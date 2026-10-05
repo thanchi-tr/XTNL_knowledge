@@ -22,6 +22,7 @@ import { fieldTier, type FieldTier } from "@/lib/field-tier";
 import { displayAnswer, displayQuestion } from "@/lib/idea-display";
 import { LIFE_TZ } from "@/lib/life-day";
 import { QUESTION_TYPES, decodeStringArray } from "@/lib/idea-payload";
+import { parseReviewDetail } from "@/lib/roadmap-types";
 import { MASTERY_LEVEL, MAX_LEVEL } from "@/lib/xp";
 
 // ─── Rows ───────────────────────────────────────────────────────────────────
@@ -368,7 +369,11 @@ export function tierMaterial(level: number): Material | null {
 
 /** One REVIEW row from the life ledger, as the idea page reads it. */
 export interface HistoryRow {
-  /** srs.ts: "advanced", "advanced · mastered", "strike", "degraded", "shielded"; backfill: "backfill: passed review". */
+  /**
+   * srs.ts: "advanced", "advanced · mastered", "strike", "degraded", "shielded";
+   * since revision 4 with the level appended ("advanced · L11→12",
+   * "advanced · mastered · L11→12", "strike · L11"); backfill: "backfill: passed review".
+   */
   detail: string | null;
   /** Epoch ms. */
   at: number;
@@ -390,12 +395,25 @@ export interface IdeaHistory {
 
 export const HISTORY_SEGS = 12;
 
-/** "on" for a recall, "miss" for a strike, a degradation, or a degradation a shield absorbed; null for anything else. */
+/**
+ * "on" for a recall, "miss" for a strike, a degradation, or a degradation a
+ * shield absorbed; null for anything else. Read through roadmap-types
+ * parseReviewDetail, the one reader of srs.ts's detail, so a tagged row
+ * ("strike · L11", "advanced · mastered · L11→12") reads as its untagged form
+ * did and the idea page keeps every miss.
+ */
 export function outcomeOf(detail: string | null): "on" | "miss" | null {
-  const d = (detail ?? "").trim().toLowerCase();
-  if (d.startsWith("advanced") || d.startsWith("backfill")) return "on";
-  if (d === "strike" || d === "degraded" || d === "shielded") return "miss";
-  return null;
+  switch (parseReviewDetail(detail).outcome) {
+    case "advanced":
+    case "backfill":
+      return "on";
+    case "strike":
+    case "degraded":
+    case "shielded":
+      return "miss";
+    default:
+      return null;
+  }
 }
 
 export function historyOf(rows: readonly HistoryRow[]): IdeaHistory {

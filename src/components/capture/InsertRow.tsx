@@ -3,9 +3,10 @@
 import { useEffect, useRef } from "react";
 import type { DayKey } from "@/lib/life-day";
 import type { ParsedCapture } from "@/lib/life-types";
+import type { CaptureAim } from "@/app/actions/capture";
 import { Icon } from "@/components/ui/Icon";
 import { useMediaQuery } from "./capture-hooks";
-import { MENU_NAME, insertChipLabel, insertMenuOptions, insertRowChips, type Insert, type InsertChip, type InsertMenu } from "./capture-ui";
+import { MENU_NAME, insertChipLabel, insertMenuOptions, insertRowChips, lineHasPrefix, type Insert, type InsertChip, type InsertMenu } from "./capture-ui";
 
 /**
  * The tap-to-add grammar row (capture.md P1), directly above the line.
@@ -64,6 +65,13 @@ interface InsertRowProps {
   text: string;
   today: DayKey;
   goals: { id: string; title: string }[] | null;
+  /**
+   * The open roadmap (CaptureVocabulary.aim): the Goal ▾ menu offers 'New aim'
+   * only once a load has said 'NONE'. The sheet passes nothing while an edit
+   * of a saved line is open (an edit stays a task, so an aim line can't open
+   * the form there).
+   */
+  aim?: CaptureAim;
   /** The open ▾ menu, or null for the top row. */
   menu: InsertMenu | null;
   /** A ▾ chip opened a menu, or its back chip (or Escape) closed it. */
@@ -72,15 +80,16 @@ interface InsertRowProps {
   onInsert: (insert: Insert) => void;
 }
 
-export function InsertRow({ parsed, text, today, goals, menu, onMenu, onInsert }: InsertRowProps) {
+export function InsertRow({ parsed, text, today, goals, aim, menu, onMenu, onInsert }: InsertRowProps) {
   const rowRef = useRef<HTMLDivElement | null>(null);
   /** A keyboard press swapped the row: focus stays on (or returns to) the opener (a mouse or touch keeps it on the line). */
   const keyboardSwap = useRef<{ opener: InsertMenu } | null>(null);
   // The Fold's cover screen: no ▾ glyphs (capture.css) and the one-tap chips first.
   const narrow = useMediaQuery("(max-width: 399px)");
 
-  const hasMode = parsed.tokens.some((t) => t.field === "mode");
-  const chips: InsertChip[] = menu ? insertMenuOptions(menu, { today, goals, hasMode }) : insertRowChips(parsed, text, { narrow });
+  // A mode the parser read, or a leading 'aim:' (capture-ui lineHasPrefix): no second prefix from the Goal ▾ menu.
+  const hasMode = lineHasPrefix(parsed, text);
+  const chips: InsertChip[] = menu ? insertMenuOptions(menu, { today, goals, hasMode, aim }) : insertRowChips(parsed, text, { narrow });
   const signature = `${menu ?? ""}|${chips.map((c) => c.id).join(",")}`;
   useEdgeFade(rowRef, signature);
 

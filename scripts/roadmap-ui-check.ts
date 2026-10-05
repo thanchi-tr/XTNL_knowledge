@@ -26,6 +26,16 @@ import "./_no-model";
  * reference disclosure; never 'miss' or --owed; /add's preselect parser; the
  * intake's checks; roadmap.css (layer order, rm-* names, no Tailwind
  * collision, no gold or --owed, ≥ 12 px, transform/opacity motion only).
+ *
+ * Revision 4 (roadmap-rev4.md; section 11): the ASK card and its LATER and
+ * OFF prompts (F-R4-1), the closed roadmap's way on (F-R4-2), Today's aim
+ * line (F-R4-3), the intake's depth, dates, coverage, exam and outline
+ * (F-R4-4, F-R4-9, F-R4-24), the date check's words (F-R4-11), Proficiency's
+ * basis and the ladder's floors (F-R4-12), the Start pay line and the health
+ * line (F-R4-13), the honesty copy and its bans (F-R4-15), legacy plans
+ * (F-R4-16), the keys-only draft and its tap budget (F-R4-17), RunFacts'
+ * redaction and integrity lines (F-R4-20), Gemini's labelled choices
+ * (F-R4-21), the two switches off (F-R4-23), and the fix rounds' carry-overs.
  */
 import Module from "node:module";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -41,11 +51,14 @@ import {
   SPAN_MAX_DAYS,
   WEEK_QUEST_ROWS_TODAY,
   draftNeedsOf,
+  floorBase,
   interval,
   positionCountOf,
   provenanceOf,
   type AimCardView,
+  type AimLineView,
   type ItemDraft,
+  type KnowledgeCheck,
   type MeasureRowView,
   type MilestoneDraft,
   type MilestoneRowView,
@@ -60,7 +73,7 @@ import { goalPercent } from "../src/lib/goals";
 import * as copy from "../src/components/roadmap/roadmap-copy";
 import * as model from "../src/components/roadmap/roadmap-ui-model";
 import { addCardHref, addPreselectOf, todayTaskHref } from "../src/components/roadmap/roadmap-links";
-import { FIXTURE_STATES, fig, liveShaped, liveShapedAim, roadmapFixture, weekQuestsFixture, type FixtureState } from "../src/app/dev/style/roadmap/fixtures";
+import { FIXTURE_STATES, REV4_STATES, fig, liveShaped, liveShapedAim, roadmapFixture, weekQuestsFixture, type FixtureState } from "../src/app/dev/style/roadmap/fixtures";
 
 // The brands hold at the props (Provenance): a plain number is no figure on any roadmap surface.
 // @ts-expect-error a plain number never type-checks as a measure row's figure
@@ -120,7 +133,7 @@ function walk(dir: string, out: string[] = []): string[] {
 
 async function main() {
   const { FixtureRoadmapProvider, FIXTURE_REFUSAL } = await import("../src/components/roadmap/roadmap-runtime");
-  const { RoadmapScreen } = await import("../src/components/roadmap/RoadmapView");
+  const { RoadmapScreen, startSnapshotOf } = await import("../src/components/roadmap/RoadmapView");
   const { RoadmapForm, intakeOf, emptyIntakeDraft, asksNewCards, splitHint } = await import("../src/components/roadmap/RoadmapForm");
   const { AimCard } = await import("../src/components/roadmap/AimCard");
   const { WeekQuests, weekQuestsShowOnToday } = await import("../src/components/roadmap/WeekQuests");
@@ -140,10 +153,10 @@ async function main() {
     let today = "";
     let intake = "";
     try {
-      page = fx.view ? R(createElement(RoadmapScreen, { view: fx.view, startPreview: fx.startPreview })) : "";
-      aim = fx.aim ? R(createElement(AimCard, { view: fx.aim, today: fx.view?.today })) : "";
+      page = fx.view ? R(createElement(RoadmapScreen, { view: fx.view, startPreview: fx.startPreview, gates: fx.gates })) : "";
+      aim = fx.aim ? R(createElement(AimCard, { view: fx.aim, today: fx.view?.today, autosaveAim: null })) : "";
       today = fx.today ? R(createElement(WeekQuests, { variant: "today", view: fx.today })) : "";
-      intake = fx.intake ? R(createElement(RoadmapForm, { view: fx.intake })) : "";
+      intake = fx.intake ? R(createElement(RoadmapForm, { view: fx.intake, gates: fx.gates })) : "";
     } catch (err) {
       check(`render: the '${s}' fixture renders`, false, String(err).slice(0, 300));
     }
@@ -183,7 +196,11 @@ async function main() {
     "privacy line: generated from the section list (a section left out leaves its words out)",
     PACK_SECTIONS.every((s) => !copy.privacyLine(PACK_SECTIONS.filter((x) => x !== s) as PackSection[]).includes(copy.PACK_SECTION_WORDS[s]))
   );
-  check("privacy line: the spec's words", priv === "Drafting sends Google your aim, Area name, constraints, exam name, syllabus lines, the plan's milestone count and weeks, and your Domain names with their card counts — never your cards, their titles or ids.", priv);
+  check(
+    "privacy line: the revision-4 words (the outline's line Domains, the stages and whether there is an exam, never its date, and which Domains you chose)",
+    priv === "Drafting sends Google your aim, Area name, constraints, exam name, outline lines with the Domain you tied each to, the plan's stages and whether there is an exam (never its date), and your Domain names with their card counts and which Domains you chose — never your cards, their titles or ids.",
+    priv
+  );
   check("levelPhrase: level 6 at m = 1 is about 12 days", copy.levelPhrase(6, 1) === "cards at level 6+ (each recalled after a gap of about 12 days)", copy.levelPhrase(6, 1));
   check("levelPhrase: level 10 at m = 1 is about 50 days", copy.levelPhrase(10, 1).includes("about 50 days"));
   check("levelPhrase: follows the current multiplier (m = 1.5)", copy.levelPhrase(6, 1.5).includes(`about ${interval(5, 1.5)} days`) && interval(5, 1.5) !== interval(5, 1));
@@ -255,11 +272,10 @@ async function main() {
     `aim card (draft): 'A draft is waiting for your check · ${nextUndecided} items' (the next milestone's undecided rows only, never outline items)`,
     textOf(renders.get("draft-mixed")!.aim).replace(/\s+/g, " ").includes(`A draft is waiting for your check · ${nextUndecided} items`)
   );
+  // Revision 4 replaces the rev-3 compact line with the ASK card (F-R4-1; pinned in section 11).
   const emptyKey = renders.get("empty")!.aim;
-  check("aim card (empty): one compact line with a key", (emptyKey.match(/rm-ac-empty"/g) ?? []).length === 1 && emptyKey.includes("Gemini can draft a roadmap, or build one from your numbers"));
-  check("aim card (empty): without a key, '…build one from your own numbers.'", renders.get("no-key")!.aim.includes("build one from your own numbers."));
-  check("aim card (empty): dismissed by the cookie renders nothing", R(createElement(AimCard, { view: roadmapFixture("empty").aim!, promptDismissed: true })) === "");
-  check("aim card (empty): the × hides it (an accessible 'Hide this')", emptyKey.includes('aria-label="Hide this"'));
+  check("aim card (empty): the ASK card, with or without a key (no key line, no Gemini)", emptyKey.includes('class="card rm-ac-call') && renders.get("no-key")!.aim.includes('class="card rm-ac-call') && !/Gemini/.test(textOf(emptyKey)));
+  check("aim card (empty): the transition alias (promptDismissed) renders nothing", R(createElement(AimCard, { view: roadmapFixture("empty").aim!, promptDismissed: true })) === "");
 
   // ── 3. Code rules (Names, Provenance) ───────────────────────────────────────
   console.log("— code —");
@@ -285,10 +301,12 @@ async function main() {
   check("provenance: measured()/recorded()/selfReported()/estimated()/workedOut() are called only in the five allowed lib files", ctorAt.length === 0, ctorAt.join(", "));
   const textAt = ALL_SRC.filter((f) => !/src\/lib\/(roadmap-server|roadmap-quests-server)\.ts$/.test(f) && /(?<![\w.])(yoursText|labelTextOf)\(/.test(code(read(f))));
   check("provenance: yoursText() and labelTextOf() only in roadmap-server.ts and roadmap-quests-server.ts", textAt.length === 0, textAt.join(", "));
-  const codeAt = ALL_SRC.filter((f) => !f.endsWith("src/lib/roadmap-realism.ts") && /(?<![\w.])codeText\(/.test(code(read(f))));
-  check("provenance: codeText() only in roadmap-realism.ts", codeAt.length === 0, codeAt.join(", "));
-  const codeLiteral = ALL_SRC.filter((f) => !f.endsWith("src/lib/roadmap-realism.ts") && /["']CODE["']/.test(code(read(f))));
-  check("provenance: the literal origin 'CODE' is written only in roadmap-realism.ts", codeLiteral.length === 0, codeLiteral.join(", "));
+  // Revision 4: roadmap-catalog.ts renders the catalog types' labels (catalogLabelOf), the other place 'CODE' is written (F-R4-18).
+  const CODE_WRITERS = /src\/lib\/(roadmap-realism|roadmap-catalog)\.ts$/;
+  const codeAt = ALL_SRC.filter((f) => !CODE_WRITERS.test(f) && /(?<![\w.])codeText\(/.test(code(read(f))));
+  check("provenance: codeText() only in roadmap-realism.ts and roadmap-catalog.ts", codeAt.length === 0, codeAt.join(", "));
+  const codeLiteral = ALL_SRC.filter((f) => !CODE_WRITERS.test(f) && /["']CODE["']/.test(code(read(f))));
+  check("provenance: the literal origin 'CODE' is written only in roadmap-realism.ts and roadmap-catalog.ts", codeLiteral.length === 0, codeLiteral.join(", "));
   const casts = [...roadmapSrc, ...walk("src/app/you/roadmap")].filter((f) => /\bas\s+(Measured|Recorded|SelfReported|Estimated|WorkedOut|YoursText|CodeText|DomainName)\b/.test(code(read(f))));
   check("provenance: no roadmap surface casts a figure or a label into a brand (only the fixtures do)", casts.length === 0, casts.join(", "));
   check("provenance: the model modules import none of the brand makers", ["src/lib/roadmap-model.ts", "src/lib/roadmap-validate.ts", "src/lib/roadmap-evidence.ts"].every((f) => !/\b(measured|recorded|selfReported|estimated|workedOut|yoursText|codeText|labelTextOf|domainName)\b/.test(code(read(f)).replace(/^import type[^;]*;/gm, ""))));
@@ -474,16 +492,22 @@ async function main() {
   check("intake (no key): no Draft with Gemini at all, and the no-key line", !noKey.includes("Draft with Gemini") && noKey.includes(copy.NO_KEY_LINE.replace(/'/g, "&#x27;")));
   check("intake (no key): no disabled primary", !/<button[^>]*disabled=""[^>]*class="btn btn-primary|class="btn btn-primary[^"]*"[^>]*disabled=""/.test(noKey));
   check("intake (no key): no privacy or free-tier line (nothing is sent)", !noKey.includes("Drafting sends Google") && !noKey.includes("free tier"));
-  const withKey = renders.get("intake")!.intake;
-  check("intake (key): Draft with Gemini primary, Build from my numbers secondary", /class="btn btn-primary lg"[^>]*>Draft with Gemini</.test(withKey) && /class="btn btn-secondary lg"[^>]*>Build from my numbers</.test(withKey));
-  check("intake (key, FREE): the privacy line and the free-tier line under Advanced", withKey.includes("Drafting sends Google your aim") && withKey.includes(copy.FREE_TIER_LINE.replace(/'/g, "&#x27;")));
-  const paid = R(createElement(RoadmapForm, { view: { ...roadmapFixture("intake").intake!, keyTier: "PAID" } }));
-  check("intake (key, PAID): no free-tier line", !paid.includes("free tier") && paid.includes("Drafting sends Google"));
+  // ROADMAP_GEMINI_LIVE is false in this build (F-R4-23): a key alone shows no Gemini path; with the lead's switch on (gates) the rev-3 pins hold.
+  const withKeyOff = renders.get("intake")!.intake;
+  check(
+    "intake (key, Gemini off): Build from my numbers is the primary, no Draft with Gemini, no privacy or free-tier line",
+    /<button type="submit" class="btn btn-primary lg"[^>]*>Build from my numbers</.test(withKeyOff) && !withKeyOff.includes("Draft with Gemini") && !withKeyOff.includes("Drafting sends Google") && !withKeyOff.includes("free tier")
+  );
+  const withKey = R(createElement(RoadmapForm, { view: roadmapFixture("intake").intake!, gates: { gemini: true } }));
+  check("intake (key, switch on): Draft with Gemini primary, Build from my numbers secondary", /class="btn btn-primary lg"[^>]*>Draft with Gemini</.test(withKey) && /class="btn btn-secondary lg"[^>]*>Build from my numbers</.test(withKey));
+  check("intake (key, FREE, switch on): the privacy line and the free-tier line under Advanced", withKey.includes("Drafting sends Google your aim") && withKey.includes(copy.FREE_TIER_LINE.replace(/'/g, "&#x27;")));
+  const paid = R(createElement(RoadmapForm, { view: { ...roadmapFixture("intake").intake!, keyTier: "PAID" }, gates: { gemini: true } }));
+  check("intake (key, PAID, switch on): no free-tier line", !paid.includes("free tier") && paid.includes("Drafting sends Google"));
   check("intake: the aim is shown verbatim ('Never rewritten.')", withKey.includes("Shown exactly as you wrote it, everywhere. Never rewritten."));
   check("intake: the date chips stop at 3 years", withKey.includes(">3 years<") && !withKey.includes(">5 years<"));
   check("intake: 16 px inputs come from study.css (.st-input under 600 px)", /@media \(max-width: 599px\)\s*\{\s*\.st-input \{ font-size: 16px; \}/.test(read("src/components/library/study.css")));
   const today0 = "2026-10-04";
-  const base = { ...emptyIntakeDraft(today0), aim: "Run 10 km in under 50 minutes", areaTrack: "BODY" as const };
+  const base = { ...emptyIntakeDraft(today0, "TRACK"), aim: "Run 10 km in under 50 minutes", areaTrack: "BODY" as const };
   check("intake: under 35 days is refused with the spec's words", intakeOf({ ...base, targetDay: addDays(today0, 28) }, today0).problems.targetDay === "Too short for a roadmap — capture it as a goal on Today.");
   check("intake: over 1,080 days is refused with the spec's words", intakeOf({ ...base, targetDay: addDays(today0, SPAN_MAX_DAYS + 1) }, today0).problems.targetDay === "Set where you want to be in 3 years; planning further out comes later.");
   check("intake: exactly 1,080 days is allowed", intakeOf({ ...base, targetDay: addDays(today0, SPAN_MAX_DAYS) }, today0).intake != null);
@@ -656,7 +680,9 @@ async function main() {
     check("runs: a FAILED draft that wrote nothing leaves Gemini's lead and says nothing changed", nothingHtml.includes(copy.RUN_UNFINISHED_LINE.replace(/'/g, "&#x27;")) && nothingHtml.includes(copy.GEMINI_LEAD_LINE) && !nothingHtml.includes("here is a plan from your numbers"));
     check("runs: draftRunWriterOf prefers wrote; a view without it falls back to the run alone", model.draftRunWriterOf({ ...dv.run!, status: "CAPPED", wrote: "GEMINI" }) === "GEMINI" && model.draftRunWriterOf({ ...dv.run!, status: "CAPPED", wrote: undefined }) === null);
     check("runs: no writer, no claim (the lead line is absent)", draftLeadOf(null, "draft", false).lead === null && draftLeadOf("INHOUSE", "draft", false).lead === copy.BUILT_LEAD_LINE);
-    check("runs: Discard sits on its own line, a chip button away from Draft again", /<div class="rm-lines">(?:(?!<\/div>)[\s\S])*Draft again[\s\S]*?<\/div><div class="rm-acts"><button[^>]*class="chip[^"]*"[^>]*>Discard the draft<\/button>/.test(draftHtml2));
+    const draftGated = R(createElement(RoadmapScreen, { view: roadmapFixture("draft-mixed").view!, gates: { gemini: true } }));
+    check("runs: Draft again only with the Gemini switch on (F-R4-23)", !draftHtml2.includes(">Draft again<") && draftGated.includes("Draft again"));
+    check("runs: Discard sits on its own line, a chip button away from Draft again", /<div class="rm-lines">(?:(?!<\/div>)[\s\S])*Draft again[\s\S]*?<\/div><div class="rm-acts"><button[^>]*class="chip[^"]*"[^>]*>Discard the draft<\/button>/.test(draftGated));
 
     // An ACTIVE roadmap's re-plan is rendered above Now, with Accept and Discard (Lens 2 blocker).
     const replanHtml = renders.get("active-replan")!.page;
@@ -902,6 +928,742 @@ async function main() {
     check("live: liveShaped strips acceptedRun, positions and the rows' titleStruck", !("acceptedRun" in ls) && !("positions" in ls) && ls.milestones.every((r) => !("titleStruck" in r)));
   }
 
+  // ── 11. Revision 4 (roadmap-rev4.md) ──────────────────────────────────────
+  console.log("— revision 4 —");
+  {
+    const { AimLine } = await import("../src/components/roadmap/AimLine");
+    const { askPrimaryWord } = await import("../src/components/roadmap/AimCard");
+    const { RunTable, runFactsLine } = await import("../src/components/roadmap/RunFacts");
+    const { knowledgeSentence, knowledgeNotesOf } = await import("../src/components/roadmap/ChecksPanel");
+    const { restsOnAddedOf } = await import("../src/components/roadmap/StartSheet");
+    const { gapPanelShown } = await import("../src/components/roadmap/GapPanel");
+    const { catalogChoicesOf } = await import("../src/components/roadmap/CatalogSheet");
+    const { stageFloorOf, floorPercentOf } = await import("../src/lib/roadmap-proficiency");
+    const flat = (html: string) => textOf(html).replace(/\s+/g, " ");
+    const pageOf = (s: FixtureState) => renders.get(s)!.page;
+    const aimOf = (s: FixtureState) => renders.get(s)!.aim;
+    const quest = (t: string) => /\bquests?\b/i.test(t.replace(/\bweek quests?\b/gi, ""));
+    check("rev 4: every revision-4 fixture state renders", REV4_STATES.every((s) => renders.get(s)!.page || renders.get(s)!.intake));
+
+    // F-R4-1. The ASK card: the aim asked in place.
+    const emptyAim = roadmapFixture("empty").aim!;
+    const ask = R(createElement(AimCard, { view: emptyAim, prompt: "ASK", autosaveAim: null }));
+    const askText = flat(ask);
+    check(
+      "ask: 'Set an aim', the body and the rank line",
+      askText.includes(copy.AIM_CALL_HEADING) && askText.includes(copy.AIM_CALL_BODY) && askText.includes("Stages you reach raise your Aim rank, from Initiate toward Paragon: the aim held at Mastered (level 12).")
+    );
+    check("ask: a textarea with maxlength 140, and 'Not now' and 'Don't suggest this' buttons", /<textarea[^>]*maxlength="140"/i.test(ask) && /<button[^>]*>(?:<[^>]+>)*Not now(?:<[^>]+>)*<\/button>/.test(ask) && /<button[^>]*>(?:<[^>]+>)*Don&#x27;t suggest this(?:<[^>]+>)*<\/button>/.test(ask));
+    check("ask: no Gemini, earn, mastery, ⬡, bare quest or 'Each milestone you reach raises'", !/Gemini|\bearns?\b|mastery|⬡|Each milestone you reach raises/i.test(askText) && !quest(askText));
+    check("ask: the primary reads 'Set an aim' while the box is empty and 'Continue' with text", askPrimaryWord("") === "Set an aim" && askPrimaryWord("   ") === "Set an aim" && askPrimaryWord("Speak Japanese at work") === "Continue");
+    check("ask: the empty card's primary is 'Set an aim' (to /you/roadmap/new)", /<a class="btn btn-primary[^"]*"[^>]*href="\/you\/roadmap\/new"[^>]*>Set an aim<\/a>/.test(ask));
+    const cont = R(createElement(AimCard, { view: emptyAim, prompt: "ASK", autosaveAim: "Speak Japanese at work" }));
+    check(
+      "ask: an autosaved aim prefills the box, says 'Continue where you left off', and the primary reads 'Continue'",
+      cont.includes(">Speak Japanese at work</textarea>") && cont.includes(copy.AIM_CALL_CONTINUE_LINE) && /<a class="btn btn-primary[^"]*"[^>]*>Continue<\/a>/.test(cont)
+    );
+    const lastAim = { roadmapId: "rm0", aim: "Run a sub-50 10K", rankIndex: 6, rankName: AIM_RANKS[6], reached: true, day: "2027-03-03" };
+    const withLast = flat(R(createElement(AimCard, { view: emptyAim, prompt: "ASK", lastAim, autosaveAim: null })));
+    // Two lines (lens 3): the aim clipped to one, then the achievement in full, so the rank and day never clip at 344.
+    check("ask: the last-aim line only with a last aim, 'Aim rank' before the rank", withLast.includes("Last aim: “Run a sub-50 10K” Aim rank Paragon · reached 3 Mar 2027") && !askText.includes("Last aim"));
+    const seeded = R(createElement(AimCard, { view: emptyAim, prompt: "ASK", seed: { goalId: "g1", title: "Speak Japanese at work" }, autosaveAim: null }));
+    check("ask: the seed line only with a seed", seeded.includes("Start from your long goal “Speak Japanese at work”") && !ask.includes("Start from your long goal"));
+    const later = R(createElement(AimCard, { view: emptyAim, prompt: "LATER" }));
+    check(
+      "ask: LATER renders exactly one .rm-ac-empty whose × reads 'Not now: no aim suggestions for 4 weeks'",
+      (later.match(/rm-ac-empty(?![\w-])/g) ?? []).length === 1 && later.includes('aria-label="Not now: no aim suggestions for 4 weeks"')
+    );
+    check("ask: LATER with a last aim reads 'Last aim: Aim rank …'", /Last aim: Aim rank/.test(flat(R(createElement(AimCard, { view: emptyAim, prompt: "LATER", lastAim })))));
+    check("ask: OFF renders nothing", R(createElement(AimCard, { view: emptyAim, prompt: "OFF" })) === "");
+    // A file that names the prompt cookie never holds an 'off' value (the year-long 'off' is retired; LATER and the stored switch replace it).
+    const offWriters = [...roadmapSrc, "src/app/actions/roadmap.ts"].filter((f) => /AIM_PROMPT_COOKIE|xtnl-aim-prompt/.test(code(read(f))) && /(?<!autoComplete=)["'`]off["'`]/.test(code(read(f))));
+    check("ask: no file under src/components/roadmap or the roadmap actions writes the 'off' cookie value", offWriters.length === 0, offWriters.join(", "));
+    const noneHtml = pageOf("empty");
+    check("ask: the NONE card links to /you/roadmap/new and names no Gemini while its path is off", noneHtml.includes('href="/you/roadmap/new"') && !/Gemini/.test(textOf(noneHtml)));
+    check("ask: AimCard and RoadmapForm never build an '?aim=' URL or read it from searchParams", !/\?aim=|searchParams/.test(code(read("src/components/roadmap/AimCard.tsx")) + code(read("src/components/roadmap/RoadmapForm.tsx"))));
+
+    // F-R4-2. No dead end once a roadmap closes.
+    for (const s of ["done-depth", "archived", "done"] as const) check(`closed (${s}): 'Set a new aim' to /you/roadmap/new`, pageOf(s).includes('href="/you/roadmap/new"') && pageOf(s).includes("Set a new aim"));
+    check("closed: an ACTIVE roadmap has no 'Set a new aim'", !pageOf("depth-realistic").includes("Set a new aim") && !pageOf("active").includes("Set a new aim"));
+    const doneAim = roadmapFixture("done-depth").aim!;
+    const at3 = R(createElement(AimCard, { view: doneAim, today: "2028-03-15" }));
+    const ord = (h: string) => [h.indexOf(">Open roadmap<"), h.indexOf(">Set your next aim<")];
+    check("done: reached 3 days ago, 'Open roadmap' is the primary and 'Set your next aim' the secondary", /class="btn btn-primary"[^>]*>Open roadmap</.test(at3) && /class="btn btn-secondary"[^>]*>Set your next aim</.test(at3) && ord(at3)[0] < ord(at3)[1]);
+    check("done: 'Aim rank' before the final rank", at3.indexOf("Aim rank") >= 0 && at3.indexOf("Aim rank") < at3.indexOf(">Paragon<"));
+    const at8 = R(createElement(AimCard, { view: doneAim, today: "2028-03-20" }));
+    const unreached = R(createElement(AimCard, { view: { ...doneAim, reachedDay: null, heldDepth: null }, today: "2028-03-15" }));
+    check("done: reached 8 days ago, or unreached, the order swaps", [at8, unreached].every((h) => /class="btn btn-primary"[^>]*>Set your next aim</.test(h) && ord(h)[1] < ord(h)[0]));
+    check("done: the held depth line while new", flat(at3).includes("Mastered (level 12) in Probability and Inference · confirmed 14 Mar 2028") && !flat(at8).includes("confirmed 14 Mar"));
+
+    // F-R4-3. Today's aim line.
+    const lineViews: AimLineView[] = [
+      { kind: "SET", variant: "WEEK", href: "/you/roadmap/new" },
+      { kind: "SET", variant: "MONTH", href: "/you/roadmap/new" },
+      { kind: "SET", variant: "BACK", href: "/you/roadmap/new" },
+      { kind: "SET", variant: "NEXT", href: "/you/roadmap/new" },
+      { kind: "DRAFT", roadmapId: "rm1", href: "/you/roadmap" },
+      { kind: "START", milestoneId: "m2", ord: 2, stageName: "Familiar", givesRank: "Journeyman", href: "/you/roadmap#now" },
+      { kind: "START", milestoneId: "m6", ord: 6, stageName: null, givesRank: null, href: "/you/roadmap#now" },
+    ];
+    for (const v of lineViews) {
+      const h = R(createElement(AimLine, { view: v }));
+      const t = flat(h);
+      const tag = `${v.kind}${v.kind === "SET" ? ` ${v.variant}` : ""}${v.kind === "START" && !v.givesRank ? " keeps" : ""}`;
+      check(`aim line (${tag}): no behind, late, overdue, missed, stall or due; no Gemini, bare quest or earn`, t.length > 0 && !/behind|late|overdue|missed|stall|\bdue\b/i.test(t) && !/Gemini/.test(t) && !quest(t) && !/\bearns?\b/i.test(t), t);
+      check(`aim line (${tag}): no href to /review, no --owed, warn or danger`, !/href="\/review/.test(h) && !/owed|warn|danger/.test(h));
+      check(`aim line (${tag}): 'Not now' is a button with an aria-label`, /<button[^>]*aria-label="Not now[^"]*"/.test(h));
+    }
+    check("aim line: the rank phrase is the shared helper's", copy.aimLineCopy(lineViews[5]).rest === `${copy.givesRankByName("Journeyman")}.` && copy.aimLineCopy(lineViews[6]).rest === "It keeps your rank.");
+
+    // F-R4-4. The intake leans long-term.
+    const fieldDraft = emptyIntakeDraft(today0, "FIELD");
+    const trackDraft = emptyIntakeDraft(today0, "TRACK");
+    check("intake: a Field Area starts REALISTIC; a track Area CHOSEN at 12 months", fieldDraft.dateMode === "REALISTIC" && trackDraft.dateMode === "CHOSEN" && trackDraft.targetDay === "2027-10-04", trackDraft.targetDay);
+    for (const mm of [1, 1.5]) check(`intake: the REALISTIC hint's floors are floorBase(12, m) and floorBase(10, m) (m = ${mm})`, copy.realisticHint(mm).includes(`at least ${floorBase(12, mm)} days`) && copy.realisticHint(mm).includes(`${floorBase(10, mm)} for level 10`));
+    check("intake: the floors follow the multiplier", floorBase(12, 1) !== floorBase(12, 1.5));
+    const chips = roadmapFixture("intake-depth").intake!.dateChips!;
+    check(
+      "intake: a new learner at Mastered: 6 and 12 months read 'before level 12 is possible', 24 months 'possible'",
+      copy.chipVerdict(chips[0].possible.MASTERED, 12) === "before level 12 is possible" && copy.chipVerdict(chips[1].possible.MASTERED, 12) === "before level 12 is possible" && copy.chipVerdict(chips[2].possible.MASTERED, 12) === "possible"
+    );
+    check("intake: at Fluent the 12-month chip reads 'possible'", copy.chipVerdict(chips[1].possible.FLUENT, 10) === "possible");
+    const intakeDepth = renders.get("intake-depth")!.intake;
+    const intakeDepthText = flat(intakeDepth);
+    check("intake: the chips carry their verdicts beside 'When realistic'", intakeDepthText.includes("When realistic") && intakeDepthText.includes("6 months before level 12 is possible") && intakeDepthText.includes("24 months possible"));
+    check("intake: the REALISTIC hint renders at the user's multiplier", intakeDepthText.includes(copy.realisticHint(1)));
+    const formSrc4 = code(read("src/components/roadmap/RoadmapForm.tsx"));
+    const aimSets = [...formSrc4.matchAll(/set\("aim",\s*([^)]*\))?/g)].map((x) => x[0]);
+    check(
+      "intake: the aim is set only by the user's typing, the handoff and 'Use it'",
+      aimSets.length === 2 && /onChange=\{\(e\) => set\("aim", e\.target\.value\)\}/.test(formSrc4) && /set\("aim", handoff\.aim/.test(formSrc4) && (formSrc4.match(/\baim: h\.aim\b/g) ?? []).length === 1,
+      aimSets.join(" | ")
+    );
+    check("intake: 'Never rewritten.' still holds", intakeDepth.includes("Shown exactly as you wrote it, everywhere. Never rewritten."));
+
+    // F-R4-9. Coverage, always with its terms.
+    const covRows = [...intakeDepthText.matchAll(/(Probability|Inference) · \d+ cards: the most of the 25-card floor, 80% of your \d+ \(\d+\), and 3 × \d+(?:\.\d)? outline lines \(\d+\)/g)];
+    check("coverage: the disclosure shows all three terms for every Domain", covRows.length === 2, String(covRows.length));
+    check("coverage: the lines tied to no Domain are listed", intakeDepthText.includes("2 outline lines aren't tied to a Domain: S5, S6."));
+    check("coverage: 'Coverage unchecked: no outline.' on a plan without one", flat(pageOf("coverage-choice")).includes("Coverage unchecked: no outline."));
+    const cc = roadmapFixture("coverage-choice").view!;
+    const cc400 = flat(R(createElement(RoadmapScreen, { view: { ...cc, today: addDays(cc.today, 400) } })));
+    check("coverage: the coverage-choice line stays on an ACTIVE plan 400 days after the choice", cc400.includes("Probability: 5 cards, below the app's 34, your choice on 5 Oct 2026."));
+    check("coverage: a depth plan's stage count is never typed per milestone (no 'Type a target')", !pageOf("draft-v3").includes("Type a target") && !pageOf("count-gate").includes("Type a target") && pageOf("draft-mixed").includes("Type a target"));
+
+    // F-R4-11. Keep the depth, move the date.
+    const REALISTIC_STATES: FixtureState[] = ["depth-realistic", "depth-calibrating", "depth-lowered", "coverage-choice", "exam-waypoint", "held-stages", "count-gate", "draft-v3", "draft-exam"];
+    const choseAt = REALISTIC_STATES.filter((s) => /as you chose/.test(textOf(pageOf(s)) + textOf(aimOf(s))));
+    check("date: a plan in REALISTIC mode never reads 'as you chose'", choseAt.length === 0, choseAt.join(", "));
+    check("date: a date the app set reads 'the date the app set on 5 Oct'", flat(pageOf("depth-realistic")).includes("the date the app set on 5 Oct"));
+    check("date: the calibrating chip reads 'estimate', by month", flat(pageOf("depth-calibrating")).includes("Mastered (level 12) by about Mar 2028 · estimate") && flat(aimOf("depth-calibrating")).includes("Mastered (level 12) by about Mar 2028 · estimate"));
+    check("date: the exam line renders on an ACTIVE plan", flat(pageOf("depth-realistic")).includes("By your exam (Tue 4 May 2027) the plan reaches Retained (level 8). The depth goes on past it."));
+    check("date: a user's date kept over the pace says so, once accepted", flat(pageOf("depth-over")).includes("Your date is 23 weeks ahead of your pace — kept as you chose (Over).") && copy.overKeptLine("2027-10-03", "2027-10-03") === null);
+    const imp = pageOf("draft-impossible");
+    check("date: IMPOSSIBLE offers the realistic date and a lower depth, and Accept waits", imp.includes(">Use Sun 12 Mar 2028<") && imp.includes("Choose a lower depth…") && imp.includes("Change the date or the depth") && !/>Accept plan</.test(imp));
+    check("date: the CALIBRATED trigger offers Re-date and Keep the dates", flat(pageOf("depth-calibrating")).includes("Re-date") && flat(pageOf("depth-calibrating")).includes("Keep the dates") && pageOf("depth-calibrating").includes(copy.REDATE_NOTE.replace(/'/g, "&#x27;")));
+
+    // F-R4-12. Ranks follow stages; Proficiency names its basis.
+    check("proficiency: the label names its basis ('toward Mastered (level 12)'), on the page and the card", pageOf("depth-realistic").includes("toward Mastered (level 12)") && aimOf("depth-realistic").includes("toward Mastered (level 12)"));
+    check("proficiency: a lowered depth's basis is Fluent (level 10)", pageOf("depth-lowered").includes("toward Fluent (level 10)"));
+    const pfBlock = (h: string) => {
+      const a = h.indexOf('class="rm-rp-pf"');
+      return a < 0 ? "" : textOf(h.slice(a, h.indexOf("</div></div>", a) + 12));
+    };
+    const pf = pfBlock(pageOf("depth-realistic")) + pfBlock(aimOf("depth-realistic"));
+    check("proficiency: 'Mastered' inside the Proficiency block only in its basis", pf.length > 0 && (pf.match(/Mastered/g) ?? []).length === (pf.match(/toward Mastered \(level 12\)/g) ?? []).length, pf.slice(0, 200));
+    check(
+      "ranks: each stage names its floor, from stageFloorOf",
+      pageOf("depth-realistic").includes(`Retained (level 8) · its cards part from ${floorPercentOf(stageFloorOf(8, 12))}%`) && pageOf("depth-realistic").includes(`Mastered (level 12) · its cards part from ${floorPercentOf(stageFloorOf(12, 12))}%`)
+    );
+    check("ranks: held stages give no rank and say so", (flat(pageOf("held-stages")).match(/Held when you began/g) ?? []).length >= 3 && !/milestone 1 · reached/.test(flat(pageOf("held-stages"))));
+    check("ranks: a lowered depth tops out short of Paragon and says why", flat(pageOf("depth-lowered")).includes("Top rank on this plan: Expert — Paragon needs the depth Mastered (level 12)."));
+    check("ranks: a coverage choice keeps Paragon closed and says why", flat(pageOf("coverage-choice")).includes("Top rank on this plan: Virtuoso — Paragon needs each required Domain's coverage at the app's policy or above."));
+
+    // F-R4-13. Production practice and the Start pay line.
+    // A TaskTemplate's band column (template.band, tpl.band, taskTemplate.band): a practice's band is its own durationBand.
+    const bandReads = [...walk("src/lib").filter((f) => /\/roadmap-[^/]*\.ts$/.test(f)), ...roadmapSrc].filter((f) => /\b(?:template|tpl|taskTemplate|TaskTemplate)s?(?:\[[^\]]*\])?\??\.band\b/.test(code(read(f))));
+    check("start: nothing under src/lib/roadmap-* or src/components/roadmap reads .band from a TaskTemplate", bandReads.length === 0, bandReads.join(", "));
+    const spE = roadmapFixture("exam-waypoint").startPreview!;
+    check(
+      "start: the pay line names the practice the app added",
+      restsOnAddedOf(spE) === "Timed practice: Probability, Inference" &&
+        copy.restsOnAddedLine(6, "Timed practice: Probability, Inference").endsWith("because of the practice the app added (Timed practice: Probability, Inference). Switch it off and this milestone pays nothing.") &&
+        restsOnAddedOf(roadmapFixture("start-refit").startPreview!) === null
+    );
+    const healthRow: WeekQuestRow = Object.assign(
+      { ord: 1, kind: "PRACTICE" as const, label: "Easy session · 3 sessions × 30 min", count: 3, unit: "session" as const, evidence: "SELF_REPORTED" as const, figure: fig(1, "from your ticks", "SELF"), done: false, dueLine: null, quotaLine: null, slipLine: null, seekTemplateId: "t-es", place: "in Habits", href: null },
+      { health: true }
+    );
+    const bodyQuests = R(createElement(WeekQuests, { variant: "today", view: weekQuestsFixture({ level: null }, [healthRow]) }));
+    check("health: a BODY practice row carries HEALTH_LINE; a Field one doesn't", bodyQuests.includes(copy.HEALTH_LINE) && !renders.get("depth-realistic")!.today.includes(copy.HEALTH_LINE));
+    check("health: the Start sheet carries HEALTH_LINE only for a BODY track Area (or a milestone's note)", /notes\.includes\("HEALTH_LINE"\) \|\| \(editor\?\.scope\.areaFieldId == null && editor\?\.scope\.track === "BODY"\)\) && <p className="rm-it-why">\{HEALTH_LINE\}/.test(code(read("src/components/roadmap/StartSheet.tsx"))));
+    check("health: a body draft carries it, a Field draft doesn't", pageOf("draft-body").includes(copy.HEALTH_LINE) && !pageOf("draft-v3").includes(copy.HEALTH_LINE));
+    const parts = flat(renders.get("depth-realistic")!.today);
+    check("week quests v2: a RAISE and an ADD row carry their parts by Domain", parts.includes("3 in Probability · 3 in Inference") && parts.includes("2 to Inference · multiple choice not counted"));
+
+    // F-R4-15. Honesty copy: goldens and bans.
+    const dr = flat(pageOf("depth-realistic"));
+    check(
+      "copy: the Depth line golden",
+      dr.includes(
+        "Depth: Mastered (level 12) in Probability and Inference: 34 and 25 cards, each passing its review after a gap of about 110 days at the first try. Multiple-choice cards don't count. The 25-card floor and the 80% share are the app's policy, not facts about these subjects. Change them if you know better."
+      )
+    );
+    const ccText = flat(pageOf("coverage-choice"));
+    check("copy: a Gemini-suggested Domain the user added stays on the Depth line", ccText.includes("Risk Management: suggested by Gemini, added by you on 5 Oct"));
+    check("copy: a coverage choice stays on the Depth line", ccText.includes("Probability: 5 cards, below the app's 34, your choice on 5 Oct"));
+    check("copy: a lowered depth stays on the Depth line", flat(pageOf("depth-lowered")).includes("Depth: Fluent (level 10) — below Mastered, your choice on 5 Jan."));
+    check("copy: a depth set by the exam", copy.depthChoiceLine({ from: 12, to: 10, day: "2026-10-05", reason: "EXAM" }, "2026-10-05") === "Depth: Fluent (level 10) — below Mastered, set by your exam date on 5 Oct.");
+    check(
+      "copy: the date line (R2's words, shown as given)",
+      dr.includes("At 70% of your usual 3 new cards a week, your 80% pass rate (reads high), 80% for gaps of 50 days and more (the app's policy) and the 92% of your due queue you clear, this depth is realistic by Sun 12 Mar 2028. Earliest if every review passes, at this pace: Sat 30 Oct 2027.")
+    );
+    check("copy: the never-lowered line", copy.NEVER_LOWERED_LINE === "The app doesn't lower the depth to fit a date. A lower depth is your choice and stays on the plan." && dr.includes(copy.NEVER_LOWERED_LINE));
+    check(
+      "copy: the coverage line",
+      dr.includes("The app tests whether you hold the cards you wrote. Whether they cover everything 'Know probability and inference well enough to pass Exam P and use them at work' needs is yours to judge: your outline and your standard are the outside checks.")
+    );
+    check(
+      "copy: the Paragon line names the count",
+      copy.paragonDepthLine(2) ===
+        "Paragon: every one of your 2 required Domains held at level 12, the final milestone reached, the plan's practice kept, and your standard logged at or above your bar. Cards tested by your reviews; practice and score from your ticks and your log." && dr.includes(copy.paragonDepthLine(2))
+    );
+    check("copy: the schedule-bound line from the floor", copy.scheduleBoundLine(12, 1) === `This date is set by the review schedule, not your hours: a new card needs at least ${floorBase(12, 1)} days to reach level 12. More hours won't bring it much closer.`);
+    const DEPTH_STATES: FixtureState[] = ["depth-realistic", "depth-calibrating", "depth-over", "depth-lowered", "coverage-choice", "exam-waypoint", "count-gate", "held-stages", "done-depth", "draft-v3", "draft-exam", "draft-rejected", "draft-impossible"];
+    const fittedAt = DEPTH_STATES.filter((s) => /\bFitted\b|FITTED/.test(textOf(pageOf(s))));
+    check("bans: no 'Fitted' on a depth plan", fittedAt.length === 0, fittedAt.join(", "));
+    const masteredBare = DEPTH_STATES.flatMap((s) => lines(pageOf(s) + aimOf(s)).filter((l) => /\bMastered\b/.test(l) && !/level 1[12]/.test(l) && !/below Mastered|Mastered →/.test(l)).map((l) => `${s}: ${l}`));
+    check("bans: 'Mastered' always with its level (12, or 11 'Toward Mastered')", masteredBare.length === 0, masteredBare.slice(0, 3).join(" | "));
+    const depthBar = lines(DEPTH_STATES.map((s) => pageOf(s)).join("\n")).filter((l) => /\bdepth\b/i.test(l) && /\bbar\b/i.test(l));
+    check("bans: 'bar' never refers to the depth", depthBar.length === 0, depthBar.slice(0, 2).join(" | "));
+    check("bans: the Paragon copy never says 'every Domain'", !/every Domain\b(?!'s count)/.test(code(read("src/components/roadmap/roadmap-copy.ts")).replace(/every Domain's count/g, "")));
+    const lowering = roadmapSrc.filter((f) => !/DateBlock\.tsx$|RoadmapForm\.tsx$|roadmap-copy\.ts$|roadmap-runtime\.tsx$/.test(f) && /lowerDepth\(|LOWER_DEPTH_WORD|coverage:\s*\{/.test(code(read(f))));
+    check("bans: lowering the depth or a coverage lives only on their tap paths (DateBlock's sheet, the intake's coverage edit)", lowering.length === 0, lowering.join(", "));
+    const depthAimTexts = DEPTH_STATES.map((s) => flat(aimOf(s))).join(" ");
+    check("copy: the Aim card's depth chip names the level ('Mastered (level 12) by Mar 2028')", depthAimTexts.includes("Mastered (level 12) by Mar 2028"));
+
+    // F-R4-16. Plans made before revision 4: no row text.
+    const legacyStrings = ["Risk and position sizing", "Backtests that hold up", "Kelly sizing", "Forward-testing", "Drill reading backtest reports", "Backtest"];
+    for (const s of ["legacy", "legacy-draft"] as const) {
+      const h = flat(pageOf(s) + aimOf(s));
+      check(`legacy (${s}): the aim and the banner, 'Wording from an earlier Gemini draft is hidden.' on the page`, h.includes("Become a consistently profitable systematic EUR/USD trader by 2028") && flat(pageOf(s)).includes(copy.LEGACY_GEMINI_HIDDEN));
+      check(`legacy (${s}): none of the seeded Gemini strings`, legacyStrings.every((x) => !h.includes(x)), legacyStrings.filter((x) => h.includes(x)).join(", "));
+    }
+    check("legacy: an ACTIVE plan offers 'Start again at a depth'; a draft 'Draft it again'", flat(pageOf("legacy")).includes(copy.START_AGAIN_AT_DEPTH_WORD) && flat(pageOf("legacy-draft")).includes(copy.DRAFT_IT_AGAIN_WORD) && !/>Accept plan</.test(pageOf("legacy-draft")));
+
+    // F-R4-17. The keys-only draft: one confirmation of real names.
+    const v3 = roadmapFixture("draft-v3").view!.draft!;
+    const v3m1 = v3.milestones[0];
+    const needs = draftNeedsOf(v3m1);
+    const additionIds = new Set((v3.additions ?? []).map((a) => a.itemId));
+    let v3Taps = 0;
+    for (const n of needs) {
+      if (n.id && additionIds.has(n.id)) continue; // budgeted apart (F-R4-21)
+      v3Taps += n.need === "DECIDE" ? 1 : 2; // a bar, a name or a map: the field and Save
+    }
+    v3Taps += 1; // Accept
+    check("tap budget: deciding and accepting the keys-only draft-mixed-3 takes ≤ 4 taps at 344 px (additions apart)", v3Taps <= 4, `${v3Taps} taps`);
+    const v3Html = pageOf("draft-v3");
+    check(
+      "v3: the header golden",
+      flat(v3Html).includes(
+        "Gemini arranged your outline into milestones, suggested which of your other Domains the aim may need, and picked practice types from the app's list. It wrote none of the words: every name here is the app's or comes from your aim, outline and Domains, and every number is worked out by the app."
+      ) && copy.GEMINI_V3_LEAD_LINE.startsWith("Gemini arranged your outline")
+    );
+    const { addableKinds: addable4 } = await import("../src/components/roadmap/AddItemSheet");
+    check("v3: a depth plan adds no Domain to one milestone (its Domains count at every stage)", !addable4(v3m1, false, [{ id: "d-zz" }]).includes("DOMAIN") && addable4(v3m1, false, [{ id: "d-zz" }]).includes("PRACTICE") && !pageOf("count-gate").includes(">Add a Domain<"));
+    check("v3: no Keep control and no bulk keep on a keys-only draft", !/>Keep</.test(v3Html) && !v3Html.includes("unflagged suggestions") && !/>I checked this</.test(v3Html));
+    check("v3: no 'Gemini's guess' line", !/Gemini&#x27;s guess/.test(v3Html) && !v3Html.includes(copy.CREDENTIAL_LINE.replace(/'/g, "&#x27;")));
+    const bodyD = flat(pageOf("draft-body"));
+    check(
+      "v3: the exclusions line",
+      bodyD.includes("Left out because of your constraints: Harder session ('running'), Longer session ('running'), Performance check ('running'), Do a full attempt ('running').") ||
+        bodyD.includes(copy.exclusionsLine(roadmapFixture("draft-body").view!.draft!.exclusions!)!),
+      copy.exclusionsLine(roadmapFixture("draft-body").view!.draft!.exclusions!) ?? ""
+    );
+    check("v3: the aim-conflict line", bodyD.includes("Your constraints say 'no running' and your aim is 'Run a sub-50 10K'. The plan leaves out running sessions until you change one of them."));
+    check("v3: the one session-picks confirm quotes the constraints", bodyD.includes("Gemini picked Strength session and Easy session. Your constraints say 'Knee injury, no running'. Keep them?") && bodyD.includes(copy.SESSION_PICKS_EASY));
+    const noExam = catalogChoicesOf("PRACTICE", { areaFieldId: "f-st", track: "CRAFT", examLabel: null, excluded: [], allowed: [] }, { lastStage: false });
+    const withExamCk = catalogChoicesOf("CHECKPOINT", { areaFieldId: "f-st", track: "CRAFT", examLabel: "Exam P", excluded: [], allowed: [] }, { lastStage: true });
+    check("catalog: the type picker never offers an exam-only type without an exam, nor the code-placed exam day", !noExam.includes("TIMED_PRACTICE") && noExam.includes("PROBLEM_SETS") && withExamCk.includes("MOCK_TEST") && !withExamCk.includes("EXAM_DAY"), `${noExam.join(",")} | ${withExamCk.join(",")}`);
+    const bodyChoices = catalogChoicesOf("PRACTICE", { areaFieldId: null, track: "BODY", examLabel: null, excluded: ["HARDER_SESSION", "LONGER_SESSION"], allowed: ["LONGER_SESSION"] }, { lastStage: false });
+    check("catalog: an excluded type stays out unless the user allowed it back", !bodyChoices.includes("HARDER_SESSION") && bodyChoices.includes("LONGER_SESSION") && bodyChoices.includes("EASY_SESSION"), bodyChoices.join(","));
+
+    // F-R4-20. RunFacts never echoes a redacted label.
+    const hostile: RunView = {
+      ...roadmapFixture("draft-v3").view!.run!,
+      report: {
+        dropped: [
+          { milestoneOrd: 1, kind: "TOPIC", label: "Read https://example.test/x", code: "CONTAINED_LINK", reason: "It contained a link. Links are never shown or kept." },
+          { milestoneOrd: 0, kind: "GAP", label: "Zorblax heuristics", code: "NOT_A_NAME", reason: "Not a name." },
+          { milestoneOrd: 0, kind: "GAP", label: "Quantum vibes", code: "NOT_IN_YOUR_WORDS", reason: "The app found these words nowhere in your aim, outline, exam or chosen Domains." },
+        ],
+        flagged: [],
+        notes: [],
+        integrity: { verdict: "CLEAN", violations: [], modelChars: 0, gapsKept: 2, gapsHidden: 3, gapsDropped: 1, notANameByClause: {} },
+      },
+    };
+    const hostileHtml = R(createElement(RunTable, { run: hostile, today: "2026-10-05" })) + R(createElement(RoadmapScreen, { view: { ...roadmapFixture("draft-v3").view!, run: hostile } }));
+    check("runfacts: no label for a link, a non-name or any area suggestion", !/example\.test|Zorblax|Quantum vibes/.test(hostileHtml));
+    check(
+      "runfacts: the integrity line goldens",
+      copy.integrityLine({ verdict: "CLEAN", gapsKept: 0, gapsHidden: 0 }) === "Gemini's reply: keys only · 0 words of its own" &&
+        copy.integrityLine({ verdict: "CLEAN", gapsKept: 2, gapsHidden: 3 }) === "Gemini's reply: keys only · 2 area names picked from your words (not checked) · 3 not shown" &&
+        copy.integrityLine({ verdict: "REJECTED", gapsKept: 0, gapsHidden: 0 }) === "Rejected (format) · plan from your numbers"
+    );
+    const rejRun = roadmapFixture("draft-rejected").view!.run!;
+    check("runfacts: a rejected reply reads '1 draft · Rejected (format) · plan from your numbers'", runFactsLine(rejRun) === "1 draft · Rejected (format) · plan from your numbers", runFactsLine(rejRun));
+    check("runfacts: a rejected reply's draft says none of it is used", flat(pageOf("draft-rejected")).includes(copy.RUN_REJECTED_LINE));
+
+    // F-R4-21. Gemini's choices are labelled and changeable.
+    check("arrangement: the line shows on Gemini runs only", v3Html.includes(copy.ARRANGEMENT_LINE.replace(/'/g, "&#x27;")) && !pageOf("count-gate").includes(copy.ARRANGEMENT_LINE.replace(/'/g, "&#x27;")));
+    const v3Text = flat(v3Html);
+    check("additions: the row lists your Domains with their counts and the date effect", v3Text.includes("Calculus (20 cards · 7 at level 6+), Linear Algebra (5 cards · 1 at level 6+)") && v3Text.includes("Adding both moves the realistic date by about 6 weeks, to Sun 23 Apr 2028."));
+    check("additions: an English non-exam aim renders [Add both]", />Add both</.test(v3Html) && />Choose…</.test(v3Html) && />Leave out</.test(v3Html));
+    const exHtml = pageOf("draft-exam");
+    check("additions: an exam aim renders one toggle per Domain and no add-all", (exHtml.match(/role="switch"[^>]*aria-label="Add (?:Calculus|Linear Algebra)"/g) ?? []).length === 2 && !/>Add both</.test(exHtml) && />Confirm</.test(exHtml));
+    check("additions: one past 3 years is disabled with its reason", /aria-label="Add Linear Algebra" disabled=""/.test(exHtml) && flat(exHtml).includes("Adding Linear Algebra would take the plan past 3 years at this depth."));
+    check("provenance: a type's chooser on every catalog row ('picked by Gemini from the app's list' / 'added by the app')", v3Html.includes("picked by Gemini from the app&#x27;s list") && pageOf("depth-realistic").includes("added by the app"));
+    check("provenance: a type can be changed on the draft ('Change the type')", v3Html.includes("Change the type"));
+    check("outline: a line can be moved or re-tied ('Move…', 'Domain…')", v3Html.includes(">Move…<") && v3Html.includes(">Domain…<"));
+
+    // F-R4-23. Both switches off.
+    const offRenders = FIXTURE_STATES.filter((s) => !roadmapFixture(s).gates).map((s) => ({ s, r: renders.get(s)! }));
+    const geminiButton = offRenders.filter(({ r }) => r.intake.includes("Draft with Gemini") || /Gemini can draft/.test(r.aim)).map(({ s }) => s);
+    check("switches: with ROADMAP_GEMINI_LIVE false no render shows [Draft with Gemini]", geminiButton.length === 0, geminiButton.join(", "));
+    const formGemini = offRenders.filter(({ r }) => r.intake && /Gemini/.test(textOf(r.intake))).map(({ s }) => s);
+    check("switches: … nor any Gemini sentence in the form", formGemini.length === 0, formGemini.join(", "));
+    const gapsShown = offRenders.filter(({ r }) => /Areas Gemini thinks may need their own Domain|suggest areas you don&#x27;t have yet/.test(r.page + r.intake)).map(({ s }) => s);
+    check("switches: with ROADMAP_GAPS_LIVE false no render shows the suggestions switch or the gap panel", gapsShown.length === 0, gapsShown.join(", "));
+    check("switches: the lead's gates show the gap panel and the Gemini path", pageOf("draft-gaps").includes("Areas Gemini thinks may need their own Domain") && renders.get("intake-gemini")!.intake.includes("Draft with Gemini") && gapPanelShown([{ itemId: "g", name: "x", source: { kind: "AIM", index: 0 }, similarTo: null }], 0) === false);
+    check("gaps: only names from the user's words are shown; the rest only counted", flat(pageOf("draft-gaps")).includes("Conditional expectation") && !/never shown text/.test(pageOf("draft-gaps")) && /\b3\b/.test(flat(pageOf("draft-gaps")).slice(flat(pageOf("draft-gaps")).indexOf("Areas Gemini thinks"))));
+
+    // F-R4-24. Facts from the user replace guesses.
+    check("outline: the exam aim's label", intakeDepthText.includes(copy.OUTLINE_EXAM_LABEL) && copy.OUTLINE_EXAM_LABEL === "Official syllabus: paste the topic list from the official source");
+    check("outline: any other aim's label", flat(renders.get("intake-empty-library")!.intake).includes(copy.OUTLINE_LABEL) && copy.OUTLINE_LABEL === "Your outline: what this covers, one per line — from an official source or your own list");
+    const v3View = roadmapFixture("draft-v3").view!;
+    const noOutline = flat(R(createElement(RoadmapScreen, { view: { ...v3View, header: { ...v3View.header!, hasSyllabus: false } } })));
+    const exView = roadmapFixture("draft-exam").view!;
+    const noOutlineExam = flat(R(createElement(RoadmapScreen, { view: { ...exView, header: { ...exView.header!, hasSyllabus: false } } })));
+    check(
+      "outline: the empty-state goldens",
+      noOutline.includes("What to learn comes from your outline. Gemini doesn't write topics: it would be guessing.") && noOutline.includes("Add your outline") && !noOutline.includes(copy.OUTLINE_EMPTY_EXAM_LINE) && noOutlineExam.includes("Paste the official syllabus so every line has a place in the plan.")
+    );
+    const emptyLib = flat(renders.get("intake-empty-library")!.intake);
+    check("empty library: 'Name the areas this needs' and the outline pointer, no suggestions and no Gemini", emptyLib.includes(copy.NAME_AREAS_LABEL) && emptyLib.includes(copy.NAME_AREAS_HINT) && !/Gemini|suggest/i.test(emptyLib));
+    check("outline: the line-Domain groups, 'Not tied to a Domain' last, a 'Change' select per line", /class="rm-lgroups"/.test(intakeDepth) && intakeDepth.lastIndexOf(">Not tied to a Domain<") > intakeDepth.lastIndexOf(">Inference</span>") && (intakeDepth.match(/aria-label="Change the Domain of S\d+"/g) ?? []).length === 6);
+    check("exam: 'Is there an exam or qualification at the end?' with its date, a waypoint", intakeDepthText.includes("Is there an exam or qualification at the end?") && intakeDepthText.includes("When is it? (optional)") && intakeDepthText.includes("Your exam date is a waypoint: the depth goes on past it."));
+    check("draft with Gemini: says what it will arrange", copy.geminiArrangesLine(9, 3) === "Gemini will arrange your 9 outline lines and pick practice types for your 3 Domains; the app writes every word.");
+
+    // The fix rounds' carry-overs.
+    const fitted: KnowledgeCheck = {
+      measureKey: "CARDS_AT_LEVEL|d:d-rm|L6",
+      level: 6,
+      verdict: "FITTED",
+      target: 14,
+      fitted: 14,
+      baseline: 4,
+      expected: 14,
+      best: 20,
+      strictMax: 24,
+      bestCase: false,
+      earliestDay: null,
+      lastCardDay: null,
+      basis: ["Fitted at Steady: 4 now, plus 70% of the ≈ 10 more your reviews can be expected to bring to level 6 by Sun 7 Mar = 11", "Kept at 14: the floor of 3 more than you had, raised to keep each milestone a step."],
+    };
+    const fs = knowledgeSentence(fitted, { intensity: "STEADY", dueDay: "2027-03-07", m: 1, today: T });
+    check("carry-over: a FITTED sentence is the engine's sum ('= 11'), never '= 14' when kept higher", fs.includes("= 11.") && !fs.includes("= 14") && knowledgeNotesOf(fitted).length === 1, fs);
+    const noFormula = knowledgeSentence({ ...fitted, basis: [fitted.basis[1]] }, { intensity: "STEADY", dueDay: "2027-03-07", m: 1, today: T });
+    check("carry-over: with only a 'Kept at' note, no '= <target>' is claimed", !noFormula.includes("= 14"), noFormula);
+    const ckFitted = R(createElement(ChecksPanel, { roadmapId: "rm1", mf: { ...activeFx.view!.feasibility!.milestones[0], knowledge: [fitted] }, aimCheck: { kind: "unchecked" }, intensity: "STEADY", dueDay: "2027-03-07", m: 1, today: T, title: "Milestone 2", throughput: null, hoursPerWeek: 8 }));
+    check("carry-over: the checks panel shows the 'Kept at' reason", flat(ckFitted).includes("Kept at 14: the floor of 3 more than you had"));
+    const rp = roadmapFixture("active-replan").view!;
+    const carriedFirst = {
+      ...rp,
+      draft: {
+        ...rp.draft!,
+        feasibility: {
+          ...rp.draft!.feasibility,
+          impossible: true,
+          milestones: [{ ...rp.feasibility!.milestones[0], lineageId: "ml2", ord: 2, worst: "IMPOSSIBLE" as const }, ...rp.draft!.feasibility.milestones.map((x) => (x.ord === 4 ? { ...x, worst: "IMPOSSIBLE" as const } : x))],
+        },
+      },
+    };
+    const cfHtml = flat(R(createElement(RoadmapScreen, { view: carriedFirst })));
+    check("carry-over: the footer names the draft's Impossible milestone, never a carried one listed first", cfHtml.includes("Fix milestone 4 first") && !cfHtml.includes("Fix milestone 2 first"));
+    const errs: string[] = [];
+    const origError = console.error;
+    console.error = (...a: unknown[]) => void errs.push(a.map(String).join(" "));
+    try {
+      const act0 = roadmapFixture("active").view!;
+      const dupRows = [...act0.milestones, { ...act0.milestones[2], id: "m3b", state: "DROPPED" as const }];
+      R(createElement(RoadmapScreen, { view: { ...act0, milestones: dupRows } }));
+      R(createElement(RoadmapScreen, { view: roadmapFixture("depth-realistic").view! }));
+    } finally {
+      console.error = origError;
+    }
+    check("carry-over: the Reference and the lists render without duplicate keys", !errs.some((e) => /same key/i.test(e)), errs.find((e) => /same key/i.test(e))?.slice(0, 160));
+    const emptyTitle = model.itemActionsOf(model.titleItemOf({ ...m1, title: "", titleOrigin: "GEMINI", titleDecision: "PENDING" }), "draft");
+    check("carry-over: an empty Gemini title offers only Edit ('Name this milestone')", emptyTitle.wide.join() === "EDIT" && emptyTitle.narrow.more.length === 0);
+    const namedTitleMs: MilestoneDraft = { ...m1, title: "Backtest 3 strategies", titleOrigin: "GEMINI", titleDecision: "PENDING", titleFlags: [] };
+    const emptyTitleMs: MilestoneDraft = { ...namedTitleMs, title: "  " };
+    check(
+      "carry-over: 'Keep this milestone's unflagged suggestions (n)' never counts an empty Gemini title (the server keeps none)",
+      model.bulkKeepRowsOf(namedTitleMs).some((r) => r.kind === "TITLE") && !model.bulkKeepRowsOf(emptyTitleMs).some((r) => r.kind === "TITLE") && model.bulkKeepCountOf(emptyTitleMs) === model.bulkKeepCountOf(namedTitleMs) - 1
+    );
+    const starterRun: RunView = { ...roadmapFixture("draft-mixed").view!.run!, status: "FAILED", wrote: "STARTER" };
+    const starterTable = flat(R(createElement(RunTable, { run: starterRun, today: "2026-10-04" })));
+    check("carry-over: a failed Gemini run whose rows are the starter reads 'the app (Gemini didn't answer)'", starterTable.includes("the app (Gemini didn't answer)") && !/Drafted by gemini/i.test(starterTable));
+
+    // ── Revision 4's fix round (the three reviews; contracts §15.15 R5) ──
+    console.log("— revision 4 fix round —");
+    const aimCardMod = await import("../src/components/roadmap/AimCard");
+    const formMod = await import("../src/components/roadmap/RoadmapForm");
+    const { howMeasuredDescription } = await import("../src/components/roadmap/HowMeasuredSheet");
+    const runtimeMod = await import("../src/components/roadmap/roadmap-runtime");
+    const aimSrc = code(read("src/components/roadmap/AimCard.tsx"));
+    const viewSrc = code(read("src/components/roadmap/RoadmapView.tsx"));
+    const formSrc = code(read("src/components/roadmap/RoadmapForm.tsx"));
+
+    // The contract fields read directly (§15.11): none of the five casts is left.
+    const r5Casts: [string, RegExp][] = [
+      ["src/components/roadmap/RoadmapForm.tsx", /\(x as \{ nonRecall\?: unknown \}\)/],
+      ["src/components/roadmap/StartSheet.tsx", /\(p\.pay as \{ restsOnAdded\?: unknown \}\)/],
+      ["src/components/roadmap/RoadmapView.tsx", /CurrentMilestoneView & \{ startFeasibility\?/],
+      ["src/components/roadmap/roadmap-ui-model.ts", /\(row as \{ partsLine\?: unknown \}\)|\(row as \{ health\?: unknown \}\)|\(p as \{ label\?: unknown \}\)/],
+      ["src/components/roadmap/CatalogSheet.tsx", /ItemEdit & \{ catalogKey: CatalogKey \}/],
+    ];
+    const castsLeft = r5Casts.filter(([f, re]) => re.test(read(f))).map(([f]) => f);
+    check("fix round: the §15.11 fields are read without a cast (nonRecall, restsOnAdded, startFeasibility, partsLine and health, label, ItemEdit.catalogKey)", castsLeft.length === 0, castsLeft.join(", "));
+    const startedCur = { ...activeFx.view!.current!, goalId: "g2", startFeasibility: activeFx.view!.feasibility!.milestones[0], startedDay: "2026-12-21" };
+    check("fix round: a started milestone's Start snapshot is read from CurrentMilestoneView", startSnapshotOf(startedCur)?.day === "2026-12-21" && startSnapshotOf({ ...startedCur, startedDay: null }) === null && startSnapshotOf({ ...startedCur, goalId: null }) === null);
+    check("fix round: Proficiency's label is ProficiencyView.label", model.proficiencyBasisLabelOf({ ...roadmapFixture("depth-realistic").view!.proficiency!, label: "Proficiency toward Fluent (level 10)" }) === "Proficiency toward Fluent (level 10)");
+
+    // integrityLine counts gapsNotShownOf (hidden + dropped; §15.5).
+    check(
+      "fix round: 'n not shown' is hidden + dropped (gapsNotShownOf)",
+      copy.integrityLine({ verdict: "CLEAN", gapsKept: 1, gapsHidden: 3, gapsDropped: 2 }) === "Gemini's reply: keys only · 1 area name picked from your words (not checked) · 5 not shown" &&
+        copy.integrityLine({ verdict: "CLEAN", gapsKept: 0, gapsHidden: 0, gapsDropped: 2 }) === "Gemini's reply: keys only · 0 words of its own · 2 not shown" &&
+        /gapsNotShownOf\(/.test(code(read("src/components/roadmap/roadmap-copy.ts")))
+    );
+    check("fix round: RunFacts' integrity line counts the dropped names too ('4 not shown')", flat(R(createElement(RunTable, { run: hostile, today: "2026-10-05" }))).includes("· 4 not shown"));
+
+    // RunTable's "Drafted by" says why the app's plan stands in Gemini's place.
+    const rejTable = flat(R(createElement(RunTable, { run: rejRun, today: "2026-10-05" })));
+    const refusedRun: RunView = { ...starterRun, error: "reply refused: it held words the app didn't write", report: { dropped: [], flagged: [], notes: [], integrity: { verdict: "CLEAN", violations: [], modelChars: 0, gapsKept: 0, gapsHidden: 0, gapsDropped: 0, notANameByClause: {} } } };
+    const refusedTable = flat(R(createElement(RunTable, { run: refusedRun, today: "2026-10-05" })));
+    check(
+      "fix round: 'Drafted by' is keyed on the cause: rejected, refused, or no answer",
+      rejTable.includes(copy.STARTER_WROTE_REJECTED) &&
+        !rejTable.includes("Gemini didn't answer") &&
+        refusedTable.includes(copy.STARTER_WROTE_REFUSED) &&
+        !refusedTable.includes("Gemini didn't answer") &&
+        copy.starterWriterWords({ error: "no reply", report: null }) === copy.STARTER_WROTE_NO_ANSWER &&
+        copy.starterWriterWords({ error: "Gemini timed out", report: { integrity: { verdict: "SALVAGED" } } }) === copy.STARTER_WROTE_NO_ANSWER,
+      `${rejTable.slice(0, 120)} | ${refusedTable.slice(0, 120)}`
+    );
+    check(
+      "fix round: a refused reply's draft banner never says Gemini didn't answer",
+      model.draftBannerOf(refusedRun) === copy.RUN_REFUSED_LINE && model.draftBannerOf({ ...starterRun, error: "no reply" }) === copy.RUN_STARTER_LINE && !/didn't answer/.test(copy.RUN_REFUSED_LINE)
+    );
+
+    // AimCard: HIDDEN and OFF suggest nothing; a last aim's achievement stays (F-R4-2; §15.10).
+    check("fix round: HIDDEN with no last aim renders nothing", R(createElement(AimCard, { view: emptyAim, prompt: "HIDDEN" })) === "");
+    for (const p of ["HIDDEN", "OFF"] as const) {
+      const kept = R(createElement(AimCard, { view: emptyAim, prompt: p, lastAim }));
+      check(
+        `fix round: ${p} with a last aim shows only its achievement — no link to a new aim, no ×, no data-tour`,
+        flat(kept).includes("Last aim: Aim rank Paragon · reached 3 Mar 2027") && !/href=/.test(kept) && !/<button/.test(kept) && !/data-tour/.test(kept) && !/Set an aim|Set your next aim/.test(flat(kept)),
+        flat(kept)
+      );
+    }
+    check(
+      "fix round: emptySurfaceOf: ASK and LATER as they are; HIDDEN and OFF keep only a last aim",
+      aimCardMod.emptySurfaceOf("ASK", lastAim) === "ASK" &&
+        aimCardMod.emptySurfaceOf("LATER", null) === "LATER" &&
+        aimCardMod.emptySurfaceOf("HIDDEN", lastAim) === "KEPT" &&
+        aimCardMod.emptySurfaceOf("OFF", lastAim) === "KEPT" &&
+        aimCardMod.emptySurfaceOf("HIDDEN", null) === "NONE" &&
+        aimCardMod.emptySurfaceOf("OFF", undefined) === "NONE"
+    );
+    check(
+      "fix round: the LATER line's × hides it for 4 weeks (hideAimPrompt, mode HIDDEN); only the ASK card's 'Not now' snoozes",
+      /setMode\("HIDDEN"\)/.test(aimSrc) && /runtime\.actions\.hideAimPrompt\(\)/.test(aimSrc) && (aimSrc.match(/snoozeAimPrompt\(/g) ?? []).length === 1 && later.includes('aria-label="Not now: no aim suggestions for 4 weeks"')
+    );
+    check(
+      "fix round: hideAimPrompt and keepCalibratedDates are runtime actions, inert on fixtures",
+      typeof runtimeMod.LIVE_ACTIONS.hideAimPrompt === "function" &&
+        typeof runtimeMod.LIVE_ACTIONS.keepCalibratedDates === "function" &&
+        (await runtimeMod.FIXTURE_ACTIONS.hideAimPrompt()).ok === false &&
+        (await runtimeMod.FIXTURE_ACTIONS.keepCalibratedDates("rm1")).ok === false
+    );
+    check("fix round: a failed Undo on 'Aim suggestions are off' says so (a refusal and a thrown call)", (aimSrc.match(/AIM_UNDO_FAILED/g) ?? []).length >= 2 && copy.AIM_UNDO_FAILED === "Couldn't turn them back on. Settings › Aim suggestions.");
+    check("fix round: the snooze and hide errors show under whatever stays on screen (lifted to EmptyCard)", /const errorLine = writeError \?/.test(aimSrc) && !/function LaterLine[\s\S]*?useRoadmapAction\(\)[\s\S]*?function EmptyCard/.test(aimSrc));
+    // Fix round 2 (lens 3): a failed "Not now" brings back the surface that was tapped, with its reason under it.
+    const collapseRun = async (call: () => Promise<{ ok: true } | { ok: false; error: string }>, back: "ASK" | "LATER") => {
+      const modes: string[] = [];
+      const errors: (string | null)[] = [];
+      await aimCardMod.collapseWrite(call, back, { mode: (m) => void modes.push(m), error: (e) => void errors.push(e) });
+      return { modes, errors };
+    };
+    const refused = await collapseRun(async () => ({ ok: false, error: "Nothing is saved on this page." }), "LATER");
+    const thrown = await collapseRun(async () => {
+      throw new Error("offline");
+    }, "ASK");
+    const saved = await collapseRun(async () => ({ ok: true }), "LATER");
+    check(
+      "fix round 2: collapseWrite: a refusal restores the tapped surface with its reason; a thrown call restores it with the retry line; a success stays collapsed",
+      JSON.stringify(refused) === JSON.stringify({ modes: ["LATER"], errors: [null, "Nothing is saved on this page."] }) &&
+        JSON.stringify(thrown) === JSON.stringify({ modes: ["ASK"], errors: [null, aimCardMod.NETWORK_RETRY] }) &&
+        JSON.stringify(saved) === JSON.stringify({ modes: [], errors: [null] }),
+      JSON.stringify([refused, thrown, saved])
+    );
+    check(
+      "fix round 2: the LATER × restores LATER and the ASK card's 'Not now' restores ASK when the write fails",
+      /setMode\("HIDDEN"\);[\s\S]{0,200}write\("LATER", \(\) => runtime\.actions\.hideAimPrompt\(\)\)/.test(aimSrc) &&
+        /setMode\("LATER"\);[\s\S]{0,200}write\("ASK", \(\) => runtime\.actions\.snoozeAimPrompt\(\)\)/.test(aimSrc) &&
+        /collapseWrite\(call, back, \{ mode: setMode, error: setWriteError \}\)/.test(aimSrc)
+    );
+    // Today's SET × says "no aim suggestions for 4 weeks" and does that (decision 34): 'hide:', so /you shows no "Set an aim →" line either.
+    const lineSrc = code(read("src/components/roadmap/AimLine.tsx"));
+    check(
+      "fix round 2: Today's SET × calls hideAimPrompt (the 'hide:' cookie /you's LATER × writes), never snoozeAimPrompt; its label is unchanged",
+      /view\.kind === "SET" \? a\.hideAimPrompt\(\)/.test(lineSrc) &&
+        !/snoozeAimPrompt\(/.test(lineSrc) &&
+        R(createElement(AimLine, { view: { kind: "SET", variant: "WEEK", href: "/you/roadmap/new" } })).includes('aria-label="Not now: no aim suggestions for 4 weeks"')
+    );
+
+    // The ASK card: the seed only while the box is empty; the last aim on two lines.
+    check("fix round: seedShown — a seed only while the box is empty", aimCardMod.seedShown({ goalId: "g1", title: "x" }, "") && aimCardMod.seedShown({ goalId: "g1", title: "x" }, "   ") && !aimCardMod.seedShown({ goalId: "g1", title: "x" }, "Speak Japanese") && !aimCardMod.seedShown(null, ""));
+    const seededTyped = R(createElement(AimCard, { view: emptyAim, prompt: "ASK", seed: { goalId: "g1", title: "Speak Japanese at work" }, autosaveAim: "Read manga without a dictionary" }));
+    check("fix round: with words in the box the seed is hidden (it would replace them), and 'Continue' leads", !seededTyped.includes("Start from your long goal") && /<a class="btn btn-primary[^"]*"[^>]*>Continue<\/a>/.test(seededTyped));
+    const lastHtml = R(createElement(AimCard, { view: emptyAim, prompt: "ASK", lastAim: { ...lastAim, aim: "Read a statistics paper's methods section and check its maths without notes or help" }, autosaveAim: null }));
+    check(
+      "fix round: the last aim reads on two lines: the aim (clipped) and the achievement in full",
+      /<p class="rm-ac-last-aim">Last aim: “Read a statistics paper/.test(lastHtml) && /<p class="rm-ac-last-rank">Aim rank <b>Paragon<\/b> · reached 3 Mar 2027<\/p>/.test(lastHtml) && copy.lastAimRankLine(lastAim) === "Aim rank Paragon · reached 3 Mar 2027"
+    );
+
+    // Legacy plans: the restart carries the plan's own Domains; a closed one offers only the next aim.
+    const legacyV = roadmapFixture("legacy").view!;
+    const restartH = aimCardMod.restartHandoffOf({ aim: legacyV.header!.aim, roadmapId: legacyV.header!.id, area: legacyV.header!.area, track: legacyV.header!.track, domainIds: legacyV.legacy?.domainIds ?? legacyV.header!.domainIds, areaFieldId: legacyV.legacy?.areaFieldId });
+    check(
+      "fix round: 'Start again at a depth' carries the aim, the Area and the plan's own Domains, with replaces",
+      JSON.stringify(restartH) === JSON.stringify({ aim: legacyV.header!.aim, source: "restart", replaces: "rm1", areaFieldId: "f-tr", track: "CRAFT", domainIds: ["d-rm", "d-ps"] }),
+      JSON.stringify(restartH)
+    );
+    const trackH = aimCardMod.restartHandoffOf({ aim: "Run a sub-50 10K", roadmapId: "rm9", area: { kind: "TRACK", track: "BODY" } });
+    check("fix round: a track plan's restart carries its track and no Domains", JSON.stringify(trackH) === JSON.stringify({ aim: "Run a sub-50 10K", source: "restart", replaces: "rm9", areaFieldId: null, track: "BODY" }), JSON.stringify(trackH));
+    check(
+      "fix round: both restart handoffs go through restartHandoffOf (the page passes the legacy or header Domains; the Aim card its legacyView's)",
+      /restartHandoffOf\(\{[^}]*domainIds: legacy\?\.domainIds \?\? header\.domainIds/.test(viewSrc) &&
+        /function legacyRestartHandoffOf[\s\S]*?restartHandoffOf\(\{[^}]*domainIds: view\.legacyView\?\.domainIds[^}]*areaFieldId: view\.legacyView\?\.areaFieldId/.test(aimSrc) &&
+        /const handoff = legacyRestartHandoffOf\(view\);[\s\S]{0,120}writeAimHandoff\(handoff\)/.test(aimSrc)
+    );
+    // Fix round 2 (lens 3 #13 and #17; contracts §16.3): the legacy Aim card reads AimCardView.legacyView like the page's banner.
+    const legacyAimFx = roadmapFixture("legacy").aim!;
+    const legacyAimHtml = flat(R(createElement(AimCard, { view: legacyAimFx, today: "2026-10-05" })));
+    const legacyAimPlain = flat(R(createElement(AimCard, { view: { ...legacyAimFx, legacyView: { ...legacyAimFx.legacyView!, geminiHidden: false } }, today: "2026-10-05" })));
+    const legacyAimNone = flat(R(createElement(AimCard, { view: { ...legacyAimFx, legacyView: null }, today: "2026-10-05" })));
+    check(
+      "fix round 2: the legacy Aim card shows 'Wording from an earlier Gemini draft is hidden.' only when legacyView.geminiHidden",
+      legacyAimHtml.includes(copy.LEGACY_GEMINI_HIDDEN) && !legacyAimPlain.includes(copy.LEGACY_GEMINI_HIDDEN) && !legacyAimNone.includes(copy.LEGACY_GEMINI_HIDDEN) && legacyAimHtml.includes(copy.START_AGAIN_AT_DEPTH_WORD),
+      legacyAimHtml.slice(0, 300)
+    );
+    check(
+      "fix round 2: the legacy draft Aim card shows the Gemini-hidden line too",
+      flat(R(createElement(AimCard, { view: roadmapFixture("legacy-draft").aim!, today: "2026-10-05" }))).includes(copy.LEGACY_GEMINI_HIDDEN)
+    );
+    const aimRestart = aimCardMod.legacyRestartHandoffOf(legacyAimFx);
+    check(
+      "fix round 2: the Aim card's 'Start again at a depth' carries the old plan's own Domains (legacyView.domainIds), the Area and replaces",
+      JSON.stringify(aimRestart) === JSON.stringify({ aim: legacyAimFx.aim, source: "restart", replaces: legacyAimFx.roadmapId, areaFieldId: "f-tr", domainIds: ["d-rm", "d-ps"] }),
+      JSON.stringify(aimRestart)
+    );
+    const aimRestartBare = aimCardMod.legacyRestartHandoffOf({ ...legacyAimFx, area: null, legacyView: { kind: "ACTIVE", geminiHidden: false, areaFieldId: "f-tr" } });
+    check(
+      "fix round 2: with no Area chip the legacyView's areaFieldId carries the Area; with no aim there is no handoff",
+      JSON.stringify(aimRestartBare) === JSON.stringify({ aim: legacyAimFx.aim, source: "restart", replaces: legacyAimFx.roadmapId, areaFieldId: "f-tr" }) && aimCardMod.legacyRestartHandoffOf({ ...legacyAimFx, aim: null }) === null,
+      JSON.stringify(aimRestartBare)
+    );
+    // The intake's 'restart' note names only what the form took over.
+    const restartNote = (c: { area: boolean; domains: boolean }) => copy.handoffNote("restart", "x", c);
+    check(
+      "fix round 2: the 'restart' note says 'its aim, Area and Domains' only when the Domains came along; 'its aim and Area' or 'its aim' otherwise",
+      restartNote({ area: true, domains: true }) === "From your plan made before plans aimed at a depth: its aim, Area and Domains are carried over. Saving this archives that plan." &&
+        restartNote({ area: true, domains: false }) === "From your plan made before plans aimed at a depth: its aim and Area are carried over. Saving this archives that plan." &&
+        restartNote({ area: false, domains: false }) === "From your plan made before plans aimed at a depth: its aim is carried over. Saving this archives that plan." &&
+        !copy.handoffNote("restart", "x").includes("Domains")
+    );
+    const fieldsFx = [{ id: "f-tr" }, { id: "f-jp" }];
+    check(
+      "fix round 2: handoffCarriedOf follows the form's merge: a known Field with Domains, a known Field without, a track Area, an unknown Field",
+      JSON.stringify([
+        formMod.handoffCarriedOf({ areaFieldId: "f-tr", domainIds: ["d-rm"] }, fieldsFx),
+        formMod.handoffCarriedOf({ areaFieldId: "f-tr" }, fieldsFx),
+        formMod.handoffCarriedOf({ areaFieldId: null, track: "BODY" }, fieldsFx),
+        formMod.handoffCarriedOf({ areaFieldId: "f-gone", domainIds: ["d-rm"] }, fieldsFx),
+        formMod.handoffCarriedOf({}, fieldsFx),
+      ]) ===
+        JSON.stringify([
+          { area: true, domains: true },
+          { area: true, domains: false },
+          { area: true, domains: false },
+          { area: false, domains: false },
+          { area: false, domains: false },
+        ]) && /handoffNote\(handoff\.source, handoff\.aim, handoffCarriedOf\(handoff, view\.fields\)\)/.test(formSrc)
+    );
+    check("fix round: legacyAimActionOf: a draft drafts again, an active plan starts again, a done one offers the next aim", aimCardMod.legacyAimActionOf("DRAFT") === "DRAFT_AGAIN" && aimCardMod.legacyAimActionOf("RUNNING") === "DRAFT_AGAIN" && aimCardMod.legacyAimActionOf("ACCEPTED") === "START_AGAIN" && aimCardMod.legacyAimActionOf("DONE") === "NEXT_AIM");
+    const legacyAim = roadmapFixture("legacy").aim!;
+    const doneLegacyAim = flat(R(createElement(AimCard, { view: { ...legacyAim, state: "DONE", doneDay: "2026-10-01" }, today: "2026-10-05" })));
+    check("fix round: a DONE legacy Aim card offers 'Set your next aim', never 'Start again at a depth' or its measure line", doneLegacyAim.includes(copy.AIM_NEXT_AIM) && !doneLegacyAim.includes(copy.START_AGAIN_AT_DEPTH_WORD) && !doneLegacyAim.includes(copy.LEGACY_MEASURE_LINE), doneLegacyAim);
+    const doneLegacyPage = flat(R(createElement(RoadmapScreen, { view: { ...legacyV, state: "DONE", header: { ...legacyV.header!, status: "DONE", doneDay: "2026-10-01" }, legacy: { ...legacyV.legacy!, kind: "DONE" } } })));
+    check(
+      "fix round: a DONE legacy page keeps the Gemini-hidden line and offers only a new aim (no measure line, no restart)",
+      doneLegacyPage.includes(copy.LEGACY_GEMINI_HIDDEN) && doneLegacyPage.includes(copy.AIM_NEW_AIM) && !doneLegacyPage.includes(copy.LEGACY_MEASURE_LINE) && !doneLegacyPage.includes(copy.START_AGAIN_AT_DEPTH_WORD),
+      doneLegacyPage.slice(0, 300)
+    );
+
+    // [Keep the dates] is recorded on the plan (keepCalibratedDates), never in this device's storage.
+    check("fix round: [Keep the dates] calls keepCalibratedDates; no KEPT_DATES_KEY and no localStorage on the roadmap page", /a\.keepCalibratedDates\(header\.id\)/.test(viewSrc) && !/KEPT_DATES_KEY|localStorage/.test(viewSrc));
+    check("fix round: the CALIBRATED offer still offers Re-date and Keep the dates", flat(pageOf("depth-calibrating")).includes("Keep the dates") && flat(pageOf("depth-calibrating")).includes("Re-date"));
+
+    // Gemini named only where it may be (Acceptance: with Gemini off, no Gemini sentence).
+    const okGemini: RunView = { ...roadmapFixture("draft-v3").view!.run!, status: "OK", wrote: "GEMINI" };
+    check(
+      "fix round: geminiNamedOf: live with a key, or rows a Gemini run arranged; never a starter in a failed run's place",
+      model.geminiNamedOf(true, null) && model.geminiNamedOf(false, okGemini) && !model.geminiNamedOf(false, null) && !model.geminiNamedOf(false, starterRun) && !model.geminiNamedOf(false, rejRun)
+    );
+    check("fix round: the How-measured sheet names Gemini only when gemini is set", /Gemini/.test(howMeasuredDescription(true)) && !/Gemini/.test(howMeasuredDescription(false)) && /\{gemini \? \(\s*<p[^>]*>\s*Gemini returns keys only/.test(code(read("src/components/roadmap/HowMeasuredSheet.tsx"))));
+    check("fix round: the roadmap page passes the gate to the How-measured sheet", /<HowMeasuredSheet [^\n]*gemini=\{gemini\}/.test(viewSrc) && /geminiNamedOf\(/.test(viewSrc));
+    const starterNoOutline = flat(R(createElement(RoadmapScreen, { view: { ...v3View, run: { ...v3View.run!, status: "FAILED", wrote: "STARTER", error: "no reply" }, header: { ...v3View.header!, hasSyllabus: false } } })));
+    check(
+      "fix round: the empty-outline line names Gemini only on a Gemini-arranged draft",
+      starterNoOutline.includes(copy.OUTLINE_EMPTY_LINE) && !starterNoOutline.includes(copy.OUTLINE_EMPTY_GEMINI_TAIL) && copy.outlineEmptyLine(false) === "What to learn comes from your outline." && copy.outlineEmptyLine(true) === `${copy.OUTLINE_EMPTY_LINE} ${copy.OUTLINE_EMPTY_GEMINI_TAIL}`,
+      starterNoOutline.slice(0, 200)
+    );
+
+    // The intake: recall counts on the chips, an empty date box when realistic, the outline opened by #syllabus, the capture line kept until used.
+    check(
+      "fix round: a Domain chip names its multiple-choice cards (nonRecall), and the preview counts recall cards only",
+      formMod.domainChipCount({ cards: 48, atSix: 18, nonRecall: 6 }) === "48 cards · 6 multiple choice not counted · 18 at level 6+" &&
+        formMod.domainChipCount({ cards: 9, atSix: 0 }) === "9 cards · 0 at level 6+" &&
+        formMod.nonRecallOf({ nonRecall: undefined }) === null &&
+        intakeDepthText.includes("48 cards · 6 multiple choice not counted · 18 at level 6+") &&
+        intakeDepthText.includes("80% of your 42 (34)"),
+      intakeDepthText.slice(intakeDepthText.indexOf("Domains you already have"), intakeDepthText.indexOf("Domains you already have") + 260)
+    );
+    check("fix round: with 'When realistic' pressed the date box is empty (no date the plan won't use)", /<input[^>]*aria-label="A date of your own"[^>]*value=""/.test(intakeDepth) && /value=\{realistic \? "" : d\.targetDay\}/.test(formSrc));
+    check(
+      "fix round: the capture line is cleared only once its aim reached the intake (handoffUsed)",
+      formMod.clearsCaptureLine({ source: "capture", sheetText: "aim: speak Japanese" }, true) &&
+        !formMod.clearsCaptureLine({ source: "capture", sheetText: "aim: speak Japanese" }, false) &&
+        !formMod.clearsCaptureLine({ source: "you" }, true) &&
+        !formMod.clearsCaptureLine({ source: "capture" }, true) &&
+        !formMod.clearsCaptureLine(null, true) &&
+        /clearsCaptureLine\(handoff, handoffUsed\)/.test(formSrc) &&
+        (formSrc.match(/setHandoffUsed\(true\)/g) ?? []).length === 2
+    );
+    check("fix round: a link to #syllabus opens the outline and focuses its box", formMod.opensOutline("#syllabus") && !formMod.opensOutline("") && !formMod.opensOutline("#reality") && /open=\{outlineOpen \|\|/.test(formSrc) && /addEventListener\("hashchange"/.test(formSrc));
+    // Plan history: lowerDepthCore's record reads as a lowered depth because the row says so (PlanHistoryRow.depthLowered, §16.2),
+    // never because its version repeats the row before (accept → Undo → accept re-uses a version and lowered nothing).
+    const { planHistoryLine, isDepthLoweringRow } = await import("../src/components/roadmap/PlanHistory");
+    const lowRows = roadmapFixture("depth-lowered").view!.history;
+    check(
+      "fix round 2: Plan history keys 'depth lowered' on row.depthLowered: the lowered record reads 'v1 depth lowered 5 Jan: Mastered → Fluent'",
+      isDepthLoweringRow({ depthLowered: true }) &&
+        !isDepthLoweringRow({ depthLowered: false }) &&
+        !isDepthLoweringRow({}) &&
+        planHistoryLine(lowRows[1], "2027-01-28") === "v1 depth lowered 5 Jan: Mastered → Fluent" &&
+        planHistoryLine(lowRows[0], "2027-01-28").startsWith("v1 accepted 5 Oct") &&
+        flat(pageOf("depth-lowered")).includes("v1 depth lowered 5 Jan: Mastered → Fluent"),
+      planHistoryLine(lowRows[1], "2027-01-28")
+    );
+    type HistoryRow = RoadmapView["history"][number];
+    const hist = (rows: HistoryRow[]) => rows.map((r) => planHistoryLine(r, "2026-11-20")).join(" · ");
+    const v1: HistoryRow = { version: 1, day: "2026-11-02", undone: false, changes: [] };
+    check(
+      "fix round 2: accept → Undo → accept at v1 reads two acceptances, the first undone (never 'depth lowered')",
+      hist([{ ...v1, undone: true }, { ...v1, day: "2026-11-03" }]) === "v1 accepted 2 Nov · undone · v1 accepted 3 Nov",
+      hist([{ ...v1, undone: true }, { ...v1, day: "2026-11-03" }])
+    );
+    const reaccept = hist([v1, { version: 2, day: "2026-11-04", undone: true, changes: ["end target 60 → 50"] }, { version: 2, day: "2026-11-05", undone: false, changes: ["end target 60 → 55"], depthLowered: false }]);
+    check(
+      "fix round 2: accept → Undo → accept at v2 reads 'v2 accepted' twice (the re-accept re-uses the version and lowered nothing)",
+      reaccept === "v1 accepted 2 Nov · v2 accepted 4 Nov: end target 60 → 50 · undone · v2 accepted 5 Nov: end target 60 → 55" && !reaccept.includes("depth lowered"),
+      reaccept
+    );
+    const undoThenLower = hist([v1, { version: 2, day: "2026-11-04", undone: true, changes: ["end target 60 → 50"] }, { version: 1, day: "2026-11-06", undone: false, changes: ["lowered the depth Mastered → Fluent"], depthLowered: true }]);
+    check(
+      "fix round 2: Undo → lower depth reads 'v1 depth lowered' though its version differs from the row before; the bare fallback reads no tail",
+      undoThenLower === "v1 accepted 2 Nov · v2 accepted 4 Nov: end target 60 → 50 · undone · v1 depth lowered 6 Nov: Mastered → Fluent" &&
+        planHistoryLine({ ...v1, changes: ["lowered the depth"], depthLowered: true }, "2026-11-20") === "v1 depth lowered 2 Nov",
+      undoThenLower
+    );
+    check("fix round 2: PlanHistory never infers a lowering from a repeated version (no prev row is read)", !/prev\b/.test(code(read("src/components/roadmap/PlanHistory.tsx"))));
+    check("fix round: a button chip inside .rm-chips keeps its 40 px target ('When realistic' and the date chips)",/\.rm-chips \.chip\.btn-chip \{ min-height: 40px; \}/.test(read("src/components/roadmap/roadmap.css")));
+
+    // The WRITE_MARGIN ruling's option (b) (R2's spareOnlyOf): a REALISTIC intake with no measured pace needs one only
+    // when a Domain is short of its count. When every Domain holds its count, the new cards are the spare alone, the
+    // engine dates the plan on the cards held, and the form never refuses for a pace ("The app needs a pace…" is false there).
+    {
+      const { writeNeedOf } = await import("../src/lib/roadmap-types");
+      const depthIntake = roadmapFixture("intake-depth").intake!;
+      const st = depthIntake.fields.find((f) => f.id === "f-st")!;
+      const pick = (ids: string[]) => st.domains.filter((x) => ids.includes(x.id)).map((x) => ({ id: x.id, name: x.name, cards: x.cards, nonRecall: x.nonRecall ?? 0 }));
+      const covOf = (ids: string[], named: string[] = []) => formMod.coveragePreviewOf(pick(ids), named, [], undefined);
+      const prOnly = covOf(["d-pr"]);
+      const prIn = covOf(["d-pr", "d-in"]);
+      const req = formMod.newCardsRequiredOf;
+      check(
+        "option (b): Probability (42 live, n 34) needs no pace, though WRITE_MARGIN still asks a few spare cards; Inference (9 live, n 25) does",
+        prOnly.length === 1 &&
+          prOnly[0].live === 42 &&
+          prOnly[0].n === 34 &&
+          writeNeedOf(prOnly[0].n, prOnly[0].live) > 0 &&
+          !req(true, prOnly, false) &&
+          prIn.find((c) => c.domainId === "d-in")?.live === 9 &&
+          prIn.find((c) => c.domainId === "d-in")?.n === 25 &&
+          req(true, prIn, false),
+        JSON.stringify(prIn.map((c) => [c.domainId, c.live, c.n, writeNeedOf(c.n, c.live)]))
+      );
+      check(
+        "option (b): a named new Domain (no cards yet) is short of its count, so it needs the pace; a measured pace or a chosen date never does; the golden table",
+        req(true, covOf(["d-pr"], ["Calculus"]), false) &&
+          !req(true, prIn, true) &&
+          !req(false, prIn, false) &&
+          !req(true, [], false) &&
+          req(true, [{ live: 24, n: 25 }], false) &&
+          !req(true, [{ live: 25, n: 25 }], false) &&
+          !req(true, [{ live: 42, n: 34 }, { live: 30, n: 30 }], false) &&
+          req(true, [{ live: 42, n: 34 }, { live: 9, n: 25 }], false)
+      );
+      check(
+        "option (b): the form reads newCardsRequiredOf (no writeNeedOf left in the form: the spare alone never makes the pace 'needed')",
+        /const newCardsRequired = newCardsRequiredOf\(realistic, coverage, paceMeasured\)/.test(formSrc) && !/writeNeedOf/.test(formSrc) && /intakeOf\(d, view\.today, \{ chosen, newCardsRequired \}\)/.test(formSrc)
+      );
+      // Rendered: the same intake with no pace measured anywhere, its draft holding Probability alone, then Probability and Inference.
+      const unmeasured = (ids: string[]): typeof depthIntake => ({
+        ...depthIntake,
+        paceRate: null,
+        fields: depthIntake.fields.map((f) => (f.id === "f-st" ? { ...f, paceMeasured: false, domains: f.domains.map((x) => ({ ...x, paceMeasured: false })) } : f)),
+        draft: { ...depthIntake.draft!, intake: { ...depthIntake.draft!.intake, domainIds: ids, syllabus: null, coverage: null, dateMode: "REALISTIC" } },
+      });
+      const held = flat(R(createElement(RoadmapForm, { view: unmeasured(["d-pr"]) })));
+      const short = flat(R(createElement(RoadmapForm, { view: unmeasured(["d-pr", "d-in"]) })));
+      check(
+        "option (b), rendered: every Domain holding its count reads 'New cards a week optional' with no 'The app needs a pace…'; a Domain short of it reads 'needed' with it",
+        held.includes("New cards a week optional") && !held.includes(copy.NEW_CARDS_REQUIRED_HINT) && short.includes("New cards a week needed") && short.includes(copy.NEW_CARDS_REQUIRED_HINT),
+        `${/New cards a week \w+/.exec(held)?.[0]} | ${/New cards a week \w+/.exec(short)?.[0]}`
+      );
+      const draftHeld = formMod.draftOfIntake(unmeasured(["d-pr"]).draft!.intake);
+      check(
+        "option (b): intakeOf saves a REALISTIC intake with no pace when it isn't needed, and refuses it with the hint when it is",
+        intakeOf(draftHeld, depthIntake.today, { chosen: pick(["d-pr"]), newCardsRequired: false }).intake?.newCardsPerWeek === null &&
+          intakeOf(draftHeld, depthIntake.today, { chosen: pick(["d-pr"]), newCardsRequired: true }).problems.newCards === copy.NEW_CARDS_REQUIRED_HINT
+      );
+    }
+  }
+
   // ── 10. roadmap.css ─────────────────────────────────────────────────────────
   console.log("— roadmap.css —");
   const css = read("src/components/roadmap/roadmap.css");
@@ -914,7 +1676,7 @@ async function main() {
   const trans = [...cssCode.matchAll(/transition(?:-property)?\s*:\s*([^;}]+)/g)].map((m) => m[1].trim().split(/\s+/)[0]);
   check("css: only transform (and opacity) transition", trans.every((p) => p === "transform" || p === "opacity" || p === "none"), trans.join(", "));
   check("css: no keyframes, no infinite loop, no shimmer", !/@keyframes|infinite|shimmer/.test(cssCode));
-  const KIT = new Set(["meter", "t-eyebrow", "t-meta", "t-error", "st-input", "st-label", "icon-btn", "btn", "chip", "card", "trk-row", "rm-mr", "sr-only"]);
+  const KIT = new Set(["meter", "t-eyebrow", "t-meta", "t-error", "st-input", "st-label", "icon-btn", "btn", "chip", "btn-chip", "card", "trk-row", "rm-mr", "sr-only"]);
   const classes = new Set([...cssCode.matchAll(/\.(-?[A-Za-z_][\w-]*)/g)].map((m) => m[1]).filter((c) => !/^\d/.test(c)));
   const foreign = [...classes].filter((c) => !c.startsWith("rm-") && !KIT.has(c));
   check("css: every class it styles is rm-* (kit classes only as context)", foreign.length === 0, foreign.join(", "));

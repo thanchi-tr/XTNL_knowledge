@@ -11,4 +11,7 @@
   .dev-today .dev-runner .wr { min-height: 0; padding-bottom: 12px; }
   /* Roadmap (lane T, F23): each week quests state under its label. */
   .dev-today .dev-quest { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  /* Revision 4 (lane T, F-R4-3; fix round 2): the aim line in place, in a copy of the board's own columns
+     (today.css .board, c1 and c2 empty), full page width, so c3 has its real width at every viewport. */
+  .dev-today .dev-aim-board { display: flex; flex-direction: column; gap: 8px; min-width: 0; margin-bottom: 28px; }
 }

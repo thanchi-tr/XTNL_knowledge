@@ -15,6 +15,11 @@
  * R3's checkLabel (useDisplayLabel). DRAFT and KEPT_SUGGESTION rows always
  * carry their words (never colour alone). Without the user's Domains on the
  * page no row offers Map to….
+ *
+ * Revision 4 (F-R4-18): a code-worded type from the app's list says who chose
+ * it beside its How: "practice type picked by Gemini from the app's list",
+ * "added by the app", or "you chose this" (CatalogChip), and offers "Change
+ * the type" on a draft.
  */
 import { useMemo, type ReactNode } from "react";
 import { ChipButton } from "@/components/ui/Chip";
@@ -22,12 +27,28 @@ import { StruckLabel } from "./StruckLabel";
 import { Icon } from "@/components/ui/Icon";
 import { cx } from "@/components/ui/cx";
 import { ActionError } from "@/components/home/ActionError";
-import type { BlockingFlag, MilestoneDraft } from "@/lib/roadmap-types";
+import type { BlockingFlag, ItemDraft, MilestoneDraft } from "@/lib/roadmap-types";
 import { FlagChips, FlagReasons } from "./FlagChips";
 import { ProvenanceChip } from "./ProvenanceChip";
 import { useItemEditor, type ActTarget, type ItemEditorScope } from "./ItemEditor";
 import { deviceLabelCheck, labelContextOf } from "./roadmap-labels";
-import { ITEM_ACTION_WORD, canMapOf, displayLabelOf, itemActionsOf, itemClassOf, needsRecheckOf, rowDomId, titleItemOf, type EditorRow, type ItemAction } from "./roadmap-ui-model";
+import {
+  CATALOG_PROVENANCE_NOTES,
+  ITEM_ACTION_WORD,
+  actionWordOf,
+  canMapOf,
+  catalogByOf,
+  catalogSlotOf,
+  displayLabelOf,
+  itemActionsOf,
+  itemClassOf,
+  needsRecheckOf,
+  rowDomId,
+  titleItemOf,
+  type EditorRow,
+  type ItemAction,
+} from "./roadmap-ui-model";
+import { catalogProvenanceWords } from "./roadmap-copy";
 
 /** A row's struck spans and reasons: the server's, else the device's re-check (a fallback; the server decides the flags). */
 export function useDisplayLabel(
@@ -45,6 +66,15 @@ export function useDisplayLabel(
 
 /** The label with its struck NUMBER spans (its own module, so the Aim card can use it without the editor). */
 export { StruckLabel };
+
+/** Who chose a code-worded type, in words (never colour alone); null for any other row. */
+export function CatalogChip({ item }: { item: Pick<ItemDraft, "catalogKey" | "notes" | "origin" | "decision"> | null }) {
+  if (!item) return null;
+  const by = catalogByOf(item);
+  const slot = catalogSlotOf(item.catalogKey);
+  if (!by || !slot) return null;
+  return <span className={cx("rm-pv", by === "GEMINI" && "rm-pv-pick", by === "APP" && "rm-pv-app")}>{catalogProvenanceWords(slot, by)}</span>;
+}
 
 /** A milestone's title outside its editor row (a card's header, Now): as written, with its NUMBER spans struck. */
 export function MilestoneTitleText({ milestone }: { milestone: MilestoneDraft }) {
@@ -88,6 +118,9 @@ export function ItemRow({
   const press = (a: ItemAction) => editor?.act(target, a);
   const reasonCtx = { constraints: editor?.scope.constraints ?? null, milestoneOrd: milestone.ord, milestoneCount: editor?.scope.milestoneCount };
   const shown = useDisplayLabel(row, milestone, editor?.scope, item?.method);
+  const catalog = Boolean(item?.catalogKey && catalogByOf(item));
+  const notes = catalog ? item?.notes.filter((n) => !CATALOG_PROVENANCE_NOTES.has(n)) : item?.notes;
+  const provenance = catalog ? <CatalogChip item={item} /> : <ProvenanceChip origin={row.origin} decision={row.decision} />;
 
   if (stage === "outline") {
     return (
@@ -98,8 +131,8 @@ export function ItemRow({
         </p>
         <div className="rm-it-chips">
           {chipsBefore}
-          <ProvenanceChip origin={row.origin} decision={row.decision} />
-          <FlagChips flags={row.flags} notes={item?.notes} />
+          {provenance}
+          <FlagChips flags={row.flags} notes={notes} />
         </div>
         <FlagReasons flags={row.flags} ctx={reasonCtx} reasons={shown.reasons} />
       </li>
@@ -121,8 +154,8 @@ export function ItemRow({
       {!removed && (
         <div className="rm-it-chips">
           {chipsBefore}
-          {!hideProvenance && <ProvenanceChip origin={row.origin} decision={row.decision} />}
-          <FlagChips flags={row.flags} notes={item?.notes} />
+          {!hideProvenance && provenance}
+          <FlagChips flags={row.flags} notes={notes} />
           {actions.wide.length === 0 && actions.narrow.more.length > 0 && (
             <ChipButton className="rm-ov" style={{ marginLeft: "auto" }} aria-label={`More: ${actions.narrow.more.map((a) => ITEM_ACTION_WORD[a]).join(", ")}`} onClick={() => editor?.more(target, actions.narrow.more)}>
               <Icon name="dot3" />
@@ -137,14 +170,14 @@ export function ItemRow({
           <div className="rm-acts rm-acts-w">
             {actions.wide.map((a) => (
               <ChipButton key={a} disabled={busy} onClick={() => press(a)}>
-                {ITEM_ACTION_WORD[a]}
+                {actionWordOf(row, a)}
               </ChipButton>
             ))}
           </div>
           <div className="rm-acts rm-acts-n">
             {actions.narrow.shown.map((a) => (
               <ChipButton key={a} disabled={busy} onClick={() => press(a)}>
-                {ITEM_ACTION_WORD[a]}
+                {actionWordOf(row, a)}
               </ChipButton>
             ))}
             {actions.narrow.more.length > 0 && (

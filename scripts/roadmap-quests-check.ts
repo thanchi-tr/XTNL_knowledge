@@ -15,6 +15,36 @@
  * (roadmapStepErrorsOf); a row's place is today-board's placementOf, in the
  * words of the section TodayBoard's seekPlaceOf opens.
  *
+ * Revision 4 (roadmap-rev4.md F-R4-14, F-R4-13, F-R4-16; generator 2): RAISE
+ * and ADD are one row each with a part per Domain; RAISE's reach is the
+ * reach model at Start's figures (priors while calibrating), each part read
+ * from its own measure key, so a slip offsets only its part; ADD's need is
+ * coverage's (ceil(WRITE_MARGIN × n_d) less the recall cards held), with a
+ * per-Domain catch-up cap and the capacity cap shared in proportion; recall
+ * cards only; clean entry on an `rc` part; a v1 set renders unchanged; legacy
+ * roadmaps have no week quests; a BODY plan's practice rows carry the health
+ * line.
+ *
+ * Fix round of revision 4 (roadmap-contracts.md §15.1, §15.2, §15.15 R6):
+ * WRITE_MARGIN is 1.3, so the ADD goldens are worked at it (the fixtures hold
+ * enough recall cards that rev 3's worked example, need 11 → pace 3, caught up
+ * at 4, then 3, still holds) and the basis reads the spare from the constant
+ * ("1.3 × 18 → 24, a 30% spare"); clean entry is roadmap-types' one rule
+ * (isRetryEntry, R1's), so a tagged miss days before the pass, a shield and a
+ * degrade read as retries and a later strike keeps a retry entry one, and the
+ * server reads the ledger over retryReadDaysOf.
+ *
+ * Fix round 2 of revision 4 (roadmap-contracts.md §16.1, §16.9 R6): the
+ * window is lane 0's widened retryReadDaysOf (184 days at L12, m 1), read
+ * through it and never as a number; srs.ts's latest retry entry (a degrade
+ * from L, the pass after the lower grace, L held to its interval, grace and
+ * the cron's day) reads as a retry at L 12/10/8/6 with the loadout's m and
+ * grace, one day narrower as clean, and the old 173-day window's cost (the
+ * card counted, RAISE asking nothing) is shown; and R6's half of lens 2's
+ * gap 8: Start's set from its overrides equals what its written rows give,
+ * a render keeps Start's row, and the next cron reads the StartSnapshot back
+ * from its JSON column.
+ *
  * Pure: no database, no clock, no model. The server functions run against an
  * in-memory QuestStore that keeps the two write rules (ON CONFLICT DO
  * NOTHING; UPDATE … WHERE finalizedAt IS NULL). scripts/_no-model.ts is
@@ -25,24 +55,33 @@
 import "./_no-model";
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { LIFE_TZ, addDays, dayStartOf, weekdayOf, zonedToInstant, type DayKey } from "../src/lib/life-day";
+import { LIFE_TZ, addDays, dayStartOf, daysBetween, weekdayOf, zonedToInstant, type DayKey } from "../src/lib/life-day";
 import type { RestRow } from "../src/lib/duty-rule";
 import type { InstanceLike } from "../src/lib/habit";
 import {
   CARD_WRITE_MIN,
+  C_PRIOR,
+  NON_RECALL_TYPES,
+  P_PRIOR,
+  RHO_PRIOR,
+  WRITE_MARGIN,
+  WEEK_QUEST_GENERATOR_VERSION,
+  WEEK_QUEST_PARTS_TODAY,
   WEEK_QUESTS_PER_WEEK_MAX,
   bestReach,
   cardsAtLevelKey,
   checkpointLogPrefix,
   domainName,
   positionCountOf,
-  effectiveState,
-  existingExpected,
   floorBase,
   interval,
+  isRetryEntry,
   labelTextOf,
   questWeekKey,
+  reachProb,
+  retryReadDaysOf,
   roadmapStepErrorsOf,
+  writeNeedOf,
   yoursText,
   type AddQuestSpec,
   type CardState,
@@ -51,6 +90,7 @@ import {
   type MilestoneFeasibility,
   type PracticeQuestSpec,
   type RaiseQuestSpec,
+  type ReachParams,
   type StartSnapshot,
   type StartWeek,
   type StepQuestSpec,
@@ -63,19 +103,25 @@ import {
 } from "../src/lib/roadmap-types";
 import {
   WEEK_QUEST_NOTE_PATTERNS,
+  addSpareText,
   nonHeldShareOf,
   pastWeekOf,
+  questPartsLineOf,
   questProgress,
+  questReachOf,
   questsBehind,
   questsBehindLine,
   scaledCountOf,
+  shareOutByPace,
   weekDoneShare,
   weekQuestResultsOf,
   weekQuestsFor,
   weekQuestsViewOf,
+  type WeekQuestRowV2,
 } from "../src/lib/roadmap-quests";
 import { triggersOf } from "../src/lib/roadmap-pace";
-import { goalSeriesEntryOf } from "../src/lib/roadmap-readings";
+import { graceDays } from "../src/lib/xp";
+import { cleanReadDaysOf, goalSeriesEntryOf } from "../src/lib/roadmap-readings";
 import { seekPlaceOf } from "../src/lib/today-board";
 import {
   boardInstancesOf,
@@ -84,6 +130,7 @@ import {
   finalizeQuestWeeks,
   freezeWeekQuests,
   heldDaysAsOf,
+  isLegacyFacts,
   loadPastWeeks,
   loadWeekQuests,
   openMilestoneOf,
@@ -103,6 +150,7 @@ import {
   type QuestItemRow,
   type QuestMeasureRow,
   type QuestMilestoneFacts,
+  type QuestReviewRow,
   type QuestStore,
   type QuestTemplateRow,
   type StoredQuestWeek,
@@ -154,7 +202,13 @@ function eligible(from: DayKey, to: DayKey, held: ReadonlySet<DayKey>): number {
   return n;
 }
 
-/** A StartSnapshot the way F4 step 13 defines it: needRate_w = newNeeded_start × fw_w ÷ Ww_start. */
+/**
+ * A StartSnapshot the way F4 step 13 defines it: needRate_w = newNeeded_start
+ * × fw_w ÷ Ww_start. Revision 4: the reach figures at Start (c and ρ default
+ * to 1 and 0, so a golden reads the review rules alone unless it sets them;
+ * a fixture that leaves cStart null reads the priors) and the per-Domain
+ * needs (needRate_{d,w} = newNeeded_start_d × fw_w ÷ Ww_start).
+ */
 function snapshotOf(p: {
   startedDay: DayKey;
   dueDay: DayKey;
@@ -166,6 +220,11 @@ function snapshotOf(p: {
   reviewMin?: number;
   held?: DayKey[];
   lastCardDay?: DayKey | null;
+  pLongStart?: number;
+  cStart?: number | null;
+  rhoStart?: number | null;
+  calibrating?: StartSnapshot["calibrating"];
+  newNeededByDomain?: Record<string, number>;
 }): StartSnapshot {
   const held = new Set(p.held ?? []);
   const lastCardDay = p.lastCardDay === undefined ? addDays(p.dueDay, -floorBase(p.level)) : p.lastCardDay;
@@ -188,9 +247,10 @@ function snapshotOf(p: {
       availableClass: "ESTIMATED",
       fw: fwDays / 7,
       needRate: wwDays > 0 ? (newNeeded * fwDays) / wwDays : 0,
+      ...(p.newNeededByDomain ? { needRateByDomain: Object.fromEntries(Object.entries(p.newNeededByDomain).map(([d, n]) => [d, wwDays > 0 ? (n * fwDays) / wwDays : 0])) } : {}),
     });
   }
-  return {
+  const snap: StartSnapshot = {
     kind: "START",
     startedDay: p.startedDay,
     dueDay: p.dueDay,
@@ -204,7 +264,14 @@ function snapshotOf(p: {
     rateSource: p.rateSource ?? "SCOPE",
     m: 1,
     feasibility: PLAN_STUB,
+    reachModel: 2,
   };
+  if (p.pLongStart != null) snap.pLongStart = p.pLongStart;
+  if (p.cStart !== null) snap.cStart = p.cStart ?? 1;
+  if (p.rhoStart !== null) snap.rhoStart = p.rhoStart ?? 0;
+  if (p.calibrating) snap.calibrating = p.calibrating;
+  if (p.newNeededByDomain) snap.newNeededByDomain = { ...p.newNeededByDomain };
+  return snap;
 }
 
 const ROOMY: WeekQuestInput["capacity"] = { availableMin: 600, class: "ESTIMATED", calibrating: false };
@@ -246,14 +313,16 @@ function cards(n: number, level: number, dueDay: DayKey, extra: Partial<CardStat
   return Array.from({ length: n }, () => ({ level, dueDay, graceEndsDay: null, createdDay: addDays(M, -60), domainId: "d-risk", ...extra }));
 }
 
-// ═══ ADD (F13 worked example): on pace 3, capped by catch-up 4, then 3 ══════
+// ═══ ADD (F13's worked example under F-R4-14): on pace 3, capped by catch-up 4, then 3 ══
 
 console.log("— ADD —");
 const ADD_DUE = addDays(M, 55); // Sun, 8 weeks
 const addSnap = snapshotOf({ startedDay: M, dueDay: ADD_DUE, level: 6, newNeededStart: 11 });
 const RISK = [D("Risk Management")];
+/** Generator 2 reads the parts' Domain names from the Domain rows at view time. */
+const NAMES: Record<string, ReturnType<typeof D>> = { "d-risk": D("Risk Management"), "d-ps": D("Position Sizing"), "d-prob": D("Probability"), "d-inf": D("Inference"), "d-x": D("Python 3") };
 const addCard = (cs: CardState[]): WeekQuestCardInput => ({
-  measureKey: cardsAtLevelKey(["d-risk"], 6),
+  measureKey: cardsAtLevelKey(["d-risk"], 6, "r"),
   domainIds: ["d-risk"],
   domainNames: RISK,
   level: 6,
@@ -263,24 +332,39 @@ const addCard = (cs: CardState[]): WeekQuestCardInput => ({
   cards: cs,
   rateSource: "SCOPE",
   fieldId: "f-trading",
+  domainId: "d-risk",
+  segment: "r",
 });
-const addCards = [...cards(8, 6, addDays(M, 90)), ...cards(10, 4, addDays(M, 40))];
+// 13 recall cards held: the coverage need is ceil(1.3 × 18) − 13 = 24 − 13 = 11 (rev 3's yield gave 11 from 18 cards; F-R4-14 sets it by
+// coverage). Fix round (WRITE_MARGIN 1.1 → 1.3, contracts §15.2): the 4 extra level-4 cards, due well after the window, keep rev 3's worked
+// example (need 11 → pace 3, caught up at 4, then 3) and leave RAISE's "1 can by Thu 24 Dec" as it was.
+const addCards = [...cards(8, 6, addDays(M, 90)), ...cards(1, 4, addDays(M, 40)), ...cards(4, 4, addDays(M, 90))];
 {
+  eq("fixture: WRITE_MARGIN is 1.3 (contracts §15.2); every ADD golden below is worked at it", WRITE_MARGIN, 1.3);
   eq("fixture: lastCardDay = due − floorBase(6) = Wed of week 5", addSnap.lastCardDay, addDays(M, 30));
   eq("fixture: 31 writing days at Start (Ww_start 4.43)", Math.round(addSnap.wwStart * 7), 31);
-  const eff = addCards.map((c) => effectiveState(c, M));
-  check("fixture: existingExpected at p 0.8 is 14.4", Math.abs(existingExpected(eff, 6, ADD_DUE, 0.8) - 14.4) < 1e-9);
+  eq("fixture: the coverage need is writeNeedOf(18, 13) = 24 − 13 = 11 (ceil(1.3 × 18), 23.4 rounded up)", writeNeedOf(18, 13), 11);
+  eq("… the build round's 9 cards held would need 24 − 9 = 15 at 1.3 (11 at 1.1)", writeNeedOf(18, 9), 15);
 
   const w1 = weekQuestsFor(inputOf({ weekStart: M, startedDay: M, dueDay: ADD_DUE, snapshot: addSnap, card: addCard(addCards) }));
   const a1 = pick(w1, "ADD");
-  eq("week 1: Add 3 cards to Risk Management (pace 3 under the cap of 4)", a1 && [a1.label, a1.count, a1.pace, a1.unit, a1.evidence], ["Add 3 cards to Risk Management", 3, 3, "card", "RECORDED"]);
+  eq("week 1: Add 3 cards (pace 3 under the cap of 4)", a1 && [a1.label, a1.count, a1.pace, a1.unit, a1.evidence], ["Add 3 cards", 3, 3, "card", "RECORDED"]);
+  eq("week 1: one part, for Risk Management", a1?.parts, [{ domainId: "d-risk", count: 3, pace: 3, cappedBy: null }]);
+  eq("week 1: generator 2 is stored on the set", [w1.generator, WEEK_QUEST_GENERATOR_VERSION], [2, 2]);
   eq("week 1: no cap bound", w1.cappedBy, null);
   check("week 1: QUESTS_BEHIND does not fire", !questsBehind(w1));
   check("week 1: the basis names the cap 1.5 × 2.5 → 4", hasBasis(w1, /1\.5 × the 2\.5 a week the plan needed at Start \(at least 3\) → 4/));
+  check(
+    "week 1: the basis names the coverage need from WRITE_MARGIN (1.3 × 18 → 24, a 30% spare, less the 13 cards held)",
+    hasBasis(w1, /^Add: Risk Management: still needed 11 new cards \(1\.3 × 18 → 24, a 30% spare because some cards lag, less the 13 cards it holds\) · pace 11 × 7 ÷ 31 days → 3 · /),
+    json(w1.basis)
+  );
+  check("… and never a typed '10%' nor a rounded figure written as an equation ('1.3 × 18 = 24')", !w1.basis.some((b) => /10% spare|× 18 = /.test(b)));
+  check("week 1: and that multiple-choice cards don't count", hasBasis(w1, /^Add: multiple-choice cards don't count/));
 
   const w4 = weekQuestsFor(inputOf({ weekStart: W(3), startedDay: M, dueDay: ADD_DUE, snapshot: addSnap, card: addCard(addCards) }));
   const a4 = pick(w4, "ADD");
-  eq("week 4 after three missed weeks: Add 4 cards, capped (pace 8)", a4 && [a4.label, a4.count, a4.pace], ["Add 4 cards to Risk Management", 4, 8]);
+  eq("week 4 after three missed weeks: Add 4 cards, capped (pace 8)", a4 && [a4.label, a4.count, a4.pace, a4.parts?.[0]?.cappedBy], ["Add 4 cards", 4, 8, "CATCHUP"]);
   eq("week 4: cappedBy CATCHUP", w4.cappedBy, "CATCHUP");
   check("week 4: writing weeks left 10 ÷ 7 < 2", !!a4 && Math.abs(a4.writingWeeksLeft - 10 / 7) < 1e-9);
   check("week 4: QUESTS_BEHIND fires", questsBehind(w4));
@@ -296,20 +380,23 @@ const addCards = [...cards(8, 6, addDays(M, 90)), ...cards(10, 4, addDays(M, 40)
   const w5Cards = [...addCards, ...cards(4, 1, created, { createdDay: created })];
   const w5 = weekQuestsFor(inputOf({ weekStart: W(4), startedDay: M, dueDay: ADD_DUE, snapshot: addSnap, card: addCard(w5Cards) }));
   const a5 = pick(w5, "ADD");
-  eq("week 5 after 4 cards in week 4: newNeeded 7, pace 7, cap 3 → Add 3, capped", a5 && [a5.label, a5.count, a5.pace], ["Add 3 cards to Risk Management", 3, 7]);
+  eq("week 5 after 4 cards in week 4: newNeeded 24 − 17 = 7, pace 7, cap 3 → Add 3, capped", a5 && [a5.label, a5.count, a5.pace], ["Add 3 cards", 3, 7]);
   eq("week 5: cappedBy CATCHUP", w5.cappedBy, "CATCHUP");
 
   const w6 = weekQuestsFor(inputOf({ weekStart: W(5), startedDay: M, dueDay: ADD_DUE, snapshot: addSnap, card: addCard(w5Cards) }));
   check("week 6: no ADD after the writing window, and the note says why", !pick(w6, "ADD") && hasBasis(w6, /^Add: No new cards this week: a card written after Wed 2 Dec can't reach level 6 by 27 Dec\./));
 
-  // A p flip: started while p was calibrating (yield 1), measured at 0.8 later. The set keeps Start's figures.
-  const flipCards = [...cards(8, 6, addDays(M, 90)), ...cards(6, 4, addDays(M, 40))];
-  const calSnap = snapshotOf({ startedDay: M, dueDay: ADD_DUE, level: 6, pCalibrating: true, newNeededStart: 4 });
-  const flipIn = inputOf({ weekStart: W(2), startedDay: M, dueDay: ADD_DUE, snapshot: calSnap, card: addCard(flipCards) });
+  // A p flip: started while p was calibrating, measured later. ADD's need is coverage's, so the pass rate changes nothing in it.
+  const calSnap = snapshotOf({ startedDay: M, dueDay: ADD_DUE, level: 6, pCalibrating: true, newNeededStart: 11 });
+  const flipIn = inputOf({ weekStart: W(2), startedDay: M, dueDay: ADD_DUE, snapshot: calSnap, card: addCard(addCards) });
   const flip = weekQuestsFor(flipIn);
-  const af = pick(flip, "ADD");
-  eq("p calibrating at Start: best case 14, so 4 new cards in all; week 3 asks ceil(4 × 7 ÷ 17) = 2", af && [af.count, af.pace], [2, 2]);
-  eq("the ADD is unchanged by a pass rate measured later (the set reads only Start's p)", weekQuestsFor(flipIn).quests, flip.quests);
+  const measuredFlip = weekQuestsFor({ ...flipIn, milestone: { ...flipIn.milestone, snapshot: addSnap } });
+  eq(
+    "ADD by coverage: a pass rate calibrating at Start asks what a measured one does (pace ceil(11 × 7 ÷ 17) = 5, catch-up cap 4)",
+    [pick(flip, "ADD")?.count, pick(flip, "ADD")?.pace, pick(measuredFlip, "ADD")?.count, pick(measuredFlip, "ADD")?.pace],
+    [4, 5, 4, 5]
+  );
+  eq("the ADD is unchanged by a pass rate measured later (the set reads only Start's figures)", weekQuestsFor(flipIn).quests, flip.quests);
   const view = weekQuestsViewOf({
     set: flip,
     progress: [],
@@ -376,14 +463,14 @@ console.log("— capacity —");
   check("… pro-rated to the window: a Thursday Start has 8 h × 60 × 0.7 × 4 ÷ 7 ≈ 3 h 10", hasBasis(calibThu, /^Capacity: ≈ 3 h 10 this week/), json(calibThu.basis));
 }
 
-// ═══ RAISE (F13 worked example) ═════════════════════════════════════════════
+// ═══ RAISE (F13's worked example under F-R4-14) ═════════════════════════════
 
 console.log("— RAISE —");
 const PS = [D("Position Sizing")];
 const raiseDue = addDays(W(6), 13); // two weeks left from W(6)
 const raiseSnap = snapshotOf({ startedDay: M, dueDay: raiseDue, level: 6, rateSource: "NONE" });
 const raiseCard = (cs: CardState[], over: Partial<WeekQuestCardInput> = {}): WeekQuestCardInput => ({
-  measureKey: cardsAtLevelKey(["d-ps"], 6),
+  measureKey: cardsAtLevelKey(["d-ps"], 6, "r"),
   domainIds: ["d-ps"],
   domainNames: PS,
   level: 6,
@@ -393,31 +480,44 @@ const raiseCard = (cs: CardState[], over: Partial<WeekQuestCardInput> = {}): Wee
   cards: cs,
   rateSource: "NONE",
   fieldId: "f-trading",
+  domainId: "d-ps",
+  segment: "r",
   ...over,
 });
+/** The review rules at c = 1, p 0.8: a one-pass card with slack s reaches level 6 with 0.8 (s = 0) or 0.8 + 0.2 × 0.8 = 0.96 (a next-day retry fits). */
+const RULES_08: ReachParams = { p: 0.8, pLong: 0.8, c: 1, rho: 0, m: 1, strikeLimit: 2, graceExtra: 0 };
 {
   const wk = W(6);
   const wed = addDays(wk, 2);
   const due7 = [...cards(4, 5, wed), ...cards(1, 5, addDays(wk, 3)), ...cards(2, 5, addDays(wk, 4))];
   const set = weekQuestsFor(inputOf({ weekStart: wk, startedDay: M, dueDay: raiseDue, snapshot: raiseSnap, card: raiseCard([...cards(10, 6, addDays(wk, 30)), ...due7]) }));
   const r = pick(set, "RAISE");
-  eq("pace ceil(10 ÷ 2) = 5 under the reach ceil(7 × 0.8) = 6: Bring 5 cards", r && [r.label, r.count, r.floor, r.unit, r.evidence], ["Bring 5 cards in Position Sizing to level 6+", 5, 10, "card", "TESTED"]);
+  const expected = due7.reduce((s, c) => s + reachProb(RULES_08, 5, 6, daysBetween(c.dueDay, addDays(wk, 6))), 0);
+  check("fixture: the review rules give 0.96 for a card due Wed–Fri (a miss retries the next day), so 7 cards reach about 6.72", Math.abs(expected - 7 * 0.96) < 1e-9, String(expected));
+  eq("pace ceil(10 ÷ 2) = 5 under the reach ceil(6.72) = 7: Bring 5 cards to level 6+", r && [r.label, r.count, r.floor, r.unit, r.evidence], ["Bring 5 cards to level 6+", 5, 10, "card", "TESTED"]);
+  eq("one part, for Position Sizing, with its own key, floor and due days", r?.parts?.map((p) => [p.domainId, p.measureKey, p.floor, p.count, p.dueDays.length]), [["d-ps", "CARDS_AT_LEVEL|d:d-ps|L6|r", 10, 5, 7]]);
   eq("its due days, one per reachable card", r?.dueDays.length, 7);
-  const v = weekQuestsViewOf({ set, progress: [], variant: "today", milestone: { ord: 2, of: 3, title: "t" }, level: 6, frozen: true, writesOff: false, places: {} });
+  const v = weekQuestsViewOf({ set, progress: [], variant: "today", milestone: { ord: 2, of: 3, title: "t" }, level: 6, frozen: true, writesOff: false, places: {}, domainNames: NAMES });
   eq("the row says '4 come due Wed, 1 Thu, 2 Fri'", v.rows[0]?.dueLine, "4 come due Wed, 1 Thu, 2 Fri");
+  eq("the parts line names the Domain: '5 in Position Sizing'", (v.rows[0] as WeekQuestRowV2 | undefined)?.partsLine, "5 in Position Sizing");
   check("a card due anyway counts: the sheet says so", hasBasis(set, /a card that was due anyway counts: passing its review is the step/));
+  check("the reach line names the review rules and Start's figures", hasBasis(set, /^Bring: reach follows the app's review rules \(a miss costs a day, two in a row cost a level, a card overdue past its grace drops a level\) at Start's figures: your 80% pass rate, the 100% of your due reviews you clear/), json(set.basis));
   check("no ADD with pace source NONE, and the basis says so", !pick(set, "ADD") && hasBasis(set, /new cards aren't counted: no pace yet/));
 
   const below = weekQuestsFor(inputOf({ weekStart: wk, startedDay: M, dueDay: raiseDue, snapshot: raiseSnap, card: raiseCard(due7, { baseline: 12, v0: 9 }) }));
   const rb = pick(below, "RAISE");
-  eq("below the baseline: asks from max(v0, b) = 12 (G = 8, pace 4)", rb && [rb.floor, rb.count], [12, 4]);
-  check("… and the basis says the 3 slipped cards don't move the milestone", hasBasis(below, /^Bring: 3 cards already counted when you started have slipped below level 6; bringing them back doesn't move Milestone 2/));
-  check("… which the roadmap page shows as a note", weekQuestsViewOf({ set: below, progress: [], variant: "roadmap", milestone: { ord: 2, of: 3, title: "t" }, level: 6, frozen: true, writesOff: false, places: {} }).notes.some((n) => /^3 cards already counted/.test(n)));
-
-  const half = weekQuestsFor(
-    inputOf({ weekStart: wk, startedDay: M, dueDay: raiseDue, snapshot: snapshotOf({ startedDay: M, dueDay: raiseDue, level: 6, pStart: 0.5, rateSource: "NONE" }), card: raiseCard(cards(3, 5, wed), { target: 30 }) })
+  eq("below the baseline: asks from max(v0, b) = 12 (G = 8, pace 4)", rb && [rb.parts?.[0]?.floor, rb.count], [12, 4]);
+  check("… and the basis says the 3 slipped cards don't move the milestone", hasBasis(below, /^Bring: Position Sizing: 3 cards already counted when you started have slipped below level 6; bringing them back doesn't move Milestone 2/));
+  check(
+    "… which the roadmap page shows as a note",
+    weekQuestsViewOf({ set: below, progress: [], variant: "roadmap", milestone: { ord: 2, of: 3, title: "t" }, level: 6, frozen: true, writesOff: false, places: {} }).notes.some((n) => /^Position Sizing: 3 cards already counted/.test(n))
   );
-  eq("p = 0.5 and 3 reachable one-pass cards: asks at most ceil(1.5) = 2", pick(half, "RAISE")?.count, 2);
+
+  // p = 0.5: one-pass cards due Wednesday reach with 0.5 + 0.25 = 0.75 (rev 3's p^k said 0.5); due Sunday, with no day to retry, 0.5.
+  const halfSnap = snapshotOf({ startedDay: M, dueDay: raiseDue, level: 6, pStart: 0.5, rateSource: "NONE" });
+  const halfWed = weekQuestsFor(inputOf({ weekStart: wk, startedDay: M, dueDay: raiseDue, snapshot: halfSnap, card: raiseCard(cards(3, 5, wed), { target: 30 }) }));
+  const halfSun = weekQuestsFor(inputOf({ weekStart: wk, startedDay: M, dueDay: raiseDue, snapshot: halfSnap, card: raiseCard(cards(3, 5, addDays(wk, 6)), { target: 30 }) }));
+  eq("p = 0.5, 3 one-pass cards: due Wednesday asks ceil(3 × 0.75) = 3 (the retry counts); due Sunday ceil(3 × 0.5) = 2", [pick(halfWed, "RAISE")?.count, pick(halfSun, "RAISE")?.count], [3, 2]);
 
   // A fresh level-6 milestone in its first week with no level-5 cards: no RAISE, and the lag line.
   const fresh = weekQuestsFor(
@@ -432,8 +532,9 @@ const raiseCard = (cs: CardState[], over: Partial<WeekQuestCardInput> = {}): Wee
     json(fresh.basis)
   );
 
-  const py = weekQuestsFor(inputOf({ weekStart: wk, startedDay: M, dueDay: raiseDue, snapshot: raiseSnap, card: raiseCard(due7, { domainNames: [D("Python 3")] }) }));
-  eq("a Domain named 'Python 3' is an opaque text slot", pick(py, "RAISE")?.label, "Bring 5 cards in Python 3 to level 6+");
+  const py = weekQuestsFor(inputOf({ weekStart: wk, startedDay: M, dueDay: raiseDue, snapshot: raiseSnap, card: raiseCard(due7, { domainNames: [D("Python 3")], domainId: "d-x", domainIds: ["d-x"] }) }));
+  const pyRow = weekQuestsViewOf({ set: py, progress: [], variant: "roadmap", milestone: { ord: 2, of: 3, title: "t" }, level: 6, frozen: true, writesOff: false, places: {}, domainNames: NAMES }).rows[0] as WeekQuestRowV2;
+  eq("a Domain named 'Python 3' is an opaque text slot of the parts line; the label holds only {n} and {L}", [pick(py, "RAISE")?.label, pyRow?.partsLine], ["Bring 5 cards to level 6+", "5 in Python 3"]);
 }
 
 // ═══ PRACTICE, STEP, CHECKPOINT ═════════════════════════════════════════════
@@ -570,9 +671,11 @@ console.log("— labels —");
   eq("checkpointLabelOf: YoursText only (code never writes a checkpoint label)", [checkpointLabelOf(item("GEMINI", "CHECKED")), checkpointLabelOf(item("CODE", "PENDING")), checkpointLabelOf(item("GEMINI", "KEPT"))], ["Do 3 mock tests", null, null]);
 
   // Every label of every fixture: no digit outside the template's {n}, {L} and {min} slots.
+  const four = ["Area 51", "B2", "C3", "D4"].map((n, i) => ({ ...addCard(addCards), domainId: `d4-${i}`, domainIds: [`d4-${i}`], domainNames: [D(n)], measureKey: cardsAtLevelKey([`d4-${i}`], 6, "r") }));
+  const fourNames = Object.fromEntries(four.map((c) => [c.domainId as string, c.domainNames[0]]));
   const sets: WeekQuestSet[] = [
     weekQuestsFor(inputOf({ weekStart: W(6), startedDay: M, dueDay: raiseDue, snapshot: raiseSnap, card: raiseCard(cards(7, 5, addDays(W(6), 2)), { domainNames: [D("Python 3"), D("R 4.2")] }) })),
-    weekQuestsFor(inputOf({ weekStart: M, startedDay: M, dueDay: ADD_DUE, snapshot: addSnap, card: { ...addCard(addCards), domainNames: [D("Area 51"), D("B2"), D("C3"), D("D4")] } })),
+    weekQuestsFor({ ...inputOf({ weekStart: M, startedDay: M, dueDay: ADD_DUE, snapshot: addSnap }), cards: four }),
     weekQuestsFor(
       inputOf({
         weekStart: W(8),
@@ -602,7 +705,30 @@ console.log("— labels —");
     }
   }
   check(`no digit outside the {n}, {L} and {min} slots of a template (${labels} labels)`, offenders.length === 0 && labels >= 6, offenders.join(" | "));
-  eq("a label over four Domains reads 'A, B, C or D'", pick(sets[1], "ADD")?.label, "Add 3 cards to Area 51, B2, C3 or D4");
+  // Generator 2: RAISE and ADD labels hold no text slot; the Domains are in the parts line, DomainNames only.
+  const addFour = pick(sets[1], "ADD");
+  eq("a four-Domain ADD: 'Add 12 cards', one part per Domain", [addFour?.label, addFour?.parts?.map((p) => p.count)], ["Add 12 cards", [3, 3, 3, 3]]);
+  const lineOf = (variant: "today" | "aim" | "roadmap") =>
+    (weekQuestsViewOf({ set: sets[1], progress: [], variant, milestone: { ord: 2, of: 3, title: "t" }, level: 6, frozen: true, writesOff: false, places: {}, domainNames: fourNames }).rows.find((r) => r.kind === "ADD") as WeekQuestRowV2 | undefined)?.partsLine;
+  eq(
+    `the parts line: Today and the Aim card show the first ${WEEK_QUEST_PARTS_TODAY} and '+n more', the roadmap page all, with the multiple-choice clause`,
+    [lineOf("today"), lineOf("aim"), lineOf("roadmap")],
+    [
+      "3 to Area 51 · 3 to B2 · +2 more Domains · multiple choice not counted",
+      "3 to Area 51 · 3 to B2 · +2 more Domains · multiple choice not counted",
+      "3 to Area 51 · 3 to B2 · 3 to C3 · 3 to D4 · multiple choice not counted",
+    ]
+  );
+  check("NON_RECALL_TYPES is multiple choice (the clause's condition)", json(NON_RECALL_TYPES) === json(["MULTI"]));
+  const bare: string[] = [];
+  for (const variant of ["today", "aim", "roadmap"] as const) {
+    for (const s of sets) {
+      const v = weekQuestsViewOf({ set: s, progress: [], variant, milestone: { ord: 2, of: 3, title: "t" }, level: 6, frozen: true, writesOff: false, places: {}, domainNames: { ...NAMES, ...fourNames } });
+      for (const row of v.rows as WeekQuestRowV2[]) if (row.partsLine && (/\b\d+ of \d+\b/.test(row.partsLine) || /\d+\s*\/\s*\d+/.test(row.partsLine))) bare.push(row.partsLine);
+    }
+  }
+  check("the parts line never shows a bare 'n of N'", bare.length === 0, bare.join(" | "));
+  eq("questPartsLineOf: one RAISE part, and no line for a row without parts (v1) or of another kind", [questPartsLineOf({ kind: "RAISE", parts: [{ name: D("Probability"), count: 1 }] }, "today"), questPartsLineOf({ kind: "RAISE" }, "today"), questPartsLineOf({ kind: "PRACTICE", parts: [{ name: D("X"), count: 1 }] }, "roadmap")], ["1 in Probability", null, null]);
 }
 
 // ═══ Verification (F14) ═════════════════════════════════════════════════════
@@ -679,6 +805,8 @@ interface Idea {
   graceEndsAt: Date | null;
   createdAt: Date;
   isArchived: boolean;
+  /** Absent: a recall type. */
+  questionType?: string;
 }
 
 interface FakeDb {
@@ -694,6 +822,8 @@ interface FakeDb {
   capacity: QuestCapacity;
   quotas: { fieldId: string; name: string; quota: number }[];
   weeks: StoredQuestWeek[];
+  /** REVIEW ledger rows (the clean-entry read). */
+  reviews?: QuestReviewRow[];
 }
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 0));
@@ -748,6 +878,20 @@ function storeOf(db: FakeDb): QuestStore {
       await tick();
       return db.ideas.filter((i) => domainIds.includes(i.domainId) && !i.isArchived && i.createdAt >= from && i.createdAt < to).length;
     },
+    async addedByDomain(domainIds, from, to) {
+      await tick();
+      const out: Record<string, number> = {};
+      for (const i of db.ideas) {
+        if (!domainIds.includes(i.domainId) || i.isArchived || i.createdAt < from || i.createdAt >= to) continue;
+        if (i.questionType != null && (NON_RECALL_TYPES as readonly string[]).includes(i.questionType)) continue;
+        out[i.domainId] = (out[i.domainId] ?? 0) + 1;
+      }
+      return out;
+    },
+    async reviewRows(_u, ideaIds, from) {
+      await tick();
+      return (db.reviews ?? []).filter((r) => ideaIds.includes(r.ideaId) && r.day >= from);
+    },
     async restRows(_u, from, to) {
       await tick();
       return db.rest.filter((r) => r.day >= from && r.day <= to);
@@ -791,10 +935,10 @@ function storeOf(db: FakeDb): QuestStore {
 function dbOf(over: { status?: string; domainDecision?: string; goalClosedDay?: DayKey | null; startedDay?: DayKey } = {}): FakeDb {
   const startedDay = over.startedDay ?? M;
   const snap = snapshotOf({ startedDay, dueDay: ADD_DUE, level: 6, newNeededStart: 11 });
-  const key = cardsAtLevelKey(["d-risk"], 6);
+  const key = cardsAtLevelKey(["d-risk"], 6, "r");
   const facts: QuestMilestoneFacts = {
-    roadmap: { id: "rm1", status: "ACTIVE", fieldId: "f-trading", track: "CRAFT", hoursPerWeek: 8, intensity: "STEADY", startPoint: "BASICS", typicalHours: null, typicalHoursSource: null, targetDay: addDays(M, 300), practicesAllowed: true },
-    milestone: { id: "ms2", lineageId: "lin-ms2", ord: 2, title: "Risk and position sizing", status: over.status ?? "STARTED", startedDay, dueDay: ADD_DUE, feasibility: snap, goalId: "g2" },
+    roadmap: { id: "rm1", status: "ACTIVE", fieldId: "f-trading", track: "CRAFT", hoursPerWeek: 8, intensity: "STEADY", startPoint: "BASICS", typicalHours: null, typicalHoursSource: null, targetDay: addDays(M, 300), practicesAllowed: true, depth: 12 },
+    milestone: { id: "ms2", lineageId: "lin-ms2", ord: 2, title: "Risk and position sizing", status: over.status ?? "STARTED", startedDay, dueDay: ADD_DUE, feasibility: snap, goalId: "g2", stage: "FAMILIAR" },
     goal: { id: "g2", dueDay: ADD_DUE, closed: over.goalClosedDay != null, closedDay: over.goalClosedDay ?? null, archivedDay: null },
     place: 2,
     of: 3,
@@ -835,6 +979,7 @@ function dbOf(over: { status?: string; domainDecision?: string; goalClosedDay?: 
     domains: [{ id: "d-risk", name: "Risk Management", fieldId: "f-trading" }],
     ideas,
     readings: [{ measureKey: key, day: startedDay, value: 8 }],
+    reviews: [],
     rest: [],
     capacity: { availableMin: 600, class: "ESTIMATED", calibrating: false },
     quotas: [{ fieldId: "f-trading", name: "Trading", quota: 3 }],
@@ -1111,11 +1256,38 @@ function greps() {
   check("no href to /review in the quest modules", !/["'`]\/review/.test(src));
   check("the pattern list picks out the PAST_DUE, lag and capacity lines", WEEK_QUEST_NOTE_PATTERNS.length === 8);
 
+  // Fix round (contracts §15.1, §15.2, §15.15 R6): one clean-entry rule, and the spare read from the constant.
+  const quests = read("src/lib/roadmap-quests.ts");
+  const questsServer = read("src/lib/roadmap-quests-server.ts");
+  const code = (t: string) => t.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
+  check(
+    "no second clean-entry rule: neither quest module defines isRetryEntry or ReviewRowLike; the server imports roadmap-types' isRetryEntry and retryReadDaysOf",
+    !/\b(?:function|const)\s+isRetryEntry\b|\b(?:interface|type)\s+ReviewRowLike\b/.test(code(quests) + code(questsServer)) &&
+      /import\s*\{[^}]*\bisRetryEntry\b[^}]*\bretryReadDaysOf\b[^}]*\}\s*from\s*"\.\/roadmap-types"/.test(questsServer) &&
+      /retryReadDaysOf\(L, m,/.test(code(questsServer))
+  );
+  check(
+    "the ADD basis names the spare from WRITE_MARGIN (addSpareText: pct(WRITE_MARGIN − 1) and writeNeedOf), never a typed percentage",
+    !/\d+% spare/.test(code(quests)) && /pct\(WRITE_MARGIN - 1\)\}% spare/.test(code(quests)) && /\$\{addSpareText\(r\.c\.target\)\}/.test(code(quests))
+  );
+  // Fix round 2, R6 → R4 (tracked here, never failed here: roadmap-server.ts is R4's). Start's set reads its v0 from Start's
+  // overrides, and every later read of Start's week from the started-day reading, so both must count a key as R1 does:
+  // recall cards only with a segment, no first `rc` reading (acceptCore already leaves that to R1's ledger read), per key.
+  const startCountsAll = /const live = liveCount\(ctx, parsed\.domainIds, parsed\.level\);\s*v0 = live\.value;/.test(code(read("src/lib/roadmap-server.ts")));
+  if (startCountsAll)
+    console.log(
+      "  PENDING (R4): finishStartCore's started-day CARDS_AT_LEVEL reading and Start's v0 use liveCount without the segment (multiple-choice cards and `rc` retry entries counted): use liveCountOfKey, write no first `rc` reading, and pass v0ByKey"
+    );
+
   console.log("— SQL against the migration —");
   const migration = read("prisma/migrations/20261101000000_life_roadmap/migration.sql");
+  // Revision 4's additive columns (Roadmap.depth, RoadmapMilestone.stage, …), which the milestone query reads.
+  const rev4 = read("prisma/migrations/20261106000000_life_roadmap_rev4/migration.sql");
   const tableCols = (table: string) => {
     const m = new RegExp(`CREATE TABLE "public"\\."${table}" \\(([\\s\\S]*?)\\n\\);`).exec(migration);
-    return new Set(m ? [...m[1].matchAll(/^\s*"(\w+)"/gm)].map((x) => x[1]) : []);
+    const cols = new Set(m ? [...m[1].matchAll(/^\s*"(\w+)"/gm)].map((x) => x[1]) : []);
+    for (const a of rev4.matchAll(new RegExp(`ALTER TABLE "public"\\."${table}" ADD COLUMN "(\\w+)"`, "g"))) cols.add(a[1]);
+    return cols;
   };
   const server = read("src/lib/roadmap-quests-server.ts");
   const insert = /INSERT INTO "public"\."RoadmapQuestWeek"\s*\(([^)]*)\)/.exec(server);
@@ -1456,10 +1628,796 @@ function fixRound2() {
   }
 }
 
+// ═══ Revision 4 (F-R4-14, F-R4-13, F-R4-16): parts, the reach model, coverage, clean entry ══
+
+/** A one-Domain card measure of a depth plan (key segment `r`, or `rc` at the final gate). */
+function measureOf(domainId: string, name: string, p: { level: number; target: number; baseline: number; v0?: number; cards: CardState[]; segment?: "r" | "rc"; rateSource?: WeekQuestCardInput["rateSource"] }): WeekQuestCardInput {
+  const segment = p.segment ?? "r";
+  return {
+    measureKey: cardsAtLevelKey([domainId], p.level, segment),
+    domainIds: [domainId],
+    domainNames: [D(name)],
+    level: p.level,
+    target: p.target,
+    baseline: p.baseline,
+    v0: p.v0 ?? p.baseline,
+    cards: p.cards,
+    rateSource: p.rateSource ?? "SCOPE",
+    fieldId: "f-stats",
+    domainId,
+    segment,
+  };
+}
+const inDomain = (domainId: string, n: number, level: number, due: DayKey, extra: Partial<CardState> = {}) => cards(n, level, due, { domainId, ...extra });
+const viewOfSet = (set: WeekQuestSet, variant: "today" | "aim" | "roadmap", progress: ReturnType<typeof questProgress>[] = [], extra: Partial<Parameters<typeof weekQuestsViewOf>[0]> = {}) =>
+  weekQuestsViewOf({ set, progress, variant, milestone: { ord: 2, of: 5, title: "Familiar: Probability, Inference to level 6+" }, level: 6, frozen: true, writesOff: false, places: {}, domainNames: NAMES, ...extra });
+
+async function rev4() {
+  const U = "user1";
+
+  console.log("— rev 4: RAISE parts —");
+  const wk = W(6);
+  const wed = addDays(wk, 2);
+  const thu = addDays(wk, 3);
+  const twoRaise = (snap: StartSnapshot) =>
+    weekQuestsFor({
+      ...inputOf({ weekStart: wk, startedDay: M, dueDay: raiseDue, snapshot: snap }),
+      cards: [
+        measureOf("d-prob", "Probability", { level: 6, target: 34, baseline: 20, cards: [...inDomain("d-prob", 20, 6, addDays(wk, 40)), ...inDomain("d-prob", 6, 5, wed)], rateSource: "NONE" }),
+        measureOf("d-inf", "Inference", { level: 6, target: 25, baseline: 22, cards: [...inDomain("d-inf", 22, 6, addDays(wk, 40)), ...inDomain("d-inf", 4, 5, thu)], rateSource: "NONE" }),
+        measureOf("d-risk", "Risk Management", { level: 6, target: 18, baseline: 18, cards: inDomain("d-risk", 18, 6, addDays(wk, 40)), rateSource: "NONE" }),
+      ],
+    });
+  {
+    const set = twoRaise(raiseSnap);
+    const r = pick(set, "RAISE");
+    const want = (n: number, slack: number) => n * reachProb(RULES_08, 5, 6, slack);
+    check("fixture: 6 Probability cards due Wed reach about 5.76; 4 Inference cards due Thu about 3.84", Math.abs(want(6, 4) - 5.76) < 1e-9 && Math.abs(want(4, 3) - 3.84) < 1e-9);
+    eq(
+      "a two-Domain RAISE splits by gap and reach: Probability min(pace 7, reach 6) = 6, Inference min(pace 2, reach 4) = 2; Risk Management at its target gives no part",
+      r && [r.label, r.count, r.parts?.map((p) => [p.domainId, p.floor, p.count, p.measureKey])],
+      ["Bring 8 cards to level 6+", 8, [["d-prob", 20, 6, "CARDS_AT_LEVEL|d:d-prob|L6|r"], ["d-inf", 22, 2, "CARDS_AT_LEVEL|d:d-inf|L6|r"]]]
+    );
+    check("… and the held Domain says so in the basis", hasBasis(set, /^Bring: Risk Management: target held — 18 at level 6\+ are already counted; keep reviewing when due\./), json(set.basis));
+    eq("the row's due days merge the parts' (6 Wed, 4 Thu)", [r?.dueDays.length, viewOfSet(set, "today").rows[0]?.dueLine], [10, "6 come due Wed, 4 Thu"]);
+    eq(
+      "the parts line: '6 in Probability · 2 in Inference' (Today shows the first two, here all of them)",
+      [(viewOfSet(set, "today").rows[0] as WeekQuestRowV2).partsLine, (viewOfSet(set, "roadmap").rows[0] as WeekQuestRowV2).partsLine],
+      ["6 in Probability · 2 in Inference", "6 in Probability · 2 in Inference"]
+    );
+    eq(
+      "the row's parts carry each Domain's name (DomainName), count, progress and done",
+      viewOfSet(set, "roadmap").rows[0]?.parts?.map((p) => [p.domainId, String(p.name), p.count, p.progress, p.done]),
+      [["d-prob", "Probability", 6, 0, false], ["d-inf", "Inference", 2, 0, false]]
+    );
+    const gone = viewOfSet(set, "roadmap", [], { domainNames: { "d-prob": D("Probability") } }).rows[0] as WeekQuestRowV2;
+    eq("a part whose Domain row is gone keeps its count in the row and leaves the parts list", [gone.count, gone.parts?.map((p) => p.domainId), gone.partsLine], [8, ["d-prob"], "6 in Probability"]);
+
+    // Reach at c = 0.8 asks no more than at c = 1 (and its expected reach is strictly lower).
+    const at08 = twoRaise(snapshotOf({ startedDay: M, dueDay: raiseDue, level: 6, rateSource: "NONE", cStart: 0.8, rhoStart: 0.2 }));
+    const at08b = twoRaise(snapshotOf({ startedDay: M, dueDay: raiseDue, level: 6, rateSource: "NONE", cStart: 0.8, rhoStart: 0.6 }));
+    const partsOf = (s: WeekQuestSet) => pick(s, "RAISE")?.parts?.map((p) => p.count) ?? [];
+    check(
+      `reach at c = 0.8 asks no more than at c = 1, part by part (${json(partsOf(at08))}, ${json(partsOf(at08b))} vs ${json(partsOf(set))})`,
+      partsOf(at08).every((n, i) => n <= (partsOf(set)[i] ?? 0)) && partsOf(at08b).every((n, i) => n <= (partsOf(set)[i] ?? 0)) && (pick(at08, "RAISE")?.count ?? 0) <= (r?.count ?? 0)
+    );
+    const p08 = { ...RULES_08, c: 0.8, rho: 0.2 };
+    check("… its expected reach is strictly lower, and lower still when missed days bunch (ρ 0.6)", reachProb(p08, 5, 6, 4) < reachProb(RULES_08, 5, 6, 4) && reachProb({ ...p08, rho: 0.6 }, 5, 6, 4) < reachProb(p08, 5, 6, 4));
+  }
+
+  console.log("— rev 4: a part's slip offsets only that part —");
+  {
+    const spec: RaiseQuestSpec = {
+      ord: 1,
+      kind: "RAISE",
+      label: "Bring 8 cards to level 6+",
+      count: 8,
+      unit: "card",
+      evidence: "TESTED",
+      from: wk,
+      to: addDays(wk, 6),
+      measureKey: "CARDS_AT_LEVEL|d:d-prob|L6|r",
+      domainIds: ["d-prob", "d-inf"],
+      minLevel: 6,
+      floor: 42,
+      dueDays: [],
+      bestCase: false,
+      parts: [
+        { domainId: "d-prob", measureKey: "CARDS_AT_LEVEL|d:d-prob|L6|r", floor: 20, count: 6, dueDays: [] },
+        { domainId: "d-inf", measureKey: "CARDS_AT_LEVEL|d:d-inf|L6|r", floor: 22, count: 2, dueDays: [] },
+      ],
+    };
+    const p = questProgress(spec, {
+      kind: "RAISE",
+      value: null,
+      high: null,
+      slipDay: null,
+      byDomain: { "d-prob": { value: 26, high: 26, slipDay: null }, "d-inf": { value: 21, high: 23, slipDay: thu } },
+    });
+    eq(
+      "Probability up 6 and Inference slipped below its floor: progress 6 + 0 = 6 (a net over one key would read 5), not done",
+      [p.progress, p.done, p.parts?.map((x) => [x.domainId, x.progress, x.done]), p.slipped],
+      [6, false, [["d-prob", 6, true], ["d-inf", 0, false]], { from: 7, day: thu }]
+    );
+    const all = questProgress(spec, { kind: "RAISE", value: null, high: null, slipDay: null, byDomain: { "d-prob": { value: 40, high: 40, slipDay: null }, "d-inf": { value: 24, high: 24, slipDay: null } } });
+    eq("the row is done when every part is (each clamped to its count: 6 + 2)", [all.progress, all.done], [8, true]);
+    const proto = questProgress(spec, { kind: "RAISE", value: 30, high: 30, slipDay: null, byDomain: JSON.parse('{"__proto__": {"value": 99, "high": 99, "slipDay": null}}') });
+    eq("evidence without the part's Domain reads 0 for it, and '__proto__' never resolves as a Domain", [proto.progress, proto.done], [0, false]);
+    const row = viewOfSet({ weekStart: wk, milestoneId: "m", state: "OPEN", generator: 2, quests: [spec], basis: [], cappedBy: null }, "today", [p]).rows[0];
+    eq("the row's figure is the parts' sum, and the slip caption counts the slipped cards", [row?.figure.value, row?.slipLine, row?.parts?.map((x) => x.progress)], [6, "1 card slipped back to level 5 on Thu", [6, 0]]);
+  }
+
+  console.log("— rev 4: ADD by coverage, per Domain —");
+  const addTwoSnap = snapshotOf({ startedDay: M, dueDay: ADD_DUE, level: 6, newNeededStart: 0, newNeededByDomain: { "d-inf": 13, "d-risk": 3 } });
+  const addTwo = (weekStart: DayKey, capacity: WeekQuestInput["capacity"] = ROOMY) =>
+    weekQuestsFor({
+      ...inputOf({ weekStart, startedDay: M, dueDay: ADD_DUE, snapshot: addTwoSnap, capacity }),
+      cards: [
+        measureOf("d-inf", "Inference", {
+          level: 6,
+          target: 25,
+          baseline: 10,
+          // Fix round (WRITE_MARGIN 1.3): 5 more level-4 cards, due after the window, keep the 13 left (33 − 20) of the build round's 28 − 15.
+          cards: [...inDomain("d-inf", 10, 6, addDays(M, 60)), ...inDomain("d-inf", 5, 4, addDays(M, 40)), ...inDomain("d-inf", 5, 4, addDays(M, 90)), ...inDomain("d-inf", 3, 6, addDays(M, 60), { recall: false })],
+        }),
+        // … and 4 more here keep Risk Management's 3 left (24 − 21).
+        measureOf("d-risk", "Risk Management", { level: 6, target: 18, baseline: 8, cards: [...inDomain("d-risk", 8, 6, addDays(M, 60)), ...inDomain("d-risk", 9, 4, addDays(M, 40)), ...inDomain("d-risk", 4, 4, addDays(M, 90))] }),
+      ],
+    });
+  {
+    eq("fixture: Inference needs ceil(1.3 × 25) = 33 (32.5 rounded up) and holds 20 recall cards (3 multiple choice not counted): 13 left", [writeNeedOf(25, 20), writeNeedOf(25, 0)], [13, 33]);
+    eq("fixture: Risk Management needs ceil(1.3 × 18) = 24 and holds 21: 3 left", writeNeedOf(18, 21), 3);
+    eq(
+      "addSpareText words the goal from WRITE_MARGIN, rounded up with '→' as the pace is (never '1.3 × 25 = 33', which is 32.5)",
+      [addSpareText(25), addSpareText(18), addSpareText(10)],
+      ["1.3 × 25 → 33, a 30% spare because some cards lag", "1.3 × 18 → 24, a 30% spare because some cards lag", "1.3 × 10 → 13, a 30% spare because some cards lag"]
+    );
+    check(
+      "… its spare is pct(WRITE_MARGIN − 1) of the constant itself (a changed margin changes the words)",
+      addSpareText(25).includes(`${WRITE_MARGIN} × 25 → ${writeNeedOf(25, 0)}, a ${Math.round((WRITE_MARGIN - 1) * 100)}% spare`)
+    );
+    const w1 = addTwo(M);
+    const a1 = pick(w1, "ADD");
+    eq(
+      "week 1: Inference ceil(13 × 7 ÷ 31) = 3, Risk Management ceil(3 × 7 ÷ 31) = 1: 'Add 4 cards'",
+      a1 && [a1.label, a1.count, a1.pace, a1.parts],
+      ["Add 4 cards", 4, 4, [{ domainId: "d-inf", count: 3, pace: 3, cappedBy: null }, { domainId: "d-risk", count: 1, pace: 1, cappedBy: null }]]
+    );
+    check(
+      "… the basis names Inference's coverage need over the remaining writing weeks",
+      hasBasis(w1, /^Add: Inference: still needed 13 new cards \(1\.3 × 25 → 33, a 30% spare because some cards lag, less the 20 cards it holds\) · pace 13 × 7 ÷ 31 days → 3/),
+      json(w1.basis)
+    );
+    eq(
+      "the parts line: '3 to Inference · 1 to Risk Management · multiple choice not counted'",
+      (viewOfSet(w1, "roadmap").rows.find((r) => r.kind === "ADD") as WeekQuestRowV2 | undefined)?.partsLine,
+      "3 to Inference · 1 to Risk Management · multiple choice not counted"
+    );
+    eq("the link goes to /add for the part with the largest count", viewOfSet(w1, "aim").rows.find((r) => r.kind === "ADD")?.href, "/add?field=f-stats&domain=d-inf");
+
+    // Week 4 (10 writing days left): Inference pace ceil(13 × 7 ÷ 10) = 10 over its cap max(3, ceil(1.5 × 2.94)) = 5; Risk Management pace 3 at its cap 3.
+    const w4 = addTwo(W(3));
+    const a4 = pick(w4, "ADD");
+    eq(
+      "the per-Domain catch-up cap: Inference 5 of its 10 (CATCHUP), Risk Management 3 of 3",
+      a4 && [a4.count, a4.pace, a4.parts?.map((p) => [p.domainId, p.count, p.pace, p.cappedBy])],
+      [8, 13, [["d-inf", 5, 10, "CATCHUP"], ["d-risk", 3, 3, null]]]
+    );
+    eq("… the set reads CATCHUP and QUESTS_BEHIND fires (a part capped by catch-up with Ww < 2)", [w4.cappedBy, questsBehind(w4)], ["CATCHUP", true]);
+    check("… and the catch-up line names the Domain", hasBasis(w4, /^Add: Inference: asks 5 of the 10 new cards needed to stay on plan; 1\.5 × the 2\.9 a week the plan needed at Start/), json(w4.basis));
+    const tm = { ord: 2, cardPaces: [], pays: [], practice: null, carried: false, checkpoint: null, id: "ms2", dueDay: ADD_DUE, level: 6 };
+    eq("R1's trigger reads the same set: QUESTS_BEHIND, in the one wording", triggersOf({ milestones: [tm], paceAtAcceptance: "SCOPE", paceNow: "SCOPE", questWeek: w4 }).map((h) => [h.trigger, h.line]), [["QUESTS_BEHIND", questsBehindLine(w4, { ord: 2, level: 6, dueDay: ADD_DUE })]]);
+
+    // The capacity cap on the total, shared out in proportion to pace_d (10 : 3).
+    const tight = addTwo(W(3), { availableMin: 50, class: "ESTIMATED", calibrating: false });
+    const at = pick(tight, "ADD");
+    eq(
+      "a capacity of 4 cards ((50 − 30) ÷ 5) shared 10 : 3 → Inference 3, Risk Management 1, both CAPACITY",
+      at && [at.count, at.parts?.map((p) => [p.domainId, p.count, p.cappedBy])],
+      [4, [["d-inf", 3, "CAPACITY"], ["d-risk", 1, "CAPACITY"]]]
+    );
+    eq("… the set reads CAPACITY and QUESTS_BEHIND does not fire", [tight.cappedBy, questsBehind(tight)], ["CAPACITY", false]);
+    check("… and the basis says how it was shared", hasBasis(tight, /^Add: Practices and reviews fill this week's time, so it asks 4 of the 13 new cards the plan needs, shared in proportion: 3 to Inference · 1 to Risk Management\./), json(tight.basis));
+    const mixed = addTwo(W(3), { availableMin: 60, class: "ESTIMATED", calibrating: false });
+    eq(
+      "a capacity of 6: Inference keeps its catch-up 5 (CATCHUP), Risk Management gets 1 (CAPACITY); the set reads CATCHUP",
+      [pick(mixed, "ADD")?.parts?.map((p) => [p.domainId, p.count, p.cappedBy]), mixed.cappedBy, questsBehind(mixed)],
+      [[["d-inf", 5, "CATCHUP"], ["d-risk", 1, "CAPACITY"]], "CATCHUP", true]
+    );
+    eq(
+      "shareOutByPace: floors, then the largest remainders under each part's want; never above a want; nothing for nothing",
+      [shareOutByPace(6, [5, 3], [10, 3]), shareOutByPace(4, [5, 3], [10, 3]), shareOutByPace(20, [5, 3], [10, 3]), shareOutByPace(0, [5, 3], [10, 3]), shareOutByPace(5, [2, 2, 2], [1, 1, 1])],
+      [[5, 1], [3, 1], [5, 3], [0, 0], [2, 2, 1]]
+    );
+
+    // ADD verification by part: recall cards per Domain; a multiple-choice card added doesn't advance it.
+    const spec = a1 as AddQuestSpec;
+    const pr = questProgress(spec, { kind: "ADD", added: 9, addedByDomain: { "d-inf": 6, "d-risk": 0 } });
+    eq("ADD by part: Inference 6 (of 3, read honestly), Risk Management 0 of 1: progress min-summed 3, not done", [pr.progress, pr.done, pr.parts?.map((x) => [x.domainId, x.progress, x.done])], [3, false, [["d-inf", 6, true], ["d-risk", 0, false]]]);
+    eq("… done once every part is", questProgress(spec, { kind: "ADD", added: 4, addedByDomain: { "d-inf": 3, "d-risk": 1 } }).done, true);
+  }
+
+  console.log("— rev 4: clean entry (`rc`) —");
+  {
+    const finalDue = addDays(W(6), 13);
+    const finalSnap = snapshotOf({ startedDay: M, dueDay: finalDue, level: 12, rateSource: "NONE" });
+    const final = (segment: "r" | "rc", extra: CardState[] = []) =>
+      weekQuestsFor({
+        ...inputOf({ weekStart: wk, startedDay: M, dueDay: finalDue, snapshot: finalSnap }),
+        cards: [measureOf("d-prob", "Probability", { level: 12, target: 34, baseline: 20, segment, cards: [...inDomain("d-prob", 5, 11, wed), ...extra], rateSource: "NONE" })],
+      });
+    const plain = pick(final("r"), "RAISE");
+    const clean = pick(final("rc"), "RAISE");
+    eq(
+      "five level-11 cards due Wed: a plain key counts a next-day retry (5 × 0.96 → 5); the depth term's `rc` counts only a first-try pass (5 × 0.8 → 4)",
+      [plain?.count, clean?.count],
+      [5, 4]
+    );
+    check("… the `rc` basis says a retry counts after its next review", hasBasis(final("rc"), /^Bring: at level 12 a card counts once it entered on a first-try pass; one that got there on a next-day retry counts after its next review\./));
+    // A card at exactly 12 that entered on a retry: the `rc` reading counts it at 11, so this week asks for its next review.
+    const withRetry = final("rc", inDomain("d-prob", 1, 12, thu, { retryEntry: true }));
+    const rr = pick(withRetry, "RAISE");
+    eq("a retry-entry card at level 12 due Thu is reachable: its next pass (0.8 + a retry) brings it in", [rr?.count, rr?.dueDays.length], [5, 6]);
+    check("… and the basis names it", hasBasis(withRetry, /^Bring: Probability: 1 card reached level 12 on a retry: it counts after its next review, which this week can bring\./), json(withRetry.basis));
+    const plainRetry = pick(final("r", inDomain("d-prob", 1, 12, thu, { retryEntry: true })), "RAISE");
+    eq("… a plain key counts that card already (not reachable)", plainRetry?.dueDays.length, 5);
+
+    // Clean entry is roadmap-types' one rule (fix round, contracts §15.1: R1's, which the reach DP follows); R6 keeps no copy.
+    eq(
+      "isRetryEntry (roadmap-types): 'strike · L11' then 'advanced · L11→12' the next day; untagged rows read the same; one life day ordered by `at`",
+      [
+        isRetryEntry([{ day: wk, detail: "strike · L11" }, { day: addDays(wk, 1), detail: "advanced · L11→12" }], 12),
+        isRetryEntry([{ day: wk, detail: "strike" }, { day: addDays(wk, 1), detail: "advanced" }], 12),
+        isRetryEntry([{ day: wk, at: 2, detail: "advanced · L11→12" }, { day: wk, at: 1, detail: "strike · L11" }], 12),
+      ],
+      [true, true, true]
+    );
+    eq(
+      "… not a first-try pass, a pass after it, another level, or a degrade that took it down a level before the pass; a backfill row between them is skipped",
+      [
+        isRetryEntry([{ day: wk, detail: "advanced · L11→12" }], 12),
+        isRetryEntry([{ day: wk, detail: "strike · L11" }, { day: addDays(wk, 1), detail: "advanced · L11→12" }, { day: addDays(wk, 110), detail: "advanced · L12→13" }], 12),
+        isRetryEntry([{ day: wk, detail: "strike · L9" }, { day: addDays(wk, 1), detail: "advanced · L9→10" }], 12),
+        isRetryEntry([{ day: wk, detail: "strike · L11" }, { day: addDays(wk, 1), detail: "degraded · L11" }, { day: addDays(wk, 2), detail: "advanced · L10→11" }], 12),
+        isRetryEntry([{ day: wk, detail: "strike · L11" }, { day: addDays(wk, 1), detail: "backfill: passed review" }, { day: addDays(wk, 1), detail: "advanced · L11→12" }], 12),
+      ],
+      [false, false, false, false, true]
+    );
+    // The three cases where R6's own rule differed from R1's (contracts §15.1, §15.16 item 5): each now follows R1.
+    eq(
+      "R1's rule where R6's differed: tagged rows 3 days apart are a retry (the tags place the miss on this climb); a shield or a degrade from 12 just before the pass is a retry; a later 'strike · L12' keeps a retry entry one until its next pass",
+      [
+        isRetryEntry([{ day: wk, detail: "strike · L11" }, { day: addDays(wk, 3), detail: "advanced · L11→12" }], 12),
+        isRetryEntry([{ day: wk, detail: "shielded · L11" }, { day: addDays(wk, 1), detail: "advanced · L11→12" }], 12),
+        isRetryEntry([{ day: wk, detail: "degraded · L12" }, { day: addDays(wk, 1), detail: "advanced · L11→12" }], 12),
+        isRetryEntry([{ day: wk, detail: "strike · L11" }, { day: addDays(wk, 1), detail: "advanced · L11→12" }, { day: addDays(wk, 112), detail: "strike · L12" }], 12),
+      ],
+      [true, true, true, true]
+    );
+    eq(
+      "… untagged rows keep the day window: a miss 3 days before the pass is not a retry, an untagged shield the day before is",
+      [
+        isRetryEntry([{ day: wk, detail: "strike" }, { day: addDays(wk, 3), detail: "advanced" }], 12),
+        isRetryEntry([{ day: wk, detail: "shielded" }, { day: addDays(wk, 1), detail: "advanced" }], 12),
+      ],
+      [false, true]
+    );
+    eq(
+      "… a first-try pass followed by a later strike at 12 is still clean (the pass, not the last row, decides)",
+      isRetryEntry([{ day: wk, detail: "advanced · L11→12" }, { day: addDays(wk, 112), detail: "strike · L12" }], 12),
+      false
+    );
+  }
+
+  console.log("— rev 4: the reach inputs at Start —");
+  {
+    const base = snapshotOf({ startedDay: M, dueDay: ADD_DUE, level: 12 });
+    const cal = questReachOf({ ...base, calibrating: ["p", "c", "rho"], pStart: 1, cStart: 1, rhoStart: 0 }, 1);
+    eq("calibrating at Start: the priors (p 0.80, pLong 0.80, c 0.85, ρ 0.6), never 1, each named as assumed", [cal.params.p, cal.params.pLong, cal.params.c, cal.params.rho, cal.assumed], [P_PRIOR, 0.8, C_PRIOR, RHO_PRIOR, ["p", "c", "rho"]]);
+    const rev3 = { ...base, pCalibrating: true, pStart: 1 } as StartSnapshot;
+    delete (rev3 as Partial<StartSnapshot>).cStart;
+    delete (rev3 as Partial<StartSnapshot>).rhoStart;
+    eq("a snapshot without the rev-4 figures (rev 3's pCalibrating, p 1): the priors too", [questReachOf(rev3, 1).params.p, questReachOf(rev3, 1).params.c, questReachOf(rev3, 1).params.rho, questReachOf(rev3, 1).assumed], [0.8, 0.85, 0.6, ["p", "c", "rho"]]);
+    const measuredReach = questReachOf({ ...base, pStart: 0.9, pLongStart: 0.8, cStart: 0.92, rhoStart: 0.3 }, 1.5, { extraStrikes: 1, graceExtraDays: 2 });
+    eq("measured at Start: p 0.9, pLong 0.8, c 0.92, ρ 0.3, m 1.5, the loadout's 3 strikes and 2 grace days", [measuredReach.params, measuredReach.assumed], [{ p: 0.9, pLong: 0.8, c: 0.92, rho: 0.3, m: 1.5, strikeLimit: 3, graceExtra: 2 }, []]);
+    eq("pLong is never above p, nor above the cap", [questReachOf({ ...base, pStart: 0.7 }, 1).params.pLong, questReachOf({ ...base, pStart: 0.95, pLongStart: 0.9 }, 1).params.pLong], [0.7, 0.8]);
+    const calSet = weekQuestsFor({
+      ...inputOf({ weekStart: wk, startedDay: M, dueDay: raiseDue, snapshot: snapshotOf({ startedDay: M, dueDay: raiseDue, level: 6, rateSource: "NONE", calibrating: ["p", "c", "rho"], cStart: null, rhoStart: null }) }),
+      cards: [measureOf("d-prob", "Probability", { level: 6, target: 34, baseline: 20, cards: inDomain("d-prob", 6, 5, wed), rateSource: "NONE" })],
+    });
+    check(
+      "the basis names what was assumed: 'an 80% pass rate (the app's assumption until 30 reviews are measured)', the clearance and the bunching",
+      hasBasis(calSet, /an 80% pass rate \(the app's assumption until 30 reviews are measured\), 85% of your due reviews cleared \(the app's assumption\), missed days bunching together at the app's assumed rate\.$/),
+      json(calSet.basis)
+    );
+    const lvl12 = weekQuestsFor({ ...inputOf({ weekStart: wk, startedDay: M, dueDay: raiseDue, snapshot: raiseSnap }), cards: [measureOf("d-prob", "Probability", { level: 12, target: 34, baseline: 20, segment: "rc", cards: inDomain("d-prob", 5, 11, wed), rateSource: "NONE" })] });
+    check("a level-12 plan's basis names the long-gap rate as the app's policy", hasBasis(lvl12, /80% for gaps of 50 days and more \(the app's policy: none of your reviews has tested gaps that long yet\)/), json(lvl12.basis));
+  }
+
+  console.log("— rev 4: a v1 frozen set renders unchanged —");
+  {
+    const v1: WeekQuestSet = {
+      weekStart: wk,
+      milestoneId: "m1",
+      state: "OPEN",
+      generator: 1,
+      basis: [],
+      cappedBy: null,
+      quests: [
+        { ord: 1, kind: "RAISE", label: "Bring 5 cards in Position Sizing to level 6+", count: 5, unit: "card", evidence: "TESTED", from: wk, to: addDays(wk, 6), measureKey: "CARDS_AT_LEVEL|d:d-ps|L6", domainIds: ["d-ps"], minLevel: 6, floor: 10, dueDays: [wed], bestCase: false },
+        { ord: 2, kind: "ADD", label: "Add 3 cards to Risk Management", count: 3, unit: "card", evidence: "RECORDED", from: wk, to: addDays(wk, 6), domainIds: ["d-risk"], fieldId: "f-trading", quotaField: null, pace: 3, writingWeeksLeft: 3, lastCardDay: null },
+        { ord: 3, kind: "PRACTICE", label: "Backtest · 3 sessions × 45 min", count: 3, unit: "session", evidence: "SELF_REPORTED", from: wk, to: addDays(wk, 6), templateId: "t-bt", minutes: 45 },
+      ],
+    };
+    const prog = [
+      questProgress(v1.quests[0], { kind: "RAISE", value: 13, high: 14, slipDay: thu }),
+      questProgress(v1.quests[1], { kind: "ADD", added: 4 }),
+      questProgress(v1.quests[2], { kind: "PRACTICE", rule: "TARGET:3/W", startDay: M, instances: [{ day: wk, status: "DONE" }] }),
+    ];
+    eq("v1 progress is rev 3's: RAISE net of its one floor (3 of 5, slipped from 4), ADD what the rows say (4 of 3)", prog.map((p) => [p.progress, p.done, p.slipped, "parts" in p]), [[3, false, { from: 4, day: thu }, false], [4, true, null, false], [1, false, null, false]]);
+    const REV3_ROW_KEYS = ["ord", "kind", "label", "count", "unit", "evidence", "figure", "done", "dueLine", "quotaLine", "slipLine", "seekTemplateId", "place", "href"];
+    for (const variant of ["today", "aim", "roadmap"] as const) {
+      const v = viewOfSet(v1, variant, prog);
+      check(`a v1 row has rev 3's fields only (no parts, no parts line) on ${variant}`, v.rows.every((r) => json(Object.keys(r)) === json(REV3_ROW_KEYS)), json(v.rows.map((r) => Object.keys(r))));
+    }
+    const v = viewOfSet(v1, "roadmap", prog);
+    eq(
+      "… its labels, captions and links as rev 3 rendered them",
+      v.rows.map((r) => [r.label, r.figure.caption, r.dueLine, r.slipLine, r.href]),
+      [
+        ["Bring 5 cards in Position Sizing to level 6+", "tested by your reviews", "1 comes due Wed", "1 card slipped back to level 5 on Thu", null],
+        ["Add 3 cards to Risk Management", "counted by the app; it doesn't judge them", null, null, "/add?field=f-trading&domain=d-risk"],
+        ["Backtest · 3 sessions × 45 min", "from your ticks · the milestone counts 80% of these", null, null, "/today#t-t-bt"],
+      ]
+    );
+    const res = weekQuestResultsOf(v1, prog, null, 0, 7);
+    eq("… and its results are unchanged", res.rows, [{ ord: 1, progress: 3, done: false }, { ord: 2, progress: 4, done: true }, { ord: 3, progress: 1, done: false }]);
+    eq("questsBehind on a v1 set keeps rev 3's rule (cappedBy CATCHUP and Ww < 2)", [questsBehind({ ...v1, cappedBy: "CATCHUP" }), questsBehind({ ...v1, cappedBy: "CATCHUP", quests: v1.quests.map((q) => (q.kind === "ADD" ? { ...q, writingWeeksLeft: 1.4 } : q)) })], [false, true]);
+  }
+
+  console.log("— rev 4: practices the app adds, and the health line —");
+  {
+    const added = { origin: "CODE", decision: "PENDING", label: "Explain it in your own words: Probability", flags: [] as string[] };
+    const name = questLabelOf(added);
+    eq("a PRODUCTION_ADDED practice (origin CODE) is CodeText, with no check needed", name, "Explain it in your own words: Probability");
+    const set = weekQuestsFor(inputOf({ weekStart: M, startedDay: M, dueDay: LONG_DUE, snapshot: longSnap, practices: name ? [{ templateId: "t-ex", name, rule: "TARGET:2/W", startDay: M, bandMinutes: 45 }] : [] }));
+    eq("… and yields a PRACTICE week quest", pick(set, "PRACTICE")?.label, "Explain it in your own words: Probability · 2 sessions × 45 min");
+    const body = viewOfSet(set, "today", [], { health: true }).rows as WeekQuestRowV2[];
+    const field = viewOfSet(set, "today", [], { health: false }).rows as WeekQuestRowV2[];
+    eq("a BODY plan's PRACTICE rows carry the health line (HEALTH_LINE, R5), a Field plan's don't", [body.map((r) => r.health ?? null), field.map((r) => r.health ?? null)], [[true], [null]]);
+  }
+
+  console.log("— rev 4: the server reads every Domain's measure —");
+  const dbTwo = (): FakeDb => {
+    const db = dbOf();
+    const snap = snapshotOf({ startedDay: M, dueDay: ADD_DUE, level: 6, newNeededStart: 0, newNeededByDomain: { "d-inf": 13, "d-risk": 3 } });
+    db.facts[0].milestone.feasibility = snap;
+    const kInf = cardsAtLevelKey(["d-inf"], 6, "r");
+    const kRisk = cardsAtLevelKey(["d-risk"], 6, "r");
+    const dom = db.items.ms2.find((i) => i.kind === "DOMAIN") as QuestItemRow;
+    db.items.ms2 = [{ ...dom, id: "dom-risk", lineageId: "lin-dom-risk", ord: 2, domainId: "d-risk" }, { ...dom, id: "dom-inf", lineageId: "lin-dom-inf", ord: 1, label: "Inference", domainId: "d-inf" }, ...db.items.ms2.filter((i) => i.kind !== "DOMAIN")];
+    // The Risk measure first: the read orders them by the DOMAIN items (Inference is ord 1).
+    db.measures.ms2 = [
+      { kind: "CARDS_AT_LEVEL", role: "PAYS", scope: { domainIds: ["d-risk"] }, minLevel: 6, target: 18, baseline: 8, rateSource: "SCOPE", measureKey: kRisk },
+      { kind: "CARDS_AT_LEVEL", role: "PAYS", scope: { domainIds: ["d-inf"] }, minLevel: 6, target: 25, baseline: 10, rateSource: "SCOPE", measureKey: kInf },
+    ];
+    db.domains = [
+      { id: "d-risk", name: "Risk Management", fieldId: "f-stats" },
+      { id: "d-inf", name: "Inference", fieldId: "f-stats" },
+    ];
+    const idea = (id: string, domainId: string, level: number, due: DayKey, questionType?: string): Idea => ({ id, domainId, level, dueDate: at(due, 9), graceEndsAt: null, createdAt: at(addDays(M, -60), 10), isArchived: false, ...(questionType ? { questionType } : {}) });
+    db.ideas = [
+      ...Array.from({ length: 10 }, (_, i) => idea(`inf6-${i}`, "d-inf", 6, addDays(M, 60), "SHORT")),
+      ...Array.from({ length: 5 }, (_, i) => idea(`inf4-${i}`, "d-inf", 4, addDays(M, 40), "SHORT")),
+      // Fix round (WRITE_MARGIN 1.3): as in addTwo, 5 and 4 more level-4 cards keep 13 and 3 left.
+      ...Array.from({ length: 5 }, (_, i) => idea(`inf4b-${i}`, "d-inf", 4, addDays(M, 90), "SHORT")),
+      ...Array.from({ length: 3 }, (_, i) => idea(`infmc-${i}`, "d-inf", 6, addDays(M, 60), "MULTI")),
+      ...Array.from({ length: 8 }, (_, i) => idea(`risk6-${i}`, "d-risk", 6, addDays(M, 60))),
+      ...Array.from({ length: 9 }, (_, i) => idea(`risk4-${i}`, "d-risk", 4, addDays(M, 40))),
+      ...Array.from({ length: 4 }, (_, i) => idea(`risk4b-${i}`, "d-risk", 4, addDays(M, 90))),
+    ];
+    db.readings = [
+      { measureKey: kInf, day: M, value: 10 },
+      { measureKey: kRisk, day: M, value: 8 },
+    ];
+    return db;
+  };
+  {
+    const db = dbTwo();
+    const input = await weekQuestInputFor(storeOf(db), U, db.facts[0], M, at(M, 4, 15));
+    eq(
+      "weekQuestInputFor: one card input per PAYS measure, in the DOMAIN items' order, each with its Domain, key segment, v0 and target",
+      input?.cards?.map((c) => [c.domainId, c.segment, c.measureKey, c.v0, c.target, c.cards.length, String(c.domainNames[0])]),
+      [["d-inf", "r", "CARDS_AT_LEVEL|d:d-inf|L6|r", 10, 25, 23, "Inference"], ["d-risk", "r", "CARDS_AT_LEVEL|d:d-risk|L6|r", 8, 18, 21, "Risk Management"]]
+    );
+    eq("… `card` is the first (for v1 readers), and a multiple-choice card reads recall false", [input?.card?.domainId, input?.cards?.[0].cards.filter((c) => c.recall === false).length], ["d-inf", 3]);
+    const set = input ? weekQuestsFor(input) : null;
+    eq("… so ADD asks Inference 3 (13 left) and Risk Management 1 (3 left)", set ? pick(set, "ADD")?.parts?.map((p) => [p.domainId, p.count]) : null, [["d-inf", 3], ["d-risk", 1]]);
+    const startWeek = await weekQuestInputFor(storeOf(db), U, db.facts[0], M, at(M, 4, 15), { v0ByKey: { [cardsAtLevelKey(["d-risk"], 6, "r")]: 9 } });
+    eq("Start's v0 per measure key wins over the live count only when no reading of that day exists", startWeek?.cards?.map((c) => c.v0), [10, 8]);
+    const noReading = dbTwo();
+    noReading.readings = [];
+    const sw = await weekQuestInputFor(storeOf(noReading), U, noReading.facts[0], M, at(M, 4, 15), { v0ByKey: { [cardsAtLevelKey(["d-risk"], 6, "r")]: 9 } });
+    eq("… with none: v0ByKey, else the measure's own count (recall cards at level 6+: Inference 10, multiple choice left out)", sw?.cards?.map((c) => c.v0), [10, 9]);
+  }
+  {
+    // Freeze-time independence with parts: the cron's set (Mon 04:15) and a render's (Wed 10:00) agree.
+    const a = dbTwo();
+    const b = dbTwo();
+    const wk1 = W(1);
+    const push = (db: FakeDb, id: string, domainId: string, questionType: string | undefined, created: Date) =>
+      db.ideas.push({ id, domainId, level: 1, dueDate: created, graceEndsAt: null, createdAt: created, isArchived: false, ...(questionType ? { questionType } : {}) });
+    push(b, "late-inf-1", "d-inf", "SHORT", at(addDays(wk1, 1), 11));
+    push(b, "late-inf-2", "d-inf", "SHORT", at(addDays(wk1, 1), 12));
+    push(b, "late-inf-mc", "d-inf", "MULTI", at(addDays(wk1, 1), 13));
+    push(b, "late-risk-mc", "d-risk", "MULTI", at(addDays(wk1, 1), 13));
+    b.rest.push({ day: addDays(wk1, 4), kind: "REST", declaredAt: at(addDays(wk1, 1), 12), cancelledAt: null });
+    await freezeWeekQuests(U, at(wk1, 4, 15), "CRON", { ...ON, store: storeOf(a) });
+    await freezeWeekQuests(U, at(addDays(wk1, 2), 10), "RENDER", { ...ON, store: storeOf(b) });
+    const sa = setOfStored(a.weeks[0]);
+    const sb = setOfStored(b.weeks[0]);
+    eq("the cron's set and a Wednesday render's ask the same quests, parts included", sb.quests, sa.quests);
+    eq("… with the same basis but the read-at line", sb.basis.slice(1), sa.basis.slice(1));
+    eq("… and generator 2 is stored", [a.weeks[0].generator, sa.quests.find((q) => q.kind === "ADD")?.label], [2, "Add 5 cards"]);
+    const lb = await loadWeekQuests(U, at(addDays(wk1, 2), 11), { ...ON, store: storeOf(b) });
+    const addRow = lb?.progress.find((p) => p.ord === sb.quests.find((q) => q.kind === "ADD")?.ord);
+    eq("the 2 recall cards added to Inference advance its part; the multiple-choice cards advance nothing", [addRow?.progress, addRow?.parts?.map((p) => [p.domainId, p.progress])], [2, [["d-inf", 2], ["d-risk", 0]]]);
+    eq(
+      "the Today view names the parts from the Domain rows",
+      (lb?.view.rows.find((r) => r.kind === "ADD") as WeekQuestRowV2 | undefined)?.partsLine,
+      "4 to Inference · 1 to Risk Management · multiple choice not counted"
+    );
+  }
+  {
+    // RAISE progress reads each part's own key: the `rc` reading counts a retry entry at 12 after its next pass.
+    const db = dbTwo();
+    const kRc = cardsAtLevelKey(["d-inf"], 12, "rc");
+    const kPlain = cardsAtLevelKey(["d-inf"], 12);
+    const wk1 = W(1);
+    const spec: RaiseQuestSpec = {
+      ord: 1,
+      kind: "RAISE",
+      label: "Bring 1 card to level 12+",
+      count: 1,
+      unit: "card",
+      evidence: "TESTED",
+      from: wk1,
+      to: addDays(wk1, 6),
+      measureKey: kRc,
+      domainIds: ["d-inf"],
+      minLevel: 12,
+      floor: 20,
+      dueDays: [addDays(wk1, 2)],
+      bestCase: false,
+      parts: [{ domainId: "d-inf", measureKey: kRc, floor: 20, count: 1, dueDays: [addDays(wk1, 2)] }],
+    };
+    const set: WeekQuestSet = { weekStart: wk1, milestoneId: "ms2", state: "OPEN", generator: 2, quests: [spec], basis: [], cappedBy: null };
+    // Tue: a level-11 card passed on its next-day retry: the plain key reads 21, the `rc` key still 20.
+    db.readings.push({ measureKey: kPlain, day: addDays(wk1, 1), value: 21 }, { measureKey: kRc, day: addDays(wk1, 1), value: 20 });
+    const before = (await questProgressFor(storeOf(db), U, set)).progress[0];
+    eq("a retry-entry card at level 12 doesn't advance the final-stage part (its `rc` reading counts it at 11)", [before.progress, before.done], [0, false]);
+    db.readings.push({ measureKey: kRc, day: addDays(wk1, 5), value: 21 });
+    const after = (await questProgressFor(storeOf(db), U, set)).progress[0];
+    eq("… until its next pass: the `rc` reading reaches 21 and the part is done", [after.progress, after.done], [1, true]);
+
+    // The server's clean-entry read: a level-12 card whose last rows are 'strike · L11' then 'advanced · L11→12'.
+    const fin = dbTwo();
+    fin.measures.ms2 = [{ kind: "CARDS_AT_LEVEL", role: "PAYS", scope: { domainIds: ["d-inf"] }, minLevel: 12, target: 25, baseline: 20, rateSource: "SCOPE", measureKey: kRc }];
+    const card12 = (id: string) => ({ id, domainId: "d-inf", level: 12, dueDate: at(addDays(wk1, 100), 9), graceEndsAt: null, createdAt: at(addDays(M, -200), 9), isArchived: false });
+    fin.ideas = [card12("c-retry"), card12("c-clean"), card12("c-shield"), card12("c-later"), card12("c-apart")];
+    const rv = (ideaId: string, back: number, detail: string): QuestReviewRow => ({ ideaId, day: addDays(wk1, -back), occurredAt: at(addDays(wk1, -back), 9), detail });
+    fin.reviews = [
+      rv("c-retry", 10, "strike · L11"),
+      rv("c-retry", 9, "advanced · L11→12"),
+      rv("c-clean", 9, "advanced · L11→12"),
+      // Fix round (roadmap-types' one rule, contracts §15.1): a shield before the pass, a later strike at 12, tagged rows 4 days apart.
+      rv("c-shield", 20, "shielded · L11"),
+      rv("c-shield", 19, "advanced · L11→12"),
+      rv("c-later", 150, "strike · L11"),
+      rv("c-later", 149, "advanced · L11→12"),
+      rv("c-later", 3, "strike · L12"),
+      rv("c-apart", 40, "strike · L11"),
+      rv("c-apart", 36, "advanced · L11→12"),
+    ];
+    const froms: DayKey[] = [];
+    const spy = (db: FakeDb, loadout?: { intervalMultiplier: number; extraStrikes: number; graceExtraDays: number }): QuestStore => {
+      const s = storeOf(db);
+      return {
+        ...s,
+        async reviewRows(u, ids, from) {
+          froms.push(from);
+          return s.reviewRows(u, ids, from);
+        },
+        ...(loadout ? { reachLoadout: async () => loadout } : {}),
+      };
+    };
+    const fi = await weekQuestInputFor(spy(fin), U, fin.facts[0], wk1, at(wk1, 4, 15));
+    eq(
+      "weekQuestInputFor marks retry entries by roadmap-types' rule: a strike, a shield, a later strike at 12 (still a retry until its next pass) and tagged rows 4 days apart; a first-try pass is clean",
+      fi?.cards?.[0].cards.map((c) => [c.level, c.retryEntry ?? false]),
+      [[12, true], [12, false], [12, true], [12, true], [12, true]]
+    );
+    await weekQuestInputFor(spy(fin, { intervalMultiplier: 1.5, extraStrikes: 0, graceExtraDays: 2 }), U, fin.facts[0], wk1, at(wk1, 4, 15));
+    eq(
+      `… reading the REVIEW rows over retryReadDaysOf, the window R1 and R4 read (fix round 2, contracts §16.1): ${retryReadDaysOf(12, 1)} days at m 1 ((interval 160 + grace 11 + 1) + (grace 10 + 2) = 172 + 12), and retryReadDaysOf(12, 1.5, 2) with a loadout`,
+      froms,
+      [addDays(wk1, -retryReadDaysOf(12, 1)), addDays(wk1, -retryReadDaysOf(12, 1.5, 2))]
+    );
+    const plainFin = dbTwo();
+    plainFin.measures.ms2 = [{ ...fin.measures.ms2[0], measureKey: kPlain }];
+    plainFin.ideas = fin.ideas;
+    plainFin.reviews = fin.reviews;
+    froms.length = 0;
+    const pf = await weekQuestInputFor(spy(plainFin), U, plainFin.facts[0], wk1, at(wk1, 4, 15));
+    eq("… and only on an `rc` measure: a plain key reads no ledger and marks nothing", [froms.length, pf?.cards?.[0].cards.some((c) => c.retryEntry) ?? null], [0, false]);
+  }
+  {
+    // Fix round 2 (contracts §16.1; the lens 2 minor R6 handed to lane 0): the read holds srs.ts's latest retry entry. A degrade
+    // from L (due the next day), the pass L−1→L at the end of the lower level's grace plus the cron's day, then L held to its
+    // interval (the jitter's top at levels 5–8), its grace and the cron's day. R6 reads it as a retry; one day narrower it reads
+    // clean, and so did the fix round's 173-day window at L12, which counted the card in the `rc` measure and left RAISE nothing to ask.
+    const wk1 = W(1);
+    const now = at(wk1, 4, 15);
+    const latest = (L: number, m: number, g: number): { db: FakeDb; back: number } => {
+      const db = dbTwo();
+      db.measures.ms2 = [{ kind: "CARDS_AT_LEVEL", role: "PAYS", scope: { domainIds: ["d-inf"] }, minLevel: L, target: 25, baseline: 20, rateSource: "SCOPE", measureKey: cardsAtLevelKey(["d-inf"], L, "rc") }];
+      const back = retryReadDaysOf(L, m, g);
+      const d0 = addDays(wk1, -back);
+      const passDay = addDays(d0, 1 + graceDays(L - 1) + g + 1);
+      db.ideas = [{ id: "c-edge", domainId: "d-inf", level: L, dueDate: at(addDays(wk1, 2), 9), graceEndsAt: null, createdAt: at(addDays(d0, -400), 9), isArchived: false, questionType: "SHORT" }];
+      db.reviews = [
+        { ideaId: "c-edge", day: d0, occurredAt: at(d0, 9), detail: `degraded · L${L}` },
+        { ideaId: "c-edge", day: passDay, occurredAt: at(passDay, 9), detail: `advanced · L${L - 1}→${L}` },
+      ];
+      return { db, back };
+    };
+    /** The store with the loadout (m, grace extension), reading the ledger from where R6 asks, or `later` days after it (a narrower read). */
+    const storeAt = (db: FakeDb, m: number, g: number, later = 0, seen?: DayKey[]): QuestStore => {
+      const s = storeOf(db);
+      return {
+        ...s,
+        reachLoadout: async () => ({ intervalMultiplier: m, extraStrikes: 0, graceExtraDays: g }),
+        async reviewRows(u, ids, from) {
+          seen?.push(from);
+          return s.reviewRows(u, ids, addDays(from, later));
+        },
+      };
+    };
+    const retryOf = async (store: QuestStore, db: FakeDb) => (await weekQuestInputFor(store, U, db.facts[0], wk1, now))?.cards?.[0].cards[0]?.retryEntry ?? false;
+    const fails: string[] = [];
+    for (const L of [12, 10, 8, 6])
+      for (const [m, g] of [[1, 0], [1.5, 0], [1, 2]] as const) {
+        const { db, back } = latest(L, m, g);
+        const seen: DayKey[] = [];
+        const exact = await retryOf(storeAt(db, m, g, 0, seen), db);
+        const narrower = await retryOf(storeAt(db, m, g, 1), db);
+        if (!(exact && !narrower && json(seen) === json([addDays(wk1, -back)]))) fails.push(`L${L} m${m} g${g}: back ${back}, read from ${seen.join(",")}, exact ${exact}, narrower ${narrower}`);
+      }
+    check(
+      "weekQuestInputFor reads srs.ts's latest retry entry (a degrade from L, the pass after the lower grace, L held to its interval — the jitter's top at 5–8 — its grace and the cron's day) as a retry at L 12/10/8/6, m 1 and 1.5, grace extension 0 and 2, reading from today − retryReadDaysOf(L, m, extension); one day narrower it reads clean",
+      fails.length === 0,
+      fails.join("; ")
+    );
+    const { db } = latest(12, 1, 0);
+    const raiseOf = async (store: QuestStore) => {
+      const input = await weekQuestInputFor(store, U, db.facts[0], wk1, now);
+      const raise = input ? weekQuestsFor(input).quests.find((q) => q.kind === "RAISE") : undefined;
+      return [input?.cards?.[0].cards[0]?.retryEntry ?? false, raise && raise.kind === "RAISE" ? (raise.parts ?? []).map((p) => [p.domainId, p.count, p.dueDays]) : null];
+    };
+    eq(
+      "… what the old window cost at L12: over 173 days the card read clean (counted at level 12, nothing to bring); over the shared window it is a retry due Wednesday, and RAISE asks its next pass",
+      [await raiseOf(storeAt(db, 1, 0, retryReadDaysOf(12, 1) - 173)), await raiseOf(storeAt(db, 1, 0))],
+      [[false, null], [true, [["d-inf", 1, [addDays(wk1, 2)]]]]]
+    );
+  }
+  {
+    // Final round (the clean-entry window): the wider of the current acceptance's m and the live one, R1's cleanReadDaysOf.
+    // A card entered level 12 on a retry 200 days ago, its interval set under an interval multiplier of 1.5 (recorded on the
+    // acceptance) since unequipped (live m 1): the live window (184 days) misses both rows, the acceptance's (264) holds them.
+    const wk1 = W(1);
+    const now = at(wk1, 4, 15);
+    const dbOld = (key = cardsAtLevelKey(["d-inf"], 12, "rc"), withCard = true): FakeDb => {
+      const db = dbTwo();
+      db.measures.ms2 = [{ kind: "CARDS_AT_LEVEL", role: "PAYS", scope: { domainIds: ["d-inf"] }, minLevel: 12, target: 25, baseline: 20, rateSource: "SCOPE", measureKey: key }];
+      db.ideas = withCard ? [{ id: "c-old", domainId: "d-inf", level: 12, dueDate: at(addDays(wk1, 2), 9), graceEndsAt: null, createdAt: at(addDays(wk1, -400), 9), isArchived: false, questionType: "SHORT" }] : [];
+      db.reviews = [
+        { ideaId: "c-old", day: addDays(wk1, -200), occurredAt: at(addDays(wk1, -200), 9), detail: "strike · L11" },
+        { ideaId: "c-old", day: addDays(wk1, -199), occurredAt: at(addDays(wk1, -199), 9), detail: "advanced · L11→12" },
+      ];
+      return db;
+    };
+    type Acc = number | null | "rejects" | "throwsAtOnce" | "absent";
+    const run = async (db: FakeDb, o: { acc: Acc; liveM?: number; grace?: number }) => {
+      const s = storeOf(db);
+      const froms: DayKey[] = [];
+      const accReads: string[][] = [];
+      const store: QuestStore = {
+        ...s,
+        reachLoadout: async () => ({ intervalMultiplier: o.liveM ?? 1, extraStrikes: 0, graceExtraDays: o.grace ?? 0 }),
+        async reviewRows(u, ids, from) {
+          froms.push(from);
+          return s.reviewRows(u, ids, from);
+        },
+        ...(o.acc === "absent"
+          ? {}
+          : {
+              acceptanceMultiplier: (u: string, roadmapId: string): Promise<number | null> => {
+                accReads.push([u, roadmapId]);
+                if (o.acc === "throwsAtOnce") throw new Error("acceptance read failed at once");
+                if (o.acc === "rejects") return Promise.reject(new Error("acceptance read failed"));
+                return Promise.resolve(o.acc as number | null);
+              },
+            }),
+      };
+      const errors: string[] = [];
+      const origError = console.error;
+      console.error = (...args: unknown[]) => void errors.push(args.map(String).join(" "));
+      let input: Awaited<ReturnType<typeof weekQuestInputFor>> = null;
+      let threw = "";
+      try {
+        input = await weekQuestInputFor(store, U, db.facts[0], wk1, now);
+      } catch (err) {
+        threw = String(err);
+      } finally {
+        console.error = origError;
+      }
+      const raise = input ? weekQuestsFor(input).quests.find((q) => q.kind === "RAISE") : undefined;
+      return {
+        backs: froms.map((f) => daysBetween(f, wk1)),
+        accReads,
+        retry: input?.cards?.[0].cards[0]?.retryEntry ?? false,
+        raise: raise && raise.kind === "RAISE" ? (raise.parts ?? []).map((p) => [p.domainId, p.count, p.dueDays]) : null,
+        errors,
+        threw,
+      };
+    };
+    const wide = await run(dbOld(), { acc: 1.5 });
+    eq(
+      "weekQuestInputFor reads an `rc` part's ledger over the wider of the acceptance's m (1.5) and the live one (1): 264 days, R1's cleanReadDaysOf(12, 1.5, the live loadout)",
+      [wide.backs, cleanReadDaysOf(12, 1.5, { intervalMultiplier: 1, graceExtraDays: 0 })],
+      [[264], 264]
+    );
+    eq("… the acceptance read once, by the user and the milestone's roadmap", wide.accReads, [[U, dbOld().facts[0].roadmap.id]]);
+    eq("… so the card that entered 12 on a retry under the since-unequipped loadout is a retry, and RAISE asks its next pass (Wednesday)", [wide.retry, wide.raise], [true, [["d-inf", 1, [addDays(wk1, 2)]]]]);
+    const before = await run(dbOld(), { acc: "absent" });
+    eq("a store with no acceptance read (as before this round) reads the live m alone: 184 days, the retry entry read clean and RAISE asks nothing of it", [before.backs, before.retry, before.raise], [[184], false, null]);
+    const narrowAcc = await run(dbOld(), { acc: 1, liveM: 1.5, grace: 2 });
+    eq("a live m wider than the acceptance's (1.5 over 1), grace +2: 268 days, R1's figure", [narrowAcc.backs, cleanReadDaysOf(12, 1, { intervalMultiplier: 1.5, graceExtraDays: 2 }), narrowAcc.retry], [[268], 268, true]);
+    const grid: string[] = [];
+    for (const acc of [1, 1.25, 1.5, null, Number.NaN, 0, -2])
+      for (const liveM of [1, 1.5])
+        for (const grace of [0, 2]) {
+          const r = await run(dbOld(), { acc, liveM, grace });
+          const want = cleanReadDaysOf(12, acc, { intervalMultiplier: liveM, graceExtraDays: grace });
+          if (json(r.backs) !== json([want])) grid.push(`acc ${acc} live ${liveM} g${grace}: ${json(r.backs)} ≠ ${want}`);
+        }
+    check("the quests' window equals R1's cleanReadDaysOf on every case (acceptance m 1, 1.25, 1.5, none, NaN, 0, −2 × live m 1, 1.5 × grace 0, 2)", grid.length === 0, grid.join("; "));
+    const rejects = await run(dbOld(), { acc: "rejects" });
+    const atOnce = await run(dbOld(), { acc: "throwsAtOnce" });
+    check(
+      "an acceptance read that rejects, or throws at once, is logged and the window reads the live m (184 days); the input is still built",
+      [rejects, atOnce].every((r) => json(r.backs) === json([184]) && !r.threw && r.errors.some((e) => /acceptance's interval multiplier is unavailable/.test(e))),
+      json([rejects, atOnce].map((r) => ({ backs: r.backs, threw: r.threw, errors: r.errors.slice(0, 1) })))
+    );
+    const plainKey = await run(dbOld(cardsAtLevelKey(["d-inf"], 12)), { acc: 1.5 });
+    const noCard = await run(dbOld(undefined, false), { acc: 1.5 });
+    eq("… and the acceptance is read only when an `rc` measure has a card at L: none for a plain key, none with no card at 12", [plainKey.accReads.length, plainKey.backs.length, noCard.accReads.length, noCard.backs.length], [0, 0, 0, 0]);
+    const server = read("src/lib/roadmap-quests-server.ts");
+    const code = (t: string) => t.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
+    const storeRead = /async acceptanceMultiplier\(userId, roadmapId\) \{[\s\S]{0,400}?\n {2}\},/.exec(server)?.[0] ?? "";
+    check(
+      "the Prisma quest store reads the current acceptance as R1 does: the user's roadmap, undone ones skipped, acceptanceOrderBy (newest version, then newest record)",
+      /prisma\.roadmapAcceptance\.findFirst\(/.test(storeRead) && /undoneAt: null/.test(storeRead) && /roadmap: \{ userId \}/.test(storeRead) && /orderBy: acceptanceOrderBy\(\)/.test(storeRead),
+      storeRead
+    );
+    check(
+      "one window in the quest server: retryReadDaysOf is called once, in cleanWindowDaysOf at the wider m, which wave 3 calls with the milestone's roadmap",
+      (code(server).match(/retryReadDaysOf\(/g) ?? []).length === 1 &&
+        /async function cleanWindowDaysOf\([\s\S]*?const m = Math\.max\(liveM,[\s\S]*?return retryReadDaysOf\(L, m, loadout\.graceExtraDays \|\| 0\);/.test(code(server)) &&
+        /await cleanWindowDaysOf\(store, userId, facts\.roadmap\.id, L, m, loadout\)/.test(code(server))
+    );
+  }
+  {
+    // Lens 2 gap 8, R6's half (the server half, through R4's startCore, is R4's roadmap-server-check): Start → its rows →
+    // loadWeekQuests. Start freezes its week from overrides (the StartSnapshot, the started day, the lineage → template map)
+    // before its finish transaction writes them. Once written (the snapshot through the JSON column), the rows give the same
+    // set, a render finds Start's row and writes nothing, and next Monday's cron reads the stored snapshot's per-Domain need.
+    const wk1 = W(1);
+    const thu = addDays(wk1, 3);
+    const db = dbTwo();
+    const ms = db.facts[0].milestone;
+    const snap = snapshotOf({ startedDay: thu, dueDay: ADD_DUE, level: 6, newNeededStart: 0, newNeededByDomain: { "d-inf": 13, "d-risk": 3 } });
+    // Before the finish transaction: STARTING, no snapshot, no goal, the templates made (from Thursday) but not on the items, no Start reading.
+    ms.status = "STARTING";
+    ms.startedDay = null;
+    ms.feasibility = PLAN_STUB;
+    db.facts[0].goal = null;
+    for (const it of db.items.ms2) it.templateId = null;
+    db.templates = db.templates.map((t) => ({ ...t, startDay: thu }));
+    db.readings = [];
+    const store = storeOf(db);
+    const startAt = at(thu, 10);
+    const started = await weekQuestSetFor(U, "ms2", wk1, startAt, { store, overrides: { startedDay: thu, snapshot: snap, templateIds: { "lin-p1": "t-bt", "lin-s1": "t-s1" } } });
+    // The finish transaction: STARTED with the snapshot (a JSON column), the goal, the items' templates, the Start readings
+    // (each measure's recall cards at level 6+: Inference 10, its 3 multiple-choice cards left out; Risk Management 8), Start's set.
+    ms.status = "STARTED";
+    ms.startedDay = thu;
+    ms.feasibility = JSON.parse(JSON.stringify(snap));
+    db.facts[0].goal = { id: "g2", dueDay: ADD_DUE, closed: false, closedDay: null, archivedDay: null };
+    for (const it of db.items.ms2) it.templateId = it.lineageId === "lin-p1" ? "t-bt" : it.lineageId === "lin-s1" ? "t-s1" : null;
+    db.readings = [
+      { measureKey: cardsAtLevelKey(["d-inf"], 6, "r"), day: thu, value: 10 },
+      { measureKey: cardsAtLevelKey(["d-risk"], 6, "r"), day: thu, value: 8 },
+    ];
+    const wrote = started ? await store.insertQuestWeek(U, "rm1", started, "START", startAt) : 0;
+    const later = at(thu, 11);
+    const fromRows = await weekQuestSetFor(U, "ms2", wk1, later, { store });
+    const partsOf = (set: WeekQuestSet | null | undefined, kind: "RAISE" | "ADD") => {
+      const q = set?.quests.find((x) => x.kind === kind);
+      return q && (q.kind === "RAISE" || q.kind === "ADD") ? (q.parts ?? []).map((p) => p.domainId) : null;
+    };
+    eq(
+      "Start's set (from its overrides) is generator 2, with an ADD part per Domain, and is the set its rows give once written (quests and basis but the read-at line)",
+      [wrote, started?.generator, partsOf(started, "ADD"), canon(fromRows?.quests) === canon(started?.quests), canon(fromRows?.basis.slice(1)) === canon(started?.basis.slice(1))],
+      [1, 2, ["d-inf", "d-risk"], true, true]
+    );
+    const render = await freezeWeekQuests(U, later, "RENDER", { ...ON, store });
+    const load = await loadWeekQuests(U, later, { ...ON, store });
+    eq(
+      "… a render finds Start's row and writes nothing; loadWeekQuests shows that row, frozen, with the Domains' parts named",
+      [render, db.weeks.map((w) => w.source), load?.frozen, canon(load?.set.quests) === canon(started?.quests), (load?.view.rows.find((r) => r.kind === "ADD") as WeekQuestRowV2 | undefined)?.partsLine ?? null],
+      [{ froze: 0, skipped: null }, ["START"], true, true, "3 to Inference · 1 to Risk Management · multiple choice not counted"]
+    );
+    const mon2 = at(W(2), 4, 15);
+    const cron = await freezeWeekQuests(U, mon2, "CRON", { ...ON, store });
+    const stored = db.weeks[1] ? setOfStored(db.weeks[1]) : null;
+    const direct = await weekQuestSetFor(U, "ms2", W(2), mon2, { store, overrides: { snapshot: snap } });
+    eq(
+      "… and next Monday's cron freezes from the stored snapshot as read back from JSON: the set the in-memory snapshot gives, an ADD part per Domain from needRateByDomain",
+      [cron, canon(stored) === canon(direct), partsOf(stored, "ADD")],
+      [{ froze: 1, skipped: null }, true, ["d-inf", "d-risk"]]
+    );
+  }
+  {
+    // Legacy roadmaps (F-R4-16): no week quests, nothing frozen.
+    const legacy = dbOf();
+    legacy.facts[0].roadmap.depth = null;
+    const store = storeOf(legacy);
+    eq("a Field roadmap with depth null is legacy: loadWeekQuests is null and the freeze skips it", [await loadWeekQuests(U, at(W(1), 9), { ...ON, store }), await freezeWeekQuests(U, at(W(1), 4, 15), "CRON", { ...ON, store }), legacy.weeks.length], [null, { froze: 0, skipped: "NO_ROADMAP" }, 0]);
+    const f = dbOf().facts[0];
+    const row = (stage: string | null | undefined, id = "x"): QuestMilestoneFacts => ({ ...f, milestone: { ...f.milestone, id, stage } });
+    eq(
+      "isLegacyFacts: depth set and every row staged is not legacy; a row with no stage is; a read without the rev-4 columns is",
+      [
+        isLegacyFacts(f, [f, row("FLUENT")]),
+        isLegacyFacts(f, [f, row(null)]),
+        isLegacyFacts({ ...f, roadmap: { ...f.roadmap, depth: undefined } }, [f]),
+        isLegacyFacts(row(undefined, "ms2"), [row(undefined, "ms2")]),
+      ],
+      [false, true, true, true]
+    );
+    const track = { ...f, roadmap: { ...f.roadmap, fieldId: null, track: "BODY", depth: null }, milestone: { ...f.milestone, stage: "STAGE_1" } };
+    eq("a track plan (depth null by design) with its stages set is not legacy", isLegacyFacts(track, [track]), false);
+  }
+  {
+    // A BODY track plan: its practice row on Today carries the health line.
+    const body = dbOf();
+    body.facts[0].roadmap = { ...body.facts[0].roadmap, fieldId: null, track: "BODY", depth: null };
+    body.facts[0].milestone.stage = "STAGE_1";
+    body.measures.ms2 = [];
+    body.items.ms2 = body.items.ms2.filter((i) => i.kind !== "DOMAIN");
+    const load = await loadWeekQuests(U, at(addDays(W(1), 2), 10), { ...ON, store: storeOf(body) });
+    eq("a BODY plan's PRACTICE row on Today carries `health`; nothing else does", load?.view.rows.map((r) => [r.kind, (r as WeekQuestRowV2).health ?? null]), [["PRACTICE", true]]);
+    const field = await loadWeekQuests(U, at(addDays(W(1), 2), 10), { ...ON, store: storeOf(dbOf()) });
+    check("… a Field plan's rows never do", !!field && field.view.rows.every((r) => (r as WeekQuestRowV2).health === undefined));
+  }
+}
+
 async function main() {
   await server();
   await fixRound();
   fixRound2();
+  await rev4();
   greps();
   if (failed > 0) {
     console.log(`\nroadmap-quests-check: ${passed} passed, ${failed} FAILED`);

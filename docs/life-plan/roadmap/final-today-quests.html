@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="dark">
 <title>Today week quests</title>
-<meta name="description" content="Mockup, revision 3: Today's Week quests · Milestone 2 card in context with M2's board (Must lane, Owed row, DayLedger Quest ring, Next up) at 344, 932 and 1440 px, collapsed and open, with its states.">
+<meta name="description" content="Mockup, revision 4: Today at 344 and 932 px with the quiet aim line (set an aim on fresh-start days, a draft waiting, a milestone ready to start), its back-off and compact rules, and the week quests card with per-Domain parts and a Body practice row's health line; revision 3's frames follow.">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400&family=Inter:wght@400..700&family=JetBrains+Mono:wght@500;600&display=swap">
 <style>
 /* =====================================================================
@@ -711,6 +711,127 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
 .today-board .foot-note{font-size:12px;line-height:16px;color:var(--ink-2);text-align:center;padding:4px 0 8px}
 .today-board .page-tight{padding-top:8px}
 
+/* rev4-css:start */
+/* =====================================================================
+   REVISION 4 (roadmap-rev4.md, 2026-10-05): the aim asked in place, depth
+   and stages, "keep the depth, move the date", keys-only drafts. Still
+   rm-* names only, ink only: no gold (MP spending), no --owed (nothing here
+   is debt), no status hue without a word. What roadmap.css adds in rev 4.
+   ===================================================================== */
+/* the ASK card (F-R4-1): about 344 px at 344, at most 410 with a seed and a last aim */
+.rm-ac-call{padding:12px 14px 6px;display:flex;flex-direction:column}
+.rm-ac-call .ac-h{font:600 19px/23px var(--font-display)}
+.rm-ac-call .ac-last{margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rm-ac-call .ac-body{font-size:14px;line-height:19px;color:var(--ink-1);margin-top:6px}
+.rm-ac-call .ac-rank{margin-top:4px}
+.rm-ac-call .ac-cont{margin-top:6px;color:var(--ink-1)}
+.rm-ac-call textarea.st-input{margin-top:6px;min-height:65px;height:65px;padding:8px 12px;resize:none}
+.rm-ac-call .ac-cont+textarea.st-input{margin-top:2px}
+.rm-ac-seed{display:flex;align-items:center;gap:8px;min-height:40px;margin-top:6px;padding:0 2px;font:600 14px/19px var(--font-ui);color:var(--ink-0);text-decoration:none;min-width:0;width:100%;text-align:left}
+.rm-ac-seed svg.i{width:16px;height:16px;color:var(--ink-1)}
+.rm-ac-seed span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;text-decoration:underline;text-underline-offset:3px}
+.rm-ac-call .ac-go{margin-top:6px}
+.rm-ac-seed+.ac-go{margin-top:2px}
+.rm-ac-quiet{display:flex;gap:2px;margin-left:-10px}
+.rm-ac-quiet .btn{min-height:40px}
+/* the LATER line keeps rev 3's .aim-empty geometry (56 px min) with the new copy */
+.aim-empty .t b{color:var(--ink-0);font-weight:600}
+/* Today's aim line (F-R4-3): ≤ 72 px at 344, never red, never counted */
+.rm-aim-line{display:flex;align-items:center;gap:4px;min-height:56px;padding:6px 6px 6px 14px}
+.rm-aim-line>a{flex:1;min-width:0;display:flex;gap:10px;align-items:center;min-height:48px;text-decoration:none;color:var(--ink-1);font-size:14px;line-height:19px}
+.rm-aim-line>a>svg.i{width:20px;height:20px;flex:none;color:var(--ink-1)}
+.rm-aim-line>a>span{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.rm-aim-line>a b{color:var(--ink-0);font-weight:600}
+.rm-aim-line .icon-btn{width:40px;height:40px;border-radius:10px}
+/* shipped: data-compact is the clock alone, so the hide is keyed on lane T's wrapper and the board's close-due state */
+.rm-quests-slot[data-compact]:has(> .rm-aim-slot[data-close-due]){display:none}
+/* the depth, date and provenance lines (F-R4-15) */
+.rm-depth{display:flex;flex-direction:column;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-depth b{color:var(--ink-0);font-weight:600}
+.rm-depth .pl{display:flex;gap:6px;align-items:flex-start}
+.rm-depth .pl>svg.i{width:14px;height:14px;flex:none;margin-top:2px;color:var(--ink-2)}
+.rm-depth .q{color:var(--ink-2)}
+.rm-basisk{display:block;font:400 12px/16px var(--font-ui);letter-spacing:0;text-transform:none;color:var(--ink-2);margin-top:1px}
+.rm-rp .pf .rm-basisk{text-align:right}
+/* coverage breakdown (F-R4-9) */
+.rm-cov{display:flex;flex-direction:column}
+.rm-cov>li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:start;padding:8px 0;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-cov>li:first-child{border-top:0;padding-top:2px}
+.rm-cov>li b{color:var(--ink-0);font-weight:600}
+.rm-cov>li .btn{min-height:40px;margin:-8px -6px -8px 0}
+.rm-cov>li.below{color:var(--ink-0)}
+.rm-cov .un{grid-column:1/-1}
+/* the outline's line Domains (F-R4-24) */
+.rm-lgroup+.rm-lgroup{margin-top:10px}
+.rm-lgroup>.t-eyebrow{display:block;margin:0 0 2px;color:var(--ink-1)}
+.rm-lrow{display:grid;grid-template-columns:30px minmax(0,1fr) auto;align-items:center;gap:0 8px;min-height:44px;border-top:1px solid var(--line-1);font-size:14px;line-height:19px}
+.rm-lrow .k{font:500 12px/16px var(--font-mono);color:var(--ink-2)}
+.rm-lrow .t{min-width:0;overflow-wrap:anywhere}
+.rm-lrow .t small{display:block;font-size:12px;line-height:16px;color:var(--ink-2)}
+.rm-lrow .btn{min-height:40px;padding:0 10px}
+/* chips with a verdict word under the label (the By-when chips) */
+.rm-chips .chip.btn-chip{min-height:40px}
+.chip.btn-chip.two{flex-direction:column;align-items:flex-start;justify-content:center;gap:0;line-height:16px;padding:4px 12px;white-space:normal;text-align:left}
+.chip.btn-chip.two small{font:500 12px/15px var(--font-ui);color:var(--ink-2)}
+.chip.btn-chip.two[aria-pressed="true"] small{color:color-mix(in srgb,var(--page) 75%,transparent)}
+/* the Depth control: the stage name over its level */
+.segc.two button{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:48px;padding:4px 6px;line-height:17px}
+.segc.two button small{font:500 12px/15px var(--font-ui);color:var(--ink-2)}
+.segc.two button[aria-pressed="true"] small{color:color-mix(in srgb,var(--page) 75%,transparent)}
+/* Gemini's additions, one toggle per Domain on an exam aim (F-R4-21) */
+.rm-adds{padding:14px}
+.rm-adds .t{font-size:14px;line-height:19px}
+.rm-add{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:center;padding:10px 0;border-top:1px solid var(--line-1)}
+.rm-add:first-of-type{margin-top:10px}
+.rm-add b{font-weight:600}
+.rm-add .t-meta{grid-column:1}
+.rm-add.blocked b,.rm-add.blocked .t-meta{color:var(--ink-2)}
+.rm-adds .acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:center}
+/* date check (F-R4-11) */
+.rm-date .offers{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.rm-date .offers .btn{justify-content:flex-start;white-space:normal;text-align:left;line-height:1.3;padding:8px 14px}
+.rm-wp{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:18px;color:var(--ink-1);margin-top:8px}
+.rm-wp>svg.i{width:16px;height:16px;flex:none;margin-top:1px;color:var(--ink-1)}
+.rm-wp b{color:var(--ink-0);font-weight:600}
+/* stage rows: held, dropped, count gate */
+.ml-row.held .ms-n{border-style:dotted;color:var(--ink-2)}
+.ml-row.held b,.ml-row.dropped b{color:var(--ink-1)}
+.ml-row.dropped .ms-n{border-style:dashed;color:var(--ink-2)}
+.ml-row.dropped b{text-decoration:line-through;text-decoration-color:var(--ink-mute)}
+.ml-row .r .q{font:500 12px/16px var(--font-ui);color:var(--ink-2)}
+.tag-s{display:inline-flex;align-items:center;min-height:20px;padding:0 6px;border-radius:6px;border:1px solid var(--line-2);font:600 12px/16px var(--font-ui);color:var(--ink-1);margin-left:6px;vertical-align:1px;white-space:nowrap}
+/* week quest parts (F-R4-14) */
+.rm-parts-l{grid-column:2/-1;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-parts-l .more{color:var(--ink-2)}
+/* the arrangement line, the keys-only header, the integrity line */
+.rm-arr{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-arr>svg.i{width:18px;height:18px;flex:none;margin-top:0;color:var(--ink-1)}
+.pv-pick{border:1px dashed var(--line-ctl);color:var(--ink-1)}
+.pv-app{color:var(--ink-1)}
+/* the area-suggestion panel (ROADMAP_GAPS_LIVE only: lead-only, off in this build) */
+.rm-gaps{padding:14px}
+.rm-gaps .t-eyebrow{color:var(--ink-1)}
+.rm-gaps h3{font:600 17px/22px var(--font-display);margin-top:4px}
+.rm-gaps p{font-size:13px;line-height:18px;color:var(--ink-1);margin-top:6px}
+.rm-gap{padding:10px 0;border-top:1px solid var(--line-1);margin-top:10px}
+.rm-gap+.rm-gap{margin-top:0}
+.rm-gap b{font-weight:600}
+/* Settings: the Aim suggestions row (settings.css set-row, copied) */
+.set{padding:4px 14px}
+.set-row{display:flex;align-items:center;gap:8px 12px;min-height:60px;padding:10px 0;flex-wrap:wrap}
+.set-row+.set-row{border-top:1px solid var(--line-1)}
+.set-row .n{flex:1;min-width:160px}
+.set-row .n b{font-weight:500;display:block}
+.set-row .n span{display:block;font-size:13px;line-height:18px;color:var(--ink-2)}
+.set-grid{display:grid;gap:16px}
+@container main (min-width:760px){.set-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start}}
+/* mockup chrome for rev 4 */
+.mk-r4{border-top:2px solid var(--ink-0);margin-top:18px}
+.mk-r3{border-top:1px dashed var(--line-ctl);margin-top:24px}
+.mk-r3 .mk-cap{max-width:932px}
+.mk-flag{display:inline-flex;align-items:center;gap:6px;margin-left:8px;padding:1px 8px;border-radius:6px;border:1px dashed var(--line-ctl);font:600 12px/16px var(--font-mono);color:var(--ink-1)}
+.mk-fig.w312{max-width:344px}
+/* rev4-css:end */
 </style>
 </head>
 <body>
@@ -793,12 +914,260 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
 </defs>
 </svg>
 <header class="mk">
-  <div class="t-eyebrow">XTNL · Roadmap · mockup 5 of 5 · roadmap.md rev 3, F13, F14, F16 seams 16–17, F17</div>
-  <h1>Today — the week quests card</h1>
-  <p>Each started milestone is sliced into this life week (Monday 04:00 to Monday 04:00, Sydney): concrete actions whose counts code works out from the milestone's own gap, the weeks left, what the review schedule lets cards reach, and the time the app has seen you keep. The app's own rows verify each one: cards your reviews brought to the level (tested), cards you added (counted by the app), and sessions and steps you ticked. A week quest has no checkbox, pays nothing, and is frozen for its week. On Today it is a quiet card under the goals, headed <b>Week quests · Milestone 2</b> (the request's working name "This week's quests" would put a bare "quests" on screen, which the naming rules ban).</p>
-  <div class="mk-ex">Example data — fake but plausible, as of Thu 28 Jan 2027 09:12 · M2's board as merged at 9b3d299 · same plan as mockups 2–4</div>
+  <div class="t-eyebrow">XTNL · Roadmap · mockup 5 of 5 · roadmap-rev4.md, F-R4-3, F-R4-13, F-R4-14 (rev 3's F13, F14, F16 seams 16–17 and F17 below)</div>
+  <h1>Today — the aim line and the week quests card</h1>
+  <p>Today carries the aim in two ways. With no week quests, <b>the aim line</b> invites one quietly on fresh-start days and points to the aim's own next step: a draft waiting for a check, a milestone ready to start (revision 4). With a started milestone, <b>the week quests card</b> slices it into this life week (Monday 04:00 to Monday 04:00, Sydney): concrete actions whose counts code works out from each Domain's gap, the weeks left and what the review schedule lets cards reach; in revision 4 Bring and Add carry one part per Domain. The app's own rows verify each one. A week quest has no checkbox, pays nothing and is frozen for its week; nothing here is counted, red or in the bell.</p>
+  <div class="mk-ex">Example data — fake but plausible · the plan of mockups 1–4 · each frame says its "as of"</div>
   <nav class="mk-nav" aria-label="Roadmap mockups"><a href="final-roadmap-new.html">1 · Set an aim</a><a href="final-roadmap-draft.html">2 · Draft review</a><a href="final-roadmap.html">3 · Living roadmap</a><a href="final-aim-card.html">4 · Character page</a><a href="final-today-quests.html" aria-current="page">5 · Today's week quests</a></nav>
-  <div class="mk-legend" aria-label="Provenance classes as rendered">
+  <div class="mk-legend" aria-label="Provenance as rendered in revision 4">
+  <span><span class="pv pv-pick">practice type picked by Gemini from the app's list</span> GEMINI_PICK</span>
+  <span><span class="pv pv-app">added by the app</span> CODE</span>
+  <span><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>you chose this</span> YOURS</span>
+  <span><span class="cap">"suggested by Gemini, added by you on 5 Oct"</span> a Domain Gemini chose, for the plan's life</span>
+  <span><span class="cap">tested by your reviews · measured 09:12</span> MEASURED</span>
+  <span><span class="cap">counted by the app; it doesn't judge them</span> RECORDED</span>
+  <span><span class="cap">from your ticks</span> SELF_REPORTED</span>
+  <span><span class="cap">plain, basis on "How this is worked out"</span> WORKED_OUT</span>
+</div>
+</header>
+<!-- rev4:start -->
+<section class="mk-sec mk-r4" id="shipped">
+<h2>As shipped · revision 4 after the build and two fix rounds</h2>
+<p>These frames are redrawn to the shipped Today (src/app/today/page.tsx, AimLine.tsx and roadmap.css at the end of fix round 2). Where they differ from the first mockup, the code wins; docs/life-plan/roadmap-rev4.md, "As shipped", says why. <span class="mk-flag">example data</span> Every goal, count and date below is made up but plausible, and each frame says its day.</p>
+<ul class="mk-cap wide">
+<li><b>The set-an-aim ×</b> calls <b>hideAimPrompt()</b> ('hide:'): for 28 days /you shows nothing that suggests an aim (HIDDEN) and this line stays away. The first mockup's snoozeAimPrompt() ('later:') would have left /you's "Set an aim →" line up under a label that says "no aim suggestions for 4 weeks".</li>
+<li><b>The line sits in lane T's wrapper</b>, <code>&lt;div class="rm-aim-slot" data-close-due&gt;</code>, inside the quests slot. data-close-due comes from the server's board.</li>
+<li><b>The compact hide</b> is <code>.rm-quests-slot[data-compact]:has(&gt; .rm-aim-slot[data-close-due])</code>: data-compact follows the clock alone, so the rule needs the board's close-due state too. An evening with nothing to close still shows the line.</li>
+<li><b>The text fits</b> its 3-line clamp at 344 with 3.9 px to spare in the longest line Today draws ("Milestone 1 · Familiar, part 1 is ready to start. …"), by today-ui-check's estimate over 545 copies. START keeps the plain stage name, with no "(level 12)", which would take 4 lines.</li>
+<li><b>Add during a count gate</b> asks toward the gate's own count, at the 30% spare (frame A).</li>
+</ul>
+</section>
+<section class="mk-sec mk-r4">
+<h2>Revision 4 · the aim line on Today · 344 and 932 · Mon 12 Oct 2026, no aim set</h2>
+<p>Today mentions the aim in one quiet ink line (F-R4-3), in the quests slot inside .o9 after the goals, and only when no week quests are shown, so the two never appear together. It shows on fresh-start days (the life week's Monday, the 1st, or the first day back after 7 or more days with no app open), backing off to the 1st only after four fresh-start days with no answer; and whenever the aim's own next step waits (a draft to check, a milestone ready to start). It is never above Next up, the Must lane or an Ask, never red, never counted, never in the bell, and never a link to Review.</p>
+<div class="mk-row">
+<figure class="mk-fig">
+<div class="mk-tag"><b>344</b> × 882 · Galaxy Fold cover</div>
+<div style="position:relative"><div class="frame f344" id="r4td344"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#" aria-current="page"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">Today</div><h1>Monday, 12 October</h1></div>
+<nav class="tb-tabs tabs" aria-label="Today pages"><a class="tab-s" href="#" aria-current="page">Board</a><a class="tab-s" href="#">Weekly review</a><a class="tab-s" href="#">Rules</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page today-board">
+<div class="board">
+  <div class="c1">
+    <section class="card today-day o2" aria-label="Day ledger">
+  <div class="d-top">
+    <div class="seal" aria-hidden="true"><svg viewBox="0 0 52 52"><circle cx="26" cy="26" r="25" fill="var(--light-glow)"/><circle cx="26" cy="26" r="21" fill="none" stroke="var(--light)" stroke-width="2"/><path d="M26.6 13.5c.5 2.6-.9 4.2-2.3 5.8-1.4 1.6-2.7 3.1-2.7 5.5a4.7 4.7 0 0 0 9.4 0c0-1.8-.8-3.2-1.6-4.3-.3 1.1-.9 2-1.7 2.4.5-3.1-.2-6.8-1.1-9.4z" fill="var(--light)"/></svg></div>
+    <div><div class="streak-line"><span class="streak-num">12</span><span class="streak-word">day streak</span></div><p class="streak-cap">Kept today.</p></div>
+  </div>
+  <div class="d-full">
+    <div class="d-full-h"><span class="t-eyebrow">Full day</span><span class="t-meta num">1 of 3</span><span class="aside">+0.5 MP when it settles</span></div>
+    <div class="rings"><div class="rg"><div class="pring" style="--p:50" role="img" aria-label="Musts 1 of 2"><svg viewBox="0 0 36 36"><circle class="trk" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="val" cx="18" cy="18" r="15.9" pathLength="100"/></svg><div class="ctr"><span class="n">1/2</span></div></div><div class="lbl"><b>Musts</b><span class="num">1 of 2</span></div></div><div class="rg"><div class="pring" style="--p:40" role="img" aria-label="Quest 6 of 15"><svg viewBox="0 0 36 36"><circle class="trk" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="val" cx="18" cy="18" r="15.9" pathLength="100"/></svg><div class="ctr"><span class="n">6</span></div></div><div class="lbl"><b>Quest</b><span class="num">6 of 15</span></div></div><div class="rg"><div class="pring closed" style="--p:100" role="img" aria-label="Life 1 of 1"><svg viewBox="0 0 36 36"><circle class="trk" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="val" cx="18" cy="18" r="15.9" pathLength="100"/></svg><div class="ctr"><svg class="i"><use href="#i-check"/></svg></div></div><div class="lbl"><b>Life</b><span class="num">1 of 1</span></div></div></div>
+    <p class="full-note"><svg class="i"><use href="#i-clock"/></svg><span>A Full day also repairs a broken day before it, once a week.</span></p>
+  </div>
+  <div class="cells">
+    <div class="cell"><div class="v"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg><b>14.2</b></div><div class="k">life XP</div></div>
+    <div class="cell"><div class="v"><svg class="g c-pts" aria-label="review points"><use href="#c-pts"/></svg><b>9.0</b></div><div class="k">review pts</div></div>
+    <div class="cell"><div class="v">3h 10<small>/ 4h</small></div><div class="k">planned of capacity</div></div>
+  </div>
+</section>
+    <section class="card today-hero o3" aria-labelledby="nu-h">
+  <div class="hero-top"><span class="t-eyebrow">Next up · Quest</span><span class="t-meta num">about 6 min</span></div>
+  <h2 id="nu-h" class="t-display-m">Clear the review quest</h2>
+  <p class="t-meta">6 of 15 done · 15 cards of 26 due · paid in review points, 0 life XP</p>
+  <div class="segs hero-segs" role="img" aria-label="Quest: 6 of 15 reviewed"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="cur"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="focus-line"><svg class="sig"><use href="#s-know"/></svg><span>Focus today: <b>Trading</b> pays +32%</span></div>
+  <a class="btn btn-primary lg btn-block" href="#"><svg class="i"><use href="#i-study"/></svg>Start review <span class="kbd">R</span></a>
+</section>
+    <section class="card today-ask o4"><span class="dot" aria-hidden="true"></span><div class="txt"><b>Yesterday: 1 to record</b><span>Tick what you did before Sunday is judged.</span></div><button class="btn btn-secondary">Record</button></section>
+  </div>
+  <div class="c2" data-tour="today-lanes">
+    <section class="today-lane lane-must o5" aria-labelledby="lane-must"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-must">Must</h2><span class="lane-count num">1 of 2 kept</span></div><div class="card lane-body"><div class="t-row"><div class="row done"><button class="tick" data-shape="diamond" data-state="done" aria-label="Undo Morning meds"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Morning meds</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-care"/></svg>Care</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>kept 07:40</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+2.7</span></span></div></div><div class="t-row"><div class="row"><button class="tick" data-shape="diamond" aria-label="Tick Submit timesheet"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Submit timesheet</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-duty"/></svg>Duty</span><span class="r-bit due"><svg class="i"><use href="#i-clock"/></svg>due 17:00</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 8.3</span></span></div></div></div></section>
+    <section class="today-lane o6" aria-labelledby="lane-planned"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-planned">Planned</h2><span class="lane-count num">1 of 2</span></div><div class="card lane-body"><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Call the bank about the card"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Call the bank about the card</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-duty"/></svg>Duty</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>done 08:55</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+3.1</span></span></div></div><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Review the EUR/USD journal"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Review the EUR/USD journal</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit "><svg class="i"><use href="#i-clock"/></svg>30 min</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 6.0</span></span></div></div></div></section>
+    <section class="today-lane o7" aria-labelledby="lane-habits"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-habits">Habits</h2><span class="lane-count num">2 of 4</span></div><div class="card lane-body"><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Backtest"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Backtest</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit">45 min · 1 of 3 this week</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 9.1</span></span></div></div><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Japanese vocabulary drill"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Japanese vocabulary drill</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit">2 of 2 this week</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+6.2</span></span></div></div><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Read 20 pages"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Read 20 pages</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>done 07:15</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+3.4</span></span></div></div><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Evening stretch"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Evening stretch</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-body"/></svg>Body</span><span class="r-bit">10 min</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 2.6</span></span></div></div></div></section>
+
+  </div>
+  <div class="c3">
+    <div class="o9"><div class="o9-stack"><section class="today-goals" aria-labelledby="goals-h">
+  <div class="sec-h"><span class="lane-mark"></span><h2 id="goals-h">Goals</h2><span class="aside">2 open</span></div>
+  <div class="card">
+    <div class="goal"><div class="gh"><b>Run 10K under 55:00</b><span><svg class="sig"><use href="#s-body"/></svg>Mid · by 29 Nov</span></div>
+      <div class="meter" role="meter" aria-valuenow="62" aria-valuemin="0" aria-valuemax="100" aria-label="Run 10K under 55:00: 62%"><i style="--v:.62"></i></div>
+      <div class="gf"><span class="num">62%</span><span>· from your ticks</span><span>· pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg><span class="num">6</span></span> × progress from 70%</span></div></div>
+    <div class="goal"><div class="gh"><b>Read Japanese manga without a dictionary</b><span><svg class="sig"><use href="#s-craft"/></svg>Long · by Dec 2027</span></div>
+      <div class="meter"><i style="--v:.15"></i></div>
+      <div class="gf"><span class="num">15%</span><span>· 1 of 7 steps</span><span>· pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg><span class="num">20</span></span> × progress from 70%</span></div></div>
+  </div>
+</section><div class="rm-quests-slot"><div class="rm-aim-slot"><section class="card rm-aim-line" id="r4line344" aria-label="Aim"><a href="final-roadmap-new.html"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span><b>A new week.</b> Set an aim: what do you want to be able to do in a year or three?</span></a><button type="button" class="icon-btn" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i"><use href="#i-x"/></svg></button></section></div></div></div></div>
+    <section class="card today-side-rows o10" aria-label="Inbox and Anytime">
+  <button type="button" class="collapsed"><svg class="i"><use href="#i-inbox"/></svg><b>Inbox</b><span>2 to sort</span><svg class="i"><use href="#i-chev"/></svg></button>
+  <button type="button" class="collapsed" aria-expanded="false"><svg class="sig"><use href="#s-craft"/></svg><b>Anytime</b><span>4 · 1 planned later</span><svg class="i"><use href="#i-chev"/></svg></button>
+</section>
+    <section class="card today-close o11"><button type="button" class="close-day"><span class="ic"><svg class="i"><use href="#i-moon"/></svg></span><span class="close-txt"><b>Close the day</b><span>3 still open: move it, or do a must's minimum.</span></span><svg class="i" style="width:16px;height:16px;color:var(--ink-2)"><use href="#i-chev"/></svg></button></section>
+    <div class="foot-note o11"><p>Life XP and review points are two ledgers. They are never added together.</p></div>
+  </div>
+</div>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#" aria-current="page"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div><div class="fold" style="top:818px"><span>818 · tab bar starts</span></div><div class="fold" style="top:882px"><span>882 · first screen ends</span></div></div>
+
+<p class="mk-geo" id="geo-r4td344">Measuring… (open this file in a browser; the numbers fill in once the fonts load)</p>
+<ul class="mk-cap"><li><b>Placement:</b> page.tsx's questsSlot is the week quests card when they show on Today, else the aim line inside lane T's <code>.rm-aim-slot</code> wrapper, else nothing. At 344 it follows the lanes and the goals, below the fold, as the week quests card did.</li><li><b>The line</b> (.card.rm-aim-line): a 20 px route glyph, the text as one link (14/19, ink-1, at most 3 lines, a target of 48 px or more), and a 40 px quiet × labelled "Not now: no aim suggestions for 4 weeks". <b>Shipped:</b> it calls <b>hideAimPrompt()</b>, the 4-week 'hide:' cookie the /you LATER line's × writes, so /you shows HIDDEN (no "Set an aim →" line) and this line stays away; capture's offer is quiet too. The /you ASK card's "Not now" writes 'later:', which also quiets this line.</li><li>Nothing joins todayCountsOf, the nav's "Today 2", the bell or the Asks; there is no chime and no shortcut.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>932</b> · rail · in c3 under Goals</div>
+<div class="mk-scroll"><div class="frame f932" id="r4td932"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#" aria-current="page"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">Today</div><h1>Monday, 12 October</h1></div>
+<nav class="tb-tabs tabs" aria-label="Today pages"><a class="tab-s" href="#" aria-current="page">Board</a><a class="tab-s" href="#">Weekly review</a><a class="tab-s" href="#">Rules</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page today-board">
+<div class="board">
+  <div class="c1">
+    <section class="card today-day o2" aria-label="Day ledger">
+  <div class="d-top">
+    <div class="seal" aria-hidden="true"><svg viewBox="0 0 52 52"><circle cx="26" cy="26" r="25" fill="var(--light-glow)"/><circle cx="26" cy="26" r="21" fill="none" stroke="var(--light)" stroke-width="2"/><path d="M26.6 13.5c.5 2.6-.9 4.2-2.3 5.8-1.4 1.6-2.7 3.1-2.7 5.5a4.7 4.7 0 0 0 9.4 0c0-1.8-.8-3.2-1.6-4.3-.3 1.1-.9 2-1.7 2.4.5-3.1-.2-6.8-1.1-9.4z" fill="var(--light)"/></svg></div>
+    <div><div class="streak-line"><span class="streak-num">12</span><span class="streak-word">day streak</span></div><p class="streak-cap">Kept today.</p></div>
+  </div>
+  <div class="d-full">
+    <div class="d-full-h"><span class="t-eyebrow">Full day</span><span class="t-meta num">1 of 3</span><span class="aside">+0.5 MP when it settles</span></div>
+    <div class="rings"><div class="rg"><div class="pring" style="--p:50" role="img" aria-label="Musts 1 of 2"><svg viewBox="0 0 36 36"><circle class="trk" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="val" cx="18" cy="18" r="15.9" pathLength="100"/></svg><div class="ctr"><span class="n">1/2</span></div></div><div class="lbl"><b>Musts</b><span class="num">1 of 2</span></div></div><div class="rg"><div class="pring" style="--p:40" role="img" aria-label="Quest 6 of 15"><svg viewBox="0 0 36 36"><circle class="trk" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="val" cx="18" cy="18" r="15.9" pathLength="100"/></svg><div class="ctr"><span class="n">6</span></div></div><div class="lbl"><b>Quest</b><span class="num">6 of 15</span></div></div><div class="rg"><div class="pring closed" style="--p:100" role="img" aria-label="Life 1 of 1"><svg viewBox="0 0 36 36"><circle class="trk" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="val" cx="18" cy="18" r="15.9" pathLength="100"/></svg><div class="ctr"><svg class="i"><use href="#i-check"/></svg></div></div><div class="lbl"><b>Life</b><span class="num">1 of 1</span></div></div></div>
+    <p class="full-note"><svg class="i"><use href="#i-clock"/></svg><span>A Full day also repairs a broken day before it, once a week.</span></p>
+  </div>
+  <div class="cells">
+    <div class="cell"><div class="v"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg><b>14.2</b></div><div class="k">life XP</div></div>
+    <div class="cell"><div class="v"><svg class="g c-pts" aria-label="review points"><use href="#c-pts"/></svg><b>9.0</b></div><div class="k">review pts</div></div>
+    <div class="cell"><div class="v">3h 10<small>/ 4h</small></div><div class="k">planned of capacity</div></div>
+  </div>
+</section>
+    <section class="card today-hero o3" aria-labelledby="nu-h-2">
+  <div class="hero-top"><span class="t-eyebrow">Next up · Quest</span><span class="t-meta num">about 6 min</span></div>
+  <h2 id="nu-h-2" class="t-display-m">Clear the review quest</h2>
+  <p class="t-meta">6 of 15 done · 15 cards of 26 due · paid in review points, 0 life XP</p>
+  <div class="segs hero-segs" role="img" aria-label="Quest: 6 of 15 reviewed"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="cur"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="focus-line"><svg class="sig"><use href="#s-know"/></svg><span>Focus today: <b>Trading</b> pays +32%</span></div>
+  <a class="btn btn-primary lg btn-block" href="#"><svg class="i"><use href="#i-study"/></svg>Start review <span class="kbd">R</span></a>
+</section>
+    <section class="card today-ask o4"><span class="dot" aria-hidden="true"></span><div class="txt"><b>Yesterday: 1 to record</b><span>Tick what you did before Sunday is judged.</span></div><button class="btn btn-secondary">Record</button></section>
+  </div>
+  <div class="c2" data-tour="today-lanes">
+    <section class="today-lane lane-must o5" aria-labelledby="lane-must-2"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-must-2">Must</h2><span class="lane-count num">1 of 2 kept</span></div><div class="card lane-body"><div class="t-row"><div class="row done"><button class="tick" data-shape="diamond" data-state="done" aria-label="Undo Morning meds"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Morning meds</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-care"/></svg>Care</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>kept 07:40</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+2.7</span></span></div></div><div class="t-row"><div class="row"><button class="tick" data-shape="diamond" aria-label="Tick Submit timesheet"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Submit timesheet</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-duty"/></svg>Duty</span><span class="r-bit due"><svg class="i"><use href="#i-clock"/></svg>due 17:00</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 8.3</span></span></div></div></div></section>
+    <section class="today-lane o6" aria-labelledby="lane-planned-2"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-planned-2">Planned</h2><span class="lane-count num">1 of 2</span></div><div class="card lane-body"><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Call the bank about the card"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Call the bank about the card</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-duty"/></svg>Duty</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>done 08:55</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+3.1</span></span></div></div><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Review the EUR/USD journal"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Review the EUR/USD journal</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit "><svg class="i"><use href="#i-clock"/></svg>30 min</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 6.0</span></span></div></div></div></section>
+    <section class="today-lane o7" aria-labelledby="lane-habits-2"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-habits-2">Habits</h2><span class="lane-count num">2 of 4</span></div><div class="card lane-body"><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Backtest"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Backtest</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit">45 min · 1 of 3 this week</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 9.1</span></span></div></div><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Japanese vocabulary drill"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Japanese vocabulary drill</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit">2 of 2 this week</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+6.2</span></span></div></div><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Read 20 pages"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Read 20 pages</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>done 07:15</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+3.4</span></span></div></div><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Evening stretch"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Evening stretch</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-body"/></svg>Body</span><span class="r-bit">10 min</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 2.6</span></span></div></div></div></section>
+
+  </div>
+  <div class="c3">
+    <div class="o9"><div class="o9-stack"><section class="today-goals" aria-labelledby="goals-h">
+  <div class="sec-h"><span class="lane-mark"></span><h2 id="goals-h">Goals</h2><span class="aside">2 open</span></div>
+  <div class="card">
+    <div class="goal"><div class="gh"><b>Run 10K under 55:00</b><span><svg class="sig"><use href="#s-body"/></svg>Mid · by 29 Nov</span></div>
+      <div class="meter" role="meter" aria-valuenow="62" aria-valuemin="0" aria-valuemax="100" aria-label="Run 10K under 55:00: 62%"><i style="--v:.62"></i></div>
+      <div class="gf"><span class="num">62%</span><span>· from your ticks</span><span>· pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg><span class="num">6</span></span> × progress from 70%</span></div></div>
+    <div class="goal"><div class="gh"><b>Read Japanese manga without a dictionary</b><span><svg class="sig"><use href="#s-craft"/></svg>Long · by Dec 2027</span></div>
+      <div class="meter"><i style="--v:.15"></i></div>
+      <div class="gf"><span class="num">15%</span><span>· 1 of 7 steps</span><span>· pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg><span class="num">20</span></span> × progress from 70%</span></div></div>
+  </div>
+</section><div class="rm-quests-slot"><div class="rm-aim-slot"><section class="card rm-aim-line" id="r4line932" aria-label="Aim"><a href="final-roadmap-new.html"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span><b>A new week.</b> Set an aim: what do you want to be able to do in a year or three?</span></a><button type="button" class="icon-btn" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i"><use href="#i-x"/></svg></button></section></div></div></div></div>
+    <section class="card today-side-rows o10" aria-label="Inbox and Anytime">
+  <button type="button" class="collapsed"><svg class="i"><use href="#i-inbox"/></svg><b>Inbox</b><span>2 to sort</span><svg class="i"><use href="#i-chev"/></svg></button>
+  <button type="button" class="collapsed" aria-expanded="false"><svg class="sig"><use href="#s-craft"/></svg><b>Anytime</b><span>4 · 1 planned later</span><svg class="i"><use href="#i-chev"/></svg></button>
+</section>
+    <section class="card today-close o11"><button type="button" class="close-day"><span class="ic"><svg class="i"><use href="#i-moon"/></svg></span><span class="close-txt"><b>Close the day</b><span>3 still open: move it, or do a must's minimum.</span></span><svg class="i" style="width:16px;height:16px;color:var(--ink-2)"><use href="#i-chev"/></svg></button></section>
+    <div class="foot-note o11"><p>Life XP and review points are two ledgers. They are never added together.</p></div>
+  </div>
+</div>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#" aria-current="page"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div></div>
+
+<p class="mk-geo" id="geo-r4td932" style="max-width:932px">Measuring… (open this file in a browser; the numbers fill in once the fonts load)</p>
+<ul class="mk-cap wide"><li>From 640 px of main the line sits in c3, under Goals, beside the DayLedger and Next up. The Quest ring is the review quest's; the line names no quest.</li><li><b>Shipped:</b> c3 is about 339 px wide here (315 px at 1440), and every copy fits its 3 lines. At viewports of 724–860 px (iPad portrait) and 1184–1414 px (1366 px laptops) c3 is narrower than the 344 px column, and START would take 4 lines; the finishing round removed the clamp from a 640 px container, so the rank words are never cut.</li></ul>
+</figure>
+</div>
+</section>
+<section class="mk-sec mk-r4">
+<h2>Revision 4 · the aim line's kinds · 344</h2>
+<p>The rule is pure (roadmap-invite todayAimLineOf, lane 0) and returns data; AimLine renders the copy. Each kind's bold lead is the line's first sentence. No kind says behind, late, overdue, missed, stalled or due, names Gemini, or says "earn" or a bare "quest".</p>
+<div class="mk-row">
+<figure class="mk-fig">
+<div class="mk-tag"><b>SET</b> · WEEK, MONTH, BACK, NEXT</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="today-goals" aria-labelledby="g-mini"><div class="sec-h"><span class="lane-mark"></span><h2 id="g-mini">Goals</h2><span class="aside">2 open</span></div><div class="card"><div class="goal"><div class="gh"><b>Run 10K under 55:00</b><span><svg class="sig"><use href="#s-body"/></svg>Mid · by 29 Nov</span></div><div class="gf"><span class="num">62%</span><span>· from your ticks</span></div></div></div></section><div class="rm-quests-slot" style="margin-top:16px"><div class="rm-aim-slot"><section class="card rm-aim-line" aria-label="Aim"><a href="final-roadmap-new.html"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span><b>A new week.</b> Set an aim: what do you want to be able to do in a year or three?</span></a><button type="button" class="icon-btn" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i"><use href="#i-x"/></svg></button></section></div></div><div style="height:12px"></div><section class="card rm-aim-line" aria-label="Aim"><a href="final-roadmap-new.html"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span><b>A new month.</b> Set an aim: what do you want to be able to do in a year or three?</span></a><button type="button" class="icon-btn" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i"><use href="#i-x"/></svg></button></section><div style="height:12px"></div><section class="card rm-aim-line" aria-label="Aim"><a href="final-roadmap-new.html"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span><b>Welcome back.</b> Set an aim: what do you want to be able to do in a year or three?</span></a><button type="button" class="icon-btn" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i"><use href="#i-x"/></svg></button></section><div style="height:12px"></div><section class="card rm-aim-line" id="r4lineNext" aria-label="Aim"><a href="final-roadmap-new.html"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span><b>Your last aim is done.</b> Set the next one: what do you want to be able to do in a year or three?</span></a><button type="button" class="icon-btn" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i"><use href="#i-x"/></svg></button></section>
+</div></div></div><p class="mk-geo" id="geo-r4lineNext">Measuring… (open this file in a browser; the numbers fill in once the fonts load)</p>
+<ul class="mk-cap"><li><b>WEEK</b>, Mon 12 Oct 2026: no roadmap, the prompt is ASK, a Monday, and fewer than 4 fresh-start days since the ask began.</li><li><b>MONTH</b>, Tue 1 Dec 2026: the 1st. After four ignored fresh-start days, only the 1st shows it (the back-off): Mondays show nothing.</li><li><b>BACK</b>, Thu 22 Oct 2026: the first day back after 9 days with no DAY_OPEN row (Tue 13 Oct). Read from life-day keys, so 02:00 on a Monday is still Sunday.</li><li><b>NEXT</b>, Mon 20 Mar 2028: the latest roadmap was done on Sun 12 Mar, within 28 days. Each leads to /you/roadmap/new.</li><li>"Not now", turning the Settings switch back on, or a closed aim moves the ask's anchor, so the back-off starts again; nothing is counted per view.</li><li><b>Geometry:</b> every kind is 3 lines or fewer at 344 (216 px of text beside the glyph and the ×), so the card is at most 71 px (3 × 19 + 6 + 6 + 2): within the 72 px bound. <b>Shipped:</b> today-ui-check estimates every copy from Inter's advance widths and the CSS's own numbers; NEXT is the longest SET line, and START's "part 1" lines are the longest Today draws (212.1 of 216 px). The × on every SET kind writes 'hide:'.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>DRAFT</b> and <b>START</b></div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card rm-aim-line" aria-label="Aim"><a href="final-roadmap-draft.html"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span><b>A roadmap draft is waiting for your check.</b></span></a><button type="button" class="icon-btn" aria-label="Not now: hide this for a week"><svg class="i"><use href="#i-x"/></svg></button></section><div style="height:12px"></div><section class="card rm-aim-line" aria-label="Aim"><a href="final-roadmap.html#now"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span><b>Milestone 3 · Retained is ready to start.</b> Reaching it gives the Aim rank Specialist.</span></a><button type="button" class="icon-btn" aria-label="Not now: hide this for a week"><svg class="i"><use href="#i-x"/></svg></button></section><div style="height:12px"></div><section class="card rm-aim-line" aria-label="Aim"><a href="final-roadmap.html#now"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span><b>Milestone 2 · Familiar is ready to start.</b> It keeps your rank.</span></a><button type="button" class="icon-btn" aria-label="Not now: hide this for a week"><svg class="i"><use href="#i-x"/></svg></button></section><div style="height:12px"></div><section class="card rm-aim-line" aria-label="Aim"><a href="final-roadmap.html#now"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span><b>Milestone 2 is ready to start.</b> Reaching it gives the Aim rank Journeyman.</span></a><button type="button" class="icon-btn" aria-label="Not now: hide this for a week"><svg class="i"><use href="#i-x"/></svg></button></section><div style="height:12px"></div><section class="card rm-aim-line" aria-label="Aim"><a href="final-roadmap.html#now"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span><b>Milestone 1 · Familiar, part 1 is ready to start.</b> Reaching it gives the Aim rank Journeyman.</span></a><button type="button" class="icon-btn" aria-label="Not now: hide this for a week"><svg class="i"><use href="#i-x"/></svg></button></section><div style="height:12px"></div><section class="card rm-aim-line" aria-label="Aim"><a href="final-roadmap.html#now"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span><b>Milestone 5 · Mastered, part 1 is ready to start.</b> Reaching it gives the Aim rank Expert.</span></a><button type="button" class="icon-btn" aria-label="Not now: hide this for a week"><svg class="i"><use href="#i-x"/></svg></button></section>
+</div></div></div>
+<ul class="mk-cap"><li><b>DRAFT</b>: a draft with no running run, saved on day s before today, shows on s + 1, then on fresh-start days, 3 days in all (AIM_DRAFT_SHOWS_MAX); after that only on /you, until the draft is saved again. It leads to /you/roadmap. The Settings switch doesn't govern it: it is the user's own pending work (decision 49).</li><li><b>START</b>, Mon 28 Dec 2026: Familiar closed on Sun 27 Dec, so milestone 3 is ready the next day. It shows daily for 7 days, then on fresh-start days, and leads to /you/roadmap#now. The stage comes from STAGE_NAMES, so no title reaches Today; the rank comes from the shared helper.</li><li>Mon 23 Nov 2026: "Familiar, part 1" gave Journeyman, so milestone 2 (Familiar) keeps the rank: "It keeps your rank."</li><li>A track plan has no stage name: "Milestone 2 is ready to start." Its rank follows its place among the kept stages.</li><li>Their × is "Not now: hide this for a week" (snoozeAimStep): the cookie names the milestone, so a different milestone shows again. START never shows while ROADMAP_GOALS_LIVE is false.</li><li><b>Shipped, the last two lines:</b> "Familiar, part 1" (a new learner's first milestone, start-part) is the longest line Today draws and still fits 3 lines at 344. "Mastered, part 1" (a library already holding Fluent, start-part-depth) gives <b>Expert</b>, the rank of the gate below: a count gate toward the depth never gives Virtuoso before the depth is held (decision 40, as shipped). The stage keeps its plain name here, with no "(level 12)".</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>Hidden</b> · the evening, Close the day due · and a backed-off Monday</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="today-goals" aria-labelledby="g-mini"><div class="sec-h"><span class="lane-mark"></span><h2 id="g-mini">Goals</h2><span class="aside">2 open</span></div><div class="card"><div class="goal"><div class="gh"><b>Run 10K under 55:00</b><span><svg class="sig"><use href="#s-body"/></svg>Mid · by 29 Nov</span></div><div class="gf"><span class="num">62%</span><span>· from your ticks</span></div></div></div></section><div class="rm-quests-slot" data-compact="1" style="margin-top:16px"><div class="rm-aim-slot" data-close-due="1"><section class="card rm-aim-line" aria-label="Aim"><a href="final-roadmap-new.html"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span><b>A new week.</b> Set an aim: what do you want to be able to do in a year or three?</span></a><button type="button" class="icon-btn" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i"><use href="#i-x"/></svg></button></section></div></div><section class="card today-close" data-prominent="1" style="margin-top:16px"><button type="button" class="close-day"><span class="ic"><svg class="i"><use href="#i-moon"/></svg></span><span class="close-txt"><b>Close the day</b><span>3 still open: move it, or do a must's minimum.</span></span><svg class="i" style="width:16px;height:16px;color:var(--ink-2)"><use href="#i-chev"/></svg></button></section>
+</div></div></div>
+<ul class="mk-cap"><li><b>Shipped:</b> <code>.rm-quests-slot[data-compact]:has(&gt; .rm-aim-slot[data-close-due]) { display: none; }</code>: while Close the day is prominent and due the line is gone (the markup is in this frame; the rule hides it). data-compact turned out to follow the clock alone, so lane T wraps the line in <code>.rm-aim-slot</code> with data-close-due from the server's board, and today-ui-check fails any rule that names rm-aim with data-compact and without data-close-due. An evening with nothing to close still shows the line.</li><li>A Monday after four ignored fresh-start days looks the same: Goals, then nothing. The next 1st shows MONTH.</li></ul>
+</figure>
+</div>
+</section>
+<section class="mk-sec mk-r4">
+<h2>Revision 4 · week quests with per-Domain parts · 344</h2>
+<p>Version 2 of the generator (WEEK_QUEST_GENERATOR_VERSION 2): a stage milestone holds one card measure per Domain, so Bring and Add each become one row with parts. Counts come from the reach model (lane 0's reachTable) at the milestone's start parameters, and only recall cards count: a multiple-choice card added this week doesn't advance Add, and a card that entered level 12 on a next-day retry doesn't advance a final-stage part until its next pass.</p>
+<div class="mk-row">
+<figure class="mk-fig">
+<div class="mk-tag"><b>A</b> · Milestone 1 (Familiar, part 1) · as of Thu 12 Nov 2026</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="rm-quests-today" aria-label="Week quests, Milestone 1"><div class="sec-h"><span class="lane-mark"></span><h2>Week quests · Milestone 1</h2><span class="aside"><a class="hit" href="final-roadmap.html#now">until Sun</a></span></div><div class="card rm-quest"><p class="rm-quest-legend">Bring: tested by your reviews · Add: counted by the app · sessions and steps: your ticks</p><a class="rm-quest-row" href="final-roadmap.html#now" aria-label="Bring 6 cards to level 6+, 2 of 6 cards, tested by your reviews"><svg class="sig" aria-hidden="true"><use href="#s-know"/></svg><span class="lbl">Bring 6 cards to level 6+</span><span class="cnt num">2 of 6 cards</span><p class="rm-parts-l">2 in Probability · 4 in Inference</p><div class="meter thin" aria-hidden="true"><i style="--v:0.3333"></i></div><p class="ev">1 comes due Fri, 3 Sat, 2 Sun</p></a><a class="rm-quest-row" href="#" aria-label="Add 2 cards, 1 of 2 cards added, counted by the app"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Add 2 cards</span><span class="cnt num">1 of 2 cards</span><p class="rm-parts-l">2 to Inference · multiple choice not counted</p><div class="meter thin" aria-hidden="true"><i style="--v:0.5000"></i></div></a><button type="button" class="rm-quest-line" aria-label="Step: Book Exam P, 0 of 1 step, you tick it. Shows it in Anytime"><svg class="i" aria-hidden="true"><use href="#i-step"/></svg><span class="lbl">Step: Book Exam P <span>· in Anytime</span></span></button><button type="button" class="rm-quest-more" aria-expanded="false"><svg class="i"><use href="#i-down"/></svg>2 more</button><p class="rm-quest-foot">Week quests pay nothing. Bring, session and step rows count toward Milestone 1 as you do them; new cards count once they reach level 6+.</p></div></section>
+</div></div></div>
+<ul class="mk-cap"><li><b>Bring 6 cards to level 6+</b>: one row, its parts line "2 in Probability · 4 in Inference". Each part is min(the pace its gap asks, what its cards can reach by Sunday); progress is Σ min(what moved, the part's count), and the row is done when every part is.</li><li><b>Add 2 cards</b>: only Inference still needs cards. <b>Shipped:</b> during a count gate Add asks toward the gate's own count (Inference: 15 cards at level 6+), at WRITE_MARGIN's 30% spare: 1.3 × 15 → 20, less the 18 recall cards it holds, leaves 2. At a stage gate it asks toward the coverage figure: 1.3 × 25 → 33. Whether Add should pace toward the depth's count during a count gate is the lead's ruling. The clause "multiple choice not counted" shows while NON_RECALL_TYPES is non-empty.</li><li>"Book Exam P" is the exam's step, placed by the app in the first stage (F-R4-11).</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>B</b> · three Domains: Today shows two parts and "+1 more"</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="rm-quests-today" aria-label="Week quests, Milestone 1"><div class="sec-h"><span class="lane-mark"></span><h2>Week quests · Milestone 1</h2><span class="aside"><a class="hit" href="final-roadmap.html#now">until Sun</a></span></div><div class="card rm-quest"><p class="rm-quest-legend">Bring: tested by your reviews · Add: counted by the app · sessions and steps: your ticks</p><a class="rm-quest-row" href="final-roadmap.html#now" aria-label="Bring 9 cards to level 6+, 3 of 9 cards, tested by your reviews"><svg class="sig" aria-hidden="true"><use href="#s-know"/></svg><span class="lbl">Bring 9 cards to level 6+</span><span class="cnt num">3 of 9 cards</span><p class="rm-parts-l">3 in Probability · 3 in Inference <span class="more">· +1 more</span></p><div class="meter thin" aria-hidden="true"><i style="--v:0.3333"></i></div></a><a class="rm-quest-row" href="#" aria-label="Add 3 cards, 1 of 3 cards added, counted by the app"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Add 3 cards</span><span class="cnt num">1 of 3 cards</span><p class="rm-parts-l">2 to Inference · 1 to Calculus <span class="more">· multiple choice not counted</span></p><div class="meter thin" aria-hidden="true"><i style="--v:0.3333"></i></div></a><button type="button" class="rm-quest-more" aria-expanded="false"><svg class="i"><use href="#i-down"/></svg>3 more</button><p class="rm-quest-foot">Week quests pay nothing. Bring, session and step rows count toward Milestone 1 as you do them; new cards count once they reach level 6+.</p></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>With Calculus added (Gemini's suggestion, confirmed by the user, mockup 2), Bring has three parts. Today shows the first WEEK_QUEST_PARTS_TODAY (2) and "+1 more"; the roadmap's Now section shows every part. Every count keeps its unit.</li><li>Parts are not quests: WEEK_QUESTS_PER_WEEK_MAX stays 7.</li><li>Add's link goes to /add with the Domain of the largest part (here Inference).</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>C</b> · a Body plan's practice rows carry HEALTH_LINE</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="rm-quests-today" aria-label="Week quests, Milestone 2"><div class="sec-h"><span class="lane-mark"></span><h2>Week quests · Milestone 2</h2><span class="aside"><a class="hit" href="final-roadmap.html#now">until Sun</a></span></div><div class="card rm-quest"><p class="rm-quest-legend">sessions and steps: your ticks</p><a class="rm-quest-row" href="#" aria-label="Easy session, 3 sessions of 40 minutes, 1 of 3 sessions, from your ticks"><svg class="sig" aria-hidden="true"><use href="#s-body"/></svg><span class="lbl">Easy session · 3 sessions × 40 min</span><span class="cnt num">1 of 3 sessions</span><p class="ev">Not medical advice — check health-related changes with a professional.</p><p class="ev">from your ticks · the milestone counts 80% of these</p></a><a class="rm-quest-row" href="#" aria-label="Mobility session, 2 sessions of 20 minutes, 0 of 2 sessions, from your ticks"><svg class="sig" aria-hidden="true"><use href="#s-body"/></svg><span class="lbl">Mobility session · 2 sessions × 20 min</span><span class="cnt num">0 of 2 sessions</span><p class="ev">Not medical advice — check health-related changes with a professional.</p></a><p class="rm-quest-foot">Week quests pay nothing. Session rows count toward Milestone 2 as you tick them.</p></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>A BODY-track milestone's practice row shows HEALTH_LINE as its sub-line, on Today and on the roadmap page (F-R4-13), in code's words. A Field plan's rows never do.</li><li>The sessions are the app's own (Easy session, Mobility session): with the user's constraint "knee injury, no running" the plan uses only easy, mobility and technique sessions (mockup 2, frame E).</li></ul>
+</figure>
+</div>
+</section>
+<!-- rev4:end -->
+<!-- rev3-note:start -->
+<section class="mk-sec mk-r3">
+<h2>Revision 3 frames · kept for what revision 4 leaves unchanged</h2>
+<p>Everything below is revision 3's mockup of the week quests card. Where it differs from the frames above, revision 4 wins:</p>
+<ul class="mk-cap wide">
+<li>Bring and Add are one row each with per-Domain parts ("3 in Probability · 2 in Inference"); rev 3's "Bring 3 cards in Risk Management or Position Sizing" union is gone, because a depth counts each Domain separately.</li>
+<li>Row labels name catalog practice types in the app's words ("Explain it in your own words: Probability, Inference"); rev 3's Gemini-worded practices and steps ("Backtest", "Set a maximum daily loss") exist only on legacy plans, whose text is hidden.</li>
+<li>When no week quests show, the same slot may hold the aim line (above).</li>
+<li>Unchanged: the card's place in the slot, the 3 collapsed rows and "n more", the compact evening line, all-done, seeking a session's task, writes-off, and no red, no count and no link to Review.</li>
+</ul>
+<div class="mk-legend" aria-label="Provenance classes as rendered in revision 3">
   <span><span class="pv pv-draft">Gemini suggestion · not checked</span> DRAFT</span>
   <span><span class="pv pv-kept">Gemini's words · kept by you · not checked</span> KEPT_SUGGESTION</span>
   <span><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>You checked this</span> YOURS</span>
@@ -808,7 +1177,8 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
   <span><span class="cap">≈ 9 h 10 (task estimates, not timed)</span> ESTIMATED</span>
   <span><span class="cap">plain, basis on "How this is worked out"</span> WORKED_OUT</span>
 </div>
-</header>
+</section>
+<!-- rev3-note:end -->
 <section class="mk-sec">
 <h2>The board · 344, 932 and 1440 · quests collapsed</h2>
 <p>One DOM, three orders (today.css): at 344 the board is one column in .o1–.o11 order, so the card follows Next up, the Ask, M2's Must lane, Planned and Habits, and sits with the goals; from 640 px of main it moves to the right-hand column under the goals, beside the DayLedger's Quest ring and Next up · Quest; from 1100 px it is the third column. It never sits above Next up, the Must lane or an Ask. TodayBoard renders it through the optional questsSlot inside .o9, directly after GoalsStrip; buildBoard and todayCountsOf are untouched.</p>
@@ -1196,5 +1566,22 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
   addEventListener('resize', run);
 })();
 </script>
+<!-- rev4-script:start -->
+<script>
+/* rev4-script:start · Mockup only: checks the aim line's F-R4-3 bound (≤ 72 px at 344). */
+(function () {
+  function run() {
+    [['r4line344', 'geo-r4td344', 'the WEEK line on the board'], ['r4line932', 'geo-r4td932', 'the WEEK line in c3'], ['r4lineNext', 'geo-r4lineNext', 'NEXT, the longest line']].forEach(function (c) {
+      var e = document.getElementById(c[0]), o = document.getElementById(c[1]); if (!e || !o) return;
+      var hgt = Math.round(e.getBoundingClientRect().height);
+      o.textContent = 'Measured here: ' + c[2] + ' is ' + hgt + ' px tall (bound ≤ 72 px at 344): ' + (hgt <= 72 ? 'within it.' : 'OVER by ' + (hgt - 72) + ' px.');
+    });
+  }
+  (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(run);
+  addEventListener('resize', run);
+})();
+/* rev4-script:end */
+</script>
+<!-- rev4-script:end -->
 </body>
 </html>

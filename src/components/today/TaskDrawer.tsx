@@ -4,7 +4,8 @@ import { useState } from "react";
 import { BANDS, type Band, type Receipt } from "@/lib/life-types";
 import { MINUTE_CHIPS, ruleOf, type BoardRow } from "@/lib/today-board";
 import { SIZING_MAX_ATTEMPTS, effBand } from "@/lib/life-grade";
-import { gradeChipOf } from "@/lib/life-lexicon";
+import { gradeChipOf, planBornBasisOf } from "@/lib/life-lexicon";
+import { isRoadmapCaptureKey } from "@/lib/roadmap-types";
 import type { DayKey } from "@/lib/life-day";
 import { formatExpiry } from "@/lib/format-date";
 import { BAND_BLURB, BAND_LABEL, fmtMinutes, fmtXp } from "./format";
@@ -88,7 +89,11 @@ export function TaskDrawer(props: Props) {
   const effective: Band = effBand(t.band, pendingRate ?? t.bandOverride);
   const maxIdx = Math.min(BANDS.length - 1, machineIdx + 1);
   const resizing = working?.kind === "resize";
-  const canResize = !t.gradeFrozen && t.gradeAttempts < SIZING_MAX_ATTEMPTS && !t.sizing;
+  // A plan-born task (roadmap Start, 'rm:…'; decision 50): no model sizes or explains it. No Resize (the server refuses
+  // it too), and its "Why" is code's words from its own columns, never the stored basis.
+  const planBorn = isRoadmapCaptureKey(t.captureKey);
+  const canResize = !planBorn && !t.gradeFrozen && t.gradeAttempts < SIZING_MAX_ATTEMPTS && !t.sizing;
+  const why = planBorn ? planBornBasisOf(t) : t.gradeBasis;
   const rating = ratingGate(t, props.now);
   const tomorrow = tomorrowOffer(t, props.today);
   const locked = busy || working !== null;
@@ -100,6 +105,7 @@ export function TaskDrawer(props: Props) {
       gradeFrozenAt: t.gradeFrozenAt ? new Date(t.gradeFrozenAt) : null,
       bandOverride: t.bandOverride,
       createdAt: new Date(t.createdAt),
+      planBorn,
     },
     new Date(props.now)
   );
@@ -245,7 +251,7 @@ export function TaskDrawer(props: Props) {
       <div className="today-size">
         <div className="today-size-h">
           <span className="t-eyebrow">Size</span>
-          <span className={`t-mono ${CHIP_CLASS[chip.tone]}`} title={t.gradeBasis ?? undefined}>
+          <span className={`t-mono ${CHIP_CLASS[chip.tone]}`} title={why ?? undefined}>
             {chip.label}
           </span>
         </div>
@@ -283,7 +289,7 @@ export function TaskDrawer(props: Props) {
 
         <dl>
           <dt>Why</dt>
-          <dd>{t.gradeBasis || "No rule matched; sized as ordinary effort until the AI's answer lands."}</dd>
+          <dd>{why || "No rule matched; sized as ordinary effort until the AI's answer lands."}</dd>
           <dt>Machine grade</dt>
           <dd>
             {BAND_LABEL[t.band]} · ~{fmtMinutes(t.machineMinutes)}

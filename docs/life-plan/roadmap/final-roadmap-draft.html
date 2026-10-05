@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="dark">
 <title>Roadmap draft review</title>
-<meta name="description" content="Mockup, revision 3: reviewing a Gemini-drafted roadmap at 344 and 932 px: provenance labels, flags, checks, decisions, accept; plus running, fallback, credential, language, edit and impossible states.">
+<meta name="description" content="Mockup, revision 4: the keys-only draft review at 344 and 932 px (Gemini's Domain additions as toggles with the date effect, depth and the realistic date, the exam waypoint, the arrangement line, the integrity line), and its states: the starter draft, a rejected reply, exclusions and the session-picks confirm, Over and Impossible dates, the lower-depth sheet, the lead-only area panel, a legacy draft; revision 3's frames follow.">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400&family=Inter:wght@400..700&family=JetBrains+Mono:wght@500;600&display=swap">
 <style>
 /* =====================================================================
@@ -576,6 +576,126 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
 .ml-row .rkc b{color:var(--ink-1);font-weight:600}
 .ml-row .r small{display:block;font:500 12px/16px var(--font-ui);color:var(--ink-2)}
 
+/* rev4-css:start */
+/* =====================================================================
+   REVISION 4 (roadmap-rev4.md, 2026-10-05): the aim asked in place, depth
+   and stages, "keep the depth, move the date", keys-only drafts. Still
+   rm-* names only, ink only: no gold (MP spending), no --owed (nothing here
+   is debt), no status hue without a word. What roadmap.css adds in rev 4.
+   ===================================================================== */
+/* the ASK card (F-R4-1): about 344 px at 344, at most 410 with a seed and a last aim */
+.rm-ac-call{padding:12px 14px 6px;display:flex;flex-direction:column}
+.rm-ac-call .ac-h{font:600 19px/23px var(--font-display)}
+.rm-ac-call .ac-last{margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rm-ac-call .ac-body{font-size:14px;line-height:19px;color:var(--ink-1);margin-top:6px}
+.rm-ac-call .ac-rank{margin-top:4px}
+.rm-ac-call .ac-cont{margin-top:6px;color:var(--ink-1)}
+.rm-ac-call textarea.st-input{margin-top:6px;min-height:65px;height:65px;padding:8px 12px;resize:none}
+.rm-ac-call .ac-cont+textarea.st-input{margin-top:2px}
+.rm-ac-seed{display:flex;align-items:center;gap:8px;min-height:40px;margin-top:6px;padding:0 2px;font:600 14px/19px var(--font-ui);color:var(--ink-0);text-decoration:none;min-width:0;width:100%;text-align:left}
+.rm-ac-seed svg.i{width:16px;height:16px;color:var(--ink-1)}
+.rm-ac-seed span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;text-decoration:underline;text-underline-offset:3px}
+.rm-ac-call .ac-go{margin-top:6px}
+.rm-ac-seed+.ac-go{margin-top:2px}
+.rm-ac-quiet{display:flex;gap:2px;margin-left:-10px}
+.rm-ac-quiet .btn{min-height:40px}
+/* the LATER line keeps rev 3's .aim-empty geometry (56 px min) with the new copy */
+.aim-empty .t b{color:var(--ink-0);font-weight:600}
+/* Today's aim line (F-R4-3): ≤ 72 px at 344, never red, never counted */
+.rm-aim-line{display:flex;align-items:center;gap:4px;min-height:56px;padding:6px 6px 6px 14px}
+.rm-aim-line>a{flex:1;min-width:0;display:flex;gap:10px;align-items:center;min-height:48px;text-decoration:none;color:var(--ink-1);font-size:14px;line-height:19px}
+.rm-aim-line>a>svg.i{width:20px;height:20px;flex:none;color:var(--ink-1)}
+.rm-aim-line>a>span{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.rm-aim-line>a b{color:var(--ink-0);font-weight:600}
+.rm-aim-line .icon-btn{width:40px;height:40px;border-radius:10px}
+.rm-quests-slot[data-compact]:has(> .rm-aim-line){display:none}
+/* the depth, date and provenance lines (F-R4-15) */
+.rm-depth{display:flex;flex-direction:column;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-depth b{color:var(--ink-0);font-weight:600}
+.rm-depth .pl{display:flex;gap:6px;align-items:flex-start}
+.rm-depth .pl>svg.i{width:14px;height:14px;flex:none;margin-top:2px;color:var(--ink-2)}
+.rm-depth .q{color:var(--ink-2)}
+.rm-basisk{display:block;font:400 12px/16px var(--font-ui);letter-spacing:0;text-transform:none;color:var(--ink-2);margin-top:1px}
+.rm-rp .pf .rm-basisk{text-align:right}
+/* coverage breakdown (F-R4-9) */
+.rm-cov{display:flex;flex-direction:column}
+.rm-cov>li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:start;padding:8px 0;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-cov>li:first-child{border-top:0;padding-top:2px}
+.rm-cov>li b{color:var(--ink-0);font-weight:600}
+.rm-cov>li .btn{min-height:40px;margin:-8px -6px -8px 0}
+.rm-cov>li.below{color:var(--ink-0)}
+.rm-cov .un{grid-column:1/-1}
+/* the outline's line Domains (F-R4-24) */
+.rm-lgroup+.rm-lgroup{margin-top:10px}
+.rm-lgroup>.t-eyebrow{display:block;margin:0 0 2px;color:var(--ink-1)}
+.rm-lrow{display:grid;grid-template-columns:30px minmax(0,1fr) auto;align-items:center;gap:0 8px;min-height:44px;border-top:1px solid var(--line-1);font-size:14px;line-height:19px}
+.rm-lrow .k{font:500 12px/16px var(--font-mono);color:var(--ink-2)}
+.rm-lrow .t{min-width:0;overflow-wrap:anywhere}
+.rm-lrow .t small{display:block;font-size:12px;line-height:16px;color:var(--ink-2)}
+.rm-lrow .btn{min-height:40px;padding:0 10px}
+/* chips with a verdict word under the label (the By-when chips) */
+.rm-chips .chip.btn-chip{min-height:40px}
+.chip.btn-chip.two{flex-direction:column;align-items:flex-start;justify-content:center;gap:0;line-height:16px;padding:4px 12px;white-space:normal;text-align:left}
+.chip.btn-chip.two small{font:500 12px/15px var(--font-ui);color:var(--ink-2)}
+.chip.btn-chip.two[aria-pressed="true"] small{color:color-mix(in srgb,var(--page) 75%,transparent)}
+/* the Depth control: the stage name over its level */
+.segc.two button{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:48px;padding:4px 6px;line-height:17px}
+.segc.two button small{font:500 12px/15px var(--font-ui);color:var(--ink-2)}
+.segc.two button[aria-pressed="true"] small{color:color-mix(in srgb,var(--page) 75%,transparent)}
+/* Gemini's additions, one toggle per Domain on an exam aim (F-R4-21) */
+.rm-adds{padding:14px}
+.rm-adds .t{font-size:14px;line-height:19px}
+.rm-add{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:center;padding:10px 0;border-top:1px solid var(--line-1)}
+.rm-add:first-of-type{margin-top:10px}
+.rm-add b{font-weight:600}
+.rm-add .t-meta{grid-column:1}
+.rm-add.blocked b,.rm-add.blocked .t-meta{color:var(--ink-2)}
+.rm-adds .acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:center}
+/* date check (F-R4-11) */
+.rm-date .offers{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.rm-date .offers .btn{justify-content:flex-start;white-space:normal;text-align:left;line-height:1.3;padding:8px 14px}
+.rm-wp{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:18px;color:var(--ink-1);margin-top:8px}
+.rm-wp>svg.i{width:16px;height:16px;flex:none;margin-top:1px;color:var(--ink-1)}
+.rm-wp b{color:var(--ink-0);font-weight:600}
+/* stage rows: held, dropped, count gate */
+.ml-row.held .ms-n{border-style:dotted;color:var(--ink-2)}
+.ml-row.held b,.ml-row.dropped b{color:var(--ink-1)}
+.ml-row.dropped .ms-n{border-style:dashed;color:var(--ink-2)}
+.ml-row.dropped b{text-decoration:line-through;text-decoration-color:var(--ink-mute)}
+.ml-row .r .q{font:500 12px/16px var(--font-ui);color:var(--ink-2)}
+.tag-s{display:inline-flex;align-items:center;min-height:20px;padding:0 6px;border-radius:6px;border:1px solid var(--line-2);font:600 12px/16px var(--font-ui);color:var(--ink-1);margin-left:6px;vertical-align:1px;white-space:nowrap}
+/* week quest parts (F-R4-14) */
+.rm-parts-l{grid-column:2/-1;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-parts-l .more{color:var(--ink-2)}
+/* the arrangement line, the keys-only header, the integrity line */
+.rm-arr{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-arr>svg.i{width:18px;height:18px;flex:none;margin-top:0;color:var(--ink-1)}
+.pv-pick{border:1px dashed var(--line-ctl);color:var(--ink-1)}
+.pv-app{color:var(--ink-1)}
+/* the area-suggestion panel (ROADMAP_GAPS_LIVE only: lead-only, off in this build) */
+.rm-gaps{padding:14px}
+.rm-gaps .t-eyebrow{color:var(--ink-1)}
+.rm-gaps h3{font:600 17px/22px var(--font-display);margin-top:4px}
+.rm-gaps p{font-size:13px;line-height:18px;color:var(--ink-1);margin-top:6px}
+.rm-gap{padding:10px 0;border-top:1px solid var(--line-1);margin-top:10px}
+.rm-gap+.rm-gap{margin-top:0}
+.rm-gap b{font-weight:600}
+/* Settings: the Aim suggestions row (settings.css set-row, copied) */
+.set{padding:4px 14px}
+.set-row{display:flex;align-items:center;gap:8px 12px;min-height:60px;padding:10px 0;flex-wrap:wrap}
+.set-row+.set-row{border-top:1px solid var(--line-1)}
+.set-row .n{flex:1;min-width:160px}
+.set-row .n b{font-weight:500;display:block}
+.set-row .n span{display:block;font-size:13px;line-height:18px;color:var(--ink-2)}
+.set-grid{display:grid;gap:16px}
+@container main (min-width:760px){.set-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start}}
+/* mockup chrome for rev 4 */
+.mk-r4{border-top:2px solid var(--ink-0);margin-top:18px}
+.mk-r3{border-top:1px dashed var(--line-ctl);margin-top:24px}
+.mk-r3 .mk-cap{max-width:932px}
+.mk-flag{display:inline-flex;align-items:center;gap:6px;margin-left:8px;padding:1px 8px;border-radius:6px;border:1px dashed var(--line-ctl);font:600 12px/16px var(--font-mono);color:var(--ink-1)}
+.mk-fig.w312{max-width:344px}
+/* rev4-css:end */
 </style>
 </head>
 <body>
@@ -659,12 +779,461 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
 </svg>
 
 <header class="mk">
-  <div class="t-eyebrow">XTNL · Roadmap · mockup 2 of 5 · roadmap.md rev 3, F5–F9, F12</div>
-  <h1>Draft review — /you/roadmap (DRAFT)</h1>
-  <p>Gemini drafts the <b>structure</b> only: milestone titles, keys into the user's own Domain list, topics, practices with a method from a closed list, steps and a checkpoint kind. The response schema has no slot for a number, date, level, duration, resource, URL, fact or statement about the user. Code sets every date, level, target, session count and verdict. Every Gemini-written string carries its provenance; lexical flags force a separate tap for likely claims; nothing reaches Today in Gemini's words without the user's own check or edit. The next milestone is decided now; later ones stay an outline until their Start. <b>Revision 3</b>: each milestone card says which Aim rank reaching it gives (worked out by code from its place in the plan), and the Domains Gemini picked carry their own [I checked this] and [Map to…], because they set what counts and the names week quests show.</p>
-  <div class="mk-ex">Example data — fake but plausible, as of Sun 4 Oct 2026 09:12 · Gemini's labels below are written for the mockup, not real model output</div>
+  <div class="t-eyebrow">XTNL · Roadmap · mockup 2 of 5 · roadmap-rev4.md, F-R4-11, F-R4-17 to F-R4-21 (rev 3's F3–F8 below)</div>
+  <h1>Draft review — a plan with no Gemini words</h1>
+  <p>The draft page. In <b>revision 4</b> Gemini writes no words: it returns keys from lists the app issues (Domains the aim may need, where each outline line goes, which practice types), and code writes every name, number, date, level and target. A reply that breaks the format is rejected whole and the plan from the user's numbers is written instead. What Gemini chose is labelled and changeable in one tap, Domains it adds need the user's confirmation with the date effect shown first, and the depth is never lowered to fit a date: the date check offers the realistic date, keeping the user's date (Tight or Over), or a lower depth by the user's own tap. Gemini drafting is off in this build until the v3 probe passes; the main frames show it as it will be, and frame A shows today's path.</p>
+  <div class="mk-ex">Example data — fake but plausible · the Statistics plan of mockups 1, 3–5, as of Mon 5 Oct 2026 · dates from lane 0's reach model · the Gemini choices are written for the mockup, not real model output</div>
   <nav class="mk-nav" aria-label="Roadmap mockups"><a href="final-roadmap-new.html">1 · Set an aim</a><a href="final-roadmap-draft.html" aria-current="page">2 · Draft review</a><a href="final-roadmap.html">3 · Living roadmap</a><a href="final-aim-card.html">4 · Character page</a><a href="final-today-quests.html">5 · Today's week quests</a></nav>
-  <div class="mk-legend" aria-label="Provenance classes as rendered">
+  <div class="mk-legend" aria-label="Provenance as rendered in revision 4">
+  <span><span class="pv pv-pick">practice type picked by Gemini from the app's list</span> GEMINI_PICK</span>
+  <span><span class="pv pv-app">added by the app</span> CODE</span>
+  <span><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>you chose this</span> YOURS</span>
+  <span><span class="cap">"suggested by Gemini, added by you on 5 Oct"</span> a Domain Gemini chose, for the plan's life</span>
+  <span><span class="cap">tested by your reviews · measured 09:12</span> MEASURED</span>
+  <span><span class="cap">counted by the app; it doesn't judge them</span> RECORDED</span>
+  <span><span class="cap">from your ticks</span> SELF_REPORTED</span>
+  <span><span class="cap">plain, basis on "How this is worked out"</span> WORKED_OUT</span>
+</div>
+</header>
+<!-- rev4:start -->
+<section class="mk-sec mk-r4" id="shipped">
+<h2>As shipped · revision 4 after the build and two fix rounds</h2>
+<p>These frames are redrawn to the shipped draft review (DraftReview.tsx, ItemRow.tsx, DateBlock.tsx, RunFacts.tsx and roadmap-copy.ts at the end of fix round 2). Where they differ from the first mockup, the code wins; docs/life-plan/roadmap-rev4.md, "As shipped", says why. <span class="mk-flag">example data</span> The plan, its counts and dates are made up but plausible, computed with lane 0's reach model.</p>
+<ul class="mk-cap wide">
+<li><b>Which path you see.</b> ROADMAP_GEMINI_LIVE stays false until the v3 probe passes, so every draft in this build is the app's own (frame A) or the user's. The main frames show the keys-only Gemini path as it will look once it is live: Gemini's reply holds keys only, and every name and number on screen is the app's or the user's.</li>
+<li><b>Every Gemini choice is labelled by what was chosen</b>: "practice type picked by Gemini from the app's list", "step type picked by Gemini from the app's list" and "checkpoint type picked by Gemini from the app's list". Each can be changed in one tap.</li>
+<li><b>Labels name only your Domains.</b> While Gemini's suggested Domains wait for your answer, no practice, step or checkpoint label names them; after [Add] or [Leave out] the labels are rewritten over the Domains the plan holds.</li>
+<li><b>A reply the tripwire refused</b> has its own banner (frame B2), never "Gemini didn't answer".</li>
+<li><b>The lower-depth sheet</b> lists each lower depth with its stage's day in this plan (frame G).</li>
+<li><b>A legacy draft</b> shows its aim card first, then the banner (frame I).</li>
+</ul>
+</section>
+<section class="mk-sec mk-r4">
+<h2>Revision 4 · a keys-only draft (prompt v3) · 344 then 932 · Mon 5 Oct 2026</h2>
+<p>Gemini returns keys only, from lists the app issues for this run: which of the user's unchosen Domains the aim may need, which outline line goes in which stage, and which practice, step and checkpoint types from the app's catalog (F-R4-17, F-R4-18). Code writes every title, label, number, date, level and target; the outline lines are the user's own words, and which Domain each belongs to is the user's. So there is nothing to Keep: rev 3's Keep, bulk keep and "I checked this" are gone, and accepting takes at most 4 taps. What Gemini chose is labelled and changeable in one tap (F-R4-21).</p>
+<div class="mk-row">
+<figure class="mk-fig">
+<div class="mk-tag"><b>344</b> × 882 · Galaxy Fold cover</div>
+<div class="frame f344"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-current="page" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">You</div><h1>Roadmap</h1></div>
+<nav class="tb-tabs tabs" aria-label="You pages"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page">
+<div class="tabs you-tabs" role="tablist" aria-label="You"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></div>
+<div class="rm-cols">
+<div class="rm-col">
+  <section class="card rm-aim o1" aria-label="The draft">
+    <div class="t-eyebrow">Draft · not accepted yet</div>
+    <p class="rm-aim-t" style="margin-top:6px">Know probability and inference well enough to pass Exam P and use them at work</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Statistics · level 9</span><span class="chip">Mastered (level 12)</span><span class="chip">Exam P · Tue 4 May 2027</span><span class="chip">6 h a week · Steady</span></div>
+    <p class="rm-lead">Gemini arranged your outline into milestones, suggested which of your other Domains the aim may need, and picked practice types from the app's list. It wrote none of the words: every name here is the app's or comes from your aim, outline and Domains, and every number is worked out by the app.</p>
+    <div class="rm-lines"><span>1 draft · Gemini's reply: keys only · 0 words of its own</span><span>Constraints you gave: "Evenings only." Nothing was left out because of them.</span><span><a class="ilink" href="#">Edit the intake</a> · <a class="ilink" href="#">Draft again</a> (4 of 5 drafts left today) · <a class="ilink" href="#">Discard</a></span></div>
+  </section>
+  <section class="card rm-adds o2" id="additions" aria-label="Domains Gemini suggests">
+    <p class="t"><b>Gemini suggests adding 2 of your Domains:</b> Calculus (20 cards · 7 at level 6+), Linear Algebra (5 cards · 1 at level 6+). Each would count at every milestone, at 25 cards each.</p>
+    <div class="rm-add"><div><b>Calculus</b><div class="t-meta">20 cards · 7 at level 6+ · counts at 25</div><div class="t-meta" style="color:var(--ink-1)">Adding it moves the realistic date by about 2 weeks, to Sun 26 Mar 2028.</div></div><span class="switch-hit"><button class="switch" role="switch" aria-checked="false" aria-label="Add Calculus"></button></span></div><div class="rm-add"><div><b>Linear Algebra</b><div class="t-meta">5 cards · 1 at level 6+ · counts at 25</div><div class="t-meta" style="color:var(--ink-1)">Adding it moves the realistic date by about 6 weeks, to Sun 23 Apr 2028.</div></div><span class="switch-hit"><button class="switch" role="switch" aria-checked="false" aria-label="Add Linear Algebra"></button></span></div><p class="t-meta" style="margin-top:8px">Adding both moves it by about 8 weeks, to Sun 7 May 2028.</p><div class="acts"><button class="btn btn-primary">Confirm</button><span class="t-meta">Each is off until you turn it on. Gemini can't check what the aim needs.</span></div>
+  </section>
+  <section class="card rm-arr o4"><svg class="i"><use href="#i-route"/></svg><span>Which outline lines and practice types sit in which milestone is Gemini's suggestion. Move a line or change a practice if it doesn't fit.</span></section>
+  <div class="o5">
+    <div class="sec-h"><span class="lane-mark"></span><h2>Milestones · 6</h2><span class="aside">the app's titles and dates</span></div>
+    <div class="rm-stack" style="gap:12px">
+<section class="card" aria-label="Milestone 1">
+  <div class="ms-h"><span class="ms-n cur">1</span><div>
+    <div class="ms-t">Familiar, part 1: Probability, Inference to level 6+</div>
+    <div class="ms-w">Mon 5 Oct → Sun 22 Nov · 7 weeks · dates set by the app</div>
+    <p class="rk" style="margin-top:6px">Reaching it gives the Aim rank&nbsp;<b>Journeyman</b></p>
+  </div></div>
+  <div class="ms-sec">
+    <div class="ms-sh"><span class="t-eyebrow">Measures</span><span class="cap">what progress is judged by</span></div>
+    <div class="mr" style="padding-top:2px"><div class="mr-h"><b>33 of 34 cards in Probability at level 6+</b></div><p class="t-meta">now 18 · multiple choice not counted · tested by your reviews once started</p></div>
+    <div class="mr"><div class="mr-h"><b>15 of 25 cards in Inference at level 6+</b></div><p class="t-meta">now 0 · what your cards can be expected to reach by 22 Nov, so the first rank comes within 7 weeks</p></div>
+    <div class="mr"><div class="mr-h"><b>Keep 4 sessions a week: 22 of 28 by 22 Nov</b></div><p class="t-meta">the practices below · from your ticks once started · worked out from your hours</p></div>
+  </div>
+  <div class="ms-sec">
+    <div class="ms-sh"><span class="t-eyebrow">What to learn</span><span class="cap">your outline lines · write cards on each in its Domain</span></div>
+    <div class="it"><div class="it-k">Outline line S1 · Probability</div><div class="it-l">General probability</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>your outline</span><button class="chip btn-chip" style="margin-left:auto">Move…</button></div></div><div class="it"><div class="it-k">Outline line S2 · Probability</div><div class="it-l">Univariate random variables</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>your outline</span><button class="chip btn-chip" style="margin-left:auto">Move…</button></div></div>
+  </div>
+  <div class="ms-sec">
+    <div class="ms-sh"><span class="t-eyebrow">What to practise</span><span class="cap">sessions and minutes set by the app</span></div>
+    <div class="it"><div class="it-chips" style="margin:0 0 6px"><span class="chip">Deliberate practice</span><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div><div class="it-l">Recall drills: Probability, Inference</div><div class="it-m">2× a week · 20 min · worked out from your hours</div><details class="how"><summary><svg class="i"><use href="#i-chev"/></svg>How</summary><ol><li>Close your notes and cards.</li><li>Write or say everything you can recall about one point.</li><li>Check it against your cards.</li><li>Turn what you missed into a card in its Domain.</li></ol></details><div class="it-acts"><button class="chip btn-chip">Change type…</button></div></div>
+    <div class="it"><div class="it-chips" style="margin:0 0 6px"><span class="chip">Reading</span><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div><div class="it-l">Study Inference</div><div class="it-m">2× a week · 30 min · worked out from your hours</div><details class="how"><summary><svg class="i"><use href="#i-chev"/></svg>How</summary><ol><li>Work through one section of your material.</li><li>Stop after each idea and put it in your own words.</li><li>Turn what matters into cards in its Domain.</li><li>Review the new cards when they come due.</li></ol></details><div class="it-acts"><button class="chip btn-chip">Change type…</button></div></div>
+  </div>
+  <div class="ms-sec">
+    <div class="ms-sh"><span class="t-eyebrow">Steps</span><span class="cap">you tick these once started</span></div>
+    <div class="it"><div class="it-l">Book Exam P</div><div class="it-chips"><span class="pv pv-app">added by the app</span></div></div>
+    <div class="it"><div class="it-l">Choose your material for Probability, Inference</div><div class="it-chips"><span class="pv pv-pick">step type picked by Gemini from the app's list</span></div></div>
+  </div>
+  <div class="ms-sec">
+    <div class="ms-sh"><span class="t-eyebrow">Checkpoint · self-test</span><span class="cap">context only</span></div>
+    <div class="it-l">Self-test: Probability, Inference</div>
+    <div class="it-chips"><span class="pv pv-pick">checkpoint type picked by Gemini from the app's list</span><button class="chip btn-chip" style="min-height:40px">Set the bar</button></div>
+  </div>
+</section>
+<section class="card">
+  <div class="ms-h"><span class="ms-n">2</span><div><div class="ms-t">Familiar: Probability, Inference to level 6+</div><div class="ms-w">Mon 23 Nov → Sun 27 Dec · 5 weeks</div><p class="rk" style="margin-top:6px">Reaching it keeps your rank</p></div></div>
+  <div class="ms-sec"><ul><li class="oi"><div class="it-k">Measures</div><div class="it-l">34 cards in Probability and 25 in Inference at level 6+</div><div class="it-chips"><span class="cap">the coverage itself: a stage raises the level, not the count</span></div></li><li class="oi"><div class="it-k">Outline line S3 · Probability</div><div class="it-l">Multivariate random variables</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>your outline</span></div></li><li class="oi"><div class="it-k">Practice · Deliberate practice</div><div class="it-l">Problem sets: Probability, Inference</div><div class="it-chips"><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div></li><li class="oi"><div class="it-k">Practice · Deliberate practice</div><div class="it-l">Recall drills: Probability, Inference</div><div class="it-chips"><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div></li></ul></div>
+  
+</section>
+<section class="card">
+  <div class="ms-h"><span class="ms-n">3</span><div><div class="ms-t">Retained: Probability, Inference to level 8+</div><div class="ms-w">Mon 28 Dec → Sun 14 Feb · 7 weeks</div><p class="rk" style="margin-top:6px">Reaching it gives the Aim rank&nbsp;<b>Specialist</b></p></div></div>
+  <div class="ms-sec"><ul><li class="oi"><div class="it-k">Outline line S4 · Inference</div><div class="it-l">Conditional expectation and variance</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>your outline</span></div></li><li class="oi"><div class="it-k">Outline line S5 · not tied to a Domain</div><div class="it-l">Common discrete distributions</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>your outline</span></div></li><li class="oi"><div class="it-k">Practice · Deliberate practice</div><div class="it-l">Problem sets: Probability, Inference</div><div class="it-chips"><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div></li><li class="oi"><div class="it-k">Practice · Deliberate practice</div><div class="it-l">Timed practice: Probability, Inference</div><div class="it-chips"><span class="pv pv-app">added by the app</span></div></li><li class="oi"><div class="it-k">Checkpoint · mock test</div><div class="it-l">Mock test: Exam P</div><div class="it-chips"><span class="pv pv-app">added by the app</span></div></li></ul></div>
+  
+</section>
+<section class="card">
+  <div class="ms-h"><span class="ms-n">4</span><div><div class="ms-t">Fluent: Probability, Inference to level 10+</div><div class="ms-w">Mon 15 Feb → Sun 16 May · 13 weeks</div><p class="rk" style="margin-top:6px">Reaching it gives the Aim rank&nbsp;<b>Expert</b></p></div></div>
+  <div class="ms-sec"><ul><li class="oi"><div class="it-k">Practice · Writing</div><div class="it-l">Explain it in your own words: Probability, Inference</div><div class="it-chips"><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div></li><li class="oi"><div class="it-k">Practice · Deliberate practice</div><div class="it-l">Timed practice: Probability, Inference</div><div class="it-chips"><span class="pv pv-app">added by the app</span></div></li><li class="oi"><div class="it-k">Checkpoint · your exam · Tue 4 May</div><div class="it-l">Exam: Exam P</div><div class="it-chips"><span class="pv pv-app">added by the app</span><span class="cap">your bar 6 of 10 · the plan's standard</span></div></li></ul></div>
+  
+</section>
+<section class="card">
+  <div class="ms-h"><span class="ms-n">5</span><div><div class="ms-t">Toward Mastered: Probability, Inference to level 11+</div><div class="ms-w">Mon 17 May → Sun 1 Aug · 11 weeks</div><p class="rk" style="margin-top:6px">Reaching it keeps your rank</p></div></div>
+  <div class="ms-sec"><ul><li class="oi"><div class="it-k">Practice · Deliberate practice</div><div class="it-l">Go over your mistakes: Probability, Inference</div><div class="it-chips"><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div></li><li class="oi"><div class="it-k">Practice · Writing</div><div class="it-l">Explain it in your own words: Probability, Inference</div><div class="it-chips"><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div></li></ul></div>
+  <div class="ms-foot"><span class="cap">copies the practices of the stage above it</span></div>
+</section>
+<section class="card">
+  <div class="ms-h"><span class="ms-n">6</span><div><div class="ms-t">Mastered: Probability, Inference to level 12+</div><div class="ms-w">Mon 2 Aug 2027 → Sun 12 Mar 2028 · 32 weeks · the realistic date</div><p class="rk" style="margin-top:6px">Reaching it gives the Aim rank&nbsp;<b>Virtuoso</b><br>Reaching the aim gives the Aim rank&nbsp;<b>Paragon</b></p></div></div>
+  <div class="ms-sec"><ul><li class="oi"><div class="it-k">Measures · the depth</div><div class="it-l">34 cards in Probability and 25 in Inference at level 12, each entered at the first try</div><div class="it-chips"><span class="cap">the plan's end state</span></div></li><li class="oi"><div class="it-k">Practice · Deliberate practice</div><div class="it-l">Go over your mistakes: Probability, Inference</div><div class="it-chips"><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div></li><li class="oi"><div class="it-k">Practice · Writing</div><div class="it-l">Explain it in your own words: Probability, Inference</div><div class="it-chips"><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div></li><li class="oi"><div class="it-k">Step</div><div class="it-l">Explain Probability, Inference to someone without notes</div><div class="it-chips"><span class="pv pv-pick">step type picked by Gemini from the app's list</span></div></li></ul></div>
+  
+</section>
+    </div>
+  </div>
+</div>
+<div class="rm-col">
+  <div class="o3">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Depth and date</h2><span class="aside">worked out by the app</span></div>
+  <section class="card pad rm-date">
+    <div class="rm-depth" style="margin-top:0;padding-top:0;border-top:0">
+      <p><b>Depth: Mastered (level 12)</b> in Probability and Inference: 34 and 25 cards, each passing its review after a gap of about 110 days at the first try. Multiple-choice cards don't count. The 25-card floor and the 80% share are the app's policy, not facts about these subjects. Change them if you know better.</p>
+    </div>
+    <div class="ck" style="margin-top:6px">
+      <div class="ck-h"><b>Date</b><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits · when realistic</span></div>
+      <p>At 70% of your usual 3 new cards a week, your 80% pass rate (reads high), 80% for gaps of 50 days and more (the app's policy) and the 92% of your due queue you clear, this depth is realistic by <b>Sun 12 Mar 2028</b>. Earliest if every review passes, at this pace: Sat 30 Oct 2027.</p>
+      <p class="fixed">This date is set by the review schedule, not your hours: a new card needs at least 340 days to reach level 12. More hours won't bring it much closer.</p>
+    </div>
+    <p class="rm-wp"><svg class="i"><use href="#i-cal"/></svg><span>By your exam (Tue 4 May 2027) the plan reaches <b>Retained (level 8)</b>. The depth goes on past it.</span></p>
+    <p class="t-meta" style="margin-top:8px">The app doesn't lower the depth to fit a date. A lower depth is your choice and stays on the plan. <a class="ilink" href="#lower">Choose a lower depth…</a></p>
+    <div class="ck" style="border-top:1px solid var(--line-1);margin-top:10px">
+      <div class="ck-h"><b>Top rank on this plan: Paragon</b></div>
+      <p>Paragon: every one of your 2 required Domains held at level 12, the final milestone reached, the plan's practice kept, and your standard logged at or above your bar. Cards tested by your reviews; practice and score from your ticks and your log.</p>
+      <p class="fixed">The app tests whether you hold the cards you wrote. Whether they cover everything 'Know probability and inference well enough to pass Exam P and use them at work' needs is yours to judge: your outline and your standard are the outside checks.</p>
+    </div>
+  </section>
+</div>
+  <div class="o6">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Lines to look at</h2><span class="aside">from your outline</span></div>
+  <section class="card pad">
+    <p class="t-meta" style="color:var(--ink-1)"><b class="ink-0">Not in this plan yet: S6</b> · Common continuous distributions · <a class="ilink" href="#">Add to milestone…</a></p>
+    <p class="t-meta" style="margin-top:8px;color:var(--ink-1)">2 outline lines aren't tied to a Domain: S5, S6. They raise every Domain's count, but no card is checked against them. <a class="ilink" href="#">Choose Domains</a></p>
+  </section>
+</div>
+  <div class="o7">
+  <div class="sec-h"><span class="lane-mark"></span><h2>How this was drafted</h2></div>
+  <section class="card tp">
+    <div><span class="k">Gemini's reply</span><span class="v">keys only · 0 words of its own</span><span class="s">prompt v3 · Mon 5 Oct 09:12 · 1 draft · the reply is checked key by key against the lists issued for this run</span></div>
+    <div><span class="k">Drafts left today</span><span class="v">4 of 5</span><span class="s">a draft again may return a similar arrangement</span></div>
+  </section>
+</div>
+</div>
+</div>
+<div class="rm-sticky">
+  <button type="button" class="btn btn-primary lg">Next item to decide</button>
+  <p class="t-meta">1 left: Gemini's suggested Domains. Then Accept.</p>
+</div>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-current="page" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div>
+<ul class="mk-cap"><li><b>The header</b> is v3's: it says what Gemini did and that it wrote none of the words. "keys only · 0 words of its own" is the run's integrity verdict (CLEAN, modelChars 0).</li><li><b>The additions row</b> comes first: Domains Gemini suggests beyond the user's choice, with their real counts and <b>the date effect before anything is confirmed</b> (lane 0's reach model: +2 weeks with Calculus, +6 with Linear Algebra, +8 with both). This is an exam aim, so each Domain is its own toggle, off by default, and there is no add-all. A pending addition blocks Accept; the footer's "Next item to decide" scrolls here.</li><li><b>Depth and date</b>: the depth is never fitted down. REALISTIC mode is FITS by construction; the date names its inputs, the best case is its own line, and the schedule-bound line shows because the last card is written about 60 days in and the review schedule sets the rest.</li><li><b>The arrangement line</b> shows on Gemini runs only. Every outline line has <b>Move…</b>; every practice has <b>Change type…</b> (the Edit sheet's catalog picker; the choice becomes the user's).</li><li><b>Milestone 1 is a count gate</b> ("Familiar, part 1"): the first kept stage, Familiar, is due on day 83, past FIRST_RANK_MAX_DAYS (75), so a PART gate sits on the Sunday on or after day 41.5 (Sun 22 Nov) asking what the cards can be expected to reach by then (Probability's 41.96 clamps to 33 of 34; Inference's 15.5 floors to 15). Foundation (day 62) merged into Familiar (21 days apart, under 35).</li><li><b>Provenance</b> (shipped words): "practice type picked by Gemini from the app's list", "step type …" or "checkpoint type picked by Gemini from the app's list" (GEMINI_PICK, by slot), "added by the app" (the exam's book step, mock test and timed practice, which code places, and the exam day), "your outline". Labels are re-rendered from their catalog key on read, so a renamed Domain follows.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>932</b> · rail · two columns from 760 px of main</div>
+<div class="mk-scroll"><div class="frame f932"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-current="page" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">You</div><h1>Roadmap</h1></div>
+<nav class="tb-tabs tabs" aria-label="You pages"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page">
+<div class="tabs you-tabs" role="tablist" aria-label="You"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></div>
+<div class="rm-cols">
+<div class="rm-col">
+  <section class="card rm-aim o1" aria-label="The draft">
+    <div class="t-eyebrow">Draft · not accepted yet</div>
+    <p class="rm-aim-t" style="margin-top:6px">Know probability and inference well enough to pass Exam P and use them at work</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Statistics · level 9</span><span class="chip">Mastered (level 12)</span><span class="chip">Exam P · Tue 4 May 2027</span><span class="chip">6 h a week · Steady</span></div>
+    <p class="rm-lead">Gemini arranged your outline into milestones, suggested which of your other Domains the aim may need, and picked practice types from the app's list. It wrote none of the words: every name here is the app's or comes from your aim, outline and Domains, and every number is worked out by the app.</p>
+    <div class="rm-lines"><span>1 draft · Gemini's reply: keys only · 0 words of its own</span><span>Constraints you gave: "Evenings only." Nothing was left out because of them.</span><span><a class="ilink" href="#">Edit the intake</a> · <a class="ilink" href="#">Draft again</a> (4 of 5 drafts left today) · <a class="ilink" href="#">Discard</a></span></div>
+  </section>
+  <section class="card rm-adds o2" id="additions" aria-label="Domains Gemini suggests">
+    <p class="t"><b>Gemini suggests adding 2 of your Domains:</b> Calculus (20 cards · 7 at level 6+), Linear Algebra (5 cards · 1 at level 6+). Each would count at every milestone, at 25 cards each.</p>
+    <div class="rm-add"><div><b>Calculus</b><div class="t-meta">20 cards · 7 at level 6+ · counts at 25</div><div class="t-meta" style="color:var(--ink-1)">Adding it moves the realistic date by about 2 weeks, to Sun 26 Mar 2028.</div></div><span class="switch-hit"><button class="switch" role="switch" aria-checked="false" aria-label="Add Calculus"></button></span></div><div class="rm-add"><div><b>Linear Algebra</b><div class="t-meta">5 cards · 1 at level 6+ · counts at 25</div><div class="t-meta" style="color:var(--ink-1)">Adding it moves the realistic date by about 6 weeks, to Sun 23 Apr 2028.</div></div><span class="switch-hit"><button class="switch" role="switch" aria-checked="false" aria-label="Add Linear Algebra"></button></span></div><p class="t-meta" style="margin-top:8px">Adding both moves it by about 8 weeks, to Sun 7 May 2028.</p><div class="acts"><button class="btn btn-primary">Confirm</button><span class="t-meta">Each is off until you turn it on. Gemini can't check what the aim needs.</span></div>
+  </section>
+  <section class="card rm-arr o4"><svg class="i"><use href="#i-route"/></svg><span>Which outline lines and practice types sit in which milestone is Gemini's suggestion. Move a line or change a practice if it doesn't fit.</span></section>
+  <div class="o5">
+    <div class="sec-h"><span class="lane-mark"></span><h2>Milestones · 6</h2><span class="aside">the app's titles and dates</span></div>
+    <div class="rm-stack" style="gap:12px">
+<section class="card" aria-label="Milestone 1">
+  <div class="ms-h"><span class="ms-n cur">1</span><div>
+    <div class="ms-t">Familiar, part 1: Probability, Inference to level 6+</div>
+    <div class="ms-w">Mon 5 Oct → Sun 22 Nov · 7 weeks · dates set by the app</div>
+    <p class="rk" style="margin-top:6px">Reaching it gives the Aim rank&nbsp;<b>Journeyman</b></p>
+  </div></div>
+  <div class="ms-sec">
+    <div class="ms-sh"><span class="t-eyebrow">Measures</span><span class="cap">what progress is judged by</span></div>
+    <div class="mr" style="padding-top:2px"><div class="mr-h"><b>33 of 34 cards in Probability at level 6+</b></div><p class="t-meta">now 18 · multiple choice not counted · tested by your reviews once started</p></div>
+    <div class="mr"><div class="mr-h"><b>15 of 25 cards in Inference at level 6+</b></div><p class="t-meta">now 0 · what your cards can be expected to reach by 22 Nov, so the first rank comes within 7 weeks</p></div>
+    <div class="mr"><div class="mr-h"><b>Keep 4 sessions a week: 22 of 28 by 22 Nov</b></div><p class="t-meta">the practices below · from your ticks once started · worked out from your hours</p></div>
+  </div>
+  <div class="ms-sec">
+    <div class="ms-sh"><span class="t-eyebrow">What to learn</span><span class="cap">your outline lines · write cards on each in its Domain</span></div>
+    <div class="it"><div class="it-k">Outline line S1 · Probability</div><div class="it-l">General probability</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>your outline</span><button class="chip btn-chip" style="margin-left:auto">Move…</button></div></div><div class="it"><div class="it-k">Outline line S2 · Probability</div><div class="it-l">Univariate random variables</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>your outline</span><button class="chip btn-chip" style="margin-left:auto">Move…</button></div></div>
+  </div>
+  <div class="ms-sec">
+    <div class="ms-sh"><span class="t-eyebrow">What to practise</span><span class="cap">sessions and minutes set by the app</span></div>
+    <div class="it"><div class="it-chips" style="margin:0 0 6px"><span class="chip">Deliberate practice</span><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div><div class="it-l">Recall drills: Probability, Inference</div><div class="it-m">2× a week · 20 min · worked out from your hours</div><details class="how"><summary><svg class="i"><use href="#i-chev"/></svg>How</summary><ol><li>Close your notes and cards.</li><li>Write or say everything you can recall about one point.</li><li>Check it against your cards.</li><li>Turn what you missed into a card in its Domain.</li></ol></details><div class="it-acts"><button class="chip btn-chip">Change type…</button></div></div>
+    <div class="it"><div class="it-chips" style="margin:0 0 6px"><span class="chip">Reading</span><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div><div class="it-l">Study Inference</div><div class="it-m">2× a week · 30 min · worked out from your hours</div><details class="how"><summary><svg class="i"><use href="#i-chev"/></svg>How</summary><ol><li>Work through one section of your material.</li><li>Stop after each idea and put it in your own words.</li><li>Turn what matters into cards in its Domain.</li><li>Review the new cards when they come due.</li></ol></details><div class="it-acts"><button class="chip btn-chip">Change type…</button></div></div>
+  </div>
+  <div class="ms-sec">
+    <div class="ms-sh"><span class="t-eyebrow">Steps</span><span class="cap">you tick these once started</span></div>
+    <div class="it"><div class="it-l">Book Exam P</div><div class="it-chips"><span class="pv pv-app">added by the app</span></div></div>
+    <div class="it"><div class="it-l">Choose your material for Probability, Inference</div><div class="it-chips"><span class="pv pv-pick">step type picked by Gemini from the app's list</span></div></div>
+  </div>
+  <div class="ms-sec">
+    <div class="ms-sh"><span class="t-eyebrow">Checkpoint · self-test</span><span class="cap">context only</span></div>
+    <div class="it-l">Self-test: Probability, Inference</div>
+    <div class="it-chips"><span class="pv pv-pick">checkpoint type picked by Gemini from the app's list</span><button class="chip btn-chip" style="min-height:40px">Set the bar</button></div>
+  </div>
+</section>
+<section class="card">
+  <div class="ms-h"><span class="ms-n">2</span><div><div class="ms-t">Familiar: Probability, Inference to level 6+</div><div class="ms-w">Mon 23 Nov → Sun 27 Dec · 5 weeks</div><p class="rk" style="margin-top:6px">Reaching it keeps your rank</p></div></div>
+  <div class="ms-sec"><ul><li class="oi"><div class="it-k">Measures</div><div class="it-l">34 cards in Probability and 25 in Inference at level 6+</div><div class="it-chips"><span class="cap">the coverage itself: a stage raises the level, not the count</span></div></li><li class="oi"><div class="it-k">Outline line S3 · Probability</div><div class="it-l">Multivariate random variables</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>your outline</span></div></li><li class="oi"><div class="it-k">Practice · Deliberate practice</div><div class="it-l">Problem sets: Probability, Inference</div><div class="it-chips"><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div></li><li class="oi"><div class="it-k">Practice · Deliberate practice</div><div class="it-l">Recall drills: Probability, Inference</div><div class="it-chips"><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div></li></ul></div>
+  
+</section>
+<section class="card">
+  <div class="ms-h"><span class="ms-n">3</span><div><div class="ms-t">Retained: Probability, Inference to level 8+</div><div class="ms-w">Mon 28 Dec → Sun 14 Feb · 7 weeks</div><p class="rk" style="margin-top:6px">Reaching it gives the Aim rank&nbsp;<b>Specialist</b></p></div></div>
+  <div class="ms-sec"><ul><li class="oi"><div class="it-k">Outline line S4 · Inference</div><div class="it-l">Conditional expectation and variance</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>your outline</span></div></li><li class="oi"><div class="it-k">Outline line S5 · not tied to a Domain</div><div class="it-l">Common discrete distributions</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>your outline</span></div></li><li class="oi"><div class="it-k">Practice · Deliberate practice</div><div class="it-l">Problem sets: Probability, Inference</div><div class="it-chips"><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div></li><li class="oi"><div class="it-k">Practice · Deliberate practice</div><div class="it-l">Timed practice: Probability, Inference</div><div class="it-chips"><span class="pv pv-app">added by the app</span></div></li><li class="oi"><div class="it-k">Checkpoint · mock test</div><div class="it-l">Mock test: Exam P</div><div class="it-chips"><span class="pv pv-app">added by the app</span></div></li></ul></div>
+  
+</section>
+<section class="card">
+  <div class="ms-h"><span class="ms-n">4</span><div><div class="ms-t">Fluent: Probability, Inference to level 10+</div><div class="ms-w">Mon 15 Feb → Sun 16 May · 13 weeks</div><p class="rk" style="margin-top:6px">Reaching it gives the Aim rank&nbsp;<b>Expert</b></p></div></div>
+  <div class="ms-sec"><ul><li class="oi"><div class="it-k">Practice · Writing</div><div class="it-l">Explain it in your own words: Probability, Inference</div><div class="it-chips"><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div></li><li class="oi"><div class="it-k">Practice · Deliberate practice</div><div class="it-l">Timed practice: Probability, Inference</div><div class="it-chips"><span class="pv pv-app">added by the app</span></div></li><li class="oi"><div class="it-k">Checkpoint · your exam · Tue 4 May</div><div class="it-l">Exam: Exam P</div><div class="it-chips"><span class="pv pv-app">added by the app</span><span class="cap">your bar 6 of 10 · the plan's standard</span></div></li></ul></div>
+  
+</section>
+<section class="card">
+  <div class="ms-h"><span class="ms-n">5</span><div><div class="ms-t">Toward Mastered: Probability, Inference to level 11+</div><div class="ms-w">Mon 17 May → Sun 1 Aug · 11 weeks</div><p class="rk" style="margin-top:6px">Reaching it keeps your rank</p></div></div>
+  <div class="ms-sec"><ul><li class="oi"><div class="it-k">Practice · Deliberate practice</div><div class="it-l">Go over your mistakes: Probability, Inference</div><div class="it-chips"><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div></li><li class="oi"><div class="it-k">Practice · Writing</div><div class="it-l">Explain it in your own words: Probability, Inference</div><div class="it-chips"><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div></li></ul></div>
+  <div class="ms-foot"><span class="cap">copies the practices of the stage above it</span></div>
+</section>
+<section class="card">
+  <div class="ms-h"><span class="ms-n">6</span><div><div class="ms-t">Mastered: Probability, Inference to level 12+</div><div class="ms-w">Mon 2 Aug 2027 → Sun 12 Mar 2028 · 32 weeks · the realistic date</div><p class="rk" style="margin-top:6px">Reaching it gives the Aim rank&nbsp;<b>Virtuoso</b><br>Reaching the aim gives the Aim rank&nbsp;<b>Paragon</b></p></div></div>
+  <div class="ms-sec"><ul><li class="oi"><div class="it-k">Measures · the depth</div><div class="it-l">34 cards in Probability and 25 in Inference at level 12, each entered at the first try</div><div class="it-chips"><span class="cap">the plan's end state</span></div></li><li class="oi"><div class="it-k">Practice · Deliberate practice</div><div class="it-l">Go over your mistakes: Probability, Inference</div><div class="it-chips"><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div></li><li class="oi"><div class="it-k">Practice · Writing</div><div class="it-l">Explain it in your own words: Probability, Inference</div><div class="it-chips"><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div></li><li class="oi"><div class="it-k">Step</div><div class="it-l">Explain Probability, Inference to someone without notes</div><div class="it-chips"><span class="pv pv-pick">step type picked by Gemini from the app's list</span></div></li></ul></div>
+  
+</section>
+    </div>
+  </div>
+</div>
+<div class="rm-col">
+  <div class="o3">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Depth and date</h2><span class="aside">worked out by the app</span></div>
+  <section class="card pad rm-date">
+    <div class="rm-depth" style="margin-top:0;padding-top:0;border-top:0">
+      <p><b>Depth: Mastered (level 12)</b> in Probability and Inference: 34 and 25 cards, each passing its review after a gap of about 110 days at the first try. Multiple-choice cards don't count. The 25-card floor and the 80% share are the app's policy, not facts about these subjects. Change them if you know better.</p>
+    </div>
+    <div class="ck" style="margin-top:6px">
+      <div class="ck-h"><b>Date</b><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits · when realistic</span></div>
+      <p>At 70% of your usual 3 new cards a week, your 80% pass rate (reads high), 80% for gaps of 50 days and more (the app's policy) and the 92% of your due queue you clear, this depth is realistic by <b>Sun 12 Mar 2028</b>. Earliest if every review passes, at this pace: Sat 30 Oct 2027.</p>
+      <p class="fixed">This date is set by the review schedule, not your hours: a new card needs at least 340 days to reach level 12. More hours won't bring it much closer.</p>
+    </div>
+    <p class="rm-wp"><svg class="i"><use href="#i-cal"/></svg><span>By your exam (Tue 4 May 2027) the plan reaches <b>Retained (level 8)</b>. The depth goes on past it.</span></p>
+    <p class="t-meta" style="margin-top:8px">The app doesn't lower the depth to fit a date. A lower depth is your choice and stays on the plan. <a class="ilink" href="#lower">Choose a lower depth…</a></p>
+    <div class="ck" style="border-top:1px solid var(--line-1);margin-top:10px">
+      <div class="ck-h"><b>Top rank on this plan: Paragon</b></div>
+      <p>Paragon: every one of your 2 required Domains held at level 12, the final milestone reached, the plan's practice kept, and your standard logged at or above your bar. Cards tested by your reviews; practice and score from your ticks and your log.</p>
+      <p class="fixed">The app tests whether you hold the cards you wrote. Whether they cover everything 'Know probability and inference well enough to pass Exam P and use them at work' needs is yours to judge: your outline and your standard are the outside checks.</p>
+    </div>
+  </section>
+</div>
+  <div class="o6">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Lines to look at</h2><span class="aside">from your outline</span></div>
+  <section class="card pad">
+    <p class="t-meta" style="color:var(--ink-1)"><b class="ink-0">Not in this plan yet: S6</b> · Common continuous distributions · <a class="ilink" href="#">Add to milestone…</a></p>
+    <p class="t-meta" style="margin-top:8px;color:var(--ink-1)">2 outline lines aren't tied to a Domain: S5, S6. They raise every Domain's count, but no card is checked against them. <a class="ilink" href="#">Choose Domains</a></p>
+  </section>
+</div>
+  <div class="o7">
+  <div class="sec-h"><span class="lane-mark"></span><h2>How this was drafted</h2></div>
+  <section class="card tp">
+    <div><span class="k">Gemini's reply</span><span class="v">keys only · 0 words of its own</span><span class="s">prompt v3 · Mon 5 Oct 09:12 · 1 draft · the reply is checked key by key against the lists issued for this run</span></div>
+    <div><span class="k">Drafts left today</span><span class="v">4 of 5</span><span class="s">a draft again may return a similar arrangement</span></div>
+  </section>
+</div>
+</div>
+</div>
+<div class="rm-sticky">
+  <button type="button" class="btn btn-primary lg">Next item to decide</button>
+  <p class="t-meta">1 left: Gemini's suggested Domains. Then Accept.</p>
+</div>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-current="page" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div></div>
+<ul class="mk-cap wide"><li>The plan's milestones on the left, depth and date, the outline lines to look at and how it was drafted on the right. Below 760 px the columns dissolve and order restores the reading order: header, additions, depth and date, arrangement, milestones, lines, drafting.</li><li>Milestone 6's window is 224 days, over MILESTONE_MAX_DAYS (186): no odd level remains between 11 and 12 to split it. <b>For the lead:</b> the motivation timeline's longest stretch (224) breaks F-R4-10's ≤ 192 assertion for this fixture under the final reach model.</li></ul>
+</figure>
+</div>
+</section>
+<section class="mk-sec mk-r4">
+<h2>Revision 4 · draft states and sheets · 344</h2>
+
+<div class="mk-row">
+<figure class="mk-fig">
+<div class="mk-tag"><b>A</b> · this build's draft: from the app's numbers</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="rm-stack"><section class="card rm-aim o1" aria-label="The draft">
+    <div class="t-eyebrow">Draft · not accepted yet</div>
+    <p class="rm-aim-t" style="margin-top:6px">Know probability and inference well enough to pass Exam P and use them at work</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Statistics · level 9</span><span class="chip">Mastered (level 12)</span><span class="chip">Exam P · Tue 4 May 2027</span><span class="chip">6 h a week · Steady</span></div>
+    <p class="rm-lead">Built from your numbers.</p>
+    <div class="rm-lines"><span>The app placed your outline lines in order and picked the practice types: easy to change.</span><span><a class="ilink" href="#">Edit the intake</a> · <a class="ilink" href="#">Discard</a></span></div>
+  </section>
+<section class="card"><div class="ms-h"><span class="ms-n cur">1</span><div><div class="ms-t">Familiar, part 1: Probability, Inference to level 6+</div><div class="ms-w">Mon 5 Oct → Sun 22 Nov · 7 weeks</div></div></div><div class="ms-sec"><ul><li class="oi"><div class="it-k">Outline line S1 · Probability</div><div class="it-l">General probability</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>your outline</span></div></li><li class="oi"><div class="it-k">Practice · Deliberate practice</div><div class="it-l">Recall drills: Probability, Inference</div><div class="it-chips"><span class="pv pv-app">added by the app</span></div></li><li class="oi"><div class="it-k">Step</div><div class="it-l">Book Exam P</div><div class="it-chips"><span class="pv pv-app">added by the app</span></div></li></ul></div></section>
+<div class="rm-sticky" style="position:static;background:none"><button type="button" class="btn btn-primary lg">Accept the plan</button><p class="t-meta">Nothing to decide: every name here is the app's or yours.</p></div></div>
+</div></div></div>
+<ul class="mk-cap"><li>ROADMAP_GEMINI_LIVE stays false until the v3 probe passes, so every draft in this build is the starter's (or the user's own). Same titles, measures and dates; its lines are placed in order and its practice types are the app's, labelled "added by the app". No arrangement line, no additions row: nothing waits for a decision, so Accept is the first tap.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>B</b> · a reply that breaks the format</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="rm-stack"><section class="card rm-aim o1" aria-label="The draft">
+    <div class="t-eyebrow">Draft · not accepted yet</div>
+    <p class="rm-aim-t" style="margin-top:6px">Know probability and inference well enough to pass Exam P and use them at work</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Statistics · level 9</span><span class="chip">Mastered (level 12)</span><span class="chip">Exam P · Tue 4 May 2027</span><span class="chip">6 h a week · Steady</span></div>
+    <p class="rm-lead">Gemini's reply didn't keep to the app's format, so none of it is used. Here is a plan from your numbers; every check still runs.</p>
+    <div class="rm-lines"><span>How this was drafted: Rejected (format) · plan from your numbers</span><span>The call still counts toward today's 5 drafts.</span></div>
+  </section></div>
+</div></div></div>
+<ul class="mk-cap"><li>Any breach but an over-long array (a wrong type, a value outside an enum, an extra property, a missing key, free text) rejects the whole reply: nothing from it is written, the run is FAILED with report.fallback STARTER, and the plan from the user's numbers is written in its place.</li><li>The log line carries normalised paths only ("stages.FOUNDATION.&lt;extra&gt;"), never the model's words; RunFacts never echoes a dropped string.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>B2</b> · a reply the tripwire refused</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="rm-stack"><section class="card rm-aim o1" aria-label="The draft">
+    <div class="t-eyebrow">Draft · not accepted yet</div>
+    <p class="rm-aim-t" style="margin-top:6px">Know probability and inference well enough to pass Exam P and use them at work</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Statistics · level 9</span><span class="chip">Mastered (level 12)</span><span class="chip">Exam P · Tue 4 May 2027</span><span class="chip">6 h a week · Steady</span></div>
+    <p class="rm-lead">Gemini's reply held words the app didn't write, so none of it is used. Here is a plan from your numbers; every check still runs.</p>
+    <div class="rm-lines"><span>Drafted by: the app (Gemini's reply was refused)</span><span>The call still counts toward today's 5 drafts.</span></div>
+  </section></div>
+</div></div></div>
+<ul class="mk-cap"><li><b>Shipped:</b> a reply that kept to the format but would have put model text into the plan (the one writer's tripwire, F-R4-20) writes the plan from the user's numbers under RUN_REFUSED_LINE. It never says "Gemini didn't answer" when Gemini did: "Drafted by" is keyed on the cause, "rejected" for a format breach (frame B), "refused" for the tripwire, "didn't answer" for no usable answer.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>C</b> · an English, non-exam aim · and an addition past 3 years</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card rm-adds" aria-label="Domains Gemini suggests"><p class="t"><b>Gemini suggests adding 2 of your Domains:</b> Calculus (20 cards · 7 at level 6+), Linear Algebra (5 cards · 1 at level 6+). Each would count at every milestone, at 25 cards each.</p><p class="t-meta" style="margin-top:8px">Adding both moves the realistic date by about 8 weeks, to Sun 7 May 2028.</p><div class="acts"><button class="btn btn-secondary">Add both</button><button class="btn btn-secondary">Choose…</button><button class="btn btn-quiet">Leave out</button></div></section>
+<div style="height:16px"></div>
+<section class="card rm-adds" aria-label="A blocked addition"><div class="rm-add blocked" style="margin-top:0;border-top:0;padding-top:0"><div><b>Calculus</b><div class="t-meta">20 cards · 7 at level 6+ · counts at 25</div><div class="t-meta">Adding Calculus would take the plan past 3 years at this depth.</div></div><span class="switch-hit"><button class="switch" role="switch" aria-checked="false" aria-disabled="true" aria-label="Add Calculus (not possible: past 3 years)"></button></span></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>For an English aim with no exam: [Add both] [Choose…] [Leave out]. For an exam or a non-English aim, the per-Domain toggles of the main frame. Either way the date effect shows first.</li><li>A toggle whose Domain would put the realistic date past SPAN_MAX_DAYS (1,080) is disabled with the reason; so is one that would make R exceed 6 Domains ("A plan holds up to 6 Domains.").</li><li>Confirmed Domains carry "suggested by Gemini, added by you on 5 Oct" on the Depth line for the plan's life (mockup 3, frame C).</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>D</b> · a Body plan with constraints: exclusions and the one confirm</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="rm-stack"><section class="card rm-aim"><div class="t-eyebrow">Draft · not accepted yet</div><p class="rm-aim-t" style="margin-top:6px">Run a sub-50 10K</p><div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-body"/></svg>Body · practice only</span><span class="chip">by Sun 3 Oct 2027</span></div><p class="rm-lead">Not medical advice — check health-related changes with a professional.</p></section>
+<section class="card pad"><p class="t-meta" style="color:var(--ink-1)"><b class="ink-0">Left out because of your constraints:</b> Harder session ('running'), Longer session ('running'), Performance check ('running'), Full attempt ('running'). <a class="ilink" href="#">Allow one</a></p><p class="t-meta" style="margin-top:8px;color:var(--ink-1)">Your constraints say 'no running' and your aim is 'Run a sub-50 10K'. The plan leaves out running sessions until you change one of them.</p></section>
+<section class="card rm-adds" id="picks"><p class="t"><b>Gemini picked Strength session and Easy session.</b> Your constraints say 'Knee injury, no running'. Keep them?</p><div class="acts"><button class="btn btn-secondary">Keep them</button><button class="btn btn-primary btn-wrap">Use easy, mobility and technique instead</button></div><p class="t-meta" style="margin-top:8px">Nothing reaches Today before you answer. Without Gemini the plan uses only easy, mobility and technique sessions.</p></section></div>
+</div></div></div>
+<ul class="mk-cap"><li>constraintExclusionsOf runs on each type's <b>rendered label</b> (keywords + template + fill), with a negation scope that runs across commas and 'or': "no running" leaves out Harder and Longer sessions, and, on this aim, Performance check and Full attempt, each listed with its word. [Allow one] puts a type back in the Edit sheet's picker, never into a reply.</li><li>With any constraint on a Body or Care plan, Gemini's session picks are one pending decision quoting the constraints; it blocks Accept and is the only such tap. The app's own plan uses only easy, mobility and technique sessions.</li><li>HEALTH_LINE leads a Body draft; a Field plan never shows it.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>E</b> · a chosen date: Over</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card pad rm-date"><div class="ck" style="padding-top:0"><div class="ck-h"><b>Your date</b><span class="vd"><svg class="i"><use href="#v-over"/></svg>Over</span></div>
+<p>Your date, Tue 5 Oct 2027, is 23 weeks ahead of your pace. Keeping it asks 6 new cards a week, more than your usual 3, and works only if nearly every review passes.</p>
+<p class="rm-wp"><svg class="i"><use href="#i-cal"/></svg><span>By your date the plan reaches <b>Toward Mastered (level 11)</b>.</span></p>
+<div class="offers"><button class="btn btn-primary">Use Sun 12 Mar 2028</button><div class="rm-sw" style="padding:0 2px"><span class="t">Keep my date over my pace</span><span class="switch-hit"><button class="switch" role="switch" aria-checked="false" aria-label="Keep my date over my pace"></button></span></div><button class="btn btn-secondary">Choose a lower depth…</button></div>
+<p class="fixed">The app doesn't lower the depth to fit a date. A lower depth is your choice and stays on the plan.</p></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>A 12-month date (Tue 5 Oct 2027) for this depth: D_best_2x is Mon 27 Sep 2027 (the best case at twice the usual pace), so the date is possible, but no rate up to 6 a week reaches it at the measured pass rate: OVER asks 6 and says it works only if nearly every review passes.</li><li>The waypoint is reachByUserDate: the highest stage whose expected day falls on or before the date (Toward Mastered, day 300). No depth term changes.</li><li>Keeping it needs the switch, and the "Over" chip stays for good: "Your date is 23 weeks ahead of your pace — kept as you chose (Over)." A date the app set is never called the user's choice.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>F</b> · Impossible: before the floor</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card pad rm-date"><div class="ck" style="padding-top:0"><div class="ck-h"><b>Your date</b><span class="vd vd-x"><svg class="i"><use href="#v-imp"/></svg>Impossible</span></div>
+<p>Your date, Mon 5 Apr 2027, is before the earliest this depth can be reached, even at twice your pace: a new card needs at least 318 days to reach level 12 here.</p>
+<p class="rm-wp"><svg class="i"><use href="#i-cal"/></svg><span>By your date the plan reaches <b>Retained (level 8)</b>.</span></p>
+<div class="offers"><button class="btn btn-primary">Use Sun 12 Mar 2028</button><button class="btn btn-secondary">Choose a lower depth…</button></div></div></section>
+<div class="rm-sticky" style="position:static;background:none;margin-top:8px"><button type="button" class="btn btn-primary lg">Next item to decide</button><p class="t-meta">Accept waits for a date this depth can reach, or a lower depth.</p></div>
+</div></div></div>
+<ul class="mk-cap"><li>Six months (Mon 5 Apr 2027) is before both the strict floor (318 days with every review passing and every card written today) and D_best_2x. Accept is refused for this depth and date; the offers stay one tap each and none is automatic.</li><li>IMPOSSIBLE judges only the aim's own date, never the exam's.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>G</b> · the lower-depth sheet</div>
+<div class="frame f344" id="lower"><div class="shf"><div class="sheet-s"><div class="grabber"></div>
+<div class="sheet-h"><div class="t"><h2>Choose a lower depth</h2><p class="sub">Now: Mastered (level 12).</p></div><button class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+<p class="t-meta" style="margin-top:14px;color:var(--ink-1)">A lower depth is your choice: the plan shows it for good, Proficiency is measured toward the new depth, and Paragon is off. Ranks already given stay.</p>
+<div style="display:flex;flex-direction:column;gap:8px;margin-top:12px">
+  <button type="button" class="rm-pick"><span class="t"><b>Lower to Fluent (level 10)</b><span class="t-meta">its stage in this plan: Sun 16 May 2027</span></span></button>
+  <button type="button" class="rm-pick"><span class="t"><b>Lower to Retained (level 8)</b><span class="t-meta">its stage in this plan: Sun 14 Feb 2027 · what you'd hold by your exam</span></span></button>
+</div>
+</div></div></div>
+<ul class="mk-cap"><li><b>Shipped:</b> each lower depth with its stage's day in this plan ("its stage in this plan: Sun 16 May 2027"), or "not a stage of this plan yet: the plan is dated again". A realistic date computed per lower depth is Deferred. With an exam date, the depth the plan reaches by the exam is marked "what you'd hold by your exam" (Retained by Tue 4 May). The sheet's close button leaves the depth as it is.</li><li>The only way down: the tap records {depthChoice: {from 12, to 10, day, reason CHOICE}} (or EXAM), shown for good, Proficiency rebased, Paragon off.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>H</b> · area suggestions (lead-only, off in this build)<span class="mk-flag">lead-only switch · off in this build</span></div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card rm-gaps"><div class="t-eyebrow">Gemini's pick of your words · not checked</div><h3>Areas Gemini thinks may need their own Domain</h3><p>Each name is a phrase from your aim, outline, exam or Domains. Whether it needs its own Domain is Gemini's guess, and the app can't check it. Create one only if you know it does.</p>
+<div class="rm-gap"><b>Random variables</b><div class="t-meta">from your outline line S2</div><div class="it-acts"><button class="chip btn-chip">Create as a Domain…</button><button class="chip btn-chip">Dismiss</button></div></div>
+<div class="rm-gap"><b>Continuous distributions</b><div class="t-meta">from your outline line S6</div><div class="it-acts"><button class="chip btn-chip">Create as a Domain…</button><button class="chip btn-chip">Dismiss</button></div></div>
+<p class="t-meta" style="margin-top:4px">Gemini suggested 2 names the app couldn't find in your words; they're not shown.</p></section>
+<div style="height:16px"></div>
+<section class="card tp"><div><span class="k">Gemini's reply</span><span class="v">keys only</span><span class="s">2 area names picked from your words (not checked) · 2 not shown</span></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>Exists only while ROADMAP_GAPS_LIVE (lead only, false in this build) and the user's switch are on. Only names that are a phrase, in order, from one text the user typed or chose (the aim, the outline, the exam, the chosen Domains) are shown; every other name is dropped unseen and only counted.</li><li>The panel sits apart from the plan, under its eyebrow; a GAP row never reaches measures, Today, quests, report labels or RunFacts. [Create as a Domain…] names a real, empty Domain the user fills with their own cards.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>I</b> · a legacy draft</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="rm-stack"><section class="card rm-aim"><div class="t-eyebrow">Aim</div><p class="rm-aim-t" style="margin-top:6px">Become a consistently profitable systematic EUR/USD trader by 2028</p><div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Trading · level 6</span><span class="chip">31 Dec 2027</span></div></section>
+<section class="card rm-banner" aria-label="Planned before plans aimed at a depth"><div class="t"><b>This draft was made before plans aimed at a depth.</b>Wording from an earlier Gemini draft is hidden.</div><button class="btn btn-primary">Draft it again</button></section></div>
+</div></div></div>
+<ul class="mk-cap"><li>A draft made before revision 4 shows its aim card (the aim, the Area, the date), then the banner, and no milestone or item text. The hidden-wording line shows only when a row had a Gemini origin. [Draft it again] opens the intake, and the next draft replaces the old rows. <b>Shipped:</b> with no depth set, drafting and accepting refuse with "Pick a depth in the intake first"; a draft with a depth but rows from before revision 4 refuses at accept with "Draft it again first".</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>J</b> · moving an outline line</div>
+<div class="frame f344"><div class="shf"><div class="sheet-s"><div class="grabber"></div>
+<div class="sheet-h"><div class="t"><h2>Outline line S3</h2><p class="sub">Multivariate random variables · your words</p></div><button class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+<div class="rm-f" style="margin-top:14px"><span class="st-label">In milestone</span><select class="st-input"><option>2 · Familiar</option><option>1 · Familiar, part 1</option><option>3 · Retained</option><option>4 · Fluent</option><option>5 · Toward Mastered</option><option>6 · Mastered</option></select><p class="st-hint">Gemini put it in milestone 2. Moving it changes no number.</p></div>
+<div class="rm-f" style="margin-top:12px"><span class="st-label">Its Domain</span><select class="st-input"><option>Probability</option><option>Inference</option><option>None</option></select><p class="st-hint">Yours to choose. It sets how many cards the Domain needs, so the plan is re-dated.</p></div>
+<div class="it-acts" style="margin-top:14px"><button class="btn btn-primary">Save</button><button class="btn btn-quiet">Cancel</button></div>
+</div></div></div>
+<ul class="mk-cap"><li>moveLineCore moves a TOPIC row between unstarted milestones of the version; setLineDomainCore changes its Domain (on a draft it updates Roadmap.syllabus.lineDomains; after acceptance, through a re-plan of unstarted stages). Either way coverage is recomputed and the plan re-dated.</li></ul>
+</figure>
+</div>
+</section>
+<!-- rev4:end -->
+<!-- rev3-note:start -->
+<section class="mk-sec mk-r3">
+<h2>Revision 3 frames · kept for what revision 4 leaves unchanged</h2>
+<p>Everything below is revision 3's draft review (prompt v2, Gemini's own words). Revision 4 retires it for every new draft:</p>
+<ul class="mk-cap wide">
+<li>No item carries Gemini's words: titles, practices, steps and checkpoints are the app's templates; topics are the user's outline lines. So Keep, bulk keep, KEPT_SUGGESTION, the flags on model text (Claim word, Looks like a resource, About you, Number, Too early) and CREDENTIAL_LINE are gone from the draft, and "I checked this" remains only in the area-suggestion panel.</li>
+<li>Targets are the depth's coverage per Domain, never "Fitted" (no FITTED verdict on a depth plan); the time check, the realism engine's capacity and the reality check stand.</li>
+<li>The running, timed-out and "Gemini didn't answer" states (A–C) stand with the v3 header; a v2 draft still in the database is a legacy draft (frame I above) and its text is hidden.</li>
+</ul>
+<div class="mk-legend" aria-label="Provenance classes as rendered in revision 3">
   <span><span class="pv pv-draft">Gemini suggestion · not checked</span> DRAFT</span>
   <span><span class="pv pv-kept">Gemini's words · kept by you · not checked</span> KEPT_SUGGESTION</span>
   <span><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>You checked this</span> YOURS</span>
@@ -674,8 +1243,8 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
   <span><span class="cap">≈ 9 h 10 (task estimates, not timed)</span> ESTIMATED</span>
   <span><span class="cap">plain, basis on "How this is worked out"</span> WORKED_OUT</span>
 </div>
-
-</header>
+</section>
+<!-- rev3-note:end -->
 
 <section class="mk-sec">
   <h2>draft-mixed · 344 then 932</h2>

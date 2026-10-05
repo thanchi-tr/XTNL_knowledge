@@ -44,9 +44,11 @@ const CAP: Readonly<Record<ItemKind, number>> = {
   PRACTICE: PRACTICES_PER_MILESTONE,
   STEP: STEPS_PER_MILESTONE,
   CHECKPOINT: CHECKPOINTS_PER_MILESTONE,
+  // Revision 4 (lane-0 contract shell): a GAP row is never added by hand.
+  GAP: 0,
 };
 
-const KIND_WORD: Readonly<Record<ItemKind, string>> = { DOMAIN: "a Domain", TOPIC: "a topic", PRACTICE: "a practice", STEP: "a step", CHECKPOINT: "a checkpoint" };
+const KIND_WORD: Readonly<Record<ItemKind, string>> = { DOMAIN: "a Domain", TOPIC: "a topic", PRACTICE: "a practice", STEP: "a step", CHECKPOINT: "a checkpoint", GAP: "an area" };
 
 /**
  * The kinds a milestone can still take (a track Area takes no Domains or
@@ -58,7 +60,9 @@ export function addableKinds(m: MilestoneDraft, trackArea: boolean, library?: re
   const live = (k: ItemKind) => m.items.filter((it) => it.kind === k && it.decision !== "REMOVED").length;
   const taken = new Set(m.items.filter((it) => it.kind === "DOMAIN" && it.domainId && it.decision !== "REMOVED").map((it) => it.domainId));
   const pickable = Array.isArray(library) && library.some((d) => !taken.has(d.id));
-  const kinds: ItemKind[] = trackArea ? ["PRACTICE", "STEP", "CHECKPOINT"] : ["DOMAIN", "TOPIC", "PRACTICE", "STEP", "CHECKPOINT"];
+  // A plan aimed at a depth (revision 4: its rows carry a stage) counts the same Domains at every stage: they change in the intake or Gemini's additions row, never one milestone at a time.
+  const depthPlan = m.stage != null;
+  const kinds: ItemKind[] = trackArea ? ["PRACTICE", "STEP", "CHECKPOINT"] : depthPlan ? ["TOPIC", "PRACTICE", "STEP", "CHECKPOINT"] : ["DOMAIN", "TOPIC", "PRACTICE", "STEP", "CHECKPOINT"];
   return kinds.filter((k) => live(k) < CAP[k] && (k !== "DOMAIN" || pickable) && (k !== "TOPIC" || taken.size > 0));
 }
 

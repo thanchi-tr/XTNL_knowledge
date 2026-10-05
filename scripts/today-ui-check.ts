@@ -36,14 +36,32 @@
  * imports roadmap-events, so scripts/_no-model.ts comes first (F16 seam
  * 22): no check reaches a model.
  *
- *   npx tsx scripts/today-ui-check.ts
+ * Revision 4 (roadmap-rev4.md F-R4-3, lane T) adds Today's one quiet aim
+ * line: loadAimStep and cookies() in the page's one wave, the slot holding
+ * the week quests or else the aim line (never both), the compact hide keyed
+ * on Close the day being due (the evening AND something to close, not the
+ * clock alone), nothing in the counts, the Asks, the bell or a write, and
+ * the fifteen fixture states, each roadmap-invite todayAimLineOf's own answer
+ * (it imports roadmap-invite, after _no-model). The fix rounds add the HIDDEN
+ * prompt ('hide:'), the count gates' START lines and the contract's rank
+ * indices; fix round 2 adds Today's SET × writing 'hide:' (the 4 weeks its
+ * label promises), the two in-place states in a copy of the board's columns,
+ * and the line's text fit: an estimate from Inter's own advance widths that
+ * every copy Today can draw fits the 3-line clamp (≤ 72 px) at 344 and in the
+ * board's real column at ui-audit's widths. ui-audit's browser pass stays the
+ * gate; this fails first when a copy grows.
+ *
+ * A PENDING line is another lane's open item this check tracks; with
+ * --strict each one fails.
+ *
+ *   npx tsx scripts/today-ui-check.ts [--strict]
  */
 import "./_no-model";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { addDays, dayEndOf, dayKeyOf, dayStartOf, zonedToInstant, type DayKey } from "../src/lib/life-day";
+import { addDays, dayEndOf, dayKeyOf, dayStartOf, weekdayOf, zonedToInstant, type DayKey } from "../src/lib/life-day";
 import { parseCapture, shiftReverted, type KeyLike } from "../src/lib/capture-parse";
 import { BAND_OVERRIDE_COOLDOWN_DAYS, debtFor, selfRatingOpen, selfRatingOpensOn } from "../src/lib/life-grade";
 import { normTitleOf } from "../src/lib/life-lexicon";
@@ -260,9 +278,39 @@ import {
 } from "../src/components/today/board-ui";
 import { GoalsStrip } from "../src/components/today/GoalsStrip";
 import { GOAL_ALREADY_CLOSED, type GoalPayout } from "../src/lib/goals";
-import { QUEST_FIXTURES, fixtureBoard, fixtureRoadmapBoard, fixtureRoadmapBoardData } from "../src/app/dev/style/today/fixtures";
+import {
+  AIM_FIRST,
+  AIM_LADDERS,
+  AIM_LINE_FIXTURES,
+  AIM_MON,
+  PART_DOMAIN_NAMES,
+  QUEST_FIXTURES,
+  aimLineKindOf,
+  aimLineOfFixture,
+  fixtureBoard,
+  fixtureRoadmapBoard,
+  fixtureRoadmapBoardData,
+  type AimLineFixture,
+} from "../src/app/dev/style/today/fixtures";
 import { NextUp } from "../src/components/today/NextUp";
 import { SEEK_TEMPLATE_EVENT, onSeekTemplate, seekTemplate } from "../src/components/roadmap/roadmap-events";
+import { AIM_INVITE_SINCE, AIM_LATER_DAYS, AIM_STEP_COOKIE, aimPromptOf, hideCookieValue, laterCookieValue, stepCookieValue } from "../src/lib/roadmap-invite";
+import {
+  AIM_RANKS,
+  MAX_MILESTONES,
+  RANK_MILESTONE_MAX,
+  ROADMAP_GOALS_LIVE,
+  STAGE_KEYS,
+  STAGE_LEVEL,
+  STAGE_RANK,
+  WEEK_QUEST_PARTS_TODAY,
+  parseMeasureKey,
+  rankIndexForStage,
+  stageLabelOf,
+  type AimLineView,
+} from "../src/lib/roadmap-types";
+import { BODY_SAFE_KINDS, catalogEntryOf } from "../src/lib/roadmap-catalog";
+import { AIM_NOT_NOW_SET_LABEL, aimLineCopy } from "../src/components/roadmap/roadmap-copy";
 
 const TZ = "Australia/Sydney";
 // Thursday 1 October 2026 (AEST; Sydney's DST starts Sunday 4 October).
@@ -279,6 +327,15 @@ function check(name: string, ok: boolean, detail = "") {
   if (ok) passed++;
   else failed++;
   console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` — ${detail}` : ""}`);
+}
+/** --strict: every PENDING line (another lane's open item) is a failure. */
+const STRICT = process.argv.includes("--strict");
+let pendingCount = 0;
+/** A check another lane's change turns green: PASS once `ok`, else PENDING (FAIL under --strict), naming its owner. */
+function pending(owner: string, name: string, ok: boolean, detail = "") {
+  if (ok || STRICT) return check(name, ok, detail);
+  pendingCount++;
+  console.log(`PENDING (${owner}) ${name}${detail ? ` — ${detail}` : ""}`);
 }
 
 // ── Fixtures ──────────────────────────────────────────────────────────────
@@ -2763,9 +2820,12 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
     "page: loadWeekQuests joins loadTodayBoard in one Promise.all (a failure reads as no card), with no Suspense or fallback",
     /loadTodayBoard\(userId, day, now\)/.test(wave) && /loadWeekQuests\(userId, now\)\.catch\(\(\) => null\)/.test(wave) && !/Suspense/.test(page)
   );
+  // Revision 4 (F-R4-3): the same slot holds the aim line when no week quests show, so the two never appear together.
   check(
-    "page: the card is <WeekQuests variant=\"today\"> passed as questsSlot, only for an OPEN week with a quest",
-    /quests && weekQuestsShownOnToday\(quests\.view\) \? <WeekQuests variant="today" view=\{quests\.view\} \/> : null/.test(page) && page.includes("questsSlot={questsSlot}")
+    "page: questsSlot is <WeekQuests variant=\"today\"> for an OPEN week with a quest, else the aim line in its .rm-aim-slot (data-close-due), else nothing",
+    /const questsSlot =\s*quests && weekQuestsShownOnToday\(quests\.view\) \? \(\s*<WeekQuests variant="today" view=\{quests\.view\} \/>\s*\) : aimLine \? \(\s*<div className="rm-aim-slot" data-close-due=\{closeDue \? "1" : undefined\}>\s*<AimLine view=\{aimLine\} \/>\s*<\/div>\s*\) : null;/.test(
+      page
+    ) && page.includes("questsSlot={questsSlot}")
   );
   check(
     "page: a week not yet frozen is frozen after the response (RENDER), never on a writes-off server",
@@ -2905,8 +2965,9 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   // F23 (lane T): /dev/style/today shows the six week quests states, compact in the board's own slot.
   const fx = code(read("src/app/dev/style/today/TodayFixtures.tsx"));
   check(
-    "fixture: the six states — open, partial, all done, compact, writes off, practice-only",
-    QUEST_FIXTURES.map((f) => f.key).join() === "open,partial,done,compact,writes-off,practice-only" &&
+    "fixture: the nine states — open, partial, all done, compact, writes off, practice-only (generator 1), and rev 4's parts, more parts, body plan with the health line (generator 2)",
+    QUEST_FIXTURES.map((f) => f.key).join() === "open,partial,done,compact,writes-off,practice-only,parts,parts-more,body-health" &&
+      QUEST_FIXTURES.filter((f) => f.input.set.generator === 2).map((f) => f.key).join() === "parts,parts-more,body-health" &&
       QUEST_FIXTURES.filter((f) => f.compact).map((f) => f.key).join() === "compact" &&
       QUEST_FIXTURES.find((f) => f.key === "writes-off")?.input.writesOff === true &&
       QUEST_FIXTURES.find((f) => f.key === "practice-only")?.input.set.quests.every((q) => q.kind === "PRACTICE") === true
@@ -2930,8 +2991,651 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   );
 }
 
+// ═══ Revision 4: the aim line on Today (roadmap-rev4.md F-R4-3; lane T) ═══
+// One quiet line in the week quests' slot, only when no week quests show:
+// SET on fresh-start days with its back-off, DRAFT, START. Loaded in the
+// page's one wave; hidden only while Close the day is due (the evening AND
+// something left to close); never a count, an Ask, the bell, red or a write.
+{
+  const code = (src: string) =>
+    src
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+  const page = code(read("src/app/today/page.tsx"));
+  const boardSrc = code(read("src/components/today/TodayBoard.tsx"));
+
+  // The loads: loadAimStep (R4) and cookies() join the board's one wave; nothing else is read for the line.
+  const wave = /await Promise\.all\(\[([\s\S]*?)\]\);/.exec(page)?.[1] ?? "";
+  check(
+    "aim line: loadAimStep (a failure reads as no line) and cookies() sit in the page's one Promise.all",
+    (page.match(/Promise\.all\(/g) ?? []).length === 1 &&
+      /const \[board, streak, bosses, feed, quests, aimStep, jar\] = await Promise\.all\(\[/.test(page) &&
+      /loadAimStep\(userId, now\)\.catch\(\(\) => null\),/.test(wave) &&
+      /\bcookies\(\),?\s*$/.test(wave.trim()) &&
+      !/await cookies\(\)/.test(page),
+    wave.replace(/\s+/g, " ").trim()
+  );
+  check("aim line: the page never calls loadAimCard (loadAimStep is Today's own ≤ 4-read loader)", !/loadAimCard/.test(page) && page.includes('import { loadAimStep } from "@/lib/roadmap-server";'));
+  // The rule: roadmap-invite todayAimLineOf over the step, the prompt from aimPromptOf (the stored switch and the
+  // 'later:', 'hide:' or 'off' cookie), the anchor cookie, the step snooze cookie, the life day, and ROADMAP_GOALS_LIVE.
+  check(
+    "aim line: todayAimLineOf reads the step, aimPromptOf(cookie, aimSuggestions, day), both cookies, the life day and ROADMAP_GOALS_LIVE",
+    /const aimCookie = jar\.get\(AIM_PROMPT_COOKIE\)\?\.value;\s*const aimLine = todayAimLineOf\(\{\s*step: aimStep,\s*prompt: aimPromptOf\(aimCookie, aimStep\?\.aimSuggestions \?\? null, day\),\s*cookie: aimCookie,\s*stepCookie: jar\.get\(AIM_STEP_COOKIE\)\?\.value,\s*today: day,\s*goalsLive: ROADMAP_GOALS_LIVE,\s*\}\);/.test(
+      page
+    ) &&
+      /const day = todayKey\(now\);/.test(page) &&
+      AIM_STEP_COOKIE === "xtnl-aim-step"
+  );
+  // Fix round (lane 0's HIDDEN prompt): the page never branches on the prompt itself, so every AimPrompt value
+  // (ASK, LATER, HIDDEN, OFF, and any later one) reaches Today only through todayAimLineOf.
+  check(
+    "aim line: the page never branches on the prompt (no AimPrompt literal, no prompt comparison): a new prompt state needs no Today code",
+    !/"(?:ASK|LATER|HIDDEN|OFF)"/.test(page) && !/prompt\s*[!=]==/.test(page) && (page.match(/aimPromptOf\(/g) ?? []).length === 1
+  );
+  // The fixtures read the line exactly as the page does (so every fixture state is the page's own answer).
+  const fxSrc = code(read("src/app/dev/style/today/fixtures.ts"));
+  check(
+    "aim line: the fixtures' aimLineOfFixture reads todayAimLineOf with the page's own arguments",
+    /return todayAimLineOf\(\{\s*step: f\.step,\s*prompt: aimPromptOf\(f\.cookie, f\.step\.aimSuggestions \?\? null, f\.today\),\s*cookie: f\.cookie,\s*stepCookie: f\.stepCookie,\s*today: f\.today,\s*goalsLive: f\.goalsLive,\s*\}\);/.test(fxSrc)
+  );
+
+  // The compact hide keys on Close the day being DUE, not the clock alone (F-R4-3: TodayBoard's data-compact is
+  // closeDayProminent(clock), so the page adds data-close-due from the board's own close list).
+  check(
+    "aim line: the board's data-compact is the evening clock alone (closeDayProminent), so the page keys the hide on close-due too",
+    /<div className="rm-quests-slot" data-compact=\{prominent \? "1" : undefined\}/.test(boardSrc) && /const prominent = closeDayProminent\(clock\);/.test(boardSrc)
+  );
+  check(
+    "aim line: data-close-due is the board's own Close the day list (closeItemsOf over buildBoard, the same inputs as TodayBoard), built only when the line shows",
+    /const closeBoard = aimLine && !weekQuestsShownOnToday\(quests\?\.view\) \? buildBoard\(board\) : null;/.test(page) &&
+      /const closeDue = closeBoard \? closeItemsOf\(\{ must: closeBoard\.must, todayRows: closeBoard\.todayRows, today: closeBoard\.today, live: closeBoard\.dutyLive \}\)\.length > 0 : false;/.test(page) &&
+      /const closeItems = closeItemsOf\(\{ must: board\.must, todayRows: board\.todayRows, today: current\.today, live \}\);/.test(boardSrc) &&
+      /const live = board\.dutyLive;/.test(boardSrc)
+  );
+  {
+    const closeDueOf = (data: BoardData): boolean => {
+      const b = buildBoard(data);
+      return closeItemsOf({ must: b.must, todayRows: b.todayRows, today: b.today, live: b.dutyLive }).length > 0;
+    };
+    const meds = tpl({ id: "meds", title: "Morning meds", compulsory: true, dueKind: "DEADLINE", dueDay: TODAY, mvv: "take them" });
+    check(
+      "aim line: close-due with a must still open; not with nothing left open (an evening with nothing to close still shows the line)",
+      closeDueOf(board(TODAY, [meds])) && !closeDueOf(board(TODAY, [])) && closeDayProminent(at(TODAY, 19))
+    );
+  }
+  // The rule in roadmap.css (R5's file; spec F-R4-3 "the compact :has rule"): hide the slot only when it is compact
+  // AND its aim slot is close-due. Binding once AimLine is no longer lane 0's shell; until then it is printed PENDING.
+  const rmCss = code(read("src/components/roadmap/roadmap.css"));
+  const HIDE_RULE = /\.rm-quests-slot\[data-compact\]:has\(> \.rm-aim-slot\[data-close-due\]\)\s*\{\s*display:\s*none;?\s*\}/;
+  const aimLineShell = /STUB:/.test(read("src/components/roadmap/AimLine.tsx"));
+  const hideRuleName = "aim line: roadmap.css hides the slot only while compact AND close-due: .rm-quests-slot[data-compact]:has(> .rm-aim-slot[data-close-due]) { display: none; }";
+  if (!aimLineShell) check(hideRuleName, HIDE_RULE.test(rmCss));
+  else pending("R5", hideRuleName, HIDE_RULE.test(rmCss), "binding once AimLine.tsx loses its STUB marker");
+  const aimSelectors = [...rmCss.matchAll(/([^{}]+)\{/g)].map((m) => m[1].trim()).filter((s) => s.includes("rm-aim") && s.includes("data-compact"));
+  check(
+    "aim line: no rule hides it on the evening clock alone (every selector naming rm-aim with data-compact also needs data-close-due)",
+    aimSelectors.every((s) => s.includes("data-close-due")),
+    aimSelectors.join(" | ")
+  );
+
+  // Quiet by construction: the page adds no class of its own beyond the plain wrapper, and nothing reaches the counts.
+  const slotExpr = /const questsSlot =([\s\S]*?) : null;/.exec(page)?.[1] ?? "";
+  check(
+    "aim line: the wrapper is plain (no owed, warn, danger or gold class; no data-template-id; no /review link)",
+    slotExpr.includes('className="rm-aim-slot"') && !/owed|warn|danger|gold|data-template-id|\/review/.test(slotExpr),
+    slotExpr.replace(/\s+/g, " ").trim()
+  );
+  check(
+    "aim line: the page writes nothing for it (no action import, no snooze, no handoff, no after() for the aim)",
+    !/@\/app\/actions/.test(page) && !/snoozeAim|setAimSuggestions|writeAimHandoff|dismissAimPrompt/.test(page) && !/after\([^)]*aim/i.test(page)
+  );
+  const shellFiles = readdirSync(join(ROOT, "src/components/shell"))
+    .filter((n) => /\.(tsx?|css)$/.test(n))
+    .map((n) => `src/components/shell/${n}`);
+  const quiet = ["src/components/today/board-ui.ts", "src/lib/today-board.ts", "src/lib/tasks.ts", "src/lib/notifications.ts", "src/components/today/TodayBoard.tsx", ...shellFiles];
+  const loud = quiet.filter((f) => /aimLine|AimLine|aimStep|AimStep|rm-aim/.test(code(read(f))));
+  check(
+    "aim line: board-ui.ts, todayCountsOf (tasks.ts), notifications.ts, the board and the shell (nav count, bell, Asks) never name it",
+    shellFiles.length > 0 && loud.length === 0,
+    loud.join(", ")
+  );
+  const countsFn = /export function todayCountsOf[\s\S]*?\n\}/.exec(code(read("src/lib/tasks.ts")))?.[0] ?? "";
+  check("aim line: todayCountsOf counts no roadmap row", countsFn.length > 0 && !/roadmap|aim/i.test(countsFn));
+
+  // The fixture states (F-R4-3 Files: SET WEEK, MONTH, BACK and NEXT, backed off, DRAFT, START and compact).
+  const want: Record<AimLineFixture["key"], ReturnType<typeof aimLineKindOf>> = {
+    "set-week": "SET WEEK",
+    "set-month": "SET MONTH",
+    "set-back": "SET BACK",
+    "set-next": "SET NEXT",
+    "backed-off": null,
+    "backed-off-first": "SET MONTH",
+    hidden: null,
+    draft: "DRAFT",
+    start: "START",
+    "start-keeps": "START",
+    "start-track": "START",
+    "start-part": "START",
+    "start-part-depth": "START",
+    compact: "SET WEEK",
+    "compact-clear": "SET WEEK",
+  };
+  check(
+    "aim fixtures: the fifteen states, in order (fix round: hidden, the longest START line, a count gate at the depth)",
+    AIM_LINE_FIXTURES.map((f) => f.key).join() ===
+      "set-week,set-month,set-back,set-next,backed-off,backed-off-first,hidden,draft,start,start-keeps,start-track,start-part,start-part-depth,compact,compact-clear",
+    AIM_LINE_FIXTURES.map((f) => f.key).join()
+  );
+  check(
+    "aim fixtures: the days are what they say (Mon 8 Mar 2027; Thu 1 Apr 2027), after AIM_INVITE_SINCE (the back-off's floor never moves them)",
+    weekdayOf(AIM_MON) === 1 && !AIM_MON.endsWith("-01") && weekdayOf(AIM_FIRST) === 4 && AIM_FIRST.endsWith("-01") && AIM_INVITE_SINCE < "2027-01-01",
+    AIM_INVITE_SINCE
+  );
+  const got = AIM_LINE_FIXTURES.map((f) => [f.key, aimLineKindOf(aimLineOfFixture(f))] as const);
+  check(
+    "aim fixtures: each state is todayAimLineOf's own answer, and the one it says",
+    got.every(([k, kind]) => kind === want[k] && kind === AIM_LINE_FIXTURES.find((f) => f.key === k)?.expect),
+    got.map(([k, kind]) => `${k}=${kind}`).join(" ")
+  );
+  const fx = (k: AimLineFixture["key"]) => AIM_LINE_FIXTURES.find((f) => f.key === k)!;
+  const startOf = (k: AimLineFixture["key"]) => {
+    const v = aimLineOfFixture(fx(k));
+    return v && v.kind === "START" ? { ord: v.ord, stage: v.stageName, gives: v.givesRank, href: v.href } : null;
+  };
+  check(
+    "aim fixtures: START names the stage from STAGE_NAMES and the rank it gives ('Milestone 2 · Familiar … Journeyman'); between two gates it keeps your rank; a track plan names no stage; a count gate reads 'Familiar, part 1'",
+    JSON.stringify([startOf("start"), startOf("start-keeps"), startOf("start-track"), startOf("start-part")]) ===
+      JSON.stringify([
+        { ord: 2, stage: "Familiar", gives: "Journeyman", href: "/you/roadmap#now" },
+        { ord: 4, stage: "Toward Mastered", gives: null, href: "/you/roadmap#now" },
+        { ord: 2, stage: null, gives: "Journeyman", href: "/you/roadmap#now" },
+        { ord: 1, stage: "Familiar, part 1", gives: "Journeyman", href: "/you/roadmap#now" },
+      ]),
+    JSON.stringify([startOf("start"), startOf("start-keeps"), startOf("start-track"), startOf("start-part")])
+  );
+  // Fix round (lens 2, contracts §15.4): the fixtures' rank indices are the contract's, not typed guesses.
+  {
+    const bad = Object.entries(AIM_LADDERS).flatMap(([name, l]) =>
+      l.rows
+        .map(([stage, gate, rank], i) => [i + 1, stage, gate, rank, l.depth == null ? i + 1 : rankIndexForStage(stage, gate, l.depth)] as const)
+        .filter(([, , , rank, want]) => rank !== want)
+        .map(([ord, stage, gate, rank, want]) => `${name} #${ord} ${stage}@${gate}: ${rank} vs ${want}`)
+    );
+    const ranks = (k: keyof typeof AIM_LADDERS) => AIM_LADDERS[k].rows.map(([, , r]) => r).join();
+    check(
+      "aim fixtures: every ladder's rank index is rankIndexForStage(stage, gate level, depth) (a track plan's k-th stage ranks k); the new learner ranks [2, 2, 3, 4, 4, 5] and the pack [2, 3, 4, 4, 5] (F-R4-12)",
+      bad.length === 0 && ranks("learner") === "2,2,3,4,4,5" && ranks("pack") === "2,3,4,4,5",
+      bad.join(" | ")
+    );
+  }
+  {
+    // A library holding Fluent at depth Mastered: the count gate counts toward level 12 itself, with retry entries
+    // (the 'r' segment), so Today's START line must not promise the depth's rank before the depth is held.
+    const v = aimLineOfFixture(fx("start-part-depth"));
+    const held = AIM_LADDERS["held-fluent"].rows.filter(([, , , h]) => h).length;
+    check(
+      "aim fixtures: a count gate at the depth (a library holding Fluent, aimed at Mastered) reads 'Milestone 5 · Mastered, part 1' and gives Expert, never Virtuoso before the depth is held; the four held stages give no rank and are skipped",
+      v?.kind === "START" &&
+        v.ord === 5 &&
+        v.stageName === "Mastered, part 1" &&
+        v.givesRank === "Expert" &&
+        held === 4 &&
+        rankIndexForStage("PART", 12, 12) === STAGE_RANK.FLUENT &&
+        rankIndexForStage("PART", 12) === STAGE_RANK.FLUENT &&
+        rankIndexForStage("MASTERED", 12, 12) === STAGE_RANK.MASTERED &&
+        rankIndexForStage("PART", 6, 12) === STAGE_RANK.FAMILIAR,
+      JSON.stringify(v)
+    );
+  }
+  check(
+    "aim fixtures: START never shows while ROADMAP_GOALS_LIVE is false (each START state assumes it on, and with it off gives nothing); the other states assume it as shipped",
+    (["start", "start-keeps", "start-track"] as const).every((k) => fx(k).goalsLive && aimLineOfFixture({ ...fx(k), goalsLive: false }) === null) &&
+      AIM_LINE_FIXTURES.filter((f) => f.expect !== "START").every((f) => !f.goalsLive),
+    `ROADMAP_GOALS_LIVE is ${ROADMAP_GOALS_LIVE}`
+  );
+  check(
+    "aim fixtures: the Settings switch (aimSuggestions false) and a legacy 'off' cookie silence SET only; DRAFT and START still show",
+    aimLineOfFixture({ ...fx("set-week"), step: { ...fx("set-week").step, aimSuggestions: false } }) === null &&
+      aimLineOfFixture({ ...fx("set-week"), cookie: "off" }) === null &&
+      aimLineKindOf(aimLineOfFixture({ ...fx("draft"), step: { ...fx("draft").step, aimSuggestions: false } })) === "DRAFT" &&
+      aimLineKindOf(aimLineOfFixture({ ...fx("start"), cookie: "off" })) === "START"
+  );
+  check(
+    "aim fixtures: 'Not now' on DRAFT (the step cookie) hides it the next day; on SET (Today's ×: a fresh 'hide:' cookie) hides SET, as the /you ASK card's 'later:' does",
+    aimLineOfFixture({ ...fx("draft"), stepCookie: stepCookieValue("DRAFT", "rm-fx", AIM_MON) }) === null &&
+      aimLineOfFixture({ ...fx("set-week"), cookie: hideCookieValue(addDays(AIM_MON, -1)) }) === null &&
+      aimLineOfFixture({ ...fx("set-week"), cookie: laterCookieValue(addDays(AIM_MON, -1)) }) === null
+  );
+  // Fix round 2 (lens 1 and lens 3 minor, the Today SET × ruling): Today's SET × is labelled "Not now: no aim
+  // suggestions for 4 weeks" (the /you LATER line's × label), so it writes what that label promises: 'hide:'
+  // (hideAimPrompt), which /you reads as HIDDEN (no "Set an aim →" line) and Today as nothing for AIM_LATER_DAYS,
+  // the 1st included. 'later:' (snoozeAimPrompt) would leave /you's LATER line, an aim suggestion, under that label.
+  {
+    const aimLineSrc = code(read("src/components/roadmap/AimLine.tsx"));
+    const setAction = /kind\s*===\s*"SET"\s*\?\s*a\.(\w+)\(/.exec(aimLineSrc)?.[1] ?? null;
+    const xDay = addDays(AIM_MON, -1); // Sun 7 Mar 2027: the × on a Sunday's line
+    const after = (today: DayKey) => aimLineOfFixture({ ...fx("set-week"), today, step: { ...fx("set-week").step, lastOpenBefore: addDays(today, -1) }, cookie: hideCookieValue(xDay) });
+    check(
+      "aim line: Today's SET × calls hideAimPrompt ('hide:'), the 4 weeks its label promises: /you reads HIDDEN, not LATER's 'Set an aim →'; after a × on Sun 7 Mar the next Monday and the next 1st (Thu 1 Apr, day 25) show nothing, and Mon 5 Apr (day 29) asks again",
+      setAction === "hideAimPrompt" &&
+        !/snoozeAimPrompt/.test(aimLineSrc) &&
+        AIM_NOT_NOW_SET_LABEL === `Not now: no aim suggestions for ${AIM_LATER_DAYS / 7} weeks` &&
+        aimPromptOf(hideCookieValue(xDay), null, addDays(xDay, 1)) === "HIDDEN" &&
+        aimPromptOf(laterCookieValue(xDay), null, addDays(xDay, 1)) === "LATER" &&
+        after(AIM_MON) === null &&
+        after(AIM_FIRST) === null &&
+        aimLineKindOf(after(addDays(xDay, AIM_LATER_DAYS + 1))) === "SET WEEK",
+      `SET × → ${setAction} · label "${AIM_NOT_NOW_SET_LABEL}" · Mon 5 Apr: ${aimLineKindOf(after(addDays(xDay, AIM_LATER_DAYS + 1)))}`
+    );
+  }
+  // Fix round (lens 3 #9, lane 0's HIDDEN): "Not now" on the /you LATER line writes 'hide:<day>'. Its label says
+  // "no aim suggestions for 4 weeks", so Today's SET keeps quiet for AIM_LATER_DAYS too, the 1st included.
+  {
+    const mon29 = addDays(AIM_FIRST, -3); // Mon 29 Mar 2027, 7 days after the 'hide:' of Mon 22 Mar
+    const hide = hideCookieValue(addDays(AIM_FIRST, -10));
+    const on29 = (cookie: string) => aimLineOfFixture({ ...fx("set-week"), today: mon29, step: { ...fx("set-week").step, lastOpenBefore: addDays(mon29, -1) }, cookie });
+    check(
+      "aim fixtures: the /you line's 'Not now' (a 'hide:' cookie, the HIDDEN prompt) quiets SET on Today for 4 weeks: a Monday and the 1st give nothing, where the same days ask without it",
+      fx("hidden").cookie === hide &&
+        hide === `hide:${addDays(AIM_FIRST, -10)}` &&
+        aimPromptOf(hide, null, AIM_FIRST) === "HIDDEN" &&
+        aimLineOfFixture(fx("hidden")) === null &&
+        aimLineKindOf(aimLineOfFixture(fx("backed-off-first"))) === "SET MONTH" &&
+        weekdayOf(mon29) === 1 &&
+        on29(hide) === null &&
+        aimLineKindOf(on29(laterCookieValue(addDays(mon29, -31)))) === "SET WEEK"
+    );
+    const onMon = (cookie: string | undefined) => aimLineKindOf(aimLineOfFixture({ ...fx("set-week"), cookie }));
+    check(
+      "aim fixtures: on its 28th day 'hide:' asks again and the back-off starts from there (askAnchorOf counts it like 'later:'); a day earlier it still hides",
+      AIM_LATER_DAYS === 28 &&
+        onMon(hideCookieValue(addDays(AIM_MON, -27))) === null &&
+        onMon(hideCookieValue(addDays(AIM_MON, -28))) === "SET WEEK" &&
+        onMon(hideCookieValue(addDays(AIM_MON, -31))) === "SET WEEK" &&
+        onMon(undefined) === null,
+      `-27: ${onMon(hideCookieValue(addDays(AIM_MON, -27)))} · -28: ${onMon(hideCookieValue(addDays(AIM_MON, -28)))} · -31: ${onMon(hideCookieValue(addDays(AIM_MON, -31)))} · none (backed off since AIM_INVITE_SINCE): ${onMon(undefined)}`
+    );
+    check(
+      "aim fixtures: 'hide:' silences SET only: DRAFT and START (the user's own pending work) still show",
+      aimLineKindOf(aimLineOfFixture({ ...fx("draft"), cookie: hide })) === "DRAFT" && aimLineKindOf(aimLineOfFixture({ ...fx("start"), cookie: hide })) === "START"
+    );
+  }
+  check(
+    "aim fixtures: the two compact states are the evening (data-compact), one with something to close (hidden) and one with nothing (shown); no other state is compact",
+    AIM_LINE_FIXTURES.filter((f) => f.compact).map((f) => `${f.key}:${f.closeDue}`).join() === "compact:true,compact-clear:false" && AIM_LINE_FIXTURES.every((f) => f.compact || !f.closeDue)
+  );
+  const fxPage = code(read("src/app/dev/style/today/TodayFixtures.tsx"));
+  check(
+    "aim fixtures: drawn by AimLine in the board's slot exactly as the page draws it (rm-quests-slot data-compact > rm-aim-slot data-close-due), from aimLineOfFixture, inside the fixtures provider (Not now saves nothing)",
+    /<div className="rm-quests-slot" data-compact=\{a\.compact \? "1" : undefined\}>\s*<div className="rm-aim-slot" data-close-due=\{a\.closeDue \? "1" : undefined\}>\s*<AimLine view=\{a\.view\} \/>/.test(fxPage) &&
+      /AIM_LINE_FIXTURES\.map\(\(f\) => \(\{ \.\.\.f, view: aimLineOfFixture\(f\) \}\)\)/.test(fxPage) &&
+      /<FixtureRoadmapProvider>[\s\S]*?<AimLine view=\{p\.view\} \/>[\s\S]*?<AimLine view=\{a\.view\} \/>[\s\S]*?<\/FixtureRoadmapProvider>/.test(fxPage)
+  );
+  // The week quests card's generator-2 states (F-R4-13, F-R4-14), in the same fixture list as rev 3's six.
+  const v2 = QUEST_FIXTURES.filter((f) => f.input.set.generator === 2);
+  const parted = v2.flatMap((f) => f.input.set.quests.filter((q) => (q.kind === "RAISE" || q.kind === "ADD") && (q.parts?.length ?? 0) > 0));
+  check(
+    "quest parts: each parted row is RAISE or ADD, its count the sum of its parts, its label the spec's ('Bring {n} cards to level {L}+', 'Add {n} cards'), every part's Domain named",
+    parted.length === 3 &&
+      parted.every((q) => {
+        if (q.kind !== "RAISE" && q.kind !== "ADD") return false;
+        const parts = q.parts ?? [];
+        const sum = parts.reduce((s, p) => s + p.count, 0);
+        const label = q.kind === "RAISE" ? `Bring ${q.count} cards to level ${q.minLevel}+` : `Add ${q.count} cards`;
+        return sum === q.count && q.label === label && parts.every((p) => Object.prototype.hasOwnProperty.call(PART_DOMAIN_NAMES, p.domainId));
+      }),
+    parted.map((q) => q.label).join(" | ")
+  );
+  check(
+    "quest parts: every RAISE part's measure is its one Domain's, at the row's level, with the recall segment 'r' (parseMeasureKey)",
+    parted.every((q) => {
+      if (q.kind !== "RAISE") return true;
+      return (q.parts ?? []).every((p) => {
+        const k = parseMeasureKey(p.measureKey);
+        return k?.kind === "CARDS_AT_LEVEL" && k.domainIds.join() === p.domainId && k.level === q.minLevel && k.segment === "r";
+      });
+    })
+  );
+  check(
+    "quest parts: progress is Σ_d clamp(v_d − floor_d, 0, count_d) over the parts, done only when every part is",
+    v2.every((f) =>
+      f.input.progress.every((p) => !p.parts || (p.progress === p.parts.reduce((s, x) => s + x.progress, 0) && p.done === p.parts.every((x) => x.done) && p.parts.every((x) => x.progress >= 0 && x.progress <= x.count)))
+    )
+  );
+  check(
+    "quest parts: one state has more parts than Today shows (WEEK_QUEST_PARTS_TODAY), so '+n more' is drawn",
+    WEEK_QUEST_PARTS_TODAY === 2 && QUEST_FIXTURES.find((f) => f.key === "parts-more")!.input.set.quests.some((q) => q.kind === "RAISE" && (q.parts?.length ?? 0) > WEEK_QUEST_PARTS_TODAY)
+  );
+  const bodyFx = QUEST_FIXTURES.find((f) => f.key === "body-health")!.input;
+  const bodySafe = BODY_SAFE_KINDS.map((k) => catalogEntryOf(k)?.template ?? "?");
+  check(
+    "quest parts: the body plan with constraints is practice-only, health on (HEALTH_LINE under each row), every session a catalog body-safe type",
+    bodyFx.health === true && bodyFx.set.quests.length > 0 && bodyFx.set.quests.every((q) => q.kind === "PRACTICE" && bodySafe.some((t) => q.label.startsWith(`${t} · `))),
+    bodySafe.join(", ")
+  );
+  check(
+    "quest parts: rev 3's six states stay generator 1 with no parts, names or health (they render as before)",
+    QUEST_FIXTURES.filter((f) => f.input.set.generator === 1).length === 6 &&
+      QUEST_FIXTURES.filter((f) => f.input.set.generator === 1).every((f) => f.input.domainNames == null && !f.input.health && f.input.set.quests.every((q) => !("parts" in q)) && f.input.progress.every((p) => !p.parts))
+  );
+  // Fix round 2: the in-place states sit in a copy of the board's own columns (.board > .c1 .c2 .c3 > .o9, as
+  // TodayBoard renders them), outside the fixture grid, so the line has c3's real width at 932 and 1440 (a fixture
+  // cell is wider there); the second is the longest line, so ui-audit measures "no clamped text" on the tightest copy.
+  check(
+    "aim fixtures: two states in place, in a copy of the board's columns (c3 > o9: the goals, then the slot), outside the fixture grid: SET WEEK and the longest line (start-part)",
+    /\{aimInPlace\.map\(\(p\) => \(\s*<div key=\{p\.key\} className="dev-aim-board" data-state=\{`aim-\$\{p\.key\}`\}>[\s\S]*?<div className="board">\s*<div className="c1" \/>\s*<div className="c2" \/>\s*<div className="c3">\s*<div className="o9">\s*<GoalsStrip[^\n]*?\/>\s*<div className="rm-quests-slot" style=\{AIM_SLOT_STYLE\}>\s*<div className="rm-aim-slot">\s*<AimLine view=\{p\.view\} \/>/.test(
+      fxPage
+    ) &&
+      /<div className="c3">\s*<div className="o9">\s*<GoalsStrip/.test(boardSrc) &&
+      fxPage.indexOf("aimInPlace.map(") >= 0 &&
+      fxPage.indexOf("aimInPlace.map(") < fxPage.search(/<div className="dev-grid">\s*\{aimStates\.map\(/) &&
+      /key: "in-place", fixture: "set-week"/.test(fxPage) &&
+      /key: "in-place-longest", fixture: "start-part"/.test(fxPage) &&
+      /const AIM_SLOT_STYLE = \{ marginTop: 16 \} as const;/.test(fxPage) &&
+      /const QUESTS_SLOT_STYLE = \{ marginTop: 16 \} as const;/.test(boardSrc)
+  );
+  {
+    const fxCss = code(read("src/app/dev/style/today/today-fixtures.css"));
+    check(
+      "aim fixtures: the board copy is full page width (no fixture grid, no width of its own), so today.css's .today-board .board columns size it",
+      /\.dev-today \.dev-aim-board \{ display: flex; flex-direction: column; gap: 8px; min-width: 0; margin-bottom: 28px; \}/.test(fxCss) &&
+        !/dev-aim-board[^{]*\{[^}]*(?:[{;]\s*(?:max-)?width:|grid-template)/.test(fxCss) &&
+        /className="page today-board cq-main dev-today"/.test(fxPage)
+    );
+  }
+}
+
+// ═══ Fix round 2 (lane T): the aim line's text fits its 3-line clamp ═══════
+// Acceptance gates the line at ≤ 72 px at 344 with no clamped text, in ui-audit (the lead's browser pass);
+// nothing here runs a browser. This is an estimate from the font's own advance widths and the CSS's own numbers,
+// so a copy that would reach a 4th line (which the clamp cuts, taking the rank words with it) fails here before
+// any browser run: the Names ruling on "(level 12)" in the START line, a longer stage or rank name, a new SET
+// variant. It also finds where the board's column is narrower than at 344 (a PENDING line for R5's clamp).
+{
+  const code = (src: string) =>
+    src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+  // Inter as src/app/layout.tsx loads it (next/font/google, the latin subset, the variable wght axis): advance
+  // widths in font units (2048 per em) for U+0020–U+007E, then FIT_EXTRA, at wght 400 and 600 (HVAR applied).
+  // Read from .next/static/media/83afe278b6a6bb3c-s.p.2bn3s6zvc0dyp.woff2 (sha256 c940764593d0fe5d…) on Mon 5 Oct
+  // 2026. Kerning (GPOS) is not applied; in Inter it almost always narrows a line, so the estimate errs wide.
+  const FIT_UPM = 2048;
+  const FIT_EXTRA = "·’‘“”–—…";
+  const FIT_ADV: Readonly<Record<400 | 600, string>> = {
+    400:
+      "576,589,954,1297,1314,2011,1319,614,747,747,1026,1355,590,942,590,738,1292,833,1249,1265,1323,1215,1270,1159,1267,1270,590,618,1355,1355,1355,1047,1978,1413,1340,1496,1478,1231,1209,1528,1522,550,1169,1376,1158,1850,1543,1566,1308,1566,1318,1314,1322,1524,1413,2018,1397,1390,1288,747,738,747,965,934,661,1150,1254,1170,1254,1194,758,1256,1211,496,496,1124,496,1794,1210,1228,1254,1254,771,1081,670,1211,1151,1676,1118,1151,1131,873,681,873,1355,590,534,534,902,902,1024,2048,1770",
+    600:
+      "509,665,1084,1321,1334,2062,1361,673,766,766,1114,1381,660,954,660,780,1358,870,1279,1307,1369,1259,1315,1183,1316,1315,660,680,1381,1381,1381,1120,2054,1499,1351,1510,1479,1241,1204,1535,1528,568,1189,1448,1158,1893,1556,1575,1322,1584,1338,1334,1356,1506,1499,2097,1482,1469,1342,766,780,766,989,964,725,1179,1281,1196,1281,1213,800,1284,1259,540,540,1171,540,1849,1258,1249,1281,1281,818,1130,729,1259,1208,1724,1170,1211,1162,938,741,938,1381,660,610,610,1053,1041,1024,2048,1979",
+  };
+  const FIT_CHARS = [...Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i)), ...FIT_EXTRA];
+  const advOf = (w: 400 | 600) => {
+    const units = FIT_ADV[w].split(",").map(Number);
+    return new Map(FIT_CHARS.map((ch, i) => [ch, units[i]] as const));
+  };
+  const ADV = { 400: advOf(400), 600: advOf(600) } as const;
+  const unknownChars = new Set<string>();
+  const widthPx = (s: string, w: 400 | 600, px: number) =>
+    ([...s].reduce((sum, ch) => {
+      const a = ADV[w].get(ch);
+      if (a == null) unknownChars.add(ch);
+      return sum + (a ?? FIT_UPM); // an unknown glyph counts a full em, and fails the table check below
+    }, 0) *
+      px) /
+    FIT_UPM;
+  check(
+    "text fit: the width table holds every character, 103 per weight, the same order (U+0020–U+007E, then · ’ ‘ “ ” – — …)",
+    FIT_ADV[400].split(",").length === FIT_CHARS.length && FIT_ADV[600].split(",").length === FIT_CHARS.length && FIT_CHARS.length === 103 && widthPx("Aim", 400, FIT_UPM) === 1413 + 496 + 1794 && widthPx("Aim", 600, FIT_UPM) === 1499 + 540 + 1849
+  );
+
+  /**
+   * Greedy wrap at spaces, as a browser wraps the line: the lead's words at 600, then the rest's at 400 (AimLine
+   * renders `<b>{lead}</b>{" " + rest}`, so the space before the rest is in the 400 run). A word wider than the
+   * column takes a line of its own (overflow-wrap: anywhere would split it; no copy here has one).
+   */
+  const linesOf = (lead: string, rest: string, width: number, px: number): number => {
+    const words: [string, 400 | 600][] = [...lead.split(" ").map((w) => [w, 600] as [string, 600]), ...(rest ? rest.split(" ").map((w) => [w, 400] as [string, 400]) : [])];
+    let n = 1;
+    let x = 0;
+    words.forEach(([w, weight], i) => {
+      const ww = widthPx(w, weight, px);
+      const sp = i === 0 ? 0 : widthPx(" ", weight, px);
+      if (x > 0 && x + sp + ww > width) {
+        n += 1;
+        x = ww;
+      } else x += (x > 0 ? sp : 0) + ww;
+    });
+    return n;
+  };
+  /** The narrowest text column (to 1/64 px, a browser's layout unit) at which the copy takes at most n lines. */
+  const narrowestFor = (lead: string, rest: string, n: number, px: number): number => {
+    let lo = 0;
+    let hi = 4096;
+    while (hi - lo > 1 / 64) {
+      const mid = (lo + hi) / 2;
+      if (linesOf(lead, rest, mid, px) <= n) hi = mid;
+      else lo = mid;
+    }
+    return hi;
+  };
+
+  // The CSS's own numbers: the line (roadmap.css, R5), the card's border and the page (components.css), the nav
+  // (tokens.css, components.css) and the board's columns (today.css). Read, not typed, so a change re-runs the model.
+  const rmCss = code(read("src/components/roadmap/roadmap.css"));
+  const compCss = code(read("src/app/styles/components.css"));
+  const tokensCss = code(read("src/app/styles/tokens.css"));
+  const todayCss = code(read("src/components/today/today.css"));
+  const ruleOf = (src: string, selector: string): string => {
+    const re = new RegExp(`(?:^|[\\n{}])\\s*${selector.replace(/[.*+?^${}()|[\]\\>]/g, "\\$&")} \\{([^}]*)\\}`);
+    return re.exec(src)?.[1] ?? "";
+  };
+  const num = (re: RegExp, src: string): number => {
+    const m = re.exec(src);
+    return m ? Number(m[1]) : NaN;
+  };
+  const linePad = /padding: (\d+)px (\d+)px (\d+)px (\d+)px/.exec(ruleOf(rmCss, ".rm-aim-line"))?.slice(1).map(Number) ?? [];
+  const L = {
+    padTop: linePad[0] ?? NaN,
+    padRight: linePad[1] ?? NaN,
+    padBottom: linePad[2] ?? NaN,
+    padLeft: linePad[3] ?? NaN,
+    gap: num(/gap: (\d+)px/, ruleOf(rmCss, ".rm-aim-line")),
+    linkGap: num(/gap: (\d+)px/, ruleOf(rmCss, ".rm-aim-line-a")),
+    fontPx: num(/font-size: (\d+)px/, ruleOf(rmCss, ".rm-aim-line-a")),
+    lineHeight: num(/line-height: (\d+)px/, ruleOf(rmCss, ".rm-aim-line-a")),
+    glyph: num(/width: (\d+)px/, ruleOf(rmCss, ".rm-aim-line-a > svg")),
+    x: num(/(?:^|[;{\s])width: (\d+)px/, ruleOf(rmCss, ".rm-aim-line .rm-aim-line-x")),
+    clamp: num(/-webkit-line-clamp: (\d+)/, ruleOf(rmCss, ".rm-aim-line-t")),
+    bold: num(/font-weight: (\d+)/, ruleOf(rmCss, ".rm-aim-line-t b")),
+    border: num(/border: (\d+)px solid/, ruleOf(compCss, ".card")),
+    pagePad: num(/padding: \d+px (\d+)px \d+px/, ruleOf(compCss, ".page")),
+    pageMax: num(/max-width: (\d+)px/, ruleOf(compCss, ".page")),
+    railW: num(/--rail-w:\s*(\d+)px/, tokensCss),
+    sideW: num(/--sidebar-w:\s*(\d+)px/, tokensCss),
+    railAt: num(/@media \(min-width: (\d+)px\) \{\s*\.app \{ display: grid; grid-template-columns: var\(--rail-w\)/, compCss),
+    sideAt: num(/@media \(min-width: (\d+)px\) \{\s*\.app \{ grid-template-columns: var\(--sidebar-w\)/, compCss),
+  };
+  const pageSteps = [...compCss.matchAll(/@container main \(min-width: (\d+)px\) \{ \.page \{ padding: \d+px (\d+)px \d+px; \} \}/g)].map((m) => [Number(m[1]), Number(m[2])] as const).sort((a, b) => a[0] - b[0]);
+  // The board's grid steps: each `@container main (min-width: W)` block of today.css that sets `.today-board .board`'s
+  // columns, with its gap (kept from the step before when it sets none) and c3's column.
+  type GridStep = { at: number; fr: number[]; gap: number; c3: number };
+  const gridSteps: GridStep[] = [];
+  for (const m of todayCss.matchAll(/@container main \(min-width: (\d+)px\) \{([\s\S]*?)\n\}/g)) {
+    const board = ruleOf(m[2], ".today-board .board");
+    const cols = /grid-template-columns: ([^;]+);/.exec(board)?.[1];
+    if (!cols) continue;
+    const prev = gridSteps[gridSteps.length - 1];
+    gridSteps.push({
+      at: Number(m[1]),
+      fr: [...cols.matchAll(/minmax\(0, ([\d.]+)fr\)/g)].map((f) => Number(f[1])),
+      gap: num(/gap: (\d+)px/, board) || prev?.gap || NaN,
+      c3: num(/\.today-board \.board > \.c3 \{ grid-column: (\d+);/, m[2]),
+    });
+  }
+  gridSteps.sort((a, b) => a.at - b.at);
+  // The clamp in force at a container width: the base rule, then any `@container main (min-width: W)` block in
+  // roadmap.css that sets .rm-aim-line-t's clamp (a number, or none/unset), or makes it a block (no clamp).
+  const clampSteps: [number, number][] = [];
+  {
+    const re = /@container main \(min-width: (\d+)px\) \{/g;
+    for (let m = re.exec(rmCss); m; m = re.exec(rmCss)) {
+      let depth = 1;
+      let i = m.index + m[0].length;
+      for (; i < rmCss.length && depth > 0; i++) depth += rmCss[i] === "{" ? 1 : rmCss[i] === "}" ? -1 : 0;
+      // Any rule in the block whose selector ends in .rm-aim-line-t (".rm-aim-line-t", ".rm-aim-line .rm-aim-line-t", …).
+      const block = rmCss.slice(m.index + m[0].length, i - 1);
+      const t = [...block.matchAll(/([^{}]*)\{([^{}]*)\}/g)].filter((r) => /\.rm-aim-line-t\s*$/.test(r[1].split(",").pop() ?? "")).map((r) => r[2]).join(";");
+      const c = /-webkit-line-clamp:\s*(\d+|none|unset|initial)/.exec(t)?.[1];
+      if (c) clampSteps.push([Number(m[1]), /^\d+$/.test(c) ? Number(c) : Infinity]);
+      else if (/display:\s*block/.test(t)) clampSteps.push([Number(m[1]), Infinity]);
+    }
+    clampSteps.sort((a, b) => a[0] - b[0]);
+  }
+  const clampAt = (main: number) => clampSteps.filter(([w]) => main >= w).reduce((c, [, v]) => v, L.clamp);
+  /** The text column of the aim line in the board's slot (c3 > o9) at viewport width vw: no scrollbar (a phone's overlays; a desktop's classic one narrows it further). */
+  const columnAt = (vw: number) => {
+    const nav = vw >= L.sideAt ? L.sideW : vw >= L.railAt ? L.railW : 0;
+    const main = vw - nav;
+    const padX = pageSteps.filter(([w]) => main >= w).reduce((p, [, x]) => x, L.pagePad);
+    const content = Math.min(main, L.pageMax) - 2 * padX;
+    const g = gridSteps.filter((s) => main >= s.at).pop();
+    const c3 = g ? ((content - g.gap * (g.fr.length - 1)) * g.fr[g.c3 - 1]) / g.fr.reduce((s, f) => s + f, 0) : content;
+    const text = c3 - 2 * L.border - L.padLeft - L.padRight - L.gap - L.x - L.glyph - L.linkGap;
+    return { main, c3, text, clamp: clampAt(main) };
+  };
+  const modelRead = Object.values(L).every((v) => Number.isFinite(v)) && pageSteps.length >= 1 && gridSteps.length >= 1 && gridSteps.every((s) => s.fr.length >= 2 && Number.isFinite(s.gap) && s.c3 >= 1 && s.c3 <= s.fr.length);
+  check(
+    "text fit: the layout model reads its numbers from the CSS (the line, the card border, the page padding and max width, the rail and sidebar, the board's column steps)",
+    modelRead,
+    `${JSON.stringify(L)} · page ${JSON.stringify(pageSteps)} · grid ${JSON.stringify(gridSteps)} · clamp steps ${JSON.stringify(clampSteps)}`
+  );
+  check(
+    "text fit: the table's text is the line's (Inter 14 px, lead 600, rest 400), and 3 lines fit 72 px: 3 × 19 + 6 + 6 + 2 × 1 border = 71",
+    L.fontPx === 14 && L.bold === 600 && L.clamp === 3 && L.clamp * L.lineHeight + L.padTop + L.padBottom + 2 * L.border <= 72 && /--font-ui: var\(--font-inter\)/.test(tokensCss),
+    `${L.clamp} × ${L.lineHeight} + ${L.padTop} + ${L.padBottom} + 2 × ${L.border} = ${L.clamp * L.lineHeight + L.padTop + L.padBottom + 2 * L.border}`
+  );
+  const at344 = columnAt(344);
+  check(
+    "text fit: at 344 the text column is 216 px (344 − 2 × 16 page = 312 card − 2 border − 14 − 6 padding − 4 gap − 40 × − 20 glyph − 10 gap)",
+    Math.abs(at344.text - 216) < 1e-9 && at344.c3 === 312,
+    `${at344.text} px`
+  );
+
+  // Every copy Today can draw: the fixtures' lines, every SET variant and DRAFT, and every START a plan can reach
+  // (each stage label stageLabelOf gives, a track plan's none, at every place 1..MAX_MILESTONES, with every rank a
+  // milestone can give or none). The cross product is wider than real plans (a "Toward …" stage keeps your rank).
+  type Copy = { key: string; lead: string; rest: string };
+  const copyOf = (key: string, v: AimLineView): Copy => ({ key, ...aimLineCopy(v) });
+  const fixtureCopies = AIM_LINE_FIXTURES.flatMap((f) => {
+    const v = aimLineOfFixture(f);
+    return v ? [copyOf(f.key, v)] : [];
+  });
+  const stageLabels: (string | null)[] = [
+    null,
+    ...STAGE_KEYS.map((s) => stageLabelOf(s)),
+    ...STAGE_KEYS.slice(1).map((s) => stageLabelOf("BETWEEN", STAGE_LEVEL[s] - 1)),
+    ...STAGE_KEYS.map((s) => stageLabelOf("PART", STAGE_LEVEL[s])),
+  ].filter((s, i, all) => all.indexOf(s) === i);
+  const ranks = [null, ...AIM_RANKS.slice(1, RANK_MILESTONE_MAX + 1)];
+  const startCopies: Copy[] = [];
+  for (let ord = 1; ord <= MAX_MILESTONES; ord++)
+    for (const stageName of stageLabels) for (const givesRank of ranks) startCopies.push(copyOf(`START ${ord} ${stageName ?? "track"} ${givesRank ?? "keeps"}`, { kind: "START", milestoneId: "m", ord, stageName, givesRank, href: "/you/roadmap#now" }));
+  const otherCopies = [
+    ...(["WEEK", "MONTH", "BACK", "NEXT"] as const).map((variant) => copyOf(`SET ${variant}`, { kind: "SET", variant, href: "/you/roadmap/new" })),
+    copyOf("DRAFT", { kind: "DRAFT", roadmapId: "r", href: "/you/roadmap" }),
+  ];
+  const all = [...otherCopies, ...startCopies];
+  const need = new Map(all.map((c) => [c.key, narrowestFor(c.lead, c.rest, L.clamp, L.fontPx)] as const));
+  check(
+    "text fit: the copies are what the space says (a stage label for every gate, 'Toward …' and 'part 1' stage, Aspirant … Virtuoso and none, places 1–6; 15 labels × 6 ranks × 6 places + 5)",
+    stageLabels.length === 15 && stageLabels.every((s) => s === null || s.length > 0) && ranks.length === 6 && ranks[ranks.length - 1] === "Virtuoso" && all.length === 15 * 6 * 6 + 5 && fixtureCopies.length === 13 && unknownChars.size === 0,
+    `${all.length} copies; labels ${stageLabels.map((s) => s ?? "(track)").join(" | ")}${unknownChars.size ? ` · unknown characters ${[...unknownChars].join("")}` : ""}`
+  );
+  // The binding part: Acceptance's widths. At 344 and 375 the board is one column (c3 is the page's width) and the
+  // clamp must be the base 3 lines (the 72 px gate); at 932 and 1440 the line sits in c3 (the in-place fixture
+  // states draw it there for ui-audit), where a clamp R5 lifts cuts nothing.
+  for (const vw of [344, 375, 932, 1440]) {
+    const col = columnAt(vw);
+    const needOf = (c: Copy): number =>
+      col.clamp === L.clamp ? (need.get(c.key) ?? Infinity) : Number.isFinite(col.clamp) ? narrowestFor(c.lead, c.rest, col.clamp, L.fontPx) : 0;
+    const over = all.filter((c) => needOf(c) > col.text);
+    const least = all.map((c) => [c.key, needOf(c)] as const).sort((x, y) => y[1] - x[1])[0];
+    check(
+      `text fit (estimate): at ${vw} every copy Today can draw (${all.length}) fits ${Number.isFinite(col.clamp) ? `the ${col.clamp}-line clamp` : "(no clamp at this width)"} in the board's column (text ${col.text.toFixed(1)} px; c3 ${col.c3.toFixed(1)})`,
+      (vw > 375 || col.clamp === L.clamp) && over.length === 0,
+      over.length
+        ? over.slice(0, 6).map((c) => `${c.key} needs ${needOf(c).toFixed(1)}`).join(" | ")
+        : Number.isFinite(col.clamp)
+          ? `least spare ${(col.text - least[1]).toFixed(1)} px (${least[0]} needs ${least[1].toFixed(1)} px)`
+          : "no clamp"
+    );
+  }
+  {
+    const fxNeed = fixtureCopies.map((c) => [c.key, narrowestFor(c.lead, c.rest, L.clamp, L.fontPx)] as const).sort((a, b) => b[1] - a[1]);
+    check(
+      "text fit (estimate): the fixtures' longest line is start-part (a new learner's count gate), the in-place state ui-audit measures in c3; it fits 3 lines at 344 with its spare printed",
+      fxNeed[0]?.[0] === "start-part" && fxNeed[0][1] <= at344.text,
+      fxNeed.slice(0, 4).map(([k, w]) => `${k} ${w.toFixed(1)} px`).join(" · ") + ` · spare at 344: ${(at344.text - (fxNeed[0]?.[1] ?? 0)).toFixed(1)} px`
+    );
+  }
+  // For the lead's Names ruling (contracts §16.10: "(level 12)" on the Today START line): what it would cost at 344.
+  {
+    const lv = [
+      ["Milestone 6 · Mastered (level 12) is ready to start.", "Reaching it gives the Aim rank Virtuoso."],
+      ["Milestone 5 · Mastered (level 12), part 1 is ready to start.", "Reaching it gives the Aim rank Expert."],
+      ["Milestone 1 · Familiar (level 6), part 1 is ready to start.", "Reaching it gives the Aim rank Journeyman."],
+    ] as const;
+    console.log(`NOTE text fit, for the "(level 12)" ruling: at 344 (${at344.text} px) ${lv.map(([l, r]) => `"${l}" → ${linesOf(l, r, at344.text, L.fontPx)} lines`).join(" · ")} (a 4th line is cut by the clamp)`);
+  }
+  // Between ui-audit's widths the board's c3 is narrower than at 344 (two columns from a 640 px container, three
+  // from 1100), so the 3-line clamp cuts real lines there, the rank words first. R5's roadmap.css owns the clamp:
+  // lifting it in a `@container main (min-width: …)` block (the copy is code-owned and bounded; only 344 has the
+  // 72 px gate) turns this green. Swept over every viewport from 344 (the narrowest the app is laid out for) to
+  // 1920, with the fixtures' lines.
+  {
+    const cut: number[] = [];
+    let worst: { vw: number; key: string; text: number; need: number } | null = null;
+    const fxNeed = new Map(fixtureCopies.map((c) => [c.key, (n: number) => narrowestFor(c.lead, c.rest, n, L.fontPx)] as const));
+    const needAt = new Map<string, number>();
+    for (let vw = 344; vw <= 1920; vw++) {
+      const col = columnAt(vw);
+      if (!Number.isFinite(col.clamp)) continue;
+      const hit = fixtureCopies.filter((c) => {
+        const k = `${c.key}@${col.clamp}`;
+        if (!needAt.has(k)) needAt.set(k, fxNeed.get(c.key)!(col.clamp));
+        return needAt.get(k)! > col.text;
+      });
+      if (hit.length) {
+        cut.push(vw);
+        const h = hit.map((c) => ({ vw, key: c.key, text: col.text, need: needAt.get(`${c.key}@${col.clamp}`)! })).sort((a, b) => b.need - b.text - (a.need - a.text))[0];
+        if (!worst || h.need - h.text > worst.need - worst.text) worst = h;
+      }
+    }
+    const ranges = cut.reduce<[number, number][]>((r, vw) => {
+      const last = r[r.length - 1];
+      if (last && last[1] === vw - 1) last[1] = vw;
+      else r.push([vw, vw]);
+      return r;
+    }, []);
+    const longest = fixtureCopies.find((c) => c.key === "start-part");
+    const at = (vw: number) => {
+      const col = columnAt(vw);
+      return `${vw}: ${col.text.toFixed(1)} px, start-part ${longest ? linesOf(longest.lead, longest.rest, col.text, L.fontPx) : "?"} lines`;
+    };
+    pending(
+      "R5",
+      "text fit (estimate): no viewport from 344 to 1920 clamps a fixture line in the board's column (its c3 is narrower than at 344 at some widths, and the 3-line clamp then cuts the rank words)",
+      ranges.length === 0,
+      ranges.length
+        ? `clamped at ${ranges.map(([a, b]) => (a === b ? `${a}` : `${a}–${b}`)).join(", ")} px wide; worst ${worst?.key} at ${worst?.vw} (needs ${worst?.need.toFixed(1)} of ${worst?.text.toFixed(1)} px) · ${[768, 1366].map(at).join(" · ")}`
+        : ""
+    );
+  }
+}
+
 // The async checks (withMoments) settle before the tally.
 void Promise.all(asyncChecks).then(() => {
-  console.log(`\n${passed} passed, ${failed} failed`);
+  console.log(`\n${passed} passed, ${failed} failed${pendingCount > 0 ? `, ${pendingCount} PENDING (another lane's; --strict fails them)` : ""}`);
   if (failed > 0) process.exit(1);
 });

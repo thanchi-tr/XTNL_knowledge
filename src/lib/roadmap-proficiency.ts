@@ -26,9 +26,31 @@
  * The basis changes only with a plan decision (an acceptance, its Undo, a practice
  * switched off at Start), and the reading written then carries rebased {on, from,
  * cause}: shown "Changed on … (was 41%)", never as a gain.
+ *
+ * Revision 4 (F-R4-12; PROFICIENCY_VERSION 2), compatible additions:
+ *   StageRankFields · StageRankRow (assignRankIndices ranks a depth plan by stage)
+ *   RankMilestone.held · AimRankInput.depthRank (held rows give no rank; the top by depth)
+ *   ProficiencyReadingInput.counts · ProficiencyToward · proficiencyTowardOf · proficiencyLabelOf
+ *   proficiencyLineOf · ProficiencyViewR1 · stageFloorOf · floorPercentOf
+ *   - The cards part is the depth terms (n_d recall cards at L*, clean entry at L*), so it
+ *     is exactly 1 when the depth is held; a retry-entry card at L* weighs as L* − 1.
+ *   - The stages part is reached ÷ scheduled positions: held stages count as reached, a
+ *     PART gate is a position (both are rows of the version, so the rev-3 count is it).
+ *   - The label always names its basis: "Proficiency toward Mastered (level 12): 28%".
+ *   - A depth or coverage change is a plan decision: rebased, "depth lowered Mastered →
+ *     Fluent", never a gain or a loss. A v2 reading never rebases against, nor shows a
+ *     delta against, a v1 reading.
+ * Revision 4 fix round (roadmap-contracts.md §15), compatible:
+ *   - ProficiencyToward is roadmap-types' (§15.11), re-exported here.
+ *   - assignRankIndices(rows, firstByLineage, depth?): a PART at the depth gives the gate
+ *     below's rank (§15.4), so Virtuoso never comes before Mastered is reached.
+ *   - basisMatchesEndState · rebaseCauseOf: a same-version end-state change (a lowered
+ *     depth's record) rebuilds the basis and rebases as REPLAN in the depth's words.
+ *   - endStateTowardOf · depthChangeLineOf: Plan history's "lowered the depth Mastered →
+ *     Fluent" for an isDepthLoweringRecord row (R4's historyOf reads it; §15.7).
  */
 import { addDays, daysBetween, weekStartKeyOf, type DayKey } from "./life-day";
-import type { LevelHistogram } from "./roadmap-measures";
+import { countsOfHistogram, levelEntriesOf, type CardCounts, type LevelHistogram } from "./roadmap-measures";
 import {
   AIM_RANKS,
   KEEP_SHARE,
@@ -38,17 +60,24 @@ import {
   RANK_NEW_DAYS,
   RANK_TOP,
   REACH_CONFIRM_DAYS,
+  STAGE_NAMES,
+  TRACK_STAGE_KEYS,
   aimRankName,
   measured,
   parseMeasureKey,
   plannedUnits,
   proficiencyKey,
   rankIndexAt,
+  rankIndexForStage,
   selfReported,
+  stageOfLevel,
   topRankIndexOf,
+  topRankIndexOfDepth,
   type AimRankLadderRow,
   type AimRankView,
   type AssignRankIndices,
+  type CardSegment,
+  type DepthRankInput,
   type EndStateTerm,
   type Feasibility,
   type MilestoneDraft,
@@ -62,8 +91,11 @@ import {
   type ProficiencyPracticeTerm,
   type ProficiencyRebase,
   type ProficiencyRebaseCause,
+  type ProficiencyToward,
   type ProficiencyView,
+  type RankRow,
   type Reading,
+  type StageKey,
 } from "./roadmap-types";
 
 const EPS = 1e-9;
@@ -106,7 +138,9 @@ function practiceRuleOf(item: MilestoneDraft["items"][number]): string | null {
  * CARDS_AT_LEVEL measures; planned practice per lineage, round(KEEP_SHARE ×
  * the planned units over its milestone's window less held days), WORKED_OUT;
  * scheduled = the version's scheduled milestones (distinct lineages, carried
- * included, LATER excluded). A switched-off lineage leaves it.
+ * included, LATER excluded). A switched-off lineage leaves it. Revision 4: a
+ * held stage (HELD_AT_START) and a PART gate are positions like any other; a
+ * stage a lowered depth dropped (DEPTH_LOWERED) is not.
  */
 export function proficiencyBasisOf(input: ProficiencyBasisInput): ProficiencyBasis {
   const cards = new Map<string, ProficiencyCardTerm>();
@@ -120,7 +154,8 @@ export function proficiencyBasisOf(input: ProficiencyBasisInput): ProficiencyBas
   const practice = new Map<string, ProficiencyPracticeTerm>();
   const lineages = new Set<string>();
   for (const m of input.milestones) {
-    if (UNSCHEDULED.has(m.status)) continue;
+    // Rev 4: a stage a lowered depth dropped (MilestoneNote DEPTH_LOWERED) leaves the basis too.
+    if (UNSCHEDULED.has(m.status) || (m.notes ?? []).includes("DEPTH_LOWERED")) continue;
     lineages.add(m.lineageId);
     if (!m.windowStart || !m.dueDay) continue;
     for (const item of m.items) {
@@ -152,18 +187,74 @@ export function basisWithout(basis: ProficiencyBasis, lineageIds: Iterable<strin
   return { ...basis, practice: basis.practice.filter((p) => !off.has(p.itemLineageId)) };
 }
 
+/** The card terms' identity (key = target, sorted): what an end state measures. */
+const cardsSignature = (cards: readonly Pick<ProficiencyCardTerm, "measureKey" | "target">[]): string =>
+  JSON.stringify(cards.map((c) => `${c.measureKey}=${c.target}`).sort());
+
+/**
+ * The basis still measures this end state: its card terms are exactly the
+ * ones proficiencyBasisOf builds from it (rev-4 fix round). The writers carry
+ * the previous reading's basis within a version only while this holds: a
+ * lowered depth writes a second acceptance record inside the same version
+ * (roadmap-types isDepthLoweringRecord), and should its own Proficiency row
+ * not land, the next run rebuilds the basis from the acceptance it reads
+ * rather than counting toward the depth the user lowered.
+ */
+export function basisMatchesEndState(basis: Pick<ProficiencyBasis, "cards">, endState: readonly EndStateTerm[]): boolean {
+  const fromEnd = proficiencyBasisOf({ basisVersion: 0, endState, feasibility: null, milestones: [], switchedOff: [] }).cards;
+  return cardsSignature(basis.cards) === cardsSignature(fromEnd);
+}
+
+/**
+ * The cause of a rebase no plan decision named (the writers' own run): a
+ * higher basisVersion is a re-plan and a lower one an Undo. Within one
+ * version, changed card terms or positions are a plan decision inside the
+ * version (a lowered depth, isDepthLoweringRecord, or a coverage change),
+ * read as REPLAN so its words name the depth ("depth lowered Mastered →
+ * Fluent"), never "switched off at Start"; only a change of planned practice
+ * alone is a switch-off.
+ */
+export function rebaseCauseOf(before: ProficiencyBasis, after: ProficiencyBasis): ProficiencyRebaseCause {
+  if (after.basisVersion > before.basisVersion) return "REPLAN";
+  if (after.basisVersion < before.basisVersion) return "UNDO";
+  if (cardsSignature(before.cards) !== cardsSignature(after.cards) || before.scheduled !== after.scheduled) return "REPLAN";
+  return "SWITCHED_OFF";
+}
+
 /**
  * The plan words of a rebase (never a gain): "the re-plan lowered the end
  * target 30 → 25", "Backtest was switched off at Start", "the plan's last
  * change was undone". `names` maps practice lineages to their names.
  */
-export function rebaseDetailOf(before: ProficiencyBasis, after: ProficiencyBasis, cause: ProficiencyRebaseCause, names: Readonly<Record<string, string>> = {}): string {
+export function rebaseDetailOf(
+  before: ProficiencyBasis,
+  after: ProficiencyBasis,
+  cause: ProficiencyRebaseCause,
+  names: Readonly<Record<string, string>> = {},
+  domainNames: Readonly<Record<string, string>> = {}
+): string {
   if (cause === "UNDO") return "the plan's last change was undone";
   if (cause === "SWITCHED_OFF") {
     const gone = before.practice.filter((p) => !after.practice.some((q) => q.itemLineageId === p.itemLineageId));
     const list = gone.map((p) => names[p.itemLineageId] ?? "a practice");
     if (list.length === 0) return "a practice was switched off at Start";
     return `${list.length === 1 ? list[0] : `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`} ${list.length === 1 ? "was" : "were"} switched off at Start`;
+  }
+  // Revision 4: a depth plan's decisions in its own words — the depth, then each Domain's coverage.
+  const tb = proficiencyTowardOf(before);
+  const ta = proficiencyTowardOf(after);
+  if (tb && ta && tb.level !== ta.level) return `depth ${ta.level < tb.level ? "lowered" : "raised"} ${tb.name} → ${ta.name}`;
+  if (tb && ta) {
+    const cover: string[] = [];
+    const nameOf = (t: ProficiencyCardTerm) => t.domainIds.map((id) => domainNames[id] ?? "a Domain").join(", ");
+    const beforeBy = new Map(before.cards.map((c) => [c.measureKey, c] as const));
+    for (const a of after.cards) {
+      const b = beforeBy.get(a.measureKey);
+      if (!b) cover.push(`${nameOf(a)} added to the depth`);
+      else if (a.target !== b.target) cover.push(`coverage in ${nameOf(a)} ${a.target < b.target ? "lowered" : "raised"} ${b.target} → ${a.target}`);
+    }
+    for (const b of before.cards) if (!after.cards.some((a) => a.measureKey === b.measureKey)) cover.push(`${nameOf(b)} left the depth`);
+    if (cover.length > 0) return cover.slice(0, 2).join("; ");
   }
   const verb = cause === "ACCEPTED" ? "the plan" : "the re-plan";
   const words: string[] = [];
@@ -275,6 +366,87 @@ export function proficiencyPercent(value: number): number {
   return Math.floor(clamp01(value) * 100 + EPS);
 }
 
+// ═══ Revision 4: the basis in words (F-R4-12) ═══════════════════════════════
+
+/** What a depth plan's Proficiency counts toward ("Mastered", level 12): roadmap-types' (the fix round put it on the contract, §15.11), re-exported. */
+export type { ProficiencyToward };
+
+const segmentOf = (measureKey: string): CardSegment | undefined => {
+  const p = parseMeasureKey(measureKey);
+  return p?.kind === "CARDS_AT_LEVEL" ? p.segment : undefined;
+};
+
+/**
+ * The basis's depth: on a depth plan the card terms are the depth terms (one
+ * per Domain, `rc` at L*), and Proficiency counts toward L*. Null on a track
+ * plan, a rev-3 basis, or one with no `rc` term (the label then reads
+ * "Proficiency" alone).
+ */
+export function proficiencyTowardOf(basis: Pick<ProficiencyBasis, "cards">): ProficiencyToward | null {
+  let level = 0;
+  for (const t of basis.cards) if (segmentOf(t.measureKey) === "rc" && t.level > level) level = t.level;
+  if (level <= 0) return null;
+  const stage = stageOfLevel(level);
+  return { level, name: stage ? STAGE_NAMES[stage] : `level ${level}` };
+}
+
+/**
+ * The label that always names its basis (F-R4-12; Names): "Proficiency toward
+ * Mastered (level 12)", "Proficiency toward Fluent (level 10)" after a
+ * lowering, so a higher figure after a lowering never reads as more mastery.
+ * "Proficiency" alone without a depth.
+ */
+export function proficiencyLabelOf(toward: ProficiencyToward | null | undefined): string {
+  return toward ? `Proficiency toward ${toward.name} (level ${toward.level})` : "Proficiency";
+}
+
+/** The label with its figure: "Proficiency toward Mastered (level 12): 28%". */
+export function proficiencyLineOf(toward: ProficiencyToward | null | undefined, value: number): string {
+  return `${proficiencyLabelOf(toward)}: ${proficiencyPercent(value)}%`;
+}
+
+/** What an acceptance's end state counts toward (its `rc` depth terms), as proficiencyTowardOf reads a basis; null without a depth. */
+export function endStateTowardOf(endState: readonly Pick<EndStateTerm, "measureKey">[]): ProficiencyToward | null {
+  const cards: ProficiencyCardTerm[] = [];
+  for (const t of endState) {
+    const p = parseMeasureKey(t.measureKey);
+    if (p?.kind === "CARDS_AT_LEVEL") cards.push({ measureKey: t.measureKey, domainIds: p.domainIds, level: p.level, target: 0 });
+  }
+  return proficiencyTowardOf({ cards });
+}
+
+/**
+ * Plan history's words for a change of depth between two end states (rev-4
+ * fix round, contracts §15.7): "lowered the depth Mastered → Fluent"
+ * ("raised" the other way); null when the depth didn't change or either end
+ * state has none. A record lowerDepthCore writes inside its version
+ * (roadmap-types isDepthLoweringRecord) reads with these words, never as "the
+ * re-plan lowered the end target"; the Proficiency rebase of the same
+ * decision reads "depth lowered Mastered → Fluent" (rebaseDetailOf).
+ */
+export function depthChangeLineOf(before: readonly Pick<EndStateTerm, "measureKey">[], after: readonly Pick<EndStateTerm, "measureKey">[]): string | null {
+  const tb = endStateTowardOf(before);
+  const ta = endStateTowardOf(after);
+  if (!tb || !ta || tb.level === ta.level) return null;
+  return `${ta.level < tb.level ? "lowered" : "raised"} the depth ${tb.name} → ${ta.name}`;
+}
+
+/**
+ * A stage's floor of the cards part (the ladder disclosure "Aim ranks on this
+ * plan"): LEVEL_WEIGHT(ℓ) ÷ LEVEL_WEIGHT(L*), what the cards part reads when
+ * every coverage card sits at exactly ℓ. At L* = 12: Foundation 1.8%, Familiar
+ * 7.4%, Retained 20.3%, Fluent 45.6%, Toward Mastered 67.6%, Mastered 100%.
+ */
+export function stageFloorOf(level: number, depth: number): number {
+  const top = LEVEL_WEIGHT(depth);
+  return top > 0 ? clamp01(LEVEL_WEIGHT(Math.min(level, depth)) / top) : 0;
+}
+
+/** A floor as a percent to one decimal (1.8, 7.4, 20.3 …): the disclosure's figure. */
+export function floorPercentOf(floor: number): number {
+  return Math.round(clamp01(floor) * 1000 + EPS) / 10;
+}
+
 // ═══ The stored detail ══════════════════════════════════════════════════════
 
 /** Per Domain of the card terms: its name, its cards in scope and the depth its best cards add (the cause line's words). */
@@ -287,9 +459,11 @@ export interface ProficiencyDomainFacts {
 /** The PROFICIENCY detail R1 stores: the contract's fields plus byDomain (for "cards archived or moved out of Probability"). */
 export interface ProficiencyDetailR1 extends ProficiencyDetail {
   byDomain?: Record<string, ProficiencyDomainFacts>;
+  /** Revision 4: what it counts toward (the label's basis); absent without a depth. */
+  toward?: ProficiencyToward | null;
 }
 
-/** The PROFICIENCY reading's detail (v, basisVersion, basis, parts, …, rebased). */
+/** The PROFICIENCY reading's detail (v, basisVersion, basis, parts, …, rebased; rev 4: toward). */
 export function proficiencyDetailOf(
   result: ProficiencyResult,
   basis: ProficiencyBasis,
@@ -311,6 +485,8 @@ export function proficiencyDetailOf(
     rebased: extra.rebased,
   };
   if (extra.byDomain) detail.byDomain = extra.byDomain;
+  const toward = proficiencyTowardOf(basis);
+  if (toward) detail.toward = toward;
   return detail;
 }
 
@@ -356,7 +532,7 @@ export function parseProficiencyDetail(detail: unknown): ProficiencyDetailR1 | n
       if (isObj(f) && typeof f.name === "string" && typeof f.n === "number" && typeof f.depth === "number") byDomain[id] = { name: f.name, n: f.n, depth: f.depth };
     }
   }
-  return {
+  const out: ProficiencyDetailR1 = {
     v: detail.v,
     basisVersion: typeof detail.basisVersion === "number" ? detail.basisVersion : basis.basisVersion,
     basis,
@@ -372,14 +548,26 @@ export function parseProficiencyDetail(detail: unknown): ProficiencyDetailR1 | n
     rebased: parseRebase(detail.rebased),
     byDomain,
   };
+  // The basis decides what it counts toward (a stored `toward` only echoes it).
+  const toward = proficiencyTowardOf(basis);
+  if (toward) out.toward = toward;
+  return out;
+}
+
+/** Each card term's levels as its segment weighs them (levelEntriesOf), per Domain of its scope. */
+function termEntries(counts: CardCounts, t: ProficiencyCardTerm, domainId: string): [number, number][] {
+  return levelEntriesOf(counts, domainId, t.level, segmentOf(t.measureKey));
 }
 
 /**
  * Per Domain: its cards in the card terms' scopes, and the depth its cards
  * add among each term's T best (ties broken by Domain id, so it is
  * deterministic). Σ depth over Domains equals the cards part's depth.
+ * Revision 4: pass CardCounts (or a histogram, read as every card) — a term
+ * with a segment counts recall cards, and `rc` weighs a retry entry at L as L − 1.
  */
-export function byDomainOf(h: LevelHistogram, basis: ProficiencyBasis, names: Readonly<Record<string, string>>): Record<string, ProficiencyDomainFacts> {
+export function byDomainOf(h: LevelHistogram | CardCounts, basis: ProficiencyBasis, names: Readonly<Record<string, string>>): Record<string, ProficiencyDomainFacts> {
+  const counts = isCardCounts(h) ? h : countsOfHistogram(h);
   const out: Record<string, ProficiencyDomainFacts> = {};
   const touch = (id: string) => (out[id] ??= { name: names[id] ?? "a Domain", n: 0, depth: 0 });
   const counted = new Set<string>();
@@ -387,16 +575,22 @@ export function byDomainOf(h: LevelHistogram, basis: ProficiencyBasis, names: Re
     const cards: { level: number; domainId: string }[] = [];
     for (const id of new Set(t.domainIds)) {
       const f = touch(id);
+      const entries = termEntries(counts, t, id);
       if (!counted.has(id)) {
         counted.add(id);
-        for (const c of Object.values(h[id] ?? {})) f.n += c;
+        for (const [, c] of entries) f.n += c;
       }
-      for (const [level, count] of Object.entries(h[id] ?? {})) for (let i = 0; i < count; i++) cards.push({ level: Number(level), domainId: id });
+      for (const [level, count] of entries) for (let i = 0; i < count; i++) cards.push({ level, domainId: id });
     }
     cards.sort((a, b) => b.level - a.level || (a.domainId < b.domainId ? -1 : a.domainId > b.domainId ? 1 : 0));
     for (const c of cards.slice(0, Math.max(0, t.target))) touch(c.domainId).depth += LEVEL_WEIGHT(Math.min(c.level, t.level));
   }
   return out;
+}
+
+function isCardCounts(v: LevelHistogram | CardCounts): v is CardCounts {
+  const o = v as Partial<CardCounts>;
+  return isObj(o.all) && isObj(o.recall) && isObj(o.retry) && Object.keys(v).length === 3;
 }
 
 /** What a writer (or a plan decision) needs to make today's PROFICIENCY row. */
@@ -405,6 +599,8 @@ export interface ProficiencyReadingInput {
   today: DayKey;
   basis: ProficiencyBasis;
   histogram: LevelHistogram;
+  /** Revision 4: recall and retry-entry counts (the depth terms read these); absent, `histogram` stands for every count. */
+  counts?: CardCounts;
   domainNames: Readonly<Record<string, string>>;
   /** Per practice lineage, the kept units (latest PRACTICE_KEPT readings, own windows). */
   kept: Readonly<Record<string, number>>;
@@ -419,31 +615,34 @@ export interface ProficiencyReadingInput {
 /**
  * Today's PROFICIENCY row (measureKey PROFICIENCY|r:<id>, value in [0, 1]).
  * When the previous reading sat on another basis, this one is rebased {on:
- * today, from: the previous value, cause}: the decision's cause, else read
- * from the versions (a higher basisVersion is a re-plan, a lower an Undo, the
- * same a switch-off). Otherwise the previous rebase is carried forward, so
- * "Changed on …" can show until the week ends.
+ * today, from: the previous value, cause}: the decision's cause, else
+ * rebaseCauseOf (a higher basisVersion is a re-plan, a lower an Undo; within
+ * a version, changed card terms are a plan decision such as a lowered depth,
+ * and only a practice change alone is a switch-off). Otherwise the previous
+ * rebase is carried forward, so "Changed on …" can show until the week ends.
  */
 export function proficiencyReadingOf(input: ProficiencyReadingInput): { measureKey: string; day: DayKey; value: number; detail: ProficiencyDetailR1 } {
+  const counts = input.counts ?? countsOfHistogram(input.histogram);
   const cardLevels: Record<string, number[]> = {};
   for (const t of input.basis.cards) {
     const levels: number[] = [];
-    for (const id of new Set(t.domainIds)) for (const [level, count] of Object.entries(input.histogram[id] ?? {})) for (let i = 0; i < count; i++) levels.push(Number(level));
+    for (const id of new Set(t.domainIds)) for (const [level, count] of termEntries(counts, t, id)) for (let i = 0; i < count; i++) levels.push(level);
     cardLevels[t.measureKey] = levels;
   }
   const result = proficiencyOf({ basis: input.basis, cardLevels, kept: input.kept, reached: input.reached, reachedOnTicks: input.reachedOnTicks });
   const prev = input.previous ? parseProficiencyDetail(input.previous.detail) : null;
-  let rebased: ProficiencyRebase | null = prev?.rebased ?? null;
-  if (prev && input.previous && basisSignature(prev.basis) !== basisSignature(input.basis)) {
-    const cause: ProficiencyRebaseCause =
-      input.decision?.cause ?? (input.basis.basisVersion > prev.basis.basisVersion ? "REPLAN" : input.basis.basisVersion < prev.basis.basisVersion ? "UNDO" : "SWITCHED_OFF");
-    rebased = { on: input.today, from: clamp01(input.previous.value), cause, detail: rebaseDetailOf(prev.basis, input.basis, cause, input.decision?.names ?? {}) };
+  // A reading of another version (v1 before revision 4) is another formula: never rebased against, never carried.
+  const sameFormula = prev != null && prev.v === PROFICIENCY_VERSION;
+  let rebased: ProficiencyRebase | null = sameFormula ? (prev?.rebased ?? null) : null;
+  if (sameFormula && prev && input.previous && basisSignature(prev.basis) !== basisSignature(input.basis)) {
+    const cause: ProficiencyRebaseCause = input.decision?.cause ?? rebaseCauseOf(prev.basis, input.basis);
+    rebased = { on: input.today, from: clamp01(input.previous.value), cause, detail: rebaseDetailOf(prev.basis, input.basis, cause, input.decision?.names ?? {}, input.domainNames) };
   }
   const detail = proficiencyDetailOf(result, input.basis, {
     reached: input.reached,
     scheduled: input.basis.scheduled,
     rebased,
-    byDomain: byDomainOf(input.histogram, input.basis, input.domainNames),
+    byDomain: byDomainOf(counts, input.basis, input.domainNames),
   }) as ProficiencyDetailR1;
   return { measureKey: proficiencyKey(input.roadmapId), day: input.today, value: result.value, detail };
 }
@@ -497,14 +696,28 @@ export function proficiencyCaptionOf(cls: ProficiencyClass, parts: ProficiencyPa
   return parts.cards != null ? "tested by your reviews and your ticks" : "from your ticks";
 }
 
+/**
+ * ProficiencyView plus its basis in words (revision 4): `toward` (null without
+ * a depth) and `label`, "Proficiency toward Mastered (level 12)". R5's block
+ * shows `${label}: ${percent}%` (proficiencyLineOf), and only there may
+ * "Mastered" appear inside the Proficiency block.
+ */
+export interface ProficiencyViewR1 extends ProficiencyView {
+  toward: ProficiencyToward | null;
+  label: string;
+}
+
 /** Proficiency as every surface shows it, from the stored reading (`live` only on a writes-off server). */
-export function proficiencyViewOf(current: Reading, beforeThisWeek: Reading | null, today: DayKey, live: boolean): ProficiencyView {
+export function proficiencyViewOf(current: Reading, beforeThisWeek: Reading | null, today: DayKey, live: boolean): ProficiencyViewR1 {
   const d = parseProficiencyDetail(current.detail);
   const value = clamp01(current.value);
   const cls: ProficiencyClass = d?.class ?? "MEASURED";
   const parts = d?.parts ?? { cards: null, practice: null, milestones: null };
   const caption = proficiencyCaptionOf(cls, parts);
+  const toward = d ? proficiencyTowardOf(d.basis) : null;
   return {
+    toward,
+    label: proficiencyLabelOf(toward),
     figure: { value: cls === "MEASURED" ? measured(value) : selfReported(value), caption },
     percent: proficiencyPercent(value),
     class: cls,
@@ -531,8 +744,30 @@ export function proficiencyViewOf(current: Reading, beforeThisWeek: Reading | nu
  * "Start again" copy share their lineage's place (and a draft row of that
  * lineage takes the same place), so a milestone after them gets its true
  * place, never one too high.
+ *
+ * Revision 4 (F-R4-12): a row that carries its stage (StageRankRow) is ranked
+ * by it, roadmap-types rankIndexForStage — Foundation 1 (Aspirant), Familiar
+ * 2, Retained 3, Fluent 4, Mastered 5; BETWEEN takes the gate below ("keeps
+ * your rank"); PART takes the rank of the stage it precedes, which then keeps
+ * it; a merged gate is simply absent, so its name is skipped. A track plan's
+ * stages (STAGE_1..STAGE_5) rank by place among its kept stages, the rev-3
+ * place rule, whatever their key. Either way never above the lineage's first
+ * value. A held row ("Held when you began") gets its stage's index for
+ * display; aimRankOf counts no held row.
+ *
+ * Fix round (contracts §15.4; decision 40 "Mastered gives Virtuoso", stage
+ * rank = verified depth): `depth` is the plan's L* (Roadmap.depth: 12, 10 or
+ * 8). A PART counting toward the depth's own gate gives the rank of the gate
+ * below it (Expert under Mastered, Specialist under Fluent, Journeyman under
+ * Retained), since its target is n − 1 cards or fewer counted on `r`, retry
+ * entries included: a library holding Fluent never shows Virtuoso before
+ * Mastered is reached. Omitted, the depth reads 12 (a PART at 12 is always at
+ * the depth); a PART below the depth is unchanged. The third argument is
+ * optional, and roadmap-types' AssignRankIndices types it (fix round 2,
+ * contracts §16.9), so R4's rankIndicesOf passes the plan's depth through
+ * RoadmapLanes and needs no re-rank after the call.
  */
-export const assignRankIndices: AssignRankIndices = (rows, firstByLineage) => {
+export const assignRankIndices = ((rows: readonly RankRow[], firstByLineage: Readonly<Record<string, number>>, depth?: number | null): Record<string, number | null> => {
   const out: Record<string, number | null> = {};
   const byOrd = (a: { ord: number; id: string }, b: { ord: number; id: string }) => a.ord - b.ord || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   const carried = rows.filter((r) => !r.later && r.carried).sort(byOrd);
@@ -546,14 +781,39 @@ export const assignRankIndices: AssignRankIndices = (rows, firstByLineage) => {
     placeOf.set(lineageId, place);
     return place;
   };
+  const rankOf = (r: RankRow, p: number): number => {
+    const staged = stageRankOf(r as StageRankRow, depth);
+    if (staged == null) return rankIndexAt(p, firstByLineage[r.lineageId]);
+    const first = firstByLineage[r.lineageId];
+    return Math.max(1, first != null && Number.isFinite(first) ? Math.min(staged, first) : staged);
+  };
   for (const r of carried) {
     const p = placeFor(r.lineageId);
-    out[r.id] = r.rankIndex ?? rankIndexAt(p, firstByLineage[r.lineageId]);
+    out[r.id] = r.rankIndex ?? rankOf(r, p);
   }
-  for (const r of fresh) out[r.id] = rankIndexAt(placeFor(r.lineageId), firstByLineage[r.lineageId]);
+  for (const r of fresh) out[r.id] = rankOf(r, placeFor(r.lineageId));
   for (const r of rows) if (r.later) out[r.id] = null;
   return out;
-};
+}) satisfies AssignRankIndices;
+
+/** Revision 4: a row's stage, for assignRankIndices (R4 passes RoadmapMilestone.stage and the gate's level). */
+export interface StageRankFields {
+  /** RoadmapMilestone.stage: a gate, BETWEEN, PART or STAGE_1..STAGE_5; null on a legacy row (the place rule). */
+  stage?: StageKey | string | null;
+  /** The level the row's card measures gate at: BETWEEN's odd level (11), PART's stage level (6). Gates read it from their key. */
+  gateLevel?: number | null;
+}
+
+/** A RankRow that carries its stage (revision 4). Assignable to RankRow, so assignRankIndices takes it as it is. */
+export type StageRankRow = RankRow & StageRankFields;
+
+const TRACK_STAGES: ReadonlySet<string> = new Set(TRACK_STAGE_KEYS);
+
+/** The stage's rank (rankIndexForStage, given the plan's depth), or null for a track stage, a legacy row, or a BETWEEN or PART without its level (the place rule then). */
+function stageRankOf(r: StageRankFields, depth?: number | null): number | null {
+  if (!r.stage || TRACK_STAGES.has(r.stage)) return null;
+  return rankIndexForStage(r.stage, r.gateLevel ?? null, depth ?? null);
+}
 
 /** One milestone as the rank reader reads it. */
 export interface RankMilestone {
@@ -563,20 +823,38 @@ export interface RankMilestone {
   reachPendingDay: DayKey | null;
   /** Not LATER (a scheduled row of the current version, carried included). */
   scheduled: boolean;
+  /**
+   * Revision 4: held when the plan began (MilestoneNote HELD_AT_START): it has
+   * reachedDay (the acceptance day) and counts in Proficiency's stages part,
+   * but gives no rank. Only stages reached inside the plan give a rank.
+   */
+  held?: boolean;
 }
 
 export interface AimRankInput {
   milestones: readonly RankMilestone[];
-  /** Roadmap.reachedDay: Paragon when set on a plan that has had ≥ PARAGON_MIN_MILESTONES. */
+  /** Roadmap.reachedDay: Paragon when set on a plan whose top rank is Paragon. */
   roadmapReachedDay: DayKey | null;
-  /** The most milestones scheduled in any one version. */
+  /** The most milestones scheduled in any one version (the rev-3 top, used without depthRank). */
   maxScheduled: number;
   today: DayKey;
+  /**
+   * Revision 4: the plan's top-rank facts (roadmap-types topRankIndexOfDepth):
+   * on a card plan Paragon needs depth 12, a standard, no coverage below the
+   * policy and production practice from Fluent on, else the final stage's
+   * rank; on a track plan a standard, ≥ 4 kept stages and ≥ 180 days. Absent:
+   * rev 3's topRankIndexOf(maxScheduled).
+   */
+  depthRank?: DepthRankInput | null;
 }
 
 /**
- * Rank = the max rankIndex over confirmed reaches (or Paragon); never falls.
- * Next rank, top on this plan, pending, the ladder.
+ * Rank = the max rankIndex over confirmed reaches inside the plan (or
+ * Paragon); never falls. Next rank, top on this plan, pending, the ladder.
+ *   - held rows (HELD_AT_START) give no rank and give no ladder row;
+ *   - Paragon is Roadmap.reachedDay on a plan whose top rank is Paragon;
+ *   - the top shown is never below a rank already given (a lower depth caps
+ *     the top and keeps every rank given so far);
  *   - newSince: the confirmed day that gave the current rank, while within RANK_NEW_DAYS; never a pending reach;
  *   - next: the first unreached scheduled milestone (by ord) whose rankIndex is above the rank;
  *     else, with unreached milestones left, "Milestone 6 keeps your rank"; else Paragon when the
@@ -585,10 +863,11 @@ export interface AimRankInput {
  */
 export function aimRankOf(input: AimRankInput): AimRankView {
   const ms = [...input.milestones].sort((a, b) => a.ord - b.ord);
-  const top = topRankIndexOf(input.maxScheduled);
+  const top = input.depthRank ? topRankIndexOfDepth(input.depthRank) : topRankIndexOf(input.maxScheduled);
   const paragon = input.roadmapReachedDay != null && top === RANK_TOP;
-  const confirmed = ms.filter((m) => m.reachedDay != null && m.rankIndex != null);
+  const confirmed = ms.filter((m) => m.reachedDay != null && m.rankIndex != null && m.held !== true);
   const index = paragon ? RANK_TOP : confirmed.reduce((best, m) => Math.max(best, Math.min(m.rankIndex!, RANK_TOP - 1)), 0);
+  const topShown = Math.max(top, index);
 
   let gaveDay: DayKey | null = null;
   if (paragon) gaveDay = input.roadmapReachedDay;
@@ -609,7 +888,7 @@ export function aimRankOf(input: AimRankInput): AimRankView {
 
   const giver = new Map<number, number>();
   for (const m of ms) {
-    if (m.rankIndex == null || !(m.scheduled || m.reachedDay != null)) continue;
+    if (m.rankIndex == null || m.held === true || !(m.scheduled || m.reachedDay != null)) continue;
     if (!giver.has(m.rankIndex)) giver.set(m.rankIndex, m.ord);
   }
   const nextIndex = next.kind === "milestone" ? next.index : next.kind === "paragon" ? RANK_TOP : -1;
@@ -623,7 +902,7 @@ export function aimRankOf(input: AimRankInput): AimRankView {
     name: aimRankName(index),
     newSince,
     next,
-    top: { index: top, name: aimRankName(top), withAim: top === RANK_TOP },
+    top: { index: topShown, name: aimRankName(topShown), withAim: top === RANK_TOP },
     pending,
     ladder,
   };

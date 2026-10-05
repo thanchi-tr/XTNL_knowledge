@@ -12,6 +12,14 @@
  *   empty · no-key · running · draft-mixed · draft-credential · accepted ·
  *   active · behind · past-due · start-refit · body-practice · done · intake ·
  *   active-replan · draft-live
+ * Revision 4 (roadmap-rev4.md; the spec's Statistics pack aimed at a depth):
+ *   depth-realistic · depth-calibrating · depth-over · depth-lowered ·
+ *   coverage-choice · exam-waypoint · count-gate · held-stages · legacy ·
+ *   legacy-draft · done-depth · archived · draft-v3 (the keys-only
+ *   "draft-mixed-3") · draft-exam · draft-body · draft-rejected ·
+ *   draft-impossible · draft-gaps · intake-depth · intake-empty-library ·
+ *   intake-gemini. draft-gaps and intake-gemini are lead-only: drawn with a
+ *   switch on (RoadmapFixture.gates) that is off in this build.
  *
  * draft-live is shaped like R4's view builder output with none of the fields
  * the server derives on read: no `library`, no `struck`/`reasons`, no title
@@ -24,14 +32,21 @@
 import {
   AIM_RANKS,
   ORIGINS,
+  cardsAtLevelKey,
   practiceMinutesPerWeekOf,
   provenanceOf,
   type AimCardView,
   type AimRankName,
   type AimRankView,
+  type CoverageBreakdown,
+  type DateCheck,
+  type DepthView,
+  type DomainAddition,
   type DraftView,
   type EvidenceValue,
   type Feasibility,
+  type Intake,
+  type IntakeFieldOption,
   type IntakeView,
   type ItemDraft,
   type KnowledgeCheck,
@@ -48,14 +63,21 @@ import {
   type RoadmapView,
   type RunView,
   type SelfReported,
+  type StageKey,
   type StartPreview,
   type Throughput,
   type WeekQuestRow,
   type WeekQuestsView,
 } from "@/lib/roadmap-types";
+import type { CatalogKey } from "@/lib/roadmap-catalog";
 import { addDays } from "@/lib/life-day";
 import { undecidedOf } from "@/components/roadmap/roadmap-ui-model";
 
+/**
+ * Every state, as one literal list: scripts/ui-audit.mjs and roadmap-contract-check
+ * read the quoted names between these brackets, so a state added here is audited
+ * without an ui-audit edit. The revision-4 states follow the rev-3 ones.
+ */
 export const FIXTURE_STATES = [
   "empty",
   "no-key",
@@ -72,8 +94,59 @@ export const FIXTURE_STATES = [
   "intake",
   "active-replan",
   "draft-live",
+  "depth-realistic",
+  "depth-calibrating",
+  "depth-over",
+  "depth-lowered",
+  "coverage-choice",
+  "exam-waypoint",
+  "count-gate",
+  "held-stages",
+  "legacy",
+  "legacy-draft",
+  "done-depth",
+  "archived",
+  "draft-v3",
+  "draft-exam",
+  "draft-body",
+  "draft-rejected",
+  "draft-impossible",
+  "draft-gaps",
+  "intake-depth",
+  "intake-empty-library",
+  "intake-gemini",
 ] as const;
 export type FixtureState = (typeof FIXTURE_STATES)[number];
+
+/** Revision 4's states (roadmap-rev4.md F-R4-15's ui-audit list, then the drafts, the intake and the lead-only switches); roadmap-ui-check pins that each is in FIXTURE_STATES. */
+export const REV4_STATES = [
+  "depth-realistic",
+  "depth-calibrating",
+  "depth-over",
+  "depth-lowered",
+  "coverage-choice",
+  "exam-waypoint",
+  "count-gate",
+  "held-stages",
+  "legacy",
+  "legacy-draft",
+  "done-depth",
+  "archived",
+  "draft-v3",
+  "draft-exam",
+  "draft-body",
+  "draft-rejected",
+  "draft-impossible",
+  "draft-gaps",
+  "intake-depth",
+  "intake-empty-library",
+  "intake-gemini",
+] as const satisfies readonly FixtureState[];
+type Rev4State = (typeof REV4_STATES)[number];
+
+function isRev4State(s: FixtureState): s is Rev4State {
+  return (REV4_STATES as readonly string[]).includes(s);
+}
 
 export function fixtureStateOf(raw: unknown): FixtureState {
   const s = Array.isArray(raw) ? raw[0] : raw;
@@ -786,6 +859,8 @@ export interface RoadmapFixture {
   today: WeekQuestsView | null;
   startPreview: StartPreview | null;
   note: string;
+  /** A lead-only state drawn with a switch on (ROADMAP_GEMINI_LIVE, ROADMAP_GAPS_LIVE are false in this build; the server still refuses). */
+  gates?: { gemini?: boolean; gaps?: boolean };
 }
 
 function intakeFixture(hasKey: boolean): IntakeView {
@@ -1040,6 +1115,7 @@ function replanDraft(): DraftView {
 
 function fixtureOf(state: FixtureState): RoadmapFixture {
   seq = 0;
+  if (isRev4State(state)) return rev4FixtureOf(state);
   switch (state) {
     case "active-replan": {
       const base = activeView();
@@ -1191,5 +1267,807 @@ function fixtureOf(state: FixtureState): RoadmapFixture {
       };
       return { view: done, intake: null, aim: aimFromView(done, "DONE"), today: null, startPreview: null, note: "Done: the final Aim rank and the last Proficiency, read-only." };
     }
+  }
+}
+
+// ═══ Revision 4 (roadmap-rev4.md): the spec's pack, aimed at a depth ═════════
+//
+// One plan, the mockups': Statistics, with Probability (48 cards, 6 of them
+// multiple choice: 42 recall cards; n 34) and Inference (9 cards; n 25), at
+// Mastered (level 12), Exam P on Tue 4 May 2027, accepted Mon 5 Oct 2026 at
+// Steady. Stage days are lane M's (computed with lane 0's reach model):
+// Familiar part 1 Sun 22 Nov 2026, Familiar 27 Dec, Retained 14 Feb 2027,
+// Fluent 16 May, Toward Mastered 1 Aug, Mastered Sun 12 Mar 2028. Ranks
+// [2, 2, 3, 4, 4, 5]. Every title, practice, step and checkpoint is code's
+// (catalog templates) or the user's (outline lines); nothing here is a
+// Gemini word.
+
+const PACK_AIM = "Know probability and inference well enough to pass Exam P and use them at work";
+const PACK_TODAY = "2027-01-07";
+const PACK_ACCEPTED = "2026-10-05";
+const EXAM_DAY = "2027-05-04";
+const PACK_DOMAINS = ["d-pr", "d-in"];
+
+const PACK_LIB: LibraryDomain[] = [
+  { id: "d-pr", name: "Probability", fieldId: "f-st", fieldName: "Statistics", cards: 48, atSix: 18, atTop: 2, level: 6, sample: ["Bayes' rule for two events", "Variance of a sum", "The law of total expectation"] },
+  { id: "d-in", name: "Inference", fieldId: "f-st", fieldName: "Statistics", cards: 9, atSix: 0, atTop: 0, level: 2 },
+  { id: "d-ca", name: "Calculus", fieldId: "f-st", fieldName: "Statistics", cards: 20, atSix: 7, atTop: 1, level: 4 },
+  { id: "d-la", name: "Linear Algebra", fieldId: "f-st", fieldName: "Statistics", cards: 5, atSix: 1, atTop: 0, level: 1 },
+  { id: "d-rk", name: "Risk Management", fieldId: "f-st", fieldName: "Statistics", cards: 14, atSix: 3, atTop: 0, level: 2 },
+];
+
+/** Multiple-choice cards per Domain (IntakeFieldOption.domains[].nonRecall): Probability's 48 hold 6, so 42 count. */
+const PACK_NON_RECALL: Readonly<Record<string, number>> = { "d-pr": 6 };
+
+const OUTLINE = ["General probability", "Univariate random variables", "Multivariate random variables", "Conditional expectation and variance", "Common discrete distributions", "Common continuous distributions"];
+
+const STAGES: { ord: number; stage: StageKey; level: number; title: string; ws: string; due: string; rank: number }[] = [
+  { ord: 1, stage: "PART", level: 6, title: "Familiar, part 1: Probability, Inference to level 6+", ws: "2026-10-05", due: "2026-11-22", rank: 2 },
+  { ord: 2, stage: "FAMILIAR", level: 6, title: "Familiar: Probability, Inference to level 6+", ws: "2026-11-23", due: "2026-12-27", rank: 2 },
+  { ord: 3, stage: "RETAINED", level: 8, title: "Retained: Probability, Inference to level 8+", ws: "2026-12-28", due: "2027-02-14", rank: 3 },
+  { ord: 4, stage: "FLUENT", level: 10, title: "Fluent: Probability, Inference to level 10+", ws: "2027-02-15", due: "2027-05-16", rank: 4 },
+  { ord: 5, stage: "BETWEEN", level: 11, title: "Toward Mastered: Probability, Inference to level 11+", ws: "2027-05-17", due: "2027-08-01", rank: 4 },
+  { ord: 6, stage: "MASTERED", level: 12, title: "Mastered: Probability, Inference to level 12+", ws: "2027-08-02", due: "2028-03-12", rank: 5 },
+];
+
+/** One card measure per Domain (F-R4-9): `r` at a stage gate, `rc` (clean entry) at the depth. */
+function depthMeasure(id: string, domainId: string, level: number, target: number, baseline: number | null, depth = 12): MeasureSpec {
+  return {
+    ...cardsMeasure(id, [domainId], level, target, baseline),
+    targetSource: level === depth ? "DEPTH" : "WORKED_OUT",
+    fittedTarget: null,
+    measureKey: cardsAtLevelKey([domainId], level, level === depth ? "rc" : "r"),
+  };
+}
+
+/** A code-worded type from the catalog (origin CODE): Gemini's pick, the app's addition, or the user's choice. */
+function catalogItem(kind: "PRACTICE" | "STEP" | "CHECKPOINT", key: CatalogKey, label: string, p: Partial<ItemDraft> = {}): ItemDraft {
+  return item({ kind, label, origin: APP, decision: "PENDING", catalogKey: key, ...p });
+}
+
+function packStage(s: (typeof STAGES)[number], p: Partial<MilestoneDraft> = {}, counts: [number, number] = [34, 25], baselines: [number | null, number | null] = [null, null]): MilestoneDraft {
+  return milestone({
+    ord: s.ord,
+    title: s.title,
+    titleOrigin: APP,
+    titleDecision: "PENDING",
+    windowStart: s.ws,
+    dueDay: s.due,
+    status: "PLANNED",
+    rankIndex: s.rank,
+    stage: s.stage,
+    measures: [depthMeasure(`ms${s.ord}p`, "d-pr", s.level, counts[0], baselines[0]), depthMeasure(`ms${s.ord}i`, "d-in", s.level, counts[1], baselines[1])],
+    ...p,
+  });
+}
+
+function packCoverage(p: Partial<Record<"d-pr" | "d-in", Partial<CoverageBreakdown>>> = {}): CoverageBreakdown[] {
+  return [
+    { domainId: "d-pr", name: "Probability", live: 42, nonRecall: 6, linesTied: 2, linesShared: 1, floor: 25, share: 34, outline: 9, policy: 34, typed: null, n: 34, belowPolicy: false, ...p["d-pr"] },
+    { domainId: "d-in", name: "Inference", live: 9, nonRecall: 0, linesTied: 3, linesShared: 1, floor: 25, share: 8, outline: 12, policy: 25, typed: null, n: 25, belowPolicy: false, ...p["d-in"] },
+  ];
+}
+
+function packDepth(p: Partial<DepthView> = {}): DepthView {
+  return { depth: 12, coverage: packCoverage(), coverageChoices: [], depthChoice: null, domainOrigins: {}, outlineChecked: true, exam: { day: EXAM_DAY, reachLevel: 8 }, ...p };
+}
+
+const REALISTIC_BASIS = [
+  "At 70% of your usual 3 new cards a week, your 80% pass rate (reads high), 80% for gaps of 50 days and more (the app's policy) and the 92% of your due queue you clear, this depth is realistic by Sun 12 Mar 2028. Earliest if every review passes, at this pace: Sat 30 Oct 2027.",
+  "By your exam (Tue 4 May 2027) the plan reaches Retained (level 8). The depth goes on past it.",
+  "This date is set by the review schedule, not your hours: a new card needs at least 340 days to reach level 12. More hours won't bring it much closer.",
+];
+
+function packDateCheck(p: Partial<DateCheck> = {}): DateCheck {
+  return {
+    D_real: "2028-03-12",
+    D_full: "2028-01-30",
+    D_best_pace: "2027-10-30",
+    D_best_2x: "2027-09-05",
+    D_floor: "2027-09-12",
+    verdict: "FITS",
+    rateAsked: 2.1,
+    reachByUserDate: null,
+    reachByExam: 8,
+    scheduleBound: true,
+    dateOrigin: { origin: "REALISTIC", calibrating: [] },
+    basis: REALISTIC_BASIS,
+    ...p,
+  };
+}
+
+function packHeader(p: Partial<RoadmapHeader> = {}): RoadmapHeader {
+  return header({
+    id: "rm4",
+    aim: PACK_AIM,
+    area: { kind: "FIELD", fieldId: "f-st", name: "Statistics", level: 9 },
+    startDay: PACK_ACCEPTED,
+    targetDay: "2028-03-12",
+    acceptedDay: PACK_ACCEPTED,
+    firstAcceptedDay: PACK_ACCEPTED,
+    hoursPerWeek: 6,
+    track: "CRAFT",
+    credential: true,
+    hasSyllabus: true,
+    constraints: "Evenings only.",
+    examLabel: "Exam P",
+    examDay: EXAM_DAY,
+    depth: 12,
+    dateMode: "CHOSEN",
+    dateOrigin: { origin: "REALISTIC", calibrating: [] },
+    legacy: false,
+    ...p,
+  });
+}
+
+/** Proficiency labelled with its basis (R1's ProficiencyViewR1: toward and label). */
+function packProficiency(value: number, parts: ProficiencyView["parts"], reached: number, p: Partial<ProficiencyView> = {}, today = PACK_TODAY, toward: { level: number; name: string } = { level: 12, name: "Mastered" }, scheduled = 6): ProficiencyView {
+  return Object.assign(proficiency(value, parts, reached, scheduled, p, today), { toward, label: `Proficiency toward ${toward.name} (level ${toward.level})` });
+}
+
+/** The pack's ladder: Aspirant skipped (Foundation merged into Familiar), the rest by stage. */
+function packRank(given: number, p: Partial<AimRankView> = {}): AimRankView {
+  const rows: AimRankView["ladder"] = [
+    { index: 0, name: AIM_RANKS[0], milestoneOrd: null, state: "given" },
+    { index: 2, name: AIM_RANKS[2], milestoneOrd: 1, state: given >= 2 ? "given" : "next" },
+    { index: 3, name: AIM_RANKS[3], milestoneOrd: 3, state: given >= 3 ? "given" : given === 2 ? "next" : "later" },
+    { index: 4, name: AIM_RANKS[4], milestoneOrd: 4, state: given >= 4 ? "given" : given === 3 ? "next" : "later" },
+    { index: 5, name: AIM_RANKS[5], milestoneOrd: 6, state: given >= 5 ? "given" : given === 4 ? "next" : "later" },
+    { index: 6, name: AIM_RANKS[6], milestoneOrd: null, state: given >= 6 ? "given" : "later" },
+  ];
+  const nextRow = rows.find((r) => r.state === "next" && r.milestoneOrd != null);
+  return {
+    index: given,
+    name: AIM_RANKS[given],
+    newSince: null,
+    next: nextRow ? { kind: "milestone", index: nextRow.index, name: nextRow.name, milestoneOrd: nextRow.milestoneOrd as number } : { kind: "paragon" },
+    top: { index: 6, name: AIM_RANKS[6], withAim: true },
+    pending: null,
+    ladder: rows,
+    ...p,
+  };
+}
+
+function packRows(states: Partial<Record<number, MilestoneRowView["state"]>>, p: Partial<Record<number, Partial<MilestoneRowView>>> = {}): MilestoneRowView[] {
+  return STAGES.map((s) => ({
+    id: `m${s.ord}`,
+    lineageId: `ml${s.ord}`,
+    ord: s.ord,
+    title: s.title,
+    titleClass: "WORKED_OUT" as const,
+    state: states[s.ord] ?? "PLANNED",
+    windowStart: s.ws,
+    dueDay: s.due,
+    percent: null,
+    rankIndex: s.rank,
+    gaveRank: null,
+    reachedDay: null,
+    countsFrom: null,
+    closedPercent: null,
+    stage: s.stage,
+    gateLevel: s.level,
+    held: false,
+    ...p[s.ord],
+  }));
+}
+
+/** Milestone 3 (Retained) as started: the user's outline lines, the app's and Gemini's practice types, the mock test before the exam. */
+function packM3(started = true): MilestoneDraft {
+  return packStage(
+    STAGES[2],
+    {
+      status: started ? "STARTED" : "PLANNED",
+      items: [
+        item({ kind: "DOMAIN", label: "Probability", domainId: "d-pr", origin: "USER", decision: "EDITED" }),
+        item({ kind: "DOMAIN", label: "Inference", domainId: "d-in", origin: "USER", decision: "EDITED" }),
+        item({ kind: "TOPIC", label: OUTLINE[3], domainId: "d-in", origin: "SYLLABUS", decision: "PENDING", syllabusRef: 3 }),
+        item({ kind: "TOPIC", label: OUTLINE[4], domainId: null, origin: "SYLLABUS", decision: "PENDING", syllabusRef: 4 }),
+        catalogItem("PRACTICE", "PROBLEM_SETS", "Problem sets: Probability, Inference", { method: "DELIBERATE_PRACTICE", sessionsPerWeek: 2, durationBand: "D30", rule: "TARGET:2/W", planSource: "WORKED_OUT", notes: ["GEMINI_PICK"], templateId: started ? "t-ps" : null, lineageId: "lp-ps" }),
+        catalogItem("PRACTICE", "TIMED_PRACTICE", "Timed practice: Probability, Inference", { method: "DELIBERATE_PRACTICE", sessionsPerWeek: 1, durationBand: "D45", rule: "TARGET:1/W", planSource: "WORKED_OUT", notes: ["PRODUCTION_ADDED"], templateId: started ? "t-tp" : null, lineageId: "lp-tp" }),
+        catalogItem("CHECKPOINT", "MOCK_TEST", "Mock test: Exam P", { checkpointKind: "MOCK_TEST", bar: 6, outOf: 10, lineageId: "lc-mt" }),
+      ],
+      measures: [depthMeasure("ms3p", "d-pr", 8, 34, 14), depthMeasure("ms3i", "d-in", 8, 25, 2), practiceMeasure("ms3k", 12)],
+    },
+    [34, 25],
+    [14, 2]
+  );
+}
+
+function packFeasibility(today = PACK_TODAY): Feasibility {
+  return {
+    today,
+    m: 1,
+    milestones: STAGES.map((s) => mfOf(packStage(s), [knowledge(cardsAtLevelKey(["d-pr"], s.level, s.level === 12 ? "rc" : "r"), s.level, "FITS", 34, 14, 36, 41, 46), knowledge(cardsAtLevelKey(["d-in"], s.level, s.level === 12 ? "rc" : "r"), s.level, "FITS", 25, 2, 26, 31, 38)])),
+    aimCheck: { kind: "unchecked" },
+    basis: [],
+    remedies: [],
+    impossible: false,
+    over: false,
+    dateCheck: packDateCheck(),
+  };
+}
+
+function packRow(measureKey: string, label: string, target: number, baseline: number, value: number, p: Partial<MeasureRowView> = {}): MeasureRowView {
+  return cardsRow({ measureKey, label, target, baseline, figure: fig(value, "tested by your reviews"), gained: Math.max(0, value - baseline), needed: target - baseline, alreadyCounted: baseline, pace: { kind: "on-pace", day: "2027-02-14", pipeline: 9, bestCase: false }, ...p });
+}
+
+function packWeekQuests(today = true): WeekQuestsView {
+  const parts = (line: string) => ({ partsLine: line });
+  const rows: WeekQuestRow[] = [
+    Object.assign(weekRow({ ord: 1, kind: "RAISE", label: "Bring 6 cards to level 8+", count: 6, unit: "card", figure: fig(2, "tested by your reviews · measured 09:12"), dueLine: "Probability: 2 come due Fri, 1 Sat · Inference: 1 Fri, 2 Sun", href: "/you/roadmap#now" }), parts("3 in Probability · 3 in Inference")),
+    Object.assign(weekRow({ ord: 2, kind: "ADD", label: "Add 2 cards", count: 2, unit: "card", figure: fig(1, "counted by the app; it doesn't judge them", "RECORDED"), href: "/add?field=f-st&domain=d-in" }), parts("2 to Inference · multiple choice not counted")),
+    weekRow({ ord: 3, kind: "PRACTICE", label: "Problem sets: Probability, Inference · 2 sessions × 30 min", count: 2, unit: "session", figure: fig(1, "from your ticks", "SELF"), seekTemplateId: "t-ps", place: "in Habits", href: "/today#t-t-ps" }),
+  ];
+  return weekQuestsFixture(
+    {
+      milestoneId: "m3",
+      milestoneOrd: 3,
+      milestoneOf: 6,
+      milestoneTitle: STAGES[2].title,
+      weekStart: "2027-01-04",
+      weekEnd: "2027-01-10",
+      level: 8,
+      basis: today ? ["Parts by Domain: each Domain's gap and the cards that can reach level 8 this week if passed on their day, at your 80% pass rate."] : [],
+    },
+    rows
+  );
+}
+
+/** The pack as accepted and started at Retained (milestone 3), as of Thu 7 Jan 2027. */
+function packActiveView(p: Partial<RoadmapView> = {}): RoadmapView {
+  const m3 = packM3(true);
+  const run: RunView = { ...acceptedGeminiRun(), promptVersion: 3, report: { dropped: [], flagged: [], notes: [], integrity: { verdict: "CLEAN", violations: [], modelChars: 0, gapsKept: 0, gapsHidden: 0, gapsDropped: 0, notANameByClause: {} } } };
+  return activeView({
+    today: PACK_TODAY,
+    header: packHeader(),
+    run,
+    acceptedRun: run,
+    positions: 6,
+    library: PACK_LIB,
+    rank: packRank(2),
+    proficiency: packProficiency(0.3423, { cards: 0.168, practice: 0.765, milestones: 2 / 6 }, 2),
+    toward: {
+      measures: [
+        packRow(cardsAtLevelKey(["d-pr"], 12, "rc"), "Probability · recall cards at level 12, each entered at the first try", 34, 2, 2, { pace: { kind: "on-pace", day: "2028-03-12", pipeline: 0, bestCase: false } }),
+        packRow(cardsAtLevelKey(["d-in"], 12, "rc"), "Inference · recall cards at level 12, each entered at the first try", 25, 0, 0, { pace: { kind: "on-pace", day: "2028-03-12", pipeline: 0, bestCase: false } }),
+      ],
+      reached: 2,
+      scheduled: 6,
+      practiceKept: { share: 0.76, sessions: 21 },
+      weightLine: null,
+    },
+    current: {
+      milestone: m3,
+      measures: [
+        packRow(cardsAtLevelKey(["d-pr"], 8, "r"), "34 cards in Probability at level 8+", 34, 14, 18),
+        packRow(cardsAtLevelKey(["d-in"], 8, "r"), "25 cards in Inference at level 8+", 25, 2, 6),
+        { measureKey: "PRACTICE_KEPT|t:t-ps,t-tp|from:2026-12-28", kind: "PRACTICE_KEPT", role: "PAYS", target: 12, baseline: null, figure: fig(3, "from your ticks", "SELF"), gained: null, needed: null, alreadyCounted: null, pace: { kind: "on-pace" }, measuredAt: MEASURED_AT, basisClass: "SELF_REPORTED" },
+      ],
+      headline: fig(0.17, "tested by your reviews"),
+      goalId: "g3",
+      starting: false,
+      stated: 6,
+      zeroReason: null,
+      checkpointLog: null,
+      pastDue: false,
+      practiceKept: { "lp-ps": { kept: 2, of: 3 }, "lp-tp": { kept: 1, of: 2 } },
+    },
+    milestones: packRows({ 1: "REACHED", 2: "REACHED", 3: "CURRENT" }, { 1: { reachedDay: "2026-11-20", percent: 100, gaveRank: "Journeyman" }, 2: { reachedDay: "2026-12-27", percent: 100 }, 3: { percent: 17 } }),
+    weekQuests: packWeekQuests(),
+    pastWeeks: [
+      { weekStart: "2026-12-28", milestoneOrd: 3, settled: true, done: 2, total: 3, capped: false, heldDays: 0 },
+      { weekStart: "2026-12-21", milestoneOrd: 2, settled: true, done: 3, total: 3, capped: false, heldDays: 0 },
+    ],
+    throughput: THROUGHPUT,
+    feasibility: packFeasibility(),
+    history: [{ version: 1, day: PACK_ACCEPTED, undone: false, changes: [] }],
+    depth: packDepth(),
+    dateCheck: packDateCheck(),
+    paragonMissing: [],
+    legacy: null,
+    gaps: [],
+    gapsHidden: 0,
+    ...p,
+  });
+}
+
+/** The Aim card of a depth plan: the date chip by depth, the stage on the milestone line. */
+function packAim(v: RoadmapView, state: AimCardView["state"], p: Partial<AimCardView> = {}): AimCardView {
+  const base = aimFromView(v, state);
+  const cur = v.current;
+  const stage = cur ? STAGES.find((s) => s.ord === cur.milestone.ord) : undefined;
+  return {
+    ...base,
+    depth: 12,
+    dateChip: { depth: 12, day: "2028-03-12", estimate: false },
+    aimSuggestions: null,
+    lastAim: null,
+    legacy: false,
+    milestone: base.milestone ? { ...base.milestone, stage: stage?.stage ?? null, gateLevel: stage?.level ?? null } : null,
+    ...p,
+  };
+}
+
+/** A keys-only draft's rows: the PART stage decided now, the rest an outline. */
+function packDraftMilestones(opts: { gemini: boolean; additions: string[]; exam: boolean; body?: false }): MilestoneDraft[] {
+  const pick = (n: ItemDraft): ItemDraft => (opts.gemini ? n : { ...n, notes: n.notes.filter((x) => x !== "GEMINI_PICK") });
+  const adds = (ord: number) => opts.additions.map((id) => item({ kind: "DOMAIN", label: PACK_LIB.find((d) => d.id === id)!.name, domainId: id, origin: "GEMINI", decision: "PENDING", notes: ["NOT_CHOSEN"], id: `add-${id}-${ord}`, lineageId: `ladd-${id}-${ord}` }));
+  const chosen = () => [item({ kind: "DOMAIN", label: "Probability", domainId: "d-pr", origin: "USER", decision: "EDITED" }), item({ kind: "DOMAIN", label: "Inference", domainId: "d-in", origin: "USER", decision: "EDITED" })];
+  const line = (i: number, domainId: string | null) => item({ kind: "TOPIC", label: OUTLINE[i], domainId, origin: "SYLLABUS", decision: "PENDING", syllabusRef: i });
+  // Who arranged the outline lines and types: Gemini's run says so; the app's own starter carries no arrangement line.
+  const arranged = opts.gemini ? { arrangedBy: "GEMINI" as const } : {};
+  const draft = (s: (typeof STAGES)[number], items: ItemDraft[], counts: [number, number] = [34, 25], baselines: [number | null, number | null] = [18, 0]): MilestoneDraft => ({
+    ...packStage(s, { status: "DRAFT", version: 1, items: [...chosen(), ...adds(s.ord), ...items], ...arranged }, counts, baselines),
+  });
+  return [
+    draft(
+      STAGES[0],
+      [
+        line(0, "d-pr"),
+        line(1, "d-pr"),
+        pick(catalogItem("PRACTICE", "RECALL_DRILLS", "Recall drills: Probability, Inference", { method: "DELIBERATE_PRACTICE", sessionsPerWeek: 2, durationBand: "D20", rule: "TARGET:2/W", planSource: "WORKED_OUT", notes: ["GEMINI_PICK"] })),
+        pick(catalogItem("PRACTICE", "READ_AND_CARD", "Study Inference", { method: "READING", sessionsPerWeek: 2, durationBand: "D30", rule: "TARGET:2/W", planSource: "WORKED_OUT", domainId: "d-in", notes: ["GEMINI_PICK"] })),
+        ...(opts.exam ? [catalogItem("STEP", "BOOK_EXAM", "Book Exam P")] : []),
+        pick(catalogItem("STEP", "CHOOSE_MATERIAL", "Choose your material for Probability, Inference", { notes: ["GEMINI_PICK"] })),
+        pick(catalogItem("CHECKPOINT", "SELF_TEST", "Self-test: Probability, Inference", { checkpointKind: "SELF_TEST", notes: ["GEMINI_PICK"] })),
+      ],
+      [33, 15]
+    ),
+    draft(STAGES[1], [line(2, "d-pr"), pick(catalogItem("PRACTICE", "PROBLEM_SETS", "Problem sets: Probability, Inference", { method: "DELIBERATE_PRACTICE", sessionsPerWeek: 2, durationBand: "D30", rule: "TARGET:2/W", notes: ["GEMINI_PICK"] }))]),
+    draft(STAGES[2], [line(3, "d-in"), line(4, null), catalogItem("PRACTICE", "EXPLAIN_IT", "Explain it in your own words: Probability, Inference", { method: "WRITING", sessionsPerWeek: 1, durationBand: "D30", rule: "TARGET:1/W", notes: ["PRODUCTION_ADDED"] })]),
+    draft(STAGES[3], [pick(catalogItem("PRACTICE", "EXPLAIN_IT", "Explain it in your own words: Probability, Inference", { method: "WRITING", sessionsPerWeek: 2, durationBand: "D45", rule: "TARGET:2/W", notes: ["GEMINI_PICK"] })), ...(opts.exam ? [catalogItem("CHECKPOINT", "EXAM_DAY", "Exam: Exam P", { checkpointKind: "EXAM_DAY", bar: 6, outOf: 10 })] : [])]),
+    draft(STAGES[4], [pick(catalogItem("PRACTICE", "MISTAKE_REVIEW", "Go over your mistakes: Probability, Inference", { method: "DELIBERATE_PRACTICE", sessionsPerWeek: 2, durationBand: "D45", rule: "TARGET:2/W", notes: ["GEMINI_PICK"] }))]),
+    draft(STAGES[5], [pick(catalogItem("PRACTICE", "MISTAKE_REVIEW", "Go over your mistakes: Probability, Inference", { method: "DELIBERATE_PRACTICE", sessionsPerWeek: 2, durationBand: "D45", rule: "TARGET:2/W", notes: ["GEMINI_PICK"] })), pick(catalogItem("STEP", "EXPLAIN_ONCE", "Explain Probability, Inference to someone without notes", { notes: ["GEMINI_PICK"] }))]),
+  ];
+}
+
+function packAdditions(blockedLinear = false): DomainAddition[] {
+  return [
+    { itemId: "add-d-ca-1", domainId: "d-ca", name: "Calculus", cards: 20, atSix: 7, n: 25, dateWith: "2028-03-26", blocked: null },
+    { itemId: "add-d-la-1", domainId: "d-la", name: "Linear Algebra", cards: 5, atSix: 1, n: 25, dateWith: blockedLinear ? null : "2028-04-23", blocked: blockedLinear ? "PAST_SPAN" : null },
+  ];
+}
+
+function v3Run(p: Partial<RunView> = {}): RunView {
+  return {
+    id: "r4",
+    kind: "GEMINI",
+    status: "OK",
+    startedAt: "2026-10-04T22:12:00.000Z",
+    finishedAt: "2026-10-04T22:12:09.400Z",
+    model: "gemini-3.5-flash-lite",
+    modelVersion: "gemini-3.5-flash-lite",
+    promptVersion: 3,
+    drafts: 1,
+    stale: false,
+    usualSeconds: null,
+    error: null,
+    wrote: "GEMINI",
+    capped: false,
+    report: { dropped: [], flagged: [], notes: [], integrity: { verdict: "CLEAN", violations: [], modelChars: 0, gapsKept: 0, gapsHidden: 0, gapsDropped: 0, notANameByClause: {} } },
+    ...p,
+  };
+}
+
+/** A keys-only draft of the pack (F-R4-17, F-R4-21): `gemini` arranged by Gemini (else the app's starter), its additions and their mode. */
+function packDraftView(opts: { gemini: boolean; exam: boolean; additions: string[]; mode?: "BULK" | "TOGGLES"; blockedLinear?: boolean; run?: RunView | null; dateCheck?: DateCheck; aim?: string; p?: Partial<DraftView> }): RoadmapView {
+  const ms = packDraftMilestones({ gemini: opts.gemini, additions: opts.additions, exam: opts.exam });
+  const adds = opts.additions.length ? packAdditions(opts.blockedLinear) : [];
+  // Without an exam the date check has no exam waypoint.
+  const dateCheck = opts.dateCheck ?? (opts.exam ? packDateCheck() : packDateCheck({ reachByExam: null, basis: [REALISTIC_BASIS[0], REALISTIC_BASIS[2]] }));
+  const f: Feasibility = { ...packFeasibility("2026-10-05"), milestones: ms.map((m) => mfOf(m, [])), dateCheck };
+  const checkpointToSet = ms[0].items.find((it) => it.kind === "CHECKPOINT" && it.bar == null);
+  const draft: DraftView = {
+    version: 1,
+    milestones: ms,
+    feasibility: f,
+    bulkKeepOff: true,
+    credential: opts.exam,
+    nonEnglish: false,
+    alarm: false,
+    uncoveredSyllabus: [5],
+    nextLineageId: ms[0].lineageId,
+    acceptable: false,
+    nextToDecide: adds.length ? adds[0].itemId : (checkpointToSet?.id ?? null),
+    exclusions: [],
+    sessionPicks: null,
+    aimConflict: null,
+    gapsHidden: 0,
+    gaps: [],
+    additions: adds,
+    additionsMode: opts.mode ?? (opts.exam ? "TOGGLES" : "BULK"),
+    unassignedLines: [4, 5],
+    dateCheck,
+    depth: packDepth({ exam: opts.exam ? { day: EXAM_DAY, reachLevel: 8 } : null }),
+    legacy: null,
+    ...opts.p,
+  };
+  const run = opts.run === undefined ? (opts.gemini ? v3Run() : v3Run({ kind: "INHOUSE", model: null, modelVersion: null, promptVersion: null, drafts: 0, wrote: "INHOUSE", report: null })) : opts.run;
+  return {
+    ...activeView(),
+    state: "DRAFT",
+    today: "2026-10-05",
+    acceptedRun: null,
+    positions: undefined,
+    header: packHeader({ status: "DRAFT", version: 0, acceptedDay: null, firstAcceptedDay: null, aim: opts.aim ?? (opts.exam ? PACK_AIM : "Use probability and inference fluently in my analytics work"), examLabel: opts.exam ? "Exam P" : null, examDay: opts.exam ? EXAM_DAY : null, credential: opts.exam, dateMode: "REALISTIC", dateOrigin: null }),
+    run,
+    draft,
+    library: PACK_LIB,
+    rank: null,
+    proficiency: null,
+    toward: null,
+    current: null,
+    milestones: [],
+    weekQuests: null,
+    pastWeeks: [],
+    feasibility: null,
+    history: [],
+    depth: null,
+    dateCheck: null,
+    paragonMissing: [],
+    legacy: null,
+  };
+}
+
+/** A body plan with constraints (F-R4-17): the kinds left out with their words, the aim conflict, the one session-picks confirm. */
+function bodyDraftView(): RoadmapView {
+  const trackStage = (ord: number, stage: StageKey, ws: string, due: string, items: ItemDraft[]): MilestoneDraft =>
+    milestone({ ord, title: `Run a sub-50 10K · stage ${ord} of 3`, titleOrigin: APP, titleDecision: "PENDING", windowStart: ws, dueDay: due, status: "DRAFT", rankIndex: ord, stage, items, measures: [practiceMeasure(`mbd${ord}`, 18)], notes: ["HEALTH_LINE"], arrangedBy: "GEMINI" });
+  const ms = [
+    trackStage(1, "STAGE_1", "2026-10-05", "2026-12-27", [
+      catalogItem("PRACTICE", "EASY_SESSION", "Easy session", { method: "WORKOUT", sessionsPerWeek: 3, durationBand: "D30", rule: "TARGET:3/W", planSource: "WORKED_OUT", notes: ["GEMINI_PICK"] }),
+      catalogItem("PRACTICE", "STRENGTH_SESSION", "Strength session", { method: "WORKOUT", sessionsPerWeek: 1, durationBand: "D30", rule: "TARGET:1/W", planSource: "WORKED_OUT", notes: ["GEMINI_PICK"] }),
+      catalogItem("STEP", "SET_UP", "Set up what you need for Run a sub-50 10K"),
+    ]),
+    trackStage(2, "STAGE_3", "2026-12-28", "2027-05-23", [catalogItem("PRACTICE", "MOBILITY_SESSION", "Mobility session", { method: "WORKOUT", sessionsPerWeek: 2, durationBand: "D20", rule: "TARGET:2/W" })]),
+    trackStage(3, "STAGE_5", "2027-05-24", "2027-10-03", [catalogItem("PRACTICE", "TECHNIQUE_SESSION", "Technique session", { method: "WORKOUT", sessionsPerWeek: 2, durationBand: "D30", rule: "TARGET:2/W" })]),
+  ];
+  const v = packDraftView({ gemini: true, exam: false, additions: [] });
+  return {
+    ...v,
+    header: header({ id: "rm5", aim: "Run a sub-50 10K", area: { kind: "TRACK", track: "BODY" }, track: "BODY", targetDay: "2027-10-03", constraints: "Knee injury, no running", hoursPerWeek: 4, status: "DRAFT", version: 0, acceptedDay: null, firstAcceptedDay: null, startDay: "2026-10-05" }),
+    library: [],
+    draft: {
+      ...v.draft!,
+      milestones: ms,
+      feasibility: { ...v.draft!.feasibility, milestones: ms.map((m) => mfOf(m, [])), dateCheck: undefined },
+      credential: false,
+      exclusions: [
+        { kind: "HARDER_SESSION", word: "running" },
+        { kind: "LONGER_SESSION", word: "running" },
+        { kind: "PERFORMANCE_CHECK", word: "running" },
+        { kind: "FULL_ATTEMPT", word: "running" },
+      ],
+      aimConflict: { word: "running" },
+      sessionPicks: { kinds: ["STRENGTH_SESSION", "EASY_SESSION"], constraints: "Knee injury, no running", decision: "PENDING" },
+      additions: [],
+      unassignedLines: [],
+      uncoveredSyllabus: [],
+      dateCheck: null,
+      depth: null,
+      nextLineageId: ms[0].lineageId,
+      nextToDecide: ms[0].items[0].id,
+    },
+  };
+}
+
+/** The legacy plan's chosen Domains (Roadmap.domainIds): two of the Trading Field's. */
+const LEGACY_DOMAINS = ["d-rm", "d-ps"];
+
+/** A plan made before revision 4 (F-R4-16): its aim, Area, banner and action; none of its milestone or item text arrives. */
+function legacyView(kind: "ACTIVE" | "DRAFT"): RoadmapView {
+  const base = activeView();
+  return {
+    ...base,
+    state: kind,
+    header: header({ status: kind, legacy: true, depth: null, version: kind === "DRAFT" ? 0 : 1, acceptedDay: kind === "DRAFT" ? null : "2026-10-04", domainIds: LEGACY_DOMAINS }),
+    run: null,
+    acceptedRun: null,
+    positions: undefined,
+    draft: kind === "DRAFT" ? { ...packDraftView({ gemini: false, exam: false, additions: [] }).draft!, milestones: [], acceptable: false, nextLineageId: null, nextToDecide: null, legacy: { kind: "DRAFT", geminiHidden: true } } : null,
+    rank: kind === "DRAFT" ? null : rank(0),
+    proficiency: null,
+    toward: null,
+    current: null,
+    milestones: [],
+    weekQuests: null,
+    pastWeeks: [],
+    feasibility: null,
+    triggers: [],
+    aftercare: [],
+    history: kind === "DRAFT" ? [] : base.history,
+    // Its own Domains travel with "Start again at a depth" (the contract §15.11), not the Area's defaults.
+    legacy: { kind, geminiHidden: true, domainIds: LEGACY_DOMAINS, areaFieldId: "f-tr" },
+    depth: null,
+    dateCheck: null,
+    paragonMissing: [],
+    gaps: [],
+    gapsHidden: 0,
+  };
+}
+
+/** The intake with a Field Area aimed at a depth (F-R4-4, F-R4-9, F-R4-24): Depth, coverage, When realistic, the exam and its date, the outline's line Domains. */
+function depthIntakeFixture(p: Partial<Intake> = {}, view: Partial<IntakeView> = {}): IntakeView {
+  const today = "2026-10-05";
+  const base = intakeFixture(false);
+  const field: IntakeFieldOption = { id: "f-st", name: "Statistics", level: 9, cards: 96, inMaintenance: false, paceMeasured: true, domains: PACK_LIB.map((d) => ({ id: d.id, name: d.name, cards: d.cards, atSix: d.atSix, atTop: d.atTop, paceMeasured: true, nonRecall: PACK_NON_RECALL[d.id] ?? 0 })) };
+  const empty: IntakeFieldOption = { id: "f-new", name: "Sailing", level: 1, cards: 0, inMaintenance: false, paceMeasured: false, domains: [] };
+  const intake: Intake = {
+    aim: PACK_AIM,
+    fieldId: "f-st",
+    track: "CRAFT",
+    domainIds: PACK_DOMAINS,
+    targetDay: addDays(today, 1080),
+    hoursPerWeek: 6,
+    newCardsPerWeek: null,
+    typicalHours: null,
+    typicalHoursSource: null,
+    syllabus: { lines: OUTLINE, source: "SOA Exam P syllabus", lineDomains: ["d-pr", "d-pr", "d-pr", "d-in", null, null] },
+    startPoint: "BASICS",
+    intensity: "STEADY",
+    practicesAllowed: true,
+    constraints: "Evenings only.",
+    examLabel: "Exam P",
+    depth: 12,
+    coverage: null,
+    dateMode: "REALISTIC",
+    exam: true,
+    examDay: EXAM_DAY,
+    replaces: null,
+    ...p,
+  };
+  return {
+    ...base,
+    today,
+    fields: [field, empty, ...base.fields],
+    draft: { roadmapId: "rm4", intake, savedDay: today },
+    m: 1,
+    paceRate: 3,
+    dateChips: [
+      { months: 6, day: "2027-04-05", possible: { MASTERED: false, FLUENT: false, RETAINED: true } },
+      { months: 12, day: "2027-10-05", possible: { MASTERED: false, FLUENT: true, RETAINED: true } },
+      { months: 24, day: "2028-10-05", possible: { MASTERED: true, FLUENT: true, RETAINED: true } },
+      { months: 36, day: "2029-09-19", possible: { MASTERED: true, FLUENT: true, RETAINED: true } },
+    ],
+    ...view,
+  };
+}
+
+function rev4FixtureOf(state: Rev4State): RoadmapFixture {
+  switch (state) {
+    case "depth-realistic": {
+      const v = packActiveView();
+      return { view: v, intake: null, aim: packAim(v, "ACTIVE"), today: v.weekQuests, startPreview: null, note: "A plan aimed at a depth, started at Retained: the Depth line and the exam waypoint in the header, Proficiency toward Mastered (level 12), one measure per Domain, the user's outline lines, the app's and Gemini's practice types." };
+    }
+    case "depth-calibrating": {
+      const base = packActiveView();
+      const v: RoadmapView = {
+        ...base,
+        today: "2026-11-02",
+        header: packHeader({ dateOrigin: { origin: "REALISTIC", calibrating: ["p", "c"] }, targetDay: "2028-03-19" }),
+        rank: packRank(0, { next: { kind: "milestone", index: 2, name: AIM_RANKS[2], milestoneOrd: 1 } }),
+        proficiency: packProficiency(0.05, { cards: 0.079, practice: 0, milestones: 0 }, 0, {}, "2026-11-02"),
+        current: { ...base.current!, milestone: { ...packStage(STAGES[0]), status: "PLANNED", items: [] }, goalId: null, measures: [], headline: null, stepDone: undefined, practiceKept: undefined },
+        milestones: packRows({ 1: "PLANNED" }),
+        weekQuests: null,
+        pastWeeks: [],
+        dateCheck: packDateCheck({ dateOrigin: { origin: "REALISTIC", calibrating: ["p", "c"] }, D_real: "2028-03-19", basis: [REALISTIC_BASIS[0].replace("your 80% pass rate (reads high)", "an assumed 80% pass rate").replace("the 92% of your due queue you clear", "an assumed 85% of your due queue cleared"), "This date is an estimate: it assumes an 80% pass rate until 30 reviews are measured and that you clear 85% of your due queue until your clearance is measured.", REALISTIC_BASIS[1]] }),
+        triggers: [{ trigger: "CALIBRATED", milestoneOrd: null, line: "Your pass rate is now measured (76%). Re-date the stages you haven't started?" }],
+        throughput: CALIBRATING_TP,
+      };
+      return { view: v, intake: null, aim: packAim(v, "ACCEPTED", { dateChip: { depth: 12, day: "2028-03-19", estimate: true } }), today: null, startPreview: null, note: "While the pass rate and the clearance calibrate the date uses the published priors, says so, reads 'estimate', and offers a re-date once measured (CALIBRATED)." };
+    }
+    case "depth-over": {
+      const base = packActiveView();
+      const v: RoadmapView = {
+        ...base,
+        header: packHeader({ targetDay: "2027-10-03", over: true, dateOrigin: { origin: "USER", calibrating: [] } }),
+        dateCheck: packDateCheck({
+          verdict: "OVER",
+          rateAsked: 4.2,
+          reachByUserDate: 11,
+          dateOrigin: { origin: "USER", calibrating: [] },
+          basis: [REALISTIC_BASIS[0], "Asks 4.2 new cards a week, more than your usual 3.", "By your date the plan reaches Toward Mastered (level 11).", REALISTIC_BASIS[1]],
+        }),
+      };
+      return { view: v, intake: null, aim: packAim(v, "ACTIVE", { over: true, dateChip: { depth: 12, day: "2027-10-03", estimate: false } }), today: v.weekQuests, startPreview: null, note: "The user's own date, kept over the pace: 'Over' for good, the rate it asks, and where the plan is by that date." };
+    }
+    case "depth-lowered": {
+      const base = packActiveView();
+      const v: RoadmapView = {
+        ...base,
+        header: packHeader({ depth: 10, targetDay: "2027-05-16" }),
+        depth: packDepth({ depth: 10, depthChoice: { from: 12, to: 10, day: "2027-01-05", reason: "CHOICE" }, coverage: packCoverage() }),
+        proficiency: packProficiency(0.4648, { cards: 0.372, practice: 0.765, milestones: 2 / 4 }, 2, { change: { kind: "rebased", rebase: { on: "2027-01-05", from: 0.34, cause: "REPLAN", detail: "depth lowered Mastered → Fluent" } } }, PACK_TODAY, { level: 10, name: "Fluent" }, 4),
+        // The stages above the new depth are dropped: the ladder ends at Fluent's rank (every rank given is kept).
+        rank: (() => {
+          const r = packRank(2, { top: { index: 4, name: AIM_RANKS[4], withAim: false } });
+          return { ...r, ladder: r.ladder.filter((x) => x.index <= 4) };
+        })(),
+        positions: 4,
+        paragonMissing: ["DEPTH"],
+        // lowerDepthCore writes a record within version 1 (contracts §15.7); R4's historyOf flags it (depthLowered, §16.2) and words
+        // it with depthChangeLineOf, so Plan history reads "v1 depth lowered 5 Jan: Mastered → Fluent", never "accepted".
+        history: [
+          { version: 1, day: PACK_ACCEPTED, undone: false, changes: [] },
+          { version: 1, day: "2027-01-05", undone: false, changes: ["lowered the depth Mastered → Fluent"], depthLowered: true },
+        ],
+        milestones: packRows({ 1: "REACHED", 2: "REACHED", 3: "CURRENT", 5: "DROPPED", 6: "DROPPED" }, { 1: { reachedDay: "2026-11-20", percent: 100 }, 2: { reachedDay: "2026-12-27", percent: 100 }, 3: { percent: 17 } }),
+        dateCheck: packDateCheck({ D_real: "2027-05-16", basis: ["At 70% of your usual 3 new cards a week, your 80% pass rate (reads high) and the 92% of your due queue you clear, this depth is realistic by Sun 16 May 2027."] }),
+      };
+      return { view: v, intake: null, aim: packAim(v, "ACTIVE", { depth: 10, dateChip: { depth: 10, day: "2027-05-16", estimate: false } }), today: v.weekQuests, startPreview: null, note: "A lowered depth: shown for good on the Depth line, the stages above it dropped, Proficiency rebased toward Fluent (level 10), every rank given kept, Paragon off." };
+    }
+    case "coverage-choice": {
+      const base = packActiveView();
+      const v: RoadmapView = {
+        ...base,
+        header: packHeader({ hasSyllabus: false }),
+        depth: packDepth({
+          coverage: [...packCoverage({ "d-pr": { typed: 5, n: 5, belowPolicy: true } }), { domainId: "d-rk", name: "Risk Management", live: 14, nonRecall: 0, linesTied: 0, linesShared: 0, floor: 25, share: 12, outline: 0, policy: 25, typed: null, n: 25, belowPolicy: false }],
+          coverageChoices: [{ domainId: "d-pr", policy: 34, typed: 5, day: PACK_ACCEPTED }],
+          domainOrigins: { "d-pr": { by: "INTAKE", day: PACK_ACCEPTED }, "d-in": { by: "INTAKE", day: PACK_ACCEPTED }, "d-rk": { by: "GEMINI_NEEDS", day: PACK_ACCEPTED } },
+          outlineChecked: false,
+          exam: null,
+        }),
+        rank: packRank(2, { top: { index: 5, name: AIM_RANKS[5], withAim: false } }),
+        paragonMissing: ["COVERAGE"],
+      };
+      return { view: v, intake: null, aim: packAim(v, "ACTIVE"), today: v.weekQuests, startPreview: null, note: "A coverage figure below the app's, Gemini's suggested Domain the user added, and no outline: each shown on the Depth line for the life of the plan; the top rank is Virtuoso." };
+    }
+    case "exam-waypoint": {
+      const base = packActiveView();
+      const m3 = packM3(false);
+      const v: RoadmapView = {
+        ...base,
+        today: "2026-12-28",
+        current: { ...base.current!, milestone: m3, goalId: null, measures: [], headline: null, stepDone: undefined, practiceKept: undefined },
+        milestones: packRows({ 1: "REACHED", 2: "REACHED", 3: "PLANNED" }, { 1: { reachedDay: "2026-11-20", percent: 100 }, 2: { reachedDay: "2026-12-27", percent: 100 } }),
+        weekQuests: null,
+      };
+      const sp: StartPreview = {
+        milestoneId: m3.id!,
+        ord: 3,
+        of: 6,
+        title: m3.title,
+        dueDay: "2027-02-14",
+        goalsLive: true,
+        writesOff: false,
+        refusal: null,
+        todayCheck: null,
+        feasibility: mfOf(m3, []),
+        pending: [],
+        todayRows: [
+          { kind: "TITLE", itemId: null, label: m3.title, class: "WORKED_OUT", needs: "NONE" },
+          { kind: "PRACTICE", itemId: m3.items[4].id, label: m3.items[4].label, class: "WORKED_OUT", needs: "NONE" },
+          { kind: "PRACTICE", itemId: m3.items[5].id, label: m3.items[5].label, class: "WORKED_OUT", needs: "NONE" },
+          { kind: "CHECKPOINT", itemId: m3.items[6].id, label: m3.items[6].label, class: "WORKED_OUT", needs: "NONE" },
+        ],
+        practices: [
+          { itemId: m3.items[4].id!, lineageId: "lp-ps", name: m3.items[4].label, rule: "TARGET:2/W", minutes: 30, on: true, alreadyOnToday: null, price: 9, weeklyMinutes: 60 },
+          { itemId: m3.items[5].id!, lineageId: "lp-tp", name: m3.items[5].label, rule: "TARGET:1/W", minutes: 45, on: true, alreadyOnToday: null, price: 12, weeklyMinutes: 45 },
+        ],
+        steps: [],
+        pay: Object.assign({ stated: 6, zeroReason: null, limitLine: null, paidOn: null }, { restsOnAdded: "Timed practice: Probability, Inference" }),
+        payBasis: { otherMinutesPerWeek: 120, hasCards: true, lineagePaidOn: null },
+        givesRank: "Specialist",
+        weekQuests: null,
+        canStart: true,
+        blockers: [],
+      };
+      return { view: v, intake: null, aim: packAim(v, "ACTIVE"), today: null, startPreview: sp, note: "Between stages, before the exam: the exam's waypoint for good, the Start sheet's pay line resting on a practice the app added." };
+    }
+    case "count-gate": {
+      const v = packDraftView({ gemini: false, exam: false, additions: [] });
+      return { view: v, intake: null, aim: { ...packAim(v, "DRAFT"), draftItems: 1, rank: null, proficiency: null, milestone: null, dateChip: null }, today: null, startPreview: null, note: "This build's draft (from the app's numbers): a count gate first ('Familiar, part 1'), the outline's lines placed in order, the app's practice types; nothing waits but the checkpoint's bar." };
+    }
+    case "held-stages": {
+      const base = packActiveView();
+      const held = { held: true, state: "PLANNED" as const, reachedDay: PACK_ACCEPTED };
+      const v: RoadmapView = {
+        ...base,
+        today: PACK_ACCEPTED,
+        rank: packRank(0, { next: { kind: "milestone", index: 4, name: AIM_RANKS[4], milestoneOrd: 4 } }),
+        proficiency: packProficiency(0.3, { cards: 0.42, practice: 0, milestones: 3 / 6 }, 3, {}, PACK_ACCEPTED),
+        milestones: packRows({ 4: "PLANNED" }, { 1: held, 2: held, 3: held }),
+        current: { ...base.current!, milestone: { ...packStage(STAGES[3]), items: [] }, goalId: null, measures: [], headline: null, stepDone: undefined, practiceKept: undefined },
+        weekQuests: null,
+        pastWeeks: [],
+      };
+      return { view: v, intake: null, aim: packAim(v, "ACCEPTED"), today: null, startPreview: null, note: "A strong library: the stages already held show 'Held when you began' and give no rank; the plan starts at Fluent." };
+    }
+    case "legacy": {
+      const v = legacyView("ACTIVE");
+      // The Aim card carries the page's banner facts (AimCardView.legacyView, contracts §16.3): the Gemini-hidden line and the plan's own Domains.
+      return { view: v, intake: null, aim: { ...aimFromView(activeView(), "ACTIVE"), legacy: true, legacyView: v.legacy, milestone: null, rank: null, proficiency: null, weekQuests: null }, today: null, startPreview: null, note: "A plan made before revision 4: its aim, Area, the banner and 'Start again at a depth'; none of its milestone or item text, and it isn't measured." };
+    }
+    case "legacy-draft": {
+      const v = legacyView("DRAFT");
+      return { view: v, intake: null, aim: { ...aimFromView(activeView(), "DRAFT"), legacy: true, legacyView: v.legacy, milestone: null, rank: null, proficiency: null, weekQuests: null, draftItems: null }, today: null, startPreview: null, note: "A draft made before revision 4: the banner and 'Draft it again', which opens the intake; Accept waits." };
+    }
+    case "done-depth": {
+      const base = packActiveView();
+      const v: RoadmapView = {
+        ...base,
+        state: "DONE",
+        today: "2028-03-15",
+        header: packHeader({ status: "DONE", reachedDay: "2028-03-12", doneDay: "2028-03-14" }),
+        rank: packRank(6, { newSince: "2028-03-12", next: { kind: "top" } }),
+        proficiency: packProficiency(1, { cards: 1, practice: 0.84, milestones: 1 }, 6, {}, "2028-03-15"),
+        current: null,
+        weekQuests: null,
+        milestones: packRows({ 1: "REACHED", 2: "REACHED", 3: "REACHED", 4: "REACHED", 5: "REACHED", 6: "REACHED" }),
+        triggers: [],
+      };
+      return {
+        view: v,
+        intake: null,
+        aim: packAim(v, "DONE", { reachedDay: "2028-03-12", doneDay: "2028-03-14", heldDepth: { depth: 12, domainNames: ["Probability", "Inference"], confirmedDay: "2028-03-14" }, milestone: null, weekQuests: null }),
+        today: null,
+        startPreview: null,
+        note: "The aim reached 3 days ago: the achievement leads ('Open roadmap', then 'Set your next aim'), and the roadmap ends with 'Set a new aim'.",
+      };
+    }
+    case "archived": {
+      const base = packActiveView();
+      const v: RoadmapView = { ...base, state: "ARCHIVED", header: packHeader({ status: "ARCHIVED", archivedDay: "2027-01-07", archiveReason: "archived by you" }), current: null, weekQuests: null, triggers: [] };
+      return { view: v, intake: null, aim: { ...packAim(v, "EMPTY"), state: "EMPTY", lastAim: { roadmapId: "rm4", aim: PACK_AIM, rankIndex: 2, rankName: "Journeyman", reached: false, day: "2027-01-07" } }, today: null, startPreview: null, note: "Archived: read-only history with no dead end ('Set a new aim'); the Aim card asks again, with the last aim's line." };
+    }
+    case "draft-v3": {
+      const v = packDraftView({ gemini: true, exam: false, additions: ["d-ca", "d-la"], mode: "BULK" });
+      return { view: v, intake: null, aim: { ...packAim(v, "DRAFT"), draftItems: 1, rank: null, proficiency: null, milestone: null, dateChip: null }, today: null, startPreview: null, note: "draft-mixed-3 (keys only): Gemini arranged the outline and picked the types; it wrote no words. An English, non-exam aim: [Add both] [Choose…] [Leave out], with the date effect first." };
+    }
+    case "draft-exam": {
+      const v = packDraftView({ gemini: true, exam: true, additions: ["d-ca", "d-la"], mode: "TOGGLES", blockedLinear: true });
+      return { view: v, intake: null, aim: null, today: null, startPreview: null, note: "An exam aim: one toggle per Domain and [Confirm], no add-all; an addition past 3 years is disabled with its reason." };
+    }
+    case "draft-body": {
+      const v = bodyDraftView();
+      return { view: v, intake: null, aim: null, today: null, startPreview: null, note: "A body plan with constraints: the kinds left out with their words, the aim conflict, and the one confirm that quotes the constraints." };
+    }
+    case "draft-rejected": {
+      const v = packDraftView({
+        gemini: false,
+        exam: true,
+        additions: [],
+        run: v3Run({ status: "FAILED", wrote: "STARTER", error: "reply rejected: EXTRA_PROPERTY", report: { dropped: [], flagged: [], notes: [], integrity: { verdict: "REJECTED", violations: [{ code: "EXTRA_PROPERTY", path: "stages.FOUNDATION.<extra>" }], modelChars: 0, gapsKept: 0, gapsHidden: 0, gapsDropped: 0, notANameByClause: {} } } }),
+      });
+      return { view: v, intake: null, aim: null, today: null, startPreview: null, note: "A reply that broke the format: rejected whole, nothing from it used, the plan from the user's numbers in its place." };
+    }
+    case "draft-impossible": {
+      const v = packDraftView({
+        gemini: false,
+        exam: true,
+        additions: [],
+        dateCheck: packDateCheck({
+          verdict: "IMPOSSIBLE",
+          rateAsked: null,
+          reachByUserDate: 8,
+          dateOrigin: { origin: "USER", calibrating: [] },
+          basis: [REALISTIC_BASIS[0], "Your date, Mon 5 Apr 2027, is before the earliest this depth can be reached, even at twice your pace: a new card needs at least 318 days to reach level 12 here.", "By your date the plan reaches Retained (level 8)."],
+        }),
+      });
+      return { view: v, intake: null, aim: null, today: null, startPreview: null, note: "A chosen date before the floor: Impossible for that depth and date; the realistic date or a lower depth, each one tap, nothing automatic." };
+    }
+    case "draft-gaps": {
+      const v = packDraftView({
+        gemini: true,
+        exam: true,
+        additions: [],
+        p: {
+          gaps: [
+            { itemId: "gap1", name: "Conditional expectation", source: { kind: "OUTLINE", index: 3 }, similarTo: null },
+            { itemId: "gap2", name: "Probability exam", source: { kind: "AIM", index: 0 }, similarTo: "Probability" },
+          ],
+          gapsHidden: 3,
+        },
+      });
+      return { view: v, intake: null, aim: null, today: null, startPreview: null, gates: { gemini: true, gaps: true }, note: "Lead-only (ROADMAP_GAPS_LIVE is false in this build): the area-suggestion panel, apart from the plan; only names found in the user's own words are shown, the rest only counted." };
+    }
+    case "intake-depth":
+      return { view: null, intake: depthIntakeFixture(), aim: null, today: null, startPreview: null, note: "The intake for a Field Area: Depth, the coverage breakdown, When realistic and the chips' verdicts, the exam with its date, the outline's line Domains." };
+    case "intake-empty-library":
+      return { view: null, intake: depthIntakeFixture({ fieldId: "f-new", domainIds: [], syllabus: null, examLabel: null, exam: false, examDay: null, aim: "Sail a dinghy solo" }, { paceRate: null }), aim: null, today: null, startPreview: null, note: "An empty library: name the areas this needs, and paste an outline from a source you trust; no pointer to Gemini." };
+    case "intake-gemini":
+      return { view: null, intake: { ...intakeFixture(true), m: 1 }, aim: null, today: null, startPreview: null, gates: { gemini: true }, note: "Lead-only (ROADMAP_GEMINI_LIVE is false in this build): Draft with Gemini says what it will arrange; the app writes every word." };
   }
 }

@@ -57,6 +57,41 @@
  * acceptance only for that day's reading (accepted vs accepted-later, and a
  * live-shaped view without acceptedDay); a Gemini title's numbers are
  * struck on the card with the spans R3's withLabelChecks derives.
+ * Roadmap revision 4 (roadmap-rev4.md; lane Y) adds: /you derives the empty
+ * card's prompt with aimPromptOf (the cookie and the stored switch), its seed
+ * with longGoalSeedOf over s.goals and its last aim from the view, in the one
+ * Promise.all (F-R4-1); the Aim card fixtures' seven empty states and three
+ * closed aims, every fact possible today, the depth plan's ranks by stage and
+ * its top by topRankIndexOfDepth (F-R4-1, F-R4-2), and their render once R5's
+ * card lands (WAIT until then); the rules page's rev-4 cards (the depth in
+ * five measurable terms, clean entry, the cards that count, the long-gap
+ * policy, the priors, keep the depth and move the date, stage ranks and
+ * Paragon, practice by stage, the invitation), read from the code; Settings'
+ * "Aim suggestions" switch (its page read, the legacy cookie, a pure render
+ * of SettingsView, the fixtures' recorder; F-R4-5); and the carry-overs: the
+ * library's level filter at LEVEL_FILTER_MAX, and the reset's roadmap counts.
+ * The rev-4 fix round adds: the LATER line after a reached aim offers "Set
+ * your next aim" (the spec's copy), not "Set an aim"; lane 0's HIDDEN (a
+ * 'hide:' cookie: the line's × quiets /you for 4 weeks, Settings still reads
+ * on) and OFF with a last aim, as fixtures whose boxes never suggest an aim,
+ * carry no tour target and keep the last aim's Aim rank; the tallest ASK
+ * with an empty box (a long goal and a last aim) for the 410 px audit; and
+ * the rules page held to lane 0's fix-round definitions: clean entry is
+ * isRetryEntry's rule, a first part at the depth gives the stage before's
+ * Aim rank (rankIndexForStage with the depth), the writing spare is printed
+ * from WRITE_MARGIN, and the LATER line's × hides it (waiting on R4 and R5
+ * until both land).
+ * Fix round 2 of revision 4 adds: nothing waits any more (every lane this
+ * reads has landed, so each former WAIT is a FAIL, the seed hiding while
+ * the box holds text included, with seedShown's goldens); the plan made
+ * before revision 4 on /you (lane 0's legacyView: open, drafted and closed
+ * fixtures as R4 sends them, the hidden-wording line, and Start again's
+ * handoff carrying the old plan's Domains); the rules page's clean-entry
+ * window (retryReadDaysOf, 184 days at level 12, tight against the latest
+ * retry entry) and its ward residual; and each "Not now" read from the code
+ * that writes it (You snoozes, the line's × and Today's × hide, capture's
+ * "Make it an aim" offers only on ASK), so the rules page and the Settings
+ * note name exactly what the switch and the snoozes quiet.
  * It imports roadmap modules, so scripts/_no-model.ts comes first.
  */
 import "./_no-model";
@@ -137,27 +172,46 @@ import { GOAL_RULES } from "../src/lib/life-economy";
 import type { LifeTrackRow } from "../src/lib/life-tracks";
 import { momentMeta, momentMonths } from "../src/app/you/_lib/moments";
 import Module from "node:module";
-import { addDays, dayKeyOf, todayKey, weekStartKeyOf, zonedToInstant, type DayKey } from "../src/lib/life-day";
+import { addDays, dayKeyOf, daysBetween, todayKey, weekStartKeyOf, zonedToInstant, type DayKey } from "../src/lib/life-day";
 import {
+  AIM_MAX,
   AIM_PROMPT_COOKIE,
   AIM_RANKS,
+  LEVEL_WEIGHT,
   PROFICIENCY_WEIGHTS,
   RANK_NEW_DAYS,
   RANK_TOP,
+  REACH_CONFIRM_DAYS,
+  RETRY_ENTRY_DAYS,
+  WRITE_MARGIN,
+  ROADMAP_GEMINI_LIVE,
+  ROADMAP_WRITES_OFF,
+  SPAN_MAX_DAYS,
+  SPAN_MIN_DAYS,
+  STAGE_KEYS,
+  STAGE_LEVEL,
   TOP_LEVEL,
   aimRankName,
+  rankIndexForStage,
   countsTowardDraftCap,
   draftNeedsOf,
   type AimCardView,
   type MilestoneDraft,
   type PositionRow,
   isAcceptanceReading,
+  isLegacyRoadmap,
+  isRetryEntry,
   isSupersededRow,
   maxScheduledPositionsOf,
   milestoneDueDayOf,
   positionCountOf,
+  retryReadDaysOf,
   topRankIndexOf,
+  topRankIndexOfDepth,
 } from "../src/lib/roadmap-types";
+import { AIM_DONE_SHOW_DAYS, AIM_INVITE_SINCE, AIM_LATER_DAYS, aimPromptOf, hideCookieValue, laterCookieValue } from "../src/lib/roadmap-invite";
+import { offersAim } from "../src/components/capture/aim-capture";
+import { TYPE_NAME } from "../src/components/library/library-model";
 import { proficiencyOf } from "../src/lib/roadmap-proficiency";
 import { withLabelChecks } from "../src/lib/roadmap-validate";
 import { measuredLabel as aimMeasuredLabel } from "../src/components/roadmap/roadmap-copy";
@@ -169,11 +223,32 @@ import {
   REPLAN_NEXT,
   TITLE_WITH_NUMBER,
   TRADING_LABEL_BASE,
+  UNSENT_AIM,
   aimCardFixtures,
   buildAimFixture,
   tradingRows,
 } from "../src/app/dev/style/art/you/aim-fixtures";
 import ts from "typescript";
+
+/** The spec's pack golden (F-R4-12): its stages [L6, L8, L10, L11, L12] give Aim ranks [2, 3, 4, 4, 5]. */
+const PACK_STAGE_RANKS = [2, 3, 4, 4, 5];
+
+/**
+ * Capture's "Make it an aim" (lane C's aim-capture offersAim) as the copy on
+ * Settings and the rules page must describe it (fix round 2): true when it
+ * offers a long goal only while aimPromptOf reads ASK, so Not now (LATER),
+ * the line's × or Today's Not now (HIDDEN) and the stored no (OFF) all quiet
+ * it. Called loosely, since its arity is lane C's.
+ */
+function captureQuietedByPrompt(): boolean {
+  const offer = offersAim as unknown as (parsed: unknown, aim: unknown, prompt: unknown) => boolean;
+  const long = { mode: "GOAL", horizon: "LONG", title: "Hold a conversation in Japanese" };
+  try {
+    return offer(long, "NONE", "ASK") === true && (["LATER", "HIDDEN", "OFF"] as const).every((p) => offer(long, "NONE", p) === false);
+  } catch {
+    return false;
+  }
+}
 
 const ROOT = join(__dirname, "..");
 let pass = 0;
@@ -182,9 +257,6 @@ function check(name: string, ok: boolean, detail = "") {
   if (ok) pass++;
   else fails.push(detail ? `${name} — ${detail}` : name);
 }
-/** A check that waits on another roadmap lane's code (its shell still throws "Not yet: …"): printed, never failing. */
-const warns: string[] = [];
-const warn = (name: string, detail: string) => warns.push(`${name} — ${detail}`);
 /** A known difference another lane owns, printed and never failing. */
 const notes: string[] = [];
 const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
@@ -1153,7 +1225,7 @@ function literalText(body: string): string {
   check("aim card: loadSheet and the Aim card load in one Promise.all with the cookies", /Promise\.all\(\[\s*loadSheet\(userId, now\),\s*aimCardOrNull\(userId, now\),\s*cookies\(\)\s*\]\)/.test(youCode));
   check("aim card: loadAimCard is called only inside aimCardOrNull's try", (youCode.match(/\bloadAimCard\(/g) ?? []).length === 1 && /async function aimCardOrNull[\s\S]*?try \{\s*return await loadAimCard\(userId, now\);\s*\} catch/.test(youCode));
   const hero = youCode.indexOf("<CharacterHero");
-  const card = youCode.indexOf("{aim && <AimCard view={aim} promptDismissed={promptDismissed} today={aimToday} />}");
+  const card = youCode.indexOf('{aim && <AimCard view={aim} prompt={prompt} seed={seed} lastAim={aim.lastAim ?? null} promptDismissed={prompt === "OFF"} today={aimToday} />}');
   const ready = youCode.indexOf("{s.ready && <ReadyCallout");
   check("aim card: rendered only when loaded, directly under CharacterHero and before the ready callout", hero >= 0 && card > hero && ready > card && !/<\/div>|<div/.test(youCode.slice(youCode.indexOf("/>", hero), card)));
   check("aim card: no Suspense on /you (the card arrives with the sheet; nothing shifts)", !/Suspense/.test(youCode));
@@ -1165,10 +1237,51 @@ function literalText(body: string): string {
       /<AimCard\b[^>]*\btoday=\{aimToday\}/.test(youCode)
   );
   check("aim card: you/loading.tsx is left as it was (no Aim skeleton to match)", !/aim/i.test(read("src/app/you/loading.tsx")));
+  // Revision 4 (roadmap-rev4.md F-R4-1): the empty card's prompt, seed and last aim, from what the page already loads.
   check(
-    "aim card: the dismissed prompt is read from its cookie on the server",
-    /import \{ cookies \} from "next\/headers"/.test(youCode) && /jar\.get\(AIM_PROMPT_COOKIE\)\?\.value === "off"/.test(youCode) && AIM_PROMPT_COOKIE === "xtnl-aim-prompt"
+    "aim card (rev 4): the prompt is aimPromptOf over the cookie, the card's stored aimSuggestions and the page's life day, read on the server",
+    /import \{ cookies \} from "next\/headers"/.test(youCode) &&
+      /import \{ aimPromptOf, longGoalSeedOf \} from "@\/lib\/roadmap-invite";/.test(youCode) &&
+      /const prompt = aimPromptOf\(jar\.get\(AIM_PROMPT_COOKIE\)\?\.value, aim\?\.aimSuggestions \?\? null, aimToday\);/.test(youCode) &&
+      AIM_PROMPT_COOKIE === "xtnl-aim-prompt"
   );
+  check("aim card (rev 4): the 'off' cookie is no longer tested on its own (aimPromptOf reads it, with the stored switch)", !/=== "off"/.test(youCode) && !/const promptDismissed\b/.test(youCode));
+  check("aim card (rev 4): the long-goal seed comes from the sheet's own goals (s.goals), no new read", /const seed = longGoalSeedOf\(s\.goals, aimToday\);/.test(youCode) && (youCode.match(/longGoalSeedOf\(/g) ?? []).length === 1);
+  check(
+    "aim card (rev 4): the card gets prompt, seed and the view's lastAim, and promptDismissed only as the transition alias for OFF",
+    /<AimCard\b[^>]*\bprompt=\{prompt\}[^>]*\bseed=\{seed\}[^>]*\blastAim=\{aim\.lastAim \?\? null\}[^>]*\bpromptDismissed=\{prompt === "OFF"\}/.test(youCode)
+  );
+  check("aim card (rev 4): the page builds no '?aim=' URL and reads no searchParams (the aim never travels in a URL)", !/\?aim=|searchParams/.test(youCode));
+  check("aim card (rev 4): still exactly one Promise.all on /you (the prompt, seed and last aim add no read)", (youCode.match(/Promise\.all\(/g) ?? []).length === 1);
+  {
+    const sheet = read("src/app/you/_lib/sheet.ts");
+    check("aim card (rev 4): _lib/sheet.ts is untouched by the aim (no invite, seed or switch read in it)", !/roadmap-invite|aimSuggestions|longGoalSeed|AIM_PROMPT/.test(sheet));
+  }
+  // The prompt rule /you and Settings read, run (lane 0's aimPromptOf): the stored no, the legacy cookie, the snooze.
+  {
+    const today: DayKey = "2026-12-22";
+    check(
+      "aim card (rev 4): aimPromptOf gives ASK with nothing set, OFF for the stored no or a legacy 'off' cookie, LATER inside a snooze and ASK after it",
+      aimPromptOf(undefined, null, today) === "ASK" &&
+        aimPromptOf(undefined, false, today) === "OFF" &&
+        aimPromptOf("off", true, today) === "OFF" &&
+        aimPromptOf(laterCookieValue(addDays(today, -27)), null, today) === "LATER" &&
+        aimPromptOf(laterCookieValue(addDays(today, -AIM_LATER_DAYS)), null, today) === "ASK"
+    );
+    // The fix round's HIDDEN (lane 0): the LATER line's × writes 'hide:<day>', which quiets /you for
+    // AIM_LATER_DAYS from that tap; the stored no still wins, and the page passes it on unchanged.
+    check(
+      "aim card (fix round): a 'hide:' cookie gives HIDDEN for AIM_LATER_DAYS from the tap, then ASK; the stored no still gives OFF",
+      aimPromptOf(hideCookieValue(today), null, today) === "HIDDEN" &&
+        aimPromptOf(hideCookieValue(addDays(today, -(AIM_LATER_DAYS - 1))), true, today) === "HIDDEN" &&
+        aimPromptOf(hideCookieValue(addDays(today, -AIM_LATER_DAYS)), null, today) === "ASK" &&
+        aimPromptOf(hideCookieValue(today), false, today) === "OFF"
+    );
+    check(
+      "aim card (fix round): /you hands the card HIDDEN as it is (promptDismissed stays the alias for OFF only, so R5's card can keep a last aim's line)",
+      /promptDismissed=\{prompt === "OFF"\}/.test(youCode) && !/prompt === "HIDDEN"/.test(youCode)
+    );
+  }
   check(
     "aim card: the fallback freeze (RENDER) runs in the page's one after(), after the chain, only when this week is unfrozen",
     /questWeekUnfrozen = aim\?\.questWeekUnfrozen === true;/.test(youCode) &&
@@ -1212,8 +1325,18 @@ async function aimCardGuardChecks() {
   const today: DayKey = "2026-12-22";
   const fixtures = aimCardFixtures(today);
   const keys = fixtures.map((f) => f.key);
-  const needed = ["empty", "draft", "accepted", "active", "new-rank", "fallen", "replan", "past-due", "done"];
-  check("aim fixtures: the spec's nine states are all there", needed.every((k) => keys.includes(k as (typeof keys)[number])), needed.filter((k) => !keys.includes(k as (typeof keys)[number])).join(", "));
+  const needed = ["draft", "accepted", "active", "new-rank", "fallen", "replan", "past-due", "done"];
+  check("aim fixtures: the spec's states after the empty card are all there", needed.every((k) => keys.includes(k as (typeof keys)[number])), needed.filter((k) => !keys.includes(k as (typeof keys)[number])).join(", "));
+  // Revision 4 (F-R4-1, F-R4-2): the empty card's seven states replace rev 3's one line, and the closed aims lead somewhere.
+  const rev4Empty = ["empty-ask", "empty-ask-seed", "empty-ask-last-aim", "empty-ask-continue", "empty-later", "empty-later-last-aim", "empty-off"];
+  const rev4Done = ["done-reached", "done-30", "done-unreached"];
+  check("aim fixtures (rev 4): the empty card's seven states are there", rev4Empty.every((k) => keys.includes(k as (typeof keys)[number])), rev4Empty.filter((k) => !keys.includes(k as (typeof keys)[number])).join(", "));
+  // The fix round's empty states: the tallest ASK once the seed hides while text is typed (lens 3), HIDDEN
+  // (lane 0's 'hide:<day>') with and without a last aim, and OFF with a last aim (F-R4-2: it never vanishes).
+  const fixEmpty = ["empty-ask-seed-last-aim", "empty-hidden", "empty-hidden-last-aim", "empty-off-last-aim"];
+  check("aim fixtures (fix round): the tallest ASK with an empty box, HIDDEN with and without a last aim, and OFF with a last aim are there", fixEmpty.every((k) => keys.includes(k as (typeof keys)[number])), fixEmpty.filter((k) => !keys.includes(k as (typeof keys)[number])).join(", "));
+  check("aim fixtures (rev 4): done 3 days after a reach, done 30 days ago and done unreached are there", rev4Done.every((k) => keys.includes(k as (typeof keys)[number])), rev4Done.filter((k) => !keys.includes(k as (typeof keys)[number])).join(", "));
+  check("aim fixtures (rev 4): rev 3's single 'empty' line is gone", !keys.includes("empty" as (typeof keys)[number]));
   // The fix round's states: a re-plan waiting on an active plan, between milestones (ACTIVE, not
   // ACCEPTED), and a "Start again" copy whose milestone already paid (LINEAGE_PAID with its day).
   // Fix round 2 adds an ACCEPTED card whose latest reading is not the acceptance's (accepted-later).
@@ -1260,13 +1383,33 @@ async function aimCardGuardChecks() {
     if (!accepted && v.acceptedDay) out.push(`an acceptance day on a ${v.state} card`);
     if (v.acceptedDay && v.acceptedDay > today) out.push(`accepted ${v.acceptedDay}, after today`);
     if (v.state === "ACCEPTED" && v.acceptedDay && v.proficiency && dayOf(v.proficiency.measuredAt) < v.acceptedDay) out.push(`Proficiency measured ${v.proficiency.measuredAt}, before the acceptance on ${v.acceptedDay}`);
+    // Revision 4 (F-R4-1, F-R4-2), as R4's loadAimCard fills the card:
+    // - the empty card holds no roadmap; its last aim is the latest DONE roadmap's, closed AIM_DONE_SHOW_DAYS or more ago
+    //   (before that the DONE card leads), with its rank named by aimRankName;
+    // - a DONE card leads only within AIM_DONE_SHOW_DAYS of its done day, and is done no earlier than it was reached;
+    // - the held depth is confirmed REACH_CONFIRM_DAYS after the reach, and never ahead.
+    if (v.state === "EMPTY" && (v.roadmapId || v.aim || v.rank || v.milestone)) out.push("an EMPTY card holding a roadmap");
+    if (v.lastAim) {
+      if (v.state !== "EMPTY") out.push(`a last aim on a ${v.state} card`);
+      if (v.lastAim.rankName !== aimRankName(v.lastAim.rankIndex)) out.push(`last aim's rank ${v.lastAim.rankName} ≠ index ${v.lastAim.rankIndex}`);
+      if (v.lastAim.day > addDays(today, -AIM_DONE_SHOW_DAYS)) out.push(`last aim on ${v.lastAim.day}, inside the ${AIM_DONE_SHOW_DAYS} days its DONE card leads`);
+      if (v.lastAim.reached && v.lastAim.rankIndex < 1) out.push("a reached last aim with no Aim rank");
+    }
+    if (v.state === "DONE" && v.doneDay && daysBetween(v.doneDay, today) >= AIM_DONE_SHOW_DAYS) out.push(`a DONE card ${daysBetween(v.doneDay, today)} days after its done day (the card is EMPTY by then)`);
+    if (v.state === "DONE" && v.reachedDay && v.doneDay && v.doneDay < v.reachedDay) out.push("done before it was reached");
+    if (v.heldDepth) {
+      if (!v.reachedDay) out.push("a held depth on an aim not reached");
+      else if (v.heldDepth.confirmedDay !== addDays(v.reachedDay, REACH_CONFIRM_DAYS)) out.push(`depth confirmed ${v.heldDepth.confirmedDay}, not ${REACH_CONFIRM_DAYS} days after the reach`);
+      if (v.heldDepth.confirmedDay > today) out.push(`depth confirmed ${v.heldDepth.confirmedDay}, after today`);
+      if (v.reachedDay && addDays(v.reachedDay, RANK_NEW_DAYS) <= today) out.push(`held depth shown ${daysBetween(v.reachedDay, today)} days after the reach (only for ${RANK_NEW_DAYS})`);
+    }
     return out;
   };
   for (const f of fixtures) {
     const built = buildAimFixture(f);
     if (!built.view) {
-      if (/^Not yet: /.test(built.waiting)) warn(`aim fixture ${f.key}: waits on a roadmap shell`, built.waiting);
-      else check(`aim fixture ${f.key}: builds`, false, built.waiting);
+      // Every roadmap builder has landed (fix round 2): a fixture that can't build is a FAIL, never a wait.
+      check(`aim fixture ${f.key}: builds`, false, built.waiting);
       continue;
     }
     const v = built.view;
@@ -1279,8 +1422,17 @@ async function aimCardGuardChecks() {
     if (v.proficiency) check(`aim fixture ${f.key}: Proficiency reads its stored reading's percent, floored`, v.proficiency.percent === Math.floor(100 * v.proficiency.figure.value + 1e-9));
     const bad = impossible(v);
     check(`aim fixture ${f.key}: every fact is possible today`, bad.length === 0, bad.join("; "));
-    // R4's rankInputOf: maxScheduled is counted by place (maxScheduledPositionsOf), never by row.
-    if (v.rank && f.rows) check(`aim fixture ${f.key}: the top rank on this plan is read from its places`, v.rank.top.index === topRankIndexOf(maxScheduledPositionsOf(f.rows)), `${v.rank.top.name} vs ${maxScheduledPositionsOf(f.rows)} places`);
+    // R4's rankInputOf: maxScheduled is counted by place (maxScheduledPositionsOf), never by row. A depth plan's
+    // top is revision 4's (topRankIndexOfDepth: Paragon needs depth 12, a standard, coverage and production practice).
+    if (v.rank && f.rows && !f.depthRank) check(`aim fixture ${f.key}: the top rank on this plan is read from its places`, v.rank.top.index === topRankIndexOf(maxScheduledPositionsOf(f.rows)), `${v.rank.top.name} vs ${maxScheduledPositionsOf(f.rows)} places`);
+    if (v.rank && f.depthRank) check(`aim fixture ${f.key}: a depth plan's top rank is topRankIndexOfDepth's`, v.rank.top.index === topRankIndexOfDepth(f.depthRank), `${v.rank.top.name} vs ${aimRankName(topRankIndexOfDepth(f.depthRank))}`);
+    if (f.depthRank) check(`aim fixture ${f.key}: a depth plan's milestones carry their stage's rank (rankIndexForStage), never their place`, (f.rows ?? []).every((r, i) => r.rankIndex === PACK_STAGE_RANKS[i]), JSON.stringify((f.rows ?? []).map((r) => r.rankIndex)));
+    // The empty card's prompt (F-R4-1), as /you derives it: aimPromptOf over the cookie and the stored switch.
+    if (f.expect.prompt) check(`aim fixture ${f.key}: prompt ${f.expect.prompt}`, aimPromptOf(f.empty?.cookie, v.aimSuggestions ?? null, today) === f.expect.prompt, aimPromptOf(f.empty?.cookie, v.aimSuggestions ?? null, today));
+    if (v.state === "EMPTY") check(`aim fixture ${f.key}: an empty card names its prompt`, f.expect.prompt != null);
+    // A seed is what longGoalSeedOf gives: a title within AIM_MAX, and a target day only inside the aim's span.
+    const seed = f.empty?.seed;
+    if (seed) check(`aim fixture ${f.key}: the seed is a long goal's, with a fitting target day`, seed.title.length > 0 && seed.title.length <= AIM_MAX && (seed.targetDay == null || (daysBetween(today, seed.targetDay) >= SPAN_MIN_DAYS && daysBetween(today, seed.targetDay) <= SPAN_MAX_DAYS)), JSON.stringify(seed));
     if (v.rank && !f.rows) check(`aim fixture ${f.key}: a ranked fixture names the rows its rank was read from`, false);
     // ACCEPTED: a plan accepted and no milestone ever carried (roadmap-types AimCardState).
     if (f.rows) {
@@ -1421,7 +1573,104 @@ async function aimCardGuardChecks() {
   const reads = files.filter((f) => /@\/lib\/(prisma|roadmap-server|roadmap-quests-server|roadmap-readings|throughput-server)|@prisma\/client|getCurrentUserId/.test(codeOf(read(f))));
   check("aim fixtures: the fixture route reads no database and never the user's roadmap", reads.length === 0, reads.join(", "));
   const page = codeOf(read(`${dir}/page.tsx`));
-  check("aim fixtures: every state renders the real AimCard in its own [data-aim-card] box", /<AimCard view=\{built\.view\} promptDismissed=\{false\} today=\{today\} \/>/.test(page) && /data-aim-card=\{slot \?\? fixture\.key\}/.test(page) && /data-aim-fixture=\{f\.key\}/.test(page));
+  check(
+    "aim fixtures: every state renders the real AimCard in its own [data-aim-card] box",
+    /<AimCard\s+view=\{view\}/.test(page) && /data-aim-card=\{slot \?\? fixture\.key\}/.test(page) && /data-aim-fixture=\{f\.key\}/.test(page)
+  );
+  // Revision 4 (F-R4-1): the page gives every card what /you gives it, derived the same way.
+  check(
+    "aim fixtures (rev 4): each card's prompt is aimPromptOf over the fixture's cookie and the view's aimSuggestions, as on /you",
+    /const prompt = aimPromptOf\(fixture\.empty\?\.cookie, view\?\.aimSuggestions \?\? null, today\);/.test(page) &&
+      /\bprompt=\{prompt\}/.test(page) &&
+      /\bseed=\{fixture\.empty\?\.seed \?\? null\}/.test(page) &&
+      /\blastAim=\{view\.lastAim \?\? null\}/.test(page) &&
+      /\bpromptDismissed=\{prompt === "OFF"\}/.test(page)
+  );
+  check(
+    "aim fixtures (rev 4): the unsent aim reaches the card only through R5's named seam (autosaveAim), never the real form's autosave",
+    /\{\.\.\.autosaveSeam\(fixture\.empty\?\.autosaveAim\)\}/.test(page) && /autosaveAim: aim/.test(page) && !/localStorage|sessionStorage/.test(page)
+  );
+  {
+    const view = (k: string) => buildAimFixture(fixtures.find((f) => f.key === k)!);
+    const fx = (k: string) => fixtures.find((f) => f.key === k)!;
+    const continueFx = fx("empty-ask-continue");
+    const cont = view("empty-ask-continue").view;
+    check(
+      "aim fixture empty-ask-continue: the tallest ASK holds an unsent aim, a long goal and a last aim together",
+      continueFx.empty?.autosaveAim === UNSENT_AIM && UNSENT_AIM.length <= AIM_MAX && continueFx.empty.seed != null && cont?.lastAim != null
+    );
+    check("aim fixture empty-off: the stored no (aimSuggestions false), not a cookie", view("empty-off").view?.aimSuggestions === false && fx("empty-off").empty?.cookie === undefined);
+    // The fix round's empty states, each held to what makes it that state.
+    const seedLast = fx("empty-ask-seed-last-aim");
+    check(
+      "aim fixture empty-ask-seed-last-aim: a long goal and a last aim with an empty box (no unsent aim): the tallest ASK once the seed hides while text is typed",
+      seedLast.empty?.seed != null && seedLast.empty.autosaveAim === undefined && view("empty-ask-seed-last-aim").view?.lastAim != null && seedLast.expect.prompt === "ASK"
+    );
+    const hideOf = (k: string) => /^hide:(\d{4}-\d{2}-\d{2})$/.exec(fx(k).empty?.cookie ?? "")?.[1] ?? null;
+    check(
+      "aim fixtures empty-hidden(-last-aim): the LATER line's × (a 'hide:' cookie inside its 4 weeks), suggestions still on, one with no last aim and one with a reached one",
+      ["empty-hidden", "empty-hidden-last-aim"].every((k) => {
+        const day = hideOf(k);
+        return day != null && fx(k).empty?.cookie === hideCookieValue(day) && daysBetween(day, today) >= 0 && daysBetween(day, today) < AIM_LATER_DAYS && view(k).view?.aimSuggestions !== false;
+      }) &&
+        view("empty-hidden").view?.lastAim == null &&
+        view("empty-hidden-last-aim").view?.lastAim?.reached === true
+    );
+    check(
+      "aim fixture empty-off-last-aim: the stored no with a last aim closed unreached (its rank and the day it closed)",
+      view("empty-off-last-aim").view?.aimSuggestions === false && fx("empty-off-last-aim").empty?.cookie === undefined && view("empty-off-last-aim").view?.lastAim?.reached === false
+    );
+    check(
+      "aim fixtures (rev 4): a last aim reached reads its rank and reach day; one closed unreached reads the day it closed",
+      view("empty-later-last-aim").view?.lastAim?.reached === true &&
+        view("empty-later-last-aim").view?.lastAim?.rankIndex === RANK_TOP &&
+        view("empty-ask-last-aim").view?.lastAim?.reached === false
+    );
+    const reachedFx = view("done-reached").view;
+    check(
+      "aim fixture done-reached: reached 3 days ago (inside the week its achievement leads), Paragon marked new, with the held depth's Domains",
+      reachedFx?.reachedDay === addDays(today, -3) && reachedFx.rank?.newSince === addDays(today, -3) && (reachedFx.heldDepth?.domainNames ?? []).length === 2 && reachedFx.depth === 12
+    );
+    const thirty = fx("done-30");
+    const thirtyView = view("done-30").view;
+    check(
+      "aim fixture done-30: closed past the days a DONE card leads, so the card is EMPTY and asks, with the last aim",
+      thirtyView?.state === "EMPTY" && thirty.expect.prompt === "ASK" && thirtyView.lastAim != null && daysBetween(thirtyView.lastAim.day, today) > AIM_DONE_SHOW_DAYS
+    );
+    const unreached = view("done-unreached").view;
+    check("aim fixture done-unreached: DONE with no reach day and no held depth", unreached?.state === "DONE" && unreached.reachedDay === null && unreached.heldDepth == null);
+    // Fix round 2 (F-R4-16; lane 0's AimCardView.legacyView, contracts §16.3): a plan made before revision 4, as R4's
+    // aimCardOfData sends it — legacy by lane 0's isLegacyRoadmap (a Field plan with no depth), an open plan read
+    // ACCEPTED (it can't start a milestone), no milestone, Aim rank, Proficiency, depth, date chip or week quests, and
+    // legacyView as legacyViewOf builds it: the roadmap's status, its chosen Domains and its Area Field. Accepted before
+    // revision 4 shipped (AIM_INVITE_SINCE), since a legacy draft can't be accepted after.
+    const legacyKeys = ["legacy-active", "legacy-draft", "legacy-done"];
+    const missingLegacy = legacyKeys.filter((k) => !keys.includes(k as (typeof keys)[number]));
+    check("aim fixtures (fix round 2): a plan made before revision 4, open, drafted and closed, is there", missingLegacy.length === 0, missingLegacy.join(", "));
+    const stateOfKind: Partial<Record<string, AimCardView["state"]>> = { ACTIVE: "ACCEPTED", DRAFT: "DRAFT", DONE: "DONE" };
+    const legacyBad = legacyKeys.flatMap((k) => {
+      if (missingLegacy.includes(k)) return [];
+      const v = view(k).view;
+      if (!v) return [`${k}: no view`];
+      const out: string[] = [];
+      const lv = v.legacyView;
+      if (v.legacy !== true || !lv) out.push(`${k}: not marked legacy, or no legacyView`);
+      else {
+        if (stateOfKind[lv.kind] !== v.state) out.push(`${k}: a ${lv.kind} roadmap reads ${v.state}`);
+        if (!lv.domainIds || lv.domainIds.length === 0) out.push(`${k}: no Domains for Start again to carry`);
+        if (v.area?.kind !== "FIELD" || lv.areaFieldId !== v.area.fieldId) out.push(`${k}: legacyView.areaFieldId is not the Area's Field`);
+      }
+      if (!isLegacyRoadmap({ fieldId: v.area?.kind === "FIELD" ? v.area.fieldId : null, depth: v.depth }, [])) out.push(`${k}: not legacy by isLegacyRoadmap`);
+      if (v.milestone || v.rank || v.proficiency || v.weekQuests || v.draftItems != null || v.dateChip || v.heldDepth || v.measuredAt || v.lastAim) out.push(`${k}: carries plan text, a measure or a last aim`);
+      if (v.acceptedDay && v.acceptedDay >= AIM_INVITE_SINCE) out.push(`${k}: accepted ${v.acceptedDay}, not before revision 4 shipped (${AIM_INVITE_SINCE})`);
+      return out;
+    });
+    check("aim fixtures (fix round 2): each legacy card is what R4 sends: legacy, the state its status gives, legacyView's Domains and Area Field, nothing measured", legacyBad.length === 0, legacyBad.join("; "));
+    check(
+      "aim fixtures (fix round 2): one legacy plan had Gemini rows (the hidden-wording line) and one had none",
+      view("legacy-active").view?.legacyView?.geminiHidden === true && view("legacy-draft").view?.legacyView?.geminiHidden === false
+    );
+  }
   // Every AimCard on the page sits inside FixtureRoadmapProvider (read from the JSX tree), so the
   // EMPTY card's × reaches the inert fixture action, never the live dismissAimPrompt (which would set
   // the real xtnl-aim-prompt cookie for a year).
@@ -1434,13 +1683,13 @@ async function aimCardGuardChecks() {
         let wrapped = false;
         for (let p: ts.Node | undefined = n.parent; p && !ts.isFunctionLike(p); p = p.parent) if (ts.isJsxElement(p) && p.openingElement.tagName.getText(sf) === "FixtureRoadmapProvider") wrapped = true;
         const attrs = (n as ts.JsxSelfClosingElement | ts.JsxOpeningElement).attributes.properties.map((a) => (ts.isJsxAttribute(a) ? a.name.getText(sf) : ""));
-        tags.push({ name: "AimCard", wrapped, today: attrs.includes("today") });
+        tags.push({ name: "AimCard", wrapped, today: attrs.includes("today") && attrs.includes("prompt") && attrs.includes("seed") && attrs.includes("lastAim") });
       }
       ts.forEachChild(n, visit);
     };
     visit(sf);
     check(
-      "aim fixtures: every AimCard renders inside FixtureRoadmapProvider (inert actions: the × sets no real cookie) and gets the page's life day",
+      "aim fixtures: every AimCard renders inside FixtureRoadmapProvider (inert actions: the × sets no real cookie) and gets the page's life day, prompt, seed and last aim",
       tags.length > 0 && tags.every((t) => t.wrapped && t.today) && /import \{ FixtureRoadmapProvider \} from "@\/components\/roadmap\/roadmap-runtime";/.test(page),
       JSON.stringify(tags)
     );
@@ -1448,7 +1697,8 @@ async function aimCardGuardChecks() {
   check("aim fixtures: no brand constructor is called outside the roadmap's own builders", !/\b(measured|recorded|selfReported|estimated|workedOut)\(/.test(codeOf(read(`${dir}/aim-fixtures.ts`))));
 }
 
-// 9d. The rules page's Roadmap section (seam 12).
+// 9d. The rules page's Roadmap section (seam 12; revision 4: roadmap-rev4.md F-R4-8 to F-R4-13, the
+// clean-entry, recall-card and long-gap wording, and the invitation's rules).
 {
   const rules = read("src/app/today/rules/page.tsx");
   const start = rules.indexOf("function RoadmapRules(");
@@ -1459,12 +1709,30 @@ async function aimCardGuardChecks() {
   check("rules roadmap: the Roadmap cards type no number by hand", start >= 0 && body.length > 2000 && typed.length === 0, typed.join(", "));
   const imported = rules.match(/import \{([^}]*)\} from "@\/lib\/roadmap-types"/)?.[1] ?? "";
   const needed = [
-    "SPAN_MIN_DAYS", "SPAN_MAX_DAYS", "MILESTONE_TARGET_DAYS", "MAX_MILESTONES", "THRESHOLDS", "INTENSITY", "KEEP_SHARE", "PRACTICE_PAY_FLOOR_MIN", "PRACTICE_PAY_SHARE",
+    "SPAN_MIN_DAYS", "SPAN_MAX_DAYS", "MAX_MILESTONES", "KEEP_SHARE", "PRACTICE_PAY_FLOOR_MIN", "PRACTICE_PAY_SHARE",
     "DECLARED_FACTOR", "RAMP_ALLOWANCE", "TIME_FITS_MAX", "CARD_WRITE_MIN", "REVIEW_SECONDS", "WEEK_QUEST_CATCHUP_FACTOR", "WEEK_QUEST_ADD_MIN_CAP", "WEEK_QUESTS_PER_WEEK_MAX",
-    "LEVEL_WEIGHT", "AIM_RANKS", "RANK_MILESTONE_MAX", "PARAGON_MIN_MILESTONES", "rankIndexAt", "topRankIndexOf", "floorBase",
+    "LEVEL_WEIGHT", "AIM_RANKS", "PARAGON_MIN_MILESTONES", "rankIndexAt", "topRankIndexOf", "floorBase",
+    // Revision 4: the depth, coverage, stages, dates, the reach model and its priors, practice by stage, ranks.
+    "AIM_DEPTHS", "DEPTH_DEFAULT", "STAGE_KEYS", "STAGE_LEVEL", "STAGE_NAMES", "STAGE_RANK", "rankIndexForStage", "stageLabelOf", "FIRST_RANK_MAX_DAYS", "TRACK_STAGE_SHARES",
+    "COVER_FLOOR_CARDS", "COVER_SHARE", "CARDS_PER_OUTLINE_LINE", "COVER_MIN", "COVER_MAX", "WRITE_MARGIN", "NON_RECALL_TYPES", "RETRY_ENTRY_DAYS", "DEPTH_DOMAINS_MAX",
+    "PACE_SHARE", "OVER_PACE_FACTOR", "SCHEDULE_BOUND_SHARE", "P_PRIOR", "C_PRIOR", "RHO_PRIOR", "RHO_MIN_DAYS", "LONG_GAP_LEVEL", "P_LONG_CAP", "CLEARANCE_SERIES_DAYS",
+    "OFF_DAY_CLEAR_SHARE", "REACH_STRIKE_LIMIT", "interval", "TRACK_PARAGON_MIN_DAYS", "STAGE_PRACTICE_BAND_MIN", "practiceBandMinutes", "WEEK_QUEST_PARTS_TODAY", "ROADMAP_GEMINI_LIVE",
+    // Fix round 2 (lane 0, contracts §16.1): the clean-entry read's window.
+    "retryReadDaysOf",
   ];
   const missing = needed.filter((n) => !new RegExp(`\\b${n}\\b`).test(imported));
   check("rules roadmap: the constants and tables are read from roadmap-types", missing.length === 0, missing.join(", "));
+  // Retired with revision 4's depth plans: the fitted target, equal windows and the threshold share are never published.
+  const retired = ["THRESHOLD_SPAN_SHARE", "MIN_INCREMENT_SHARE", "milestoneCountFor", "INTENSITY", "RANK_MILESTONE_MAX"].filter((n) => new RegExp(`\\b${n}\\b`).test(imported));
+  check("rules roadmap (rev 4): rev 3's fitted-window rules are gone (no threshold share, increment share, equal windows or intensity-scaled target)", retired.length === 0, retired.join(", "));
+  const invite = rules.match(/import \{([^}]*)\} from "@\/lib\/roadmap-invite"/)?.[1] ?? "";
+  const inviteNeeded = ["AIM_AWAY_DAYS", "AIM_BACKOFF_FRESH_DAYS", "AIM_DONE_SHOW_DAYS", "AIM_DRAFT_SHOWS_MAX", "AIM_LATER_DAYS", "AIM_START_DAILY_DAYS", "AIM_STEP_SNOOZE_DAYS"].filter((n) => !new RegExp(`\\b${n}\\b`).test(invite));
+  check("rules roadmap (rev 4): the invitation's numbers are read from roadmap-invite", inviteNeeded.length === 0, inviteNeeded.join(", "));
+  check(
+    "rules roadmap (rev 4): the practice types are named from roadmap-catalog's own templates (RETRIEVAL_KINDS, PRODUCTION_KINDS, catalogLabelOf)",
+    /import \{ PRODUCTION_KINDS, RETRIEVAL_KINDS, catalogLabelOf, type PracticeKind \} from "@\/lib\/roadmap-catalog";/.test(rules) && /RETRIEVAL_KINDS\.map\(kindName\)/.test(rules) && /PRODUCTION_KINDS\.filter/.test(rules)
+  );
+  check("rules roadmap (rev 4): the cards that don't count are NON_RECALL_TYPES by their library names", /NON_RECALL_TYPES\.map\(\(t\) => TYPE_NAME\[t\]\.toLowerCase\(\)\)/.test(rules));
   check("rules roadmap: the Proficiency shares come from the formula itself (roadmap-proficiency proficiencyOf)", /import \{ proficiencyOf \} from "@\/lib\/roadmap-proficiency";/.test(rules) && /PROFICIENCY_SHARE_ROWS\.map/.test(body));
   // The share table, run: the page's own builder (transpiled from its source) over R1's real formula.
   {
@@ -1480,11 +1748,11 @@ async function aimCardGuardChecks() {
     const noCards = sharesOf?.(false, true);
     check("rules roadmap: with every part, the shares are PROFICIENCY_WEIGHTS", same(all, [w.cards, w.practice, w.milestones]), JSON.stringify(all));
     check(
-      "rules roadmap: a Field Area without practice reads cards 80% / milestones 20% (the spec's F12 prose says 0.75 / 0.25; the rule gives 0.8 / 0.2)",
+      "rules roadmap: a Field Area without practice reads cards 80% / stages 20% (the spec's F12 prose says 0.75 / 0.25; the rule gives 0.8 / 0.2)",
       same(noPractice, [w.cards / (w.cards + w.milestones), null, w.milestones / (w.cards + w.milestones)]) && same(noPractice, [0.8, null, 0.2]),
       JSON.stringify(noPractice)
     );
-    check("rules roadmap: a track Area reads practice 62.5% / milestones 37.5%", same(noCards, [null, 0.625, 0.375]), JSON.stringify(noCards));
+    check("rules roadmap: a track Area reads practice 62.5% / stages 37.5%", same(noCards, [null, 0.625, 0.375]), JSON.stringify(noCards));
     const sharePct = /const sharePct = \(n: number\) => `\$\{Number\(\(n \* 100\)\.toFixed\(1\)\)\}%`;/.test(rules);
     check("rules roadmap: shares print to one decimal at most (62.5%, never a rounded 63% + 38%)", sharePct);
   }
@@ -1500,9 +1768,14 @@ async function aimCardGuardChecks() {
       "rules roadmap: the draft cap counts a failed Gemini draft and not a reused one, as countsTowardDraftCap does",
       failedCounts && !reusedCounts && /drafts a day, a failed one included/.test(flat(aims)) && /a reused draft doesn&apos;t count/.test(flat(aims))
     );
+    // Revision 4 (decision 42): Gemini writes no words; keys only, labelled, rejected whole when malformed, and off until its probe passes.
     check(
-      "rules roadmap: Gemini's words keep their label until checked or reworded (EDITED means the words changed), and a number is struck, only Edit or Remove",
-      /keeps its label until you check it or change its words/.test(flat(aims)) && /struck through, never rewritten: that item can only be edited or removed/.test(flat(aims))
+      "rules roadmap (rev 4): Gemini writes no word of a plan: keys only from the app's lists, each choice labelled, a malformed reply rejected whole",
+      /Gemini writes no word of a plan/.test(flat(aims)) && /returns only keys from lists the app owns/.test(flat(aims)) && /labelled and can be changed in one tap/.test(flat(aims)) && /rejected whole/.test(flat(aims)) && !/keeps its label until you check it/.test(flat(aims))
+    );
+    check(
+      "rules roadmap (rev 4): while ROADMAP_GEMINI_LIVE is false the page says drafting is off (read from the switch, not typed)",
+      /\{ROADMAP_GEMINI_LIVE \? "" : "Gemini drafting is off until a test of its replies passes\. "\}/.test(body) && ROADMAP_GEMINI_LIVE === false
     );
     check(
       "rules roadmap: once started, a milestone's due day is its goal's (milestoneDueDayOf), so a Reschedule moves it",
@@ -1532,10 +1805,164 @@ async function aimCardGuardChecks() {
   for (const p of parts) cards.set(p.slice(0, p.indexOf('"')), literalText(p));
   const titles = [...cards.keys()];
   check(
-    "rules roadmap: cards for the aim, realism, pay, week quests, Proficiency and the Aim rank",
-    ["Aims and milestones", "Is the plan realistic?", "What a milestone pays", "Week quests (not the daily review quest)", "Proficiency", "Aim rank"].every((t) => cards.has(t)),
+    "rules roadmap: cards for the aim, the depth, realism, practice, pay, week quests, Proficiency, the Aim rank and the suggestions to set an aim",
+    [
+      "Aims and milestones",
+      "Depth: high mastery, measured",
+      "Is the plan realistic?",
+      "Practice that builds the depth",
+      "What a milestone pays",
+      "Week quests (not the daily review quest)",
+      "Proficiency",
+      "Aim rank",
+      "Suggestions to set an aim",
+    ].every((t) => cards.has(t)),
     titles.join(" | ")
   );
+  // Revision 4: the depth's published definition (F-R4-9), and the words the spec pins (Names, F-R4-15).
+  {
+    const flat = (t: string) => t.replace(/\s+/g, " ");
+    const depthSrc = parts.find((p) => p.startsWith('Depth: high mastery, measured"')) ?? "";
+    const depth = flat(cards.get("Depth: high mastery, measured") ?? "");
+    check(
+      "rules roadmap (rev 4): high mastery in five measurable terms: depth, coverage, practice kept, a standard you set, held",
+      /<ol className="rules-list">/.test(depthSrc) && ["Depth:", "Coverage:", "Practice kept:", "A standard you set:", "Held:"].every((w) => depth.includes(w))
+    );
+    check(
+      "rules roadmap (rev 4): 'Mastered' only as the level-12 stage, with its level read from the code",
+      /\{STAGE_NAMES\.MASTERED\} \(level \{DEFAULT_DEPTH\}\)/.test(depthSrc) && /const DEFAULT_DEPTH = AIM_DEPTHS\[DEPTH_DEFAULT\];/.test(rules) && !/Mastered/.test(text)
+    );
+    check("rules roadmap (rev 4): the depth is never lowered to fit a date, only by your choice, shown for good", /doesn&apos;t lower the depth to fit a date: it moves the date instead/.test(depth) && /A lower depth is your choice, and it stays on the plan for good/.test(depth));
+    check(
+      "rules roadmap (rev 4): clean entry and the cards that count (every type but multiple choice), in the depth card",
+      /counts only when it got there on a first-try pass/.test(depth) && /counts after its next review/.test(depth) && /\{RETRY_ENTRY_DAYS\}/.test(depthSrc) && /every card type except/.test(depth) && TYPE_NAME.MULTI === "Multiple choice"
+    );
+    // The fix round's one clean-entry definition (lane 0's isRetryEntry, R1's rule): the miss before the entering pass
+    // may be a strike, a shielded miss (a skill held the level) or the miss that dropped the card from the level; tagged rows need no day
+    // window, older untagged rows need the miss within RETRY_ENTRY_DAYS. The page's sentence, held to the function.
+    {
+      const d0: DayKey = "2026-12-01";
+      const rows = (...r: [number, string][]) => r.map(([day, detail]) => ({ day: addDays(d0, day), detail }));
+      const L = 12;
+      const strike = isRetryEntry(rows([0, "strike · L11"], [1, "advanced · L11→12"]), L);
+      const shielded = isRetryEntry(rows([0, "shielded · L11"], [1, "advanced · L11→12"]), L);
+      const dropped = isRetryEntry(rows([0, "advanced · L11→12"], [40, "degraded · L12"], [41, "advanced · L11→12"]), L);
+      const taggedFar = isRetryEntry(rows([0, "strike · L11"], [RETRY_ENTRY_DAYS + 9, "advanced · L11→12"]), L);
+      const oldNear = isRetryEntry(rows([0, "strike"], [RETRY_ENTRY_DAYS, "advanced"]), L);
+      const oldFar = isRetryEntry(rows([0, "strike"], [RETRY_ENTRY_DAYS + 1, "advanced"]), L);
+      const firstTry = isRetryEntry(rows([0, "strike · L10"], [1, "advanced · L10→11"], [120, "advanced · L11→12"]), L);
+      check(
+        "rules roadmap (fix round): the clean-entry sentence is isRetryEntry's rule: a strike, a miss a skill held the level through (shielded) or the drop from the level makes a retry entry; older rows only within RETRY_ENTRY_DAYS; a first-try pass is clean",
+        strike && shielded && dropped && taggedFar && oldNear && !oldFar && !firstTry &&
+          /a card whose pass into the level comes right after a miss \(a strike, a miss where a skill held the level, or the miss that dropped it from that level\) counts after its next review/.test(depth) &&
+          /On reviews logged before the app recorded the level, that miss counts only within \{RETRY_ENTRY_DAYS\} days of the pass/.test(depthSrc.replace(/\s+/g, " ").replace(/\{" "\}/g, "")),
+        JSON.stringify({ strike, shielded, dropped, taggedFar, oldNear, oldFar, firstTry })
+      );
+      // Fix round 2 (lane 0's retryReadDaysOf, contracts §16.1): how far back the read looks for that miss, printed from the
+      // function at the depth's level (184 days at level 12, base spacing, no grace extension: 160 + 11 + 1 at the level,
+      // 10 + 2 for the miss before the pass), with its one residual (a skill that shields a card past its grace) stated.
+      const flatSrc = depthSrc.replace(/\s+/g, " ").replace(/\{" "\}/g, "");
+      check(
+        "rules roadmap (fix round 2): the clean-entry read's window is retryReadDaysOf at the depth's level (184 days at level 12), and a card a skill kept past its grace is said to read as a first try",
+        /const cleanWindow = retryReadDaysOf\(DEFAULT_DEPTH\);/.test(rules) &&
+          retryReadDaysOf(12) === 184 &&
+          retryReadDaysOf(12, 1.5) === 264 &&
+          /To find that miss, the app reads a card&apos;s reviews back \{cleanWindow\} days at level \{DEFAULT_DEPTH\}: the longest a card can stay there, with the miss before it \(more with a loadout that stretches spacing or grace\)\./.test(flatSrc) &&
+          /A card a skill kept at its level past its grace can stay longer, and its entry then reads as a first try\./.test(depth),
+        String(retryReadDaysOf(12))
+      );
+      // The window holds the latest retry entry the review rules allow at level 12: the miss at level 11 up to its grace
+      // (graceDays(11) = 10) and 2 days before the entering pass, and the read up to 172 days after it (interval 160, grace
+      // 11, the cron's day). Read over the window both rows are there; one day narrower the miss falls out and it reads clean.
+      const L12 = 12;
+      const win = retryReadDaysOf(L12);
+      const passAt = L12 - 2 + 2;
+      const latest = rows([0, "strike · L11"], [passAt, "advanced · L11→12"]);
+      const inWindow = (r: { day: DayKey; detail: string }[], span: number) => r.filter((x) => daysBetween(x.day, addDays(d0, win)) <= span);
+      check(
+        "rules roadmap (fix round 2): the latest retry entry at level 12 reads as a retry over the window the page prints, and as clean one day narrower",
+        isRetryEntry(inWindow(latest, win), L12) && !isRetryEntry(inWindow(latest, win - 1), L12),
+        `window ${win}, pass on day ${passAt}`
+      );
+    }
+    // WRITE_MARGIN moved to 1.3 in the fix round (lane 0): the page prints the constant and its spare, never a typed figure.
+    check(
+      "rules roadmap (fix round): the writing spare is printed from WRITE_MARGIN (⌈WRITE_MARGIN × the count⌉, a spare of pct(WRITE_MARGIN − 1))",
+      /⌈\{WRITE_MARGIN\} × the count⌉ less the cards that count now, a spare of \{pct\(WRITE_MARGIN - 1\)\}/.test(depthSrc.replace(/\s+/g, " ")) && Number.isFinite(WRITE_MARGIN) && WRITE_MARGIN > 1
+    );
+    check("rules roadmap (rev 4): coverage is the user's to judge, and a count below the policy is shown for good", /is yours to judge/.test(depth) && /shown on the plan for good/.test(depth) && /coverage unchecked: no outline/.test(depth));
+    const real = flat(cards.get("Is the plan realistic?") ?? "");
+    const realSrc = parts.find((p) => p.startsWith('Is the plan realistic?"')) ?? "";
+    check(
+      "rules roadmap (rev 4): the long-gap pass rate is labelled the app's policy, with its level and cap from the code",
+      /the app&apos;s policy, since none of your reviews has tested gaps that long yet/.test(real) && /\{LONG_GAP_LEVEL\}/.test(realSrc) && /\{pct\(P_LONG_CAP\)\}/.test(realSrc) && /const longGap = interval\(LONG_GAP_LEVEL\);/.test(rules)
+    );
+    check("rules roadmap (rev 4): while calibrating the date uses published assumptions, says 'estimate', and is never the best case", /reads &quot;estimate&quot;/.test(real) && /it is never the best case/.test(real) && ["P_PRIOR", "C_PRIOR", "RHO_PRIOR"].every((n) => realSrc.includes(n)));
+    check("rules roadmap (rev 4): a date the app set is never called the user's choice, and no offer is taken by itself", /A date the app set is never called your choice/.test(real) && /none is taken by itself/.test(real));
+    check("rules roadmap (rev 4): no 'Fitted' anywhere in the roadmap rules (depth plans are never fitted)", !/fitted/i.test(text));
+    const prof2 = flat(cards.get("Proficiency") ?? "");
+    check("rules roadmap (rev 4): Proficiency always names its basis ('Proficiency toward …')", /always names what it is measured toward, &quot;Proficiency toward/.test(prof2));
+    // The stages table's arithmetic, run (lane 0's helpers): ranks by stage, and the spec's floor table at level 12.
+    const floors = STAGE_KEYS.map((k) => Number(((100 * LEVEL_WEIGHT(STAGE_LEVEL[k])) / LEVEL_WEIGHT(12)).toFixed(1)));
+    check(
+      "rules roadmap (rev 4): the stages table gives Aspirant to Virtuoso by stage, and the cards part's floors are the spec's 1.8 / 7.4 / 20.3 / 45.6 / 100%",
+      STAGE_KEYS.map((k) => aimRankName(rankIndexForStage(k) ?? 0)).join(",") === AIM_RANKS.slice(1, 6).join(",") && JSON.stringify(floors) === JSON.stringify([1.8, 7.4, 20.3, 45.6, 100]) && Number(((100 * LEVEL_WEIGHT(11)) / LEVEL_WEIGHT(12)).toFixed(1)) === 67.6,
+      JSON.stringify(floors)
+    );
+    check("rules roadmap (rev 4): the stages table is built from STAGE_KEYS with rankIndexForStage and floorBase, never typed", /STAGE_KEYS\.map\(/.test(rules) && /rankIndexForStage\(s\.k, s\.level, DEFAULT_DEPTH\)/.test(rules) && /days: floorBase\(s\.level\)/.test(rules));
+    const sug = flat(cards.get("Suggestions to set an aim") ?? "");
+    check(
+      "rules roadmap (rev 4): the suggestions card never names Gemini and never says earn, mastery, ⬡ or a bare 'quest'",
+      !/gemini|\bearns?\b|master|⬡/i.test(sug) && !/\bquests?\b/i.test(sug.replace(/week quests?/gi, "")),
+      sug.slice(0, 120)
+    );
+    check(
+      "rules roadmap (rev 4): the stored switch is the lasting no on every device, and it doesn't govern the draft or start lines",
+      /stored with your settings, so it holds on every device/.test(sug) &&
+        /the switch doesn&apos;t govern them/.test(sug) &&
+        /None of these is counted, read red, reaches the bell/.test(sug)
+    );
+    // Fix round 2: each Not now, read from the code that writes it. You's ASK card snoozes ('later:', snoozeAimPrompt: the
+    // card folds to the LATER line); that line's × and Today's SET × hide ('hide:', hideAimPrompt: HIDDEN everywhere;
+    // R5's AimLine since fix round 2, lens 1 and 3); capture's "Make it an aim" offers only on ASK (lane C's offersAim),
+    // so every Not now quiets it. None is a no: Settings reads the switch on. The sentences follow what the code does.
+    {
+      const sugSrc = (parts.find((p) => p.startsWith('Suggestions to set an aim"')) ?? "").replace(/\s+/g, " ").replace(/\{" "\}/g, "");
+      const today: DayKey = "2026-12-22";
+      const aimCardSrc = codeOf(read("src/components/roadmap/AimCard.tsx"));
+      const aimLineSrc = codeOf(read("src/components/roadmap/AimLine.tsx"));
+      const askSnoozes = /setMode\("LATER"\);[\s\S]{0,240}?\.snoozeAimPrompt\(\)/.test(aimCardSrc);
+      const lineHides = /setMode\("HIDDEN"\);[\s\S]{0,240}?\.hideAimPrompt\(\)/.test(aimCardSrc);
+      const todayHides = /view\.kind === "SET" \? a\.hideAimPrompt\(\)/.test(aimLineSrc) && !/view\.kind === "SET" \? a\.snoozeAimPrompt\(\)/.test(aimLineSrc);
+      const captureQuiet = captureQuietedByPrompt();
+      const hideServer = codeOf(read("src/lib/roadmap-server.ts"));
+      const hideCore = /export async function hideAimPromptCore[\s\S]*?\n\}/.exec(hideServer)?.[0] ?? "";
+      const r4Hide = hideCore.length > 0 && /hideCookieValue\(/.test(hideCore) && !/Not yet/.test(hideCore);
+      check(
+        "rules roadmap (fix round 2): Not now on You folds its card to one line (snoozeAimPrompt → LATER), and Today's line and capture's offer stay quiet meanwhile",
+        askSnoozes && captureQuiet && aimPromptOf(laterCookieValue(today), null, today) === "LATER" &&
+          /Not now on You folds its card to one line for \{AIM_LATER_DAYS\} days, and Today&apos;s line and capture&apos;s offer stay quiet meanwhile\./.test(sugSrc),
+        JSON.stringify({ askSnoozes, captureQuiet })
+      );
+      check(
+        "rules roadmap (fix round 2): Not now on Today's line, or the one line's ×, hides every suggestion for AIM_LATER_DAYS from the tap (hideAimPrompt → HIDDEN), and none of them turns the switch off",
+        lineHides && todayHides && r4Hide &&
+          aimPromptOf(hideCookieValue(today), null, today) === "HIDDEN" &&
+          aimPromptOf(hideCookieValue(today), null, addDays(today, AIM_LATER_DAYS - 1)) === "HIDDEN" &&
+          aimPromptOf(hideCookieValue(today), null, addDays(today, AIM_LATER_DAYS)) === "ASK" &&
+          /Not now on Today&apos;s line, or that one line&apos;s ×, hides all of them for \{AIM_LATER_DAYS\} days from then\. None of them is a no: the switch in Settings stays on\./.test(sugSrc),
+        JSON.stringify({ lineHides, todayHides, r4Hide })
+      );
+      check(
+        "rules roadmap (fix round 2): capture's offer to make a long goal your aim is on the card, exactly while capture honours the prompt (offersAim only on ASK)",
+        captureQuiet === /Capture offers to make a long goal you type your aim\./.test(sug) && captureQuiet
+      );
+      check(
+        "rules roadmap (fix round): whatever the user chooses, the last aim's Aim rank stays on You and asks nothing (F-R4-2; the fixtures page holds the render to it)",
+        /Either way your last aim&apos;s Aim rank stays on You, with nothing that asks\./.test(sug)
+      );
+    }
+  }
   check("rules roadmap: no heading starts with 'Quest'", titles.every((t) => !/^quest/i.test(t)));
   const quests = text.replace(/week quests?/gi, "").replace(/review quest/gi, "");
   check("rules roadmap: 'quest' only ever as 'week quest(s)' or the daily review quest", !/\bquests?\b/i.test(quests), (quests.match(/.{0,30}\bquests?\b.{0,30}/i) ?? [""])[0]);
@@ -1549,10 +1976,155 @@ async function aimCardGuardChecks() {
   const rank = (cards.get("Aim rank") ?? "").replace(/\s+/g, " ");
   const rankLeft = rank.replace(/Aim ranks?/g, "").replace(/top rank on this plan/gi, "").replace(/next rank|keeps your rank|rank is kept for good/gi, "");
   check("rules roadmap: 'rank' only as 'Aim rank', 'top rank on this plan' or 'rank is kept for good'", !/\brank/i.test(rankLeft), (rankLeft.match(/.{0,30}\brank.{0,30}/i) ?? [""])[0]);
-  check("rules roadmap: no rank line uses 'earn', and the rank is never called a title band", !/\bearns?\b/i.test(rank) && !/Novice|Apprentice|Adept|Master/.test(rank) && /not a title/.test(rank));
+  check("rules roadmap: no rank line uses 'earn', and the rank is never called a title band", !/\bearns?\b/i.test(rank) && !/\b(Novice|Apprentice|Adept|Master)\b/.test(rank) && /not a title/.test(rank));
+  check(
+    "rules roadmap (rev 4): stages give the Aim rank, held stages give none, and Paragon names its conditions (a standard, level 12, practice kept)",
+    /Each stage you reach inside the plan gives the Aim rank/.test(rank) && /A stage you already held when you began gives no Aim rank/.test(rank) && /your standard logged at or above its bar/.test(rank) && /A stage closed short on the way doesn&apos;t block it/.test(rank)
+  );
+  // The fix round's PART at the depth (lane 0's rankIndexForStage with the depth; contracts §15.4): a first part
+  // counting toward the depth's own stage gives the stage before's Aim rank, never the depth's, and the page says so
+  // from the function. A part below the depth still gives its stage's.
+  {
+    const rankSrc = (parts.find((p) => p.startsWith('Aim rank"')) ?? "").replace(/\s+/g, " ");
+    const atDepth = rankIndexForStage("PART", 12, 12);
+    check(
+      "rules roadmap (fix round): a first part before the depth's own stage gives the stage before's Aim rank (rankIndexForStage PART at the depth), read from the function",
+      atDepth === rankIndexForStage("FLUENT") &&
+        rankIndexForStage("PART", 10, 10) === rankIndexForStage("RETAINED") &&
+        rankIndexForStage("PART", 6, 12) === rankIndexForStage("FAMILIAR") &&
+        /const partAtDepth = aimRankName\(rankIndexForStage\("PART", DEFAULT_DEPTH, DEFAULT_DEPTH\) \?\? 0\);/.test(rules) &&
+        /A first part before the depth&apos;s own stage gives the Aim rank of the stage before it instead \( \{partAtDepth\} on a plan at level \{DEFAULT_DEPTH\}\): its count can be met before the depth is held, so the depth&apos;s Aim rank comes only with the depth\./.test(rankSrc),
+      String(atDepth)
+    );
+  }
   const pay = parts.find((p) => p.startsWith('What a milestone pays"')) ?? "";
   check("rules roadmap: the milestone's stated MP carries an sr-only ' MP'", /<CurrencyGlyph kind="mp" \/>\s*\{mpFigure\(mid\.stated\)\}\s*<span className="sr-only"> MP<\/span>/.test(pay));
   check("rules roadmap: the review quest's text and its QUEST_CAP import are untouched", /import \{ FULL_DAY_MP, QUEST_CAP \} from "@\/lib\/full-day";/.test(rules) && (rules.match(/\{QUEST_CAP\}/g) ?? []).length === 3);
+}
+
+// 9e. Settings › Days: the "Aim suggestions" switch (roadmap-rev4.md F-R4-5), its page read and its fixtures.
+{
+  const page = codeOf(read("src/app/settings/page.tsx"));
+  check(
+    "settings (rev 4): the page selects LifeSettings.aimSuggestions, and reads again without it when only that column is missing (isMissingRev4Column)",
+    /select: \{ dailyCapacityMin: true, capacitySetAt: true, debtWriteOff: true, aimSuggestions: true \}/.test(page) &&
+      /if \(!isMissingRev4Column\(err\)\) throw err;/.test(page) &&
+      /return life && \{ \.\.\.life, aimSuggestions: null \};/.test(page)
+  );
+  check(
+    "settings (rev 4): the cookie joins the page's one Promise.all, and the switch is aimPromptOf's rule (a legacy 'off' cookie reads off; a snooze does not)",
+    /const \[life, fields, progression, jar\] = await Promise\.all\(\[loadLifeSettings\(userId\), loadFieldFocus\(userId\), loadProgression\(userId\), cookies\(\)\]\);/.test(page) &&
+      /aimSuggestions: aimPromptOf\(jar\.get\(AIM_PROMPT_COOKIE\)\?\.value, life\?\.aimSuggestions \?\? null, today\) !== "OFF",/.test(page)
+  );
+  const today: DayKey = "2026-12-22";
+  check(
+    "settings (rev 4): the switch reads off for the stored no and for a legacy 'off' cookie, on when never set or snoozed",
+    aimPromptOf("off", null, today) === "OFF" && aimPromptOf(undefined, false, today) === "OFF" && aimPromptOf(undefined, null, today) !== "OFF" && aimPromptOf(laterCookieValue(today), true, today) !== "OFF"
+  );
+  check(
+    "settings (fix round): the LATER line's × (HIDDEN, a 'hide:' cookie) is a snooze, not a no: the switch reads on, and the stored no still reads off",
+    aimPromptOf(hideCookieValue(today), null, today) === "HIDDEN" && aimPromptOf(hideCookieValue(today), true, today) !== "OFF" && aimPromptOf(hideCookieValue(today), false, today) === "OFF"
+  );
+  const view = codeOf(read("src/components/settings/SettingsView.tsx"));
+  check(
+    "settings (rev 4): the row sits in the Days card, only when the page passed the switch, wired to actions/roadmap setAimSuggestions",
+    /\{aimSuggestions !== undefined && <AimSuggestionsRow initial=\{aimSuggestions\} \/>\}/.test(view) &&
+      /import \{ setAimSuggestions \} from "@\/app\/actions\/roadmap";/.test(view) &&
+      /write = setAimSuggestions/.test(view) &&
+      view.indexOf("<AimSuggestionsRow initial") > view.indexOf("function DaysSection(") &&
+      view.indexOf("<AimSuggestionsRow initial") < view.indexOf("function DebtWriteOffRow(")
+  );
+  check(
+    "settings (rev 4): a refusal (writes off) is said once and the switch goes back, as Accept a loss does",
+    /if \(!res\.ok\) \{\s*setOn\(!next\);\s*setError\(res\.error\);\s*\}/.test(view.slice(view.indexOf("export function AimSuggestionsRow")))
+  );
+}
+
+/** Renders Settings' view over fixture data (the switch on, off, and absent), and runs the fixtures' recorder. */
+async function settingsRenderChecks() {
+  try {
+    const { SettingsView, AIM_SUGGESTIONS_COPY } = await import("../src/components/settings/SettingsView");
+    const { aimSuggestionsRecorder, AIM_SUGGESTION_FIXTURES } = await import("../src/app/dev/style/settings/SettingsFixtures");
+    const base = { capacity: { minutes: 240, set: true }, focus: null, fields: [], duty: { today: "2026-12-22" as DayKey, launchDay: null, debtWriteOff: false } };
+    const html = (aimSuggestions: boolean | undefined) => renderToStaticMarkup(createElement(SettingsView, { data: { ...base, aimSuggestions } }));
+    const sw = (h: string) => /role="switch" aria-checked="(true|false)" aria-label="Suggest setting an aim"/.exec(h)?.[1] ?? null;
+    const on = html(true);
+    const off = html(false);
+    const none = html(undefined);
+    check(
+      "settings (rev 4): a pure render shows the row's words, and the switch follows aimSuggestions (on, off)",
+      on.includes(AIM_SUGGESTIONS_COPY.name) && on.includes(AIM_SUGGESTIONS_COPY.note) && sw(on) === "true" && sw(off) === "false",
+      `${sw(on)} / ${sw(off)}`
+    );
+    check("settings (rev 4): with no switch passed there is no row (no control that does nothing)", !none.includes(AIM_SUGGESTIONS_COPY.name) && sw(none) === null);
+    const words = `${AIM_SUGGESTIONS_COPY.name} ${AIM_SUGGESTIONS_COPY.note} ${AIM_SUGGESTIONS_COPY.label}`;
+    // Fix round 2: the spec's note named You and Today; capture's "Make it an aim" now honours the switch too (lane C's
+    // offersAim offers only on ASK), so the note names it, and names it exactly while that holds (below).
+    check(
+      "settings (rev 4): the copy names every surface the switch quiets, never names Gemini, earn, mastery or a bare quest, and never claims the draft or start lines",
+      AIM_SUGGESTIONS_COPY.note === "With no aim set, You suggests one; Today does on a new week, a new month or your first day back, then once a month; and capture offers to make a long goal your aim." &&
+        AIM_SUGGESTIONS_COPY.label === "Suggest setting an aim" &&
+        !/gemini|\bearns?\b|master|\bquests?\b|draft|milestone/i.test(words)
+    );
+    const captureQuiet = captureQuietedByPrompt();
+    check(
+      "settings (fix round 2): the note names capture's offer exactly while the switch quiets it (aim-capture offersAim offers a long goal only on ASK, never on OFF)",
+      captureQuiet && /capture offers to make a long goal your aim/.test(AIM_SUGGESTIONS_COPY.note),
+      `offersAim honours the prompt: ${captureQuiet}`
+    );
+    const ok = aimSuggestionsRecorder();
+    await ok.write(false);
+    await ok.write(true);
+    check("settings fixtures (rev 4): the recorder records setAimSuggestions(false) when it turns off and (true) when it turns on", JSON.stringify(ok.calls) === "[false,true]");
+    const refused = aimSuggestionsRecorder(ROADMAP_WRITES_OFF);
+    const res = await refused.write(false);
+    check("settings fixtures (rev 4): with writes off the recorder refuses with the standard copy", !res.ok && res.error === ROADMAP_WRITES_OFF && JSON.stringify(refused.calls) === "[false]");
+    check("settings fixtures (rev 4): on, off and writes-off states", AIM_SUGGESTION_FIXTURES.map((f) => f.key).join(",") === "on,off,writes-off");
+  } catch (err) {
+    check("settings (rev 4): SettingsView renders over fixture data", false, err instanceof Error ? err.message : String(err));
+  }
+}
+
+// 9f. Carry-overs lane Y owns (rev-3 fix round 2): the library's level filter, and the reset's roadmap counts.
+async function carryOverChecks() {
+  const lib = codeOf(read("src/components/library/LibrarySearch.tsx"));
+  check(
+    "library: the level filter clamps, clears and reads 'of N' at LEVEL_FILTER_MAX (20), so levels 13–20 are never hidden by a cleared chip",
+    !/MASTERY_LEVEL/.test(lib) &&
+      /if \(f\.minLevel > 1 \|\| f\.maxLevel < LEVEL_FILTER_MAX\) \{/.test(lib) &&
+      /clear: \(\) => set\(\{ minLevel: 1, maxLevel: LEVEL_FILTER_MAX \}\)/.test(lib) &&
+      (lib.match(/max=\{LEVEL_FILTER_MAX\}/g) ?? []).length === 2 &&
+      /Math\.min\(LEVEL_FILTER_MAX, Number\(e\.target\.value\) \|\| LEVEL_FILTER_MAX\)/.test(lib) &&
+      /of \{LEVEL_FILTER_MAX\}/.test(lib) &&
+      /aria-label=\{`Level \$\{idea\.level\} of \$\{MAX_LEVEL\}`\}/.test(lib)
+  );
+  try {
+    const { LEVEL_FILTER_MAX } = await import("../src/components/library/library-model");
+    const { MAX_LEVEL } = await import("../src/lib/xp");
+    check("library: LEVEL_FILTER_MAX is xp.ts MAX_LEVEL", LEVEL_FILTER_MAX === MAX_LEVEL && MAX_LEVEL === 20);
+    const { roadmapResetLine } = await import("../src/components/taxonomy/DangerZone");
+    const { RESET_ARCHIVE_NOTE } = await import("../src/lib/reset-scopes");
+    const counts = { roadmaps: 2, openRoadmaps: 1 };
+    check(
+      "danger zone: 'life' and 'everything' state the roadmaps they delete; 'ideas' and 'knowledge' the open roadmap they archive (ROADMAP_RESET_EFFECT)",
+      /Also deletes 2 roadmaps/.test(roadmapResetLine("life", counts) ?? "") &&
+        /Also deletes 2 roadmaps/.test(roadmapResetLine("everything", counts) ?? "") &&
+        (roadmapResetLine("ideas", counts) ?? "").includes(RESET_ARCHIVE_NOTE) &&
+        /archives your open roadmap/.test(roadmapResetLine("knowledge", counts) ?? "")
+    );
+    check(
+      "danger zone: no roadmap line when the scope touches none (no roadmap; no open roadmap to archive), so no effect is claimed that won't happen",
+      roadmapResetLine("life", { roadmaps: 0, openRoadmaps: 0 }) === null && roadmapResetLine("ideas", { roadmaps: 3, openRoadmaps: 0 }) === null && roadmapResetLine("knowledge", {}) === null
+    );
+  } catch (err) {
+    check("carry-overs: library-model, xp and DangerZone import", false, err instanceof Error ? err.message : String(err));
+  }
+  const danger = codeOf(read("src/components/taxonomy/DangerZone.tsx"));
+  check(
+    "danger zone: the counts line states the roadmaps, and the chosen scope's roadmap line shows with it",
+    /countOf\(counts, "roadmaps", "roadmap", "roadmaps"\)/.test(danger) && /\{spec && roadmapLine && <p className="t-meta">\{roadmapLine\}<\/p>\}/.test(danger) && /const roadmapLine = scope \? roadmapResetLine\(scope, counts\) : null;/.test(danger)
+  );
+  check("danger zone: an archived roadmap reads 'roadmaps archived' in the summary, with no minus (it is kept)", /roadmapsArchived: "roadmaps archived"/.test(danger) && /KEPT_KEYS\.has\(k\) \? "" : MINUS/.test(danger));
 }
 
 /**
@@ -1574,35 +2146,163 @@ async function aimPageRenderChecks() {
     return;
   }
   const keys = aimCardFixtures("2026-12-22").map((f) => f.key);
-  const boxes = [...html.matchAll(/data-aim-card="([^"]+)"/g)].map((m) => m[1]);
+  // The fixtures as the page built them (it anchors them on today's life day).
+  const fixtures = aimCardFixtures(todayKey(new Date()));
+  const boxes =[...html.matchAll(/data-aim-card="([^"]+)"/g)].map((m) => m[1]);
   check("aim fixtures page: one [data-aim-card] box per state, and the active card under the hero", boxes.length === keys.length + 1 && keys.every((k) => boxes.includes(k)) && boxes[0] === "under-hero", boxes.join(", "));
   check("aim fixtures page: no state waits on a roadmap builder", !html.includes("Fixture waits on the roadmap"));
   const segments = html.split(/data-aim-card="/).slice(1);
-  const bare = segments.filter((seg) => !/class="card rm-ac(?:-empty)?[ "]/.test(seg)).map((seg) => seg.slice(0, seg.indexOf('"')));
-  check("aim fixtures page: every box holds an Aim card (.rm-ac, or the compact .rm-ac-empty line)", bare.length === 0, bare.join(", "));
-  const empty = segments.find((seg) => seg.startsWith('empty"')) ?? "";
-  check("aim fixtures page: the EMPTY state shows its line with the × (inert here: the fixtures provider)", /Set an aim/.test(empty.slice(0, 2000)) && /aria-label="Hide this"/.test(empty.slice(0, 2000)));
-
-  // Fix round 2, as R5's AimCard renders the fixtures (fields lane 0 added; R4 fills them live). Each
-  // box is cut before the next fixture's label and note, which may quote the words checked for.
+  // Each box is cut before the next fixture's label and note, which may quote the words checked for.
   const box = (key: string) => {
     const seg = segments.find((s) => s.startsWith(`${key}"`)) ?? "";
     const end = seg.indexOf("data-aim-fixture=");
     return end >= 0 ? seg.slice(0, end) : seg;
   };
+  // Revision 4 (F-R4-1): OFF renders nothing; every other box holds a card (.rm-ac, the ASK card .rm-ac-call, or the LATER line .rm-ac-empty).
+  // The fix round's OFF and HIDDEN boxes are held below: nothing, or at most a last aim's line.
+  const quietKeys = ["empty-off", "empty-off-last-aim", "empty-hidden", "empty-hidden-last-aim"];
+  const bare = segments.filter((seg) => !quietKeys.some((k) => seg.startsWith(`${k}"`)) && !/class="card rm-ac(?:-empty|-call)?[ "]/.test(seg)).map((seg) => seg.slice(0, seg.indexOf('"')));
+  check("aim fixtures page: every box but OFF and HIDDEN holds an Aim card (.rm-ac, the ASK card .rm-ac-call, or the LATER line .rm-ac-empty)", bare.length === 0, bare.join(", "));
+  check("aim fixtures page (rev 4): OFF (suggestions off) renders nothing in its box", !/class="card rm-ac/.test(box("empty-off")) && box("empty-off").length > 0);
+  const askKeys = ["empty-ask", "empty-ask-seed", "empty-ask-last-aim", "empty-ask-continue", "empty-ask-seed-last-aim", "done-30"];
+  const laterKeys = ["empty-later", "empty-later-last-aim"];
+  // Every ASK box, and the LATER line with no last aim, offers "Set an aim"; with a last aim the LATER line reads
+  // "Last aim: Aim rank Paragon · Set your next aim →" (F-R4-1, spec line 405), so it offers the next aim instead.
+  const setAnAimKeys = [...askKeys, "empty-later"];
+  check(
+    "aim fixtures page (rev 4): every ASK box and the LATER line offer 'Set an aim'; the LATER line after a reached aim offers 'Set your next aim' (inert here: the fixtures provider)",
+    setAnAimKeys.every((k) => /Set an aim/.test(box(k))) && /Set your next aim/.test(box("empty-later-last-aim")),
+    [...setAnAimKeys.filter((k) => !/Set an aim/.test(box(k))), ...(/Set your next aim/.test(box("empty-later-last-aim")) ? [] : ["empty-later-last-aim"])].join(", ")
+  );
+  // The fix round's quiet states (lane 0's HIDDEN; OFF with a last aim, F-R4-2): never a suggestion — no "Set an aim",
+  // no "Set your next aim", no Not now or ×, no link to a new aim — and anything shown is the last aim's own line.
+  {
+    const aimCardCode = codeOf(read("src/components/roadmap/AimCard.tsx"));
+    const hiddenLanded = /["']HIDDEN["']/.test(aimCardCode);
+    const suggests = (k: string) => /Set an aim|Set your next aim|Not now|Don&#x27;t suggest this|href="\/you\/roadmap\/new"|<textarea/.test(box(k));
+    const onlyLastAim = (k: string) => !/class="card rm-ac/.test(box(k)) || (/Last aim:/.test(box(k)) && /Aim rank/.test(box(k)));
+    check(
+      "aim fixtures page (fix round): OFF with a last aim never suggests an aim (at most the last aim's line: its Aim rank, no link to a new aim, no ×)",
+      !suggests("empty-off-last-aim") && onlyLastAim("empty-off-last-aim")
+    );
+    // The tour's You step (tour-steps.ts, F-R4-6) spotlights [data-tour="you-aim"] first: a quiet box carries none, so
+    // the step falls back to the hero instead of pointing "Give it an aim" at a line that invites nothing.
+    const untoured = (k: string) => !/data-tour="you-aim"/.test(box(k));
+    check("aim fixtures page (fix round): OFF boxes carry no you-aim tour target, so the tour's You step spotlights the hero", untoured("empty-off") && untoured("empty-off-last-aim"));
+    const hiddenOk =
+      ["empty-hidden", "empty-hidden-last-aim"].every((k) => !suggests(k) && onlyLastAim(k) && untoured(k)) && !/class="card rm-ac/.test(box("empty-hidden")) && box("empty-hidden").length > 0;
+    // R5's HIDDEN has landed (fix round 2): a regression is a FAIL, never a wait.
+    check("aim fixtures page (fix round): HIDDEN renders as OFF does: nothing, or with a last aim only its line, never a suggestion", hiddenLanded && hiddenOk);
+    // F-R4-2: "the achievement never vanishes from the character page", as the rules page publishes it ("Either way your
+    // last aim's Aim rank stays on You"): OFF and HIDDEN with a last aim keep its line (lens 3, finding 14).
+    const vanished = ["empty-off-last-aim", "empty-hidden-last-aim"].filter((k) => !/Last aim:/.test(box(k)) || !/Aim rank/.test(box(k)));
+    const published = /Either way your last aim&apos;s Aim rank stays on You,\s+with nothing that asks\./.test(read("src/app/today/rules/page.tsx"));
+    check("aim fixtures page (fix round): with suggestions off or hidden, the last aim's Aim rank stays on the card, as the rules page says", published && vanished.length === 0 && hiddenLanded, vanished.join(", "));
+  }
+  // The rev-4 card itself is R5's (AimCard.tsx), landed: each is a FAIL if it regresses (fix round 2: no wait left).
+  {
+    const r5Landed = !/STUB: lane R5 implements/.test(read("src/components/roadmap/AimCard.tsx"));
+    const idx = (k: string, s: string) => box(k).indexOf(s);
+    const rev4: [string, boolean][] = [
+      [
+        "the ASK card: 'Set an aim', a 140-character box, Not now and Don't suggest this, data-tour=\"you-aim\", and no Gemini",
+        askKeys.every((k) => /class="card rm-ac-call/.test(box(k)) && /data-tour="you-aim"/.test(box(k)) && /maxLength="140"|maxlength="140"/.test(box(k)) && /Not now/.test(box(k)) && /Don&#x27;t suggest this/.test(box(k)) && !/Gemini/.test(box(k))),
+      ],
+      ["the ASK card's rank line names Paragon as 'the aim held at Mastered (level 12)'", askKeys.every((k) => /Stages you reach raise your Aim rank, from Initiate toward Paragon: the aim held at Mastered \(level 12\)\./.test(box(k)))],
+      [
+        "the seed line shows with a seed and an empty box, and never without a seed",
+        ["empty-ask-seed", "empty-ask-seed-last-aim"].every((k) => /Start from your long goal/.test(box(k))) && ["empty-ask", "empty-ask-last-aim", "done-30"].every((k) => !/Start from your long goal/.test(box(k))),
+      ],
+      ["the last aim's line shows only with a last aim, 'Aim rank' before its rank", ["empty-ask-last-aim", "empty-ask-continue", "empty-ask-seed-last-aim", "done-30"].every((k) => /Last aim:/.test(box(k)) && /Aim rank/.test(box(k))) && !/Last aim:/.test(box("empty-ask"))],
+      ["an unsent aim starts the box, with 'Continue where you left off' and the primary 'Continue'", box("empty-ask-continue").includes(UNSENT_AIM) && /Continue where you left off/.test(box("empty-ask-continue")) && />Continue</.test(box("empty-ask-continue"))],
+      ["LATER is one .rm-ac-empty line whose × is 'Not now: no aim suggestions for 4 weeks'", laterKeys.every((k) => (box(k).match(/rm-ac-empty/g) ?? []).length === 1 && /aria-label="Not now: no aim suggestions for 4 weeks"/.test(box(k)))],
+      ["LATER after a reached aim names the last aim's Aim rank", /Last aim: Aim rank/.test(box("empty-later-last-aim"))],
+      ["done 3 days after the reach: Open roadmap leads, Set your next aim second", idx("done-reached", "Open roadmap") >= 0 && idx("done-reached", "Set your next aim") > idx("done-reached", "Open roadmap")],
+      ["done unreached, and done a week after the reach: Set your next aim leads, Open roadmap second", ["done-unreached", "done"].every((k) => idx(k, "Set your next aim") >= 0 && idx(k, "Open roadmap") > idx(k, "Set your next aim"))],
+    ];
+    for (const [name, ok] of rev4) check(`aim fixtures page (rev 4): ${name}`, r5Landed && ok);
+    // Lens 3 (major), R5's seedShown (fix round 2; Y → R5 handoff 13, now strict): with text in the box the seed hides,
+    // so a tap can't replace the typed aim (and the continue state stays under 410 px). The continue fixture holds a
+    // seed, so the check can't pass for want of one.
+    check(
+      "aim fixtures page (fix round 2): the seed never renders while the box holds an unsent aim (empty-ask-continue has a seed and shows no 'Start from your long goal')",
+      fixtures.find((f) => f.key === "empty-ask-continue")?.empty?.seed != null && box("empty-ask-continue").length > 0 && !/Start from your long goal/.test(box("empty-ask-continue"))
+    );
+    try {
+      const { seedShown } = await import("../src/components/roadmap/AimCard");
+      const seed = fixtures.find((f) => f.key === "empty-ask-seed")?.empty?.seed ?? null;
+      check(
+        "aim card (fix round 2): seedShown is the rule: a seed with an empty or blank box shows, any typed text hides it, no seed never shows",
+        seed != null && seedShown(seed, "") && seedShown(seed, "   ") && !seedShown(seed, UNSENT_AIM) && !seedShown(seed, " x ") && !seedShown(null, "") && !seedShown(undefined, "")
+      );
+    } catch (err) {
+      check("aim card (fix round 2): seedShown imports", false, err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // Fix round 2 (F-R4-16; lens 3 #13 and #17; lane 0's AimCardView.legacyView, contracts §16.3): a plan made before
+  // revision 4 on /you. The card shows the aim, the Area and its banner's one action, "Wording from an earlier Gemini
+  // draft is hidden." only when a row was Gemini's, and no milestone, Aim rank or Proficiency. An open plan offers
+  // "Start again at a depth" (with its measure line), carrying the old plan's own Domains and Area Field into the new
+  // intake with `replaces`; a draft offers "Draft it again"; a closed one only "Set your next aim" (no replaces).
+  try {
+    const copy = await import("../src/components/roadmap/roadmap-copy");
+    const card = await import("../src/components/roadmap/AimCard");
+    const act = box("legacy-active");
+    const dr = box("legacy-draft");
+    const dn = box("legacy-done");
+    const count = (b: string, w: string) => b.split(w).length - 1;
+    const quiet = (b: string) => b.length > 0 && !/Proficiency|Aim rank|rm-ac-meter|Milestone \d/.test(b) && /class="card rm-ac[ "]/.test(b) && /data-tour="you-aim"/.test(b);
+    check(
+      "aim fixtures page (fix round 2): an open legacy plan shows its banner, the hidden-wording line, Start again at a depth and its measure line, and no milestone, rank or Proficiency",
+      quiet(act) && act.includes(copy.LEGACY_ACTIVE_BANNER) && act.includes(copy.LEGACY_GEMINI_HIDDEN) && act.includes(copy.LEGACY_MEASURE_LINE) && count(act, copy.START_AGAIN_AT_DEPTH_WORD) === 2,
+      act.slice(0, 160)
+    );
+    check(
+      "aim fixtures page (fix round 2): a legacy draft shows its banner and Draft it again, and no hidden-wording line when no row was Gemini's",
+      quiet(dr) && dr.includes(copy.LEGACY_DRAFT_BANNER) && dr.includes(copy.DRAFT_IT_AGAIN_WORD) && !dr.includes(copy.LEGACY_GEMINI_HIDDEN) && !dr.includes(copy.START_AGAIN_AT_DEPTH_WORD)
+    );
+    check(
+      "aim fixtures page (fix round 2): a closed legacy plan offers only Set your next aim (no Start again: only an open plan is replaced), with the hidden-wording line",
+      quiet(dn) && dn.includes(copy.LEGACY_GEMINI_HIDDEN) && dn.includes(copy.AIM_NEXT_AIM) && !dn.includes(copy.START_AGAIN_AT_DEPTH_WORD) && !dn.includes(copy.LEGACY_MEASURE_LINE)
+    );
+    const fxView = (k: string) => buildAimFixture(fixtures.find((f) => f.key === k)!).view!;
+    const open = fxView("legacy-active");
+    check(
+      "aim card (fix round 2): legacyAimActionOf: an open legacy plan starts again, a draft drafts again, a closed one sets the next aim",
+      card.legacyAimActionOf(open.state) === "START_AGAIN" && card.legacyAimActionOf(fxView("legacy-draft").state) === "DRAFT_AGAIN" && card.legacyAimActionOf(fxView("legacy-done").state) === "NEXT_AIM"
+    );
+    const h = card.legacyRestartHandoffOf(open);
+    check(
+      "aim card (fix round 2): Start again at a depth hands the new intake the aim, `replaces`, and the old plan's own Domains and Area Field from legacyView",
+      h != null && h.source === "restart" && h.aim === open.aim && h.replaces === open.roadmapId && JSON.stringify(h.domainIds) === JSON.stringify(open.legacyView?.domainIds) && h.areaFieldId === open.legacyView?.areaFieldId,
+      JSON.stringify(h)
+    );
+    const bare = card.legacyRestartHandoffOf({ ...open, legacyView: undefined });
+    check(
+      "aim card (fix round 2): without legacyView (a loader that doesn't fill it) the handoff invents no Domains: the form preselects the Area's, and the Area still travels",
+      bare != null && bare.domainIds === undefined && bare.areaFieldId === (open.area?.kind === "FIELD" ? open.area.fieldId : null),
+      JSON.stringify(bare)
+    );
+  } catch (err) {
+    check("aim fixtures page (fix round 2): the legacy card renders and its helpers import", false, err instanceof Error ? err.message : String(err));
+  }
+
+  // Fix round 2, as R5's AimCard renders the fixtures (fields lane 0 added; R4 fills them live).
   const aimSrc = codeOf(read("src/components/roadmap/AimCard.tsx"));
   const r5 = "R5 (AimCard.tsx): fix round 2, contracts §11.4.5";
   // The ACCEPTED caption: "as measured at acceptance on <day>" only for a reading of the acceptance day.
   const captionOk = /as measured at acceptance on /.test(box("accepted")) && !/at acceptance/.test(box("accepted-later"));
-  if (/\bisAcceptanceReading\b/.test(aimSrc))
-    check("aim fixtures page: 'as measured at acceptance on <day>' shows for the acceptance day's reading only, never once a later reading stands", captionOk, `${/as measured at acceptance on /.test(box("accepted"))} / ${!/at acceptance/.test(box("accepted-later"))}`);
-  else if (!captionOk) warn("aim fixtures page: the ACCEPTED caption claims the acceptance whatever the reading's day (accepted-later)", `waits on ${r5}: isAcceptanceReading(proficiency.measuredAt, view.acceptedDay)`);
+  check(
+    `aim fixtures page: 'as measured at acceptance on <day>' shows for the acceptance day's reading only, never once a later reading stands (${r5}: isAcceptanceReading)`,
+    /\bisAcceptanceReading\b/.test(aimSrc) && captionOk,
+    `${/as measured at acceptance on /.test(box("accepted"))} / ${!/at acceptance/.test(box("accepted-later"))}`
+  );
   // A Gemini title's NUMBER spans are struck on the card's milestone line.
   const strikeOk = /<s>1%<\/s>/.test(box("between"));
-  if (/\btitleStruck\b/.test(aimSrc)) check("aim fixtures page: the between card strikes the '1%' in Gemini's undecided title", strikeOk);
-  else if (!strikeOk) warn("aim fixtures page: the between card shows Gemini's '1%' unstruck", `waits on ${r5}: StruckLabel with milestone.titleStruck`);
+  check(`aim fixtures page: the between card strikes the '1%' in Gemini's undecided title (${r5}: titleStruck)`, /\btitleStruck\b/.test(aimSrc) && strikeOk);
   // Live-shaped: a view without acceptedDay (R4 not filling it) never claims the acceptance.
-  if (/\bisAcceptanceReading\b/.test(aimSrc)) {
+  {
     try {
       const { AimCard } = await import("../src/components/roadmap/AimCard");
       const { FixtureRoadmapProvider } = await import("../src/components/roadmap/roadmap-runtime");
@@ -1620,11 +2320,13 @@ async function aimPageRenderChecks() {
   await redirects();
   await aimCardGuardChecks();
   await aimPageRenderChecks();
+  await settingsRenderChecks();
+  await carryOverChecks();
   const tw = await tailwindUtilities();
   cssChecks(tw.test, tw.via);
   sourceChecks(tw.test, tw.via);
-  console.log(`you-check: ${pass} passed, ${fails.length} failed${warns.length ? `, ${warns.length} waiting on another lane` : ""}`);
-  for (const w of warns) console.log(`  WARN ${w}`);
+  // Fix round 2: every roadmap lane this check reads has landed, so nothing waits: a gap is a FAIL.
+  console.log(`you-check: ${pass} passed, ${fails.length} failed`);
   for (const n of notes) console.log(`  NOTE ${n}`);
   for (const f of fails) console.log(`  FAIL ${f}`);
   process.exit(fails.length ? 1 : 0);

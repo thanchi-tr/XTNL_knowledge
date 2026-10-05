@@ -123,57 +123,100 @@ import {
   ADHERENCE_MIN_BAND,
   ADHERENCE_MIN_JUDGED,
   ADHERENCE_MIN_MINUTES,
+  AIM_DEPTHS,
   AIM_RANKS,
   CALIBRATION_WEEKS,
+  CARDS_PER_OUTLINE_LINE,
   CARD_WRITE_MIN,
+  CLEARANCE_SERIES_DAYS,
+  CLEARANCE_WINDOW_DAYS,
+  COVER_FLOOR_CARDS,
+  COVER_MAX,
+  COVER_MIN,
+  COVER_SHARE,
+  C_PRIOR,
   DECLARED_FACTOR,
-  INTENSITY,
+  DEPTH_DEFAULT,
+  DEPTH_DOMAINS_MAX,
+  FIRST_RANK_MAX_DAYS,
   KEEP_SHARE,
   LEVEL_WEIGHT,
+  LONG_GAP_LEVEL,
   MAX_MILESTONES,
   MILESTONE_MAX_DAYS,
   MILESTONE_MIN_DAYS,
-  MILESTONE_TARGET_DAYS,
   MIN_INCREMENT_CARDS_FLOOR,
-  MIN_INCREMENT_SHARE,
+  NON_RECALL_TYPES,
+  OFF_DAY_CLEAR_SHARE,
+  OVER_PACE_FACTOR,
+  PACE_SHARE,
   PARAGON_MIN_MILESTONES,
   PASS_SHARE_MIN_REVIEWS,
   PASS_SHARE_WINDOW_DAYS,
   PRACTICE_BUDGET_SHARE,
   PRACTICE_PAY_FLOOR_MIN,
   PRACTICE_PAY_SHARE,
+  P_LONG_CAP,
+  P_PRIOR,
   RAMP_ALLOWANCE,
   RAMP_FLOOR_MIN,
-  RANK_MILESTONE_MAX,
   RANK_NEW_DAYS,
   RANK_TOP,
   REACH_CONFIRM_DAYS,
+  REACH_STRIKE_LIMIT,
+  RETRY_ENTRY_DAYS,
   REVIEW_SECONDS,
+  RHO_MIN_DAYS,
+  RHO_PRIOR,
   ROADMAP_DRAFTS_PER_DAY,
+  ROADMAP_GEMINI_LIVE,
   ROADMAP_REUSE_DAYS,
+  SCHEDULE_BOUND_SHARE,
   SPAN_MAX_DAYS,
   SPAN_MIN_DAYS,
+  STAGE_KEYS,
+  STAGE_LEVEL,
+  STAGE_NAMES,
+  STAGE_PRACTICE_BAND_MIN,
+  STAGE_RANK,
   START_MIN_DAYS_TO_DUE,
-  THRESHOLDS,
-  THRESHOLD_SPAN_SHARE,
   TIME_FITS_MAX,
   TIME_TIGHT_MAX,
   TOP_LEVEL,
+  TRACK_PARAGON_MIN_DAYS,
+  TRACK_STAGE_SHARES,
   WEEK_QUESTS_PER_WEEK_MAX,
   WEEK_QUEST_ADD_MIN_CAP,
   WEEK_QUEST_CATCHUP_FACTOR,
   WEEK_QUEST_CHECKPOINT_FROM,
   WEEK_QUEST_FINAL_LAG_DAYS,
+  WEEK_QUEST_PARTS_TODAY,
   WEEK_QUEST_ROWS_TODAY,
+  WRITE_MARGIN,
   aimRankName,
+  domainName,
   floorBase,
-  floorStrict,
-  milestoneCountFor,
+  interval,
+  practiceBandMinutes,
   rankIndexAt,
+  rankIndexForStage,
+  retryReadDaysOf,
+  stageLabelOf,
   topRankIndexOf,
   type ProficiencyParts,
 } from "@/lib/roadmap-types";
 import { proficiencyOf } from "@/lib/roadmap-proficiency";
+import { PRODUCTION_KINDS, RETRIEVAL_KINDS, catalogLabelOf, type PracticeKind } from "@/lib/roadmap-catalog";
+import {
+  AIM_AWAY_DAYS,
+  AIM_BACKOFF_FRESH_DAYS,
+  AIM_DONE_SHOW_DAYS,
+  AIM_DRAFT_SHOWS_MAX,
+  AIM_LATER_DAYS,
+  AIM_START_DAILY_DAYS,
+  AIM_STEP_SNOOZE_DAYS,
+} from "@/lib/roadmap-invite";
+import { TYPE_NAME } from "@/components/library/library-model";
 
 export const metadata: Metadata = { title: "How a day is judged" };
 
@@ -442,12 +485,12 @@ function TracksRules() {
   );
 }
 
-// ─── Roadmap (roadmap.md F16 seam 12) ──────────────────────────────────────
+// ─── Roadmap (roadmap.md F16 seam 12; revision 4: roadmap-rev4.md F-R4-8 to F-R4-13) ───
 
-/** What each week quest kind asks and what checks it (F14): the row's first words, never "Quest n of N". */
+/** What each week quest kind asks and what checks it (F14, F-R4-14): the row's first words, never "Quest n of N". */
 const WEEK_QUEST_KIND_ROWS: { row: string; asks: string; by: string }[] = [
-  { row: "Bring … cards to the level", asks: "cards in the milestone's Domains brought to its level", by: "tested by your reviews" },
-  { row: "Add … cards", asks: "new cards filed in its Domains", by: "counted by the app; it doesn't judge them" },
+  { row: "Bring … cards to level …+", asks: "the milestone's cards brought to its level, in parts by Domain", by: "tested by your reviews" },
+  { row: "Add … cards", asks: "new cards filed in its Domains, in parts by Domain", by: "counted by the app; it doesn't judge them" },
   { row: "Practice · … sessions", asks: "each of its practices' planned sessions", by: "from your ticks" },
   { row: "Step: …", asks: "its next one-off step", by: "you ticked it" },
   { row: "Checkpoint: … · log your score", asks: "its checkpoint, near the window's end", by: "you logged it · doesn't move your progress" },
@@ -459,11 +502,16 @@ const oneIn = (share: number) => `1/${Math.round(1 / share)}`;
 /** A share to one decimal at most: 60%, 62.5%. */
 const sharePct = (n: number) => `${Number((n * 100).toFixed(1))}%`;
 
+/** "a, b and c". */
+function listWords(words: readonly string[]): string {
+  return words.length < 2 ? words.join("") : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
+}
+
 /**
  * The shares Proficiency's own formula (roadmap-proficiency.ts proficiencyOf)
  * gives a plan with these parts, read off a one-of-each basis: the table
  * below can't drift from what the roadmap computes (a Field Area without
- * practice reads cards 80% / milestones 20%).
+ * practice reads cards 80% / stages 20%).
  */
 function proficiencySharesOf(withCards: boolean, withPractice: boolean): ProficiencyParts {
   return proficiencyOf({
@@ -481,6 +529,8 @@ function proficiencySharesOf(withCards: boolean, withPractice: boolean): Profici
 }
 
 const PROFICIENCY_PARTS = ["cards", "practice", "milestones"] as const;
+/** The parts' names on the page: the third is the stages part (ProficiencyParts.milestones in code). */
+const PROFICIENCY_PART_WORD: Record<(typeof PROFICIENCY_PARTS)[number], string> = { cards: "cards", practice: "practice", milestones: "stages" };
 
 /** Every part; a Field Area without practice; a track Area (practice, no cards). Short labels: the table fits 344 px. */
 const PROFICIENCY_SHARE_ROWS: { label: string; shares: ProficiencyParts }[] = [
@@ -489,103 +539,287 @@ const PROFICIENCY_SHARE_ROWS: { label: string; shares: ProficiencyParts }[] = [
   { label: "No cards", shares: proficiencySharesOf(false, true) },
 ];
 
+/** The depth everything below is worked at: Mastered, the default (AIM_DEPTHS, DEPTH_DEFAULT). */
+const DEFAULT_DEPTH = AIM_DEPTHS[DEPTH_DEFAULT];
+
 /**
- * The roadmap's published rules: an aim and its milestones, the realism
- * checks, what a milestone pays, week quests, Proficiency and the Aim rank.
- * Every number is read from roadmap-types.ts (the frozen contract the
- * planner, the week quests, Proficiency and the Aim rank compute with) or
- * life-economy.ts, and every table is worked out by the same helpers, so the
- * page cannot publish a rule the roadmap does not apply. They are policy,
- * not facts. scripts/you-check.ts holds that no figure here is typed by hand,
- * that week quests are never a bare "quest", and that the Proficiency and Aim
- * rank cards keep their words apart from mastery and pay.
+ * The stages a depth plan climbs (F-R4-10, F-R4-12): each gate's name and
+ * level, the fewest days a new card needs to reach it at base spacing, the
+ * Aim rank reaching it inside the plan gives, and the floor of Proficiency's
+ * cards part there (LEVEL_WEIGHT(ℓ) ÷ LEVEL_WEIGHT(depth)). The level-11 gate
+ * between Fluent and Mastered (BETWEEN) is the usual one, and keeps your rank.
+ */
+const STAGE_ROWS: { name: string; level: number; days: number; rank: string; floor: number }[] = [
+  ...STAGE_KEYS.map((k) => ({ k, level: STAGE_LEVEL[k], name: STAGE_NAMES[k] })),
+  { k: "BETWEEN" as const, level: DEFAULT_DEPTH - 1, name: stageLabelOf("BETWEEN", DEFAULT_DEPTH - 1) ?? "" },
+]
+  .sort((a, b) => a.level - b.level)
+  .map((s) => {
+    const index = rankIndexForStage(s.k, s.level, DEFAULT_DEPTH);
+    return {
+      name: s.name,
+      level: s.level,
+      days: floorBase(s.level),
+      rank: s.k === "BETWEEN" ? "keeps your rank" : index == null ? "" : aimRankName(index),
+      floor: LEVEL_WEIGHT(s.level) / LEVEL_WEIGHT(DEFAULT_DEPTH),
+    };
+  });
+
+/** A catalog practice type's name, read from its code template (roadmap-catalog): "Recall drills", "Explain it in your own words". */
+const KIND_FILL = { track: "FIELD" as const, domains: [domainName({ id: "rules", name: "your Domains" })] };
+const kindName = (key: PracticeKind): string => String(catalogLabelOf(key, KIND_FILL)).replace(/: your Domains$/, "");
+
+/** The card types a depth plan doesn't count (NON_RECALL_TYPES), by their library names. */
+const NOT_COUNTED = NON_RECALL_TYPES.map((t) => TYPE_NAME[t].toLowerCase());
+
+/** A level's review gap at base spacing, to the nearest 5 days ("about 110 days"), as the copy rounds it. */
+const gapAbout = (level: number) => Math.round(interval(level) / 5) * 5;
+
+/** Minutes of a practice band ("D45" → 45). */
+const bandMinutes = (stage: "RETAINED" | "FLUENT") => {
+  const band = STAGE_PRACTICE_BAND_MIN[stage];
+  return band ? practiceBandMinutes(band) : null;
+};
+
+/**
+ * The roadmap's published rules: an aim and its stages, the depth (high
+ * mastery, measured), the realism checks, practice by stage, what a milestone
+ * pays, week quests, Proficiency, the Aim rank, and the suggestions to set an
+ * aim. Every number is read from roadmap-types.ts (the frozen contract the
+ * planner, the week quests, Proficiency and the Aim rank compute with),
+ * roadmap-invite.ts, roadmap-catalog.ts or life-economy.ts, and every table
+ * is worked out by the same helpers, so the page cannot publish a rule the
+ * roadmap does not apply. They are policy, not facts. scripts/you-check.ts
+ * holds that no figure here is typed by hand, that week quests are never a
+ * bare "quest", and that the Proficiency and Aim rank cards keep their words
+ * apart from mastery and pay.
  */
 function RoadmapRules({ edge, judgeDay }: { edge: string; judgeDay: string }) {
   const mid = GOAL_RULES.MID;
-  const fewest = milestoneCountFor(0);
   const levels = Array.from({ length: TOP_LEVEL }, (_, i) => i + 1);
-  const plans = Array.from({ length: MAX_MILESTONES }, (_, i) => i + 1).map((n) => ({
+  // A life track's plan ranks its stages by place (F-R4-12): the k-th kept stage gives the Aim rank at place k.
+  const tracks = Array.from({ length: TRACK_STAGE_SHARES.length }, (_, i) => i + 1).map((n) => ({
     n,
     gives: Array.from({ length: n }, (_, j) => aimRankName(rankIndexAt(j + 1))),
     top: topRankIndexOf(n),
   }));
+  const fluent = AIM_DEPTHS.FLUENT;
+  const retained = AIM_DEPTHS.RETAINED;
+  // A first part counting toward the depth's own stage (contracts §15.4): the Aim rank of the stage before it, never the depth's.
+  const partAtDepth = aimRankName(rankIndexForStage("PART", DEFAULT_DEPTH, DEFAULT_DEPTH) ?? 0);
+  const last = gapAbout(DEFAULT_DEPTH - 1);
+  // How far back the clean-entry read looks at the depth's level (lane 0's window, contracts §16.1: the time a card can sit
+  // at the level, its interval and grace, plus the miss before its entering pass), at base spacing and no grace extension.
+  const cleanWindow = retryReadDaysOf(DEFAULT_DEPTH);
+  const longGap = interval(LONG_GAP_LEVEL);
+  const retrieval = listWords(RETRIEVAL_KINDS.map(kindName));
+  const production = listWords(PRODUCTION_KINDS.filter((k) => k !== "TIMED_PRACTICE").map(kindName));
+  const fromRetained = bandMinutes("RETAINED");
+  const fromFluent = bandMinutes("FLUENT");
   return (
     <>
       <Card title="Aims and milestones" sub="Policy, not facts: how the app plans toward an aim" wide>
         <p>
-          An aim is set {SPAN_MIN_DAYS} to {SPAN_MAX_DAYS.toLocaleString("en-GB")} days ahead, in your own words, with the hours a week you give
-          it. Gemini, when it is set up, drafts words only: milestone titles, topics, practices, steps, a checkpoint and
-          which of your Domains each milestone needs. It writes no number. Code sets every date, level, target, session
-          count and duration. A word Gemini wrote keeps its label until you check it or change its words, and a number in
-          its words is struck through, never rewritten: that item can only be edited or removed. Nothing reaches Today in
-          its words without your tap. At most {ROADMAP_DRAFTS_PER_DAY} Gemini drafts a day, a failed one included; the
-          same request within {ROADMAP_REUSE_DAYS} days reuses the last one, and a reused draft doesn&apos;t count. Without
-          Gemini the plan is built from your numbers or written by you, with the same checks.
+          An aim is set in your own words, with the hours a week you give it, and is never rewritten. An aim that grows a
+          Field is planned to a depth (below); one that grows a life track is practice only. Its date is the app&apos;s
+          realistic date unless you choose one, from {SPAN_MIN_DAYS} to {SPAN_MAX_DAYS.toLocaleString("en-GB")} days ahead. A depth the app
+          can&apos;t reach within {SPAN_MAX_DAYS.toLocaleString("en-GB")} days at your pace is refused, with what to narrow: fewer Domains,
+          more cards a week, or a lower depth.
         </p>
-        <Formula>
-          milestones = clamp(round(days ÷ {MILESTONE_TARGET_DAYS}), {fewest}, {MAX_MILESTONES})
-        </Formula>
         <p>
-          Each milestone spans {MILESTONE_MIN_DAYS} to {MILESTONE_MAX_DAYS} days and ends on a Sunday; the last ends on the
-          aim&apos;s date. Its card level is one of {THRESHOLDS.join(", ")}: the first is the highest a new card can reach in{" "}
-          {pct(THRESHOLD_SPAN_SHARE)} of the days to its due day, never below where you said you start, and levels never
-          fall along the plan.
+          Gemini writes no word of a plan. When it drafts, it returns only keys from lists the app owns: which of your other
+          Domains the aim may need, which line of your outline goes in which milestone, and which practice, step and
+          checkpoint types from the app&apos;s list. The app writes every name and instruction and sets every number, date,
+          level and target; each of Gemini&apos;s choices is labelled and can be changed in one tap, and a Domain it adds needs
+          your confirm. A reply that breaks the format is rejected whole, and the plan from your numbers is written in its
+          place. {ROADMAP_GEMINI_LIVE ? "" : "Gemini drafting is off until a test of its replies passes. "}At most{" "}
+          {ROADMAP_DRAFTS_PER_DAY} Gemini drafts a day, a failed one included; the same request within {ROADMAP_REUSE_DAYS}{" "}
+          days reuses the last one, and a reused draft doesn&apos;t count. Without Gemini the plan is built from your
+          numbers or written by you, with the same checks.
+        </p>
+        <p>
+          The plan climbs stages. Each stage&apos;s milestone asks every Domain the aim needs to bring its cards to the
+          stage&apos;s level, and the last stage is the depth. Each is dated from the review schedule at your pace (below)
+          and ends on the Sunday on or after that day.
         </p>
         <div className="rules-scroll">
           <table className="rules-table">
             <tbody>
               <tr>
-                <th scope="row" className="t-eyebrow">
+                <th scope="col" className="t-eyebrow">
+                  Stage
+                </th>
+                <th scope="col" className="t-eyebrow">
                   Level
                 </th>
-                {THRESHOLDS.map((l) => (
-                  <td key={l} className="num ink-2">
-                    {l}+
-                  </td>
-                ))}
-              </tr>
-              <tr>
-                <th scope="row" className="t-eyebrow">
+                <th scope="col" className="t-eyebrow">
                   Days, every review passed
                 </th>
-                {THRESHOLDS.map((l) => (
-                  <td key={l} className="num">
-                    {floorBase(l)}
-                  </td>
-                ))}
-              </tr>
-              <tr>
-                <th scope="row" className="t-eyebrow">
-                  Days at the earliest
+                <th scope="col" className="t-eyebrow">
+                  Reaching it gives
                 </th>
-                {THRESHOLDS.map((l) => (
-                  <td key={l} className="num">
-                    {floorStrict(l)}
-                  </td>
-                ))}
+                <th scope="col" className="t-eyebrow">
+                  Cards part there
+                </th>
               </tr>
+              {STAGE_ROWS.map((s) => (
+                <tr key={s.name}>
+                  <td className="b">{s.name}</td>
+                  <td className="num">{s.level}+</td>
+                  <td className="num">{s.days}</td>
+                  <td className="ink-1">{s.rank}</td>
+                  <td className="num">{sharePct(s.floor)}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
         <p className="t-meta">
-          The fewest days a new card needs to reach each level at base review spacing, and with the luckiest interval; a
-          loadout that stretches spacing stretches them too.
+          Days, every review passed: the fewest a new card needs to reach the level at base review spacing; a loadout
+          that stretches spacing stretches them too. Cards part there: Proficiency&apos;s cards part with every card
+          just at that level, on a plan at level {DEFAULT_DEPTH}, so early stages read low.
         </p>
-        <Formula>target = baseline + ⌊intensity × (expected − baseline)⌋</Formula>
+        <ul className="rules-bullets">
+          <li>
+            Two stages under {MILESTONE_MIN_DAYS} days apart merge into the higher one, and a stage with fewer than{" "}
+            {MIN_INCREMENT_CARDS_FLOOR} cards left to raise joins the next; the depth&apos;s own stage is never merged away. A
+            stage over {MILESTONE_MAX_DAYS} days long gains a gate at the odd level in between ({stageLabelOf("BETWEEN", DEFAULT_DEPTH - 1)}
+            {" "}is the usual one), which keeps your rank.
+          </li>
+          <li>
+            When the first stage is more than {FIRST_RANK_MAX_DAYS} days away, a first part comes before it (such as{" "}
+            {stageLabelOf("PART", STAGE_LEVEL.FAMILIAR)}), on the Sunday on or after day {FIRST_RANK_MAX_DAYS} or halfway to it, whichever
+            comes first, asking the cards your pace can be expected to bring to that level by then. So the first Aim rank comes
+            within about {Math.round(FIRST_RANK_MAX_DAYS / 7)} weeks.
+          </li>
+          <li>
+            At most {MAX_MILESTONES} milestones. A stage you already hold when you begin shows &quot;Held when you began&quot;
+            and is skipped. A plan with nothing left to do is refused: the depth already held in its Domains, or under{" "}
+            {SPAN_MIN_DAYS} days from done.
+          </li>
+          <li>
+            A life track&apos;s aim has no depth: its stages are shares of the practice planned to its date (
+            {TRACK_STAGE_SHARES.map(pct).join(", ")}), from your ticks.
+          </li>
+          <li>
+            A plan made before plans aimed at a depth can&apos;t start a milestone, and any wording from an earlier Gemini draft is
+            hidden. Start again at a depth carries its aim, Area and Domains into a new plan.
+          </li>
+        </ul>
         <p>
-          Intensity is Light {pct(INTENSITY.LIGHT)}, Steady {pct(INTENSITY.STEADY)} or Push {pct(INTENSITY.PUSH)} of the
-          gain your reviews can be expected to bring by the due day. A milestone asks at least max(
-          {MIN_INCREMENT_CARDS_FLOOR}, ⌈{MIN_INCREMENT_SHARE} × baseline⌉) cards above its baseline, or its level steps
-          down. A practice counts {pct(KEEP_SHARE)} of its planned sessions, rest and vacation days excused.
-        </p>
-        <p>
-          A milestone&apos;s progress is the lowest of its parts, read from stored readings: its Domains&apos; cards at its
+          A milestone&apos;s progress is the lowest of its parts, read from stored readings: each Domain&apos;s cards at its
           level (tested by your reviews), the sessions you ticked and the steps you did. With no reading it is not
           measured, and nothing is invented in its place.
         </p>
       </Card>
 
-      <Card title="Is the plan realistic?" sub="What the app checks, and what it can't">
+      <Card title="Depth: high mastery, measured" sub="What the last stage means, and what counts toward it" wide>
+        <p>
+          A Field aim is planned to a depth: {STAGE_NAMES.MASTERED} (level {DEFAULT_DEPTH}) unless you choose{" "}
+          {STAGE_NAMES.FLUENT} (level {fluent}) or {STAGE_NAMES.RETAINED} (level {retained}). A lower depth is your choice, and
+          it stays on the plan for good. The app doesn&apos;t lower the depth to fit a date: it moves the date instead.
+        </p>
+        <ol className="rules-list">
+          <li>
+            Depth: every Domain the aim needs holds its count of cards at the depth&apos;s level. At level {DEFAULT_DEPTH} each
+            counted card passed its level-{DEFAULT_DEPTH - 1} review, about {last} days after the one before (longer with your
+            interval settings), at the first try. Tested by your reviews.
+          </li>
+          <li>
+            Coverage: each Domain counts on its own, the lowest of them, never a total. Its count is the app&apos;s policy or
+            yours, and a count below the policy is shown on the plan for good.
+          </li>
+          <li>
+            Practice kept: the plan&apos;s practice at {pct(KEEP_SHARE)} of its planned sessions overall, with practice that
+            uses what you know kept from {STAGE_NAMES.FLUENT} on. From your ticks.
+          </li>
+          <li>
+            A standard you set: a checkpoint with your own bar, on the last milestone or at your exam, logged at or above the
+            bar. You logged it.
+          </li>
+          <li>Held: the depth counts as reached once it has held {REACH_CONFIRM_DAYS} days.</li>
+        </ol>
+        <p>
+          The cards that count are every card type except {listWords(NOT_COUNTED)}: recognising an answer isn&apos;t
+          recalling it, and the plan shows how many it leaves out. A card at exactly the depth&apos;s level counts only when
+          it got there on a first-try pass. A miss is retried the next day without losing the level; a card whose pass into
+          the level comes right after a miss (a strike, a miss where a skill held the level, or the miss that dropped it from that level)
+          counts after its next review. On reviews logged before the app recorded the level, that miss counts only within{" "}
+          {RETRY_ENTRY_DAYS} days of the pass. To find that miss, the app reads a card&apos;s reviews back {cleanWindow} days at
+          level {DEFAULT_DEPTH}: the longest a card can stay there, with the miss before it (more with a loadout that stretches
+          spacing or grace). A card a skill kept at its level past its grace can stay longer, and its entry then reads as a
+          first try.
+        </p>
+        <Formula>
+          cards a Domain needs = max({COVER_FLOOR_CARDS}, ⌈{COVER_SHARE} × its cards that count now⌉, {CARDS_PER_OUTLINE_LINE} × its outline lines)
+        </Formula>
+        <ul className="rules-bullets">
+          <li>
+            An outline line belongs to the Domain you tie it to (the app suggests one by its words; Gemini never chooses it).
+            Lines tied to no Domain are shared evenly between the Domains, and listed.
+          </li>
+          <li>
+            You can type a Domain&apos;s count, from {COVER_MIN} to {COVER_MAX}. One below the app&apos;s is your choice, shown
+            for good, and while it stands the top rank on the plan is {aimRankName(RANK_TOP - 1)}. With no outline the plan
+            says &quot;coverage unchecked: no outline&quot; for good.
+          </li>
+          <li>
+            New cards to write: ⌈{WRITE_MARGIN} × the count⌉ less the cards that count now, a spare of {pct(WRITE_MARGIN - 1)}{" "}
+            because some cards lag. A plan holds at most {DEPTH_DOMAINS_MAX} Domains.
+          </li>
+        </ul>
+        <p>
+          The floor of {COVER_FLOOR_CARDS} cards and the {pct(COVER_SHARE)} share are the app&apos;s policy, not facts about a
+          subject: change a count if you know better. The app tests whether you hold the cards you wrote; whether they cover
+          everything your aim needs is yours to judge, and your outline and your standard are the outside checks.
+        </p>
+      </Card>
+
+      <Card title="Is the plan realistic?" sub="Keep the depth, move the date: what the app checks, and what it can't" wide>
+        <Formula>stage day = the first day every Domain&apos;s expected cards at the stage&apos;s level reach its count</Formula>
+        <ul className="rules-bullets">
+          <li>
+            Expected reach follows the app&apos;s review rules: a miss costs a day, {REACH_STRIKE_LIMIT} in a row cost a level,
+            and a card overdue past its grace drops a level. A due review is done on its day as often as you clear your due
+            queue, and missed days bunch together as they do in your history.
+          </li>
+          <li>
+            It uses your pass rate over {PASS_SHARE_WINDOW_DAYS} days (it reads high: a lapse by neglect isn&apos;t logged); for
+            reviews at level {LONG_GAP_LEVEL} and above, gaps of {longGap} days and more, at most {pct(P_LONG_CAP)}, the
+            app&apos;s policy, since none of your reviews has tested gaps that long yet; the share of your due queue you clear,
+            over {CLEARANCE_WINDOW_DAYS} days; and how missed days bunch, over your last {CLEARANCE_SERIES_DAYS} days (a day
+            that clears under {pct(OFF_DAY_CLEAR_SHARE)} of its queue counts as missed).
+          </li>
+          <li>
+            Until each is measured the app assumes it, and says so: a pass rate of {pct(P_PRIOR)} until{" "}
+            {PASS_SHARE_MIN_REVIEWS} reviews, clearing {pct(C_PRIOR)} of the queue until {CLEARANCE_WINDOW_DAYS} days, a
+            missed day followed by another {pct(RHO_PRIOR)} of the time until {RHO_MIN_DAYS} days, and a pace you typed until yours is measured. A date that rests
+            on an assumption reads &quot;estimate&quot;, names it, and is offered a re-date once it is measured; it is never
+            the best case. The best case, every review passing, is shown on its own line.
+          </li>
+          <li>
+            How hard is the share of your usual writing pace the plan counts on: Light {pct(PACE_SHARE.LIGHT)}, Steady{" "}
+            {pct(PACE_SHARE.STEADY)}, Push {pct(PACE_SHARE.PUSH)}. It moves dates, never the depth.
+          </li>
+          <li>
+            &quot;When realistic&quot;, the default, dates the plan itself. A date you choose reads Fits (on or after the realistic date),
+            Tight (it needs your full usual pace), Over (up to {OVER_PACE_FACTOR} × your usual pace: it needs your &quot;keep my
+            date&quot; switch and shows for good) or Impossible (before the earliest the depth can be reached even at{" "}
+            {OVER_PACE_FACTOR} × your pace: refused). The offers are the realistic date, keeping yours, or a lower depth, and
+            none is taken by itself; the plan also says which stage it reaches by your date. A date the app set is never
+            called your choice.
+          </li>
+          <li>
+            An exam with a date is a waypoint inside the plan, not its end: the depth stays, the exam sits in the stage that
+            holds its day with mock tests before it, its score is the plan&apos;s standard, and the plan says which stage it
+            reaches by then.
+          </li>
+          <li>
+            When most of the wait comes after the last card is written ({pct(SCHEDULE_BOUND_SHARE)} or more of the{" "}
+            {floorBase(DEFAULT_DEPTH)} days a new card needs to reach level {DEFAULT_DEPTH}), the plan says the date is set by
+            the review schedule, not your hours.
+          </li>
+        </ul>
         <Formula>available = min(your hours × A, ramp cap), over the days not held</Formula>
         <ul className="rules-bullets">
           <li>
@@ -605,18 +839,35 @@ function RoadmapRules({ edge, judgeDay }: { edge: string; judgeDay: string }) {
             estimated.
           </li>
           <li>
-            Reach discounts each pass a card still needs by your pass share, measured over {PASS_SHARE_WINDOW_DAYS} days
-            once you have {PASS_SHARE_MIN_REVIEWS} reviews; until then it is the best case, and says so. The pass share reads
-            high: a lapse by neglect isn&apos;t logged.
+            With your own &quot;hours this usually takes&quot; figure and its source, the date is no earlier than your hours
+            reach it. Without one the aim reads &quot;Aim not checked&quot;.
+          </li>
+        </ul>
+      </Card>
+
+      <Card title="Practice that builds the depth" sub="From the app's list of practice types, yours to change">
+        <ul className="rules-bullets">
+          <li>
+            At {STAGE_NAMES.FOUNDATION} and {STAGE_NAMES.FAMILIAR} a stage holds at least one practice that makes you recall:{" "}
+            {retrieval}.
           </li>
           <li>
-            A target code fitted reads Fitted, with its arithmetic and no verdict. A target you type reads Fits, Tight (only
-            in the best case), Over (beyond it) or Impossible (faster than the review schedule allows). Impossible blocks the
-            plan; Over needs your &quot;keep it over&quot; switch, and shows for good.
+            From {STAGE_NAMES.RETAINED} on it holds at least one that uses what you know: {production}, or timed practice on an
+            exam aim.
           </li>
           <li>
-            The aim itself is checked only against your own &quot;hours this usually takes&quot; figure and its source.
-            Without one it reads &quot;Aim not checked&quot;.
+            When a stage lacks one, the app adds it, labelled &quot;added by the app&quot;, if practices are allowed and a slot
+            is free. You may swap it for another type from the list.
+          </li>
+          <li>
+            Sessions are at least {fromRetained} minutes from {STAGE_NAMES.RETAINED} and {fromFluent} from{" "}
+            {STAGE_NAMES.FLUENT}. When a session that long doesn&apos;t fit, writing slows first (a later date) before the time
+            check reads Over.
+          </li>
+          <li>
+            Effort is never sized by a model: it is the practice type and its minutes, the app&apos;s or yours. With practices
+            switched off there is no practice from {STAGE_NAMES.FLUENT} on, so the top rank on the plan is{" "}
+            {aimRankName(RANK_TOP - 1)}.
           </li>
         </ul>
       </Card>
@@ -643,6 +894,10 @@ function RoadmapRules({ edge, judgeDay }: { edge: string; judgeDay: string }) {
           <li>
             Once started, its due day is its goal&apos;s: a Reschedule on Today moves it, and progress, pay and reach are
             all judged on that one day.
+          </li>
+          <li>
+            When it would pay only because of a practice the app added, its Start sheet says so: switch that practice off and
+            it pays nothing.
           </li>
           <li>
             A milestone pays once. Started again after a drop, it is still the same milestone: once the copy starts, the
@@ -684,15 +939,22 @@ function RoadmapRules({ edge, judgeDay }: { edge: string; judgeDay: string }) {
         </div>
         <ul className="rules-bullets">
           <li>
-            Each count is the gap left ÷ the weeks left. Bring asks at most what can be expected to reach the level this week
-            at the pass rate stored when the milestone started. A card that was due anyway counts: passing its review is the
-            step.
+            Bring and Add split by Domain: each Domain is its own part with its own count, and a Domain already at its count
+            has none. Only the cards that count are counted ({listWords(NOT_COUNTED)} isn&apos;t), and on the depth&apos;s last
+            stage a card that reached the level on a retry counts after its next review. Today shows the first{" "}
+            {WEEK_QUEST_PARTS_TODAY} parts of a row; the roadmap page shows all of them.
           </li>
           <li>
-            Add asks at most max({WEEK_QUEST_ADD_MIN_CAP}, ⌈{WEEK_QUEST_CATCHUP_FACTOR} × the new cards a week the plan
-            needed at Start⌉), so missed weeks never pile up (the catch-up cap), and at most what the week&apos;s time holds
-            at {CARD_WRITE_MIN} min a card after practices, reviews and your other Fields&apos; weekly quotas (the capacity
-            cap). A card added in the aim&apos;s own Field counts toward that Field&apos;s weekly quota too.
+            Each count is the gap left ÷ the weeks left. Bring asks at most what can be expected to reach the level this week
+            at the pass rates and clearance stored when the milestone started. A card that was due anyway counts: passing its
+            review is the step.
+          </li>
+          <li>
+            Add asks what the Domain&apos;s count still needs (with its spare), at most max({WEEK_QUEST_ADD_MIN_CAP}, ⌈
+            {WEEK_QUEST_CATCHUP_FACTOR} × the new cards a week the plan needed there at Start⌉), so missed weeks never pile up
+            (the catch-up cap), and at most what the week&apos;s time holds at {CARD_WRITE_MIN} min a card after practices,
+            reviews and your other Fields&apos; weekly quotas, shared between the Domains (the capacity cap). A card added in
+            the aim&apos;s own Field counts toward that Field&apos;s weekly quota too.
           </li>
           <li>
             Sessions ask for the plan&apos;s own count, and missed ones never carry into the next week. A step shows once the
@@ -700,9 +962,10 @@ function RoadmapRules({ edge, judgeDay }: { edge: string; judgeDay: string }) {
             {pct(WEEK_QUEST_CHECKPOINT_FROM)} of the window has passed, and its score never moves progress.
           </li>
           <li>
-            A week holds at most {WEEK_QUESTS_PER_WEEK_MAX} week quests, and Today shows {WEEK_QUEST_ROWS_TODAY} before the
-            rest. The set is fixed just after Monday {edge} and never changes mid-week; its results are written from the{" "}
-            {judgeDay} {edge} after its Sunday ({WEEK_QUEST_FINAL_LAG_DAYS} days on), once late ticks and make-ups are in.
+            A week holds at most {WEEK_QUESTS_PER_WEEK_MAX} week quests (a row&apos;s parts are not week quests), and Today shows{" "}
+            {WEEK_QUEST_ROWS_TODAY} before the rest. The set is fixed just after Monday {edge} and never changes mid-week; its
+            results are written from the {judgeDay} {edge} after its Sunday ({WEEK_QUEST_FINAL_LAG_DAYS} days on), once late
+            ticks and make-ups are in.
           </li>
           <li>Week quests pay nothing, add nothing to Today&apos;s counts or the bell, never read red, and never link to Review.</li>
         </ul>
@@ -719,7 +982,7 @@ function RoadmapRules({ edge, judgeDay }: { edge: string; judgeDay: string }) {
                 </th>
                 {PROFICIENCY_PARTS.map((k) => (
                   <th key={k} scope="col" className="t-eyebrow">
-                    {k}
+                    {PROFICIENCY_PART_WORD[k]}
                   </th>
                 ))}
               </tr>
@@ -743,41 +1006,64 @@ function RoadmapRules({ edge, judgeDay }: { edge: string; judgeDay: string }) {
         </div>
         <ul className="rules-bullets">
           <li>
-            Cards, tested by your reviews: for each end target of T cards at level L, the T best cards in its Domains give Σ
-            weight(min(level, L)) ÷ (T × weight(L)). A card above L counts as L; a missing card counts nothing.
+            Cards, tested by your reviews: for each Domain&apos;s count n at the depth&apos;s level L, its n best cards that
+            count give Σ weight(min(level, L)) ÷ (n × weight(L)). A card above L counts as L; a missing card counts nothing;
+            a card that reached L on a retry weighs as the level below until its next pass. So it reads {pct(1)} only when the
+            depth is held.
           </li>
           <li>Practice, from your ticks: Σ min(kept, planned) ÷ Σ planned, practice by practice.</li>
-          <li>Milestones: reached ÷ scheduled. A reach that rests on ticks counts once it has held {REACH_CONFIRM_DAYS} days.</li>
+          <li>
+            Stages: reached ÷ scheduled. A stage held when you began counts as reached, and a first part counts as a stage.
+            A reach that rests on ticks counts once it has held {REACH_CONFIRM_DAYS} days.
+          </li>
           <li>
             A plan without practice (a Field Area with no practices), or without cards (a track Area), renormalises the
             shares over the parts it has, as the table shows.
           </li>
         </ul>
         <p>
-          A level&apos;s weight is the days of review spacing a card has come through to reach it, at base spacing. A card
-          just written, or passed once, weighs nothing, so writing cards alone moves nothing.
+          It always names what it is measured toward, &quot;Proficiency toward {STAGE_NAMES.FLUENT} (level {fluent})&quot;, so a
+          figure after a lower depth never reads as more. A level&apos;s weight is the days of review spacing a card has come
+          through to reach it, at base spacing. A card just written, or passed once, weighs nothing, so writing cards alone
+          moves nothing.
         </p>
         <Samples head={["level", "weight"]} rows={levels.map((l) => [String(l), String(LEVEL_WEIGHT(l))])} />
         <p>
           It shows as a whole percentage, rounded down, from the day&apos;s stored reading. A slipped card lowers it the same
-          day. A re-plan changes it as a change of plan, shown with the figure before it, never as a gain. It pays nothing
-          and sets no goal&apos;s progress.
+          day. A re-plan, a lower depth or a changed count changes it as a change of plan, shown with the figure before it,
+          never as a gain or a loss. It pays nothing and sets no goal&apos;s progress.
         </p>
       </Card>
 
-      <Card title="Aim rank" sub="A record of the milestones you reached: kept for good, and it pays nothing">
+      <Card title="Aim rank" sub="A record of the stages you reached: kept for good, and it pays nothing">
         <p className="ink-0">{AIM_RANKS.join(" → ")}</p>
         <p>
-          Every aim starts at {aimRankName(0)}. Reaching the milestone at place j in the plan gives the Aim rank at place
-          min(j, {RANK_MILESTONE_MAX}); reaching the aim gives the Aim rank {aimRankName(RANK_TOP)} on a plan that has had{" "}
-          {PARAGON_MIN_MILESTONES} or more milestones.
+          Every aim starts at {aimRankName(0)}. Each stage you reach inside the plan gives the Aim rank in the stages table;
+          a gate in between keeps your rank, and a first part gives its stage&apos;s Aim rank early, so the stage itself then
+          keeps your rank. A first part before the depth&apos;s own stage gives the Aim rank of the stage before it instead (
+          {partAtDepth} on a plan at level {DEFAULT_DEPTH}): its count can be met before the depth is held, so the
+          depth&apos;s Aim rank comes only with the depth. A stage you already held when you began gives no Aim rank.
+        </p>
+        <p>
+          {aimRankName(RANK_TOP)} comes with the aim reached on a plan at level {DEFAULT_DEPTH}: its last stage reached and
+          held, every Domain it needs at level {DEFAULT_DEPTH} on the same day&apos;s readings, the plan&apos;s practice kept
+          at {pct(KEEP_SHARE)} overall and the practice that uses what you know kept from {STAGE_NAMES.FLUENT} on, and your
+          standard logged at or above its bar. A stage closed short on the way doesn&apos;t block it. A lower depth tops out
+          at its own stage&apos;s Aim rank, so the top rank on this plan is {aimRankName(STAGE_RANK.FLUENT)} at level {fluent}{" "}
+          and {aimRankName(STAGE_RANK.RETAINED)} at level {retained}. With no standard, a Domain below the app&apos;s count,
+          or no such practice from {STAGE_NAMES.FLUENT} on, the top rank on this plan is {aimRankName(RANK_TOP - 1)}.
+        </p>
+        <p>
+          A life track&apos;s aim has no levels, so its stages give the Aim rank by place: the k-th stage you reach gives the
+          one at place k, and {aimRankName(RANK_TOP)} needs a standard, {PARAGON_MIN_MILESTONES} or more stages and at least{" "}
+          {TRACK_PARAGON_MIN_DAYS} days.
         </p>
         <div className="rules-scroll">
           <table className="rules-table">
             <tbody>
               <tr>
                 <th scope="col" className="t-eyebrow">
-                  Milestones
+                  Life track stages
                 </th>
                 <th scope="col" className="t-eyebrow">
                   Each one reached gives
@@ -786,13 +1072,13 @@ function RoadmapRules({ edge, judgeDay }: { edge: string; judgeDay: string }) {
                   Top rank on this plan
                 </th>
               </tr>
-              {plans.map((p) => (
+              {tracks.map((p) => (
                 <tr key={p.n}>
                   <td className="num">{p.n}</td>
                   <td className="ink-1">{p.gives.join(" · ")}</td>
                   <td className="ink-1">
                     {aimRankName(p.top)}
-                    {p.top === RANK_TOP ? ", with the aim" : ""}
+                    {p.top === RANK_TOP ? `, with the aim, a standard and ${TRACK_PARAGON_MIN_DAYS} days` : ""}
                   </td>
                 </tr>
               ))}
@@ -808,10 +1094,35 @@ function RoadmapRules({ edge, judgeDay }: { edge: string; judgeDay: string }) {
             plan.
           </li>
           <li>
-            The rank is kept for good: a slipped card lowers Proficiency, never the Aim rank. A new Aim rank is marked on the
-            Aim card for {RANK_NEW_DAYS} days.
+            The rank is kept for good: a slipped card lowers Proficiency, never the Aim rank, and a lower depth keeps every Aim
+            rank given so far. A new Aim rank is marked on the Aim card for {RANK_NEW_DAYS} days.
           </li>
           <li>It is not a title, and it pays nothing.</li>
+        </ul>
+      </Card>
+
+      <Card title="Suggestions to set an aim" sub="An invitation, never a count">
+        <ul className="rules-bullets">
+          <li>
+            With no aim set, You asks for one in place. Today mentions it in one quiet line on a fresh start: the life
+            week&apos;s Monday, the first of the month, or your first day back after more than {AIM_AWAY_DAYS} days away. After{" "}
+            {AIM_BACKOFF_FRESH_DAYS} of those with no answer, only on the first of the month. Within {AIM_DONE_SHOW_DAYS} days
+            of an aim&apos;s end it reads &quot;Your last aim is done&quot;. Capture offers to make a long goal you type your
+            aim.
+          </li>
+          <li>
+            Not now on You folds its card to one line for {AIM_LATER_DAYS} days, and Today&apos;s line and capture&apos;s offer
+            stay quiet meanwhile. Not now on Today&apos;s line, or that one line&apos;s ×, hides all of them for{" "}
+            {AIM_LATER_DAYS} days from then. None of them is a no: the switch in Settings stays on. Don&apos;t suggest this, or
+            the switch in Settings, is the lasting no: it is stored with your settings, so it holds on every device, and
+            Settings can turn it back on. Either way your last aim&apos;s Aim rank stays on You, with nothing that asks.
+          </li>
+          <li>
+            Your own waiting steps have their own line: a draft waiting for your check shows on at most {AIM_DRAFT_SHOWS_MAX}{" "}
+            days, and a milestone ready to start daily for {AIM_START_DAILY_DAYS} days, then on fresh starts. Not now hides
+            either for {AIM_STEP_SNOOZE_DAYS} days; the switch doesn&apos;t govern them.
+          </li>
+          <li>None of these is counted, read red, reaches the bell, plays a sound or pays anything.</li>
         </ul>
       </Card>
     </>

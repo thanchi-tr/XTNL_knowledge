@@ -11,14 +11,24 @@
  *
  * draftRoadmap returns at once with the RUNNING run; the model call runs in
  * after() (Next 16 dispatches actions one at a time, so a 37-second action
- * would block every tap behind it), under the page's maxDuration. Start's
- * after() sizing goes through life-sizing applySizing, as capture does.
+ * would block every tap behind it), under the page's maxDuration. Start
+ * defers nothing: no model sizes or explains a plan-born ('rm:') task
+ * (decision 50; contracts §15.6), so life-sizing is never called from here.
  *
  * Refresh: an action that changes the roadmap page calls refresh() on
  * success, so the response carries the re-rendered route (the caller need
  * not router.refresh() as well). saveIntake, draftRoadmap, buildStarter and
  * startManual do not: the intake page navigates to /you/roadmap itself.
- * dismissAimPrompt only sets a cookie, which re-renders the page by itself.
+ * snoozeAimPrompt and snoozeAimStep only set a cookie, which re-renders the
+ * page by itself (Next 16: a cookie set in a Server Function returns the
+ * updated UI in the same round trip).
+ *
+ * Revision 4 (lane R4): snoozeAimPrompt, setAimSuggestions, snoozeAimStep,
+ * lowerDepth, confirmDomainAdditions, confirmSessionPicks, moveLine and
+ * setLineDomain; the fix round's hideAimPrompt (the LATER line's ×, the
+ * 'hide:<day>' cookie) and keepCalibratedDates ([Keep the dates], recorded on
+ * the plan). The year-long 'off' cookie is never written any more;
+ * dismissAimPrompt is now "Not now" until the Aim card moves off it.
  *
  * Contract: docs/life-plan/roadmap-contracts.md §R4.
  */
@@ -26,7 +36,6 @@ import { after } from "next/server";
 import { cookies } from "next/headers";
 import { refresh } from "next/cache";
 import { getCurrentUserId } from "@/lib/user";
-import { applySizing } from "@/lib/life-sizing";
 import {
   acceptCore,
   addItemCore,
@@ -34,32 +43,42 @@ import {
   archiveRoadmapCore,
   buildStarterCore,
   claimDraftCore,
+  confirmDomainAdditionsCore,
+  confirmSessionPicksCore,
   decideItemCore,
   discardDraftCore,
   editItemCore,
   finishStartCore,
+  hideAimPromptCore,
+  keepCalibratedDatesCore,
   keepOnTodayCore,
   keepUnflaggedCore,
   logCheckpointCore,
+  lowerDepthCore,
   markRoadmapDoneCore,
+  moveLineCore,
   replanCore,
   resolveDomainCore,
   returnStartingCore,
   saveIntakeCore,
   setAimFigureCore,
+  setAimSuggestionsCore,
+  setLineDomainCore,
+  snoozeAimPromptCore,
+  snoozeAimStepCore,
   startAgainCore,
   startManualCore,
   startMilestoneCore,
   startPreview,
   undoAcceptCore,
   undoDiscardCore,
+  type AimCookieJar,
   type NewItem,
   type RoadmapDeps,
 } from "@/lib/roadmap-server";
 import {
-  AIM_PROMPT_COOKIE,
-  AIM_PROMPT_COOKIE_MAX_AGE_S,
   type AcceptChoices,
+  type AimDepth,
   type DomainResolution,
   type Intake,
   type ItemDecisionChoice,
@@ -76,11 +95,10 @@ import { createDomain } from "./taxonomy";
 const SAVE_FAILED = "Couldn't save that. Try again.";
 const NO_REF = "That's no longer here. Refresh and try again.";
 
-/** What every action hands its core: after() for the background work, the real sizing, and the taxonomy's createDomain. */
+/** What every action hands its core: after() for the background work (the draft's model call) and the taxonomy's createDomain. */
 function depsOf(): RoadmapDeps {
   return {
     defer: (task) => after(task),
-    applySizing: (templateId) => applySizing(templateId),
     io: { createDomain: (fieldId, name) => createDomain(fieldId, name) },
   };
 }
@@ -281,16 +299,123 @@ export async function keepOnToday(milestoneId: string, templateId: string): Prom
 }
 
 /**
- * The Aim card's ×: sets the cookie AIM_PROMPT_COOKIE = 'off' for a year.
- * No database write, so it works on a writes-off server too (the line is a
- * per-browser preference); /you reads the cookie on the server.
+ * Retired as a writer (F-R4-1, F-R4-5): the year-long 'off' cookie is never
+ * written any more. Kept, until R5 moves the Aim card off it, as "Not now"
+ * (the 4-week snooze), which is what every × on an aim surface means now.
  */
 export async function dismissAimPrompt(): Promise<RoadmapActionResult<null>> {
+  return snoozeAimPrompt();
+}
+
+// ═══ Revision 4 (roadmap-rev4.md; contracts §14) ════════════════════════════
+
+/**
+ * Next's cookies() as the cores' jar (Next 16: cookies() is async; set and
+ * delete work in a Server Function, and the response carries the cookie).
+ */
+async function jarOf(): Promise<AimCookieJar> {
+  const store = await cookies();
+  return {
+    get: (name) => store.get(name)?.value,
+    set: (name, value, opts) => {
+      store.set(name, value, opts);
+    },
+    delete: (name) => {
+      store.delete(name);
+    },
+  };
+}
+
+/**
+ * "Not now" on the empty Aim card or Today's SET line (F-R4-1, F-R4-3): the
+ * 4-week 'later:<today>' cookie. No database write, so it works on a
+ * writes-off server too; the cookie re-renders the page by itself.
+ */
+export async function snoozeAimPrompt(): Promise<RoadmapActionResult<null>> {
   try {
-    (await cookies()).set(AIM_PROMPT_COOKIE, "off", { maxAge: AIM_PROMPT_COOKIE_MAX_AGE_S, path: "/", sameSite: "lax", httpOnly: true });
-    return { ok: true, value: null };
+    return await snoozeAimPromptCore(await jarOf(), new Date());
   } catch (err) {
-    console.error("roadmap dismissAimPrompt failed:", err);
+    console.error("roadmap snoozeAimPrompt failed:", err);
     return { ok: false, error: SAVE_FAILED };
   }
+}
+
+/**
+ * "Don't suggest this" (false), its Undo and the Settings switch (true)
+ * (F-R4-1, F-R4-5): LifeSettings.aimSuggestions, the lasting no that holds on
+ * every device. Refuses with writes off; true also clears a legacy 'off'
+ * cookie and restarts the back-off ('on:<today>').
+ */
+export async function setAimSuggestions(on: boolean): Promise<RoadmapActionResult<null>> {
+  if (on !== true && on !== false) return { ok: false, error: NO_REF };
+  return act("setAimSuggestions", true, async (userId, now) => setAimSuggestionsCore(userId, on, await jarOf(), now, depsOf()));
+}
+
+/** "Not now: hide this for a week" on Today's DRAFT or START line (F-R4-3). A cookie only. */
+export async function snoozeAimStep(kind: "DRAFT" | "START", id: string): Promise<RoadmapActionResult<null>> {
+  if ((kind !== "DRAFT" && kind !== "START") || !isRef(id)) return { ok: false, error: NO_REF };
+  try {
+    return await snoozeAimStepCore(await jarOf(), kind, id, new Date());
+  } catch (err) {
+    console.error("roadmap snoozeAimStep failed:", err);
+    return { ok: false, error: SAVE_FAILED };
+  }
+}
+
+/** [Choose a lower depth…] (F-R4-11): the only path that lowers a depth, shown on the plan for good. */
+export async function lowerDepth(roadmapId: string, to: AimDepth, reason: "CHOICE" | "EXAM"): Promise<RoadmapActionResult<null>> {
+  if (!isRef(roadmapId)) return { ok: false, error: NO_REF };
+  return act("lowerDepth", true, (userId, now) => lowerDepthCore(userId, roadmapId, to, reason, now, depsOf()));
+}
+
+/** Gemini's Domain additions (F-R4-21): the chosen ones added, the rest left out, the plan re-dated. */
+export async function confirmDomainAdditions(roadmapId: string, version: number, domainIds: string[]): Promise<RoadmapActionResult<null>> {
+  if (!isRef(roadmapId) || !Number.isInteger(version) || !Array.isArray(domainIds) || domainIds.length > 40 || !domainIds.every(isRef)) return { ok: false, error: NO_REF };
+  return act("confirmDomainAdditions", true, (userId, now) => confirmDomainAdditionsCore(userId, roadmapId, version, domainIds, now, depsOf()));
+}
+
+/** A body or care plan's session picks (F-R4-17): [Keep them] or [Use easy, mobility and technique instead]. */
+export async function confirmSessionPicks(roadmapId: string, choice: "KEEP" | "EASY"): Promise<RoadmapActionResult<null>> {
+  if (!isRef(roadmapId) || (choice !== "KEEP" && choice !== "EASY")) return { ok: false, error: NO_REF };
+  return act("confirmSessionPicks", true, (userId, now) => confirmSessionPicksCore(userId, roadmapId, choice, now, depsOf()));
+}
+
+/** Moves an outline line to another milestone (F-R4-21). */
+export async function moveLine(itemId: string, toMilestoneId: string): Promise<RoadmapActionResult<null>> {
+  if (!isRef(itemId) || !isRef(toMilestoneId)) return { ok: false, error: NO_REF };
+  return act("moveLine", true, (userId, now) => moveLineCore(userId, itemId, toMilestoneId, now, depsOf()));
+}
+
+/** Changes an outline line's Domain (F-R4-21): the plan is re-dated with its coverage. */
+export async function setLineDomain(roadmapId: string, lineIndex: number, domainId: string | null): Promise<RoadmapActionResult<null>> {
+  if (!isRef(roadmapId) || !Number.isInteger(lineIndex) || (domainId !== null && !isRef(domainId))) return { ok: false, error: NO_REF };
+  return act("setLineDomain", true, (userId, now) => setLineDomainCore(userId, roadmapId, lineIndex, domainId, now, depsOf()));
+}
+
+// ═══ Revision 4 fix round: shells (lane 0; contracts §15.10) ════════════════
+
+/**
+ * "Not now: no aim suggestions for 4 weeks" on the LATER line (fix round): the
+ * 'hide:<today>' cookie (roadmap-invite hideCookieValue), which aimPromptOf
+ * reads as HIDDEN. A cookie only, like snoozeAimPrompt, so it works on a
+ * writes-off server too; the cookie re-renders the page by itself.
+ */
+export async function hideAimPrompt(): Promise<RoadmapActionResult<null>> {
+  try {
+    return await hideAimPromptCore(await jarOf(), new Date());
+  } catch (err) {
+    console.error("roadmap hideAimPrompt failed:", err);
+    return { ok: false, error: SAVE_FAILED };
+  }
+}
+
+/**
+ * [Keep the dates] on the CALIBRATED offer (fix round, F-R4-11): recorded on
+ * the plan (the acceptance's dateOrigin.calibrating loses the inputs measured
+ * now; nothing is re-dated), never in a device's localStorage, so the offer
+ * doesn't return on another device. Refuses with writes off.
+ */
+export async function keepCalibratedDates(roadmapId: string): Promise<RoadmapActionResult<null>> {
+  if (!isRef(roadmapId)) return { ok: false, error: NO_REF };
+  return act("keepCalibratedDates", true, (userId, now) => keepCalibratedDatesCore(userId, roadmapId, now, depsOf()));
 }

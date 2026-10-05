@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -10,6 +10,7 @@ import {
   loadCaptureVocabulary,
   recaptureFromCapture,
   undoWeightCapture,
+  type CaptureAim,
   type CaptureErrorCode,
   type CaptureManyResult,
   type CaptureResult,
@@ -23,9 +24,13 @@ import { normTitleOf } from "@/lib/life-lexicon";
 import { mark } from "@/lib/celebrate";
 import { MODAL_OPEN_SELECTOR } from "@/lib/shortcuts";
 import { SHEET_DRAFT_CLEARED_EVENT, writeIdeaHandoff, type SheetDraftCleared } from "@/lib/idea-handoff";
+import { writeAimHandoff } from "@/lib/roadmap-handoff";
+import type { AimPrompt } from "@/lib/roadmap-invite";
+import { AIM_MAX } from "@/lib/roadmap-types";
 import { useWordComplete, WordHintBar } from "@/components/WordComplete";
 import { useAutocorrect } from "@/components/useAutocorrect";
 import { IconButton } from "@/components/ui/Button";
+import { Icon } from "@/components/ui/Icon";
 import { dismissToast, getToasts, pushToast, subscribeToasts } from "@/components/ui/toast-store";
 import { CaptureChips } from "./CaptureChips";
 import { StatusLine, TOAST_MS, TOAST_SHORT_MS, dockToastOf, toastSentence, type Toast } from "./CaptureToast";
@@ -88,6 +93,7 @@ import {
   vocabPriceable,
   vocabRefreshDecision,
   vocabStale,
+  VOCAB_FRESH_MS,
   VOCAB_IDLE_MS,
   VOCAB_REFRESH_DELAY_MS,
   WEIGHT_UNIT_EVENT,
@@ -101,6 +107,23 @@ import {
   type VocabCache,
 } from "./capture-ui";
 import { pushEscapeLayer, trapTab } from "./layers";
+import {
+  AIM_LONG_GOAL_NOTE,
+  MAKE_IT_AN_AIM,
+  aimActionOf,
+  aimCaptureOf,
+  aimChipLabel,
+  aimCounterOf,
+  aimHandoffOf,
+  aimPrefixSpan,
+  aimPromptOnOpen,
+  aimRewriteOf,
+  isCaptureAim,
+  isCaptureAimPrompt,
+  isLongGoalLine,
+  offersAim,
+  type AimCapture,
+} from "./aim-capture";
 import type { WeightUnit } from "@/lib/weight";
 import {
   WEIGHT_PRIMARY,
@@ -162,6 +185,22 @@ import {
  * is logged as that day's reading, never saved as a task: one chip, 'Log
  * weight', a toast with Undo and a View link to Train, no Edit, no board
  * flash and no celebration (a record, not a reward).
+ *
+ * An aim line ('aim: hold a conversation in Japanese': aim-capture.ts,
+ * roadmap-rev4 F-R4-7) is never saved as a task: one chip, 'Aim → roadmap
+ * form', and the primary (and Enter) reads 'Open the aim form'. It writes
+ * the aim handoff (sessionStorage, never a URL) and navigates; the line
+ * stays in the sheet until an intake that took its aim saves, and the form
+ * then clears it (clearSheetDraftIf, the idea pattern; an open draft saved
+ * without its 'Use it' keeps the line). Its chip keeps the line as text (a
+ * task). A long goal with no roadmap open offers 'Make it an aim', which
+ * rewrites its prefix to 'aim: ', while set-an-aim suggestions are on and
+ * not snoozed (the vocabulary's aimPrompt is 'ASK': the user's "Don't
+ * suggest this", the Settings switch and a 4-week "Not now" quiet it here
+ * too, decision 34). The Goal ▾ menu's 'New aim' puts 'aim: ' in front of
+ * the line once a load has said no roadmap is open (a tool the user opens,
+ * so it reads the open roadmap only, never the prompt; not during an edit).
+ * No key is added for any of them.
  */
 
 const NO_WORDS: string[] = [];
@@ -196,6 +235,19 @@ interface SheetVocab extends VocabCache {
   priced: boolean;
   /** WordComplete's words, loaded only for idea lines; null until then. */
   words: string[] | null;
+  /**
+   * Whether a roadmap is open (CaptureVocabulary.aim), from the last server
+   * answer of this page load; never stored with the cached vocabulary, so
+   * undefined (unknown) until a load brings it.
+   */
+  aim?: CaptureAim;
+  /**
+   * Whether set-an-aim suggestions may show (CaptureVocabulary.aimPrompt),
+   * from a server answer: in memory only, like `aim`, and unknown again on an
+   * opening once that answer is older than VOCAB_FRESH_MS (aimPromptOnOpen),
+   * so a "no" tapped on /you or Today since is never contradicted.
+   */
+  aimPrompt?: AimPrompt;
 }
 
 interface Opening {
@@ -281,6 +333,7 @@ function settleUnsent(
  */
 export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null } = {}) {
   const pathname = usePathname();
+  const router = useRouter();
   const onToday = pathname === "/today";
   /** The Train page shows the weight card: a weigh-in saved there refreshes it. */
   const onTrain = pathname === "/train";
@@ -322,6 +375,8 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
   const [menu, setMenu] = useState<InsertMenu | null>(null);
   const [feedsOpen, setFeedsOpen] = useState(false);
   const [paste, setPaste] = useState<{ lines: string[]; truncated: boolean } | null>(null);
+  /** 'Make it an aim' rewrote a long goal's line: the line before, and the line it made. The aim chip puts the goal back while the line is still that one. */
+  const [aimRewrite, setAimRewrite] = useState<{ from: Line; to: string } | null>(null);
   const [coarse, setCoarse] = useState(false);
   const [pocket, setPocket] = useState(false);
   const [sentThisOpening, setSentThisOpening] = useState(0);
@@ -370,6 +425,11 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
   const idleTimer = useRef<number | null>(null);
   const showListRequest = useRef(false);
   const ideaModeRef = useRef(false);
+  /** The line is an aim line (its button names the open roadmap), and the line wants to know whether a roadmap is open at all (an aim line or a long goal). */
+  const aimLineRef = useRef(false);
+  const aimWantedRef = useRef(false);
+  /** A long goal: 'Make it an aim' also needs to know whether set-an-aim suggestions may show. */
+  const aimPromptWantedRef = useRef(false);
   const menuRef = useRef<InsertMenu | null>(null);
   /** Captures an edit is on its way to replace (replacingOf), for handlers that run later. */
   const replacingRef = useRef<ReadonlyMap<string, string>>(new Map());
@@ -383,6 +443,15 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
 
   const parsed = useMemo(() => (open && day ? parseCapture(text, { today: day, reverted }) : null), [open, day, text, reverted]);
   const ideaMode = parsed?.mode === "IDEA";
+  /**
+   * An 'aim: …' line (aim-capture aimCaptureOf), read before the parse: it
+   * opens the aim form instead of saving. Never while an edit of a saved line
+   * is open (an edit replaces a task row) or over a paste preview.
+   */
+  const aimCap = useMemo(() => (open && day && !editing && !paste ? aimCaptureOf(text, reverted) : null), [open, day, editing, paste, text, reverted]);
+  const longGoal = !aimCap && !editing && !paste && isLongGoalLine(parsed);
+  // The Goal ▾ menu's 'New aim' shows only with no roadmap open (known), so an open Goal menu asks too.
+  const aimWanted = !!aimCap || longGoal || (menu === "goal" && !editing);
   /** A bare weigh-in number is read in the user's unit (from the vocabulary; 'kg' until it loads). The server reads it the same way. */
   const weightUnit: WeightUnit = vocab?.weightUnit ?? "kg";
   const weighIn = useMemo(() => (open && day ? weighInOf(text, reverted, day, weightUnit) : null), [open, day, text, reverted, weightUnit]);
@@ -406,6 +475,9 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
     toastRef.current = toast;
     vocabRef.current = vocab;
     ideaModeRef.current = ideaMode;
+    aimLineRef.current = !!aimCap;
+    aimWantedRef.current = aimWanted;
+    aimPromptWantedRef.current = longGoal;
     menuRef.current = menu;
     replacingRef.current = replacing;
   });
@@ -508,7 +580,10 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
       .then((v) => {
         const cache: VocabCache = { day: v.day, goals: v.goals, recent: v.recent, rawBefore: v.rawBefore, active: v.active, ...(v.weightUnit ? { weightUnit: v.weightUnit } : {}), at: Date.now() };
         writeVocabCache(cache);
-        setVocab((prev) => ({ ...cache, priced: true, words: withWords ? v.words : (prev?.words ?? null) }));
+        // The open roadmap and the suggestions prompt ride only in memory (the stored cache never holds them): unknown when the server could not read them.
+        const aim = isCaptureAim(v.aim) ? v.aim : undefined;
+        const aimPrompt = isCaptureAimPrompt(v.aimPrompt) ? v.aimPrompt : undefined;
+        setVocab((prev) => ({ ...cache, priced: true, words: withWords ? v.words : (prev?.words ?? null), aim, aimPrompt }));
       })
       .catch(() => {
         /* the sheet still captures; the chips say 'priced on save' */
@@ -536,6 +611,14 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
       loadVocab(true);
       return;
     }
+    // An aim line's button names the open roadmap: asked at once, as an idea
+    // line's words are (an aim line saves nothing, so no save waits on it);
+    // once per opening, so a read that failed is not asked again and again.
+    if (openRef.current && aimLineRef.current && v?.aim === undefined && !o.refreshed) {
+      o.refreshed = true;
+      loadVocab(false);
+      return;
+    }
     const since = emptySince.current;
     const decision = vocabRefreshDecision({
       now,
@@ -543,7 +626,10 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
       savesInFlight: inFlight.current.size,
       savedThisOpening: o.saved,
       refreshedThisOpening: o.refreshed,
-      stale: vocabStale(v, todayKey(), now),
+      // A long goal wants to know whether a roadmap is open and whether suggestions may show
+      // ('Make it an aim'): until a load has said so, the vocabulary counts as stale, under the
+      // same rules that keep saves first.
+      stale: vocabStale(v, todayKey(), now) || (aimWantedRef.current && v?.aim === undefined) || (aimPromptWantedRef.current && v?.aimPrompt === undefined),
       coarseOpen: openRef.current && coarseRef.current,
       lineEmpty: !lineRef.current.text.trim(),
       emptyForMs: since === null ? 0 : now - since,
@@ -580,6 +666,11 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
   useEffect(() => {
     if (open && ideaMode && !vocab?.words) considerVocab();
   }, [open, ideaMode, vocab, considerVocab]);
+
+  // An aim line or a long goal asks whether a roadmap is open (and a long goal whether suggestions may show), when no load has said so yet.
+  useEffect(() => {
+    if (open && ((aimWanted && vocab?.aim === undefined) || (longGoal && vocab?.aimPrompt === undefined))) considerVocab();
+  }, [open, aimWanted, longGoal, vocab, considerVocab]);
 
   // An open phone sheet whose line has just emptied (or opened empty): the refresh may go once it stays empty.
   const lineEmpty = !text.trim();
@@ -857,6 +948,8 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
         setSentThisOpening(0);
         // Whether the ≈ may be shown is decided again: a vocabulary priced an hour ago reads 'priced on save' until the refresh.
         setVocab((v) => vocabOnOpen(v, today, Date.now()));
+        // Its suggestions prompt, read over VOCAB_FRESH_MS ago, is unknown again ('Make it an aim' waits for the next load).
+        setVocab((v) => aimPromptOnOpen(v, today, Date.now(), VOCAB_FRESH_MS));
         // A fresh opening starts with an empty status line: what an earlier
         // opening said has had its turn in the dock, and closing with nothing
         // added must not put it there again (dockToastChoice 0 → none).
@@ -1154,6 +1247,26 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
     sendBatch(lines);
   };
 
+  /**
+   * An aim line's primary and Enter (roadmap-rev4 F-R4-7): the aim goes to the
+   * intake form in sessionStorage (writeAimHandoff; the paths are fixed, so
+   * nothing typed is ever in a URL), then the sheet closes and the page
+   * changes. No capture action is called and nothing is stored as pending:
+   * the line stays in the sheet's draft until an intake that took its aim
+   * saves, and the form then clears it (clearSheetDraftIf; the words are
+   * never lost to a save that didn't use them). An ACTIVE roadmap can't take a new
+   * aim, so its page opens with no handoff. The open roadmap is asked again
+   * next time: the user is on their way to change it.
+   */
+  const openAimForm = (capture: AimCapture, sheetText: string) => {
+    const act = aimActionOf(vocabRef.current?.aim);
+    if (act.handoff) writeAimHandoff(aimHandoffOf(capture, sheetText));
+    setAimRewrite(null);
+    setVocab((v) => (v && v.aim !== undefined ? { ...v, aim: undefined } : v));
+    closeSheet("navigate");
+    router.push(act.href);
+  };
+
   /** Saves the line: closes, or stays for the next one. `inbox` sends it to the Inbox. */
   const submit = (source: EnterSource, stay: boolean, opts: { inbox?: boolean } = {}) => {
     const now = Date.now();
@@ -1166,6 +1279,12 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
     const line = lineRef.current;
     if (!line.text.trim() || !day) return;
     lastSubmitAt.current = now;
+    // An aim line opens the aim form: read before the parse, and nothing is saved as a task.
+    const aimLine = editing ? null : aimCaptureOf(line.text, line.reverted);
+    if (aimLine) {
+      openAimForm(aimLine, line.text);
+      return;
+    }
     const read = parseCapture(line.text, { today: day, reverted: line.reverted });
     const unit: WeightUnit = vocabRef.current?.weightUnit ?? "kg";
     const weighed = weighInOf(line.text, line.reverted, day, unit);
@@ -1587,6 +1706,48 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
   };
 
   /**
+   * The aim chip, tapped. Right after 'Make it an aim' (the line unchanged
+   * since) it puts the goal line back as it was; otherwise the 'aim:' prefix
+   * becomes text (a reverted span, Ctrl+Z brings it back) and the line reads
+   * as a task, here and on the server.
+   */
+  const revertAim = () => {
+    const line = lineRef.current;
+    const rewrite = aimRewrite;
+    setAimRewrite(null);
+    if (rewrite && rewrite.to === line.text) {
+      setLine(rewrite.from.text, rewrite.from.reverted);
+      setRevertHistory([]);
+      focusInput(rewrite.from.text.length);
+      announce("Back to the goal line");
+      return;
+    }
+    const span = aimPrefixSpan(line.text);
+    if (!span) return;
+    setLine(line.text, [...line.reverted, span]);
+    setRevertHistory((h) => [...h, { span, text: line.text }].slice(-20));
+    focusInput();
+  };
+
+  /** 'Make it an aim' under a long goal: its prefix becomes 'aim: ' in the line itself (aim-capture aimRewriteOf), so the change is seen and the aim chip undoes it. */
+  const makeItAnAim = () => {
+    if (!day) return;
+    const line = lineRef.current;
+    const read = parseCapture(line.text, { today: day, reverted: line.reverted });
+    const res = aimRewriteOf(line.text, line.reverted, read);
+    if (!res) return;
+    setAimRewrite({ from: { text: line.text, reverted: line.reverted }, to: res.text });
+    setLine(res.text, res.reverted);
+    setRevertHistory([]);
+    setError(null);
+    setNote(null);
+    setBlocked(null);
+    setMenu(null);
+    focusInput(res.caret);
+    announce(`The line is an aim now. ${aimActionOf(vocabRef.current?.aim).label}, or tap the Aim chip to keep the goal.`);
+  };
+
+  /**
    * A chip's words land in the line (capture-ui applyInsert) and the top row
    * comes back; the caret goes to the end, or to the title's place on a line
    * with no title yet.
@@ -1702,19 +1863,25 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
     const pinned = coarse || compact;
     const empty = !text.trim();
     const canSave = !empty && (!!parsed.title || !!weighIn);
-    const canInbox = canSave && !weighIn && !editing && !parsed.inbox && parsed.kind === "TASK" && !parsed.doneNow;
+    // An aim line saves nothing: its one action opens the aim form (never empty, never disabled).
+    const aimAct = aimCap ? aimActionOf(vocab?.aim) : null;
+    const canInbox = canSave && !aimCap && !weighIn && !editing && !parsed.inbox && parsed.kind === "TASK" && !parsed.doneNow;
     const primary = primaryAction({ editing: !!editing, coarse, empty, sentThisOpening, parsed });
-    const primaryLabel = weighIn && !primary.done && !editing ? WEIGHT_PRIMARY : primary.label;
+    const primaryLabel = aimAct ? aimAct.label : weighIn && !primary.done && !editing ? WEIGHT_PRIMARY : primary.label;
+    const primaryDisabled = aimAct ? false : !primary.done && !canSave;
     const priced = vocab && vocab.day === day && vocab.priced ? vocab.rawBefore : null;
     const duplicate = vocab && parsed.title && !ideaMode && !weighIn ? duplicateOf(parsed.title, vocab.active, editing?.norm ?? null) : null;
     const mustBlocked = blocked !== null && blocked === text;
     const offToday = !onToday;
-    const hint = coarse ? TOUCH_HINT : KEY_HINT;
+    const hint = aimAct ? (coarse ? aimAct.touchHint : aimAct.keyHint) : coarse ? TOUCH_HINT : KEY_HINT;
+    const aimCounter = aimCap ? aimCounterOf(aimCap.aim) : null;
+    // 'Make it an aim': a long goal, with no roadmap open and suggestions on and not snoozed (both known, not guessed).
+    const aimOffer = longGoal && offersAim(parsed, vocab?.aim, vocab?.aimPrompt);
 
     // The slot above the line: word hints for an idea, suggestions after '^' or '#', Recent on an empty line, else the insert row.
     let slot: React.ReactNode = null;
-    // A weigh-in has no grammar to add: no insert row, no suggestions.
-    if (!paste && !weighIn) {
+    // A weigh-in has no grammar to add: no insert row, no suggestions. Nor has an aim line (it goes to the aim form as it is).
+    if (!paste && !weighIn && !aimCap) {
       if (ideaMode) {
         slot = (
           <div className="capture-hints">
@@ -1747,7 +1914,8 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
           slot = <SuggestRow label="Recent" items={items} onPick={pickRecent} />;
         }
         if (!slot) {
-          slot = <InsertRow parsed={parsed} text={text} today={day} goals={goals} menu={menu} onMenu={onMenu} onInsert={insertIntoLine} />;
+          // The Goal ▾ menu's 'New aim' (F-R4-7) reads the open roadmap; never during an edit, whose line stays a task.
+          slot = <InsertRow parsed={parsed} text={text} today={day} goals={goals} aim={editing ? undefined : vocab?.aim} menu={menu} onMenu={onMenu} onInsert={insertIntoLine} />;
         }
       }
     }
@@ -1818,6 +1986,25 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
           })
         }
       />
+    ) : aimCap ? (
+      // An aim line: one chip, read before the parse. Tapping it keeps the line as text (a task), or, right after 'Make it an aim', puts the goal back.
+      <div className="capture-chips">
+        <ul className="capture-chip-row" aria-label="How the line was read">
+          <li>
+            <button
+              type="button"
+              className="chip btn-chip capture-chip"
+              onClick={revertAim}
+              onMouseDown={(e) => e.preventDefault()}
+              title={aimRewrite?.to === text ? "Tap to keep the goal" : `Tap to keep “${text.trim()}” as text`}
+              aria-label={`${aimChipLabel(vocab?.aim)}. ${aimRewrite?.to === text ? "Tap to keep the goal line." : `Tap to keep “${text.trim()}” as text.`}`}
+            >
+              {aimChipLabel(vocab?.aim)}
+              <Icon name="x" className="capture-chip-x" />
+            </button>
+          </li>
+        </ul>
+      </div>
     ) : (
       <CaptureChips
         text={text}
@@ -1843,6 +2030,24 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
       <>
         {!paste && autocorrect.recent.length > 0 && (
           <p className="capture-note">Corrected {autocorrect.recent.map((c) => `${c.from} → ${c.to}`).join(", ")} · Ctrl+Z undoes it</p>
+        )}
+        {aimCounter && (
+          <p className="capture-note">
+            <span className="num">{aimCounter}</span>
+            <span className="sr-only"> characters: the aim form takes {AIM_MAX} at most</span>
+          </p>
+        )}
+        {aimOffer && (
+          <>
+            <p className="capture-note" role="note">
+              {AIM_LONG_GOAL_NOTE}
+            </p>
+            <p className="capture-note">
+              <button type="button" className="link capture-toast-act" onMouseDown={(e) => e.preventDefault()} onClick={makeItAnAim}>
+                {MAKE_IT_AN_AIM}
+              </button>
+            </p>
+          </>
         )}
         {note && <p className="capture-note">{note}</p>}
         {error && (
@@ -1873,7 +2078,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
           </>
         ) : (
           <>
-            <button type="button" className={`btn btn-primary capture-save${pinned ? "" : " lg"}`} onClick={onPrimary} disabled={!primary.done && !canSave}>
+            <button type="button" className={`btn btn-primary capture-save${pinned ? "" : " lg"}`} onClick={onPrimary} disabled={primaryDisabled}>
               {primaryLabel}
             </button>
             {canInbox && (

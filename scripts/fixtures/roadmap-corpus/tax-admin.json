@@ -60,5 +60,89 @@
         ]
       }
     }
-  ]
+  ],
+  "v3": {
+    "probe": false,
+    "about": "A Duty aim (not probed in v3): code's practice kinds filled with the aim.",
+    "intake": {
+      "depth": null,
+      "dateMode": "CHOSEN",
+      "exam": false,
+      "examDay": null,
+      "suggestAreas": false
+    },
+    "replies": [
+      {
+        "id": "tax-admin-v3-a",
+        "about": "Set time, admin sessions and a log; no confirm on a Duty plan.",
+        "reply": {
+          "stages": {
+            "STAGE_1": {
+              "practices": [
+                {
+                  "kind": "SET_TIME"
+                },
+                {
+                  "kind": "ADMIN_SESSION"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "SET_UP"
+                }
+              ]
+            },
+            "STAGE_2": {
+              "practices": [
+                {
+                  "kind": "ADMIN_SESSION"
+                }
+              ],
+              "steps": []
+            },
+            "STAGE_3": {
+              "practices": [
+                {
+                  "kind": "ADMIN_SESSION"
+                },
+                {
+                  "kind": "KEEP_A_LOG"
+                }
+              ],
+              "steps": []
+            },
+            "STAGE_4": {
+              "practices": [
+                {
+                  "kind": "ADMIN_SESSION"
+                },
+                {
+                  "kind": "PLAN_AHEAD"
+                }
+              ],
+              "steps": []
+            },
+            "STAGE_5": {
+              "practices": [
+                {
+                  "kind": "ADMIN_SESSION"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "FULL_ATTEMPT"
+                }
+              ],
+              "checkpoint": "PERFORMANCE_CHECK"
+            }
+          }
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "excluded": [],
+          "sessionPicks": false
+        }
+      }
+    ]
+  }
 }

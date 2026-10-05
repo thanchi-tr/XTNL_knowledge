@@ -63,5 +63,91 @@
         ]
       }
     }
-  ]
+  ],
+  "v3": {
+    "probe": true,
+    "about": "A Care aim with constraints that name no cue (\"I work full time, so weekends only\"): nothing leaves the enum, and the session picks still need the confirm.",
+    "intake": {
+      "depth": null,
+      "dateMode": "CHOSEN",
+      "exam": false,
+      "examDay": null,
+      "suggestAreas": false
+    },
+    "replies": [
+      {
+        "id": "care-routine-v3-a",
+        "about": "Set time, check in and keep a log.",
+        "reply": {
+          "stages": {
+            "STAGE_1": {
+              "practices": [
+                {
+                  "kind": "SET_TIME"
+                },
+                {
+                  "kind": "PLAN_AHEAD"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "SET_UP"
+                }
+              ]
+            },
+            "STAGE_2": {
+              "practices": [
+                {
+                  "kind": "SET_TIME"
+                },
+                {
+                  "kind": "CHECK_IN"
+                }
+              ],
+              "steps": []
+            },
+            "STAGE_3": {
+              "practices": [
+                {
+                  "kind": "CHECK_IN"
+                },
+                {
+                  "kind": "KEEP_A_LOG"
+                }
+              ],
+              "steps": []
+            },
+            "STAGE_4": {
+              "practices": [
+                {
+                  "kind": "SET_TIME"
+                },
+                {
+                  "kind": "ADMIN_SESSION"
+                }
+              ],
+              "steps": []
+            },
+            "STAGE_5": {
+              "practices": [
+                {
+                  "kind": "CHECK_IN"
+                },
+                {
+                  "kind": "KEEP_A_LOG"
+                }
+              ],
+              "steps": [],
+              "checkpoint": null
+            }
+          }
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "excluded": [],
+          "sessionPicks": true
+        }
+      }
+    ]
+  }
 }

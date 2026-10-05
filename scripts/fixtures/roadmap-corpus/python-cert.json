@@ -71,5 +71,90 @@
         ]
       }
     }
-  ]
+  ],
+  "v3": {
+    "probe": true,
+    "about": "A certificate aim the user answered Yes to; one unchosen Domain (Testing).",
+    "intake": {
+      "depth": 12,
+      "dateMode": "REALISTIC",
+      "exam": true,
+      "examLabel": "Python entry-level certificate",
+      "examDay": null,
+      "suggestAreas": false
+    },
+    "replies": [
+      {
+        "id": "python-cert-v3-a",
+        "about": "REJECTED: a smuggled stage title (an extra property) means nothing from the reply is used.",
+        "reply": {
+          "needs": [
+            "D3"
+          ],
+          "stages": {
+            "FOUNDATION": {
+              "title": "Python basics with the official course",
+              "practices": [
+                {
+                  "kind": "READ_AND_CARD",
+                  "on": "D1"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "CHOOSE_MATERIAL"
+                }
+              ]
+            },
+            "FAMILIAR": {
+              "practices": [
+                {
+                  "kind": "PROBLEM_SETS",
+                  "on": "D1"
+                }
+              ],
+              "steps": []
+            },
+            "RETAINED": {
+              "practices": [
+                {
+                  "kind": "BUILD_SOMETHING",
+                  "on": "D2"
+                }
+              ],
+              "steps": []
+            },
+            "FLUENT": {
+              "practices": [
+                {
+                  "kind": "TIMED_PRACTICE"
+                }
+              ],
+              "steps": [],
+              "checkpoint": "MOCK_TEST"
+            },
+            "MASTERED": {
+              "practices": [
+                {
+                  "kind": "TIMED_PRACTICE"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "BOOK_EXAM"
+                }
+              ],
+              "checkpoint": "MOCK_TEST"
+            }
+          }
+        },
+        "expect": {
+          "verdict": "REJECTED",
+          "dropped": {
+            "REJECTED": 1
+          }
+        }
+      }
+    ]
+  }
 }

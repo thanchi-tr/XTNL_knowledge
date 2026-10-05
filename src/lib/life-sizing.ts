@@ -5,7 +5,8 @@ import { dayStartOf, todayKey } from "./life-day";
 import { SIZING_PROMPT_VERSION, TASK_SIZING_MODEL, sizeLifeTask } from "./gemini";
 import { SIZING_DAILY_CAP } from "./life-grade";
 import { describeRule } from "./recurrence";
-import { gradeFromCopy, gradeFromModel, pickCopySource, sizingSkipReason, type GradeUpdate } from "./life-lexicon";
+import { gradeFromCopy, gradeFromModel, pickCopySource, planBornGradeOf, sizingSkipReason, type GradeUpdate } from "./life-lexicon";
+import { isRoadmapCaptureKey } from "./roadmap-types";
 
 /**
  * The one AI sizing a task gets, run in after() from task creation.
@@ -18,6 +19,10 @@ import { gradeFromCopy, gradeFromModel, pickCopySource, sizingSkipReason, type G
  *    capture), a template renamed away from its grade key, anything that
  *    is not paid work (a goal, an idea draft), or a grade already made by
  *    the current prompt — unless forced by a resize.
+ *    A plan-born template (roadmap Start, captureKey 'rm:…') is never
+ *    sized, forced or not: no model sizes or explains one (roadmap
+ *    decision 50), so its "Why" is code's words (life-lexicon
+ *    planBornGradeOf), written back if anything else stands there.
  * 2. Copy the model grade of another task with the same normalised title,
  *    if one exists and its title still says those words: the per-title
  *    cache that makes a recurring or re-typed chore cost no model call, and
@@ -63,7 +68,8 @@ async function write(templateId: string, update: GradeUpdate): Promise<boolean> 
 /**
  * Sizes one template. `force` is the size panel's 'Resize': it skips the
  * per-title copy and re-asks the model, but still respects the freeze,
- * the 24-hour window and the daily cap. Resolves to what happened; never
+ * the 24-hour window and the daily cap. A plan-born template is 'done'
+ * before any of that, forced or not. Resolves to what happened; never
  * rejects.
  */
 export async function applySizing(templateId: string, opts: { force?: boolean; now?: Date } = {}): Promise<SizingOutcome> {
@@ -90,12 +96,24 @@ export async function applySizing(templateId: string, opts: { force?: boolean; n
         gradeBasis: true,
         gradeFrozenAt: true,
         createdAt: true,
+        category: true,
+        band: true,
+        captureKey: true,
       },
     });
     if (!t) return "missing";
     // A goal pays through its steps and an idea draft is filed, not done:
     // neither is priced, so neither spends a model call or a cap slot.
     if (t.kind === "GOAL" || t.kind === "IDEA_DRAFT") return "done";
+
+    // A plan-born task (contracts §15.6, §16.4): whoever calls this — Start
+    // defers nothing and Resize is refused first — no copy, cap slot or model
+    // call is spent, and its "Why" is code's words from its own columns.
+    if (isRoadmapCaptureKey(t.captureKey)) {
+      const update = planBornGradeOf(t);
+      if (update) await write(t.id, update);
+      return "done";
+    }
 
     const skip = sizingSkipReason(t, now, { force: opts.force, promptVersion: SIZING_PROMPT_VERSION });
     if (skip) return skip;

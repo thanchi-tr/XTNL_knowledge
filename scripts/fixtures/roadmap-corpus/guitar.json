@@ -133,5 +133,113 @@
         ]
       }
     }
-  ]
+  ],
+  "v3": {
+    "probe": true,
+    "about": "A Fluent-depth plan (the user's lower depth) with \"No teacher\" in the constraints: WITH_A_PARTNER leaves the run's enum.",
+    "intake": {
+      "depth": 10,
+      "dateMode": "REALISTIC",
+      "exam": false,
+      "examDay": null,
+      "suggestAreas": false
+    },
+    "replies": [
+      {
+        "id": "guitar-v3-a",
+        "about": "SALVAGED: four practices in one stage (the 4th is cut); a full attempt placed in the first stage is dropped (last stage only).",
+        "reply": {
+          "stages": {
+            "FOUNDATION": {
+              "practices": [
+                {
+                  "kind": "SLOW_DRILLS",
+                  "on": "D1"
+                },
+                {
+                  "kind": "READ_AND_CARD",
+                  "on": "D2"
+                },
+                {
+                  "kind": "RECALL_DRILLS",
+                  "on": "D1"
+                },
+                {
+                  "kind": "LISTEN_AND_REPEAT"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "FULL_ATTEMPT"
+                },
+                {
+                  "kind": "CHOOSE_MATERIAL"
+                }
+              ],
+              "checkpoint": "SELF_TEST"
+            },
+            "FAMILIAR": {
+              "practices": [
+                {
+                  "kind": "SLOW_DRILLS",
+                  "on": "D1"
+                },
+                {
+                  "kind": "RUN_THROUGHS"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "SMALL_PROJECT",
+                  "on": "D1"
+                }
+              ],
+              "checkpoint": null
+            },
+            "RETAINED": {
+              "practices": [
+                {
+                  "kind": "RUN_THROUGHS"
+                },
+                {
+                  "kind": "MISTAKE_REVIEW",
+                  "on": "D1"
+                }
+              ],
+              "steps": [],
+              "checkpoint": "SELF_TEST"
+            },
+            "FLUENT": {
+              "practices": [
+                {
+                  "kind": "RUN_THROUGHS"
+                },
+                {
+                  "kind": "EXPLAIN_IT",
+                  "on": "D2"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "FULL_ATTEMPT"
+                }
+              ],
+              "checkpoint": "PERFORMANCE_CHECK"
+            }
+          }
+        },
+        "expect": {
+          "verdict": "SALVAGED",
+          "excluded": [
+            "WITH_A_PARTNER"
+          ],
+          "sessionPicks": false,
+          "dropped": {
+            "OVER_CAP": 1,
+            "AIM_STEP_EARLY": 1
+          }
+        }
+      }
+    ]
+  }
 }

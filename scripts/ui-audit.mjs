@@ -6,6 +6,7 @@
  *
  *   node scripts/ui-audit.mjs [--base http://localhost:3100] [--routes all|real|fixtures|/today,/review]
  *                             [--widths 344,375,932,1440] [--json out.json] [--chrome <path>] [--plan]
+ *                             [--gate '{"route":…,"width":…,"ask":[…],"aimLines":[…]}']
  *
  * Routes: `all` (the default) is every real route plus every fixture route;
  * `fixtures` is the /dev/style pages only (every ?state= in R5's
@@ -36,6 +37,24 @@
  * flags an Aim card taller than 470 px on a phone (F19: about 400, at most
  * about 470).
  *
+ * Gated (roadmap-rev4.md Acceptance and F-R4-1, F-R4-3; heightGateProblems,
+ * which `--gate '<json>'` runs on given measurements and exits, before Chrome):
+ *   - at 344, the ASK card ≤ 410 px in every state drawn, its tallest
+ *     (empty-ask-continue, empty-ask-seed-last-aim on /dev/style/art/you)
+ *     required. The bound is the card, section.card.rm-ac-call, not its
+ *     [data-aim-card] box: F-R4-1 lists (a) the SectionHeader "Aim" and (b)
+ *     the card, and its "about 312 px of content … about 330 px without a seed
+ *     or a last aim, at most 410 px with both" is (b)'s content plus its own
+ *     padding and border (312 + 12 + 4 + 2). The whole box (with the 24 px
+ *     header) stays recorded under the 470 px NOTE;
+ *   - at 344, every visible Today aim line (.rm-aim-line) ≤ 72 px;
+ *   - at every width, no aim line clamps its text (.rm-aim-line-t
+ *     scrollHeight ≤ clientHeight + 1), and on /dev/style/today the two
+ *     in-place lines (aim-in-place, aim-in-place-longest) are drawn, and from
+ *     932 sit in the board's c3 column (narrower than the board) under Goals.
+ *     Without --widths, /dev/style/today and /today are also audited at 768
+ *     and 1366 (EXTRA_WIDTHS), where c3 is narrower than at 344.
+ *
  * Fails (exit 1) on, per route × width:
  *   - horizontal overflow (scrollWidth > innerWidth)
  *   - text spilling past its card (a nowrap line wider than the card it sits in,
@@ -46,6 +65,7 @@
  *   - under 600 px: a text input, select or textarea under 16 px (the browser zooms into it)
  *   - console errors or uncaught exceptions
  *   - on /today and /review: any running infinite animation at rest
+ *   - the height gates above (the ASK card, Today's aim line)
  * And once, with prefers-reduced-motion: the first frame must carry html[data-motion="still"].
  *
  * Chrome is driven over the DevTools protocol (node's global WebSocket); set
@@ -157,7 +177,74 @@ const ROUTES = (
 )
   .map((r) => r.trim())
   .filter(Boolean);
+const WIDTHS_GIVEN = args.includes("--widths");
 const WIDTHS = opt("widths", "344,375,932,1440").split(",").map(Number);
+/**
+ * Widths audited on a route beyond WIDTHS (only when --widths isn't given):
+ * Today's board puts the aim line in its c3 column from a 640 px main, and c3
+ * is narrower than at 344 between the Acceptance widths (an iPad held upright,
+ * a 1366 laptop), where a clamp would cut the line's rank words.
+ */
+const EXTRA_WIDTHS = { "/dev/style/today": [768, 1366], "/today": [768, 1366] };
+const widthsFor = (route) => (WIDTHS_GIVEN ? WIDTHS : [...WIDTHS, ...(EXTRA_WIDTHS[pathOf(route)] ?? []).filter((w) => !WIDTHS.includes(w))]);
+
+// ── The height gates (roadmap-rev4.md Acceptance; see the header) ─────────────
+const GATES = {
+  /** The width the two height bounds hold at. */
+  width: 344,
+  /** The ASK card, section.card.rm-ac-call (the card; not its [data-aim-card] box with the SectionHeader). */
+  askMaxPx: 410,
+  askBounds: "section.card.rm-ac-call",
+  /** The ASK states that must be drawn and measured at 344: the tallest two. */
+  askRequired: { "/dev/style/art/you": ["empty-ask-continue", "empty-ask-seed-last-aim"] },
+  /** Today's aim line, .card.rm-aim-line, border included. */
+  aimLineMaxPx: 72,
+  /** The aim-line states that must be drawn at every width, and from inC3From sit in the board's c3 under Goals. */
+  aimLineRequired: { "/dev/style/today": ["aim-in-place", "aim-in-place-longest"] },
+  inC3From: 932,
+};
+
+/**
+ * The gates' problems for one route × width, from the page's measurements
+ * (AUDIT's `ask` and `aimLines`): `ask` [{ key, h }] (h: the card's height),
+ * `aimLines` [{ key, h, cut, c3 }] (cut: the text's scrollHeight −
+ * clientHeight, null with no .rm-aim-line-t; c3: { inside, columns,
+ * underGoals } inside a board's c3, else null). Heights pass to the pixel
+ * (≤ bound + 0.5). Pure: `--gate` runs it on given measurements.
+ */
+function heightGateProblems({ route, width, ask = [], aimLines = [] }) {
+  const path = pathOf(route);
+  const px = (h) => `${Math.round(h * 10) / 10}px`;
+  const out = [];
+  if (width === GATES.width) {
+    for (const a of ask) if (!(a.h <= GATES.askMaxPx + 0.5)) out.push(`ASK card ${a.key} is ${px(a.h)} tall (≤ ${GATES.askMaxPx} at ${GATES.width})`);
+    for (const k of GATES.askRequired[path] ?? []) if (!ask.some((a) => a.key === k)) out.push(`ASK card ${k} not drawn at ${GATES.width}`);
+    for (const l of aimLines) if (!(l.h <= GATES.aimLineMaxPx + 0.5)) out.push(`aim line ${l.key} is ${px(l.h)} tall (≤ ${GATES.aimLineMaxPx} at ${GATES.width})`);
+  }
+  for (const l of aimLines) {
+    if (typeof l.cut !== "number") out.push(`aim line ${l.key} has no .rm-aim-line-t`);
+    else if (l.cut > 1) out.push(`aim line ${l.key} clamps its text (${l.cut}px cut)`);
+  }
+  const required = GATES.aimLineRequired[path] ?? [];
+  for (const k of required) if (!aimLines.some((l) => l.key === k)) out.push(`aim line ${k} not drawn`);
+  if (width >= GATES.inC3From) {
+    for (const l of aimLines) if (required.includes(l.key) && !(l.c3 && l.c3.inside && l.c3.columns && l.c3.underGoals)) out.push(`aim line ${l.key} is not in the board's c3 under Goals (${JSON.stringify(l.c3)})`);
+  }
+  return out;
+}
+
+// --gate '<json>': the gates on given measurements (the contract check's cases), printed as JSON; no server, no Chrome.
+if (args.includes("--gate")) {
+  let input;
+  try {
+    input = JSON.parse(opt("gate", ""));
+  } catch {
+    console.error("ui-audit: --gate takes one JSON object {route, width, ask, aimLines}");
+    process.exit(2);
+  }
+  console.log(JSON.stringify({ problems: heightGateProblems(input), widths: widthsFor(input.route ?? "/") }));
+  process.exit(0);
+}
 const JSON_OUT = opt("json", null);
 const CHROME = opt("chrome", process.env.CHROME || "C:/Program Files/Google/Chrome/Application/chrome.exe");
 const AT_REST_ROUTES = ["/today", "/review"];
@@ -185,7 +272,18 @@ if (refused.length) {
   process.exit(2);
 }
 if (args.includes("--plan")) {
-  console.log(JSON.stringify({ base: BASE, rehearsal: IS_REHEARSAL, motionRoute: MOTION_ROUTE, roadmapStatesFrom: ROADMAP_STATES_FROM, routes: ROUTES, widths: WIDTHS }));
+  console.log(
+    JSON.stringify({
+      base: BASE,
+      rehearsal: IS_REHEARSAL,
+      motionRoute: MOTION_ROUTE,
+      roadmapStatesFrom: ROADMAP_STATES_FROM,
+      routes: ROUTES,
+      widths: WIDTHS,
+      extraWidths: Object.fromEntries(ROUTES.map((r) => [r, widthsFor(r).filter((w) => !WIDTHS.includes(w))]).filter(([, w]) => w.length > 0)),
+      gates: GATES,
+    })
+  );
   process.exit(0);
 }
 
@@ -325,6 +423,32 @@ const AUDIT = `(() => {
   document.querySelectorAll('.rm-quests-slot').forEach((el, i) => {
     if (vis(el)) out.heights['today-quests' + (i ? ':' + (i + 1) : '')] = Math.round(el.getBoundingClientRect().height);
   });
+  // Gated (heightGateProblems): the ASK card (the card, section.rm-ac-call) and every visible Today aim line.
+  out.ask = [];
+  let askN = 0;
+  document.querySelectorAll('section.rm-ac-call').forEach((el) => {
+    if (!vis(el)) return;
+    const box = el.closest('[data-aim-card]');
+    out.ask.push({ key: box ? box.getAttribute('data-aim-card') : 'ask' + (askN++ ? ':' + askN : ''), h: el.getBoundingClientRect().height });
+  });
+  out.aimLines = [];
+  let lineN = 0;
+  document.querySelectorAll('.rm-aim-line').forEach((el) => {
+    if (!vis(el)) return;
+    const st = el.closest('[data-state^="aim-"]');
+    const r = el.getBoundingClientRect();
+    const t = el.querySelector('.rm-aim-line-t');
+    const c3 = el.closest('.board > .c3');
+    let c3m = null;
+    if (c3) {
+      const cr = c3.getBoundingClientRect();
+      const br = c3.parentElement.getBoundingClientRect();
+      const goals = c3.querySelector('.today-goals');
+      const sr = (el.closest('.rm-quests-slot') || el).getBoundingClientRect();
+      c3m = { inside: r.left >= cr.left - 1 && r.right <= cr.right + 1, columns: cr.width < br.width - 1, underGoals: !!goals && vis(goals) && sr.top >= goals.getBoundingClientRect().bottom - 1 };
+    }
+    out.aimLines.push({ key: st ? st.getAttribute('data-state') : 'aim-line' + (lineN++ ? ':' + lineN : ''), h: r.height, cut: t ? t.scrollHeight - t.clientHeight : null, c3: c3m });
+  });
   out.small = [...new Set(out.small)].slice(0, 30);
   out.tiny = [...new Set(out.tiny)].slice(0, 30);
   out.spill = [...new Set(out.spill)].slice(0, 30);
@@ -374,14 +498,15 @@ async function visit(url, { width, reduced = false, settle = 900 }) {
 }
 
 for (const route of ROUTES) {
-  for (const width of WIDTHS) {
+  for (const width of widthsFor(route)) {
     const { errors } = await visit(`${BASE}${route}`, { width });
     let r;
     try {
       r = await evaluate(AUDIT);
     } catch (e) {
-      r = { overflow: 0, small: [], tiny: [], loops: [], spill: [], zoomInputs: [], heights: {}, evalError: String(e) };
+      r = { overflow: 0, small: [], tiny: [], loops: [], spill: [], zoomInputs: [], heights: {}, ask: [], aimLines: [], evalError: String(e) };
     }
+    const gated = heightGateProblems({ route, width, ask: r.ask, aimLines: r.aimLines });
     const path = route.split("?")[0];
     const loopsBad = AT_REST_ROUTES.includes(path) && !route.includes("?") ? r.loops : [];
     const problems = [];
@@ -393,12 +518,15 @@ for (const route of ROUTES) {
     if (errors.length) problems.push(`${errors.length} console errors`);
     if (loopsBad.length) problems.push(`infinite animations at rest: ${loopsBad.join(", ")}`);
     if (r.evalError) problems.push(r.evalError);
+    problems.push(...gated);
     const ok = problems.length === 0;
     if (!ok) failures++;
     results.push({ route, width, ok, ...r, errors, problems });
     console.log(`${ok ? "PASS" : "FAIL"} ${route} @${width}${ok ? "" : ` — ${problems.join("; ")}`}`);
     const heights = Object.entries(r.heights ?? {});
     if (heights.length) console.log(`      heights: ${heights.map(([k, h]) => `${k} ${h}px`).join(", ")}`);
+    const measured = [...(r.ask ?? []).map((a) => `ASK ${a.key} ${Math.round(a.h)}px`), ...(r.aimLines ?? []).map((l) => `${l.key} ${Math.round(l.h)}px${typeof l.cut === "number" && l.cut > 1 ? ` (${l.cut}px cut)` : ""}`)];
+    if (measured.length) console.log(`      gated: ${measured.join(", ")}`);
     for (const [k, h] of heights) if (k.startsWith("aim") && width < 600 && h > 470) console.log(`      NOTE: ${k} is ${h}px tall at ${width} (F19: about 400, at most about 470)`);
     if (!ok) {
       for (const s of r.spill.slice(0, 6)) console.log(`      spill: ${s}`);

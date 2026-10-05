@@ -43,6 +43,29 @@
  *     the roadmap step reports (roadmapStepErrorsOf);
  *   - a row's place on Today is today-board's own placementOf, in the words
  *     of the board section the seek opens (questPlaceText).
+ *
+ * Revision 4 (roadmap-rev4.md F-R4-14, F-R4-16; contracts §14.9):
+ *   - every PAYS card measure of the milestone is read, one per Domain
+ *     (WeekQuestInput.cards), with its segment: recall cards only (CardState
+ *     .recall from Idea.questionType), and for an `rc` measure the cards at
+ *     exactly L with their clean-entry state from the REVIEW ledger rows
+ *     (roadmap-types' isRetryEntry over retryReadDaysOf, the one rule R1's
+ *     readings and R4's planContext also read; fix round, contracts §15.1),
+ *     read with the card levels;
+ *   - the reach uses the StartSnapshot's figures and the loadout's strikes and
+ *     grace, read with m;
+ *   - ADD's evidence counts recall cards per Domain (addedByDomain); RAISE
+ *     reads each part's own measure key;
+ *   - a legacy roadmap (isLegacyRoadmap: depth null on a Field Area, or a
+ *     scheduled row with no stage) has no week quests: loadWeekQuests returns
+ *     null and the freeze skips it ("Start again at a depth to measure this
+ *     aim" is R4's page line);
+ *   - the milestone read selects Roadmap.depth and RoadmapMilestone.stage;
+ *     before the rev-4 migration is applied (isMissingRev4Column) it reads
+ *     without them, and every roadmap then reads as legacy (none can have
+ *     started: ROADMAP_GOALS_LIVE was false throughout);
+ *   - the view reads the parts' Domain names from the Domain rows, and marks
+ *     a BODY plan's PRACTICE rows for HEALTH_LINE.
  */
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
@@ -56,17 +79,25 @@ import { parseRule } from "./recurrence";
 import { loadWeeklyQuotas } from "./field-quota";
 import { loadThroughput } from "./throughput-server";
 import { availableFor } from "./roadmap-realism";
+import { catalogTrackOf } from "./roadmap-catalog";
+import type { Track } from "./life-types";
 import { placementOf, ruleOf, type BoardInstance, type BoardTemplate, type Placement } from "./today-board";
 import {
   DECISIONS,
   DECLARED_FACTOR,
+  NON_RECALL_TYPES,
   ORIGINS,
   PRACTICE_BANDS,
   THROUGHPUT_LAG_DAYS,
+  acceptanceOrderBy,
   checkpointLogPrefix,
   domainName,
+  isLegacyRoadmap,
+  isMissingRev4Column,
   isMissingRoadmapTable,
   isQuestWeekFinal,
+  isRetryEntry,
+  isRecallType,
   isSupersededRow,
   labelTextOf,
   milestoneDueDayOf,
@@ -75,7 +106,9 @@ import {
   practiceBandMinutes,
   provenanceOf,
   questWeekKey,
+  retryReadDaysOf,
   yoursText,
+  type CardSegment,
   type CardState,
   type CodeText,
   type Decision,
@@ -89,9 +122,11 @@ import {
   type QuestFreezeRun,
   type RateSource,
   type RealismInput,
+  type ReviewLedgerRow,
   type RoadmapWriteOpts,
   type StartPoint,
   type StartSnapshot,
+  type WeekQuestCardInput,
   type WeekQuestCheckpointInput,
   type WeekQuestInput,
   type WeekQuestPracticeInput,
@@ -112,6 +147,7 @@ import {
   weekQuestResultsOf,
   weekQuestsFor,
   weekQuestsViewOf,
+  type WeekQuestInputExtras,
   type WeekQuestResultsStored,
   type WeekQuestsViewInput,
 } from "./roadmap-quests";
@@ -124,6 +160,8 @@ export interface QuestRoadmapRow {
   status: string;
   fieldId: string | null;
   track: string;
+  /** Revision 4: Roadmap.depth (12, 10 or 8 on a Field Area; null on a track Area or a legacy plan). Absent reads as null. */
+  depth?: number | null;
   hoursPerWeek: number;
   intensity: string;
   startPoint: string;
@@ -150,6 +188,8 @@ export interface QuestMilestoneFacts {
     /** RoadmapMilestone.version and createdAt (fix round): isSupersededRow orders a "Start again" copy after its dropped row. */
     version?: number;
     createdAt?: Date | string | null;
+    /** Revision 4: RoadmapMilestone.stage (a StageKey; null on a legacy row). Absent reads as null. */
+    stage?: string | null;
   };
   /** The milestone's goal (null before Start, or when it was deleted). */
   goal: { id: string; dueDay: DayKey | null; closed: boolean; closedDay: DayKey | null; archivedDay: DayKey | null } | null;
@@ -232,6 +272,17 @@ export interface QuestCardRow {
   dueDate: Date;
   graceEndsAt: Date | null;
   createdAt: Date;
+  /** Revision 4: the Idea's id (the clean-entry ledger read) and its question type (recall cards: every type but NON_RECALL_TYPES). Absent: counted. */
+  id?: string;
+  questionType?: string | null;
+}
+
+/** One REVIEW ledger row of a card (ActivityEvent source REVIEW, sourceId the Idea). */
+export interface QuestReviewRow {
+  ideaId: string;
+  day: DayKey;
+  occurredAt: Date;
+  detail: string | null;
 }
 
 /** A RoadmapQuestWeek row, JSON columns unparsed. */
@@ -280,6 +331,10 @@ export interface QuestStore {
   logDays(userId: string, prefix: string, from: DayKey | null, to: DayKey): Promise<DayKey[]>;
   /** Non-archived Ideas with domainId in scope and createdAt in [from, to). */
   countAdded(domainIds: readonly string[], from: Date, to: Date): Promise<number>;
+  /** Revision 4 (ADD's parts): non-archived recall cards (questionType not in NON_RECALL_TYPES) created in [from, to), per Domain id. */
+  addedByDomain(domainIds: readonly string[], from: Date, to: Date): Promise<Record<string, number>>;
+  /** Revision 4 (clean entry): the REVIEW ledger rows of these cards dated from `from` on. */
+  reviewRows(userId: string, ideaIds: readonly string[], from: DayKey): Promise<QuestReviewRow[]>;
   /** RestDay rows with day in [from, to] (none when the table is missing). */
   restRows(userId: string, from: DayKey, to: DayKey): Promise<RestRow[]>;
   /** The week's capacity as if read on Monday, as a function of the week's held days (so it joins the read wave). */
@@ -288,6 +343,15 @@ export interface QuestStore {
   quotas(userId: string, weekStart: DayKey): Promise<{ fieldId: string; name: string; quota: number }[]>;
   /** The current interval multiplier m. */
   intervalMultiplier(userId: string): Promise<number>;
+  /** Revision 4 (optional): m with the loadout's extra strikes and grace days (the reach model's terms), in one read. Absent: intervalMultiplier with none. */
+  reachLoadout?(userId: string): Promise<{ intervalMultiplier: number; extraStrikes: number; graceExtraDays: number }>;
+  /**
+   * The clean-entry window (cleanWindowDaysOf): the interval multiplier m
+   * recorded on the roadmap's current acceptance (acceptanceOrderBy, undone
+   * ones skipped: the one R1's readings read), or null with none. Absent:
+   * none, so the window reads the live m alone.
+   */
+  acceptanceMultiplier?(userId: string, roadmapId: string): Promise<number | null>;
   /** Frozen weeks of the user: of one roadmap, not yet finalised, or of one life week (any combination). */
   questWeeks(userId: string, filter: { roadmapId?: string; unfinalized?: boolean; weekStart?: DayKey }): Promise<StoredQuestWeek[]>;
   insertQuestWeek(userId: string, roadmapId: string, set: WeekQuestSet, source: WeekQuestSource, now: Date): Promise<number>;
@@ -315,7 +379,10 @@ export interface QuestSetOverrides {
    * band, starting on the started day.
    */
   templateIds?: Readonly<Record<string, string>>;
+  /** The Start reading of the card measure (rev 3: one measure). */
   v0?: number;
+  /** Revision 4: the Start reading per measure key (a depth plan's one measure per Domain); a key not here falls back to its stored reading, then to the live count. */
+  v0ByKey?: Readonly<Record<string, number>>;
 }
 
 // ═══ Labels: only the user's words, code's names and Domain names (F13) ═════
@@ -422,6 +489,11 @@ export function scheduledPlacesOf(
   return { placeOf, of: positionCountOf(scheduled) };
 }
 
+/** A BODY-track plan (F-R4-13): its PRACTICE week quest rows show HEALTH_LINE. */
+function isBodyPlan(r: QuestRoadmapRow): boolean {
+  return r.fieldId == null && catalogTrackOf({ fieldId: null, track: r.track as Track }) === "BODY";
+}
+
 /** RoadmapMilestone.feasibility as a StartSnapshot, or null before Start. */
 export function startSnapshotOfRow(feasibility: unknown): StartSnapshot | null {
   if (!feasibility || typeof feasibility !== "object") return null;
@@ -466,13 +538,86 @@ export function heldDaysAsOf(rows: readonly RestRow[], asOf: Date, from: DayKey,
 
 const isBand = (b: string | null): b is PracticeBand => b != null && (PRACTICE_BANDS as readonly string[]).includes(b);
 
+// ═══ Legacy plans (F-R4-16) ═════════════════════════════════════════════════
+
+/**
+ * Whether the open milestone's roadmap is legacy (F-R4-16): depth null on a
+ * Field Area, or a scheduled row of it with no stage (isLegacyRoadmap). A
+ * legacy roadmap has no week quests. A fact read without the rev-4 columns
+ * (depth and stage absent) reads as legacy.
+ */
+export function isLegacyFacts(open: QuestMilestoneFacts, list: readonly QuestMilestoneFacts[]): boolean {
+  const same = list.filter((f) => f.roadmap.id === open.roadmap.id);
+  if (!same.some((f) => f.milestone.id === open.milestone.id)) same.push(open);
+  return isLegacyRoadmap({ fieldId: open.roadmap.fieldId, depth: open.roadmap.depth ?? null }, same.map((f) => ({ stage: f.milestone.stage ?? null })));
+}
+
 // ═══ Building a week's input (F13 Input) ════════════════════════════════════
+
+/** A WeekQuestInput with R6's extras (the loadout's reach terms). */
+export type WeekQuestInputR6 = WeekQuestInput & WeekQuestInputExtras;
+
+/** Own-property read of a number from a plain record ('__proto__' and friends never resolve). */
+function ownNumberOf(rec: Readonly<Record<string, number>> | null | undefined, key: string): number | undefined {
+  if (!rec || typeof rec !== "object" || !Object.prototype.hasOwnProperty.call(rec, key)) return undefined;
+  const v = rec[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+/** The measure's own count of a Domain's cards at ≥ L, as its key counts (r: recall only; rc: and a retry entry at exactly L counts L − 1). */
+function measureCountOf(cards: readonly CardState[], L: number, segment: CardSegment | undefined): number {
+  let n = 0;
+  for (const c of cards) {
+    if (segment && c.recall === false) continue;
+    if (c.level < L) continue;
+    if (segment === "rc" && c.level === L && c.retryEntry) continue;
+    n += 1;
+  }
+  return n;
+}
+
+/**
+ * The clean-entry read's window at level L, in life days: retryReadDaysOf at
+ * the wider of the live m and the roadmap's current acceptance's, with the
+ * live grace extension — R1's cleanReadDaysOf to the day, so R1's readings,
+ * R4's planContext and these parts read one window. srs.ts sets a card's
+ * interval with the loadout of its review day, so a card that entered L under
+ * an interval multiplier since unequipped still sits inside it. The
+ * acceptance is read only here (a card sits at L on an `rc` measure);
+ * unreadable (logged) or absent, the live m alone.
+ */
+async function cleanWindowDaysOf(store: QuestStore, userId: string, roadmapId: string, L: number, liveM: number, loadout: { graceExtraDays: number }): Promise<number> {
+  const accepted = await Promise.resolve()
+    .then(() => (store.acceptanceMultiplier ? store.acceptanceMultiplier(userId, roadmapId) : null))
+    .catch((err: unknown) => {
+      console.error("week quests: the acceptance's interval multiplier is unavailable (the clean-entry window reads the live m):", questErrorText(err));
+      return null;
+    });
+  const m = Math.max(liveM, typeof accepted === "number" && Number.isFinite(accepted) && accepted > 0 ? accepted : 1);
+  return retryReadDaysOf(L, m, loadout.graceExtraDays || 0);
+}
 
 /**
  * WeekQuestInput for one milestone's week, read as of Monday 04:00 except
  * card levels. null when the milestone has no StartSnapshot or started day
  * (not started, and no override), or when one of its Domains is still in
  * Gemini's words (Start refuses that, F15, so such a milestone never has a set).
+ *
+ * Revision 4: every PAYS CARDS_AT_LEVEL measure is read, in the order of the
+ * milestone's DOMAIN items (R's order), into `cards` (`card` is the first,
+ * for v1 readers). A card's `recall` comes from its question type; an `rc`
+ * measure's cards at exactly L get `retryEntry` from their REVIEW ledger rows
+ * of the last cleanWindowDaysOf life days (retryReadDaysOf at the wider of m
+ * and the acceptance's, with the loadout's grace extension; fix round 2,
+ * contracts §16.1: the window holds the entering pass and the miss before it,
+ * srs.ts's latest retry entry included — 184 days at L12, m 1; one shared
+ * window, R1's cleanReadDaysOf, so R1's readings, R4's planContext and these
+ * parts count the same cards), read with the card levels and judged by
+ * roadmap-types' isRetryEntry, the one clean-entry rule (fix round,
+ * contracts §15.1: R1's, which the reach DP
+ * follows; a shield or a degrade before the pass is a retry too, and a later
+ * strike at L keeps it one until its next pass). The loadout's strikes and
+ * grace come with m.
  */
 export async function weekQuestInputFor(
   store: QuestStore,
@@ -481,7 +626,7 @@ export async function weekQuestInputFor(
   weekStart: DayKey,
   now: Date,
   overrides: QuestSetOverrides = {}
-): Promise<WeekQuestInput | null> {
+): Promise<WeekQuestInputR6 | null> {
   const ms = facts.milestone;
   const snapshot = overrides.snapshot ?? startSnapshotOfRow(ms.feasibility);
   const startedDay = overrides.startedDay ?? ms.startedDay ?? snapshot?.startedDay ?? null;
@@ -495,14 +640,28 @@ export async function weekQuestInputFor(
   // Wave 1: the milestone's own rows.
   const { items, measures } = await store.parts(ms.id);
   const live = items.filter((i) => i.decision !== "REMOVED");
-  const card = measures.find((mm) => mm.kind === "CARDS_AT_LEVEL" && mm.role === "PAYS" && mm.measureKey && mm.minLevel != null) ?? null;
-  const parsedKey = card?.measureKey ? parseMeasureKey(card.measureKey) : null;
-  const scopeIds: string[] =
-    card && card.scope && typeof card.scope === "object" && Array.isArray((card.scope as { domainIds?: unknown }).domainIds)
-      ? ((card.scope as { domainIds: unknown[] }).domainIds.filter((d) => typeof d === "string") as string[])
-      : parsedKey?.kind === "CARDS_AT_LEVEL"
-        ? parsedKey.domainIds
-        : [];
+  const domainOrd = new Map<string, number>();
+  for (const d of live) if (d.kind === "DOMAIN" && d.domainId != null && !domainOrd.has(d.domainId)) domainOrd.set(d.domainId, d.ord);
+  const scopeOf = (mm: QuestMeasureRow): string[] => {
+    const parsed = mm.measureKey ? parseMeasureKey(mm.measureKey) : null;
+    if (mm.scope && typeof mm.scope === "object" && Array.isArray((mm.scope as { domainIds?: unknown }).domainIds)) {
+      return (mm.scope as { domainIds: unknown[] }).domainIds.filter((d): d is string => typeof d === "string");
+    }
+    return parsed?.kind === "CARDS_AT_LEVEL" ? parsed.domainIds : [];
+  };
+  const cardMeasures = measures
+    .filter((mm) => mm.kind === "CARDS_AT_LEVEL" && mm.role === "PAYS" && mm.measureKey && mm.minLevel != null)
+    .map((mm) => {
+      const parsed = parseMeasureKey(mm.measureKey as string);
+      return { mm, key: mm.measureKey as string, L: mm.minLevel as number, scope: scopeOf(mm), segment: parsed?.kind === "CARDS_AT_LEVEL" ? parsed.segment : undefined };
+    })
+    .filter((x) => x.scope.length > 0)
+    .sort((a, b) => {
+      const oa = Math.min(...a.scope.map((id) => domainOrd.get(id) ?? Number.MAX_SAFE_INTEGER));
+      const ob = Math.min(...b.scope.map((id) => domainOrd.get(id) ?? Number.MAX_SAFE_INTEGER));
+      return oa - ob || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+    });
+  const scopeIds = [...new Set(cardMeasures.flatMap((x) => x.scope))];
 
   // The Domains set the paying scope and the quest text: Gemini's unchecked words never reach a set.
   for (const d of live) {
@@ -521,24 +680,40 @@ export async function weekQuestInputFor(
   const templateIds = [...new Set([...practiceItems, ...stepItems].map((i) => templateOf(i) as string))];
   const stepTemplateIds = stepItems.map((i) => templateOf(i) as string);
   const restTo = maxDay(dueDay, weekEnd);
+  const v0Of = (key: string): Promise<{ day: DayKey; value: number } | null> =>
+    startedDay >= weekStart ? store.readingOn(userId, key, startedDay) : store.lastReadingBefore(userId, key, weekStart);
+  const loadoutOf = async (): Promise<{ intervalMultiplier: number; extraStrikes: number; graceExtraDays: number }> =>
+    store.reachLoadout ? store.reachLoadout(userId) : { intervalMultiplier: await store.intervalMultiplier(userId), extraStrikes: 0, graceExtraDays: 0 };
 
   // Wave 2: everything else, at once.
-  const [templates, stepInstances, domains, cards, v0Row, rest, capacityOf, quotas, m, logDays] = await Promise.all([
+  const [templates, stepInstances, domains, cards, v0Rows, rest, capacityOf, quotas, loadout, logDays] = await Promise.all([
     templateIds.length ? store.templates(userId, templateIds) : Promise.resolve([] as QuestTemplateRow[]),
     stepTemplateIds.length && startedDay <= lastBefore ? store.instances(userId, stepTemplateIds, startedDay, lastBefore) : Promise.resolve([] as QuestInstanceRow[]),
     scopeIds.length ? store.domains(scopeIds) : Promise.resolve([]),
-    card && scopeIds.length ? store.cards(scopeIds, asOf) : Promise.resolve([] as QuestCardRow[]),
-    card?.measureKey
-      ? startedDay >= weekStart
-        ? store.readingOn(userId, card.measureKey, startedDay)
-        : store.lastReadingBefore(userId, card.measureKey, weekStart)
-      : Promise.resolve(null),
+    scopeIds.length ? store.cards(scopeIds, asOf) : Promise.resolve([] as QuestCardRow[]),
+    Promise.all(cardMeasures.map((x) => v0Of(x.key))),
     store.restRows(userId, weekStart, restTo),
     store.capacity(userId, facts.roadmap, weekStart),
     store.quotas(userId, weekStart),
-    store.intervalMultiplier(userId),
+    loadoutOf(),
     cpItem ? store.logDays(userId, checkpointLogPrefix(cpItem.lineageId), null, lastBefore) : Promise.resolve([] as DayKey[]),
   ]);
+  const m = Number.isFinite(loadout.intervalMultiplier) && loadout.intervalMultiplier > 0 ? loadout.intervalMultiplier : 1;
+
+  // Wave 3 (an `rc` measure only): the clean-entry read for its cards at exactly L, with the card levels.
+  const retryIds = new Set<string>();
+  const rcAt = cardMeasures.filter((x) => x.segment === "rc");
+  if (rcAt.length) {
+    const atL = cards.filter((c) => c.id != null && rcAt.some((x) => x.scope.includes(c.domainId) && c.level === x.L));
+    if (atL.length) {
+      const L = Math.max(...rcAt.map((x) => x.L));
+      const back = await cleanWindowDaysOf(store, userId, facts.roadmap.id, L, m, loadout);
+      const rows = await store.reviewRows(userId, atL.map((c) => c.id as string), addDays(todayKey(now), -back));
+      const byIdea = new Map<string, ReviewLedgerRow[]>();
+      for (const r of rows) byIdea.set(r.ideaId, [...(byIdea.get(r.ideaId) ?? []), { day: r.day, at: r.occurredAt.getTime(), detail: r.detail }]);
+      for (const c of atL) if (isRetryEntry(byIdea.get(c.id as string) ?? [], c.level)) retryIds.add(c.id as string);
+    }
+  }
 
   const held = heldDaysAsOf(rest, asOf, weekStart, restTo);
   const heldWeek = [...held].filter((d) => d >= weekStart && d <= weekEnd).sort();
@@ -553,40 +728,44 @@ export async function weekQuestInputFor(
     return { id, recurrence: item.kind === "PRACTICE" ? item.rule : null, startDay: startedDay, estMinutes: band, completedAt: null, archivedAt: null };
   };
 
-  // The card measure.
-  let cardInput: WeekQuestInput["card"] = null;
-  if (card && card.measureKey && card.minLevel != null && scopeIds.length) {
-    const L = card.minLevel;
-    const byId = new Map(domains.map((d) => [d.id, d]));
+  // The card measures, one per Domain on a depth plan.
+  const byId = new Map(domains.map((d) => [d.id, d]));
+  const states: CardState[] = cards.map((c) => ({
+    level: c.level,
+    dueDay: dayKeyOf(c.dueDate),
+    graceEndsDay: c.graceEndsAt ? dayKeyOf(c.graceEndsAt) : null,
+    createdDay: dayKeyOf(c.createdAt),
+    domainId: c.domainId,
+    ...(c.questionType != null ? { recall: isRecallType(c.questionType) } : {}),
+    ...(c.id != null && retryIds.has(c.id) ? { retryEntry: true } : {}),
+  }));
+  const cardInputs: WeekQuestCardInput[] = cardMeasures.map((x, i) => {
     const names: DomainName[] = [];
-    for (const id of scopeIds) {
+    for (const id of x.scope) {
       const row = byId.get(id);
       if (row) names.push(domainName(row));
     }
-    const states: CardState[] = cards.map((c) => ({
-      level: c.level,
-      dueDay: dayKeyOf(c.dueDate),
-      graceEndsDay: c.graceEndsAt ? dayKeyOf(c.graceEndsAt) : null,
-      createdDay: dayKeyOf(c.createdAt),
-      domainId: c.domainId,
-    }));
-    const baseline = card.baseline ?? 0;
-    const liveCount = states.filter((c) => c.level >= L).length;
-    const v0 = startedDay >= weekStart ? (v0Row?.value ?? overrides.v0 ?? liveCount) : (v0Row?.value ?? baseline);
-    const rate = card.rateSource as RateSource | null;
-    cardInput = {
-      measureKey: card.measureKey,
-      domainIds: [...scopeIds],
+    const own = states.filter((c) => c.domainId != null && x.scope.includes(c.domainId));
+    const baseline = x.mm.baseline ?? 0;
+    const startV0 = ownNumberOf(overrides.v0ByKey, x.key) ?? (cardMeasures.length === 1 ? overrides.v0 : undefined);
+    const v0 = startedDay >= weekStart ? (v0Rows[i]?.value ?? startV0 ?? measureCountOf(own, x.L, x.segment)) : (v0Rows[i]?.value ?? baseline);
+    const rate = x.mm.rateSource as RateSource | null;
+    const input: WeekQuestCardInput = {
+      measureKey: x.key,
+      domainIds: [...x.scope],
       domainNames: names,
-      level: L,
-      target: card.target,
+      level: x.L,
+      target: x.mm.target,
       baseline,
       v0,
-      cards: states,
+      cards: own,
       rateSource: rate === "SCOPE" || rate === "FIELD" || rate === "YOURS" || rate === "NONE" ? rate : snapshot.rateSource,
-      fieldId: byId.get(scopeIds[0])?.fieldId ?? null,
+      fieldId: byId.get(x.scope[0])?.fieldId ?? null,
     };
-  }
+    if (x.scope.length === 1) input.domainId = x.scope[0];
+    if (x.segment) input.segment = x.segment;
+    return input;
+  });
 
   // Practices on Today, in ord.
   const practices: WeekQuestPracticeInput[] = [];
@@ -631,15 +810,17 @@ export async function weekQuestInputFor(
     weekEnd,
     milestone: { id: ms.id, ord: facts.place, of: facts.of, startedDay, dueDay, snapshot },
     heldDays: [...held].sort(),
-    card: cardInput,
+    card: cardInputs[0] ?? null,
+    cards: cardInputs,
     capacity: capacityOf(heldWeek),
     otherFieldQuotas: quotas.filter((q) => q.fieldId !== facts.roadmap.fieldId).reduce((sum, q) => sum + Math.max(0, q.quota), 0),
     areaQuotaField: areaQuota ? { fieldId: areaQuota.fieldId, name: areaQuota.name } : null,
     practices,
     steps,
     checkpoint,
-    m: Number.isFinite(m) && m > 0 ? m : 1,
+    m,
     cardLevelsReadAt: now.toISOString(),
+    loadout: { extraStrikes: loadout.extraStrikes, graceExtraDays: loadout.graceExtraDays },
   };
 }
 
@@ -763,7 +944,25 @@ async function evidenceFor(
     Promise.all(
       specs.map(async (q): Promise<QuestEvidence | null> => {
         if (q.to < q.from) return null;
+        if (q.kind === "RAISE" && q.parts && q.parts.length > 0) {
+          // Generator 2: each part reads its own Domain's measure key (recall cards; `rc` counts a retry entry after its next pass).
+          const evs = await Promise.all(q.parts.map((p) => store.readingsBetween(userId, p.measureKey, q.from, q.to)));
+          const byDomain: Record<string, { value: number | null; high: number | null; slipDay: DayKey | null }> = {};
+          q.parts.forEach((p, i) => {
+            const ev = raiseEvidenceOf(evs[i]);
+            byDomain[p.domainId] = { value: ev.value, high: ev.high, slipDay: ev.slipDay };
+          });
+          return { kind: "RAISE", value: null, high: null, slipDay: null, byDomain };
+        }
         if (q.kind === "RAISE") return raiseEvidenceOf(await store.readingsBetween(userId, q.measureKey, q.from, q.to));
+        if (q.kind === "ADD" && q.parts && q.parts.length > 0) {
+          // Generator 2: recall cards per Domain (a multiple-choice card added this week doesn't count).
+          const ids = q.parts.map((p) => p.domainId);
+          const by = await store.addedByDomain(ids, dayStartOf(q.from), dayStartOf(addDays(q.to, 1)));
+          const addedByDomain: Record<string, number> = {};
+          for (const id of ids) addedByDomain[id] = Object.prototype.hasOwnProperty.call(by, id) && Number.isFinite(by[id]) ? Math.max(0, Math.floor(by[id])) : 0;
+          return { kind: "ADD", added: ids.reduce((sum, id) => sum + addedByDomain[id], 0), addedByDomain };
+        }
         if (q.kind === "ADD") return { kind: "ADD", added: q.domainIds.length ? await store.countAdded(q.domainIds, dayStartOf(q.from), dayStartOf(addDays(q.to, 1))) : 0 };
         if (q.kind === "CHECKPOINT") return { kind: "CHECKPOINT", logDays: await store.logDays(userId, checkpointLogPrefix(q.itemLineageId), q.from, q.to) };
         return null;
@@ -854,6 +1053,8 @@ async function loadWeekQuestsUncached(userId: string, now: Date, opts: QuestOpts
   const [list, rows] = await Promise.all([store.milestones(userId, { active: true }), store.questWeeks(userId, { weekStart })]);
   const open = openOf(list);
   if (!open) return null;
+  // A legacy roadmap is not measured (F-R4-16): no week quests until "Start again at a depth".
+  if (isLegacyFacts(open, list)) return null;
   const key = questWeekKey(open.milestone.id, weekStart);
   const stored = rows.find((r) => r.dedupeKey === key) ?? null;
   let set: WeekQuestSet | null = stored ? setOfStored(stored) : null;
@@ -863,7 +1064,10 @@ async function loadWeekQuestsUncached(userId: string, now: Date, opts: QuestOpts
     if (!input) return null;
     set = weekQuestsFor(input);
   }
-  const { progress, places } = await questProgressFor(store, userId, set, today);
+  const partIds = [...new Set(set.quests.flatMap((q) => ((q.kind === "RAISE" || q.kind === "ADD") && q.parts ? q.parts.map((p) => p.domainId) : [])))];
+  const [{ progress, places }, nameRows] = await Promise.all([questProgressFor(store, userId, set, today), partIds.length ? store.domains(partIds) : Promise.resolve([])]);
+  const domainNames: Record<string, DomainName> = {};
+  for (const row of nameRows) domainNames[row.id] = domainName(row);
   const snapshot = startSnapshotOfRow(open.milestone.feasibility);
   const raise = set.quests.find((q) => q.kind === "RAISE");
   const level = raise && raise.kind === "RAISE" ? raise.minLevel : (snapshot?.feasibility?.knowledge?.[0]?.level ?? null);
@@ -876,6 +1080,8 @@ async function loadWeekQuestsUncached(userId: string, now: Date, opts: QuestOpts
     writesOff: !lifeWritesEnabled(opts.env),
     places,
     passRate: snapshot ? { start: { p: snapshot.pStart, calibrating: snapshot.pCalibrating }, now: null } : null,
+    domainNames,
+    health: isBodyPlan(open.roadmap),
   };
   return { set, frozen, progress, view: weekQuestsViewOf({ ...viewInput, variant: "today" }), viewInput };
 }
@@ -897,7 +1103,7 @@ export async function loadWeekQuests(userId: string, now: Date, opts: QuestOpts 
     try {
       return await loadWeekQuestsUncached(userId, now, opts);
     } catch (err) {
-      if (!isMissingRoadmapTable(err)) console.error("week quests not loaded:", err);
+      if (!isMissingRoadmapTable(err) && !isMissingRev4Column(err)) console.error("week quests not loaded:", err);
       return null;
     }
   };
@@ -980,6 +1186,8 @@ export async function freezeWeekQuests(userId: string, now: Date, source: WeekQu
     const [list, rows] = await Promise.all([store.milestones(userId, { active: true }), store.questWeeks(userId, { weekStart })]);
     const open = openOf(list);
     if (!open) return { froze: 0, skipped: "NO_ROADMAP" };
+    // A legacy roadmap is not measured (F-R4-16): nothing to freeze.
+    if (isLegacyFacts(open, list)) return { froze: 0, skipped: "NO_ROADMAP" };
     const key = questWeekKey(open.milestone.id, weekStart);
     if (rows.some((r) => r.dedupeKey === key)) return { froze: 0, skipped: null };
     const input = await weekQuestInputFor(store, userId, open, weekStart, now);
@@ -988,7 +1196,7 @@ export async function freezeWeekQuests(userId: string, now: Date, source: WeekQu
     if (froze > 0) invalidate("roadmap");
     return { froze, skipped: null };
   } catch (err) {
-    if (isMissingRoadmapTable(err)) return { froze: 0, skipped: "MISSING_TABLE" };
+    if (isMissingRoadmapTable(err) || isMissingRev4Column(err)) return { froze: 0, skipped: "MISSING_TABLE" };
     console.error("week quests not frozen:", err);
     return { froze: 0, skipped: null, error: questErrorText(err) };
   }
@@ -1125,6 +1333,9 @@ interface MilestoneSqlRow {
   goalClosedScore: number | null;
   goalCompletedAt: Date | null;
   goalArchivedAt: Date | null;
+  /** Revision 4 (absent when read before the rev-4 migration). */
+  depth?: number | null;
+  stage?: string | null;
 }
 
 const keyOrNull = (d: Date | null): DayKey | null => (d ? keyOfDateColumn(d) : null);
@@ -1153,6 +1364,7 @@ function factsOf(rows: readonly MilestoneSqlRow[]): QuestMilestoneFacts[] {
           typicalHoursSource: r.typicalHoursSource,
           targetDay: keyOfDateColumn(r.targetDay),
           practicesAllowed: r.practicesAllowed,
+          depth: r.depth == null ? null : Number(r.depth),
         },
         milestone: {
           id: r.id,
@@ -1166,6 +1378,7 @@ function factsOf(rows: readonly MilestoneSqlRow[]): QuestMilestoneFacts[] {
           goalId: r.goalId,
           version: Number(r.version),
           createdAt: r.createdAt,
+          stage: r.stage ?? null,
         },
         goal:
           r.goalId && r.goalRowId
@@ -1185,7 +1398,13 @@ function factsOf(rows: readonly MilestoneSqlRow[]): QuestMilestoneFacts[] {
   return out;
 }
 
-function milestonesSql(userId: string, scope: { active: true } | { milestoneIds: readonly string[] }): Prisma.Sql {
+/**
+ * The milestone read. With `rev4` it also selects Roadmap.depth and
+ * RoadmapMilestone.stage (F-R4-16's legacy test); the store retries without
+ * them when the rev-4 migration isn't applied yet (isMissingRev4Column), and
+ * every roadmap then reads as legacy.
+ */
+function milestonesSql(userId: string, scope: { active: true } | { milestoneIds: readonly string[] }, rev4 = true): Prisma.Sql {
   const where =
     "active" in scope
       ? Prisma.sql`r."status" = 'ACTIVE' AND m."status" IN ('PLANNED', 'STARTING', 'STARTED') AND m."version" <= r."version"`
@@ -1196,6 +1415,7 @@ function milestonesSql(userId: string, scope: { active: true } | { milestoneIds:
            r."hoursPerWeek", r."intensity", r."startPoint", r."typicalHours", r."typicalHoursSource", r."targetDay", r."practicesAllowed",
            m."id", m."lineageId", m."ord", m."title", m."status", m."version", m."startedDay", m."dueDay", m."feasibility", m."goalId", m."createdAt",
            t."id" AS "goalRowId", t."dueDay" AS "goalDueDay", t."closedScore" AS "goalClosedScore", t."completedAt" AS "goalCompletedAt", t."archivedAt" AS "goalArchivedAt"
+           ${rev4 ? Prisma.sql`, r."depth", m."stage"` : Prisma.empty}
     FROM "public"."RoadmapMilestone" m
     JOIN "public"."Roadmap" r ON r."id" = m."roadmapId"
     LEFT JOIN "public"."TaskTemplate" t ON t."id" = m."goalId" AND t."userId" = r."userId"
@@ -1232,8 +1452,13 @@ function declaredCapacity(roadmap: QuestRoadmapRow, heldDays: readonly DayKey[])
 export const prismaQuestStore: QuestStore = {
   async milestones(userId, scope) {
     if ("milestoneIds" in scope && scope.milestoneIds.length === 0) return [];
-    const rows = await prisma.$queryRaw<MilestoneSqlRow[]>(milestonesSql(userId, scope));
-    return factsOf(rows);
+    try {
+      return factsOf(await prisma.$queryRaw<MilestoneSqlRow[]>(milestonesSql(userId, scope)));
+    } catch (err) {
+      // Before the rev-4 migration: read without depth and stage (every roadmap then reads as legacy).
+      if (!isMissingRev4Column(err)) throw err;
+      return factsOf(await prisma.$queryRaw<MilestoneSqlRow[]>(milestonesSql(userId, scope, false)));
+    }
   },
   async parts(milestoneId) {
     const [items, measures] = await Promise.all([
@@ -1301,7 +1526,7 @@ export const prismaQuestStore: QuestStore = {
   async cards(domainIds, createdBefore) {
     return prisma.idea.findMany({
       where: { domainId: { in: [...domainIds] }, isArchived: false, createdAt: { lt: createdBefore } },
-      select: { domainId: true, level: true, dueDate: true, graceEndsAt: true, createdAt: true },
+      select: { id: true, domainId: true, level: true, dueDate: true, graceEndsAt: true, createdAt: true, questionType: true },
     });
   },
   async lastReadingBefore(userId, measureKey, day) {
@@ -1336,6 +1561,24 @@ export const prismaQuestStore: QuestStore = {
   },
   async countAdded(domainIds, from, to) {
     return prisma.idea.count({ where: { domainId: { in: [...domainIds] }, isArchived: false, createdAt: { gte: from, lt: to } } });
+  },
+  async addedByDomain(domainIds, from, to) {
+    const rows = await prisma.idea.groupBy({
+      by: ["domainId"],
+      where: { domainId: { in: [...domainIds] }, isArchived: false, createdAt: { gte: from, lt: to }, questionType: { notIn: [...NON_RECALL_TYPES] } },
+      _count: { _all: true },
+    });
+    const out: Record<string, number> = {};
+    for (const r of rows) out[r.domainId] = r._count._all;
+    return out;
+  },
+  async reviewRows(userId, ideaIds, from) {
+    if (ideaIds.length === 0) return [];
+    const rows = await prisma.activityEvent.findMany({
+      where: { userId, source: "REVIEW", sourceId: { in: [...ideaIds] }, day: { gte: dateColumn(from) } },
+      select: { sourceId: true, day: true, occurredAt: true, detail: true },
+    });
+    return rows.flatMap((r) => (r.sourceId ? [{ ideaId: r.sourceId, day: keyOfDateColumn(r.day), occurredAt: r.occurredAt, detail: r.detail }] : []));
   },
   async restRows(userId, from, to) {
     try {
@@ -1387,6 +1630,15 @@ export const prismaQuestStore: QuestStore = {
   async intervalMultiplier(userId) {
     const { loadModifiers } = await import("./skill-effects");
     return (await loadModifiers(userId)).intervalMultiplier;
+  },
+  async reachLoadout(userId) {
+    const { loadModifiers } = await import("./skill-effects");
+    const mods = await loadModifiers(userId);
+    return { intervalMultiplier: mods.intervalMultiplier, extraStrikes: mods.extraStrikes, graceExtraDays: mods.graceExtraDays };
+  },
+  async acceptanceMultiplier(userId, roadmapId) {
+    const a = await prisma.roadmapAcceptance.findFirst({ where: { roadmapId, undoneAt: null, roadmap: { userId } }, orderBy: acceptanceOrderBy(), select: { intervalMultiplier: true } });
+    return a ? a.intervalMultiplier : null;
   },
   async questWeeks(userId, filter) {
     const rows = await prisma.roadmapQuestWeek.findMany({

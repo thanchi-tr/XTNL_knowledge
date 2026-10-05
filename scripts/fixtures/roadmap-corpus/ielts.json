@@ -80,5 +80,125 @@
         ]
       }
     }
-  ]
+  ],
+  "v3": {
+    "probe": true,
+    "about": "An exam aim the user answered Yes to (IELTS Academic, with its date: never sent), no outline, two unchosen Domains (Grammar, Listening).",
+    "intake": {
+      "depth": 12,
+      "dateMode": "REALISTIC",
+      "exam": true,
+      "examLabel": "IELTS Academic",
+      "examDay": "2027-04-04",
+      "suggestAreas": false
+    },
+    "replies": [
+      {
+        "id": "ielts-v3-a",
+        "about": "Listening needed; timed practice and a mock test toward the end; the exam booked early.",
+        "reply": {
+          "needs": [
+            "D4"
+          ],
+          "stages": {
+            "FOUNDATION": {
+              "practices": [
+                {
+                  "kind": "RECALL_DRILLS",
+                  "on": "D1"
+                },
+                {
+                  "kind": "READ_AND_CARD",
+                  "on": "D2"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "BOOK_EXAM"
+                },
+                {
+                  "kind": "CHOOSE_MATERIAL"
+                }
+              ],
+              "checkpoint": "SELF_TEST"
+            },
+            "FAMILIAR": {
+              "practices": [
+                {
+                  "kind": "WRITING_PRACTICE",
+                  "on": "D2"
+                },
+                {
+                  "kind": "RECALL_DRILLS",
+                  "on": "D1"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "OUTLINE",
+                  "on": "D2"
+                }
+              ],
+              "checkpoint": null
+            },
+            "RETAINED": {
+              "practices": [
+                {
+                  "kind": "WRITING_PRACTICE",
+                  "on": "D2"
+                },
+                {
+                  "kind": "SAY_IT_ALOUD",
+                  "on": "D1"
+                }
+              ],
+              "steps": [],
+              "checkpoint": "MOCK_TEST"
+            },
+            "FLUENT": {
+              "practices": [
+                {
+                  "kind": "TIMED_PRACTICE"
+                },
+                {
+                  "kind": "MISTAKE_REVIEW"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "LIST_GAPS"
+                }
+              ],
+              "checkpoint": "MOCK_TEST"
+            },
+            "MASTERED": {
+              "practices": [
+                {
+                  "kind": "TIMED_PRACTICE"
+                },
+                {
+                  "kind": "EXPLAIN_IT",
+                  "on": "D2"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "FULL_ATTEMPT"
+                }
+              ],
+              "checkpoint": "PERFORMANCE_CHECK"
+            }
+          }
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "needs": [
+            "d_en_listen"
+          ],
+          "excluded": [],
+          "sessionPicks": false
+        }
+      }
+    ]
+  }
 }

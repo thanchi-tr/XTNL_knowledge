@@ -1,0 +1,231 @@
+{
+  "aim": "new-subject",
+  "about": "A subject new to the user (F-R4-23): a Field Area whose two Domains the user named at intake (no cards yet) and a six-line outline the user tied to them, so the plan has keys to arrange. The probe sends it with the gap slot on. v3 only: no v2 drafts.",
+  "probe": false,
+  "today": "2026-10-05",
+  "areaFieldId": "fld_sail",
+  "input": {
+    "intake": {
+      "aim": "Sail a dinghy solo",
+      "fieldId": "fld_sail",
+      "track": "CRAFT",
+      "domainIds": [
+        "d_sa_boat",
+        "d_sa_wind"
+      ],
+      "targetDay": "2027-10-03",
+      "hoursPerWeek": 4,
+      "newCardsPerWeek": 5,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": {
+        "lines": [
+          "Rigging and launching",
+          "Points of sail",
+          "Tacking and gybing",
+          "Capsize recovery drills",
+          "Reading wind shifts and gusts",
+          "Weather forecasts and safe limits"
+        ],
+        "source": "my own list"
+      },
+      "startPoint": "NEW",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": null,
+      "examLabel": null
+    },
+    "areaName": "Sailing",
+    "domains": [
+      {
+        "id": "d_sa_boat",
+        "name": "Boat Handling",
+        "fieldId": "fld_sail",
+        "cards": 0,
+        "atSix": 0,
+        "atTop": 0,
+        "chosen": true
+      },
+      {
+        "id": "d_sa_wind",
+        "name": "Wind and Weather",
+        "fieldId": "fld_sail",
+        "cards": 0,
+        "atSix": 0,
+        "atTop": 0,
+        "chosen": true
+      }
+    ],
+    "windows": []
+  },
+  "library": [
+    {
+      "id": "d_sa_boat",
+      "name": "Boat Handling",
+      "fieldId": "fld_sail",
+      "fieldName": "Sailing",
+      "cards": 0,
+      "titles": [],
+      "tags": []
+    },
+    {
+      "id": "d_sa_wind",
+      "name": "Wind and Weather",
+      "fieldId": "fld_sail",
+      "fieldName": "Sailing",
+      "cards": 0,
+      "titles": [],
+      "tags": []
+    }
+  ],
+  "drafts": [],
+  "v3": {
+    "probe": true,
+    "about": "The probe's suggestions-on call on a new subject.",
+    "intake": {
+      "depth": 12,
+      "dateMode": "REALISTIC",
+      "exam": false,
+      "examDay": null,
+      "suggestAreas": true,
+      "newDomainNames": [
+        "Boat Handling",
+        "Wind and Weather"
+      ],
+      "lineDomains": [
+        "d_sa_boat",
+        "d_sa_boat",
+        "d_sa_boat",
+        "d_sa_boat",
+        "d_sa_wind",
+        "d_sa_wind"
+      ]
+    },
+    "replies": [
+      {
+        "id": "new-subject-v3-a",
+        "about": "Every line placed; two grounded gap names shown, a course name dropped, an invented area hidden.",
+        "reply": {
+          "stages": {
+            "FOUNDATION": {
+              "lines": [
+                "S1",
+                "S2"
+              ],
+              "practices": [
+                {
+                  "kind": "READ_AND_CARD",
+                  "on": "D1"
+                },
+                {
+                  "kind": "RECALL_DRILLS",
+                  "on": "D2"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "SET_UP"
+                },
+                {
+                  "kind": "CHOOSE_MATERIAL"
+                }
+              ],
+              "checkpoint": "SELF_TEST"
+            },
+            "FAMILIAR": {
+              "lines": [
+                "S3",
+                "S5"
+              ],
+              "practices": [
+                {
+                  "kind": "SLOW_DRILLS",
+                  "on": "D1"
+                },
+                {
+                  "kind": "RECALL_DRILLS"
+                }
+              ],
+              "steps": [],
+              "checkpoint": null
+            },
+            "RETAINED": {
+              "lines": [
+                "S4",
+                "S6"
+              ],
+              "practices": [
+                {
+                  "kind": "RUN_THROUGHS",
+                  "on": "D1"
+                },
+                {
+                  "kind": "EXPLAIN_IT",
+                  "on": "D2"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "EXPLAIN_ONCE",
+                  "on": "D2"
+                }
+              ],
+              "checkpoint": "SELF_TEST"
+            },
+            "FLUENT": {
+              "lines": [],
+              "practices": [
+                {
+                  "kind": "RUN_THROUGHS"
+                },
+                {
+                  "kind": "MISTAKE_REVIEW"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "SMALL_PROJECT",
+                  "on": "D1"
+                }
+              ]
+            },
+            "MASTERED": {
+              "practices": [
+                {
+                  "kind": "RUN_THROUGHS"
+                },
+                {
+                  "kind": "EXPLAIN_IT"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "FULL_ATTEMPT"
+                }
+              ],
+              "checkpoint": "PERFORMANCE_CHECK"
+            }
+          },
+          "gaps": [
+            "Capsize recovery",
+            "Points of sail",
+            "RYA dinghy course",
+            "Racing tactics"
+          ]
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "uncovered": [],
+          "needs": [],
+          "excluded": [],
+          "sessionPicks": false,
+          "gapsShown": [
+            "Capsize recovery",
+            "Points of sail"
+          ],
+          "gapsHidden": 2
+        }
+      }
+    ]
+  }
+}

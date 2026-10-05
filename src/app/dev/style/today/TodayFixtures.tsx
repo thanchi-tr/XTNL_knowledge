@@ -16,9 +16,23 @@ import { RepairAsk, WelcomeBack, YesterdaySettled } from "@/components/today/m2/
 import { RecordYesterdaySheet, RestControls, type DidAnswer } from "@/components/today/m2/Sheets";
 import { WeekCard, WeekRunner, WeekTrack } from "@/components/today/m2/WeekRunner";
 import { WeekQuests } from "@/components/roadmap/WeekQuests";
+import { AimLine } from "@/components/roadmap/AimLine";
+import { FixtureRoadmapProvider } from "@/components/roadmap/roadmap-runtime";
 import { weekQuestsViewOf } from "@/lib/roadmap-quests";
-import type { WeekQuestsView } from "@/lib/roadmap-types";
-import { DAY_AWAY, DAY_FULL, DAY_KEPT, DAY_MORNING, QUEST_FIXTURES, fixtureBoard, fixtureRoadmapBoard, type QuestFixture } from "./fixtures";
+import type { AimLineView, WeekQuestsView } from "@/lib/roadmap-types";
+import {
+  AIM_LINE_FIXTURES,
+  DAY_AWAY,
+  DAY_FULL,
+  DAY_KEPT,
+  DAY_MORNING,
+  QUEST_FIXTURES,
+  aimLineKindOf,
+  aimLineOfFixture,
+  fixtureBoard,
+  fixtureRoadmapBoard,
+  type QuestFixture,
+} from "./fixtures";
 
 /**
  * A week quests fixture as the card renders it: roadmap-quests'
@@ -33,6 +47,31 @@ function questViewOf(f: QuestFixture): WeekQuestsView | null {
   }
 }
 
+/** What the rule gave, in plain words beside each aim line state (data only: no title, no model text). */
+function aimRuleLine(v: AimLineView | null): string {
+  const kind = aimLineKindOf(v);
+  if (!v || !kind) return "todayAimLineOf → nothing on Today";
+  const start = v.kind === "START" ? ` · milestone ${v.ord}${v.stageName ? ` · ${v.stageName}` : ""} · ${v.givesRank ? `gives ${v.givesRank}` : "keeps your rank"}` : "";
+  return `todayAimLineOf → ${kind}${start} → ${v.href}`;
+}
+
+/** The board's slot spacing under the goals (TodayBoard's QUESTS_SLOT_STYLE). */
+const AIM_SLOT_STYLE = { marginTop: 16 } as const;
+
+/**
+ * The aim line in place, inside a copy of the board's own columns (fix round
+ * 2): `.board > .c1 .c2 .c3` from today.css, with c1 and c2 left empty, so
+ * the line has c3's real width at every viewport (312 px at 344, about 339 at
+ * 932 and 315 at 1440), where a fixture grid cell is wider (about 392 at
+ * 932). ui-audit reads each by its data-state; the second is the longest line
+ * Today draws (a count gate's START), so "no clamped text" is measured on the
+ * tightest copy at c3's width.
+ */
+const AIM_IN_PLACE = [
+  { key: "in-place", fixture: "set-week", title: "In place · the board's columns, under the goals: a Monday with no aim" },
+  { key: "in-place-longest", fixture: "start-part", title: "In place · the board's columns: the longest line (a new learner's count gate, START), at c3's real width" },
+] as const;
+
 /**
  * /dev/style/today — L1's fixtures: every Today state and the M2-ready
  * pieces (make-up cards, owed summary, the settle and plan-time-off sheets,
@@ -45,6 +84,20 @@ function questViewOf(f: QuestFixture): WeekQuestsView | null {
  * Start again) and the week quests card's six states (open, partial, all
  * done, compact, writes off, practice-only), the first beside the Day
  * ledger's Quest ring. Pure fixtures only; never the user's roadmap.
+ *
+ * Revision 4 (lane T, F-R4-3): the aim line's states (SET week, month, back
+ * and next; backed off, and the 1st after it; hidden by the /you line's "Not
+ * now"; DRAFT; START, one that keeps your rank, a track plan's, the longest
+ * (a count gate's) and a count gate at the depth after held stages; compact
+ * with something to close, and with nothing), each in the board's slot
+ * exactly as the page draws it, plus two in place under the goals inside a
+ * copy of the board's columns (fix round 2: c3's real width at 932 and
+ * 1440; the second is the longest line). Every state is todayAimLineOf's own
+ * answer; ui-audit reads each by its data-state="aim-<key>" box (the line
+ * ≤ 72 px at 344, no clamped text).
+ * And the week quests card's generator-2 states (F-R4-13, F-R4-14): RAISE
+ * and ADD with per-Domain parts, three parts (Today shows two and "+n
+ * more"), and a BODY plan's body-safe sessions with the health line.
  */
 
 const STRETCH: MakeUp = {
@@ -71,6 +124,8 @@ export function TodayFixtures() {
   const board = useMemo(() => fixtureBoard(), []);
   const roadmapBoard = useMemo(() => fixtureRoadmapBoard(), []);
   const questStates = useMemo(() => QUEST_FIXTURES.map((f) => ({ ...f, view: questViewOf(f) })), []);
+  const aimStates = useMemo(() => AIM_LINE_FIXTURES.map((f) => ({ ...f, view: aimLineOfFixture(f) })), []);
+  const aimInPlace = useMemo(() => AIM_IN_PLACE.map((p) => ({ ...p, view: aimStates.find((a) => a.key === p.fixture)?.view ?? null })), [aimStates]);
   const [muState, setMuState] = useState<MakeUpState>("open");
   const [ySheet, setYSheet] = useState(false);
   const [answers, setAnswers] = useState<Record<string, DidAnswer>>({});
@@ -234,7 +289,7 @@ export function TodayFixtures() {
         <GoalsStrip goals={roadmapBoard.goals} busy={false} onProgress={() => undefined} launched onClose={() => undefined} onReschedule={() => undefined} />
       </div>
 
-      <SectionHeader title="Week quests" aside="open · partial · all done · compact · writes off · practice-only (the card under the goals)" />
+      <SectionHeader title="Week quests" aside="open · partial · all done · compact · writes off · practice-only · parts · more parts · body plan with the health line (the card under the goals)" />
       {questStates.some((q) => !q.view) && (
         <p className="t-meta dev-banner">The week quests views are built by roadmap-quests (lane R6) and drawn by WeekQuests (lane R5); until both land, the states below are listed but not drawn.</p>
       )}
@@ -268,6 +323,56 @@ export function TodayFixtures() {
           </div>
         ))}
       </div>
+
+      <SectionHeader
+        title="Aim line"
+        aside="in place, in the board's columns (a Monday · the longest line) · set: week · month · back · next · backed off · hidden · draft · start (keeps · track · part · part at the depth) · compact (the same slot, only when no week quests show)"
+      />
+      <p className="t-meta dev-banner">
+        Each state is roadmap-invite&apos;s todayAimLineOf over made-up 2027 days, read as the Today page reads it, and drawn by AimLine (lane R5) in the board&apos;s slot. The first two sit in a copy of
+        the board&apos;s columns, so the line has its real width at every viewport; the rest sit in fixture cells, which match the board only at 344 and 375. &ldquo;Not now&rdquo; saves nothing here (the
+        fixtures provider).
+      </p>
+      {/* The fixtures provider: AimLine's "Not now" reaches inert actions, so this page never sets the real snooze cookies. */}
+      <FixtureRoadmapProvider>
+        {aimInPlace.map((p) => (
+          <div key={p.key} className="dev-aim-board" data-state={`aim-${p.key}`}>
+            <p className="t-eyebrow">{p.title}</p>
+            {/* As on the board: TodayBoard's .board > .c3 > .o9, the goals, then the slot (c1 and c2 empty). */}
+            {p.view && (
+              <div className="board">
+                <div className="c1" />
+                <div className="c2" />
+                <div className="c3">
+                  <div className="o9">
+                    <GoalsStrip goals={board.goals} busy={false} onProgress={() => undefined} launched onClose={() => undefined} onReschedule={() => undefined} />
+                    <div className="rm-quests-slot" style={AIM_SLOT_STYLE}>
+                      <div className="rm-aim-slot">
+                        <AimLine view={p.view} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+        <div className="dev-grid">
+          {aimStates.map((a) => (
+            <div key={a.key} className="dev-quest" data-state={`aim-${a.key}`}>
+              <p className="t-eyebrow">{a.title}</p>
+              <p className="t-meta">{aimRuleLine(a.view)}</p>
+              {a.view && (
+                <div className="rm-quests-slot" data-compact={a.compact ? "1" : undefined}>
+                  <div className="rm-aim-slot" data-close-due={a.closeDue ? "1" : undefined}>
+                    <AimLine view={a.view} />
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </FixtureRoadmapProvider>
 
       <SectionHeader title="Sheets (M2)" aside="record yesterday · close the day · plan time off" />
       <div className="dev-row">

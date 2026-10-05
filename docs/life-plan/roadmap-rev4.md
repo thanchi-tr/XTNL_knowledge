@@ -1,8 +1,9 @@
 # Roadmap revision 4: the aim at the centre, plans that reach high mastery, and drafting with no Gemini words
 
-Build spec, revision 4, final (2026-10-05, after two critiques). It is a **delta** on docs/life-plan/roadmap.md revision 3:
+Build spec, revision 4, final (2026-10-05, after two critiques), **brought up to the shipped behaviour after the build and its two fix rounds** (same day). It is a **delta** on docs/life-plan/roadmap.md revision 3:
 - Where this text and revision 3 differ, this text wins. Everything revision 3 says that this text does not change still stands, every guarantee included (decision 50 lists them).
-- The frozen contract is docs/life-plan/roadmap-contracts.md. Lane 0 appends a §11 "Revision 4" to it (F-R4 Lanes).
+- The frozen contract is docs/life-plan/roadmap-contracts.md. Revision 4 is its §14; the fix round is §15, fix round 2 is §16, and §17 records what the lanes shipped in fix round 2 (F-R4 Lanes; the section numbers moved because the rev-3 fix rounds had used §11–§13).
+- **As shipped.** Where the build or a fix round departed from the first text, the rule is rewritten in place and marked *(shipped)*, and "As shipped" below lists every such change in one place, with the rulings still open for the lead. A reviewer who finds the code doing what an *(shipped)* line says has found the intended behaviour, not a bug.
 - Three designs were proposed for the user's new direction: A (encourage the aim), B (high mastery) and C (eliminate hallucination). This spec takes the strongest proposals from each, reconciles where they conflict, and records what was set aside and why.
 - Two read-only critiques followed (a hallucination red team, and high mastery, realism and motivation). Every blocker and major finding is applied, and so are the minors this spec agrees with. "Critique notes" at the end says how each one was handled.
 
@@ -30,10 +31,10 @@ Three areas, each tied to a phrase of it:
    - Today mentions the aim quietly on fresh-start days (a new week, a new month, or the first day back after a week away), backing off to once a month when it is ignored, and whenever the aim's own next step is waiting.
    - Capture, the intake form, Settings and the tour all lead to the aim.
    - Finishing an aim leads straight to the next one, and the last aim's rank stays on the character page.
-   - It is never done through counts, red, the bell, rewards or a model. Every "no" is honest: "Not now" is 4 weeks, and the lasting no is stored with your settings, so it holds on every device.
+   - It is never done through counts, red, the bell, rewards or a model. Every "no" is honest: "Not now" is 4 weeks on every surface that suggests an aim (the /you card, Today and capture's offer), and the lasting no is stored with your settings, so it holds on every device.
 2. **"ensure the designed road map is taking to high mastery"**
    - High mastery gets a measurable meaning: a **Depth**, by default Mastered (level 12), held across every required Domain at a stated coverage. At level 12 each counted card passed its level-11 review, scheduled about 110 days out, at the first try; multiple-choice cards don't count. Sustained practice and an outside standard you log complete it.
-   - The plan climbs stages from Foundation (level 4) to Mastered (level 12), each dated by the real review schedule, with a first rank within about 11 weeks.
+   - The plan climbs stages from Foundation (level 4) to Mastered (level 12), each dated by the real review schedule, with a first rank within about 11 weeks. A new learner reaches Mastered in about 15–16 months *(shipped: the reach model with clean entry and a 30% writing spare)*.
    - The engine **keeps the depth and moves the date**. It never fits the aim down to what the user would reach anyway. Only the user's explicit tap lowers the depth or a Domain's coverage, and that choice stays on the plan for good.
    - Dates are honest while the app is still learning your pass rate and pace: they use a published assumption, say so, and offer a re-date when the measurement lands. An exam with a fixed date is a waypoint on the way, not a reason to lower the depth.
    - The Aim rank follows the stages you reach inside the plan, and Paragon means verified depth plus your standard.
@@ -71,6 +72,88 @@ Each of those is labelled as Gemini's suggestion and can be changed in one tap (
 | Gemini writes titles, topics, practice names, steps, checkpoint labels and new Domain names | Keys only; a code-owned catalog; topics only from the user's outline, tied to Domains by the user | F-R4-17, F-R4-18, F-R4-24 |
 | Lexical flags and KEPT_SUGGESTION taps carry the guarantee | The schema has no free text; integrity verdicts; one writer with a tripwire; a taint-checked, measured bar; two switches | F-R4-20, F-R4-22, F-R4-23 |
 
+## As shipped (after the build and two fix rounds)
+
+The build ran in twelve lanes. Three read-only reviews followed (the hallucination bar; high mastery, realism and economy; encouragement and honesty at 344 px), then two fix rounds. This section lists every place where the shipped code departs from the first text of this spec, by area. Each change is also written in place below and marked *(shipped)*. The code-level record (exports, signatures, pins) is roadmap-contracts.md §14–§17.
+
+**The numbers that moved:**
+
+| What | First text | Shipped | Why | Pinned by |
+|---|---|---|---|---|
+| WRITE_MARGIN | 1.1, a 10% spare | **1.3, a 30% spare** | Under clean entry about 1 card in 5 misses its level-11 review at the first try and waits about 160 days for its next pass. At 1.1 a new learner reached Mastered on day 547 and the final stretch ran 203–231 days, which broke question 9 and F-R4-10's 192-day bound. 1.3 is the smallest round value that keeps both. | roadmap-contract-check, roadmap-realism-check, roadmap-quests-check (contracts §15.2) |
+| The writing need, new_d | Inference 19, Probability 0 | **Inference 24, Probability 3** (writeNeedOf(25, 9) and writeNeedOf(34, 42)); a new 25-card Domain needs 33 | The margin | the same |
+| A new learner's Mastered | "about 11–15 months" | **about 15–16 months**: stage day 479, D_real 482 (about 15.8 months) at the priors (p 0.80, c 0.85, ρ 0.6); 460 at a measured Steady | The reach model with the long-gap rate, clean entry and the 30% spare | roadmap-realism-check |
+| The clean-entry window | interval(L\*, m) + graceDays(L\*) + RETRY_ENTRY_DAYS: 173 days at level 12 | **184 days at level 12** (264 at m 1.5; 188 with a 2-day grace extension), read through cleanReadDaysOf | The old window could miss the miss before the entering pass, and at levels 5–8 the jitter could push the pass itself out, so a retry entry read as clean (F-R4-12) | roadmap-contract-check, roadmap-measures-check, roadmap-quests-check (contracts §16.1) |
+| AIM_INVITE_SINCE | the deploy day (lead) | **Tue 6 Oct 2026**, the earliest day the gated push can deploy | A later placeholder held the back-off off for a month | roadmap-invite-check (move the constant and its pins together on a later deploy) |
+| The worked examples (F-R4-10) | design B's figures at c = 1 | recomputed under the final model at 1.3 (pack: Mastered on day 430; new learner at Steady: 460) | Lane 0 recomputed them, as the first text asked | roadmap-contract-check, roadmap-realism-check |
+
+**Encouraging the aim (F-R4-1 to F-R4-7):**
+- **A fourth prompt state, HIDDEN** ('hide:<day>', hideCookieValue; 28 days). The LATER line's × on /you and the SET line's × on Today write it, through the new hideAimPrompt(). Each × now does what its label says: no surface suggests an aim for 4 weeks. The ASK card's "Not now" still writes 'later:', which folds the card to the LATER line. Settings shows the switch on under HIDDEN, because only OFF is off.
+- **HIDDEN or OFF with a last aim** shows the achievement alone: "Last aim: Aim rank Paragon · reached 12 Mar 2028", with no link and no ×. With no last aim, nothing shows.
+- **The ASK card's last aim takes two lines.** The aim is clipped to one line with an ellipsis, and "Aim rank Paragon · reached 12 Mar 2028" follows in full. At 344 px the one-line form could not keep the achievement in view.
+- **The long-goal seed shows only while the box is empty.** A tap would otherwise replace the typed aim, and with all three extras the card would pass 410 px.
+- **A failed "Not now" or ×** brings back the surface that was tapped, with its reason (collapseWrite). A failed Undo on the "suggestions are off" toast says so: "Couldn't turn them back on. Settings › Aim suggestions."
+- **The Aim card's date chip** reads "Mastered (level 12) by Mar 2028", or "Mastered (level 12) by about Mar 2028 · estimate", so "Mastered" always carries its level (Names).
+- **Today:** the aim line sits in lane T's wrapper `.rm-aim-slot`, whose `data-close-due` comes from the server's board. The compact hide is `.rm-quests-slot[data-compact]:has(> .rm-aim-slot[data-close-due])`, because data-compact follows the clock alone. loadAimStep makes 5 reads, the 5th being the started milestones' goals.
+- **Settings' note names capture** (F-R4-5), because the switch also quiets capture's offer.
+- **Capture** (F-R4-7): "Make it an aim" shows only while aimPromptOf reads ASK, so "Not now", "Don't suggest this" and the switch quiet it too. An "aim:" line the user types is never governed. The sheet's line clears only after an intake that used the aim saves. The Goal ▾ "New aim" entry is not built yet (below).
+- **dismissAimPrompt** stays as an alias of snoozeAimPrompt. Nothing writes 'off' any more.
+
+**High mastery (F-R4-8 to F-R4-16):**
+- **Coverage is frozen at intake.** A Domain's live and multiple-choice counts are read once, when it joins the plan. Archiving cards, writing more, or a card turning multiple choice never moves n_d at a re-plan, a re-date or a lowering; only a typed figure, a line's Domain or LOWER_DEPTH does (frozenCoverageCountsOf).
+- **WRITE_MARGIN's side effect, option (b).** COVER_SHARE × 1.3 = 1.04, which is over 1, so every Domain asks for at least the spare. With no writing pace and every Domain already holding its count (live_d ≥ n_d), the engine dates the plan on the cards held and names the spare it doesn't count (spareOnlyOf). A Domain short of its count still needs a pace. The engine ships this rule. The intake form's matching change is in the finishing round, and the lead confirms the rule.
+- **A count gate at the depth** (a PART toward the final gate) gives the rank of the gate below it, not its stage's. A library holding Fluent never gives Virtuoso before Mastered is held. This deviates from decision 40's literal text.
+- **The ladder:** short windows merge from the final gate back; BETWEEN is placed so that no stretch after it is longer than MILESTONE_MAX_DAYS + 6; realism-check asserts the 192-day bound on every fixture with no exemption.
+- **CHOSEN with no pace when a Domain is short of its count** reads TIGHT with D_real null: "Not dated".
+- **[Keep the dates]** on the CALIBRATED offer is a server action. It rewrites the live acceptance's assumed inputs in place, an exception to roadmap.md's "never updated" rule that the lead confirms. CALIBRATED fires for p, c and ρ; a measured pace stays PACE_MEASURED's.
+- **The lower-depth sheet** lists each lower depth with "its stage in this plan: <day>", or "not a stage of this plan yet: the plan is dated again". A realistic date per lower depth is Deferred.
+- **Plan history** reads a lowering from the acceptance itself (PlanHistoryRow.depthLowered): "v1 depth lowered 7 Jan: Mastered → Fluent". An accept, Undo, accept sequence reads "accepted" twice.
+- **On a depth plan**, the Edit sheet has no "Type a target" on a stage measure, and the server refuses one; a single milestone cannot add a Domain. Counts come from coverage.
+- **Week quests:** ADD asks toward the milestone measure's own target: the coverage n_d at a stage gate, the gate's count at a PART. Its basis reads "1.3 × 25 → 33, a 30% spare because some cards lag". The arrow marks the rounding; an equals sign would be a false equation.
+- **Plans made before revision 4:** a legacy DRAFT with no depth refuses with "Pick a depth in the intake first"; the restart note names only what was carried; the Aim card shows the hidden-wording line and carries the old plan's Domains.
+
+**No Gemini words (F-R4-17 to F-R4-24):**
+- **The constraint parser** skips generic words ("time", "exercise", "only"). A scope break such as "while" or "but" ends a cue only after the cue has taken a term. A clause that clears what a cue named ("injured, but cleared to run", "doctor says running is fine") ends that cue (the rule `constraint.release`). The release never removes an exclusion the user states in a later clause ("knee injury, swimming ok, running not ok" excludes running): fix round 2 ended the cue for the rest of the sentence, and the finishing round scoped it to its own clause, below. Known safe-side residual: "not a morning person, evenings for running" excludes running. It is listed with its word, [Allow one] undoes it, and the confirm is raised anyway.
+- **Session picks** include FULL_ATTEMPT and PERFORMANCE_CHECK. The confirm shows on a BODY or CARE plan with non-empty constraints and at least one practice pick. "Use easy, mobility and technique instead" removes a picked full attempt or performance check without a replacement.
+- **Code labels render over the plan's Domains only**, never over a Domain Gemini suggested and the user hasn't confirmed. [Add] and [Leave out] re-render them.
+- **One draft-from-reply step** (draftFromReply) serves the draft path, reuse and the hallucination bar, so the bar tests production code.
+- **The tripwire** also refuses a non-null proposedName or rawLabel on any revision-4 row. A reply it refuses shows RUN_REFUSED_LINE: "Gemini's reply held words the app didn't write, so none of it is used. Here is a plan from your numbers; every check still runs."
+- **Copy gated on Gemini:** the empty-outline line is "What to learn comes from your outline.", and "Gemini doesn't write topics: it would be guessing." follows only where Gemini may be named. The Area hint reads "Only you pick the Area".
+- **A Domain named at intake** is recorded with origin INTAKE.
+- **The bar** (F-R4-22): 20 URL forms; V built from 15 view-writing modules without their word lists, and never holding a guarded claim, resource, spend or credential word; four new E sub-classes; views read on a sample to keep the 30 s budget; the week-quests view and the no-pending-Domain-label gate in H1. **Residuals:** one-source claims 25 of 41 (61%), several-sources 0 of 1,958; the gap bar is not met.
+
+**Still open at the end of fix round 2.** The finishing round closes these; each is stated as the rule the code must meet. The last column is read from the code at 11:10 on 5 Oct, while the finishing round was still under way.
+
+| Item | Owner | The rule | Status at 11:10 |
+|---|---|---|---|
+| The library reads tagged review details | lead | library-model outcomeOf matches 'strike…', 'degraded…' and 'shielded…' by prefix, as every other reader does. **srs.ts's level tag does not ship without it.** | landed: outcomeOf reads each tagged detail as its untagged form; `roadmap-contract:strict` passes |
+| Plan-born tasks can't be resized by a model | lead | applySizing returns before any model call for an 'rm:' template; resizableCore refuses ("A plan-born task's size comes from its practice."); TaskDrawer offers no Resize on an 'rm:' row. Latent while ROADMAP_GOALS_LIVE is false. | landed in life-sizing.ts, tasks.ts and TaskDrawer.tsx |
+| The 344 px height gates | lead | ui-audit gates the ASK card (empty-ask-continue, empty-ask-seed-last-aim) at ≤ 410 px and every Today aim line at ≤ 72 px with no clamped text; it adds the legacy Aim card boxes. Whether 410 bounds the section or the whole box is the lead's ruling. | landed in ui-audit (410 px, 72 px, no clamped text); a browser run is the lead's |
+| Goal ▾ "New aim" | lead | capture.md, revision 4, "The Goal ▾ menu": capture-ui.ts, InsertRow.tsx and QuickCapture's `aim={vocab?.aim}`. | in progress: the option is in capture-ui.ts; InsertRow.tsx and QuickCapture not yet |
+| The release keeps later exclusions | R3, R7 | A releasing clause suppresses terms only up to the next pause, break or cue, then the cue that was active resumes. "knee injury, swimming ok, running not ok" → running. The bar gains that sub-class. | landed: "knee injury, swimming ok, running not ok" → running; the bar's K family has the release sub-class |
+| The intake asks for a pace only when needed | R5 | The form requires "New cards a week" only when a chosen Domain is short of its count (option (b)). | open |
+| The aim line in the board's third column | R5 | No clamp from a 640 px container, so the rank words are never cut at 724–860 px or on 1366 px laptops. | landed in roadmap.css |
+| Start counts the right cards | R4 | finishStartCore reads each key with its segment, writes no first reading for an `rc` key, and passes a v0 per key. | open |
+| One clean-entry window everywhere | R4, R6 (optional) | planContext and the week quests read through cleanReadDaysOf, as R1 does. | open (optional) |
+| PROGRESS.md and question 11 | lead | They state the one-source residual (25 of 41) before ROADMAP_GAPS_LIVE can flip. | question 11 states it (below); PROGRESS.md open |
+| The re-blessed corpus pin | lead | Review pin.json (0dd9a8be…) and confirm. | open |
+| Integration | lead | `npm run roadmap-contract:strict` at 0; life:check runs it `--strict`, with life-day-check's list to match; optionally `today-ui:strict`. | roadmap-contract:strict passes; the life:check switch is open |
+
+**Rulings for the lead.** The first nine a lane took so the build could go on, and each is small to reverse; the last four are open questions the code answers one way for now.
+- WRITE_MARGIN 1.3 (lane 0) and option (b) for its side effect (R2).
+- HIDDEN as a fourth prompt state, and Today's SET × writing it (lane 0, R5). The alternative was to keep 'later:' for both × and relabel them, with no HIDDEN state.
+- Capture's offer follows the prompt (lane C). Lanes Y and C pin the Settings note and the rules page to it.
+- A count gate at the depth gives the rank below (lane 0).
+- [Keep the dates] updates the acceptance in place (R4).
+- The DRAFT button in capture keeps /you/roadmap (lane C; the one-line alternative is in capture.md).
+- Today's START line keeps "Mastered" without "(level 12)": with it, the PART lines take 4 lines at 344.
+- The intake writes "0 at level 6+", not "none", and keeps an empty date input for "When realistic", with no "Pick a date" control.
+- The practice conditions apply to every depth plan's aim reach, not only to plans that can give Paragon (R1).
+- PART pay: R2's timeline counts a PART as paying ⬡6, while R4 copies no practices into it.
+- ADD pacing during a PART (toward the gate's count, while the plan writes at r_plan).
+- depthRecordsOf when a line's Domain raises the policy figure under an unchanged typed figure.
+- Whether a DRAFT's redraft freezes to the draft rows' coverage, not today's.
+
 ## Decisions
 
 Numbering continues from revision 3's 32.
@@ -80,7 +163,8 @@ Numbering continues from revision 3's 32.
     - Nothing is counted, nothing is red, nothing reaches the bell, no chime plays and nothing pays.
     - *Reason:* the character page is where the user sees who they are becoming, and the moment of commitment there costs one sentence. Counts and alarms would turn an invitation into a nag, and decisions 17 and 26 forbid them on Today.
 34. **Every "no" is honest and reversible.**
-    - "Not now" quiets every set-an-aim suggestion for AIM_LATER_DAYS (28), and the snooze is shared by /you and Today. Every × on an aim surface means "Not now" and says so.
+    - "Not now" quiets every set-an-aim suggestion for AIM_LATER_DAYS (28), and the snooze is shared by /you, Today and capture's long-goal offer. Every × on an aim surface means "Not now" and says so.
+    - *(shipped)* Two snoozes, one meaning each. The ASK card's "Not now" writes 'later:<day>': the card folds to its LATER line, and Today's line and capture's offer stay quiet. The LATER line's × and Today's SET × write 'hide:<day>' (HIDDEN): nothing suggests an aim anywhere for 28 days. Neither is a no: the Settings switch stays on.
     - The lasting no is an explicit choice: the quiet "Don't suggest this" on the ASK card (with an undo toast that names Settings) or the Settings switch. It is stored in LifeSettings.aimSuggestions, so it holds on every device and doesn't expire. Settings can undo it.
     - An existing 'off' cookie is still respected as a no.
     - Lines about the user's own pending work (a waiting draft, a milestone ready to start) have their own rules (decision 35) and are not governed by the switch.
@@ -114,6 +198,7 @@ Numbering continues from revision 3's 32.
     - *Reason:* intensity keeps its meaning of effort, but it can no longer shrink the aim.
 40. **Stages carry the rank, and Paragon is verified depth with your standard.**
     - Foundation gives Aspirant, Familiar Journeyman, Retained Specialist, Fluent Expert and Mastered Virtuoso. An intermediate gate (BETWEEN) keeps your rank. A count gate (PART, F-R4-10) gives its stage's rank early, and the stage itself then keeps your rank.
+    - *(shipped)* Except at the depth: a count gate toward the depth's own gate gives the rank of the gate below (Expert under Mastered). Its target is at most n − 1 cards counted with retry entries included, so giving Virtuoso there would hand out a rank that is never lost before the depth is held (contracts §15.4).
     - Only stages reached **inside the plan** give a rank. A stage already held when you began shows "Held when you began" and counts in Proficiency, but gives no rank. A plan whose final stage is already held is refused (decision 41).
     - Paragon comes with the aim reached on a depth-12 card plan: the final stage reached, every required Domain held at level 12 (recall cards, clean entry) on the same day's readings, the plan's practice kept at KEEP_SHARE overall with its production practice kept from Fluent on, your standard logged at or above its bar, no Domain's coverage below the app's policy, and the reach confirmed. A stage closed short on the way doesn't block it.
     - A track plan ranks its k-th kept stage k, and can give Paragon only with a standard, at least PARAGON_MIN_MILESTONES (4) kept stages and a span of at least TRACK_PARAGON_MIN_DAYS (180).
@@ -125,7 +210,7 @@ Numbering continues from revision 3's 32.
     - A depth plan whose final stage is already held at intake or acceptance, or whose realistic date is under SPAN_MIN_DAYS away, is refused: "You already hold this depth in these Domains. Add a Domain, raise coverage or set a different aim."
     - Seasons (aims up to 5 years) are Deferred, with their design.
     - Your own earlier date is shown as a waypoint ("by Sun 4 Apr 2027 the plan reaches Retained").
-    - *Reason:* new learners reach Mastered in about 11–15 months, well inside 3 years. Seasons add a chain read, a second migration column set and a new lifecycle action for an edge case, inside a revision that is already large.
+    - *Reason:* new learners reach Mastered in about 15–16 months *(shipped: stage day 479 and D_real 482 at the priors, 460 at a measured Steady)*, well inside 3 years. Seasons add a chain read, a second migration column set and a new lifecycle action for an edge case, inside a revision that is already large.
 42. **Gemini writes no words.**
     - The response schema has no free STRING outside the opt-in `gaps` list, and `gaps` is absent while ROADMAP_GAPS_LIVE is false (decision 51). Every other string node is an enum of keys issued for this run. Outline lines carry no Domain key.
     - Code writes every title, practice, step and checkpoint label from closed templates (roadmap-catalog.ts).
@@ -284,7 +369,8 @@ All are pure and live in src/lib/roadmap-types.ts (lane 0) unless another home i
 **Inviting the aim** (src/lib/roadmap-invite.ts, lane 0):
 - AIM_LATER_DAYS 28; AIM_PROMPT_LATER_MAX_AGE_S 365 days (the 'later:<day>' and 'on:<day>' values outlive the snooze, because their day anchors the back-off).
 - AIM_AWAY_DAYS 7 (a first day back after this many days with no DAY_OPEN row is a fresh-start day).
-- AIM_BACKOFF_FRESH_DAYS 4 (after this many fresh-start days of an ignored ask, SET shows only on the 1st). AIM_INVITE_SINCE: DayKey, the deploy day of revision 4 (lead; a floor for the back-off's anchor).
+- AIM_BACKOFF_FRESH_DAYS 4 (after this many fresh-start days of an ignored ask, SET shows only on the 1st). AIM_INVITE_SINCE: DayKey, the deploy day of revision 4 (lead; a floor for the back-off's anchor). *(shipped: "2026-10-06", Tue 6 Oct 2026. With no action from that day, SET shows on Mon 12, 19 and 26 Oct and Sun 1 Nov, then only on Tue 1 Dec. A deploy after Sun 11 Oct moves the constant and roadmap-invite-check's pins together.)*
+- *(shipped)* The 'hide:<day>' cookie value (hideCookieValue), read as HIDDEN for AIM_LATER_DAYS; askAnchorOf counts a 'hide:' day + 28 as it counts 'later:'.
 - AIM_DRAFT_SHOWS_MAX 3; AIM_START_DAILY_DAYS 7.
 - AIM_DONE_SHOW_DAYS 28.
 - AIM_STEP_COOKIE "xtnl-aim-step"; AIM_STEP_SNOOZE_DAYS 7; AIM_STEP_COOKIE_MAX_AGE_S 8 days.
@@ -295,9 +381,10 @@ All are pure and live in src/lib/roadmap-types.ts (lane 0) unless another home i
 - AIM_DEPTHS {MASTERED 12, FLUENT 10, RETAINED 8}; DEPTH_DEFAULT MASTERED.
 - DEPTH_DOMAINS_MAX 6.
 - COVER_FLOOR_CARDS 25; COVER_SHARE 0.8; CARDS_PER_OUTLINE_LINE 3; COVER_MIN 1; COVER_MAX 500. A typed figure under the policy figure is a coverageChoice (decision 53).
-- WRITE_MARGIN 1.1 (a 10% spare, because some cards lag).
+- WRITE_MARGIN **1.3** (a 30% spare, because some cards lag) *(shipped; the first text had 1.1. Under clean entry about 1 card in 5 misses its level-11 review and waits about 160 days, so a 10% spare broke question 9 and the 192-day bound. The rules page and the How-measured sheet print pct(WRITE_MARGIN − 1), and the ADD basis reads the constant.)*
 - NON_RECALL_TYPES ['MULTI'] (not counted by depth plans; question 16).
-- RETRY_ENTRY_DAYS 2 (a 'strike' then 'advanced' within this many life days is a retry entry).
+- RETRY_ENTRY_DAYS 2 (a 'strike' then 'advanced' within this many life days is a retry entry, on untagged rows; F-R4-12).
+- *(shipped)* `retryReadDaysOf(L, m?, graceExtra?)`, the clean-entry window (F-R4-12): 184 days at level 12 and m 1, 264 at m 1.5. `JITTER_HIGH` 1.25 (the top of srs.ts's ±25% jitter at levels 5–8).
 
 **Stages:**
 - STAGE_KEYS FOUNDATION, FAMILIAR, RETAINED, FLUENT, MASTERED, at STAGE_LEVEL 4, 6, 8, 10 and 12.
@@ -342,7 +429,7 @@ All are pure and live in src/lib/roadmap-types.ts (lane 0) unless another home i
 - WEEK_QUEST_GENERATOR_VERSION 2; WEEK_QUEST_PARTS_TODAY 2.
 
 **Hostile corpus** (scripts/fixtures/roadmap-hostile/generate.ts, lane R7):
-- the seeds, and the family counts A 5,000, B 1,000, C 2,000, D 2,000, E ≥ 20,000 gap strings, E-G ≥ 2,000 recombined-claim strings and K ≥ 1,500 constraint cases, plus F, 100 mutations per blessed probe reply;
+- the seeds, and the family counts A 5,000, B 1,000, C 2,000, D 2,000, E ≥ 20,000 gap strings, E-G ≥ 2,000 recombined-claim strings and K ≥ 1,500 constraint cases, plus F, 100 mutations per blessed probe reply *(shipped: 162 runs and 22,231 E strings, with the E sub-classes of F-R4-22; the whole output pinned at sha256 0dd9a8be…)*;
 - H5 at p99 ≤ 50 ms per reply;
 - a runtime budget of ≤ 30 s for H1–H5.
 
@@ -359,14 +446,15 @@ All are pure and live in src/lib/roadmap-types.ts (lane 0) unless another home i
 **Spec.**
 
 **New pure module src/lib/roadmap-invite.ts** (lane 0, written in full; client-importable; no database, no clock reads; the roadmap-* code rules apply):
-- `type AimPrompt = 'ASK' | 'LATER' | 'OFF'`.
+- `type AimPrompt = 'ASK' | 'LATER' | 'HIDDEN' | 'OFF'` *(shipped: HIDDEN added in the fix round, contracts §15.10)*.
 - `aimPromptOf(cookie: string | undefined, setting: boolean | null, today: DayKey): AimPrompt`, reading LifeSettings.aimSuggestions (`setting`) and AIM_PROMPT_COOKIE:
   - setting false gives OFF (the stored, lasting no);
   - 'off' gives OFF (the existing value keeps its meaning);
   - `/^later:(\d{4}-\d{2}-\d{2})$/` while today < addDays(day, AIM_LATER_DAYS) gives LATER;
+  - *(shipped)* `/^hide:(\d{4}-\d{2}-\d{2})$/` while today < addDays(day, AIM_LATER_DAYS) gives HIDDEN;
   - anything else (absent, malformed, expired, or 'on:<day>') gives ASK.
-- `laterCookieValue(today)` gives 'later:<today>'; `onCookieValue(today)` gives 'on:<today>' (written when the switch is turned back on).
-- `askAnchorOf(cookie, lastClosedDay, epochDay)`: the day the current ask began, for the back-off (F-R4-3): the latest of a 'later:' day + AIM_LATER_DAYS, an 'on:' day, the latest roadmap's doneDay or archive day, the life epoch day, and AIM_INVITE_SINCE (the day revision 4 ships, set by the lead, so the back-off doesn't start already spent).
+- `laterCookieValue(today)` gives 'later:<today>'; *(shipped)* `hideCookieValue(today)` gives 'hide:<today>'; `onCookieValue(today)` gives 'on:<today>' (written when the switch is turned back on).
+- `askAnchorOf(cookie, lastClosedDay, epochDay)`: the day the current ask began, for the back-off (F-R4-3): the latest of a 'later:' or 'hide:' day + AIM_LATER_DAYS, an 'on:' day, the latest roadmap's doneDay or archive day, the life epoch day, and AIM_INVITE_SINCE (the day revision 4 ships, so the back-off doesn't start already spent; shipped as Tue 6 Oct 2026).
 - `longGoalSeedOf(goals, today): AimSeed | null` over the sheet's goal ladder (s.goals):
   - it considers open goals with horizon LONG, no roadmap link and a non-empty title;
   - the latest dueDay wins (a null due day sorts last), and ties go by title;
@@ -388,32 +476,33 @@ All are pure and live in src/lib/roadmap-types.ts (lane 0) unless another home i
 - (a) SectionHeader "Aim".
 - (b) `section.card.rm-ac-call` with `data-tour="you-aim"`, containing in order:
   - the heading "Set an aim", in t-display-s;
-  - only with a last aim, one t-meta line (F-R4-2): "Last aim: “<aim>” · Aim rank Paragon · reached 3 Mar 2028" (or "· closed 3 Mar 2028" when it ended unreached), the aim clamped to one line with an ellipsis;
+  - only with a last aim, a t-meta block of **two lines** (F-R4-2) *(shipped; the first text had one line)*: "Last aim: “<aim>”", the aim clipped to one line with an ellipsis, then "Aim rank Paragon · reached 3 Mar 2028" (or "closed 3 Mar 2028" when it ended unreached) in full, at a 16 px line height. At 344 px the tail alone is about 254 px, so on one line the achievement itself would clip;
   - the body, 14/19 ink-1: "What do you want to be able to do in a year or three? The app plans milestones toward it and measures them from your reviews and ticks.";
   - a t-meta line: "Stages you reach raise your Aim rank, from Initiate toward Paragon: the aim held at Mastered (level 12).";
   - a textarea.st-input, 2 rows, 16 px under 600, maxLength AIM_MAX, with the sr-only label "Your aim, in your words" and the placeholder "Something you want to be able to do". A "n / 140" counter shows only past 120;
   - **an unfinished aim is never lost:** after mount, the card reads RoadmapForm's unsent autosave (the same local key, in a try/catch). When it holds an aim, the textarea starts with it and a t-meta line reads "Continue where you left off". Typing here writes the same autosave key, so "Not now" and leaving the page keep the text;
-  - only with a seed, a 40 px quiet link-button: "Start from your long goal “<title>”", on one line with an ellipsis;
+  - only with a seed, and *(shipped)* only while the box is empty (seedShown), a 40 px quiet link-button: "Start from your long goal “<title>”", on one line with an ellipsis. Once the user has typed, a tap would replace their words with the goal's title (the handoff wins over the autosave), and the three extras together would pass 410 px;
   - a 44 px primary button: "Set an aim" while the box is empty and "Continue" once it has text. It is never disabled, and both go to /you/roadmap/new. A handoff is written only when there is text (source 'you') or the seed was tapped (source 'goal', with its targetDay);
   - a 40 px row of two quiet buttons: "Not now" and "Don't suggest this".
 - No string names Gemini. The no-key copy is the same.
-- Height: about 330 px without a seed or a last aim, and at most 410 px with both. That stays under ui-audit's 470 px note.
+- Height: about 330 px without a seed or a last aim, and at most 410 px with both. That stays under ui-audit's 470 px note. *(shipped: the tallest ASK states are `empty-ask-seed-last-aim` (a seed, a two-line last aim, an empty box) and `empty-ask-continue`; the estimate is about 403 px. The ui-audit gate is the lead's finishing-round item, with the ruling on whether 410 bounds `section.rm-ac-call` or the whole box with its "Aim" header, about 427 px. If it fails, the last aim's rank line drops to 12 px.)*
 
 **LATER: rev 3's 56 px line geometry, with new copy.**
 - The copy: "Set an aim → milestones toward it, measured from your reviews and ticks".
-- Its × is labelled "Not now: no aim suggestions for 4 weeks" and calls snoozeAimPrompt() again. Every × on an aim surface means "Not now" (decision 34); the year-long 'off' cookie is no longer written anywhere.
+- Its × is labelled "Not now: no aim suggestions for 4 weeks". *(shipped)* It calls `hideAimPrompt()`, which writes 'hide:<today>' (HIDDEN), so the label is true: the line stays away on the next visit and Today's SET line is quiet for 28 days. The first text had it call snoozeAimPrompt() again, which brought the line back on the next visit. Every × on an aim surface means "Not now" (decision 34); the year-long 'off' cookie is no longer written anywhere.
 - With a last aim, the line's text becomes "Last aim: Aim rank Paragon · Set your next aim →".
 
-**OFF** renders nothing. The Roadmap tab always offers "Set an aim".
+**HIDDEN and OFF** *(shipped)* render nothing that suggests an aim. With a last aim they keep its achievement alone, a quiet line with no link and no × (KEPT): "Last aim: Aim rank Paragon · reached 3 Mar 2028". Without one they render nothing. The Roadmap tab always offers "Set an aim".
 
 **"Not now":**
 - the client collapses the card to the line at once, and the typed text stays in the autosave;
-- the new action `snoozeAimPrompt()` sets the cookie laterCookieValue(todayKey(now)) with maxAge AIM_PROMPT_LATER_MAX_AGE_S, path '/', sameSite lax and httpOnly, with refresh false;
-- after 28 life days the full card returns.
+- the new action `snoozeAimPrompt()` sets the cookie laterCookieValue(todayKey(now)) with maxAge AIM_PROMPT_LATER_MAX_AGE_S, path '/', sameSite lax and httpOnly, with refresh false; *(shipped)* `hideAimPrompt()` sets hideCookieValue(todayKey(now)) with the same options. Neither writes the database;
+- after 28 life days the full card returns;
+- *(shipped)* a refused or failed write brings back the surface that was tapped (the ASK card, or the LATER line), with its reason under it (collapseWrite), so an error never stands alone with nothing to retry.
 
 **"Don't suggest this":**
 - calls the new `setAimSuggestions(false)` (R4), which writes LifeSettings.aimSuggestions = false, gated by lifeWritesEnabled() (it refuses with writes off, with the standard copy), and revalidates 'roadmap';
-- the card collapses to nothing at once, and a toast reads "Aim suggestions are off. Turn them back on in Settings." with [Undo], which calls setAimSuggestions(true).
+- the card collapses to nothing at once (or to the KEPT line with a last aim), and a toast reads "Aim suggestions are off. Turn them back on in Settings." with [Undo], which calls setAimSuggestions(true). *(shipped)* A failed Undo shows a toast saying so: "Couldn't turn them back on. Settings › Aim suggestions."
 
 **src/app/you/page.tsx** passes:
 - `prompt={aimPromptOf(jar.get(AIM_PROMPT_COOKIE)?.value, aim?.aimSuggestions ?? null, today)}`, replacing the page's `promptDismissed` cookie test. AimCardView (EMPTY included) gains `aimSuggestions: boolean | null`, read by R4's loadAimCardUncached with one indexed select on LifeSettings (its cache tags already include 'life'; setAimSuggestions revalidates 'life' and 'roadmap'). _lib/sheet.ts stays untouched;
@@ -430,6 +519,7 @@ s.goals is already loaded, and the page keeps its one Promise.all of [loadSheet,
   - 'capture': "From your capture line."
   - 'restart': F-R4-16.
 - With an open DRAFT, the DRAFT wins, and the note reads "Your open draft is shown. The aim you typed: “…” · Use it". "Use it" sets the aim.
+- *(shipped)* AimCard's `autosaveAim` prop is a fixture seam: when it is passed, or under the fixtures provider, the card neither reads nor writes the real autosave, so /dev/style/art/you never puts a made-up aim into the user's form.
 
 **The Roadmap page's NONE card** uses the same heading, body and rank line. Gemini is mentioned only when ROADMAP_GEMINI_LIVE and a key both hold: "Gemini can arrange it into milestones; the app writes every word and number."
 
@@ -441,12 +531,12 @@ s.goals is already loaded, and the page keeps its one Promise.all of [loadSheet,
   - src/components/roadmap/AimCard.tsx, roadmap-copy.ts (AIM_CALL_*), roadmap.css (`.rm-ac-call` in @layer components), RoadmapForm.tsx (the autosave key exported for AimCard) and RoadmapView.tsx (EmptyRoadmap), all R5;
   - src/app/actions/roadmap.ts (snoozeAimPrompt, setAimSuggestions) and roadmap-server.ts (AimCardView.aimSuggestions and lastAim) (R4);
   - prisma/schema.prisma and the migration (LifeSettings.aimSuggestions; lane 0);
-  - src/app/you/page.tsx and src/app/dev/style/art/you/aim-fixtures.ts with its page, for the states empty-ask, empty-ask-seed, empty-ask-last-aim, empty-ask-continue, empty-later, empty-later-last-aim and empty-off (Y);
-  - docs/life-plan/roadmap/final-aim-card.html, where state J is re-mocked (M).
+  - src/app/you/page.tsx and src/app/dev/style/art/you/aim-fixtures.ts with its page, for the states empty-ask, empty-ask-seed, empty-ask-last-aim, empty-ask-continue, empty-later, empty-later-last-aim and empty-off (Y); *(shipped)* plus empty-ask-seed-last-aim (the tallest), empty-hidden, empty-hidden-last-aim and empty-off-last-aim, and the legacy states legacy-active, legacy-draft and legacy-done (F-R4-16). `empty-ask-continue` holds an unsent aim, a seed and a last aim at once, so the seed is hidden there;
+  - docs/life-plan/roadmap/final-aim-card.html, where state J is re-mocked (M), redrawn after fix round 2 to the shipped card.
 
 **Tests.**
 - **roadmap-invite-check** (new, lane 0; imports _no-model first):
-  - the aimPromptOf truth table: absent gives ASK; 'off' gives OFF; setting false gives OFF whatever the cookie; setting true with 'off' gives OFF (the old cookie is still a no until the switch deletes it); 'later:today' and 'later:today−27' give LATER; 'later:today−28' gives ASK; 'on:today' gives ASK; 'later:garbage' gives ASK;
+  - the aimPromptOf truth table: absent gives ASK; 'off' gives OFF; setting false gives OFF whatever the cookie; setting true with 'off' gives OFF (the old cookie is still a no until the switch deletes it); 'later:today' and 'later:today−27' give LATER; 'later:today−28' gives ASK; 'on:today' gives ASK; 'later:garbage' gives ASK; *(shipped)* 'hide:today' and 'hide:today−27' give HIDDEN, and 'hide:today−28' gives ASK;
   - askAnchorOf: the latest of its inputs and AIM_INVITE_SINCE, with a 'later:' day counted 28 days on;
   - longGoalSeedOf:
     - MID goals and roadmap goals are ignored;
@@ -459,19 +549,20 @@ s.goals is already loaded, and the page keeps its one Promise.all of [loadSheet,
   - it has no "Gemini", "earn", "mastery", ⬡ or bare "quest", and no "Each milestone you reach raises";
   - the label is "Set an aim" when empty and "Continue" with text;
   - an autosave holding an aim prefills the textarea, shows "Continue where you left off", and the primary reads "Continue";
-  - the last-aim line appears only with lastAim, with "Aim rank" before the rank;
-  - LATER renders exactly one `.rm-ac-empty` whose × has aria-label "Not now: no aim suggestions for 4 weeks", and OFF renders '';
+  - the last-aim line appears only with lastAim, with "Aim rank" before the rank; *(shipped)* on two lines, the rank line never clipped;
+  - LATER renders exactly one `.rm-ac-empty` whose × has aria-label "Not now: no aim suggestions for 4 weeks", and OFF renders ''; *(shipped)* the LATER × calls hideAimPrompt and the ASK card's "Not now" snoozeAimPrompt, both through collapseWrite (a refusal and a throw each restore the tapped surface with the reason); HIDDEN and OFF with a last aim render only the KEPT line, with no link and no ×; the seed never renders while the box holds text;
   - no file under src/components/roadmap/** or src/app/actions/roadmap.ts writes the 'off' cookie value any more (grep);
   - the seed line appears only with a seed;
   - the NONE card has href /you/roadmap/new and no Gemini words while the Gemini path is off;
   - a grep finds that AimCard and RoadmapForm never build an '?aim=' URL or read it from searchParams.
 - **you-check:** prompt comes from aimPromptOf with the card's aimSuggestions, and the seed from s.goals; there is still exactly one Promise.all; loading.tsx and _lib/sheet.ts are untouched.
 - **roadmap-server-check:**
-  - snoozeAimPrompt writes 'later:<todayKey(now)>' with maxAge 365 days, through a cookie-jar seam;
+  - snoozeAimPrompt writes 'later:<todayKey(now)>' with maxAge 365 days, through a cookie-jar seam; *(shipped)* hideAimPrompt writes 'hide:<todayKey(now)>' with the same options;
   - setAimSuggestions(false) writes the column and refuses with writes off; setAimSuggestions(true) writes true, deletes an 'off' cookie and writes 'on:<today>';
   - loadAimCard's lastAim is the latest DONE roadmap's aim, final rank and day, and null with none.
 - **ui-audit** on /dev/style/art/you at 344/375/932/1440:
-  - the ASK card is ≤ 410 px at 344 in its tallest state;
+  - the ASK card is ≤ 410 px at 344 in its tallest state *(shipped: gated on `[data-aim-card="empty-ask-continue"]` and `[data-aim-card="empty-ask-seed-last-aim"]`; added to ui-audit in the finishing round)*;
+  - *(shipped)* the quiet boxes (empty-hidden, empty-hidden-last-aim, empty-off-last-aim) and the legacy boxes (legacy-active, legacy-draft, legacy-done) have no overflow and targets ≥ 40 px;
   - there is no horizontal scroll;
   - the textarea is 16 px under 600;
   - every target is ≥ 40 px.
@@ -487,11 +578,12 @@ s.goals is already loaded, and the page keeps its one Promise.all of [loadSheet,
   - for RANK_NEW_DAYS after the aim was reached, the achievement leads: the final rank, the held depth facts ("Mastered (level 12) in Probability and Inference · confirmed 3 Mar 2028") and a primary "Open roadmap", with "Set your next aim" (→ /you/roadmap/new) as the secondary;
   - after that, and for a DONE roadmap whose aim was not reached, "Set your next aim" is the primary and "Open roadmap" the secondary.
   - The final rank and the last Proficiency lines are unchanged.
-- **loadAimCardUncached** picks a DONE roadmap only while daysBetween(doneDay, today) < AIM_DONE_SHOW_DAYS. After that the card is EMPTY, and F-R4-1's prompt rules apply, with the last aim's line (lastAim) on ASK and LATER, so the achievement never vanishes from the character page.
+- **loadAimCardUncached** picks a DONE roadmap only while daysBetween(doneDay, today) < AIM_DONE_SHOW_DAYS. After that the card is EMPTY, and F-R4-1's prompt rules apply, with the last aim's line (lastAim) on ASK and LATER, so the achievement never vanishes from the character page. *(shipped)* HIDDEN and OFF keep it too, as the KEPT line ("Last aim: Aim rank Paragon · reached 3 Mar 2028", no link, no ×): a no to suggestions is not a no to the record. The fixture `done-30` therefore renders EMPTY.
+  - *(shipped)* The DONE card's body is "Aim reached Sun 12 Mar" or "Closed Sun 12 Mar · the aim wasn't reached", and the held depth line shows only while the achievement leads. A legacy DONE card offers "Set your next aim" (no `replaces`) and "Open roadmap" (F-R4-16).
   - The Roadmap page still shows the last closed roadmap as history until a new one opens; pickRoadmap is unchanged.
 - **saveIntakeCore** after a DONE or ARCHIVED roadmap inserts a new DRAFT. Its guard refuses only while a roadmap is open.
 
-**Files.** RoadmapView.tsx, AimCard.tsx and roadmap-copy.ts (R5); roadmap-server.ts loadAimCardUncached and lastAim (R4); the art/you fixtures "done 3 days ago (reached)", "done 30 days ago" and "done unreached" (Y); the /dev/style/roadmap done and archived states (R5).
+**Files.** RoadmapView.tsx, AimCard.tsx and roadmap-copy.ts (R5); roadmap-server.ts loadAimCardUncached and lastAim (R4); the art/you fixtures "done 3 days ago (reached)", "done 30 days ago" and "done unreached" (Y), *(shipped)* plus empty-hidden-last-aim and empty-off-last-aim; the /dev/style/roadmap done and archived states (R5).
 
 **Tests.**
 - **roadmap-ui-check:**
@@ -511,8 +603,12 @@ s.goals is already loaded, and the page keeps its one Promise.all of [loadSheet,
 ```ts
 const questsSlot = quests && weekQuestsShownOnToday(quests.view)
   ? <WeekQuests variant="today" view={quests.view} />
-  : aimLine ? <AimLine view={aimLine} /> : null;
+  : aimLine
+    ? <div className="rm-aim-slot" data-close-due={closeDue ? "1" : undefined}><AimLine view={aimLine} /></div>
+    : null;
 ```
+
+*(shipped)* The line sits in lane T's wrapper `.rm-aim-slot`, whose `data-close-due` is worked out on the server from the render's board (closeItemsOf over buildBoard). Every board action refreshes the page, so it stays current after each tap. The first text mounted `<AimLine view={aimLine} />` bare.
 
 - At 344 it follows the lanes and the Owed row, with the goals, below the fold. At ≥ 640 it sits in c3 under Goals.
 - It is never above Next up, the Must lane or an Ask.
@@ -520,11 +616,11 @@ const questsSlot = quests && weekQuestsShownOnToday(quests.view)
 
 **Loads.**
 - `loadAimStep(userId, now)` (R4) and cookies() join the page's one Promise.all.
-- loadAimStep is cached as 'aimStep:<user>:<today>' on ['roadmap', 'life'], and makes at most 4 indexed reads:
+- loadAimStep is cached as 'aimStep:<user>:<today>' on ['roadmap', 'life'], and makes at most 4 indexed reads *(shipped: 5; the 5th reads the started milestones' goals, for the close days)*:
   - the user's roadmaps' status, depth, updatedAt, doneAt and archive day;
   - for an open roadmap, its milestones' status, ord, stage, rankIndex, reachedDay, the acceptance day and the close days;
   - LifeSettings.aimSuggestions and epochDay;
-  - the latest DAY_OPEN ledger row dated before today (for the first day back).
+  - the latest DAY_OPEN ledger row dated before today (for the first day back). The page records today's DAY_OPEN in after() on the first render, so BACK stays stable all day.
 - A missing table or column gives null. It never calls loadAimCard.
 
 **The pure rule** `todayAimLineOf({step, prompt, cookie, stepCookie, today, goalsLive})`, in roadmap-invite.ts, returns null or one of three kinds. It returns data; R5's AimLine renders the copy.
@@ -542,7 +638,7 @@ const questsSlot = quests && weekQuestsShownOnToday(quests.view)
    - MONTH: "**A new month.** Set an aim: …"
    - BACK: "**Welcome back.** Set an aim: …"
    - NEXT: "**Your last aim is done.** Set the next one: …"
-   - The line leads to /you/roadmap/new. "Not now" calls snoozeAimPrompt(), the same 4-week cookie, which also collapses the /you card.
+   - The line leads to /you/roadmap/new. "Not now" calls ~~snoozeAimPrompt()~~ *(shipped)* `hideAimPrompt()`, the 4-week 'hide:' cookie, so /you shows HIDDEN (no "Set an aim →" line) and this line stays away. The first text's 'later:' would have left /you's LATER line, itself an aim suggestion, under a label that says "no aim suggestions for 4 weeks" (decision 34).
 2. **DRAFT.** A DRAFT roadmap with no RUNNING run, last saved on day s before today, shows on s + 1, then on fresh-start days, AIM_DRAFT_SHOWS_MAX days in all (s + 1 and the next two fresh-start days): "**A roadmap draft is waiting for your check.**" → /you/roadmap. After that it shows only on /you, until the draft is saved again.
 3. **START.** Shown when all of these hold:
    - the roadmap is ACTIVE and goalsLive is true;
@@ -553,6 +649,7 @@ const questsSlot = quests && weekQuestsShownOnToday(quests.view)
 
    The copy: "**Milestone 2 · Familiar is ready to start.** Reaching it gives the Aim rank Journeyman." (or "It keeps your rank."). It leads to /you/roadmap#now.
    - The stage is named from STAGE_NAMES, so no title reaches Today. A track plan reads "**Milestone 2 is ready to start.**".
+   - *(shipped)* The stage keeps its plain name here, with no "(level 12)": with the level, "Milestone 5 · Mastered (level 12), part 1 … Expert" and "Milestone 1 · Familiar (level 6), part 1 … Journeyman" take 4 lines at 344 px. Whether the Names rule exempts this line is the lead's ruling.
    - While ROADMAP_GOALS_LIVE is false, START never shows.
 
 **Snoozing DRAFT and START.** "Not now" calls `snoozeAimStep(kind, id)`, which sets AIM_STEP_COOKIE to '<kind>:<roadmapId|milestoneId>:<day>' (maxAge 8 days).
@@ -565,7 +662,9 @@ const questsSlot = quests && weekQuestsShownOnToday(quests.view)
 - a trailing 40 px quiet IconButton ×, labelled "Not now: no aim suggestions for 4 weeks" (SET) or "Not now: hide this for a week" (DRAFT, START);
 - ≤ 72 px at 344.
 
-**CSS.** `.rm-quests-slot[data-compact]:has(> .rm-aim-line) { display: none }`, so the line is gone while Close the day is prominent. Lane T confirms that `data-compact` is set by Close the day being due, not by the clock alone; if it is clock-only, T keys the rule on the board's close-due state instead, so an evening with nothing to close still shows the line.
+**CSS.** ~~`.rm-quests-slot[data-compact]:has(> .rm-aim-line) { display: none }`~~ *(shipped)* `.rm-quests-slot[data-compact]:has(> .rm-aim-slot[data-close-due]) { display: none; }`, so the line is gone while Close the day is prominent **and** due. Lane T found that `data-compact` follows the clock alone (TodayBoard's `closeDayProminent(clock)`), so, as this text asked, the rule is keyed on the board's close-due state: an evening with nothing to close still shows the line. today-ui-check fails any selector that names rm-aim with data-compact and without data-close-due.
+
+*(shipped)* The text fits its 3-line clamp at 344 px with 3.9 px to spare in the longest line Today draws (start-part), by today-ui-check's estimate over all 545 copies (Inter's advance widths, the CSS's own numbers). In the board's third column at viewports 724–860 px (iPad portrait) and 1184–1266 and 1332–1414 px (1366 px laptops) the column is narrower than at 344, and START takes 4 lines; the finishing round removed the clamp from a 640 px container (`@container main (min-width: 640px) { .rm-aim-line-t { -webkit-line-clamp: unset; } }`), so the rank words are never cut there.
 
 **Rules:**
 - never red: no --owed, warn, danger or gold;
@@ -578,7 +677,7 @@ const questsSlot = quests && weekQuestsShownOnToday(quests.view)
 - roadmap-invite.ts: todayAimLineOf, isFreshStartDay and the cookie helpers (lane 0);
 - roadmap-server.ts loadAimStep and actions/roadmap.ts snoozeAimStep (R4);
 - AimLine.tsx, roadmap-copy.ts and roadmap.css (R5);
-- src/app/today/page.tsx, src/app/dev/style/today/TodayFixtures.tsx and fixtures.ts (the SET WEEK, MONTH, BACK and NEXT, backed-off, DRAFT, START and compact states), and scripts/today-ui-check.ts (T);
+- src/app/today/page.tsx, src/app/dev/style/today/TodayFixtures.tsx and fixtures.ts (the SET WEEK, MONTH, BACK and NEXT, backed-off, DRAFT, START and compact states), and scripts/today-ui-check.ts (T); *(shipped)* also the hidden state, `aim-in-place` and `aim-in-place-longest` (drawn inside a copy of the board's own columns, so c3 has its real width at every viewport), `start-part-depth`, and the quest-parts states `parts`, `parts-more` and `body-health` (F-R4-14): fifteen states in all;
 - docs/life-plan/roadmap/final-today-quests.html (M).
 
 **Tests.**
@@ -605,12 +704,14 @@ const questsSlot = quests && weekQuestsShownOnToday(quests.view)
   - the questsSlot expression above (update its regex);
   - loadAimStep and cookies() sit in the one Promise.all;
   - the pin that board-ui.ts, todayCountsOf and notifications.ts never match /aimLine|AimLine|aimStep/;
-  - the compact :has rule exists;
-  - the TodayBoard pins are unchanged.
+  - the compact :has rule exists *(shipped: keyed on `.rm-aim-slot[data-close-due]`)*;
+  - the TodayBoard pins are unchanged;
+  - *(shipped)* the SET × calls hideAimPrompt and the file has no snoozeAimPrompt; a × on Sun 7 Mar 2027 shows nothing on Mon 8 Mar and Thu 1 Apr and SET WEEK on Mon 5 Apr;
+  - *(shipped)* the text-fit estimate: every copy fits the 3-line clamp in the board's real column at 344, 375, 932 and 1440, and a sweep from 344 to 1920 px (PENDING on the c3 clamp until the finishing round; a failure under `--strict`).
 - **roadmap-server-check:**
   - loadAimStep is cached on ['roadmap', 'life'], makes ≤ 4 reads, and gives null on a missing table or column;
   - closing a ROADMAP goal revalidates 'roadmap', so START shows on the next render.
-- **ui-audit** on /dev/style/today with each state at 344/375/932/1440: ≤ 72 px at 344, and in c3 under Goals at 932.
+- **ui-audit** on /dev/style/today with each state at 344/375/932/1440: ≤ 72 px at 344, and in c3 under Goals at 932. *(shipped: the gate, added to ui-audit in the finishing round, is on every visible `[data-state^="aim-"] .rm-aim-line`, with `.rm-aim-line-t`'s scrollHeight ≤ clientHeight + 1 at every audited width; `aim-compact` is left out, being hidden by design.)*
 
 ### F-R4-4. The intake leans long-term
 
@@ -624,7 +725,7 @@ const questsSlot = quests && weekQuestsShownOnToday(quests.view)
 - It never blocks submit, never edits the aim, and clears when the condition clears.
 
 **By when** gains a date mode (Intake.dateMode):
-- For a Field Area, the chip "When realistic" is first and pressed by default (REALISTIC). The other chips (6 / 12 / 24 months and 3 years) and the date input set CHOSEN. The 3-month chip is removed, because no depth fits in 3 months.
+- For a Field Area, the chip "When realistic" is first and pressed by default (REALISTIC). The other chips (6 / 12 / 24 months and 3 years) and the date input set CHOSEN. The 3-month chip is removed, because no depth fits in 3 months. *(shipped)* The date input stays **empty** under "When realistic" (aria-label "A date of your own"), since the plan uses no date of the user's then; picking a date switches to CHOSEN. There is no separate "Pick a date" control.
 - Each CHOSEN chip carries its floor verdict, computed like the hint below from floorBase(L\*, m) plus the minimum writing days for the Domains that need new cards: "6 months · before level 12 is possible" or "24 months · possible". A chip is never hidden or disabled; the draft gives the full verdict.
 - With an exam (F-R4-24), the exam's date is asked separately, and the hint says "Your exam date is a waypoint: the depth goes on past it."
 - The hint under it is computed from the floors at the user's m (IntakeView gains `m`):
@@ -632,11 +733,13 @@ const questsSlot = quests && weekQuestsShownOnToday(quests.view)
   - CHOSEN, more than floorBase(L\*) days away: "<Weekday d Mon yyyy> · <n> days from today. The draft says what this date means for your depth."
   - CHOSEN, under floorBase(L\*): "That is before a new card can reach level 12 here. The draft will offer the realistic date, a lower depth, or to keep yours."
 - For a track Area there is no schedule floor, so the default is CHOSEN at 12 months, and the hint is rev 3's.
-- **"New cards a week"** (rev 3 field 9) becomes required when the mode is REALISTIC, a Domain needs new cards (F-R4-9) and no pace is measured. Its copy: "The app needs a pace to date your milestones. Your rate, not yet measured."
+- **"New cards a week"** (rev 3 field 9) becomes required when the mode is REALISTIC, a Domain ~~needs new cards~~ *(shipped, option (b))* **is short of its count (live_d < n_d)** (F-R4-9), and no pace is measured. Its copy: "The app needs a pace to date your milestones. Your rate, not yet measured." With WRITE_MARGIN 1.3 every Domain asks for at least the spare, so "needs new cards" would require a pace from every user; a library whose Domains each hold their count is dated on the cards held (F-R4-11, "Missing inputs"). The field is still offered whenever new cards would be written. *(The engine and saveIntake ship this rule; the form's half lands in the finishing round. Until then the form over-asks, which is harmless.)*
+- *(shipped)* A REALISTIC intake that does need a pace and has none is refused at intake (saveIntakeCore → intakeRefusalOf → the ladder's NO_PACE), never left to draft an empty plan.
 
 **Order of the main form** for a Field Area:
 - Aim → Area → Depth (F-R4-9) → Domains, with the coverage disclosure → By when → Hours a week;
 - then Exam, with its date (F-R4-24) → Outline, with each line's Domain (F-R4-24) → How hard (F-R4-11) → New cards a week (when shown) → Reality check → Constraints → Advanced.
+- *(shipped)* A Domain chip shows its mix and its level-6 count as numbers: "48 cards · 6 multiple choice not counted · 18 at level 6+", and "9 cards · 0 at level 6+" (never "none"). The Area hint ends "Only you pick the Area."; "It is never sent to Gemini" under the exam date shows only while the Gemini path is live (F-R4-23).
 
 **Files.** RoadmapForm.tsx and roadmap-copy.ts (R5); roadmap-invite.ts vagueAimHint (lane 0); the IntakeView fields `m`, `dateMode` defaults and the chip verdicts in roadmap-server.ts loadIntakeView (R4, from R2's pure floor helper); docs/life-plan/roadmap/final-roadmap-new.html (M).
 
@@ -646,7 +749,8 @@ const questsSlot = quests && weekQuestsShownOnToday(quests.view)
   - 'Hold a 30-minute conversation in Japanese', 'Pass FRM Part 1', 'Run a sub-50 10K' and '' each give none.
 - **roadmap-ui-check:**
   - emptyIntakeDraft for a Field Area has dateMode REALISTIC, and a track Area has CHOSEN at 12 months;
-  - the REALISTIC hint's numbers equal floorBase(12, m) and floorBase(10, m) at m = 1 and m = 1.5 (computed, not typed);
+  - the REALISTIC hint's numbers equal floorBase(12, m) and floorBase(10, m) at m = 1 and m = 1.5 (computed, not typed); the date input is empty in REALISTIC;
+  - *(finishing round)* a chosen Domain with 42 recall cards against n 34 doesn't make the pace required; one with 9 against n 25 does;
   - for a new learner at Mastered, the 6- and 12-month chips read "before level 12 is possible" and the 24-month chip "possible"; at Fluent the 12-month chip reads "possible";
   - a grep finds no code path that sets the aim except the user's onChange, the handoff and "Use it";
   - the "Never rewritten" pin still holds.
@@ -655,16 +759,19 @@ const questsSlot = quests && weekQuestsShownOnToday(quests.view)
 
 **Spec.** SettingsView gets a new set-row in the Days section card:
 - b: "Aim suggestions";
-- span: "With no aim set, You suggests one, and Today does on a new week, a new month or your first day back, then once a month.";
+- span: ~~"With no aim set, You suggests one, and Today does on a new week, a new month or your first day back, then once a month."~~ *(shipped)* "With no aim set, You suggests one; Today does on a new week, a new month or your first day back, then once a month; and capture offers to make a long goal your aim." The switch governs capture's offer too (F-R4-7), so the note names it; you-check pins the note to aim-capture's offersAim;
 - a Switch labelled "Suggest setting an aim".
 
-The setting is stored in the new column LifeSettings.aimSuggestions (Boolean, nullable; null means on, the default), so it holds on every device. On means prompt ASK or LATER; off means OFF.
+The setting is stored in the new column LifeSettings.aimSuggestions (Boolean, nullable; null means on, the default), so it holds on every device. On means prompt ASK, LATER or *(shipped)* HIDDEN; off means OFF. A "Not now" is never a no, so the switch reads on under either snooze.
+- *(shipped)* The row is hidden when the page passes no `aimSuggestions` (the column missing), so no switch ever does nothing. The page reads the column itself, with the missing-column retry.
 - Turning it on calls `setAimSuggestions(true)` (R4): it writes true, deletes an 'off' cookie and writes 'on:<today>' (so the back-off starts again).
 - Turning it off calls `setAimSuggestions(false)`, which writes false.
 - Both are gated by lifeWritesEnabled() and refuse with writes off with the standard copy, and the switch then returns to its previous state. Both revalidate 'life' and 'roadmap'.
 - dismissAimPrompt and the 'off' cookie are retired as writers; an existing 'off' cookie is still read as off, and the switch shows off until it is turned on.
 
 src/app/settings/page.tsx adds aimSuggestions to its existing LifeSettings select, reads the cookie (await cookies()), and passes `aimSuggestions: boolean` (false when the column is false or the cookie is 'off') as an optional SettingsData field. The copy does not claim the switch governs the DRAFT or START lines.
+
+*(shipped)* The rules page (/today/rules, "Suggestions to set an aim") says the same: "Not now on You folds its card to one line for 28 days, and Today's line and capture's offer stay quiet meanwhile. Not now on Today's line, or that one line's ×, hides all of them for 28 days from then. None of them is a no: the switch in Settings stays on." you-check reads each "Not now" from the code that writes it, so the sentence and the code cannot drift apart.
 
 **Files.** src/components/settings/SettingsView.tsx, src/app/settings/page.tsx and the src/app/dev/style/settings fixtures (Y); actions/roadmap.ts setAimSuggestions (R4); the column (lane 0).
 
@@ -704,15 +811,17 @@ src/app/settings/page.tsx adds aimSuggestions to its existing LifeSettings selec
   - the chips row shows one chip, "Aim → roadmap form". Tapping it reverts the line through the existing reverted-span mechanism, and the line reads as a task;
   - a "n / 140" counter shows past 140;
   - the primary button reads "Open the aim form", and Enter does the same. It writes the handoff {aim, source 'capture', sheetText} and navigates to /you/roadmap/new. Nothing is saved as a task;
-  - the sheet keeps its line until saveIntake succeeds. RoadmapForm then calls clearSheetDraftIf(sheetText), the idea pattern;
-  - with `vocab.aim` 'DRAFT', the button reads "Open your draft" (→ /you/roadmap);
+  - the sheet keeps its line until ~~saveIntake succeeds~~ *(shipped)* an intake that **used its aim** saves: the no-draft merge, or "Use it" on an open draft. RoadmapForm then calls clearSheetDraftIf(sheetText), the idea pattern (clearsCaptureLine). Under the literal first rule, saving an open draft without "Use it" would have dropped the typed words;
+  - with `vocab.aim` 'DRAFT', the button reads "Open your draft" (→ /you/roadmap) *(shipped: kept as written; the handoff is still written, and the draft's "Edit the intake" offers "The aim you typed · Use it" for the handoff's 10 minutes. Opening the form instead is a one-line change recorded in capture.md, for the lead to rule on)*;
   - with 'ACTIVE', it reads "Open your roadmap", and the chip reads "Aim · one is already set".
-- **A long goal.** When the line parses as a LONG goal ('goal long:' or '#long') and vocab.aim is 'NONE':
+  - *(shipped)* The footer hint reads "Enter opens the aim form · Esc closes", and the counter is "n / 140" with sr-only words. Aim mode is off while an edit of a saved line is open and over a paste preview; an unknown roadmap state acts as NONE for the button, but never offers "Make it an aim" or "New aim".
+- **A long goal.** When the line parses as a LONG goal ('goal long:' or '#long') and vocab.aim is 'NONE', *(shipped)* **and the aim prompt reads ASK**:
   - one t-meta line shows under the chips: "Long-term? Make it your aim: the app plans milestones and measures them.";
-  - a 40 px link-button "Make it an aim" visibly rewrites the line's prefix to 'aim: ', and the chip undoes it;
+  - a 40 px link-button "Make it an aim" visibly rewrites the line's prefix to 'aim: ' (dropping the '#long' tag; other tags and date words stay), and the chip undoes it;
   - saving it as a goal still works, unchanged.
-- **The Goal ▾ menu** gains "New aim", which inserts 'aim: '. It is hidden when vocab.aim is not 'NONE' or the line already has a prefix.
-- **loadCaptureVocabulary** gains an optional `aim: 'NONE' | 'DRAFT' | 'ACTIVE'`: one cached read on 'roadmap', with a missing table giving 'NONE'.
+  - *(shipped)* The offer is a set-an-aim suggestion, so it follows decision 34: "Not now" (LATER or HIDDEN), "Don't suggest this", the Settings switch and a legacy 'off' cookie all quiet it (`offersAim(parsed, aim, prompt)` needs aim NONE and prompt ASK). An "aim:" line the user types is the user's own words and is never governed. Stated residual: a no tapped within 5 minutes after the sheet's vocabulary was read shows only at the next read (the sheet forgets a prompt read 5 minutes ago or on another day, aimPromptOnOpen).
+- **The Goal ▾ menu** gains "New aim", which inserts 'aim: '. It is hidden when vocab.aim is not 'NONE' or the line already has a prefix. It is a tool the user opens, so the prompt doesn't govern it. *(Not built at the end of fix round 2: the menu lives in capture-ui.ts and InsertRow.tsx, which no lane owned. The exact three-file edit is in capture.md, revision 4, "The Goal ▾ menu"; capture-server-check pins it once `goal-new-aim` exists. The lead's finishing-round item.)*
+- **loadCaptureVocabulary** gains an optional `aim: 'NONE' | 'DRAFT' | 'ACTIVE'`: one cached read on 'roadmap', with a missing table giving 'NONE'. *(shipped)* It also gains an optional `aimPrompt: AimPrompt`: aimPromptOf over LifeSettings.aimSuggestions (one select cached on 'life', a missing column read as on) and the cookie, read per request outside the cache. A failed read leaves it out, and with it unknown no offer shows.
 - No new keyboard shortcut is added. The existing capture keys (c, Alt+N, Ctrl+K and the phone icon) reach it.
 
 **Files.**
@@ -725,10 +834,10 @@ src/app/settings/page.tsx adds aimSuggestions to its existing LifeSettings selec
 - **The capture checks:**
   - an aim line never calls the capture save action, and the handoff uses writeAimHandoff, never a query string;
   - the primary label is never empty or disabled;
-  - "Make it an aim" shows only for LONG goals with aim 'NONE';
+  - "Make it an aim" shows only for LONG goals with aim 'NONE' *(shipped: and prompt ASK; the full aim × prompt table, and readCaptureAimPrompt equal to aimPromptOf on every cookie and setting)*;
   - capture-parse-check is unchanged and green;
   - the vocabulary's aim is 'NONE' on a missing table (capture-server-check).
-- **roadmap-ui-check:** the form clears the sheet line only after saveIntake succeeds.
+- **roadmap-ui-check:** the form clears the sheet line only after saveIntake succeeds, *(shipped)* and only when the handoff was used.
 
 ---
 
@@ -763,7 +872,7 @@ src/app/settings/page.tsx adds aimSuggestions to its existing LifeSettings selec
   - The best case (p = pLong = c = 1, strict intervals) is always computed and shown as a secondary line, never as the date.
 - **What it doesn't read:** a card's current strike is treated as none. The basis says so, and that this reads slightly high.
 - **The basis line** (roadmap-copy): "Expected reach follows the app's review rules: a miss costs a day, two in a row cost a level, and a card overdue past its grace drops a level. It uses your pass rate (80%, reads high: lapses by neglect aren't logged), a pass rate of 80% for gaps of 50 days and more (the app's policy: none of your reviews has tested gaps that long yet), the share of your due queue you clear (92%), and how missed days bunch together in your history."
-- **Start collecting the level now** (lane 0, one line in src/lib/srs.ts): the REVIEW ledger row's detail gains the level, appended at the end so every prefix reader still matches: "advanced · L11→12" (and "advanced · mastered · L11→12"), "strike · L11". Existing rows are untouched (the ledger is append-only). A per-level pass rate can then be measured once cards reach level 9 (Deferred), and the clean-entry reading (F-R4-12) is exact for new rows.
+- **Start collecting the level now** (lane 0, one line in src/lib/srs.ts *(shipped: 3 lines, because the miss tag goes into `lateOutcome`'s value)*): the REVIEW ledger row's detail gains the level, appended at the end so every prefix reader still matches: "advanced · L11→12" (and "advanced · mastered · L11→12"), "strike · L11". Existing rows are untouched (the ledger is append-only). A per-level pass rate can then be measured once cards reach level 9 (Deferred), and the clean-entry reading (F-R4-12) is exact for new rows. *(One reader matched exactly: library-model's outcomeOf. It reads every tagged miss as nothing, so the idea page would drop tagged misses. The lead fixed it in the finishing round (it now reads each tagged detail as its untagged form), and srs.ts's tag does not ship without that.)*
 - **Consumers:**
   - roadmap-realism.ts (R2): stage dating, the date check, the StartSnapshot (p_start, pLong_start, c_start, ρ_start and the per-Domain need);
   - roadmap-quests.ts (R6): RAISE's expected reach;
@@ -790,7 +899,7 @@ src/app/settings/page.tsx adds aimSuggestions to its existing LifeSettings selec
   - pLong < p lowers L10 and L12 values and leaves L8 unchanged;
   - cleanAt L\*: strictly lower than without it whenever p < 1 and strikeLimit ≥ 2; equal at p = 1;
   - priors: p calibrating uses 0.80 and c calibrating 0.85, never 1.
-- **The ledger tag:** a grep finds that every reader of a REVIEW detail (review-facts.ts, library-model.ts, roadmap-server.ts and any other) matches with startsWith or includes, never with ===; a review-check golden shows the new detail strings.
+- **The ledger tag:** a grep finds that every reader of a REVIEW detail (review-facts.ts, library-model.ts, roadmap-server.ts and any other) matches with startsWith or includes, never with ===; a review-check golden shows the new detail strings. *(shipped: roadmap-contract-check pins review-facts on the tagged strings, since review-check is in no lane; library-model was a PENDING line until the lead's finishing-round fix, and `roadmap-contract:strict` now passes.)*
 - Building the table for c < 1 takes ≤ 400 ms in the check (timed and printed).
 
 ### F-R4-9. Depth: the aim's end state
@@ -800,7 +909,7 @@ src/app/settings/page.tsx adds aimSuggestions to its existing LifeSettings selec
 **The intake** (RoadmapForm, R5; validateIntake and saveIntakeCore, R4):
 - **Depth**, a Segmented control for a Field Area: "Mastered · level 12" (the default) · "Fluent · level 10" · "Retained · level 8". The hint is computed from the user's m: "Mastered: each card passes its review after a gap of about 110 days at the first try. Multiple-choice cards don't count. A lower depth is your choice and stays on the plan." ("about 110" is interval(11, m), rounded to 5.) It is stored in Roadmap.depth. A track Area has none (null).
 - **Required Domains R**, at most DEPTH_DOMAINS_MAX: the intake's chosen Domains, plus Gemini's additions the user confirms (F-R4-21), plus Domains the user names (F-R4-24), plus Domains created from a suggestion while ROADMAP_GAPS_LIVE (F-R4-19).
-- **The cards that count** on a depth plan are **recall cards**: every card type except NON_RECALL_TYPES (multiple choice). live_d, every stage measure and every depth term count only these. Wherever a Domain's count is shown, the mix is too: "42 cards · 6 multiple choice not counted".
+- **The cards that count** on a depth plan are **recall cards**: every card type except NON_RECALL_TYPES (multiple choice). live_d, every stage measure and every depth term count only these. Wherever a Domain's count is shown, the mix is too: "42 cards · 6 multiple choice not counted". *(shipped: the intake view carries each Domain's multiple-choice count, `IntakeFieldOption.domains[].nonRecall`.)*
 - **Each outline line's Domain is the user's** (F-R4-24): Roadmap.syllabus gains `lineDomains: (domainId | null)[]` (YOURS), prefilled by a deterministic match (a line belongs to the chosen Domain whose name's content stems all appear in the line; with no match or a tie, null). Gemini never sets it.
 - **Coverage n_d** for each Domain d in R:
   - the policy: max(COVER_FLOOR_CARDS, ceil(COVER_SHARE × the Domain's live recall cards at intake), ceil(CARDS_PER_OUTLINE_LINE × lines_d)), where lines_d = the lines tied to d plus an even share of the lines tied to no Domain in R (|unassigned| ÷ |R|);
@@ -808,6 +917,8 @@ src/app/settings/page.tsx adds aimSuggestions to its existing LifeSettings selec
   - The disclosure "How many cards each Domain needs" lists every Domain as a row with where its figure came from, always: "Probability · 34 cards: the most of the 25-card floor, 80% of your 42 (34), and 3 × 8 outline lines (24) · Edit".
   - Lines tied to no Domain in R are listed under it: "4 outline lines aren't tied to a Domain: S3, S7, S9, S12. They raise every Domain's count, but no card is checked against them. [Choose Domains]". With more outline areas than DEPTH_DOMAINS_MAX Domains, the line adds "A plan holds up to 6 Domains."
   - With no outline, the Depth line reads "coverage unchecked: no outline" for the life of the plan.
+  - *(shipped)* **The counts are frozen at intake** (frozenCoverageCountsOf). A Domain already in the plan keeps the live and multiple-choice counts stored with the acceptance (or the draft, before the first acceptance); only a Domain newly in R reads today's library. So archiving 20 cards, writing 18 more, or a card turning multiple choice never moves n_d at a re-plan's accept, a re-date, a line's Domain change or LOWER_DEPTH, and never turns a typed figure into a false coverage choice. n_d moves only by a typed figure, a line's Domain, or LOWER_DEPTH. The ladder, the end state and the additions' date effect read the same frozen counts.
+  - *(shipped)* On a depth plan the Edit sheet offers no "Type a target" on a stage measure, and editItemCore refuses one ("On a plan aimed at a depth, counts come from coverage: change coverage or choose a lower depth."); a single milestone cannot add a Domain (addItemCore refuses kind DOMAIN). Either would change counts outside coverage and LOWER_DEPTH.
 - **"Where you're starting"** is removed for a Field Area: the cards say where the user starts (F-R4-10's held stages, and the facts line). It stays for a track Area, where it only informs Gemini's arrangement. START_POINT_FLOOR is unused by depth plans.
 
 **The end state** (EndStateTerm on RoadmapAcceptance.endState, as in rev 3):
@@ -815,7 +926,7 @@ src/app/settings/page.tsx adds aimSuggestions to its existing LifeSettings selec
 - **The measure-key grammar** (lane 0, parseMeasureKey) gains an optional last segment: `r` counts recall cards only; `rc` counts recall cards with clean entry at exactly L (a card at ≥ L + 1 always counts). Every stage measure of a depth plan carries `r`; the depth terms and the final milestone's card measures carry `rc`. A key without the segment keeps its rev-3 meaning, so legacy rows and goals read as before. Every parser of measure keys handles the segment (a grep pin).
 - The terms are never scaled by intensity, never fitted to reach, and never lowered by a remedy.
 - endStateFor reads these depth terms, not the last milestone's measure.
-- **The writing need:** new_d = max(0, ceil(WRITE_MARGIN × n_d) − live_d).
+- **The writing need:** new_d = max(0, ceil(WRITE_MARGIN × n_d) − live_d). *(shipped: WRITE_MARGIN is 1.3, so a Domain at its count still asks for the spare: Probability, 42 cards against n 34, needs 3; a new 25-card Domain needs 33.)*
 - **The final milestone is the depth.** Its PAYS card measures are exactly the depth terms, plus its practices. Reaching it means holding the depth.
 
 **High mastery, in measurable terms**, published on /today/rules and on the "How this is worked out" sheet:
@@ -847,7 +958,8 @@ src/app/settings/page.tsx adds aimSuggestions to its existing LifeSettings selec
     - 6 unassigned lines over 2 Domains add 3 lines' worth (9 cards) to each Domain's outline term;
     - a typed 40 stays 40 (YOURS); a typed 5 under a policy of 34 records a coverageChoice;
   - lineDomainDefaultOf: "Conditional probability and Bayes" goes to Probability; a line naming two chosen Domains, or none, gives null;
-  - new_d: Inference 19, Probability 0;
+  - new_d: ~~Inference 19, Probability 0~~ *(shipped, at WRITE_MARGIN 1.3)* Inference 24, Probability 3;
+  - *(shipped)* frozen counts: archive 20 cards → re-plan → accept leaves n_d unchanged; write 18 more → n_d unchanged and no coverage choice; a malformed stored entry reads today's counts;
   - LIGHT, STEADY and PUSH give byte-identical endState;
   - no remedy changes a depth term;
   - the final milestone's PAYS card measures equal the depth terms, with the `rc` segment;
@@ -888,14 +1000,16 @@ src/app/settings/page.tsx adds aimSuggestions to its existing LifeSettings selec
 - **A plan with nothing left to do is refused** (decision 41), at intake and again at accept: when the final gate L\* is already held, or when D_real < today + SPAN_MIN_DAYS. The copy: "You already hold this depth in these Domains. Add a Domain, raise coverage or set a different aim." (or "…is only weeks away: add a Domain, raise coverage or choose a deeper aim."). This also stops "archive, then set the same aim again" from giving ranks.
 
 **Windows**, in this order, deterministic:
-1. **Merge.** Consecutive kept points are today or the gates' due days. A window under MILESTONE_MIN_DAYS removes the lower gate of the pair, or the gate itself when the lower point is today. This repeats until stable, and the final gate L\* is never removed. A removed gate's rank name is skipped.
+1. **Merge.** Consecutive kept points are today or the gates' due days. A window under MILESTONE_MIN_DAYS removes the lower gate of the pair, or the gate itself when the lower point is today. This repeats until stable, and the final gate L\* is never removed. A removed gate's rank name is skipped. *(shipped: short windows are read from the final gate back. Left to right, a 125-day track plan collapsed to one stage; this way it keeps two. Every worked example merges the same either way.)*
 2. **Count gate (PART).** When the first kept window (today to the first kept gate G at level ℓ) is longer than FIRST_RANK_MAX_DAYS, one PART gate is placed before G:
    - due on the Sunday on or after day min(FIRST_RANK_MAX_DAYS, half the window), and inserted only if both resulting windows are at least MILESTONE_MIN_DAYS after the snap;
    - its target per Domain is the expected count of recall cards at level ≥ ℓ by its due day, floored, clamped to [MIN_INCREMENT_CARDS_FLOOR, n_d − 1]; a Domain whose expected count is under the floor is left out of the gate, and the gate is skipped when every Domain is;
    - it is a PAYS card measure like any stage's, with key segment `r`, and it never lowers the depth or any gate stage's n_d;
    - its title is "{stage}, part 1: {domains} to level {L}+" and its measure line shows the count ("13 of 25 cards in Inference at level 4+");
-   - it gives its stage's rank, and the stage itself then keeps your rank (F-R4-12).
+   - it gives its stage's rank, and the stage itself then keeps your rank (F-R4-12) *(shipped: except a count gate toward the depth's own gate, which gives the rank of the gate below; decision 40)*;
+   - *(shipped)* a count gate before a gate other than the first is placed the same way when a library already holds the stages below it (a library holding Fluent gets "Mastered, part 1").
 3. **Split.** A window over MILESTONE_MAX_DAYS gets one intermediate gate (BETWEEN) at the odd level between its two gates (L5, L7, L9, L11). L11, between Fluent and Mastered, is the usual one, and it keeps your rank.
+   - *(shipped)* **Where the split goes.** BETWEEN is due on the Sunday on or after max(its own stage day, min(the upper gate's due day − MILESTONE_MAX_DAYS, the window's middle)), in the ladder and in every depth re-date. So when the final date is held later than the reach (by the hours bound, or by the user's date), no stretch after the split is longer than MILESTONE_MAX_DAYS + 6. One split per window remains the rule: a CHOSEN date so far out that the final window passes 372 days still leaves one long half, and the 192-day bound applies to realistic plans.
    - A first window still over MILESTONE_MAX_DAYS after the count gate has no gate below it, so it is kept with MilestoneNote LONG_WINDOW: "Writing 150 cards at 2 a week takes 75 weeks. Write more a week, or narrow the aim."
 4. At most MAX_MILESTONES. When the count gate and the splits would exceed 6, the count gate is kept first, then the splits that leave the shorter windows. This is asserted.
 
@@ -906,18 +1020,20 @@ src/app/settings/page.tsx adds aimSuggestions to its existing LifeSettings selec
 
 These are new CODE_TEMPLATES (lane 0). {domains} reads "A, B and n more" past three names. {stage} comes from STAGE_NAMES (Foundation, Familiar, Retained, Fluent, Mastered, and "Toward <next stage>" for BETWEEN). Gemini never writes a title.
 
-**Track plans.** Five stages at TRACK_STAGE_SHARES of the planned practice volume to the date, with the same merge rule. The stage key is STAGE_k, and the rank follows the kept stages' order (F-R4-12).
+**Track plans.** Five stages at TRACK_STAGE_SHARES of the planned practice volume to the date, with the same merge rule. The stage key is STAGE_k, and the rank follows the kept stages' order (F-R4-12). *(shipped: the stages are dated by shares of the open days to the date; typicalHours is not used. The starter's sessions: CRAFT, slow drills, adding run-throughs from the third stage; BODY, easy sessions, adding longer sessions, or mobility sessions with constraints; CARE, set time, adding check-ins; DUTY, admin sessions, adding plan-ahead. The final stage gets a performance check unless the plan is body-safe. A track Area gets this ladder only when the intake sets a date mode.)*
 
-**The motivation timeline** (`motivationTimelineOf(plan)`, R2, pure): from a plan's expected stage days, the day of the first rank, each later rank, each milestone that could pay ⬡6 (its practice clears the GOAL_RULES gate), Paragon, and the longest stretch with none of them. roadmap-realism-check prints it for every corpus fixture and asserts the first rank ≤ FIRST_RANK_MAX_DAYS + 6 and the longest stretch ≤ MILESTONE_MAX_DAYS + 6. A fixture whose plan carries LONG_WINDOW (writing too slow for any count gate to reach MIN_INCREMENT_CARDS_FLOOR in time) is exempt, and must show the LONG_WINDOW note instead.
+**The motivation timeline** (`motivationTimelineOf(plan)`, R2, pure): from a plan's expected stage days, the day of the first rank, each later rank, each milestone that could pay ⬡6 (its practice clears the GOAL_RULES gate), Paragon, and the longest stretch with none of them. roadmap-realism-check prints it for every corpus fixture and asserts the first rank ≤ FIRST_RANK_MAX_DAYS + 6 and the longest stretch ≤ MILESTONE_MAX_DAYS + 6. A fixture whose plan carries LONG_WINDOW (writing too slow for any count gate to reach MIN_INCREMENT_CARDS_FLOOR in time) is exempt, and must show the LONG_WINDOW note instead. *(shipped: with the split placement above and WRITE_MARGIN 1.3, the 192-day bound holds on every corpus fixture, and realism-check asserts it with no exemption. It passes the depth to rankIndexForStage, so a count gate at the depth ranks as decision 40 now says.)*
 
-**Worked examples** (stage days before the Sunday snap, at c = 1 with no held days; confirmed by design B's probe at pLong = p and without clean entry). **Lane 0 recomputes every figure below under the final model (pLong = min(p, 0.80), cleanAt at L\*) and pins the recomputed values; the realism reviewer confirms them.** The merges, the count gate and the ranks are expected to hold; the days after Retained move later by the long-gap rate and clean entry:
-- **The spec's pack.** Probability has 42 cards (n 34). Inference has 9 (n 25; 19 new at 3 a week). p is 0.8.
-  - Stage days: L4 day 43, L6 63, L8 109, L10 202, L11 286, L12 414. The best case for L12 is 375.
-  - Milestones: Familiar (L6) on day 63, with Foundation merged into it; Retained on 109; Fluent on 202; Toward Mastered (L11) on 286; Mastered on 414. That is 5 milestones.
-- **A new learner.** Two new Domains of 25 cards each; a source of 6 a week at Steady (4.2 a week); p 0.85.
-  - Stage days: L4 89, L6 108, L8 153, L10 241, L11 318, L12 431 (best 420).
-  - Milestones: Familiar on 108 (Foundation merged) is the first gate, and its 108-day window gets a count gate: "Familiar, part 1" on the Sunday on or after day 54. Then Familiar 108, Retained 153, Fluent 241, Toward Mastered 318, Mastered 431. That is 6 milestones, the first rank by about day 54-60.
-  - At Push (5.4 a week): L4 70, L6 89, L8 135, L10 223, L11 300, L12 412 (Familiar first on 89, with a count gate near day 45).
+**Worked examples** (stage days before the Sunday snap, at c = 1 with no held days). The first text gave design B's figures (pLong = p, no clean entry, WRITE_MARGIN 1.1) and asked lane 0 to recompute them under the final model. *(shipped)* These are the recomputed values, under the final model (pLong = min(p, 0.80), cleanAt at L\*) at WRITE_MARGIN 1.3, pinned in roadmap-contract-check and roadmap-realism-check (contracts §15.2). Design B's figures stay pinned too, as the record of why the margin changed:
+- **The spec's pack.** Probability has 42 cards (n 34; 3 new). Inference has 9 (n 25; 24 new at 3 a week). p is 0.8.
+  - Stage days: L4 day 48, L6 68, L8 114, L10 205, L11 282, L12 **430**. The best case for L12 is 379. *(Design B, at 1.1: 43, 63, 109, 202, 286, 414; the final model at 1.1 gave 517.)*
+  - Milestones: Familiar (L6) on day 68, with Foundation merged into it (20 days apart); its 68-day first window needs no count gate. Then Retained on 114, Fluent on 205, Toward Mastered (L11) on 282 and Mastered on 430: 5 milestones. The final stretch is 148 days.
+- **A new learner.** Two new Domains of 25 cards each (33 new cards each); a source of 6 a week at Steady (4.2 a week); p 0.85.
+  - Stage days: L4 89, L6 108, L8 153, L10 242, L11 321, L12 **460** (best 420). *(Design B: 89, 108, 153, 241, 318, 431; the final model at 1.1 gave 547.)*
+  - Milestones: Familiar on 108 (Foundation merged) is the first gate, and its 108-day window gets a count gate: "Familiar, part 1" on the Sunday on or after day 54. Then Familiar 108, Retained 153, Fluent 242, Toward Mastered 321, Mastered 460. That is 6 milestones, the first rank by about day 54–60, and a final stretch of 139 days.
+  - At Push (5.4 a week): L4 70, L6 89, L8 135, L10 224, L11 302, L12 446 (Familiar first on 89, with a count gate near day 45).
+  - On the priors while calibrating (p 0.80, c 0.85, ρ 0.6) at Steady: L4 90, L6 112, L8 160, L10 251, L11 330, L12 479; D_real is day 482, about 15.8 months (question 9).
+  - The cost of the spare: the learner's last new card falls on day 106, not 90.
 
 **Files.**
 - roadmap-realism.ts: stageLadderOf (with the count gate and the refusals), motivationTimelineOf, the depth starterLadder and fitPlan's depth branch (R2);
@@ -933,7 +1049,7 @@ These are new CODE_TEMPLATES (lane 0). {domains} reads "A, B and n more" past th
   - the split: a 212-day L10 → L12 window gets L11;
   - a long first window (75 weeks of writing) keeps LONG_WINDOW after its count gate;
   - ≤ 6 milestones for every fixture with 1 to 6 Domains;
-  - the motivation timeline of every corpus fixture: the first rank ≤ 81 days and the longest stretch ≤ 192 days, unless the plan carries LONG_WINDOW;
+  - the motivation timeline of every corpus fixture: the first rank ≤ 81 days and the longest stretch ≤ 192 days, unless the plan carries LONG_WINDOW *(shipped: the stretch bound holds on every fixture, actuarial-probability's hours-bound plan included, through the split placement)*;
   - a STRONG library already holding L8 coverage marks Foundation, Familiar and Retained "Held when you began" and schedules from Fluent on;
   - a library already holding the depth is refused at intake and at accept; so is one whose realistic date is 20 days away;
   - a gap of 2 at a gate merges it and doesn't hold it;
@@ -958,7 +1074,7 @@ These are new CODE_TEMPLATES (lane 0). {domains} reads "A, B and n more" past th
 **What was assumed** (dateOrigin, stored in the feasibility JSON): {origin: 'REALISTIC' | 'USER', calibrating: subset of ['p', 'c', 'rho', 'pace']}. 'pace' means a typed rate the app hasn't measured. While `calibrating` is non-empty:
 - the dates use the priors (F-R4-8), never p = 1;
 - the Date copy says which inputs are assumed ("assumes an 80% pass rate until 30 reviews are measured; your typed 3 new cards a week isn't measured yet");
-- the Aim card chip reads "Mastered by about Nov 2027 · estimate", and the best case shows as its own line.
+- the Aim card chip reads "Mastered by about Nov 2027 · estimate" *(shipped: "Mastered (level 12) by about Nov 2027 · estimate")*, and the best case shows as its own line.
 
 **The verdict on the user's date D_u** (CHOSEN mode; REALISTIC is FITS by construction):
 - **FITS:** D_u ≥ D_real. The plan writes at r_plan. The time after the realistic final stage sits in its window ("slack before your date"), and a window over 186 days gains its BETWEEN gate.
@@ -973,7 +1089,7 @@ These are new CODE_TEMPLATES (lane 0). {domains} reads "A, B and n more" past th
 - [Use Sun 21 Nov 2027]: the realistic date (Remedy USE_REALISTIC_DATE; rev 3's MOVE_DATE is retargeted to D_real for depth plans);
 - [Keep my date]: TIGHT, or OVER with its switch;
 - [Choose a lower depth…] (LOWER_DEPTH):
-  - a sheet lists each lower depth with its realistic date; with an exam date, the depth the plan reaches by the exam is marked "what you'd hold by your exam";
+  - a sheet lists each lower depth with its realistic date; with an exam date, the depth the plan reaches by the exam is marked "what you'd hold by your exam"; *(shipped: each option reads "Lower to Fluent (level 10)" with "its stage in this plan: Sun 16 May 2027", or "not a stage of this plan yet: the plan is dated again". A realistic date computed per lower depth is Deferred. The sheet's note: "A lower depth is your choice: the plan shows it for good, Proficiency is measured toward the new depth, and Paragon is off. Ranks already given stay.")*
   - the choice sets Roadmap.depth, is recorded in the acceptance's feasibility as {depthChoice: {from, to, day, reason: 'CHOICE' | 'EXAM'}}, and is shown for good: "Depth: Fluent (level 10) — below Mastered, your choice on 5 Oct" (or "— set by your exam date on 5 Oct");
   - Proficiency is rebased (F-R4-12), and Paragon is off.
 - Whenever D_u < D_real, there is also the waypoint line: "By your date the plan reaches Retained (level 8)." This is reachByUserDate: the highest level among the realistic plan's milestones (gates and BETWEEN) whose stageDay ≤ D_u.
@@ -984,7 +1100,7 @@ REFIT_LIGHT and MOVE_TO_LATER are never offered on depth plans. One lowers targe
 - The depth and the aim's date are unchanged by it. reachByExam is the highest level among the plan's milestones whose stageDay ≤ examDay.
 - The stage whose window holds examDay (the first stage whose due day is on or after it) gets, placed by code and never chosen by Gemini:
   - the checkpoint EXAM_DAY "Exam: {exam}", anchored on examDay, with the user's bar and outOf. It is the plan's standard (F-R4-12), and it replaces that stage's own checkpoint;
-  - MOCK_TEST in the stage before it (or the same stage, anchored at least 14 days before the exam, when there is none before), and TIMED_PRACTICE in the stages up to the exam when practices are allowed and a slot is free;
+  - MOCK_TEST in the stage before it (or the same stage, anchored at least 14 days before the exam, when there is none before), and TIMED_PRACTICE in the stages up to the exam when practices are allowed and a slot is free; *(shipped: "the same stage" is skipped, since a milestone holds at most one checkpoint and EXAM_DAY takes it; MOCK_TEST goes in the stage before when there is one)*;
   - BOOK_EXAM as a step in the first stage.
 - The line "By your exam (Sun 4 Apr 2027) the plan reaches Retained (level 8)." shows on the plan for good, and on the Date block.
 - An examDay after the aim's realistic date puts EXAM_DAY on the final milestone, as rev 3's standard was. An examDay before the first stage's due day sits in the first stage.
@@ -995,6 +1111,7 @@ REFIT_LIGHT and MOVE_TO_LATER are never offered on depth plans. One lowers targe
 - Otherwise, in one transaction under the roadmap lock: it sets Roadmap.depth; marks every unstarted stage whose gate is above the new L\* DROPPED, with the new MilestoneNote DEPTH_LOWERED ("dropped when the depth was lowered on 5 Oct"); rewrites endState to the new depth terms (`rc` at the new L\*); and writes one rebased Proficiency reading.
 - A STARTED stage at exactly the new L\* keeps its measures: a started paying target is never rewritten (rev 3 decision 16). The end state's terms decide the aim.
 - It writes no goalMp and touches no goal. The top rank is recomputed (F-R4-12) and is never below a rank already given.
+- *(shipped)* On an ACTIVE plan it records the lowering as a second acceptance within the same version (previousVersion = version, carrying the new end state and the depthChoice). Undo refuses such a record. Plan history reads it from the record itself (PlanHistoryRow.depthLowered): "v1 depth lowered 7 Jan: Mastered → Fluent", so an accept, Undo, accept sequence never reads as a lowering. Acceptances are ordered by version, then by acceptedAt. Proficiency is rebased with the cause REPLAN and the detail "depth lowered Mastered → Fluent" (there is no separate cause).
 
 **REALISTIC mode.**
 - Roadmap.targetDay is provisional on a DRAFT.
@@ -1006,14 +1123,16 @@ REFIT_LIGHT and MOVE_TO_LATER are never offered on depth plans. One lowers targe
 
 **Missing inputs:**
 - p, c or ρ calibrating: the priors, labelled (above).
-- Pace NONE with new cards needed: REALISTIC requires the typed rate (F-R4-4), recorded as 'pace' in calibrating. In CHOSEN mode, without one, the stages spread evenly to D_u and read "Not dated: no writing pace yet". PACE_MEASURED offers re-dating.
-- **CALIBRATED** (a new re-plan trigger, like PACE_MEASURED): when any input in dateOrigin.calibrating becomes measured, the roadmap page offers "Your pass rate is now measured (76%). Re-date the stages you haven't started?" [Re-date] [Keep the dates]. Re-dating runs the REFIT re-date over unstarted stages only; it never lowers n_d or ℓ.
+- Pace NONE with ~~new cards needed~~ *(shipped, option (b))* **a Domain short of its count**: REALISTIC requires the typed rate (F-R4-4), recorded as 'pace' in calibrating. In CHOSEN mode, without one, the stages spread evenly to D_u and read "Not dated: no writing pace yet" *(shipped: the verdict is TIGHT with D_real null, since FITS would claim what the app can't know; D_floor can still make it IMPOSSIBLE)*. PACE_MEASURED offers re-dating.
+- *(shipped, option (b), the lead to confirm)* **Pace NONE and every Domain already holding its count** (live_d ≥ n_d), so the new cards are only WRITE_MARGIN's spare: the plan is dated on the cards held (spareOnlyOf): rate 0, D_full = D_real, no rate asked, and no 'pace' in calibrating. Its basis says so: "With only the cards you hold, …" and "No writing pace yet, so the N spare new cards the plan would write (30% over the count, because some cards lag) aren't counted. Enter how many new cards a week you'll write, and the date may come closer." A user's date before D_floor (the spare written today) is IMPOSSIBLE, worded "even if every review passes and the new cards are written today", never "twice your pace"; a date from D_floor up to D_real is OVER, "…or with new cards written: enter how many a week you'll write." If the cards held can't reach the depth within SPAN_MAX_DAYS, the old rule applies. The dates come out later than with a pace (Probability alone: day 412 with no pace, 370 at 6 a week). To reverse: spareOnlyOf returns false, and realism-check's two re-pinned cases go back.
+- **CALIBRATED** (a new re-plan trigger, like PACE_MEASURED): when any input in dateOrigin.calibrating becomes measured, the roadmap page offers "Your pass rate is now measured (76%). Re-date the stages you haven't started?" [Re-date] [Keep the dates]. Re-dating runs the REFIT re-date over unstarted stages only; it never lowers n_d or ℓ. *(shipped)* It fires for p, c and ρ; a newly measured pace stays PACE_MEASURED's, so one event never gives two lines. **[Keep the dates]** is a server action (keepCalibratedDates): under the roadmap lock it rewrites the live acceptance's `dateCheck.dateOrigin.calibrating` to the inputs still calibrating, so the offer doesn't come back, and changes nothing else. That updates an acceptance in place, an exception to roadmap.md's "never updated" rule (an extra record within the version would read as a lowered depth); the lead confirms it. With nothing measured since, it refuses (NO_CALIBRATED_OFFER).
 
 **Start.** refitForStart's today check becomes a date check:
 - "Milestone 3 · Retained was planned for Sun 13 Dec; at today's cards it's realistic by Sun 3 Jan".
 - [Use 3 Jan] re-dates this and the later unstarted stages. Counts and levels never fall.
 - [Keep 13 Dec — Over] needs the switch.
 - IMPOSSIBLE refuses Start with the offers.
+- *(shipped)* Start's stage date follows this section's ladder at the realistic rate: FITS by the realistic day, TIGHT at the full usual pace, OVER at up to twice the pace or the floor, else IMPOSSIBLE. On a depth plan the rev-3 "today check" is always empty.
 
 **Triggers.** BEHIND and QUESTS_BEHIND offer Reschedule (the goal) and closing short, as in rev 3. "Re-fit later milestones" becomes "Re-date later milestones", which never lowers n_d or ℓ.
 
@@ -1028,7 +1147,7 @@ REFIT_LIGHT and MOVE_TO_LATER are never offered on depth plans. One lowers targe
 - roadmap-types.ts: DateCheck, DateOrigin, DATE_VERDICTS, Remedy += USE_REALISTIC_DATE and LOWER_DEPTH, ReplanTrigger += CALIBRATED, MilestoneNote DEPTH_LOWERED, CHECKPOINT_KINDS EXAM_DAY, PACE_SHARE, OVER_PACE_FACTOR and DateMode (lane 0);
 - roadmap-server.ts: accept stores the DateCheck and the choice, lowerDepthCore, the CALIBRATED trigger, and the REALISTIC writes (R4);
 - roadmap-pace.ts (R1);
-- ChecksPanel.tsx, ReplanSheet.tsx, StartSheet.tsx, AimHeader.tsx and AimCard.tsx (R5). The Aim card's chip reads "Mastered by Nov 2027" (or "by about Nov 2027 · estimate"), replacing "by 31 Mar", so the card doesn't grow at 344.
+- ChecksPanel.tsx, ReplanSheet.tsx, StartSheet.tsx, AimHeader.tsx and AimCard.tsx (R5). The Aim card's chip reads "Mastered by Nov 2027" (or "by about Nov 2027 · estimate"), replacing "by 31 Mar", so the card doesn't grow at 344. *(shipped: "Mastered (level 12) by Nov 2027", so "Mastered" keeps its level as Names requires; the roadmap header reads "Mastered (level 12) by Sun 12 Mar 2028". An accepted plan whose user-set date was kept Over also shows "Your date is N weeks ahead of your pace — kept as you chose (Over).")*
 
 **Tests.** roadmap-realism-check:
 - **The new learner with a CHOSEN 1-year date:**
@@ -1043,6 +1162,8 @@ REFIT_LIGHT and MOVE_TO_LATER are never offered on depth plans. One lowers targe
 - REALISTIC mode always gives FITS with targetDay = D_real.
 - D_real beyond 1080 days refuses with its copy.
 - p calibrating dates at 0.80, not 1, and records 'p' in dateOrigin.calibrating; a typed pace records 'pace'; pace NONE in CHOSEN mode gives "Not dated".
+- *(shipped)* Option (b): Probability alone (42 cards, n 34) with no pace is dated in REALISTIC mode on the cards held (day 412; rate null, no 'pace'); the pack with no pace is still refused NO_PACE (Inference 9 against n 25); the spare-only CHOSEN verdicts [300 IMPOSSIBLE, 312 OVER, 400 OVER, 411 OVER, 412 FITS] never name a rate; a new learner on the priors reaches Mastered on stage day 479 (D_real 482), and at a measured Steady on 460.
+- *(shipped)* dateEffectOf on a plan that isn't dated gives no date and never "past 3 years", so no addition toggle is wrongly blocked.
 - **Exam:** an ielts-like fixture with examDay at day 180 and a realistic Mastered at day 431 keeps depth 12, places EXAM_DAY in the stage holding day 180, MOCK_TEST before it, and reachByExam = the highest stage due by day 180; the verdict on the aim's date is unaffected by the exam; an examDay after D_real puts EXAM_DAY on the final milestone.
 - **LOWER_DEPTH:** refused with a STARTED Mastered-gate milestone; with Fluent STARTED and Mastered unstarted, lowering to Fluent drops the Mastered and Toward Mastered stages, keeps Fluent's measures, writes no goalMp, and leaves every given rank in place.
 - **CALIBRATED:** a plan accepted with p calibrating offers re-dating once 30 reviews exist, and re-dating moves only unstarted stages.
@@ -1060,7 +1181,7 @@ REFIT_LIGHT and MOVE_TO_LATER are never offered on depth plans. One lowers targe
 **assignRankIndices for depth plans:**
 - A gate stage's rankIndex is `rankIndexForStage(stage)`: FOUNDATION 1 (Aspirant), FAMILIAR 2 (Journeyman), RETAINED 3 (Specialist), FLUENT 4 (Expert), MASTERED 5 (Virtuoso).
 - BETWEEN takes the rank of the gate below it ("keeps your rank").
-- PART takes the rank of the stage it precedes, and that stage then keeps your rank.
+- PART takes the rank of the stage it precedes, and that stage then keeps your rank. *(shipped)* A PART toward the depth's own gate takes the rank of the gate below instead: Expert under Mastered, Specialist at a Fluent depth, Journeyman at a Retained depth (`rankIndexForStage(stage, gateLevel, depth)`; R1, R2 and R4 pass the depth). A library holding Fluent ranks [Expert, Virtuoso], never Virtuoso first.
 - A merged gate's name is skipped.
 - **A track plan** ranks by place among its kept stages: the k-th kept stage gives k (rev 3's place rule), whatever its STAGE_k key.
 - It is never above the lineage's first value (rev 3's rule, unchanged).
@@ -1069,7 +1190,7 @@ REFIT_LIGHT and MOVE_TO_LATER are never offered on depth plans. One lowers targe
 **`topRankIndexOfDepth(input: {depth, track, hasStandard, keptStages, spanDays, coverageBelowPolicy, productionPlannedFromFluent})`:**
 - On a card plan, Paragon (6) needs depth 12, a standard (hasStandard; question 7), no Domain's coverage below the app's policy, and a production practice planned at Fluent and above. Otherwise it is the final stage's rank: Mastered gives Virtuoso, Fluent Expert, Retained Specialist.
 - On a track plan, Paragon needs a standard, keptStages ≥ PARAGON_MIN_MILESTONES and spanDays ≥ TRACK_PARAGON_MIN_DAYS. Otherwise the top is the last kept stage's place-rank, at most Virtuoso.
-- The function is pure; the roadmap view shows its result as "Top rank on this plan: Virtuoso — Paragon needs a standard you set" (or the missing condition).
+- The function is pure; the roadmap view shows its result as "Top rank on this plan: Virtuoso — Paragon needs a standard you set" (or the missing condition). *(shipped: the top shown is the higher of this and the rank already given, so a lowered depth caps the top but never below a rank the user holds.)*
 
 **Paragon is Roadmap.reachedDay on a plan whose top rank is Paragon.** Rev 3's aim-reached rule (F10) is replaced for depth plans by:
 - the final stage reached and confirmed (two-phase, REACH_CONFIRM_DAYS);
@@ -1081,6 +1202,8 @@ REFIT_LIGHT and MOVE_TO_LATER are never offered on depth plans. One lowers targe
 
 A stage closed short or past due on the way doesn't block it: the final stage's depth terms cover every lower gate's card terms. The Close sheet of an intermediate stage says so: "Closing short doesn't change Paragon: it needs the final stage, the depth, the plan's practice overall and your standard." A track plan's aim reach keeps rev 3's rule, with the standard.
 
+*(shipped, R1; the lead confirms)* The practice conditions apply to every depth plan's aim reach (Roadmap.reachedDay), not only to plans that can give Paragon; the standard is required only when the plan has one, so a plan without one can reach its aim and tops out at Virtuoso. Planned sessions are counted per practice over its stage window less held days, kept sessions are capped per practice, and a practice switched off at Start is not planned. The standard is the EXAM_DAY checkpoint, else the final stage's checkpoint with a bar and an outOf; the latest log inside its window decides.
+
 **The rank** is the maximum, over stages reached inside the plan. A lower depth keeps every rank given so far and caps the top rank.
 
 **Proficiency v2** (PROFICIENCY_VERSION 2):
@@ -1089,10 +1212,16 @@ A stage closed short or past due on the way doesn't block it: the final stage's 
 - **Stages part:** reached ÷ scheduled positions. Held stages count as reached; a PART gate is a position.
 - **Shares** are unchanged: 0.6, 0.25 and 0.15, renormalised.
 - **The label always names its basis:** "Proficiency toward Mastered (level 12): 28%", and after a depth or coverage change "Proficiency toward Fluent (level 10): 52%". A higher figure after a lowering can then never read as more mastery.
-- **A depth or coverage change** is a plan decision. The reading is rebased: "Changed on 5 Oct · depth lowered Mastered → Fluent (was 31%)". It never reads as a gain or a loss.
-- A version-2 reading shows no delta against a version-1 reading (rev 3's detail.v rule).
+- **A depth or coverage change** is a plan decision. The reading is rebased: "Changed on 5 Oct · depth lowered Mastered → Fluent (was 31%)". It never reads as a gain or a loss. *(shipped: the cause is REPLAN, with the decision in the detail's words; a coverage lowering reads "coverage in Probability lowered 34 → 5".)*
+- A version-2 reading shows no delta against a version-1 reading (rev 3's detail.v rule). *(shipped: and it never rebases against or carries a version-1 reading.)*
 
-**Clean entry in the readings** (R1, recordRoadmapReadings): for the cards at exactly L\* in R's Domains, one indexed read of their REVIEW ledger rows in the last interval(L\*, m) + graceDays(L\*) + RETRY_ENTRY_DAYS life days. A card whose latest REVIEW row is a pass ('advanced…', and for new rows "→L\*") preceded within RETRY_ENTRY_DAYS by a 'strike…' row is a retry entry: it counts as L\* − 1 for the `rc` terms until its next pass. The reading's detail stores {byDomain, retryEntries} so the plan can say "2 cards reached level 12 on a retry: they count after their next review".
+**Clean entry in the readings** (R1, recordRoadmapReadings): for the cards at exactly L\* in R's Domains, one indexed read of their REVIEW ledger rows in the last ~~interval(L\*, m) + graceDays(L\*) + RETRY_ENTRY_DAYS life days~~ *(shipped)* **clean-entry window** of life days. A card whose latest REVIEW row is a pass ('advanced…', and for new rows "→L\*") preceded within RETRY_ENTRY_DAYS by a 'strike…' row is a retry entry: it counts as L\* − 1 for the `rc` terms until its next pass. The reading's detail stores {byDomain, retryEntries} so the plan can say "2 cards reached level 12 on a retry: they count after their next review".
+
+*(shipped)* **The day rule, as built.** One definition in roadmap-types (`isRetryEntry`, `retryReadDaysOf`), shared by R1's readings, R4's planning read and R6's week quests:
+- **The entering pass** is the card's latest 'advanced…' row; on a tagged row it must read L(L\*−1)→L\*. **It is a retry entry** when the row just before it is a miss: 'strike', 'shielded', or 'degraded' from L\*. With level tags on both rows the climb decides, whatever the gap in days; only untagged rows keep the RETRY_ENTRY_DAYS (2) window. Backfill and unknown rows are skipped. A later miss at L\* keeps it a retry entry until a pass moves the card above L\*.
+- **The window** holds srs.ts's worst case, from three facts in srs.ts (a strike moves only the due day and keeps the grace end; a pass and a degrade set the grace end from the new due day; the daily cron degrades a card past its grace end). Since the entering pass: the interval at L\* (at levels 5–8 the jitter's top, ceil(BASE × JITTER_HIGH × m)), plus graceDays(L\*) and the loadout's grace extension, plus 1 for the cron's lag. Before it: max(RETRY_ENTRY_DAYS, graceDays(L\* − 1) + the grace extension + 2). That is **184 days at level 12** (264 at m 1.5, 188 with a 2-day grace extension); the first text's window was 173 and read srs.ts's latest retry entry as clean.
+- **R1 reads it through `cleanReadDaysOf(L, m, live)`**: the wider of the acceptance's and the live loadout's interval multiplier, plus the live grace extension, so R1 never reads a card as clean that R4 or R6 reads as a retry. (R4 and R6 read the live loadout; reading through cleanReadDaysOf too is an optional finishing-round item.)
+- **Stated residual:** a DEGRADATION_WARD that shields a card past its grace keeps it at its level longer than any fixed window, and that card reads as clean. The rules page prints the window from retryReadDaysOf and states the residual.
 
 **The ladder disclosure ("Aim ranks on this plan")** shows each stage's floor of the cards part, LEVEL_WEIGHT(ℓ) ÷ LEVEL_WEIGHT(L\*). At L\* = 12: Foundation 1.8%, Familiar 7.4%, Retained 20.3%, Fluent 45.6%, Toward Mastered 67.6%, Mastered 100%.
 - The fixed line: "Proficiency counts review time: a level-12 card has come through about 340 days of spacing, so early stages read low. Your Aim rank records each stage you reach."
@@ -1106,8 +1235,8 @@ A stage closed short or past due on the way doesn't block it: the final stage's 
 
 **Files.**
 - roadmap-proficiency.ts (assignRankIndices, aimRankOf, proficiencyBasisOf, PROFICIENCY_VERSION 2), roadmap-readings.ts (the aim-reach condition, clean entry) and roadmap-measures.ts (recall-only and `rc` counts) (R1);
-- roadmap-types.ts: rankIndexForStage and topRankIndexOfDepth (lane 0);
-- PlanRanks.tsx, ProficiencyBlock.tsx and the Close sheet line (R5).
+- roadmap-types.ts: rankIndexForStage and topRankIndexOfDepth (lane 0); *(shipped)* isRetryEntry, retryReadDaysOf and JITTER_HIGH;
+- PlanRanks.tsx, ProficiencyBlock.tsx and the Close sheet line (R5); *(shipped)* PlanHistory.tsx, keyed on PlanHistoryRow.depthLowered.
 
 **Tests.** roadmap-measures-check:
 - Stage-to-rank goldens:
@@ -1125,7 +1254,7 @@ A stage closed short or past due on the way doesn't block it: the final stage's 
 - Archiving a 35-day aim and setting another gives each roadmap at most Aspirant (rev 3's golden, restated); setting the same aim again on a library that holds its depth is refused.
 - **Track plans:** a 35-day track plan with a standard and one kept stage gives at most Aspirant; a 200-day plan with 5 kept stages and a standard can give Paragon; with 3 kept stages it tops at Specialist.
 - The rank stays monotone over a series: a degradation, a lowered depth, a re-date, and an Undo.
-- Clean entry: a card whose last rows are 'strike · L11' then 'advanced · L11→12' the next day counts at L11 for `rc`, and at L12 for a plain key; an older row pair without level tags is read the same way; a pass after it counts it.
+- Clean entry: a card whose last rows are 'strike · L11' then 'advanced · L11→12' the next day counts at L11 for `rc`, and at L12 for a plain key; an older row pair without level tags is read the same way; a pass after it counts it. *(shipped: tagged rows days apart, a 'shielded · L11' or 'degraded · L12' before the pass, and a later 'strike · L12' each read as a retry; untagged rows 3 days apart read clean. srs.ts's latest legal retry entry at L 12, 10, 8 and 6, at m 1 and 1.5, with and without 2 grace days, reads as a retry over the window and as clean one day narrower; the old 173-day window reads the L12 case as clean.)*
 - Proficiency v2:
   - the worked example gives 28%, labelled with its basis;
   - the floor table;
@@ -1143,6 +1272,8 @@ A stage closed short or past due on the way doesn't block it: the final stage's 
 - At RETAINED and above (BETWEEN included), a stage holds at least one PRODUCTION_KINDS practice: PROBLEM_SETS, EXPLAIN_IT, WRITING_PRACTICE, BUILD_SOMETHING, RUN_THROUGHS, MISTAKE_REVIEW, SAY_IT_ALOUD, or TIMED_PRACTICE on an exam aim.
 - When the stage lacks the required kind, code adds one (origin CODE, ItemNote STUDY_ADDED or PRODUCTION_ADDED, "added by the app"), if practices are allowed and a slot is free (≤ 3). Otherwise the stage notes NO_STUDY_SLOT or NO_PRODUCTION_SLOT.
 - The starter picks RECALL_DRILLS early and EXPLAIN_IT later. The user may swap either for another catalog kind.
+- *(shipped)* Retrieval or production has one definition, `practiceRoleOf` (roadmap-catalog), read by the stage shape, the top-rank facts and the production-kept reading alike: by catalog type first (RETRIEVAL_KINDS, PRODUCTION_KINDS, anything else neither); with no type, by method (READING and DELIBERATE_PRACTICE retrieval, WRITING and PROJECT_WORK production). So a "Write it myself" plan with a typed WRITING practice from Fluent on keeps Paragon open everywhere.
+- *(shipped)* A count gate (PART) copies no practices from its stage. R2's motivation timeline counts a PART as able to pay ⬡6; which of the two is right is the lead's ruling.
 
 **Band floors.**
 - In RETAINED, FLUENT and MASTERED stages, the allocation never steps a practice below STAGE_PRACTICE_BAND_MIN (D30, D45, D45).
@@ -1184,15 +1315,17 @@ A stage closed short or past due on the way doesn't block it: the final stage's 
   - The label is "Bring {n} cards to level {L}+" with n = Σ count_d. The parts line is "3 in Probability · 2 in Inference".
   - Progress is Σ_d clamp(v_d − floor_d, 0, count_d). The row is done when every part is done.
 - **ADD** becomes one row with parts [{domainId, count_d}]:
-  - newNeeded_d = max(0, ceil(WRITE_MARGIN × n_d) − live_d at weekStart), counting recall cards. Coverage sets it, not a yield.
+  - newNeeded_d = max(0, ceil(WRITE_MARGIN × n_d) − live_d at weekStart), counting recall cards. Coverage sets it, not a yield. *(shipped: n_d is the milestone measure's own target, the coverage n_d at a stage gate and the gate's own count at a PART, so a PART week doesn't front-load every new card before the gate. The StartSnapshot sizes each stage's need the same way. Whether ADD should pace toward the depth's n_d during a PART, as the plan writes at r_plan, is the lead's ruling; R2 and R6 change together if so.)*
+  - *(shipped)* The basis line reads the spare from WRITE_MARGIN: "still needed 13 new cards (1.3 × 25 → 33, a 30% spare because some cards lag, less the 20 cards it holds)". The arrow marks the rounding (1.3 × 25 is 32.5), as the pace line's "pace 13 × 7 ÷ 31 days → 3" does; a "=" would be a false equation.
   - pace_d = ceil(newNeeded_d × fw ÷ Ww), with lastCardDay = dueDay − floorBase(L).
   - The catch-up cap is per Domain, max(WEEK_QUEST_ADD_MIN_CAP, ceil(1.5 × needRate_{d,w})).
   - The capacity cap applies to the total, shared out in proportion to pace_d.
   - Only recall cards count toward it (a multiple-choice card added that week doesn't).
   - The label is "Add {n} cards" and the parts line "4 to Inference · 2 to Risk Management · multiple choice not counted" (the last clause only while NON_RECALL_TYPES is non-empty). The link goes to /add?field=&domain= for the part with the largest count.
 - **QUESTS_BEHIND** fires when any part is capped by CATCHUP with Ww < 2.
-- **Today's row** shows the first WEEK_QUEST_PARTS_TODAY parts and "+n more"; the roadmap page shows all of them. Every count keeps its unit.
-- **Versions.** WEEK_QUEST_GENERATOR_VERSION 2 is stored on new sets. A v1 set (no parts) renders as a single part from its stored fields, and its results are unchanged.
+- **Today's row** shows the first WEEK_QUEST_PARTS_TODAY parts and "+n more"; the roadmap page shows all of them. Every count keeps its unit. *(shipped: "+1 more Domain", so the count keeps a unit; the Aim card cuts the parts line as Today does. The parts line is in the row's accessible name.)*
+- **Versions.** WEEK_QUEST_GENERATOR_VERSION 2 is stored on new sets. A v1 set (no parts) renders as a single part from its stored fields, and its results are unchanged. *(shipped: a v1 row has no parts line at all, so it stays byte-identical to rev 3; its label already names the Domains. There is one generator path: every new set is generator 2, legacy plans are skipped, and frozen v1 sets render from storage.)*
+- *(shipped)* Generator 2 reads the reach at the StartSnapshot's parameters, never the best case. A snapshot without cStart or rhoStart reads the priors; pLong is min(p, pLongStart, P_LONG_CAP). The loadout's extra strikes and grace days are read when the set is generated. RAISE counts only recall cards when the part's key has an `r` or `rc` segment; every generator-2 ADD counts recall cards. Clean entry is roadmap-types' isRetryEntry over the shared window (F-R4-12).
 - **The caps.** WEEK_QUESTS_PER_WEEK_MAX stays 7, because parts are not quests. The contract check still asserts the per-kind sum.
 
 **Files.**
@@ -1203,13 +1336,14 @@ A stage closed short or past due on the way doesn't block it: the final stage's 
 **Tests.** roadmap-quests-check:
 - a two-Domain RAISE splits by gap and reach, and one Domain at its target contributes no part;
 - a part's slip offsets only that part;
-- ADD by coverage: Inference needs 28 and has 15, so 13 are left over the remaining writing weeks;
+- ADD by coverage: Inference needs ~~28 and has 15~~ *(shipped, at WRITE_MARGIN 1.3)* 33 (1.3 × 25, rounded up) and has 20, so 13 are left over the remaining writing weeks; the basis never shows "10% spare" or a "=" for the rounding;
 - the per-Domain catch-up cap, and a capacity cap shared out in proportion;
 - a v1 frozen set renders unchanged;
 - the independence of the freeze time (rev 3's golden) holds with parts;
 - reach at c = 0.8 asks no more than at c = 1;
 - a multiple-choice card added in the week doesn't advance ADD, and a retry-entry card at L12 doesn't advance a final-stage RAISE part until its next pass;
-- labels still take only YoursText, CodeText and DomainName, and the parts line never shows a bare "n of N".
+- labels still take only YoursText, CodeText and DomainName, and the parts line never shows a bare "n of N";
+- *(shipped)* a Start → load round trip: Start's frozen set reads back identical from storage, and next Monday's set reads the StartSnapshot back from JSON. *(Finishing round, R4: Start's started-day reading and its v0 count each key with its segment, write no first reading for an `rc` key, and pass a v0 per key; quests-check prints this as PENDING until it lands.)*
 
 ### F-R4-15. Honesty copy and the guards that keep it
 
@@ -1226,6 +1360,7 @@ A stage closed short or past due on the way doesn't block it: the final stage's 
 - **Coverage:** "The app tests whether you hold the cards you wrote. Whether they cover everything '<aim>' needs is yours to judge: your outline and your standard are the outside checks."
 - **Paragon:** "Paragon: every one of your 2 required Domains held at level 12, the final milestone reached, the plan's practice kept, and your standard logged at or above your bar. Cards tested by your reviews; practice and score from your ticks and your log."
 - **Schedule-bound:** the line from F-R4-11.
+- *(shipped)* **Paragon's missing condition** for a Domain below policy reads "each required Domain's coverage at the app's policy or above", which honours the "every Domain" ban. The last milestone of a plan whose date the app set reads "ends on the date the app set", never "ends on your date".
 
 **Bans in roadmap-ui-check:**
 - "Fitted" or "FITTED" on a depth plan;
@@ -1240,7 +1375,7 @@ A stage closed short or past due on the way doesn't block it: the final stage's 
 
 **Tests.**
 - **roadmap-ui-check:** the copy goldens and the bans above. The Aim card stays under 470 px at 344 with the depth chip.
-- **ui-audit** on /dev/style/roadmap, with the new states depth-realistic, depth-calibrating, depth-over, depth-lowered, coverage-choice, exam-waypoint, count-gate, held-stages and legacy.
+- **ui-audit** on /dev/style/roadmap, with the new states depth-realistic, depth-calibrating, depth-over, depth-lowered, coverage-choice, exam-waypoint, count-gate, held-stages and legacy. *(shipped: all nine exist under these names, plus `legacy-draft` and the keys-only draft `draft-v3`, named so it stays distinct from rev 3's draft-mixed.)*
 
 ### F-R4-16. Plans made before revision 4
 
@@ -1250,16 +1385,19 @@ A stage closed short or past due on the way doesn't block it: the final stage's 
   - that no RoadmapMilestone is STARTING or STARTED. If one is, stop: this rule assumes none;
   - the count of legacy RoadmapMilestone rows with titleOrigin 'GEMINI' and RoadmapItem rows with origin 'GEMINI', and of RoadmapRun rows with kind 'GEMINI' created after the rev-3 push. P0 expects all three to be 0; any row found is listed in PROGRESS.md and is covered by the hiding rule below.
 - **A legacy roadmap shows no milestone or item text.** Whatever its status, it renders only its aim (the user's words), its Area and chosen Domains (library names), the banner and its actions. Milestone titles, item labels, topics, practices and steps of a legacy version are never rendered, on the roadmap page, the Aim card, the draft review, Today or in RunFacts. The banner adds, when any row of it had a Gemini origin: "Wording from an earlier Gemini draft is hidden." The legacy Aim card shows the aim and the banner's action, with no milestone title.
+  - *(shipped)* **The roadmap page:** the aim card (the aim, the Area chip and the date chip), then the banner: its bold line, "Wording from an earlier Gemini draft is hidden." on a line of its own when any row had a Gemini origin, and, on an open plan, "Start again at a depth to measure this aim." Then its one action, Plan history, and on a closed plan the closed footer.
+  - *(shipped)* **The Aim card** carries the same facts (`AimCardView.legacyView`): the aim, the Area, the banner, the hidden-wording line on its own line, and one action by state. A DRAFT offers "Draft it again"; an open plan offers "Start again at a depth" with the measure line; a DONE plan offers "Set your next aim" (no `replaces`) and "Open roadmap". No Proficiency, rank, depth date chip, week quests or last aim; the chips are the Area and the plan's own date (or "Done 12 Mar" once closed). The /you fixtures are legacy-active, legacy-draft and legacy-done.
 - **A legacy DRAFT:**
   - the banner reads "This draft was made before plans aimed at a depth. [Draft it again]", which opens the intake form;
   - saving sets depth, and the next draft run replaces the old rows (rev 3's "earlier DRAFT rows of that version are deleted first");
-  - accept refuses while any milestone of the draft version has stage null: "Draft it again first".
+  - accept refuses while any milestone of the draft version has stage null: "Draft it again first". *(shipped: a legacy DRAFT with no depth at all refuses claim and build with "Pick a depth in the intake first…" (PICK_A_DEPTH_FIRST), instead of the circular "Draft it again first"; a DRAFT with a depth but stage-less rows refuses at accept with DRAFT_IT_AGAIN, and a redraft replaces those rows.)*
 - **A legacy ACTIVE roadmap** (nothing started):
   - the banner reads "Planned before plans aimed at a depth. [Start again at a depth]";
-  - the button writes a handoff {aim, source 'restart', areaFieldId, track, domainIds, replaces: roadmapId} and opens /you/roadmap/new;
+  - the button writes a handoff {aim, source 'restart', areaFieldId, track, domainIds, replaces: roadmapId} and opens /you/roadmap/new; *(shipped: on both surfaces the Domains are the old plan's own, from LegacyView.domainIds, never every Domain with cards in the Area. The Aim card carries no track yet, so a Field plan's "Practices count toward" falls back to the form's default there)*;
+  - *(shipped)* the intake's note names only what it really took over: "From your plan made before plans aimed at a depth: its aim, Area and Domains are carried over. Saving this archives that plan.", or "its aim and Area are", or "its aim is" (handoffNote with handoffCarriedOf);
   - saveIntakeCore with `replaces` archives that roadmap (reason "replaced by a plan aimed at a depth on <day>") in the same claim-first transaction that inserts the new DRAFT. It is guarded so the old roadmap must be ACTIVE, depth null, with no STARTING or STARTED milestone.
   - If the user leaves the form, nothing is lost.
-- **Measuring legacy plans.** recordRoadmapReadings and loadWeekQuests skip legacy roadmaps, and the page says "Start again at a depth to measure this aim". Start refuses: "Start again at a depth first".
+- **Measuring legacy plans.** recordRoadmapReadings and loadWeekQuests skip legacy roadmaps, and the page says "Start again at a depth to measure this aim". Start refuses: "Start again at a depth first". *(shipped: both skips report `NO_ROADMAP`, as there is no LEGACY skip value; saveIntakeCore's `replaces` refuses only when the old plan is not legacy, so a legacy track plan can be replaced too.)*
 - **Retired for new drafts:** the rev-3 v2 decision paths (bulk keep, Keep and KEPT_SUGGESTION creation) refuse on a depth plan and on a legacy plan. With legacy text hidden, nothing renders v2 rows any more. The lead may delete the v2 engine branches once production shows no legacy rows (Deferred).
 
 **Files.** roadmap-server.ts: saveIntakeCore `replaces`, the legacy guards, the legacy view (draftViewOf and the roadmap and Aim card loaders return no milestone or item text for a legacy version), and the readings and quest skips (R4, with R1 and R6 for the skips); RoadmapView.tsx, DraftReview.tsx and AimCard.tsx (R5); the Intake.replaces field (lane 0).
@@ -1273,7 +1411,8 @@ A stage closed short or past due on the way doesn't block it: the final stage's 
   - a legacy DRAFT's accept is refused;
   - the readings writer writes nothing for a legacy roadmap;
   - the view builders over a seeded legacy roadmap with GEMINI titles and KEPT GEMINI items return no title, label or topic string from those rows (the taint check of F-R4-22 run on the view).
-- **roadmap-ui-check:** the legacy renders of the roadmap page, the draft review and the Aim card contain the aim, the banner and "Wording from an earlier Gemini draft is hidden.", and none of the seeded Gemini strings.
+- **roadmap-ui-check:** the legacy renders of the roadmap page, the draft review and the Aim card contain the aim, the banner and "Wording from an earlier Gemini draft is hidden.", and none of the seeded Gemini strings. *(shipped: the hidden-wording line shows only when geminiHidden; legacyRestartHandoffOf carries `replaces`, the Area Field and the old plan's Domains, and invents none without legacyView; the three restart-note strings.)*
+- *(shipped)* **you-check:** the legacy-active, legacy-draft and legacy-done boxes render their banner, action and hidden-wording line as above, with no milestone, rank, Proficiency, depth date chip, week quests or last aim.
 
 ---
 
@@ -1323,9 +1462,17 @@ STAGE = {
   - The check runs on each kind's **rendered label** (its keywords plus its template words plus its fill: the Domain names, the aim, the exam label), not only on its keywords. So "Performance check: Run a sub-50 10K" is excluded by "no running".
   - Every exclusion is kept as {kind, word} and shown on the draft (F-R4-21): "Left out because of your constraints: Harder session ('running'), Strength session ('lifting'). [Allow one]". [Allow one] puts that kind back in the Edit sheet's catalog picker, never into the reply.
   - When the aim itself meets a negated term, the draft shows one ink line: "Your constraints say 'no running' and your aim is 'Run a sub-50 10K'. The plan leaves out running sessions until you change one of them."
+  - *(shipped)* **What the parser adds to the spec's 12 cues:**
+    - **generic words** (CONSTRAINT_GENERIC_WORDS: time, exercise, when, only, …) are never terms, so "no time on weekdays" keeps SET_TIME and "no exercise" never removes Field PROBLEM_SETS;
+    - **scope breaks** (CONSTRAINT_SCOPE_BREAKS: contrast words such as "but", and "while") end a cue's scope only after the cue has taken a term, so "no running, but swimming is fine" names running only, and "injured while running" still names running;
+    - **the release** (rule `constraint.release`, in RULE_NAMES but not H6's required list): a clause that clears what a cue named ends that cue. A clause opened by a pause or by but, however, although, though or now, or the cue's own clause after injury, injured, pain or doctor says (CONSTRAINT_STATE_CUES), releases when it holds cleared, recovered, healed, fine, ok, okay, resolved or gone (CONSTRAINT_RELEASE_WORDS, matched as written, never by stem) as a state, before any blocker (never, the n't forms, nor, yet, until, unless, once, after, if, when, only, pending, almost, partly, …). Terms a cue took before the release stand, and a release word is never a term. So "injured, but cleared to run" and "knee injury healed, running is fine" exclude nothing, while "not cleared to run", "no running until cleared" and "knee injury still healing, so running is out" still exclude running;
+    - **the release never removes a later exclusion** the user states. "knee injury, swimming ok, running not ok" excludes running, and so does "knee injury healed, but running not ok". The release suppresses terms only up to the next pause, break or cue, then the cue that was active resumes. The fix-round-2 code ended the cue for the rest of the sentence, which errs on the unsafe side; R3 scoped it in the finishing round (landed by 11:10 on 5 Oct), and R7's bar gained the sub-class "{cue}, {other} is fine, {t} not ok / not allowed / is out / hurts" (must exclude t);
+    - **CONSTRAINT_CONFLICT** (the editor and gap flag) reads the union of rev 3's cue reading and negatedTermsOf, and a stem the constraints negate never grounds a gap name (F-R4-19), so the user's "No money for paid courses or signals" can't ground "Signals".
+    - **Known safe-side residual** (question 11): "not a morning person, evenings for running" excludes running. Telling a preference from a negation needs meaning, not cue rules; the exclusion is listed with its word, [Allow one] undoes it, and the confirm is raised anyway.
 - **Body and care plans with constraints.** On a BODY or CARE track, when the constraints are non-empty (or non-English by isNonEnglish, or the parser finds no term in them):
   - the starter and every code-added BODY kind use only EASY_SESSION, MOBILITY_SESSION and TECHNIQUE_SESSION;
   - Gemini's session picks are held as one pending decision per plan (ItemNote GEMINI_PICK, decision PENDING): "Gemini picked Harder session and Strength session. Your constraints say '…'. Keep them?" [Keep them] [Use easy, mobility and technique instead]. It blocks accept until answered (`confirmSessionPicksCore`, R4), and it is the only such tap; the picks are never on Today before it.
+  - *(shipped)* **What a session pick is:** SESSION_PICK_KINDS (roadmap-catalog), every practice type plus FULL_ATTEMPT and PERFORMANCE_CHECK, the two types that are the activity itself; SET_UP stays out. The confirm is raised on a BODY or CARE plan with non-empty constraints when Gemini picked at least one of them, safe kinds included. "Use easy, mobility and technique instead" removes a picked full attempt or performance check and puts nothing in its place; the safe sessions replace practice picks only.
 - **With suggestions off, the reply holds zero characters Gemini wrote.** Every enum has ≤ 42 values.
 
 **The system instruction, v3** (replaces v2; it changes only with a version bump; inputHash includes the version, so v2 replies are never reused):
@@ -1358,7 +1505,7 @@ With ROADMAP_GAPS_LIVE and suggestions on (F-R4-19), a 6th rule is added: "gaps:
 - <plan> lists the stages: "FOUNDATION (level 4) · FAMILIAR (level 6) · …", whether practices are allowed, and whether there is an exam (never its date).
 - The method glossary is replaced by the catalog glossary in code's words: "RECALL_DRILLS (close your notes and recall one point) …".
 - The privacy line, generated from the pack's sections, adds "which Domains you chose".
-- **inputHashMaterial** gains: suggestAreas, the depth, the exam Yes/No answer, the lineDomains, ROADMAP_GAPS_LIVE, and the sha256 of the exact system instruction sent. So a reply drafted under different model inputs is never reused.
+- **inputHashMaterial** gains: suggestAreas, the depth, the exam Yes/No answer, the lineDomains, ROADMAP_GAPS_LIVE, and the sha256 of the exact system instruction sent. So a reply drafted under different model inputs is never reused. *(shipped: the instruction's full text goes into the hashed material, which R4's sha256 then covers, so node:crypto stays out of pure code. The outline section keeps the id "syllabus" in code but is fenced `<outline>`, and the pack's closing line is "Return every stage listed in the plan.", so no tag-like text sits outside a fence.)*
 
 **The validator v3** (roadmap-validate.ts `validateKeysOnly`, R3). It runs after the integrity walk (F-R4-20):
 - **Exact key resolution.** There is no trim, case-fold or NFKC, so 'Ｄ１', 'Д1', 'd1', 'D01' and 'D1 ' never resolve. Every lookup is an own-property lookup on a null-prototype map.
@@ -1371,6 +1518,11 @@ With ROADMAP_GAPS_LIVE and suggestions on (F-R4-19), a 6th rule is added: "gaps:
   - A lastStageOnly kind outside the last stage is dropped with its reason, and so are an examOnly kind on a non-exam aim and a kind the constraint filter excluded, which is a defence in depth.
 - **`gaps`:** F-R4-19.
 - checkLabel is kept for gap names, [Create] names and editor hints.
+- *(shipped)* **The validator's output, as built:**
+  - the caller passes the branded fill (Domain names, the aim, the exam label), because the model modules may not make brands; a pick whose template needs a fill it lacks is dropped with "the app couldn't write its name", never given an invented label;
+  - the validator runs the integrity walk itself and reads the issued enums from the exact schema used, so `report.integrity` is always set and a REJECTED reply gives an empty draft;
+  - validator milestones carry no title (code names them from the ladder) and no card measures (the ladder's); NOT_CHOSEN Domain items and GAP rows sit on the first milestone, and R4 copies the Domain items to every unstarted milestone;
+  - a lastStageOnly pick placed early is dropped with the report code AIM_STEP_EARLY.
 
 **Materialisation** (roadmap-server.ts planFromSample, R4, after R2's stageLadderOf):
 - Each slot's items go to the milestone of its stage.
@@ -1379,9 +1531,11 @@ With ROADMAP_GAPS_LIVE and suggestions on (F-R4-19), a 6th rule is added: "gaps:
   - steps ≤ 3;
   - checkpoint ≤ 1, the higher stage's;
   - lines unlimited.
-- A BETWEEN milestone copies the practices of the slot above it. Lines, steps and the checkpoint stay with that slot's own milestone.
+- A BETWEEN milestone copies the practices of the slot above it. Lines, steps and the checkpoint stay with that slot's own milestone. *(shipped: a PART copies none.)*
 - Milestone titles are CodeText (F-R4-10).
 - On read, a CODE item's label is re-rendered from its catalogKey and Domains, so it follows a renamed Domain.
+- *(shipped)* **Code labels name only the plan's Domains (R).** A Domain Gemini suggested is PENDING until the user decides, and every label is rendered with it masked (withPendingHidden), so no label names a Domain the user hasn't confirmed. [Add] and [Leave out] re-render the labels over R as it now stands. The hallucination bar gates it: 0 such labels over 87 draft views holding a pending suggestion.
+- *(shipped)* **One draft-from-reply step.** `draftFromReply` runs the integrity walk (the path re-normalised), the REJECTED gate, the plan with its keys-only context, and the tripwire as a dry run. The draft path, the reuse path and the hallucination bar all call it, so the bar tests production code.
 - The user's Edit makes it EDITED (YOURS) and keeps the catalogKey, so its "how" copy stays.
 
 **What the UI drops for v3 drafts:**
@@ -1405,6 +1559,7 @@ With ROADMAP_GAPS_LIVE and suggestions on (F-R4-19), a 6th rule is added: "gaps:
   - the enums are filtered for track, exam, constraints and practices off;
   - **the constraint goldens:** "knee injury, no running" removes HARDER_SESSION and, on the aim "Run a sub-50 10K", PERFORMANCE_CHECK and FULL_ATTEMPT; "no running, jumping or lifting" removes HARDER_SESSION and STRENGTH_SESSION; "doctor says avoid high-intensity cardio" removes HARDER_SESSION; a pianist's "bad knee, no running" keeps RUN_THROUGHS; every exclusion is listed with its word;
   - **the confirm goldens:** a BODY plan with "pregnant", with "đau gối, không chạy bộ" or with "heart condition" needs the session-picks confirm, and its starter offers only EASY, MOBILITY and TECHNIQUE; a BODY plan with empty constraints doesn't;
+  - *(shipped)* **the release goldens:** "injured, but cleared to run", "knee injury healed, running is fine", "doctor says running is fine" and "back pain gone, lifting ok" → no term; "injured last year, now fully recovered and running daily" → [last, year]; "no running, fine motor work ok" → running; 14 safe-side phrasings, among them "not cleared to run", "no running until cleared" and "injured, yet to be cleared for running", each still name their term; with the rule switched off the old reading returns. *(Finishing round, landed: "knee injury, swimming ok, running not ok" and "knee injury healed, but running not ok" → running; "knee injury, cycling fine, running hurts" includes running.)*
   - the prompt golden carries v3, the chosen markers, each outline line's Domain key and the catalog glossary;
   - inputHashMaterial changes when suggestAreas, the depth, the exam answer, a lineDomains entry or the system instruction changes;
   - confusable keys never resolve, and '__proto__', 'constructor' and 'toString' never resolve as keys;
@@ -1419,7 +1574,7 @@ With ROADMAP_GAPS_LIVE and suggestions on (F-R4-19), a 6th rule is added: "gaps:
   - todayBoundRowsOf for a v3 milestone has no CHECK_OR_EDIT row;
   - merged slots respect the caps.
 - **roadmap-ui-check:**
-  - the tap budget: deciding and accepting the v3 fixture "draft-mixed-3" (a Field plan, English, no exam) takes ≤ 4 taps at 344 px (rev 3's budget was ≤ 14); Domain additions are budgeted apart, one tap per Domain (F-R4-21);
+  - the tap budget: deciding and accepting the v3 fixture "draft-mixed-3" *(shipped as `draft-v3`)* (a Field plan, English, no exam) takes ≤ 4 taps at 344 px (rev 3's budget was ≤ 14); Domain additions are budgeted apart, one tap per Domain (F-R4-21);
   - the v3 header golden;
   - the exclusions line and the aim-conflict line;
   - no Keep control on a v3 draft.
@@ -1461,12 +1616,14 @@ With ROADMAP_GAPS_LIVE and suggestions on (F-R4-19), a 6th rule is added: "gaps:
 - SELF_TEST "Self-test: {domains}"
 - PERFORMANCE_CHECK (lastStageOnly) "Performance check: {aim}". Like FULL_ATTEMPT, it performs the aim itself, so it never sits before the last stage.
 - MOCK_TEST (examOnly) "Mock test: {exam}". It is never offered for a non-exam aim, because the label would imply a mock test exists.
-- EXAM_DAY (examOnly, codeOnly) "Exam: {exam}". Placed by code on the stage holding Roadmap.examDay (F-R4-11), with the user's bar and outOf; never in an enum.
+- EXAM_DAY (examOnly, codeOnly) "Exam: {exam}". Placed by code on the stage holding Roadmap.examDay (F-R4-11), with the user's bar and outOf; never in an enum. *(shipped: CHECKPOINT_KINDS stays the three pickable kinds, and EXAM_DAY lives in STORED_CHECKPOINT_KINDS, so the Add and Edit sheets never offer it and stored EXAM_DAY rows keep their kind.)*
+
+*(shipped)* Steps and checkpoints carry no PracticeMethod (they are not sessions). The count gate's title keeps the digit in "{stage}, part 1", the spec's own name, so the no-digit pin exempts that one literal. Catalog copy may use "you" and "your" ("Close your notes and cards."); only the evaluative ABOUT_YOU words are banned, and "strength" only inside "Strength session".
 
 **The how copy.** KIND_HOW[key] lives in roadmap-copy.ts (R5) as plain procedure: no digits, no CLAIM_WORDS, no efficacy words.
 - For example, RECALL_DRILLS: "Close your notes and cards." / "Write or say everything you can recall about one point." / "Check it against your cards." / "Turn what you missed into a card in its Domain."
 - METHOD_HOW stays as the fallback.
-- A row shows "practice type picked by Gemini from the app's list" (GEMINI_PICK), "added by the app" (STUDY_ADDED or PRODUCTION_ADDED) or "you chose this", beside the How disclosure.
+- A row shows "practice type picked by Gemini from the app's list" (GEMINI_PICK), "added by the app" (STUDY_ADDED or PRODUCTION_ADDED) or "you chose this", beside the How disclosure. *(shipped: a step reads "step type picked by Gemini from the app's list" and a checkpoint "checkpoint type picked by Gemini from the app's list", so every Gemini choice names what was chosen.)*
 
 **The grep rule** (rev 3's Provenance enforcement) gains roadmap-catalog.ts as a place where codeText() and the literal origin 'CODE' may appear.
 
@@ -1495,12 +1652,13 @@ With ROADMAP_GAPS_LIVE and suggestions on (F-R4-19), a 6th rule is added: "gaps:
      - it has 1 to GAP_WORDS_MAX words, each ≤ GAP_WORD_CHARS_MAX characters;
      - it holds no word from RESOURCE_WORDS, CLAIM_WORDS, ABOUT_YOU_WORDS, SPELLED_NUMBER_WORDS, the date words or LABEL_START_WORDS, **except** a word inside a *_TERM_PHRASES entry, an ABOUT_YOU_TERM_WORD, and the gerund of a skill (listening, reading, writing, speaking, sight reading). So "Time series", "Set theory", "Fixed income", "Standard deviation", "Unit testing", "Double-entry bookkeeping" and "Listening" pass it.
 
-     Anything else is dropped with DropReason NOT_A_NAME. Its text is not stored; report.integrity.notANameByClause counts the drops per clause, so false drops can be watched.
+     Anything else is dropped with DropReason NOT_A_NAME. Its text is not stored; report.integrity.notANameByClause counts the drops per clause, so false drops can be watched. *(shipped: a name over GAP_NAME_MAX is dropped by the "length" clause (one of 13), since maxLength is not an integrity rule; the start-word clause reads only the first word, with START_NOUN_WORDS ("List comprehensions", "File handling") exempt.)*
   3. **Grounding** (`groundingOf`, R3; BlockingFlag NOT_IN_YOUR_WORDS, deterministic):
      - **The sources are only text the user typed or chose:** the aim, the constraints, the exam label, each outline line, the Area name, the names of the Domains chosen in this intake, and Intake.newDomainNames. Never card titles or tags (Gemini writes those when cards are filed, in synthesizeNodeData), never an unchosen library Domain, and never a Domain created from a GAP in any roadmap (read from the user's DOMAIN items with ItemNote FROM_SUGGESTION, one indexed read; no column).
      - **A phrase, not a bag of words:** a name is GROUNDED when its content stems (function words and DOMAIN_STOP_WORDS removed) all appear **in order inside one source text**. There is no synonym expansion and no recombination across sources: "Economics exam" is grounded only if one source says "economics … exam".
      - Otherwise it carries NOT_IN_YOUR_WORDS. The existing lexical flags still run and add their reasons.
-- **What is shown.** Only GROUNDED names with no blocking flag reach the panel. Every other name is dropped unseen: its text stays only in RoadmapRun.samples (the raw reply, server only), and the panel says "Gemini suggested 3 names the app couldn't find in your words; they're not shown." A shown name that is CONTAINED in, or SIMILAR to, one of the Area's Domains gets the note "similar to your Domain Statistics" and stays a GAP row.
+- **What is shown.** Only GROUNDED names with no blocking flag reach the panel. Every other name is dropped unseen: its text stays only in RoadmapRun.samples (the raw reply, server only), and the panel says "Gemini suggested 3 names the app couldn't find in your words; they're not shown." A shown name that is CONTAINED in, or SIMILAR to, one of the Area's Domains gets the note "similar to your Domain Statistics" and stays a GAP row. *(shipped: "n not shown" is one count everywhere, gapsNotShownOf = the hidden plus the shape-dropped.)*
+- *(shipped)* **The measured residual** (F-R4-22's E-G family): a claim built from one source text of the user's, in order, is still shown in 25 of 41 cases (61%), e.g. "Probability exam" or "IELTS test", each holding a credential word. Claims recombined from several sources: 0 of 1,958. A raw-word credential clause would hide most of the 25, but would also drop real names such as "Exam technique" and "SSL certificates", so it is not taken. With ROADMAP_GAPS_LIVE false none of this reaches anyone; PROGRESS.md and question 11 state it before the switch can flip. Known latent miss: a name the user typed as a new Domain, in their own casing, is grounded but flagged PROPER_NOUN and hidden (newDomainNames are not yet in the flags' user text).
 - **Storage and quarantine.**
   - A new ItemKind 'GAP': origin GEMINI, domainId null, its flags, and the index of the source text that grounds it.
   - A GAP item sits on the first milestone of the version, as a plan-level row.
@@ -1555,7 +1713,7 @@ Absent optionals and a null on a nullable field are fine. The verdict:
 - **SALVAGED:** only OVER_MAX_ITEMS, which is truncated;
 - **REJECTED:** anything else.
 
-It is stored in RoadmapRun.report.integrity = {verdict, violations: [{code, path}], modelChars, gapsKept, gapsHidden, gapsDropped, notANameByClause}. modelChars is the count of model text kept, which is 0 unless gaps are shown. report is JSONB, so no migration is needed.
+It is stored in RoadmapRun.report.integrity = {verdict, violations: [{code, path}], modelChars, gapsKept, gapsHidden, gapsDropped, notANameByClause}. modelChars is the count of model text kept, which is 0 unless gaps are shown. report is JSONB, so no migration is needed. *(shipped: FREE_TEXT is also recorded for text under an extra property or in a mistyped value; the verdict is unchanged. An over-long string is not a breach; a gap name over 40 characters is dropped by the shape rule's "length" clause.)*
 
 **Paths never carry the model's words.** Before a violation is stored or logged, its path is normalised: a segment that is a schema property name or an array index is kept, any other segment becomes "<extra>", and the whole path is cut to REPORT_PATH_SEGMENT_MAX characters. So the reply `{"stages":{"FOUNDATION":{"steps":[],"You must buy the official CFA curriculum for $1,200":1}}}` is stored as `{code: 'EXTRA_PROPERTY', path: 'stages.FOUNDATION.<extra>'}`.
 
@@ -1567,7 +1725,7 @@ It is stored in RoadmapRun.report.integrity = {verdict, violations: [{code, path
 - One structured log line is written, with normalised paths only: `console.warn(JSON.stringify({evt: 'roadmap.reply', runId, verdict, violations, modelChars}))`.
 - **Reuse** re-runs integrityOf on the stored sample against the **current** run's buildResponseSchema, never the stored one. So a stored reply with `gaps`, reused while suggestions are off, is EXTRA_PROPERTY and REJECTED.
 
-**One writer, one tripwire.** `writeRoadmapRows(tx, rows, ctx)` in roadmap-server.ts (R4) is the only code that creates a RoadmapItem or RoadmapMilestone, or updates one's title, label, origin, titleOrigin or catalogKey. It calls `assertNoModelText(rows, ctx)` first. Every such path goes through it: draftWriteOps, persistRun, the reuse path, resolveDomainCore (a CREATE from a GAP included), confirmDomainAdditionsCore, confirmSessionPicksCore, acceptCore, replanCore, moveLineCore, setLineDomainCore, lowerDepthCore and the edit actions. Guarded status transitions that change no text stay where they are. For any roadmap written by revision 4 code the tripwire throws when:
+**One writer, one tripwire.** `writeRoadmapRows(tx, rows, ctx)` *(shipped as `writeRoadmapRows(ops, write, ctx)`: it adds operations to the caller's claim-first transaction; `write` is DRAFT, REWRITE, COPY or PATCH)* in roadmap-server.ts (R4) is the only code that creates a RoadmapItem or RoadmapMilestone, or updates one's title, label, origin, titleOrigin or catalogKey. It calls `assertNoModelText(rows, ctx)` first. Every such path goes through it: draftWriteOps, persistRun, the reuse path, resolveDomainCore (a CREATE from a GAP included), confirmDomainAdditionsCore, confirmSessionPicksCore, acceptCore, replanCore, moveLineCore, setLineDomainCore, lowerDepthCore and the edit actions. Guarded status transitions that change no text stay where they are. For any roadmap written by revision 4 code the tripwire throws when:
 - any milestone has titleOrigin GEMINI;
 - any item has origin GEMINI and a kind other than DOMAIN or GAP;
 - any GEMINI DOMAIN item's label differs from its Domain row's name;
@@ -1577,13 +1735,15 @@ It is stored in RoadmapRun.report.integrity = {verdict, violations: [{code, path
 
 User edits (origin USER, decision EDITED) pass. A throw turns into FAILED plus the starter on a draft path, and into a refused action elsewhere ("That change couldn't be saved."), with the log line.
 
+*(shipped)* The tripwire also refuses a non-null proposedName or rawLabel on any revision-4 row, and checks topics and suggestion names before the code wording, so a refusal names the exact rule. A reply it refuses writes the starter under RUN_REFUSED_LINE: "Gemini's reply held words the app didn't write, so none of it is used. Here is a plan from your numbers; every check still runs." It never says "Gemini didn't answer" when Gemini did. RunFacts' "Drafted by" is keyed on the cause: "the app (Gemini's reply was rejected)", "… was refused)" or "… didn't answer)".
+
 **Redaction** (RunFacts.tsx, R5; the report builder, R3):
 - A report entry for CONTAINED_LINK, NOT_A_NAME, a REJECTED violation, or any GAP (shown or not) stores the label ''. Its reason is "(not shown: it contained a link)", "(not shown)" or "(see the suggestions panel)".
 - RunFacts never echoes a dropped, hidden or GAP model string, and never renders a GAP-derived label, so a gap's text appears only in the panel, under its eyebrow. The raw reply stays only in RoadmapRun.samples on the server.
 
-**The "How this was drafted" line:** "Gemini's reply: keys only · 0 words of its own", or "… · 2 area names picked from your words (not checked) · 3 not shown", or "Rejected (format) · plan from your numbers".
+**The "How this was drafted" line:** "Gemini's reply: keys only · 0 words of its own", or "… · 2 area names picked from your words (not checked) · 3 not shown", or "Rejected (format) · plan from your numbers". *(shipped: on a REJECTED run RunFacts reads "1 draft · Rejected (format) · plan from your numbers", with no "built from your numbers" prefix.)*
 
-**Production monitors** (read-only, run by the lead after the deploy; listed in Acceptance), with REJECT_ALARM_SHARE as the threshold at which the lead turns ROADMAP_GEMINI_LIVE off.
+**Production monitors** (read-only, run by the lead after the deploy; listed in Acceptance), with REJECT_ALARM_SHARE as the threshold at which the lead turns ROADMAP_GEMINI_LIVE off. *(shipped: ROADMAP_MONITOR_QUERIES in roadmap-server.ts, 15 named queries, with `rm-templates-model-basis` for plan-born tasks sized by a model, and the review-level-tag query excluding backfill rows.)*
 
 **Files.** roadmap-validate.ts (integrityOf, the path normaliser) and the report builder (R3); roadmap-server.ts (writeRoadmapRows, assertNoModelText, planFromSample, runDraftCore, reuse, and every caller moved onto the writer) (R4); RunFacts.tsx and roadmap-copy.ts (R5); roadmap-types.ts (ValidationIntegrity, ValidationReport.integrity as an optional field) (lane 0).
 
@@ -1609,13 +1769,14 @@ User edits (origin USER, decision EDITED) pass. A throw turns into FAILED plus t
 **Spec.** These are re-derived by code after validation (R3 and R4), and the UI is R5's.
 - **Domain additions.** Gemini's `needs` (and exact-match gaps, F-R4-19) become pending DOMAIN items with NOT_CHOSEN, on every unstarted milestone of the version (the plan's Domain set is one set; F-R4-10).
   - One row above the milestones: "Gemini suggests adding 2 of your Domains: Risk Management (14 cards · 3 at level 6+), Calculus (30 cards). Each would count at every milestone, at 25 and 30 cards."
-  - **The date effect shows before anything is confirmed**, computed by R2 for each Domain and for the set: "Adding both moves the realistic date by about 4 months, to Sun 6 Feb 2028." When an addition would put D_real past SPAN_MAX_DAYS, its toggle is disabled with "Adding Calculus would take the plan past 3 years at this depth."
+  - **The date effect shows before anything is confirmed**, computed by R2 for each Domain and for the set: "Adding both moves the realistic date by about 4 months, to Sun 6 Feb 2028." When an addition would put D_real past SPAN_MAX_DAYS, its toggle is disabled with "Adding Calculus would take the plan past 3 years at this depth." *(shipped: the effect reads R with its frozen counts and each added Domain as a scope of its own, with its own cards; on a plan that isn't dated it shows no date and blocks nothing.)*
   - **For an English, non-exam aim:** [Add both] [Choose…] [Leave out].
   - **For an exam aim (examLabel set) or a non-English aim (isNonEnglish):** one toggle per Domain, off by default, and [Confirm]; there is no add-all control (rev 3's bulkKeepAllowed rule, kept).
   - `confirmDomainAdditionsCore(roadmapId, version, domainIds)` sets the chosen ones CHECKED and the rest REMOVED, across the version's unstarted rows in one transaction through the one writer, then re-dates.
-  - A pending addition blocks accept. "Next item to decide" scrolls to it.
+  - A pending addition blocks accept. "Next item to decide" scrolls to it. *(shipped: while one is pending the footer's primary is "Next item to decide", and Accept comes after the confirm. Labels never name a pending Domain, F-R4-17.)*
   - Together with DEPTH_DOMAINS_MAX, R never exceeds 6. A choice that would is disabled.
-  - **Provenance for the life of the plan.** acceptCore records `domainOrigins: {[domainId]: {by: 'INTAKE' | 'NAMED' | 'GEMINI_NEEDS' | 'GEMINI_GAP', day}}` in the acceptance's feasibility (before acceptance it is derived from the DOMAIN items). The Depth line and the How-measured sheet show "Risk Management: suggested by Gemini, added by you on 5 Oct" for every GEMINI_* Domain, on every later version.
+  - **Provenance for the life of the plan.** acceptCore records `domainOrigins: {[domainId]: {by: 'INTAKE' | 'NAMED' | 'GEMINI_NEEDS' | 'GEMINI_GAP', day}}` in the acceptance's feasibility (before acceptance it is derived from the DOMAIN items). The Depth line and the How-measured sheet show "Risk Management: suggested by Gemini, added by you on 5 Oct" for every GEMINI_* Domain, on every later version. *(shipped: a Domain the user named at intake is recorded as INTAKE, not NAMED; both are the user's, and only GEMINI_* origins print a line.)*
+  - *(shipped)* On a depth plan, resolveDomainCore refuses MAP, CREATE and DROP on one milestone's Domain item ("change them in the intake form"), since the Domain set is one set; CHECK works only on an area suggestion.
 - **No scope widening.** A practice's `on` outside R loses the association (F-R4-17). It never adds a Domain. Outline lines carry no Domain from the reply at all.
 - **Omissions and exclusions,** each listed on the draft:
   - outline lines placed in no stage, as in rev 3: "Not in this plan yet: S4, S9 · [Add to milestone…]";
@@ -1663,38 +1824,51 @@ User edits (origin USER, decision EDITED) pass. A throw turns into FAILED plus t
   - proper nouns: capitalised, lowercase and camelCase;
   - brand-like lowercase tokens from a syllable generator;
   - numbers: digits in 10 scripts, spelled numbers, ordinals, ½, Roman numerals and Han numerals;
-  - URLs in 16 forms (example[.]com, 'dot com', hxxps, bit.ly/x);
+  - URLs in 16 forms (example[.]com, 'dot com', hxxps, bit.ly/x) *(shipped: 20; the four more are the forms R3's link rules recognise, a spaced dot, '。', a bare "hxxps" and an IP address, without which four link rules could never fire)*;
   - declarative claims; about-you; schedule words; health; constraint clashes; foreign script; no-space scripts; mixed-script homoglyphs;
   - a control set of real area names that the user's own text contains as a phrase (built from the packs' aims, outlines and chosen Domains), plus the names F-R4-19 must keep ("Time series", "Set theory", "Fixed income", "Standard deviation", "Unit testing", "Double-entry bookkeeping", "Listening", "Sight reading") placed in a pack outline.
 - **E-G, recombined claims (≥ 2,000):** claims built only from the packs' own words, including card titles and unchosen Domain names ("Economics exam", "Inference certification", "Calculus prerequisite" when the user wrote "prerequisite"), each labelled claim or no-claim by the generator, and each marked whether its words come from one source text in order or from several.
-- **K, constraints (≥ 1,500):** constraint phrasings (negation lists, "avoid", "doctor says", injuries, conditions with no cue such as "pregnant" or "heart condition") × every BODY and CARE kind × English, Vietnamese and Japanese, each labelled with the kinds that must be excluded, and whether the confirm must be raised.
+- **K, constraints (≥ 1,500):** constraint phrasings (negation lists, "avoid", "doctor says", injuries, conditions with no cue such as "pregnant" or "heart condition") × every BODY and CARE kind × English, Vietnamese and Japanese, each labelled with the kinds that must be excluded, and whether the confirm must be raised. *(Finishing round, landed: a release sub-class "{cue}, {other} is fine, {t} not ok / not allowed / is out / hurts", which must exclude t, so the bar gates the release rule of F-R4-17.)*
 - **F, real-reply mutations:** 100 per blessed probe fixture (F-R4-23), each with its expected verdict.
+- *(shipped)* **The E family, as built.** `gaps` holds at most 4 items, so ≥ 20,000 strings can't ride about 1,700 replies: the E replies carry 1–4 gaps each (CLEAN) or 5–6 (SALVAGED), and separately every string goes through the full path, 4 per reply. Four sub-classes are generated last, so no earlier case or id moves:
+  - **clash** (303 names): grounded constraint clashes over 101 derived runs, using every cue of both parsers;
+  - **resource patterns** (82): an ISBN, a year, so resource.isbn and resource.year fire;
+  - **one-source** (141): one outline line the user wrote holding a claim or an about-you statement, with the gap names copied from it in order, so they are GROUNDED and only the flags can hide them;
+  - **one-source-name** (105): a phrase of the user's outline with an invented name, camelCase word or acronym where PROPER_NOUN reads it.
+- *(shipped)* No ambiguous case is generated: no invalid item sits only past maxItems, every E string is at most GAP_NAME_MAX long except a dedicated over-length class, and a Field run whose pack has no writing pace keeps its chosen date, so its views aren't empty.
 
 **The assertions,** new scripts/roadmap-hostile-check.ts (it imports _no-model first, and is appended to life:check):
 - **H1 closure and taint.** For every reply in A–F:
   - **structural:** every label-bearing field of the ValidatedDraft and of the draft view's rows (milestone titles, item labels, proposed names) is one of: a codeText render of a recorded catalogKey and fill; the user's own text (the aim, an outline line, the exam label, a constraint, a named Domain); the name of a Domain listed in this run's pack, read from its row; or a GAP row inside the panel view. 0 exceptions;
   - **taint:** let V be the tokens of every roadmap-copy string, every catalog template and KIND_HOW line, the pack's user text and its Domain names; let T be the tokens of 4 or more characters in every string of the raw reply (keys and values), minus the schema's property names, the issued enum keys and V. No token of T may appear in any rendered view model (DraftView, RoadmapView, AimCardView, the Today quests view, the RunFacts props), in report JSON or in the log line, apart from GAP rows inside the panel view. 0 exceptions. T is non-empty for at least 99% of family D, or the check fails as vacuous.
+  - *(shipped)* **How V is built,** so the app's own words can't mask a reply's:
+    - V takes the literals of the 15 modules that write view text (roadmap-copy, -ui-model, -labels, -catalog, -types, -realism, -server, -pace, -proficiency, -quests, -quests-server, -invite, -economy, -measures and -readings), and from roadmap-validate only the reasons it renders, never its rule examples or messages;
+    - it skips every word list (constants named *_WORDS, *_TERMS, *_PHRASES, *_CUES, *_STEMS or *_KEYWORDS, Sets, and each catalog `keywords:` array: 40 lists), and never holds a guarded word (HOSTILE_CANON's 21, among them certified, accredited, diploma, official and course, plus the single-word claim, resource, spend and credential entries: 90 words);
+    - a guarded word counts as the app's own only inside a run of 2 or more words of one of the app's literals, as a whole literal, or as an exact CONSTANT_CASE value such as "SYLLABUS". Anywhere else a reply's "course" or "official" is a hit.
+  - *(shipped)* **Which views are read:** the seven views hostileViewsOf names (HOSTILE_VIEW_NAMES): the DraftView, the RunView (RunFacts' props), the Today-bound rows, the AimStep, the RoadmapView, the AimCardView, and the week-quests view of the first milestone as if started today. To keep the 30 s budget they are built for every REJECTED reply holding a token of T, every CLEAN or SALVAGED reply with a token of T outside `gaps`, and every 50th reply per family (every 10th in E). View hits are counted apart from the draft's own, and both must be 0.
+  - *(shipped)* **No code label names a pending Domain:** 0 over the 87 draft views that hold a Domain Gemini suggested.
 - **H2 quarantine:** no gap string appears outside GAP rows, and no GAP row appears in measures, Today-bound rows, quest input, report labels, RunFacts output or the log line. 0 exceptions.
-- **H3 claims:** every claim-bearing gap string in E is dropped, flagged or hidden: **0 shown**. The control set stays ≥ 95% shown (asserted, and printed as friction). For E-G, the share of claim-labelled strings that would be shown is printed as **the residual**, split by one-source and several-sources; several-sources must be 0, and the one-source residual is stated in PROGRESS.md and question 11, not assumed to be 0.
+- **H3 claims:** every claim-bearing gap string in E is dropped, flagged or hidden: **0 shown**. The control set stays ≥ 95% shown (asserted, and printed as friction). For E-G, the share of claim-labelled strings that would be shown is printed as **the residual**, split by one-source and several-sources; several-sources must be 0, and the one-source residual is stated in PROGRESS.md and question 11, not assumed to be 0. *(shipped: the residual is 25 of 41 one-source, 61%, and 0 of 1,958 several-sources; control 252 of 252 shown. The flags carry gated weight: with the layers above them switched off, CLAIM_WORDS hides 92 of 92 one-source claims, ABOUT_YOU 49 of 49 and PROPER_NOUN 104 of 105, and turning each flag off then shows them.)*
 - **H3-real:** once the probe's real gap strings are labelled (F-R4-23), they are scored the same way, apart from the generated set, because the lexicon's author did not write them.
-- **H4 verdicts:** every case's verdict equals its expected verdict. The check prints a confusion matrix, and fails on any mismatch; a REJECTED-expected case that comes out CLEAN or SALVAGED is reported first. A REJECTED reply writes nothing.
+- **H4 verdicts:** every case's verdict equals its expected verdict. The check prints a confusion matrix, and fails on any mismatch; a REJECTED-expected case that comes out CLEAN or SALVAGED is reported first. A REJECTED reply writes nothing. *(shipped: the seam sends the reply alone to R4's draftFromReply, the production step, for every REJECTED reply and every 50th other, and asserts R4's verdict, no plan for a REJECTED reply, and no tripwire refusal of a keys-only plan.)*
 - **H5:** 0 throws, and ≤ 50 ms per reply at p99.
 - **H6 every rule works:**
   - validateKeysOnly, checkLabel, groundingOf, gapNameShape and constraintExclusionsOf take injectable `rules` and `lexicon` parameters, with no behaviour change at the defaults;
   - every rule (each link regex, each shape-rule clause, grounding, each flag family, each negation cue) fires on at least one case, or the check fails and names the rule;
   - the rule-overlap matrix (which rules catch the same cases) is printed. Ablation, one rule off at a time, is printed as a report, not a gate, because the layers overlap on purpose;
   - a lexicon ablation, entry by entry, runs separately as `npm run roadmap-hostile:ablate`, whenever roadmap-lexicon.ts changes, as a report.
+  - *(shipped)* R7 owns the required list: R3's H6 rules plus every cue.\*, resource.\* and flag.\* rule a gap string can reach, 60 rules, attributed through `RuleOpts.trace`. The ablation's section 2b switches each flag.\* and resource.\* rule off with the layers above the flags off, so their weight shows (PROPER_NOUN +1,703 claims shown, CLAIM_WORDS +905, ABOUT_YOU +850).
 - **K, the constraint bar:** for English phrasings in the grammar, every labelled kind is excluded (recall 100%); for every Vietnamese, Japanese, cue-less or unparsed case on a BODY or CARE plan, the confirm is raised (100%); and no Field kind is excluded by a body constraint (over-exclusion 0).
 - **The metamorphic relations,** on checkLabel and groundingOf:
   - M1: inserting a \p{Nd} digit from any of 10 scripts, or a Han numeral, adds NUMBER, unless the token is an exact n-gram of the user's text;
   - M2: wrapping 2 or more characters in any of 8 quote styles adds LOOKS_LIKE_RESOURCE;
   - M3: appending 'by <Capitalised>' adds LOOKS_LIKE_RESOURCE;
-  - M4: inserting any of the 16 URL forms drops the name;
+  - M4: inserting any of the 16 URL forms *(shipped: 20)* drops the name;
   - M5: inserting zero-width or bidi characters leaves the flags unchanged;
   - M6: lowercasing a NOT_IN_YOUR_WORDS name keeps the flag;
   - M7: reordering a GROUNDED two-word phrase that its source holds only in the other order makes it NOT_IN_YOUR_WORDS.
-- **Pinning.** The generator's whole output is pinned by its sha256 and the family counts. Changing the corpus needs `--bless`.
-- **The runtime budget** for H1–H5 and K is ≤ 30 s.
+- **Pinning.** The generator's whole output is pinned by its sha256 and the family counts. Changing the corpus needs `--bless`. *(shipped: 0dd9a8be…, 162 runs, 22,231 E strings; re-blessed in fix round 2, for the lead to review.)*
+- **The runtime budget** for H1–H5 and K is ≤ 30 s. *(shipped: about 20–22 s, with the views on their sample and R2's date core memoised; H5's views p99 about 37 ms.)*
 
 **Files.** New: scripts/fixtures/roadmap-hostile/generate.ts, scripts/roadmap-hostile-check.ts and scripts/roadmap-hostile-ablate.ts (R7). The injectable parameters in roadmap-validate.ts (R3). package.json scripts (lane 0). The rev-3 corpus section of roadmap-model-check moves to v3, and the v2 drafts become D-family payloads (R3).
 
@@ -1758,11 +1932,12 @@ User edits (origin USER, decision EDITED) pass. A throw turns into FAILED plus t
   - It is still Roadmap.syllabus (YOURS, ≤ 40 lines × 120 characters, with an optional source), and gains `lineDomains` (F-R4-9).
   - **Each line's Domain.** Under the lines, the form groups them by Domain, prefilled by lineDomainDefaultOf, with a "Not tied to a Domain" group last. Each line has a 40 px "Change" control (a select of the chosen Domains and "None"). Changing the chosen Domains re-runs the default for lines the user hasn't changed.
   - "What to learn" comes only from these lines.
-  - The empty state on the draft and roadmap pages: "What to learn comes from your outline. Gemini doesn't write topics: it would be guessing. [Add your outline]". With an exam and no outline: "Paste the official syllabus so every line has a place in the plan."
+  - The empty state on the draft and roadmap pages: "What to learn comes from your outline. Gemini doesn't write topics: it would be guessing. [Add your outline]". With an exam and no outline: "Paste the official syllabus so every line has a place in the plan." *(shipped: the line is split. "What to learn comes from your outline." always shows; "Gemini doesn't write topics: it would be guessing." follows only where Gemini may be named, on its path live with a key or on a draft Gemini arranged, so with Gemini off no Gemini sentence appears anywhere, Acceptance.)*
 - **An empty library.** With 0 Domains in the Area and no outline, the form offers:
   - "Name the areas this needs": chips the user types, ≤ DEPTH_DOMAINS_MAX, each validated by the createDomain rules (Intake.newDomainNames). saveIntakeCore creates them in the Area Field inside its transaction (YOURS);
   - and "Not sure what it covers? Paste the official outline or syllabus from a source you trust, one topic per line." It never points to Gemini's suggestions: a newcomer to a subject is the person least able to judge them.
 - **"Draft with Gemini"** says what it will arrange: "Gemini will arrange your 9 outline lines and pick practice types for your 3 Domains; the app writes every word." It shows only when ROADMAP_GEMINI_LIVE holds and there is a key.
+- *(shipped)* Two intake hints that named Gemini follow the same switch: the Area hint now reads "One of your Fields, or a life track for an aim that is practice only. Only you pick the Area.", and "It is never sent to Gemini." under the exam date shows only while the Gemini path is live. The exam's fields read "The exam or qualification" and "When is it? (optional)", a native date input.
 
 **Files.** RoadmapForm.tsx, DraftReview.tsx, RoadmapView.tsx and roadmap-copy.ts (R5); roadmap-server.ts (validateIntake: Yes requires examLabel, examDay's range, lineDomains within the chosen Domains; newDomainNames) (R4); roadmap-types.ts (CREDENTIAL_WORDS for the prefill, Intake.newDomainNames, Intake.examDay, syllabus.lineDomains) and the column Roadmap.examDay (lane 0); src/app/you/roadmap/new/page.tsx (R5).
 
@@ -1851,7 +2026,7 @@ It is pre-approved once local tests pass, like life_roadmap: every statement is 
 **Order:**
 1. **Preconditions** (above): P0's gate is in the rev-3 push; the rev-3 fix round is integrated and pushed, with life_roadmap applied.
 2. **Lane 0, the lead, contract first** and alone. **Every lane after it reads its files as the rev-3 fix round left them, and roadmap-contracts.md §9–§11, before editing.**
-   - Write roadmap-contracts.md §11 "Revision 4", listing every new export, field, union value and constant below, frozen as rev 3's are.
+   - Write roadmap-contracts.md §11 "Revision 4" *(shipped as §14, since the rev-3 fix rounds had used §11–§13; §15 and §16 are the two fix rounds, §17 what the lanes shipped in fix round 2)*, listing every new export, field, union value and constant below, frozen as rev 3's are.
    - prisma/schema.prisma and the migration file (written, not applied).
    - roadmap-types.ts:
      - the constants (Constants);
@@ -1877,7 +2052,7 @@ It is pre-approved once local tests pass, like life_roadmap: every statement is 
    - the life:check and ui:check lists (adding roadmap-invite-check, roadmap-hostile-check and tour-check's new pins);
    - the ui-audit fixture states;
    - the docs: data-model.md (the eight columns, the REVIEW detail's level tag), grading.md (unchanged sentence; confirm), capture.md, and a pointer line at the top of roadmap.md: "Revision 4: roadmap-rev4.md wins where they differ".
-5. **Three read-only reviewers**, below. Their findings are fixed.
+5. **Three read-only reviewers**, below. Their findings are fixed. *(shipped: two fix rounds, each opened by lane 0 alone, then every lane on its own files; "As shipped" above lists what they changed, and roadmap-contracts.md §15–§17 record it.)*
 6. **Gates**, then the migration (rehearsal, the ref check, the pre-apply grep, apply), then commit and **push**.
 7. **Afterwards, as PROGRESS.md orders:**
    - the rehearsal pass at 344 px → push;
@@ -1898,7 +2073,7 @@ No subagent touches a database, runs a dev server, calls a model or commits. A l
 | R5 roadmap UI | src/components/roadmap/** (not roadmap-events.ts), including new AimLine.tsx and GapPanel.tsx; src/app/you/roadmap/**; src/app/dev/style/roadmap/**; scripts/roadmap-ui-check.ts | the UI of every feature except T, Y and C, including: the ASK card's third action, continue-from-autosave and last-aim line; the chip verdicts; the line-Domain groups and the exam date; the exclusions and session-picks rows; the additions toggles, date effect and provenance lines; HEALTH_LINE on the Start sheet and BODY practice rows; the Proficiency basis label; the Close sheet's Paragon line; the Start sheet's pay line; the legacy hiding |
 | T Today | src/app/today/page.tsx; src/app/dev/style/today/**; scripts/today-ui-check.ts | F-R4-3 (placement, the close-due rule for the compact hide, fixtures for BACK and the back-off) |
 | Y You, rules, Settings, tour | src/app/you/page.tsx; src/app/today/rules/page.tsx; src/app/dev/style/art/you/**; src/components/settings/SettingsView.tsx; src/app/settings/page.tsx; src/app/dev/style/settings/**; src/components/tour/tour-steps.ts; scripts/you-check.ts, tour-check.ts, shell-check.ts | F-R4-1 (page), F-R4-2 (fixtures), F-R4-5 (the stored switch), F-R4-6, the rules page for F-R4-8 to F-R4-13 (the clean-entry, recall-card and long-gap wording) |
-| C capture | src/components/capture/QuickCapture.tsx; src/app/actions/capture.ts; the CaptureVocabulary type's file; the capture checks; docs/life-plan/capture.md | F-R4-7 |
+| C capture | src/components/capture/QuickCapture.tsx; src/app/actions/capture.ts; the CaptureVocabulary type's file; the capture checks; docs/life-plan/capture.md; *(shipped)* the new src/components/capture/aim-capture.ts (the pure helpers, which the "use server" file and the component can't hold) | F-R4-7 (*the Goal ▾ menu lives in capture-ui.ts and InsertRow.tsx, which no lane owned: the lead's*) |
 | M mockups | docs/life-plan/roadmap/final-aim-card.html (ASK with Don't suggest this, continue and last aim, LATER, DONE-next, the depth chip with estimate, legacy hidden), final-roadmap-new.html (depth, coverage with its breakdown, When realistic with chip verdicts, exam and exam date, outline with line Domains, areas), final-roadmap-draft.html (a v3 draft: additions toggles with the date effect, exclusions and session picks, date check, arrangement line, integrity line; the gaps panel only as a lead-only state), final-roadmap.html (the stage ladder with a count gate, held stages, the depth line with provenance and a coverage choice, the exam waypoint, lowered depth, the closed footer), final-today-quests.html (the aim line states including BACK, RAISE/ADD parts, a BODY practice row with HEALTH_LINE), each at 344 and 932 | F-R4-1 to F-R4-3, F-R4-9 to F-R4-14, F-R4-17, F-R4-19 to F-R4-21, F-R4-24 |
 
 **How the lanes connect:**
@@ -1950,7 +2125,7 @@ No subagent touches a database, runs a dev server, calls a model or commits. A l
 
 **Checks that must pass:**
 - npx tsc --noEmit, npm run lint, next build.
-- npm run life:check, with roadmap-invite and roadmap-hostile appended after rev 3's seven roadmap checks. Every rev-3, M1, M5 and M2 check also passes.
+- npm run life:check, with roadmap-invite and roadmap-hostile appended after rev 3's seven roadmap checks. Every rev-3, M1, M5 and M2 check also passes. *(shipped: goals-close-check runs after character-check. A check that waits on another lane prints a PENDING line, and its `--strict` run fails on it; at integration `npm run roadmap-contract:strict` must reach 0 PENDING, then life:check runs it with `--strict` and life-day-check's exact list follows. today-ui-check has a `--strict` run too.)*
 - npm run ui:check, with roadmap-ui-check, and tour-check with its new pins if question 3 is approved.
 - npm run balance:horizon exits 0 with its worst case unchanged, and npm run skills:stats is byte-identical.
 - ui-audit at 344, 375, 932 and 1440 on every /dev/style/roadmap state, the new states included, on the aim-line and quest-parts states on /dev/style/today, on the Aim card states on /dev/style/art/you, and on /dev/style/settings. The checks:
@@ -1959,12 +2134,12 @@ No subagent touches a database, runs a dev server, calls a model or commits. A l
   - text ≥ 12 px;
   - 16 px inputs;
   - 0 console errors;
-  - ASK ≤ 410 px in its tallest state, and the aim line ≤ 72 px, at 344.
+  - ASK ≤ 410 px in its tallest state, and the aim line ≤ 72 px, at 344. *(shipped: the lead's finishing-round gates, F-R4-1 and F-R4-3; the aim line also shows no clamped text at any audited width, and the legacy and quiet Aim card boxes are audited.)*
 
 **The hallucination bar** (it blocks the build; F-R4-22):
 - H1: 0 structural exceptions and 0 taint hits over families A–F, with T non-empty for ≥ 99% of family D;
 - H2: 0 exceptions, report JSON, RunFacts and the log line included;
-- H3: 0 claim-bearing gap strings shown over ≥ 20,000, the control set ≥ 95% shown, and the E-G residual printed (the several-sources residual = 0; the one-source residual stated in PROGRESS.md);
+- H3: 0 claim-bearing gap strings shown over ≥ 20,000, the control set ≥ 95% shown, and the E-G residual printed (the several-sources residual = 0; the one-source residual stated in PROGRESS.md) *(shipped: 0 shown over 22,231; one-source 25 of 41; several-sources 0 of 1,958; the flags' weight gated with the layers above them off)*;
 - H4: every case's verdict equals its expected verdict, with the confusion matrix printed;
 - H5: 0 throws, and p99 ≤ 50 ms;
 - H6: every rule fires on at least one case, and the overlap matrix is printed;
@@ -1987,9 +2162,9 @@ No subagent touches a database, runs a dev server, calls a model or commits. A l
 - **/you with no roadmap** shows the ASK card.
   - Typing an aim and tapping Continue opens the form with the aim filled in and Area focused.
   - Typing an aim, tapping "Not now", and reopening /you 28 scripted days later shows the card with the typed aim and "Continue where you left off".
-  - "Not now" collapses the card and sets 'later:'. With a scripted clock, the card returns after 28 days.
+  - "Not now" collapses the card and sets 'later:'. With a scripted clock, the card returns after 28 days. *(shipped)* The LATER line's × sets 'hide:', and /you then shows nothing that suggests an aim (or only the last aim's line) until day 28.
   - "Don't suggest this" hides the card and shows the undo toast, and Undo brings it back. The Settings switch turned off hides the card and Today's SET line in a second browser profile too (the setting is stored), and turned on brings them back.
-- **Today, with a scripted clock:** a Monday with no aim shows the SET WEEK line under the goals; a Tuesday shows nothing; a Thursday after 8 days with no app open shows BACK; after four ignored fresh-start days, Mondays show nothing and the next 1st shows MONTH; "Not now" quiets both surfaces.
+- **Today, with a scripted clock:** a Monday with no aim shows the SET WEEK line under the goals; a Tuesday shows nothing; a Thursday after 8 days with no app open shows BACK; after four ignored fresh-start days, Mondays show nothing and the next 1st shows MONTH; "Not now" quiets both surfaces *(shipped: Today's × writes 'hide:', so /you shows HIDDEN and capture offers nothing for 28 days)*.
   - Nothing appears in the nav count, the bell or the Asks, and the line hides only while Close the day is due.
 - **The intake, "When realistic":** a rehearsal library with two new Domains builds a 6-milestone plan (Familiar part 1, Familiar, Retained, Fluent, Toward Mastered, Mastered), ranked [2, 2, 3, 4, 4, 5], with the chip "Mastered by …" (or "by about … · estimate" while calibrating). Every check runs, and the plan comes from the starter.
 - **A 1-year date** gives a verdict other than FITS, with its offers and the waypoint line, and changes no depth term.
@@ -2004,7 +2179,7 @@ No subagent touches a database, runs a dev server, calls a model or commits. A l
 - **A body plan** with "knee injury, no running" lists the excluded kinds with their words, its starter offers only easy, mobility and technique sessions, and HEALTH_LINE shows on its Start sheet and its Today practice row.
 - **The Gemini path:** with ROADMAP_GEMINI_LIVE false or no key, no Gemini button or sentence appears anywhere, and with ROADMAP_GAPS_LIVE false no suggestions switch or panel does. A canned v3 reply run through the server check path writes no GEMINI item except NOT_CHOSEN Domains and GAP rows.
 - **A seeded legacy roadmap** with Gemini titles shows its banner and "Wording from an earlier Gemini draft is hidden", none of its titles, and refuses Start. "Start again at a depth" carries the aim over, and saving archives the old roadmap in the same transaction.
-- **Capture** (if question 4 is approved): "aim: hold a conversation in Japanese" opens the form with the line, and the sheet keeps it until the intake saves.
+- **Capture** (if question 4 is approved): "aim: hold a conversation in Japanese" opens the form with the line, and the sheet keeps it until the intake saves *(shipped: an intake that used it)*. A "goal long:" line offers "Make it an aim" only while the /you card would ask; after "Not now" or "Don't suggest this" it doesn't.
 - **Writes off:** every new action refuses with "Roadmap changes are recorded only on the live app", and nothing is written.
 
 **Production, read-only, before the deploy:**
@@ -2046,6 +2221,10 @@ Then the lead commits and pushes (the user's standing rule).
 - **A per-line coverage check:** cards tagged with an outline line, so a line can be SELF_REPORTED or measured, not only counted.
 - **Area suggestions live** (ROADMAP_GAPS_LIVE): after at least 30 labelled real gap strings from approved calls pass the gap bar (question 17).
 - **Deleting the v2 drafting branches** (validateSample, bulk keep, KEPT_SUGGESTION creation) once production shows no legacy rows.
+- *(Added after the fix rounds)* **A realistic date for each lower depth** on the lower-depth sheet (it shows the stage's day in the current plan today).
+- *(Added after the fix rounds)* **A window event after a "Not now", a hide or the switch**, so capture forgets its read prompt at once instead of within 5 minutes.
+- *(Added after the fix rounds)* **The track on LegacyView**, so the Aim card's "Start again at a depth" carries a Field plan's "Practices count toward" as the roadmap page does.
+- *(Added after the fix rounds)* **Re-basing /dev/style/art/you's rev-3-shaped trading fixtures** on a depth plan with code-worded titles; they still exercise the Aim card's non-legacy branches.
 - **Outside the roadmap, flagged by the red team:** card titles, premises and prompts are written by Gemini when cards are filed (synthesizeNodeData), and novelty Domains can be named by it (nameNewDomain). The roadmap no longer treats them as the user's words, but other surfaces that present them as the user's knowledge deserve their own review.
 - **Carried over from rev 3:**
   - REDRAFT re-plans (now keys-only, when they return);
@@ -2066,7 +2245,7 @@ Each question is product-level and has a recommended default. A question left un
 3. **The tour.** May the tour's "You" step mention the aim? It is copy only, still 7 steps, and it revises the earlier "no tour change".
    *Recommended: yes.*
 4. **Capture.** Should typing "aim: …" open the aim form with your line carried over, and should a "goal long: …" line offer "Make it an aim"?
-   *Recommended: yes, built last.*
+   *Recommended: yes, built last.* *(Shipped: the offer follows your "Not now" and "Don't suggest this" like every other suggestion; a line you start with "aim:" always opens the form.)*
 5. **Default depth.** Should every aim that grows a Field default to Mastered (level 12)? At level 12 a card counts only if it passed its level-11 review, about 110 days after the one before, at the first try; a card that got there on a next-day retry counts after its next review. Fluent (level 10) or Retained (level 8) would be your explicit choice, marked on the plan for good, and could not give Paragon.
    *Recommended: yes.*
 6. **Coverage per Domain.** By default a Domain counts as covered when it holds the most of: 25 cards, 80% of the cards it has now, or 3 cards per outline line you tie to it. You can type any Domain's figure; a figure below the app's is shown on the plan for good as your choice, and while it stands the top rank is Virtuoso.
@@ -2076,11 +2255,13 @@ Each question is product-level and has a recommended default. A question left un
 8. **Dates.** The date defaults to "When realistic": the app dates each milestone from your cards and pace. While your pass rate or pace is still being measured, the date says "estimate", names what it assumed, and offers a re-date once measured. If you pick an earlier date, the plan says Tight or Over (and how many cards a week it would ask), offers the realistic date, or lets you lower the depth. It never lowers the depth by itself. "How hard" becomes the share of your usual pace the plan counts on (Light 50%, Steady 70%, Push 90%).
    *Recommended: yes.*
 9. **Aims beyond 3 years.** Keep 3 years as the limit in this build, with "Plan season 2" for longer aims later?
-   *Recommended: keep 3 years now.* New learners reach Mastered in about 11–15 months.
+   *Recommended: keep 3 years now.* New learners reach Mastered in about ~~11–15~~ **15–16 months** *(shipped: about 15.8 months while the app is still learning your pass rate, about 15 months once it is measured at a steady pace; the honest count of a first-try pass after the 110-day gap, plus a 30% spare of new cards, moved it from the first estimate)*.
 10. **Gemini writes no words.** Practice, step, checkpoint and milestone names would use the app's wording ("Recall drills: Probability", "Easy session"), and you can rename any of them. "What to learn" would come only from your own outline or the official syllabus, and which Domain each line belongs to is yours (the app prefills it). The intake would ask "Is there an exam or qualification at the end?" instead of guessing. OK, given the wording is plainer than Gemini's?
     *Recommended: yes.*
 11. **Areas you don't have yet.** This is the only place Gemini's own words could appear. When switched on, Gemini could only suggest a phrase that already appears in your own aim, outline, exam or chosen Domains; every other name it returns would be hidden and only counted ("3 not shown"). The 10 approved calls can return at most 8 such names, too few to test it, so it would be built but kept off by a switch only the lead turns. Should it be (a) built and kept off until at least 30 real suggestions are tested; or (b) not offered at all?
     *Recommended: (a).*
+    **What the build measured** *(shipped, stated before the switch can flip)*: a claim made only of your own words, copied in order from one line you wrote (for example "Probability exam" from an outline line that says it), would still be shown in **25 of 41** generated cases (61%); each such name holds a word like "exam", "test" or "certificate". Claims stitched from several of your texts are never shown (0 of 1,958). Hiding names with those words would also hide real topics such as "Exam technique", so it isn't done. The switch stays off in this build, so none of this reaches you.
+    **A related known over-caution** in the health filter (F-R4-17): "not a morning person, evenings for running" is read as "no running", so the plan leaves running sessions out. It errs on the safe side, lists what it left out with the word, and [Allow one] puts a session back.
 12. **Go/no-go.** Gemini drafting stays hidden until the approved 10-call test shows it keeps to the keys-only format **and** places every outline line, suggests mostly sensible Domains (8 in 10 or better, by the lead's labels) and picks fitting practice types (8 stages in 10 or better). Until then "Build from my numbers" and "Write it myself" are the routes. OK?
     *Recommended: yes.*
 13. **Stage names.** Foundation (level 4), Familiar (6), Retained (8), Fluent (10), Mastered (12), plus "part 1" when the first stage is far off ("Familiar, part 1: 13 of 25 cards at level 6+", so a first rank comes within about 11 weeks). "Working knowledge" is avoided because the intake uses it, and "Recall" because it is an attribute.

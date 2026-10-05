@@ -6,15 +6,44 @@
  * code templates filled only with YoursText, CodeText, DomainNames and
  * WORKED_OUT numbers. Week quests pay nothing and have no checkbox.
  *
- * Contract: docs/life-plan/roadmap-contracts.md §R6. Imports nothing from
- * roadmap-model, roadmap-validate or roadmap-evidence. One of the five files
- * allowed to call the number-brand constructors (questProgress' figures, in
- * weekQuestsViewOf).
+ * Revision 4 (roadmap-rev4.md F-R4-14; WEEK_QUEST_GENERATOR_VERSION 2):
+ *   - RAISE is one row with a part per Domain still short: count_d =
+ *     min(pace_d, ceil(expectedReach_d)), the reach from roadmap-types'
+ *     reach table (the real review rules: a miss costs a day, two in a row
+ *     a level, a card past grace drops one; clearance c and off-day
+ *     persistence ρ; the long-gap pass rate at level ≥ 9; clean entry on an
+ *     `rc` key) at the StartSnapshot's figures, the priors while those were
+ *     calibrating. Progress is Σ_d clamp(v_d − floor_d, 0, count_d), read
+ *     from each Domain's own measure (recall cards; `rc` counts a retry
+ *     entry after its next pass), so a slip in one Domain offsets only its
+ *     own part; the row is done when every part is.
+ *   - ADD is one row with a part per Domain: newNeeded_d = writeNeedOf(n_d,
+ *     the recall cards it holds) = ceil(WRITE_MARGIN × n_d) − those cards
+ *     (coverage, not a yield; the basis names the spare from WRITE_MARGIN), a
+ *     per-Domain catch-up cap, and the capacity cap on the total, shared out
+ *     in proportion to pace_d. Only recall cards count toward it.
+ *   - Clean entry on an `rc` part is roadmap-types' one rule (isRetryEntry,
+ *     R1's, which the reach DP follows; fix round, contracts §15.1): this
+ *     module keeps no second definition.
+ *   - Labels: "Bring {n} cards to level {L}+" and "Add {n} cards"; the parts
+ *     line ("3 in Probability · 2 in Inference") is questPartsLineOf's.
+ *   - A v1 set (no parts) keeps its figures and renders exactly as before.
+ *
+ * Contract: docs/life-plan/roadmap-contracts.md §R6, §14.9. Imports nothing
+ * from roadmap-model, roadmap-validate or roadmap-evidence. One of the five
+ * files allowed to call the number-brand constructors (questProgress'
+ * figures, in weekQuestsViewOf).
  *
  *   weekQuestsFor · questProgress · weekQuestResultsOf · weekDoneShare · questsBehind
  *   weekQuestsViewOf · pastWeekOf
  *   added by R6: questsBehindLine · questWindowOf · nonHeldShareOf · scaledCountOf · unitWord
  *                WeekQuestResultsStored · WEEK_QUEST_CAPTION · WEEK_QUEST_NOTE_PATTERNS
+ *   added by R6 (rev 4): questReachOf · questPartsLineOf · shareOutByPace · addSpareText (fix round)
+ *                WeekQuestInputExtras · QuestReach · WeekQuestRowV2 · WeekQuestsViewV2
+ *                (fix round: the V2 names are aliases of the contract's
+ *                WeekQuestRow and WeekQuestsView, which now carry partsLine
+ *                and health; isRetryEntry and ReviewRowLike moved to
+ *                roadmap-types as isRetryEntry and ReviewLedgerRow)
  *
  * Every count is WORKED_OUT and every basis line says what produced it. The
  * basis lines are stored with the frozen set (RoadmapQuestWeek.basis), so
@@ -28,7 +57,14 @@ import { LIFE_TZ, addDays, daysBetween, weekdayOf, type DayKey } from "./life-da
 import { WEEKDAY_SHORT, describeRule, parseRule } from "./recurrence";
 import {
   CARD_WRITE_MIN,
+  C_PRIOR,
   KEEP_SHARE,
+  LONG_GAP_LEVEL,
+  NON_RECALL_TYPES,
+  P_LONG_CAP,
+  P_PRIOR,
+  REACH_STRIKE_LIMIT,
+  RHO_PRIOR,
   WEEK_QUEST_ADD_MIN_CAP,
   WEEK_QUEST_BEHIND_WRITING_WEEKS,
   WEEK_QUEST_CATCHUP_FACTOR,
@@ -36,30 +72,38 @@ import {
   WEEK_QUEST_EVIDENCE_OF,
   WEEK_QUEST_GENERATOR_VERSION,
   WEEK_QUEST_MAX_PER_KIND,
+  WEEK_QUEST_PARTS_TODAY,
   WEEK_QUESTS_PER_WEEK_MAX,
+  WRITE_MARGIN,
   domainsText,
   effectiveState,
-  existingExpected,
   bestReach,
+  floorBase,
   keptUnits,
   measured,
-  passesNeeded,
   plannedUnits,
+  reachTable,
   recorded,
   selfReported,
+  writeNeedOf,
+  type AddPart,
   type AddQuestSpec,
+  type CalibratingInput,
   type CheckpointQuestSpec,
   type CodeText,
   type DomainName,
-  type EffectiveCard,
   type EvidenceValue,
   type PastWeekView,
   type PracticeQuestSpec,
   type QuestEvidence,
+  type RaisePart,
   type RaiseQuestSpec,
+  type ReachParams,
+  type StartSnapshot,
   type StartWeek,
   type StepQuestSpec,
   type WeekQuestCap,
+  type WeekQuestCardInput,
   type WeekQuestInput,
   type WeekQuestKind,
   type WeekQuestProgress,
@@ -142,16 +186,23 @@ function possessive(name: string): string {
   return /s$/i.test(name) ? `${name}'` : `${name}'s`;
 }
 
-// ═══ Labels: code templates whose text slots take only the brands (F13 Labels) ══
-
-/** "Bring {n} card(s) in {domains} to level {L}+". */
-function raiseLabel(n: number, domains: readonly DomainName[], level: number): string {
-  return `Bring ${n} ${plural(n, "card", "cards")} in ${domainsText(domains, "or")} to level ${level}+`;
+/** Own-property read of a JSON-shaped record (a stored set's maps; '__proto__' and friends never resolve). */
+function ownNumber(rec: Readonly<Record<string, unknown>> | null | undefined, key: string): number | null {
+  if (!rec || typeof rec !== "object" || !Object.prototype.hasOwnProperty.call(rec, key)) return null;
+  const v = rec[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-/** "Add {n} card(s) to {domains}". */
-function addLabel(n: number, domains: readonly DomainName[]): string {
-  return `Add ${n} ${plural(n, "card", "cards")} to ${domainsText(domains, "or")}`;
+// ═══ Labels: code templates whose text slots take only the brands (F13 Labels) ══
+
+/** Generator 2 (F-R4-14): "Bring {n} card(s) to level {L}+"; the Domains are in the parts line. */
+function raiseLabel(n: number, level: number): string {
+  return `Bring ${n} ${plural(n, "card", "cards")} to level ${level}+`;
+}
+
+/** Generator 2 (F-R4-14): "Add {n} card(s)"; the Domains are in the parts line. */
+function addLabel(n: number): string {
+  return `Add ${n} ${plural(n, "card", "cards")}`;
 }
 
 /** "{name} · {n} session(s) × {min} min", or "{name} · {n} day(s) × {min} min" for a DAILY rule. */
@@ -182,13 +233,155 @@ function checkpointLabel(label: YoursText): string {
 export const WEEK_QUEST_NOTE_PATTERNS: readonly RegExp[] = [
   /^Week: Milestone \d+ was due /,
   /^Bring: No card in /,
-  /^Bring: At the pass rate stored at Start, no card /,
-  /^Bring: \d+ cards? already counted when you started /,
+  // v1's wording and generator 2's ("At Start's figures, no card in Inference …").
+  /^Bring: At (?:the pass rate stored at Start|Start's figures), no card /,
+  // v1's "5 cards already counted …" and generator 2's "Inference: 5 cards already counted …".
+  /^Bring: (?:.+?: )?\d+ cards? already counted when you started /,
   /^Add: Practices and reviews fill this week's time/,
   /^Add: No time left for new cards this week/,
   /^Add: No new cards this week/,
   /^Capacity: This week's plan is more than /,
 ];
+
+// ═══ Revision 4: the reach model, retry entries and parts (F-R4-8, F-R4-14) ══
+
+/**
+ * What a week's input may carry beyond the contract's WeekQuestInput (R6,
+ * optional): the loadout's reach terms, read with the interval multiplier
+ * m when the set is generated. Absent, the base review rules (srs.ts's two
+ * strikes, no grace extension) stand, which reads a little low.
+ */
+export interface WeekQuestInputExtras {
+  loadout?: { extraStrikes?: number; graceExtraDays?: number } | null;
+}
+
+/** The reach inputs a week keeps from Start (F-R4-14), and the ones that were the app's assumption then. */
+export interface QuestReach {
+  params: ReachParams;
+  /** 'p', 'c', 'rho': the priors stood in (P_PRIOR, C_PRIOR, RHO_PRIOR), named in the basis. */
+  assumed: CalibratingInput[];
+}
+
+const shareOf = (x: unknown): number | null => (typeof x === "number" && Number.isFinite(x) ? clamp(x, 0, 1) : null);
+
+/**
+ * RAISE's reach parameters from the StartSnapshot (F-R4-14 "at the start
+ * parameters"): p_start, pLong_start = min(p_start, its stored value or
+ * P_LONG_CAP), c_start and ρ_start, frozen for the milestone's life. An
+ * input that was calibrating at Start (StartSnapshot.calibrating, or rev 3's
+ * pCalibrating) or that the snapshot lacks reads as the published prior,
+ * never as 1 (F-R4-8: "Never p = 1 or c = 1 while calibrating"). m is the
+ * current interval multiplier (the reach this week, as rev 3); the strike
+ * limit and grace extension are the loadout's.
+ */
+export function questReachOf(snapshot: StartSnapshot, m: number, loadout?: WeekQuestInputExtras["loadout"]): QuestReach {
+  const assumed: CalibratingInput[] = [];
+  const cal = new Set<string>(Array.isArray(snapshot.calibrating) ? snapshot.calibrating : []);
+  if (snapshot.pCalibrating) cal.add("p");
+  const pick = (key: "p" | "c" | "rho", stored: unknown, prior: number): number => {
+    const v = shareOf(stored);
+    if (cal.has(key) || v == null) {
+      assumed.push(key);
+      return prior;
+    }
+    return v;
+  };
+  const p = pick("p", snapshot.pStart, P_PRIOR);
+  const storedLong = assumed.includes("p") ? null : shareOf(snapshot.pLongStart);
+  const pLong = Math.min(p, storedLong ?? P_LONG_CAP, P_LONG_CAP);
+  const c = pick("c", snapshot.cStart, C_PRIOR);
+  const rho = pick("rho", snapshot.rhoStart, RHO_PRIOR);
+  const extraStrikes = Math.max(0, Math.floor(loadout?.extraStrikes ?? 0) || 0);
+  const graceExtra = Math.max(0, Math.floor(loadout?.graceExtraDays ?? 0) || 0);
+  return {
+    params: { p, pLong, c, rho, m: Number.isFinite(m) && m > 0 ? m : 1, strikeLimit: REACH_STRIKE_LIMIT + extraStrikes, graceExtra },
+    assumed,
+  };
+}
+
+/**
+ * The parts line of a RAISE or ADD row (F-R4-14): "3 in Probability · 2 in
+ * Inference" (RAISE) or "4 to Inference · 2 to Risk Management · multiple
+ * choice not counted" (ADD; the last clause only while NON_RECALL_TYPES is
+ * non-empty). Today and the Aim card show the first WEEK_QUEST_PARTS_TODAY
+ * parts and "+n more Domain(s)"; the roadmap page shows them all. Counts
+ * only, never a bare "n of N". null for a row without parts (a v1 row, whose
+ * label names its Domains).
+ */
+export function questPartsLineOf(row: { kind: WeekQuestKind; parts?: readonly { name: DomainName; count: number }[] }, variant: WeekQuestVariant): string | null {
+  if ((row.kind !== "RAISE" && row.kind !== "ADD") || !row.parts || row.parts.length === 0) return null;
+  const word = row.kind === "RAISE" ? "in" : "to";
+  const all = row.parts.map((p) => `${p.count} ${word} ${String(p.name)}`);
+  const shown = variant === "roadmap" ? all : all.slice(0, WEEK_QUEST_PARTS_TODAY);
+  const more = all.length - shown.length;
+  const out = [...shown];
+  if (more > 0) out.push(`+${more} more ${plural(more, "Domain", "Domains")}`);
+  if (row.kind === "ADD" && NON_RECALL_TYPES.length > 0) out.push("multiple choice not counted");
+  return out.join(" · ");
+}
+
+/**
+ * Shares `total` units out in proportion to `weights`, never giving a part
+ * more than its `wants` (ADD's capacity cap over the parts, F-R4-14): each
+ * part first takes floor(total × w ÷ Σw) (at most its want), then the units
+ * left go one by one to the part with the largest remainder still under its
+ * want (ties: the earlier part). Deterministic; Σ ≤ total.
+ */
+export function shareOutByPace(total: number, wants: readonly number[], weights: readonly number[]): number[] {
+  const out = wants.map(() => 0);
+  const sum = weights.reduce((s, w) => s + Math.max(0, w), 0);
+  const units = Math.max(0, Math.floor(total));
+  if (units === 0 || sum <= 0) return out;
+  const exact = weights.map((w) => (units * Math.max(0, w)) / sum);
+  for (let i = 0; i < out.length; i++) out[i] = Math.min(Math.max(0, wants[i]), floorSafe(exact[i]));
+  let left = units - out.reduce((s, n) => s + n, 0);
+  while (left > 0) {
+    let best = -1;
+    let bestRem = -Infinity;
+    for (let i = 0; i < out.length; i++) {
+      if (out[i] >= wants[i]) continue;
+      const rem = exact[i] - out[i];
+      if (rem > bestRem + EPS) {
+        best = i;
+        bestRem = rem;
+      }
+    }
+    if (best < 0) break;
+    out[best] += 1;
+    left -= 1;
+  }
+  return out;
+}
+
+/** A part's Domain id: the measure's own (a depth plan's measure is one Domain's), else its scope's first. */
+function partDomainOf(c: WeekQuestCardInput): string {
+  return c.domainId ?? c.domainIds[0] ?? "";
+}
+
+/** "your 85% pass rate" / "an 80% pass rate (the app's assumption until 30 reviews are measured)", and the rest of the reach basis line. */
+function reachBasisLine(reach: QuestReach, level: number): string {
+  const { p, pLong, c } = reach.params;
+  const a = new Set(reach.assumed);
+  const parts = [
+    a.has("p") ? `an ${pct(p)}% pass rate (the app's assumption until 30 reviews are measured)` : `your ${pct(p)}% pass rate`,
+  ];
+  if (level > LONG_GAP_LEVEL) parts.push(`${pct(pLong)}% for gaps of 50 days and more (the app's policy: none of your reviews has tested gaps that long yet)`);
+  parts.push(a.has("c") ? `${pct(c)}% of your due reviews cleared (the app's assumption)` : `the ${pct(c)}% of your due reviews you clear`);
+  parts.push(a.has("rho") ? "missed days bunching together at the app's assumed rate" : "missed days bunching together as they did in your history");
+  return `Bring: reach follows the app's review rules (a miss costs a day, two in a row cost a level, a card overdue past its grace drops a level) at Start's figures: ${parts.join(", ")}.`;
+}
+
+/**
+ * ADD's coverage goal as its basis line words it (F-R4-14; fix round,
+ * contracts §15.2): "1.3 × 25 → 33, a 30% spare because some cards lag".
+ * The margin and the spare are read from WRITE_MARGIN, never typed, and the
+ * goal is writeNeedOf's own arithmetic (ceil(WRITE_MARGIN × n), with its
+ * float guard). "→", not "=", because the goal is rounded up (1.3 × 25 is
+ * 32.5), as the pace line's "→" is.
+ */
+export function addSpareText(target: number): string {
+  return `${WRITE_MARGIN} × ${target} → ${writeNeedOf(target, 0)}, a ${pct(WRITE_MARGIN - 1)}% spare because some cards lag`;
+}
 
 /** The snapshot's week for weekStart, else the nearest planned week before it (a reschedule ran past the plan), else null. */
 function snapshotWeekOf(weeks: readonly StartWeek[], weekStart: DayKey): StartWeek | null {
@@ -198,6 +391,22 @@ function snapshotWeekOf(weeks: readonly StartWeek[], weekStart: DayKey): StartWe
     if (w.weekStart < weekStart && (!best || w.weekStart > best.weekStart)) best = w;
   }
   return best;
+}
+
+/**
+ * needRate_{d,w}: the new cards a week Domain d needed when the milestone
+ * started (ADD's per-Domain catch-up cap, F-R4-14). In order: the snapshot's
+ * week's needRateByDomain; newNeeded_start_d × fw ÷ Ww_start from the
+ * snapshot's newNeededByDomain; else (a snapshot written before those
+ * fields) Start's whole need rate, shared by this week's needs.
+ */
+function needRateOf(domainId: string, need: number, needSum: number, snapshot: StartSnapshot, exactWeek: StartWeek | null, fwDays: number): number {
+  const byWeek = ownNumber(exactWeek?.needRateByDomain, domainId);
+  if (byWeek != null) return Math.max(0, byWeek);
+  const atStart = ownNumber(snapshot.newNeededByDomain, domainId);
+  if (atStart != null && snapshot.wwStart > 0) return Math.max(0, (atStart * (fwDays / 7)) / snapshot.wwStart);
+  const total = exactWeek?.needRate ?? (snapshot.wwStart > 0 ? (snapshot.newNeededStart * (fwDays / 7)) / snapshot.wwStart : 0);
+  return needSum > 0 ? Math.max(0, (total * need) / needSum) : 0;
 }
 
 /** "1 comes due Tue, 2 Wed, 1 Sat" from the reachable cards' due days. */
@@ -217,18 +426,20 @@ type Building =
   | Omit<CheckpointQuestSpec, "ord">;
 
 /**
- * The week's set (F13): its state (OPEN, HELD, PAST_DUE), then RAISE, ADD,
- * PRACTICE (in ord), STEP and CHECKPOINT, each count WORKED_OUT from the gap
- * above the floor, the weeks left, the spaced-repetition reach at p_start,
- * the catch-up cap and the week's capacity; every basis line says what
- * produced it. Never more than WEEK_QUESTS_PER_WEEK_MAX.
+ * The week's set (F13; generator 2, F-R4-14): its state (OPEN, HELD,
+ * PAST_DUE), then RAISE, ADD, PRACTICE (in ord), STEP and CHECKPOINT, each
+ * count WORKED_OUT from the gap above the floor, the weeks left, the reach
+ * model at Start's figures, the coverage's writing need, the catch-up cap and
+ * the week's capacity; every basis line says what produced it. RAISE and ADD
+ * carry one part per Domain (input.cards, else input.card alone). Never more
+ * than WEEK_QUESTS_PER_WEEK_MAX: parts are not quests.
  *
  * Reads only its input: every field is as of Monday 04:00 except card
  * levels (read at the freeze, named in the basis). Defensive about live
  * values a caller may pass: a step done or a checkpoint logged on or after
  * weekStart still counts as open as of Monday.
  */
-export function weekQuestsFor(input: WeekQuestInput): WeekQuestSet {
+export function weekQuestsFor(input: WeekQuestInput & WeekQuestInputExtras): WeekQuestSet {
   const { weekStart, milestone } = input;
   const weekEnd = addDays(weekStart, 6);
   const { startedDay, dueDay, snapshot } = milestone;
@@ -271,10 +482,6 @@ export function weekQuestsFor(input: WeekQuestInput): WeekQuestSet {
 
   const built: Building[] = [];
   let cappedBy: WeekQuestCap | null = null;
-  const card = input.card;
-  const effective: EffectiveCard[] = card ? card.cards.map((c) => effectiveState(c, weekStart)) : [];
-  const pStart = snapshot.pCalibrating ? 1 : snapshot.pStart;
-  const bestCase = snapshot.pCalibrating;
   const m = input.m;
 
   // The week's room for new cards (step 4) and its time (step 8) share these.
@@ -290,148 +497,222 @@ export function weekQuestsFor(input: WeekQuestInput): WeekQuestSet {
       ? "task estimates, not timed"
       : "your hours × 0.7 while your tracked time is calibrating; unverified";
 
-  if (card && card.domainNames.length === 0) {
+  // The card measures, one per Domain (generator 2): input.cards, else the one input.card.
+  const measures: WeekQuestCardInput[] = input.cards && input.cards.length > 0 ? input.cards : input.card ? [input.card] : [];
+  const named = measures.filter((c) => c.domainNames.length > 0);
+  if (measures.length > 0 && named.length === 0) {
     basis.push("Bring: the milestone's Domains were removed, so there is nothing to bring or add.");
+  } else if (named.length < measures.length) {
+    basis.push("Bring: a Domain of the milestone was removed, so nothing is asked for it.");
   }
+  const L = named.length > 0 ? named[0].level : null;
+  const parts = L == null ? [] : named.filter((c) => c.level === L);
+  if (L != null && parts.length < named.length) basis.push(`Bring: a measure at a level other than ${L} isn't asked in this week's rows.`);
+  const nameOf = (c: WeekQuestCardInput) => domainsText(c.domainNames, "or");
+  const reach = questReachOf(snapshot, m, input.loadout);
 
-  // 3. RAISE (TESTED).
-  if (card && card.domainNames.length > 0) {
-    const L = card.level;
-    const b0 = Math.max(card.v0, card.baseline);
-    const gap = Math.max(0, card.target - b0);
-    if (card.v0 < card.baseline) {
-      const slipped = card.baseline - card.v0;
-      basis.push(
-        `Bring: ${slipped} ${plural(slipped, "card", "cards")} already counted when you started ${plural(slipped, "has", "have")} slipped below level ${L}; bringing ${plural(slipped, "it", "them")} back doesn't move Milestone ${ord}, so this week asks from ${b0}.`
-      );
-    }
-    if (gap === 0) {
-      basis.push(`Bring: target held — ${card.target} at level ${L}+ is already counted; keep reviewing when due.`);
-    } else {
-      const reachable = effective.filter((c) => c.level < L && bestReach(c, L, m) <= to);
-      const expected = bestCase ? reachable.length : reachable.reduce((sum, c) => sum + Math.pow(pStart, passesNeeded(c, L)), 0);
-      const pace = ceilDiv(gap * e, wDays);
-      const reach = ceilSafe(expected);
-      const count = Math.min(pace, reach);
-      const domains = domainsText(card.domainNames, "or");
-      basis.push(`Bring: gap ${card.target} − ${b0} = ${gap} ${plural(gap, "card", "cards")} to bring to level ${L}+ (your reading before this week ${card.v0}; the milestone's baseline ${card.baseline}).`);
-      basis.push(`Bring: weeks left ${oneDecimal(wDays / 7)}, this one included · pace ${gap} × ${e} ÷ ${wDays} days → ${pace}.`);
-      if (reachable.length > 0) {
+  // 3. RAISE (TESTED): one row, a part per Domain still short.
+  if (L != null && parts.length > 0) {
+    const table = reachTable(reach.params);
+    const raiseParts: RaisePart[] = [];
+    const domainsOfParts: string[] = [];
+    let explained = false;
+    let anyReachable = false;
+    let anyRetry = false;
+    for (const c of parts) {
+      const name = nameOf(c);
+      const b0 = Math.max(c.v0, c.baseline);
+      const gap = Math.max(0, c.target - b0);
+      if (c.v0 < c.baseline) {
+        const slipped = c.baseline - c.v0;
         basis.push(
-          bestCase
-            ? `Bring: reach ${reachable.length} ${plural(reachable.length, "card", "cards")} can reach level ${L} this week if passed on ${plural(reachable.length, "its", "their")} day (best case — your pass rate was still calibrating at Start). Asked: ${count}.`
-            : `Bring: reach ${reachable.length} ${plural(reachable.length, "card", "cards")} can reach level ${L} this week if passed on ${plural(reachable.length, "its", "their")} day; at the ${pct(snapshot.pStart)}% pass rate stored at Start, about ${oneDecimal(expected)} (best case ${reachable.length}). Asked: ${count}.`
+          `Bring: ${name}: ${slipped} ${plural(slipped, "card", "cards")} already counted when you started ${plural(slipped, "has", "have")} slipped below level ${L}; bringing ${plural(slipped, "it", "them")} back doesn't move Milestone ${ord}, so this week asks from ${b0}.`
         );
-        basis.push("Bring: a card that was due anyway counts: passing its review is the step. The schedule never lets a card level early.");
+      }
+      if (gap === 0) {
+        basis.push(`Bring: ${name}: target held — ${c.target} at level ${L}+ ${plural(c.target, "is", "are")} already counted; keep reviewing when due.`);
+        continue;
+      }
+      if (!explained) {
+        basis.push(`Bring: weeks left ${oneDecimal(wDays / 7)}, this one included; each Domain is asked for its own gap, and a slip in one Domain doesn't offset another.`);
+        basis.push(reachBasisLine(reach, L));
+        explained = true;
+      }
+      // The cards the measure counts: recall cards when the key has its segment; `rc` counts a retry entry at L after its next pass.
+      const counted = c.segment ? c.cards.filter((x) => x.recall !== false) : c.cards;
+      const clean = c.segment === "rc";
+      const eff = counted.map((x) => {
+        const s = effectiveState(x, weekStart);
+        return { level: s.level, dueDay: s.dueDay, retryEntry: !!x.retryEntry && s.level === x.level };
+      });
+      const below = eff.filter((x) => x.level < L && bestReach(x, L, m) <= to);
+      const retries = clean ? eff.filter((x) => x.level === L && x.retryEntry && x.dueDay <= to) : [];
+      const reachable = below.length + retries.length;
+      const expected =
+        below.reduce((sum, x) => sum + table.reachProb(x.level, L, daysBetween(bestReach(x, L, m), to), clean ? { cleanAt: L } : undefined), 0) +
+        retries.reduce((sum, x) => sum + table.reachProb(L, L + 1, daysBetween(x.dueDay, to)), 0);
+      const pace = ceilDiv(gap * e, wDays);
+      const reachN = ceilSafe(expected);
+      const count = Math.min(pace, reachN);
+      basis.push(
+        `Bring: ${name}: gap ${c.target} − ${b0} = ${gap} ${plural(gap, "card", "cards")} to bring to level ${L}+ (your reading before this week ${c.v0}; the milestone's baseline ${c.baseline}) · pace ${gap} × ${e} ÷ ${wDays} days → ${pace}.`
+      );
+      if (reachable > 0) {
+        anyReachable = true;
+        basis.push(
+          `Bring: ${name}: ${reachable} ${plural(reachable, "card", "cards")} can reach level ${L} this week if passed on ${plural(reachable, "its", "their")} day; at Start's figures about ${oneDecimal(expected)} (best case ${reachable}). Asked: ${count}.`
+        );
+      }
+      if (retries.length > 0) {
+        anyRetry = true;
+        basis.push(
+          `Bring: ${name}: ${retries.length} ${plural(retries.length, "card", "cards")} reached level ${L} on a retry: ${plural(retries.length, "it counts", "they count")} after ${plural(retries.length, "its", "their")} next review, which this week can bring.`
+        );
       }
       if (count === 0) {
-        if (reachable.length === 0) {
-          const later = effective.filter((c) => c.level < L).map((c) => bestReach(c, L, m)).filter((d) => d > to).sort();
+        if (reachable === 0) {
+          const later = eff
+            .filter((x) => x.level < L)
+            .map((x) => bestReach(x, L, m))
+            .filter((d) => d > to)
+            .sort();
           const first = later[0] ?? null;
           const by = first ? later.filter((d) => d <= first).length : 0;
           basis.push(
             first
-              ? `Bring: No card in ${domains} can reach level ${L} this week even if every review passes; ${by} can by ${dayLabel(first)}.`
-              : `Bring: No card in ${domains} can reach level ${L} this week even if every review passes.`
+              ? `Bring: No card in ${name} can reach level ${L} this week even if every review passes; ${by} can by ${dayLabel(first)}.`
+              : `Bring: No card in ${name} can reach level ${L} this week even if every review passes.`
           );
         } else {
-          basis.push(`Bring: At the pass rate stored at Start, no card is expected to reach level ${L} this week.`);
+          basis.push(`Bring: At Start's figures, no card in ${name} is expected to reach level ${L} this week.`);
         }
-      } else {
-        if (pace > reach) basis.push(`Bring: the pace asks ${pace}, more than this week's reach; it asks ${count}. Whether that is a delay is the pace line's call, not this week's.`);
-        built.push({
-          kind: "RAISE",
-          label: raiseLabel(count, card.domainNames, L),
-          count,
-          unit: "card",
-          evidence: WEEK_QUEST_EVIDENCE_OF.RAISE,
-          from,
-          to,
-          measureKey: card.measureKey,
-          domainIds: [...card.domainIds],
-          minLevel: L,
-          floor: b0,
-          dueDays: reachable.map((c) => c.dueDay).sort(),
-          bestCase,
-        });
+        continue;
       }
+      if (pace > reachN) basis.push(`Bring: ${name}: the pace asks ${pace}, more than this week's reach; it asks ${count}. Whether that is a delay is the pace line's call, not this week's.`);
+      raiseParts.push({
+        domainId: partDomainOf(c),
+        measureKey: c.measureKey,
+        floor: b0,
+        count,
+        dueDays: [...below.map((x) => x.dueDay), ...retries.map((x) => x.dueDay)].sort(),
+      });
+      for (const id of c.domainIds) if (!domainsOfParts.includes(id)) domainsOfParts.push(id);
+    }
+    if (anyReachable) basis.push("Bring: a card that was due anyway counts: passing its review is the step. The schedule never lets a card level early.");
+    if (explained && !anyRetry && parts.some((c) => c.segment === "rc")) {
+      basis.push(`Bring: at level ${L} a card counts once it entered on a first-try pass; one that got there on a next-day retry counts after its next review.`);
+    }
+    if (raiseParts.length > 0) {
+      const total = raiseParts.reduce((s, p) => s + p.count, 0);
+      built.push({
+        kind: "RAISE",
+        label: raiseLabel(total, L),
+        count: total,
+        unit: "card",
+        evidence: WEEK_QUEST_EVIDENCE_OF.RAISE,
+        from,
+        to,
+        measureKey: raiseParts[0].measureKey,
+        domainIds: domainsOfParts,
+        minLevel: L,
+        floor: raiseParts.reduce((s, p) => s + p.floor, 0),
+        dueDays: raiseParts.flatMap((p) => p.dueDays).sort(),
+        bestCase: false,
+        parts: raiseParts,
+      });
     }
   }
 
-  // 4. ADD (RECORDED).
+  // 4. ADD (RECORDED): one row, a part per Domain still short of its coverage (recall cards only).
   const shift = daysBetween(snapshot.dueDay, dueDay);
-  const lastCardDay = snapshot.lastCardDay ? addDays(snapshot.lastCardDay, shift) : null;
-  if (card && card.domainNames.length > 0) {
-    if (card.rateSource === "NONE") {
+  const lastCardDay =
+    L == null ? null : snapshot.lastCardDay ? addDays(snapshot.lastCardDay, shift) : addDays(dueDay, -floorBase(L, snapshot.m > 0 ? snapshot.m : 1));
+  if (L != null && parts.length > 0 && lastCardDay) {
+    const pacing = parts.filter((c) => c.rateSource !== "NONE");
+    if (pacing.length === 0) {
       basis.push("Add: new cards aren't counted: no pace yet, so no card is asked for.");
-    } else if (!lastCardDay) {
-      basis.push("Add: the plan has no writing window for new cards.");
     } else {
+      for (const c of parts) if (c.rateSource === "NONE") basis.push(`Add: ${nameOf(c)}: new cards aren't counted: no pace yet, so none is asked for.`);
       const fwDays = eligibleDays(from, minDay(to, lastCardDay), held).length;
       if (fwDays === 0) {
-        basis.push(
-          `Add: No new cards this week: a card written after ${dayLabel(lastCardDay)} can't reach level ${card.level} by ${shortDay(dueDay)}.`
-        );
+        basis.push(`Add: No new cards this week: a card written after ${dayLabel(lastCardDay)} can't reach level ${L} by ${shortDay(dueDay)}.`);
       } else {
-        const L = card.level;
         const wwDays = eligibleDays(from, lastCardDay, held).length;
-        const existing = existingExpected(effective, L, dueDay, pStart, m);
-        const yieldStart = snapshot.pCalibrating ? 1 : snapshot.yieldStart;
-        const newNeeded = yieldStart > 0 ? Math.max(0, ceilSafe((card.target - existing) / yieldStart)) : 0;
-        const pace = ceilDiv(newNeeded * fwDays, wwDays);
-        const needRate =
-          snapshot.weeks.find((w) => w.weekStart === weekStart)?.needRate ??
-          (snapshot.wwStart > 0 ? (snapshot.newNeededStart * (fwDays / 7)) / snapshot.wwStart : 0);
-        const cap = Math.max(WEEK_QUEST_ADD_MIN_CAP, ceilSafe(WEEK_QUEST_CATCHUP_FACTOR * needRate));
+        const exactWeek = snapshot.weeks.find((w) => w.weekStart === weekStart) ?? null;
+        const rows = pacing.map((c) => {
+          const live = c.cards.filter((x) => x.recall !== false).length;
+          const need = writeNeedOf(c.target, live);
+          return { c, live, need, pace: ceilDiv(need * fwDays, wwDays) };
+        });
+        const needSum = rows.reduce((s, r) => s + r.need, 0);
+        const sized = rows.map((r) => {
+          const needRate = needRateOf(partDomainOf(r.c), r.need, needSum, snapshot, exactWeek, fwDays);
+          const cap = Math.max(WEEK_QUEST_ADD_MIN_CAP, ceilSafe(WEEK_QUEST_CATCHUP_FACTOR * needRate));
+          return { ...r, needRate, cap, want: Math.min(r.pace, cap) };
+        });
         const quotaMin = input.otherFieldQuotas * CARD_WRITE_MIN;
         const room = availE - practiceMin - reviewMin - quotaMin;
         const capFit = floorSafe(Math.max(0, room) / CARD_WRITE_MIN);
-        const count = Math.min(pace, cap, capFit);
-        let capped: WeekQuestCap | null = null;
-        if (pace > cap && cap <= capFit) capped = "CATCHUP";
-        else if (pace > capFit && capFit < cap) capped = "CAPACITY";
-        cappedBy = capped;
+        const wantSum = sized.reduce((s, r) => s + r.want, 0);
+        const paceSum = sized.reduce((s, r) => s + r.pace, 0);
+        const counts = wantSum <= capFit ? sized.map((r) => r.want) : shareOutByPace(capFit, sized.map((r) => r.want), sized.map((r) => r.pace));
+        const cappedOf = (i: number): WeekQuestCap | null => (counts[i] < sized[i].want ? "CAPACITY" : sized[i].pace > sized[i].cap ? "CATCHUP" : null);
+        const caps = sized.map((_, i) => cappedOf(i));
+        cappedBy = caps.includes("CATCHUP") ? "CATCHUP" : caps.includes("CAPACITY") ? "CAPACITY" : null;
+        const count = counts.reduce((s, n) => s + n, 0);
 
+        basis.push(`Add: writing weeks left ${oneDecimal(wwDays / 7)} — a card written after ${dayLabel(lastCardDay)} can't reach level ${L} by ${shortDay(dueDay)}.`);
+        sized.forEach((r) => {
+          // The coverage goal, writeNeedOf's own arithmetic (ceil(WRITE_MARGIN × n_d)); "→" because it is rounded up, like the pace.
+          basis.push(
+            `Add: ${nameOf(r.c)}: still needed ${r.need} new ${plural(r.need, "card", "cards")} (${addSpareText(r.c.target)}, less the ${r.live} ${plural(r.live, "card", "cards")} it holds) · pace ${r.need} × ${fwDays} ÷ ${wwDays} days → ${r.pace} · most a week ${WEEK_QUEST_CATCHUP_FACTOR} × the ${oneDecimal(r.needRate)} a week the plan needed at Start (at least ${WEEK_QUEST_ADD_MIN_CAP}) → ${r.cap}.`
+          );
+        });
+        if (NON_RECALL_TYPES.length > 0) basis.push("Add: multiple-choice cards don't count: recognising an answer isn't recalling it.");
         basis.push(
-          `Add: still needed ${newNeeded} new ${plural(newNeeded, "card", "cards")} (each has a ${pct(yieldStart)}% chance${bestCase ? ", best case" : ""} of reaching level ${L} by ${shortDay(dueDay)}; your cards already there or on the way count about ${oneDecimal(existing)}).`
-        );
-        basis.push(
-          `Add: writing weeks left ${oneDecimal(wwDays / 7)} — a card written after ${dayLabel(lastCardDay)} can't reach level ${L} by ${shortDay(dueDay)} · pace ${newNeeded} × ${fwDays} ÷ ${wwDays} days → ${pace}.`
-        );
-        basis.push(`Add: most a week asks ${WEEK_QUEST_CATCHUP_FACTOR} × the ${oneDecimal(needRate)} a week the plan needed at Start (at least ${WEEK_QUEST_ADD_MIN_CAP}) → ${cap}.`);
-        basis.push(
-          `Add: room ${minutesText(availE)} available − ${minutesText(practiceMin + reviewMin)} of practices and reviews${quotaMin > 0 ? ` − ${minutesText(quotaMin)} for other Fields' weekly quotas (${input.otherFieldQuotas} ${plural(input.otherFieldQuotas, "card", "cards")})` : ""} → ${capFit} ${plural(capFit, "card", "cards")} at ${CARD_WRITE_MIN} min. Asked: ${count}${capped ? "" : "; no cap bound"}.`
+          `Add: room ${minutesText(availE)} available − ${minutesText(practiceMin + reviewMin)} of practices and reviews${quotaMin > 0 ? ` − ${minutesText(quotaMin)} for other Fields' weekly quotas (${input.otherFieldQuotas} ${plural(input.otherFieldQuotas, "card", "cards")})` : ""} → ${capFit} ${plural(capFit, "card", "cards")} at ${CARD_WRITE_MIN} min. Asked: ${count}${cappedBy ? "" : "; no cap bound"}.`
         );
         if (input.areaQuotaField) basis.push(`Add: ${possessive(input.areaQuotaField.name)} weekly quota counts these cards too.`);
         if (input.otherFieldQuotas === 0) basis.push("Add: other Fields' weekly quotas: none this week.");
-        if (capped === "CATCHUP") {
+        sized.forEach((r, i) => {
+          if (caps[i] !== "CATCHUP") return;
           basis.push(
-            `Add: asks ${count} of the ${pace} new cards needed to stay on plan; ${WEEK_QUEST_CATCHUP_FACTOR} × the ${oneDecimal(needRate)} a week the plan needed at Start is the most a week asks. Missed cards are not piled onto the week.`
+            `Add: ${nameOf(r.c)}: asks ${counts[i]} of the ${r.pace} new cards needed to stay on plan; ${WEEK_QUEST_CATCHUP_FACTOR} × the ${oneDecimal(r.needRate)} a week the plan needed at Start is the most a week asks. Missed cards are not piled onto the week.`
           );
-        } else if (capped === "CAPACITY") {
+        });
+        if (caps.includes("CAPACITY")) {
+          const shared = sized.length > 1 ? `, shared in proportion: ${sized.map((r, i) => `${counts[i]} to ${nameOf(r.c)}`).join(" · ")}` : "";
           basis.push(
             count === 0
               ? "Add: No time left for new cards this week: practices and reviews fill it."
-              : `Add: Practices and reviews fill this week's time, so it asks ${count} of the ${pace} new cards the plan needs.`
+              : `Add: Practices and reviews fill this week's time, so it asks ${count} of the ${paceSum} new cards the plan needs${shared}.`
           );
         }
+        const addParts: AddPart[] = [];
+        sized.forEach((r, i) => {
+          if (counts[i] > 0) addParts.push({ domainId: partDomainOf(r.c), count: counts[i], pace: r.pace, cappedBy: caps[i] });
+        });
         if (count > 0) {
+          let lead = 0;
+          for (let i = 1; i < addParts.length; i++) if (addParts[i].count > addParts[lead].count) lead = i;
+          const leadMeasure = sized.find((r) => partDomainOf(r.c) === addParts[lead].domainId)?.c ?? sized[0].c;
           built.push({
             kind: "ADD",
-            label: addLabel(count, card.domainNames),
+            label: addLabel(count),
             count,
             unit: "card",
             evidence: WEEK_QUEST_EVIDENCE_OF.ADD,
             from,
             to,
-            domainIds: [...card.domainIds],
-            fieldId: card.fieldId,
+            domainIds: addParts.map((p) => p.domainId),
+            fieldId: leadMeasure.fieldId,
             quotaField: input.areaQuotaField ? { ...input.areaQuotaField } : null,
-            pace,
+            pace: paceSum,
             writingWeeksLeft: wwDays / 7,
             lastCardDay,
+            parts: addParts,
           });
-        } else if (capped !== "CAPACITY") {
+        } else if (!caps.includes("CAPACITY")) {
           basis.push("Add: no new cards are needed this week.");
         }
       }
@@ -564,10 +845,41 @@ const inWindow = (d: DayKey, spec: { from: DayKey; to: DayKey }) => d >= spec.fr
  * RAISE is clamped to [0, count] (a card that slips offsets one that rose);
  * the others are what the rows say, so "10 of 8 cards" can read honestly.
  * Evidence of another kind reads as no progress.
+ *
+ * Generator 2 (a RAISE or ADD with parts, F-R4-14): each part reads its own
+ * Domain's evidence (RAISE byDomain, from that Domain's measure key; ADD
+ * addedByDomain, recall cards only), so a slip in one Domain offsets only
+ * its own part. RAISE progress is Σ_d clamp(v_d − floor_d, 0, count_d);
+ * ADD's is Σ_d min(added_d, count_d), each part's own figure staying what
+ * the rows say. The row is done when every part is done.
  */
 export function questProgress(spec: WeekQuestSpec, evidence: QuestEvidence): WeekQuestProgress {
   let progress = 0;
   let slipped: WeekQuestProgress["slipped"] = null;
+  if (spec.kind === "RAISE" && evidence.kind === "RAISE" && spec.parts && spec.parts.length > 0) {
+    const by = evidence.byDomain;
+    let high = 0;
+    let slipDay: DayKey | null = null;
+    const parts = spec.parts.map((part) => {
+      const ev = by && Object.prototype.hasOwnProperty.call(by, part.domainId) ? by[part.domainId] : null;
+      const got = ev?.value == null ? 0 : clamp(ev.value - part.floor, 0, part.count);
+      const top = ev?.high == null ? got : clamp(ev.high - part.floor, 0, part.count);
+      high += Math.max(got, top);
+      if (top > got && ev?.slipDay && (slipDay == null || ev.slipDay < slipDay)) slipDay = ev.slipDay;
+      return { domainId: part.domainId, progress: got, count: part.count, done: got >= part.count };
+    });
+    progress = parts.reduce((s, p) => s + p.progress, 0);
+    if (progress < high) slipped = { from: high, day: slipDay };
+    return { ord: spec.ord, progress, count: spec.count, done: parts.every((p) => p.done), slipped, parts };
+  }
+  if (spec.kind === "ADD" && evidence.kind === "ADD" && spec.parts && spec.parts.length > 0) {
+    const parts = spec.parts.map((part) => {
+      const added = Math.max(0, Math.floor(ownNumber(evidence.addedByDomain, part.domainId) ?? 0));
+      return { domainId: part.domainId, progress: added, count: part.count, done: added >= part.count };
+    });
+    progress = parts.reduce((s, p) => s + Math.min(p.progress, p.count), 0);
+    return { ord: spec.ord, progress, count: spec.count, done: parts.every((p) => p.done), slipped: null, parts };
+  }
   if (spec.kind === "RAISE" && evidence.kind === "RAISE") {
     progress = evidence.value == null ? 0 : clamp(evidence.value - spec.floor, 0, spec.count);
     const high = evidence.high == null ? progress : clamp(evidence.high - spec.floor, 0, spec.count);
@@ -664,12 +976,15 @@ export function weekDoneShare(set: WeekQuestSet, results: WeekQuestResults, nonH
 /**
  * QUESTS_BEHIND (F14): the frozen set's ADD capped by CATCHUP with fewer than
  * WEEK_QUEST_BEHIND_WRITING_WEEKS writing weeks left, this one included.
- * Never on HELD or PAST_DUE, never on a CAPACITY cap.
+ * Never on HELD or PAST_DUE, never on a CAPACITY cap. Generator 2 (F-R4-14):
+ * it fires when any part is capped by CATCHUP; the set's cappedBy is then
+ * CATCHUP too (it wins over a CAPACITY part), which R1's triggersOf reads.
  */
 export function questsBehind(set: WeekQuestSet | null): boolean {
   if (!set || set.state !== "OPEN" || set.cappedBy !== "CATCHUP") return false;
   const add = set.quests.find((q): q is AddQuestSpec => q.kind === "ADD");
-  return !!add && add.writingWeeksLeft < WEEK_QUEST_BEHIND_WRITING_WEEKS;
+  if (!add || !(add.writingWeeksLeft < WEEK_QUEST_BEHIND_WRITING_WEEKS)) return false;
+  return add.parts && add.parts.length > 0 ? add.parts.some((p) => p.cappedBy === "CATCHUP") : true;
 }
 
 /**
@@ -721,7 +1036,30 @@ export interface WeekQuestsViewInput {
    * has re-fitted, the target fitted today. "Week quests keep Start's figures."
    */
   passRate?: { start: { p: number; calibrating: boolean }; now: { p: number; calibrating: boolean } | null; fittedNow?: number | null } | null;
+  /**
+   * Added by R6 (rev 4, optional): the parts' Domain names, read from the
+   * Domain rows when the view is built, so a renamed Domain reads its new
+   * name. A part whose Domain is gone keeps its count in the row and is left
+   * out of the parts list.
+   */
+  domainNames?: Readonly<Record<string, DomainName>> | null;
+  /** Added by R6 (rev 4, optional): a BODY-track plan; its PRACTICE rows carry `health` (HEALTH_LINE as the row's sub-line, F-R4-13). */
+  health?: boolean;
 }
+
+/**
+ * A row as weekQuestsViewOf builds it (R6, rev 4). The fix round put its two
+ * optional fields on the contract (roadmap-types WeekQuestRow, contracts
+ * §15.11): `partsLine`, the variant's parts line (questPartsLineOf), on a
+ * RAISE or ADD row with parts; `health`, only ever true, on a PRACTICE row of
+ * a BODY plan (the component shows HEALTH_LINE under it). A v1 row carries
+ * neither, so it renders exactly as before. Kept as an alias, so a reader
+ * needs no cast.
+ */
+export type WeekQuestRowV2 = WeekQuestRow;
+
+/** weekQuestsViewOf's result: the contract's WeekQuestsView (an alias, kept for the names). */
+export type WeekQuestsViewV2 = WeekQuestsView;
 
 const TODAY_ORDER: Record<WeekQuestKind, number> = { RAISE: 0, ADD: 1, STEP: 2, PRACTICE: 3, CHECKPOINT: 4 };
 
@@ -738,7 +1076,13 @@ function hrefOf(spec: WeekQuestSpec, variant: WeekQuestVariant): string | null {
     case "RAISE":
       return variant === "today" ? "/you/roadmap#now" : null;
     case "ADD": {
-      const domain = spec.domainIds[0];
+      // Generator 2: the part with the largest count (ties: the earlier part); v1: the first Domain in scope.
+      let domain = spec.domainIds[0];
+      if (spec.parts && spec.parts.length > 0) {
+        let lead = spec.parts[0];
+        for (const p of spec.parts) if (p.count > lead.count) lead = p;
+        domain = lead.domainId;
+      }
       if (!domain) return null;
       const params = spec.fieldId ? `field=${encodeURIComponent(spec.fieldId)}&domain=${encodeURIComponent(domain)}` : `domain=${encodeURIComponent(domain)}`;
       return `/add?${params}`;
@@ -751,15 +1095,36 @@ function hrefOf(spec: WeekQuestSpec, variant: WeekQuestVariant): string | null {
   }
 }
 
-function rowOf(spec: WeekQuestSpec, p: WeekQuestProgress | undefined, input: WeekQuestsViewInput): WeekQuestRow {
+/** A generator-2 row's parts as the component shows them: its Domain's name, count and verified progress; a part whose Domain is gone is left out. */
+function partsOf(spec: WeekQuestSpec, p: WeekQuestProgress | undefined, names: Readonly<Record<string, DomainName>>): NonNullable<WeekQuestRow["parts"]> | null {
+  if ((spec.kind !== "RAISE" && spec.kind !== "ADD") || !spec.parts || spec.parts.length === 0) return null;
+  const out: NonNullable<WeekQuestRow["parts"]> = [];
+  for (const part of spec.parts) {
+    const name = Object.prototype.hasOwnProperty.call(names, part.domainId) ? names[part.domainId] : null;
+    if (!name) continue;
+    const got = p?.parts?.find((x) => x.domainId === part.domainId);
+    out.push({ domainId: part.domainId, name, count: part.count, progress: got ? got.progress : 0, done: got ? got.done : false });
+  }
+  return out;
+}
+
+function rowOf(spec: WeekQuestSpec, p: WeekQuestProgress | undefined, input: WeekQuestsViewInput): WeekQuestRowV2 {
   const progress = p ? p.progress : 0;
   const done = p ? p.done : progress >= spec.count;
+  const parts = partsOf(spec, p, input.domainNames ?? {});
   let slipLine: string | null = null;
   if (spec.kind === "RAISE" && p?.slipped && p.slipped.from > progress) {
     const n = p.slipped.from - progress;
     slipLine = `${n} ${plural(n, "card", "cards")} slipped back to level ${Math.max(1, spec.minLevel - 1)}${p.slipped.day ? ` on ${weekdayWord(p.slipped.day)}` : ""}`;
   }
   const templateId = spec.kind === "PRACTICE" || spec.kind === "STEP" ? spec.templateId : null;
+  const extra: { parts?: NonNullable<WeekQuestRow["parts"]>; partsLine?: string; health?: true } = {};
+  if (parts) {
+    extra.parts = parts;
+    const line = questPartsLineOf({ kind: spec.kind, parts }, input.variant);
+    if (line) extra.partsLine = line;
+  }
+  if (spec.kind === "PRACTICE" && input.health) extra.health = true;
   return {
     ord: spec.ord,
     kind: spec.kind,
@@ -775,6 +1140,7 @@ function rowOf(spec: WeekQuestSpec, p: WeekQuestProgress | undefined, input: Wee
     seekTemplateId: input.variant === "today" ? templateId : null,
     place: templateId ? (input.places[templateId] ?? null) : null,
     href: hrefOf(spec, input.variant),
+    ...extra,
   };
 }
 
@@ -828,7 +1194,7 @@ function notesOf(input: WeekQuestsViewInput): string[] {
  *            which the page's trigger banner shows) and the cap.
  * writesOff marks a live set only: a set read from its frozen row is recorded.
  */
-export function weekQuestsViewOf(input: WeekQuestsViewInput): WeekQuestsView {
+export function weekQuestsViewOf(input: WeekQuestsViewInput): WeekQuestsViewV2 {
   const { set, variant } = input;
   const byOrd = new Map(input.progress.map((p) => [p.ord, p]));
   let rows = set.quests.map((q) => rowOf(q, byOrd.get(q.ord), input));

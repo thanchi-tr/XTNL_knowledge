@@ -2,6 +2,7 @@
 
 import { after } from "next/server";
 import { refresh } from "next/cache";
+import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { cached, invalidate } from "@/lib/cache";
 import { getCurrentUserId } from "@/lib/user";
@@ -32,6 +33,8 @@ import {
 import { applySizing } from "@/lib/life-sizing";
 import { fileIdeaDraftCore } from "@/lib/idea-filing";
 import { loadStructureWords, loadVocabulary } from "@/lib/vocabulary";
+import { OPEN_ROADMAP_STATUSES, readCaptureAim, readCaptureAimPrompt } from "@/components/capture/aim-capture";
+import { AIM_PROMPT_COOKIE, type AimPrompt } from "@/lib/roadmap-invite";
 import type { BoardPlace, CaptureMode, ParsedCapture, TaskKind } from "@/lib/life-types";
 
 /**
@@ -516,7 +519,27 @@ export interface CaptureVocabulary {
   active: CaptureActiveTitle[];
   /** The unit a bare weigh-in number is read in ('weight 72.4'): the user's, 'kg' when unset or unreadable. */
   weightUnit?: WeightUnit;
+  /**
+   * The open roadmap (roadmap-rev4 F-R4-7), for an 'aim: …' line and a long
+   * goal: 'NONE' (no DRAFT or ACTIVE roadmap, or the Roadmap table is not
+   * there yet), 'DRAFT' or 'ACTIVE'. Absent when it could not be read: the
+   * sheet then acts as for 'NONE' but never offers 'Make it an aim'
+   * (components/capture/aim-capture.ts).
+   */
+  aim?: CaptureAim;
+  /**
+   * Whether set-an-aim suggestions may show (roadmap-rev4 decision 34; fix
+   * round 2): roadmap-invite aimPromptOf over LifeSettings.aimSuggestions and
+   * the AIM_PROMPT_COOKIE snooze, the rule /you, Today and Settings read.
+   * The sheet offers 'Make it an aim' under a long goal only on 'ASK'.
+   * Absent when it could not be read (no offer then). An 'aim:' line never
+   * reads it: what the user typed is theirs, not a suggestion.
+   */
+  aimPrompt?: AimPrompt;
 }
+
+/** Whether a roadmap is open, as the capture sheet needs it (CaptureVocabulary.aim). */
+export type CaptureAim = "NONE" | "DRAFT" | "ACTIVE";
 
 // The open goals come from tasks.ts loadOpenGoals: the same list, in the same
 // order, that createTemplateCore matches '^name' against, so the chip's
@@ -531,8 +554,55 @@ const loadRawBefore = (userId: string, day: DayKey) =>
     return Math.max(0, sum._sum.rawXp ?? 0);
   });
 
+/**
+ * Whether a roadmap is open (CaptureVocabulary.aim): one indexed read
+ * (Roadmap @@index([userId, status])) of the open rows' status only — never
+ * a revision-4 column, so it reads the same before and after that
+ * migration — cached on 'roadmap', which every roadmap write invalidates.
+ * A missing Roadmap table reads 'NONE'; any other failure, unknown
+ * (aim-capture readCaptureAim; never cached, never thrown).
+ */
+const loadCaptureAim = (userId: string) =>
+  readCaptureAim(() =>
+    cached(`captureAim:${userId}`, ["roadmap"], async () => {
+      const rows = await prisma.roadmap.findMany({
+        where: { userId, status: { in: [...OPEN_ROADMAP_STATUSES] } },
+        select: { status: true },
+        take: 2,
+      });
+      return rows.map((r) => r.status);
+    })
+  );
+
 type VocabWords = Awaited<ReturnType<typeof loadVocabulary>>;
 type StructureWords = Awaited<ReturnType<typeof loadStructureWords>>;
+
+/**
+ * Whether set-an-aim suggestions may show (CaptureVocabulary.aimPrompt):
+ * the AIM_PROMPT_COOKIE snooze, read per request (never cached), and the
+ * stored switch, one indexed select of LifeSettings.aimSuggestions cached on
+ * 'life' (setAimSuggestions invalidates 'life' and 'roadmap'). A missing
+ * aimSuggestions column (revision 4's migration not applied yet) reads as
+ * on, as Settings and /you read it; any other failure, unknown
+ * (aim-capture readCaptureAimPrompt; never cached, never thrown).
+ */
+const loadCaptureAimPrompt = async (userId: string, day: DayKey): Promise<AimPrompt | undefined> => {
+  let cookie: string | undefined;
+  try {
+    cookie = (await cookies()).get(AIM_PROMPT_COOKIE)?.value;
+  } catch {
+    return undefined;
+  }
+  return readCaptureAimPrompt(
+    () =>
+      cached(`captureAimSuggestions:${userId}`, ["life"], async () => {
+        const row = await prisma.lifeSettings.findUnique({ where: { userId }, select: { aimSuggestions: true } });
+        return row?.aimSuggestions ?? null;
+      }),
+    cookie,
+    day
+  );
+};
 
 /**
  * What the sheet previews a line against. Fetched lazily, never shipped in
@@ -540,7 +610,10 @@ type StructureWords = Awaited<ReturnType<typeof loadStructureWords>>;
  * (`opts.words === true`): a task line never shows it, and a lighter call
  * keeps the sheet's first save from queueing behind it. `recent` and
  * `active` are tasks.ts reads, cached under 'life' (the active titles from
- * the Today board's own cached read). Every part fails soft — a sheet with
+ * the Today board's own cached read); `aim`, whether a roadmap is open, is
+ * one read cached under 'roadmap' (loadCaptureAim); `aimPrompt`, whether a
+ * set-an-aim suggestion may show, the snooze cookie and one read cached
+ * under 'life' (loadCaptureAimPrompt). Every part fails soft — a sheet with
  * no suggestions and a ≈ price read against an empty day still captures,
  * which is all it must never stop doing.
  */
@@ -555,7 +628,7 @@ export async function loadCaptureVocabulary(opts?: { words?: boolean }): Promise
   }
 
   const withWords = typeof opts === "object" && opts !== null && opts.words === true;
-  const [vocab, structure, goals, rawBefore, recent, active, weightUnit] = await Promise.all([
+  const [vocab, structure, goals, rawBefore, recent, active, weightUnit, aim, aimPrompt] = await Promise.all([
     withWords ? loadVocabulary().catch((): VocabWords => []) : Promise.resolve<VocabWords>([]),
     withWords ? loadStructureWords().catch((): StructureWords => []) : Promise.resolve<StructureWords>([]),
     loadOpenGoals(userId).catch(() => []),
@@ -565,6 +638,8 @@ export async function loadCaptureVocabulary(opts?: { words?: boolean }): Promise
     loadWeightGoal(userId)
       .then((g): WeightUnit => (g.unit === "lb" ? "lb" : "kg"))
       .catch((): WeightUnit => "kg"),
+    loadCaptureAim(userId),
+    loadCaptureAimPrompt(userId, day),
   ]);
 
   // The same merge as /add: structure names first, de-duplicated without case.
@@ -577,5 +652,5 @@ export async function loadCaptureVocabulary(opts?: { words?: boolean }): Promise
     words.push(word);
   }
 
-  return { words, goals, rawBefore, day, recent, active, weightUnit };
+  return { words, goals, rawBefore, day, recent, active, weightUnit, ...(aim ? { aim } : {}), ...(aimPrompt ? { aimPrompt } : {}) };
 }

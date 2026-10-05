@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { resetKnowledgeBase } from "@/app/actions/reset";
-import { RESET_SCOPES, RESET_SCOPE_ORDER, type ResetScope, type ResetSummary } from "@/lib/reset-scopes";
+import { RESET_ARCHIVE_NOTE, RESET_SCOPES, RESET_SCOPE_ORDER, ROADMAP_RESET_EFFECT, type ResetScope, type ResetSummary } from "@/lib/reset-scopes";
 import { Button } from "@/components/ui/Button";
 import { TypedConfirm } from "@/components/ui/TypedConfirm";
 import { MINUS } from "@/components/ui/format";
@@ -22,6 +22,29 @@ function countOf(counts: Record<string, number>, key: string, one: string, many:
   const n = counts[key] ?? 0;
   return `${n.toLocaleString("en-GB")} ${n === 1 ? one : many}`;
 }
+
+/**
+ * What the chosen scope does to the roadmap (reset-scopes ROADMAP_RESET_EFFECT;
+ * roadmap.md F16 seam 11), from getResetPreview's roadmaps and openRoadmaps:
+ * 'life' and 'everything' delete every roadmap with the life tables; 'ideas'
+ * and 'knowledge' archive the open one (DRAFT or ACTIVE), because they take
+ * away what its measures count. Null when the scope touches no roadmap, so
+ * the panel never claims an effect that won't happen.
+ */
+export function roadmapResetLine(scope: ResetScope, counts: Record<string, number>): string | null {
+  if (ROADMAP_RESET_EFFECT[scope] === "delete") {
+    const all = counts.roadmaps ?? 0;
+    return all > 0 ? `Also deletes ${countOf(counts, "roadmaps", "roadmap", "roadmaps")}, with their milestones, readings and Aim ranks.` : null;
+  }
+  const open = counts.openRoadmaps ?? 0;
+  return open > 0
+    ? `Also archives your open roadmap, marked "${RESET_ARCHIVE_NOTE}": its readings and Aim rank stay as history, and a milestone goal it put on Today stays and pays nothing.`
+    : null;
+}
+
+/** The summary's row for a key (a table's own key otherwise); an archived roadmap is kept, so it shows no minus. */
+const DONE_LABEL: Record<string, string> = { roadmapsArchived: "roadmaps archived" };
+const KEPT_KEYS = new Set(["roadmapsArchived"]);
 
 /**
  * Irreversible resets (Settings › Data; it lived at the bottom of the old
@@ -51,6 +74,7 @@ export function DangerZone({ counts, onReset }: Props) {
   const [typed, setTyped] = useState("");
 
   const spec = scope ? RESET_SCOPES[scope] : null;
+  const roadmapLine = scope ? roadmapResetLine(scope, counts) : null;
 
   function choose(next: ResetScope | null) {
     setScope(next);
@@ -89,9 +113,9 @@ export function DangerZone({ counts, onReset }: Props) {
           ) : (
             rows.map(([k, n]) => (
               <li key={k}>
-                <span>{k}</span>
+                <span>{DONE_LABEL[k] ?? k}</span>
                 <span className="t-mono">
-                  {MINUS}
+                  {KEPT_KEYS.has(k) ? "" : MINUS}
                   {n.toLocaleString("en-GB")}
                 </span>
               </li>
@@ -123,6 +147,7 @@ export function DangerZone({ counts, onReset }: Props) {
           countOf(counts, "tasks", "task", "tasks"),
           countOf(counts, "taskInstances", "task record", "task records"),
           countOf(counts, "activityEvents", "activity event", "activity events"),
+          countOf(counts, "roadmaps", "roadmap", "roadmaps"),
         ].join(" · ")}
       </p>
 
@@ -145,6 +170,8 @@ export function DangerZone({ counts, onReset }: Props) {
           );
         })}
       </div>
+
+      {spec && roadmapLine && <p className="t-meta">{roadmapLine}</p>}
 
       {spec && scope && (
         <div

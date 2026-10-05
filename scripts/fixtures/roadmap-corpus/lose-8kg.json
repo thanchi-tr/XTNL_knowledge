@@ -61,5 +61,97 @@
         ]
       }
     }
-  ]
+  ],
+  "v3": {
+    "probe": true,
+    "about": "A Body aim with \"knee injury, no running\": the harder and longer sessions leave the enum, and Gemini's picks need the one quoted confirm.",
+    "intake": {
+      "depth": null,
+      "dateMode": "CHOSEN",
+      "exam": false,
+      "examDay": null,
+      "suggestAreas": false
+    },
+    "replies": [
+      {
+        "id": "lose-8kg-v3-a",
+        "about": "Easy, strength and mobility sessions: CLEAN, and the session picks are PENDING the user's confirm.",
+        "reply": {
+          "stages": {
+            "STAGE_1": {
+              "practices": [
+                {
+                  "kind": "EASY_SESSION"
+                },
+                {
+                  "kind": "MOBILITY_SESSION"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "SET_UP"
+                }
+              ]
+            },
+            "STAGE_2": {
+              "practices": [
+                {
+                  "kind": "EASY_SESSION"
+                },
+                {
+                  "kind": "STRENGTH_SESSION"
+                }
+              ],
+              "steps": []
+            },
+            "STAGE_3": {
+              "practices": [
+                {
+                  "kind": "STRENGTH_SESSION"
+                },
+                {
+                  "kind": "MOBILITY_SESSION"
+                },
+                {
+                  "kind": "EASY_SESSION"
+                }
+              ],
+              "steps": []
+            },
+            "STAGE_4": {
+              "practices": [
+                {
+                  "kind": "STRENGTH_SESSION"
+                },
+                {
+                  "kind": "TECHNIQUE_SESSION"
+                }
+              ],
+              "steps": []
+            },
+            "STAGE_5": {
+              "practices": [
+                {
+                  "kind": "EASY_SESSION"
+                },
+                {
+                  "kind": "STRENGTH_SESSION"
+                }
+              ],
+              "steps": [],
+              "checkpoint": "PERFORMANCE_CHECK"
+            }
+          }
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "excluded": [
+            "HARDER_SESSION",
+            "LONGER_SESSION"
+          ],
+          "sessionPicks": true
+        }
+      }
+    ]
+  }
 }

@@ -12,13 +12,18 @@
  *   the parts: in a "What it's made of" disclosure on the Aim card, always
  *   shown on the roadmap page with the "Aim ranks on this plan" ladder.
  *
- * Proficiency pays nothing and is never celebrated; "mastery", "mastered" and
- * the ⬡ glyph never appear in this block.
+ * Proficiency pays nothing and is never celebrated; "mastery" and the ⬡
+ * glyph never appear in this block, and "Mastered" only as the basis in its
+ * label (revision 4, F-R4-12): the eyebrow "Proficiency" over "toward
+ * Mastered (level 12)", and the meter's name "Proficiency toward Mastered
+ * (level 12): 28%, …", so a figure after a lowered depth never reads as more.
+ * On the roadmap page the ladder shows each stage's floor (PlanRanks).
  */
 import { Icon } from "@/components/ui/Icon";
 import { LastSeenMeter } from "@/components/home/LastSeenMeter";
-import type { AimRankView, ProficiencyView } from "@/lib/roadmap-types";
+import type { AimDepth, AimRankView, MilestoneRowView, ParagonMissing, ProficiencyView } from "@/lib/roadmap-types";
 import { dayLabel, measuredLabel, nextRankLine, proficiencyChangeLine, proficiencyMissingLine, proficiencyPartsLine, rankPendingLine } from "./roadmap-copy";
+import { proficiencyBasisLabelOf, proficiencyBasisOf } from "./roadmap-ui-model";
 import { PlanRanks } from "./PlanRanks";
 
 export function ProficiencyBlock({
@@ -30,6 +35,7 @@ export function ProficiencyBlock({
   writesOff,
   seenKey,
   pendingShownElsewhere = false,
+  ladder,
 }: {
   rank: AimRankView;
   proficiency: ProficiencyView | null;
@@ -41,8 +47,11 @@ export function ProficiencyBlock({
   seenKey: string;
   /** The surface already states the pending reach (the Aim card's milestone line is that milestone). */
   pendingShownElsewhere?: boolean;
+  /** The roadmap page's ladder (revision 4): the plan's rows for each rank's stage, the depth for the floors, and what keeps Paragon closed. */
+  ladder?: { milestones: readonly MilestoneRowView[]; depth: AimDepth | null; paragonMissing: readonly ParagonMissing[] };
 }) {
   const change = proficiency ? proficiencyChangeLine(proficiency.change, today) : null;
+  const basis = proficiency ? proficiencyBasisOf(proficiency) : null;
   const parts = proficiency ? proficiencyPartsLine(proficiency) : "";
   const caption = proficiency
     ? variant === "page"
@@ -63,13 +72,16 @@ export function ProficiencyBlock({
       {proficiency ? (
         <>
           <div className="rm-rp-pf">
-            <div className="rm-rp-k">Proficiency</div>
+            <div className="rm-rp-k">
+              Proficiency
+              {basis && <span className="rm-basisk">{basis}</span>}
+            </div>
             <div className="rm-rp-v num">{proficiency.percent}%</div>
           </div>
           <LastSeenMeter
             seenKey={`roadmap:${seenKey}:proficiency`}
             value={Number(proficiency.figure.value)}
-            label={`Proficiency ${proficiency.percent}%, ${proficiency.figure.caption}`}
+            label={`${proficiencyBasisLabelOf(proficiency)}: ${proficiency.percent}%, ${proficiency.figure.caption}`}
             valueText={`${proficiency.percent}%`}
           />
           <p className="rm-cap rm-rp-full">{caption}</p>
@@ -96,7 +108,7 @@ export function ProficiencyBlock({
           <p className="t-meta rm-rp-full">{nextRankLine(rank.next)}</p>
         </>
       )}
-      {variant === "page" && <PlanRanks rank={rank} scheduled={scheduled} />}
+      {variant === "page" && <PlanRanks rank={rank} scheduled={scheduled} milestones={ladder?.milestones} depth={ladder?.depth ?? null} paragonMissing={ladder?.paragonMissing} />}
     </div>
   );
 }

@@ -23,6 +23,13 @@
  * Every figure is the row's branded progress (Measured | Recorded |
  * SelfReported) with its caption; every count carries its unit. Labels are
  * the frozen set's own (YoursText, CodeText and Domain names only).
+ *
+ * Revision 4 (F-R4-13, F-R4-14): a RAISE or ADD row of generator 2 carries
+ * its parts by Domain under the label ("3 in Probability · 2 in Inference";
+ * Today and the Aim card show the first two and "+1 more Domain", the
+ * roadmap page every part), in its accessible name too; a body plan's
+ * practice row carries HEALTH_LINE as its sub-line. A v1 row renders as
+ * before.
  */
 import Link from "next/link";
 import { useId, useState } from "react";
@@ -34,6 +41,7 @@ import { cx } from "@/components/ui/cx";
 import type { EvidenceValue, WeekQuestRow, WeekQuestVariant, WeekQuestsView } from "@/lib/roadmap-types";
 import { seekTemplate } from "./roadmap-events";
 import {
+  HEALTH_LINE,
   PRACTICE_KEEP_SHARE_LINE,
   WEEK_QUEST_CAPTIONS,
   addCountsLine,
@@ -49,7 +57,9 @@ import {
 import { ROADMAP_CHECKPOINT_HREF, ROADMAP_NOW_HREF, TODAY_HREF } from "./roadmap-links";
 import {
   notesShownOf,
+  partsLineOf,
   practiceNameOf,
+  rowHealthOf,
   weekQuestAccessibleName,
   weekQuestCountOf,
   weekQuestKindsOf,
@@ -122,6 +132,7 @@ function TodayRow({ row }: { row: WeekQuestRow }) {
         <KindGlyph row={row} />
         <span className="rm-q-lbl">{row.label}</span>
         <span className="rm-q-cnt num">{weekQuestCountOf(row)}</span>
+        {partsLineOf(row) && <p className="rm-parts-l">{partsLineOf(row)}</p>}
         <RowMeter row={row} />
         {row.kind === "RAISE" && row.dueLine && !row.done && <p className="rm-q-ev">{row.dueLine}</p>}
         {row.slipLine && <p className="rm-q-ev">{row.slipLine}</p>}
@@ -158,6 +169,7 @@ function TodayRow({ row }: { row: WeekQuestRow }) {
           {tail}
           {!row.done ? placeSuffix(row.place) : ""}
         </span>
+        {rowHealthOf(row) && <span className="rm-q-health">{HEALTH_LINE}</span>}
       </span>
     </button>
   );
@@ -254,6 +266,7 @@ function RoadmapRow({ row, view, onLogCheckpoint }: { row: WeekQuestRow; view: W
       <KindGlyph row={row} />
       <span className="rm-q-lbl">{row.label}</span>
       <span className="rm-q-cnt num">{weekQuestCountOf(row)}</span>
+      {partsLineOf(row) && <p className="rm-parts-l">{partsLineOf(row)}</p>}
       <RowMeter row={row} />
       {row.kind === "RAISE" && (
         <>
@@ -276,6 +289,7 @@ function RoadmapRow({ row, view, onLogCheckpoint }: { row: WeekQuestRow; view: W
       {row.kind === "PRACTICE" && (
         <>
           <Evidence figure={row.figure} extra={PRACTICE_KEEP_SHARE_LINE} />
+          {rowHealthOf(row) && <p className="rm-q-ev">{HEALTH_LINE}</p>}
           {row.href && !row.done && (
             <Link className="link rm-q-lnk" href={row.href}>
               On Today

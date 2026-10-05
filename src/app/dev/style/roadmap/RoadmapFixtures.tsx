@@ -5,7 +5,9 @@
  * audits: the Roadmap page (or the intake form), with the Aim card as /you
  * shows it and the week quests card as Today shows it beside it. Inert: the
  * fixtures provider answers every button with "nothing is saved on this page",
- * and no router or database is reached.
+ * and no router or database is reached. A lead-only state (draft-gaps,
+ * intake-gemini) is drawn with its switch on through `gates`; the build's
+ * switches stay off.
  */
 import Link from "next/link";
 import { FixtureRoadmapProvider } from "@/components/roadmap/roadmap-runtime";
@@ -14,7 +16,7 @@ import { RoadmapForm } from "@/components/roadmap/RoadmapForm";
 import { AimCard } from "@/components/roadmap/AimCard";
 import { WeekQuests } from "@/components/roadmap/WeekQuests";
 import { SectionHeader } from "@/components/ui/Tabs";
-import { FIXTURE_STATES, roadmapFixture, type FixtureState } from "./fixtures";
+import { FIXTURE_STATES, REV4_STATES, roadmapFixture, type FixtureState } from "./fixtures";
 
 export function RoadmapFixtures({ state }: { state: FixtureState }) {
   const fx = roadmapFixture(state);
@@ -22,7 +24,14 @@ export function RoadmapFixtures({ state }: { state: FixtureState }) {
   return (
     <FixtureRoadmapProvider>
       <nav className="rm-fx-nav" aria-label="Roadmap fixture states">
-        {FIXTURE_STATES.map((s) => (
+        {FIXTURE_STATES.filter((s) => !(REV4_STATES as readonly string[]).includes(s)).map((s) => (
+          <Link key={s} className="chip btn-chip" aria-current={s === state ? "page" : undefined} href={`/dev/style/roadmap?state=${s}`}>
+            {s}
+          </Link>
+        ))}
+      </nav>
+      <nav className="rm-fx-nav" aria-label="Roadmap fixture states, revision 4">
+        {REV4_STATES.map((s) => (
           <Link key={s} className="chip btn-chip" aria-current={s === state ? "page" : undefined} href={`/dev/style/roadmap?state=${s}`}>
             {s}
           </Link>
@@ -31,11 +40,11 @@ export function RoadmapFixtures({ state }: { state: FixtureState }) {
       <p className="t-meta" style={{ margin: "0 0 16px" }}>
         Fixtures: every figure here is made up. {fx.note}
       </p>
-      {fx.view && <RoadmapScreen view={fx.view} startPreview={fx.startPreview} />}
+      {fx.view && <RoadmapScreen view={fx.view} startPreview={fx.startPreview} gates={fx.gates} />}
       {fx.intake && (
         <div style={{ marginTop: fx.view ? 24 : 0 }}>
           {fx.view && <SectionHeader title="Set an aim" aside="/you/roadmap/new" />}
-          <RoadmapForm view={fx.intake} />
+          <RoadmapForm view={fx.intake} gates={fx.gates} />
         </div>
       )}
       {(fx.aim || fx.today) && (

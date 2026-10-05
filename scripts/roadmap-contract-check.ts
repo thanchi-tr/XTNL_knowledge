@@ -20,8 +20,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { Prisma } from "@prisma/client";
-import { LIFE_TZ, addDays, dayKeyOf, weekdayOf, type DayKey } from "../src/lib/life-day";
-import { MASTERY_LEVEL, MAX_LEVEL, baseIntervalDays, nextIntervalDays } from "../src/lib/xp";
+import { LIFE_TZ, addDays, dayKeyOf, daysBetween, weekdayOf, type DayKey } from "../src/lib/life-day";
+import { MASTERY_LEVEL, MAX_LEVEL, baseIntervalDays, graceDays, nextIntervalDays } from "../src/lib/xp";
 import { WEEK_JUDGE_LAG_DAYS } from "../src/lib/life-economy";
 import { SETTLE_LAG_DAYS } from "../src/lib/duty-economy";
 import { DURATION_BAND_MINUTES } from "../src/lib/life-lexicon";
@@ -39,6 +39,11 @@ import type { GoalProgressInput } from "../src/lib/goals";
 import { SEEK_TEMPLATE_EVENT, isSeekTemplateDetail } from "../src/components/roadmap/roadmap-events";
 import * as RT from "../src/lib/roadmap-types";
 import { statedForMilestone } from "../src/lib/roadmap-economy";
+import * as CAT from "../src/lib/roadmap-catalog";
+import * as LX from "../src/lib/roadmap-lexicon";
+import * as V from "../src/lib/roadmap-validate";
+import { reviewMarkOf } from "../src/lib/review-facts";
+import { outcomeOf as libraryOutcomeOf } from "../src/components/library/library-model";
 
 const ROOT = join(__dirname, "..");
 const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
@@ -53,6 +58,26 @@ function check(name: string, ok: boolean, detail = "") {
 }
 const json = (v: unknown) => JSON.stringify(v);
 const eq = (name: string, got: unknown, want: unknown) => check(name, json(got) === json(want), `got ${json(got)}, want ${json(want)}`);
+/**
+ * A pin on another lane's adoption of a lane-0 single definition (the fix
+ * round's handoffs, contracts §15.11): a pass once it holds; until then a
+ * PENDING line naming the owner. With --strict (the lead, at integration)
+ * a PENDING is a failure, so nothing stays pending past the round.
+ */
+const STRICT = process.argv.includes("--strict");
+let pendingCount = 0;
+function pending(name: string, ok: boolean, owner: string, detail = "") {
+  if (ok) {
+    passed++;
+    return;
+  }
+  if (STRICT) {
+    check(`${name} (${owner})`, false, detail);
+    return;
+  }
+  pendingCount++;
+  console.log(`  PENDING (${owner}): ${name}${detail ? ` — ${detail}` : ""}`);
+}
 const throws = (fn: () => unknown): boolean => {
   try {
     fn();
@@ -215,7 +240,13 @@ console.log("— constants —");
   eq("start points and their floors", RT.START_POINTS.map((s) => [s, RT.START_POINT_FLOOR[s]]), [["NEW", 4], ["BASICS", 4], ["WORKING", 6], ["STRONG", 6]]);
   eq("intensity: Light 0.5, Steady 0.7 (default), Push 0.9", [RT.INTENSITY.LIGHT, RT.INTENSITY.STEADY, RT.INTENSITY.PUSH, RT.DEFAULT_INTENSITY], [0.5, 0.7, 0.9, "STEADY"]);
   eq("tracks: Craft (a Field Area's default), Body, Care, Duty", [RT.ROADMAP_TRACKS, RT.DEFAULT_FIELD_TRACK], [["CRAFT", "BODY", "CARE", "DUTY"], "CRAFT"]);
-  check("CREDENTIAL_WORDS: the eleven words, lower case", RT.CREDENTIAL_WORDS.length === 11 && RT.CREDENTIAL_WORDS.every((w) => w === w.toLowerCase()) && RT.CREDENTIAL_WORDS.includes("certification"));
+  check(
+    "CREDENTIAL_WORDS: rev 3's eleven words plus rev 4's eight for the exam prefill (bar, chartered, registered, licensure, licensing, board, boards, accredited), lower case",
+    RT.CREDENTIAL_WORDS.length === 19 &&
+      RT.CREDENTIAL_WORDS.every((w) => w === w.toLowerCase()) &&
+      ["certification", "bar", "chartered", "registered", "licensure", "licensing", "board", "boards", "accredited"].every((w) => RT.CREDENTIAL_WORDS.includes(w)),
+    `${RT.CREDENTIAL_WORDS.length}`
+  );
   eq("milestones: 75-day target, at most 6, windows 35..186", [RT.MILESTONE_TARGET_DAYS, RT.MAX_MILESTONES, RT.MILESTONE_MIN_DAYS, RT.MILESTONE_MAX_DAYS], [75, 6, 35, 186]);
   eq(
     "caps per milestone: Domains 4, new 2, topics 6, practices 3, steps 3, checkpoints 1",
@@ -254,9 +285,9 @@ console.log("— constants —");
     [14, 0.5, 4, 8, 14, 104, 600_000, 28]
   );
   eq(
-    "model: flash-lite, prompt v2, 1 sample, seeds 11 + 100 × redrafts, offsets 0/12/26",
+    "model: flash-lite, prompt v3 (keys only; revision 4), 1 sample, seeds 11 + 100 × redrafts, offsets 0/12/26",
     [RT.ROADMAP_MODEL, RT.ROADMAP_PROMPT_VERSION, RT.ROADMAP_SAMPLES, RT.SEED_BASE, RT.SEED_REDRAFT_STEP, RT.SEED_OFFSETS],
-    ["gemini-3.5-flash-lite", 2, 1, 11, 100, [0, 12, 26]]
+    ["gemini-3.5-flash-lite", 3, 1, 11, 100, [0, 12, 26]]
   );
   eq(
     "model: abort 35 s, backstop 37 s, claim guard 60 s, stale 90 s, 6000 tokens, thinking off until the probe",
@@ -278,13 +309,13 @@ console.log("— constants —");
   check("REACH_CONFIRM_DAYS = SETTLE_LAG_DAYS (2)", RT.REACH_CONFIRM_DAYS === SETTLE_LAG_DAYS && SETTLE_LAG_DAYS === 2);
   check("WEEK_QUEST_FINAL_LAG_DAYS = WEEK_JUDGE_LAG_DAYS (3)", RT.WEEK_QUEST_FINAL_LAG_DAYS === WEEK_JUDGE_LAG_DAYS && WEEK_JUDGE_LAG_DAYS === 3);
   eq(
-    "week quests: generator 1, catch-up 1.5 with a minimum cap of 3, checkpoint from 0.8, 3 rows on Today, behind under 2 writing weeks",
-    [RT.WEEK_QUEST_GENERATOR_VERSION, RT.WEEK_QUEST_CATCHUP_FACTOR, RT.WEEK_QUEST_ADD_MIN_CAP, RT.WEEK_QUEST_CHECKPOINT_FROM, RT.WEEK_QUEST_ROWS_TODAY, RT.WEEK_QUEST_BEHIND_WRITING_WEEKS],
-    [1, 1.5, 3, 0.8, 3, 2]
+    "week quests: generator 2 (per-Domain parts; revision 4), catch-up 1.5 with a minimum cap of 3, checkpoint from 0.8, 3 rows on Today, behind under 2 writing weeks, 2 parts on Today",
+    [RT.WEEK_QUEST_GENERATOR_VERSION, RT.WEEK_QUEST_CATCHUP_FACTOR, RT.WEEK_QUEST_ADD_MIN_CAP, RT.WEEK_QUEST_CHECKPOINT_FROM, RT.WEEK_QUEST_ROWS_TODAY, RT.WEEK_QUEST_BEHIND_WRITING_WEEKS, RT.WEEK_QUEST_PARTS_TODAY],
+    [2, 1.5, 3, 0.8, 3, 2, 2]
   );
   eq("week quest evidence: RAISE tested, ADD recorded, the rest self-reported", RT.WEEK_QUEST_EVIDENCE_OF, { RAISE: "TESTED", ADD: "RECORDED", PRACTICE: "SELF_REPORTED", STEP: "SELF_REPORTED", CHECKPOINT: "SELF_REPORTED" });
   const w = RT.PROFICIENCY_WEIGHTS;
-  check("PROFICIENCY_WEIGHTS {0.6, 0.25, 0.15} sum to 1; version 1", w.cards === 0.6 && w.practice === 0.25 && w.milestones === 0.15 && Math.abs(w.cards + w.practice + w.milestones - 1) < 1e-12 && RT.PROFICIENCY_VERSION === 1);
+  check("PROFICIENCY_WEIGHTS {0.6, 0.25, 0.15} sum to 1; version 2 (revision 4)", w.cards === 0.6 && w.practice === 0.25 && w.milestones === 0.15 && Math.abs(w.cards + w.practice + w.milestones - 1) < 1e-12 && RT.PROFICIENCY_VERSION === 2);
   eq("ranks: milestone max 5, top 6, Paragon from 4 milestones, new for 7 days", [RT.RANK_MILESTONE_MAX, RT.RANK_TOP, RT.PARAGON_MIN_MILESTONES, RT.RANK_NEW_DAYS], [5, 6, 4, 7]);
   eq("gate strings", [RT.ROADMAP_WRITES_OFF, RT.NOT_RECORDED_HERE, RT.AIM_PROMPT_COOKIE], ["Roadmap changes are recorded only on the live app", "not recorded on this server", "xtnl-aim-prompt"]);
   check("notYet throws 'Not yet: <what>'", (() => {
@@ -547,7 +578,11 @@ console.log("— seams —");
   check("the migration creates exactly the 8 tables", json(tables) === json(models), json(tables));
   check("the pre-apply grep: no DROP at all, and nothing names a table outside Roadmap*", !/\bDROP\b/i.test(migration) && named.every((t) => models.includes(t)), json(named.filter((t) => !models.includes(t))));
   const later = readdirSync(join(ROOT, "prisma/migrations")).filter((d) => /^\d{14}_/.test(d)).sort();
-  check("20261101000000_life_roadmap sorts last", later[later.length - 1] === "20261101000000_life_roadmap", later.slice(-2).join(", "));
+  check(
+    "20261101000000_life_roadmap is followed only by revision 4's 20261106000000_life_roadmap_rev4, which sorts last",
+    later[later.length - 2] === "20261101000000_life_roadmap" && later[later.length - 1] === "20261106000000_life_roadmap_rev4",
+    later.slice(-3).join(", ")
+  );
 }
 
 // ═══ Fix round: milestone positions, one per lineage ════════════════════════
@@ -996,15 +1031,24 @@ console.log("— integration —");
 {
   const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> }).scripts;
   // roadmap.md Acceptance: life:check with these appended, in this order; ui:check with roadmap-ui-check.
-  const LIFE = ["roadmap-contract", "roadmap-measures", "throughput", "roadmap-realism", "roadmap-model", "roadmap-server", "roadmap-quests"];
+  // Revision 4 (roadmap-rev4.md Acceptance): roadmap-invite and roadmap-hostile after rev 3's seven; goals-close after character (the fix round's lane L check).
+  const LIFE = ["roadmap-contract", "roadmap-measures", "throughput", "roadmap-realism", "roadmap-model", "roadmap-server", "roadmap-quests", "roadmap-invite", "roadmap-hostile"];
   const life = scripts["life:check"] ?? "";
   const tail = LIFE.map((n) => `tsx scripts/${n}-check.ts`).join(" && ");
-  check("life:check ends with the 7 roadmap checks in the Acceptance order", life.endsWith(` && ${tail}`), life.slice(-400));
+  // Fix round 2 (§16.6): at integration the lead runs this check with --strict inside life:check; either form passes here.
+  const strictTail = tail.replace("tsx scripts/roadmap-contract-check.ts", "tsx scripts/roadmap-contract-check.ts --strict");
+  check("life:check ends with rev 3's 7 roadmap checks (roadmap-contract with or without --strict), then roadmap-invite and roadmap-hostile, in the Acceptance order", life.endsWith(` && ${tail}`) || life.endsWith(` && ${strictTail}`), life.slice(-400));
+  check(
+    "life:check runs goals-close-check right after character-check, and goals-close:check runs it alone",
+    life.includes("tsx scripts/character-check.ts && tsx scripts/goals-close-check.ts && ") && scripts["goals-close:check"] === "tsx scripts/goals-close-check.ts" && existsSync(join(ROOT, "scripts/goals-close-check.ts"))
+  );
+  check("roadmap-hostile:ablate runs scripts/roadmap-hostile-ablate.ts (a report, not a gate)", scripts["roadmap-hostile:ablate"] === "tsx scripts/roadmap-hostile-ablate.ts" && existsSync(join(ROOT, "scripts/roadmap-hostile-ablate.ts")));
+  check("roadmap-contract:strict runs this check with --strict (the lead's integration gate: every fix-round PENDING must have landed)", scripts["roadmap-contract:strict"] === "tsx scripts/roadmap-contract-check.ts --strict");
   check("ui:check ends with roadmap-ui-check", (scripts["ui:check"] ?? "").endsWith(" && tsx scripts/roadmap-ui-check.ts"), (scripts["ui:check"] ?? "").slice(-120));
   const missing = [...LIFE, "roadmap-ui"].filter((n) => !existsSync(join(ROOT, `scripts/${n}-check.ts`)) || scripts[`${n}:check`] !== `tsx scripts/${n}-check.ts`);
   check("each roadmap check exists and its own :check script runs it alone", missing.length === 0, missing.join(", "));
   const lifeDay = read("scripts/life-day-check.ts");
-  check("life-day-check's exact life:check list names the 7 roadmap checks", LIFE.every((n) => lifeDay.includes(`"${n}"`)));
+  check("life-day-check's exact life:check list names the 9 roadmap checks and goals-close", [...LIFE, "goals-close"].every((n) => lifeDay.includes(`"${n}"`)));
 
   // ui-audit: the roadmap fixture routes, and the rehearsal-only guard (run with --plan: it exits before Chrome starts;
   // a missing --chrome path is passed too, so nothing could start a browser even if --plan broke).
@@ -1079,8 +1123,1526 @@ console.log("— integration —");
   check("ui-audit records the Aim card heights ([data-aim-card], .rm-ac) and Today's quest slot", /\[data-aim-card\]/.test(auditSrc) && /\.rm-ac, \.rm-ac-empty/.test(auditSrc) && /\.rm-quests-slot/.test(auditSrc));
 }
 
-if (failed > 0) {
-  console.log(`\nroadmap-contract-check: ${passed} passed, ${failed} FAILED`);
-  process.exit(1);
+// ═══════════════════════════════════════════════════════════════════════════
+// Revision 4 (docs/life-plan/roadmap-rev4.md; contracts §14)
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log("— rev 4: constants —");
+{
+  eq("depth: Mastered 12 (default), Fluent 10, Retained 8; at most 6 Domains", [RT.AIM_DEPTHS, RT.DEPTH_KEYS, RT.DEPTH_DEFAULT, RT.DEPTH_DOMAINS_MAX], [{ MASTERED: 12, FLUENT: 10, RETAINED: 8 }, ["MASTERED", "FLUENT", "RETAINED"], "MASTERED", 6]);
+  eq(
+    "coverage: floor 25, share 0.8, 3 cards an outline line, typed 1..500; write margin 1.3 (fix round: a 30% spare, contracts §15.2); multiple choice not counted; a retry entry within 2 days",
+    [RT.COVER_FLOOR_CARDS, RT.COVER_SHARE, RT.CARDS_PER_OUTLINE_LINE, RT.COVER_MIN, RT.COVER_MAX, RT.WRITE_MARGIN, RT.NON_RECALL_TYPES, RT.RETRY_ENTRY_DAYS],
+    [25, 0.8, 3, 1, 500, 1.3, ["MULTI"], 2]
+  );
+  eq(
+    "stages: Foundation 4, Familiar 6, Retained 8, Fluent 10, Mastered 12 (= THRESHOLDS); track shares 0.2..1.0; first rank within 75 days; band floors D30/D45/D45",
+    [RT.STAGE_KEYS.map((k) => [k, RT.STAGE_LEVEL[k], RT.STAGE_NAMES[k]]), RT.TRACK_STAGE_KEYS, RT.TRACK_STAGE_SHARES, RT.FIRST_RANK_MAX_DAYS, RT.STAGE_PRACTICE_BAND_MIN],
+    [
+      [["FOUNDATION", 4, "Foundation"], ["FAMILIAR", 6, "Familiar"], ["RETAINED", 8, "Retained"], ["FLUENT", 10, "Fluent"], ["MASTERED", 12, "Mastered"]],
+      ["STAGE_1", "STAGE_2", "STAGE_3", "STAGE_4", "STAGE_5"],
+      [0.2, 0.4, 0.6, 0.8, 1.0],
+      75,
+      { RETAINED: "D30", FLUENT: "D45", MASTERED: "D45" },
+    ]
+  );
+  check("the gate levels are the rev-3 THRESHOLDS; FIRST_RANK_MAX_DAYS = MILESTONE_TARGET_DAYS", json(RT.STAGE_KEYS.map((k) => RT.STAGE_LEVEL[k])) === json(RT.THRESHOLDS) && RT.FIRST_RANK_MAX_DAYS === RT.MILESTONE_TARGET_DAYS);
+  eq(
+    "dates: REALISTIC / CHOSEN; FITS, TIGHT, OVER, IMPOSSIBLE; an Over date asks up to 2× the pace; schedule-bound at 0.9; PACE_SHARE is INTENSITY",
+    [RT.DATE_MODES, RT.DATE_VERDICTS, RT.OVER_PACE_FACTOR, RT.SCHEDULE_BOUND_SHARE, RT.PACE_SHARE === RT.INTENSITY],
+    [["REALISTIC", "CHOSEN"], ["FITS", "TIGHT", "OVER", "IMPOSSIBLE"], 2, 0.9, true]
+  );
+  eq(
+    "the reach model: version 2; steps 0.005 / 0.01 / 0.05; T_MAX 1080; priors p 0.80, c 0.85, ρ 0.6; long gap from level 9, capped at 0.80; ρ over 90 days, an off day under half its queue, 28 days to measure; strike limit 2",
+    [RT.REACH_MODEL_VERSION, RT.REACH_P_STEP, RT.REACH_C_STEP, RT.REACH_RHO_STEP, RT.REACH_T_MAX, RT.P_PRIOR, RT.C_PRIOR, RT.RHO_PRIOR, RT.LONG_GAP_LEVEL, RT.P_LONG_CAP, RT.CLEARANCE_SERIES_DAYS, RT.OFF_DAY_CLEAR_SHARE, RT.RHO_MIN_DAYS, RT.REACH_STRIKE_LIMIT],
+    [2, 0.005, 0.01, 0.05, 1080, 0.8, 0.85, 0.6, 9, 0.8, 90, 0.5, 28, 2]
+  );
+  check("REACH_T_MAX = SPAN_MAX_DAYS; LONG_GAP_LEVEL is the first level reviewed after a gap of 50 days or more (interval(9) = 50, interval(8) = 36)", RT.REACH_T_MAX === RT.SPAN_MAX_DAYS && RT.interval(9) === 50 && RT.interval(8) < 50);
+  const srs = read("src/lib/srs.ts");
+  check("REACH_STRIKE_LIMIT mirrors srs.ts STRIKE_LIMIT (2)", /const STRIKE_LIMIT = 2;/.test(srs) && RT.REACH_STRIKE_LIMIT === 2);
+  eq("ranks: a track plan's Paragon needs 180 days (and 4 kept stages)", [RT.TRACK_PARAGON_MIN_DAYS, RT.PARAGON_MIN_MILESTONES, RT.STAGE_RANK], [180, 4, { FOUNDATION: 1, FAMILIAR: 2, RETAINED: 3, FLUENT: 4, MASTERED: 5 }]);
+  eq(
+    "the model: Gemini drafting and area suggestions both OFF (lead only); 30 labelled gap strings; gaps ≤ 4, 40 characters, 4 words of ≤ 24; 8 no-space scripts; report paths ≤ 64; reject alarm 0.2",
+    [RT.ROADMAP_GEMINI_LIVE, RT.ROADMAP_GAPS_LIVE, RT.GAPS_LIVE_MIN_LABELLED, RT.GAPS_MAX, RT.GAP_NAME_MAX, RT.GAP_WORDS_MAX, RT.GAP_WORD_CHARS_MAX, RT.NO_SPACE_SCRIPTS, RT.REPORT_PATH_SEGMENT_MAX, RT.REPORT_EXTRA_SEGMENT, RT.REJECT_ALARM_SHARE],
+    [false, false, 30, 4, 40, 4, 24, ["Han", "Hiragana", "Katakana", "Thai", "Lao", "Khmer", "Myanmar", "Tibetan"], 64, "<extra>", 0.2]
+  );
+  check("GEMINI_DRAFTING_OFF (P0) is kept", typeof RT.GEMINI_DRAFTING_OFF === "string" && RT.GEMINI_DRAFTING_OFF.startsWith("Gemini drafting is off"));
+  eq(
+    "the unions grow: ItemKind GAP (PLAN_ITEM_KINDS without it); TargetSource DEPTH; Remedy USE_REALISTIC_DATE and LOWER_DEPTH (the only depth remedies); ReplanTrigger CALIBRATED",
+    [RT.ITEM_KINDS, RT.PLAN_ITEM_KINDS, RT.TARGET_SOURCES, RT.REMEDIES, RT.DEPTH_REMEDIES, RT.REPLAN_TRIGGERS.slice(-1)],
+    [
+      ["DOMAIN", "TOPIC", "PRACTICE", "STEP", "CHECKPOINT", "GAP"],
+      ["DOMAIN", "TOPIC", "PRACTICE", "STEP", "CHECKPOINT"],
+      ["WORKED_OUT", "YOURS", "DEPTH"],
+      ["MOVE_DATE", "REFIT_LIGHT", "MOVE_TO_LATER", "USE_REALISTIC_DATE", "LOWER_DEPTH"],
+      ["USE_REALISTIC_DATE", "LOWER_DEPTH"],
+      ["CALIBRATED"],
+    ]
+  );
+  eq(
+    "BlockingFlag NOT_IN_YOUR_WORDS; ItemNote GEMINI_PICK, NOT_CHOSEN, FROM_SUGGESTION, PRODUCTION_ADDED; MilestoneNote HELD_AT_START, LONG_WINDOW, NO_PRODUCTION_SLOT, DEPTH_LOWERED; DropReason DUPLICATE, NOT_A_NAME, REJECTED, CONSTRAINT",
+    [RT.BLOCKING_FLAGS.slice(-1), RT.ITEM_NOTES.slice(-4), RT.MILESTONE_NOTES.slice(-4), RT.DROP_REASONS.slice(-4)],
+    [["NOT_IN_YOUR_WORDS"], ["GEMINI_PICK", "NOT_CHOSEN", "FROM_SUGGESTION", "PRODUCTION_ADDED"], ["HELD_AT_START", "LONG_WINDOW", "NO_PRODUCTION_SLOT", "DEPTH_LOWERED"], ["DUPLICATE", "NOT_A_NAME", "REJECTED", "CONSTRAINT"]]
+  );
+  eq(
+    "checkpoints: EXAM_DAY is stored but never pickable (CHECKPOINT_KINDS unchanged); stage values; integrity codes and verdicts; card segments",
+    [RT.CHECKPOINT_KINDS, RT.STORED_CHECKPOINT_KINDS, RT.STAGE_VALUES, RT.INTEGRITY_CODES, RT.INTEGRITY_VERDICTS, RT.CARD_SEGMENTS, RT.CALIBRATING_INPUTS],
+    [
+      ["MOCK_TEST", "PERFORMANCE_CHECK", "SELF_TEST"],
+      ["MOCK_TEST", "PERFORMANCE_CHECK", "SELF_TEST", "EXAM_DAY"],
+      ["FOUNDATION", "FAMILIAR", "RETAINED", "FLUENT", "MASTERED", "BETWEEN", "PART", "STAGE_1", "STAGE_2", "STAGE_3", "STAGE_4", "STAGE_5"],
+      ["TYPE", "ENUM", "EXTRA_PROPERTY", "MISSING_REQUIRED", "FREE_TEXT", "OVER_MAX_ITEMS"],
+      ["CLEAN", "SALVAGED", "REJECTED"],
+      ["r", "rc"],
+      ["p", "c", "rho", "pace"],
+    ]
+  );
+  eq("examPrefillOf: 'Pass the bar' and 'Become a chartered accountant' prefill Yes; 'Play guitar at an open mic' No", [RT.examPrefillOf("Pass the bar"), RT.examPrefillOf("Become a chartered accountant"), RT.examPrefillOf("Play guitar at an open mic")], [true, true, false]);
 }
-console.log(`\nroadmap-contract-check: ${passed} passed, 0 failed`);
+
+// ═══ Rev 4: the reach model (F-R4-8) ═════════════════════════════════════════
+
+console.log("— rev 4: the reach model —");
+const PR = (p: number, extra: Partial<RT.ReachParams> = {}): RT.ReachParams => ({ p, pLong: p, c: 1, rho: 0, m: 1, strikeLimit: 2, graceExtra: 0, ...extra });
+{
+  // The goldens confirmed with design B's probe (c = 1, m = 1, pLong = p, no cleanAt).
+  let worst = 0;
+  for (const L of [6, 8, 10, 12]) for (const p of [0.75, 0.85, 0.92]) worst = Math.max(worst, Math.abs(RT.reachProb(PR(p), 1, L, 0) - Math.pow(p, L - 1)));
+  check("reachProb(1, L, 0) = p^(L−1) for L 6/8/10/12 and p 0.75/0.85/0.92 at c = 1 (to 1e-12: the zero-slack case is rev 3's p^k)", worst < 1e-12, String(worst));
+  const r3 = (x: number) => Math.round(x * 1000) / 1000;
+  eq(
+    "at p 0.85, c = 1: L12 from a new card with slack 7, 30, 60 → 0.822, 0.904, 0.950; L10 slack 7 → 0.862; L8 slack 30 → 0.993; at p 0.75, L12 slack 60 → 0.842",
+    [r3(RT.reachProb(PR(0.85), 1, 12, 7)), r3(RT.reachProb(PR(0.85), 1, 12, 30)), r3(RT.reachProb(PR(0.85), 1, 12, 60)), r3(RT.reachProb(PR(0.85), 1, 10, 7)), r3(RT.reachProb(PR(0.85), 1, 8, 30)), r3(RT.reachProb(PR(0.75), 1, 12, 60))],
+    [0.822, 0.904, 0.95, 0.862, 0.993, 0.842]
+  );
+  check("p = 1 and c = 1 give 1 for any slack ≥ 0", [0, 1, 7, 90, 400].every((s) => RT.reachProb(PR(1), 1, 12, s) === 1) && RT.reachProb(PR(1), 3, 10, 0) === 1);
+  check("a negative slack gives 0; a level at or above L gives 1", RT.reachProb(PR(0.85), 1, 12, -1) === 0 && RT.reachProb(PR(0.85), 12, 12, -5) === 1 && RT.reachProb(PR(0.85), 13, 12, 0) === 1);
+  const slacks = [0, 3, 7, 14, 30, 60, 120, 240];
+  const mono = (f: (s: number) => number) => slacks.every((s, i) => i === 0 || f(s) >= f(slacks[i - 1]) - 1e-15);
+  check("reachProb is monotone in slack (at c = 1 and at c = 0.8, ρ 0.6, pLong 0.8, clean entry)", mono((s) => RT.reachProb(PR(0.85), 1, 12, s)) && mono((s) => RT.reachProb(PR(0.85, { c: 0.8, rho: 0.6, pLong: 0.8 }), 1, 12, s, { cleanAt: 12 })));
+  const ps = [0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 1];
+  check("… monotone in p", ps.every((p, i) => i === 0 || RT.reachProb(PR(p, { c: 0.9, rho: 0.5 }), 1, 10, 30) >= RT.reachProb(PR(ps[i - 1], { c: 0.9, rho: 0.5 }), 1, 10, 30) - 1e-15));
+  const cs = [0.5, 0.6, 0.7, 0.8, 0.9, 1];
+  check("… monotone in c; c = 0.7 is strictly lower than c = 1 at the same slack", cs.every((c, i) => i === 0 || RT.reachProb(PR(0.85, { c, rho: 0.5 }), 1, 12, 60) >= RT.reachProb(PR(0.85, { c: cs[i - 1], rho: 0.5 }), 1, 12, 60) - 1e-15) && RT.reachProb(PR(0.85, { c: 0.7, rho: 0.3 }), 1, 12, 60) < RT.reachProb(PR(0.85), 1, 12, 60));
+  // m = 1.5 scales the floors: a card written d − floorBase(L, 1.5) days ago has exactly zero slack.
+  const d = addDays(TODAY, 400);
+  const at15 = (back: number) => RT.newExpectedSlack([addDays(d, -back)], 10, d, PR(0.85, { m: 1.5 }));
+  check("m = 1.5 scales the floors: zero slack at floorBase(10, 1.5) = 233 days gives p^9; a day less gives 0", Math.abs(at15(RT.floorBase(10, 1.5)) - Math.pow(0.85, 9)) < 1e-12 && at15(RT.floorBase(10, 1.5) - 1) === 0 && RT.floorBase(10, 1.5) === 233);
+  // A card past its grace projects from ℓ − 1 (effectiveState), due today.
+  const past = RT.effectiveState({ level: 7, dueDay: addDays(TODAY, -20), graceEndsDay: addDays(TODAY, -2) }, TODAY);
+  const by = addDays(TODAY, 200);
+  check(
+    "a card past its grace projects from ℓ − 1: its expected reach equals a level-6 card due today",
+    past.level === 6 && past.dueDay === TODAY && Math.abs(RT.existingExpectedSlack([past], 10, by, PR(0.85)) - RT.existingExpectedSlack([{ level: 6, dueDay: TODAY }], 10, by, PR(0.85))) < 1e-15
+  );
+  // The rev-3 worked example (18.4), reproduced at zero slack with c = 1: 12 at level 6+, 10 at level 4 due today, on the day they can first reach 6.
+  const ex = [...Array.from({ length: 12 }, () => ({ level: 6, dueDay: addDays(TODAY, 9) })), ...Array.from({ length: 10 }, () => ({ level: 4, dueDay: TODAY }))];
+  const reach6 = RT.bestReach({ level: 4, dueDay: TODAY }, 6);
+  check("rev 3's worked example: 12 + 10 × 0.8² = 18.4 at zero slack, c = 1 (existingExpectedSlack = existingExpected there)", Math.abs(RT.existingExpectedSlack(ex, 6, reach6, PR(0.8)) - 18.4) < 1e-9 && Math.abs(RT.existingExpected(ex, 6, reach6, 0.8) - 18.4) < 1e-9);
+  // The spec pack's Inference: 9 cards at level 2 due today plus 19 new at 3 a week (the reference plan), p 0.8, c = 1, no clean entry: 26.0 of 28 at L12 by day 434 (rev 3: 2.6).
+  const inf = Array.from({ length: 9 }, () => ({ level: 2, dueDay: TODAY }));
+  const write = RT.referenceWriteDaysOf({ inf: 19 }, 3, TODAY).inf;
+  const by434 = addDays(TODAY, 434);
+  const got = RT.existingExpectedSlack(inf, 12, by434, PR(0.8)) + RT.newExpectedSlack(write, 12, by434, PR(0.8));
+  const rev3 = RT.existingExpected(inf, 12, by434, 0.8) + 19 * Math.pow(0.8, 11);
+  check("the spec pack's Inference expects 26.0 of 28 at L12 by day 434 (rev 3's p^k gave 2.6)", Math.round(got * 10) / 10 === 26.0 && Math.round(rev3 * 10) / 10 === 2.6, `${got.toFixed(3)} vs ${rev3.toFixed(3)}`);
+  eq("the reference writing plan: 19 cards at 3 a week, card k on day floor(7k ÷ 3); two Domains share 4.2 a week by their need", [write.slice(0, 4).map((w) => daysBetween(TODAY, w)), daysBetween(TODAY, write[18]), RT.referenceWriteDaysOf({ a: 28, b: 28 }, 4.2, TODAY).a.slice(0, 3).map((w) => daysBetween(TODAY, w)), RT.referenceWriteDaysOf({ a: 0, b: 3 }, 0, TODAY)], [[0, 2, 4, 7], 42, [0, 3, 6], { a: [], b: [] }]);
+}
+
+// The new parameters: ρ, pLong, clean entry and the priors (computed here, printed, pinned).
+{
+  // An independent model of independent days (ρ = 1 − c), written apart from the table: the realism reviewer's hand-run in code.
+  const indep = (p: number, pLong: number, c: number, L: number, slack: number, cleanAt: number | null): number => {
+    const memo = new Map<string, number>();
+    const V = (target: number, t: number, l: number, s: number, o: number): number => {
+      if (l >= target) return 1;
+      if (t < 0) return 0;
+      const key = `${target}|${t}|${l}|${s}|${o}`;
+      const hit = memo.get(key);
+      if (hit !== undefined) return hit;
+      const G = graceDays(l);
+      const q = l >= RT.LONG_GAP_LEVEL ? pLong : p;
+      const down = Math.max(1, l - 1);
+      const tomorrow = (nl: number, ns: number, no: number) => (t - 1 < 0 ? 0 : V(target, t - 1, nl, ns, no));
+      let pass: number;
+      if (l + 1 >= target) pass = cleanAt === target && s > 0 ? (t - RT.interval(target) < 0 ? 0 : V(target + 1, t - RT.interval(target), target, 0, 0)) : 1;
+      else pass = t - RT.interval(l + 1) < 0 ? 0 : V(target, t - RT.interval(l + 1), l + 1, 0, 0);
+      const miss = s + 1 < 2 ? (o + 1 > G ? tomorrow(down, 0, 0) : tomorrow(l, s + 1, o + 1)) : tomorrow(down, 0, 0);
+      const on = q * pass + (1 - q) * miss;
+      const off = o + 1 > G ? tomorrow(down, 0, 0) : tomorrow(l, s, o + 1);
+      const v = c * on + (1 - c) * off;
+      memo.set(key, v);
+      return v;
+    };
+    let need = 0;
+    for (let l = 2; l <= L - 1; l++) need += RT.interval(l);
+    return V(L, need + slack, 1, 0, 0);
+  };
+  const a = RT.reachProb(PR(0.85, { c: 0.9, rho: 0.1, pLong: 0.8 }), 1, 12, 60);
+  const b = indep(0.85, 0.8, 0.9, 12, 60, null);
+  const ac = RT.reachProb(PR(0.85, { c: 0.9, rho: 0.1, pLong: 0.8 }), 1, 12, 60, { cleanAt: 12 });
+  const bc = indep(0.85, 0.8, 0.9, 12, 60, 12);
+  check("ρ = 1 − c gives exactly the independent-day values (an independent model, L12 slack 60, c 0.9, pLong 0.8, with and without clean entry)", Math.abs(a - b) < 1e-12 && Math.abs(ac - bc) < 1e-12, `${a} vs ${b}; ${ac} vs ${bc}`);
+  const rhos = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9].map((rho) => RT.reachProb(PR(0.85, { c: 0.9, rho }), 1, 12, 60));
+  console.log(`  ρ 0.1..0.9 at c 0.9, L12 slack 60: ${rhos.map((x) => x.toFixed(4)).join(" ")}`);
+  check("reachProb is strictly decreasing in ρ at fixed c (L12, c 0.9): missed days that bunch cost more", rhos.every((x, i) => i === 0 || x < rhos[i - 1]));
+  eq(
+    "pLong < p lowers L10 and L12 and leaves L8 unchanged (pinned: 0.9307 < 0.9478; 0.9137 < 0.9504; 0.9932 = 0.9932)",
+    [10, 12, 8].map((L) => [RT.reachProb(PR(0.85, { pLong: 0.8 }), 1, L, L === 12 ? 60 : 30), RT.reachProb(PR(0.85), 1, L, L === 12 ? 60 : 30)].map((x) => Number(x.toFixed(4)))),
+    [[0.9307, 0.9478], [0.9137, 0.9504], [0.9932, 0.9932]]
+  );
+  const clean = (p: number, strikeLimit = 2) => [RT.reachProb(PR(p, { strikeLimit }), 1, 12, 60, { cleanAt: 12 }), RT.reachProb(PR(p, { strikeLimit }), 1, 12, 60)];
+  check(
+    "cleanAt L*: strictly lower whenever p < 1 and the strike limit ≥ 2 (0.8265 < 0.9504 at p 0.85); equal at p = 1; equal with a strike limit of 1 (no retry exists)",
+    clean(0.85)[0] < clean(0.85)[1] && Number(clean(0.85)[0].toFixed(4)) === 0.8265 && clean(0.6)[0] < clean(0.6)[1] && clean(0.85, 3)[0] < clean(0.85, 3)[1] && clean(1)[0] === clean(1)[1] && Math.abs(clean(0.85, 1)[0] - clean(0.85, 1)[1]) < 1e-15
+  );
+  const card = (level: number, retryEntry: boolean): RT.ReachCard => ({ level, dueDay: addDays(TODAY, 30), retryEntry });
+  const at = addDays(TODAY, 100);
+  check(
+    "a card at exactly L* on a retry entry needs one more pass for the `rc` terms (its next review is due in 30 days: reachProb(12, 13, 70)); a clean one counts 1; at L* + 1 it always counts",
+    RT.existingExpectedSlack([card(12, false)], 12, at, PR(0.85), { cleanAt: 12 }) === 1 &&
+      Math.abs(RT.existingExpectedSlack([card(12, true)], 12, at, PR(0.85), { cleanAt: 12 }) - RT.reachProb(PR(0.85), 12, 13, 70)) < 1e-15 &&
+      RT.existingExpectedSlack([card(12, true)], 12, at, PR(0.85)) === 1 &&
+      RT.existingExpectedSlack([card(13, true)], 12, at, PR(0.85), { cleanAt: 12 }) === 1
+  );
+  const cal = { kind: "calibrating" as const, have: 3, need: 30 };
+  const prior = RT.reachInputsOf({ passShare: cal, clearance: cal }, 1);
+  const measured = RT.reachInputsOf({ passShare: { kind: "measured", value: 0.92, n: 120 }, clearance: { kind: "measured", value: 0.95, n: 14 }, absencePersistence: { kind: "measured", value: 0.4, n: 60 } }, 1.5, { extraStrikes: 1, graceExtraDays: 2 });
+  eq(
+    "the priors: calibrating p 0.80, c 0.85, ρ 0.6 (never 1), each recorded; measured inputs pass through, pLong = min(p, 0.80), the loadout's strikes and grace",
+    [prior.params, prior.calibrating, measured.params, measured.calibrating],
+    [
+      { p: 0.8, pLong: 0.8, c: 0.85, rho: 0.6, m: 1, strikeLimit: 2, graceExtra: 0 },
+      ["p", "c", "rho"],
+      { p: 0.92, pLong: 0.8, c: 0.95, rho: 0.4, m: 1.5, strikeLimit: 3, graceExtra: 2 },
+      [],
+    ]
+  );
+  eq("the best case is p = pLong = c = 1 (its own line, never the date)", RT.bestCaseParams(1), { p: 1, pLong: 1, c: 1, rho: 0, m: 1, strikeLimit: 2, graceExtra: 0 });
+  eq(
+    "the table rounds its parameters (p to 0.005, pLong and c to 0.01, ρ to 0.05), never lifts pLong above p, and clamps an impossible ρ",
+    [RT.reachParamsKey({ p: 0.8237, pLong: 0.8237, c: 0.873, rho: 0.62, m: 1, strikeLimit: 2, graceExtra: 0 }), RT.reachParamsKey({ p: 0.3, pLong: 0.3, c: 0.3, rho: 0, m: 1, strikeLimit: 2, graceExtra: 0 }).rho],
+    [{ p: 0.825, pLong: 0.82, c: 0.87, rho: 0.6, m: 1, strikeLimit: 2, graceExtra: 0 }, 0.571429]
+  );
+  const t0 = Date.now();
+  const fresh = RT.reachProb({ p: 0.835, pLong: 0.8, c: 0.83, rho: 0.45, m: 1.25, strikeLimit: 2, graceExtra: 1 }, 1, 12, 60, { cleanAt: 12 });
+  const ms = Date.now() - t0;
+  console.log(`  building a c < 1 table (L12 with clean entry, so L13 too): ${ms} ms`);
+  check("building the table for c < 1 takes ≤ 400 ms", ms <= 400 && fresh > 0 && fresh < 1, `${ms} ms`);
+}
+
+// ═══ Rev 4: the worked examples, recomputed under the final model (F-R4-10) ═══
+
+console.log("— rev 4: worked examples —");
+{
+  // Stage days (days from today, before the Sunday snap) at c = 1 with no held day, through roadmap-types stageDayOf and the
+  // reference writing plan (referenceWriteDaysOf). "design B" = pLong = p and no clean entry (the spec's figures, reproduced);
+  // "final" = pLong = min(p, 0.80) and cleanAt = 12 at the final gate (lane 0's recomputation, pinned).
+  const GATES = [4, 6, 8, 10, 11, 12];
+  const ladder = (doms: { n: number; cards: RT.ReachCard[]; newNeeded: number }[], rate: number, params: RT.ReachParams, clean: boolean) => {
+    const need: Record<string, number> = {};
+    doms.forEach((x, i) => (need[`d${i}`] = x.newNeeded));
+    const w = RT.referenceWriteDaysOf(need, rate, TODAY);
+    const input = doms.map((x, i) => ({ n: x.n, cards: x.cards, writeDays: w[`d${i}`] }));
+    const days = GATES.map((L) => {
+      const day = RT.stageDayOf(input, L, TODAY, params, clean && L === 12 ? { cleanAt: 12 } : undefined);
+      return day ? daysBetween(TODAY, day) : null;
+    });
+    const best = RT.stageDayOf(input, 12, TODAY, RT.bestCaseParams(1));
+    return { days, best: best ? daysBetween(TODAY, best) : null };
+  };
+  const cardsAtL = (n: number, level: number, dueIn: (i: number) => number): RT.ReachCard[] => Array.from({ length: n }, (_, i) => ({ level, dueDay: addDays(TODAY, dueIn(i)) }));
+  // The new-card need at a given margin (writeNeedOf's arithmetic): the spec's figures assumed 1.1; the plan writes at WRITE_MARGIN.
+  const needAt = (margin: number, n: number, live: number) => Math.max(0, Math.ceil(Math.round(margin * n * 1e9) / 1e9) - live);
+  const learner = (margin: number) => [{ n: 25, cards: [], newNeeded: needAt(margin, 25, 0) }, { n: 25, cards: [], newNeeded: needAt(margin, 25, 0) }];
+  // The spec's pack. Inference: 9 cards at level 2 due today (the fixture rev 3's 2.6 implies), n 25.
+  // Probability: 42 cards matching its D-line (18 at level 6+, 2 at 12), n 34.
+  const probabilityCards = [...cardsAtL(2, 12, (i) => 40 + i), ...cardsAtL(6, 8, (i) => 5 + 5 * i), ...cardsAtL(5, 7, (i) => 3 + 4 * i), ...cardsAtL(5, 6, (i) => 2 + 3 * i), ...cardsAtL(8, 5, (i) => 1 + i), ...cardsAtL(8, 4, (i) => i), ...cardsAtL(8, 3, (i) => i % 4)];
+  const pack = (margin: number) => [
+    { n: 34, newNeeded: needAt(margin, 34, 42), cards: probabilityCards },
+    { n: 25, cards: cardsAtL(9, 2, () => 0), newNeeded: needAt(margin, 25, 9) },
+  ];
+  check(
+    "the pack fixture matches its D-lines: Probability 42 cards, 18 at level 6+, 2 at 12, n 34; Inference 9, n 25 — needing 0 and 19 at the spec's 1.1, 3 and 24 at WRITE_MARGIN (writeNeedOf)",
+    probabilityCards.length === 42 && probabilityCards.filter((c) => c.level >= 6).length === 18 && probabilityCards.filter((c) => c.level >= 12).length === 2 && json(pack(1.1).map((d) => d.newNeeded)) === json([0, 19]) && json(pack(RT.WRITE_MARGIN).map((d) => d.newNeeded)) === json([RT.writeNeedOf(34, 42), RT.writeNeedOf(25, 9)]) && json(pack(RT.WRITE_MARGIN).map((d) => d.newNeeded)) === json([3, 24])
+  );
+  const FINAL = (p: number) => PR(p, { pLong: Math.min(p, RT.P_LONG_CAP) });
+  // Design B at the spec's margin (1.1): the spec's figures, reproduced by the reference.
+  const pB = ladder(pack(1.1), 3, PR(0.8), false);
+  const sB = ladder(learner(1.1), 4.2, PR(0.85), false);
+  const uB = ladder(learner(1.1), 5.4, PR(0.85), false);
+  // The final model at 1.1: the build round's recomputation (kept, so the fix round's reason stays checkable).
+  const pF11 = ladder(pack(1.1), 3, FINAL(0.8), true);
+  const sF11 = ladder(learner(1.1), 4.2, FINAL(0.85), true);
+  const uF11 = ladder(learner(1.1), 5.4, FINAL(0.85), true);
+  // The final model at WRITE_MARGIN (1.3): what the plans are dated with now (pinned).
+  const pF = ladder(pack(RT.WRITE_MARGIN), 3, FINAL(0.8), true);
+  const sF = ladder(learner(RT.WRITE_MARGIN), 4.2, FINAL(0.85), true);
+  const uF = ladder(learner(RT.WRITE_MARGIN), 5.4, FINAL(0.85), true);
+  // At the calibrating priors (p 0.80, c 0.85, ρ 0.6), a new learner at Steady: what an "estimate" date reads.
+  const sP = ladder(learner(RT.WRITE_MARGIN), 4.2, PR(RT.P_PRIOR, { pLong: Math.min(RT.P_PRIOR, RT.P_LONG_CAP), c: RT.C_PRIOR, rho: RT.RHO_PRIOR }), true);
+  console.log(`  pack           design B ${pB.days.join(" ")} (best ${pB.best}) · final@1.1 ${pF11.days.join(" ")} · final@${RT.WRITE_MARGIN} ${pF.days.join(" ")} (best ${pF.best})`);
+  console.log(`  learner Steady design B ${sB.days.join(" ")} (best ${sB.best}) · final@1.1 ${sF11.days.join(" ")} · final@${RT.WRITE_MARGIN} ${sF.days.join(" ")} (best ${sF.best}) · at the priors ${sP.days.join(" ")}`);
+  console.log(`  learner Push   design B ${uB.days.join(" ")} (best ${uB.best}) · final@1.1 ${uF11.days.join(" ")} · final@${RT.WRITE_MARGIN} ${uF.days.join(" ")} (best ${uF.best})`);
+  eq("design B's figures are reproduced exactly by the reference: the pack 43 63 109 202 286 414 (best 375)", [pB.days, pB.best], [[43, 63, 109, 202, 286, 414], 375]);
+  eq("… the new learner at Steady 89 108 153 241 318 431 (best 420), and at Push 70 89 135 223 300 412", [sB.days, sB.best, uB.days], [[89, 108, 153, 241, 318, 431], 420, [70, 89, 135, 223, 300, 412]]);
+  eq("the final model at the spec's 1.1 (the build round's pin): the pack's Mastered 517, the learner's 547 (Steady) and 537 (Push)", [pF11.days[5], sF11.days[5], uF11.days[5]], [517, 547, 537]);
+  check(
+    "… why the margin rose: at 1.1 the final stretch (Toward Mastered → Mastered) runs past F-R4-10's bound of MILESTONE_MAX_DAYS + 6 on every one of them",
+    [pF11, sF11, uF11].every((x) => (x.days[5] ?? 0) - (x.days[4] ?? 0) > RT.MILESTONE_MAX_DAYS + 6),
+    json([pF11, sF11, uF11].map((x) => (x.days[5] ?? 0) - (x.days[4] ?? 0)))
+  );
+  eq("RECOMPUTED at WRITE_MARGIN 1.3 (final model, pinned): the pack 48 68 114 205 282 430 (best 379)", [pF.days, pF.best], [[48, 68, 114, 205, 282, 430], 379]);
+  eq("RECOMPUTED at 1.3: the new learner at Steady 89 108 153 242 321 460 (best 420), at Push 70 89 135 224 302 446 (best 402)", [sF.days, sF.best, uF.days, uF.best], [[89, 108, 153, 242, 321, 460], 420, [70, 89, 135, 224, 302, 446], 402]);
+  check(
+    "at 1.3 every final stretch is within F-R4-10's MILESTONE_MAX_DAYS + 6 (192), the priors' included",
+    [pF, sF, uF, sP].every((x) => x.days[4] != null && x.days[5] != null && x.days[5] - x.days[4] <= RT.MILESTONE_MAX_DAYS + 6),
+    json([pF, sF, uF, sP].map((x) => (x.days[5] ?? 0) - (x.days[4] ?? 0)))
+  );
+  check(
+    "… and a new learner's Mastered is about 15 months (question 9 and decision 41: about 11–15 months; ≤ 470 days at Steady, measured and at the priors)",
+    (sF.days[5] ?? Infinity) <= 470 && (uF.days[5] ?? Infinity) <= 470 && (sP.days[5] ?? Infinity) <= 490,
+    json([sF.days[5], uF.days[5], sP.days[5]])
+  );
+  const probAlone = ladder([pack(RT.WRITE_MARGIN)[0]], 3, FINAL(0.8), true);
+  check("Probability binds no gate of the pack (Inference's days are the plan's)", probAlone.days.every((x, i) => x != null && pF.days[i] != null && x <= pF.days[i]!), json(probAlone.days));
+  // The ranks the stages give (decision 40): the pack's [L6, L8, L10, L11, L12]; the new learner's [PART(L6), L6, L8, L10, L11, L12].
+  const packRanks = [RT.rankIndexForStage("FAMILIAR"), RT.rankIndexForStage("RETAINED"), RT.rankIndexForStage("FLUENT"), RT.rankIndexForStage("BETWEEN", 11), RT.rankIndexForStage("MASTERED")];
+  const learnerRanks = [RT.rankIndexForStage("PART", 6), RT.rankIndexForStage("FAMILIAR"), RT.rankIndexForStage("RETAINED"), RT.rankIndexForStage("FLUENT"), RT.rankIndexForStage("BETWEEN", 11), RT.rankIndexForStage("MASTERED")];
+  eq("stage ranks: the pack [2, 3, 4, 4, 5]; the new learner [2, 2, 3, 4, 4, 5] (PART gives its stage's rank, which then keeps it)", [packRanks, learnerRanks], [[2, 3, 4, 4, 5], [2, 2, 3, 4, 4, 5]]);
+  // Proficiency v2's floor table and worked example (R1 computes them; the arithmetic is LEVEL_WEIGHT's).
+  eq(
+    "the cards part's floor at each stage, LEVEL_WEIGHT(ℓ) ÷ LEVEL_WEIGHT(12): 1.8%, 7.4%, 20.3%, 45.6%, 67.6%, 100%",
+    [4, 6, 8, 10, 11, 12].map((l) => Math.round((1000 * RT.LEVEL_WEIGHT(l)) / RT.LEVEL_WEIGHT(12)) / 10),
+    [1.8, 7.4, 20.3, 45.6, 67.6, 100]
+  );
+  const cardsPart = (59 * RT.LEVEL_WEIGHT(8)) / (59 * RT.LEVEL_WEIGHT(12));
+  const value = 0.6 * cardsPart + 0.25 * (30 / 72) + 0.15 * (2 / 5);
+  check("Proficiency v2's worked example: 0.6 × 0.2029 + 0.25 × 0.4167 + 0.15 × 0.4 = 0.2859 → 28%", Math.abs(cardsPart - 0.2029) < 5e-5 && Math.abs(value - 0.2859) < 5e-5 && Math.floor(100 * value) === 28, value.toFixed(4));
+}
+
+// ═══ Rev 4: coverage arithmetic (F-R4-9) ═════════════════════════════════════
+
+console.log("— rev 4: coverage —");
+{
+  eq(
+    "coveragePolicyOf: Probability 42 → 34; Inference 9 → 25; 32 recall of 42 (10 multiple choice) → 26; a new Domain → 25; 12 lines → 36; the share never rounds up on float noise (30 → 24)",
+    [RT.coveragePolicyOf(42, 0).n, RT.coveragePolicyOf(9, 0).n, RT.coveragePolicyOf(32, 0).n, RT.coveragePolicyOf(0, 0).n, RT.coveragePolicyOf(0, 12).n, RT.coveragePolicyOf(30, 0).share, RT.coveragePolicyOf(42, 8)],
+    [34, 25, 26, 25, 36, 24, { n: 34, floor: 25, share: 34, outline: 24 }]
+  );
+  eq("writeNeedOf = max(0, ceil(1.3 × n) − live): Inference 24, Probability 3, a new 25-card Domain 33, n 30 → 39 and n 10 → 13 (float noise never rounds up)", [RT.writeNeedOf(25, 9), RT.writeNeedOf(34, 42), RT.writeNeedOf(25, 0), RT.writeNeedOf(30, 0), RT.writeNeedOf(10, 0)], [24, 3, 33, 39, 13]);
+  check("isRecallType: every card type but MULTI", RT.isRecallType("SHORT") && RT.isRecallType("CLOZE") && !RT.isRecallType("MULTI") && !RT.isRecallType(null));
+}
+
+// ═══ Rev 4: stages and ranks (F-R4-10, F-R4-12) ══════════════════════════════
+
+console.log("— rev 4: stages and ranks —");
+{
+  const ladders: Record<string, readonly string[]> = {
+    "title bands": TITLE_BANDS.map((b) => b.name),
+    "Transcendent ranks": TRANSCENDENT_RANKS.map((r) => r.name),
+    "Field tiers": FIELD_TIERS.flatMap((t) => [t.label, t.tier]),
+    "emblem ranks": Object.entries(RANK_META).flatMap(([rank, meta]) => [rank, meta.label]),
+    "habit rungs": HABIT_RUNGS.map((r) => r.rung),
+    materials: MATERIALS.flatMap((m) => [m, materialLabel(m)]),
+    "Aim ranks": [...RT.AIM_RANKS],
+    "intake and attribute words": ["Recall", "Working knowledge"],
+  };
+  const names = new Set(RT.STAGE_KEYS.map((k) => RT.STAGE_NAMES[k].toLowerCase()));
+  const clashes = Object.entries(ladders).flatMap(([ladder, list]) => list.filter((n) => names.has(n.toLowerCase())).map((n) => `${ladder}: ${n}`));
+  check("STAGE_NAMES are disjoint from every app ladder, the Aim ranks, 'Recall' and 'Working knowledge'", clashes.length === 0, clashes.join(", "));
+  check("'Mastered' names level 12 only", RT.STAGE_KEYS.filter((k) => /master/i.test(RT.STAGE_NAMES[k])).every((k) => RT.STAGE_LEVEL[k] === 12) && RT.stageOfLevel(12) === "MASTERED" && RT.STAGE_LEVEL.MASTERED === RT.TOP_LEVEL);
+  eq(
+    "stageLabelOf: a gate's name; BETWEEN at 11 → 'Toward Mastered', at 7 → 'Toward Retained'; PART at 6 → 'Familiar, part 1'; a track stage or a missing level → null",
+    [RT.stageLabelOf("FLUENT"), RT.stageLabelOf("BETWEEN", 11), RT.stageLabelOf("BETWEEN", 7), RT.stageLabelOf("PART", 6), RT.stageLabelOf("STAGE_2"), RT.stageLabelOf("BETWEEN"), RT.stageLabelOf(null)],
+    ["Fluent", "Toward Mastered", "Toward Retained", "Familiar, part 1", null, null, null]
+  );
+  eq("gateStagesTo: the response schema's SLOTS, FOUNDATION … the depth's key", [RT.gateStagesTo(12), RT.gateStagesTo(8)], [["FOUNDATION", "FAMILIAR", "RETAINED", "FLUENT", "MASTERED"], ["FOUNDATION", "FAMILIAR", "RETAINED"]]);
+  eq("rankIndexForStage: gates 1..5; BETWEEN keeps the rank below; PART takes its stage's; a track stage → null", [RT.STAGE_KEYS.map((k) => RT.rankIndexForStage(k)), RT.rankIndexForStage("BETWEEN", 5), RT.rankIndexForStage("PART", 4), RT.rankIndexForStage("STAGE_3"), RT.rankIndexForStage("PART")], [[1, 2, 3, 4, 5], 1, 1, null, null]);
+  eq(
+    "rankIndexForStage (fix round, §15.4): a PART counting toward the depth's own gate gives the gate below's rank, never the depth's — at 12 Expert (whatever depth is passed), at 10 on a Fluent plan Specialist, at 8 on a Retained plan Journeyman; a PART below the depth keeps its stage's rank",
+    [RT.rankIndexForStage("PART", 12), RT.rankIndexForStage("PART", 12, 12), RT.rankIndexForStage("PART", 10, 10), RT.rankIndexForStage("PART", 8, 8), RT.rankIndexForStage("PART", 10, 12), RT.rankIndexForStage("PART", 10), RT.rankIndexForStage("PART", 6, 12), RT.rankIndexForStage("MASTERED", null, 12)],
+    [4, 4, 3, 2, 4, 4, 2, 5]
+  );
+  check(
+    "… so a library holding Fluent never shows Virtuoso before Mastered is reached: its [PART(L12), MASTERED] ladder ranks [Expert, Virtuoso]",
+    json([RT.rankIndexForStage("PART", 12, 12), RT.rankIndexForStage("MASTERED", 12, 12)].map((i) => RT.aimRankName(i ?? 0))) === json(["Expert", "Virtuoso"])
+  );
+  eq("depthKeyOf / isAimDepth", [RT.depthKeyOf(12), RT.depthKeyOf(10), RT.depthKeyOf(8), RT.isAimDepth(12), RT.isAimDepth(11), RT.isAimDepth("12")], ["MASTERED", "FLUENT", "RETAINED", true, false, false]);
+
+  // topRankIndexOfDepth's truth table over every input, against a table written apart from it.
+  const want = (x: RT.DepthRankInput): number => {
+    if (x.track) return x.hasStandard && x.keptStages >= 4 && x.spanDays >= 180 ? 6 : Math.min(x.keptStages, 5);
+    if (x.depth === null) return x.keptStages >= 4 ? 6 : Math.min(x.keptStages, 5);
+    const finalRank = { 12: 5, 10: 4, 8: 3 }[x.depth];
+    return x.depth === 12 && x.hasStandard && !x.coverageBelowPolicy && x.productionPlannedFromFluent ? 6 : finalRank;
+  };
+  const bad: string[] = [];
+  let rows = 0;
+  for (const depth of [12, 10, 8, null] as (RT.AimDepth | null)[])
+    for (const track of [false, true])
+      for (const hasStandard of [false, true])
+        for (const coverageBelowPolicy of [false, true])
+          for (const productionPlannedFromFluent of [false, true])
+            for (const keptStages of [0, 1, 3, 4, 5, 6])
+              for (const spanDays of [35, 179, 180, 400]) {
+                const x: RT.DepthRankInput = { depth: track ? null : depth, track, hasStandard, keptStages, spanDays, coverageBelowPolicy, productionPlannedFromFluent };
+                rows++;
+                if (RT.topRankIndexOfDepth(x) !== want(x)) bad.push(json(x));
+              }
+  check(`topRankIndexOfDepth's truth table over every input (${rows} rows)`, bad.length === 0, bad.slice(0, 3).join("; "));
+  const base: RT.DepthRankInput = { depth: 12, track: false, hasStandard: true, keptStages: 5, spanDays: 431, coverageBelowPolicy: false, productionPlannedFromFluent: true };
+  eq(
+    "Paragon on a Mastered plan with a standard; Fluent tops out at Expert; no standard, a Domain below policy, or no production from Fluent on → Virtuoso",
+    [base, { ...base, depth: 10 as const }, { ...base, hasStandard: false }, { ...base, coverageBelowPolicy: true }, { ...base, productionPlannedFromFluent: false }].map((x) => RT.aimRankName(RT.topRankIndexOfDepth(x))),
+    ["Paragon", "Expert", "Virtuoso", "Virtuoso", "Virtuoso"]
+  );
+  const track: RT.DepthRankInput = { depth: null, track: true, hasStandard: true, keptStages: 1, spanDays: 35, coverageBelowPolicy: false, productionPlannedFromFluent: false };
+  eq(
+    "track plans: a 35-day plan with a standard and one kept stage → Aspirant; 200 days, 5 kept, a standard → Paragon; 3 kept → Specialist",
+    [track, { ...track, keptStages: 5, spanDays: 200 }, { ...track, keptStages: 3, spanDays: 200 }].map((x) => RT.aimRankName(RT.topRankIndexOfDepth(x))),
+    ["Aspirant", "Paragon", "Specialist"]
+  );
+  eq("paragonMissingOf names the missing conditions in order", [RT.paragonMissingOf(base), RT.paragonMissingOf({ ...base, depth: 10, hasStandard: false }), RT.paragonMissingOf(track)], [[], ["DEPTH", "STANDARD"], ["STAGES", "SPAN"]]);
+}
+
+// ═══ Rev 4: the measure-key segment (F-R4-9) ═════════════════════════════════
+
+console.log("— rev 4: measure keys —");
+{
+  const r = RT.cardsAtLevelKey(["dB", "dA"], 8, "r");
+  const rc = RT.cardsAtLevelKey(["dA"], 12, "rc");
+  eq("cardsAtLevelKey with a segment: '…|L8|r' and '…|L12|rc'", [r, rc], ["CARDS_AT_LEVEL|d:dA,dB|L8|r", "CARDS_AT_LEVEL|d:dA|L12|rc"]);
+  eq(
+    "parseMeasureKey round-trips `r` and `rc`; a key without them parses exactly as in rev 3 (no segment property)",
+    [RT.parseMeasureKey(r), RT.parseMeasureKey(rc), RT.parseMeasureKey("CARDS_AT_LEVEL|d:dA|L6")],
+    [{ kind: "CARDS_AT_LEVEL", domainIds: ["dA", "dB"], level: 8, segment: "r" }, { kind: "CARDS_AT_LEVEL", domainIds: ["dA"], level: 12, segment: "rc" }, { kind: "CARDS_AT_LEVEL", domainIds: ["dA"], level: 6 }]
+  );
+  check(
+    "… and refuses any other segment, a trailing bar, or a segment on another key kind",
+    RT.parseMeasureKey("CARDS_AT_LEVEL|d:dA|L6|x") === null &&
+      RT.parseMeasureKey("CARDS_AT_LEVEL|d:dA|L6|") === null &&
+      RT.parseMeasureKey("CARDS_AT_LEVEL|d:dA|L6|rcx") === null &&
+      RT.parseMeasureKey(`${RT.practiceKeptKey(["t1"], "2026-10-08")}|r`) === null &&
+      throws(() => RT.cardsAtLevelKey(["dA"], 6, "x" as RT.CardSegment))
+  );
+  // The one parser: no module under src/ outside roadmap-types.ts parses a measure key by hand.
+  const offenders: string[] = [];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(join(ROOT, dir))) {
+      const rel = `${dir}/${name}`;
+      if (statSync(join(ROOT, rel)).isDirectory()) walk(rel);
+      else if (/\.(ts|tsx)$/.test(name) && rel !== "src/lib/roadmap-types.ts") {
+        const src = read(rel);
+        if (/CARDS_AT_LEVEL\\\||PRACTICE_KEPT\\\||startsWith\(["'`]CARDS_AT_LEVEL|startsWith\(["'`]PRACTICE_KEPT|measureKey\.split\(/.test(src)) offenders.push(rel);
+      }
+    }
+  };
+  walk("src");
+  check("no measure-key parser outside parseMeasureKey (a grep over src/)", offenders.length === 0, offenders.join(", "));
+}
+
+// ═══ Rev 4: titles and code templates (F-R4-10, F-R4-18) ═════════════════════
+
+console.log("— rev 4: titles —");
+{
+  const dn = (name: string) => RT.domainName({ id: name.toLowerCase(), name });
+  const [prob, inf, calc, risk, lin] = ["Probability", "Inference", "Calculus", "Risk Management", "Linear Algebra"].map(dn);
+  const aim = RT.yoursText("USER", "PENDING", "Run a sub-50 10K")!;
+  const exam = RT.yoursText("USER", "PENDING", "SOA Exam P")!;
+  eq(
+    "stage titles: '{stage}: {domains} to level {L}+', the count gate's 'part 1', a track stage's '{aim} · stage {k} of {n}'",
+    [
+      RT.codeText("{stage}: {domains} to level {L}+", { stage: "Familiar", domains: [prob, inf], level: 6 }),
+      RT.codeText("{stage}, part 1: {domains} to level {L}+", { stage: "Familiar", domains: [inf], level: 6 }),
+      RT.codeText("{stage}: {domains} to level {L}+", { stage: "Toward Mastered", domains: [prob, inf], level: 11 }),
+      RT.codeText("{aim} · stage {k} of {n}", { aim, k: 2, n: 5 }),
+    ],
+    ["Familiar: Probability, Inference to level 6+", "Familiar, part 1: Inference to level 6+", "Toward Mastered: Probability, Inference to level 11+", "Run a sub-50 10K · stage 2 of 5"]
+  );
+  eq(
+    "{domains} reads 'A, B and two more' past three names (spelled: a code name holds no digit but {L}, {k}, {n})",
+    [RT.codeText("Recall drills: {domains}", { domains: [prob, inf, calc] }), RT.codeText("Recall drills: {domains}", { domains: [prob, inf, calc, risk] }), RT.domainsShort([prob, inf, calc, risk, lin, dn("Statistics")])],
+    ["Recall drills: Probability, Inference, Calculus", "Recall drills: Probability, Inference and two more", "Probability, Inference and four more"]
+  );
+  check(
+    "codeText refuses a stage that isn't a stage name, {k} past {n}, a {k} of 0, and an unfilled {exam}",
+    throws(() => RT.codeText("{stage}: {domains} to level {L}+", { stage: "Grandmaster", domains: [prob], level: 6 })) &&
+      throws(() => RT.codeText("{aim} · stage {k} of {n}", { aim, k: 3, n: 2 })) &&
+      throws(() => RT.codeText("{aim} · stage {k} of {n}", { aim, k: 0, n: 2 })) &&
+      throws(() => RT.codeText("Book {exam}", {})) &&
+      RT.codeText("Book {exam}", { exam }) === "Book SOA Exam P"
+  );
+  check("one pass: a Domain named '{L}' or an aim holding '{aim}' is never filled again", RT.codeText("{domains} to level {L}+", { domains: [dn("{L}")], level: 6 }) === "{L} to level 6+" && RT.codeText("Practice for {aim}", { aim: RT.yoursText("USER", "PENDING", "Learn {aim}")! }) === "Practice for Learn {aim}");
+  // The count gate's "part 1" is the spec's own stage name (Names; question 13: "Familiar, part 1"), the one literal digit allowed.
+  const digitFree = RT.CODE_TEMPLATES.filter((t) => /\d/.test(t.replace(/\{(L|k|n)\}/g, "").replace(", part 1:", ",:")));
+  check("no code template holds a digit outside {L}, {k}, {n} and the count gate's 'part 1'", digitFree.length === 0, digitFree.join(", "));
+}
+
+// ═══ Rev 4: the catalog (F-R4-18) ════════════════════════════════════════════
+
+console.log("— rev 4: the catalog —");
+{
+  const dn = (name: string) => RT.domainName({ id: name.toLowerCase(), name });
+  const fill = { domains: [dn("Probability"), dn("Inference")], aim: RT.yoursText("USER", "PENDING", "Play Clair de Lune")!, exam: RT.yoursText("USER", "PENDING", "SOA Exam P")! };
+  check("every key is unique; 24 practices, 8 steps, 4 checkpoints", new Set(CAT.CATALOG.map((e) => e.key)).size === CAT.CATALOG.length && CAT.PRACTICE_KINDS.length === 24 && CAT.STEP_KINDS.length === 8 && CAT.CATALOG_CHECKPOINT_KINDS.length === 4);
+  check("the checkpoint types are roadmap-types' stored checkpoint kinds", json([...CAT.CATALOG_CHECKPOINT_KINDS].sort()) === json([...RT.STORED_CHECKPOINT_KINDS].sort()));
+  const notTemplates = CAT.CATALOG.flatMap((e) => [e.template, ...(e.trackTemplate ? [e.trackTemplate] : [])]).filter((t) => !(RT.CODE_TEMPLATES as readonly string[]).includes(t));
+  check("every catalog template is a CODE_TEMPLATE", notTemplates.length === 0, notTemplates.join(", "));
+  const renders: string[] = [];
+  for (const e of CAT.CATALOG)
+    for (const track of e.tracks) {
+      try {
+        renders.push(CAT.catalogLabelOf(e.key, { track, ...fill }));
+      } catch (err) {
+        renders.push(`THROW ${e.key}/${track}: ${String(err)}`);
+      }
+    }
+  check("every type renders through codeText on every track it serves", renders.every((r) => !r.startsWith("THROW")), renders.filter((r) => r.startsWith("THROW")).join("; "));
+  eq(
+    "catalogLabelOf goldens",
+    [
+      CAT.catalogLabelOf("RECALL_DRILLS", { track: "FIELD", ...fill }),
+      CAT.catalogLabelOf("READ_AND_CARD", { track: "FIELD", ...fill }),
+      CAT.catalogLabelOf("SLOW_DRILLS", { track: "CRAFT", ...fill }),
+      CAT.catalogLabelOf("EASY_SESSION", { track: "BODY" }),
+      CAT.catalogLabelOf("MOCK_TEST", { track: "FIELD", ...fill }),
+      CAT.catalogLabelOf("EXAM_DAY", { track: "FIELD", ...fill }),
+      CAT.catalogLabelOf("FULL_ATTEMPT", { track: "BODY", ...fill }),
+    ],
+    ["Recall drills: Probability, Inference", "Study Probability, Inference", "Slow, focused drills: Play Clair de Lune", "Easy session", "Mock test: SOA Exam P", "Exam: SOA Exam P", "Do a full attempt at: Play Clair de Lune"]
+  );
+  check("catalogLabelOf refuses a type off its track and an unknown key", throws(() => CAT.catalogLabelOf("HARDER_SESSION", { track: "FIELD" })) && throws(() => CAT.catalogLabelOf("NOPE" as CAT.CatalogKey, { track: "FIELD" })));
+  // The words: no template's own words and no how line holds a digit, a CLAIM_WORD, an evaluative ABOUT_YOU word, or a
+  // RESOURCE_WORD next to a capitalised name. (Second-person pronouns are allowed: code copy addresses the user — "Close your
+  // notes" is the spec's own example — and "strength" is allowed only inside the BODY type's name "Strength session".)
+  const PRONOUNS = new Set(["you", "your", "yours", "yourself"]);
+  const aboutYou = LX.ABOUT_YOU_WORDS.filter((w) => !PRONOUNS.has(w));
+  const tokens = (text: string) => text.toLowerCase().match(/[a-z]+(?:[-'][a-z]+)*/g) ?? [];
+  const wordsOf = (text: string) => ` ${tokens(text).join(" ")} `;
+  const problems: string[] = [];
+  for (const e of CAT.CATALOG) {
+    const own = [e.template, ...(e.trackTemplate ? [e.trackTemplate] : [])].map((t) => t.replace(/\{\w+\}/g, " "));
+    for (const text of [...own.map((t) => (e.key === "STRENGTH_SESSION" ? t.replace(/strength session/i, " ") : t)), ...e.how]) {
+      if (/\d/.test(text)) problems.push(`${e.key}: a digit in "${text}"`);
+      const w = wordsOf(text);
+      for (const c of LX.CLAIM_WORDS) if (w.includes(` ${c} `)) problems.push(`${e.key}: claim word "${c}" in "${text}"`);
+      for (const a of aboutYou) if (w.includes(` ${a} `)) problems.push(`${e.key}: about-you word "${a}" in "${text}"`);
+      for (const r of LX.RESOURCE_WORDS) {
+        const re = new RegExp(`(\\b${r}\\s+[A-Z][a-z]|[A-Z][a-z]+\\s+${r}\\b)`);
+        if (re.test(text.replace(/^[A-Z]/, (ch) => ch.toLowerCase()))) problems.push(`${e.key}: resource word "${r}" next to a name in "${text}"`);
+      }
+    }
+    if (e.how.length < 3 || e.how.length > 5) problems.push(`${e.key}: ${e.how.length} how lines`);
+  }
+  check("no template's own words and no how line holds a digit, a claim word, an evaluative about-you word, or a resource word next to a name; 3–5 how lines each", problems.length === 0, problems.slice(0, 4).join("; "));
+  const methodless = CAT.CATALOG.filter((e) => (e.slot === "PRACTICE" ? !e.method || !RT.METHOD_DEFAULT_BAND[e.method] : e.method !== null)).map((e) => e.key);
+  check("every practice type maps to a PracticeMethod with a METHOD_DEFAULT_BAND; steps and checkpoints (not sessions) carry none", methodless.length === 0, methodless.join(", "));
+  // The run enums.
+  let largest = 0;
+  const leaks: string[] = [];
+  for (const slot of ["PRACTICE", "STEP", "CHECKPOINT"] as const)
+    for (const track of CAT.CATALOG_TRACKS)
+      for (const exam of [false, true])
+        for (const practicesAllowed of [false, true]) {
+          const kinds = CAT.catalogKindsFor(slot, { track, exam, practicesAllowed });
+          largest = Math.max(largest, kinds.length);
+          for (const k of kinds) {
+            const e = CAT.catalogEntryOf(k)!;
+            if (e.codeOnly) leaks.push(`codeOnly ${k}`);
+            if (e.examOnly && !exam) leaks.push(`examOnly ${k} without an exam`);
+            if (!e.tracks.includes(track)) leaks.push(`${k} on ${track}`);
+            if (e.slot !== slot) leaks.push(`${k} in ${slot}`);
+          }
+          if (slot === "PRACTICE" && !practicesAllowed && kinds.length > 0) leaks.push(`practices off on ${track}`);
+        }
+  check("examOnly types are absent from a non-exam run's enum, codeOnly types from every enum, and practices off empties the practice enum", leaks.length === 0, leaks.slice(0, 4).join("; "));
+  check(`every enum has ≤ ${CAT.CATALOG_ENUM_MAX} values (the largest catalog enum: ${largest}; D-keys and S-keys ≤ 40)`, largest <= CAT.CATALOG_ENUM_MAX && CAT.CATALOG_ENUM_MAX === 42 && RT.PACK_MAX_DOMAINS <= 42 && RT.SYLLABUS_MAX_LINES <= 42);
+  check("the run's enum leaves out the constraint filter's exclusions", !CAT.catalogKindsFor("PRACTICE", { track: "BODY", exam: false, practicesAllowed: true, excluded: ["HARDER_SESSION"] }).includes("HARDER_SESSION"));
+  const performers = CAT.CATALOG.filter((e) => e.key === "PERFORMANCE_CHECK" || e.key === "FULL_ATTEMPT");
+  check("every type whose label performs the aim itself (PERFORMANCE_CHECK, FULL_ATTEMPT) is lastStageOnly; SET_UP (preparation) is not", performers.length === 2 && performers.every((e) => e.lastStageOnly === true && e.template.includes("{aim}")) && !CAT.catalogEntryOf("SET_UP")!.lastStageOnly);
+  check("MOCK_TEST, TIMED_PRACTICE, BOOK_EXAM and EXAM_DAY are examOnly; EXAM_DAY alone is codeOnly", ["MOCK_TEST", "TIMED_PRACTICE", "BOOK_EXAM", "EXAM_DAY"].every((k) => CAT.catalogEntryOf(k)!.examOnly) && CAT.CATALOG.filter((e) => e.codeOnly).map((e) => e.key).join() === "EXAM_DAY");
+  const bodyWords = new Set(CAT.CATALOG.filter((e) => e.tracks.includes("BODY") && !e.tracks.includes("FIELD")).flatMap((e) => e.keywords));
+  const fieldClash = CAT.CATALOG.filter((e) => e.tracks.includes("FIELD")).flatMap((e) => e.keywords.filter((k) => bodyWords.has(k)).map((k) => `${e.key}: ${k}`));
+  check("no Field type's keywords contain a BODY keyword ('run-throughs' is not 'run')", fieldClash.length === 0, fieldClash.join(", "));
+  const field = new Set(CAT.CATALOG.filter((e) => e.slot === "PRACTICE" && e.tracks.includes("FIELD")).map((e) => e.key as string));
+  check(
+    "RETRIEVAL_KINDS and PRODUCTION_KINDS are disjoint subsets of the Field practice types; BODY_SAFE_KINDS are body sessions",
+    CAT.RETRIEVAL_KINDS.every((k) => field.has(k)) && CAT.PRODUCTION_KINDS.every((k) => field.has(k)) && !CAT.RETRIEVAL_KINDS.some((k) => (CAT.PRODUCTION_KINDS as readonly string[]).includes(k)) && json(CAT.BODY_SAFE_KINDS) === json(["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION"]) && CAT.BODY_SAFE_KINDS.every((k) => CAT.catalogEntryOf(k)!.tracks.includes("BODY"))
+  );
+  check("own-property lookups only: '__proto__', 'constructor' and 'toString' are never a catalog key", ["__proto__", "constructor", "toString", "hasOwnProperty"].every((k) => CAT.catalogEntryOf(k) === null && !CAT.isCatalogKey(k)));
+  check("a CODE type writes the code origin and its band follows its method", CAT.catalogOriginOf() === "CODE" && CAT.catalogBandOf("BUILD_SOMETHING") === "D60" && CAT.catalogBandOf("OUTLINE") === null && CAT.catalogHowOf("RECALL_DRILLS")[0] === "Close your notes and cards.");
+  // The rendered label meets a negated constraint term (R3's constraintExclusionsOf): pending until R3 implements it.
+  let pending = false;
+  try {
+    const ex = V.constraintExclusionsOf("knee injury, no running", CAT.catalogKindsFor("PRACTICE", { track: "BODY", exam: false, practicesAllowed: true }), { track: "BODY" });
+    check("a type whose rendered label meets a negated constraint term is excluded (with its word): 'no running' removes HARDER_SESSION", ex.some((x) => x.kind === "HARDER_SESSION" && /run/.test(x.word)));
+  } catch (err) {
+    if (!/Not yet/.test(String(err))) throw err;
+    pending = true;
+  }
+  if (pending) console.log("  PENDING (lane R3): constraintExclusionsOf is a shell; the rendered-label exclusion golden runs once R3 implements it");
+}
+
+// ═══ Rev 4: the REVIEW ledger tag (F-R4-8) ═══════════════════════════════════
+
+console.log("— rev 4: the ledger tag —");
+{
+  const srs = read("src/lib/srs.ts");
+  check(
+    "srs.ts appends the level at the end of every REVIEW detail: '<advanced[ · mastered]> · L<from>→<to>' on a pass, '<outcome> · L<level>' on a miss",
+    srs.includes('`${mastered ? "advanced · mastered" : "advanced"} · L${idea.level}→${newLevel}`') &&
+      srs.includes("lateOutcome = `strike · L${idea.level}`;") &&
+      srs.includes("lateOutcome = `${outcome.outcome} · L${idea.level}`;") &&
+      srs.includes("reviewEvent(ideaId, now, 0, lateOutcome)")
+  );
+  eq(
+    "parseReviewDetail reads tagged and untagged rows alike",
+    ["advanced · L11→12", "advanced · mastered · L11→12", "strike · L11", "degraded · L7", "advanced", "strike", "backfill: passed review", null, "weird"].map(RT.parseReviewDetail),
+    [
+      { outcome: "advanced", mastered: false, from: 11, to: 12 },
+      { outcome: "advanced", mastered: true, from: 11, to: 12 },
+      { outcome: "strike", mastered: false, from: 11, to: null },
+      { outcome: "degraded", mastered: false, from: 7, to: null },
+      { outcome: "advanced", mastered: false, from: null, to: null },
+      { outcome: "strike", mastered: false, from: null, to: null },
+      { outcome: "backfill", mastered: false, from: null, to: null },
+      { outcome: null, mastered: false, from: null, to: null },
+      { outcome: null, mastered: false, from: null, to: null },
+    ]
+  );
+  // Every reader of a REVIEW detail matches by prefix (startsWith, includes, LIKE 'x%') or reads through parseReviewDetail,
+  // never with === against an outcome word. (library-model.ts outcomeOf, the last exact reader, now reads through parseReviewDetail.)
+  const exact: string[] = [];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(join(ROOT, dir))) {
+      const rel = `${dir}/${name}`;
+      if (statSync(join(ROOT, rel)).isDirectory()) walk(rel);
+      else if (/\.(ts|tsx)$/.test(name) && !rel.includes("/dev/")) {
+        if (/[=!]==\s*["'](advanced|strike|degraded|shielded|advanced · mastered)["']/.test(read(rel).replace(/\b(outcome|kind)\s*[=!]==\s*["']\w+["']/g, ""))) exact.push(rel);
+      }
+    }
+  };
+  walk("src");
+  check("no REVIEW-detail reader compares an outcome word with ===", exact.length === 0, exact.join(", "));
+  check(
+    "library-model.ts outcomeOf reads the detail through roadmap-types parseReviewDetail (the idea page's history strip)",
+    /import \{[^}]*\bparseReviewDetail\b[^}]*\} from "@\/lib\/roadmap-types"/.test(read("src/components/library/library-model.ts")) &&
+      /export function outcomeOf\([^)]*\)[^{]*\{\s*switch \(parseReviewDetail\(detail\)\.outcome\)/.test(read("src/components/library/library-model.ts"))
+  );
+  const sql = read("scripts/life-audit.sql");
+  check("the audit SQL reads REVIEW details by prefix (LIKE 'advanced%')", /detail LIKE 'advanced%'/.test(sql) && !/detail\s*=\s*'advanced'/.test(sql));
+}
+
+// ═══ Rev 4: legacy plans, the integrity verdict, the view fields (F-R4-16, F-R4-20) ═
+
+console.log("— rev 4: legacy, integrity, view fields —");
+{
+  eq(
+    "isLegacyRoadmap: depth null on a Field Area, or any row with stage null; a track Area with staged rows is not",
+    [
+      RT.isLegacyRoadmap({ fieldId: "f1", depth: null }, [{ stage: "FAMILIAR" }]),
+      RT.isLegacyRoadmap({ fieldId: "f1", depth: 12 }, [{ stage: "FAMILIAR" }, { stage: null }]),
+      RT.isLegacyRoadmap({ fieldId: "f1", depth: 12 }, [{ stage: "FAMILIAR" }, { stage: "MASTERED" }]),
+      RT.isLegacyRoadmap({ fieldId: null, depth: null }, [{ stage: "STAGE_1" }]),
+      RT.isLegacyRoadmap({ fieldId: null, depth: null }, [{}]),
+    ],
+    [true, true, false, false, true]
+  );
+  eq(
+    "integrityVerdictOf: none → CLEAN; only OVER_MAX_ITEMS → SALVAGED; anything else → REJECTED",
+    [RT.integrityVerdictOf([]), RT.integrityVerdictOf([{ code: "OVER_MAX_ITEMS" }, { code: "OVER_MAX_ITEMS" }]), RT.integrityVerdictOf([{ code: "OVER_MAX_ITEMS" }, { code: "EXTRA_PROPERTY" }]), RT.integrityVerdictOf([{ code: "FREE_TEXT" }])],
+    ["CLEAN", "SALVAGED", "REJECTED", "REJECTED"]
+  );
+  const dateCheck: RT.DateCheck = { D_real: "2027-12-12", D_full: "2027-11-21", D_best_pace: "2027-10-17", D_best_2x: "2027-08-01", D_floor: "2027-07-01", verdict: "TIGHT", rateAsked: 4.2, reachByUserDate: 11, reachByExam: 8, scheduleBound: true, dateOrigin: { origin: "REALISTIC", calibrating: ["p"] }, basis: [] };
+  const fields = {
+    intake: { depth: 12, coverage: { d1: 40 }, dateMode: "REALISTIC", exam: true, examDay: "2027-04-04", newDomainNames: ["Bayesian methods"], replaces: null, suggestAreas: false } satisfies Partial<RT.Intake>,
+    lineDomains: ["d1", null] satisfies RT.Syllabus["lineDomains"],
+    reply: { needs: ["D3"], stages: { FOUNDATION: { lines: ["S1"], practices: [{ kind: "RECALL_DRILLS", on: "D1" }], steps: [{ kind: "OUTLINE" }], checkpoint: null } } } satisfies RT.DraftReplyV3,
+    integrity: { verdict: "REJECTED", violations: [{ code: "EXTRA_PROPERTY", path: "stages.FOUNDATION.<extra>" }], modelChars: 0, gapsKept: 0, gapsHidden: 0, gapsDropped: 0, notANameByClause: {} } satisfies RT.ValidationIntegrity,
+    dateCheck,
+    feasibility: { reachModel: 2, dateCheck, depthChoice: { from: 12, to: 10, day: "2026-10-05", reason: "CHOICE" }, coverageChoices: [{ domainId: "d1", policy: 34, typed: 5, day: "2026-10-05" }], domainOrigins: { d3: { by: "GEMINI_NEEDS", day: "2026-10-05" } } } satisfies Partial<RT.Feasibility>,
+    snapshot: { reachModel: 2, pLongStart: 0.8, cStart: 0.92, rhoStart: 0.6, calibrating: ["rho"], newNeededByDomain: { d2: 19 } } satisfies Partial<RT.StartSnapshot>,
+    raise: [{ domainId: "d1", measureKey: "CARDS_AT_LEVEL|d:d1|L8|r", floor: 12, count: 3, dueDays: ["2026-10-07"] }] satisfies RT.RaiseQuestSpec["parts"],
+    add: [{ domainId: "d2", count: 4, pace: 4, cappedBy: null }] satisfies RT.AddQuestSpec["parts"],
+    aimCard: { aimSuggestions: false, lastAim: { roadmapId: "r0", aim: "Pass FRM Part 1", rankIndex: 6, rankName: "Paragon", reached: true, day: "2028-03-03" }, depth: 12, dateChip: { depth: 12, day: "2027-11-21", estimate: true }, legacy: false } satisfies Partial<RT.AimCardView>,
+    step: { open: { kind: "DRAFT", roadmapId: "r1", savedDay: "2026-10-04", running: false }, lastDoneDay: null, lastClosedDay: null, epochDay: "2026-08-01", lastOpenBefore: "2026-10-04", aimSuggestions: null } satisfies RT.AimStep,
+    line: { kind: "START", milestoneId: "m2", ord: 2, stageName: "Familiar", givesRank: "Journeyman", href: "/you/roadmap#now" } satisfies RT.AimLineView,
+    draftView: { exclusions: [{ kind: "HARDER_SESSION", word: "running" }], sessionPicks: { kinds: ["HARDER_SESSION"], constraints: "knee injury, no running", decision: "PENDING" }, gapsHidden: 3, additionsMode: "TOGGLES", unassignedLines: [3, 7] } satisfies Partial<RT.DraftView>,
+    item: { catalogKey: "RECALL_DRILLS", groundRef: null } satisfies Partial<RT.ItemDraft>,
+    milestone: { stage: "PART", arrangedBy: "GEMINI" } satisfies Partial<RT.MilestoneDraft>,
+    throughput: { absencePersistence: { kind: "measured", value: 0.6, n: 90 } } satisfies Partial<RT.Throughput>,
+  };
+  check("the revision-4 shapes compile as documented and are serialisable", json(JSON.parse(json(fields))) === json(fields));
+}
+
+// ═══ Rev 4 fix round: one definition each (contracts §15) ══════════════════════
+
+console.log("— rev 4 fix round: single definitions —");
+{
+  // Clean entry (§15.1): R1's rule, now roadmap-types isRetryEntry; R1's goldens hold on it, and R6's cases read as R1 reads them.
+  const at = (day: DayKey, hh: number) => new Date(`${day}T${String(hh).padStart(2, "0")}:00:00.000Z`).toISOString();
+  const row = (day: DayKey, detail: string, hh = 9): RT.ReviewLedgerRow => ({ day, detail, occurredAt: at(day, hh) });
+  const d0 = "2026-12-01";
+  const tagged = [row("2026-08-13", "advanced · L10→11"), row(d0, "strike · L11"), row(addDays(d0, 1), "advanced · L11→12")];
+  eq(
+    "isRetryEntry (R1's goldens): strike then pass next day; untagged alike; a first-try pass clean; a later pass counts it; a later miss keeps it; untagged 5 days apart clean; tagged 5 days apart a retry; shielded and a degrade from 12 retries; a card that came down to 12 clean; no rows clean; same-day rows by their time",
+    [
+      RT.isRetryEntry(tagged, 12),
+      RT.isRetryEntry([row("2026-08-13", "advanced"), row(d0, "strike"), row(addDays(d0, 1), "advanced")], 12),
+      RT.isRetryEntry([row("2026-08-13", "advanced · L10→11"), row(d0, "advanced · L11→12")], 12),
+      RT.isRetryEntry([...tagged, row("2027-05-10", "advanced · L12→13")], 12),
+      RT.isRetryEntry([...tagged, row("2027-05-10", "strike · L12")], 12),
+      RT.isRetryEntry([row(d0, "strike"), row(addDays(d0, 5), "advanced")], 12),
+      RT.isRetryEntry([row(d0, "strike · L11"), row(addDays(d0, 5), "advanced · L11→12")], 12),
+      RT.isRetryEntry([row(d0, "shielded · L11"), row(addDays(d0, 1), "advanced · L11→12")], 12),
+      RT.isRetryEntry([row(d0, "degraded · L12"), row(addDays(d0, 1), "advanced · L11→12")], 12),
+      RT.isRetryEntry([row(d0, "strike · L12"), row(addDays(d0, 1), "advanced · L12→13")], 12),
+      RT.isRetryEntry([], 12),
+      RT.isRetryEntry([row(d0, "advanced · L11→12", 10), row(d0, "strike · L11", 9)], 12),
+    ],
+    [true, true, false, false, true, false, true, true, true, false, false, true]
+  );
+  const wk = "2026-10-05";
+  eq(
+    "isRetryEntry (R6's rows: `at` in ms, no occurredAt): same-day rows by `at`; a backfill row between is skipped; a strike at another level, a degrade in between, a pass after it read clean",
+    [
+      RT.isRetryEntry([{ day: wk, at: 2, detail: "advanced · L11→12" }, { day: wk, at: 1, detail: "strike · L11" }], 12),
+      RT.isRetryEntry([{ day: wk, detail: "strike · L11" }, { day: addDays(wk, 1), detail: "backfill: passed review" }, { day: addDays(wk, 1), detail: "advanced · L11→12" }], 12),
+      RT.isRetryEntry([{ day: wk, detail: "strike · L9" }, { day: addDays(wk, 1), detail: "advanced · L9→10" }], 12),
+      RT.isRetryEntry([{ day: wk, detail: "strike · L11" }, { day: addDays(wk, 1), detail: "degraded · L11" }, { day: addDays(wk, 2), detail: "advanced · L10→11" }], 12),
+      RT.isRetryEntry([{ day: wk, detail: "strike · L11" }, { day: addDays(wk, 1), detail: "advanced · L11→12" }, { day: addDays(wk, 110), detail: "advanced · L12→13" }], 12),
+    ],
+    [true, true, false, false, false]
+  );
+  check(
+    "… where R6's own rule differed, the one rule is R1's (the DP's): tagged rows 3 days apart are a retry (one climb); a 'shielded · L11' before the pass is a retry; a later 'strike · L12' keeps a retry entry one until its next pass",
+    RT.isRetryEntry([{ day: wk, detail: "strike · L11" }, { day: addDays(wk, 3), detail: "advanced · L11→12" }], 12) &&
+      RT.isRetryEntry([{ day: wk, detail: "shielded · L11" }, { day: addDays(wk, 1), detail: "advanced · L11→12" }], 12) &&
+      RT.isRetryEntry([{ day: wk, detail: "strike · L11" }, { day: addDays(wk, 1), detail: "advanced · L11→12" }, { day: addDays(wk, 160), detail: "strike · L12" }], 12)
+  );
+  // Fix round 2 (§16.1): widened to hold the entering pass and the miss before it (was 173, 253, 176): the worst case is pinned below.
+  eq(
+    "retryReadDaysOf: (interval(12) + graceDays(12) + 1) + (graceDays(11) + 2) = 172 + 12 (m 1.5: 252 + 12), + 2 per grace-extension day",
+    [RT.retryReadDaysOf(12, 1), RT.retryReadDaysOf(12, 1.5), RT.retryReadDaysOf(12, 1, 3), RT.retryReadDaysOf(12, Number.NaN), RT.retryReadDaysOf(12, 1.5, 2)],
+    [184, 264, 190, 184, 268]
+  );
+  const ownDefinition = (f: string, fn: string) => new RegExp(`export\\s+(async\\s+)?function\\s+${fn}\\b|(?:export\\s+)?const\\s+${fn}\\s*=`).test(read(f));
+  pending("roadmap-measures.ts re-exports roadmap-types isRetryEntry and retryReadDaysOf (no second definition)", !ownDefinition("src/lib/roadmap-measures.ts", "isRetryEntry") && !ownDefinition("src/lib/roadmap-measures.ts", "retryReadDaysOf"), "R1");
+  pending("roadmap-quests.ts imports roadmap-types isRetryEntry (no second definition; its goldens follow R1's rule)", !ownDefinition("src/lib/roadmap-quests.ts", "isRetryEntry"), "R6");
+  pending("roadmap-server.ts planContext sets CardState.retryEntry with roadmap-types isRetryEntry over retryReadDaysOf (R2's held-at-start and stage dating read it)", /retryEntry\s*:/.test(read("src/lib/roadmap-server.ts")) && /isRetryEntry\(/.test(read("src/lib/roadmap-server.ts")), "R4");
+
+  // Coverage frozen at intake (§15.3).
+  const prior: RT.CoverageBreakdown[] = [{ domainId: "d-pr", name: "Probability", live: 42, nonRecall: 6, linesTied: 0, linesShared: 0, floor: 25, share: 34, outline: 0, policy: 34, typed: null, n: 34, belowPolicy: false }];
+  eq(
+    "frozenCoverageCountsOf: a Domain in the prior coverage keeps its intake counts (20 cards archived since, or 18 written: still 42 · 6); a Domain new to R reads today's; no prior reads today's; a malformed entry is ignored",
+    [
+      RT.frozenCoverageCountsOf([{ id: "d-pr", live: 22, nonRecall: 6 }], prior),
+      RT.frozenCoverageCountsOf([{ id: "d-pr", live: 60, nonRecall: 6 }, { id: "d-in", live: 9, nonRecall: 0 }], prior),
+      RT.frozenCoverageCountsOf([{ id: "d-pr", live: 22, nonRecall: 1 }], null),
+      RT.frozenCoverageCountsOf([{ id: "d-pr", live: 22, nonRecall: 1 }], [{ domainId: "d-pr", live: Number.NaN }]),
+    ],
+    [
+      [{ id: "d-pr", live: 42, nonRecall: 6 }],
+      [{ id: "d-pr", live: 42, nonRecall: 6 }, { id: "d-in", live: 9, nonRecall: 0 }],
+      [{ id: "d-pr", live: 22, nonRecall: 1 }],
+      [{ id: "d-pr", live: 22, nonRecall: 1 }],
+    ]
+  );
+  check(
+    "… so n_d is unchanged by an archive of 20 cards (34) and by 18 more written (34), and a typed 40 stays at or above policy (no false coverage choice)",
+    RT.coveragePolicyOf(RT.frozenCoverageCountsOf([{ id: "d-pr", live: 22, nonRecall: 6 }], prior)[0].live, 0).n === 34 &&
+      RT.coveragePolicyOf(RT.frozenCoverageCountsOf([{ id: "d-pr", live: 60, nonRecall: 6 }], prior)[0].live, 0).n === 34 &&
+      40 >= RT.coveragePolicyOf(42, 0).n
+  );
+  pending("roadmap-server.ts coverageFor reads frozenCoverageCountsOf (the counts at intake, F-R4-9)", /frozenCoverageCountsOf\(/.test(read("src/lib/roadmap-server.ts")), "R4");
+
+  // Gaps not shown (§15.5), acceptances (§15.7), plan-born tasks (§15.6).
+  eq("gapsNotShownOf: hidden + dropped; missing or malformed counts read 0", [RT.gapsNotShownOf({ gapsHidden: 2, gapsDropped: 3 }), RT.gapsNotShownOf({ gapsHidden: 2 }), RT.gapsNotShownOf(null), RT.gapsNotShownOf({ gapsHidden: -1, gapsDropped: Number.NaN })], [5, 2, 0, 0]);
+  pending("roadmap-server.ts draftViewOf counts gapsNotShownOf (hidden + dropped)", /gapsNotShownOf\(/.test(read("src/lib/roadmap-server.ts")), "R4");
+  pending("roadmap-copy.ts integrityLine counts gapsNotShownOf (hidden + dropped)", /gapsNotShownOf\(/.test(read("src/components/roadmap/roadmap-copy.ts")), "R5");
+  eq("acceptanceOrderBy: version, then acceptedAt, newest first (a fresh array each call)", [RT.acceptanceOrderBy(), RT.acceptanceOrderBy() !== RT.acceptanceOrderBy()], [[{ version: "desc" }, { acceptedAt: "desc" }], true]);
+  eq("isDepthLoweringRecord: a record within its version is a lowered depth; a re-plan's acceptance and the first (null) are not", [RT.isDepthLoweringRecord({ version: 3, previousVersion: 3 }), RT.isDepthLoweringRecord({ version: 3, previousVersion: 2 }), RT.isDepthLoweringRecord({ version: 1, previousVersion: null })], [true, false, false]);
+  const readings = read("src/lib/roadmap-readings.ts");
+  pending("roadmap-readings.ts orders every `take: 1` acceptance read by version then acceptedAt (acceptanceOrderBy), so a lowered depth's record wins", !/orderBy\s*:\s*\{\s*version\s*:\s*"desc"(\s+as\s+const)?\s*\}\s*,\s*take\s*:\s*1/.test(readings), "R1");
+  eq("isRoadmapCaptureKey: 'rm:' keys only (a plan-born goal, practice or step)", [RT.isRoadmapCaptureKey("rm:ms-2"), RT.isRoadmapCaptureKey("rm:ms-2:p0"), RT.isRoadmapCaptureKey("goal:rm"), RT.isRoadmapCaptureKey(null), RT.isRoadmapCaptureKey("RM:ms")], [true, true, false, false, false]);
+  const serverCode = read("src/lib/roadmap-server.ts").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+  pending("roadmap-server.ts never defers applySizing for a plan-born template (no model rationale reaches Today's 'Why', decision 50)", !/e\.applySizing\(/.test(serverCode), "R4");
+  // life-sizing.ts applySizing refuses a plan-born template whoever calls it: run for real in planBornCases (after the last section).
+
+  // The catalog (§15.8, §15.9).
+  eq(
+    "SESSION_PICK_KINDS: every practice type plus FULL_ATTEMPT and PERFORMANCE_CHECK (the activity itself); never SET_UP or another step or checkpoint",
+    [
+      CAT.SESSION_PICK_KINDS.length,
+      CAT.PRACTICE_KINDS.every((k) => CAT.isSessionPickKind(k)),
+      ["FULL_ATTEMPT", "PERFORMANCE_CHECK"].map(CAT.isSessionPickKind),
+      ["SET_UP", "OUTLINE", "BOOK_EXAM", "MOCK_TEST", "__proto__", "constructor", null].map(CAT.isSessionPickKind),
+    ],
+    [CAT.PRACTICE_KINDS.length + 2, true, [true, true], [false, false, false, false, false, false, false]]
+  );
+  eq(
+    "practiceRoleOf: by catalog type first (RECALL_DRILLS retrieval, PROBLEM_SETS production, EASY_SESSION neither even with a WRITING method), else by method (READING, DELIBERATE_PRACTICE retrieval; WRITING, PROJECT_WORK production; WORKOUT none)",
+    [
+      CAT.practiceRoleOf({ catalogKey: "RECALL_DRILLS" }),
+      CAT.practiceRoleOf({ catalogKey: "PROBLEM_SETS", method: "READING" }),
+      CAT.practiceRoleOf({ catalogKey: "EASY_SESSION", method: "WRITING" }),
+      CAT.practiceRoleOf({ method: "READING" }),
+      CAT.practiceRoleOf({ catalogKey: null, method: "DELIBERATE_PRACTICE" }),
+      CAT.practiceRoleOf({ method: "WRITING" }),
+      CAT.practiceRoleOf({ method: "PROJECT_WORK" }),
+      CAT.practiceRoleOf({ method: "WORKOUT" }),
+      CAT.practiceRoleOf({}),
+    ],
+    ["RETRIEVAL", "PRODUCTION", null, "RETRIEVAL", "RETRIEVAL", "PRODUCTION", "PRODUCTION", null, null]
+  );
+  check("… every RETRIEVAL_KINDS and PRODUCTION_KINDS member reads its role", CAT.RETRIEVAL_KINDS.every((k) => CAT.practiceRoleOf({ catalogKey: k }) === "RETRIEVAL") && CAT.PRODUCTION_KINDS.every((k) => CAT.practiceRoleOf({ catalogKey: k }) === "PRODUCTION"));
+  pending("roadmap-realism.ts uses roadmap-catalog practiceRoleOf (no second definition)", !/function\s+practiceRoleOf\b/.test(read("src/lib/roadmap-realism.ts")), "R2");
+  pending("roadmap-server.ts productionFromFluentOf uses practiceRoleOf (a typed WRITING practice counts, as R2's basis says)", /practiceRoleOf\(/.test(read("src/lib/roadmap-server.ts")), "R4");
+  pending("roadmap-readings.ts's production-kept read uses practiceRoleOf", /practiceRoleOf\(/.test(readings), "R1");
+  pending("roadmap-validate.ts lists session picks by isSessionPickKind (FULL_ATTEMPT and PERFORMANCE_CHECK included)", /isSessionPickKind\(|SESSION_PICK_KINDS/.test(read("src/lib/roadmap-validate.ts")), "R3");
+  pending("roadmap-server.ts pendingPick holds a GEMINI_PICK of any session-pick kind (isSessionPickKind)", /isSessionPickKind\(|SESSION_PICK_KINDS/.test(read("src/lib/roadmap-server.ts")), "R4");
+
+  // The fix round's view fields compile (satisfies) and serialise; the casts R5 used go once it reads them.
+  const fields = {
+    proficiency: { toward: { level: 12, name: "Mastered" }, label: "Proficiency toward Mastered (level 12)" } satisfies Partial<RT.ProficiencyView>,
+    questRow: { partsLine: "3 in Probability · 2 in Inference", health: true } satisfies Partial<RT.WeekQuestRow>,
+    edit: { catalogKey: "TIMED_PRACTICE" } satisfies RT.ItemEdit,
+    fieldOption: { id: "d-pr", name: "Probability", cards: 48, atSix: 18, atTop: 2, paceMeasured: true, nonRecall: 6 } satisfies RT.IntakeFieldOption["domains"][number],
+    pay: { stated: 6, zeroReason: null, limitLine: null, restsOnAdded: "Timed practice: Probability, Inference" } satisfies RT.StartPreview["pay"],
+    current: { startedDay: "2026-10-05", startFeasibility: null } satisfies Partial<RT.CurrentMilestoneView>,
+    header: { domainIds: ["d-pr", "d-in"] } satisfies Partial<RT.RoadmapHeader>,
+    legacy: { kind: "ACTIVE", geminiHidden: true, domainIds: ["d-pr"], areaFieldId: "f1" } satisfies RT.LegacyView,
+    feasibility: { coverage: prior } satisfies Partial<RT.Feasibility>,
+    draftFromReply: { integrity: { verdict: "REJECTED", violations: [{ code: "FREE_TEXT", path: "stages.FOUNDATION.<extra>" }], modelChars: 0, gapsKept: 0, gapsHidden: 0, gapsDropped: 0, notANameByClause: {} }, validated: null, plan: null, refused: "REJECTED" } satisfies RT.DraftFromReplyResult,
+  };
+  check("the fix round's view fields compile as documented and are serialisable", json(JSON.parse(json(fields))) === json(fields));
+  const r5Casts: [string, RegExp][] = [
+    ["src/components/roadmap/RoadmapForm.tsx", /\(x as \{ nonRecall\?: unknown \}\)/],
+    ["src/components/roadmap/StartSheet.tsx", /\(p\.pay as \{ restsOnAdded\?: unknown \}\)/],
+    ["src/components/roadmap/RoadmapView.tsx", /CurrentMilestoneView & \{ startFeasibility\?/],
+    ["src/components/roadmap/roadmap-ui-model.ts", /\(row as \{ partsLine\?: unknown \}\)|\(row as \{ health\?: unknown \}\)/],
+    ["src/components/roadmap/CatalogSheet.tsx", /ItemEdit & \{ catalogKey: CatalogKey \}/],
+  ];
+  const casts = r5Casts.filter(([f, re]) => re.test(read(f))).map(([f]) => f);
+  pending("R5 reads the fix round's contract fields directly (no cast for nonRecall, restsOnAdded, startFeasibility, partsLine and health, ItemEdit.catalogKey)", casts.length === 0, "R5", casts.join(", "));
+
+  // The PART at the depth (§15.4): every caller on a depth plan passes the depth.
+  pending("R1's assignRankIndices passes the plan's depth to rankIndexForStage (a PART at a Fluent or Retained depth)", /rankIndexForStage\((?:[^()]|\([^()]*\))*,(?:[^()]|\([^()]*\))*,(?:[^()]|\([^()]*\))*\)/.test(read("src/lib/roadmap-proficiency.ts")), "R1");
+  pending("R4's rankIndicesOf passes the plan's depth to rankIndexForStage", /rankIndexForStage\((?:[^()]|\([^()]*\))*,(?:[^()]|\([^()]*\))*,(?:[^()]|\([^()]*\))*\)/.test(read("src/lib/roadmap-server.ts")), "R4");
+  pending("R2's motivationTimelineOf passes the plan's depth to rankIndexForStage", /rankIndexForStage\((?:[^()]|\([^()]*\))*,(?:[^()]|\([^()]*\))*,(?:[^()]|\([^()]*\))*\)/.test(read("src/lib/roadmap-realism.ts")), "R2");
+  // The LATER line's × and [Keep the dates] (§15.10): the shells land, and R5 calls them.
+  const serverAndActions = read("src/lib/roadmap-server.ts") + read("src/app/actions/roadmap.ts");
+  pending("hideAimPromptCore and keepCalibratedDatesCore are implemented (their STUB markers gone)", !/STUB: lane R4 implements \(F-R4-1, fix round\)|STUB: lane R4 implements \(F-R4-11, fix round\)/.test(serverAndActions), "R4");
+  const aimCard = read("src/components/roadmap/AimCard.tsx");
+  pending("AimCard renders HIDDEN like OFF (no suggestion; the last aim's line only) and the LATER line's × calls hideAimPrompt", /"HIDDEN"/.test(aimCard) && /hideAimPrompt\(/.test(aimCard), "R5");
+  pending("RoadmapView's [Keep the dates] calls keepCalibratedDates, not localStorage", /keepCalibratedDates\(/.test(read("src/components/roadmap/RoadmapView.tsx")) && !/KEPT_DATES_KEY/.test(read("src/components/roadmap/RoadmapView.tsx")), "R5");
+  pending("roadmap-quests.ts's ADD basis names the spare from WRITE_MARGIN, never a typed '10%'", !/10% spare/.test(read("src/lib/roadmap-quests.ts")), "R6");
+
+  // The bar measures production code (§15.12): one draft-from-reply step that the draft path and the bar's views share.
+  pending("roadmap-server.ts exports draftFromReply (→ DraftFromReplyResult), called by runDraftCore, reuseRun and hostileViewsOf", /export function draftFromReply\b/.test(read("src/lib/roadmap-server.ts")) && (read("src/lib/roadmap-server.ts").match(/\bdraftFromReply\(/g) ?? []).length >= 4, "R4");
+  pending("the hostile seam passes only the reply and the run to R4 and asserts R4's verdict (no bar-side validate before the views)", /draftFromReply|DraftFromReplyResult/.test(read("scripts/fixtures/roadmap-hostile/seam.ts")), "R7");
+
+  // The ledger tag's readers (F-R4-8's review-check golden, owned by no lane: pinned here).
+  eq(
+    "review-facts reviewMarkOf reads the tagged details: 'strike · L11', 'degraded · L7', 'shielded · L11' miss; 'advanced · L11→12' and 'advanced · mastered · L11→12' pass",
+    ["strike · L11", "degraded · L7", "shielded · L11", "advanced · L11→12", "advanced · mastered · L11→12"].map(reviewMarkOf),
+    ["miss", "miss", "miss", "pass", "pass"]
+  );
+  eq(
+    "library-model outcomeOf reads the tagged details ('strike · L11' a miss) and the untagged ones alike, so the idea page keeps tagged misses",
+    ["strike · L11", "degraded · L7", "shielded · L11", "advanced · L11→12", "advanced · mastered · L11→12", "strike", "advanced", "backfill: passed review", null].map(libraryOutcomeOf),
+    ["miss", "miss", "miss", "on", "on", "miss", "on", "on", null]
+  );
+}
+
+// ═══ Rev 4 fix round 2: what the re-review left open (contracts §16) ══════════
+
+console.log("— rev 4 fix round 2 —");
+{
+  const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+  /** Each call of `callee` in `src`: its top-level argument count (a trailing comma is not an argument). */
+  const callArgCounts = (src: string, callee: string): number[] => {
+    const out: number[] = [];
+    let i = src.indexOf(`${callee}(`);
+    while (i >= 0) {
+      let depth = 0;
+      let args = 1;
+      let empty = true;
+      let last = "";
+      let j = i + callee.length;
+      for (; j < src.length; j++) {
+        const ch = src[j];
+        if (ch === "(" || ch === "[" || ch === "{") depth++;
+        else if (ch === ")" || ch === "]" || ch === "}") {
+          depth--;
+          if (depth === 0) break;
+        } else if (ch === "," && depth === 1) args++;
+        if (depth >= 1 && j > i + callee.length && !/\s/.test(ch)) {
+          empty = false;
+          if (depth === 1) last = ch;
+        }
+      }
+      out.push(empty ? 0 : last === "," ? args - 1 : args);
+      i = src.indexOf(`${callee}(`, j);
+    }
+    return out;
+  };
+  const bodyOf = (src: string, head: RegExp): string => {
+    const m = head.exec(src);
+    if (!m) return "";
+    const end = src.indexOf("\n}\n", m.index);
+    return src.slice(m.index, end < 0 ? undefined : end + 2);
+  };
+
+  // §16.1 The clean-entry window holds srs.ts's latest retry entry (lens 2 minor: R1, R4 and R6 read their REVIEW rows over it).
+  check("JITTER_LOW and JITTER_HIGH are xp.ts's jitter bounds (× (0.75 + rand × 0.5), so under × 1.25)", /\(0\.75 \+ Math\.random\(\) \* 0\.5\)/.test(read("src/lib/xp.ts")) && RT.JITTER_LOW === 0.75 && RT.JITTER_HIGH === 1.25);
+  const srsSrc = read("src/lib/srs.ts");
+  check(
+    "srs.ts as the window reads it: a strike moves only the due day (graceEndsAt kept), a pass and a degrade set graceEndsAt from the new due day, the cron degrades past graceEndsAt",
+    /const dueDate = addDays\(now, 1\);\s*await prisma\.idea\.update\(\{\s*where: \{ id: ideaId \},\s*data: \{ failedAttempts, dueDate \}/.test(srsSrc) &&
+      /graceEndsAt: graceEndsAt\(dueDate, newLevel, modifiers\.graceExtraDays\)/.test(srsSrc) &&
+      /graceEndsAt: graceEndsAt\(dueDate, newLevel, graceExtraDays\)/.test(srsSrc) &&
+      /graceEndsAt: \{ lt: now \}/.test(srsSrc)
+  );
+  const D0: DayKey = "2027-01-04";
+  const within = (rows: RT.ReviewLedgerRow[], today: DayKey, back: number) => rows.filter((r) => r.day >= addDays(today, -back));
+  /** srs.ts's latest retry entry at L: a degrade from L on D0 (due the next day), the pass L−1→L at the end of the lower level's grace plus the cron's day, then L held to the end of its interval (the jitter's top at 5–8) and grace plus the cron's day. */
+  const latest = (L: number, m: number, g: number) => {
+    const iv = L >= RT.JITTER_LEVEL_MIN && L <= RT.JITTER_LEVEL_MAX ? Math.ceil(baseIntervalDays(L) * RT.JITTER_HIGH * m) : Math.round(baseIntervalDays(L) * m);
+    const passDay = addDays(D0, 1 + graceDays(L - 1) + g + 1);
+    const today = addDays(passDay, iv + graceDays(L) + g + 1);
+    const rows: RT.ReviewLedgerRow[] = [{ day: D0, detail: `degraded · L${L}` }, { day: passDay, detail: `advanced · L${L - 1}→${L}` }];
+    const strike: RT.ReviewLedgerRow[] = [{ day: addDays(passDay, -(graceDays(L - 1) + g + 1)), detail: `strike · L${L - 1}` }, rows[1]];
+    return { today, rows, strike };
+  };
+  const latestCases = [12, 10, 8, 6].flatMap((L) => [{ L, m: 1, g: 0 }, { L, m: 1.5, g: 0 }, { L, m: 1, g: 2 }]);
+  const windowFails = latestCases
+    .map(({ L, m, g }) => {
+      const { today, rows, strike } = latest(L, m, g);
+      const back = RT.retryReadDaysOf(L, m, g);
+      const ok = daysBetween(D0, today) === back && RT.isRetryEntry(within(rows, today, back), L) && !RT.isRetryEntry(within(rows, today, back - 1), L) && RT.isRetryEntry(within(strike, today, back), L);
+      return ok ? null : `L${L} m${m} g${g}: back ${back}, span ${daysBetween(D0, today)}`;
+    })
+    .filter((x) => x != null);
+  check(
+    "retryReadDaysOf holds srs.ts's latest retry entry exactly (a degrade from L, the pass after the lower grace, L held to its grace and the cron's day; a strike at L − 1 sits inside), at L 12/10/8/6, m 1 and 1.5, grace extension 0 and 2: read as a retry; one day narrower, as clean",
+    windowFails.length === 0,
+    windowFails.join("; ")
+  );
+  {
+    const { today, rows } = latest(12, 1, 0);
+    check("… the fix round's 173-day window read that L12 retry entry as clean (the inflated `rc` the re-review found)", !RT.isRetryEntry(within(rows, today, 173), 12) && RT.isRetryEntry(within(rows, today, RT.retryReadDaysOf(12)), 12));
+  }
+  const narrower: string[] = [];
+  for (let L = 2; L <= MAX_LEVEL; L++)
+    for (const m of [1, 1.5])
+      for (const g of [0, 3]) if (RT.retryReadDaysOf(L, m, g) < RT.interval(L, m) + graceDays(L) + RT.RETRY_ENTRY_DAYS + g) narrower.push(`L${L} m${m} g${g}`);
+  check("… and it is never narrower than the fix round's interval + grace + RETRY_ENTRY_DAYS + extension, at any level 2–20", narrower.length === 0, narrower.join(", "));
+
+  // §16.2 Plan history keys "depth lowered" on the record itself; §16.3 the Aim card's legacy facts.
+  const fields = {
+    history: [
+      { version: 1, day: "2026-11-02", undone: false, changes: [] },
+      { version: 2, day: "2026-11-04", undone: true, changes: ["end target 60 → 50"] },
+      { version: 2, day: "2026-11-05", undone: false, changes: ["end target 60 → 50"], depthLowered: false },
+      { version: 2, day: "2026-11-06", undone: false, changes: ["lowered the depth Mastered → Fluent"], depthLowered: true },
+    ] satisfies RT.PlanHistoryRow[],
+    aimCard: { legacy: true, legacyView: { kind: "ACTIVE", geminiHidden: true, domainIds: ["d-pr", "d-in"], areaFieldId: "f1" } } satisfies Partial<RT.AimCardView>,
+  };
+  check("PlanHistoryRow.depthLowered and AimCardView.legacyView compile as documented and are serialisable", json(JSON.parse(json(fields))) === json(fields));
+
+  // Other lanes' adoption (PENDING until it lands; --strict fails it).
+  const server = strip(read("src/lib/roadmap-server.ts"));
+  const history = bodyOf(server, /function historyOf\(/);
+  pending(
+    "roadmap-server.ts historyOf sets PlanHistoryRow.depthLowered from isDepthLoweringRecord and words such a row with depthChangeLineOf (R1's handoff), so Plan history never guesses from a repeated version",
+    /depthLowered\s*:/.test(history) && /isDepthLoweringRecord\(/.test(history) && /depthChangeLineOf\(/.test(history),
+    "R4"
+  );
+  const planHistory = strip(read("src/components/roadmap/PlanHistory.tsx"));
+  pending("PlanHistory keys 'depth lowered' on row.depthLowered, never on a version that repeats the row before (accept → Undo → accept lowered nothing)", /depthLowered/.test(planHistory) && !/prev\.version\s*===\s*row\.version|row\.version\s*===\s*prev\.version/.test(planHistory), "R5");
+  const ladder = bodyOf(server, /function ladderOf\(/);
+  pending(
+    "roadmap-server.ts ladderOf passes StageLadderOpts.counts (frozenCoverageCountsOf of today's counts and the plan's coverage prior), so a redrafted ladder's targets match the frozen end state",
+    callArgCounts(ladder, "e.lanes.stageLadderOf").length > 0 && callArgCounts(ladder, "e.lanes.stageLadderOf").every((n) => n >= 5) && /counts/.test(ladder),
+    "R4",
+    json(callArgCounts(ladder, "e.lanes.stageLadderOf"))
+  );
+  const effects = callArgCounts(server, ".lanes.dateEffectOf");
+  pending("every lanes.dateEffectOf call passes the frozen counts as its 4th argument (the additions' date effect and the bar's memo wrapper alike)", effects.length > 0 && effects.every((n) => n >= 4), "R4", json(effects));
+  pending("roadmap-server.ts fills AimCardView.legacyView (legacyViewOf) on a legacy plan's Aim card", /legacyView\s*:/.test(server), "R4");
+  // AssignRankIndices now names R1's optional depth (§16.9): R4 passes it instead of re-ranking after the call (R1's handoff; cosmetic today).
+  const byDepth: RT.AssignRankIndices = (rows, first, depth) => Object.fromEntries(rows.map((r) => [r.id, depth == null ? (first[r.lineageId] ?? null) : depth]));
+  eq(
+    "AssignRankIndices takes the plan's depth as an optional third argument (R1's assignRankIndices satisfies it; a two-argument call still compiles)",
+    [byDepth([{ id: "m1", lineageId: "l1", ord: 1, carried: false, later: false, rankIndex: null }], { l1: 2 }, 12), byDepth([{ id: "m1", lineageId: "l1", ord: 1, carried: false, later: false, rankIndex: null }], { l1: 2 })],
+    [{ m1: 12 }, { m1: 2 }]
+  );
+  const ranks = callArgCounts(server, "e.lanes.assignRankIndices");
+  pending("R4's rankIndicesOf passes the plan's depth to lanes.assignRankIndices (R1's handoff)", ranks.length > 0 && ranks.every((n) => n >= 3), "R4", json(ranks));
+  const aimCardSrc = strip(read("src/components/roadmap/AimCard.tsx"));
+  pending("AimCard's legacy card shows LEGACY_GEMINI_HIDDEN from view.legacyView and passes its domainIds and areaFieldId to restartHandoffOf", /legacyView/.test(aimCardSrc) && /LEGACY_GEMINI_HIDDEN/.test(aimCardSrc), "R5");
+  // tasks.ts resizableCore refuses a plan-born template, and TaskDrawer offers no Resize for one: run for real in planBornCases.
+  // ui-audit's height gates (roadmap-rev4.md Acceptance): run on given measurements through `--gate` (it prints the gates'
+  // problems and exits before Chrome; a missing --chrome path is passed too), and read from --plan and the page script.
+  const uiAudit = read("scripts/ui-audit.mjs");
+  const gate = (m: object) => {
+    const r = spawnSync(process.execPath, [join(ROOT, "scripts/ui-audit.mjs"), "--chrome", join(ROOT, "no-such-chrome.exe"), "--gate", JSON.stringify(m)], { encoding: "utf8", timeout: 20_000 });
+    try {
+      return r.status === 0 ? (JSON.parse(r.stdout) as { problems: string[]; widths: number[] }) : null;
+    } catch {
+      return null;
+    }
+  };
+  const YOU = "/dev/style/art/you";
+  const TODAY_FX = "/dev/style/today";
+  const tallest = [{ key: "empty-ask-continue", h: 398.4 }, { key: "empty-ask-seed-last-aim", h: 410.4 }];
+  const askCases: [string, object, number][] = [
+    ["both tallest states at and under 410 at 344", { route: YOU, width: 344, ask: [...tallest, { key: "empty-ask", h: 330 }] }, 0],
+    ["the tallest at 411 at 344", { route: YOU, width: 344, ask: [tallest[0], { key: "empty-ask-seed-last-aim", h: 411 }] }, 1],
+    ["a third ASK state over 410 at 344", { route: YOU, width: 344, ask: [...tallest, { key: "empty-ask-seed", h: 412 }] }, 1],
+    ["empty-ask-continue not drawn at 344", { route: YOU, width: 344, ask: [tallest[1]] }, 1],
+    ["no ASK card drawn at 344", { route: YOU, width: 344, ask: [] }, 2],
+    ["the bound holds at 344 only (450 at 375)", { route: YOU, width: 375, ask: [{ key: "empty-ask-seed-last-aim", h: 450 }] }, 0],
+    ["/you's own card over 410 at 344", { route: "/you", width: 344, ask: [{ key: "ask", h: 430 }] }, 1],
+  ];
+  const askOut = askCases.map(([name, m, want]) => [name, gate(m)?.problems.length ?? -1, want] as const);
+  check(
+    "ui-audit gates the ASK card at ≤ 410 px at 344, the card section.rm-ac-call (F-R4-1's (b): 312 px of content + 18 of padding and border is its 'about 330'; the box with the SectionHeader is recorded under the 470 NOTE), with empty-ask-continue and empty-ask-seed-last-aim required",
+    askOut.every(([, got, want]) => got === want),
+    json(askOut.filter(([, got, want]) => got !== want))
+  );
+  const line = (key: string, h: number, cut: number | null, c3: object | null = null) => ({ key, h, cut, c3 });
+  const inC3 = { inside: true, columns: true, underGoals: true };
+  const lines = (h: number, cut: number, c3: object | null = null) => [line("aim-in-place", 71, 0, c3), line("aim-in-place-longest", h, cut, c3)];
+  const lineCases: [string, object, number][] = [
+    ["71 px, nothing cut, at 344", { route: TODAY_FX, width: 344, aimLines: [...lines(71, 0), line("aim-set-week", 71, 0)] }, 0],
+    ["73 px at 344", { route: TODAY_FX, width: 344, aimLines: lines(73, 0) }, 1],
+    ["19 px of text cut at 344", { route: TODAY_FX, width: 344, aimLines: lines(71, 19) }, 1],
+    ["19 px cut at 768 (c3 narrower than at 344)", { route: TODAY_FX, width: 768, aimLines: lines(90, 19, inC3) }, 1],
+    ["90 px and nothing cut at 768 (the 72 bound is 344's)", { route: TODAY_FX, width: 768, aimLines: lines(90, 0, inC3) }, 0],
+    ["1 px of rounding at 1366", { route: TODAY_FX, width: 1366, aimLines: lines(71, 1, inC3) }, 0],
+    ["no .rm-aim-line-t", { route: TODAY_FX, width: 375, aimLines: [line("aim-in-place", 71, 0), line("aim-in-place-longest", 71, null)] }, 1],
+    ["the longest in-place line not drawn", { route: TODAY_FX, width: 375, aimLines: [line("aim-in-place", 71, 0)] }, 1],
+    ["in c3 under Goals at 932", { route: TODAY_FX, width: 932, aimLines: lines(71, 0, inC3) }, 0],
+    ["not under Goals at 932", { route: TODAY_FX, width: 932, aimLines: lines(71, 0, { ...inC3, underGoals: false }) }, 2],
+    ["the board in one column at 1440", { route: TODAY_FX, width: 1440, aimLines: lines(71, 0, { ...inC3, columns: false }) }, 2],
+    ["/today's own line at 80 px at 344", { route: "/today", width: 344, aimLines: [line("aim-line", 80, 0)] }, 1],
+  ];
+  const lineOut = lineCases.map(([name, m, want]) => [name, gate(m)?.problems.length ?? -1, want] as const);
+  check(
+    "ui-audit gates Today's .rm-aim-line at ≤ 72 px at 344 and never clamped (.rm-aim-line-t scrollHeight ≤ clientHeight + 1) at any width, the two in-place lines drawn and, from 932, in c3 under Goals",
+    lineOut.every(([, got, want]) => got === want),
+    json(lineOut.filter(([, got, want]) => got !== want))
+  );
+  const planG = (() => {
+    const r = spawnSync(process.execPath, [join(ROOT, "scripts/ui-audit.mjs"), "--plan", "--chrome", join(ROOT, "no-such-chrome.exe"), "--base", "http://localhost:3000", "--routes", "fixtures"], { encoding: "utf8", timeout: 20_000 });
+    try {
+      return r.status === 0 ? (JSON.parse(r.stdout) as { gates?: { width: number; askMaxPx: number; askBounds: string; aimLineMaxPx: number }; extraWidths?: Record<string, number[]> }) : null;
+    } catch {
+      return null;
+    }
+  })();
+  check(
+    "ui-audit --plan states the gates (410 px for section.card.rm-ac-call and 72 px at 344) and audits /dev/style/today also at 768 and 1366 (c3 narrower than at 344)",
+    planG?.gates?.width === 344 &&
+      planG.gates.askMaxPx === 410 &&
+      planG.gates.askBounds === "section.card.rm-ac-call" &&
+      planG.gates.aimLineMaxPx === 72 &&
+      json(planG.extraWidths?.["/dev/style/today"]) === json([768, 1366]),
+    json(planG)
+  );
+  check(
+    "ui-audit's page script measures section.rm-ac-call and every .rm-aim-line (its .rm-aim-line-t scrollHeight − clientHeight, c3, .today-goals), and every route × width runs heightGateProblems",
+    /querySelectorAll\('section\.rm-ac-call'\)/.test(uiAudit) &&
+      /querySelectorAll\('\.rm-aim-line'\)/.test(uiAudit) &&
+      /t\.scrollHeight - t\.clientHeight/.test(uiAudit) &&
+      /closest\('\.board > \.c3'\)/.test(uiAudit) &&
+      /heightGateProblems\(\{ route, width, ask: r\.ask, aimLines: r\.aimLines \}\)/.test(uiAudit) &&
+      /problems\.push\(\.\.\.gated\)/.test(uiAudit) &&
+      uiAudit.indexOf('args.includes("--gate")') < uiAudit.indexOf("spawn(CHROME")
+  );
+}
+
+// ═══ Rev 4: the lane-0 modules and the shells ════════════════════════════════
+
+console.log("— rev 4: modules and shells —");
+{
+  for (const f of ["src/lib/roadmap-catalog.ts", "src/lib/roadmap-invite.ts", "src/lib/roadmap-handoff.ts", "scripts/roadmap-invite-check.ts", "scripts/roadmap-hostile-check.ts", "scripts/roadmap-hostile-ablate.ts", "src/components/roadmap/AimLine.tsx"]) check(`${f} exists`, existsSync(join(ROOT, f)));
+  const shells: [string, string[]][] = [
+    ["src/lib/roadmap-realism.ts", ["coverageOf", "lineDomainDefaultOf", "depthTermsOf", "stageLadderOf", "motivationTimelineOf", "dateCheckOf", "lowerDepthPlanOf", "dateEffectOf", "floorDayOf", "syncStagePractices"]],
+    ["src/lib/roadmap-validate.ts", ["integrityOf", "normaliseReportPath", "validateKeysOnly", "constraintExclusionsOf", "gapNameShape", "groundingOf"]],
+    ["src/lib/roadmap-server.ts", ["loadAimStep", "snoozeAimPromptCore", "snoozeAimStepCore", "setAimSuggestionsCore", "lowerDepthCore", "confirmDomainAdditionsCore", "confirmSessionPicksCore", "moveLineCore", "setLineDomainCore", "assertNoModelText", "writeRoadmapRows", "hideAimPromptCore", "keepCalibratedDatesCore"]],
+    ["src/app/actions/roadmap.ts", ["snoozeAimPrompt", "setAimSuggestions", "snoozeAimStep", "lowerDepth", "confirmDomainAdditions", "confirmSessionPicks", "moveLine", "setLineDomain", "hideAimPrompt", "keepCalibratedDates"]],
+    ["src/components/roadmap/AimLine.tsx", ["AimLine"]],
+  ];
+  const missing = shells.flatMap(([f, names]) => names.filter((n) => !new RegExp(`export (async )?function ${n}\\b`).test(read(f))).map((n) => `${f}: ${n}`));
+  check("every revision-4 export a lane implements exists (a shell until it lands)", missing.length === 0, missing.join(", "));
+  check("AimCard takes the revision-4 props (prompt, seed, lastAim) beside promptDismissed", /prompt\?: AimPrompt;/.test(read("src/components/roadmap/AimCard.tsx")) && /seed\?: AimSeed \| null;/.test(read("src/components/roadmap/AimCard.tsx")) && /lastAim\?: LastAimView \| null;/.test(read("src/components/roadmap/AimCard.tsx")));
+  // The three new lane-0 modules are pure: no Prisma, no model, no clock module.
+  const pureClosure = (entry: string): string[] => {
+    const seen = new Set<string>();
+    const stack = [join(ROOT, entry)];
+    const SPEC = /(?:\bimport\s+(type\s+)?(?:[^'"`;]*?\s+from\s+)?|\bexport\s+(type\s+)?[^'"`;]*?\s+from\s+)["']([^"']+)["']/g;
+    while (stack.length) {
+      const f = stack.pop() as string;
+      if (seen.has(f)) continue;
+      seen.add(f);
+      if (f.startsWith("pkg:")) continue;
+      const src = readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+      for (const m of src.matchAll(SPEC)) {
+        if (m[1] || m[2]) continue;
+        const spec = m[3];
+        if (!spec.startsWith(".") && !spec.startsWith("@/")) {
+          stack.push(`pkg:${spec}`);
+          continue;
+        }
+        const base = spec.startsWith("@/") ? join(ROOT, "src", spec.slice(2)) : resolve(dirname(f), spec);
+        const hit = ["", ".ts", ".tsx"].map((e) => base + e).find((p) => existsSync(p) && statSync(p).isFile());
+        if (hit) stack.push(hit);
+      }
+    }
+    return [...seen].map((f) => (f.startsWith("pkg:") ? f : relative(ROOT, f).split(sep).join("/")));
+  };
+  for (const m of ["src/lib/roadmap-catalog.ts", "src/lib/roadmap-invite.ts", "src/lib/roadmap-handoff.ts"]) {
+    const c = pureClosure(m);
+    const bad = c.filter((p) => p === "pkg:@prisma/client" || p === "src/lib/prisma.ts" || p === "src/lib/gemini.ts" || p === "src/lib/roadmap-model.ts" || p === "src/lib/roadmap-evidence.ts" || p.startsWith("pkg:@google/genai") || p === "pkg:next/headers" || p === "pkg:next/cache");
+    check(`${m} is pure: it reaches no Prisma, model, cookie or cache module`, bad.length === 0, bad.join(", "));
+  }
+  const invite = read("src/lib/roadmap-invite.ts").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+  check("roadmap-invite.ts reads no clock (every rule takes today)", !/\bnew Date\(\s*\)|Date\.now\(|todayKey\(/.test(invite));
+  // The probe is never imported by a check, and the hostile check imports _no-model first.
+  const probeImporters = readdirSync(join(ROOT, "scripts")).filter((f) => /\.(ts|mts|mjs)$/.test(f) && f !== "roadmap-probe.ts" && /from\s+["']\.\/roadmap-probe(\.ts)?["']|import\(\s*["']\.\/roadmap-probe/.test(read(`scripts/${f}`)));
+  check("no check imports roadmap-probe.ts (the lead's approved real calls)", probeImporters.length === 0, probeImporters.join(", "));
+  const firstImport = (f: string) => /^import\b[^\n]*/m.exec(read(f))?.[0] ?? "";
+  check("roadmap-hostile-check, roadmap-hostile-ablate and roadmap-invite-check import _no-model first", ["scripts/roadmap-hostile-check.ts", "scripts/roadmap-hostile-ablate.ts", "scripts/roadmap-invite-check.ts"].every((f) => /^import\s+["']\.\/_no-model(\.ts)?["'];?\s*$/.test(firstImport(f))));
+}
+
+// ═══ Rev 4: the migration (decision 48) ══════════════════════════════════════
+
+console.log("— rev 4: the migration —");
+{
+  const sql = read("prisma/migrations/20261106000000_life_roadmap_rev4/migration.sql");
+  const statements = sql
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("--") && l.trim())
+    .join("\n")
+    .split(";")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const want = [
+    'ALTER TABLE "public"."Roadmap" ADD COLUMN "depth" INTEGER',
+    `ALTER TABLE "public"."Roadmap" ADD COLUMN "dateMode" TEXT NOT NULL DEFAULT 'CHOSEN'`,
+    'ALTER TABLE "public"."Roadmap" ADD COLUMN "coverage" JSONB',
+    'ALTER TABLE "public"."Roadmap" ADD COLUMN "suggestAreas" BOOLEAN NOT NULL DEFAULT false',
+    'ALTER TABLE "public"."Roadmap" ADD COLUMN "examDay" DATE',
+    'ALTER TABLE "public"."RoadmapMilestone" ADD COLUMN "stage" TEXT',
+    'ALTER TABLE "public"."RoadmapItem" ADD COLUMN "catalogKey" TEXT',
+    'ALTER TABLE "public"."LifeSettings" ADD COLUMN "aimSuggestions" BOOLEAN',
+  ];
+  eq("the rev-4 migration is exactly the spec's eight ADD COLUMN statements", statements, want);
+  check(
+    "its pre-apply grep: no DROP at all, every ALTER TABLE names a Roadmap* table or LifeSettings with ADD COLUMN only, no index and no foreign key",
+    !/\bDROP\b/i.test(sql) && statements.every((x) => /^ALTER TABLE "public"\."(Roadmap\w*|LifeSettings)" ADD COLUMN /.test(x)) && !/\bINDEX\b|\bREFERENCES\b|\bFOREIGN\b/i.test(sql.replace(/^--.*$/gm, ""))
+  );
+  const known = (code: string, message: string, meta: Record<string, unknown>) => new Prisma.PrismaClientKnownRequestError(message, { code, clientVersion: "6.19.0", meta });
+  check(
+    'isMissingRev4Column: a P2022 on Roadmap.depth or LifeSettings.aimSuggestions, and a raw 42703 on "stage"; not another column, a missing table, or another error',
+    RT.isMissingRev4Column(known("P2022", "The column `Roadmap.depth` does not exist in the current database.", { column: "Roadmap.depth" })) &&
+      RT.isMissingRev4Column(known("P2022", "The column `LifeSettings.aimSuggestions` does not exist in the current database.", { column: "LifeSettings.aimSuggestions" })) &&
+      RT.isMissingRev4Column(known("P2010", 'Raw query failed. Code: `42703`. Message: `column "stage" does not exist`', { code: "42703", message: 'column "stage" does not exist' })) &&
+      !RT.isMissingRev4Column(known("P2022", "The column `Idea.level` does not exist in the current database.", { column: "Idea.level" })) &&
+      !RT.isMissingRev4Column(known("P2021", "The table `public.Roadmap` does not exist in the current database.", { table: "public.Roadmap" })) &&
+      !RT.isMissingRev4Column(new Error("depth")) &&
+      !RT.isMissingRev4Column(null) &&
+      !RT.isMissingRoadmapTable(known("P2022", "The column `Roadmap.depth` does not exist in the current database.", { column: "Roadmap.depth" })) &&
+      json(RT.REV4_COLUMNS) === json(["depth", "dateMode", "coverage", "suggestAreas", "examDay", "stage", "catalogKey", "aimSuggestions"])
+  );
+  const schema = read("prisma/schema.prisma");
+  const model = (name: string) => new RegExp(`model ${name} \\{([\\s\\S]*?)\\n\\}`).exec(schema)?.[1] ?? "";
+  check(
+    "schema.prisma carries the same eight fields on the four models",
+    /\n\s+depth\s+Int\?/.test(model("Roadmap")) &&
+      /\n\s+dateMode\s+String\s+@default\("CHOSEN"\)/.test(model("Roadmap")) &&
+      /\n\s+coverage\s+Json\?/.test(model("Roadmap")) &&
+      /\n\s+suggestAreas\s+Boolean\s+@default\(false\)/.test(model("Roadmap")) &&
+      /\n\s+examDay\s+DateTime\?\s+@db\.Date/.test(model("Roadmap")) &&
+      /\n\s+stage\s+String\?/.test(model("RoadmapMilestone")) &&
+      /\n\s+catalogKey\s+String\?/.test(model("RoadmapItem")) &&
+      /\n\s+aimSuggestions\s+Boolean\?/.test(model("LifeSettings"))
+  );
+}
+
+// ═══ Plan-born tasks: no model sizes or explains one (contracts §15.6, §16.4; the lead's half) ═══
+//
+// The Resize channel was: TaskDrawer's Resize → resizeTask → resizableCore → applySizing(force) → sizeLifeTask, whose
+// free `rationale` became gradeBasis and showed under "Why". It is closed three times over, and each part runs here
+// for real: life-lexicon's code basis, applySizing and resizableCore against a stubbed Prisma (installed as
+// globalThis.prisma before src/lib/prisma loads, so no client is built and nothing can reach a database), and the
+// drawer rendered. These cases await, so they run after every synchronous case, before the summary.
+
+async function planBornCases(): Promise<void> {
+  console.log("— plan-born tasks: no model sizes or explains one (§15.6, §16.4) —");
+  const g = globalThis as { prisma?: unknown };
+  if (g.prisma !== undefined) {
+    check("plan-born: the Prisma stub is installed before src/lib/prisma loads (no client is ever built here)", false, "something imported the Prisma client first");
+    return;
+  }
+  const entries: Record<string, unknown> = {};
+  g.prisma = new Proxy(
+    {},
+    {
+      get(_t, prop) {
+        if (prop === "then" || typeof prop === "symbol") return undefined;
+        if (prop in entries) return entries[prop];
+        throw new Error(`roadmap-contract-check: no database here (prisma.${prop})`);
+      },
+    }
+  );
+  const LL = await import("../src/lib/life-lexicon");
+  const { SIZING_DAILY_CAP } = await import("../src/lib/life-grade");
+  const { applySizing } = await import("../src/lib/life-sizing");
+  const { PLAN_BORN_RESIZE_REFUSAL, TEMPLATE_SELECT, resizableCore, toBoardTemplate } = await import("../src/lib/tasks");
+  const { TaskDrawer } = await import("../src/components/today/TaskDrawer");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+
+  /** What a model's `rationale` reads like: the words that must never be a plan-born task's "Why". */
+  const MODEL_WORDS = "A focused drill that builds exam speed under time pressure.";
+  const CODE = "Study · Standard · 45m";
+
+  // ── life-lexicon: the code basis ──
+  eq(
+    "planBornBasisOf: '<category> · <band> · <minutes>m' from the template's own columns; an unknown category, band or minutes reads Other, Standard, 30m",
+    [
+      LL.planBornBasisOf({ category: "STUDY", band: "STANDARD", estMinutes: 45 }),
+      LL.planBornBasisOf({ category: "EXERCISE", band: "DEMANDING", estMinutes: 59.6 }),
+      LL.planBornBasisOf({ category: "NOPE", band: "nope", estMinutes: Number.NaN }),
+      LL.planBornBasisOf({ category: "CARE", band: "INTRO", estMinutes: 0 }),
+    ],
+    [CODE, "Exercise · Demanding · 60m", "Other · Standard · 30m", "Care · Intro · 1m"]
+  );
+  eq(
+    "planBornGradeOf writes the code basis and nothing else (no model field, no attempt, no copy), over a model's words or a lexical basis alike; null once it stands",
+    [
+      LL.planBornGradeOf({ category: "STUDY", band: "STANDARD", estMinutes: 45, gradeBasis: MODEL_WORDS }),
+      LL.planBornGradeOf({ category: "STUDY", band: "STANDARD", estMinutes: 45, gradeBasis: '"drill" → Study · Standard · 30m' }),
+      LL.planBornGradeOf({ category: "STUDY", band: "STANDARD", estMinutes: 45, gradeBasis: null }),
+      LL.planBornGradeOf({ category: "STUDY", band: "STANDARD", estMinutes: 45, gradeBasis: CODE }),
+    ],
+    [{ gradeBasis: CODE }, { gradeBasis: CODE }, { gradeBasis: CODE }, null]
+  );
+  const minuteOld = new Date("2026-10-01T02:00:00.000Z");
+  const chipAt = new Date("2026-10-01T02:01:00.000Z");
+  const chipBase = { gradeSource: "LEXICAL", gradeConfidence: 0.4, gradeAttempts: 0, gradeFrozenAt: null, bandOverride: 0, createdAt: minuteOld };
+  eq(
+    "gradeChipOf: a plan-born task reads 'from the plan', never 'sizing…' (no model is coming); frozen and self-rated still win; an ordinary task's chips are unchanged",
+    [
+      LL.gradeChipOf({ ...chipBase, planBorn: true }, chipAt).label,
+      LL.gradeChipOf({ ...chipBase, planBorn: true, bandOverride: 1 }, chipAt).label,
+      LL.gradeChipOf({ ...chipBase, planBorn: true, gradeFrozenAt: chipAt }, chipAt).label,
+      LL.gradeChipOf(chipBase, chipAt).label,
+      LL.gradeChipOf({ ...chipBase, planBorn: false, gradeSource: "AI", gradeConfidence: 0.84, gradeAttempts: 1 }, chipAt).label,
+    ],
+    [LL.PLAN_BORN_CHIP, "self-rated", "frozen", "sizing…", "AI · 84%"]
+  );
+
+  // ── life-sizing applySizing, whoever calls it (after() at capture, or Resize's force) ──
+  const NOW = new Date("2026-10-01T03:00:00.000Z");
+  const calls: string[] = [];
+  let template: Record<string, unknown> | null = null;
+  let sizedToday = 0;
+  const writes: { where: unknown; data: unknown }[] = [];
+  const delegate = (impl: Record<string, (args: never) => Promise<unknown>>, name: string) =>
+    new Proxy(impl, {
+      get(t, m) {
+        if (m === "then" || typeof m === "symbol") return undefined;
+        if (m in t) return t[m];
+        return () => {
+          calls.push(`${name}.${m}`);
+          throw new Error(`roadmap-contract-check: ${name}.${m} is not stubbed`);
+        };
+      },
+    });
+  entries.taskTemplate = delegate(
+    {
+      findUnique: async () => (calls.push("findUnique"), template),
+      findFirst: async (args: { select?: Record<string, boolean> }) => (calls.push(`findFirst:${Object.keys(args.select ?? {}).includes("captureKey") ? "captureKey" : "-"}`), template),
+      findMany: async () => (calls.push("findMany"), []),
+      count: async () => (calls.push("count"), sizedToday),
+      updateMany: async (args: { where: unknown; data: unknown }) => (calls.push("updateMany"), writes.push(args), { count: 1 }),
+    },
+    "taskTemplate"
+  );
+  const practice = (over: Record<string, unknown> = {}) => ({
+    id: "tpl-practice",
+    userId: "u-plan",
+    kind: "HABIT",
+    title: "Timed drill",
+    normTitle: LL.normTitleOf("Timed drill"),
+    note: null,
+    recurrence: "TARGET:3/W",
+    compulsory: false,
+    dueKind: null,
+    track: "CRAFT",
+    trackSource: "TAG",
+    category: "STUDY",
+    band: "STANDARD",
+    estMinutes: 45,
+    minutesSource: "USER",
+    gradeSource: "LEXICAL",
+    gradePromptVersion: null,
+    gradeBasis: '"drill" → Study · Standard · 30m',
+    gradeFrozenAt: null,
+    createdAt: new Date("2026-10-01T02:59:00.000Z"),
+    captureKey: "rm:ms-1:p0",
+    ...over,
+  });
+  const sized = async (row: Record<string, unknown>, opts: { force?: boolean }) => {
+    template = row;
+    calls.length = 0;
+    writes.length = 0;
+    sizedToday = 0;
+    const outcome = await applySizing(String(row.id), { ...opts, now: NOW });
+    return { outcome, calls: [...calls], writes: writes.map((w) => w.data), guarded: writes.every((w) => json(w.where).includes('"gradeFrozenAt":null')) };
+  };
+  const forced = await sized(practice(), { force: true });
+  check(
+    "applySizing(force) on a plan-born practice ('rm:<id>:p0', Resize's path): 'done', one read and one guarded write of the code basis; no copy read, no cap slot, no model call",
+    forced.outcome === "done" && json(forced.calls) === json(["findUnique", "updateMany"]) && json(forced.writes) === json([{ gradeBasis: CODE }]) && forced.guarded,
+    json(forced)
+  );
+  const overModel = await sized(practice({ gradeSource: "AI", gradePromptVersion: 1, gradeBasis: MODEL_WORDS }), {});
+  check(
+    "applySizing (after(), unforced) on a plan-born template carrying a model's words: the code basis replaces them (regenerated, never kept)",
+    overModel.outcome === "done" && json(overModel.calls) === json(["findUnique", "updateMany"]) && json(overModel.writes) === json([{ gradeBasis: CODE }]),
+    json(overModel)
+  );
+  const step = await sized(practice({ id: "tpl-step", kind: "TASK", recurrence: null, captureKey: "rm:ms-1:s2", category: "ADMIN", band: "INTRO", estMinutes: 15 }), { force: true });
+  check(
+    "…a plan-born step ('rm:<id>:s2') the same: 'done' with its own code basis",
+    step.outcome === "done" && json(step.writes) === json([{ gradeBasis: "Admin · Intro · 15m" }]) && !step.calls.includes("count"),
+    json(step)
+  );
+  const settled = await sized(practice({ gradeBasis: CODE }), { force: true });
+  check("…and once the code basis stands, a repeat reads and writes nothing more ('done')", settled.outcome === "done" && json(settled.calls) === json(["findUnique"]), json(settled));
+  // Control: an ordinary task on the same path is untouched — it still reaches the day's cap check (just before the
+  // model call; capped here, so no model is reached) and notes the cap on its own basis.
+  const ordinaryRow = practice({ id: "tpl-ordinary", captureKey: null });
+  template = ordinaryRow;
+  calls.length = 0;
+  writes.length = 0;
+  sizedToday = SIZING_DAILY_CAP;
+  const capped = await applySizing("tpl-ordinary", { force: true, now: NOW });
+  check(
+    "control: an ordinary task's Resize keeps today's path (the cap read, then 'capped' with the note on its own basis)",
+    capped === "capped" && json(calls) === json(["findUnique", "count", "updateMany"]) && json(writes.map((w) => w.data)) === json([{ gradeBasis: '"drill" → Study · Standard · 30m · AI sizing paused (daily limit)' }]),
+    json([capped, calls, writes])
+  );
+  for (const key of ["goal:rm", "RM:ms-1:p0"]) {
+    template = practice({ id: "tpl-near", captureKey: key });
+    calls.length = 0;
+    sizedToday = SIZING_DAILY_CAP;
+    const near = await applySizing("tpl-near", { force: true, now: NOW });
+    check(`control: '${key}' is not plan-born, so it is sized as an ordinary task ('capped' here)`, near === "capped" && calls.includes("count"), json([near, calls]));
+  }
+
+  // ── tasks.ts resizableCore: the Resize action's gate ──
+  const resizeRow = (over: Record<string, unknown>) => ({
+    gradeFrozenAt: null,
+    createdAt: new Date("2026-10-01T02:00:00.000Z"),
+    gradeAttempts: 0,
+    kind: "HABIT",
+    title: "Timed drill",
+    normTitle: LL.normTitleOf("Timed drill"),
+    captureKey: "rm:ms-1:p0",
+    ...over,
+  });
+  const gate = async (over: Record<string, unknown>) => {
+    template = resizeRow(over);
+    calls.length = 0;
+    const r = await resizableCore("u-plan", "tpl-practice", NOW);
+    return { r, calls: [...calls] };
+  };
+  const refused = await gate({});
+  check(
+    `resizableCore refuses a plan-born practice, fresh and unfrozen, with "${PLAN_BORN_RESIZE_REFUSAL}" (its read selects captureKey), so Resize never reaches applySizing`,
+    !refused.r.ok && refused.r.error === "A plan-born task's size comes from its practice." && json(refused.calls) === json(["findFirst:captureKey"]),
+    json(refused)
+  );
+  const refusedStep = await gate({ kind: "TASK", captureKey: "rm:ms-1:s0" });
+  check("…and a plan-born step ('rm:<id>:s0') the same", !refusedStep.r.ok && refusedStep.r.error === PLAN_BORN_RESIZE_REFUSAL, json(refusedStep));
+  const goalRow = await gate({ kind: "GOAL", captureKey: "rm:ms-1" });
+  check("…a plan-born goal keeps the goals refusal (goals are never sized)", !goalRow.r.ok && goalRow.r.error === "Goals and idea drafts aren't sized; only tasks are.", json(goalRow));
+  const ordinaryGate = await gate({ captureKey: null });
+  const nearGate = await gate({ captureKey: "goal:rm" });
+  check("control: the same row with no 'rm:' key may still be resized (ordinary tasks unchanged)", ordinaryGate.r.ok && nearGate.r.ok, json([ordinaryGate, nearGate]));
+
+  // ── tasks.ts toBoardTemplate: the row's 'sizing…' (TaskRow) ──
+  const boardTemplate = (captureKey: string | null) => {
+    const r = Object.fromEntries(Object.keys(TEMPLATE_SELECT).map((k) => [k, null])) as Record<string, unknown>;
+    Object.assign(r, {
+      id: "tpl-row",
+      title: "Timed drill",
+      normTitle: LL.normTitleOf("Timed drill"),
+      kind: "HABIT",
+      inbox: false,
+      recurrence: "TARGET:3/W",
+      startDay: new Date(Date.UTC(2026, 9, 1)),
+      track: "CRAFT",
+      category: "STUDY",
+      band: "STANDARD",
+      lexicalBand: "STANDARD",
+      bandOverride: 0,
+      estMinutes: 45,
+      machineMinutes: 30,
+      gradeSource: "LEXICAL",
+      gradeConfidence: 0.4,
+      gradeAttempts: 0,
+      compulsory: false,
+      compulsoryOnRest: false,
+      intrinsic: false,
+      sortOrder: 0,
+      createdAt: new Date("2026-10-01T02:59:00.000Z"),
+      captureKey,
+    });
+    return toBoardTemplate(r as unknown as Parameters<typeof toBoardTemplate>[0], NOW);
+  };
+  check(
+    "toBoardTemplate: a minutes-old plan-born row is never 'sizing…' (no AI answer is coming); the same ordinary row still is",
+    !boardTemplate("rm:ms-1:p0").sizing && !boardTemplate("rm:ms-1:s0").sizing && boardTemplate(null).sizing && boardTemplate("goal:rm").sizing,
+    json([boardTemplate("rm:ms-1:p0").sizing, boardTemplate(null).sizing])
+  );
+
+  // ── TaskDrawer: no Resize, and a "Why" in code's words ──
+  type DrawerProps = Parameters<typeof TaskDrawer>[0];
+  type DrawerTemplate = DrawerProps["row"]["template"];
+  const drawerNow = new Date("2026-10-01T03:00:00.000Z").getTime();
+  const tpl = (over: Partial<DrawerTemplate>): DrawerTemplate => ({
+    id: "tpl-drawer",
+    title: "Timed drill",
+    normTitle: LL.normTitleOf("Timed drill"),
+    recurrence: "TARGET:3/W",
+    dueDay: null,
+    dueKind: null,
+    intrinsic: false,
+    autoMetric: null,
+    mvv: null,
+    track: "CRAFT",
+    band: "STANDARD",
+    bandOverride: 0,
+    estMinutes: 45,
+    machineMinutes: 30,
+    kind: "HABIT",
+    inbox: false,
+    startDay: "2026-10-01",
+    horizon: null,
+    parentId: "goal-1",
+    krMetric: null,
+    krTarget: null,
+    krUnit: null,
+    compulsory: false,
+    autoTarget: null,
+    category: "STUDY",
+    lexicalBand: "STANDARD",
+    aiBand: null,
+    gradeSource: "AI",
+    gradeConfidence: 0.84,
+    gradeBasis: MODEL_WORDS,
+    gradeModel: null,
+    gradePromptVersion: 1,
+    gradeAttempts: 1,
+    gradeFrozen: false,
+    sizing: false,
+    bandOverrideAt: null,
+    gradeFrozenAt: null,
+    topAttribute: null,
+    note: null,
+    completedAt: null,
+    createdAt: "2026-10-01T02:50:00.000Z",
+    sortOrder: 0,
+    captureKey: null,
+    ...over,
+  });
+  const receipt = { v: "life-1", factors: [], minutes: 45, raw: 10, kneeBefore: 0, xp: 12, track: "CRAFT" } satisfies DrawerProps["projection"];
+  const drawer = (t: DrawerTemplate): string =>
+    renderToStaticMarkup(
+      createElement(TaskDrawer, {
+        row: {
+          key: t.id,
+          template: t,
+          lane: "today",
+          day: "2026-10-01",
+          state: "open",
+          slot: 0,
+          instanceId: null,
+          timesDone: 0,
+          minimum: false,
+          paid: null,
+          projection: receipt,
+          streakDays: 0,
+          carriedFrom: null,
+          late: false,
+          dueLabel: null,
+          ruleLabel: null,
+          estMinutes: t.estMinutes,
+          streak: null,
+          strength: null,
+          rung: null,
+          toNextRung: null,
+          progress: null,
+          parentTitle: null,
+          auto: null,
+        },
+        now: drawerNow,
+        today: "2026-10-01",
+        minutes: null,
+        onMinutes: () => {},
+        projection: receipt,
+        minimumProjection: null,
+        busy: false,
+        working: null,
+        onDone: () => {},
+        onMinimum: () => {},
+        onSkip: () => {},
+        onTomorrow: () => {},
+        onAgain: () => {},
+        onRename: () => {},
+        onArchive: () => {},
+        onOverride: () => {},
+        onResize: () => {},
+      })
+    );
+  const hasResize = (html: string) => />(Resize|Sizing…)<\/button>/.test(html);
+  const whyOf = (html: string) => /<dt>Why<\/dt><dd>([^<]*)<\/dd>/.exec(html)?.[1] ?? null;
+  const ordinaryHtml = drawer(tpl({}));
+  check(
+    "control: an ordinary task's drawer is unchanged (Resize offered, its stored basis under 'Why')",
+    hasResize(ordinaryHtml) && whyOf(ordinaryHtml) === MODEL_WORDS,
+    json([hasResize(ordinaryHtml), whyOf(ordinaryHtml)])
+  );
+  const bornHtml = drawer(tpl({ captureKey: "rm:ms-1:p0" }));
+  check(
+    "TaskDrawer: a plan-born ('rm:') row offers no Resize, and its 'Why' is code's words; the stored model words appear nowhere (not the Why, not the chip's title)",
+    !hasResize(bornHtml) && whyOf(bornHtml) === CODE && !bornHtml.includes(MODEL_WORDS) && bornHtml.includes(`title="${CODE}"`),
+    json([hasResize(bornHtml), whyOf(bornHtml), bornHtml.includes(MODEL_WORDS)])
+  );
+  const freshHtml = drawer(tpl({ captureKey: "rm:ms-1:s0", kind: "TASK", recurrence: null, gradeSource: "LEXICAL", gradeAttempts: 0, gradeBasis: null, createdAt: "2026-10-01T02:59:00.000Z" }));
+  check(
+    "…a minutes-old plan-born step reads 'from the plan' (never 'sizing…', no AI answer is coming) with its code 'Why', never the 'until the AI's answer lands' fallback",
+    !hasResize(freshHtml) && freshHtml.includes(`>${LL.PLAN_BORN_CHIP}<`) && !freshHtml.includes("sizing…") && whyOf(freshHtml) === CODE && !/AI&#x27;s answer|AI's answer/.test(freshHtml),
+    json([hasResize(freshHtml), whyOf(freshHtml)])
+  );
+}
+
+// The awaited cases run last; the summary waits for them.
+void planBornCases()
+  .catch((err: unknown) => check("plan-born: the stubbed-Prisma cases ran to the end", false, err instanceof Error ? (err.stack ?? err.message) : String(err)))
+  .then(() => {
+    if (failed > 0) {
+      console.log(`\nroadmap-contract-check: ${passed} passed, ${failed} FAILED${pendingCount ? `, ${pendingCount} pending` : ""}`);
+      process.exit(1);
+    }
+    console.log(`\nroadmap-contract-check: ${passed} passed, 0 failed${pendingCount ? `, ${pendingCount} pending (other lanes' adoption of a lane-0 definition; --strict fails them)` : ""}`);
+  });

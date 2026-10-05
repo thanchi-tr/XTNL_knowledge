@@ -20,23 +20,32 @@ import {
   applyRemedy,
   archiveRoadmap,
   buildStarter,
+  confirmDomainAdditions,
+  confirmSessionPicks,
   decideItem,
   discardDraft,
-  dismissAimPrompt,
   draftRoadmap,
   editItem,
   finishStarting,
+  hideAimPrompt,
+  keepCalibratedDates,
   keepOnToday,
   keepUnflagged,
   loadStartPreview,
   logCheckpoint,
+  lowerDepth,
   markRoadmapDone,
+  moveLine,
   redraft,
   replan,
   resolveDomain,
   returnStarting,
   saveIntake,
   setAimFigure,
+  setAimSuggestions,
+  setLineDomain,
+  snoozeAimPrompt,
+  snoozeAimStep,
   startAgain,
   startManual,
   startMilestone,
@@ -74,7 +83,29 @@ export interface RoadmapActions {
   replan: typeof replan;
   archiveRoadmap: typeof archiveRoadmap;
   markRoadmapDone: typeof markRoadmapDone;
-  dismissAimPrompt: typeof dismissAimPrompt;
+  /**
+   * Revision 4 (F-R4-1, F-R4-3, F-R4-5): "Not now" on the ASK card and
+   * Today's SET line (the 4-week 'later:' cookie; nothing writes the
+   * year-long 'off' any more); "Not now: hide this for a week" on Today's
+   * DRAFT and START lines; "Don't suggest this" and its Undo (the stored
+   * LifeSettings.aimSuggestions).
+   */
+  snoozeAimPrompt: typeof snoozeAimPrompt;
+  /** The LATER line's × (the contract §15.10): the 4-week 'hide:' cookie, so no aim suggestion shows on /you or Today until it lapses. */
+  hideAimPrompt: typeof hideAimPrompt;
+  snoozeAimStep: typeof snoozeAimStep;
+  setAimSuggestions: typeof setAimSuggestions;
+  /** [Keep the dates] on a CALIBRATED offer (F-R4-11; the contract §15.10): recorded on the plan, so the offer stays answered on every device. */
+  keepCalibratedDates: typeof keepCalibratedDates;
+  /** [Choose a lower depth…] (F-R4-11): the only path that lowers a depth. */
+  lowerDepth: typeof lowerDepth;
+  /** Gemini's Domain additions, each the user's to confirm (F-R4-21). */
+  confirmDomainAdditions: typeof confirmDomainAdditions;
+  /** A body or care plan's one session-picks confirm (F-R4-17). */
+  confirmSessionPicks: typeof confirmSessionPicks;
+  /** Move an outline line to another milestone, or tie it to another Domain (F-R4-21). */
+  moveLine: typeof moveLine;
+  setLineDomain: typeof setLineDomain;
   /** An accepted roadmap's "Add a figure" (R4's setAimFigureCore): the aim check's hours and their source, the user's. */
   setAimFigure: typeof setAimFigure;
   /**
@@ -117,7 +148,16 @@ export const LIVE_ACTIONS: RoadmapActions = {
   replan,
   archiveRoadmap,
   markRoadmapDone,
-  dismissAimPrompt,
+  snoozeAimPrompt,
+  hideAimPrompt,
+  snoozeAimStep,
+  setAimSuggestions,
+  keepCalibratedDates,
+  lowerDepth,
+  confirmDomainAdditions,
+  confirmSessionPicks,
+  moveLine,
+  setLineDomain,
   setAimFigure,
   keepOnToday,
   archiveTask: (id) => archiveTask(id),
@@ -156,7 +196,16 @@ export const FIXTURE_ACTIONS: RoadmapActions = {
   replan: refuse,
   archiveRoadmap: refuse,
   markRoadmapDone: refuse,
-  dismissAimPrompt: refuse,
+  snoozeAimPrompt: refuse,
+  hideAimPrompt: refuse,
+  snoozeAimStep: refuse,
+  setAimSuggestions: refuse,
+  keepCalibratedDates: refuse,
+  lowerDepth: refuse,
+  confirmDomainAdditions: refuse,
+  confirmSessionPicks: refuse,
+  moveLine: refuse,
+  setLineDomain: refuse,
   setAimFigure: refuse,
   keepOnToday: refuse,
   archiveTask: refuse,

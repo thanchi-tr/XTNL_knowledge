@@ -69,5 +69,104 @@
         ]
       }
     }
-  ]
+  ],
+  "v3": {
+    "probe": true,
+    "about": "A non-English aim: every pick is code's words, so nothing needs a language check; bulk keep stays off.",
+    "intake": {
+      "depth": 12,
+      "dateMode": "REALISTIC",
+      "exam": false,
+      "examDay": null,
+      "suggestAreas": false
+    },
+    "replies": [
+      {
+        "id": "vietnamese-japanese-v3-a",
+        "about": "Recall, listen and say it aloud, building to a performance check.",
+        "reply": {
+          "stages": {
+            "FOUNDATION": {
+              "practices": [
+                {
+                  "kind": "RECALL_DRILLS",
+                  "on": "D1"
+                },
+                {
+                  "kind": "READ_AND_CARD",
+                  "on": "D2"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "CHOOSE_MATERIAL"
+                }
+              ],
+              "checkpoint": "SELF_TEST"
+            },
+            "FAMILIAR": {
+              "practices": [
+                {
+                  "kind": "LISTEN_AND_REPEAT"
+                },
+                {
+                  "kind": "RECALL_DRILLS"
+                }
+              ],
+              "steps": []
+            },
+            "RETAINED": {
+              "practices": [
+                {
+                  "kind": "SAY_IT_ALOUD"
+                },
+                {
+                  "kind": "WRITING_PRACTICE",
+                  "on": "D2"
+                }
+              ],
+              "steps": [],
+              "checkpoint": "SELF_TEST"
+            },
+            "FLUENT": {
+              "practices": [
+                {
+                  "kind": "SAY_IT_ALOUD"
+                },
+                {
+                  "kind": "WITH_A_PARTNER"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "EXPLAIN_ONCE"
+                }
+              ]
+            },
+            "MASTERED": {
+              "practices": [
+                {
+                  "kind": "SAY_IT_ALOUD"
+                },
+                {
+                  "kind": "MISTAKE_REVIEW"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "FULL_ATTEMPT"
+                }
+              ],
+              "checkpoint": "PERFORMANCE_CHECK"
+            }
+          }
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "excluded": [],
+          "sessionPicks": false
+        }
+      }
+    ]
+  }
 }

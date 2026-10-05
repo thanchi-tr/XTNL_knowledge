@@ -77,16 +77,40 @@ export function VerdictChip({ verdict, unverified }: { verdict: KnowledgeCheck["
   );
 }
 
-/** "Targets vs your pace" in words, from the engine's own figures. */
-export function knowledgeSentence(k: KnowledgeCheck, ctx: { intensity: Intensity; dueDay: string | null; m: number; today?: string }): string {
+/**
+ * The engine's own lines that explain a target its formula doesn't give
+ * today (fix round 2's carry-over): "Kept at 15, so …" (the never-falls
+ * floor held it up) and "Worked out at 20 on an earlier day; with today's
+ * figures it would be 19". The panel shows them under the sentence.
+ */
+export function knowledgeNotesOf(k: Pick<KnowledgeCheck, "basis">): string[] {
+  return k.basis.filter((b) => /^(Kept at|Worked out at)\b/.test(b));
+}
+
+/**
+ * "Targets vs your pace" in words, from the engine's own figures. A FITTED
+ * target's sentence is the engine's own formula line (k.basis: "Fitted at
+ * Steady: 12 now, plus 70% of the ≈ 10 more … = 19"), so its sum is true even
+ * when the stored target differs (a raised floor, a draft re-judged later):
+ * the reason then follows as knowledgeNotesOf's line, never "= <target>".
+ * `asOf` "then": figures taken at Start, read on a later day.
+ */
+export function knowledgeSentence(k: KnowledgeCheck, ctx: { intensity: Intensity; dueDay: string | null; m: number; today?: string; asOf?: "now" | "then" }): string {
   const due = ctx.dueDay ? dayLabel(ctx.dueDay, ctx.today) : "its due day";
   const exp = Math.floor(k.expected);
   const best = Math.floor(k.best);
   const calib = k.bestCase ? " Best case — your pass rate is still calibrating." : "";
+  const when = ctx.asOf ?? "now";
   switch (k.verdict) {
     case "FITTED": {
+      const formula = k.basis.find((b) => b.startsWith("Fitted at"));
       const more = Math.max(0, Math.round(k.expected - k.baseline));
-      return `Fitted at ${INTENSITY_WORD[ctx.intensity]}: ${k.baseline} now, plus ${pct(INTENSITY[ctx.intensity])} of the ≈ ${more} more your reviews can be expected to bring to level ${k.level} by ${due} = ${k.target}. Best case ${best}, if every review passes on its day.${calib}`;
+      const sum = formula
+        ? (when === "then" ? formula.replace(/: (\d+) now,/, ": $1 then,") : formula).replace(/\.?$/, ".")
+        : knowledgeNotesOf(k).length > 0
+          ? `Fitted at ${INTENSITY_WORD[ctx.intensity]}: ${k.baseline} ${when}, plus ${pct(INTENSITY[ctx.intensity])} of the ≈ ${more} more your reviews can be expected to bring to level ${k.level} by ${due}.`
+          : `Fitted at ${INTENSITY_WORD[ctx.intensity]}: ${k.baseline} ${when}, plus ${pct(INTENSITY[ctx.intensity])} of the ≈ ${more} more your reviews can be expected to bring to level ${k.level} by ${due} = ${k.target}.`;
+      return `${sum} Best case ${best}, if every review passes on its day.${calib}`;
     }
     case "FITS":
       return `${k.target} is within the ≈ ${exp} your reviews can be expected to bring to level ${k.level} by ${due}.${calib}`;
@@ -115,11 +139,16 @@ export function remedyWord(r: Remedy, mf: MilestoneFeasibility | null, today?: s
     return earliest ? `Move the date to ${dayWithWeekday(earliest, today)}` : "Move the date to the earliest that fits";
   }
   if (r === "REFIT_LIGHT") return "Re-fit at Light";
+  // Revision 4: a depth plan's date offer (the lower depth is its own sheet, never a remedy button).
+  if (r === "USE_REALISTIC_DATE") return "Use the realistic date";
+  if (r === "LOWER_DEPTH") return "Choose a lower depth…";
   return "Move the last milestones to Later";
 }
 
-export function RemedyButtons({ roadmapId, remedies, mf, today }: { roadmapId: string; remedies: readonly Remedy[]; mf: MilestoneFeasibility | null; today?: string }) {
+export function RemedyButtons({ roadmapId, remedies: all, mf, today }: { roadmapId: string; remedies: readonly Remedy[]; mf: MilestoneFeasibility | null; today?: string }) {
   const { run, pending, error } = useRoadmapAction();
+  // LOWER_DEPTH is never applied as a remedy: only its own sheet's explicit tap lowers a depth (the Date block offers it).
+  const remedies = all.filter((r) => r !== "LOWER_DEPTH");
   if (remedies.length === 0) return null;
   return (
     <>
@@ -147,6 +176,7 @@ export function ChecksPanel({
   throughput,
   hoursPerWeek,
   intakeEditable = true,
+  asOf = null,
 }: {
   roadmapId: string | null;
   mf: MilestoneFeasibility | null;
@@ -161,12 +191,19 @@ export function ChecksPanel({
   hoursPerWeek: number;
   /** The intake can still be edited (a DRAFT): "Add a figure" links to its Reality check; otherwise it opens the figure sheet (setAimFigure). */
   intakeEditable?: boolean;
+  /**
+   * Whose figures these are (fix round 2's carry-over): a started milestone's
+   * Start snapshot ("Worked out at Start on 21 Dec", figures "then"), or the
+   * acceptance's ("as accepted on 4 Oct"). Absent: a draft's, worked out today.
+   */
+  asOf?: { kind: "START" | "ACCEPTED"; day: string } | null;
 }) {
   const [why, setWhy] = useState(false);
   return (
     <div className="rm-ms-sec">
       <div className="rm-ms-sh">
         <span className="t-eyebrow">Is this realistic?</span>
+        {asOf && <span className="rm-cap">{asOf.kind === "START" ? `worked out at Start on ${dayLabel(asOf.day, today)}` : `as accepted on ${dayLabel(asOf.day, today)}`}</span>}
         {mf && (
           <button type="button" className="rm-ilink rm-cap" onClick={() => setWhy(true)} style={{ minHeight: 40 }}>
             Why
@@ -180,7 +217,10 @@ export function ChecksPanel({
             <b>Targets vs your pace</b>
             <VerdictChip verdict={k.verdict} />
           </div>
-          <p>{knowledgeSentence(k, { intensity, dueDay, m, today })}</p>
+          <p>{knowledgeSentence(k, { intensity, dueDay, m, today, asOf: asOf?.kind === "START" ? "then" : "now" })}</p>
+          {knowledgeNotesOf(k).map((b) => (
+            <p key={b}>{b}</p>
+          ))}
           {k.verdict === "IMPOSSIBLE" && k.earliestDay && <p>Earliest day it fits: {dayWithWeekday(k.earliestDay, today)}.</p>}
         </div>
       ))}

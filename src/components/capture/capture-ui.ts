@@ -43,7 +43,7 @@ import { normTitleOf } from "../../lib/life-lexicon";
 import { captureShapeOf } from "../../lib/capture-shape";
 import { nextDue, parseRule } from "../../lib/recurrence";
 import { dayName, placeOf, shortDate, startDayFor, weekdayName, type BoardTemplate } from "../../lib/today-board";
-import type { CaptureActiveTitle, CapturedItem } from "../../app/actions/capture";
+import type { CaptureActiveTitle, CaptureAim, CapturedItem } from "../../app/actions/capture";
 import type { WeightUnit } from "../../lib/weight";
 import { weightToastCopy } from "./weight-capture";
 
@@ -460,6 +460,19 @@ function hasToken(parsed: ParsedCapture, field: string): boolean {
   return parsed.tokens.some((t) => t.field === field);
 }
 
+/**
+ * The line opens with a prefix: a mode the parser read ('goal: ', 'idea: '),
+ * or 'aim:' (an aim line, or its bare prefix still waiting for its words;
+ * aim-capture reads it, the parser never does). The Goal ▾ menu hides 'New
+ * goal' and 'New aim' on such a line, so a tap never stacks two prefixes
+ * ('goal: aim: …'). The same leading 'aim\s*:' as roadmap-handoff AIM_LINE,
+ * written out here because capture-ui.ts keeps to type-only imports of the
+ * roadmap modules (capture.md, "The Goal ▾ menu").
+ */
+export function lineHasPrefix(parsed: ParsedCapture, text: string): boolean {
+  return hasToken(parsed, "mode") || /^\s*aim\s*:/i.test(text);
+}
+
 /** A planned date or deadline, or a schedule with fixed days: what a Must is judged on. */
 export function hasDayToJudge(parsed: ParsedCapture): boolean {
   if (parsed.dueDay) return true;
@@ -531,13 +544,26 @@ const WD_LONG = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Sa
  * Next week. Repeat: Daily, Weekdays, Every <today's weekday>, 3×/week,
  * Weekly. Must: the four fixes, each closing the line with '!'. Time:
  * 10m … 2h. Goal: 'New goal' (the 'goal: ' prefix; not on a line that
- * already has a mode prefix), then the open goals to link under a quiet
+ * already has a mode prefix), then 'New aim' (the 'aim: ' prefix, roadmap-rev4
+ * F-R4-7: only once a load has said no roadmap is open, `aim` 'NONE', and
+ * not on a line with a prefix), then the open goals to link under a quiet
  * 'Link to' (vocab.goals), or a disabled 'No open goals' (or 'Loading
  * goals…' before they arrive).
+ *
+ * 'New aim' is a tool the user opens, not a set-an-aim suggestion: it reads
+ * only the open roadmap, never the prompt (capture.md, "The user's no"). The
+ * line it makes is an aim line, whose Enter opens the aim form through the
+ * handoff (QuickCapture openAimForm); no key of its own.
  */
 export function insertMenuOptions(
   menu: InsertMenu,
-  ctx: { today: DayKey; goals: readonly { id: string; title: string }[] | null; hasMode?: boolean }
+  ctx: {
+    today: DayKey;
+    goals: readonly { id: string; title: string }[] | null;
+    hasMode?: boolean;
+    /** The open roadmap (CaptureVocabulary.aim); unknown (undefined) until a load says, and then 'New aim' waits. */
+    aim?: CaptureAim;
+  }
 ): InsertChip[] {
   const { today } = ctx;
   switch (menu) {
@@ -582,6 +608,10 @@ export function insertMenuOptions(
       if (!ctx.hasMode) {
         const newGoal: Insert = { text: "goal: ", field: "mode" };
         out.push({ id: "goal-new", label: "New goal", name: `New goal: ${insertChipLabel(newGoal)}`, insert: newGoal });
+        if (ctx.aim === "NONE") {
+          const newAim: Insert = { text: "aim: ", field: "mode" };
+          out.push({ id: "goal-new-aim", label: "New aim", name: `New aim: ${insertChipLabel(newAim)}`, insert: newAim });
+        }
       }
       if (ctx.goals === null) out.push({ id: "goal-loading", label: "Loading goals…", disabled: true });
       else if (ctx.goals.length === 0) out.push({ id: "goal-none", label: "No open goals", disabled: true });

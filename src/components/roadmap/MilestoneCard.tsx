@@ -16,6 +16,14 @@
  *
  * Outline: the verdict chips, the measure line and the items with their
  * DRAFT chips, "decide when you start it".
+ *
+ * Revision 4 (F-R4-10, F-R4-17, F-R4-21): on a keys-only draft the title is
+ * code's ("Familiar: Probability, Inference to level 6+"), one card measure
+ * per Domain ("multiple choice not counted"), no Keep and no bulk keep, the
+ * outline lines can be moved and tied to another Domain, a type from the
+ * app's list says who chose it and can be changed, Gemini's Domain
+ * additions are decided once in the plan-level row (never here), and a stage
+ * held when you began is a one-line card that gives no rank.
  */
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
@@ -24,6 +32,7 @@ import { ActionError } from "@/components/home/ActionError";
 import { cx } from "@/components/ui/cx";
 import { daysBetween } from "@/lib/life-day";
 import {
+  parseMeasureKey,
   type AimCheck,
   type Intensity,
   type ItemDraft,
@@ -35,16 +44,30 @@ import {
 } from "@/lib/roadmap-types";
 import {
   CHECKPOINT_KIND_WORD,
+  HEALTH_LINE,
   MILESTONE_NOTE_LINE,
   PARAGON_PARTS,
   basisClassNote,
   dayLabel,
+  heldRowLine,
   levelGapPhrase,
   rankLineParts,
   plural,
   spanLabel,
+  stageWords,
 } from "./roadmap-copy";
-import { bulkKeepCountOf, editorRowOf, measureDomainClassOf, rowDomId, scopeNamesOf, titleItemOf, type LibraryDomain, type RankPlanEntry } from "./roadmap-ui-model";
+import {
+  bulkKeepCountOf,
+  editorRowOf,
+  isHeldMilestone,
+  isPendingAddition,
+  measureDomainClassOf,
+  rowDomId,
+  scopeNamesOf,
+  titleItemOf,
+  type LibraryDomain,
+  type RankPlanEntry,
+} from "./roadmap-ui-model";
 import { useRoadmapAction } from "./roadmap-runtime";
 import { ItemRow, MilestoneTitleText, useDisplayLabel } from "./ItemRow";
 import { ProvenanceChip } from "./ProvenanceChip";
@@ -52,7 +75,7 @@ import { FlagChips, FlagReasons } from "./FlagChips";
 import { useItemEditor, type ActTarget } from "./ItemEditor";
 import { ChecksPanel, VerdictChip } from "./ChecksPanel";
 import { DomainItemRow, SetTheBar } from "./DomainRow";
-import { TopicRow } from "./TopicRow";
+import { TopicRow, type OutlineMoves } from "./TopicRow";
 import { PracticeRow } from "./PracticeRow";
 import { MeasureEditSheet } from "./EditItemSheet";
 import { AddItemBar } from "./AddItemSheet";
@@ -64,6 +87,8 @@ export interface MilestoneCardContext {
   m: number;
   /** The plan's last day (the last milestone "ends on your date"). */
   targetDay: string;
+  /** Revision 4: the plan's date is the app's realistic date, never called the user's ("ends on the date the app set"). */
+  dateByApp?: boolean;
   domainIndex: ReadonlyMap<string, LibraryDomain | { id: string; name: string }>;
   credentialNoSyllabus: boolean;
   bulkKeepOff: boolean;
@@ -76,6 +101,12 @@ export interface MilestoneCardContext {
    * has no editable intake, so its checks open the figure sheet instead.
    */
   intakeEditable?: boolean;
+  /** Revision 4: a keys-only draft (no Keep, no bulk keep; outline lines movable; additions decided once, above). */
+  keysOnly?: boolean;
+  /** A keys-only draft's outline lines: where they can move and the Domains they can be tied to. */
+  moves?: OutlineMoves | null;
+  /** A BODY track plan: its sessions carry HEALTH_LINE. */
+  body?: boolean;
 }
 
 const KIND_ORDER = ["DOMAIN", "TOPIC", "PRACTICE", "STEP", "CHECKPOINT"] as const;
@@ -89,6 +120,12 @@ function weeksOf(m: MilestoneDraft): number | null {
   return Math.max(1, Math.round((daysBetween(m.windowStart, m.dueDay) + 1) / 7));
 }
 
+/** A card measure's key segment (revision 4): `r` counts recall cards only, `rc` also clean entry; none on a rev-3 key. */
+export function measureSegmentOf(measureKey: string | null): "r" | "rc" | null {
+  const p = measureKey ? parseMeasureKey(measureKey) : null;
+  return p?.kind === "CARDS_AT_LEVEL" ? (p.segment ?? null) : null;
+}
+
 /** "Hold 43 cards at level 6+ in A, B (now 28)", with its propagation note. */
 function CardMeasure({ measure, milestone, check, ctx, editable }: { measure: MeasureSpec; milestone: MilestoneDraft; check: KnowledgeCheck | null; ctx: MilestoneCardContext; editable: boolean }) {
   const [edit, setEdit] = useState(false);
@@ -96,6 +133,7 @@ function CardMeasure({ measure, milestone, check, ctx, editable }: { measure: Me
   const level = measure.minLevel ?? 0;
   const baseline = measure.baseline ?? check?.baseline ?? null;
   const note = basisClassNote(measureDomainClassOf(milestone, measure.scope.domainIds));
+  const segment = measureSegmentOf(measure.measureKey);
   return (
     <div className="rm-mr rm-mr-top">
       <div className="rm-mr-h">
@@ -106,14 +144,17 @@ function CardMeasure({ measure, milestone, check, ctx, editable }: { measure: Me
       </div>
       <p className="t-meta">
         {levelGapPhrase(level, ctx.m)} · tested by your reviews once started
-        {measure.targetSource === "YOURS" ? " · your target" : ""}
+        {measure.targetSource === "YOURS" ? " · your target" : measure.targetSource === "DEPTH" ? " · the depth" : ""}
+        {segment ? " · multiple choice not counted" : ""}
+        {segment === "rc" ? " · a card that got there on a retry counts after its next review" : ""}
       </p>
       {note && (
         <p className="t-meta">
           <b>{note}</b> until you check or edit the Domains below
         </p>
       )}
-      {editable && (
+      {/* A depth plan's counts are its coverage (F-R4-9): changed only through the coverage edit, never typed per stage. */}
+      {editable && !segment && (
         <>
           <div className="rm-acts">
             <ChipButton onClick={() => setEdit(true)}>Type a target</ChipButton>
@@ -144,6 +185,12 @@ function sectionItems(m: MilestoneDraft, kind: (typeof KIND_ORDER)[number]): Ite
   return m.items.filter((it) => it.kind === kind).sort((a, b) => a.ord - b.ord);
 }
 
+/** The rows a card shows: on a keys-only draft Gemini's pending Domain additions are decided once, in the plan-level row, never here. */
+function itemsShown(m: MilestoneDraft, kind: (typeof KIND_ORDER)[number], ctx: MilestoneCardContext): ItemDraft[] {
+  const rows = sectionItems(m, kind);
+  return ctx.keysOnly ? rows.filter((it) => !isPendingAddition(it) && !(it.decision === "REMOVED" && it.notes.includes("NOT_CHOSEN"))) : rows;
+}
+
 function domainNameOf(it: ItemDraft, ctx: MilestoneCardContext): string | null {
   if (it.domainId) return ctx.domainIndex.get(it.domainId)?.name ?? null;
   return it.proposedName ?? null;
@@ -157,7 +204,7 @@ function ItemsOf({ m, kind, stage, ctx }: { m: MilestoneDraft; kind: (typeof KIN
   const editor = useItemEditor();
   return (
     <>
-      {sectionItems(m, kind).map((it) => {
+      {itemsShown(m, kind, ctx).map((it) => {
         const t = targetOf(it, m);
         if (kind === "DOMAIN") {
           const facts = it.domainId ? ctx.domainIndex.get(it.domainId) : undefined;
@@ -165,7 +212,7 @@ function ItemsOf({ m, kind, stage, ctx }: { m: MilestoneDraft; kind: (typeof KIN
         }
         if (kind === "TOPIC") {
           const facts = it.domainId ? ctx.domainIndex.get(it.domainId) : undefined;
-          return <TopicRow key={t.row.id} target={t} stage={stage} domainName={domainNameOf(it, ctx)} facts={isLibrary(facts) ? facts : null} />;
+          return <TopicRow key={t.row.id} target={t} stage={stage} domainName={domainNameOf(it, ctx)} facts={isLibrary(facts) ? facts : null} moves={ctx.keysOnly ? ctx.moves : null} />;
         }
         if (kind === "PRACTICE") return <PracticeRow key={t.row.id} target={t} stage={stage} />;
         if (kind === "CHECKPOINT") {
@@ -258,12 +305,57 @@ export function MilestoneCard({
 }) {
   const [showAll, setShowAll] = useState(false);
   const editor = useItemEditor();
+  if (isHeldMilestone(m)) return <HeldCard milestone={m} />;
+  return <MilestoneBody milestone={m} stage={stage} mf={mf} rank={rank} aimCheck={aimCheck} ctx={ctx} showAll={showAll} setShowAll={setShowAll} editor={editor} />;
+}
+
+/** A stage held when you began (F-R4-10, F-R4-12): one line, no items, never started, no rank given. */
+function HeldCard({ milestone: m }: { milestone: MilestoneDraft }) {
+  return (
+    <section className="card rm-held" aria-label={`Milestone ${m.ord}`}>
+      <div className="rm-ms-h">
+        <span className="rm-ms-n rm-ms-n-held">{m.ord}</span>
+        <div>
+          <p className="rm-ms-t">
+            <MilestoneTitleText milestone={m} />
+          </p>
+          <div className="rm-ms-w">{heldRowLine(m.rankIndex)}</div>
+          <p className="t-meta" style={{ margin: "4px 0 0" }}>
+            {MILESTONE_NOTE_LINE.HELD_AT_START}
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function MilestoneBody({
+  milestone: m,
+  stage,
+  mf,
+  rank,
+  aimCheck,
+  ctx,
+  showAll,
+  setShowAll,
+  editor,
+}: {
+  milestone: MilestoneDraft;
+  stage: "draft" | "outline";
+  mf: MilestoneFeasibility | null;
+  rank: RankPlanEntry | undefined;
+  aimCheck: AimCheck | null;
+  ctx: MilestoneCardContext;
+  showAll: boolean;
+  setShowAll: (f: (v: boolean) => boolean) => void;
+  editor: ReturnType<typeof useItemEditor>;
+}) {
   const weeks = weeksOf(m);
   const last = m.dueDay === ctx.targetDay;
-  const windowLine = m.windowStart ? `${spanLabel(m.windowStart, m.dueDay, ctx.today)}${weeks ? ` · ${plural(weeks, "week")}` : ""}${stage === "draft" ? " · dates set by the app" : ""}${last ? " · ends on your date" : ""}` : "Later · no dates";
+  const windowLine = m.windowStart ? `${spanLabel(m.windowStart, m.dueDay, ctx.today)}${weeks ? ` · ${plural(weeks, "week")}` : ""}${stage === "draft" ? " · dates set by the app" : ""}${last ? (ctx.dateByApp ? " · ends on the date the app set" : " · ends on your date") : ""}` : "Later · no dates";
   const cards = m.measures.filter((x) => x.kind === "CARDS_AT_LEVEL" && x.role === "PAYS");
   const practice = m.measures.find((x) => x.kind === "PRACTICE_KEPT" && x.role === "PAYS");
-  const has = (k: (typeof KIND_ORDER)[number]) => m.items.some((it) => it.kind === k);
+  const has = (k: (typeof KIND_ORDER)[number]) => itemsShown(m, k, ctx).length > 0;
   const title = titleItemOf(m);
   // The title's reasons as every row shows them: the server's, else the device's re-check (a fallback).
   const titleShown = useDisplayLabel(title, m, editor?.scope);
@@ -285,6 +377,7 @@ export function MilestoneCard({
             <FlagReasons flags={title.flags} ctx={{ constraints: editor?.scope.constraints ?? null, milestoneOrd: m.ord, milestoneCount: ctx.milestoneCount }} reasons={titleShown.reasons} />
           </>
         )}
+        {stageWords(m.stage, gateOf(m)) && <div className="rm-ms-w rm-ms-stage">{stageWords(m.stage, gateOf(m))}</div>}
         <div className="rm-ms-w">{windowLine}</div>
         <RankLines rank={rank} />
       </div>
@@ -292,7 +385,7 @@ export function MilestoneCard({
   );
 
   if (stage === "outline") {
-    const items = KIND_ORDER.flatMap((k) => sectionItems(m, k));
+    const items = KIND_ORDER.flatMap((k) => itemsShown(m, k, ctx));
     const shown = showAll ? items : items.slice(0, 7);
     return (
       <section className="card" aria-label={`Milestone ${m.ord}`}>
@@ -386,14 +479,15 @@ export function MilestoneCard({
         <ItemsOf m={m} kind="DOMAIN" stage="draft" ctx={ctx} />
       </Section>
       <Section
-        title={ctx.credentialNoSyllabus ? "Gemini's guess at what to learn — not checked against the official syllabus" : "What to learn"}
-        cap={ctx.credentialNoSyllabus ? undefined : "How, for every topic: write cards on it in its Domain and review them when due."}
+        title={ctx.credentialNoSyllabus && !ctx.keysOnly ? "Gemini's guess at what to learn — not checked against the official syllabus" : "What to learn"}
+        cap={ctx.keysOnly ? "your outline lines · write cards on each in its Domain" : ctx.credentialNoSyllabus ? undefined : "How, for every topic: write cards on it in its Domain and review them when due."}
         show={has("TOPIC")}
       >
         <ItemsOf m={m} kind="TOPIC" stage="draft" ctx={ctx} />
       </Section>
       <Section title="What to practise" cap="sessions and minutes set by the app" show={has("PRACTICE")}>
         <ItemsOf m={m} kind="PRACTICE" stage="draft" ctx={ctx} />
+        {ctx.body && <p className="rm-it-why">{HEALTH_LINE}</p>}
       </Section>
       <Section title="Steps" cap="you tick these once started" show={has("STEP")}>
         <ItemsOf m={m} kind="STEP" stage="draft" ctx={ctx} />
@@ -404,7 +498,12 @@ export function MilestoneCard({
         </p>
       ))}
       {editor && <AddItemBar milestone={m} scope={editor.scope} />}
-      {!ctx.bulkKeepOff && <BulkKeep m={m} />}
+      {!ctx.bulkKeepOff && !ctx.keysOnly && <BulkKeep m={m} />}
     </section>
   );
+}
+
+/** A stage's gate level: its paying card measure's level (BETWEEN's odd level, PART's count level). */
+function gateOf(m: Pick<MilestoneDraft, "measures">): number | null {
+  return m.measures.find((x) => x.kind === "CARDS_AT_LEVEL" && x.role === "PAYS" && x.minLevel != null)?.minLevel ?? null;
 }

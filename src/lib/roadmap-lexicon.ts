@@ -19,6 +19,16 @@
  *
  * The spec's lists are kept whole; additions are marked "(added)" and each
  * is a word of the same kind the spec names.
+ *
+ * Revision 4 (lane R3): the lists also serve the gap names' shape rule
+ * (F-R4-19) and the constraint filter (F-R4-17), and roadmap-validate takes
+ * any of them as an injected `lexicon` (RuleOpts) for the hostile bar's
+ * lexicon ablation (npm run roadmap-hostile:ablate), with no change at the
+ * defaults. New lists below: CONSTRAINT_CUES, CONSTRAINT_SCOPE_BREAKS,
+ * CONSTRAINT_GENERIC_WORDS, AREA_GERUNDS, START_TERM_PHRASES, START_NOUN_WORDS,
+ * ORDINAL_WORDS, QUOTE_PAIRS; and (fix round 2) the release lists
+ * CONSTRAINT_RELEASE_WORDS, CONSTRAINT_RELEASE_STARTS,
+ * CONSTRAINT_RELEASE_BLOCKERS and CONSTRAINT_STATE_CUES.
  */
 import type { PracticeMethod } from "./roadmap-types";
 
@@ -428,6 +438,253 @@ export const LABEL_START_WORDS: readonly string[] = [
   "speak", "start", "stretch", "study", "summarise", "summarize", "swim", "take", "teach", "test",
   "time", "timed", "track", "train", "transcribe", "translate", "trace", "try", "update", "use",
   "visit", "walk", "warm", "watch", "weekly", "work", "write",
+];
+
+// ═══ Revision 4 (roadmap-rev4.md F-R4-17, F-R4-19, F-R4-22) ══════════════════
+// No new claim lists: these serve the constraint filter, the gap names' shape
+// rule and the quote and link patterns.
+
+/**
+ * The constraint filter's negation cues (F-R4-17, constraintExclusionsOf),
+ * exactly the spec's list. Apostrophes are closed first ("can't" → "cant",
+ * "don't" → "dont"); a one-word cue matches by stem ("injuries", "avoiding"),
+ * a two-word cue as a run of words. After a cue its scope runs to the end of
+ * its sentence across commas and "or", "and", "nor", up to 6 content words:
+ * "no running, jumping or lifting" → running, jumping, lifting. Each cue is a
+ * rule of its own for the hostile bar's H6 ("cue.<cue>").
+ */
+export const CONSTRAINT_CUES: readonly string[] = ["no", "not", "avoid", "without", "can't", "cannot", "don't", "stop", "doctor says", "injury", "injured", "pain"];
+
+/**
+ * Words that end a cue's scope early (a contrast, not a list): "no running,
+ * but swimming is fine". Only once the cue has taken a term (fix round): a
+ * break right after a cue ("injured while running") leaves the scope open,
+ * so the term after it is still negated.
+ */
+export const CONSTRAINT_SCOPE_BREAKS: readonly string[] = ["but", "except", "however", "although", "though", "unless", "while", "yet"];
+
+/**
+ * A clause that clears what a cue named (fix round 2, lens 1 minor: BODY and
+ * CARE over-exclusion). Matched as written, never by stem, so an ongoing
+ * state ("healing", "recovering", "getting better") is no release: "knee
+ * injury still healing, so running is out" keeps running. A release word is
+ * never a negated term itself. A clause runs to the next pause (a comma,
+ * colon, dash or bracket), scope break or cue; it releases when it holds a
+ * release word before any CONSTRAINT_RELEASE_BLOCKERS word. The rules
+ * (negatedTermsOf):
+ *   - a clause opened by a pause or by a CONSTRAINT_RELEASE_STARTS word ends
+ *     the cue's scope there, even before the cue has taken a term: "injured,
+ *     but cleared to run", "knee injury, running is fine", "injured last
+ *     year, now fully recovered and running daily";
+ *   - the clause right after a state cue (CONSTRAINT_STATE_CUES) that
+ *     releases means the cue negates nothing: "knee injury healed, running is
+ *     fine", "back pain gone", "doctor says running is fine".
+ * The terms a cue took before the release stand: "no running, but cleared
+ * for swimming" still names running. After a negating cue ("no", "not",
+ * "avoid" …) a release word is negated with the rest: "not cleared to run"
+ * names run.
+ */
+export const CONSTRAINT_RELEASE_WORDS: readonly string[] = ["cleared", "recovered", "healed", "fine", "ok", "okay", "resolved", "gone"];
+
+/**
+ * Words that open a clause the release rule reads ("but", "now" …). Only
+ * CONSTRAINT_SCOPE_BREAKS end a scope on their own; "now" opens a clause and
+ * ends nothing ("can't run now or jump" still names jump). "yet" is not here
+ * ("injured, yet to be cleared for running" clears nothing), nor "unless",
+ * "except" or "while" (a condition, not a contrast).
+ */
+export const CONSTRAINT_RELEASE_STARTS: readonly string[] = ["but", "however", "although", "though", "now"];
+
+/**
+ * Words that keep a release word from clearing anything when they come before
+ * it in its clause: a negation the cue list doesn't hold ("isn't fine",
+ * "never fully recovered"), a condition or a time still to come ("only when
+ * cleared", "until healed", "once recovered", "yet to be cleared"), and a
+ * partial state ("almost healed", "mostly fine"). Apostrophes are closed, as
+ * the constraint tokens are ("isn't" → "isnt").
+ */
+export const CONSTRAINT_RELEASE_BLOCKERS: readonly string[] = [
+  "never",
+  "isnt",
+  "arent",
+  "wasnt",
+  "werent",
+  "doesnt",
+  "didnt",
+  "wont",
+  "hasnt",
+  "havent",
+  "hadnt",
+  "shouldnt",
+  "mustnt",
+  "couldnt",
+  "nor",
+  "neither",
+  "yet",
+  "until",
+  "till",
+  "unless",
+  "once",
+  "after",
+  "before",
+  "if",
+  "when",
+  "only",
+  "pending",
+  "almost",
+  "nearly",
+  "partly",
+  "partially",
+  "mostly",
+  "hardly",
+  "barely",
+  "not",
+  "no",
+];
+
+/**
+ * The cues that report a state (a condition, or what a doctor said) rather
+ * than negate a word; a subset of CONSTRAINT_CUES. A releasing clause right
+ * after one means it negates nothing ("knee injury healed", "doctor says
+ * running is fine"); otherwise its scope is the usual one ("knee injury,
+ * no running", "doctor says running is out").
+ */
+export const CONSTRAINT_STATE_CUES: readonly string[] = ["injury", "injured", "pain", "doctor says"];
+
+/**
+ * Words inside a cue's scope too general to exclude a type by: "no time on
+ * weekdays" says nothing against "Set time for: …", "no strenuous exercise"
+ * nothing against "Problem sets" (whose keywords hold "exercises"), and "pain
+ * when running" names running, not "when". They are skipped, not counted
+ * toward the scope's 6 words.
+ */
+export const CONSTRAINT_GENERIC_WORDS: readonly string[] = [
+  "when",
+  "only",
+  "allowed",
+  "please",
+  "anything",
+  "something",
+  "things",
+  "stuff",
+  "activity",
+  "activities",
+  "exercise",
+  "exercises",
+  "exercising",
+  "sport",
+  "sports",
+  "time",
+  "lot",
+  "lots",
+  "says",
+  "said",
+  "doctor",
+];
+
+/**
+ * F-R4-19: the gerunds of a skill. A gap name may hold one although its stem
+ * is a LABEL_START_WORD ("Listening", "Sight reading").
+ */
+export const AREA_GERUNDS: readonly string[] = ["listening", "reading", "writing", "speaking", "sight reading", "sight-reading"];
+
+/**
+ * F-R4-19: area names that hold a LABEL_START_WORD as part of a term, so the
+ * shape rule keeps them ("Set theory"), as RESOURCE_TERM_PHRASES does for
+ * "Time series". A term phrase exempts each of its words.
+ */
+export const START_TERM_PHRASES: readonly string[] = [
+  "set theory",
+  "group theory",
+  "model theory",
+  "map reading",
+  "note taking",
+  "record keeping",
+  "time management",
+  "time signatures",
+  "code review",
+  "design patterns",
+  "test design",
+  "test automation",
+  "build systems",
+  "track and field",
+];
+
+/**
+ * F-R4-19: LABEL_START_WORDS that also head an area's name as a noun or an
+ * adjective ("Open source", "List comprehensions", "File handling", "Call
+ * options", "Balance sheets", "Measure theory", "Pair programming", "Short
+ * selling"). As a gap name's first word one of these is no action, so the
+ * shape rule's start-word clause lets it pass (grounding still decides).
+ */
+export const START_NOUN_WORDS: readonly string[] = [
+  "open",
+  "list",
+  "file",
+  "time",
+  "map",
+  "note",
+  "record",
+  "model",
+  "group",
+  "code",
+  "track",
+  "set",
+  "sight",
+  "call",
+  "balance",
+  "log",
+  "design",
+  "test",
+  "measure",
+  "pair",
+  "short",
+];
+
+/** F-R4-19: ordinals are numbers in a gap name ("Second edition"); spelled numbers are SPELLED_NUMBER_WORDS. */
+export const ORDINAL_WORDS: readonly string[] = [
+  "first",
+  "second",
+  "third",
+  "fourth",
+  "fifth",
+  "sixth",
+  "seventh",
+  "eighth",
+  "ninth",
+  "tenth",
+  "eleventh",
+  "twelfth",
+  "twentieth",
+  "hundredth",
+  "thousandth",
+];
+
+/**
+ * LOOKS_LIKE_RESOURCE's quoted title (F-R4-22 M2): two or more characters
+ * between an opening mark and its closing mark, in any of these styles. The
+ * ASCII and typographic single quotes count only at a word boundary, so an
+ * apostrophe ("Bayes' rule", "don't") is never a quote.
+ */
+export const QUOTE_PAIRS: readonly (readonly [string, string])[] = [
+  ['"', '"'],
+  ["“", "”"],
+  ["„", "“"],
+  ["„", "”"],
+  ["”", "”"],
+  ["‟", "”"],
+  ["«", "»"],
+  ["»", "«"],
+  ["‹", "›"],
+  ["›", "‹"],
+  ["「", "」"],
+  ["『", "』"],
+  ["〝", "〞"],
+  ["〝", "〟"],
+  ["＂", "＂"],
+  ["｢", "｣"],
+  ["《", "》"],
+  ["〈", "〉"],
 ];
 
 /**

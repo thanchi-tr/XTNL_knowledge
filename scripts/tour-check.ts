@@ -7,6 +7,13 @@
  * keys and roles, motion through the gateway, and no class named like a
  * Tailwind utility. No DB, no browser.
  *
+ * Roadmap revision 4 (roadmap-rev4.md F-R4-6, question 3 approved): the You
+ * step names the aim (YOU_COPY, ≤ 160 characters, /\baim\b/, no Gemini,
+ * earn, mastery, ⬡ or bare "quest"), its first target is the Aim card
+ * ([data-tour="you-aim"]) before the hero, and there are still seven steps.
+ * The Aim card is lane R5's and has landed (fix round 2 of revision 4): its
+ * data-tour="you-aim" is checked like every other target, a FAIL if missing.
+ *
  * Run: npx tsx scripts/tour-check.ts
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -20,6 +27,7 @@ import {
   CAPTURE_TARGETS,
   PHONE_SHORTCUTS_COPY,
   SETTLE_MS,
+  YOU_COPY,
   copyText,
   hasNoTour,
   readSeen,
@@ -66,6 +74,18 @@ const TOUR_CSS = read("src/components/tour/tour.css");
   check("copy: capture says nothing is guessed by AI", /no AI/i.test(capture));
   check("copy: the done step points at Settings", /Settings/.test(copyText(KEYBOARD[KEYBOARD.length - 1].body)));
   check("copy: no promise words (soon, coming, will be)", ![...KEYBOARD, ...PHONE].some((s) => /\b(soon|coming|will be)\b/i.test(copyText(s.body))));
+  // Roadmap revision 4 (F-R4-6): the You step names the aim, in the spec's words, as an invitation.
+  for (const [name, steps] of [["keyboard", KEYBOARD], ["phone", PHONE]] as const) {
+    const you = copyText(steps.find((s) => s.id === "you")!.body);
+    check(`copy (${name}): the you step is YOU_COPY, at most 160 characters, and names the aim`, you === YOU_COPY && you.length <= 160 && /\baim\b/.test(you), `${you.length}: ${you}`);
+    check(
+      `copy (${name}): the you step never names Gemini and never says earn, mastery, ⬡ or a bare "quest"`,
+      !/gemini|\bearns?\b|master|⬡/i.test(you) && !/\bquests?\b/i.test(you.replace(/week quests?/gi, "")),
+      you
+    );
+  }
+  eq("copy: YOU_COPY is the spec's sentence (145 characters)", [YOU_COPY, YOU_COPY.length], ["Your character grows from what you do. Give it an aim and the app plans milestones toward it, then measures them from your own reviews and ticks.", 145]);
+  check("steps: still seven, so the aim adds no step", KEYBOARD.length === 7 && PHONE.length === 7);
 }
 
 // ── keys come from SHORTCUTS, never from the tour's source ─────────────────
@@ -126,6 +146,7 @@ const TOUR_CSS = read("src/components/tour/tour.css");
   const chrome = read("src/components/shell/Chrome.tsx");
   const classUsed = (c: string) => new RegExp(`className=(?:"|\\{[^}]*["'\`])[^"'\`]*\\b${c}\\b`).test(chrome) || new RegExp(`className="[^"]*\\b${c}\\b`).test(src);
   const all = [...new Set([...KEYBOARD, ...PHONE].flatMap((s) => s.targets))];
+  // The Aim card is lane R5's (AimCard.tsx), landed: its data-tour="you-aim" is held like every other target (fix round 2).
   for (const sel of all) {
     for (const m of sel.matchAll(/\[data-tour="([^"]+)"\]/g)) check(`target: data-tour="${m[1]}" is in the source`, src.includes(`data-tour="${m[1]}"`));
     for (const m of sel.replace(/\[[^\]]*\]/g, "").matchAll(/\.([\w-]+)/g)) check(`target: .${m[1]} (${sel}) is a class the shell renders`, classUsed(m[1]));
@@ -137,7 +158,13 @@ const TOUR_CSS = read("src/components/tour/tour.css");
     check(`target: ${id} has a target in the tab bar, the rail and the sidebar`, [".tabbar", ".rail", ".sidebar"].every((c) => t.some((s) => s.startsWith(c))), t.join(", "));
   }
   check("target: capture reaches the three capture buttons", CAPTURE_TARGETS.length === 3);
-  check("target: the page-specific targets come first", KEYBOARD.find((s) => s.id === "today")!.targets[0] === '[data-tour="today-lanes"]' && KEYBOARD.find((s) => s.id === "you")!.targets[0] === '[data-tour="you-hero"]');
+  check("target: the page-specific targets come first", KEYBOARD.find((s) => s.id === "today")!.targets[0] === '[data-tour="today-lanes"]' && KEYBOARD.find((s) => s.id === "you")!.targets[0] === '[data-tour="you-aim"]');
+  const youTargets = KEYBOARD.find((s) => s.id === "you")!.targets;
+  check(
+    "target: the you step spotlights the Aim card first, then the hero, then the You links, and the crest last (F-R4-6)",
+    youTargets[0] === '[data-tour="you-aim"]' && youTargets[1] === '[data-tour="you-hero"]' && youTargets[youTargets.length - 1] === '[data-tour="you-crest"]' && youTargets.slice(2, -1).every((t) => !t.startsWith("[data-tour")),
+    youTargets.join(", ")
+  );
   check("target: welcome, shortcuts and done are centred (no target)", ["welcome", "shortcuts", "done"].every((id) => KEYBOARD.find((s) => s.id === id)!.targets.length === 0));
 }
 

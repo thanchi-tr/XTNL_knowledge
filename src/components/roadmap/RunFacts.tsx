@@ -5,25 +5,59 @@
  * checker · 1 matched to your library · What was dropped", and the sheet that
  * lists every report entry in words. Nothing is rewritten: a drop, a match or
  * a flag is shown with its reason, as the checker recorded it.
+ *
+ * Revision 4 (F-R4-20): a keys-only run says what its reply was in counts,
+ * never in the model's words: "Gemini's reply: keys only · 0 words of its
+ * own" (or "· 2 area names picked from your words (not checked) · 3 not
+ * shown"), or "Rejected (format) · plan from your numbers". An entry for a
+ * link, a name that isn't one, a rejected reply or any area suggestion is
+ * never echoed (its label is redacted, and this file never shows one even if
+ * a row carried it), so a gap's text appears only in its panel. A FAILED
+ * Gemini run whose rows are the app's starter reads "the app (…)" with its
+ * cause (fix round 2's carry-over; revision 4's fix round): "Gemini's reply
+ * was rejected" (integrity REJECTED), "Gemini's reply was refused" (the
+ * tripwire), else "Gemini didn't answer" — never "Drafted by gemini-…".
  */
 import { useState } from "react";
 import { Sheet } from "@/components/ui/Sheet";
 import type { ReportEntry, RunView } from "@/lib/roadmap-types";
-import { DRAFTED_BY_LABEL, FLAG_WORD, NOTE_WORD, calendarDayOf, dayWithWeekday, plural, timeLabel } from "./roadmap-copy";
+import { DRAFTED_BY_LABEL, FLAG_WORD, NOTE_WORD, calendarDayOf, dayWithWeekday, integrityLine, plural, starterWriterWords, timeLabel } from "./roadmap-copy";
 
-/** The facts line's words (without the link). */
+/** A Gemini run whose rows are the app's own plan (it failed or was rejected, and the starter was written in its place). */
+export function wroteStarter(run: Pick<RunView, "kind" | "wrote">): boolean {
+  return run.kind === "GEMINI" && run.wrote === "STARTER";
+}
+
+/** The facts line's words (without the link). A starter written in a failed run's place leads with "built from your numbers". */
 export function runFactsLine(run: RunView): string {
   const parts: string[] = [];
+  const integrity = run.report?.integrity;
+  // A rejected reply's integrity line already says "plan from your numbers".
+  if (run.kind === "GEMINI" && wroteStarter(run) && integrity?.verdict !== "REJECTED") parts.push("built from your numbers");
   if (run.kind === "GEMINI") parts.push(plural(Math.max(1, run.drafts), "draft"));
   else parts.push(run.kind === "INHOUSE" ? "built from your numbers" : "written by you");
+  if (integrity) parts.push(integrityLine(integrity));
   const report = run.report;
   if (report) {
-    const dropped = report.dropped.length;
+    const dropped = report.dropped.filter((e) => !silentEntry(e)).length;
     const matched = report.flagged.filter((e) => e.code === "MATCHED_EXISTING").length;
     if (dropped > 0) parts.push(`${plural(dropped, "item")} dropped by the checker`);
     if (matched > 0) parts.push(`${matched} matched to your library`);
   }
   return parts.join(" · ");
+}
+
+/** Codes whose entries never echo a label (F-R4-20 redaction): links, non-names, a rejected reply, any area suggestion. */
+const REDACTED_CODES: ReadonlySet<string> = new Set(["CONTAINED_LINK", "NOT_A_NAME", "REJECTED", "NOT_IN_YOUR_WORDS"]);
+
+/** An entry shown without its label (redaction): a GAP row or a redacted code. */
+export function redactedEntry(e: Pick<ReportEntry, "kind" | "code">): boolean {
+  return e.kind === "GAP" || REDACTED_CODES.has(e.code);
+}
+
+/** An area-suggestion entry counted in the integrity line and the panel's count, not listed again as a drop. */
+function silentEntry(e: Pick<ReportEntry, "kind">): boolean {
+  return e.kind === "GAP";
 }
 
 function entryCode(e: ReportEntry): string {
@@ -49,7 +83,7 @@ function Entries({ title, entries }: { title: string; entries: readonly ReportEn
               {entryCode(e)} · {where(e)}
             </b>
             <span className="t-meta">
-              {e.label ? `“${e.label}” · ` : ""}
+              {e.label && !redactedEntry(e) ? `“${e.label}” · ` : ""}
               {e.reason}
             </span>
           </li>
@@ -104,7 +138,7 @@ export function RunTable({ run, today, seconds, label = DRAFTED_BY_LABEL }: { ru
     <div className="card rm-tp" style={{ marginTop: 12, background: "var(--raised)" }}>
       <div>
         <span className="rm-tp-k">{label}</span>
-        <span className="rm-tp-v t-mono">{run.kind === "GEMINI" ? (run.modelVersion ?? run.model ?? "Gemini") : run.kind === "INHOUSE" ? "the app" : "you"}</span>
+        <span className="rm-tp-v t-mono">{wroteStarter(run) ? starterWriterWords(run) : run.kind === "GEMINI" ? (run.modelVersion ?? run.model ?? "Gemini") : run.kind === "INHOUSE" ? "the app" : "you"}</span>
         <span className="rm-tp-s">
           {run.promptVersion != null ? `prompt v${run.promptVersion} · ` : ""}
           {dayWithWeekday(day, today)} {timeLabel(run.startedAt)}
@@ -118,6 +152,7 @@ export function RunTable({ run, today, seconds, label = DRAFTED_BY_LABEL }: { ru
           {secs != null ? ` · ${secs.toFixed(1)} s` : ""}
         </span>
         {run.error && <span className="rm-tp-s">{run.error}</span>}
+        {run.report?.integrity && <span className="rm-tp-s">{integrityLine(run.report.integrity)} · checked key by key against the lists issued for this run</span>}
       </div>
     </div>
   );

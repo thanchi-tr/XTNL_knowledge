@@ -116,7 +116,7 @@ Manual, on the rehearsal server: an 'x run 30m' line edited to 'x run 45m' nets 
 
 **Spec.** THE ROW
 - One row of 40 px quiet chips directly above the input. It scrolls horizontally and never wraps: role='group', aria-label 'Add to the line'.
-- Chips: When ▾ · Repeat ▾ · Must · Time ▾ · Goal ▾ · Inbox · Idea. Under 400 px: When · Repeat · Must · Time · Inbox · Idea · Goal (no ▾ glyphs), with an edge fade while the row overflows. Goal ▾ opens with 'New goal' (inserts 'goal: ', hidden when the line has a mode prefix), then 'Link to' and the open goals.
+- Chips: When ▾ · Repeat ▾ · Must · Time ▾ · Goal ▾ · Inbox · Idea. Under 400 px: When · Repeat · Must · Time · Inbox · Idea · Goal (no ▾ glyphs), with an edge fade while the row overflows. Goal ▾ opens with 'New goal' (inserts 'goal: ', hidden when the line has a mode prefix), then 'Link to' and the open goals. Roadmap revision 4 adds 'New aim' after 'New goal' (inserts 'aim: '; see "'aim:' opens the aim form" below).
 - Under 600 px it replaces the legend. From 600 the legend stays as a one-line hint while the line is empty.
 - A ▾ chip swaps the row in place for its options. The first option chip is '‹' (back), and the opener carries aria-expanded. That keeps it to one row of height on the cover screen.
 
@@ -763,6 +763,59 @@ Parity, idempotence and the revert round trip on every fixture.
 **Files.** src/components/AddIdeaForm.tsx
 
 **Tests.** idea-capture-check.ts: the wrapSelection reducer — mid-word, a whole line, and an already-wrapped selection is not double-wrapped.
+
+## Roadmap revision 4 · 'aim:' opens the aim form, and a long goal is offered as an aim (S)
+
+Added with docs/life-plan/roadmap-rev4.md F-R4-7 (lane C, question 4 approved). The roadmap's aim is the app's core, and the capture line is where a long-term thought often first gets typed. The aim is invited here, never pushed: nothing is counted, nothing is red, nothing pays, and no key is added.
+
+**Grammar note.** `aim:` is a prefix like `idea:` and `goal:`, at the very start of the line, in any case and with spaces allowed around the colon ('aim: hold a conversation in Japanese', '  AIM :x'). roadmap-handoff.ts `aimLineOf` is the one parser. 'aim:' alone, 'aimless walk', 'goal: aim: x' and 'idea: aim: x' are not aim lines. capture-parse.ts and CaptureMode are unchanged: the parser never sees an aim, the sheet reads the line with aimLineOf before it shows the parse.
+
+**An aim line** (src/components/capture/aim-capture.ts holds the rules; QuickCapture.tsx the wiring):
+- It is never saved as a task. The chips row shows one chip, 'Aim → roadmap form'. No insert row, no price, no To Inbox.
+- The primary button reads 'Open the aim form', and Enter does the same, through the same submit path as a save (the 300 ms guard, compositionend, the phone's action key). It writes the handoff `{aim, source 'capture', sheetText}` with writeAimHandoff (sessionStorage; the aim never travels in a URL), closes the sheet and navigates to /you/roadmap/new. No capture action is called and nothing is stored as pending.
+- The sheet keeps its line (its local draft) until an intake that took its aim saves; RoadmapForm then calls clearSheetDraftIf(sheetText), the idea pattern, and the mounted sheet drops the line only while it still matches. The aim is taken when the form had no open draft (it fills the new intake) or when 'Use it' is tapped on an open draft. Saving an open draft without 'Use it' leaves the line in the sheet, so the words typed are never lost to a save that didn't use them (R5's `handoffUsed` and `clearsCaptureLine`, landed in the fix round; capture-server-check pins it).
+- With a DRAFT roadmap the button reads 'Open your draft' (→ /you/roadmap; the handoff is still written, so the form can offer 'Use it'). With an ACTIVE one it reads 'Open your roadmap' (→ /you/roadmap, no handoff: an active plan can't take a new aim), and the chip reads 'Aim · one is already set'.
+- The footer says what Enter does ('Enter opens the aim form · Esc closes'). Past 140 characters (the form's AIM_MAX) a 'n / 140' counter shows; the form asks for it shorter.
+- Tapping the chip keeps the line as text the usual way (a reverted span over 'aim:'; Ctrl+Z brings it back): the line is then an ordinary task, on the sheet and the server alike.
+- Not while an edit of a saved line is open (an edit replaces a task row, so the line stays a task), and not over a paste preview. A pasted list is saved line by line as tasks, an 'aim:' line included.
+
+**A long goal.** When the line parses as a LONG goal ('goal long: …', '#long', or a goal dated more than 180 days out), no roadmap is open, and set-an-aim suggestions are on and not snoozed (the prompt is ASK; see "The user's no" below):
+- one quiet line shows under the chips: 'Long-term? Make it your aim: the app plans milestones and measures them.';
+- a 40 px link-button 'Make it an aim' visibly rewrites the line: the goal prefix becomes 'aim:' and the '#long' that made it a goal goes ('goal long: run a marathon' → 'aim: run a marathon'); every other word stays as typed;
+- right after that, the aim chip undoes it: it puts the goal line back exactly as it was (once the line has been edited since, the chip keeps 'aim:' as text instead);
+- saving it as a goal still works, unchanged.
+
+**The open roadmap.** loadCaptureVocabulary gains an optional `aim: 'NONE' | 'DRAFT' | 'ACTIVE'`: one indexed read of the open roadmaps' status only (no revision-4 column), cached on 'roadmap'. A missing Roadmap table reads 'NONE'; any other failure leaves it unknown, and then the sheet acts as for 'NONE' but never offers 'Make it an aim'. The sheet keeps it in memory only (the stored vocabulary never holds it, so after a reload it is unknown until a load brings it). An aim line asks for it at once, once per opening (an aim line saves nothing, so no save waits on it); a long goal counts it as stale under the refresh rules that keep saves first. After an aim line opens the form or the roadmap, it is asked again next time.
+
+**The user's no** (fix round 2 of revision 4; roadmap-rev4.md decision 34: "Not now" quiets every set-an-aim suggestion for 28 days, and the lasting no is the user's). 'Make it an aim' under a long goal is a set-an-aim suggestion, so it follows the same rule as Today's SET line: it shows only while roadmap-invite `aimPromptOf` reads ASK. "Don't suggest this" and the Settings switch (OFF, stored in LifeSettings.aimSuggestions, so on every device), a legacy 'off' cookie (OFF), the ASK card's "Not now" (LATER) and the LATER line's × (HIDDEN) each quiet it, the snoozes for their 28 days. What the user types stays theirs: an 'aim:' line opens the form whatever the prompt, and the Goal ▾ menu's 'New aim' (a tool the user opens, not a suggestion) reads only the open roadmap.
+- loadCaptureVocabulary gains an optional `aimPrompt: 'ASK' | 'LATER' | 'HIDDEN' | 'OFF'` (roadmap-invite's AimPrompt), in the same Promise.all: the AIM_PROMPT_COOKIE value, read per request outside any cache, and one indexed select of LifeSettings.aimSuggestions only, cached on 'life' (setAimSuggestions invalidates 'life' and 'roadmap'), through aim-capture `readCaptureAimPrompt`. A missing aimSuggestions column (revision 4's migration not applied yet; isMissingRev4Column) reads as on, as Settings and /you read it; a failed cookie read or any other failure leaves it unknown, and then no offer shows.
+- The sheet keeps it in memory beside the open roadmap (never in the stored vocabulary) and trusts only the four states (isCaptureAimPrompt). A long goal asks for it under the same refresh rules as the open roadmap. On each new opening, a prompt read more than VOCAB_FRESH_MS (5 min) ago, or on another life day, is unknown again (aimPromptOnOpen), so a "no" tapped on /you or Today since is seen at the next load and never contradicted by an old answer. The residual: a "no" tapped within 5 minutes after a load is seen at the next load after that (a window event from the Aim card and Settings would close it; not built).
+
+**The Goal ▾ menu** gains 'New aim', after 'New goal', which inserts 'aim: '. It is hidden when the open roadmap is not known to be 'NONE' or the line already has a prefix. The sheet already asks for the open roadmap while the Goal ▾ menu is open (aimWanted), so the option appears once a load has said 'NONE'.
+
+Status: not built. The option lives in capture-ui.ts insertMenuOptions and InsertRow.tsx, which are outside lane C in revision 4; the lead applies this handoff, and capture-server-check pins it as soon as `id: "goal-new-aim"` exists (until then it prints PENDING):
+- capture-ui.ts: add `CaptureAim` to the existing `import type { … } from "../../app/actions/capture"` (a type import only: a runtime import of aim-capture.ts would make every check that imports capture-ui.ts reach roadmap-handoff.ts, and the _no-model walk in roadmap-contract-check would then require _no-model in each of them). insertMenuOptions' ctx gains `aim?: CaptureAim`. In `case "goal"`, inside `if (!ctx.hasMode) { … }` right after the 'New goal' push: `if (ctx.aim === "NONE") { const newAim: Insert = { text: "aim: ", field: "mode" }; out.push({ id: "goal-new-aim", label: "New aim", name: `New aim: ${insertChipLabel(newAim)}`, insert: newAim }); }`.
+- InsertRow.tsx: `import type { CaptureAim } from "@/app/actions/capture";`, a prop `aim?: CaptureAim` (documented as CaptureVocabulary.aim), destructured, and `insertMenuOptions(menu, { today, goals, hasMode, aim })`.
+- QuickCapture.tsx (lane C's file; one attribute, added by the lead with the two above so tsc stays clean): `<InsertRow parsed={parsed} text={text} today={day} goals={goals} aim={vocab?.aim} menu={menu} onMenu={onMenu} onInsert={insertIntoLine} />`.
+
+**Files.** New src/components/capture/aim-capture.ts; src/components/capture/QuickCapture.tsx; src/app/actions/capture.ts (CaptureVocabulary.aim and .aimPrompt, CaptureAim, loadCaptureAim, loadCaptureAimPrompt); scripts/capture-server-check.ts. lib/roadmap-handoff.ts (aimLineOf, writeAimHandoff) is lane 0's; RoadmapForm.tsx (the 'capture' note and clearing the line after saveIntake) is R5's.
+
+**Tests.** capture-server-check.ts, 'the aim from the capture line' (it imports scripts/_no-model.ts first, as every check that reaches a roadmap module must):
+- the aim line agrees with aimLineOf over a table, its chip span, a tapped chip making it a task on the sheet and the server alike;
+- the vocabulary's aim: NONE, DRAFT and ACTIVE from the rows; NONE on a missing table (P2021 and 42P01); unknown on a missing column, a pool timeout or a malformed answer;
+- the button's words by state, never empty, and the fixed paths; the chip; the counter;
+- the handoff: written with writeAimHandoff under its sessionStorage key, taken once with the line as sheetText;
+- 'Make it an aim' only for a long goal with aim NONE and the prompt ASK (every aim × prompt pair, unknown included), and the rewrite table, a kept span moving with its words;
+- the prompt (fix round 2): readCaptureAimPrompt over 17 cases (on, never set, no row, false, false over 'on:', a legacy 'off', 'later:', 'hide:' on its last day, an expired 'later:', 'on:', malformed cookie and setting, the aimSuggestions column missing with and without a snooze, another column missing, a pool timeout with and without 'off'), each answer equal to aimPromptOf's; the four trusted states; aimPromptOnOpen's freshness (kept under VOCAB_FRESH_MS, unknown at it and on another day, nothing else changed); from the source, the cookie read outside the cache, the one-column select cached on 'life', the sheet's trust, refresh and forgetting, and an aim line's action never reading it. Each of 23 mutations (scratch mirror, never the repo) turns the check red;
+- the copy names no model, reward or count;
+- from RoadmapForm's source (R5's file, read only): the line is cleared once, after saveIntake answered ok, for a 'capture' handoff whose aim was used (the no-draft merge or 'Use it'), never by an open draft's mount;
+- from the source: submit returns on an aim line before any parse, pending write or send; openAimForm writes the handoff, closes and navigates and calls no capture action; the only router.push takes a fixed path, and nothing builds '?aim='; the primary is never disabled; the vocabulary read selects status only, cached on 'roadmap'; no new keydown listener and no aim key in shortcuts.ts.
+
+capture-parse-check is unchanged and green.
+
+**Taken in fix round 2 (lane C), for the lead to confirm.** 'Make it an aim' now follows the user's no ("The user's no" above). Round 1 read it as an answer to the user's own long-term line and left it ungoverned; the reviewers held it to decision 34's "every set-an-aim suggestion", and the offer's own words ("Long-term? Make it your aim: …") are such a suggestion. To undo it, offersAim's `prompt === "ASK"` is the one condition. Lane Y's Settings note and the /today/rules card now name capture's offer beside You and Today, and you-check ties those words to offersAim's behaviour (captureQuietedByPrompt), so the copy and the code move together.
+
+**Still open for the lead.** With a DRAFT roadmap, 'Open your draft' goes to /you/roadmap, as F-R4-7 specifies and its words say. The aim is still handed over: "Edit the intake" on the draft opens the form, which offers "The aim you typed · Use it" for the handoff's 10 minutes (AIM_HANDOFF_TTL_MS), and the sheet keeps the line until an intake uses it, so nothing is lost. If the lead prefers the typed aim seen at once, AIM_ACTIONS.DRAFT.href becomes AIM_FORM_HREF (the form edits the open draft) and the label "Open your draft's intake"; capture-server-check's button golden changes with it.
 
 ## Lanes
 

@@ -35,6 +35,8 @@
   .rm-aim-t { font: 600 19px/23px var(--font-display); overflow-wrap: anywhere; margin: 6px 0 0; }
   .rm-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   .rm-chips .chip { white-space: normal; max-width: 100%; min-height: 24px; padding-top: 2px; padding-bottom: 2px; }
+  /* A chip that is a button keeps the kit's 40 px target inside .rm-chips (the By-when chips, "When realistic" included): the rule above is for status chips. */
+  .rm-chips .chip.btn-chip { min-height: 40px; }
   .rm-qchip { border-style: dashed; color: var(--ink-2); }
   .rm-lines { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; font-size: 13px; line-height: 18px; color: var(--ink-2); }
   .rm-lines b { color: var(--ink-1); font-weight: 600; }
@@ -349,10 +351,151 @@
   .rm-ac-acts { display: flex; gap: 8px; margin-top: 12px; }
   .rm-ac-acts > .btn { flex: 1; }
   .rm-ac-empty { display: flex; align-items: center; gap: 10px; padding: 6px 6px 6px 14px; min-height: 56px; }
-  .rm-ac-empty-t { flex: 1; min-width: 0; font-size: 14px; line-height: 19px; color: var(--ink-1); }
-  .rm-ac-empty-t a { display: inline-flex; align-items: center; min-height: 40px; margin: -11px 0; color: var(--ink-0); font-weight: 600; }
-  .rm-ac-empty-t b { color: var(--ink-0); font-weight: 600; }
+  .rm-ac-empty-t, .rm-ac-later-t { flex: 1; min-width: 0; font-size: 14px; line-height: 19px; color: var(--ink-1); }
+  .rm-ac-empty-t a, .rm-ac-later-t a { display: inline-flex; align-items: center; min-height: 40px; margin: -11px 0; color: var(--ink-0); font-weight: 600; }
+  .rm-ac-empty-t b, .rm-ac-later-t b { color: var(--ink-0); font-weight: 600; }
+  /* HIDDEN or OFF with a last aim: the achievement alone, with no × beside it. */
+  .rm-ac-kept { padding-right: 14px; }
 
   /* ---------- the fixtures page's state strip ---------- */
   .rm-fx-nav { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 16px; }
+
+  /* =====================================================================
+     REVISION 4 (roadmap-rev4.md): the aim asked in place, depth and stages,
+     "keep the depth, move the date", keys-only drafts. Still rm-* names,
+     ink only, no gold, no --owed, a word beside every status.
+     ===================================================================== */
+
+  /* ---------- the ASK card (F-R4-1): ≤ 410 px at 344 in its tallest state ---------- */
+  .rm-ac-call { padding: 12px 14px 4px; display: flex; flex-direction: column; }
+  .rm-ac-h { font: 600 19px/23px var(--font-display); margin: 0; }
+  /* The last aim on two lines: the aim clipped to one, the achievement ("Aim rank Paragon · reached 6 Aug 2026") never clipped. */
+  /* 16 px lines keep the two-line form inside the 410 px bound (seed + last aim, the tallest ASK state; ui-audit measures it). */
+  .rm-ac-last { margin: 2px 0 0; min-width: 0; line-height: 16px; }
+  .rm-ac-last-aim { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rm-ac-last-rank { margin: 0; }
+  .rm-ac-last-rank b { color: var(--ink-1); font-weight: 600; }
+  .rm-ac-body { font-size: 14px; line-height: 19px; color: var(--ink-1); margin: 4px 0 0; }
+  .rm-ac-rank { margin: 2px 0 0; }
+  .rm-ac-cont { margin: 4px 0 0; color: var(--ink-1); }
+  .rm-ac-call .rm-ac-box { margin-top: 4px; min-height: 0; padding: 8px 12px; line-height: 1.3; resize: none; }
+  .rm-ac-count { margin: 2px 0 0; text-align: right; }
+  .rm-ac-seed { display: flex; align-items: center; gap: 8px; min-height: 40px; margin-top: 2px; padding: 0 2px; font: 600 14px/19px var(--font-ui); color: var(--ink-0); text-decoration: none; min-width: 0; width: 100%; }
+  .rm-ac-seed > svg { width: 16px; height: 16px; flex: none; color: var(--ink-1); }
+  .rm-ac-seed > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; text-decoration: underline; text-underline-offset: 3px; }
+  .rm-ac-go { margin-top: 4px; }
+  .rm-ac-seed + .rm-ac-go { margin-top: 2px; }
+  .rm-ac-quiet { display: flex; flex-wrap: wrap; gap: 2px; margin-left: -10px; }
+  .rm-ac-quiet .btn { min-height: 40px; }
+  .rm-ac-acts-col { flex-direction: column; }
+
+  /* ---------- Today's aim line (F-R4-3): ≤ 72 px at 344, never red, never counted ---------- */
+  .rm-aim-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: 56px; padding: 6px 6px 6px 14px; }
+  .rm-aim-line-a { flex: 1; min-width: 0; display: flex; gap: 10px; align-items: center; min-height: 48px; text-decoration: none; color: var(--ink-1); font-size: 14px; line-height: 19px; }
+  .rm-aim-line-a > svg { width: 20px; height: 20px; flex: none; color: var(--ink-1); }
+  .rm-aim-line-t { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  /* The 3-line clamp is the phone's (one board column under 640 px of main: the 72 px gate at 344). From 640 the
+     line sits in the board's c3 column, which is narrower than at 344 at some widths (724–860, 1184–1266 and
+     1332–1414 px wide: an iPad held upright, a 1366 laptop), and a clamp there would cut the rank words ("Reaching it
+     gives the Aim rank …") first. The copy is code-owned and bounded, so the line takes the lines it needs. */
+  @container main (min-width: 640px) { .rm-aim-line-t { -webkit-line-clamp: unset; } }
+  .rm-aim-line-t b { color: var(--ink-0); font-weight: 600; }
+  .rm-aim-line .rm-aim-line-x { width: 40px; height: 40px; min-height: 40px; border-radius: 10px; flex: none; }
+  .rm-aim-line > .t-error, .rm-aim-line > p { flex-basis: 100%; }
+  /* Gone while Close the day is due: compact (the evening) AND the board has something to close (lane T's wrapper). */
+  .rm-quests-slot[data-compact]:has(> .rm-aim-slot[data-close-due]) { display: none; }
+
+  /* ---------- Proficiency names its basis (F-R4-12) ---------- */
+  .rm-basisk { display: block; font: 400 12px/16px var(--font-ui); letter-spacing: 0; text-transform: none; color: var(--ink-2); margin-top: 1px; }
+  .rm-rp-pf .rm-basisk { text-align: right; }
+
+  /* ---------- the NONE card and the closed footer (F-R4-1, F-R4-2) ---------- */
+  .rm-none { padding: 20px 16px; text-align: center; display: flex; flex-direction: column; align-items: center; }
+  .rm-none-h { display: block; font: 600 19px/23px var(--font-display); margin-top: 8px; }
+  .rm-none-p { margin: 6px auto 0; max-width: 40ch; font-size: 14px; line-height: 19px; color: var(--ink-1); }
+  .rm-none-p.t-meta { font-size: 13px; line-height: 18px; color: var(--ink-2); }
+  .rm-none > .btn { margin-top: 14px; }
+  .rm-closed { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+  .rm-closed .t-meta { margin: 0; }
+  .rm-banner-s { display: block; font-size: 13px; line-height: 18px; color: var(--ink-1); margin-top: 2px; }
+
+  /* ---------- the Depth line, its choices and provenance (F-R4-15) ---------- */
+  .rm-depth { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line-1); font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .rm-ms-sec > .rm-depth { margin-top: 0; padding-top: 0; border-top: 0; }
+  .rm-depth b { color: var(--ink-0); font-weight: 600; }
+  .rm-depth-pl { display: flex; gap: 6px; align-items: flex-start; }
+  .rm-depth-pl > svg { width: 14px; height: 14px; flex: none; margin-top: 2px; color: var(--ink-2); }
+  .rm-depth-q { color: var(--ink-2); }
+
+  /* ---------- the date check (F-R4-11) ---------- */
+  .rm-date { scroll-margin-top: 80px; }
+  .rm-date-l { font-size: 13px; line-height: 18px; color: var(--ink-1); margin: 6px 0 0; }
+  .rm-date-l:first-of-type { margin-top: 0; }
+  .rm-date-fixed { color: var(--ink-2); }
+  .rm-date-offers { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
+  .rm-date-offers .btn { justify-content: flex-start; }
+  .rm-date-card .rm-ms-sec:first-child { border-top: 0; }
+
+  /* ---------- Gemini's choices, labelled and changeable (F-R4-17, F-R4-21) ---------- */
+  .rm-adds { padding: 14px; }
+  .rm-adds-t { font-size: 14px; line-height: 19px; color: var(--ink-0); margin: 0; }
+  .rm-adds .t-meta { margin: 4px 0 0; }
+  .rm-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line-1); }
+  .rm-adds-t + .rm-add { margin-top: 10px; }
+  .rm-add b { font-weight: 600; }
+  .rm-add-blocked b, .rm-add-blocked .t-meta { color: var(--ink-2); }
+  .rm-excl .t-meta + .t-meta { margin-top: 6px; }
+  .rm-arr { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .rm-arr > svg { width: 18px; height: 18px; flex: none; color: var(--ink-1); }
+  .rm-lines-card .t-meta { margin: 6px 0 0; }
+  .rm-pv-pick { border: 1px dashed var(--line-ctl); color: var(--ink-1); }
+  .rm-pv-app { color: var(--ink-1); }
+
+  /* ---------- stages: held, and the stage under a title ---------- */
+  .rm-held { opacity: .92; }
+  .rm-ms-n-held { border-style: dotted; color: var(--ink-2); }
+  .rm-ms-stage { color: var(--ink-1); }
+
+  /* ---------- week quest parts (F-R4-14) and a body row's health line (F-R4-13) ---------- */
+  .rm-parts-l { grid-column: 2 / -1; font-size: 13px; line-height: 18px; color: var(--ink-1); margin: 2px 0 0; }
+  .rm-q-health { display: block; font-size: 12px; line-height: 16px; color: var(--ink-2); margin-top: 2px; }
+
+  /* ---------- the intake (F-R4-4, F-R4-9, F-R4-24) ---------- */
+  .rm-vague { margin: 6px 0 0; }
+  .rm-seg-two button { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 48px; padding: 4px 6px; line-height: 17px; }
+  .rm-seg-two button small { font: 500 12px/15px var(--font-ui); color: var(--ink-2); }
+  .rm-seg-two button[aria-pressed="true"] small { color: color-mix(in srgb, var(--page) 75%, transparent); }
+  .rm-date-chips { margin: 0 0 8px; }
+  .rm-chips .chip.rm-chip-two { min-height: 40px; flex-direction: column; align-items: flex-start; justify-content: center; gap: 0; line-height: 16px; padding: 4px 12px; text-align: left; }
+  .rm-chip-two small { font: 500 12px/15px var(--font-ui); color: var(--ink-2); }
+  .rm-chip-two[aria-pressed="true"] small { color: color-mix(in srgb, var(--page) 75%, transparent); }
+  .rm-named { display: flex; gap: 8px; align-items: center; }
+  .rm-named .st-input { flex: 1; min-width: 0; }
+  .rm-cov { display: flex; flex-direction: column; margin: 0; padding: 0 0 4px; list-style: none; }
+  .rm-cov > li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line-1); font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .rm-cov > li:first-child { border-top: 0; padding-top: 2px; }
+  .rm-cov > li b { color: var(--ink-0); font-weight: 600; }
+  .rm-cov > li .rm-num { width: 96px; }
+  .rm-cov-below { color: var(--ink-0); }
+  .rm-cov-un { grid-template-columns: minmax(0, 1fr); }
+  .rm-lgroups { display: flex; flex-direction: column; gap: 10px; }
+  .rm-lgroup > .t-eyebrow { display: block; margin: 0 0 2px; color: var(--ink-1); }
+  .rm-lrow { display: grid; grid-template-columns: 30px minmax(0, 1fr) minmax(0, 132px); align-items: center; gap: 0 8px; min-height: 44px; border-top: 1px solid var(--line-1); font-size: 14px; line-height: 19px; }
+  .rm-lrow-k { font: 500 12px/16px var(--font-mono); color: var(--ink-2); }
+  .rm-lrow-t { min-width: 0; overflow-wrap: anywhere; }
+  .rm-lrow .rm-lrow-sel { min-height: 40px; padding: 0 8px; }
+
+  /* ---------- the area-suggestion panel (ROADMAP_GAPS_LIVE only; off in this build) ---------- */
+  .rm-gaps { padding: 14px; }
+  .rm-gaps .t-eyebrow { color: var(--ink-1); }
+  .rm-gaps-h { font: 600 17px/22px var(--font-display); margin: 4px 0 0; }
+  .rm-gaps-p { font-size: 13px; line-height: 18px; color: var(--ink-1); margin: 6px 0 0; }
+  .rm-gap { padding: 10px 0; border-top: 1px solid var(--line-1); margin-top: 10px; }
+  .rm-gap + .rm-gap { margin-top: 0; }
+  .rm-gap b { font-weight: 600; }
+  .rm-gaps-n { margin-top: 10px; }
+
+  /* ---------- sheets ---------- */
+  .rm-sheet-ol { list-style: decimal; padding-left: 20px; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .rm-sheet-ol b { color: var(--ink-0); font-weight: 600; }
 }

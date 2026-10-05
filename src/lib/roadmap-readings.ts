@@ -33,6 +33,34 @@
  *     a reset is detected with reset-scopes isResetArchiveReason.
  * Fix round 2: GoalSeriesFacts.today; loadRoadmapGoalSeries passes its day, so LINEAGE_PAID's day
  *   carries its year when it is not this year's, as the roadmap page words it.
+ * Revision 4 (F-R4-9, F-R4-12, F-R4-16; compatible):
+ *   - RoadmapContext.depth / legacy / counts / checkpointLogs / m; loadCardCounts (R4's plan
+ *     decisions and views count cards the same way).
+ *   - Card counts by (Domain, level, type): a key with a segment counts recall cards only;
+ *     `rc` leaves out a card at exactly L that entered it on a next-day retry, read from its
+ *     REVIEW ledger rows (one indexed read, only for cards at exactly an `rc` level).
+ *   - The aim's reach on a revision-4 plan (aimReachedOf): the final stage confirmed, the
+ *     depth terms held on the same day's readings, the plan's practice kept at KEEP_SHARE
+ *     overall and its production practice from Fluent on, and the standard logged at or
+ *     above its bar inside its window when the plan has one. On a plan whose top rank is
+ *     Paragon, that day gives Paragon (aimRankOf). A stage closed short doesn't block it.
+ *   - A legacy roadmap (isLegacyRoadmap) is never measured: the writers write nothing.
+ *   - Reads that select the eight new columns fall back without them on a missing column
+ *     (isMissingRev4Column), so a server ahead of the migration reads every roadmap as
+ *     legacy and writes nothing, rather than failing.
+ * Revision 4 fix round (roadmap-contracts.md §15):
+ *   - Clean entry is roadmap-types' isRetryEntry and retryReadDaysOf, the one definition (§15.1).
+ *   - Both `take: 1` acceptance reads order by acceptanceOrderBy() (version, then acceptedAt), so the
+ *     record a lowered depth writes inside its version wins (§15.7).
+ *   - Production practice is roadmap-catalog practiceRoleOf (catalog type, else method; §15.9).
+ *   - The previous Proficiency basis is carried within its version only while it still measures the
+ *     acceptance's end state (roadmap-proficiency basisMatchesEndState); else it is rebuilt.
+ * Revision 4 fix round 2 (roadmap-contracts.md §16.1):
+ *   - The clean-entry window is cleanReadDaysOf: retryReadDaysOf at the wider of the acceptance's
+ *     interval multiplier and the live loadout's, with the loadout's grace extension
+ *     (ReachWindowMods; ReadingsDeps.reachModifiers, else skill-effects loadModifiers on the real
+ *     client). R4's CardState and R6's quests read theirs with the live loadout, so R1's window is
+ *     never narrower than theirs and the three readers never disagree on a card.
  *
  * Shape of a run: one context load (two read waves: the roadmap with its
  * milestones, items, measures and acceptance; then the latest readings, the
@@ -52,8 +80,12 @@ import { RESET_ARCHIVE_NOTE, isResetArchiveReason } from "./reset-scopes";
 import { goalAsOf, type GoalStep, type RoadmapGoalEntry, type RoadmapSeriesPoint } from "./goals";
 import type { InstanceLike } from "./habit";
 import {
-  cardsAtLevelFromHistogram,
+  aimReachedOf,
+  cardCountsOf,
+  cardsAtLevelFromCounts,
   cardsReadingRow,
+  checkpointStandingOf,
+  countsOfHistogram,
   lastReadingOn,
   measureLabelOf,
   milestoneGOn,
@@ -64,30 +96,50 @@ import {
   statedReadBackOf,
   zeroReasonOf,
   zeroReasonWordsOf,
+  type CardCounts,
   type LevelHistogram,
   type MilestoneG,
+  type PracticeKeep,
   type ReachAction,
   type SeriesMilestone,
 } from "./roadmap-measures";
-import { basisWithout, parseProficiencyDetail, proficiencyBasisOf, proficiencyReadingOf } from "./roadmap-proficiency";
+import { basisMatchesEndState, basisWithout, parseProficiencyDetail, proficiencyBasisOf, proficiencyReadingOf } from "./roadmap-proficiency";
+import { practiceRoleOf, type CatalogKey } from "./roadmap-catalog";
 import {
+  MILESTONE_NOTES,
+  NON_RECALL_TYPES,
   PROFICIENCY_VERSION,
   READINGS_THROTTLE_MS,
   ROADMAP_NOT_YET,
   SELF_KEY_PREFIX,
+  STAGE_KEYS,
+  STAGE_LEVEL,
+  TRACK_STAGE_KEYS,
+  acceptanceOrderBy,
+  checkpointLogPrefix,
+  isAimDepth,
+  isLegacyRoadmap,
+  isMissingRev4Column,
   isMissingRoadmapTable,
+  isRetryEntry,
+  isStageKey,
   isSupersededRow,
   milestoneDueDayOf,
   parseMeasureKey,
+  plannedUnits,
   proficiencyKey,
   provenanceOf,
+  retryReadDaysOf,
+  type CardSegment,
   type Decision,
   type EndStateTerm,
+  type GateStage,
   type ItemDraft,
   type ItemKind,
   type MeasureScope,
   type MeasureSpec,
   type MilestoneDraft,
+  type MilestoneNote,
   type MilestoneStatus,
   type Origin,
   type PositionRow,
@@ -99,7 +151,9 @@ import {
   type ReadingSource,
   type ReadingsRun,
   type RoadmapStatus,
+  type ReviewLedgerRow,
   type RoadmapWriteOpts,
+  type StageKey,
   type StartSnapshot,
 } from "./roadmap-types";
 
@@ -112,6 +166,17 @@ export type RoadmapReadingsClient = Pick<
   "roadmap" | "roadmapMilestone" | "roadmapReading" | "idea" | "domain" | "taskTemplate" | "taskInstance" | "restDay" | "activityEvent" | "$transaction" | "$executeRaw" | "$queryRaw"
 >;
 
+/**
+ * The live loadout's figures the clean-entry window reads (skill-effects
+ * loadModifiers): the interval multiplier and the GRACE_EXTENSION days. R4's
+ * planContext (CardState.retryEntry) and R6's week quests read their windows
+ * with the same two, so the readings read theirs with them too.
+ */
+export interface ReachWindowMods {
+  intervalMultiplier: number;
+  graceExtraDays: number;
+}
+
 /** What the writers take besides the gate's env: an injected client, context loader, scope map and clock (the checks inject all four). */
 export interface ReadingsDeps extends RoadmapWriteOpts {
   client?: RoadmapReadingsClient;
@@ -119,9 +184,25 @@ export interface ReadingsDeps extends RoadmapWriteOpts {
   loadScopeMap?: (userId: string) => Promise<RoadmapScopeMap | null>;
   /** The time a row is written; readingUpsertOp refuses a row whose day is not today by it. */
   clock?: () => Date;
+  /**
+   * The live loadout for the clean-entry window (cleanReadDaysOf). Absent:
+   * skill-effects loadModifiers on the real client; none on an injected client
+   * (a check's stub), so the window reads the acceptance's m and no grace.
+   */
+  reachModifiers?: (userId: string) => Promise<ReachWindowMods | null>;
 }
 
 const clientOf = (d: ReadingsDeps): RoadmapReadingsClient => d.client ?? prisma;
+
+/** The live loadout, read with skill-effects loadModifiers (as R4's reachModifiers and R6's reachLoadout read it). */
+async function loadLiveReachMods(userId: string): Promise<ReachWindowMods> {
+  const { loadModifiers } = await import("./skill-effects");
+  const mods = await loadModifiers(userId);
+  return { intervalMultiplier: mods.intervalMultiplier, graceExtraDays: mods.graceExtraDays };
+}
+
+/** The loadout reader a context load uses: the injected one, else the real one on the real client, else none. */
+const liveModsOf = (d: ReadingsDeps): ((userId: string) => Promise<ReachWindowMods | null>) | undefined => d.reachModifiers ?? (d.client ? undefined : loadLiveReachMods);
 
 // ═══ The upsert ═════════════════════════════════════════════════════════════
 
@@ -280,6 +361,17 @@ export interface RoadmapContext {
   templates: Record<string, CtxTemplate>;
   /** Held days (rest, sick, vacation, freeze) over the plan's windows. */
   heldDays: DayKey[];
+  // ── Revision 4 (absent on a rev-3 fixture: every card counts, the rev-3 aim rule) ──
+  /** Roadmap.depth (L*: 12, 10 or 8) on a depth plan; null on a track Area or a legacy plan. */
+  depth?: number | null;
+  /** isLegacyRoadmap: never measured (F-R4-16); the writers write nothing for it. */
+  legacy?: boolean;
+  /** The card counts every card figure reads (all, recall, retry entries at the `rc` levels). Absent: `histogram` stands for every count. */
+  counts?: CardCounts;
+  /** The SELF checkpoint logs of the plan's standard (its lineage's prefix), for the aim's reach. */
+  checkpointLogs?: Reading[];
+  /** The interval multiplier of the current acceptance (the clean-entry read's window reads the wider of it and the live loadout's; cleanReadDaysOf). */
+  m?: number;
 }
 
 /** Which roadmap a context load reads. */
@@ -291,6 +383,8 @@ export interface ContextQuery {
   statuses?: RoadmapStatus[];
   /** Domains whose cards the run must read beyond the plan's own (a plan decision's new end state). */
   extraDomainIds?: readonly string[];
+  /** Rev 4: measure keys whose counts the run must read beyond the plan's own (a plan decision's new basis: its `rc` levels get the clean-entry read). */
+  extraKeys?: readonly string[];
 }
 
 const LOADED_STATUSES: MilestoneStatus[] = ["PLANNED", "STARTING", "STARTED", "LATER"];
@@ -325,9 +419,19 @@ function endStateOf(v: unknown): EndStateTerm[] {
   return out;
 }
 
-type ItemRow = RoadmapItem;
+/** A RoadmapItem row, read with or without the rev-4 column (a read before the migration omits it). */
+type ItemRow = Omit<RoadmapItem, "catalogKey"> & { catalogKey?: string | null };
 type MeasureRow = RoadmapMeasure;
-type MilestoneRow = RoadmapMilestone & { items: RoadmapItem[]; measures: RoadmapMeasure[] };
+/** A RoadmapMilestone row with its items and measures, with or without the rev-4 column. */
+type MilestoneRow = Omit<RoadmapMilestone, "stage"> & { stage?: string | null; items: ItemRow[]; measures: RoadmapMeasure[] };
+
+/** The milestone notes R4 keeps in RoadmapMilestone.feasibility (no column of their own): HELD_AT_START, LONG_WINDOW … */
+export function milestoneNotesOf(feasibility: unknown): MilestoneNote[] {
+  if (!feasibility || typeof feasibility !== "object" || Array.isArray(feasibility)) return [];
+  const notes = (feasibility as { notes?: unknown }).notes;
+  if (!Array.isArray(notes)) return [];
+  return notes.filter((n): n is MilestoneNote => typeof n === "string" && (MILESTONE_NOTES as readonly string[]).includes(n));
+}
 
 function itemOf(r: ItemRow): ItemDraft {
   return {
@@ -354,6 +458,7 @@ function itemOf(r: ItemRow): ItemDraft {
     templateId: r.templateId,
     flags: r.flags as ItemDraft["flags"],
     notes: r.notes as ItemDraft["notes"],
+    catalogKey: (r.catalogKey ?? null) as CatalogKey | null,
   };
 }
 
@@ -392,7 +497,8 @@ function milestoneOf(r: MilestoneRow): CtxMilestone {
     overAccepted: r.overAccepted,
     items: r.items.map(itemOf),
     measures: r.measures.map(measureOf),
-    notes: [],
+    notes: milestoneNotesOf(r.feasibility),
+    stage: isStageKey(r.stage) ? r.stage : null,
     startedDay: keyOrNull(r.startedDay),
     goalId: r.goalId,
     reachedDay: keyOrNull(r.reachedDay),
@@ -457,30 +563,36 @@ function practiceWindows(milestones: readonly CtxMilestone[]): { key: string; li
  * start with no upper bound and kept up to the latest such day. A past-due
  * open milestone whose goal's due day differs from its row's needs the
  * as-of reads of that day: a third read, only in that rare case.
+ *
+ * Revision 4: the roadmap's depth and Area; each milestone's stage and notes,
+ * each item's catalog key; the card counts by (Domain, level, type) with the
+ * clean-entry ledger read at the `rc` levels (loadCardCounts, in wave 2); the
+ * standard's checkpoint logs (wave 2, only when the plan has a standard); and
+ * `legacy`. A missing rev-4 column (before the migration) re-reads without
+ * the new columns: depth and every stage read null, so the roadmap is legacy.
+ * `live` reads the loadout for the clean-entry window (cleanReadDaysOf); it is
+ * called only when a card sits at exactly an `rc` level.
  */
-export async function loadRoadmapContext(client: RoadmapReadingsClient, q: ContextQuery, today: DayKey): Promise<RoadmapContext | null> {
+export async function loadRoadmapContext(
+  client: RoadmapReadingsClient,
+  q: ContextQuery,
+  today: DayKey,
+  live?: (userId: string) => Promise<ReachWindowMods | null>
+): Promise<RoadmapContext | null> {
   const where: Prisma.RoadmapWhereInput = { userId: q.userId };
   if (q.roadmapId) where.id = q.roadmapId;
   if (q.goalId) where.milestones = { some: { goalId: q.goalId } };
   if (q.statuses) where.status = { in: q.statuses };
-  const row = await client.roadmap.findFirst({
-    where,
-    orderBy: { updatedAt: "desc" },
-    select: {
-      id: true,
-      status: true,
-      version: true,
-      reachedDay: true,
-      archiveReason: true,
-      milestones: { where: { status: { in: LOADED_STATUSES } }, orderBy: { ord: "asc" }, include: { items: true, measures: true } },
-      acceptances: { where: { undoneAt: null }, orderBy: { version: "desc" }, take: 1, select: { version: true, endState: true } },
-    },
-  });
+  const row = await findRoadmapRow(client, where);
   if (!row) return null;
   const milestones = row.milestones
     .map(milestoneOf)
     .filter((m) => m.status === "STARTING" || m.status === "STARTED" || m.version <= row.version);
   const acceptance = row.acceptances[0] ? { version: row.acceptances[0].version, endState: endStateOf(row.acceptances[0].endState) } : null;
+  const depth = isAimDepth(row.depth) ? row.depth : null;
+  const legacy = isLegacyRoadmap({ fieldId: row.fieldId ?? null, depth }, milestones);
+  const intervalM = row.acceptances[0]?.intervalMultiplier;
+  const m = typeof intervalM === "number" && Number.isFinite(intervalM) && intervalM > 0 ? intervalM : 1;
 
   const keys = new Set<string>([proficiencyKey(row.id)]);
   const domainIds = new Set<string>();
@@ -508,6 +620,13 @@ export async function loadRoadmapContext(client: RoadmapReadingsClient, q: Conte
     const p = parseMeasureKey(t.measureKey);
     if (p?.kind === "CARDS_AT_LEVEL") p.domainIds.forEach((d) => domainIds.add(d));
   }
+  // Revision 4: the `rc` levels (and their Domains) need the clean-entry read; the standard's logs decide the aim's reach.
+  for (const k of q.extraKeys ?? []) {
+    const p = parseMeasureKey(k);
+    if (p?.kind === "CARDS_AT_LEVEL") p.domainIds.forEach((d) => domainIds.add(d));
+  }
+  const clean = cleanLevelsOf([...milestones.flatMap((x) => x.measures.filter((meas) => meas.role === "PAYS").map((meas) => meas.measureKey)), ...(acceptance?.endState ?? []).map((t) => t.measureKey), ...(q.extraKeys ?? [])]);
+  const standard = !legacy && (depth != null || isTrackPlan(milestones)) ? standardOf(milestones) : null;
   const windows = practiceWindows(milestones).filter((w) => w.until != null);
   // A past-due open milestone's g is read as of its due day: each PAYS key's last reading on or before that day.
   // The row's own due day here (the goal's is read below); a goal rescheduled to another day that is also past gets a third read.
@@ -522,7 +641,7 @@ export async function loadRoadmapContext(client: RoadmapReadingsClient, q: Conte
   const tplIds = Array.from(practiceTemplateIds);
   const readingSelect = { measureKey: true, day: true, value: true, detail: true, source: true, observedAt: true } as const;
 
-  const [latest, clips, groups, domains, goals, steps, instances, rest, freezes] = await Promise.all([
+  const [latest, clips, counts, domains, goals, steps, instances, rest, freezes, logs] = await Promise.all([
     client.$queryRaw<{ measureKey: string; day: Date; value: number; detail: unknown; source: string; observedAt: Date }[]>(Prisma.sql`
       SELECT DISTINCT ON ("measureKey") "measureKey", "day", "value", "detail", "source", "observedAt"
       FROM "RoadmapReading"
@@ -538,9 +657,7 @@ export async function loadRoadmapContext(client: RoadmapReadingsClient, q: Conte
         })
       )
     ),
-    ids.length > 0
-      ? client.idea.groupBy({ by: ["domainId", "level"], where: { domainId: { in: ids }, isArchived: false }, _count: { _all: true } })
-      : Promise.resolve([] as { domainId: string; level: number; _count: { _all: number } }[]),
+    loadCardCounts(client, q.userId, { domainIds: ids, clean, m, live: live ? () => live(q.userId) : undefined }, today),
     ids.length > 0 ? client.domain.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }) : Promise.resolve([]),
     goalIds.length > 0
       ? client.taskTemplate.findMany({ where: { userId: q.userId, id: { in: goalIds } }, select: { id: true, closedScore: true, archivedAt: true, dueDay: true } })
@@ -565,6 +682,10 @@ export async function loadRoadmapContext(client: RoadmapReadingsClient, q: Conte
         return [];
       }),
     client.activityEvent.findMany({ where: { userId: q.userId, source: "FREEZE_USE", day: { gte: dateColumn(heldFrom) } }, select: { day: true } }),
+    // The standard's logs (append-only SELF rows under its lineage's prefix); only a revision-4 plan with a standard reads them.
+    standard
+      ? client.roadmapReading.findMany({ where: { userId: q.userId, source: "SELF", measureKey: { startsWith: checkpointLogPrefix(standard.item.lineageId) } }, select: readingSelect })
+      : Promise.resolve([] as { measureKey: string; day: Date; value: number; detail: unknown; source: string; observedAt: Date }[]),
   ]);
 
   const toReading = (r: { measureKey: string; day: Date; value: number; detail: unknown; source: string; observedAt: Date }): Reading => ({
@@ -578,8 +699,7 @@ export async function loadRoadmapContext(client: RoadmapReadingsClient, q: Conte
   const readings = [...latest.map(toReading), ...clips.filter((c): c is NonNullable<typeof c> => c != null).map(toReading)];
   const pk = proficiencyKey(row.id);
 
-  const histogram: Record<string, Record<number, number>> = {};
-  for (const g of groups) (histogram[g.domainId] ??= {})[g.level] = g._count._all;
+  const histogram = counts.all;
 
   const goalState = new Map(goals.map((g) => [g.id, { open: g.closedScore == null && g.archivedAt == null, archived: g.archivedAt != null, dueDay: keyOrNull(g.dueDay) }] as const));
   const stepsBy = new Map<string, GoalStep[]>();
@@ -632,10 +752,281 @@ export async function loadRoadmapContext(client: RoadmapReadingsClient, q: Conte
     domainNames: Object.fromEntries(domains.map((d) => [d.id, d.name])),
     templates,
     heldDays: Array.from(held).sort(),
+    depth,
+    legacy,
+    counts,
+    checkpointLogs: logs.map(toReading),
+    m,
   };
 }
 
-// ═══ The plan (pure) ════════════════════════════════════════════════════════
+/** The first roadmap matching `where`, with its milestones and current acceptance; without the rev-4 columns when they are missing (before the migration). */
+async function findRoadmapRow(client: RoadmapReadingsClient, where: Prisma.RoadmapWhereInput) {
+  // The current acceptance: newest version, then newest record within it — lowerDepthCore writes a second
+  // record inside the same version (contracts §15.7), and `version` alone would tie and could read the
+  // end state from before the lowering.
+  const acceptances = { where: { undoneAt: null }, orderBy: acceptanceOrderBy(), take: 1, select: { version: true, endState: true, intervalMultiplier: true } };
+  const milestoneWhere = { status: { in: LOADED_STATUSES } };
+  try {
+    return await client.roadmap.findFirst({
+      where,
+      orderBy: { updatedAt: "desc" },
+      select: {
+        id: true,
+        status: true,
+        version: true,
+        reachedDay: true,
+        archiveReason: true,
+        fieldId: true,
+        depth: true,
+        milestones: { where: milestoneWhere, orderBy: { ord: "asc" }, include: { items: true, measures: true } },
+        acceptances,
+      },
+    });
+  } catch (err) {
+    if (!isMissingRev4Column(err)) throw err;
+    const row = await client.roadmap.findFirst({
+      where,
+      orderBy: { updatedAt: "desc" },
+      select: {
+        id: true,
+        status: true,
+        version: true,
+        reachedDay: true,
+        archiveReason: true,
+        fieldId: true,
+        milestones: { where: milestoneWhere, orderBy: { ord: "asc" }, omit: { stage: true }, include: { items: { omit: { catalogKey: true } }, measures: true } },
+        acceptances,
+      },
+    });
+    return row ? { ...row, depth: null } : null;
+  }
+}
+
+/** The `rc` levels among measure keys, each with the Domains its keys cover (the clean-entry read's scope). */
+export function cleanLevelsOf(keys: readonly (string | null | undefined)[]): { level: number; domainIds: string[] }[] {
+  const by = new Map<number, Set<string>>();
+  for (const k of keys) {
+    const p = k ? parseMeasureKey(k) : null;
+    if (p?.kind !== "CARDS_AT_LEVEL" || p.segment !== "rc") continue;
+    const set = by.get(p.level) ?? by.set(p.level, new Set()).get(p.level)!;
+    p.domainIds.forEach((d) => set.add(d));
+  }
+  return Array.from(by.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([level, ids]) => ({ level, domainIds: Array.from(ids).sort() }));
+}
+
+/**
+ * The clean-entry read's window for a card at exactly `level` (fix round 2,
+ * contracts §16.1): roadmap-types retryReadDaysOf at the wider of `m` (the
+ * acceptance's interval multiplier) and the live loadout's, with the live
+ * loadout's GRACE_EXTENSION days. srs.ts sets a card's due day and grace with
+ * the loadout of the day it was reviewed, which neither figure alone bounds;
+ * the wider window reads more rows and never changes the answer (the entering
+ * pass is the latest row). R4's planContext and R6's quests read theirs as
+ * retryReadDaysOf(L, live m, live grace), so this window is never narrower
+ * than theirs: a card none of them reads as clean is never counted clean
+ * here. Without a loadout (unreadable, or a check's stub) it is
+ * retryReadDaysOf(level, m): the acceptance's m and no grace extension.
+ * Residual (roadmap-types): a grace extension or multiplier since dropped
+ * from the loadout, or a ward that shielded the card past its grace.
+ */
+export function cleanReadDaysOf(level: number, m: number | null | undefined, live?: ReachWindowMods | null): number {
+  const multiplier = (x: unknown): number => (typeof x === "number" && Number.isFinite(x) && x > 0 ? x : 1);
+  const grace = live && Number.isFinite(live.graceExtraDays) && live.graceExtraDays > 0 ? Math.floor(live.graceExtraDays) : 0;
+  return retryReadDaysOf(level, Math.max(multiplier(m), live ? multiplier(live.intervalMultiplier) : 1), grace);
+}
+
+/**
+ * The card counts (F-R4-9, F-R4-12) for a set of Domains: one grouped read
+ * (Idea groupBy domainId, level, questionType) for every card and the recall
+ * cards; and, at each `rc` level, the clean-entry reading — the recall cards
+ * at exactly that level in its Domains, then ONE indexed read of their REVIEW
+ * ledger rows (ActivityEvent by userId and sourceId) over the last
+ * cleanReadDaysOf(level, m, the live loadout) life days, each card judged by
+ * isRetryEntry. The ledger read (and the loadout read, `live`) happens only
+ * when such cards exist; an unreadable loadout is logged and the window reads
+ * the acceptance's m with no grace extension. R4 counts the same way from its
+ * own reads (planContext: CardState.retryEntry for its baselines and live
+ * counts, over retryReadDaysOf(L*, live m, live grace)), and R6's quests over
+ * the same window; this one is never narrower, so every card figure of a
+ * depth plan counts the same cards.
+ */
+export async function loadCardCounts(
+  client: Pick<RoadmapReadingsClient, "idea" | "activityEvent">,
+  userId: string,
+  q: {
+    domainIds: readonly string[];
+    clean?: readonly { level: number; domainIds: readonly string[] }[];
+    m?: number;
+    /** The live loadout (interval multiplier, grace extension) for the window; read only when a card sits at an `rc` level. */
+    live?: () => Promise<ReachWindowMods | null>;
+  },
+  today: DayKey
+): Promise<CardCounts> {
+  const ids = Array.from(new Set(q.domainIds));
+  const clean = (q.clean ?? []).filter((c) => Number.isInteger(c.level) && c.level >= 2 && c.domainIds.length > 0);
+  if (ids.length === 0 && clean.length === 0) return cardCountsOf([]);
+  const [groups, atLevel] = await Promise.all([
+    ids.length > 0
+      ? client.idea.groupBy({ by: ["domainId", "level", "questionType"], where: { domainId: { in: ids }, isArchived: false }, _count: { _all: true } })
+      : Promise.resolve([] as { domainId: string; level: number; questionType?: string | null; _count: { _all: number } }[]),
+    Promise.all(
+      clean.map((c) =>
+        client.idea.findMany({
+          where: { domainId: { in: [...c.domainIds] }, level: c.level, isArchived: false, questionType: { notIn: [...NON_RECALL_TYPES] } },
+          select: { id: true, domainId: true },
+        })
+      )
+    ),
+  ]);
+  const retry: Record<string, Record<number, number>> = {};
+  const cardIds = Array.from(new Set(atLevel.flat().map((c) => c.id)));
+  if (cardIds.length > 0) {
+    const live = q.live
+      ? await Promise.resolve()
+          .then(q.live)
+          .catch((err: unknown) => {
+            console.error("roadmap readings: the loadout is unavailable (the clean-entry window reads the acceptance's interval multiplier, no grace extension):", errorText(err));
+            return null;
+          })
+      : null;
+    const back = Math.max(...clean.map((c) => cleanReadDaysOf(c.level, q.m, live)));
+    const rows = await client.activityEvent.findMany({
+      where: { userId, source: "REVIEW", sourceId: { in: cardIds }, day: { gte: dateColumn(addDays(today, -back)) } },
+      select: { sourceId: true, day: true, detail: true, occurredAt: true },
+    });
+    const byCard = new Map<string, ReviewLedgerRow[]>();
+    for (const r of rows) {
+      if (!r.sourceId) continue;
+      (byCard.get(r.sourceId) ?? byCard.set(r.sourceId, []).get(r.sourceId)!).push({ day: keyOfDateColumn(r.day), detail: r.detail, occurredAt: r.occurredAt instanceof Date ? r.occurredAt.toISOString() : null });
+    }
+    clean.forEach((c, i) => {
+      for (const card of atLevel[i]) {
+        if (!isRetryEntry(byCard.get(card.id) ?? [], c.level)) continue;
+        const row = (retry[card.domainId] ??= {});
+        row[c.level] = (row[c.level] ?? 0) + 1;
+      }
+    });
+  }
+  return cardCountsOf(
+    groups.map((g) => ({ domainId: g.domainId, level: g.level, questionType: (g as { questionType?: string | null }).questionType ?? null, count: g._count._all })),
+    retry
+  );
+}
+
+// ═══ Revision 4: the stage facts the aim's reach reads ══════════════════════
+
+const TRACK_STAGE_SET: ReadonlySet<string> = new Set(TRACK_STAGE_KEYS);
+
+/** A revision-4 track plan: its scheduled rows carry STAGE_1..STAGE_5. */
+function isTrackPlan(milestones: readonly Pick<CtxMilestone, "stage" | "status">[]): boolean {
+  const scheduled = milestones.filter((m) => m.status !== "LATER");
+  return scheduled.length > 0 && scheduled.every((m) => m.stage != null && TRACK_STAGE_SET.has(m.stage));
+}
+
+/** A row's gate level: its gate stage's STAGE_LEVEL, else (BETWEEN, PART) the level of its card measures. Null when it has none. */
+export function stageGateLevelOf(m: Pick<MilestoneDraft, "stage" | "measures">): number | null {
+  const stage = m.stage as StageKey | null | undefined;
+  if (stage && (STAGE_KEYS as readonly string[]).includes(stage)) return STAGE_LEVEL[stage as GateStage];
+  let best: number | null = null;
+  for (const meas of m.measures) {
+    if (meas.kind !== "CARDS_AT_LEVEL") continue;
+    const p = meas.measureKey ? parseMeasureKey(meas.measureKey) : null;
+    const level = meas.minLevel ?? (p?.kind === "CARDS_AT_LEVEL" ? p.level : null);
+    if (level != null && (best == null || level > best)) best = level;
+  }
+  return best;
+}
+
+/** The plan's standard: an EXAM_DAY checkpoint (any scheduled stage), else the final scheduled milestone's checkpoint; with the user's bar and outOf. */
+export function standardOf(milestones: readonly CtxMilestone[]): { item: ItemDraft; holder: CtxMilestone } | null {
+  const scheduled = milestones.filter((m) => m.status !== "LATER" && m.status !== "SUPERSEDED" && m.status !== "DISCARDED" && !m.notes.includes("DEPTH_LOWERED")).sort((a, b) => a.ord - b.ord);
+  const isStandard = (i: ItemDraft) => i.kind === "CHECKPOINT" && i.decision !== "REMOVED" && i.bar != null && Number.isFinite(i.bar) && i.outOf != null && i.outOf > 0;
+  for (const m of scheduled) {
+    const exam = m.items.find((i) => isStandard(i) && i.checkpointKind === "EXAM_DAY");
+    if (exam) return { item: exam, holder: m };
+  }
+  const last = scheduled[scheduled.length - 1];
+  if (!last) return null;
+  const finals = scheduled.filter((m) => m.lineageId === last.lineageId);
+  for (const m of [...finals].reverse()) {
+    const cp = m.items.find(isStandard);
+    if (cp) return { item: cp, holder: m };
+  }
+  return null;
+}
+
+/** The standard logged at or above its bar inside its window: the latest log of its lineage between its stage's start and its due day. */
+export function standardMetOf(s: { item: ItemDraft; holder: CtxMilestone }, logs: readonly Reading[]): boolean {
+  const from = s.holder.windowStart ?? s.holder.startedDay;
+  const to = dueOf(s.holder);
+  const inWindow = logs.filter((r) => (!from || r.day >= from) && (!to || r.day <= to));
+  return checkpointStandingOf(inWindow, s.item.lineageId, s.item.outOf, s.item.bar)?.met === true;
+}
+
+const FLUENT_LEVEL = STAGE_LEVEL.FLUENT;
+/**
+ * Production practice (F-R4-13), the one definition (roadmap-catalog
+ * practiceRoleOf, contracts §15.9): by its catalog type first, else by its
+ * method (WRITING and PROJECT_WORK), so a "Write it myself" plan's typed
+ * writing practice from Fluent on counts here exactly as R2's basis line and
+ * R4's top-rank facts count it.
+ */
+const isProductionPractice = (item: Pick<ItemDraft, "catalogKey" | "method">): boolean => practiceRoleOf(item) === "PRODUCTION";
+
+/** A practice item's rule: its own, else from its sessions (7 → DAILY, n → TARGET:n/W), as the basis reads it. */
+function practiceRuleOfItem(item: ItemDraft): string | null {
+  if (item.rule) return item.rule;
+  const s = item.sessionsPerWeek;
+  if (s == null || !(s > 0)) return null;
+  return s >= 7 ? "DAILY" : `TARGET:${Math.round(s)}/W`;
+}
+
+/**
+ * Kept and planned sessions across every started stage (F-R4-12: "kept
+ * sessions ÷ planned sessions across every started stage", from your ticks):
+ * per practice of each STARTING or STARTED row (never a superseded one; a
+ * practice switched off at Start is not planned), planned = its units over the
+ * stage's window [start, dueOf(m)] less held days (the window its PRACTICE_KEPT
+ * effTarget is worked out on), kept = its latest reading, capped at planned so
+ * extra sessions of one practice never make up for another. `pick` narrows to
+ * a set (production practice from Fluent on).
+ */
+export function practiceKeepOf(
+  ctx: Pick<RoadmapContext, "milestones" | "templates" | "heldDays">,
+  readings: readonly Reading[],
+  today: DayKey,
+  superseded: ReadonlySet<string>,
+  pick: (m: CtxMilestone, item: ItemDraft) => boolean
+): PracticeKeep {
+  let kept = 0;
+  let planned = 0;
+  for (const m of ctx.milestones) {
+    if ((m.status !== "STARTING" && m.status !== "STARTED") || superseded.has(m.id)) continue;
+    for (const meas of m.measures) {
+      if (meas.role !== "PAYS" || meas.kind !== "PRACTICE_KEPT" || !meas.measureKey) continue;
+      const p = parseMeasureKey(meas.measureKey);
+      if (p?.kind !== "PRACTICE_KEPT") continue;
+      const lineages = meas.scope.itemLineageIds && meas.scope.itemLineageIds.length > 0 ? meas.scope.itemLineageIds : meas.itemLineageId ? [meas.itemLineageId] : [];
+      const r = lastReadingOn(readings, meas.measureKey, today);
+      const d = r?.detail && typeof r.detail === "object" ? (r.detail as { byTemplate?: Record<string, number>; byLineage?: Record<string, number> }) : {};
+      for (const l of lineages) {
+        const item = m.items.find((i) => i.lineageId === l && i.kind === "PRACTICE");
+        if (!item || item.decision === "REMOVED" || item.addToToday === false || !pick(m, item)) continue;
+        const tplId = item.templateId ?? (p.templateIds.length === 1 ? p.templateIds[0] : null);
+        const tpl = tplId ? ctx.templates[tplId] : undefined;
+        const plannedL = plannedUnits(tpl?.rule ?? practiceRuleOfItem(item), { from: p.from, to: dueOf(m) ?? p.from, startDay: tpl?.startDay ?? p.from }, ctx.heldDays);
+        const fromDetail = typeof d.byLineage?.[l] === "number" ? d.byLineage[l] : tplId && typeof d.byTemplate?.[tplId] === "number" ? d.byTemplate[tplId] : 0;
+        const keptL = !r ? 0 : lineages.length === 1 ? r.value : fromDetail;
+        planned += plannedL;
+        kept += Math.min(Math.max(0, keptL), plannedL);
+      }
+    }
+  }
+  return { kept, planned };
+}
 
 /** A milestone's measures and their "slowest: …" words (a practice is named only when its name is YOURS or the app's own). */
 export function seriesMilestoneOf(m: Pick<MilestoneDraft, "measures" | "items"> & { id: string }): SeriesMilestone {
@@ -694,23 +1085,33 @@ export interface PlanOptions {
  *      goalAsOf(today, dueOf(m)) (one due day: the goal's once started) on the
  *      stored readings overlaid with step 1.
  *   3. Roadmap.reachedDay, once the final scheduled milestone's reach is
- *      confirmed and every end-state measure holds its target today.
+ *      confirmed and every end-state measure holds its target today. On a
+ *      revision-4 plan also (aimReachedOf): a depth plan's practice kept at
+ *      KEEP_SHARE overall and its production practice from Fluent on, and the
+ *      plan's standard (when it has one) logged at or above its bar inside its
+ *      window. On a plan whose top rank is Paragon, that day gives Paragon.
  *   4. The PROFICIENCY row (ACTIVE only): the basis carried from the previous
  *      reading of the same version (a plan decision passes its own), less any
- *      practice switched off at Start; reaches applied in step 2 count.
+ *      practice switched off at Start; reaches applied in step 2 count (a held
+ *      stage counts as reached: it has its reachedDay).
+ * Card values read ctx.counts: a key with a segment counts recall cards, and
+ * `rc` leaves out the retry entries at exactly L (rev 4); a key without one
+ * reads every card, exactly as in rev 3.
  */
 export function planRoadmapWrite(ctx: RoadmapContext, now: Date, opts: PlanOptions = {}): RoadmapWritePlan {
   const today = todayKey(now);
   const observedAt = now.toISOString();
   const rows = new Map<string, ReadingRow>();
   const superseded = supersededIdsOf(ctx.milestones);
+  const counts = ctx.counts ?? countsOfHistogram(ctx.histogram);
+  const cardRow = (key: string, p: { domainIds: string[]; level: number; segment?: CardSegment }) => cardsReadingRow(key, today, cardsAtLevelFromCounts(counts, p.domainIds, p.level, p.segment));
 
   for (const m of ctx.milestones) {
     if (!isOpenMilestone(m, superseded)) continue;
     for (const meas of payingKeyed(m)) {
       const key = meas.measureKey!;
       const p = parseMeasureKey(key);
-      if (p?.kind === "CARDS_AT_LEVEL") rows.set(key, cardsReadingRow(key, today, cardsAtLevelFromHistogram(ctx.histogram, p.domainIds, p.level)));
+      if (p?.kind === "CARDS_AT_LEVEL") rows.set(key, cardRow(key, p));
       else if (p?.kind === "PRACTICE_KEPT") {
         const tpls = templateIdsOf(meas).map((id) => ({ templateId: id, ...(ctx.templates[id] ?? { rule: null, startDay: p.from, instances: [] }) }));
         const value = practiceKeptValue(tpls, { startedDay: p.from, dueDay: dueOf(m) ?? p.from, asOf: today }, ctx.heldDays);
@@ -723,7 +1124,7 @@ export function planRoadmapWrite(ctx: RoadmapContext, now: Date, opts: PlanOptio
   const endState = ctx.roadmap.status === "ACTIVE" ? (ctx.acceptance?.endState ?? []) : [];
   for (const t of endState) {
     const p = parseMeasureKey(t.measureKey);
-    if (p?.kind === "CARDS_AT_LEVEL" && !rows.has(t.measureKey)) rows.set(t.measureKey, cardsReadingRow(t.measureKey, today, cardsAtLevelFromHistogram(ctx.histogram, p.domainIds, p.level)));
+    if (p?.kind === "CARDS_AT_LEVEL" && !rows.has(t.measureKey)) rows.set(t.measureKey, cardRow(t.measureKey, p));
   }
 
   const computed: Reading[] = Array.from(rows.values()).map((r) => ({ ...r, source: "COMPUTED", observedAt }));
@@ -746,21 +1147,40 @@ export function planRoadmapWrite(ctx: RoadmapContext, now: Date, opts: PlanOptio
   let aimReachedDay: DayKey | null = null;
   if (ctx.roadmap.status === "ACTIVE" && ctx.roadmap.reachedDay == null) {
     // The final scheduled lineage (a dropped row and its "Start again" copy share it): reached when any of its rows is.
-    const scheduled = ctx.milestones.filter((m) => m.status !== "LATER");
+    // A stage a lowered depth dropped (DEPTH_LOWERED) is no longer scheduled: the new final stage decides.
+    const scheduled = ctx.milestones.filter((m) => m.status !== "LATER" && !m.notes.includes("DEPTH_LOWERED"));
     const maxOrd = scheduled.reduce((best, m) => Math.max(best, m.ord), -Infinity);
     const finalLineages = new Set(scheduled.filter((m) => m.ord === maxOrd).map((m) => m.lineageId));
     const finalReached = scheduled.some((m) => finalLineages.has(m.lineageId) && reachedNow.get(m.id) != null);
     const valueOf = (key: string) => lastReadingOn(overlaid, key, today)?.value ?? null;
-    if (finalReached && endState.every((t) => (valueOf(t.measureKey) ?? -Infinity) >= t.target)) aimReachedDay = today;
+    const termsMet = endState.every((t) => (valueOf(t.measureKey) ?? -Infinity) >= t.target);
+    let reached = finalReached && termsMet;
+    // Revision 4: a depth plan's practice conditions, and the standard on any revision-4 plan that has one (F-R4-12).
+    const depthPlan = ctx.depth != null;
+    if (reached && !ctx.legacy && (depthPlan || isTrackPlan(ctx.milestones))) {
+      const standard = standardOf(ctx.milestones);
+      reached = aimReachedOf({
+        finalReached,
+        termsMet,
+        practice: depthPlan ? practiceKeepOf(ctx, overlaid, today, superseded, () => true) : null,
+        production: depthPlan ? practiceKeepOf(ctx, overlaid, today, superseded, (m, item) => (stageGateLevelOf(m) ?? 0) >= FLUENT_LEVEL && isProductionPractice(item)) : null,
+        standard: standard ? { required: true, met: standardMetOf(standard, ctx.checkpointLogs ?? []) } : null,
+      });
+    }
+    if (reached) aimReachedDay = today;
   }
 
   let proficiency: ReadingRow | null = null;
   if (ctx.roadmap.status === "ACTIVE" && ctx.acceptance) {
     const prev = ctx.previousProficiency ? parseProficiencyDetail(ctx.previousProficiency.detail) : null;
     const versionRows = ctx.milestones.filter((m) => m.status === "STARTING" || m.status === "STARTED" || m.version === ctx.roadmap.version);
+    // The previous reading's basis is carried within its version only while it still measures the acceptance's
+    // end state (fix round): a lowered depth writes a second record inside the version, so a basis left toward
+    // the old depth (its own Proficiency row didn't land) is rebuilt from the acceptance, and rebased as a plan
+    // decision ("depth lowered Mastered → Fluent", rebaseCauseOf), never counted toward the depth given up.
     let basis =
       opts.basis ??
-      (prev && prev.v === PROFICIENCY_VERSION && prev.basisVersion === ctx.roadmap.version
+      (prev && prev.v === PROFICIENCY_VERSION && prev.basisVersion === ctx.roadmap.version && basisMatchesEndState(prev.basis, ctx.acceptance.endState)
         ? prev.basis
         : proficiencyBasisOf({ basisVersion: ctx.roadmap.version, endState: ctx.acceptance.endState, feasibility: null, milestones: versionRows, switchedOff: [], heldDays: ctx.heldDays }));
     const switchedOff = ctx.milestones
@@ -794,6 +1214,7 @@ export function planRoadmapWrite(ctx: RoadmapContext, now: Date, opts: PlanOptio
       today,
       basis,
       histogram: ctx.histogram,
+      counts,
       domainNames: ctx.domainNames,
       kept,
       reached: reachedLineages.size,
@@ -877,7 +1298,7 @@ export function resetReadingsThrottle(): void {
   lastChainRun.clear();
 }
 
-const loaderOf = (d: ReadingsDeps) => d.loadContext ?? ((q: ContextQuery, today: DayKey) => loadRoadmapContext(clientOf(d), q, today));
+const loaderOf = (d: ReadingsDeps) => d.loadContext ?? ((q: ContextQuery, today: DayKey) => loadRoadmapContext(clientOf(d), q, today, liveModsOf(d)));
 /** A failure in words, never blank (roadmapStepErrorsOf drops a blank error, and a failure must reach the cron's `errors`). */
 const errorText = (err: unknown): string => {
   const text = err instanceof Error ? err.message || err.name : String(err);
@@ -888,6 +1309,9 @@ async function runForActive(userId: string, now: Date, d: ReadingsDeps): Promise
   const today = todayKey(now);
   const ctx = await loaderOf(d)({ userId, statuses: ["ACTIVE"] }, today);
   if (!ctx) return { written: 0, reaches: 0, skipped: "NO_ROADMAP" };
+  // A roadmap made before revision 4 is not measured (F-R4-16): "Start again at a depth to measure this aim".
+  // RoadmapSkip has no LEGACY word (lane 0's union); NO_ROADMAP reads "no roadmap measured here".
+  if (ctx.legacy) return { written: 0, reaches: 0, skipped: "NO_ROADMAP" };
   const plan = planRoadmapWrite(ctx, now);
   const done = await applyRoadmapWrite(clientOf(d), userId, ctx.roadmap.id, plan, now);
   return { ...done, skipped: null };
@@ -931,8 +1355,8 @@ export async function recordRoadmapReadings(
 /** The scope map the event writers check before any read (cached on 'roadmap'). */
 export interface RoadmapScopeMap {
   roadmapId: string;
-  /** CARDS_AT_LEVEL measures of STARTING and STARTED milestones, and the end state's. */
-  cards: { measureKey: string; domainIds: string[]; level: number }[];
+  /** CARDS_AT_LEVEL measures of STARTING and STARTED milestones, and the end state's (rev 4: with the key's segment). */
+  cards: { measureKey: string; domainIds: string[]; level: number; segment?: CardSegment }[];
   /** Practice and step templates of STARTING and STARTED milestones. */
   templateIds: string[];
 }
@@ -943,11 +1367,11 @@ export function scopeMapOf(input: {
   milestones: readonly { status: string; measures: readonly Pick<MeasureSpec, "kind" | "role" | "measureKey" | "scope">[]; items: readonly Pick<ItemDraft, "kind" | "templateId">[] }[];
   endState: readonly EndStateTerm[];
 }): RoadmapScopeMap {
-  const cards = new Map<string, { measureKey: string; domainIds: string[]; level: number }>();
+  const cards = new Map<string, { measureKey: string; domainIds: string[]; level: number; segment?: CardSegment }>();
   const tpls = new Set<string>();
   const addCard = (key: string | null) => {
     const p = key ? parseMeasureKey(key) : null;
-    if (p?.kind === "CARDS_AT_LEVEL") cards.set(key!, { measureKey: key!, domainIds: p.domainIds, level: p.level });
+    if (p?.kind === "CARDS_AT_LEVEL") cards.set(key!, p.segment ? { measureKey: key!, domainIds: p.domainIds, level: p.level, segment: p.segment } : { measureKey: key!, domainIds: p.domainIds, level: p.level });
   };
   for (const m of input.milestones) {
     if (m.status !== "STARTING" && m.status !== "STARTED") continue;
@@ -974,7 +1398,7 @@ export async function loadScopeMap(userId: string, client: RoadmapReadingsClient
             where: { status: { in: ["STARTING", "STARTED"] } },
             select: { status: true, measures: { select: { kind: true, role: true, measureKey: true, scope: true } }, items: { select: { kind: true, templateId: true } } },
           },
-          acceptances: { where: { undoneAt: null }, orderBy: { version: "desc" }, take: 1, select: { endState: true } },
+          acceptances: { where: { undoneAt: null }, orderBy: acceptanceOrderBy(), take: 1, select: { endState: true } },
         },
       });
       if (!row) return null;
@@ -1000,6 +1424,15 @@ export function crossesLevel(oldLevel: number, newLevel: number, level: number):
 }
 
 /**
+ * A review moves a card measure's count (rev 4): it crosses L; or, on an `rc`
+ * key, it crosses L + 1 too — a retry-entry card at exactly L starts to count
+ * at its next pass, which takes it from L to L + 1.
+ */
+export function movesCardCount(oldLevel: number, newLevel: number, card: { level: number; segment?: CardSegment }): boolean {
+  return crossesLevel(oldLevel, newLevel, card.level) || (card.segment === "rc" && crossesLevel(oldLevel, newLevel, card.level + 1));
+}
+
+/**
  * submitReview's event writer: returns at once (no read past the cached scope
  * map) unless the Domain is in the scope of a STARTING, STARTED or end-state
  * CARDS measure whose L lies between the old and new level; then one run
@@ -1019,7 +1452,7 @@ export async function recordCardsForReview(
   const now = opts.now ?? new Date();
   await guarded("review", async () => {
     const map = await (opts.loadScopeMap ?? ((u: string) => loadScopeMap(u, clientOf(opts))))(userId);
-    if (!map || !map.cards.some((c) => c.domainIds.includes(domainId) && crossesLevel(oldLevel, newLevel, c.level))) return { written: 0, reaches: 0, skipped: null };
+    if (!map || !map.cards.some((c) => c.domainIds.includes(domainId) && movesCardCount(oldLevel, newLevel, c))) return { written: 0, reaches: 0, skipped: null };
     return runForActive(userId, now, opts);
   });
 }
@@ -1154,7 +1587,7 @@ export async function proficiencyReadingFor(
   opts: ReadingsDeps = {}
 ): Promise<ReadingRow | null> {
   const today = todayKey(now);
-  const ctx = await loaderOf(opts)({ userId, roadmapId, extraDomainIds: args.basis.cards.flatMap((c) => c.domainIds) }, today);
+  const ctx = await loaderOf(opts)({ userId, roadmapId, extraDomainIds: args.basis.cards.flatMap((c) => c.domainIds), extraKeys: args.basis.cards.map((c) => c.measureKey) }, today);
   if (!ctx) return null;
   const acceptance = ctx.acceptance ?? { version: args.basis.basisVersion, endState: [] };
   const plan = planRoadmapWrite({ ...ctx, roadmap: { ...ctx.roadmap, status: "ACTIVE" }, acceptance }, now, { basis: args.basis, decision: args.decision, countNewReaches: false });
@@ -1265,9 +1698,11 @@ export async function loadRoadmapGoalSeries(userId: string, goalIds: readonly st
     const [milestones, readings, stated] = await Promise.all([
       client.roadmapMilestone.findMany({
         where: { goalId: { in: ids }, roadmap: { userId } },
+        // The series reads no rev-4 column, so Today's board never depends on the rev-4 migration.
+        omit: { stage: true },
         include: {
           measures: true,
-          items: true,
+          items: { omit: { catalogKey: true } },
           roadmap: {
             select: {
               status: true,

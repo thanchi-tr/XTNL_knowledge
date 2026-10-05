@@ -74,7 +74,7 @@ import {
 import { DUTY_READ_AHEAD_DAYS, DUTY_READ_BACK_DAYS, type DutyBoard, type SettledFact } from "./duty-view";
 import { isMissingRestDayTable } from "./rest-rules";
 import { loadRoadmapGoalSeries } from "./roadmap-readings";
-import { isMissingRoadmapTable, isSupersededRow, type PositionRow } from "./roadmap-types";
+import { isMissingRoadmapTable, isRoadmapCaptureKey, isSupersededRow, type PositionRow } from "./roadmap-types";
 import {
   EpochSet,
   HISTORY_DAYS,
@@ -297,9 +297,11 @@ export function toBoardTemplate(r: TemplateRow, now: Date): BoardTemplate {
     gradeAttempts: r.gradeAttempts,
     gradeFrozen,
     // life-lexicon.ts's 'sizing…': a lexical grade minutes old whose one AI
-    // call has not landed yet. A renamed title is never sized, so never pending.
+    // call has not landed yet. A renamed title is never sized, so never pending,
+    // and neither is a plan-born task ('rm:…'): no model sizes one (decision 50).
     sizing:
       r.gradeSource === "LEXICAL" &&
+      !isRoadmapCaptureKey(r.captureKey) &&
       !gradeFrozen &&
       r.bandOverride === 0 &&
       r.gradeAttempts === 0 &&
@@ -2854,14 +2856,23 @@ export async function setBandOverrideCore(userId: string, templateId: string, ov
   return ok({ bandOverride: clamped });
 }
 
-/** Whether a template may still be re-sized by the AI: paid work, not frozen, not renamed, and its one retry unused. */
+/** resizableCore's refusal for a plan-born task (contracts §16.4): its size is the plan's, never a model's. */
+export const PLAN_BORN_RESIZE_REFUSAL = "A plan-born task's size comes from its practice.";
+
+/**
+ * Whether a template may still be re-sized by the AI: paid work, not
+ * plan-born, not frozen, not renamed, and its one retry unused. A plan-born
+ * task (roadmap Start, captureKey 'rm:…') is never re-sized: no model sizes
+ * or explains one (roadmap decision 50), so Resize never reaches the model.
+ */
 export async function resizableCore(userId: string, templateId: string, now: Date = new Date()): Promise<LifeResult<null>> {
   const row = await prisma.taskTemplate.findFirst({
     where: { id: templateId, userId, archivedAt: null },
-    select: { gradeFrozenAt: true, createdAt: true, gradeAttempts: true, kind: true, title: true, normTitle: true },
+    select: { gradeFrozenAt: true, createdAt: true, gradeAttempts: true, kind: true, title: true, normTitle: true, captureKey: true },
   });
   if (!row) return fail("That task no longer exists.");
   if (row.kind === "GOAL" || row.kind === "IDEA_DRAFT") return fail("Goals and idea drafts aren't sized; only tasks are.");
+  if (isRoadmapCaptureKey(row.captureKey)) return fail(PLAN_BORN_RESIZE_REFUSAL);
   if (isGradeFrozen(row, now)) {
     return fail("The size is frozen: it was completed, or captured over a day ago. Self-rate it instead.");
   }

@@ -19,6 +19,10 @@
  *     share p over 28 days (passes from REVIEW_FRACTION since 2026-08-12),
  *     calibrating below 30 reviews and always noted "reads high".
  *   - Clearance: Σ min(reviews_d, open_d) ÷ Σ open_d over 14 days, from DAY_OPEN.
+ *   - Absence persistence ρ (revision 4, F-R4-8): P(off tomorrow | off today)
+ *     over the last CLEARANCE_SERIES_DAYS life days of the clearance series,
+ *     so the reach model's missed days bunch as the user's really do
+ *     (absencePersistenceOf).
  *   - New cards a week, in total, per Field and per Domain (Idea.createdAt,
  *     complete since NEW_CARDS_SINCE), and the pace source a card scope reads.
  *
@@ -36,7 +40,7 @@
  * allowed to call the number-brand constructors (estimated()).
  *
  *   throughputOf · weeklyFigureOf · taskRowsOf · scopePaceOf · trackedEstimate
- *   countsForAdherence · throughputWindowStart
+ *   countsForAdherence · throughputWindowStart · clearanceSeriesStart · absencePersistenceOf
  */
 import { addDays, weekStartKeyOf, type DayKey } from "./life-day";
 import { BANDS, CATEGORIES, TRACKS, type Band, type Category, type Track } from "./life-types";
@@ -47,13 +51,16 @@ import {
   ADHERENCE_MIN_JUDGED,
   ADHERENCE_MIN_MINUTES,
   CALIBRATION_WEEKS,
+  CLEARANCE_SERIES_DAYS,
   CLEARANCE_WINDOW_DAYS,
   NEW_CARDS_SINCE,
+  OFF_DAY_CLEAR_SHARE,
   PACE_MIN_WEEKS,
   PACE_WINDOW_WEEKS,
   PASS_SHARE_MIN_REVIEWS,
   PASS_SHARE_WINDOW_DAYS,
   REVIEW_PASSES_SINCE,
+  RHO_MIN_DAYS,
   WEEK_MIN_ELIGIBLE_DAYS,
   estimated,
   type Estimated,
@@ -94,13 +101,13 @@ export interface ThroughputRows {
   /** LifeSettings.epochDay: weeks before it do not count. */
   epochDay: DayKey | null;
   settledThroughDay: DayKey | null;
-  /** Held days (heldDaysOf) in the window. */
+  /** Held days (heldDaysOf) in the window (from the earlier of the 8-week window and ρ's series). */
   heldDays: readonly DayKey[];
   tasks: readonly ThroughputTaskRow[];
   recurring: readonly ThroughputTemplate[];
-  /** Review attempts ('bf:' keys excluded) and passes per day. */
+  /** Review attempts ('bf:' keys excluded) and passes per day (attempts from the earlier of the 8-week window and ρ's series). */
   reviews: readonly { day: DayKey; attempts: number; passes: number }[];
-  /** DAY_OPEN: cards open when the day was first opened, and reviews that day. */
+  /** DAY_OPEN: cards open when the day was first opened, and reviews that day (the last CLEARANCE_SERIES_DAYS life days: ρ's series; clearance reads its 14). */
   dayOpens: readonly { day: DayKey; open: number; reviews: number }[];
   /** New cards (Idea.createdAt), per day, Field and Domain. */
   newCards: readonly { day: DayKey; fieldId: string; domainId: string }[];
@@ -326,6 +333,80 @@ function clearanceOf(rows: ThroughputRows): ShareFigure {
   return { kind: "measured", value: cleared / open, n: days };
 }
 
+/** The first day ρ's series reads: the last CLEARANCE_SERIES_DAYS life days up to finalDay (throughput-server reads its rows from here). */
+export function clearanceSeriesStart(finalDay: DayKey): DayKey {
+  return addDays(finalDay, -(CLEARANCE_SERIES_DAYS - 1));
+}
+
+type SeriesDay = "on" | "off" | null;
+
+/**
+ * ρ, the absence persistence (F-R4-8; the reach model's two-state chain):
+ * P(off tomorrow | off today) over the clearance series, the life days of
+ * [max(finalDay − 89, the epoch, the first DAY_OPEN row in it), finalDay].
+ * Each day is
+ *   - on, when it has a DAY_OPEN row with cards open and cleared at least
+ *     OFF_DAY_CLEAR_SHARE of them (min(reviews, open) ÷ open);
+ *   - off, when it cleared under that share, or when it has no DAY_OPEN row
+ *     and no review at all (the app wasn't opened: an absence, which is what
+ *     the chain must see; the series starts at the first DAY_OPEN row so the
+ *     days before the app recorded opens are never read as absences);
+ *   - not observed: a held day (rest, sick, vacation, freeze), a day with
+ *     nothing open, or one with reviews but no DAY_OPEN row (its queue is
+ *     unknown). A day not observed breaks the pairs on either side.
+ * ρ = off→off ÷ off→any over consecutive observed days. With no off day
+ * followed by an observed one, the series shows no bunching to measure and ρ
+ * is the independent-days value, 1 − the series' on-share (0 with no off
+ * day). Calibrating below RHO_MIN_DAYS observed days (the reach model then
+ * uses RHO_PRIOR, labelled); n is the observed days.
+ */
+export function absencePersistenceOf(rows: ThroughputRows): ShareFigure {
+  let from = clearanceSeriesStart(rows.finalDay);
+  if (rows.epochDay && rows.epochDay > from) from = rows.epochDay;
+  const opens = new Map<DayKey, { open: number; reviews: number }>();
+  let firstOpen: DayKey | null = null;
+  for (const r of rows.dayOpens) {
+    if (r.day < from || r.day > rows.finalDay) continue;
+    opens.set(r.day, { open: r.open, reviews: r.reviews });
+    if (firstOpen == null || r.day < firstOpen) firstOpen = r.day;
+  }
+  if (firstOpen == null) return { kind: "calibrating", have: 0, need: RHO_MIN_DAYS };
+  from = maxDay(from, firstOpen);
+  const held = new Set(rows.heldDays);
+  const attempts = byDay(rows.reviews, (r) => r.day, (r) => r.attempts);
+  const states: SeriesDay[] = [];
+  for (let d = from; d <= rows.finalDay; d = addDays(d, 1)) {
+    if (held.has(d)) {
+      states.push(null);
+      continue;
+    }
+    const row = opens.get(d);
+    if (row) {
+      if (!(row.open > 0)) states.push(null);
+      else states.push(Math.min(Math.max(0, row.reviews), row.open) / row.open < OFF_DAY_CLEAR_SHARE ? "off" : "on");
+      continue;
+    }
+    states.push((attempts.get(d) ?? 0) > 0 ? null : "off");
+  }
+  let observed = 0;
+  let on = 0;
+  let offPairs = 0;
+  let offOff = 0;
+  for (let i = 0; i < states.length; i++) {
+    const s = states[i];
+    if (s == null) continue;
+    observed += 1;
+    if (s === "on") on += 1;
+    const next = states[i + 1];
+    if (s === "off" && next != null) {
+      offPairs += 1;
+      if (next === "off") offOff += 1;
+    }
+  }
+  if (observed < RHO_MIN_DAYS) return { kind: "calibrating", have: observed, need: RHO_MIN_DAYS };
+  return { kind: "measured", value: offPairs > 0 ? offOff / offPairs : 1 - on / observed, n: observed };
+}
+
 /** The new-card weeks: counted from NEW_CARDS_SINCE (Idea.createdAt is complete since then), not the life epoch. */
 function newCardWeeks(rows: ThroughputRows, held: ReadonlySet<DayKey>): WeekSlot[] {
   return countedWeeks(rows.finalDay, NEW_CARDS_SINCE, held);
@@ -391,6 +472,7 @@ export function throughputOf(rows: ThroughputRows): Throughput {
     reviewsPerDay: weeklyFigureOf(weeklySums(slots, (d) => attemptsByDay.get(d) ?? 0).map((w) => w / 7)),
     passShare: passShareOf(rows),
     clearance: clearanceOf(rows),
+    absencePersistence: absencePersistenceOf(rows),
     newCards: {
       total: weeklyFigureOf(weeklySums(cardSlots, (d) => cardsByDay.get(d) ?? 0)),
       byField,

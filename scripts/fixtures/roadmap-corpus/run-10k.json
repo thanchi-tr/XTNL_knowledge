@@ -61,5 +61,98 @@
         ]
       }
     }
-  ]
+  ],
+  "v3": {
+    "probe": true,
+    "about": "A Body aim with no constraints: every session kind is offered, and no confirm is needed.",
+    "intake": {
+      "depth": null,
+      "dateMode": "CHOSEN",
+      "exam": false,
+      "examDay": null,
+      "suggestAreas": false
+    },
+    "replies": [
+      {
+        "id": "run-10k-v3-a",
+        "about": "Easy, harder and longer sessions building to a performance check.",
+        "reply": {
+          "stages": {
+            "STAGE_1": {
+              "practices": [
+                {
+                  "kind": "EASY_SESSION"
+                },
+                {
+                  "kind": "MOBILITY_SESSION"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "SET_UP"
+                }
+              ]
+            },
+            "STAGE_2": {
+              "practices": [
+                {
+                  "kind": "EASY_SESSION"
+                },
+                {
+                  "kind": "LONGER_SESSION"
+                }
+              ],
+              "steps": []
+            },
+            "STAGE_3": {
+              "practices": [
+                {
+                  "kind": "HARDER_SESSION"
+                },
+                {
+                  "kind": "LONGER_SESSION"
+                },
+                {
+                  "kind": "STRENGTH_SESSION"
+                }
+              ],
+              "steps": []
+            },
+            "STAGE_4": {
+              "practices": [
+                {
+                  "kind": "HARDER_SESSION"
+                },
+                {
+                  "kind": "LONGER_SESSION"
+                }
+              ],
+              "steps": []
+            },
+            "STAGE_5": {
+              "practices": [
+                {
+                  "kind": "HARDER_SESSION"
+                },
+                {
+                  "kind": "EASY_SESSION"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "FULL_ATTEMPT"
+                }
+              ],
+              "checkpoint": "PERFORMANCE_CHECK"
+            }
+          }
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "excluded": [],
+          "sessionPicks": false
+        }
+      }
+    ]
+  }
 }

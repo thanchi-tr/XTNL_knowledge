@@ -14,29 +14,61 @@
  * only when the fit held a target up, and the carried rows the engine is
  * given set the re-split (R4 leaves a dropped original out).
  *
+ * Revision 4 fix round (contracts §15): every figure at WRITE_MARGIN 1.3;
+ * F-R4-10's final-stretch bound asserted on every corpus fixture (no
+ * clean-entry exemption); the split placed toward a final date the hours
+ * (or a user's date) hold later, in the ladder and in every re-date; a count
+ * gate at the depth ranks two levels below (the depth passed to
+ * rankIndexForStage); roadmap-catalog's practiceRoleOf; coverage counts
+ * frozen at intake (StageLadderOpts.counts, dateEffectOf's counts); every
+ * stage's StartSnapshot carrying the reach model; a count gate's practice.
+ *
+ * Fix round 2 of revision 4 (contracts §16.10, the WRITE_MARGIN ruling's
+ * option (b)): new cards that are only WRITE_MARGIN's spare (every Domain
+ * holds its count) need no pace: with none, the plan is dated on the cards
+ * held, in either mode, and says so; its floor counts the spare, in the date
+ * check and at Start alike. dateEffectOf never reads a plan that isn't dated
+ * as past the span.
+ *
  * Pure: no database, no clock, no model. scripts/_no-model.ts is imported
  * first, like every check that imports a roadmap module.
  *
  *   npx tsx scripts/roadmap-realism-check.ts
  */
 import "./_no-model";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { addDays, daysBetween, weekStartKeyOf, weekdayOf, type DayKey } from "../src/lib/life-day";
+import { WEEKDAY_SHORT } from "../src/lib/recurrence";
 import * as RT from "../src/lib/roadmap-types";
+import { catalogLabelOf } from "../src/lib/roadmap-catalog";
 import {
   applyRemedy,
   availableFor,
   cardReach,
+  coverageOf,
+  dateCheckOf,
+  dateEffectOf,
+  depthTermsOf,
   feasibilityOf,
   fitPlan,
+  floorDayOf,
+  lineDomainDefaultOf,
+  lowerDepthPlanOf,
   manualLadder,
+  motivationTimelineOf,
+  productionPlannedFromFluentOf,
   refit,
   refitForStart,
   remedyTargetDay,
   splitWindows,
+  stageLadderOf,
   startSnapshotOf,
   starterLadder,
+  syncStagePractices,
   thresholdFor,
   writingPlanOf,
+  type StageLadderResult,
 } from "../src/lib/roadmap-realism";
 
 let passed = 0;
@@ -1001,6 +1033,1019 @@ console.log("— lineage and carried rows (fix round 2) —");
     sixWithOriginal.filter((m) => m.status === "DRAFT").length === 4 && RT.positionCountOf(sixWithOriginal.filter((m) => m.status !== "LATER")) === 6,
     json(sixWithOriginal.map((m) => [m.lineageId, m.status]))
   );
+}
+
+// ═══ Revision 4: depth plans (roadmap-rev4.md F-R4-8 to F-R4-13, F-R4-21) ═══
+//
+// Fixtures: lane 0's §14.5 (contracts) — the spec's pack (Probability 42 cards on its D-line, n 34; Inference 9 at level 2, n 25,
+// p 0.8, 3 a week) and the new learner (two new Domains of 25, a source of 6 a week, p 0.85) — at c = 1 with no held day.
+// Fix round (contracts §15.2): WRITE_MARGIN is 1.3, so new_d is ceil(1.3 × n_d) − live_d: Inference 24, Probability 3, a new
+// 25-card Domain 33. Every figure below is that model's; the 1.1 figures stay pinned in roadmap-contract-check as the reason.
+
+const T4: DayKey = "2026-10-05"; // a Monday
+const at4 = (k: number): DayKey => addDays(T4, k);
+const dd4 = (x: DayKey | null | undefined): number | null => (x ? daysBetween(T4, x) : null);
+const P = (p: number, o: Partial<RT.ReachParams> = {}): RT.ReachParams => ({ p, pLong: Math.min(p, RT.P_LONG_CAP), c: 1, rho: 0, m: 1, strikeLimit: 2, graceExtra: 0, ...o });
+function tp4(o: { adherence?: number | null; p?: number | null; c?: number | null } = {}): RT.Throughput {
+  const cal = { kind: "calibrating" as const, have: 1, need: 4 };
+  return {
+    finalDay: at4(-2),
+    trackedMinutes: cal,
+    geminiShare: null,
+    playMinutes: cal,
+    trackedByTrack: {},
+    trackedByCategory: {},
+    completions: cal,
+    activeDays: cal,
+    adherence: o.adherence === null ? { kind: "calibrating", have: 0, need: 8 } : { kind: "measured", value: o.adherence ?? 1, n: 20 },
+    reviewsPerDay: cal,
+    passShare: o.p === null ? { kind: "calibrating", have: 3, need: 30 } : { kind: "measured", value: o.p ?? 0.85, n: 120 },
+    clearance: o.c === null ? { kind: "calibrating", have: 0, need: 1 } : { kind: "measured", value: o.c ?? 1, n: 14 },
+    newCards: { total: cal, byField: {}, byDomain: {} },
+  };
+}
+const card4 = (n: number, level: number, dueIn: (i: number) => number, domainId: string, extra: Partial<RT.CardState> = {}): RT.CardState[] =>
+  Array.from({ length: n }, (_, i) => ({ level, dueDay: at4(dueIn(i)), graceEndsDay: null, domainId, ...extra }));
+const scope4 = (ids: string[], cards: RT.CardState[], rate: number | null = 6, rateSource: RT.RateSource = "FIELD"): RT.RealismScope => ({
+  key: [...ids].sort().join(","),
+  domainIds: [...ids].sort(),
+  fieldId: "f1",
+  cards,
+  rateSource: rate == null ? "NONE" : rateSource,
+  rate,
+});
+function in4(o: Partial<RT.RealismInput>, scopes: RT.RealismScope[]): RT.RealismInput {
+  return {
+    today: T4,
+    targetDay: at4(365),
+    scopes,
+    throughput: tp4(),
+    hoursPerWeek: 10,
+    intensity: "STEADY",
+    startPoint: "NEW",
+    typicalHours: null,
+    typicalHoursSource: null,
+    m: 1,
+    heldDays: [],
+    areaInMaintenance: false,
+    practicesAllowed: true,
+    trackArea: false,
+    depth: 12,
+    dateMode: "REALISTIC",
+    reach: P(0.85),
+    calibrating: [],
+    sourceRate: 6,
+    ...o,
+  };
+}
+function ik4(o: Partial<RT.Intake>): RT.Intake {
+  return {
+    aim: "Pass the probability exam",
+    fieldId: "f1",
+    track: "CRAFT",
+    domainIds: ["a", "b"],
+    targetDay: at4(365),
+    hoursPerWeek: 10,
+    newCardsPerWeek: null,
+    typicalHours: null,
+    typicalHoursSource: null,
+    syllabus: null,
+    startPoint: "NEW",
+    intensity: "STEADY",
+    practicesAllowed: true,
+    constraints: null,
+    examLabel: null,
+    depth: 12,
+    dateMode: "REALISTIC",
+    ...o,
+  };
+}
+let idSeq = 0;
+const mk4 = () => `r4-${++idSeq}`;
+const names4 = { prob: "Probability", inf: "Inference", a: "Alpha", b: "Beta", c: "Gamma", d: "Delta", e: "Epsilon", f: "Zeta" } as unknown as Record<string, RT.DomainName>;
+type Ok = Extract<StageLadderResult, { ok: true }>;
+function ladder4(label: string, r: StageLadderResult): Ok {
+  if (!r.ok) throw new Error(`${label}: refused ${r.reason}: ${r.error}`);
+  return r;
+}
+const MONTHS4 = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "Sun 7 Nov 2027", as the date check writes a day. */
+const dowText4 = (d: DayKey): string => `${WEEKDAY_SHORT[weekdayOf(d) - 1]} ${Number(d.slice(8, 10))} ${MONTHS4[Number(d.slice(5, 7)) - 1]} ${d.slice(0, 4)}`;
+const shape = (plan: readonly RT.MilestoneDraft[]): string[] => plan.map((m) => `${m.stage}@${dd4(m.dueDay)}`);
+const cardMeasures = (m: RT.MilestoneDraft) => m.measures.filter((x) => x.kind === "CARDS_AT_LEVEL");
+const finalOf = (plan: readonly RT.MilestoneDraft[]) => plan.filter((m) => m.status !== "DISCARDED")[plan.filter((m) => m.status !== "DISCARDED").length - 1];
+const stageDaysOf = (r: Ok) => Object.fromEntries(Object.entries(r.stageDays).map(([k, v]) => [k, dd4(v)]));
+/** The input that judges a built ladder (its final due as the target, the same mode). */
+const judgeIn = (base: RT.RealismInput, plan: readonly RT.MilestoneDraft[]): RT.RealismInput => ({ ...base, targetDay: finalOf(plan).dueDay! });
+
+// The spec's pack (lane 0's fixture): rate 3 a week = 50% (Light) of a source of 6.
+const probCards = [
+  ...card4(2, 12, (i) => 40 + i, "prob"),
+  ...card4(6, 8, (i) => 5 + 5 * i, "prob"),
+  ...card4(5, 7, (i) => 3 + 4 * i, "prob"),
+  ...card4(5, 6, (i) => 2 + 3 * i, "prob"),
+  ...card4(8, 5, (i) => 1 + i, "prob"),
+  ...card4(8, 4, (i) => i, "prob"),
+  ...card4(8, 3, (i) => i % 4, "prob"),
+];
+const infCards = card4(9, 2, () => 0, "inf");
+const packScope = scope4(["prob", "inf"], [...probCards, ...infCards]);
+const packIn = in4({ intensity: "LIGHT", reach: P(0.8) }, [packScope]);
+const packIk = ik4({ domainIds: ["prob", "inf"], intensity: "LIGHT" });
+const learnerScope = scope4(["a", "b"], []);
+const learnerIn = (o: Partial<RT.RealismInput> = {}) => in4(o, [learnerScope]);
+
+console.log("— rev 4: coverage and the depth terms (F-R4-9) —");
+{
+  const cov = coverageOf({
+    domains: [
+      { id: "prob", name: "Probability", live: 42, nonRecall: 0 },
+      { id: "inf", name: "Inference", live: 9, nonRecall: 0 },
+      { id: "mc", name: "Mixed", live: 32, nonRecall: 10 },
+      { id: "new", name: "New", live: 0, nonRecall: 0 },
+    ],
+    lineDomains: [],
+    typed: null,
+  });
+  eq("n_d: Probability 42 → 34, Inference 9 → 25 (the floor), 42 cards with 10 multiple choice → 26, a new Domain → 25", cov.map((c) => c.n), [34, 25, 26, 25]);
+  check("each row shows all three terms and where n came from (Probability: floor 25, 80% of 42 = 34, outline 0)", cov[0].floor === 25 && cov[0].share === 34 && cov[0].outline === 0 && cov[0].policy === 34 && cov[0].typed === null && !cov[0].belowPolicy, json(cov[0]));
+  const twelve = coverageOf({ domains: [{ id: "a", name: "A", live: 0, nonRecall: 0 }, { id: "b", name: "B", live: 0, nonRecall: 0 }], lineDomains: Array(12).fill("a"), typed: null });
+  eq("12 outline lines tied to one Domain give 36 (and the other Domain its floor)", [twelve[0].n, twelve[0].linesTied, twelve[1].n], [36, 12, 25]);
+  const six = coverageOf({ domains: [{ id: "a", name: "A", live: 0, nonRecall: 0 }, { id: "b", name: "B", live: 0, nonRecall: 0 }], lineDomains: [null, null, null, null, "zz", null], typed: null });
+  eq("6 lines tied to no Domain in R (one to a Domain outside it) add 3 lines' worth (9 cards) to each Domain's outline term", six.map((c) => [c.linesShared, c.outline]), [[3, 9], [3, 9]]);
+  const typed = coverageOf({ domains: [{ id: "p", name: "P", live: 42, nonRecall: 0 }, { id: "q", name: "Q", live: 42, nonRecall: 0 }], lineDomains: [], typed: { p: 40, q: 5 } });
+  eq("a typed 40 stays 40 (YOURS); a typed 5 under the policy's 34 is a coverage choice (belowPolicy)", typed.map((c) => [c.n, c.typed, c.policy, c.belowPolicy]), [[40, 40, 34, false], [5, 5, 34, true]]);
+  const bad = coverageOf({ domains: [{ id: "p", name: "P", live: 42, nonRecall: 0 }], lineDomains: [], typed: { p: 0, __proto__: 7 } as unknown as Record<string, number> });
+  check("a typed figure outside COVER_MIN..COVER_MAX is ignored (the policy stands)", bad[0].n === 34 && bad[0].typed === null);
+  const chosen = [
+    { id: "prob", name: "Probability" },
+    { id: "inf", name: "Inference" },
+  ];
+  eq(
+    "lineDomainDefaultOf: 'Conditional probability and Bayes' → Probability; a line naming both chosen Domains, or neither, → null; stems match ('Inferences')",
+    [lineDomainDefaultOf("Conditional probability and Bayes", chosen), lineDomainDefaultOf("Probability for inference", chosen), lineDomainDefaultOf("Calculus refresher", chosen), lineDomainDefaultOf("Bayesian inferences", chosen)],
+    ["prob", null, null, "inf"]
+  );
+  check("a Domain named only with stop words ('Basics') matches nothing", lineDomainDefaultOf("Basics of everything", [{ id: "x", name: "Basics" }]) === null);
+  const terms = depthTermsOf(12, typed, { p: 2 }, T4);
+  eq(
+    "depthTermsOf: one term per Domain, CARDS_AT_LEVEL|d:<id>|L12|rc, target n_d, DEPTH or YOURS, baselines as given",
+    terms.map((t) => [t.measureKey, t.target, t.targetSource, t.baseline, t.baselineDay]),
+    [
+      ["CARDS_AT_LEVEL|d:p|L12|rc", 40, "YOURS", 2, T4],
+      ["CARDS_AT_LEVEL|d:q|L12|rc", 5, "YOURS", 0, T4],
+    ]
+  );
+  check("depthTermsOf with the policy's figures reads DEPTH", depthTermsOf(10, cov.slice(0, 1), {}, T4)[0].targetSource === "DEPTH" && depthTermsOf(10, cov.slice(0, 1), {}, T4)[0].measureKey === "CARDS_AT_LEVEL|d:prob|L10|rc");
+
+  const pack = ladder4("pack", stageLadderOf(packIk, packIn, names4, mk4));
+  eq("the pack's coverage: Probability 34, Inference 25", pack.coverage?.map((c) => [c.domainId, c.n]), [["prob", 34], ["inf", 25]]);
+  // Coverage frozen at intake (contracts §15.3, lens 2): a ladder R4 rebuilds after the first draft (a re-plan's redraft) is
+  // given the intake's counts (opts.counts, roadmap-types frozenCoverageCountsOf); n_d reads them, the writing need today's cards.
+  const frozenProb: RT.CoverageCounts[] = [{ id: "prob", live: 42, nonRecall: 0 }];
+  const grown = in4({ intensity: "LIGHT", reach: P(0.8) }, [scope4(["prob", "inf"], [...probCards, ...card4(18, 1, () => 0, "prob"), ...infCards])]);
+  const shrunk = in4({ intensity: "LIGHT", reach: P(0.8) }, [scope4(["prob", "inf"], [...probCards.slice(0, 22), ...infCards])]);
+  const viaToday = ladder4("written 18, today's counts", stageLadderOf(packIk, grown, names4, mk4));
+  const afterWrite = ladder4("written 18, frozen", stageLadderOf(packIk, grown, names4, mk4, { counts: frozenProb }));
+  const afterArchive = ladder4("archived 20, frozen", stageLadderOf(packIk, shrunk, names4, mk4, { counts: frozenProb }));
+  const finalCounts = (r: Ok) => cardMeasures(finalOf(r.plan)).map((x) => [x.scope.domainIds![0], x.target]);
+  const writesOf = (r: Ok, base: RT.RealismInput, key: string) => (writingPlanOf(r.plan, judgeIn(base, r.plan)).find((w) => w.scopeKey === key)?.weeks ?? []).reduce((s, w) => s + w.cards, 0);
+  check(
+    "n_d frozen at intake: 18 Probability cards written since (60 live) leave n at 34 with the intake's counts (48 from today's), the final stage asks 34 = the end state's term, and the need reads today's cards (writeNeedOf(34, 60) = 0)",
+    json(viaToday.coverage?.map((c) => [c.domainId, c.n])) === json([["prob", 48], ["inf", 25]]) &&
+      json(afterWrite.coverage?.map((c) => [c.domainId, c.n, c.live])) === json([["prob", 34, 42], ["inf", 25, 9]]) &&
+      json(finalCounts(afterWrite)) === json([["prob", 34], ["inf", 25]]) &&
+      json(afterWrite.endState?.map((t) => t.target)) === json([34, 25]) &&
+      writesOf(afterWrite, grown, "prob") === 0,
+    json([viaToday.coverage?.map((c) => c.n), afterWrite.coverage?.map((c) => [c.n, c.live]), finalCounts(afterWrite), writesOf(afterWrite, grown, "prob")])
+  );
+  check(
+    "… 20 Probability cards archived (22 live) leave n at 34, and the plan writes the 23 the library now lacks (writeNeedOf(34, 22)); Inference, with no frozen entry (new to R), reads today's",
+    json(finalCounts(afterArchive)) === json([["prob", 34], ["inf", 25]]) && writesOf(afterArchive, shrunk, "prob") === RT.writeNeedOf(34, 22) && RT.writeNeedOf(34, 22) === 23 && afterArchive.coverage?.[1].live === 9,
+    json([finalCounts(afterArchive), writesOf(afterArchive, shrunk, "prob")])
+  );
+  const malformed = ladder4("malformed frozen entry", stageLadderOf(packIk, grown, names4, mk4, { counts: [{ id: "prob", live: Number.NaN, nonRecall: 0 }] }));
+  const effectFrozen = dateEffectOf(packIk, grown, ["c"], frozenProb);
+  const effectToday = dateEffectOf(packIk, grown, ["c"]);
+  check(
+    "a malformed frozen entry reads today's counts (48); dateEffectOf with the frozen counts dates an addition against n 34, not 48 (an earlier or equal date)",
+    malformed.coverage?.[0].n === 48 && effectFrozen.length === 2 && !!effectFrozen[0].dateWith && !!effectToday[0].dateWith && effectFrozen[0].dateWith! <= effectToday[0].dateWith!,
+    json([malformed.coverage?.[0].n, effectFrozen.map((e) => dd4(e.dateWith)), effectToday.map((e) => dd4(e.dateWith))])
+  );
+  const writes = writingPlanOf(pack.plan, judgeIn(packIn, pack.plan));
+  const total = (key: string) => (writes.find((w) => w.scopeKey === key)?.weeks ?? []).reduce((s, w) => s + w.cards, 0);
+  eq(
+    "new_d at WRITE_MARGIN 1.3 (contracts §15.2): the pack writes 24 new cards in Inference (ceil(1.3 × 25) − 9) and 3 in Probability (ceil(1.3 × 34) − 42)",
+    [total("inf"), total("prob"), RT.WRITE_MARGIN],
+    [24, 3, 1.3]
+  );
+  const fin = finalOf(pack.plan);
+  eq(
+    "the final milestone's PAYS card measures are exactly the depth terms, with the rc segment",
+    cardMeasures(fin).map((x) => [x.measureKey, x.target, x.role]),
+    pack.endState?.map((t) => [t.measureKey, t.target, "PAYS"])
+  );
+  const tiers = (["LIGHT", "STEADY", "PUSH"] as const).map((intensity) => ladder4(intensity, stageLadderOf(ik4({ intensity }), learnerIn({ intensity }), names4, mk4)));
+  check("LIGHT, STEADY and PUSH give byte-identical endState", json(tiers[0].endState) === json(tiers[1].endState) && json(tiers[1].endState) === json(tiers[2].endState));
+  const lines = { lines: Array.from({ length: 12 }, (_, i) => `Alpha topic ${i + 1}`), source: null };
+  const withLines = ladder4("lines starter", stageLadderOf(ik4({ syllabus: lines }), learnerIn(), names4, mk4));
+  const skeleton = ladder4("lines skeleton", stageLadderOf(ik4({ syllabus: lines }), learnerIn(), names4, mk4, { items: "NONE" }));
+  eq(
+    "12 outline lines tied to Alpha give it 36 on the starter and on a skeleton a Gemini run fills alike (a line's Domain is the user's, never the reply's)",
+    [cardMeasures(finalOf(withLines.plan)).map((x) => x.target), cardMeasures(finalOf(skeleton.plan)).map((x) => x.target)],
+    [[36, 25], [36, 25]]
+  );
+  const ladderIn = judgeIn(learnerIn(), tiers[1].plan);
+  const before = json(tiers[1].plan.map(cardMeasures).map((ms) => ms.map((x) => [x.measureKey, x.target])));
+  const after = (["USE_REALISTIC_DATE", "LOWER_DEPTH", "REFIT_LIGHT", "MOVE_TO_LATER", "MOVE_DATE"] as RT.Remedy[]).map((r) =>
+    json(applyRemedy(tiers[1].plan, ladderIn, r).map(cardMeasures).map((ms) => ms.map((x) => [x.measureKey, x.target])))
+  );
+  check("no remedy changes a depth term (or any stage's count or level)", after.every((a) => a === before));
+  // g is the minimum over Domains: 40 Probability cards at level 12 and none in Inference is not held.
+  // At WRITE_MARGIN 1.3 Probability still writes writeNeedOf(32, 40) = 2 (COVER_SHARE × WRITE_MARGIN = 1.04 > 1), so Inference
+  // writes 33 of the 35 new cards: a plan of Inference alone is compared at that share of the source rate.
+  const half = scope4(["prob", "inf"], card4(40, 13, () => 100, "prob"));
+  const g = ladder4("min over Domains", stageLadderOf(ik4({ domainIds: ["prob", "inf"] }), in4({}, [half]), names4, mk4));
+  const infOnly = ladder4("Inference only", stageLadderOf(ik4({ domainIds: ["inf"] }), in4({ sourceRate: (6 * 33) / 35 }, [half]), names4, mk4));
+  check(
+    "g is the minimum over Domains: 40 Probability cards at level 12+ and none in Inference hold nothing (no held stage, no refusal); every stage waits for Inference, as a plan of Inference alone does at its share of the writing (33 of 35: Probability's 40 still need 2)",
+    !g.plan.some((m) => m.notes.includes("HELD_AT_START")) &&
+      json(stageDaysOf(g)) === json(stageDaysOf(infOnly)) &&
+      json(g.coverage?.map((c) => [c.n, RT.writeNeedOf(c.n, c.live)])) === json([[32, 2], [25, 33]]),
+    json([stageDaysOf(g), stageDaysOf(infOnly), g.coverage?.map((c) => [c.n, c.live])])
+  );
+}
+
+console.log("— rev 4: the stage ladder (F-R4-10) —");
+{
+  const pack = ladder4("pack", stageLadderOf(packIk, packIn, names4, mk4));
+  const steady = ladder4("learner Steady", stageLadderOf(ik4({}), learnerIn(), names4, mk4));
+  const push = ladder4("learner Push", stageLadderOf(ik4({ intensity: "PUSH" }), learnerIn({ intensity: "PUSH" }), names4, mk4));
+  console.log(`  pack ${json(stageDaysOf(pack))} · learner Steady ${json(stageDaysOf(steady))} · Push ${json(stageDaysOf(push))}`);
+  eq(
+    "the worked examples' stage days under the final model at WRITE_MARGIN 1.3 (contracts §15.2's table): the pack 68 114 205 282 430 (L4's 48 merged)",
+    stageDaysOf(pack),
+    { 6: 68, 8: 114, 10: 205, 11: 282, 12: 430 }
+  );
+  eq(
+    "… the new learner at Steady 108 153 242 321 460 (about 15 months, question 9), at Push 89 135 224 302 446",
+    [stageDaysOf(steady), stageDaysOf(push)],
+    [
+      { 6: 108, 8: 153, 10: 242, 11: 321, 12: 460 },
+      { 6: 89, 8: 135, 10: 224, 11: 302, 12: 446 },
+    ]
+  );
+  check("the writing reduces to the reference plan (roadmap-types referenceWriteDaysOf): pack 3 a week, learner 4.2 and 5.4", pack.rate === 3 && steady.rate === 4.2 && push.rate === 5.4, json([pack.rate, steady.rate, push.rate]));
+  eq(
+    "their milestones after the Sunday snap: the pack Familiar 69 (Foundation merged), Retained 118, Fluent 209, Toward Mastered 286, Mastered 433",
+    shape(pack.plan),
+    ["FAMILIAR@69", "RETAINED@118", "FLUENT@209", "BETWEEN@286", "MASTERED@433"]
+  );
+  eq(
+    "… the learner: Familiar, part 1 on 55, Familiar 111, Retained 153, Fluent 244, Toward Mastered 321, Mastered 461; Push: part 1 on 48, then 90 139 230 307 447",
+    [shape(steady.plan), shape(push.plan)],
+    [
+      ["PART@55", "FAMILIAR@111", "RETAINED@153", "FLUENT@244", "BETWEEN@321", "MASTERED@461"],
+      ["PART@48", "FAMILIAR@90", "RETAINED@139", "FLUENT@230", "BETWEEN@307", "MASTERED@447"],
+    ]
+  );
+  eq(
+    "titles are code's templates: 'Familiar, part 1: Alpha, Beta to level 6+', 'Toward Mastered: Alpha, Beta to level 11+', 'Mastered: Alpha, Beta to level 12+'",
+    [steady.plan[0].title, steady.plan[4].title, steady.plan[5].title, steady.plan[0].titleOrigin, steady.plan[5].titleDecision],
+    ["Familiar, part 1: Alpha, Beta to level 6+", "Toward Mastered: Alpha, Beta to level 11+", "Mastered: Alpha, Beta to level 12+", "CODE", "KEPT"]
+  );
+  const part = steady.plan[0];
+  check(
+    "the count gate: the learner's 108-day first window gets PART, targets under 25 and ≥ 3 per Domain, key segment r, worked out (never DEPTH)",
+    part.stage === "PART" && cardMeasures(part).every((x) => x.target >= 3 && x.target < 25 && x.measureKey!.endsWith("|L6|r") && x.targetSource === "WORKED_OUT"),
+    json(cardMeasures(part))
+  );
+  check("PART never changes a gate stage's count: every gate and BETWEEN stage asks n_d (25), the final with rc", steady.plan.slice(1).every((m) => cardMeasures(m).every((x) => x.target === 25)) && cardMeasures(steady.plan[5]).every((x) => x.measureKey!.endsWith("|rc")));
+  check("the pack's 63-day first window gets no count gate", pack.plan.every((m) => m.stage !== "PART"));
+  check(
+    "the split: the pack's 224-day Fluent → Mastered window gets one BETWEEN at level 11, on its own stage day (the reach sets the final date)",
+    pack.plan.filter((m) => m.stage === "BETWEEN").length === 1 && cardMeasures(pack.plan[3]).every((x) => x.minLevel === 11) && dd4(pack.plan[3].dueDay) === 286 && daysBetween(pack.plan[2].dueDay!, pack.plan[4].dueDay!) === 224
+  );
+  // A first gate under 35 days merges into the next: 30 cards at level 3 due now hold the counts at L4 within days and L6 in about 3 weeks.
+  const early = ladder4("early gates", stageLadderOf(ik4({ domainIds: ["a"] }), in4({}, [scope4(["a"], card4(30, 3, (i) => i % 3, "a"))]), names4, mk4));
+  check("the merge rule: a first gate due within 35 days (Foundation, and Familiar at about day 21) merges into the next", early.plan[0].stage === "RETAINED" && !early.plan.some((m) => m.stage === "FOUNDATION" || m.stage === "FAMILIAR"), json(shape(early.plan)));
+  // The count gate's halves after the Sunday snap: a 76-day first window (a library holding Fluent, the user's date 76 days out).
+  // A pace of 3 a week: at WRITE_MARGIN 1.3 the 30 cards still ask writeNeedOf(25, 30) = 3 new ones. With no pace those 3 are
+  // the spare alone (30 ≥ n 25), so a CHOSEN plan is dated on the cards held (contracts §16.10 option (b)); a library short of
+  // its count (20 cards) with no pace is "Not dated" (no count gate at all).
+  const fluentHeld = (today: DayKey, n = 30) => scope4(["a"], Array.from({ length: n }, () => ({ level: 11, dueDay: addDays(today, 3), graceEndsDay: null, domainId: "a" })), 3);
+  const halvesIn = (today: DayKey) => in4({ today, dateMode: "CHOSEN", userDate: addDays(today, 76), targetDay: addDays(today, 76), sourceRate: 3 }, [fluentHeld(today)]);
+  const halves = (today: DayKey) =>
+    ladder4(`76-day window from ${today}`, stageLadderOf(ik4({ domainIds: ["a"], dateMode: "CHOSEN", targetDay: addDays(today, 76) }), halvesIn(today), names4, mk4));
+  const noPaceOf = (n: number) =>
+    stageLadderOf(
+      ik4({ domainIds: ["a"], dateMode: "CHOSEN", targetDay: at4(76) }),
+      in4({ dateMode: "CHOSEN", userDate: at4(76), targetDay: at4(76), sourceRate: null }, [scope4(["a"], fluentHeld(T4, n).cards, null)]),
+      names4,
+      mk4
+    );
+  const noPace = noPaceOf(30);
+  const noPaceShort = noPaceOf(20);
+  check(
+    "a library holding Fluent (30 cards, n 25) with no pace: its writeNeedOf(25, 30) = 3 new cards are the spare alone, so a CHOSEN plan is dated on the cards held (no 'Not dated', no new card counted)",
+    RT.writeNeedOf(25, 30) === 3 &&
+      noPace.ok &&
+      noPace.rate === null &&
+      json(shape(noPace.plan)) === json(["FOUNDATION@0", "FAMILIAR@0", "RETAINED@0", "FLUENT@0", "PART@41", "MASTERED@76"]) &&
+      noPace.dateCheck!.basis[0].startsWith("With only the cards you hold") &&
+      !noPace.dateCheck!.basis.some((b) => b.startsWith("Not dated")),
+    json(noPace.ok ? [shape(noPace.plan), noPace.dateCheck!.basis] : noPace)
+  );
+  check(
+    "… a library short of its count (20 cards, n 25) with no pace still reads 'Not dated' and places no count gate",
+    noPaceShort.ok && !noPaceShort.plan.some((m) => m.stage === "PART") && noPaceShort.dateCheck!.basis[0].startsWith("Not dated: no writing pace yet"),
+    json(noPaceShort.ok ? shape(noPaceShort.plan) : noPaceShort)
+  );
+  const fromFriday = halves(at4(4));
+  const fromMonday = halves(T4);
+  check(
+    "a 76-day first window from a Friday: the count gate would fall on the Sunday of day 44, leaving 32 days (< 35): none",
+    !fromFriday.plan.some((m) => m.stage === "PART") && fromFriday.plan.filter((m) => m.notes.includes("HELD_AT_START")).length === 4,
+    json(fromFriday.plan.map((m) => `${m.stage}@${daysBetween(at4(4), m.dueDay!)}`))
+  );
+  check("… from a Monday it falls on day 41, leaving 35: placed", fromMonday.plan.some((m) => m.stage === "PART" && dd4(m.dueDay) === 41), json(shape(fromMonday.plan)));
+  // A count gate toward the depth's own gate (contracts §15.4): its target is at most n − 1 on `r` (retry entries count), so it
+  // gives the rank of the gate two levels below (Expert under Mastered), never the depth's; motivationTimelineOf passes the depth.
+  const partAtDepth = fromMonday.plan.find((m) => m.stage === "PART");
+  const monMt = motivationTimelineOf(fromMonday.plan, judgeIn(halvesIn(T4), fromMonday.plan));
+  check(
+    "a library holding Fluent (depth 12): the count gate at level 12 (24 of 25 on r) gives Expert on day 41 and Mastered Virtuoso on day 76 — two ranks on the timeline, never Virtuoso before the depth is held",
+    !!partAtDepth &&
+      cardMeasures(partAtDepth).every((x) => x.minLevel === 12 && x.target === 24 && x.measureKey!.endsWith("|L12|r")) &&
+      RT.rankIndexForStage("PART", 12, 12) === RT.STAGE_RANK.FLUENT &&
+      json(monMt.rankDays) === json([41, 76]),
+    json([shape(fromMonday.plan), monMt.rankDays])
+  );
+  // At a Fluent depth: a library holding Retained (30 cards at level 9), the user's date 110 days out.
+  const retIn = in4({ depth: 10, dateMode: "CHOSEN", userDate: at4(110), targetDay: at4(110), sourceRate: 3 }, [scope4(["a"], card4(30, 9, (i) => 3 + (i % 5), "a"), 3)]);
+  const atFluent = ladder4("Fluent depth, Retained held", stageLadderOf(ik4({ domainIds: ["a"], depth: 10, dateMode: "CHOSEN", targetDay: at4(110) }), retIn, names4, mk4));
+  const fluentMt = motivationTimelineOf(atFluent.plan, judgeIn(retIn, atFluent.plan));
+  check(
+    "… at a Fluent depth (a library holding Retained) the count gate at level 10 gives Specialist, then Fluent Expert: ranks on days 55 and 110 (without the depth it would give Expert at once)",
+    json(shape(atFluent.plan)) === json(["FOUNDATION@0", "FAMILIAR@0", "RETAINED@0", "PART@55", "FLUENT@110"]) &&
+      json(fluentMt.rankDays) === json([55, 110]) &&
+      RT.rankIndexForStage("PART", 10, 10) === RT.STAGE_RANK.RETAINED &&
+      RT.rankIndexForStage("PART", 10) === RT.STAGE_RANK.FLUENT,
+    json([shape(atFluent.plan), fluentMt.rankDays])
+  );
+  // A long first window: six new Domains share 4.2 new cards a week (168 to write, about 40 weeks).
+  const sixIds = ["a", "b", "c", "d", "e", "f"];
+  const six = ladder4("six Domains", stageLadderOf(ik4({ domainIds: sixIds }), in4({}, [scope4(sixIds, [])]), names4, mk4));
+  check(
+    "a long first window keeps LONG_WINDOW after its count gate (part 1 by day 76, then Familiar's window over 186 days)",
+    six.plan[0].stage === "PART" && dd4(six.plan[0].dueDay)! <= RT.FIRST_RANK_MAX_DAYS + 6 && six.plan[1].notes.includes("LONG_WINDOW") && daysBetween(six.plan[0].dueDay!, six.plan[1].dueDay!) > RT.MILESTONE_MAX_DAYS,
+    json(shape(six.plan))
+  );
+  eq("{domains} past three names reads 'A, B and four more' (no digit)", six.plan[1].title, "Familiar: Alpha, Beta and four more to level 6+");
+  const counts = sixIds.map((_, k) => stageLadderOf(ik4({ domainIds: sixIds.slice(0, k + 1) }), in4({}, [scope4(sixIds.slice(0, k + 1), [])]), names4, mk4));
+  check("≤ 6 milestones for every plan of 1 to 6 Domains", counts.every((r) => r.ok && r.plan.length <= RT.MAX_MILESTONES), json(counts.map((r) => (r.ok ? r.plan.length : r.reason))));
+  // A STRONG library already holding Retained's coverage.
+  const strong = scope4(["a", "b"], [...card4(30, 8, (i) => 10 + 2 * i, "a"), ...card4(30, 8, (i) => 11 + 2 * i, "b")]);
+  const held = ladder4("strong", stageLadderOf(ik4({ startPoint: "STRONG" }), in4({}, [strong]), names4, mk4));
+  eq(
+    "a STRONG library holding level 8: Foundation, Familiar and Retained are 'Held when you began' (due today, no items, no measures), and the plan schedules from Fluent on",
+    held.plan.map((m) => [m.stage, dd4(m.dueDay), m.notes.includes("HELD_AT_START"), m.items.length + m.measures.length > 0]),
+    [
+      ["FOUNDATION", 0, true, false],
+      ["FAMILIAR", 0, true, false],
+      ["RETAINED", 0, true, false],
+      ["FLUENT", 118, false, true],
+      ["BETWEEN", 195, false, true],
+      // 349 at WRITE_MARGIN 1.3 (412 at 1.1): the 30 cards per Domain now write writeNeedOf(25, 30) = 3 more each, a spare that reaches the depth sooner.
+      ["MASTERED", 349, false, true],
+    ]
+  );
+  eq("… its slots go to the next kept stage: Foundation, Familiar and Retained's items to Fluent", [held.slotTo?.FOUNDATION, held.slotTo?.RETAINED, held.slotTo?.FLUENT].map((x) => x === held.plan[3].lineageId), [true, true, true]);
+  const holds = stageLadderOf(ik4({}), in4({}, [scope4(["a", "b"], [...card4(30, 13, () => 50, "a"), ...card4(30, 13, () => 50, "b")])]), names4, mk4);
+  check("a library already holding the depth is refused (HELD) with its copy", !holds.ok && holds.reason === "HELD" && holds.error.startsWith("You already hold this depth in these Domains."), json(holds));
+  const near = stageLadderOf(ik4({}), in4({}, [scope4(["a", "b"], [...card4(40, 11, () => 0, "a"), ...card4(40, 11, () => 0, "b")])]), names4, mk4);
+  check("… and one whose realistic date is days away (TOO_SOON, in the spec's words)", !near.ok && near.reason === "TOO_SOON" && near.error === "This depth is only weeks away: add a Domain, raise coverage or choose a deeper aim.", json(near));
+  const soon = stageLadderOf(ik4({ dateMode: "CHOSEN", targetDay: at4(30) }), learnerIn({ dateMode: "CHOSEN", userDate: at4(30), targetDay: at4(30) }), names4, mk4);
+  check("a CHOSEN date under 35 days away is refused for its date", !soon.ok && soon.reason === "TOO_SOON" && soon.error === "A plan needs at least 5 weeks: choose a later date.", json(soon));
+  // A gate short by 2 isn't a milestone, and isn't held: Alpha holds 23 of its 25 at level 4.
+  const gap2 = ladder4("gap of 2", stageLadderOf(ik4({ domainIds: ["a"] }), in4({}, [scope4(["a"], [...card4(23, 4, (i) => 20 + i, "a"), ...card4(2, 2, () => 0, "a")])]), names4, mk4));
+  check("a gap of 2 at a gate merges it and doesn't hold it (no Foundation row)", !gap2.plan.some((m) => m.stage === "FOUNDATION"), json(shape(gap2.plan)));
+  const all = [pack, steady, push, six, held, gap2, fromMonday];
+  const titleDigits = all.flatMap((r) => r.plan.map((m) => m.title.replace(/level \d{1,2}\+/, "").replace(/, part 1:/, ":"))).filter((t) => /\d/.test(t));
+  check("titles hold no digit but {L} (and the count gate's 'part 1')", titleDigits.length === 0, json(titleDigits));
+  // (REALISTIC plans: a CHOSEN date before the realistic one is the user's, and the date check says so.)
+  const early2 = [pack, steady, push, six, held, gap2].flatMap((r) => r.plan.filter((m) => !m.notes.includes("HELD_AT_START") && m.stage !== "PART").map((m) => ({ due: m.dueDay!, sd: r.stageDays[rowLevel(m)] }))).filter((x) => x.sd && x.due < x.sd);
+  check("due days are never before their stage day", early2.length === 0, json(early2));
+  check(
+    "every row carries its stage (no legacy row), and held rows give no rank to fit or judge",
+    all.every((r) => r.plan.every((m) => m.stage != null)) && feasibilityOf(held.plan, judgeIn(in4({}, [strong]), held.plan)).milestones.every((x) => !held.plan.slice(0, 3).some((m) => m.lineageId === x.lineageId))
+  );
+}
+
+function rowLevel(m: RT.MilestoneDraft): number {
+  return Math.max(0, ...m.measures.map((x) => x.minLevel ?? 0));
+}
+
+console.log("— rev 4: motivation timelines of the corpus fixtures (decision 54) —");
+{
+  const DIR = join(process.cwd(), "scripts/fixtures/roadmap-corpus");
+  const files = readdirSync(DIR).filter((f) => /^[a-z0-9-]+\.json$/.test(f) && !f.startsWith("probe-")).sort();
+  const firstBad: string[] = [];
+  const stretchBad: string[] = [];
+  const finalStretches: string[] = [];
+  const finalBad: string[] = [];
+  const splitEarly: string[] = [];
+  const hoursBound: string[] = [];
+  const dd4f = (from: DayKey, x: DayKey | null | undefined): number | null => (x ? daysBetween(from, x) : null);
+  let fixtures = 0;
+  for (const f of files) {
+    const j = JSON.parse(readFileSync(join(DIR, f), "utf8")) as {
+      today: DayKey;
+      input: { intake: RT.Intake; domains: { id: string; name: string; cards: number; atSix: number; atTop: number }[] };
+    };
+    if (!j?.input?.intake) continue;
+    fixtures++;
+    const today = j.today;
+    const ik = j.input.intake;
+    const track = ik.fieldId == null;
+    const doms = j.input.domains.filter((d) => ik.domainIds.includes(d.id));
+    // Cards from each Domain's D-line (cards, at level 6+, at the top level), due over the next weeks; a typed pace where none is given (fixture choice: 3 a week).
+    const cards: RT.CardState[] = [];
+    for (const d of doms) {
+      for (let i = 0; i < d.atTop; i++) cards.push({ level: 12, dueDay: addDays(today, 30 + i), graceEndsDay: null, domainId: d.id });
+      for (let i = 0; i < d.atSix - d.atTop; i++) cards.push({ level: 6 + (i % 3), dueDay: addDays(today, 1 + (i % 30)), graceEndsDay: null, domainId: d.id });
+      for (let i = 0; i < d.cards - d.atSix; i++) cards.push({ level: 1 + (i % 5), dueDay: addDays(today, i % 10), graceEndsDay: null, domainId: d.id });
+    }
+    const ids = doms.map((d) => d.id).sort();
+    const rate = ik.newCardsPerWeek ?? 3;
+    const input: RT.RealismInput = {
+      today,
+      targetDay: ik.targetDay,
+      scopes: track ? [] : [{ key: ids.join(","), domainIds: ids, fieldId: ik.fieldId, cards, rateSource: "YOURS", rate }],
+      throughput: { ...tp4({ adherence: null, p: null, c: null }), finalDay: addDays(today, -2) },
+      hoursPerWeek: ik.hoursPerWeek,
+      intensity: ik.intensity,
+      startPoint: ik.startPoint,
+      typicalHours: ik.typicalHours,
+      typicalHoursSource: ik.typicalHoursSource,
+      m: 1,
+      heldDays: [],
+      areaInMaintenance: false,
+      practicesAllowed: ik.practicesAllowed,
+      trackArea: track,
+      depth: track ? null : 12,
+      dateMode: track ? "CHOSEN" : "REALISTIC",
+    };
+    const names = Object.fromEntries(doms.map((d) => [d.id, d.name])) as unknown as Record<string, RT.DomainName>;
+    const res = stageLadderOf({ ...ik, depth: track ? null : 12, dateMode: track ? "CHOSEN" : "REALISTIC" }, input, names, mk4);
+    if (!res.ok) {
+      firstBad.push(`${f}: refused ${res.reason}`);
+      continue;
+    }
+    const judged = { ...input, targetDay: finalOf(res.plan).dueDay! };
+    const mt = motivationTimelineOf(res.plan, judged);
+    // The stretch before the final stage, were the final gate dated without clean entry (the reach model's tail, F-R4-8).
+    let tail = "";
+    if (!track) {
+      const fin = finalOf(res.plan);
+      const prev = res.plan.filter((m) => m.status !== "DISCARDED" && !m.notes.includes("HELD_AT_START"));
+      const before = prev[prev.length - 2];
+      const need = Object.fromEntries((res.coverage ?? []).map((c) => [c.domainId, RT.writeNeedOf(c.n, cards.filter((x) => x.domainId === c.domainId).length)]));
+      const w = RT.referenceWriteDaysOf(need, res.rate ?? 0, today);
+      const params = RT.reachInputsOf(judged.throughput, 1).params;
+      const plain = RT.stageDayOf(
+        (res.coverage ?? []).map((c) => ({ n: c.n, cards: cards.filter((x) => x.domainId === c.domainId).map((x) => RT.effectiveState(x, today)), writeDays: w[c.domainId] ?? [] })),
+        12,
+        today,
+        params
+      );
+      const plainStretch = plain && before ? daysBetween(before.dueDay!, plain) : null;
+      const cleanStretch = before ? daysBetween(before.dueDay!, fin.dueDay!) : null;
+      tail = ` · final stretch ${cleanStretch} (without clean entry ${plainStretch})`;
+      if (cleanStretch != null) finalStretches.push(`${f} ${cleanStretch}`);
+      if (cleanStretch != null && cleanStretch > RT.MILESTONE_MAX_DAYS + 6 && !mt.longWindow) finalBad.push(`${f}: ${cleanStretch}`);
+      // A split never before its stage day (the hours bound moves it later, never earlier).
+      for (const m of res.plan) if (m.stage === "BETWEEN" && res.stageDays[rowLevel(m)] && m.dueDay! < res.stageDays[rowLevel(m)]!) splitEarly.push(`${f} ${dd4f(today, m.dueDay)} < ${dd4f(today, res.stageDays[rowLevel(m)])}`);
+      if (res.dateCheck?.basis.some((b) => /^Your [\d.]+ h, at the hours you have, take until/.test(b))) hoursBound.push(`${f} ${cleanStretch}`);
+    }
+    if (mt.longestGap > RT.MILESTONE_MAX_DAYS + 6 && !mt.longWindow) stretchBad.push(`${f}: ${mt.longestGap}`);
+    console.log(`  ${f.padEnd(26)} ${shape(res.plan).join(" ")} | first rank ${mt.firstRankDay}, ranks ${mt.rankDays.join(",")}, ⬡6 ${mt.payDays.join(",")}, Paragon ${mt.paragonDay}, longest ${mt.longestGap}${tail}`);
+    if (!mt.longWindow && (mt.firstRankDay == null || mt.firstRankDay > RT.FIRST_RANK_MAX_DAYS + 6)) firstBad.push(`${f}: ${mt.firstRankDay}`);
+  }
+  check(`every corpus fixture's first rank comes by day ${RT.FIRST_RANK_MAX_DAYS + 6} (${fixtures} fixtures)`, fixtures >= 11 && firstBad.length === 0, firstBad.join("; "));
+  // F-R4-10's bound, now asserted (fix round: WRITE_MARGIN 1.3, contracts §15.2, and the split placed toward a final date the hours hold later).
+  check(`no stretch without a rank, a ⬡6 milestone or Paragon is over ${RT.MILESTONE_MAX_DAYS + 6} days, the final stretch to Mastered included (no exemption)`, stretchBad.length === 0, stretchBad.join("; "));
+  check(`every depth fixture's final stretch (the stage before Mastered → Mastered) is within ${RT.MILESTONE_MAX_DAYS + 6} days: ${finalStretches.join(", ")}`, finalStretches.length >= 7 && finalBad.length === 0, finalBad.join("; "));
+  check(
+    "actuarial-probability, whose Mastered the hours hold (typicalHours 300 at 6 h a week, day 503), places Toward Mastered toward it (day 321, not its stage day 307): a 182-day final stretch, not 196",
+    hoursBound.length === 1 && hoursBound[0] === "actuarial-probability.json 182" && splitEarly.length === 0,
+    json([hoursBound, splitEarly])
+  );
+  const steady = ladder4("learner", stageLadderOf(ik4({}), learnerIn(), names4, mk4));
+  const sIn = judgeIn(learnerIn(), steady.plan);
+  const mt = motivationTimelineOf(steady.plan, sIn);
+  eq("the learner's timeline: the first rank on day 55 (the count gate), ranks 55 153 244 461, Paragon on 461 (its performance check is the standard)", [mt.firstRankDay, mt.rankDays, mt.paragonDay], [55, [55, 153, 244, 461], 461]);
+  check("… without a standard Paragon is off the timeline", motivationTimelineOf(steady.plan, sIn, { hasStandard: false }).paragonDay === null && motivationTimelineOf(steady.plan, sIn, { coverageBelowPolicy: true }).paragonDay === null);
+}
+
+console.log("— rev 4: keep the depth, move the date (F-R4-11) —");
+{
+  const real = ladder4("learner", stageLadderOf(ik4({}), learnerIn(), names4, mk4));
+  const dc = real.dateCheck!;
+  eq("REALISTIC mode is FITS by construction, with the last stage on D_real (the Sunday on or after day 460: 461)", [dc.verdict, dd4(dc.D_real), dd4(finalOf(real.plan).dueDay), dc.dateOrigin.origin], ["FITS", 461, 461, "REALISTIC"]);
+  console.log(`  learner dates: D_real ${dd4(dc.D_real)}, D_full ${dd4(dc.D_full)}, D_best_pace ${dd4(dc.D_best_pace)}, D_best_2x ${dd4(dc.D_best_2x)}, D_floor ${dd4(dc.D_floor)}`);
+  check("D_best_pace ≥ D_best_2x, and the Date copy names D_best_pace", dc.D_best_pace! >= dc.D_best_2x! && dc.basis.some((b) => b.includes("Earliest if every review passes, at this pace:") && b.includes(dowText4(dc.D_best_pace!))));
+  check("the schedule-bound line shows for the new learner", dc.scheduleBound && dc.basis.some((b) => b.startsWith("This date is set by the review schedule, not your hours: a new card needs at least 340 days to reach level 12.")));
+  // The new learner with a CHOSEN 1-year date.
+  const yr = at4(365);
+  const chosenIn = learnerIn({ dateMode: "CHOSEN", userDate: yr, targetDay: yr });
+  const chosen = ladder4("chosen 1y", stageLadderOf(ik4({ dateMode: "CHOSEN", targetDay: yr }), chosenIn, names4, mk4));
+  const fe = feasibilityOf(chosen.plan, chosenIn);
+  check(
+    "a CHOSEN 1-year date: never FITS; the offers are the realistic date and a lower depth (Keep my date asks more than 4.2 a week)",
+    chosen.dateCheck!.verdict !== "FITS" && fe.remedies.includes("USE_REALISTIC_DATE") && fe.remedies.includes("LOWER_DEPTH") && (chosen.dateCheck!.rateAsked ?? 0) > 4.2,
+    json([chosen.dateCheck!.verdict, fe.remedies, chosen.dateCheck!.rateAsked])
+  );
+  eq("… no depth term changes: the final stage still asks 25 recall cards at level 12 (rc) in each Domain", cardMeasures(finalOf(chosen.plan)).map((x) => [x.measureKey, x.target]), cardMeasures(finalOf(real.plan)).map((x) => [x.measureKey, x.target]));
+  eq("… reachByUserDate is level 11, Toward Mastered (its stage day 321 ≤ 364 < Mastered's)", [chosen.dateCheck!.reachByUserDate, chosen.dateCheck!.basis.some((b) => b === "By your date the plan reaches level 11, on the way to Mastered (level 12).")], [11, true]);
+  check("REFIT_LIGHT and MOVE_TO_LATER are never offered on a depth plan", ![...fe.remedies, ...fe.milestones.flatMap((m) => m.remedies)].some((r) => r === "REFIT_LIGHT" || r === "MOVE_TO_LATER"));
+  // Each verdict boundary, on the realistic ladder.
+  const verdictAt = (k: DayKey | null) => dateCheckOf(real.plan, chosenIn, "CHOSEN", k).verdict;
+  const D = dc;
+  eq(
+    "the verdict at each boundary: D_real FITS, a day before TIGHT; D_full TIGHT, a day before OVER; D_best_2x OVER, a day before IMPOSSIBLE",
+    [verdictAt(D.D_real), verdictAt(addDays(D.D_real!, -1)), verdictAt(D.D_full), verdictAt(addDays(D.D_full!, -1)), verdictAt(D.D_best_2x), verdictAt(addDays(D.D_best_2x!, -1))],
+    ["FITS", "TIGHT", "TIGHT", "OVER", "OVER", "IMPOSSIBLE"]
+  );
+  check("… and a day before D_floor is IMPOSSIBLE (the bound is the later of D_best_2x and D_floor)", verdictAt(addDays(D.D_floor!, -1)) === "IMPOSSIBLE" && D.D_floor! <= D.D_best_2x!);
+  const tight = dateCheckOf(real.plan, chosenIn, "CHOSEN", addDays(D.D_real!, -1));
+  const over = dateCheckOf(real.plan, chosenIn, "CHOSEN", addDays(D.D_full!, -1));
+  check("the rates are monotone: TIGHT asks between 4.2 and your usual 6, OVER at most twice it", tight.rateAsked! >= 4.2 && tight.rateAsked! <= 6 && over.rateAsked! > 6 && over.rateAsked! <= 12, json([tight.rateAsked, over.rateAsked]));
+  check("TIGHT's line: 'Uses your full usual pace: no margin for a lean week.'; IMPOSSIBLE names the floor", tight.basis.includes("Uses your full usual pace: no margin for a lean week.") && dateCheckOf(real.plan, chosenIn, "CHOSEN", at4(200)).basis.some((b) => b.includes("a new card needs at least 318 days to reach level 12 here")));
+  const tiers = (["LIGHT", "STEADY", "PUSH"] as const).map((intensity) => ladder4(intensity, stageLadderOf(ik4({ intensity }), learnerIn({ intensity }), names4, mk4)).dateCheck!.D_real!);
+  check("Light gives dates ≥ Steady ≥ Push (the pace share moves the date, never the depth)", tiers[0] >= tiers[1] && tiers[1] >= tiers[2] && tiers[0] > tiers[2], json(tiers.map(dd4)));
+  const far = stageLadderOf(ik4({ domainIds: ["a", "b", "c", "d", "e", "f"] }), in4({ sourceRate: 1 }, [scope4(["a", "b", "c", "d", "e", "f"], [], 1)]), names4, mk4);
+  check("a realistic date past 1,080 days is refused with its copy (TOO_FAR)", !far.ok && far.reason === "TOO_FAR" && far.error.startsWith("At your pace this depth is realistic in more than 3 years."), json(far));
+  // While calibrating: the priors, never p = 1, and what was assumed.
+  const calIn = learnerIn({ reach: undefined, calibrating: undefined, throughput: tp4({ p: null, c: null }) });
+  const cal = ladder4("calibrating", stageLadderOf(ik4({}), calIn, names4, mk4));
+  check(
+    "p calibrating dates at the priors (0.80, 0.85, 0.6), later than with them measured, and records 'p', 'c' and 'rho' in dateOrigin.calibrating",
+    cal.dateCheck!.D_real! > dc.D_real! && json(cal.dateCheck!.dateOrigin.calibrating) === json(["p", "c", "rho"]) && cal.dateCheck!.basis.some((b) => b.startsWith("This date is an estimate: it assumes an 80% pass rate until 30 reviews are measured")),
+    json(cal.dateCheck)
+  );
+  // Question 9's months (contracts §16.10): a brand-new learner has nothing measured, so the priors date the plan. The figure
+  // the spec's "about 11–15 months" must be checked against (30.44 days a month).
+  eq(
+    "a new learner on the priors (2 Domains, 0 cards, 6 a week at Steady): Mastered's stage day 479 and D_real 482, about 15.8 months (question 9)",
+    [cal.stageDays[12] != null ? dd4(cal.stageDays[12]) : null, dd4(cal.dateCheck!.D_real), Math.round((dd4(cal.dateCheck!.D_real)! / 30.44) * 10) / 10],
+    [479, 482, 15.8]
+  );
+  const typed = ladder4("typed pace", stageLadderOf(ik4({ newCardsPerWeek: 6 }), in4({ calibrating: undefined, sourceRate: undefined }, [scope4(["a", "b"], [], 6, "YOURS")]), names4, mk4));
+  check("a typed pace records 'pace'", typed.dateCheck!.dateOrigin.calibrating.includes("pace") && typed.dateCheck!.basis.some((b) => b.includes("your typed 6 new cards a week isn't measured yet")), json(typed.dateCheck!.dateOrigin));
+  const noPaceChosen = ladder4("no pace, chosen", stageLadderOf(ik4({ dateMode: "CHOSEN", targetDay: at4(730) }), in4({ dateMode: "CHOSEN", userDate: at4(730), sourceRate: null }, [scope4(["a", "b"], [], null)]), names4, mk4));
+  check(
+    "pace NONE in CHOSEN mode: the stages spread evenly to the date and read 'Not dated: no writing pace yet'",
+    noPaceChosen.dateCheck!.D_real === null && noPaceChosen.dateCheck!.basis[0].startsWith("Not dated: no writing pace yet") && finalOf(noPaceChosen.plan).dueDay === at4(730),
+    json(shape(noPaceChosen.plan))
+  );
+  const noPaceReal = stageLadderOf(ik4({}), in4({ sourceRate: null }, [scope4(["a", "b"], [], null)]), names4, mk4);
+  check("… and REALISTIC mode needs the typed rate (NO_PACE)", !noPaceReal.ok && noPaceReal.reason === "NO_PACE");
+
+  // The spare alone with no pace (the WRITE_MARGIN ruling's option (b), contracts §16.10). COVER_SHARE × WRITE_MARGIN = 1.04 > 1,
+  // so a Domain at its share always asks a few spare cards, and before this every REALISTIC plan with no measured or typed
+  // pace was refused NO_PACE. A Domain that already holds its count n_d needs no pace: the plan is dated on the cards held.
+  const spareSizes = Array.from({ length: 476 }, (_, i) => i + 25);
+  check(
+    "every library of 25 to 500 recall cards (no outline) holds its own count (live ≥ n_d, so its new cards are the spare alone), and at WRITE_MARGIN 1.3 every one still asks some",
+    spareSizes.every((live) => RT.coveragePolicyOf(live, 0).n <= live) && (RT.WRITE_MARGIN * RT.COVER_SHARE <= 1 || spareSizes.every((live) => RT.writeNeedOf(RT.coveragePolicyOf(live, 0).n, live) > 0)),
+    json(spareSizes.filter((live) => RT.writeNeedOf(RT.coveragePolicyOf(live, 0).n, live) === 0).slice(0, 5))
+  );
+  const probIk = ik4({ domainIds: ["prob"] });
+  const probNoPaceIn = in4({ sourceRate: null }, [scope4(["prob"], probCards, null)]);
+  const probPaceIn = in4({}, [scope4(["prob"], probCards, 6)]);
+  const spareR = stageLadderOf(probIk, probNoPaceIn, names4, mk4);
+  check("Probability alone (42 cards, n 34: writeNeedOf(34, 42) = 3, the spare alone) with no pace is dated in REALISTIC mode, not refused NO_PACE", spareR.ok, json(spareR));
+  const spared = ladder4("Probability, pace 6", stageLadderOf(probIk, probPaceIn, names4, mk4));
+  if (spareR.ok) {
+    const spare = spareR;
+    const spareWrites = writingPlanOf(spare.plan, judgeIn(probNoPaceIn, spare.plan)).reduce((s, w) => s + w.weeks.reduce((t, x) => t + x.cards, 0), 0);
+    check(
+      "… rate null, no card written, D_full = D_real, no rate asked, nothing assumed about a pace",
+      RT.writeNeedOf(34, 42) === 3 &&
+        spare.rate === null &&
+        spareWrites === 0 &&
+        spare.dateCheck!.verdict === "FITS" &&
+        spare.dateCheck!.D_full === spare.dateCheck!.D_real &&
+        spare.dateCheck!.rateAsked === null &&
+        !spare.dateCheck!.dateOrigin.calibrating.includes("pace"),
+      json([spare.rate, spareWrites, spare.dateCheck])
+    );
+    eq(
+      "… its realistic day is 412 on the cards held, the same plan writing its spare at a pace of 6 (4.2 a week at Steady) 370: a pace only brings the date closer, and the stages below the depth are the same",
+      [dd4(spare.dateCheck!.D_real), dd4(spared.dateCheck!.D_real), json(shape(spare.plan).slice(0, -1)) === json(shape(spared.plan).slice(0, -1)), spared.rate],
+      [412, 370, true, 4.2]
+    );
+    check(
+      "… its basis says what it counted: 'With only the cards you hold, …', the best case 'on the cards you hold', and the 3 spare cards not counted, with the 30% read from WRITE_MARGIN",
+      spare.dateCheck!.basis[0].startsWith("With only the cards you hold, your 85% pass rate") &&
+        spare.dateCheck!.basis[0].includes("Earliest if every review passes, on the cards you hold:") &&
+        spare.dateCheck!.basis.includes(
+          `No writing pace yet, so the 3 spare new cards the plan would write (${Math.round((RT.WRITE_MARGIN - 1) * 100)}% over the count, because some cards lag) aren't counted. Enter how many new cards a week you'll write, and the date may come closer.`
+        ) &&
+        !spared.dateCheck!.basis.some((b) => b.startsWith("No writing pace yet")),
+      json(spare.dateCheck!.basis)
+    );
+    const mixed = stageLadderOf(packIk, in4({ intensity: "LIGHT", reach: P(0.8), sourceRate: null }, [scope4(["prob", "inf"], [...probCards, ...infCards], null)]), names4, mk4);
+    check("… the pack with no pace is still refused NO_PACE: Inference (9 cards) is short of its 25, so its new cards are needed, not a spare", !mixed.ok && mixed.reason === "NO_PACE", json(mixed));
+    const chosenSpare = { ...probNoPaceIn, dateMode: "CHOSEN" as const };
+    const sv = (k: number) => dateCheckOf(spare.plan, chosenSpare, "CHOSEN", at4(k));
+    const svs = [300, 312, 400, 411, 412].map((k) => [k, sv(k).verdict, sv(k).rateAsked]);
+    eq(
+      "… a date of the user's on it: before D_floor (day 312, the spare written today) IMPOSSIBLE, from it to D_real OVER, from D_real (412) FITS; never a rate asked",
+      [dd4(spare.dateCheck!.D_floor), svs],
+      [312, [[300, "IMPOSSIBLE", null], [312, "OVER", null], [400, "OVER", null], [411, "OVER", null], [412, "FITS", null]]]
+    );
+    check(
+      "… IMPOSSIBLE never says 'twice your pace' with no pace (with one it still does), and OVER offers the pace",
+      sv(300).basis.some((b) => b.includes("even if every review passes and the new cards are written today: a new card needs at least 318 days")) &&
+        !sv(300).basis.some((b) => b.includes("twice your pace")) &&
+        dateCheckOf(real.plan, chosenIn, "CHOSEN", at4(200)).basis.some((b) => b.includes("even at twice your pace: a new card needs at least 318 days")) &&
+        sv(400).basis.includes("Your date comes before the realistic one: it works only if nearly every review passes, or with new cards written: enter how many a week you'll write."),
+      json([sv(300).basis, sv(400).basis])
+    );
+    const startSpare = refitForStart(spare.plan.find((m) => !m.notes.includes("HELD_AT_START"))!, spare.plan, { ...chosenSpare, targetDay: finalOf(spare.plan).dueDay! });
+    check(
+      "… Start on it: the stage date FITS on its own planned day, and the card check says new cards aren't counted with no pace",
+      startSpare.stageDate?.verdict === "FITS" &&
+        !startSpare.impossible &&
+        startSpare.feasibility.knowledge.some((k) => k.basis.includes("New cards aren't counted: no pace yet — enter a weekly number or re-date after 4 weeks.")),
+      json([startSpare.stageDate, startSpare.feasibility.knowledge.map((k) => k.verdict)])
+    );
+  }
+  // The floor counts the spare: 30 cards at level 3 due every 10 days (n 25, spare 3): written today, the 3 spare cards beat
+  // the last existing ones, so the floor (532) comes before the held cards' best case (562). The date check and the Start
+  // check agree on it: only a day before the floor is IMPOSSIBLE; from it to the realistic day, OVER.
+  const spreadIn = in4({ sourceRate: null }, [scope4(["a"], card4(30, 3, (i) => 10 * (i + 1), "a"), null)]);
+  const spreadR = stageLadderOf(ik4({ domainIds: ["a"] }), spreadIn, names4, mk4);
+  if (spreadR.ok) {
+    const fin = finalOf(spreadR.plan);
+    const startOn = (k: number) => refitForStart({ ...fin, dueDay: at4(k) }, spreadR.plan, { ...spreadIn, dateMode: "CHOSEN", targetDay: fin.dueDay! }).stageDate?.verdict;
+    eq(
+      "the spare only, its floor before the held cards' best case (532 < 562): the date check reads day 540 OVER and 531 IMPOSSIBLE, and Start on the final stage due 540 OVER, due 531 IMPOSSIBLE",
+      [dd4(spreadR.dateCheck!.D_floor), dd4(spreadR.dateCheck!.D_best_pace), dateCheckOf(spreadR.plan, { ...spreadIn, dateMode: "CHOSEN" }, "CHOSEN", at4(540)).verdict, dateCheckOf(spreadR.plan, { ...spreadIn, dateMode: "CHOSEN" }, "CHOSEN", at4(531)).verdict, startOn(540), startOn(531)],
+      [532, 562, "OVER", "IMPOSSIBLE", "OVER", "IMPOSSIBLE"]
+    );
+  } else check("the spread library (30 cards at level 3, spare 3) with no pace is dated on the cards held", false, json(spreadR));
+  // When the cards held can't reach the depth within SPAN_MAX_DAYS (a 30% pass rate), the spare can't be left out: as before.
+  const lowIn = (o: Partial<RT.RealismInput>) => in4({ sourceRate: null, reach: P(0.3), ...o }, [scope4(["prob"], probCards, null)]);
+  const lowReal = stageLadderOf(probIk, lowIn({}), names4, mk4);
+  const lowChosen = stageLadderOf(ik4({ domainIds: ["prob"], dateMode: "CHOSEN", targetDay: at4(700) }), lowIn({ dateMode: "CHOSEN", userDate: at4(700), targetDay: at4(700) }), names4, mk4);
+  check(
+    "… a spare-only library whose cards held can't reach the depth within 3 years (30% pass rate): REALISTIC is refused NO_PACE, CHOSEN reads 'Not dated', as before",
+    !lowReal.ok && lowReal.reason === "NO_PACE" && lowChosen.ok && lowChosen.dateCheck!.D_real === null && lowChosen.dateCheck!.basis[0].startsWith("Not dated: no writing pace yet"),
+    json([lowReal, lowChosen.ok ? lowChosen.dateCheck!.basis : lowChosen])
+  );
+  // The date core's memo (a page of views dates the same model many times): a hit is the same answer, handed out as a copy,
+  // and an input that differs anywhere (here the pace) is never answered from another's entry.
+  {
+    const yrA = chosenIn;
+    const yrB = { ...chosenIn, sourceRate: 3 };
+    const day = addDays(dc.D_real!, -30);
+    const a1 = dateCheckOf(real.plan, yrA, "CHOSEN", day);
+    const b1 = dateCheckOf(real.plan, yrB, "CHOSEN", day);
+    const keep = json(a1);
+    a1.basis.push("edited by a caller");
+    a1.dateOrigin.calibrating.push("pace");
+    const a2 = dateCheckOf(real.plan, yrA, "CHOSEN", day);
+    const b2 = dateCheckOf(real.plan, yrB, "CHOSEN", day);
+    check(
+      "the date core's memo: a repeated call is the same answer, a caller's edit to a returned check never reaches the next, and a different pace (6 vs 3) is never answered from the other's entry",
+      json(a2) === keep && json(b2) === json(b1) && json(a2) !== json(b2) && a2.rateAsked !== b2.rateAsked && a2 !== a1,
+      json([a2.verdict, a2.rateAsked, b2.verdict, b2.rateAsked])
+    );
+  }
+  // dateEffectOf on a plan that isn't dated (CHOSEN, no pace, new cards needed): there is no date to be past, so no addition is
+  // blocked PAST_SPAN with a "past 3 years" it can't know (it was, before: D_real null read as past the span).
+  const undated = in4({ sourceRate: null, dateMode: "CHOSEN", userDate: at4(700), targetDay: at4(700) }, [scope4(["a", "b", "c"], [], null)]);
+  const undatedEffect = dateEffectOf(ik4({ dateMode: "CHOSEN", targetDay: at4(700) }), undated, ["c"]);
+  const datedEffect = dateEffectOf(ik4({}), in4({}, [scope4(["a", "b", "c"], [], 6)]), ["c"]);
+  const farEffect = dateEffectOf(ik4({ domainIds: ["a", "b", "c", "d", "e"] }), in4({ sourceRate: 1 }, [scope4(["a", "b", "c", "d", "e", "f"], [], 1)]), ["f"]);
+  check(
+    "dateEffectOf with no pace and new cards needed: dateWith null and pastSpan false for each addition and the set (no toggle blocked); with a pace it dates them, and past 3 years is still PAST_SPAN",
+    json(undatedEffect) === json([{ domainId: "c", dateWith: null, pastSpan: false }, { domainId: null, dateWith: null, pastSpan: false }]) &&
+      datedEffect.every((e) => e.dateWith != null && !e.pastSpan) &&
+      farEffect.every((e) => e.pastSpan),
+    json([undatedEffect, datedEffect, farEffect])
+  );
+  // typicalHours 300 at 5 h a week (your recurring tasks kept 70%: 210 minutes a week) moves D_real to D_hours.
+  const hoursIn = learnerIn({ typicalHours: 300, hoursPerWeek: 5, throughput: tp4({ adherence: 0.7 }) });
+  const hours = ladder4("typicalHours", stageLadderOf(ik4({ typicalHours: 300, hoursPerWeek: 5 }), hoursIn, names4, mk4));
+  check(
+    "typicalHours 300 at 5 h a week moves D_real to D_hours (day 599, Sunday 601), says so, and drops the schedule-bound line",
+    dd4(hours.dateCheck!.D_real) === 601 && hours.dateCheck!.basis.some((b) => b.startsWith("Your 300 h, at the hours you have, take until")) && !hours.dateCheck!.scheduleBound,
+    json(hours.dateCheck)
+  );
+  // The split when the hours hold Mastered later than the reach would (fix round, contracts §15.15): Toward Mastered goes no
+  // earlier than Mastered − 186 days (Sunday-snapped), never before its own stage day, ≥ 35 days from both neighbours.
+  const hoursShape = ["PART@55", "FAMILIAR@111", "RETAINED@153", "FLUENT@244", "BETWEEN@419", "MASTERED@601"];
+  const hoursJudged = judgeIn(hoursIn, hours.plan);
+  check(
+    "… and the split goes toward the date the hours hold: Toward Mastered on 419, not its stage day 321, so neither half of the 357-day Fluent → Mastered window is over 186 days (321 would leave 280); the longest stretch is 182",
+    json(shape(hours.plan)) === json(hoursShape) && dd4(hours.stageDays[11]) === 321 && motivationTimelineOf(hours.plan, hoursJudged).longestGap === 182,
+    json([shape(hours.plan), stageDaysOf(hours), motivationTimelineOf(hours.plan, hoursJudged)])
+  );
+  const hoursAcc = hours.plan.map((m) => ({ ...m, status: "PLANNED" as RT.MilestoneStatus }));
+  const hoursAccIn: RT.RealismInput = { ...hoursJudged, dateMode: "CHOSEN", userDate: finalOf(hoursAcc).dueDay };
+  const reHours = [refit(hoursAcc, hoursAccIn), applyRemedy(hoursAcc, hoursAccIn, "USE_REALISTIC_DATE")];
+  check(
+    "… a re-date (refit, USE_REALISTIC_DATE) places it the same way, and Mastered's window starts the day after it",
+    reHours.every((p) => json(shape(p)) === json(hoursShape) && p[5].windowStart === addDays(p[4].dueDay!, 1)),
+    json(reHours.map((p) => p.map((m) => `${m.stage}:${dd4(m.windowStart)}-${dd4(m.dueDay)}`)))
+  );
+  // A CHOSEN date past D_real (FITS): the slack sits in the final window; one split can't hold both halves under 186 days, so it
+  // goes to the window's middle (never before its stage day), and every stage still FITS.
+  const slackIn = learnerIn({ dateMode: "CHOSEN", userDate: at4(700), targetDay: at4(700) });
+  const slack = ladder4("slack to day 700", stageLadderOf(ik4({ dateMode: "CHOSEN", targetDay: at4(700) }), slackIn, names4, mk4));
+  const slackFe = feasibilityOf(slack.plan, judgeIn(slackIn, slack.plan));
+  check(
+    "a CHOSEN date at day 700 (D_real 461): Toward Mastered at the 456-day window's middle (475, its stage day 321), Mastered on 700, every stage FITS",
+    json(shape(slack.plan)) === json(["PART@55", "FAMILIAR@111", "RETAINED@153", "FLUENT@244", "BETWEEN@475", "MASTERED@700"]) && slack.dateCheck!.verdict === "FITS" && slackFe.milestones.every((m) => m.worst === "FITS"),
+    json([shape(slack.plan), slackFe.milestones.map((m) => m.worst)])
+  );
+  // An exam date at day 180: a waypoint inside the plan.
+  const examIk = ik4({ examLabel: "JLPT N2", exam: true, examDay: at4(180) });
+  const exam = ladder4("exam", stageLadderOf(examIk, learnerIn({ examDay: at4(180) }), names4, mk4));
+  const checkpoints = exam.plan.map((m) => m.items.filter((i) => i.kind === "CHECKPOINT").map((i) => i.catalogKey).join(""));
+  eq(
+    "an exam on day 180: the depth stays Mastered; EXAM_DAY sits in the stage holding it (Fluent, due 244), MOCK_TEST in the stage before; BOOK_EXAM in the first; reachByExam level 8",
+    [cardMeasures(finalOf(exam.plan))[0].measureKey, checkpoints, exam.plan[0].items.some((i) => i.catalogKey === "BOOK_EXAM"), exam.dateCheck!.reachByExam, exam.dateCheck!.verdict],
+    ["CARDS_AT_LEVEL|d:a|L12|rc", ["", "", "MOCK_TEST", "EXAM_DAY", "", ""], true, 8, "FITS"]
+  );
+  check(
+    "… timed practice in the stages up to the exam (practices allowed, a slot free), never after it; the exam line stays on the plan",
+    exam.plan.every((m, i) => m.items.some((x) => x.catalogKey === "TIMED_PRACTICE") === i <= 3) && exam.dateCheck!.basis.some((b) => b.startsWith("By your exam (") && b.endsWith("the plan reaches Retained (level 8). The depth goes on past it."))
+  );
+  eq("the exam leaves the verdict on the aim's own date as it was", [exam.dateCheck!.D_real, exam.dateCheck!.verdict], [dc.D_real, dc.verdict]);
+  const late = ladder4("exam after D_real", stageLadderOf(ik4({ examLabel: "JLPT N2", exam: true, examDay: at4(700) }), learnerIn({ examDay: at4(700) }), names4, mk4));
+  check("an examDay after D_real puts EXAM_DAY on the final milestone", finalOf(late.plan).items.some((i) => i.catalogKey === "EXAM_DAY") && late.dateCheck!.reachByExam === 12);
+  // LOWER_DEPTH.
+  const acc = real.plan.map((m) => ({ ...m, status: "PLANNED" as RT.MilestoneStatus, rankIndex: RT.rankIndexForStage(m.stage, rowLevel(m)) }));
+  const accIn = learnerIn({ dateMode: "CHOSEN", userDate: finalOf(acc).dueDay, targetDay: finalOf(acc).dueDay! });
+  const startedM = acc.map((m) => (m.stage === "MASTERED" ? { ...m, status: "STARTED" as RT.MilestoneStatus } : m));
+  const refused = lowerDepthPlanOf(startedM, accIn, 10);
+  check("LOWER_DEPTH is refused while a started stage works above the new depth", !refused.ok && refused.error === "Close or drop milestone 6 first: it is working toward a level above Fluent.", json(refused));
+  const startedF = acc.map((m) => (m.stage === "FLUENT" ? { ...m, status: "STARTED" as RT.MilestoneStatus } : m));
+  const lowered = lowerDepthPlanOf(startedF, accIn, 10);
+  check(
+    "with Fluent STARTED and Mastered unstarted, lowering to Fluent drops Mastered and Toward Mastered (DEPTH_LOWERED), keeps Fluent's measures as started, and leaves every given rank in place",
+    lowered.ok &&
+      json(lowered.plan.map((m) => [m.stage, m.status, m.notes.includes("DEPTH_LOWERED")])) ===
+        json([["PART", "PLANNED", false], ["FAMILIAR", "PLANNED", false], ["RETAINED", "PLANNED", false], ["FLUENT", "STARTED", false], ["BETWEEN", "DISCARDED", true], ["MASTERED", "DISCARDED", true]]) &&
+      json(cardMeasures(lowered.plan[3])) === json(cardMeasures(startedF[3])) &&
+      lowered.plan.slice(0, 4).every((m, i) => m.rankIndex === acc[i].rankIndex) &&
+      json(lowered.dropped) === json([acc[4].lineageId, acc[5].lineageId]),
+    json(lowered)
+  );
+  const unstarted = lowerDepthPlanOf(acc, accIn, 10);
+  check("an unstarted Fluent becomes the final stage with the depth terms (rc at level 10)", unstarted.ok && cardMeasures(unstarted.plan[3]).every((x) => x.measureKey!.endsWith("|L10|rc") && x.target === 25));
+  const toEight = lowerDepthPlanOf(acc, accIn, 8);
+  check("lowering to Retained drops Fluent too, and no count ever changes", toEight.ok && toEight.plan.filter((m) => m.status === "DISCARDED").length === 3 && toEight.plan.every((m) => cardMeasures(m).every((x) => x.target === cardMeasures(acc[toEight.plan.indexOf(m)]).find((y) => y.scope.domainIds![0] === x.scope.domainIds![0])!.target)));
+  const strongAcc = ladder4("strong", stageLadderOf(ik4({}), in4({}, [scope4(["a", "b"], [...card4(30, 8, (i) => 10 + 2 * i, "a"), ...card4(30, 8, (i) => 11 + 2 * i, "b")])]), names4, mk4));
+  const toHeld = lowerDepthPlanOf(strongAcc.plan, in4({}, [scope4(["a", "b"], [])]), 8);
+  check("lowering to a depth already held when you began is refused", !toHeld.ok && toHeld.error.startsWith("You already hold Retained (level 8)"), json(toHeld));
+  // CALIBRATED: a plan accepted while p calibrated is re-dated once p is measured; only unstarted stages move.
+  const calAcc = cal.plan.map((m, i) => ({ ...m, status: (i === 0 ? "STARTED" : "PLANNED") as RT.MilestoneStatus }));
+  const calIn2 = { ...calIn, dateMode: "CHOSEN" as const, userDate: finalOf(calAcc).dueDay, targetDay: finalOf(calAcc).dueDay! };
+  const redated = refit(calAcc, { ...calIn2, reach: P(0.92), calibrating: [], throughput: tp4({ p: 0.92 }) });
+  check(
+    "CALIBRATED re-dating (refit) with p measured at 92% moves only the unstarted stages, never a count or a level; the started one keeps its dates",
+    redated[0].dueDay === calAcc[0].dueDay &&
+      redated[0].status === "STARTED" &&
+      redated.slice(1).some((m, i) => m.dueDay !== calAcc[i + 1].dueDay) &&
+      redated.every((m, i) => json(cardMeasures(m).map((x) => [x.minLevel, x.target])) === json(cardMeasures(calAcc[i]).map((x) => [x.minLevel, x.target]))),
+    json([shape(calAcc), shape(redated)])
+  );
+  const useReal = applyRemedy(chosen.plan, chosenIn, "USE_REALISTIC_DATE");
+  eq("USE_REALISTIC_DATE re-dates the stages, the last on D_real; remedyTargetDay is D_real", [dd4(finalOf(useReal).dueDay), dd4(remedyTargetDay(chosen.plan, chosenIn))], [461, 461]);
+  // Start: a date check, never a lower count.
+  const startIn = learnerIn({ today: at4(30), dateMode: "CHOSEN", userDate: finalOf(acc).dueDay, targetDay: finalOf(acc).dueDay! });
+  const st = refitForStart(acc[1], acc, startIn);
+  check(
+    "the Start check offers a date, never a lower count: no todayCheck, the counts as accepted, and the stage date (planned 111, realistic later at today's cards)",
+    st.todayCheck === null && st.stageDate != null && dd4(st.stageDate.planned) === 111 && (dd4(st.stageDate.realistic) ?? 0) > 111 && st.stageDate.verdict !== "FITS" && json(cardMeasures(st.milestone).map((x) => x.target)) === json(cardMeasures(acc[1]).map((x) => x.target)),
+    json(st.stageDate)
+  );
+  const onTime = refitForStart(acc[1], acc, learnerIn({ dateMode: "CHOSEN", userDate: finalOf(acc).dueDay, targetDay: finalOf(acc).dueDay! }));
+  check("… started on time it FITS", onTime.stageDate?.verdict === "FITS" && !onTime.impossible, json(onTime.stageDate));
+  // The date effect of adding Domains (F-R4-21) and the floor day (F-R4-4's chips).
+  const extra = scope4(["a", "b", "c", "d"], card4(40, 3, () => 2, "d"));
+  const effect = dateEffectOf(ik4({}), in4({}, [learnerScope, extra]), ["c", "d"]);
+  check(
+    "dateEffectOf: each Domain and the set, shown before anything is confirmed; a new 25-card Domain moves the date later; none pass 3 years",
+    effect.length === 3 && effect[2].domainId === null && dd4(effect[0].dateWith)! > dd4(dc.D_real)! && effect.every((e) => !e.pastSpan),
+    json(effect.map((e) => [e.domainId, dd4(e.dateWith), e.pastSpan]))
+  );
+  const crowd = dateEffectOf(ik4({}), in4({ sourceRate: 2 }, [scope4(["a", "b", "c", "d", "e", "f"], [], 2)]), ["c", "d", "e", "f"]);
+  check("… an addition that would take the plan past 3 years reads pastSpan", crowd.some((e) => e.pastSpan), json(crowd.map((e) => [e.domainId, dd4(e.dateWith), e.pastSpan])));
+  const floor = (depth: RT.AimDepth) => dd4(floorDayOf({ today: T4, depth, m: 1, newCardsNeeded: 56, ratePerWeek: 4.2 }));
+  eq("floorDayOf: a new learner (56 new at 4.2 a week) can reach level 12 from day 431 and level 10 from day 246", [floor(12), floor(10)], [431, 246]);
+  check(
+    "the chips: at Mastered 6 and 12 months are before level 12 is possible and 24 months possible; at Fluent 12 months is possible",
+    floor(12)! > 182 && floor(12)! > 365 && floor(12)! <= 730 && floor(10)! <= 365 && dd4(floorDayOf({ today: T4, depth: 12, m: 1.5, newCardsNeeded: 0, ratePerWeek: null })) === RT.floorBase(12, 1.5)
+  );
+}
+
+console.log("— rev 4: stage practices and the band floors (F-R4-13) —");
+{
+  const real = ladder4("learner", stageLadderOf(ik4({}), learnerIn(), names4, mk4));
+  eq(
+    "the starter's kinds follow the stage: recall drills before Retained, explain-it from Retained on (each added by the app)",
+    real.plan.map((m) => m.items.filter((i) => i.kind === "PRACTICE").map((i) => `${i.catalogKey}:${i.notes.join("")}`).join(",")),
+    ["RECALL_DRILLS:STUDY_ADDED", "RECALL_DRILLS:STUDY_ADDED", "EXPLAIN_IT:PRODUCTION_ADDED", "EXPLAIN_IT:PRODUCTION_ADDED", "EXPLAIN_IT:PRODUCTION_ADDED", "EXPLAIN_IT:PRODUCTION_ADDED"]
+  );
+  eq("no step drops under its band floor: Retained D30, Fluent, Toward Mastered and Mastered D45", real.plan.map((m) => m.items.find((i) => i.kind === "PRACTICE")!.durationBand), ["D30", "D30", "D30", "D45", "D45", "D45"]);
+  check("productionPlannedFromFluentOf: true with the starter's practices", productionPlannedFromFluentOf(real.plan));
+  const fluent = real.plan[3];
+  const userRead: RT.ItemDraft = { ...fluent.items.find((i) => i.kind === "PRACTICE")!, lineageId: "u-read", catalogKey: "READ_AND_CARD", label: "Study Alpha, Beta", origin: "USER", decision: "EDITED", method: "READING", notes: [] };
+  const onlyRead = { ...fluent, items: [...fluent.items.filter((i) => i.kind !== "PRACTICE"), userRead] };
+  const synced = syncStagePractices(onlyRead, learnerIn(), names4, mk4);
+  const added = synced.items.find((i) => i.notes.includes("PRODUCTION_ADDED"));
+  check("a Fluent stage with only READ_AND_CARD gets a PRODUCTION_ADDED practice when a slot is free", added?.catalogKey === "EXPLAIN_IT" && added.origin === "CODE" && onlyRead.items.length + 1 === synced.items.length, json(synced.items.map((i) => i.catalogKey)));
+  const fitted = fitPlan(real.plan.map((m, i) => (i === 3 ? synced : m)), judgeIn(learnerIn(), real.plan));
+  check("… at D45 or more once fitted", ["D45", "D60", "D90", "D120"].includes(fitted[3].items.find((i) => i.notes.includes("PRODUCTION_ADDED"))!.durationBand ?? ""));
+  const full = { ...onlyRead, items: [...onlyRead.items, { ...userRead, lineageId: "u-2" }, { ...userRead, lineageId: "u-3" }] };
+  const noSlot = syncStagePractices(full, learnerIn(), names4, mk4);
+  check("… and the note when no slot is free (NO_PRODUCTION_SLOT)", noSlot.notes.includes("NO_PRODUCTION_SLOT") && !noSlot.items.some((i) => i.notes.includes("PRODUCTION_ADDED")));
+  const found = real.plan[1];
+  const build: RT.ItemDraft = { ...userRead, lineageId: "u-build", catalogKey: "BUILD_SOMETHING", label: "Build something with Alpha, Beta", method: "PROJECT_WORK" };
+  const onlyBuild = syncStagePractices({ ...found, items: [...found.items.filter((i) => i.kind !== "PRACTICE"), build] }, learnerIn(), names4, mk4);
+  check("a Familiar stage with only BUILD_SOMETHING gets a retrieval practice (STUDY_ADDED)", onlyBuild.items.some((i) => i.catalogKey === "RECALL_DRILLS" && i.notes.includes("STUDY_ADDED")), json(onlyBuild.items.map((i) => i.catalogKey)));
+  // One definition of retrieval or production practice (contracts §15.9): roadmap-catalog's practiceRoleOf, catalog type first,
+  // then the method. A "Write it myself" practice typed WRITING (no catalog type) is production in R2, R4's top rank and R1 alike.
+  const realismSrc = readFileSync(join(process.cwd(), "src/lib/roadmap-realism.ts"), "utf8");
+  check(
+    "roadmap-realism reads roadmap-catalog's practiceRoleOf (imported; no second definition)",
+    !/function\s+practiceRoleOf\b/.test(realismSrc) && /import\s*\{[^}]*\bpracticeRoleOf\b[^}]*\}\s*from\s*"\.\/roadmap-catalog"/.test(realismSrc)
+  );
+  const typedWriting: RT.ItemDraft = { ...userRead, lineageId: "u-write", catalogKey: null, label: "Write up a worked example", method: "WRITING" };
+  const typedFluent = syncStagePractices({ ...fluent, items: [...fluent.items.filter((i) => i.kind !== "PRACTICE"), typedWriting] }, learnerIn(), names4, mk4);
+  const typedPlan = real.plan.map((m) =>
+    (rowLevel(m) >= 10 ? { ...m, items: [...m.items.filter((i) => i.kind !== "PRACTICE"), { ...typedWriting, lineageId: `u-write-${m.lineageId}` }] } : m)
+  );
+  const easyPlan = real.plan.map((m) =>
+    (rowLevel(m) >= 10 ? { ...m, items: [...m.items.filter((i) => i.kind !== "PRACTICE"), { ...userRead, lineageId: `u-easy-${m.lineageId}`, catalogKey: "EASY_SESSION" as RT.ItemDraft["catalogKey"], method: "WRITING" as RT.PracticeMethod }] } : m)
+  );
+  check(
+    "a typed WRITING practice with no catalog type is production: a Fluent stage holding it gets no PRODUCTION_ADDED, and a plan whose stages from Fluent on hold it keeps Paragon open; a catalog type outside both lists (EASY_SESSION) is neither, whatever its method",
+    !typedFluent.items.some((i) => i.notes.includes("PRODUCTION_ADDED")) && productionPlannedFromFluentOf(typedPlan) && !productionPlannedFromFluentOf(easyPlan),
+    json(typedFluent.items.map((i) => [i.catalogKey, i.method, i.notes]))
+  );
+  const off = ladder4("practices off", stageLadderOf(ik4({ practicesAllowed: false }), learnerIn({ practicesAllowed: false }), names4, mk4));
+  const offFe = feasibilityOf(off.plan, judgeIn(learnerIn({ practicesAllowed: false }), off.plan));
+  check(
+    "practices switched off: no practice, productionPlannedFromFluent false, and the plan says Paragon needs them",
+    off.plan.every((m) => !m.items.some((i) => i.kind === "PRACTICE")) && !productionPlannedFromFluentOf(off.plan) && offFe.basis.includes("Paragon needs practice that uses what you know from Fluent on. Allow practices to keep it open.")
+  );
+  // A tight week slows the writing (a later date) before a practice drops under its floor; with no room even then, OVER.
+  // Four new Domains on a source of 12 a week (8.4 at Steady): 10 h a week hold it; 1.25 h don't while the cards are being written.
+  const quad = ["a", "b", "c", "d"];
+  const quadIn = (hours: number) => in4({ hoursPerWeek: hours, sourceRate: 12 }, [scope4(quad, [], 12)]);
+  const roomy = ladder4("roomy", stageLadderOf(ik4({ domainIds: quad, hoursPerWeek: 10 }), quadIn(10), names4, mk4));
+  const tight = ladder4("tight", stageLadderOf(ik4({ domainIds: quad, hoursPerWeek: 1.25 }), quadIn(1.25), names4, mk4));
+  const tightFe = feasibilityOf(tight.plan, judgeIn(quadIn(1.25), tight.plan));
+  console.log(`  capacity: 10 h → ${roomy.rate} a week, D_real ${dd4(roomy.dateCheck?.D_real)}; 1.25 h → ${tight.rate} a week, D_real ${dd4(tight.dateCheck?.D_real)}, time ${tightFe.milestones.map((m) => m.time.verdict).join(" ")}`);
+  check(
+    "a tight week slows the writing first (8.4 → 3.95 a week): a later realistic date, every practice at its band floor or above, and no stage reads OVER",
+    roomy.rate === 8.4 &&
+      tight.rate === 3.95 &&
+      tight.dateCheck!.D_real! > roomy.dateCheck!.D_real! &&
+      tightFe.milestones.every((m) => m.time.verdict !== "OVER") &&
+      tight.plan.every((m) => m.items.filter((i) => i.kind === "PRACTICE").every((i) => RT.PRACTICE_BANDS.indexOf(i.durationBand!) >= RT.PRACTICE_BANDS.indexOf(m.stage === "FLUENT" || m.stage === "MASTERED" || m.stage === "BETWEEN" ? "D45" : m.stage === "RETAINED" ? "D30" : "D15"))),
+    json([tight.rate, dd4(tight.dateCheck?.D_real), shape(tight.plan)])
+  );
+  const noneIn = learnerIn({ hoursPerWeek: 1, throughput: tp4({ adherence: 0.3 }) });
+  const none = ladder4("no room", stageLadderOf(ik4({ hoursPerWeek: 1 }), noneIn, names4, mk4));
+  const noneFe = feasibilityOf(none.plan, judgeIn(noneIn, none.plan));
+  check(
+    "… with no room even with no new cards, the writing isn't slowed (it can't help) and the time check reads OVER ('cut a practice or raise hours')",
+    none.rate === 4.2 && noneFe.over && noneFe.milestones.some((m) => m.time.verdict === "OVER" && m.time.basis.some((b) => b.endsWith("cut a practice or raise hours."))),
+    json(noneFe.milestones.map((m) => m.time.verdict))
+  );
+  // CODE labels: catalogLabelOf(key, fill) exactly, and they follow a renamed Domain.
+  const labels = real.plan.flatMap((m) => m.items.filter((i) => i.origin === "CODE" && i.catalogKey && i.kind === "PRACTICE").map((i) => [i.label, catalogLabelOf(i.catalogKey!, { track: "FIELD", domains: ["Alpha", "Beta"] as unknown as RT.DomainName[] })]));
+  check("every CODE label equals its catalog template's render", labels.length > 0 && labels.every(([a, b]) => a === b), json(labels.slice(0, 2)));
+  const renamed = real.plan.map((m) => ({ ...m, items: m.items.map((i) => (i.kind === "DOMAIN" && i.domainId === "a" ? { ...i, label: "Algebra" } : i)) }));
+  const refitted = fitPlan(renamed, judgeIn(learnerIn(), real.plan));
+  check(
+    "… and re-renders after a Domain rename (titles too)",
+    refitted[2].items.find((i) => i.catalogKey === "EXPLAIN_IT")!.label === "Explain it in your own words: Algebra, Beta" && refitted[2].title === "Retained: Algebra, Beta to level 8+",
+    json([refitted[2].title, refitted[2].items.map((i) => i.label)])
+  );
+}
+
+console.log("— rev 4: judging a depth plan, Start and the snapshot —");
+{
+  const real = ladder4("learner", stageLadderOf(ik4({}), learnerIn(), names4, mk4));
+  const inp = judgeIn(learnerIn(), real.plan);
+  const fe = feasibilityOf(real.plan, inp);
+  const verdicts = fe.milestones.flatMap((m) => m.knowledge.map((k) => k.verdict));
+  check("a depth plan is never FITTED: every count is judged against the reach model (FITS on the realistic plan)", verdicts.length === 12 && verdicts.every((v) => v === "FITS"), json(verdicts));
+  const words = JSON.stringify(fe).match(/Fitted|FITTED|Kept at/g);
+  check("no 'Fitted' (or 'Kept at') anywhere in a depth plan's checks", words === null, json(words));
+  check("the checks carry the date check and the reach model's version", fe.dateCheck?.verdict === "FITS" && fe.reachModel === RT.REACH_MODEL_VERSION && fe.basis[0].startsWith("Expected reach follows the app's review rules"));
+  const rc = fe.milestones[5].knowledge[0];
+  check("the final stage's check says how clean entry counts", rc.basis.some((b) => b.startsWith("At level 12 a card counts once it got there at the first try")) && rc.basis.includes("Multiple-choice cards don't count: recognising an answer isn't recalling it."));
+  const mc = in4({}, [scope4(["a", "b"], [...card4(20, 6, () => 3, "a", { recall: false }), ...card4(20, 6, () => 3, "b", { recall: false })])]);
+  const mcPlan = ladder4("multiple choice", stageLadderOf(ik4({}), mc, names4, mk4));
+  check("multiple-choice cards don't count: 20 at level 6 in each Domain leave the coverage at the floor and the baselines at 0", mcPlan.coverage!.every((c) => c.live === 0 && c.nonRecall === 20 && c.n === 25) && mcPlan.plan.every((m) => cardMeasures(m).every((x) => x.baseline === 0)));
+  const st = refitForStart(real.plan[1], real.plan, inp);
+  const snap = startSnapshotOf(st.milestone, st, inp, T4);
+  check(
+    "the StartSnapshot (Familiar) carries the reach model at Start (version 2; p 0.85, pLong 0.80, c 1, ρ 0) and each Domain's new cards still needed (writeNeedOf(25, 0) = 33 each at WRITE_MARGIN 1.3), the weekly needs summing to the total",
+    snap.reachModel === RT.REACH_MODEL_VERSION &&
+      snap.pStart === 0.85 &&
+      snap.pLongStart === 0.8 &&
+      snap.cStart === 1 &&
+      snap.rhoStart === 0 &&
+      json(snap.newNeededByDomain) === json({ a: 33, b: 33 }) &&
+      snap.newNeededStart === 66 &&
+      snap.weeks.every((w) => Math.abs(Object.values(w.needRateByDomain ?? {}).reduce((s, x) => s + x, 0) - w.needRate) < 1e-9),
+    json({ ...snap, weeks: snap.weeks.length, feasibility: null })
+  );
+  // Every Start path of a depth plan (the count gate, each gate, BETWEEN, the final) carries the reach model and the per-Domain
+  // need R6's quests read (lens 2's gap 8: no stage falls back to the priors or to rev 3's needRate).
+  const snaps = real.plan.map((m) => {
+    const r = refitForStart(m, real.plan, inp);
+    return { stage: m.stage, s: startSnapshotOf(r.milestone, r, inp, T4), ids: cardMeasures(m).map((x) => x.scope.domainIds![0]).sort() };
+  });
+  check(
+    "every stage's StartSnapshot (PART, the gates, BETWEEN, Mastered) carries reachModel 2, pLong, c and ρ at Start, and newNeededByDomain and needRateByDomain for each of its Domains",
+    snaps.length === 6 &&
+      snaps.every(
+        ({ s, ids }) =>
+          s.reachModel === RT.REACH_MODEL_VERSION &&
+          s.pLongStart === 0.8 &&
+          s.cStart === 1 &&
+          s.rhoStart === 0 &&
+          json(Object.keys(s.newNeededByDomain ?? {}).sort()) === json(ids) &&
+          s.weeks.every((w) => json(Object.keys(w.needRateByDomain ?? {}).sort()) === json(ids))
+      ),
+    json(snaps.map(({ stage, s }) => [stage, s.reachModel, s.newNeededByDomain]))
+  );
+  // A count gate's ⬡6 (lead's ruling, PART pay): it holds the app's retrieval practice on the starter, and on a skeleton (items NONE,
+  // where R4 copies no Gemini slot practice into it) once fitPlan syncs the stage shape, so the timeline's ⬡6 on its day is the
+  // practice the plan holds (the Start sheet then says it rests on a practice the app added).
+  const skeleton = ladder4("learner skeleton", stageLadderOf(ik4({}), learnerIn(), names4, mk4, { items: "NONE" }));
+  const fittedSkeleton = fitPlan(skeleton.plan, judgeIn(learnerIn(), skeleton.plan));
+  const partPractice = (m: RT.MilestoneDraft) => m.items.filter((i) => i.kind === "PRACTICE").map((i) => `${i.catalogKey}:${i.origin}:${i.notes.join("")}`);
+  const learnerMt = motivationTimelineOf(real.plan, inp);
+  check(
+    "a count gate holds the app's retrieval practice (RECALL_DRILLS, origin CODE, STUDY_ADDED) on the starter and on a fitted skeleton, and the timeline counts its ⬡6 on day 55",
+    real.plan[0].stage === "PART" &&
+      json(partPractice(real.plan[0])) === json(["RECALL_DRILLS:CODE:STUDY_ADDED"]) &&
+      skeleton.plan[0].items.every((i) => i.kind !== "PRACTICE") &&
+      json(partPractice(fittedSkeleton[0])) === json(["RECALL_DRILLS:CODE:STUDY_ADDED"]) &&
+      learnerMt.payDays[0] === 55,
+    json([partPractice(real.plan[0]), partPractice(fittedSkeleton[0]), learnerMt.payDays])
+  );
+  const calIn = learnerIn({ reach: undefined, calibrating: undefined, throughput: tp4({ p: null }) });
+  const calSnap = startSnapshotOf(st.milestone, st, calIn, T4);
+  check("while calibrating, p_start is the prior 0.80 (never 1), flagged", calSnap.pStart === RT.P_PRIOR && calSnap.pCalibrating && calSnap.calibrating!.includes("p"));
+  const carried = real.plan.map((m, i) => (i === 0 ? { ...m, status: "STARTED" as RT.MilestoneStatus } : m));
+  const cfe = feasibilityOf(carried, inp);
+  check("a started stage is reported (its load counts) but never blocks the rest", cfe.milestones.some((m) => m.lineageId === carried[0].lineageId) && !cfe.impossible);
+}
+
+console.log("— rev 4: track plans (F-R4-10) —");
+{
+  const body = ladder4(
+    "body",
+    stageLadderOf(ik4({ aim: "Walk 10 km easily", fieldId: null, track: "BODY", domainIds: [], constraints: "knee injury, no running", dateMode: "CHOSEN" }), in4({ trackArea: true, depth: null }, []), names4, mk4)
+  );
+  eq(
+    "a 12-month BODY plan: five stages at 20% steps of its open days (Sundays), STAGE_1..STAGE_5, titled '{aim} · stage k of n'",
+    body.plan.map((m) => [m.stage, dd4(m.dueDay), m.title]),
+    [
+      ["STAGE_1", 76, "Walk 10 km easily · stage 1 of 5"],
+      ["STAGE_2", 146, "Walk 10 km easily · stage 2 of 5"],
+      ["STAGE_3", 223, "Walk 10 km easily · stage 3 of 5"],
+      ["STAGE_4", 293, "Walk 10 km easily · stage 4 of 5"],
+      ["STAGE_5", 365, "Walk 10 km easily · stage 5 of 5"],
+    ]
+  );
+  check(
+    "with constraints the starter places only easy, mobility and technique sessions, no performance check, and HEALTH_LINE on every stage",
+    body.plan.every((m) => m.notes.includes("HEALTH_LINE") && m.items.every((i) => i.kind === "PRACTICE" && ["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION"].includes(i.catalogKey ?? ""))),
+    json(body.plan.map((m) => m.items.map((i) => i.catalogKey)))
+  );
+  const short = ladder4("125 days", stageLadderOf(ik4({ aim: "Keep the house running", fieldId: null, track: "CARE", domainIds: [], targetDay: at4(125), dateMode: "CHOSEN" }), in4({ trackArea: true, depth: null, targetDay: at4(125) }, []), names4, mk4));
+  eq("the merge rule on a 125-day track plan keeps two stages (third and fifth), the last with its performance check", [shape(short.plan), finalOf(short.plan).items.some((i) => i.catalogKey === "PERFORMANCE_CHECK")], [["STAGE_3@76", "STAGE_5@125"], true]);
+  const mt = motivationTimelineOf(short.plan, in4({ trackArea: true, depth: null, targetDay: at4(125) }, []));
+  eq("… a track plan ranks its k-th kept stage k, and can't give Paragon in 125 days", [mt.rankDays, mt.paragonDay], [[76, 125], null]);
+  const tiny = ladder4("40 days", stageLadderOf(ik4({ aim: "Play a piece", fieldId: null, track: "CRAFT", domainIds: [], targetDay: at4(40), dateMode: "CHOSEN" }), in4({ trackArea: true, depth: null, targetDay: at4(40) }, []), names4, mk4));
+  check("a 40-day track plan is one stage ('stage 1 of 1'), dated on the aim's date", tiny.plan.length === 1 && tiny.plan[0].title === "Play a piece · stage 1 of 1" && tiny.plan[0].dueDay === at4(40));
+  check("a track ladder has no date check (its date is the user's)", body.dateCheck === null && dateCheckOf(body.plan, in4({ trackArea: true, depth: null }, []), "CHOSEN", at4(365)).verdict === "FITS");
 }
 
 if (failed > 0) {

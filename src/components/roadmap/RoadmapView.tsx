@@ -36,21 +36,53 @@ import { ActionError } from "@/components/home/ActionError";
 import { cx } from "@/components/ui/cx";
 import { goalPercent } from "@/lib/goals";
 import { addDays, daysBetween } from "@/lib/life-day";
-import { NOT_RECORDED_HERE, aimRankName, parseMeasureKey, provenanceOf, type CurrentMilestoneView, type ItemDraft, type MilestoneRowView, type RoadmapView, type StartPreview } from "@/lib/roadmap-types";
 import {
+  NOT_RECORDED_HERE,
+  ROADMAP_GEMINI_LIVE,
+  aimRankName,
+  parseMeasureKey,
+  provenanceOf,
+  type CurrentMilestoneView,
+  type ItemDraft,
+  type MilestoneFeasibility,
+  type MilestoneRowView,
+  type RoadmapView,
+  type StartPreview,
+} from "@/lib/roadmap-types";
+import { writeAimHandoff } from "@/lib/roadmap-handoff";
+import {
+  AIM_CALL_BODY,
+  AIM_CALL_HEADING,
+  AIM_CALL_RANK_LINE,
+  AIM_HISTORY_LINE,
+  AIM_NEW_AIM,
   CHECKPOINT_KIND_WORD,
+  CLOSE_SHORT_PARAGON_LINE,
+  DRAFT_IT_AGAIN_WORD,
+  KEEP_DATES_WORD,
+  LEGACY_ACTIVE_BANNER,
+  LEGACY_DRAFT_BANNER,
+  LEGACY_GEMINI_HIDDEN,
+  LEGACY_MEASURE_LINE,
   MILESTONE_NOTE_LINE,
+  NONE_GEMINI_LINE,
   PARAGON_PARTS,
+  REDATE_NOTE,
+  REDATE_WORD,
+  START_AGAIN_AT_DEPTH_WORD,
   START_AGAIN_LINE,
   TIME_FIXED_LINE,
   WRITES_OFF_BANNER,
   dayLabel,
   dayWithWeekday,
+  heldRowLine,
   measuredLabel,
+  paragonDepthLine,
   pastDueLine,
   paceLine,
   spanLabel,
   statedLine,
+  topRankDepthLine,
 } from "./roadmap-copy";
 import { ROADMAP_NEW_HREF, TODAY_HREF, todayTaskHref } from "./roadmap-links";
 import {
@@ -58,6 +90,7 @@ import {
   behindBannerOf,
   domainIndexOf,
   editorRowOf,
+  geminiNamedOf,
   milestoneRowLine,
   paragonLineShown,
   positionsOf,
@@ -66,7 +99,7 @@ import {
   startAgainOffered,
   type LibraryDomain,
 } from "./roadmap-ui-model";
-import { useRoadmapAction } from "./roadmap-runtime";
+import { useRoadmapAction, useRoadmapRuntime } from "./roadmap-runtime";
 import { ItemEditor } from "./ItemEditor";
 import { editorScopeOf, DraftReview, DraftRunning } from "./DraftReview";
 import { AimHeader } from "./AimHeader";
@@ -86,12 +119,15 @@ import { ReplanSheet } from "./ReplanSheet";
 import { ThroughputPanel } from "./ThroughputPanel";
 import { ChecksPanel, VerdictChip } from "./ChecksPanel";
 import { RunFacts, RunTable } from "./RunFacts";
+import { AreaChipView, restartHandoffOf } from "./AimCard";
 import { PlanHistory } from "./PlanHistory";
 import { HowMeasuredSheet, WorkedOutSheet } from "./HowMeasuredSheet";
 import { RankLines } from "./MilestoneCard";
 import { PaysLine } from "./PaysLine";
 import { RoadmapGlyph } from "./RoadmapGlyph";
 import { TitleClassChip } from "./ProvenanceChip";
+import { DateBlock } from "./DateBlock";
+import { GapPanel, type LiveGates } from "./GapPanel";
 import "./roadmap.css";
 
 function isLibrary(d: LibraryDomain | { id: string; name: string } | undefined): d is LibraryDomain {
@@ -100,16 +136,21 @@ function isLibrary(d: LibraryDomain | { id: string; name: string } | undefined):
 
 // ── NONE ────────────────────────────────────────────────────────────────────
 
-export function EmptyRoadmap({ hasKey }: { hasKey: boolean }) {
+/**
+ * NONE (F-R4-1): the ASK card's heading, body and true rank line, and "Set an
+ * aim". Gemini is named only while ROADMAP_GEMINI_LIVE and a key both hold.
+ */
+export function EmptyRoadmap({ hasKey, gates }: { hasKey: boolean; gates?: LiveGates }) {
+  const gemini = (gates?.gemini ?? ROADMAP_GEMINI_LIVE) && hasKey;
   return (
-    <section className="card" style={{ padding: "20px 16px", textAlign: "center" }}>
+    <section className="card rm-none" aria-label="No roadmap yet">
       <RoadmapGlyph name="route" size={28} style={{ margin: "0 auto" }} />
-      <b style={{ display: "block", font: "600 19px/23px var(--font-display)", marginTop: 8 }}>Set an aim</b>
-      <p className="t-meta" style={{ margin: "6px auto 14px", maxWidth: "30ch" }}>
-        {hasKey ? "Say what you want to be able to do. Gemini can draft a roadmap, or build one from your numbers." : "Say what you want to be able to do. The app builds a roadmap from your own numbers."}
-      </p>
+      <b className="rm-none-h">{AIM_CALL_HEADING}</b>
+      <p className="rm-none-p">{AIM_CALL_BODY}</p>
+      <p className="t-meta rm-none-p">{AIM_CALL_RANK_LINE}</p>
+      {gemini && <p className="t-meta rm-none-p">{NONE_GEMINI_LINE}</p>}
       <Button variant="primary" href={ROADMAP_NEW_HREF}>
-        Set an aim
+        {AIM_CALL_HEADING}
       </Button>
     </section>
   );
@@ -258,6 +299,7 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
             <p className="t-meta" style={{ marginTop: 4 }}>
               No week quests this week. The goal on Today is Carried, never owed.
             </p>
+            {view.header?.depth != null && <p className="t-meta">{CLOSE_SHORT_PARAGON_LINE}</p>}
             <div className="rm-acts">
               {current.goalId && <ChipButton onClick={() => setResched(true)}>Reschedule Milestone {m.ord}</ChipButton>}
               <Link className="chip btn-chip" href={TODAY_HREF}>
@@ -479,11 +521,47 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
 
 // ── Triggers and levers ─────────────────────────────────────────────────────
 
+/**
+ * CALIBRATED (F-R4-11): an input the date assumed is now measured. [Re-date]
+ * runs the REFIT re-date over unstarted stages only (counts and levels never
+ * fall); [Keep the dates] leaves the dates as they are and records that on
+ * the plan (R4's keepCalibratedDates: the measured inputs leave
+ * dateOrigin.calibrating, so the offer is answered on every device and the
+ * chip stops saying "estimate" for them; the contract §15.10).
+ */
+function CalibratedOffer({ view, line }: { view: RoadmapView; line: string }) {
+  const header = view.header!;
+  const [kept, setKept] = useState(false);
+  const { run, pending, error } = useRoadmapAction();
+  if (kept) return null;
+  return (
+    <section className="card rm-banner" aria-label="Your inputs are measured">
+      <div className="rm-banner-t">
+        <p style={{ margin: 0 }}>{line}</p>
+        <p className="t-meta" style={{ margin: "4px 0 0" }}>
+          {REDATE_NOTE}
+        </p>
+      </div>
+      <div className="rm-acts" style={{ marginTop: 0 }}>
+        <Button variant="primary" disabled={pending} onClick={() => run((a) => a.replan(header.id, "REFIT"))}>
+          {REDATE_WORD}
+        </Button>
+        <Button variant="quiet" disabled={pending} onClick={() => run((a) => a.keepCalibratedDates(header.id), () => setKept(true))}>
+          {KEEP_DATES_WORD}
+        </Button>
+      </div>
+      {error && <ActionError>{error}</ActionError>}
+    </section>
+  );
+}
+
 function Triggers({ view, current, onReplan }: { view: RoadmapView; current: CurrentMilestoneView | null; onReplan: () => void }) {
   const [resched, setResched] = useState(false);
   const { run, pending, error } = useRoadmapAction();
   const behind = view.triggers.find((t) => t.trigger === "QUESTS_BEHIND");
-  const others = view.triggers.filter((t) => t.trigger !== "QUESTS_BEHIND");
+  const calibrated = view.triggers.find((t) => t.trigger === "CALIBRATED");
+  const others = view.triggers.filter((t) => t.trigger !== "QUESTS_BEHIND" && t.trigger !== "CALIBRATED");
+  const depthPlan = view.header?.depth != null;
   if (view.triggers.length === 0) return null;
   const ord = current?.milestone.ord ?? behind?.milestoneOrd ?? 0;
   const banner = behind ? behindBannerOf(behind.line, ord) : null;
@@ -515,12 +593,15 @@ function Triggers({ view, current, onReplan }: { view: RoadmapView; current: Cur
                   Or let it close short: it <PaysLine text={statedLine(current.stated, null)} />.
                 </p>
               )}
+              {depthPlan && <p className="t-meta">{CLOSE_SHORT_PARAGON_LINE}</p>}
               {later.length > 0 && (
                 <>
                   <Button className="rm-btn-wrap" disabled={pending} onClick={() => run((a) => a.replan(view.header!.id, "REFIT"))}>
-                    Re-fit later milestones
+                    {depthPlan ? "Re-date later milestones" : "Re-fit later milestones"}
                   </Button>
-                  <p className="t-meta">This re-fits {laterLine}; it doesn&apos;t change Milestone {ord}.</p>
+                  <p className="t-meta">
+                    {depthPlan ? `This re-dates ${laterLine}; it never lowers a count or a level, and it doesn't change Milestone ${ord}.` : `This re-fits ${laterLine}; it doesn't change Milestone ${ord}.`}
+                  </p>
                 </>
               )}
               {error && <ActionError>{error}</ActionError>}
@@ -529,6 +610,7 @@ function Triggers({ view, current, onReplan }: { view: RoadmapView; current: Cur
           {current?.goalId && <RescheduleSheet open={resched} onClose={() => setResched(false)} goalId={current.goalId} ord={ord} today={view.today} />}
         </>
       )}
+      {calibrated && <CalibratedOffer view={view} line={calibrated.line} />}
       {others.length > 0 && (
         <section className="card rm-banner">
           <div className="rm-banner-t">
@@ -574,6 +656,7 @@ function MilestonesList({
   open,
   positions,
   paragon,
+  depthLine,
 }: {
   rows: readonly MilestoneRowView[];
   today: string;
@@ -583,10 +666,17 @@ function MilestonesList({
   positions: number;
   /** The Aim rank's own top says Paragon comes with the aim (rank.top.withAim). */
   paragon: boolean;
+  /** Revision 4: a depth plan's own line under the list (the Paragon conditions, or what keeps Paragon closed); replaces rev 3's. */
+  depthLine?: string | null;
 }) {
   let best = 0;
   const gives = new Map<string, boolean>();
   for (const r of [...rows].sort((a, b) => a.ord - b.ord)) {
+    // A stage held when you began gives no rank (F-R4-12): it neither gives one nor raises the bar for the next.
+    if (r.held) {
+      gives.set(r.id, false);
+      continue;
+    }
     const g = r.rankIndex != null && r.rankIndex > best;
     gives.set(r.id, g);
     if (r.rankIndex != null) best = Math.max(best, r.rankIndex);
@@ -606,16 +696,16 @@ function MilestonesList({
                     <StruckLabel label={r.title} struck={r.titleStruck} />
                   </b>
                   <TitleClassChip cls={r.titleClass} />
-                  <span className="t-meta">{milestoneRowLine(r, today)}</span>
+                  <span className="t-meta">{r.held ? heldRowLine(r.rankIndex) : milestoneRowLine(r, today)}</span>
                 </div>
                 <span className="rm-ml-r">
-                  {r.percent != null ? `${r.percent}%` : r.closedPercent != null ? `${r.closedPercent}%` : ""}
-                  {r.state !== "CLOSED_UNREACHED" && <small>{parts ? `→ ${aimRankName(r.rankIndex!)}` : r.rankIndex != null ? "keeps your rank" : ""}</small>}
+                  {r.percent != null && !r.held ? `${r.percent}%` : r.closedPercent != null ? `${r.closedPercent}%` : ""}
+                  {r.state !== "CLOSED_UNREACHED" && !r.held && <small>{parts ? `→ ${aimRankName(r.rankIndex!)}` : r.rankIndex != null ? "keeps your rank" : ""}</small>}
                 </span>
               </summary>
               <div className="rm-ml-more">
-                <p className="t-meta">{r.windowStart && r.dueDay ? spanLabel(r.windowStart, r.dueDay, today) : "No dates: a Later milestone gets its dates when a re-plan brings it back."}</p>
-                {r.rankIndex != null && r.state !== "CLOSED_UNREACHED" && (
+                <p className="t-meta">{r.held ? MILESTONE_NOTE_LINE.HELD_AT_START : r.windowStart && r.dueDay ? spanLabel(r.windowStart, r.dueDay, today) : "No dates: a Later milestone gets its dates when a re-plan brings it back."}</p>
+                {r.rankIndex != null && r.state !== "CLOSED_UNREACHED" && !r.held && (
                   <p className="t-meta">{parts ? `Reaching it gives the Aim rank ${aimRankName(r.rankIndex)}.` : "Reaching it keeps your rank."}</p>
                 )}
                 {r.state === "CURRENT" && (
@@ -630,10 +720,14 @@ function MilestonesList({
             </details>
           );
         })}
-        {paragon && (
-          <p className="rm-note rm-note-top">
-            {PARAGON_PARTS.lead} {PARAGON_PARTS.name}.
-          </p>
+        {depthLine ? (
+          <p className="rm-note rm-note-top">{depthLine}</p>
+        ) : (
+          paragon && (
+            <p className="rm-note rm-note-top">
+              {PARAGON_PARTS.lead} {PARAGON_PARTS.name}.
+            </p>
+          )
         )}
       </section>
     </div>
@@ -642,15 +736,31 @@ function MilestonesList({
 
 // ── Reference ───────────────────────────────────────────────────────────────
 
-function Reference({ view, current }: { view: RoadmapView; current: CurrentMilestoneView | null }) {
+/**
+ * A started milestone's Start snapshot (R4's CurrentMilestoneView
+ * startFeasibility and startedDay; the contract §15.11): the figures its
+ * target was worked out from when it started.
+ */
+export function startSnapshotOf(current: CurrentMilestoneView): { feasibility: MilestoneFeasibility; day: string } | null {
+  if (!current.goalId) return null;
+  return current.startFeasibility && current.startedDay ? { feasibility: current.startFeasibility, day: current.startedDay } : null;
+}
+
+function Reference({ view, current, gates }: { view: RoadmapView; current: CurrentMilestoneView | null; gates?: LiveGates }) {
   const [open, setOpen] = useState(false);
   const [measured, setMeasured] = useState(false);
   const [worked, setWorked] = useState(false);
   const header = view.header!;
   const f = view.feasibility;
-  const cur = current ? (f?.milestones.find((x) => x.lineageId === current.milestone.lineageId) ?? null) : null;
-  const others = f ? f.milestones.filter((x) => x !== cur) : [];
+  // A started milestone's check is its Start snapshot ("worked out at Start on 21 Dec", figures "then"); otherwise the acceptance's, labelled with its day.
+  const startCheck = current ? startSnapshotOf(current) : null;
+  const cur = current ? (startCheck?.feasibility ?? f?.milestones.find((x) => x.lineageId === current.milestone.lineageId) ?? null) : null;
+  const asOf = startCheck ? { kind: "START" as const, day: startCheck.day } : header.acceptedDay ? { kind: "ACCEPTED" as const, day: header.acceptedDay } : null;
+  // The other milestones as accepted: never the current lineage (its own check is above), each keyed by place (a lineage can repeat).
+  const others = f ? f.milestones.filter((x) => x !== cur && (!current || x.lineageId !== current.milestone.lineageId)) : [];
   const drafted = referenceRunOf(view);
+  // Gemini is named in the sheet only while its path is live with a key, or when a Gemini run arranged this plan.
+  const gemini = geminiNamedOf((gates?.gemini ?? ROADMAP_GEMINI_LIVE) && view.hasKey, drafted.run);
   return (
     <div className="rm-ref rm-o5" data-open={open ? "1" : undefined}>
       <button type="button" className="rm-ref-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
@@ -686,18 +796,29 @@ function Reference({ view, current }: { view: RoadmapView; current: CurrentMiles
                 throughput={view.throughput}
                 hoursPerWeek={header.hoursPerWeek}
                 intakeEditable={false}
+                asOf={asOf}
               />
             ) : (
               <p className="rm-ms-sec t-meta" style={{ borderTop: 0 }}>
                 The checks show here once a milestone is current.
               </p>
             )}
+            {view.dateCheck && (
+              <DateBlock
+                roadmapId={header.status === "ACTIVE" ? header.id : null}
+                check={view.dateCheck}
+                depth={header.depth ?? null}
+                rows={view.milestones.filter((r) => !r.held && r.state !== "LATER" && r.state !== "DROPPED")}
+                mode="plan"
+                userDay={header.targetDay}
+              />
+            )}
             {others.length > 0 && (
               <div className="rm-ms-sec">
                 <div className="t-eyebrow">Other milestones · as accepted</div>
                 <ul className="rm-oi-list" style={{ marginTop: 6 }}>
-                  {others.map((x) => (
-                    <li key={x.lineageId} className="rm-oi">
+                  {others.map((x, i) => (
+                    <li key={`${x.lineageId}:${i}`} className="rm-oi">
                       <div className="rm-vds">
                         <span className="t-meta" style={{ minWidth: 16 }}>
                           {x.ord}
@@ -745,7 +866,7 @@ function Reference({ view, current }: { view: RoadmapView; current: CurrentMiles
           </span>
         </section>
       </div>
-      <HowMeasuredSheet open={measured} onClose={() => setMeasured(false)} />
+      <HowMeasuredSheet open={measured} onClose={() => setMeasured(false)} gemini={gemini} />
       <WorkedOutSheet open={worked} onClose={() => setWorked(false)} m={f?.m ?? 1} />
     </div>
   );
@@ -812,6 +933,16 @@ function Footer({ view, current, onReplan }: { view: RoadmapView; current: Curre
   const [archive, setArchive] = useState(false);
   const [done, setDone] = useState(false);
   const header = view.header!;
+  // DONE or ARCHIVED (a reset's archive included): no dead end — the next aim, and the history kept.
+  if (header.status === "DONE" || header.status === "ARCHIVED")
+    return (
+      <div className="rm-o7 rm-closed" id="archive">
+        <Button variant="primary" href={ROADMAP_NEW_HREF}>
+          {AIM_NEW_AIM}
+        </Button>
+        <p className="t-meta">{AIM_HISTORY_LINE}</p>
+      </div>
+    );
   if (header.status !== "ACTIVE") return null;
   const reached = Boolean(header.reachedDay);
   return (
@@ -838,29 +969,61 @@ function Footer({ view, current, onReplan }: { view: RoadmapView; current: Curre
 
 // ── ACTIVE / DONE / ARCHIVED ────────────────────────────────────────────────
 
-function LivingRoadmap({ view, startPreview }: { view: RoadmapView; startPreview?: StartPreview | null }) {
+/** The list's line on a plan aimed at a depth: the Paragon conditions (naming the count of required Domains), or what keeps Paragon closed. */
+export function depthListLine(view: Pick<RoadmapView, "depth" | "paragonMissing" | "rank">): string | null {
+  if (!view.depth) return null;
+  const missing = view.paragonMissing ?? [];
+  if (missing.length === 0) return paragonDepthLine(view.depth.coverage.length);
+  return view.rank ? topRankDepthLine(view.rank.top, missing) : null;
+}
+
+function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; startPreview?: StartPreview | null; gates?: LiveGates }) {
   const header = view.header!;
   const current = view.current as CurrentMilestoneView | null;
   const [replan, setReplan] = useState(false);
   const [start, setStart] = useState(Boolean(startPreview));
   const index = useMemo(() => domainIndexOf(view), [view]);
   const scope = useMemo(() => editorScopeOf(view, current ? [current.milestone] : []), [view, current]);
+  const names = useMemo(() => new Map([...index.values()].map((d) => [d.id, d.name] as const)), [index]);
   const scheduled = positionsOf(view);
   const closed = header.status !== "ACTIVE";
   const body = (
     <div className="rm-cols">
       <div className="rm-col">
-        <AimHeader className="rm-o1" header={header} rank={view.rank} proficiency={view.proficiency} today={view.today} scheduled={scheduled} writesOff={view.writesOff} />
+        <AimHeader
+          className="rm-o1"
+          header={header}
+          rank={view.rank}
+          proficiency={view.proficiency}
+          today={view.today}
+          scheduled={scheduled}
+          writesOff={view.writesOff}
+          depth={view.depth ?? null}
+          dateCheck={view.dateCheck ?? null}
+          milestones={view.milestones}
+          paragonMissing={view.paragonMissing ?? []}
+          m={view.feasibility?.m ?? 1}
+          names={names}
+        />
         {!closed && <Triggers view={view} current={current} onReplan={() => setReplan(true)} />}
         {!closed && view.draft && (
           <div className="rm-o2" id="replan">
-            <DraftReview view={view} mode="replan" />
+            <DraftReview view={view} mode="replan" gates={gates} />
           </div>
         )}
         {!closed && current && <NowSection view={view} current={current} onStartOpen={() => setStart(true)} />}
         {view.milestones.length > 0 && (
-          <MilestonesList rows={view.milestones} today={view.today} targetDay={header.targetDay} open={!closed} positions={scheduled} paragon={paragonLineShown(view.rank)} />
+          <MilestonesList
+            rows={view.milestones}
+            today={view.today}
+            targetDay={header.targetDay}
+            open={!closed}
+            positions={scheduled}
+            paragon={paragonLineShown(view.rank)}
+            depthLine={depthListLine(view)}
+          />
         )}
+        {!closed && <GapPanel gaps={view.gaps} hidden={view.gapsHidden} scope={scope} gates={gates} />}
         <Footer view={view} current={current} onReplan={() => setReplan(true)} />
       </div>
       <div className="rm-col">
@@ -880,7 +1043,7 @@ function LivingRoadmap({ view, startPreview }: { view: RoadmapView; startPreview
             />
           </div>
         )}
-        {!closed && <Reference view={view} current={current} />}
+        {!closed && <Reference view={view} current={current} gates={gates} />}
         {view.aftercare.length > 0 && <Aftercare view={view} />}
       </div>
     </div>
@@ -898,8 +1061,94 @@ function LivingRoadmap({ view, startPreview }: { view: RoadmapView; startPreview
   );
 }
 
+// ── A plan made before revision 4 (F-R4-16) ──────────────────────────────────
+
+/**
+ * A legacy roadmap shows no milestone or item text, whatever its status: its
+ * aim (the user's words), its Area, the banner and its one action, and its
+ * history. A legacy DRAFT: "[Draft it again]" opens the intake form; saving
+ * sets a depth and the next draft replaces the old rows. A legacy ACTIVE plan:
+ * "[Start again at a depth]" carries its aim, Area and Domains into a new
+ * intake (a sessionStorage handoff, never a URL), and saving it archives this
+ * roadmap in the same transaction. It isn't measured, and nothing starts.
+ */
+function LegacyRoadmap({ view }: { view: RoadmapView }) {
+  const header = view.header!;
+  const runtime = useRoadmapRuntime();
+  const legacy = view.legacy ?? view.draft?.legacy ?? null;
+  const status = legacy?.kind ?? header.status;
+  const draft = status === "DRAFT";
+  const closed = status === "DONE" || status === "ARCHIVED";
+  // Its aim, Area and Domains travel (F-R4-16): the plan's own Domains (LegacyView or the header), never the Area's defaults.
+  const handoff = restartHandoffOf({ aim: header.aim, roadmapId: header.id, area: header.area, track: header.track, domainIds: legacy?.domainIds ?? header.domainIds ?? null, areaFieldId: legacy?.areaFieldId });
+  const restart = () => {
+    if (runtime.fixture) return;
+    writeAimHandoff(handoff);
+  };
+  return (
+    <div className="rm-stack">
+      <section className="card rm-aim" aria-label="Aim">
+        <div className="t-eyebrow">{header.status === "ARCHIVED" ? "Aim · archived" : header.status === "DONE" ? "Aim · done" : "Aim"}</div>
+        <p className="rm-aim-t">{header.aim}</p>
+        <div className="rm-chips">
+          <AreaChipView area={header.area} />
+          <Chip>{dayLabel(header.targetDay, view.today)}</Chip>
+        </div>
+      </section>
+      <section className="card rm-banner" aria-label="Planned before plans aimed at a depth">
+        <div className="rm-banner-t">
+          <b>{draft ? LEGACY_DRAFT_BANNER : LEGACY_ACTIVE_BANNER}</b>
+          {legacy?.geminiHidden && <span className="rm-banner-s">{LEGACY_GEMINI_HIDDEN}</span>}
+          {!draft && !closed && <span className="rm-banner-s">{LEGACY_MEASURE_LINE}</span>}
+        </div>
+        {draft ? (
+          <Button variant="primary" href={ROADMAP_NEW_HREF}>
+            {DRAFT_IT_AGAIN_WORD}
+          </Button>
+        ) : !closed ? (
+          <Button variant="primary" href={ROADMAP_NEW_HREF} onClick={restart}>
+            {START_AGAIN_AT_DEPTH_WORD}
+          </Button>
+        ) : null}
+      </section>
+      {view.history.length > 0 && (
+        <section className="card rm-tp">
+          <div>
+            <span className="rm-tp-k">Plan history</span>
+            <span className="rm-tp-v">v{header.version}</span>
+            <PlanHistory rows={view.history} today={view.today} />
+          </div>
+        </section>
+      )}
+      {closed && (
+        <div className="rm-closed">
+          <Button variant="primary" href={ROADMAP_NEW_HREF}>
+            {AIM_NEW_AIM}
+          </Button>
+          <p className="t-meta">{AIM_HISTORY_LINE}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A view of a plan made before revision 4 (the server marks it; its milestone and item text never arrives). */
+export function isLegacyView(view: Pick<RoadmapView, "legacy" | "header" | "draft">): boolean {
+  return Boolean(view.legacy || view.header?.legacy || view.draft?.legacy);
+}
+
 /** The screen for one RoadmapView (the page and the fixtures render it). */
-export function RoadmapScreen({ view, startPreview }: { view: RoadmapView; /** Fixtures: a Start sheet already computed (it opens with it). */ startPreview?: StartPreview | null }) {
+export function RoadmapScreen({
+  view,
+  startPreview,
+  gates,
+}: {
+  view: RoadmapView;
+  /** Fixtures: a Start sheet already computed (it opens with it). */
+  startPreview?: StartPreview | null;
+  /** Fixtures only: draw a lead-only state (Gemini live, area suggestions live). The live page passes nothing: the switches decide. */
+  gates?: LiveGates;
+}) {
   const writesOffNote = view.writesOff ? (
     <section className="card rm-note" style={{ marginBottom: 16 }}>
       <RoadmapGlyph name="info" />
@@ -907,10 +1156,11 @@ export function RoadmapScreen({ view, startPreview }: { view: RoadmapView; /** F
     </section>
   ) : null;
   let screen: ReactNode = null;
-  if (view.state === "NONE" || !view.header) screen = <EmptyRoadmap hasKey={view.hasKey} />;
+  if (view.state === "NONE" || !view.header) screen = <EmptyRoadmap hasKey={view.hasKey} gates={gates} />;
+  else if (isLegacyView(view)) screen = <LegacyRoadmap view={view} />;
   else if (view.state === "RUNNING" && view.run) screen = <DraftRunning view={view} />;
-  else if (view.state === "DRAFT" && view.draft) screen = <DraftReview view={view} />;
-  else screen = <LivingRoadmap view={view} startPreview={startPreview} />;
+  else if (view.state === "DRAFT" && view.draft) screen = <DraftReview view={view} gates={gates} />;
+  else screen = <LivingRoadmap view={view} startPreview={startPreview} gates={gates} />;
   return (
     <>
       {writesOffNote}

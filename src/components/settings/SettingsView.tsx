@@ -11,7 +11,10 @@
  *              Accept a loss (LifeSettings.debtWriteOff, actions/duty
  *              setDebtWriteOff) and where time off is declared; standing rest
  *              weekdays stay 'not yet' (m2-refit decision 14). Before the
- *              launch day the rows say when they arrive.
+ *              launch day the rows say when they arrive. Aim suggestions
+ *              (roadmap rev 4, F-R4-5: LifeSettings.aimSuggestions through
+ *              actions/roadmap setAimSuggestions), the lasting no that holds
+ *              on every device.
  *   Keyboard shortcuts
  *              The same grouped list as the '?' sheet (shell/Shortcuts
  *              ShortcutList, read from src/lib/shortcuts.ts) · Replay the tour
@@ -28,6 +31,7 @@ import { useEffect, useState, useSyncExternalStore, useTransition } from "react"
 import { getResetPreview } from "@/app/actions/reset";
 import { setDebtWriteOff } from "@/app/actions/duty";
 import { setDailyCapacity } from "@/app/actions/tasks";
+import { setAimSuggestions } from "@/app/actions/roadmap";
 import { REST_PER_WEEK, WRITE_OFF_MIN_DAYS } from "@/lib/duty-economy";
 import type { DayKey } from "@/lib/life-day";
 import { dutyPhaseOf, weekdayDateLabel } from "@/lib/rituals";
@@ -42,7 +46,7 @@ import { Button } from "@/components/ui/Button";
 import { Chip, ChipButton } from "@/components/ui/Chip";
 import { useMotionPref } from "@/components/ui/MotionPrefs";
 import { Sheet } from "@/components/ui/Sheet";
-import { SectionHeader, Segmented, Skeleton } from "@/components/ui/Tabs";
+import { SectionHeader, Segmented, Skeleton, Switch } from "@/components/ui/Tabs";
 import { formatNumber } from "@/components/ui/format";
 import { AcceptLossRow } from "./DaysControls";
 import { CAPACITY_PRESETS, clampCapacity, formatCapacity } from "./settings-model";
@@ -59,7 +63,31 @@ export interface SettingsData {
    * Absent: the Days rows say when they arrive, as before.
    */
   duty?: { today: DayKey; launchDay: DayKey | null; debtWriteOff: boolean };
+  /**
+   * Aim suggestions (roadmap rev 4, F-R4-5; optional, a compatible extension):
+   * false when LifeSettings.aimSuggestions is false or a legacy 'off' cookie
+   * stands, else true (the page reads both through roadmap-invite aimPromptOf).
+   * Absent: no row (a page that couldn't read it shows no switch that does nothing).
+   */
+  aimSuggestions?: boolean;
 }
+
+/** What the Aim suggestions switch calls: actions/roadmap setAimSuggestions, or a fixture's recorder. A throw (the network) reads as a refusal. */
+export type SetAimSuggestions = (on: boolean) => Promise<{ ok: true; value: unknown } | { ok: false; error: string }>;
+
+/**
+ * The row's words (F-R4-5). They name every surface the switch quiets: You's
+ * card, Today's line, and capture's "Make it an aim" on a long goal (fix
+ * round 2: aim-capture offersAim offers only while aimPromptOf reads ASK, so
+ * the stored no quiets it too; you-check holds the note to offersAim). They
+ * never name Gemini, and never claim the switch governs the draft-waiting or
+ * milestone-ready lines.
+ */
+export const AIM_SUGGESTIONS_COPY = {
+  name: "Aim suggestions",
+  note: "With no aim set, You suggests one; Today does on a new week, a new month or your first day back, then once a month; and capture offers to make a long goal your aim.",
+  label: "Suggest setting an aim",
+} as const;
 
 function subscribeHash(cb: () => void) {
   window.addEventListener("hashchange", cb);
@@ -74,7 +102,7 @@ export function SettingsView({ data }: { data: SettingsData }) {
         <ShortcutsSection />
       </div>
       <div className="set-stack">
-        <DaysSection capacity={data.capacity} duty={data.duty ?? null} />
+        <DaysSection capacity={data.capacity} duty={data.duty ?? null} aimSuggestions={data.aimSuggestions} />
         <StudyDataSection data={data} />
       </div>
     </div>
@@ -212,7 +240,7 @@ function ShortcutsSection() {
 
 // ─── Days ───────────────────────────────────────────────────────────────────
 
-function DaysSection({ capacity, duty }: { capacity: SettingsData["capacity"]; duty: SettingsData["duty"] | null }) {
+function DaysSection({ capacity, duty, aimSuggestions }: { capacity: SettingsData["capacity"]; duty: SettingsData["duty"] | null; aimSuggestions?: boolean }) {
   const [open, setOpen] = useState(false);
   const phase = duty ? dutyPhaseOf(duty.today, duty.launchDay) : "off";
   const from = duty?.launchDay ? `From ${weekdayDateLabel(duty.launchDay)}` : null;
@@ -262,6 +290,7 @@ function DaysSection({ capacity, duty }: { capacity: SettingsData["capacity"]; d
             {phase === "live" && duty ? <DebtWriteOffRow initial={duty.debtWriteOff} /> : <LaterRow name="Accept a loss" when={from ?? "Arrives with make-up cards"} note="Musts carry no debt yet, so there is nothing to write off." />}
           </>
         )}
+        {aimSuggestions !== undefined && <AimSuggestionsRow initial={aimSuggestions} />}
       </div>
       <CapacitySheet open={open} onClose={() => setOpen(false)} capacity={capacity} />
     </section>
@@ -292,6 +321,53 @@ function DebtWriteOffRow({ initial }: { initial: boolean }) {
   return (
     <>
       <AcceptLossRow checked={on} onChange={change} disabled={pending} />
+      {error && (
+        <p className="st-error" role="alert" style={{ padding: "0 4px 8px" }}>
+          {error}
+        </p>
+      )}
+    </>
+  );
+}
+
+/**
+ * Aim suggestions (roadmap rev 4, F-R4-5): the stored, lasting switch for the
+ * "Set an aim" suggestions on You, Today and capture (LifeSettings.aimSuggestions, so it
+ * holds on every device). On calls setAimSuggestions(true), which also clears a
+ * legacy 'off' cookie and starts the back-off again; off calls it with false.
+ * Both refuse with writes off (lifeWritesEnabled, the standard copy): the
+ * refusal is said once and the switch goes back, as Accept a loss does.
+ * `write` is the fixtures' seam (/dev/style/settings records the calls).
+ */
+export function AimSuggestionsRow({ initial, write = setAimSuggestions }: { initial: boolean; write?: SetAimSuggestions }) {
+  const [on, setOn] = useState(initial);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  function change(next: boolean) {
+    setError(null);
+    setOn(next);
+    start(async () => {
+      let res: Awaited<ReturnType<SetAimSuggestions>>;
+      try {
+        res = await write(next);
+      } catch {
+        res = { ok: false, error: "Couldn't reach the server. Check the connection and try again." };
+      }
+      if (!res.ok) {
+        setOn(!next);
+        setError(res.error);
+      }
+    });
+  }
+  return (
+    <>
+      <div className="set-row">
+        <div className="n">
+          <b>{AIM_SUGGESTIONS_COPY.name}</b>
+          <span>{AIM_SUGGESTIONS_COPY.note}</span>
+        </div>
+        <Switch checked={on} onChange={change} disabled={pending} label={AIM_SUGGESTIONS_COPY.label} />
+      </div>
       {error && (
         <p className="st-error" role="alert" style={{ padding: "0 4px 8px" }}>
           {error}

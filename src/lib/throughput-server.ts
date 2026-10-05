@@ -21,7 +21,7 @@ import { cached } from "./cache";
 import { DAY_START_HOUR, LIFE_TZ, addDays, dateColumn, dayKeyOf, dayStartOf, keyOfDateColumn, type DayKey } from "./life-day";
 import { heldDaysOf, type RestRow } from "./duty-rule";
 import { ADHERENCE_MIN_MINUTES, CLEARANCE_WINDOW_DAYS, NEW_CARDS_SINCE, PASS_SHARE_WINDOW_DAYS, REVIEW_PASSES_SINCE, THROUGHPUT_LAG_DAYS, type Throughput } from "./roadmap-types";
-import { taskRowsOf, throughputOf, throughputWindowStart, type ThroughputLedgerRow, type ThroughputRows } from "./throughput";
+import { clearanceSeriesStart, taskRowsOf, throughputOf, throughputWindowStart, type ThroughputLedgerRow, type ThroughputRows } from "./throughput";
 
 // Timestamp columns are TIMESTAMP(3) holding UTC wall time; the raw query compares them with
 // the instant converted to UTC explicitly, so the session's TimeZone setting never shifts it.
@@ -46,6 +46,7 @@ interface DayCountRaw {
 }
 
 const maxDay = (a: DayKey, b: DayKey): DayKey => (a > b ? a : b);
+const minDay = (a: DayKey, b: DayKey): DayKey => (a < b ? a : b);
 
 /** Bands adherence reads (≥ STANDARD); throughput.ts filters again, purely. */
 const ADHERENCE_BANDS = ["STANDARD", "DEMANDING", "SEVERE"];
@@ -55,15 +56,23 @@ const ADHERENCE_BANDS = ["STANDARD", "DEMANDING", "SEVERE"];
  * uncached. Nine reads in one wave: the settings, the TASK and UNDO rows
  * (joined to their template and instance), the live recurring STANDARD+
  * templates of ≥ 20 min with their instances, review attempts a day, the
- * REVIEW_FRACTION passes of the last 28 days, the DAY_OPEN rows of the last
- * 14, new cards, the RestDay rows and the FREEZE_USE days.
+ * REVIEW_FRACTION passes of the last 28 days, the DAY_OPEN rows, new cards,
+ * the RestDay rows and the FREEZE_USE days.
+ *
+ * Revision 4 (F-R4-8): ρ's clearance series reads the last
+ * CLEARANCE_SERIES_DAYS (90) life days, so the DAY_OPEN rows, the review
+ * attempts and the held days are read from the earlier of the 8-week window
+ * and that series. Every other figure filters to its own window (clearance
+ * its 14 days, the weekly figures their counted weeks), so they are unchanged.
  */
 async function readThroughputRows(userId: string, finalDay: DayKey): Promise<ThroughputRows> {
   const today = addDays(finalDay, THROUGHPUT_LAG_DAYS);
   const asOf = dayStartOf(today);
   const from = throughputWindowStart(finalDay);
   const passFrom = maxDay(addDays(finalDay, -(PASS_SHARE_WINDOW_DAYS - 1)), REVIEW_PASSES_SINCE);
-  const openFrom = addDays(finalDay, -(CLEARANCE_WINDOW_DAYS - 1));
+  const seriesFrom = clearanceSeriesStart(finalDay);
+  const openFrom = minDay(addDays(finalDay, -(CLEARANCE_WINDOW_DAYS - 1)), seriesFrom);
+  const readFrom = minDay(from, seriesFrom);
   const cardsFrom = maxDay(from, NEW_CARDS_SINCE);
 
   const [settings, ledger, recurring, attempts, passes, dayOpens, ideas, restRows, freezeRows] = await Promise.all([
@@ -106,7 +115,7 @@ async function readThroughputRows(userId: string, finalDay: DayKey): Promise<Thr
       SELECT e."day", COUNT(*)::int AS "n"
       FROM "ActivityEvent" e
       WHERE e."userId" = ${userId} AND e."source" = 'REVIEW' AND COALESCE(e."dedupeKey", '') NOT LIKE 'bf:%'
-        AND e."day" >= ${from}::date AND e."day" <= ${finalDay}::date
+        AND e."day" >= ${readFrom}::date AND e."day" <= ${finalDay}::date
       GROUP BY e."day"
     `,
     // Passes: the REVIEW_FRACTION ledger rows per life day. createdAt holds UTC wall time: read
@@ -129,17 +138,17 @@ async function readThroughputRows(userId: string, finalDay: DayKey): Promise<Thr
       select: { createdAt: true, domainId: true, domain: { select: { fieldId: true } } },
     }),
     prisma.restDay.findMany({
-      where: { userId, day: { gte: dateColumn(from), lte: dateColumn(finalDay) }, declaredAt: { lt: asOf } },
+      where: { userId, day: { gte: dateColumn(readFrom), lte: dateColumn(finalDay) }, declaredAt: { lt: asOf } },
       select: { day: true, kind: true, declaredAt: true, cancelledAt: true },
     }),
     prisma.activityEvent.findMany({
-      where: { userId, source: "FREEZE_USE", day: { gte: dateColumn(from), lte: dateColumn(finalDay) }, createdAt: { lt: asOf } },
+      where: { userId, source: "FREEZE_USE", day: { gte: dateColumn(readFrom), lte: dateColumn(finalDay) }, createdAt: { lt: asOf } },
       select: { day: true },
     }),
   ]);
 
   const rest: RestRow[] = restRows.map((r) => ({ day: keyOfDateColumn(r.day), kind: r.kind, declaredAt: r.declaredAt, cancelledAt: r.cancelledAt }));
-  const held = heldDaysOf(rest, from, finalDay);
+  const held = heldDaysOf(rest, readFrom, finalDay);
   for (const f of freezeRows) held.add(keyOfDateColumn(f.day));
 
   const ledgerRows: ThroughputLedgerRow[] = ledger

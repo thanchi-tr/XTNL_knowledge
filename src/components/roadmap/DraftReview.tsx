@@ -2,30 +2,45 @@
 
 /**
  * The DRAFT state of /you/roadmap (lane R5; F8 page states, F9;
+ * roadmap-rev4.md F-R4-11, F-R4-16 to F-R4-21, F-R4-24;
  * final-roadmap-draft.html): review, edit and accept. The same review sits
  * above Now for an ACTIVE roadmap's pending re-plan (version + 1, mode
  * "replan": "Re-plan draft · not accepted yet"), with its own Accept and
  * Discard (the contract §9.3).
  *
- *   Header: "Gemini suggested the words. Every number here is worked out by
- *   the app from your records or typed by you." (or "Built from your
- *   numbers."; a re-plan reads "Re-fitted from your accepted plan." or
- *   "Edited from your accepted plan.", plus "Gemini's words stay marked."
- *   while any row is), keyed on who wrote the rows on screen (RunView.wrote),
- *   never on the latest run, which may be CAPPED or FAILED with nothing
- *   written; the run's facts with "What was dropped", the constraints line,
- *   "Not in this plan yet: S4" with [Add S4 as a topic], Edit the intake ·
- *   Draft again, and Discard on its own line (a mis-tap on Draft again
- *   spends a daily draft).
- *   The alarm banner above half flagged; the credential line with [Paste the
- *   syllabus]; the non-English line.
- *   The next milestone expanded (decided now); later ones as an outline.
- *   A sticky footer that is never a dead disabled button: "Accept plan ·
- *   milestone 1 ready · 2 in outline", or "Next item to decide" (it scrolls
- *   there), or "Fix milestone 1 first".
+ *   Header: by who wrote the rows on screen (RunView.wrote, never the latest
+ *   run's own kind): a keys-only Gemini draft "Gemini arranged your outline
+ *   into milestones … It wrote none of the words …"; the app's "Built from
+ *   your numbers."; a re-plan "Re-fitted from your accepted plan." or
+ *   "Edited from your accepted plan."; a rev-3 Gemini draft (a legacy view
+ *   never reaches here) its rev-3 line. The run's facts with "How this was
+ *   drafted" ("Gemini's reply: keys only · 0 words of its own", or
+ *   "Rejected (format) · plan from your numbers"), Edit the intake · Draft
+ *   again (only while Gemini drafting is live), and Discard on its own line.
  *
- * Accept writes the first readings and the acceptance; its toast offers Undo
- * for ACCEPT_UNDO_MS. Discard is quiet, with an undo toast.
+ * A keys-only draft (revision 4) then shows, each the user's to change:
+ *   - Gemini's Domain additions, decided once above the milestones, with each
+ *     Domain's real counts and the date effect before anything is confirmed:
+ *     [Add both] [Choose…] [Leave out] for an English, non-exam aim; one
+ *     toggle per Domain and [Confirm] (no add-all) for an exam or non-English
+ *     aim; a Domain past 3 years or a 7th is disabled with its reason;
+ *   - the kinds the constraints left out, each with its word, [Allow one];
+ *     the aim-conflict line; a body or care plan's one session-picks confirm;
+ *   - the Depth line and the date check with its offers (Use the realistic
+ *     date, Keep my date, Choose a lower depth…; nothing lowers by itself);
+ *   - the arrangement line (Gemini runs only);
+ *   - the milestones: the next expanded and decided now, later ones as an
+ *     outline; no Keep and no bulk keep;
+ *   - "Lines to look at": outline lines in no milestone, and lines tied to no
+ *     Domain; the outline's empty state; the area-suggestion panel (only
+ *     while ROADMAP_GAPS_LIVE).
+ * A legacy draft never renders here (RoadmapScreen shows its banner).
+ *
+ * A sticky footer that is never a dead disabled button: "Accept the plan",
+ * or "Next item to decide" (it scrolls to the additions, the session picks
+ * or the next row), or "Fix milestone 1 first" (only for a milestone of this
+ * draft, never a started one: fix round 2's carry-over), or the date's own
+ * refusal. Accept's toast offers Undo for ACCEPT_UNDO_MS.
  *
  * The RUNNING state is static text in an aria-live region (no spinner, no
  * shimmer); the page refreshes every DRAFT_REFRESH_MS for at most
@@ -42,45 +57,89 @@ import { pushToast } from "@/components/ui/toast-store";
 import { ActionError } from "@/components/home/ActionError";
 import {
   ACCEPT_UNDO_MS,
+  DEPTH_DOMAINS_MAX,
   DRAFT_REFRESH_MAX_MS,
   DRAFT_REFRESH_MS,
+  ROADMAP_GEMINI_LIVE,
   RUN_STALE_MS,
+  type DraftView,
   type MilestoneDraft,
   type RoadmapHeader,
   type RoadmapView,
   type RunView,
   type RunWriter,
 } from "@/lib/roadmap-types";
+import type { CatalogKey } from "@/lib/roadmap-catalog";
 import {
+  ARRANGEMENT_LINE,
   BUILT_LEAD_LINE,
+  CHOOSE_WORD,
+  CONFIRM_WORD,
   CONSTRAINTS_LINE,
   CREDENTIAL_LINE,
   GEMINI_LEAD_LINE,
+  GEMINI_V3_LEAD_LINE,
+  HEALTH_LINE,
   INTENSITY_WORD,
+  KIND_NAME,
+  LEAVE_OUT_WORD,
+  OUTLINE_EMPTY_EXAM_LINE,
+  ADD_OUTLINE_WORD,
   REPLAN_EDITED_LINE,
   REPLAN_EYEBROW,
   REPLAN_GEMINI_LINE,
   REPLAN_REFIT_LINE,
+  RUN_REJECTED_LINE,
+  SESSION_PICKS_EASY,
+  SESSION_PICKS_KEEP,
   TIME_FIXED_LINE,
   TRACK_WORD,
+  addAllWord,
   addAsTopicWord,
+  additionBlockedLine,
+  additionEffectLine,
+  additionsLine,
+  aimConflictLine,
   byLine,
+  depthName,
+  exclusionsLine,
+  outlineEmptyLine,
+  paragonDepthLine,
   plural,
+  sessionPicksLine,
   timeSecondsLabel,
   uncoveredLine,
+  unassignedLinesLine,
 } from "./roadmap-copy";
 import { ROADMAP_NEW_HREF } from "./roadmap-links";
-import { carriedRowsOf, domainIndexOf, draftBannerOf, draftHasGeminiWords, draftRunWriterOf, rankPlanOf, rowDomId, scheduledOf, undecidedOf } from "./roadmap-ui-model";
+import {
+  additionsDatesOf,
+  carriedRowsOf,
+  domainIndexOf,
+  draftBannerOf,
+  draftHasGeminiWords,
+  draftRunWriterOf,
+  geminiNamedOf,
+  isHeldMilestone,
+  isKeysOnlyDraft,
+  rankPlanOf,
+  rowDomId,
+  scheduledOf,
+  undecidedOf,
+} from "./roadmap-ui-model";
 import { useRoadmapAction, useRoadmapRuntime } from "./roadmap-runtime";
 import { ItemEditor, type ItemEditorScope } from "./ItemEditor";
 import { MilestoneCard, type MilestoneCardContext } from "./MilestoneCard";
 import { RunFacts } from "./RunFacts";
 import { AreaChipView } from "./AimCard";
+import { DepthLines } from "./AimHeader";
+import { DateBlock } from "./DateBlock";
+import { GapPanel, type LiveGates } from "./GapPanel";
 import { RoadmapGlyph } from "./RoadmapGlyph";
 import "./roadmap.css";
 
-/** The editor's scope from the view (the label checks' context and the Domain sheets' library). */
-export function editorScopeOf(view: RoadmapView, milestones: readonly MilestoneDraft[]): ItemEditorScope | null {
+/** The editor's scope from the view (the label checks' context, the Domain sheets' library, and the type picker's exclusions). */
+export function editorScopeOf(view: RoadmapView, milestones: readonly MilestoneDraft[], allowed: readonly CatalogKey[] = []): ItemEditorScope | null {
   const h = view.header;
   if (!h) return null;
   const syllabusLines = milestones.flatMap((m) => m.items.filter((it) => it.kind === "TOPIC" && it.origin === "SYLLABUS").map((it) => it.label));
@@ -94,37 +153,70 @@ export function editorScopeOf(view: RoadmapView, milestones: readonly MilestoneD
     track: h.track,
     library: view.library,
     syllabusLines,
-    milestoneCount: scheduledOf(milestones).length,
+    milestoneCount: scheduledOf(milestones).filter((m) => !isHeldMilestone(m)).reduce((n, m) => Math.max(n, m.ord), 0),
     today: view.today,
+    excluded: (view.draft?.exclusions ?? []).map((x) => x.kind),
+    allowed,
   };
 }
 
-function scrollToRow(id: string) {
+/** Scrolls to a row (or a plan-level card), focusing its first control. */
+function scrollToId(domId: string) {
   if (typeof document === "undefined") return;
-  const el = document.getElementById(rowDomId(id));
+  const el = document.getElementById(domId);
   if (!el) return;
   el.scrollIntoView({ block: "center" });
   const focusable = el.querySelector<HTMLElement>("button, a, input");
   focusable?.focus({ preventScroll: true });
 }
 
+function scrollToRow(id: string) {
+  scrollToId(rowDomId(id));
+}
+
+/** The additions card's and the session picks card's DOM ids: "Next item to decide" lands on the plan-level decision. */
+export const ADDITIONS_DOM_ID = "rm-additions";
+export const PICKS_DOM_ID = "rm-picks";
+
+/**
+ * Where "Next item to decide" goes (F-R4-21): R4's nextToDecide is a pending
+ * addition's or session pick's item id first; those are decided once, in
+ * their plan-level card, so the footer scrolls there.
+ */
+export function nextTargetOf(draft: Pick<DraftView, "nextToDecide" | "additions" | "sessionPicks" | "milestones">, fallback: string | null): string | null {
+  const id = draft.nextToDecide ?? fallback;
+  const additionIds = new Set((draft.additions ?? []).map((a) => a.itemId).filter((x): x is string => Boolean(x)));
+  const pendingAdd = draft.milestones.some((m) => m.items.some((it) => it.kind === "DOMAIN" && it.origin === "GEMINI" && it.decision === "PENDING" && it.notes.includes("NOT_CHOSEN")));
+  if (pendingAdd && (draft.additions?.length ?? 0) > 0 && (!id || additionIds.has(id) || draft.milestones.some((m) => m.items.some((it) => it.id === id && it.notes.includes("NOT_CHOSEN"))))) return ADDITIONS_DOM_ID;
+  if (draft.sessionPicks?.decision === "PENDING" && (!id || draft.milestones.some((m) => m.items.some((it) => it.id === id && it.notes.includes("GEMINI_PICK"))))) return PICKS_DOM_ID;
+  return id ? rowDomId(id) : null;
+}
+
 /** RunFacts adds to the lead line only for a Gemini run or a report with entries ("built from your numbers" is the lead already). */
 function runSaysMore(run: RunView): boolean {
   const r = run.report;
-  return run.kind === "GEMINI" || Boolean(r && (r.dropped.length > 0 || r.flagged.length > 0 || r.notes.length > 0));
+  return run.kind === "GEMINI" || Boolean(r && (r.dropped.length > 0 || r.flagged.length > 0 || r.notes.length > 0 || r.integrity));
+}
+
+/** A run whose reply the integrity walk rejected (F-R4-20): the plan on screen is the app's, written in its place. */
+export function runRejectedOf(run: RunView | null): boolean {
+  return Boolean(run && run.kind === "GEMINI" && (run.report?.integrity?.verdict === "REJECTED" || /^reply rejected/i.test(run.error ?? "")));
 }
 
 /**
  * The eyebrow and the lead line by who wrote the rows on screen (F9 Header;
- * the contract §11.2). A re-plan's rows start from the accepted plan: one the
- * app re-fitted (INHOUSE) reads "Re-fitted from your accepted plan.", one the
- * user edited (MANUAL) "Edited from your accepted plan.", and while any row
- * is still Gemini's words (`geminiWords`) the line adds "Gemini's words stay
- * marked." — never "Built from your numbers." over rows Gemini wrote.
+ * the contract §11.2; revision 4's keys-only header). A re-plan's rows start
+ * from the accepted plan: one the app re-fitted (INHOUSE) reads "Re-fitted
+ * from your accepted plan.", one the user edited (MANUAL) "Edited from your
+ * accepted plan.", and while any row is still Gemini's words (`geminiWords`)
+ * the line adds "Gemini's words stay marked." — never "Built from your
+ * numbers." over rows Gemini wrote. A keys-only Gemini draft (`keysOnly`)
+ * reads GEMINI_V3_LEAD_LINE: it wrote none of the words.
  */
-export function draftLeadOf(writer: RunWriter | null, mode: "draft" | "replan", nonEnglish: boolean, geminiWords = false): { eyebrow: string; lead: string | null } {
+export function draftLeadOf(writer: RunWriter | null, mode: "draft" | "replan", nonEnglish: boolean, geminiWords = false, keysOnly = false): { eyebrow: string; lead: string | null } {
   const eyebrow =
     mode === "replan" ? REPLAN_EYEBROW : writer === "GEMINI" ? "Draft · not accepted yet" : writer === "MANUAL" ? "Draft · written by you" : writer ? "Draft · built from your numbers" : "Draft · not accepted yet";
+  if (keysOnly && writer === "GEMINI") return { eyebrow, lead: GEMINI_V3_LEAD_LINE };
   if (nonEnglish && writer === "GEMINI") return { eyebrow, lead: "Gemini's labels are in your language; the app's checks read English only, so each needs your tap." };
   if (mode === "replan" && writer && writer !== "GEMINI") {
     const base = writer === "INHOUSE" ? REPLAN_REFIT_LINE : writer === "MANUAL" ? REPLAN_EDITED_LINE : BUILT_LEAD_LINE;
@@ -167,13 +259,16 @@ export function UncoveredSyllabus({ indices, milestoneId, ord }: { indices: read
 }
 
 /** The draft's header card (a DRAFT roadmap), or the re-plan's (an ACTIVE roadmap's version + 1). */
-function DraftHeader({ header, run, view, mode, next }: { header: RoadmapHeader; run: RunView | null; view: RoadmapView; mode: "draft" | "replan"; next: MilestoneDraft | null }) {
+function DraftHeader({ header, run, view, mode, next, keysOnly, gates }: { header: RoadmapHeader; run: RunView | null; view: RoadmapView; mode: "draft" | "replan"; next: MilestoneDraft | null; keysOnly: boolean; gates?: LiveGates }) {
   const { run: act, pending, error, runtime } = useRoadmapAction();
   const draft = view.draft!;
   const writer = draftRunWriterOf(run);
-  const { eyebrow, lead } = draftLeadOf(writer, mode, draft.nonEnglish, draftHasGeminiWords(draft.milestones));
+  const rejected = runRejectedOf(run);
+  const { eyebrow, lead } = draftLeadOf(writer, mode, draft.nonEnglish, draftHasGeminiWords(draft.milestones), keysOnly);
   const capped = run?.capped === true || run?.status === "CAPPED";
-  const uncovered = draft.uncoveredSyllabus.length > 0 ? <UncoveredSyllabus indices={draft.uncoveredSyllabus} milestoneId={next?.id ?? null} ord={next?.ord ?? null} /> : null;
+  const geminiLive = (gates?.gemini ?? ROADMAP_GEMINI_LIVE) && view.hasKey;
+  // On a keys-only draft the uncovered lines sit under "Lines to look at", with the lines tied to no Domain.
+  const uncovered = !keysOnly && draft.uncoveredSyllabus.length > 0 ? <UncoveredSyllabus indices={draft.uncoveredSyllabus} milestoneId={next?.id ?? null} ord={next?.ord ?? null} /> : null;
   const discard = () =>
     act(
       (a) => a.discardDraft(header.id),
@@ -209,28 +304,30 @@ function DraftHeader({ header, run, view, mode, next }: { header: RoadmapHeader;
       </section>
     );
   }
+  const bodyTrack = header.area.kind === "TRACK" && header.area.track === "BODY";
   return (
     <section className="card rm-aim" aria-label="The draft">
       <div className="t-eyebrow">{eyebrow}</div>
       <p className="rm-aim-t">{header.aim}</p>
       <div className="rm-chips">
         <AreaChipView area={header.area} />
-        <Chip>{byLine(header.targetDay, view.today, false)}</Chip>
+        <Chip>{header.depth != null ? depthName(header.depth) : byLine(header.targetDay, view.today, false)}</Chip>
+        {header.examLabel && <Chip>Exam: {header.examLabel}</Chip>}
         <Chip>
           {header.hoursPerWeek} h a week · {INTENSITY_WORD[header.intensity]}
         </Chip>
-        {header.examLabel && <Chip>Exam: {header.examLabel}</Chip>}
       </div>
-      {lead && <p className="rm-lead">{lead}</p>}
+      {rejected ? <p className="rm-lead">{RUN_REJECTED_LINE}</p> : lead && <p className="rm-lead">{lead}</p>}
+      {keysOnly && bodyTrack && <p className="rm-lead">{HEALTH_LINE}</p>}
       <div className="rm-lines">
         {run && runSaysMore(run) && <RunFacts run={run} today={view.today} />}
-        {header.constraints && <span>{CONSTRAINTS_LINE}</span>}
+        {header.constraints && !keysOnly && <span>{CONSTRAINTS_LINE}</span>}
         {uncovered}
         <span>
           <Link className="rm-ilink" href={ROADMAP_NEW_HREF}>
             Edit the intake
           </Link>
-          {view.hasKey && writer === "GEMINI" && !capped && (
+          {geminiLive && writer === "GEMINI" && !capped && (
             <>
               {" · "}
               <button type="button" className="rm-ilink" disabled={pending} onClick={() => act((a) => a.redraft(header.id))}>
@@ -252,16 +349,225 @@ function DraftHeader({ header, run, view, mode, next }: { header: RoadmapHeader;
   );
 }
 
-function DraftFooter({ view, next, outlineCount, mode }: { view: RoadmapView; next: MilestoneDraft | null; outlineCount: number; mode: "draft" | "replan" }) {
+/**
+ * Gemini's Domain additions (F-R4-21): one row above the milestones with the
+ * user's own Domains, their real counts, the count each would be held to,
+ * and the date effect, shown before anything is confirmed. A pending one
+ * blocks Accept. Nothing is ever added without the user's tap.
+ */
+export function AdditionsCard({ view }: { view: RoadmapView }) {
+  const draft = view.draft!;
+  const header = view.header!;
+  const adds = draft.additions ?? [];
+  const [choosing, setChoosing] = useState(draft.additionsMode === "TOGGLES");
+  const [on, setOn] = useState<Set<string>>(new Set());
+  const { run, pending, error } = useRoadmapAction();
+  if (adds.length === 0) return null;
+  const open = adds.filter((a) => !a.blocked);
+  const confirm = (ids: readonly string[]) => run((a) => a.confirmDomainAdditions(header.id, draft.version, [...ids]));
+  const effect = (ids: readonly string[]) => {
+    const names = adds.filter((a) => ids.includes(a.domainId)).map((a) => a.name);
+    const { from, to } = additionsDatesOf(draft, ids);
+    return additionEffectLine(names, from, to);
+  };
+  const allEffect = effect(open.map((a) => a.domainId));
+  // R never passes DEPTH_DOMAINS_MAX: once the chosen ones fill it, the rest are disabled.
+  const required = draft.depth?.coverage.length ?? 0;
+  const roomLeft = Math.max(0, DEPTH_DOMAINS_MAX - required);
+  return (
+    <section className="card rm-adds" id={ADDITIONS_DOM_ID} aria-label="Gemini's suggested Domains">
+      <p className="rm-adds-t">{additionsLine(adds)}</p>
+      {!choosing && allEffect && <p className="t-meta">{allEffect}</p>}
+      {choosing &&
+        adds.map((a) => {
+          const full = !on.has(a.domainId) && on.size >= roomLeft;
+          const blocked = a.blocked ?? (full ? "TOO_MANY_DOMAINS" : null);
+          const one = effect([a.domainId]);
+          return (
+            <div key={a.domainId} id={a.itemId ? rowDomId(a.itemId) : undefined} className={blocked ? "rm-add rm-add-blocked" : "rm-add"}>
+              <div>
+                <b>{a.name}</b>
+                <p className="t-meta">
+                  {plural(a.cards, "card")}
+                  {a.atSix > 0 ? ` · ${a.atSix} at level 6+` : ""} · counts at {a.n}
+                </p>
+                <p className="t-meta">{blocked ? additionBlockedLine(a.name, blocked) : one}</p>
+              </div>
+              <Switch
+                checked={on.has(a.domainId)}
+                disabled={Boolean(blocked)}
+                onChange={(v) => setOn((s) => (v ? new Set([...s, a.domainId]) : new Set([...s].filter((x) => x !== a.domainId))))}
+                label={`Add ${a.name}`}
+              />
+            </div>
+          );
+        })}
+      {choosing && on.size > 1 && <p className="t-meta">{effect([...on])}</p>}
+      <div className="rm-acts">
+        {choosing ? (
+          <>
+            <Button variant="primary" disabled={pending} onClick={() => confirm([...on])}>
+              {CONFIRM_WORD}
+            </Button>
+            <p className="t-meta" style={{ margin: 0 }}>
+              Each is off until you turn it on. Gemini can&apos;t check what the aim needs.
+            </p>
+          </>
+        ) : (
+          <>
+            {open.length > 0 && (
+              <Button disabled={pending} onClick={() => confirm(open.map((a) => a.domainId))}>
+                {open.length === 1 ? `Add ${open[0].name}` : addAllWord(open.length)}
+              </Button>
+            )}
+            <Button onClick={() => setChoosing(true)}>{CHOOSE_WORD}</Button>
+            <Button variant="quiet" disabled={pending} onClick={() => confirm([])}>
+              {LEAVE_OUT_WORD}
+            </Button>
+          </>
+        )}
+      </div>
+      {error && <ActionError>{error}</ActionError>}
+    </section>
+  );
+}
+
+/** The kinds the constraints left out (with [Allow one]) and the aim-conflict line (F-R4-17). */
+function ExclusionsCard({ view, allowed, onAllow }: { view: RoadmapView; allowed: readonly CatalogKey[]; onAllow: (k: CatalogKey) => void }) {
+  const draft = view.draft!;
+  const xs = (draft.exclusions ?? []).filter((x) => !allowed.includes(x.kind));
+  const line = exclusionsLine(xs);
+  const conflict = draft.aimConflict ? aimConflictLine(draft.aimConflict.word, view.header!.aim) : null;
+  const [allowing, setAllowing] = useState(false);
+  if (!line && !conflict && allowed.length === 0) return null;
+  return (
+    <section className="card pad rm-excl" aria-label="Left out because of your constraints">
+      {line && (
+        <p className="t-meta rm-ink1" style={{ margin: 0 }}>
+          {line}{" "}
+          <button type="button" className="rm-ilink" onClick={() => setAllowing((v) => !v)} aria-expanded={allowing}>
+            Allow one
+          </button>
+        </p>
+      )}
+      {allowing && (
+        <div className="rm-acts">
+          {xs.map((x) => (
+            <ChipButton key={x.kind} onClick={() => onAllow(x.kind)}>
+              {KIND_NAME[x.kind]}
+            </ChipButton>
+          ))}
+        </div>
+      )}
+      {allowed.length > 0 && <p className="t-meta">Allowed back in the type picker: {allowed.map((k) => KIND_NAME[k]).join(", ")}.</p>}
+      {conflict && <p className="t-meta rm-ink1">{conflict}</p>}
+    </section>
+  );
+}
+
+/** A body or care plan's one session-picks confirm (F-R4-17): it quotes the constraints and blocks Accept until answered. */
+function SessionPicksCard({ view }: { view: RoadmapView }) {
+  const draft = view.draft!;
+  const picks = draft.sessionPicks;
+  const { run, pending, error } = useRoadmapAction();
+  if (!picks || picks.decision !== "PENDING" || picks.kinds.length === 0) return null;
+  return (
+    <section className="card rm-adds" id={PICKS_DOM_ID} aria-label="Gemini's session picks">
+      <p className="rm-adds-t">{sessionPicksLine(picks)}</p>
+      <div className="rm-acts">
+        <Button disabled={pending} onClick={() => run((a) => a.confirmSessionPicks(view.header!.id, "KEEP"))}>
+          {SESSION_PICKS_KEEP}
+        </Button>
+        <Button variant="primary" className="rm-btn-wrap" disabled={pending} onClick={() => run((a) => a.confirmSessionPicks(view.header!.id, "EASY"))}>
+          {SESSION_PICKS_EASY}
+        </Button>
+      </div>
+      <p className="t-meta">Nothing reaches Today before you answer. Without Gemini the plan uses only easy, mobility and technique sessions.</p>
+      {error && <ActionError>{error}</ActionError>}
+    </section>
+  );
+}
+
+/**
+ * "Lines to look at" (F-R4-21, F-R4-24): lines in no milestone, lines tied to
+ * no Domain, or the outline's empty state. The empty state names Gemini only
+ * where Gemini may be named (`gemini`: its path live with a key, or a draft
+ * Gemini arranged); otherwise "What to learn comes from your outline." alone.
+ */
+function OutlineLines({ view, next, gemini }: { view: RoadmapView; next: MilestoneDraft | null; gemini: boolean }) {
+  const draft = view.draft!;
+  const header = view.header!;
+  const unassigned = unassignedLinesLine(draft.unassignedLines ?? [], (draft.depth?.coverage.length ?? 0) >= DEPTH_DOMAINS_MAX);
+  if (!header.hasSyllabus && header.area.kind === "FIELD") {
+    return (
+      <section className="card pad rm-lines-card" aria-label="What to learn">
+        <p className="t-meta rm-ink1" style={{ margin: 0 }}>
+          {outlineEmptyLine(gemini)}
+        </p>
+        {header.examLabel && <p className="t-meta rm-ink1">{OUTLINE_EMPTY_EXAM_LINE}</p>}
+        <div className="rm-acts">
+          <Button href={`${ROADMAP_NEW_HREF}#syllabus`}>{ADD_OUTLINE_WORD}</Button>
+        </div>
+      </section>
+    );
+  }
+  if (draft.uncoveredSyllabus.length === 0 && !unassigned) return null;
+  return (
+    <div>
+      <SectionHeader title="Lines to look at" aside="from your outline" />
+      <section className="card pad rm-lines-card">
+        <UncoveredSyllabus indices={draft.uncoveredSyllabus} milestoneId={next?.id ?? null} ord={next?.ord ?? null} />
+        {unassigned && (
+          <p className="t-meta">
+            {unassigned}{" "}
+            <Link className="rm-ilink" href={`${ROADMAP_NEW_HREF}#syllabus`}>
+              Choose Domains
+            </Link>
+          </p>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function DraftFooter({
+  view,
+  next,
+  outlineCount,
+  mode,
+  over,
+  setOver,
+}: {
+  view: RoadmapView;
+  next: MilestoneDraft | null;
+  outlineCount: number;
+  mode: "draft" | "replan";
+  over: boolean;
+  setOver: (v: boolean) => void;
+}) {
   const draft = view.draft!;
   const header = view.header!;
   const { run, pending, error, runtime } = useRoadmapAction();
-  const [over, setOver] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
   const undecided = next ? undecidedOf(next) : [];
   const f = draft.feasibility;
-  const impossibleMs = f.milestones.find((x) => x.worst === "IMPOSSIBLE");
-  const nextId = draft.nextToDecide ?? undecided[0]?.id ?? null;
+  // Only a milestone of this draft can be fixed here: a started (carried) one listed first never names the footer (fix round 2's carry-over).
+  const impossibleMs = f.milestones.find((x) => x.worst === "IMPOSSIBLE" && draft.milestones.some((m) => m.lineageId === x.lineageId));
+  const target = nextTargetOf(draft, undecided[0]?.id ?? null);
+  const dateImpossible = draft.dateCheck?.verdict === "IMPOSSIBLE";
+  const needsOver = f.over || draft.dateCheck?.verdict === "OVER";
+  const pendingPlanLevel = target === ADDITIONS_DOM_ID ? "Gemini's suggested Domains" : target === PICKS_DOM_ID ? "Gemini's session picks" : null;
+
+  if (dateImpossible) {
+    return (
+      <div className="rm-sticky">
+        <Button variant="primary" size="lg" onClick={() => scrollToId("date")}>
+          Change the date or the depth
+        </Button>
+        <p className="t-meta">Your date is before the earliest this depth can be reached: use the realistic date, or choose a lower depth.</p>
+      </div>
+    );
+  }
 
   if (f.impossible && impossibleMs) {
     const ms = draft.milestones.find((x) => x.lineageId === impossibleMs.lineageId);
@@ -275,15 +581,15 @@ function DraftFooter({ view, next, outlineCount, mode }: { view: RoadmapView; ne
     );
   }
 
-  if (!draft.acceptable && nextId) {
+  if (!draft.acceptable && target) {
     return (
       <div className="rm-sticky">
-        <Button variant="primary" size="lg" onClick={() => scrollToRow(nextId)}>
+        <Button variant="primary" size="lg" onClick={() => scrollToId(target)}>
           Next item to decide
         </Button>
         <p className="t-meta">
-          {next ? `${plural(undecided.length, "item")} left in milestone ${next.ord}. ` : ""}
-          {outlineCount > 0 ? `${outlineCount === 1 ? "The other milestone stays" : "The other milestones stay"} an outline; you decide their items when you start each one.` : ""}
+          {pendingPlanLevel ? `1 left: ${pendingPlanLevel}. Then Accept. ` : next ? `${plural(undecided.length, "item")} left in milestone ${next.ord}. ` : ""}
+          {!pendingPlanLevel && outlineCount > 0 ? `${outlineCount === 1 ? "The other milestone stays" : "The other milestones stay"} an outline; you decide their items when you start each one.` : ""}
         </p>
       </div>
     );
@@ -301,7 +607,7 @@ function DraftFooter({ view, next, outlineCount, mode }: { view: RoadmapView; ne
   }
 
   const accept = () => {
-    if (f.over && !over) {
+    if (needsOver && !over) {
       setHint("Turn on “Keep it over my hours/pace” first: this plan asks more than your hours or pace.");
       return;
     }
@@ -320,7 +626,7 @@ function DraftFooter({ view, next, outlineCount, mode }: { view: RoadmapView; ne
 
   return (
     <div className="rm-sticky">
-      {f.over && (
+      {needsOver && (
         <div className="rm-sw" style={{ flexBasis: "100%" }}>
           <span className="rm-sw-t">Keep it over my hours/pace</span>
           <Switch checked={over} onChange={setOver} label="Keep it over my hours/pace" />
@@ -330,7 +636,7 @@ function DraftFooter({ view, next, outlineCount, mode }: { view: RoadmapView; ne
         {pending ? "Accepting…" : "Accept plan"}
       </Button>
       <p className="t-meta">
-        Milestone {next?.ord ?? 1} ready{outlineCount > 0 ? ` · ${outlineCount} in outline` : ""}.{f.over ? " Kept over, it shows a quiet “Over” chip for good." : ""}
+        Milestone {next?.ord ?? 1} ready{outlineCount > 0 ? ` · ${outlineCount} in outline` : ""}.{needsOver ? " Kept over, it shows a quiet “Over” chip for good." : ""}
       </p>
       {hint && (
         <p className="t-error" role="alert">
@@ -342,26 +648,42 @@ function DraftFooter({ view, next, outlineCount, mode }: { view: RoadmapView; ne
   );
 }
 
-export function DraftReview({ view, mode = "draft" }: { view: RoadmapView; /** "replan": an ACTIVE roadmap's version + 1, shown above Now. */ mode?: "draft" | "replan" }) {
+export function DraftReview({
+  view,
+  mode = "draft",
+  gates,
+}: {
+  view: RoadmapView;
+  /** "replan": an ACTIVE roadmap's version + 1, shown above Now. */
+  mode?: "draft" | "replan";
+  /** Fixtures only: draw a lead-only state (the area-suggestion panel). */
+  gates?: LiveGates;
+}) {
   const draft = view.draft;
   const header = view.header;
+  const [allowed, setAllowed] = useState<CatalogKey[]>([]);
+  const [over, setOver] = useState(false);
   const index = useMemo(() => domainIndexOf(view), [view]);
-  const scope = useMemo(() => (draft ? editorScopeOf(view, draft.milestones) : null), [view, draft]);
+  const scope = useMemo(() => (draft ? editorScopeOf(view, draft.milestones, allowed) : null), [view, draft, allowed]);
   if (!draft || !header || !scope) return null;
 
+  const keysOnly = isKeysOnlyDraft(draft);
   const sched = scheduledOf(draft.milestones);
-  const next = draft.milestones.find((m) => m.lineageId === draft.nextLineageId) ?? sched.find((m) => m.status === "DRAFT") ?? sched[0] ?? null;
+  const live = sched.filter((m) => !isHeldMilestone(m));
+  const next = draft.milestones.find((m) => m.lineageId === draft.nextLineageId) ?? live.find((m) => m.status === "DRAFT") ?? live[0] ?? null;
   const outline = draft.milestones.filter((m) => m !== next).sort((a, b) => a.ord - b.ord);
   // A re-plan's milestones take their places after the carried ones (one place per lineage).
   const carried = mode === "replan" ? carriedRowsOf(view.milestones) : [];
   const ranks = rankPlanOf(draft.milestones, carried);
   const mfOf = (m: MilestoneDraft) => draft.feasibility.milestones.find((x) => x.lineageId === m.lineageId) ?? null;
+  const required = draft.depth?.coverage.map((c) => ({ id: c.domainId, name: c.name })) ?? [];
   const ctx: MilestoneCardContext = {
     roadmapId: header.id,
     today: view.today,
     intensity: header.intensity,
     m: draft.feasibility.m,
     targetDay: header.targetDay,
+    dateByApp: header.dateMode === "REALISTIC" || header.dateOrigin?.origin === "REALISTIC" || draft.dateCheck?.dateOrigin.origin === "REALISTIC",
     domainIndex: index,
     credentialNoSyllabus: draft.credential && !header.hasSyllabus,
     bulkKeepOff: draft.bulkKeepOff,
@@ -370,10 +692,20 @@ export function DraftReview({ view, mode = "draft" }: { view: RoadmapView; /** "
     milestoneCount: new Set(carried.map((c) => c.lineageId)).size + sched.length,
     // A re-plan's roadmap is ACTIVE: its intake is closed, so the checks' "Add a figure" opens the figure sheet.
     intakeEditable: mode === "draft",
+    keysOnly,
+    moves: keysOnly
+      ? {
+          roadmapId: header.id,
+          milestones: live.filter((m) => m.id && (m.status === "DRAFT" || m.status === "PLANNED")).map((m) => ({ id: m.id as string, label: `Milestone ${m.ord} · ${m.title}` })),
+          domains: required,
+        }
+      : null,
+    body: header.area.kind === "TRACK" && header.area.track === "BODY",
   };
   // The banner names what happened to the latest run; who wrote the rows is the header's (RunView.wrote).
-  const banner = mode === "draft" ? draftBannerOf(view.run) : null;
+  const banner = mode === "draft" && !runRejectedOf(view.run) ? draftBannerOf(view.run) : null;
   const outlineRange = outline.length > 0 ? (outline.length === 1 ? `Milestone ${outline[0].ord}` : `Milestones ${outline[0].ord}–${outline[outline.length - 1].ord}`) : null;
+  const geminiArranged = draft.milestones.some((m) => m.arrangedBy === "GEMINI");
 
   return (
     <ItemEditor scope={scope}>
@@ -384,8 +716,11 @@ export function DraftReview({ view, mode = "draft" }: { view: RoadmapView; /** "
             <span>{banner}</span>
           </section>
         )}
-        <DraftHeader header={header} run={view.run} view={view} mode={mode} next={next} />
-        {draft.alarm && (
+        <DraftHeader header={header} run={view.run} view={view} mode={mode} next={next} keysOnly={keysOnly} gates={gates} />
+        {keysOnly && <AdditionsCard view={view} />}
+        {keysOnly && <SessionPicksCard view={view} />}
+        {keysOnly && <ExclusionsCard view={view} allowed={allowed} onAllow={(k) => setAllowed((a) => (a.includes(k) ? a : [...a, k]))} />}
+        {draft.alarm && !keysOnly && (
           <section className="card rm-note">
             <Icon name="flag" />
             <span>
@@ -393,12 +728,45 @@ export function DraftReview({ view, mode = "draft" }: { view: RoadmapView; /** "
             </span>
           </section>
         )}
-        {ctx.credentialNoSyllabus && mode === "draft" && (
+        {ctx.credentialNoSyllabus && mode === "draft" && !keysOnly && (
           <section className="card rm-banner">
             <p className="rm-banner-t">
               <b>{CREDENTIAL_LINE}</b>
             </p>
             <Button href={`${ROADMAP_NEW_HREF}#syllabus`}>Paste the syllabus</Button>
+          </section>
+        )}
+        {keysOnly && (draft.depth || draft.dateCheck) && (
+          <div>
+            <SectionHeader title={draft.depth ? "Depth and date" : "Date"} aside="worked out by the app" />
+            <section className="card rm-date-card">
+              {draft.depth && (
+                <div className="rm-ms-sec" style={{ borderTop: 0 }}>
+                  <DepthLines depth={draft.depth} m={draft.feasibility.m} aim={header.aim} today={view.today} />
+                </div>
+              )}
+              {draft.dateCheck && (
+                <DateBlock
+                  roadmapId={header.id}
+                  check={draft.dateCheck}
+                  depth={draft.depth?.depth ?? header.depth ?? null}
+                  rows={live.map((m) => ({ stage: m.stage ?? null, gateLevel: m.measures.find((x) => x.kind === "CARDS_AT_LEVEL" && x.role === "PAYS")?.minLevel ?? null, dueDay: m.dueDay }))}
+                  mode="draft"
+                  keepOver={over}
+                  onKeepMyDate={() => {
+                    if (draft.dateCheck?.verdict === "OVER") setOver(true);
+                    scrollToId("rm-accept");
+                  }}
+                />
+              )}
+              {draft.depth && draft.depth.depth === 12 && <p className="rm-ms-sec t-meta">{paragonDepthLine(draft.depth.coverage.length)}</p>}
+            </section>
+          </div>
+        )}
+        {keysOnly && geminiArranged && (
+          <section className="card rm-arr">
+            <RoadmapGlyph name="info" />
+            <span>{ARRANGEMENT_LINE}</span>
           </section>
         )}
         <div className="rm-grid">
@@ -422,7 +790,11 @@ export function DraftReview({ view, mode = "draft" }: { view: RoadmapView; /** "
             </div>
           )}
         </div>
-        <DraftFooter view={view} next={next} outlineCount={outline.length} mode={mode} />
+        {keysOnly && mode === "draft" && <OutlineLines view={view} next={next} gemini={geminiNamedOf((gates?.gemini ?? ROADMAP_GEMINI_LIVE) && view.hasKey, view.run)} />}
+        <GapPanel gaps={draft.gaps} hidden={draft.gapsHidden} scope={scope} gates={gates} />
+        <div id="rm-accept">
+          <DraftFooter view={view} next={next} outlineCount={outline.filter((m) => !isHeldMilestone(m)).length} mode={mode} over={over} setOver={setOver} />
+        </div>
       </div>
     </ItemEditor>
   );

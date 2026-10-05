@@ -26,6 +26,16 @@
  *   zeroReasonWordsOf (LINEAGE_PAID carries its day) · zeroReasonOf's optional hasCards and lineagePaidOn
  * Fix round 2: ZERO_REASON_WORDS equals R5's ZERO_REASON_LINE ("practice under
  *   a third …", no "is") · zeroReasonWordsOf's optional `today` (the year across a year)
+ * Revision 4 (F-R4-9, F-R4-12; compatible):
+ *   CardLevelRow.recall/retryEntry and cardsAtLevelValue's optional segment · CardsValue
+ *   CardCounts · cardCountsOf · countsOfHistogram · cardsAtLevelFromCounts · levelEntriesOf
+ *   ReviewLedgerRow · isRetryEntry · retryReadDaysOf (the clean-entry ledger reading; since the
+ *   rev-4 fix round re-exported from roadmap-types, the one definition, contracts §15.1)
+ *   PracticeKeep · keptEnough · AimReachInput · AimReachMissing · aimReachMissingOf · aimReachedOf
+ *   The measure-key segment: `r` counts recall cards only (every type but
+ *   NON_RECALL_TYPES); `rc` also leaves out a card at exactly L that entered L
+ *   on a next-day retry, until its next pass (clean entry). A key without the
+ *   segment counts every card, exactly as in rev 3.
  */
 import { addDays, daysBetween, type DayKey } from "./life-day";
 import { goalPercent, stepsDoneAsOf, type GoalStep, type RoadmapSeriesPoint } from "./goals";
@@ -37,6 +47,7 @@ import {
   REACH_CONFIRM_DAYS,
   SELF_KEY_PREFIX,
   checkpointLogPrefix,
+  isRecallType,
   keptUnits,
   measured,
   otherTrackedMinutesOf,
@@ -45,6 +56,7 @@ import {
   practiceMinutesPerWeekOf,
   selfReported,
   startStatedInputOf,
+  type CardSegment,
   type EvidenceValue,
   type ItemDraft,
   type MeasureSpec,
@@ -70,22 +82,64 @@ export interface CardLevelRow {
   domainId: string;
   level: number;
   isArchived?: boolean;
+  /** Revision 4: false for a NON_RECALL_TYPES card (multiple choice); absent reads as a recall card. */
+  recall?: boolean;
+  /** Revision 4 (clean entry): it entered its current level on a next-day retry (isRetryEntry). */
+  retryEntry?: boolean;
 }
 
 /**
- * CARDS_AT_LEVEL (MEASURED): non-archived cards in the scope's Domains at
- * level ≥ minLevel; levels 13–20 count. detail {byDomain}.
+ * A CARDS_AT_LEVEL value: the count and its split by Domain. On a key with a
+ * segment (rev 4) it also carries what the count left out, so the plan can
+ * say why: `retryEntries` (cards at exactly L that entered L on a retry: "2
+ * cards reached level 12 on a retry: they count after their next review",
+ * `rc` only) and `notCounted` (multiple-choice cards at ≥ L, by Domain).
  */
-export function cardsAtLevelValue(cards: readonly CardLevelRow[], domainIds: readonly string[], minLevel: number): { value: number; byDomain: Record<string, number> } {
+export interface CardsValue {
+  value: number;
+  byDomain: Record<string, number>;
+  retryEntries?: number;
+  retryByDomain?: Record<string, number>;
+  notCounted?: Record<string, number>;
+}
+
+/** A Domain id that is safe as a plain object key (never a prototype name). */
+const ownKey = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
+
+/**
+ * CARDS_AT_LEVEL (MEASURED): non-archived cards in the scope's Domains at
+ * level ≥ minLevel; levels 13–20 count. detail {byDomain}. Revision 4: with
+ * segment `r` only recall cards count (a row with recall false is left out);
+ * with `rc` a card at exactly minLevel that entered it on a retry is left out
+ * too, until its next pass. No segment counts every card (rev 3).
+ */
+export function cardsAtLevelValue(cards: readonly CardLevelRow[], domainIds: readonly string[], minLevel: number, segment?: CardSegment | null): CardsValue {
   const byDomain: Record<string, number> = {};
-  for (const id of new Set(domainIds)) byDomain[id] = 0;
+  const retryByDomain: Record<string, number> = {};
+  const notCounted: Record<string, number> = {};
+  for (const id of new Set(domainIds)) {
+    byDomain[id] = 0;
+    retryByDomain[id] = 0;
+    notCounted[id] = 0;
+  }
   let value = 0;
+  let retryEntries = 0;
   for (const c of cards) {
-    if (c.isArchived === true || !(c.domainId in byDomain) || !(c.level >= minLevel)) continue;
+    if (c.isArchived === true || !ownKey(byDomain, c.domainId) || !(c.level >= minLevel)) continue;
+    if (segment && c.recall === false) {
+      notCounted[c.domainId] += 1;
+      continue;
+    }
+    if (segment === "rc" && c.level === minLevel && c.retryEntry === true) {
+      retryByDomain[c.domainId] += 1;
+      retryEntries += 1;
+      continue;
+    }
     byDomain[c.domainId] += 1;
     value += 1;
   }
-  return { value, byDomain };
+  if (!segment) return { value, byDomain };
+  return { value, byDomain, retryEntries, retryByDomain, notCounted };
 }
 
 /**
@@ -126,6 +180,113 @@ export function levelsInScope(h: LevelHistogram, domainIds: readonly string[]): 
   for (const id of new Set(domainIds)) for (const [level, count] of Object.entries(h[id] ?? {})) for (let i = 0; i < count; i++) out.push(Number(level));
   return out.sort((a, b) => b - a);
 }
+
+// ═══ Revision 4: recall cards and clean entry (F-R4-9, F-R4-12) ════════════
+
+/**
+ * Every card figure a depth plan reads, from one grouped read (Idea groupBy
+ * domainId, level, questionType) and, at the `rc` levels, the clean-entry
+ * ledger read:
+ *   all     every non-archived card (rev 3's histogram; a key with no segment);
+ *   recall  the recall cards (every type but NON_RECALL_TYPES);
+ *   retry   recall cards at exactly a level that entered it on a next-day retry
+ *           (read only at the levels of the plan's `rc` keys).
+ */
+export interface CardCounts {
+  all: LevelHistogram;
+  recall: LevelHistogram;
+  retry: LevelHistogram;
+}
+
+/** One row of the grouped read. A row with no type (a check's fixture) reads as a recall card. */
+export interface CardGroupRow {
+  domainId: string;
+  level: number;
+  questionType?: string | null;
+  count: number;
+}
+
+/** CardCounts from the grouped rows and the retry entries found at the `rc` levels. */
+export function cardCountsOf(groups: readonly CardGroupRow[], retry: LevelHistogram = {}): CardCounts {
+  const all: Record<string, Record<number, number>> = {};
+  const recall: Record<string, Record<number, number>> = {};
+  for (const g of groups) {
+    if (!(g.count > 0) || !Number.isFinite(g.level)) continue;
+    const a = (all[g.domainId] ??= {});
+    a[g.level] = (a[g.level] ?? 0) + g.count;
+    if (g.questionType == null || isRecallType(g.questionType)) {
+      const r = (recall[g.domainId] ??= {});
+      r[g.level] = (r[g.level] ?? 0) + g.count;
+    }
+  }
+  return { all, recall, retry };
+}
+
+/** A rev-3 histogram as CardCounts: every card counts as recall and none entered on a retry (the checks' rev-3 fixtures). */
+export function countsOfHistogram(h: LevelHistogram): CardCounts {
+  return { all: h, recall: h, retry: {} };
+}
+
+/**
+ * One Domain's (level, count) pairs as a key with this segment weighs them:
+ * no segment, every card; `r`, recall cards; `rc`, recall cards with the
+ * retry entries at exactly `level` moved down to level − 1 (they count after
+ * their next pass, and Proficiency weighs them as L − 1). Highest first.
+ */
+export function levelEntriesOf(counts: CardCounts, domainId: string, level: number, segment?: CardSegment | null): [number, number][] {
+  const h = segment ? counts.recall : counts.all;
+  const row = ownKey(h, domainId) ? h[domainId] : {};
+  const retryRow = segment === "rc" && ownKey(counts.retry, domainId) ? counts.retry[domainId] : {};
+  const out = new Map<number, number>();
+  for (const [k, n] of Object.entries(row)) {
+    const l = Number(k);
+    if (!(n > 0)) continue;
+    const retry = l === level ? Math.min(n, Math.max(0, retryRow[l] ?? 0)) : 0;
+    if (n - retry > 0) out.set(l, (out.get(l) ?? 0) + n - retry);
+    if (retry > 0) out.set(l - 1, (out.get(l - 1) ?? 0) + retry);
+  }
+  return Array.from(out.entries()).sort((a, b) => b[0] - a[0]);
+}
+
+/**
+ * CARDS_AT_LEVEL from CardCounts: no segment reads exactly as
+ * cardsAtLevelFromHistogram over every card (rev 3); `r` counts recall
+ * cards at ≥ L; `rc` also leaves out the retry entries at exactly L. The
+ * value carries what was left out (CardsValue).
+ */
+export function cardsAtLevelFromCounts(counts: CardCounts, domainIds: readonly string[], level: number, segment?: CardSegment | null): CardsValue {
+  if (!segment) return cardsAtLevelFromHistogram(counts.all, domainIds, level);
+  const byDomain: Record<string, number> = {};
+  const retryByDomain: Record<string, number> = {};
+  const notCounted: Record<string, number> = {};
+  let value = 0;
+  let retryEntries = 0;
+  for (const id of new Set(domainIds)) {
+    let recallAt = 0;
+    let allAt = 0;
+    for (const [k, n] of Object.entries(ownKey(counts.recall, id) ? counts.recall[id] : {})) if (Number(k) >= level) recallAt += n;
+    for (const [k, n] of Object.entries(ownKey(counts.all, id) ? counts.all[id] : {})) if (Number(k) >= level) allAt += n;
+    const atL = (ownKey(counts.recall, id) ? counts.recall[id][level] : 0) ?? 0;
+    const retry = segment === "rc" ? Math.min(atL, Math.max(0, (ownKey(counts.retry, id) ? counts.retry[id][level] : 0) ?? 0)) : 0;
+    byDomain[id] = recallAt - retry;
+    retryByDomain[id] = retry;
+    notCounted[id] = Math.max(0, allAt - recallAt);
+    value += recallAt - retry;
+    retryEntries += retry;
+  }
+  return { value, byDomain, retryEntries, retryByDomain, notCounted };
+}
+
+/*
+ * Clean entry (decision 36, F-R4-12): the REVIEW-ledger reading has ONE
+ * definition, roadmap-types' (fix round, contracts §15.1): R1's rule, which
+ * the reach DP follows too, plus R6's skip of backfill and unrecognised rows.
+ * R1's readings, R6's RAISE parts and R4's planContext (CardState.retryEntry)
+ * all read it; it is re-exported here so this module's callers keep their
+ * import. A retry entry counts as level − 1 for the `rc` terms until its next
+ * pass (which moves it above `level`).
+ */
+export { isRetryEntry, retryReadDaysOf, type ReviewLedgerRow } from "./roadmap-types";
 
 // ═══ PRACTICE_KEPT ══════════════════════════════════════════════════════════
 
@@ -198,9 +359,27 @@ export function practiceDetailOf(v: PracticeKeptValue, lineageTemplates?: Readon
   return detail;
 }
 
-/** A row to store for CARDS_AT_LEVEL (value; detail {byDomain}). */
-export function cardsReadingRow(measureKey: string, day: DayKey, v: { value: number; byDomain: Record<string, number> }): { measureKey: string; day: DayKey; value: number; detail: { byDomain: Record<string, number> } } {
-  return { measureKey, day, value: v.value, detail: { byDomain: { ...v.byDomain } } };
+/** A CARDS_AT_LEVEL reading's detail: {byDomain}, and on a key with a segment (rev 4) what the count left out. */
+export interface CardsReadingDetail {
+  byDomain: Record<string, number>;
+  /** `rc`: cards at exactly L that entered L on a retry ("they count after their next review"). */
+  retryEntries?: number;
+  retryByDomain?: Record<string, number>;
+  /** `r` / `rc`: multiple-choice cards at ≥ L, by Domain ("multiple choice not counted"). */
+  notCounted?: Record<string, number>;
+}
+
+/**
+ * A row to store for CARDS_AT_LEVEL (value; detail {byDomain}). A value with
+ * the rev-4 fields (a key with a segment) stores {byDomain, retryEntries,
+ * retryByDomain, notCounted}; a rev-3 key's detail is unchanged.
+ */
+export function cardsReadingRow(measureKey: string, day: DayKey, v: CardsValue): { measureKey: string; day: DayKey; value: number; detail: CardsReadingDetail } {
+  const detail: CardsReadingDetail = { byDomain: { ...v.byDomain } };
+  if (v.retryEntries != null) detail.retryEntries = v.retryEntries;
+  if (v.retryByDomain) detail.retryByDomain = { ...v.retryByDomain };
+  if (v.notCounted) detail.notCounted = { ...v.notCounted };
+  return { measureKey, day, value: v.value, detail };
 }
 
 /** A row to store for PRACTICE_KEPT (value = kept; detail {kept, planned, held, effTarget, byTemplate, byLineage?}). */
@@ -474,6 +653,61 @@ export function reachActionOf(input: ReachInput): ReachAction {
 /** The day a pending reach counts from ("Reached · counts from Thu"). */
 export function countsFromOf(reachPendingDay: DayKey): DayKey {
   return addDays(reachPendingDay, REACH_CONFIRM_DAYS);
+}
+
+// ═══ Revision 4: the aim's reach (F-R4-12; decision 40) ═════════════════════
+
+/** Kept and planned sessions over a set of started stages (from your ticks); kept is capped at planned per practice. */
+export interface PracticeKeep {
+  kept: number;
+  planned: number;
+}
+
+/** Kept at KEEP_SHARE: kept ≥ KEEP_SHARE × planned. Nothing planned (or no figure) holds by itself. */
+export function keptEnough(k: PracticeKeep | null | undefined): boolean {
+  if (!k || !(k.planned > 0)) return true;
+  return k.kept >= KEEP_SHARE * k.planned - 1e-9;
+}
+
+/**
+ * What the aim's reach reads on a revision-4 plan (Roadmap.reachedDay; on a
+ * plan whose top rank is Paragon, that day gives Paragon):
+ *   finalReached  the final stage reached and confirmed (two-phase, REACH_CONFIRM_DAYS);
+ *   termsMet      every end-state term ≥ its target on the same day's readings (a depth
+ *                 plan's terms are the depth: `rc`, recall cards, clean entry, MEASURED);
+ *   practice      a depth plan's practice kept at KEEP_SHARE overall, across every
+ *                 started stage (null: not a depth plan, or none planned);
+ *   production    its production practice kept at KEEP_SHARE across the stages from
+ *                 Fluent on (null: none planned there; the top rank is then Virtuoso);
+ *   standard      the plan's standard (the final milestone's checkpoint with a bar, or
+ *                 EXAM_DAY), when it has one, logged at or above its bar inside its window.
+ * A stage closed short or past due on the way doesn't block it: the final
+ * stage's depth terms cover every lower gate's card terms.
+ */
+export interface AimReachInput {
+  finalReached: boolean;
+  termsMet: boolean;
+  practice?: PracticeKeep | null;
+  production?: PracticeKeep | null;
+  standard?: { required: boolean; met: boolean } | null;
+}
+
+/** What still holds the aim back, in the order the conditions are listed; [] when it is reached. */
+export type AimReachMissing = "FINAL" | "DEPTH" | "PRACTICE" | "PRODUCTION" | "STANDARD";
+
+export function aimReachMissingOf(input: AimReachInput): AimReachMissing[] {
+  const out: AimReachMissing[] = [];
+  if (!input.finalReached) out.push("FINAL");
+  if (!input.termsMet) out.push("DEPTH");
+  if (!keptEnough(input.practice)) out.push("PRACTICE");
+  if (!keptEnough(input.production)) out.push("PRODUCTION");
+  if (input.standard?.required && !input.standard.met) out.push("STANDARD");
+  return out;
+}
+
+/** The aim is reached when nothing is missing (aimReachMissingOf). */
+export function aimReachedOf(input: AimReachInput): boolean {
+  return aimReachMissingOf(input).length === 0;
 }
 
 // ═══ Figures ════════════════════════════════════════════════════════════════

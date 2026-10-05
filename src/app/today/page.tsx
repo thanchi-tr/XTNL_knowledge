@@ -1,19 +1,25 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import { after } from "next/server";
 import { getCurrentUserId } from "@/lib/user";
 import { todayKey } from "@/lib/life-day";
 import { autoCompleteStudyTasks, loadTodayBoard, recordDayOpen } from "@/lib/tasks";
-import { boardClock, unrecordedStudyTasks, weekQuestsShownOnToday } from "@/lib/today-board";
+import { boardClock, buildBoard, unrecordedStudyTasks, weekQuestsShownOnToday } from "@/lib/today-board";
 import { getDailyStreak } from "@/lib/streak";
 import { loadBossStates } from "@/lib/bosses";
 import { loadNotifications } from "@/lib/notifications";
 import { isLaunched } from "@/lib/life-economy";
 import { maybeMaintainLife } from "@/lib/settlement";
 import { freezeWeekQuests, loadWeekQuests } from "@/lib/roadmap-quests-server";
+import { loadAimStep } from "@/lib/roadmap-server";
+import { AIM_STEP_COOKIE, aimPromptOf, todayAimLineOf } from "@/lib/roadmap-invite";
+import { AIM_PROMPT_COOKIE, ROADMAP_GOALS_LIVE } from "@/lib/roadmap-types";
 import { ShellTitle } from "@/components/shell/ShellTitle";
 import { longDate } from "@/components/shell/nav";
 import { TodayBoard } from "@/components/today/TodayBoard";
+import { closeItemsOf } from "@/components/today/board-ui";
 import { WeekQuests } from "@/components/roadmap/WeekQuests";
+import { AimLine } from "@/components/roadmap/AimLine";
 
 // The board turns on the clock (a 04:00 day edge, a ten-minute undo window)
 // and on every tick — never statically cache it.
@@ -33,14 +39,19 @@ export default async function TodayPage() {
   // top bar's bell), and this life week's quests for the started roadmap
   // milestone (roadmap F17: one cached indexed row once the week is frozen,
   // so the card loads with the board; no Suspense, no fallback, and a
-  // failure or a missing table renders nothing). All cached; a warm load
-  // costs nothing.
-  const [board, streak, bosses, feed, quests] = await Promise.all([
+  // failure or a missing table renders nothing). Revision 4 (F-R4-3) adds the
+  // aim's step (R4's loadAimStep: at most 4 indexed reads, cached for the life
+  // day on 'roadmap' and 'life'; a missing table or column, or a failure,
+  // reads as no line) and the request's cookies (the "Not now" snoozes). All
+  // cached; a warm load costs nothing.
+  const [board, streak, bosses, feed, quests, aimStep, jar] = await Promise.all([
     loadTodayBoard(userId, day, now),
     getDailyStreak(userId),
     loadBossStates(userId),
     loadNotifications(userId, now).catch(() => null),
     loadWeekQuests(userId, now).catch(() => null),
+    loadAimStep(userId, now).catch(() => null),
+    cookies(),
   ]);
 
   // Writes a render may owe, after the response and only when owed: the
@@ -82,9 +93,44 @@ export default async function TodayPage() {
   // silently shift every day edge in the app, and this is where it shows.
   const clock = boardClock(now);
 
+  // Revision 4 (F-R4-3, decisions 35 and 49): one quiet aim line, from day
+  // keys alone (roadmap-invite todayAimLineOf; no view is counted): SET on a
+  // fresh-start day with its back-off (the Settings switch and every "Not
+  // now" silence it: 'later:' from the /you ASK card, 'hide:' from the /you
+  // LATER line and from this line's SET ×, whose label promises no aim
+  // suggestions for 4 weeks; aimPromptOf reads the cookie and the switch,
+  // and the page never branches on the prompt), DRAFT for a waiting draft (3
+  // days at most), START for a milestone ready to start (never while
+  // ROADMAP_GOALS_LIVE is false). Nothing here writes: "Not now" is
+  // AimLine's own action.
+  const aimCookie = jar.get(AIM_PROMPT_COOKIE)?.value;
+  const aimLine = todayAimLineOf({
+    step: aimStep,
+    prompt: aimPromptOf(aimCookie, aimStep?.aimSuggestions ?? null, day),
+    cookie: aimCookie,
+    stepCookie: jar.get(AIM_STEP_COOKIE)?.value,
+    today: day,
+    goalsLive: ROADMAP_GOALS_LIVE,
+  });
+  // The line hides only while Close the day is due: the board's slot carries
+  // data-compact on the evening clock (closeDayProminent), and this wrapper
+  // carries data-close-due when Close the day has something to close (the
+  // board's own closeItemsOf, over the same board), so an evening with
+  // nothing left open still shows it (roadmap.css keys the rule on both).
+  const closeBoard = aimLine && !weekQuestsShownOnToday(quests?.view) ? buildBoard(board) : null;
+  const closeDue = closeBoard ? closeItemsOf({ must: closeBoard.must, todayRows: closeBoard.todayRows, today: closeBoard.today, live: closeBoard.dutyLive }).length > 0 : false;
+
   // The week quests card (F17) under the goals, only for an open week with a
-  // quest: never an Ask, a count or a bell line, and never on red.
-  const questsSlot = quests && weekQuestsShownOnToday(quests.view) ? <WeekQuests variant="today" view={quests.view} /> : null;
+  // quest; else the aim line in the same slot, so the two never show together.
+  // Never an Ask, a count or a bell line, and never on red.
+  const questsSlot =
+    quests && weekQuestsShownOnToday(quests.view) ? (
+      <WeekQuests variant="today" view={quests.view} />
+    ) : aimLine ? (
+      <div className="rm-aim-slot" data-close-due={closeDue ? "1" : undefined}>
+        <AimLine view={aimLine} />
+      </div>
+    ) : null;
 
   return (
     <>

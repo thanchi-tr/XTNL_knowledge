@@ -12,6 +12,8 @@
  *   Map to…         → the Domain picker over the user's library — EDITED
  *   Create          → an editable name, label-checked, then the similar-name prompt — EDITED or CHECKED
  *   Drop            → resolveDomain DROP
+ *   Change the type → a code-worded practice, step or checkpoint swapped for
+ *                     another from the app's list (revision 4, F-R4-21): EDITED
  *
  * The milestone's title is decided through its milestone id (decideItem and
  * editItem take it in place of an item id; R4's cores read either).
@@ -21,11 +23,13 @@ import { Sheet } from "@/components/ui/Sheet";
 import { Button } from "@/components/ui/Button";
 import type { Track } from "@/lib/life-types";
 import type { ItemDraft, MilestoneDraft } from "@/lib/roadmap-types";
+import type { CatalogKey } from "@/lib/roadmap-catalog";
 import { useRoadmapAction } from "./roadmap-runtime";
 import { ITEM_ACTION_WORD, itemClassOf, type EditorRow, type ItemAction, type LibraryDomain } from "./roadmap-ui-model";
 import { labelWithClass } from "./roadmap-copy";
 import { EditItemSheet } from "./EditItemSheet";
 import { CreateDomainSheet, MapDomainSheet } from "./DomainSheets";
+import { CatalogTypeSheet } from "./CatalogSheet";
 
 /** What the label checks and the Domain sheets read (F6's LabelContext, the Area, the library). */
 export interface ItemEditorScope {
@@ -42,6 +46,9 @@ export interface ItemEditorScope {
   syllabusLines: readonly string[];
   milestoneCount: number;
   today: string;
+  /** Revision 4: the types the constraints left out (DraftView.exclusions), and the ones the user allowed back ([Allow one]): the type picker reads both. */
+  excluded?: readonly CatalogKey[];
+  allowed?: readonly CatalogKey[];
 }
 
 /** The row an action is about, with its item (null for the title) and its milestone. */
@@ -72,6 +79,7 @@ export function ItemEditor({ scope, children }: { scope: ItemEditorScope; childr
   const [edit, setEdit] = useState<ActTarget | null>(null);
   const [map, setMap] = useState<ActTarget | null>(null);
   const [create, setCreate] = useState<ActTarget | null>(null);
+  const [type, setType] = useState<ActTarget | null>(null);
   const [overflow, setOverflow] = useState<{ target: ActTarget; actions: readonly ItemAction[] } | null>(null);
 
   const act = useCallback(
@@ -100,6 +108,9 @@ export function ItemEditor({ scope, children }: { scope: ItemEditorScope; childr
           return;
         case "CREATE":
           setCreate(target);
+          return;
+        case "TYPE":
+          setType(target);
           return;
       }
     },
@@ -145,6 +156,7 @@ export function ItemEditor({ scope, children }: { scope: ItemEditorScope; childr
       <EditItemSheet target={edit} scope={scope} onClose={() => setEdit(null)} />
       <MapDomainSheet target={map} scope={scope} onClose={() => setMap(null)} />
       <CreateDomainSheet target={create} scope={scope} onClose={() => setCreate(null)} />
+      <CatalogTypeSheet target={type} scope={scope} onClose={() => setType(null)} />
     </EditorContext.Provider>
   );
 }

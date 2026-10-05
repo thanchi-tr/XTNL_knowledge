@@ -18,9 +18,19 @@
  * Targets are CSS selectors, best first; the tour spotlights the first one
  * that is on screen (the tab bar < 600, the rail 600–1279 and the sidebar
  * from 1280 are all in the DOM, two of them display:none). A page-specific
- * target ([data-tour="today-lanes"] on /today, [data-tour="you-hero"] on
- * /you) wins where it exists; elsewhere the step falls back to the shell's
- * own link, which is on every page. A step with no visible target is centred.
+ * target ([data-tour="today-lanes"] on /today, [data-tour="you-aim"] then
+ * [data-tour="you-hero"] on /you) wins where it exists; elsewhere the step
+ * falls back to the shell's own link, which is on every page. A step with no
+ * visible target is centred.
+ *
+ * The You step names the aim (roadmap-rev4.md F-R4-6, question 3 approved):
+ * copy only, still seven steps, and TOUR_SEEN_KEY is honoured, so nobody who
+ * has seen the tour gets it again. Its first target is the Aim card
+ * ([data-tour="you-aim"] on its ASK, LATER, active and legacy roots); with
+ * no card on screen (suggestions off, or hidden for 4 weeks by the line's own
+ * × or Not now on Today's line) the hero takes the spotlight. Like every
+ * invitation to set an aim, YOU_COPY never names Gemini and never says earn,
+ * mastery, ⬡ or a bare "quest".
  */
 import { SECTIONS } from "@/components/shell/nav";
 import { keyParts, shortcutOf, type ShortcutId } from "@/lib/shortcuts";
@@ -56,6 +66,9 @@ export interface StepContext {
 export const TODAY_COPY = "Must, Planned and Habits. Ticking a task pays life XP, and its receipt shows how every number was worked out.";
 /** The Today step once Duty is live (m2-refit F15): the same lanes, plus the stake and the way back, within the 160-character budget. */
 export const TODAY_DUTY_COPY = "Must, Planned and Habits. A tick pays life XP; its receipt shows the sums. A must you miss is owed; make it up within two days and its streak comes back.";
+
+/** The You step (F-R4-6): what the character page is, and the aim it can be given. 145 characters, within the 160 budget. */
+export const YOU_COPY = "Your character grows from what you do. Give it an aim and the app plans milestones toward it, then measures them from your own reviews and ticks.";
 
 /** Wait this long on /today after hydration before the first-run tour starts by itself. */
 export const SETTLE_MS = 800;
@@ -125,8 +138,8 @@ export function tourSteps({ keyboard, keyOf = (id) => shortcutOf(id).keys[0], du
     {
       id: "you",
       title: "You",
-      body: ["Your character. Its Fields and attributes grow from what you do: the ideas you learn and, once life counts, the days you keep."],
-      targets: ['[data-tour="you-hero"]', ...navTargets("you"), '[data-tour="you-crest"]'],
+      body: [YOU_COPY],
+      targets: ['[data-tour="you-aim"]', '[data-tour="you-hero"]', ...navTargets("you"), '[data-tour="you-crest"]'],
     },
     {
       id: "shortcuts",

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="dark">
 <title>Living roadmap</title>
-<meta name="description" content="Mockup, revision 3: the active roadmap page /you/roadmap at 344, 932 and 1440 px with the Aim rank, Proficiency and this week's week quests, plus calibrating, behind, target-lowered, Start, practice-only, past-due and late-window states and the sheets.">
+<meta name="description" content="Mockup, revision 4: the active roadmap /you/roadmap at 344 and 932 px with the stage ladder (a count gate, Familiar, Retained, Fluent with the exam waypoint, Toward Mastered, Mastered), the Depth line, Proficiency toward its basis, week quests with per-Domain parts, and the states: no roadmap, held stages, provenance and coverage choices, a lowered depth, the closed footer, legacy, re-dating, the Start and Close sheets; revision 3's frames follow.">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400&family=Inter:wght@400..700&family=JetBrains+Mono:wght@500;600&display=swap">
 <style>
 /* =====================================================================
@@ -247,6 +247,7 @@ textarea.st-input{resize:vertical;min-height:72px}
 .rm-banner{display:flex;flex-wrap:wrap;gap:10px 12px;align-items:center;padding:12px 14px;border-color:var(--line-ctl)}
 .rm-banner .t{flex:1 1 200px;min-width:0;font-size:14px;line-height:19px}
 .rm-banner .t b{display:block;font-weight:600}
+.rm-banner .t .s{display:block;font-size:13px;line-height:18px;color:var(--ink-1);margin-top:2px}
 /* provenance: a class is always words; colour is never alone */
 .pv{display:inline-flex;align-items:center;gap:5px;min-height:24px;padding:2px 8px;border-radius:var(--r-chip);font:600 12px/16px var(--font-ui);color:var(--ink-1);border:1px solid var(--line-2);max-width:100%}
 .pv svg.i,.pv svg.g{width:12px;height:12px}
@@ -576,6 +577,126 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
 .ml-row .rkc b{color:var(--ink-1);font-weight:600}
 .ml-row .r small{display:block;font:500 12px/16px var(--font-ui);color:var(--ink-2)}
 
+/* rev4-css:start */
+/* =====================================================================
+   REVISION 4 (roadmap-rev4.md, 2026-10-05): the aim asked in place, depth
+   and stages, "keep the depth, move the date", keys-only drafts. Still
+   rm-* names only, ink only: no gold (MP spending), no --owed (nothing here
+   is debt), no status hue without a word. What roadmap.css adds in rev 4.
+   ===================================================================== */
+/* the ASK card (F-R4-1): about 344 px at 344, at most 410 with a seed and a last aim */
+.rm-ac-call{padding:12px 14px 6px;display:flex;flex-direction:column}
+.rm-ac-call .ac-h{font:600 19px/23px var(--font-display)}
+.rm-ac-call .ac-last{margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rm-ac-call .ac-body{font-size:14px;line-height:19px;color:var(--ink-1);margin-top:6px}
+.rm-ac-call .ac-rank{margin-top:4px}
+.rm-ac-call .ac-cont{margin-top:6px;color:var(--ink-1)}
+.rm-ac-call textarea.st-input{margin-top:6px;min-height:65px;height:65px;padding:8px 12px;resize:none}
+.rm-ac-call .ac-cont+textarea.st-input{margin-top:2px}
+.rm-ac-seed{display:flex;align-items:center;gap:8px;min-height:40px;margin-top:6px;padding:0 2px;font:600 14px/19px var(--font-ui);color:var(--ink-0);text-decoration:none;min-width:0;width:100%;text-align:left}
+.rm-ac-seed svg.i{width:16px;height:16px;color:var(--ink-1)}
+.rm-ac-seed span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;text-decoration:underline;text-underline-offset:3px}
+.rm-ac-call .ac-go{margin-top:6px}
+.rm-ac-seed+.ac-go{margin-top:2px}
+.rm-ac-quiet{display:flex;gap:2px;margin-left:-10px}
+.rm-ac-quiet .btn{min-height:40px}
+/* the LATER line keeps rev 3's .aim-empty geometry (56 px min) with the new copy */
+.aim-empty .t b{color:var(--ink-0);font-weight:600}
+/* Today's aim line (F-R4-3): ≤ 72 px at 344, never red, never counted */
+.rm-aim-line{display:flex;align-items:center;gap:4px;min-height:56px;padding:6px 6px 6px 14px}
+.rm-aim-line>a{flex:1;min-width:0;display:flex;gap:10px;align-items:center;min-height:48px;text-decoration:none;color:var(--ink-1);font-size:14px;line-height:19px}
+.rm-aim-line>a>svg.i{width:20px;height:20px;flex:none;color:var(--ink-1)}
+.rm-aim-line>a>span{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.rm-aim-line>a b{color:var(--ink-0);font-weight:600}
+.rm-aim-line .icon-btn{width:40px;height:40px;border-radius:10px}
+.rm-quests-slot[data-compact]:has(> .rm-aim-line){display:none}
+/* the depth, date and provenance lines (F-R4-15) */
+.rm-depth{display:flex;flex-direction:column;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-depth b{color:var(--ink-0);font-weight:600}
+.rm-depth .pl{display:flex;gap:6px;align-items:flex-start}
+.rm-depth .pl>svg.i{width:14px;height:14px;flex:none;margin-top:2px;color:var(--ink-2)}
+.rm-depth .q{color:var(--ink-2)}
+.rm-basisk{display:block;font:400 12px/16px var(--font-ui);letter-spacing:0;text-transform:none;color:var(--ink-2);margin-top:1px}
+.rm-rp .pf .rm-basisk{text-align:right}
+/* coverage breakdown (F-R4-9) */
+.rm-cov{display:flex;flex-direction:column}
+.rm-cov>li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:start;padding:8px 0;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-cov>li:first-child{border-top:0;padding-top:2px}
+.rm-cov>li b{color:var(--ink-0);font-weight:600}
+.rm-cov>li .btn{min-height:40px;margin:-8px -6px -8px 0}
+.rm-cov>li.below{color:var(--ink-0)}
+.rm-cov .un{grid-column:1/-1}
+/* the outline's line Domains (F-R4-24) */
+.rm-lgroup+.rm-lgroup{margin-top:10px}
+.rm-lgroup>.t-eyebrow{display:block;margin:0 0 2px;color:var(--ink-1)}
+.rm-lrow{display:grid;grid-template-columns:30px minmax(0,1fr) auto;align-items:center;gap:0 8px;min-height:44px;border-top:1px solid var(--line-1);font-size:14px;line-height:19px}
+.rm-lrow .k{font:500 12px/16px var(--font-mono);color:var(--ink-2)}
+.rm-lrow .t{min-width:0;overflow-wrap:anywhere}
+.rm-lrow .t small{display:block;font-size:12px;line-height:16px;color:var(--ink-2)}
+.rm-lrow .btn{min-height:40px;padding:0 10px}
+/* chips with a verdict word under the label (the By-when chips) */
+.rm-chips .chip.btn-chip{min-height:40px}
+.chip.btn-chip.two{flex-direction:column;align-items:flex-start;justify-content:center;gap:0;line-height:16px;padding:4px 12px;white-space:normal;text-align:left}
+.chip.btn-chip.two small{font:500 12px/15px var(--font-ui);color:var(--ink-2)}
+.chip.btn-chip.two[aria-pressed="true"] small{color:color-mix(in srgb,var(--page) 75%,transparent)}
+/* the Depth control: the stage name over its level */
+.segc.two button{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:48px;padding:4px 6px;line-height:17px}
+.segc.two button small{font:500 12px/15px var(--font-ui);color:var(--ink-2)}
+.segc.two button[aria-pressed="true"] small{color:color-mix(in srgb,var(--page) 75%,transparent)}
+/* Gemini's additions, one toggle per Domain on an exam aim (F-R4-21) */
+.rm-adds{padding:14px}
+.rm-adds .t{font-size:14px;line-height:19px}
+.rm-add{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:center;padding:10px 0;border-top:1px solid var(--line-1)}
+.rm-add:first-of-type{margin-top:10px}
+.rm-add b{font-weight:600}
+.rm-add .t-meta{grid-column:1}
+.rm-add.blocked b,.rm-add.blocked .t-meta{color:var(--ink-2)}
+.rm-adds .acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:center}
+/* date check (F-R4-11) */
+.rm-date .offers{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.rm-date .offers .btn{justify-content:flex-start;white-space:normal;text-align:left;line-height:1.3;padding:8px 14px}
+.rm-wp{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:18px;color:var(--ink-1);margin-top:8px}
+.rm-wp>svg.i{width:16px;height:16px;flex:none;margin-top:1px;color:var(--ink-1)}
+.rm-wp b{color:var(--ink-0);font-weight:600}
+/* stage rows: held, dropped, count gate */
+.ml-row.held .ms-n{border-style:dotted;color:var(--ink-2)}
+.ml-row.held b,.ml-row.dropped b{color:var(--ink-1)}
+.ml-row.dropped .ms-n{border-style:dashed;color:var(--ink-2)}
+.ml-row.dropped b{text-decoration:line-through;text-decoration-color:var(--ink-mute)}
+.ml-row .r .q{font:500 12px/16px var(--font-ui);color:var(--ink-2)}
+.tag-s{display:inline-flex;align-items:center;min-height:20px;padding:0 6px;border-radius:6px;border:1px solid var(--line-2);font:600 12px/16px var(--font-ui);color:var(--ink-1);margin-left:6px;vertical-align:1px;white-space:nowrap}
+/* week quest parts (F-R4-14) */
+.rm-parts-l{grid-column:2/-1;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-parts-l .more{color:var(--ink-2)}
+/* the arrangement line, the keys-only header, the integrity line */
+.rm-arr{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-arr>svg.i{width:18px;height:18px;flex:none;margin-top:0;color:var(--ink-1)}
+.pv-pick{border:1px dashed var(--line-ctl);color:var(--ink-1)}
+.pv-app{color:var(--ink-1)}
+/* the area-suggestion panel (ROADMAP_GAPS_LIVE only: lead-only, off in this build) */
+.rm-gaps{padding:14px}
+.rm-gaps .t-eyebrow{color:var(--ink-1)}
+.rm-gaps h3{font:600 17px/22px var(--font-display);margin-top:4px}
+.rm-gaps p{font-size:13px;line-height:18px;color:var(--ink-1);margin-top:6px}
+.rm-gap{padding:10px 0;border-top:1px solid var(--line-1);margin-top:10px}
+.rm-gap+.rm-gap{margin-top:0}
+.rm-gap b{font-weight:600}
+/* Settings: the Aim suggestions row (settings.css set-row, copied) */
+.set{padding:4px 14px}
+.set-row{display:flex;align-items:center;gap:8px 12px;min-height:60px;padding:10px 0;flex-wrap:wrap}
+.set-row+.set-row{border-top:1px solid var(--line-1)}
+.set-row .n{flex:1;min-width:160px}
+.set-row .n b{font-weight:500;display:block}
+.set-row .n span{display:block;font-size:13px;line-height:18px;color:var(--ink-2)}
+.set-grid{display:grid;gap:16px}
+@container main (min-width:760px){.set-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start}}
+/* mockup chrome for rev 4 */
+.mk-r4{border-top:2px solid var(--ink-0);margin-top:18px}
+.mk-r3{border-top:1px dashed var(--line-ctl);margin-top:24px}
+.mk-r3 .mk-cap{max-width:932px}
+.mk-flag{display:inline-flex;align-items:center;gap:6px;margin-left:8px;padding:1px 8px;border-radius:6px;border:1px dashed var(--line-ctl);font:600 12px/16px var(--font-mono);color:var(--ink-1)}
+.mk-fig.w312{max-width:344px}
+/* rev4-css:end */
 </style>
 </head>
 <body>
@@ -658,12 +779,500 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
 </defs>
 </svg>
 <header class="mk">
-  <div class="t-eyebrow">XTNL · Roadmap · mockup 3 of 5 · roadmap.md rev 3, F10–F14, F18</div>
-  <h1>Living roadmap — /you/roadmap (ACTIVE)</h1>
-  <p>The second You tab once a plan is accepted. Revision 3 adds the <b>Aim rank</b> and <b>Proficiency</b> to the Aim header, puts this week's <b>week quests</b> first inside Now, and folds the reference sections into one disclosure at 344. Every figure is computed in-house from the app's own rows and says what kind of evidence it is: cards your reviews brought to a level (tested), cards you added (counted by the app), and sessions and steps you ticked (from your ticks). Week quests, Proficiency and the rank pay nothing and call no model.</p>
-  <div class="mk-ex">Example data — fake but plausible, as of Thu 28 Jan 2027 09:12 (milestone 1 reached 18 Dec; milestone 2 started Mon 21 Dec)</div>
+  <div class="t-eyebrow">XTNL · Roadmap · mockup 3 of 5 · roadmap-rev4.md, F-R4-2, F-R4-9 to F-R4-16, F-R4-21 (rev 3's F9–F18 below)</div>
+  <h1>Living roadmap — /you/roadmap</h1>
+  <p>The accepted plan. In <b>revision 4</b> it climbs stages from Foundation (level 4) to Mastered (level 12), each dated by the real review schedule, and the final milestone <b>is</b> the depth: every required Domain held at its coverage, each card passing its review after a gap of about 110 days at the first try. The app keeps the depth and moves the date; only the user's tap lowers the depth or a coverage, and that choice stays on the plan. The Aim rank follows the stages reached inside the plan; Paragon means the depth held, the practice kept and the user's standard logged.</p>
+  <div class="mk-ex">Example data — fake but plausible · the Statistics plan of mockups 1, 2, 4 and 5, accepted Mon 5 Oct 2026 · dates from lane 0's reach model · each frame says its "as of"</div>
   <nav class="mk-nav" aria-label="Roadmap mockups"><a href="final-roadmap-new.html">1 · Set an aim</a><a href="final-roadmap-draft.html">2 · Draft review</a><a href="final-roadmap.html" aria-current="page">3 · Living roadmap</a><a href="final-aim-card.html">4 · Character page</a><a href="final-today-quests.html">5 · Today's week quests</a></nav>
-  <div class="mk-legend" aria-label="Provenance classes as rendered">
+  <div class="mk-legend" aria-label="Provenance as rendered in revision 4">
+  <span><span class="pv pv-pick">practice type picked by Gemini from the app's list</span> GEMINI_PICK</span>
+  <span><span class="pv pv-app">added by the app</span> CODE</span>
+  <span><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>you chose this</span> YOURS</span>
+  <span><span class="cap">"suggested by Gemini, added by you on 5 Oct"</span> a Domain Gemini chose, for the plan's life</span>
+  <span><span class="cap">tested by your reviews · measured 09:12</span> MEASURED</span>
+  <span><span class="cap">counted by the app; it doesn't judge them</span> RECORDED</span>
+  <span><span class="cap">from your ticks</span> SELF_REPORTED</span>
+  <span><span class="cap">plain, basis on "How this is worked out"</span> WORKED_OUT</span>
+</div>
+</header>
+<!-- rev4:start -->
+<section class="mk-sec mk-r4" id="shipped">
+<h2>As shipped · revision 4 after the build and two fix rounds</h2>
+<p>These frames are redrawn to the shipped roadmap page (RoadmapView.tsx, AimHeader.tsx, PlanHistory.tsx, DateBlock.tsx and roadmap-copy.ts at the end of fix round 2). Where they differ from the first mockup, the code wins; docs/life-plan/roadmap-rev4.md, "As shipped", says why. <span class="mk-flag">example data</span> The plan, its cards, dates, ranks and scores are made up but plausible, computed with lane 0's reach model; each frame says its "as of". Gemini arranged this plan's outline and practice types, which goes live only once the v3 probe passes; until then a plan from the app's numbers looks the same apart from its provenance labels.</p>
+<ul class="mk-cap wide">
+<li><b>Plan history</b> lists only what the code records: "v1 accepted 5 Oct". The first mockup's "Gemini suggested Calculus and Linear Algebra; you left both out" is not rendered by any code; a Domain left out leaves no line, and a confirmed one keeps "suggested by Gemini, added by you on 5 Oct" on the Depth line (frame C).</li>
+<li><b>A lowered depth</b> reads in Plan history from the acceptance itself: "v1 depth lowered 7 Jan: Mastered → Fluent" (frame D). An accept, Undo, accept sequence reads "accepted" twice.</li>
+<li><b>Coverage is frozen at intake</b>: archiving or writing cards never moves the 34 and 25 below at a re-plan, a re-date or a lowering.</li>
+<li><b>A plan made before revision 4</b> shows its aim card, then the banner with "Wording from an earlier Gemini draft is hidden." and "Start again at a depth to measure this aim." on lines of their own, then Plan history (frame F).</li>
+<li><b>[Keep the dates]</b> on the CALIBRATED offer is saved on the plan, not on the device (frame G).</li>
+<li><b>The lower-depth sheet</b> lists each lower depth with its stage's day in this plan (mockup 2, frame G).</li>
+</ul>
+</section>
+<section class="mk-sec mk-r4">
+<h2>Revision 4 · the stage ladder · 344 and 932 · as of Thu 7 Jan 2027</h2>
+<p>The plan climbs stages, each dated from the card pipeline at the user's pace, pass rate and clearance (F-R4-10): <b>Familiar, part 1</b> (a count gate, so a first rank comes within 7 weeks) → <b>Familiar</b> → <b>Retained</b> → <b>Fluent</b> (with Exam P inside its window) → <b>Toward Mastered</b> → <b>Mastered</b>, which <b>is</b> the depth. Titles are the app's words; the Aim rank follows the stages reached inside the plan (decision 40). Gemini arranged the outline lines and practice types (the draft of mockup 2, with both suggested Domains left out).</p>
+<div class="mk-row">
+<figure class="mk-fig">
+<div class="mk-tag"><b>344</b> × 882 · Galaxy Fold cover</div>
+<div style="position:relative"><div class="frame f344" id="r4rm344"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-current="page" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">You</div><h1>Roadmap</h1></div>
+<nav class="tb-tabs tabs" aria-label="You pages"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page">
+<div class="tabs you-tabs" role="tablist" aria-label="You"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></div>
+<div class="rm-cols">
+<div class="rm-col">
+  <section class="card rm-aim o1" aria-label="Aim">
+    <div class="t-eyebrow">Aim</div>
+    <p class="rm-aim-t" style="margin-top:6px">Know probability and inference well enough to pass Exam P and use them at work</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Statistics · level 9</span><span class="chip">Mastered (level 12) by Sun 12 Mar 2028</span><span class="chip">Exam P · Tue 4 May</span></div>
+    <div class="rm-lines"><span>Plan v1 · accepted 5 Oct · the date the app set on 5 Oct</span></div>
+    <div class="rm-depth">
+      <p><b>Depth: Mastered (level 12)</b> in Probability and Inference: 34 and 25 cards, each passing its review after a gap of about 110 days at the first try. Multiple-choice cards don't count. The 25-card floor and the 80% share are the app's policy, not facts about these subjects. Change them if you know better.</p>
+      <p class="pl"><svg class="i"><use href="#i-cal"/></svg><span>By your exam (Tue 4 May 2027) the plan reaches <b>Retained (level 8)</b>. The depth goes on past it.</span></p>
+    </div>
+    <div class="rm-rp">
+      <div><div class="k">Aim rank</div><div class="v">Journeyman</div></div>
+      <div class="pf"><div class="k">Proficiency<span class="rm-basisk">toward Mastered (level 12)</span></div><div class="v num">34%</div></div>
+      <div class="meter" role="meter" aria-valuenow="34" aria-valuemin="0" aria-valuemax="100" aria-label="Proficiency toward Mastered (level 12): 34%, tested by your reviews and your ticks"><i style="--v:.3423"></i></div>
+      <p class="cap full">tested by your reviews and your ticks · measured 09:12</p>
+      <p class="t-meta full">cards 17% · tested by your reviews · practice 76% · from your ticks · stages 2 of 6</p><p class="t-meta full">Next rank: Specialist at milestone 3 · rank is kept for good</p>
+      <p class="t-meta full">Top rank on this plan: Paragon</p>
+      <details class="rm-parts"><summary><svg class="i"><use href="#i-chev"/></svg>Aim ranks on this plan</summary><ol class="rm-ladder" aria-label="Aim ranks on this plan">
+<li class="on"><span><b>Initiate</b> · from your first acceptance</span></li>
+<li class="on"><span><b>Journeyman</b> · milestone 1, Familiar, part 1 · reached 20 Nov · milestone 2 keeps it · cards part from 7.4%</span></li>
+<li class="cur"><span><b>Specialist</b> · milestone 3, Retained · next rank · from 20.3%</span></li>
+<li><span><b>Expert</b> · milestone 4, Fluent · from 45.6% · milestone 5 keeps it (67.6%)</span></li>
+<li><span><b>Virtuoso</b> · milestone 6, Mastered · 100%</span></li>
+<li><span><b>Paragon</b> · the aim: the depth held, the practice kept, your Exam P score at or above your bar</span></li></ol>
+<p class="t-meta">Aspirant is skipped: Foundation (level 4) came within 21 days of Familiar, so it merged into it. Proficiency counts review time: a level-12 card has come through about 340 days of spacing, so early stages read low. Your Aim rank records each stage you reach.</p></details>
+    </div>
+    <div class="rm-lines"><span>Aim not checked: the app doesn't know how long this usually takes · <a class="ilink" href="#">Add a figure</a></span></div>
+  </section>
+  <div class="o2" id="now">
+    <div class="sec-h"><span class="lane-mark"></span><h2>Now · milestone 3 of 6</h2><span class="aside">day 11 of 49</span></div>
+    <section class="card" aria-label="Current milestone">
+      <div class="ms-h"><span class="ms-n cur">3</span><div>
+        <div class="ms-t">Retained: Probability, Inference to level 8+</div>
+        <div class="ms-w">Mon 28 Dec → Sun 14 Feb · started Mon 28 Dec</div>
+        <div class="rm-chips" style="margin-top:8px"><span class="chip">Current</span><span class="pv">Mid goal on Today · pays <svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg> 6 × progress from 70%</span></div>
+        <p class="rk" style="margin-top:8px">Reaching it gives the Aim rank&nbsp;<b>Specialist</b></p>
+      </div></div>
+      <div class="ms-sec" id="week-quests">
+        <div class="ms-sh"><span class="t-eyebrow">Week quests</span><span class="cap">Mon 4 – Sun 10 Jan · fixed Mon 04:15</span></div>
+        <div class="rm-quest"><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-know"/></svg><span class="lbl">Bring 6 cards to level 8+</span><span class="cnt num">2 of 6 cards</span><p class="rm-parts-l">3 in Probability (1 so far) · 3 in Inference (1 so far)</p><div class="meter thin" aria-hidden="true"><i style="--v:.3333"></i></div><p class="ev">tested by your reviews · measured 09:12 · multiple choice not counted</p><p class="ev">Probability: 2 come due Fri, 1 Sat · Inference: 1 Fri, 2 Sun. A card that was due anyway counts.</p></div><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-craft"/></svg><span class="lbl">Problem sets: Probability, Inference · 2 sessions × 30 min</span><span class="cnt num">0 of 2 sessions</span><p class="ev">from your ticks · the milestone counts 80% of these</p><a class="link lnk" href="final-today-quests.html">On Today</a></div><div class="rm-quest-row done"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="lbl">Timed practice: Probability, Inference · 1 session × 45 min</span><span class="cnt num">1 of 1 session · done</span><p class="ev">from your ticks</p></div></div>
+        <p class="cap" style="margin-top:8px">Week quests pay nothing. Bring and session rows count toward Milestone 3 as you do them.</p>
+      </div>
+      <div class="ms-sec">
+        <div class="rm-head"><span class="big">17%</span><span class="cap" style="text-align:right">tested by your reviews<br>measured 09:12</span></div>
+        <div class="meter" style="margin:10px 0 8px" role="meter" aria-valuenow="17" aria-valuemin="0" aria-valuemax="100" aria-label="Milestone 3, 17%, tested by your reviews"><i style="--v:.1739"></i></div>
+        <p class="t-meta">The slowest part sets the milestone · On pace for 14 Feb.</p>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">Measures</span><span class="cap">one per Domain, each its own</span></div>
+        <div class="mr" style="padding-top:2px"><div class="mr-h"><b>34 cards in Probability at level 8+</b><span class="pct">20%</span></div><div class="meter"><i style="--v:.2"></i></div><p class="t-meta"><b>18 of 34</b> · 14 when you started · multiple choice not counted</p><p class="t-meta">each recalled after a gap of about 26 days · tested by your reviews · measured 09:12</p></div>
+        <div class="mr"><div class="mr-h"><b>25 cards in Inference at level 8+<span class="slow">slowest</span></b><span class="pct">17%</span></div><div class="meter"><i style="--v:.1739"></i></div><p class="t-meta"><b>6 of 25</b> · 2 when you started</p><p class="t-meta">On pace for 14 Feb: the cards in the pipeline can be expected to reach level 8 by then.</p></div>
+        <div class="mr"><div class="mr-h"><b>Practice kept</b><span class="pct">60%</span></div><div class="meter"><i style="--v:.6"></i></div><p class="t-meta"><b>3 of 5</b> sessions so far · from your ticks</p></div>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">What to learn</span><span class="cap">your outline lines · write cards on each in its Domain</span></div>
+        <div class="it"><div class="it-k">Outline line S4 · Inference</div><div class="it-l">Conditional expectation and variance</div><div class="it-m">Inference: 28 cards · 25 at level 6+ · 6 at level 8+</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>your outline</span></div></div>
+        <div class="it"><div class="it-k">Outline line S5 · not tied to a Domain</div><div class="it-l">Common discrete distributions</div><div class="it-m">counted in every Domain's figure; no card is checked against it · <a class="ilink" href="#">Choose a Domain</a></div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>your outline</span></div></div>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">What to practise</span><span class="cap">on Today under this goal</span></div>
+        <div class="it"><div class="it-chips" style="margin:0 0 6px"><span class="chip">Deliberate practice</span><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div><div class="it-l">Problem sets: Probability, Inference</div><div class="it-m">2× a week · 30 min · kept <b>2 of 3</b> so far · from your ticks · <a class="ilink" href="final-today-quests.html">On Today</a></div><details class="how"><summary><svg class="i"><use href="#i-chev"/></svg>How</summary><ol><li>Pick a handful of problems on one point from your material.</li><li>Work each one through without looking at the answer.</li><li>Check your working, not only the result.</li><li>Turn each mistake into a card in its Domain.</li></ol></details></div>
+        <div class="it"><div class="it-chips" style="margin:0 0 6px"><span class="chip">Deliberate practice</span><span class="pv pv-app">added by the app</span></div><div class="it-l">Timed practice: Probability, Inference</div><div class="it-m">1× a week · 45 min · kept <b>1 of 2</b> so far · placed because of your exam</div><details class="how"><summary><svg class="i"><use href="#i-chev"/></svg>How</summary><ol><li>Set a timer for the session before you start.</li><li>Answer questions at the pace the exam asks for.</li><li>Stop when the timer ends, finished or not.</li><li>Mark your answers and note where time ran short.</li></ol></details></div>
+      </div>
+      <div class="ms-sec" id="checkpoint">
+        <div class="ms-sh"><span class="t-eyebrow">Checkpoint · mock test</span><span class="cap">added by the app · before your exam</span></div>
+        <div class="it-l">Mock test: Exam P</div>
+        <p class="t-meta" style="margin-top:3px">no score logged yet · your bar 6 of 10 · doesn't move your progress</p>
+        <div class="it-acts"><button class="chip btn-chip">Log a score</button></div>
+      </div>
+    </section>
+  </div>
+  <div class="o4">
+    <div class="sec-h"><span class="lane-mark"></span><h2>Milestones</h2><span class="aside">6 · to 12 Mar 2028</span></div>
+    <section class="card">
+      <div class="ml-row reached"><span class="ms-n" style="border-color:var(--ink-0)">1</span><div><b>Familiar, part 1: Probability, Inference to level 6+</b><span class="t-meta">Reached 20 Nov · 5 Oct – 22 Nov · 33 and 15 cards</span></div><span class="r">100%<small>→ Journeyman</small></span></div>
+      <div class="ml-row reached"><span class="ms-n" style="border-color:var(--ink-0)">2</span><div><b>Familiar: Probability, Inference to level 6+</b><span class="t-meta">Reached 27 Dec · 23 Nov – 27 Dec</span></div><span class="r">100%<small>keeps your rank</small></span></div>
+      <div class="ml-row cur"><span class="ms-n cur">3</span><div><b>Retained: Probability, Inference to level 8+</b><span class="t-meta">Current · 28 Dec – 14 Feb</span></div><span class="r">17%<small>→ Specialist</small></span></div>
+      <div class="ml-row"><span class="ms-n">4</span><div><b>Fluent: Probability, Inference to level 10+</b><span class="t-meta">15 Feb – 16 May · Exam P on Tue 4 May</span></div><span class="r"><small>→ Expert</small></span></div>
+      <div class="ml-row"><span class="ms-n">5</span><div><b>Toward Mastered: Probability, Inference to level 11+</b><span class="t-meta">17 May – 1 Aug</span></div><span class="r"><small>keeps your rank</small></span></div>
+      <div class="ml-row"><span class="ms-n">6</span><div><b>Mastered: Probability, Inference to level 12+</b><span class="t-meta">2 Aug – 12 Mar 2028 · the depth</span></div><span class="r"><small>→ Virtuoso</small></span></div>
+      <p class="rm-note" style="border-top:1px solid var(--line-1)">Paragon: every one of your 2 required Domains held at level 12, the final milestone reached, the plan's practice kept, and your standard logged at or above your bar. Cards tested by your reviews; practice and score from your ticks and your log.</p>
+    </section>
+  </div>
+  <div class="o7 it-acts" style="margin-top:0"><button class="btn btn-secondary">Re-plan</button><button class="btn btn-danger">Archive</button></div>
+</div>
+<div class="rm-col">
+  <div class="o3">
+    <div class="sec-h"><span class="lane-mark"></span><h2>Toward the aim</h2><span class="aside">since you began · 5 Oct</span></div>
+    <section class="card">
+      <div class="trk-row"><svg class="sig"><use href="#s-know"/></svg><div>
+        <div class="mr-h"><b>Probability · cards at level 12</b><span class="pct">2 of 34</span></div>
+        <div class="meter"><i style="--v:.0588"></i></div>
+        <div class="t-meta">each passed its review after a gap of about 110 days at the first try · tested by your reviews · measured 09:12</div>
+      </div></div>
+      <div class="trk-row"><svg class="sig"><use href="#s-know"/></svg><div>
+        <div class="mr-h"><b>Inference · cards at level 12</b><span class="pct">0 of 25</span></div>
+        <div class="meter"><i style="--v:0"></i></div>
+        <div class="t-meta">realistic by Sun 12 Mar 2028 at your pace</div>
+      </div></div>
+      <div class="trk-row"><svg class="i" style="width:22px;height:22px"><use href="#i-flag"/></svg><div>
+        <div class="mr-h"><b>Stages reached</b><span class="pct">2 of 6</span></div>
+        <div class="segs tall" style="margin:8px 0 4px" role="img" aria-label="Stages 1 and 2 reached, stage 3 current, 3 to come"><i class="on"></i><i class="on"></i><i class="cur"></i><i></i><i></i><i></i></div>
+      </div></div>
+      <div class="trk-row"><svg class="i" style="width:22px;height:22px"><use href="#i-tick"/></svg><div>
+        <div class="mr-h"><b>Practice kept since you began</b><span class="pct">≈ 76%</span></div>
+        <div class="t-meta">26 of 34 sessions · from your ticks · Paragon needs 80% overall</div>
+      </div></div>
+      <p class="rm-note" style="border-top:1px solid var(--line-1)">The app tests whether you hold the cards you wrote. Whether they cover everything 'Know probability and inference well enough to pass Exam P and use them at work' needs is yours to judge: your outline and your standard are the outside checks.</p>
+    </section>
+  </div>
+  <details class="rm-ref o5">
+    <summary><b>How this is worked out</b><span>capacity · the date · drafting · measuring</span><svg class="i"><use href="#i-chev"/></svg></summary>
+    <div class="rm-ref-b">
+      <div>
+        <div class="sec-h"><span class="lane-mark"></span><h2>Your capacity</h2><span class="aside">what the app has seen</span></div>
+        <section class="card tp">
+          <div><span class="k">Hours you gave this aim</span><span class="v">6 h a week</span><span class="s">your estimate</span></div>
+          <div><span class="k">Pass share</span><span class="v">80% (reads high)</span><span class="s">lapses by neglect aren't logged, so this reads high</span></div>
+          <div><span class="k">Gaps of 50 days and more</span><span class="v">80%</span><span class="s">the app's policy: none of your reviews has tested gaps that long yet</span></div>
+          <div><span class="k">Due queue cleared</span><span class="v">92%</span><span class="s">median of 14 days · missed days bunch together (0.45, last 90 days)</span></div>
+          <div><span class="k">New cards a week</span><span class="v">3 here</span><span class="s">median of 8 weeks · Steady plans on 2.1</span></div>
+        </section>
+      </div>
+      <div>
+        <div class="sec-h"><span class="lane-mark"></span><h2>Is this realistic?</h2><span class="aside"><a class="ilink" href="#">Constants</a></span></div>
+        <section class="card pad rm-date">
+          <div class="ck" style="padding-top:0"><div class="ck-h"><b>Date</b><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits · the date the app set</span></div><p>At 70% of your usual 3 new cards a week, your 80% pass rate (reads high), 80% for gaps of 50 days and more (the app's policy) and the 92% of your due queue you clear, this depth is realistic by <b>Sun 12 Mar 2028</b>. Earliest if every review passes, at this pace: Sat 30 Oct 2027.</p><p class="fixed">This date is set by the review schedule, not your hours: a new card needs at least 340 days to reach level 12. More hours won't bring it much closer.</p></div>
+          <div class="ck"><div class="ck-h"><b>App-tracked time</b><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits</span></div><p>Worst week needs ≈ 2 h 50; you have ≈ 4 h 10.</p></div>
+          <p class="t-meta" style="margin-top:6px">The app doesn't lower the depth to fit a date. A lower depth is your choice and stays on the plan. <a class="ilink" href="#">Choose a lower depth…</a></p>
+        </section>
+      </div>
+      <div>
+        <div class="sec-h"><span class="lane-mark"></span><h2>How this was drafted</h2></div>
+        <section class="card tp">
+          <div><span class="k">Gemini's reply</span><span class="v">keys only</span><span class="s">0 words of its own · prompt v3 · Mon 5 Oct 09:12 · 1 draft</span></div>
+          <div><span class="k">Arranged by</span><span class="v">Gemini</span><span class="s">which outline lines and practice types sit in which milestone; move or change any of them</span></div>
+          <div><span class="k">Plan history</span><span class="v">v1</span><span class="s">v1 accepted 5 Oct</span></div>
+        </section>
+      </div>
+    </div>
+  </details>
+</div>
+</div>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-current="page" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div><div class="fold" style="top:818px"><span>818 · tab bar starts</span></div><div class="fold" style="top:882px"><span>882 · first screen ends</span></div></div>
+<p class="mk-geo" id="geo-r4rm344">Measuring… (open this file in a browser; the numbers fill in once the fonts load)</p>
+<ul class="mk-cap"><li><b>The Depth line</b> sits in the Aim header for the life of the plan, with the exam waypoint: "By your exam (Tue 4 May 2027) the plan reaches Retained (level 8). The depth goes on past it." The date chip names the depth; the plan's date was set by the app (REALISTIC), so no copy calls it "as you chose".</li><li><b>Proficiency toward Mastered (level 12): 34%</b>: its label always names the basis. The ladder disclosure lists each stage's floor of the cards part (7.4%, 20.3%, 45.6%, 67.6%, 100%) and says why early stages read low.</li><li><b>Now</b>: Bring is one row with per-Domain parts, each with its own due cards. Measures are one per Domain ("34 cards in Probability at level 8+"), the slowest sets the milestone: g = min, never a union.</li><li><b>What to learn</b> is the user's outline line, with its Domain; S5 is tied to none and says so. Practices carry their provenance and the catalog's How.</li><li>The mock test is the exam's, placed by the app in the stage before the exam's (Fluent holds "Exam: Exam P" on Tue 4 May, the plan's standard).</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>932</b> · rail · two columns</div>
+<div class="mk-scroll"><div class="frame f932"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-current="page" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">You</div><h1>Roadmap</h1></div>
+<nav class="tb-tabs tabs" aria-label="You pages"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page">
+<div class="tabs you-tabs" role="tablist" aria-label="You"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></div>
+<div class="rm-cols">
+<div class="rm-col">
+  <section class="card rm-aim o1" aria-label="Aim">
+    <div class="t-eyebrow">Aim</div>
+    <p class="rm-aim-t" style="margin-top:6px">Know probability and inference well enough to pass Exam P and use them at work</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Statistics · level 9</span><span class="chip">Mastered (level 12) by Sun 12 Mar 2028</span><span class="chip">Exam P · Tue 4 May</span></div>
+    <div class="rm-lines"><span>Plan v1 · accepted 5 Oct · the date the app set on 5 Oct</span></div>
+    <div class="rm-depth">
+      <p><b>Depth: Mastered (level 12)</b> in Probability and Inference: 34 and 25 cards, each passing its review after a gap of about 110 days at the first try. Multiple-choice cards don't count. The 25-card floor and the 80% share are the app's policy, not facts about these subjects. Change them if you know better.</p>
+      <p class="pl"><svg class="i"><use href="#i-cal"/></svg><span>By your exam (Tue 4 May 2027) the plan reaches <b>Retained (level 8)</b>. The depth goes on past it.</span></p>
+    </div>
+    <div class="rm-rp">
+      <div><div class="k">Aim rank</div><div class="v">Journeyman</div></div>
+      <div class="pf"><div class="k">Proficiency<span class="rm-basisk">toward Mastered (level 12)</span></div><div class="v num">34%</div></div>
+      <div class="meter" role="meter" aria-valuenow="34" aria-valuemin="0" aria-valuemax="100" aria-label="Proficiency toward Mastered (level 12): 34%, tested by your reviews and your ticks"><i style="--v:.3423"></i></div>
+      <p class="cap full">tested by your reviews and your ticks · measured 09:12</p>
+      <p class="t-meta full">cards 17% · tested by your reviews · practice 76% · from your ticks · stages 2 of 6</p><p class="t-meta full">Next rank: Specialist at milestone 3 · rank is kept for good</p>
+      <p class="t-meta full">Top rank on this plan: Paragon</p>
+      <details class="rm-parts"><summary><svg class="i"><use href="#i-chev"/></svg>Aim ranks on this plan</summary><ol class="rm-ladder" aria-label="Aim ranks on this plan">
+<li class="on"><span><b>Initiate</b> · from your first acceptance</span></li>
+<li class="on"><span><b>Journeyman</b> · milestone 1, Familiar, part 1 · reached 20 Nov · milestone 2 keeps it · cards part from 7.4%</span></li>
+<li class="cur"><span><b>Specialist</b> · milestone 3, Retained · next rank · from 20.3%</span></li>
+<li><span><b>Expert</b> · milestone 4, Fluent · from 45.6% · milestone 5 keeps it (67.6%)</span></li>
+<li><span><b>Virtuoso</b> · milestone 6, Mastered · 100%</span></li>
+<li><span><b>Paragon</b> · the aim: the depth held, the practice kept, your Exam P score at or above your bar</span></li></ol>
+<p class="t-meta">Aspirant is skipped: Foundation (level 4) came within 21 days of Familiar, so it merged into it. Proficiency counts review time: a level-12 card has come through about 340 days of spacing, so early stages read low. Your Aim rank records each stage you reach.</p></details>
+    </div>
+    <div class="rm-lines"><span>Aim not checked: the app doesn't know how long this usually takes · <a class="ilink" href="#">Add a figure</a></span></div>
+  </section>
+  <div class="o2" id="now">
+    <div class="sec-h"><span class="lane-mark"></span><h2>Now · milestone 3 of 6</h2><span class="aside">day 11 of 49</span></div>
+    <section class="card" aria-label="Current milestone">
+      <div class="ms-h"><span class="ms-n cur">3</span><div>
+        <div class="ms-t">Retained: Probability, Inference to level 8+</div>
+        <div class="ms-w">Mon 28 Dec → Sun 14 Feb · started Mon 28 Dec</div>
+        <div class="rm-chips" style="margin-top:8px"><span class="chip">Current</span><span class="pv">Mid goal on Today · pays <svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg> 6 × progress from 70%</span></div>
+        <p class="rk" style="margin-top:8px">Reaching it gives the Aim rank&nbsp;<b>Specialist</b></p>
+      </div></div>
+      <div class="ms-sec" id="week-quests">
+        <div class="ms-sh"><span class="t-eyebrow">Week quests</span><span class="cap">Mon 4 – Sun 10 Jan · fixed Mon 04:15</span></div>
+        <div class="rm-quest"><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-know"/></svg><span class="lbl">Bring 6 cards to level 8+</span><span class="cnt num">2 of 6 cards</span><p class="rm-parts-l">3 in Probability (1 so far) · 3 in Inference (1 so far)</p><div class="meter thin" aria-hidden="true"><i style="--v:.3333"></i></div><p class="ev">tested by your reviews · measured 09:12 · multiple choice not counted</p><p class="ev">Probability: 2 come due Fri, 1 Sat · Inference: 1 Fri, 2 Sun. A card that was due anyway counts.</p></div><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-craft"/></svg><span class="lbl">Problem sets: Probability, Inference · 2 sessions × 30 min</span><span class="cnt num">0 of 2 sessions</span><p class="ev">from your ticks · the milestone counts 80% of these</p><a class="link lnk" href="final-today-quests.html">On Today</a></div><div class="rm-quest-row done"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="lbl">Timed practice: Probability, Inference · 1 session × 45 min</span><span class="cnt num">1 of 1 session · done</span><p class="ev">from your ticks</p></div></div>
+        <p class="cap" style="margin-top:8px">Week quests pay nothing. Bring and session rows count toward Milestone 3 as you do them.</p>
+      </div>
+      <div class="ms-sec">
+        <div class="rm-head"><span class="big">17%</span><span class="cap" style="text-align:right">tested by your reviews<br>measured 09:12</span></div>
+        <div class="meter" style="margin:10px 0 8px" role="meter" aria-valuenow="17" aria-valuemin="0" aria-valuemax="100" aria-label="Milestone 3, 17%, tested by your reviews"><i style="--v:.1739"></i></div>
+        <p class="t-meta">The slowest part sets the milestone · On pace for 14 Feb.</p>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">Measures</span><span class="cap">one per Domain, each its own</span></div>
+        <div class="mr" style="padding-top:2px"><div class="mr-h"><b>34 cards in Probability at level 8+</b><span class="pct">20%</span></div><div class="meter"><i style="--v:.2"></i></div><p class="t-meta"><b>18 of 34</b> · 14 when you started · multiple choice not counted</p><p class="t-meta">each recalled after a gap of about 26 days · tested by your reviews · measured 09:12</p></div>
+        <div class="mr"><div class="mr-h"><b>25 cards in Inference at level 8+<span class="slow">slowest</span></b><span class="pct">17%</span></div><div class="meter"><i style="--v:.1739"></i></div><p class="t-meta"><b>6 of 25</b> · 2 when you started</p><p class="t-meta">On pace for 14 Feb: the cards in the pipeline can be expected to reach level 8 by then.</p></div>
+        <div class="mr"><div class="mr-h"><b>Practice kept</b><span class="pct">60%</span></div><div class="meter"><i style="--v:.6"></i></div><p class="t-meta"><b>3 of 5</b> sessions so far · from your ticks</p></div>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">What to learn</span><span class="cap">your outline lines · write cards on each in its Domain</span></div>
+        <div class="it"><div class="it-k">Outline line S4 · Inference</div><div class="it-l">Conditional expectation and variance</div><div class="it-m">Inference: 28 cards · 25 at level 6+ · 6 at level 8+</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>your outline</span></div></div>
+        <div class="it"><div class="it-k">Outline line S5 · not tied to a Domain</div><div class="it-l">Common discrete distributions</div><div class="it-m">counted in every Domain's figure; no card is checked against it · <a class="ilink" href="#">Choose a Domain</a></div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>your outline</span></div></div>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">What to practise</span><span class="cap">on Today under this goal</span></div>
+        <div class="it"><div class="it-chips" style="margin:0 0 6px"><span class="chip">Deliberate practice</span><span class="pv pv-pick">practice type picked by Gemini from the app's list</span></div><div class="it-l">Problem sets: Probability, Inference</div><div class="it-m">2× a week · 30 min · kept <b>2 of 3</b> so far · from your ticks · <a class="ilink" href="final-today-quests.html">On Today</a></div><details class="how"><summary><svg class="i"><use href="#i-chev"/></svg>How</summary><ol><li>Pick a handful of problems on one point from your material.</li><li>Work each one through without looking at the answer.</li><li>Check your working, not only the result.</li><li>Turn each mistake into a card in its Domain.</li></ol></details></div>
+        <div class="it"><div class="it-chips" style="margin:0 0 6px"><span class="chip">Deliberate practice</span><span class="pv pv-app">added by the app</span></div><div class="it-l">Timed practice: Probability, Inference</div><div class="it-m">1× a week · 45 min · kept <b>1 of 2</b> so far · placed because of your exam</div><details class="how"><summary><svg class="i"><use href="#i-chev"/></svg>How</summary><ol><li>Set a timer for the session before you start.</li><li>Answer questions at the pace the exam asks for.</li><li>Stop when the timer ends, finished or not.</li><li>Mark your answers and note where time ran short.</li></ol></details></div>
+      </div>
+      <div class="ms-sec" id="checkpoint">
+        <div class="ms-sh"><span class="t-eyebrow">Checkpoint · mock test</span><span class="cap">added by the app · before your exam</span></div>
+        <div class="it-l">Mock test: Exam P</div>
+        <p class="t-meta" style="margin-top:3px">no score logged yet · your bar 6 of 10 · doesn't move your progress</p>
+        <div class="it-acts"><button class="chip btn-chip">Log a score</button></div>
+      </div>
+    </section>
+  </div>
+  <div class="o4">
+    <div class="sec-h"><span class="lane-mark"></span><h2>Milestones</h2><span class="aside">6 · to 12 Mar 2028</span></div>
+    <section class="card">
+      <div class="ml-row reached"><span class="ms-n" style="border-color:var(--ink-0)">1</span><div><b>Familiar, part 1: Probability, Inference to level 6+</b><span class="t-meta">Reached 20 Nov · 5 Oct – 22 Nov · 33 and 15 cards</span></div><span class="r">100%<small>→ Journeyman</small></span></div>
+      <div class="ml-row reached"><span class="ms-n" style="border-color:var(--ink-0)">2</span><div><b>Familiar: Probability, Inference to level 6+</b><span class="t-meta">Reached 27 Dec · 23 Nov – 27 Dec</span></div><span class="r">100%<small>keeps your rank</small></span></div>
+      <div class="ml-row cur"><span class="ms-n cur">3</span><div><b>Retained: Probability, Inference to level 8+</b><span class="t-meta">Current · 28 Dec – 14 Feb</span></div><span class="r">17%<small>→ Specialist</small></span></div>
+      <div class="ml-row"><span class="ms-n">4</span><div><b>Fluent: Probability, Inference to level 10+</b><span class="t-meta">15 Feb – 16 May · Exam P on Tue 4 May</span></div><span class="r"><small>→ Expert</small></span></div>
+      <div class="ml-row"><span class="ms-n">5</span><div><b>Toward Mastered: Probability, Inference to level 11+</b><span class="t-meta">17 May – 1 Aug</span></div><span class="r"><small>keeps your rank</small></span></div>
+      <div class="ml-row"><span class="ms-n">6</span><div><b>Mastered: Probability, Inference to level 12+</b><span class="t-meta">2 Aug – 12 Mar 2028 · the depth</span></div><span class="r"><small>→ Virtuoso</small></span></div>
+      <p class="rm-note" style="border-top:1px solid var(--line-1)">Paragon: every one of your 2 required Domains held at level 12, the final milestone reached, the plan's practice kept, and your standard logged at or above your bar. Cards tested by your reviews; practice and score from your ticks and your log.</p>
+    </section>
+  </div>
+  <div class="o7 it-acts" style="margin-top:0"><button class="btn btn-secondary">Re-plan</button><button class="btn btn-danger">Archive</button></div>
+</div>
+<div class="rm-col">
+  <div class="o3">
+    <div class="sec-h"><span class="lane-mark"></span><h2>Toward the aim</h2><span class="aside">since you began · 5 Oct</span></div>
+    <section class="card">
+      <div class="trk-row"><svg class="sig"><use href="#s-know"/></svg><div>
+        <div class="mr-h"><b>Probability · cards at level 12</b><span class="pct">2 of 34</span></div>
+        <div class="meter"><i style="--v:.0588"></i></div>
+        <div class="t-meta">each passed its review after a gap of about 110 days at the first try · tested by your reviews · measured 09:12</div>
+      </div></div>
+      <div class="trk-row"><svg class="sig"><use href="#s-know"/></svg><div>
+        <div class="mr-h"><b>Inference · cards at level 12</b><span class="pct">0 of 25</span></div>
+        <div class="meter"><i style="--v:0"></i></div>
+        <div class="t-meta">realistic by Sun 12 Mar 2028 at your pace</div>
+      </div></div>
+      <div class="trk-row"><svg class="i" style="width:22px;height:22px"><use href="#i-flag"/></svg><div>
+        <div class="mr-h"><b>Stages reached</b><span class="pct">2 of 6</span></div>
+        <div class="segs tall" style="margin:8px 0 4px" role="img" aria-label="Stages 1 and 2 reached, stage 3 current, 3 to come"><i class="on"></i><i class="on"></i><i class="cur"></i><i></i><i></i><i></i></div>
+      </div></div>
+      <div class="trk-row"><svg class="i" style="width:22px;height:22px"><use href="#i-tick"/></svg><div>
+        <div class="mr-h"><b>Practice kept since you began</b><span class="pct">≈ 76%</span></div>
+        <div class="t-meta">26 of 34 sessions · from your ticks · Paragon needs 80% overall</div>
+      </div></div>
+      <p class="rm-note" style="border-top:1px solid var(--line-1)">The app tests whether you hold the cards you wrote. Whether they cover everything 'Know probability and inference well enough to pass Exam P and use them at work' needs is yours to judge: your outline and your standard are the outside checks.</p>
+    </section>
+  </div>
+  <details class="rm-ref o5">
+    <summary><b>How this is worked out</b><span>capacity · the date · drafting · measuring</span><svg class="i"><use href="#i-chev"/></svg></summary>
+    <div class="rm-ref-b">
+      <div>
+        <div class="sec-h"><span class="lane-mark"></span><h2>Your capacity</h2><span class="aside">what the app has seen</span></div>
+        <section class="card tp">
+          <div><span class="k">Hours you gave this aim</span><span class="v">6 h a week</span><span class="s">your estimate</span></div>
+          <div><span class="k">Pass share</span><span class="v">80% (reads high)</span><span class="s">lapses by neglect aren't logged, so this reads high</span></div>
+          <div><span class="k">Gaps of 50 days and more</span><span class="v">80%</span><span class="s">the app's policy: none of your reviews has tested gaps that long yet</span></div>
+          <div><span class="k">Due queue cleared</span><span class="v">92%</span><span class="s">median of 14 days · missed days bunch together (0.45, last 90 days)</span></div>
+          <div><span class="k">New cards a week</span><span class="v">3 here</span><span class="s">median of 8 weeks · Steady plans on 2.1</span></div>
+        </section>
+      </div>
+      <div>
+        <div class="sec-h"><span class="lane-mark"></span><h2>Is this realistic?</h2><span class="aside"><a class="ilink" href="#">Constants</a></span></div>
+        <section class="card pad rm-date">
+          <div class="ck" style="padding-top:0"><div class="ck-h"><b>Date</b><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits · the date the app set</span></div><p>At 70% of your usual 3 new cards a week, your 80% pass rate (reads high), 80% for gaps of 50 days and more (the app's policy) and the 92% of your due queue you clear, this depth is realistic by <b>Sun 12 Mar 2028</b>. Earliest if every review passes, at this pace: Sat 30 Oct 2027.</p><p class="fixed">This date is set by the review schedule, not your hours: a new card needs at least 340 days to reach level 12. More hours won't bring it much closer.</p></div>
+          <div class="ck"><div class="ck-h"><b>App-tracked time</b><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits</span></div><p>Worst week needs ≈ 2 h 50; you have ≈ 4 h 10.</p></div>
+          <p class="t-meta" style="margin-top:6px">The app doesn't lower the depth to fit a date. A lower depth is your choice and stays on the plan. <a class="ilink" href="#">Choose a lower depth…</a></p>
+        </section>
+      </div>
+      <div>
+        <div class="sec-h"><span class="lane-mark"></span><h2>How this was drafted</h2></div>
+        <section class="card tp">
+          <div><span class="k">Gemini's reply</span><span class="v">keys only</span><span class="s">0 words of its own · prompt v3 · Mon 5 Oct 09:12 · 1 draft</span></div>
+          <div><span class="k">Arranged by</span><span class="v">Gemini</span><span class="s">which outline lines and practice types sit in which milestone; move or change any of them</span></div>
+          <div><span class="k">Plan history</span><span class="v">v1</span><span class="s">v1 accepted 5 Oct</span></div>
+        </section>
+      </div>
+    </div>
+  </details>
+</div>
+</div>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-current="page" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div></div>
+<ul class="mk-cap wide"><li>From 760 px of main the reference stands open in the right column. Toward the aim shows the depth terms themselves: each Domain's cards at level 12, entered at the first try.</li><li>Milestone rows show their stage title, window and the rank they give ("keeps your rank" for the count gate's stage and for Toward Mastered).</li></ul>
+</figure>
+</div>
+</section>
+<section class="mk-sec mk-r4">
+<h2>Revision 4 · roadmap states and sheets · 344</h2>
+
+<div class="mk-row">
+<figure class="mk-fig">
+<div class="mk-tag"><b>A</b> · no roadmap yet (NONE)</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card rm-ac-call" style="padding-bottom:12px"><h3 class="ac-h">Set an aim</h3><p class="ac-body">What do you want to be able to do in a year or three? The app plans milestones toward it and measures them from your reviews and ticks.</p><p class="t-meta ac-rank">Stages you reach raise your Aim rank, from Initiate toward Paragon: the aim held at Mastered (level 12).</p><a class="btn btn-primary btn-block ac-go" style="margin-top:12px" href="final-roadmap-new.html">Set an aim</a></section>
+</div></div></div>
+<ul class="mk-cap"><li>The same heading, body and rank line as the /you card, with one primary to /you/roadmap/new. Gemini is mentioned only when ROADMAP_GEMINI_LIVE and a key both hold: "Gemini can arrange it into milestones; the app writes every word and number."</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>B</b> · held stages: a strong library · as of Mon 5 Oct 2026</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card rm-aim"><div class="t-eyebrow">Aim</div><p class="rm-aim-t" style="margin-top:6px">Write production Python with tests I trust, without looking things up</p><div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Programming · level 12</span><span class="chip">Mastered (level 12) by Sun 10 Oct 2027</span></div>
+<div class="rm-depth"><p><b>Depth: Mastered (level 12)</b> in Python and Testing: 48 and 28 cards, each passing its review after a gap of about 110 days at the first try.</p></div>
+<div class="rm-rp"><div><div class="k">Aim rank</div><div class="v">Initiate</div></div><div class="pf"><div class="k">Proficiency<span class="rm-basisk">toward Mastered (level 12)</span></div><div class="v num">16%</div></div><p class="t-meta full" style="margin-top:8px">First rank: Expert at milestone 3 · held stages give no rank</p></div></section>
+<div style="height:16px"></div><div class="sec-h"><span class="lane-mark"></span><h2>Milestones</h2><span class="aside">6 · to 10 Oct 2027</span></div>
+<section class="card">
+<div class="ml-row held"><span class="ms-n">1</span><div><b>Foundation</b><span class="t-meta">Held when you began · Aspirant level · 5 Oct</span></div><span class="r"><small class="q">no rank</small></span></div>
+<div class="ml-row held"><span class="ms-n">2</span><div><b>Familiar</b><span class="t-meta">Held when you began · Journeyman level · 5 Oct</span></div><span class="r"><small class="q">no rank</small></span></div>
+<div class="ml-row cur"><span class="ms-n cur">3</span><div><b>Fluent, part 1: Python, Testing to level 10+</b><span class="t-meta">5 Oct – 6 Dec · 14 and 7 cards</span></div><span class="r"><small>→ Expert</small></span></div>
+<div class="ml-row"><span class="ms-n">4</span><div><b>Fluent: Python, Testing to level 10+</b><span class="t-meta">7 Dec – 31 Jan 2027</span></div><span class="r"><small>keeps your rank</small></span></div>
+<div class="ml-row"><span class="ms-n">5</span><div><b>Toward Mastered: Python, Testing to level 11+</b><span class="t-meta">1 Feb – 18 Apr 2027</span></div><span class="r"><small>keeps your rank</small></span></div>
+<div class="ml-row"><span class="ms-n">6</span><div><b>Mastered: Python, Testing to level 12+</b><span class="t-meta">19 Apr – 10 Oct 2027 · the depth</span></div><span class="r"><small>→ Virtuoso</small></span></div>
+<p class="rm-note" style="border-top:1px solid var(--line-1)">Specialist is skipped: Retained (level 8) comes within 20 days, so it merged into Fluent.</p></section>
+</div></div></div>
+<ul class="mk-cap"><li>Programming: Python (60 cards, n 48) and Testing (35, n 28) already hold level 6, so Foundation and Familiar are scheduled rows reached on the acceptance day, "Held when you began": never startable, counted in Proficiency's stages, and <b>giving no rank</b>.</li><li>Retained (level 8) is expected on day 20, under 35 days from today, so it merged into Fluent and its rank name is skipped. Fluent's first window is 118 days, so a count gate sits at Sun 6 Dec (day 62) with what the cards can be expected to reach by then (14.75 → 14 and 7.15 → 7).</li><li>The first rank is Expert, at milestone 3. Proficiency 16% at acceptance = 0.6 × 0.19 (cards toward level 12) + 0.15 × 2/6 (the held stages count as reached). Dates from lane 0's reach model at the same measured inputs as the main plan; no new cards are needed.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>C</b> · the depth line's provenance and a coverage choice · and no outline</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card rm-aim"><div class="t-eyebrow">Aim</div><p class="rm-aim-t" style="margin-top:6px">Know probability and inference well enough to pass Exam P and use them at work</p>
+<div class="rm-depth">
+<p><b>Depth: Mastered (level 12)</b> in Probability, Inference and Calculus: 34, 20 and 25 cards, each passing its review after a gap of about 110 days at the first try. Multiple-choice cards don't count. The 25-card floor and the 80% share are the app's policy, not facts about these subjects. Change them if you know better.</p>
+<p class="pl"><svg class="i"><use href="#i-route"/></svg><span>Calculus: suggested by Gemini, added by you on 5 Oct.</span></p>
+<p class="pl"><svg class="i"><use href="#i-edit"/></svg><span>Inference: 20 cards, below the app's 25, your choice on 5 Oct.</span></p>
+</div>
+<div class="rm-rp"><div><div class="k">Aim rank</div><div class="v">Journeyman</div></div><div class="pf"><div class="k">Proficiency<span class="rm-basisk">toward Mastered (level 12)</span></div><div class="v num">31%</div></div><p class="t-meta full" style="margin-top:8px">Top rank on this plan: Virtuoso — Paragon needs every Domain at the app's figure or above</p></div></section>
+<div style="height:16px"></div>
+<section class="card rm-aim"><div class="t-eyebrow">Aim · no outline</div><p class="rm-aim-t" style="margin-top:6px">Hold a 30-minute conversation in Japanese</p><div class="rm-depth"><p><b>Depth: Mastered (level 12)</b> in Grammar and Vocabulary: 25 and 25 cards, each passing its review after a gap of about 110 days at the first try.</p><p class="pl"><svg class="i"><use href="#i-info"/></svg><span>Coverage unchecked: no outline.</span></p></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>Every Domain Gemini suggested and the user confirmed carries "suggested by Gemini, added by you on 5 Oct" for the plan's life (domainOrigins, also on the How-measured sheet). A typed figure below the app's is a coverage choice, shown for good; while it stands the top rank is Virtuoso, and the line names what Paragon misses.</li><li>With no outline, "Coverage unchecked: no outline." stays for the plan's life.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>D</b> · a lowered depth · as of Thu 7 Jan 2027</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card rm-aim"><div class="t-eyebrow">Aim</div><p class="rm-aim-t" style="margin-top:6px">Know probability and inference well enough to pass Exam P and use them at work</p><div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Statistics · level 9</span><span class="chip">Fluent (level 10) by Sun 16 May 2027</span></div>
+<div class="rm-depth"><p><b>Depth: Fluent (level 10) — below Mastered, your choice on 7 Jan.</b> In Probability and Inference: 34 and 25 cards, each passing its review after a gap of about 50 days at the first try.</p></div>
+<div class="rm-rp"><div><div class="k">Aim rank</div><div class="v">Journeyman</div></div><div class="pf"><div class="k">Proficiency<span class="rm-basisk">toward Fluent (level 10)</span></div><div class="v num">46%</div></div><div class="meter"><i style="--v:.4636"></i></div><p class="t-meta full chg">Changed on 7 Jan · depth lowered Mastered → Fluent (was 34%)</p><p class="t-meta full">Top rank on this plan: Expert · a lower depth keeps every rank given</p></div></section>
+<div style="height:16px"></div><div class="sec-h"><span class="lane-mark"></span><h2>Milestones</h2><span class="aside">4 · to 16 May</span></div>
+<section class="card">
+<div class="ml-row cur"><span class="ms-n cur">3</span><div><b>Retained: Probability, Inference to level 8+</b><span class="t-meta">Current · 28 Dec – 14 Feb</span></div><span class="r">17%<small>→ Specialist</small></span></div>
+<div class="ml-row"><span class="ms-n">4</span><div><b>Fluent: Probability, Inference to level 10+</b><span class="t-meta">15 Feb – 16 May · now the depth</span></div><span class="r"><small>→ Expert</small></span></div>
+<div class="ml-row dropped"><span class="ms-n">5</span><div><b>Toward Mastered: Probability, Inference to level 11+</b><span class="t-meta">Dropped when the depth was lowered on 7 Jan</span></div><span class="r"><small class="q">dropped</small></span></div>
+<div class="ml-row dropped"><span class="ms-n">6</span><div><b>Mastered: Probability, Inference to level 12+</b><span class="t-meta">Dropped when the depth was lowered on 7 Jan</span></div><span class="r"><small class="q">dropped</small></span></div>
+</section>
+<section class="card tp" style="margin-top:16px"><div><span class="k">Plan history</span><span class="v">v1</span><span class="s">v1 accepted 5 Oct · v1 depth lowered 7 Jan: Mastered → Fluent</span></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>Only the LOWER_DEPTH tap does this. Retained is started and its gate (8) is not above the new depth (10), so it is allowed: the unstarted stages above Fluent are dropped with "Dropped when the depth was lowered on 7 Jan", the end state becomes Fluent's terms, and one rebased Proficiency reading is written.</li><li>46% = 0.6 × 0.329 + 0.25 × 0.765 + 0.15 × 2/4: the same cards toward level 10. It reads as a plan decision, never as a gain. Every rank given stays; the top is Expert.</li><li><b>Shipped:</b> the lowering is a second acceptance within version 1 (Undo refuses it), so Plan history reads "v1 depth lowered 7 Jan: Mastered → Fluent" from the record itself. The counts stay the frozen 34 and 25.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>E</b> · the closed footer: done, and archived by a reset</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card rm-aim"><div class="t-eyebrow">Aim · done 12 Mar 2028</div><p class="rm-aim-t" style="margin-top:6px">Know probability and inference well enough to pass Exam P and use them at work</p><div class="rm-rp"><div><div class="k">Aim rank</div><div class="v">Paragon</div></div><div class="pf"><div class="k">Proficiency<span class="rm-basisk">toward Mastered (level 12)</span></div><div class="v num">100%</div></div></div></section>
+<div class="rm-acts" style="display:flex;flex-direction:column;gap:6px;margin-top:16px"><a class="btn btn-primary lg" href="final-roadmap-new.html">Set a new aim</a><p class="t-meta">This roadmap stays here as history.</p></div>
+<div style="height:20px"></div>
+<section class="card rm-aim"><div class="t-eyebrow">Aim · archived 2 Jun 2027</div><p class="rm-aim-t" style="margin-top:6px">Know probability and inference well enough to pass Exam P and use them at work</p><p class="t-meta" style="margin-top:8px">Measures removed by a reset on 2 Jun 2027.</p></section>
+<div class="rm-acts" style="display:flex;flex-direction:column;gap:6px;margin-top:16px"><a class="btn btn-primary lg" href="final-roadmap-new.html">Set a new aim</a><p class="t-meta">This roadmap stays here as history.</p></div>
+</div></div></div>
+<ul class="mk-cap"><li>A DONE or ARCHIVED roadmap renders its history and a primary "Set a new aim" with "This roadmap stays here as history."; the reset's archive says its measures were removed. An ACTIVE roadmap has no such footer. saveIntake after a DONE or ARCHIVED roadmap inserts a new draft.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>F</b> · a plan made before revision 4 (legacy ACTIVE)</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card rm-aim"><div class="t-eyebrow">Aim</div><p class="rm-aim-t" style="margin-top:6px">Become a consistently profitable systematic EUR/USD trader by 2028</p><div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Trading · level 6</span><span class="chip">31 Dec 2027</span></div></section>
+<div style="height:16px"></div>
+<section class="card rm-banner" aria-label="Planned before plans aimed at a depth"><div class="t"><b>Planned before plans aimed at a depth.</b><span class="s">Wording from an earlier Gemini draft is hidden.</span><span class="s">Start again at a depth to measure this aim.</span></div><a class="btn btn-primary" href="final-roadmap-new.html">Start again at a depth</a></section>
+<div style="height:16px"></div>
+<section class="card tp"><div><span class="k">Plan history</span><span class="v">v1</span><span class="s">v1 accepted 4 Oct</span></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>Only its aim, its Area, its date and the banner render; no milestone or item text, whatever its status. Start refuses ("Start again at a depth first"), the readings writer and week quests skip it.</li><li><b>Shipped:</b> the aim card comes first; the banner's hidden-wording line shows only when a row had a Gemini origin, and the measure line only while the plan is open. [Start again at a depth] carries the aim, the Area and the old plan's own Domains into a new depth intake, which archives this roadmap when saved. A closed legacy plan drops the button and shows the closed footer instead.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>G</b> · CALIBRATED: re-date once measured · as of Mon 2 Nov 2026</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card rm-banner"><div class="t"><b>Your pass rate is now measured (76%).</b>Re-date the stages you haven't started?</div><div class="it-acts" style="margin:0"><button class="btn btn-primary">Re-date</button><button class="btn btn-secondary">Keep the dates</button></div></section>
+<p class="t-meta" style="margin:10px 4px 0">The plan was accepted while the pass rate was calibrating: its dates assumed the app's 80% ("estimate"). Re-dating moves only unstarted stages and never lowers a count or a level.</p>
+</div></div></div>
+<ul class="mk-cap"><li>A plan accepted with the pass rate calibrating (mockup 4, frame H) recorded 'p' as assumed. Once 30 reviews exist the page offers a re-date, one tap, and nothing moves without it. "Re-date later milestones" is the only lever on a depth plan: REFIT_LIGHT and MOVE_TO_LATER are never offered.</li><li><b>Shipped:</b> [Keep the dates] is a server action (keepCalibratedDates): it records on the plan's acceptance that the pass rate is now measured, so the offer doesn't come back on another device, and changes nothing else. It fires for the pass rate, the clearance and the absence persistence; a newly measured pace stays its own offer.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>H</b> · the Start sheet: a date check and the pay line</div>
+<div class="frame f344"><div class="shf"><div class="sheet-s"><div class="grabber"></div>
+<div class="sheet-h"><div class="t"><h2>Start milestone 4</h2><p class="sub">Fluent: Probability, Inference to level 10+ · as of Mon 15 Feb 2027</p></div><button class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+<div class="card pad rm-date" style="margin-top:14px"><div class="ck" style="padding-top:0"><div class="ck-h"><b>Date</b><span class="vd"><svg class="i"><use href="#v-over"/></svg>Later than planned</span></div><p>Milestone 4 · Fluent was planned for Sun 16 May; at today's cards it's realistic by Sun 30 May.</p><div class="offers"><button class="btn btn-primary">Use 30 May</button><div class="rm-sw" style="padding:0 2px"><span class="t">Keep 16 May — Over</span><span class="switch-hit"><button class="switch" role="switch" aria-checked="false" aria-label="Keep 16 May over my pace"></button></span></div></div><p class="fixed">Counts and levels never fall: re-dating moves this and the later unstarted stages.</p></div></div>
+<p class="t-meta" style="margin-top:12px;color:var(--ink-1)">Pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg>6</span> because of the practice the app added (Timed practice: Probability, Inference). Switch it off and this milestone pays 0.</p>
+<div class="rm-sw" style="margin-top:8px"><span class="t">Add to Today</span><span class="switch-hit"><button class="switch" role="switch" aria-checked="true" aria-label="Add to Today"></button></span></div>
+<div class="it-acts" style="margin-top:12px"><button class="btn btn-primary">Start</button><button class="btn btn-quiet">Not yet</button></div>
+</div></div></div>
+<ul class="mk-cap"><li>refitForStart's check is a date check: it offers a date, never a lower count. Keeping the planned date needs the switch and reads Over for good; IMPOSSIBLE refuses Start with the offers.</li><li>The pay line shows when ⬡6 rests on a practice the app added: without Timed practice (1 × 45 min) this stage's practice would fall under GOAL_RULES's 1 h a week.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>I</b> · closing a stage short</div>
+<div class="frame f344"><div class="shf"><div class="sheet-s"><div class="grabber"></div>
+<div class="sheet-h"><div class="t"><h2>Close milestone 3</h2><p class="sub">Retained: Probability, Inference to level 8+ · 85%</p></div><button class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+<p class="t-meta" style="margin-top:12px;color:var(--ink-1)">Closing short doesn't change Paragon: it needs the final stage, the depth, the plan's practice overall and your standard.</p>
+<p class="t-meta" style="margin-top:8px">The goal closes at 85% and pays as GOAL_RULES says; the rank Specialist isn't given by a stage closed short.</p>
+<div class="it-acts" style="margin-top:12px"><button class="btn btn-primary">Close at 85%</button><button class="btn btn-quiet">Keep going</button></div>
+</div></div></div>
+<ul class="mk-cap"><li>The Close sheet of an intermediate stage says Paragon is unaffected: the final stage's depth terms cover every lower gate's card terms.</li></ul>
+</figure>
+</div>
+</section>
+<!-- rev4:end -->
+<!-- rev3-note:start -->
+<section class="mk-sec mk-r3">
+<h2>Revision 3 frames · kept for what revision 4 leaves unchanged</h2>
+<p>Everything below is revision 3's living roadmap. Where it differs from the frames above, revision 4 wins:</p>
+<ul class="mk-cap wide">
+<li>Milestones are stages with the app's titles; equal windows, Gemini titles and "Fitted" targets are gone. Each card measure is one per Domain at the stage's level; the count is the depth's coverage, apart from the count gate.</li>
+<li>Ranks follow stages reached inside the plan; held stages give none; Paragon is the depth held with the user's standard (rev 3's "4 or more milestones" is a track plan's rule now, with 180 days).</li>
+<li>"Is this realistic?" is a date check (Fits, Tight, Over, Impossible) with the realistic date, keeping the user's date, or a lower depth by tap; re-plans re-date and never lower n_d or a level.</li>
+<li>Unchanged: the two-column layout from 760 px, the reference disclosure at 344, week quests first in Now, past week quests settling on Wednesday, the Start sheet's freeze, practice-only plans, the Re-plan and Archive actions.</li>
+</ul>
+<div class="mk-legend" aria-label="Provenance classes as rendered in revision 3">
   <span><span class="pv pv-draft">Gemini suggestion · not checked</span> DRAFT</span>
   <span><span class="pv pv-kept">Gemini's words · kept by you · not checked</span> KEPT_SUGGESTION</span>
   <span><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>You checked this</span> YOURS</span>
@@ -673,7 +1282,8 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
   <span><span class="cap">≈ 9 h 10 (task estimates, not timed)</span> ESTIMATED</span>
   <span><span class="cap">plain, basis on "How this is worked out"</span> WORKED_OUT</span>
 </div>
-</header>
+</section>
+<!-- rev3-note:end -->
 <section class="mk-sec">
 <h2>on-pace · 344, 932 and 1440</h2>
 <p>One markup, two layouts. Below 760 px of main the two columns dissolve (display: contents) and CSS order gives the revision 3 reading order: Aim (with the Aim rank and Proficiency) → Now, with this week's quests first → Toward the aim → Milestones → one "How this is worked out" disclosure holding Your capacity, Is this realistic?, How this was drafted and How this is measured → the footer actions. From 760 px, left is Aim, Now, Milestones; right is Toward the aim and the four reference sections, open. No chart and no graph canvas: the pace is text.</p>
@@ -1661,5 +2271,22 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
   addEventListener('resize', run);
 })();
 </script>
+<!-- rev4-script:start -->
+<script>
+/* rev4-script:start · Mockup only: where the Aim header ends on the phone frame. */
+(function () {
+  function run() {
+    var f = document.getElementById('r4rm344'), o = document.getElementById('geo-r4rm344'); if (!f || !o) return;
+    var hd = f.querySelector('.rm-aim'), nw = f.querySelector('#now');
+    if (!hd || !nw) return;
+    var fr = f.getBoundingClientRect(), h = hd.getBoundingClientRect(), n = nw.getBoundingClientRect();
+    o.textContent = 'Measured here at 344: the Aim header (with the Depth line, the exam waypoint and the rank block) is ' + Math.round(h.height) + ' px tall; Now starts ' + Math.round(n.top - fr.top) + ' px down (the first screen ends at 818).';
+  }
+  (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(run);
+  addEventListener('resize', run);
+})();
+/* rev4-script:end */
+</script>
+<!-- rev4-script:end -->
 </body>
 </html>

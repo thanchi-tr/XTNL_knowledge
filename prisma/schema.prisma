@@ -628,6 +628,8 @@ model LifeSettings {
   activityMap       Json?
   /// Per-track weekly targets (M5).
   weeklyTargets     Json?
+  /// Roadmap revision 4: "Suggest setting an aim". false is the lasting no; true or null (the default) is on.
+  aimSuggestions    Boolean?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -982,6 +984,16 @@ model Roadmap {
   practicesAllowed   Boolean             @default(true)
   constraints        String?
   examLabel          String?
+  /// Revision 4: the aim's depth, the gate level of its final stage (12 Mastered, 10 Fluent, 8 Retained). Null on a track Area and on a plan made before revision 4 (legacy).
+  depth              Int?
+  /// Revision 4: REALISTIC (the app dates the plan; only on a DRAFT) or CHOSEN.
+  dateMode           String              @default("CHOSEN")
+  /// Revision 4: YOURS coverage overrides, {[domainId]: number} (only figures the user typed).
+  coverage           Json?
+  /// Revision 4: "Let Gemini suggest areas" (read only while ROADMAP_GAPS_LIVE).
+  suggestAreas       Boolean             @default(false)
+  /// Revision 4: the user's exam date (YOURS); a waypoint, never the aim's date, never sent to Gemini.
+  examDay            DateTime?           @db.Date
   /// DRAFT | ACTIVE | DONE | ARCHIVED.
   status             String              @default("DRAFT")
   /// The accepted version; 0 before the first acceptance. A draft or re-plan writes its milestones at version + 1.
@@ -1083,6 +1095,8 @@ model RoadmapMilestone {
   feasibility     Json?
   /// 1 to 5 on scheduled rows (min(place, RANK_MILESTONE_MAX)); null on LATER rows. Written only by acceptCore on DRAFT rows.
   rankIndex       Int?
+  /// Revision 4: FOUNDATION | FAMILIAR | RETAINED | FLUENT | MASTERED | BETWEEN | PART | STAGE_1..STAGE_5; null on rows made before revision 4.
+  stage           String?
   createdAt       DateTime           @default(now())
   items           RoadmapItem[]
   measures        RoadmapMeasure[]
@@ -1134,6 +1148,8 @@ model RoadmapItem {
   addToToday      Boolean          @default(true)
   /// The TaskTemplate Start created for a practice or step. No foreign key.
   templateId      String?
+  /// Revision 4: the roadmap-catalog.ts key of a practice, step or checkpoint type (its label is re-rendered from it); null otherwise.
+  catalogKey      String?
   flags           String[]         @default([])
   notes           String[]         @default([])
   createdAt       DateTime         @default(now())

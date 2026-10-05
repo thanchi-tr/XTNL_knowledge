@@ -5,7 +5,10 @@
  * exclusion (taskRowsOf, the step the server shares), the median and p25 of
  * an even count, clearance with no DAY_OPEN row, adherence over STANDARD+
  * templates of ≥ 20 min only, the Gemini-sized share, the pass share at 29
- * and 30 reviews, and the pace-source order a card scope reads.
+ * and 30 reviews, and the pace-source order a card scope reads. Revision 4:
+ * the absence persistence ρ over the 90-day clearance series (absences, off
+ * days, unobserved days, the series' start, calibrating below 28 days) and
+ * its hand-off to the reach model.
  *
  * Pure: no database, no clock, no model. scripts/_no-model.ts is imported
  * first, like every check that imports a roadmap module.
@@ -13,10 +16,14 @@
  *   npx tsx scripts/throughput-check.ts
  */
 import "./_no-model";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { addDays, weekStartKeyOf, weekdayOf, type DayKey } from "../src/lib/life-day";
 import type { Category, Track } from "../src/lib/life-types";
 import * as RT from "../src/lib/roadmap-types";
 import {
+  absencePersistenceOf,
+  clearanceSeriesStart,
   countsForAdherence,
   scopePaceOf,
   taskRowsOf,
@@ -263,6 +270,62 @@ console.log("— new cards and the pace source —");
   const pre = rows({ finalDay: "2026-08-30", today: "2026-09-01", newCards: Array.from({ length: 40 }, (_, i) => ({ day: addDays("2026-07-06", i), fieldId: "f1", domainId: "a" })) });
   const early = throughputOf(pre).newCards.byDomain.a;
   check("new-card weeks start at NEW_CARDS_SINCE (2026-07-28): only the weeks from then count", early?.kind === "measured" && early.weeks === 5, json(early));
+}
+
+console.log("— absence persistence ρ (revision 4, F-R4-8) —");
+{
+  // The series: the last CLEARANCE_SERIES_DAYS (90) life days up to finalDay, from the first DAY_OPEN row in it.
+  const start = clearanceSeriesStart(FINAL);
+  check("ρ's series starts 89 days before finalDay (90 life days)", start === addDays(FINAL, -89) && RT.CLEARANCE_SERIES_DAYS === 90);
+  const on = (dd: DayKey) => ({ day: dd, open: 10, reviews: 10 });
+  const span = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => addDays(start, from + i));
+  eq("no DAY_OPEN row: calibrating 0 of 28 (the reach model then uses RHO_PRIOR, labelled)", absencePersistenceOf(rows()), { kind: "calibrating", have: 0, need: RT.RHO_MIN_DAYS });
+  eq("27 observed days: still calibrating, 27 of 28", absencePersistenceOf(rows({ dayOpens: span(63, 89).map(on) })), { kind: "calibrating", have: 27, need: 28 });
+  const allOn = absencePersistenceOf(rows({ dayOpens: span(0, 89).map(on) }));
+  eq("90 days all on: measured, no off day to bunch → ρ 0 (the independent-days value, 1 − on-share)", allOn, { kind: "measured", value: 0, n: 90 });
+  // An absence: 60 days on, 10 days with no DAY_OPEN row and no review (off), 20 on. off→off 9 of off→any 10 → 0.9.
+  const absent = rows({ dayOpens: [...span(0, 59), ...span(70, 89)].map(on) });
+  const a = absencePersistenceOf(absent);
+  check("a 10-day absence (no DAY_OPEN, no review) reads as off days that bunch: ρ = 9 ÷ 10 = 0.9 over 90 observed days", a.kind === "measured" && Math.abs(a.value - 0.9) < 1e-12 && a.n === 90, json(a));
+  // Scattered single misses (2 on, 1 off by clearing under half), no bunching: ρ = 0.
+  const scattered = span(0, 89).map((dd, i) => (i % 3 === 2 ? { day: dd, open: 10, reviews: 4 } : on(dd)));
+  const s1 = absencePersistenceOf(rows({ dayOpens: scattered }));
+  check("a day clearing under half its queue (4 of 10) is off; single scattered misses → ρ 0", s1.kind === "measured" && s1.value === 0 && s1.n === 90, json(s1));
+  const half = absencePersistenceOf(rows({ dayOpens: span(0, 89).map((dd, i) => (i % 3 === 2 ? { day: dd, open: 10, reviews: 5 } : on(dd))) }));
+  check("clearing exactly half (5 of 10) is on (an off day clears under OFF_DAY_CLEAR_SHARE)", half.kind === "measured" && half.value === 0 && RT.OFF_DAY_CLEAR_SHARE === 0.5);
+  // The series starts at the first DAY_OPEN row: 40 days before it are never read as an absence.
+  const late = absencePersistenceOf(rows({ dayOpens: span(40, 89).map(on) }));
+  eq("days before the first DAY_OPEN row in the window are not counted (50 observed, all on)", late, { kind: "measured", value: 0, n: 50 });
+  // A day with reviews but no DAY_OPEN row (its queue is unknown) and a held day are not observed: they break the pairs.
+  const gaps = rows({
+    dayOpens: span(0, 89)
+      .filter((_, i) => i !== 30 && i !== 31 && i !== 50)
+      .map(on),
+    reviews: [{ day: addDays(start, 31), attempts: 5, passes: 4 }],
+    heldDays: [addDays(start, 50)],
+  });
+  const g = absencePersistenceOf(gaps);
+  // Day 30: no row, no review → off; day 31: reviews but no row → not observed (so day 30's pair is broken); day 50: held.
+  check("an off day followed by an unobserved day (reviews, no DAY_OPEN) forms no pair; a held day isn't observed: 88 observed, ρ = 1 − 87/88", g.kind === "measured" && g.n === 88 && Math.abs(g.value - (1 - 87 / 88)) < 1e-12, json(g));
+  const nothingOpen = absencePersistenceOf(rows({ dayOpens: span(0, 89).map((dd, i) => (i < 40 ? { day: dd, open: 0, reviews: 0 } : on(dd))) }));
+  eq("a day with nothing open isn't observed (a DAY_OPEN row with open 0)", nothingOpen, { kind: "measured", value: 0, n: 50 });
+  const epoch = absencePersistenceOf(rows({ epochDay: addDays(start, 70), dayOpens: span(0, 89).map(on) }));
+  eq("the life epoch cuts the series (20 days: calibrating)", epoch, { kind: "calibrating", have: 20, need: 28 });
+  const t = throughputOf(absent);
+  check("throughputOf carries it as absencePersistence", t.absencePersistence?.kind === "measured" && Math.abs((t.absencePersistence?.kind === "measured" ? t.absencePersistence.value : 0) - 0.9) < 1e-12);
+  const inputs = RT.reachInputsOf(t, 1);
+  check("the reach model reads it: ρ 0.9 measured, not the prior, and 'rho' not calibrating", inputs.params.rho === 0.9 && !inputs.calibrating.includes("rho"), json(inputs));
+  const cal = RT.reachInputsOf(throughputOf(rows()), 1);
+  check("with no series the reach model uses RHO_PRIOR 0.6 and records 'rho'", cal.params.rho === RT.RHO_PRIOR && cal.calibrating.includes("rho"));
+  const server = readFileSync(join(process.cwd(), "src/lib/throughput-server.ts"), "utf8");
+  check(
+    "throughput-server reads DAY_OPEN, review attempts and held days from the start of ρ's series (clearanceSeriesStart)",
+    /clearanceSeriesStart\(finalDay\)/.test(server) && /day: \{ gte: dateColumn\(openFrom\)/.test(server) && /e\."day" >= \$\{readFrom\}::date/.test(server) && /heldDaysOf\(rest, readFrom, finalDay\)/.test(server)
+  );
+  // The other figures read their own windows, so reading 90 days of rows leaves them as they were.
+  const wide = rows({ dayOpens: [{ day: addDays(FINAL, -40), open: 50, reviews: 0 }, { day: FINAL, open: 10, reviews: 7 }], reviews: [{ day: addDays(FINAL, -60), attempts: 99, passes: 0 }] });
+  const tw = throughputOf(wide);
+  check("rows older than clearance's 14 days and the pass share's 28 change neither", tw.clearance.kind === "measured" && Math.abs(tw.clearance.value - 0.7) < 1e-12 && tw.passShare.kind === "calibrating" && tw.passShare.have === 0, json([tw.clearance, tw.passShare]));
 }
 
 if (failed > 0) {

@@ -21,6 +21,12 @@
  * Contract: docs/life-plan/roadmap-contracts.md §R4.
  *
  *   statedForMilestone
+ *
+ * Revision 4 (F-R4-13, pay honesty): when the 6 rests on a practice the app
+ * added (STUDY_ADDED or PRODUCTION_ADDED) — without its minutes the milestone
+ * would fall under the practice gate — `restsOnAdded` names it, so the Start
+ * sheet says "Pays ⬡6 because of the practice the app added (Explain it in
+ * your own words). Switch it off and this milestone pays 0."
  */
 import type { DayKey } from "./life-day";
 import { statedGoalMp } from "./life-economy";
@@ -35,6 +41,9 @@ export interface StatedInput {
   hasCards: boolean;
   /** The day a goal of the same lineage closed paying; null when none did. */
   lineagePaidOn: DayKey | null;
+  /** Revision 4: the minutes a week of the practices the app added (part of practiceMinutesPerWeek), and the first one's name. */
+  addedPracticeMinutesPerWeek?: number;
+  addedPracticeName?: string | null;
 }
 
 export interface StatedForMilestone {
@@ -43,6 +52,8 @@ export interface StatedForMilestone {
   zeroReason: StatedZeroReason | null;
   /** "pays nothing · this milestone already paid on 3 Mar". */
   paidOn: DayKey | null;
+  /** Revision 4: the added practice the 6 rests on (its name; "" when unnamed). Absent when the 6 doesn't rest on one (the goldens keep their shape). */
+  restsOnAdded?: string | null;
 }
 
 /** Float noise only (a third of 180 is 60.000000000000004). */
@@ -59,6 +70,19 @@ const finiteOr0 = (n: number): number => (typeof n === "number" && Number.isFini
  * of it by definition).
  */
 export function statedForMilestone(input: StatedInput): StatedForMilestone {
+  const out = statedOf(input);
+  const added = finiteOr0(input.addedPracticeMinutesPerWeek ?? 0);
+  if (out.stated === 0 || added <= 0) return out;
+  // Without the added practice's minutes, would the milestone fall under the practice gate?
+  const without = statedOf({
+    ...input,
+    practiceMinutesPerWeek: Math.max(0, finiteOr0(input.practiceMinutesPerWeek) - added),
+    plannedTrackedMinutesPerWeek: Math.max(0, finiteOr0(input.plannedTrackedMinutesPerWeek) - added),
+  });
+  return without.stated === 0 ? { ...out, restsOnAdded: input.addedPracticeName ?? "" } : out;
+}
+
+function statedOf(input: StatedInput): StatedForMilestone {
   if (input.lineagePaidOn) return { stated: 0, zeroReason: "LINEAGE_PAID", paidOn: input.lineagePaidOn };
   const practice = finiteOr0(input.practiceMinutesPerWeek);
   const planned = Math.max(practice, finiteOr0(input.plannedTrackedMinutesPerWeek));

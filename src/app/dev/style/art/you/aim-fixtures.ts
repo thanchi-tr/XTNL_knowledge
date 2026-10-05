@@ -34,26 +34,68 @@
  * an on-pace day is never after the due day, a Start line never offers the
  * rank already held (you-check holds each fixture to these).
  *
- * The states: empty, running, draft waiting, accepted (the acceptance
- * reading), accepted days ago (today's reading), active (on pace, week
- * quests 2 of 5), a re-plan waiting, between milestones (the next title
- * still Gemini's, its number struck), a reach waiting on ticks, a new Aim
- * rank, Proficiency fallen, Proficiency changed by a re-plan, a "Start
- * again" copy whose milestone already paid, no reading yet (writes off),
- * past due, and done (a three-milestone Body plan, one of its milestones
- * started again).
+ * The states: the empty card's eleven (below: the spec's seven and the fix
+ * round's four), running, draft waiting, accepted (the acceptance reading),
+ * accepted days ago (today's reading),
+ * active (on pace, week quests 2 of 5), a re-plan waiting, between
+ * milestones (the next title still Gemini's, its number struck), a reach
+ * waiting on ticks, a new Aim rank, Proficiency fallen, Proficiency changed
+ * by a re-plan, a "Start again" copy whose milestone already paid, no
+ * reading yet (writes off), past due, and the closed aims: done (a
+ * three-milestone Body plan, one of its milestones started again), done 3
+ * days after a reach, done 30 days ago, and done unreached.
+ *
+ * Revision 4 (roadmap-rev4.md F-R4-1, F-R4-2). The empty card asks for the
+ * aim in place, so it has the spec's seven states: ASK (the full card), ASK
+ * with a long goal to start from, ASK with the last aim's line, ASK
+ * continuing an unsent aim (an unsent aim, a long goal and a last aim
+ * together), LATER (the line, for 4 weeks after "Not now"), LATER with the
+ * last aim, and OFF (nothing). The fix round adds four:
+ *   - ASK with a long goal and a last aim and an empty box: the tallest ASK
+ *     once the seed hides while the box holds text (R5, lens 3), so ui-audit
+ *     measures the 410 px bound on it as well as on the continue state;
+ *   - HIDDEN (lane 0's 'hide:<day>': the LATER line's × "Not now: no aim
+ *     suggestions for 4 weeks" now does what it says), with and without a
+ *     last aim;
+ *   - OFF with a last aim (F-R4-2: the achievement never vanishes from the
+ *     character page; HIDDEN and OFF may show only its line, with no link to
+ *     a new aim and no ×).
+ * Each carries what /you reads, never the prompt itself: the
+ * AIM_PROMPT_COOKIE value and the view's aimSuggestions (the page derives the
+ * prompt with roadmap-invite aimPromptOf, as /you does), the seed built by
+ * longGoalSeedOf over a fixture goal, and the view's lastAim (LastAimView, as
+ * R4's loadAimCard fills it from the latest DONE roadmap). A closed aim leads
+ * the card for AIM_DONE_SHOW_DAYS after its done day; after that the card is
+ * EMPTY with the last aim's line ("done 30 days ago"). The closed depth plan
+ * (the spec's pack: Probability and Inference held at level 12) ranks its
+ * stages through lane 0's rankIndexForStage, given the plan's depth as every
+ * caller passes it (contracts §15.4), and its top rank is
+ * topRankIndexOfDepth's (PACK_DEPTH_RANK).
+ *
+ * Fix round 2 adds a plan made before revision 4 (F-R4-16; lane 0's
+ * AimCardView.legacyView, contracts §16.3), as R4's aimCardOfData sends it:
+ * accepted (an open legacy plan reads ACCEPTED: it can't start a milestone),
+ * a draft, and closed. Each carries only the aim, the Area and legacyView
+ * (Gemini rows hidden or not, the chosen Domains, the Area Field), so the
+ * card on /you shows the hidden-wording line and hands "Start again at a
+ * depth" the old plan's own Domains, and ui-audit measures it at 344.
  */
 import { addDays, weekStartKeyOf, zonedToInstant, type DayKey } from "@/lib/life-day";
 import { GOAL_RULES } from "@/lib/life-economy";
 import { milestoneHeadlineOf, type MilestoneG } from "@/lib/roadmap-measures";
 import { aimRankOf, proficiencyViewOf, type ProficiencyDetailR1, type ProficiencyDomainFacts, type RankMilestone } from "@/lib/roadmap-proficiency";
+import { AIM_DONE_SHOW_DAYS, AIM_INVITE_SINCE, hideCookieValue, laterCookieValue, longGoalSeedOf, type AimPrompt, type AimSeed } from "@/lib/roadmap-invite";
 import {
+  AIM_DEPTHS,
   LEVEL_WEIGHT,
   PROFICIENCY_VERSION,
   PROFICIENCY_WEIGHTS,
+  RANK_TOP,
   REACH_CONFIRM_DAYS,
+  STAGE_LEVEL,
   aimRankName,
   cardsAtLevelKey,
+  rankIndexForStage,
   draftNeedsOf,
   maxScheduledPositionsOf,
   milestoneDueDayOf,
@@ -65,8 +107,10 @@ import {
   type AimCardView,
   type AreaChip,
   type Decision,
+  type DepthRankInput,
   type ItemDraft,
   type ItemKind,
+  type LastAimView,
   type MilestoneDraft,
   type MilestoneStatus,
   type Origin,
@@ -75,11 +119,23 @@ import {
   type ProficiencyParts,
   type ProficiencyRebase,
   type Reading,
+  type RoadmapStatus,
+  type StageKey,
 } from "@/lib/roadmap-types";
 import { labelBaseFor, withLabelChecks, type LabelBase } from "@/lib/roadmap-validate";
 
 export type AimFixtureKey =
-  | "empty"
+  | "empty-ask"
+  | "empty-ask-seed"
+  | "empty-ask-last-aim"
+  | "empty-ask-continue"
+  | "empty-ask-seed-last-aim"
+  | "empty-later"
+  | "empty-later-last-aim"
+  | "empty-hidden"
+  | "empty-hidden-last-aim"
+  | "empty-off"
+  | "empty-off-last-aim"
   | "running"
   | "draft"
   | "accepted"
@@ -94,7 +150,25 @@ export type AimFixtureKey =
   | "paid-lineage"
   | "no-reading"
   | "past-due"
-  | "done";
+  | "done"
+  | "done-reached"
+  | "done-30"
+  | "done-unreached"
+  | "legacy-active"
+  | "legacy-draft"
+  | "legacy-done";
+
+/**
+ * What /you reads for the empty card besides the view (F-R4-1): the
+ * AIM_PROMPT_COOKIE value (absent: never snoozed), the long-goal seed
+ * (longGoalSeedOf over the sheet's goals) and an unsent aim in RoadmapForm's
+ * autosave (R5's fixture seam; on /you the card reads the autosave itself).
+ */
+export interface AimFixtureEmpty {
+  cookie?: string;
+  seed?: AimSeed | null;
+  autosaveAim?: string;
+}
 
 export interface AimFixture {
   key: AimFixtureKey;
@@ -102,10 +176,14 @@ export interface AimFixture {
   label: string;
   /** What the fixture shows, in a line. */
   note: string;
-  /** What the card must say about it (you-check holds the built view to these). */
-  expect: { state: AimCardState; percent: number | null; rank: string | null; change: "fall" | "rebased" | null };
+  /** What the card must say about it (you-check holds the built view to these). `prompt` only for EMPTY: what aimPromptOf gives over the cookie and the view's aimSuggestions. */
+  expect: { state: AimCardState; percent: number | null; rank: string | null; change: "fall" | "rebased" | null; prompt?: AimPrompt };
   /** The plan's milestone rows its Aim rank was read from (maxScheduledPositionsOf), when a fixture has a rank. */
   rows?: readonly PositionRow[];
+  /** A depth plan's top-rank input (revision 4: topRankIndexOfDepth), in place of rev 3's count of places. */
+  depthRank?: DepthRankInput;
+  /** The empty card's inputs besides the view (revision 4). */
+  empty?: AimFixtureEmpty;
   build: () => AimCardView;
 }
 
@@ -184,6 +262,100 @@ export const BODY_ROWS: readonly PositionRow[] = [
 
 /** Milestone 2's due days, in days from today: as planned, and its goal's after a Reschedule on Today (the one the card shows). */
 export const MILESTONE2_DUE = { planned: 40, goal: 47 } as const;
+
+/**
+ * A revision 4 depth plan, closed (F-R4-2): the spec's pack, Probability
+ * (34 cards) and Inference (25) at Mastered (level 12), its five stages
+ * Familiar (Foundation merged into it), Retained, Fluent, Toward Mastered
+ * (the level-11 BETWEEN gate) and Mastered, ranked by stage (rankIndexForStage:
+ * 2, 3, 4, 4, 5), with 72 planned practice sessions and a standard, so the
+ * reached plan tops out at Paragon.
+ */
+const PACK = {
+  roadmapId: "fx-roadmap-pack",
+  aim: "Read a statistics paper's methods and check them without notes",
+  area: { kind: "FIELD", fieldId: "fx-field-stats", name: "Statistics", level: 9 } as AreaChip,
+  depth: AIM_DEPTHS.MASTERED,
+  domains: [
+    { id: "fx-domain-prob", name: "Probability", n: 34, share: 34 / 59 },
+    { id: "fx-domain-inf", name: "Inference", n: 25, share: 25 / 59 },
+  ],
+  lineage: "fx-lineage-recall",
+  planned: 72,
+} as const;
+
+/** The pack's stages in order, each with its gate level: the rank each one reached inside the plan gives. */
+const PACK_STAGES: readonly { stage: StageKey; level: number }[] = [
+  { stage: "FAMILIAR", level: STAGE_LEVEL.FAMILIAR },
+  { stage: "RETAINED", level: STAGE_LEVEL.RETAINED },
+  { stage: "FLUENT", level: STAGE_LEVEL.FLUENT },
+  { stage: "BETWEEN", level: STAGE_LEVEL.MASTERED - 1 },
+  { stage: "MASTERED", level: STAGE_LEVEL.MASTERED },
+];
+
+/** The pack's milestone rows (all started; the stage's rank, never its place). */
+export const PACK_ROWS: readonly PositionRow[] = PACK_STAGES.map((s, i) => ({
+  id: `fx-pack-ms-${i + 1}`,
+  lineageId: `fx-pack-lineage-${i + 1}`,
+  version: 1,
+  status: "STARTED",
+  rankIndex: rankIndexForStage(s.stage, s.level, PACK.depth),
+  createdAt: 1,
+}));
+
+/** Days before today the pack plan was accepted (before its first stage was reached), and its span to the date the app set. */
+const ACCEPTED_PACK_DAYS_AGO = 520;
+const PACK_SPAN_DAYS = ACCEPTED_PACK_DAYS_AGO + 30;
+
+/** The pack's top-rank input: depth 12, a standard (its exam score), no coverage choice, production practice from Fluent on, so Paragon is open. */
+export const PACK_DEPTH_RANK: DepthRankInput = {
+  depth: PACK.depth,
+  track: false,
+  hasStandard: true,
+  keptStages: PACK_STAGES.length,
+  spanDays: PACK_SPAN_DAYS,
+  coverageBelowPolicy: false,
+  productionPlannedFromFluent: true,
+};
+
+/** The pack's depth basis (Proficiency v2's cards part is the depth terms: one per Domain, level 12, clean entry). */
+function packBasis(): ProficiencyBasis {
+  return {
+    basisVersion: 1,
+    cards: PACK.domains.map((d) => ({ measureKey: cardsAtLevelKey([d.id], PACK.depth, "rc"), domainIds: [d.id], level: PACK.depth, target: d.n })),
+    practice: [{ itemLineageId: PACK.lineage, planned: PACK.planned }],
+    scheduled: PACK_STAGES.length,
+  };
+}
+
+/** The pack's rank rows: stage s reached on `reached[s]` (days from today), the rest unreached. */
+function packRanks(today: DayKey, reached: readonly (number | null)[]): RankMilestone[] {
+  return PACK_STAGES.map((s, i) => ({
+    ord: i + 1,
+    rankIndex: rankIndexForStage(s.stage, s.level, PACK.depth),
+    reachedDay: reached[i] == null ? null : addDays(today, reached[i]!),
+    reachPendingDay: null,
+    scheduled: true,
+  }));
+}
+
+/** A long goal on the sheet with no roadmap (the seed's source): longGoalSeedOf reads it as /you does. */
+function longGoalSeed(today: DayKey): AimSeed | null {
+  return longGoalSeedOf([{ id: "fx-goal-long", title: "Hold a 30-minute conversation in Japanese", horizon: "LONG", dueDay: addDays(today, 400) }], today);
+}
+
+/**
+ * The last aim, as R4's loadAimCard keeps it from the latest DONE roadmap
+ * (LastAimView): its words, its final Aim rank, and the day it was reached
+ * (or closed, when it ended unreached). An EMPTY card shows it only once the
+ * aim closed AIM_DONE_SHOW_DAYS or more ago (before that the DONE card leads).
+ */
+function lastAimOf(roadmapId: string, aim: string, rankIndex: number, reached: boolean, day: DayKey): LastAimView {
+  return { roadmapId, aim, rankIndex, rankName: aimRankName(rankIndex), reached, day };
+}
+
+/** The unsent aim the continue state starts from (RoadmapForm's autosave, through R5's fixture seam). */
+export const UNSENT_AIM = "Price options and explain the Greeks to a client";
 
 /** A draft row as the validator and the editor hand it on (roadmap-types ItemDraft); a fixture sets only what it shows. */
 function draftItem(milestone: string, n: number, kind: ItemKind, label: string, origin: Origin, decision: Decision, extra: Partial<ItemDraft> = {}): ItemDraft {
@@ -288,17 +460,19 @@ interface ReadingInput {
   reached: number;
   reachedOnTicks: boolean;
   rebased?: ProficiencyRebase | null;
+  /** The Domains in the card terms' scope, with each one's share of the depth (the fall's cause names them); the trading plan's by default. */
+  domains?: readonly { id: string; name: string; n: number; share: number }[];
 }
 
 /** A stored PROFICIENCY reading as R1's writers store it: value = Σ share × part, detail per F12 (with R1's byDomain facts). */
 function proficiencyReading(r: ReadingInput): Reading {
   const shares = sharesOf(r.parts);
   const value = (shares.cards ?? 0) * (r.parts.cards ?? 0) + (shares.practice ?? 0) * (r.parts.practice ?? 0) + (shares.milestones ?? 0) * (r.parts.milestones ?? 0);
-  const term = r.basis.cards[0];
+  const terms = r.basis.cards;
   const planned = r.basis.practice.reduce((s, p) => s + p.planned, 0);
-  const depth = term && r.parts.cards != null ? Math.round(r.parts.cards * term.target * LEVEL_WEIGHT(term.level)) : 0;
+  const depth = terms.length > 0 && r.parts.cards != null ? Math.round(r.parts.cards * terms.reduce((s, t) => s + t.target * LEVEL_WEIGHT(t.level), 0)) : 0;
   const byDomain: Record<string, ProficiencyDomainFacts> = {};
-  if (term) for (const d of TRADING_DOMAINS) if (term.domainIds.includes(d.id)) byDomain[d.id] = { name: d.name, n: d.n, depth: Math.round(depth * d.share) };
+  for (const d of r.domains ?? TRADING_DOMAINS) if (terms.some((t) => t.domainIds.includes(d.id))) byDomain[d.id] = { name: d.name, n: d.n, depth: Math.round(depth * d.share) };
   const detail: ProficiencyDetailR1 = {
     v: PROFICIENCY_VERSION,
     basisVersion: r.basis.basisVersion,
@@ -428,6 +602,68 @@ function trading(state: AimCardState, today: DayKey, acceptedDay: DayKey | null)
   return { ...blank(state), roadmapId: TRADING.roadmapId, aim: TRADING.aim, area: TRADING_AREA, targetDay: addDays(today, 450), acceptedDay };
 }
 
+/**
+ * The empty card (no open roadmap, F-R4-1) as R4's loadAimCard returns it:
+ * LifeSettings.aimSuggestions (null: never set, which means on; false: the
+ * stored no) and the last aim, or none.
+ */
+function emptyCard(aimSuggestions: boolean | null, lastAim: LastAimView | null): AimCardView {
+  return { ...blank("EMPTY"), aimSuggestions, lastAim };
+}
+
+/** The closed pack plan's card (F-R4-2): a depth plan, its date the app's, accepted before any stage was reached. */
+function pack(state: AimCardState, today: DayKey): AimCardView {
+  const accepted = addDays(today, -ACCEPTED_PACK_DAYS_AGO);
+  return { ...blank(state), roadmapId: PACK.roadmapId, aim: PACK.aim, area: PACK.area, targetDay: addDays(accepted, PACK_SPAN_DAYS), acceptedDay: accepted, aimChecked: true, depth: PACK.depth };
+}
+
+/** The pack plan, reached and closed: its last aim's line (Aim rank Paragon, the day it was reached). */
+function packLastAim(today: DayKey, reachedDaysAgo: number): LastAimView {
+  return lastAimOf(PACK.roadmapId, PACK.aim, RANK_TOP, true, addDays(today, -reachedDaysAgo));
+}
+
+/**
+ * A plan made before revision 4 (F-R4-16; lens 3 #13 and #17, fix round 2):
+ * a Field Area with no depth, so lane 0's isLegacyRoadmap holds. R4's
+ * aimCardOfData then sends no milestone, Aim rank, Proficiency or depth:
+ * only the aim, the Area, the state (an ACTIVE plan reads ACCEPTED, since it
+ * can't start a milestone) and legacyView, R4's legacyViewOf — whether any
+ * row had a Gemini origin ("Wording from an earlier Gemini draft is
+ * hidden.") and the chosen Domains and Area Field that "Start again at a
+ * depth" carries into the new intake (contracts §16.3). It was accepted
+ * before revision 4 shipped (AIM_INVITE_SINCE), and its milestone and item
+ * text never reaches the card, so the fixture holds none.
+ */
+const LEGACY = {
+  roadmapId: "fx-roadmap-legacy",
+  aim: "Read central bank minutes and explain what changed",
+  fieldId: "fx-field-econ",
+  area: { kind: "FIELD", fieldId: "fx-field-econ", name: "Economics", level: 5 } as AreaChip,
+  domainIds: ["fx-domain-macro", "fx-domain-money"],
+} as const;
+
+/** The day before revision 4 shipped, or `daysAgo` before today when that is earlier (a fixture day is never ahead). */
+function beforeRev4(today: DayKey, daysAgo: number): DayKey {
+  const before = addDays(AIM_INVITE_SINCE, -1);
+  const floor = addDays(today, -daysAgo);
+  return before < floor ? before : floor;
+}
+
+/** The legacy plan's card as R4 sends it: `kind` is the roadmap's status, `state` the card's (ACTIVE reads ACCEPTED). */
+function legacyCard(state: AimCardState, kind: RoadmapStatus, geminiHidden: boolean, acceptedDay: DayKey | null, targetDay: DayKey): AimCardView {
+  return {
+    ...blank(state),
+    roadmapId: LEGACY.roadmapId,
+    aim: LEGACY.aim,
+    area: LEGACY.area,
+    targetDay,
+    acceptedDay,
+    depth: null,
+    legacy: true,
+    legacyView: { kind, geminiHidden, domainIds: [...LEGACY.domainIds], areaFieldId: LEGACY.fieldId },
+  };
+}
+
 /** Days before today the trading plan's version 1 was accepted, in the states after its first milestone started (before milestone 1 was reached). */
 const ACCEPTED_V1_DAYS_AGO = 75;
 
@@ -459,12 +695,94 @@ export function aimCardFixtures(today: DayKey): AimFixture[] {
   const acceptedV1 = addDays(today, -ACCEPTED_V1_DAYS_AGO);
 
   return [
+    // ── The empty card (revision 4, F-R4-1): it asks for the aim in place ──
     {
-      key: "empty",
-      label: "Empty",
-      note: "No roadmap: the one compact line, dismissible by its ×.",
-      expect: { state: "EMPTY", percent: null, rank: null, change: null },
-      build: () => blank("EMPTY"),
+      key: "empty-ask",
+      label: "Empty · asks for the aim",
+      note: "No roadmap and never snoozed: the card asks for the aim in place, with Not now and Don't suggest this. No long goal to start from and no last aim.",
+      expect: { state: "EMPTY", percent: null, rank: null, change: null, prompt: "ASK" },
+      empty: {},
+      build: () => emptyCard(null, null),
+    },
+    {
+      key: "empty-ask-seed",
+      label: "Empty · from a long goal",
+      note: "An open long goal on the sheet with no roadmap: 'Start from your long goal' carries its title, and its due day when that is a fitting aim date.",
+      expect: { state: "EMPTY", percent: null, rank: null, change: null, prompt: "ASK" },
+      empty: { seed: longGoalSeed(today) },
+      build: () => emptyCard(null, null),
+    },
+    {
+      key: "empty-ask-last-aim",
+      label: "Empty · after an aim closed unreached",
+      note: "The last aim, a Body plan closed 40 days ago without reaching it, stays on the card with its final Aim rank and the day it closed.",
+      expect: { state: "EMPTY", percent: null, rank: null, change: null, prompt: "ASK" },
+      empty: {},
+      build: () => emptyCard(null, lastAimOf(BODY.roadmapId, BODY.aim, rankIndexAt(2), false, addDays(today, -40))),
+    },
+    {
+      key: "empty-ask-continue",
+      label: "Empty · an unsent aim",
+      note: "An aim typed earlier and never sent: the box starts with it (Continue where you left off), beside a long goal and the last aim. While the box holds text the long goal's link hides, so tapping it can't replace the typed aim. The audit measures it.",
+      expect: { state: "EMPTY", percent: null, rank: null, change: null, prompt: "ASK" },
+      empty: { seed: longGoalSeed(today), autosaveAim: UNSENT_AIM },
+      build: () => emptyCard(true, packLastAim(today, 60)),
+    },
+    {
+      key: "empty-ask-seed-last-aim",
+      label: "Empty · a long goal and the last aim (the tallest)",
+      note: "An empty box with a long goal to start from and the last aim's line together: the card's tallest state once the long goal's link hides while text is typed, so the audit measures the 410 px bound on it.",
+      expect: { state: "EMPTY", percent: null, rank: null, change: null, prompt: "ASK" },
+      empty: { seed: longGoalSeed(today) },
+      build: () => emptyCard(null, packLastAim(today, 75)),
+    },
+    {
+      key: "empty-later",
+      label: "Empty · Not now",
+      note: "Not now 3 days ago: the one compact line for four weeks from that day. Its × hides the line too, for four weeks from that tap.",
+      expect: { state: "EMPTY", percent: null, rank: null, change: null, prompt: "LATER" },
+      empty: { cookie: laterCookieValue(addDays(today, -3)) },
+      build: () => emptyCard(null, null),
+    },
+    {
+      key: "empty-later-last-aim",
+      label: "Empty · Not now, after a reached aim",
+      note: "Not now 10 days ago, after an aim reached and closed: the line names the last aim's Aim rank and offers the next aim.",
+      expect: { state: "EMPTY", percent: null, rank: null, change: null, prompt: "LATER" },
+      empty: { cookie: laterCookieValue(addDays(today, -10)) },
+      build: () => emptyCard(null, packLastAim(today, 60)),
+    },
+    {
+      key: "empty-hidden",
+      label: "Empty · the line hidden",
+      note: "The compact line's ×, or Not now on Today's line, 5 days ago ('Not now: no aim suggestions for 4 weeks'): nothing on the sheet, nothing on Today and no offer in capture, until four weeks from that tap. Suggestions are still on, so Settings shows the switch on.",
+      expect: { state: "EMPTY", percent: null, rank: null, change: null, prompt: "HIDDEN" },
+      empty: { cookie: hideCookieValue(addDays(today, -5)) },
+      build: () => emptyCard(null, null),
+    },
+    {
+      key: "empty-hidden-last-aim",
+      label: "Empty · the line hidden, after a reached aim",
+      note: "The line's × 12 days ago, after an aim reached and closed: at most the last aim's Aim rank and day stay, with no link to a new aim and no ×.",
+      expect: { state: "EMPTY", percent: null, rank: null, change: null, prompt: "HIDDEN" },
+      empty: { cookie: hideCookieValue(addDays(today, -12)) },
+      build: () => emptyCard(null, packLastAim(today, 60)),
+    },
+    {
+      key: "empty-off",
+      label: "Empty · suggestions off",
+      note: "Don't suggest this, or the Settings switch (stored, so it holds on every device): nothing on the sheet. The Roadmap tab still offers Set an aim.",
+      expect: { state: "EMPTY", percent: null, rank: null, change: null, prompt: "OFF" },
+      empty: {},
+      build: () => emptyCard(false, null),
+    },
+    {
+      key: "empty-off-last-aim",
+      label: "Empty · suggestions off, after an aim closed",
+      note: "Suggestions off, and the last aim, a Body plan closed 40 days ago unreached: at most its line stays (its Aim rank and the day it closed), with no link to a new aim and no ×.",
+      expect: { state: "EMPTY", percent: null, rank: null, change: null, prompt: "OFF" },
+      empty: {},
+      build: () => emptyCard(false, lastAimOf(BODY.roadmapId, BODY.aim, rankIndexAt(2), false, addDays(today, -40))),
     },
     {
       key: "running",
@@ -737,6 +1055,98 @@ export function aimCardFixtures(today: DayKey): AimFixture[] {
           doneDay: addDays(today, -2),
         };
       },
+    },
+    // ── Closed aims (revision 4, F-R4-2): no dead end ──
+    {
+      key: "done-reached",
+      label: "Done · 3 days after the reach",
+      note: "A depth plan reached 3 days ago and marked done: for a week the achievement leads (the Aim rank, the depth held in both Domains, Open roadmap), with Set your next aim second.",
+      expect: { state: "DONE", percent: 96, rank: aimRankName(RANK_TOP), change: null },
+      rows: PACK_ROWS,
+      depthRank: PACK_DEPTH_RANK,
+      build: () => {
+        const reached = addDays(today, -3);
+        const closed = addDays(today, -1);
+        const reading = proficiencyReading({
+          roadmapId: PACK.roadmapId,
+          day: closed,
+          observedAt: at(closed, 7, 40),
+          basis: packBasis(),
+          parts: { cards: 1, practice: 62 / PACK.planned, milestones: 1 },
+          inScope: 59,
+          reached: PACK_STAGES.length,
+          reachedOnTicks: false,
+          domains: PACK.domains,
+        });
+        return {
+          ...pack("DONE", today),
+          measuredAt: reading.observedAt,
+          rank: aimRankOf({ milestones: packRanks(today, [-400, -340, -250, -160, -3]), roadmapReachedDay: reached, maxScheduled: maxScheduledPositionsOf(PACK_ROWS), today }),
+          proficiency: proficiencyViewOf(reading, null, today, false),
+          reachedDay: reached,
+          doneDay: closed,
+          heldDepth: { depth: PACK.depth, domainNames: PACK.domains.map((d) => d.name), confirmedDay: addDays(reached, REACH_CONFIRM_DAYS) },
+        };
+      },
+    },
+    {
+      key: "done-30",
+      label: `Done ${AIM_DONE_SHOW_DAYS + 2} days ago`,
+      note: `The aim was reached and closed ${AIM_DONE_SHOW_DAYS + 2} days ago, past the ${AIM_DONE_SHOW_DAYS} days a closed aim leads the card: the card asks for the next aim, and the last aim's Aim rank stays on it.`,
+      expect: { state: "EMPTY", percent: null, rank: null, change: null, prompt: "ASK" },
+      empty: {},
+      build: () => emptyCard(null, packLastAim(today, AIM_DONE_SHOW_DAYS + 5)),
+    },
+    {
+      key: "done-unreached",
+      label: "Done · unreached",
+      note: "Marked done 5 days ago at Fluent, the aim not reached: Set your next aim leads and Open roadmap is second, with the final Aim rank and the last Proficiency.",
+      expect: { state: "DONE", percent: 50, rank: aimRankName(rankIndexForStage("FLUENT") ?? 0), change: null },
+      rows: PACK_ROWS.map((r, i) => (i < 3 ? r : { ...r, status: "PLANNED" })),
+      depthRank: PACK_DEPTH_RANK,
+      build: () => {
+        const closed = addDays(today, -5);
+        const reading = proficiencyReading({
+          roadmapId: PACK.roadmapId,
+          day: closed,
+          observedAt: at(closed, 21, 5),
+          basis: packBasis(),
+          parts: { cards: 0.456, practice: 40 / PACK.planned, milestones: 3 / PACK_STAGES.length },
+          inScope: 59,
+          reached: 3,
+          reachedOnTicks: false,
+          domains: PACK.domains,
+        });
+        return {
+          ...pack("DONE", today),
+          measuredAt: reading.observedAt,
+          rank: aimRankOf({ milestones: packRanks(today, [-300, -230, -120, null, null]), roadmapReachedDay: null, maxScheduled: maxScheduledPositionsOf(PACK_ROWS), today }),
+          proficiency: proficiencyViewOf(reading, null, today, false),
+          doneDay: closed,
+        };
+      },
+    },
+    // ── Plans made before revision 4 (F-R4-16; fix round 2: AimCardView.legacyView) ──
+    {
+      key: "legacy-active",
+      label: "Planned before depth",
+      note: "An accepted plan made before plans aimed at a depth, one of its rows Gemini's: the aim, its Area, the banner with 'Wording from an earlier Gemini draft is hidden.' and Start again at a depth, which carries the plan's own Domains into the new intake. No milestone, rank or Proficiency: it isn't measured.",
+      expect: { state: "ACCEPTED", percent: null, rank: null, change: null },
+      build: () => legacyCard("ACCEPTED", "ACTIVE", true, beforeRev4(today, 1), addDays(today, 300)),
+    },
+    {
+      key: "legacy-draft",
+      label: "Drafted before depth",
+      note: "A draft made before plans aimed at a depth, with no Gemini rows: the banner and Draft it again, which opens the intake; nothing to accept, and no hidden-wording line.",
+      expect: { state: "DRAFT", percent: null, rank: null, change: null },
+      build: () => legacyCard("DRAFT", "DRAFT", false, null, addDays(today, 300)),
+    },
+    {
+      key: "legacy-done",
+      label: "Planned before depth, closed",
+      note: "A plan made before plans aimed at a depth, closed 6 days ago unreached: Set your next aim leads, with no Start again (only an open plan is replaced), and the earlier Gemini wording stays hidden.",
+      expect: { state: "DONE", percent: null, rank: null, change: null },
+      build: () => ({ ...legacyCard("DONE", "DONE", true, beforeRev4(today, 40), addDays(today, 120)), doneDay: addDays(today, -6) }),
     },
   ];
 }

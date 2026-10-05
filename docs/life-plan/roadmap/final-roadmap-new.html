@@ -2,8 +2,8 @@
 <html lang="en" data-theme="night">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="dark">
-<title>Set an aim</title>
-<meta name="description" content="Mockup, revision 3: the roadmap intake page /you/roadmap/new at 344 and 932 px, with its no-key, track-Area, unmeasured-pace, date and refusal states.">
+<title>Set an aim intake</title>
+<meta name="description" content="Mockup, revision 4: the intake form /you/roadmap/new at 344 and 932 px with the depth, each Domain's coverage and its breakdown, When realistic with chip verdicts, the exam and its date, the outline with each line's Domain, and the states (vague aim, chosen dates, empty library, coverage edit, track Area, handoff notes, lead-only switches); revision 3's frames follow.">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400&family=Inter:wght@400..700&family=JetBrains+Mono:wght@500;600&display=swap">
 <style>
 /* =====================================================================
@@ -576,6 +576,126 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
 .ml-row .rkc b{color:var(--ink-1);font-weight:600}
 .ml-row .r small{display:block;font:500 12px/16px var(--font-ui);color:var(--ink-2)}
 
+/* rev4-css:start */
+/* =====================================================================
+   REVISION 4 (roadmap-rev4.md, 2026-10-05): the aim asked in place, depth
+   and stages, "keep the depth, move the date", keys-only drafts. Still
+   rm-* names only, ink only: no gold (MP spending), no --owed (nothing here
+   is debt), no status hue without a word. What roadmap.css adds in rev 4.
+   ===================================================================== */
+/* the ASK card (F-R4-1): about 344 px at 344, at most 410 with a seed and a last aim */
+.rm-ac-call{padding:12px 14px 6px;display:flex;flex-direction:column}
+.rm-ac-call .ac-h{font:600 19px/23px var(--font-display)}
+.rm-ac-call .ac-last{margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rm-ac-call .ac-body{font-size:14px;line-height:19px;color:var(--ink-1);margin-top:6px}
+.rm-ac-call .ac-rank{margin-top:4px}
+.rm-ac-call .ac-cont{margin-top:6px;color:var(--ink-1)}
+.rm-ac-call textarea.st-input{margin-top:6px;min-height:65px;height:65px;padding:8px 12px;resize:none}
+.rm-ac-call .ac-cont+textarea.st-input{margin-top:2px}
+.rm-ac-seed{display:flex;align-items:center;gap:8px;min-height:40px;margin-top:6px;padding:0 2px;font:600 14px/19px var(--font-ui);color:var(--ink-0);text-decoration:none;min-width:0;width:100%;text-align:left}
+.rm-ac-seed svg.i{width:16px;height:16px;color:var(--ink-1)}
+.rm-ac-seed span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;text-decoration:underline;text-underline-offset:3px}
+.rm-ac-call .ac-go{margin-top:6px}
+.rm-ac-seed+.ac-go{margin-top:2px}
+.rm-ac-quiet{display:flex;gap:2px;margin-left:-10px}
+.rm-ac-quiet .btn{min-height:40px}
+/* the LATER line keeps rev 3's .aim-empty geometry (56 px min) with the new copy */
+.aim-empty .t b{color:var(--ink-0);font-weight:600}
+/* Today's aim line (F-R4-3): ≤ 72 px at 344, never red, never counted */
+.rm-aim-line{display:flex;align-items:center;gap:4px;min-height:56px;padding:6px 6px 6px 14px}
+.rm-aim-line>a{flex:1;min-width:0;display:flex;gap:10px;align-items:center;min-height:48px;text-decoration:none;color:var(--ink-1);font-size:14px;line-height:19px}
+.rm-aim-line>a>svg.i{width:20px;height:20px;flex:none;color:var(--ink-1)}
+.rm-aim-line>a>span{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.rm-aim-line>a b{color:var(--ink-0);font-weight:600}
+.rm-aim-line .icon-btn{width:40px;height:40px;border-radius:10px}
+.rm-quests-slot[data-compact]:has(> .rm-aim-line){display:none}
+/* the depth, date and provenance lines (F-R4-15) */
+.rm-depth{display:flex;flex-direction:column;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-depth b{color:var(--ink-0);font-weight:600}
+.rm-depth .pl{display:flex;gap:6px;align-items:flex-start}
+.rm-depth .pl>svg.i{width:14px;height:14px;flex:none;margin-top:2px;color:var(--ink-2)}
+.rm-depth .q{color:var(--ink-2)}
+.rm-basisk{display:block;font:400 12px/16px var(--font-ui);letter-spacing:0;text-transform:none;color:var(--ink-2);margin-top:1px}
+.rm-rp .pf .rm-basisk{text-align:right}
+/* coverage breakdown (F-R4-9) */
+.rm-cov{display:flex;flex-direction:column}
+.rm-cov>li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:start;padding:8px 0;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-cov>li:first-child{border-top:0;padding-top:2px}
+.rm-cov>li b{color:var(--ink-0);font-weight:600}
+.rm-cov>li .btn{min-height:40px;margin:-8px -6px -8px 0}
+.rm-cov>li.below{color:var(--ink-0)}
+.rm-cov .un{grid-column:1/-1}
+/* the outline's line Domains (F-R4-24) */
+.rm-lgroup+.rm-lgroup{margin-top:10px}
+.rm-lgroup>.t-eyebrow{display:block;margin:0 0 2px;color:var(--ink-1)}
+.rm-lrow{display:grid;grid-template-columns:30px minmax(0,1fr) auto;align-items:center;gap:0 8px;min-height:44px;border-top:1px solid var(--line-1);font-size:14px;line-height:19px}
+.rm-lrow .k{font:500 12px/16px var(--font-mono);color:var(--ink-2)}
+.rm-lrow .t{min-width:0;overflow-wrap:anywhere}
+.rm-lrow .t small{display:block;font-size:12px;line-height:16px;color:var(--ink-2)}
+.rm-lrow .btn{min-height:40px;padding:0 10px}
+/* chips with a verdict word under the label (the By-when chips) */
+.rm-chips .chip.btn-chip{min-height:40px}
+.chip.btn-chip.two{flex-direction:column;align-items:flex-start;justify-content:center;gap:0;line-height:16px;padding:4px 12px;white-space:normal;text-align:left}
+.chip.btn-chip.two small{font:500 12px/15px var(--font-ui);color:var(--ink-2)}
+.chip.btn-chip.two[aria-pressed="true"] small{color:color-mix(in srgb,var(--page) 75%,transparent)}
+/* the Depth control: the stage name over its level */
+.segc.two button{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:48px;padding:4px 6px;line-height:17px}
+.segc.two button small{font:500 12px/15px var(--font-ui);color:var(--ink-2)}
+.segc.two button[aria-pressed="true"] small{color:color-mix(in srgb,var(--page) 75%,transparent)}
+/* Gemini's additions, one toggle per Domain on an exam aim (F-R4-21) */
+.rm-adds{padding:14px}
+.rm-adds .t{font-size:14px;line-height:19px}
+.rm-add{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:center;padding:10px 0;border-top:1px solid var(--line-1)}
+.rm-add:first-of-type{margin-top:10px}
+.rm-add b{font-weight:600}
+.rm-add .t-meta{grid-column:1}
+.rm-add.blocked b,.rm-add.blocked .t-meta{color:var(--ink-2)}
+.rm-adds .acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:center}
+/* date check (F-R4-11) */
+.rm-date .offers{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.rm-date .offers .btn{justify-content:flex-start;white-space:normal;text-align:left;line-height:1.3;padding:8px 14px}
+.rm-wp{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:18px;color:var(--ink-1);margin-top:8px}
+.rm-wp>svg.i{width:16px;height:16px;flex:none;margin-top:1px;color:var(--ink-1)}
+.rm-wp b{color:var(--ink-0);font-weight:600}
+/* stage rows: held, dropped, count gate */
+.ml-row.held .ms-n{border-style:dotted;color:var(--ink-2)}
+.ml-row.held b,.ml-row.dropped b{color:var(--ink-1)}
+.ml-row.dropped .ms-n{border-style:dashed;color:var(--ink-2)}
+.ml-row.dropped b{text-decoration:line-through;text-decoration-color:var(--ink-mute)}
+.ml-row .r .q{font:500 12px/16px var(--font-ui);color:var(--ink-2)}
+.tag-s{display:inline-flex;align-items:center;min-height:20px;padding:0 6px;border-radius:6px;border:1px solid var(--line-2);font:600 12px/16px var(--font-ui);color:var(--ink-1);margin-left:6px;vertical-align:1px;white-space:nowrap}
+/* week quest parts (F-R4-14) */
+.rm-parts-l{grid-column:2/-1;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-parts-l .more{color:var(--ink-2)}
+/* the arrangement line, the keys-only header, the integrity line */
+.rm-arr{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-arr>svg.i{width:18px;height:18px;flex:none;margin-top:0;color:var(--ink-1)}
+.pv-pick{border:1px dashed var(--line-ctl);color:var(--ink-1)}
+.pv-app{color:var(--ink-1)}
+/* the area-suggestion panel (ROADMAP_GAPS_LIVE only: lead-only, off in this build) */
+.rm-gaps{padding:14px}
+.rm-gaps .t-eyebrow{color:var(--ink-1)}
+.rm-gaps h3{font:600 17px/22px var(--font-display);margin-top:4px}
+.rm-gaps p{font-size:13px;line-height:18px;color:var(--ink-1);margin-top:6px}
+.rm-gap{padding:10px 0;border-top:1px solid var(--line-1);margin-top:10px}
+.rm-gap+.rm-gap{margin-top:0}
+.rm-gap b{font-weight:600}
+/* Settings: the Aim suggestions row (settings.css set-row, copied) */
+.set{padding:4px 14px}
+.set-row{display:flex;align-items:center;gap:8px 12px;min-height:60px;padding:10px 0;flex-wrap:wrap}
+.set-row+.set-row{border-top:1px solid var(--line-1)}
+.set-row .n{flex:1;min-width:160px}
+.set-row .n b{font-weight:500;display:block}
+.set-row .n span{display:block;font-size:13px;line-height:18px;color:var(--ink-2)}
+.set-grid{display:grid;gap:16px}
+@container main (min-width:760px){.set-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start}}
+/* mockup chrome for rev 4 */
+.mk-r4{border-top:2px solid var(--ink-0);margin-top:18px}
+.mk-r3{border-top:1px dashed var(--line-ctl);margin-top:24px}
+.mk-r3 .mk-cap{max-width:932px}
+.mk-flag{display:inline-flex;align-items:center;gap:6px;margin-left:8px;padding:1px 8px;border-radius:6px;border:1px dashed var(--line-ctl);font:600 12px/16px var(--font-mono);color:var(--ink-1)}
+.mk-fig.w312{max-width:344px}
+/* rev4-css:end */
 </style>
 </head>
 <body>
@@ -659,12 +779,412 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
 </svg>
 
 <header class="mk">
-  <div class="t-eyebrow">XTNL · Roadmap · mockup 1 of 5 · roadmap.md rev 3, F2</div>
+  <div class="t-eyebrow">XTNL · Roadmap · mockup 1 of 5 · roadmap-rev4.md, F-R4-4, F-R4-9, F-R4-11, F-R4-19, F-R4-24 (rev 3's F2 below)</div>
   <h1>Set an aim — /you/roadmap/new</h1>
-  <p>The intake page. The user writes an <b>Aim</b> in their own words and picks its <b>Area</b> (a Field it grows, or a life track for a practice-only aim), then gives what the planner genuinely needs: a date, hours a week, a starting point and an intensity. Optional fields carry the facts only the user can supply (constraints, an exam, the official syllabus with its source, and "hours this usually takes" with its source). Every figure under a field is the app's own reading of the user's records, never a model's. <b>Revision 3</b> changes two things here: an aim's date is at most 3 years away (the "Beyond this plan" tail is cut), and the privacy line gains the free-tier note, because this server's Gemini key is on Google's free tier.</p>
-  <div class="mk-ex">Example data — fake but plausible numbers for this user's library (Trading, Mathematics &amp; Statistics, Biological &amp; Chemical Sciences …), as of Sun 4 Oct 2026</div>
+  <p>The intake page. The user writes an <b>Aim</b> in their own words, a year or more out, and picks its <b>Area</b>. <b>Revision 4</b> puts high mastery at the centre: a Field aim's <b>Depth</b> is Mastered (level 12) by default, held in every chosen Domain at a stated <b>coverage</b>; the date defaults to <b>When realistic</b>, so the app keeps the depth and moves the date. Facts come from the user and are never guessed: whether there is an exam and when, the outline and which Domain each line belongs to. Every figure under a field is the app's own reading of the user's records, never a model's.</p>
+  <div class="mk-ex">Example data — fake but plausible numbers for this user's Statistics Field, as of Mon 5 Oct 2026 · coverage and chips computed with lane 0's helpers</div>
   <nav class="mk-nav" aria-label="Roadmap mockups"><a href="final-roadmap-new.html" aria-current="page">1 · Set an aim</a><a href="final-roadmap-draft.html">2 · Draft review</a><a href="final-roadmap.html">3 · Living roadmap</a><a href="final-aim-card.html">4 · Character page</a><a href="final-today-quests.html">5 · Today's week quests</a></nav>
-  <div class="mk-legend" aria-label="Provenance classes as rendered">
+  <div class="mk-legend" aria-label="Provenance as rendered in revision 4">
+  <span><span class="pv pv-pick">practice type picked by Gemini from the app's list</span> GEMINI_PICK</span>
+  <span><span class="pv pv-app">added by the app</span> CODE</span>
+  <span><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>you chose this</span> YOURS</span>
+  <span><span class="cap">"suggested by Gemini, added by you on 5 Oct"</span> a Domain Gemini chose, for the plan's life</span>
+  <span><span class="cap">tested by your reviews · measured 09:12</span> MEASURED</span>
+  <span><span class="cap">counted by the app; it doesn't judge them</span> RECORDED</span>
+  <span><span class="cap">from your ticks</span> SELF_REPORTED</span>
+  <span><span class="cap">plain, basis on "How this is worked out"</span> WORKED_OUT</span>
+</div>
+</header>
+<!-- rev4:start -->
+<section class="mk-sec mk-r4" id="shipped">
+<h2>As shipped · revision 4 after the build and two fix rounds</h2>
+<p>These frames are redrawn to the shipped intake (RoadmapForm.tsx and roadmap-copy.ts at the end of fix round 2). Where they differ from the first mockup, the code wins; docs/life-plan/roadmap-rev4.md, "As shipped", says why. <span class="mk-flag">example data</span> The aim, the library's Domains and their counts are made up but plausible.</p>
+<ul class="mk-cap wide">
+<li><b>"When realistic" leaves the date input empty</b>: the plan uses no date of the user's, so there is no "Pick a date" control. Typing or picking a date, or tapping a month chip, switches to a chosen date.</li>
+<li><b>Counts are numbers</b>: "9 cards · 0 at level 6+", never "none".</li>
+<li><b>"New cards a week"</b> reads "needed" only when a chosen Domain is short of its count and no pace is measured. A library whose Domains each already hold their count is dated on the cards it holds, because the 30% spare alone needs no pace (option (b); the form's half lands in the finishing round). A plan that does need a pace and has none is refused when the intake is saved, never drafted empty.</li>
+<li><b>The counts are frozen once the plan is accepted</b>: the coverage rows show the cards at intake, and archiving or writing cards later never moves a figure; only an Edit, a line's Domain, or a lower depth does.</li>
+<li><b>Gemini-off copy</b>: the Area hint ends "Only you pick the Area."; the exam date's "It is never sent to Gemini." shows only while the Gemini path is live.</li>
+<li><b>The exam's fields</b> read "The exam or qualification" and "When is it? (optional)", a plain date input.</li>
+</ul>
+</section>
+<section class="mk-sec mk-r4">
+<h2>Revision 4 · the intake for a Field Area · 344 then 932 · Mon 5 Oct 2026</h2>
+<p>Arrived from the character page's card: the aim is filled in and Area has the focus (the handoff, never a URL). The form leans long-term and puts the depth first (F-R4-4, F-R4-9, F-R4-24). The order for a Field Area: Aim → Area → Depth → Domains with their coverage → By when → Hours; then the exam with its date → the outline with each line's Domain → How hard → (New cards a week, when no pace is measured) → Reality check → Constraints → Advanced. "Where you're starting" is gone for a Field Area: the cards say where the user starts. Gemini drafting stays off in this build (ROADMAP_GEMINI_LIVE), so the form names no Gemini and its buttons are [Build from my numbers] and [Write it myself].</p>
+<div class="mk-row">
+<figure class="mk-fig">
+<div class="mk-tag"><b>344</b> × 882 · Galaxy Fold cover · tab bar</div>
+<div class="frame f344"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-current="page" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">You</div><h1>Set an aim</h1></div>
+<nav class="tb-tabs tabs" aria-label="You pages"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page narrow">
+<div class="tabs you-tabs" role="tablist" aria-label="You"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></div>
+<section class="card rm-note" style="margin-bottom:12px"><svg class="i"><use href="#i-info"/></svg><span style="flex:1">Carried over from your character page. Pick what it grows below.</span></section>
+<p class="t-meta" style="margin:0 4px 12px">Say what you want to be able to do. The app sets every date, level and target from your records, and measures progress from them.</p>
+<form class="rm-form" onsubmit="return false">
+  <section class="card rm-fs" aria-label="The aim">
+    <div class="rm-f">
+      <label class="st-label">What do you want to be able to do? <span class="st-count">79 / 140</span></label>
+      <textarea class="st-input" rows="2">Know probability and inference well enough to pass Exam P and use them at work</textarea>
+      <p class="st-hint">Think a year or more out: something you want to be able to do, not a task.</p>
+      <p class="st-hint" style="margin-top:2px">Shown exactly as you wrote it, everywhere. Never rewritten.</p>
+    </div>
+    <div class="rm-f" id="rm-f-area">
+      <span class="st-label">Area — what this grows</span>
+      <button type="button" class="rm-pick" aria-haspopup="dialog" style="box-shadow:0 0 0 2px var(--ink-0)"><svg class="sig"><use href="#s-know"/></svg><span class="t"><b>Statistics</b><span class="t-meta">Field · level 9 · 82 cards</span></span><svg class="i"><use href="#i-chev"/></svg></button>
+      <p class="st-hint">One of your Fields, or a life track for an aim that is practice only. Only you pick the Area.</p>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">Practices count toward</span>
+      <div class="segc fill" role="group" aria-label="Practices count toward"><button type="button" aria-pressed="true">Craft</button><button type="button" aria-pressed="false">Body</button><button type="button" aria-pressed="false">Care</button><button type="button" aria-pressed="false">Duty</button></div>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">Depth — how far into each Domain</span>
+      <div class="segc fill two" role="group" aria-label="Depth"><button type="button" aria-pressed="true" aria-label="Mastered · level 12">Mastered<small>level 12</small></button><button type="button" aria-pressed="false" aria-label="Fluent · level 10">Fluent<small>level 10</small></button><button type="button" aria-pressed="false" aria-label="Retained · level 8">Retained<small>level 8</small></button></div>
+      <p class="st-hint">Mastered: each card passes its review after a gap of about 110 days at the first try. Multiple-choice cards don't count. A lower depth is your choice and stays on the plan.</p>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">Domains you already have <span class="opt">2 chosen · up to 6</span></span>
+      <div class="rm-dchips" role="group" aria-label="Domains">
+        <button type="button" class="rm-dchip" aria-pressed="true"><b>Probability</b><span>48 cards · 6 multiple choice not counted · 18 at level 6+</span></button>
+        <button type="button" class="rm-dchip" aria-pressed="true"><b>Inference</b><span>9 cards · 0 at level 6+</span></button>
+        <button type="button" class="rm-dchip" aria-pressed="false"><b>Calculus</b><span>20 cards · 7 at level 6+</span></button>
+        <button type="button" class="rm-dchip" aria-pressed="false"><b>Linear Algebra</b><span>5 cards · 1 at level 6+</span></button>
+        <button type="button" class="rm-dchip add"><b>+ Add a Domain from another Field</b><span>your library only</span></button>
+      </div>
+      <p class="st-hint">Every chosen Domain counts on its own: the depth is held in each.</p>
+      <details class="rm-adv" open style="border-top:0;padding-top:0">
+  <summary><svg class="i"><use href="#i-chev"/></svg>How many cards each Domain needs<span class="aside">34 · 25</span></summary>
+  <div class="rm-adv-b" style="gap:6px">
+    <ul class="rm-cov">
+      <li><span><b>Probability</b> · 34 cards: the most of the 25-card floor, 80% of your 42 (34), and 3 × 4 outline lines (12)</span><button type="button" class="btn btn-quiet">Edit</button></li>
+      <li><span><b>Inference</b> · 25 cards: the most of the 25-card floor, 80% of your 9 (8), and 3 × 2 outline lines (6)</span><button type="button" class="btn btn-quiet">Edit</button></li>
+      <li><span class="un">2 outline lines aren't tied to a Domain: S5, S6. They raise every Domain's count, but no card is checked against them. <a class="ilink" href="#rm-f-outline">Choose Domains</a></span></li>
+    </ul>
+    <p class="st-hint" style="margin:0">Multiple-choice cards don't count. The 25-card floor, the 80% share and the 3 cards a line are the app's policy, not facts about these subjects. A lower figure is your choice and stays on the plan.</p>
+  </div>
+</details>
+    </div>
+  </section>
+
+  <section class="card rm-fs" aria-label="Time">
+    <div class="rm-f">
+      <span class="st-label">By when</span>
+      <div class="rm-chips"><button type="button" class="chip btn-chip" aria-pressed="true">When realistic</button><button type="button" class="chip btn-chip two" aria-pressed="false">6 months<small>before level 12 is possible</small></button><button type="button" class="chip btn-chip two" aria-pressed="false">12 months<small>before level 12 is possible</small></button><button type="button" class="chip btn-chip two" aria-pressed="false">24 months<small>possible</small></button><button type="button" class="chip btn-chip two" aria-pressed="false">3 years<small>possible</small></button></div>
+      <input type="date" class="st-input" style="margin-top:8px" aria-label="A date of your own" min="2026-11-09" max="2029-09-19" value="">
+      <p class="st-hint">The app dates each milestone from your cards and pace. A new card needs at least 340 days of spaced reviews to reach level 12 (Mastered), 155 for level 10.</p>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">Hours a week for this aim</span>
+      <div class="rm-step"><button type="button" class="icon-btn" aria-label="One hour less"><svg class="i"><use href="#i-minus"/></svg></button><input class="st-input" value="6" inputmode="numeric" aria-label="Hours a week"><button type="button" class="icon-btn" aria-label="One hour more"><svg class="i"><use href="#i-plus"/></svg></button><span class="t-meta">h a week · 1 to 40</span></div>
+      <div class="rm-fact"><span class="t-eyebrow">What the app has seen</span>You've tracked ≈ 7 h 40 a week of tasks (task estimates, not timed; median of 4 weeks).</div>
+    </div>
+  </section>
+
+  <section class="card rm-fs" aria-label="Facts only you can give">
+    <div class="rm-f">
+      <span class="st-label">Is there an exam or qualification at the end?</span>
+      <div class="segc fill" role="group" aria-label="Is there an exam or qualification at the end?"><button type="button" aria-pressed="true">Yes</button><button type="button" aria-pressed="false">No</button></div>
+      <p class="st-hint">Prefilled from your aim's words: change it if it's wrong.</p>
+    </div>
+    <div class="rm-f">
+      <label class="st-label">The exam or qualification <span class="opt">6 / 80</span></label>
+      <input class="st-input" value="Exam P">
+    </div>
+    <div class="rm-f">
+      <label class="st-label">When is it? (optional)</label>
+      <input type="date" class="st-input" aria-label="When is it? (optional)" value="2027-05-04">
+      <p class="st-hint">Your exam date is a waypoint: the depth goes on past it.</p>
+    </div>
+    <div class="rm-f" id="rm-f-outline">
+      <label class="st-label">Official syllabus: paste the topic list from the official source <span class="opt">6 / 40 lines</span></label>
+      <textarea class="st-input" rows="6">General probability
+Univariate random variables
+Multivariate random variables
+Conditional expectation and variance
+Common discrete distributions
+Common continuous distributions</textarea>
+      <input class="st-input" style="margin-top:8px" value="the exam body's outline" aria-label="Where the syllabus comes from">
+      <p class="st-hint">What to learn comes only from these lines. Each line counts in the Domain you tie it to.</p>
+      <div style="margin-top:10px"><div class="rm-lgroup"><span class="t-eyebrow">Probability</span><div class="rm-lrow"><span class="k">S1</span><span class="t">General probability<small>matched by its name</small></span><button type="button" class="btn btn-quiet" aria-label="Change the Domain of S1">Change</button></div><div class="rm-lrow"><span class="k">S2</span><span class="t">Univariate random variables<small>you chose</small></span><button type="button" class="btn btn-quiet" aria-label="Change the Domain of S2">Change</button></div><div class="rm-lrow"><span class="k">S3</span><span class="t">Multivariate random variables<small>you chose</small></span><button type="button" class="btn btn-quiet" aria-label="Change the Domain of S3">Change</button></div></div>
+<div class="rm-lgroup"><span class="t-eyebrow">Inference</span><div class="rm-lrow"><span class="k">S4</span><span class="t">Conditional expectation and variance<small>you chose</small></span><button type="button" class="btn btn-quiet" aria-label="Change the Domain of S4">Change</button></div></div>
+<div class="rm-lgroup"><span class="t-eyebrow">Not tied to a Domain</span><div class="rm-lrow"><span class="k">S5</span><span class="t">Common discrete distributions</span><button type="button" class="btn btn-quiet" aria-label="Change the Domain of S5">Change</button></div><div class="rm-lrow"><span class="k">S6</span><span class="t">Common continuous distributions</span><button type="button" class="btn btn-quiet" aria-label="Change the Domain of S6">Change</button></div></div></div>
+    </div>
+  </section>
+
+  <section class="card rm-fs" aria-label="Pace and limits">
+    <div class="rm-f">
+      <span class="st-label">How hard</span>
+      <div class="segc fill" role="group" aria-label="How hard"><button type="button" aria-pressed="false">Light</button><button type="button" aria-pressed="true">Steady</button><button type="button" aria-pressed="false">Push</button></div>
+      <p class="st-hint">Steady counts on 70% of your usual pace, so a lean week doesn't break the plan.</p>
+      <div class="rm-fact"><span class="t-eyebrow">Your usual pace</span>Statistics: 3 new cards a week (median of 8 weeks). Steady plans on 2.1.</div>
+    </div>
+    <details class="rm-adv">
+      <summary><svg class="i"><use href="#i-chev"/></svg>Reality check<span class="aside">optional · not set</span></summary>
+    </details>
+    <div class="rm-f">
+      <label class="st-label">Constraints <span class="opt">optional · 14 / 280</span></label>
+      <textarea class="st-input" rows="1">Evenings only.</textarea>
+      <p class="st-hint">Limits the plan keeps to. A practice type that clashes with them is left out, and the draft says which and why.</p>
+    </div>
+    <details class="rm-adv">
+      <summary><svg class="i"><use href="#i-chev"/></svg>Advanced<span class="aside">practices on</span></summary>
+    </details>
+  </section>
+
+  <div class="rm-sticky">
+    <button type="button" class="btn btn-primary lg">Build from my numbers</button>
+    <button type="button" class="btn btn-secondary lg">Write it myself</button>
+    <p class="t-meta">The app builds this plan from your own numbers — the checks and measures all run.</p>
+  </div>
+</form>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-current="page" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div>
+<ul class="mk-cap"><li><b>Depth</b> is a Segmented control, Mastered (level 12) pressed by default; its hint computes "about 110 days" from interval(11, m) at the user's m. A lower depth is a pressed choice, never a fit.</li><li><b>Domains</b> show their mix wherever a count is shown: Probability's 48 cards include 6 multiple choice, which don't count, so the depth works on its 42. Inference has 9 cards and 0 at level 6+ (the count is always a number). <b>Shipped:</b> the figures are frozen once the plan is accepted.</li><li><b>Coverage</b> (open here): every Domain shows its figure and all three of its terms, always. The 2 lines tied to no Domain add an even share to each, and are listed with a way to tie them.</li><li><b>By when</b>: "When realistic" is first and pressed (REALISTIC): the draft dates the stages from the card pipeline. Each other chip carries its floor verdict; none is hidden or disabled. 340 and 155 are floorBase(12, m) and floorBase(10, m), computed. <b>Shipped:</b> the date input below the chips stays empty in REALISTIC, since the plan uses no date of the user's; picking one switches to a chosen date.</li><li><b>The exam</b> is a fact the user answers, prefilled from the aim ("Exam P"); its date is optional and a waypoint only: it never sets the aim's date and is never sent to Gemini.</li><li><b>The outline</b>: for an exam, "Official syllabus". Each line's Domain is the user's: S1 was matched by name (the deterministic default), S2–S4 the user chose, S5 and S6 are not tied. Each row has a 40 px Change control (a select of the chosen Domains and None).</li><li><b>How hard</b> moves dates only: Steady counts on 70% of the usual 3 new cards a week.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>932</b> · rail · one 640 px column</div>
+<div class="mk-scroll"><div class="frame f932"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-current="page" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">You</div><h1>Set an aim</h1></div>
+<nav class="tb-tabs tabs" aria-label="You pages"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page narrow">
+<div class="tabs you-tabs" role="tablist" aria-label="You"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></div>
+<section class="card rm-note" style="margin-bottom:12px"><svg class="i"><use href="#i-info"/></svg><span style="flex:1">Carried over from your character page. Pick what it grows below.</span></section>
+<p class="t-meta" style="margin:0 4px 12px">Say what you want to be able to do. The app sets every date, level and target from your records, and measures progress from them.</p>
+<form class="rm-form" onsubmit="return false">
+  <section class="card rm-fs" aria-label="The aim">
+    <div class="rm-f">
+      <label class="st-label">What do you want to be able to do? <span class="st-count">79 / 140</span></label>
+      <textarea class="st-input" rows="2">Know probability and inference well enough to pass Exam P and use them at work</textarea>
+      <p class="st-hint">Think a year or more out: something you want to be able to do, not a task.</p>
+      <p class="st-hint" style="margin-top:2px">Shown exactly as you wrote it, everywhere. Never rewritten.</p>
+    </div>
+    <div class="rm-f" id="rm-f-area">
+      <span class="st-label">Area — what this grows</span>
+      <button type="button" class="rm-pick" aria-haspopup="dialog" style="box-shadow:0 0 0 2px var(--ink-0)"><svg class="sig"><use href="#s-know"/></svg><span class="t"><b>Statistics</b><span class="t-meta">Field · level 9 · 82 cards</span></span><svg class="i"><use href="#i-chev"/></svg></button>
+      <p class="st-hint">One of your Fields, or a life track for an aim that is practice only. Only you pick the Area.</p>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">Practices count toward</span>
+      <div class="segc fill" role="group" aria-label="Practices count toward"><button type="button" aria-pressed="true">Craft</button><button type="button" aria-pressed="false">Body</button><button type="button" aria-pressed="false">Care</button><button type="button" aria-pressed="false">Duty</button></div>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">Depth — how far into each Domain</span>
+      <div class="segc fill two" role="group" aria-label="Depth"><button type="button" aria-pressed="true" aria-label="Mastered · level 12">Mastered<small>level 12</small></button><button type="button" aria-pressed="false" aria-label="Fluent · level 10">Fluent<small>level 10</small></button><button type="button" aria-pressed="false" aria-label="Retained · level 8">Retained<small>level 8</small></button></div>
+      <p class="st-hint">Mastered: each card passes its review after a gap of about 110 days at the first try. Multiple-choice cards don't count. A lower depth is your choice and stays on the plan.</p>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">Domains you already have <span class="opt">2 chosen · up to 6</span></span>
+      <div class="rm-dchips" role="group" aria-label="Domains">
+        <button type="button" class="rm-dchip" aria-pressed="true"><b>Probability</b><span>48 cards · 6 multiple choice not counted · 18 at level 6+</span></button>
+        <button type="button" class="rm-dchip" aria-pressed="true"><b>Inference</b><span>9 cards · 0 at level 6+</span></button>
+        <button type="button" class="rm-dchip" aria-pressed="false"><b>Calculus</b><span>20 cards · 7 at level 6+</span></button>
+        <button type="button" class="rm-dchip" aria-pressed="false"><b>Linear Algebra</b><span>5 cards · 1 at level 6+</span></button>
+        <button type="button" class="rm-dchip add"><b>+ Add a Domain from another Field</b><span>your library only</span></button>
+      </div>
+      <p class="st-hint">Every chosen Domain counts on its own: the depth is held in each.</p>
+      <details class="rm-adv" open style="border-top:0;padding-top:0">
+  <summary><svg class="i"><use href="#i-chev"/></svg>How many cards each Domain needs<span class="aside">34 · 25</span></summary>
+  <div class="rm-adv-b" style="gap:6px">
+    <ul class="rm-cov">
+      <li><span><b>Probability</b> · 34 cards: the most of the 25-card floor, 80% of your 42 (34), and 3 × 4 outline lines (12)</span><button type="button" class="btn btn-quiet">Edit</button></li>
+      <li><span><b>Inference</b> · 25 cards: the most of the 25-card floor, 80% of your 9 (8), and 3 × 2 outline lines (6)</span><button type="button" class="btn btn-quiet">Edit</button></li>
+      <li><span class="un">2 outline lines aren't tied to a Domain: S5, S6. They raise every Domain's count, but no card is checked against them. <a class="ilink" href="#rm-f-outline">Choose Domains</a></span></li>
+    </ul>
+    <p class="st-hint" style="margin:0">Multiple-choice cards don't count. The 25-card floor, the 80% share and the 3 cards a line are the app's policy, not facts about these subjects. A lower figure is your choice and stays on the plan.</p>
+  </div>
+</details>
+    </div>
+  </section>
+
+  <section class="card rm-fs" aria-label="Time">
+    <div class="rm-f">
+      <span class="st-label">By when</span>
+      <div class="rm-chips"><button type="button" class="chip btn-chip" aria-pressed="true">When realistic</button><button type="button" class="chip btn-chip two" aria-pressed="false">6 months<small>before level 12 is possible</small></button><button type="button" class="chip btn-chip two" aria-pressed="false">12 months<small>before level 12 is possible</small></button><button type="button" class="chip btn-chip two" aria-pressed="false">24 months<small>possible</small></button><button type="button" class="chip btn-chip two" aria-pressed="false">3 years<small>possible</small></button></div>
+      <input type="date" class="st-input" style="margin-top:8px" aria-label="A date of your own" min="2026-11-09" max="2029-09-19" value="">
+      <p class="st-hint">The app dates each milestone from your cards and pace. A new card needs at least 340 days of spaced reviews to reach level 12 (Mastered), 155 for level 10.</p>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">Hours a week for this aim</span>
+      <div class="rm-step"><button type="button" class="icon-btn" aria-label="One hour less"><svg class="i"><use href="#i-minus"/></svg></button><input class="st-input" value="6" inputmode="numeric" aria-label="Hours a week"><button type="button" class="icon-btn" aria-label="One hour more"><svg class="i"><use href="#i-plus"/></svg></button><span class="t-meta">h a week · 1 to 40</span></div>
+      <div class="rm-fact"><span class="t-eyebrow">What the app has seen</span>You've tracked ≈ 7 h 40 a week of tasks (task estimates, not timed; median of 4 weeks).</div>
+    </div>
+  </section>
+
+  <section class="card rm-fs" aria-label="Facts only you can give">
+    <div class="rm-f">
+      <span class="st-label">Is there an exam or qualification at the end?</span>
+      <div class="segc fill" role="group" aria-label="Is there an exam or qualification at the end?"><button type="button" aria-pressed="true">Yes</button><button type="button" aria-pressed="false">No</button></div>
+      <p class="st-hint">Prefilled from your aim's words: change it if it's wrong.</p>
+    </div>
+    <div class="rm-f">
+      <label class="st-label">The exam or qualification <span class="opt">6 / 80</span></label>
+      <input class="st-input" value="Exam P">
+    </div>
+    <div class="rm-f">
+      <label class="st-label">When is it? (optional)</label>
+      <input type="date" class="st-input" aria-label="When is it? (optional)" value="2027-05-04">
+      <p class="st-hint">Your exam date is a waypoint: the depth goes on past it.</p>
+    </div>
+    <div class="rm-f" id="rm-f-outline">
+      <label class="st-label">Official syllabus: paste the topic list from the official source <span class="opt">6 / 40 lines</span></label>
+      <textarea class="st-input" rows="6">General probability
+Univariate random variables
+Multivariate random variables
+Conditional expectation and variance
+Common discrete distributions
+Common continuous distributions</textarea>
+      <input class="st-input" style="margin-top:8px" value="the exam body's outline" aria-label="Where the syllabus comes from">
+      <p class="st-hint">What to learn comes only from these lines. Each line counts in the Domain you tie it to.</p>
+      <div style="margin-top:10px"><div class="rm-lgroup"><span class="t-eyebrow">Probability</span><div class="rm-lrow"><span class="k">S1</span><span class="t">General probability<small>matched by its name</small></span><button type="button" class="btn btn-quiet" aria-label="Change the Domain of S1">Change</button></div><div class="rm-lrow"><span class="k">S2</span><span class="t">Univariate random variables<small>you chose</small></span><button type="button" class="btn btn-quiet" aria-label="Change the Domain of S2">Change</button></div><div class="rm-lrow"><span class="k">S3</span><span class="t">Multivariate random variables<small>you chose</small></span><button type="button" class="btn btn-quiet" aria-label="Change the Domain of S3">Change</button></div></div>
+<div class="rm-lgroup"><span class="t-eyebrow">Inference</span><div class="rm-lrow"><span class="k">S4</span><span class="t">Conditional expectation and variance<small>you chose</small></span><button type="button" class="btn btn-quiet" aria-label="Change the Domain of S4">Change</button></div></div>
+<div class="rm-lgroup"><span class="t-eyebrow">Not tied to a Domain</span><div class="rm-lrow"><span class="k">S5</span><span class="t">Common discrete distributions</span><button type="button" class="btn btn-quiet" aria-label="Change the Domain of S5">Change</button></div><div class="rm-lrow"><span class="k">S6</span><span class="t">Common continuous distributions</span><button type="button" class="btn btn-quiet" aria-label="Change the Domain of S6">Change</button></div></div></div>
+    </div>
+  </section>
+
+  <section class="card rm-fs" aria-label="Pace and limits">
+    <div class="rm-f">
+      <span class="st-label">How hard</span>
+      <div class="segc fill" role="group" aria-label="How hard"><button type="button" aria-pressed="false">Light</button><button type="button" aria-pressed="true">Steady</button><button type="button" aria-pressed="false">Push</button></div>
+      <p class="st-hint">Steady counts on 70% of your usual pace, so a lean week doesn't break the plan.</p>
+      <div class="rm-fact"><span class="t-eyebrow">Your usual pace</span>Statistics: 3 new cards a week (median of 8 weeks). Steady plans on 2.1.</div>
+    </div>
+    <details class="rm-adv">
+      <summary><svg class="i"><use href="#i-chev"/></svg>Reality check<span class="aside">optional · not set</span></summary>
+    </details>
+    <div class="rm-f">
+      <label class="st-label">Constraints <span class="opt">optional · 14 / 280</span></label>
+      <textarea class="st-input" rows="1">Evenings only.</textarea>
+      <p class="st-hint">Limits the plan keeps to. A practice type that clashes with them is left out, and the draft says which and why.</p>
+    </div>
+    <details class="rm-adv">
+      <summary><svg class="i"><use href="#i-chev"/></svg>Advanced<span class="aside">practices on</span></summary>
+    </details>
+  </section>
+
+  <div class="rm-sticky">
+    <button type="button" class="btn btn-primary lg">Build from my numbers</button>
+    <button type="button" class="btn btn-secondary lg">Write it myself</button>
+    <p class="t-meta">The app builds this plan from your own numbers — the checks and measures all run.</p>
+  </div>
+</form>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-current="page" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div></div>
+<ul class="mk-cap wide"><li>The same form in the narrow page (640 px). The coverage rows, the line groups and the two-line date chips keep their 40 px targets. Nothing is in the URL; the unsent form survives in guarded localStorage, the key the /you card reads and writes.</li></ul>
+</figure>
+</div>
+</section>
+<section class="mk-sec mk-r4">
+<h2>Revision 4 · intake states and sheets · 344</h2>
+
+<div class="mk-row">
+<figure class="mk-fig">
+<div class="mk-tag"><b>A</b> · a vague aim, after 600 ms idle</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card rm-fs"><div class="rm-f"><label class="st-label">What do you want to be able to do? <span class="st-count">14 / 140</span></label><textarea class="st-input" rows="1">Learn Japanese</textarea><p class="t-meta" style="margin-top:6px;color:var(--ink-1)">Say what you'll be able to do, and how well: something you could show someone.</p><p class="st-hint">Think a year or more out: something you want to be able to do, not a task.</p><p class="st-hint" style="margin-top:2px">Shown exactly as you wrote it, everywhere. Never rewritten.</p></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>vagueAimHint (pure, no model) fires when the trimmed aim has fewer than 3 words, or its only verbs are vague (get better, improve, learn, understand …) with no number, standard or object of 2 or more words after them. "Learn Japanese" gives it; "Hold a 30-minute conversation in Japanese" doesn't.</li><li>The hint is ink-1 t-meta, never error-coloured; it never blocks submit, never edits the aim, and clears when the condition does.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>B</b> · By when: a chosen date under and over the floor</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card rm-fs"><div class="rm-f"><span class="st-label">By when</span><div class="rm-chips"><button type="button" class="chip btn-chip" aria-pressed="false">When realistic</button><button type="button" class="chip btn-chip two" aria-pressed="true">6 months<small>before level 12 is possible</small></button><button type="button" class="chip btn-chip two" aria-pressed="false">12 months<small>before level 12 is possible</small></button><button type="button" class="chip btn-chip two" aria-pressed="false">24 months<small>possible</small></button><button type="button" class="chip btn-chip two" aria-pressed="false">3 years<small>possible</small></button></div><p class="st-hint">That is before a new card can reach level 12 here. The draft will offer the realistic date, a lower depth, or to keep yours.</p></div><div class="rm-f"><span class="st-label">By when</span><div class="rm-chips"><button type="button" class="chip btn-chip" aria-pressed="false">When realistic</button><button type="button" class="chip btn-chip two" aria-pressed="false">6 months<small>before level 12 is possible</small></button><button type="button" class="chip btn-chip two" aria-pressed="false">12 months<small>before level 12 is possible</small></button><button type="button" class="chip btn-chip two" aria-pressed="true">24 months<small>possible</small></button><button type="button" class="chip btn-chip two" aria-pressed="false">3 years<small>possible</small></button></div><p class="st-hint">Thu 5 Oct 2028 · 731 days from today. The draft says what this date means for your depth.</p></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>6 months: under floorBase(12) (340 days), so "That is before a new card can reach level 12 here…". 24 months: the date and its day count, and the draft gives the verdict (FITS, TIGHT, OVER or IMPOSSIBLE, mockup 2).</li><li>A chip's verdict adds the writing days for the Domains that need new cards to the floor: Inference's 19 cards take until day 42 at the usual 3 a week, and 340 + 42 > 365, so the 12-month chip reads "before level 12 is possible" for this pack. <b>For R2:</b> the floor helper's writing rate decides this; at twice the pace (21 days) the chip would read "possible".</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>C</b> · no exam: the outline's other wording</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card rm-fs"><div class="rm-f"><span class="st-label">Is there an exam or qualification at the end?</span><div class="segc fill" role="group" aria-label="Is there an exam or qualification at the end?"><button type="button" aria-pressed="false">Yes</button><button type="button" aria-pressed="true">No</button></div></div><div class="rm-f"><label class="st-label">Your outline: what this covers, one per line — from an official source or your own list <span class="opt">optional</span></label><textarea class="st-input" rows="3" placeholder="One topic per line · up to 40 lines"></textarea></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>No sets the exam's name and date to null; exam-only practice types (mock test, timed practice, booking the exam) are then never offered.</li><li>With no outline the plan reads "coverage unchecked: no outline" for good (decision 53).</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>D</b> · an empty library: name the areas</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card rm-fs"><div class="rm-f"><span class="st-label">Area — what this grows</span><button type="button" class="rm-pick"><svg class="sig"><use href="#s-know"/></svg><span class="t"><b>Japanese</b><span class="t-meta">Field · level 1 · no cards yet</span></span><svg class="i"><use href="#i-chev"/></svg></button></div>
+<div class="rm-f"><span class="st-label">Name the areas this needs <span class="opt">2 of 6</span></span><div class="rm-dchips"><span class="rm-dchip" style="flex-direction:row;align-items:center;gap:6px;background:var(--ink-0);border-color:var(--ink-0);color:var(--page)"><b>Grammar</b><button type="button" class="icon-btn" style="width:32px;height:32px;color:inherit" aria-label="Remove Grammar"><svg class="i" style="width:16px;height:16px"><use href="#i-x"/></svg></button></span><span class="rm-dchip" style="flex-direction:row;align-items:center;gap:6px;background:var(--ink-0);border-color:var(--ink-0);color:var(--page)"><b>Vocabulary</b><button type="button" class="icon-btn" style="width:32px;height:32px;color:inherit" aria-label="Remove Vocabulary"><svg class="i" style="width:16px;height:16px"><use href="#i-x"/></svg></button></span></div><input class="st-input" style="margin-top:8px" placeholder="Name an area, then Enter"><p class="st-hint">Each becomes a Domain in Japanese when you save, named by you.</p></div>
+<div class="rm-f"><label class="st-label">Your outline <span class="opt">optional</span></label><p class="st-hint" style="margin:0 0 6px">Not sure what it covers? Paste the official outline or syllabus from a source you trust, one topic per line.</p><textarea class="st-input" rows="2" placeholder="One topic per line · up to 40 lines"></textarea></div>
+<div class="rm-f"><label class="st-label">New cards a week <span class="opt">needed · 0 to 100</span></label><input class="st-input" style="max-width:120px" value="6" inputmode="numeric" placeholder="e.g. 4" aria-label="New cards a week"><p class="st-hint">The app needs a pace to date your milestones. Your rate, not yet measured.</p></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>With 0 Domains in the Area and no outline, the form asks the user to name the areas (Intake.newDomainNames, at most 6, each checked by createDomain's rules; saveIntake creates them in the Field in its transaction) and points to an outline from a source the user trusts. It never points to Gemini's suggestions: a newcomer is the person least able to judge them.</li><li>"New cards a week" reads "needed" here: REALISTIC mode, two new Domains short of their count (0 of 25 each), and no measured pace. It is recorded as an assumed input ('pace'), so the draft's date reads "estimate" and offers a re-date once measured. <b>Shipped (option (b)):</b> when every chosen Domain already holds its count, only the 30% spare would be written, so the field reads "optional" and the plan is dated on the cards held; without a pace a plan that needs one is refused when the intake is saved.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>E</b> · the coverage Edit sheet: a figure below the app's</div>
+<div class="frame f344"><div class="shf"><div class="sheet-s"><div class="grabber"></div>
+<div class="sheet-h"><div class="t"><h2>Cards in Probability</h2><p class="sub">How many count toward the depth</p></div><button class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+<div class="rm-f" style="margin-top:14px"><div class="rm-step"><button type="button" class="icon-btn" aria-label="One less"><svg class="i"><use href="#i-minus"/></svg></button><input class="st-input" value="20" inputmode="numeric" aria-label="Cards in Probability"><button type="button" class="icon-btn" aria-label="One more"><svg class="i"><use href="#i-plus"/></svg></button><span class="t-meta">1 to 500</span></div></div>
+<p class="t-meta" style="margin-top:10px">The app's figure is 34: the most of the 25-card floor, 80% of your 42 (34), and 3 × 4 outline lines (12).</p>
+<p class="t-meta" style="margin-top:6px;color:var(--ink-0)">20 is below the app's 34. It stays on the plan as your choice, and while it stands the top rank on this plan is Virtuoso.</p>
+<div class="it-acts" style="margin-top:14px"><button class="btn btn-primary">Use 20</button><button class="btn btn-secondary">Use the app's 34</button></div>
+</div></div></div>
+<ul class="mk-cap"><li>Typing is the user's right (COVER_MIN 1 to COVER_MAX 500). A figure under the policy is a coverage choice {domainId, policy, typed, day}: the sheet says so before Save, the plan shows "Probability: 20 cards, below the app's 34, your choice on 5 Oct." for its life, and while it stands the top rank is Virtuoso.</li><li>No string that lowers a coverage exists outside this edit path and the LOWER_DEPTH sheet (a roadmap-ui-check ban).</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>F</b> · a life-track Area (practice only)</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card rm-fs"><div class="rm-f"><label class="st-label">What do you want to be able to do? <span class="st-count">29 / 140</span></label><textarea class="st-input" rows="1">Run 10 km in under 50 minutes</textarea></div>
+<div class="rm-f"><span class="st-label">Area — what this grows</span><button type="button" class="rm-pick"><svg class="sig"><use href="#s-body"/></svg><span class="t"><b>Body · practice only</b><span class="t-meta">track level 6 · its last 2 judged weeks kept</span></span><svg class="i"><use href="#i-chev"/></svg></button></div>
+<div class="rm-f"><span class="st-label">By when</span><div class="rm-chips"><button type="button" class="chip btn-chip" aria-pressed="false">6 months</button><button type="button" class="chip btn-chip" aria-pressed="true">12 months</button><button type="button" class="chip btn-chip" aria-pressed="false">24 months</button><button type="button" class="chip btn-chip" aria-pressed="false">3 years</button></div><p class="st-hint">The app splits this into stages by planned practice; the last ends on your date.</p></div>
+<div class="rm-f"><label class="st-label">Constraints <span class="opt">optional · 25 / 280</span></label><textarea class="st-input" rows="1">Knee injury, no running</textarea><p class="st-hint">Limits the plan keeps to. A practice type that clashes with them is left out, and the draft says which and why.</p></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>No Depth, no Domains, no coverage: a track plan's stages are shares of planned practice. By when defaults to CHOSEN at 12 months with rev 3's hint, and the 3-month chip is gone for every Area.</li><li>"Knee injury, no running" makes the Body plan use only easy, mobility and technique sessions (mockup 2, frame E).</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>G</b> · the handoff notes by source</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card rm-note"><svg class="i"><use href="#i-info"/></svg><span style="flex:1">From your long goal “Read Japanese manga without a dictionary”. The goal stays as it is on Today.</span></section><div style="height:12px"></div>
+<section class="card rm-note"><svg class="i"><use href="#i-info"/></svg><span style="flex:1">From your capture line.</span></section><div style="height:12px"></div>
+<section class="card rm-note"><svg class="i"><use href="#i-info"/></svg><span style="flex:1">Your open draft is shown. The aim you typed: “Hold a 30-minute conversation in Japanese” · <a class="ilink" href="#">Use it</a></span></section><div style="height:12px"></div>
+<section class="card rm-note"><svg class="i"><use href="#i-info"/></svg><span style="flex:1">From your plan made before plans aimed at a depth: its aim, Area and Domains are carried over. Saving this archives that plan.</span></section>
+</div></div></div>
+<ul class="mk-cap"><li>'goal' (the seed on /you), 'capture' ("aim: …" in capture, built last), an open DRAFT that wins over a typed aim ("Use it" sets the aim), and 'restart' (a legacy plan's Start again at a depth).</li><li><b>Proposed copy</b> for 'restart' (the spec points to F-R4-16 without words): "From your plan made before plans aimed at a depth: its aim, Area and Domains are carried over. Saving this archives that plan."</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>H</b> · Gemini live and the area switch<span class="mk-flag">lead-only switches · off in this build</span></div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="rm-sticky" style="position:static;background:none"><button type="button" class="btn btn-primary lg">Draft with Gemini</button><button type="button" class="btn btn-secondary lg">Build from my numbers</button><p class="t-meta">Gemini will arrange your 6 outline lines and pick practice types for your 2 Domains; the app writes every word.</p></div>
+<section class="card rm-fs" style="margin-top:12px"><details class="rm-adv" open style="border-top:0;padding-top:0"><summary><svg class="i"><use href="#i-chev"/></svg>Advanced</summary><div class="rm-adv-b"><div class="rm-sw"><span class="t">Include practices (things to do, not just know)</span><span class="switch-hit"><button class="switch" role="switch" aria-checked="true" aria-label="Include practices"></button></span></div><div class="rm-sw"><span class="t">Let Gemini suggest areas you don't have yet (picked from your own words; not checked)</span><span class="switch-hit"><button class="switch" role="switch" aria-checked="false" aria-label="Let Gemini suggest areas you don't have yet"></button></span></div><p class="st-hint" style="margin:0">Drafting sends Google your aim, Area name, constraints, the exam's name, your outline lines with the Domain you tied each to, and your Domain names with their card counts and which ones you chose — never your cards, their titles or ids, and never your exam date.</p><p class="st-hint" style="margin:0">This server's Gemini key is on Google's free tier, so Google may use what drafting sends to improve its products.</p></div></details></section>
+</div></div></div>
+<ul class="mk-cap"><li>Shown only once the lead turns ROADMAP_GEMINI_LIVE on after the v3 probe passes, and only with a key. The line says what Gemini will arrange, from the form's own counts.</li><li>The area-suggestion switch exists only while ROADMAP_GAPS_LIVE is on (lead only, false in this build); while either switch is off it is absent and a stored suggestAreas is ignored.</li><li>The privacy line is generated from the pack's sections: it gains the line Domains and "which ones you chose", and says the exam date is never sent.</li></ul>
+</figure>
+</div>
+</section>
+<!-- rev4:end -->
+<!-- rev3-note:start -->
+<section class="mk-sec mk-r3">
+<h2>Revision 3 frames · kept for what revision 4 leaves unchanged</h2>
+<p>Everything below is revision 3's intake. Where it differs from the frames above, revision 4 wins:</p>
+<ul class="mk-cap wide">
+<li>A Field Area asks for the <b>Depth</b> and shows each Domain's coverage; "Where you're starting" is gone for it (it stays for a track Area).</li>
+<li>By when starts at "When realistic"; the 3-month chip is gone; each chip carries its floor verdict. The hint is no longer "6 milestones of 10–11 weeks": stages are dated from the card pipeline.</li>
+<li>How hard is the share of the usual pace (Light 50%, Steady 70%, Push 90%) and moves dates only; it no longer scales a fitted target.</li>
+<li>The exam is a Yes/No question with an optional date, and the syllabus is an outline whose lines the user ties to Domains. The rev-3 note "Shown to Gemini as limits…" under Constraints, and every Gemini sentence, show only while ROADMAP_GEMINI_LIVE is on.</li>
+<li>Unchanged: the Area picker sheet, the reality-check inputs, the 35-day and 3-year limits, one open roadmap per user, errors in the kit's .t-error.</li>
+</ul>
+<div class="mk-legend" aria-label="Provenance classes as rendered in revision 3">
   <span><span class="pv pv-draft">Gemini suggestion · not checked</span> DRAFT</span>
   <span><span class="pv pv-kept">Gemini's words · kept by you · not checked</span> KEPT_SUGGESTION</span>
   <span><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>You checked this</span> YOURS</span>
@@ -674,8 +1194,8 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
   <span><span class="cap">≈ 9 h 10 (task estimates, not timed)</span> ESTIMATED</span>
   <span><span class="cap">plain, basis on "How this is worked out"</span> WORKED_OUT</span>
 </div>
-
-</header>
+</section>
+<!-- rev3-note:end -->
 
 <section class="mk-sec">
   <h2>The form, with a Gemini key · 344 then 932</h2>

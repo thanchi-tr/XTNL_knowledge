@@ -12,8 +12,9 @@ import { todayKey, type DayKey } from "@/lib/life-day";
 import { GOAL_RULES } from "@/lib/life-economy";
 import type { Horizon, Track } from "@/lib/life-types";
 import { SKILL_POOL } from "@/lib/skill-pool";
-import { AimCard } from "@/components/roadmap/AimCard";
+import { AimCard, type AimCardProps } from "@/components/roadmap/AimCard";
 import { FixtureRoadmapProvider } from "@/components/roadmap/roadmap-runtime";
+import { aimPromptOf } from "@/lib/roadmap-invite";
 import { aimCardFixtures, buildAimFixture, type AimFixture } from "./aim-fixtures";
 
 export const metadata: Metadata = { title: "You fixtures" };
@@ -36,7 +37,27 @@ export const metadata: Metadata = { title: "You fixtures" };
  * reach the inert fixture actions ("nothing is saved on this page"), never
  * the live ones: the EMPTY card's × can't set the real xtnl-aim-prompt
  * cookie from here. Each card gets the page's life day, as /you passes it.
+ *
+ * Revision 4 (F-R4-1): every card gets its prompt, seed and last aim exactly
+ * as /you gives them: prompt = aimPromptOf(the fixture's cookie value, the
+ * view's aimSuggestions, today), the fixture's seed (longGoalSeedOf over a
+ * fixture goal), and the view's lastAim; promptDismissed is the transition
+ * alias for OFF, as on /you. The OFF and HIDDEN states' boxes are empty on
+ * purpose; with a last aim they hold at most its line (no link to a new aim,
+ * no ×), as R5's card renders them (lane 0's HIDDEN, the fix round). Fix
+ * round 2 adds the legacy boxes (a plan made before revision 4: open,
+ * drafted, closed), each carrying lane 0's legacyView as R4 sends it.
  */
+
+/**
+ * R5's fixture seam for the continue state (handoff: AimCardProps.autosaveAim,
+ * the unsent aim the card starts from in place of reading RoadmapForm's
+ * autosave). Passed only by the fixture that holds one, so a fixture card
+ * never reads or writes the real form's autosave from this page.
+ */
+function autosaveSeam(aim: string | undefined): Partial<AimCardProps> {
+  return aim === undefined ? {} : ({ autosaveAim: aim } as Partial<AimCardProps>);
+}
 
 /**
  * One Aim card fixture, or the line saying which builder it still waits on.
@@ -45,11 +66,21 @@ export const metadata: Metadata = { title: "You fixtures" };
  */
 function AimFixtureCard({ fixture, today, slot }: { fixture: AimFixture; today: DayKey; slot?: string }) {
   const built = buildAimFixture(fixture);
+  const view = built.view;
+  const prompt = aimPromptOf(fixture.empty?.cookie, view?.aimSuggestions ?? null, today);
   return (
     <div data-aim-card={slot ?? fixture.key}>
-      {built.view ? (
+      {view ? (
         <FixtureRoadmapProvider>
-          <AimCard view={built.view} promptDismissed={false} today={today} />
+          <AimCard
+            view={view}
+            prompt={prompt}
+            seed={fixture.empty?.seed ?? null}
+            lastAim={view.lastAim ?? null}
+            promptDismissed={prompt === "OFF"}
+            today={today}
+            {...autosaveSeam(fixture.empty?.autosaveAim)}
+          />
         </FixtureRoadmapProvider>
       ) : (
         <p className="t-meta">Fixture waits on the roadmap: {built.waiting}</p>

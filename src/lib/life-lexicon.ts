@@ -116,6 +116,11 @@ export function isCategory(x: unknown): x is Category {
   return typeof x === "string" && (CATEGORIES as readonly string[]).includes(x);
 }
 
+/** Code's own words for a grade, "<category> · <band> · <minutes>m": a model answer with no rationale, and every plan-born task's "Why". */
+function gradeWordsOf(category: Category, band: Band, minutes: number): string {
+  return `${CATEGORY_LABEL[category]} · ${BAND_META[band].label} · ${minutes}m`;
+}
+
 export function isDurationBand(x: unknown): x is DurationBand {
   return typeof x === "string" && (DURATION_BANDS as readonly string[]).includes(x);
 }
@@ -477,9 +482,7 @@ export function mergeSizing(lexical: Sizing, ai: LifeSizingRaw, opts: { tagTrack
   const composition = normaliseComposition(blended);
 
   const rationale = (typeof ai.rationale === "string" ? ai.rationale : "").trim();
-  const basis = (
-    rationale || `${CATEGORY_LABEL[category]} · ${BAND_META[band].label} · ${machineMinutes}m`
-  ).slice(0, SIZING_BASIS_CHARS);
+  const basis = (rationale || gradeWordsOf(category, band, machineMinutes)).slice(0, SIZING_BASIS_CHARS);
 
   return {
     category,
@@ -683,6 +686,41 @@ export function gradeFromModel(
   };
 }
 
+// ── A plan-born task's grade (roadmap decision 50; contracts §15.6, §16.4) ──
+
+/** The template columns a plan-born task's "Why" is written from. */
+export interface PlanBornGradeInput {
+  category: string;
+  band: string;
+  /** The plan's minutes: a practice's come from its catalog band, a step's from capture's lexical grade. */
+  estMinutes: number;
+}
+
+/**
+ * A plan-born task's "Why" (captureKey 'rm:…', roadmap-types
+ * isRoadmapCaptureKey): "<category> · <band> · <minutes>m", code's words
+ * from the template's own columns. No model sizes or explains a plan-born
+ * task, so this is the only "Why" its size panel shows, whatever the
+ * stored basis says, and what life-sizing writes back if it is ever asked
+ * to size one.
+ */
+export function planBornBasisOf(t: PlanBornGradeInput): string {
+  const category: Category = isCategory(t.category) ? t.category : "OTHER";
+  const minutes = Number.isFinite(t.estMinutes) ? Math.max(1, Math.round(t.estMinutes)) : DURATION_BAND_MINUTES.D30;
+  return gradeWordsOf(category, toBand(t.band), minutes).slice(0, SIZING_BASIS_CHARS);
+}
+
+/**
+ * What life-sizing's applySizing writes for a plan-born template instead of
+ * a model grade: the code basis, and nothing else, so no model's words, no
+ * copied grade, no attempt and no cap slot. Null when the code basis
+ * already stands, so a repeat writes nothing.
+ */
+export function planBornGradeOf(t: PlanBornGradeInput & { gradeBasis: string | null }): GradeUpdate | null {
+  const gradeBasis = planBornBasisOf(t);
+  return t.gradeBasis === gradeBasis ? null : { gradeBasis };
+}
+
 // ── The grade chip ────────────────────────────────────────────────────────
 
 export interface GradeChip {
@@ -690,11 +728,15 @@ export interface GradeChip {
   tone: "muted" | "blue" | "green";
 }
 
+/** A plan-born task's chip while its size can still change: its size is the plan's, never a model's. */
+export const PLAN_BORN_CHIP = "from the plan";
+
 /**
  * The grade chip's words (grading section I): 'lexical · 40%' → 'sizing…'
  * → 'AI · 84%' → 'self-rated' → 'frozen'. A lexical grade still inside its
  * window with no attempt yet is being sized; one whose attempt failed says
- * so rather than spinning forever.
+ * so rather than spinning forever. A plan-born task is never sized by a
+ * model, so it reads 'from the plan' and never 'sizing…'.
  */
 export function gradeChipOf(
   t: {
@@ -704,11 +746,14 @@ export function gradeChipOf(
     gradeFrozenAt: Date | null;
     bandOverride: number;
     createdAt: Date;
+    /** A plan-born task (roadmap-types isRoadmapCaptureKey). Absent reads as false. */
+    planBorn?: boolean;
   },
   now: Date = new Date()
 ): GradeChip {
   if (isGradeFrozen(t, now)) return { label: t.bandOverride !== 0 ? "frozen · self-rated" : "frozen", tone: "muted" };
   if (t.bandOverride !== 0) return { label: "self-rated", tone: "blue" };
+  if (t.planBorn) return { label: PLAN_BORN_CHIP, tone: "muted" };
   const pct = `${Math.round(t.gradeConfidence * 100)}%`;
   if (t.gradeSource === "AI") return { label: `AI · ${pct}`, tone: "green" };
   if (t.gradeSource === "COPIED") return { label: `AI (copied) · ${pct}`, tone: "green" };

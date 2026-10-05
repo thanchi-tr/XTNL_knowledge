@@ -295,7 +295,8 @@ export async function applyReviewResult(
   // its row (xp 0) waits for `after`, off the answer's critical path; the
   // outcome is noted here once it is known. A review that threw before
   // landing notes nothing, and is not activity.
-  let lateOutcome: ReviewOutcome["outcome"] | null = null;
+  // The miss row's detail: its outcome, then (roadmap rev 4) the level it was taken at, " · L11", appended so every prefix reader still matches.
+  let lateOutcome: `${ReviewOutcome["outcome"]} · L${number}` | null = null;
   let landed = false;
   after(async () => {
     if (lateOutcome) {
@@ -358,7 +359,8 @@ export async function applyReviewResult(
     if (mastered) {
       ops.push(mintIdeaMasteryOp(userId, ideaId, modifiers.masteryMultiplier));
     }
-    const review = reviewEvent(ideaId, now, pointsAwarded, mastered ? "advanced · mastered" : "advanced");
+    // Roadmap rev 4: the level is appended at the end (" · L11→12"), so every prefix reader still matches.
+    const review = reviewEvent(ideaId, now, pointsAwarded, `${mastered ? "advanced · mastered" : "advanced"} · L${idea.level}→${newLevel}`);
     ops.push(activityOp(userId, review));
     await prisma.$transaction(ops);
     // Reviews invalidate 'activity' only (recalculateLeveling below clears
@@ -416,13 +418,13 @@ export async function applyReviewResult(
     // Same as the shielded path: the Idea moved out of the due window
     // without any points changing, so nothing else will invalidate for us.
     invalidate("ideas");
-    lateOutcome = "strike";
+    lateOutcome = `strike · L${idea.level}`;
     landed = true;
     return { outcome: "strike", failedAttempts, strikeLimit, nextCombo, nextDue: dueDate.toISOString() };
   }
 
   const outcome = await attemptDegradation({ ...idea, failedAttempts }, now, userId, progression, nextCombo);
-  lateOutcome = outcome.outcome;
+  lateOutcome = `${outcome.outcome} · L${idea.level}`;
   landed = true;
   return outcome;
 }

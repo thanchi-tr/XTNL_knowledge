@@ -161,8 +161,8 @@ check(
 }
 
 // ── roadmap (lane Y, F16 seam 10 and F23): the Roadmap sub, "Set an aim", the fixtures page, the strip at 344 ──
-// nav.ts is lane L's (seam 10), and YouTabs.tsx and you.css are in no lane: what the strip still lacks is a
-// WARN naming its handoff until it lands, and anything else wrong is a FAIL.
+// nav.ts is lane L's (seam 10), and YouTabs.tsx is lane Y's since roadmap revision 4 (a rev-3 carry-over):
+// anything the strip lacks is a FAIL now that both its fixes have landed.
 {
   const you = SECTIONS.find((s) => s.id === "you");
   const labels = (you?.subs ?? []).map((s) => s.label);
@@ -194,16 +194,19 @@ check(
   // and the current tab can sit out of view unless the strip scrolls it in and shows that more is there.
   const widthAt = (names: readonly string[]) => names.reduce((w, n) => w + n.length * 7 + 28, 0) + 4 * (names.length - 1);
   check(`tabs at 344 (roadmap): the You strip (${widthAt(want)} px at least) is wider than the 312 px content, so it scrolls`, widthAt(want) > 312);
-  const tabs = read("src/components/home/YouTabs.tsx");
+  // Landed in roadmap revision 4 (lane Y's carry-over; YouTabs.tsx): the strip moves its own scrollLeft
+  // to the current tab on every route (never scrollIntoView, which could also move the page), and the
+  // edge with more tabs past it fades (an inline mask, data-fade start/end/both; none when the strip fits).
+  const tabs = read("src/components/home/YouTabs.tsx").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
   const youCss = cssRules(read("src/components/home/you.css"));
   const stripProblems: string[] = [];
-  if (!/scrollIntoView\(|\.scrollLeft\s*=|\.scrollTo\(/.test(tabs)) stripProblems.push("YouTabs never scrolls the current tab into view");
-  if (!youCss.some((r) => /\.you-tabs/.test(r.selector) && /mask-image|linear-gradient/.test(r.body))) stripProblems.push("the You tab strip has no scroll cue");
-  const lead = "the lead: YouTabs.tsx and you.css are in no lane (roadmap F16 seam 10 says shell-check asserts both)";
-  checkPending("tabs at 344 (roadmap): the current tab is scrolled into view, and the strip keeps a scroll cue", stripProblems, {
-    "YouTabs never scrolls the current tab into view": lead,
-    "the You tab strip has no scroll cue": lead,
-  });
+  if (!/\.scrollLeft\s*[+-]?=|\.scrollTo\(/.test(tabs) || !/\[current\]\);/.test(tabs)) stripProblems.push("YouTabs never scrolls the current tab into view");
+  if (/scrollIntoView\(/.test(tabs)) stripProblems.push("YouTabs scrolls with scrollIntoView (it can move the page)");
+  const inlineCue = /maskImage: MASK\[fade\]/.test(tabs) && /WebkitMaskImage: MASK\[fade\]/.test(tabs) && /data-fade=\{fade \?\? undefined\}/.test(tabs);
+  if (!inlineCue && !youCss.some((r) => /\.you-tabs/.test(r.selector) && /mask-image|linear-gradient/.test(r.body))) stripProblems.push("the You tab strip has no scroll cue");
+  if (!/if \(max <= 1\) return null;/.test(tabs)) stripProblems.push("the You tab strip's cue shows even when every tab fits");
+  // Nothing pending: lane Y landed both (the two keys handed to the lead are deleted).
+  checkPending("tabs at 344 (roadmap): the current tab is scrolled into view, and the strip keeps a scroll cue", stripProblems, {});
 }
 
 // ── the pre-paint script agrees with parsePrefs/resolveMotion ──────────────

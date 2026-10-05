@@ -10,6 +10,7 @@
  *
  * Run: npx tsx scripts/study-side-check.ts
  */
+import "./_no-model";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
@@ -49,6 +50,8 @@ import { RESET_SCOPES, RESET_SCOPE_ORDER } from "../src/lib/reset-scopes";
 import { FIELD_TIERS } from "../src/lib/field-tier";
 import { QUESTION_TYPES, encodeIdeaContent, parseCloze } from "../src/lib/idea-payload";
 import { MASTERY_LEVEL, MAX_LEVEL } from "../src/lib/xp";
+import { parseReviewDetail } from "../src/lib/roadmap-types";
+import { reviewMarkOf } from "../src/lib/review-facts";
 import { SECTIONS, activeSub, titleFor } from "../src/components/shell/nav";
 
 const ROOT = join(__dirname, "..");
@@ -197,6 +200,40 @@ eq("history: outcomes", ["advanced", "advanced · mastered", "backfill: passed r
   eq("history: empty", [historyOf([]).total, historySummary(historyOf([]))], [0, "No reviews recorded yet"]);
   const long = historyOf(Array.from({ length: 30 }, (_, i) => ({ detail: "advanced", at: i, backfill: false })));
   check("history: the strip keeps the last 12, the counts keep all", long.segs.length === 12 && long.total === 30);
+}
+// Revision 4 (F-R4-8): srs.ts appends the level to every REVIEW detail. A tagged row reads as its untagged form did.
+eq(
+  "history: tagged outcomes (rev 4) read as the untagged ones",
+  ["advanced · L11→12", "advanced · mastered · L11→12", "strike · L11", "degraded · L7", "shielded · L11", "  Strike · L3 ", "advanced · L0→1", "weird · L11"].map(outcomeOf),
+  ["on", "on", "miss", "miss", "miss", "miss", "on", null]
+);
+{
+  // One card's ledger across the deploy: untagged rows before, tagged rows after. The strip keeps every miss.
+  const h = historyOf([
+    { detail: "backfill: passed review", at: 1, backfill: true },
+    { detail: "advanced", at: 2, backfill: false },
+    { detail: "strike", at: 3, backfill: false },
+    { detail: "advanced · L3→4", at: 4, backfill: false },
+    { detail: "strike · L4", at: 5, backfill: false },
+    { detail: "degraded · L4", at: 6, backfill: false },
+    { detail: "shielded · L3", at: 7, backfill: false },
+    { detail: "advanced · mastered · L11→12", at: 8, backfill: false },
+  ]);
+  eq("history: old and tagged rows together, every miss kept", h.segs, ["on", "on", "miss", "on", "miss", "miss", "miss", "on"]);
+  eq("history: old and tagged rows together, counts", [h.recalls, h.misses, h.total, historySummary(h)], [4, 4, 8, "4 recalls, 4 misses"]);
+  // The Library's strip and the review hub (review-facts reviewMarkOf) read every outcome row alike.
+  const rows = ["advanced", "advanced · mastered", "strike", "degraded", "shielded", "advanced · L11→12", "advanced · mastered · L11→12", "strike · L11", "degraded · L7", "shielded · L11"];
+  eq("history: outcomeOf agrees with review-facts reviewMarkOf on old and tagged rows", rows.map((d) => (outcomeOf(d) === "on" ? "pass" : outcomeOf(d))), rows.map(reviewMarkOf));
+  eq(
+    "history: outcomeOf agrees with roadmap-types parseReviewDetail on old and tagged rows",
+    rows.map(outcomeOf),
+    rows.map((d) => parseReviewDetail(d).outcome).map((o) => (o === "advanced" || o === "backfill" ? "on" : o === null ? null : "miss"))
+  );
+  const lm = code(read("src/components/library/library-model.ts"));
+  check(
+    "history: library-model reads REVIEW details through parseReviewDetail, never === against an outcome word",
+    /parseReviewDetail\(detail\)/.test(lm) && !/[=!]==\s*["'](advanced|strike|degraded|shielded|backfill)/.test(lm) && /from "@\/lib\/roadmap-types"/.test(lm)
+  );
 }
 
 // ── Editing ─────────────────────────────────────────────────────────────────

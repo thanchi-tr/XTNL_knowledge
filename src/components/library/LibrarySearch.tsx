@@ -26,7 +26,7 @@ import { ideaHistory } from "@/app/actions/ideas";
 import { DIFFICULTY_META, type DifficultyBand } from "@/lib/difficulty";
 import { fieldTier } from "@/lib/field-tier";
 import { QUESTION_TYPES } from "@/lib/idea-payload";
-import { MASTERY_LEVEL } from "@/lib/xp";
+import { MAX_LEVEL } from "@/lib/xp";
 import { MathText } from "@/components/math/MathText";
 import { Button } from "@/components/ui/Button";
 import { Chip, ChipButton } from "@/components/ui/Chip";
@@ -39,6 +39,7 @@ import {
   COLLECTION_NAME,
   DIFFICULTY_BANDS,
   EMPTY_FILTERS,
+  LEVEL_FILTER_MAX,
   STATUS_NAME,
   TYPE_NAME,
   URL_KEYS,
@@ -419,7 +420,7 @@ function IdeaRow({ idea, now, onOpen }: { idea: LibraryIdea; now: number; onOpen
             Mastered
           </Chip>
         ) : (
-          <span aria-label={`Level ${idea.level} of ${MASTERY_LEVEL}`}>L{idea.level}</span>
+          <span aria-label={`Level ${idea.level} of ${MAX_LEVEL}`}>L{idea.level}</span>
         )}
       </span>
     </Link>
@@ -455,8 +456,8 @@ function activeTokens(f: LibraryFilters, fields: LibraryField[], set: (patch: Pa
   for (const t of f.types) out.push({ key: `y:${t}`, label: TYPE_NAME[t], clear: () => set({ types: toggle(f.types, t) }) });
   for (const c of f.cols) out.push({ key: `c:${c}`, label: COLLECTION_NAME[c], clear: () => set({ cols: toggle(f.cols, c) }) });
   for (const b of f.bands) out.push({ key: `b:${b}`, label: DIFFICULTY_META[b].label, clear: () => set({ bands: toggle(f.bands, b) }) });
-  if (f.minLevel > 1 || f.maxLevel < MASTERY_LEVEL) {
-    out.push({ key: "lv", label: `Level ${f.minLevel}–${f.maxLevel}`, clear: () => set({ minLevel: 1, maxLevel: MASTERY_LEVEL }) });
+  if (f.minLevel > 1 || f.maxLevel < LEVEL_FILTER_MAX) {
+    out.push({ key: "lv", label: `Level ${f.minLevel}–${f.maxLevel}`, clear: () => set({ minLevel: 1, maxLevel: LEVEL_FILTER_MAX }) });
   }
   return out;
 }
@@ -593,7 +594,7 @@ function FilterSheet({
             type="number"
             inputMode="numeric"
             min={1}
-            max={MASTERY_LEVEL}
+            max={LEVEL_FILTER_MAX}
             value={f.minLevel}
             onChange={(e) => onChange({ minLevel: Math.min(f.maxLevel, Math.max(1, Number(e.target.value) || 1)) })}
           />
@@ -609,13 +610,13 @@ function FilterSheet({
             type="number"
             inputMode="numeric"
             min={1}
-            max={MASTERY_LEVEL}
+            max={LEVEL_FILTER_MAX}
             value={f.maxLevel}
             onChange={(e) =>
-              onChange({ maxLevel: Math.max(f.minLevel, Math.min(MASTERY_LEVEL, Number(e.target.value) || MASTERY_LEVEL)) })
+              onChange({ maxLevel: Math.max(f.minLevel, Math.min(LEVEL_FILTER_MAX, Number(e.target.value) || LEVEL_FILTER_MAX)) })
             }
           />
-          <span className="t-meta">of {MASTERY_LEVEL}</span>
+          <span className="t-meta">of {LEVEL_FILTER_MAX}</span>
         </div>
       </div>
     </Sheet>

@@ -1,0 +1,37 @@
+{
+  "sha256": "9d542fd58ec62bcef8a335da00490589e98f8ad260a5b94162db8341d3146d9d",
+  "counts": {
+    "runs": 162,
+    "A": 5000,
+    "B": 1000,
+    "C": 2000,
+    "D": 2000,
+    "E_replies": 1700,
+    "E_strings": 22231,
+    "E_claims": 21946,
+    "E_control": 252,
+    "E_clash": 303,
+    "E_oneSource": 246,
+    "EG": 2304,
+    "K": 1821,
+    "K_release": 274,
+    "K_overExclusion": 1031,
+    "M": 2200,
+    "F": 0
+  },
+  "packs": {
+    "actuarial-probability": "88245bd3a0bdeca6",
+    "care-routine": "ab621bc759fdef03",
+    "guitar": "c9483750f407bfe6",
+    "ielts": "e976edf7d59d0277",
+    "japanese-work": "778f7f77c07088f3",
+    "lose-8kg": "40c8d0ecf27ac984",
+    "new-subject": "ca7a739d61cd2e14",
+    "python-cert": "d04e68ee4f769608",
+    "run-10k": "cbd5989879845161",
+    "tax-admin": "f8ca56c09b3348d5",
+    "trading": "e3da5d8bdccd9e0d",
+    "vietnamese-japanese": "1edef685ba5a5978"
+  },
+  "probes": []
+}

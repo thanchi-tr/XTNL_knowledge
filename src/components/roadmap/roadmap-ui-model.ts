@@ -42,6 +42,8 @@ import {
   type MilestoneRowView,
   type MilestoneStatus,
   type Origin,
+  type ProficiencyView,
+  type DraftView,
   type RoadmapView,
   type RunView,
   type RunWriter,
@@ -53,12 +55,14 @@ import {
   type WeekQuestsView,
 } from "@/lib/roadmap-types";
 import { statedForMilestone } from "@/lib/roadmap-economy";
+import { catalogEntryOf, type CatalogKey } from "@/lib/roadmap-catalog";
 import type { DayKey } from "@/lib/life-day";
 import type { Segment } from "@/components/ui/Meter";
 import {
   DRAFTED_BY_LABEL,
   DRAFT_CAP_LINE,
   LATEST_RUN_LABEL,
+  RUN_REFUSED_LINE,
   RUN_STARTER_LINE,
   RUN_UNFINISHED_LINE,
   closedUnreachedLine,
@@ -124,6 +128,8 @@ export interface EditorRow {
   struck?: readonly [number, number][];
   /** Each flag's reason naming what set it (ItemDraft.reasons, MilestoneDraft.titleReasons); undefined: not derived here. */
   reasons?: Partial<Record<BlockingFlag, string>>;
+  /** Revision 4: a code-worded type from roadmap-catalog (a practice, step or checkpoint); its type can be changed in one tap (F-R4-21). */
+  catalogKey?: CatalogKey | null;
 }
 
 /**
@@ -163,6 +169,7 @@ export function editorRowOf(it: ItemDraft): EditorRow {
     placeholder: it.notes.includes("PLACEHOLDER"),
     struck: it.struck,
     reasons: it.reasons,
+    catalogKey: it.catalogKey ?? null,
   };
 }
 
@@ -200,7 +207,7 @@ export function needsRecheckOf(row: EditorRow): boolean {
   return (row.flags.includes("NUMBER") && row.struck === undefined) || row.reasons === undefined;
 }
 
-export type ItemAction = "KEEP" | "EDIT" | "REMOVE" | "CHECK" | "MAP" | "CREATE" | "DROP";
+export type ItemAction = "KEEP" | "EDIT" | "REMOVE" | "CHECK" | "MAP" | "CREATE" | "DROP" | "TYPE";
 
 /** What a row offers: all of them from 380 px; below it the first is a button and the rest sit in ⋯. */
 export interface ItemActions {
@@ -241,6 +248,8 @@ function baseActionsOf(row: EditorRow, stage: "draft" | "outline" | "active" | "
     return { wide: all, narrow: { shown: all, more: [] } };
   }
   const number = row.flags.includes("NUMBER");
+  // A title with no words (the checker dropped Gemini's to '') can't be kept or checked: only named (fix round 2's carry-over).
+  if (row.kind === "TITLE" && !row.label.trim() && (cls === "DRAFT" || cls === "KEPT_SUGGESTION")) return { wide: ["EDIT"], narrow: { shown: ["EDIT"], more: [] } };
   if (cls === "DRAFT") {
     if (row.kind === "DOMAIN") return { wide: ["CHECK", "MAP", "KEEP", "REMOVE"], narrow: { shown: ["CHECK"], more: ["MAP", "KEEP", "REMOVE"] } };
     if (number && row.kind === "TITLE") return { wide: ["EDIT"], narrow: { shown: ["EDIT"], more: [] } };
@@ -255,6 +264,8 @@ function baseActionsOf(row: EditorRow, stage: "draft" | "outline" | "active" | "
     return { wide: pair, narrow: { shown: [pair[0]], more: pair.slice(1) } };
   }
   if (row.placeholder) return { wide: ["EDIT"], narrow: { shown: ["EDIT"], more: [] } };
+  // Revision 4 (F-R4-18, F-R4-21): a code-worded type on a draft can be swapped for another from the app's list, or its words edited (YOURS).
+  if (row.catalogKey && stage === "draft" && (row.kind === "PRACTICE" || row.kind === "STEP" || row.kind === "CHECKPOINT")) return { wide: ["TYPE", "EDIT"], narrow: { shown: ["TYPE"], more: ["EDIT"] } };
   return NONE;
 }
 
@@ -267,13 +278,20 @@ export const ITEM_ACTION_WORD: Readonly<Record<ItemAction, string>> = {
   MAP: "Map to…",
   CREATE: "Create",
   DROP: "Drop",
+  TYPE: "Change the type",
 };
 
-/** Items "Keep this milestone's unflagged suggestions" would keep: Gemini's undecided, unflagged items (and an unflagged title); never a proposed Domain. */
+/** An action's words on a row: an empty title's Edit reads "Name this milestone". */
+export function actionWordOf(row: Pick<EditorRow, "kind" | "label">, a: ItemAction): string {
+  if (a === "EDIT" && row.kind === "TITLE" && !row.label.trim()) return "Name this milestone";
+  return ITEM_ACTION_WORD[a];
+}
+
+/** Items "Keep this milestone's unflagged suggestions" would keep: Gemini's undecided, unflagged items (and an unflagged title with words); never a proposed Domain. */
 export function bulkKeepRowsOf(m: MilestoneDraft): EditorRow[] {
   const rows: EditorRow[] = [];
   const title = titleItemOf(m);
-  if (itemClassOf(title) === "DRAFT" && title.flags.length === 0) rows.push(title);
+  if (itemClassOf(title) === "DRAFT" && title.flags.length === 0 && title.label.trim().length > 0) rows.push(title);
   for (const it of m.items) {
     const row = editorRowOf(it);
     if (itemClassOf(row) !== "DRAFT" || row.proposed || row.flags.length > 0) continue;
@@ -445,12 +463,28 @@ export function behindBannerOf(line: string, ord: number): { head: string; body:
   return { head: `Behind on new cards for Milestone ${ord}`, body: line };
 }
 
-/** "Add 5 cards to Risk Management, 2 of 5 cards added, counted by the app". */
+/** "Add 5 cards to Risk Management, 2 of 5 cards added, counted by the app" (with a generator-2 row's parts: "…, 3 in Probability · 2 in Inference"). */
 export function weekQuestAccessibleName(row: WeekQuestRow): string {
   const countLine = weekQuestCountOf(row);
   const added = row.kind === "ADD" && !row.done ? " added" : "";
   const where = row.place ? `. Shows it ${row.place}` : "";
-  return `${row.label}, ${countLine}${added}, ${row.figure.caption}${where}`;
+  const parts = partsLineOf(row);
+  return `${row.label}, ${countLine}${added}${parts ? `, ${parts}` : ""}, ${row.figure.caption}${where}`;
+}
+
+/**
+ * A generator-2 row's parts line (R6's WeekQuestRowV2.partsLine, the
+ * variant's own cut: Today and the Aim card the first two parts and "+n more
+ * Domain(s)"); null on a v1 row, which renders as before.
+ */
+export function partsLineOf(row: WeekQuestRow): string | null {
+  const line = row.partsLine;
+  return typeof line === "string" && line.trim().length > 0 ? line : null;
+}
+
+/** A body plan's practice row carries HEALTH_LINE as its sub-line (R6's WeekQuestRow.health; the contract §15.11). */
+export function rowHealthOf(row: WeekQuestRow): boolean {
+  return row.kind === "PRACTICE" && row.health === true;
 }
 
 // ═══ Milestones list and strip (F18) ═════════════════════════════════════════
@@ -580,7 +614,8 @@ export function draftBannerOf(run: RunView | null): string | null {
   if (!run) return null;
   const writer = draftRunWriterOf(run);
   if (run.capped === true || run.status === "CAPPED") return DRAFT_CAP_LINE;
-  if (run.status === "FAILED" && run.kind === "GEMINI") return writer === "STARTER" ? RUN_STARTER_LINE : writer ? RUN_UNFINISHED_LINE : null;
+  // The starter stands in Gemini's place: say why (a refused reply did answer; a rejected one has its own header line, RUN_REJECTED_LINE).
+  if (run.status === "FAILED" && run.kind === "GEMINI") return writer === "STARTER" ? (/^reply refused\b/.test(run.error ?? "") ? RUN_REFUSED_LINE : RUN_STARTER_LINE) : writer ? RUN_UNFINISHED_LINE : null;
   return null;
 }
 
@@ -594,6 +629,17 @@ export function draftBannerOf(run: RunView | null): string | null {
 export function referenceRunOf(view: Pick<RoadmapView, "run" | "acceptedRun">): { run: RunView | null; label: string } {
   if (view.acceptedRun !== undefined) return { run: view.acceptedRun, label: DRAFTED_BY_LABEL };
   return { run: view.run, label: LATEST_RUN_LABEL };
+}
+
+/**
+ * Whether a surface may name Gemini (Acceptance: with ROADMAP_GEMINI_LIVE
+ * false or no key, no Gemini sentence appears anywhere): its path is live
+ * with a key, or the rows on screen are the ones a Gemini run arranged
+ * (provenance must still say so). A starter written in a failed run's
+ * place, a plan from your numbers or one you wrote never names it.
+ */
+export function geminiNamedOf(live: boolean, run: RunView | null | undefined): boolean {
+  return live || draftRunWriterOf(run ?? null) === "GEMINI";
 }
 
 /** Any live row of a draft still in Gemini's words (DRAFT or KEPT_SUGGESTION): a title, or an item not removed. */
@@ -653,4 +699,78 @@ export function typedTargetVerdict(target: number, check: Pick<KnowledgeCheck, "
   if (target > check.best) return "OVER";
   if (target > check.expected) return "TIGHT";
   return "FITS";
+}
+
+// ═══ Revision 4 (roadmap-rev4.md) ════════════════════════════════════════════
+
+/**
+ * Proficiency's label, always naming its basis (F-R4-12; Names): R1's
+ * ProficiencyView.label ("Proficiency toward Mastered (level 12)"; the
+ * contract §15.11) when the view carries it, else "Proficiency" (a plan with
+ * no depth).
+ */
+export function proficiencyBasisLabelOf(p: ProficiencyView): string {
+  const label = p.label;
+  return typeof label === "string" && label.trim().length > 0 ? label : "Proficiency";
+}
+
+/** The basis alone, for the line under the eyebrow: "toward Mastered (level 12)"; null without one. */
+export function proficiencyBasisOf(p: ProficiencyView): string | null {
+  const label = proficiencyBasisLabelOf(p);
+  return label.startsWith("Proficiency toward ") ? label.slice("Proficiency ".length) : null;
+}
+
+/**
+ * Who chose a code-worded type (F-R4-18): Gemini's pick from the app's list
+ * (ItemNote GEMINI_PICK), the app (a starter's pick, STUDY_ADDED or
+ * PRODUCTION_ADDED), or you (an addition you made or a type you changed: its
+ * decision EDITED). null: not a catalog item.
+ */
+export function catalogByOf(it: Pick<ItemDraft, "catalogKey" | "notes" | "origin" | "decision">): "GEMINI" | "APP" | "YOU" | null {
+  if (!it.catalogKey) return null;
+  if (it.notes.includes("GEMINI_PICK") && it.decision !== "EDITED") return "GEMINI";
+  if (it.origin === "USER" || it.decision === "EDITED" || it.decision === "CHECKED") return "YOU";
+  return "APP";
+}
+
+/** The notes a catalog row shows as its provenance words (so its note chips don't repeat them). */
+export const CATALOG_PROVENANCE_NOTES: ReadonlySet<string> = new Set(["GEMINI_PICK", "STUDY_ADDED", "PRODUCTION_ADDED"]);
+
+/** The slot of a catalog key (the provenance words name it: "practice type picked by Gemini…"). */
+export function catalogSlotOf(key: CatalogKey | null | undefined): "PRACTICE" | "STEP" | "CHECKPOINT" | null {
+  return key ? (catalogEntryOf(key)?.slot ?? null) : null;
+}
+
+/**
+ * A revision-4 draft (F-R4-17): every row a revision-4 path wrote has a
+ * stage, and a Field plan has a depth. Keys only: no Keep, no bulk keep, no
+ * "I checked this" on Gemini's choices; what Gemini chose is labelled and
+ * changeable instead.
+ */
+export function isKeysOnlyDraft(draft: Pick<DraftView, "milestones" | "depth">): boolean {
+  return draft.depth != null || draft.milestones.some((m) => m.stage != null);
+}
+
+/** A stage held when you began (HELD_AT_START): no items, never started, gives no rank. */
+export function isHeldMilestone(m: Pick<MilestoneDraft, "notes">): boolean {
+  return m.notes.includes("HELD_AT_START");
+}
+
+/** Gemini's pending Domain additions are decided in the plan-level row, never on a milestone (F-R4-21). */
+export function isPendingAddition(it: Pick<ItemDraft, "kind" | "origin" | "decision" | "notes">): boolean {
+  return it.kind === "DOMAIN" && it.origin === "GEMINI" && it.decision === "PENDING" && it.notes.includes("NOT_CHOSEN");
+}
+
+/**
+ * The date of a draft before and after the additions (F-R4-21): the plan's
+ * realistic date now (its date check's D_real), and the latest date with
+ * every addition chosen (the additions' own dates with them; the set's
+ * effect is at least the worst single one).
+ */
+export function additionsDatesOf(draft: Pick<DraftView, "dateCheck" | "additions">, chosen: readonly string[]): { from: string | null; to: string | null } {
+  const from = draft.dateCheck?.D_real ?? null;
+  const picked = (draft.additions ?? []).filter((a) => chosen.includes(a.domainId) && a.dateWith);
+  if (picked.length === 0) return { from, to: null };
+  const to = picked.map((a) => a.dateWith as string).sort().pop() ?? null;
+  return { from, to };
 }

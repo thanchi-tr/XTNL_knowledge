@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="dark">
 <title>Character page Aim card</title>
-<meta name="description" content="Mockup, revision 3: the character page /you at 344, 932 and 1440 px with the Aim card under the hero (Aim rank, Proficiency, the milestone line and one week quest line), and its states.">
+<meta name="description" content="Mockup, revision 4: the character page /you at 344 and 932 px with the Aim card asking for the aim in place (ASK, continue, the two-line last aim, LATER, HIDDEN and OFF with the kept achievement line, the undo toast), the card with a depth plan (date chip, Proficiency's basis), done and legacy states (open, draft, closed), and the Settings switch, redrawn to the shipped components after fix round 2; revision 3's frames follow.">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400&family=Inter:wght@400..700&family=JetBrains+Mono:wght@500;600&display=swap">
 <style>
 /* =====================================================================
@@ -576,6 +576,132 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
 .ml-row .rkc b{color:var(--ink-1);font-weight:600}
 .ml-row .r small{display:block;font:500 12px/16px var(--font-ui);color:var(--ink-2)}
 
+/* rev4-css:start */
+/* =====================================================================
+   REVISION 4 (roadmap-rev4.md, 2026-10-05): the aim asked in place, depth
+   and stages, "keep the depth, move the date", keys-only drafts. Still
+   rm-* names only, ink only: no gold (MP spending), no --owed (nothing here
+   is debt), no status hue without a word. What roadmap.css adds in rev 4.
+   ===================================================================== */
+/* the ASK card (F-R4-1): about 344 px at 344, at most 410 with a seed and a last aim */
+.rm-ac-call{padding:12px 14px 4px;display:flex;flex-direction:column}
+.rm-ac-call .ac-h{font:600 19px/23px var(--font-display)}
+/* shipped (fix round 1): the last aim on two lines, the achievement never clipped; 16 px lines */
+.rm-ac-call .ac-last{margin-top:2px;min-width:0;line-height:16px}
+.rm-ac-call .ac-last-aim{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rm-ac-call .ac-last-rank b{color:var(--ink-1);font-weight:600}
+/* shipped: HIDDEN or OFF with a last aim keeps its achievement alone, with no x */
+.aim-empty.kept{padding-right:14px}
+.aim-err{margin-top:6px;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-ac-call .ac-body{font-size:14px;line-height:19px;color:var(--ink-1);margin-top:4px}
+.rm-ac-call .ac-rank{margin-top:2px}
+.rm-ac-call .ac-cont{margin-top:4px;color:var(--ink-1)}
+.rm-ac-call textarea.st-input{margin-top:4px;min-height:60px;height:60px;padding:8px 12px;line-height:1.3;resize:none}
+.rm-ac-call .ac-cont+textarea.st-input{margin-top:2px}
+.rm-ac-seed{display:flex;align-items:center;gap:8px;min-height:40px;margin-top:6px;padding:0 2px;font:600 14px/19px var(--font-ui);color:var(--ink-0);text-decoration:none;min-width:0;width:100%;text-align:left}
+.rm-ac-seed svg.i{width:16px;height:16px;color:var(--ink-1)}
+.rm-ac-seed span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;text-decoration:underline;text-underline-offset:3px}
+.rm-ac-call .ac-go{margin-top:4px}
+.rm-ac-seed+.ac-go{margin-top:2px}
+.rm-ac-quiet{display:flex;flex-wrap:wrap;gap:2px;margin-left:-10px}
+.rm-ac-quiet .btn{min-height:40px}
+/* the LATER line keeps rev 3's .aim-empty geometry (56 px min) with the new copy */
+.aim-empty .t b{color:var(--ink-0);font-weight:600}
+/* Today's aim line (F-R4-3): ≤ 72 px at 344, never red, never counted */
+.rm-aim-line{display:flex;align-items:center;gap:4px;min-height:56px;padding:6px 6px 6px 14px}
+.rm-aim-line>a{flex:1;min-width:0;display:flex;gap:10px;align-items:center;min-height:48px;text-decoration:none;color:var(--ink-1);font-size:14px;line-height:19px}
+.rm-aim-line>a>svg.i{width:20px;height:20px;flex:none;color:var(--ink-1)}
+.rm-aim-line>a>span{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.rm-aim-line>a b{color:var(--ink-0);font-weight:600}
+.rm-aim-line .icon-btn{width:40px;height:40px;border-radius:10px}
+.rm-quests-slot[data-compact]:has(> .rm-aim-line){display:none}
+/* the depth, date and provenance lines (F-R4-15) */
+.rm-depth{display:flex;flex-direction:column;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-depth b{color:var(--ink-0);font-weight:600}
+.rm-depth .pl{display:flex;gap:6px;align-items:flex-start}
+.rm-depth .pl>svg.i{width:14px;height:14px;flex:none;margin-top:2px;color:var(--ink-2)}
+.rm-depth .q{color:var(--ink-2)}
+.rm-basisk{display:block;font:400 12px/16px var(--font-ui);letter-spacing:0;text-transform:none;color:var(--ink-2);margin-top:1px}
+.rm-rp .pf .rm-basisk{text-align:right}
+/* coverage breakdown (F-R4-9) */
+.rm-cov{display:flex;flex-direction:column}
+.rm-cov>li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:start;padding:8px 0;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-cov>li:first-child{border-top:0;padding-top:2px}
+.rm-cov>li b{color:var(--ink-0);font-weight:600}
+.rm-cov>li .btn{min-height:40px;margin:-8px -6px -8px 0}
+.rm-cov>li.below{color:var(--ink-0)}
+.rm-cov .un{grid-column:1/-1}
+/* the outline's line Domains (F-R4-24) */
+.rm-lgroup+.rm-lgroup{margin-top:10px}
+.rm-lgroup>.t-eyebrow{display:block;margin:0 0 2px;color:var(--ink-1)}
+.rm-lrow{display:grid;grid-template-columns:30px minmax(0,1fr) auto;align-items:center;gap:0 8px;min-height:44px;border-top:1px solid var(--line-1);font-size:14px;line-height:19px}
+.rm-lrow .k{font:500 12px/16px var(--font-mono);color:var(--ink-2)}
+.rm-lrow .t{min-width:0;overflow-wrap:anywhere}
+.rm-lrow .t small{display:block;font-size:12px;line-height:16px;color:var(--ink-2)}
+.rm-lrow .btn{min-height:40px;padding:0 10px}
+/* chips with a verdict word under the label (the By-when chips) */
+.rm-chips .chip.btn-chip{min-height:40px}
+.chip.btn-chip.two{flex-direction:column;align-items:flex-start;justify-content:center;gap:0;line-height:16px;padding:4px 12px;white-space:normal;text-align:left}
+.chip.btn-chip.two small{font:500 12px/15px var(--font-ui);color:var(--ink-2)}
+.chip.btn-chip.two[aria-pressed="true"] small{color:color-mix(in srgb,var(--page) 75%,transparent)}
+/* the Depth control: the stage name over its level */
+.segc.two button{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:48px;padding:4px 6px;line-height:17px}
+.segc.two button small{font:500 12px/15px var(--font-ui);color:var(--ink-2)}
+.segc.two button[aria-pressed="true"] small{color:color-mix(in srgb,var(--page) 75%,transparent)}
+/* Gemini's additions, one toggle per Domain on an exam aim (F-R4-21) */
+.rm-adds{padding:14px}
+.rm-adds .t{font-size:14px;line-height:19px}
+.rm-add{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:center;padding:10px 0;border-top:1px solid var(--line-1)}
+.rm-add:first-of-type{margin-top:10px}
+.rm-add b{font-weight:600}
+.rm-add .t-meta{grid-column:1}
+.rm-add.blocked b,.rm-add.blocked .t-meta{color:var(--ink-2)}
+.rm-adds .acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:center}
+/* date check (F-R4-11) */
+.rm-date .offers{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.rm-date .offers .btn{justify-content:flex-start;white-space:normal;text-align:left;line-height:1.3;padding:8px 14px}
+.rm-wp{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:18px;color:var(--ink-1);margin-top:8px}
+.rm-wp>svg.i{width:16px;height:16px;flex:none;margin-top:1px;color:var(--ink-1)}
+.rm-wp b{color:var(--ink-0);font-weight:600}
+/* stage rows: held, dropped, count gate */
+.ml-row.held .ms-n{border-style:dotted;color:var(--ink-2)}
+.ml-row.held b,.ml-row.dropped b{color:var(--ink-1)}
+.ml-row.dropped .ms-n{border-style:dashed;color:var(--ink-2)}
+.ml-row.dropped b{text-decoration:line-through;text-decoration-color:var(--ink-mute)}
+.ml-row .r .q{font:500 12px/16px var(--font-ui);color:var(--ink-2)}
+.tag-s{display:inline-flex;align-items:center;min-height:20px;padding:0 6px;border-radius:6px;border:1px solid var(--line-2);font:600 12px/16px var(--font-ui);color:var(--ink-1);margin-left:6px;vertical-align:1px;white-space:nowrap}
+/* week quest parts (F-R4-14) */
+.rm-parts-l{grid-column:2/-1;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-parts-l .more{color:var(--ink-2)}
+/* the arrangement line, the keys-only header, the integrity line */
+.rm-arr{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-arr>svg.i{width:18px;height:18px;flex:none;margin-top:0;color:var(--ink-1)}
+.pv-pick{border:1px dashed var(--line-ctl);color:var(--ink-1)}
+.pv-app{color:var(--ink-1)}
+/* the area-suggestion panel (ROADMAP_GAPS_LIVE only: lead-only, off in this build) */
+.rm-gaps{padding:14px}
+.rm-gaps .t-eyebrow{color:var(--ink-1)}
+.rm-gaps h3{font:600 17px/22px var(--font-display);margin-top:4px}
+.rm-gaps p{font-size:13px;line-height:18px;color:var(--ink-1);margin-top:6px}
+.rm-gap{padding:10px 0;border-top:1px solid var(--line-1);margin-top:10px}
+.rm-gap+.rm-gap{margin-top:0}
+.rm-gap b{font-weight:600}
+/* Settings: the Aim suggestions row (settings.css set-row, copied) */
+.set{padding:4px 14px}
+.set-row{display:flex;align-items:center;gap:8px 12px;min-height:60px;padding:10px 0;flex-wrap:wrap}
+.set-row+.set-row{border-top:1px solid var(--line-1)}
+.set-row .n{flex:1;min-width:160px}
+.set-row .n b{font-weight:500;display:block}
+.set-row .n span{display:block;font-size:13px;line-height:18px;color:var(--ink-2)}
+.set-grid{display:grid;gap:16px}
+@container main (min-width:760px){.set-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start}}
+/* mockup chrome for rev 4 */
+.mk-r4{border-top:2px solid var(--ink-0);margin-top:18px}
+.mk-r3{border-top:1px dashed var(--line-ctl);margin-top:24px}
+.mk-r3 .mk-cap{max-width:932px}
+.mk-flag{display:inline-flex;align-items:center;gap:6px;margin-left:8px;padding:1px 8px;border-radius:6px;border:1px dashed var(--line-ctl);font:600 12px/16px var(--font-mono);color:var(--ink-1)}
+.mk-fig.w312{max-width:344px}
+/* rev4-css:end */
 </style>
 </head>
 <body>
@@ -658,12 +784,576 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
 </defs>
 </svg>
 <header class="mk">
-  <div class="t-eyebrow">XTNL · Roadmap · mockup 4 of 5 · roadmap.md rev 3, F12, F16 seam 9, F19</div>
+  <div class="t-eyebrow">XTNL · Roadmap · mockup 4 of 5 · roadmap-rev4.md, F-R4-1, F-R4-2, F-R4-5, F-R4-11, F-R4-12, F-R4-16 (rev 3's F12, F16 seam 9 and F19 below)</div>
   <h1>Character page — /you with the Aim card</h1>
-  <p>The character page gains one card, directly under the hero: the user's <b>Aim</b> in their own words, its <b>Aim rank</b> (given by reaching milestones, kept for good) and its <b>Proficiency</b> (a measured percentage that may fall), the current milestone in one line, and one line for this week's <b>week quests</b>. Everything is computed in-house from stored readings; nothing here calls a model or pays anything. CharacterHero, the ready callout, Life tracks, Attributes and loading.tsx are untouched. Roadmap is the second You tab.</p>
-  <div class="mk-ex">Example data — fake but plausible, as of Thu 28 Jan 2027 09:12 · same plan as mockups 2, 3 and 5</div>
+  <p>The character page gains one card, directly under the hero: the user's <b>Aim</b> in their own words, its <b>Aim rank</b> (given by the stages reached inside the plan, kept for good) and its <b>Proficiency</b> toward the aim's depth (a measured percentage that may fall), the current milestone by its stage, and one line for this week's <b>week quests</b>. <b>Revision 4</b> makes the empty card the app's main invitation: with no aim it asks "What do you want to be able to do in a year or three?" in place, keeps whatever was typed, shows the last aim's rank, and offers "Not now" (4 weeks) and "Don't suggest this" (a stored setting, undone in Settings). Everything is computed in-house from stored readings; nothing here calls a model or pays anything. <b>Redrawn after fix round 2</b> to match the shipped AimCard, SettingsView and roadmap-copy: the first revision-4 section below lists what changed.</p>
+  <div class="mk-ex">Example data — fake but plausible · the plan of mockups 1–3 and 5 · dates computed with lane 0's reach model · each frame says its "as of"</div>
   <nav class="mk-nav" aria-label="Roadmap mockups"><a href="final-roadmap-new.html">1 · Set an aim</a><a href="final-roadmap-draft.html">2 · Draft review</a><a href="final-roadmap.html">3 · Living roadmap</a><a href="final-aim-card.html" aria-current="page">4 · Character page</a><a href="final-today-quests.html">5 · Today's week quests</a></nav>
-  <div class="mk-legend" aria-label="Provenance classes as rendered">
+  <div class="mk-legend" aria-label="Provenance as rendered in revision 4">
+  <span><span class="pv pv-pick">practice type picked by Gemini from the app's list</span> GEMINI_PICK</span>
+  <span><span class="pv pv-app">added by the app</span> CODE</span>
+  <span><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>you chose this</span> YOURS</span>
+  <span><span class="cap">"suggested by Gemini, added by you on 5 Oct"</span> a Domain Gemini chose, for the plan's life</span>
+  <span><span class="cap">tested by your reviews · measured 09:12</span> MEASURED</span>
+  <span><span class="cap">counted by the app; it doesn't judge them</span> RECORDED</span>
+  <span><span class="cap">from your ticks</span> SELF_REPORTED</span>
+  <span><span class="cap">plain, basis on "How this is worked out"</span> WORKED_OUT</span>
+</div>
+</header>
+<!-- rev4:start -->
+<section class="mk-sec mk-r4" id="shipped">
+<h2>As shipped · revision 4 after the build and two fix rounds</h2>
+<p>These frames are redrawn to the shipped components (AimCard.tsx, SettingsView.tsx and roadmap-copy.ts at the end of fix round 2). Where they differ from the first mockup, the code wins; docs/life-plan/roadmap-rev4.md, "As shipped", says why. <span class="mk-flag">example data</span> Every aim, date, count and rank below is made up but plausible, and each frame says its "as of".</p>
+<ul class="mk-cap wide">
+<li><b>The last aim takes two lines</b> on the ASK card (frame B): the aim clipped to one line, then "Aim rank Paragon · reached 12 Mar 2028" in full. At 344 px the tail alone is about 254 px, so on one line the achievement itself would clip.</li>
+<li><b>The long-goal seed shows only while the box is empty</b> (frame C, seedShown).</li>
+<li><b>Two snoozes, one meaning each.</b> The ASK card's "Not now" writes 'later:' and folds the card to the LATER line (frame D). The LATER line's × writes 'hide:' (hideAimPrompt), and so does Today's set-an-aim ×: for 28 days nothing suggests an aim anywhere (HIDDEN, frames F and F2). Neither is a no: the Settings switch stays on.</li>
+<li><b>HIDDEN or OFF with a last aim</b> keeps the achievement alone, with no link and no × (frame F2). The LATER and kept lines have no "Aim" header: the line is the whole surface.</li>
+<li><b>A failed "Not now" or ×</b> brings back the surface that was tapped, with its reason under it (frame D2).</li>
+<li><b>The date chip</b> reads "Mastered (level 12) by Mar 2028", so "Mastered" keeps its level (frames G and H).</li>
+<li><b>The DONE card</b> reads "Aim reached Sun 12 Mar" or "Closed Sun 12 Mar · the aim wasn't reached"; the held depth shows only while the achievement leads (frames I and J).</li>
+<li><b>Plans made before revision 4</b>: open, draft and closed (frames K, K2 and K3), with "Wording from an earlier Gemini draft is hidden." on a line of its own, and the restart carrying the old plan's own Domains.</li>
+<li><b>The Settings note names capture</b>: the switch quiets capture's "Make it an aim" too.</li>
+</ul>
+</section>
+<section class="mk-sec mk-r4">
+<h2>Revision 4 · /you with no aim: the card asks for it · 344 and 932</h2>
+<p>With no roadmap the Aim card is no longer a 56 px line: it asks for the aim in place, directly under the hero, where the user sees who they are becoming (decision 33). One sentence and one tap: the textarea and <b>Set an aim</b> (it reads <b>Continue</b> once the box has text) go to /you/roadmap/new with the typed aim in a sessionStorage handoff, never in the URL. <b>Not now</b> quiets every set-an-aim suggestion for 28 days; <b>Don't suggest this</b> is the lasting no, stored in LifeSettings.aimSuggestions and undone in Settings (decision 34). No count, no red, no bell, no reward, no model and no Gemini word: the card is the same with or without a key.</p>
+<div class="mk-row">
+<figure class="mk-fig">
+<div class="mk-tag"><b>344</b> × 882 · Galaxy Fold cover · as of Mon 5 Oct 2026</div>
+<div style="position:relative"><div class="frame f344" id="r4you344"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">3</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-current="page" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">You</div><h1>Character</h1></div>
+<nav class="tb-tabs tabs" aria-label="You pages"><a class="tab-s" href="#" aria-current="page">Sheet</a><a class="tab-s" href="#">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page">
+<div class="tabs you-tabs" role="tablist" aria-label="You"><a class="tab-s" href="#" aria-current="page">Sheet</a><a class="tab-s" href="#">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></div>
+<div class="you-grid">
+  <div class="you-stack">
+    <section class="card hero-c" aria-label="Character">
+      <div class="hc-top"><svg width="96" height="100" viewBox="0 0 100 104" style="flex:none" aria-hidden="true"><use href="#crest14"/></svg><div style="min-width:0"><h2>Adept</h2><div class="t-epithet">of the Deep Archive</div><div class="t-meta" style="margin-top:4px">Character level <b class="ink-0 num">14</b> · Mind leads</div></div></div>
+      <div class="lvl-line"><b><span class="num">86%</span> to level 15</b><span class="nx"><svg width="20" height="21" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest15b"/></svg>Practitioner</span></div>
+      <div class="meter"><i style="--v:.86"></i></div>
+      <p class="blurb">Practitioner: knowledge used, not merely stored.</p>
+      <div class="purse">
+        <div><div class="v"><svg class="g c-mp"><use href="#c-mp"/></svg>1,346</div><div class="k">mastery points</div></div>
+        <div><div class="v"><svg class="g c-mp"><use href="#c-mp"/></svg>5.5<small>/ 8</small></div><div class="k">life MP last week</div></div>
+        <div><div class="v">38</div><div class="k">ideas mastered</div></div>
+        <div><div class="v">38<small>/ 749</small></div><div class="k">emblems</div></div>
+      </div>
+    </section>
+
+    <div class="aim-sec">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Aim</h2></div>
+  <section class="card rm-ac-call" data-tour="you-aim" id="r4ask344" aria-labelledby="r4ask344-h">
+    <h3 class="ac-h" id="r4ask344-h">Set an aim</h3>
+    
+    <p class="ac-body">What do you want to be able to do in a year or three? The app plans milestones toward it and measures them from your reviews and ticks.</p>
+    <p class="t-meta ac-rank">Stages you reach raise your Aim rank, from Initiate toward Paragon: the aim held at Mastered (level 12).</p>
+    
+    <label class="sr-only" for="r4ask344-t">Your aim, in your words</label>
+    <textarea class="st-input" id="r4ask344-t" rows="2" maxlength="140" placeholder="Something you want to be able to do"></textarea>
+    <button type="button" class="rm-ac-seed"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span>Start from your long goal “Read Japanese manga without a dictionary”</span></button>
+    <a class="btn btn-primary btn-block ac-go" href="final-roadmap-new.html">Set an aim</a>
+    <div class="rm-ac-quiet"><button type="button" class="btn btn-quiet">Not now</button><button type="button" class="btn btn-quiet">Don't suggest this</button></div>
+  </section>
+</div>
+
+    <section class="card ready-c" aria-label="Ready to unlock"><svg class="coin44" viewBox="0 0 64 64" aria-hidden="true"><use href="#coin-ready"/></svg><div class="t"><b>An emblem is ready</b><span class="t-meta">Law of Large Numbers · Apex · 1,200 of your 1,346 MP</span></div><a class="btn btn-secondary" href="#">View</a></section>
+
+    <div>
+      <div class="sec-h"><span class="lane-mark"></span><h2>Life tracks</h2><span class="aside">levels capped by kept weeks and paid goals</span></div>
+      <section class="card">
+        <div class="trk-row"><svg class="sig"><use href="#s-duty"/></svg><div><div class="trk-h"><b>Duty</b><span class="lv">11</span><span class="wk" role="img" aria-label="Last 8 judged weeks: kept, kept, kept, held, kept, kept, kept, kept"><i class="k"></i><i class="k"></i><i class="k"></i><i class="h"></i><i class="k"></i><i class="k"></i><i class="k"></i><i class="k"></i></span></div><div class="meter"><i style="--v:.8"></i></div><div class="t-meta"><b>80%</b> to level 12</div></div></div>
+        <div class="trk-row"><svg class="sig"><use href="#s-craft"/></svg><div><div class="trk-h"><b>Craft</b><span class="lv">8</span><span class="wk" role="img" aria-label="Last 8 judged weeks: 6 kept"><i class="k"></i><i></i><i class="k"></i><i class="k"></i><i class="k"></i><i></i><i class="k"></i><i class="k"></i></span></div><div class="meter"><i style="--v:.62"></i></div><div class="t-meta"><b>62%</b> to level 9</div></div></div>
+        <div class="trk-row"><svg class="sig"><use href="#s-body"/></svg><div><div class="trk-h"><b>Body</b><span class="lv">6</span><span class="wk" role="img" aria-label="Last 8 judged weeks: 5 kept"><i class="k"></i><i class="k"></i><i></i><i class="k"></i><i></i><i class="k"></i><i></i><i class="k"></i></span></div><div class="meter"><i style="--v:.55"></i></div><div class="t-meta"><b>55%</b> to level 7</div></div></div>
+        <div class="trk-row"><svg class="sig"><use href="#s-care"/></svg><div><div class="trk-h"><b>Care</b><span class="lv">5</span><span class="wk" role="img" aria-label="Last 8 judged weeks: 4 kept"><i></i><i class="k"></i><i></i><i class="k"></i><i class="k"></i><i></i><i class="k"></i><i></i></span></div><div class="meter"><i style="--v:.4"></i></div><div class="t-meta"><b>40%</b> to level 6</div></div></div>
+        <div class="trk-row"><svg class="sig"><use href="#s-know"/></svg><div><div class="trk-h"><b>Knowledge</b><span class="lv">14</span></div><div class="meter"><i style="--v:.86"></i></div><div class="t-meta"><b>86%</b> to level 15 · from your Fields</div></div></div>
+      </section>
+    </div>
+  </div>
+
+  <div class="you-stack">
+    <div>
+      <div class="sec-h"><span class="lane-mark"></span><h2>Attributes</h2><span class="aside">13, from your Fields and life tracks</span></div>
+      <section class="card radar-c">
+        <div class="radar-plot"><svg viewBox="-165 -140 330 280" role="img" aria-label="Attribute radar with 7 days ago dashed. Top three: Mind 412, Statistic 388, Reason 301."><polygon points="0.0,-30.0 13.9,-26.6 24.7,-17.0 29.8,-3.6 28.1,10.6 19.9,22.5 7.2,29.1 -7.2,29.1 -19.9,22.5 -28.1,10.6 -29.8,-3.6 -24.7,-17.0 -13.9,-26.6" fill="none" stroke="var(--line-1)"/><polygon points="0.0,-60.0 27.9,-53.1 49.4,-34.1 59.6,-7.2 56.1,21.3 39.8,44.9 14.4,58.3 -14.4,58.3 -39.8,44.9 -56.1,21.3 -59.6,-7.2 -49.4,-34.1 -27.9,-53.1" fill="none" stroke="var(--line-1)"/><polygon points="0.0,-90.0 41.8,-79.7 74.1,-51.1 89.3,-10.8 84.2,31.9 59.7,67.4 21.5,87.4 -21.5,87.4 -59.7,67.4 -84.2,31.9 -89.3,-10.8 -74.1,-51.1 -41.8,-79.7" fill="none" stroke="var(--line-1)"/><polygon points="0.0,-120.0 55.8,-106.3 98.8,-68.2 119.1,-14.5 112.2,42.6 79.6,89.8 28.7,116.5 -28.7,116.5 -79.6,89.8 -112.2,42.6 -119.1,-14.5 -98.8,-68.2 -55.8,-106.3" fill="none" stroke="var(--line-1)"/><line x1="0" y1="0" x2="0.0" y2="-120.0" stroke="var(--line-1)"/><line x1="0" y1="0" x2="55.8" y2="-106.3" stroke="var(--line-1)"/><line x1="0" y1="0" x2="98.8" y2="-68.2" stroke="var(--line-1)"/><line x1="0" y1="0" x2="119.1" y2="-14.5" stroke="var(--line-1)"/><line x1="0" y1="0" x2="112.2" y2="42.6" stroke="var(--line-1)"/><line x1="0" y1="0" x2="79.6" y2="89.8" stroke="var(--line-1)"/><line x1="0" y1="0" x2="28.7" y2="116.5" stroke="var(--line-1)"/><line x1="0" y1="0" x2="-28.7" y2="116.5" stroke="var(--line-1)"/><line x1="0" y1="0" x2="-79.6" y2="89.8" stroke="var(--line-1)"/><line x1="0" y1="0" x2="-112.2" y2="42.6" stroke="var(--line-1)"/><line x1="0" y1="0" x2="-119.1" y2="-14.5" stroke="var(--line-1)"/><line x1="0" y1="0" x2="-98.8" y2="-68.2" stroke="var(--line-1)"/><line x1="0" y1="0" x2="-55.8" y2="-106.3" stroke="var(--line-1)"/><polygon points="0.0,-105.6 19.5,-37.2 52.3,-36.1 35.7,-4.3 51.6,19.6 50.1,56.6 19.5,79.2 -9.2,37.3 -39.0,44.0 -24.7,9.4 -47.7,-5.8 -42.5,-29.3 -45.7,-87.1" fill="none" stroke="var(--ink-2)" stroke-dasharray="3 3"/><polygon points="0.0,-110.4 20.6,-39.3 54.3,-37.5 35.7,-4.3 53.9,20.4 52.5,59.3 20.4,82.7 -9.5,38.4 -41.4,46.7 -24.7,9.4 -48.8,-5.9 -44.4,-30.7 -48.5,-92.4" fill="color-mix(in srgb, var(--ink-0) 8%, transparent)" stroke="var(--ink-0)" stroke-width="1.5" stroke-linejoin="round"/><circle cx="0.0" cy="-110.4" r="4" fill="#4d9cf5" stroke="var(--card)"/><circle cx="20.6" cy="-39.3" r="4" fill="#f0554d" stroke="var(--card)"/><circle cx="54.3" cy="-37.5" r="4" fill="#f0a030" stroke="var(--card)"/><circle cx="35.7" cy="-4.3" r="4" fill="#ff8fb0" stroke="var(--card)"/><circle cx="53.9" cy="20.4" r="4" fill="#9b6bff" stroke="var(--card)"/><circle cx="52.5" cy="59.3" r="4" fill="#2fd0ff" stroke="var(--card)"/><circle cx="20.4" cy="82.7" r="4" fill="#7fa8d4" stroke="var(--card)"/><circle cx="-9.5" cy="38.4" r="4" fill="#ff7a3d" stroke="var(--card)"/><circle cx="-41.4" cy="46.7" r="4" fill="#ffd24d" stroke="var(--card)"/><circle cx="-24.7" cy="9.4" r="4" fill="#7b6bff" stroke="var(--card)"/><circle cx="-48.8" cy="-5.9" r="4" fill="#ff5eb0" stroke="var(--card)"/><circle cx="-44.4" cy="-30.7" r="4" fill="#c96a4a" stroke="var(--card)"/><circle cx="-48.5" cy="-92.4" r="4" fill="#00cc7a" stroke="var(--card)"/></svg><span class="radar-lbl at-middle lead" style="left:50.0%;top:2.1%">Mind</span><span class="radar-lbl at-start" style="left:68.9%;top:7.6%">Physical</span><span class="radar-lbl at-start" style="left:83.4%;top:22.8%">Critical Thinking</span><span class="radar-lbl at-start" style="left:90.3%;top:44.2%">Compassion</span><span class="radar-lbl at-start" style="left:88.0%;top:67.0%">Abstract</span><span class="radar-lbl at-start" style="left:76.9%;top:85.8%">Logic</span><span class="radar-lbl at-start" style="left:59.7%;top:96.5%">Reason</span><span class="radar-lbl at-end" style="left:40.3%;top:96.5%">Rebuttal</span><span class="radar-lbl at-end" style="left:23.1%;top:85.8%">Self Respect</span><span class="radar-lbl at-end" style="left:12.0%;top:67.0%">Faith</span><span class="radar-lbl at-end" style="left:9.7%;top:44.2%">Creativity</span><span class="radar-lbl at-end" style="left:16.6%;top:22.8%">Stubbornness</span><span class="radar-lbl at-end" style="left:31.1%;top:7.6%">Statistic</span>
+</div>
+        <div class="rlegend"><span>— now</span><span>- - - 7 days ago</span></div>
+        <ul class="top3">
+          <li><svg viewBox="0 0 24 24" width="18" height="18"><polygon points="12,3 20,8 20,16 12,21 4,16 4,8" fill="#4d9cf5"/></svg><span>Mind <b>412</b></span><span class="note">leads · gives your epithet</span></li>
+          <li><svg viewBox="0 0 24 24" width="18" height="18"><polygon points="12,3 21,10 17.5,20 6.5,20 3,10" fill="#00cc7a"/></svg><span>Statistic <b>388</b></span><span class="note">+14 this week</span></li>
+          <li><svg viewBox="0 0 24 24" width="18" height="18"><polygon points="12,3 21,20 3,20" fill="#7fa8d4"/></svg><span>Reason <b>301</b></span><span class="note">+6 this week</span></li>
+        </ul>
+      </section>
+    </div>
+    <div>
+      <div class="sec-h"><span class="lane-mark"></span><h2>Goals and mastery</h2></div>
+      <section class="card">
+        
+        <div class="mo"><span class="art"><svg class="sig"><use href="#s-body"/></svg></span><div class="mo-body"><b>Run 10K under 55:00</b><span class="t-meta">Mid · 62% · pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg>6 × progress</span> from 70%</span></div></div>
+        <div class="mo"><span class="art"><svg class="sig"><use href="#s-craft"/></svg></span><div class="mo-body"><b>Read Japanese manga without a dictionary</b><span class="t-meta">Long · due Dec 2027 · 15% · pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg>20 × progress</span> from 70%</span></div></div>
+        <div class="mo"><span class="art"><svg class="sig"><use href="#s-know"/></svg></span><div class="mo-body"><b>38 ideas mastered</b><span class="t-meta">4 Field tiers · 2 habits Established · 3 PRs</span></div></div>
+      </section>
+    </div>
+  </div>
+</div>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">3</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-current="page" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div><div class="fold" style="top:818px"><span>818 · tab bar starts</span></div><div class="fold" style="top:882px"><span>882 · first screen ends</span></div></div>
+
+<p class="mk-geo" id="geo-r4ask344">Measuring… (open this file in a browser; the numbers fill in once the fonts load)</p>
+<ul class="mk-cap"><li><b>Order inside the card</b> (F-R4-1): the heading in t-display-s → the body (14/19, ink-1) → the rank line (t-meta) → the textarea (2 rows, 16 px, maxlength 140, sr-only label "Your aim, in your words"; the "n / 140" counter shows only past 120) → the seed link → the primary → the two quiet buttons.</li><li><b>The seed</b> is the latest-due open LONG goal with no roadmap link (longGoalSeedOf over s.goals): here "Read Japanese manga without a dictionary", due Dec 2027, so its due day (426 days out, inside 35–1,080) travels as targetDay. The goal stays as it is on Today.</li><li>The rank line is true as written: the Aim rank follows the stages reached inside the plan, and Paragon is the aim held at Mastered (level 12) with the user's standard (decision 40). There is no "Each milestone you reach raises…" and no "earn".</li><li><b>Geometry</b> at 344 with Inter's advance widths: body 4 lines, rank line 3 lines, so about 344 px without a seed or a last aim, about 386 with the seed (this frame), about 406 with both. The ui-audit bound is ≤ 410 px; the box under the frame measures it in your browser.</li><li>The Goals list lost rev 3's roadmap goal (there is no roadmap); the Long goal is the seed's source.</li><li>The card carries data-tour="you-aim" (as do the LATER line and the card with an aim): the tour's You step targets it first and names the aim (question 3, copy only, still 7 steps).</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>932</b> · rail · two columns</div>
+<div class="mk-scroll"><div class="frame f932" id="r4you932"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">3</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-current="page" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">You</div><h1>Character</h1></div>
+<nav class="tb-tabs tabs" aria-label="You pages"><a class="tab-s" href="#" aria-current="page">Sheet</a><a class="tab-s" href="#">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page">
+<div class="tabs you-tabs" role="tablist" aria-label="You"><a class="tab-s" href="#" aria-current="page">Sheet</a><a class="tab-s" href="#">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></div>
+<div class="you-grid">
+  <div class="you-stack">
+    <section class="card hero-c" aria-label="Character">
+      <div class="hc-top"><svg width="96" height="100" viewBox="0 0 100 104" style="flex:none" aria-hidden="true"><use href="#crest14"/></svg><div style="min-width:0"><h2>Adept</h2><div class="t-epithet">of the Deep Archive</div><div class="t-meta" style="margin-top:4px">Character level <b class="ink-0 num">14</b> · Mind leads</div></div></div>
+      <div class="lvl-line"><b><span class="num">86%</span> to level 15</b><span class="nx"><svg width="20" height="21" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest15b"/></svg>Practitioner</span></div>
+      <div class="meter"><i style="--v:.86"></i></div>
+      <p class="blurb">Practitioner: knowledge used, not merely stored.</p>
+      <div class="purse">
+        <div><div class="v"><svg class="g c-mp"><use href="#c-mp"/></svg>1,346</div><div class="k">mastery points</div></div>
+        <div><div class="v"><svg class="g c-mp"><use href="#c-mp"/></svg>5.5<small>/ 8</small></div><div class="k">life MP last week</div></div>
+        <div><div class="v">38</div><div class="k">ideas mastered</div></div>
+        <div><div class="v">38<small>/ 749</small></div><div class="k">emblems</div></div>
+      </div>
+    </section>
+
+    <div class="aim-sec">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Aim</h2></div>
+  <section class="card rm-ac-call" data-tour="you-aim" id="r4ask932" aria-labelledby="r4ask932-h">
+    <h3 class="ac-h" id="r4ask932-h">Set an aim</h3>
+    
+    <p class="ac-body">What do you want to be able to do in a year or three? The app plans milestones toward it and measures them from your reviews and ticks.</p>
+    <p class="t-meta ac-rank">Stages you reach raise your Aim rank, from Initiate toward Paragon: the aim held at Mastered (level 12).</p>
+    
+    <label class="sr-only" for="r4ask932-t">Your aim, in your words</label>
+    <textarea class="st-input" id="r4ask932-t" rows="2" maxlength="140" placeholder="Something you want to be able to do"></textarea>
+    <button type="button" class="rm-ac-seed"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span>Start from your long goal “Read Japanese manga without a dictionary”</span></button>
+    <a class="btn btn-primary btn-block ac-go" href="final-roadmap-new.html">Set an aim</a>
+    <div class="rm-ac-quiet"><button type="button" class="btn btn-quiet">Not now</button><button type="button" class="btn btn-quiet">Don't suggest this</button></div>
+  </section>
+</div>
+
+    <section class="card ready-c" aria-label="Ready to unlock"><svg class="coin44" viewBox="0 0 64 64" aria-hidden="true"><use href="#coin-ready"/></svg><div class="t"><b>An emblem is ready</b><span class="t-meta">Law of Large Numbers · Apex · 1,200 of your 1,346 MP</span></div><a class="btn btn-secondary" href="#">View</a></section>
+
+    <div>
+      <div class="sec-h"><span class="lane-mark"></span><h2>Life tracks</h2><span class="aside">levels capped by kept weeks and paid goals</span></div>
+      <section class="card">
+        <div class="trk-row"><svg class="sig"><use href="#s-duty"/></svg><div><div class="trk-h"><b>Duty</b><span class="lv">11</span><span class="wk" role="img" aria-label="Last 8 judged weeks: kept, kept, kept, held, kept, kept, kept, kept"><i class="k"></i><i class="k"></i><i class="k"></i><i class="h"></i><i class="k"></i><i class="k"></i><i class="k"></i><i class="k"></i></span></div><div class="meter"><i style="--v:.8"></i></div><div class="t-meta"><b>80%</b> to level 12</div></div></div>
+        <div class="trk-row"><svg class="sig"><use href="#s-craft"/></svg><div><div class="trk-h"><b>Craft</b><span class="lv">8</span><span class="wk" role="img" aria-label="Last 8 judged weeks: 6 kept"><i class="k"></i><i></i><i class="k"></i><i class="k"></i><i class="k"></i><i></i><i class="k"></i><i class="k"></i></span></div><div class="meter"><i style="--v:.62"></i></div><div class="t-meta"><b>62%</b> to level 9</div></div></div>
+        <div class="trk-row"><svg class="sig"><use href="#s-body"/></svg><div><div class="trk-h"><b>Body</b><span class="lv">6</span><span class="wk" role="img" aria-label="Last 8 judged weeks: 5 kept"><i class="k"></i><i class="k"></i><i></i><i class="k"></i><i></i><i class="k"></i><i></i><i class="k"></i></span></div><div class="meter"><i style="--v:.55"></i></div><div class="t-meta"><b>55%</b> to level 7</div></div></div>
+        <div class="trk-row"><svg class="sig"><use href="#s-care"/></svg><div><div class="trk-h"><b>Care</b><span class="lv">5</span><span class="wk" role="img" aria-label="Last 8 judged weeks: 4 kept"><i></i><i class="k"></i><i></i><i class="k"></i><i class="k"></i><i></i><i class="k"></i><i></i></span></div><div class="meter"><i style="--v:.4"></i></div><div class="t-meta"><b>40%</b> to level 6</div></div></div>
+        <div class="trk-row"><svg class="sig"><use href="#s-know"/></svg><div><div class="trk-h"><b>Knowledge</b><span class="lv">14</span></div><div class="meter"><i style="--v:.86"></i></div><div class="t-meta"><b>86%</b> to level 15 · from your Fields</div></div></div>
+      </section>
+    </div>
+  </div>
+
+  <div class="you-stack">
+    <div>
+      <div class="sec-h"><span class="lane-mark"></span><h2>Attributes</h2><span class="aside">13, from your Fields and life tracks</span></div>
+      <section class="card radar-c">
+        <div class="radar-plot"><svg viewBox="-165 -140 330 280" role="img" aria-label="Attribute radar with 7 days ago dashed. Top three: Mind 412, Statistic 388, Reason 301."><polygon points="0.0,-30.0 13.9,-26.6 24.7,-17.0 29.8,-3.6 28.1,10.6 19.9,22.5 7.2,29.1 -7.2,29.1 -19.9,22.5 -28.1,10.6 -29.8,-3.6 -24.7,-17.0 -13.9,-26.6" fill="none" stroke="var(--line-1)"/><polygon points="0.0,-60.0 27.9,-53.1 49.4,-34.1 59.6,-7.2 56.1,21.3 39.8,44.9 14.4,58.3 -14.4,58.3 -39.8,44.9 -56.1,21.3 -59.6,-7.2 -49.4,-34.1 -27.9,-53.1" fill="none" stroke="var(--line-1)"/><polygon points="0.0,-90.0 41.8,-79.7 74.1,-51.1 89.3,-10.8 84.2,31.9 59.7,67.4 21.5,87.4 -21.5,87.4 -59.7,67.4 -84.2,31.9 -89.3,-10.8 -74.1,-51.1 -41.8,-79.7" fill="none" stroke="var(--line-1)"/><polygon points="0.0,-120.0 55.8,-106.3 98.8,-68.2 119.1,-14.5 112.2,42.6 79.6,89.8 28.7,116.5 -28.7,116.5 -79.6,89.8 -112.2,42.6 -119.1,-14.5 -98.8,-68.2 -55.8,-106.3" fill="none" stroke="var(--line-1)"/><line x1="0" y1="0" x2="0.0" y2="-120.0" stroke="var(--line-1)"/><line x1="0" y1="0" x2="55.8" y2="-106.3" stroke="var(--line-1)"/><line x1="0" y1="0" x2="98.8" y2="-68.2" stroke="var(--line-1)"/><line x1="0" y1="0" x2="119.1" y2="-14.5" stroke="var(--line-1)"/><line x1="0" y1="0" x2="112.2" y2="42.6" stroke="var(--line-1)"/><line x1="0" y1="0" x2="79.6" y2="89.8" stroke="var(--line-1)"/><line x1="0" y1="0" x2="28.7" y2="116.5" stroke="var(--line-1)"/><line x1="0" y1="0" x2="-28.7" y2="116.5" stroke="var(--line-1)"/><line x1="0" y1="0" x2="-79.6" y2="89.8" stroke="var(--line-1)"/><line x1="0" y1="0" x2="-112.2" y2="42.6" stroke="var(--line-1)"/><line x1="0" y1="0" x2="-119.1" y2="-14.5" stroke="var(--line-1)"/><line x1="0" y1="0" x2="-98.8" y2="-68.2" stroke="var(--line-1)"/><line x1="0" y1="0" x2="-55.8" y2="-106.3" stroke="var(--line-1)"/><polygon points="0.0,-105.6 19.5,-37.2 52.3,-36.1 35.7,-4.3 51.6,19.6 50.1,56.6 19.5,79.2 -9.2,37.3 -39.0,44.0 -24.7,9.4 -47.7,-5.8 -42.5,-29.3 -45.7,-87.1" fill="none" stroke="var(--ink-2)" stroke-dasharray="3 3"/><polygon points="0.0,-110.4 20.6,-39.3 54.3,-37.5 35.7,-4.3 53.9,20.4 52.5,59.3 20.4,82.7 -9.5,38.4 -41.4,46.7 -24.7,9.4 -48.8,-5.9 -44.4,-30.7 -48.5,-92.4" fill="color-mix(in srgb, var(--ink-0) 8%, transparent)" stroke="var(--ink-0)" stroke-width="1.5" stroke-linejoin="round"/><circle cx="0.0" cy="-110.4" r="4" fill="#4d9cf5" stroke="var(--card)"/><circle cx="20.6" cy="-39.3" r="4" fill="#f0554d" stroke="var(--card)"/><circle cx="54.3" cy="-37.5" r="4" fill="#f0a030" stroke="var(--card)"/><circle cx="35.7" cy="-4.3" r="4" fill="#ff8fb0" stroke="var(--card)"/><circle cx="53.9" cy="20.4" r="4" fill="#9b6bff" stroke="var(--card)"/><circle cx="52.5" cy="59.3" r="4" fill="#2fd0ff" stroke="var(--card)"/><circle cx="20.4" cy="82.7" r="4" fill="#7fa8d4" stroke="var(--card)"/><circle cx="-9.5" cy="38.4" r="4" fill="#ff7a3d" stroke="var(--card)"/><circle cx="-41.4" cy="46.7" r="4" fill="#ffd24d" stroke="var(--card)"/><circle cx="-24.7" cy="9.4" r="4" fill="#7b6bff" stroke="var(--card)"/><circle cx="-48.8" cy="-5.9" r="4" fill="#ff5eb0" stroke="var(--card)"/><circle cx="-44.4" cy="-30.7" r="4" fill="#c96a4a" stroke="var(--card)"/><circle cx="-48.5" cy="-92.4" r="4" fill="#00cc7a" stroke="var(--card)"/></svg><span class="radar-lbl at-middle lead" style="left:50.0%;top:2.1%">Mind</span><span class="radar-lbl at-start" style="left:68.9%;top:7.6%">Physical</span><span class="radar-lbl at-start" style="left:83.4%;top:22.8%">Critical Thinking</span><span class="radar-lbl at-start" style="left:90.3%;top:44.2%">Compassion</span><span class="radar-lbl at-start" style="left:88.0%;top:67.0%">Abstract</span><span class="radar-lbl at-start" style="left:76.9%;top:85.8%">Logic</span><span class="radar-lbl at-start" style="left:59.7%;top:96.5%">Reason</span><span class="radar-lbl at-end" style="left:40.3%;top:96.5%">Rebuttal</span><span class="radar-lbl at-end" style="left:23.1%;top:85.8%">Self Respect</span><span class="radar-lbl at-end" style="left:12.0%;top:67.0%">Faith</span><span class="radar-lbl at-end" style="left:9.7%;top:44.2%">Creativity</span><span class="radar-lbl at-end" style="left:16.6%;top:22.8%">Stubbornness</span><span class="radar-lbl at-end" style="left:31.1%;top:7.6%">Statistic</span>
+</div>
+        <div class="rlegend"><span>— now</span><span>- - - 7 days ago</span></div>
+        <ul class="top3">
+          <li><svg viewBox="0 0 24 24" width="18" height="18"><polygon points="12,3 20,8 20,16 12,21 4,16 4,8" fill="#4d9cf5"/></svg><span>Mind <b>412</b></span><span class="note">leads · gives your epithet</span></li>
+          <li><svg viewBox="0 0 24 24" width="18" height="18"><polygon points="12,3 21,10 17.5,20 6.5,20 3,10" fill="#00cc7a"/></svg><span>Statistic <b>388</b></span><span class="note">+14 this week</span></li>
+          <li><svg viewBox="0 0 24 24" width="18" height="18"><polygon points="12,3 21,20 3,20" fill="#7fa8d4"/></svg><span>Reason <b>301</b></span><span class="note">+6 this week</span></li>
+        </ul>
+      </section>
+    </div>
+    <div>
+      <div class="sec-h"><span class="lane-mark"></span><h2>Goals and mastery</h2></div>
+      <section class="card">
+        
+        <div class="mo"><span class="art"><svg class="sig"><use href="#s-body"/></svg></span><div class="mo-body"><b>Run 10K under 55:00</b><span class="t-meta">Mid · 62% · pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg>6 × progress</span> from 70%</span></div></div>
+        <div class="mo"><span class="art"><svg class="sig"><use href="#s-craft"/></svg></span><div class="mo-body"><b>Read Japanese manga without a dictionary</b><span class="t-meta">Long · due Dec 2027 · 15% · pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg>20 × progress</span> from 70%</span></div></div>
+        <div class="mo"><span class="art"><svg class="sig"><use href="#s-know"/></svg></span><div class="mo-body"><b>38 ideas mastered</b><span class="t-meta">4 Field tiers · 2 habits Established · 3 PRs</span></div></div>
+      </section>
+    </div>
+  </div>
+</div>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">3</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-current="page" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div></div>
+
+<p class="mk-geo" id="geo-r4ask932" style="max-width:932px">Measuring… (open this file in a browser; the numbers fill in once the fonts load)</p>
+<ul class="mk-cap wide"><li>The card keeps the left column's width (about 410 px, 382 of content): the body takes 3 lines and the rank line 2, so the card is shorter than at 344.</li></ul>
+</figure>
+</div>
+</section>
+<section class="mk-sec mk-r4">
+<h2>Revision 4 · the empty card's states · 344</h2>
+<p>Each frame is the Aim section alone, as AimCard EMPTY renders it from <code>prompt</code> (aimPromptOf: ASK, LATER, HIDDEN or OFF), <code>seed</code> and <code>lastAim</code>. The fixtures on /dev/style/art/you are empty-ask, empty-ask-seed, empty-ask-last-aim, empty-ask-seed-last-aim, empty-ask-continue, empty-later, empty-later-last-aim, empty-hidden, empty-hidden-last-aim, empty-off and empty-off-last-aim. ui-audit gates the tallest ASK states, empty-ask-seed-last-aim and empty-ask-continue, at ≤ 410 px at 344.</p>
+<div class="mk-row">
+<figure class="mk-fig">
+<div class="mk-tag"><b>A</b> · ASK · no seed, no last aim · empty-ask</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="aim-sec">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Aim</h2></div>
+  <section class="card rm-ac-call" data-tour="you-aim" id="r4askA" aria-labelledby="r4askA-h">
+    <h3 class="ac-h" id="r4askA-h">Set an aim</h3>
+    
+    <p class="ac-body">What do you want to be able to do in a year or three? The app plans milestones toward it and measures them from your reviews and ticks.</p>
+    <p class="t-meta ac-rank">Stages you reach raise your Aim rank, from Initiate toward Paragon: the aim held at Mastered (level 12).</p>
+    
+    <label class="sr-only" for="r4askA-t">Your aim, in your words</label>
+    <textarea class="st-input" id="r4askA-t" rows="2" maxlength="140" placeholder="Something you want to be able to do"></textarea>
+    
+    <a class="btn btn-primary btn-block ac-go" href="final-roadmap-new.html">Set an aim</a>
+    <div class="rm-ac-quiet"><button type="button" class="btn btn-quiet">Not now</button><button type="button" class="btn btn-quiet">Don't suggest this</button></div>
+  </section>
+</div>
+</div></div></div><p class="mk-geo" id="geo-r4askA">Measuring… (open this file in a browser; the numbers fill in once the fonts load)</p>
+<ul class="mk-cap"><li>The common first sight: about 344 px. The primary reads "Set an aim" while the box is empty and is never disabled: with an empty box it simply opens the form.</li><li>A handoff is written only when there is text (source 'you') or the seed was tapped (source 'goal').</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>B</b> · ASK · a last aim and a seed (the tallest) · empty-ask-seed-last-aim · as of Mon 10 Apr 2028</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="aim-sec">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Aim</h2></div>
+  <section class="card rm-ac-call" data-tour="you-aim" id="r4askB" aria-labelledby="r4askB-h">
+    <h3 class="ac-h" id="r4askB-h">Set an aim</h3>
+    <div class="t-meta ac-last"><p class="ac-last-aim">Last aim: “Know probability and inference well enough to pass Exam P and use them at work”</p><p class="ac-last-rank">Aim rank <b>Paragon</b> · reached 12 Mar 2028</p></div>
+    <p class="ac-body">What do you want to be able to do in a year or three? The app plans milestones toward it and measures them from your reviews and ticks.</p>
+    <p class="t-meta ac-rank">Stages you reach raise your Aim rank, from Initiate toward Paragon: the aim held at Mastered (level 12).</p>
+    
+    <label class="sr-only" for="r4askB-t">Your aim, in your words</label>
+    <textarea class="st-input" id="r4askB-t" rows="2" maxlength="140" placeholder="Something you want to be able to do"></textarea>
+    <button type="button" class="rm-ac-seed"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span>Start from your long goal “Read Japanese manga without a dictionary”</span></button>
+    <a class="btn btn-primary btn-block ac-go" href="final-roadmap-new.html">Set an aim</a>
+    <div class="rm-ac-quiet"><button type="button" class="btn btn-quiet">Not now</button><button type="button" class="btn btn-quiet">Don't suggest this</button></div>
+  </section>
+</div>
+</div></div></div><p class="mk-geo" id="geo-r4askB">Measuring… (open this file in a browser; the numbers fill in once the fonts load)</p>
+<ul class="mk-cap"><li>The last aim (F-R4-2) shows once the DONE roadmap is 28 days past its done day and the card is EMPTY again. <b>Shipped: two lines</b>, 16 px each: the aim clipped to one line with an ellipsis, then "Aim rank <b>Paragon</b> · reached 12 Mar 2028" in full, so the achievement never clips and never vanishes from the character page.</li><li>"reached 12 Mar 2028" (or "closed 12 Mar 2028" when it ended unreached) is the latest DONE roadmap's reached or done day.</li><li>The tallest ASK state: about 403 px for the section with the shipped spacing (padding 12/14/4, a 60 px box), inside the 410 bound. The box below measures it; ui-audit's gate (the lead's) confirms it, and rules whether 410 bounds the section or the whole box with its "Aim" header (about 427 px).</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>C</b> · ASK · continue where you left off · empty-ask-continue</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="aim-sec">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Aim</h2></div>
+  <section class="card rm-ac-call" data-tour="you-aim" id="r4askC" aria-labelledby="r4askC-h">
+    <h3 class="ac-h" id="r4askC-h">Set an aim</h3>
+    
+    <p class="ac-body">What do you want to be able to do in a year or three? The app plans milestones toward it and measures them from your reviews and ticks.</p>
+    <p class="t-meta ac-rank">Stages you reach raise your Aim rank, from Initiate toward Paragon: the aim held at Mastered (level 12).</p>
+    <p class="t-meta ac-cont">Continue where you left off</p>
+    <label class="sr-only" for="r4askC-t">Your aim, in your words</label>
+    <textarea class="st-input" id="r4askC-t" rows="2" maxlength="140" placeholder="Something you want to be able to do">Hold a 30-minute conversation in Japanese</textarea>
+    
+    <a class="btn btn-primary btn-block ac-go" href="final-roadmap-new.html">Continue</a>
+    <div class="rm-ac-quiet"><button type="button" class="btn btn-quiet">Not now</button><button type="button" class="btn btn-quiet">Don't suggest this</button></div>
+  </section>
+</div>
+</div></div></div><p class="mk-geo" id="geo-r4askC">Measuring… (open this file in a browser; the numbers fill in once the fonts load)</p>
+<ul class="mk-cap"><li>After mount the card reads RoadmapForm's unsent autosave (the same local key, in a try/catch). It held an aim, so the box starts with it, the line reads "Continue where you left off" and the primary reads "Continue". Typing here writes the same key, so "Not now" and leaving the page keep the text.</li><li><b>Shipped (seedShown):</b> the seed link shows only while the box is empty. This fixture holds an unsent aim, a seed and a last aim at once, so its seed is hidden: a tap would replace the typed aim with the goal's title, and all three together would pass the 410 bound.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>D</b> · LATER · after "Not now" on the card · empty-later and empty-later-last-aim</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card aim-empty" data-tour="you-aim" aria-label="Aim"><span class="t"><a href="final-roadmap-new.html">Set an aim</a> → milestones toward it, measured from your reviews and ticks</span><button class="icon-btn" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i"><use href="#i-x"/></svg></button></section><div style="height:16px"></div><section class="card aim-empty" data-tour="you-aim" aria-label="Aim"><span class="t">Last aim: Aim rank <b>Paragon</b> · <a href="final-roadmap-new.html">Set your next aim →</a></span><button class="icon-btn" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i"><use href="#i-x"/></svg></button></section>
+</div></div></div>
+<ul class="mk-cap"><li>The ASK card's "Not now" wrote 'later:&lt;day&gt;' (snoozeAimPrompt) and folded the card to this line at once; the typed text stays in the autosave. Rev 3's 56 px line geometry with the new copy, and no "Aim" header: the line is the whole surface. It wraps to 3 lines at 344 (about 71 px); with a last aim it reads "Last aim: Aim rank Paragon · Set your next aim →".</li><li><b>Shipped:</b> its × is labelled "Not now: no aim suggestions for 4 weeks" and calls <b>hideAimPrompt()</b>, which writes 'hide:&lt;day&gt;': the line is gone (HIDDEN, frame F or F2) and stays gone on the next visit, and Today's set-an-aim line is quiet too, for 28 days. The first mockup had it call snoozeAimPrompt() again, which brought the line straight back. The year-long 'off' cookie is no longer written anywhere.</li><li>After 28 life days the full card (A or B) returns, with whatever was typed still in the box.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>D2</b> · a "Not now" that didn't go through</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card aim-empty" data-tour="you-aim" aria-label="Aim"><span class="t"><a href="final-roadmap-new.html">Set an aim</a> → milestones toward it, measured from your reviews and ticks</span><button class="icon-btn" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i"><use href="#i-x"/></svg></button></section>
+<p class="aim-err" role="alert">That didn't go through. Check your connection and try again.</p>
+</div></div></div>
+<ul class="mk-cap"><li>The surface folds at once on a tap. If the write is refused (writes off, the standard copy) or the connection drops, the surface that was tapped comes back with the reason under it (collapseWrite): here the LATER line after a failed ×. A failed "Not now" brings the ASK card back the same way, so an error never stands alone with nothing to retry.</li><li>A failed Undo on the "suggestions are off" toast says so in a toast: "Couldn't turn them back on. Settings › Aim suggestions."</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>E</b> · "Don't suggest this": the card goes, the toast offers Undo</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card hero-c" aria-label="Character"><div class="hc-top"><svg width="64" height="67" viewBox="0 0 100 104" style="flex:none" aria-hidden="true"><use href="#crest14"/></svg><div style="min-width:0"><h2 style="font-size:24px;line-height:28px">Adept</h2><div class="t-epithet">of the Deep Archive</div></div></div></section><div style="height:16px"></div><section class="card ready-c" aria-label="Ready to unlock"><svg class="coin44" viewBox="0 0 64 64" aria-hidden="true"><use href="#coin-ready"/></svg><div class="t"><b>An emblem is ready</b><span class="t-meta">Law of Large Numbers · Apex · 1,200 of your 1,346 MP</span></div><a class="btn btn-secondary" href="#">View</a></section><div class="toast-s" role="status" style="margin-top:16px"><div class="tt">Aim suggestions are off. Turn them back on in Settings.</div><button class="btn btn-secondary" style="min-height:40px">Undo</button></div>
+</div></div></div>
+<ul class="mk-cap"><li>setAimSuggestions(false) writes LifeSettings.aimSuggestions = false (gated by lifeWritesEnabled(); with writes off it refuses with the standard copy and the card stays). The card collapses to nothing at once.</li><li>The toast names where the switch lives; [Undo] calls setAimSuggestions(true), which also writes 'on:&lt;today&gt;' so the back-off starts again.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>F</b> · HIDDEN or OFF, no last aim: nothing · empty-hidden and empty-off</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card hero-c" aria-label="Character"><div class="hc-top"><svg width="64" height="67" viewBox="0 0 100 104" style="flex:none" aria-hidden="true"><use href="#crest14"/></svg><div style="min-width:0"><h2 style="font-size:24px;line-height:28px">Adept</h2><div class="t-epithet">of the Deep Archive</div></div></div></section><div style="height:16px"></div><section class="card ready-c" aria-label="Ready to unlock"><svg class="coin44" viewBox="0 0 64 64" aria-hidden="true"><use href="#coin-ready"/></svg><div class="t"><b>An emblem is ready</b><span class="t-meta">Law of Large Numbers · Apex · 1,200 of your 1,346 MP</span></div><a class="btn btn-secondary" href="#">View</a></section>
+</div></div></div>
+<ul class="mk-cap"><li>The hero is followed directly by the ready callout. HIDDEN ('hide:', from the LATER line's × or Today's ×) lasts 28 days; OFF is the stored no ("Don't suggest this", the Settings switch, or a legacy 'off' cookie until the switch is turned on). The Roadmap tab still offers "Set an aim" (the NONE card, mockup 3).</li><li>Settings shows the switch on under HIDDEN: only OFF is off.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>F2</b> · HIDDEN or OFF with a last aim: the achievement alone · empty-hidden-last-aim and empty-off-last-aim · as of Mon 10 Apr 2028</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card hero-c" aria-label="Character"><div class="hc-top"><svg width="64" height="67" viewBox="0 0 100 104" style="flex:none" aria-hidden="true"><use href="#crest14"/></svg><div style="min-width:0"><h2 style="font-size:24px;line-height:28px">Adept</h2><div class="t-epithet">of the Deep Archive</div></div></div></section><div style="height:16px"></div><section class="card aim-empty kept" aria-label="Last aim"><span class="t">Last aim: Aim rank <b>Paragon</b> · reached 12 Mar 2028</span></section><div style="height:16px"></div><section class="card ready-c" aria-label="Ready to unlock"><svg class="coin44" viewBox="0 0 64 64" aria-hidden="true"><use href="#coin-ready"/></svg><div class="t"><b>An emblem is ready</b><span class="t-meta">Law of Large Numbers · Apex · 1,200 of your 1,346 MP</span></div><a class="btn btn-secondary" href="#">View</a></section>
+</div></div></div>
+<ul class="mk-cap"><li><b>Shipped (KEPT):</b> a no to suggestions is not a no to the record. With a last aim, HIDDEN and OFF keep its achievement as one quiet line: no link to a new aim, no ×, no data-tour (it invites nothing), and no "Aim" header.</li><li>"reached 12 Mar 2028" (or "closed …") is the latest DONE roadmap's day, as on the ASK card.</li></ul>
+</figure>
+</div>
+</section>
+<section class="mk-sec mk-r4">
+<h2>Revision 4 · the card with an aim · 344</h2>
+<p>The plan below is the one mockups 1–3 and 5 follow: Statistics, Probability and Inference at Mastered (level 12), Exam P on Tue 4 May 2027, accepted Mon 5 Oct 2026 and arranged by Gemini (the draft of mockup 2; until the v3 probe passes, a plan from the app's numbers looks the same apart from its provenance labels). Dates come from roadmap-types' reach model (lane 0) at a measured 80% pass rate, 92% of the due queue cleared and an absence persistence of 0.45, at Steady (2.1 of the usual 3 new cards a week).</p>
+<div class="mk-row">
+<figure class="mk-fig">
+<div class="mk-tag"><b>G</b> · started · Milestone 3 · as of Thu 7 Jan 2027</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="aim-sec">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Aim</h2><span class="aside"><a class="hit" href="final-roadmap.html">measured 09:12</a></span></div>
+  <section class="card aim-c" data-tour="you-aim" id="r4aimG" aria-label="Aim: rank, Proficiency and progress">
+    <p class="aim-t">Know probability and inference well enough to pass Exam P and use them at work</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Statistics · level 9</span><span class="chip">Mastered (level 12) by Mar 2028</span><span class="chip quiet">Aim not checked</span></div>
+    <div class="rm-rp">
+      <div><div class="k">Aim rank</div><div class="v">Journeyman</div></div>
+      <div class="pf"><div class="k">Proficiency<span class="rm-basisk">toward Mastered (level 12)</span></div><div class="v num">34%</div></div>
+      <div class="meter" role="meter" aria-valuenow="34" aria-valuemin="0" aria-valuemax="100" aria-label="Proficiency toward Mastered (level 12): 34%, tested by your reviews and your ticks"><i style="--v:.3423"></i></div>
+      <p class="cap full">tested by your reviews and your ticks</p>
+      <p class="t-meta full">Next rank: Specialist at milestone 3 · rank is kept for good</p><details class="rm-parts"><summary><svg class="i"><use href="#i-chev"/></svg>What it's made of</summary><p>cards 17% · tested by your reviews · practice 76% · from your ticks · stages 2 of 6</p></details>
+    </div>
+    <div class="aim-ms"><span>Milestone <b>3 of 6</b> · Retained (level 8)</span></div><p class="aim-line">17% · tested by your reviews · on pace for 14 Feb</p>
+    <a class="rm-quest-one aim-q" href="final-today-quests.html"><svg class="i" aria-hidden="true"><use href="#i-cal"/></svg><b>Week quests</b><span class="n">1 of 3 done · Today</span><svg class="i"><use href="#i-chev"/></svg></a>
+    <div class="aim-acts"><a class="btn btn-secondary" href="final-roadmap.html">Open roadmap</a></div>
+  </section>
+</div>
+</div></div></div><p class="mk-geo" id="geo-r4aimG">Measuring… (open this file in a browser; the numbers fill in once the fonts load)</p>
+<ul class="mk-cap"><li><b>The date chip</b> reads "Mastered (level 12) by Mar 2028" (F-R4-11), replacing rev 3's "by 31 Dec 2027". <b>Shipped:</b> the Names rule wins over the first text's "Mastered by Mar 2028", so "Mastered" keeps its level; the card stays under its 470 px note at 344.</li><li><b>Proficiency names its basis</b>: the label is "Proficiency toward Mastered (level 12)" (the basis in sentence case under the eyebrow), the meter's name says it too. 34% = 0.6 × 0.168 (cards) + 0.25 × 0.765 (practice) + 0.15 × 2/6 (stages): the cards part counts the depth terms, 34 Probability and 25 Inference cards weighted toward level 12, so early stages read low.</li><li><b>Aim rank Journeyman</b> came with "Familiar, part 1" (the count gate, 20 Nov); Familiar kept the rank. Milestone 3 (Retained) gives Specialist.</li><li>The milestone line names the stage and its level, never a title: "Milestone 3 of 6 · Retained (level 8)".</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>H</b> · accepted, not started · while the pass rate is calibrating · as of Mon 5 Oct 2026</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="aim-sec">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Aim</h2><span class="aside"><a class="hit" href="final-roadmap.html">measured 5 Oct</a></span></div>
+  <section class="card aim-c" data-tour="you-aim" aria-label="Aim: rank, Proficiency and progress">
+    <p class="aim-t">Know probability and inference well enough to pass Exam P and use them at work</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Statistics · level 9</span><span class="chip">Mastered (level 12) by about Mar 2028 · estimate</span><span class="chip quiet">Aim not checked</span></div>
+    <p class="rk" style="margin-top:12px">Aim rank <b>Initiate</b> · Proficiency toward Mastered (level 12) <b class="num">5%</b></p><p class="cap">as measured at acceptance on 5 Oct · cards 8% · tested by your reviews</p>
+    <div class="aim-ms"><span>Milestone <b>1 of 6</b> · Familiar, part 1 (level 6)</span></div><p class="aim-line">Start milestone 1 when you're ready.<br><span class="t-meta">Becomes a Mid goal on Today · pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg>6 × progress</span> from 70%.</span><br><span class="t-meta">Reaching it gives the Aim rank Journeyman</span></p>
+    <div class="aim-acts"><a class="btn btn-secondary" href="final-roadmap.html">Open roadmap</a></div>
+  </section>
+</div>
+</div></div></div>
+<ul class="mk-cap"><li>With the pass rate or the clearance still calibrating, the date uses the published priors (80% pass, 85% cleared, ρ 0.6) and the chip reads "Mastered (level 12) by about Mar 2028 · estimate" (here Sun 19 Mar 2028). The roadmap page names what was assumed and offers a re-date once measured.</li><li>The acceptance reading: cards 8% (Probability's best 34 and Inference's 9 cards weighted toward level 12: 1,586 of 20,060 review-days), practice and stages 0 → 0.6 × 0.079 = 5%. Early stages read low by design.</li><li>While ROADMAP_GOALS_LIVE is off the body reads "Milestone 1 is planned" and Start is hidden, as in rev 3.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>I</b> · done · reached 3 days ago · as of Wed 15 Mar 2028</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="aim-sec">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Aim</h2><span class="aside"><a class="hit" href="final-roadmap.html">measured 08:40</a></span></div>
+  <section class="card aim-c" data-tour="you-aim" aria-label="Aim: done">
+    <p class="aim-t">Know probability and inference well enough to pass Exam P and use them at work</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Statistics · level 13</span><span class="chip">Done 12 Mar</span></div>
+    <div class="rm-rp">
+      <div><div class="k">Aim rank</div><div class="v">Paragon <span class="new">new 12 Mar</span></div></div>
+      <div class="pf"><div class="k">Proficiency<span class="rm-basisk">toward Mastered (level 12)</span></div><div class="v num">100%</div></div>
+      <div class="meter" role="meter" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100" aria-label="Proficiency toward Mastered (level 12): 100%, tested by your reviews and your ticks"><i style="--v:1"></i></div>
+      <p class="cap full">tested by your reviews and your ticks</p>
+      <p class="t-meta full">Top rank on this plan · rank is kept for good</p>
+    </div>
+    <div class="aim-ms"><span>Aim reached Sun 12 Mar</span></div><p class="aim-line">Mastered (level 12) in Probability and Inference · confirmed 14 Mar 2028</p>
+    <div class="aim-acts" style="flex-direction:column"><a class="btn btn-primary" href="final-roadmap.html">Open roadmap</a><a class="btn btn-secondary" href="final-roadmap-new.html">Set your next aim</a></div>
+  </section>
+</div>
+</div></div></div>
+<ul class="mk-cap"><li>For RANK_NEW_DAYS (7) after the reach, the achievement leads: the final rank, the held depth facts ("Mastered (level 12) in Probability and Inference · confirmed 14 Mar 2028", the reach day plus REACH_CONFIRM_DAYS), and <b>Open roadmap</b> as the primary with <b>Set your next aim</b> under it. <b>Shipped:</b> the standard's score is on the roadmap page, not on this card.</li><li>Paragon here: both Domains held at level 12 on the same day's readings (34 and 25 recall cards, clean entry), the plan's practice kept at 80% or more, explanation practice kept from Fluent on, Exam P logged at 8 of 10 against the bar of 6, and the reach held for 2 days.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>J</b> · done · not reached (or reached 8+ days ago)</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="aim-sec">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Aim</h2><span class="aside"><a class="hit" href="final-roadmap.html">measured 08:40</a></span></div>
+  <section class="card aim-c" data-tour="you-aim" aria-label="Aim: done">
+    <p class="aim-t">Know probability and inference well enough to pass Exam P and use them at work</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Statistics · level 13</span><span class="chip">Done 12 Mar</span></div>
+    <div class="rm-rp">
+      <div><div class="k">Aim rank</div><div class="v">Expert</div></div>
+      <div class="pf"><div class="k">Proficiency<span class="rm-basisk">toward Mastered (level 12)</span></div><div class="v num">71%</div></div>
+      <div class="meter" role="meter" aria-valuenow="71" aria-valuemin="0" aria-valuemax="100" aria-label="Proficiency toward Mastered (level 12): 71%, tested by your reviews and your ticks"><i style="--v:.7115"></i></div>
+      <p class="cap full">tested by your reviews and your ticks</p>
+      <p class="t-meta full">Rank is kept for good</p><details class="rm-parts"><summary><svg class="i"><use href="#i-chev"/></svg>What it's made of</summary><p>cards 64% · tested by your reviews · practice 81% · from your ticks · stages 5 of 6</p></details>
+    </div>
+    <div class="aim-ms"><span>Closed Sun 12 Mar · the aim wasn't reached</span></div>
+    <div class="aim-acts" style="flex-direction:column"><a class="btn btn-primary" href="final-roadmap-new.html">Set your next aim</a><a class="btn btn-secondary" href="final-roadmap.html">Open roadmap</a></div>
+  </section>
+</div>
+</div></div></div>
+<ul class="mk-cap"><li><b>Set your next aim</b> leads and <b>Open roadmap</b> follows. Reached more than 7 days ago, the reached card swaps its two buttons the same way and drops the held-depth line. <b>Shipped:</b> no "highest stage" line; the rank and Proficiency say how far it went.</li><li>The DONE card shows for 28 days after its done day (AIM_DONE_SHOW_DAYS); then the card is EMPTY with the last aim's line (frame B), and Today's set-an-aim line reads "Your last aim is done."</li><li>Proficiency 71% = 0.6 × 0.64 + 0.25 × 0.81 + 0.15 × 5/6.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>K</b> · a plan made before revision 4, open · legacy-active</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="aim-sec">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Aim</h2></div>
+  <section class="card aim-c" data-tour="you-aim" aria-label="Aim: planned before plans aimed at a depth">
+    <p class="aim-t">Become a consistently profitable systematic EUR/USD trader by 2028</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Trading · level 6</span><span class="chip">by 31 Dec 2027</span></div>
+    <p class="rm-lead">Planned before plans aimed at a depth.</p>
+    <p class="t-meta" style="margin-top:4px">Wording from an earlier Gemini draft is hidden.</p>
+    <p class="t-meta" style="margin-top:4px">Start again at a depth to measure this aim.</p>
+    <div class="aim-acts"><a class="btn btn-primary" href="final-roadmap-new.html">Start again at a depth</a></div>
+  </section>
+</div>
+</div></div></div>
+<ul class="mk-cap"><li>A legacy roadmap shows its aim (the user's words), its Area, its own date chip and the banner's action, and no milestone title, rank, Proficiency or week quests. <b>Shipped:</b> "Wording from an earlier Gemini draft is hidden." is a line of its own, shown only when a row had a Gemini origin (AimCardView.legacyView.geminiHidden; none are expected in production, by P0), and the measure line follows it.</li><li><b>Start again at a depth</b> writes the handoff {aim, source 'restart', areaFieldId, domainIds, replaces} with the old plan's own Domains (legacyView.domainIds, never every Domain in the Area) and opens the form, whose note names only what was carried: "From your plan made before plans aimed at a depth: its aim, Area and Domains are carried over. Saving this archives that plan." Saving archives this roadmap in the same transaction.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>K2</b> · a legacy draft · legacy-draft</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="aim-sec">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Aim</h2></div>
+  <section class="card aim-c" data-tour="you-aim" aria-label="Aim: planned before plans aimed at a depth">
+    <p class="aim-t">Become a consistently profitable systematic EUR/USD trader by 2028</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Trading · level 6</span><span class="chip">by 31 Dec 2027</span></div>
+    <p class="rm-lead">This draft was made before plans aimed at a depth.</p>
+    <div class="aim-acts"><a class="btn btn-primary" href="final-roadmap-new.html">Draft it again</a></div>
+  </section>
+</div>
+</div></div></div>
+<ul class="mk-cap"><li>A legacy draft with no Gemini rows: no hidden-wording line, and no measure line. <b>Draft it again</b> opens the intake; with no depth set, drafting and accepting refuse with "Pick a depth in the intake first", and the next draft replaces the old rows.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>K3</b> · a legacy plan, closed · legacy-done · as of Mon 5 Oct 2026</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="aim-sec">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Aim</h2></div>
+  <section class="card aim-c" data-tour="you-aim" aria-label="Aim: planned before plans aimed at a depth">
+    <p class="aim-t">Become a consistently profitable systematic EUR/USD trader by 2028</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Trading · level 6</span><span class="chip">Done 29 Sep</span></div>
+    <p class="rm-lead">Planned before plans aimed at a depth.</p>
+    <div class="aim-acts"><a class="btn btn-primary" href="final-roadmap-new.html">Set your next aim</a><a class="btn btn-secondary" href="final-roadmap.html">Open roadmap</a></div>
+  </section>
+</div>
+</div></div></div>
+<ul class="mk-cap"><li>Closed 6 days ago: "Set your next aim" leads, with no <code>replaces</code> (only an open plan is archived by a new intake), and "Open roadmap" shows it as history. No "Start again at a depth" and no measure line.</li></ul>
+</figure>
+</div>
+</section>
+<section class="mk-sec mk-r4">
+<h2>Revision 4 · Settings: the "Aim suggestions" switch · 344 and 932</h2>
+<p>One new row in the Days section card (F-R4-5). On means the card asks (or shows its LATER line, or is snoozed for 4 weeks: HIDDEN still reads on); off means OFF everywhere the switch governs: the /you card, Today's set-an-aim line and, <b>as shipped</b>, capture's "Make it an aim" offer, which the note now names. It is stored in LifeSettings.aimSuggestions (null means on), so it holds on every device. The copy never names Gemini, and it doesn't claim the switch governs the draft-waiting or milestone-ready lines, which are the user's own pending work.</p>
+<div class="mk-row">
+<figure class="mk-fig">
+<div class="mk-tag"><b>344</b> · /you/settings</div>
+<div class="frame f344"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-current="page" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">You</div><h1>Settings</h1></div>
+<nav class="tb-tabs tabs" aria-label="You pages"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#" aria-current="page">Settings</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page">
+<div class="tabs you-tabs" role="tablist" aria-label="You"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#" aria-current="page">Settings</a></div>
+<div class="set-grid"><section aria-label="Days">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Days</h2></div>
+  <div class="card set">
+    <div class="set-row"><div class="n"><b>Capacity</b><span>Planned time on Today warns past this.</span></div><button class="btn btn-secondary" aria-label="Capacity, 4 h. Change">4 h</button></div>
+    <div class="set-row"><div class="n"><b>Aim suggestions</b><span>With no aim set, You suggests one; Today does on a new week, a new month or your first day back, then once a month; and capture offers to make a long goal your aim.</span></div><span class="switch-hit"><button class="switch" role="switch" aria-checked="true" aria-label="Suggest setting an aim"></button></span></div>
+    <div class="set-row"><div class="n"><b>Rest weekdays</b><span>A rest day is held: nothing is owed and the streak waits.</span></div><span class="chip">Arrives with rest days</span></div>
+    <div class="set-row"><div class="n"><b>Time off</b><span>Rest tomorrow, sick today, or a vacation from tomorrow; never backdated.</span></div><span class="chip">Arrives with rest days</span></div>
+  </div>
+</section></div>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-current="page" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div>
+<ul class="mk-cap"><li>The switch is the kit's Switch (a 44 px hit around 52 × 32), labelled "Suggest setting an aim". Turning it on calls setAimSuggestions(true): it writes true, deletes a legacy 'off' cookie and writes 'on:&lt;today&gt;', so the back-off starts again.</li><li>With writes off (a dev server sharing the database) either direction refuses with the standard copy, said once, and the switch returns to where it was.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>off</b> · the stored no, or a legacy 'off' cookie</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section aria-label="Days">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Days</h2></div>
+  <div class="card set">
+    
+    <div class="set-row"><div class="n"><b>Aim suggestions</b><span>With no aim set, You suggests one; Today does on a new week, a new month or your first day back, then once a month; and capture offers to make a long goal your aim.</span></div><span class="switch-hit"><button class="switch" role="switch" aria-checked="false" aria-label="Suggest setting an aim"></button></span></div>
+    <div class="set-row"><div class="n"><b>Rest weekdays</b><span>A rest day is held: nothing is owed and the streak waits.</span></div><span class="chip">Arrives with rest days</span></div>
+    <div class="set-row"><div class="n"><b>Time off</b><span>Rest tomorrow, sick today, or a vacation from tomorrow; never backdated.</span></div><span class="chip">Arrives with rest days</span></div>
+  </div>
+</section>
+</div></div></div>
+<ul class="mk-cap"><li>The settings page reads the cookie (await cookies()) and passes aimSuggestions: false when the column is false or the cookie is 'off'; the switch shows off until it is turned on.</li><li><b>Shipped:</b> the page reads the column itself, with the missing-column retry; with the column missing it passes nothing and the row is hidden, so no switch ever does nothing.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>932</b> · two columns</div>
+<div class="mk-scroll"><div class="frame f932"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-current="page" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">You</div><h1>Settings</h1></div>
+<nav class="tb-tabs tabs" aria-label="You pages"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#" aria-current="page">Settings</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page">
+<div class="tabs you-tabs" role="tablist" aria-label="You"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#" aria-current="page">Settings</a></div>
+<div class="set-grid"><div class="you-stack"><section aria-label="Feedback">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Feedback</h2></div>
+  <div class="card set">
+    <div class="set-row"><div class="n"><b>Theme</b><span>Night is the default. This device only.</span></div><div class="segc" role="group" aria-label="Theme"><button aria-pressed="true">Night</button><button aria-pressed="false">Day</button></div></div>
+    <div class="set-row"><div class="n"><b>Motion</b><span>Calm keeps the meters and drops the flourishes.</span></div><div class="segc" role="group" aria-label="Motion"><button aria-pressed="true">Full</button><button aria-pressed="false">Calm</button><button aria-pressed="false">Still</button></div></div>
+    <div class="set-row"><div class="n"><b>Sound</b><span>One soft chime per tier. This device only.</span></div><div class="segc" role="group" aria-label="Sound"><button aria-pressed="false">Off</button><button aria-pressed="true">Soft</button></div></div>
+  </div>
+</section></div><div class="you-stack"><section aria-label="Days">
+  <div class="sec-h"><span class="lane-mark"></span><h2>Days</h2></div>
+  <div class="card set">
+    <div class="set-row"><div class="n"><b>Capacity</b><span>Planned time on Today warns past this.</span></div><button class="btn btn-secondary" aria-label="Capacity, 4 h. Change">4 h</button></div>
+    <div class="set-row"><div class="n"><b>Aim suggestions</b><span>With no aim set, You suggests one; Today does on a new week, a new month or your first day back, then once a month; and capture offers to make a long goal your aim.</span></div><span class="switch-hit"><button class="switch" role="switch" aria-checked="true" aria-label="Suggest setting an aim"></button></span></div>
+    <div class="set-row"><div class="n"><b>Rest weekdays</b><span>A rest day is held: nothing is owed and the streak waits.</span></div><span class="chip">Arrives with rest days</span></div>
+    <div class="set-row"><div class="n"><b>Time off</b><span>Rest tomorrow, sick today, or a vacation from tomorrow; never backdated.</span></div><span class="chip">Arrives with rest days</span></div>
+  </div>
+</section></div></div>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-current="page" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div></div>
+<ul class="mk-cap wide"><li>From 760 px of main the sections sit in two columns; Days is in the right one. No overflow at 344 (ui-audit).</li></ul>
+</figure>
+</div>
+</section>
+<!-- rev4:end -->
+<!-- rev3-note:start -->
+<section class="mk-sec mk-r3">
+<h2>Revision 3 frames · kept for what revision 4 leaves unchanged</h2>
+<p>Everything below is revision 3's mockup. Where it differs from the frames above, revision 4 wins:</p>
+<ul class="mk-cap wide">
+<li>Milestone titles are the app's words now ("Retained: Probability, Inference to level 8+"); the Aim card names only the stage and its level ("Milestone 3 of 6 · Retained (level 8)"). Rev 3's Gemini titles ("Risk and position sizing", "Backtests that hold up") would be hidden on a legacy plan (frame K).</li>
+<li>The date chip reads "Mastered (level 12) by Mar 2028" (or "… · estimate"), not "by 31 Dec 2027"; Proficiency's label names its basis; the parts say "stages", not "milestones".</li>
+<li>Ranks follow stages reached inside the plan, not places in it: "Next rank: Journeyman at milestone 2" holds only when milestone 2 is the stage that gives it. Paragon needs the depth held and the user's standard, not 4 milestones; frame G of rev 3 ("tops out at Specialist") is a track plan's rule now, with 4 kept stages and 180 days.</li>
+<li>State J (the compact empty line) is re-mocked below for revision 4: the × is "Not now" for 4 weeks, never a year.</li>
+<li>Unchanged: the card's place under the hero, one Promise.all with no Suspense, the LastSeenMeter, the parts disclosure at 344, the week-quests line, behind-pace signals only on roadmap surfaces, writes-off and no-reading states.</li>
+</ul>
+<div class="mk-legend" aria-label="Provenance classes as rendered in revision 3">
   <span><span class="pv pv-draft">Gemini suggestion · not checked</span> DRAFT</span>
   <span><span class="pv pv-kept">Gemini's words · kept by you · not checked</span> KEPT_SUGGESTION</span>
   <span><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>You checked this</span> YOURS</span>
@@ -673,7 +1363,8 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
   <span><span class="cap">≈ 9 h 10 (task estimates, not timed)</span> ESTIMATED</span>
   <span><span class="cap">plain, basis on "How this is worked out"</span> WORKED_OUT</span>
 </div>
-</header>
+</section>
+<!-- rev3-note:end -->
 <section class="mk-sec">
 <h2>/you · 344, 932 and 1440</h2>
 <p>The Aim card sits directly under the hero, before the ready callout. It arrives with the sheet: loadAimCard joins loadSheet in one Promise.all, with no Suspense and no skeleton, so nothing streams in late and nothing shifts (F16 seam 9; you/loading.tsx is unchanged). The dashed lines on the phone frame mark the 344 × 882 cover screen: content is visible to 818 px (882 minus the 64 px tab bar). The boxes under the frames are measured by this page in your browser, so the F19 geometry claim (about 400 px tall in the common case, at most about 470) is checked, not assumed.</p>
@@ -1207,11 +1898,11 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
 <ul class="mk-cap"><li>"Drafting your roadmap…" is static text: no spinner, no shimmer. The draft keeps running if the user leaves.</li></ul>
 </figure>
 <figure class="mk-fig">
-<div class="mk-tag"><b>J</b> · no roadmap: the compact empty line</div>
+<div class="mk-tag"><b>J</b> · no roadmap · re-mocked for revision 4: the LATER line</div>
 <div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
-<section class="card aim-empty"><span class="t"><a href="final-roadmap-new.html">Set an aim</a> → Gemini can draft a roadmap, or build one from your numbers</span><button class="icon-btn" aria-label="Hide this"><svg class="i"><use href="#i-x"/></svg></button></section><div style="height:16px"></div><section class="card aim-empty"><span class="t"><a href="final-roadmap-new.html">Set an aim</a> → build one from your own numbers.</span><button class="icon-btn" aria-label="Hide this"><svg class="i"><use href="#i-x"/></svg></button></section>
+<div class="aim-sec"><div class="sec-h"><span class="lane-mark"></span><h2>Aim</h2></div><section class="card aim-empty" data-tour="you-aim"><span class="t"><a href="final-roadmap-new.html">Set an aim</a> → milestones toward it, measured from your reviews and ticks</span><button class="icon-btn" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i"><use href="#i-x"/></svg></button></section></div><div style="height:16px"></div><div class="aim-sec"><div class="sec-h"><span class="lane-mark"></span><h2>Aim</h2></div><section class="card aim-empty" data-tour="you-aim"><span class="t">Last aim: Aim rank <b>Paragon</b> · <a href="final-roadmap-new.html">Set your next aim →</a></span><button class="icon-btn" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i"><use href="#i-x"/></svg></button></section></div>
 </div></div></div>
-<ul class="mk-cap"><li>One line, 56 px. Second line: no Gemini key on this server.</li><li>Revision 3: the × calls dismissAimPrompt, which sets the cookie xtnl-aim-prompt=off for a year; the page reads it on the server, so the line never flashes in and out. The Roadmap tab still offers "Set an aim".</li></ul>
+<ul class="mk-cap"><li>Revision 4: with no aim the card asks in place (ASK, the frames at the top); this line is the LATER state after "Not now", for 28 days. Its × means "Not now" again and says so; no × writes the year-long 'off' cookie any more, and the lasting no lives in Settings.</li><li>The no-key copy is the same: the invitation never names Gemini.</li></ul>
 </figure>
 <figure class="mk-fig">
 <div class="mk-tag"><b>K</b> · no reading yet · writes off</div>
@@ -1291,5 +1982,27 @@ a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
   addEventListener('resize', run);
 })();
 </script>
+<!-- rev4-script:start -->
+<script>
+/* rev4-script:start · Mockup only: measures the revision-4 Aim cards, so the
+   F-R4-1 bound (ASK ≤ 410 px at 344 in its tallest state) and F-R4-15's
+   (the Aim card under 470 px at 344 with the depth chip) are checked, not assumed. */
+(function () {
+  function h(id) { var e = document.getElementById(id); return e ? Math.round(e.getBoundingClientRect().height) : null; }
+  function put(out, t) { var o = document.getElementById(out); if (o) o.textContent = t; }
+  function run() {
+    [['r4ask344', 'geo-r4ask344', 'ASK with a seed, at 344', 410], ['r4ask932', 'geo-r4ask932', 'ASK with a seed, at 932', 410], ['r4askA', 'geo-r4askA', 'ASK, no seed, no last aim', 410], ['r4askB', 'geo-r4askB', 'ASK with a last aim and a seed (the tallest)', 410], ['r4askC', 'geo-r4askC', 'ASK continuing an unsent aim', 410], ['r4aimG', 'geo-r4aimG', 'the Aim card with the depth chip', 470]].forEach(function (c) {
+      var v = h(c[0]); if (v == null) return;
+      put(c[1], 'Measured here: ' + c[2] + ' is ' + v + ' px tall (bound ≤ ' + c[3] + ' px at 344): ' + (v <= c[3] ? 'within it.' : 'OVER by ' + (v - c[3]) + ' px.'));
+    });
+    var f = document.getElementById('r4you344'), card = document.getElementById('r4ask344');
+    if (f && card) { var top = Math.round(card.getBoundingClientRect().top - f.getBoundingClientRect().top); var end = top + h('r4ask344'); var o = document.getElementById('geo-r4ask344'); if (o) o.textContent += ' The card starts ' + top + ' px down and ends at ' + end + ' px' + (end <= 818 ? ': all on the first screen (818).' : ': ' + (end - 818) + ' px fall below the first screen (818).'); }
+  }
+  (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(run);
+  addEventListener('resize', run);
+})();
+/* rev4-script:end */
+</script>
+<!-- rev4-script:end -->
 </body>
 </html>

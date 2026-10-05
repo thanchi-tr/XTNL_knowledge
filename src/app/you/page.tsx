@@ -8,6 +8,7 @@ import { recordTodaySnapshot } from "@/lib/snapshot";
 import { todayKey } from "@/lib/life-day";
 import { MASTERY_LEVEL } from "@/lib/xp";
 import { AIM_PROMPT_COOKIE, type AimCardView } from "@/lib/roadmap-types";
+import { aimPromptOf, longGoalSeedOf } from "@/lib/roadmap-invite";
 import { loadAimCard } from "@/lib/roadmap-server";
 import { freezeWeekQuests } from "@/lib/roadmap-quests-server";
 import { ShellTitle } from "@/components/shell/ShellTitle";
@@ -49,6 +50,14 @@ async function aimCardOrNull(userId: string, now: Date): Promise<AimCardView | n
  * The Aim card loads with the sheet in one wave, with no Suspense and no
  * skeleton, so nothing shifts in under the hero (loading.tsx is unchanged:
  * the swap from it to the page is a replacement, not a shift).
+ *
+ * Revision 4 (roadmap-rev4.md F-R4-1, F-R4-2): with no aim, the card asks for
+ * one in place. The page reads the three things it needs from what it already
+ * loads, with no new read: the prompt (roadmap-invite aimPromptOf: the
+ * AIM_PROMPT_COOKIE snooze and LifeSettings.aimSuggestions, which R4's
+ * loadAimCard selects onto the view), the long-goal seed (longGoalSeedOf over
+ * the sheet's own goal ladder, s.goals) and the last aim's line (the view's
+ * lastAim, from the latest DONE roadmap). The aim never travels in a URL.
  */
 export default async function YouSheetPage() {
   const now = new Date();
@@ -79,14 +88,20 @@ export default async function YouSheetPage() {
     }
   });
   // One wave: the sheet (cached), the Aim card (cached) and the request's cookies, read on
-  // the server so the dismissed "Set an aim" line never flashes in and out.
+  // the server so the "Set an aim" card never flashes in and out.
   const [s, aim, jar] = await Promise.all([loadSheet(userId, now), aimCardOrNull(userId, now), cookies()]);
   questWeekUnfrozen = aim?.questWeekUnfrozen === true;
-  const promptDismissed = jar.get(AIM_PROMPT_COOKIE)?.value === "off";
   // The life day the card's dates are read against, from the same `now` the loaders used: the
   // client component never falls back to its own clock, so the server render and hydration agree
   // across the 04:00 turn ("measured 09:12", "by 31 Mar", the year).
   const aimToday = todayKey(now);
+  // The empty card's state (F-R4-1): ASK (the full card), LATER (the line, for 4 weeks after "Not
+  // now"), HIDDEN (for 4 weeks after the line's own × or Not now on Today's line: nothing, or
+  // only a last aim's line; the fix round's 'hide:<day>') or OFF (nothing but a last aim's line: "Don't suggest this", the
+  // Settings switch, or a legacy 'off' cookie). promptDismissed stays the alias for OFF only.
+  const prompt = aimPromptOf(jar.get(AIM_PROMPT_COOKIE)?.value, aim?.aimSuggestions ?? null, aimToday);
+  // "Start from your long goal": the sheet's own goal ladder, no new read.
+  const seed = longGoalSeedOf(s.goals, aimToday);
   const launched = s.life.launched;
 
   return (
@@ -109,7 +124,7 @@ export default async function YouSheetPage() {
             owned={s.owned}
             poolSize={s.poolSize}
           />
-          {aim && <AimCard view={aim} promptDismissed={promptDismissed} today={aimToday} />}
+          {aim && <AimCard view={aim} prompt={prompt} seed={seed} lastAim={aim.lastAim ?? null} promptDismissed={prompt === "OFF"} today={aimToday} />}
           {s.ready && <ReadyCallout ready={s.ready} balance={s.balance} />}
           {s.lifeNote && <LifeNote />}
           <LifeTracks knowledge={s.knowledge} life={s.life} />

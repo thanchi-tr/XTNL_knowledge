@@ -146,5 +146,113 @@
         ]
       }
     }
-  ]
+  ],
+  "v3": {
+    "probe": false,
+    "about": "An English aim about a language (not probed in v3).",
+    "intake": {
+      "depth": 12,
+      "dateMode": "REALISTIC",
+      "exam": false,
+      "examDay": null,
+      "suggestAreas": false
+    },
+    "replies": [
+      {
+        "id": "japanese-work-v3-a",
+        "about": "Listening needed; say it aloud and work with a partner later.",
+        "reply": {
+          "needs": [
+            "D4"
+          ],
+          "stages": {
+            "FOUNDATION": {
+              "practices": [
+                {
+                  "kind": "RECALL_DRILLS",
+                  "on": "D1"
+                },
+                {
+                  "kind": "READ_AND_CARD",
+                  "on": "D2"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "CHOOSE_MATERIAL"
+                }
+              ],
+              "checkpoint": "SELF_TEST"
+            },
+            "FAMILIAR": {
+              "practices": [
+                {
+                  "kind": "RECALL_DRILLS",
+                  "on": "D2"
+                },
+                {
+                  "kind": "LISTEN_AND_REPEAT"
+                }
+              ],
+              "steps": []
+            },
+            "RETAINED": {
+              "practices": [
+                {
+                  "kind": "SAY_IT_ALOUD",
+                  "on": "D1"
+                },
+                {
+                  "kind": "WRITING_PRACTICE",
+                  "on": "D2"
+                }
+              ],
+              "steps": [],
+              "checkpoint": "SELF_TEST"
+            },
+            "FLUENT": {
+              "practices": [
+                {
+                  "kind": "SAY_IT_ALOUD"
+                },
+                {
+                  "kind": "WITH_A_PARTNER"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "EXPLAIN_ONCE",
+                  "on": "D1"
+                }
+              ]
+            },
+            "MASTERED": {
+              "practices": [
+                {
+                  "kind": "SAY_IT_ALOUD"
+                },
+                {
+                  "kind": "WITH_A_PARTNER"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "FULL_ATTEMPT"
+                }
+              ],
+              "checkpoint": "PERFORMANCE_CHECK"
+            }
+          }
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "needs": [
+            "d_ja_listen"
+          ],
+          "excluded": [],
+          "sessionPicks": false
+        }
+      }
+    ]
+  }
 }

@@ -15,7 +15,7 @@ import "./_no-model";
  * Undo, ords after carried rows, rank indices, [Create]), F15 (stated MP
  * goldens, every Start refusal, switched-off practices, the delayed-start
  * offer, the claim, captureKey idempotency, Finish starting, the ParsedCapture,
- * injected sizing, one quest set, high-water baselines), F19 (the Aim card's
+ * no model sizing (decision 50), one quest set, high-water baselines), F19 (the Aim card's
  * empty, draft and missing-table states) and F22 (re-plans never touch
  * started rows, the end-state anchor, archive, done).
  *
@@ -31,10 +31,34 @@ import "./_no-model";
  * fields, the weight line, the scope's pace (median of weekly sums), the
  * date remedy, and that no view loader reaches the model.
  *
+ * Revision 4 fix round (contracts §15.15, lane R4): the LATER line's
+ * 'hide:<day>' cookie and [Keep the dates] recorded on the plan; coverage
+ * frozen at intake (archive 20, write 18, a lowered depth, a typed figure
+ * that didn't change, the first accept's draft counts); clean entry read in
+ * the planning context; no model sizing at Start and its monitor; session
+ * picks of any slot (lose-8kg, "pregnant"); production by practiceRoleOf; a
+ * PART at the depth's rank; "n not shown" and the run's integrity re-made
+ * safe; the view fields R5 read through casts; the tripwire's rawLabel and
+ * proposedName; typed counts refused on a depth plan; a legacy life-track
+ * plan replaced; draftFromReply as the one draft step.
+ *
+ * Revision 4 fix round 2 (contracts §16.9, lane R4): a redraft on an ACTIVE
+ * plan ([Use the realistic date], a line's Domain) after archiving 20 or
+ * writing 18 cards asks for the end state's n_d (the frozen counts, fixture
+ * and real R2); the additions' date effect gets the frozen counts and the
+ * added Domain's cards; Plan history's depthLowered after accept → Undo →
+ * accept and Undo → lower; the legacy Aim card's LegacyView; the depth to
+ * R1's ranks; no code label names a pending Gemini addition ([Leave out],
+ * [Add], an edit's re-fit; fixture and real R2/R3); Start → R6's own
+ * weekQuestSetFor and loadWeekQuests over the fake world (a round trip); the
+ * bar's named views with the week-quests view; NO_PACE refused at intake.
+ *
  * Cases that exercise another lane's real code (R1's readings, lane L's
  * prepareRoadmapGoalClose) go green at integration in those lanes' checks.
  */
-import { addDays, todayKey, type DayKey } from "../src/lib/life-day";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { addDays, daysBetween, todayKey, weekStartKeyOf, type DayKey } from "../src/lib/life-day";
 import { statedForMilestone } from "../src/lib/roadmap-economy";
 import type {
   AcceptanceRec,
@@ -58,6 +82,9 @@ import type {
 import {
   ORIGINS,
   ROADMAP_WRITES_OFF,
+  coveragePolicyOf,
+  domainName,
+  type DateCheck,
   RUN_FALLBACK_STARTER,
   THROUGHPUT_LAG_DAYS,
   cardsAtLevelKey,
@@ -65,8 +92,12 @@ import {
   isSupersededRow,
   proficiencyKey,
   milestoneCountFor,
+  retryReadDaysOf,
   startStatedInputOf,
-  type EvidencePack,
+  type CardState,
+  type EndStateTerm,
+  type ValidationIntegrity,
+  type ValidationReport,
   type Feasibility,
   type Intake,
   type ItemDraft,
@@ -75,13 +106,17 @@ import {
   type MilestoneFeasibility,
   type Reading,
   type StartSnapshot,
+  type Syllabus,
   type ValidatedDraft,
   type WeekQuestSet,
 } from "../src/lib/roadmap-types";
 import type { ParsedCapture } from "../src/lib/life-types";
 import * as R1 from "../src/lib/roadmap-proficiency";
+import * as REALISM from "../src/lib/roadmap-realism";
+import { catalogEntryOf, catalogLabelOf } from "../src/lib/roadmap-catalog";
+import type { QuestMilestoneFacts, QuestStore } from "../src/lib/roadmap-quests-server";
+import { AIM_PROMPT_COOKIE, aimPromptOf } from "../src/lib/roadmap-invite";
 import { reusableSamplesOf } from "../src/lib/roadmap-model";
-import type { LabelChecked } from "../src/lib/roadmap-validate";
 import type { CaptureLink } from "../src/lib/tasks";
 import { throughputWindowStart, type ThroughputRows } from "../src/lib/throughput";
 import type { WeightView } from "../src/lib/weight";
@@ -98,6 +133,7 @@ import type { DayLedger } from "../src/lib/today-board";
 type ServerModule = typeof import("../src/lib/roadmap-server");
 let S: ServerModule;
 let upsertDecision: (typeof import("../src/lib/roadmap-readings"))["upsertDecision"];
+let cleanReadDaysOf: (typeof import("../src/lib/roadmap-readings"))["cleanReadDaysOf"];
 
 function installNoDatabase(): void {
   const g = globalThis as { prisma?: unknown };
@@ -148,6 +184,8 @@ interface QuestWeekRow {
   milestoneId: string;
   dedupeKey: string;
   source: string;
+  /** The frozen set as the freeze writes it (R6's loader reads it back: the Start round trip). */
+  set?: WeekQuestSet;
 }
 
 interface Tables {
@@ -192,6 +230,20 @@ class FakeWorld {
   weight: WeightView | null = null;
   /** Calls the view loaders must never make. */
   modelCalls = 0;
+  /** LifeSettings (revision 4): the stored aim-suggestions switch and the epoch day; null: no row. */
+  settings: { aimSuggestions: boolean | null; epochDay: DayKey } | null = { aimSuggestions: null, epochDay: "2026-01-01" };
+  /** The latest DAY_OPEN row before today, as loadAimStep reads it. */
+  lastOpen: DayKey | null = null;
+  /** Reads the aim step made (≤ 4, F-R4-3). */
+  stepReads = 0;
+  /** A revision-4 column not yet applied (P2022): the settings read throws it. */
+  missingColumn = false;
+  /** The REVIEW ledger rows by card id (the clean-entry read, fix round), and each read made of them. */
+  reviews: Record<string, { day: DayKey; detail: string | null; occurredAt?: string | null }[]> = {};
+  reviewReads: { ids: string[]; from: DayKey }[] = [];
+  /** The clean-entry window's acceptance reads (RoadmapStore.acceptanceMultiplier), by roadmap id; `acceptanceFails` makes it throw. */
+  acceptanceReads: string[] = [];
+  acceptanceFails = false;
   private seq = 0;
   makeId = () => `id${(++this.seq).toString().padStart(4, "0")}`;
 
@@ -210,8 +262,11 @@ class FakeWorld {
             r.userId === userId &&
             g.statuses.includes(r.status as never) &&
             (g.version == null || r.version === g.version) &&
-            (g.archiveReason == null || r.archiveReason === g.archiveReason)
+            (g.archiveReason == null || r.archiveReason === g.archiveReason) &&
+            (!g.depthNull || r.depth == null)
         );
+      case "NO_STARTED_MILESTONE":
+        return !t.roadmapMilestone.some((m) => m.roadmapId === g.roadmapId && (m.status === "STARTING" || m.status === "STARTED"));
       case "NO_RECENT_RUNNING":
         return !t.roadmapRun.some((r) => r.roadmapId === g.roadmapId && r.status === "RUNNING" && r.startedAt.getTime() > g.since.getTime());
       case "GEMINI_RUNS_BELOW":
@@ -306,7 +361,7 @@ class FakeWorld {
         case "questWeek": {
           const key = `rq:${op.set.milestoneId}:${op.set.weekStart}`;
           if (!this.t.questWeeks.some((q) => q.userId === userId && q.dedupeKey === key)) {
-            this.t.questWeeks.push({ userId, roadmapId: op.roadmapId, milestoneId: op.set.milestoneId, dedupeKey: key, source: op.source });
+            this.t.questWeeks.push({ userId, roadmapId: op.roadmapId, milestoneId: op.set.milestoneId, dedupeKey: key, source: op.source, set: clone(op.set) });
           }
           break;
         }
@@ -398,6 +453,16 @@ class FakeWorld {
         await tick();
         return clone(this.t.readings.filter((r) => r.userId === userId && r.source === "SELF" && prefixes.some((p) => r.measureKey.startsWith(p))));
       },
+      acceptanceMultiplier: async (userId, roadmapId) => {
+        await tick();
+        this.acceptanceReads.push(roadmapId);
+        if (this.acceptanceFails) throw new Error("acceptance read failed");
+        // The SQL's order (acceptanceOrderBy): newest version, then newest record; undone ones skipped; the user's roadmap only.
+        const live = this.t.roadmapAcceptance
+          .filter((a) => a.roadmapId === roadmapId && a.undoneAt == null && this.t.roadmap.some((r) => r.id === roadmapId && r.userId === userId))
+          .sort((a, b) => b.version - a.version || b.acceptedAt.getTime() - a.acceptedAt.getTime());
+        return live.length ? live[0].intervalMultiplier : null;
+      },
       apply: async (userId, ops) => {
         await tick();
         return this.applyNow(userId, ops);
@@ -464,6 +529,26 @@ class FakeWorld {
         t.archivedAt = now;
         return { ok: true };
       },
+      reachModifiers: async () => ({ intervalMultiplier: 1, extraStrikes: 0, graceExtraDays: 0 }),
+      aimSettings: async () => {
+        this.stepReads++;
+        if (this.missingColumn) throw Object.assign(new Error('The column `LifeSettings.aimSuggestions` does not exist in the current database.'), { code: "P2022", meta: { column: "LifeSettings.aimSuggestions" } });
+        return this.settings ? clone(this.settings) : null;
+      },
+      writeAimSuggestions: async (_userId, on) => {
+        if (this.missingColumn) throw Object.assign(new Error('The column `LifeSettings.aimSuggestions` does not exist in the current database.'), { code: "P2022", meta: { column: "LifeSettings.aimSuggestions" } });
+        this.settings = { aimSuggestions: on, epochDay: this.settings?.epochDay ?? TODAY };
+      },
+      lastDayOpenBefore: async () => {
+        this.stepReads++;
+        return this.lastOpen;
+      },
+      suggestionDomainIds: async () =>
+        Array.from(new Set(this.t.roadmapItem.filter((i) => i.kind === "DOMAIN" && i.notes.includes("FROM_SUGGESTION") && i.domainId).map((i) => i.domainId as string))),
+      reviewRows: async (_userId, ids, from) => {
+        this.reviewReads.push({ ids: [...ids], from });
+        return Object.fromEntries(ids.map((id) => [id, clone((this.reviews[id] ?? []).filter((r) => r.day >= from))]));
+      },
     };
   }
 }
@@ -478,48 +563,17 @@ function emptyLedger(day: DayKey): DayLedger {
   return { day, rawBefore: 0, lifeXp: 0, completions: [], reviews: 0, reviewXp: 0, ideas: 0, dayOpenQty: null };
 }
 
-/** [start, end) spans of each digit run (the fixture checker's NUMBER spans). */
-function digitSpans(label: string): [number, number][] {
-  return [...label.matchAll(/\d+/g)].map((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]);
-}
-
-/** The fixture label checker (R3's checkLabel stand-in): a digit is NUMBER, a link is dropped. */
-function fixtureCheckLabel(label: string): ReturnType<RoadmapLanes["checkLabel"]> {
-  const n = /\d/.test(label);
-  return {
-    cleaned: label,
-    flags: n ? ["NUMBER"] : [],
-    struck: n ? digitSpans(label) : [],
-    drop: /https?:/.test(label) ? "CONTAINED_LINK" : null,
-    reasons: n ? { NUMBER: `has the number "${(label.match(/\d+/) ?? [""])[0]}", which you didn't write` } : {},
-  };
-}
-
-/**
- * R3's withLabelChecks over the fixture checker, as its contract reads: a
- * Gemini title not EDITED gets titleFlags (with titleStruck and titleReasons
- * when flagged), any other title titleFlags []; a flagged Gemini item not
- * EDITED gets its struck NUMBER spans and a reason per stored flag. The real
- * one runs under "with the real lanes" below.
- */
-function fixtureLabelChecks<T extends MilestoneDraft>(milestones: readonly T[]): (T & LabelChecked)[] {
-  return milestones.map((m) => {
-    let title: Pick<MilestoneDraft, "titleFlags" | "titleStruck" | "titleReasons"> = { titleFlags: [] };
-    if (m.titleOrigin === "GEMINI" && m.titleDecision !== "EDITED" && m.title.trim()) {
-      const c = fixtureCheckLabel(m.title);
-      if (!c.drop) title = { titleFlags: [...c.flags], ...(c.flags.includes("NUMBER") && c.struck.length ? { titleStruck: c.struck } : {}), ...(c.flags.length ? { titleReasons: c.reasons } : {}) };
-    }
-    const items = m.items.map((it): ItemDraft => {
-      if (it.origin !== "GEMINI" || it.decision === "EDITED" || it.flags.length === 0) return it;
-      const c = fixtureCheckLabel(it.label);
-      const struck = it.flags.includes("NUMBER") && c.flags.includes("NUMBER") ? c.struck : [];
-      return { ...it, ...(struck.length ? { struck } : {}), reasons: Object.fromEntries(it.flags.map((f) => [f, c.reasons?.[f] ?? `fixture: ${f}`])) };
-    });
-    return { ...m, ...title, items } as T & LabelChecked;
-  });
-}
-
 // ═══ Fixture lanes (R1, R2, R3, R6 stand-ins: deterministic, tiny) ══════════
+//
+// Revision 4: the stand-ins write revision-4 shapes. R2's stage ladder is a
+// window per stage (the last n slots up to the depth, so the final row is the
+// depth's stage), one paying card measure per Domain of R at level 6 (key
+// segment `r`, `rc` on the final stage), the Domains as the user's rows and a
+// code-worded title. R3's keys-only validator reads a fixture reply by place:
+// its practices, steps and checkpoint become catalog types (CODE, worded by
+// roadmap-catalog, GEMINI_PICK), its `needs` pending NOT_CHOSEN Domains, its
+// `lines` the user's outline lines (SYLLABUS), its `gaps` GAP rows. No
+// Gemini-worded title or item exists anywhere (the tripwire would refuse it).
 
 function windowsOf(today: DayKey, target: DayKey, count?: number) {
   const span = Math.round((Date.parse(target) - Date.parse(today)) / 86_400_000);
@@ -529,25 +583,31 @@ function windowsOf(today: DayKey, target: DayKey, count?: number) {
 }
 
 interface FixtureReplyMilestone {
-  title: string;
+  title?: string;
+  /** The Domain the milestone's picks are "on" (its first). */
   domains?: string[];
-  newDomains?: string[];
-  practices?: { name: string; method: string }[];
+  practices?: { name: string; method: string; on?: string }[];
   steps?: { title: string }[];
   checkpoint?: { label: string; kind: string } | null;
+  /** Outline line indices placed here. */
+  lines?: number[];
+  /** Unchosen Domain ids Gemini says the aim needs. */
+  needs?: string[];
+  /** Area suggestion names (GAP rows). */
+  gaps?: string[];
+  /** A test hook: the stage gets this marker in its title (the fixture engines read it: [impossible], [over], [delayed], …). */
+  marker?: string;
 }
 
 function item(kind: ItemDraft["kind"], ord: number, label: string, extra: Partial<ItemDraft> = {}): ItemDraft {
-  const flagged = label.startsWith("!");
-  const text = flagged ? label.slice(1) : label;
   return {
     id: null,
-    lineageId: `lin-${kind}-${ord}-${text.replace(/\W+/g, "").slice(0, 12)}`,
+    lineageId: `lin-${kind}-${ord}-${label.replace(/\W+/g, "").slice(0, 12)}`,
     kind,
     ord,
-    label: text,
-    rawLabel: text,
-    origin: "GEMINI",
+    label,
+    rawLabel: null,
+    origin: CODE_ORIGIN,
     decision: "PENDING",
     domainId: null,
     proposedName: null,
@@ -562,7 +622,7 @@ function item(kind: ItemDraft["kind"], ord: number, label: string, extra: Partia
     bar: null,
     addToToday: true,
     templateId: null,
-    flags: /\d/.test(text) ? ["NUMBER"] : flagged ? ["PROPER_NOUN"] : [],
+    flags: [],
     notes: [],
     ...extra,
   };
@@ -588,45 +648,102 @@ function measure(kind: MeasureSpec["kind"], extra: Partial<MeasureSpec>): Measur
   };
 }
 
-function milestonesFromReply(parsed: unknown, windows: readonly { start: DayKey; end: DayKey }[], trackArea: boolean): MilestoneDraft[] {
-  const ms = ((parsed as { milestones?: FixtureReplyMilestone[] })?.milestones ?? []).slice(0, windows.length);
-  return ms.map((m, i) => {
-    const items: ItemDraft[] = [];
-    let ord = 1;
-    for (const d of m.domains ?? []) items.push(item("DOMAIN", ord++, `Domain ${d}`, { domainId: d, lineageId: `lin-dom-${i}-${d}` }));
-    for (const n of m.newDomains ?? []) items.push(item("DOMAIN", ord++, n, { proposedName: n.replace(/^!/, ""), lineageId: `lin-new-${i}-${n.replace(/\W+/g, "")}` }));
-    for (const p of m.practices ?? []) items.push(item("PRACTICE", ord++, p.name, { method: "DELIBERATE_PRACTICE", lineageId: `lin-p-${i}-${p.name.replace(/\W+/g, "")}` }));
-    for (const s of m.steps ?? []) items.push(item("STEP", ord++, s.title, { lineageId: `lin-s-${i}-${s.title.replace(/\W+/g, "")}` }));
-    if (m.checkpoint) items.push(item("CHECKPOINT", ord++, m.checkpoint.label, { checkpointKind: "MOCK_TEST", lineageId: `lin-c-${i}` }));
-    const measures: MeasureSpec[] = [];
-    const domains = (m.domains ?? []).slice().sort();
-    if (!trackArea && domains.length) measures.push(measure("CARDS_AT_LEVEL", { scope: { domainIds: domains }, unit: "card" }));
-    const pl = items.filter((x) => x.kind === "PRACTICE").map((x) => x.lineageId);
-    if (pl.length) measures.push(measure("PRACTICE_KEPT", { scope: { itemLineageIds: pl }, unit: "session" }));
-    const cp = items.find((x) => x.kind === "CHECKPOINT");
-    if (cp) measures.push(measure("CHECKPOINT", { scope: { itemLineageIds: [cp.lineageId] }, itemLineageId: cp.lineageId, unit: "log" }));
+/** Cards of these Domains at level ≥ L, read once from the scope that holds them all (scopes overlap: never summed across them). */
+const cardsAt = (input: Parameters<RoadmapLanes["fitPlan"]>[1], ids: readonly string[], level: number) => {
+  const scope = input.scopes.find((sc) => ids.every((d) => sc.domainIds.includes(d)));
+  return scope ? scope.cards.filter((c) => c.level >= level && ids.includes(c.domainId ?? "")).length : 0;
+};
+
+/** The fixture's stage slots: FOUNDATION … the depth's key on a Field Area, STAGE_1..STAGE_5 on a track Area. */
+const slotsFor = (intake: Pick<Intake, "fieldId" | "depth">): string[] =>
+  intake.fieldId == null ? ["STAGE_1", "STAGE_2", "STAGE_3", "STAGE_4", "STAGE_5"] : ["FOUNDATION", "FAMILIAR", "RETAINED", "FLUENT", "MASTERED"].filter((_, i) => [4, 6, 8, 10, 12][i] <= (intake.depth ?? 12));
+
+/** R2's stage ladder, as the fixture builds it: one window per kept stage, the final stage the depth's. */
+function fixtureLadder(intake: Intake, input: Parameters<RoadmapLanes["fitPlan"]>[1], names: Readonly<Record<string, string>>, makeId: () => string): MilestoneDraft[] {
+  const target = intake.dateMode === "REALISTIC" ? addDays(input.today, 300) : intake.targetDay;
+  const windows = windowsOf(input.today, target) ?? [];
+  const slots = slotsFor(intake);
+  const ids = intake.fieldId ? [...intake.domainIds] : [];
+  return windows.map((win, i) => {
+    const stage = slots[Math.max(0, slots.length - windows.length + i)];
+    const last = i === windows.length - 1;
+    const items: ItemDraft[] = ids.map((d, k) => item("DOMAIN", k + 1, String(names[d] ?? d), { origin: "USER", decision: "KEPT", domainId: d, lineageId: makeId() }));
+    const measures: MeasureSpec[] = ids.map((d) =>
+      measure("CARDS_AT_LEVEL", { scope: { domainIds: [d] }, minLevel: 6, target: cardsAt(input, [d], 6) + 5 + i, unit: "card", measureKey: cardsAtLevelKey([d], 6, last ? "rc" : "r") })
+    );
     return {
       id: null,
-      lineageId: `lin-m-${i}-${m.title.replace(/\W+/g, "").slice(0, 16)}`,
+      lineageId: makeId(),
       version: 0,
       ord: i + 1,
-      title: m.title,
-      titleOrigin: "GEMINI",
+      title: intake.fieldId ? `${stage}: ${ids.map((d) => names[d]).join(", ") || "your Domains"} to level 6+` : `${intake.aim} · stage ${i + 1} of ${windows.length}`,
+      titleOrigin: CODE_ORIGIN,
       titleDecision: "PENDING",
-      windowStart: windows[i].start,
-      dueDay: windows[i].end,
+      windowStart: win.start,
+      dueDay: win.end,
       status: "DRAFT",
       rankIndex: null,
       overAccepted: false,
       items,
       measures,
       notes: [],
-    };
+      stage: stage as MilestoneDraft["stage"],
+    } satisfies MilestoneDraft;
   });
 }
 
-const cardsAt = (input: Parameters<RoadmapLanes["fitPlan"]>[1], ids: readonly string[], level: number) =>
-  input.scopes.filter((s) => s.key === [...ids].sort().join(",")).reduce((n, s) => n + s.cards.filter((c) => c.level >= level).length, 0);
+const PRACTICE_KEYS = ["PROBLEM_SETS", "RECALL_DRILLS", "EXPLAIN_IT"] as const;
+/** A body plan's picks (Gemini's choice of sessions; a plan with constraints waits for the user's confirm). */
+const BODY_PRACTICE_KEYS = ["HARDER_SESSION", "STRENGTH_SESSION", "LONGER_SESSION"] as const;
+const STEP_KEYS = ["OUTLINE", "EXPLAIN_ONCE", "SMALL_PROJECT"] as const;
+
+/** A catalog type's code words, as roadmap-catalog writes them. */
+const catalogWords = (key: string, domains: string[], aim: string, track: "FIELD" | "BODY" | "CARE" | "DUTY" | "CRAFT" = "FIELD"): string =>
+  String(catalogLabelOf(key as never, { track, domains: domains.map((n) => domainName({ id: "", name: n })), aim: aim as never }));
+
+/** R3's keys-only validator over a fixture reply: catalog types placed by slot; the outline lines, needs and gaps as the spec writes them. */
+function fixtureKeysOnly(w: FakeWorld, parsed: unknown, ctx: Parameters<RoadmapLanes["validateKeysOnly"]>[1]): ValidatedDraft {
+  const reply = ((parsed as { milestones?: FixtureReplyMilestone[] })?.milestones ?? []).slice(0, ctx.slots.length);
+  const nameOf = (id: string) => w.tree.flatMap((f) => f.domains).find((d) => d.id === id)?.name ?? id;
+  const offset = ctx.slots.length - reply.length;
+  const trackPlan = ctx.intake.fieldId == null;
+  const track = (trackPlan ? ctx.intake.track : "FIELD") as "FIELD" | "BODY";
+  const practiceKeys: readonly string[] = trackPlan ? BODY_PRACTICE_KEYS : PRACTICE_KEYS;
+  const milestones: MilestoneDraft[] = reply.map((m, i) => {
+    const stage = ctx.slots[Math.max(0, offset + i)];
+    const on = m.domains?.[0] ?? ctx.required[0] ?? null;
+    const items: ItemDraft[] = [];
+    let ord = 1;
+    (m.practices ?? []).forEach((p, k) => {
+      const key = practiceKeys[k % practiceKeys.length];
+      const dom = trackPlan ? null : (p.on ?? on);
+      items.push(
+        item("PRACTICE", ord++, catalogWords(key, dom ? [nameOf(dom)] : ctx.required.map(nameOf), ctx.intake.aim, track), {
+          catalogKey: key as ItemDraft["catalogKey"],
+          domainId: dom,
+          method: "DELIBERATE_PRACTICE",
+          notes: ["GEMINI_PICK"],
+          lineageId: `lin-p-${i}-${k}-${p.name.replace(/\W+/g, "").slice(0, 10)}`,
+        })
+      );
+    });
+    (m.steps ?? []).forEach((_, k) => {
+      const key = STEP_KEYS[k % STEP_KEYS.length];
+      items.push(item("STEP", ord++, catalogWords(key, on ? [nameOf(on)] : ctx.required.map(nameOf), ctx.intake.aim), { catalogKey: key, domainId: on, notes: ["GEMINI_PICK"], lineageId: `lin-s-${i}-${k}` }));
+    });
+    if (m.checkpoint) {
+      items.push(item("CHECKPOINT", ord++, catalogWords("SELF_TEST", on ? [nameOf(on)] : ctx.required.map(nameOf), ctx.intake.aim), { catalogKey: "SELF_TEST", checkpointKind: "SELF_TEST", domainId: on, notes: ["GEMINI_PICK"], lineageId: `lin-c-${i}` }));
+    }
+    for (const line of m.lines ?? []) {
+      const text = ctx.intake.syllabus?.lines[line];
+      if (text != null) items.push(item("TOPIC", ord++, text, { origin: "SYLLABUS", syllabusRef: line, domainId: ctx.intake.syllabus?.lineDomains?.[line] ?? null, lineageId: `lin-t-${line}` }));
+    }
+    for (const d of m.needs ?? []) items.push(item("DOMAIN", ord++, nameOf(d), { origin: "GEMINI", domainId: d, notes: ["NOT_CHOSEN"], lineageId: `lin-need-${d}` }));
+    for (const g of m.gaps ?? []) items.push(item("GAP", ord++, g, { origin: "GEMINI", groundRef: 0, lineageId: `lin-gap-${g.replace(/\W+/g, "")}` }));
+    return { id: null, lineageId: `lin-v-${i}`, version: ctx.version, ord: i + 1, title: m.marker ?? "", titleOrigin: CODE_ORIGIN, titleDecision: "PENDING", windowStart: null, dueDay: null, status: "DRAFT", rankIndex: null, overAccepted: false, items, measures: [], notes: [], stage: stage as MilestoneDraft["stage"] };
+  });
+  return { milestones, report: { dropped: [], flagged: [], notes: [] }, bulkKeepOff: false, credential: false, nonEnglish: false, uncoveredSyllabus: [], alarm: false };
+}
 
 function feasibilityFixture(plan: readonly MilestoneDraft[], today: DayKey): Feasibility {
   const milestones: MilestoneFeasibility[] = plan.map((m) => {
@@ -658,45 +775,103 @@ function feasibilityFixture(plan: readonly MilestoneDraft[], today: DayKey): Fea
   };
 }
 
+/** R2's date check stand-in: D_real the last stage's due day; a [date-impossible] or [date-over] marker on any title sets the verdict. */
+function dateCheckFixture(plan: readonly MilestoneDraft[], input: Parameters<RoadmapLanes["fitPlan"]>[1], dateMode: "REALISTIC" | "CHOSEN"): DateCheck {
+  const last = plan.filter((m) => m.status !== "LATER" && m.dueDay).map((m) => m.dueDay as DayKey).sort().pop() ?? addDays(input.today, 300);
+  const verdict = plan.some((m) => /\[date-impossible\]/.test(m.title)) ? "IMPOSSIBLE" : plan.some((m) => /\[date-over\]/.test(m.title)) ? "OVER" : "FITS";
+  const realistic = /\[too-soon\]/.test(plan.map((m) => m.title).join(" ")) ? addDays(input.today, 20) : last;
+  return {
+    D_real: realistic,
+    D_full: realistic,
+    D_best_pace: realistic,
+    D_best_2x: realistic,
+    D_floor: realistic,
+    verdict,
+    rateAsked: null,
+    reachByUserDate: null,
+    reachByExam: input.examDay ? 8 : null,
+    scheduleBound: false,
+    dateOrigin: { origin: dateMode === "REALISTIC" ? "REALISTIC" : "USER", calibrating: [...(input.calibrating ?? [])] },
+    basis: [],
+  };
+}
+
 function lanesFor(w: FakeWorld): Partial<RoadmapLanes> {
+  const nameOf = (id: string) => w.tree.flatMap((f) => f.domains).find((d) => d.id === id)?.name ?? id;
   return {
     splitWindows: (today, target, count) => windowsOf(today, target, count),
     buildEvidencePack: (input) => {
-      const chosen = [...input.intake.domainIds].sort();
+      const listed = input.domains.map((d) => d.id);
       return {
-        promptVersion: 2,
+        promptVersion: 3,
         lines: [input.intake.aim, ...input.domains.map((d) => `${d.name} · ${Math.floor(d.cards / 5) * 5}`)],
         sections: ["area", "aim", "domains", "plan"],
         domains: [],
         syllabusKeys: [],
-        milestoneCount: input.windows.length,
-        weeksPerMilestone: input.windows.map(() => 10),
+        milestoneCount: slotsFor(input.intake).length,
+        weeksPerMilestone: [],
         practicesAllowed: input.intake.practicesAllowed,
         trackArea: input.intake.fieldId == null,
         methods: [],
-        keymap: { domains: {}, syllabus: {} },
-        domainIdsHash: chosen.join(","),
-      } satisfies EvidencePack;
+        keymap: { domains: Object.fromEntries(listed.map((id, i) => [`D${i + 1}`, id])), syllabus: {} },
+        domainIdsHash: [...input.intake.domainIds].sort().join(","),
+        run: {
+          track: (input.intake.fieldId == null ? input.intake.track : "FIELD") as "FIELD",
+          slots: slotsFor(input.intake),
+          depth: input.intake.fieldId == null ? null : ((input.intake.depth ?? 12) as 12),
+          otherKeys: [],
+          practiceKinds: [],
+          stepKinds: [],
+          checkpointKinds: [],
+          exam: !!input.intake.examLabel,
+          gaps: false,
+          exclusions: [],
+          aimConflict: null,
+        },
+      };
     },
-    inputHashMaterial: (pack, intake, modelId, samples) => json([pack.promptVersion, modelId, samples, intake.aim, pack.lines, pack.domainIdsHash]),
-    validateSample: (parsed, ctx): ValidatedDraft => ({
-      milestones: milestonesFromReply(parsed, ctx.windows, ctx.intake.fieldId == null),
-      report: { dropped: [], flagged: [], notes: [] },
-      bulkKeepOff: false,
-      credential: false,
-      nonEnglish: false,
-      uncoveredSyllabus: [],
-      alarm: false,
-    }),
-    checkLabel: fixtureCheckLabel,
-    withLabelChecks: fixtureLabelChecks,
+    inputHashMaterial: (pack, intake, modelId, samples) => json([pack.promptVersion, modelId, samples, intake.aim, pack.lines, pack.domainIdsHash, intake.depth ?? null]),
+    buildResponseSchema: () => ({ type: "OBJECT", properties: { needs: { type: "ARRAY" }, stages: { type: "OBJECT", properties: { FOUNDATION: {}, FAMILIAR: {}, RETAINED: {}, FLUENT: {}, MASTERED: {} } } } }),
+    integrityOf: (parsed) => {
+      if (!parsed || typeof parsed !== "object") return { verdict: "REJECTED", violations: [{ code: "TYPE", path: "" }], modelChars: 0, gapsKept: 0, gapsHidden: 0, gapsDropped: 0, notANameByClause: {} };
+      const ms = (parsed as { milestones?: unknown[] }).milestones;
+      if (!Array.isArray(ms) || ms.length === 0) return { verdict: "REJECTED", violations: [{ code: "MISSING_REQUIRED", path: "stages" }], modelChars: 0, gapsKept: 0, gapsHidden: 0, gapsDropped: 0, notANameByClause: {} };
+      const smuggled = (parsed as { smuggle?: string }).smuggle;
+      if (smuggled) return { verdict: "REJECTED", violations: [{ code: "EXTRA_PROPERTY", path: `stages.FOUNDATION.${smuggled}` }], modelChars: 0, gapsKept: 0, gapsHidden: 0, gapsDropped: 0, notANameByClause: {} };
+      return { verdict: "CLEAN", violations: [], modelChars: 0, gapsKept: 0, gapsHidden: 2, gapsDropped: 0, notANameByClause: {} };
+    },
+    validateKeysOnly: (parsed, ctx) => fixtureKeysOnly(w, parsed, ctx),
+    stageLadderOf: (intake, input, names, makeId) => {
+      if (/\[held\]/.test(intake.aim)) return { ok: false, reason: "HELD", error: "You already hold this depth in these Domains. Add a Domain, raise coverage or set a different aim." };
+      if (/\[too far\]/.test(intake.aim) || intake.domainIds.length > 5) return { ok: false, reason: "TOO_FAR", error: "At your pace this depth is realistic in about 4 years. Narrow the aim to fewer Domains, write more cards a week, or choose a lower depth." };
+      return { ok: true, plan: fixtureLadder(intake, input, names as Record<string, string>, makeId), stageDays: {} };
+    },
+    syncStagePractices: (m) => m,
+    coverageOf: (input) =>
+      input.domains.map((d) => {
+        const linesTied = input.lineDomains.filter((x) => x === d.id).length;
+        const shared = input.domains.length ? input.lineDomains.filter((x) => x == null).length / input.domains.length : 0;
+        const p = coveragePolicyOf(d.live, linesTied + shared);
+        const typed = input.typed?.[d.id] ?? null;
+        return { domainId: d.id, name: d.name, live: d.live, nonRecall: d.nonRecall, linesTied, linesShared: shared, floor: p.floor, share: p.share, outline: p.outline, policy: p.n, typed, n: typed ?? p.n, belowPolicy: typed != null && typed < p.n };
+      }),
+    depthTermsOf: (depth, coverage, baselines, today) =>
+      coverage.map((c) => ({ measureKey: cardsAtLevelKey([c.domainId], depth, "rc"), target: c.n, baseline: baselines[c.domainId] ?? 0, baselineDay: today, label: `${c.name} · cards at level ${depth}+`, targetSource: c.typed != null ? "YOURS" : "DEPTH" })),
+    dateCheckOf: (ladder, input, dateMode) => dateCheckFixture(ladder, input, dateMode),
+    lowerDepthPlanOf: (plan, _input, to) => ({ ok: true, plan: plan.filter((m) => m.status === "STARTING" || m.status === "STARTED" || (m.measures.find((x) => x.kind === "CARDS_AT_LEVEL")?.minLevel ?? 0) <= to || !/MASTERED|FLUENT/.test(m.stage ?? "")), dropped: plan.filter((m) => m.status !== "STARTED" && m.status !== "STARTING" && /^(MASTERED|FLUENT)$/.test(m.stage ?? "") && (to < 12 ? m.stage === "MASTERED" || (to < 10 && m.stage === "FLUENT") : false)).map((m) => m.lineageId) }),
+    dateEffectOf: (intake, input, add) => add.map((id) => ({ domainId: id, dateWith: addDays(input.today, nameOf(id) === "Calculus" ? 1200 : 420), pastSpan: nameOf(id) === "Calculus" })),
+    floorDayOf: (x) => addDays(x.today, Math.round([0, 0, 0, 0, 0, 0, 0, 0, 105, 0, 155, 0, 340][x.depth] * x.m) + (x.ratePerWeek ? Math.ceil((7 * x.newCardsNeeded) / Math.max(1, x.ratePerWeek)) : 0)),
+    constraintExclusionsOf: (constraints) => (/no running/i.test(constraints ?? "") ? [{ kind: "HARDER_SESSION", word: "running" }] : []),
+    lineDomainDefaultOf: () => null,
+    checkLabel: (label) => ({ cleaned: label, flags: [], struck: [], drop: /https?:/.test(label) ? "CONTAINED_LINK" : null, reasons: {} }),
+    withLabelChecks: (ms) => ms.map((m) => ({ ...m, titleFlags: [] })),
     isNonEnglish: () => false,
     bulkKeepAllowed: (i) => !/[A-Z]{2,6}/.test(i.aim) && !i.examLabel,
     fitPlan: (plan, input) =>
       plan.map((m) => ({
         ...m,
         measures: m.measures.map((x) => {
-          if (x.kind !== "CARDS_AT_LEVEL" || x.targetSource === "YOURS") return x;
+          if (x.kind !== "CARDS_AT_LEVEL" || x.targetSource === "YOURS" || x.targetSource === "DEPTH") return x;
           const level = x.minLevel ?? 6;
           return { ...x, minLevel: level, target: cardsAt(input, x.scope.domainIds ?? [], level) + 5 };
         }),
@@ -707,54 +882,17 @@ function lanesFor(w: FakeWorld): Partial<RoadmapLanes> {
     feasibilityOf: (plan, input) => feasibilityFixture(plan, input.today),
     applyRemedy: (plan, _input, remedy) =>
       remedy === "MOVE_TO_LATER" ? plan.map((m, i) => (i === plan.length - 1 && m.status === "DRAFT" ? { ...m, status: "LATER", windowStart: null, dueDay: null } : m)) : [...plan],
-    starterLadder: (intake, input, names, makeId) => {
-      const windows = windowsOf(input.today, intake.targetDay) ?? [];
-      const ids = [...intake.domainIds].sort();
-      return windows.map((win, i) => {
-        const items: ItemDraft[] = ids.map((d, k) => ({ ...item("DOMAIN", k + 1, String(names[d] ?? d)), origin: "USER", decision: "KEPT", domainId: d, flags: [], lineageId: makeId() }));
-        if (intake.fieldId == null) items.push({ ...item("PRACTICE", 9, `Practice for ${intake.aim}`), origin: CODE_ORIGIN, flags: [], notes: ["PLACEHOLDER"], lineageId: makeId() });
-        else if (intake.practicesAllowed) items.push({ ...item("PRACTICE", 9, `Study ${ids.map((d) => names[d]).join(", ")}`), origin: CODE_ORIGIN, flags: [], method: "READING", lineageId: makeId() });
-        const measures: MeasureSpec[] = [];
-        if (ids.length) measures.push(measure("CARDS_AT_LEVEL", { scope: { domainIds: ids }, minLevel: 6, target: cardsAt(input, ids, 6) + 5 + i, unit: "card" }));
+    starterLadder: (intake, input, names, makeId) =>
+      fixtureLadder(intake, input, names as Record<string, string>, makeId).map((m) => {
+        const items = [...m.items];
+        if (intake.fieldId == null) items.push(item("PRACTICE", 9, `Practice for ${intake.aim}`, { notes: ["PLACEHOLDER"], lineageId: makeId() }));
+        else if (intake.practicesAllowed) items.push(item("PRACTICE", 9, catalogWords("READ_AND_CARD", intake.domainIds.map((d) => String(names[d] ?? d)), intake.aim), { catalogKey: "READ_AND_CARD", method: "READING", lineageId: makeId() }));
         const pl = items.filter((x) => x.kind === "PRACTICE").map((x) => x.lineageId);
-        if (pl.length) measures.push(measure("PRACTICE_KEPT", { scope: { itemLineageIds: pl } }));
-        return {
-          id: null,
-          lineageId: makeId(),
-          version: 0,
-          ord: i + 1,
-          title: `${ids.map((d) => names[d]).join(", ") || intake.aim} to level 6+`,
-          titleOrigin: CODE_ORIGIN,
-          titleDecision: "PENDING",
-          windowStart: win.start,
-          dueDay: win.end,
-          status: "DRAFT",
-          rankIndex: null,
-          overAccepted: false,
-          items: items.map((x) => (x.kind === "PRACTICE" ? { ...x, sessionsPerWeek: 3, durationBand: "D30", rule: "TARGET:3/W", planSource: "WORKED_OUT" } : x)),
-          measures,
-          notes: [],
-        } satisfies MilestoneDraft;
-      });
-    },
+        const measures = [...m.measures, ...(pl.length ? [measure("PRACTICE_KEPT", { scope: { itemLineageIds: pl } })] : [])];
+        return { ...m, items: items.map((x) => (x.kind === "PRACTICE" ? { ...x, sessionsPerWeek: 3, durationBand: "D30", rule: "TARGET:3/W", planSource: "WORKED_OUT" } : x)), measures };
+      }),
     manualLadder: (intake, input, makeId) =>
-      (windowsOf(input.today, intake.targetDay) ?? []).map((win, i) => ({
-        id: null,
-        lineageId: makeId(),
-        version: 0,
-        ord: i + 1,
-        title: `Milestone ${i + 1}`,
-        titleOrigin: "USER",
-        titleDecision: "EDITED",
-        windowStart: win.start,
-        dueDay: win.end,
-        status: "DRAFT",
-        rankIndex: null,
-        overAccepted: false,
-        items: [],
-        measures: [],
-        notes: ["NOT_MEASURABLE"],
-      })),
+      fixtureLadder(intake, input, Object.fromEntries(intake.domainIds.map((d) => [d, nameOf(d)])), makeId).map((m, i) => ({ ...m, title: `Milestone ${i + 1}`, titleOrigin: "USER", titleDecision: "EDITED" })),
     refit: (plan) => plan.map((m) => ({ ...m })),
     refitForStart: (milestone, plan, input) => {
       const card = milestone.measures.find((x) => x.kind === "CARDS_AT_LEVEL");
@@ -763,7 +901,7 @@ function lanesFor(w: FakeWorld): Partial<RoadmapLanes> {
         milestone,
         feasibility: feasibilityFixture([milestone], input.today).milestones[0],
         todayCheck: delayed
-          ? { measureKey: cardsAtLevelKey(card.scope.domainIds ?? [], card.minLevel as number), stored: card.target, fittedNow: card.target - 2, reason: "no new cards yet in these Domains" }
+          ? { measureKey: card.measureKey ?? cardsAtLevelKey(card.scope.domainIds ?? [], card.minLevel as number), stored: card.target, fittedNow: card.target - 2, reason: "no new cards yet in these Domains" }
           : null,
         impossible: /\[impossible-now\]/.test(milestone.title),
       };
@@ -838,13 +976,94 @@ function depsFor(w: FakeWorld, extra: Partial<RoadmapDeps> = {}): RoadmapDeps {
     lanes: lanesFor(w),
     makeId: w.makeId,
     defer: () => undefined,
-    applySizing: async (id) => {
-      w.sized.push(id);
-    },
     callModel: async () => ({ milestones: [] }),
     goalsLive: true,
     geminiLive: true,
     ...extra,
+  };
+}
+
+/**
+ * R6's QuestStore over the fake world (fix round 2, lens 2 gap 8): the rows
+ * Start writes, read back by R6's own weekQuestSetFor and loadWeekQuests —
+ * the milestone with its stored StartSnapshot, its goal, items, measures and
+ * templates, the library's cards, the readings and the frozen weeks. Nothing
+ * here is R6's logic; what isn't kept in the fake world reads as empty.
+ */
+function questStoreOf(w: FakeWorld): QuestStore {
+  const SCHEDULED = ["PLANNED", "STARTING", "STARTED"];
+  const reading = (userId: string, key: string) => w.t.readings.filter((r) => r.userId === userId && r.measureKey === key && r.source === "COMPUTED").sort((a, b) => a.day.localeCompare(b.day));
+  return {
+    milestones: async (userId, scope) => {
+      const ids = "milestoneIds" in scope ? scope.milestoneIds : [];
+      const roadmaps = w.t.roadmap.filter((r) => r.userId === userId && ("active" in scope ? r.status === "ACTIVE" : w.t.roadmapMilestone.some((m) => m.roadmapId === r.id && ids.includes(m.id))));
+      const out: QuestMilestoneFacts[] = [];
+      for (const r of roadmaps) {
+        const rows = w.t.roadmapMilestone.filter((m) => m.roadmapId === r.id && ((SCHEDULED.includes(m.status) && m.version <= r.version) || ids.includes(m.id)));
+        const scheduledRows = rows.filter((m) => SCHEDULED.includes(m.status) && m.version <= r.version).sort((a, b) => a.ord - b.ord || a.id.localeCompare(b.id));
+        const place = new Map<string, number>();
+        for (const m of scheduledRows) if (!place.has(m.lineageId)) place.set(m.lineageId, place.size + 1);
+        for (const m of rows) {
+          const goal = m.goalId ? w.templates.find((t) => t.id === m.goalId) : undefined;
+          out.push({
+            roadmap: { id: r.id, status: r.status, fieldId: r.fieldId, track: r.track, depth: r.depth ?? null, hoursPerWeek: r.hoursPerWeek, intensity: r.intensity, startPoint: r.startPoint, typicalHours: r.typicalHours, typicalHoursSource: r.typicalHoursSource, targetDay: r.targetDay, practicesAllowed: r.practicesAllowed },
+            milestone: { id: m.id, lineageId: m.lineageId, ord: m.ord, title: m.title, status: m.status, startedDay: m.startedDay, dueDay: m.dueDay, feasibility: clone(m.feasibility), goalId: m.goalId, version: m.version, createdAt: m.createdAt, stage: m.stage ?? null },
+            goal: goal ? { id: goal.id, dueDay: goal.dueDay, closed: goal.closedScore != null, closedDay: null, archivedDay: goal.archivedAt ? todayKey(goal.archivedAt) : null } : null,
+            place: place.get(m.lineageId) ?? m.ord,
+            of: place.size,
+          });
+        }
+      }
+      return out;
+    },
+    parts: async (milestoneId) => ({
+      items: w.t.roadmapItem
+        .filter((i) => i.milestoneId === milestoneId)
+        .map((i) => ({ id: i.id, lineageId: i.lineageId, kind: i.kind, ord: i.ord, label: i.label, origin: i.origin, decision: i.decision, domainId: i.domainId, proposedName: i.proposedName, flags: [...(i.flags ?? [])], templateId: i.templateId, rule: i.rule, durationBand: i.durationBand, outOf: i.outOf, bar: i.bar, addToToday: i.addToToday })),
+      measures: w.t.roadmapMeasure
+        .filter((x) => x.milestoneId === milestoneId)
+        .map((x) => ({ kind: x.kind, role: x.role, scope: clone(x.scope), minLevel: x.minLevel, target: x.target, baseline: x.baseline, rateSource: x.rateSource, measureKey: x.measureKey })),
+    }),
+    templates: async (_userId, ids) =>
+      w.templates.filter((t) => ids.includes(t.id)).map((t) => ({ id: t.id, recurrence: t.recurrence, startDay: TODAY, estMinutes: 30, completedAt: t.completedAt, archivedAt: t.archivedAt, kind: t.kind, dueDay: t.dueDay, closedScore: t.closedScore })),
+    instances: async () => [],
+    domains: async (ids) => w.tree.flatMap((f) => f.domains).filter((d) => ids.includes(d.id)).map((d) => ({ id: d.id, name: d.name, fieldId: d.fieldId })),
+    cards: async (domainIds) =>
+      w.tree
+        .flatMap((f) => f.domains)
+        .filter((d) => domainIds.includes(d.id))
+        .flatMap((d) => d.cards.map((c) => ({ domainId: d.id, level: c.level, dueDate: new Date(`${c.dueDay}T00:00:00.000Z`), graceEndsAt: null, createdAt: new Date(`${c.createdDay}T00:00:00.000Z`) }))),
+    lastReadingBefore: async (userId, key, day) => {
+      const r = reading(userId, key).filter((x) => x.day < day).pop();
+      return r ? { day: r.day, value: r.value } : null;
+    },
+    readingOn: async (userId, key, day) => {
+      const r = reading(userId, key).find((x) => x.day === day);
+      return r ? { day: r.day, value: r.value } : null;
+    },
+    readingsBetween: async (userId, key, from, to) => reading(userId, key).filter((x) => x.day >= from && x.day <= to).map((x) => ({ day: x.day, value: x.value })),
+    logDays: async () => [],
+    countAdded: async () => 0,
+    addedByDomain: async () => ({}),
+    reviewRows: async () => [],
+    restRows: async () => [],
+    capacity: async (_userId, roadmap) => (held) => ({ availableMin: (roadmap.hoursPerWeek * 60 * Math.max(0, 7 - held.length)) / 7, class: "YOURS", calibrating: true }),
+    quotas: async () => [],
+    intervalMultiplier: async () => 1,
+    questWeeks: async (userId, filter) =>
+      w.t.questWeeks
+        .filter((q) => q.userId === userId && q.set && (filter.roadmapId == null || q.roadmapId === filter.roadmapId) && (filter.weekStart == null || q.set.weekStart === filter.weekStart))
+        .map((q, i) => {
+          const set = q.set as WeekQuestSet;
+          return { id: `qw${i + 1}`, userId: q.userId, roadmapId: q.roadmapId, milestoneId: q.milestoneId, weekStart: set.weekStart, dedupeKey: q.dedupeKey, source: q.source, state: set.state, generator: set.generator, quests: clone(set.quests), basis: clone(set.basis), cappedBy: set.cappedBy, results: null, finalizedAt: null, createdAt: NOW };
+        }),
+    insertQuestWeek: async (userId, roadmapId, set, source) => {
+      const key = `rq:${set.milestoneId}:${set.weekStart}`;
+      if (w.t.questWeeks.some((q) => q.userId === userId && q.dedupeKey === key)) return 0;
+      w.t.questWeeks.push({ userId, roadmapId, milestoneId: set.milestoneId, dedupeKey: key, source, set: clone(set) });
+      return 1;
+    },
+    finalizeQuestWeek: async () => 0,
   };
 }
 
@@ -918,14 +1137,15 @@ const rowsOf = (w: FakeWorld, roadmapId: string, version?: number) =>
 const itemsOf = (w: FakeWorld, milestoneId: string) => w.t.roadmapItem.filter((i) => i.milestoneId === milestoneId).sort((a, b) => a.ord - b.ord);
 const measuresOf = (w: FakeWorld, milestoneId: string) => w.t.roadmapMeasure.filter((x) => x.milestoneId === milestoneId);
 
-/** Decides every item of the next milestone the way a user who checks everything would. */
+/**
+ * What a user does to a revision-4 milestone before accepting (no Gemini
+ * words to decide): set each checkpoint's bar. Code's names and the user's
+ * own rows need no tap.
+ */
 async function decideAll(w: FakeWorld, roadmapId: string, milestoneId: string) {
   const deps = depsFor(w);
-  const m = w.t.roadmapMilestone.find((x) => x.id === milestoneId) as MilestoneRec;
-  if (m.titleDecision === "PENDING") await S.decideItemCore(USER, m.id, "CHECKED", NOW, deps);
   for (const i of itemsOf(w, milestoneId)) {
-    if (i.kind === "CHECKPOINT") await S.editItemCore(USER, i.id, { outOf: 100, bar: 70 }, NOW, deps);
-    if (i.decision === "PENDING") await S.decideItemCore(USER, i.id, i.flags.includes("NUMBER") ? "REMOVED" : "CHECKED", NOW, deps);
+    if (i.kind === "CHECKPOINT" && (i.bar == null || i.outOf == null)) await S.editItemCore(USER, i.id, { outOf: 100, bar: 70 }, NOW, deps);
   }
   void roadmapId;
 }
@@ -940,12 +1160,19 @@ async function accepted(w: FakeWorld, reply: unknown = REPLY): Promise<string> {
   return id;
 }
 
+/** Marks a stage's code title for the fixture engines ([over], [impossible], [impossible-now], [delayed], [date-over], …). */
+function mark(w: FakeWorld, milestoneId: string, marker: string) {
+  const m = w.t.roadmapMilestone.find((x) => x.id === milestoneId) as MilestoneRec;
+  m.title = `${m.title} ${marker}`;
+}
+
 const START_ALL: Parameters<typeof S.startMilestoneCore>[2] = { target: "STORED", overAccepted: false, practicesOff: [], rules: {}, decisions: {}, edits: {} };
 
 async function main() {
   installNoDatabase();
+  const errOf = (r: { ok: boolean; error?: string }) => (r.ok ? "ok" : (r as { error: string }).error);
   S = await import("../src/lib/roadmap-server");
-  ({ upsertDecision } = await import("../src/lib/roadmap-readings"));
+  ({ upsertDecision, cleanReadDaysOf } = await import("../src/lib/roadmap-readings"));
   check("the Prisma client in this process is the throwing stand-in", (() => {
     try {
       return (globalThis as unknown as { prisma: { roadmap: unknown } }).prisma.roadmap === "unreachable";
@@ -965,6 +1192,11 @@ async function main() {
     zeroReason: "LINEAGE_PAID",
     paidOn: "2026-03-03",
   });
+  // Pay honesty (F-R4-13): the 6 rests on the practice the app added when, without it, the milestone falls under the gate.
+  const rests = statedForMilestone({ practiceMinutesPerWeek: 90, plannedTrackedMinutesPerWeek: 200, hasCards: true, lineagePaidOn: null, addedPracticeMinutesPerWeek: 45, addedPracticeName: "Explain it in your own words: Probability" });
+  eq("a 6 that rests on an added practice names it (without its 45 minutes the plan is under an hour)", [rests.stated, rests.restsOnAdded], [6, "Explain it in your own words: Probability"]);
+  const clears = statedForMilestone({ practiceMinutesPerWeek: 180, plannedTrackedMinutesPerWeek: 300, hasCards: true, lineagePaidOn: null, addedPracticeMinutesPerWeek: 45, addedPracticeName: "Explain it" });
+  eq("…a 6 that clears the gate without it doesn't", [clears.stated, clears.restsOnAdded], [6, null]);
   check("stated is only ever 0 or 6", [0, 15, 59, 60, 61, 90, 300].every((p) => [0, 6].includes(statedForMilestone({ practiceMinutesPerWeek: p, plannedTrackedMinutesPerWeek: 200, hasCards: true, lineagePaidOn: null }).stated)));
 
   // ═══ rev 4 P0: Gemini drafting is off until the probe passes ══════════════
@@ -1176,14 +1408,14 @@ async function main() {
     const w4 = world();
     const id4 = await newDraft(w4);
     const manual = await S.startManualCore(USER, id4, NOW, depsFor(w4));
-    check("'Write it myself' writes a MANUAL run with an empty ladder", manual.ok && w4.t.roadmapRun[0].kind === "MANUAL" && rowsOf(w4, id4, 1).every((m) => itemsOf(w4, m.id).length === 0));
-    const blocked = await S.acceptCore(USER, id4, { overAccepted: false }, NOW, depsFor(w4));
-    check("…which cannot be accepted until it measures something", !blocked.ok && /No measurable part/.test(blocked.ok ? "" : blocked.error));
+    check("'Write it myself' writes a MANUAL run: the stage ladder with its Domains and nothing else", manual.ok && w4.t.roadmapRun[0].kind === "MANUAL" && rowsOf(w4, id4, 1).every((m) => itemsOf(w4, m.id).every((i) => i.kind === "DOMAIN") && m.stage != null));
     const first = rowsOf(w4, id4, 1)[0];
-    const added = await S.addItemCore(USER, first.id, { kind: "DOMAIN", domainId: "d-prob" }, NOW, depsFor(w4));
-    check("adding a Domain by hand gives the milestone a card measure", added.ok && measuresOf(w4, first.id).some((x) => x.kind === "CARDS_AT_LEVEL" && x.role === "PAYS"));
+    const added = await S.addItemCore(USER, first.id, { kind: "DOMAIN", domainId: "d-risk" }, NOW, depsFor(w4));
+    check("a depth plan counts one set of Domains: a Domain added to one milestone is refused", !added.ok && /same Domains at every stage/.test(added.ok ? "" : added.error), json(added));
+    const step = await S.addItemCore(USER, first.id, { kind: "STEP", label: "Book a tutor session" }, NOW, depsFor(w4));
+    check("…a step the user writes is added (USER, EDITED)", step.ok && itemsOf(w4, first.id).some((i) => i.kind === "STEP" && i.origin === "USER" && i.decision === "EDITED"));
     const acc4 = await S.acceptCore(USER, id4, { overAccepted: false }, NOW, depsFor(w4));
-    check("…and then it is accepted", acc4.ok, json(acc4));
+    check("…and the hand-written plan is accepted (its stages measure the Domains)", acc4.ok, json(acc4));
   }
   check("S.claimPlanOf: the guard and the cap read in order (RUNNING before CAPPED)", (() => {
     const run = (status: string, ageMs: number): RunRec => ({ id: status + ageMs, roadmapId: "r", userId: USER, day: TODAY, version: 1, kind: "GEMINI", status, model: null, modelVersion: null, promptVersion: null, seedBase: null, inputHash: null, pack: null, samples: null, report: null, usage: null, responseIds: [], finishReasons: [], latencyMs: null, error: null, startedAt: at(-ageMs), finishedAt: null });
@@ -1194,62 +1426,65 @@ async function main() {
   // ═══ F9: review and accept ════════════════════════════════════════════════
   console.log("— review and accept —");
   {
+    // A keys-only draft (F-R4-17): code's titles and catalog-worded picks, Gemini's Domain additions pending (F-R4-21).
     const w = world();
     const id = await drafted(w, {
       milestones: [
-        { title: "One", domains: ["d-prob"], newDomains: ["!Bayes Theory"], practices: [{ name: "Do 50 problems", method: "X" }, { name: "Timed problems", method: "X" }], steps: [{ title: "Draft a sheet" }] },
-        { title: "Two [impossible]", domains: ["d-inf"] },
+        { domains: ["d-prob"], practices: [{ name: "a", method: "X" }, { name: "b", method: "X" }], steps: [{ title: "s" }], needs: ["d-risk"] },
+        { domains: ["d-inf"] },
       ],
     });
-    const [m1, m2] = rowsOf(w, id, 1);
     const deps = depsFor(w);
+    const rows0 = rowsOf(w, id, 1);
+    const items0 = rows0.flatMap((m) => itemsOf(w, m.id));
+    check("a keys-only draft: every row has a stage and every title is code's", rows0.length === 2 && rows0.every((m) => m.stage != null && m.titleOrigin === CODE_ORIGIN), json(rows0.map((m) => [m.stage, m.titleOrigin])));
+    check("…no item with origin GEMINI except its Domain additions (NOT_CHOSEN)", items0.every((i) => i.origin !== "GEMINI" || (i.kind === "DOMAIN" && i.notes.includes("NOT_CHOSEN"))), json(items0.filter((i) => i.origin === "GEMINI").map((i) => [i.kind, i.notes])));
+    const picks = items0.filter((i) => i.kind === "PRACTICE" || i.kind === "STEP");
+    check("…every practice and step a catalog type, code-worded, Gemini's pick", picks.length === 3 && picks.every((i) => i.origin === CODE_ORIGIN && !!i.catalogKey && i.notes.includes("GEMINI_PICK")), json(picks.map((i) => [i.catalogKey, i.label])));
+    check("…the addition sits on every milestone, pending", rows0.every((m) => itemsOf(w, m.id).some((i) => i.kind === "DOMAIN" && i.domainId === "d-risk" && i.decision === "PENDING")));
     const pend = await S.acceptCore(USER, id, { overAccepted: false }, NOW, deps);
-    check("accept refuses a PENDING item in the next milestone", !pend.ok && /Decide/.test(pend.ok ? "" : pend.error), json(pend));
-    const num = itemsOf(w, m1.id).find((i) => i.flags.includes("NUMBER")) as ItemRec;
-    const keepNum = await S.decideItemCore(USER, num.id, "KEPT", NOW, deps);
-    check("a NUMBER item cannot be kept", !keepNum.ok);
-    const checkNum = await S.decideItemCore(USER, num.id, "CHECKED", NOW, deps);
-    check("…nor checked", !checkNum.ok);
-    const kept = await S.keepUnflaggedCore(USER, m1.id, NOW, deps);
-    check("bulk keep keeps the unflagged items only", kept.ok && kept.value.kept >= 3, json(kept));
-    check("…as KEPT (KEPT_SUGGESTION), never CHECKED", itemsOf(w, m1.id).filter((i) => i.decision === "KEPT").length >= 3 && !itemsOf(w, m1.id).some((i) => i.decision === "CHECKED"));
-    check("…skipping every flagged item", itemsOf(w, m1.id).filter((i) => i.flags.length > 0).every((i) => i.decision === "PENDING"));
-    check("…and an unresolved proposed Domain", itemsOf(w, m1.id).filter((i) => i.kind === "DOMAIN" && !i.domainId).every((i) => i.decision === "PENDING"));
-    const later = await S.keepUnflaggedCore(USER, m2.id, NOW, deps);
-    check("bulk keep is offered for the next milestone only", !later.ok);
-    await S.decideItemCore(USER, num.id, "REMOVED", NOW, deps);
-    const proposed = itemsOf(w, m1.id).find((i) => i.kind === "DOMAIN" && !i.domainId) as ItemRec;
-    const unresolved = await S.acceptCore(USER, id, { overAccepted: false }, NOW, deps);
-    check("accept refuses an unresolved proposed Domain", !unresolved.ok && /proposed Domain/.test(unresolved.ok ? "" : unresolved.error), json(unresolved));
-    const createAsIs = await S.resolveDomainCore(USER, proposed.id, { kind: "CREATE", name: "Bayes Theory", fieldId: "f-stats" }, NOW, deps);
-    check("[Create] stays off for a flagged name until it is edited", !createAsIs.ok && w.domainsCreated.length === 0, json(createAsIs));
-    const created = await S.resolveDomainCore(USER, proposed.id, { kind: "CREATE", name: "Bayesian inference", fieldId: "f-stats" }, NOW, deps);
-    const after = itemsOf(w, m1.id).find((i) => i.id === proposed.id);
-    check("[Create] with an edited name creates the Domain and records EDITED", created.ok && w.domainsCreated.length === 1 && after?.decision === "EDITED" && !!after.domainId, json(after));
-    check("…and the card measure's scope gains it", measuresOf(w, m1.id).some((x) => x.kind === "CARDS_AT_LEVEL" && (x.scope as { domainIds: string[] }).domainIds.includes(after?.domainId ?? "")));
-    const outline = itemsOf(w, m2.id).some((i) => i.decision === "PENDING");
+    eq("a pending Domain addition blocks accept", pend.ok ? "ok" : pend.error, S.DECIDE_ADDITIONS);
+    const practice = picks.find((i) => i.kind === "PRACTICE") as ItemRec;
+    eq("Keep is retired on a revision-4 plan", ((r) => (r.ok ? "ok" : r.error))(await S.decideItemCore(USER, practice.id, "KEPT", NOW, deps)), S.NOTHING_TO_KEEP);
+    eq("…so is bulk keep", ((r) => (r.ok ? "ok" : r.error))(await S.keepUnflaggedCore(USER, rows0[0].id, NOW, deps)), S.NOTHING_TO_KEEP);
+    eq("…and 'I checked this' on code's words", ((r) => (r.ok ? "ok" : r.error))(await S.decideItemCore(USER, practice.id, "CHECKED", NOW, deps)), S.NOTHING_TO_CHECK);
+    const offAdd = await S.confirmDomainAdditionsCore(USER, id, 1, ["d-risk"], NOW, { ...deps, env: WRITES_OFF });
+    eq("confirming additions refuses with writes off", offAdd.ok ? "ok" : offAdd.error, ROADMAP_WRITES_OFF);
+    const ghost = await S.confirmDomainAdditionsCore(USER, id, 1, ["d-inf-ghost"], NOW, deps);
+    check("…and refuses a Domain Gemini didn't suggest", !ghost.ok, json(ghost));
+    const added = await S.confirmDomainAdditionsCore(USER, id, 1, ["d-risk"], NOW, deps);
+    const rows1 = rowsOf(w, id, 1);
+    check("confirming it: CHECKED on every row, and the plan re-dated with it (each stage measures Risk Management)", added.ok && rows1.every((m) => itemsOf(w, m.id).some((i) => i.domainId === "d-risk" && i.decision === "CHECKED") && measuresOf(w, m.id).some((x) => x.kind === "CARDS_AT_LEVEL" && json(x.scope).includes("d-risk"))), json(added));
+    check("…the picks kept their places through the re-date", itemsOf(w, rows1[0].id).filter((i) => i.kind === "PRACTICE").length === 2 && itemsOf(w, rows1[0].id).some((i) => i.kind === "STEP"));
+    const m2 = rows1[1];
+    w.t.roadmapMilestone.find((m) => m.id === m2.id)!.title += " [impossible]";
     const impossible = await S.acceptCore(USER, id, { overAccepted: false }, NOW, deps);
-    check("an IMPOSSIBLE outline milestone blocks acceptance", !impossible.ok && /can't be done/.test(impossible.ok ? "" : impossible.error), json(impossible));
-    w.t.roadmapMilestone.find((m) => m.id === m2.id)!.title = "Two";
+    check("an IMPOSSIBLE stage blocks acceptance", !impossible.ok && /can't be done/.test(impossible.ok ? "" : impossible.error), json(impossible));
+    w.t.roadmapMilestone.find((m) => m.id === m2.id)!.title = w.t.roadmapMilestone.find((m) => m.id === m2.id)!.title.replace(" [impossible]", "");
     const okAccept = await S.acceptCore(USER, id, { overAccepted: false }, NOW, deps);
-    check("outline PENDING items don't block acceptance", outline && okAccept.ok, json(okAccept));
+    check("then it is accepted", okAccept.ok, json(okAccept));
     const r = w.t.roadmap.find((x) => x.id === id) as RoadmapRec;
-    check("accept: the roadmap is ACTIVE at version 1 with firstAcceptedDay today", r.status === "ACTIVE" && r.version === 1 && r.firstAcceptedDay === TODAY);
-    eq("accept: DRAFT → PLANNED, ords 1..n, rank indices 1..n", rowsOf(w, id, 1).map((m) => [m.status, m.ord, m.rankIndex]), [
-      ["PLANNED", 1, 1],
-      ["PLANNED", 2, 2],
+    check("accept: the roadmap is ACTIVE at version 1 with firstAcceptedDay today, its date mode CHOSEN", r.status === "ACTIVE" && r.version === 1 && r.firstAcceptedDay === TODAY && r.dateMode === "CHOSEN");
+    eq("accept: DRAFT → PLANNED, ords 1..n, rank indices by stage (Fluent → Expert 4, Mastered → Virtuoso 5)", rowsOf(w, id, 1).map((m) => [m.status, m.ord, m.rankIndex, m.stage]), [
+      ["PLANNED", 1, 4, "FLUENT"],
+      ["PLANNED", 2, 5, "MASTERED"],
     ]);
-    const cardM = measuresOf(w, m1.id).find((x) => x.kind === "CARDS_AT_LEVEL") as MeasureRec;
-    check("accept: card baselines are the live value today, fittedTarget = target, a measureKey", cardM.baselineDay === TODAY && cardM.fittedTarget === cardM.target && !!cardM.measureKey && cardM.baseline === 12, json(cardM));
-    check("accept: one RoadmapAcceptance row with the end state", w.t.roadmapAcceptance.length === 1 && Array.isArray(w.t.roadmapAcceptance[0].endState));
-    check("accept: first readings for today, PROFICIENCY included", w.t.readings.some((x) => x.measureKey === cardM.measureKey && x.day === TODAY) && w.t.readings.some((x) => x.measureKey.startsWith("PROFICIENCY|")));
+    const cardM = measuresOf(w, rows1[0].id).find((x) => x.kind === "CARDS_AT_LEVEL" && json(x.scope).includes("d-prob")) as MeasureRec;
+    check("accept: a stage measure keeps its key (segment r), baseline the live recall count today, fittedTarget = target", cardM.baselineDay === TODAY && cardM.fittedTarget === cardM.target && cardM.measureKey === cardsAtLevelKey(["d-prob"], 6, "r") && cardM.baseline === 12, json(cardM));
+    const acc = w.t.roadmapAcceptance[0];
+    const end = acc.endState as { measureKey: string; target: number; targetSource?: string }[];
+    eq("accept: the end state is the depth terms, one per Domain of R at level 12 with `rc` (not the last milestone's measure)", end.map((t) => t.measureKey).sort(), ["d-inf", "d-prob", "d-risk"].map((d) => cardsAtLevelKey([d], 12, "rc")).sort());
+    const f = acc.feasibility as Feasibility;
+    check("…the acceptance's feasibility carries the reach model, the date check and each Domain's provenance", f.reachModel === 2 && f.dateCheck != null && f.domainOrigins?.["d-risk"]?.by === "GEMINI_NEEDS" && f.domainOrigins?.["d-prob"]?.by === "INTAKE", json([f.reachModel, f.domainOrigins]));
+    check("accept: first readings for today (an `r` key), PROFICIENCY included; no first reading of an `rc` key (R1's, with clean entry)", w.t.readings.some((x) => x.measureKey === cardM.measureKey && x.day === TODAY) && w.t.readings.some((x) => x.measureKey.startsWith("PROFICIENCY|")) && !w.t.readings.some((x) => x.measureKey.endsWith("|rc")));
     const again = await S.acceptCore(USER, id, { overAccepted: false }, NOW, deps);
     check("a second accept is refused (nothing left to accept)", !again.ok);
   }
   {
     const w = world();
-    const id = await drafted(w, { milestones: [{ title: "Push it [over]", domains: ["d-prob"] }, { title: "Two", domains: ["d-inf"] }] });
+    const id = await drafted(w, { milestones: [{ domains: ["d-prob"] }, { domains: ["d-inf"] }] });
     const m1 = rowsOf(w, id, 1)[0];
+    mark(w, m1.id, "[over]");
     await decideAll(w, id, m1.id);
     const over = await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w));
     check("OVER without the switch is refused", !over.ok && /over your hours/.test(over.ok ? "" : over.error), json(over));
@@ -1336,16 +1571,14 @@ async function main() {
     check("a re-fit writes version 2 as a DRAFT of the unstarted positions only", rp.ok && rowsOf(w, id, 2).length === 1 && rowsOf(w, id, 2)[0].status === "DRAFT", json(rp));
     check("…never touching the STARTED row", rowsOf(w, id, 1)[0].status === "STARTED" && rowsOf(w, id, 1)[0].goalId != null);
     const v2 = rowsOf(w, id, 2)[0];
-    check("…keeping the unstarted position's lineage", v2.lineageId === rowsOf(w, id, 1)[1].lineageId);
-    const blockedReplan = await S.acceptCore(USER, id, { overAccepted: false }, at(15_000), depsFor(w));
-    check("the re-plan's next milestone (an old outline) must be decided before it is accepted", !blockedReplan.ok, json(blockedReplan));
+    check("…keeping the unstarted position's lineage and its stage", v2.lineageId === rowsOf(w, id, 1)[1].lineageId && v2.stage === rowsOf(w, id, 1)[1].stage);
     await decideAll(w, id, v2.id);
     const acc2 = await S.acceptCore(USER, id, { overAccepted: false }, at(20_000), depsFor(w));
-    check("the re-plan is accepted at version 2", acc2.ok && w.t.roadmap[0].version === 2, json(acc2));
+    check("the re-plan is accepted at version 2 (nothing of Gemini's to decide)", acc2.ok && w.t.roadmap[0].version === 2, json(acc2));
     eq("…the previous PLANNED row → SUPERSEDED", rowsOf(w, id, 1)[1].status, "SUPERSEDED");
     eq("…new ords follow the carried row", rowsOf(w, id, 2)[0].ord, 2);
-    check("…its rankIndex is its place, never above its lineage's first", rowsOf(w, id, 2)[0].rankIndex === 2 && rowsOf(w, id, 1)[0].rankIndex === 1);
-    check("…the carried STARTED row keeps its rankIndex", rowsOf(w, id, 1)[0].rankIndex === 1);
+    check("…its rankIndex is its stage's (Mastered: Virtuoso 5), never above its lineage's first", rowsOf(w, id, 2)[0].rankIndex === 5 && rowsOf(w, id, 1)[0].rankIndex === 4, json([rowsOf(w, id, 1)[0].rankIndex, rowsOf(w, id, 2)[0].rankIndex]));
+    check("…the carried STARTED row keeps its rankIndex", rowsOf(w, id, 1)[0].rankIndex === 4);
     const undo = await S.undoAcceptCore(USER, id, 2, at(25_000), depsFor(w));
     check("Undo of the re-plan restores the previous PLANNED row and version 1, in one write", undo.ok && w.t.roadmap[0].version === 1 && rowsOf(w, id, 1)[1].status === "PLANNED" && rowsOf(w, id, 2)[0].status === "DRAFT", json(undo));
     check("…and sets the acceptance's undoneAt", w.t.roadmapAcceptance.filter((a) => a.version === 2).every((a) => a.undoneAt != null));
@@ -1358,40 +1591,71 @@ async function main() {
   }
 
   {
-    // [Create] under Gemini's own, unflagged name records CHECKED; topics filed under it follow it.
+    // [Create as a Domain…] from an area suggestion (F-R4-19): the name as shown is GEMINI CHECKED, FROM_SUGGESTION, on every row; re-dated.
     const w = world();
-    const id = await drafted(w, { milestones: [{ title: "One", domains: ["d-prob"], newDomains: ["Bayesian thinking"] }, { title: "Two", domains: ["d-inf"] }] });
+    const id = await drafted(w, { milestones: [{ domains: ["d-prob"], gaps: ["Bayesian methods"] }, { domains: ["d-inf"] }] });
     const m1 = rowsOf(w, id, 1)[0];
-    const proposed = itemsOf(w, m1.id).find((i) => i.kind === "DOMAIN" && !i.domainId) as ItemRec;
-    const res = await S.resolveDomainCore(USER, proposed.id, { kind: "CREATE", name: "Bayesian thinking", fieldId: "f-stats" }, NOW, depsFor(w));
-    check("[Create] under the proposed name, unflagged, records CHECKED", res.ok && itemsOf(w, m1.id).find((i) => i.id === proposed.id)?.decision === "CHECKED", json(res));
-    const mapped = await S.resolveDomainCore(USER, proposed.id, { kind: "MAP", domainId: "d-inf" }, NOW, depsFor(w));
-    check("[Map to…] records EDITED and moves the scope", mapped.ok && itemsOf(w, m1.id).find((i) => i.id === proposed.id)?.decision === "EDITED");
-    const ghost = await S.resolveDomainCore(USER, proposed.id, { kind: "MAP", domainId: "d-ghost" }, NOW, depsFor(w));
-    check("[Map to…] a Domain that isn't the user's is refused", !ghost.ok);
+    check("with ROADMAP_GAPS_LIVE false a reply's gap names never land (no GAP row)", !rowsOf(w, id, 1).some((m) => itemsOf(w, m.id).some((i) => i.kind === "GAP")));
+    // As if drafted while the switch was on: one GAP row on the first milestone, Gemini's, pending.
+    const anyItem = itemsOf(w, m1.id)[0];
+    w.t.roadmapItem.push({ ...anyItem, id: "gap-1", lineageId: "lin-gap-1", kind: "GAP", ord: 90, label: "Bayesian methods", origin: "GEMINI", decision: "PENDING", domainId: null, syllabusRef: 0, catalogKey: null, notes: [], flags: [] });
+    const gap = itemsOf(w, m1.id).find((i) => i.kind === "GAP") as ItemRec;
+    const draftView = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    check("a pending GAP never blocks accept (it is no undecided row)", !draftView.draft?.milestones[0].items.some((i) => i.kind === "GAP") || S.undecidedRowsOf(draftView.draft!.milestones[0]) === 0, json(draftView.draft?.nextToDecide));
+    eq("with ROADMAP_GAPS_LIVE false the panel shows nothing", draftView.draft?.gaps, []);
+    const off = await S.resolveDomainCore(USER, gap.id, { kind: "CREATE", name: "Bayesian methods", fieldId: "f-stats" }, NOW, { ...depsFor(w), env: WRITES_OFF });
+    eq("Create refuses with writes off", off.ok ? "ok" : off.error, ROADMAP_WRITES_OFF);
+    const edited = await S.resolveDomainCore(USER, gap.id, { kind: "CREATE", name: "Kessler statistics", fieldId: "f-stats" }, NOW, depsFor(w, { lanes: { ...lanesFor(w) } }));
+    eq("an edited name the app can't ground in your words needs the second confirm", edited.ok ? "ok" : edited.error, S.UNGROUNDED_NAME);
+    const made = await S.resolveDomainCore(USER, gap.id, { kind: "CREATE", name: "Bayesian methods", fieldId: "f-stats" }, NOW, depsFor(w));
+    const rows = rowsOf(w, id, 1);
+    const created = w.tree[0].domains.find((d) => d.name === "Bayesian methods");
+    check("Create under the shown name creates the Domain (taxonomy createDomain) once", made.ok && !!created && w.domainsCreated.length === 1, json(made));
+    check(
+      "…adds it to every unstarted row: GEMINI and CHECKED, ItemNote FROM_SUGGESTION",
+      rows.every((m) => itemsOf(w, m.id).some((i) => i.kind === "DOMAIN" && i.domainId === created?.id && i.origin === "GEMINI" && i.decision === "CHECKED" && i.notes.includes("FROM_SUGGESTION"))),
+      json(rows.map((m) => itemsOf(w, m.id).filter((i) => i.kind === "DOMAIN").map((i) => [i.label, i.origin, i.decision, i.notes])))
+    );
+    check("…the GAP row is REMOVED and the plan re-dated with it (each stage measures it)", rows.every((m) => !itemsOf(w, m.id).some((i) => i.kind === "GAP" && i.decision !== "REMOVED")) && rows.every((m) => measuresOf(w, m.id).some((x) => json(x.scope).includes(created?.id ?? "?"))));
+    const next = await S.loadIntakeView(USER, NOW, depsFor(w));
+    void next;
+    check("…and it never grounds a later suggestion (the FROM_SUGGESTION read)", (await w.io().suggestionDomainIds!(USER)).includes(created?.id ?? "?"));
   }
   {
-    // Two taps on different items of one milestone (two devices) both land: each decision is its own row's write.
+    // Two taps on different items of one milestone (two devices) both land: each word edit is its own row's write, through the one writer.
     const w = world();
     const id = await drafted(w);
     const m1 = rowsOf(w, id, 1)[0];
-    const [a, b] = itemsOf(w, m1.id).filter((i) => i.decision === "PENDING" && i.flags.length === 0);
-    await Promise.all([S.decideItemCore(USER, a.id, "CHECKED", NOW, depsFor(w)), S.decideItemCore(USER, b.id, "KEPT", NOW, depsFor(w))]);
-    eq("two concurrent decisions on one milestone both stand", [itemsOf(w, m1.id).find((i) => i.id === a.id)?.decision, itemsOf(w, m1.id).find((i) => i.id === b.id)?.decision], ["CHECKED", "KEPT"]);
-    const kept = await S.keepUnflaggedCore(USER, m1.id, NOW, depsFor(w));
-    check("bulk keep never turns a CHECKED item back into KEPT", kept.ok && itemsOf(w, m1.id).find((i) => i.id === a.id)?.decision === "CHECKED");
+    const [a, b] = itemsOf(w, m1.id).filter((i) => i.kind === "PRACTICE" || i.kind === "STEP");
+    await Promise.all([S.editItemCore(USER, a.id, { label: "My drills" }, NOW, depsFor(w)), S.editItemCore(USER, b.id, { label: "My outline" }, NOW, depsFor(w))]);
+    eq("two concurrent word edits on one milestone both stand (EDITED, the user's words)", [itemsOf(w, m1.id).find((i) => i.id === a.id)?.label, itemsOf(w, m1.id).find((i) => i.id === b.id)?.label], ["My drills", "My outline"]);
+    check("…an edited catalog row keeps its type (its how copy stays)", itemsOf(w, m1.id).find((i) => i.id === a.id)?.catalogKey === a.catalogKey && itemsOf(w, m1.id).find((i) => i.id === a.id)?.decision === "EDITED");
   }
   {
-    // The remedies: one tap each, re-run by the engine.
+    // The remedies of a track plan (no depth): one tap each, re-run by the engine.
     const w = world();
-    const id = await drafted(w);
+    const id = await newDraft(w, { ...INTAKE, aim: "Run a sub-50 10K", fieldId: null, track: "BODY", domainIds: [] });
+    await S.buildStarterCore(USER, id, NOW, depsFor(w));
     const later = await S.applyRemedyCore(USER, id, "MOVE_TO_LATER", NOW, depsFor(w));
     const rows = rowsOf(w, id, 1);
-    check("'Move to Later' keeps the trailing milestone as a LATER row with no dates", later.ok && rows[rows.length - 1].status === "LATER" && rows[rows.length - 1].dueDay == null, json(rows.map((r) => r.status)));
+    check("'Move to Later' keeps the trailing milestone as a LATER row with no dates", later.ok && rows[rows.length - 1].status === "LATER" && rows[rows.length - 1].dueDay == null, json([later, rows.map((r) => r.status)]));
     const light = await S.applyRemedyCore(USER, id, "REFIT_LIGHT", NOW, depsFor(w));
     check("'Re-fit at Light' stores the intensity LIGHT", light.ok && w.t.roadmap[0].intensity === "LIGHT");
     const bad = await S.applyRemedyCore(USER, id, "NOPE" as never, NOW, depsFor(w));
     check("an unknown remedy is refused", !bad.ok);
+  }
+  {
+    // Keep the depth, move the date (F-R4-11): a depth plan never fits down; [Use <realistic date>] re-dates it.
+    const w = world();
+    const id = await drafted(w);
+    const light = await S.applyRemedyCore(USER, id, "REFIT_LIGHT", NOW, depsFor(w));
+    const later = await S.applyRemedyCore(USER, id, "MOVE_TO_LATER", NOW, depsFor(w));
+    check("REFIT_LIGHT and MOVE_TO_LATER are refused on a depth plan", !light.ok && !later.ok && w.t.roadmap[0].intensity === "STEADY", json([light, later]));
+    const lower = await S.applyRemedyCore(USER, id, "LOWER_DEPTH", NOW, depsFor(w));
+    check("LOWER_DEPTH has its own sheet (lowerDepth), never a remedy tap", !lower.ok);
+    const realistic = await S.applyRemedyCore(USER, id, "USE_REALISTIC_DATE", NOW, depsFor(w));
+    const r = w.t.roadmap[0];
+    check("[Use <D_real>] sets the realistic date as the app's (REALISTIC on a draft) and re-dates the stages", realistic.ok && r.dateMode === "REALISTIC" && rowsOf(w, id, 1).every((m) => m.stage != null), json([realistic, r.dateMode, r.targetDay]));
   }
   {
     // Discarding a re-plan draft (ACTIVE roadmap) and its Undo.
@@ -1437,7 +1701,7 @@ async function main() {
     eq("…it states 6 for 3 × 30 min of practice", preview?.pay.stated, 6);
     check("…and lists the Today-bound rows, each settled", !!preview && preview.todayRows.every((r) => r.needs === "NONE") && preview.todayRows.some((r) => r.kind === "DOMAIN"));
     const outline = await S.startPreview(USER, m2.id, NOW, depsFor(w));
-    check("an outline milestone's sheet lists its pending items and blocks Start", !!outline && !outline.canStart && outline.pending.length > 0);
+    check("a later milestone's sheet has nothing of Gemini's pending (keys-only)", !!outline && outline.pending.length === 0, json(outline?.pending));
     const [a, b] = await Promise.all([S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w)), S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w))]);
     check("a double tap: one answers with the goal", (a.ok || b.ok) && json([a, b]).includes("goalId"), json([a, b]));
     const goals = w.templates.filter((t) => t.kind === "GOAL");
@@ -1449,7 +1713,7 @@ async function main() {
     const practice = w.templates.find((t) => t.kind === "HABIT");
     check("its practice is a recurring child under the goal (rm:<id>:p0)", practice?.parentId === goal.id && practice?.captureKey === `rm:${m1.id}:p0` && practice?.recurrence === "TARGET:3/W");
     check("its step is a one-off child (rm:<id>:s<i>)", w.templates.some((t) => t.kind === "TASK" && t.parentId === goal.id && /^rm:.*:s\d$/.test(t.captureKey ?? "")));
-    check("sizing ran through the injected applySizing only", w.sized.length === 0);
+    check("no model sized a plan-born task (decision 50: Start defers no sizing)", w.sized.length === 0);
     const row = w.t.roadmapMilestone.find((m) => m.id === m1.id) as MilestoneRec;
     check("the milestone is STARTED with its goal", row.status === "STARTED" && row.goalId === goal.id);
     const pk = measuresOf(w, m1.id).find((x) => x.kind === "PRACTICE_KEPT") as MeasureRec;
@@ -1461,14 +1725,21 @@ async function main() {
     check("another milestone can't start while one is open", !two.ok, json(two));
   }
   {
-    // Sizing is deferred and injected.
+    // Decision 50 (fix round, contracts §15.6): no model sizes or explains a plan-born task. Start defers nothing, so
+    // life-sizing's applySizing (Gemini's free rationale stored as gradeBasis, shown under Today's "Why") never runs
+    // for an 'rm:' template; the catalog method set its band and minutes.
     const w = world();
     const id = await accepted(w);
     const [m1] = rowsOf(w, id, 1);
     const tasks: (() => Promise<void> | void)[] = [];
-    await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w, { defer: (t) => tasks.push(t) }));
+    const st = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w, { defer: (t) => tasks.push(t) }));
     for (const t of tasks) await t();
-    check("Start's sizing runs in the deferred task through the injected applySizing (never Gemini)", w.sized.length === 2, json(w.sized));
+    const born = w.templates.filter((t) => t.captureKey?.startsWith("rm:"));
+    check("Start defers no task at all: no sizing of a plan-born template", st.ok && tasks.length === 0 && born.length >= 3, json([st.ok, tasks.length, born.length]));
+    check("…every plan-born template keeps the catalog's minutes (a practice's estMinutes from its band), never a model's", born.filter((t) => t.kind === "HABIT").every((t) => (t.parsed?.estMinutes ?? 0) > 0), json(born.map((t) => [t.kind, t.parsed?.estMinutes])));
+    const src = readFileSync(join(process.cwd(), "src/lib/roadmap-server.ts"), "utf8");
+    const actions = readFileSync(join(process.cwd(), "src/app/actions/roadmap.ts"), "utf8");
+    check("…and neither roadmap-server nor its actions reach life-sizing (no applySizing call or import)", !/applySizing\(/.test(src) && !/from "\.\/life-sizing"|from "@\/lib\/life-sizing"/.test(src + actions), "");
   }
   {
     // Two concurrent Starts of different milestones → one STARTING.
@@ -1520,7 +1791,8 @@ async function main() {
       eq("due ≤ 30 days refuses", r.ok ? "ok" : r.error, S.DUE_TOO_SOON);
     }
     {
-      const { w, m1 } = await mk({ milestones: [{ title: "Hard [impossible-now]", domains: ["d-prob"], practices: [{ name: "Timed problems", method: "X" }] }, { title: "Two", domains: ["d-inf"] }] });
+      const { w, m1 } = await mk({ milestones: [{ domains: ["d-prob"], practices: [{ name: "Timed problems", method: "X" }] }, { domains: ["d-inf"] }] });
+      mark(w, m1.id, "[impossible-now]");
       const r = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w));
       check("IMPOSSIBLE now refuses", !r.ok && /can't be done/.test(r.ok ? "" : r.error), json(r));
     }
@@ -1533,35 +1805,14 @@ async function main() {
       check("…with the switch it starts", r2.ok, json(r2));
     }
     {
+      // Keys-only rows go to Today in code's or the user's words: Start needs no provenance tap (F-R4-17).
       const { w, m1 } = await mk(REPLY);
-      const practice = itemsOf(w, m1.id).find((i) => i.kind === "PRACTICE") as ItemRec;
-      practice.decision = "KEPT";
+      const pv = await S.startPreview(USER, m1.id, NOW, depsFor(w));
+      check("a keys-only milestone's Today-bound rows are all settled (no 'check it or edit it')", !!pv && pv.todayRows.every((r) => r.needs === "NONE") && pv.blockers.length === 0, json(pv?.todayRows));
+      const legacyRow = itemsOf(w, m1.id).find((i) => i.kind === "PRACTICE") as ItemRec;
+      legacyRow.origin = "GEMINI";
       const r = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w));
-      check("a KEPT_SUGGESTION Today-bound row refuses Start", !r.ok && /Gemini's words/.test(r.ok ? "" : r.error), json(r));
-      const sheet = await S.startMilestoneCore(USER, m1.id, { ...START_ALL, decisions: { [practice.id]: "CHECKED" } }, NOW, depsFor(w));
-      check("…checking it on the sheet lets Start through", sheet.ok, json(sheet));
-    }
-    {
-      const { w, m1 } = await mk(REPLY);
-      const dom = itemsOf(w, m1.id).find((i) => i.kind === "DOMAIN") as ItemRec;
-      dom.decision = "KEPT";
-      const r = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w));
-      check("a KEPT_SUGGESTION Domain item refuses Start", !r.ok && /Gemini picked the Domain/.test(r.ok ? "" : r.error), json(r));
-    }
-    {
-      const { w, m1 } = await mk(REPLY);
-      const cp = itemsOf(w, m1.id).find((i) => i.kind === "CHECKPOINT") as ItemRec;
-      cp.decision = "KEPT";
-      const r = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w));
-      check("a kept but unchecked checkpoint label refuses Start", !r.ok && /Gemini's words/.test(r.ok ? "" : r.error), json(r));
-    }
-    {
-      const { w, m1 } = await mk(REPLY);
-      w.t.roadmapMilestone.find((m) => m.id === m1.id)!.titleDecision = "KEPT";
-      const r = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w));
-      check("a kept but unchecked title refuses Start", !r.ok && /Gemini's words/.test(r.ok ? "" : r.error), json(r));
-      const r2 = await S.startMilestoneCore(USER, m1.id, { ...START_ALL, edits: { [m1.id]: { label: "My own title" } } }, NOW, depsFor(w));
-      check("…editing it on the sheet (the milestone's id) lets Start through with the user's words", r2.ok && w.templates.some((t) => t.kind === "GOAL" && t.title === "My own title"), json(r2));
+      check("a row in Gemini's words (a plan written before revision 4) never reaches Today: Start refuses it", !r.ok && w.templates.length === 0, json(r));
     }
     {
       // A track Area: a placeholder practice must be named; every practice off leaves nothing to measure.
@@ -1598,7 +1849,8 @@ async function main() {
     }
     {
       // The delayed-start offer: [Use 14].
-      const { w, m1 } = await mk({ milestones: [{ title: "Late [delayed]", domains: ["d-prob"], practices: [{ name: "Timed problems", method: "X" }] }, { title: "Two", domains: ["d-inf"] }] });
+      const { w, m1 } = await mk({ milestones: [{ domains: ["d-prob"], practices: [{ name: "Timed problems", method: "X" }] }, { domains: ["d-inf"] }] });
+      mark(w, m1.id, "[delayed]");
       const pv = await S.startPreview(USER, m1.id, NOW, depsFor(w));
       const stored = measuresOf(w, m1.id).find((x) => x.kind === "CARDS_AT_LEVEL")?.target ?? 0;
       check("the sheet offers 'fitted today it would be …'", pv?.todayCheck?.fittedNow === stored - 2, json(pv?.todayCheck));
@@ -1625,8 +1877,8 @@ async function main() {
       // A same-name practice already on Today from an earlier milestone starts switched off.
       const { w, id, m1 } = await mk({
         milestones: [
-          { title: "One", domains: ["d-prob"], practices: [{ name: "Backtest", method: "X" }] },
-          { title: "Two", domains: ["d-inf"], practices: [{ name: "Backtest", method: "X" }] },
+          { domains: ["d-prob"], practices: [{ name: "Backtest", method: "X", on: "d-prob" }] },
+          { domains: ["d-inf"], practices: [{ name: "Backtest", method: "X", on: "d-prob" }] },
         ],
       });
       await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w));
@@ -1635,8 +1887,8 @@ async function main() {
       const m2 = rowsOf(w, id, 1)[1];
       await decideAll(w, id, m2.id);
       const pv = await S.startPreview(USER, m2.id, NOW, depsFor(w));
-      const row = pv?.practices.find((p) => p.name === "Backtest");
-      check("'Backtest is already on Today (from Milestone 1)': its switch starts off", row?.on === false && row.alreadyOnToday?.fromOrd === 1, json(row));
+      const row = pv?.practices.find((p) => p.name === "Problem sets: Probability");
+      check("'Problem sets: Probability is already on Today (from Milestone 1)': its switch starts off", row?.on === false && row.alreadyOnToday?.fromOrd === 1, json(pv?.practices));
     }
   }
 
@@ -1654,28 +1906,20 @@ async function main() {
     check("checkpoint logs never touch computed rows", w.t.readings.filter((r) => r.source === "SELF").every((r) => r.measureKey.startsWith("SELF|CHECKPOINT|")));
   }
   {
-    // The end-state anchor across a re-plan that lowers a target, and the marker.
+    // The end-state anchor across a re-plan: a depth term's baseline stays the first acceptance's (the depth terms never move with a re-plan).
     const w = world();
     const id = await accepted(w);
-    const first = w.t.roadmapAcceptance[0];
-    const firstEnd = first.endState as { measureKey: string; target: number; baseline: number }[];
-    w.tree[0].domains[1].cards.push(card("d-inf", 6), card("d-inf", 6)); // live counts move after the first acceptance
+    const firstEnd = w.t.roadmapAcceptance[0].endState as { measureKey: string; target: number; baseline: number }[];
+    w.tree[0].domains[1].cards.push(...[...Array(25)].map(() => card("d-inf", 12))); // live counts move after the first acceptance
     const rp = await S.replanCore(USER, id, "MANUAL", at(60_000), depsFor(w));
-    check("a hand re-plan copies the unstarted positions as DRAFT rows", rp.ok && rowsOf(w, id, 2).length === 2, json(rp));
-    const v2two = rowsOf(w, id, 2)[1];
-    const target = firstEnd.find((t) => t.measureKey.includes("d-inf"))!.target;
-    w.t.roadmapMeasure.filter((x) => x.milestoneId === v2two.id && x.kind === "CARDS_AT_LEVEL").forEach((x) => {
-      x.target = target - 1;
-      x.targetSource = "YOURS";
-    });
+    check("a hand re-plan copies the unstarted positions as DRAFT rows, stages kept", rp.ok && rowsOf(w, id, 2).length === 2 && rowsOf(w, id, 2).every((m) => m.stage != null), json(rp));
     const acc = await S.acceptCore(USER, id, { overAccepted: false }, at(70_000), depsFor(w));
     check("fixture: the re-plan is accepted", acc.ok, json(acc));
     const second = w.t.roadmapAcceptance[1].endState as { measureKey: string; target: number; baseline: number }[];
     const inf1 = firstEnd.find((t) => t.measureKey.includes("d-inf"))!;
     const inf2 = second.find((t) => t.measureKey === inf1.measureKey)!;
-    check("lowering an end target keeps the first acceptance's baseline (the anchor)", inf2.baseline === inf1.baseline && inf2.target === inf1.target - 1, json([inf1, inf2]));
+    check("the depth term keeps its key, its target (n_d never re-fitted) and the first acceptance's baseline (the anchor)", !!inf2 && inf2.baseline === inf1.baseline && inf2.target === inf1.target, json([inf1, inf2]));
     const view = await S.loadRoadmapView(USER, at(80_000), depsFor(w));
-    check("…and the roadmap header shows 'Target lowered'", view.header?.targetLowered?.from === inf1.target && view.header.targetLowered.to === inf1.target - 1, json(view.header?.targetLowered));
     eq("…and Plan history lists both acceptances", view.history.map((h) => h.version), [1, 2]);
     const rebased = w.t.readings.filter((r) => r.measureKey.startsWith("PROFICIENCY|")).pop();
     check("…the re-plan's PROFICIENCY reading is rebased (REPLAN), never a gain", (rebased?.detail as { rebased?: { cause?: string } })?.rebased?.cause === "REPLAN", json(rebased?.detail));
@@ -1689,7 +1933,7 @@ async function main() {
     w.t.roadmapMilestone.find((m) => m.id === m1.id)!.reachedDay = TODAY;
     await S.replanCore(USER, id, "REFIT", at(1_000), depsFor(w));
     await S.acceptCore(USER, id, { overAccepted: false }, at(2_000), depsFor(w));
-    check("a re-plan keeps the reached milestone's rankIndex, and its reachedDay", rowsOf(w, id, 1)[0].rankIndex === 1 && rowsOf(w, id, 1)[0].reachedDay === TODAY);
+    check("a re-plan keeps the reached milestone's rankIndex (its stage's, Expert 4), and its reachedDay", rowsOf(w, id, 1)[0].rankIndex === 4 && rowsOf(w, id, 1)[0].reachedDay === TODAY, json(rowsOf(w, id, 1)[0]));
   }
   {
     const w = world();
@@ -1754,7 +1998,7 @@ async function main() {
     const w2 = world();
     await accepted(w2);
     const acc = await S.loadAimCard(USER, NOW, depsFor(w2));
-    check("accepted, not started: ACCEPTED with the next milestone's stated pay and rank", acc?.state === "ACCEPTED" && acc.milestone?.start?.stated === 6 && acc.milestone.start.givesRank === "Aspirant", json(acc?.milestone));
+    check("accepted, not started: ACCEPTED with the next milestone's stated pay and its stage's rank", acc?.state === "ACCEPTED" && acc.milestone?.start?.stated === 6 && acc.milestone.start.givesRank === "Expert" && acc.milestone.stage === "FLUENT", json(acc?.milestone));
     const view = await S.loadRoadmapView(USER, NOW, depsFor(w2));
     check("the roadmap view of an accepted plan: ACTIVE, Now is milestone 1, two rows", view.state === "ACTIVE" && view.current?.milestone.ord === 1 && view.milestones.length === 2, json([view.state, view.milestones.map((m) => m.state)]));
     eq("…the rows read Planned then Outline", view.milestones.map((m) => m.state), ["PLANNED", "OUTLINE"]);
@@ -1809,7 +2053,8 @@ async function main() {
     const copyId = await dropAndStartAgain(w, m1);
     check("…the copy is a fourth row of three positions", rowsOf(w, id, 1).length === 4 && rowsOf(w, id, 1).some((m) => m.id === copyId));
     const view = await S.loadRoadmapView(USER, at(2_000), depsFor(w));
-    eq("the top rank of a 3-milestone plan with a restart is Specialist (positions, not rows)", view.rank?.top.name, "Specialist");
+    // Revision 4 (F-R4-12): a depth plan's top is its final stage's rank (Mastered: Virtuoso) without a standard; a restart adds no position.
+    eq("the top rank of a 3-milestone depth plan with a restart is its final stage's (Virtuoso), never Paragon without a standard", [view.rank?.top.name, view.rank?.top.withAim], ["Virtuoso", false]);
     const card = await S.loadAimCard(USER, at(2_000), depsFor(w));
     eq("…and the Aim card's milestone line counts 3 positions ('of 3')", card?.milestone?.of, 3);
     w.t.roadmap[0].reachedDay = TODAY;
@@ -1822,7 +2067,12 @@ async function main() {
     await decideAll(w, id, rowsOf(w, id, 2).find((m) => m.status === "DRAFT")!.id);
     const acc = await S.acceptCore(USER, id, { overAccepted: false }, at(6_000), depsFor(w));
     check("…accepted", acc.ok, json(acc));
-    eq("a re-plan after a restart gives each position its true place (1, 2, 3; not 1, 3, 4)", rowsOf(w, id, 2).map((m) => m.rankIndex), [1, 2, 3]);
+    eq("a re-plan after a restart ranks each position by its stage (Retained 3, Fluent 4, Mastered 5)", rowsOf(w, id, 2).map((m) => m.rankIndex), [3, 4, 5]);
+    // Fix round 2's carry-over: the re-planned "Start again" copy keeps its lineage's number, and the last number is the plan's positions.
+    const v2 = rowsOf(w, id, 2);
+    eq("…the copy is numbered with its lineage's place, the rest after the carried rows: ords 1, 2, 3 for 3 positions (never '4 of 3')", [v2.map((m) => m.ord), v2.find((m) => m.lineageId === m1.lineageId)?.ord], [[1, 2, 3], 1]);
+    const v2view = await S.loadRoadmapView(USER, at(7_000), depsFor(w));
+    check("…and the page's positions agree with the last ord", v2view.positions === 3 && Math.max(...v2.map((m) => m.ord)) === v2view.positions, json(v2view.positions));
   }
   {
     // Re-plan, then Start the still-PLANNED milestone, then Accept: refused (never two rows of one position).
@@ -1966,7 +2216,7 @@ async function main() {
       return { w, m1, practices: itemsOf(w, m1.id).filter((i) => i.kind === "PRACTICE") };
     };
     const { w, m1, practices } = await setUp();
-    check("fixture: a plan-only edit keeps the practices' decisions (CHECKED) and makes the plan YOURS", practices.every((p) => p.decision === "CHECKED" && p.planSource === "YOURS" && p.sessionsPerWeek === 1));
+    check("fixture: a plan-only edit keeps the practices' decisions (code's, PENDING) and makes the plan YOURS", practices.every((p) => p.decision === "PENDING" && p.planSource === "YOURS" && p.sessionsPerWeek === 1), json(practices.map((p) => [p.decision, p.planSource, p.sessionsPerWeek])));
     const pv = await S.startPreview(USER, m1.id, NOW, depsFor(w));
     check("the sheet carries its pay basis and each practice's minutes a week", !!pv?.payBasis && pv.practices.every((p) => p.weeklyMinutes === 30), json([pv?.payBasis, pv?.practices.map((p) => p.weeklyMinutes)]));
     eq("…both on: ⬡ 6", pv?.pay.stated, 6);
@@ -1983,68 +2233,25 @@ async function main() {
     check("…both on, Start freezes the sheet's ⬡ 6", st2.ok && bothOn.stated === 6 && goalOf(second.w, second.m1.id).stated === 6, json([st2, bothOn]));
   }
 
-  console.log("— fix round: titles, flags, struck spans —");
-  {
-    const w = world();
-    const id = await drafted(w, { milestones: [{ title: "Do 50 problems first", domains: ["d-prob"], practices: [{ name: "Do 20 drills", method: "X" }] }, { title: "Two", domains: ["d-inf"] }] });
-    const [m1] = rowsOf(w, id, 1);
-    const keep = await S.decideItemCore(USER, m1.id, "KEPT", NOW, depsFor(w));
-    eq("a NUMBER title can't be kept", keep.ok ? "ok" : keep.error, S.TITLE_NUMBER);
-    const checked = await S.decideItemCore(USER, m1.id, "CHECKED", NOW, depsFor(w));
-    eq("…nor checked", checked.ok ? "ok" : checked.error, S.TITLE_NUMBER);
-    const bulk = await S.keepUnflaggedCore(USER, m1.id, NOW, depsFor(w));
-    check("bulk keep skips the flagged title", bulk.ok && w.t.roadmapMilestone.find((m) => m.id === m1.id)?.titleDecision === "PENDING", json(bulk));
-    const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
-    const d1 = view.draft?.milestones[0];
-    check("the draft's title carries its flags, struck spans and reason (derived on read)", !!d1 && (d1.titleFlags ?? []).includes("NUMBER") && json(d1.titleStruck) === json([[3, 5]]) && /"50"/.test(d1.titleReasons?.NUMBER ?? ""), json([d1?.titleFlags, d1?.titleStruck, d1?.titleReasons]));
-    const drills = d1?.items.find((i) => i.kind === "PRACTICE");
-    check("…a NUMBER item's struck spans and reason too", json(drills?.struck) === json([[3, 5]]) && /"20"/.test(drills?.reasons?.NUMBER ?? ""), json([drills?.struck, drills?.reasons]));
-    check("…unflagged rows carry none", view.draft?.milestones[1].titleFlags?.length === 0 && view.draft.milestones[1].titleStruck == null);
-    const edited = await S.editItemCore(USER, m1.id, { label: "Do the problems first" }, NOW, depsFor(w));
-    check("Edit is offered: the user's words, EDITED", edited.ok && w.t.roadmapMilestone.find((m) => m.id === m1.id)?.titleDecision === "EDITED", json(edited));
-    const after = await S.loadRoadmapView(USER, NOW, depsFor(w));
-    check("…and the edited title carries no flag", (after.draft?.milestones[0].titleFlags ?? []).length === 0);
-  }
-  {
-    // The Start sheet refuses "I checked this" on a NUMBER title as well.
-    const w = world();
-    const id = await accepted(w);
-    const [m1] = rowsOf(w, id, 1);
-    const row = w.t.roadmapMilestone.find((m) => m.id === m1.id) as MilestoneRec;
-    row.title = "Do 50 problems";
-    row.titleDecision = "KEPT";
-    const r = await S.startMilestoneCore(USER, m1.id, { ...START_ALL, decisions: { [m1.id]: "CHECKED" } }, NOW, depsFor(w));
-    eq("the Start sheet's 'I checked this' on a NUMBER title is refused", r.ok ? "ok" : r.error, S.TITLE_NUMBER);
-    const pv = await S.startPreview(USER, m1.id, NOW, depsFor(w));
-    check("…and the sheet's milestone shows why (no flags column needed)", !pv?.canStart && (pv?.todayRows[0].needs ?? "") === "CHECK_OR_EDIT");
-    void id;
-  }
-  {
-    // The alarm counts what validation counted: Gemini titles and items.
-    const w = world();
-    await drafted(w, { milestones: [{ title: "Week 1 basics", domains: ["d-prob"], practices: [{ name: "Do 20 drills", method: "X" }] }, { title: "Week 2 drills", domains: ["d-inf"] }] });
-    const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
-    check("3 of 5 Gemini rows flagged (2 titles, 1 item): the alarm is on", view.draft?.alarm === true, json(view.draft?.alarm));
-  }
-
   console.log("— fix round: Edit means the words changed; Type a target —");
   {
     const w = world();
     const id = await drafted(w);
     const [m1] = rowsOf(w, id, 1);
     const before = itemsOf(w, m1.id).map((i) => [i.id, i.decision]);
+    const cardsBefore = json(measuresOf(w, m1.id).filter((x) => x.kind === "CARDS_AT_LEVEL"));
+    // Fix round (lens 2): a depth plan's stage counts and levels come from coverage and the depth, never typed here.
     const typed = await S.editItemCore(USER, m1.id, { target: 30, minLevel: 8 }, NOW, depsFor(w));
     const card1 = measuresOf(w, m1.id).find((x) => x.kind === "CARDS_AT_LEVEL") as MeasureRec;
-    check("'Type a target' on the milestone's id sets its card measure (YOURS)", typed.ok && card1.target === 30 && card1.minLevel === 8 && card1.targetSource === "YOURS", json([typed, card1]));
+    eq("'Type a target' on a depth plan's stage is refused in words (counts come from coverage)", errOf(typed), S.DEPTH_COUNTS_FROM_COVERAGE);
+    check("…its card measures stay as R2 set them (target, level, key and source)", json(measuresOf(w, m1.id).filter((x) => x.kind === "CARDS_AT_LEVEL")) === cardsBefore && card1.targetSource !== "YOURS", json(card1));
+    const viaItem = await S.editItemCore(USER, itemsOf(w, m1.id).find((i) => i.kind === "PRACTICE")!.id, { target: 3 }, NOW, depsFor(w));
+    eq("…and so is a typed target sent with an item's id", errOf(viaItem), S.DEPTH_COUNTS_FROM_COVERAGE);
     eq("…and changes no item's decision, nor the title's", [itemsOf(w, m1.id).map((i) => [i.id, i.decision]), w.t.roadmapMilestone.find((m) => m.id === m1.id)?.titleDecision], [before, "PENDING"]);
     const cp = itemsOf(w, m1.id).find((i) => i.kind === "CHECKPOINT") as ItemRec;
     const bar = await S.editItemCore(USER, cp.id, { outOf: 100, bar: 70 }, NOW, depsFor(w));
     const cpAfter = itemsOf(w, m1.id).find((i) => i.id === cp.id) as ItemRec;
-    check("'Set the bar' alone keeps Gemini's checkpoint words PENDING (not 'You wrote this')", bar.ok && cpAfter.decision === "PENDING" && cpAfter.bar === 70, json(cpAfter));
-    await S.decideItemCore(USER, m1.id, "CHECKED", NOW, depsFor(w));
-    for (const i of itemsOf(w, m1.id)) if (i.kind !== "CHECKPOINT" && i.decision === "PENDING") await S.decideItemCore(USER, i.id, "CHECKED", NOW, depsFor(w));
-    const acc = await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w));
-    check("…so the checkpoint still waits for a decision at Accept", !acc.ok && /Decide the checkpoint/.test(acc.ok ? "" : acc.error), json(acc));
+    check("'Set the bar' alone keeps the checkpoint's code words and decision", bar.ok && cpAfter.decision === "PENDING" && cpAfter.bar === 70 && cpAfter.origin === CODE_ORIGIN, json(cpAfter));
     const practice = itemsOf(w, m1.id).find((i) => i.kind === "PRACTICE") as ItemRec;
     const decisionBefore = practice.decision;
     const plan = await S.editItemCore(USER, practice.id, { sessionsPerWeek: 2, method: practice.method as never, durationBand: practice.durationBand as never }, NOW, depsFor(w));
@@ -2057,31 +2264,19 @@ async function main() {
     check("…new words make it EDITED (YOURS) and clear its flags", words.ok && cpWords.decision === "EDITED" && cpWords.flags.length === 0 && cpWords.label === "My own mock test", json(cpWords));
     const ok2 = await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w));
     check("…and then the plan is accepted", ok2.ok, json(ok2));
+    const stageKey = (measuresOf(w, m1.id).find((x) => x.kind === "CARDS_AT_LEVEL") as MeasureRec).measureKey;
+    check("…a stage measure keeps its key and segment at acceptance (r below the depth)", stageKey === cardsAtLevelKey([(card1.scope as { domainIds: string[] }).domainIds[0]], card1.minLevel as number, "r"), json(stageKey));
   }
   {
-    // On the Start sheet, a bar alone leaves a kept checkpoint in Gemini's words: Start still refuses.
-    const w = world();
-    const id = await accepted(w);
-    const [m1] = rowsOf(w, id, 1);
-    const cp = itemsOf(w, m1.id).find((i) => i.kind === "CHECKPOINT") as ItemRec;
-    cp.decision = "KEPT";
-    const r = await S.startMilestoneCore(USER, m1.id, { ...START_ALL, edits: { [cp.id]: { outOf: 100, bar: 60 } } }, NOW, depsFor(w));
-    check("a bar set on the sheet doesn't make Gemini's checkpoint words the user's", !r.ok && /Gemini's words/.test(r.ok ? "" : r.error), json(r));
-    void id;
-  }
-  {
-    // [Map to…] moves the topics filed under the old Domain; [Drop] unfiles them.
+    // A depth plan's Domains are one set (F-R4-10): [Map to…], [Create] and [Drop] on one milestone's Domain are refused.
     const w = world();
     const id = await drafted(w);
     const [m1] = rowsOf(w, id, 1);
     const dom = itemsOf(w, m1.id).find((i) => i.kind === "DOMAIN") as ItemRec;
-    const topic: ItemRec = { ...dom, id: "topic-1", lineageId: "lin-topic-1", kind: "TOPIC", ord: 50, label: "Conditional probability", domainId: dom.domainId, decision: "PENDING" };
-    w.t.roadmapItem.push(topic);
     const mapped = await S.resolveDomainCore(USER, dom.id, { kind: "MAP", domainId: "d-risk" }, NOW, depsFor(w));
-    check("[Map to…] moves the topics filed under the Domain it replaces", mapped.ok && itemsOf(w, m1.id).find((i) => i.lineageId === "lin-topic-1")?.domainId === "d-risk", json(itemsOf(w, m1.id).find((i) => i.lineageId === "lin-topic-1")));
-    const domNow = itemsOf(w, m1.id).find((i) => i.kind === "DOMAIN" && i.domainId === "d-risk") as ItemRec;
-    const dropped = await S.resolveDomainCore(USER, domNow.id, { kind: "DROP" }, NOW, depsFor(w));
-    check("[Drop] unfiles them", dropped.ok && itemsOf(w, m1.id).find((i) => i.lineageId === "lin-topic-1")?.domainId == null, json(itemsOf(w, m1.id).find((i) => i.lineageId === "lin-topic-1")));
+    const dropped = await S.resolveDomainCore(USER, dom.id, { kind: "DROP" }, NOW, depsFor(w));
+    const checked = await S.resolveDomainCore(USER, dom.id, { kind: "CHECK" }, NOW, depsFor(w));
+    check("a depth plan's Domain item can't be mapped, dropped or checked on one milestone", !mapped.ok && !dropped.ok && !checked.ok && itemsOf(w, m1.id).find((i) => i.id === dom.id)?.domainId === dom.domainId, json([mapped, dropped, checked]));
   }
 
   console.log("— fix round: runs (who wrote the rows, failed samples, the cap) —");
@@ -2140,9 +2335,9 @@ async function main() {
     const id = await newDraft(w, { ...INTAKE, domainIds: ["d-prob", "d-inf", "d-a", "d-b", "d-c"] });
     const built = await S.buildStarterCore(USER, id, NOW, depsFor(w));
     const report = w.t.roadmapRun[0].report as { dropped: { code: string; reason: string }[] } | null;
-    check("'Build from my numbers' with 5 chosen Domains says the 5th isn't used ('What was dropped')", built.ok && report?.dropped[0]?.code === "OVER_CAP" && /Calculus/.test(report.dropped[0].reason), json(report));
-    const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
-    check("…on the page's run report", view.run?.report?.dropped.some((d) => d.code === "OVER_CAP") === true);
+    check("a depth plan's starter measures every Domain of R: 5 chosen, 5 measured at each stage, nothing dropped", built.ok && report == null && rowsOf(w, id, 1).every((m) => measuresOf(w, m.id).filter((x) => x.kind === "CARDS_AT_LEVEL").length === 5), json([built, report]));
+    const six = await S.saveIntakeCore(USER, { ...INTAKE, domainIds: ["d-prob", "d-inf", "d-a", "d-b", "d-c", "d-risk"], newDomainNames: ["Statistics II"] }, NOW, depsFor(w));
+    eq("…and a 7th Domain is refused at intake (DEPTH_DOMAINS_MAX)", six.ok ? "ok" : six.error, S.TOO_MANY_DOMAINS);
   }
 
   console.log("— fix round: aftercare, the Aim card, the view's fields —");
@@ -2174,8 +2369,8 @@ async function main() {
     await decideAll(w, id, m2.id);
     const card = await S.loadAimCard(USER, NOW, depsFor(w));
     check("between milestones the Aim card is ACTIVE with the next milestone's Start line", card?.state === "ACTIVE" && card.milestone?.status === "PLANNED" && card.milestone.ord === 2 && card.milestone.start != null, json([card?.state, card?.milestone]));
-    check("…keeping the rank-up's 'new' marker", card?.rank?.name === "Aspirant" && card.rank.newSince === TODAY, json(card?.rank));
-    check("…and the milestone line carries its title's class", card?.milestone?.titleClass === "YOURS" || card?.milestone?.titleClass === "DRAFT", json(card?.milestone?.titleClass));
+    check("…keeping the rank-up's 'new' marker (the stage's rank: Expert)", card?.rank?.name === "Expert" && card.rank.newSince === TODAY, json(card?.rank));
+    check("…and the milestone line carries its title's class (code's: WORKED_OUT) and its stage", card?.milestone?.titleClass === "WORKED_OUT" && card.milestone.stage === "MASTERED", json([card?.milestone?.titleClass, card?.milestone?.stage]));
     const before = await (async () => {
       const w2 = world();
       await accepted(w2);
@@ -2188,7 +2383,7 @@ async function main() {
     const w = world();
     await drafted(w);
     const card = await S.loadAimCard(USER, NOW, depsFor(w));
-    eq("'A draft is waiting for your check · 5 items': milestone 1's title, Domain, practice, step and checkpoint (not milestone 2's)", card?.draftItems, 5);
+    eq("'A draft is waiting for your check · 1 item': milestone 1's checkpoint bar (code's words need no tap; not milestone 2's)", card?.draftItems, 1);
     const w2 = world();
     const id2 = await accepted(w2);
     await S.replanCore(USER, id2, "MANUAL", at(1_000), depsFor(w2));
@@ -2210,9 +2405,9 @@ async function main() {
     check("the view carries the library: every Field's Domains with their facts and up to 3 titles", view.library?.length === 3 && prob?.cards === 20 && prob.atSix === 12 && prob.level === 5 && prob.fieldName === "Statistics" && json(prob.sample) === json(["Bayes' rule", "Base rates"]), json(prob));
     const inf = view.toward?.measures.find((x) => x.measureKey.includes("d-inf"));
     const probEnd = view.toward?.measures.find((x) => x.measureKey.includes("d-prob"));
-    check("'Toward the aim' rows carry their words (EndStateTerm.label)", probEnd?.label === "Probability · cards at level 6+", json(probEnd?.label));
-    check("…and the weakest class of the Domains in scope: Gemini's undecided outline Domain reads DRAFT, a checked one WORKED_OUT", inf?.basisClass === "DRAFT" && probEnd?.basisClass === "WORKED_OUT", json([inf?.basisClass, probEnd?.basisClass]));
-    check("the Milestones list carries each title's class", view.milestones[0].titleClass === "YOURS" && view.milestones[1].titleClass === "DRAFT", json(view.milestones.map((m) => m.titleClass)));
+    check("'Toward the aim' rows carry their words (EndStateTerm.label): the depth terms", probEnd?.label === "Probability · cards at level 12+", json(probEnd?.label));
+    check("…and the weakest class of the Domains in scope (the user's Domains: no Gemini row anywhere)", inf?.basisClass === "WORKED_OUT" && probEnd?.basisClass === "WORKED_OUT", json([inf?.basisClass, probEnd?.basisClass]));
+    check("the Milestones list carries each title's class (code's) and stage", view.milestones.every((m) => m.titleClass === "WORKED_OUT" && m.stage != null), json(view.milestones.map((m) => [m.titleClass, m.stage])));
     await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w));
     const step = itemsOf(w, m1.id).find((i) => i.kind === "STEP") as ItemRec;
     const practice = itemsOf(w, m1.id).find((i) => i.kind === "PRACTICE") as ItemRec;
@@ -2290,7 +2485,8 @@ async function main() {
   {
     // Moving the date is checked against today (R2's remedyTargetDay caps at today + 1080), not the draft's start day.
     const w = world();
-    const id = await drafted(w);
+    const id = await newDraft(w, { ...INTAKE, aim: "Run a sub-50 10K", fieldId: null, track: "BODY", domainIds: [] });
+    await S.buildStarterCore(USER, id, NOW, depsFor(w));
     w.t.roadmap[0].startDay = addDays(TODAY, -400);
     const far = addDays(TODAY, 1000);
     const lanes = { ...lanesFor(w), applyRemedy: ((plan, _input, remedy) => (remedy === "MOVE_DATE" ? plan.map((m, i) => (i === plan.length - 1 ? { ...m, dueDay: far } : m)) : [...plan])) as RoadmapLanes["applyRemedy"] };
@@ -2405,14 +2601,16 @@ async function main() {
     const practice = itemsOf(w, next2.id).find((i) => i.kind === "PRACTICE") as ItemRec;
     const edit = await S.editItemCore(USER, practice.id, { sessionsPerWeek: 2 }, at(3_000), spy);
     check("fixture: a plan edit on the re-plan draft re-fits it", edit.ok, json(edit));
-    const remedy = await S.applyRemedyCore(USER, id, "REFIT_LIGHT", at(4_000), spy);
-    check("fixture: a remedy on the re-plan draft", remedy.ok, json(remedy));
-    await decideAll(w, id, next2.id);
+    const remedy = await S.applyRemedyCore(USER, id, "USE_REALISTIC_DATE", at(4_000), spy);
+    check("fixture: a remedy on the re-plan draft (the realistic date)", remedy.ok, json(remedy));
+    // The realistic date re-dated the draft (its rows written again): read its next row afresh.
+    const next2b = rowsOf(w, id, 2).find((m) => m.status === "DRAFT") as MilestoneRec;
+    await decideAll(w, id, next2b.id);
     const acc = await S.acceptCore(USER, id, { overAccepted: false }, at(5_000), spy);
     check("fixture: the re-plan is accepted", acc.ok, json(acc));
-    await S.startPreview(USER, next2.id, at(6_000), spy);
+    await S.startPreview(USER, next2b.id, at(6_000), spy);
     const wheres = new Set(seen.map((s) => s.where));
-    check("refit, feasibilityOf, fitPlan, applyRemedy and refitForStart were all read", ["refit", "feasibilityOf", "fitPlan", "applyRemedy", "refitForStart"].every((x) => wheres.has(x)), json([...wheres]));
+    check("refit, feasibilityOf, fitPlan and refitForStart were all read", ["refit", "feasibilityOf", "fitPlan", "refitForStart"].every((x) => wheres.has(x)), json([...wheres]));
     check(
       "…each with the carried milestone at the goal's due day, never the row's own (replanCore, the draft view, rewrite, applyRemedyCore, acceptCore, the Start sheet)",
       seen.length > 0 && seen.every((s) => json(s.carried) === json([[m1.id, goal.dueDay]])),
@@ -2469,26 +2667,12 @@ async function main() {
 
   console.log("— fix round 2: the alarm, what a draft still needs, bulk keep —");
   {
-    // R3's unverifiedAlarmOf, the one rule: removing the flagged items clears the banner.
-    const w = world();
-    const id = await drafted(w, { milestones: [{ title: "Week 1 basics", domains: ["d-prob"], practices: [{ name: "Do 20 drills", method: "X" }] }, { title: "Week 2 drills", domains: ["d-inf"] }] });
-    const before = await S.loadRoadmapView(USER, NOW, depsFor(w));
-    check("fixture: 3 of 5 flagged, the alarm is on", before.draft?.alarm === true);
-    const drills = itemsOf(w, rowsOf(w, id, 1)[0].id).find((i) => i.kind === "PRACTICE") as ItemRec;
-    const removed = await S.decideItemCore(USER, drills.id, "REMOVED", NOW, depsFor(w));
-    const row = itemsOf(w, rowsOf(w, id, 1)[0].id).find((i) => i.id === drills.id);
-    check("fixture: the flagged practice removed (still a row, its flag kept)", removed.ok && row?.decision === "REMOVED" && row.flags.includes("NUMBER"), json(row));
-    const after = await S.loadRoadmapView(USER, NOW, depsFor(w));
-    check("removing the flagged item turns the alarm off (2 of 4: a REMOVED row no longer counts)", after.draft?.alarm === false, json(after.draft?.alarm));
-  }
-  {
     // draftNeedsOf: the footer's target in the page's order, the Aim card's count, never a syllabus line or a named placeholder.
     const w = world();
     const id = await drafted(w, REPLY, { ...INTAKE, syllabus: { lines: ["Conditional probability"], source: null } });
     const [m1] = rowsOf(w, id, 1);
-    await S.decideItemCore(USER, m1.id, "CHECKED", NOW, depsFor(w));
     const topic = await S.addItemCore(USER, m1.id, { kind: "TOPIC", syllabusRef: 0 }, NOW, depsFor(w));
-    check("fixture: the syllabus line is a topic, PENDING as validation writes it (origin SYLLABUS)", topic.ok && itemsOf(w, m1.id).some((i) => i.origin === "SYLLABUS" && i.decision === "PENDING"));
+    check("fixture: the syllabus line is a topic, PENDING as validation writes it (origin SYLLABUS)", topic.ok && itemsOf(w, m1.id).some((i) => i.origin === "SYLLABUS" && i.decision === "PENDING"), json(topic));
     const recs = itemsOf(w, m1.id);
     const dom = recs.find((i) => i.kind === "DOMAIN") as ItemRec;
     const prac = recs.find((i) => i.kind === "PRACTICE") as ItemRec;
@@ -2499,21 +2683,25 @@ async function main() {
     );
     const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
     const needs = draftNeedsOf(view.draft!.milestones[0]);
-    eq("what milestone 1 still needs, in the page's order (an earlier-ordered checkpoint last)", needs.map((n) => `${n.kind}:${n.need}`), ["DOMAIN:DECIDE", "PRACTICE:DECIDE", "PRACTICE:NAME", "STEP:DECIDE", "CHECKPOINT:DECIDE"]);
-    eq("'Next item to decide' is the first of them (the Domain, not the checkpoint ordered before it)", view.draft?.nextToDecide, dom.id);
-    check("…never the PENDING syllabus topic nor the named placeholder", !needs.some((n) => n.id === "ph-named" || recs.some((r) => r.id === n.id && r.origin === "SYLLABUS")));
+    eq("what milestone 1 still needs, in the page's order (an earlier-ordered checkpoint last): a name and a bar, nothing of Gemini's", needs.map((n) => `${n.kind}:${n.need}`), ["PRACTICE:NAME", "CHECKPOINT:SET_BAR"]);
+    eq("'Next item to decide' is the first of them (the placeholder, not the checkpoint ordered before it)", view.draft?.nextToDecide, "ph-open");
+    check("…never the PENDING syllabus topic, the named placeholder or the user's Domain", !needs.some((n) => n.id === "ph-named" || n.id === dom.id || recs.some((r) => r.id === n.id && r.origin === "SYLLABUS")));
     const card = await S.loadAimCard(USER, NOW, depsFor(w));
     eq("the Aim card's count is the footer's (undecidedRowsOf = draftNeedsOf(milestone 1).length)", card?.draftItems, needs.length);
-    eq("…the same count undecidedRowsOf gives", S.undecidedRowsOf(view.draft!.milestones[0]), 5);
+    eq("…the same count undecidedRowsOf gives", S.undecidedRowsOf(view.draft!.milestones[0]), 2);
   }
   {
-    // Bulk keep never keeps an empty Gemini title (it must be named first).
+    // An empty title is named, never kept or checked (fix round 2's carry-over: decideItemCore refuses KEPT and CHECKED on it).
     const w = world();
     const id = await drafted(w);
     const [m1] = rowsOf(w, id, 1);
     (w.t.roadmapMilestone.find((m) => m.id === m1.id) as MilestoneRec).title = "";
-    const r = await S.keepUnflaggedCore(USER, m1.id, NOW, depsFor(w));
-    check("bulk keep leaves an empty Gemini title PENDING", r.ok && w.t.roadmapMilestone.find((m) => m.id === m1.id)?.titleDecision === "PENDING", json(r));
+    const checkedEmpty = await S.decideItemCore(USER, m1.id, "CHECKED", NOW, depsFor(w));
+    eq("'I checked this' on an empty title is refused ('Name this milestone first')", checkedEmpty.ok ? "ok" : checkedEmpty.error, S.NAME_IT_FIRST);
+    const keptEmpty = await S.decideItemCore(USER, m1.id, "KEPT", NOW, depsFor(w));
+    check("…and Keep is refused too", !keptEmpty.ok && w.t.roadmapMilestone.find((m) => m.id === m1.id)?.titleDecision === "PENDING", json(keptEmpty));
+    const named = await S.editItemCore(USER, m1.id, { label: "My first stage" }, NOW, depsFor(w));
+    check("…naming it settles it (EDITED)", named.ok && w.t.roadmapMilestone.find((m) => m.id === m1.id)?.titleDecision === "EDITED");
   }
 
   console.log("— fix round 2: the view's new fields —");
@@ -2563,19 +2751,13 @@ async function main() {
     check("…and with its 'Start again' copy (three rows) still 2", v2.positions === 2 && rowsOf(w, id, 1).length === 3, json([v2.positions, rowsOf(w, id, 1).length]));
   }
   {
-    // AimCardView.acceptedDay; titleStruck on the Milestones list and the Aim card's milestone line.
+    // AimCardView.acceptedDay; no struck spans on code's titles (Gemini writes no title).
     const w = world();
-    const id = await accepted(w, { milestones: [{ title: "Foundations", domains: ["d-prob"], practices: [{ name: "Timed problems", method: "X" }] }, { title: "Read 3 chapters", domains: ["d-inf"] }] });
-    const [m1] = rowsOf(w, id, 1);
+    await accepted(w);
     const card = await S.loadAimCard(USER, NOW, depsFor(w));
     eq("the Aim card carries the day the plan was accepted", card?.acceptedDay, TODAY);
     const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
-    check("the Milestones list strikes an outline Gemini title's number", json(view.milestones[1].titleStruck) === json([[5, 6]]) && view.milestones[0].titleStruck === undefined, json(view.milestones.map((m) => m.titleStruck)));
-    const row = w.t.roadmapMilestone.find((m) => m.id === m1.id) as MilestoneRec;
-    row.title = "Do 50 problems";
-    row.titleDecision = "KEPT";
-    const card2 = await S.loadAimCard(USER, NOW, depsFor(w));
-    check("…and the Aim card's milestone line strikes its own", json(card2?.milestone?.titleStruck) === json([[3, 5]]), json(card2?.milestone));
+    check("code's titles carry no struck spans", view.milestones.every((m) => m.titleStruck === undefined) && card?.milestone?.titleStruck === undefined);
   }
   {
     // triggersFor leaves a trace when the triggers can't be read (the banner is QUESTS_BEHIND's one surface).
@@ -2593,6 +2775,1354 @@ async function main() {
       console.error = original;
     }
     check("a failed trigger read shows no banner and logs 'roadmap: triggers unavailable:'", view.triggers.length === 0 && logged.some((a) => a[0] === "roadmap: triggers unavailable:"), json(logged.map((a) => String(a[0]))));
+  }
+
+  // ═══ Revision 4 (lane R4: docs/life-plan/roadmap-rev4.md) ═══════════════════
+  /** A cookie jar as Next's cookies() serves the cores (set, get, delete), recording every write. */
+  class FakeJar {
+    values = new Map<string, string>();
+    sets: { name: string; value: string; maxAge: number; path: string; sameSite: string; httpOnly: boolean }[] = [];
+    deleted: string[] = [];
+    get(name: string) {
+      return this.values.get(name);
+    }
+    set(name: string, value: string, opts: { maxAge: number; path: string; sameSite: "lax"; httpOnly: boolean }) {
+      this.values.set(name, value);
+      this.sets.push({ name, value, ...opts });
+    }
+    delete(name: string) {
+      this.deleted.push(name);
+      this.values.delete(name);
+    }
+  }
+  const SERVER_SRC = readFileSync(join(process.cwd(), "src/lib/roadmap-server.ts"), "utf8");
+  const ACTIONS_SRC = readFileSync(join(process.cwd(), "src/app/actions/roadmap.ts"), "utf8");
+
+  console.log("— rev 4: the aim invitation (F-R4-1, F-R4-2, F-R4-3, F-R4-5) —");
+  {
+    const jar = new FakeJar();
+    const r = await S.snoozeAimPromptCore(jar, NOW);
+    const set = jar.sets[0];
+    check("'Not now' writes 'later:<today>' (maxAge 365 days, path /, lax, httpOnly), no database", r.ok && set?.name === AIM_PROMPT_COOKIE && set.value === `later:${TODAY}` && set.maxAge === 365 * 86_400 && set.path === "/" && set.sameSite === "lax" && set.httpOnly, json(set));
+    const step = new FakeJar();
+    const s1 = await S.snoozeAimStepCore(step, "START", "ms-1", NOW);
+    check("'Not now: hide this for a week' writes '<kind>:<id>:<today>' (maxAge 8 days)", s1.ok && step.sets[0]?.name === "xtnl-aim-step" && step.sets[0].value === `START:ms-1:${TODAY}` && step.sets[0].maxAge === 8 * 86_400, json(step.sets));
+    const bad = await S.snoozeAimStepCore(step, "START", "../x", NOW);
+    check("…a malformed reference writes nothing", !bad.ok && step.sets.length === 1);
+    check("no roadmap file writes the year-long 'off' value any more", !/["']off["']\s*,\s*\{\s*maxAge/.test(ACTIONS_SRC) && !/set\([^)]*["']off["']/.test(ACTIONS_SRC + SERVER_SRC));
+  }
+  {
+    const w = world();
+    const jar = new FakeJar();
+    const off = await S.setAimSuggestionsCore(USER, false, jar, NOW, { ...depsFor(w), env: WRITES_OFF });
+    eq("setAimSuggestions refuses with writes off, writing nothing", [errOf(off), w.settings?.aimSuggestions], [ROADMAP_WRITES_OFF, null]);
+    const no = await S.setAimSuggestionsCore(USER, false, jar, NOW, depsFor(w));
+    check("'Don't suggest this' (false) writes the column, the lasting no, and no cookie", no.ok && w.settings?.aimSuggestions === false && jar.sets.length === 0, json([no, w.settings]));
+    const card = await S.loadAimCard(USER, NOW, depsFor(w));
+    eq("the Aim card reads the stored switch (one select)", [card?.state, card?.aimSuggestions], ["EMPTY", false]);
+    jar.values.set(AIM_PROMPT_COOKIE, "off");
+    const yes = await S.setAimSuggestionsCore(USER, true, jar, NOW, depsFor(w));
+    check("…true writes true, deletes a legacy 'off' cookie and writes 'on:<today>' (the back-off starts again)", yes.ok && w.settings?.aimSuggestions === true && jar.deleted.includes(AIM_PROMPT_COOKIE) && jar.values.get(AIM_PROMPT_COOKIE) === `on:${TODAY}`, json([jar.deleted, [...jar.values]]));
+    w.missingColumn = true;
+    const missing = await S.loadAimCard(USER, NOW, depsFor(w));
+    eq("a revision-4 column not yet applied: the card still renders, aimSuggestions read as null", [missing?.state, missing?.aimSuggestions], ["EMPTY", null]);
+    const notYetColumn = await S.setAimSuggestionsCore(USER, false, jar, NOW, depsFor(w));
+    check("…and the switch says it arrives with the next update", !notYetColumn.ok, json(notYetColumn));
+  }
+  {
+    // The last aim and the DONE window (F-R4-1, F-R4-2).
+    const w = world();
+    const id = await accepted(w);
+    const r = w.t.roadmap.find((x) => x.id === id) as RoadmapRec;
+    const [m1] = rowsOf(w, id, 1);
+    w.t.roadmapMilestone.find((m) => m.id === m1.id)!.reachedDay = addDays(TODAY, -40);
+    Object.assign(r, { status: "DONE", doneAt: new Date(NOW.getTime() - 27 * 86_400_000), reachedDay: addDays(TODAY, -30) });
+    const recent = await S.loadAimCard(USER, NOW, depsFor(w));
+    eq("DONE 27 days ago: the card is DONE", recent?.state, "DONE");
+    r.doneAt = new Date(NOW.getTime() - 28 * 86_400_000);
+    const later = await S.loadAimCard(USER, NOW, depsFor(w));
+    check("DONE 28 days ago: EMPTY, with the last aim's words, final rank and the day it was reached", later?.state === "EMPTY" && later.lastAim?.aim === INTAKE.aim && later.lastAim.rankName === "Expert" && later.lastAim.reached && later.lastAim.day === addDays(TODAY, -30), json(later?.lastAim));
+    const again = await S.saveIntakeCore(USER, { ...INTAKE, aim: "My next aim" }, NOW, depsFor(w));
+    check("saveIntake after a DONE roadmap inserts a new DRAFT (not refused)", again.ok && w.t.roadmap.filter((x) => x.status === "DRAFT").length === 1, json(again));
+    const w2 = world();
+    const id2 = await accepted(w2);
+    await S.archiveRoadmapCore(USER, id2, { reason: "Changed course", archiveGoal: false }, NOW, depsFor(w2));
+    const arch = await S.loadAimCard(USER, NOW, depsFor(w2));
+    eq("a history of only ARCHIVED roadmaps: EMPTY with no last aim", [arch?.state, arch?.lastAim], ["EMPTY", null]);
+    const none = await S.loadAimCard(USER, NOW, depsFor(world()));
+    eq("…and none at all: no last aim", none?.lastAim, null);
+  }
+  {
+    // Today's aim step (F-R4-3): ≤ 4 reads, null on a missing table or column, never loadAimCard.
+    const w = world();
+    w.lastOpen = addDays(TODAY, -9);
+    const empty = await S.loadAimStep(USER, NOW, depsFor(w));
+    check("no roadmap: no open step, the setting, the epoch day and the first day back", empty != null && empty.open == null && empty.epochDay === "2026-01-01" && empty.lastOpenBefore === addDays(TODAY, -9) && empty.aimSuggestions == null, json(empty));
+    const id = await drafted(w);
+    w.stepReads = 0;
+    let lists = 0;
+    let bundles = 0;
+    const base = w.store();
+    const counting: RoadmapStore = { ...base, listRoadmaps: (u) => (lists++, base.listRoadmaps(u)), bundle: (u, rid) => (bundles++, base.bundle(u, rid)) };
+    const draft = await S.loadAimStep(USER, NOW, depsFor(w, { store: counting }));
+    check("a DRAFT: its id, the day it was saved and whether a draft runs", draft?.open?.kind === "DRAFT" && draft.open.roadmapId === id && draft.open.savedDay === TODAY && draft.open.running === false, json(draft?.open));
+    check("…in at most 4 reads (roadmaps, the open roadmap's rows, LifeSettings, the last DAY_OPEN)", lists + bundles + w.stepReads <= 4, json([lists, bundles, w.stepReads]));
+    const missing = await S.loadAimStep(USER, NOW, { ...depsFor(w), store: { ...w.store(), listRoadmaps: async () => Promise.reject(Object.assign(new Error("The table `public.Roadmap` does not exist"), { code: "P2021", meta: { table: "public.Roadmap" } })) } });
+    eq("a missing table gives null", missing, null);
+    w.missingColumn = true;
+    eq("…and so does a revision-4 column not yet applied", await S.loadAimStep(USER, NOW, depsFor(w)), null);
+    check("loadAimStep is cached as 'aimStep:<user>:<today>' on ['roadmap', 'life'] and never calls loadAimCard", /cached\(`aimStep:\$\{userId\}:\$\{todayKey\(now\)\}`, \["roadmap", "life"\]/.test(SERVER_SRC) && !/function loadAimStepUncached[\s\S]*?loadAimCard\(/.test(SERVER_SRC.slice(SERVER_SRC.indexOf("async function loadAimStepUncached"), SERVER_SRC.indexOf("export async function snoozeAimPromptCore"))));
+    const w2 = world();
+    const id2 = await accepted(w2);
+    const [a, b] = rowsOf(w2, id2, 1);
+    const st = await S.startMilestoneCore(USER, a.id, START_ALL, NOW, depsFor(w2));
+    check("fixture: milestone 1 started", st.ok, json(st));
+    const step = await S.loadAimStep(USER, NOW, depsFor(w2));
+    const ms = step?.open?.kind === "ACTIVE" ? step.open.milestones : [];
+    eq("an ACTIVE plan: each milestone's place, stage, state and rank (no title reaches Today)", ms.map((m) => [m.ord, m.stage, m.state, m.rankIndex]), [
+      [1, "FLUENT", "OPEN", 4],
+      [2, "MASTERED", "PLANNED", 5],
+    ]);
+    check("…never a title or label in the step", !json(step).includes("to level 6+"), json(step));
+    void b;
+    check("closing a ROADMAP goal revalidates 'roadmap' (goals-server), so START shows on the next render", /if \(isRoadmap\) invalidate\("roadmap"\)/.test(readFileSync(join(process.cwd(), "src/lib/goals-server.ts"), "utf8")));
+  }
+
+  console.log("— rev 4: the intake (F-R4-4, F-R4-9, F-R4-16, F-R4-24) —");
+  {
+    const ctx = { today: TODAY, fields: world().tree };
+    const v = (patch: Record<string, unknown>) => S.validateIntake({ ...INTAKE, ...patch }, ctx);
+    const plain = v({});
+    eq("a Field intake with no depth is Mastered (12), the default, CHOSEN with its date", plain.ok ? [plain.value.depth, plain.value.dateMode] : null, [12, "CHOSEN"]);
+    eq("…a depth on a track Area is refused", errOf(v({ fieldId: null, track: "BODY", domainIds: [], depth: 10 })), S.DEPTH_ON_TRACK);
+    check("…an unknown depth is refused", !v({ depth: 9 }).ok && !v({ depth: "MASTERED" }).ok);
+    check("…a coverage outside 1–500 is refused, a typed 40 is kept (YOURS), another Domain's figure ignored", !v({ coverage: { "d-prob": 0 } }).ok && !v({ coverage: { "d-prob": 501 } }).ok && json((v({ coverage: { "d-prob": 40, "d-risk": 9 } }) as { value: Intake }).value.coverage) === json({ "d-prob": 40 }));
+    const many = v({ domainIds: ["d-prob", "d-inf", "d-risk"], newDomainNames: ["A one", "A two", "A three", "A four"] });
+    eq("…more than 6 Domains (named ones included) is refused", errOf(many), S.TOO_MANY_DOMAINS);
+    eq("…a line tied to a Domain outside the chosen ones is refused", errOf(v({ syllabus: { lines: ["Bayes"], source: null, lineDomains: ["d-risk"] } })), S.LINE_DOMAIN_OUTSIDE);
+    const aligned = v({ syllabus: { lines: ["Bayes", "  ", "Markov chains"], source: null, lineDomains: ["d-prob", null, "d-inf"] } });
+    eq("…blank lines drop out with their Domain (the two lists stay aligned)", aligned.ok ? aligned.value.syllabus : null, { lines: ["Bayes", "Markov chains"], source: null, lineDomains: ["d-prob", "d-inf"] });
+    const realistic = v({ dateMode: "REALISTIC", targetDay: undefined });
+    check("REALISTIC needs no date: a provisional one (today + 1,080) until a draft sets the realistic one", realistic.ok && realistic.value.targetDay === addDays(TODAY, 1080) && realistic.value.dateMode === "REALISTIC", json(realistic));
+    eq("a track Area is always CHOSEN", (v({ fieldId: null, track: "BODY", domainIds: [], dateMode: "REALISTIC" }) as { value: Intake }).value.dateMode, "CHOSEN");
+    eq("the exam: Yes without its name is refused", errOf(v({ exam: true, examLabel: "" })), S.NAME_THE_EXAM);
+    const no = v({ aim: "Pass the bar", exam: false, examLabel: "Bar exam", examDay: addDays(TODAY, 90) });
+    check("…No is honoured, even for 'Pass the bar' (its prefill is only a prefill): no name, no date", no.ok && no.value.examLabel == null && no.value.examDay == null, json(no));
+    eq("…an exam date in the past is refused", errOf(v({ exam: true, examLabel: "SOA Exam P", examDay: addDays(TODAY, -1) })), S.EXAM_DAY_RANGE);
+    eq("…today is refused (tomorrow at the earliest)", errOf(v({ exam: true, examLabel: "SOA Exam P", examDay: TODAY })), S.EXAM_DAY_RANGE);
+    eq("…and past 1,080 days", errOf(v({ exam: true, examLabel: "SOA Exam P", examDay: addDays(TODAY, 1081) })), S.EXAM_DAY_RANGE);
+    const exam = v({ exam: true, examLabel: "SOA Exam P", examDay: addDays(TODAY, 180) });
+    check("…a date in range is kept (YOURS, a waypoint)", exam.ok && exam.value.examDay === addDays(TODAY, 180) && exam.value.exam === true, json(exam));
+    check("a named Domain that is a link or a repeat is refused, one the Area already has too", !v({ newDomainNames: ["www.example.com"] }).ok && !v({ newDomainNames: ["Set theory", "set theory"] }).ok && !v({ newDomainNames: ["Probability"] }).ok);
+  }
+  {
+    // Named Domains (F-R4-24): created in the Area Field at save, chosen; a repeat tap reuses them.
+    const w = world();
+    const r = await S.saveIntakeCore(USER, { ...INTAKE, domainIds: [], newDomainNames: ["Set theory", "Measure theory"] }, NOW, depsFor(w));
+    const row = w.t.roadmap[0];
+    check("an empty library's named areas are created in the Area Field and become the plan's Domains", r.ok && w.domainsCreated.length === 2 && w.domainsCreated.every((d) => d.fieldId === "f-stats") && row.domainIds.length === 2, json([w.domainsCreated, row.domainIds]));
+    const again = await S.saveIntakeCore(USER, { ...INTAKE, domainIds: [], newDomainNames: ["Set theory", "Measure theory"] }, NOW, depsFor(w));
+    check("…a second tap names Domains the Area now has: refused ('pick it instead'), never a duplicate Domain", !again.ok && /pick it instead/.test(errOf(again)) && w.domainsCreated.length === 2, json(again));
+    const stored = await S.saveIntakeCore(USER, { ...INTAKE, depth: 10, coverage: { "d-prob": 40 }, exam: true, examLabel: "SOA Exam P", examDay: addDays(TODAY, 200), syllabus: { lines: ["Bayes"], source: null, lineDomains: ["d-prob"] } }, NOW, depsFor(w));
+    const saved = w.t.roadmap[0];
+    check("the intake stores depth, coverage, date mode, exam date and the lines' Domains", stored.ok && saved.depth === 10 && json(saved.coverage) === json({ "d-prob": 40 }) && saved.dateMode === "CHOSEN" && saved.examDay === addDays(TODAY, 200) && json((saved.syllabus as Syllabus).lineDomains) === json(["d-prob"]), json(saved));
+    eq("…and reads them back (intakeOf)", [S.intakeOf(saved).depth, S.intakeOf(saved).examDay, S.intakeOf(saved).coverage], [10, addDays(TODAY, 200), { "d-prob": 40 }]);
+  }
+  {
+    // A plan with nothing left to do, or none within 3 years, is refused at intake (F-R4-10, decision 41).
+    const w = world();
+    const held = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Hold what I hold [held]" }, NOW, depsFor(w));
+    check("a depth already held in these Domains is refused at intake", !held.ok && /already hold this depth/.test(errOf(held)) && w.t.roadmap.length === 0, json(held));
+    const far = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Everything [too far]" }, NOW, depsFor(w));
+    check("…and a realistic date past 3 years", !far.ok && /about 4 years/.test(errOf(far)), json(far));
+    const track = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Run [held]", fieldId: null, track: "BODY", domainIds: [] }, NOW, depsFor(w));
+    check("…never on a track Area (no depth to hold)", track.ok, json(track));
+  }
+
+  console.log("— rev 4: legacy plans (F-R4-16) —");
+  /** An accepted plan made before revision 4: depth null, no stage, Gemini's words on its rows (marker tokens a taint check finds). */
+  const legacyWorld = async () => {
+    const w = world();
+    const id = await accepted(w);
+    const r = w.t.roadmap.find((x) => x.id === id) as RoadmapRec;
+    r.depth = null;
+    for (const m of rowsOf(w, id)) {
+      Object.assign(m, { stage: null, title: "Zorblatt's secret stage", titleOrigin: "GEMINI", titleDecision: "KEPT" });
+      for (const i of itemsOf(w, m.id)) if (i.kind !== "DOMAIN") Object.assign(i, { label: "Quixplendor drills", origin: "GEMINI", decision: "KEPT" });
+    }
+    return { w, id };
+  };
+  {
+    const { w, id } = await legacyWorld();
+    const [m1] = rowsOf(w, id, 1);
+    eq("a legacy ACTIVE roadmap refuses Start", errOf(await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w))), S.START_AGAIN_AT_DEPTH);
+    eq("…and a re-plan", errOf(await S.replanCore(USER, id, "REFIT", NOW, depsFor(w))), S.START_AGAIN_AT_DEPTH);
+    const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    const card = await S.loadAimCard(USER, NOW, depsFor(w));
+    const preview = await S.startPreview(USER, m1.id, NOW, depsFor(w));
+    const all = json([view, card]);
+    check("the views return no title, label or topic text of a legacy version (taint)", !/Zorblatt|Quixplendor/.test(all), all.match(/.{40}(Zorblatt|Quixplendor).{20}/)?.[0] ?? "");
+    check("…the page keeps the aim, the banner (Gemini wording hidden) and nothing measured", view.header?.aim === INTAKE.aim && view.legacy?.geminiHidden === true && view.milestones.length === 0 && view.current == null && view.toward == null && view.run?.report == null, json(view.legacy));
+    check("…the Aim card shows the aim and no milestone title", card?.legacy === true && card.aim === INTAKE.aim && card.milestone == null, json(card?.milestone));
+    check("…and the Start sheet refuses", preview?.refusal === S.START_AGAIN_AT_DEPTH, json(preview?.refusal));
+  }
+  {
+    const { w, id } = await legacyWorld();
+    const [a, b] = await Promise.all([
+      S.saveIntakeCore(USER, { ...INTAKE, aim: "Again, at a depth", replaces: id }, NOW, depsFor(w)),
+      S.saveIntakeCore(USER, { ...INTAKE, aim: "Again, at a depth", replaces: id }, NOW, depsFor(w)),
+    ]);
+    const old = w.t.roadmap.find((x) => x.id === id) as RoadmapRec;
+    check("'Start again at a depth': one DRAFT and the old roadmap archived, in one transaction (a double tap included)", a.ok && b.ok && w.t.roadmap.filter((x) => x.status === "DRAFT").length === 1 && old.status === "ARCHIVED" && old.archiveReason === S.replacedReasonOf(TODAY), json([a, b, w.t.roadmap.map((x) => [x.status, x.archiveReason])]));
+    const fresh = w.t.roadmap.find((x) => x.status === "DRAFT") as RoadmapRec;
+    check("…the new draft is at a depth", fresh.depth === 12);
+    const { w: w2, id: id2 } = await legacyWorld();
+    (w2.t.roadmap.find((x) => x.id === id2) as RoadmapRec).depth = 12;
+    const set = await S.saveIntakeCore(USER, { ...INTAKE, replaces: id2 }, NOW, depsFor(w2));
+    check("the guard refuses a roadmap with a depth", !set.ok && w2.t.roadmap.length === 1, json(set));
+    const { w: w3, id: id3 } = await legacyWorld();
+    w3.t.roadmapMilestone.find((m) => m.roadmapId === id3)!.status = "STARTED";
+    const started = await S.saveIntakeCore(USER, { ...INTAKE, replaces: id3 }, NOW, depsFor(w3));
+    check("…and one with a started milestone", !started.ok && w3.t.roadmap.length === 1, json(started));
+  }
+  {
+    // A legacy DRAFT: accept refuses until it is drafted again at a depth.
+    const w = world();
+    const id = await drafted(w);
+    for (const m of rowsOf(w, id, 1)) m.stage = null;
+    eq("a legacy draft (a row with no stage) can't be accepted", errOf(await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w))), S.DRAFT_IT_AGAIN);
+    const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    check("…its draft view carries no row text, only the banner", view.draft?.legacy != null && view.draft.milestones.length === 0 && view.draft.acceptable === false, json(view.draft?.legacy));
+    const again = await S.buildStarterCore(USER, id, NOW, depsFor(w));
+    check("drafting it again replaces the old rows with staged ones, and then it is accepted", again.ok && rowsOf(w, id, 1).every((m) => m.stage != null) && (await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w))).ok);
+  }
+
+  console.log("— rev 4: keys-only drafting, integrity and the one writer (F-R4-17, F-R4-20) —");
+  {
+    // A REJECTED reply (an extra property carrying a sentence): nothing of it is written; the run is FAILED with its verdict; the starter stands.
+    const w = world();
+    const id = await newDraft(w);
+    const logged: string[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => void logged.push(args.map(String).join(" "));
+    try {
+      await drafted(w, { smuggle: "You must buy the official CFA curriculum for $1,200", milestones: [{ domains: ["d-prob"] }, { domains: ["d-inf"] }] });
+    } finally {
+      console.warn = warn;
+    }
+    const run = w.t.roadmapRun.find((r) => r.roadmapId === id && r.kind === "GEMINI") as RunRec;
+    const report = run.report as { fallback?: string; integrity?: { verdict: string; violations: { code: string; path: string }[] } };
+    check("a REJECTED reply: the run is FAILED ('reply rejected: …'), counted toward the cap, the starter written", run.status === "FAILED" && /reply rejected: EXTRA_PROPERTY/.test(run.error ?? "") && report.fallback === RUN_FALLBACK_STARTER && rowsOf(w, id, 1).length > 0, json([run.status, run.error, report]));
+    eq("…its verdict and normalised path stored (report.integrity): the sentence never kept", report.integrity?.violations, [{ code: "EXTRA_PROPERTY", path: "stages.FOUNDATION.<extra>" }]);
+    const line = logged.find((l) => l.includes("roadmap.reply")) ?? "";
+    // The raw reply stays only in RoadmapRun.samples on the server (F-R4-20).
+    const tables = json({ ...w.t, roadmapRun: w.t.roadmapRun.map((r) => ({ ...r, samples: null })) });
+    check("…one log line with normalised paths only: none of the reply's words, and none in any row (the raw reply stays in samples)", /"verdict":"REJECTED"/.test(line) && !/CFA|curriculum|1,200/.test(logged.join("\n")) && !/CFA|curriculum/.test(tables), line);
+    check("…no item from the reply", rowsOf(w, id, 1).flatMap((m) => itemsOf(w, m.id)).every((i) => i.origin !== "GEMINI"));
+  }
+  {
+    // Reuse walks the stored reply against the CURRENT schema: a stored `gaps` while suggestions are off is REJECTED, never reused.
+    const w = world();
+    const id = await drafted(w);
+    const ok0 = w.t.roadmapRun.find((r) => r.status === "OK" && r.roadmapId === id) as RunRec;
+    const samples = ok0.samples as { raw: string; ok?: boolean }[];
+    samples[0].raw = json({ ...JSON.parse(samples[0].raw), gaps: ["Bayesian methods"] });
+    const lanes = { ...lanesFor(w), integrityOf: ((parsed: unknown, schema: unknown) => {
+      const hasGaps = !!(parsed as { gaps?: unknown })?.gaps;
+      const schemaGaps = !!(schema as { properties?: { gaps?: unknown } })?.properties?.gaps;
+      if (hasGaps && !schemaGaps) return { verdict: "REJECTED", violations: [{ code: "EXTRA_PROPERTY", path: "gaps" }], modelChars: 0, gapsKept: 0, gapsHidden: 0, gapsDropped: 0, notANameByClause: {} };
+      return lanesFor(w).integrityOf!(parsed, schema);
+    }) as RoadmapLanes["integrityOf"] };
+    const reuse = await S.claimDraftCore(USER, id, { force: false }, at(60_000), depsFor(w, { lanes }));
+    check("a stored reply with `gaps`, reused while suggestions are off, is REJECTED against the current schema: a fresh run is claimed instead", reuse.ok && reuse.value.status === "RUNNING", json(reuse));
+  }
+  {
+    // The tripwire, through the one writer.
+    const ctx = { roadmapId: "r1", syllabusLines: ["Conditional probability"], domainNames: { "d-prob": "Probability" }, rev4: true, track: "FIELD" as const, aim: INTAKE.aim, exam: null, required: ["d-prob"] };
+    const base: MilestoneDraft = { id: null, lineageId: "l1", version: 1, ord: 1, title: "Fluent: Probability to level 10+", titleOrigin: CODE_ORIGIN, titleDecision: "PENDING", windowStart: TODAY, dueDay: addDays(TODAY, 60), status: "DRAFT", rankIndex: null, overAccepted: false, items: [], measures: [], notes: [], stage: "FLUENT" };
+    const throws = (plan: MilestoneDraft[]) => {
+      try {
+        S.writeRoadmapRows([], { kind: "DRAFT", roadmapId: "r1", version: 1, plan, feasibility: null, now: NOW, makeId: () => globalThis.crypto.randomUUID() }, ctx);
+        return null;
+      } catch (err) {
+        return err instanceof S.ModelTextError ? err.message : `other: ${String(err)}`;
+      }
+    };
+    const okPractice = item("PRACTICE", 1, String(catalogLabelOf("RECALL_DRILLS", { track: "FIELD", domains: [domainName({ id: "d-prob", name: "Probability" })] })), { catalogKey: "RECALL_DRILLS", domainId: "d-prob" });
+    eq("a code-worded catalog practice passes", throws([{ ...base, items: [okPractice] }]), null);
+    check("a GEMINI practice is refused", /written by Gemini/.test(throws([{ ...base, items: [{ ...okPractice, origin: "GEMINI" }] }]) ?? ""));
+    check("…a GEMINI title is refused", /title written by Gemini/.test(throws([{ ...base, titleOrigin: "GEMINI" }]) ?? ""));
+    check("…a CODE label that isn't its catalog render is refused", /not the app's wording/.test(throws([{ ...base, items: [{ ...okPractice, label: "Recall drills: Probability, and buy the official book" }] }]) ?? ""));
+    check("…a SYLLABUS topic whose label isn't its line is refused", /not your line/.test(throws([{ ...base, items: [item("TOPIC", 1, "Conditional probability and the CFA syllabus", { origin: "SYLLABUS", syllabusRef: 0 })] }]) ?? ""));
+    eq("…the user's line passes", throws([{ ...base, items: [item("TOPIC", 1, "Conditional probability", { origin: "SYLLABUS", syllabusRef: 0 })] }]), null);
+    check("…a Gemini-named Domain that isn't one of yours is refused", /not one of yours/.test(throws([{ ...base, items: [item("DOMAIN", 1, "Stochastic calculus", { origin: "GEMINI", domainId: null, notes: ["NOT_CHOSEN"] })] }]) ?? ""));
+    check("…a code topic is refused (topics are your outline's)", /not from your outline/.test(throws([{ ...base, items: [item("TOPIC", 1, "Bayes")] }]) ?? ""));
+    check("…a suggestion's name on a plan row is refused", /suggestion's name/.test(throws([{ ...base, items: [item("GAP", 1, "Risk theory", { origin: "GEMINI" }), item("STEP", 2, "Risk theory")] }]) ?? ""));
+    eq("…the user's EDITED words pass", throws([{ ...base, items: [{ ...okPractice, label: "My own drills", decision: "EDITED" }] }]), null);
+    check("…and a draft row with no stage is refused", /without a stage/.test(throws([{ ...base, stage: null }]) ?? ""));
+    // On a draft path: the run fails and the starter is written.
+    const w = world();
+    const id = await newDraft(w);
+    const gemini = { ...lanesFor(w), validateKeysOnly: ((parsed, c) => {
+      const v = lanesFor(w).validateKeysOnly!(parsed, c);
+      return { ...v, milestones: v.milestones.map((m) => ({ ...m, items: m.items.map((i) => (i.kind === "PRACTICE" ? { ...i, origin: "GEMINI" as const, label: "Buy the official course" } : i)) })) };
+    }) as RoadmapLanes["validateKeysOnly"] };
+    const tasks: (() => Promise<void> | void)[] = [];
+    const c = await S.claimDraftCore(USER, id, { force: true }, NOW, depsFor(w, { lanes: gemini, defer: (t) => tasks.push(t), callModel: async () => REPLY, clock: () => NOW }));
+    for (const t of tasks) await t();
+    const run = w.t.roadmapRun.find((r) => c.ok && r.id === c.value.runId) as RunRec;
+    check("on a draft path the tripwire fails the run and the starter is written in its place", run?.status === "FAILED" && /words the app didn't write/.test(run.error ?? "") && !/official course/.test(json(w.t.roadmapItem)) && rowsOf(w, id, 1).length > 0, json([run?.status, run?.error]));
+    // On an action path: the action refuses.
+    const id2 = await drafted(world());
+    void id2;
+    const w3 = world();
+    const id3 = await drafted(w3);
+    const m3 = rowsOf(w3, id3, 1)[0];
+    (itemsOf(w3, m3.id).find((i) => i.kind === "PRACTICE") as ItemRec).origin = "GEMINI";
+    const add = await S.addItemCore(USER, m3.id, { kind: "STEP", label: "My step" }, NOW, depsFor(w3));
+    eq("on an action path the tripwire refuses the change", errOf(add), S.CHANGE_NOT_SAVED);
+  }
+  {
+    // The grep (F-R4-20): no StoreOp that inserts a milestone or item, or writes its words or origin, outside the one writer.
+    const start = SERVER_SRC.indexOf("export function writeRoadmapRows(");
+    const end = SERVER_SRC.indexOf("function modelTextContextOf(", start);
+    const outside = SERVER_SRC.slice(0, start) + SERVER_SRC.slice(end);
+    const inserts = outside.match(/op: "insert", table: "roadmap(Item|Milestone)"/g) ?? [];
+    const textUpdates = [...outside.matchAll(/op: "update", table: "roadmap(Item|Milestone)"[\s\S]{0,400}?data: \{([^}]*)\}/g)].filter((m) => /\b(title|label|origin|titleOrigin|catalogKey|proposedName|rawLabel)\s*[:,]/.test(m[2]));
+    check("the grep: no milestone or item insert outside writeRoadmapRows", start > 0 && end > start && inserts.length === 0, inserts.join(" | "));
+    check("…no update that writes title, label, origin, titleOrigin, catalogKey, proposedName or rawLabel outside it", textUpdates.length === 0, textUpdates.map((m) => m[0].slice(0, 120)).join(" | "));
+    check("…the generic row update sends text fields through the writer (updateOne's TEXT_FIELDS guard)", /if \(TEXT_FIELDS\.some\(\(k\) => k in data\)\)/.test(SERVER_SRC));
+    const srcFiles = ["src/lib/roadmap-server.ts", "src/lib/roadmap-readings.ts", "src/lib/roadmap-quests-server.ts", "src/lib/tasks.ts", "src/lib/goals-server.ts"].map((f) => readFileSync(join(process.cwd(), f), "utf8")).join("\n");
+    check("…and no prisma.roadmapItem / roadmapMilestone create, createMany, update, updateMany or upsert anywhere", !/prisma\.roadmap(Item|Milestone)\.(create|createMany|update|updateMany|upsert)\(/.test(srcFiles));
+  }
+  {
+    // Materialisation (F-R4-17): a merged slot's picks go into the next kept milestone, within the caps, the higher stage's first.
+    const ladderRow = (stage: string, level: number, ord: number): MilestoneDraft => ({ id: null, lineageId: `L-${stage}`, version: 1, ord, title: stage, titleOrigin: CODE_ORIGIN, titleDecision: "PENDING", windowStart: TODAY, dueDay: addDays(TODAY, 40 * ord), status: "DRAFT", rankIndex: null, overAccepted: false, items: [], measures: [measure("CARDS_AT_LEVEL", { minLevel: level, scope: { domainIds: ["d-prob"] } })], notes: [], stage: stage as MilestoneDraft["stage"] });
+    const pick = (key: string) => item("PRACTICE", 1, key, { catalogKey: key as ItemDraft["catalogKey"], notes: ["GEMINI_PICK"] });
+    const slot = (stage: string, keys: string[], extra: ItemDraft[] = []): MilestoneDraft => ({ ...ladderRow(stage, 0, 1), items: [...keys.map(pick), ...extra] });
+    const ladder = [ladderRow("FAMILIAR", 6, 1), ladderRow("RETAINED", 8, 2), ladderRow("BETWEEN", 11, 3), ladderRow("MASTERED", 12, 4)];
+    const placed = S.materialiseKeys(
+      ladder,
+      { milestones: [slot("FOUNDATION", ["RECALL_DRILLS", "READ_AND_CARD"], [item("TOPIC", 9, "Line A", { origin: "SYLLABUS", syllabusRef: 0 })]), slot("FAMILIAR", ["PROBLEM_SETS", "EXPLAIN_IT"]), slot("RETAINED", ["WRITING_PRACTICE"]), slot("FLUENT", ["MISTAKE_REVIEW"]), slot("MASTERED", ["BUILD_SOMETHING", "SAY_IT_ALOUD"])] },
+      ["FOUNDATION", "FAMILIAR", "RETAINED", "FLUENT", "MASTERED"],
+      { gapsOn: false, makeId: () => globalThis.crypto.randomUUID() }
+    );
+    const keysOf = (i: number, kind = "PRACTICE") => placed[i].items.filter((x) => x.kind === kind).map((x) => x.catalogKey ?? x.label);
+    eq("a merged slot (Foundation) goes into the next kept milestone, the higher stage's picks first, ≤ 3 practices", keysOf(0), ["PROBLEM_SETS", "EXPLAIN_IT", "RECALL_DRILLS"]);
+    eq("…its lines always (unlimited)", keysOf(0, "TOPIC"), ["Line A"]);
+    eq("a merged Fluent slot goes into the next kept milestone (BETWEEN at 11), after the copied higher stage's picks", keysOf(2), ["BUILD_SOMETHING", "SAY_IT_ALOUD", "MISTAKE_REVIEW"]);
+    check("…and BETWEEN copies the practices of the slot above it (Mastered's)", ["BUILD_SOMETHING", "SAY_IT_ALOUD"].every((k) => keysOf(2).includes(k)) && keysOf(2).length <= 3, json(keysOf(2)));
+    eq("the Mastered slot's picks stay with Mastered", keysOf(3), ["BUILD_SOMETHING", "SAY_IT_ALOUD"]);
+  }
+  {
+    // A body plan with constraints (F-R4-17): Gemini's session picks wait for one confirm; "easy, mobility and technique" replaces them.
+    const w = world();
+    const bodyIntake: Intake = { ...INTAKE, aim: "Get back to running", fieldId: null, track: "BODY", domainIds: [], constraints: "knee injury, no running" };
+    const id = await drafted(w, { milestones: [{ practices: [{ name: "a", method: "X" }] }, { practices: [{ name: "b", method: "X" }] }] }, bodyIntake);
+    const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    check("the draft shows the pending picks with the user's constraints quoted, and the exclusions with their words", view.draft?.sessionPicks?.decision === "PENDING" && view.draft.sessionPicks.constraints === "knee injury, no running" && json(view.draft.exclusions) === json([{ kind: "HARDER_SESSION", word: "running" }]), json([view.draft?.sessionPicks, view.draft?.exclusions]));
+    eq("a pending session-picks decision blocks accept", errOf(await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w))), S.CONFIRM_PICKS);
+    eq("…the confirm refuses with writes off", errOf(await S.confirmSessionPicksCore(USER, id, "EASY", NOW, { ...depsFor(w), env: WRITES_OFF })), ROADMAP_WRITES_OFF);
+    const easy = await S.confirmSessionPicksCore(USER, id, "EASY", NOW, depsFor(w));
+    const practices = rowsOf(w, id, 1).flatMap((m) => itemsOf(w, m.id).filter((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED"));
+    check("'Use easy, mobility and technique instead': the picks removed and code's safe sessions in their place, in one write", easy.ok && practices.length > 0 && practices.every((p) => ["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION"].includes(p.catalogKey ?? "") && p.origin === CODE_ORIGIN), json(practices.map((p) => [p.catalogKey, p.label])));
+    const acc = await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w));
+    check("…then the plan is accepted", acc.ok, json(acc));
+    const w2 = world();
+    const id2 = await drafted(w2, { milestones: [{ domains: ["d-prob"], practices: [{ name: "a", method: "X" }] }, { domains: ["d-inf"] }] });
+    eq("a Field plan's picks never wait for a confirm", errOf(await S.confirmSessionPicksCore(USER, id2, "KEEP", NOW, depsFor(w2))), "There are no session picks to confirm.");
+  }
+  {
+    // The outline (F-R4-9, F-R4-21): every topic is the user's line with the user's Domain, whatever the reply; moves and Domain changes.
+    const w = world();
+    const outline: Intake = { ...INTAKE, syllabus: { lines: ["Conditional probability", "Bayes' theorem", "Markov chains"], source: null, lineDomains: ["d-prob", "d-prob", null] } };
+    const id = await drafted(w, { milestones: [{ domains: ["d-prob"], lines: [0, 2] }, { domains: ["d-inf"], lines: [1] }] }, outline);
+    const [m1, m2] = rowsOf(w, id, 1);
+    const topics = rowsOf(w, id, 1).flatMap((m) => itemsOf(w, m.id).filter((i) => i.kind === "TOPIC"));
+    check("every topic's label is its intake line and its Domain the user's line Domain", topics.length === 3 && topics.every((t) => t.label === outline.syllabus!.lines[t.syllabusRef as number] && t.domainId === (outline.syllabus!.lineDomains![t.syllabusRef as number] ?? null) && t.origin === "SYLLABUS"), json(topics.map((t) => [t.label, t.domainId])));
+    const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    eq("a line tied to no Domain of R is listed (unassignedLines)", view.draft?.unassignedLines, [2]);
+    const line2 = itemsOf(w, m1.id).find((i) => i.syllabusRef === 2) as ItemRec;
+    const moved = await S.moveLineCore(USER, line2.id, m2.id, NOW, depsFor(w));
+    check("moveLine moves the topic between draft rows (the user's arrangement: EDITED)", moved.ok && !itemsOf(w, m1.id).some((i) => i.syllabusRef === 2) && itemsOf(w, m2.id).some((i) => i.syllabusRef === 2 && i.decision === "EDITED"), json(moved));
+    const after = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    eq("…which reads as the user's arrangement", after.draft?.milestones.find((m) => m.items.some((i) => i.syllabusRef === 2))?.arrangedBy, "USER");
+    eq("moveLine refuses with writes off", errOf(await S.moveLineCore(USER, line2.id, m1.id, NOW, { ...depsFor(w), env: WRITES_OFF })), ROADMAP_WRITES_OFF);
+    const set = await S.setLineDomainCore(USER, id, 2, "d-inf", NOW, depsFor(w));
+    const stored = (w.t.roadmap[0].syllabus as Syllabus).lineDomains;
+    const t2 = rowsOf(w, id, 1).flatMap((m) => itemsOf(w, m.id)).find((i) => i.syllabusRef === 2);
+    check("setLineDomain changes the user's line Domain and the line's topic, re-dated", set.ok && json(stored) === json(["d-prob", "d-prob", "d-inf"]) && t2?.domainId === "d-inf", json([set, stored, t2?.domainId]));
+    eq("…a Domain outside R is refused", errOf(await S.setLineDomainCore(USER, id, 2, "d-risk", NOW, depsFor(w))), S.LINE_DOMAIN_OUTSIDE);
+    const acc = await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w));
+    check("fixture: accepted", acc.ok, json(acc));
+    const [a1] = rowsOf(w, id, 1).filter((m) => m.status === "PLANNED");
+    await S.startMilestoneCore(USER, a1.id, START_ALL, NOW, depsFor(w));
+    const setActive = await S.setLineDomainCore(USER, id, 0, null, at(1_000), depsFor(w));
+    const started = w.t.roadmapMilestone.find((m) => m.id === a1.id) as MilestoneRec;
+    check("after acceptance a line's Domain goes through a MANUAL re-plan of the unstarted stages; the started row is never touched", setActive.ok && rowsOf(w, id, 2).length > 0 && started.status === "STARTED" && itemsOf(w, a1.id).find((i) => i.syllabusRef === 0)?.domainId === "d-prob", json([setActive, rowsOf(w, id, 2).length]));
+    const mStarted = await S.moveLineCore(USER, itemsOf(w, a1.id).find((i) => i.kind === "TOPIC")!.id, rowsOf(w, id, 2)[0].id, NOW, depsFor(w));
+    check("…and moveLine never moves a started row's line", !mStarted.ok, json(mStarted));
+  }
+  {
+    // A Domain addition past 3 years, and the 7th Domain (F-R4-21).
+    const w = world();
+    w.tree[0].domains.push({ id: "d-calc", name: "Calculus", fieldId: "f-stats", cards: [] });
+    const id = await drafted(w, { milestones: [{ domains: ["d-prob"], needs: ["d-calc"] }, { domains: ["d-inf"] }] }, { ...INTAKE, aim: "Understand probability deeply" });
+    const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    const add = view.draft?.additions?.[0];
+    check("the additions row lists the Domain's real facts, its n_d and the date with it, before anything is confirmed", add?.domainId === "d-calc" && add.name === "Calculus" && add.cards === 0 && add.n === 25 && add.dateWith === addDays(TODAY, 1200) && add.blocked === "PAST_SPAN", json(add));
+    eq("…offered as BULK for an English, non-exam aim", view.draft?.additionsMode, "BULK");
+    const past = await S.confirmDomainAdditionsCore(USER, id, 1, ["d-calc"], NOW, depsFor(w, { lanes: { ...lanesFor(w), dateCheckOf: (ladder, input, mode) => ({ ...lanesFor(w).dateCheckOf!(ladder, input, mode, null), D_real: addDays(TODAY, 1200) }) } }));
+    check("an addition that would pass 1,080 days is refused, in words", !past.ok && /past 3 years/.test(errOf(past)), json(past));
+    const leave = await S.confirmDomainAdditionsCore(USER, id, 1, [], NOW, depsFor(w));
+    check("[Leave out]: the addition REMOVED on every row, and accept no longer blocked by it", leave.ok && rowsOf(w, id, 1).every((m) => itemsOf(w, m.id).filter((i) => i.domainId === "d-calc").every((i) => i.decision === "REMOVED")) && (await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w))).ok);
+    const w2 = world();
+    w2.tree[0].domains.push(...["a", "b", "c", "d", "e"].map((x) => ({ id: `d-${x}x`, name: `Area ${x}`, fieldId: "f-stats", cards: [] })));
+    const id2 = await drafted(w2, { milestones: [{ domains: ["d-prob"], needs: ["d-ax", "d-bx", "d-cx", "d-dx", "d-ex"] }, { domains: ["d-inf"] }] });
+    eq("a 7th Domain is refused (R holds at most 6)", errOf(await S.confirmDomainAdditionsCore(USER, id2, 1, ["d-ax", "d-bx", "d-cx", "d-dx", "d-ex"], NOW, depsFor(w2))), S.TOO_MANY_DOMAINS);
+    const exam = world();
+    const idE = await drafted(exam, { milestones: [{ domains: ["d-prob"], needs: ["d-risk"] }, { domains: ["d-inf"] }] }, { ...INTAKE, aim: "Pass FRM Part 1", exam: true, examLabel: "FRM Part 1" });
+    eq("an exam aim offers one toggle per Domain (no add-all)", (await S.loadRoadmapView(USER, NOW, depsFor(exam))).draft?.additionsMode, "TOGGLES");
+    void idE;
+  }
+  {
+    // domainOrigins survives a re-plan (F-R4-21).
+    const w = world();
+    const id = await drafted(w, { milestones: [{ domains: ["d-prob"], needs: ["d-risk"] }, { domains: ["d-inf"] }] });
+    await S.confirmDomainAdditionsCore(USER, id, 1, ["d-risk"], NOW, depsFor(w));
+    await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w));
+    await S.replanCore(USER, id, "REFIT", at(1_000), depsFor(w));
+    await S.acceptCore(USER, id, { overAccepted: false }, at(2_000), depsFor(w));
+    const f2 = w.t.roadmapAcceptance[1]?.feasibility as Feasibility | undefined;
+    check("'suggested by Gemini, added by you on <day>' survives a REFIT re-plan (domainOrigins carried)", f2?.domainOrigins?.["d-risk"]?.by === "GEMINI_NEEDS" && f2.domainOrigins["d-risk"].day === TODAY, json(f2?.domainOrigins));
+    const view = await S.loadRoadmapView(USER, at(3_000), depsFor(w));
+    check("…and the ACTIVE plan's Depth line carries it", view.depth?.domainOrigins["d-risk"]?.by === "GEMINI_NEEDS" && view.depth.depth === 12, json(view.depth?.domainOrigins));
+  }
+
+  {
+    // Area suggestions (F-R4-19): off (ROADMAP_GAPS_LIVE false), no GAP row is written; a GAP row is never a measure, a Today row or a blocker.
+    const w = world();
+    const id = await drafted(w, { milestones: [{ domains: ["d-prob"], gaps: ["Bayesian statistics"] }, { domains: ["d-inf"] }] });
+    check("with suggestions off, Gemini's gap names are never written", !w.t.roadmapItem.some((i) => i.kind === "GAP") && !/Bayesian/.test(json(w.t.roadmapItem)));
+    const view0 = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    check("…and the view lists none", (view0.draft?.gaps ?? []).length === 0 && (view0.gaps ?? []).length === 0);
+    const [m1] = rowsOf(w, id, 1);
+    const base = itemsOf(w, m1.id)[0];
+    w.t.roadmapItem.push({ ...base, id: "gap-1", lineageId: "lin-gap-1", kind: "GAP", ord: 99, label: "Bayesian statistics", origin: "GEMINI", decision: "PENDING", domainId: null, catalogKey: null, notes: [], flags: [] } as ItemRec);
+    for (const m of rowsOf(w, id, 1)) await decideAll(w, id, m.id);
+    const acc = await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w));
+    check("a GAP row (written while suggestions were on) never blocks accept", acc.ok, json(acc));
+    check("…is never in a measure", !w.t.roadmapMeasure.some((x) => json(x).includes("lin-gap-1") || json(x).includes("gap-1")));
+    const preview = await S.startPreview(USER, m1.id, NOW, depsFor(w));
+    check("…and never a Today row or a pending decision at Start", !!preview && !preview.todayRows.some((r) => r.itemId === "gap-1") && !preview.pending.some((i) => i.id === "gap-1"), json(preview?.todayRows));
+  }
+
+  console.log("— rev 4: depth, held stages, the date (F-R4-9, F-R4-10, F-R4-11) —");
+  {
+    // REALISTIC: a draft write sets the realistic date (on the DRAFT); acceptance fixes it and the mode becomes CHOSEN.
+    const w = world();
+    const id = await newDraft(w, { ...INTAKE, dateMode: "REALISTIC", targetDay: undefined as unknown as DayKey });
+    eq("a REALISTIC draft starts with the provisional date", w.t.roadmap[0].targetDay, addDays(TODAY, 1080));
+    await S.buildStarterCore(USER, id, NOW, depsFor(w));
+    const realistic = rowsOf(w, id, 1).map((m) => m.dueDay as DayKey).sort().pop();
+    eq("…the starter's write sets the roadmap's date to D_real", w.t.roadmap[0].targetDay, realistic);
+    const acc = await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w));
+    const f = w.t.roadmapAcceptance[0]?.feasibility as Feasibility | undefined;
+    check("acceptance fixes it: CHOSEN, the date the realistic one, dateOrigin REALISTIC ('the date the app set')", acc.ok && w.t.roadmap[0].dateMode === "CHOSEN" && w.t.roadmap[0].targetDay === realistic && f?.dateCheck?.dateOrigin.origin === "REALISTIC", json([acc, w.t.roadmap[0].dateMode, f?.dateCheck?.dateOrigin]));
+    const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    check("…the header keeps who set it", view.header?.dateOrigin?.origin === "REALISTIC" && view.header.depth === 12 && view.dateCheck?.verdict === "FITS");
+  }
+  {
+    const w = world();
+    const id = await drafted(w);
+    for (const m of rowsOf(w, id, 1)) await decideAll(w, id, m.id);
+    mark(w, rowsOf(w, id, 1)[1].id, "[date-impossible]");
+    eq("an IMPOSSIBLE date refuses accept for that depth and date", errOf(await S.acceptCore(USER, id, { overAccepted: true }, NOW, depsFor(w))), S.DATE_IMPOSSIBLE);
+    const w2 = world();
+    const id2 = await drafted(w2);
+    for (const m of rowsOf(w2, id2, 1)) await decideAll(w2, id2, m.id);
+    mark(w2, rowsOf(w2, id2, 1)[1].id, "[date-over]");
+    const over = await S.acceptCore(USER, id2, { overAccepted: false }, NOW, depsFor(w2));
+    check("an OVER date needs the switch", !over.ok && /over your hours or pace/.test(errOf(over)));
+    const kept = await S.acceptCore(USER, id2, { overAccepted: true }, NOW, depsFor(w2));
+    check("…with it, Over is stored for good", kept.ok && w2.t.roadmapAcceptance[0].overAccepted === true, json(kept));
+    const w3 = world();
+    const id3 = await drafted(w3);
+    for (const m of rowsOf(w3, id3, 1)) await decideAll(w3, id3, m.id);
+    mark(w3, rowsOf(w3, id3, 1)[0].id, "[too-soon]");
+    eq("a realistic date under 35 days away is refused at accept", errOf(await S.acceptCore(USER, id3, { overAccepted: false }, NOW, depsFor(w3))), S.ONLY_WEEKS_AWAY);
+  }
+  {
+    // Held stages (F-R4-10): reached at acceptance, never startable, no rank; a plan whose final stage is held is refused.
+    const w = world();
+    const id = await drafted(w);
+    const [h1] = rowsOf(w, id, 1);
+    const held = w.t.roadmapMilestone.find((m) => m.id === h1.id) as MilestoneRec;
+    held.feasibility = { ...((held.feasibility as object) ?? {}), notes: ["HELD_AT_START"] };
+    w.t.roadmapItem = w.t.roadmapItem.filter((i) => i.milestoneId !== h1.id || i.kind === "DOMAIN");
+    const acc = await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w));
+    const after = w.t.roadmapMilestone.find((m) => m.id === h1.id) as MilestoneRec;
+    check("a held stage is PLANNED with reachedDay the acceptance day, and no goal", acc.ok && after.status === "PLANNED" && after.reachedDay === TODAY && after.goalId == null, json([acc, after]));
+    eq("…never startable", errOf(await S.startMilestoneCore(USER, h1.id, START_ALL, NOW, depsFor(w))), S.LINEAGE_REACHED);
+    const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    check("…'Held when you began' on the list, and Now is the next stage", view.milestones[0].held === true && view.current?.milestone.id !== h1.id, json(view.milestones[0]));
+    check("…it gives no rank (the rank reader counts reaches inside the plan)", (view.rank?.index ?? 0) === 0 || view.rank?.name === "Initiate", json(view.rank?.name));
+    const w2 = world();
+    const id2 = await drafted(w2);
+    for (const m of rowsOf(w2, id2, 1)) (w2.t.roadmapMilestone.find((x) => x.id === m.id) as MilestoneRec).feasibility = { notes: ["HELD_AT_START"] };
+    eq("a plan whose final stage is already held is refused at accept", errOf(await S.acceptCore(USER, id2, { overAccepted: false }, NOW, depsFor(w2))), S.NOTHING_LEFT);
+  }
+  {
+    // Lower the depth (F-R4-11): refused while a started stage works above it; otherwise the stages above dropped, a new end state.
+    const w = world();
+    const id = await accepted(w);
+    const [f1, m2] = rowsOf(w, id, 1);
+    for (const x of w.t.roadmapMeasure.filter((x) => x.milestoneId === m2.id && x.kind === "CARDS_AT_LEVEL")) x.minLevel = 12;
+    for (const x of w.t.roadmapMeasure.filter((x) => x.milestoneId === f1.id && x.kind === "CARDS_AT_LEVEL")) x.minLevel = 10;
+    const off = await S.lowerDepthCore(USER, id, 10, "CHOICE", NOW, { ...depsFor(w), env: WRITES_OFF });
+    eq("lowering refuses with writes off", errOf(off), ROADMAP_WRITES_OFF);
+    w.t.roadmapMilestone.find((m) => m.id === m2.id)!.status = "STARTED";
+    const refused = await S.lowerDepthCore(USER, id, 10, "CHOICE", NOW, depsFor(w));
+    check("refused while a STARTED Mastered-gate milestone works above the new depth", !refused.ok && /Close or drop milestone 2 first/.test(errOf(refused)), json(refused));
+    w.t.roadmapMilestone.find((m) => m.id === m2.id)!.status = "PLANNED";
+    const st = await S.startMilestoneCore(USER, f1.id, START_ALL, NOW, depsFor(w));
+    check("fixture: Fluent started", st.ok, json(st));
+    const goalsBefore = json(w.templates.map((t) => [t.id, t.stated, t.archivedAt]));
+    const profOf = () => w.t.readings.filter((x) => x.measureKey.startsWith("PROFICIENCY|"));
+    const profBefore = json(profOf());
+    const lowered = await S.lowerDepthCore(USER, id, 10, "CHOICE", at(1_000), depsFor(w));
+    const r = w.t.roadmap[0];
+    const dropped = w.t.roadmapMilestone.find((m) => m.id === m2.id) as MilestoneRec;
+    check("with Fluent started and Mastered unstarted, lowering to Fluent sets the depth and drops Mastered (DEPTH_LOWERED)", lowered.ok && r.depth === 10 && dropped.status === "DISCARDED" && (dropped.feasibility as { notes?: string[] }).notes?.includes("DEPTH_LOWERED") === true, json([lowered, r.depth, dropped.status]));
+    check("…keeps Fluent's measures, writes no goalMp and touches no goal", measuresOf(w, f1.id).some((x) => x.kind === "CARDS_AT_LEVEL") && json(w.templates.map((t) => [t.id, t.stated, t.archivedAt])) === goalsBefore);
+    const rec = w.t.roadmapAcceptance[w.t.roadmapAcceptance.length - 1];
+    const end = rec.endState as { measureKey: string }[];
+    check("…a new end-state record (acceptances are never updated) at the new depth (`rc` at 10), with the choice for good", rec.version === 1 && rec.previousVersion === 1 && end.every((t) => /\|L10\|rc$/.test(t.measureKey)) && (rec.feasibility as Feasibility).depthChoice?.to === 10 && (rec.feasibility as Feasibility).depthChoice?.reason === "CHOICE", json([end, (rec.feasibility as Feasibility).depthChoice]));
+    check("…one rebased Proficiency reading (the day's one row, rewritten over the new end state)", profOf().length === 1 && json(profOf()) !== profBefore, json(profOf()));
+    const view = await S.loadRoadmapView(USER, at(2_000), depsFor(w));
+    check("…the list shows the dropped stage ('dropped when the depth was lowered') and the Depth line the choice", view.milestones.some((m) => m.id === m2.id && m.state === "DROPPED") && view.depth?.depthChoice?.from === 12, json([view.milestones.map((m) => [m.id === m2.id, m.state]), view.depth?.depthChoice]));
+    eq("…the lowering is never an Undo-able acceptance", errOf(await S.undoAcceptCore(USER, id, 1, at(3_000), depsFor(w))), "The depth was lowered on this plan since; re-plan instead.");
+    eq("…and a depth below the current one only", errOf(await S.lowerDepthCore(USER, id, 12, "CHOICE", at(4_000), depsFor(w))), "Pick a depth below the current one.");
+  }
+  {
+    // CALIBRATED (F-R4-11): an input the accepted dates assumed is measured now.
+    const w = world();
+    const id = await accepted(w);
+    const acc = w.t.roadmapAcceptance[0];
+    const f = acc.feasibility as Feasibility;
+    acc.feasibility = { ...f, dateCheck: { ...(f.dateCheck as DateCheck), dateOrigin: { origin: "REALISTIC", calibrating: ["p"] } } };
+    const measuredIo = { ...w.io(), throughput: async (_u: string, finalDay: DayKey) => ({ ...S.calibratingThroughput(finalDay), passShare: { kind: "measured" as const, value: 0.76, n: 40 } }) };
+    const view = await S.loadRoadmapView(USER, NOW, depsFor(w, { io: measuredIo }));
+    const hit = view.triggers.find((t) => t.trigger === "CALIBRATED");
+    eq("the roadmap offers to re-date once the pass rate is measured", hit?.line, "Your pass rate is now measured (76%). Re-date the stages you haven't started?");
+    const still = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    check("…not while it is still calibrating", !still.triggers.some((t) => t.trigger === "CALIBRATED"));
+    void id;
+  }
+
+  console.log("— rev 4: the fix-round carry-overs —");
+  {
+    // The "opposite state": drop, Start again, unarchive: the dormant copy never reaches the engine and isn't carried into a re-plan.
+    const w = world();
+    const id = await accepted(w);
+    const [m1] = rowsOf(w, id, 1);
+    const copyId = await dropAndStartAgain(w, m1);
+    goalOf(w, m1.id).archivedAt = null;
+    const seen: { where: string; carried: [string | null, DayKey | null][]; lineage: number }[] = [];
+    const rp = await S.replanCore(USER, id, "REFIT", at(2_000), depsFor(w, { lanes: spyLanes(w, seen, m1.lineageId) }));
+    check("fixture: a re-fit with the original open again", rp.ok, json(rp));
+    check("drop → Start again → unarchive: the engine reads one row of that position (the original), never the dormant copy", seen.length > 0 && seen.every((s) => s.lineage === 1 && s.carried.some(([cid]) => cid === m1.id)), json(seen));
+    check("…and the re-plan doesn't carry the copy forward", !rowsOf(w, id, 2).some((m) => m.lineageId === m1.lineageId), json(rowsOf(w, id, 2).map((m) => m.lineageId)));
+    void copyId;
+  }
+  {
+    // Lines a started milestone covers are in the plan (fix round 2's carry-over): not "Not in this plan yet", and never a second topic.
+    const w = world();
+    const outline: Intake = { ...INTAKE, syllabus: { lines: ["Conditional probability", "Bayes' theorem"], source: null, lineDomains: ["d-prob", "d-inf"] } };
+    const id = await drafted(w, { milestones: [{ domains: ["d-prob"], lines: [0] }, { domains: ["d-inf"] }] }, outline);
+    await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w));
+    const [m1] = rowsOf(w, id, 1);
+    await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w));
+    await S.replanCore(USER, id, "MANUAL", at(1_000), depsFor(w));
+    const view = await S.loadRoadmapView(USER, at(2_000), depsFor(w));
+    eq("a re-plan's 'Not in this plan yet' leaves out the line the started milestone covers", view.draft?.uncoveredSyllabus, [1]);
+    const draftRow = rowsOf(w, id, 2)[0];
+    const dup = await S.addItemCore(USER, draftRow.id, { kind: "TOPIC", syllabusRef: 0 }, at(3_000), depsFor(w));
+    check("…and [Add as topic] refuses it (already a topic of the plan)", !dup.ok && /already a topic/.test(errOf(dup)), json(dup));
+  }
+  {
+    // A started milestone's check reads its re-fit at Start (fix round 2's carry-over): its StartSnapshot feasibility and start day.
+    const w = world();
+    const id = await accepted(w);
+    const [m1] = rowsOf(w, id, 1);
+    await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w));
+    const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    const cur = view.current as (typeof view.current & { startFeasibility?: unknown; startedDay?: DayKey | null }) | null;
+    check("Now carries the started milestone's re-fit at Start and its start day", cur?.startedDay === TODAY && cur.startFeasibility != null, json([cur?.startedDay, !!cur?.startFeasibility]));
+  }
+  {
+    // The production monitors (F-R4-20): read-only SQL the lead runs.
+    check("every production monitor is one read-only SELECT", S.ROADMAP_MONITOR_QUERIES.length >= 12 && S.ROADMAP_MONITOR_QUERIES.every((q) => /^\s*SELECT\b/i.test(q.sql) && !/\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE)\b/i.test(q.sql)), json(S.ROADMAP_MONITOR_QUERIES.map((q) => q.name)));
+  }
+
+  // ═══ Revision 4 fix round (the three reviews' findings on lane R4; contracts §15.15) ═══
+  console.log("— rev 4 fix round: the aim's 'Not now' and [Keep the dates] (§15.10) —");
+  {
+    // The LATER line's × (lens 3 #9, option (a)): the 'hide:<day>' cookie, read as HIDDEN, so its label is true.
+    const jar = new FakeJar();
+    const r = await S.hideAimPromptCore(jar, NOW);
+    const set = jar.sets[0];
+    check(
+      "hideAimPrompt writes 'hide:<today>' (maxAge 365 days, path /, lax, httpOnly), no database",
+      r.ok && set?.name === AIM_PROMPT_COOKIE && set.value === `hide:${TODAY}` && set.maxAge === 365 * 86_400 && set.path === "/" && set.sameSite === "lax" && set.httpOnly,
+      json(set)
+    );
+    eq("…the invitation reads it as HIDDEN for 4 weeks (no suggestion on /you or Today), then asks again", [aimPromptOf(set?.value, null, TODAY), aimPromptOf(set?.value, null, addDays(TODAY, 27)), aimPromptOf(set?.value, null, addDays(TODAY, 28))], ["HIDDEN", "HIDDEN", "ASK"]);
+    eq("…a stored no still wins", aimPromptOf(set?.value, false, TODAY), "OFF");
+    check("…its action is a cookie only (no writes-off refusal: it works on any server)", /export async function hideAimPrompt\(\)[\s\S]{0,400}?hideAimPromptCore\(await jarOf\(\), new Date\(\)\)/.test(ACTIONS_SRC) && !/STUB: lane R4 implements/.test(SERVER_SRC + ACTIONS_SRC));
+  }
+  {
+    // [Keep the dates] on the CALIBRATED offer (lens 2 and 3 minor): recorded on the plan, never in a device's localStorage.
+    const w = world();
+    const id = await accepted(w);
+    const acc = w.t.roadmapAcceptance[0];
+    const f = acc.feasibility as Feasibility;
+    acc.feasibility = { ...f, dateCheck: { ...(f.dateCheck as DateCheck), dateOrigin: { origin: "REALISTIC", calibrating: ["p", "c"] } } };
+    const keep = { ...acc, feasibility: null };
+    const checkBefore = json({ ...(acc.feasibility as Feasibility).dateCheck, dateOrigin: null });
+    const measuredIo = { ...w.io(), throughput: async (_u: string, finalDay: DayKey) => ({ ...S.calibratingThroughput(finalDay), passShare: { kind: "measured" as const, value: 0.76, n: 40 } }) };
+    eq("keepCalibratedDates refuses with writes off", errOf(await S.keepCalibratedDatesCore(USER, id, NOW, { ...depsFor(w, { io: measuredIo }), env: WRITES_OFF })), ROADMAP_WRITES_OFF);
+    eq("…and with no CALIBRATED offer (nothing assumed is measured yet)", errOf(await S.keepCalibratedDatesCore(USER, id, NOW, depsFor(w))), S.NO_CALIBRATED_OFFER);
+    const kept = await S.keepCalibratedDatesCore(USER, id, NOW, depsFor(w, { io: measuredIo }));
+    const after = w.t.roadmapAcceptance[0];
+    const fa = after.feasibility as Feasibility;
+    check("[Keep the dates]: the acceptance's dateOrigin.calibrating loses the input measured now (p), keeps the one still assumed (c)", kept.ok && json(fa.dateCheck?.dateOrigin.calibrating) === json(["c"]) && fa.dateCheck?.dateOrigin.origin === "REALISTIC", json([kept, fa.dateCheck?.dateOrigin]));
+    check("…nothing is re-dated and nothing else changes: one record, its end state, dates and verdict as they were", w.t.roadmapAcceptance.length === 1 && json({ ...after, feasibility: null }) === json(keep) && json({ ...fa.dateCheck, dateOrigin: null }) === checkBefore, "");
+    const view = await S.loadRoadmapView(USER, NOW, depsFor(w, { io: measuredIo }));
+    check("…the offer doesn't come back (on any device: it is the plan's record)", !view.triggers.some((t) => t.trigger === "CALIBRATED") && json(view.header?.dateOrigin?.calibrating) === json(["c"]), json(view.triggers.map((t) => t.trigger)));
+    eq("…a second tap has nothing to keep", errOf(await S.keepCalibratedDatesCore(USER, id, at(1_000), depsFor(w, { io: measuredIo }))), S.NO_CALIBRATED_OFFER);
+    const d = world();
+    const did = await drafted(d);
+    check("…a draft roadmap is refused (only an accepted plan has dates to keep)", !(await S.keepCalibratedDatesCore(USER, did, NOW, depsFor(d, { io: measuredIo }))).ok);
+  }
+
+  console.log("— rev 4 fix round: coverage frozen at intake (lens 2 major; §15.3) —");
+  {
+    const many = (dom: string, n: number, level = 3) => Array.from({ length: n }, () => card(dom, level));
+    const termOf = (w: FakeWorld, k: number, dom: string) => (w.t.roadmapAcceptance[k]?.endState as EndStateTerm[] | undefined)?.find((t) => t.measureKey.includes(`d:${dom}|`))?.target;
+    const covOf = (w: FakeWorld, k: number, dom: string) => ((w.t.roadmapAcceptance[k]?.feasibility as Feasibility | undefined)?.coverage ?? []).find((c) => c.domainId === dom);
+    const replanAccept = async (w: FakeWorld, id: string, from: number) => {
+      const rp = await S.replanCore(USER, id, "REFIT", at(from), depsFor(w));
+      if (!rp.ok) return rp;
+      const next = rowsOf(w, id, rp.value.version).find((m) => m.status === "DRAFT");
+      if (next) await decideAll(w, id, next.id);
+      return S.acceptCore(USER, id, { overAccepted: false }, at(from + 1_000), depsFor(w));
+    };
+    // 60 recall cards in Probability: n_d = 80% of 60 = 48 at intake.
+    const w = world();
+    w.tree[0].domains[0].cards = many("d-prob", 60);
+    const id = await accepted(w);
+    eq("fixture: the first acceptance's n_d is 80% of Probability's 60 recall cards (48)", termOf(w, 0, "d-prob"), 48);
+    check("…and the acceptance stores the breakdown it froze (live 60)", covOf(w, 0, "d-prob")?.live === 60, json(covOf(w, 0, "d-prob")));
+    w.tree[0].domains[0].cards.splice(0, 20);
+    const a2 = await replanAccept(w, id, 10_000);
+    check("archive 20 cards → re-plan → accept: n_d stays 48 (the counts at intake), never 32", a2.ok && termOf(w, 1, "d-prob") === 48 && covOf(w, 1, "d-prob")?.live === 60, json([a2, termOf(w, 1, "d-prob"), covOf(w, 1, "d-prob")]));
+    const w2 = world();
+    w2.tree[0].domains[0].cards = many("d-prob", 60);
+    const id2 = await accepted(w2);
+    w2.tree[0].domains[0].cards.push(...many("d-prob", 18));
+    const b2 = await replanAccept(w2, id2, 10_000);
+    check("write 18 cards → re-plan → accept: n_d stays 48, never today's 63", b2.ok && termOf(w2, 1, "d-prob") === 48, json([b2, termOf(w2, 1, "d-prob")]));
+    eq("…and no coverage choice appears", (w2.t.roadmapAcceptance[1]?.feasibility as Feasibility | undefined)?.coverageChoices ?? [], []);
+    const lowered = await S.lowerDepthCore(USER, id2, 10, "CHOICE", at(20_000), depsFor(w2));
+    const last = w2.t.roadmapAcceptance.length - 1;
+    check("…a lowered depth keeps n_d too (48 at the new depth), with the frozen breakdown on its record", lowered.ok && termOf(w2, last, "d-prob") === 48 && covOf(w2, last, "d-prob")?.live === 60, json([lowered, termOf(w2, last, "d-prob")]));
+    // A typed figure at or above the policy at intake never becomes a false choice when the library grows.
+    const w3 = world();
+    w3.tree[0].domains[0].cards = many("d-prob", 60);
+    const id3 = await drafted(w3, REPLY, { ...INTAKE, coverage: { "d-prob": 50 } });
+    await decideAll(w3, id3, rowsOf(w3, id3, 1).find((m) => m.status === "DRAFT")!.id);
+    const c3 = await S.acceptCore(USER, id3, { overAccepted: false }, NOW, depsFor(w3));
+    w3.tree[0].domains[0].cards.push(...many("d-prob", 18));
+    const c3b = await replanAccept(w3, id3, 10_000);
+    check("a typed 50 (at intake's policy 48: not a choice) stays no choice after 18 more cards (today's policy 63)", c3.ok && c3b.ok && termOf(w3, 1, "d-prob") === 50 && ((w3.t.roadmapAcceptance[1]?.feasibility as Feasibility).coverageChoices ?? []).length === 0, json((w3.t.roadmapAcceptance[1]?.feasibility as Feasibility | undefined)?.coverageChoices));
+    // A policy that moves under an unchanged typed figure (the user's own line Domains) makes no false "your choice";
+    // a figure typed anew below the policy is one, dated the day it was typed.
+    const w6 = world();
+    w6.tree[0].domains[0].cards = many("d-prob", 40);
+    const lines = Array.from({ length: 12 }, (_, i) => `Topic ${i + 1}`);
+    const id6 = await drafted(w6, REPLY, { ...INTAKE, coverage: { "d-prob": 33 }, syllabus: { lines, source: null, lineDomains: lines.map(() => null) } });
+    await decideAll(w6, id6, rowsOf(w6, id6, 1).find((m) => m.status === "DRAFT")!.id);
+    const f6 = await S.acceptCore(USER, id6, { overAccepted: false }, NOW, depsFor(w6));
+    const r6 = w6.t.roadmap.find((r) => r.id === id6) as RoadmapRec;
+    r6.syllabus = { lines, source: null, lineDomains: lines.map(() => "d-prob") };
+    const g6 = await replanAccept(w6, id6, 10_000);
+    const choices6 = (w6.t.roadmapAcceptance[1]?.feasibility as Feasibility | undefined)?.coverageChoices;
+    const cov6 = covOf(w6, 1, "d-prob");
+    check("every outline line tied to Probability raises its policy to 36 over the typed 33: no choice recorded (the figure didn't change)", f6.ok && g6.ok && cov6?.policy === 36 && cov6.typed === 33 && (choices6 ?? []).length === 0, json([cov6?.policy, choices6]));
+    r6.coverage = { "d-prob": 30 };
+    const h6 = await replanAccept(w6, id6, 3 * 86_400_000);
+    eq("…typing 30 afterwards is the user's choice, dated that day", [h6.ok, (w6.t.roadmapAcceptance[2]?.feasibility as Feasibility | undefined)?.coverageChoices], [true, [{ domainId: "d-prob", policy: 36, typed: 30, day: addDays(TODAY, 3) }]]);
+    // A typed figure below the policy is a choice, recorded once, its day kept.
+    const w4 = world();
+    w4.tree[0].domains[0].cards = many("d-prob", 60);
+    const id4 = await drafted(w4, REPLY, { ...INTAKE, coverage: { "d-prob": 40 } });
+    await decideAll(w4, id4, rowsOf(w4, id4, 1).find((m) => m.status === "DRAFT")!.id);
+    await S.acceptCore(USER, id4, { overAccepted: false }, NOW, depsFor(w4));
+    const later = 3 * 86_400_000;
+    const d4 = await replanAccept(w4, id4, later);
+    eq("a typed 40 under the policy 48 is a coverage choice, its day kept through a re-plan days later", [d4.ok, (w4.t.roadmapAcceptance[1]?.feasibility as Feasibility | undefined)?.coverageChoices], [true, [{ domainId: "d-prob", policy: 48, typed: 40, day: TODAY }]]);
+    // The first acceptance freezes to the counts the draft's rows were built from, not the library on the day of the tap.
+    const w5 = world();
+    w5.tree[0].domains[0].cards = many("d-prob", 60);
+    const id5 = await drafted(w5);
+    const draftLive = rowsOf(w5, id5, 1)
+      .map((m) => (m.feasibility as { coverage?: { domainId: string; live: number }[] } | null)?.coverage?.find((c) => c.domainId === "d-prob")?.live)
+      .find((x) => x != null);
+    eq("a draft's rows carry the coverage they were built from (live 60): the first acceptance freezes to it", draftLive, 60);
+    await decideAll(w5, id5, rowsOf(w5, id5, 1).find((m) => m.status === "DRAFT")!.id);
+    w5.tree[0].domains[0].cards.push(...many("d-prob", 18));
+    const e5 = await S.acceptCore(USER, id5, { overAccepted: false }, NOW, depsFor(w5));
+    check("cards written between the draft and the first accept: n_d is the draft's (48), so the end state equals the final stage's terms", e5.ok && termOf(w5, 0, "d-prob") === 48 && covOf(w5, 0, "d-prob")?.live === 60, json([termOf(w5, 0, "d-prob"), covOf(w5, 0, "d-prob")]));
+  }
+
+  console.log("— rev 4 fix round: clean entry in the planning context (§15.1) —");
+  {
+    const w = world();
+    w.tree[0].domains[0].cards.push({ ...card("d-prob", 12), id: "c-retry" }, { ...card("d-prob", 12), id: "c-clean" }, { ...card("d-prob", 11), id: "c-eleven" }, { ...card("d-prob", 12), id: "c-multi", type: "MULTI" });
+    w.reviews = {
+      "c-retry": [
+        { day: addDays(TODAY, -61), detail: "strike · L11" },
+        { day: addDays(TODAY, -60), detail: "advanced · L11→12" },
+      ],
+      "c-clean": [{ day: addDays(TODAY, -60), detail: "advanced · L11→12" }],
+    };
+    const seen: CardState[][] = [];
+    const spy = { ...lanesFor(w), stageLadderOf: ((intake, input, names, makeId) => (seen.push(input.scopes.find((sc) => sc.domainIds.includes("d-prob"))?.cards ?? []), lanesFor(w).stageLadderOf!(intake, input, names, makeId))) as RoadmapLanes["stageLadderOf"] };
+    const r = await S.saveIntakeCore(USER, INTAKE, NOW, depsFor(w, { lanes: spy }));
+    const read = w.reviewReads[0];
+    check(
+      "planContext reads the REVIEW rows of the recall cards at exactly the depth (12), once, over retryReadDaysOf(12, m)",
+      r.ok && w.reviewReads.length === 1 && json([...read.ids].sort()) === json(["c-clean", "c-retry"]) && read.from === addDays(TODAY, -retryReadDaysOf(12, 1)),
+      json(w.reviewReads)
+    );
+    const at12 = (seen[0] ?? []).filter((c) => c.level === 12 && c.recall !== false);
+    check("…the card that entered level 12 on a retry carries CardState.retryEntry (R2's held-at-start and dating read it); the clean one doesn't", at12.length === 2 && at12.filter((c) => c.retryEntry === true).length === 1, json(at12));
+    const plain = world();
+    await S.saveIntakeCore(USER, INTAKE, NOW, depsFor(plain));
+    eq("…no read when no card sits at the depth", plain.reviewReads.length, 0);
+    const track = world();
+    track.tree[0].domains[0].cards.push({ ...card("d-prob", 12), id: "c-t" });
+    await S.saveIntakeCore(USER, { ...INTAKE, aim: "Run a 10K", fieldId: null, track: "BODY", domainIds: [] }, NOW, depsFor(track));
+    eq("…and none on a track Area (no depth)", track.reviewReads.length, 0);
+    eq("…and no acceptance read on a version-0 plan (the intake's preview, a first draft: nothing accepted)", [w.acceptanceReads.length, plain.acceptanceReads.length], [0, 0]);
+  }
+
+  console.log("— rev 4 final round: the clean-entry window reads the wider of the acceptance's m and the live one (R1's cleanReadDaysOf) —");
+  {
+    // A card that entered level 12 on a retry 200 days ago, its interval set under an interval multiplier of 1.5 recorded on
+    // the acceptance and since unequipped (live m 1): the live window (184 days) misses both rows, the acceptance's (264) holds them.
+    const plan = async (o: { accM: number; liveM?: number; grace?: number; fails?: boolean; cards?: boolean }) => {
+      const w = world();
+      const id = await accepted(w);
+      const acc = w.t.roadmapAcceptance.filter((a) => a.roadmapId === id && a.undoneAt == null).sort((a, b) => b.version - a.version || b.acceptedAt.getTime() - a.acceptedAt.getTime())[0];
+      acc.intervalMultiplier = o.accM;
+      if (o.cards !== false) w.tree[0].domains[0].cards.push({ ...card("d-prob", 12), id: "c-old" }, { ...card("d-prob", 12), id: "c-first" });
+      w.reviews = {
+        "c-old": [
+          { day: addDays(TODAY, -200), detail: "strike · L11" },
+          { day: addDays(TODAY, -199), detail: "advanced · L11→12" },
+        ],
+        "c-first": [{ day: addDays(TODAY, -199), detail: "advanced · L11→12" }],
+      };
+      w.reviewReads = [];
+      w.acceptanceReads = [];
+      w.acceptanceFails = !!o.fails;
+      const liveM = o.liveM ?? 1;
+      const grace = o.grace ?? 0;
+      const io = { ...w.io(), intervalMultiplier: async () => liveM, reachModifiers: async () => ({ intervalMultiplier: liveM, extraStrikes: 0, graceExtraDays: grace }) };
+      // Every RealismInput a lane is handed: the d-prob scope's CardStates (CardState.retryEntry is what planContext read).
+      const seen: CardState[][] = [];
+      const base = lanesFor(w) as Record<string, unknown>;
+      const lanes = Object.fromEntries(
+        Object.entries(base).map(([k, f]) => [
+          k,
+          typeof f !== "function"
+            ? f
+            : (...args: unknown[]) => {
+                for (const a of args) {
+                  const scopes = a && typeof a === "object" ? (a as { scopes?: { domainIds: string[]; cards: CardState[] }[] }).scopes : undefined;
+                  if (Array.isArray(scopes)) seen.push(scopes.find((sc) => sc.domainIds.includes("d-prob"))?.cards ?? []);
+                }
+                return (f as (...x: unknown[]) => unknown)(...args);
+              },
+        ])
+      ) as Partial<RoadmapLanes>;
+      const errors: string[] = [];
+      const origError = console.error;
+      console.error = (...args: unknown[]) => void errors.push(args.map(String).join(" "));
+      let view: Awaited<ReturnType<typeof S.loadRoadmapView>> | null = null;
+      let froms: DayKey[] = [];
+      let accReads: string[] = [];
+      try {
+        // The page's read (planContext once), then a re-plan, whose ladder lanes are handed the CardStates.
+        view = await S.loadRoadmapView(USER, NOW, depsFor(w, { io, lanes }));
+        froms = w.reviewReads.map((r) => r.from);
+        accReads = [...w.acceptanceReads];
+        await S.replanCore(USER, id, "REFIT", at(1_000), depsFor(w, { io, lanes }));
+      } finally {
+        console.error = origError;
+      }
+      const at12 = (seen.find((cs) => cs.some((c) => c.level === 12)) ?? []).filter((c) => c.level === 12);
+      return { w, id, view, froms, accReads, retries: at12.filter((c) => c.retryEntry === true).length, at12: at12.length, errors };
+    };
+    const back = (from: DayKey | undefined) => (from ? daysBetween(from, TODAY) : null);
+    const wide = await plan({ accM: 1.5 });
+    eq(
+      "an acceptance at m 1.5 under a live m of 1: planContext reads the REVIEW rows over retryReadDaysOf(12, 1.5) = 264 days, R1's cleanReadDaysOf(12, 1.5, the live loadout) to the day",
+      [wide.froms.map(back), cleanReadDaysOf(12, 1.5, { intervalMultiplier: 1, graceExtraDays: 0 }), retryReadDaysOf(12, 1.5)],
+      [[264], 264, 264]
+    );
+    eq("…the acceptance read once (by the roadmap's id), only because a card sits at the depth", wide.accReads, [wide.id]);
+    eq("…so the card that entered 12 on a retry under the old loadout carries CardState.retryEntry; the first-try one doesn't", [wide.at12, wide.retries], [2, 1]);
+    const live = await plan({ accM: 1 });
+    eq("before this round's read (the live m alone, as an acceptance at m 1 reads): 184 days, both rows missed, the retry entry read clean", [live.froms.map(back), live.at12, live.retries], [[184], 2, 0]);
+    const liveWider = await plan({ accM: 1, liveM: 1.5, grace: 2 });
+    eq(
+      "a live m wider than the acceptance's (1.5 over 1) with grace +2: retryReadDaysOf(12, 1.5, 2) = 268, R1's figure, and the retry entry is read",
+      [liveWider.froms.map(back), cleanReadDaysOf(12, 1, { intervalMultiplier: 1.5, graceExtraDays: 2 }), liveWider.retries],
+      [[268], 268, 1]
+    );
+    const grid: string[] = [];
+    for (const accM of [1, 1.25, 1.5, Number.NaN, 0])
+      for (const liveM of [1, 1.5])
+        for (const grace of [0, 2]) {
+          const r = await plan({ accM, liveM, grace });
+          const want = cleanReadDaysOf(12, accM, { intervalMultiplier: liveM, graceExtraDays: grace });
+          if (json(r.froms.map(back)) !== json([want])) grid.push(`acc ${accM} live ${liveM} g${grace}: ${json(r.froms.map(back))} ≠ ${want}`);
+        }
+    check("the window equals R1's cleanReadDaysOf on every case (acceptance m 1, 1.25, 1.5, NaN, 0 × live m 1, 1.5 × grace 0, 2): one window for the readings, the quests and the plan", grid.length === 0, grid.join("; "));
+    const failing = await plan({ accM: 1.5, fails: true });
+    check(
+      "an unreadable acceptance is logged and the window reads the live m (184 days): the view still loads and never throws",
+      json(failing.froms.map(back)) === json([184]) && failing.view != null && failing.errors.some((e) => /acceptance's interval multiplier is unavailable/.test(e)),
+      json({ froms: failing.froms, errors: failing.errors.slice(0, 2) })
+    );
+    const none = await plan({ accM: 1.5, cards: false });
+    eq("…and with no card at the depth, neither the acceptance nor the ledger is read", [none.w.acceptanceReads.length, none.w.reviewReads.length], [0, 0]);
+    const src = readFileSync(join(process.cwd(), "src/lib/roadmap-server.ts"), "utf8");
+    const storeRead = /async acceptanceMultiplier\(userId, roadmapId\) \{[\s\S]{0,400}?\n {2}\},/.exec(src)?.[0] ?? "";
+    check(
+      "the Prisma store reads the current acceptance as R1 does: the user's roadmap, undone ones skipped, acceptanceOrderBy (newest version, then newest record)",
+      /prisma\.roadmapAcceptance\.findFirst\(/.test(storeRead) && /undoneAt: null/.test(storeRead) && /roadmap: \{ userId \}/.test(storeRead) && /orderBy: acceptanceOrderBy\(\)/.test(storeRead),
+      storeRead
+    );
+  }
+
+  console.log("— rev 4 fix round: no model sizes a plan-born task; the monitors (§15.6) —");
+  {
+    const names = S.ROADMAP_MONITOR_QUERIES.map((q) => q.name);
+    const rm = S.ROADMAP_MONITOR_QUERIES.find((q) => q.name === "rm-templates-model-basis");
+    check("a monitor finds a plan-born template with a model's words as its 'Why' (expect 0 rows)", !!rm && /"captureKey" LIKE 'rm:%'/.test(rm.sql) && /"gradeSource" = 'AI'/.test(rm.sql) && /"gradeBasis" IS NOT NULL/.test(rm.sql), json(names));
+    const tag = S.ROADMAP_MONITOR_QUERIES.find((q) => q.name === "review-level-tag");
+    check("…the level-tag monitor leaves out backfill rows (dedupeKey 'bf:…')", !!tag && /"dedupeKey" NOT LIKE 'bf:%'/.test(tag.sql) && /"dedupeKey" IS NULL/.test(tag.sql), tag?.sql ?? "");
+  }
+
+  console.log("— rev 4 fix round: one definition each (session picks, production, ranks, gaps not shown) —");
+  {
+    // Session picks (§15.8, lens 1 minor): lose-8kg with "pregnant" — a cue-less constraint excludes nothing, so Gemini's
+    // FULL_ATTEMPT step and PERFORMANCE_CHECK checkpoint wait for the confirm with the practices.
+    const pregnant = (w: FakeWorld): Partial<RoadmapLanes> => ({
+      ...lanesFor(w),
+      validateKeysOnly: ((parsed, c) => {
+        const v = lanesFor(w).validateKeysOnly!(parsed, c);
+        const last = v.milestones.length - 1;
+        const aim = c.intake.aim;
+        return {
+          ...v,
+          milestones: v.milestones.map((m, i) =>
+            i !== last
+              ? m
+              : {
+                  ...m,
+                  items: [
+                    ...m.items,
+                    item("STEP", 20, catalogWords("FULL_ATTEMPT", [], aim, "BODY"), { catalogKey: "FULL_ATTEMPT", notes: ["GEMINI_PICK"], lineageId: "lin-full" }),
+                    item("CHECKPOINT", 21, catalogWords("PERFORMANCE_CHECK", [], aim, "BODY"), { catalogKey: "PERFORMANCE_CHECK", checkpointKind: "PERFORMANCE_CHECK", notes: ["GEMINI_PICK"], lineageId: "lin-perf" }),
+                  ],
+                }
+          ),
+        };
+      }) as RoadmapLanes["validateKeysOnly"],
+    });
+    const lose: Intake = { ...INTAKE, aim: "Lose 8 kg", fieldId: null, track: "BODY", domainIds: [], constraints: "pregnant" };
+    const reply = { milestones: [{ practices: [{ name: "a", method: "X" }] }, {}] };
+    const draftWith = async (w: FakeWorld) => {
+      const id = await newDraft(w, lose);
+      const tasks: (() => Promise<void> | void)[] = [];
+      const claim = await S.claimDraftCore(USER, id, { force: true }, NOW, depsFor(w, { lanes: pregnant(w), defer: (t) => tasks.push(t), callModel: async () => reply, clock: () => NOW }));
+      if (!claim.ok) throw new Error(`fixture claim: ${claim.error}`);
+      for (const t of tasks) await t();
+      return id;
+    };
+    const w = world();
+    const id = await draftWith(w);
+    const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    const kinds = view.draft?.sessionPicks?.kinds ?? [];
+    check("the confirm lists a picked FULL_ATTEMPT step and PERFORMANCE_CHECK checkpoint with the practices, the constraint quoted", view.draft?.sessionPicks?.decision === "PENDING" && ["FULL_ATTEMPT", "PERFORMANCE_CHECK", "HARDER_SESSION"].every((k) => kinds.includes(k as never)) && view.draft.sessionPicks.constraints === "pregnant", json(view.draft?.sessionPicks));
+    eq("…accept waits for the confirm", errOf(await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w))), S.CONFIRM_PICKS);
+    const easy = await S.confirmSessionPicksCore(USER, id, "EASY", NOW, depsFor(w));
+    const all = rowsOf(w, id, 1).flatMap((m) => itemsOf(w, m.id));
+    check("'Use easy, mobility and technique instead' removes the picked step and checkpoint too", easy.ok && all.filter((i) => i.catalogKey === "FULL_ATTEMPT" || i.catalogKey === "PERFORMANCE_CHECK").every((i) => i.decision === "REMOVED"), json(all.map((i) => [i.catalogKey, i.decision])));
+    const lastRow = rowsOf(w, id, 1).slice(-1)[0];
+    check("…a milestone whose only picks were the step and the checkpoint gets no practice in their place", !itemsOf(w, lastRow.id).some((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED"), json(itemsOf(w, lastRow.id).map((i) => [i.kind, i.catalogKey, i.decision])));
+    check("…the picked practice is replaced by code's safe sessions, and the plan is accepted", all.some((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED" && ["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION"].includes(i.catalogKey ?? "")) && (await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w))).ok);
+    const k = world();
+    const kid = await draftWith(k);
+    const kept = await S.confirmSessionPicksCore(USER, kid, "KEEP", NOW, depsFor(k));
+    check("[Keep them] keeps every pick (CHECKED), the step and the checkpoint included", kept.ok && rowsOf(k, kid, 1).flatMap((m) => itemsOf(k, m.id)).filter((i) => i.notes.includes("GEMINI_PICK")).every((i) => i.decision === "CHECKED"));
+  }
+  {
+    // Production practice (§15.9): roadmap-catalog practiceRoleOf, catalog type first, then the method.
+    const w = world();
+    const id = await accepted(w);
+    const late = rowsOf(w, id, 1);
+    // Fluent and Mastered gates (the fixture's stage measures sit at level 6).
+    late.forEach((m, k) => measuresOf(w, m.id).filter((x) => x.kind === "CARDS_AT_LEVEL").forEach((x) => (x.minLevel = k === 0 ? 10 : 12)));
+    const setPractices = (patch: Partial<ItemRec>) => {
+      for (const m of late) for (const i of itemsOf(w, m.id)) if (i.kind === "PRACTICE") Object.assign(i, patch);
+    };
+    setPractices({ catalogKey: null, method: "WRITING", label: "My own essays", origin: "USER", decision: "EDITED" });
+    const writing = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    check("a typed WRITING practice from Fluent on is production practice (Paragon isn't closed by it)", !(writing.paragonMissing ?? []).includes("PRODUCTION"), json(writing.paragonMissing));
+    setPractices({ catalogKey: "RECALL_DRILLS", method: "DELIBERATE_PRACTICE" });
+    const recall = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    check("…a retrieval type isn't (PRODUCTION names what keeps Paragon closed)", (recall.paragonMissing ?? []).includes("PRODUCTION"), json(recall.paragonMissing));
+    check("…one definition: productionFromFluentOf reads practiceRoleOf", /function productionFromFluentOf[\s\S]{0,700}?practiceRoleOf\(i\) === "PRODUCTION"/.test(SERVER_SRC));
+  }
+  {
+    // A PART at the depth (§15.4): the gate two levels below's rank, never the depth's before it is held.
+    const partLanes = (w: FakeWorld, depth: 10 | 12): Partial<RoadmapLanes> => {
+      const base = lanesFor(w);
+      const reshape = (plan: MilestoneDraft[]) =>
+        plan.map((m, i) => ({
+          ...m,
+          stage: (i === 0 ? "PART" : depth === 12 ? "MASTERED" : "FLUENT") as MilestoneDraft["stage"],
+          measures: m.measures.map((x) => (x.kind === "CARDS_AT_LEVEL" ? { ...x, minLevel: depth, measureKey: cardsAtLevelKey(x.scope.domainIds ?? [], depth, i === 0 ? "r" : "rc") } : x)),
+        }));
+      return {
+        ...base,
+        stageLadderOf: (intake, input, names, makeId) => {
+          const res = base.stageLadderOf!(intake, input, names, makeId);
+          return res.ok ? { ...res, plan: reshape(res.plan) } : res;
+        },
+        starterLadder: (intake, input, names, makeId) => reshape(base.starterLadder!(intake, input, names, makeId)),
+      };
+    };
+    const ranksOf = async (depth: 10 | 12) => {
+      const w = world();
+      const lanes = partLanes(w, depth);
+      const id = await newDraft(w, { ...INTAKE, depth });
+      const built = await S.buildStarterCore(USER, id, NOW, depsFor(w, { lanes }));
+      for (const m of rowsOf(w, id, 1)) await decideAll(w, id, m.id);
+      const acc = await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w, { lanes }));
+      return built.ok && acc.ok ? rowsOf(w, id, 1).map((m) => [m.stage, m.rankIndex]) : [built, acc];
+    };
+    eq("a PART toward Mastered at a Mastered depth gives Expert (4), Mastered Virtuoso (5)", await ranksOf(12), [["PART", 4], ["MASTERED", 5]]);
+    eq("…a PART toward Fluent at a Fluent depth gives Specialist (3), Fluent Expert (4)", await ranksOf(10), [["PART", 3], ["FLUENT", 4]]);
+  }
+  {
+    // Gap names not shown (§15.5): hidden + dropped, one count; the run's facts carry its integrity, its paths made safe.
+    const w = world();
+    const id = await newDraft(w);
+    const integrity: ValidationIntegrity = { verdict: "CLEAN", violations: [], modelChars: 0, gapsKept: 0, gapsHidden: 2, gapsDropped: 3, notANameByClause: { link: 3 } };
+    const lanes = { ...lanesFor(w), integrityOf: (() => integrity) as RoadmapLanes["integrityOf"] };
+    const tasks: (() => Promise<void> | void)[] = [];
+    await S.claimDraftCore(USER, id, { force: true }, NOW, depsFor(w, { lanes, defer: (t) => tasks.push(t), callModel: async () => REPLY, clock: () => NOW }));
+    for (const t of tasks) await t();
+    const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    eq("'n not shown' counts every gap name not shown: hidden (2) + dropped (3)", view.draft?.gapsHidden, 5);
+    check("…and the run's facts carry the integrity verdict (RunFacts' integrity line, 'Drafted by' by its cause)", view.run?.report?.integrity?.verdict === "CLEAN" && view.run.report.integrity.gapsDropped === 3, json(view.run?.report?.integrity));
+    const run = w.t.roadmapRun.find((r) => r.kind === "GEMINI" && r.status === "OK") as RunRec;
+    (run.report as ValidationReport).integrity = { ...integrity, verdict: "REJECTED", violations: [{ code: "EXTRA_PROPERTY", path: "stages.buyTheOfficialCourse.kind" }] };
+    const again = await S.loadRoadmapView(USER, at(1_000), depsFor(w));
+    check("…a stored path is made safe again on read: only schema keys, indexes and '<extra>' reach a view", again.run?.report?.integrity?.violations[0]?.path === "stages.<extra>.kind" && !/buyTheOfficialCourse/.test(json(again)), json(again.run?.report?.integrity));
+  }
+
+  console.log("— rev 4 fix round: the view fields R5 read through casts (§15.11) —");
+  {
+    const w = world();
+    w.tree[0].domains[0].cards.push({ ...card("d-prob", 4), type: "MULTI" }, { ...card("d-prob", 4), type: "MULTI" });
+    const iv = await S.loadIntakeView(USER, NOW, depsFor(w));
+    const prob = iv.fields.find((f) => f.id === "f-stats")?.domains.find((d) => d.id === "d-prob");
+    eq("the intake's Domain options count multiple choice apart (nonRecall), as the draft's coverage does", [prob?.cards, prob?.nonRecall], [22, 2]);
+    await accepted(w);
+    const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    eq("the header carries the plan's chosen Domains ('Start again at a depth' carries them)", view.header?.domainIds, INTAKE.domainIds);
+    const { w: lw } = await legacyWorld();
+    const lv = await S.loadRoadmapView(USER, NOW, depsFor(lw));
+    check("a legacy plan's banner carries its Domains and Area for the restart handoff", json(lv.legacy?.domainIds) === json(INTAKE.domainIds) && lv.legacy?.areaFieldId === "f-stats", json(lv.legacy));
+    check("Now's StartSnapshot fields and the catalog pick are read on the contract (no cast left in roadmap-server)", !/Object\.assign\(view, \{ startFeasibility/.test(SERVER_SRC) && !/catalogKey\?: unknown \}\)\.catalogKey/.test(SERVER_SRC));
+  }
+
+  console.log("— rev 4 fix round: the one writer, depth counts, the legacy restart (lens 1, 2, 3) —");
+  {
+    // The tripwire refuses raw model words and a proposed name on any row; the generic update routes both through it.
+    const ctx = { roadmapId: "r1", syllabusLines: [], domainNames: { "d-prob": "Probability" }, rev4: true, track: "FIELD" as const, aim: INTAKE.aim, exam: null, required: ["d-prob"] };
+    const base: MilestoneDraft = { id: null, lineageId: "l1", version: 1, ord: 1, title: "Fluent: Probability to level 10+", titleOrigin: CODE_ORIGIN, titleDecision: "PENDING", windowStart: TODAY, dueDay: addDays(TODAY, 60), status: "DRAFT", rankIndex: null, overAccepted: false, items: [], measures: [], notes: [], stage: "FLUENT" };
+    const throws = (plan: MilestoneDraft[]) => {
+      try {
+        S.writeRoadmapRows([], { kind: "DRAFT", roadmapId: "r1", version: 1, plan, feasibility: null, now: NOW, makeId: () => globalThis.crypto.randomUUID() }, ctx);
+        return null;
+      } catch (err) {
+        return err instanceof S.ModelTextError ? err.message : `other: ${String(err)}`;
+      }
+    };
+    const okPractice = item("PRACTICE", 1, String(catalogLabelOf("RECALL_DRILLS", { track: "FIELD", domains: [domainName({ id: "d-prob", name: "Probability" })] })), { catalogKey: "RECALL_DRILLS", domainId: "d-prob" });
+    eq("fixture: a code-worded practice passes", throws([{ ...base, items: [okPractice] }]), null);
+    check("a row keeping raw model words (rawLabel) is refused", /raw model words/.test(throws([{ ...base, items: [{ ...okPractice, rawLabel: "Buy the official book" }] }]) ?? ""));
+    check("…and a row with a proposed name (rendered for a DOMAIN with no Domain)", /proposed name/.test(throws([{ ...base, items: [item("DOMAIN", 1, "Probability", { origin: "GEMINI", domainId: "d-prob", notes: ["NOT_CHOSEN"], proposedName: "Stochastic calculus" })] }]) ?? ""));
+    check("…and a suggestion row too", /raw model words/.test(throws([{ ...base, items: [okPractice, item("GAP", 2, "Risk theory", { origin: "GEMINI", rawLabel: "Risk theory, per the CFA" })] }]) ?? ""));
+    check("the generic row update sends proposedName and rawLabel through the writer (TEXT_FIELDS)", /const TEXT_FIELDS[^\n]*"proposedName"[^\n]*"rawLabel"/.test(SERVER_SRC));
+  }
+  {
+    // addItem: a Domain on a depth plan is refused (pinned in the drafting section); a legacy life-track plan is replaced.
+    const w = world();
+    const trackIntake: Intake = { ...INTAKE, aim: "Run a 10K", fieldId: null, track: "BODY", domainIds: [] };
+    const id = await drafted(w, { milestones: [{ practices: [{ name: "a", method: "X" }] }, { practices: [{ name: "b", method: "X" }] }] }, trackIntake);
+    const acc = await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w));
+    check("fixture: an accepted life-track plan", acc.ok, json(acc));
+    for (const m of rowsOf(w, id)) m.stage = null;
+    const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    check("…made before revision 4 (rows with no stage): legacy, with no Area Field on its banner", view.legacy != null && view.legacy.areaFieldId == null, json(view.legacy));
+    const again = await S.saveIntakeCore(USER, { ...trackIntake, aim: "Run a 10K, planned again", replaces: id }, NOW, depsFor(w));
+    const old = w.t.roadmap.find((r) => r.id === id) as RoadmapRec;
+    check("'Start again at a depth' replaces a legacy life-track plan (no dead end): one new DRAFT, the old one archived", again.ok && old.status === "ARCHIVED" && old.archiveReason === S.replacedReasonOf(TODAY) && w.t.roadmap.filter((r) => r.status === "DRAFT").length === 1, json([again, old.status]));
+    const w2 = world();
+    const id2 = await accepted(w2);
+    const rev4 = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Again", replaces: id2 }, NOW, depsFor(w2));
+    check("…a plan aimed at a depth is never replaced this way", !rev4.ok && /Only a plan made before/.test(errOf(rev4)) && w2.t.roadmap.length === 1, json(rev4));
+  }
+  {
+    // draftFromReply: the one step, exported and called by runDraftCore, reuseRun and hostileViewsOf (§15.12).
+    const calls = (SERVER_SRC.match(/\bdraftFromReply\(/g) ?? []).length;
+    check("draftFromReply is exported and called by runDraftCore, reuseRun and hostileViewsOf", /export function draftFromReply\b/.test(SERVER_SRC) && calls >= 4, `${calls} occurrences`);
+    for (const fn of ["export async function runDraftCore", "async function reuseRun", "export function hostileViewsOf"]) {
+      const start = SERVER_SRC.indexOf(fn);
+      const body = start >= 0 ? SERVER_SRC.slice(start, SERVER_SRC.indexOf("\n}\n", start)) : "";
+      check(`…${fn.split(" ").pop()} walks and validates only through it (no integrityFor or planFromReply of its own)`, /draftFromReply\(/.test(body) && !/\bintegrityFor\(|\bplanFromReply\(/.test(body), fn);
+    }
+  }
+
+  // ═══ Revision 4 fix round 2 (the re-review's findings on lane R4; contracts §16.9) ═══
+  console.log("— rev 4 fix round 2: a redraft's stage targets read the counts frozen at intake (§16.9) —");
+  {
+    const many = (dom: string, n: number, level = 3) => Array.from({ length: n }, () => card(dom, level));
+    type Counts = readonly { id: string; live: number; nonRecall: number }[];
+    /**
+     * R2's documented contract (StageLadderOpts.counts) on the fixture ladder: the final stage's per-Domain target is
+     * coverageOf's n at the depth (`rc`) over the counts it is given, else over today's library.
+     */
+    const countedLadder = (w: FakeWorld, seen: (Counts | null)[]): RoadmapLanes["stageLadderOf"] => (intake, input, names, makeId, opts) => {
+      seen.push(opts?.counts ?? null);
+      const fx = lanesFor(w);
+      const res = fx.stageLadderOf!(intake, input, names, makeId);
+      if (!res.ok) return res;
+      const library = w.tree.flatMap((f) => f.domains);
+      const counts: Counts = opts?.counts ?? intake.domainIds.map((id) => ({ id, live: library.find((d) => d.id === id)?.cards.length ?? 0, nonRecall: 0 }));
+      const lines = intake.syllabus?.lines ?? [];
+      const cov = fx.coverageOf!({ domains: counts.map((c) => ({ id: c.id, name: "", live: c.live, nonRecall: c.nonRecall })), lineDomains: lines.map((_, i) => intake.syllabus?.lineDomains?.[i] ?? null), typed: intake.coverage ?? null });
+      const depth = intake.depth ?? 12;
+      const last = res.plan.length - 1;
+      const plan = res.plan.map((m, i) =>
+        i < last
+          ? m
+          : {
+              ...m,
+              measures: m.measures.map((x) => {
+                const d = x.scope.domainIds?.[0];
+                const c = cov.find((y) => y.domainId === d);
+                return x.kind === "CARDS_AT_LEVEL" && d && c ? { ...x, minLevel: depth, target: c.n, targetSource: "DEPTH" as const, measureKey: cardsAtLevelKey([d], depth, "rc") } : x;
+              }),
+            }
+      );
+      return { ...res, plan };
+    };
+    const endOf = (w: FakeWorld, k: number) => (w.t.roadmapAcceptance[k]?.endState as EndStateTerm[] | undefined)?.find((t) => t.measureKey.includes("d:d-prob|"))?.target;
+    /** The final scheduled stage's Probability measure in a version (the depth's terms). */
+    const finalOf = (w: FakeWorld, id: string, version: number) => {
+      const rows = rowsOf(w, id, version).filter((m) => m.status !== "LATER");
+      const final = rows[rows.length - 1];
+      return final ? measuresOf(w, final.id).find((x) => x.kind === "CARDS_AT_LEVEL" && (x.measureKey ?? "").includes("d:d-prob|"))?.target : undefined;
+    };
+    const acceptDraft = async (w: FakeWorld, id: string, version: number, from: number, deps: RoadmapDeps) => {
+      const next = rowsOf(w, id, version).find((m) => m.status === "DRAFT");
+      if (next) await decideAll(w, id, next.id);
+      return S.acceptCore(USER, id, { overAccepted: false }, at(from), deps);
+    };
+
+    // [Use the realistic date] on an ACTIVE plan's re-plan, after archiving 20 of Probability's 60 recall cards.
+    const w = world();
+    w.tree[0].domains[0].cards = many("d-prob", 60);
+    const id = await accepted(w);
+    eq("fixture: the accepted end state holds n_d 48 for Probability's 60 recall cards", endOf(w, 0), 48);
+    w.tree[0].domains[0].cards.splice(0, 20);
+    const seen: (Counts | null)[] = [];
+    const deps = depsFor(w, { lanes: { ...lanesFor(w), stageLadderOf: countedLadder(w, seen) } });
+    const rp = await S.replanCore(USER, id, "REFIT", at(1_000), deps);
+    const used = await S.applyRemedyCore(USER, id, "USE_REALISTIC_DATE", at(2_000), deps);
+    check(
+      "archive 20 cards → re-plan → [Use the realistic date] on the ACTIVE plan: the redrafted final stage asks for the end state's 48, never today's 32",
+      rp.ok && used.ok && finalOf(w, id, 2) === 48,
+      json([rp, used, finalOf(w, id, 2)])
+    );
+    check("…the ladder is given the counts frozen at intake (Probability live 60, not 40)", seen.length > 0 && seen.every((c) => c?.find((x) => x.id === "d-prob")?.live === 60), json(seen));
+    const a2 = await acceptDraft(w, id, 2, 3_000, deps);
+    check("…and once accepted, the end state and the final stage agree (48 = 48): the aim is reached when its last milestone is", a2.ok && endOf(w, 1) === 48 && finalOf(w, id, 2) === endOf(w, 1), json([a2, endOf(w, 1), finalOf(w, id, 2)]));
+
+    // The same after writing 18 more (today's library would ask for 62).
+    const w2 = world();
+    w2.tree[0].domains[0].cards = many("d-prob", 60);
+    const id2 = await accepted(w2);
+    w2.tree[0].domains[0].cards.push(...many("d-prob", 18));
+    const seen2: (Counts | null)[] = [];
+    const deps2 = depsFor(w2, { lanes: { ...lanesFor(w2), stageLadderOf: countedLadder(w2, seen2) } });
+    await S.replanCore(USER, id2, "REFIT", at(1_000), deps2);
+    const used2 = await S.applyRemedyCore(USER, id2, "USE_REALISTIC_DATE", at(2_000), deps2);
+    check(
+      "write 18 cards → re-plan → [Use the realistic date]: the final stage asks for 48, never more than the aim (today's 63)",
+      used2.ok && finalOf(w2, id2, 2) === 48 && coveragePolicyOf(78, 0).n !== 48,
+      json([used2, finalOf(w2, id2, 2), coveragePolicyOf(78, 0).n])
+    );
+
+    // A line's Domain set on an ACTIVE plan (a MANUAL re-plan of the unstarted stages), after archiving 20.
+    const w3 = world();
+    w3.tree[0].domains[0].cards = many("d-prob", 60);
+    const outline: Intake = { ...INTAKE, syllabus: { lines: ["Conditional probability"], source: null, lineDomains: [null] } };
+    const id3 = await drafted(w3, REPLY, outline);
+    await decideAll(w3, id3, rowsOf(w3, id3, 1).find((m) => m.status === "DRAFT")!.id);
+    const a3 = await S.acceptCore(USER, id3, { overAccepted: false }, NOW, depsFor(w3));
+    w3.tree[0].domains[0].cards.splice(0, 20);
+    const seen3: (Counts | null)[] = [];
+    const deps3 = depsFor(w3, { lanes: { ...lanesFor(w3), stageLadderOf: countedLadder(w3, seen3) } });
+    const set3 = await S.setLineDomainCore(USER, id3, 0, "d-prob", at(1_000), deps3);
+    const frozenWant = coveragePolicyOf(60, 1).n;
+    check(
+      "archive 20 → a line's Domain set on the ACTIVE plan: the re-plan's final stage reads the frozen 60 cards with the line now tied (n_d from 60, not 40)",
+      a3.ok && set3.ok && finalOf(w3, id3, 2) === frozenWant && frozenWant !== coveragePolicyOf(40, 1).n,
+      json([a3, set3, finalOf(w3, id3, 2), frozenWant, coveragePolicyOf(40, 1).n])
+    );
+    const b3 = await acceptDraft(w3, id3, 2, 2_000, deps3);
+    check("…accepted, its end state is that same target", b3.ok && endOf(w3, 1) === finalOf(w3, id3, 2), json([b3, endOf(w3, 1), finalOf(w3, id3, 2)]));
+
+    // The additions' date effect reads R's frozen counts and each added Domain's own cards.
+    const w4 = world();
+    w4.tree[0].domains.push({ id: "d-comb", name: "Combinatorics", fieldId: "f-stats", cards: many("d-comb", 30) });
+    await drafted(w4, { milestones: [{ domains: ["d-prob"], needs: ["d-comb"] }, { domains: ["d-inf"] }] });
+    w4.tree[0].domains[0].cards.push(...many("d-prob", 18));
+    const effects: { intake: string[]; add: string[]; counts: Counts | null; added: number }[] = [];
+    const lanes4: Partial<RoadmapLanes> = {
+      ...lanesFor(w4),
+      dateEffectOf: (intake, input, add, counts) => {
+        effects.push({ intake: [...intake.domainIds], add: [...add], counts: counts ?? null, added: input.scopes.filter((sc) => sc.domainIds.includes("d-comb")).flatMap((sc) => sc.cards).length });
+        return lanesFor(w4).dateEffectOf!(intake, input, add, counts);
+      },
+    };
+    const v4 = await S.loadRoadmapView(USER, NOW, depsFor(w4, { lanes: lanes4 }));
+    check(
+      "the additions' date effect is given R and its counts frozen at the draft (Probability live 20, not today's 38) as its 4th argument, and the added Domain's own 30 cards",
+      (v4.draft?.additions ?? []).length === 1 && effects.length === 1 && json(effects[0].intake) === json(INTAKE.domainIds) && json(effects[0].add) === json(["d-comb"]) && effects[0].counts?.find((c) => c.id === "d-prob")?.live === 20 && effects[0].added === 30,
+      json(effects)
+    );
+  }
+
+  console.log("— rev 4 fix round 2: Plan history keys 'depth lowered' on the record (§16.2) —");
+  {
+    const replanAccept = async (w: FakeWorld, id: string, from: number) => {
+      const rp = await S.replanCore(USER, id, "REFIT", at(from), depsFor(w));
+      if (!rp.ok) return rp;
+      const next = rowsOf(w, id, rp.value.version).find((m) => m.status === "DRAFT");
+      if (next) await decideAll(w, id, next.id);
+      return S.acceptCore(USER, id, { overAccepted: false }, at(from + 1_000), depsFor(w));
+    };
+    // accept → re-plan → accept → Undo → accept again → lower the depth.
+    const w = world();
+    const id = await accepted(w);
+    const a2 = await replanAccept(w, id, 10_000);
+    const undo = await S.undoAcceptCore(USER, id, 2, at(20_000), depsFor(w));
+    const again = await S.acceptCore(USER, id, { overAccepted: false }, at(30_000), depsFor(w));
+    const low = await S.lowerDepthCore(USER, id, 10, "CHOICE", at(40_000), depsFor(w));
+    check("fixture: accepted, re-planned, undone, accepted again, then lowered", a2.ok && undo.ok && again.ok && low.ok, json([a2, undo, again, low]));
+    const hist = (await S.loadRoadmapView(USER, at(50_000), depsFor(w))).history;
+    eq(
+      "Plan history [v1, v2 undone, v2, v2 lowered]: the re-accept of the same version lowered nothing; the lowering is flagged from its record",
+      hist.map((h) => [h.version, h.undone, h.depthLowered]),
+      [
+        [1, false, false],
+        [2, true, false],
+        [2, false, false],
+        [2, false, true],
+      ]
+    );
+    eq("…the lowering reads in R1's words (depthChangeLineOf)", hist[3]?.changes, ["lowered the depth Mastered → Fluent"]);
+    check("…and the re-accept reads as the re-plan's end-target changes, never as a depth line", !(hist[2]?.changes ?? []).some((c) => /depth/.test(c)), json(hist[2]?.changes));
+    // Undo, then lower: the lowering of version 1 still reads as one.
+    const u = world();
+    const uid = await accepted(u);
+    await replanAccept(u, uid, 10_000);
+    const undo2 = await S.undoAcceptCore(USER, uid, 2, at(20_000), depsFor(u));
+    const low2 = await S.lowerDepthCore(USER, uid, 10, "CHOICE", at(30_000), depsFor(u));
+    const hist2 = (await S.loadRoadmapView(USER, at(40_000), depsFor(u))).history;
+    eq(
+      "Undo → lower the depth: [v1, v2 undone, v1 lowered], the lowering against v1's end state",
+      [undo2.ok, low2.ok, hist2.map((h) => [h.version, h.undone, h.depthLowered]), hist2[2]?.changes],
+      [
+        true,
+        true,
+        [
+          [1, false, false],
+          [2, true, false],
+          [1, false, true],
+        ],
+        ["lowered the depth Mastered → Fluent"],
+      ]
+    );
+  }
+
+  console.log("— rev 4 fix round 2: the Aim card's legacy facts; the depth to R1's ranks (§16.3, §16.9) —");
+  {
+    const { w } = await legacyWorld();
+    const card = await S.loadAimCard(USER, NOW, depsFor(w));
+    check(
+      "a legacy plan's Aim card carries its LegacyView: Gemini's wording hidden, and its Domains and Area for 'Start again at a depth'",
+      card?.legacy === true && card.legacyView?.geminiHidden === true && json(card.legacyView?.domainIds) === json(INTAKE.domainIds) && card.legacyView?.areaFieldId === "f-stats" && card.legacyView?.kind === "ACTIVE",
+      json(card?.legacyView)
+    );
+    const w2 = world();
+    await accepted(w2);
+    const card2 = await S.loadAimCard(USER, NOW, depsFor(w2));
+    check("…a plan at a depth carries none", card2?.legacy === false && card2.legacyView == null, json([card2?.legacy, card2?.legacyView]));
+  }
+  {
+    const w = world();
+    const depths: unknown[] = [];
+    const lanes: Partial<RoadmapLanes> = { ...lanesFor(w), assignRankIndices: ((rows, first, depth) => (depths.push(depth), R1.assignRankIndices(rows, first, depth))) as RoadmapLanes["assignRankIndices"] };
+    const id = await drafted(w);
+    await decideAll(w, id, rowsOf(w, id, 1).find((m) => m.status === "DRAFT")!.id);
+    const acc = await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w, { lanes }));
+    check("acceptCore gives R1's assignRankIndices the plan's depth (12) as its third argument", acc.ok && json(depths) === json([12]), json([acc, depths]));
+  }
+
+  console.log("— rev 4 fix round 2: code labels name R only, never a pending Gemini addition (lens 1 minor; F-R4-21) —");
+  {
+    /** R2's naming on the fixture, as roadmap-realism's fitDepth does it: every code-written catalog label over the row's live DOMAIN items (seen: the names each row offered). */
+    const naming = (w: FakeWorld, seen: string[][]): Partial<RoadmapLanes> => {
+      const fx = lanesFor(w);
+      return {
+        ...fx,
+        fitPlan: (plan, input) =>
+          fx.fitPlan!(plan, input).map((m) => {
+            const domains = m.items
+              .filter((i) => i.kind === "DOMAIN" && i.decision !== "REMOVED" && i.domainId)
+              .sort((a, b) => a.ord - b.ord)
+              .map((i) => domainName({ id: i.domainId as string, name: i.label }));
+            seen.push(domains.map(String));
+            return {
+              ...m,
+              items: m.items.map((i) => {
+                const entry = i.catalogKey ? catalogEntryOf(i.catalogKey) : null;
+                if (!entry || i.origin !== CODE_ORIGIN || (i.decision !== "PENDING" && i.decision !== "KEPT") || !entry.template.includes("{domains}") || domains.length === 0) return i;
+                try {
+                  return { ...i, label: String(catalogLabelOf(entry.key, { track: "FIELD", domains })) };
+                } catch {
+                  return i;
+                }
+              }),
+            };
+          }),
+      };
+    };
+    const reply = { milestones: [{ domains: ["d-prob"], practices: [{ name: "a", method: "X" }], steps: [{ title: "s" }], needs: ["d-comb"] }, { domains: ["d-inf"], practices: [{ name: "b", method: "X" }] }] };
+    const draftWith = async (w: FakeWorld, seen: string[][]) => {
+      w.tree[0].domains.push({ id: "d-comb", name: "Combinatorics", fieldId: "f-stats", cards: [card("d-comb", 3)] });
+      const id = await newDraft(w);
+      const tasks: (() => Promise<void> | void)[] = [];
+      const claim = await S.claimDraftCore(USER, id, { force: true }, NOW, depsFor(w, { lanes: naming(w, seen), defer: (t) => tasks.push(t), callModel: async () => reply, clock: () => NOW }));
+      if (!claim.ok) throw new Error(`fixture claim: ${claim.error}`);
+      for (const t of tasks) await t();
+      return id;
+    };
+    const rowItems = (w: FakeWorld, id: string) => rowsOf(w, id, 1).flatMap((m) => itemsOf(w, m.id));
+    const codeLabels = (w: FakeWorld, id: string) => rowItems(w, id).filter((i) => i.catalogKey && i.decision !== "REMOVED").map((i) => i.label);
+    const w = world();
+    const seen: string[][] = [];
+    const id = await draftWith(w, seen);
+    const waiting = rowItems(w, id).filter((i) => i.domainId === "d-comb");
+    check("fixture: Gemini's addition waits on the kept rows (GEMINI, PENDING, NOT_CHOSEN), back in place after R2's step", waiting.length > 0 && waiting.every((i) => i.origin === "GEMINI" && i.decision === "PENDING" && i.notes.includes("NOT_CHOSEN")), json(waiting.map((i) => [i.decision, i.notes])));
+    check(
+      "R2's naming step never sees a pending addition as one of the row's Domains, so no code label names it",
+      seen.length > 0 && !seen.some((d) => d.includes("Combinatorics")) && codeLabels(w, id).length > 0 && !codeLabels(w, id).some((l) => /Combinatorics/.test(l)),
+      json([seen, codeLabels(w, id)])
+    );
+    const view = await S.loadRoadmapView(USER, NOW, depsFor(w, { lanes: naming(w, []) }));
+    const viewLabels = (view.draft?.milestones ?? []).flatMap((m) => m.items.filter((i) => i.kind !== "DOMAIN").map((i) => i.label));
+    check("…the draft view's rows name none of it either, while its additions row offers it", (view.draft?.additions ?? []).some((a) => a.domainId === "d-comb") && viewLabels.length > 0 && !viewLabels.some((l) => /Combinatorics/.test(l)), json(viewLabels));
+    const leave = await S.confirmDomainAdditionsCore(USER, id, 1, [], NOW, depsFor(w, { lanes: naming(w, []) }));
+    check(
+      "[Leave out]: the addition REMOVED on every row, and every code label still names R only",
+      leave.ok && rowItems(w, id).filter((i) => i.domainId === "d-comb").every((i) => i.decision === "REMOVED") && !codeLabels(w, id).some((l) => /Combinatorics/.test(l)),
+      json([leave, codeLabels(w, id)])
+    );
+    const w2 = world();
+    const id2 = await draftWith(w2, []);
+    const add = await S.confirmDomainAdditionsCore(USER, id2, 1, ["d-comb"], NOW, depsFor(w2, { lanes: naming(w2, []) }));
+    check(
+      "[Add]: the redraft re-renders the code labels over R as it now stands (Combinatorics named once it is the user's)",
+      add.ok && rowItems(w2, id2).filter((i) => i.domainId === "d-comb" && i.kind === "DOMAIN").every((i) => i.decision === "CHECKED") && codeLabels(w2, id2).some((l) => /Combinatorics/.test(l)),
+      json([add, codeLabels(w2, id2)])
+    );
+    // A structural edit while the addition waits (Remove a practice: the draft is re-fitted) keeps it hidden from the naming too.
+    const w3 = world();
+    const seen3: string[][] = [];
+    const id3 = await draftWith(w3, seen3);
+    const practice = rowItems(w3, id3).find((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED") as ItemRec;
+    seen3.length = 0;
+    const removed = await S.decideItemCore(USER, practice.id, "REMOVED", NOW, depsFor(w3, { lanes: naming(w3, seen3) }));
+    check(
+      "…and a re-fit after an edit (Remove a practice) never names the waiting Domain, which stays PENDING",
+      removed.ok && seen3.length > 0 && !seen3.some((d) => d.includes("Combinatorics")) && !codeLabels(w3, id3).some((l) => /Combinatorics/.test(l)) && rowItems(w3, id3).filter((i) => i.domainId === "d-comb").every((i) => i.decision === "PENDING"),
+      json([removed, seen3, codeLabels(w3, id3)])
+    );
+  }
+
+  console.log("— rev 4 fix round 2: Start → R6's week quests, a round trip (lens 2 gap 8) —");
+  {
+    const QS = await import("../src/lib/roadmap-quests-server");
+    const w = world();
+    const id = await accepted(w);
+    const [m1] = rowsOf(w, id, 1);
+    const store = questStoreOf(w);
+    const lanes: Partial<RoadmapLanes> = {
+      ...lanesFor(w),
+      weekQuestSetFor: (userId, milestoneId, weekStart, now, opts) => QS.weekQuestSetFor(userId, milestoneId, weekStart, now, { ...opts, store, env: WRITES_ON }),
+      loadWeekQuests: (userId, now) => QS.loadWeekQuests(userId, now, { store, env: WRITES_ON }),
+    };
+    const st = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w, { lanes }));
+    const frozen = w.t.questWeeks.filter((q) => q.milestoneId === m1.id);
+    const set = frozen[0]?.set;
+    check(
+      "Start freezes R6's set for the started milestone and this life week (source START), built from what Start writes",
+      st.ok && frozen.length === 1 && frozen[0].source === "START" && set?.weekStart === weekStartKeyOf(TODAY) && set.milestoneId === m1.id && set.quests.length > 0,
+      json([st, frozen.map((q) => [q.source, q.set?.weekStart, q.set?.quests.length])])
+    );
+    const load = await QS.loadWeekQuests(USER, at(60_000), { store, env: WRITES_ON });
+    check(
+      "…R6's loader reads it back as the open milestone's frozen set (the same quests), with the StartSnapshot R4 stored",
+      load?.frozen === true && load.set.milestoneId === m1.id && json(load.set.quests) === json(set?.quests) && load.viewInput.passRate != null && load.viewInput.milestone.ord === 1,
+      json(load ? { frozen: load.frozen, milestoneId: load.set.milestoneId, passRate: load.viewInput.passRate } : null)
+    );
+    const card = await S.loadAimCard(USER, at(60_000), depsFor(w, { lanes }));
+    check("…the Aim card counts those quests (0 of n done) and knows the week is frozen", card?.weekQuests?.total === set?.quests.length && card?.weekQuests?.done === 0 && card.questWeekUnfrozen === false, json([card?.weekQuests, card?.questWeekUnfrozen]));
   }
 
   // ═══ With the real lanes (PENDING until R1, R2 and R3 land; green at integration) ═══
@@ -2627,6 +4157,24 @@ async function main() {
       },
     };
   };
+  /** The real R2 ladder sets a stage on every row (revision 4): until it does, a case that writes a real plan is pending R2. */
+  const requireRealStages = (w: FakeWorld, intake: Intake) => {
+    const input = { today: TODAY, targetDay: intake.targetDay, scopes: [], throughput: S.calibratingThroughput(TODAY), hoursPerWeek: 5, intensity: "STEADY", startPoint: "BASICS", typicalHours: null, typicalHoursSource: null, m: 1, heldDays: [], areaInMaintenance: false, practicesAllowed: true, trackArea: false, depth: 12, dateMode: "CHOSEN", userDate: intake.targetDay } as Parameters<RoadmapLanes["starterLadder"]>[1];
+    const names = Object.fromEntries(intake.domainIds.map((d) => [d, domainName({ id: d, name: w.tree.flatMap((f) => f.domains).find((x) => x.id === d)?.name ?? d })]));
+    const plan = REALISM.starterLadder({ ...intake, depth: 12 }, input, names, () => globalThis.crypto.randomUUID());
+    if (plan.some((m) => m.stage == null)) throw new Error("Not yet: R2's depth starter sets no stage on its rows");
+  };
+  /** A keys-only reply the run's own schema allows: every slot, no steps, the first practice kind where the schema offers one. */
+  const replyFromSchema = (schema: unknown) => {
+    type Pick = { items?: { properties?: { kind?: { enum?: string[] } } } };
+    const stages = (schema as { properties?: { stages?: { required?: string[]; properties?: Record<string, { properties?: { practices?: Pick } }> } } } | null)?.properties?.stages;
+    const out: Record<string, unknown> = {};
+    for (const slot of stages?.required ?? []) {
+      const kinds = stages?.properties?.[slot]?.properties?.practices?.items?.properties?.kind?.enum ?? [];
+      out[slot] = kinds.length ? { practices: [{ kind: kinds[0] }], steps: [] } : { steps: [] };
+    }
+    return { stages: out };
+  };
   const sdkReply = (body: unknown) => {
     const text = json(body);
     return { text, candidates: [{ finishReason: "STOP", content: { parts: [{ text }] } }], usageMetadata: { totalTokenCount: 10 }, modelVersion: "fixture", responseId: "resp-1" };
@@ -2648,7 +4196,9 @@ async function main() {
 
   await integration("'Build from my numbers' on the fixture library is accepted and started as one MID goal (R1, R2)", async () => {
     const w = world();
-    const id = await newDraft(w, { ...INTAKE, targetDay: addDays(TODAY, 120) });
+    // Mastered in 120 days is impossible on this library (R2's date check): the plan dates itself (REALISTIC).
+    requireRealStages(w, { ...INTAKE, targetDay: addDays(TODAY, 120) });
+    const id = await newDraft(w, { ...INTAKE, dateMode: "REALISTIC", newCardsPerWeek: 20 });
     const built = await S.buildStarterCore(USER, id, NOW, realDeps(w));
     if (!built.ok) return [false, built.error];
     const acc = await S.acceptCore(USER, id, { overAccepted: true }, NOW, realDeps(w));
@@ -2659,18 +4209,49 @@ async function main() {
     return [st.ok && goals.length === 1 && goals[0].horizon === "MID" && [0, 6].includes(goals[0].stated ?? -1), json([st, goals.map((g) => g.stated)])];
   });
 
-  await integration("a Gemini draft through the real draftSamples, validator and fitting lands as GEMINI suggestions (R2, R3)", async () => {
+  await integration("a keys-only Gemini draft through the real pack, schema, integrity walk, validator and ladder writes no Gemini words (R2, R3)", async () => {
     const w = world();
+    requireRealStages(w, INTAKE);
     const id = await newDraft(w);
-    const reply = { milestones: [{ title: "Foundations", domains: ["D1"], newDomains: [], topics: [], practices: [{ name: "Timed problems", method: "DELIBERATE_PRACTICE" }], steps: [] }, { title: "Inference", domains: ["D2"], newDomains: [], topics: [], steps: [] }] };
     const tasks: (() => Promise<void> | void)[] = [];
-    const deps = realDeps(w, { defer: (t) => tasks.push(t), callModel: async () => sdkReply(reply), clock: () => NOW });
+    const deps = realDeps(w, { defer: (t) => tasks.push(t), callModel: async (req) => sdkReply(replyFromSchema((req as { responseSchema?: unknown }).responseSchema)), clock: () => NOW });
     const c = await S.claimDraftCore(USER, id, { force: false }, NOW, deps);
     if (!c.ok) return [false, c.error];
     for (const t of tasks) await t();
     const rows = rowsOf(w, id, 1);
     const items = rows.flatMap((m) => itemsOf(w, m.id));
-    return [w.t.roadmapRun[0].status !== "FAILED" && rows.length >= 1 && items.some((i) => i.origin === "GEMINI" && i.decision === "PENDING"), json([w.t.roadmapRun[0].status, w.t.roadmapRun[0].error, rows.length])];
+    const run = w.t.roadmapRun[0];
+    return [
+      run.status !== "FAILED" && rows.length >= 1 && rows.every((m) => m.stage != null && m.titleOrigin !== "GEMINI") && items.every((i) => i.origin !== "GEMINI" || (i.kind === "DOMAIN" && i.notes.includes("NOT_CHOSEN"))) && (run.report as { integrity?: { verdict?: string } } | null)?.integrity?.verdict === "CLEAN",
+      json([run.status, run.error, rows.length, (run.report as { integrity?: unknown } | null)?.integrity]),
+    ];
+  });
+
+  await integration("hostileViewsOf (lane R7's seam): a REJECTED reply renders the starter, no GEMINI row and none of its words; a clean reply renders code's words (R2, R3)", async () => {
+    const intake: Intake = { ...INTAKE, dateMode: "REALISTIC", newCardsPerWeek: 20 };
+    const domains = [
+      { id: "d-prob", name: "Probability", fieldId: "f-stats", cards: 20, atSix: 12, atTop: 0 },
+      { id: "d-inf", name: "Inference", fieldId: "f-stats", cards: 4, atSix: 4, atTop: 0 },
+    ];
+    const rejected = S.hostileViewsOf({
+      run: { id: "t1" },
+      parsed: { stages: { FOUNDATION: { steps: [], "You must buy the official CFA curriculum": 1 } } },
+      validated: null,
+      integrity: { verdict: "REJECTED", violations: [{ code: "EXTRA_PROPERTY", path: "stages.FOUNDATION.<extra>" }], modelChars: 0, gapsKept: 0, gapsHidden: 0, gapsDropped: 0, notANameByClause: {} },
+      intake,
+      areaName: "Statistics",
+      domains,
+      today: TODAY,
+    });
+    const text = json(rejected);
+    const draft = rejected.views[0] as { milestones?: MilestoneDraft[] } | null;
+    const ok =
+      !/"(titleOrigin|origin)":"GEMINI"/.test(text) &&
+      !/CFA|curriculum/.test(text) &&
+      (draft?.milestones?.length ?? 0) > 0 &&
+      rejected.logLines.length === 1 &&
+      rejected.logLines[0].includes('"verdict":"REJECTED"');
+    return [ok, text.slice(0, 300)];
   });
 
   await integration("a Reschedule: R2's re-fit starts the next window the day after the goal's new due day (fix round 2)", async () => {
@@ -2705,13 +4286,86 @@ async function main() {
     return [v2.filter((m) => m.status === "DRAFT").length === 6, json(v2.map((m) => [m.status, m.windowStart, m.dueDay]))];
   });
 
-  await integration("the page's title checks are R3's withLabelChecks: 'Do 50 problems first' is NUMBER with '50' struck (fix round 2)", async () => {
+  await integration("fix round 2: a REALISTIC intake that needs new cards and has no pace is refused at intake in R2's words, not first at the draft (R2)", async () => {
     const w = world();
-    await drafted(w, { milestones: [{ title: "Do 50 problems first", domains: ["d-prob"] }, { title: "Inference basics", domains: ["d-inf"] }] });
-    const view = await S.loadRoadmapView(USER, NOW, realDeps(w));
-    const d1 = view.draft?.milestones[0];
-    const span = d1?.titleStruck?.[0];
-    return [!!d1 && (d1.titleFlags ?? []).includes("NUMBER") && !!span && d1.title.slice(span[0], span[1]) === "50", json([d1?.titleFlags, d1?.titleStruck])];
+    requireRealStages(w, INTAKE);
+    const r = await S.saveIntakeCore(USER, { ...INTAKE, dateMode: "REALISTIC", newCardsPerWeek: null }, NOW, realDeps(w));
+    const withPace = await S.saveIntakeCore(USER, { ...INTAKE, dateMode: "REALISTIC", newCardsPerWeek: 20 }, NOW, realDeps(w));
+    return [!r.ok && /pace|cards a week/i.test(errOf(r)) && w.t.roadmap.length === 1 && withPace.ok, json([r, withPace.ok])];
+  });
+
+  await integration("fix round 2: hostileViewsOf names its views, and adds the week-quests view of the first milestone as if started (R7's handoff; R2, R6)", async () => {
+    const intake: Intake = { ...INTAKE, dateMode: "REALISTIC", newCardsPerWeek: 20 };
+    const domains = [
+      { id: "d-prob", name: "Probability", fieldId: "f-stats", cards: 20, atSix: 12, atTop: 0 },
+      { id: "d-inf", name: "Inference", fieldId: "f-stats", cards: 4, atSix: 4, atTop: 0 },
+    ];
+    const out = S.hostileViewsOf({ run: { id: "t-wq" }, parsed: { stages: { FOUNDATION: { steps: [], "Buy the Zorblatt course first": 1 } } }, intake, areaName: "Statistics", domains, today: TODAY });
+    const wq = out.views[6] as { milestoneOrd?: number; rows?: { kind: string }[] } | null;
+    const text = json(out.views);
+    const ok = out.viewNames.length === out.views.length && json(out.viewNames) === json(S.HOSTILE_VIEW_NAMES) && !!wq && (wq.rows?.length ?? 0) > 0 && wq.milestoneOrd === 1 && !/Zorblatt/.test(text) && !/"(titleOrigin|origin)":"GEMINI"/.test(text);
+    return [ok, json({ names: out.viewNames, rows: wq?.rows?.map((r) => r.kind) })];
+  });
+
+  await integration("fix round 2: archive 20 cards → re-plan → [Use the realistic date] on an ACTIVE plan: R2's redrafted final stage asks for the end state's n_d (R2, contracts §16.9)", async () => {
+    const w = world();
+    w.tree[0].domains[0].cards = Array.from({ length: 60 }, () => card("d-prob", 3));
+    const intake: Intake = { ...INTAKE, dateMode: "REALISTIC", newCardsPerWeek: 20 };
+    requireRealStages(w, intake);
+    const id = await newDraft(w, intake);
+    const built = await S.buildStarterCore(USER, id, NOW, realDeps(w));
+    if (!built.ok) return [false, built.error];
+    const acc = await S.acceptCore(USER, id, { overAccepted: true }, NOW, realDeps(w));
+    if (!acc.ok) return [false, acc.error];
+    const term = (w.t.roadmapAcceptance[0].endState as EndStateTerm[]).find((t) => t.measureKey.includes("d:d-prob|"));
+    w.tree[0].domains[0].cards.splice(0, 20);
+    const rp = await S.replanCore(USER, id, "MANUAL", at(1_000), realDeps(w));
+    if (!rp.ok) return [false, rp.error];
+    const used = await S.applyRemedyCore(USER, id, "USE_REALISTIC_DATE", at(2_000), realDeps(w));
+    if (!used.ok) return [false, used.error];
+    const finalTargets = rowsOf(w, id, 2)
+      .filter((m) => m.status !== "LATER")
+      .flatMap((m) => measuresOf(w, m.id).filter((x) => x.measureKey === term?.measureKey).map((x) => x.target));
+    return [!!term && finalTargets.length > 0 && finalTargets.every((t) => t === term.target), json([term?.measureKey, term?.target, finalTargets])];
+  });
+
+  await integration("fix round 2: a Gemini draft's code labels never name a pending addition; [Leave out] and [Add] re-render them over R (R2, R3)", async () => {
+    const run = async (choice: string[] | null) => {
+      const w = world();
+      w.tree[0].domains.push({ id: "d-comb", name: "Combinatorics", fieldId: "f-stats", cards: [card("d-comb", 3), card("d-comb", 3)] });
+      requireRealStages(w, INTAKE);
+      const id = await newDraft(w);
+      const tasks: (() => Promise<void> | void)[] = [];
+      const callModel = async (req: unknown) => {
+        const schema = (req as { responseSchema?: unknown }).responseSchema;
+        const needs = (schema as { properties?: { needs?: { items?: { enum?: string[] } } } } | null)?.properties?.needs?.items?.enum ?? [];
+        return sdkReply({ ...replyFromSchema(schema), needs: needs.slice(0, 1) });
+      };
+      const deps = realDeps(w, { defer: (t) => tasks.push(t), callModel, clock: () => NOW });
+      const c = await S.claimDraftCore(USER, id, { force: false }, NOW, deps);
+      if (!c.ok) throw new Error(c.error);
+      for (const t of tasks) await t();
+      const items = () => rowsOf(w, id, 1).flatMap((m) => itemsOf(w, m.id));
+      const labels = () => items().filter((i) => i.catalogKey && i.decision !== "REMOVED").map((i) => i.label);
+      const pending = items().filter((i) => i.domainId === "d-comb" && i.decision === "PENDING").length;
+      const before = labels();
+      const decided = choice ? await S.confirmDomainAdditionsCore(USER, id, 1, choice, NOW, realDeps(w)) : null;
+      return { pending, before, after: labels(), decided, comb: items().filter((i) => i.domainId === "d-comb" && i.kind === "DOMAIN").map((i) => i.decision) };
+    };
+    const left = await run([]);
+    const added = await run(["d-comb"]);
+    const named = (ls: string[]) => ls.some((l) => /Combinatorics/.test(l));
+    const ok =
+      left.pending > 0 &&
+      left.before.length > 0 &&
+      !named(left.before) &&
+      left.decided?.ok === true &&
+      left.comb.every((d) => d === "REMOVED") &&
+      !named(left.after) &&
+      added.decided?.ok === true &&
+      added.comb.every((d) => d === "CHECKED") &&
+      named(added.after);
+    return [ok, json({ left: { pending: left.pending, before: left.before.slice(0, 3), after: left.after.slice(0, 3), decided: left.decided }, added: { after: added.after.slice(0, 3), decided: added.decided, comb: added.comb } })];
   });
 
   if (failed > 0) {

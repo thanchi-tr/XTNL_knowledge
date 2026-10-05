@@ -25,6 +25,12 @@
  *   Week quests if you start now  the generator's set for the rest of this
  *                   life week, "fixed for the week once you start".
  *
+ * Revision 4 (F-R4-13): when the stated pay rests on a practice the app added
+ * (without it the milestone would fall under the practice gate) the sheet
+ * says so ("… because of the practice the app added (Explain it in your own
+ * words). Switch it off and this milestone pays nothing."), and a body
+ * milestone's sheet carries HEALTH_LINE.
+ *
  * Start is hidden (not disabled) while ROADMAP_GOALS_LIVE is false. The sticky
  * button is never dead: until Start can be offered it jumps to the next row to
  * check.
@@ -49,6 +55,7 @@ import {
 } from "@/lib/roadmap-types";
 import {
   CHECKPOINT_KIND_WORD,
+  HEALTH_LINE,
   PROVENANCE_WORDS,
   TIME_FIXED_LINE,
   WEEK_QUEST_CAPTIONS,
@@ -56,6 +63,7 @@ import {
   givesRankByName,
   labelWithClass,
   plural,
+  restsOnAddedLine,
   ruleWords,
   spanLabel,
   statedLine,
@@ -92,6 +100,12 @@ function previewCount(q: WeekQuestSet["quests"][number]): string {
   const words: Record<string, [string, string]> = { card: ["card", "cards"], session: ["session", "sessions"], day: ["day", "days"], step: ["step", "steps"], log: ["score", "scores"] };
   const [one, many] = words[q.unit] ?? ["", ""];
   return `${q.count} ${q.count === 1 ? one : many}`;
+}
+
+/** The practice the stated pay rests on, when the app added it (R4's StartPreview.pay.restsOnAdded; the contract §15.11). */
+export function restsOnAddedOf(p: Pick<StartPreview, "pay">): string | null {
+  const name = p.pay.restsOnAdded;
+  return typeof name === "string" && name.trim().length > 0 ? name : null;
 }
 
 /** The Today-bound rows' remaining count (Start waits on these). */
@@ -287,6 +301,7 @@ export function StartSheet({
   initial?: StartPreview | null;
 }) {
   const runtime = useRoadmapRuntime();
+  const editor = useItemEditor();
   const [preview, setPreview] = useState<StartPreview | null>(initial ?? null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [target, setTarget] = useState<StartChoices["target"]>("FITTED_NOW");
@@ -362,6 +377,7 @@ export function StartSheet({
               {p.refusal}
             </p>
           )}
+          {(milestone.notes.includes("HEALTH_LINE") || (editor?.scope.areaFieldId == null && editor?.scope.track === "BODY")) && <p className="rm-it-why">{HEALTH_LINE}</p>}
           <span className="t-eyebrow rm-sheet-eyebrow">Today&apos;s check</span>
           <div className="sunk" style={{ padding: 12 }}>
             {p.todayCheck ? (
@@ -433,6 +449,7 @@ export function StartSheet({
             Becomes a Mid goal on Today, due {dayWithWeekday(p.dueDay, today)} · <PaysLine text={statedLine(pay!.stated, pay!.zeroReason, pay!.paidOn, today)} />
             {pay!.stated > 0 ? ", once 21 days old" : ""} · progress from your records, no +1
           </p>
+          {restsOnAddedOf(p) && pay!.stated > 0 && <p className="t-meta rm-ink1">{restsOnAddedLine(pay!.stated, restsOnAddedOf(p) as string)}</p>}
           {p.pay.limitLine && <p className="t-meta">{p.pay.limitLine}</p>}
           <p className="rm-rk">{givesRankByName(p.givesRank)}</p>
 

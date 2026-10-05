@@ -102,5 +102,147 @@
         ]
       }
     }
-  ]
+  ],
+  "v3": {
+    "probe": true,
+    "about": "The word-rich pack: an exam aim with the user's outline (each line tied to a Domain by the user, S6 to none), chosen and unchosen Domains, and library titles grounding must ignore. The probe sends it keys-only with the gap slot on.",
+    "intake": {
+      "depth": 12,
+      "dateMode": "REALISTIC",
+      "exam": true,
+      "examDay": null,
+      "suggestAreas": true,
+      "lineDomains": [
+        "d_st_prob",
+        "d_st_prob",
+        "d_st_prob",
+        "d_st_inf",
+        "d_st_prob",
+        null
+      ]
+    },
+    "replies": [
+      {
+        "id": "actuarial-probability-v3-a",
+        "about": "A clean keys-only reply with the gap slot on: Calculus needed, S4 left out, one grounded gap shown, one resource gap dropped, one ungrounded gap hidden, one exact Domain match.",
+        "reply": {
+          "needs": [
+            "D3"
+          ],
+          "stages": {
+            "FOUNDATION": {
+              "lines": [
+                "S1",
+                "S5"
+              ],
+              "practices": [
+                {
+                  "kind": "READ_AND_CARD",
+                  "on": "D1"
+                },
+                {
+                  "kind": "RECALL_DRILLS"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "CHOOSE_MATERIAL"
+                },
+                {
+                  "kind": "BOOK_EXAM"
+                }
+              ],
+              "checkpoint": "SELF_TEST"
+            },
+            "FAMILIAR": {
+              "lines": [
+                "S2",
+                "S6"
+              ],
+              "practices": [
+                {
+                  "kind": "PROBLEM_SETS",
+                  "on": "D1"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "OUTLINE",
+                  "on": "D2"
+                }
+              ],
+              "checkpoint": null
+            },
+            "RETAINED": {
+              "lines": [
+                "S3"
+              ],
+              "practices": [
+                {
+                  "kind": "PROBLEM_SETS"
+                },
+                {
+                  "kind": "MISTAKE_REVIEW"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "LIST_GAPS"
+                }
+              ],
+              "checkpoint": "MOCK_TEST"
+            },
+            "FLUENT": {
+              "lines": [],
+              "practices": [
+                {
+                  "kind": "TIMED_PRACTICE"
+                },
+                {
+                  "kind": "EXPLAIN_IT",
+                  "on": "D2"
+                }
+              ],
+              "steps": [],
+              "checkpoint": "SELF_TEST"
+            },
+            "MASTERED": {
+              "practices": [
+                {
+                  "kind": "TIMED_PRACTICE"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "FULL_ATTEMPT"
+                }
+              ],
+              "checkpoint": "MOCK_TEST"
+            }
+          },
+          "gaps": [
+            "Conditional expectation",
+            "Exam P syllabus",
+            "Kessler statistics",
+            "Calculus"
+          ]
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "uncovered": [
+            3
+          ],
+          "needs": [
+            "d_st_calc"
+          ],
+          "excluded": [],
+          "sessionPicks": false,
+          "gapsShown": [
+            "Conditional expectation"
+          ],
+          "gapsHidden": 2
+        }
+      }
+    ]
+  }
 }

@@ -37,6 +37,18 @@
  *     allowed while the copy is still PLANNED (Undo right after Drop). Run
  *     through unarchiveCore with every Prisma entry it can reach swapped for
  *     a stub or a throwing spy.
+ *   - the aim from the capture line (roadmap-rev4 F-R4-7, lane C;
+ *     components/capture/aim-capture.ts): 'aim: …' read with aimLineOf
+ *     before the parse and kept as a task once its chip is tapped; the
+ *     vocabulary's open roadmap ('NONE' on a missing table, unknown on any
+ *     other failure); the button's words by state, never empty or disabled;
+ *     the handoff written with writeAimHandoff (sessionStorage, the line as
+ *     sheetText), never a URL; 'Make it an aim' only for a long goal with no
+ *     roadmap open while set-an-aim suggestions are on and not snoozed (the
+ *     vocabulary's aimPrompt, aimPromptOf over LifeSettings.aimSuggestions
+ *     and the snooze cookie: decision 34, fix round 2), and its prefix
+ *     rewrite; and, read from the source, that an aim line never reaches a
+ *     capture save and adds no key.
  *
  * No database: nothing here runs a query (importing tasks.ts only creates
  * the idle Prisma client; the unarchive cases swap its entries for stubs and
@@ -51,11 +63,42 @@ import { join } from "node:path";
 import { addDays, dayStartOf, type DayKey } from "../src/lib/life-day";
 import { CAPTURE_BATCH_MAX, CAPTURE_UNDO_MS, PLACE_LANES, type ParsedCapture } from "../src/lib/life-types";
 import { normTitleOf } from "../src/lib/life-lexicon";
-import { MAX_CAPTURE_CHARS, parseCapture } from "../src/lib/capture-parse";
+import { MAX_CAPTURE_CHARS, parseCapture, sanitizeCaptureInput } from "../src/lib/capture-parse";
+import * as aimCapture from "../src/components/capture/aim-capture";
+import {
+  AIM_CHIP,
+  AIM_CHIP_SET,
+  AIM_FORM_HREF,
+  AIM_LONG_GOAL_NOTE,
+  AIM_OPEN_DRAFT,
+  AIM_OPEN_FORM,
+  AIM_OPEN_ROADMAP,
+  AIM_ROADMAP_HREF,
+  MAKE_IT_AN_AIM,
+  OPEN_ROADMAP_STATUSES,
+  aimActionOf,
+  aimCaptureOf,
+  aimChipLabel,
+  aimCounterOf,
+  aimHandoffOf,
+  aimPrefixSpan,
+  aimPromptOnOpen,
+  aimRewriteOf,
+  captureAimOf,
+  isCaptureAim,
+  isCaptureAimPrompt,
+  isLongGoalLine,
+  offersAim,
+  readCaptureAim,
+  readCaptureAimPrompt,
+} from "../src/components/capture/aim-capture";
+import { AIM_LATER_DAYS, AIM_PROMPT_COOKIE, aimPromptOf, hideCookieValue, laterCookieValue, onCookieValue, type AimPrompt } from "../src/lib/roadmap-invite";
+import { AIM_HANDOFF_KEY, aimLineOf, takeAimHandoff, writeAimHandoff, type AimHandoffStorage } from "../src/lib/roadmap-handoff";
+import { AIM_MAX, REV4_COLUMNS } from "../src/lib/roadmap-types";
 import { captureShapeOf } from "../src/lib/capture-shape";
 import { parseRule } from "../src/lib/recurrence";
 import { completionBlockOf, placeOf, statsFor, type BoardData, type BoardInstance, type BoardTemplate } from "../src/lib/today-board";
-import { toastCopy } from "../src/components/capture/capture-ui";
+import { VOCAB_FRESH_MS, applyInsert, insertMenuOptions, lineHasPrefix, toastCopy, type Insert } from "../src/components/capture/capture-ui";
 import {
   ACTIVE_TITLES_MAX,
   BATCH_NO_KEY,
@@ -986,9 +1029,471 @@ async function unarchiveChecks(): Promise<void> {
   }
 }
 
+// ── The aim from the capture line (roadmap-rev4 F-R4-7, lane C) ────────────
+// 'aim: …' opens the aim form with a handoff and is never saved as a task; a
+// long goal is offered as an aim. aim-capture.ts holds the rules; the sheet's
+// wiring and the vocabulary read are pinned from the source.
+async function aimCaptureChecks(): Promise<void> {
+  console.log("\n— the aim from the capture line —");
+  const p0 = (t: string) => parseCapture(t, { today: TODAY });
+
+  // The aim line: aimLineOf is the one parser, and the chip's revert makes the line a task.
+  const table: [string, string | null][] = [
+    ["aim: Price options", "Price options"],
+    ["  AIM :x", "x"],
+    ["Aim:   hold a conversation in Japanese  ", "hold a conversation in Japanese"],
+    ["aim:", null],
+    ["aim:   ", null],
+    ["aimless walk", null],
+    ["aimless", null],
+    ["goal: aim: x", null],
+    ["idea: aim: x", null],
+    ["x aim: run", null],
+    ["my aim: run", null],
+    ["", null],
+  ];
+  const wrong = table.filter(([t, want]) => (aimCaptureOf(t)?.aim ?? null) !== want || aimLineOf(t) !== want);
+  check("aim line: aimCaptureOf reads exactly what aimLineOf reads (start of line only; 'aim:' alone, 'aimless', 'goal: aim:' and 'idea: aim:' are not aims)", wrong.length === 0, JSON.stringify(wrong));
+  const pa = aimPrefixSpan("  AIM :x");
+  check("aim line: the chip's span is the 'aim:' prefix itself ('  AIM :x' → 2..7), and none on a line that is not an aim", !!pa && pa.start === 2 && pa.end === 7 && aimPrefixSpan("aimless") === null && aimPrefixSpan("goal: aim: x") === null);
+  const line = "aim: Price options";
+  const prefix = aimPrefixSpan(line)!;
+  check("aim line: once its chip is tapped (a reverted span over 'aim:') the line is no aim", aimCaptureOf(line, [prefix]) === null && aimCaptureOf(line, [{ start: 2, end: 3 }]) === null);
+  check("aim line: a span kept as text elsewhere in the line leaves it an aim", aimCaptureOf(line, [{ start: 5, end: 10 }])?.aim === "Price options");
+  const asTask = parseCapture(line, { today: TODAY, reverted: [prefix] });
+  const server = sanitizeCaptureInput(line, [prefix]);
+  check(
+    "aim line: tapped back, it reads as a task on the sheet and the server alike (the server keeps the span and parses the same line)",
+    asTask.mode === "TASK" && asTask.kind === "TASK" && !!asTask.title && server.reverted.length === 1 && server.reverted[0].start === 0 && server.reverted[0].end === 4 && JSON.stringify(parseCapture(server.text, { today: TODAY, reverted: server.reverted })) === JSON.stringify(asTask),
+    `${asTask.mode} “${asTask.title}”`
+  );
+
+  // The open roadmap: the vocabulary's one read.
+  check("vocab aim: the statuses read are the open ones, DRAFT and ACTIVE", JSON.stringify([...OPEN_ROADMAP_STATUSES]) === JSON.stringify(["DRAFT", "ACTIVE"]));
+  check(
+    "vocab aim: no open row is NONE, a DRAFT is DRAFT, an ACTIVE wins over a DRAFT",
+    captureAimOf([]) === "NONE" && captureAimOf(["DRAFT"]) === "DRAFT" && captureAimOf(["ACTIVE"]) === "ACTIVE" && captureAimOf(["DRAFT", "ACTIVE"]) === "ACTIVE" && captureAimOf(["DONE", "ARCHIVED"]) === "NONE"
+  );
+  const missingTable = Object.assign(new Error("The table `public.Roadmap` does not exist in the current database."), { code: "P2021", meta: { modelName: "Roadmap", table: "public.Roadmap" } });
+  const missingRelation = Object.assign(new Error('relation "public.Roadmap" does not exist'), { code: "42P01" });
+  const missingColumn = Object.assign(new Error("The column `Roadmap.depth` does not exist in the current database."), { code: "P2022", meta: { column: "Roadmap.depth" } });
+  const pool = Object.assign(new Error("Timed out fetching a new connection from the connection pool."), { code: "P2024" });
+  const throwing = (err: unknown) => async (): Promise<readonly unknown[]> => {
+    throw err;
+  };
+  const [aMissing, aRelation, aColumn, aPool, aNone, aDraft, aBad] = await Promise.all([
+    readCaptureAim(throwing(missingTable)),
+    readCaptureAim(throwing(missingRelation)),
+    readCaptureAim(throwing(missingColumn)),
+    readCaptureAim(throwing(pool)),
+    readCaptureAim(async () => []),
+    readCaptureAim(async () => ["DRAFT"]),
+    readCaptureAim(async () => "DRAFT" as unknown as readonly unknown[]),
+  ]);
+  check("vocab aim: a missing Roadmap table (life_roadmap not applied) is NONE (P2021 and 42P01)", aMissing === "NONE" && aRelation === "NONE", `${aMissing} ${aRelation}`);
+  check("vocab aim: any other failure is unknown, never a guessed NONE (a missing column, a pool timeout, a malformed answer)", aColumn === undefined && aPool === undefined && aBad === undefined, `${aColumn} ${aPool} ${aBad}`);
+  check("vocab aim: a read that answers is its state", aNone === "NONE" && aDraft === "DRAFT");
+  check("vocab aim: the sheet trusts only the three states", isCaptureAim("NONE") && isCaptureAim("DRAFT") && isCaptureAim("ACTIVE") && !isCaptureAim("DONE") && !isCaptureAim(undefined) && !isCaptureAim(null) && !isCaptureAim("none"));
+
+  // The user's "no" (fix round 2): the vocabulary's aimPrompt, aimPromptOf over the stored switch and the snooze cookie.
+  const missingAimSuggestions = Object.assign(new Error("The column `LifeSettings.aimSuggestions` does not exist in the current database."), { code: "P2022", meta: { column: "LifeSettings.aimSuggestions" } });
+  const missingOther = Object.assign(new Error("The column `LifeSettings.dailyCapacityMin` does not exist in the current database."), { code: "P2022", meta: { column: "LifeSettings.dailyCapacityMin" } });
+  const setting = (v: unknown) => async () => v as boolean | null;
+  const failing = (err: unknown) => async (): Promise<boolean | null> => {
+    throw err;
+  };
+  // [name, the stored switch's read, the cookie, the switch as aimPromptOf takes it (null: unreadable), want]
+  const promptCases: [string, () => Promise<boolean | null | undefined>, string | undefined, boolean | null, AimPrompt | undefined][] = [
+    ["on (true), no cookie", setting(true), undefined, true, "ASK"],
+    ["never set (null), no cookie", setting(null), undefined, null, "ASK"],
+    ["no LifeSettings row (undefined)", setting(undefined), undefined, null, "ASK"],
+    ["\"Don't suggest this\" (false)", setting(false), undefined, false, "OFF"],
+    ["false beats a fresh 'on:' cookie", setting(false), onCookieValue(TODAY), false, "OFF"],
+    ["a legacy 'off' cookie", setting(null), "off", null, "OFF"],
+    ["\"Not now\" today ('later:')", setting(true), laterCookieValue(TODAY), true, "LATER"],
+    ["the LATER line's x ('hide:', its last day)", setting(null), hideCookieValue(addDays(TODAY, -(AIM_LATER_DAYS - 1))), null, "HIDDEN"],
+    ["a 'later:' 28 days old (expired)", setting(null), laterCookieValue(addDays(TODAY, -AIM_LATER_DAYS)), null, "ASK"],
+    ["'on:' (the switch turned back on)", setting(true), onCookieValue(TODAY), true, "ASK"],
+    ["a malformed cookie", setting(null), "later:2026-02-30", null, "ASK"],
+    ["a malformed setting ('yes')", setting("yes"), undefined, null, "ASK"],
+    ["the aimSuggestions column missing (P2022: migration not applied) reads on", failing(missingAimSuggestions), undefined, null, "ASK"],
+    ["the column missing, with a snooze cookie", failing(missingAimSuggestions), laterCookieValue(TODAY), null, "LATER"],
+    ["another column missing is unknown", failing(missingOther), undefined, null, undefined],
+    ["a pool timeout is unknown", failing(pool), undefined, null, undefined],
+    ["a pool timeout with an 'off' cookie is still unknown (no guess)", failing(pool), "off", null, undefined],
+  ];
+  const promptGot = await Promise.all(promptCases.map(([, read, cookie]) => readCaptureAimPrompt(read, cookie, TODAY)));
+  const promptWrong = promptCases.map(([name, , cookie, , want], i) => ({ name, cookie, want, got: promptGot[i] })).filter((c) => c.got !== c.want);
+  check("vocab prompt: readCaptureAimPrompt is aimPromptOf over the switch and the cookie; a missing aimSuggestions column reads on; any other failure is unknown", promptWrong.length === 0, JSON.stringify(promptWrong));
+  check(
+    "vocab prompt: every answer agrees with aimPromptOf, the one rule /you, Today and Settings read",
+    promptCases.every(([, , cookie, sw], i) => promptGot[i] === undefined || promptGot[i] === aimPromptOf(cookie, sw, TODAY)) && promptGot.filter((g) => g !== undefined).length === promptCases.length - 3 && AIM_PROMPT_COOKIE.length > 0
+  );
+  check("vocab prompt: the sheet trusts only the four states", ["ASK", "LATER", "HIDDEN", "OFF"].every(isCaptureAimPrompt) && ![undefined, null, "ask", "ON", "", 1].some(isCaptureAimPrompt));
+  const fresh = { day: TODAY, at: 1_000_000, aimPrompt: "ASK" as AimPrompt, aim: "NONE" as const };
+  const keptFresh = aimPromptOnOpen(fresh, TODAY, 1_000_000 + VOCAB_FRESH_MS - 1, VOCAB_FRESH_MS);
+  const droppedOld = aimPromptOnOpen(fresh, TODAY, 1_000_000 + VOCAB_FRESH_MS, VOCAB_FRESH_MS);
+  const droppedDay = aimPromptOnOpen(fresh, addDays(TODAY, 1), 1_000_001, VOCAB_FRESH_MS);
+  const noPrompt: { day: DayKey; at: number; aimPrompt?: AimPrompt } = { day: TODAY, at: 0 };
+  const longLine = p0("goal long: run a marathon");
+  check(
+    "vocab prompt: on a new opening, a prompt read VOCAB_FRESH_MS ago or on another life day is unknown again (the next load reads it), a fresher one is kept as it is, and nothing else changes",
+    keptFresh === fresh &&
+      droppedOld !== null &&
+      droppedOld.aimPrompt === undefined &&
+      droppedOld.aim === "NONE" &&
+      droppedOld.at === fresh.at &&
+      fresh.aimPrompt === "ASK" &&
+      droppedDay !== null &&
+      droppedDay.aimPrompt === undefined &&
+      aimPromptOnOpen(noPrompt, TODAY, 10 * VOCAB_FRESH_MS, VOCAB_FRESH_MS) === noPrompt &&
+      aimPromptOnOpen(null, TODAY, 0, VOCAB_FRESH_MS) === null &&
+      !offersAim(longLine, droppedOld.aim, droppedOld.aimPrompt) &&
+      offersAim(longLine, keptFresh!.aim, keptFresh!.aimPrompt),
+    JSON.stringify([droppedOld, droppedDay])
+  );
+
+  // The button, the chip and the counter.
+  const states = [undefined, null, "NONE", "DRAFT", "ACTIVE", "junk"] as const;
+  const acts = states.map((s) => aimActionOf(s as Parameters<typeof aimActionOf>[0]));
+  check(
+    "aim button: never empty, and only ever one of the three fixed paths' words",
+    acts.every((a) => typeof a.label === "string" && a.label.trim().length > 0 && [AIM_FORM_HREF, AIM_ROADMAP_HREF].includes(a.href) && a.keyHint.length > 0 && a.touchHint.length > 0),
+    JSON.stringify(acts.map((a) => a.label))
+  );
+  check(
+    "aim button: 'Open the aim form' (→ /you/roadmap/new) with no roadmap or unknown, 'Open your draft' (→ /you/roadmap) with a DRAFT, 'Open your roadmap' (→ /you/roadmap) with an ACTIVE one",
+    acts[0].label === AIM_OPEN_FORM && acts[1].label === AIM_OPEN_FORM && acts[2].label === AIM_OPEN_FORM && acts[5].label === AIM_OPEN_FORM && acts[2].href === "/you/roadmap/new" &&
+      acts[3].label === AIM_OPEN_DRAFT && acts[3].href === "/you/roadmap" && acts[4].label === AIM_OPEN_ROADMAP && acts[4].href === "/you/roadmap" &&
+      AIM_OPEN_FORM === "Open the aim form" && AIM_OPEN_DRAFT === "Open your draft" && AIM_OPEN_ROADMAP === "Open your roadmap"
+  );
+  check("aim button: the aim is handed over except to an ACTIVE roadmap (which can't take a new aim)", acts[2].handoff && acts[3].handoff && !acts[4].handoff && acts[0].handoff);
+  check("aim button: the footer says what Enter does instead of 'Enter saves'", acts.every((a) => /^Enter opens /.test(a.keyHint) && /^Enter opens /.test(a.touchHint) && !/saves/.test(a.keyHint)));
+  check(
+    "aim chip: 'Aim → roadmap form', and 'Aim · one is already set' with an ACTIVE roadmap",
+    AIM_CHIP === "Aim → roadmap form" && AIM_CHIP_SET === "Aim · one is already set" && aimChipLabel("ACTIVE") === AIM_CHIP_SET && aimChipLabel("DRAFT") === AIM_CHIP && aimChipLabel("NONE") === AIM_CHIP && aimChipLabel(undefined) === AIM_CHIP
+  );
+  check("aim counter: 'n / 140' only past the form's 140 (counted as the form counts)", AIM_MAX === 140 && aimCounterOf("x".repeat(140)) === null && aimCounterOf("x".repeat(141)) === "141 / 140" && aimCounterOf("") === null);
+
+  // The handoff: sessionStorage, the line as sheetText, never a URL.
+  const mem = new Map<string, string>();
+  const store: AimHandoffStorage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => void mem.set(k, v), removeItem: (k) => void mem.delete(k) };
+  const sheet = "aim: hold a conversation in Japanese";
+  const cap = aimCaptureOf(sheet)!;
+  const h = aimHandoffOf(cap, sheet);
+  check("handoff: {aim, source 'capture', sheetText: the line exactly}", h.aim === "hold a conversation in Japanese" && h.source === "capture" && h.sheetText === sheet && Object.keys(h).sort().join() === "aim,sheetText,source");
+  const NOW = Date.UTC(2026, 9, 1, 2);
+  const wrote = writeAimHandoff(h, store, NOW);
+  const back = takeAimHandoff(NOW + 60_000, store);
+  check(
+    "handoff: written with writeAimHandoff under its sessionStorage key, taken once with the aim, the source and the line intact",
+    wrote && back !== null && back.aim === h.aim && back.source === "capture" && back.sheetText === sheet && !mem.has(AIM_HANDOFF_KEY) && takeAimHandoff(NOW + 60_000, store) === null
+  );
+  const long = `aim: ${"y".repeat(495)}`;
+  check("handoff: the longest aim a line can hold (495) travels whole", long.length === MAX_CAPTURE_CHARS && writeAimHandoff(aimHandoffOf(aimCaptureOf(long)!, long), store, NOW) && takeAimHandoff(NOW, store)?.aim.length === 495);
+
+  // A long goal, offered as an aim.
+  const p = (t: string) => parseCapture(t, { today: TODAY });
+  const longLines = ["goal long: run a marathon", "run a marathon #long", "goal: run a marathon #long", "goal: run a marathon by 30 jun 2027"];
+  const notLong = ["goal: run a marathon", "goal mid: run a 10K", "goal short: tidy the desk", "run a marathon", "#long", "idea: what is long? :: x", "aim: run a marathon"];
+  check("long goal: 'goal long:', '#long' and a goal dated over 180 days out are long goals", longLines.every((t) => isLongGoalLine(p(t))), longLines.filter((t) => !isLongGoalLine(p(t))).join(" | "));
+  check("long goal: a goal with no horizon, MID, SHORT, a task, a bare '#long' (no title), an idea and an aim line are not", notLong.every((t) => !isLongGoalLine(p(t))), notLong.filter((t) => isLongGoalLine(p(t))).join(" | "));
+  const prompts = ["ASK", "LATER", "HIDDEN", "OFF", undefined, null] as const;
+  const offerTable = longLines.flatMap((t) => (["NONE", "DRAFT", "ACTIVE", undefined] as const).flatMap((a) => prompts.map((q) => [t, a, q, offersAim(p(t), a, q)] as const)));
+  check(
+    "'Make it an aim' shows only for a long goal with no roadmap open (NONE), never with a DRAFT, an ACTIVE roadmap or an unknown state",
+    offerTable.filter(([, , q]) => q === "ASK").every(([, a, , o]) => o === (a === "NONE")) && notLong.every((t) => !offersAim(p(t), "NONE", "ASK")),
+    JSON.stringify(offerTable.filter(([, a, q, o]) => q === "ASK" && o !== (a === "NONE")))
+  );
+  // Fix round 2 (decision 34: "Not now" quiets every set-an-aim suggestion; the lasting no is the user's).
+  check(
+    "'Make it an aim' is a set-an-aim suggestion: only while the prompt is ASK; never after \"Don't suggest this\" or the Settings switch (OFF), never in a 4-week \"Not now\" (LATER, HIDDEN), never when the prompt is unknown",
+    offerTable.every(([, a, q, o]) => o === (a === "NONE" && q === "ASK")) && offerTable.filter(([, a, q]) => a === "NONE" && q !== "ASK").length === longLines.length * 5,
+    JSON.stringify(offerTable.filter(([, a, q, o]) => o !== (a === "NONE" && q === "ASK")))
+  );
+  check("'Make it an aim': the copy", AIM_LONG_GOAL_NOTE === "Long-term? Make it your aim: the app plans milestones and measures them." && MAKE_IT_AN_AIM === "Make it an aim");
+  const rewrites: [string, string, string][] = [
+    ["goal long: run a marathon", "aim: run a marathon", "run a marathon"],
+    ["run a marathon #long", "aim: run a marathon", "run a marathon"],
+    ["run #long a marathon", "aim: run a marathon", "run a marathon"],
+    ["goal: run a marathon #long", "aim: run a marathon", "run a marathon"],
+    ["goal long: learn Japanese #care", "aim: learn Japanese #care", "learn Japanese #care"],
+    ["goal: run a marathon by 30 jun 2027", "aim: run a marathon by 30 jun 2027", "run a marathon by 30 jun 2027"],
+    ["  goal long:  learn x", "  aim:  learn x", "learn x"],
+  ];
+  const badRewrites = rewrites.filter(([t, want, aim]) => {
+    const r = aimRewriteOf(t, [], p(t));
+    return !r || r.text !== want || r.caret !== want.length || aimCaptureOf(r.text, r.reverted)?.aim !== aim;
+  });
+  check("'Make it an aim': the goal prefix becomes 'aim:' and the '#long' that made it a goal goes; every other word stays as typed", badRewrites.length === 0, JSON.stringify(badRewrites.map(([t]) => [t, aimRewriteOf(t, [], p(t))?.text])));
+  check("'Make it an aim': nothing to rewrite on a line that is not a long goal", notLong.every((t) => aimRewriteOf(t, [], p(t)) === null));
+  const kept = "goal long: pay rent by fri";
+  const keptSpan = { start: kept.indexOf("by fri"), end: kept.length };
+  const keptRw = aimRewriteOf(kept, [keptSpan], parseCapture(kept, { today: TODAY, reverted: [keptSpan] }));
+  check(
+    "'Make it an aim': a span kept as text moves with its words",
+    !!keptRw && keptRw.text === "aim: pay rent by fri" && keptRw.reverted.length === 1 && keptRw.text.slice(keptRw.reverted[0].start, keptRw.reverted[0].end) === "by fri",
+    JSON.stringify(keptRw)
+  );
+
+  // The Goal ▾ menu's 'New aim' inserts 'aim: ' (capture-ui applyInsert treats it as a prefix, like 'goal: ').
+  const newAim: Insert = { text: "aim: ", field: "mode" };
+  const ins = (t: string) => applyInsert(t, [], newAim, p(t), { today: TODAY });
+  const intoWords = ins("hold a conversation in Japanese");
+  const intoEmpty = ins("");
+  check(
+    "goal menu: 'aim: ' in front of the words makes an aim line; on an empty line it waits for the words",
+    intoWords?.text === "aim: hold a conversation in Japanese" && aimCaptureOf(intoWords.text, intoWords.reverted)?.aim === "hold a conversation in Japanese" && intoEmpty?.text === "aim: " && aimCaptureOf(intoEmpty.text) === null,
+    JSON.stringify([intoWords?.text, intoEmpty?.text])
+  );
+  // The option itself (the lead's handoff, landed): capture-ui insertMenuOptions, InsertRow and the sheet's one attribute.
+  {
+    const goalMenu = (ctx: object) => insertMenuOptions("goal", ctx as Parameters<typeof insertMenuOptions>[1]);
+    const goalIds = (ctx: object) => goalMenu(ctx).map((c) => c.id);
+    const withAim = (aim: unknown, hasMode = false, goals: { id: string; title: string }[] | null = []) => goalIds({ today: TODAY, goals, hasMode, aim });
+    const strip = (s: string) => s.replace(/\r\n/g, "\n").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+    const rowSrc = strip(readFileSync(join(__dirname, "..", "src/components/capture/InsertRow.tsx"), "utf8"));
+    const qcSrc = strip(readFileSync(join(__dirname, "..", "src/components/capture/QuickCapture.tsx"), "utf8"));
+    const uiSrc = strip(readFileSync(join(__dirname, "..", "src/components/capture/capture-ui.ts"), "utf8"));
+    check(
+      "goal menu: 'New aim' (after 'New goal') only with no roadmap open and no prefix; the sheet passes the open roadmap to the row",
+      withAim("NONE").join() === "goal-new,goal-new-aim,goal-none" &&
+        ["DRAFT", "ACTIVE", undefined].every((a) => !withAim(a).includes("goal-new-aim")) &&
+        !withAim("NONE", true).includes("goal-new-aim") &&
+        /insertMenuOptions\(menu, \{ today, goals, hasMode, aim \}\)/.test(rowSrc) &&
+        /<InsertRow [^>]*aim=\{editing \? undefined : vocab\?\.aim\}/.test(qcSrc),
+      withAim("NONE").join()
+    );
+    check(
+      "goal menu: 'New aim' sits between 'New goal' and the goals to link, while the goals load and once they have loaded",
+      withAim("NONE", false, null).join() === "goal-new,goal-new-aim,goal-loading" &&
+        withAim("NONE", false, [{ id: "g1", title: "Run a marathon" }]).join() === "goal-new,goal-new-aim,goal-links,goal-to-g1" &&
+        withAim("ACTIVE", false, [{ id: "g1", title: "Run a marathon" }]).join() === "goal-new,goal-links,goal-to-g1" &&
+        withAim("NONE", true, [{ id: "g1", title: "Run a marathon" }]).join() === "goal-links,goal-to-g1",
+      JSON.stringify([withAim("NONE", false, null), withAim("NONE", false, [{ id: "g1", title: "Run a marathon" }])])
+    );
+    const opt = goalMenu({ today: TODAY, goals: [], aim: "NONE" }).find((c) => c.id === "goal-new-aim");
+    check(
+      "goal menu: 'New aim' inserts the 'aim: ' prefix, named for a screen reader ('New aim: Add “aim:” to the line'), and is never disabled",
+      !!opt && opt.label === "New aim" && opt.name === "New aim: Add “aim:” to the line" && opt.insert?.text === "aim: " && opt.insert.field === "mode" && !opt.disabled && !opt.menu && !opt.eyebrow,
+      JSON.stringify(opt)
+    );
+    // Tapping it on a line of words makes the aim line, whose Enter opens the aim form through the handoff (submit → openAimForm).
+    const tapped = opt?.insert ? applyInsert("speak Japanese at work", [], opt.insert, p("speak Japanese at work"), { today: TODAY }) : null;
+    check(
+      "goal menu: tapping 'New aim' on a line of words makes an aim line (the form opens from it with the handoff, never a URL)",
+      tapped?.text === "aim: speak Japanese at work" && aimCaptureOf(tapped.text, tapped.reverted)?.aim === "speak Japanese at work" && aimLineOf(tapped.text) === "speak Japanese at work",
+      JSON.stringify(tapped)
+    );
+    // "The line already has a prefix": a parsed mode, or a leading 'aim:' (bare or with words), which the parser never reads.
+    const prefixed = ["goal: run a marathon", "idea: what is a p-value :: the chance of data this extreme", "aim: ", "aim:", "aim: run a marathon", "  AIM : x"];
+    const plain = ["", "buy milk", "aimless walk", "tmr aim: x", "the aim: x", "goal"];
+    check(
+      "goal menu: a line with a prefix (a parsed mode, or a leading 'aim:') hides 'New goal' and 'New aim'; any other line keeps both",
+      prefixed.every((t) => lineHasPrefix(p(t), t)) && plain.every((t) => !lineHasPrefix(p(t), t)) && /const hasMode = lineHasPrefix\(parsed, text\)/.test(rowSrc),
+      JSON.stringify([prefixed.filter((t) => !lineHasPrefix(p(t), t)), plain.filter((t) => lineHasPrefix(p(t), t))])
+    );
+    check(
+      "goal menu: 'New aim' is a tool the user opens: it reads the open roadmap only, never the prompt (no aimPrompt in the row or the menu), and adds no key",
+      !/aimPrompt/.test(rowSrc) && !/aimPrompt/.test(uiSrc) && !/addEventListener\(\s*["']key/.test(rowSrc) && !/onKeyDown=\{[^}]*aim/i.test(rowSrc) && /import type \{[^}]*\bCaptureAim\b[^}]*\} from "\.\.\/\.\.\/app\/actions\/capture"/.test(uiSrc) && !/from "\.\/aim-capture"|roadmap-handoff/.test(uiSrc),
+      "capture-ui.ts keeps a type-only import of CaptureAim (no runtime path to the roadmap modules)"
+    );
+  }
+
+  // Copy: no model, no reward words, no counts (roadmap-rev4 decision 33 and the Names rules).
+  const words = (Object.values(aimCapture) as unknown[]).filter((v): v is string => typeof v === "string");
+  const copy = [...words, ...acts.flatMap((a) => [a.label, a.keyHint, a.touchHint])];
+  const badCopy = copy.filter((s) => /gemini|\bearn|mastery|⬡|\bquests?\b|\bdeadline\b/i.test(s));
+  check("copy: no Gemini, earn, mastery, ⬡, quest or deadline in the aim copy", badCopy.length === 0 && copy.length >= 10, badCopy.join(" | "));
+
+  // ── The wiring, read from the source ──
+  const ROOT = join(__dirname, "..");
+  const strip = (s: string) => s.replace(/\r\n/g, "\n").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+  const qc = strip(readFileSync(join(ROOT, "src/components/capture/QuickCapture.tsx"), "utf8"));
+  const bodyOf = (src: string, head: string) => {
+    const at = src.indexOf(head);
+    if (at < 0) return "";
+    const end = src.indexOf("\n  };\n", at);
+    return src.slice(at, end < 0 ? undefined : end);
+  };
+  const submitBody = bodyOf(qc, "const submit = (");
+  const ia = submitBody.indexOf("aimCaptureOf(line.text, line.reverted)");
+  check(
+    "sheet: submit reads the aim line before the parse and returns before anything is stored or sent (every Enter, the button and compositionend come through submit)",
+    ia > 0 &&
+      ia < submitBody.indexOf("parseCapture(line.text") &&
+      ia < submitBody.indexOf("addPending(pending)") &&
+      ia < submitBody.indexOf("sendLine(pending") &&
+      /const aimLine = editing \? null : aimCaptureOf\(line\.text, line\.reverted\);\s*if \(aimLine\) \{\s*openAimForm\(aimLine, line\.text\);\s*return;\s*\}/.test(submitBody),
+    `submit: ${submitBody.length} chars`
+  );
+  const open = bodyOf(qc, "const openAimForm = (");
+  check(
+    "sheet: an aim line never calls a capture save: openAimForm writes the handoff with writeAimHandoff, closes and navigates, and stores or sends nothing",
+    /if \(act\.handoff\) writeAimHandoff\(aimHandoffOf\(capture, sheetText\)\);/.test(open) &&
+      /closeSheet\("navigate"\);\s*router\.push\(act\.href\);/.test(open) &&
+      !/createFromCapture|createManyFromCapture|recaptureFromCapture|sendLine|sendBatch|addPending|writeDraft|startTransition/.test(open),
+    `openAimForm: ${open.length} chars`
+  );
+  const pushes = [...qc.matchAll(/router\.push\(([^)]*)\)/g)].map((m) => m[1]);
+  check(
+    "sheet: the aim never travels in a URL (no '?aim=', no search params; every router.push takes a fixed path)",
+    pushes.length === 1 && pushes[0] === "act.href" && !/[?&]aim=/.test(qc) && !/searchParams/.test(qc) && AIM_FORM_HREF === "/you/roadmap/new" && AIM_ROADMAP_HREF === "/you/roadmap",
+    pushes.join(", ")
+  );
+  check(
+    "sheet: the aim line's primary is never disabled and reads the action's words; it gets no To Inbox and no insert row",
+    /const primaryDisabled = aimAct \? false : !primary\.done && !canSave;/.test(qc) &&
+      /disabled=\{primaryDisabled\}/.test(qc) &&
+      /const primaryLabel = aimAct \? aimAct\.label :/.test(qc) &&
+      /const canInbox = canSave && !aimCap &&/.test(qc) &&
+      /if \(!paste && !weighIn && !aimCap\) \{/.test(qc)
+  );
+  check(
+    "sheet: an aim line is read only off an edit and off a paste preview (an edit replaces a task row)",
+    /const aimCap = useMemo\(\(\) => \(open && day && !editing && !paste \? aimCaptureOf\(text, reverted\) : null\)/.test(qc)
+  );
+  check(
+    "sheet: 'Make it an aim' renders only under aimOffer = a long goal (not an aim line, not an edit, not a paste) with aim NONE and the prompt ASK",
+    /const longGoal = !aimCap && !editing && !paste && isLongGoalLine\(parsed\);/.test(qc) &&
+      /const aimOffer = longGoal && offersAim\(parsed, vocab\?\.aim, vocab\?\.aimPrompt\);/.test(qc) &&
+      /\{aimOffer && \([\s\S]{0,400}AIM_LONG_GOAL_NOTE[\s\S]{0,400}onClick=\{makeItAnAim\}[\s\S]{0,80}MAKE_IT_AN_AIM/.test(qc) &&
+      (qc.match(/MAKE_IT_AN_AIM/g) ?? []).length === 2
+  );
+  check(
+    "sheet: the aim chip reverts the 'aim:' prefix through the reverted spans, or puts back the goal line right after 'Make it an aim'",
+    /const revertAim = \(\) => \{[\s\S]*?if \(rewrite && rewrite\.to === line\.text\) \{\s*setLine\(rewrite\.from\.text, rewrite\.from\.reverted\);[\s\S]*?const span = aimPrefixSpan\(line\.text\);[\s\S]*?setLine\(line\.text, \[\.\.\.line\.reverted, span\]\);/.test(qc) &&
+      /onClick=\{revertAim\}/.test(qc)
+  );
+  const cacheLiteral = /const cache: VocabCache = \{[^}]*\}/.exec(qc)?.[0] ?? "";
+  check("sheet: the open roadmap and the suggestions prompt are never written to the stored vocabulary (they ride in memory, unknown after a reload)", cacheLiteral.length > 0 && !/\baim\b|aimPrompt/.test(cacheLiteral));
+  const loadBody = qc.slice(qc.indexOf("const loadVocab = useCallback("), qc.indexOf("const considerVocab = useCallback("));
+  check(
+    "sheet: the prompt comes only from a server answer it trusts (isCaptureAimPrompt), unknown otherwise, and rides beside the open roadmap",
+    /const aimPrompt = isCaptureAimPrompt\(v\.aimPrompt\) \? v\.aimPrompt : undefined;/.test(loadBody) &&
+      /setVocab\(\(prev\) => \(\{ \.\.\.cache, priced: true, words: [^}]*, aim, aimPrompt \}\)\);/.test(loadBody) &&
+      (qc.match(/\baimPrompt:/g) ?? []).length === 0,
+    `loadVocab: ${loadBody.length} chars`
+  );
+  check(
+    "sheet: a new opening forgets a prompt read over VOCAB_FRESH_MS ago (aimPromptOnOpen over vocabOnOpen), so a \"no\" tapped since is never contradicted",
+    /if \(!wasOpen\) \{[\s\S]*?setVocab\(\(v\) => vocabOnOpen\(v, today, Date\.now\(\)\)\);\s*setVocab\(\(v\) => aimPromptOnOpen\(v, today, Date\.now\(\), VOCAB_FRESH_MS\)\);[\s\S]*?\n      \}/.test(qc) &&
+      (qc.match(/aimPromptOnOpen\(/g) ?? []).length === 1
+  );
+  check(
+    "sheet: a long goal asks for the prompt too (stale until a load says it), under the refresh rules that keep saves first; an aim line's action never reads it",
+    /aimPromptWantedRef\.current = longGoal;/.test(qc) &&
+      /\|\| \(aimPromptWantedRef\.current && v\?\.aimPrompt === undefined\)/.test(qc) &&
+      /if \(open && \(\(aimWanted && vocab\?\.aim === undefined\) \|\| \(longGoal && vocab\?\.aimPrompt === undefined\)\)\) considerVocab\(\);/.test(qc) &&
+      !/aimPrompt/.test(submitBody) &&
+      !/aimPrompt/.test(open) &&
+      aimActionOf.length === 1
+  );
+  check(
+    "sheet: an aim line asks for the open roadmap at once, once per opening; a long goal asks under the refresh rules that keep saves first",
+    /if \(openRef\.current && aimLineRef\.current && v\?\.aim === undefined && !o\.refreshed\) \{\s*o\.refreshed = true;\s*loadVocab\(false\);/.test(qc) &&
+      /stale: vocabStale\(v, todayKey\(\), now\) \|\| \(aimWantedRef\.current && v\?\.aim === undefined\)/.test(qc)
+  );
+  check(
+    "keys: no new shortcut (still the two window keydown listeners: the capture hotkey and Ctrl+Z's undo), and shortcuts.ts has no aim key",
+    (qc.match(/addEventListener\("keydown"/g) ?? []).length === 2 && !/\baim\b/i.test(readFileSync(join(ROOT, "src/lib/shortcuts.ts"), "utf8"))
+  );
+
+  const ac = readFileSync(join(ROOT, "src/components/capture/aim-capture.ts"), "utf8");
+  const acImports = ac.match(/^import[^;]+;/gm) ?? [];
+  check(
+    "guard: aim-capture imports no database, task, ledger, cache or model code, and only types from the server actions (it runs in the browser too)",
+    acImports.length > 0 &&
+      acImports.every((l) => !/prisma|tasks|ledger|activity|cache|gemini|roadmap-model|roadmap-server|roadmap-evidence|next\//i.test(l)) &&
+      acImports.filter((l) => l.includes("app/actions")).every((l) => l.startsWith("import type")),
+    acImports.join(" | ")
+  );
+
+  const actions = strip(readFileSync(join(ROOT, "src/app/actions/capture.ts"), "utf8"));
+  const loader = actions.slice(actions.indexOf("const loadCaptureAim = "), actions.indexOf("type VocabWords"));
+  check(
+    "action: the vocabulary's aim is one read cached on 'roadmap', of the open rows' status only (no revision-4 column), through readCaptureAim",
+    /readCaptureAim\(\(\) =>\s*cached\(`captureAim:\$\{userId\}`, \["roadmap"\], async \(\) => \{/.test(loader) &&
+      /prisma\.roadmap\.findMany\(\{\s*where: \{ userId, status: \{ in: \[\.\.\.OPEN_ROADMAP_STATUSES\] \} \},\s*select: \{ status: true \},\s*take: 2,\s*\}\)/.test(loader) &&
+      !REV4_COLUMNS.some((c) => new RegExp(`\\b${c}\\b`).test(loader)),
+    `loader: ${loader.length} chars`
+  );
+  const vocabFn = actions.slice(actions.indexOf("export async function loadCaptureVocabulary("));
+  check(
+    "action: loadCaptureVocabulary reads the aim and the prompt in its one Promise.all and returns each only when known",
+    /const \[vocab, structure, goals, rawBefore, recent, active, weightUnit, aim, aimPrompt\] = await Promise\.all\(\[/.test(vocabFn) &&
+      /loadCaptureAim\(userId\),\s*loadCaptureAimPrompt\(userId, day\),\s*\]\);/.test(vocabFn) &&
+      /return \{ words, goals, rawBefore, day, recent, active, weightUnit, \.\.\.\(aim \? \{ aim \} : \{\}\), \.\.\.\(aimPrompt \? \{ aimPrompt \} : \{\}\) \};/.test(vocabFn)
+  );
+  const promptLoader = actions.slice(actions.indexOf("const loadCaptureAimPrompt = "), actions.indexOf("export async function loadCaptureVocabulary("));
+  const cachedAt = promptLoader.indexOf("cached(");
+  check(
+    "action: the prompt is the snooze cookie, read per request outside the cache (a failed read is unknown), and one select of LifeSettings.aimSuggestions only, cached on 'life', through readCaptureAimPrompt",
+    cachedAt > 0 &&
+      /cookie = \(await cookies\(\)\)\.get\(AIM_PROMPT_COOKIE\)\?\.value;\s*\} catch \{\s*return undefined;\s*\}/.test(promptLoader) &&
+      promptLoader.indexOf("cookies()") < cachedAt &&
+      !/cookies\(\)/.test(promptLoader.slice(cachedAt)) &&
+      /return readCaptureAimPrompt\(\s*\(\) =>\s*cached\(`captureAimSuggestions:\$\{userId\}`, \["life"\], async \(\) => \{/.test(promptLoader) &&
+      /prisma\.lifeSettings\.findUnique\(\{ where: \{ userId \}, select: \{ aimSuggestions: true \} \}\)/.test(promptLoader) &&
+      /return row\?\.aimSuggestions \?\? null;/.test(promptLoader) &&
+      /cookie,\s*day\s*\);/.test(promptLoader) &&
+      /import \{ cookies \} from "next\/headers";/.test(actions),
+    `prompt loader: ${promptLoader.length} chars`
+  );
+  check(
+    "action: CaptureVocabulary.aim and .aimPrompt are optional, typed 'NONE' | 'DRAFT' | 'ACTIVE' and roadmap-invite's AimPrompt",
+    /\n  aim\?: CaptureAim;\s*aimPrompt\?: AimPrompt;\s*\}/.test(actions) &&
+      /export type CaptureAim = "NONE" \| "DRAFT" \| "ACTIVE";/.test(actions) &&
+      /import \{ AIM_PROMPT_COOKIE, type AimPrompt \} from "@\/lib\/roadmap-invite";/.test(actions)
+  );
+
+  // The line is never lost (fix round, lens 3 #8): the intake form clears the sheet's 'aim: …' line
+  // only after saveIntake succeeded AND the intake took the line's aim (no open draft, or 'Use it').
+  // RoadmapForm.tsx is R5's, read here (never imported: it pulls in CSS) because the guarantee is the
+  // capture line's. A guard helper the statement calls (R5's clearsCaptureLine) is read into the guard.
+  const form = strip(readFileSync(join(ROOT, "src/components/roadmap/RoadmapForm.tsx"), "utf8"));
+  const formSubmit = bodyOf(form, "const submit = async (");
+  const clearAt = formSubmit.indexOf("clearSheetDraftIf(");
+  const okAt = formSubmit.indexOf("if (!saved.ok)");
+  const clearStmt = clearAt < 0 ? "" : formSubmit.slice(Math.max(formSubmit.lastIndexOf(";", clearAt), formSubmit.lastIndexOf("}", clearAt)) + 1, formSubmit.indexOf(";", clearAt) + 1);
+  const helperName = /\b(\w+)\(handoff\b[^)]*\)/.exec(clearStmt.replace(/clearSheetDraftIf\([^)]*\)/, ""))?.[1] ?? null;
+  const helperAt = helperName ? form.indexOf(`function ${helperName}(`) : -1;
+  const helperBody = helperAt < 0 ? "" : form.slice(helperAt, form.indexOf("\n}\n", helperAt));
+  const helperReturn = helperBody.slice(Math.max(0, helperBody.indexOf("return ")));
+  const guard = `${clearStmt}\n${helperBody}`;
+  check(
+    "intake: the form clears the capture line once, only after saveIntake answered ok, and only a 'capture' handoff's own line",
+    clearAt > 0 && okAt > 0 && okAt < clearAt && (form.match(/clearSheetDraftIf\(/g) ?? []).length === 1 && /source === "capture"/.test(guard) && /clearSheetDraftIf\(handoff\.sheetText\)/.test(clearStmt),
+    clearStmt.trim()
+  );
+  // R5 landed the gate (handoffUsed + clearsCaptureLine) in this fix round, so it is pinned, not pending:
+  // the clear needs the use (a conjunction, no '||'); an open draft's mount (which only shows 'The aim you
+  // typed · Use it') never marks it used; only the no-draft merge and the 'Use it' tap mark it.
+  // Ablated in a scratch copy: a mount that marks, a helper with '||', the rev-3 ungated clear, a clear
+  // before saveIntake answered, and a 'Use it' that does not mark each fail one of the two checks.
+  const mount = bodyOf(form, "useEffect(() => {\n    if (loaded.current) return;");
+  const draftBranch = /if \(view\.draft\) \{([\s\S]*?)return;\s*\}/.exec(mount)?.[1] ?? "";
+  const afterDraft = draftBranch ? mount.slice(mount.indexOf(draftBranch) + draftBranch.length) : "";
+  const marks = form.match(/setHandoffUsed\(true\)|handoffUsed(?:\.current)?\s*=\s*true/g) ?? [];
+  const mergeMarks = afterDraft.match(/setHandoff\(h\);\s*setHandoffUsed\(true\);/g) ?? [];
+  const useItMarks = form.match(/set\("aim", handoff\.aim[^;]*\);\s*setHandoffUsed\(true\);\s*\}\}\s*>\s*Use it/g) ?? [];
+  check(
+    "intake: an open draft saved without 'Use it' keeps the capture line (the clear needs the aim used; only the no-draft merge and 'Use it' mark it, never an open draft's mount)",
+    /handoffUsed/.test(clearStmt) &&
+      draftBranch.length > 0 &&
+      !/setHandoffUsed\(true\)|handoffUsed(?:\.current)?\s*=\s*true/.test(draftBranch) &&
+      (helperBody === "" || (!/\|\|/.test(helperReturn) && /\bused\b/.test(helperReturn))) &&
+      marks.length === 2 &&
+      mergeMarks.length === 1 &&
+      useItMarks.length === 1,
+    `${clearStmt.trim()} · marks ${marks.length}, merge ${mergeMarks.length}, Use it ${useItMarks.length}`
+  );
+}
+
 batchChecks()
   .then(replacementChecks)
   .then(unarchiveChecks)
+  .then(aimCaptureChecks)
   .catch((err) => {
     failed++;
     console.log(`FAIL batch checks threw — ${String(err)}`);

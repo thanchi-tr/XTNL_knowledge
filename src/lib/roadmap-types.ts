@@ -54,8 +54,53 @@
  *   Fix round 2       AimCardView.acceptedDay with isAcceptanceReading; titleStruck on MilestoneRowView
  *                     and AimCardMilestone; RoadmapView.acceptedRun and RoadmapView.positions
  *   Goal seam types   RoadmapSeriesPoint · RoadmapGoalEntry (declared in goals.ts, re-exported)
+ *
+ * Revision 4 (docs/life-plan/roadmap-rev4.md; contracts §14), lane 0:
+ *   Gate              ROADMAP_GAPS_LIVE · GAPS_LIVE_MIN_LABELLED · REJECT_ALARM_SHARE (ROADMAP_GEMINI_LIVE kept false)
+ *   Unions            TargetSource DEPTH · Remedy USE_REALISTIC_DATE, LOWER_DEPTH · ReplanTrigger CALIBRATED ·
+ *                     ItemKind GAP · BlockingFlag NOT_IN_YOUR_WORDS · DropReason DUPLICATE, NOT_A_NAME, REJECTED,
+ *                     CONSTRAINT · ItemNote GEMINI_PICK, NOT_CHOSEN, FROM_SUGGESTION, PRODUCTION_ADDED ·
+ *                     MilestoneNote HELD_AT_START, LONG_WINDOW, NO_PRODUCTION_SLOT, DEPTH_LOWERED ·
+ *                     CheckpointKind EXAM_DAY · GateStage · TrackStage · StageKey · DateMode · DateVerdict ·
+ *                     AimDepth · DepthKey · IntegrityVerdict · IntegrityCode
+ *   Depth             AIM_DEPTHS · DEPTH_DEFAULT · depthKeyOf · coverage constants · WRITE_MARGIN · NON_RECALL_TYPES ·
+ *                     RETRY_ENTRY_DAYS · isRecallType
+ *   Stages            STAGE_KEYS · STAGE_LEVEL · STAGE_NAMES · stageOfLevel · stageLabelOf · TRACK_STAGE_KEYS ·
+ *                     TRACK_STAGE_SHARES · FIRST_RANK_MAX_DAYS · rankIndexForStage · topRankIndexOfDepth
+ *   Dates             DATE_MODES · DATE_VERDICTS · OVER_PACE_FACTOR · SCHEDULE_BOUND_SHARE · PACE_SHARE
+ *   The reach model   REACH_* · P_PRIOR · C_PRIOR · RHO_PRIOR · LONG_GAP_LEVEL · P_LONG_CAP · ReachParams ·
+ *                     reachInputsOf · reachTable · reachProb · existingExpectedSlack · newExpectedSlack ·
+ *                     referenceWriteDaysOf · stageDayOf (F-R4-8, implemented in full)
+ *   The ledger tag    parseReviewDetail (srs.ts writes "advanced · L11→12", "strike · L11")
+ *   Keys              cardsAtLevelKey's `r` / `rc` segment, parseMeasureKey reads it (CardSegment)
+ *   Shapes            DateCheck · DateOrigin · DepthChoice · CoverageChoice · CoverageBreakdown · DomainOrigin(s) ·
+ *                     ValidationIntegrity · DraftReplyV3 · AimStep · AimLineView · LastAimView · GapView ·
+ *                     ConstraintExclusion · SessionPicks · DomainAddition · MotivationTimeline · the parts on the
+ *                     week quest specs, and optional fields on Intake, IntakeView, DraftView, RoadmapView,
+ *                     RoadmapHeader, AimCardView, MilestoneDraft, ItemDraft, StartSnapshot, Feasibility, Throughput
+ *   Legacy            isLegacyRoadmap (F-R4-16) · REV4_COLUMNS · isMissingRev4Column (the migration's insurance)
+ *
+ * Revision 4 fix round (contracts §15), lane 0: one definition each where the
+ * lanes disagreed or read through casts:
+ *   Clean entry       ReviewLedgerRow · isRetryEntry · retryReadDaysOf (R1's rule; R1 and R6 import it)
+ *   Ranks             rankIndexForStage(stage, gateLevel?, depth?): a PART at the depth gives the gate below's rank
+ *   Coverage          Feasibility.coverage (frozen at intake) · frozenCoverageCountsOf · WRITE_MARGIN 1.3
+ *   Acceptances       acceptanceOrderBy · isDepthLoweringRecord (a lowered depth is a record within its version)
+ *   Integrity         gapsNotShownOf (hidden + dropped: every gap name not shown)
+ *   Plan-born tasks   isRoadmapCaptureKey (no model sizes or explains a plan-born template)
+ *   View fields       ProficiencyToward · ProficiencyView.toward/label · WeekQuestRow.partsLine/health ·
+ *                     ItemEdit.catalogKey · IntakeFieldOption.domains[].nonRecall · StartPreview.pay.restsOnAdded ·
+ *                     CurrentMilestoneView.startFeasibility/startedDay · RoadmapHeader.domainIds · LegacyView.domainIds
+ *
+ * Revision 4 fix round 2 (contracts §16), lane 0:
+ *   Clean entry       retryReadDaysOf widened to hold the entering pass and the miss before it · JITTER_HIGH
+ *   View fields       PlanHistoryRow.depthLowered (R4 sets it; R5 keys "depth lowered" on it) ·
+ *                     AimCardView.legacyView (the Aim card's legacy banner facts)
+ *   Ranks             AssignRankIndices takes R1's optional depth (R4's rankIndicesOf passes it)
+ * The practice, step and checkpoint catalog is roadmap-catalog.ts; the aim
+ * invitation rules are roadmap-invite.ts; the aim handoff is roadmap-handoff.ts.
  */
-import { MASTERY_LEVEL, baseIntervalDays } from "./xp";
+import { MASTERY_LEVEL, baseIntervalDays, graceDays } from "./xp";
 import { addDays, dayKeyOf, daysBetween, type DayKey } from "./life-day";
 import { isFixedSchedule, occurrencesBetween, parseRule, periodOf, type Rule, type RuleLike } from "./recurrence";
 import { instanceOutcome, outcomesOf, targetUnits, type InstanceLike } from "./habit";
@@ -64,6 +109,8 @@ import { SETTLE_LAG_DAYS } from "./duty-economy";
 import { DURATION_BAND_MINUTES } from "./life-lexicon";
 import type { Category, Track } from "./life-types";
 import type { RoadmapGoalEntry, RoadmapSeriesPoint } from "./goals";
+import type { QuestionType } from "@prisma/client";
+import type { CatalogKey } from "./roadmap-catalog";
 
 export type { RoadmapGoalEntry, RoadmapSeriesPoint };
 
@@ -87,6 +134,23 @@ export const ROADMAP_GEMINI_LIVE = false;
 /** The claim's refusal while ROADMAP_GEMINI_LIVE is false. */
 export const GEMINI_DRAFTING_OFF = "Gemini drafting is off until its checks pass. Build from your numbers or write it yourself.";
 
+/**
+ * The area-suggestion slot (`gaps`, Gemini's only free text) exists only
+ * while this is true (rev 4 decision 51). False in this build: the intake
+ * hides the switch, `gaps` is absent from every response schema, and a
+ * stored Roadmap.suggestAreas true is ignored. Lead only; it turns on only
+ * after GAPS_LIVE_MIN_LABELLED real gap strings from approved calls are
+ * labelled and none labelled a claim would be shown (F-R4-19, F-R4-23).
+ */
+export const ROADMAP_GAPS_LIVE = false;
+/** Real gap strings that must be labelled before ROADMAP_GAPS_LIVE may turn on. */
+export const GAPS_LIVE_MIN_LABELLED = 30;
+/**
+ * Production monitor (F-R4-20): REJECTED plus SALVAGED over a week's v3
+ * Gemini runs above this share turns ROADMAP_GEMINI_LIVE off (by the lead).
+ */
+export const REJECT_ALARM_SHARE = 0.2;
+
 /** Every roadmap user action's refusal on a server with writes off (decision 13), the ROADMAP close included. */
 export const ROADMAP_WRITES_OFF = "Roadmap changes are recorded only on the live app";
 
@@ -107,8 +171,15 @@ export function notYet(what: string): never {
 /** Set to '1' by scripts/_no-model.ts; the default callModel refuses to run under it (F5). */
 export const ROADMAP_CHECK_ENV = "ROADMAP_CHECK";
 
-/** The Aim card's empty line, dismissed for a year (dismissAimPrompt); the /you page reads it on the server. */
+/**
+ * The aim prompt's cookie, read on the server by /you and Today. Revision 4
+ * (roadmap-invite.ts aimPromptOf): 'later:<day>' is the 4-week "Not now"
+ * snooze, 'on:<day>' marks the Settings switch turned back on, and a legacy
+ * 'off' (rev 3's year-long ×) is still read as a no. No action writes 'off'
+ * any more; the lasting no is LifeSettings.aimSuggestions = false.
+ */
 export const AIM_PROMPT_COOKIE = "xtnl-aim-prompt";
+/** A year in seconds: rev 3's 'off' lifetime (legacy; the 'later:' and 'on:' values use roadmap-invite AIM_PROMPT_LATER_MAX_AGE_S). */
 export const AIM_PROMPT_COOKIE_MAX_AGE_S = 365 * 24 * 60 * 60;
 
 /**
@@ -205,9 +276,20 @@ export const ORIGINS: readonly Origin[] = ["GEMINI", "CODE", "USER", "SYLLABUS"]
 export type Decision = "PENDING" | "KEPT" | "CHECKED" | "EDITED" | "REMOVED";
 export const DECISIONS: readonly Decision[] = ["PENDING", "KEPT", "CHECKED", "EDITED", "REMOVED"];
 
-/** RoadmapItem.kind. DOMAIN → Domain.id; STEP → a goal step; CHECKPOINT is context only. */
-export type ItemKind = "DOMAIN" | "TOPIC" | "PRACTICE" | "STEP" | "CHECKPOINT";
-export const ITEM_KINDS: readonly ItemKind[] = ["DOMAIN", "TOPIC", "PRACTICE", "STEP", "CHECKPOINT"];
+/**
+ * RoadmapItem.kind. DOMAIN → Domain.id; STEP → a goal step; CHECKPOINT is
+ * context only. GAP (revision 4, F-R4-19) is an area Gemini thinks may need
+ * its own Domain: origin GEMINI, domainId null, on the version's first
+ * milestone as a plan-level row, quarantined — no path that reads DOMAIN
+ * items, measures, scope, fitting, Today-bound rows, quest input, accept
+ * blockers, RunFacts labels or report labels ever sees one, and `undecided`
+ * excludes it. None exists while ROADMAP_GAPS_LIVE is false.
+ */
+export type ItemKind = "DOMAIN" | "TOPIC" | "PRACTICE" | "STEP" | "CHECKPOINT" | "GAP";
+export const ITEM_KINDS: readonly ItemKind[] = ["DOMAIN", "TOPIC", "PRACTICE", "STEP", "CHECKPOINT", "GAP"];
+/** The kinds a plan holds (every ItemKind but the quarantined GAP): what measures, Start, quests and the editor read. */
+export type PlanItemKind = Exclude<ItemKind, "GAP">;
+export const PLAN_ITEM_KINDS: readonly PlanItemKind[] = ["DOMAIN", "TOPIC", "PRACTICE", "STEP", "CHECKPOINT"];
 
 /** RoadmapItem.planSource: who set sessions, band and rule. */
 export type PlanSource = "WORKED_OUT" | "YOURS";
@@ -216,7 +298,14 @@ export type PlanSource = "WORKED_OUT" | "YOURS";
 export type MeasureKind = "CARDS_AT_LEVEL" | "PRACTICE_KEPT" | "CHECKPOINT";
 export const MEASURE_KINDS: readonly MeasureKind[] = ["CARDS_AT_LEVEL", "PRACTICE_KEPT", "CHECKPOINT"];
 export type MeasureRole = "PAYS" | "CONTEXT";
-export type TargetSource = "WORKED_OUT" | "YOURS";
+/**
+ * Where a measure's target came from. DEPTH (revision 4): a depth plan's
+ * stage or end-state term, n_d from the coverage policy (F-R4-9) — never
+ * scaled by intensity, never fitted to reach, never lowered by a remedy.
+ * YOURS when the user typed it.
+ */
+export type TargetSource = "WORKED_OUT" | "YOURS" | "DEPTH";
+export const TARGET_SOURCES: readonly TargetSource[] = ["WORKED_OUT", "YOURS", "DEPTH"];
 /** Where a scope's new-card pace comes from, in order: the scope, the Area Field, the user's typed rate, none. */
 export type RateSource = "SCOPE" | "FIELD" | "YOURS" | "NONE";
 export const RATE_SOURCES: readonly RateSource[] = ["SCOPE", "FIELD", "YOURS", "NONE"];
@@ -229,9 +318,17 @@ export type ReadingSource = "COMPUTED" | "SELF";
 export type PracticeMethod = "DELIBERATE_PRACTICE" | "READING" | "PROJECT_WORK" | "COACHED_SESSION" | "WORKOUT" | "WRITING";
 export const PRACTICE_METHODS: readonly PracticeMethod[] = ["DELIBERATE_PRACTICE", "READING", "PROJECT_WORK", "COACHED_SESSION", "WORKOUT", "WRITING"];
 
-/** Checkpoint kinds. The bar and outOf are always the user's (YOURS). */
-export type CheckpointKind = "MOCK_TEST" | "PERFORMANCE_CHECK" | "SELF_TEST";
+/**
+ * Checkpoint kinds. The bar and outOf are always the user's (YOURS).
+ * EXAM_DAY (revision 4, F-R4-11) is placed by code only, on the stage
+ * holding Roadmap.examDay: it is never in a model enum and never offered in
+ * an editor picker (roadmap-catalog marks it codeOnly).
+ */
+export type CheckpointKind = "MOCK_TEST" | "PERFORMANCE_CHECK" | "SELF_TEST" | "EXAM_DAY";
+/** The kinds a user or a (v2) model may pick: every kind but the code-placed EXAM_DAY. Unchanged from rev 3. */
 export const CHECKPOINT_KINDS: readonly CheckpointKind[] = ["MOCK_TEST", "PERFORMANCE_CHECK", "SELF_TEST"];
+/** Every stored value of RoadmapItem.checkpointKind (the TEXT union), EXAM_DAY included: what a reader of stored rows accepts. */
+export const STORED_CHECKPOINT_KINDS: readonly CheckpointKind[] = ["MOCK_TEST", "PERFORMANCE_CHECK", "SELF_TEST", "EXAM_DAY"];
 
 /** Practice duration bands (a subset of life-types DurationBand; minutes from life-lexicon DURATION_BAND_MINUTES). */
 export type PracticeBand = "D15" | "D20" | "D30" | "D45" | "D60" | "D90" | "D120";
@@ -258,7 +355,13 @@ export type BlockingFlag =
   | "MATCHED_EXISTING"
   | "TOPIC_OUTSIDE_SCOPE"
   | "AIM_STEP_EARLY"
-  | "LANGUAGE_UNCHECKED";
+  | "LANGUAGE_UNCHECKED"
+  | "NOT_IN_YOUR_WORDS";
+/**
+ * NOT_IN_YOUR_WORDS (revision 4, F-R4-19): a gap name whose content stems do
+ * not all appear, in order, inside one text the user typed or chose. A name
+ * carrying it (or any other blocking flag) is never shown; it is only counted.
+ */
 export const BLOCKING_FLAGS: readonly BlockingFlag[] = [
   "NUMBER",
   "LOOKS_LIKE_RESOURCE",
@@ -271,27 +374,50 @@ export const BLOCKING_FLAGS: readonly BlockingFlag[] = [
   "TOPIC_OUTSIDE_SCOPE",
   "AIM_STEP_EARLY",
   "LANGUAGE_UNCHECKED",
+  "NOT_IN_YOUR_WORDS",
 ];
 
-/** Notes (shown, never blocking). PLACEHOLDER marks the starter's "Practice for <aim>" (F7). */
-export type ItemNote = "CHECK_LINK" | "ADDED_TO_SCOPE" | "RAISED" | "STUDY_ADDED" | "PLACEHOLDER";
-export const ITEM_NOTES: readonly ItemNote[] = ["CHECK_LINK", "ADDED_TO_SCOPE", "RAISED", "STUDY_ADDED", "PLACEHOLDER"];
+/**
+ * Notes (shown, never blocking). PLACEHOLDER marks the starter's "Practice
+ * for <aim>" (F7). Revision 4:
+ *   GEMINI_PICK       a practice, step or checkpoint type Gemini picked from
+ *                     the app's list ("practice type picked by Gemini from the app's list")
+ *   NOT_CHOSEN        a DOMAIN item for a Domain Gemini's `needs` added (pending the user's confirm)
+ *   FROM_SUGGESTION   a DOMAIN item for a Domain the user created from a GAP row
+ *   PRODUCTION_ADDED  a production practice code added at Retained and above ("added by the app")
+ */
+export type ItemNote = "CHECK_LINK" | "ADDED_TO_SCOPE" | "RAISED" | "STUDY_ADDED" | "PLACEHOLDER" | "GEMINI_PICK" | "NOT_CHOSEN" | "FROM_SUGGESTION" | "PRODUCTION_ADDED";
+export const ITEM_NOTES: readonly ItemNote[] = ["CHECK_LINK", "ADDED_TO_SCOPE", "RAISED", "STUDY_ADDED", "PLACEHOLDER", "GEMINI_PICK", "NOT_CHOSEN", "FROM_SUGGESTION", "PRODUCTION_ADDED"];
 
 /** "Targets vs your pace": FITTED for a code-fitted target (no verdict); the rest only for a typed (YOURS) target. */
 export type KnowledgeVerdict = "FITTED" | "FITS" | "TIGHT" | "OVER" | "IMPOSSIBLE";
 /** "App-tracked time", for the worst calendar week. UNVERIFIED is a flag beside it, never a verdict of its own. */
 export type TimeVerdict = "FITS" | "TIGHT" | "OVER";
 
-/** The remedies, one tap each (F4 step 9): (a) move the date, (b) re-fit at Light, (d) move trailing milestones to Later. */
-export type Remedy = "MOVE_DATE" | "REFIT_LIGHT" | "MOVE_TO_LATER";
-export const REMEDIES: readonly Remedy[] = ["MOVE_DATE", "REFIT_LIGHT", "MOVE_TO_LATER"];
+/**
+ * The remedies, one tap each (F4 step 9): (a) move the date, (b) re-fit at
+ * Light, (d) move trailing milestones to Later. Revision 4 (F-R4-11), on a
+ * depth plan: USE_REALISTIC_DATE ([Use Sun 21 Nov 2027]: the date check's
+ * D_real; MOVE_DATE is retargeted to D_real there) and LOWER_DEPTH ([Choose
+ * a lower depth…], the only path that lowers a depth, shown for good).
+ * REFIT_LIGHT and MOVE_TO_LATER are never offered on a depth plan.
+ */
+export type Remedy = "MOVE_DATE" | "REFIT_LIGHT" | "MOVE_TO_LATER" | "USE_REALISTIC_DATE" | "LOWER_DEPTH";
+export const REMEDIES: readonly Remedy[] = ["MOVE_DATE", "REFIT_LIGHT", "MOVE_TO_LATER", "USE_REALISTIC_DATE", "LOWER_DEPTH"];
+/** The remedies a depth plan may offer (F-R4-11): never one that lowers a target or drops the depth stage. */
+export const DEPTH_REMEDIES: readonly Remedy[] = ["USE_REALISTIC_DATE", "LOWER_DEPTH"];
 
 /** A re-plan in v1: a re-fit to the user's numbers, or by hand. REDRAFT is Deferred. */
 export type ReplanKind = "REFIT" | "MANUAL";
 
-/** Behind-pace signals; shown on the Roadmap page and the Aim card only, never on Today or in the bell. */
-export type ReplanTrigger = "BEHIND" | "SLIPPED" | "PRACTICE_LOW" | "CARRIED" | "CHECKPOINT_MISMATCH" | "PACE_MEASURED" | "QUESTS_BEHIND";
-export const REPLAN_TRIGGERS: readonly ReplanTrigger[] = ["BEHIND", "SLIPPED", "PRACTICE_LOW", "CARRIED", "CHECKPOINT_MISMATCH", "PACE_MEASURED", "QUESTS_BEHIND"];
+/**
+ * Behind-pace signals; shown on the Roadmap page and the Aim card only,
+ * never on Today or in the bell. CALIBRATED (revision 4, F-R4-11): an input
+ * the accepted date assumed (dateOrigin.calibrating) is now measured —
+ * "Re-date the stages you haven't started?"; re-dating never lowers n_d or a level.
+ */
+export type ReplanTrigger = "BEHIND" | "SLIPPED" | "PRACTICE_LOW" | "CARRIED" | "CHECKPOINT_MISMATCH" | "PACE_MEASURED" | "QUESTS_BEHIND" | "CALIBRATED";
+export const REPLAN_TRIGGERS: readonly ReplanTrigger[] = ["BEHIND", "SLIPPED", "PRACTICE_LOW", "CARRIED", "CHECKPOINT_MISMATCH", "PACE_MEASURED", "QUESTS_BEHIND", "CALIBRATED"];
 
 /** The Gemini key's billing tier (question 5). FREE shows the form's free-tier line; PAID drops it. */
 export type GeminiKeyTier = "FREE" | "PAID";
@@ -326,7 +452,15 @@ export const DEFAULT_INTENSITY: Intensity = "STEADY";
 export const ROADMAP_TRACKS: readonly Track[] = ["CRAFT", "BODY", "CARE", "DUTY"];
 export const DEFAULT_FIELD_TRACK: Track = "CRAFT";
 
-/** Words that make an aim a credential aim (plus any all-caps token of 2–6 letters, or any exam label). */
+/**
+ * Words that make an aim a credential aim (plus any all-caps token of 2–6
+ * letters, or any exam label). Revision 4 (F-R4-24) widens the list for the
+ * exam question's PREFILL only ("Is there an exam or qualification at the
+ * end? Yes / No", prefilled by examPrefillOf, always editable): bar,
+ * chartered, registered, licensure, licensing, board, boards, accredited.
+ * "Credential" itself becomes examLabel ≠ null, the user's own answer, so
+ * the wider list never gates anything but the prefill.
+ */
 export const CREDENTIAL_WORDS: readonly string[] = [
   "exam",
   "test",
@@ -339,6 +473,14 @@ export const CREDENTIAL_WORDS: readonly string[] = [
   "diploma",
   "qualification",
   "accreditation",
+  "bar",
+  "chartered",
+  "registered",
+  "licensure",
+  "licensing",
+  "board",
+  "boards",
+  "accredited",
 ];
 
 // ═══ Milestone constants ════════════════════════════════════════════════════
@@ -411,6 +553,8 @@ export const TOP_LEVEL = MASTERY_LEVEL;
 export const JITTER_LEVEL_MIN = 5;
 export const JITTER_LEVEL_MAX = 8;
 export const JITTER_LOW = 0.75;
+/** The jitter's upper bound (xp.ts: × (0.75 + rand × 0.5), so always under × 1.25): retryReadDaysOf's widest interval at levels 5–8. */
+export const JITTER_HIGH = 1.25;
 
 /** interval(l) = round(BASE_INTERVAL_DAYS[l] × m), m = the current modifiers.intervalMultiplier. */
 export function interval(level: number, m = 1): number {
@@ -461,6 +605,10 @@ export interface CardState {
   /** The life day it was created (dayKeyOf(Idea.createdAt)), where a reader needs it. */
   createdDay?: DayKey;
   domainId?: string;
+  /** Revision 4: false for a NON_RECALL_TYPES card (multiple choice), which a depth plan does not count; absent reads as counted (rev 3). */
+  recall?: boolean;
+  /** Revision 4 (clean entry): it entered its current level on a next-day retry ('strike…' then 'advanced…' within RETRY_ENTRY_DAYS). */
+  retryEntry?: boolean;
 }
 
 /** A card's state after the degrade cron has had its say. */
@@ -715,6 +863,13 @@ export interface Throughput {
   passShare: ShareFigure;
   /** Σ min(reviews_d, open_d) ÷ Σ open_d over CLEARANCE_WINDOW_DAYS, from DAY_OPEN. */
   clearance: ShareFigure;
+  /**
+   * Revision 4 (F-R4-8; R2): ρ, P(off tomorrow | off today) over the last
+   * CLEARANCE_SERIES_DAYS life days of the clearance series, an "off" day
+   * clearing under OFF_DAY_CLEAR_SHARE of its due queue; calibrating below
+   * RHO_MIN_DAYS measured days (RHO_PRIOR then). Absent reads as calibrating.
+   */
+  absencePersistence?: ShareFigure;
   newCards: { total: WeeklyFigure; byField: Record<string, WeeklyFigure>; byDomain: Record<string, WeeklyFigure> };
 }
 
@@ -739,7 +894,25 @@ export const REACH_CONFIRM_DAYS = SETTLE_LAG_DAYS;
 
 /** The only proven id; the approved probe may switch it. */
 export const ROADMAP_MODEL = "gemini-3.5-flash-lite";
-export const ROADMAP_PROMPT_VERSION = 2;
+/**
+ * Revision 4: 3, keys-only drafting (F-R4-17). The reply holds only keys
+ * issued for the run (and, only while ROADMAP_GAPS_LIVE and the user's
+ * switch are both on, at most GAPS_MAX gap strings). inputHash includes the
+ * version, so a v2 reply is never reused; v2 rows are legacy (F-R4-16).
+ */
+export const ROADMAP_PROMPT_VERSION: number = 3;
+/** The most gap strings a reply may hold (the `gaps` array's maxItems; F-R4-19). */
+export const GAPS_MAX = 4;
+/** A gap name's caps: characters, words, and characters per word (the shape rule). */
+export const GAP_NAME_MAX = 40;
+export const GAP_WORDS_MAX = 4;
+export const GAP_WORD_CHARS_MAX = 24;
+/** Scripts written without spaces between words: a gap name holding any of their characters is dropped (NOT_A_NAME). */
+export const NO_SPACE_SCRIPTS: readonly string[] = ["Han", "Hiragana", "Katakana", "Thai", "Lao", "Khmer", "Myanmar", "Tibetan"];
+/** A stored integrity violation's path is cut to this many characters (F-R4-20). */
+export const REPORT_PATH_SEGMENT_MAX = 64;
+/** The segment a normalised report path holds in place of any key that is not a schema property name or an index. */
+export const REPORT_EXTRA_SEGMENT = "<extra>";
 /** One draft per request in v1; the consensus module is Deferred (decision 3). */
 export const ROADMAP_SAMPLES = 1;
 /** seedBase = SEED_BASE + SEED_REDRAFT_STEP × forced redrafts today for this roadmap; each sample adds its offset. */
@@ -882,7 +1055,15 @@ export const WEEK_QUEST_STATES: readonly WeekQuestState[] = ["OPEN", "HELD", "PA
 export type WeekQuestSource = "CRON" | "START" | "RENDER";
 export type WeekQuestCap = "CATCHUP" | "CAPACITY";
 
-export const WEEK_QUEST_GENERATOR_VERSION = 1;
+/**
+ * Revision 4: 2 (F-R4-14): RAISE and ADD carry per-Domain `parts`, counts use
+ * the reach model and recall cards (clean entry for an `rc` key). A frozen
+ * v1 set (no parts) renders as a single part from its stored fields, and its
+ * results are unchanged.
+ */
+export const WEEK_QUEST_GENERATOR_VERSION: number = 2;
+/** Today's RAISE and ADD rows show this many parts, then "+n more" (the roadmap page shows them all). */
+export const WEEK_QUEST_PARTS_TODAY = 2;
 export const WEEK_QUEST_CATCHUP_FACTOR = 1.5;
 export const WEEK_QUEST_ADD_MIN_CAP = 3;
 /** The CHECKPOINT quest appears once this share of the window has elapsed. */
@@ -913,7 +1094,14 @@ export function isQuestWeekFinal(to: DayKey, today: DayKey): boolean {
  * and R1 implements the rule (fix round: comment corrected).
  */
 export const PROFICIENCY_WEIGHTS: Readonly<{ cards: number; practice: number; milestones: number }> = { cards: 0.6, practice: 0.25, milestones: 0.15 };
-export const PROFICIENCY_VERSION = 1;
+/**
+ * Revision 4: 2 (F-R4-12). On a depth plan the cards part is the depth
+ * terms (n_d recall cards at L*, clean entry at L*), the stages part counts
+ * held stages as reached and a PART gate as a position, and the label always
+ * names its basis ("Proficiency toward Mastered (level 12): 28%"). A v2
+ * reading shows no delta against a v1 reading (rev 3's detail.v rule).
+ */
+export const PROFICIENCY_VERSION: number = 2;
 
 /** Indices 0–6. Disjoint from every other ladder in the app (roadmap-contract-check). */
 export const AIM_RANKS = ["Initiate", "Aspirant", "Journeyman", "Specialist", "Expert", "Virtuoso", "Paragon"] as const;
@@ -976,8 +1164,853 @@ export interface RankRow {
  * a dropped row and its "Start again" copy — take one place between them, so
  * a milestone added after them gets its true place. Count positions with
  * positionCountOf / maxScheduledPositionsOf below.
+ *
+ * `depth` (fix round 2, contracts §16.9; R1 already takes it): the plan's
+ * depth, which rankIndexForStage reads for a PART at the depth (§15.4). R4's
+ * rankIndicesOf passes it rather than re-ranking the rows after the call.
  */
-export type AssignRankIndices = (rows: readonly RankRow[], firstByLineage: Readonly<Record<string, number>>) => Record<string, number | null>;
+export type AssignRankIndices = (rows: readonly RankRow[], firstByLineage: Readonly<Record<string, number>>, depth?: number | null) => Record<string, number | null>;
+
+// ═══ Revision 4: depth and coverage (F-R4-9; decisions 36, 53) ══════════════
+//
+// High mastery is a Depth: every required Domain holds n_d recall cards at
+// level ≥ L*, a card at exactly L* counting only when it entered L* on a
+// first-try pass (clean entry). The depth is the aim's end state: never
+// scaled by intensity, never fitted to reach, never lowered by a remedy.
+// Only the user's explicit LOWER_DEPTH tap (or a coverage edit) lowers it,
+// and the plan shows that choice for good.
+
+/** A depth's name (the Segmented control's value). */
+export type DepthKey = "MASTERED" | "FLUENT" | "RETAINED";
+/** Roadmap.depth: the gate level of the final stage. Null on a track Area and on a legacy plan. */
+export type AimDepth = 12 | 10 | 8;
+export const AIM_DEPTHS: Readonly<Record<DepthKey, AimDepth>> = { MASTERED: 12, FLUENT: 10, RETAINED: 8 };
+/** Deepest first (the Segmented control's order). */
+export const DEPTH_KEYS: readonly DepthKey[] = ["MASTERED", "FLUENT", "RETAINED"];
+/** A Field aim's default depth (question 5): Mastered, level 12. */
+export const DEPTH_DEFAULT: DepthKey = "MASTERED";
+
+export function isAimDepth(v: unknown): v is AimDepth {
+  return v === 12 || v === 10 || v === 8;
+}
+
+/** The depth's name for its level. */
+export function depthKeyOf(depth: AimDepth): DepthKey {
+  return depth === 12 ? "MASTERED" : depth === 10 ? "FLUENT" : "RETAINED";
+}
+
+/** R, the required Domains of a depth plan, holds at most this many (the chosen, the confirmed additions, the named and the created). */
+export const DEPTH_DOMAINS_MAX = 6;
+/** The coverage policy: n_d = max(COVER_FLOOR_CARDS, ceil(COVER_SHARE × live recall cards), ceil(CARDS_PER_OUTLINE_LINE × lines_d)). */
+export const COVER_FLOOR_CARDS = 25;
+export const COVER_SHARE = 0.8;
+export const CARDS_PER_OUTLINE_LINE = 3;
+/** A typed coverage figure (YOURS) lies in COVER_MIN..COVER_MAX; one under the policy figure is a coverage choice, shown for good. */
+export const COVER_MIN = 1;
+export const COVER_MAX = 500;
+/**
+ * The writing need: new_d = max(0, ceil(WRITE_MARGIN × n_d) − live_d) — a 30%
+ * spare, because some cards lag. Fix round (contracts §15.2): 1.1 → 1.3. Under
+ * clean entry about 1 card in 5 misses its level-11 review at the first try
+ * and waits about 160 days for its next pass, which a 10% spare can't cover:
+ * at 1.1 a new learner's Mastered came on day 547 (about 18 months) and the
+ * final stretch ran 203–231 days on 6 corpus fixtures, past F-R4-10's
+ * 192-day bound and question 9's "about 11–15 months". At 1.3 the learner's
+ * Mastered is day 460 (about 15 months) and the stretch 139, for about 16
+ * more writing days (the last card on day 106 instead of 90).
+ */
+export const WRITE_MARGIN = 1.3;
+/** Card types a depth plan does not count (question 16): recognising one option out of four is not recall. */
+export const NON_RECALL_TYPES: readonly QuestionType[] = ["MULTI"];
+/** A 'strike' then 'advanced' within this many life days is a retry entry (it counts at L* only after its next pass). */
+export const RETRY_ENTRY_DAYS = 2;
+
+/** A recall card: every card type except NON_RECALL_TYPES. live_d, every stage measure and every depth term count only these. */
+export function isRecallType(type: string | null | undefined): boolean {
+  return typeof type === "string" && !(NON_RECALL_TYPES as readonly string[]).includes(type);
+}
+
+/** ceil that forgives binary-floating noise (0.8 × 30 = 24.000000000000004 is 24, not 25; 1.1 × 30 is 33; 1.3 × 10 is 13). */
+function ceilClean(x: number): number {
+  return Math.ceil(Math.round(x * 1e9) / 1e9);
+}
+
+/**
+ * The coverage policy's figure for one Domain (F-R4-9): the most of the
+ * 25-card floor, 80% of its live recall cards, and 3 cards per outline line
+ * (`lines` = the lines tied to it plus its even share of the lines tied to
+ * no Domain in R; fractional shares allowed). R2's coverageOf shows all
+ * three terms; this is the one arithmetic.
+ */
+export function coveragePolicyOf(liveRecall: number, lines: number): { n: number; floor: number; share: number; outline: number } {
+  const floor = COVER_FLOOR_CARDS;
+  const share = ceilClean(COVER_SHARE * Math.max(0, liveRecall));
+  const outline = ceilClean(CARDS_PER_OUTLINE_LINE * Math.max(0, lines));
+  return { n: Math.max(floor, share, outline), floor, share, outline };
+}
+
+/** new_d = max(0, ceil(WRITE_MARGIN × n_d) − live_d): the new recall cards a Domain needs written. Inference (n 25, 9 live) needs 24; Probability (n 34, 42 live) 3. */
+export function writeNeedOf(n: number, liveRecall: number): number {
+  return Math.max(0, ceilClean(WRITE_MARGIN * Math.max(0, n)) - Math.max(0, Math.floor(liveRecall)));
+}
+
+/** One Domain's counts as coverage reads them: its live recall cards and the multiple-choice cards left out. */
+export interface CoverageCounts {
+  id: string;
+  live: number;
+  nonRecall: number;
+}
+
+/**
+ * The counts a Domain's coverage is worked out from, frozen at intake (F-R4-9
+ * "the Domain's live recall cards at intake"; fix round, contracts §15.3): a
+ * Domain already in `prior` — the current live acceptance's
+ * Feasibility.coverage, or on the first acceptance the draft's — keeps its
+ * stored live and nonRecall; only a Domain newly in R reads today's library.
+ * So archiving cards, a card turning multiple choice, or writing more cards
+ * never moves n_d at a re-plan's accept or a lowered depth, and never turns
+ * a typed figure into a false coverage choice: only a typed figure (YOURS),
+ * a line's Domain (the user's) or LOWER_DEPTH changes the end state.
+ * A malformed stored entry is ignored (that Domain reads today's counts).
+ */
+export function frozenCoverageCountsOf(today: readonly CoverageCounts[], prior: readonly Partial<Pick<CoverageBreakdown, "domainId" | "live" | "nonRecall">>[] | null | undefined): CoverageCounts[] {
+  const stored = new Map<string, { live: number; nonRecall: number }>();
+  for (const c of prior ?? []) {
+    if (!c || typeof c.domainId !== "string" || typeof c.live !== "number" || !Number.isFinite(c.live)) continue;
+    const nonRecall = typeof c.nonRecall === "number" && Number.isFinite(c.nonRecall) ? c.nonRecall : 0;
+    if (!stored.has(c.domainId)) stored.set(c.domainId, { live: Math.max(0, Math.floor(c.live)), nonRecall: Math.max(0, Math.floor(nonRecall)) });
+  }
+  return today.map((d) => {
+    const s = stored.get(d.id);
+    return s ? { id: d.id, live: s.live, nonRecall: s.nonRecall } : { id: d.id, live: d.live, nonRecall: d.nonRecall };
+  });
+}
+
+// ═══ Revision 4: stages (F-R4-10) ═══════════════════════════════════════════
+
+/** The gate stages, at the THRESHOLDS levels. A depth plan climbs the gates ≤ its depth. */
+export type GateStage = "FOUNDATION" | "FAMILIAR" | "RETAINED" | "FLUENT" | "MASTERED";
+export const STAGE_KEYS: readonly GateStage[] = ["FOUNDATION", "FAMILIAR", "RETAINED", "FLUENT", "MASTERED"];
+export const STAGE_LEVEL: Readonly<Record<GateStage, number>> = { FOUNDATION: 4, FAMILIAR: 6, RETAINED: 8, FLUENT: 10, MASTERED: 12 };
+/**
+ * The stage names (Names): shown inside the milestone name ("Milestone 2 ·
+ * Familiar (level 6)"). Disjoint from every app ladder, from "Recall" (an
+ * attribute) and from "Working knowledge" (an intake word); "Mastered" means
+ * level 12 only (roadmap-contract-check).
+ */
+export const STAGE_NAMES: Readonly<Record<GateStage, string>> = {
+  FOUNDATION: "Foundation",
+  FAMILIAR: "Familiar",
+  RETAINED: "Retained",
+  FLUENT: "Fluent",
+  MASTERED: "Mastered",
+};
+/** A track plan's stages: volume shares of the planned practice to the date. */
+export type TrackStage = "STAGE_1" | "STAGE_2" | "STAGE_3" | "STAGE_4" | "STAGE_5";
+export const TRACK_STAGE_KEYS: readonly TrackStage[] = ["STAGE_1", "STAGE_2", "STAGE_3", "STAGE_4", "STAGE_5"];
+export const TRACK_STAGE_SHARES: readonly number[] = [0.2, 0.4, 0.6, 0.8, 1.0];
+/**
+ * RoadmapMilestone.stage (null on rows made before revision 4):
+ *   a gate stage; BETWEEN, an intermediate gate at the odd level between two
+ *   gates (L5, L7, L9, L11; it keeps your rank); PART, the count gate in a
+ *   long first window ("Familiar, part 1"; it gives its stage's rank, and the
+ *   stage then keeps it); or a track stage STAGE_1..STAGE_5.
+ */
+export type StageKey = GateStage | "BETWEEN" | "PART" | TrackStage;
+/** Every stored value of RoadmapMilestone.stage. */
+export const STAGE_VALUES: readonly StageKey[] = [...STAGE_KEYS, "BETWEEN", "PART", ...TRACK_STAGE_KEYS];
+/** The first rank comes within about this many days (decision 54): a first window longer than it gets a count gate. = MILESTONE_TARGET_DAYS. */
+export const FIRST_RANK_MAX_DAYS = MILESTONE_TARGET_DAYS;
+/** STAGE_PRACTICE_BAND_MIN: the allocation never steps a practice below these bands in these stages (F-R4-13). */
+export const STAGE_PRACTICE_BAND_MIN: Readonly<Partial<Record<GateStage, PracticeBand>>> = { RETAINED: "D30", FLUENT: "D45", MASTERED: "D45" };
+
+export function isStageKey(v: unknown): v is StageKey {
+  return typeof v === "string" && (STAGE_VALUES as readonly string[]).includes(v);
+}
+
+/** The gate stage at exactly `level` (4, 6, 8, 10, 12); null for any other level. */
+export function stageOfLevel(level: number): GateStage | null {
+  return STAGE_KEYS.find((s) => STAGE_LEVEL[s] === level) ?? null;
+}
+
+/** The response schema's SLOTS for a depth (FOUNDATION … the depth's key), in order. */
+export function gateStagesTo(depth: AimDepth): GateStage[] {
+  return STAGE_KEYS.filter((s) => STAGE_LEVEL[s] <= depth);
+}
+
+/**
+ * The stage's words for a milestone (code copy; {stage} in the title
+ * templates): a gate's name; BETWEEN at odd level L → "Toward <the gate at
+ * L + 1>"; PART at level L → "<the gate at L>, part 1". A track stage, an
+ * unknown level or a missing one gives null (a track plan reads "Milestone 2").
+ */
+export function stageLabelOf(stage: StageKey | string | null | undefined, level?: number | null): string | null {
+  if (!stage) return null;
+  if ((STAGE_KEYS as readonly string[]).includes(stage)) return STAGE_NAMES[stage as GateStage];
+  if (stage === "BETWEEN" && typeof level === "number") {
+    const above = stageOfLevel(level + 1);
+    return above ? `Toward ${STAGE_NAMES[above]}` : null;
+  }
+  if (stage === "PART" && typeof level === "number") {
+    const gate = stageOfLevel(level);
+    return gate ? `${STAGE_NAMES[gate]}, part 1` : null;
+  }
+  return null;
+}
+
+/** The rank each gate stage gives when reached inside the plan (decision 40): Aspirant … Virtuoso. */
+export const STAGE_RANK: Readonly<Record<GateStage, number>> = { FOUNDATION: 1, FAMILIAR: 2, RETAINED: 3, FLUENT: 4, MASTERED: 5 };
+/** A track plan can give Paragon only with a standard, ≥ PARAGON_MIN_MILESTONES kept stages and a span of at least this. */
+export const TRACK_PARAGON_MIN_DAYS = 180;
+
+/**
+ * A depth plan's milestone rankIndex (F-R4-12; R1's assignRankIndices calls
+ * it): a gate stage gives STAGE_RANK; BETWEEN at odd level L takes the rank
+ * of the gate below (L − 1: "keeps your rank"); PART at level L (the gate it
+ * counts toward) takes that gate's rank, and the gate itself then keeps it
+ * (the gate's own index equals it). null for a track stage (a track plan
+ * ranks its k-th kept stage k: rankIndexAt), and for a BETWEEN or PART
+ * without its level. Held rows still get their index (for display: "Held
+ * when you began · Specialist level"), but give no rank (aimRankOf).
+ *
+ * Fix round (contracts §15.4; decision 40 "Mastered gives Virtuoso", stage
+ * rank = verified depth): a PART counting toward the depth's own gate — L* =
+ * `depth`, or 12 when the depth isn't passed (a PART at 12 is always at the
+ * depth) — gives the rank of the gate two levels below (Fluent's Expert under
+ * Mastered, Retained's Specialist under Fluent, Familiar's Journeyman under
+ * Retained): its target is n − 1 cards or fewer counted on `r` (retry entries
+ * included), so it must never give the depth's rank before the depth is held.
+ * The depth's gate then gives its own rank. Callers on a depth-10 or depth-8
+ * plan pass the depth (R1's assignRankIndices, R4's rankIndicesOf, R2's
+ * motivationTimelineOf); a PART below the depth is unchanged.
+ */
+export function rankIndexForStage(stage: StageKey | string | null | undefined, gateLevel?: number | null, depth?: number | null): number | null {
+  if (!stage) return null;
+  if ((STAGE_KEYS as readonly string[]).includes(stage)) return STAGE_RANK[stage as GateStage];
+  if (stage === "BETWEEN" && typeof gateLevel === "number") {
+    const below = stageOfLevel(gateLevel - 1);
+    return below ? STAGE_RANK[below] : null;
+  }
+  if (stage === "PART" && typeof gateLevel === "number") {
+    const gate = stageOfLevel(gateLevel);
+    if (!gate) return null;
+    const atDepth = gateLevel >= (typeof depth === "number" && Number.isFinite(depth) ? depth : STAGE_LEVEL.MASTERED);
+    if (!atDepth) return STAGE_RANK[gate];
+    const below = stageOfLevel(gateLevel - 2);
+    return below ? STAGE_RANK[below] : null;
+  }
+  return null;
+}
+
+/** topRankIndexOfDepth's input (F-R4-12). */
+export interface DepthRankInput {
+  /** Roadmap.depth; null on a track Area or a legacy plan. */
+  depth: AimDepth | null;
+  /** A track Area (practice only). */
+  track: boolean;
+  /** The plan has an outside standard: a checkpoint with the user's bar and outOf on the final milestone, or EXAM_DAY (question 7). */
+  hasStandard: boolean;
+  /** A track plan's kept stages (after the merges); a legacy plan's most scheduled positions (maxScheduledPositionsOf). */
+  keptStages: number;
+  /** A track plan's span in days (the start to the aim's date). */
+  spanDays: number;
+  /** Any Domain's coverage stands below the app's policy (a coverage choice, decision 53). */
+  coverageBelowPolicy: boolean;
+  /** A production practice is planned in every stage from Fluent on (F-R4-13). */
+  productionPlannedFromFluent: boolean;
+}
+
+/**
+ * The top rank a plan can give (F-R4-12), pure:
+ *   a card plan: Paragon (6) needs depth 12, a standard, no Domain below the
+ *     coverage policy and production practice planned from Fluent on;
+ *     otherwise the final stage's rank (Mastered → Virtuoso 5, Fluent →
+ *     Expert 4, Retained → Specialist 3);
+ *   a track plan: Paragon needs a standard, ≥ PARAGON_MIN_MILESTONES kept
+ *     stages and ≥ TRACK_PARAGON_MIN_DAYS of span; otherwise the last kept
+ *     stage's place-rank, at most Virtuoso (Initiate with none);
+ *   a legacy plan (depth null, not a track): rev 3's rule, topRankIndexOf(keptStages).
+ * The roadmap view shows it as "Top rank on this plan: Virtuoso — Paragon
+ * needs a standard you set" (paragonMissingOf names the missing condition).
+ */
+export function topRankIndexOfDepth(input: DepthRankInput): number {
+  if (input.track) {
+    const kept = Math.max(0, Math.floor(input.keptStages));
+    if (input.hasStandard && kept >= PARAGON_MIN_MILESTONES && input.spanDays >= TRACK_PARAGON_MIN_DAYS) return RANK_TOP;
+    return Math.min(kept, RANK_MILESTONE_MAX);
+  }
+  if (input.depth == null) return topRankIndexOf(input.keptStages);
+  if (input.depth === 12 && input.hasStandard && !input.coverageBelowPolicy && input.productionPlannedFromFluent) return RANK_TOP;
+  const final = stageOfLevel(input.depth);
+  return final ? STAGE_RANK[final] : 0;
+}
+
+/** Why a plan's top rank is not Paragon, first missing condition first (the copy names it); [] when Paragon is open. */
+export type ParagonMissing = "DEPTH" | "STANDARD" | "COVERAGE" | "PRODUCTION" | "STAGES" | "SPAN";
+export function paragonMissingOf(input: DepthRankInput): ParagonMissing[] {
+  const out: ParagonMissing[] = [];
+  if (input.track) {
+    if (!input.hasStandard) out.push("STANDARD");
+    if (input.keptStages < PARAGON_MIN_MILESTONES) out.push("STAGES");
+    if (input.spanDays < TRACK_PARAGON_MIN_DAYS) out.push("SPAN");
+    return out;
+  }
+  if (input.depth == null) return input.keptStages >= PARAGON_MIN_MILESTONES ? [] : ["STAGES"];
+  if (input.depth !== 12) out.push("DEPTH");
+  if (!input.hasStandard) out.push("STANDARD");
+  if (input.coverageBelowPolicy) out.push("COVERAGE");
+  if (!input.productionPlannedFromFluent) out.push("PRODUCTION");
+  return out;
+}
+
+// ═══ Revision 4: dates (F-R4-11; decision 37) ═══════════════════════════════
+
+/** Roadmap.dateMode. REALISTIC (a Field Area's default) exists only on a DRAFT; acceptCore writes CHOSEN, and dateOrigin keeps who set the date. */
+export type DateMode = "REALISTIC" | "CHOSEN";
+export const DATE_MODES: readonly DateMode[] = ["REALISTIC", "CHOSEN"];
+/** The verdict on the user's date: REALISTIC mode is FITS by construction; IMPOSSIBLE refuses accept for that depth and date. */
+export type DateVerdict = "FITS" | "TIGHT" | "OVER" | "IMPOSSIBLE";
+export const DATE_VERDICTS: readonly DateVerdict[] = ["FITS", "TIGHT", "OVER", "IMPOSSIBLE"];
+/** An Over date may ask up to this many times the usual writing pace (and D_best_2x is the best case at it). */
+export const OVER_PACE_FACTOR = 2;
+/** The schedule-bound line shows when D_real minus the last writing day ≥ this share of floorBase(L*). */
+export const SCHEDULE_BOUND_SHARE = 0.9;
+/**
+ * Intensity is the pace share (decision 39): Light, Steady and Push count on
+ * 50%, 70% and 90% of the usual writing pace. An alias of INTENSITY, so the
+ * values are unchanged. It moves dates, never the depth.
+ */
+export const PACE_SHARE: Readonly<Record<Intensity, number>> = INTENSITY;
+
+// ═══ Revision 4: the reach model (F-R4-8; decision 38) ══════════════════════
+//
+// Expected reach follows srs.ts and the degrade cron. A miss below the strike
+// limit costs a day; two misses in a row (STRIKE_LIMIT + the loadout's extra
+// strikes) cost a level; a card overdue past its grace (graceDays(ℓ) + the
+// GRACE_EXTENSION days) loses a level. A due review is done on its day when
+// the day is "on": days are on or off as a two-state chain with stationary
+// on-share c (the measured clearance) and off-persistence ρ, so missed days
+// bunch together as they really do. Reviews at level ≥ LONG_GAP_LEVEL (gaps of
+// 50 days and more) use the long-gap pass rate pLong = min(p, P_LONG_CAP), the
+// app's policy until a per-level rate can be measured (Deferred). p^k is
+// only the zero-slack case at c = 1.
+
+/** Stored in every StartSnapshot and acceptance feasibility (version 1 was rev 3's p^k). */
+export const REACH_MODEL_VERSION: number = 2;
+/** The table is memoised per (p, pLong, c, ρ, m, strike limit, grace extra), each rounded to its step. */
+export const REACH_P_STEP = 0.005;
+export const REACH_C_STEP = 0.01;
+export const REACH_RHO_STEP = 0.05;
+/** The longest time the table covers (days); a longer window reads as this. = SPAN_MAX_DAYS. */
+export const REACH_T_MAX = SPAN_MAX_DAYS;
+/** Calibrating priors (policy, labelled where used; never 1): the pass rate until PASS_SHARE_MIN_REVIEWS are measured … */
+export const P_PRIOR = 0.8;
+/** … the clearance until CLEARANCE_WINDOW_DAYS of DAY_OPEN rows exist … */
+export const C_PRIOR = 0.85;
+/** … and the off-day persistence ρ until RHO_MIN_DAYS of the clearance series are measured. */
+export const RHO_PRIOR = 0.6;
+/** Reviews at this level and above follow a gap of 50 days or more (interval(9) = 50): they use pLong. */
+export const LONG_GAP_LEVEL = 9;
+/** pLong = min(p, P_LONG_CAP): "the app's policy for 50–110-day gaps: none of your reviews has tested that yet". */
+export const P_LONG_CAP = 0.8;
+/** ρ is measured over this many life days of the clearance series (R2, throughput-server). */
+export const CLEARANCE_SERIES_DAYS = 90;
+/** An "off" day in the clearance series clears under this share of its due queue. */
+export const OFF_DAY_CLEAR_SHARE = 0.5;
+/** ρ reads calibrating (RHO_PRIOR) while fewer than this many days of the series are measured. */
+export const RHO_MIN_DAYS = 28;
+/** srs.ts STRIKE_LIMIT, mirrored (roadmap-contract-check greps srs.ts for it): the misses in a row that cost a level. */
+export const REACH_STRIKE_LIMIT = 2;
+
+/**
+ * The reach model's inputs. p, the pass rate; pLong, the pass rate used for
+ * reviews at level ≥ LONG_GAP_LEVEL (never above p); c, the clearance (the
+ * chain's stationary on-share); rho, P(off tomorrow | off today); m, the
+ * interval multiplier; strikeLimit, STRIKE_LIMIT plus the loadout's
+ * extraStrikes; graceExtra, the GRACE_EXTENSION days.
+ */
+export interface ReachParams {
+  p: number;
+  pLong: number;
+  c: number;
+  rho: number;
+  m: number;
+  strikeLimit: number;
+  graceExtra: number;
+}
+
+/** Which inputs the date assumed (DateOrigin.calibrating): the priors stood in for p, c, ρ; 'pace' is a typed rate the app hasn't measured. */
+export type CalibratingInput = "p" | "c" | "rho" | "pace";
+export const CALIBRATING_INPUTS: readonly CalibratingInput[] = ["p", "c", "rho", "pace"];
+
+/**
+ * The reach inputs from the throughput figures (F-R4-8): p from passShare
+ * (P_PRIOR while calibrating), pLong = min(p, P_LONG_CAP), c from clearance
+ * (C_PRIOR while calibrating), ρ from absencePersistence (RHO_PRIOR while
+ * calibrating or absent), with what was assumed. Never p = 1 or c = 1 while
+ * calibrating: the best case is its own line (bestCaseParams).
+ */
+export function reachInputsOf(
+  t: { passShare: ShareFigure; clearance: ShareFigure; absencePersistence?: ShareFigure | null },
+  m: number,
+  opts: { extraStrikes?: number; graceExtraDays?: number } = {}
+): { params: ReachParams; calibrating: CalibratingInput[] } {
+  const calibrating: CalibratingInput[] = [];
+  const share = (f: ShareFigure | null | undefined, prior: number, key: CalibratingInput): number => {
+    if (f && f.kind === "measured" && Number.isFinite(f.value)) return Math.min(1, Math.max(0, f.value));
+    calibrating.push(key);
+    return prior;
+  };
+  const p = share(t.passShare, P_PRIOR, "p");
+  const c = share(t.clearance, C_PRIOR, "c");
+  const rho = share(t.absencePersistence, RHO_PRIOR, "rho");
+  return {
+    params: { p, pLong: Math.min(p, P_LONG_CAP), c, rho, m, strikeLimit: REACH_STRIKE_LIMIT + Math.max(0, Math.floor(opts.extraStrikes ?? 0)), graceExtra: Math.max(0, Math.floor(opts.graceExtraDays ?? 0)) },
+    calibrating,
+  };
+}
+
+/** The best case (p = pLong = c = 1): "earliest if every review passes", always its own secondary line, never the date. */
+export function bestCaseParams(m: number, strikeLimit = REACH_STRIKE_LIMIT, graceExtra = 0): ReachParams {
+  return { p: 1, pLong: 1, c: 1, rho: 0, m, strikeLimit, graceExtra };
+}
+
+/** Options for a reach query. cleanAt = L* (the depth terms only): a card entering L* on a next-day retry counts only after its next pass. */
+export interface ReachOpts {
+  cleanAt?: number | null;
+}
+
+/** A reach table: reachProb for one set of (rounded) parameters. */
+export interface ReachTable {
+  /** The parameters the table was built with, after rounding and clamping. */
+  readonly params: Readonly<ReachParams>;
+  /**
+   * The probability that a card due today at `level`, with no strike, reaches
+   * L within Σ_{l=level+1..L−1} interval(l, m) + slackDays (a day off at the
+   * start drawn from the chain's stationary on-share). 1 when level ≥ L; 0
+   * for a negative slack; windows past REACH_T_MAX read as REACH_T_MAX.
+   */
+  reachProb(level: number, L: number, slackDays: number, opts?: ReachOpts): number;
+}
+
+const roundTo = (x: number, step: number): number => Number((Math.round(x / step) * step).toFixed(6));
+
+/** Rounds and clamps the parameters as the table is built (and memoised) with them. */
+export function reachParamsKey(params: ReachParams): ReachParams {
+  const p = Math.min(1, Math.max(0, roundTo(params.p, REACH_P_STEP)));
+  const c = Math.min(1, Math.max(REACH_C_STEP, roundTo(params.c, REACH_C_STEP)));
+  // pLong is never above p (rounding to the coarser step must not lift it).
+  const pLong = Math.min(p, Math.max(0, roundTo(params.pLong, REACH_C_STEP)));
+  let rho = Math.min(1, Math.max(0, roundTo(params.rho, REACH_RHO_STEP)));
+  // A chain with on-share c needs P(off tomorrow | on today) = (1 − c)(1 − ρ) ÷ c ≤ 1: below c = 0.5 that bounds ρ from below.
+  if (c < 1 && c < 0.5) rho = Math.max(rho, Number(((1 - 2 * c) / (1 - c)).toFixed(6)));
+  const m = Number.isFinite(params.m) && params.m > 0 ? Number(params.m.toFixed(6)) : 1;
+  const strikeLimit = Math.max(1, Math.floor(params.strikeLimit));
+  const graceExtra = Math.max(0, Math.floor(params.graceExtra));
+  return { p, pLong, c, rho, m, strikeLimit, graceExtra };
+}
+
+/** One target level's entry values E[t][ℓ][z] = W(t, ℓ, s = 0, o = 0, today on/off), t = 0..REACH_T_MAX. */
+interface ReachLayer {
+  /** Levels 1..L − 1. */
+  levels: number;
+  entry: Float64Array;
+}
+
+const REACH_MEMO = new Map<string, Map<string, ReachLayer>>();
+
+/**
+ * The dynamic program, exact over (days left t, level ℓ, strikes s, days
+ * overdue o, today on/off), mirroring srs.ts and the degrade cron:
+ *   on day, the due review is done:
+ *     pass (p, or pLong when ℓ ≥ LONG_GAP_LEVEL) → ℓ + 1: 1 when ℓ + 1 ≥ L
+ *       (with cleanAt = L and s > 0 — a retry entry — the value is instead
+ *       the chance of the next pass at L within the time left); else wait
+ *       interval(ℓ + 1, m) days, s = 0, o = 0;
+ *     miss with s + 1 < strikeLimit → retry tomorrow with s + 1 (srs.ts keeps
+ *       graceEndsAt, so o + 1; past grace the cron degrades it);
+ *     any other miss → max(1, ℓ − 1), due tomorrow, s = 0, o = 0;
+ *   off day, the review waits a day: o + 1 > graceDays(ℓ) + graceExtra
+ *     degrades it (max(1, ℓ − 1), due tomorrow, s = 0, o = 0), else o + 1;
+ *   t < 0 gives 0, ℓ ≥ L gives 1. Levels 5–8 use their base interval (the
+ *   jitter's mean). Days: P(off tomorrow | on) = (1 − c)(1 − ρ) ÷ c,
+ *   P(off tomorrow | off) = ρ; a wait of k days uses the k-step chain.
+ */
+function buildReachLayer(params: ReachParams, L: number, clean: ReachLayer | null): ReachLayer {
+  const { p, pLong, c, rho, m, strikeLimit: S, graceExtra } = params;
+  const T = REACH_T_MAX;
+  const a = c >= 1 ? 0 : ((1 - c) * (1 - rho)) / c;
+  const lam = rho - a;
+  const pow = (k: number) => Math.pow(lam, k);
+  const onAfter = (fromOn: boolean, k: number): number => (c >= 1 ? 1 : fromOn ? c + (1 - c) * pow(k) : c - c * pow(k));
+  const nL = L - 1;
+  const O = Math.max(1, L - 2 + graceExtra + 1);
+  const size = nL * S * O * 2;
+  const at = (l: number, s: number, o: number, z: number) => (((l - 1) * S + s) * O + o) * 2 + z;
+  let prev = new Float64Array(size);
+  let cur = new Float64Array(size);
+  const entry = new Float64Array((T + 1) * nL * 2);
+  const eAt = (t: number, l: number, z: number) => (t * nL + (l - 1)) * 2 + z;
+  const on1 = onAfter(true, 1);
+  const off1 = onAfter(false, 1);
+  // Per level: the wait after a pass into ℓ + 1 and its chain probability.
+  const waitK: number[] = [];
+  const waitOn: number[] = [];
+  for (let l = 1; l <= nL; l++) {
+    const k = Math.max(1, interval(l + 1, m));
+    waitK[l] = k;
+    waitOn[l] = onAfter(true, k);
+  }
+  const cleanK = Math.max(1, interval(L, m));
+  const cleanOn = onAfter(true, cleanK);
+  const next = (l: number, s: number, o: number, pon: number) => pon * prev[at(l, s, o, 1)] + (1 - pon) * prev[at(l, s, o, 0)];
+  for (let t = 0; t <= T; t++) {
+    const canWait = t >= 1;
+    for (let l = 1; l <= nL; l++) {
+      const G = Math.max(0, l - 1) + graceExtra;
+      const q = l >= LONG_GAP_LEVEL ? pLong : p;
+      const down = Math.max(1, l - 1);
+      // The pass value depends only on t and ℓ (and s for a retry entry).
+      let passFirst: number;
+      let passRetry: number;
+      if (l + 1 >= L) {
+        passFirst = 1;
+        if (clean) {
+          const t2 = t - cleanK;
+          passRetry = t2 < 0 ? 0 : cleanOn * clean.entry[(t2 * clean.levels + (L - 1)) * 2 + 1] + (1 - cleanOn) * clean.entry[(t2 * clean.levels + (L - 1)) * 2];
+        } else passRetry = 1;
+      } else {
+        const t2 = t - waitK[l];
+        const won = waitOn[l];
+        passFirst = t2 < 0 ? 0 : won * entry[eAt(t2, l + 1, 1)] + (1 - won) * entry[eAt(t2, l + 1, 0)];
+        passRetry = passFirst;
+      }
+      const degradeOn = canWait ? next(down, 0, 0, on1) : 0;
+      const degradeOff = canWait ? next(down, 0, 0, off1) : 0;
+      for (let s = 0; s < S; s++) {
+        const vPass = s > 0 ? passRetry : passFirst;
+        for (let o = 0; o <= G; o++) {
+          let vMiss: number;
+          if (s + 1 < S) vMiss = o + 1 > G ? degradeOn : canWait ? next(l, s + 1, o + 1, on1) : 0;
+          else vMiss = degradeOn;
+          cur[at(l, s, o, 1)] = q * vPass + (1 - q) * vMiss;
+          cur[at(l, s, o, 0)] = o + 1 > G ? degradeOff : canWait ? next(l, s, o + 1, off1) : 0;
+        }
+      }
+      entry[eAt(t, l, 1)] = cur[at(l, 0, 0, 1)];
+      entry[eAt(t, l, 0)] = cur[at(l, 0, 0, 0)];
+    }
+    const swap = prev;
+    prev = cur;
+    cur = swap;
+  }
+  return { levels: nL, entry };
+}
+
+/**
+ * The reach table for one set of parameters (F-R4-8), implemented in full
+ * and shared by R1 (projectCards, BEHIND), R2 (stage dating, the date check,
+ * the StartSnapshot) and R6 (RAISE's expected reach). Deterministic; built
+ * lazily per target level and memoised per rounded parameters. At zero slack,
+ * c = 1, pLong = p and no cleanAt it equals rev 3's p^k (existingExpected).
+ */
+export function reachTable(params: ReachParams): ReachTable {
+  const key = reachParamsKey(params);
+  const memoKey = JSON.stringify(key);
+  let layers = REACH_MEMO.get(memoKey);
+  if (!layers) {
+    layers = new Map();
+    REACH_MEMO.set(memoKey, layers);
+  }
+  const store = layers;
+  const layerOf = (L: number, cleanAt: boolean): ReachLayer => {
+    const id = `${L}${cleanAt ? "c" : ""}`;
+    const hit = store.get(id);
+    if (hit) return hit;
+    const built = buildReachLayer(key, L, cleanAt ? layerOf(L + 1, false) : null);
+    store.set(id, built);
+    return built;
+  };
+  return {
+    params: key,
+    reachProb(level: number, L: number, slackDays: number, opts?: ReachOpts): number {
+      const lv = Math.floor(level);
+      const target = Math.floor(L);
+      if (lv >= target) return 1;
+      if (!Number.isFinite(slackDays) || slackDays < 0) return 0;
+      const from = Math.max(1, lv);
+      let need = 0;
+      for (let l = from + 1; l <= target - 1; l++) need += interval(l, key.m);
+      const t = Math.min(REACH_T_MAX, need + Math.floor(slackDays));
+      const layer = layerOf(target, opts?.cleanAt === target);
+      const i = (t * layer.levels + (from - 1)) * 2;
+      return key.c * layer.entry[i + 1] + (1 - key.c) * layer.entry[i];
+    },
+  };
+}
+
+/** reachTable(params).reachProb(…): the one-off form. */
+export function reachProb(params: ReachParams, level: number, L: number, slackDays: number, opts?: ReachOpts): number {
+  return reachTable(params).reachProb(level, L, slackDays, opts);
+}
+
+/** An existing card as the reach sums read it: its effective state, and whether it entered its level on a next-day retry (the readings' clean-entry read). */
+export interface ReachCard extends EffectiveCard {
+  retryEntry?: boolean;
+}
+
+/**
+ * existingExpectedSlack(cards, L, d) = (cards counted at ≥ L) + Σ over the
+ * other cards of reachProb(ℓ_eff, L, d − bestReach_c(L)) — a negative slack
+ * counts 0 (F-R4-8). With cleanAt = L, a card at exactly L on a retry entry
+ * is "an other card" needing one more pass: reachProb(L, L + 1, d − its due
+ * day). Its current strike is treated as none (reads slightly high).
+ */
+export function existingExpectedSlack(cards: readonly ReachCard[], L: number, d: DayKey, params: ReachParams, opts?: ReachOpts): number {
+  const table = reachTable(params);
+  const m = table.params.m;
+  const clean = opts?.cleanAt === L;
+  let sum = 0;
+  for (const card of cards) {
+    if (card.level >= L) {
+      if (clean && card.level === L && card.retryEntry) sum += table.reachProb(L, L + 1, daysBetween(card.dueDay, d));
+      else sum += 1;
+      continue;
+    }
+    const slack = daysBetween(bestReach(card, L, m), d);
+    if (slack >= 0) sum += table.reachProb(card.level, L, slack, opts);
+  }
+  return sum;
+}
+
+/** One day's writing: a DayKey is one card that day; {day, count} writes `count` (fractional allowed) that day. */
+export type WriteDay = DayKey | { day: DayKey; count: number };
+
+/** newExpectedSlack(writeDays, L, d) = Σ over the writing days w of reachProb(1, L, d − w − floorBase(L, m)): a card written on day w is level 1 and due at once. */
+export function newExpectedSlack(writeDays: readonly WriteDay[], L: number, d: DayKey, params: ReachParams, opts?: ReachOpts): number {
+  const table = reachTable(params);
+  const fb = floorBase(L, table.params.m);
+  let sum = 0;
+  for (const w of writeDays) {
+    const day = typeof w === "string" ? w : w.day;
+    const count = typeof w === "string" ? 1 : w.count;
+    if (!(count > 0)) continue;
+    const slack = daysBetween(day, d) - fb;
+    if (slack >= 0) sum += count * table.reachProb(1, L, slack, opts);
+  }
+  return sum;
+}
+
+/**
+ * The reference writing plan (the worked examples' and the goldens'; R2's
+ * plan reduces to it with no held day and no capacity cap): the rate is
+ * split over the Domains still short in proportion to their new_d, r_d =
+ * ratePerWeek × new_d ÷ Σ new; card k (0-based) of Domain d is written on day
+ * floor(k × 7 ÷ r_d) from today. Domains needing none write nothing; a rate
+ * ≤ 0 writes nothing.
+ */
+export function referenceWriteDaysOf(newByDomain: Readonly<Record<string, number>>, ratePerWeek: number, today: DayKey): Record<string, DayKey[]> {
+  const total = Object.values(newByDomain).reduce((s, n) => s + Math.max(0, Math.floor(n)), 0);
+  const out: Record<string, DayKey[]> = {};
+  for (const [id, raw] of Object.entries(newByDomain)) {
+    const n = Math.max(0, Math.floor(raw));
+    out[id] = [];
+    if (n === 0 || total === 0 || !(ratePerWeek > 0)) continue;
+    const rd = (ratePerWeek * n) / total;
+    for (let k = 0; k < n; k++) out[id].push(addDays(today, Math.floor((k * 7) / rd)));
+  }
+  return out;
+}
+
+/** One required Domain as stage dating reads it: its count n_d, its existing recall cards (effective states) and its writing days. */
+export interface StageDomainInput {
+  n: number;
+  cards: readonly ReachCard[];
+  writeDays: readonly WriteDay[];
+}
+
+/**
+ * stageDay(ℓ) (F-R4-10): the first day d ≥ today on which, for every Domain,
+ * existingExpectedSlack + newExpectedSlack ≥ n_d. Expected counts are
+ * monotone in d, so a binary search; null when it isn't met by today +
+ * REACH_T_MAX. The final gate is dated with cleanAt = L*; the lower gates without it.
+ */
+export function stageDayOf(domains: readonly StageDomainInput[], L: number, today: DayKey, params: ReachParams, opts?: ReachOpts): DayKey | null {
+  const meets = (k: number): boolean => {
+    const d = addDays(today, k);
+    return domains.every((dom) => existingExpectedSlack(dom.cards, L, d, params, opts) + newExpectedSlack(dom.writeDays, L, d, params, opts) >= dom.n - 1e-9);
+  };
+  if (!meets(REACH_T_MAX)) return null;
+  let lo = 0;
+  let hi = REACH_T_MAX;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (meets(mid)) hi = mid;
+    else lo = mid + 1;
+  }
+  return addDays(today, lo);
+}
+
+// ═══ Revision 4: the REVIEW ledger tag (F-R4-8) ═════════════════════════════
+
+/** What srs.ts writes as a REVIEW row's outcome word (and the backfill's). */
+export type ReviewOutcomeWord = "advanced" | "strike" | "degraded" | "shielded" | "backfill";
+
+/** A REVIEW row's detail, read: the outcome, the mastery mark, and the level tag when the row has one (rows written since revision 4). */
+export interface ReviewDetail {
+  outcome: ReviewOutcomeWord | null;
+  mastered: boolean;
+  /** The level the review was taken at ("L11"); null on an untagged (older) row. */
+  from: number | null;
+  /** A pass's new level ("→12"); null on a miss or an untagged row. */
+  to: number | null;
+}
+
+/**
+ * Reads srs.ts's REVIEW detail. Since revision 4 the level is appended at the
+ * end, so every prefix reader still matches: "advanced · L11→12",
+ * "advanced · mastered · L11→12", "strike · L11" (and "degraded · L11",
+ * "shielded · L11"). Older rows ("advanced", "strike", "backfill: passed
+ * review") read the same with no level. Readers match by prefix, never ===.
+ */
+export function parseReviewDetail(detail: string | null | undefined): ReviewDetail {
+  const d = (detail ?? "").trim().toLowerCase();
+  const outcome: ReviewOutcomeWord | null = d.startsWith("advanced")
+    ? "advanced"
+    : d.startsWith("strike")
+      ? "strike"
+      : d.startsWith("degraded")
+        ? "degraded"
+        : d.startsWith("shielded")
+          ? "shielded"
+          : d.startsWith("backfill")
+            ? "backfill"
+            : null;
+  const tag = /·\s*l(\d{1,2})(?:\s*→\s*(\d{1,2}))?\s*$/.exec(d);
+  return {
+    outcome,
+    mastered: outcome === "advanced" && /·\s*mastered\b/.test(d),
+    from: tag ? Number(tag[1]) : null,
+    to: tag && tag[2] ? Number(tag[2]) : null,
+  };
+}
+
+// ═══ Fix round: clean entry, one definition (F-R4-9, F-R4-12, F-R4-14) ══════
+
+/**
+ * One REVIEW ledger row of a card, as the clean-entry read takes it. Rows are
+ * ordered by `occurredAt` (ISO; R1's ActivityEvent.occurredAt), else `at`
+ * (epoch ms; R6's rows), else the life day at 00:00 UTC; ties keep their
+ * input order.
+ */
+export interface ReviewLedgerRow {
+  day: DayKey;
+  detail: string | null;
+  occurredAt?: string | null;
+  at?: number | null;
+}
+
+const MISS_OUTCOMES: ReadonlySet<ReviewOutcomeWord> = new Set<ReviewOutcomeWord>(["strike", "shielded", "degraded"]);
+
+function ledgerOrderKey(r: ReviewLedgerRow): string {
+  if (typeof r.occurredAt === "string" && r.occurredAt) return r.occurredAt;
+  if (typeof r.at === "number" && Number.isFinite(r.at)) {
+    const t = new Date(r.at);
+    if (Number.isFinite(t.getTime())) return t.toISOString();
+  }
+  return `${r.day}T00:00:00.000Z`;
+}
+
+/**
+ * Clean entry (decision 36; F-R4-12's read; the fix round's one definition,
+ * R1's rule, which the reach DP also follows — R1's readings and R6's RAISE
+ * parts both import it): did a card now at exactly `level` enter it on a
+ * next-day retry? Its REVIEW rows are read in time order:
+ *   - the entering pass is its latest 'advanced…' row; a tagged one must read
+ *     "→level" and "L(level − 1)" (a pass that took it elsewhere means it came
+ *     back down to `level` since, which is no entry by a retry);
+ *   - it is a retry entry when the row just before that pass is a miss —
+ *     'strike…' or 'shielded…' (the card stays and retries tomorrow), or
+ *     'degraded…' — and either both rows carry the level tag that places them
+ *     on this climb (the strike or shield at level − 1, a degrade from
+ *     `level` itself), or, on older untagged rows, the miss lies within
+ *     RETRY_ENTRY_DAYS life days before the pass.
+ * A 'backfill…' row is not a review (backfill-activity.ts recorded passes
+ * only) and is skipped. No pass in the rows reads as clean. A retry entry
+ * counts as level − 1 for the `rc` terms until its next pass (which moves it
+ * above `level`).
+ */
+export function isRetryEntry(rows: readonly ReviewLedgerRow[], level: number): boolean {
+  const sorted = rows
+    .map((r, i) => ({ r, i, k: ledgerOrderKey(r), d: parseReviewDetail(r.detail) }))
+    .filter((x) => x.d.outcome !== null && x.d.outcome !== "backfill")
+    .sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : a.i - b.i));
+  let at = -1;
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    if (sorted[i].d.outcome === "advanced") {
+      at = i;
+      break;
+    }
+  }
+  if (at <= 0) return false;
+  const pass = sorted[at].d;
+  if (pass.to != null && pass.to !== level) return false;
+  if (pass.from != null && pass.from !== level - 1) return false;
+  const before = sorted[at - 1];
+  const miss = before.d;
+  if (!miss.outcome || !MISS_OUTCOMES.has(miss.outcome)) return false;
+  if (pass.from != null && miss.from != null) return miss.outcome === "degraded" ? miss.from === level : miss.from === level - 1;
+  const gap = daysBetween(before.r.day, sorted[at].r.day);
+  return gap >= 0 && gap <= RETRY_ENTRY_DAYS;
+}
+
+/**
+ * How far back the clean-entry read looks for a card at exactly `level`
+ * (fix round 2, contracts §16.1: the window must hold both the entering pass
+ * and the miss just before it, or isRetryEntry finds no row before the pass
+ * and reads a retry entry as clean, which inflates every `rc` count):
+ *   - the card has sat at `level` since its entering pass: at most its
+ *     interval — the jitter's upper bound at levels 5–8,
+ *     ceil(BASE × JITTER_HIGH × m) — plus graceDays(level) + graceExtra
+ *     before the degrade, plus 1 for the daily degrade cron's lag (a strike
+ *     at `level` moves the due day, never graceEndsAt);
+ *   - the miss before the pass lies at most graceDays(level − 1) +
+ *     graceExtra + 2 days before it: a degrade from `level` is due the next
+ *     day, then has the lower level's grace and the cron's lag (a strike at
+ *     level − 1 sits closer); never under RETRY_ENTRY_DAYS, the untagged
+ *     rule's own gap.
+ * Instants under N days apart lie at most N life days apart, so the sum is a
+ * bound in life days. For level 12 at m 1 that is 160 + 11 + 1 + 12 = 184
+ * (264 at m 1.5; +2 per grace-extension day). A wider window reads more rows
+ * and never changes the answer, since the entering pass is the latest one.
+ * Residual: a DEGRADATION_WARD that shields a card past its grace keeps it
+ * at its level longer than any fixed window; such a card reads as clean.
+ * R1's readings, R6's quests and R4's planContext (CardState.retryEntry)
+ * read their REVIEW rows over this window.
+ */
+export function retryReadDaysOf(level: number, m = 1, graceExtra = 0): number {
+  const mm = Math.max(1, Number.isFinite(m) ? m : 1);
+  const g = Math.max(0, Math.floor(Number.isFinite(graceExtra) ? graceExtra : 0));
+  const jittered = level >= JITTER_LEVEL_MIN && level <= JITTER_LEVEL_MAX;
+  const atLevel = jittered ? Math.max(interval(level, mm), Math.ceil(baseIntervalDays(level) * JITTER_HIGH * mm)) : interval(level, mm);
+  const sinceEntry = atLevel + graceDays(level) + g + 1;
+  const missBefore = Math.max(RETRY_ENTRY_DAYS, graceDays(level - 1) + g + 2);
+  return sinceEntry + missBefore;
+}
+
+// ═══ Revision 4: legacy plans (F-R4-16) ═════════════════════════════════════
+
+/**
+ * A roadmap made before revision 4: depth null on a Field Area, or any
+ * milestone row of its current or draft version with stage null. Every
+ * revision-4 draft path sets the stage on every row, Field and track alike.
+ * A legacy roadmap renders no milestone or item text, cannot start a
+ * milestone, and is not measured; "Start again at a depth" replaces it.
+ */
+export function isLegacyRoadmap(r: { fieldId: string | null; depth: number | null | undefined }, rows: readonly { stage?: string | null }[]): boolean {
+  if (r.fieldId != null && r.depth == null) return true;
+  return rows.some((x) => x.stage == null);
+}
 
 // ═══ Milestone positions: one per lineage (F12, F15; fix round) ═════════════
 //
@@ -1162,8 +2195,63 @@ export function yoursText(origin: Origin, decision: Decision, text: string): You
   return provenanceOf(origin, decision) === "YOURS" ? (text as YoursText) : null;
 }
 
-/** The closed list of names code writes (origin CODE). */
-export const CODE_TEMPLATES = ["Study {domains}", "{domains} to level {L}+", "Practice for {aim}"] as const;
+/**
+ * The closed list of names code writes (origin CODE). Revision 4 adds the
+ * stage titles (F-R4-10) and every practice, step and checkpoint template of
+ * roadmap-catalog.ts (F-R4-18): Gemini writes no words, so every name in a
+ * plan is one of these, the user's own text, or a Domain's name.
+ */
+export const CODE_TEMPLATES = [
+  // Revision 3.
+  "Study {domains}",
+  "{domains} to level {L}+",
+  "Practice for {aim}",
+  // Revision 4: milestone titles (F-R4-10).
+  "{stage}: {domains} to level {L}+",
+  "{stage}, part 1: {domains} to level {L}+",
+  "{aim} · stage {k} of {n}",
+  // Revision 4: practice types (roadmap-catalog.ts, F-R4-18). "Study {domains}" above is READ_AND_CARD.
+  "Recall drills: {domains}",
+  "Problem sets: {domains}",
+  "Timed practice: {domains}",
+  "Slow, focused drills: {domains}",
+  "Full run-throughs: {domains}",
+  "Listen and repeat: {domains}",
+  "Say it aloud: {domains}",
+  "Writing practice: {domains}",
+  "Explain it in your own words: {domains}",
+  "Build something with {domains}",
+  "Practise with a teacher or partner: {domains}",
+  "Go over your mistakes: {domains}",
+  "Slow, focused drills: {aim}",
+  "Full run-throughs: {aim}",
+  "Practise with a teacher or partner: {aim}",
+  "Easy session",
+  "Harder session",
+  "Longer session",
+  "Strength session",
+  "Mobility session",
+  "Technique session",
+  "Set time for: {aim}",
+  "Check-in: {aim}",
+  "Admin session: {aim}",
+  "Plan the week ahead",
+  "Keep a log: {aim}",
+  // Revision 4: step types.
+  "Write an outline of {domains}",
+  "Explain {domains} to someone without notes",
+  "Finish a small project with {domains}",
+  "List what you still can't do in {domains}",
+  "Choose your material for {domains}",
+  "Set up what you need for {aim}",
+  "Book {exam}",
+  "Do a full attempt at: {aim}",
+  // Revision 4: checkpoint types.
+  "Self-test: {domains}",
+  "Performance check: {aim}",
+  "Mock test: {exam}",
+  "Exam: {exam}",
+] as const;
 export type CodeTemplate = (typeof CODE_TEMPLATES)[number];
 export interface CodeFill {
   domains?: readonly DomainName[];
@@ -1171,6 +2259,13 @@ export interface CodeFill {
   level?: number;
   /** The aim, as the user wrote it ({aim}). */
   aim?: YoursText;
+  /** A stage's words ({stage}): a gate's STAGE_NAMES name, or "Toward <gate>" for BETWEEN (stageLabelOf; a PART's ", part 1" is the template's). */
+  stage?: string;
+  /** The exam's name, as the user wrote it ({exam}: Intake.examLabel). */
+  exam?: YoursText;
+  /** A track stage's place and the plan's count ({k} of {n}), 1..MAX_MILESTONES. */
+  k?: number;
+  n?: number;
 }
 
 /** "A, B, C or D" (join "or", the week quest labels) or "A, B" (join "comma", code names). */
@@ -1180,29 +2275,68 @@ export function domainsText(names: readonly DomainName[], join: "comma" | "or"):
   return `${list.slice(0, -1).join(", ")} or ${list[list.length - 1]}`;
 }
 
+const SPELLED_MORE = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+
+/**
+ * {domains} in a code name (F-R4-10): up to three names joined by ", ";
+ * past three, "A, B and two more" — spelled, so a code name holds no digit
+ * but its {L}, {k} and {n}.
+ */
+export function domainsShort(names: readonly DomainName[]): string {
+  const list = names.map((n) => String(n));
+  if (list.length <= 3) return list.join(", ");
+  const more = list.length - 2;
+  return `${list.slice(0, 2).join(", ")} and ${SPELLED_MORE[more] ?? "several"} more`;
+}
+
+/** The {stage} words a title may hold: a gate's name, or "Toward <gate>" (BETWEEN). */
+function isStageWords(s: string): boolean {
+  const names = STAGE_KEYS.map((k) => STAGE_NAMES[k]);
+  return names.includes(s) || (s.startsWith("Toward ") && names.slice(1).includes(s.slice("Toward ".length)));
+}
+
 /**
  * A CodeText from a closed template. Refuses (throws) a template outside
- * CODE_TEMPLATES and a slot left unfilled: "Study Probability, Inference",
- * "Probability, Inference to level 6+", "Practice for Run a sub-50 10K".
- * (Called only in roadmap-realism.ts, the one place the origin 'CODE' is written.)
+ * CODE_TEMPLATES and a slot left unfilled or ill-filled: "Study Probability,
+ * Inference", "Probability, Inference to level 6+", "Practice for Run a
+ * sub-50 10K", "Familiar: Probability, Inference to level 6+", "Exam: SOA
+ * Exam P", "Run a sub-50 10K · stage 2 of 5". (Called only in
+ * roadmap-realism.ts and roadmap-catalog.ts, the places the origin 'CODE' is written.)
  */
 export function codeText(template: CodeTemplate, fill: CodeFill = {}): CodeText {
   if (!(CODE_TEMPLATES as readonly string[]).includes(template)) throw new Error(`codeText: not a code template: ${String(template)}`);
-  let out: string = template;
-  if (out.includes("{domains}")) {
-    if (!fill.domains || fill.domains.length === 0) throw new Error("codeText: {domains} needs at least one Domain name");
-    out = out.replace("{domains}", domainsText(fill.domains, "comma"));
-  }
-  if (out.includes("{L}")) {
-    const l = fill.level;
-    if (l == null || !Number.isInteger(l) || l < 1 || l > 20) throw new Error("codeText: {L} needs a whole level 1..20");
-    out = out.replace("{L}", String(l));
-  }
-  if (out.includes("{aim}")) {
-    if (!fill.aim || !String(fill.aim).trim()) throw new Error("codeText: {aim} needs the aim");
-    out = out.replace("{aim}", String(fill.aim).trim());
-  }
-  return out as CodeText;
+  const value = (slot: string): string => {
+    switch (slot) {
+      case "stage": {
+        const s = fill.stage;
+        if (!s || !isStageWords(s)) throw new Error(`codeText: {stage} needs a stage name: ${JSON.stringify(s ?? null)}`);
+        return s;
+      }
+      case "domains":
+        if (!fill.domains || fill.domains.length === 0) throw new Error("codeText: {domains} needs at least one Domain name");
+        return domainsShort(fill.domains);
+      case "L": {
+        const l = fill.level;
+        if (l == null || !Number.isInteger(l) || l < 1 || l > 20) throw new Error("codeText: {L} needs a whole level 1..20");
+        return String(l);
+      }
+      case "k":
+      case "n": {
+        const v = fill[slot];
+        if (v == null || !Number.isInteger(v) || v < 1 || v > MAX_MILESTONES) throw new Error(`codeText: {${slot}} needs a whole number 1..${MAX_MILESTONES}`);
+        return String(v);
+      }
+      case "exam":
+        if (!fill.exam || !String(fill.exam).trim()) throw new Error("codeText: {exam} needs the exam's name");
+        return String(fill.exam).trim();
+      default:
+        if (!fill.aim || !String(fill.aim).trim()) throw new Error("codeText: {aim} needs the aim");
+        return String(fill.aim).trim();
+    }
+  };
+  // One pass: a filled-in name that itself holds "{L}" or "{aim}" is never filled again.
+  if (template.includes("{k}") && template.includes("{n}") && fill.k != null && fill.n != null && fill.k > fill.n) throw new Error("codeText: {k} is past {n}");
+  return template.replace(/\{(stage|domains|L|k|n|exam|aim)\}/g, (_m, slot: string) => value(slot)) as CodeText;
 }
 
 /** A DomainName from a Domain row (its name on one line). */
@@ -1239,10 +2373,24 @@ function keyId(id: string, what: string): string {
   return id;
 }
 
-/** `CARDS_AT_LEVEL|d:<sorted domainIds joined by ,>|L<n>` (value identity; no target). */
-export function cardsAtLevelKey(domainIds: readonly string[], level: number): string {
+/**
+ * The optional last segment of a CARDS_AT_LEVEL key (revision 4, F-R4-9):
+ *   'r'  counts recall cards only (every card type but NON_RECALL_TYPES);
+ *   'rc' counts recall cards with clean entry at exactly L (a card at exactly
+ *        L that entered it on a next-day retry counts after its next pass; a
+ *        card at ≥ L + 1 always counts).
+ * Every stage measure of a depth plan carries 'r'; the depth terms and the
+ * final milestone's card measures carry 'rc'. A key without the segment
+ * keeps its rev-3 meaning (every card), so legacy rows and goals read as before.
+ */
+export type CardSegment = "r" | "rc";
+export const CARD_SEGMENTS: readonly CardSegment[] = ["r", "rc"];
+
+/** `CARDS_AT_LEVEL|d:<sorted domainIds joined by ,>|L<n>`, plus `|r` or `|rc` on a depth plan (value identity; no target). */
+export function cardsAtLevelKey(domainIds: readonly string[], level: number, segment?: CardSegment | null): string {
   if (!Number.isInteger(level) || level < 1 || level > 20) throw new Error(`cardsAtLevelKey: not a level: ${level}`);
-  return `CARDS_AT_LEVEL|d:${keyIds(domainIds, "cardsAtLevelKey").join(",")}|L${level}`;
+  if (segment != null && !(CARD_SEGMENTS as readonly string[]).includes(segment)) throw new Error(`cardsAtLevelKey: not a segment: ${JSON.stringify(segment)}`);
+  return `CARDS_AT_LEVEL|d:${keyIds(domainIds, "cardsAtLevelKey").join(",")}|L${level}${segment ? `|${segment}` : ""}`;
 }
 
 /** `PRACTICE_KEPT|t:<sorted templateIds>|from:<startedDay>`: a new window is new effort. */
@@ -1270,20 +2418,28 @@ export function checkpointLogKey(itemLineageId: string, nonce: string): string {
 export const SELF_KEY_PREFIX = "SELF|";
 
 export type ParsedMeasureKey =
-  | { kind: "CARDS_AT_LEVEL"; domainIds: string[]; level: number }
+  /** `segment` is present only on a key that carries one ('r' or 'rc'); absent, the key counts every card (rev 3). */
+  | { kind: "CARDS_AT_LEVEL"; domainIds: string[]; level: number; segment?: CardSegment }
   | { kind: "PRACTICE_KEPT"; templateIds: string[]; from: DayKey }
   | { kind: "PROFICIENCY"; roadmapId: string }
   | { kind: "CHECKPOINT_LOG"; itemLineageId: string; nonce: string };
 
-/** Reads any key the builders above write; null for anything else. Ids come back sorted. */
+/**
+ * Reads any key the builders above write; null for anything else. Ids come
+ * back sorted. The one measure-key parser (roadmap-contract-check greps that
+ * no other module parses a key): every reader of a CARDS_AT_LEVEL key goes
+ * through here and honours its segment.
+ */
 export function parseMeasureKey(key: string): ParsedMeasureKey | null {
   if (typeof key !== "string") return null;
-  let m = /^CARDS_AT_LEVEL\|d:([A-Za-z0-9_,-]+)\|L(\d{1,2})$/.exec(key);
+  let m = /^CARDS_AT_LEVEL\|d:([A-Za-z0-9_,-]+)\|L(\d{1,2})(?:\|(rc|r))?$/.exec(key);
   if (m) {
     const ids = m[1].split(",");
     const level = Number(m[2]);
     if (ids.some((id) => !KEY_ID.test(id)) || level < 1 || level > 20) return null;
-    return { kind: "CARDS_AT_LEVEL", domainIds: [...ids].sort(), level };
+    const parsed: ParsedMeasureKey = { kind: "CARDS_AT_LEVEL", domainIds: [...ids].sort(), level };
+    if (m[3]) parsed.segment = m[3] as CardSegment;
+    return parsed;
   }
   m = /^PRACTICE_KEPT\|t:([A-Za-z0-9_,-]+)\|from:(\d{4}-\d{2}-\d{2})$/.exec(key);
   if (m) {
@@ -1316,6 +2472,19 @@ export function milestonePracticeKey(milestoneId: string, i: number): string {
 export function milestoneStepKey(milestoneId: string, i: number): string {
   if (!Number.isInteger(i) || i < 0 || i > 99) throw new Error(`milestoneStepKey: not a place: ${i}`);
   return `${milestoneGoalKey(milestoneId)}:s${i}`;
+}
+
+/**
+ * A plan-born task (fix round, contracts §15.6; decision 50 "No Gemini words
+ * reach Today"): a TaskTemplate or goal whose captureKey starts with 'rm:'.
+ * No model sizes or explains one: Start never defers life-sizing's
+ * applySizing for it (the catalog method already sets its band), and
+ * life-sizing refuses one, so no model `rationale` becomes its gradeBasis and
+ * reaches the TaskDrawer's "Why". Its basis is code's
+ * ("<category> · <band> · <minutes>m").
+ */
+export function isRoadmapCaptureKey(captureKey: string | null | undefined): boolean {
+  return typeof captureKey === "string" && captureKey.startsWith(ROADMAP_CAPTURE_PREFIX);
 }
 
 /** 'rq:<milestoneId>:<weekStart>': RoadmapQuestWeek.dedupeKey, unique per user. */
@@ -1377,12 +2546,42 @@ export function isMissingRoadmapTable(err: unknown): boolean {
   return missing && ROADMAP_TABLE.test(text);
 }
 
+/** The eight columns migration 20261106000000_life_roadmap_rev4 adds (decision 48). */
+export const REV4_COLUMNS: readonly string[] = ["depth", "dateMode", "coverage", "suggestAreas", "examDay", "stage", "catalogKey", "aimSuggestions"];
+
+/**
+ * Whether a database error says one of revision 4's eight columns does not
+ * exist: Prisma's P2022, or Postgres's 42703 (undefined_column), naming one
+ * of them (Migration, "Order"). Code can deploy before the migration is
+ * applied, so reads that select a new column (loadAimCard, loadAimStep,
+ * loadWeekQuests, the settings page) catch it and render as before, with
+ * aimSuggestions read as null. Any other column, a missing table, and any
+ * other error is not this.
+ */
+export function isMissingRev4Column(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { code?: unknown; meta?: unknown; message?: unknown };
+  const meta = e.meta && typeof e.meta === "object" ? (e.meta as Record<string, unknown>) : {};
+  const text = `${typeof e.message === "string" ? e.message : ""} ${JSON.stringify(meta)}`;
+  const missingColumn = e.code === "P2022" || meta.code === "42703" || /\b42703\b/.test(text) || /column \W{0,2}[\w."]*\W{0,2} does not exist/i.test(text);
+  if (!missingColumn) return false;
+  const named = new RegExp(`(?:^|[^A-Za-z0-9_])(?:(?:Roadmap|RoadmapMilestone|RoadmapItem|LifeSettings)\\W{0,3}\\.\\W{0,3})?(${REV4_COLUMNS.join("|")})(?![A-Za-z0-9_])`);
+  return named.test(text);
+}
+
 // ═══ Shapes: intake, pack, reply ════════════════════════════════════════════
 
 /** Roadmap.syllabus (YOURS). */
 export interface Syllabus {
   lines: string[];
   source: string | null;
+  /**
+   * Revision 4 (F-R4-9, F-R4-24): each line's Domain, the user's (YOURS),
+   * index-aligned with `lines`; null = tied to no Domain. Prefilled by R2's
+   * lineDomainDefaultOf (a deterministic match) and changed only by the user
+   * (the form, setLineDomainCore). Gemini never sets it. Absent on a rev-3 row.
+   */
+  lineDomains?: (string | null)[];
 }
 
 /** The intake form, as saveIntake receives it (the server re-validates every field). */
@@ -1403,6 +2602,28 @@ export interface Intake {
   practicesAllowed: boolean;
   constraints: string | null;
   examLabel: string | null;
+  // ── Revision 4 (every field optional: a rev-3 intake still reads) ──
+  /** Roadmap.depth for a Field Area (12, 10 or 8; the default Mastered); null on a track Area. Refused on a track Area. */
+  depth?: AimDepth | null;
+  /** Roadmap.coverage: the user's typed figures, {[domainId]: n} in COVER_MIN..COVER_MAX. Below the policy figure it is a coverage choice. */
+  coverage?: Record<string, number> | null;
+  /** REALISTIC (a Field Area's default: targetDay is provisional on the DRAFT) or CHOSEN (the user's date). */
+  dateMode?: DateMode;
+  /** "Is there an exam or qualification at the end?" (prefilled by examPrefillOf, editable). true requires examLabel; false sets examLabel and examDay null. */
+  exam?: boolean | null;
+  /** Roadmap.examDay (YOURS): between tomorrow and SPAN_MAX_DAYS away; a waypoint, never the aim's date, never sent to Gemini. */
+  examDay?: DayKey | null;
+  /** An empty library's "Name the areas this needs": Domains saveIntakeCore creates in the Area Field inside its transaction (≤ DEPTH_DOMAINS_MAX in R). */
+  newDomainNames?: string[];
+  /** "Start again at a depth": the legacy ACTIVE roadmap saveIntakeCore archives in the same transaction (F-R4-16). */
+  replaces?: string | null;
+  /** Roadmap.suggestAreas: read only while ROADMAP_GAPS_LIVE; a stored true is ignored while it is false. */
+  suggestAreas?: boolean;
+}
+
+/** The exam question's prefill (F-R4-24): isCredentialAim over the aim alone (CREDENTIAL_WORDS widened for this). The user's Yes/No wins. */
+export function examPrefillOf(aim: string): boolean {
+  return isCredentialAim(aim, null);
 }
 
 /** The pack's sections, in prompt order; the form's privacy line is generated from this list. */
@@ -1462,6 +2683,106 @@ export interface DraftReplyMilestone {
   checkpoint?: { label: string; kind: string } | null;
 }
 
+/**
+ * The v3 reply the keys-only schema asks for (ROADMAP_PROMPT_VERSION 3,
+ * F-R4-17). Every string is a key issued for the run, except `gaps`, which
+ * exists only while ROADMAP_GAPS_LIVE and the user's switch are both on.
+ * Validation reads the parsed JSON as unknown (integrityOf, then
+ * validateKeysOnly) and never trusts this shape.
+ *   needs   unchosen D-keys the aim needs (omitted with none listed, or on a track Area)
+ *   stages  one entry per slot (FOUNDATION … the depth's key, or STAGE_1..STAGE_5)
+ */
+export interface DraftReplyV3 {
+  needs?: string[];
+  stages: Record<string, DraftReplyStage>;
+  gaps?: string[];
+}
+
+/** One slot of a v3 reply. `lines` are S-keys (no Domain: a line's Domain is the user's); `on` is a D-key. */
+export interface DraftReplyStage {
+  lines?: string[];
+  practices?: { kind: string; on?: string }[];
+  steps: { kind: string; on?: string }[];
+  checkpoint?: string | null;
+}
+
+// ─── The integrity verdict (F-R4-20) ────────────────────────────────────────
+
+/** CLEAN: no violation. SALVAGED: only OVER_MAX_ITEMS (truncated). REJECTED: anything else; nothing from the reply is written. */
+export type IntegrityVerdict = "CLEAN" | "SALVAGED" | "REJECTED";
+export const INTEGRITY_VERDICTS: readonly IntegrityVerdict[] = ["CLEAN", "SALVAGED", "REJECTED"];
+/**
+ * A violation found walking the reply against the exact schema issued for the
+ * run (own-property lookups only): a wrong TYPE, a value outside the issued
+ * ENUM, an EXTRA_PROPERTY at any depth ('title', 'label', '__proto__' …), a
+ * MISSING_REQUIRED key, FREE_TEXT (a string outside `gaps`), or an array
+ * OVER_MAX_ITEMS (the only salvageable one).
+ */
+export type IntegrityCode = "TYPE" | "ENUM" | "EXTRA_PROPERTY" | "MISSING_REQUIRED" | "FREE_TEXT" | "OVER_MAX_ITEMS";
+export const INTEGRITY_CODES: readonly IntegrityCode[] = ["TYPE", "ENUM", "EXTRA_PROPERTY", "MISSING_REQUIRED", "FREE_TEXT", "OVER_MAX_ITEMS"];
+
+/** One violation. `path` is normalised: schema property names and indexes kept, every other segment REPORT_EXTRA_SEGMENT, cut to REPORT_PATH_SEGMENT_MAX — it never carries the model's words. */
+export interface IntegrityViolation {
+  code: IntegrityCode;
+  path: string;
+}
+
+/** RoadmapRun.report.integrity (no migration: report is JSONB). */
+export interface ValidationIntegrity {
+  verdict: IntegrityVerdict;
+  violations: IntegrityViolation[];
+  /** Characters of model text kept: 0 unless gap names are shown. */
+  modelChars: number;
+  gapsKept: number;
+  /** Gap names returned but not shown (ungrounded or flagged); counted, never stored as text. */
+  gapsHidden: number;
+  /** Gap strings dropped as NOT_A_NAME. */
+  gapsDropped: number;
+  /** NOT_A_NAME drops per shape-rule clause, so false drops can be watched. */
+  notANameByClause: Record<string, number>;
+}
+
+/**
+ * What R4's one draft-from-reply step returns (fix round, contracts §15.12;
+ * lens 1 #9): runDraftCore's per-sample step — R4's integrityFor (the path
+ * re-normalised, the verdict as R4 overrides it) → the REJECTED gate →
+ * planFromReply with its KeysOnlyContext → the one writer's tripwire as a dry
+ * run — as one pure function `draftFromReply(…)` in roadmap-server.ts, which
+ * runDraftCore, reuseRun and hostileViewsOf all call. The bar (R7's seam)
+ * then passes only the reply and the run, and asserts `integrity.verdict`
+ * equals the case's expected verdict, so H4's no-write clause and H1's views
+ * test production code.
+ *   plan     the rows the draft path would write; null when nothing of the
+ *            reply is written (the starter renders instead)
+ *   refused  why nothing of the reply is written: REJECTED (integrity),
+ *            TRIPWIRE (assertNoModelText refused the plan), EMPTY (nothing
+ *            survived validation); null when `plan` is set
+ */
+export interface DraftFromReplyResult {
+  integrity: ValidationIntegrity;
+  validated: ValidatedDraft | null;
+  plan: MilestoneDraft[] | null;
+  refused: "REJECTED" | "TRIPWIRE" | "EMPTY" | null;
+}
+
+/**
+ * Every gap name Gemini returned that is not shown (F-R4-19: "every other
+ * name is dropped unseen and only counted"): the hidden (ungrounded or
+ * flagged) plus the dropped (links, non-names). The one figure behind "3 not
+ * shown" (fix round, contracts §15.5): R4's draftViewOf and R5's integrityLine
+ * both read it, never gapsHidden alone. A missing or malformed count reads 0.
+ */
+export function gapsNotShownOf(integrity: Partial<Pick<ValidationIntegrity, "gapsHidden" | "gapsDropped">> | null | undefined): number {
+  const n = (x: unknown) => (typeof x === "number" && Number.isFinite(x) && x > 0 ? Math.floor(x) : 0);
+  return integrity ? n(integrity.gapsHidden) + n(integrity.gapsDropped) : 0;
+}
+
+/** The verdict from the violations: none → CLEAN; only OVER_MAX_ITEMS → SALVAGED; anything else → REJECTED. */
+export function integrityVerdictOf(violations: readonly { code: IntegrityCode }[]): IntegrityVerdict {
+  if (violations.length === 0) return "CLEAN";
+  return violations.every((v) => v.code === "OVER_MAX_ITEMS") ? "SALVAGED" : "REJECTED";
+}
+
 // ═══ Shapes: drafts, measures, validation ═══════════════════════════════════
 
 /** One item, as validation, fitting, the editor and persistence pass it (mirrors RoadmapItem). */
@@ -1501,6 +2822,16 @@ export interface ItemDraft {
   struck?: [number, number][];
   /** Each flag's reason in words, naming what set it ('names "Kestrel", which you didn't write'): R3's LabelCheck.reasons, re-derived on read with `struck`. */
   reasons?: Partial<Record<BlockingFlag, string>>;
+  /**
+   * Revision 4 (RoadmapItem.catalogKey): the roadmap-catalog.ts type of a
+   * practice, step or checkpoint. On read a CODE item's label is re-rendered
+   * from it (catalogLabelOf, with its `on` Domain in domainId, or all of R
+   * when domainId is null), so it follows a renamed Domain; the user's Edit
+   * makes it EDITED (YOURS) and keeps the key, so its "how" copy stays.
+   */
+  catalogKey?: CatalogKey | null;
+  /** A GAP row's grounding source (F-R4-19): the index into groundingSourcesOf's list (stored in RoadmapItem.syllabusRef for a GAP; no column). */
+  groundRef?: number | null;
 }
 
 /** RoadmapMeasure.scope. CARDS_AT_LEVEL: domainIds. PRACTICE_KEPT: itemLineageIds (templateIds from Start). CHECKPOINT: one itemLineageId. */
@@ -1532,8 +2863,17 @@ export interface MeasureSpec {
  * Milestone-level notes (codes; copy in roadmap-copy.ts): no study slot ("this
  * milestone already has 3"), no measurable part, a card measure dropped as
  * too small, the "Not medical advice" line. Lanes may append codes.
+ * Revision 4:
+ *   HELD_AT_START       a stage whose terms were all met at acceptance: PLANNED, reachedDay = the
+ *                       acceptance day, no items, no goal, never startable, and it gives NO rank
+ *                       ("Held when you began"); it counts as reached in Proficiency's stages part
+ *   LONG_WINDOW         a first window still over MILESTONE_MAX_DAYS after the count gate
+ *                       ("Writing 150 cards at 2 a week takes 75 weeks. Write more a week, or narrow the aim.")
+ *   NO_PRODUCTION_SLOT  a stage at Retained or above that needs a production practice and has no free slot
+ *   DEPTH_LOWERED       a stage dropped when the depth was lowered ("dropped when the depth was lowered on 5 Oct")
  */
-export type MilestoneNote = "NO_STUDY_SLOT" | "NOT_MEASURABLE" | "CARDS_TOO_SMALL" | "HEALTH_LINE";
+export type MilestoneNote = "NO_STUDY_SLOT" | "NOT_MEASURABLE" | "CARDS_TOO_SMALL" | "HEALTH_LINE" | "HELD_AT_START" | "LONG_WINDOW" | "NO_PRODUCTION_SLOT" | "DEPTH_LOWERED";
+export const MILESTONE_NOTES: readonly MilestoneNote[] = ["NO_STUDY_SLOT", "NOT_MEASURABLE", "CARDS_TOO_SMALL", "HEALTH_LINE", "HELD_AT_START", "LONG_WINDOW", "NO_PRODUCTION_SLOT", "DEPTH_LOWERED"];
 
 /** One milestone of a draft or version (mirrors RoadmapMilestone, with its items and measures). */
 export interface MilestoneDraft {
@@ -1566,10 +2906,37 @@ export interface MilestoneDraft {
   titleStruck?: [number, number][];
   /** Each title flag's reason in words, derived with titleFlags. */
   titleReasons?: Partial<Record<BlockingFlag, string>>;
+  /** Revision 4 (RoadmapMilestone.stage): set on every row a revision-4 draft path writes; null on a legacy row (isLegacyRoadmap). */
+  stage?: StageKey | null;
+  /**
+   * Who arranged which outline lines and practice types sit in this
+   * milestone (F-R4-21), derived on read from the version's run kind and any
+   * moves; no column. GEMINI shows "Which outline lines and practice types
+   * sit in which milestone is Gemini's suggestion."
+   */
+  arrangedBy?: "GEMINI" | "CODE" | "USER";
 }
 
-/** Why the checker dropped something (F6). */
-export type DropReason = "UNKNOWN_KEY" | "DANGLING_NEW_DOMAIN" | "CONTAINED_LINK" | "EXTRA_MILESTONE" | "OVER_CAP" | "EMPTY_LABEL" | "BAD_SHAPE";
+/**
+ * Why the checker dropped something (F6). Revision 4:
+ *   DUPLICATE   an outline line placed in two stages (it stays in the first)
+ *   NOT_A_NAME  a gap string that fails the shape rule (its text is not stored; counted per clause)
+ *   REJECTED    a reply the integrity walk rejected whole (nothing from it is written)
+ *   CONSTRAINT  a kind the constraint filter excluded (a defence in depth: it is never in the run's enum)
+ */
+export type DropReason =
+  | "UNKNOWN_KEY"
+  | "DANGLING_NEW_DOMAIN"
+  | "CONTAINED_LINK"
+  | "EXTRA_MILESTONE"
+  | "OVER_CAP"
+  | "EMPTY_LABEL"
+  | "BAD_SHAPE"
+  | "DUPLICATE"
+  | "NOT_A_NAME"
+  | "REJECTED"
+  | "CONSTRAINT";
+export const DROP_REASONS: readonly DropReason[] = ["UNKNOWN_KEY", "DANGLING_NEW_DOMAIN", "CONTAINED_LINK", "EXTRA_MILESTONE", "OVER_CAP", "EMPTY_LABEL", "BAD_SHAPE", "DUPLICATE", "NOT_A_NAME", "REJECTED", "CONSTRAINT"];
 
 /** One line of the "What was dropped" sheet: every drop, flag and note, in words. */
 export interface ReportEntry {
@@ -1586,6 +2953,170 @@ export interface ValidationReport {
   dropped: ReportEntry[];
   flagged: ReportEntry[];
   notes: ReportEntry[];
+  /**
+   * Revision 4 (F-R4-20): the integrity walk's verdict, on every v3 Gemini
+   * run. A report entry for CONTAINED_LINK, NOT_A_NAME, a REJECTED violation
+   * or any GAP stores the label '' (redaction): no model text in report JSON.
+   */
+  integrity?: ValidationIntegrity;
+}
+
+// ─── Revision 4: the draft's choices and omissions (F-R4-17, F-R4-19, F-R4-21) ─
+
+/** A kind the constraint filter left out of the run, with the word that excluded it ("Harder session ('running')"). */
+export interface ConstraintExclusion {
+  kind: CatalogKey;
+  word: string;
+}
+
+/**
+ * A body or care plan with constraints (F-R4-17): Gemini's session picks are
+ * one pending decision per plan ("Gemini picked Harder session and Strength
+ * session. Your constraints say '…'. Keep them?"). It blocks accept until
+ * answered (confirmSessionPicksCore); EASY replaces the picks with
+ * EASY_SESSION, MOBILITY_SESSION and TECHNIQUE_SESSION.
+ */
+export interface SessionPicks {
+  kinds: CatalogKey[];
+  /** The user's constraints, quoted. */
+  constraints: string;
+  decision: "PENDING" | "KEPT" | "EASY";
+}
+
+/** The aim itself meets a negated constraint term ("Your constraints say 'no running' and your aim is 'Run a sub-50 10K'"). */
+export interface AimConflict {
+  word: string;
+}
+
+/**
+ * One Domain Gemini's `needs` (or an exact-match gap) would add (F-R4-21),
+ * with its real facts and the date effect, shown before anything is
+ * confirmed. `blocked`: adding it would take the plan past SPAN_MAX_DAYS, or
+ * R would exceed DEPTH_DOMAINS_MAX (its toggle is disabled with the reason).
+ */
+export interface DomainAddition {
+  itemId: string | null;
+  domainId: string;
+  name: string;
+  cards: number;
+  atSix: number;
+  /** Its n_d at the plan's depth. */
+  n: number;
+  /** The realistic date with this Domain added (R2's per-Domain date effect); null while not computed. */
+  dateWith: DayKey | null;
+  blocked: "PAST_SPAN" | "TOO_MANY_DOMAINS" | null;
+}
+
+/** Where a shown gap name was found (F-R4-19): one text the user typed or chose, by kind and index. */
+export type GroundSourceKind = "AIM" | "CONSTRAINTS" | "EXAM" | "OUTLINE" | "AREA" | "DOMAIN" | "NAMED";
+
+/** A gap name shown in the panel (only GROUNDED, unflagged names; ROADMAP_GAPS_LIVE only). */
+export interface GapView {
+  itemId: string;
+  name: string;
+  source: { kind: GroundSourceKind; index: number };
+  /** "similar to your Domain Statistics" (CONTAINED or SIMILAR; it stays a GAP row). */
+  similarTo: string | null;
+}
+
+/** A Domain's provenance on a depth plan, for its life (F-R4-21): how it joined R and on which day. */
+export interface DomainOrigin {
+  by: "INTAKE" | "NAMED" | "GEMINI_NEEDS" | "GEMINI_GAP";
+  day: DayKey;
+}
+/** {[domainId]: DomainOrigin}, recorded by acceptCore in the acceptance's feasibility (derived from the DOMAIN items before acceptance). */
+export type DomainOrigins = Record<string, DomainOrigin>;
+
+/** A typed coverage figure below the policy (decision 53): shown on the Depth line for the life of the plan; while any stands, the top rank is Virtuoso. */
+export interface CoverageChoice {
+  domainId: string;
+  policy: number;
+  typed: number;
+  day: DayKey;
+}
+
+/** A lowered depth (F-R4-11): only by the LOWER_DEPTH tap, shown for good ("— below Mastered, your choice on 5 Oct" or "— set by your exam date on 5 Oct"). */
+export interface DepthChoice {
+  from: AimDepth;
+  to: AimDepth;
+  day: DayKey;
+  reason: "CHOICE" | "EXAM";
+}
+
+/**
+ * One required Domain's coverage, with where its figure came from, always
+ * (F-R4-9): "Probability · 34 cards: the most of the 25-card floor, 80% of
+ * your 42 (34), and 3 × 8 outline lines (24)".
+ */
+export interface CoverageBreakdown {
+  domainId: string;
+  name: string;
+  /** Live recall cards at intake (multiple choice not counted) and the multiple-choice cards left out. */
+  live: number;
+  nonRecall: number;
+  /** The outline lines tied to it, and its even share of the lines tied to no Domain in R. */
+  linesTied: number;
+  linesShared: number;
+  /** coveragePolicyOf's terms. */
+  floor: number;
+  share: number;
+  outline: number;
+  policy: number;
+  /** The user's typed figure (YOURS), or null. */
+  typed: number | null;
+  /** The figure in force: typed ?? policy. */
+  n: number;
+  belowPolicy: boolean;
+}
+
+/** What the date check assumed (stored in the feasibility JSON): who set the date, and which inputs were priors or a typed pace. */
+export interface DateOrigin {
+  origin: "REALISTIC" | "USER";
+  calibrating: CalibratingInput[];
+}
+
+/**
+ * The date check (F-R4-11; R2's dateCheckOf), stored in the acceptance's
+ * feasibility with the user's choice. Days are null when not dated ("Not
+ * dated: no writing pace yet").
+ *   D_real       the Sunday on or after max(D_exp(r_plan), D_hours): the realistic date
+ *   D_full       D_exp(r_src): realistic at the full usual pace
+ *   D_best_pace  D_bst(r_plan): "earliest if every review passes, at this pace" (the secondary line)
+ *   D_best_2x    D_bst(OVER_PACE_FACTOR × r_src): the IMPOSSIBLE test only
+ *   D_floor      strict floors with p = 1 and every needed card written today
+ */
+export interface DateCheck {
+  D_real: DayKey | null;
+  D_full: DayKey | null;
+  D_best_pace: DayKey | null;
+  D_best_2x: DayKey | null;
+  D_floor: DayKey | null;
+  verdict: DateVerdict;
+  /** New cards a week the plan asks (r_plan, or the least r* for TIGHT and OVER); null with no new cards needed. */
+  rateAsked: number | null;
+  /** The highest level among the realistic plan's milestones whose stage day ≤ the user's date; null when D_u ≥ D_real. */
+  reachByUserDate: number | null;
+  /** The highest level among the plan's milestones whose stage day ≤ examDay; null without an exam date. */
+  reachByExam: number | null;
+  /** D_real minus the last writing day ≥ SCHEDULE_BOUND_SHARE × floorBase(L*): "set by the review schedule, not your hours". */
+  scheduleBound: boolean;
+  dateOrigin: DateOrigin;
+  basis: string[];
+}
+
+/**
+ * A plan's motivation timeline (R2's motivationTimelineOf; days from today):
+ * the first rank, each later rank, each milestone that could pay ⬡6, Paragon
+ * (null when the plan can't give it), and the longest stretch with none.
+ */
+export interface MotivationTimeline {
+  firstRankDay: number | null;
+  rankDays: number[];
+  payDays: number[];
+  paragonDay: number | null;
+  longestGap: number;
+  /** The plan carries LONG_WINDOW (exempt from the first-rank bound; shows the note instead). */
+  longWindow: boolean;
 }
 
 /** One validated sample: milestones with code-set numbers still to fit (F4), and the report. */
@@ -1600,6 +3131,18 @@ export interface ValidatedDraft {
   uncoveredSyllabus: number[];
   /** More than UNVERIFIED_ALARM of the items carry a blocking flag. */
   alarm: boolean;
+  // ── Revision 4 (validateKeysOnly) ──
+  /** Gemini's `needs`, resolved to Domain ids (pending DOMAIN items with NOT_CHOSEN). */
+  needs?: string[];
+  /** Kinds the constraint filter left out, with their words. */
+  exclusions?: ConstraintExclusion[];
+  /** A body or care plan's pending session-picks decision. */
+  sessionPicks?: SessionPicks | null;
+  /** Gap rows shown (GROUNDED, unflagged), and the count of the rest (never their text). */
+  gaps?: GapView[];
+  gapsHidden?: number;
+  /** Outline line indices tied to no Domain in R. */
+  unassignedLines?: number[];
 }
 
 // ─── What a draft milestone still needs (fix round 2: one definition) ────────
@@ -1688,6 +3231,12 @@ export interface EndStateTerm {
   baselineDay: DayKey;
   /** "Probability, Inference · cards at level 6+". */
   label: string;
+  /**
+   * Revision 4: a depth plan's terms are one per required Domain,
+   * `CARDS_AT_LEVEL|d:<id>|L<L*>|rc` with target n_d, targetSource DEPTH (the
+   * policy) or YOURS (typed). Never scaled, fitted or lowered by a remedy.
+   */
+  targetSource?: TargetSource;
 }
 
 /** A plan window: [start, end], both life days. */
@@ -1726,6 +3275,18 @@ export interface RealismInput {
   areaInMaintenance: boolean;
   practicesAllowed: boolean;
   trackArea: boolean;
+  // ── Revision 4 (R4 fills them from the intake and reachInputsOf; R2 reads them) ──
+  /** Roadmap.depth; null or absent: a track Area or a legacy plan. */
+  depth?: AimDepth | null;
+  dateMode?: DateMode;
+  /** The user's date in CHOSEN mode (= targetDay); null in REALISTIC mode. */
+  userDate?: DayKey | null;
+  examDay?: DayKey | null;
+  /** The reach model's inputs (reachInputsOf), and which of them were assumed. */
+  reach?: ReachParams;
+  calibrating?: CalibratingInput[];
+  /** The source writing rate (new cards a life week; measured or typed) before PACE_SHARE; null with none. */
+  sourceRate?: number | null;
 }
 
 /** "Targets vs your pace" for one card measure. */
@@ -1813,6 +3374,41 @@ export interface Feasibility {
   impossible: boolean;
   /** Any OVER (time or typed target): needs "Keep it over my hours/pace". */
   over: boolean;
+  // ── Revision 4: what rides RoadmapAcceptance.feasibility (no migration) ──
+  /** REACH_MODEL_VERSION the figures were worked out with. */
+  reachModel?: number;
+  /** The date check, with the user's choice (TIGHT kept, OVER kept with the switch). */
+  dateCheck?: DateCheck | null;
+  depthChoice?: DepthChoice | null;
+  coverageChoices?: CoverageChoice[];
+  domainOrigins?: DomainOrigins;
+  /**
+   * Fix round (contracts §15.3): every required Domain's coverage as it was
+   * worked out for this draft or acceptance, with the counts frozen at
+   * intake (frozenCoverageCountsOf): the draft's feasibility carries the
+   * counts its rows were built from; each acceptance stores what it accepted.
+   * The next acceptance and lowerDepthCore read live and nonRecall from here
+   * for every Domain already in it, so n_d moves only by a typed figure, a
+   * line's Domain or LOWER_DEPTH. Absent on rev-3 and earlier rev-4 rows
+   * (those Domains read today's counts once, then freeze).
+   */
+  coverage?: CoverageBreakdown[];
+}
+
+/**
+ * The one order of a roadmap's acceptances, newest first (fix round,
+ * contracts §15.7): lowerDepthCore writes a second record within the same
+ * version (previousVersion = version), so `version` alone ties and a reader
+ * with `take: 1` could read the pre-lowering end state. Prisma's orderBy
+ * takes it as it is (a fresh array each call).
+ */
+export function acceptanceOrderBy(): [{ version: "desc" }, { acceptedAt: "desc" }] {
+  return [{ version: "desc" }, { acceptedAt: "desc" }];
+}
+
+/** A record written within its version (previousVersion = version): a lowered depth (lowerDepthCore), never a re-plan's acceptance and never Undo-able. Plan history words it as "lowered the depth", not "the re-plan lowered the end target". */
+export function isDepthLoweringRecord(a: { version: number; previousVersion: number | null | undefined }): boolean {
+  return a.previousVersion != null && a.previousVersion === a.version;
 }
 
 /** One life week of a started milestone's plan, with what the week quests keep from Start. */
@@ -1821,6 +3417,8 @@ export interface StartWeek extends PlanWeek {
   needRate: number;
   /** |E_w ∩ (…, lastCardDay]| ÷ 7. */
   fw: number;
+  /** Revision 4 (F-R4-14): needRate_{d,w} per Domain id (ADD's per-Domain catch-up cap). */
+  needRateByDomain?: Record<string, number>;
 }
 
 /** RoadmapMilestone.feasibility after Start (refitForStart): what the week quests keep for the milestone's life. */
@@ -1848,6 +3446,17 @@ export interface StartSnapshot {
    * milestone notes do). Absent: none kept.
    */
   aftercareKept?: string[];
+  // ── Revision 4 (F-R4-8, F-R4-14): the reach inputs at Start, frozen for the milestone's life ──
+  /** REACH_MODEL_VERSION the snapshot was worked out with (absent: rev 3's p^k). */
+  reachModel?: number;
+  /** pLong, c and ρ at Start (the spec's pLong_start, c_start, ρ_start); pStart above is p_start. */
+  pLongStart?: number;
+  cStart?: number;
+  rhoStart?: number;
+  /** The inputs that were priors at Start. */
+  calibrating?: CalibratingInput[];
+  /** newNeeded_start per Domain id (the new recall cards each Domain still needed at Start). */
+  newNeededByDomain?: Record<string, number>;
 }
 
 // ═══ Shapes: pace, Proficiency, rank ════════════════════════════════════════
@@ -1952,6 +3561,17 @@ export interface ProficiencyView {
   change: ProficiencyChange | null;
   /** Computed on this request and not stored (a writes-off server's live figure): "not recorded on this server". A stored reading is never live, even on a writes-off server. */
   live: boolean;
+  // ── Revision 4 (F-R4-12; fix round: on the contract, R1's ProficiencyViewR1 fills them) ──
+  /** What a depth plan's Proficiency counts toward (the depth's level and stage name); null without a depth. */
+  toward?: ProficiencyToward | null;
+  /** The label that always names its basis: "Proficiency toward Mastered (level 12)"; "Proficiency" alone without a depth. */
+  label?: string;
+}
+
+/** What a depth plan's Proficiency counts toward: the depth's level and its stage name ("Mastered", 12). R1's proficiencyTowardOf builds it. */
+export interface ProficiencyToward {
+  level: number;
+  name: string;
 }
 
 /** What the next rank is, in words the copy fills. */
@@ -2016,6 +3636,33 @@ export interface RaiseQuestSpec extends WeekQuestBase {
   dueDays: DayKey[];
   /** p_start was calibrating: the reach is the best case. */
   bestCase: boolean;
+  /**
+   * Revision 4 (generator 2): one part per Domain with a gap, count_d =
+   * min(pace_d, ceil(expectedReach_d)); count = Σ count_d; progress is
+   * Σ_d clamp(v_d − floor_d, 0, count_d) and the row is done when every part
+   * is. A v1 set has none (it renders as a single part from the fields above).
+   */
+  parts?: RaisePart[];
+}
+
+/** One Domain's share of a RAISE row. */
+export interface RaisePart {
+  domainId: string;
+  /** That Domain's measure key, with its `r` or `rc` segment. */
+  measureKey: string;
+  /** b0_d. */
+  floor: number;
+  count: number;
+  dueDays: DayKey[];
+}
+
+/** One Domain's share of an ADD row (recall cards only; multiple choice added that week doesn't count). */
+export interface AddPart {
+  domainId: string;
+  count: number;
+  /** The uncapped ask pace_d, and the cap that bound it. */
+  pace?: number;
+  cappedBy?: WeekQuestCap | null;
 }
 
 export interface AddQuestSpec extends WeekQuestBase {
@@ -2030,6 +3677,8 @@ export interface AddQuestSpec extends WeekQuestBase {
   /** Ww at the freeze: the writing weeks left, this one included (QUESTS_BEHIND). */
   writingWeeksLeft: number;
   lastCardDay: DayKey | null;
+  /** Revision 4 (generator 2): one part per Domain still short; the link goes to /add for the part with the largest count. */
+  parts?: AddPart[];
 }
 
 export interface PracticeQuestSpec extends WeekQuestBase {
@@ -2079,6 +3728,10 @@ export interface WeekQuestCardInput {
   rateSource: RateSource;
   /** The first Domain's Field (the ADD link). */
   fieldId: string | null;
+  /** Revision 4: a depth plan's measure is one Domain's (WeekQuestInput.cards holds one per Domain). */
+  domainId?: string;
+  /** Revision 4: the measure key's segment; with it, only recall cards count, and 'rc' counts a retry-entry card at L after its next pass. */
+  segment?: CardSegment;
 }
 
 export interface WeekQuestPracticeInput {
@@ -2119,6 +3772,8 @@ export interface WeekQuestInput {
   /** Held days from weekStart to dueDay, declared before Monday 04:00. */
   heldDays: DayKey[];
   card: WeekQuestCardInput | null;
+  /** Revision 4 (generator 2): every card measure of the milestone, one per Domain (`card` stays the first, for v1 readers). */
+  cards?: WeekQuestCardInput[];
   capacity: {
     /** available_w for this week. */
     availableMin: number;
@@ -2141,8 +3796,20 @@ export interface WeekQuestInput {
 
 /** What questProgress reads for one quest (one function on every surface, F14). */
 export type QuestEvidence =
-  | { kind: "RAISE"; /** The last stored reading dated in the window; null → v0. */ value: number | null; /** The week's highest reading so far. */ high: number | null; /** The day a slip was read (the caption's day). */ slipDay: DayKey | null }
-  | { kind: "ADD"; /** Non-archived Ideas with domainId in scope created in the window. */ added: number }
+  | {
+      kind: "RAISE";
+      /** The last stored reading dated in the window; null → v0. */ value: number | null;
+      /** The week's highest reading so far. */ high: number | null;
+      /** The day a slip was read (the caption's day). */ slipDay: DayKey | null;
+      /** Revision 4: per part (Domain id), the same three; absent on a v1 set. */
+      byDomain?: Record<string, { value: number | null; high: number | null; slipDay: DayKey | null }>;
+    }
+  | {
+      kind: "ADD";
+      /** Non-archived Ideas with domainId in scope created in the window. */ added: number;
+      /** Revision 4: recall cards added per Domain id; absent on a v1 set. */
+      addedByDomain?: Record<string, number>;
+    }
   | { kind: "PRACTICE"; rule: string | null; startDay: DayKey; instances: InstanceLike[] }
   | { kind: "STEP"; /** Days with a done instance. */ doneDays: DayKey[] }
   | { kind: "CHECKPOINT"; /** Days with a SELF|CHECKPOINT log. */ logDays: DayKey[] };
@@ -2155,6 +3822,8 @@ export interface WeekQuestProgress {
   done: boolean;
   /** RAISE slipped below the week's high: "1 card slipped back to level 5 on Thu". */
   slipped: { from: number; day: DayKey | null } | null;
+  /** Revision 4: each part's progress (a part's slip offsets only that part); absent on a v1 set. */
+  parts?: { domainId: string; progress: number; count: number; done: boolean }[];
 }
 
 /** RoadmapQuestWeek.results, written once after the week settles. */
@@ -2189,6 +3858,16 @@ export interface WeekQuestRow {
   place: string | null;
   /** A link, per variant (F13 Output table). Never /review. */
   href: string | null;
+  /**
+   * Revision 4: RAISE and ADD parts ("3 in Probability · 2 in Inference"):
+   * Today shows the first WEEK_QUEST_PARTS_TODAY and "+n more", the roadmap
+   * page all. Every count keeps its unit; never a bare "n of N".
+   */
+  parts?: { domainId: string; name: DomainName; count: number; progress: number; done: boolean }[];
+  /** Revision 4 (fix round: on the contract; R6's questPartsLineOf fills it): the variant's parts line, on a RAISE or ADD row with parts. */
+  partsLine?: string;
+  /** Revision 4 (F-R4-13): a PRACTICE row of a BODY plan; the component shows HEALTH_LINE as its sub-line (R6 writes only true). */
+  health?: boolean;
 }
 
 /** A week's set as a surface shows it. */
@@ -2246,9 +3925,16 @@ export interface ItemEdit {
   bar?: number;
   /** A TOPIC moved to another Domain of its milestone. */
   domainId?: string;
-  /** A typed target (YOURS) for a card measure, by measureKey. */
+  /** A typed target (YOURS) for a card measure, by measureKey. Refused on a depth plan's stage (fix round): its counts come from coverage. */
   target?: number;
   minLevel?: number;
+  /**
+   * Revision 4 (F-R4-21, fix round: on the contract): "Change the type" — a
+   * PRACTICE, STEP or CHECKPOINT re-typed from the app's list (its slot and
+   * track only). The app re-writes the label from the catalog template
+   * (CODE); the row's catalog choice becomes the user's.
+   */
+  catalogKey?: CatalogKey | null;
 }
 
 /** How a proposed or picked Domain is resolved (F9): map to one of the user's, create one under a confirmed name, or drop it. */
@@ -2330,7 +4016,19 @@ export interface StartPreview {
    * `paidOn`: with LINEAGE_PAID, the day that lineage's goal paid ("pays
    * nothing · this milestone already paid on 3 Mar").
    */
-  pay: { stated: number; zeroReason: StatedZeroReason | null; limitLine: string | null; paidOn?: DayKey | null };
+  pay: {
+    stated: number;
+    zeroReason: StatedZeroReason | null;
+    limitLine: string | null;
+    paidOn?: DayKey | null;
+    /**
+     * Revision 4 (F-R4-13 pay honesty; fix round: on the contract, R4's
+     * roadmap-economy fills it): the name of the practice the app added that
+     * the stated pay rests on — without it the milestone would fall under the
+     * practice gate. null or absent: the pay rests on no added practice.
+     */
+    restsOnAdded?: string | null;
+  };
   /**
    * What the pay line is worked out from, so the sheet recomputes it on
    * every practice switch (fix round): statedForMilestone(
@@ -2409,7 +4107,14 @@ export interface IntakeFieldOption {
   inMaintenance: boolean;
   /** Whether the Field has a measured new-card pace (else "New cards a week" is asked when no chosen Domain has one). */
   paceMeasured: boolean;
-  domains: { id: string; name: string; cards: number; atSix: number; atTop: number; paceMeasured: boolean }[];
+  /**
+   * `nonRecall` (revision 4, fix round): its multiple-choice cards, which a
+   * depth plan doesn't count (NON_RECALL_TYPES), so the intake's coverage
+   * preview reads live = cards − nonRecall exactly as the server's draft does
+   * ("42 cards · 6 multiple choice not counted"). R4's loadIntakeView always
+   * fills it; absent only on a view built before the fix round (read as 0).
+   */
+  domains: { id: string; name: string; cards: number; atSix: number; atTop: number; paceMeasured: boolean; nonRecall?: number }[];
 }
 
 /** What /you/roadmap/new renders (F2). */
@@ -2425,6 +4130,20 @@ export interface IntakeView {
   fields: IntakeFieldOption[];
   /** "You've tracked ≈ 7 h 40 a week of tasks (task estimates, not timed; median of 4 weeks)" or calibrating. */
   tracked: WeeklyFigure | null;
+  // ── Revision 4 (F-R4-4, F-R4-9) ──
+  /** The current interval multiplier: the hints' floors are floorBase(L*, m) ("at least 340 days … level 12"), computed, never typed. */
+  m?: number;
+  /** "By when"'s CHOSEN chips with their floor verdicts per depth, for the Area's default Domains (R2's floor helper; none hidden or disabled). */
+  dateChips?: IntakeDateChip[];
+  /** The measured new-card pace of the Area (new cards a week), when there is one; null: "New cards a week" is asked in REALISTIC mode when a Domain needs new cards. */
+  paceRate?: number | null;
+}
+
+/** A "By when" chip: 6 / 12 / 24 months or 3 years, with "· possible" or "· before level 12 is possible" per depth. */
+export interface IntakeDateChip {
+  months: 6 | 12 | 24 | 36;
+  day: DayKey;
+  possible: Record<DepthKey, boolean>;
 }
 
 // ═══ Shapes: the character page's Aim card ══════════════════════════════════
@@ -2476,6 +4195,24 @@ export interface AimCardMilestone {
   countsFrom: DayKey | null;
   /** Accepted, not started: the stated-pay line and the rank it gives. `paidOn` dates a LINEAGE_PAID zero. */
   start: { stated: number; zeroReason: StatedZeroReason | null; givesRank: AimRankName | null; paidOn?: DayKey | null } | null;
+  /** Revision 4: the stage ("Milestone 2 · Familiar (level 6)") and its gate level; null on a legacy row or a track stage. */
+  stage?: StageKey | null;
+  gateLevel?: number | null;
+}
+
+/**
+ * The last aim, kept on the character page after its roadmap closes (F-R4-1,
+ * F-R4-2): "Last aim: “<aim>” · Aim rank Paragon · reached 3 Mar 2028" (or
+ * "· closed 3 Mar 2028" when it ended unreached). From the latest DONE roadmap.
+ */
+export interface LastAimView {
+  roadmapId: string;
+  aim: string;
+  rankIndex: number;
+  rankName: AimRankName;
+  reached: boolean;
+  /** reachedDay when reached, else the done day. */
+  day: DayKey;
 }
 
 /** What loadAimCard returns for /you (F19). Serialisable. */
@@ -2520,7 +4257,97 @@ export interface AimCardView {
   questWeekUnfrozen: boolean;
   reachedDay: DayKey | null;
   doneDay: DayKey | null;
+  // ── Revision 4 ──
+  /** LifeSettings.aimSuggestions (one indexed select; null = never set, which means on). EMPTY included. */
+  aimSuggestions?: boolean | null;
+  /** The latest DONE roadmap's aim, final rank and day (EMPTY's last-aim line); null with none. */
+  lastAim?: LastAimView | null;
+  /** Roadmap.depth (null on a track Area or a legacy plan). */
+  depth?: AimDepth | null;
+  /** The chip "Mastered by Nov 2027" (or "by about Nov 2027 · estimate" while calibrating), replacing "by 31 Mar". */
+  dateChip?: { depth: AimDepth; day: DayKey; estimate: boolean } | null;
+  /** DONE within RANK_NEW_DAYS of the reach: the held depth facts ("Mastered (level 12) in Probability and Inference · confirmed 3 Mar 2028"). */
+  heldDepth?: { depth: AimDepth; domainNames: string[]; confirmedDay: DayKey } | null;
+  /** A plan made before revision 4: the card shows the aim and the banner's action, no milestone title (F-R4-16). */
+  legacy?: boolean;
+  /**
+   * Fix round 2 (contracts §16.3; F-R4-16, lens 3 #13 and #17): a legacy
+   * plan's banner facts, R4's legacyViewOf(b) — the same LegacyView
+   * RoadmapView carries. The Aim card shows LEGACY_GEMINI_HIDDEN when
+   * `geminiHidden`, and its "Start again at a depth" handoff
+   * (restartHandoffOf) carries the old plan's `domainIds` and `areaFieldId`,
+   * as RoadmapView's banner does, so the new intake preselects that plan's
+   * Domains rather than every Domain with cards in the Area. Null or absent
+   * on a revision-4 plan; `legacy` stays the boolean the card keys on.
+   */
+  legacyView?: LegacyView | null;
 }
+
+// ═══ Revision 4: Today's aim line (F-R4-3) ══════════════════════════════════
+
+/** One milestone of the open ACTIVE roadmap, as the aim line's START rule reads it (R4's loadAimStep fills it). */
+export interface AimStepMilestone {
+  id: string;
+  /** Its place in the plan (1-based; the copy's "Milestone 2"). */
+  ord: number;
+  stage: StageKey | null;
+  /** The gate level (BETWEEN's odd level, PART's count level), for the stage's words. */
+  gateLevel: number | null;
+  /** PLANNED (not started), OPEN (STARTING or STARTED and not closed), CLOSED (reached, closed short or dropped) or LATER. */
+  state: "PLANNED" | "OPEN" | "CLOSED" | "LATER";
+  rankIndex: number | null;
+  reachedDay: DayKey | null;
+  /** HELD_AT_START: reached at acceptance, skipped, and it gives no rank. */
+  held: boolean;
+  /** A CLOSED row's close day (reached, closed or dropped); a held row's is the acceptance day. */
+  closedDay: DayKey | null;
+  /** milestoneDueDayOf: a PLANNED row past it is PAST_DUE. */
+  dueDay: DayKey | null;
+}
+
+/**
+ * What R4's loadAimStep returns for Today (≤ 4 indexed reads, cached as
+ * 'aimStep:<user>:<today>' on ['roadmap', 'life']; a missing table or column
+ * gives null). roadmap-invite todayAimLineOf reads it.
+ */
+export interface AimStep {
+  /** The open roadmap, or null when none is DRAFT or ACTIVE. */
+  open:
+    | null
+    | { kind: "DRAFT"; roadmapId: string; savedDay: DayKey; running: boolean }
+    | { kind: "ACTIVE"; roadmapId: string; track: boolean; acceptedDay: DayKey; milestones: AimStepMilestone[] };
+  /** The latest DONE roadmap's done day (the NEXT variant), or null. */
+  lastDoneDay: DayKey | null;
+  /** The latest DONE or ARCHIVED roadmap's done or archive day (the ask's anchor), or null. */
+  lastClosedDay: DayKey | null;
+  /** LifeSettings.epochDay, or null. */
+  epochDay: DayKey | null;
+  /** The latest DAY_OPEN ledger row dated before today (the first day back), or null. */
+  lastOpenBefore: DayKey | null;
+  /** LifeSettings.aimSuggestions (null: never set, on). */
+  aimSuggestions: boolean | null;
+}
+
+/**
+ * The aim line on Today (data; R5's AimLine renders the copy). Never red,
+ * never counted, never in the bell, never a link to /review.
+ *   SET    "A new week. Set an aim: …" (WEEK, MONTH, BACK, NEXT) → /you/roadmap/new
+ *   DRAFT  "A roadmap draft is waiting for your check." → /you/roadmap
+ *   START  "Milestone 2 · Familiar is ready to start. Reaching it gives the Aim rank Journeyman." → /you/roadmap#now
+ */
+export type AimLineView =
+  | { kind: "SET"; variant: "WEEK" | "MONTH" | "BACK" | "NEXT"; href: string }
+  | { kind: "DRAFT"; roadmapId: string; href: string }
+  | {
+      kind: "START";
+      milestoneId: string;
+      ord: number;
+      /** The stage's words from STAGE_NAMES (stageLabelOf); null on a track plan ("Milestone 2 is ready to start."). No title ever reaches Today. */
+      stageName: string | null;
+      /** The rank reaching it gives; null: "It keeps your rank." */
+      givesRank: AimRankName | null;
+      href: string;
+    };
 
 /**
  * The reading was taken on the day the plan was accepted (fix round 2): its
@@ -2565,6 +4392,51 @@ export interface RoadmapHeader {
   aimCheck: AimCheck;
   over: boolean;
   targetLowered: TargetLowered | null;
+  // ── Revision 4 ──
+  depth?: AimDepth | null;
+  dateMode?: DateMode;
+  examDay?: DayKey | null;
+  /** Who set the date and what it assumed (a date the app set is never called "your choice"). */
+  dateOrigin?: DateOrigin | null;
+  /** A plan made before revision 4 (isLegacyRoadmap). */
+  legacy?: boolean;
+  /** Fix round (F-R4-16, decision 47): the plan's chosen Domains (Roadmap.domainIds), so "Start again at a depth" carries them into the new intake. */
+  domainIds?: string[];
+}
+
+/**
+ * The Depth line (F-R4-15), shown for the life of the plan: the depth and
+ * its Domains with counts, every coverage choice, every Gemini-suggested
+ * Domain ("suggested by Gemini, added by you on 5 Oct"), "coverage
+ * unchecked: no outline", and a lowered depth.
+ */
+export interface DepthView {
+  depth: AimDepth;
+  coverage: CoverageBreakdown[];
+  coverageChoices: CoverageChoice[];
+  depthChoice: DepthChoice | null;
+  domainOrigins: DomainOrigins;
+  /** The plan has an outline (else "coverage unchecked: no outline", for good). */
+  outlineChecked: boolean;
+  /** "By your exam (Sun 4 Apr 2027) the plan reaches Retained (level 8)." */
+  exam: { day: DayKey; reachLevel: number | null } | null;
+}
+
+/** A legacy roadmap's banner (F-R4-16): its milestone and item text is never rendered. */
+export interface LegacyView {
+  /** DRAFT: "[Draft it again]"; ACTIVE: "[Start again at a depth]"; DONE or ARCHIVED: history only. */
+  kind: RoadmapStatus;
+  /** Any row had a Gemini origin: "Wording from an earlier Gemini draft is hidden." */
+  geminiHidden: boolean;
+  /**
+   * Fix round (F-R4-16, decision 47): what "Start again at a depth" carries
+   * into the new intake's handoff — the legacy roadmap's chosen Domains
+   * (Roadmap.domainIds), its Area (null on a track Area) and its track.
+   * Offered with `replaces` only while `kind` is ACTIVE; a DONE or ARCHIVED
+   * legacy roadmap offers "Set your next aim" with no `replaces`.
+   */
+  domainIds?: string[];
+  areaFieldId?: string | null;
 }
 
 /** A run's facts (RunFacts, the RUNNING state). */
@@ -2617,6 +4489,28 @@ export interface DraftView {
   acceptable: boolean;
   /** The first item still to decide ("Next item to decide"): draftNeedsOf(the next milestone)[0]'s id (fix round 2). */
   nextToDecide: string | null;
+  // ── Revision 4 (F-R4-17, F-R4-19, F-R4-21) ──
+  /** Kinds the constraint filter left out, each with its word ("Left out because of your constraints: …"). */
+  exclusions?: ConstraintExclusion[];
+  /** A body or care plan's session-picks decision (blocks accept while PENDING). */
+  sessionPicks?: SessionPicks | null;
+  /** The aim meets a negated constraint term. */
+  aimConflict?: AimConflict | null;
+  /** Gap names not shown ("Gemini suggested 3 names the app couldn't find in your words; they're not shown"). */
+  gapsHidden?: number;
+  /** The shown gap names (the panel; ROADMAP_GAPS_LIVE only). */
+  gaps?: GapView[];
+  /** Gemini's Domain additions, with their facts and date effects (a pending one blocks accept). */
+  additions?: DomainAddition[];
+  /** BULK ([Add both] [Choose…] [Leave out]) for an English, non-exam aim; TOGGLES (one per Domain, no add-all) for an exam or non-English aim. */
+  additionsMode?: "BULK" | "TOGGLES";
+  /** Outline line indices tied to no Domain in R. */
+  unassignedLines?: number[];
+  /** The draft's date check, coverage and depth line. */
+  dateCheck?: DateCheck | null;
+  depth?: DepthView | null;
+  /** A legacy draft (F-R4-16): no row text is rendered; accept refuses ("Draft it again first"). */
+  legacy?: LegacyView | null;
 }
 
 /** One measure line ("Hold 20 cards at level 6+ in Probability, Inference (now 12)"). */
@@ -2680,6 +4574,10 @@ export interface MilestoneRowView {
   reachedDay: DayKey | null;
   countsFrom: DayKey | null;
   closedPercent: number | null;
+  /** Revision 4: the stage and its gate level; `held` marks "Held when you began" (no rank). */
+  stage?: StageKey | null;
+  gateLevel?: number | null;
+  held?: boolean;
 }
 
 /** "Now": the current milestone, expanded (anchor #now). */
@@ -2699,6 +4597,14 @@ export interface CurrentMilestoneView {
   stepDone?: Record<string, DayKey | null>;
   /** Practice item lineage → its sessions kept so far and planned so far ("kept 10 of 16 so far"), from the stored PRACTICE_KEPT detail (fix round). */
   practiceKept?: Record<string, { kept: number; of: number }>;
+  /**
+   * Revision 4 (fix round: on the contract; R4 fills them from the StartSnapshot):
+   * a started milestone's Start figures — the MilestoneFeasibility its target
+   * was worked out from when it started, and its start day — for the
+   * Reference's "Worked out when it started on …". null before Start.
+   */
+  startFeasibility?: MilestoneFeasibility | null;
+  startedDay?: DayKey | null;
 }
 
 /** "Toward the aim": the end state's own meters, never blended. */
@@ -2716,6 +4622,18 @@ export interface PlanHistoryRow {
   day: DayKey;
   undone: boolean;
   changes: string[];
+  /**
+   * Fix round 2 (contracts §16.2; lens 2 and lens 3): this row is a record
+   * lowerDepthCore wrote inside its version (isDepthLoweringRecord(a):
+   * previousVersion === version), not a re-plan's acceptance. R4's historyOf
+   * sets it from the acceptance itself and words such a row's `changes` as
+   * [depthChangeLineOf(endStateOf(prev), endStateOf(a)) ?? "lowered the
+   * depth"]. R5's PlanHistory keys "depth lowered" on it, never on a version
+   * that repeats the row before: after Undo the roadmap's version drops back
+   * by one, so accept → Undo → accept writes a second acceptance of the same
+   * version, which lowered nothing. Absent reads false.
+   */
+  depthLowered?: boolean;
 }
 
 /** "Timed problems — on Today · [Keep on Today] [Archive]". */
@@ -2815,4 +4733,16 @@ export interface RoadmapView {
   triggers: TriggerHit[];
   aftercare: AftercareRow[];
   questWeekUnfrozen: boolean;
+  // ── Revision 4 ──
+  /** The Depth line, on a depth plan (null on a track Area or a legacy plan). */
+  depth?: DepthView | null;
+  /** The accepted date check (dateOrigin, the waypoints, the schedule-bound line). */
+  dateCheck?: DateCheck | null;
+  /** "Top rank on this plan: Virtuoso — Paragon needs a standard you set": the missing conditions (topRankIndexOfDepth, paragonMissingOf). */
+  paragonMissing?: ParagonMissing[];
+  /** A legacy roadmap's banner (F-R4-16). */
+  legacy?: LegacyView | null;
+  /** The shown gap names (ROADMAP_GAPS_LIVE only) and the hidden count. */
+  gaps?: GapView[];
+  gapsHidden?: number;
 }

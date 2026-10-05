@@ -25,12 +25,39 @@ import { goalPercent, statedPayoutCopy } from "@/lib/goals";
 import type { Track } from "@/lib/life-types";
 import {
   AIM_RANKS,
+  CARDS_PER_OUTLINE_LINE,
+  COVER_FLOOR_CARDS,
+  COVER_SHARE,
+  DEPTH_DOMAINS_MAX,
   INTENSITY,
   NOT_RECORDED_HERE,
+  PARAGON_MIN_MILESTONES,
   ROADMAP_DRAFTS_PER_DAY,
   ROADMAP_WRITES_OFF,
+  STAGE_LEVEL,
+  STAGE_NAMES,
+  TRACK_PARAGON_MIN_DAYS,
+  floorBase,
+  gapsNotShownOf,
   interval,
+  stageLabelOf,
+  stageOfLevel,
   type AimCheck,
+  type AimDepth,
+  type AimLineView,
+  type ConstraintExclusion,
+  type CoverageBreakdown,
+  type CoverageChoice,
+  type DateVerdict,
+  type DepthChoice,
+  type DomainAddition,
+  type DomainOrigin,
+  type GroundSourceKind,
+  type LastAimView,
+  type ParagonMissing,
+  type SessionPicks,
+  type StageKey,
+  type ValidationIntegrity,
   type AimRankView,
   type BlockingFlag,
   type CheckpointKind,
@@ -56,6 +83,8 @@ import {
   type WeekQuestKind,
   type WeekQuestUnit,
 } from "@/lib/roadmap-types";
+import { CATALOG, catalogHowOf, type CatalogKey } from "@/lib/roadmap-catalog";
+import { AIM_LATER_DAYS } from "@/lib/roadmap-invite";
 
 // ═══ The contract's copy ═════════════════════════════════════════════════════
 
@@ -146,6 +175,8 @@ export const FREE_TIER_LINE = "This server's Gemini key is on Google's free tier
 export const DRAFT_CAP_LINE = `${ROADMAP_DRAFTS_PER_DAY} drafts today — build from your numbers or write it yourself.`;
 /** A FAILED Gemini run that wrote R2's starter in its place (F8 "On failure"). */
 export const RUN_STARTER_LINE = "Gemini didn't answer; here is a plan from your numbers. Every check still runs.";
+/** A reply the tripwire refused (runDraftCore's "reply refused: …"): Gemini did answer, so never "didn't answer". */
+export const RUN_REFUSED_LINE = "Gemini's reply held words the app didn't write, so none of it is used. Here is a plan from your numbers; every check still runs.";
 /** The latest run failed and wrote nothing: the rows on screen are the earlier draft's, unchanged. */
 export const RUN_UNFINISHED_LINE = "The last draft didn't finish, so nothing below changed.";
 /** The draft header's lead line by who wrote the rows (F9): Gemini's words, or code's. */
@@ -173,15 +204,20 @@ export const LIBRARY_UNCHECKED_LINE = "Your Domains weren't checked here.";
 /** A plan-only edit of Gemini's words (sessions, band, bar, kind): the numbers become yours, the words don't. */
 export const EDIT_NUMBERS_NOTE = "Your numbers; the words stay Gemini's until you edit them or tap I checked this.";
 
-/** How each pack section is named in the privacy line (closed: every PackSection has words). */
+/**
+ * How each pack section is named in the privacy line (closed: every
+ * PackSection has words). Revision 4 (F-R4-17): the v3 pack sends the
+ * outline lines with the Domain each is tied to, the plan's stages (whether
+ * there is an exam, never its date) and which Domains you chose.
+ */
 export const PACK_SECTION_WORDS: Readonly<Record<PackSection, string>> = {
   aim: "your aim",
   area: "Area name",
   constraints: "constraints",
   exam: "exam name",
-  syllabus: "syllabus lines",
-  plan: "the plan's milestone count and weeks",
-  domains: "your Domain names with their card counts",
+  syllabus: "outline lines with the Domain you tied each to",
+  plan: "the plan's stages and whether there is an exam (never its date)",
+  domains: "your Domain names with their card counts and which Domains you chose",
 };
 const PACK_SECTION_ORDER: readonly PackSection[] = ["aim", "area", "constraints", "exam", "syllabus", "plan", "domains"];
 
@@ -390,6 +426,8 @@ export const CHECKPOINT_KIND_WORD: Readonly<Record<CheckpointKind, string>> = {
   MOCK_TEST: "mock test",
   PERFORMANCE_CHECK: "performance check",
   SELF_TEST: "self-test",
+  // Revision 4: the exam itself, placed by code on the stage that holds Roadmap.examDay; never offered in a picker.
+  EXAM_DAY: "your exam",
 };
 
 /** A recurrence rule in words: "3× a week", "every day", "2× a month". */
@@ -459,6 +497,8 @@ export const FLAG_WORD: Readonly<Record<BlockingFlag, string>> = {
   TOPIC_OUTSIDE_SCOPE: "Outside this milestone",
   AIM_STEP_EARLY: "Too early",
   LANGUAGE_UNCHECKED: "Language not checked",
+  // Revision 4 (F-R4-19): a name the app found nowhere in your words; such a gap name is never shown, only counted.
+  NOT_IN_YOUR_WORDS: "Not in your words",
 };
 
 /** Why a flag blocks bulk keep, in words (shown under the item). */
@@ -488,6 +528,9 @@ export function flagReason(flag: BlockingFlag, ctx: { constraints?: string | nul
         : "Reads like the aim itself, before the last milestone.";
     case "LANGUAGE_UNCHECKED":
       return "The app's checks read English only, so this needs your own tap.";
+    case "NOT_IN_YOUR_WORDS":
+      // Revision 4 (F-R4-19), as R3's FLAG_REASON reads it.
+      return "The app found these words nowhere in your aim, outline, exam or chosen Domains.";
   }
 }
 
@@ -515,6 +558,11 @@ export const NOTE_WORD: Readonly<Record<ItemNote, string>> = {
   RAISED: "Level kept from falling",
   STUDY_ADDED: "Study time counts in the plan",
   PLACEHOLDER: "Name this practice",
+  // Revision 4 (F-R4-18, F-R4-19, F-R4-21): who chose a type or a Domain, in words (never colour alone).
+  GEMINI_PICK: "picked by Gemini from the app's list",
+  NOT_CHOSEN: "suggested by Gemini · not added yet",
+  FROM_SUGGESTION: "named from Gemini's pick of your words, created by you",
+  PRODUCTION_ADDED: "added by the app",
 };
 
 /** A milestone note's line. */
@@ -523,6 +571,11 @@ export const MILESTONE_NOTE_LINE: Readonly<Record<MilestoneNote, string>> = {
   NOT_MEASURABLE: "No measurable part — add a Domain or a practice.",
   CARDS_TOO_SMALL: "The card target was too small to be a milestone, so it was dropped.",
   HEALTH_LINE,
+  // Revision 4 (F-R4-10, F-R4-11, F-R4-13). LONG_WINDOW's figures are longWindowLine's when the milestone's facts are at hand.
+  HELD_AT_START: "Held when you began: you already held this stage, so it gives no rank. It counts in Proficiency.",
+  LONG_WINDOW: "Writing these cards takes many weeks. Write more a week, or narrow the aim.",
+  NO_PRODUCTION_SLOT: "No practice that uses what you know was added: this milestone already has 3 practices. Swap one for a practice type that does.",
+  DEPTH_LOWERED: "Dropped when the depth was lowered.",
 };
 
 // ═══ Pay (F15; MP only through statedPayoutCopy and the ⬡ glyph) ═════════════
@@ -848,4 +901,597 @@ export function byLine(targetDay: DayKey, today: DayKey, withWeeks: boolean): st
 /** The life day `n` days on (re-exported so views need not import life-day). */
 export function dayPlus(day: DayKey, n: number): DayKey {
   return addDays(day, n);
+}
+
+// ═══ Revision 4 (roadmap-rev4.md): the aim at the centre, depth, keys only ═══
+//
+// Every string below is code's. The invitation copy (the ASK card, the LATER
+// line, Today's aim line, the form's notes) never names Gemini and never says
+// "earn", the M-word, the MP glyph or a bare "quest" (roadmap-ui-check pins
+// each). "Mastered" appears only as the stage name of level 12, with
+// "(level 12)" on first use in a block; "Depth" is always followed by its
+// stage and level.
+
+/** "4" weeks: the snooze in words, from AIM_LATER_DAYS. */
+const LATER_WEEKS = Math.round(AIM_LATER_DAYS / 7);
+
+/** "Mastered (level 12)", "Fluent (level 10)", "Toward Mastered (level 11)", "Familiar, part 1 (level 6)"; a level with no stage reads "level 9". */
+export function stageLevelName(level: number, stage?: StageKey | string | null): string {
+  const named = stage ? stageLabelOf(stage, level) : null;
+  if (named) return `${named} (level ${level})`;
+  const gate = stageOfLevel(level);
+  if (gate) return `${STAGE_NAMES[gate]} (level ${level})`;
+  const above = stageOfLevel(level + 1);
+  return above ? `Toward ${STAGE_NAMES[above]} (level ${level})` : `level ${level}`;
+}
+
+/** A depth's name: "Mastered (level 12)". */
+export function depthName(depth: AimDepth): string {
+  return stageLevelName(depth);
+}
+
+/** A depth's stage name alone ("Mastered"), for a chip that carries no level. */
+export function depthStage(depth: AimDepth): string {
+  const gate = stageOfLevel(depth);
+  return gate ? STAGE_NAMES[gate] : `level ${depth}`;
+}
+
+/** "Milestone 2 · Familiar (level 6)" (a track or legacy row: "Milestone 2"). */
+export function milestoneStageLine(ord: number, stage: StageKey | string | null | undefined, gateLevel: number | null | undefined): string {
+  const named = stage ? stageLabelOf(stage, typeof gateLevel === "number" ? gateLevel : undefined) : null;
+  if (!named) return `Milestone ${ord}`;
+  return typeof gateLevel === "number" ? `Milestone ${ord} · ${named} (level ${gateLevel})` : `Milestone ${ord} · ${named}`;
+}
+
+/** The stage's words alone, with its level: "Familiar (level 6)"; null on a track or legacy row. */
+export function stageWords(stage: StageKey | string | null | undefined, gateLevel: number | null | undefined): string | null {
+  const named = stage ? stageLabelOf(stage, typeof gateLevel === "number" ? gateLevel : undefined) : null;
+  if (!named) return null;
+  return typeof gateLevel === "number" ? `${named} (level ${gateLevel})` : named;
+}
+
+/** "about 110 days": the gap a card at L* came through, interval(L* − 1, m), rounded to 5 (F-R4-9). */
+export function depthGapDays(depth: number, m: number): number {
+  return Math.max(5, Math.round(interval(Math.max(1, depth - 1), m) / 5) * 5);
+}
+
+/** "3 Mar 2028": a day with its year, always (a last aim, a choice's day). */
+export function dateFull(day: DayKey): string {
+  const [y, m, d] = partsOf(day);
+  return `${d} ${MONTHS[m - 1]} ${y}`;
+}
+
+/** "Sun 4 Apr 2027". */
+export function dayFull(day: DayKey): string {
+  return `${weekdayName(day)} ${dateFull(day)}`;
+}
+
+/** "Nov 2027" (the Aim card's date chip). */
+export function monthYear(day: DayKey): string {
+  const [y, m] = partsOf(day);
+  return `${MONTHS[m - 1]} ${y}`;
+}
+
+/** "A and B", "A, B and C" (no Oxford comma: the spec's copy). */
+export function andList(parts: readonly string[]): string {
+  if (parts.length <= 1) return parts[0] ?? "";
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+// ─── The invitation (F-R4-1 to F-R4-3, F-R4-5) ───
+
+export const AIM_CALL_HEADING = "Set an aim";
+export const AIM_CALL_BODY = "What do you want to be able to do in a year or three? The app plans milestones toward it and measures them from your reviews and ticks.";
+/** True as written (decision 40): ranks follow the stages reached inside the plan; Paragon is the aim held at Mastered (level 12). */
+export const AIM_CALL_RANK_LINE = `Stages you reach raise your Aim rank, from ${AIM_RANKS[0]} toward ${AIM_RANKS[6]}: the aim held at ${STAGE_NAMES.MASTERED} (level ${STAGE_LEVEL.MASTERED}).`;
+export const AIM_CALL_LABEL = "Your aim, in your words";
+export const AIM_CALL_PLACEHOLDER = "Something you want to be able to do";
+export const AIM_CALL_CONTINUE_LINE = "Continue where you left off";
+export const AIM_CALL_PRIMARY = "Set an aim";
+export const AIM_CALL_PRIMARY_TEXT = "Continue";
+export const AIM_NOT_NOW = "Not now";
+export const AIM_DONT_SUGGEST = "Don't suggest this";
+/**
+ * Every × on an aim surface means "Not now" and says so (decision 34). This
+ * label has one meaning wherever it shows (/you's LATER line, Today's SET
+ * line): the 'hide:' cookie (hideAimPrompt), so neither surface suggests an
+ * aim for 4 weeks (fix round 2).
+ */
+export const AIM_NOT_NOW_SET_LABEL = `Not now: no aim suggestions for ${LATER_WEEKS} weeks`;
+export const AIM_NOT_NOW_STEP_LABEL = "Not now: hide this for a week";
+export const AIM_OFF_TOAST = "Aim suggestions are off. Turn them back on in Settings.";
+/** The Undo on AIM_OFF_TOAST didn't go through: say so, and where the switch is. */
+export const AIM_UNDO_FAILED = "Couldn't turn them back on. Settings › Aim suggestions.";
+/** The LATER line's words after its "Set an aim" link. */
+export const AIM_LATER_TAIL = " → milestones toward it, measured from your reviews and ticks";
+export const AIM_NEXT_AIM = "Set your next aim";
+export const AIM_NEW_AIM = "Set a new aim";
+export const AIM_HISTORY_LINE = "This roadmap stays here as history.";
+/** The NONE card's Gemini line: only while ROADMAP_GEMINI_LIVE and a key both hold. */
+export const NONE_GEMINI_LINE = "Gemini can arrange it into milestones; the app writes every word and number.";
+
+/** "Start from your long goal “Read Japanese manga without a dictionary”". */
+export function seedLine(title: string): string {
+  return `Start from your long goal “${title}”`;
+}
+
+/** "Last aim: “<aim>” · Aim rank Paragon · reached 3 Mar 2028" (or "· closed 3 Mar 2028" when it ended unreached). */
+export function lastAimLine(last: Pick<LastAimView, "aim" | "rankName" | "reached" | "day">): string {
+  return `Last aim: “${last.aim}” · ${lastAimRankLine(last)}`;
+}
+
+/** The achievement half of the last-aim line, which never clips: "Aim rank Paragon · reached 3 Mar 2028". */
+export function lastAimRankLine(last: Pick<LastAimView, "rankName" | "reached" | "day">): string {
+  return `Aim rank ${last.rankName} · ${lastAimDayLine(last)}`;
+}
+
+/** "reached 3 Mar 2028" or "closed 3 Mar 2028". */
+export function lastAimDayLine(last: Pick<LastAimView, "reached" | "day">): string {
+  return `${last.reached ? "reached" : "closed"} ${dateFull(last.day)}`;
+}
+
+/** The DONE card's held depth: "Mastered (level 12) in Probability and Inference · confirmed 3 Mar 2028". */
+export function heldDepthLine(h: { depth: AimDepth; domainNames: readonly string[]; confirmedDay: DayKey }): string {
+  return `${depthName(h.depth)} in ${andList(h.domainNames)} · confirmed ${dateFull(h.confirmedDay)}`;
+}
+
+/** The Aim card's date chip (F-R4-11): "Mastered (level 12) by Nov 2027", or "Mastered (level 12) by about Nov 2027 · estimate" while calibrating. */
+export function depthDateChip(c: { depth: AimDepth; day: DayKey; estimate: boolean }): string {
+  return c.estimate ? `${depthName(c.depth)} by about ${monthYear(c.day)} · estimate` : `${depthName(c.depth)} by ${monthYear(c.day)}`;
+}
+
+/** Today's aim line (F-R4-3): the lead in bold, then the rest. Never behind, late, overdue, missed or due-day copy. */
+export function aimLineCopy(v: AimLineView): { lead: string; rest: string } {
+  const ask = "what do you want to be able to do in a year or three?";
+  if (v.kind === "SET") {
+    if (v.variant === "NEXT") return { lead: "Your last aim is done.", rest: `Set the next one: ${ask}` };
+    const lead = v.variant === "MONTH" ? "A new month." : v.variant === "BACK" ? "Welcome back." : "A new week.";
+    return { lead, rest: `Set an aim: ${ask}` };
+  }
+  if (v.kind === "DRAFT") return { lead: "A roadmap draft is waiting for your check.", rest: "" };
+  const lead = v.stageName ? `Milestone ${v.ord} · ${v.stageName} is ready to start.` : `Milestone ${v.ord} is ready to start.`;
+  return { lead, rest: v.givesRank ? `${givesRankByName(v.givesRank)}.` : "It keeps your rank." };
+}
+
+/**
+ * The intake's note by where the aim came from (F-R4-1, F-R4-7, F-R4-16).
+ * 'restart' names only what the form really took over (fix round 2, lens 3
+ * #17): its aim always; the Area when the handoff's Area was applied; its
+ * Domains only when the handoff carried the old plan's own (otherwise the
+ * form preselects the Area's Domains, which were not "carried over").
+ */
+export function handoffNote(source: "you" | "goal" | "capture" | "restart", aim: string, carried?: { area: boolean; domains: boolean }): string {
+  switch (source) {
+    case "you":
+      return "Carried over from your character page. Pick what it grows below.";
+    case "goal":
+      return `From your long goal “${aim}”. The goal stays as it is on Today.`;
+    case "capture":
+      return "From your capture line.";
+    case "restart": {
+      const what = carried?.area && carried.domains ? "its aim, Area and Domains are" : carried?.area ? "its aim and Area are" : "its aim is";
+      return `From your plan made before plans aimed at a depth: ${what} carried over. Saving this archives that plan.`;
+    }
+  }
+}
+
+/** With an open DRAFT the draft wins: "Your open draft is shown. The aim you typed: “…”" and [Use it]. */
+export function openDraftNote(aim: string): string {
+  return `Your open draft is shown. The aim you typed: “${aim}”`;
+}
+
+// ─── The intake (F-R4-4, F-R4-9, F-R4-24) ───
+
+export const AIM_LONG_HINT = "Think a year or more out: something you want to be able to do, not a task.";
+export const VAGUE_AIM_LINE = "Say what you'll be able to do, and how well: something you could show someone.";
+export const WHEN_REALISTIC = "When realistic";
+export const EXAM_WAYPOINT_HINT = "Your exam date is a waypoint: the depth goes on past it.";
+export const NEW_CARDS_REQUIRED_HINT = "The app needs a pace to date your milestones. Your rate, not yet measured.";
+export const EXAM_QUESTION = "Is there an exam or qualification at the end?";
+export const EXAM_NAME_LABEL = "The exam or qualification";
+export const EXAM_DATE_LABEL = "When is it? (optional)";
+export const OUTLINE_EXAM_LABEL = "Official syllabus: paste the topic list from the official source";
+export const OUTLINE_LABEL = "Your outline: what this covers, one per line — from an official source or your own list";
+export const LINE_NO_DOMAIN = "Not tied to a Domain";
+export const NAME_AREAS_LABEL = "Name the areas this needs";
+export const NAME_AREAS_HINT = "Not sure what it covers? Paste the official outline or syllabus from a source you trust, one topic per line.";
+export const COVERAGE_TITLE = "How many cards each Domain needs";
+export const SUGGEST_AREAS_LABEL = "Let Gemini suggest areas you don't have yet (picked from your own words; not checked)";
+
+/** The Depth control's hint, computed from the user's interval multiplier ("about 110" is interval(11, m) rounded to 5). */
+export function depthHint(depth: AimDepth, m: number): string {
+  return `${depthName(depth)}: each card passes its review after a gap of about ${depthGapDays(depth, m)} days at the first try. Multiple-choice cards don't count. A lower depth is your choice and stays on the plan.`;
+}
+
+/** "When realistic": the floors at the user's m (computed, never typed). */
+export function realisticHint(m: number): string {
+  return `The app dates each milestone from your cards and pace. A new card needs at least ${floorBase(12, m)} days of spaced reviews to reach level 12 (${STAGE_NAMES.MASTERED}), ${floorBase(10, m)} for level 10.`;
+}
+
+/** A chosen date: over the floor, or under it. */
+export function chosenDateHint(day: DayKey, today: DayKey, depth: AimDepth | null, m: number): string {
+  const span = daysBetween(today, day);
+  if (depth != null && span < floorBase(depth, m)) return `That is before a new card can reach level ${depth} here. The draft will offer the realistic date, a lower depth, or to keep yours.`;
+  return `${dayFull(day)} · ${count(span)} days from today. The draft says what this date means for your depth.`;
+}
+
+/** A By-when chip's verdict word under its label: "possible" or "before level 12 is possible". */
+export function chipVerdict(possible: boolean, depth: AimDepth): string {
+  return possible ? "possible" : `before level ${depth} is possible`;
+}
+
+/** "Steady counts on 70% of your usual pace, so a lean week doesn't break the plan." (decision 39; from INTENSITY). */
+export function paceShareHint(i: Intensity): string {
+  return `${INTENSITY_WORD[i]} counts on ${Math.round(INTENSITY[i] * 100)}% of your usual pace, so a lean week doesn't break the plan.`;
+}
+
+/** "Draft with Gemini" says what it will arrange (F-R4-24; only while ROADMAP_GEMINI_LIVE and a key). */
+export function geminiArrangesLine(lines: number, domains: number): string {
+  const what: string[] = [];
+  if (lines > 0) what.push(`arrange your ${plural(lines, "outline line")}`);
+  what.push(domains > 0 ? `pick practice types for your ${plural(domains, "Domain")}` : "pick practice types from the app's list");
+  return `Gemini will ${what.join(" and ")}; the app writes every word.`;
+}
+
+/** One coverage row (F-R4-9): "Probability · 34 cards: the most of the 25-card floor, 80% of your 42 (34), and 3 × 8 outline lines (24)". */
+export function coverageRowLine(c: Pick<CoverageBreakdown, "name" | "n" | "floor" | "share" | "outline" | "live" | "linesTied" | "linesShared" | "typed" | "policy">): string {
+  const lines = c.linesTied + c.linesShared;
+  const linesWords = Number.isInteger(lines) ? count(lines) : lines.toFixed(1);
+  const policy = `the most of the ${c.floor}-card floor, ${Math.round(COVER_SHARE * 100)}% of your ${count(c.live)} (${c.share}), and ${CARDS_PER_OUTLINE_LINE} × ${linesWords} outline lines (${c.outline})`;
+  if (c.typed != null) return `${c.name} · ${plural(c.n, "card")}: your figure; the app's is ${c.policy}, ${policy}`;
+  return `${c.name} · ${plural(c.n, "card")}: ${policy}`;
+}
+
+/** "4 outline lines aren't tied to a Domain: S3, S7, S9, S12. They raise every Domain's count, but no card is checked against them." */
+export function unassignedLinesLine(indices: readonly number[], overMax = false): string | null {
+  if (indices.length === 0) return null;
+  const s = indices.map((i) => `S${i + 1}`).join(", ");
+  const head =
+    indices.length === 1
+      ? `1 outline line isn't tied to a Domain: ${s}. It raises every Domain's count, but no card is checked against it.`
+      : `${indices.length} outline lines aren't tied to a Domain: ${s}. They raise every Domain's count, but no card is checked against them.`;
+  return overMax ? `${head} A plan holds up to ${DEPTH_DOMAINS_MAX} Domains.` : head;
+}
+
+/** "42 cards · 6 multiple choice not counted" (wherever a Domain's count is shown on a depth plan). */
+export function recallCountLine(cards: number, nonRecall: number | null): string {
+  if (nonRecall == null || nonRecall <= 0) return plural(cards, "card");
+  return `${plural(cards, "card")} · ${nonRecall} multiple choice not counted`;
+}
+
+// ─── Depth, dates and choices on the plan (F-R4-15) ───
+
+/**
+ * The Depth line: "Depth: Mastered (level 12) in Probability and Inference:
+ * 34 and 25 cards, each passing its review after a gap of about 110 days at
+ * the first try. Multiple-choice cards don't count. The 25-card floor and the
+ * 80% share are the app's policy, not facts about these subjects. Change
+ * them if you know better."
+ */
+export function depthLine(depth: AimDepth, coverage: readonly Pick<CoverageBreakdown, "name" | "n">[], m: number): string {
+  const names = andList(coverage.map((c) => c.name));
+  const counts = andList(coverage.map((c) => count(c.n)));
+  const domains = coverage.length > 0 ? ` in ${names}: ${counts} ${coverage.length === 1 && coverage[0].n === 1 ? "card" : "cards"},` : ",";
+  return `Depth: ${depthName(depth)}${domains} each passing its review after a gap of about ${depthGapDays(depth, m)} days at the first try. Multiple-choice cards don't count. The ${COVER_FLOOR_CARDS}-card floor and the ${Math.round(COVER_SHARE * 100)}% share are the app's policy, not facts about these subjects. Change them if you know better.`;
+}
+
+/** "Risk Management: suggested by Gemini, added by you on 5 Oct." (GEMINI_NEEDS) or the suggestion-created Domain's line (GEMINI_GAP). */
+export function domainOriginLine(name: string, origin: DomainOrigin, today?: DayKey): string | null {
+  if (origin.by === "GEMINI_NEEDS") return `${name}: suggested by Gemini, added by you on ${dayLabel(origin.day, today)}.`;
+  if (origin.by === "GEMINI_GAP") return `${name}: named from Gemini's pick of your words, created by you on ${dayLabel(origin.day, today)}.`;
+  return null;
+}
+
+/** "Probability: 5 cards, below the app's 34, your choice on 5 Oct." (decision 53; for the life of the plan). */
+export function coverageChoiceLine(name: string, c: Pick<CoverageChoice, "policy" | "typed" | "day">, today?: DayKey): string {
+  return `${name}: ${plural(c.typed, "card")}, below the app's ${c.policy}, your choice on ${dayLabel(c.day, today)}.`;
+}
+
+export const COVERAGE_UNCHECKED_LINE = "Coverage unchecked: no outline.";
+
+/** "Depth: Fluent (level 10) — below Mastered, your choice on 5 Oct." / "— set by your exam date on 5 Oct." */
+export function depthChoiceLine(c: Pick<DepthChoice, "from" | "to" | "day" | "reason">, today?: DayKey): string {
+  const why = c.reason === "EXAM" ? `set by your exam date on ${dayLabel(c.day, today)}` : `your choice on ${dayLabel(c.day, today)}`;
+  return `Depth: ${depthName(c.to)} — below ${depthStage(c.from)}, ${why}.`;
+}
+
+/** "By your exam (Sun 4 Apr 2027) the plan reaches Retained (level 8). The depth goes on past it." */
+export function examWaypointLine(day: DayKey, level: number | null): string {
+  return level != null
+    ? `By your exam (${dayFull(day)}) the plan reaches ${stageLevelName(level)}. The depth goes on past it.`
+    : `By your exam (${dayFull(day)}) the plan reaches no stage yet. The depth goes on past it.`;
+}
+
+/** "By your date the plan reaches Retained (level 8)." (reachByUserDate) */
+export function userDateWaypointLine(level: number): string {
+  return `By your date the plan reaches ${stageLevelName(level)}.`;
+}
+
+export const NEVER_LOWERED_LINE = "The app doesn't lower the depth to fit a date. A lower depth is your choice and stays on the plan.";
+
+/** The coverage honesty line: the app tests the cards; whether they cover the aim is the user's to judge. */
+export function coverageJudgeLine(aim: string): string {
+  return `The app tests whether you hold the cards you wrote. Whether they cover everything '${aim}' needs is yours to judge: your outline and your standard are the outside checks.`;
+}
+
+/** The Paragon line, naming the count of required Domains (never "every Domain"). */
+export function paragonDepthLine(domains: number): string {
+  return `${AIM_RANKS[6]}: every one of your ${domains} required ${domains === 1 ? "Domain" : "Domains"} held at level 12, the final milestone reached, the plan's practice kept, and your standard logged at or above your bar. Cards tested by your reviews; practice and score from your ticks and your log.`;
+}
+
+/** The schedule-bound line (F-R4-11), from the floor at the user's m. */
+export function scheduleBoundLine(depth: number, m: number): string {
+  return `This date is set by the review schedule, not your hours: a new card needs at least ${floorBase(depth, m)} days to reach level ${depth}. More hours won't bring it much closer.`;
+}
+
+/** A date the app set is never called the user's choice: "the date the app set on 5 Oct". */
+export function dateAppSetLine(day: DayKey, today?: DayKey): string {
+  return `the date the app set on ${dayLabel(day, today)}`;
+}
+
+/** The verdict on the user's date as a word (a word and a glyph, never colour alone). */
+export const DATE_VERDICT_WORD: Readonly<Record<DateVerdict, string>> = { FITS: "Fits", TIGHT: "Tight", OVER: "Over", IMPOSSIBLE: "Impossible" };
+
+/** [Use Sun 21 Nov 2027] (USE_REALISTIC_DATE). */
+export function realisticDateWord(day: DayKey): string {
+  return `Use ${dayFull(day)}`;
+}
+/**
+ * An accepted plan whose own date the user kept over the pace (F-R4-15 "Your
+ * date"): "Your date is 8 weeks ahead of your pace — kept as you chose
+ * (Over)." Only for a date the user set (dateOrigin USER): a date the app set
+ * is never "as you chose". null when the realistic date isn't later.
+ */
+export function overKeptLine(userDay: DayKey, realDay: DayKey | null): string | null {
+  if (!realDay || realDay <= userDay) return null;
+  const weeks = Math.max(1, Math.round((Date.parse(`${realDay}T00:00:00Z`) - Date.parse(`${userDay}T00:00:00Z`)) / (7 * 86_400_000)));
+  return `Your date is ${weeks} ${weeks === 1 ? "week" : "weeks"} ahead of your pace — kept as you chose (Over).`;
+}
+export const KEEP_MY_DATE = "Keep my date";
+export const KEEP_OVER_SWITCH = "Keep my date over my pace";
+export const LOWER_DEPTH_WORD = "Choose a lower depth…";
+export const LOWER_DEPTH_TITLE = "Choose a lower depth";
+export const LOWER_DEPTH_NOTE = "A lower depth is your choice: the plan shows it for good, Proficiency is measured toward the new depth, and Paragon is off. Ranks already given stay.";
+export const BY_YOUR_EXAM_MARK = "what you'd hold by your exam";
+
+/** What keeps Paragon closed, in words (F-R4-12): the first missing condition. */
+export const PARAGON_MISSING_WORD: Readonly<Record<ParagonMissing, string>> = {
+  DEPTH: `${AIM_RANKS[6]} needs the depth ${STAGE_NAMES.MASTERED} (level ${STAGE_LEVEL.MASTERED})`,
+  STANDARD: `${AIM_RANKS[6]} needs a standard you set`,
+  COVERAGE: `${AIM_RANKS[6]} needs each required Domain's coverage at the app's policy or above`,
+  PRODUCTION: `${AIM_RANKS[6]} needs practice that uses what you know from ${STAGE_NAMES.FLUENT} on`,
+  STAGES: `${AIM_RANKS[6]} needs at least ${PARAGON_MIN_MILESTONES} kept stages`,
+  SPAN: `${AIM_RANKS[6]} needs a plan of at least ${TRACK_PARAGON_MIN_DAYS} days`,
+};
+
+/** "Top rank on this plan: Virtuoso — Paragon needs a standard you set." (or rev 3's line when Paragon is open). */
+export function topRankDepthLine(top: AimRankView["top"], missing: readonly ParagonMissing[]): string {
+  if (missing.length === 0 || top.index >= 6) return topRankLine(top);
+  return `Top rank on this plan: ${top.name} — ${PARAGON_MISSING_WORD[missing[0]]}.`;
+}
+
+export const PRODUCTION_PARAGON_LINE = `${AIM_RANKS[6]} needs practice that uses what you know from ${STAGE_NAMES.FLUENT} on. Allow practices to keep it open.`;
+/** The Close sheet line of an intermediate stage (F-R4-12). */
+export const CLOSE_SHORT_PARAGON_LINE = `Closing short doesn't change ${AIM_RANKS[6]}: it needs the final stage, the depth, the plan's practice overall and your standard.`;
+
+/** The ladder disclosure's fixed line (F-R4-12), from the floor at L* (spacing × 1). */
+export function proficiencyFloorLine(depth: number): string {
+  return `Proficiency counts review time: a level-${depth} card has come through about ${floorBase(depth, 1)} days of spacing, so early stages read low. Your Aim rank records each stage you reach.`;
+}
+
+/** A held stage's row: "Held when you began · Specialist level" (it gives no rank). */
+export function heldRowLine(rankIndex: number | null): string {
+  return rankIndex != null ? `Held when you began · ${AIM_RANKS[Math.max(0, Math.min(6, rankIndex))]} level` : "Held when you began";
+}
+
+/** The Start sheet's pay honesty line (F-R4-13): the stated pay rests on a practice the app added. */
+export function restsOnAddedLine(stated: number, name: string): string {
+  return `It ${statedLine(stated, null)} because of the practice the app added (${name}). Switch it off and this milestone pays nothing.`;
+}
+
+/** The CALIBRATED trigger's two taps (F-R4-11). */
+export const REDATE_WORD = "Re-date";
+export const KEEP_DATES_WORD = "Keep the dates";
+export const REDATE_NOTE = "Re-dating moves only the stages you haven't started. It never lowers a count or a level.";
+
+// ─── Keys-only drafts (F-R4-17 to F-R4-21) ───
+
+/** The v3 draft header (replaces GEMINI_LEAD_LINE for a keys-only Gemini draft). */
+export const GEMINI_V3_LEAD_LINE =
+  "Gemini arranged your outline into milestones, suggested which of your other Domains the aim may need, and picked practice types from the app's list. It wrote none of the words: every name here is the app's or comes from your aim, outline and Domains, and every number is worked out by the app.";
+/** The arrangement line, on a Gemini run only. */
+export const ARRANGEMENT_LINE = "Which outline lines and practice types sit in which milestone is Gemini's suggestion. Move a line or change a practice if it doesn't fit.";
+/** A REJECTED reply's banner (F-R4-20). */
+export const RUN_REJECTED_LINE = "Gemini's reply didn't keep to the app's format, so none of it is used. Here is a plan from your numbers; every check still runs.";
+
+/**
+ * "How this was drafted" (F-R4-20): never a model word, only counts. "n not
+ * shown" is gapsNotShownOf (hidden + dropped; the contract §15.5): every name
+ * Gemini returned that isn't shown is counted, the shape-dropped ones too.
+ */
+export function integrityLine(integrity: Pick<ValidationIntegrity, "verdict" | "gapsKept" | "gapsHidden"> & Partial<Pick<ValidationIntegrity, "gapsDropped">>): string {
+  if (integrity.verdict === "REJECTED") return "Rejected (format) · plan from your numbers";
+  const parts = ["Gemini's reply: keys only"];
+  if (integrity.gapsKept > 0) parts.push(`${plural(integrity.gapsKept, "area name")} picked from your words (not checked)`);
+  else parts.push("0 words of its own");
+  const notShown = gapsNotShownOf(integrity);
+  if (notShown > 0) parts.push(`${notShown} not shown`);
+  return parts.join(" · ");
+}
+
+/**
+ * Who wrote a Gemini run's rows when the app's starter stands in its place
+ * (RunTable's "Drafted by"), keyed on the cause: a reply that broke the
+ * format (integrity REJECTED), a reply the tripwire refused ("reply refused:
+ * …"), or no usable answer. Never "Gemini didn't answer" when it did.
+ */
+export const STARTER_WROTE_NO_ANSWER = "the app (Gemini didn't answer)";
+export const STARTER_WROTE_REJECTED = "the app (Gemini's reply was rejected)";
+export const STARTER_WROTE_REFUSED = "the app (Gemini's reply was refused)";
+export function starterWriterWords(run: { error?: string | null; report?: { integrity?: Pick<ValidationIntegrity, "verdict"> | null } | null }): string {
+  if (run.report?.integrity?.verdict === "REJECTED") return STARTER_WROTE_REJECTED;
+  if (/^reply refused\b/.test(run.error ?? "")) return STARTER_WROTE_REFUSED;
+  return STARTER_WROTE_NO_ANSWER;
+}
+
+/** A catalog type's short name (pickers, the exclusions line, the session-picks confirm). Code's words. */
+export const KIND_NAME: Readonly<Record<CatalogKey, string>> = {
+  RECALL_DRILLS: "Recall drills",
+  PROBLEM_SETS: "Problem sets",
+  TIMED_PRACTICE: "Timed practice",
+  SLOW_DRILLS: "Slow, focused drills",
+  RUN_THROUGHS: "Full run-throughs",
+  READ_AND_CARD: "Study and write cards",
+  LISTEN_AND_REPEAT: "Listen and repeat",
+  SAY_IT_ALOUD: "Say it aloud",
+  WRITING_PRACTICE: "Writing practice",
+  EXPLAIN_IT: "Explain it in your own words",
+  BUILD_SOMETHING: "Build something",
+  WITH_A_PARTNER: "Practise with a teacher or partner",
+  MISTAKE_REVIEW: "Go over your mistakes",
+  EASY_SESSION: "Easy session",
+  HARDER_SESSION: "Harder session",
+  LONGER_SESSION: "Longer session",
+  STRENGTH_SESSION: "Strength session",
+  MOBILITY_SESSION: "Mobility session",
+  TECHNIQUE_SESSION: "Technique session",
+  SET_TIME: "Set time",
+  CHECK_IN: "Check-in",
+  ADMIN_SESSION: "Admin session",
+  PLAN_AHEAD: "Plan the week ahead",
+  KEEP_A_LOG: "Keep a log",
+  OUTLINE: "Write an outline",
+  EXPLAIN_ONCE: "Explain it to someone without notes",
+  SMALL_PROJECT: "Finish a small project",
+  LIST_GAPS: "List what you still can't do",
+  CHOOSE_MATERIAL: "Choose your material",
+  SET_UP: "Set up what you need",
+  BOOK_EXAM: "Book the exam",
+  FULL_ATTEMPT: "Do a full attempt",
+  SELF_TEST: "Self-test",
+  PERFORMANCE_CHECK: "Performance check",
+  MOCK_TEST: "Mock test",
+  EXAM_DAY: "Exam",
+};
+
+/** A type's "How" lines (F-R4-18): the catalog's plain procedure (roadmap-catalog catalogHowOf); METHOD_HOW stays the fallback. */
+export const KIND_HOW: Readonly<Record<CatalogKey, readonly string[]>> = Object.fromEntries(CATALOG.map((e) => [e.key, catalogHowOf(e.key)])) as Record<CatalogKey, readonly string[]>;
+
+/** Who chose a code-worded type, beside its How (F-R4-18): Gemini's pick from the app's list, the app, or you. */
+export function catalogProvenanceWords(slot: "PRACTICE" | "STEP" | "CHECKPOINT", by: "GEMINI" | "APP" | "YOU"): string {
+  const what = slot === "PRACTICE" ? "practice type" : slot === "STEP" ? "step type" : "checkpoint type";
+  if (by === "GEMINI") return `${what} picked by Gemini from the app's list`;
+  if (by === "APP") return "added by the app";
+  return "you chose this";
+}
+
+/** "Left out because of your constraints: Harder session ('running'), Strength session ('lifting')." */
+export function exclusionsLine(xs: readonly ConstraintExclusion[]): string | null {
+  if (xs.length === 0) return null;
+  return `Left out because of your constraints: ${xs.map((x) => `${KIND_NAME[x.kind] ?? x.kind} ('${x.word}')`).join(", ")}.`;
+}
+
+/** "Your constraints say 'no running' and your aim is 'Run a sub-50 10K'. The plan leaves out running sessions until you change one of them." */
+export function aimConflictLine(word: string, aim: string): string {
+  return `Your constraints say 'no ${word}' and your aim is '${aim}'. The plan leaves out ${word} sessions until you change one of them.`;
+}
+
+/** The one session-picks confirm (F-R4-17): "Gemini picked Harder session and Strength session. Your constraints say '…'. Keep them?" */
+export function sessionPicksLine(p: Pick<SessionPicks, "kinds" | "constraints">): string {
+  return `Gemini picked ${andList(p.kinds.map((k) => KIND_NAME[k] ?? k))}. Your constraints say '${p.constraints}'. Keep them?`;
+}
+export const SESSION_PICKS_KEEP = "Keep them";
+export const SESSION_PICKS_EASY = "Use easy, mobility and technique instead";
+
+/** Gemini's Domain additions (F-R4-21): "Gemini suggests adding 2 of your Domains: Risk Management (14 cards · 3 at level 6+), Calculus (30 cards). Each would count at every milestone, at 25 and 30 cards." */
+export function additionsLine(adds: readonly Pick<DomainAddition, "name" | "cards" | "atSix" | "n">[]): string {
+  const each = adds.map((a) => `${a.name} (${plural(a.cards, "card")}${a.atSix > 0 ? ` · ${a.atSix} at level 6+` : ""})`).join(", ");
+  const head = adds.length === 1 ? "Gemini suggests adding 1 of your Domains" : `Gemini suggests adding ${adds.length} of your Domains`;
+  const counts = andList(adds.map((a) => count(a.n)));
+  return `${head}: ${each}. ${adds.length === 1 ? "It would count" : "Each would count"} at every milestone, at ${counts} cards.`;
+}
+
+/** "Adding both moves the realistic date by about 4 months, to Sun 6 Feb 2028." */
+export function additionEffectLine(names: readonly string[], from: DayKey | null, to: DayKey | null): string | null {
+  if (!to) return null;
+  const who = names.length === 2 ? "Adding both" : names.length > 2 ? `Adding all ${names.length}` : `Adding ${names[0] ?? "it"}`;
+  if (!from || to <= from) return `${who} keeps the realistic date at ${dayFull(to)}.`;
+  const days = daysBetween(from, to);
+  const weeks = Math.max(1, Math.round(days / 7));
+  const by = days >= 56 ? `about ${Math.round(days / 30.4)} months` : `about ${plural(weeks, "week")}`;
+  return `${who} moves the realistic date by ${by}, to ${dayFull(to)}.`;
+}
+
+/** A blocked addition: past 3 years at this depth, or past the plan's Domain cap. */
+export function additionBlockedLine(name: string, why: "PAST_SPAN" | "TOO_MANY_DOMAINS"): string {
+  return why === "PAST_SPAN" ? `Adding ${name} would take the plan past 3 years at this depth.` : `Adding ${name} would pass the ${DEPTH_DOMAINS_MAX} Domains a plan holds.`;
+}
+
+/** [Add both] / [Add all 3] (an English, non-exam aim only). */
+export function addAllWord(n: number): string {
+  return n === 2 ? "Add both" : `Add all ${n}`;
+}
+export const CHOOSE_WORD = "Choose…";
+export const LEAVE_OUT_WORD = "Leave out";
+export const CONFIRM_WORD = "Confirm";
+
+/**
+ * The empty outline state (F-R4-24). The Gemini sentence only where Gemini
+ * is named (its path live with a key, or a draft Gemini arranged): with
+ * Gemini off no Gemini sentence appears anywhere (Acceptance).
+ */
+export const OUTLINE_EMPTY_LINE = "What to learn comes from your outline.";
+export const OUTLINE_EMPTY_GEMINI_TAIL = "Gemini doesn't write topics: it would be guessing.";
+export function outlineEmptyLine(gemini: boolean): string {
+  return gemini ? `${OUTLINE_EMPTY_LINE} ${OUTLINE_EMPTY_GEMINI_TAIL}` : OUTLINE_EMPTY_LINE;
+}
+export const OUTLINE_EMPTY_EXAM_LINE = "Paste the official syllabus so every line has a place in the plan.";
+export const ADD_OUTLINE_WORD = "Add your outline";
+
+// ─── Legacy plans (F-R4-16) ───
+
+export const LEGACY_DRAFT_BANNER = "This draft was made before plans aimed at a depth.";
+export const LEGACY_ACTIVE_BANNER = "Planned before plans aimed at a depth.";
+export const LEGACY_GEMINI_HIDDEN = "Wording from an earlier Gemini draft is hidden.";
+export const LEGACY_MEASURE_LINE = "Start again at a depth to measure this aim.";
+export const DRAFT_IT_AGAIN_WORD = "Draft it again";
+export const START_AGAIN_AT_DEPTH_WORD = "Start again at a depth";
+
+// ─── Area suggestions (F-R4-19; only while ROADMAP_GAPS_LIVE) ───
+
+export const GAPS_EYEBROW = "Gemini's pick of your words · not checked";
+export const GAPS_TITLE = "Areas Gemini thinks may need their own Domain";
+export const GAPS_LINE = "Each name is a phrase from your aim, outline, exam or Domains. Whether it needs its own Domain is Gemini's guess, and the app can't check it. Create one only if you know it does.";
+export const GAP_CREATE_WORD = "Create as a Domain…";
+export const GAP_DISMISS_WORD = "Dismiss";
+
+/** "Gemini suggested 3 names the app couldn't find in your words; they're not shown." */
+export function gapsHiddenLine(n: number): string | null {
+  if (n <= 0) return null;
+  return n === 1 ? "Gemini suggested 1 name the app couldn't find in your words; it's not shown." : `Gemini suggested ${n} names the app couldn't find in your words; they're not shown.`;
+}
+
+const GROUND_WORDS: Readonly<Record<GroundSourceKind, string>> = {
+  AIM: "from your aim",
+  CONSTRAINTS: "from your constraints",
+  EXAM: "from your exam's name",
+  OUTLINE: "from your outline line",
+  AREA: "from your Area's name",
+  DOMAIN: "from your Domain",
+  NAMED: "from an area you named",
+};
+
+/** "from your outline line S4" */
+export function gapSourceLine(src: { kind: GroundSourceKind; index: number }): string {
+  return src.kind === "OUTLINE" ? `${GROUND_WORDS.OUTLINE} S${src.index + 1}` : GROUND_WORDS[src.kind];
+}
+
+/** "similar to your Domain Statistics" */
+export function gapSimilarLine(name: string): string {
+  return `similar to your Domain ${name}`;
+}
+
+/** The second confirm for an edited, ungrounded name. */
+export function gapUngroundedConfirm(name: string): string {
+  return `Create a Domain named “${name}”? The app found these words nowhere in your aim, outline, exam or chosen Domains.`;
 }
