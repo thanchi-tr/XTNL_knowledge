@@ -1,0 +1,821 @@
+{
+  "aim": "run-10k",
+  "pack": "run-10k",
+  "promptVersion": 4,
+  "gapsLive": false,
+  "thinkingLow": false,
+  "note": "A real v4 reply, unedited. `plan` is code's plan with the reply's picks (the progression), stage by stage. The lead fills `labels` (practice fit per stage read from `plan`, arrangement from the reply's order), sets `expected` (CLEAN, SALVAGED or REJECTED) and blessed: true; roadmap-model-check then re-validates and deep-compares it.",
+  "model": "gemini-3.5-flash-lite",
+  "modelVersion": "gemini-3.5-flash-lite",
+  "responseId": "EG_DasDZN_vb9tMPuo3foQo",
+  "finishReason": "STOP",
+  "latencyMs": 1664,
+  "usage": {
+    "promptTokenCount": 400,
+    "candidatesTokenCount": 39,
+    "totalTokenCount": 439,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 400
+      }
+    ],
+    "serviceTier": "standard"
+  },
+  "error": null,
+  "raw": "{\n  \"picks\": {\n    \"STAGE_1\": \"MOBILITY_SESSION\",\n    \"STAGE_2\": \"TECHNIQUE_SESSION\"\n  }\n}",
+  "parsed": {
+    "picks": {
+      "STAGE_1": "MOBILITY_SESSION",
+      "STAGE_2": "TECHNIQUE_SESSION"
+    }
+  },
+  "integrity": {
+    "verdict": "CLEAN",
+    "violations": [],
+    "modelChars": 0,
+    "gapsKept": 0,
+    "gapsHidden": 0,
+    "gapsDropped": 0,
+    "notANameByClause": {}
+  },
+  "validated": {
+    "milestones": [
+      {
+        "id": null,
+        "lineageId": "probe-1",
+        "version": 1,
+        "ord": 1,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-2",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "WORKOUT",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "PRACTICE",
+            "label": "Easy session",
+            "origin": "CODE",
+            "catalogKey": "EASY_SESSION"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-3",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "WORKOUT",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Mobility session",
+            "origin": "CODE",
+            "catalogKey": "MOBILITY_SESSION"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-4",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "WORKOUT",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "PRACTICE",
+            "label": "Technique session",
+            "origin": "CODE",
+            "catalogKey": "TECHNIQUE_SESSION"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-5",
+            "ord": 3,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "STEP",
+            "label": "Set up what you need for Run a sub-50 10K",
+            "origin": "CODE",
+            "catalogKey": "SET_UP"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-2"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-2"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-3"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-3"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-4"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-4"
+          }
+        ],
+        "notes": [
+          "HEALTH_LINE"
+        ],
+        "titleFlags": [],
+        "stage": "STAGE_1",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-6",
+        "version": 1,
+        "ord": 2,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-7",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "WORKOUT",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Technique session",
+            "origin": "CODE",
+            "catalogKey": "TECHNIQUE_SESSION"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-8",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "WORKOUT",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "PRACTICE",
+            "label": "Easy session",
+            "origin": "CODE",
+            "catalogKey": "EASY_SESSION"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-7"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-7"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-8"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-8"
+          }
+        ],
+        "notes": [
+          "HEALTH_LINE"
+        ],
+        "titleFlags": [],
+        "stage": "STAGE_2",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-9",
+        "version": 1,
+        "ord": 3,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-10",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "WORKOUT",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "PRACTICE",
+            "label": "Technique session",
+            "origin": "CODE",
+            "catalogKey": "TECHNIQUE_SESSION"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-11",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "WORKOUT",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "PRACTICE",
+            "label": "Easy session",
+            "origin": "CODE",
+            "catalogKey": "EASY_SESSION"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-10"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-10"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-11"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-11"
+          }
+        ],
+        "notes": [
+          "HEALTH_LINE"
+        ],
+        "titleFlags": [],
+        "stage": "STAGE_3",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-12",
+        "version": 1,
+        "ord": 4,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-13",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "WORKOUT",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "PRACTICE",
+            "label": "Technique session",
+            "origin": "CODE",
+            "catalogKey": "TECHNIQUE_SESSION"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-14",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "WORKOUT",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "PRACTICE",
+            "label": "Easy session",
+            "origin": "CODE",
+            "catalogKey": "EASY_SESSION"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-13"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-13"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-14"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-14"
+          }
+        ],
+        "notes": [
+          "HEALTH_LINE"
+        ],
+        "titleFlags": [],
+        "stage": "STAGE_4",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-15",
+        "version": 1,
+        "ord": 5,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-16",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "WORKOUT",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "PRACTICE",
+            "label": "Technique session",
+            "origin": "CODE",
+            "catalogKey": "TECHNIQUE_SESSION"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-17",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "WORKOUT",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "PRACTICE",
+            "label": "Easy session",
+            "origin": "CODE",
+            "catalogKey": "EASY_SESSION"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-16"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-16"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-17"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-17"
+          }
+        ],
+        "notes": [
+          "HEALTH_LINE"
+        ],
+        "titleFlags": [],
+        "stage": "STAGE_5",
+        "arrangedBy": "GEMINI"
+      }
+    ],
+    "report": {
+      "dropped": [],
+      "flagged": [],
+      "notes": [],
+      "integrity": {
+        "verdict": "CLEAN",
+        "violations": [],
+        "modelChars": 0,
+        "gapsKept": 0,
+        "gapsHidden": 0,
+        "gapsDropped": 0,
+        "notANameByClause": {}
+      }
+    },
+    "bulkKeepOff": false,
+    "credential": false,
+    "nonEnglish": false,
+    "uncoveredSyllabus": [],
+    "alarm": false,
+    "needs": [],
+    "exclusions": [],
+    "sessionPicks": null,
+    "gaps": [],
+    "gapsHidden": 0,
+    "unassignedLines": [],
+    "picks": {
+      "STAGE_1": "MOBILITY_SESSION",
+      "STAGE_2": "TECHNIQUE_SESSION"
+    },
+    "order": null,
+    "reordered": false
+  },
+  "pickStages": [
+    "STAGE_1",
+    "STAGE_2"
+  ],
+  "plan": [
+    {
+      "stage": "STAGE_1",
+      "level": null,
+      "windowStart": "2026-10-05",
+      "dueDay": "2026-12-20",
+      "room": 3,
+      "practices": [
+        {
+          "kind": "EASY_SESSION",
+          "why": "FOCUS",
+          "picked": false,
+          "sessionsPerWeek": 1,
+          "durationBand": "D45"
+        },
+        {
+          "kind": "MOBILITY_SESSION",
+          "why": "PICK",
+          "picked": true,
+          "sessionsPerWeek": 1,
+          "durationBand": "D30"
+        },
+        {
+          "kind": "TECHNIQUE_SESSION",
+          "why": "PARTNER",
+          "picked": false,
+          "sessionsPerWeek": 1,
+          "durationBand": "D45"
+        }
+      ],
+      "steps": [
+        "SET_UP"
+      ],
+      "checkpoint": null
+    },
+    {
+      "stage": "STAGE_2",
+      "level": null,
+      "windowStart": "2026-12-21",
+      "dueDay": "2027-02-07",
+      "room": 3,
+      "practices": [
+        {
+          "kind": "TECHNIQUE_SESSION",
+          "why": "FOCUS",
+          "picked": true,
+          "sessionsPerWeek": 2,
+          "durationBand": "D45"
+        },
+        {
+          "kind": "EASY_SESSION",
+          "why": "CARRY",
+          "picked": false,
+          "sessionsPerWeek": 1,
+          "durationBand": "D30"
+        }
+      ],
+      "steps": [],
+      "checkpoint": null
+    }
+  ],
+  "room": {
+    "basis": "ladder",
+    "maxPractices": [
+      3,
+      3
+    ],
+    "examStage": null
+  },
+  "expected": null,
+  "blessed": false,
+  "labels": {
+    "needs": {},
+    "stages": {
+      "STAGE_1": {
+        "practiceFit": null
+      },
+      "STAGE_2": {
+        "practiceFit": null
+      }
+    },
+    "arrangementKeepsOrder": null,
+    "gaps": []
+  }
+}

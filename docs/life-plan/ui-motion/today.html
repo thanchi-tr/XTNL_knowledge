@@ -1,0 +1,2054 @@
+<!doctype html>
+<html lang="en" data-theme="night" data-motion="full">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="dark light">
+<title>Today quests motion</title>
+<meta name="description" content="Animated mockup of Today's aim line and week-quest card at 344 px and 1440 px: animated quest glyphs (idle, started pip, done with a check badge), evidence badges, the check draw when a quest completes, meters from last seen, and the body-plan health chip.">
+<script>(function(){try{var h=document.documentElement,l=localStorage.getItem("xtnl-mk:level")||"system",t=localStorage.getItem("xtnl-mk:theme")||"night";var r=(window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches)||localStorage.getItem("xtnl-mk:data-sim-reduce")==="1";h.dataset.motion=l==="system"?(r?"still":"full"):l;h.dataset.theme=t;}catch(e){var m=window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches;document.documentElement.dataset.motion=m?"still":"full";}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400&family=Inter:wght@400..700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>
+/* =====================================================================
+   XTNL · SIGIL & SLATE — ui-motion mockups (ui-motion.md, revision 2).
+   Tokens copied from src/app/styles/tokens.css (Night default, Vellum).
+   Kit classes mirror components.css; mg-* is glyph.css, shd-* is fx.css.
+   Only transform, opacity, stroke-dashoffset and stroke-dasharray animate.
+   Ink only on roadmap glyphs and shaders: no gold, no --owed, no --light.
+   ===================================================================== */
+:root,.theme-night{
+  color-scheme:dark;
+  --canvas:#050609;--page:#0a0d13;--sunken:#07090e;--card:#11151d;--raised:#171c26;--overlay:#1d2330;
+  --bar:#0c0f15;--scrim:rgba(3,4,7,.66);--face:#0d1017;
+  --ink-0:#f1f3f8;--ink-1:#c3cad8;--ink-2:#9aa3b5;--ink-mute:#6f788c;
+  --line-1:rgba(255,255,255,.065);--line-2:rgba(255,255,255,.11);--line-ctl:#76819a;--hi:rgba(255,255,255,.04);
+  --kept:#5fd38d;--on-kept:#0b1a12;--held:#72d2ec;
+  --xp:#fdaf3a;--mp:#ffe08a;
+  --focus:var(--ink-0);--shadow-pop:0 16px 40px -12px rgba(0,0,0,.6);
+  --dawn-cap:.20;
+}
+:root[data-theme="vellum"]{
+  color-scheme:light;
+  --canvas:#e2dccf;--page:#f3efe6;--sunken:#e9e3d6;--card:#fffdf8;--raised:#faf6ee;--overlay:#ffffff;
+  --bar:#f3efe6;--scrim:rgba(30,26,18,.38);--face:#0d1017;
+  --ink-0:#17191f;--ink-1:#3a404d;--ink-2:#595f6e;--ink-mute:#777d8a;
+  --line-1:rgba(40,32,16,.08);--line-2:rgba(40,32,16,.14);--line-ctl:#7f7868;--hi:rgba(255,255,255,.7);
+  --kept:#155f36;--on-kept:#fff;--held:#0c5a73;--xp:#a33d00;--mp:#b47308;
+  --shadow-pop:0 16px 40px -14px rgba(40,30,10,.35);
+  --dawn-cap:.14;
+}
+:root{
+  --font-ui:"Inter","Segoe UI",system-ui,sans-serif;
+  --font-display:"Fraunces","Iowan Old Style","Palatino Linotype",Georgia,serif;
+  --font-mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+  --r-chip:8px;--r-ctl:12px;--r-card:16px;--r-sheet:24px;
+  --topbar-h:56px;--tabbar-h:64px;--sidebar-w:232px;
+  --t-press:90ms;--t-quick:160ms;--t-base:240ms;--t-slow:420ms;
+  --ease-out:cubic-bezier(.16,1,.3,1);--ease-inout:cubic-bezier(.65,0,.35,1);--ease-stamp:cubic-bezier(.34,1.56,.64,1);
+  --ambient-play:running;
+}
+html[data-motion="calm"],html[data-motion="still"],html[data-power="save"]{--ambient-play:paused}
+/* Still: nothing animates; every rule rests on its final state. */
+html[data-motion="still"] *,html[data-motion="still"] *::before,html[data-motion="still"] *::after{animation:none!important;transition:none!important}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%;background:var(--canvas)}
+body{background:var(--canvas);color:var(--ink-0);font:400 15px/1.45 var(--font-ui);-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:none;border:0;cursor:pointer;-webkit-tap-highlight-color:transparent;text-align:inherit}
+a{color:inherit}
+ul,ol{list-style:none}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+[hidden]{display:none!important}
+.num{font-variant-numeric:tabular-nums lining-nums}
+.t-eyebrow{font:600 12px/16px var(--font-ui);letter-spacing:.11em;text-transform:uppercase;color:var(--ink-2)}
+.t-meta{font:400 13px/18px var(--font-ui);color:var(--ink-2)}
+.t-disp{font:600 19px/23px var(--font-display)}
+.ink-1{color:var(--ink-1)} .ink-2{color:var(--ink-2)}
+
+/* ---------- kit icons ---------- */
+svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex:none}
+svg.sig{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round;flex:none;vertical-align:-2px}
+svg.g{flex:none;vertical-align:-2px}
+.c-xp{color:var(--xp)} .c-mp{color:var(--mp)}
+
+/* ---------- glyphs (glyph.css: mg-*) ---------- */
+.mg{display:inline-block;vertical-align:middle;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;overflow:visible}
+.mg.is-idle{stroke-width:1.5}
+.mg.z12,.mg.z12.is-idle{stroke-width:2}
+.mg.is-idle:not(.inh){color:var(--ink-2)}
+.mg.is-active:not(.inh),.mg.is-done:not(.inh){color:var(--ink-0)}
+.mg .f{fill:currentColor;stroke:none}
+.mg .fs{fill:currentColor}
+.mg .k{stroke:var(--card)}
+.mg .c0{color:var(--ink-0)} .mg .c2{color:var(--ink-2)} .mg .cm{color:var(--ink-mute)}
+.mg [data-part]{transform-box:fill-box;transform-origin:center}
+.mg [data-part="ping"]{opacity:0}
+.mg .mg-core{fill:var(--card)}
+.mg .mg-shackle{transform-box:view-box;transform-origin:8px 11px}
+.mg.is-open .mg-shackle{transform:translateY(-2.5px) rotate(-12deg)}
+.mg.mg-intensity [data-part]{transform-origin:center bottom}
+.mg.mg-flame{transform-origin:50% 100%}
+.mg-rank.is-idle .cm,.mg-rank .cm{color:var(--ink-mute)}
+/* the one CSS loop: the drafting glyph breathes in opacity on its outer svg, no direction, ≤ 74 half-periods (≈ 89 s) */
+@keyframes mg-breathe{to{opacity:.45}}
+[data-wait]:not([data-weave-live]):not([data-paused]) svg.mg-weave{animation:mg-breathe 1200ms ease-in-out 74 alternate;animation-play-state:var(--ambient-play)}
+
+/* KindGlyph: quest glyph + evidence badge (bottom-right) + done check (top-right), 12 px on a --card disc with a 2 px ring */
+.kg{position:relative;display:inline-grid;place-items:center;width:20px;height:20px;flex:none;color:var(--ink-0)}
+.kg.kg-l{width:28px;height:28px}
+.kg-b{position:absolute;width:14px;height:14px;border-radius:50%;background:var(--card);box-shadow:0 0 0 2px var(--card);display:grid;place-items:center;color:var(--ink-1)}
+.kg-b .mg{width:12px;height:12px}
+.kg-ev{right:-7px;bottom:-6px}
+.kg-ok{right:-7px;top:-6px;color:var(--ink-0)}
+.kg-l .kg-ev{right:-5px;bottom:-4px} .kg-l .kg-ok{right:-5px;top:-4px}
+
+/* RankSeal */
+.rs{display:inline-flex;flex-direction:column;align-items:center;gap:4px;flex:none;color:var(--ink-0)}
+.rs-34 .mg,.rs-40 .mg{stroke-width:1.5}
+.rs-48 .mg,.rs-72 .mg{stroke-width:1.25}
+.rs-48 .mg [data-part="rim"]{stroke-width:1.5}
+.rs-pips{display:flex;gap:3px}
+.rs-pips i{width:5px;height:5px;border-radius:50%;background:transparent;box-shadow:inset 0 0 0 1px var(--ink-mute)}
+.rs-pips i.on{background:var(--ink-0);box-shadow:none}
+.rs-pips i.next{box-shadow:inset 0 0 0 1.25px var(--ink-0)}
+.rs-pips i.beyond{box-shadow:inset 0 0 0 1px var(--ink-mute);opacity:.6}
+
+/* ---------- surfaces, buttons, chips (kit) ---------- */
+.card{background:var(--card);border:1px solid var(--line-1);border-radius:var(--r-card);box-shadow:inset 0 1px 0 var(--hi)}
+.btn{min-height:44px;border-radius:var(--r-ctl);display:inline-flex;align-items:center;justify-content:center;gap:8px;font:600 14px/1.2 var(--font-ui);padding:0 14px;white-space:nowrap;text-decoration:none;transition:transform var(--t-press) var(--ease-out)}
+.btn:active{transform:scale(.98)}
+.btn-primary{background:var(--ink-0);color:var(--page)}
+.btn-secondary{border:1px solid var(--line-ctl);color:var(--ink-0)}
+.btn-quiet{color:var(--ink-1);padding:0 10px}
+.btn-block{width:100%}
+.icon-btn{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;position:relative;color:var(--ink-1);flex:none}
+.icon-btn.sm{width:40px;height:40px;border-radius:10px}
+.icon-btn[aria-pressed="true"]{background:var(--raised);color:var(--ink-0)}
+.badge{position:absolute;top:5px;right:4px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--ink-0);color:var(--page);font:700 12px/18px var(--font-ui);text-align:center;box-shadow:0 0 0 2px var(--bar)}
+.ilink{color:var(--ink-0);text-decoration:underline;text-underline-offset:3px;min-height:40px;min-width:40px;display:inline-flex;align-items:center;margin:-8px 0;font-weight:600;font-size:13px}
+.chip{display:inline-flex;align-items:center;gap:5px;min-height:24px;padding:0 8px;border-radius:var(--r-chip);font:600 12px/1.25 var(--font-ui);border:1px solid var(--line-2);color:var(--ink-1);white-space:nowrap;font-variant-numeric:tabular-nums}
+.chip .mg,.chip svg.sig,.chip svg.i{width:12px;height:12px}
+.chips{display:flex;flex-wrap:wrap;align-items:center;column-gap:8px;row-gap:16px}
+
+/* HonestyChip: visible word always; a button has a real 40 × 40 box (min-height and min-width 40, negative block margins) */
+.hc{display:inline-flex;align-items:center;gap:5px;min-height:24px;padding:0 8px;border-radius:var(--r-chip);font:600 12px/1.25 var(--font-ui);border:1px solid var(--line-2);color:var(--ink-1);white-space:nowrap;font-variant-numeric:tabular-nums;background:transparent}
+.hc .gx{position:relative;display:inline-grid;width:12px;height:12px;flex:none}
+.hc .gx>svg{grid-area:1/1;width:12px;height:12px}
+.hcb{display:inline-flex;align-items:center;min-height:40px;min-width:40px;margin:-8px 0;padding:0;border-radius:10px;color:inherit;vertical-align:middle}
+.hcb>.hc{border-color:var(--line-ctl);color:var(--ink-0)}
+.hcb[aria-expanded="true"]>.hc{background:var(--raised)}
+.hcb:active>.hc{transform:scale(.98)}
+.hc.wrap,.hcb.wrap>.hc{white-space:normal;padding-top:3px;padding-bottom:3px;line-height:16px}
+/* InfoTip and the panels it opens: inline, right after the button, full width under its row */
+.itip{width:40px;height:40px;display:inline-grid;place-items:center;border-radius:10px;color:var(--ink-2);flex:none;margin:-8px -10px -8px 0}
+.itip .mg{width:20px;height:20px}
+.itip[aria-expanded="true"]{color:var(--ink-0);background:var(--raised)}
+.tp{flex:0 0 100%;width:100%;margin:6px 0 2px;padding:10px 12px;border-radius:10px;background:var(--sunken);border:1px solid var(--line-2);font:400 13px/18px var(--font-ui);color:var(--ink-1);white-space:normal;text-align:left}
+.tp b{color:var(--ink-0);font-weight:600}
+.tp p+p{margin-top:6px}
+.keyl{display:flex;flex-direction:column;gap:6px}
+.keyl li{display:grid;grid-template-columns:20px minmax(0,1fr);gap:8px;align-items:start}
+.keyl .kgx{display:grid;place-items:center;min-height:18px;color:var(--ink-0)}
+.keyl .kgx .mg{width:16px;height:16px}
+.keyl .kgx .kg{transform:scale(.8)}
+
+/* ---------- meters, rings, pips ---------- */
+.meter{height:8px;border-radius:4px;background:color-mix(in srgb,var(--ink-0) 8%,var(--sunken));box-shadow:inset 0 0 0 1px var(--line-2);position:relative;overflow:hidden}
+.meter>i{position:absolute;left:0;top:0;bottom:0;width:100%;border-radius:4px;background:var(--ink-0);transform-origin:left;transform:scaleX(var(--v,0))}
+.meter.thin{height:6px}
+.meter .floor{position:absolute;top:0;bottom:0;width:2px;background:var(--ink-1);left:var(--at);box-shadow:0 0 0 1px var(--card)}
+.elapsed{height:4px;border-radius:2px;background:color-mix(in srgb,var(--ink-0) 8%,var(--sunken));position:relative;overflow:hidden}
+.elapsed>i{position:absolute;inset:0;background:var(--ink-2);transform-origin:left;transform:scaleX(var(--v,0))}
+.pr{flex:none;transform:rotate(0)}
+.pr-t{fill:none;stroke:color-mix(in srgb,var(--ink-0) 12%,transparent);stroke-width:3}
+.pr-v{fill:none;stroke:var(--ink-0);stroke-width:3;stroke-linecap:round}
+.segs{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:3px}
+.segs i{height:6px;border-radius:2px;background:color-mix(in srgb,var(--ink-0) 9%,transparent)}
+.segs i.on{background:var(--ink-0)}
+.segs i.cur{box-shadow:inset 0 0 0 1.5px var(--ink-0)}
+.pp{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;max-width:220px}
+.pp-d{display:flex;flex-direction:column;align-items:center;gap:1px;border-radius:6px;padding:1px 0;font:600 12px/14px var(--font-ui);color:var(--ink-1)}
+.pp-d b{font-weight:600}
+.pp-d i{font-style:normal;font:700 12px/14px var(--font-ui);color:var(--ink-0);min-height:14px;font-variant-numeric:tabular-nums}
+.pp-d.past,.pp-d.past i{color:var(--ink-2)}
+.pp-d.today{box-shadow:inset 0 0 0 1.5px var(--ink-0)}
+
+/* Kit Tick: 44 target around a 24 circle; done = kept fill, the check draws via stroke-dashoffset */
+.tick{width:44px;height:44px;display:grid;place-items:center;flex:none;transition:transform var(--t-press) var(--ease-out)}
+.tick:active{transform:scale(.88)}
+.tick-c{width:24px;height:24px;border-radius:50%;box-shadow:inset 0 0 0 1.75px var(--line-ctl);display:grid;place-items:center;transition:background var(--t-quick) var(--ease-out)}
+.tick-c svg{width:18px;height:18px;fill:none;stroke:var(--on-kept);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;opacity:0}
+.tick[aria-checked="true"] .tick-c{background:var(--kept);box-shadow:none}
+.tick[aria-checked="true"] .tick-c svg{opacity:1}
+/* kit checkbox (the safety surface's only transition) */
+.cbx{width:44px;height:44px;display:grid;place-items:center;flex:none;cursor:pointer;position:relative}
+.cbx input{position:absolute;inset:0;opacity:0;cursor:pointer;margin:0}
+.cbx span{width:22px;height:22px;border-radius:6px;box-shadow:inset 0 0 0 1.75px var(--line-ctl);display:grid;place-items:center;transition:background var(--t-quick) var(--ease-out),box-shadow var(--t-quick) var(--ease-out)}
+.cbx svg{width:16px;height:16px;fill:none;stroke:var(--page);stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:100;stroke-dashoffset:100;transition:stroke-dashoffset 220ms var(--ease-out) 40ms}
+.cbx input:checked+span{background:var(--ink-0);box-shadow:none}
+.cbx input:checked+span svg{stroke-dashoffset:0}
+.cbx input:focus-visible+span{outline:2px solid var(--focus);outline-offset:2px}
+/* switch */
+.switch{width:52px;height:32px;border-radius:16px;background:var(--sunken);border:1px solid var(--line-ctl);position:relative;flex:none;transition:background var(--t-quick)}
+.switch::after{content:"";position:absolute;top:4px;left:4px;width:22px;height:22px;border-radius:50%;background:var(--ink-2);transition:transform var(--t-quick) var(--ease-out)}
+.switch[aria-checked="true"]{background:color-mix(in srgb,var(--ink-0) 22%,var(--sunken));border-color:var(--ink-1)}
+.switch[aria-checked="true"]::after{transform:translateX(20px);background:var(--ink-0)}
+.switch-hit{min-width:44px;min-height:44px;display:grid;place-items:center;flex:none}
+.segc{display:inline-flex;border:1px solid var(--line-ctl);border-radius:12px;padding:2px;gap:2px;max-width:100%}
+.segc button{min-height:40px;min-width:56px;padding:0 10px;border-radius:10px;font-size:13px;font-weight:600;color:var(--ink-1);display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.segc button[aria-pressed="true"]{background:var(--ink-0);color:var(--page)}
+.segc.fill{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;width:100%}
+.segc.fill button{min-width:0;padding:0 6px}
+
+/* ---------- shader slots (fx.css: shd-*) ---------- */
+.shd{position:relative;overflow:hidden;contain:content;height:var(--shd-h,56px);color:var(--ink-0)}
+.shd>.shd-fb,.shd>canvas,.shd>.shd-marks{position:absolute;inset:0;width:100%;height:100%;display:block}
+.shd canvas{pointer-events:none}
+.shd>.shd-marks{z-index:1}
+.shd[data-live]>.shd-fb{visibility:hidden}
+.shd:not([data-live])>canvas{visibility:hidden}
+.shd.band-card{--shd-h:56px}
+.shd.band-page{--shd-h:64px}
+.shd-weave{--shd-h:48px}
+@container (min-width:600px){.shd.band-card{--shd-h:64px}.shd.band-page{--shd-h:72px}}
+.shd.dim{opacity:.6}
+.shd-horizon .shd-fb{color:var(--ink-0)}
+.shd-dawn{opacity:var(--dawn-cap)}
+.shd-marks{fill:none;stroke-linecap:round}
+.shd-contour{stroke:var(--ink-mute);stroke-width:1}
+.shd-hair{stroke:var(--ink-mute);stroke-opacity:.55;stroke-width:1}
+.shd-path{stroke:var(--ink-mute);stroke-width:1}
+.shd-walk{stroke:var(--ink-0);stroke-width:1.5}
+.shd-walk.shd-dots{stroke-width:2.6;stroke-dasharray:none}
+.shd-front{fill:var(--ink-0);stroke:var(--card);stroke-width:1.5;transform-box:fill-box;transform-origin:center}
+.shd-weave .shd-fb{color:var(--ink-2);opacity:.7}
+.shd-strand{fill:none;stroke:currentColor;stroke-width:1.4}
+/* backstops: the gate already says css under both queries, so no canvas exists */
+@media (prefers-contrast:more){.shd canvas,.shd>.shd-fb,.shd-marks .shd-contour{display:none}}
+html[data-sim-contrast] .shd canvas,html[data-sim-contrast] .shd>.shd-fb,html[data-sim-contrast] .shd-marks .shd-contour{display:none}
+html[data-sim-contrast] .shd-path,html[data-sim-contrast] .shd-hair{stroke:var(--ink-1);stroke-opacity:1}
+@media (forced-colors:active){.shd canvas,.shd>.shd-fb,.shd-marks .shd-contour{display:none}.shd-marks{forced-color-adjust:auto}.shd-walk,.shd-path,.shd-hair{stroke:CanvasText}.shd-front{fill:CanvasText}}
+
+/* ---------- RouteRail ---------- */
+.rr{display:flex;flex-direction:column}
+.rr-row{position:relative;display:grid;grid-template-columns:28px minmax(0,1fr);column-gap:12px}
+.rr-nw{position:relative;width:28px;height:28px;margin-top:8px;grid-column:1;grid-row:1}
+.rr-badge{position:absolute;right:-6px;bottom:-5px;width:14px;height:14px;border-radius:50%;background:var(--card);box-shadow:0 0 0 2px var(--card);display:grid;place-items:center;color:var(--ink-1)}
+.rr-badge .mg{width:12px;height:12px}
+.rr-l{position:absolute;left:13px;width:2px;overflow:visible}
+.rr-l path{fill:none;stroke:var(--ink-mute);stroke-width:1}
+.rr-l.on path{stroke:var(--ink-0);stroke-width:2}
+.rr-up{top:0;height:8px}
+.rr-down{top:36px;bottom:0;height:calc(100% - 36px)}
+.rr-d{grid-column:2;grid-row:1;min-width:0}
+.rr-d>summary,.rr-flat{display:flex;align-items:center;gap:10px;min-height:44px;padding:4px 0;cursor:pointer;list-style:none}
+.rr-flat{cursor:default}
+.rr-d>summary::-webkit-details-marker{display:none}
+.rr-n{font:600 12px/16px var(--font-mono);color:var(--ink-2);width:12px;flex:none}
+.rr-t{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;padding:6px 0}
+.rr-t b{font:500 14px/19px var(--font-ui);overflow-wrap:anywhere}
+.rr-t b.struck{text-decoration:line-through;text-decoration-thickness:1px;color:var(--ink-2)}
+.rr-2{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;font-size:13px;line-height:18px;color:var(--ink-2)}
+.rr-r{font:600 13px/19px var(--font-ui);color:var(--ink-0);flex:none}
+.rr-chev{width:16px;height:16px;color:var(--ink-2);transition:transform var(--t-quick) var(--ease-out)}
+.rr-d[open] .rr-chev{transform:rotate(90deg)}
+.rr-more{padding:0 0 12px;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rr-row.is-planned .rr-t b,.rr-row.is-outline .rr-t b{color:var(--ink-1)}
+.rr-node{display:block;overflow:visible}
+.rr-node path{fill:none;stroke:var(--ink-0);stroke-width:1.5;stroke-linecap:round;transform-box:fill-box;transform-origin:center}
+.rr-node .rr-disc{fill:var(--ink-0);stroke:none}
+.rr-node .rr-knock [data-part]{fill:none;stroke:var(--card);stroke-width:2}
+.rr-node .rr-ink2 [data-part],.rr-node path.rr-ink2{stroke:var(--ink-2)}
+.rr-node .rr-ink0{stroke:var(--ink-0)}
+.rr-node .rr-held{stroke:var(--held)}
+.rr-node .rr-thin{stroke:var(--ink-mute);stroke-width:1}
+.rr-node .rr-track{stroke:color-mix(in srgb,var(--ink-0) 14%,transparent);stroke-width:2.5}
+.rr-node .rr-arc{stroke-width:2.5}
+.rr-node .rr-ping{opacity:0}
+.rr-node .rr-here{stroke-width:1.25}
+/* the strip: repeat(n, 1fr) of 16 px nodes */
+.rs-strip{position:relative;display:grid;grid-template-columns:repeat(var(--n),1fr);align-items:center;height:20px}
+.rs-line{position:absolute;top:50%;left:calc(50% / var(--n));right:calc(50% / var(--n));height:1px;background:var(--ink-mute);transform:translateY(-50%)}
+.rs-line.on{right:auto;height:2px;background:var(--ink-0)}
+.rs-n{position:relative;display:grid;place-items:center;z-index:1}
+.rs-n .rr-node{background:var(--card);border-radius:50%}
+
+/* ---------- shell inside a frame ---------- */
+.frame{background:var(--page);border:1px solid var(--line-2);border-radius:20px;overflow:clip;position:relative;flex:none}
+.f344{width:344px}
+.f1440{width:1440px}
+.app{min-height:100%}
+.col{display:flex;flex-direction:column;min-width:0;min-height:100%}
+.main{flex:1;container:main/inline-size;min-width:0}
+.page{padding:6px 16px 28px;margin:0 auto;max-width:1240px}
+@container main (min-width:600px){.page{padding:8px 24px 40px}}
+@container main (min-width:1000px){.page{padding:12px 32px 48px}}
+.mini .page{padding:16px}
+.topbar{position:sticky;top:0;z-index:20;height:var(--topbar-h);display:flex;align-items:center;gap:6px;padding:0 6px 0 8px;background:var(--bar)}
+.crest-btn{width:44px;height:44px;display:grid;place-items:center;border-radius:12px;flex:none}
+.tb-title{flex:1;min-width:0}
+.tb-title h1{font:600 19px/23px var(--font-display);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tabbar{position:sticky;bottom:0;z-index:20;height:var(--tabbar-h);display:grid;grid-template-columns:repeat(5,1fr);align-items:center;background:var(--bar);border-top:1px solid var(--line-1)}
+.tab{text-decoration:none;height:var(--tabbar-h);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font:600 12px/14px var(--font-ui);color:var(--ink-2);position:relative}
+.tab svg.i{width:22px;height:22px}
+.tab[aria-current="page"]{color:var(--ink-0)}
+.tab[aria-current="page"]::before{content:"";position:absolute;top:0;left:30%;right:30%;height:2px;border-radius:0 0 2px 2px;background:var(--ink-0)}
+.tab .badge{top:7px;right:calc(50% - 24px)}
+.tab-plus{display:grid;place-items:center}
+.tab-plus span{width:52px;height:52px;border-radius:18px;background:var(--ink-0);color:var(--page);display:grid;place-items:center}
+.tabs{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;padding:2px}
+.tabs::-webkit-scrollbar{display:none}
+.tab-s{min-height:40px;padding:0 14px;border-radius:10px;font:600 14px var(--font-ui);color:var(--ink-2);display:inline-flex;align-items:center;gap:6px;white-space:nowrap;text-decoration:none;flex:none}
+.tab-s[aria-current="page"]{color:var(--ink-0);background:var(--raised);box-shadow:inset 0 0 0 1px var(--line-2)}
+.you-tabs{margin:2px -16px 12px;padding:2px 16px}
+.f1440 .app{display:grid;grid-template-columns:var(--sidebar-w) minmax(0,1fr)}
+.sidebar{position:sticky;top:0;align-self:start;height:100%;min-height:900px;background:var(--bar);border-right:1px solid var(--line-1);display:flex;flex-direction:column;padding:14px 12px;gap:4px}
+.sidebar a{min-height:44px;border-radius:12px;display:flex;align-items:center;gap:12px;padding:0 12px;font:600 14px var(--font-ui);color:var(--ink-2);text-decoration:none}
+.sidebar a[aria-current="page"]{background:var(--raised);color:var(--ink-0)}
+.sb-crest{display:flex;gap:10px;align-items:center;padding:6px 8px 14px}
+.sb-crest b{display:block;font:600 15px/18px var(--font-display)}
+.sb-crest span{font-size:12px;color:var(--ink-2)}
+.sidebar .sb-cap{background:var(--ink-0);color:var(--page);margin-bottom:8px}
+.sb-grow{flex:1}
+.f1440 .topbar{height:60px;padding:0 20px 0 32px;gap:16px}
+.f1440 .tb-title{flex:0 0 auto}
+.f1440 .you-tabs{display:none}
+.f1440 .tb-tabs{display:flex}
+.tb-tabs{display:none}
+.fold{position:absolute;left:0;right:0;height:0;border-top:2px dashed #9aa3b5;z-index:30;pointer-events:none}
+.fold span{position:absolute;right:6px;top:-22px;font:600 12px/16px var(--font-mono);color:#0a0d13;background:#c3cad8;padding:1px 6px;border-radius:6px}
+/* sheet frame */
+.shf{background:var(--scrim)}
+.sheet-s{background:var(--overlay);border-radius:var(--r-sheet) var(--r-sheet) 0 0;margin-top:56px;padding:6px 16px 20px;box-shadow:var(--shadow-pop)}
+.grabber{width:36px;height:4px;border-radius:2px;background:var(--line-ctl);margin:6px auto 10px}
+.shf .sheet-s{--card:var(--overlay)}
+
+/* ---------- burst motes and the live region ---------- */
+.fx{position:fixed;inset:0;pointer-events:none;z-index:80;overflow:hidden}
+.fx-mote{position:absolute;left:0;top:0;width:6px;height:6px;border-radius:50%;background:var(--tok,var(--ink-1))}
+
+/* =====================================================================
+   MOCKUP CHROME (not part of the app)
+   ===================================================================== */
+.mk-bar{position:sticky;top:0;z-index:60;background:var(--bar);border-bottom:1px solid var(--line-2);display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;padding:8px 16px;font:600 12px/16px var(--font-ui);color:var(--ink-1)}
+.mk-bar .grp{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.mk-bar .lbl{font:700 12px/16px var(--font-ui);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2)}
+.mk-bar .segc button{min-height:36px;min-width:0;padding:0 10px;font-size:12px}
+.mk-chk{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:0 8px;border-radius:10px;border:1px solid var(--line-2);cursor:pointer;font-size:12px}
+.mk-chk input{width:16px;height:16px;accent-color:var(--ink-0)}
+.mk-btn{min-height:40px;padding:0 12px;border-radius:10px;border:1px solid var(--line-ctl);font:600 12px/16px var(--font-ui);color:var(--ink-0);display:inline-flex;align-items:center;gap:6px}
+.mk-btn.pri{background:var(--ink-0);color:var(--page);border-color:var(--ink-0)}
+.mk-stat{font:600 12px/16px var(--font-mono);color:var(--ink-2)}
+.mk-stat b{color:var(--ink-0)}
+.mk-said{font:600 12px/16px var(--font-mono);color:var(--ink-0);background:var(--raised);border-radius:8px;padding:4px 8px}
+.mk{max-width:1520px;margin:0 auto;padding:28px 24px 8px}
+.mk h1{font:600 30px/34px var(--font-display);margin-top:4px}
+.mk>p{color:var(--ink-1);max-width:96ch;margin-top:10px;font-size:15px}
+.mk-nav{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.mk-nav a{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line-ctl);display:inline-flex;align-items:center;font:600 13px var(--font-ui);text-decoration:none;color:var(--ink-0)}
+.mk-nav a[aria-current="page"]{background:var(--ink-0);color:var(--page)}
+.mk-ex{display:inline-flex;align-items:center;gap:6px;margin-top:12px;padding:4px 10px;border-radius:8px;border:1px dashed var(--line-ctl);font:600 12px/16px var(--font-mono);color:var(--ink-1)}
+.mk-sec{max-width:1520px;margin:0 auto;padding:28px 24px 8px}
+.mk-sec>h2{font:700 12px/16px var(--font-ui);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-1);margin-bottom:6px}
+.mk-sec>p{font-size:14px;color:var(--ink-2);max-width:96ch;margin-bottom:14px}
+.mk-sec>p b{color:var(--ink-1)}
+.mk-row{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+.mk-fig{display:flex;flex-direction:column;gap:10px;min-width:0;max-width:100%}
+.mk-tag{font:600 12px/16px var(--font-mono);color:var(--ink-2)}
+.mk-tag b{color:var(--ink-0)}
+.mk-cap{max-width:344px;font-size:13px;line-height:18px;color:var(--ink-2)}
+.mk-cap b{color:var(--ink-1)}
+.mk-cap li{margin-top:4px;padding-left:12px;position:relative}
+.mk-cap li::before{content:"";position:absolute;left:0;top:7px;width:5px;height:5px;transform:rotate(45deg);background:var(--ink-2)}
+.mk-cap.wide{max-width:96ch}
+.mk-scroll{max-width:100%;overflow-x:auto;padding-bottom:6px}
+.mk-fx{display:flex;flex-direction:column;gap:4px}
+.mk-fx span{font:600 12px/16px var(--font-mono);color:var(--ink-2);padding-left:14px;position:relative}
+.mk-fx span::before{content:"";position:absolute;left:0;top:4px;width:8px;height:8px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--ink-2)}
+.mk-fx span[data-state="live"]{color:var(--ink-0)}
+.mk-fx span[data-state="live"]::before{background:var(--ink-0);box-shadow:none}
+.mk-fx span[data-state="held"]::before{box-shadow:inset 0 0 0 1.5px var(--ink-0)}
+.mk-demos{display:flex;flex-wrap:wrap;gap:8px;max-width:344px}
+.mk-demos.wide{max-width:none}
+.mk-flag{display:inline-flex;align-items:center;min-height:20px;padding:0 6px;border-radius:6px;border:1px dashed var(--line-ctl);font:600 12px/16px var(--font-mono);color:var(--ink-1)}
+.mk-table{border-collapse:collapse;font-size:13px;line-height:18px;width:100%}
+.mk-table th{font:700 12px/16px var(--font-ui);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);text-align:left;padding:8px 10px;border-bottom:1px solid var(--line-2);position:sticky;top:57px;background:var(--canvas);z-index:2}
+.mk-table td{padding:8px 10px;border-top:1px solid var(--line-1);vertical-align:middle;color:var(--ink-1)}
+.mk-table td.nm{font:600 12px/16px var(--font-mono);color:var(--ink-0);white-space:nowrap}
+.mk-table td.gc{text-align:center;color:var(--ink-0)}
+.mk-note{font-size:13px;color:var(--ink-2)}
+
+/* =====================================================================
+   Roadmap surfaces (roadmap.css rm-*, the Aim card ac-*, week quests wq-*)
+   ===================================================================== */
+.rm-head,.ac{container-type:inline-size;overflow:hidden}
+.rm-hb{padding:14px 16px 12px;display:flex;flex-direction:column;gap:12px}
+.rm-aim{font:600 19px/24px var(--font-display);overflow-wrap:anywhere}
+.big{font:600 30px/32px var(--font-display);font-variant-numeric:tabular-nums lining-nums}
+.rm-prof{display:flex;gap:12px;align-items:center;justify-content:space-between}
+.rm-rank{display:flex;gap:10px;align-items:center;min-width:0}
+.rm-rl{display:flex;flex-direction:column;min-width:0}
+.rm-rl b{font:600 16px/20px var(--font-display)}
+.rm-pv{display:flex;flex-direction:column;align-items:flex-end;text-align:right}
+.rm-pct{display:flex;align-items:center;gap:6px}
+.rm-at{display:inline-flex;align-items:center;gap:4px;justify-content:flex-end}
+.evs{display:inline-flex;gap:2px;color:var(--ink-1)}
+.minis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.minis>span{display:flex;flex-direction:column;gap:4px;font:600 13px/16px var(--font-ui);color:var(--ink-1)}
+.minis>span>span{display:flex;align-items:center;gap:5px}
+.minis .mg,.minis svg.sig{width:14px;height:14px}
+.minis i{display:block;height:3px;border-radius:2px;background:color-mix(in srgb,var(--ink-0) 10%,transparent);position:relative;overflow:hidden}
+.minis i::after{content:"";position:absolute;inset:0;background:var(--ink-1);transform-origin:left;transform:scaleX(var(--v))}
+.rm-next{display:flex;align-items:center;gap:6px;font-size:14px;line-height:19px;flex-wrap:wrap}
+.rm-next b{font-weight:600}
+.rm-hf{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--line-1);padding-top:8px;margin-top:2px}
+.rm-how{flex:1;min-width:0}
+.rm-how>summary{display:flex;align-items:center;gap:8px;min-height:40px;cursor:pointer;list-style:none;font:600 13px/18px var(--font-ui);color:var(--ink-1)}
+.rm-how>summary::-webkit-details-marker{display:none}
+.rm-how>summary svg.i{width:16px;height:16px;color:var(--ink-2);transition:transform var(--t-quick) var(--ease-out)}
+.rm-how[open]>summary svg.i{transform:rotate(90deg)}
+.rm-how ol{display:flex;flex-direction:column;gap:6px;padding:4px 0 8px;font-size:13px;color:var(--ink-1)}
+.rm-how li{display:flex;align-items:center;gap:8px}
+.rm-how li .mg{width:16px;height:16px}
+.rm-sec{padding:14px 14px 12px;display:flex;flex-direction:column;gap:12px}
+.rm-sh{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-height:28px}
+.rm-sh h3{font:600 17px/22px var(--font-display);flex:1;min-width:0}
+.rm-sh .t-meta{white-space:nowrap}
+.rm-sub{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font:700 12px/16px var(--font-ui);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);padding-top:4px;border-top:1px solid var(--line-1);margin-top:2px}
+.rm-sub>span:first-child{padding-top:8px}
+.rm-sub .hc,.rm-sub .hcb{letter-spacing:0;text-transform:none;margin-top:8px}
+.rm-el{display:flex;align-items:center;gap:10px;font:600 12px/16px var(--font-ui);color:var(--ink-2)}
+.rm-el .elapsed{flex:1}
+.rm-hl{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rm-hl .t-meta{display:inline-flex;align-items:center;gap:4px}
+.rm-pays{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:14px;line-height:19px;color:var(--ink-1)}
+.rm-pays b{color:var(--ink-0);font-weight:600}
+.rm-pace{display:inline-flex;align-items:center;gap:6px;font:600 14px/19px var(--font-ui)}
+.rm-cols{display:flex;flex-direction:column;gap:16px}
+.rm-cols>.rm-col{display:contents}
+@container main (min-width:760px){.rm-cols{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:16px;align-items:start}.rm-cols>.rm-col{display:flex;flex-direction:column;gap:16px;min-width:0}}
+.rm-acts{display:flex;flex-wrap:wrap;gap:8px}
+.rm-facts{display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-facts .mg{width:14px;height:14px}
+/* week-quest rows (the roadmap and Today variants) */
+.wq-l{display:flex;flex-direction:column}
+.wq-r{display:grid;grid-template-columns:24px minmax(0,1fr) auto;column-gap:10px;align-items:start;padding:10px 0;border-top:1px solid var(--line-1)}
+.wq-r:first-child{border-top:0}
+.wq-r>.kg{margin-top:1px}
+.wq-m{display:flex;flex-direction:column;gap:6px;min-width:0}
+.wq-t{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+.wq-lbl{font:500 14px/19px var(--font-ui);overflow-wrap:anywhere;min-width:0}
+.wq-c{font:600 13px/19px var(--font-ui);white-space:nowrap;color:var(--ink-0);font-variant-numeric:tabular-nums}
+.wq-r.done .wq-lbl{color:var(--ink-1)}
+.wq-x{width:40px;height:40px;margin:-10px -10px -10px 0;display:grid;place-items:center;border-radius:10px;color:var(--ink-2)}
+.wq-x svg.i{width:16px;height:16px;transition:transform var(--t-quick) var(--ease-out)}
+.wq-x[aria-expanded="true"] svg.i{transform:rotate(90deg)}
+.wq-r>.tp{grid-column:1/-1}
+.wq-aux{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;line-height:18px;color:var(--ink-2)}
+.wq-aux .mg{width:14px;height:14px}
+.rm-row{display:grid;grid-template-columns:24px minmax(0,1fr) auto;column-gap:10px;align-items:center;min-height:44px;border-top:1px solid var(--line-1);padding:6px 0}
+.rm-row>.tp{grid-column:1/-1}
+.rm-row .rl{font:500 14px/19px var(--font-ui);min-width:0;overflow-wrap:anywhere}
+.rm-row .rr2{font-size:13px;line-height:18px;color:var(--ink-2);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.rm-row .rv{font:600 13px/19px var(--font-ui);color:var(--ink-0);white-space:nowrap}
+.rm-row.tickrow{grid-template-columns:44px minmax(0,1fr) auto;margin-left:-10px}
+.rm-past>summary{display:grid;grid-template-columns:minmax(0,1fr) 120px 16px;gap:10px;align-items:center;min-height:44px;cursor:pointer;list-style:none;font:600 13px/18px var(--font-ui);color:var(--ink-1);border-top:1px solid var(--line-1)}
+.rm-past>summary::-webkit-details-marker{display:none}
+.rm-past>summary svg.i{width:16px;height:16px;color:var(--ink-2)}
+.rm-past[open]>summary svg.i{transform:rotate(90deg)}
+.rm-past ul{font-size:13px;color:var(--ink-1);display:flex;flex-direction:column;gap:4px;padding-bottom:8px}
+.rm-past li{display:flex;justify-content:space-between;gap:8px}
+/* the Aim card on /you */
+.ac-b{padding:12px 16px 14px;display:flex;flex-direction:column;gap:12px}
+.ac-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ac-top .t-eyebrow{flex:1}
+.ac-aim{font:600 17px/22px var(--font-display);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.ac-row{display:flex;gap:12px;align-items:center;justify-content:space-between}
+.ac-strip{display:flex;flex-direction:column;gap:6px}
+.ac-strip .t-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:var(--ink-1)}
+.ac-foot{display:flex;align-items:center;justify-content:space-between;gap:4px 8px;flex-wrap:wrap}
+.ac-foot>.btn{margin-left:auto}
+.ac-wq{display:inline-flex;align-items:center;gap:10px;min-height:44px;text-decoration:none;font:600 14px/19px var(--font-ui)}
+.ac-wq .num{font-weight:700}
+.ac-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px;line-height:19px;color:var(--ink-1)}
+.ac-line b{color:var(--ink-0);font-weight:600}
+.ac-run{display:flex;align-items:center;gap:10px}
+.ac-run>div{flex:1;min-width:0}
+.ac-run b{display:block;font:600 15px/20px var(--font-ui)}
+
+/* ---------- this page ---------- */
+
+.td-col{display:flex;flex-direction:column;gap:16px}
+.td-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:start}
+.td-c{display:flex;flex-direction:column;gap:16px;min-width:0}
+.tb-board{display:flex;flex-direction:column;gap:16px}
+.tb-lane{padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.tb-lh{display:flex;justify-content:space-between;align-items:center}
+.tb-ph{height:44px;border-radius:10px;background:repeating-linear-gradient(135deg,transparent 0 10px,color-mix(in srgb,var(--ink-0) 3%,transparent) 10px 11px),var(--sunken);border:1px solid var(--line-1)}
+.tb-ph.s{height:44px;width:80%}
+.wq-card{padding:12px 14px 4px;display:flex;flex-direction:column;gap:6px}
+.wq-h{display:flex;align-items:center;gap:8px;min-height:32px}
+.wq-h h3{font:600 17px/22px var(--font-display);flex:1;min-width:0}
+.wq-s{padding-bottom:4px}
+.wq-card .wq-r{grid-template-columns:24px minmax(0,1fr) 16px;text-decoration:none;color:inherit;min-height:48px;margin:0 -14px;padding:10px 14px}
+.wq-card .wq-r:hover{background:var(--raised)}
+.wq-card .wq-l>div>.wq-r{border-top:1px solid var(--line-1)}
+.wq-go{color:var(--ink-2);padding-top:2px}
+.wq-more{display:flex;align-items:center;gap:6px;min-height:44px;margin:0 -14px;padding:0 14px;width:calc(100% + 28px);font:600 13px var(--font-ui);color:var(--ink-0);border-top:1px solid var(--line-1)}
+.wq-more svg.i{transform:rotate(90deg);transition:transform var(--t-quick) var(--ease-out)}
+.wq-more[aria-expanded="true"] svg.i{transform:rotate(-90deg)}
+.al{display:flex;align-items:center;gap:4px;min-height:56px;padding:6px 6px 6px 14px}
+.al-a{flex:1;min-width:0;display:flex;gap:10px;align-items:center;min-height:48px;text-decoration:none;color:var(--ink-1);font-size:14px;line-height:19px}
+.al-a>svg{color:var(--ink-1)}
+.al-a>span{min-width:0;overflow-wrap:anywhere}
+.al-a .mg-stage{vertical-align:-4px}
+.al-a b{color:var(--ink-0);font-weight:600}
+.al-a .mg-rank{vertical-align:-4px}
+.al-list{display:flex;flex-direction:column;gap:12px;width:344px;max-width:100%}
+.al-list .mk-tag{margin-bottom:-6px}
+
+</style>
+</head>
+<body>
+<svg width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute;width:0;height:0;overflow:hidden"><defs>
+<symbol id="i-today" viewBox="0 0 24 24"><path d="M3 18h18M6.5 18a5.5 5.5 0 0 1 11 0M12 5v2.2M5.3 9.3l1.5 1.5M18.7 9.3l-1.5 1.5M8 21h8"/></symbol>
+<symbol id="i-study" viewBox="0 0 24 24"><path d="M12 6.5C9.5 4.8 6.5 4.5 3.5 5.2v13c3-.7 6-.4 8.5 1.3 2.5-1.7 5.5-2 8.5-1.3v-13c-3-.7-6-.4-8.5 1.3zM12 6.5v13"/></symbol>
+<symbol id="i-train" viewBox="0 0 24 24"><path d="M2.5 12.5h4l2.2-5.5 4.3 11 2.3-5.5h6.2"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 1 1 12 0v5.5l1.6 2H4.4zM10 20.5a2 2 0 0 0 4 0"/></symbol>
+<symbol id="i-chev" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"/></symbol>
+<symbol id="i-back" viewBox="0 0 24 24"><path d="M14.5 6l-6 6 6 6"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+<symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M21.2 12h-2.4M5.2 12H2.8M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7M18.5 18.5l-1.7-1.7M7.2 7.2L5.5 5.5"/></symbol>
+<symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></symbol>
+<symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4.5h11l-2 4 2 4H5"/></symbol>
+<symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V3.5M8 7.5l4-4 4 4M5 12v7.5h14V12"/></symbol>
+<symbol id="i-dot3" viewBox="0 0 24 24"><path d="M6 12h.01M12 12h.01M18 12h.01" stroke-width="3"/></symbol>
+<symbol id="i-sheet" viewBox="0 0 24 24"><path d="M12 2.8l7.5 4.3v9.8L12 21.2l-7.5-4.3V7.1z"/></symbol>
+<symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V4M4 20h16M8 16v-5M12 16V8M16 16v-7"/></symbol>
+<symbol id="i-library" viewBox="0 0 24 24"><path d="M5 4v16M9.5 4v16M14 5l4.5 15"/></symbol>
+<symbol id="c-xp" viewBox="0 0 24 24"><path fill="currentColor" d="M12 1.8l2.3 7.9 7.9 2.3-7.9 2.3L12 22.2l-2.3-7.9L1.8 12l7.9-2.3z"/></symbol>
+<symbol id="c-mp" viewBox="0 0 24 24"><path fill="currentColor" d="M12 1.8l8.8 5.1v10.2L12 22.2l-8.8-5.1V6.9zm0 4.3L6.9 9v6l5.1 2.9 5.1-2.9V9z"/></symbol>
+<symbol id="s-body" viewBox="0 0 24 24"><path d="M12 3.5l8.5 15.5h-17z"/></symbol>
+<symbol id="s-duty" viewBox="0 0 24 24"><path d="M12 3l7 2.8V11c0 4.6-3 8-7 10-4-2-7-5.4-7-10V5.8z"/></symbol>
+<symbol id="s-craft" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1.5"/><path d="M5 12h14"/></symbol>
+<symbol id="s-care" viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-7.5-10.4A4.1 4.1 0 0 1 12 7.2a4.1 4.1 0 0 1 7.5 2.4C19.5 15.4 12 20 12 20z"/></symbol>
+<symbol id="s-know" viewBox="0 0 24 24"><path d="M12 6.5C9.5 4.8 6.5 4.5 3.5 5.2v13c3-.7 6-.4 8.5 1.3 2.5-1.7 5.5-2 8.5-1.3v-13c-3-.7-6-.4-8.5 1.3zM12 6.5v13"/></symbol>
+<symbol id="h-rest" viewBox="0 0 24 24"><path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10z"/></symbol>
+<symbol id="h-freeze" viewBox="0 0 24 24"><path d="M12 2.5v19M3.8 7.25l16.4 9.5M3.8 16.75l16.4-9.5M9.6 3.9L12 6.3l2.4-2.4M9.6 20.1L12 17.7l2.4 2.4"/></symbol>
+<linearGradient id="m-bronze" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f3c08f"/><stop offset=".5" stop-color="#c0834f"/><stop offset="1" stop-color="#8a5530"/></linearGradient>
+<symbol id="crest14" viewBox="0 0 100 104"><polygon points="50,8 88.11,30 88.11,74 50,96 11.89,74 11.89,30" fill="#0d1017" stroke="url(#m-bronze)" stroke-width="7" stroke-linejoin="round"/><polygon points="50,16 81.18,34 81.18,70 50,88 18.82,70 18.82,34" fill="none" stroke="url(#m-bronze)" stroke-opacity=".38" stroke-width="1.6"/><text x="50" y="62" text-anchor="middle" font-size="30" font-family="Georgia,serif" font-weight="700" fill="#f1f3f8">14</text></symbol>
+</defs></svg>
+<div class="mk-bar" role="region" aria-label="Mockup controls, not part of the app">
+<div class="grp"><span class="lbl">Motion</span><div class="segc" role="group" aria-label="Motion level"><button type="button" data-set-level="system" aria-pressed="false">System</button><button type="button" data-set-level="full" aria-pressed="false">Full</button><button type="button" data-set-level="calm" aria-pressed="false">Calm · reduced</button><button type="button" data-set-level="still" aria-pressed="false">Still</button></div><span class="mk-stat">now <b id="mk-level-now">full</b></span></div>
+<div class="grp"><span class="lbl">Theme</span><div class="segc" role="group" aria-label="Theme"><button type="button" data-set-theme="night" aria-pressed="true">Night</button><button type="button" data-set-theme="vellum" aria-pressed="false">Vellum</button></div></div>
+<div class="grp"><span class="lbl">Simulate</span><label class="mk-chk"><input type="checkbox" data-sim="data-sim-reduce">OS reduce</label><label class="mk-chk"><input type="checkbox" data-sim="data-sim-nogl">No WebGL</label><label class="mk-chk"><input type="checkbox" data-sim="data-sim-contrast">High contrast</label><label class="mk-chk"><input type="checkbox" data-sim="data-power">Power save</label><label class="mk-chk"><input type="checkbox" id="mk-accent">In view at hydration</label></div>
+<div class="grp"><button type="button" class="mk-btn" id="mk-replay">Replay events in view</button><button type="button" class="mk-btn" id="mk-budget">Reset shader budgets</button><span class="mk-stat">contexts <b id="mk-ctx">0</b> · animate() <b id="mk-calls">0</b></span><span class="mk-said" id="mk-said" hidden></span></div>
+</div>
+<header class="mk">
+<div class="t-eyebrow">XTNL · ui-motion.md revision 2 · animated mockup 3 of 5</div>
+<h1>Today — the aim line and week quests</h1>
+<p>Today is the most visited screen, so it stays the calmest (D10): <b>no shader, no loop, no burst</b>. What carries the motion is the quest glyph itself: a quest kind is a shape (book + chevron = Bring, card + plus = Add, the plan's own track sigil = Practice, a stair = Step, a target = Checkpoint) with its evidence badge bottom-right; it gains a solid <b>started pip</b> at 1+ and a <b>check badge</b> when done. The only things that move here are a meter from its last-seen value and the check drawing in when a quest completes (SEEN, once). The brief's “tick burst” stays where rarity earns it: the Aim-rank rise is the roadmap's only burst (H10), and it plays on /you, never on /today.</p>
+<div class="mk-ex">Example data — fake but plausible · the EUR/USD plan, week of 25–31 Jan 2027, as of Thu 28 Jan · last seen: Add 1 of 5, Backtest 2 of 3 · the 10 km plan for the body variant</div>
+<nav class="mk-nav" aria-label="ui-motion mockups"><a href="living-roadmap.html">1 · Living roadmap</a><a href="aim-card.html">2 · Aim card</a><a href="today.html" aria-current="page">3 · Today</a><a href="activity-card.html">4 · Activities to avoid</a><a href="icon-sheet.html">5 · Icon sheet</a></nav>
+</header>
+
+<section class="mk-sec"><h2>Today · 344 · the week-quest card (≤ 30 app words) and the aim line (≤ 8)</h2>
+<p>Three rows show, then “2 more”. Each label is code-owned; the per-row why (due days, quota, place) moved into the card Key. Never red, and never counted in Today's own counts.</p>
+<div class="mk-row">
+<figure class="mk-fig"><div class="mk-tag"><b>344</b> · /today · <span class='mk-flag'>example</span></div><div class="frame f344" id="td344" data-page data-route="/today"><div class="app"><div class="col"><header class="topbar"><a class="crest-btn" href="#" aria-label="Character level 14. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a><div class="tb-title"><div class="t-eyebrow">Today</div><h1>Thu 28 Jan</h1></div><button type="button" class="icon-btn" aria-label="Asks: 2 waiting"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page"><div class="td-col"><div class="tb-board" aria-hidden="true"><section class="card tb-lane"><div class="tb-lh"><span class="t-eyebrow">Musts</span><span class="t-meta">unchanged</span></div><div class="tb-ph"></div><div class="tb-ph s"></div></section></div><section class="card al" aria-label="Aim"><a class="al-a" href="#"><svg class="mg mg-route is-active inh" data-g="route" data-s="active" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M6 15.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0 -4.4zM18 3.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0 -4.4z" data-part="rim" pathLength="100"/><path d="M8.2 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.8" data-part="mark" pathLength="100"/></svg><span><b><span data-wc="name">Milestone 5</span> <svg class="mg mg-stage is-active inh" data-g="stage.part:mastered" data-s="active" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><g transform="translate(2.4 2.4) scale(.8)"><path d="M4 19.5q8 -3 16 0q-8 2.2 -16 0z" data-part="mark" data-i="0" pathLength="100"/><path d="M5.5 15.5q6.5 -3 13 0q-6.5 2.2 -13 0z" data-part="mark" data-i="1" pathLength="100"/><path d="M7 11.5q5 -3 10 0q-5 2.2 -10 0z" data-part="mark" data-i="2" pathLength="100"/><path d="M8.5 7.5q3.5 -3 7 0q-3.5 2.2 -7 0z" data-part="mark" data-i="3" pathLength="100"/><path d="M12 2a1.6 1.6 0 0 0 0 3.2z" data-part="mark" data-i="4" pathLength="100"/></g><path d="M12 1a11 11 0 1 1 0 22a11 11 0 1 1 0 -22z" data-part="ring" pathLength="100" stroke-width="1.25"/></svg><span class="sr-only">Mastered, part 1,</span> is ready.</b> Gives <svg class="mg mg-rank is-active" data-g="rank.4" data-s="active" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path d="M12 2a10 10 0 1 1 0 20a10 10 0 1 1 0 -20z" class="c2" data-part="rim" pathLength="100"/><path d="M12 5.8L12 3.8" class="c0" data-part="mark" data-i="0" pathLength="100"/><path d="M17.369 8.9L19.101 7.9" class="c0" data-part="mark" data-i="1" pathLength="100"/><path d="M17.369 15.1L19.101 16.1" class="c0" data-part="mark" data-i="2" pathLength="100"/><path d="M12 18.05a1.15 1.15 0 1 1 0 2.3a1.15 1.15 0 1 1 0 -2.3z" class="c0 mg-slot" data-part="ring" pathLength="100" stroke-width="1.25"/><path d="M5.765 14.75a0.85 0.85 0 1 1 0 1.7a0.85 0.85 0 1 1 0 -1.7zM5.765 7.55a0.85 0.85 0 1 1 0 1.7a0.85 0.85 0 1 1 0 -1.7z" class="f cm" data-part="badge"/></svg> Aim rank <span data-wc="name">Expert</span>.</span></a><button type="button" class="icon-btn sm" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i" style="width:18px;height:18px" aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button></section><section class="card wq-card" aria-labelledby="a-h">
+<div class="wq-h"><h3 id="a-h">Week quests · <span data-wc="name">Milestone 2</span></h3><button type="button" class="itip" aria-label="Key: week quests" aria-expanded="false" aria-controls="a-k"><svg class="mg mg-m is-idle inh" data-g="m.info" data-s="idle" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M12 3.5a8.5 8.5 0 1 1 0 17a8.5 8.5 0 1 1 0 -17z" data-part="rim" pathLength="100"/><path d="M12 11v5.5M12 7.6v.01" data-part="mark" pathLength="100"/></svg></button><div class="tp tp-key" id="a-k" hidden><ul class="keyl"><li><span class="kgx" aria-hidden="true"><span class="kg kg-bring" data-kg="bring" data-s="active"><svg class="mg mg-quest is-active" data-g="quest.bring" data-s="active" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M12 6.5C9.5 4.8 6.5 4.5 3.5 5.2v13c3-.7 6-.4 8.5 1.3 2.5-1.7 5.5-2 8.5-1.3v-13c-3-.7-6-.4-8.5 1.3zM12 6.5v13" data-part="rim" pathLength="100"/><path d="M14.6 13.4l1.9-1.9 1.9 1.9" data-part="mark" pathLength="100"/><path d="M4.5 17.9a1.6 1.6 0 1 1 0 3.2a1.6 1.6 0 1 1 0 -3.2z" class="f mg-pip" data-part="solid"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.tested" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M18.5 12a6.5 6.5 0 1 1-1.9-4.6M17 3.8v3.8h-3.8" data-part="mark" pathLength="100"/></svg></span></span></span><span>Bring: tested by your reviews · 1 comes due Tue, 2 Wed, 1 Sat</span></li><li><span class="kgx" aria-hidden="true"><span class="kg kg-add" data-kg="add" data-s="active"><svg class="mg mg-quest is-active" data-g="quest.add" data-s="active" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M8 4h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" data-part="rim" pathLength="100"/><path d="M12 9v6M9 12h6" data-part="mark" pathLength="100"/><path d="M4.5 17.9a1.6 1.6 0 1 1 0 3.2a1.6 1.6 0 1 1 0 -3.2z" class="f mg-pip" data-part="solid"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.counted" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M8 6v12M12 6v12M16 6v12" data-part="mark" pathLength="100"/></svg></span></span></span><span>Add: counted by the app · counts toward Trading's weekly quota too · in Anytime</span></li><li><span class="kgx" aria-hidden="true"><span class="kg kg-practice" data-kg="practice" data-s="active"><svg class="mg mg-quest is-active" data-g="quest.practice" data-s="active" data-track="craft" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M6.5 5h11A1.5 1.5 0 0 1 19 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 17.5v-11A1.5 1.5 0 0 1 6.5 5zM5 12h14" data-part="rim" pathLength="100"/><path d="M4.5 17.9a1.6 1.6 0 1 1 0 3.2a1.6 1.6 0 1 1 0 -3.2z" class="f mg-pip" data-part="solid"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.tick" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M7.5 4.5h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z" data-part="rim" pathLength="100"/><path d="M8.5 12.3l2.5 2.5 4.5-5" data-part="mark" pathLength="100"/></svg></span></span></span><span>sessions and steps: your ticks · in Habits</span></li><li><span class="kgx" aria-hidden="true"><svg class="mg mg-m is-active inh" data-g="m.nopay" data-s="active" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M12 3.3l7.5 4.35v8.7L12 20.7l-7.5-4.35v-8.7z" data-part="rim" pathLength="100"/><path d="M12 9.4a2.6 2.6 0 1 1 0 5.2a2.6 2.6 0 1 1 0 -5.2z" data-part="mark" pathLength="100"/><path d="M4.5 19.5L19.5 4.5" data-part="badge" pathLength="100"/></svg></span><span>Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; new cards count once they reach level 6+.</span></li></ul></div></div>
+<div class="wq-s chips"><span class="t-meta">until Sun</span><span class="hc" data-wc="honest"><span class="gx" aria-hidden="true"><svg class="mg mg-m is-active z12 inh" data-g="m.nopay" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M12 3.3l7.5 4.35v8.7L12 20.7l-7.5-4.35v-8.7z" data-part="rim" pathLength="100"/><path d="M12 9.4a2.6 2.6 0 1 1 0 5.2a2.6 2.6 0 1 1 0 -5.2z" data-part="mark" pathLength="100"/><path d="M4.5 19.5L19.5 4.5" data-part="badge" pathLength="100"/></svg></span><span class="hc-l" aria-hidden="true">pays nothing</span><span class="sr-only">Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; new cards count once they reach level 6+.</span></span></div>
+<div class="wq-l"><a class="wq-r" href="#"><span class="kg kg-bring" data-kg="bring" data-s="active"><svg class="mg mg-quest is-active" data-g="quest.bring" data-s="active" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M12 6.5C9.5 4.8 6.5 4.5 3.5 5.2v13c3-.7 6-.4 8.5 1.3 2.5-1.7 5.5-2 8.5-1.3v-13c-3-.7-6-.4-8.5 1.3zM12 6.5v13" data-part="rim" pathLength="100"/><path d="M14.6 13.4l1.9-1.9 1.9 1.9" data-part="mark" pathLength="100"/><path d="M4.5 17.9a1.6 1.6 0 1 1 0 3.2a1.6 1.6 0 1 1 0 -3.2z" class="f mg-pip" data-part="solid"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.tested" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M18.5 12a6.5 6.5 0 1 1-1.9-4.6M17 3.8v3.8h-3.8" data-part="mark" pathLength="100"/></svg></span><span class="sr-only">tested by your reviews</span></span><div class="wq-m"><span class="wq-t"><span class="wq-lbl">Bring 3 cards in <span data-wc="name">Risk Management</span> or <span data-wc="name">Position Sizing</span> to level 6+</span><span class="wq-c"><span aria-hidden="true">1 of 3</span><span class="sr-only">1 of 3 cards</span></span></span><div class="meter thin" aria-hidden="true"><i style="--v:0.330"></i></div><div class="pp" role="img" aria-label="Due this week: 1 on Tuesday, 2 on Wednesday, 1 on Saturday"><span class="pp-d past"><b>M</b><i></i></span><span class="pp-d past"><b>T</b><i>1</i></span><span class="pp-d past"><b>W</b><i>2</i></span><span class="pp-d today"><b>T</b><i></i></span><span class="pp-d"><b>F</b><i></i></span><span class="pp-d"><b>S</b><i>1</i></span><span class="pp-d"><b>S</b><i></i></span></div></div><span class="wq-go" aria-hidden="true"><svg class="i" style="width:16px;height:16px" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg></span></a><a class="wq-r" href="#"><span class="kg kg-add" data-kg="add" data-s="active"><svg class="mg mg-quest is-active" data-g="quest.add" data-s="active" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M8 4h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" data-part="rim" pathLength="100"/><path d="M12 9v6M9 12h6" data-part="mark" pathLength="100"/><path d="M4.5 17.9a1.6 1.6 0 1 1 0 3.2a1.6 1.6 0 1 1 0 -3.2z" class="f mg-pip" data-part="solid"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.counted" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M8 6v12M12 6v12M16 6v12" data-part="mark" pathLength="100"/></svg></span><span class="sr-only">counted by the app; it doesn't judge them</span></span><div class="wq-m"><span class="wq-t"><span class="wq-lbl">Add 5 cards to <span data-wc="name">Risk Management</span> or <span data-wc="name">Position Sizing</span></span><span class="wq-c"><span aria-hidden="true">2 of 5</span><span class="sr-only">2 of 5 cards</span></span></span><div class="meter thin" aria-hidden="true" data-seen="meterFill" data-from="20" data-to="40"><i style="--v:0.400"></i></div><span class="wq-aux"><svg class="mg mg-m is-active inh" data-g="m.link" data-s="active" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false"><path d="M10 14l4-4" data-part="mark" pathLength="100"/><path d="M8.6 11.4l-2.1 2.1a3 3 0 0 0 4.2 4.2l2.1-2.1M15.4 12.6l2.1-2.1a3 3 0 0 0-4.2-4.2l-2.1 2.1" data-part="rim" pathLength="100"/></svg><span class="sr-only">counts toward Trading's weekly quota too</span></span></div><span class="wq-go" aria-hidden="true"><svg class="i" style="width:16px;height:16px" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg></span></a><a class="wq-r done" href="#"><span class="kg kg-practice" data-kg="practice" data-s="done" data-seen="questDone"><svg class="mg mg-quest is-done" data-g="quest.practice" data-s="done" data-track="craft" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M6.5 5h11A1.5 1.5 0 0 1 19 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 17.5v-11A1.5 1.5 0 0 1 6.5 5zM5 12h14" data-part="rim" pathLength="100"/><path d="M6.5 5h11A1.5 1.5 0 0 1 19 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 17.5v-11A1.5 1.5 0 0 1 6.5 5z" class="f" data-part="solid"/><path d="M5 12h14" class="k" data-part="mark" pathLength="100"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.tick" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M7.5 4.5h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z" data-part="rim" pathLength="100"/><path d="M8.5 12.3l2.5 2.5 4.5-5" data-part="mark" pathLength="100"/></svg></span><span class="kg-b kg-ok" aria-hidden="true"><svg class="mg mg-check is-done z12 inh" data-g="check" data-s="done" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5" data-part="mark" pathLength="100"/></svg></span><span class="sr-only">from your ticks</span></span><div class="wq-m"><span class="wq-t"><span class="wq-lbl"><span data-wc="name">Backtest</span> · 3 × 45 min</span><span class="wq-c"><span aria-hidden="true">3 of 3</span><span class="sr-only">3 of 3 sessions, done</span></span></span><div class="meter thin" aria-hidden="true" data-seen="meterFill" data-from="67" data-to="100"><i style="--v:1.000"></i></div></div><span class="wq-go" aria-hidden="true"><svg class="i" style="width:16px;height:16px" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg></span></a><div id="a-more" hidden><a class="wq-r done" href="#"><span class="kg kg-practice" data-kg="practice" data-s="done"><svg class="mg mg-quest is-done" data-g="quest.practice" data-s="done" data-track="craft" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M6.5 5h11A1.5 1.5 0 0 1 19 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 17.5v-11A1.5 1.5 0 0 1 6.5 5zM5 12h14" data-part="rim" pathLength="100"/><path d="M6.5 5h11A1.5 1.5 0 0 1 19 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 17.5v-11A1.5 1.5 0 0 1 6.5 5z" class="f" data-part="solid"/><path d="M5 12h14" class="k" data-part="mark" pathLength="100"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.tick" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M7.5 4.5h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z" data-part="rim" pathLength="100"/><path d="M8.5 12.3l2.5 2.5 4.5-5" data-part="mark" pathLength="100"/></svg></span><span class="kg-b kg-ok" aria-hidden="true"><svg class="mg mg-check is-done z12 inh" data-g="check" data-s="done" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5" data-part="mark" pathLength="100"/></svg></span><span class="sr-only">from your ticks</span></span><div class="wq-m"><span class="wq-t"><span class="wq-lbl"><span data-wc="name">Study Risk Management, Position Sizing</span> · 2 × 30 min</span><span class="wq-c"><span aria-hidden="true">2 of 2</span><span class="sr-only">2 of 2 sessions, done</span></span></span><div class="meter thin" aria-hidden="true"><i style="--v:1.000"></i></div></div><span class="wq-go" aria-hidden="true"><svg class="i" style="width:16px;height:16px" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg></span></a><a class="wq-r" href="#"><span class="kg kg-step" data-kg="step" data-s="idle"><svg class="mg mg-quest is-idle" data-g="quest.step" data-s="idle" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M4 19h5v-5h5V9h6" data-part="rim" pathLength="100"/><path d="M6.5 16.05a1.25 1.25 0 1 1 0 2.5a1.25 1.25 0 1 1 0 -2.5z" class="f mg-dot" data-part="solid"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.tick" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M7.5 4.5h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z" data-part="rim" pathLength="100"/><path d="M8.5 12.3l2.5 2.5 4.5-5" data-part="mark" pathLength="100"/></svg></span><span class="sr-only">you tick it</span></span><div class="wq-m"><span class="wq-t"><span class="wq-lbl">Set a maximum daily loss</span><span class="wq-c"><span aria-hidden="true">0 of 1</span><span class="sr-only">0 of 1 step</span></span></span><div class="meter thin" aria-hidden="true"><i style="--v:0.000"></i></div></div><span class="wq-go" aria-hidden="true"><svg class="i" style="width:16px;height:16px" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg></span></a></div></div>
+<button type="button" class="wq-more" data-toggle aria-expanded="false" aria-controls="a-more"><svg class="i" style="width:16px;height:16px" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg><span>2 more</span></button>
+</section><div class="tb-board" aria-hidden="true"><section class="card tb-lane"><div class="tb-lh"><span class="t-eyebrow">Habits</span><span class="t-meta">unchanged</span></div><div class="tb-ph"></div><div class="tb-ph s"></div></section></div></div></div></main><nav class="tabbar" aria-label="Main"><a class="tab tab-plus" href="#" aria-label="Capture"><span><svg class="i" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg></span></a><a class="tab" href="#" aria-current="page"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a><a class="tab" href="#"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-study"/></svg>Study</a><a class="tab" href="#"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-train"/></svg>Train</a><a class="tab" href="#" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav></div></div></div></figure>
+<div class="mk-fig"><div class="mk-tag">demos (SEEN only on /today)</div><div class="mk-demos"><button type="button" class="mk-btn pri" data-demo="questDoneToday">Backtest reaches 3 of 3: check draw</button><button type="button" class="mk-btn" data-demo="addFill">Add 1 → 2: meter from last seen</button></div>
+<div class="mk-cap" style="margin-top:10px"><ul><li><b>Full</b>: the meter runs 700 ms from last seen; the done badge's check draws 220 ms. No solid fade, no hop, no particles on Today.</li><li><b>Calm</b>: the check fades in; the meter is already at its value.</li><li><b>Still</b>: the finished tableau, the same words.</li></ul></div>
+<div class="mk-tag" style="margin-top:18px">the same quest done on the roadmap's Now card (fuller: solid fade + check)</div>
+<div class="card" id="td-cmp" data-route="/you/roadmap" style="padding:14px;display:flex;gap:14px;align-items:center;max-width:344px"><span class="kg kg-practice kg-l" data-kg="practice" data-s="done"><svg class="mg mg-quest is-done" data-g="quest.practice" data-s="done" data-track="craft" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" focusable="false"><path d="M6.5 5h11A1.5 1.5 0 0 1 19 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 17.5v-11A1.5 1.5 0 0 1 6.5 5zM5 12h14" data-part="rim" pathLength="100"/><path d="M6.5 5h11A1.5 1.5 0 0 1 19 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 17.5v-11A1.5 1.5 0 0 1 6.5 5z" class="f" data-part="solid"/><path d="M5 12h14" class="k" data-part="mark" pathLength="100"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.tick" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M7.5 4.5h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z" data-part="rim" pathLength="100"/><path d="M8.5 12.3l2.5 2.5 4.5-5" data-part="mark" pathLength="100"/></svg></span><span class="kg-b kg-ok" aria-hidden="true"><svg class="mg mg-check is-done z12 inh" data-g="check" data-s="done" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5" data-part="mark" pathLength="100"/></svg></span><span class="sr-only">from your ticks</span></span><span class="wq-lbl"><span data-wc="name">Backtest</span> · 3 × 45 min</span><button type="button" class="mk-btn" data-demo="questDoneRoadmap">Play</button></div>
+</div>
+</div></section>
+<section class="mk-sec"><h2>Every aim-line state · static (no draw, no chime)</h2>
+<p>A rank not yet held always carries its verb: “Gives [next-rank seal] Aim rank Expert.” Nothing is clamped, so the verb can never be cut off. Measured at 344 (216 px of text beside the route glyph and the ×), START with its full stage name needs three lines; the proposal lets the stage cairn carry “Mastered, part 1” (read aloud in full) to stay within the 72 px gate. The year-or-three question moved into the ASK card's (i).</p>
+<div class="al-list"><div class="mk-tag">SET</div><section class="card al" aria-label="Aim"><a class="al-a" href="#"><svg class="mg mg-route is-active inh" data-g="route" data-s="active" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M6 15.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0 -4.4zM18 3.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0 -4.4z" data-part="rim" pathLength="100"/><path d="M8.2 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.8" data-part="mark" pathLength="100"/></svg><span><b>A new week.</b> Set an aim.</span></a><button type="button" class="icon-btn sm" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i" style="width:18px;height:18px" aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button></section><div class="mk-tag">NEXT</div><section class="card al" aria-label="Aim"><a class="al-a" href="#"><svg class="mg mg-route is-active inh" data-g="route" data-s="active" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M6 15.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0 -4.4zM18 3.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0 -4.4z" data-part="rim" pathLength="100"/><path d="M8.2 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.8" data-part="mark" pathLength="100"/></svg><span><b>Last aim done.</b> Set the next.</span></a><button type="button" class="icon-btn sm" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i" style="width:18px;height:18px" aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button></section><div class="mk-tag">DRAFT</div><section class="card al" aria-label="Aim"><a class="al-a" href="#"><svg class="mg mg-route is-active inh" data-g="route" data-s="active" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M6 15.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0 -4.4zM18 3.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0 -4.4z" data-part="rim" pathLength="100"/><path d="M8.2 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.8" data-part="mark" pathLength="100"/></svg><span><b>Draft waiting</b> for your check.</span></a><button type="button" class="icon-btn sm" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i" style="width:18px;height:18px" aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button></section><div class="mk-tag">START · proposed: the cairn carries the stage name (2 lines at 344)</div><section class="card al" aria-label="Aim"><a class="al-a" href="#"><svg class="mg mg-route is-active inh" data-g="route" data-s="active" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M6 15.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0 -4.4zM18 3.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0 -4.4z" data-part="rim" pathLength="100"/><path d="M8.2 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.8" data-part="mark" pathLength="100"/></svg><span><b><span data-wc="name">Milestone 5</span> <svg class="mg mg-stage is-active inh" data-g="stage.part:mastered" data-s="active" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><g transform="translate(2.4 2.4) scale(.8)"><path d="M4 19.5q8 -3 16 0q-8 2.2 -16 0z" data-part="mark" data-i="0" pathLength="100"/><path d="M5.5 15.5q6.5 -3 13 0q-6.5 2.2 -13 0z" data-part="mark" data-i="1" pathLength="100"/><path d="M7 11.5q5 -3 10 0q-5 2.2 -10 0z" data-part="mark" data-i="2" pathLength="100"/><path d="M8.5 7.5q3.5 -3 7 0q-3.5 2.2 -7 0z" data-part="mark" data-i="3" pathLength="100"/><path d="M12 2a1.6 1.6 0 0 0 0 3.2z" data-part="mark" data-i="4" pathLength="100"/></g><path d="M12 1a11 11 0 1 1 0 22a11 11 0 1 1 0 -22z" data-part="ring" pathLength="100" stroke-width="1.25"/></svg><span class="sr-only">Mastered, part 1,</span> is ready.</b> Gives <svg class="mg mg-rank is-active" data-g="rank.4" data-s="active" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path d="M12 2a10 10 0 1 1 0 20a10 10 0 1 1 0 -20z" class="c2" data-part="rim" pathLength="100"/><path d="M12 5.8L12 3.8" class="c0" data-part="mark" data-i="0" pathLength="100"/><path d="M17.369 8.9L19.101 7.9" class="c0" data-part="mark" data-i="1" pathLength="100"/><path d="M17.369 15.1L19.101 16.1" class="c0" data-part="mark" data-i="2" pathLength="100"/><path d="M12 18.05a1.15 1.15 0 1 1 0 2.3a1.15 1.15 0 1 1 0 -2.3z" class="c0 mg-slot" data-part="ring" pathLength="100" stroke-width="1.25"/><path d="M5.765 14.75a0.85 0.85 0 1 1 0 1.7a0.85 0.85 0 1 1 0 -1.7zM5.765 7.55a0.85 0.85 0 1 1 0 1.7a0.85 0.85 0 1 1 0 -1.7z" class="f cm" data-part="badge"/></svg> Aim rank <span data-wc="name">Expert</span>.</span></a><button type="button" class="icon-btn sm" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i" style="width:18px;height:18px" aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button></section><div class="mk-tag">START · as specced: 3 lines at 344 (≈ 78 px), over the ≤ 72 px gate</div><section class="card al" aria-label="Aim"><a class="al-a" href="#"><svg class="mg mg-route is-active inh" data-g="route" data-s="active" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M6 15.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0 -4.4zM18 3.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0 -4.4z" data-part="rim" pathLength="100"/><path d="M8.2 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.8" data-part="mark" pathLength="100"/></svg><span><b><span data-wc="name">Milestone 5 · Mastered, part 1</span> is ready.</b> Gives <svg class="mg mg-rank is-active" data-g="rank.4" data-s="active" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path d="M12 2a10 10 0 1 1 0 20a10 10 0 1 1 0 -20z" class="c2" data-part="rim" pathLength="100"/><path d="M12 5.8L12 3.8" class="c0" data-part="mark" data-i="0" pathLength="100"/><path d="M17.369 8.9L19.101 7.9" class="c0" data-part="mark" data-i="1" pathLength="100"/><path d="M17.369 15.1L19.101 16.1" class="c0" data-part="mark" data-i="2" pathLength="100"/><path d="M12 18.05a1.15 1.15 0 1 1 0 2.3a1.15 1.15 0 1 1 0 -2.3z" class="c0 mg-slot" data-part="ring" pathLength="100" stroke-width="1.25"/><path d="M5.765 14.75a0.85 0.85 0 1 1 0 1.7a0.85 0.85 0 1 1 0 -1.7zM5.765 7.55a0.85 0.85 0 1 1 0 1.7a0.85 0.85 0 1 1 0 -1.7z" class="f cm" data-part="badge"/></svg> Aim rank <span data-wc="name">Expert</span>.</span></a><button type="button" class="icon-btn sm" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i" style="width:18px;height:18px" aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button></section><div class="mk-tag">START, keeps rank</div><section class="card al" aria-label="Aim"><a class="al-a" href="#"><svg class="mg mg-route is-active inh" data-g="route" data-s="active" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M6 15.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0 -4.4zM18 3.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0 -4.4z" data-part="rim" pathLength="100"/><path d="M8.2 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.8" data-part="mark" pathLength="100"/></svg><span><b><span data-wc="name">Milestone 4 · Fluent</span> is ready.</b> <svg class="mg mg-rank is-done" data-g="rank.3" data-s="done" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path d="M12 2a10 10 0 1 1 0 20a10 10 0 1 1 0 -20z" data-part="rim" pathLength="100"/><path d="M12 5.8L12 3.8" data-part="mark" data-i="0" pathLength="100"/><path d="M17.369 8.9L19.101 7.9" data-part="mark" data-i="1" pathLength="100"/><path d="M17.369 15.1L19.101 16.1" data-part="mark" data-i="2" pathLength="100"/><path d="M12 18.35a0.85 0.85 0 1 1 0 1.7a0.85 0.85 0 1 1 0 -1.7zM5.765 14.75a0.85 0.85 0 1 1 0 1.7a0.85 0.85 0 1 1 0 -1.7zM5.765 7.55a0.85 0.85 0 1 1 0 1.7a0.85 0.85 0 1 1 0 -1.7z" class="f cm" data-part="badge"/><path d="M12 9.4L14.252 10.7L14.252 13.3L12 14.6L9.748 13.3L9.748 10.7z" data-part="solid" pathLength="100"/></svg> Keeps your rank.</span></a><button type="button" class="icon-btn sm" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i" style="width:18px;height:18px" aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button></section></div>
+</section>
+<section class="mk-sec"><h2>Body plan · one health chip in the heading</h2>
+<p>HEALTH_LINE was repeated under every practice row; now it is one chip per card whose visible words keep the instruction, “Not medical advice · ask a professional”, and whose tap opens the full line.</p>
+<div class="mk-row"><figure class="mk-fig"><div class="mk-tag"><b>344</b> · body plan · <span class='mk-flag'>example</span></div><div class="frame f344 mini " id="td-body" data-page data-route="/today"><main class="main"><div class="page"><section class="card wq-card" aria-labelledby="bd-h">
+<div class="wq-h"><h3 id="bd-h">Week quests · <span data-wc="name">Milestone 2</span></h3><button type="button" class="itip" aria-label="Key: week quests" aria-expanded="false" aria-controls="bd-k"><svg class="mg mg-m is-idle inh" data-g="m.info" data-s="idle" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M12 3.5a8.5 8.5 0 1 1 0 17a8.5 8.5 0 1 1 0 -17z" data-part="rim" pathLength="100"/><path d="M12 11v5.5M12 7.6v.01" data-part="mark" pathLength="100"/></svg></button><div class="tp tp-key" id="bd-k" hidden><ul class="keyl"><li><span class="kgx" aria-hidden="true"><span class="kg kg-practice" data-kg="practice" data-s="active"><svg class="mg mg-quest is-active" data-g="quest.practice" data-s="active" data-track="body" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M12 3.5l8.5 15.5h-17z" data-part="rim" pathLength="100"/><path d="M4.5 17.9a1.6 1.6 0 1 1 0 3.2a1.6 1.6 0 1 1 0 -3.2z" class="f mg-pip" data-part="solid"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.tick" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M7.5 4.5h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z" data-part="rim" pathLength="100"/><path d="M8.5 12.3l2.5 2.5 4.5-5" data-part="mark" pathLength="100"/></svg></span></span></span><span>sessions and steps: your ticks · in Habits</span></li><li><span class="kgx" aria-hidden="true"><svg class="mg mg-m is-active inh" data-g="m.nopay" data-s="active" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M12 3.3l7.5 4.35v8.7L12 20.7l-7.5-4.35v-8.7z" data-part="rim" pathLength="100"/><path d="M12 9.4a2.6 2.6 0 1 1 0 5.2a2.6 2.6 0 1 1 0 -5.2z" data-part="mark" pathLength="100"/><path d="M4.5 19.5L19.5 4.5" data-part="badge" pathLength="100"/></svg></span><span>Week quests pay nothing. Session and step rows count toward Milestone 2 as you do them.</span></li><li><span class="kgx" aria-hidden="true"><svg class="mg mg-safe is-active inh" data-g="safe.health" data-s="active" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M9.975 18.975L18.975 9.975A3.5 3.5 0 0 0 14.025 5.025L5.025 14.025A3.5 3.5 0 0 0 9.975 18.975z" data-part="rim" pathLength="100"/><path d="M12 10l2 2-2 2-2-2z" data-part="mark" pathLength="100"/><path d="M12 10.65a0.45 0.45 0 1 1 0 0.9a0.45 0.45 0 1 1 0 -0.9zM12.9 11.55a0.45 0.45 0 1 1 0 0.9a0.45 0.45 0 1 1 0 -0.9zM12 12.45a0.45 0.45 0 1 1 0 0.9a0.45 0.45 0 1 1 0 -0.9zM11.1 11.55a0.45 0.45 0 1 1 0 0.9a0.45 0.45 0 1 1 0 -0.9z" class="f" data-part="solid"/></svg></span><span>Not medical advice — check health-related changes with a professional.</span></li></ul></div></div>
+<div class="wq-s chips"><span class="t-meta">until Sun</span><span class="hc" data-wc="honest"><span class="gx" aria-hidden="true"><svg class="mg mg-m is-active z12 inh" data-g="m.nopay" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M12 3.3l7.5 4.35v8.7L12 20.7l-7.5-4.35v-8.7z" data-part="rim" pathLength="100"/><path d="M12 9.4a2.6 2.6 0 1 1 0 5.2a2.6 2.6 0 1 1 0 -5.2z" data-part="mark" pathLength="100"/><path d="M4.5 19.5L19.5 4.5" data-part="badge" pathLength="100"/></svg></span><span class="hc-l" aria-hidden="true">pays nothing</span><span class="sr-only">Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; new cards count once they reach level 6+.</span></span><button type="button" class="hcb" aria-expanded="false" aria-controls="bd-hl" data-wc="honest"><span class="hc"><span class="gx" aria-hidden="true"><svg class="mg mg-safe is-active z12 inh" data-g="safe.health" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M9.975 18.975L18.975 9.975A3.5 3.5 0 0 0 14.025 5.025L5.025 14.025A3.5 3.5 0 0 0 9.975 18.975z" data-part="rim" pathLength="100"/><path d="M12 10l2 2-2 2-2-2z" data-part="mark" pathLength="100"/><path d="M12 10.65a0.45 0.45 0 1 1 0 0.9a0.45 0.45 0 1 1 0 -0.9zM12.9 11.55a0.45 0.45 0 1 1 0 0.9a0.45 0.45 0 1 1 0 -0.9zM12 12.45a0.45 0.45 0 1 1 0 0.9a0.45 0.45 0 1 1 0 -0.9zM11.1 11.55a0.45 0.45 0 1 1 0 0.9a0.45 0.45 0 1 1 0 -0.9z" class="f" data-part="solid"/></svg></span><span class="hc-l">Not medical advice · ask a professional</span></span></button><div class="tp" id="bd-hl" hidden>Not medical advice — check health-related changes with a professional.</div></div>
+<div class="wq-l"><a class="wq-r" href="#"><span class="kg kg-practice" data-kg="practice" data-s="active"><svg class="mg mg-quest is-active" data-g="quest.practice" data-s="active" data-track="body" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M12 3.5l8.5 15.5h-17z" data-part="rim" pathLength="100"/><path d="M4.5 17.9a1.6 1.6 0 1 1 0 3.2a1.6 1.6 0 1 1 0 -3.2z" class="f mg-pip" data-part="solid"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.tick" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M7.5 4.5h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z" data-part="rim" pathLength="100"/><path d="M8.5 12.3l2.5 2.5 4.5-5" data-part="mark" pathLength="100"/></svg></span><span class="sr-only">from your ticks</span></span><div class="wq-m"><span class="wq-t"><span class="wq-lbl"><span data-wc="name">Easy run</span> · 3 × 30 min</span><span class="wq-c"><span aria-hidden="true">2 of 3</span><span class="sr-only">2 of 3 sessions</span></span></span><div class="meter thin" aria-hidden="true"><i style="--v:0.670"></i></div></div><span class="wq-go" aria-hidden="true"><svg class="i" style="width:16px;height:16px" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg></span></a><a class="wq-r" href="#"><span class="kg kg-practice" data-kg="practice" data-s="idle"><svg class="mg mg-quest is-idle" data-g="quest.practice" data-s="idle" data-track="body" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M12 3.5l8.5 15.5h-17z" data-part="rim" pathLength="100"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.tick" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M7.5 4.5h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z" data-part="rim" pathLength="100"/><path d="M8.5 12.3l2.5 2.5 4.5-5" data-part="mark" pathLength="100"/></svg></span><span class="sr-only">from your ticks</span></span><div class="wq-m"><span class="wq-t"><span class="wq-lbl"><span data-wc="name">Mobility session</span> · 2 × 20 min</span><span class="wq-c"><span aria-hidden="true">0 of 2</span><span class="sr-only">0 of 2 sessions</span></span></span><div class="meter thin" aria-hidden="true"><i style="--v:0.000"></i></div></div><span class="wq-go" aria-hidden="true"><svg class="i" style="width:16px;height:16px" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg></span></a><a class="wq-r" href="#"><span class="kg kg-step" data-kg="step" data-s="active"><svg class="mg mg-quest is-active" data-g="quest.step" data-s="active" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M4 19h5v-5h5V9h6" data-part="rim" pathLength="100"/><path d="M11.5 11.05a1.25 1.25 0 1 1 0 2.5a1.25 1.25 0 1 1 0 -2.5z" class="f mg-dot" data-part="solid"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.tick" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M7.5 4.5h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z" data-part="rim" pathLength="100"/><path d="M8.5 12.3l2.5 2.5 4.5-5" data-part="mark" pathLength="100"/></svg></span><span class="sr-only">you tick it</span></span><div class="wq-m"><span class="wq-t"><span class="wq-lbl">Book a running-shoe fitting</span><span class="wq-c"><span aria-hidden="true">0 of 1</span><span class="sr-only">0 of 1 step</span></span></span><div class="meter thin" aria-hidden="true"><i style="--v:0.000"></i></div></div><span class="wq-go" aria-hidden="true"><svg class="i" style="width:16px;height:16px" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg></span></a><div id="bd-more" hidden><a class="wq-r" href="#"><span class="kg kg-checkpoint" data-kg="checkpoint" data-s="idle"><svg class="mg mg-quest is-idle" data-g="quest.checkpoint" data-s="idle" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M12 3.5a8.5 8.5 0 1 1 0 17a8.5 8.5 0 1 1 0 -17z" data-part="rim" pathLength="100"/><path d="M12 8.5a3.5 3.5 0 1 1 0 7a3.5 3.5 0 1 1 0 -7z" data-part="mark" pathLength="100"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.log" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M9 5H7.5A1.5 1.5 0 0 0 6 6.5v12A1.5 1.5 0 0 0 7.5 20h9a1.5 1.5 0 0 0 1.5-1.5v-12A1.5 1.5 0 0 0 16.5 5H15M9.5 3.5h5v3h-5z" data-part="rim" pathLength="100"/></svg></span><span class="sr-only">you log it · doesn't move your progress</span></span><div class="wq-m"><span class="wq-t"><span class="wq-lbl"><span data-wc="name">Run 5 km and log the time</span></span><span class="wq-c"><span aria-hidden="true">0 of 1</span><span class="sr-only">0 of 1</span></span></span><div class="meter thin" aria-hidden="true"><i style="--v:0.000"></i></div><span class="wq-aux"><span class="hc" data-wc="honest"><span class="gx" aria-hidden="true"><svg class="mg mg-quest is-idle z12 inh" data-g="quest.checkpoint" data-s="idle" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M12 3.5a8.5 8.5 0 1 1 0 17a8.5 8.5 0 1 1 0 -17z" data-part="rim" pathLength="100"/><path d="M12 8.5a3.5 3.5 0 1 1 0 7a3.5 3.5 0 1 1 0 -7z" data-part="mark" pathLength="100"/></svg></span><span class="hc-l" aria-hidden="true">context only</span><span class="sr-only">you log it · doesn't move your progress</span></span></span></div><span class="wq-go" aria-hidden="true"><svg class="i" style="width:16px;height:16px" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg></span></a></div></div>
+<button type="button" class="wq-more" data-toggle aria-expanded="false" aria-controls="bd-more"><svg class="i" style="width:16px;height:16px" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg><span>1 more</span></button>
+</section></div></main></div></figure></div>
+</section>
+<section class="mk-sec"><h2>Desktop · 1440 · the board's columns</h2>
+<p>Week quests sit in the board's middle column; the aim line sits in c3 under Goals. Rows keep one line each.</p>
+<div class="mk-scroll"><figure class="mk-fig"><div class="mk-tag"><b>1440</b> · /today · <span class='mk-flag'>example</span></div><div class="frame f1440" id="td1440" data-page data-route="/today"><div class="app"><nav class="sidebar" aria-label="Sections"><div class="sb-crest"><svg width="40" height="42" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg><div><b>Level 14</b><span>Adept of the Deep Archive</span></div></div><a class="sb-cap" href="#"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg>Capture</a><a href="#" aria-current="page"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-today"/></svg>Today</a><a href="#"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-study"/></svg>Study</a><a href="#"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-train"/></svg>Train</a><a href="#"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-library"/></svg>Library</a><a href="#"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-chart"/></svg>Stats</a><span class="sb-grow"></span><a href="#"><svg width="22" height="23" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar"><div class="tb-title"><div class="t-eyebrow">Today</div><h1>Thursday 28 January</h1></div><button type="button" class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page"><div class="td-3"><div class="td-c"><div class="tb-board" aria-hidden="true"><section class="card tb-lane"><div class="tb-lh"><span class="t-eyebrow">Musts</span><span class="t-meta">unchanged</span></div><div class="tb-ph"></div><div class="tb-ph s"></div></section><section class="card tb-lane"><div class="tb-lh"><span class="t-eyebrow">Anytime</span><span class="t-meta">unchanged</span></div><div class="tb-ph"></div><div class="tb-ph s"></div></section></div></div><div class="td-c"><div class="tb-board" aria-hidden="true"><section class="card tb-lane"><div class="tb-lh"><span class="t-eyebrow">Habits</span><span class="t-meta">unchanged</span></div><div class="tb-ph"></div><div class="tb-ph s"></div></section></div><section class="card wq-card" aria-labelledby="b-h">
+<div class="wq-h"><h3 id="b-h">Week quests · <span data-wc="name">Milestone 2</span></h3><button type="button" class="itip" aria-label="Key: week quests" aria-expanded="false" aria-controls="b-k"><svg class="mg mg-m is-idle inh" data-g="m.info" data-s="idle" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M12 3.5a8.5 8.5 0 1 1 0 17a8.5 8.5 0 1 1 0 -17z" data-part="rim" pathLength="100"/><path d="M12 11v5.5M12 7.6v.01" data-part="mark" pathLength="100"/></svg></button><div class="tp tp-key" id="b-k" hidden><ul class="keyl"><li><span class="kgx" aria-hidden="true"><span class="kg kg-bring" data-kg="bring" data-s="active"><svg class="mg mg-quest is-active" data-g="quest.bring" data-s="active" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M12 6.5C9.5 4.8 6.5 4.5 3.5 5.2v13c3-.7 6-.4 8.5 1.3 2.5-1.7 5.5-2 8.5-1.3v-13c-3-.7-6-.4-8.5 1.3zM12 6.5v13" data-part="rim" pathLength="100"/><path d="M14.6 13.4l1.9-1.9 1.9 1.9" data-part="mark" pathLength="100"/><path d="M4.5 17.9a1.6 1.6 0 1 1 0 3.2a1.6 1.6 0 1 1 0 -3.2z" class="f mg-pip" data-part="solid"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.tested" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M18.5 12a6.5 6.5 0 1 1-1.9-4.6M17 3.8v3.8h-3.8" data-part="mark" pathLength="100"/></svg></span></span></span><span>Bring: tested by your reviews · 1 comes due Tue, 2 Wed, 1 Sat</span></li><li><span class="kgx" aria-hidden="true"><span class="kg kg-add" data-kg="add" data-s="active"><svg class="mg mg-quest is-active" data-g="quest.add" data-s="active" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M8 4h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" data-part="rim" pathLength="100"/><path d="M12 9v6M9 12h6" data-part="mark" pathLength="100"/><path d="M4.5 17.9a1.6 1.6 0 1 1 0 3.2a1.6 1.6 0 1 1 0 -3.2z" class="f mg-pip" data-part="solid"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.counted" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M8 6v12M12 6v12M16 6v12" data-part="mark" pathLength="100"/></svg></span></span></span><span>Add: counted by the app · counts toward Trading's weekly quota too · in Anytime</span></li><li><span class="kgx" aria-hidden="true"><span class="kg kg-practice" data-kg="practice" data-s="active"><svg class="mg mg-quest is-active" data-g="quest.practice" data-s="active" data-track="craft" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M6.5 5h11A1.5 1.5 0 0 1 19 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 17.5v-11A1.5 1.5 0 0 1 6.5 5zM5 12h14" data-part="rim" pathLength="100"/><path d="M4.5 17.9a1.6 1.6 0 1 1 0 3.2a1.6 1.6 0 1 1 0 -3.2z" class="f mg-pip" data-part="solid"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.tick" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M7.5 4.5h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z" data-part="rim" pathLength="100"/><path d="M8.5 12.3l2.5 2.5 4.5-5" data-part="mark" pathLength="100"/></svg></span></span></span><span>sessions and steps: your ticks · in Habits</span></li><li><span class="kgx" aria-hidden="true"><svg class="mg mg-m is-active inh" data-g="m.nopay" data-s="active" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M12 3.3l7.5 4.35v8.7L12 20.7l-7.5-4.35v-8.7z" data-part="rim" pathLength="100"/><path d="M12 9.4a2.6 2.6 0 1 1 0 5.2a2.6 2.6 0 1 1 0 -5.2z" data-part="mark" pathLength="100"/><path d="M4.5 19.5L19.5 4.5" data-part="badge" pathLength="100"/></svg></span><span>Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; new cards count once they reach level 6+.</span></li></ul></div></div>
+<div class="wq-s chips"><span class="t-meta">until Sun</span><span class="hc" data-wc="honest"><span class="gx" aria-hidden="true"><svg class="mg mg-m is-active z12 inh" data-g="m.nopay" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M12 3.3l7.5 4.35v8.7L12 20.7l-7.5-4.35v-8.7z" data-part="rim" pathLength="100"/><path d="M12 9.4a2.6 2.6 0 1 1 0 5.2a2.6 2.6 0 1 1 0 -5.2z" data-part="mark" pathLength="100"/><path d="M4.5 19.5L19.5 4.5" data-part="badge" pathLength="100"/></svg></span><span class="hc-l" aria-hidden="true">pays nothing</span><span class="sr-only">Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; new cards count once they reach level 6+.</span></span></div>
+<div class="wq-l"><a class="wq-r" href="#"><span class="kg kg-bring" data-kg="bring" data-s="active"><svg class="mg mg-quest is-active" data-g="quest.bring" data-s="active" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M12 6.5C9.5 4.8 6.5 4.5 3.5 5.2v13c3-.7 6-.4 8.5 1.3 2.5-1.7 5.5-2 8.5-1.3v-13c-3-.7-6-.4-8.5 1.3zM12 6.5v13" data-part="rim" pathLength="100"/><path d="M14.6 13.4l1.9-1.9 1.9 1.9" data-part="mark" pathLength="100"/><path d="M4.5 17.9a1.6 1.6 0 1 1 0 3.2a1.6 1.6 0 1 1 0 -3.2z" class="f mg-pip" data-part="solid"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.tested" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M18.5 12a6.5 6.5 0 1 1-1.9-4.6M17 3.8v3.8h-3.8" data-part="mark" pathLength="100"/></svg></span><span class="sr-only">tested by your reviews</span></span><div class="wq-m"><span class="wq-t"><span class="wq-lbl">Bring 3 cards in <span data-wc="name">Risk Management</span> or <span data-wc="name">Position Sizing</span> to level 6+</span><span class="wq-c"><span aria-hidden="true">1 of 3</span><span class="sr-only">1 of 3 cards</span></span></span><div class="meter thin" aria-hidden="true"><i style="--v:0.330"></i></div><div class="pp" role="img" aria-label="Due this week: 1 on Tuesday, 2 on Wednesday, 1 on Saturday"><span class="pp-d past"><b>M</b><i></i></span><span class="pp-d past"><b>T</b><i>1</i></span><span class="pp-d past"><b>W</b><i>2</i></span><span class="pp-d today"><b>T</b><i></i></span><span class="pp-d"><b>F</b><i></i></span><span class="pp-d"><b>S</b><i>1</i></span><span class="pp-d"><b>S</b><i></i></span></div></div><span class="wq-go" aria-hidden="true"><svg class="i" style="width:16px;height:16px" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg></span></a><a class="wq-r" href="#"><span class="kg kg-add" data-kg="add" data-s="active"><svg class="mg mg-quest is-active" data-g="quest.add" data-s="active" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M8 4h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" data-part="rim" pathLength="100"/><path d="M12 9v6M9 12h6" data-part="mark" pathLength="100"/><path d="M4.5 17.9a1.6 1.6 0 1 1 0 3.2a1.6 1.6 0 1 1 0 -3.2z" class="f mg-pip" data-part="solid"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.counted" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M8 6v12M12 6v12M16 6v12" data-part="mark" pathLength="100"/></svg></span><span class="sr-only">counted by the app; it doesn't judge them</span></span><div class="wq-m"><span class="wq-t"><span class="wq-lbl">Add 5 cards to <span data-wc="name">Risk Management</span> or <span data-wc="name">Position Sizing</span></span><span class="wq-c"><span aria-hidden="true">2 of 5</span><span class="sr-only">2 of 5 cards</span></span></span><div class="meter thin" aria-hidden="true" data-seen="meterFill" data-from="20" data-to="40"><i style="--v:0.400"></i></div><span class="wq-aux"><svg class="mg mg-m is-active inh" data-g="m.link" data-s="active" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false"><path d="M10 14l4-4" data-part="mark" pathLength="100"/><path d="M8.6 11.4l-2.1 2.1a3 3 0 0 0 4.2 4.2l2.1-2.1M15.4 12.6l2.1-2.1a3 3 0 0 0-4.2-4.2l-2.1 2.1" data-part="rim" pathLength="100"/></svg><span class="sr-only">counts toward Trading's weekly quota too</span></span></div><span class="wq-go" aria-hidden="true"><svg class="i" style="width:16px;height:16px" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg></span></a><a class="wq-r done" href="#"><span class="kg kg-practice" data-kg="practice" data-s="done" data-seen="questDone"><svg class="mg mg-quest is-done" data-g="quest.practice" data-s="done" data-track="craft" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M6.5 5h11A1.5 1.5 0 0 1 19 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 17.5v-11A1.5 1.5 0 0 1 6.5 5zM5 12h14" data-part="rim" pathLength="100"/><path d="M6.5 5h11A1.5 1.5 0 0 1 19 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 17.5v-11A1.5 1.5 0 0 1 6.5 5z" class="f" data-part="solid"/><path d="M5 12h14" class="k" data-part="mark" pathLength="100"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.tick" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M7.5 4.5h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z" data-part="rim" pathLength="100"/><path d="M8.5 12.3l2.5 2.5 4.5-5" data-part="mark" pathLength="100"/></svg></span><span class="kg-b kg-ok" aria-hidden="true"><svg class="mg mg-check is-done z12 inh" data-g="check" data-s="done" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5" data-part="mark" pathLength="100"/></svg></span><span class="sr-only">from your ticks</span></span><div class="wq-m"><span class="wq-t"><span class="wq-lbl"><span data-wc="name">Backtest</span> · 3 × 45 min</span><span class="wq-c"><span aria-hidden="true">3 of 3</span><span class="sr-only">3 of 3 sessions, done</span></span></span><div class="meter thin" aria-hidden="true" data-seen="meterFill" data-from="67" data-to="100"><i style="--v:1.000"></i></div></div><span class="wq-go" aria-hidden="true"><svg class="i" style="width:16px;height:16px" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg></span></a><div id="b-more" hidden><a class="wq-r done" href="#"><span class="kg kg-practice" data-kg="practice" data-s="done"><svg class="mg mg-quest is-done" data-g="quest.practice" data-s="done" data-track="craft" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M6.5 5h11A1.5 1.5 0 0 1 19 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 17.5v-11A1.5 1.5 0 0 1 6.5 5zM5 12h14" data-part="rim" pathLength="100"/><path d="M6.5 5h11A1.5 1.5 0 0 1 19 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 17.5v-11A1.5 1.5 0 0 1 6.5 5z" class="f" data-part="solid"/><path d="M5 12h14" class="k" data-part="mark" pathLength="100"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.tick" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M7.5 4.5h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z" data-part="rim" pathLength="100"/><path d="M8.5 12.3l2.5 2.5 4.5-5" data-part="mark" pathLength="100"/></svg></span><span class="kg-b kg-ok" aria-hidden="true"><svg class="mg mg-check is-done z12 inh" data-g="check" data-s="done" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5" data-part="mark" pathLength="100"/></svg></span><span class="sr-only">from your ticks</span></span><div class="wq-m"><span class="wq-t"><span class="wq-lbl"><span data-wc="name">Study Risk Management, Position Sizing</span> · 2 × 30 min</span><span class="wq-c"><span aria-hidden="true">2 of 2</span><span class="sr-only">2 of 2 sessions, done</span></span></span><div class="meter thin" aria-hidden="true"><i style="--v:1.000"></i></div></div><span class="wq-go" aria-hidden="true"><svg class="i" style="width:16px;height:16px" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg></span></a><a class="wq-r" href="#"><span class="kg kg-step" data-kg="step" data-s="idle"><svg class="mg mg-quest is-idle" data-g="quest.step" data-s="idle" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M4 19h5v-5h5V9h6" data-part="rim" pathLength="100"/><path d="M6.5 16.05a1.25 1.25 0 1 1 0 2.5a1.25 1.25 0 1 1 0 -2.5z" class="f mg-dot" data-part="solid"/></svg><span class="kg-b kg-ev" aria-hidden="true"><svg class="mg mg-ev is-active z12 inh" data-g="ev.tick" data-s="active" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path d="M7.5 4.5h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z" data-part="rim" pathLength="100"/><path d="M8.5 12.3l2.5 2.5 4.5-5" data-part="mark" pathLength="100"/></svg></span><span class="sr-only">you tick it</span></span><div class="wq-m"><span class="wq-t"><span class="wq-lbl">Set a maximum daily loss</span><span class="wq-c"><span aria-hidden="true">0 of 1</span><span class="sr-only">0 of 1 step</span></span></span><div class="meter thin" aria-hidden="true"><i style="--v:0.000"></i></div></div><span class="wq-go" aria-hidden="true"><svg class="i" style="width:16px;height:16px" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg></span></a></div></div>
+<button type="button" class="wq-more" data-toggle aria-expanded="false" aria-controls="b-more"><svg class="i" style="width:16px;height:16px" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg><span>2 more</span></button>
+</section></div><div class="td-c"><div class="tb-board" aria-hidden="true"><section class="card tb-lane"><div class="tb-lh"><span class="t-eyebrow">Goals</span><span class="t-meta">unchanged</span></div><div class="tb-ph"></div><div class="tb-ph s"></div></section></div><section class="card al" aria-label="Aim"><a class="al-a" href="#"><svg class="mg mg-route is-active inh" data-g="route" data-s="active" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M6 15.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0 -4.4zM18 3.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0 -4.4z" data-part="rim" pathLength="100"/><path d="M8.2 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.8" data-part="mark" pathLength="100"/></svg><span><b><span data-wc="name">Milestone 5</span> <svg class="mg mg-stage is-active inh" data-g="stage.part:mastered" data-s="active" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><g transform="translate(2.4 2.4) scale(.8)"><path d="M4 19.5q8 -3 16 0q-8 2.2 -16 0z" data-part="mark" data-i="0" pathLength="100"/><path d="M5.5 15.5q6.5 -3 13 0q-6.5 2.2 -13 0z" data-part="mark" data-i="1" pathLength="100"/><path d="M7 11.5q5 -3 10 0q-5 2.2 -10 0z" data-part="mark" data-i="2" pathLength="100"/><path d="M8.5 7.5q3.5 -3 7 0q-3.5 2.2 -7 0z" data-part="mark" data-i="3" pathLength="100"/><path d="M12 2a1.6 1.6 0 0 0 0 3.2z" data-part="mark" data-i="4" pathLength="100"/></g><path d="M12 1a11 11 0 1 1 0 22a11 11 0 1 1 0 -22z" data-part="ring" pathLength="100" stroke-width="1.25"/></svg><span class="sr-only">Mastered, part 1,</span> is ready.</b> Gives <svg class="mg mg-rank is-active" data-g="rank.4" data-s="active" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path d="M12 2a10 10 0 1 1 0 20a10 10 0 1 1 0 -20z" class="c2" data-part="rim" pathLength="100"/><path d="M12 5.8L12 3.8" class="c0" data-part="mark" data-i="0" pathLength="100"/><path d="M17.369 8.9L19.101 7.9" class="c0" data-part="mark" data-i="1" pathLength="100"/><path d="M17.369 15.1L19.101 16.1" class="c0" data-part="mark" data-i="2" pathLength="100"/><path d="M12 18.05a1.15 1.15 0 1 1 0 2.3a1.15 1.15 0 1 1 0 -2.3z" class="c0 mg-slot" data-part="ring" pathLength="100" stroke-width="1.25"/><path d="M5.765 14.75a0.85 0.85 0 1 1 0 1.7a0.85 0.85 0 1 1 0 -1.7zM5.765 7.55a0.85 0.85 0 1 1 0 1.7a0.85 0.85 0 1 1 0 -1.7z" class="f cm" data-part="badge"/></svg> Aim rank <span data-wc="name">Expert</span>.</span></a><button type="button" class="icon-btn sm" aria-label="Not now: no aim suggestions for 4 weeks"><svg class="i" style="width:18px;height:18px" aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button></section></div></div></div></main></div></div></div></figure></div>
+</section>
+<div id="mk-live" class="sr-only" role="status" aria-live="polite"></div>
+<script>
+const GL = (function () {
+/* =====================================================================
+   Glyph path table (ui-motion.md §4). One source for the static markup the
+   builder writes (the "server render") and for the page script's swaps.
+   Grammar: 24 × 24 box, currentColor only, round caps and joins, stroked
+   parts carry pathLength="100" and a data-part; fills only in a solid state.
+   ===================================================================== */
+const r3 = (n) => Math.round(n * 1000) / 1000;
+/** A circle as a path that starts at the top and runs clockwise, so a draw (dashoffset 100 → 0) starts at 12 o'clock. */
+const circ = (cx, cy, r) => `M${r3(cx)} ${r3(cy - r)}a${r} ${r} 0 1 1 0 ${r3(2 * r)}a${r} ${r} 0 1 1 0 ${r3(-2 * r)}z`;
+const P = (d, part = "rim", x = {}) => ({ t: "path", d, part, ...x });
+const G = (tf, kids) => ({ t: "g", tf, kids });
+
+/* ---------- stage: the cairn ---------- */
+const STONES = [[16, 19.5], [13, 15.5], [10, 11.5], [7, 7.5]];
+const stone = (w, y) => `M${r3(12 - w / 2)} ${y}q${r3(w / 2)} -3 ${w} 0q${r3(-w / 2)} 2.2 ${-w} 0z`;
+const stoneTop = (w, y) => `M${r3(12 - w / 2)} ${y}q${r3(w / 2)} -3 ${w} 0`;
+const stoneHalf = (w, y) => {
+  const x0 = 12 - w / 2;
+  return `M${r3(x0 + w / 2)} ${r3(y - 1.5)}Q${r3(x0 + w / 4)} ${r3(y - 1.5)} ${r3(x0)} ${y}Q${r3(x0 + w / 4)} ${r3(y + 1.1)} ${r3(x0 + w / 2)} ${r3(y + 1.1)}z`;
+};
+const ORB = circ(12, 3.6, 1.6);
+const ORB_TOP = "M10.4 3.6a1.6 1.6 0 0 1 3.2 0";
+const ORB_HALF = "M12 2a1.6 1.6 0 0 0 0 3.2z";
+const GATES = { foundation: 1, familiar: 2, retained: 3, fluent: 4, mastered: 5 };
+const STAGE_LEVEL = { foundation: 4, familiar: 6, retained: 8, fluent: 10, mastered: 12 };
+
+function cairn(n, variant, state) {
+  // n: 1–5 pieces (5 = four stones + the orb). variant: null | "toward" | "part" (applies to the top piece).
+  const pieces = [];
+  const solid = [];
+  for (let i = 0; i < n; i++) {
+    const top = i === n - 1;
+    const isOrb = i === 4;
+    let d;
+    if (isOrb) d = top && variant === "toward" ? ORB_TOP : top && variant === "part" ? ORB_HALF : ORB;
+    else {
+      const [w, y] = STONES[i];
+      d = top && variant === "toward" ? stoneTop(w, y) : top && variant === "part" ? stoneHalf(w, y) : stone(w, y);
+    }
+    pieces.push(P(d, "mark", { i }));
+    if (!(top && variant === "toward")) solid.push(d);
+  }
+  if (state === "active") return [G("translate(2.4 2.4) scale(.8)", pieces), P(circ(12, 12, 11), "ring", { sw: 1.25 })];
+  if (state === "done") return [...pieces, P(solid.join(""), "solid", { f: true })];
+  return pieces;
+}
+
+/* ---------- rank: the notched medallion ---------- */
+const AIM_RANKS = ["Initiate", "Aspirant", "Journeyman", "Specialist", "Expert", "Virtuoso", "Paragon"];
+const ang = (i) => ((-90 + 60 * i) * Math.PI) / 180;
+const notch = (i) => {
+  const a = ang(i), c = Math.cos(a), s = Math.sin(a);
+  return `M${r3(12 + 6.2 * c)} ${r3(12 + 6.2 * s)}L${r3(12 + 8.2 * c)} ${r3(12 + 8.2 * s)}`;
+};
+const slotAt = (i, r) => circ(12 + 7.2 * Math.cos(ang(i)), 12 + 7.2 * Math.sin(ang(i)), r);
+const hex = (r) => {
+  let d = "";
+  for (let k = 0; k < 6; k++) {
+    const a = ang(k);
+    d += `${k ? "L" : "M"}${r3(12 + r * Math.cos(a))} ${r3(12 + r * Math.sin(a))}`;
+  }
+  return d + "z";
+};
+function rank(N, state) {
+  const out = [];
+  if (state === "idle") {
+    out.push(P(circ(12, 12, 10), "rim", { c: "m" }));
+    out.push(P([0, 1, 2, 3, 4, 5].map((i) => slotAt(i, 0.85)).join(""), "badge", { f: true, c: "m" }));
+    return out;
+  }
+  if (state === "active") {
+    out.push(P(circ(12, 12, 10), "rim", { c: "2" }));
+    for (let i = 0; i < N - 1; i++) out.push(P(notch(i), "mark", { i, c: "0" }));
+    if (N >= 1) out.push(P(slotAt(N - 1, 1.15), "ring", { sw: 1.25, c: "0", cls: "mg-slot" }));
+    const rest = [];
+    for (let i = N; i < 6; i++) rest.push(slotAt(i, 0.85));
+    if (rest.length) out.push(P(rest.join(""), "badge", { f: true, c: "m" }));
+    return out;
+  }
+  // done: held for good
+  out.push(P(circ(12, 12, 10), "rim", N === 6 ? { sw: 2.25 } : {}));
+  for (let i = 0; i < N; i++) out.push(P(notch(i), "mark", { i }));
+  const rest = [];
+  for (let i = N; i < 6; i++) rest.push(slotAt(i, 0.85));
+  if (rest.length) out.push(P(rest.join(""), "badge", { f: true, c: "m" }));
+  if (N === 0) out.push(P(circ(12, 12, 1.3), "solid", { f: true }));
+  else out.push(P(hex(2.6), "solid", N === 6 ? { fs: true } : {}));
+  return out;
+}
+
+/* ---------- quest kinds (drawn by KindGlyph) ---------- */
+const BOOK = "M12 6.5C9.5 4.8 6.5 4.5 3.5 5.2v13c3-.7 6-.4 8.5 1.3 2.5-1.7 5.5-2 8.5-1.3v-13c-3-.7-6-.4-8.5 1.3zM12 6.5v13";
+const BOOK_FILL = "M12 6.5C9.5 4.8 6.5 4.5 3.5 5.2v13c3-.7 6-.4 8.5 1.3 2.5-1.7 5.5-2 8.5-1.3v-13c-3-.7-6-.4-8.5 1.3z";
+const PIP = circ(4.5, 19.5, 1.6);
+const CARD = "M8 4h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z";
+const SIGIL = {
+  craft: { d: "M6.5 5h11A1.5 1.5 0 0 1 19 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 17.5v-11A1.5 1.5 0 0 1 6.5 5zM5 12h14", fill: "M6.5 5h11A1.5 1.5 0 0 1 19 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 17.5v-11A1.5 1.5 0 0 1 6.5 5z", knock: "M5 12h14" },
+  body: { d: "M12 3.5l8.5 15.5h-17z", fill: "M12 3.5l8.5 15.5h-17z" },
+  know: { d: BOOK, fill: BOOK_FILL, knock: "M12 6.5v13" },
+  care: { d: "M12 20s-7.5-4.6-7.5-10.4A4.1 4.1 0 0 1 12 7.2a4.1 4.1 0 0 1 7.5 2.4C19.5 15.4 12 20 12 20z", fill: "M12 20s-7.5-4.6-7.5-10.4A4.1 4.1 0 0 1 12 7.2a4.1 4.1 0 0 1 7.5 2.4C19.5 15.4 12 20 12 20z" },
+  duty: { d: "M12 3l7 2.8V11c0 4.6-3 8-7 10-4-2-7-5.4-7-10V5.8z", fill: "M12 3l7 2.8V11c0 4.6-3 8-7 10-4-2-7-5.4-7-10V5.8z" },
+};
+const STAIR = "M4 19h5v-5h5V9h6";
+const TREAD = [[6.5, 17.3], [11.5, 12.3], [17, 7.3]];
+
+function quest(kind, state, track = "craft") {
+  const pip = state === "active" ? [P(PIP, "solid", { f: true, cls: "mg-pip" })] : [];
+  switch (kind) {
+    case "bring": {
+      const chev = "M14.6 13.4l1.9-1.9 1.9 1.9";
+      if (state === "done") return [P(BOOK, "rim"), P(BOOK_FILL, "solid", { f: true }), P(chev, "mark", { k: true }), P("M12 6.5v13", "mark", { k: true })];
+      return [P(BOOK, "rim"), P(chev, "mark"), ...pip];
+    }
+    case "add": {
+      const plus = "M12 9v6M9 12h6";
+      if (state === "done") return [P(CARD, "rim"), P(CARD, "solid", { f: true }), P(plus, "mark", { k: true })];
+      return [P(CARD, "rim"), P(plus, "mark"), ...pip];
+    }
+    case "practice": {
+      const s = SIGIL[track] || SIGIL.craft;
+      if (state === "done") return [P(s.d, "rim"), P(s.fill, "solid", { f: true }), ...(s.knock ? [P(s.knock, "mark", { k: true })] : [])];
+      return [P(s.d, "rim"), ...pip];
+    }
+    case "step": {
+      const at = TREAD[state === "done" ? 2 : state === "active" ? 1 : 0];
+      return [P(STAIR, "rim"), P(circ(at[0], at[1], 1.25), "solid", { f: true, cls: "mg-dot" })];
+    }
+    case "checkpoint":
+      if (state === "done") return [P(circ(12, 12, 8.5), "rim"), P(circ(12, 12, 3.5), "mark"), P(circ(12, 12, 3.5), "solid", { f: true })];
+      return [P(circ(12, 12, 8.5), "rim"), P(circ(12, 12, 3.5), "mark"), ...pip];
+  }
+  return [];
+}
+
+/* ---------- the static and the one-shot families ---------- */
+const BALLOON = "M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5h-8l-4 3.5v-3.5H5a1.5 1.5 0 0 1-1.5-1.5V7A1.5 1.5 0 0 1 5 5.5z";
+const BALLOON_DASH = "4.5 3.83"; // pathLength units: about 2.4 / 2.2 user units on the balloon's ≈ 58-unit rim
+const CHECK_IN = "M8 12.3l2.7 2.7L16 9.6";
+const FLAME = "M12.2 2.5c.6 3-1 4.8-2.6 6.6C8 10.9 6.5 12.6 6.5 15.4a5.5 5.5 0 0 0 11 0c0-2.1-.9-3.7-1.9-5-.3 1.3-1 2.3-2 2.8.6-3.6-.2-7.9-1.4-10.7z";
+const CORE = "M12 18.5a2.2 2.2 0 0 1-2.2-2.2c0-1.4 1.1-2.3 2.2-3.6 1.1 1.3 2.2 2.2 2.2 3.6a2.2 2.2 0 0 1-2.2 2.2z";
+const ROUTE = "M8.2 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.8";
+const sealNotches = () => [0, 1, 2, 3, 4, 5].map((i) => { const a = ang(i), c = Math.cos(a), s = Math.sin(a); return `M${r3(12 + 8 * c)} ${r3(12 + 8 * s)}L${r3(12 + 10 * c)} ${r3(12 + 10 * s)}`; }).join("");
+const bar = (x, y, h) => `M${x} ${y}h3v${h}h-3z`;
+
+const STATIC = {
+  // evidence badges (static at every level; ≤ 2 subpaths, the tally 3)
+  "ev.tested": () => [P("M18.5 12a6.5 6.5 0 1 1-1.9-4.6M17 3.8v3.8h-3.8", "mark")],
+  "ev.counted": () => [P("M8 6v12M12 6v12M16 6v12", "mark")],
+  "ev.tick": () => [P("M7.5 4.5h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z", "rim"), P("M8.5 12.3l2.5 2.5 4.5-5", "mark")],
+  "ev.log": () => [P("M9 5H7.5A1.5 1.5 0 0 0 6 6.5v12A1.5 1.5 0 0 0 7.5 20h9a1.5 1.5 0 0 0 1.5-1.5v-12A1.5 1.5 0 0 0 16.5 5H15M9.5 3.5h5v3h-5z", "rim")],
+  "ev.estimate": () => [P("M5 9.5c2.3-2 4.7 2 7 0s4.7-2 7 0M5 15c2.3-2 4.7 2 7 0s4.7-2 7 0", "mark")],
+  "ev.measured": () => [P(circ(12, 12, 8.5), "rim"), P("M12 7.5V12l3 2", "mark")],
+  // provenance
+  "pv.suggest": () => [P(BALLOON, "rim", { dash: BALLOON_DASH })],
+  "pv.kept": () => [P(BALLOON, "rim", { dash: BALLOON_DASH }), P(circ(12, 9.8, 1.7), "solid", { f: true }), P("M12 11.5v2.4", "mark")],
+  "pv.pick": () => [P("M9.5 7.2h5a1 1 0 0 1 1 1v4.3a1 1 0 0 1-1 1h-2l-2 2v-2h-1a1 1 0 0 1-1-1V8.2a1 1 0 0 1 1-1z", "rim", { dash: "5 3.33" }), P(circ(4.5, 10.3, 1.3) + circ(12, 10.3, 1.2) + circ(19.5, 10.3, 1.3), "solid", { f: true })],
+  "pv.integrity": () => [P(BALLOON, "rim"), P("M8.8 11.2l2.2 2.2 4.2-4.4", "mark")],
+  "pv.app": () => [P(circ(12, 12, 3), "rim"), P("M12 2.8v2.4M12 18.8v2.4M21.2 12h-2.4M5.2 12H2.8M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7M18.5 18.5l-1.7-1.7M7.2 7.2L5.5 5.5", "mark")],
+  "pv.you": () => [P("M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4", "mark")],
+  "pv.checked": () => [P(circ(12, 12, 8.5), "rim"), P(CHECK_IN, "mark")],
+  "pv.syllabus": () => [P("M6.5 4.5h10a2 2 0 0 1 2 2v13h-10a2 2 0 0 1-2-2zM6.5 17.5a2 2 0 0 0-2 2h4", "rim"), P("M10 8.5h5M10 11.5h5", "mark")],
+  // honesty and safety (static at every level)
+  "safe.health": () => [P("M9.975 18.975L18.975 9.975A3.5 3.5 0 0 0 14.025 5.025L5.025 14.025A3.5 3.5 0 0 0 9.975 18.975z", "rim"), P("M12 10l2 2-2 2-2-2z", "mark"), P(circ(12, 11.1, 0.45) + circ(12.9, 12, 0.45) + circ(12, 12.9, 0.45) + circ(11.1, 12, 0.45), "solid", { f: true })],
+  "safe.strike": () => [P("M4.5 19.5L19.5 4.5", "mark")],
+  "safe.in": () => [P("M5 12.5l4.5 4.5L19 7.5", "mark")],
+  "safe.ask": () => [P(circ(12, 12, 8.5), "rim"), P("M9.7 9.6a2.4 2.4 0 1 1 3.3 2.2c-.6.3-1 .8-1 1.5v.5M12 16.6v.01", "mark")],
+  "m.quote": () => [P("M5 17.5V14c0-3.6 1.4-5.8 4.2-6.7M5 14h4v3.5H5zM13 17.5V14c0-3.6 1.4-5.8 4.2-6.7M13 14h4v3.5h-4z", "mark")],
+  "m.verbatim": () => [P("M4 11.5V9.3c0-2.4 1-3.9 3-4.5M4 9.3h3v2.2H4zM10 11.5V9.3c0-2.4 1-3.9 3-4.5M10 9.3h3v2.2h-3z", "mark"), P("M14.5 15h5a1 1 0 0 1 1 1v3.5a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1V16a1 1 0 0 1 1-1zM15.5 15v-1.3a1.5 1.5 0 0 1 3 0V15", "rim")],
+  "m.policy": () => [P("M3.5 16.5l13-13 4 4-13 13z", "rim"), P("M7 13l1.8 1.8M10 10l1.2 1.2M13 7l1.8 1.8", "mark")],
+  "m.judge": () => [P("M12 4.5v15M8 19.5h8M5.5 7.5h13", "rim"), P("M5.5 7.5L3 13a2.5 2.5 0 0 0 5 0zM18.5 7.5L16 13a2.5 2.5 0 0 0 5 0z", "mark")],
+  "m.nopay": () => [P("M12 3.3l7.5 4.35v8.7L12 20.7l-7.5-4.35v-8.7z", "rim"), P(circ(12, 12, 2.6), "mark"), P("M4.5 19.5L19.5 4.5", "badge")],
+  "m.clash": () => [P("M3 12h6.5M21 12h-6.5", "rim"), P("M6.8 9l2.8 3-2.8 3M17.2 9l-2.8 3 2.8 3", "mark")],
+  // session kinds (static; the name always sits beside)
+  "sess.easy": () => [P("M3 13.5c3-3.2 6 3.2 9 0s6-3.2 9 0", "mark")],
+  "sess.mobility": () => [P(circ(12, 12, 1.8), "solid", { f: true }), P("M5.94 15.5A7 7 0 1 1 9.61 18.58", "rim"), P("M11.3 21.1L9.6 18.6l3-.9", "mark")],
+  "sess.technique": () => [P("M8 3.5h8M12 3.5v10", "rim"), P("M12 13.5l2.8 3.3-2.8 3.4-2.8-3.4z", "mark")],
+  "sess.harder": () => [P("M6 13l6-6 6 6M6 19.5l6-6 6 6", "mark")],
+  "sess.longer": () => [P("M3.5 7.5v9M20.5 7.5v9", "rim"), P("M6.5 12h11M9.5 9l-3 3 3 3M14.5 9l3 3-3 3", "mark")],
+  "sess.strength": () => [P("M7 7.5v9M17 7.5v9M4.5 10v4M19.5 10v4", "rim"), P("M7 12h10", "mark")],
+  "sess.full": () => [P("M2.5 20l7-11 3.5 5 2-2.5 6.5 8.5z", "rim"), P("M9.5 9V3.5l4 1.6-4 1.6", "mark")],
+  "sess.perf": () => [P(circ(12, 13.5, 7), "rim"), P("M12 13.5V9.5M10 3.5h4M12 3.5v3M17.6 7.4l1.3-1.3", "mark")],
+  // verdicts (the existing shapes; idle = not chosen, active = chosen)
+  "v.fits": () => [P(circ(12, 12, 8.5), "rim"), P(CHECK_IN, "mark")],
+  "v.tight": () => [P(circ(12, 12, 8.5), "rim"), P("M12 3.5v17", "mark"), P("M12 3.5a8.5 8.5 0 0 1 0 17z", "solid", { f: true })],
+  "v.over": () => [P("M12 3.8l9 15.7H3z", "rim"), P("M12 10v4.2", "mark"), P("M12 16.9v.01", "badge")],
+  "v.imp": () => [P(circ(12, 12, 8.5), "rim"), P("M6 6l12 12", "mark")],
+  "v.fitted": () => [P("M4 8h16M4 16h16", "rim"), P("M8 5v6", "mark", { i: 0 }), P("M16 13v6", "mark", { i: 1 })],
+  "v.unv": () => [P(circ(12, 12, 8.5), "rim", { dash: "5 5" }), P(CHECK_IN, "mark")],
+  // time and pace (ink, static)
+  "t.cal": () => [P("M6 5.5h12a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7.5a2 2 0 0 1 2-2zM4 10h16", "rim"), P("M8.5 3.5v4M15.5 3.5v4", "mark")],
+  "t.cal-moved": () => [P("M11 20H6a2 2 0 0 1-2-2V7.5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2V12M4 10h16", "rim"), P("M8.5 3.5v4M15.5 3.5v4", "mark"), P("M13.5 16.5h7M18 14l2.5 2.5L18 19", "badge")],
+  "t.pin": () => [P("M12 21s-6.5-6.2-6.5-11a6.5 6.5 0 0 1 13 0c0 4.8-6.5 11-6.5 11z", "rim"), P(circ(12, 10, 2.3), "mark")],
+  "t.earliest": () => [P("M12 20.5V10.5", "mark", { sw: 1.25 }), P(circ(12, 7.5, 3), "rim", { sw: 1.25 })],
+  "t.span": () => [P("M5 19v-4M19 19v-4", "rim"), P("M5.5 13.5C7 6.5 17 6.5 18.5 13.5", "mark")],
+  "t.hourglass": () => [P("M7 3.5h10M7 20.5h10", "rim"), P("M8 3.5c0 4.5 8 4 8 8.5s-8 4-8 8.5M16 3.5c0 4.5-8 4-8 8.5s8 4 8 8.5", "mark")],
+  "pace.on": () => [P("M4 12h15M14 7l5 5-5 5", "mark")],
+  "pace.behind": () => [P("M4 12h5M12.5 12H19M14 7l5 5-5 5", "mark")],
+  // misc
+  "m.link": () => [P("M10 14l4-4", "mark"), P("M8.6 11.4l-2.1 2.1a3 3 0 0 0 4.2 4.2l2.1-2.1M15.4 12.6l2.1-2.1a3 3 0 0 0-4.2-4.2l-2.1 2.1", "rim")],
+  "m.builds": () => [P(circ(6.5, 17.5, 2.5) + circ(17.5, 6.5, 2.5), "rim"), P("M8.4 15.6l7.2-7.2", "mark")],
+  "m.lock": () => [P("M6.5 11h11a1.5 1.5 0 0 1 1.5 1.5v6.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 19v-6.5A1.5 1.5 0 0 1 6.5 11z", "rim"), P("M8 11V8.5a4 4 0 0 1 8 0V11", "mark", { cls: "mg-shackle" }), P("M12 14.8v2.2", "badge")],
+  "m.seal": () => [P(circ(12, 12, 8), "rim"), P(sealNotches(), "mark"), P("M8.5 12.2l2.4 2.4 4.6-4.8", "badge")],
+  "m.queue": () => [P("M3.5 14h4.5l1.2 2h5.6l1.2-2h4.5v4.5a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5z", "rim"), P("M6.5 11V5.5h11V11M9 8h6", "mark")],
+  "m.pause": () => [P("M9 6.5v11M15 6.5v11", "mark")],
+  "m.minus": () => [P("M5 12h14", "mark")],
+  "m.down": () => [P("M6 9.5l6 6 6-6", "mark")],
+  "m.info": () => [P(circ(12, 12, 8.5), "rim"), P("M12 11v5.5M12 7.6v.01", "mark")],
+  route: () => [P(circ(6, 18, 2.2) + circ(18, 6, 2.2), "rim"), P(ROUTE, "mark")],
+  "route.weave": () => [P(ROUTE, "mark", { c: "2" }), P("M3 9.5c3 2.6 6 2.6 9 0s6-2.6 9 0M3 14.5c3-2.6 6-2.6 9 0s6 2.6 9 0", "rim")],
+  check: () => [P("M5 12.5l4.5 4.5L19 7.5", "mark")],
+  "intensity.light": () => intensity(1),
+  "intensity.steady": () => intensity(2),
+  "intensity.push": () => intensity(3),
+};
+function intensity(n) {
+  return [bar(4.5, 14.5, 4.5), bar(10.5, 10.5, 8.5), bar(16.5, 6, 13)].map((d, i) => P(d, "mark", { i, fs: i < n }));
+}
+
+function flame(state) {
+  if (state === "idle") return [P(FLAME, "rim", { c: "m" })];
+  if (state === "active") return [P(FLAME, "solid", { f: true })];
+  return [P(FLAME, "solid", { f: true }), P(CORE, "mark", { f: true, cls: "mg-core" })];
+}
+
+/** Every glyph name in the catalogue, with its family and whether it has idle / active / done shapes. */
+const FAMILY = (name) => name.split(/[.:]/)[0];
+const ANIMATABLE = new Set(["stage", "rank", "quest", "v", "pv", "m", "flame", "route", "check", "intensity"]);
+
+function partsOf(name, state, o) {
+  const [base, arg] = name.split(":");
+  if (base.startsWith("stage.")) {
+    const kind = base.slice(6);
+    if (kind === "track") return cairn(Math.max(1, Math.min(5, Number(arg) || 1)), null, state);
+    if (kind === "toward" || kind === "part") return cairn(GATES[arg] || 2, kind, state);
+    return cairn(GATES[kind] || 1, null, state);
+  }
+  if (base.startsWith("rank.")) return rank(Math.max(0, Math.min(6, Number(base.slice(5)) || 0)), state);
+  if (base.startsWith("quest.")) return quest(base.slice(6), state, o.track);
+  if (base === "flame") return flame(state);
+  const f = STATIC[base];
+  return f ? f() : [];
+}
+
+function el(e) {
+  if (e.t === "g") return `<g transform="${e.tf}">${e.kids.map(el).join("")}</g>`;
+  const cls = [e.f ? "f" : "", e.fs ? "fs" : "", e.k ? "k" : "", e.c ? "c" + e.c : "", e.cls || ""].filter(Boolean).join(" ");
+  const stroked = !e.f;
+  return `<path d="${e.d}"${cls ? ` class="${cls}"` : ""} data-part="${e.part}"${e.i != null ? ` data-i="${e.i}"` : ""}${stroked ? ' pathLength="100"' : ""}${e.dash ? ` stroke-dasharray="${e.dash}"` : ""}${e.sw ? ` stroke-width="${e.sw}"` : ""}/>`;
+}
+
+/**
+ * glyph(name, state, size, opts) → inline <svg>.
+ * opts: track (quest.practice), cls, label (role="img" when it stands alone), inherit (take the colour of the text beside it).
+ */
+function glyph(name, state = "idle", size = 20, o = {}) {
+  const fam = FAMILY(name);
+  const inner = partsOf(name, state, o).map(el).join("");
+  const famCls = name === "route.weave" ? " mg-weave" : name.startsWith("intensity.") ? " mg-intensity" : "";
+  const cls = `mg mg-${fam}${famCls} is-${state}${size <= 12 ? " z12" : ""}${o.inherit ? " inh" : ""}${o.cls ? " " + o.cls : ""}`;
+  const a11y = o.label ? ` role="img" aria-label="${o.label}"` : ' aria-hidden="true"';
+  return `<svg class="${cls}" data-g="${name}" data-s="${state}"${o.track ? ` data-track="${o.track}"` : ""} viewBox="0 0 24 24" width="${size}" height="${size}"${a11y} focusable="false">${inner}</svg>`;
+}
+
+return { glyph, AIM_RANKS, TREAD, GATES };
+})();
+
+const GEO = (function () {
+/* =====================================================================
+   Shader slot geometry (ui-motion.md §6.3, §6.6): the same numbers drive
+   the WebGL uniforms and the SVG layers, so the canvas's rest frame equals
+   the SVG it replaces. Pure functions: the builder calls them for the first
+   paint, the page script calls them again at the band's real size.
+   ===================================================================== */
+const r2 = (n) => Math.round(n * 100) / 100;
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
+
+/** The horizon: hairline at 62% of the height from the bottom (GL y up), the aim point at 93% of the width. */
+function horizonGeometry(w, h) {
+  const yh = 0.38 * h;
+  const p0 = [0.05 * w, 0.9 * h];
+  const p2 = [0.93 * w, yh];
+  const p1 = [(p0[0] + p2[0]) / 2, 0.9 * h]; // p1.x is the midpoint, so x(t) is linear and frontPoint(f).x = p0.x + f·(p2.x − p0.x)
+  return { w, h, yh, p0, p1, p2 };
+}
+function qAt(g, t) {
+  const u = 1 - t;
+  return [u * u * g.p0[0] + 2 * u * t * g.p1[0] + t * t * g.p2[0], u * u * g.p0[1] + 2 * u * t * g.p1[1] + t * t * g.p2[1]];
+}
+const frontPoint = (g, f) => qAt(g, clamp01(f));
+/** The walked share of the curve's LENGTH (a dasharray on pathLength=100) that ends exactly at frontPoint(f). */
+function walkedShare(g, f) {
+  f = clamp01(f);
+  const N = 120;
+  let tot = 0, at = 0, prev = qAt(g, 0);
+  for (let i = 1; i <= N; i++) {
+    const t = i / N, p = qAt(g, t), d = Math.hypot(p[0] - prev[0], p[1] - prev[1]);
+    const t0 = (i - 1) / N;
+    if (t <= f) at += d;
+    else if (t0 < f) at += d * ((f - t0) * N);
+    tot += d;
+    prev = p;
+  }
+  return tot ? (100 * at) / tot : 0;
+}
+/** 8 points along the curve between two fronts, for the front dot's keyframes (horizon-front). */
+function frontKeyframes(g, from, to) {
+  const out = [];
+  for (let i = 0; i < 8; i++) out.push(frontPoint(g, from + ((to - from) * i) / 7));
+  return out;
+}
+/** The dawn's stops: exp(−2.2 r²), sampled out to r = 1.6 (the cap is applied by the layer's opacity). */
+const DAWN_STOPS = Array.from({ length: 11 }, (_, i) => (i * 1.6) / 10).map((r) => [r / 1.6, Math.exp(-2.2 * r * r)]);
+
+function horizonDawnSVG(g, id) {
+  const ax = r2(g.p2[0]), ay = r2(g.yh), rx = r2(0.62 * g.w), ry = r2(1.15 * g.yh + 1);
+  const stops = DAWN_STOPS.map(([o, v]) => `<stop offset="${Math.round(o * 1000) / 1000}" stop-color="currentColor" stop-opacity="${Math.round(v * 1000) / 1000}"/>`).join("");
+  return `<svg class="shd-fb" viewBox="0 0 ${r2(g.w)} ${r2(g.h)}" preserveAspectRatio="none" aria-hidden="true" focusable="false"><defs><radialGradient id="${id}-dg" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1.6" gradientTransform="translate(${ax} ${ay}) scale(${rx} ${ry})">${stops}</radialGradient><clipPath id="${id}-dc"><rect x="0" y="0" width="${r2(g.w)}" height="${ay}"/></clipPath></defs><rect class="shd-dawn" x="0" y="0" width="${r2(g.w)}" height="${r2(g.h)}" fill="url(#${id}-dg)" clip-path="url(#${id}-dc)"/></svg>`;
+}
+
+/**
+ * The measured marks (always on top, never replaced by the canvas): hairline,
+ * one contour per level of the target depth, the unwalked path, the walked
+ * path to the front, and the front dot. Unmeasured → no walked path, no dot.
+ * Self-reported → the walked path is dotted.
+ */
+function horizonMarksSVG(g, { pct = null, depth = 12, self = false } = {}) {
+  const W = r2(g.w), H = r2(g.h);
+  const curve = `M${r2(g.p0[0])} ${r2(g.p0[1])}Q${r2(g.p1[0])} ${r2(g.p1[1])} ${r2(g.p2[0])} ${r2(g.p2[1])}`;
+  let s = `<svg class="shd-marks" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true" focusable="false">`;
+  for (let k = 1; k <= depth; k++) {
+    const y = r2(g.yh + ((g.h - g.yh) * k) / (depth + 1));
+    const op = Math.round((0.5 - (0.36 * (k - 1)) / Math.max(1, depth - 1)) * 100) / 100;
+    s += `<path class="shd-contour" d="M0 ${y}H${W}" stroke-opacity="${op}" vector-effect="non-scaling-stroke"/>`;
+  }
+  s += `<path class="shd-hair" d="M0 ${r2(g.yh)}H${W}" vector-effect="non-scaling-stroke"/>`;
+  s += `<path class="shd-path" d="${curve}" vector-effect="non-scaling-stroke"/>`;
+  if (pct != null && !Number.isNaN(pct)) {
+    const f = clamp01(pct / 100);
+    const share = r2(walkedShare(g, f));
+    if (self) {
+      // a computed dot list over the walked length (round caps, every ≈ 5 px of x)
+      const n = Math.max(1, Math.round((f * (g.p2[0] - g.p0[0])) / 5));
+      let d = "";
+      for (let i = 0; i <= n; i++) {
+        const p = frontPoint(g, (f * i) / n);
+        d += `M${r2(p[0])} ${r2(p[1])}h0`;
+      }
+      s += `<path class="shd-walk shd-dots" d="${d}" vector-effect="non-scaling-stroke"/>`;
+    } else {
+      s += `<path class="shd-walk" d="${curve}" pathLength="100" stroke-dasharray="${share} 100" data-share="${share}"/>`;
+    }
+    const fp = frontPoint(g, f);
+    s += `<circle class="shd-front" cx="${r2(fp[0])}" cy="${r2(fp[1])}" r="3"/>`;
+  }
+  return s + `</svg>`;
+}
+
+/** The weave at TIME = 0 (four strands, ink-2, a standing wave: only the amplitude breathes). */
+function weaveStrandsSVG(w, h, id) {
+  const W = r2(w), H = r2(h), cy = h / 2;
+  let s = `<svg class="shd-fb" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true" focusable="false"><defs><linearGradient id="${id}-we" x1="0" x2="1" y1="0" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".08" stop-color="#fff" stop-opacity="1"/><stop offset=".92" stop-color="#fff" stop-opacity="1"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient><mask id="${id}-wm" maskUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}"><rect width="${W}" height="${H}" fill="url(#${id}-we)"/></mask></defs><g mask="url(#${id}-wm)">`;
+  for (let i = 0; i < 4; i++) {
+    const k = (2 * Math.PI) / (w * (0.55 + 0.15 * i));
+    const amp = h * (0.16 + 0.05 * i) * Math.cos(i * 1.5708);
+    // `lift` = step(.5, fract(x / (w/4) + i/2)) flips every w/8, so segment m is "over" when (m + i) is odd (static)
+    const seg = w / 8;
+    for (let m = 0; m < 8; m++) {
+      const xa = m * seg, xb = (m + 1) * seg;
+      const lift = (m + i) % 2;
+      let d = "";
+      for (let x = xa; ; x += 3) {
+        const xx = Math.min(x, xb);
+        const y = cy - amp * Math.sin(xx * k + i * 1.7);
+        d += `${d ? "L" : "M"}${r2(xx)} ${r2(y)}`;
+        if (xx >= xb) break;
+      }
+      s += `<path class="shd-strand" d="${d}" stroke-opacity="${lift ? 0.85 : 0.5}" vector-effect="non-scaling-stroke"/>`;
+    }
+  }
+  return s + `</g></svg>`;
+}
+
+return { horizonGeometry, qAt, frontPoint, walkedShare, frontKeyframes, horizonDawnSVG, horizonMarksSVG, weaveStrandsSVG, DAWN_STOPS };
+})();
+
+/* =====================================================================
+   The motion gateway, mirrored from src/lib/motion.ts (frozen): play(),
+   burst(), the level rules (full / calm / still); then glyph-motion
+   (ui-motion.md §4.7, §5.4, §5.5): every named motion with its licence.
+   No element.animate outside play(). Chains are created up front with
+   delays and fill:'backwards' (H12).
+   ===================================================================== */
+const MO = (function () {
+  "use strict";
+  const DUR = { press: 90, quick: 160, base: 240, slow: 420, calmMax: 260, calmDelayMax: 200 };
+  const EASE = { out: "cubic-bezier(.16,1,.3,1)", inout: "cubic-bezier(.65,0,.35,1)", stamp: "cubic-bezier(.34,1.56,.64,1)" };
+  const GD = { draw: 420, stoneStep: 60, drawStep: 20, ringIn: 240, check: 220, checkDelay: 40, stamp: 380, centre: 320, rim: 360, notch: 200, notchStep: 24, fill: 700, ping: 900, swap: 160, kindle: 420, flicker: 260 };
+  const ALLOWED = new Set(["opacity", "transform", "strokeDashoffset", "strokeDasharray", "offset", "easing", "composite"]);
+  const stats = { calls: 0 };
+
+  function motionLevel() {
+    const v = document.documentElement.dataset.motion;
+    return v === "calm" || v === "still" ? v : "full";
+  }
+  function sanitize(frames) {
+    return frames.map((f) => {
+      const o = {};
+      for (const k in f) if (ALLOWED.has(k)) o[k] = f[k];
+      return o;
+    });
+  }
+  function play(el, keyframes, opts) {
+    opts = opts || {};
+    if (!el || typeof el.animate !== "function") return Promise.resolve();
+    const level = motionLevel();
+    if (level === "still") return Promise.resolve();
+    const flourish = opts.flourish;
+    const rest = Object.assign({}, opts);
+    delete rest.flourish;
+    let frames = sanitize(keyframes);
+    let options = Object.assign({ fill: "both", easing: EASE.out }, rest);
+    if (level === "calm") {
+      if (flourish) return Promise.resolve();
+      frames = frames.map((f) => {
+        const g = Object.assign({}, f);
+        delete g.transform;
+        delete g.strokeDashoffset;
+        delete g.strokeDasharray;
+        return g;
+      });
+      if (!frames.some((f) => "opacity" in f)) return Promise.resolve();
+      const duration = typeof rest.duration === "number" ? rest.duration : DUR.base;
+      options = Object.assign({}, options, { duration: Math.min(duration, DUR.calmMax), delay: Math.min(typeof rest.delay === "number" ? rest.delay : 0, DUR.calmDelayMax) });
+    }
+    try {
+      stats.calls++;
+      MO.onCall && MO.onCall(stats.calls);
+      return el.animate(frames, options).finished.then(() => undefined).catch(() => undefined);
+    } catch (e) {
+      return Promise.resolve();
+    }
+  }
+
+  function hashSeed(seed) {
+    let h = 2166136261;
+    for (const c of String(seed)) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+    return h >>> 0;
+  }
+  function seededRandom(seed) {
+    let s = hashSeed(seed);
+    return () => {
+      s |= 0;
+      s = (s + 0x6d2b79f5) | 0;
+      let t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  let fxLayer = null;
+  function fx() {
+    if (fxLayer && fxLayer.isConnected) return fxLayer;
+    fxLayer = document.createElement("div");
+    fxLayer.className = "fx";
+    fxLayer.setAttribute("aria-hidden", "true");
+    document.body.appendChild(fxLayer);
+    return fxLayer;
+  }
+  function center(el) {
+    const r = el.getBoundingClientRect();
+    return [r.left + r.width / 2, r.top + r.height / 2];
+  }
+  /** A seeded burst of motes. Full only. The rank rise is the roadmap's only burst: 8 motes, ink-1, spread 40. */
+  function burst(x, y, n, seedId, o) {
+    o = o || {};
+    if (motionLevel() !== "full") return;
+    const layer = fx();
+    const count = Math.max(0, Math.min(26, Math.round(n)));
+    const r = seededRandom(seedId);
+    const spread = o.spread || 60;
+    for (let i = 0; i < count; i++) {
+      const m = document.createElement("div");
+      m.className = "fx-mote";
+      m.style.setProperty("--tok", o.color || "var(--ink-1)");
+      layer.appendChild(m);
+      const a = (i / count) * Math.PI * 2 + r() * 0.6;
+      const d = spread * (0.55 + r() * 0.6);
+      const dx = Math.cos(a) * d, dy = Math.sin(a) * d - 6;
+      const s = 0.6 + r() * 0.7;
+      stats.calls++;
+      m.animate(
+        [
+          { transform: `translate(${x - 3}px,${y - 3}px) scale(${s})`, opacity: 1 },
+          { transform: `translate(${x - 3 + dx}px,${y - 3 + dy}px) scale(${s * 0.4})`, opacity: 0 },
+        ],
+        { duration: 620 + r() * 220, easing: EASE.out, fill: "both" }
+      ).finished.catch(() => {}).then(() => m.remove());
+    }
+  }
+  /** One polite live region (role=status). Fires at every level, still included. */
+  function announce(text) {
+    const lr = document.getElementById("mk-live");
+    if (lr) {
+      lr.textContent = "";
+      setTimeout(() => (lr.textContent = text), 30);
+    }
+    MO.onAnnounce && MO.onAnnounce(text);
+  }
+
+  /* ---------- glyph-motion: each motion names its licence (H1) ---------- */
+  const q = (root, sel) => Array.from(root.querySelectorAll(sel));
+  const byI = (a, b) => Number(a.dataset.i || 0) - Number(b.dataset.i || 0);
+  const DRAW = (o) => [Object.assign({ strokeDasharray: "100 100", strokeDashoffset: 100 }, o && o.from), Object.assign({ strokeDasharray: "100 100", strokeDashoffset: 0 }, o && o.to)];
+  const BW = { fill: "backwards" };
+  const isSafety = (el) => !!(el && el.closest && el.closest("[data-safety]"));
+
+  const M = {
+    /** SEEN · the stage became current or held: stones draw bottom-up (240 each, 60 ms stagger), then the solid layer. */
+    build(svg, o) {
+      const stones = q(svg, '[data-part="mark"]').sort(byI);
+      if (o.accent) {
+        const top = stones[stones.length - 1];
+        return play(top, [{ transform: "scale(1.15)" }, { transform: "scale(1)" }], { duration: 240, easing: EASE.stamp, fill: "backwards", delay: o.delay || 0 });
+      }
+      const d0 = o.delay || 0;
+      const ps = stones.map((s, i) => play(s, DRAW({ from: { opacity: 0.35 }, to: { opacity: 1 } }), Object.assign({ duration: 240, delay: d0 + i * GD.stoneStep }, BW)));
+      const solid = svg.querySelector('[data-part="solid"]');
+      if (solid && (svg.dataset.s === "done" || solid.closest(".rr-node"))) {
+        const lastEnd = (stones.length - 1) * GD.stoneStep + 240;
+        ps.push(play(solid, [{ opacity: 0 }, { opacity: 1 }], Object.assign({ duration: 160, delay: d0 + Math.max(0, lastEnd - 160) }, BW)));
+      }
+      return Promise.all(ps);
+    },
+    /** SEEN · the counted reached count rose: segment 420 → node stamp 380 (from 300) → build (from 560). A pending reach never plays. */
+    reach(row, o) {
+      const node = row.querySelector(".rr-node, .rr-nw svg, .rs-n svg");
+      if (o.accent) return play(node, [{ transform: "scale(1.18)" }, { transform: "scale(1)" }], { duration: GD.stamp, easing: EASE.stamp, fill: "backwards" });
+      const prev = row.previousElementSibling;
+      const down = prev && prev.querySelector('[data-seg="down"]');
+      const up = row.querySelector('[data-seg="up"]');
+      if (down) play(down, DRAW(), Object.assign({ duration: 300 }, BW));
+      if (up) play(up, DRAW(), Object.assign({ duration: 120, delay: 300 }, BW));
+      play(node, [{ transform: "scale(.55)", opacity: 0 }, { transform: "scale(1)", opacity: 1 }], Object.assign({ duration: GD.stamp, delay: 300, easing: EASE.stamp }, BW));
+      const cairn = row.querySelector(".rr-node g");
+      if (cairn) M.build(cairn, { delay: 560 });
+      return new Promise((r) => setTimeout(r, 1040));
+    },
+    /** ACT · Start milestone: the here-ring stamps in, then one ping. The arc stays at the measured 0%. */
+    start(node) {
+      const ring = node.querySelector('[data-part="ring"]');
+      const ping = node.querySelector('[data-part="ping"]');
+      play(ring, [{ opacity: 0, transform: "scale(.8)" }, { opacity: 1, transform: "scale(1)" }], Object.assign({ duration: GD.ringIn, easing: EASE.stamp }, BW));
+      return play(ping, [{ opacity: 0.5, transform: "scale(.7)" }, { opacity: 0, transform: "scale(1.5)" }], { duration: GD.ping, delay: GD.ringIn, flourish: true, fill: "both" });
+    },
+    /** SEEN, its own event after `reach`: rim 360 → notches pop (from 300, 24 ms apart) → centre stamp (from 560) → burst of 8 + one announce. */
+    rankRise(sealEl, o) {
+      const svg = sealEl.querySelector("svg.mg-rank");
+      const name = o.name || "";
+      const seed = o.seed || "aimrank:rm1:" + (sealEl.dataset.rank || 0);
+      const say = () => announce(`Aim rank ${name} reached`);
+      const L = motionLevel();
+      const centre = svg.querySelector('[data-part="solid"]');
+      const doBurst = () => {
+        const c = center(svg);
+        burst(c[0], c[1], 8, seed, { color: "var(--ink-1)", spread: 40 });
+      };
+      if (L === "still") { say(); return Promise.resolve(); }
+      if (L === "calm") { say(); return play(svg, [{ opacity: 0.4 }, { opacity: 1 }], Object.assign({ duration: 200 }, BW)); }
+      if (o.accent) {
+        play(centre, [{ transform: "scale(1.6)" }, { transform: "scale(1)" }], { duration: GD.centre, easing: EASE.stamp, fill: "backwards" });
+        setTimeout(() => { doBurst(); say(); }, 200);
+        return new Promise((r) => setTimeout(r, 900));
+      }
+      const rim = svg.querySelector('[data-part="rim"]');
+      play(rim, DRAW(), Object.assign({ duration: GD.rim, flourish: true }, BW));
+      q(svg, '[data-part="mark"]').sort(byI).forEach((n, i) => play(n, [{ opacity: 0, transform: "scale(0)" }, { opacity: 1, transform: "scale(1)" }], Object.assign({ duration: GD.notch, delay: 300 + i * GD.notchStep, easing: EASE.stamp, flourish: true }, BW)));
+      play(centre, [{ opacity: 0, transform: "scale(.4)" }, { opacity: 1, transform: "scale(1)" }], Object.assign({ duration: GD.centre, delay: 560, easing: EASE.stamp }, BW));
+      const pips = sealEl.querySelectorAll(".rs-pips i.on");
+      const last = pips[pips.length - 1];
+      if (last) play(last, [{ transform: "scale(0)" }, { transform: "scale(1)" }], Object.assign({ duration: 240, delay: 640, easing: EASE.stamp }, BW));
+      setTimeout(() => { doBurst(); say(); }, 880);
+      return new Promise((r) => setTimeout(r, 1000));
+    },
+    /** SEEN · the measured count reached N: the solid layer 160, the badge check draws 220 (+40); the step's dot hops to the top tread. No particles. */
+    questDone(kgEl, o) {
+      const svg = kgEl.querySelector("svg.mg-quest");
+      const ok = kgEl.querySelector(".kg-ok");
+      const okPath = ok && ok.querySelector("path");
+      if (o.accent) return play(ok, [{ transform: "scale(1.35)" }, { transform: "scale(1)" }], { duration: 240, easing: EASE.stamp, fill: "backwards" });
+      // /today stays calm (D10): only the check draw, no solid fade and no hop
+      const today = !!kgEl.closest("[data-route=\"/today\"]");
+      if (today) {
+        if (ok) play(ok, [{ opacity: 0 }, { opacity: 1 }], Object.assign({ duration: 80 }, BW));
+        return play(okPath, DRAW(), Object.assign({ duration: GD.check, delay: GD.checkDelay }, BW));
+      }
+      if (kgEl.dataset.kg === "step") {
+        const dot = svg.querySelector(".mg-dot");
+        play(dot, [{ transform: "translate(-5.5px,5px)" }, { transform: "translate(0,0)" }], Object.assign({ duration: 320, easing: EASE.stamp }, BW));
+      } else {
+        q(svg, '[data-part="solid"]').forEach((s) => play(s, [{ opacity: 0 }, { opacity: 1 }], Object.assign({ duration: 160 }, BW)));
+        q(svg, ".k").forEach((s) => play(s, [{ opacity: 0 }, { opacity: 1 }], Object.assign({ duration: 160 }, BW)));
+      }
+      if (ok) play(ok, [{ opacity: 0 }, { opacity: 1 }], Object.assign({ duration: 80, delay: 40 }, BW));
+      return play(okPath, DRAW(), Object.assign({ duration: GD.check, delay: GD.checkDelay + 40 }, BW));
+    },
+    /** ACT · Mark done on a step or a practice: the Tick's check draws (220). No burst. */
+    stepDone(tickEl) {
+      const p = tickEl.querySelector("path");
+      return play(p, DRAW(), Object.assign({ duration: GD.check, delay: GD.checkDelay }, BW));
+    },
+    /** ACT · I checked this / Keep: the balloon fades out while a solid rim draws, then the check; the word swaps. */
+    pvConfirm(chip, o) {
+      const gx = chip.querySelector(".gx");
+      const old = gx.querySelector("svg");
+      const nu = document.createElement("span");
+      nu.innerHTML = GL.glyph(o.to || "pv.checked", "active", 12, { inherit: true });
+      const svg = nu.firstChild;
+      gx.appendChild(svg);
+      old.classList.add("gx-old");
+      const label = chip.querySelector(".hc-l");
+      const swap = () => { if (label && o.label != null) label.textContent = o.label; old.remove(); };
+      if (motionLevel() === "still") { swap(); return Promise.resolve(); }
+      play(old, [{ opacity: 1 }, { opacity: 0 }], { duration: 160, fill: "both" });
+      const rim = svg.querySelector('[data-part="rim"]');
+      const mark = svg.querySelector('[data-part="mark"]');
+      play(rim, DRAW({ from: { opacity: 0 }, to: { opacity: 1 } }), Object.assign({ duration: 240 }, BW));
+      play(mark, DRAW(), Object.assign({ duration: GD.check, delay: 200 }, BW));
+      if (label) play(label, [{ opacity: 1 }, { opacity: 0 }, { opacity: 1 }], { duration: 160, fill: "none" });
+      setTimeout(swap, 80);
+      return new Promise((r) => setTimeout(r, 500));
+    },
+    /** ACT · a pick changed the chosen verdict. unv never moves (H3). */
+    verdictChange(svg) {
+      const v = svg.dataset.g;
+      const mark = svg.querySelector('[data-part="mark"]');
+      if (v === "v.fits") return play(mark, DRAW(), Object.assign({ duration: 220 }, BW));
+      if (v === "v.tight") return play(svg.querySelector('[data-part="solid"]'), [{ transform: "scaleX(0)", opacity: 0.4 }, { transform: "scaleX(1)", opacity: 1 }], Object.assign({ duration: 240 }, BW));
+      if (v === "v.over") {
+        play(svg.querySelector('[data-part="rim"]'), DRAW(), Object.assign({ duration: 240 }, BW));
+        play(mark, [{ transform: "scale(1.8)", opacity: 0 }, { transform: "scale(1)", opacity: 1 }], Object.assign({ duration: 160, delay: 240, easing: EASE.stamp }, BW));
+        return play(svg.querySelector('[data-part="badge"]'), [{ opacity: 0 }, { opacity: 1 }], Object.assign({ duration: 160, delay: 240 }, BW));
+      }
+      if (v === "v.imp") return play(mark, DRAW(), Object.assign({ duration: 160 }, BW));
+      if (v === "v.fitted") {
+        const k = q(svg, '[data-part="mark"]').sort(byI);
+        play(k[0], [{ transform: "translateX(-3px)" }, { transform: "translateX(0)" }], Object.assign({ duration: 240, easing: EASE.inout }, BW));
+        return play(k[1], [{ transform: "translateX(3px)" }, { transform: "translateX(0)" }], Object.assign({ duration: 240, easing: EASE.inout }, BW));
+      }
+      return Promise.resolve();
+    },
+    /** ACT · a depth pick: rungs light up to the chosen one (20 ms per rung), the gap bar draws. */
+    ladder(el, o) {
+      const rungs = q(el, ".sl-r.on");
+      rungs.forEach((r, i) => play(r, [{ opacity: 0.25 }, { opacity: 1 }], Object.assign({ duration: 160, delay: i * GD.drawStep }, BW)));
+      const gap = el.querySelector(".sl-gap path");
+      if (gap) play(gap, DRAW(), Object.assign({ duration: 240, delay: Math.min(420, rungs.length * GD.drawStep) }, BW));
+      return Promise.resolve();
+    },
+    /** ACT · an intensity pick: the bars grow scaleY 0 → 1 (160, 40 ms apart). */
+    bars(svg) {
+      q(svg, '[data-part="mark"]').sort(byI).forEach((b, i) => play(b, [{ transform: "scaleY(0)" }, { transform: "scaleY(1)" }], Object.assign({ duration: 160, delay: i * 40 }, BW)));
+      return Promise.resolve();
+    },
+    /** CHANGED · an estimate moved: a crossfade of the marker and its text. No draw, no roll, no direction. */
+    dateMoved(el, o) {
+      const swap = () => { if (o.text != null) el.querySelector(".dm-t").textContent = o.text; };
+      if (motionLevel() === "still") { swap(); return Promise.resolve(); }
+      setTimeout(swap, 160);
+      return play(el, [{ opacity: 1 }, { opacity: 0, offset: 0.5 }, { opacity: 1 }], { duration: 320, fill: "none" });
+    },
+    /** ACT · a Start-sheet switch changed the stated pay: a plain crossfade (a stated rate is not money earned). */
+    paySwap(el, o) {
+      const swap = () => (el.textContent = o.text);
+      if (motionLevel() === "still") { swap(); return Promise.resolve(); }
+      setTimeout(swap, 80);
+      return play(el, [{ opacity: 1 }, { opacity: 0, offset: 0.5 }, { opacity: 1 }], { duration: 160, fill: "none" });
+    },
+    /** ACT · I checked this: the shackle lifts −2.5 and turns −12° about its left leg. */
+    unlock(svg) {
+      svg.classList.add("is-open");
+      const sh = svg.querySelector(".mg-shackle");
+      return play(sh, [{ transform: "translateY(0) rotate(0deg)" }, { transform: "translateY(-2.5px) rotate(-12deg)" }], Object.assign({ duration: 240, easing: EASE.stamp }, BW));
+    },
+    /** SEEN · a meter from the last-seen measured value to now, either direction (D9). Never from 0, no overshoot. */
+    meterFill(meterEl, o) {
+      const i = meterEl.querySelector("i");
+      const from = Number(o.from) / 100, to = Number(o.to) / 100;
+      return play(i, [{ transform: `scaleX(${from})` }, { transform: `scaleX(${to})` }], Object.assign({ duration: GD.fill }, BW));
+    },
+    /** SEEN · the horizon's walked path and front dot, on the SVG marks, from the last-seen % to now. */
+    horizonFront(band, o) {
+      const walk = band.querySelector(".shd-walk:not(.shd-dots)");
+      const dot = band.querySelector(".shd-front");
+      if (!walk || !dot) return Promise.resolve();
+      const w = band.clientWidth || 312, h = band.clientHeight || 56;
+      const geo = GEO.horizonGeometry(w, h);
+      const f0 = Number(o.from) / 100, f1 = Number(o.to) / 100;
+      const s0 = GEO.walkedShare(geo, f0), s1 = GEO.walkedShare(geo, f1);
+      play(walk, [{ strokeDasharray: `${s0} 100` }, { strokeDasharray: `${s1} 100` }], Object.assign({ duration: GD.fill }, BW));
+      const end = GEO.frontPoint(geo, f1);
+      const pts = GEO.frontKeyframes(geo, f0, f1);
+      return play(dot, pts.map((p) => ({ transform: `translate(${(p[0] - end[0]).toFixed(2)}px,${(p[1] - end[1]).toFixed(2)}px)` })), Object.assign({ duration: GD.fill }, BW));
+    },
+    /** SEEN · a counted done reach, new since last seen: the kit stamp on [m.seal]. */
+    sealReached(svg) {
+      return play(svg, [{ transform: "scale(1.7) rotate(-7deg)", opacity: 0 }, { transform: "scale(1) rotate(0deg)", opacity: 1 }], Object.assign({ duration: GD.stamp, easing: EASE.stamp }, BW));
+    },
+    /** ACT · an InfoTip or chip opens: opacity 0 → 1 (160). Instant on safety surfaces. */
+    tipOpen(panel) {
+      if (isSafety(panel)) return Promise.resolve();
+      return play(panel, [{ opacity: 0 }, { opacity: 1 }], { duration: GD.swap, fill: "backwards" });
+    },
+    /** SEEN (phase 3) · the streak rose: scaleY .55 → 1 from the bottom, then the core flickers twice. */
+    kindle(svg) {
+      play(svg, [{ transform: "scaleY(.55)" }, { transform: "scaleY(1)" }], Object.assign({ duration: GD.kindle, easing: EASE.stamp }, BW));
+      const core = svg.querySelector(".mg-core");
+      if (core) play(core, [{ opacity: 1 }, { opacity: 0.6 }, { opacity: 1 }, { opacity: 0.6 }, { opacity: 1 }], { duration: 2 * GD.flicker, delay: GD.kindle, fill: "none" });
+      return Promise.resolve();
+    },
+    /** The ping alone (the icon sheet). */
+    ping(svg) {
+      const ring = svg.querySelector('[data-part="ring"]') || svg;
+      return play(ring, [{ opacity: 0, transform: "scale(.8)" }, { opacity: 1, transform: "scale(1)" }], Object.assign({ duration: GD.ringIn, easing: EASE.stamp }, BW));
+    },
+  };
+  const LICENCE = { build: "SEEN", reach: "SEEN", start: "ACT", rankRise: "SEEN", questDone: "SEEN", stepDone: "ACT", pvConfirm: "ACT", verdictChange: "ACT", ladder: "ACT", bars: "ACT", dateMoved: "CHANGED", paySwap: "ACT", unlock: "ACT", meterFill: "SEEN", horizonFront: "SEEN", sealReached: "SEEN", tipOpen: "ACT", kindle: "SEEN", ping: "ACT" };
+
+  /** playGlyph(el, motion, { licence, accent, … }): no licence, no motion (H1). Never on a safe.* or sess.* glyph. */
+  function playGlyph(el, motion, opts) {
+    opts = opts || {};
+    if (!opts.licence) throw new Error(`playGlyph(${motion}) without a licence`);
+    if (!el) return Promise.resolve();
+    if (motion !== "tipOpen" && isSafety(el)) return Promise.resolve();
+    const g = el.getAttribute && el.getAttribute("data-g");
+    if (g && /^(safe|sess)\./.test(g)) return Promise.resolve();
+    return M[motion](el, opts);
+  }
+
+  /** sequence(): one flourish chain per page at a time; > 6 pending at mount → all jump to their end state and one SINCE_LINE says so (H13). */
+  const queue = [];
+  let running = false;
+  function sequence(fn) {
+    queue.push(fn);
+    if (!running) next();
+  }
+  function next() {
+    const fn = queue.shift();
+    if (!fn) { running = false; return; }
+    running = true;
+    Promise.resolve(fn()).then(() => setTimeout(next, 60));
+  }
+
+  return { DUR, EASE, GD, LICENCE, play, burst, announce, motionLevel, hashSeed, seededRandom, playGlyph, sequence, stats, center, onCall: null, onAnnounce: null };
+})();
+
+/* =====================================================================
+   ShaderSlot + the WebGL1 runtime (ui-motion.md §6). Hand-written, no
+   library. The gate decides css / loop / hold; a context exists only while
+   a slot loops; the SVG layers are the first paint and every static state.
+   In the real app the runtime is a lazy chunk reached through import();
+   here `runtime()` is a factory that runs only when a slot first loops.
+   Mockup note: each .frame stands for one document (one live context, one
+   loop per page); the whole file also caps live contexts at 2.
+   ===================================================================== */
+const FX = (function () {
+  "use strict";
+  const AMBIENT_ROUTES = ["/you", "/you/roadmap", "/dev/style/art/you", "/dev/style/roadmap", "/dev/style/fx"];
+  const HORIZON_AIR = true;
+  const AMBIENT_MAX = 5000, RAMP = 400, WAIT_MAX = 90000, OFF_MS = 10000, QUIET_MS = 400, FILE_CAP = 2;
+  const SHADER_VARS = ["--ink-0", "--ink-2", "--ink-mute", "--card"];
+  const CFG = {
+    horizon: { fps: 12, dprCap: 1, max: [1024, 160], ink: "--ink-0" },
+    weave: { fps: 20, dprCap: 1.5, max: [1024, 96], ink: "--ink-2" },
+  };
+  const H = document.documentElement;
+  const mq = (s) => (window.matchMedia ? window.matchMedia(s) : { matches: false, addEventListener() {} });
+  const MQ = { reduce: mq("(prefers-reduced-motion: reduce)"), contrast: mq("(prefers-contrast: more)"), forced: mq("(forced-colors: active)") };
+  const env = { loaded: document.readyState === "complete", lastInput: -1e9, supported: null, highp: null, degraded: false, losses: [], off: {}, frames: 0, govWin: [], govT0: 0, govSlow: 0, govReady: false };
+  const slots = [];
+  let raf = 0, tickLast = 0, quietTimer = 0, RT = null;
+
+  /* ---------- gate (pure over its inputs, §6.4) ---------- */
+  const level = () => (H.dataset.motion === "calm" || H.dataset.motion === "still" ? H.dataset.motion : "full");
+  const has = (a) => H.hasAttribute(a);
+  const osReduce = () => MQ.reduce.matches || has("data-sim-reduce");
+  const contrastMore = () => MQ.contrast.matches || has("data-sim-contrast");
+  const power = () => H.dataset.power === "save";
+  const saveData = () => !!(navigator.connection && navigator.connection.saveData) || (navigator.deviceMemory && navigator.deviceMemory <= 2);
+  const scopeOf = (s) => slots.filter((x) => x !== s && x.scope === s.scope);
+  const budgetKey = (s) => `xtnl:fx:ambient:${s.program}:${s.scope.id || "doc"}`;
+  function used(s) {
+    if (s.usedMem != null) return s.usedMem;
+    let v = 0;
+    try { v = Number(sessionStorage.getItem(budgetKey(s))) || 0; } catch (e) { v = 0; }
+    s.usedMem = v;
+    return v;
+  }
+  function persist(s) { try { sessionStorage.setItem(budgetKey(s), String(Math.round(s.usedMem || 0))); } catch (e) {} }
+  const budgetLeft = (s) => AMBIENT_MAX - used(s);
+  const waitCard = (s) => s.el.closest("[data-wait]");
+  const runAge = (s) => performance.now() - (s.runStart || 0);
+
+  function gate(s) {
+    const L = level();
+    if (L !== "full") return { mode: "css", why: L === "calm" ? "calm: SVG" : "still: SVG" };
+    if (contrastMore()) return { mode: "css", why: "high contrast: SVG" };
+    if (MQ.forced.matches) return { mode: "css", why: "forced colours: SVG" };
+    if (s.kind === "static") return { mode: "css", why: "static state: SVG, no context" };
+    if (env.supported === false || has("data-sim-nogl")) return { mode: "css", why: "no WebGL: SVG" };
+    if (env.highp === false) return { mode: "css", why: "mediump only: SVG" };
+    if (env.degraded) return { mode: "css", why: "throttled: SVG for the session" };
+    if (env.off[s.program]) return { mode: "css", why: "program off: SVG" };
+    if (s.el.closest('[data-fx="none"]')) return { mode: "css", why: "data-fx none" };
+    if (saveData()) return { mode: "css", why: "save-data / low memory: SVG" };
+    if (s.kind === "ambient") {
+      if (scopeOf(s).some((x) => x.kind === "wait" && (x.live || gateLoopable(x)))) return { mode: "css", why: "a WAIT loop has the page" };
+      if (!AMBIENT_ROUTES.includes(s.route)) return { mode: "css", why: "route outside AMBIENT_ROUTES" };
+      if (osReduce()) return { mode: "css", why: "OS reduced motion: SVG" };
+      if (!HORIZON_AIR) return { mode: "css", why: "HORIZON_AIR off" };
+      if (!s.measured) return { mode: "css", why: "unmeasured: unlit SVG" };
+      if (budgetLeft(s) <= 0) return { mode: "css", why: "5 s spent this session: SVG" };
+    }
+    if (s.kind === "wait") {
+      if (scopeOf(s).some((x) => x.kind === "wait" && x.live)) return { mode: "css", why: "another WAIT slot is live" };
+      const card = waitCard(s);
+      if (card && card.hasAttribute("data-stale")) return { mode: "css", why: "run stale: SVG" };
+      if (card && card.hasAttribute("data-paused")) return { mode: "css", why: "paused: SVG" };
+      if (runAge(s) >= WAIT_MAX) return { mode: "css", why: "90 s reached: SVG" };
+    }
+    if (power()) return { mode: "css", why: "power save: SVG" };
+    const hidden = document.visibilityState === "hidden";
+    if (s.live && (hidden || !s.inView)) return s.offSince && performance.now() - s.offSince >= OFF_MS ? { mode: "css", why: "offscreen 10 s: released" } : { mode: "hold", why: "held (offscreen)" };
+    if (!s.live && (hidden || !s.inView)) return { mode: "css", why: "waits until ≥ 50% in view" };
+    if (!s.live && slots.some((x) => x !== s && x.scope === s.scope && x.live)) return { mode: "css", why: "one context per page: waiting" };
+    if (!s.live && slots.filter((x) => x.live).length >= FILE_CAP) return { mode: "css", why: "file cap (mockup): waiting" };
+    return { mode: "loop", why: "" };
+  }
+  function gateLoopable(x) {
+    if (level() !== "full" || has("data-sim-nogl") || env.supported === false || env.degraded || power()) return false;
+    const card = waitCard(x);
+    return !(card && (card.hasAttribute("data-stale") || card.hasAttribute("data-paused"))) && runAge(x) < WAIT_MAX && x.inView;
+  }
+
+  /* ---------- status (mockup chrome) ---------- */
+  function status(s, txt) {
+    s.why = txt;
+    const el = document.querySelector(`[data-fx-for="${s.el.id}"]`);
+    if (!el) return;
+    let t = `${s.program} · `;
+    if (s.live && !s.held) t += s.program === "horizon" ? `live WebGL · air ${(Math.max(0, budgetLeft(s)) / 1000).toFixed(1)} s left` : `live WebGL · ${Math.max(0, Math.round((WAIT_MAX - runAge(s)) / 1000))} s left`;
+    else if (s.live && s.held) t += "held (offscreen, no frames)";
+    else t += txt || "SVG";
+    el.textContent = t;
+    el.dataset.state = s.live ? (s.held ? "held" : "live") : "svg";
+  }
+
+  /* ---------- the runtime (a lazy factory) ---------- */
+  function runtime() {
+    const PRELUDE = `#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+varying vec2 v_uv;
+uniform vec4 u_view;
+uniform vec4 u_ink;
+uniform vec4 u_seed;
+#define RES u_view.xy
+#define DPR u_view.z
+#define TIME u_view.w
+#define CAP u_ink.a
+#define SEED u_seed.x
+float h21(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+float vnoise(vec2 p){vec2 i=floor(p),f=fract(p),u=f*f*(3.0-2.0*f);vec2 a=mod(i,32.0),b=mod(i+1.0,32.0);
+ return mix(mix(h21(a),h21(vec2(b.x,a.y)),u.x),mix(h21(vec2(a.x,b.y)),h21(b),u.x),u.y);}
+float band(float d,float hw){return clamp(hw-abs(d)+0.5,0.0,1.0);}
+float dither(vec2 px){return (h21(mod(px,256.0)+SEED)-0.5)/255.0;}
+vec4 premul(vec3 c,float a){a=clamp(a,0.0,1.0);return vec4(c*a,a);}
+`;
+    const VERT = "attribute vec2 a_pos;varying vec2 v_uv;void main(){v_uv=a_pos*0.5+0.5;gl_Position=vec4(a_pos,0.0,1.0);}";
+    const FRAG = {
+      horizon: `uniform vec4 u_dawn;
+void main(){
+ vec2 px=v_uv*RES; float H=u_dawn.y;
+ vec2 e=(px-vec2(u_dawn.x,H))/vec2(0.62*RES.x,1.15*(RES.y-H)+1.0);
+ float dawn=exp(-dot(e,e)*2.2)*smoothstep(H-1.0,H+1.0,px.y);
+ vec2 g=px/(38.0*DPR); float drift=TIME*0.0533;
+ float n=0.5*(vnoise(g+SEED*97.0+vec2(drift,0.0))+vnoise(g*1.7-SEED*53.0-vec2(drift,0.0)))-0.5;
+ dawn*=1.0+u_dawn.z*n*0.4;
+ gl_FragColor=premul(u_ink.rgb,dawn*CAP*u_dawn.w+dither(px));
+}`,
+      weave: `void main(){ vec2 px=v_uv*RES; float cy=RES.y*0.5,a=0.0, br=6.2831853*TIME/12.0;
+ for(int i=0;i<4;i++){ float fi=float(i), k=6.2831853/(RES.x*(0.55+0.15*fi));
+  float amp=RES.y*(0.16+0.05*fi)*cos(br+fi*1.5708);
+  float ph=px.x*k+fi*1.7, sl=amp*k*cos(ph);
+  float d=(px.y-cy-amp*sin(ph))/sqrt(1.0+sl*sl);
+  float lift=step(0.5,fract(px.x/(RES.x*0.25)+fi*0.5));
+  a=max(a,band(d,0.7*DPR)*mix(0.5,0.85,lift)); }
+ float edge=smoothstep(0.0,0.08,v_uv.x)*(1.0-smoothstep(0.92,1.0,v_uv.x));
+ gl_FragColor=premul(u_ink.rgb,a*edge*CAP); }`,
+    };
+    function sh(gl, type, src) {
+      const o = gl.createShader(type);
+      gl.shaderSource(o, src);
+      gl.compileShader(o);
+      return o;
+    }
+    function build(s, done) {
+      const gl = s.gl;
+      const vs = sh(gl, gl.VERTEX_SHADER, VERT);
+      const fs = sh(gl, gl.FRAGMENT_SHADER, PRELUDE + FRAG[s.program]);
+      const p = gl.createProgram();
+      gl.attachShader(p, vs);
+      gl.attachShader(p, fs);
+      gl.linkProgram(p);
+      const ext = gl.getExtension("KHR_parallel_shader_compile");
+      const finish = () => {
+        if (!s.live || s.gl !== gl) return;
+        if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+          // a compile or link failure switches the program off silently (no console.error)
+          env.off[s.program] = true;
+          dispose(s, "compile failed: SVG");
+          return;
+        }
+        gl.useProgram(p);
+        const buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+        const loc = gl.getAttribLocation(p, "a_pos");
+        gl.enableVertexAttribArray(loc);
+        gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+        s.p = p;
+        s.u = { view: gl.getUniformLocation(p, "u_view"), ink: gl.getUniformLocation(p, "u_ink"), seed: gl.getUniformLocation(p, "u_seed"), dawn: gl.getUniformLocation(p, "u_dawn") };
+        gl.disable(gl.DEPTH_TEST);
+        gl.clearColor(0, 0, 0, 0);
+        done();
+      };
+      if (ext) {
+        const poll = () => {
+          if (!s.live || s.gl !== gl) return;
+          if (gl.getProgramParameter(p, ext.COMPLETION_STATUS_KHR)) finish();
+          else requestAnimationFrame(poll);
+        };
+        poll();
+      } else finish();
+    }
+    return { build };
+  }
+
+  /* ---------- palette: a whitelist of tokens only ---------- */
+  function parseColor(v) {
+    v = (v || "").trim();
+    let m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(v);
+    if (m) {
+      let h = m[1];
+      if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+      return [parseInt(h.slice(0, 2), 16) / 255, parseInt(h.slice(2, 4), 16) / 255, parseInt(h.slice(4, 6), 16) / 255];
+    }
+    m = /^rgba?\(([^)]+)\)$/i.exec(v);
+    if (m) {
+      const p = m[1].split(/[\s,/]+/).filter(Boolean).map(Number);
+      if (p.length >= 3 && p.slice(0, 3).every((x) => !Number.isNaN(x))) return [p[0] / 255, p[1] / 255, p[2] / 255];
+    }
+    return null;
+  }
+  function readPalette(s) {
+    const cs = getComputedStyle(s.el);
+    const pal = {};
+    for (const k of SHADER_VARS) pal[k] = parseColor(cs.getPropertyValue(k));
+    const card = pal["--card"] || [0.07, 0.08, 0.11];
+    const lum = 0.2126 * card[0] + 0.7152 * card[1] + 0.0722 * card[2];
+    s.ink = pal[CFG[s.program].ink] || [0.95, 0.95, 0.97];
+    s.cap = s.program === "weave" ? 0.7 : lum < 0.5 ? 0.2 : 0.14;
+    s.paletteDirty = false;
+  }
+
+  /* ---------- size: DPR-capped, pixel-capped; CSS stretches the canvas ---------- */
+  function resize(s) {
+    if (!s.canvas) return;
+    const c = CFG[s.program];
+    const r = s.el.getBoundingClientRect();
+    s.dpr = Math.min(window.devicePixelRatio || 1, c.dprCap) || 1;
+    const w = Math.max(1, Math.min(c.max[0], Math.round(r.width * s.dpr)));
+    const h = Math.max(1, Math.min(c.max[1], Math.round(r.height * s.dpr)));
+    if (s.canvas.width !== w || s.canvas.height !== h) {
+      s.canvas.width = w;
+      s.canvas.height = h;
+    }
+  }
+
+  function draw(s, now, rest) {
+    const gl = s.gl;
+    if (!gl || !s.p || gl.isContextLost()) return;
+    if (s.paletteDirty) readPalette(s);
+    const c = s.canvas;
+    gl.viewport(0, 0, c.width, c.height);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    const t = rest ? 0 : (((now - s.t0) / 1000) % 600);
+    gl.uniform4f(s.u.view, c.width, c.height, s.dpr, t);
+    gl.uniform4f(s.u.ink, s.ink[0], s.ink[1], s.ink[2], s.cap);
+    gl.uniform4f(s.u.seed, s.seed, 0, 0, 0);
+    if (s.program === "horizon") gl.uniform4f(s.u.dawn, 0.93 * c.width, 0.62 * c.height, rest ? 0 : s.air, 1);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    env.frames++;
+  }
+
+  /* ---------- lifecycle ---------- */
+  function start(s) {
+    if (s.live || gate(s).mode !== "loop") return;
+    if (performance.now() - env.lastInput < QUIET_MS) return kick();
+    RT = RT || runtime();
+    const c = document.createElement("canvas");
+    c.setAttribute("aria-hidden", "true");
+    let gl = null;
+    try {
+      gl = c.getContext("webgl", { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false, powerPreference: "low-power", failIfMajorPerformanceCaveat: !window.__XTNL_SHD_FORCE });
+    } catch (e) { gl = null; }
+    if (!gl) { env.supported = false; regate(); return; }
+    env.supported = true;
+    if (env.highp === null) {
+      const f = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
+      env.highp = !!(f && f.precision > 0);
+    }
+    if (!env.highp) { try { const x = gl.getExtension("WEBGL_lose_context"); x && x.loseContext(); } catch (e) {} regate(); return; }
+    s.canvas = c; s.gl = gl; s.live = true; s.held = false; s.offSince = 0; s.paletteDirty = true; s.liveAt = performance.now();
+    s.onLost = (e) => {
+      e.preventDefault();
+      s.el.removeAttribute("data-live");
+      s.el.dataset.shdState = "fallback";
+      s.lost = true;
+      const now = performance.now();
+      if (!s.disposing && document.visibilityState === "visible" && now - s.liveAt > 1000) {
+        env.losses = env.losses.filter((t) => now - t < 60000);
+        env.losses.push(now);
+        if (env.losses.length >= 2) env.supported = false;
+      }
+      status(s, "context lost: SVG");
+      regate();
+    };
+    s.onRestored = () => {
+      if (!s.live) return;
+      s.lost = false;
+      RT.build(s, () => { resize(s); draw(s, 0, true); requestAnimationFrame(() => { if (!s.live) return; draw(s, 0, true); s.el.setAttribute("data-live", ""); s.el.dataset.shdState = "live"; ensureTicker(); }); });
+    };
+    c.addEventListener("webglcontextlost", s.onLost);
+    c.addEventListener("webglcontextrestored", s.onRestored);
+    s.el.insertBefore(c, s.el.querySelector(".shd-marks"));
+    status(s, "compiling");
+    RT.build(s, () => {
+      resize(s);
+      s.t0 = performance.now();
+      s.air = 0;
+      draw(s, 0, true); // the rest frame (air 0 / TIME 0) equals the SVG soft layer
+      requestAnimationFrame(() => {
+        if (!s.live) return;
+        draw(s, 0, true);
+        s.el.setAttribute("data-live", "");
+        s.el.dataset.shdState = "live";
+        if (s.program === "weave") { const w = waitCard(s); w && w.setAttribute("data-weave-live", ""); }
+        H.setAttribute("data-shader-running", "");
+        s.rampIn = performance.now();
+        s.rampOut = 0;
+        s.lastDraw = 0;
+        s.lastTick = performance.now();
+        ensureTicker();
+        status(s);
+        kick(); // another visible page may start its own slot (within the caps)
+      });
+    });
+  }
+
+  function dispose(s, why) {
+    if (!s.canvas) { s.live = false; status(s, why); return; }
+    s.disposing = true;
+    const c = s.canvas, gl = s.gl;
+    c.removeEventListener("webglcontextlost", s.onLost);
+    c.removeEventListener("webglcontextrestored", s.onRestored);
+    c.remove();
+    s.el.removeAttribute("data-live");
+    s.el.dataset.shdState = "fallback";
+    const w = waitCard(s);
+    if (w && s.program === "weave") w.removeAttribute("data-weave-live");
+    try { const x = gl && gl.getExtension("WEBGL_lose_context"); x && x.loseContext(); } catch (e) {}
+    s.canvas = null; s.gl = null; s.p = null; s.live = false; s.held = false; s.rampOut = 0; s.disposing = false;
+    if (s.kind === "ambient") persist(s);
+    if (!slots.some((x) => x.live)) H.removeAttribute("data-shader-running");
+    status(s, why);
+    kick(); // the freed budget goes to the visible slot that has waited longest
+  }
+
+  /** A live horizon ramps its air out over 400 ms before it releases, but only in full and on screen; anything else swaps to the SVG at once. */
+  const canRamp = (s) => s.program === "horizon" && level() === "full" && s.inView && document.visibilityState === "visible" && !contrastMore();
+
+  /* ---------- one shared ticker; per-program frame rates ---------- */
+  function ensureTicker() { if (!raf) { tickLast = 0; raf = requestAnimationFrame(tick); } }
+  function tick(now) {
+    raf = 0;
+    const dt = tickLast ? Math.min(100, now - tickLast) : 16;
+    tickLast = now;
+    governor(dt);
+    let any = false;
+    for (const s of slots) {
+      if (!s.live || !s.p) continue;
+      const g = gate(s);
+      if (g.mode === "hold") {
+        if (!s.held) { s.held = true; s.offSince = s.offSince || now; status(s); setTimeout(() => regate(), OFF_MS + 50); }
+        continue;
+      }
+      if (s.held) { s.held = false; s.offSince = 0; status(s); }
+      if (g.mode === "css") {
+        if (!canRamp(s)) { dispose(s, g.why); continue; }
+        if (!s.rampOut) { s.rampOut = now; s.endWhy = g.why; }
+      }
+      any = true;
+      if (s.kind === "ambient") {
+        s.usedMem = used(s) + dt;
+        if (now - (s.lastPersist || 0) > 500) { persist(s); s.lastPersist = now; }
+        if (!s.rampOut && budgetLeft(s) <= RAMP) { s.rampOut = now; s.endWhy = "5 s spent this session: SVG"; }
+      }
+      if (s.program === "horizon") {
+        s.air = s.rampOut ? Math.max(0, 1 - (now - s.rampOut) / RAMP) : Math.min(1, (now - s.rampIn) / RAMP);
+        if (s.rampOut && s.air <= 0) { draw(s, now, true); dispose(s, s.endWhy || "ramped out: SVG"); continue; }
+      }
+      if (now - (s.lastDraw || 0) >= 1000 / CFG[s.program].fps - 2) { draw(s, now, false); s.lastDraw = now; }
+      if (now - (s.lastStatus || 0) > 250) { status(s); s.lastStatus = now; }
+    }
+    if (any) raf = requestAnimationFrame(tick);
+  }
+
+  /* ---------- the throttle governor: two 2 s windows with a median over 22 ms → degraded ---------- */
+  function governor(dt) {
+    if (!env.govReady) return;
+    const now = performance.now();
+    if (!env.govT0) env.govT0 = now;
+    env.govWin.push(dt);
+    if (now - env.govT0 >= 2000) {
+      const a = env.govWin.slice().sort((x, y) => x - y);
+      const med = a[Math.floor(a.length / 2)] || 0;
+      env.govSlow = med > 22 ? env.govSlow + 1 : 0;
+      env.govWin = [];
+      env.govT0 = now;
+      if (env.govSlow >= 2) { env.degraded = true; regate(); }
+    }
+  }
+
+  /* ---------- the quiet start: after load, ≥ 50% in view, 400 ms with no input, then idle ---------- */
+  function kick() {
+    clearTimeout(quietTimer);
+    if (!env.loaded) return;
+    const wait = Math.max(0, QUIET_MS - (performance.now() - env.lastInput));
+    quietTimer = setTimeout(() => {
+      const cand = slots.filter((s) => !s.live && gate(s).mode === "loop").sort((a, b) => (a.waitSince || 0) - (b.waitSince || 0));
+      const s = cand[0];
+      if (!s) return;
+      const go = () => start(s);
+      if (window.requestIdleCallback) window.requestIdleCallback(go, { timeout: 1500 });
+      else setTimeout(go, 0);
+    }, wait + 10);
+  }
+  function regate() {
+    for (const s of slots) {
+      const g = gate(s);
+      if (s.live) {
+        if (g.mode === "css") {
+          if (!canRamp(s)) dispose(s, g.why);
+          else { if (!s.rampOut) { s.rampOut = performance.now(); s.endWhy = g.why; } ensureTicker(); }
+        } else if (g.mode === "hold") {
+          if (!s.held) { s.held = true; s.offSince = s.offSince || performance.now(); status(s); setTimeout(regate, OFF_MS + 50); }
+        } else {
+          if (s.held) { s.held = false; s.offSince = 0; }
+          ensureTicker();
+        }
+      } else {
+        if (g.mode === "loop" && !s.waitSince) s.waitSince = performance.now();
+        status(s, g.mode === "loop" ? "waiting for a quiet moment" : g.why);
+      }
+    }
+    kick();
+  }
+
+  /* ---------- wiring ---------- */
+  function init() {
+    const io = new IntersectionObserver((es) => {
+      for (const e of es) {
+        const s = slots.find((x) => x.el === e.target);
+        if (!s) continue;
+        s.inView = e.intersectionRatio >= 0.5;
+        if (!s.inView && s.live && !s.offSince) s.offSince = performance.now();
+        if (s.inView) s.offSince = 0;
+      }
+      regate();
+    }, { threshold: [0, 0.5, 1] });
+    document.querySelectorAll(".shd[data-shd]").forEach((el, i) => {
+      const scope = el.closest("[data-page]") || document.body;
+      const s = { el, program: el.dataset.shd, kind: el.dataset.kind || "static", scope, route: scope.dataset.route || location.pathname, measured: el.dataset.kind !== "static" && el.dataset.pct !== "", seed: Number(el.dataset.seed) || (i + 1) * 0.137, inView: false, live: false, runStart: performance.now() };
+      if (!el.id) el.id = "shd" + i;
+      slots.push(s);
+      io.observe(el);
+      status(s, gate(s).why || "waiting for a quiet moment");
+    });
+    const input = () => { env.lastInput = performance.now(); if (slots.some((s) => !s.live)) kick(); };
+    ["scroll", "wheel", "pointerdown", "pointermove", "keydown", "touchstart"].forEach((t) => window.addEventListener(t, input, { passive: true, capture: true }));
+    window.addEventListener("load", () => {
+      env.loaded = true;
+      const ready = () => (env.govReady = true);
+      window.requestIdleCallback ? window.requestIdleCallback(ready) : setTimeout(ready, 200);
+      regate();
+    });
+    if (env.loaded) { env.govReady = true; regate(); }
+    document.addEventListener("visibilitychange", regate);
+    window.addEventListener("pagehide", () => slots.forEach((s) => s.live && dispose(s, "page hidden")));
+    window.addEventListener("pageshow", (e) => e.persisted && regate());
+    new MutationObserver(() => { slots.forEach((s) => (s.paletteDirty = true)); regate(); }).observe(H, { attributes: true, attributeFilter: ["data-motion", "data-power", "data-theme", "data-sim-reduce", "data-sim-nogl", "data-sim-contrast"] });
+    Object.values(MQ).forEach((m) => m.addEventListener && m.addEventListener("change", regate));
+    if (window.ResizeObserver) {
+      let t = 0;
+      const ro = new ResizeObserver(() => { clearTimeout(t); t = setTimeout(() => slots.forEach((s) => s.live && resize(s)), 150); });
+      slots.forEach((s) => ro.observe(s.el));
+    }
+    // WAIT: the pause button stops the weave for the session (sessionStorage) and the CSS breathe with it
+    let pausedAll = false;
+    try { pausedAll = sessionStorage.getItem("xtnl:fx:wait-paused") === "1"; } catch (e) {}
+    document.querySelectorAll("[data-weave-pause]").forEach((b) => {
+      const card = b.closest("[data-wait]");
+      const set = (on) => {
+        b.setAttribute("aria-pressed", String(on));
+        if (card) on ? card.setAttribute("data-paused", "") : card.removeAttribute("data-paused");
+      };
+      set(pausedAll);
+      b.addEventListener("click", () => {
+        const on = b.getAttribute("aria-pressed") !== "true";
+        set(on);
+        try { sessionStorage.setItem("xtnl:fx:wait-paused", on ? "1" : "0"); } catch (e) {}
+        regate();
+      });
+    });
+    window.__xtnlShader = {
+      status: () => ({ supported: env.supported, live: slots.filter((s) => s.live).length, running: slots.filter((s) => s.live && !s.held).map((s) => s.el.id), degraded: env.degraded, countedLosses: env.losses.length }),
+      running: () => slots.filter((s) => s.live && !s.held).map((s) => s.el.id),
+      get frames() { return env.frames; },
+      lose: () => slots.forEach((s) => { const x = s.gl && s.gl.getExtension("WEBGL_lose_context"); x && x.loseContext(); }),
+    };
+  }
+  /** Mockup only: give every AMBIENT slot its 5 s back, then re-gate. */
+  function resetBudgets() {
+    slots.forEach((s) => { s.usedMem = 0; try { sessionStorage.removeItem(budgetKey(s)); } catch (e) {} });
+    regate();
+  }
+  function resetWaits() {
+    slots.forEach((s) => (s.runStart = performance.now()));
+    regate();
+  }
+  return { init, regate, resetBudgets, resetWaits, slots, liveCount: () => slots.filter((s) => s.live).length, AMBIENT_ROUTES };
+})();
+
+/* =====================================================================
+   Mockup chrome (not part of the app): the level / theme / simulation
+   toolbar, InfoTip and chip panels, the band re-render at real size, the
+   SEEN simulator and the demo buttons. Per-viewer settings use
+   localStorage, wrapped in try/catch (the page renders without it).
+   ===================================================================== */
+const MK = (function () {
+  "use strict";
+  const H = document.documentElement;
+  const store = {
+    get(k) { try { return localStorage.getItem("xtnl-mk:" + k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem("xtnl-mk:" + k, v); } catch (e) {} },
+  };
+  const demos = {};
+
+  /* ---------- level, theme and simulations ---------- */
+  function setLevel(v) {
+    const sys = (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) || H.hasAttribute("data-sim-reduce") ? "still" : "full";
+    const lvl = v === "system" ? sys : v;
+    H.dataset.motion = lvl;
+    document.querySelectorAll("[data-set-level]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.setLevel === v)));
+    const out = document.getElementById("mk-level-now");
+    if (out) out.textContent = v === "system" ? `system → ${lvl}` : lvl;
+    store.set("level", v);
+    document.querySelectorAll("[data-level-note]").forEach((n) => (n.hidden = n.dataset.levelNote !== lvl));
+  }
+  function setTheme(v) {
+    if (v === "vellum") H.dataset.theme = "vellum";
+    else H.dataset.theme = "night";
+    H.style.colorScheme = v === "vellum" ? "light" : "dark";
+    document.querySelectorAll("[data-set-theme]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.setTheme === v)));
+    store.set("theme", v);
+  }
+  function setSim(attr, on) {
+    if (attr === "data-power") on ? H.setAttribute("data-power", "save") : H.removeAttribute("data-power");
+    else on ? H.setAttribute(attr, "") : H.removeAttribute(attr);
+    store.set(attr, on ? "1" : "0");
+    if (attr === "data-sim-reduce" && (store.get("level") || "system") === "system") setLevel("system");
+  }
+
+  /* ---------- InfoTip and chip panels: aria-expanded + the hidden panel right after ---------- */
+  function onTipClick(e) {
+    const b = e.target.closest("button[aria-controls]");
+    if (!b || !b.matches(".itip, .hcb, [data-toggle]")) return;
+    const p = document.getElementById(b.getAttribute("aria-controls"));
+    if (!p) return;
+    const open = b.getAttribute("aria-expanded") !== "true";
+    b.setAttribute("aria-expanded", String(open));
+    p.hidden = !open;
+    if (open) MO.playGlyph(p, "tipOpen", { licence: "ACT" });
+  }
+  function onKey(e) {
+    if (e.key !== "Escape") return;
+    const p = e.target.closest(".tp");
+    const b = p ? document.querySelector(`[aria-controls="${p.id}"]`) : e.target.closest("button[aria-controls][aria-expanded='true']");
+    if (!b) return;
+    const panel = document.getElementById(b.getAttribute("aria-controls"));
+    b.setAttribute("aria-expanded", "false");
+    if (panel) panel.hidden = true;
+    b.focus();
+  }
+
+  /* ---------- the bands, re-rendered at their real CSS size (viewBox = CSS size) ---------- */
+  function renderBand(el) {
+    if (el.dataset.playing) return;
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const w = Math.round(r.width), h = Math.round(r.height);
+    if (el.dataset.rw === String(w) && el.dataset.rh === String(h)) return;
+    el.dataset.rw = String(w);
+    el.dataset.rh = String(h);
+    const canvas = el.querySelector("canvas");
+    if (el.dataset.shd === "horizon") {
+      const geo = GEO.horizonGeometry(w, h);
+      const pct = el.dataset.pct === "" ? null : Number(el.dataset.pct);
+      const fb = el.querySelector(".shd-fb");
+      const html = (pct != null || fb ? GEO.horizonDawnSVG(geo, el.id) : "") + GEO.horizonMarksSVG(geo, { pct, depth: Number(el.dataset.depth || 12), self: el.hasAttribute("data-self") });
+      el.querySelectorAll(".shd-fb, .shd-marks").forEach((n) => n.remove());
+      el.insertAdjacentHTML("beforeend", html);
+    } else if (el.dataset.shd === "weave") {
+      el.querySelectorAll(".shd-fb").forEach((n) => n.remove());
+      el.insertAdjacentHTML("afterbegin", GEO.weaveStrandsSVG(w, h, el.id));
+    }
+    if (canvas) el.insertBefore(canvas, el.querySelector(".shd-marks"));
+  }
+
+  /* ---------- SEEN simulator ---------- */
+  // Each [data-seen] element plays once when it reaches 50% in view, as if its value changed since this viewer last looked.
+  // In view at load (or "In view at hydration" ticked) → the accent only, never a redraw from zero (D30).
+  const seenEls = [];
+  function runSeen(el, accent) {
+    const kind = el.dataset.seen;
+    const o = { licence: kind === "dateMoved" ? "CHANGED" : "SEEN", accent };
+    if (kind === "meterFill") return MO.playGlyph(el, "meterFill", Object.assign(o, { from: el.dataset.from, to: el.dataset.to }));
+    if (kind === "horizonFront") {
+      // like meter-fill: the frozen house behaviour, from last seen, even in view at hydration
+      el.dataset.playing = "1";
+      return MO.playGlyph(el, "horizonFront", Object.assign(o, { from: el.dataset.from, to: el.dataset.to })).then(() => delete el.dataset.playing);
+    }
+    if (kind === "reach") return MO.playGlyph(el, "reach", o);
+    if (kind === "rankRise") return MO.playGlyph(el, "rankRise", Object.assign(o, { name: el.dataset.name, seed: el.dataset.seed }));
+    if (kind === "questDone") return MO.playGlyph(el, "questDone", o);
+    if (kind === "build") return MO.playGlyph(el.querySelector("svg.mg-stage") || el, "build", o);
+    if (kind === "sealReached") return MO.playGlyph(el.querySelector("svg.mg") || el, "sealReached", o);
+    return Promise.resolve();
+  }
+  const VALUE = new Set(["meterFill", "horizonFront", "dateMoved"]);
+  // value motions run at once; flourish chains (reach, rank rise, quest done, build, seal) queue one at a time (H13)
+  const ORDER = { reach: 0, build: 1, rankRise: 2 };
+  const byOrder = (a, b) => (ORDER[a.el.dataset.seen] ?? 3) - (ORDER[b.el.dataset.seen] ?? 3);
+  const run = (el, accent) => (VALUE.has(el.dataset.seen) ? runSeen(el, accent) : MO.sequence(() => runSeen(el, accent)));
+  function armSeen() {
+    const io = new IntersectionObserver((es) => {
+      const due = [];
+      for (const e of es) {
+        const it = seenEls.find((x) => x.el === e.target);
+        if (!it || it.done || e.intersectionRatio < 0.5) continue;
+        it.done = true;
+        due.push(it);
+      }
+      due.sort(byOrder).forEach((it) => run(it.el, false)); // a reach plays before the rank rise it gives
+    }, { threshold: [0.5] });
+    const now = [];
+    document.querySelectorAll("[data-seen]").forEach((el) => {
+      if (el.closest("[data-seen-manual]")) return;
+      const r = el.getBoundingClientRect();
+      const vis = Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0)) / Math.max(1, r.height);
+      const it = { el, done: false };
+      seenEls.push(it);
+      if (vis >= 0.5 && r.width) {
+        it.done = true; // in view at hydration: the accent only
+        now.push(it);
+      } else io.observe(el);
+    });
+    now.sort(byOrder).forEach((it) => run(it.el, true));
+  }
+  function replaySeen(scope) {
+    const acc = document.getElementById("mk-accent");
+    const accent = !!(acc && acc.checked);
+    (scope || document).querySelectorAll("[data-seen]").forEach((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > innerHeight || !r.width) return;
+      run(el, accent);
+    });
+  }
+
+  /* ---------- toolbar wiring ---------- */
+  function init() {
+    setTheme(store.get("theme") || "night");
+    ["data-sim-reduce", "data-sim-nogl", "data-sim-contrast", "data-power"].forEach((a) => {
+      const on = store.get(a) === "1";
+      setSim(a, on);
+      const cb = document.querySelector(`[data-sim="${a}"]`);
+      if (cb) cb.checked = on;
+    });
+    setLevel(store.get("level") || "system");
+    document.addEventListener("click", (e) => {
+      const lv = e.target.closest("[data-set-level]");
+      if (lv) return setLevel(lv.dataset.setLevel);
+      const th = e.target.closest("[data-set-theme]");
+      if (th) return setTheme(th.dataset.setTheme);
+      const d = e.target.closest("[data-demo]");
+      if (d && demos[d.dataset.demo]) { e.preventDefault(); return demos[d.dataset.demo](d, e); }
+      if (e.target.closest("#mk-replay")) return replaySeen();
+      if (e.target.closest("#mk-budget")) { FX.resetBudgets(); FX.resetWaits(); return; }
+      onTipClick(e);
+    });
+    document.addEventListener("change", (e) => {
+      const s = e.target.closest("[data-sim]");
+      if (s) setSim(s.dataset.sim, s.checked);
+    });
+    document.addEventListener("keydown", onKey);
+    const calls = document.getElementById("mk-calls");
+    MO.onCall = (n) => calls && (calls.textContent = String(n));
+    const said = document.getElementById("mk-said");
+    MO.onAnnounce = (t) => { if (said) { said.textContent = `announce(): “${t}”`; said.hidden = false; } };
+    const live = document.getElementById("mk-ctx");
+    setInterval(() => live && (live.textContent = String(FX.liveCount())), 300);
+    // bands at their real size
+    const bands = document.querySelectorAll(".shd[data-shd]");
+    bands.forEach(renderBand);
+    if (window.ResizeObserver) {
+      let t = 0;
+      const ro = new ResizeObserver(() => { clearTimeout(t); t = setTimeout(() => bands.forEach(renderBand), 150); });
+      bands.forEach((b) => ro.observe(b));
+    }
+    FX.init();
+    armSeen();
+  }
+  return { init, demos, store, replaySeen, runSeen };
+})();
+
+/* ---------- this page ---------- */
+
+const near = (el, fn) => { if (!el) return; const r = el.getBoundingClientRect(); if (r.top < 60 || r.bottom > innerHeight) { el.scrollIntoView({ block: "center" }); setTimeout(fn, 450); } else fn(); };
+MK.demos.questDoneToday = () => { const el = document.querySelector("#td344 .kg[data-seen=questDone]"); const m = el && el.closest(".wq-r").querySelector(".meter"); near(el, () => { MO.playGlyph(m, "meterFill", { licence: "SEEN", from: 67, to: 100 }); MO.sequence(() => MO.playGlyph(el, "questDone", { licence: "SEEN" })); }); };
+MK.demos.addFill = () => { const m = document.querySelector("#td344 .meter[data-from='20']"); near(m, () => MO.playGlyph(m, "meterFill", { licence: "SEEN", from: 20, to: 40 })); };
+MK.demos.questDoneRoadmap = () => { const el = document.querySelector("#td-cmp .kg"); near(el, () => MO.playGlyph(el, "questDone", { licence: "SEEN" })); };
+
+MK.init();
+</script>
+</body>
+</html>

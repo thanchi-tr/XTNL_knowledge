@@ -106,10 +106,20 @@ interface PlannedCall {
 }
 
 /** The v4 plan: exactly 2 requests, both in the production configuration (contracts §19.14, §20.8). */
-const PROBE_PLAN: readonly PlannedCall[] = [
+const FIELD_PLAN: readonly PlannedCall[] = [
   { pack: "actuarial-probability", gapsLive: false, thinkingLow: false, file: "probe-v4-actuarial-probability.json" },
   { pack: "new-subject", gapsLive: false, thinkingLow: false, file: "probe-v4-new-subject.json" },
 ];
+
+/**
+ * --track-call: the user's further approval (5 Oct) of exactly ONE call on a
+ * track pack, so the track schema (a root OBJECT holding only `picks`) is
+ * tested against the API before ROADMAP_GEMINI_LIVE. Same flag, same guards.
+ */
+const TRACK_CALL_FLAG = "--track-call";
+const TRACK_PLAN: readonly PlannedCall[] = [{ pack: "run-10k", gapsLive: false, thinkingLow: false, file: "probe-v4-run-10k.json" }];
+const TRACK_ONLY = process.argv.includes(TRACK_CALL_FLAG);
+const PROBE_PLAN: readonly PlannedCall[] = TRACK_ONLY ? TRACK_PLAN : FIELD_PLAN;
 
 function refuse(message: string): never {
   console.log(`roadmap-probe: refused — ${message}`);
