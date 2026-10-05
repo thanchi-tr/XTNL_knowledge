@@ -24,20 +24,54 @@
  *              catalogKindsFor · catalogLabelOf · catalogOriginOf · catalogHowOf
  *   Fix round  SESSION_PICK_KINDS · isSessionPickKind (what the body/care confirm holds) ·
  *              practiceRoleOf (retrieval or production: the one definition)
+ *   Confirm to unlock (contracts §19; the types and the cue detector are roadmap-types')
+ *              CatalogEntry.safe · CUE_SAFE_KINDS · isCueSafeKind · cueSafeKindsOf · ACTIVITY_ALWAYS_ASK_TRACKS ·
+ *              ACTIVITY_CUE_ASK_TRACKS · CUE_GATED_TRACKS · ACTIVITY_ITSELF_KINDS · cueGatedKindsOf · activityAsksOn ·
+ *              constraintsStateOf · constraintsStateOfIntake · allowedKindsFor (the one gate) · activityGateOf ·
+ *              isPlaceableKind · activityConfirmViewOf · answerActivityCard (the card's answer) · the refusals
+ *              (ACTIVITY_ANSWER_REFUSAL · ACTIVITY_NOTHING_TICKED · ACTIVITY_ANSWER_STALE) · ACTIVITY_NOTHING_TO_AVOID ·
+ *              ACTIVITY_CARD_NAME · ACTIVITY_PENDING_POINTER · withActivityPointer · answerActivities (deprecated) ·
+ *              activityConfirmOf · coverageJsonOf (the answers' place in Roadmap.coverage)
  */
 import {
+  ACTIVITY_CONFIRM_KEY,
+  ACTIVITY_REASON_MAX,
+  CUE_QUOTES_MAX,
   METHOD_DEFAULT_BAND,
   codeText,
+  constraintCuesOf,
+  cueKeyOf,
+  cueReadingOf,
+  cueTextsOf,
+  userClauseOf,
+  type ActivityAnswer,
+  type ActivityCardAnswer,
+  type ActivityCardAnswered,
+  type ActivityConfirm,
+  type ActivityConfirmEntry,
+  type ActivityConfirmView,
+  type ActivityGate,
+  type ActivityPrefill,
+  type ActivityRow,
+  type ActivityRowState,
   type CheckpointKind,
   type CodeTemplate,
   type CodeText,
+  type ConstraintExclusion,
+  type ConstraintsState,
+  type CueSource,
+  type CueTexts,
   type DomainName,
+  type Intake,
   type Origin,
   type PracticeBand,
   type PracticeMethod,
+  type RoadmapActionResult,
   type YoursText,
 } from "./roadmap-types";
 import type { Track } from "./life-types";
+import { isDayKey } from "./life-economy";
+import type { DayKey } from "./life-day";
 
 /** Where a type can be used: a Field Area ("FIELD", whatever its life track), or a track Area (practice only) by its track. */
 export type CatalogTrack = "FIELD" | Track;
@@ -97,6 +131,16 @@ export interface CatalogEntry {
   lastStageOnly?: boolean;
   /** Placed by code only (EXAM_DAY): never in a run's enum, never in an editor picker. */
   codeOnly?: boolean;
+  /**
+   * Placed while the activity card waits on the user's answer (contracts
+   * §19): the easy, mobility and technique sessions (BODY_SAFE_KINDS; the
+   * technique session on CRAFT too) and, on CARE, planning the week and
+   * keeping a log (writing, not care contact), so a waiting plan is never
+   * empty. Every other practice on a track that asks, and the activity
+   * itself (ACTIVITY_ITSELF_KINDS), waits on the card's answer. A code word
+   * only: no copy calls a session safe.
+   */
+  safe?: true;
   /** Words the constraint filter matches by stem, with the rendered label. A Field type carries no body-activity keyword. */
   keywords: readonly string[];
   /** The "How" disclosure: three to five lines of plain procedure, in code's words. */
@@ -251,6 +295,7 @@ export const CATALOG: readonly CatalogEntry[] = [
     key: "EASY_SESSION",
     slot: "PRACTICE",
     method: "WORKOUT",
+    safe: true,
     template: "Easy session",
     tracks: ["BODY"],
     needs: null,
@@ -291,6 +336,7 @@ export const CATALOG: readonly CatalogEntry[] = [
     key: "MOBILITY_SESSION",
     slot: "PRACTICE",
     method: "WORKOUT",
+    safe: true,
     template: "Mobility session",
     tracks: ["BODY"],
     needs: null,
@@ -301,6 +347,7 @@ export const CATALOG: readonly CatalogEntry[] = [
     key: "TECHNIQUE_SESSION",
     slot: "PRACTICE",
     method: "WORKOUT",
+    safe: true,
     template: "Technique session",
     tracks: ["BODY", "CRAFT"],
     needs: null,
@@ -342,6 +389,7 @@ export const CATALOG: readonly CatalogEntry[] = [
     key: "PLAN_AHEAD",
     slot: "PRACTICE",
     method: "WRITING",
+    safe: true,
     template: "Plan the week ahead",
     tracks: ["CARE", "DUTY"],
     needs: null,
@@ -352,6 +400,7 @@ export const CATALOG: readonly CatalogEntry[] = [
     key: "KEEP_A_LOG",
     slot: "PRACTICE",
     method: "WRITING",
+    safe: true,
     template: "Keep a log: {aim}",
     tracks: ["CARE", "DUTY"],
     needs: "aim",
@@ -525,7 +574,7 @@ export const PRODUCTION_KINDS: readonly PracticeKind[] = [
   "SAY_IT_ALOUD",
   "TIMED_PRACTICE",
 ];
-/** A BODY or CARE plan with constraints (or non-English or unparsed ones): the starter and every code-added session use only these (F-R4-17). */
+/** The BODY sessions a plan places while the activity card waits (F-R4-17; contracts §19): cueSafeKindsOf("BODY"), pinned equal by a golden. */
 export const BODY_SAFE_KINDS: readonly PracticeKind[] = ["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION"];
 
 /**
@@ -655,4 +704,426 @@ export function catalogHowOf(key: CatalogKey): readonly string[] {
 export function catalogBandOf(key: CatalogKey): PracticeBand | null {
   const m = catalogEntryOf(key)?.method;
   return m ? METHOD_DEFAULT_BAND[m] : null;
+}
+
+// ═══ Confirm to unlock (contracts §19) ══════════════════════════════════════
+//
+// The one gate every plan path calls: the code-built starter and stage
+// ladder (R2's starterLadder, stageLadderOf, trackLadderOf and
+// syncStagePractices), the Gemini keys-only run (its *_FOR_RUN enums take
+// `blocked` as `excluded`, and the validator drops a blocked pick), every
+// re-plan, Start (a blocked practice is not started) and the week quests (a
+// blocked practice is not a quest). The cue detector, the stored answer and
+// the gate's shapes are roadmap-types'.
+//
+// The lead's rules (§19.1): every BODY or CARE plan asks once, whatever the
+// user wrote; a CRAFT plan asks when any of the user's texts carries a cue
+// or can't be read; a Field Area and DUTY never ask. Until the user answers
+// the card under their current words, only the track's safe kinds are
+// placed. The answer is an explicit act (ticks and Save, or "Nothing to
+// avoid") carrying the words' key. The parser's reading only suggests.
+
+/** The catalog's safe kinds (CatalogEntry.safe), in CATALOG order: the easy, mobility and technique sessions, then planning the week and keeping a log. */
+export const CUE_SAFE_KINDS: readonly CatalogKey[] = CATALOG.filter((e) => e.safe === true).map((e) => e.key);
+
+/** A catalog key marked safe (an own-property read; never a prototype name). */
+export function isCueSafeKind(key: unknown): boolean {
+  return isCatalogKey(key) && BY_KEY[key].safe === true;
+}
+
+/**
+ * The safe kinds on one track, in CATALOG order: what a plan places while
+ * its card waits. BODY: easy, mobility and technique sessions; CARE: plan
+ * the week ahead and keep a log; CRAFT: the technique session. [] on FIELD.
+ */
+export function cueSafeKindsOf(track: CatalogTrack): CatalogKey[] {
+  return CATALOG.filter((e) => e.safe === true && e.tracks.includes(track)).map((e) => e.key);
+}
+
+/** The tracks whose plans ask whatever the user wrote (cue or not, constraints empty or not): there, safety never rests on the cue detector. */
+export const ACTIVITY_ALWAYS_ASK_TRACKS: readonly CatalogTrack[] = ["BODY", "CARE"];
+/** The tracks whose plans ask when any of the user's texts carries a cue or can't be read (a craft loads the hands, the voice, the back: "wrist RSI", "voice strain"). */
+export const ACTIVITY_CUE_ASK_TRACKS: readonly CatalogTrack[] = ["CRAFT"];
+/**
+ * Every track the gate can hold, in CATALOG_TRACKS order. A Field Area
+ * (FIELD: knowledge practice) is never gated by a body cue, whatever its
+ * life track; DUTY is not gated.
+ */
+export const CUE_GATED_TRACKS: readonly CatalogTrack[] = CATALOG_TRACKS.filter((t) => ACTIVITY_ALWAYS_ASK_TRACKS.includes(t) || ACTIVITY_CUE_ASK_TRACKS.includes(t));
+
+/**
+ * Types that are the activity itself, gated with the practices: a full
+ * attempt, a performance check and a mock test. SET_UP and BOOK_EXAM name
+ * preparation and stay ungated (RT-3); EXAM_DAY is the user's own date,
+ * placed by code (codeOnly).
+ */
+export const ACTIVITY_ITSELF_KINDS: readonly CatalogKey[] = ["FULL_ATTEMPT", "PERFORMANCE_CHECK", "MOCK_TEST"];
+
+/**
+ * The kinds that wait on the card's answer while the gate is on, in CATALOG
+ * order: every practice on the track that is not safe, and
+ * ACTIVITY_ITSELF_KINDS. BODY: Harder, Longer and Strength sessions; CARE:
+ * Set time, Check-in and Admin session; CRAFT: slow drills, run-throughs and
+ * practice with a teacher or partner. [] on FIELD and DUTY.
+ */
+export function cueGatedKindsOf(track: CatalogTrack): CatalogKey[] {
+  if (!CUE_GATED_TRACKS.includes(track)) return [];
+  return CATALOG.filter((e) => e.tracks.includes(track) && e.safe !== true && (e.slot === "PRACTICE" || ACTIVITY_ITSELF_KINDS.includes(e.key))).map((e) => e.key);
+}
+
+/**
+ * Whether the gate asks for these words: always on BODY and CARE; on CRAFT
+ * when any of the user's texts carries a cue or can't be read
+ * (CueReading.hasCue); never on FIELD or DUTY. The parser's reading never
+ * turns it on: a suggestion is not a cue.
+ */
+export function activityAsksOn(state: Pick<ConstraintsState, "track" | "reading">): boolean {
+  if (ACTIVITY_ALWAYS_ASK_TRACKS.includes(state.track)) return true;
+  return ACTIVITY_CUE_ASK_TRACKS.includes(state.track) && state.reading.hasCue === true;
+}
+
+/** What constraintsStateOf reads. `exclusions` is R3's constraintExclusionsOf over the constraints (suggestions; never a block, never an unlock). */
+export interface ConstraintsStateInput {
+  track: CatalogTrack;
+  texts: CueTexts;
+  /** examLabel is set. Default false. */
+  exam?: boolean;
+  /** Default true. */
+  practicesAllowed?: boolean;
+  exclusions?: readonly ConstraintExclusion[] | null;
+}
+
+const catalogIndex = (k: string): number => CATALOG.findIndex((e) => e.key === k);
+
+/**
+ * The gate's input, pure: the cue reading over every text, its key, whether
+ * the Constraints box holds anything, and the parser's exclusions as
+ * suggestions (one per kind, on this track, in CATALOG order, each with the
+ * user's sentence: userClauseOf over the constraints, or the word).
+ */
+export function constraintsStateOf(input: ConstraintsStateInput): ConstraintsState {
+  const { track, texts } = input;
+  const prefill: ActivityPrefill[] = [];
+  const seen = new Set<string>();
+  for (const x of input.exclusions ?? []) {
+    if (!x || !isCatalogKey(x.kind) || seen.has(x.kind) || !BY_KEY[x.kind].tracks.includes(track)) continue;
+    seen.add(x.kind);
+    const word = typeof x.word === "string" ? x.word.trim().slice(0, ACTIVITY_REASON_MAX) : "";
+    prefill.push({ kind: x.kind, word, reason: userClauseOf(texts.constraints, word) || word });
+  }
+  prefill.sort((a, b) => catalogIndex(a.kind) - catalogIndex(b.kind));
+  return {
+    track,
+    exam: input.exam === true,
+    practicesAllowed: input.practicesAllowed !== false,
+    texts,
+    stated: typeof texts.constraints === "string" && texts.constraints.trim().length > 0,
+    reading: cueReadingOf(texts),
+    key: cueKeyOf(texts),
+    prefill,
+  };
+}
+
+/** constraintsStateOf for an intake: its catalog track, cueTextsOf, examLabel and practicesAllowed. */
+export function constraintsStateOfIntake(intake: Intake, exclusions?: readonly ConstraintExclusion[] | null): ConstraintsState {
+  return constraintsStateOf({ track: catalogTrackOf(intake), texts: cueTextsOf(intake), exam: !!intake.examLabel, practicesAllowed: intake.practicesAllowed, exclusions });
+}
+
+const hasOwn = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
+const isVerdict = (v: unknown): v is ActivityConfirmEntry["verdict"] => v === "AVOID" || v === "FINE";
+
+/** A stored AVOID for one kind (an own property with a valid day), else null. A FINE is never read: the card's answer unlocks, not a per-kind word. */
+function avoidEntryOf(kinds: unknown, k: CatalogKey): ActivityConfirmEntry | null {
+  if (!kinds || typeof kinds !== "object" || !hasOwn(kinds, k)) return null;
+  const x = (kinds as Record<string, unknown>)[k];
+  if (!x || typeof x !== "object") return null;
+  const { verdict, day, reason } = x as { verdict?: unknown; day?: unknown; reason?: unknown };
+  if (verdict !== "AVOID" || !isDayKey(day)) return null;
+  return { verdict, day, reason: typeof reason === "string" ? reason.slice(0, ACTIVITY_REASON_MAX) : "" };
+}
+
+/** The card's stored answer when it is a valid one (own properties; a day; catalog keys, deduped, in CATALOG order), else null. */
+function cardAnsweredOf(c: unknown): ActivityCardAnswered | null {
+  if (!c || typeof c !== "object" || !hasOwn(c, "answered")) return null;
+  const a = (c as { answered?: unknown }).answered;
+  if (!a || typeof a !== "object" || Array.isArray(a)) return null;
+  const { day, asked, none } = a as { day?: unknown; asked?: unknown; none?: unknown };
+  if (!isDayKey(day) || !Array.isArray(asked)) return null;
+  const set = new Set<string>(asked.filter((k): k is string => typeof k === "string"));
+  return { day, asked: CATALOG.filter((e) => set.has(e.key)).map((e) => e.key), none: none === true };
+}
+
+/**
+ * THE gate (contracts §19), pure: which catalog kinds a plan path may place,
+ * and what to ask. ON (activityAsksOn) on every BODY and CARE plan, and on a
+ * CRAFT plan whose words carry a cue or can't be read. Per kind on the
+ * track, in CATALOG order:
+ *   - the user said avoid (a stored AVOID, whatever the words): AVOID, not
+ *     placed, on every track;
+ *   - the card was answered under these words (ActivityConfirm.answered
+ *     with state.key) and listed the kind, gated or suggested: FINE, placed;
+ *   - gated (on, and in cueGatedKindsOf) and not answered under these
+ *     words: PENDING, not placed (a suggestion pre-ticks its box);
+ *   - the parser's reading names it (a suggestion): WORDS, placed (its box
+ *     comes pre-ticked; it never blocks);
+ *   - otherwise placed, with no row.
+ * The safe kinds are never gated. Nothing unlocks without the card's
+ * answer; a stored per-kind FINE is never read. A changed text asks again
+ * (the earlier answer's day shows as staleDay); an AVOID stands.
+ */
+export function allowedKindsFor(state: ConstraintsState, confirmation: ActivityConfirm | null | undefined): ActivityGate {
+  const track = state.track;
+  const on = activityAsksOn(state);
+  const gatedSet = new Set<string>(on ? cueGatedKindsOf(track) : []);
+  const prefillBy = new Map<string, ActivityPrefill>(state.prefill.map((p) => [p.kind, p]));
+  const conf = confirmation && typeof confirmation === "object" ? confirmation : null;
+  const kinds = conf && hasOwn(conf, "kinds") ? conf.kinds : null;
+  const card = cardAnsweredOf(conf);
+  const fresh = card && conf?.key === state.key ? card : null;
+  const stale = card && !fresh ? card : null;
+  const askedNow = new Set<string>(fresh?.asked ?? []);
+  const askedBefore = new Set<string>(stale?.asked ?? []);
+  const shown = (e: CatalogEntry) => !e.codeOnly && (state.exam || !e.examOnly) && (state.practicesAllowed || e.slot !== "PRACTICE");
+  const allowed: CatalogKey[] = [];
+  const blocked: CatalogKey[] = [];
+  const pending: CatalogKey[] = [];
+  const rows: ActivityRow[] = [];
+  for (const e of CATALOG) {
+    if (!e.tracks.includes(track)) continue;
+    const k = e.key;
+    const avoid = avoidEntryOf(kinds, k);
+    const p = prefillBy.get(k);
+    const gated = gatedSet.has(k);
+    let st: ActivityRowState | null;
+    if (avoid) st = "AVOID";
+    else if (fresh && askedNow.has(k) && (gated || p)) st = "FINE";
+    else if (gated) st = "PENDING";
+    else if (p) st = "WORDS";
+    else st = null;
+    if (st === "AVOID" || st === "PENDING") blocked.push(k);
+    else allowed.push(k);
+    if (st === null || !shown(e)) continue;
+    rows.push({
+      kind: k,
+      state: st,
+      gated,
+      prefill: (st === "PENDING" || st === "WORDS") && p ? "AVOID" : null,
+      reason: avoid ? avoid.reason : p ? p.reason : "",
+      day: avoid ? avoid.day : st === "FINE" && fresh ? fresh.day : null,
+      staleDay: st === "PENDING" && stale && askedBefore.has(k) ? stale.day : null,
+      cls: st === "AVOID" || st === "FINE" ? "YOURS" : null,
+    });
+    if (st === "PENDING") pending.push(k);
+  }
+  return { on, track, key: state.key, answered: fresh ? fresh.day : null, none: fresh ? fresh.none : false, staleDay: stale ? stale.day : null, allowed, blocked, pending, rows };
+}
+
+/** The gate for an intake: allowedKindsFor(constraintsStateOfIntake(intake, exclusions), intake.activities). */
+export function activityGateOf(intake: Intake, exclusions?: readonly ConstraintExclusion[] | null): ActivityGate {
+  return allowedKindsFor(constraintsStateOfIntake(intake, exclusions), intake.activities ?? null);
+}
+
+/**
+ * Whether a plan path may place an item of this type. An item with no
+ * catalog type (the user's own words, rev 3's) is the user's and is not
+ * gated; a catalog type is placeable unless the gate blocks it.
+ */
+export function isPlaceableKind(gate: Pick<ActivityGate, "blocked">, key: unknown): boolean {
+  return !isCatalogKey(key) || !gate.blocked.includes(key);
+}
+
+/** The text up to its first sentence break, trimmed, at most `max` characters ("…" where cut). */
+const firstSentenceOf = (text: string | null | undefined, max = ACTIVITY_REASON_MAX): string => {
+  if (typeof text !== "string") return "";
+  const t = text.trim();
+  const m = /[.!?;\n\r。！？；]/.exec(t);
+  const s = (m ? t.slice(0, m.index) : t).trim();
+  if (s.length <= max) return s;
+  const cut = s.lastIndexOf(" ", max - 1);
+  return `${s.slice(0, cut > max / 2 ? cut : max - 1).trim()}…`;
+};
+
+/**
+ * The confirm card's view field (DraftView.activityConfirm,
+ * RoadmapView.activityConfirm). While on, it quotes up to CUE_QUOTES_MAX of
+ * the user's sentences that raised a cue, constraints first, then the aim
+ * and the notes (the constraints' first sentence when no cue word matched;
+ * the first unreadable text's when only that did). With nothing else to
+ * quote, the suggestions' sentences. Rows, the key and the answer's days are
+ * the gate's; safeKinds is what the plan places meanwhile (cueSafeKindsOf).
+ */
+export function activityConfirmViewOf(state: ConstraintsState, gate: ActivityGate): ActivityConfirmView {
+  const quotes: string[] = [];
+  const add = (q: string) => {
+    const t = q.trim();
+    if (t && !quotes.includes(t) && quotes.length < CUE_QUOTES_MAX) quotes.push(t);
+  };
+  if (gate.on) {
+    const order: readonly CueSource[] = ["CONSTRAINTS", "AIM", "NOTES"];
+    for (const src of order) for (const c of state.reading.cues) if (c.source === src) add(c.clause);
+    if (quotes.length === 0 && state.stated) add(firstSentenceOf(state.texts.constraints));
+    if (quotes.length === 0 && state.reading.unparseable) {
+      const texts = [state.texts.constraints, state.texts.aim, ...(state.texts.notes ?? [])];
+      const unread = texts.find((t) => constraintCuesOf(t).unparseable);
+      if (unread) add(firstSentenceOf(unread));
+    }
+  }
+  if (quotes.length === 0) for (const r of gate.rows) if (r.prefill === "AVOID" || r.state === "WORDS") add(r.reason);
+  return {
+    on: gate.on,
+    track: gate.track,
+    key: gate.key,
+    quotes,
+    unparseable: gate.on && state.reading.unparseable,
+    rows: gate.rows,
+    pending: gate.pending.length,
+    answered: gate.answered,
+    none: gate.none,
+    staleDay: gate.staleDay,
+    safeKinds: gate.on ? cueSafeKindsOf(gate.track) : [],
+  };
+}
+
+/** The card's name, as the refusals point at it. */
+export const ACTIVITY_CARD_NAME = "Activities to avoid";
+/** The card's explicit all-clear (ActivityCardAnswer.nothingToAvoid): the button's words. */
+export const ACTIVITY_NOTHING_TO_AVOID = "Nothing to avoid";
+/** answerActivityCard's refusal of a malformed answer (an unknown, codeOnly or off-track kind, a bad day, ticks with "Nothing to avoid"). */
+export const ACTIVITY_ANSWER_REFUSAL = "That answer names a session type this plan doesn't list. Look at the list again.";
+/** Save with nothing ticked is not an answer: it never unlocks anything. */
+export const ACTIVITY_NOTHING_TICKED = `Tick what the plan should avoid, or choose “${ACTIVITY_NOTHING_TO_AVOID}”.`;
+/** The answer was given against other words (another tab or device changed them meanwhile): the card asks again. */
+export const ACTIVITY_ANSWER_STALE = "Your words changed since this list was shown. Look at it again and answer.";
+/** What any refusal says while the card waits on the user's answer (withActivityPointer). */
+export const ACTIVITY_PENDING_POINTER = `Some session types wait on your answer in “${ACTIVITY_CARD_NAME}”.`;
+
+/**
+ * A refusal that points at the card while it waits (the lead's rule: a
+ * waiting plan is never a dead end). The message as given when the gate is
+ * off or nothing waits; else the message and ACTIVITY_PENDING_POINTER.
+ */
+export function withActivityPointer(gate: Pick<ActivityGate, "on" | "pending">, message: string): string {
+  if (!gate.on || gate.pending.length === 0 || message.includes(ACTIVITY_PENDING_POINTER)) return message;
+  const m = message.replace(/\s+$/u, "");
+  return `${m}${m && !/[.!?…]$/u.test(m) ? "." : ""}${m ? " " : ""}${ACTIVITY_PENDING_POINTER}`;
+}
+
+/** The user's sentence a stored answer quotes: the kind's suggestion, else the first cue's sentence (constraints first), else the constraints' first sentence. */
+function reasonFor(state: ConstraintsState, kind: CatalogKey): string {
+  const p = state.prefill.find((x) => x.kind === kind);
+  if (p?.reason) return p.reason.slice(0, ACTIVITY_REASON_MAX);
+  for (const src of ["CONSTRAINTS", "AIM", "NOTES"] as const) {
+    const c = state.reading.cues.find((x) => x.source === src);
+    if (c?.clause) return c.clause;
+  }
+  return firstSentenceOf(state.texts.constraints);
+}
+
+/**
+ * The stored answers after the user answers the card, pure (R4's
+ * setActivityVerdictsCore writes the result; the user's own decision,
+ * YOURS). Refuses:
+ *   - a malformed answer, or a kind that is unknown, codeOnly or off this
+ *     track, or ticks together with "Nothing to avoid" (ACTIVITY_ANSWER_REFUSAL);
+ *   - an answer given against other words: answer.key !== state.key
+ *     (ACTIVITY_ANSWER_STALE; the card asks again under the new words);
+ *   - a Save with nothing ticked (ACTIVITY_NOTHING_TICKED): an unticked row
+ *     is never taken as fine by itself.
+ * Otherwise the ticks replace the card's earlier ones: each ticked kind is
+ * an AVOID (an earlier AVOID keeps its day and reason; a new one gets `day`
+ * and the reason the server quotes, reasonFor: never text the client
+ * sends); an AVOID the card didn't list stands. The card is answered under
+ * state.key on `day`, about the kinds it listed (asked: the gate's rows and
+ * the ticks), with none = nothingToAvoid. Kinds in CATALOG order.
+ */
+export function answerActivityCard(prev: ActivityConfirm | null | undefined, state: ConstraintsState, answer: ActivityCardAnswer, day: DayKey): RoadmapActionResult<ActivityConfirm> {
+  const refuse = (error: string) => ({ ok: false as const, error });
+  if (!isDayKey(day) || !answer || typeof answer !== "object") return refuse(ACTIVITY_ANSWER_REFUSAL);
+  const { key, avoid, nothingToAvoid } = answer as Partial<ActivityCardAnswer>;
+  if (typeof key !== "string" || !Array.isArray(avoid) || typeof nothingToAvoid !== "boolean" || avoid.length > CATALOG.length) return refuse(ACTIVITY_ANSWER_REFUSAL);
+  for (const k of avoid) {
+    if (!isCatalogKey(k)) return refuse(ACTIVITY_ANSWER_REFUSAL);
+    const entry = BY_KEY[k];
+    if (entry.codeOnly || !entry.tracks.includes(state.track)) return refuse(ACTIVITY_ANSWER_REFUSAL);
+  }
+  if (nothingToAvoid && avoid.length > 0) return refuse(ACTIVITY_ANSWER_REFUSAL);
+  if (key !== state.key) return refuse(ACTIVITY_ANSWER_STALE);
+  if (!nothingToAvoid && avoid.length === 0) return refuse(ACTIVITY_NOTHING_TICKED);
+  const ticks = new Set<string>(avoid);
+  const asked = new Set<string>([...allowedKindsFor(state, prev).rows.map((r) => r.kind), ...ticks]);
+  const prevKinds = prev && typeof prev === "object" && hasOwn(prev, "kinds") ? prev.kinds : null;
+  const kinds: Partial<Record<CatalogKey, ActivityConfirmEntry>> = {};
+  for (const e of CATALOG) {
+    const old = avoidEntryOf(prevKinds, e.key);
+    if (ticks.has(e.key)) kinds[e.key] = old ?? { verdict: "AVOID", day, reason: reasonFor(state, e.key) };
+    else if (old && !asked.has(e.key)) kinds[e.key] = old;
+  }
+  return { ok: true, value: { key: state.key, kinds, answered: { day, asked: CATALOG.filter((e) => asked.has(e.key)).map((e) => e.key), none: nothingToAvoid } } };
+}
+
+/**
+ * @deprecated The earlier per-kind form, kept so its callers still run while
+ * they move to answerActivityCard (contracts §19.5). Each answer is read as
+ * a tick on the card: AVOID ticks the box, FINE or null unticks it; the
+ * stored AVOIDs on the card's rows are its ticks before. The result is
+ * answerActivityCard's under the server's current key (it carries none), so
+ * a list of FINEs alone unlocks nothing (ACTIVITY_NOTHING_TICKED). Refuses
+ * an unknown, codeOnly or off-track kind, a bad verdict, a bad day or an
+ * empty list (ACTIVITY_ANSWER_REFUSAL).
+ */
+export function answerActivities(prev: ActivityConfirm | null | undefined, state: ConstraintsState, answers: readonly ActivityAnswer[], day: DayKey): RoadmapActionResult<ActivityConfirm> {
+  const refuse = { ok: false as const, error: ACTIVITY_ANSWER_REFUSAL };
+  if (!isDayKey(day) || !Array.isArray(answers) || answers.length === 0 || answers.length > CATALOG.length) return refuse;
+  const ticks = new Set<CatalogKey>(allowedKindsFor(state, prev).rows.filter((r) => r.state === "AVOID").map((r) => r.kind));
+  for (const a of answers) {
+    if (!a || !isCatalogKey(a.kind)) return refuse;
+    const entry = BY_KEY[a.kind];
+    if (entry.codeOnly || !entry.tracks.includes(state.track)) return refuse;
+    if (a.verdict !== null && !isVerdict(a.verdict)) return refuse;
+    if (a.verdict === "AVOID") ticks.add(a.kind);
+    else ticks.delete(a.kind);
+  }
+  return answerActivityCard(prev, state, { key: state.key, avoid: [...ticks], nothingToAvoid: false }, day);
+}
+
+/**
+ * The stored answers from a Roadmap.coverage value (intakeOf's read): the
+ * ACTIVITY_CONFIRM_KEY entry, own-property reads only: the key; each AVOID
+ * on a catalog key with a valid day, its reason cut to ACTIVITY_REASON_MAX
+ * (a FINE from the earlier per-kind card is dropped: it may have been a row
+ * the user left unticked); and the card's answer (a valid day, its catalog
+ * keys, none). null when absent or not an answer set (an answer with no
+ * AVOID is still a set: its key and answer stand).
+ */
+export function activityConfirmOf(coverageJson: unknown): ActivityConfirm | null {
+  if (!coverageJson || typeof coverageJson !== "object" || Array.isArray(coverageJson) || !hasOwn(coverageJson, ACTIVITY_CONFIRM_KEY)) return null;
+  const v = (coverageJson as Record<string, unknown>)[ACTIVITY_CONFIRM_KEY];
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const key = hasOwn(v, "key") ? (v as { key?: unknown }).key : undefined;
+  const raw = hasOwn(v, "kinds") ? (v as { kinds?: unknown }).kinds : undefined;
+  if (typeof key !== "string" || key.length === 0 || key.length > 64 || !raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const kinds: Partial<Record<CatalogKey, ActivityConfirmEntry>> = {};
+  for (const e of CATALOG) {
+    const x = avoidEntryOf(raw, e.key);
+    if (x) kinds[e.key] = x;
+  }
+  const answered = cardAnsweredOf(v);
+  return answered ? { key, kinds, answered } : { key, kinds };
+}
+
+/**
+ * The Roadmap.coverage value to write (intakeData, setActivityVerdictsCore):
+ * the typed figures (numbers only; never a "__proto__" key) and, when the
+ * card was answered or any kind is avoided, the answers under
+ * ACTIVITY_CONFIRM_KEY. null when both are empty. Every writer of
+ * Roadmap.coverage goes through it, so an intake save keeps the answers and
+ * an answer keeps the figures.
+ */
+export function coverageJsonOf(coverage: Record<string, number> | null | undefined, confirm: ActivityConfirm | null | undefined): Record<string, unknown> | null {
+  const out: Record<string, unknown> = {};
+  if (coverage && typeof coverage === "object" && !Array.isArray(coverage))
+    for (const [id, n] of Object.entries(coverage)) if (id !== ACTIVITY_CONFIRM_KEY && id !== "__proto__" && typeof n === "number" && Number.isFinite(n)) out[id] = n;
+  const stored = confirm ? activityConfirmOf({ [ACTIVITY_CONFIRM_KEY]: confirm }) : null;
+  if (stored && (Object.keys(stored.kinds).length > 0 || stored.answered)) out[ACTIVITY_CONFIRM_KEY] = stored;
+  return Object.keys(out).length > 0 ? out : null;
 }

@@ -66,6 +66,16 @@
  *     started: ROADMAP_GOALS_LIVE was false throughout);
  *   - the view reads the parts' Domain names from the Domain rows, and marks
  *     a BODY plan's PRACTICE rows for HEALTH_LINE.
+ *
+ * Confirm to unlock (contracts §19; lane R6's half, landed by R4's item): no
+ * quest for a practice, step or checkpoint of a kind the plan's gate blocks
+ * (waiting on the user's answer, or one they said to avoid). The gate is the
+ * caller's (QuestSetOverrides.gate: Start passes its own, with the parser's
+ * words), else questGateOf over the roadmap row's words and stored answers
+ * (the milestone read selects Roadmap.aim, constraints, examLabel, syllabus
+ * and coverage; the parts read RoadmapItem.catalogKey, absent before the
+ * rev-4 migration). An item with no catalog type is the user's own and is
+ * never held back.
  */
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
@@ -79,7 +89,7 @@ import { parseRule } from "./recurrence";
 import { loadWeeklyQuotas } from "./field-quota";
 import { loadThroughput } from "./throughput-server";
 import { availableFor } from "./roadmap-realism";
-import { catalogTrackOf } from "./roadmap-catalog";
+import { activityConfirmOf, allowedKindsFor, catalogTrackOf, constraintsStateOf, isPlaceableKind } from "./roadmap-catalog";
 import type { Track } from "./life-types";
 import { placementOf, ruleOf, type BoardInstance, type BoardTemplate, type Placement } from "./today-board";
 import {
@@ -91,6 +101,7 @@ import {
   THROUGHPUT_LAG_DAYS,
   acceptanceOrderBy,
   checkpointLogPrefix,
+  cueTextsOf,
   domainName,
   isLegacyRoadmap,
   isMissingRev4Column,
@@ -108,6 +119,7 @@ import {
   questWeekKey,
   retryReadDaysOf,
   yoursText,
+  type ActivityGate,
   type CardSegment,
   type CardState,
   type CodeText,
@@ -169,6 +181,17 @@ export interface QuestRoadmapRow {
   typicalHoursSource: string | null;
   targetDay: DayKey;
   practicesAllowed: boolean;
+  /**
+   * Confirm to unlock (contracts §19): the words the plan's gate reads and the
+   * stored answers (Roadmap.coverage). Absent (a store that doesn't read
+   * them): the week reads no gate of its own, and only a gate the caller
+   * passes (QuestSetOverrides.gate) holds a kind back.
+   */
+  aim?: string | null;
+  constraints?: string | null;
+  examLabel?: string | null;
+  syllabus?: unknown;
+  coverage?: unknown;
 }
 
 /** One milestone with its roadmap, its goal and its place among the roadmap's scheduled milestones. */
@@ -220,6 +243,8 @@ export interface QuestItemRow {
   outOf: number | null;
   bar: number | null;
   addToToday: boolean;
+  /** RoadmapItem.catalogKey (revision 4; absent or null: no catalog type, the user's own words, never held back). */
+  catalogKey?: string | null;
 }
 
 export interface QuestMeasureRow {
@@ -383,6 +408,12 @@ export interface QuestSetOverrides {
   v0?: number;
   /** Revision 4: the Start reading per measure key (a depth plan's one measure per Domain); a key not here falls back to its stored reading, then to the live count. */
   v0ByKey?: Readonly<Record<string, number>>;
+  /**
+   * Confirm to unlock (contracts §19): the plan's gate as the caller read it
+   * (R4's Start passes its own, with the parser's words). Absent: the gate of
+   * the roadmap row's own words and answers (questGateOf).
+   */
+  gate?: Pick<ActivityGate, "blocked"> | null;
 }
 
 // ═══ Labels: only the user's words, code's names and Domain names (F13) ═════
@@ -564,8 +595,26 @@ function ownNumberOf(rec: Readonly<Record<string, number>> | null | undefined, k
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
-/** The measure's own count of a Domain's cards at ≥ L, as its key counts (r: recall only; rc: and a retry entry at exactly L counts L − 1). */
-function measureCountOf(cards: readonly CardState[], L: number, segment: CardSegment | undefined): number {
+/**
+ * The plan's gate for a week (confirm to unlock, contracts §19): roadmap-
+ * catalog allowedKindsFor over the roadmap's own words (its constraints, aim
+ * and notes, cueTextsOf) and the user's stored answers (Roadmap.coverage).
+ * The parser's pre-fill is R4's (Start passes its gate); this reading holds
+ * the cue gate and every answer. null when the row carries no words (a
+ * store that doesn't read them).
+ */
+export function questGateOf(r: QuestRoadmapRow): Pick<ActivityGate, "blocked"> | null {
+  if (r.aim === undefined && r.constraints === undefined) return null;
+  const raw = r.syllabus && typeof r.syllabus === "object" ? (r.syllabus as { lines?: unknown; source?: unknown }) : null;
+  const syllabus = raw ? { lines: Array.isArray(raw.lines) ? raw.lines.filter((l): l is string => typeof l === "string") : [], source: typeof raw.source === "string" ? raw.source : null } : null;
+  const track = catalogTrackOf({ fieldId: r.fieldId, track: (r.track as Track) ?? "CRAFT" });
+  const texts = cueTextsOf({ constraints: r.constraints ?? null, aim: r.aim ?? "", examLabel: r.examLabel ?? null, typicalHoursSource: r.typicalHoursSource, syllabus });
+  const state = constraintsStateOf({ track, texts, exam: !!r.examLabel, practicesAllowed: r.practicesAllowed });
+  return allowedKindsFor(state, activityConfirmOf(r.coverage));
+}
+
+/** The measure's own count of a Domain's cards at ≥ L, as its key counts (r: recall only; rc: and a retry entry at exactly L counts L − 1). R4's bar seam reads the same count. */
+export function measureCountOf(cards: readonly CardState[], L: number, segment: CardSegment | undefined): number {
   let n = 0;
   for (const c of cards) {
     if (segment && c.recall === false) continue;
@@ -674,9 +723,13 @@ export async function weekQuestInputFor(
 
   const mapped = (i: QuestItemRow) => overrides.templateIds?.[i.id] ?? overrides.templateIds?.[i.lineageId] ?? null;
   const templateOf = (i: QuestItemRow) => i.templateId ?? mapped(i);
-  const practiceItems = live.filter((i) => i.kind === "PRACTICE" && i.addToToday && templateOf(i)).sort((a, b) => a.ord - b.ord);
-  const stepItems = live.filter((i) => i.kind === "STEP" && i.addToToday && templateOf(i)).sort((a, b) => a.ord - b.ord);
-  const cpItem = live.find((i) => i.kind === "CHECKPOINT" && i.outOf != null && i.bar != null) ?? null;
+  // Confirm to unlock (contracts §19): no quest for a practice, step or checkpoint of a kind the plan's gate blocks
+  // (waiting on the user's answer, or one they said to avoid); an item with no catalog type is the user's own.
+  const gate = overrides.gate ?? questGateOf(facts.roadmap);
+  const placeable = (i: QuestItemRow) => !gate || isPlaceableKind(gate, i.catalogKey);
+  const practiceItems = live.filter((i) => i.kind === "PRACTICE" && i.addToToday && templateOf(i) && placeable(i)).sort((a, b) => a.ord - b.ord);
+  const stepItems = live.filter((i) => i.kind === "STEP" && i.addToToday && templateOf(i) && placeable(i)).sort((a, b) => a.ord - b.ord);
+  const cpItem = live.find((i) => i.kind === "CHECKPOINT" && i.outOf != null && i.bar != null && placeable(i)) ?? null;
   const templateIds = [...new Set([...practiceItems, ...stepItems].map((i) => templateOf(i) as string))];
   const stepTemplateIds = stepItems.map((i) => templateOf(i) as string);
   const restTo = maxDay(dueDay, weekEnd);
@@ -1336,6 +1389,12 @@ interface MilestoneSqlRow {
   /** Revision 4 (absent when read before the rev-4 migration). */
   depth?: number | null;
   stage?: string | null;
+  /** Confirm to unlock (contracts §19): the gate's words and the stored answers (coverage: revision 4). */
+  aim?: string | null;
+  constraints?: string | null;
+  examLabel?: string | null;
+  syllabus?: unknown;
+  coverage?: unknown;
 }
 
 const keyOrNull = (d: Date | null): DayKey | null => (d ? keyOfDateColumn(d) : null);
@@ -1365,6 +1424,11 @@ function factsOf(rows: readonly MilestoneSqlRow[]): QuestMilestoneFacts[] {
           targetDay: keyOfDateColumn(r.targetDay),
           practicesAllowed: r.practicesAllowed,
           depth: r.depth == null ? null : Number(r.depth),
+          aim: r.aim ?? null,
+          constraints: r.constraints ?? null,
+          examLabel: r.examLabel ?? null,
+          syllabus: r.syllabus ?? null,
+          coverage: r.coverage ?? null,
         },
         milestone: {
           id: r.id,
@@ -1413,9 +1477,10 @@ function milestonesSql(userId: string, scope: { active: true } | { milestoneIds:
   return Prisma.sql`
     SELECT r."id" AS "roadmapId", r."status" AS "roadmapStatus", r."version" AS "roadmapVersion", r."fieldId", r."track",
            r."hoursPerWeek", r."intensity", r."startPoint", r."typicalHours", r."typicalHoursSource", r."targetDay", r."practicesAllowed",
+           r."aim", r."constraints", r."examLabel", r."syllabus",
            m."id", m."lineageId", m."ord", m."title", m."status", m."version", m."startedDay", m."dueDay", m."feasibility", m."goalId", m."createdAt",
            t."id" AS "goalRowId", t."dueDay" AS "goalDueDay", t."closedScore" AS "goalClosedScore", t."completedAt" AS "goalCompletedAt", t."archivedAt" AS "goalArchivedAt"
-           ${rev4 ? Prisma.sql`, r."depth", m."stage"` : Prisma.empty}
+           ${rev4 ? Prisma.sql`, r."depth", m."stage", r."coverage"` : Prisma.empty}
     FROM "public"."RoadmapMilestone" m
     JOIN "public"."Roadmap" r ON r."id" = m."roadmapId"
     LEFT JOIN "public"."TaskTemplate" t ON t."id" = m."goalId" AND t."userId" = r."userId"
@@ -1461,28 +1526,35 @@ export const prismaQuestStore: QuestStore = {
     }
   },
   async parts(milestoneId) {
+    const select = {
+      id: true,
+      lineageId: true,
+      kind: true,
+      ord: true,
+      label: true,
+      origin: true,
+      decision: true,
+      domainId: true,
+      proposedName: true,
+      flags: true,
+      templateId: true,
+      rule: true,
+      durationBand: true,
+      outOf: true,
+      bar: true,
+      addToToday: true,
+    } as const;
+    // The catalog type (revision 4) is what the gate reads (contracts §19); before the rev-4 migration it reads as absent.
+    const itemsOf = async (): Promise<QuestItemRow[]> => {
+      try {
+        return await prisma.roadmapItem.findMany({ where: { milestoneId }, select: { ...select, catalogKey: true } });
+      } catch (err) {
+        if (!isMissingRev4Column(err)) throw err;
+        return prisma.roadmapItem.findMany({ where: { milestoneId }, select });
+      }
+    };
     const [items, measures] = await Promise.all([
-      prisma.roadmapItem.findMany({
-        where: { milestoneId },
-        select: {
-          id: true,
-          lineageId: true,
-          kind: true,
-          ord: true,
-          label: true,
-          origin: true,
-          decision: true,
-          domainId: true,
-          proposedName: true,
-          flags: true,
-          templateId: true,
-          rule: true,
-          durationBand: true,
-          outOf: true,
-          bar: true,
-          addToToday: true,
-        },
-      }),
+      itemsOf(),
       prisma.roadmapMeasure.findMany({
         where: { milestoneId },
         select: { kind: true, role: true, scope: true, minLevel: true, target: true, baseline: true, rateSource: true, measureKey: true },

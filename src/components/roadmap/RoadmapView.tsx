@@ -86,6 +86,7 @@ import {
 } from "./roadmap-copy";
 import { ROADMAP_NEW_HREF, TODAY_HREF, todayTaskHref } from "./roadmap-links";
 import {
+  activityAsksOf,
   aftercareMilestoneIdOf,
   behindBannerOf,
   domainIndexOf,
@@ -94,6 +95,7 @@ import {
   milestoneRowLine,
   paragonLineShown,
   positionsOf,
+  practiceOnlyLineOf,
   referenceRunOf,
   scopeNamesOf,
   startAgainOffered,
@@ -128,6 +130,7 @@ import { RoadmapGlyph } from "./RoadmapGlyph";
 import { TitleClassChip } from "./ProvenanceChip";
 import { DateBlock } from "./DateBlock";
 import { GapPanel, type LiveGates } from "./GapPanel";
+import { ActivityConfirmCard } from "./ActivityConfirm";
 import "./roadmap.css";
 
 function isLibrary(d: LibraryDomain | { id: string; name: string } | undefined): d is LibraryDomain {
@@ -254,6 +257,8 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
   // A stored reading keeps its real "measured" time even with writes off; only a value computed here reads NOT_RECORDED_HERE.
   const headMeasuredAt = current.measures.find((x) => x.measuredAt)?.measuredAt ?? null;
   const prevBest = Math.max(0, ...rows.filter((r) => r.ord < m.ord && r.rankIndex != null).map((r) => r.rankIndex!));
+  // Constraint safety (contracts §19): while the plan waits on the user's answer about activities.
+  const practiceOnly = practiceOnlyLineOf(view.activityConfirm);
   const rank = { rankIndex: m.rankIndex, gives: m.rankIndex != null && m.rankIndex > prevBest, paragonAfter: false };
 
   const items = (kind: ItemDraft["kind"]) => m.items.filter((it) => it.kind === kind && it.decision !== "REMOVED").sort((a, b) => a.ord - b.ord);
@@ -392,13 +397,16 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
             })
           )}
 
-        {items("PRACTICE").length > 0 &&
+        {(items("PRACTICE").length > 0 || practiceOnly) &&
           sec(
             "What to practise",
             started ? "on Today under this goal" : "goes to Today when you start it",
-            items("PRACTICE").map((it) => (
-              <PracticeRow key={it.id ?? it.lineageId} target={{ row: editorRowOf(it), item: it, milestone: m }} stage="active" kept={current.practiceKept?.[it.lineageId] ?? null} />
-            ))
+            <>
+              {practiceOnly && <p className="rm-avd-p rm-avd-ms">{practiceOnly}</p>}
+              {items("PRACTICE").map((it) => (
+                <PracticeRow key={it.id ?? it.lineageId} target={{ row: editorRowOf(it), item: it, milestone: m }} stage="active" kept={current.practiceKept?.[it.lineageId] ?? null} />
+              ))}
+            </>
           )}
 
         {m.notes.length > 0 && (
@@ -987,6 +995,8 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
   const names = useMemo(() => new Map([...index.values()].map((d) => [d.id, d.name] as const)), [index]);
   const scheduled = positionsOf(view);
   const closed = header.status !== "ACTIVE";
+  // Constraint safety (contracts §19): the activity card asks above Now; once answered it sits before the footer, editable.
+  const asks = activityAsksOf(view.activityConfirm);
   const body = (
     <div className="rm-cols">
       <div className="rm-col">
@@ -1006,6 +1016,11 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
           names={names}
         />
         {!closed && <Triggers view={view} current={current} onReplan={() => setReplan(true)} />}
+        {!closed && asks && (
+          <div className="rm-o2">
+            <ActivityConfirmCard view={view.activityConfirm} roadmapId={header.id} today={view.today} place="plan" onReplan={() => setReplan(true)} />
+          </div>
+        )}
         {!closed && view.draft && (
           <div className="rm-o2" id="replan">
             <DraftReview view={view} mode="replan" gates={gates} />
@@ -1024,6 +1039,11 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
           />
         )}
         {!closed && <GapPanel gaps={view.gaps} hidden={view.gapsHidden} scope={scope} gates={gates} />}
+        {!closed && !asks && (
+          <div className="rm-o6">
+            <ActivityConfirmCard view={view.activityConfirm} roadmapId={header.id} today={view.today} place="plan" onReplan={() => setReplan(true)} />
+          </div>
+        )}
         <Footer view={view} current={current} onReplan={() => setReplan(true)} />
       </div>
       <div className="rm-col">
@@ -1054,7 +1074,7 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
       {!closed && <ReplanSheet open={replan} onClose={() => setReplan(false)} roadmapId={header.id} startedOrd={current?.goalId ? current.milestone.ord : null} />}
       {!closed && current && scope && (
         <ItemEditor scope={scope}>
-          <StartSheet open={start} onClose={() => setStart(false)} milestone={current.milestone} today={view.today} initial={startPreview ?? null} />
+          <StartSheet open={start} onClose={() => setStart(false)} milestone={current.milestone} today={view.today} initial={startPreview ?? null} activityConfirm={view.activityConfirm} roadmapId={header.id} />
         </ItemEditor>
       )}
     </>

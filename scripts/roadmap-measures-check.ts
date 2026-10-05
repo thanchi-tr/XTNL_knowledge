@@ -1652,7 +1652,8 @@ async function main() {
     );
     eq("a first-try entry 172 days back stays clean over the wider window", await retryAt12([{ sourceId: "c1", day: pass, detail: "advanced · L11→12" }], 1), { retry: 0, back: 184, liveCalls: 0 });
 
-    // The live loadout widens R1's window to R4's and R6's (both read retryReadDaysOf(L, live m, live grace)).
+    // The live loadout widens R1's window. Since the finishing round R4's planContext and R6's quests read the same window
+    // (retryReadDaysOf(L, the wider of the acceptance's m and the live m, live grace)), so all three are identical.
     eq("cleanReadDaysOf with no loadout is retryReadDaysOf at the acceptance's m: 184 (m 1), 264 (m 1.5)", [R.cleanReadDaysOf(12, 1), R.cleanReadDaysOf(12, 1.5), R.cleanReadDaysOf(12, undefined)], [184, 264, 184]);
     eq(
       "… a GRACE_EXTENSION of 2 widens it by 4 (188), the live m 1.5 over an acceptance at 1 reads 264, an acceptance at 1.5 over a live 1 keeps 264, both: 268",
@@ -1678,13 +1679,14 @@ async function main() {
             for (const g of [0, 1, 2, 5]) {
               cases += 1;
               const r1 = R.cleanReadDaysOf(L, accM, { intervalMultiplier: liveM, graceExtraDays: g });
-              // R4's planContext and R6's quests: retryReadDaysOf(L, live m, live grace); the acceptance-only window too.
+              // The live-m-only window (R4's and R6's before the finishing round) and the acceptance-only one. R4 and R6 now
+              // read the wider of the two, the same window as R1's, so this bound still holds.
               if (r1 < RT.retryReadDaysOf(L, liveM, g) || r1 < RT.retryReadDaysOf(L, accM, g)) narrower += 1;
             }
           }
         }
       }
-      eq(`R1's window is never narrower than R4's or R6's for the same loadout (${cases} cases over L, the acceptance's m, the live m and the grace)`, narrower, 0);
+      eq(`R1's window is never narrower than the live-m window or the acceptance-m window alone (R4 and R6 read the wider of the two, as R1 does) (${cases} cases over L, the acceptance's m, the live m and the grace)`, narrower, 0);
     }
     // A grace extension of 2 holds the card at 12 four days longer (srs.ts graceEndsAt: + graceExtraDays at L11 and at L12).
     const graced: Ev[] = [
@@ -1819,7 +1821,7 @@ async function main() {
         json(code.match(/.*retryReadDaysOf\(.*/g))
       );
       check(
-        "R4's planContext and R6's quests still read retryReadDaysOf with the live m and grace (the windows R1's is never narrower than)",
+        "R4's planContext and R6's quests still call retryReadDaysOf with their m and the live grace (that m is the wider of the acceptance's and the live m, as R1's; server-check and quests-check pin it)",
         /retryReadDaysOf\(depth,\s*m,\s*graceExtraDays\)/.test(read("src/lib/roadmap-server.ts")) && /retryReadDaysOf\(L,\s*m,\s*loadout\.graceExtraDays/.test(read("src/lib/roadmap-quests-server.ts"))
       );
     }

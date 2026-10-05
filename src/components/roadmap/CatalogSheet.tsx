@@ -4,8 +4,9 @@
  * Change a practice, step or checkpoint's type (lane R5; roadmap-rev4.md
  * F-R4-18, F-R4-21): the app's list for the slot and the Area (roadmap-catalog
  * catalogKindsFor: the track's types, exam-only types only with an exam, never
- * the code-placed exam day, never a type the constraints left out unless the
- * user allowed it), each with its code-written name and its first "How" line.
+ * the code-placed exam day, never a type the activity card holds: waiting on
+ * the user's answer, or one they said to avoid; a suggestion from their words
+ * is still offered), each with its code-written name and its first "How" line.
  * The pick is the user's (decision EDITED: "you chose this"); the label is
  * re-rendered by code from the type, so it follows a renamed Domain and its
  * "How" stays. A type that performs the aim itself (lastStageOnly) is offered
@@ -16,7 +17,7 @@ import { ActionError } from "@/components/home/ActionError";
 import { Icon } from "@/components/ui/Icon";
 import { catalogEntryOf, catalogKindsFor, catalogTrackOf, type CatalogKey, type CatalogSlot } from "@/lib/roadmap-catalog";
 import type { ItemEdit } from "@/lib/roadmap-types";
-import { KIND_HOW, KIND_NAME } from "./roadmap-copy";
+import { KIND_HOW, KIND_NAME, activityPickerLine } from "./roadmap-copy";
 import { useRoadmapAction } from "./roadmap-runtime";
 import type { ActTarget, ItemEditorScope } from "./ItemEditor";
 
@@ -42,6 +43,9 @@ export function CatalogTypeSheet({ target, scope, onClose }: { target: ActTarget
   const lastStage = target ? target.milestone.ord >= scope.milestoneCount : false;
   const choices = slot ? catalogChoicesOf(slot, scope, { lastStage }) : [];
   const current = target?.row.catalogKey ?? null;
+  // Constraint safety (contracts §19): the kinds waiting on the user's answer are named, not offered.
+  const held = slot ? (scope.held ?? []).filter((k) => catalogEntryOf(k)?.slot === slot).map((k) => KIND_NAME[k]) : [];
+  const heldLine = activityPickerLine(held);
   const pick = (key: CatalogKey) => {
     if (!target) return;
     // ItemEdit.catalogKey (the contract §15.11): R4's editItemCore re-renders the label from the type.
@@ -61,6 +65,7 @@ export function CatalogTypeSheet({ target, scope, onClose }: { target: ActTarget
           </button>
         ))}
       </div>
+      {heldLine && <p className="t-meta">{heldLine}</p>}
       {error && <ActionError>{error}</ActionError>}
     </Sheet>
   );

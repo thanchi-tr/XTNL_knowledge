@@ -20,6 +20,9 @@
  *   draft-impossible · draft-gaps · intake-depth · intake-empty-library ·
  *   intake-gemini. draft-gaps and intake-gemini are lead-only: drawn with a
  *   switch on (RoadmapFixture.gates) that is off in this build.
+ * Confirm to unlock (contracts §19; CONFIRM_STATES, built with the real gate):
+ *   draft-confirm · draft-words · draft-care · draft-craft · active-confirm ·
+ *   active-answered · intake-confirm.
  *
  * draft-live is shaped like R4's view builder output with none of the fields
  * the server derives on read: no `library`, no `struck`/`reasons`, no title
@@ -35,9 +38,12 @@ import {
   cardsAtLevelKey,
   practiceMinutesPerWeekOf,
   provenanceOf,
+  type ActivityConfirm,
+  type ActivityConfirmView,
   type AimCardView,
   type AimRankName,
   type AimRankView,
+  type ConstraintExclusion,
   type CoverageBreakdown,
   type DateCheck,
   type DepthView,
@@ -69,7 +75,7 @@ import {
   type WeekQuestRow,
   type WeekQuestsView,
 } from "@/lib/roadmap-types";
-import type { CatalogKey } from "@/lib/roadmap-catalog";
+import { activityConfirmViewOf, allowedKindsFor, constraintsStateOf, type CatalogKey, type CatalogTrack } from "@/lib/roadmap-catalog";
 import { addDays } from "@/lib/life-day";
 import { undecidedOf } from "@/components/roadmap/roadmap-ui-model";
 
@@ -115,6 +121,13 @@ export const FIXTURE_STATES = [
   "intake-depth",
   "intake-empty-library",
   "intake-gemini",
+  "draft-confirm",
+  "draft-words",
+  "draft-care",
+  "draft-craft",
+  "active-confirm",
+  "active-answered",
+  "intake-confirm",
 ] as const;
 export type FixtureState = (typeof FIXTURE_STATES)[number];
 
@@ -141,8 +154,23 @@ export const REV4_STATES = [
   "intake-depth",
   "intake-empty-library",
   "intake-gemini",
+  "draft-confirm",
+  "draft-words",
+  "draft-care",
+  "draft-craft",
+  "active-confirm",
+  "active-answered",
+  "intake-confirm",
 ] as const satisfies readonly FixtureState[];
 type Rev4State = (typeof REV4_STATES)[number];
+
+/** Constraint safety's states (contracts §19: the activity card on a body, care and craft draft, a Field plan's suggestions, the living roadmap asking again and answered, the intake); each is in REV4_STATES. */
+export const CONFIRM_STATES = ["draft-confirm", "draft-words", "draft-care", "draft-craft", "active-confirm", "active-answered", "intake-confirm"] as const satisfies readonly Rev4State[];
+type ConfirmState = (typeof CONFIRM_STATES)[number];
+
+function isConfirmState(s: FixtureState): s is ConfirmState {
+  return (CONFIRM_STATES as readonly string[]).includes(s);
+}
 
 function isRev4State(s: FixtureState): s is Rev4State {
   return (REV4_STATES as readonly string[]).includes(s);
@@ -1834,6 +1862,7 @@ function depthIntakeFixture(p: Partial<Intake> = {}, view: Partial<IntakeView> =
 }
 
 function rev4FixtureOf(state: Rev4State): RoadmapFixture {
+  if (isConfirmState(state)) return confirmFixtureOf(state);
   switch (state) {
     case "depth-realistic": {
       const v = packActiveView();
@@ -2069,5 +2098,285 @@ function rev4FixtureOf(state: Rev4State): RoadmapFixture {
       return { view: null, intake: depthIntakeFixture({ fieldId: "f-new", domainIds: [], syllabus: null, examLabel: null, exam: false, examDay: null, aim: "Sail a dinghy solo" }, { paceRate: null }), aim: null, today: null, startPreview: null, note: "An empty library: name the areas this needs, and paste an outline from a source you trust; no pointer to Gemini." };
     case "intake-gemini":
       return { view: null, intake: { ...intakeFixture(true), m: 1 }, aim: null, today: null, startPreview: null, gates: { gemini: true }, note: "Lead-only (ROADMAP_GEMINI_LIVE is false in this build): Draft with Gemini says what it will arrange; the app writes every word." };
+  }
+}
+
+/// ═══ Constraint safety: confirm to unlock (contracts §19) ════════════════════
+//
+// The activity card in each place it shows, built with the real pure gate
+// (roadmap-catalog constraintsStateOf → allowedKindsFor → activityConfirmViewOf)
+// over made-up words, so a fixture's rows are the server's rows. Every BODY
+// and CARE plan asks once, whatever the words; a CRAFT plan asks on a cue;
+// a Field plan never asks, and its words only suggest (decisions 1 and 7).
+
+const CONFIRM_AIM = "Run a sub-50 10K";
+
+/** The gate's state over a plan's words (texts: the constraints and the aim; no notes). */
+function confirmStateOf(track: CatalogTrack, constraints: string | null, aim: string, exclusions: ConstraintExclusion[], exam = false) {
+  return constraintsStateOf({ track, texts: { constraints, aim, notes: [] }, exam, practicesAllowed: true, exclusions });
+}
+
+/** The view the server builds (activityConfirmViewOf) for these words and stored answers. */
+function confirmViewOf(track: CatalogTrack, constraints: string | null, aim: string, exclusions: ConstraintExclusion[], stored: ActivityConfirm | null, exam = false): ActivityConfirmView {
+  const state = confirmStateOf(track, constraints, aim, exclusions, exam);
+  return activityConfirmViewOf(state, allowedKindsFor(state, stored));
+}
+
+/**
+ * A track draft built from the user's numbers while the plan waits on the
+ * answer: three stages of the track's own easy kinds only (the safe kinds),
+ * with the gate's view and, when the aim meets the user's own words, R3's
+ * aim conflict.
+ */
+function confirmTrackDraftOf(o: {
+  id: string;
+  track: "BODY" | "CARE" | "CRAFT";
+  aim: string;
+  constraints: string | null;
+  exclusions: ConstraintExclusion[];
+  aimConflict: { word: string } | null;
+  stages: [ItemDraft[], ItemDraft[], ItemDraft[]];
+}): RoadmapView {
+  const stage = (ord: number, key: StageKey, ws: string, due: string, items: ItemDraft[]): MilestoneDraft =>
+    milestone({ ord, title: `${o.aim} · stage ${ord} of 3`, titleOrigin: APP, titleDecision: "PENDING", windowStart: ws, dueDay: due, status: "DRAFT", rankIndex: ord, stage: key, items, measures: [practiceMeasure(`mcf${ord}`, 18)], notes: o.track === "CRAFT" ? [] : ["HEALTH_LINE"] });
+  const ms = [stage(1, "STAGE_1", "2026-10-05", "2026-12-27", o.stages[0]), stage(2, "STAGE_3", "2026-12-28", "2027-05-23", o.stages[1]), stage(3, "STAGE_5", "2027-05-24", "2027-10-03", o.stages[2])];
+  const v = packDraftView({ gemini: false, exam: false, additions: [] });
+  return {
+    ...v,
+    header: header({ id: o.id, aim: o.aim, area: { kind: "TRACK", track: o.track }, track: o.track, targetDay: "2027-10-03", constraints: o.constraints, hoursPerWeek: 4, status: "DRAFT", version: 0, acceptedDay: null, firstAcceptedDay: null, startDay: "2026-10-05" }),
+    library: [],
+    draft: {
+      ...v.draft!,
+      milestones: ms,
+      feasibility: { ...v.draft!.feasibility, milestones: ms.map((m) => mfOf(m, [])), dateCheck: undefined },
+      credential: false,
+      exclusions: o.exclusions,
+      aimConflict: o.aimConflict,
+      sessionPicks: null,
+      additions: [],
+      unassignedLines: [],
+      uncoveredSyllabus: [],
+      dateCheck: null,
+      depth: null,
+      nextLineageId: ms[0].lineageId,
+      nextToDecide: null,
+      activityConfirm: confirmViewOf(o.track, o.constraints, o.aim, o.exclusions, null),
+    },
+  };
+}
+
+const confirmSession = (key: CatalogKey, label: string, n: number, band: ItemDraft["durationBand"], method: ItemDraft["method"] = "WORKOUT") =>
+  catalogItem("PRACTICE", key, label, { method, sessionsPerWeek: n, durationBand: band, rule: `TARGET:${n}/W`, planSource: "WORKED_OUT" });
+
+/**
+ * A body draft while the plan waits on the answer: easy, mobility and
+ * technique sessions only. The parser's reading pre-ticks three boxes, and
+ * the aim meets the user's own sentence (decision 6: quoted, never "no X").
+ */
+function confirmDraftView(): RoadmapView {
+  const constraints = "Running causes me knee pain. Bad knees, so no jumping.";
+  return confirmTrackDraftOf({
+    id: "rm7",
+    track: "BODY",
+    aim: CONFIRM_AIM,
+    constraints,
+    exclusions: [
+      { kind: "HARDER_SESSION", word: "running" },
+      { kind: "LONGER_SESSION", word: "running" },
+      { kind: "FULL_ATTEMPT", word: "running" },
+    ],
+    aimConflict: { word: "running" },
+    stages: [
+      [confirmSession("EASY_SESSION", "Easy session", 3, "D30"), confirmSession("MOBILITY_SESSION", "Mobility session", 2, "D20"), catalogItem("STEP", "SET_UP", `Set up what you need for ${CONFIRM_AIM}`)],
+      [confirmSession("TECHNIQUE_SESSION", "Technique session", 2, "D30"), confirmSession("EASY_SESSION", "Easy session", 3, "D45")],
+      [confirmSession("EASY_SESSION", "Easy session", 3, "D45"), confirmSession("MOBILITY_SESSION", "Mobility session", 2, "D20")],
+    ],
+  });
+}
+
+const CARE_AIM = "Support Mum's care at home";
+
+/** A care draft with nothing in the Constraints box: it asks anyway, with nothing to quote, and meanwhile places planning the week and keeping a log (decision 2: never a dead end). */
+function confirmCareDraftView(): RoadmapView {
+  return confirmTrackDraftOf({
+    id: "rm9",
+    track: "CARE",
+    aim: CARE_AIM,
+    constraints: null,
+    exclusions: [],
+    aimConflict: null,
+    stages: [
+      [confirmSession("PLAN_AHEAD", "Plan the week ahead", 1, "D20", "WRITING"), confirmSession("KEEP_A_LOG", `Keep a log: ${CARE_AIM}`, 3, "D15", "WRITING")],
+      [confirmSession("PLAN_AHEAD", "Plan the week ahead", 1, "D20", "WRITING"), confirmSession("KEEP_A_LOG", `Keep a log: ${CARE_AIM}`, 3, "D15", "WRITING")],
+      [confirmSession("KEEP_A_LOG", `Keep a log: ${CARE_AIM}`, 3, "D15", "WRITING")],
+    ],
+  });
+}
+
+const CRAFT_AIM = "Play Clair de Lune at a recital";
+
+/** A craft draft whose words name a strain (a cue): it asks, quoting them, with HEALTH_LINE, and meanwhile places the technique session only. */
+function confirmCraftDraftView(): RoadmapView {
+  return confirmTrackDraftOf({
+    id: "rm10",
+    track: "CRAFT",
+    aim: CRAFT_AIM,
+    constraints: "Wrist tendinitis, can't play more than 20 minutes.",
+    exclusions: [],
+    aimConflict: null,
+    stages: [[confirmSession("TECHNIQUE_SESSION", "Technique session", 4, "D20")], [confirmSession("TECHNIQUE_SESSION", "Technique session", 4, "D20")], [confirmSession("TECHNIQUE_SESSION", "Technique session", 4, "D20")]],
+  });
+}
+
+/** A Field draft whose constraints name a practice type: never gated by a body cue; the kind its words name is a pre-ticked suggestion, still in the plan until the user saves (decision 7). */
+function confirmWordsView(): RoadmapView {
+  const constraints = "No timed practice, it stresses me out.";
+  const exclusions: ConstraintExclusion[] = [{ kind: "TIMED_PRACTICE", word: "timed practice" }];
+  const v = packDraftView({ gemini: false, exam: true, additions: [] });
+  return {
+    ...v,
+    header: { ...v.header!, constraints },
+    draft: { ...v.draft!, exclusions, activityConfirm: confirmViewOf("FIELD", constraints, PACK_AIM, exclusions, null, true) },
+  };
+}
+
+/** A body plan between milestones: its next milestone's practices, some of them waiting on the answer. */
+function confirmActiveView(constraints: string, stored: (key: string) => ActivityConfirm | null): RoadmapView {
+  const base = bodyView();
+  const exclusions: ConstraintExclusion[] = [{ kind: "LONGER_SESSION", word: "long run" }];
+  const session = (key: CatalogKey, label: string, n: number, band: ItemDraft["durationBand"], lineageId: string) =>
+    catalogItem("PRACTICE", key, label, { method: "WORKOUT", sessionsPerWeek: n, durationBand: band, rule: `TARGET:${n}/W`, planSource: "WORKED_OUT", decision: "KEPT", lineageId });
+  const m3 = milestone({
+    ord: 3,
+    title: "Race pace",
+    titleOrigin: APP,
+    titleDecision: "EDITED",
+    windowStart: "2027-02-15",
+    dueDay: "2027-04-25",
+    status: "PLANNED",
+    rankIndex: 3,
+    items: [session("EASY_SESSION", "Easy session", 2, "D45", "lp-ez3"), session("HARDER_SESSION", "Harder session", 1, "D45", "lp-hd3"), session("STRENGTH_SESSION", "Strength session", 1, "D30", "lp-sg3")],
+    measures: [practiceMeasure("mb3", 20)],
+    notes: ["HEALTH_LINE"],
+  });
+  const state = confirmStateOf("BODY", constraints, base.header!.aim, exclusions);
+  return {
+    ...base,
+    today: "2027-02-15",
+    header: { ...base.header!, constraints },
+    current: { ...base.current!, milestone: m3, goalId: null, measures: [], headline: null, stated: 6, stepDone: undefined, practiceKept: undefined },
+    milestones: base.milestones.map((r) => (r.ord === 2 ? { ...r, state: "REACHED" as const, reachedDay: "2027-02-14", percent: 100 } : r.ord === 3 ? { ...r, state: "CURRENT" as const } : r)),
+    weekQuests: null,
+    activityConfirm: activityConfirmViewOf(state, allowedKindsFor(state, stored(state.key))),
+  };
+}
+
+/** The Start sheet of confirmActiveView's next milestone: a held practice shows its line in place of its switch. */
+function confirmStartPreview(m3: MilestoneDraft): StartPreview {
+  const p = (lineageId: string, minutes: number, perWeek: number) => {
+    const it = m3.items.find((x) => x.lineageId === lineageId)!;
+    return { itemId: it.id!, lineageId, name: it.label, rule: `TARGET:${perWeek}/W`, minutes, on: true, alreadyOnToday: null, price: 8, weeklyMinutes: minutes * perWeek };
+  };
+  return {
+    milestoneId: m3.id!,
+    ord: 3,
+    of: 3,
+    title: m3.title,
+    dueDay: "2027-04-25",
+    goalsLive: true,
+    writesOff: false,
+    refusal: null,
+    todayCheck: null,
+    feasibility: mfOf(m3, []),
+    pending: [],
+    todayRows: [{ kind: "TITLE", itemId: null, label: m3.title, class: "YOURS", needs: "NONE" }, ...m3.items.map((it) => ({ kind: "PRACTICE" as const, itemId: it.id, label: it.label, class: "WORKED_OUT" as const, needs: "NONE" as const }))],
+    practices: [p("lp-ez3", 45, 2), p("lp-hd3", 45, 1), p("lp-sg3", 30, 1)],
+    steps: [],
+    pay: { stated: 6, zeroReason: null, limitLine: null, paidOn: null },
+    payBasis: { otherMinutesPerWeek: 120, hasCards: false, lineagePaidOn: null },
+    givesRank: "Journeyman",
+    weekQuests: null,
+    canStart: true,
+    blockers: [],
+  };
+}
+
+/** The intake for a body track Area whose words carry a cue: the activity question under Constraints. */
+function confirmIntakeFixture(): IntakeView {
+  const base = intakeFixture(false);
+  const intake: Intake = {
+    aim: CONFIRM_AIM,
+    fieldId: null,
+    track: "BODY",
+    domainIds: [],
+    targetDay: "2027-10-04",
+    hoursPerWeek: 4,
+    newCardsPerWeek: null,
+    typicalHours: null,
+    typicalHoursSource: null,
+    syllabus: null,
+    startPoint: "BASICS",
+    intensity: "STEADY",
+    practicesAllowed: true,
+    constraints: "No running for now, my knee hurts. Weights are fine.",
+    examLabel: null,
+    depth: null,
+    coverage: null,
+    dateMode: "CHOSEN",
+    exam: null,
+    examDay: null,
+    replaces: null,
+    activities: null,
+  };
+  return { ...base, draft: { roadmapId: "rm8", intake, savedDay: base.today } };
+}
+
+/** The body kinds the card listed when the user answered on 2 Jan (the gate's rows then). */
+const ANSWERED_ASKED: CatalogKey[] = ["HARDER_SESSION", "LONGER_SESSION", "STRENGTH_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK"];
+const ANSWERED_REASON = "Knee injury last year, no running two days in a row";
+
+function confirmFixtureOf(state: ConfirmState): RoadmapFixture {
+  switch (state) {
+    case "draft-confirm":
+      return {
+        view: confirmDraftView(),
+        intake: null,
+        aim: null,
+        today: null,
+        startPreview: null,
+        note: "A body plan asks once, whatever the words: until the user answers, the plan places only easy, mobility and technique sessions. The parser's reading only pre-ticks a box, quoting the user's own words; nothing is unlocked without their tap (Save with a box ticked, or 'Nothing to avoid'). The aim-conflict line quotes their sentence.",
+      };
+    case "draft-words":
+      return { view: confirmWordsView(), intake: null, aim: null, today: null, startPreview: null, note: "A Field plan is never held by a body cue: the type its constraints name is a pre-ticked suggestion, quoted, and stays in the plan until the user saves (or says there's nothing to avoid)." };
+    case "draft-care":
+      return { view: confirmCareDraftView(), intake: null, aim: null, today: null, startPreview: null, note: "A care plan with nothing in Constraints asks too (no quote, so the lead line claims nothing about the words), and meanwhile places planning the week and keeping a log, so it is never a dead end." };
+    case "draft-craft":
+      return { view: confirmCraftDraftView(), intake: null, aim: null, today: null, startPreview: null, note: "A craft plan asks when its words name a strain: it quotes them, carries HEALTH_LINE, and meanwhile places the technique session only." };
+    case "active-confirm": {
+      // The user answered on 2 Jan (Strength session ticked); their words have changed since, so the card asks again and the AVOID stands.
+      const v = confirmActiveView("Knee injury last year, no running two days in a row. My knee swelled after the long run.", () => ({
+        key: "k1-0b1d2c3e",
+        kinds: { STRENGTH_SESSION: { verdict: "AVOID", day: "2027-01-02", reason: ANSWERED_REASON } },
+        answered: { day: "2027-01-02", asked: ANSWERED_ASKED, none: false },
+      }));
+      return {
+        view: v,
+        intake: null,
+        aim: null,
+        today: null,
+        startPreview: confirmStartPreview(v.current!.milestone),
+        note: "The words changed after the user answered: the card asks again ('You answered on 2 Jan, before your words changed'), the 'avoid' stands, Now says what the plan places meanwhile, and the Start sheet holds the practices waiting on the answer.",
+      };
+    }
+    case "active-answered": {
+      const v = confirmActiveView("Knee injury last year, no running two days in a row.", (key) => ({
+        key,
+        kinds: { LONGER_SESSION: { verdict: "AVOID", day: "2027-01-02", reason: ANSWERED_REASON } },
+        answered: { day: "2027-01-02", asked: ANSWERED_ASKED, none: false },
+      }));
+      return { view: v, intake: null, aim: null, today: null, startPreview: null, note: "Answered under these words: the card shrinks to what the user said and what the plan can include, with 'Change', and stays on the roadmap page for the life of the plan." };
+    }
+    case "intake-confirm":
+      return { view: null, intake: confirmIntakeFixture(), aim: null, today: null, startPreview: null, note: "A body track Area: the activity question under Constraints, a box pre-ticked where the user's words suggest it; 'Confirm these' or 'Nothing to avoid' keeps the answer, saved with the plan." };
   }
 }

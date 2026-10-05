@@ -36,6 +36,17 @@ import "./_no-model";
  * (F-R4-16), the keys-only draft and its tap budget (F-R4-17), RunFacts'
  * redaction and integrity lines (F-R4-20), Gemini's labelled choices
  * (F-R4-21), the two switches off (F-R4-23), and the fix rounds' carry-overs.
+ *
+ * Constraint safety, confirm to unlock (contracts §19, section 12): the
+ * activity card's copy (the user's words quoted, the lead's question, no
+ * medical claim, never "fine" in the user's mouth, HEALTH_LINE), its model
+ * (a suggestion only ticks a box; the answer is the card's, an explicit act
+ * carrying the words' key: Save with a box ticked, or "Nothing to avoid"),
+ * the aim-conflict line quoting the user (decision 6), the notice when an
+ * answer takes a started practice off Today (decision 4), and the card on a
+ * body, care, craft and Field draft, the living roadmap (asking again and
+ * answered), the Start sheet and the intake, from the CONFIRM_STATES
+ * fixtures built with the real gate.
  */
 import Module from "node:module";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -55,7 +66,12 @@ import {
   interval,
   positionCountOf,
   provenanceOf,
+  type ActivityCardAnswer,
+  type ActivityConfirm,
+  type ActivityGate,
+  type ActivityRow,
   type AimCardView,
+  type Intake,
   type AimLineView,
   type ItemDraft,
   type KnowledgeCheck,
@@ -1181,7 +1197,11 @@ async function main() {
         bodyD.includes(copy.exclusionsLine(roadmapFixture("draft-body").view!.draft!.exclusions!)!),
       copy.exclusionsLine(roadmapFixture("draft-body").view!.draft!.exclusions!) ?? ""
     );
-    check("v3: the aim-conflict line", bodyD.includes("Your constraints say 'no running' and your aim is 'Run a sub-50 10K'. The plan leaves out running sessions until you change one of them."));
+    check(
+      "v3: the aim-conflict line quotes the user's own sentence (decision 6), never a 'no X' built from it",
+      bodyD.includes("You wrote: “Knee injury, no running”. Your aim is “Run a sub-50 10K”. If they don't fit together, change one of them.") && !bodyD.includes("Your constraints say 'no running'"),
+      /You wrote:[^.]*\.[^.]*\./.exec(bodyD)?.[0]
+    );
     check("v3: the one session-picks confirm quotes the constraints", bodyD.includes("Gemini picked Strength session and Easy session. Your constraints say 'Knee injury, no running'. Keep them?") && bodyD.includes(copy.SESSION_PICKS_EASY));
     const noExam = catalogChoicesOf("PRACTICE", { areaFieldId: "f-st", track: "CRAFT", examLabel: null, excluded: [], allowed: [] }, { lastStage: false });
     const withExamCk = catalogChoicesOf("CHECKPOINT", { areaFieldId: "f-st", track: "CRAFT", examLabel: "Exam P", excluded: [], allowed: [] }, { lastStage: true });
@@ -1662,6 +1682,593 @@ async function main() {
           intakeOf(draftHeld, depthIntake.today, { chosen: pick(["d-pr"]), newCardsRequired: true }).problems.newCards === copy.NEW_CARDS_REQUIRED_HINT
       );
     }
+  }
+
+  // ── 12. Constraint safety: confirm to unlock (contracts §19) ─────────────────
+  // The activity card: "Your words mention <the user's words>. Which activities should the plan avoid?" (with nothing to
+  // quote, "Before the plan adds …, it asks once."), one box per kind, a box pre-ticked where the user's words suggest it
+  // (a suggestion never blocks and never unlocks), HEALTH_LINE, the plan's line while it waits. Every BODY and CARE plan
+  // asks once; CRAFT asks on a cue; a Field plan never asks (its words only suggest). Answering is an explicit act: Save
+  // with a box ticked, or "Nothing to avoid"; Save with nothing ticked is never offered, an unticked row is never "fine",
+  // and the answer carries the key of the words it was shown against. Editable on the roadmap page; asked on the intake,
+  // the draft review and the Start sheet. The aim-conflict line quotes the user. 344 px first; never red.
+  console.log("— confirm to unlock (§19) —");
+  {
+    const ac = await import("../src/components/roadmap/ActivityConfirm");
+    const { StartActivities, StartPractices } = await import("../src/components/roadmap/StartSheet");
+    const { editorScopeOf } = await import("../src/components/roadmap/DraftReview");
+    const { catalogChoicesOf } = await import("../src/components/roadmap/CatalogSheet");
+    const runtimeMod = await import("../src/components/roadmap/roadmap-runtime");
+    const toasts = await import("../src/components/ui/toast-store");
+    const CAT = await import("../src/lib/roadmap-catalog");
+    const RT = await import("../src/lib/roadmap-types");
+    const { CONFIRM_STATES } = await import("../src/app/dev/style/roadmap/fixtures");
+    const flat = (html: string) => textOf(html).replace(/\s+/g, " ").trim();
+    const pageOf = (s: FixtureState) => renders.get(s)!.page;
+    const sectionOf = (html: string, marker: RegExp) => {
+      const m = marker.exec(html);
+      if (!m) return "";
+      const start = html.lastIndexOf("<", m.index);
+      const tag = /^<(\w+)/.exec(html.slice(start))?.[1] ?? "section";
+      // The element's own markup: up to its matching close, counting nested tags of its name.
+      let depth = 0;
+      const re = new RegExp(`<(/?)${tag}\\b[^>]*>`, "g");
+      re.lastIndex = start;
+      for (let t = re.exec(html); t; t = re.exec(html)) {
+        depth += t[1] ? -1 : 1;
+        if (depth === 0) return html.slice(start, t.index + t[0].length);
+      }
+      return html.slice(start);
+    };
+    const cardOf = (html: string) => sectionOf(html, /aria-label="Activities to avoid"/);
+    const countOf = (h: string, re: RegExp) => (h.match(re) ?? []).length;
+    const SAFE = ["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION"] as const;
+    const BODY_GATED = ["HARDER_SESSION", "LONGER_SESSION", "STRENGTH_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK"] as const;
+    const DAY = "2026-10-05";
+    // The rendered buttons (a button's own text), so "Nothing to avoid" in the how-line never reads as the button.
+    const buttonsOf = (h: string) => [...h.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)].map((m) => flat(m[1]));
+    // The card's answer and the gate, as the server reads them (answerActivityCard → allowedKindsFor).
+    const answerThrough = (state: ReturnType<typeof CAT.constraintsStateOf>, answer: ActivityCardAnswer | null, prev: ActivityConfirm | null = null): { ok: true; stored: ActivityConfirm; gate: ActivityGate } | { ok: false; error: string } | null => {
+      if (!answer) return null;
+      const saved = CAT.answerActivityCard(prev, state, answer, DAY);
+      return saved.ok ? { ok: true, stored: saved.value, gate: CAT.allowedKindsFor(state, saved.value) } : { ok: false, error: saved.error };
+    };
+
+    // Fixtures: each state is listed, renders, and is built with the real gate.
+    check(
+      "fixtures: the seven confirm states (body, Field, care and craft drafts; the living roadmap asking again and answered; the intake) are fixture states (audited at every width) and revision-4 states",
+      CONFIRM_STATES.length === 7 && CONFIRM_STATES.every((s) => (FIXTURE_STATES as readonly string[]).includes(s) && (REV4_STATES as readonly string[]).includes(s)) && (["draft-care", "draft-craft"] as const).every((s) => (CONFIRM_STATES as readonly string[]).includes(s))
+    );
+    check("fixtures: every confirm state renders its page or its intake", CONFIRM_STATES.every((s) => renders.get(s)!.page || renders.get(s)!.intake));
+    const fxSrc = code(read("src/app/dev/style/roadmap/fixtures.ts"));
+    check("fixtures: the confirm states are built with the real gate (constraintsStateOf → allowedKindsFor → activityConfirmViewOf), not hand-written rows", /constraintsStateOf\(/.test(fxSrc) && /allowedKindsFor\(state, /.test(fxSrc) && /activityConfirmViewOf\(state, /.test(fxSrc));
+    check("fixtures: a stored answer is the card's (answered, with the kinds it listed), never a per-kind FINE", /answered: \{ day: "2027-01-02", asked: ANSWERED_ASKED, none: false \}/.test(fxSrc) && !/verdict: "FINE"/.test(fxSrc));
+
+    // ── Copy: the user's words quoted, the lead's question, no medical claim, never "fine" in the user's mouth. ──
+    check("copy: the question is the lead's", copy.ACTIVITY_QUESTION === "Which activities should the plan avoid?");
+    check(
+      "copy: the lead quotes the user's sentences verbatim (closing stop left to the line), joined with 'and'",
+      copy.activityLeadLine(["Running causes me knee pain."]) === "Your words mention “Running causes me knee pain”." &&
+        copy.activityLeadLine(["Running causes me knee pain", "Bad knees, so no jumping"]) === "Your words mention “Running causes me knee pain” and “Bad knees, so no jumping”." &&
+        copy.activityLeadLine(["Knieschmerzen beim Laufen…"]) === "Your words mention “Knieschmerzen beim Laufen…”."
+    );
+    check(
+      "copy: with nothing to quote (a body or care plan asks whatever the words) the lead claims nothing about the words: it says what the plan asks before",
+      copy.activityLeadLine([], "BODY") === "Before the plan adds harder or longer sessions, it asks once." &&
+        copy.activityLeadLine([], "CARE") === "Before the plan adds more care sessions, it asks once." &&
+        copy.activityLeadLine([]) === "Before the plan adds more sessions, it asks once." &&
+        !/words|constraint/i.test(copy.activityLeadLine([], "BODY") + copy.activityLeadLine([], "CARE"))
+    );
+    check(
+      "copy: the plan's line while it waits, from the track's safe kinds: body (the lead's words), care (decision 2: never a dead end) and craft",
+      copy.activityPendingLine([...SAFE]) === "Easy, mobility and technique practice only until you confirm." &&
+        copy.activityPendingLine(CAT.cueSafeKindsOf("BODY")) === "Easy, mobility and technique practice only until you confirm." &&
+        copy.activityPendingLine(CAT.cueSafeKindsOf("CARE")) === "Planning the week and keeping a log only until you confirm." &&
+        copy.activityPendingLine(CAT.cueSafeKindsOf("CRAFT")) === "Technique practice only until you confirm." &&
+        !/No care sessions/.test(copy.activityPendingLine([]))
+    );
+    const row = (p: Partial<ActivityRow>): ActivityRow => ({ kind: "HARDER_SESSION", state: "PENDING", gated: true, prefill: null, reason: "", day: null, staleDay: null, cls: null, ...p });
+    check(
+      "copy: each row's line — a suggestion's quote, the user's AVOID and its day, a row the earlier answer left unticked before the words changed; none for a row the answer released (never 'fine') or a plain pending row",
+      copy.activityRowLine(row({ prefill: "AVOID", reason: "Running causes me knee pain" })) === "From your words: “Running causes me knee pain”" &&
+        copy.activityRowLine(row({ staleDay: "2026-10-03" }), "2026-10-05") === "Not ticked on 3 Oct, before your words changed" &&
+        copy.activityRowLine(row({ staleDay: "2026-10-03", prefill: "AVOID", reason: "My knee swelled after the long run" }), "2026-10-05") === "Not ticked on 3 Oct, before your words changed. From your words: “My knee swelled after the long run”" &&
+        copy.activityRowLine(row({ state: "AVOID", day: "2026-10-03", reason: "x", cls: "YOURS" }), "2026-10-05") === "You said to avoid it on 3 Oct" &&
+        copy.activityRowLine(row({ state: "FINE", day: "2026-10-03", cls: "YOURS" }), "2026-10-05") === null &&
+        copy.activityRowLine(row({ state: "WORDS", gated: false, prefill: "AVOID", reason: "No timed practice" })) === "From your words: “No timed practice”" &&
+        copy.activityRowLine(row({})) === null
+    );
+    check("copy: the stale prompt (decision 3's re-ask) names the earlier answer's day", copy.activityStaleLine("2026-10-03", "2026-10-05") === "You answered on 3 Oct, before your words changed." && copy.activityStaleLine(null) === null);
+    check(
+      "copy: the answered card's summary names the user's answer — what they said to avoid (with its day), or that there's nothing to avoid — then what the plan can include, never 'You said fine'",
+      JSON.stringify(
+        copy.activitySummaryLines(
+          { rows: [row({ kind: "STRENGTH_SESSION", state: "AVOID", day: "2026-10-05" }), row({ state: "FINE", day: "2026-10-05" }), row({ kind: "LONGER_SESSION", state: "FINE", day: "2026-10-05" }), row({ kind: "TIMED_PRACTICE", state: "WORDS", reason: "No timed practice." })], answered: "2026-10-05", none: false },
+          "2026-10-05"
+        )
+      ) ===
+        JSON.stringify([
+          "You said to avoid: Strength session (5 Oct).",
+          "The plan can include: Harder session and Longer session.",
+          "Ticked from your words, still in the plan until you answer: Timed practice (“No timed practice”).",
+        ]) &&
+        JSON.stringify(copy.activitySummaryLines({ rows: [row({ state: "FINE" }), row({ kind: "STRENGTH_SESSION", state: "FINE" })], answered: "2026-10-05", none: true }, "2026-10-05")) ===
+          JSON.stringify(["You said there's nothing to avoid (5 Oct).", "The plan can include: Harder session and Strength session."]) &&
+        JSON.stringify(copy.activitySummaryLines({ rows: [row({ kind: "MOCK_TEST", state: "AVOID", day: "2026-10-01" }), row({ state: "FINE" })], answered: "2026-10-05", none: true }, "2026-10-05")) ===
+          JSON.stringify(["You said to avoid: Mock test (1 Oct).", "You said there's nothing else to avoid (5 Oct).", "The plan can include: Harder session."]) &&
+        JSON.stringify(copy.activitySummaryLines({ rows: [row({ kind: "STRENGTH_SESSION", state: "AVOID", day: "2026-10-01" }), row({ kind: "LONGER_SESSION", state: "AVOID", day: "2026-10-05" })], answered: "2026-10-05" }, "2026-10-05")) ===
+          JSON.stringify(["You said to avoid: Strength session (1 Oct) and Longer session (5 Oct)."])
+    );
+    check(
+      "copy: the line beside the answer's button says what the act does (the unticked rows are never taken as fine silently)",
+      copy.activitySaveLine(2, 5) === "The plan leaves out 2 and can include the other 3." &&
+        copy.activitySaveLine(4, 5) === "The plan leaves out 4 and can include the other one." &&
+        copy.activitySaveLine(5, 5) === "The plan leaves out all 5." &&
+        copy.activitySaveLine(0, 5) === "The plan can then include all 5." &&
+        copy.activitySaveLine(0, 1) === "The plan can then include it." &&
+        copy.activitySaveLine(0, 0) === ""
+    );
+    check(
+      "copy: the how-line offers the two explicit acts (tick and save, or “Nothing to avoid”), on the plan and on the intake",
+      copy.ACTIVITY_HOW_LINE === `Tick what the plan should avoid, or choose “${CAT.ACTIVITY_NOTHING_TO_AVOID}”. You can change this later on the roadmap page.` &&
+        copy.ACTIVITY_INTAKE_HOW_LINE === `Tick what the plan should avoid, or choose “${CAT.ACTIVITY_NOTHING_TO_AVOID}”. Your answer is saved with the plan.`
+    );
+    check(
+      "copy: the Start sheet's, the picker's and the suggestions' lines (a suggestion never leaves one out; the picker points at the card)",
+      copy.activityWaitingLine(["Harder session"]) === "Waiting on your answer, not added to Today: Harder session." &&
+        copy.activityLeftOutLine(["Strength session"]) === "You said to avoid, not added to Today: Strength session." &&
+        copy.activityWaitingLine([]) === null &&
+        copy.activityPickerLine(["Harder session", "Strength session"]) === `Not offered until you answer “${CAT.ACTIVITY_CARD_NAME}”: Harder session and Strength session.` &&
+        copy.activitySuggestedLine(["Timed practice"]) === "Ticked from your words, still in the plan until you answer: Timed practice." &&
+        copy.activitySuggestedLine([]) === null
+    );
+    check(
+      "copy: decision 4's notice — the started practice taken off Today, history kept, with Undo; and one that couldn't be, with where to archive it",
+      copy.ACTIVITY_PAUSED_TITLE === "Taken off Today" &&
+        copy.activityPausedLine(["Strength session"]) === "You said to avoid it, so Strength session is off Today. History is kept; Undo brings it back." &&
+        copy.activityPausedLine(["Strength session", "Set time"]) === "You said to avoid them, so Strength session and Set time are off Today. History is kept; Undo brings them back." &&
+        copy.activityPausedLine([]) === null &&
+        copy.activityNotPausedLine(["Strength session"]) === "Strength session couldn't be taken off Today here. Archive it from Today if you want it off." &&
+        copy.activityNotPausedLine([]) === null
+    );
+    check(
+      "copy: decision 6 — the aim-conflict line quotes the user's own sentence (the lead's example) and never builds a 'no X' for them",
+      copy.aimConflictLine("Shin splints flare up if I run more than twice a week.", "Run a sub-50 10K") ===
+        `You wrote: “Shin splints flare up if I run more than twice a week”. Your aim is “Run a sub-50 10K”. Say in “${CAT.ACTIVITY_CARD_NAME}” which sessions the plan should leave out.` &&
+        copy.aimConflictLine("Knee injury, no running", "Run a sub-50 10K", false) === "You wrote: “Knee injury, no running”. Your aim is “Run a sub-50 10K”. If they don't fit together, change one of them." &&
+        copy.aimConflictLine("  ", "Run a sub-50 10K") === null &&
+        (() => {
+          // The function's own body (its doc and the next function's are other words).
+          const src = read("src/components/roadmap/roadmap-copy.ts");
+          const at = src.indexOf("export function aimConflictLine");
+          return at > 0 && !/Your constraints say|'no /.test(src.slice(at, src.indexOf("\n}", at)));
+        })()
+    );
+    // The card's own words never claim medical knowledge, and never put "fine" in the user's mouth.
+    const ownWords = [
+      copy.ACTIVITY_QUESTION,
+      copy.ACTIVITY_UNREAD_LINE,
+      copy.ACTIVITY_HOW_LINE,
+      copy.ACTIVITY_INTAKE_HOW_LINE,
+      copy.ACTIVITY_SAVE_WORD,
+      copy.ACTIVITY_CONFIRM_WORD,
+      copy.ACTIVITY_CONFIRMED_LINE,
+      copy.ACTIVITY_NOT_SAVED_LINE,
+      copy.ACTIVITY_HELD_WAITING,
+      copy.ACTIVITY_HELD_LEFT_OUT,
+      copy.ACTIVITY_PAUSED_TITLE,
+      copy.ACTIVITY_NOT_PAUSED_TITLE,
+      copy.activityLeadLine([], "BODY"),
+      copy.activityLeadLine([], "CARE"),
+      copy.activityPendingLine([...SAFE]),
+      copy.activityPendingLine(CAT.cueSafeKindsOf("CARE")),
+      copy.activityStaleLine(DAY)!,
+      copy.activitySaveLine(2, 5),
+      copy.activitySaveLine(0, 5),
+      copy.activityPausedLine(["Strength session"])!,
+      copy.activityNotPausedLine(["Strength session"])!,
+      copy.activityPickerLine(["Harder session"])!,
+      ...copy.activitySummaryLines({ rows: [row({ state: "AVOID" }), row({ kind: "LONGER_SESSION", state: "FINE" })], answered: DAY, none: true }),
+    ].join(" ");
+    const MEDICAL = /\b(safe|safely|unsafe|safer|injur\w*|diagnos\w*|treat\w*|heal\w*|recover\w*|medical(?! advice)|doctor|physio\w*|symptom\w*|cure\w*|harm\w*|risk\w*|condition\w*|cleared|approved)\b/i;
+    check("copy: the card's own words claim no medical knowledge (no 'safe', no diagnosis, no condition)", !MEDICAL.test(ownWords), MEDICAL.exec(ownWords)?.[0]);
+    check("copy: no line says the user said 'fine' or counts an unticked row as fine", !/\bfine\b/i.test(ownWords) && !/You said fine|count as fine|whether they're fine/.test(read("src/components/roadmap/roadmap-copy.ts")), /\bfine\b/i.exec(ownWords)?.[0]);
+    check("copy: HEALTH_LINE ('Not medical advice …') is unchanged", copy.HEALTH_LINE === "Not medical advice — check health-related changes with a professional.");
+
+    // ── The model: a suggestion only ticks a box; the answer is the card's, with the words' key. ──
+    const draftAc = roadmapFixture("draft-confirm").view!.draft!.activityConfirm!;
+    const draftState = CAT.constraintsStateOf({
+      track: "BODY",
+      texts: { constraints: "Running causes me knee pain. Bad knees, so no jumping.", aim: "Run a sub-50 10K", notes: [] },
+      exclusions: roadmapFixture("draft-confirm").view!.draft!.exclusions,
+    });
+    check(
+      "model: the draft's gate is on, every gated BODY kind waits, none answered, and the view carries the words' key",
+      draftAc.on && draftAc.track === "BODY" && draftAc.pending === 5 && draftAc.rows.every((r) => r.state === "PENDING" && r.gated && r.cls === null) && draftAc.answered === null && draftAc.key === draftState.key && draftAc.key.startsWith("k1-")
+    );
+    check(
+      "model: the boxes ticked on opening are the suggestions (and AVOID / WORDS rows), never a row the answer released and never a plain pending row",
+      JSON.stringify(model.activityAvoidOf(draftAc.rows)) === JSON.stringify(["HARDER_SESSION", "LONGER_SESSION", "FULL_ATTEMPT"]) &&
+        JSON.stringify(model.activityAvoidOf([row({ state: "FINE", cls: "YOURS" }), row({ kind: "LONGER_SESSION", state: "AVOID", cls: "YOURS" }), row({ kind: "TIMED_PRACTICE", state: "WORDS", gated: false, prefill: "AVOID" })])) === JSON.stringify(["LONGER_SESSION", "TIMED_PRACTICE"])
+    );
+    const pristine = model.activityCardAnswerOf(draftAc, model.activityAvoidOf(draftAc.rows));
+    check(
+      "model: Save on the list as it opened sends the card's answer — the view's key and the ticked kinds, in row order — and nothing else (no verdict, no reason)",
+      JSON.stringify(pristine) === JSON.stringify({ key: draftAc.key, avoid: ["HARDER_SESSION", "LONGER_SESSION", "FULL_ATTEMPT"], nothingToAvoid: false }) && JSON.stringify(Object.keys(pristine ?? {})) === JSON.stringify(["key", "avoid", "nothingToAvoid"])
+    );
+    check(
+      "model: nothing ticked is no answer (null: Save is not offered); a tick on a kind the card doesn't list is never sent",
+      model.activityCardAnswerOf(draftAc, []) === null && model.activityCardAnswerOf(draftAc, ["EASY_SESSION" as const]) === null && JSON.stringify(model.activityCardAnswerOf(draftAc, ["EASY_SESSION", "STRENGTH_SESSION"])?.avoid) === JSON.stringify(["STRENGTH_SESSION"])
+    );
+    check("model: “Nothing to avoid” is its own explicit answer, with the view's key", JSON.stringify(model.activityNothingToAvoidOf(draftAc)) === JSON.stringify({ key: draftAc.key, avoid: [], nothingToAvoid: true }));
+    check("model: the per-kind answer is gone (no activityAnswersOf: an unticked row was sent as FINE)", !("activityAnswersOf" in model) && !/activityAnswersOf|verdict: "FINE"|"FINE" as const\)|verdict:/.test(code(read("src/components/roadmap/ActivityConfirm.tsx"))));
+    // The answer goes through the real pure gate: the suggestions alone unlock nothing; the card's answer does.
+    {
+      const before = CAT.allowedKindsFor(draftState, null);
+      const saved = answerThrough(draftState, model.activityCardAnswerOf(draftAc, model.activityAvoidOf(before.rows)));
+      const after = saved?.ok ? saved.gate : null;
+      check(
+        "model: before the answer the gate places only BODY's safe practices; after Save it places the listed kinds left unticked, and the ticked ones stay out",
+        before.allowed.filter((k) => CAT.catalogEntryOf(k)?.slot === "PRACTICE").every((k) => (SAFE as readonly string[]).includes(k)) &&
+          after != null &&
+          after.allowed.includes("STRENGTH_SESSION") &&
+          after.allowed.includes("PERFORMANCE_CHECK") &&
+          !after.allowed.includes("HARDER_SESSION") &&
+          !after.allowed.includes("LONGER_SESSION") &&
+          after.pending.length === 0,
+        JSON.stringify(after?.allowed)
+      );
+      const none = answerThrough(draftState, model.activityNothingToAvoidOf(draftAc));
+      check("model: “Nothing to avoid” places every listed kind, and stores no AVOID", none?.ok === true && BODY_GATED.every((k) => none.gate.allowed.includes(k)) && Object.keys(none.stored.kinds).length === 0 && none.stored.answered?.none === true);
+      const empty = answerThrough(draftState, { key: draftAc.key, avoid: [], nothingToAvoid: false });
+      check("model: a Save with nothing ticked (never sent by the card) is refused by the server too, naming “Nothing to avoid”", empty?.ok === false && empty.error === CAT.ACTIVITY_NOTHING_TICKED);
+      const changed = CAT.constraintsStateOf({ track: "BODY", texts: { constraints: "Running causes me knee pain. Torn ACL, surgery next month.", aim: "Run a sub-50 10K", notes: [] } });
+      const stale = answerThrough(changed, pristine);
+      check("model: an answer given against words changed meanwhile (another tab) is refused (ACTIVITY_ANSWER_STALE), so the card asks again", changed.key !== draftAc.key && stale?.ok === false && stale.error === CAT.ACTIVITY_ANSWER_STALE);
+    }
+    check(
+      "model: the card shows for an on gate or any row, never for an off gate with none",
+      model.activityCardOf(draftAc) === draftAc &&
+        model.activityCardOf({ ...draftAc, on: false, rows: [], pending: 0 }) === null &&
+        model.activityCardOf(null) === null &&
+        model.activityCardOf(roadmapFixture("draft-words").view!.draft!.activityConfirm) != null
+    );
+    const wordsAc = roadmapFixture("draft-words").view!.draft!.activityConfirm!;
+    const answeredAc = roadmapFixture("active-answered").view!.activityConfirm!;
+    check(
+      "model: the list opens by itself when it asks, or when suggestions wait on an answer (a Field plan's, which holds nothing back); an answered card shows the answer",
+      model.activityOpenOf(draftAc) && model.activityAsksOf(draftAc) && model.activityOpenOf(wordsAc) && !model.activityAsksOf(wordsAc) && model.activitySuggestsOf(wordsAc) && !model.activityOpenOf(answeredAc)
+    );
+    check(
+      "model: the plan's line shows only while rows wait — body, care and craft each name their own easy kinds",
+      model.practiceOnlyLineOf(draftAc) === "Easy, mobility and technique practice only until you confirm." &&
+        model.practiceOnlyLineOf(roadmapFixture("draft-care").view!.draft!.activityConfirm) === "Planning the week and keeping a log only until you confirm." &&
+        model.practiceOnlyLineOf(roadmapFixture("draft-craft").view!.draft!.activityConfirm) === "Technique practice only until you confirm." &&
+        model.practiceOnlyLineOf(answeredAc) === null &&
+        model.practiceOnlyLineOf(wordsAc) === null
+    );
+    const careAc = roadmapFixture("draft-care").view!.draft!.activityConfirm!;
+    const craftAc = roadmapFixture("draft-craft").view!.draft!.activityConfirm!;
+    check(
+      "model: a care plan with an empty Constraints box asks (decision 1), with nothing to quote, and meanwhile places planning the week and keeping a log (decision 2)",
+      careAc.on && careAc.track === "CARE" && careAc.quotes.length === 0 && careAc.pending > 0 && JSON.stringify(careAc.safeKinds) === JSON.stringify(["PLAN_AHEAD", "KEEP_A_LOG"]) && careAc.rows.every((r) => !["PLAN_AHEAD", "KEEP_A_LOG"].includes(r.kind))
+    );
+    check(
+      "model: a craft plan whose words name a strain asks, quoting them; a craft plan with a plain aim and no constraints doesn't",
+      craftAc.on && craftAc.track === "CRAFT" && JSON.stringify(craftAc.quotes) === JSON.stringify(["Wrist tendinitis, can't play more than 20 minutes"]) && JSON.stringify(craftAc.safeKinds) === JSON.stringify(["TECHNIQUE_SESSION"]) &&
+        model.intakeActivityOf({ track: "CRAFT", texts: { constraints: null, aim: "Play Clair de Lune at a recital", notes: [] }, exam: false, practicesAllowed: true, examLabel: null, stored: null }).view.on === false
+    );
+    const draftView = roadmapFixture("draft-confirm").view!;
+    const scope = editorScopeOf(draftView, draftView.draft!.milestones)!;
+    const bodyPicks = catalogChoicesOf("PRACTICE", scope, { lastStage: false });
+    check(
+      "picker: while the answer waits the type picker offers only the safe sessions, and names the waiting kinds (ItemEditorScope.held); the client-only [Allow one] list is gone",
+      JSON.stringify(bodyPicks) === JSON.stringify([...SAFE]) && JSON.stringify(scope.held) === JSON.stringify(draftAc.rows.filter((r) => r.state === "PENDING").map((r) => r.kind)) && (scope.allowed ?? []).length === 0,
+      `${bodyPicks.join(",")} | ${scope.held?.join(",")}`
+    );
+    const answeredView = roadmapFixture("active-answered").view!;
+    const answeredScope = editorScopeOf(answeredView, [answeredView.current!.milestone])!;
+    const answeredPicks = catalogChoicesOf("PRACTICE", answeredScope, { lastStage: false });
+    check("picker: once answered it offers the kinds the answer released and leaves out what the user said to avoid", answeredPicks.includes("HARDER_SESSION") && answeredPicks.includes("STRENGTH_SESSION") && !answeredPicks.includes("LONGER_SESSION"), answeredPicks.join(","));
+    const wordsView = roadmapFixture("draft-words").view!;
+    const wordsScope = editorScopeOf(wordsView, wordsView.draft!.milestones)!;
+    check(
+      "picker: a suggestion never blocks (decision 7) — a Field plan's “No timed practice” leaves nothing out of the picker; only PENDING and AVOID kinds are left out",
+      catalogChoicesOf("PRACTICE", wordsScope, { lastStage: false }).includes("TIMED_PRACTICE") &&
+        (wordsScope.excluded ?? []).length === 0 &&
+        JSON.stringify(model.activityBlockedOf({ rows: [row({ state: "PENDING" }), row({ kind: "LONGER_SESSION", state: "AVOID" }), row({ kind: "EASY_SESSION", state: "WORDS", gated: false }), row({ kind: "STRENGTH_SESSION", state: "FINE" })] })) === JSON.stringify(["HARDER_SESSION", "LONGER_SESSION"]) &&
+        JSON.stringify(model.pickerExcludedOf(null, [{ kind: "TIMED_PRACTICE" }])) === JSON.stringify(["TIMED_PRACTICE"])
+    );
+    const confirmView = roadmapFixture("active-confirm").view!;
+    const held = model.heldPracticesOf(confirmView.current!.milestone, confirmView.activityConfirm);
+    check("model: a milestone's practices the answer holds back — waiting (Harder session) and avoided (Strength session); the easy one is placed", held.waiting.map((x) => x.label).join() === "Harder session" && held.leftOut.map((x) => x.label).join() === "Strength session");
+    check(
+      "model: a suggestion never holds a practice back (a WORDS row's kind is placed: 'take it easy' never blocks Easy session)",
+      model.heldPracticesOf(confirmView.current!.milestone, { rows: [row({ kind: "EASY_SESSION", state: "WORDS", gated: false, prefill: "AVOID", reason: "My GP said to take it easy for a month" })] }).leftOut.length === 0
+    );
+    check(
+      "model: the intake's confirmed answer reads as the server will store it — ticks AVOID, the other listed rows placed, no day yet",
+      JSON.stringify(model.rowsAnsweredBy(draftAc.rows, { avoid: ["HARDER_SESSION"] }).map((r) => `${r.kind}:${r.state}:${r.day}`)) ===
+        JSON.stringify(["HARDER_SESSION:AVOID:null", "LONGER_SESSION:FINE:null", "STRENGTH_SESSION:FINE:null", "FULL_ATTEMPT:FINE:null", "PERFORMANCE_CHECK:FINE:null"])
+    );
+    // Decision 6: the aim-conflict line quotes the user and shows only while unresolved.
+    {
+      const answeredDraftAc = CAT.activityConfirmViewOf(draftState, CAT.allowedKindsFor(draftState, (answerThrough(draftState, pristine) as { stored: ActivityConfirm }).stored));
+      const input = { conflict: { word: "running" }, constraints: "Running causes me knee pain. Bad knees, so no jumping.", aim: "Run a sub-50 10K", leftOut: 0 };
+      check(
+        "model: the aim-conflict line (decision 6) quotes the user's sentence while the card is unanswered, and goes once it is answered under these words",
+        model.aimConflictLineOf({ ...input, confirm: draftAc }) === `You wrote: “Running causes me knee pain”. Your aim is “Run a sub-50 10K”. Say in “${CAT.ACTIVITY_CARD_NAME}” which sessions the plan should leave out.` &&
+          model.aimConflictLineOf({ ...input, confirm: answeredDraftAc }) === null
+      );
+      check(
+        "model: …an older draft (no card) shows it only while a named kind is still left out; no sentence holding the word, no line (nothing is put in the user's mouth)",
+        model.aimConflictLineOf({ ...input, confirm: undefined, leftOut: 2 }) === "You wrote: “Running causes me knee pain”. Your aim is “Run a sub-50 10K”. If they don't fit together, change one of them." &&
+          model.aimConflictLineOf({ ...input, confirm: undefined, leftOut: 0 }) === null &&
+          model.aimConflictLineOf({ ...input, conflict: { word: "swimming" }, confirm: draftAc }) === null &&
+          model.aimConflictLineOf({ ...input, conflict: null, confirm: draftAc }) === null
+      );
+      const r3 = { constraints: "Knee injury. Swimming ok, running not ok.", aim: "Run a sub-50 10K", confirm: undefined, leftOut: 1 };
+      const viaR3 = model.aimConflictLineOf({ ...r3, conflict: { word: "running", quote: "Swimming ok, running not ok." } });
+      const notVerbatim = model.aimConflictLineOf({ ...r3, conflict: { word: "running", quote: "no running" } });
+      check(
+        "model: …R3's `quote` (the user's clause) is used when it is their text verbatim; a quote not in their words is never shown (the clause found in their text instead)",
+        viaR3 === "You wrote: “Swimming ok, running not ok”. Your aim is “Run a sub-50 10K”. If they don't fit together, change one of them." && notVerbatim != null && !notVerbatim.includes("“no running”") && notVerbatim.includes("running not ok"),
+        `${viaR3} | ${notVerbatim}`
+      );
+    }
+    check(
+      "model: decision 4 — R4's reply names the started practices taken off Today (paused) and those it couldn't (notPaused); read defensively",
+      JSON.stringify(model.pausedOfReply({ replan: false, paused: [{ templateId: "tpl3", title: "Strength session", kind: "STRENGTH_SESSION" }, { templateId: "tpl3", title: "dup" }, { templateId: 4, title: "x" }, null], notPaused: [] })) === JSON.stringify([{ templateId: "tpl3", title: "Strength session" }]) &&
+        JSON.stringify(model.notPausedOfReply({ notPaused: [{ templateId: "tpl9", title: "Set time", kind: "SET_TIME" }] })) === JSON.stringify([{ templateId: "tpl9", title: "Set time" }]) &&
+        [null, undefined, {}, { paused: "x" }, { replan: true }, []].every((r) => model.pausedOfReply(r).length === 0)
+    );
+
+    // ── The draft review (draft-confirm): asked above the milestones. ──
+    const dHtml = pageOf("draft-confirm");
+    const dCard = cardOf(dHtml);
+    const dText = flat(dCard);
+    check(
+      "draft: the card quotes the user's words and asks the lead's question",
+      dText.startsWith("Your words mention “Running causes me knee pain” and “Bad knees, so no jumping”. Which activities should the plan avoid?"),
+      dText.slice(0, 160)
+    );
+    check("draft: one box per waiting kind, named by the app (Harder session … Performance check)", countOf(dCard, /type="checkbox"/g) === 5 && ["Harder session", "Longer session", "Strength session", "Do a full attempt", "Performance check"].every((n) => dText.includes(n)));
+    check("draft: the suggested three come pre-ticked, each with the user's quoted words; the rest unticked", countOf(dCard, /type="checkbox"[^>]*checked=""/g) === 3 && countOf(dText, /From your words: “Running causes me knee pain”/g) === 3);
+    check("draft: the boxes are labelled (the kind's name) and described by their reason", countOf(dCard, /<label class="rm-avd-hit"><input id="[^"]+" type="checkbox"/g) === 5 && countOf(dCard, /aria-describedby="[^"]+-w"/g) === 3);
+    check("draft: one legend for the boxes (a fieldset): the question", /<fieldset class="rm-avd-set"><legend class="rm-avd-q">Your words mention/.test(dCard));
+    check(
+      "draft: with boxes ticked the button is Save, beside what it does (“The plan leaves out 3 and can include the other 2.”); the how-line names the other act",
+      JSON.stringify(buttonsOf(dCard)) === JSON.stringify(["Save my answers"]) && dText.includes("The plan leaves out 3 and can include the other 2.") && dText.includes(copy.ACTIVITY_HOW_LINE),
+      JSON.stringify(buttonsOf(dCard))
+    );
+    check("draft: the plan's line and HEALTH_LINE on the card", dText.includes("Easy, mobility and technique practice only until you confirm.") && dCard.includes(copy.HEALTH_LINE));
+    check("draft: the card sits above the milestones", dHtml.indexOf('aria-label="Activities to avoid"') > 0 && dHtml.indexOf('aria-label="Activities to avoid"') < dHtml.indexOf("Next · milestone 1"));
+    check("draft: HEALTH_LINE once at the top (the card's; the draft header leaves its own out)", !sectionOf(dHtml, /aria-label="The draft"/).includes(copy.HEALTH_LINE) && dCard.includes(copy.HEALTH_LINE));
+    const nextMs = sectionOf(dHtml, /aria-label="Milestone 1"/);
+    check("draft: the next milestone's What to practise says what the plan places meanwhile, and lists only the safe sessions", flat(nextMs).includes("What to practise sessions and minutes set by the app Easy, mobility and technique practice only until you confirm.") && !/Harder session|Strength session/.test(flat(nextMs)));
+    check("draft: the gate's view replaces the exclusions line and the client-only [Allow one]", !flat(dHtml).includes("Left out because of your constraints") && !/>Allow one</.test(dHtml));
+    const conflictCard = flat(sectionOf(dHtml, /aria-label="Your aim and your constraints"/));
+    check(
+      "draft: the aim-conflict line quotes the user's sentence (decision 6), never 'no running', while the card is unanswered",
+      conflictCard === `You wrote: “Running causes me knee pain”. Your aim is “Run a sub-50 10K”. Say in “${CAT.ACTIVITY_CARD_NAME}” which sessions the plan should leave out.` && !flat(dHtml).includes("'no running'"),
+      conflictCard
+    );
+    {
+      const fx = roadmapFixture("draft-confirm").view!;
+      const answeredDraft = { ...fx, draft: { ...fx.draft!, activityConfirm: CAT.activityConfirmViewOf(draftState, CAT.allowedKindsFor(draftState, (answerThrough(draftState, pristine) as { stored: ActivityConfirm }).stored)) } };
+      const aHtml2 = R(createElement(RoadmapScreen, { view: answeredDraft, startPreview: null }));
+      check("draft: once the card is answered under these words, the aim-conflict line goes (resolved), and the card shows the answer", !flat(aHtml2).includes("You wrote:") && flat(cardOf(aHtml2)).startsWith("You said to avoid: Harder session, Longer session and Do a full attempt (5 Oct). The plan can include: Strength session and Performance check."), flat(cardOf(aHtml2)).slice(0, 200));
+    }
+    check("draft: never red (no danger, no --owed) on the card", !/danger|owed/.test(dCard));
+    check("legacy: a draft without the gate's view keeps the exclusions line and [Allow one]", flat(pageOf("draft-body")).includes("Left out because of your constraints") && /Allow one/.test(pageOf("draft-body")) && !pageOf("draft-body").includes('aria-label="Activities to avoid"'));
+
+    // ── Care (draft-care): asks with nothing to quote; its own easy kinds meanwhile; "Nothing to avoid" with nothing ticked. ──
+    const cHtml = pageOf("draft-care");
+    const cCard = cardOf(cHtml);
+    const cText = flat(cCard);
+    check("care: an empty Constraints box asks anyway, and the lead claims nothing about the words", cText.startsWith("Before the plan adds more care sessions, it asks once. Which activities should the plan avoid?") && !cText.includes("Your words mention"), cText.slice(0, 140));
+    check(
+      "care: nothing ticked, so the one button is “Nothing to avoid” (never a Save that unlocks unticked rows), beside what it does",
+      countOf(cCard, /type="checkbox"/g) === 5 && countOf(cCard, /checked=""/g) === 0 && JSON.stringify(buttonsOf(cCard)) === JSON.stringify([CAT.ACTIVITY_NOTHING_TO_AVOID]) && cText.includes("The plan can then include all 5."),
+      JSON.stringify(buttonsOf(cCard))
+    );
+    check("care: the plan's line names planning the week and keeping a log (decision 2), with HEALTH_LINE", cText.includes("Planning the week and keeping a log only until you confirm.") && cCard.includes(copy.HEALTH_LINE));
+    check("care: the next milestone places them meanwhile, so the plan is never a dead end", /Plan the week ahead/.test(flat(sectionOf(cHtml, /aria-label="Milestone 1"/))) && flat(sectionOf(cHtml, /aria-label="Milestone 1"/)).includes("Planning the week and keeping a log only until you confirm."));
+
+    // ── Craft (draft-craft): asks on a cue, quoting it, with HEALTH_LINE; technique only meanwhile. ──
+    const kCard = cardOf(pageOf("draft-craft"));
+    const kText = flat(kCard);
+    check("craft: words naming a strain ask, quoted, over the craft's own kinds", kText.startsWith("Your words mention “Wrist tendinitis, can't play more than 20 minutes”. Which activities should the plan avoid?") && ["Slow, focused drills", "Full run-throughs", "Practise with a teacher or partner"].every((n) => kText.includes(n)), kText.slice(0, 160));
+    check("craft: technique only meanwhile, and HEALTH_LINE on a craft card that asks", kText.includes("Technique practice only until you confirm.") && kCard.includes(copy.HEALTH_LINE));
+
+    // ── A Field plan (draft-words): never gated by a body cue; its words' kind is a pre-ticked suggestion, still placed. ──
+    const wCard = cardOf(pageOf("draft-words"));
+    const wText = flat(wCard);
+    check(
+      "field: the card offers the suggestion (decision 7): quoted, pre-ticked, still in the plan until the user saves; Save beside what it does",
+      wText.startsWith("Your words mention “No timed practice, it stresses me out”. Which activities should the plan avoid?") &&
+        countOf(wCard, /type="checkbox"[^>]*checked=""/g) === 1 &&
+        wText.includes("Ticked from your words, still in the plan until you answer: Timed practice.") &&
+        JSON.stringify(buttonsOf(wCard)) === JSON.stringify(["Save my answers"]),
+      wText.slice(0, 240)
+    );
+    check("field: no HEALTH_LINE, no plan line (nothing waits), no 'Left out' on a Field plan", !wCard.includes(copy.HEALTH_LINE) && !wText.includes("until you confirm") && !wText.includes("Left out"));
+    check("field: the Field draft's practices are not held (the suggestion is placed)", !flat(pageOf("draft-words")).includes("until you confirm"));
+
+    // ── The living roadmap: asked above Now while it waits; answered, editable before the footer. ──
+    const aHtml = pageOf("active-confirm");
+    const aCard = cardOf(aHtml);
+    const aText = flat(aCard);
+    check(
+      "plan: after the words changed the card asks again (decision 3): the stale prompt with the earlier answer's day, each released row 'Not ticked on 2 Jan', and the AVOID stands, ticked",
+      aText.includes("You answered on 2 Jan, before your words changed.") &&
+        aText.includes("Harder session Not ticked on 2 Jan, before your words changed") &&
+        aText.includes("Strength session You said to avoid it on 2 Jan") &&
+        /checked=""[^>]*>?<span class="rm-avd-n">Strength session</.test(aCard.replace(/aria-describedby="[^"]*"/g, "")),
+      aText.slice(0, 300)
+    );
+    check("plan: the card asks above Now (order 2 at 344 px), before the current milestone", aHtml.indexOf('aria-label="Activities to avoid"') < aHtml.indexOf("Now · milestone") && /<div class="rm-o2"><section class="card rm-avd" id="rm-activities"/.test(aHtml));
+    check("plan: Now's What to practise says what the plan places meanwhile", flat(sectionOf(aHtml, /aria-label="Current milestone"/)).includes("Easy, mobility and technique practice only until you confirm."));
+    const doneHtml = pageOf("active-answered");
+    const doneCard = cardOf(doneHtml);
+    check(
+      "plan: answered, the card shrinks to the user's answer and what the plan can include, with Change and HEALTH_LINE, before the footer (order 6); no box, no Save; never 'fine'",
+      flat(doneCard) === `You said to avoid: Longer session (2 Jan). The plan can include: Harder session, Strength session, Do a full attempt and Performance check. Change ${copy.HEALTH_LINE}` &&
+        /<div class="rm-o6"><section class="card rm-avd"/.test(doneHtml) &&
+        !/type="checkbox"|Save my answers/.test(doneCard) &&
+        !/\bfine\b/i.test(flat(doneCard)),
+      flat(doneCard)
+    );
+    check("plan: answered, Now carries no 'until you confirm' line", !flat(doneHtml).includes("until you confirm"));
+    {
+      const st = CAT.constraintsStateOf({ track: "BODY", texts: { constraints: "Knee injury last year, no running two days in a row.", aim: answeredView.header!.aim, notes: [] }, exclusions: [{ kind: "LONGER_SESSION", word: "long run" }] });
+      const none = answerThrough(st, { key: st.key, avoid: [], nothingToAvoid: true }) as { stored: ActivityConfirm };
+      const noneHtml = R(createElement(ac.ActivityConfirmCard, { view: CAT.activityConfirmViewOf(st, CAT.allowedKindsFor(st, none.stored)), roadmapId: "rm2", today: DAY, place: "plan" }));
+      check(
+        "plan: “Nothing to avoid” reads back as said: “You said there's nothing to avoid (5 Oct).”, then what the plan can include",
+        flat(noneHtml).startsWith("You said there's nothing to avoid (5 Oct). The plan can include: Harder session, Longer session, Strength session, Do a full attempt and Performance check. Change"),
+        flat(noneHtml).slice(0, 200)
+      );
+    }
+    check("plan: a closed roadmap shows no activity card", !pageOf("done-depth").includes("rm-avd") && !pageOf("archived").includes("rm-avd"));
+
+    // ── The Start sheet: asked there too; the held practices show their line in place of a switch and count as off. ──
+    const m3 = confirmView.current!.milestone;
+    const sp = roadmapFixture("active-confirm").startPreview!;
+    const startHtml = R(createElement(StartActivities, { view: confirmView.activityConfirm, roadmapId: confirmView.header!.id, milestone: m3, today: confirmView.today }));
+    const startText = flat(startHtml);
+    check("start: the sheet asks too (its compact variant, a group, not a card) and lists the practices waiting and avoided", /<div class="sunk rm-avd rm-avd-in" role="group" aria-label="Activities to avoid">/.test(startHtml) && startText.includes("Waiting on your answer, not added to Today: Harder session.") && startText.includes("You said to avoid, not added to Today: Strength session."));
+    check("start: a body plan's sheet carries HEALTH_LINE once (the sheet's), not again in the card", !startHtml.includes(copy.HEALTH_LINE));
+    const heldLine = new Map([...held.waiting.map((it) => [it.lineageId, copy.ACTIVITY_HELD_WAITING] as const), ...held.leftOut.map((it) => [it.lineageId, copy.ACTIVITY_HELD_LEFT_OUT] as const)]);
+    const practicesHtml = R(createElement(StartPractices, { practices: sp.practices, milestone: m3, isOff: (l: string) => heldLine.has(l), onToggle: () => {}, heldOf: (l: string) => heldLine.get(l) ?? null }));
+    check("start: a held practice shows its line in place of its switch; the easy one keeps its switch", countOf(practicesHtml, /role="switch"/g) === 1 && practicesHtml.includes(copy.ACTIVITY_HELD_WAITING) && practicesHtml.includes(copy.ACTIVITY_HELD_LEFT_OUT));
+    const startSrc = code(read("src/components/roadmap/StartSheet.tsx"));
+    check("start: a held practice counts as off (the pay line and practicesOff), whatever its switch said", /const isOff = \(lineage: string\) => heldLine\.has\(lineage\) \|\|/.test(startSrc) && /practicesOff: offNow/.test(startSrc));
+    check("start: the living roadmap passes the answers and the roadmap id to the sheet", /<StartSheet [^\n]*activityConfirm=\{view\.activityConfirm\} roadmapId=\{header\.id\}/.test(code(read("src/components/roadmap/RoadmapView.tsx"))));
+    check("start: nothing to ask and nothing held renders nothing", R(createElement(StartActivities, { view: answeredView.activityConfirm, roadmapId: "rm2", milestone: { ...m3, items: m3.items.filter((it) => it.catalogKey === "EASY_SESSION") }, today: answeredView.today })) === "");
+
+    // ── The intake: asked as typed, confirmed on the form, saved right after the intake with its key. ──
+    const iHtml = renders.get("intake-confirm")!.intake;
+    const iCard = sectionOf(iHtml, /id="rm-f-activities"/);
+    const iText = flat(iCard);
+    check("intake: a body track Area's words open the question under Constraints, quoting them", iText.startsWith("Your words mention “No running for now, my knee hurts”. Which activities should the plan avoid?") && iHtml.indexOf('id="rm-f-constraints"') < iHtml.indexOf('id="rm-f-activities"'), iText.slice(0, 120));
+    check(
+      "intake: a suggestion pre-ticks a box, quoted; 'Confirm these' with a box ticked (no save before the intake exists); the plan's line and HEALTH_LINE",
+      countOf(iCard, /checked=""/g) >= 2 && iText.includes("From your words: “No running for now, my knee hurts”") && JSON.stringify(buttonsOf(iCard)) === JSON.stringify(["Confirm these"]) && iText.includes("Easy, mobility and technique practice only until you confirm.") && iCard.includes(copy.HEALTH_LINE),
+      JSON.stringify(buttonsOf(iCard))
+    );
+    check("intake: the Constraints hint on a body or care Area says the app asks first", flat(iHtml).includes("On a body or care plan the app asks which activities to avoid before it places them."));
+    const depthIntake = roadmapFixture("intake-depth").intake!;
+    check("intake: a Field Area is never gated by its constraints ('Evenings only.'): no question", !renders.get("intake-depth")!.intake.includes("rm-f-activities") && depthIntake.draft!.intake.constraints === "Evenings only.");
+    const careIntake = roadmapFixture("intake-confirm").intake!;
+    const withIntake = (p: Partial<Intake>) => R(createElement(RoadmapForm, { view: { ...careIntake, draft: { ...careIntake.draft!, intake: { ...careIntake.draft!.intake, ...p } } } }));
+    const careHtml = withIntake({ track: "CARE", aim: "Support Mum's care at home", constraints: "Evenings only." });
+    const careCard = sectionOf(careHtml, /id="rm-f-activities"/);
+    const careText = flat(careCard);
+    check(
+      "intake: a care Area asks too (no cue needed), with its own easy kinds' line and HEALTH_LINE, and “Nothing to avoid” while nothing is ticked",
+      careText.startsWith("Your words mention “Evenings only”. Which activities should the plan avoid?") && careText.includes("Planning the week and keeping a log only until you confirm.") && careText.includes(copy.HEALTH_LINE) && JSON.stringify(buttonsOf(careCard)) === JSON.stringify([CAT.ACTIVITY_NOTHING_TO_AVOID]),
+      careText.slice(0, 200)
+    );
+    const careEmpty = flat(sectionOf(withIntake({ track: "CARE", aim: "Support Mum's care at home", constraints: null }), /id="rm-f-activities"/));
+    check("intake: a care Area with an empty Constraints box asks too (decision 1), claiming nothing about the words", careEmpty.startsWith("Before the plan adds more care sessions, it asks once. Which activities should the plan avoid?"), careEmpty.slice(0, 120));
+    const craftCue = flat(sectionOf(withIntake({ track: "CRAFT", aim: "Play Clair de Lune at a recital", constraints: "Wrist tendinitis, can't play more than 20 minutes." }), /id="rm-f-activities"/));
+    const craftPlainHtml = withIntake({ track: "CRAFT", aim: "Play Clair de Lune at a recital", constraints: null });
+    check(
+      "intake: a craft Area asks when its words carry a cue (quoted, HEALTH_LINE), and not on a plain aim",
+      craftCue.startsWith("Your words mention “Wrist tendinitis, can't play more than 20 minutes”.") && craftCue.includes(copy.HEALTH_LINE) && !craftPlainHtml.includes("rm-f-activities"),
+      craftCue.slice(0, 120)
+    );
+    const storedKey = model.intakeActivityOf({ track: "BODY", texts: RT.cueTextsOf(careIntake.draft!.intake), exam: false, practicesAllowed: true, examLabel: null, stored: null });
+    const storedAnswer: ActivityConfirm = {
+      key: storedKey.key,
+      kinds: { HARDER_SESSION: { verdict: "AVOID", day: "2026-10-03", reason: "No running for now, my knee hurts" } },
+      answered: { day: "2026-10-03", asked: storedKey.view.rows.map((r) => r.kind), none: false },
+    };
+    const storedCard = sectionOf(withIntake({ activities: storedAnswer }), /id="rm-f-activities"/);
+    check(
+      "intake: an open draft's stored answer shows as said, with Change (nothing asked again under the same words)",
+      flat(storedCard).startsWith("You said to avoid: Harder session (3 Oct). The plan can include: Longer session, Strength session") && />Change</.test(storedCard) && !/type="checkbox"/.test(storedCard),
+      flat(storedCard).slice(0, 240)
+    );
+    const formSrc = code(read("src/components/roadmap/RoadmapForm.tsx"));
+    const iSave = formSrc.indexOf("runtime.actions.saveIntake(intake)");
+    const iVerdicts = formSrc.indexOf("runtime.actions.setActivityVerdicts(id, activityAnswer)");
+    const iBuild = formSrc.indexOf('path === "GEMINI" ? await runtime.actions.draftRoadmap(id)');
+    check(
+      "intake: the confirmed answer (ActivityCardAnswer, with its key) is saved after the intake and before the plan is built, only when given under the words now on the form",
+      iSave > 0 && iVerdicts > iSave && iBuild > iVerdicts && /activityAnswer\.key === activity\.key\)/.test(formSrc) && /useState<ActivityCardAnswer \| null>/.test(formSrc)
+    );
+    check("intake: the Intake the form sends never carries the answers (the server keeps the stored ones)", !/activities:/.test(formSrc.slice(formSrc.indexOf("export function intakeOf("), formSrc.indexOf("export function asksNewCards("))));
+    const acSrc = code(read("src/components/roadmap/ActivityConfirm.tsx"));
+    check(
+      "intake: a confirm is the user's tap ([Confirm these] with a box ticked, or [Nothing to avoid]; both carry keyNow; nothing on the form confirms by itself)",
+      /confirm\(activityCardAnswerOf\(\{ key: keyNow, rows: view\.rows \}, avoid\)\)/.test(acSrc) && /confirm\(activityNothingToAvoidOf\(\{ key: keyNow \}\)\)/.test(acSrc) && /onConfirm=\{setActivityAnswer\}/.test(formSrc)
+    );
+
+    // ── Saving: the card's answer through R4's action, with the words' key; inert on fixtures. ──
+    check(
+      "save: the card sends activityCardAnswerOf's answer (Save, only with a box ticked) or the all-clear (“Nothing to avoid”) through setActivityVerdicts",
+      /a\.setActivityVerdicts\(roadmapId, answer\)/.test(acSrc) && /const answer = activityCardAnswerOf\(view, avoid\);\s*if \(answer\) send\(answer\);/.test(acSrc) && /send\(activityNothingToAvoidOf\(view\)\)/.test(acSrc) && /ticked > 0 \?/.test(acSrc) && /\bACTIVITY_NOTHING_TO_AVOID\b/.test(acSrc)
+    );
+    check("save: words changed meanwhile — the stale refusal re-reads the page so the card asks again under the new words, and says why", /res\.error\.includes\(ACTIVITY_ANSWER_STALE\)/.test(acSrc) && /setStaleRefused\(true\);\s*runtime\.refresh\(\);/.test(acSrc));
+    const refused = await runtimeMod.FIXTURE_ACTIONS.setActivityVerdicts("rm7", { key: draftAc.key, avoid: [], nothingToAvoid: true });
+    check("save: the fixtures' action refuses (nothing is saved on /dev/style)", !refused.ok && refused.error === FIXTURE_REFUSAL);
+    const rtSrc = code(read("src/components/roadmap/roadmap-runtime.tsx"));
+    check(
+      "save: the live runtime wires R4's action itself (setActivityVerdicts from the roadmap actions, by its real signature: the card's answer)",
+      /setActivityVerdicts: typeof setActivityVerdicts;/.test(rtSrc) && /^\s+setActivityVerdicts,$/m.test(rtSrc.slice(rtSrc.indexOf("export const LIVE_ACTIONS"))) && /export async function setActivityVerdicts\(roadmapId: string, answer: ActivityCardAnswer\b/.test(read("src/app/actions/roadmap.ts"))
+    );
+    // Decision 4: an AVOID on an ACTIVE plan takes the started practice off Today — the quiet notice, with Undo through unarchiveTask.
+    {
+      const calls: string[] = [];
+      let refreshed = 0;
+      const fake = {
+        actions: {
+          ...runtimeMod.FIXTURE_ACTIONS,
+          unarchiveTask: async (id: string) => {
+            calls.push(id);
+            return { ok: true as const, value: null };
+          },
+        },
+        refresh: () => {
+          refreshed++;
+        },
+      };
+      for (const t of toasts.getToasts()) toasts.dismissToast(t.id);
+      const before = toasts.getToasts().length;
+      ac.announceActivitySaved({ replan: false, paused: [{ templateId: "tpl3", title: "Strength session", kind: "STRENGTH_SESSION" }], notPaused: [{ templateId: "tpl9", title: "Set time", kind: "SET_TIME" }] }, "rm2", fake);
+      const pushed = toasts.getToasts().slice(before);
+      const paused = pushed.find((t) => t.title === copy.ACTIVITY_PAUSED_TITLE);
+      const stuck = pushed.find((t) => t.title === copy.ACTIVITY_NOT_PAUSED_TITLE);
+      paused?.action?.onAction();
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      check(
+        "save: decision 4 — the reply's paused practice gets a quiet toast naming it (history kept) with Undo, which brings it back through unarchiveTask and re-reads; one R4 couldn't pause is named with where to archive it",
+        pushed.some((t) => t.title === "Answers saved") &&
+          paused?.body === copy.activityPausedLine(["Strength session"]) &&
+          paused?.action?.label === "Undo" &&
+          stuck?.body === copy.activityNotPausedLine(["Set time"]) &&
+          JSON.stringify(calls) === JSON.stringify(["tpl3"]) &&
+          refreshed === 1,
+        JSON.stringify({ titles: pushed.map((t) => t.title), calls, refreshed })
+      );
+      for (const t of pushed) toasts.dismissToast(t.id);
+      const quiet = toasts.getToasts().length;
+      ac.announceActivitySaved({ replan: false, paused: [], notPaused: [] }, "rm2", fake);
+      const plain = toasts.getToasts().slice(quiet);
+      check("save: …and an answer that took nothing off Today says only that it was saved", plain.length === 1 && plain[0].title === "Answers saved");
+      for (const t of plain) toasts.dismissToast(t.id);
+    }
+    check(
+      "health: every body or care card carries HEALTH_LINE, and a craft card that asks; a Field card never does",
+      ac.activityHealthOf({ track: "BODY" }) && ac.activityHealthOf({ track: "CARE" }) && ac.activityHealthOf({ track: "CRAFT", on: true }) && !ac.activityHealthOf({ track: "CRAFT", on: false }) && !ac.activityHealthOf({ track: "FIELD", on: false })
+    );
+    check("never red: no danger or --owed in the activity card's source", !/danger|owed/.test(acSrc));
+    const allCards = CONFIRM_STATES.map((s) => cardOf(renders.get(s)!.page) + sectionOf(renders.get(s)!.intake, /id="rm-f-activities"/)).join("\n");
+    check("names: no activity card says 'safe' or a bare 'quest'", allCards.length > 0 && !/\bquests?\b/i.test(textOf(allCards).replace(/\bweek quests?\b/gi, "")) && !/\bsafe(?:ly|r)?\b/i.test(textOf(allCards)));
+    check("names: no activity card puts 'fine' in the user's mouth (no 'You said fine', no 'count as fine')", !/You said fine|count as fine|whether they're fine/i.test(textOf(allCards)));
   }
 
   // ── 10. roadmap.css ─────────────────────────────────────────────────────────

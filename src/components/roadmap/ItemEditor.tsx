@@ -49,6 +49,8 @@ export interface ItemEditorScope {
   /** Revision 4: the types the constraints left out (DraftView.exclusions), and the ones the user allowed back ([Allow one]): the type picker reads both. */
   excluded?: readonly CatalogKey[];
   allowed?: readonly CatalogKey[];
+  /** Constraint safety (contracts §19): the kinds waiting on the user's answer (PENDING rows); the picker names them as not offered yet. */
+  held?: readonly CatalogKey[];
 }
 
 /** The row an action is about, with its item (null for the title) and its milestone. */

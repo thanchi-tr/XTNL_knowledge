@@ -49,7 +49,9 @@
  * and the line's text fit: an estimate from Inter's own advance widths that
  * every copy Today can draw fits the 3-line clamp (≤ 72 px) at 344 and in the
  * board's real column at ui-audit's widths. ui-audit's browser pass stays the
- * gate; this fails first when a copy grows.
+ * gate; this fails first when a copy grows. The finishing round adds the
+ * drawer's Machine grade line on a plan-born task ('rm:…'): "the plan set
+ * ~Nm", never "you said", and no AI band or Model row (TaskDrawer rendered).
  *
  * A PENDING line is another lane's open item this check tracks; with
  * --strict each one fails.
@@ -293,6 +295,7 @@ import {
   type AimLineFixture,
 } from "../src/app/dev/style/today/fixtures";
 import { NextUp } from "../src/components/today/NextUp";
+import { TaskDrawer } from "../src/components/today/TaskDrawer";
 import { SEEK_TEMPLATE_EVENT, onSeekTemplate, seekTemplate } from "../src/components/roadmap/roadmap-events";
 import { AIM_INVITE_SINCE, AIM_LATER_DAYS, AIM_STEP_COOKIE, aimPromptOf, hideCookieValue, laterCookieValue, stepCookieValue } from "../src/lib/roadmap-invite";
 import {
@@ -3632,6 +3635,89 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
         : ""
     );
   }
+}
+
+// ═══ Rev 4 finishing round: a plan-born task's Machine grade line ══════════
+// A plan-born task (roadmap Start, captureKey 'rm:…') takes its minutes from the plan (a practice's band minutes,
+// roadmap-server bandMinutes), not from the player, so its drawer never says "you said ~Nm": code words it as
+// "the plan set ~Nm". No model sizes one either, so an AI band or model a stale row still carries is not shown.
+// Rendered for real (TaskDrawer through renderToStaticMarkup), from rows buildBoard makes; an ordinary row is the control.
+{
+  const drawerRowOf = (t: BoardTemplate): BoardRow | null => {
+    const b = buildBoard(board(TODAY, [t]));
+    return [...b.must, ...b.todayRows, ...b.anytime, ...b.yesterdayRows].find((r) => r.template.id === t.id) ?? null;
+  };
+  const drawerHtml = (r: BoardRow): string =>
+    renderToStaticMarkup(
+      createElement(TaskDrawer, {
+        row: r,
+        now: at(TODAY, 9),
+        today: TODAY,
+        minutes: null,
+        onMinutes: () => {},
+        projection: r.projection,
+        minimumProjection: null,
+        busy: false,
+        working: null,
+        onDone: () => {},
+        onMinimum: () => {},
+        onSkip: () => {},
+        onTomorrow: () => {},
+        onAgain: () => {},
+        onRename: () => {},
+        onArchive: () => {},
+        onOverride: () => {},
+        onResize: () => {},
+      })
+    );
+  /** The Machine grade line's text, React's text-node separators dropped. */
+  const gradeLineOf = (html: string): string | null => /<dt>Machine grade<\/dt><dd>([\s\S]*?)<\/dd>/.exec(html)?.[1].replace(/<!-- -->/g, "") ?? null;
+  // The plan's minutes (45, a practice's band) differ from the machine's (30), and a stale AI band and model sit on the row.
+  const practice = (captureKey: string | null) =>
+    tpl({
+      id: captureKey ? "rm-practice" : "ord-practice",
+      title: "Timed drill",
+      kind: "HABIT",
+      recurrence: "TARGET:3/W",
+      track: "CRAFT",
+      category: "STUDY",
+      band: "STANDARD",
+      estMinutes: 45,
+      machineMinutes: 30,
+      aiBand: "DEMANDING",
+      gradeSource: "AI",
+      gradeModel: "model-x",
+      captureKey,
+    });
+  const bornRow = drawerRowOf(practice("rm:ms-1:p0"));
+  const ordRow = drawerRowOf(practice(null));
+  const bornHtml = bornRow ? drawerHtml(bornRow) : "";
+  const ordHtml = ordRow ? drawerHtml(ordRow) : "";
+  const born = gradeLineOf(bornHtml);
+  const ord = gradeLineOf(ordHtml);
+  check(
+    "drawer: a plan-born ('rm:') task's Machine grade line says the plan set its minutes (code's words), never 'you said'",
+    born != null && born.includes(" · the plan set ~45 min (counts up to 1h)") && !/you said/i.test(bornHtml),
+    String(born)
+  );
+  check(
+    "drawer: …and shows no AI band and no Model row (no model sizes a plan-born task), even when a stale row carries them",
+    born != null && !born.includes("AI said") && !bornHtml.includes("<dt>Model</dt>") && !bornHtml.includes("model-x"),
+    String(born)
+  );
+  check(
+    "drawer (control): an ordinary task with the same minutes still says 'you said ~45 min', its AI band and its Model row",
+    ord != null && ord.includes(" · you said ~45 min (counts up to 1h)") && !ord.includes("the plan set") && ord.includes(" · AI said ") && ordHtml.includes("<dt>Model</dt>"),
+    String(ord)
+  );
+  // A plan-born step whose minutes are the machine's own: no minutes clause at all, so no attribution to anyone.
+  const stepRow = drawerRowOf(tpl({ id: "rm-step", title: "Outline the proof", captureKey: "rm:ms-1:s0", estMinutes: 30, machineMinutes: 30 }));
+  const step = stepRow ? gradeLineOf(drawerHtml(stepRow)) : null;
+  check(
+    "drawer: a plan-born step at the machine's own minutes carries no minutes clause (neither 'the plan set' nor 'you said')",
+    step != null && !step.includes("the plan set") && !step.includes("you said") && step.endsWith("~30 min"),
+    String(step)
+  );
 }
 
 // The async checks (withMoments) settle before the tally.

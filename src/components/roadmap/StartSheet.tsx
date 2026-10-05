@@ -31,6 +31,14 @@
  * words). Switch it off and this milestone pays nothing."), and a body
  * milestone's sheet carries HEALTH_LINE.
  *
+ * Constraint safety (contracts §19): while the plan waits on the user's
+ * answer about activities the sheet asks it too (the activity card's "start"
+ * variant), lists the milestone's practices waiting on it and those the
+ * user said to avoid (a suggestion from their words never holds one back),
+ * and shows each of those in place of its switch
+ * ("not added to Today"): they count as off in the pay line and in what
+ * Start sends, so nothing the gate holds reaches Today.
+ *
  * Start is hidden (not disabled) while ROADMAP_GOALS_LIVE is false. The sticky
  * button is never dead: until Start can be offered it jumps to the next row to
  * check.
@@ -46,6 +54,7 @@ import { ActionError } from "@/components/home/ActionError";
 import {
   WEEK_QUEST_EVIDENCE_OF,
   provenanceOf,
+  type ActivityConfirmView,
   type MilestoneDraft,
   type StartChoices,
   type StartPracticeRow,
@@ -54,11 +63,15 @@ import {
   type WeekQuestSet,
 } from "@/lib/roadmap-types";
 import {
+  ACTIVITY_HELD_LEFT_OUT,
+  ACTIVITY_HELD_WAITING,
   CHECKPOINT_KIND_WORD,
   HEALTH_LINE,
   PROVENANCE_WORDS,
   TIME_FIXED_LINE,
   WEEK_QUEST_CAPTIONS,
+  activityLeftOutLine,
+  activityWaitingLine,
   dayWithWeekday,
   givesRankByName,
   labelWithClass,
@@ -69,7 +82,8 @@ import {
   statedLine,
   windowLabel,
 } from "./roadmap-copy";
-import { canMapOf, editorRowOf, rowDomId, startPayOf, titleItemOf, type EditorRow, type ItemAction } from "./roadmap-ui-model";
+import { activityAsksOf, canMapOf, editorRowOf, heldPracticesOf, rowDomId, startPayOf, titleItemOf, type EditorRow, type ItemAction } from "./roadmap-ui-model";
+import { ActivityConfirmCard } from "./ActivityConfirm";
 import { useRoadmapAction, useRoadmapRuntime } from "./roadmap-runtime";
 import { useItemEditor, type ActTarget } from "./ItemEditor";
 import { ItemRow, StruckLabel, useDisplayLabel } from "./ItemRow";
@@ -199,7 +213,7 @@ function EchoedLabel({ milestone, itemId, label }: { milestone: MilestoneDraft; 
   );
 }
 
-function PracticeSwitchRow({ pr, milestone, off, onToggle }: { pr: StartPracticeRow; milestone: MilestoneDraft; off: boolean; onToggle: () => void }) {
+function PracticeSwitchRow({ pr, milestone, off, onToggle, held }: { pr: StartPracticeRow; milestone: MilestoneDraft; off: boolean; onToggle: () => void; held?: string | null }) {
   const { cls } = useEchoedItem(milestone, pr.itemId, pr.name);
   const named = labelWithClass(pr.name, cls);
   return (
@@ -223,10 +237,14 @@ function PracticeSwitchRow({ pr, milestone, off, onToggle }: { pr: StartPractice
           {named} is already on Today (from Milestone {pr.alreadyOnToday.fromOrd}).
         </p>
       )}
-      <div className="rm-sw" style={{ marginTop: 4 }}>
-        <span className="rm-sw-t">{off ? "Not added: its sessions leave the plan's practice part" : "Add to Today"}</span>
-        <Switch checked={!off} onChange={onToggle} label={`Add ${named} to Today`} />
-      </div>
+      {held ? (
+        <p className="rm-it-why">{held}</p>
+      ) : (
+        <div className="rm-sw" style={{ marginTop: 4 }}>
+          <span className="rm-sw-t">{off ? "Not added: its sessions leave the plan's practice part" : "Add to Today"}</span>
+          <Switch checked={!off} onChange={onToggle} label={`Add ${named} to Today`} />
+        </div>
+      )}
     </div>
   );
 }
@@ -237,17 +255,41 @@ export function StartPractices({
   milestone,
   isOff,
   onToggle,
+  heldOf,
 }: {
   practices: readonly StartPracticeRow[];
   milestone: MilestoneDraft;
   isOff: (lineageId: string) => boolean;
   onToggle: (lineageId: string) => void;
+  /** Constraint safety (contracts §19): the line shown in place of a held practice's switch; null for the others. */
+  heldOf?: (lineageId: string) => string | null;
 }) {
   return (
     <>
       {practices.map((pr) => (
-        <PracticeSwitchRow key={pr.lineageId} pr={pr} milestone={milestone} off={isOff(pr.lineageId)} onToggle={() => onToggle(pr.lineageId)} />
+        <PracticeSwitchRow key={pr.lineageId} pr={pr} milestone={milestone} off={isOff(pr.lineageId)} onToggle={() => onToggle(pr.lineageId)} held={heldOf?.(pr.lineageId) ?? null} />
       ))}
+    </>
+  );
+}
+
+/**
+ * The Start sheet's activity block (contracts §19): the activity card while
+ * rows wait (its "start" variant), then the milestone's practices waiting on
+ * the answer and those the answers or words leave out. Null when none.
+ */
+export function StartActivities({ view, roadmapId, milestone, today }: { view: ActivityConfirmView | null | undefined; roadmapId: string | null; milestone: MilestoneDraft; today: string }) {
+  const held = heldPracticesOf(milestone, view);
+  const waiting = activityWaitingLine(held.waiting.map((it) => it.label));
+  const leftOut = activityLeftOutLine(held.leftOut.map((it) => it.label));
+  const asks = activityAsksOf(view) && roadmapId != null;
+  if (!asks && !waiting && !leftOut) return null;
+  return (
+    <>
+      <span className="t-eyebrow rm-sheet-eyebrow">Activities</span>
+      {asks && roadmapId != null && <ActivityConfirmCard view={view} roadmapId={roadmapId} today={today} place="start" />}
+      {waiting && <p className="t-meta rm-ink1">{waiting}</p>}
+      {leftOut && <p className="t-meta">{leftOut}</p>}
     </>
   );
 }
@@ -292,6 +334,8 @@ export function StartSheet({
   milestone,
   today,
   initial,
+  activityConfirm,
+  roadmapId,
 }: {
   open: boolean;
   onClose: () => void;
@@ -299,6 +343,9 @@ export function StartSheet({
   today: string;
   /** A preview already in hand (fixtures); otherwise it loads when the sheet opens. */
   initial?: StartPreview | null;
+  /** Constraint safety (contracts §19): the roadmap's activity answers (RoadmapView.activityConfirm) and its id, to ask and save here too. */
+  activityConfirm?: ActivityConfirmView | null;
+  roadmapId?: string | null;
 }) {
   const runtime = useRoadmapRuntime();
   const editor = useItemEditor();
@@ -329,7 +376,15 @@ export function StartSheet({
 
   // Practices already on Today from an earlier milestone start switched off.
   const initialOff = useMemo(() => new Set((preview?.practices ?? []).filter((p) => !p.on).map((p) => p.lineageId)), [preview]);
-  const isOff = (lineage: string) => off.has(lineage) !== initialOff.has(lineage);
+  // Constraint safety (contracts §19): a practice the activity answers hold back is off, whatever its switch said.
+  const held = useMemo(() => heldPracticesOf(milestone, activityConfirm), [milestone, activityConfirm]);
+  const heldLine = useMemo(() => {
+    const lines = new Map<string, string>();
+    for (const it of held.leftOut) lines.set(it.lineageId, ACTIVITY_HELD_LEFT_OUT);
+    for (const it of held.waiting) lines.set(it.lineageId, ACTIVITY_HELD_WAITING);
+    return lines;
+  }, [held]);
+  const isOff = (lineage: string) => heldLine.has(lineage) || off.has(lineage) !== initialOff.has(lineage);
 
   const p = preview;
   const toCheck = p ? rowsToCheck(p) : [];
@@ -378,6 +433,7 @@ export function StartSheet({
             </p>
           )}
           {(milestone.notes.includes("HEALTH_LINE") || (editor?.scope.areaFieldId == null && editor?.scope.track === "BODY")) && <p className="rm-it-why">{HEALTH_LINE}</p>}
+          <StartActivities view={activityConfirm} roadmapId={roadmapId ?? editor?.scope.roadmapId ?? null} milestone={milestone} today={today} />
           <span className="t-eyebrow rm-sheet-eyebrow">Today&apos;s check</span>
           <div className="sunk" style={{ padding: 12 }}>
             {p.todayCheck ? (
@@ -433,6 +489,7 @@ export function StartSheet({
                 milestone={milestone}
                 isOff={isOff}
                 onToggle={(lineage) => setOff((s) => new Set(s.has(lineage) ? [...s].filter((x) => x !== lineage) : [...s, lineage]))}
+                heldOf={(lineage) => heldLine.get(lineage) ?? null}
               />
             </>
           )}

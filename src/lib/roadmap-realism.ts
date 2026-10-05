@@ -32,6 +32,20 @@
  * (spareOnlyOf). The date core is memoised by its whole input (DATE_MEMO),
  * as the capacity cap is (CAP_MEMO).
  *
+ * Confirm to unlock (contracts §19, lane R2's half): every kind code places
+ * goes through roadmap-catalog's one gate. stageLadderOf and starterLadder
+ * take the plan's gate (StageLadderOpts.gate; without one, activityGateOf
+ * over the intake) and its blocked kinds join `excluded`; a track stage's
+ * starter kinds are trackStarterKindsOf's (a blocked kind gives way to a safe
+ * one on its track: CARE's are planning the week and keeping a log); the
+ * final performance check is placed only when the
+ * gate places it; fitPlan, refit, applyRemedy and lowerDepthPlanOf take the
+ * blocked kinds (PlaceOpts) so a stage's required practice is never one of
+ * them; syncTrackStarter re-syncs a track draft after the user's answer.
+ * F-R4-17's non-empty-constraints test (bodySafeOf) is gone: the gate holds it.
+ *
+ *   blockedKindsOf · trackStarterKindsOf · syncTrackStarter · PlaceOpts
+ *
  * The model, in one place (every rule is the spec's; the choices the spec
  * leaves open are marked "choice"):
  *   - Reach. A measure (scope S, level L, due day d) counts the scope's
@@ -154,6 +168,7 @@ import {
   positionCountOf,
   practiceBandMinutes,
   provenanceOf,
+  type ActivityGate,
   type AimCheck,
   type CardState,
   type Decision,
@@ -250,7 +265,8 @@ import {
   type WriteDay,
 } from "./roadmap-types";
 import {
-  BODY_SAFE_KINDS,
+  CUE_SAFE_KINDS,
+  activityGateOf,
   catalogEntryOf,
   catalogLabelOf,
   practiceRoleOf,
@@ -1192,9 +1208,18 @@ function practiceItem(lineageId: string, ord: number, label: string, method: Pra
  * production practice (syncStagePractices) and allocates practices never
  * below the stage's band floor, beside the writing the date check sets.
  */
-export function fitPlan(plan: readonly MilestoneDraft[], input: RealismInput): MilestoneDraft[] {
-  if (isDepthInput(input)) return fitDepth(plan, input, {});
+export function fitPlan(plan: readonly MilestoneDraft[], input: RealismInput, opts: PlaceOpts = {}): MilestoneDraft[] {
+  if (isDepthInput(input)) return fitDepth(plan, input, { excluded: opts.excluded });
   return fitWith(plan, input, {});
+}
+
+/**
+ * What the re-fits read besides the plan (confirm to unlock, contracts §19):
+ * the kinds the plan's gate blocks (R4 passes ActivityGate.blocked). A stage
+ * practice code adds (syncStagePractices' requirement) is never one of them.
+ */
+export interface PlaceOpts {
+  excluded?: Iterable<CatalogKey>;
 }
 
 function fitWith(plan: readonly MilestoneDraft[], input: RealismInput, opts: { resetTyped?: boolean; makeId?: () => string }): MilestoneDraft[] {
@@ -1791,8 +1816,8 @@ const scheduledUnstarted = (plan: readonly MilestoneDraft[]): number => plan.fil
  * the stage structure never change, and started rows are never touched.
  * "Re-date later milestones" and the CALIBRATED offer run it.
  */
-export function refit(plan: readonly MilestoneDraft[], input: RealismInput): MilestoneDraft[] {
-  if (isDepthInput(input)) return redateDepth(plan, input, "PLAN");
+export function refit(plan: readonly MilestoneDraft[], input: RealismInput, opts: PlaceOpts = {}): MilestoneDraft[] {
+  if (isDepthInput(input)) return redateDepth(plan, input, "PLAN", opts.excluded);
   const split = resplit(plan, input, (span, unstarted) => Math.min(unstarted, milestoneCountFor(Math.max(span, 1))));
   return fitWith(split, input, {});
 }
@@ -1912,8 +1937,8 @@ function remediesFor(plan: readonly MilestoneDraft[], input: RealismInput, befor
  * offered on a depth plan, so they return it unchanged (no remedy ever
  * changes a depth term).
  */
-export function applyRemedy(plan: readonly MilestoneDraft[], input: RealismInput, remedy: Remedy): MilestoneDraft[] {
-  if (isDepthInput(input)) return remedy === "USE_REALISTIC_DATE" || remedy === "MOVE_DATE" ? redateDepth(plan, input, "REALISTIC") : plan.map(cloneMilestone);
+export function applyRemedy(plan: readonly MilestoneDraft[], input: RealismInput, remedy: Remedy, opts: PlaceOpts = {}): MilestoneDraft[] {
+  if (isDepthInput(input)) return remedy === "USE_REALISTIC_DATE" || remedy === "MOVE_DATE" ? redateDepth(plan, input, "REALISTIC", opts.excluded) : plan.map(cloneMilestone);
   if (remedy === "MOVE_DATE") {
     const day = remedyTargetDay(plan, input);
     return day ? movedTo(plan, input, day).plan : plan.map(cloneMilestone);
@@ -1981,10 +2006,21 @@ function syllabusChunks(lines: number, n: number, cap: number = TOPICS_PER_MILES
  * ladder (stageLadderOf, items STARTER); an empty list when the ladder
  * refuses (call stageLadderOf for its words). Rev 3's starter stays for a
  * legacy call.
+ *
+ * Confirm to unlock (contracts §19): `opts` carries the plan's gate and the
+ * kinds the constraint filter left out (StageLadderOpts.gate, excluded); the
+ * stage ladder never places a blocked kind, and without a gate it works out
+ * the intake's own (activityGateOf).
  */
-export function starterLadder(intake: Intake, input: RealismInput, names: Readonly<Record<string, DomainName>>, makeId: () => string): MilestoneDraft[] {
+export function starterLadder(
+  intake: Intake,
+  input: RealismInput,
+  names: Readonly<Record<string, DomainName>>,
+  makeId: () => string,
+  opts: Pick<StageLadderOpts, "gate" | "excluded" | "counts"> = {}
+): MilestoneDraft[] {
   if (isRev4Draft(intake, input)) {
-    const r = stageLadderOf(intake, input, names, makeId);
+    const r = stageLadderOf(intake, input, names, makeId, opts);
     return r.ok ? r.plan : [];
   }
   const windows = splitWindows(input.today, input.targetDay);
@@ -3376,8 +3412,10 @@ function syncStageInPlace(ms: MilestoneDraft, practicesAllowed: boolean, domains
  * NO_STUDY_SLOT / NO_PRODUCTION_SLOT notes when no slot is free). Only a
  * DRAFT stage with card measures changes; the input milestone is not
  * mutated. `names` maps the stage's Domains to their names (its DOMAIN
- * items' labels otherwise); `excluded` holds the types the constraint
- * filter left out (R3's constraintExclusionsOf), never added here.
+ * items' labels otherwise); `excluded` holds the types the plan's gate
+ * blocks (R4 passes ActivityGate.blocked: the user's AVOIDs and the kinds
+ * their words name, contracts §19), never added here: the requirement takes
+ * the next kind of its role the gate leaves in.
  */
 export function syncStagePractices(m: MilestoneDraft, input: RealismInput, names: Readonly<Record<string, DomainName>>, makeId: () => string, excluded: Iterable<CatalogKey> = []): MilestoneDraft {
   const ms = cloneMilestone(m);
@@ -3684,10 +3722,10 @@ function realisticDayOf(plan: readonly MilestoneDraft[], input: RealismInput & {
  * never touched. Re-dated rows come back as DRAFT (the new version R4
  * writes), then fitted.
  */
-function redateDepth(plan: readonly MilestoneDraft[], input: RealismInput & { depth: AimDepth }, mode: "PLAN" | "REALISTIC"): MilestoneDraft[] {
+function redateDepth(plan: readonly MilestoneDraft[], input: RealismInput & { depth: AimDepth }, mode: "PLAN" | "REALISTIC", excluded?: Iterable<CatalogKey>): MilestoneDraft[] {
   const out = plan.map(cloneMilestone);
   const model = depthModelOfPlan(out, input);
-  if (!model) return fitDepth(out, input, {});
+  if (!model) return fitDepth(out, input, { excluded });
   const ctx = contextOf(input);
   const dating = mode === "REALISTIC" ? { mode: "REALISTIC" as DateMode, userDate: null, examDay: input.examDay ?? null } : datingOf(input);
   const core = dateCoreOf(out, model, ctx, dating.mode, dating.userDate, dating.examDay);
@@ -3735,7 +3773,7 @@ function redateDepth(plan: readonly MilestoneDraft[], input: RealismInput & { de
   const finalDue = lastIdx != null ? out[lastIdx].dueDay : null;
   const next: RealismInput & { depth: AimDepth } =
     mode === "REALISTIC" ? { ...input, targetDay: finalDue ?? input.targetDay, dateMode: "REALISTIC", userDate: null } : { ...input, targetDay: finalDue && finalDue > input.targetDay ? finalDue : input.targetDay };
-  return fitDepth(out, next, {});
+  return fitDepth(out, next, { excluded });
 }
 
 /** refitForStart's depth branch (see refitForStart). */
@@ -4034,6 +4072,15 @@ export interface StageLadderOpts {
   /** Types the constraint filter left out (R3's constraintExclusionsOf): code never places one. */
   excluded?: Iterable<CatalogKey>;
   /**
+   * Confirm to unlock (contracts §19): the plan's gate (roadmap-catalog
+   * allowedKindsFor; R4 passes activityGateOf(intake, the parser's
+   * exclusions)). Its `blocked` kinds are never placed, beside `excluded`; on
+   * a track plan a blocked starter kind gives way to a safe one
+   * (trackStarterKindsOf). Absent: activityGateOf(intake) (the cue gate and
+   * the user's stored answers, without the parser's words).
+   */
+  gate?: Pick<ActivityGate, "blocked"> | null;
+  /**
    * The counts each Domain's coverage policy reads, frozen at intake (fix
    * round, contracts §15.3): R4 passes roadmap-types
    * frozenCoverageCountsOf(today's counts, the prior acceptance's or draft's
@@ -4284,7 +4331,9 @@ function slotMapOf(plan: readonly MilestoneDraft[], L: number): Partial<Record<S
  * A track Area gets its practice stages (STAGE_1..STAGE_5 at
  * TRACK_STAGE_SHARES of the time to its date, the same merge rule).
  */
-export function stageLadderOf(intake: Intake, input: RealismInput, names: Readonly<Record<string, DomainName>>, makeId: () => string, opts: StageLadderOpts = {}): StageLadderResult {
+export function stageLadderOf(intake: Intake, input: RealismInput, names: Readonly<Record<string, DomainName>>, makeId: () => string, opts0: StageLadderOpts = {}): StageLadderResult {
+  // The one gate (contracts §19): the gate's blocked kinds join `excluded`, so no stage, checkpoint or re-sync below places one.
+  const opts: StageLadderOpts = { ...opts0, excluded: blockedKindsOf(intake, opts0), gate: GATE_APPLIED };
   if (input.trackArea || intake.fieldId == null) return trackLadderOf(intake, { ...input, trackArea: true }, makeId, opts);
   const L: AimDepth = isAimDepth(intake.depth) ? intake.depth : isAimDepth(input.depth) ? input.depth : AIM_DEPTHS[DEPTH_DEFAULT];
   const dinput: RealismInput & { depth: AimDepth } = { ...input, depth: L, trackArea: false };
@@ -4344,15 +4393,32 @@ export function stageLadderOf(intake: Intake, input: RealismInput, names: Readon
   };
 }
 
-/** A BODY or CARE plan with constraints (non-empty): code places only the body-safe sessions (F-R4-17). */
-const bodySafeOf = (intake: Intake): boolean => (intake.track === "BODY" || intake.track === "CARE") && !!intake.constraints && intake.constraints.trim().length > 0;
+/**
+ * The kinds no code path here places (confirm to unlock, contracts §19): the
+ * gate's `blocked` (the caller's, else roadmap-catalog activityGateOf over
+ * the intake: the cue gate and the user's stored answers, without the
+ * parser's words) together with the caller's `excluded`. Replaces F-R4-17's
+ * non-empty-constraints test: on every BODY or CARE plan, whatever its words
+ * (and on a CRAFT plan whose words carry a cue or can't be read), every gated
+ * kind is blocked until the user answers the activity card under the current
+ * words (contracts §19, the safety-gaps round).
+ */
+export function blockedKindsOf(intake: Intake | null, opts: { gate?: Pick<ActivityGate, "blocked"> | null; excluded?: Iterable<CatalogKey> } = {}): Set<CatalogKey> {
+  const out = new Set<CatalogKey>(opts.excluded ?? []);
+  const gate = opts.gate ?? (intake ? activityGateOf(intake) : null);
+  for (const k of gate?.blocked ?? []) out.add(k);
+  return out;
+}
 
-/** The starter's practice types on a track stage at place p (1-based): one type, a second from the third stage on. */
-function trackKindsOf(track: Track, place: number, safe: boolean): CatalogKey[] {
+/** A gate already folded into `excluded` (stageLadderOf's inner calls): nothing more to block, nothing to work out again. */
+const GATE_APPLIED: Pick<ActivityGate, "blocked"> = { blocked: [] };
+
+/** The starter's practice types on a track stage at place p (1-based), before the gate: one type, a second from the third stage on. */
+function trackKindsOf(track: Track, place: number): CatalogKey[] {
   const later = place >= 3;
   switch (track) {
     case "BODY":
-      return later ? ["EASY_SESSION", safe ? "MOBILITY_SESSION" : "LONGER_SESSION"] : ["EASY_SESSION"];
+      return later ? ["EASY_SESSION", "LONGER_SESSION"] : ["EASY_SESSION"];
     case "CARE":
       return later ? ["SET_TIME", "CHECK_IN"] : ["SET_TIME"];
     case "DUTY":
@@ -4363,6 +4429,27 @@ function trackKindsOf(track: Track, place: number, safe: boolean): CatalogKey[] 
 }
 
 /**
+ * The starter's practice types on a track stage at place p (1-based) through
+ * the gate (contracts §19): trackKindsOf's, each blocked one replaced by the
+ * first of the track's safe kinds (roadmap-catalog CUE_SAFE_KINDS on the
+ * track: easy, mobility and technique on BODY; planning the week and keeping
+ * a log on CARE; the technique session on CRAFT) that is neither blocked nor
+ * already placed, or left out when none is. A BODY plan whose card waits
+ * gets Easy, then Mobility, as F-R4-17's starter did; once the user's answer
+ * releases Longer session, Easy and Longer. A waiting CARE plan gets planning
+ * the week, then keeping a log, so it is never empty (decision 2).
+ */
+export function trackStarterKindsOf(track: Track, place: number, blocked: ReadonlySet<string>): CatalogKey[] {
+  const safe = CUE_SAFE_KINDS.filter((k) => catalogEntryOf(k)?.tracks.includes(track) === true);
+  const out: CatalogKey[] = [];
+  for (const key of trackKindsOf(track, place)) {
+    const pick = !blocked.has(key) ? key : (safe.find((k) => !blocked.has(k) && !out.includes(k)) ?? null);
+    if (pick && !out.includes(pick)) out.push(pick);
+  }
+  return out;
+}
+
+/**
  * A track plan's stages (F-R4-10, "Track plans"): STAGE_1..STAGE_5 at
  * TRACK_STAGE_SHARES of the practice volume to the user's date (practice
  * accrues on open days, so a stage is due once its share of the open days
@@ -4370,8 +4457,10 @@ function trackKindsOf(track: Track, place: number, safe: boolean): CatalogKey[] 
  * the stages'), each due on the Sunday on or after (the last on the date),
  * with the same merge rule. Titles "{aim} · stage {k} of {n}" (k the place
  * among the kept stages). The starter's practices are catalog types for the
- * track (BODY with constraints: the body-safe sessions only), and the last
- * stage's checkpoint a performance check.
+ * track through the gate (trackStarterKindsOf: on BODY and CARE, and on CRAFT
+ * while the user's words carry a cue, only the safe kinds until the user
+ * answers the activity card), and the last stage's checkpoint a performance
+ * check when the gate places it (blockedKindsOf).
  */
 function trackLadderOf(intake: Intake, input: RealismInput, makeId: () => string, opts: StageLadderOpts): StageLadderResult {
   const today = input.today;
@@ -4394,10 +4483,10 @@ function trackLadderOf(intake: Intake, input: RealismInput, makeId: () => string
   let kept: TrackRow[] = TRACK_STAGE_SHARES.map((s, i) => ({ k: i + 1, due: i === TRACK_STAGE_SHARES.length - 1 ? target : minDay(sundayOnOrAfter(shareDay(s)), target) }));
   kept = mergeShortWindows(kept, today, (r) => r.due, (r) => r.k === TRACK_STAGE_SHARES.length);
   const starter = (opts.items ?? "STARTER") === "STARTER";
-  const excluded = new Set<string>(opts.excluded ?? []);
+  // The one gate (contracts §19): what the caller's gate (or the intake's own) and `excluded` leave out is never placed.
+  const blocked = blockedKindsOf(intake, opts);
   const { aim } = aimFillsOf(intake);
   const ctrack: CatalogTrack = intake.track;
-  const safe = bodySafeOf(intake);
   const n = kept.length;
   const plan = kept.map((row, i) => {
     let title = "";
@@ -4411,15 +4500,14 @@ function trackLadderOf(intake: Intake, input: RealismInput, makeId: () => string
     if (intake.track === "BODY") ms.notes.push("HEALTH_LINE");
     if (starter) {
       let ord = 0;
-      for (const key of trackKindsOf(intake.track, i + 1, safe)) {
-        if (excluded.has(key) || (safe && intake.track === "BODY" && !(BODY_SAFE_KINDS as readonly string[]).includes(key))) continue;
+      for (const key of trackStarterKindsOf(intake.track, i + 1, blocked)) {
         const it = catalogItemOf(key, { lineageId: makeId(), ord, track: ctrack, domains: [], aim, exam: null });
         if (it) {
           ms.items.push(it);
           ord += 1;
         }
       }
-      if (i === n - 1 && !safe && !excluded.has("PERFORMANCE_CHECK")) {
+      if (i === n - 1 && !blocked.has("PERFORMANCE_CHECK")) {
         const cp = catalogItemOf("PERFORMANCE_CHECK", { lineageId: makeId(), ord, track: ctrack, domains: [], aim, exam: null });
         if (cp) ms.items.push(cp);
       }
@@ -4435,6 +4523,54 @@ function trackLadderOf(intake: Intake, input: RealismInput, makeId: () => string
     if (at >= 0) slotTo[TRACK_STAGE_KEYS[k - 1]] = fitted[at].lineageId;
   }
   return { ok: true, plan: fitted, stageDays, dateCheck: null, coverage: [], slotTo, rate: null, endState: [] };
+}
+
+/**
+ * A track plan's starter practices after the user's answer (confirm to
+ * unlock, contracts §19; R4's setActivityVerdictsCore and re-plan), pure: on
+ * every DRAFT stage (its place among the plan's scheduled, unheld stages by
+ * ord, carried ones counted), each kind trackStarterKindsOf places there
+ * under the new gate but did not under the blocked kinds the stage was built
+ * with (`since`) is added when the stage lacks it (origin CODE, worked out):
+ * a kind the user's answer just released, or the safe kind that takes the place
+ * of one they just said to avoid. Never one the user removed there (a REMOVED
+ * row of that kind), never past PRACTICES_PER_MILESTONE. The last stage gets
+ * the performance check when the gate places it now but did not then, and it
+ * holds no live checkpoint. Without `since`, every starter kind the stage
+ * lacks is added. Nothing is taken out here (R4 removes the blocked kinds
+ * first); a Field plan, or any other row, comes back as it was. The input is
+ * not mutated.
+ */
+export function syncTrackStarter(
+  plan: readonly MilestoneDraft[],
+  intake: Intake,
+  makeId: () => string,
+  opts: Pick<StageLadderOpts, "gate" | "excluded"> & { since?: Iterable<CatalogKey> } = {}
+): MilestoneDraft[] {
+  const out = plan.map(cloneMilestone);
+  if (intake.fieldId != null) return out;
+  const blocked = blockedKindsOf(intake, opts);
+  const before = opts.since ? new Set<string>(opts.since) : null;
+  const { aim } = aimFillsOf(intake);
+  const ctrack: CatalogTrack = intake.track;
+  const rows = out.filter((ms) => SCHEDULED.has(ms.status) && !isHeldRow(ms)).sort((a, b) => a.ord - b.ord);
+  rows.forEach((ms, i) => {
+    if (ms.status !== "DRAFT") return;
+    const has = (key: CatalogKey, live: boolean) => ms.items.some((it) => it.catalogKey === key && liveItem(it) === live);
+    const was = before ? trackStarterKindsOf(intake.track, i + 1, before) : [];
+    for (const key of trackStarterKindsOf(intake.track, i + 1, blocked)) {
+      if (was.includes(key) || has(key, true) || has(key, false) || livePractices(ms).length >= PRACTICES_PER_MILESTONE) continue;
+      const it = catalogItemOf(key, { lineageId: makeId(), ord: nextItemOrd(ms), track: ctrack, domains: [], aim, exam: null });
+      if (it) ms.items.push(it);
+    }
+    const last = i === rows.length - 1;
+    const checkNow = !blocked.has("PERFORMANCE_CHECK") && (!before || before.has("PERFORMANCE_CHECK"));
+    if (last && checkNow && !has("PERFORMANCE_CHECK", false) && !ms.items.some((it) => it.kind === "CHECKPOINT" && liveItem(it))) {
+      const cp = catalogItemOf("PERFORMANCE_CHECK", { lineageId: makeId(), ord: nextItemOrd(ms), track: ctrack, domains: [], aim, exam: null });
+      if (cp) ms.items.push(cp);
+    }
+  });
+  return out;
 }
 
 // ─── The motivation timeline (F-R4-10) ───────────────────────────────────────
@@ -4555,7 +4691,7 @@ export function dateCheckOf(ladder: readonly MilestoneDraft[], input: RealismInp
  * had removed that gate, the lowest stage above it becomes it, re-dated to
  * its stage day. Counts never change; no pay, goal or rank is touched here.
  */
-export function lowerDepthPlanOf(plan: readonly MilestoneDraft[], input: RealismInput, to: AimDepth): { ok: true; plan: MilestoneDraft[]; dropped: string[] } | { ok: false; error: string } {
+export function lowerDepthPlanOf(plan: readonly MilestoneDraft[], input: RealismInput, to: AimDepth, opts: PlaceOpts = {}): { ok: true; plan: MilestoneDraft[]; dropped: string[] } | { ok: false; error: string } {
   if (!isDepthInput(input)) return { ok: false, error: "This plan has no depth to lower." };
   const toName = levelWords(to);
   if (!(to < input.depth)) return { ok: false, error: `The depth is already ${levelWords(input.depth)}.` };
@@ -4606,7 +4742,7 @@ export function lowerDepthPlanOf(plan: readonly MilestoneDraft[], input: Realism
     setNote(ms, "DEPTH_LOWERED", true);
     dropped.push(ms.lineageId);
   }
-  return { ok: true, plan: fitDepth(out, lowered, {}), dropped };
+  return { ok: true, plan: fitDepth(out, lowered, { excluded: opts.excluded }), dropped };
 }
 
 /**

@@ -30,6 +30,19 @@
  * check and at Start alike. dateEffectOf never reads a plan that isn't dated
  * as past the span.
  *
+ * Confirm to unlock (contracts §19, lane R2): the code-built plan honours
+ * the gate — stageLadderOf and starterLadder never place an excluded or
+ * blocked kind (the verifier's finding #2: "No timed practice" placed Timed
+ * practice), a stage keeps its role's practice, a stored AVOID holds without
+ * a gate passed, fitPlan and refit never re-add one; a track plan places only
+ * the safe kinds until the card is answered under its current words — every
+ * BODY or CARE plan, whatever it says (no constraints included), and a CRAFT
+ * plan whose words carry a cue (the safety-gaps round, decision 1) — then
+ * the kinds the card listed and the user left unticked; CARE places its own
+ * safe kinds meanwhile (planning the week, keeping a log: decision 2); a
+ * stored per-kind FINE unlocks nothing; syncTrackStarter adds only what the
+ * answer changed.
+ *
  * Pure: no database, no clock, no model. scripts/_no-model.ts is imported
  * first, like every check that imports a roadmap module.
  *
@@ -41,10 +54,11 @@ import { join } from "node:path";
 import { addDays, daysBetween, weekStartKeyOf, weekdayOf, type DayKey } from "../src/lib/life-day";
 import { WEEKDAY_SHORT } from "../src/lib/recurrence";
 import * as RT from "../src/lib/roadmap-types";
-import { catalogLabelOf } from "../src/lib/roadmap-catalog";
+import { answerActivityCard, catalogLabelOf, constraintsStateOfIntake, type CatalogKey } from "../src/lib/roadmap-catalog";
 import {
   applyRemedy,
   availableFor,
+  blockedKindsOf,
   cardReach,
   coverageOf,
   dateCheckOf,
@@ -66,7 +80,9 @@ import {
   startSnapshotOf,
   starterLadder,
   syncStagePractices,
+  syncTrackStarter,
   thresholdFor,
+  trackStarterKindsOf,
   writingPlanOf,
   type StageLadderResult,
 } from "../src/lib/roadmap-realism";
@@ -1044,6 +1060,18 @@ console.log("— lineage and carried rows (fix round 2) —");
 
 const T4: DayKey = "2026-10-05"; // a Monday
 const at4 = (k: number): DayKey => addDays(T4, k);
+/**
+ * An intake whose activity card the user answered under its current words
+ * (contracts §19: roadmap-catalog answerActivityCard, as R4 stores it): the
+ * kinds ticked to avoid, or "Nothing to avoid" when none. `key` overrides the
+ * answer's key (an answer given under other words).
+ */
+function answeredIntake(intake: RT.Intake, avoid: readonly string[] = [], key?: string): RT.Intake {
+  const state = constraintsStateOfIntake(intake);
+  const res = answerActivityCard(intake.activities ?? null, state, { key: state.key, avoid: [...avoid] as CatalogKey[], nothingToAvoid: avoid.length === 0 }, T4);
+  if (!res.ok) throw new Error(`fixture answer: ${res.error}`);
+  return { ...intake, activities: key ? { ...res.value, key } : res.value };
+}
 const dd4 = (x: DayKey | null | undefined): number | null => (x ? daysBetween(T4, x) : null);
 const P = (p: number, o: Partial<RT.ReachParams> = {}): RT.ReachParams => ({ p, pLong: Math.min(p, RT.P_LONG_CAP), c: 1, rho: 0, m: 1, strikeLimit: 2, graceExtra: 0, ...o });
 function tp4(o: { adherence?: number | null; p?: number | null; c?: number | null } = {}): RT.Throughput {
@@ -2039,13 +2067,146 @@ console.log("— rev 4: track plans (F-R4-10) —");
     body.plan.every((m) => m.notes.includes("HEALTH_LINE") && m.items.every((i) => i.kind === "PRACTICE" && ["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION"].includes(i.catalogKey ?? ""))),
     json(body.plan.map((m) => m.items.map((i) => i.catalogKey)))
   );
-  const short = ladder4("125 days", stageLadderOf(ik4({ aim: "Keep the house running", fieldId: null, track: "CARE", domainIds: [], targetDay: at4(125), dateMode: "CHOSEN" }), in4({ trackArea: true, depth: null, targetDay: at4(125) }, []), names4, mk4));
-  eq("the merge rule on a 125-day track plan keeps two stages (third and fifth), the last with its performance check", [shape(short.plan), finalOf(short.plan).items.some((i) => i.catalogKey === "PERFORMANCE_CHECK")], [["STAGE_3@76", "STAGE_5@125"], true]);
+  // A CARE plan asks whatever its words (contracts §19, decision 1): the user's "Nothing to avoid" lets the performance check in.
+  const short = ladder4("125 days", stageLadderOf(answeredIntake(ik4({ aim: "Keep the house running", fieldId: null, track: "CARE", domainIds: [], targetDay: at4(125), dateMode: "CHOSEN" })), in4({ trackArea: true, depth: null, targetDay: at4(125) }, []), names4, mk4));
+  eq("the merge rule on a 125-day track plan keeps two stages (third and fifth), the last with its performance check (the card answered)", [shape(short.plan), finalOf(short.plan).items.some((i) => i.catalogKey === "PERFORMANCE_CHECK")], [["STAGE_3@76", "STAGE_5@125"], true]);
   const mt = motivationTimelineOf(short.plan, in4({ trackArea: true, depth: null, targetDay: at4(125) }, []));
   eq("… a track plan ranks its k-th kept stage k, and can't give Paragon in 125 days", [mt.rankDays, mt.paragonDay], [[76, 125], null]);
   const tiny = ladder4("40 days", stageLadderOf(ik4({ aim: "Play a piece", fieldId: null, track: "CRAFT", domainIds: [], targetDay: at4(40), dateMode: "CHOSEN" }), in4({ trackArea: true, depth: null, targetDay: at4(40) }, []), names4, mk4));
   check("a 40-day track plan is one stage ('stage 1 of 1'), dated on the aim's date", tiny.plan.length === 1 && tiny.plan[0].title === "Play a piece · stage 1 of 1" && tiny.plan[0].dueDay === at4(40));
   check("a track ladder has no date check (its date is the user's)", body.dateCheck === null && dateCheckOf(body.plan, in4({ trackArea: true, depth: null }, []), "CHOSEN", at4(365)).verdict === "FITS");
+}
+
+console.log("— confirm to unlock (contracts §19): the code-built plan honours the gate —");
+{
+  // The verifier's finding (hardening round, ver.still_open #2): starterLadder and stageLadderOf were called without the
+  // constraint exclusions, so "No timed practice" still placed Timed practice. Every kind code places now goes through the gate.
+  const kindsOf = (plan: readonly RT.MilestoneDraft[]): string[][] => plan.map((m) => m.items.filter((i) => i.decision !== "REMOVED" && i.catalogKey).map((i) => i.catalogKey as string));
+  const examIk = ik4({ examLabel: "JLPT N2", exam: true, examDay: at4(180) });
+  const examIn = learnerIn({ examDay: at4(180) });
+  const control = ladder4("exam", stageLadderOf(examIk, examIn, names4, mk4));
+  const noTimed = ladder4("no timed", stageLadderOf(examIk, examIn, names4, mk4, { excluded: ["TIMED_PRACTICE"] }));
+  const roleOk = (rows: string[][]) => rows.every((r, i) => control.plan[i].items.every((x) => x.kind !== "PRACTICE") || r.some((k) => ["RECALL_DRILLS", "READ_AND_CARD", "LISTEN_AND_REPEAT", "EXPLAIN_IT", "PROBLEM_SETS", "WRITING_PRACTICE", "MISTAKE_REVIEW", "SAY_IT_ALOUD", "BUILD_SOMETHING", "RUN_THROUGHS"].includes(k)));
+  check("control: the exam ladder places Timed practice and a Mock test", kindsOf(control.plan).flat().includes("TIMED_PRACTICE") && kindsOf(control.plan).flat().includes("MOCK_TEST"), json(kindsOf(control.plan)));
+  check(
+    "stageLadderOf with excluded TIMED_PRACTICE: no row holds it, and every stage still holds its retrieval or production practice",
+    !kindsOf(noTimed.plan).flat().includes("TIMED_PRACTICE") && roleOk(kindsOf(noTimed.plan)),
+    json(kindsOf(noTimed.plan))
+  );
+  const starter = starterLadder(examIk, examIn, names4, mk4, { excluded: ["TIMED_PRACTICE", "MOCK_TEST"] });
+  check("starterLadder (\"Build from my numbers\") passes them on: no Timed practice, no Mock test", starter.length > 0 && !kindsOf(starter).flat().some((k) => k === "TIMED_PRACTICE" || k === "MOCK_TEST"), json(kindsOf(starter)));
+  const viaGate = ladder4("gate", stageLadderOf(examIk, examIn, names4, mk4, { gate: { blocked: ["RECALL_DRILLS", "EXPLAIN_IT", "TIMED_PRACTICE"] } }));
+  check(
+    "the caller's gate blocks like `excluded`: a stage's required practice is the next kind of its role it leaves in (Read and card, Problem sets)",
+    !kindsOf(viaGate.plan).flat().some((k) => k === "RECALL_DRILLS" || k === "EXPLAIN_IT" || k === "TIMED_PRACTICE") && kindsOf(viaGate.plan).flat().includes("READ_AND_CARD") && roleOk(kindsOf(viaGate.plan)),
+    json(kindsOf(viaGate.plan))
+  );
+  // The user's stored AVOID is honoured with no gate passed: realism works out the intake's own (activityGateOf).
+  const avoided = ladder4(
+    "avoid",
+    stageLadderOf({ ...examIk, activities: { key: "k1-00000000", kinds: { TIMED_PRACTICE: { verdict: "AVOID", day: T4, reason: "" }, MOCK_TEST: { verdict: "AVOID", day: T4, reason: "" } } } }, examIn, names4, mk4)
+  );
+  check("a stored AVOID (never stale) keeps its kind out with no gate passed", !kindsOf(avoided.plan).flat().some((k) => k === "TIMED_PRACTICE" || k === "MOCK_TEST"), json(kindsOf(avoided.plan)));
+  // A re-fit never adds a blocked required practice: the stage that lost its code-added practice gets the next kind of its role.
+  const bare = control.plan.map((m) => ({ ...m, items: m.items.filter((i) => !(i.kind === "PRACTICE" && (i.notes.includes("STUDY_ADDED") || i.notes.includes("PRODUCTION_ADDED")))) }));
+  const fitIn = judgeIn(examIn, control.plan);
+  const refitAll = fitPlan(bare, fitIn);
+  const refitGated = fitPlan(bare, fitIn, { excluded: ["RECALL_DRILLS", "EXPLAIN_IT"] });
+  check(
+    "fitPlan re-adds each stage's practice, and with the gate's blocked kinds passed never one of them (Read and card, Problem sets instead)",
+    kindsOf(refitAll).flat().includes("RECALL_DRILLS") && !kindsOf(refitGated).flat().some((k) => k === "RECALL_DRILLS" || k === "EXPLAIN_IT") && kindsOf(refitGated).flat().includes("READ_AND_CARD"),
+    json([kindsOf(refitAll), kindsOf(refitGated)])
+  );
+  const redated = refit(bare, fitIn, { excluded: ["RECALL_DRILLS", "EXPLAIN_IT"] });
+  check("…refit (a re-date) too", !kindsOf(redated).flat().some((k) => k === "RECALL_DRILLS" || k === "EXPLAIN_IT"), json(kindsOf(redated)));
+}
+{
+  // Track plans: the gate replaces F-R4-17's non-empty-constraints test. The safety-gaps round (contracts §19, the lead's
+  // decisions 1 and 2): every BODY or CARE plan asks whatever its words, and only the card's answer unlocks.
+  const kindsOf = (plan: readonly RT.MilestoneDraft[]): string[][] => plan.map((m) => m.items.filter((i) => i.decision !== "REMOVED" && i.catalogKey).map((i) => i.catalogKey as string));
+  const trackIn = in4({ trackArea: true, depth: null, dateMode: "CHOSEN" }, []);
+  const body = (o: Partial<RT.Intake>) => ik4({ aim: "Run a sub-50 10K", fieldId: null, track: "BODY", domainIds: [], dateMode: "CHOSEN", depth: null, ...o });
+  const plain = ladder4("body plain", stageLadderOf(body({}), trackIn, {}, mk4));
+  const SAFE_ROWS = [["EASY_SESSION"], ["EASY_SESSION"], ["EASY_SESSION", "MOBILITY_SESSION"], ["EASY_SESSION", "MOBILITY_SESSION"], ["EASY_SESSION", "MOBILITY_SESSION"]];
+  const UNLOCKED = [["EASY_SESSION"], ["EASY_SESSION"], ["EASY_SESSION", "LONGER_SESSION"], ["EASY_SESSION", "LONGER_SESSION"], ["EASY_SESSION", "LONGER_SESSION", "PERFORMANCE_CHECK"]];
+  eq("decision 1: a BODY plan with no constraints and no cue asks too — only the safe sessions, Mobility in Longer's place, no performance check", kindsOf(plain.plan), SAFE_ROWS);
+  eq("…after the user's “Nothing to avoid”: Easy, Longer from the third stage, and the performance check", kindsOf(ladder4("body plain answered", stageLadderOf(answeredIntake(body({})), trackIn, {}, mk4)).plan), UNLOCKED);
+  eq("a cue the parser reads nothing from ('Running causes me knee pain.'): only the safe sessions, Mobility in Longer's place, no performance check", kindsOf(ladder4("cue", stageLadderOf(body({ constraints: "Running causes me knee pain." }), trackIn, {}, mk4)).plan), SAFE_ROWS);
+  eq("a cue in the aim alone ('Run again after knee surgery', no constraints) gates the same", kindsOf(ladder4("aim cue", stageLadderOf(body({ aim: "Run again after knee surgery" }), trackIn, {}, mk4)).plan), SAFE_ROWS);
+  eq("words the app can't read ('Đau đầu gối khi chạy') gate the same", kindsOf(ladder4("vi", stageLadderOf(body({ constraints: "Đau đầu gối khi chạy" }), trackIn, {}, mk4)).plan), SAFE_ROWS);
+  eq("cue-less constraints ('Evenings only') gate the same", kindsOf(ladder4("evenings", stageLadderOf(body({ constraints: "Evenings only" }), trackIn, {}, mk4)).plan), SAFE_ROWS);
+  const cued = body({ constraints: "Running causes me knee pain." });
+  const key = RT.cueKeyOf(RT.cueTextsOf(cued));
+  /** AVOIDs stored with no answer to the card (the card still asks: every gated kind waits). */
+  const avoidedOnly = (kinds: readonly string[]): RT.Intake => ({
+    ...cued,
+    activities: { key, kinds: Object.fromEntries(kinds.map((kind) => [kind, { verdict: "AVOID" as const, day: T4, reason: "Running causes me knee pain." }])) },
+  });
+  eq(
+    "after the user's answer ticking Strength (the card listed Longer and the performance check, left unticked): exactly those are placed where the starter places them",
+    kindsOf(ladder4("answered", stageLadderOf(answeredIntake(cued, ["STRENGTH_SESSION"]), trackIn, {}, mk4)).plan),
+    UNLOCKED
+  );
+  eq("an answer given under other words is stale: the kinds it released wait again", kindsOf(ladder4("stale", stageLadderOf(answeredIntake(cued, [], "k1-00000000"), trackIn, {}, mk4)).plan), SAFE_ROWS);
+  eq(
+    "a per-kind FINE stored by the earlier card unlocks nothing (it may have been a row the user left unticked)",
+    kindsOf(ladder4("old fine", stageLadderOf({ ...cued, activities: { key, kinds: { LONGER_SESSION: { verdict: "FINE", day: T4, reason: "" }, PERFORMANCE_CHECK: { verdict: "FINE", day: T4, reason: "" } } } }, trackIn, {}, mk4)).plan),
+    SAFE_ROWS
+  );
+  eq(
+    "an AVOID on a safe kind (Easy) is honoured too: the next safe kind takes its place",
+    kindsOf(ladder4("avoid easy", stageLadderOf(avoidedOnly(["EASY_SESSION"]), trackIn, {}, mk4)).plan),
+    [["MOBILITY_SESSION"], ["MOBILITY_SESSION"], ["MOBILITY_SESSION", "TECHNIQUE_SESSION"], ["MOBILITY_SESSION", "TECHNIQUE_SESSION"], ["MOBILITY_SESSION", "TECHNIQUE_SESSION"]]
+  );
+  const care = ik4({ aim: "Support Mum's care at home", fieldId: null, track: "CARE", domainIds: [], dateMode: "CHOSEN", depth: null, constraints: "No visits on weekdays, phone calls only." });
+  eq(
+    "decision 2: CARE places its own safe kinds while the card waits — planning the week, keeping a log from the third stage; no care session and no performance check",
+    kindsOf(ladder4("care", stageLadderOf(care, trackIn, {}, mk4)).plan),
+    [["PLAN_AHEAD"], ["PLAN_AHEAD"], ["PLAN_AHEAD", "KEEP_A_LOG"], ["PLAN_AHEAD", "KEEP_A_LOG"], ["PLAN_AHEAD", "KEEP_A_LOG"]]
+  );
+  eq("…a CARE plan with no constraints at all asks the same", kindsOf(ladder4("care plain", stageLadderOf({ ...care, constraints: null }, trackIn, {}, mk4)).plan), kindsOf(ladder4("care again", stageLadderOf(care, trackIn, {}, mk4)).plan));
+  eq(
+    "…after the user's answer leaving Check-in ticked (the parser pre-ticked it): Set time is placed, Check-in never (planning the week in its place), the performance check on the last stage",
+    kindsOf(ladder4("care answered", stageLadderOf(answeredIntake(care, ["CHECK_IN"]), trackIn, {}, mk4)).plan),
+    [["SET_TIME"], ["SET_TIME"], ["SET_TIME", "PLAN_AHEAD"], ["SET_TIME", "PLAN_AHEAD"], ["SET_TIME", "PLAN_AHEAD", "PERFORMANCE_CHECK"]]
+  );
+  eq(
+    "decision 1: a CRAFT plan asks only on a cue — a plain one is built as before; 'Wrist tendinitis, can't play more than 20 minutes.' places the technique session alone, with no performance check",
+    [
+      kindsOf(ladder4("craft", stageLadderOf(ik4({ aim: "Play a piece on the piano", fieldId: null, track: "CRAFT", domainIds: [], dateMode: "CHOSEN", depth: null }), trackIn, {}, mk4)).plan),
+      kindsOf(ladder4("craft cue", stageLadderOf(ik4({ aim: "Play a piece on the piano", fieldId: null, track: "CRAFT", domainIds: [], dateMode: "CHOSEN", depth: null, constraints: "Wrist tendinitis, can't play more than 20 minutes." }), trackIn, {}, mk4)).plan),
+    ],
+    [
+      [["SLOW_DRILLS"], ["SLOW_DRILLS"], ["SLOW_DRILLS", "RUN_THROUGHS"], ["SLOW_DRILLS", "RUN_THROUGHS"], ["SLOW_DRILLS", "RUN_THROUGHS", "PERFORMANCE_CHECK"]],
+      [["TECHNIQUE_SESSION"], ["TECHNIQUE_SESSION"], ["TECHNIQUE_SESSION"], ["TECHNIQUE_SESSION"], ["TECHNIQUE_SESSION"]],
+    ]
+  );
+  eq(
+    "trackStarterKindsOf: a blocked kind gives way to the first safe kind on its track not blocked and not placed (CARE's: planning the week, keeping a log)",
+    [trackStarterKindsOf("BODY", 3, new Set(["LONGER_SESSION"])), trackStarterKindsOf("BODY", 3, new Set(["EASY_SESSION", "LONGER_SESSION"])), trackStarterKindsOf("CARE", 3, new Set(["SET_TIME", "CHECK_IN"])), trackStarterKindsOf("BODY", 1, new Set())],
+    [["EASY_SESSION", "MOBILITY_SESSION"], ["MOBILITY_SESSION", "TECHNIQUE_SESSION"], ["PLAN_AHEAD", "KEEP_A_LOG"], ["EASY_SESSION"]]
+  );
+  check(
+    "blockedKindsOf: the caller's gate and `excluded` together; without a gate, the intake's own (a BODY plan waits on its card, whatever its words; after “Nothing to avoid” only the Mock test the card never listed, with no exam, still waits)",
+    json([...blockedKindsOf(null, { gate: { blocked: ["HARDER_SESSION"] }, excluded: ["MOCK_TEST"] })].sort()) === json(["HARDER_SESSION", "MOCK_TEST"]) &&
+      blockedKindsOf(cued).has("LONGER_SESSION") &&
+      blockedKindsOf(body({})).has("LONGER_SESSION") &&
+      json([...blockedKindsOf(answeredIntake(body({})))]) === json(["MOCK_TEST"]),
+    json([...blockedKindsOf(answeredIntake(body({})))])
+  );
+  // syncTrackStarter (R4's re-sync after the answer): only what the answer changed is added; nothing the user removed comes back.
+  const gated = ladder4("gated", stageLadderOf(cued, trackIn, {}, mk4)).plan;
+  const since = [...blockedKindsOf(cued)];
+  const synced = syncTrackStarter(gated, answeredIntake(cued, ["STRENGTH_SESSION"]), mk4, { since });
+  eq(
+    "syncTrackStarter after the answer released Longer and the check: Longer added from the third stage, the check on the last; the safe sessions stay",
+    kindsOf(synced),
+    [["EASY_SESSION"], ["EASY_SESSION"], ["EASY_SESSION", "MOBILITY_SESSION", "LONGER_SESSION"], ["EASY_SESSION", "MOBILITY_SESSION", "LONGER_SESSION"], ["EASY_SESSION", "MOBILITY_SESSION", "LONGER_SESSION", "PERFORMANCE_CHECK"]]
+  );
+  const removed = gated.map((m, i) => (i === 2 ? { ...m, items: [...m.items, { ...m.items[0], lineageId: "gone", catalogKey: "LONGER_SESSION" as const, decision: "REMOVED" as const }] } : m));
+  check("…a stage where the user removed Longer gets none back; an unchanged gate adds nothing", !kindsOf(syncTrackStarter(removed, answeredIntake(cued, ["STRENGTH_SESSION"]), mk4, { since }))[2].includes("LONGER_SESSION") && json(kindsOf(syncTrackStarter(gated, cued, mk4, { since }))) === json(kindsOf(gated)));
+  check("…a Field plan comes back as it was", json(syncTrackStarter(gated, { ...cued, fieldId: "f1" }, mk4, {})) === json(gated));
+  check("the realism file has no bodySafeOf left (the gate holds F-R4-17's rule)", !/const bodySafeOf\b/.test(readFileSync(join(__dirname, "../src/lib/roadmap-realism.ts"), "utf8")));
 }
 
 if (failed > 0) {

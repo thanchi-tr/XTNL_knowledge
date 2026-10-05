@@ -32,6 +32,10 @@
  *   GroundSource · groundingSourcesOf · groundingOf · GapNamesContext ·
  *   GapNamesResult · gapNamesOf · RuleOpts · RuleName · LexiconLists ·
  *   RULE_NAMES · H6_RULE_NAMES · RULE_EXAMPLES
+ *   The safety-gaps round (contracts §19.5, decisions 6 and 7): PackRun.blocked ·
+ *   runExclusionsOf · AimConflictQuote · unresolvedAimConflictOf, and the
+ *   rules constraint.generic, constraint.limit, constraint.gentle and
+ *   constraint.field-body
  *
  * Fix round (Lens 3): only the label's very first word is exempt from
  * PROPER_NOUN; a capitalised word after a colon or full stop is a name unless
@@ -77,6 +81,18 @@
  *       (stripInvisibles): JS \s matches U+FEFF, which split a word.
  *   The session-picks confirm holds every isSessionPickKind pick (FULL_ATTEMPT
  *   and PERFORMANCE_CHECK too), not only practices.
+ *
+ * Revision 4 fix round 4 (the constraint reader's unsafe-side misses):
+ * negatedTermsOf reads a negation or a pain word written after its term
+ * ("running hurts my knee", "swimming is fine, running not allowed",
+ * "Running, jumping, pivoting are out"; constraint.after and a rule per
+ * CONSTRAINT_CUES_AFTER entry), a state cue in an earlier sentence ("Knee
+ * injury. Running, jumping."; constraint.carry), "nothing" and the injury
+ * cues (tore, torn, sprain, fracture), and constraintExclusionsOf meets a
+ * compound the user wrote by its last part ("nothing high-impact";
+ * constraint.compound). The safe side grows with it: "nothing but swimming",
+ * "swimming doesn't hurt" and a release that continues ("swimming fine and
+ * running ok", "… and so is cycling") name nothing (constraint.release).
  */
 import { compareTwoStrings } from "string-similarity";
 import type { DayKey } from "./life-day";
@@ -86,6 +102,7 @@ import { groupsOfKey, nearStems, stem, synonymsOf, words } from "./synonyms";
 import * as LX from "./roadmap-lexicon";
 import { splitWindows } from "./roadmap-realism";
 import {
+  ACTIVITY_REASON_MAX,
   BLOCKING_FLAGS,
   CHECKPOINT_KINDS,
   CHECKPOINT_LABEL_MAX,
@@ -114,9 +131,12 @@ import {
   TOPIC_LABEL_MAX,
   TOPICS_PER_MILESTONE,
   UNVERIFIED_ALARM,
+  constraintCuesOf,
   integrityVerdictOf,
   isCredentialAim,
+  type ActivityGate,
   type AimConflict,
+  type CueClass,
   type AimDepth,
   type BlockingFlag,
   type CheckpointKind,
@@ -148,6 +168,7 @@ import {
 import type { DomainName, YoursText } from "./roadmap-types";
 import {
   CATALOG,
+  activityGateOf,
   catalogEntryOf,
   catalogLabelOf,
   catalogOriginOf,
@@ -291,6 +312,13 @@ const FUNCTION = new Set(ENGLISH_FUNCTION_WORDS);
 const stemPhrases = (list: readonly string[]): string[][] => list.map((p) => words(p).map((w) => w.stem)).filter((p) => p.length > 0);
 const stemSet = (list: readonly string[]): Set<string> => new Set(list.flatMap((p) => words(p).map((w) => w.stem)));
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
+/** A lexicon entry's words as the constraint tokens hold them: lower case, apostrophes closed ("can't" → "cant"). */
+const closedWords = (s: string): string[] =>
+  s
+    .toLowerCase()
+    .replace(/['’]/gu, "")
+    .split(/\s+/u)
+    .filter(Boolean);
 
 interface NamedPattern {
   name: RuleName;
@@ -341,6 +369,40 @@ interface Lexicon {
   releaseStarts: Set<string>;
   releaseBlockers: Set<string>;
   stateCues: Set<RuleName>;
+  // Fix round 4: the reader's unsafe-side misses (negatedTermsOf; roadmap-lexicon.ts CONSTRAINT_CUES_AFTER …).
+  postCues: Cue[];
+  verdict: Set<string>;
+  afterNegators: Set<string>;
+  bodyStems: Set<string>;
+  anaphora: Set<string>;
+  itemWords: Set<string>;
+  skipWords: Set<string>;
+  mirrorStarts: string[][];
+  mirrorEnds: string[][];
+  exceptWords: Set<string>;
+  // Hardening round: pre-fill quality (contracts §19; roadmap-lexicon.ts CONSTRAINT_MORE_CUES …).
+  /** The who-said-it cues' rule names ("cue.doctor says", "cue.physio said" …): a read back passes through one. */
+  authority: Set<RuleName>;
+  causeWords: Set<string>;
+  bodyStates: Set<string>;
+  bodySides: Set<string>;
+  troubleWords: Set<string>;
+  troubleSkip: Set<string>;
+  canWords: Set<string>;
+  whenWords: Set<string>;
+  /** The state cue a CONSTRAINT_BODY_STATE_WORDS word before a body part is ("Bad knees."; the rule constraint.body). */
+  bodyCue: Cue;
+  // The safety-gaps round: a suggestion never blocks (contracts §19, decision 7; roadmap-lexicon.ts CONSTRAINT_GENERIC_KIND_WORDS …).
+  /** Stems too general to name a type (constraint.generic). */
+  genericKind: Set<string>;
+  /** Limit phrases, as constraint tokens hold them, longest first (constraint.limit). */
+  limits: string[][];
+  /** Frequencies, a limit only when the clause judges them (constraint.limit). */
+  frequencies: string[][];
+  /** Words that are a limit before a number (constraint.limit). */
+  limitNumber: Set<string>;
+  /** Advice to go gently, as constraint tokens hold it (constraint.gentle). */
+  gentle: string[][];
   areaGerunds: string[][];
   startTerms: string[][];
   startNouns: Set<string>;
@@ -406,12 +468,8 @@ function compileLexicon(lx: LexiconModule): Lexicon {
       { name: "link.subreddit", re: /(?:^|[\s(])r\/[A-Za-z0-9_]{3,}/u },
     ],
     quoted: [new RegExp(quotedPairs.join("|"), "u"), /(?:^|[\s(])['‘‚‛][^'’‘\n]{2,}['’](?=$|[\s.,;:!?)])/u],
-    constraintCues: lx.CONSTRAINT_CUES.map((c) => {
-      const ws = c
-        .toLowerCase()
-        .replace(/['’]/gu, "")
-        .split(/\s+/u)
-        .filter(Boolean);
+    constraintCues: [...lx.CONSTRAINT_CUES, ...lx.CONSTRAINT_EXTRA_CUES, ...lx.CONSTRAINT_INJURY_CUES, ...lx.CONSTRAINT_MORE_CUES, ...lx.CONSTRAINT_MORE_INJURY_CUES, ...lx.CONSTRAINT_AUTHORITY_CUES].map((c) => {
+      const ws = closedWords(c);
       return { name: `cue.${c.toLowerCase()}`, words: ws, stem: ws.length === 1 ? stem(ws[0]) : null };
     }).sort((a, b) => b.words.length - a.words.length),
     scopeBreaks: new Set(lx.CONSTRAINT_SCOPE_BREAKS),
@@ -419,7 +477,34 @@ function compileLexicon(lx: LexiconModule): Lexicon {
     releaseWords: new Set(lx.CONSTRAINT_RELEASE_WORDS.map((w) => w.toLowerCase().replace(/['’]/gu, ""))),
     releaseStarts: new Set(lx.CONSTRAINT_RELEASE_STARTS.map((w) => w.toLowerCase().replace(/['’]/gu, ""))),
     releaseBlockers: new Set(lx.CONSTRAINT_RELEASE_BLOCKERS.map((w) => w.toLowerCase().replace(/['’]/gu, ""))),
-    stateCues: new Set(lx.CONSTRAINT_STATE_CUES.map((c) => `cue.${c.toLowerCase()}`)),
+    stateCues: new Set([...[...lx.CONSTRAINT_STATE_CUES, ...lx.CONSTRAINT_INJURY_CUES, ...lx.CONSTRAINT_MORE_INJURY_CUES, ...lx.CONSTRAINT_AUTHORITY_CUES].map((c) => `cue.${c.toLowerCase()}`), "constraint.body"]),
+    // A cue after its term is matched as written, a hyphenated compound as one word ("off-limits", "no-go"), longest first.
+    postCues: [...lx.CONSTRAINT_CUES_AFTER, ...lx.CONSTRAINT_MORE_CUES_AFTER].map((c) => ({ name: `cue.${c.toLowerCase()}`, words: closedWords(c), stem: null })).sort((a, b) => b.words.length - a.words.length),
+    verdict: new Set(lx.CONSTRAINT_VERDICT_WORDS.flatMap(closedWords)),
+    afterNegators: new Set(lx.CONSTRAINT_AFTER_NEGATORS.flatMap(closedWords)),
+    bodyStems: new Set(lx.CONSTRAINT_BODY_PARTS.flatMap(closedWords).map(stem)),
+    anaphora: new Set(lx.CONSTRAINT_ANAPHORA.flatMap(closedWords)),
+    itemWords: new Set(lx.CONSTRAINT_ITEM_WORDS.flatMap(closedWords)),
+    // Hardening round: the cause words and CONSTRAINT_MORE_SKIP_WORDS are never terms either.
+    skipWords: new Set([...lx.CONSTRAINT_SKIP_WORDS, ...lx.CONSTRAINT_MORE_SKIP_WORDS, ...lx.CONSTRAINT_CAUSE_WORDS].flatMap(closedWords)),
+    mirrorStarts: lx.CONSTRAINT_MIRROR_STARTS.map(closedWords).filter((w) => w.length > 0),
+    mirrorEnds: lx.CONSTRAINT_MIRROR_ENDS.map(closedWords).filter((w) => w.length > 0),
+    exceptWords: new Set(lx.CONSTRAINT_EXCEPT_WORDS.flatMap(closedWords)),
+    authority: new Set(["doctor says", ...lx.CONSTRAINT_AUTHORITY_CUES].map((c) => `cue.${c.toLowerCase()}`)),
+    causeWords: new Set(lx.CONSTRAINT_CAUSE_WORDS.flatMap(closedWords)),
+    bodyStates: new Set(lx.CONSTRAINT_BODY_STATE_WORDS.flatMap(closedWords)),
+    bodySides: new Set(lx.CONSTRAINT_BODY_SIDE_WORDS.flatMap(closedWords)),
+    troubleWords: new Set(lx.CONSTRAINT_TROUBLE_WORDS.flatMap(closedWords)),
+    troubleSkip: new Set(lx.CONSTRAINT_TROUBLE_SKIP_WORDS.flatMap(closedWords)),
+    canWords: new Set(lx.CONSTRAINT_CAN_WORDS.flatMap(closedWords)),
+    whenWords: new Set([...lx.CONSTRAINT_WHEN_WORDS, ...lx.SPELLED_NUMBER_WORDS, ...lx.DATE_WORDS].flatMap(closedWords)),
+    bodyCue: { name: "constraint.body", words: [], stem: null },
+    genericKind: new Set(lx.CONSTRAINT_GENERIC_KIND_WORDS.flatMap(closedWords).map(stem)),
+    // As constraintTokens reads them: a hyphenated compound stays one word ("back-to-back").
+    limits: lx.CONSTRAINT_LIMIT_PHRASES.map(closedWords).filter((w) => w.length > 0).sort((a, b) => b.length - a.length),
+    frequencies: lx.CONSTRAINT_FREQUENCY_PHRASES.map(closedWords).filter((w) => w.length > 0).sort((a, b) => b.length - a.length),
+    limitNumber: new Set(lx.CONSTRAINT_LIMIT_NUMBER_WORDS.flatMap(closedWords)),
+    gentle: lx.CONSTRAINT_GENTLE_PHRASES.map(closedWords).filter((w) => w.length > 0).sort((a, b) => b.length - a.length),
     areaGerunds: lx.AREA_GERUNDS.map((g) => g.toLowerCase().split(/\s+/u).filter(Boolean)),
     startTerms: lx.START_TERM_PHRASES.map((g) => g.toLowerCase().split(/\s+/u).filter(Boolean)),
     startNouns: new Set(lx.START_NOUN_WORDS),
@@ -1999,7 +2084,10 @@ export interface PackRun {
   depth: AimDepth | null;
   /** D-keys of the listed Domains not chosen: `needs`' enum. */
   otherKeys: string[];
-  /** The run's kinds, per slot (roadmap-catalog catalogKindsFor, the constraint exclusions left out). */
+  /**
+   * The run's kinds, per slot (roadmap-catalog catalogKindsFor, with `blocked`
+   * left out: contracts §19.5). A kind the reader only suggests stays in.
+   */
   practiceKinds: CatalogKey[];
   stepKinds: CatalogKey[];
   checkpointKinds: CatalogKey[];
@@ -2007,10 +2095,24 @@ export interface PackRun {
   exam: boolean;
   /** The gap slot is in the schema: ROADMAP_GAPS_LIVE (or the lead's probe override) and the user's switch, on a Field Area. */
   gaps: boolean;
-  /** Kinds the constraint filter left out, with their words. */
+  /**
+   * The safety-gaps round (contracts §19.5): the kinds the activity gate held
+   * out of this run's enums (roadmap-catalog activityGateOf(intake).blocked:
+   * PENDING, waiting on the user's answer to the activity card, and AVOID,
+   * the user's own), in CATALOG order, of the kinds the run would offer.
+   * Optional in the shape (a run built by hand may leave it out); packRunOf
+   * always fills it, from `exclusions`' kinds on a pack written before it.
+   */
+  blocked?: CatalogKey[];
+  /**
+   * What the run leaves out because of the user's words (runExclusionsOf):
+   * each kind the reader names that the gate blocks, with its word. A
+   * suggestion the gate doesn't block is offered (decision 7). validateKeysOnly
+   * drops a pick of one of these (defence in depth; the enum already lacks it).
+   */
   exclusions: ConstraintExclusion[];
-  /** The aim itself meets a negated constraint term. */
-  aimConflict: AimConflict | null;
+  /** The aim itself meets a negated constraint term (aimConflictOf; `quote` since the safety-gaps round). */
+  aimConflict: (AimConflict & { quote?: string }) | null;
 }
 
 const stringList = (v: unknown): string[] | null => (Array.isArray(v) && v.every((x) => typeof x === "string") ? [...(v as string[])] : null);
@@ -2031,6 +2133,9 @@ export function packRunOf(pack: unknown): PackRun | null {
     ? (own(run, "exclusions") as unknown[]).filter((x): x is ConstraintExclusion => isRec(x) && typeof x.kind === "string" && typeof x.word === "string")
     : [];
   const conflict = own(run, "aimConflict");
+  const word = own(conflict, "word");
+  const quote = own(conflict, "quote");
+  const blocked = stringList(own(run, "blocked"));
   return {
     track: track as CatalogTrack,
     slots,
@@ -2041,8 +2146,9 @@ export function packRunOf(pack: unknown): PackRun | null {
     checkpointKinds: checkpointKinds as CatalogKey[],
     exam: own(run, "exam") === true,
     gaps: own(run, "gaps") === true,
+    blocked: (blocked ?? exclusions.map((x) => x.kind)) as CatalogKey[],
     exclusions,
-    aimConflict: isRec(conflict) && typeof conflict.word === "string" ? { word: conflict.word } : null,
+    aimConflict: typeof word === "string" ? (typeof quote === "string" ? { word, quote } : { word }) : null,
   };
 }
 
@@ -2287,11 +2393,23 @@ export function normaliseReportPath(path: readonly (string | number)[], schema: 
 
 // ─── Constraints: the run's enum filter (F-R4-17) ───────────────────────────
 
-/** One negated term of the constraints: the word as written, its stem, and the cue's rule. */
+/**
+ * How a term was read (hardening round): AFTER, by a cue written after it
+ * (or a negation judging what came before it, or a mirror of one: "Inference
+ * is too hard"); CARRY, by a cue in the sentence before ("Knee injury.
+ * Running."); STATE, in a state cue's scope ("knee injury, I'd like to get
+ * fitter"). Absent: in a negating cue's scope ("no running"). Only an absent
+ * one, or one that names an activity (a practice type's own word), meets a
+ * kind through its fill (constraint.fill).
+ */
+export type NegatedTermRead = "AFTER" | "CARRY" | "STATE";
+
+/** One negated term of the constraints: the word as written, its stem, the cue's rule, and (hardening round) how it was read. */
 export interface NegatedTerm {
   word: string;
   stem: string;
   cue: RuleName;
+  read?: NegatedTermRead;
 }
 
 /** One constraint word: as written (lower case, apostrophes closed), its stem, and whether a pause (a comma, colon, dash or bracket) comes right before it. */
@@ -2328,6 +2446,21 @@ function constraintTokens(text: string): ConstraintToken[] {
   return out;
 }
 
+/** Fix round 4: the words that join two list items or two clauses ("running and jumping hurt", "swimming is fine and running hurts"). */
+const LIST_JOINS: ReadonlySet<string> = new Set(["and", "or", "nor"]);
+
+/** Fix round 4: where a read after a pain or verdict word stops, besides a pause, break or cue ("my knee hurts when I run, so I swim" names run only). */
+const FORWARD_STOPS: ReadonlySet<string> = new Set(["so", "then", "instead"]);
+
+/** Hardening round: "Running = pain", "running -> pain", "running → pain" read as "running equals pain" (a cause, CONSTRAINT_CAUSE_WORDS). */
+const EQUALS_SIGNS = /\s*(?:=+>?|-+>|[→⇒⟶])\s*/gu;
+
+/** Hardening round: the words a list item a cue carries into may hold beside its terms ("Back pain. Running for now."). */
+const CARRY_LINKS: ReadonlySet<string> = new Set(["for", "at", "of", "on", "in", "this", "now", "still", "anymore", "either", "also", "even", "just", "again", "please"]);
+
+/** Hardening round: articles, which a trouble denial never skips ("Lifting is not a problem, running is." keeps its reading). */
+const ARTICLES: ReadonlySet<string> = new Set(["a", "an", "the"]);
+
 /**
  * The negated terms of the constraints (F-R4-17's parser): after a cue
  * (CONSTRAINT_CUES: "no", "not", "avoid", "without", "can't", "cannot",
@@ -2362,25 +2495,386 @@ function constraintTokens(text: string): ConstraintToken[] {
  * word right there answers the release, not the cue ("swimming is fine but
  * running hurts" names running). So "knee injury, swimming ok, running not
  * ok" → running; "knee injury healed, but running not ok" → running; "knee
- * injury, swimming is fine and running hurts" → running, hurts; while
- * "injured last year, now fully recovered and running daily" → last, year.
- * A stated exclusion is never dropped: a release keeps back only the words of
- * its own clause.
+ * injury, swimming is fine and running hurts" → running; while "injured last
+ * year, now fully recovered and running daily" → last, year. A stated
+ * exclusion is never dropped: a release keeps back only the words of its own
+ * clause.
  *
- * Never throws; [] for empty, non-English or cue-less text.
+ * Fix round 4 (the reader's unsafe-side misses; roadmap-lexicon.ts
+ * CONSTRAINT_CUES_AFTER and the lists after it):
+ *   - a cue written after its term (constraint.after; each entry a rule
+ *     "cue.<entry>"): a pain or verdict word names the terms of its clause
+ *     before it, back across a list of bare items: "running hurts my knee" →
+ *     running; "jumping is painful" → jumping; "Running, jumping, pivoting are
+ *     out" → all three. Never back into a clause that clears or holds more
+ *     than a bare item: "swimming is fine, running hurts" and "I love cycling,
+ *     running hurts" name running only. With nothing but a body part before
+ *     it, it reads the clause after it ("my knee hurts when I run" → knee,
+ *     run; "Off limits: running"); with only a pronoun, the clause before
+ *     ("I love running but it hurts", "I used to run. It hurts now."); with
+ *     nothing at all, a bare item ending the sentence before ("Running?
+ *     Painful.");
+ *   - a negating cue (not a state cue) that judges what came before it
+ *     (constraint.after): one a verdict or release word follows ("running not
+ *     allowed", "running is not recommended", "running is not ok"), and one
+ *     whose own clause names nothing after it ("running is a no", "squats I
+ *     can't do", "Running? Not anymore.") reads back as a cue after its term
+ *     does: "swimming is fine, running not allowed" → running;
+ *   - a state cue (or a pain word) that ends its sentence having named
+ *     nothing but a body part covers the next sentence (constraint.carry):
+ *     "Knee injury. Running, jumping, pivoting." → all three; "I tore my
+ *     ACL. …" (CONSTRAINT_INJURY_CUES: tore, torn, sprain, fracture);
+ *   - "nothing" is a negating cue ("nothing high-impact"; constraintExclusionsOf
+ *     meets a compound by its last part, constraint.compound);
+ *   - the safe side (constraint.release): a negating cue a break follows
+ *     before it has named a term says what is left ("nothing but swimming",
+ *     "no exercise except walking" name nothing); a denied pain or verdict
+ *     word clears its clause ("knee injury, swimming doesn't hurt, running
+ *     does hurt" → running); and the clause after a release clears too when
+ *     it holds a release word of its own or mirrors it ("knee injury,
+ *     swimming fine and running ok" → []; "… swimming is fine and so is
+ *     cycling", "… and cycling too" → []).
+ * Skip words (CONSTRAINT_SKIP_WORDS: makes, still, go …), verdict words and
+ * pronouns are never terms.
+ *
+ * The hardening round (contracts §19: what this reads only PRE-FILLS the
+ * confirm, as a pre-ticked "avoid" quoting the user's sentence; it never
+ * unlocks a kind; lists in roadmap-lexicon.ts CONSTRAINT_MORE_CUES …):
+ *   - more cues: "never", "shouldn't", "not supposed to", "stay away from",
+ *     "me off" before their term; injury words ("surgery", "splints",
+ *     "strain" …) and who said it ("doctor said", "physio told me" …) as
+ *     state cues; "aggravates", "bothers", "kill my", "swell", "sore", "a bad
+ *     idea", "is a problem", "ruled out" … after it;
+ *   - a pain or injury cue after a cause names what caused it ("Running
+ *     causes me knee pain", "Running = pain"; constraint.after);
+ *   - a state word before a body part is a state cue ("Bad knees. Jumping
+ *     and running."; constraint.body), and a time names nothing ("Knee
+ *     surgery two weeks ago. Running and jumping." carries);
+ *   - a read passes through who said it ("Running? My doctor said
+ *     absolutely not." → running);
+ *   - a mirror of a negative verdict names its terms too ("Weights are a
+ *     no-go and so is running", "Running hurts. So does jumping.");
+ *   - the safe side: trouble denied clears its clause ("No problems with
+ *     running or lifting", "Running never causes me pain"); a positive "can"
+ *     opening a clause ends the scope ("Can't run, can't jump, can lift");
+ *     a cue carries only into a list of what it covers, never into a
+ *     sentence of its own ("Sprained ankle. Swimming three times a week is
+ *     my plan." names nothing in the second sentence);
+ *   - each term says how it was read (NegatedTerm.read), so a term read after
+ *     its cue, carried or in a state cue's scope meets a kind's fill only
+ *     when it names an activity (constraintExclusionsOf, aimConflictOf;
+ *     constraint.fill).
+ *
+ * The safety-gaps round (contracts §19, the lead's decision 7: what this
+ * reads is a pre-ticked suggestion on the activity card, never a block;
+ * lists in roadmap-lexicon.ts CONSTRAINT_LIMIT_PHRASES …):
+ *   - a word held to a limit names nothing (constraint.limit): "Shin splints
+ *     flare up if I run more than twice a week", "no running two days in a
+ *     row", "no more than two runs a week", "Running over 5K hurts", and a
+ *     frequency its clause judges ("Calling every day is too much"); a
+ *     schedule still names its term ("no running on weekdays");
+ *   - advice to go gently is never a term (constraint.gentle): "My GP said
+ *     to take it easy for a month" never names the Easy session.
+ * constraintExclusionsOf adds constraint.generic and constraint.field-body.
+ *
+ * Never throws; [] for empty, non-English or cue-less text. The confirm
+ * (sessionConfirmNeeded) never reads this: non-English or unparsed
+ * constraints on a BODY or CARE plan raise it as any others do.
  */
 export function negatedTermsOf(constraints: string | null | undefined, opts?: RuleOpts): NegatedTerm[] {
+  return placedTermsOf(constraints, opts).map((p) => p.term);
+}
+
+/**
+ * One negated term as the reader placed it (the safety-gaps round; internal):
+ * the term, and the span of the constraints it was read from: its sentence,
+ * from the sentence before when that sentence's cue carried into it or the
+ * term stood there (a pronoun's referent, an elliptical negation's item).
+ * The aim-conflict line quotes this span (decision 6), and a Field plan reads
+ * whether it is about the body (constraint.field-body).
+ */
+interface PlacedTerm {
+  term: NegatedTerm;
+  start: number;
+  end: number;
+}
+
+/** The sentence pieces negatedTermsOf reads: each run of text between sentence breaks, with its place. */
+const SENTENCE_PIECE = /[^.!?;\n]+/gu;
+
+/** negatedTermsOf's reading with each term's place (PlacedTerm). Never throws. */
+function placedTermsOf(constraints: string | null | undefined, opts?: RuleOpts): PlacedTerm[] {
   if (typeof constraints !== "string" || !constraints.trim()) return [];
   try {
     const L = lexiconOf(opts);
     const R = rulesOf(opts);
-    const out = new Map<string, NegatedTerm>();
-    for (const sentence of constraints.slice(0, 2000).split(/[.!?;\n]+/u)) {
-      const toks = constraintTokens(sentence);
-      let active: Cue | null = null;
-      let taken = 0;
+    const out = new Map<string, PlacedTerm>();
+    const releaseOn = R.on("constraint.release");
+    const afterOn = R.on("constraint.after");
+    const carryOn = R.on("constraint.carry");
+    const limitOn = R.on("constraint.limit");
+    const gentleOn = R.on("constraint.gentle");
+    /** The cue (rule) that last named a term in this sentence, cleared by a release (hardening round: the next sentence's mirror reads it). */
+    let here: { lastCue: RuleName | null } = { lastCue: null };
+    /** This sentence's span, and the sentence before's (its start and its words), for a term's place. */
+    let span = { start: 0, end: 0 };
+    let prevSpan: { start: number; toks: ReadonlySet<ConstraintToken> } | null = null;
+    /** The safety-gaps round (constraint.limit): this sentence's words a limit holds ("running more than twice a week"). */
+    let limited: ReadonlySet<ConstraintToken> = new Set();
+    /** One term named: its cue (and `also`, the fix-round-4 rule that reached it) fire the first time it is named. */
+    const name = (w: ConstraintToken, cue: RuleName, also?: RuleName): void => {
+      here.lastCue = cue;
+      // The safety-gaps round: a word held to a limit is no exclusion; it names nothing (decision 7).
+      if (limited.has(w)) {
+        R.fire("constraint.limit");
+        return;
+      }
+      if (out.has(w.stem)) return;
+      const read: NegatedTermRead | undefined = also === "constraint.after" ? "AFTER" : also === "constraint.carry" ? "CARRY" : L.stateCues.has(cue) ? "STATE" : undefined;
+      const fromBefore = prevSpan != null && (also === "constraint.carry" || prevSpan.toks.has(w));
+      out.set(w.stem, {
+        term: read ? { word: w.raw, stem: w.stem, cue, read } : { word: w.raw, stem: w.stem, cue },
+        start: fromBefore && prevSpan ? prevSpan.start : span.start,
+        end: span.end,
+      });
+      R.fire(cue);
+      if (also) R.fire(also);
+    };
+    /** The sentence before: its last clause's terms (an anaphora's referent) and, when that clause is a bare item, its terms (an elliptical negation's). */
+    let prev: { anaphora: ConstraintToken[]; bare: ConstraintToken[] } | null = null;
+    /** A state cue (or a pain word) the sentence before ended on having named nothing but a body part: it covers this sentence. */
+    let carry: Cue | null = null;
+    /** Hardening round: the cue that last named a term in the sentence before, for a mirror opening this one ("Running hurts. So does jumping."). */
+    let prevNeg: RuleName | null = null;
+    for (const piece of constraints.slice(0, 2000).matchAll(SENTENCE_PIECE)) {
+      const sentence = piece[0];
+      // Hardening round: "Running = pain", "running -> pain" read as "running equals pain" (CONSTRAINT_CAUSE_WORDS).
+      const toks = constraintTokens(sentence.replace(EQUALS_SIGNS, " equals "));
+      const n = toks.length;
+      if (n === 0) continue;
+      here = { lastCue: null };
+      span = { start: piece.index ?? 0, end: (piece.index ?? 0) + sentence.length };
+      /** A run of whole words from `at` (as the tokens hold them), or false. */
+      const wordsAt = (at: number, ws: readonly string[]): boolean => ws.every((w, k) => toks[at + k]?.raw === w);
+      // The safety-gaps round (decision 7): advice to go gently is never a term ("take it easy", constraint.gentle).
+      const gentle = new Set<ConstraintToken>();
+      if (gentleOn) {
+        for (let i = 0; i < n; i++) {
+          const g = L.gentle.find((p) => wordsAt(i, p));
+          if (!g) continue;
+          for (let k = 0; k < g.length; k++) gentle.add(toks[i + k]);
+          R.fire("constraint.gentle");
+          i += g.length - 1;
+        }
+      }
+      const isBody = (w: ConstraintToken): boolean => L.bodyStems.has(w.stem);
+      /** Hardening round: a state word before a body part ("bad knees", "stiff lower back"): the state cue constraint.body, one object per place. */
+      const bodyCues = new Map<number, Cue>();
+      const bodyAt = (i: number): Cue | undefined => {
+        if (!L.bodyStates.has(toks[i].raw) || !R.on(L.bodyCue.name)) return undefined;
+        let k = i + 1;
+        while (k < n && k <= i + 2 && !toks[k].afterPause && L.bodySides.has(toks[k].raw)) k++;
+        if (k >= n || toks[k].afterPause || !isBody(toks[k])) return undefined;
+        const hit = bodyCues.get(i) ?? { name: L.bodyCue.name, words: [toks[i].raw], stem: null };
+        bodyCues.set(i, hit);
+        return hit;
+      };
       const cueAt = (i: number): Cue | undefined =>
-        L.constraintCues.find((c) => R.on(c.name) && (c.stem != null ? toks[i].stem === c.stem || toks[i].raw === c.words[0] : c.words.every((w, k) => toks[i + k]?.raw === w)));
+        i >= 0 && i < n
+          ? L.constraintCues.find((c) => R.on(c.name) && (c.stem != null ? toks[i].stem === c.stem || toks[i].raw === c.words[0] : c.words.every((w, k) => toks[i + k]?.raw === w))) ?? bodyAt(i)
+          : undefined;
+      /** A cue after its term starting at i, any entry (a denied one clears its clause whatever constraint.after says). */
+      const postWordAt = (i: number): Cue | undefined => (i >= 0 && i < n ? L.postCues.find((c) => c.words.every((w, k) => toks[i + k]?.raw === w)) : undefined);
+      /** The same, as a cue that reads: constraint.after and its own rule on. Off, the word is an ordinary word (the old reading). */
+      const postAt = (i: number): Cue | undefined => {
+        if (!afterOn) return undefined;
+        const c = postWordAt(i);
+        return c && R.on(c.name) ? c : undefined;
+      };
+      /** A word a scope or a read takes: no function, filler, skip, generic, verdict or release word, pronoun, number, single letter, (hardening round) time word or body state word. */
+      const isTerm = (w: ConstraintToken): boolean =>
+        !(
+          FUNCTION.has(w.raw) ||
+          w.raw === "nor" ||
+          L.filler.has(w.raw) ||
+          L.genericWords.has(w.raw) ||
+          L.skipWords.has(w.raw) ||
+          L.verdict.has(w.raw) ||
+          L.anaphora.has(w.raw) ||
+          /\p{N}/u.test(w.raw) ||
+          w.raw.length < 2 ||
+          L.releaseStarts.has(w.raw) ||
+          L.releaseWords.has(w.raw) ||
+          L.whenWords.has(w.raw) ||
+          L.bodyStates.has(w.raw) ||
+          gentle.has(w)
+        );
+      // The safety-gaps round (decision 7, constraint.limit): a limit holds the words before it in its clause ("running more
+      // than twice a week", "no running two days in a row") and, with a number right after it, the clause after it ("no more
+      // than two runs a week", "max 20 minutes of running"), back and forth to a pause, a scope break or a cue. Its own words
+      // are held too. A frequency is a limit only when its clause judges it: a pain or verdict word after it, or a negating
+      // cue before it ("Calling every day is too much"; "knee injury, running daily" still names running). A schedule is no
+      // limit ("no running on weekdays" names running).
+      {
+        const held = new Set<ConstraintToken>();
+        const isNumber = (w: ConstraintToken | undefined): boolean => !!w && !w.afterPause && (/^\p{N}/u.test(w.raw) || L.whenWords.has(w.raw) || w.raw === "once" || w.raw === "twice");
+        const edge = (k: number): boolean => L.scopeBreaks.has(toks[k].raw) || cueAt(k) != null || postWordAt(k) != null;
+        const unbroken = (p: readonly string[], j: number): boolean => !toks.slice(j + 1, j + p.length).some((w) => w.afterPause);
+        /** A frequency at j (len words) is judged: a pain or verdict word after it in its clause, or a negating cue before it. */
+        const judged = (j: number, len: number): boolean => {
+          for (let k = j + len; k < n && !toks[k].afterPause; k++) if (postWordAt(k)) return true;
+          for (let k = j - 1; k >= 0 && !toks[k + 1].afterPause; k--) {
+            const c = cueAt(k);
+            if (c) return !L.stateCues.has(c.name);
+          }
+          return false;
+        };
+        if (limitOn) {
+          for (let j = 0; j < n; j++) {
+            const phrase = L.limits.find((p) => wordsAt(j, p) && unbroken(p, j));
+            const often = phrase ? undefined : L.frequencies.find((p) => wordsAt(j, p) && unbroken(p, j) && judged(j, p.length));
+            const len = phrase ? phrase.length : often ? often.length : L.limitNumber.has(toks[j].raw) && isNumber(toks[j + 1]) ? 1 : 0;
+            if (len === 0) continue;
+            for (let k = j; k < j + len; k++) held.add(toks[k]);
+            for (let k = j - 1; k >= 0 && !toks[k + 1].afterPause && !edge(k); k--) held.add(toks[k]);
+            if (isNumber(toks[j + len])) for (let k = j + len; k < n && !(k > j + len && toks[k].afterPause) && !edge(k); k++) held.add(toks[k]);
+            j += len - 1;
+          }
+        }
+        limited = held;
+      }
+      /** Words a release or a denial cleared: never taken, never read back over. */
+      const cleared = new Set<number>();
+      /** A negating cue that only denies a pain or verdict word ("does not hurt"): it opens no scope. */
+      const denying = new Set<number>();
+      /** A pain or verdict word a negation denies ("running doesn't hurt"): it names nothing. */
+      const denied = new Set<number>();
+      /** The first word of the clause holding k (its pause, or the sentence's start). */
+      const clauseStart = (k: number): number => {
+        let s = k;
+        while (s > 0 && !toks[s].afterPause) s--;
+        return s;
+      };
+      /** The last word of the clause holding k. */
+      const clauseEnd = (k: number): number => {
+        let e = k;
+        while (e + 1 < n && !toks[e + 1].afterPause) e++;
+        return e;
+      };
+      /** toks[from..to] is a bare list item: terms, determiners, joins and generic words only, with one to four terms ("Running", "the gym", "impact sports", "heavy weights and jumping"). */
+      const bare = (from: number, to: number): boolean => {
+        if (from < 0 || to >= n || from > to) return false;
+        let terms = 0;
+        for (let k = from; k <= to; k++) {
+          const w = toks[k];
+          if (cleared.has(k) || cueAt(k) || postWordAt(k) || L.anaphora.has(w.raw)) return false;
+          // Hardening round: an item may open on "so" or "then" ("Asthma, so sprinting and long runs are risky").
+          if (k === from && FORWARD_STOPS.has(w.raw) && k < to) continue;
+          if (isTerm(w)) terms++;
+          else if (!L.itemWords.has(w.raw) && !LIST_JOINS.has(w.raw) && !L.genericWords.has(w.raw)) return false;
+        }
+        return terms >= 1 && terms <= 4;
+      };
+
+      // A denied pain or verdict word clears its clause (constraint.release): "knee injury, swimming doesn't hurt, running does
+      // hurt" keeps swimming. The negation is the word right before it, past filler and skip words ("doesn't really hurt",
+      // "no longer hurts", "not that painful").
+      if (releaseOn) {
+        for (let i = 0; i < n; i++) {
+          const p = postWordAt(i);
+          if (!p) continue;
+          let k = i - 1;
+          while (k >= 0 && !toks[k + 1].afterPause && !L.afterNegators.has(toks[k].raw) && (L.filler.has(toks[k].raw) || L.skipWords.has(toks[k].raw) || toks[k].raw === "that" || toks[k].raw === "so")) k--;
+          if (k >= 0 && !toks[k + 1].afterPause && L.afterNegators.has(toks[k].raw)) {
+            // Back to the clause's pause, break or cue (across a join only into a bare item: "running and swimming don't hurt"),
+            // forward to the next pause, break, join or cue.
+            let s = k;
+            while (s > 0 && !toks[s].afterPause) {
+              const b = toks[s - 1];
+              if (L.scopeBreaks.has(b.raw) || L.releaseStarts.has(b.raw) || cueAt(s - 1) || postWordAt(s - 1)) break;
+              if (LIST_JOINS.has(b.raw) && !(s - 2 >= 0 && bare(clauseStart(s - 2), s - 2))) break;
+              s--;
+            }
+            let e = i + p.words.length - 1;
+            while (e + 1 < n && !toks[e + 1].afterPause && !L.scopeBreaks.has(toks[e + 1].raw) && !LIST_JOINS.has(toks[e + 1].raw) && !FORWARD_STOPS.has(toks[e + 1].raw) && !cueAt(e + 1) && !postWordAt(e + 1)) e++;
+            for (let x = s; x <= e; x++) cleared.add(x);
+            if (cueAt(k)) denying.add(k);
+            denied.add(i);
+            R.fire("constraint.release");
+          }
+          i += p.words.length - 1;
+        }
+        // Hardening round: trouble denied (CONSTRAINT_TROUBLE_WORDS) clears its clause the same way: "No problems with running
+        // or lifting", "I have no knee pain when running", "Running never causes me pain". The negation stands right before the
+        // trouble word, past function, filler, skip and cause words and body parts, never an article ("Lifting is not a
+        // problem, running is." keeps its reading). After "without" only forward ("no jumping or running without pain" still
+        // names running). Forward across a join into a bare item ("… with running or lifting").
+        for (let i = 0; i < n; i++) {
+          if (!L.troubleWords.has(toks[i].raw) || cleared.has(i)) continue;
+          const negates = (raw: string): boolean => L.afterNegators.has(raw) || raw === "without";
+          let k = i - 1;
+          while (
+            k >= 0 &&
+            !toks[k + 1].afterPause &&
+            !negates(toks[k].raw) &&
+            !ARTICLES.has(toks[k].raw) &&
+            (FUNCTION.has(toks[k].raw) || L.filler.has(toks[k].raw) || L.skipWords.has(toks[k].raw) || L.troubleSkip.has(toks[k].raw) || isBody(toks[k]))
+          )
+            k--;
+          if (k < 0 || toks[k + 1].afterPause || !negates(toks[k].raw)) continue;
+          let s = k;
+          if (toks[k].raw !== "without") {
+            while (s > 0 && !toks[s].afterPause) {
+              const b = toks[s - 1];
+              if (L.scopeBreaks.has(b.raw) || L.releaseStarts.has(b.raw) || cueAt(s - 1) || postWordAt(s - 1)) break;
+              if (LIST_JOINS.has(b.raw) && !(s - 2 >= 0 && bare(clauseStart(s - 2), s - 2))) break;
+              s--;
+            }
+          }
+          let e = i;
+          while (e + 1 < n && !toks[e + 1].afterPause && !L.scopeBreaks.has(toks[e + 1].raw) && !FORWARD_STOPS.has(toks[e + 1].raw) && !cueAt(e + 1) && !postWordAt(e + 1)) {
+            if (LIST_JOINS.has(toks[e + 1].raw) && !bare(e + 2, clauseEnd(e + 2))) break;
+            e++;
+          }
+          for (let x = s; x <= e; x++) cleared.add(x);
+          if (cueAt(k)) denying.add(k);
+          if (cueAt(i)) denying.add(i);
+          R.fire("constraint.release");
+        }
+      }
+
+      const cueHere = (i: number): Cue | undefined => (denying.has(i) ? undefined : cueAt(i));
+      const postHere = (i: number): Cue | undefined => (denied.has(i) ? undefined : postAt(i));
+      /**
+       * Hardening round: a cue the sentence before ended on covers this one only when its first clause is a list of what
+       * it covers ("Knee injury. Running, jumping, pivoting.", "Back pain. Running for now.", "Knee injury. Running until
+       * healed.") or holds a cue of its own ("Torn ACL. Running hurts."); never a sentence of its own ("Sprained ankle.
+       * Swimming three times a week is my plan.", "Knee injury. I'd like to get fitter.").
+       */
+      const carryInto = (): boolean => {
+        let terms = 0;
+        for (let k = 0; k < n; k++) {
+          const w = toks[k];
+          if (k > 0 && (w.afterPause || L.scopeBreaks.has(w.raw))) break;
+          if (cueHere(k) || postHere(k)) return true;
+          if (cleared.has(k)) return false;
+          // "Knee injury. Walking only." says what is left, not what to leave out.
+          if (w.raw === "only") return false;
+          if (L.releaseBlockers.has(w.raw)) return terms > 0;
+          if (isTerm(w)) terms++;
+          else if (!(L.itemWords.has(w.raw) || LIST_JOINS.has(w.raw) || L.genericWords.has(w.raw) || L.filler.has(w.raw) || L.whenWords.has(w.raw) || CARRY_LINKS.has(w.raw) || /\p{N}/u.test(w.raw))) return false;
+        }
+        return terms > 0;
+      };
+      let active: Cue | null = carryOn && carry != null && carryInto() ? carry : null;
+      /** The cue the sentence before handed over (constraint.carry). */
+      const carried: Cue | null = active;
+      carry = null;
+      let taken = 0;
+      /** Fix round 4: of those, the terms that are more than a body part ("injured my knee while running" still names running). */
+      let named = 0;
+      /** Any term read in this sentence (an elliptical negation reads the sentence before only when this one names nothing). */
+      let readHere = false;
       /**
        * A release word standing as a state ("is fine", "cleared to run",
        * "healed, …"): the clause ends after it, or a function, generic,
@@ -2391,8 +2885,8 @@ export function negatedTermsOf(constraints: string | null | undefined, opts?: Ru
         if (!L.releaseWords.has(toks[k].raw)) return false;
         const next = toks[k + 1];
         if (!next || next.afterPause) return true;
-        const n = next.raw;
-        return FUNCTION.has(n) || L.genericWords.has(n) || L.filler.has(n) || L.releaseStarts.has(n) || L.releaseWords.has(n) || L.scopeBreaks.has(n) || cueAt(k + 1) != null;
+        const nx = next.raw;
+        return FUNCTION.has(nx) || L.genericWords.has(nx) || L.filler.has(nx) || L.releaseStarts.has(nx) || L.releaseWords.has(nx) || L.scopeBreaks.has(nx) || cueHere(k + 1) != null;
       };
       /**
        * The clause from `from` clears what came before: the index of its
@@ -2401,61 +2895,328 @@ export function negatedTermsOf(constraints: string | null | undefined, opts?: Ru
        * ("but", "now"), which is skipped.
        */
       const releaseAt = (from: number): number => {
-        if (!R.on("constraint.release")) return -1;
-        for (let k = from; k < toks.length; k++) {
+        if (!releaseOn) return -1;
+        for (let k = from; k < n; k++) {
           const w = toks[k];
           if (k > from && w.afterPause) return -1;
           if (k === from && L.releaseStarts.has(w.raw)) continue;
-          if (L.scopeBreaks.has(w.raw) || cueAt(k)) return -1;
+          if (L.scopeBreaks.has(w.raw) || cueHere(k) || postHere(k)) return -1;
           if (L.releaseBlockers.has(w.raw)) return -1;
           if (releaseWordAt(k)) return k;
         }
         return -1;
       };
-      /** A word a cue's scope takes: no function, filler, generic or release word, number or single letter. */
-      const isTerm = (w: ConstraintToken): boolean =>
-        !(FUNCTION.has(w.raw) || w.raw === "nor" || L.filler.has(w.raw) || L.genericWords.has(w.raw) || /\p{N}/u.test(w.raw) || w.raw.length < 2 || L.releaseStarts.has(w.raw) || L.releaseWords.has(w.raw));
+      /**
+       * Fix round 4: the clause from `from` mirrors a release just before it ("and so is cycling", "and cycling too"): the
+       * index of its last word, or -1. No negation, blocker or cue in it.
+       */
+      const mirrorAt = (from: number): number => {
+        if (!releaseOn || from >= n) return -1;
+        let end = from;
+        while (end + 1 < n && !toks[end + 1].afterPause && !L.scopeBreaks.has(toks[end + 1].raw) && !LIST_JOINS.has(toks[end + 1].raw)) end++;
+        for (let k = from; k <= end; k++) if (L.releaseBlockers.has(toks[k].raw) || L.afterNegators.has(toks[k].raw) || cueAt(k) || postWordAt(k)) return -1;
+        const starts = L.mirrorStarts.some((m) => from + m.length - 1 <= end && m.every((w, x) => toks[from + x].raw === w));
+        const ends = L.mirrorEnds.some((m) => end - m.length + 1 >= from && m.every((w, x) => toks[end - m.length + 1 + x].raw === w));
+        return starts || ends ? end : -1;
+      };
+      /**
+       * Fix round 4: the terms before position c (a cue after its term, or a negating cue that judges what came before): back
+       * over its clause to a pause, a break, a cue or a release, across a join or a pause only into a bare list item, never
+       * over a cleared clause or a release word. `pronoun`: the clause held one; `edge`: the last word before the boundary it
+       * stopped at (-1: the sentence's start), or null at a release or a cue; `content`: any word other than a function,
+       * filler or skip word stood before c.
+       */
+      /** Hardening round: a who-said-it cue ("doctor says", "physio told me") whose last word is k: its first word's index, or -1. */
+      const authorityEndingAt = (k: number): number => {
+        for (const c of L.constraintCues) {
+          if (!L.authority.has(c.name) || !R.on(c.name) || c.words.length === 0) continue;
+          const s = k - c.words.length + 1;
+          if (s >= 0 && !denying.has(s) && c.words.every((w, x) => toks[s + x].raw === w)) return s;
+        }
+        return -1;
+      };
+      const readBack = (c: number): { terms: number[]; pronoun: boolean; edge: number | null; content: boolean } => {
+        const terms: number[] = [];
+        let pronoun = false;
+        let content = false;
+        for (let k = c - 1; k >= 0; k--) {
+          const w = toks[k];
+          // Hardening round: a read passes through who said it ("Running? My doctor said absolutely not." reads as "Running?
+          // Not."): as if its clause started after it.
+          const said = authorityEndingAt(k);
+          if (said >= 0) {
+            if (toks[said].afterPause && !(said > 0 && bare(clauseStart(said - 1), said - 1))) return { terms, pronoun, edge: said - 1, content };
+            k = said;
+            continue;
+          }
+          if (cleared.has(k) || denied.has(k) || L.releaseWords.has(w.raw) || cueHere(k) || postHere(k)) return { terms, pronoun, edge: null, content: true };
+          // A contrast ends the clause ("but", "however" …); "now" is an adverb here ("running now hurts").
+          if (L.scopeBreaks.has(w.raw)) return { terms, pronoun, edge: k - 1, content: true };
+          if (LIST_JOINS.has(w.raw)) {
+            if (k > 0 && bare(clauseStart(k - 1), k - 1)) continue;
+            return { terms, pronoun, edge: k - 1, content: true };
+          }
+          if (L.anaphora.has(w.raw)) pronoun = true;
+          if (!FUNCTION.has(w.raw) && !L.filler.has(w.raw) && !L.skipWords.has(w.raw)) content = true;
+          if (isTerm(w) && terms.length < 6) terms.push(k);
+          if (w.afterPause) {
+            if (k > 0 && bare(clauseStart(k - 1), k - 1)) continue;
+            return { terms, pronoun, edge: k - 1, content: true };
+          }
+        }
+        return { terms, pronoun, edge: -1, content };
+      };
+      /** Fix round 4: the terms after position j (a pain or verdict word with nothing but a body part before it): its clause, then across a pause or a join only into a bare item. */
+      const readForward = (j: number): number[] => {
+        const terms: number[] = [];
+        for (let k = j; k < n && terms.length < 6; k++) {
+          const w = toks[k];
+          if (w.afterPause && !bare(k, clauseEnd(k))) break;
+          if (cleared.has(k) || denied.has(k) || L.releaseWords.has(w.raw) || cueHere(k) || postHere(k) || L.scopeBreaks.has(w.raw)) break;
+          // "so" and "then" start what follows from it ("my knee hurts when I run, so I swim"), but not "so much".
+          if (FORWARD_STOPS.has(w.raw) && !L.filler.has(toks[k + 1]?.raw ?? "")) break;
+          if (LIST_JOINS.has(w.raw) && !bare(k + 1, clauseEnd(k + 1))) break;
+          if (isTerm(w)) terms.push(k);
+        }
+        return terms;
+      };
+      /** Fix round 4: the terms of the clause ending at `edge` (a pronoun's referent): back to its pause, break, join or cue; none when it clears. */
+      const clauseTermsBefore = (edge: number): ConstraintToken[] => {
+        const terms: ConstraintToken[] = [];
+        for (let k = edge; k >= 0; k--) {
+          const w = toks[k];
+          if (cleared.has(k) || denied.has(k) || L.releaseWords.has(w.raw)) return [];
+          if (cueHere(k) || postHere(k) || L.scopeBreaks.has(w.raw) || LIST_JOINS.has(w.raw)) break;
+          if (isTerm(w) && terms.length < 6) terms.push(w);
+          if (w.afterPause) break;
+        }
+        return terms;
+      };
+      /** Names what a read found; whether any of it is more than a body part. */
+      const nameAll = (ws: readonly ConstraintToken[], cue: Cue): boolean => {
+        let real = false;
+        for (const w of ws) {
+          readHere = true;
+          name(w, cue.name, "constraint.after");
+          if (!isBody(w)) real = true;
+        }
+        return real;
+      };
+      /** A pronoun's referent: the clause before the boundary, or the sentence before's last clause. */
+      const nameAnaphora = (edge: number, cue: Cue): boolean => nameAll(edge >= 0 ? clauseTermsBefore(edge) : prev?.anaphora ?? [], cue);
+      /**
+       * Fix round 4: a negating cue reads back as a cue after its term does ("running not allowed"); `elliptical` (its
+       * sentence's end, the sentence naming nothing): with nothing before it, a bare item ending the sentence before
+       * ("Running? Not anymore.").
+       */
+      const readNegation = (cue: Cue, c: number, elliptical: boolean): void => {
+        const back = readBack(c);
+        const real = nameAll(back.terms.map((k) => toks[k]), cue);
+        if (!real && back.pronoun && back.edge !== null) nameAnaphora(back.edge, cue);
+        else if (elliptical && back.terms.length === 0 && !back.content && back.edge === -1 && !readHere) nameAll(prev?.bare ?? [], cue);
+      };
+
       // A release clause in progress (fix round 3): the cue it holds back, with its count, restored where the clause ends.
       // `joins`: the clause names an activity before its release word ("swimming is fine"), so it also ends at an "and" or
       // "or" after that word ("… and running hurts"); a clause the release word opens ("now fully recovered and running
-      // daily", "cleared to run") runs to its pause, break or cue.
+      // daily", "cleared to run") runs to its pause, break or cue. `from`: its first word (fix round 4: a read never
+      // crosses it).
       // (Typed by assertion: `release` sets it, which a call's flow analysis can't see.)
-      let held = null as { cue: Cue; taken: number; at: number; joins: boolean } | null;
+      let held = null as { cue: Cue; taken: number; named: number; at: number; joins: boolean; from: number } | null;
       // The held cue was just restored: a contrast word here answers the release, not the cue, so it ends nothing.
       let reopened = false;
+      /** Fix round 4: a negating cue whose own clause has named nothing yet; at the clause's end it may judge what came before. */
+      let pend = null as { cue: Cue; at: number; took: boolean } | null;
+      /** Fix round 4: a state cue or a pain word that has named nothing but a body part; at the sentence's end it covers the next one. */
+      let state = null as { cue: Cue; other: boolean } | null;
+      const names = (from: number, at: number): boolean => toks.slice(from, at).some((w) => isTerm(w) && !RELEASE_DEGREE.test(w.raw));
       const release = (from: number, at: number) => {
-        if (active) held = { cue: active, taken, at, joins: toks.slice(from, at).some((w) => isTerm(w) && !RELEASE_DEGREE.test(w.raw)) };
+        if (active) held = { cue: active, taken, named, at, joins: names(from, at), from };
         active = null;
         reopened = false;
+        state = null;
+        here.lastCue = null;
         R.fire("constraint.release");
       };
-      for (let i = 0; i < toks.length; i++) {
-        const cue = cueAt(i);
+      const settle = (atEnd: boolean) => {
+        const p = pend;
+        pend = null;
+        if (p && !p.took && afterOn) readNegation(p.cue, p.at, atEnd);
+      };
+      /** A scope that a break right after it leaves open: a state cue's, a pain word's or a carried one ("injured while running"). */
+      const stateLike = (c: Cue): boolean => L.stateCues.has(c.name) || c === carried || L.postCues.includes(c);
+      /**
+       * Hardening round: the clause from `from` mirrors a negative verdict just before it ("Weights are a no-go and so is
+       * running", "Running hurts, jumping too", "Running hurts. So does jumping."): the index of its last word, or -1. It
+       * holds a term, and no negation, blocker, release or verdict word or cue (constraint.after).
+       */
+      const negMirrorAt = (from: number): number => {
+        if (!afterOn || from >= n) return -1;
+        let end = from;
+        while (end + 1 < n && !toks[end + 1].afterPause && !L.scopeBreaks.has(toks[end + 1].raw) && !LIST_JOINS.has(toks[end + 1].raw)) end++;
+        let terms = 0;
+        for (let k = from; k <= end; k++) {
+          const w = toks[k];
+          if (cleared.has(k) || L.releaseBlockers.has(w.raw) || L.afterNegators.has(w.raw) || L.releaseWords.has(w.raw) || L.verdict.has(w.raw) || cueAt(k) || postWordAt(k)) return -1;
+          if (isTerm(w)) terms++;
+        }
+        if (terms === 0) return -1;
+        const starts = L.mirrorStarts.some((m) => from + m.length - 1 <= end && m.every((w, x) => toks[from + x].raw === w));
+        const ends = L.mirrorEnds.some((m) => end - m.length + 1 >= from && m.every((w, x) => toks[end - m.length + 1 + x].raw === w));
+        return starts || ends ? end : -1;
+      };
+      /**
+       * Hardening round: a positive "can" at i opens a clause of its own (a pause, a join, a contrast, "so" or "then" before
+       * it, past function words, pronouns and skip words), not before a negation ("can hardly walk", "can not").
+       */
+      const canOpensAt = (i: number): boolean => {
+        let v = i + 1;
+        while (v < n && !toks[v].afterPause && (L.filler.has(toks[v].raw) || L.skipWords.has(toks[v].raw))) v++;
+        if (v < n && !toks[v].afterPause && (L.afterNegators.has(toks[v].raw) || cueAt(v) != null)) return false;
+        for (let k = i; k > 0; k--) {
+          if (toks[k].afterPause) return true;
+          const b = toks[k - 1].raw;
+          // Who said it opens a clause too ("Doctor said I can run, but no jumping").
+          if (LIST_JOINS.has(b) || L.scopeBreaks.has(b) || FORWARD_STOPS.has(b) || authorityEndingAt(k - 1) >= 0) return true;
+          if (!(FUNCTION.has(b) || L.anaphora.has(b) || L.skipWords.has(b))) return false;
+        }
+        return true;
+      };
+      // Hardening round: a sentence that mirrors the sentence before's negative verdict ("Running hurts. So does jumping.",
+      // "No running. Jumping too.") names its terms with that cue.
+      let start = 0;
+      if (prevNeg && !carried) {
+        const m = negMirrorAt(0);
+        if (m >= 0) {
+          for (let k = 0; k <= m; k++) {
+            if (!isTerm(toks[k])) continue;
+            readHere = true;
+            name(toks[k], prevNeg, "constraint.after");
+          }
+          start = m + 1;
+        }
+      }
+      for (let i = start; i < n; i++) {
         const t = toks[i];
+        const post = postHere(i);
+        const cue = post ? undefined : cueHere(i);
+        // A pending negation's own clause ends here: it may judge what came before it ("running is a no").
+        if (pend && (cue || post || t.afterPause || L.scopeBreaks.has(t.raw))) settle(false);
         // A release clause ends at the next pause, break or cue (or its join): the cue it held back covers what follows
         // ("knee injury, swimming ok, running not ok" names running). A new cue starts its own scope instead.
-        if (held && (cue || t.afterPause || L.scopeBreaks.has(t.raw) || (held.joins && i > held.at && RELEASE_CLAUSE_JOINS.has(t.raw)))) {
+        let justEnded = false;
+        if (held && (cue || post || t.afterPause || L.scopeBreaks.has(t.raw) || (held.joins && i > held.at && RELEASE_CLAUSE_JOINS.has(t.raw)))) {
+          for (let k = held.from; k < i; k++) cleared.add(k);
+          // Fix round 4: the clause after its "and" or "or" clears too when it holds a release word of its own or mirrors the
+          // release ("swimming fine and running ok", "swimming is fine and so is cycling").
+          if (!cue && !post && !t.afterPause && !L.scopeBreaks.has(t.raw)) {
+            const again = releaseAt(i + 1);
+            const at = again >= 0 ? again : mirrorAt(i + 1);
+            if (at >= 0) {
+              held = { cue: held.cue, taken: held.taken, named: held.named, at, joins: again < 0 || names(i + 1, at), from: i + 1 };
+              R.fire("constraint.release");
+              continue;
+            }
+          }
           if (!cue) {
             active = held.cue;
             taken = held.taken;
+            named = held.named;
             reopened = true;
           }
           held = null;
+          justEnded = true;
         }
-        // A pause opens a clause: one that clears what the cue named negates nothing ("knee injury, running is fine").
-        if (active && !cue && t.afterPause) {
+        // A pause opens a clause: one that clears what the cue named negates nothing ("knee injury, running is fine"); right
+        // after a release, one that mirrors it clears too ("swimming is fine, cycling too"). A carried cue's sentence opens
+        // as a clause does.
+        if (active && !cue && !post && (t.afterPause || (i === 0 && carried != null))) {
           const at = releaseAt(i);
-          if (at >= 0) release(i, at);
+          const m = at < 0 && justEnded ? mirrorAt(i) : -1;
+          if (at >= 0 || m >= 0) release(i, at >= 0 ? at : m);
+        }
+        // Fix round 4: a pain or verdict word after its term (constraint.after).
+        if (post) {
+          const before = new Set(out.keys());
+          const back = readBack(i);
+          let real = nameAll(back.terms.map((k) => toks[k]), post);
+          // Hardening round: a time before it, and nothing else, is what it judges ("Weekends are off limits for visits" names
+          // no visits): it reads no further.
+          let timed = false;
+          if (back.terms.length === 0) {
+            for (let k = i - 1; k >= 0; k--) {
+              if (L.whenWords.has(toks[k].raw)) {
+                timed = true;
+                break;
+              }
+              if (toks[k].afterPause || cueHere(k) || postHere(k) || L.scopeBreaks.has(toks[k].raw)) break;
+            }
+          }
+          if (!real && !timed) real = nameAll(readForward(i + post.words.length).map((k) => toks[k]), post);
+          // A pronoun stands for the activity before it ("I love running but it hurts", "I used to run. It hurts now."); so,
+          // within the sentence, does a body part with nothing after it ("running is my favourite but my knee hurts").
+          if (!real && !timed && back.edge !== null && (back.pronoun || (back.edge >= 0 && back.terms.some((k) => isBody(toks[k]))))) real = nameAnaphora(back.edge, post);
+          else if (!real && !timed && back.terms.length === 0 && !back.content && back.edge === -1 && !readHere) real = nameAll(prev?.bare ?? [], post);
+          state = real || timed ? null : { cue: post, other: false };
+          i += post.words.length - 1;
+          // Hardening round: a release whose subject is only a pronoun takes back what it named (constraint.release): "Squats
+          // used to hurt but they're fine now", "Running hurt, but it's healed now".
+          if (real && releaseOn) {
+            let k = i + 1;
+            while (k < n && !toks[k].afterPause && !L.releaseStarts.has(toks[k].raw) && !L.scopeBreaks.has(toks[k].raw) && !cueHere(k) && !postHere(k)) k++;
+            const at = k < n && !cueHere(k) && !postHere(k) ? releaseAt(k) : -1;
+            if (at >= 0 && toks.slice(k, at).every((w) => !isTerm(w)) && toks.slice(k, at).some((w) => L.anaphora.has(w.raw))) {
+              for (const s of Array.from(out.keys())) if (!before.has(s)) out.delete(s);
+              for (let x = k; x <= at; x++) cleared.add(x);
+              here.lastCue = null;
+              R.fire("constraint.release");
+              i = at;
+              continue;
+            }
+          }
+          // Hardening round: a mirror after it, past the rest of its clause, names its terms too ("Weights are a no-go and so
+          // is running", "Running hurts my knee, jumping too").
+          if (real) {
+            let k = i + 1;
+            while (k < n && !toks[k].afterPause && !LIST_JOINS.has(toks[k].raw) && !L.scopeBreaks.has(toks[k].raw) && !cueHere(k) && !postHere(k)) k++;
+            if (k < n && !L.scopeBreaks.has(toks[k].raw) && !cueHere(k) && !postHere(k)) {
+              const from = LIST_JOINS.has(toks[k].raw) ? k + 1 : k;
+              const m = negMirrorAt(from);
+              if (m >= 0) {
+                nameAll(toks.slice(from, m + 1).filter(isTerm), post);
+                i = m;
+              }
+            }
+          }
+          continue;
         }
         if (cue) {
+          const c = i;
           active = cue;
           taken = 0;
+          named = 0;
           reopened = false;
           i += cue.words.length - 1;
+          const isState = L.stateCues.has(cue.name);
+          state = isState ? { cue, other: false } : null;
+          // Hardening round: a pain or injury cue after a cause names what caused it, back over its clause ("Running causes me
+          // knee pain", "Running = pain"; constraint.after). Never who said it.
+          if (isState && afterOn && !L.authority.has(cue.name) && toks.slice(clauseStart(c), c).some((w) => L.causeWords.has(w.raw))) {
+            const back = readBack(c);
+            if (nameAll(back.terms.map((k) => toks[k]), cue)) state = null;
+          }
           // A state cue whose own clause clears it negates nothing there ("knee injury healed", "doctor says running is fine").
-          if (L.stateCues.has(cue.name) && i + 1 < toks.length && !toks[i + 1].afterPause) {
+          if (isState && i + 1 < n && !toks[i + 1].afterPause) {
             const at = releaseAt(i + 1);
             if (at >= 0) release(i + 1, at);
+          }
+          // Fix round 4: a negating cue may judge what came before it. A verdict or release word right after it does at once
+          // ("running not allowed", "running is not ok"); otherwise at its clause's end, if it named nothing after it.
+          if (!isState && afterOn) {
+            pend = { cue, at: c, took: false };
+            let v = i + 1;
+            while (v < n && !toks[v].afterPause && (FUNCTION.has(toks[v].raw) || L.filler.has(toks[v].raw) || L.skipWords.has(toks[v].raw))) v++;
+            if (v < n && !toks[v].afterPause && (L.verdict.has(toks[v].raw) || L.releaseWords.has(toks[v].raw))) readNegation(cue, c, false);
           }
           continue;
         }
@@ -2468,24 +3229,79 @@ export function negatedTermsOf(constraints: string | null | undefined, opts?: Ru
           }
         }
         // A break ends a cue's scope only once the cue has taken a term (fix round, lens 1 K): "injured while running" names
-        // running, while "no running while pregnant" and "no running, but swimming is fine" still stop after running.
+        // running, while "no running while pregnant" and "no running, but swimming is fine" still stop after running. Fix
+        // round 4: a body part is no such term ("injured my knee while running", "sprained my ankle while sprinting").
+        // Fix round 4: right after a negating cue that has named nothing, "but" or "except" says what is left ("nothing but
+        // swimming", "no exercise except walking"; CONSTRAINT_EXCEPT_WORDS): the cue ends there (constraint.release). "not
+        // yet cleared to run" still names run.
         if (L.scopeBreaks.has(t.raw)) {
-          if (taken > 0 && !reopened) active = null;
+          if (named > 0 && !reopened) active = null;
+          else if (active && taken === 0 && !reopened && !stateLike(active) && L.exceptWords.has(t.raw) && releaseOn) {
+            active = null;
+            R.fire("constraint.release");
+          }
           continue;
         }
-        if (!active || taken >= 6 || !isTerm(t)) continue;
-        taken += 1;
-        reopened = false;
-        if (!out.has(t.stem)) {
-          out.set(t.stem, { word: t.raw, stem: t.stem, cue: active.name });
-          R.fire(active.name);
+        // Hardening round: a positive "can" opening its clause ends the scope (constraint.release): "Can't run, can't jump,
+        // can lift" never names lift; "no running so I can swim" never names swim.
+        if (active && releaseOn && L.canWords.has(t.raw) && canOpensAt(i)) {
+          active = null;
+          state = null;
+          R.fire("constraint.release");
+          continue;
         }
+        if (!active || taken >= 6 || cleared.has(i) || !isTerm(t)) continue;
+        taken += 1;
+        if (!isBody(t)) named += 1;
+        reopened = false;
+        readHere = true;
+        if (pend && pend.cue === active) pend.took = true;
+        if (state && state.cue === active && !isBody(t)) state.other = true;
+        name(t, active.name, active === carried ? "constraint.carry" : undefined);
       }
+      settle(true);
+      if (held) for (let k = held.from; k < n; k++) cleared.add(k);
+      // Fix round 4: a state cue or a pain word that named nothing but a body part covers the next sentence ("Knee injury.
+      // Running, jumping, pivoting."); a carried cue carries no further.
+      carry = carryOn && state && !state.other && state.cue !== carried ? state.cue : null;
+      prevNeg = here.lastCue;
+      // The sentence's last clause, for the next sentence's pronoun ("It hurts now.") or elliptical negation ("No.").
+      const lastFrom = clauseStart(n - 1);
+      prev = { anaphora: clauseTermsBefore(n - 1), bare: bare(lastFrom, n - 1) ? toks.slice(lastFrom, n).filter((w, x) => isTerm(w) && !cleared.has(lastFrom + x)) : [] };
+      prevSpan = { start: span.start, toks: new Set(toks) };
     }
     return Array.from(out.values());
   } catch {
     return [];
   }
+}
+
+/**
+ * Fix round 4: the last part of a compound the user wrote ("high-impact" →
+ * impact, "long-distance" → distance, "box-jumps" → jump), which a kind's
+ * word meets (constraint.compound): "nothing high-impact" leaves out the
+ * Harder session. Never its first part ("run-throughs" is not "run"), and
+ * never a word too general or too short to name an activity ("full-time",
+ * "warm-ups"). Null for a one-word term.
+ */
+function compoundHeadOf(t: NegatedTerm, L: Lexicon): string | null {
+  if (!t.stem.includes("-")) return null;
+  const raw = t.word.split(/[-‐‑]/u).filter(Boolean).pop() ?? "";
+  const head = t.stem.split("-").filter(Boolean).pop() ?? "";
+  if (!head || raw.length < 3 || /\p{N}/u.test(raw) || FUNCTION.has(raw) || L.filler.has(raw) || L.genericWords.has(raw) || L.skipWords.has(raw) || L.verdict.has(raw)) return null;
+  return head;
+}
+
+/** The negated term a text's stems meet: by its stem first, then (constraint.compound) a compound by its last part. */
+function termMeeting(terms: readonly NegatedTerm[], stems: ReadonlySet<string>, L: Lexicon, R: Rules): NegatedTerm | undefined {
+  const exact = terms.find((t) => stems.has(t.stem));
+  if (exact || !R.on("constraint.compound")) return exact;
+  const byHead = terms.find((t) => {
+    const head = compoundHeadOf(t, L);
+    return head != null && stems.has(head);
+  });
+  if (byHead) R.fire("constraint.compound");
+  return byHead;
 }
 
 /** What constraintExclusionsOf fills a kind's label with: plain strings (a branded CatalogFill is one too). */
@@ -2496,6 +3312,57 @@ export interface ExclusionFill {
   exam?: string | null;
 }
 
+/** Hardening round: the stems of a catalog type's own words on a track (its keywords and its template's words), never its fill. */
+function ownStemsOf(entry: (typeof CATALOG)[number], track: CatalogTrack): Set<string> {
+  return new Set(constraintTokens([entry.keywords.join(" \n "), catalogTemplateOf(entry, track).replace(/\{\w+\}/g, " ")].join(" \n ")).map((t) => t.stem));
+}
+
+const activityStemsCache = new Map<string, ReadonlySet<string>>();
+/**
+ * Hardening round: the stems that name an activity on a track (every
+ * practice type's own words there: run, lift, stretch, call, visit, admin,
+ * recall, reading, writing …), or on any track (null). "Inference",
+ * "Probability", "care", "fitter" and "swimming" name none.
+ */
+function activityStemsOf(track: CatalogTrack | null): ReadonlySet<string> {
+  const key = track ?? "*";
+  const hit = activityStemsCache.get(key);
+  if (hit) return hit;
+  const out = new Set<string>();
+  for (const e of CATALOG) {
+    if (e.slot !== "PRACTICE") continue;
+    for (const t of e.tracks) if (track == null || t === track) for (const s of ownStemsOf(e, t)) out.add(s);
+  }
+  activityStemsCache.set(key, out);
+  return out;
+}
+
+/**
+ * Hardening round (constraint.fill; the verifier's finding #1): may this term
+ * meet a kind through its fill (the Domain names, the aim, the exam)? A term
+ * a negating cue named ("no running", "no Inference") may, as before. One
+ * read after its cue, carried from the sentence before or taken in a state
+ * cue's scope (NegatedTerm.read) may only when it names an activity
+ * (activityStemsOf): "Inference is too hard for me" never leaves out the 19
+ * Domain-filled Field kinds, "Mum's care is too much for me alone" no care
+ * kind, "Knee injury, I'd like to get fitter" never meets "Feel fitter by
+ * summer"; while "running hurts my knee" still meets "Performance check: Run
+ * a sub-50 10K".
+ */
+function fillable(t: NegatedTerm, activity: ReadonlySet<string>, L: Lexicon, R: Rules): boolean {
+  if (!t.read || !R.on("constraint.fill")) return true;
+  if (activity.has(t.stem)) return true;
+  const head = R.on("constraint.compound") ? compoundHeadOf(t, L) : null;
+  return head != null && activity.has(head);
+}
+
+/** A term meets a text's stems: by its stem, or (byHead) a compound by its last part. */
+function meetsStems(t: NegatedTerm, stems: ReadonlySet<string>, byHead: boolean, L: Lexicon): boolean {
+  if (!byHead) return stems.has(t.stem);
+  const head = compoundHeadOf(t, L);
+  return head != null && stems.has(head);
+}
+
 /**
  * The constraint filter (F-R4-17): each kind whose RENDERED label meets a
  * negated term of the constraints is excluded, with the word that excluded
@@ -2503,18 +3370,50 @@ export interface ExclusionFill {
  * track, and its fill (the Domain names, the aim, the exam label) for the
  * slots its template has, so "Performance check: Run a sub-50 10K" is
  * excluded by "no running" while "Easy session" is not. Matched by stem; a
- * hyphenated compound only whole ("run-throughs" is not "run"). The fill's
+ * hyphenated compound only whole ("run-throughs" is not "run"), or (fix
+ * round 4, a compound the user wrote) by its last part ("nothing
+ * high-impact" meets "impact"; compoundHeadOf). The fill's
  * Domain names are all of them (a label past three names shows "and two
- * more"; the filter reads every one). Never throws.
+ * more"; the filter reads every one). Hardening round: a term read after
+ * its cue, carried or in a state cue's scope meets the fill only when it
+ * names an activity (fillable, constraint.fill). These exclusions only
+ * pre-fill the confirm (contracts §19): they never unlock a kind, and (the
+ * safety-gaps round, decision 7) never block one either: they are the
+ * activity card's pre-ticks, and the run leaves out only what the gate
+ * blocks (runExclusionsOf). The safety-gaps round also keeps them from
+ * suggesting what the user didn't say to avoid: a word too general to name
+ * a type meets none (constraint.generic: "No timed practice" names Timed
+ * practice, never Writing practice), and on a Field plan a term from a
+ * sentence about the body meets none (constraint.field-body: "No writing by
+ * hand, I have RSI in my wrist"). Never throws.
  */
 export function constraintExclusionsOf(constraints: string | null, kinds: readonly CatalogKey[], fill: ExclusionFill, opts?: RuleOpts): ConstraintExclusion[] {
-  const terms = negatedTermsOf(constraints, opts);
-  if (terms.length === 0) return [];
+  const placed = placedTermsOf(constraints, opts);
+  if (placed.length === 0) return [];
   const R = rulesOf(opts);
   const out: ConstraintExclusion[] = [];
   const done = new Set<string>();
   try {
+    const L = lexiconOf(opts);
     const track = fill?.track ?? "FIELD";
+    const activity = activityStemsOf(track);
+    const usable = (t: NegatedTerm): boolean => fillable(t, activity, L, R);
+    // The safety-gaps round (contracts §19, decision 7: what this names is a suggestion, never a block). A word too general to
+    // name a type names none (constraint.generic: "No timed practice" never names Writing practice); on a Field plan a term
+    // from a sentence about the body names none (constraint.field-body: knowledge practice is never held by a body cue, so
+    // "No writing by hand, I have RSI in my wrist" suggests nothing there).
+    const skippedBy = (p: PlacedTerm): RuleName | null =>
+      R.on("constraint.generic") && L.genericKind.has(p.term.stem)
+        ? "constraint.generic"
+        : track === "FIELD" && R.on("constraint.field-body") && bodySpanOf(constraints as string, p.start, p.end, L)
+          ? "constraint.field-body"
+          : null;
+    const skipped = new Map<NegatedTerm, RuleName>();
+    for (const p of placed) {
+      const why = skippedBy(p);
+      if (why) skipped.set(p.term, why);
+    }
+    const terms = placed.map((p) => p.term).filter((t) => !skipped.has(t));
     const fillText = (slot: string): string =>
       slot === "domains" ? (fill?.domains ?? []).join(" \n ") : slot === "aim" ? fill?.aim ?? "" : slot === "exam" ? fill?.exam ?? "" : "";
     for (const kind of Array.isArray(kinds) ? kinds : []) {
@@ -2524,9 +3423,21 @@ export function constraintExclusionsOf(constraints: string | null, kinds: readon
       if (!entry) continue;
       const template = catalogTemplateOf(entry, track);
       const slots = Array.from(template.matchAll(/\{(\w+)\}/g), (m) => m[1]);
-      const text = [entry.keywords.join(" \n "), template.replace(/\{\w+\}/g, " "), ...slots.map(fillText)].join(" \n ");
-      const stems = new Set(constraintTokens(text).map((t) => t.stem));
-      const term = terms.find((t) => stems.has(t.stem));
+      const own = ownStemsOf(entry, track);
+      const filled = new Set(constraintTokens(slots.map(fillText).join(" \n ")).map((t) => t.stem));
+      // termMeeting's order (by stem, then a compound by its last part), with a held-back term meeting the kind's own words only.
+      const meets = (list: readonly NegatedTerm[], byHead: boolean): NegatedTerm | undefined => list.find((t) => meetsStems(t, own, byHead, L) || (meetsStems(t, filled, byHead, L) && usable(t)));
+      const pick = (byHead: boolean): NegatedTerm | undefined => meets(terms, byHead);
+      let term = pick(false);
+      if (!term && R.on("constraint.compound")) {
+        term = pick(true);
+        if (term) R.fire("constraint.compound");
+      }
+      if (!term && filled.size > 0 && terms.some((t) => !usable(t) && (meetsStems(t, filled, false, L) || (R.on("constraint.compound") && meetsStems(t, filled, true, L))))) R.fire("constraint.fill");
+      if (!term && skipped.size > 0) {
+        const would = meets(Array.from(skipped.keys()), false) ?? (R.on("constraint.compound") ? meets(Array.from(skipped.keys()), true) : undefined);
+        if (would) R.fire(skipped.get(would) as RuleName);
+      }
       if (term && R.on("constraint.label")) {
         R.fire("constraint.label");
         out.push({ kind: entry.key, word: term.word });
@@ -2538,13 +3449,118 @@ export function constraintExclusionsOf(constraints: string | null, kinds: readon
   return out;
 }
 
-/** The aim itself meets a negated term ("Your constraints say 'no running' and your aim is 'Run a sub-50 10K'"): the term's word, or null. */
-export function aimConflictOf(constraints: string | null | undefined, aim: string, opts?: RuleOpts): AimConflict | null {
-  const terms = negatedTermsOf(constraints, opts);
-  if (terms.length === 0 || typeof aim !== "string") return null;
+/** The cue classes that make a sentence about the body (constraint.field-body): an injury, a pain, a health condition or a body part. */
+const BODY_CUE_CLASSES: ReadonlySet<CueClass> = new Set<CueClass>(["INJURY", "PAIN", "HEALTH", "BODY_PART"]);
+
+/**
+ * The safety-gaps round (constraint.field-body): is text[start, end) about
+ * the body? A body part the reader knows (CONSTRAINT_BODY_PARTS), or a cue of
+ * the app's one body reading (roadmap-types constraintCuesOf: an injury, a
+ * pain, a health condition or a body part, "RSI" and "my wrist" among them).
+ */
+function bodySpanOf(text: string, start: number, end: number, L: Lexicon): boolean {
+  const s = text.slice(start, end);
+  if (constraintTokens(s).some((w) => L.bodyStems.has(w.stem))) return true;
+  try {
+    return constraintCuesOf(s).cues.some((c) => BODY_CUE_CLASSES.has(c.cls));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The user's own words for a term's place (decision 6): its sentence (from
+ * the sentence before when that one carried it), verbatim with its closing
+ * mark, trimmed, so the line can check it against the constraints; at most
+ * ACTIVITY_REASON_MAX characters, else cut at spaces around the term with
+ * "…" where cut.
+ */
+function quoteOf(text: string, start: number, end: number, word: string): string {
+  let e = end;
+  while (e < text.length && /[.!?]/u.test(text[e])) e++;
+  const s = text.slice(start, e).trim();
+  const max = ACTIVITY_REASON_MAX;
+  if (s.length <= max) return s;
+  const at = Math.max(0, s.toLowerCase().indexOf(word.toLowerCase()));
+  const room = max - 2;
+  let ws = Math.max(0, Math.min(at - Math.floor(Math.max(0, room - word.length) / 2), s.length - room));
+  let we = Math.min(s.length, ws + room);
+  if (ws > 0) {
+    const sp = s.indexOf(" ", ws);
+    if (sp >= 0 && sp < at) ws = sp + 1;
+  }
+  if (we < s.length) {
+    const sp = s.lastIndexOf(" ", we);
+    if (sp > at + word.length) we = sp;
+  }
+  return `${ws > 0 ? "…" : ""}${s.slice(ws, we).trim()}${we < s.length ? "…" : ""}`;
+}
+
+/**
+ * The aim conflict as the safety-gaps round gives it (decision 6): the term's
+ * word, and `quote`, the user's own sentence holding it (quoteOf), which the
+ * line quotes ("You wrote: 'Shin splints flare up if …'") instead of putting
+ * "no <word>" in their mouth.
+ */
+export interface AimConflictQuote extends AimConflict {
+  quote: string;
+}
+
+/**
+ * The aim itself meets a negated term of the constraints: the term's word and
+ * the user's sentence holding it (AimConflictQuote), or null. Hardening
+ * round: a term read after its cue, carried or in a state cue's scope counts
+ * only when it names an activity on any track (constraint.fill), so "Knee
+ * injury. I'd like to get fitter." never meets "Feel fitter by summer", nor
+ * "Sprained ankle. Swimming three times a week is my plan." "Swim 1 km". The
+ * safety-gaps round: a word too general to name a type meets no aim
+ * (constraint.generic: "No practice on Sundays" against "Practice piano
+ * daily"), and a word held to a limit is no conflict (constraint.limit:
+ * "Shin splints flare up if I run more than twice a week" against "Run a
+ * sub-25 5K"). Show it only while it is unresolved (unresolvedAimConflictOf).
+ */
+export function aimConflictOf(constraints: string | null | undefined, aim: string, opts?: RuleOpts): AimConflictQuote | null {
+  const placed = placedTermsOf(constraints, opts);
+  if (placed.length === 0 || typeof aim !== "string" || typeof constraints !== "string") return null;
+  const L = lexiconOf(opts);
+  const R = rulesOf(opts);
+  const silent: Rules = { on: R.on, fire: () => undefined };
   const stems = new Set(constraintTokens(aim).map((t) => t.stem));
-  const hit = terms.find((t) => stems.has(t.stem));
-  return hit ? { word: hit.word } : null;
+  const activity = activityStemsOf(null);
+  const terms = placed.map((p) => p.term);
+  const named = R.on("constraint.generic") ? terms.filter((t) => !L.genericKind.has(t.stem)) : terms;
+  const usable = named.filter((t) => fillable(t, activity, L, R));
+  const hit = termMeeting(usable, stems, L, R);
+  if (!hit && usable.length < named.length && termMeeting(named, stems, L, silent)) R.fire("constraint.fill");
+  if (!hit && named.length < terms.length && termMeeting(terms, stems, L, silent)) R.fire("constraint.generic");
+  const p = hit ? placed.find((x) => x.term === hit) : undefined;
+  return hit && p ? { word: hit.word, quote: quoteOf(constraints, p.start, p.end, hit.word) } : null;
+}
+
+/**
+ * Decision 6: the aim-conflict line shows only while the conflict is
+ * unresolved, i.e. until the user has answered the activity card under their
+ * current words, and again while a kind waits on it (gate.answered null, or
+ * gate.pending not empty). Once answered, whatever the answer (what they
+ * ticked is left out by their own choice, what they left unticked is placed),
+ * null. With no conflict, null; with no gate (no card read), the conflict.
+ */
+export function unresolvedAimConflictOf<C extends AimConflict>(conflict: C | null | undefined, gate: Pick<ActivityGate, "answered" | "pending"> | null | undefined): C | null {
+  if (!conflict) return null;
+  if (!gate) return conflict;
+  return gate.answered == null || (Array.isArray(gate.pending) && gate.pending.length > 0) ? conflict : null;
+}
+
+/**
+ * What a run leaves out because of the user's words (contracts §19.5;
+ * PackRun.exclusions, ValidatedDraft.exclusions): each kind the reader names
+ * (constraintExclusionsOf: a suggestion) that the gate blocks (PENDING or
+ * AVOID), with its word, in the suggestions' order. A suggestion the gate
+ * doesn't block stays in the run (decision 7: a suggestion never blocks).
+ */
+export function runExclusionsOf(suggestions: readonly ConstraintExclusion[], gate: Pick<ActivityGate, "blocked">): ConstraintExclusion[] {
+  const blocked = new Set<string>(Array.isArray(gate?.blocked) ? gate.blocked : []);
+  return (Array.isArray(suggestions) ? suggestions : []).filter((x) => !!x && blocked.has(x.kind)).map((x) => ({ kind: x.kind, word: x.word }));
 }
 
 /**
@@ -3108,14 +4124,19 @@ function keysOnlyInner(parsed: unknown, ctx: KeysOnlyContext, report: Validation
   };
   const issuedLines = Array.from(new Set(Object.values(sIndex))).sort((a, b) => a - b);
   const unassignedLines = issuedLines.filter((i) => !(typeof lineDomains[i] === "string" && required.has(lineDomains[i] as string)));
+  // A pack with no run facts (written before revision 4): the gate's reading of the intake, as buildEvidencePack's
+  // (contracts §19.5: what the user's words name and the gate blocks; a suggestion alone never drops a pick).
   const exclusions =
     run?.exclusions ??
-    constraintExclusionsOf(
-      intake.constraints,
-      CATALOG.filter((e) => e.tracks.includes(track)).map((e) => e.key),
-      { track, domains: Array.from(required, (id) => nameOf(id) ?? ""), aim: intake.aim, exam: exam ? intake.examLabel : null },
-      opts
-    );
+    (() => {
+      const suggestions = constraintExclusionsOf(
+        intake.constraints,
+        CATALOG.filter((e) => e.tracks.includes(track)).map((e) => e.key),
+        { track, domains: Array.from(required, (id) => nameOf(id) ?? ""), aim: intake.aim, exam: exam ? intake.examLabel : null },
+        opts
+      );
+      return runExclusionsOf(suggestions, activityGateOf(intake, suggestions));
+    })();
   const excluded = new Set(exclusions.map((e) => e.kind as string));
   const draft = (milestones: MilestoneDraft[], extra: Partial<ValidatedDraft>, placed: ReadonlySet<number>): ValidatedDraft => ({
     milestones,
@@ -3416,8 +4437,22 @@ export const RULE_NAMES: readonly RuleName[] = Array.from(
     "resource.word",
     ...DEFAULT_LEXICON.cues.map((c) => `cue.${c.join(" ")}`),
     ...LX.NEGATION_CUES_AFTER.map((c) => `cue.${c}`),
+    // Fix round 4: each cue written after its term, and the reader's new rules (negatedTermsOf, constraintExclusionsOf).
+    ...DEFAULT_LEXICON.postCues.map((c) => c.name),
     "constraint.label",
     "constraint.release",
+    "constraint.after",
+    "constraint.carry",
+    "constraint.compound",
+    // Hardening round: a state word before a body part ("Bad knees."), and a held-back term kept off a kind's fill.
+    "constraint.body",
+    "constraint.fill",
+    // The safety-gaps round (contracts §19, decision 7: a suggestion never blocks): a word too general to name a type, a
+    // word held to a limit, advice to go gently, and a body sentence on a Field plan name nothing.
+    "constraint.generic",
+    "constraint.limit",
+    "constraint.gentle",
+    "constraint.field-body",
     "keys.rejected",
     "keys.unknown",
     "keys.need",
@@ -3493,4 +4528,48 @@ export const RULE_EXAMPLES: Readonly<Record<string, string>> = {
   "cue.injury": "injury from running",
   "cue.injured": "injured running",
   "cue.pain": "pain when running",
+  // Fix round 4 (CONSTRAINT_EXTRA_CUES, CONSTRAINT_INJURY_CUES).
+  "cue.nothing": "nothing high-impact",
+  "cue.tore": "tore my ACL running",
+  "cue.torn": "torn ACL from running",
+  "cue.sprain": "sprained my ankle running",
+  "cue.fracture": "stress fracture from running",
+  // Hardening round (CONSTRAINT_MORE_CUES, CONSTRAINT_MORE_INJURY_CUES, CONSTRAINT_AUTHORITY_CUES).
+  "cue.never": "never running",
+  "cue.shouldn't": "I shouldn't run",
+  "cue.mustn't": "I mustn't run",
+  "cue.not supposed to": "not supposed to run",
+  "cue.stay away from": "stay away from running",
+  "cue.keep away from": "keep away from running",
+  "cue.steer clear of": "steer clear of running",
+  "cue.stay off": "stay off running",
+  "cue.keep off": "keep off running",
+  "cue.me off": "wants me off running",
+  "cue.surgery": "knee surgery from running",
+  "cue.operation": "operation after running",
+  "cue.replacement": "hip replacement after running",
+  "cue.splints": "shin splints from running",
+  "cue.strain": "hamstring strain from sprinting",
+  "cue.hernia": "hernia from lifting",
+  "cue.tendinitis": "tendinitis from running",
+  "cue.tendonitis": "tendonitis from running",
+  "cue.fasciitis": "plantar fasciitis from running",
+  "cue.arthritis": "arthritis from running",
+  "cue.sciatica": "sciatica from lifting",
+  "cue.broke": "broke my ankle running",
+  "cue.broken": "broken ankle from running",
+  "cue.dislocated": "dislocated my shoulder lifting",
+  "cue.rupture": "ruptured my achilles running",
+  "cue.concussion": "concussion from boxing",
+  "cue.doctor said": "doctor said running is out",
+  "cue.doctor told me": "doctor told me running is out",
+  "cue.doctor wants": "doctor wants running out",
+  "cue.physio says": "physio says running is out",
+  "cue.physio said": "physio said running is out",
+  "cue.physio told me": "physio told me running is out",
+  "cue.physio wants": "physio wants running out",
+  "cue.gp says": "GP says running is out",
+  "cue.gp said": "GP said running is out",
+  "cue.surgeon says": "surgeon says running is out",
+  "cue.surgeon said": "surgeon said running is out",
 };

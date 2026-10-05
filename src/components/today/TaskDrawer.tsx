@@ -293,10 +293,14 @@ export function TaskDrawer(props: Props) {
           <dt>Machine grade</dt>
           <dd>
             {BAND_LABEL[t.band]} · ~{fmtMinutes(t.machineMinutes)}
-            {t.estMinutes !== t.machineMinutes ? ` · you said ~${fmtMinutes(t.estMinutes)} (counts up to ${fmtMinutes(t.machineMinutes * 2)})` : ""}
-            {t.aiBand && t.aiBand !== t.band ? ` · AI said ${BAND_LABEL[t.aiBand]}` : ""}
+            {/* A plan-born task's minutes are the plan's (its practice's band, or a step's grade), never the player's words. */}
+            {t.estMinutes !== t.machineMinutes
+              ? ` · ${planBorn ? "the plan set" : "you said"} ~${fmtMinutes(t.estMinutes)} (counts up to ${fmtMinutes(t.machineMinutes * 2)})`
+              : ""}
+            {/* No model sizes a plan-born task, so a band or model a stale row still carries is not shown as its grade. */}
+            {!planBorn && t.aiBand && t.aiBand !== t.band ? ` · AI said ${BAND_LABEL[t.aiBand]}` : ""}
           </dd>
-          {t.gradeModel && (
+          {!planBorn && t.gradeModel && (
             <>
               <dt>Model</dt>
               <dd className="t-mono">

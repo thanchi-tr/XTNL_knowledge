@@ -127,6 +127,35 @@
  *     around R2's naming steps); a decision re-renders them over R.
  *   - The bar's views name themselves (HOSTILE_VIEW_NAMES) and add the
  *     week-quests view of the first milestone as if started.
+ *
+ * Constraint safety: confirm to unlock (contracts §19; lane R4's half):
+ *   - One gate (planGateOf: roadmap-catalog allowedKindsFor over the row's
+ *     words, the parser's pre-fill and the user's stored answers) read by
+ *     every plan path: the starter and stage ladder, the Gemini keys-only
+ *     placement (gateValidated, before the caps), every re-fit, redraft and
+ *     re-plan, a pick from the type list, accept (acceptBlockersOf), Start
+ *     (a held practice or step gets no task) and the week quests (Start's set
+ *     and R6's own reading). A kind it blocks is never placed (gatePlanRows).
+ *     The safety-gaps round: every BODY or CARE plan asks, CRAFT asks on a
+ *     cue; a kept pick or the user's own row of a kind that waits again is
+ *     held (accept reads every live row); every refusal while the card waits
+ *     points at it (pointedAt: accept, Start, a pick).
+ *   - The answer (setActivityVerdictsCore, YOURS: ActivityCardAnswer, ticks
+ *     or "Nothing to avoid", carrying the words' key; a stale key is refused
+ *     and the card asks again) lives in Roadmap.coverage["$activities"]:
+ *     intakeOf reads it, intakeData writes the column through coverageJsonOf,
+ *     an intake save carries it and prunes the draft to the new words, and
+ *     both writes are guarded on the row as read (ROADMAP_IS updatedAt). On a
+ *     DRAFT the answer re-syncs the draft (regatedDrafts); on an ACTIVE plan
+ *     it offers a re-plan, and an AVOID given after Start pauses the started
+ *     task (archived through tasks.ts; ActivityVerdictsResult.paused, undone
+ *     with unarchiveTask).
+ *   - Views: DraftView/RoadmapView.activityConfirm (activityConfirmViewOf);
+ *     DraftView.exclusions lists what the gate left out because of the words;
+ *     DraftView.aimConflict shows only until the card is answered.
+ *
+ *   Confirm   setActivityVerdictsCore · ActivityVerdictsResult · PausedTask · PlanGate · gatePlanRows ·
+ *             ACTIVITY_WAITING_PICK · ACTIVITY_AVOIDED_PICK · ACTIVITY_WAITING_START · ACTIVITY_HELD_IN_DRAFT
  */
 import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
@@ -394,8 +423,12 @@ import {
   type AimDepth,
   type AimStep,
   type AimStepMilestone,
+  type ActivityCardAnswer,
+  type ActivityConfirm,
+  type ActivityGate,
   type CalibratingInput,
   type ConstraintExclusion,
+  type ConstraintsState,
   type CoverageBreakdown,
   type CoverageChoice,
   type CoverageCounts,
@@ -423,15 +456,25 @@ import {
   type WeekQuestStepInput,
 } from "./roadmap-types";
 import {
-  BODY_SAFE_KINDS,
+  ACTIVITY_CARD_NAME,
+  activityConfirmOf,
+  activityConfirmViewOf,
+  allowedKindsFor,
+  answerActivityCard,
   catalogKindsFor,
   catalogEntryOf,
   catalogLabelOf,
   catalogOriginOf,
   catalogTrackOf,
+  constraintsStateOfIntake,
+  coverageJsonOf,
+  cueGatedKindsOf,
+  cueSafeKindsOf,
   isCatalogKey,
+  isPlaceableKind,
   isSessionPickKind,
   practiceRoleOf,
+  withActivityPointer,
   type CatalogKey,
   type CatalogTrack,
 } from "./roadmap-catalog";
@@ -638,8 +681,12 @@ export type StoreGuard =
   | { g: "NO_OTHER_OPEN"; exceptId: string | null }
   /** No ACTIVE roadmap of the user other than exceptId. */
   | { g: "NO_OTHER_ACTIVE"; exceptId: string | null }
-  /** The user's roadmap is in one of these statuses (and at this version, with this archive reason, and with no depth: a legacy plan). */
-  | { g: "ROADMAP_IS"; id: string; statuses: readonly RoadmapStatus[]; version?: number; archiveReason?: string; depthNull?: boolean }
+  /**
+   * The user's roadmap is in one of these statuses (and at this version, with this archive reason, and with no depth: a
+   * legacy plan; and, with `updatedAt`, not written since it was read: the stored answers and the typed figures share
+   * Roadmap.coverage, so its two writers re-read rather than overwrite each other, contracts §19.3).
+   */
+  | { g: "ROADMAP_IS"; id: string; statuses: readonly RoadmapStatus[]; version?: number; archiveReason?: string; depthNull?: boolean; updatedAt?: Date }
   /** Revision 4: no milestone of the roadmap is STARTING or STARTED ("Start again at a depth" replaces only a plan nothing started on). */
   | { g: "NO_STARTED_MILESTONE"; roadmapId: string }
   /** No run of the roadmap is RUNNING and started after `since`. */
@@ -797,8 +844,12 @@ export interface RoadmapIo {
   createTemplate(userId: string, parsed: ParsedCapture, opts: CreateTemplateOpts): Promise<{ id: string }>;
   /** taxonomy createDomain. */
   createDomain(fieldId: string, name: string): Promise<CreateDomainResult>;
-  /** tasks.ts archiveCore (the aftercare and the archive's goal). */
-  archiveTemplate(userId: string, templateId: string, now: Date): Promise<{ ok: true } | { ok: false; error: string }>;
+  /**
+   * tasks.ts archiveCore (the aftercare, the archive's goal, and a started task an AVOID pauses). `deferredTo`: a must
+   * past its typo grace once Duty is live leaves Today only on that day (archiveCore's pending archive); absent or null:
+   * archived at once.
+   */
+  archiveTemplate(userId: string, templateId: string, now: Date): Promise<{ ok: true; deferredTo?: DayKey | null } | { ok: false; error: string }>;
   // ── Revision 4 ──
   /** The loadout's reach modifiers (skill-effects loadModifiers): the interval multiplier, extra strikes and grace days (F-R4-8). */
   reachModifiers(userId: string): Promise<{ intervalMultiplier: number; extraStrikes: number; graceExtraDays: number }>;
@@ -873,6 +924,8 @@ export interface RoadmapLanes {
   dateEffectOf: typeof realism.dateEffectOf;
   floorDayOf: typeof realism.floorDayOf;
   syncStagePractices: typeof realism.syncStagePractices;
+  /** Confirm to unlock (contracts §19): a track draft's starter practices after the user's answer. */
+  syncTrackStarter: typeof realism.syncTrackStarter;
   buildResponseSchema: typeof model.buildResponseSchema;
   integrityOf: typeof validate.integrityOf;
   validateKeysOnly: typeof validate.validateKeysOnly;
@@ -913,6 +966,15 @@ export const DRAFT_RUNNING = "A draft is already running.";
 export const DRAFT_CAPPED = model.DRAFT_CAP_LINE;
 export const GATE_OFF = "Starting milestones arrives with the next update.";
 export const NOTHING_MEASURES = "Nothing here would measure progress — keep a practice on, or add a Domain.";
+/**
+ * Confirm to unlock (contracts §19): a pick of a type that waits on the user's answer to the activity card (no
+ * answer yet under their current words). It names the card itself, so pointedAt adds no second pointer.
+ */
+export const ACTIVITY_WAITING_PICK = `This type waits on your answer: say what to avoid in “${ACTIVITY_CARD_NAME}”, then add it.`;
+/** A pick of a type the user said to avoid. */
+export const ACTIVITY_AVOIDED_PICK = `You said to avoid this type: untick it in “${ACTIVITY_CARD_NAME}” to add it.`;
+/** Start with nothing to measure because every practice waits on the user's answer. */
+export const ACTIVITY_WAITING_START = `This milestone's practices wait on your answer: say what to avoid in “${ACTIVITY_CARD_NAME}” first.`;
 export const DUE_TOO_SOON = `This milestone needs at least ${START_MIN_DAYS_TO_DUE} days to its due day — re-fit the dates.`;
 export const STARTED_ELSEWHERE = "Another milestone of this roadmap is starting or open. Close it first.";
 export const DISCARDED_REASON = "Discarded draft";
@@ -1043,8 +1105,9 @@ function guardCondition(userId: string, g: StoreGuard): Prisma.Sql {
       const version = g.version != null ? Prisma.sql`AND "version" = ${g.version}::int` : Prisma.empty;
       const reason = g.archiveReason != null ? Prisma.sql`AND "archiveReason" = ${g.archiveReason}` : Prisma.empty;
       const legacy = g.depthNull ? Prisma.sql`AND "depth" IS NULL` : Prisma.empty;
+      const unwritten = g.updatedAt != null ? Prisma.sql`AND "updatedAt" = ${g.updatedAt}` : Prisma.empty;
       return Prisma.sql`EXISTS (SELECT 1 FROM "Roadmap" WHERE "id" = ${g.id} AND "userId" = ${userId}
-        AND "status" IN (${Prisma.join([...g.statuses])}) ${version} ${reason} ${legacy})`;
+        AND "status" IN (${Prisma.join([...g.statuses])}) ${version} ${reason} ${legacy} ${unwritten})`;
     }
     case "NO_STARTED_MILESTONE":
       return Prisma.sql`NOT EXISTS (SELECT 1 FROM "RoadmapMilestone" WHERE "roadmapId" = ${g.roadmapId}
@@ -1397,7 +1460,7 @@ export const prismaRoadmapIo: RoadmapIo = {
   },
   async archiveTemplate(userId, templateId, now) {
     const res = await archiveCore(userId, templateId, now);
-    return res.ok ? { ok: true } : { ok: false, error: res.error };
+    return res.ok ? { ok: true, deferredTo: res.value.effect === "deferred" ? res.value.effectiveDay : null } : { ok: false, error: res.error };
   },
   async reachModifiers(userId) {
     const m = await loadModifiers(userId);
@@ -1490,6 +1553,7 @@ const LANES: RoadmapLanes = {
   dateEffectOf: realism.dateEffectOf,
   floorDayOf: realism.floorDayOf,
   syncStagePractices: realism.syncStagePractices,
+  syncTrackStarter: realism.syncTrackStarter,
   buildResponseSchema: model.buildResponseSchema,
   integrityOf: validate.integrityOf,
   validateKeysOnly: validate.validateKeysOnly,
@@ -2581,9 +2645,12 @@ export function intakeOf(r: RoadmapRec): Intake {
     practicesAllowed: r.practicesAllowed,
     constraints: r.constraints,
     examLabel: r.examLabel,
+    // Confirm to unlock (contracts §19.3): the user's per-kind answers, stored in Roadmap.coverage["$activities"].
+    activities: activityConfirmOf(r.coverage),
   };
 }
 
+/** The Roadmap row's fields for an intake. Roadmap.coverage goes through roadmap-catalog coverageJsonOf, the one writer of that column: the typed figures and the stored answers (contracts §19.3). */
 function intakeData(i: Intake, today: DayKey): Record<string, unknown> {
   return {
     aim: i.aim,
@@ -2604,7 +2671,7 @@ function intakeData(i: Intake, today: DayKey): Record<string, unknown> {
     examLabel: i.examLabel,
     depth: i.fieldId ? (i.depth ?? AIM_DEPTHS[DEPTH_DEFAULT]) : null,
     dateMode: i.dateMode ?? "CHOSEN",
-    coverage: i.coverage ?? null,
+    coverage: coverageJsonOf(i.coverage ?? null, i.activities ?? null),
     suggestAreas: i.suggestAreas === true,
     examDay: i.examLabel ? (i.examDay ?? null) : null,
   };
@@ -2664,11 +2731,17 @@ export async function saveIntakeCore(userId: string, intake: Intake, now: Date, 
     if (rows.some((r) => r.status === "ACTIVE")) return fail(ANOTHER_ACTIVE);
     const draft = rows.find((r) => r.status === "DRAFT") ?? null;
     if (draft) {
-      const out = await e.store.apply(userId, [
-        { op: "guard", guard: { g: "ROADMAP_IS", id: draft.id, statuses: ["DRAFT"] } },
+      // The form never sends the stored answers (contracts §19.3): the row's own ride along, so an intake save never drops
+      // them; the guard on the row as read makes an answer saved meanwhile a re-read, never a loss.
+      const kept = intakeData({ ...value, activities: activityConfirmOf(draft.coverage) }, today);
+      const ops: StoreOp[] = [
+        { op: "guard", guard: { g: "ROADMAP_IS", id: draft.id, statuses: ["DRAFT"], updatedAt: draft.updatedAt } },
         { op: "guard", guard: { g: "NO_OTHER_ACTIVE", exceptId: draft.id } },
-        { op: "update", table: "roadmap", where: { id: draft.id, status: "DRAFT" }, data: { ...data, updatedAt: now } },
-      ]);
+        { op: "update", table: "roadmap", where: { id: draft.id, status: "DRAFT" }, data: { ...kept, updatedAt: now } },
+      ];
+      // The draft's rows follow the new words in the same write (contracts §19): a kind the gate now holds leaves.
+      ops.push(...(await draftGateOps(e, userId, { ...draft, ...kept } as RoadmapRec, tree, now)));
+      const out = await e.store.apply(userId, ops);
       return out === "ok" ? ok({ roadmapId: draft.id }) : "stale";
     }
     const id = e.makeId();
@@ -2680,6 +2753,40 @@ export async function saveIntakeCore(userId: string, intake: Intake, now: Date, 
   });
   invalidate("roadmap");
   return res;
+}
+
+/**
+ * A DRAFT roadmap's draft rows through the gate of its row as it will read
+ * (contracts §19; saveIntakeCore after the user's words changed): every live
+ * item a plan path placed of a kind the gate now blocks leaves its row,
+ * through the one writer, each row guarded on its status (a row of the
+ * user's own of a kind that waits again stays, held: gatePlanRows). None when the
+ * gate blocks nothing, the roadmap holds no draft, or it is a legacy draft;
+ * a write the tripwire refuses leaves the rows (logged): accept refuses a
+ * draft that still holds one (acceptBlockersOf).
+ */
+async function draftGateOps(e: Env, userId: string, next: RoadmapRec, tree: readonly TreeField[], now: Date): Promise<StoreOp[]> {
+  const gate = planGateOf(e, next).gate;
+  if (gate.blocked.length === 0) return [];
+  const b = await e.store.bundle(userId, next.id);
+  if (!b || legacyOf(b)) return [];
+  const group = draftRowsOf(b);
+  if (group.length === 0) return [];
+  const afters = gatePlanRows(group.map(draftOf), gate, next.fieldId == null, e.makeId);
+  const ops: StoreOp[] = [];
+  try {
+    group.forEach((row, i) => {
+      const after = afters[i];
+      if (JSON.stringify(after) === JSON.stringify(draftOf(row))) return;
+      ops.push({ op: "guard", guard: { g: "MILESTONE_IS", id: row.id, statuses: [row.status as MilestoneStatus] } });
+      writeRoadmapRows(ops, { kind: "REWRITE", before: row, after, now, makeId: e.makeId, decided: new Set(), others: afters.filter((_, k) => k !== i) }, modelTextContextOf(b, tree, true));
+    });
+  } catch (err) {
+    if (!(err instanceof ModelTextError)) throw err;
+    logRefusedWrite("intake-gate", err);
+    return [];
+  }
+  return ops;
 }
 
 /** The named areas of an empty library (F-R4-24): each created in the Area Field (taxonomy createDomain), or the existing one of that name reused. */
@@ -2724,10 +2831,17 @@ function intakeRowOf(userId: string, intake: Intake, now: Date): RoadmapRec {
 /**
  * The intake's refusal, before anything is saved (F-R4-10, F-R4-11): R2's
  * stage ladder refuses a depth already held in these Domains, one whose
- * realistic date is under SPAN_MIN_DAYS away or past SPAN_MAX_DAYS, and a
- * realistic date with no writing pace. null when the plan has work in it, on
- * a track Area, and when the ladder can't be worked out (logged: the draft
- * and the acceptance check again).
+ * realistic date is under SPAN_MIN_DAYS away or past SPAN_MAX_DAYS, and, on
+ * a realistic date, a Domain short of its count with no writing pace. When
+ * every Domain already holds its count n_d in recall cards, the new cards
+ * WRITE_MARGIN asks are its spare alone, so a REALISTIC intake with no pace
+ * saves and the plan is dated on the cards held (R2's spareOnlyOf, the
+ * WRITE_MARGIN ruling's option (b), contracts §16.10; RoadmapForm's
+ * newCardsRequiredOf asks for the pace on the same rule), unless those cards
+ * can't reach the depth within SPAN_MAX_DAYS (then the pace is asked for, as
+ * before). null when the plan has work in it, on a track Area, and when the
+ * ladder can't be worked out (logged: the draft and the acceptance check
+ * again).
  */
 async function intakeRefusalOf(e: Env, userId: string, intake: Intake, now: Date): Promise<string | null> {
   if (!intake.fieldId || !isAimDepth(intake.depth)) return null;
@@ -3260,6 +3374,38 @@ function liveCountOfKey(ctx: Pick<PlanContext, "domains">, key: string): { value
   return liveCount(ctx, p.domainIds, p.level, p.segment != null);
 }
 
+/**
+ * Start's count of each card measure on the started day, by key: its first
+ * reading and the week quests' v0 (finishStartCore; startPreview's set reads
+ * the same). Each key is counted by R1's own cardsAtLevelValue, as its
+ * readings count it: recall cards only with an `r` segment (multiple choice
+ * never; the detail says how many were left out), every card on a rev-3 key.
+ * Its value is liveCountOfKey's. An `rc` key gets no count here: it also
+ * counts a card that entered L on a retry only after its next pass, which
+ * R1's reading reads from the REVIEW ledger and R6's set from its own
+ * clean-entry read, so its first reading is R1's (as acceptCore leaves it)
+ * and its v0 is R6's. A repeated key is counted once.
+ */
+function startCountsOf(ctx: Pick<PlanContext, "domains">, rows: readonly { kind: string; measureKey: string | null }[]): Map<string, measures.CardsValue> {
+  const out = new Map<string, measures.CardsValue>();
+  for (const x of rows) {
+    if (x.kind !== "CARDS_AT_LEVEL" || !x.measureKey || out.has(x.measureKey)) continue;
+    const parsed = parseMeasureKey(x.measureKey);
+    if (parsed?.kind !== "CARDS_AT_LEVEL" || parsed.segment === "rc") continue;
+    const cards: measures.CardLevelRow[] = [];
+    for (const id of new Set(parsed.domainIds)) {
+      for (const c of ctx.domains.get(id)?.cards ?? []) cards.push({ domainId: id, level: c.level, ...(c.type != null ? { recall: isRecallType(c.type) } : {}) });
+    }
+    out.set(x.measureKey, measures.cardsAtLevelValue(cards, parsed.domainIds, parsed.level, parsed.segment ?? null));
+  }
+  return out;
+}
+
+/** R6's QuestSetOverrides.v0ByKey from startCountsOf. */
+function v0ByKeyOf(counts: ReadonlyMap<string, { value: number }>): Record<string, number> {
+  return Object.fromEntries(Array.from(counts, ([key, c]) => [key, c.value]));
+}
+
 function domainNamesOf(ctx: Pick<PlanContext, "domains">, ids: readonly string[]): DomainName[] {
   return ids.map((id) => ctx.domains.get(id)).filter((d): d is DomainFacts => !!d).map((d) => domainName(d));
 }
@@ -3518,13 +3664,51 @@ function withStagePractices(e: Env, ctx: PlanContext, plan: readonly MilestoneDr
   return withPendingHidden(plan, (masked) => stagePracticesOf(e, ctx, masked, names, carried));
 }
 
+/**
+ * Draft rows after the plan's gate changed (contracts §19: the user's answer,
+ * a re-plan), or as they were when the gate changes nothing in them: every
+ * live item of a kind the gate now blocks leaves (gatePlanRows), a track
+ * plan's starter kinds follow the answers (R2's syncTrackStarter: a kind the
+ * gate allows now but didn't under `since` — the blocked kinds the rows were
+ * built with — is placed where the starter places it, and so is the safe
+ * kind standing in for one now avoided), then R2's stage practices and
+ * allocation (withStagePractices). `carried` are the started rows beside
+ * them (never changed).
+ */
+function regatedDrafts(
+  e: Env,
+  ctx: PlanContext,
+  carried: readonly MilestoneDraft[],
+  drafts: readonly MilestoneDraft[],
+  names: Readonly<Record<string, DomainName>>,
+  since: readonly CatalogKey[]
+): MilestoneDraft[] {
+  const gate = gateOf(e, ctx);
+  const trackArea = ctx.intake.fieldId == null;
+  const pruned = gatePlanRows(drafts, gate, trackArea, e.makeId);
+  let filled = pruned;
+  if (trackArea) {
+    try {
+      filled = e.lanes.syncTrackStarter([...carried, ...pruned], ctx.intake, e.makeId, { gate, excluded: gate.blocked, since }).filter((d) => !isCarried(d));
+    } catch (err) {
+      console.error("roadmap: the track starter wasn't re-synced:", err instanceof Error ? err.message : err);
+    }
+  }
+  if (JSON.stringify(filled) === JSON.stringify(drafts)) return [...drafts];
+  return withStagePractices(e, ctx, filled, names, carried);
+}
+
 /** withStagePractices' two steps, over rows whose pending additions are hidden. */
 function stagePracticesOf(e: Env, ctx: PlanContext, plan: readonly MilestoneDraft[], names: Readonly<Record<string, DomainName>>, carried: readonly MilestoneDraft[]): MilestoneDraft[] {
-  const input = realismInputOf(ctx, plan);
-  const synced = plan.map((m) => {
+  // Confirm to unlock (contracts §19): no row keeps a kind the gate blocks, and no requirement adds one (R2 takes the next of its role).
+  const gate = gateOf(e, ctx);
+  const trackArea = ctx.intake.fieldId == null;
+  const gated = gatePlanRows(plan, gate, trackArea, e.makeId);
+  const input = realismInputOf(ctx, gated);
+  const synced = gated.map((m) => {
     if (heldRow(m) || m.status === "LATER") return m;
     try {
-      return syncMeasures(e.lanes.syncStagePractices(m, input, names, e.makeId), ctx.intake.fieldId == null, e.makeId);
+      return syncMeasures(e.lanes.syncStagePractices(m, input, names, e.makeId, gate.blocked), trackArea, e.makeId);
     } catch (err) {
       console.error("roadmap: stage practices not synced:", err instanceof Error ? err.message : err);
       return m;
@@ -3532,7 +3716,7 @@ function stagePracticesOf(e: Env, ctx: PlanContext, plan: readonly MilestoneDraf
   });
   try {
     const all = [...carried, ...synced];
-    const fitted = e.lanes.fitPlan(all, realismInputOf(ctx, all)).filter((d) => !isCarried(d));
+    const fitted = gatePlanRows(e.lanes.fitPlan(all, realismInputOf(ctx, all), { excluded: gate.blocked }), gate, trackArea, e.makeId).filter((d) => !isCarried(d));
     return fitted.length === synced.length ? fitted.map((d, i) => ({ ...d, stage: d.stage ?? synced[i].stage })) : synced;
   } catch (err) {
     console.error("roadmap: the allocation wasn't worked out (sessions as written):", err instanceof Error ? err.message : err);
@@ -3554,8 +3738,11 @@ function stagePracticesOf(e: Env, ctx: PlanContext, plan: readonly MilestoneDraf
 function ladderOf(e: Env, ctx: PlanContext, required: readonly string[]): { ok: true; plan: MilestoneDraft[] } | { ok: false; error: string } {
   const intake = withRequired(ctx.intake, required);
   const counts = frozenCountsOf(ctx, required, ctx.coveragePrior);
-  const res = e.lanes.stageLadderOf(intake, realismInputOf({ ...ctx, intake }, [], [required]), requiredNamesOf(ctx, required), e.makeId, { counts });
-  return res.ok ? { ok: true, plan: res.plan } : { ok: false, error: res.error };
+  // Confirm to unlock (contracts §19): the plan's one gate; R2 places no kind it blocks, and a fixture or older lane's
+  // ladder is held to it here too (gatePlanRows).
+  const gate = gateOf(e, ctx);
+  const res = e.lanes.stageLadderOf(intake, realismInputOf({ ...ctx, intake }, [], [required]), requiredNamesOf(ctx, required), e.makeId, { counts, gate, excluded: gate.blocked });
+  return res.ok ? { ok: true, plan: gatePlanRows(res.plan, gate, intake.fieldId == null, e.makeId) } : { ok: false, error: res.error };
 }
 
 /**
@@ -3602,7 +3789,9 @@ function planFromReply(
     gapSourceExclude: extra.gapSourceExclude,
     schema: extra.schema,
   });
-  const validated: ValidatedDraft = { ...checked, report: { ...checked.report, integrity } };
+  // Confirm to unlock (contracts §19): a pick of a kind the gate blocks never reaches the plan (dropped before the caps,
+  // so it never crowds out an allowed one), whatever the run's enums offered; the report says so as R3's validator does.
+  const validated: ValidatedDraft = gateValidated({ ...checked, report: { ...checked.report, integrity } }, gateOf(e, ctx));
   let ladder: readonly MilestoneDraft[] | null = extra.ladder ?? null;
   if (!ladder) {
     const res = ladderOf(e, ctx, required);
@@ -3623,6 +3812,24 @@ function planFromReply(
     extra.memo.set(key, { plan, feasibility });
   }
   return { plan, feasibility, validated };
+}
+
+/**
+ * A validated reply through the gate (contracts §19), pure: every pick of a
+ * kind the gate blocks leaves its milestone, with a CONSTRAINT drop in the
+ * report (no words: the label is '', as R3 writes it). Nothing else changes.
+ */
+function gateValidated(v: ValidatedDraft, gate: Pick<ActivityGate, "blocked">): ValidatedDraft {
+  const dropped: ValidationReport["dropped"] = [];
+  const milestones = v.milestones.map((m) => {
+    const keep = m.items.filter((it) => {
+      if (isPlaceableKind(gate, it.catalogKey)) return true;
+      dropped.push({ milestoneOrd: m.ord, kind: it.kind, label: "", code: "CONSTRAINT", reason: validate.KEYS_ONLY_REASONS.constraint });
+      return false;
+    });
+    return keep.length === m.items.length ? m : { ...m, items: keep };
+  });
+  return dropped.length ? { ...v, milestones, report: { ...v.report, dropped: [...v.report.dropped, ...dropped] } } : v;
 }
 
 /**
@@ -3703,7 +3910,10 @@ function starterPlan(e: Env, ctx: PlanContext): { plan: MilestoneDraft[]; feasib
     if (!ladder.ok) throw new PlanRefused(ladder.error);
   }
   const intake = withRequired(ctx.intake, required);
-  const plan = e.lanes.starterLadder(intake, realismInputOf({ ...ctx, intake }, [], [required]), names, e.makeId).map((m) => ({ ...m, version: ctx.roadmap.version + 1 }));
+  // Confirm to unlock (contracts §19): the starter places only what the plan's gate allows (and is held to it here).
+  const gate = gateOf(e, ctx);
+  const built = e.lanes.starterLadder(intake, realismInputOf({ ...ctx, intake }, [], [required]), names, e.makeId, { gate, excluded: gate.blocked });
+  const plan = gatePlanRows(built, gate, intake.fieldId == null, e.makeId).map((m) => ({ ...m, version: ctx.roadmap.version + 1 }));
   const depthPlan = ctx.intake.fieldId != null && isAimDepth(ctx.intake.depth);
   return { plan, feasibility: feasibilityFor(e, ctx, plan), report: depthPlan ? { dropped: [], flagged: [], notes: [] } : starterReportOf(ctx, names) };
 }
@@ -4157,7 +4367,8 @@ async function persistRun(
 ): Promise<void> {
   const ops: StoreOp[] = [
     { op: "guard", guard: { g: "RUN_IS", id: run.id, status: "RUNNING" } },
-    { op: "guard", guard: { g: "ROADMAP_IS", id: b.roadmap.id, statuses: ["DRAFT"], version: run.version - 1 } },
+    // The row as the run read it: words or answers saved meanwhile (contracts §19.3) supersede the run, never the reverse.
+    { op: "guard", guard: { g: "ROADMAP_IS", id: b.roadmap.id, statuses: ["DRAFT"], version: run.version - 1, updatedAt: b.roadmap.updatedAt } },
     { op: "update", table: "roadmapRun", where: { id: run.id, status: "RUNNING" }, data },
   ];
   if (plan.length > 0) {
@@ -4391,8 +4602,10 @@ async function rewrite(
       // days, fix round 2); only the draft's rows come back to be written.
       const carried = carriedPlanOf(b, group, await carriedGoalsOf(e, userId, b));
       const plan = [...carried, ...drafts];
-      // R2's re-fit names the stages' code labels: a pending Gemini addition is hidden from it (withPendingHidden).
-      next = withPendingHidden(plan, (masked) => e.lanes.fitPlan(masked, realismInputOf(ctx, masked))).filter((d) => !isCarried(d));
+      // R2's re-fit names the stages' code labels: a pending Gemini addition is hidden from it (withPendingHidden); it adds
+      // no stage practice of a kind the plan's gate blocks (contracts §19).
+      const blocked = gateOf(e, ctx).blocked;
+      next = withPendingHidden(plan, (masked) => e.lanes.fitPlan(masked, realismInputOf(ctx, masked), { excluded: blocked })).filter((d) => !isCarried(d));
     } catch (err) {
       console.error("roadmap: re-fit after an edit failed; saved without it:", err);
     }
@@ -4645,7 +4858,7 @@ export async function editItemCore(userId: string, itemId: string, edit: ItemEdi
     if (pickedKind != null) {
       if (!item || (item.kind !== "PRACTICE" && item.kind !== "STEP" && item.kind !== "CHECKPOINT")) return fail("Only a practice, step or checkpoint changes its type.");
       if (!EDITABLE.includes(m.status)) return fail("This milestone has started; its practices are on Today now.");
-      const picked = catalogPickOf(b, await e.io.fieldTree(), itemDraftOf(item), pickedKind);
+      const picked = catalogPickOf(e, b, await e.io.fieldTree(), itemDraftOf(item), pickedKind);
       if (typeof picked === "string") return fail(picked);
       return rewrite(e, userId, loc, now, (d) => ({ ...d, items: d.items.map((it) => (it.id === item.id ? picked : it)) }), { structural: item.kind !== "STEP", decided: new Set([item.id]) });
     }
@@ -4797,7 +5010,7 @@ export async function editItemCore(userId: string, itemId: string, edit: ItemEdi
  * choice, YOURS), keeps its Domain, and is no longer Gemini's pick or the
  * app's addition. A refusal in words, or the new row.
  */
-function catalogPickOf(b: RoadmapBundle, tree: readonly TreeField[], it: ItemDraft, raw: unknown): ItemDraft | string {
+function catalogPickOf(e: Env, b: RoadmapBundle, tree: readonly TreeField[], it: ItemDraft, raw: unknown): ItemDraft | string {
   const entry = catalogEntryOf(raw);
   if (!entry || entry.codeOnly) return "Pick a type from the list.";
   if (entry.slot !== it.kind) return "Pick a type from this list.";
@@ -4805,6 +5018,10 @@ function catalogPickOf(b: RoadmapBundle, tree: readonly TreeField[], it: ItemDra
   if (!entry.tracks.includes(track)) return "That type isn't used for this Area.";
   if (entry.examOnly && !b.roadmap.examLabel) return "That type needs an exam: say there is one first.";
   if (entry.slot === "PRACTICE" && !b.roadmap.practicesAllowed) return "Practices are off for this roadmap.";
+  // Confirm to unlock (contracts §19): a type the plan's gate blocks is picked only once the user answered the card
+  // under their current words without ticking it; the refusal points at the card (decision 2).
+  const gate = planGateOf(e, b.roadmap).gate;
+  if (!isPlaceableKind(gate, entry.key)) return pointedAt(gate, gate.rows.find((r) => r.kind === entry.key)?.state === "AVOID" ? ACTIVITY_AVOIDED_PICK : ACTIVITY_WAITING_PICK);
   const ctx = modelTextContextOf(b, tree);
   const ids = it.domainId ? [it.domainId] : [...(ctx.required ?? [])];
   const names = ids.map((id) => (Object.prototype.hasOwnProperty.call(ctx.domainNames, id) ? ctx.domainNames[id] : null)).filter((n): n is string => !!n);
@@ -4921,7 +5138,7 @@ export async function addItemCore(userId: string, milestoneId: string, input: Ne
         flags: [],
         notes: [],
       };
-      const picked = catalogPickOf(b, tree, base, pickedKind);
+      const picked = catalogPickOf(e, b, tree, base, pickedKind);
       if (typeof picked === "string") return fail(picked);
       const withBand = picked.kind === "PRACTICE" && picked.method ? { ...picked, durationBand: METHOD_DEFAULT_BAND[picked.method] } : picked;
       const out = await rewrite(e, userId, loc, now, (d) => ({ ...d, items: [...d.items, withBand] }), { structural: structuralKind(kind), decided: new Set([itemId]) });
@@ -5308,7 +5525,7 @@ export async function applyRemedyCore(userId: string, roadmapId: string, remedy:
     const carried = carriedPlanOf(b, group, await carriedGoalsOf(e, userId, b));
     const drafts = group.map(draftOf);
     const input = realismInputOf(ctx, [...carried, ...drafts]);
-    const changed = e.lanes.applyRemedy([...carried, ...drafts], input, remedy).filter((d) => !isCarried(d));
+    const changed = e.lanes.applyRemedy([...carried, ...drafts], input, remedy, { excluded: gateOf(e, ctx).blocked }).filter((d) => !isCarried(d));
     const ops: StoreOp[] = [{ op: "guard", guard: { g: "ROADMAP_IS", id: roadmapId, statuses: ["DRAFT", "ACTIVE"], version: b.roadmap.version } }];
     if (remedy === "MOVE_DATE") {
       // R2's remedyTargetDay (inside applyRemedy) picks the first Sunday that fits, at most today + SPAN_MAX_DAYS.
@@ -5399,8 +5616,18 @@ export interface AcceptCheck {
  * has its switch on (needsOver, decided by the caller). Later milestones are
  * an outline and need no decision.
  */
-export function acceptBlockersOf(drafts: readonly MilestoneDraft[], feasibility: Feasibility | null, scheduledTotal: number, opts: { picksNeedConfirm?: boolean } = {}): AcceptCheck {
+export function acceptBlockersOf(
+  drafts: readonly MilestoneDraft[],
+  feasibility: Feasibility | null,
+  scheduledTotal: number,
+  opts: { picksNeedConfirm?: boolean; gate?: Pick<ActivityGate, "blocked"> | null } = {}
+): AcceptCheck {
   const blockers: string[] = [];
+  // Confirm to unlock (contracts §19): a draft never becomes the plan holding a live item of a kind the gate blocks,
+  // whoever placed it: a kept Gemini pick or the user's own row of a kind that waits on their answer again (their words
+  // changed since the card was answered) is re-gated too (decision 5). acceptCore points the refusal at the card.
+  const gate = opts.gate;
+  if (gate && drafts.some((d) => d.status !== "LATER" && d.items.some((i) => liveItem(i) && !isPlaceableKind(gate, i.catalogKey)))) blockers.push(ACTIVITY_HELD_IN_DRAFT);
   // Revision 4 (F-R4-17, F-R4-21): Gemini's Domain additions and a body or care plan's session picks are decided for the
   // whole plan, before anything else; a pending one blocks accept, and "Next item to decide" scrolls to it.
   const pendingAdd = drafts.flatMap((d) => d.items.filter(pendingAddition));
@@ -5435,6 +5662,11 @@ export function acceptBlockersOf(drafts: readonly MilestoneDraft[], feasibility:
 /** Revision 4 accept refusals, in words. */
 export const DECIDE_ADDITIONS = "Decide Gemini's suggested Domains first: add them or leave them out.";
 export const CONFIRM_PICKS = "Confirm Gemini's session picks first: keep them, or use easy, mobility and technique sessions.";
+/**
+ * Confirm to unlock (contracts §19): the draft still holds a session type the gate holds back (it waits on the user's
+ * answer to the activity card, or they said to avoid it). acceptCore adds the card's pointer while the card waits.
+ */
+export const ACTIVITY_HELD_IN_DRAFT = "This draft holds a session type that waits on your answer or that you said to avoid: remove it, or change your answer.";
 export const DATE_IMPOSSIBLE = "Your date is before the earliest this depth can be reached: use the realistic date, or choose a lower depth.";
 export const NOTHING_LEFT = "You already hold this depth in these Domains. Add a Domain, raise coverage or set a different aim.";
 export const ONLY_WEEKS_AWAY = "This depth is only weeks away: add a Domain, raise coverage or choose a deeper aim.";
@@ -5736,9 +5968,11 @@ export async function acceptCore(userId: string, roadmapId: string, choices: Acc
       const real = feasibility.dateCheck?.D_real ?? null;
       if (real && daysBetween(ctx.today, real) < SPAN_MIN_DAYS && carriedRows.length === 0) return fail(ONLY_WEEKS_AWAY);
     }
-    const check = acceptBlockersOf(drafts, feasibility, scheduledTotal, { picksNeedConfirm: picksNeedConfirmOf(b.roadmap) });
-    if (check.blockers.length) return fail(check.blockers[0]);
-    if (check.needsOver && !overAccepted) return fail("This plan is over your hours or pace: switch on “Keep it over my hours/pace” to accept it.");
+    const gate = planGateOf(e, b.roadmap).gate;
+    const check = acceptBlockersOf(drafts, feasibility, scheduledTotal, { picksNeedConfirm: picksNeedConfirmOf(b.roadmap), gate });
+    // Decision 2: while the activity card waits, the refusal points at it (a waiting plan is never a dead end).
+    if (check.blockers.length) return fail(pointedAt(gate, check.blockers[0]));
+    if (check.needsOver && !overAccepted) return fail(pointedAt(gate, "This plan is over your hours or pace: switch on “Keep it over my hours/pace” to accept it."));
 
     // Ords (fix round 2's carry-over): a draft row whose lineage has a carried row (a "Start again" copy re-planned) takes
     // that row's ord — one position, one number — and the others follow the carried rows, so the last ord is the plan's positions.
@@ -6301,6 +6535,26 @@ const withOff = (m: MilestoneDraft, off: ReadonlySet<string>): MilestoneDraft =>
   items: m.items.map((i) => (i.kind === "PRACTICE" && off.has(i.lineageId) ? { ...i, addToToday: false } : i)),
 });
 
+/**
+ * What Start holds back (confirm to unlock, contracts §19), by item lineage:
+ * every live practice, step and checkpoint of a kind the plan's gate blocks
+ * (waiting on the user's answer, or one they said to avoid). Start creates
+ * no task, quest or measure for one; the Start sheet lists them as waiting
+ * (R5 reads the plan's activityConfirm), and they need no decision, name or
+ * bar for Start to go ahead without them.
+ */
+function heldAtStartOf(m: Pick<MilestoneDraft, "items">, gate: Pick<ActivityGate, "blocked">): Set<string> {
+  const held = (i: ItemDraft) => liveItem(i) && (i.kind === "PRACTICE" || i.kind === "STEP" || i.kind === "CHECKPOINT") && !isPlaceableKind(gate, i.catalogKey);
+  return new Set(m.items.filter(held).map((i) => i.lineageId));
+}
+
+/** A milestone with the held practices and steps off Today (addToToday false: no task, no quest, no pay). */
+const withHeld = (m: MilestoneDraft, held: ReadonlySet<string>): MilestoneDraft =>
+  held.size === 0 ? m : { ...m, items: m.items.map((i) => (held.has(i.lineageId) && (i.kind === "PRACTICE" || i.kind === "STEP") ? { ...i, addToToday: false } : i)) };
+
+/** The milestone as Start's checks read it: the held items aside. */
+const withoutHeld = (m: MilestoneDraft, held: ReadonlySet<string>): MilestoneDraft => (held.size === 0 ? m : { ...m, items: m.items.filter((i) => !held.has(i.lineageId)) });
+
 /** The Start sheet, computed before anything is created (refitForStart, statedForMilestone, the MID limit, the week's quests). Writes nothing. */
 export async function startPreview(userId: string, milestoneId: string, now: Date, deps: RoadmapDeps = {}): Promise<StartPreview | null> {
   const e = envOf(deps);
@@ -6309,7 +6563,10 @@ export async function startPreview(userId: string, milestoneId: string, now: Dat
   const { b, row, ctx, refitted } = f;
   const planRows = planRowsOf(b);
   // Its words re-checked as the editor reads them (pending rows carry their struck spans and reasons).
-  const m: MilestoneDraft = labelChecksOf(e, b, ctx.tree, [refitted.milestone], positionCountOf(planRows.filter(scheduled)))[0];
+  const checked: MilestoneDraft = labelChecksOf(e, b, ctx.tree, [refitted.milestone], positionCountOf(planRows.filter(scheduled)))[0];
+  // Confirm to unlock (contracts §19): what the plan's gate blocks isn't started (off Today, not on the sheet's lists).
+  const held = heldAtStartOf(checked, gateOf(e, ctx));
+  const m = withHeld(checked, held);
   const off = new Set<string>();
   const track: Track = isOneOf(ROADMAP_TRACKS, b.roadmap.track) ? b.roadmap.track : DEFAULT_FIELD_TRACK;
   const [ledger, midPaid] = await Promise.all([
@@ -6343,7 +6600,7 @@ export async function startPreview(userId: string, milestoneId: string, now: Dat
   } catch {
     snapshot = null;
   }
-  const rows = todayBoundRowsOf(m, off);
+  const rows = todayBoundRowsOf(withoutHeld(m, held), off);
   // The pay line at the sheet's default switches, and its basis: the sheet recomputes it on every switch with the same arithmetic.
   const payBasis = payBasisOf(m, snapshot ?? refitted.feasibility, lineagePaidOnOf(b, row, f.payments));
   const stated = statedFor(m, payBasis, off);
@@ -6353,17 +6610,18 @@ export async function startPreview(userId: string, milestoneId: string, now: Dat
   if (snapshot) {
     // "Week quests if you start now": the generator's set for the rest of this life week, from what Start would write.
     const previewTemplates = Object.fromEntries(
-      mOff.items.filter((i) => (i.kind === "PRACTICE" && i.addToToday && liveItem(i)) || (i.kind === "STEP" && liveItem(i))).map((i) => [i.id as string, `preview-${i.id}`])
+      mOff.items.filter((i) => (i.kind === "PRACTICE" || i.kind === "STEP") && i.addToToday && liveItem(i)).map((i) => [i.id as string, `preview-${i.id}`])
     );
     try {
       weekQuests = await e.lanes.weekQuestSetFor(userId, milestoneId, weekStartKeyOf(ctx.today), now, {
-        overrides: { startedDay: ctx.today, snapshot, templateIds: previewTemplates, ...(f.hw ? { v0: f.hw.live } : {}) },
+        // Start's own v0 per key (finishStartCore), so the preview's quests are the set Start freezes.
+        overrides: { startedDay: ctx.today, snapshot, templateIds: previewTemplates, v0ByKey: v0ByKeyOf(startCountsOf(ctx, row.measures)), gate: gateOf(e, ctx) },
       });
     } catch {
       weekQuests = null;
     }
   }
-  const blockers = blockersOf(m, rows);
+  const blockers = blockersOf(withoutHeld(m, held), rows);
   const rank = row.rankIndex;
   return {
     milestoneId,
@@ -6373,13 +6631,14 @@ export async function startPreview(userId: string, milestoneId: string, now: Dat
     dueDay: (m.dueDay ?? row.dueDay ?? ctx.today) as DayKey,
     goalsLive: e.goalsLive,
     writesOff: writesOff(deps),
-    refusal,
+    // Decision 2: while the activity card waits, the refusal points at it.
+    refusal: refusal == null ? null : pointedAt(gateOf(e, ctx), refusal),
     todayCheck: refitted.todayCheck,
     feasibility: refitted.feasibility,
-    pending: m.items.filter(undecidedAtStart),
+    pending: withoutHeld(m, held).items.filter(undecidedAtStart),
     todayRows: rows,
     practices,
-    steps: m.items.filter((i) => i.kind === "STEP" && liveItem(i)).map((i) => ({ itemId: i.id as string, title: i.label })),
+    steps: m.items.filter((i) => i.kind === "STEP" && liveItem(i) && !held.has(i.lineageId)).map((i) => ({ itemId: i.id as string, title: i.label })),
     // restsOnAdded (F-R4-13): "Pays ⬡6 because of the practice the app added (…)" — lane 0 adds the optional field to StartPreview.pay.
     pay: Object.assign({ stated: stated.stated, zeroReason: stated.zeroReason, limitLine: limitLineOf(midPaid), paidOn: stated.paidOn }, { restsOnAdded: stated.restsOnAdded ?? null }),
     payBasis,
@@ -6525,20 +6784,26 @@ export async function startMilestoneCore(userId: string, milestoneId: string, ch
     if (row.status === "STARTED" && row.goalId) return ok({ goalId: row.goalId });
     if (row.status === "STARTING") return fail("This milestone is already starting — tap Finish starting.");
     const planRows = planRowsOf(b);
+    // Confirm to unlock (contracts §19): the plan's gate; while its card waits, the refusals below point at it (decision 2;
+    // the card-measure refusals further on are a Field plan's, which never asks).
+    const gate = gateOf(e, ctx);
+    const refuse = (message: string) => fail<{ goalId: string | null }>(pointedAt(gate, message));
     const refusal = startRefusal(e, deps, b, row, planRows, ctx.today, refitted.impossible, f.templates);
-    if (refusal) return fail(refusal);
+    if (refusal) return refuse(refusal);
 
     const sheet = applySheet(refitted.milestone, ch, b, e, ctx.tree);
-    if (typeof sheet === "string") return fail(sheet);
+    if (typeof sheet === "string") return refuse(sheet);
     const off = new Set(ch.practicesOff);
-    let m = syncMeasures(withOff(sheet, off), b.roadmap.fieldId == null, e.makeId);
-    const blockers = blockersOf(m, todayBoundRowsOf(m, off));
-    if (blockers.length) return fail(blockers[0]);
-    if (!m.measures.some((x) => x.role === "PAYS")) return fail(NOTHING_MEASURES);
+    // What the plan's gate blocks is held back (off Today; the started row records it).
+    const held = heldAtStartOf(sheet, gate);
+    let m = syncMeasures(withHeld(withOff(sheet, off), held), b.roadmap.fieldId == null, e.makeId);
+    const blockers = blockersOf(withoutHeld(m, held), todayBoundRowsOf(withoutHeld(m, held), off));
+    if (blockers.length) return refuse(blockers[0]);
+    if (!m.measures.some((x) => x.role === "PAYS")) return refuse(held.size > 0 ? ACTIVITY_WAITING_START : NOTHING_MEASURES);
 
     const fz = refitted.feasibility;
     const over = fz.worst === "OVER" || fz.time.verdict === "OVER" || fz.knowledge.some((k) => k.verdict === "OVER");
-    if (over && !ch.overAccepted && !row.overAccepted) return fail("This milestone is over your hours or pace now: switch on “Keep it over my hours/pace” to start it.");
+    if (over && !ch.overAccepted && !row.overAccepted) return refuse("This milestone is over your hours or pace now: switch on “Keep it over my hours/pace” to start it.");
 
     // Each card measure's final target (stored or re-fitted) over its high-water baseline (decision 10). A stage holds one
     // per Domain of R (F-R4-10), each with its own key (its `r` or `rc` segment kept) and its own baseline.
@@ -6606,7 +6871,11 @@ export async function startMilestoneCore(userId: string, milestoneId: string, ch
   return finished.ok ? finished : fail(`${finished.error} Tap Finish starting to complete it.`);
 }
 
-/** "Finish starting" (and Start's last step): the rows by captureKey, PRACTICE_KEPT keys, STARTING → STARTED, the first readings and PROFICIENCY, and this week's quest set (source START). */
+/**
+ * "Finish starting" (and Start's last step): the rows by captureKey, PRACTICE_KEPT keys, STARTING → STARTED, the first
+ * readings (each card key counted as it counts, startCountsOf: no multiple choice on a depth key, no first `rc` reading)
+ * and PROFICIENCY, and this week's quest set (source START, its v0 per key from the same counts).
+ */
 export async function finishStartCore(userId: string, milestoneId: string, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ goalId: string }>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   const e = envOf(deps);
@@ -6621,6 +6890,8 @@ export async function finishStartCore(userId: string, milestoneId: string, now: 
   const track: Track = isOneOf(ROADMAP_TRACKS, b0.roadmap.track) ? b0.roadmap.track : DEFAULT_FIELD_TRACK;
   const m0 = draftOf(row0);
   const ctx = await planContext(e, userId, b0.roadmap, now);
+  // Confirm to unlock (contracts §19): the gate as it reads now (an answer given between the claim and this finish counts).
+  const gate = gateOf(e, ctx);
   const startedDay = row0.startedDay ?? ctx.today;
   const lineageGoals = b0.milestones.filter((m) => m.lineageId === row0.lineageId && m.goalId && m.id !== row0.id).map((m) => m.goalId as string);
   const payments = lineageGoals.length ? await e.io.goalPayments(userId, lineageGoals) : {};
@@ -6643,7 +6914,8 @@ export async function finishStartCore(userId: string, milestoneId: string, now: 
     const practices = m0.items.filter((i) => i.kind === "PRACTICE").sort((a, b) => a.ord - b.ord);
     for (let i = 0; i < practices.length; i++) {
       const it = practices[i];
-      if (!liveItem(it) || !it.addToToday) continue;
+      // Held back at the claim (addToToday false), or blocked by an answer given since (contracts §19): no task.
+      if (!liveItem(it) || !it.addToToday || !isPlaceableKind(gate, it.catalogKey)) continue;
       const t = await e.io.createTemplate(userId, practiceCaptureOf(it, track), {
         rawText: it.label,
         captureSource: "form",
@@ -6656,7 +6928,7 @@ export async function finishStartCore(userId: string, milestoneId: string, now: 
     const steps = m0.items.filter((i) => i.kind === "STEP").sort((a, b) => a.ord - b.ord);
     for (let i = 0; i < steps.length; i++) {
       const it = steps[i];
-      if (!liveItem(it)) continue;
+      if (!liveItem(it) || !it.addToToday || !isPlaceableKind(gate, it.catalogKey)) continue;
       const t = await e.io.createTemplate(userId, stepCaptureOf(it, track), {
         rawText: it.label,
         captureSource: "form",
@@ -6692,7 +6964,9 @@ export async function finishStartCore(userId: string, milestoneId: string, now: 
     const dueDay = row.dueDay ?? startedDay;
     const rest = await e.io.restRows(userId, startedDay, dueDay);
     const held = Array.from(heldDaysOf(rest, startedDay, dueDay)).sort();
-    let v0: number | undefined;
+    // The started day's card counts, each counted as its key counts (none for an `rc` key: R1's first reading).
+    const counts = startCountsOf(ctx, row.measures);
+    for (const [key, live] of counts) readingRows.push(measures.cardsReadingRow(key, ctx.today, live));
     for (const x of row.measures) {
       if (x.kind === "PRACTICE_KEPT") {
         const lineages = scopeOf(x.scope).itemLineageIds ?? (x.itemLineageId ? [x.itemLineageId] : []);
@@ -6715,12 +6989,6 @@ export async function finishStartCore(userId: string, milestoneId: string, now: 
           data: { scope: { itemLineageIds: lineages, templateIds }, measureKey: key, target: value.effTarget, fittedTarget: value.effTarget, baseline: 0, baselineDay: startedDay },
         });
         readingRows.push(measures.practiceReadingRow(key, ctx.today, value, Object.fromEntries(practiceItems.map((i) => [i.lineageId, templateOf.get(i.lineageId) ?? null]))));
-      } else if (x.kind === "CARDS_AT_LEVEL" && x.measureKey) {
-        const parsed = parseMeasureKey(x.measureKey);
-        if (parsed?.kind !== "CARDS_AT_LEVEL") continue;
-        const live = liveCount(ctx, parsed.domainIds, parsed.level);
-        v0 = live.value;
-        readingRows.push(measures.cardsReadingRow(x.measureKey, ctx.today, live));
       }
     }
     ops.push({ op: "update", table: "roadmapMilestone", where: { id: row.id, status: "STARTING" }, data: { status: "STARTED", goalId } });
@@ -6758,7 +7026,7 @@ export async function finishStartCore(userId: string, milestoneId: string, now: 
     if (snap) {
       try {
         const set = await e.lanes.weekQuestSetFor(userId, milestoneId, weekStartKeyOf(ctx.today), now, {
-          overrides: { startedDay, snapshot: snap, templateIds: Object.fromEntries(templateOf), ...(v0 != null ? { v0 } : {}) },
+          overrides: { startedDay, snapshot: snap, templateIds: Object.fromEntries(templateOf), v0ByKey: v0ByKeyOf(counts), gate },
         });
         if (set) ops.push({ op: "questWeek", roadmapId, set, source: "START", now });
       } catch (err) {
@@ -6930,10 +7198,20 @@ export async function replanCore(userId: string, roadmapId: string, kind: Replan
     let plan: MilestoneDraft[] = unstarted.map(fresh);
     let feasibility: Feasibility | null = null;
     const ctx = await planContext(e, userId, b.roadmap, now, coveragePriorOf(b));
+    const gate = gateOf(e, ctx);
     if (kind === "REFIT") {
-      const refitted = e.lanes.refit([...carried, ...plan], realismInputOf(ctx, [...carried, ...plan]));
+      const refitted = e.lanes.refit([...carried, ...plan], realismInputOf(ctx, [...carried, ...plan]), { excluded: gate.blocked });
       plan = refitted.filter((d) => !isCarried(d)).map((d) => ({ ...d, status: d.status === "LATER" ? "LATER" : "DRAFT", version: v }));
     }
+    // Confirm to unlock (contracts §19): the re-plan keeps no kind the user's answers block, and a track plan's starter
+    // kinds follow them (a kind their answer released is placed where the starter places it).
+    // What the starter placed before any answer is the baseline: only what the answers changed is added.
+    const unanswered = allowedKindsFor(planGateOf(e, ctx.roadmap).state, null).blocked;
+    plan = regatedDrafts(e, ctx, carried, plan, requiredNamesOf(ctx, requiredOfPlan(ctx, [...carried, ...plan])), unanswered).map((d) => ({
+      ...d,
+      version: v,
+      status: (d.status === "LATER" ? "LATER" : "DRAFT") as MilestoneStatus,
+    }));
     if (plan.length === 0) return fail("Every milestone has started; nothing is left to re-plan.");
     if (positionCountOf([...carried, ...plan.filter(scheduled)]) > MAX_MILESTONES) return fail(`A roadmap holds at most ${MAX_MILESTONES} milestones; move some to Later.`);
     try {
@@ -7933,7 +8211,7 @@ function draftViewOf(
     feasibility = { today: ctx.today, m: ctx.m, milestones: [], aimCheck: { kind: "unchecked" }, basis: [], remedies: [], impossible: false, over: false };
   }
   // The total acceptCore checks against MAX_MILESTONES: positions over the carried rows and the draft's scheduled ones.
-  const check = acceptBlockersOf(drafts, feasibility, total, { picksNeedConfirm: picksNeedConfirmOf(b.roadmap) });
+  const check = acceptBlockersOf(drafts, feasibility, total, { picksNeedConfirm: picksNeedConfirmOf(b.roadmap), gate: planGateOf(e, b.roadmap).gate });
   // A line a started milestone covers is in the plan, not "Not in this plan yet" (fix round 2's carry-over).
   const coveredBy = [...drafts.flatMap((d) => d.items), ...carriedRows.filter((m) => !superseded(b, m)).flatMap((m) => m.items.map(itemDraftOf))];
   const used = new Set(coveredBy.filter((i) => i.kind === "TOPIC" && liveItem(i) && i.syllabusRef != null).map((i) => i.syllabusRef as number));
@@ -7960,9 +8238,10 @@ function draftViewOf(
     nextLineageId: check.nextLineageId,
     acceptable: check.blockers.length === 0,
     nextToDecide: check.nextToDecide,
-    exclusions: exclusionsOf(e, b, ctx, required),
+    // What the gate leaves out because of the user's words (contracts §19): the same gate the draft was built with.
+    exclusions: leftOutOf(planGateOf(e, b.roadmap)),
     sessionPicks: sessionPicksOf(b, drafts),
-    aimConflict: aimConflictFor(b),
+    aimConflict: aimConflictFor(e, b),
     gaps: ROADMAP_GAPS_LIVE ? gapViewsOf(b, ctx, drafts) : [],
     // "n not shown" counts every gap name not shown: the hidden (ungrounded or flagged) and the dropped (links, non-names).
     gapsHidden: gapsNotShownOf(facts.report?.integrity),
@@ -7972,6 +8251,8 @@ function draftViewOf(
     dateCheck: feasibility.dateCheck ?? null,
     depth: depth != null ? depthViewFor(e, ctx, b, required, depth, feasibility, group) : null,
     legacy: null,
+    // Confirm to unlock (contracts §19): the card, from the gate every plan path reads.
+    activityConfirm: activityConfirmFor(e, b.roadmap),
   };
 }
 
@@ -7993,25 +8274,174 @@ function legacyDraftViewOf(b: RoadmapBundle, ctx: Pick<PlanContext, "today" | "m
   };
 }
 
-/** The kinds the constraint filter leaves out of this plan, each with its word (R3's constraintExclusionsOf over the catalog's kinds for the track). */
-function exclusionsOf(e: Env, b: RoadmapBundle, ctx: PlanContext, required: readonly string[]): ConstraintExclusion[] {
-  if (!b.roadmap.constraints) return [];
+// ═══ Confirm to unlock (contracts §19; lane R4's half) ═════════════════════
+//
+// Constraint safety never rests on the parser catching a phrasing. Every plan
+// path here — the code-built starter and stage ladder (ladderOf,
+// starterPlan), the Gemini keys-only placement (planFromReply), every re-fit
+// and re-plan (stagePracticesOf, rewrite, applyRemedyCore, replanCore,
+// lowerDepthCore and the redrafts), a pick from the type list
+// (catalogPickOf), Start (startPreview, startMilestoneCore, finishStartCore)
+// and the week quests (Start's set, the bar's seam) — reads ONE gate,
+// roadmap-catalog allowedKindsFor over the plan's words and the user's stored
+// answers (planGateOf), and places no kind it blocks. The lead's rules
+// (safety-gaps round): every BODY or CARE plan asks once, whatever the user
+// wrote; a CRAFT plan asks on a cue; a Field Area and DUTY never ask. Until
+// the card is answered under the current words only the track's safe kinds
+// are placed (CARE's are planning the week and keeping a log, so a waiting
+// CARE plan is never empty), and every refusal meanwhile points at the card
+// (pointedAt). The parser's exclusions only suggest (a pre-ticked box). The
+// answer is the user's own (setActivityVerdictsCore, YOURS): an explicit act
+// carrying the words' key (a stale key asks again), stored in
+// Roadmap.coverage through coverageJsonOf. An AVOID given after Start pauses
+// the started practice's Today task (archived through tasks.ts, undone with
+// unarchiveTask); a kept pick or the user's own row of a kind that waits
+// again is held (Start, the quests and accept read every live row).
+
+/** A plan's gate: what it read (the user's words and the parser's pre-fill) and roadmap-catalog allowedKindsFor's answer. */
+export interface PlanGate {
+  state: ConstraintsState;
+  gate: ActivityGate;
+}
+
+/** One gate per roadmap row as read (a re-read is a new row): every path over one read sees the same answer. */
+const planGates = new WeakMap<RoadmapRec, PlanGate>();
+
+/**
+ * The parser's exclusions the gate reads (its pre-fill, never an unlock;
+ * contracts §19.4): R3's constraintExclusionsOf over the track's offered
+ * kinds, with each kind's OWN words only (its keywords and template words:
+ * no Domain name, aim or exam filled in), so a term the plan fills into
+ * every label ("Inference is too hard", "Mum's care is too much") never
+ * names a kind (the verifier's finding #1; R3 fixes the parser, and this
+ * reading holds meanwhile). On a BODY or CARE plan the gated kinds — held
+ * until the user's answer whatever the parser reads — are also pre-ticked
+ * through their filled labels ("no running" against "Do a full attempt at:
+ * Run a 10K"): a pre-tick only, never a block of its own. A parser that
+ * throws pre-fills nothing (logged): the gate still holds every gated kind
+ * on its own reading of the words.
+ */
+function gateExclusionsOf(e: Env, intake: Intake): ConstraintExclusion[] {
+  const constraints = intake.constraints;
+  if (!constraints || !constraints.trim()) return [];
+  const track = catalogTrackOf(intake);
+  const filter = { track, exam: !!intake.examLabel, practicesAllowed: intake.fieldId == null || intake.practicesAllowed };
+  const kinds = [...catalogKindsFor("PRACTICE", filter), ...catalogKindsFor("STEP", filter), ...catalogKindsFor("CHECKPOINT", filter)];
+  const out: ConstraintExclusion[] = [];
   try {
-    const track = catalogTrackOf({ fieldId: b.roadmap.fieldId, track: ctx.intake.track });
-    const filter = { track, exam: !!b.roadmap.examLabel, practicesAllowed: b.roadmap.fieldId == null || b.roadmap.practicesAllowed };
-    const kinds = [...catalogKindsFor("PRACTICE", filter), ...catalogKindsFor("STEP", filter), ...catalogKindsFor("CHECKPOINT", filter)];
-    const names = required.map((id) => ctx.domains.get(id)?.name).filter((n): n is string => !!n);
-    return e.lanes.constraintExclusionsOf(b.roadmap.constraints, kinds, { track, domains: names, aim: b.roadmap.aim, exam: b.roadmap.examLabel });
+    out.push(...e.lanes.constraintExclusionsOf(constraints, kinds, { track, domains: [], aim: null, exam: null }));
   } catch (err) {
-    console.error("roadmap: the constraint exclusions weren't worked out:", err instanceof Error ? err.message : err);
-    return [];
+    console.error("roadmap: the constraint exclusions weren't worked out (nothing pre-filled):", err instanceof Error ? err.message : err);
+  }
+  const gated = new Set<string>(cueGatedKindsOf(track));
+  if (gated.size > 0) {
+    try {
+      const seen = new Set<string>(out.map((x) => x.kind));
+      const filled = e.lanes.constraintExclusionsOf(constraints, kinds.filter((k) => gated.has(k)), { track, domains: [], aim: intake.aim, exam: intake.examLabel });
+      for (const x of filled) if (gated.has(x.kind) && !seen.has(x.kind)) out.push(x);
+    } catch (err) {
+      console.error("roadmap: the gated kinds' pre-fill wasn't worked out:", err instanceof Error ? err.message : err);
+    }
+  }
+  return out;
+}
+
+/**
+ * THE gate of a roadmap as read (contracts §19): constraintsStateOfIntake over
+ * the row's intake (its words, track, exam and practices) with the parser's
+ * pre-fill (gateExclusionsOf), then allowedKindsFor with the user's stored
+ * answers. Pure over the row; one per row object.
+ */
+function planGateOf(e: Env, roadmap: RoadmapRec): PlanGate {
+  const hit = planGates.get(roadmap);
+  if (hit) return hit;
+  const intake = intakeOf(roadmap);
+  const state = constraintsStateOfIntake(intake, gateExclusionsOf(e, intake));
+  const out: PlanGate = { state, gate: allowedKindsFor(state, intake.activities ?? null) };
+  planGates.set(roadmap, out);
+  return out;
+}
+
+/** The gate of a plan context (its roadmap row). */
+const gateOf = (e: Env, ctx: Pick<PlanContext, "roadmap">): ActivityGate => planGateOf(e, ctx.roadmap).gate;
+
+/**
+ * A refusal while the activity card waits points at it (decision 2: a
+ * waiting plan is never a dead end): roadmap-catalog withActivityPointer,
+ * unless the message already names the card (ACTIVITY_WAITING_PICK,
+ * ACTIVITY_WAITING_START), so the card is never named twice.
+ */
+const pointedAt = (gate: Pick<ActivityGate, "on" | "pending"> | null | undefined, message: string): string =>
+  !gate || message.includes(ACTIVITY_CARD_NAME) ? message : withActivityPointer(gate, message);
+
+/** An item a plan path placed (code's starter or requirement, or Gemini's pick), not a decision of the user's (YOURS: picked, edited or checked). */
+const placedByPlan = (i: Pick<ItemDraft, "origin" | "decision">): boolean => provenanceOf(i.origin, i.decision) !== "YOURS";
+
+/**
+ * A plan's rows through the gate (contracts §19), pure: on every row not
+ * carried (DRAFT, LATER, PLANNED), a live item of a kind the gate blocks
+ * leaves — dropped when a plan path placed it, REMOVED (kept as a row) when
+ * it was the user's own and they now say avoid. A row of the user's own
+ * (a Gemini pick they kept, a type they picked) of a kind that waits on
+ * their answer again (their words changed since the card was answered)
+ * stays as their decision but is held (decision 5): Start holds it back
+ * (heldAtStartOf), the week quests skip it, and accept refuses the draft
+ * until the card is answered (acceptBlockersOf reads every live row). A
+ * changed row's measures follow (syncMeasures). Carried rows are never
+ * touched.
+ */
+export function gatePlanRows(plan: readonly MilestoneDraft[], gate: Pick<ActivityGate, "blocked" | "rows">, trackArea: boolean, makeId: () => string): MilestoneDraft[] {
+  const avoided = new Set<string>(gate.rows.filter((r) => r.state === "AVOID").map((r) => r.kind));
+  return plan.map((m) => {
+    if (m.status === "STARTING" || m.status === "STARTED") return m;
+    let changed = false;
+    const items: ItemDraft[] = [];
+    for (const it of m.items) {
+      if (!liveItem(it) || isPlaceableKind(gate, it.catalogKey)) items.push(it);
+      else if (placedByPlan(it)) changed = true;
+      else if (avoided.has(it.catalogKey as string)) {
+        changed = true;
+        items.push({ ...it, decision: "REMOVED" });
+      } else items.push(it);
+    }
+    return changed ? syncMeasures({ ...m, items }, trackArea, makeId) : m;
+  });
+}
+
+/**
+ * What the draft leaves out because of the user's words (DraftView.exclusions,
+ * "Left out because of your constraints: …"): each kind the parser named
+ * that the gate blocks, with its word, in the gate's order. A suggestion
+ * the gate doesn't block (WORDS) or a kind the user's answer released is
+ * placed, so it isn't listed.
+ */
+function leftOutOf(pg: PlanGate): ConstraintExclusion[] {
+  const blocked = new Set<string>(pg.gate.blocked);
+  return pg.state.prefill.filter((p) => blocked.has(p.kind)).map((p) => ({ kind: p.kind, word: p.word }));
+}
+
+/** The confirm card's view (DraftView/RoadmapView.activityConfirm): the gate's, while it asks or holds an answer; null when there is nothing to show. */
+function activityConfirmFor(e: Env, roadmap: RoadmapRec): DraftView["activityConfirm"] {
+  try {
+    const pg = planGateOf(e, roadmap);
+    const view = activityConfirmViewOf(pg.state, pg.gate);
+    return view.on || view.rows.length > 0 ? view : null;
+  } catch (err) {
+    console.error("roadmap: the confirm card wasn't worked out:", err instanceof Error ? err.message : err);
+    return null;
   }
 }
 
-/** The aim itself meets a negated constraint term (R3's aimConflictOf); null when none or unreadable. */
-function aimConflictFor(b: RoadmapBundle): DraftView["aimConflict"] {
+/**
+ * The aim itself meets a negated constraint term (R3's aimConflictOf); null
+ * when none or unreadable, and null once the user answered the activity card
+ * under these words (decision 6: the line shows only while the conflict is
+ * unresolved; their answer decides what the plan leaves out).
+ */
+function aimConflictFor(e: Env, b: RoadmapBundle): DraftView["aimConflict"] {
   if (!b.roadmap.constraints) return null;
   try {
+    if (planGateOf(e, b.roadmap).gate.answered != null) return null;
     return validate.aimConflictOf(b.roadmap.constraints, b.roadmap.aim);
   } catch {
     return null;
@@ -8338,6 +8768,8 @@ function roadmapViewOfData(e: Env, deps: RoadmapDeps, v: ViewData, ctx: PlanCont
     legacy: null,
     gaps: ROADMAP_GAPS_LIVE && b.roadmap.version >= 1 ? gapViewsOf(b, ctx, planDrafts) : [],
     gapsHidden: gapsNotShownOf(acceptedRun?.report?.integrity),
+    // Confirm to unlock (contracts §19): the answers stay editable for the life of the plan (open plans only).
+    activityConfirm: status === "DRAFT" || status === "ACTIVE" ? activityConfirmFor(e, b.roadmap) : null,
   };
 }
 
@@ -9048,7 +9480,7 @@ export async function lowerDepthCore(userId: string, roadmapId: string, to: AimD
     let dropped: string[];
     let lowered: MilestoneDraft[] = plan;
     try {
-      const pure = e.lanes.lowerDepthPlanOf(plan, realismInputOf(ctx, plan), to);
+      const pure = e.lanes.lowerDepthPlanOf(plan, realismInputOf(ctx, plan), to, { excluded: gateOf(e, ctx).blocked });
       if (!pure.ok) return fail(pure.error);
       dropped = pure.dropped;
       lowered = pure.plan;
@@ -9172,8 +9604,10 @@ export async function confirmDomainAdditionsCore(userId: string, roadmapId: stri
 
 /**
  * A body or care plan's session picks (F-R4-17), its one confirm: KEEP sets
- * Gemini's picks CHECKED; EASY removes them and puts the easy, mobility and
- * technique sessions in their place (code's, within the caps), in one
+ * Gemini's picks CHECKED; EASY removes them and puts the track's safe
+ * sessions in their place (cueSafeKindsOf: easy, mobility and technique on
+ * BODY, planning the week and keeping a log on CARE; code's, within the
+ * caps), in one
  * transaction through the one writer. Refused with writes off and with no
  * pick waiting.
  */
@@ -9190,10 +9624,14 @@ export async function confirmSessionPicksCore(userId: string, roadmapId: string,
     const track = catalogTrackOf({ fieldId: b.roadmap.fieldId, track: intakeOf(b.roadmap).track });
     const ops: StoreOp[] = [{ op: "guard", guard: { g: "ROADMAP_IS", id: roadmapId, statuses: ["DRAFT", "ACTIVE"], version: b.roadmap.version } }];
     const decided = new Set<string>();
+    // Confirm to unlock (contracts §19): this confirm is a second layer. Keeping a pick never unlocks a kind the gate
+    // blocks (that pick leaves instead), and no safe session the user said to avoid takes a pick's place.
+    const gate = planGateOf(e, b.roadmap).gate;
     const afterOf = (m: MilestoneBundle): MilestoneDraft => {
       const d = draftOf(m);
       if (choice === "KEEP") {
-        return { ...d, items: d.items.map((i) => (pendingPick(i) ? (decided.add(i.id as string), { ...i, decision: "CHECKED" as Decision }) : i)) };
+        const items = d.items.map((i) => (pendingPick(i) ? (decided.add(i.id as string), { ...i, decision: (isPlaceableKind(gate, i.catalogKey) ? "CHECKED" : "REMOVED") as Decision }) : i));
+        return items.some((i, k) => i.decision === "REMOVED" && d.items[k].decision !== "REMOVED") ? syncMeasures({ ...d, items }, b.roadmap.fieldId == null, e.makeId) : { ...d, items };
       }
       const picks = d.items.filter(pendingPick);
       if (picks.length === 0) return d;
@@ -9203,9 +9641,12 @@ export async function confirmSessionPicksCore(userId: string, roadmapId: string,
       const practicePicks = picks.filter((p) => p.kind === "PRACTICE");
       if (practicePicks.length === 0) return syncMeasures({ ...d, items }, b.roadmap.fieldId == null, e.makeId);
       const sessions = Math.max(1, ...practicePicks.map((p) => p.sessionsPerWeek ?? 1));
-      for (const key of BODY_SAFE_KINDS) {
+      // The track's safe practices (roadmap-catalog cueSafeKindsOf): easy, mobility and technique on BODY; planning the
+      // week and keeping a log on CARE (decision 2), so the swap never leaves a CARE plan empty.
+      for (const key of cueSafeKindsOf(track).filter((k) => catalogEntryOf(k)?.slot === "PRACTICE")) {
         if (items.filter((i) => i.kind === "PRACTICE" && liveItem(i)).length >= PRACTICES_PER_MILESTONE) break;
         if (items.some((i) => i.kind === "PRACTICE" && liveItem(i) && i.catalogKey === key)) continue;
+        if (!isPlaceableKind(gate, key)) continue;
         const entry = catalogEntryOf(key);
         if (!entry || !entry.tracks.includes(track)) continue;
         let label: string;
@@ -9253,6 +9694,205 @@ export async function confirmSessionPicksCore(userId: string, roadmapId: string,
   });
   invalidate("roadmap");
   return res;
+}
+
+/**
+ * A started practice's Today task an AVOID paused (decision 4): archived
+ * through tasks.ts archiveCore (RoadmapIo.archiveTemplate), never deleted;
+ * its history and streak stand, and the Today task's own undo
+ * (actions/tasks unarchiveTask) brings it back.
+ */
+export interface PausedTask {
+  templateId: string;
+  /** The task's title on Today (the roadmap item's label when the task can't be read). */
+  title: string;
+  /** The catalog type the user said to avoid. */
+  kind: CatalogKey;
+  /** The day it leaves Today when archiveCore deferred it (a must, once Duty is live: its pending archive); null: off Today now. */
+  deferredTo: DayKey | null;
+}
+
+/** setActivityVerdictsCore's answer. */
+export interface ActivityVerdictsResult {
+  /** The accepted plan holds unstarted rows the new answer changes: the page offers a re-plan. */
+  replan: boolean;
+  /**
+   * Decision 4: the started practices' (and steps') Today tasks of a kind
+   * this answer newly avoids, paused at once so an avoided activity never
+   * stays live on Today. The page shows a quiet notice with an Undo
+   * (unarchiveTask per task). A must's archive that tasks.ts defers (Duty)
+   * carries its day (deferredTo). [] when none.
+   */
+  paused: PausedTask[];
+  /** Those whose archive was refused or failed: still on Today, so the page names them (the user archives them there). */
+  notPaused: PausedTask[];
+}
+
+/**
+ * The user's answer to the activity card (confirm to unlock, contracts
+ * §19.3, §19.5): ActivityCardAnswer, an explicit act — the kinds ticked to
+ * avoid, or "Nothing to avoid" — carrying the key of the words it was given
+ * against. Stored as their own decision (YOURS) in Roadmap.coverage through
+ * coverageJsonOf, with the typed figures kept. Refused with writes off, on a
+ * roadmap that isn't the user's or isn't open, and as roadmap-catalog
+ * answerActivityCard refuses: a malformed answer or a kind off the plan's
+ * track (ACTIVITY_ANSWER_REFUSAL), an answer given against other words
+ * (ACTIVITY_ANSWER_STALE: the words changed meanwhile, in another tab or
+ * device, so the page re-reads and the card asks again; decision 3), and a
+ * Save with nothing ticked (ACTIVITY_NOTHING_TICKED: an unticked row is never
+ * taken as fine). The reason stored is quoted by the server from the user's
+ * own words, never sent. Guarded on the row as read (ROADMAP_IS with
+ * updatedAt): an intake saved meanwhile is a re-read, so neither write drops
+ * the other's, and a re-read under new words refuses the old key.
+ *
+ * On a DRAFT roadmap the draft's rows follow the new gate in the same
+ * transaction (regatedDrafts: a kind now blocked leaves, a newly released
+ * one is placed where the starter places it; through the one writer). On an
+ * ACTIVE roadmap nothing accepted is rewritten: `replan` says whether an
+ * unstarted milestone holds a kind now blocked or the answer allows a kind
+ * it held, so the page offers a re-plan (replanCore honours the answer).
+ * Start and the week quests read the stored answer from the next read on.
+ *
+ * Decision 4: once the answer is stored, every live Today task of a started
+ * milestone (a practice or a step, superseded or finished rows included)
+ * whose kind this answer newly avoids is paused through the existing task
+ * path (archiveCore; never deleted) and listed in `paused` for the page's
+ * quiet notice and its Undo. A kind avoided before this answer is not
+ * paused again (the user may have brought its task back).
+ */
+export async function setActivityVerdictsCore(userId: string, roadmapId: string, answer: ActivityCardAnswer, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<ActivityVerdictsResult>> {
+  if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
+  const e = envOf(deps);
+  let toPause: TaskToPause[] = [];
+  const res = await withRetry<{ replan: boolean }>(async () => {
+    toPause = [];
+    const b = await e.store.bundle(userId, roadmapId);
+    if (!b) return fail(NO_ROADMAP);
+    if (!isOpen(b.roadmap)) return fail("This roadmap is closed.");
+    const today = todayKey(now);
+    const before = planGateOf(e, b.roadmap);
+    const intake = intakeOf(b.roadmap);
+    // The card's answer under the words as read now: its key must be theirs (decision 3).
+    const answered = answerActivityCard(intake.activities ?? null, before.state, answer, today);
+    if (!answered.ok) return fail(answered.error);
+    const coverage = coverageJsonOf(intake.coverage, answered.value);
+    const ops: StoreOp[] = [
+      { op: "guard", guard: { g: "ROADMAP_IS", id: roadmapId, statuses: [b.roadmap.status as RoadmapStatus], version: b.roadmap.version, updatedAt: b.roadmap.updatedAt } },
+      { op: "update", table: "roadmap", where: { id: roadmapId }, data: { coverage, updatedAt: now } },
+    ];
+    // The row as it reads once written: the gate every later plan path reads.
+    const next: RoadmapRec = { ...b.roadmap, coverage };
+    const after = planGateOf(e, next).gate;
+    const moved = JSON.stringify(after.blocked) !== JSON.stringify(before.gate.blocked);
+    toPause = tasksToPauseOf(b, intake.activities ?? null, answered.value);
+    let replan = false;
+    if (b.roadmap.status === "ACTIVE") {
+      replan = moved && planRowsOf(b).some((m) => !isCarried(m) && m.status !== "LATER");
+    } else if (moved && !legacyOf(b)) {
+      const group = draftRowsOf(b);
+      if (group.length > 0) {
+        const ctx = await planContext(e, userId, next, now, coveragePriorOf(b) ?? draftCoverageOf(group));
+        const drafts = group.map(draftOf);
+        let afters: MilestoneDraft[];
+        try {
+          afters = regatedDrafts(e, ctx, [], drafts, requiredNamesOf(ctx, requiredDomainsOf(b, group)), before.gate.blocked);
+        } catch (err) {
+          console.error("roadmap: the draft wasn't re-synced after the answers (the plan paths read them):", err instanceof Error ? err.message : err);
+          afters = gatePlanRows(drafts, after, b.roadmap.fieldId == null, e.makeId);
+        }
+        const tree = await e.io.fieldTree();
+        const ctxText = modelTextContextOf(b, tree, true);
+        const pairs = group.map((row, i) => ({ row, after: afters.find((d) => d.id != null && d.id === row.id) ?? afters.find((d) => d.lineageId === row.lineageId) ?? afters[i] }));
+        try {
+          for (const { row, after: a } of pairs) {
+            if (!a || JSON.stringify(a) === JSON.stringify(draftOf(row))) continue;
+            const decided = new Set(a.items.filter((it) => it.id && row.items.find((x) => x.id === it.id)?.decision !== it.decision).map((it) => it.id as string));
+            ops.push({ op: "guard", guard: { g: "MILESTONE_IS", id: row.id, statuses: [row.status as MilestoneStatus] } });
+            writeRoadmapRows(ops, { kind: "REWRITE", before: row, after: { ...a, status: row.status === "LATER" ? "LATER" : "DRAFT" }, now, makeId: e.makeId, decided, others: pairs.filter((p) => p.row.id !== row.id).map((p) => p.after).filter((x): x is MilestoneDraft => !!x) }, ctxText);
+          }
+        } catch (err) {
+          if (!(err instanceof ModelTextError)) throw err;
+          logRefusedWrite("activities", err);
+          return fail(CHANGE_NOT_SAVED);
+        }
+      }
+    }
+    const out = await e.store.apply(userId, ops);
+    return out === "ok" ? ok({ replan }) : "stale";
+  });
+  invalidate("roadmap");
+  if (!res.ok) return res;
+  const { paused, notPaused } = await pauseAvoidedTasks(e, userId, toPause, now);
+  return ok({ replan: res.value.replan, paused, notPaused });
+}
+
+/** A started milestone's live Today task of a kind the answer newly avoids (decision 4). */
+interface TaskToPause {
+  templateId: string;
+  kind: CatalogKey;
+  /** The roadmap item's label: the notice's words when the task can't be read. */
+  label: string;
+}
+
+/**
+ * The Today tasks an answer pauses (decision 4), pure: every live practice or
+ * step of a STARTED row (the plan's carried rows: superseded and finished
+ * ones too, since their tasks can stay on Today) that has a task, of a kind
+ * the answer avoids and the stored answer before it didn't. One per task, in
+ * row and item order.
+ */
+function tasksToPauseOf(b: RoadmapBundle, prev: ActivityConfirm | null, next: ActivityConfirm): TaskToPause[] {
+  const was = new Set<string>(prev && prev.kinds ? Object.keys(prev.kinds).filter((k) => prev.kinds[k as CatalogKey]?.verdict === "AVOID") : []);
+  const newly = new Set<string>(Object.keys(next.kinds).filter((k) => next.kinds[k as CatalogKey]?.verdict === "AVOID" && !was.has(k)));
+  const out: TaskToPause[] = [];
+  if (newly.size === 0) return out;
+  for (const m of [...b.milestones].sort(byOrd)) {
+    if (m.status !== "STARTED") continue;
+    for (const i of [...m.items].sort((x, y) => x.ord - y.ord)) {
+      if (!liveItem(i) || (i.kind !== "PRACTICE" && i.kind !== "STEP") || !i.templateId || !isCatalogKey(i.catalogKey) || !newly.has(i.catalogKey)) continue;
+      if (!out.some((t) => t.templateId === i.templateId)) out.push({ templateId: i.templateId, kind: i.catalogKey, label: i.label });
+    }
+  }
+  return out;
+}
+
+/**
+ * Pauses the tasks (decision 4) through the existing task path:
+ * RoadmapIo.archiveTemplate (tasks.ts archiveCore: never a delete; the Today
+ * task's own unarchive is the undo). A task already archived, or a one-off
+ * step already done, is left as it is and not listed. A refusal or a failure
+ * is logged and listed in `notPaused` (still on Today), never thrown: the
+ * answer itself is already stored.
+ */
+async function pauseAvoidedTasks(e: Env, userId: string, list: readonly TaskToPause[], now: Date): Promise<{ paused: PausedTask[]; notPaused: PausedTask[] }> {
+  const paused: PausedTask[] = [];
+  const notPaused: PausedTask[] = [];
+  if (list.length === 0) return { paused, notPaused };
+  let templates: Map<string, TemplateLite> | null = null;
+  try {
+    templates = new Map((await e.io.templates(userId, list.map((t) => t.templateId))).map((t) => [t.id, t]));
+  } catch (err) {
+    console.error("roadmap: the avoided practices' tasks weren't read (each is archived as found):", err instanceof Error ? err.message : err);
+  }
+  for (const x of list) {
+    const t = templates?.get(x.templateId);
+    // Read and gone, already archived, or a one-off step already done: nothing of it is live on Today.
+    if (templates && (!t || t.archivedAt != null || (t.recurrence == null && t.completedAt != null))) continue;
+    const row: PausedTask = { templateId: x.templateId, title: t?.title || x.label, kind: x.kind, deferredTo: null };
+    try {
+      const r = await e.io.archiveTemplate(userId, x.templateId, now);
+      if (r.ok) paused.push({ ...row, deferredTo: r.deferredTo ?? null });
+      else {
+        console.error("roadmap: an avoided practice's task wasn't paused:", r.error);
+        notPaused.push(row);
+      }
+    } catch (err) {
+      console.error("roadmap: an avoided practice's task wasn't paused:", err instanceof Error ? err.message : err);
+      notPaused.push(row);
+    }
+  }
+  if (paused.length > 0) invalidate("life", "activity");
+  return { paused, notPaused };
 }
 
 /**
@@ -9835,17 +10475,24 @@ function hostileWeekQuestsOf(hr: Pick<HostileRunFacts, "e" | "ctx">, b: RoadmapB
   try {
     const ctx = hr.ctx;
     const plan = b.milestones.map(draftOf);
-    const d = draftOf(row);
+    // As Start would start it (contracts §19): what the plan's gate blocks is held back, so no quest names it.
+    const d0 = draftOf(row);
+    const held = heldAtStartOf(d0, gateOf(hr.e, ctx));
+    const d = withHeld(d0, held);
     const input = realismInputOf(ctx, plan);
     const refitted = hr.e.lanes.refitForStart(d, plan, input);
     const snapshot = hr.e.lanes.startSnapshotOf(refitted.milestone, refitted, input, today);
     const weekStart = weekStartKeyOf(today);
+    // Start's own v0 per key (startCountsOf; an `rc` key's is R6's clean count): the bar's view is the set Start freezes.
+    const counts = v0ByKeyOf(startCountsOf(ctx, d.measures));
     const cards: WeekQuestCardInput[] = [];
     for (const x of d.measures) {
       const ids = x.scope.domainIds ?? [];
       if (x.kind !== "CARDS_AT_LEVEL" || x.role !== "PAYS" || x.minLevel == null || !x.measureKey || ids.length === 0) continue;
       const parsed = parseMeasureKey(x.measureKey);
-      const v = liveCountOfKey(ctx, x.measureKey)?.value ?? 0;
+      const states = cardStatesOf(ctx, ids);
+      const segment = parsed?.kind === "CARDS_AT_LEVEL" ? parsed.segment : undefined;
+      const v = Object.prototype.hasOwnProperty.call(counts, x.measureKey) ? counts[x.measureKey] : questsServer.measureCountOf(states, x.minLevel, segment);
       const rate = x.rateSource;
       cards.push({
         measureKey: x.measureKey,
@@ -9855,7 +10502,7 @@ function hostileWeekQuestsOf(hr: Pick<HostileRunFacts, "e" | "ctx">, b: RoadmapB
         target: x.target,
         baseline: x.baseline ?? v,
         v0: v,
-        cards: cardStatesOf(ctx, ids),
+        cards: states,
         rateSource: rate === "SCOPE" || rate === "FIELD" || rate === "YOURS" || rate === "NONE" ? rate : snapshot.rateSource,
         fieldId: ctx.domains.get(ids[0])?.fieldId ?? null,
         ...(ids.length === 1 ? { domainId: ids[0] } : {}),
@@ -9876,7 +10523,7 @@ function hostileWeekQuestsOf(hr: Pick<HostileRunFacts, "e" | "ctx">, b: RoadmapB
         if (title) steps.push({ templateId: `hq-${i.lineageId}`, title, ord: i.ord, doneDay: null, minutes: bandOf(i) });
       }
     }
-    const cp = live.find((i) => i.kind === "CHECKPOINT" && i.outOf != null && i.bar != null) ?? null;
+    const cp = live.find((i) => i.kind === "CHECKPOINT" && i.outOf != null && i.bar != null && !held.has(i.lineageId)) ?? null;
     const cpLabel = cp ? questsServer.checkpointLabelOf(cp) : null;
     const checkpoint: WeekQuestCheckpointInput | null = cp && cpLabel ? { itemLineageId: cp.lineageId, label: cpLabel, lastLogDay: null } : null;
     const of = positionCountOf(b.milestones.filter(scheduled));

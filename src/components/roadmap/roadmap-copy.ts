@@ -18,6 +18,9 @@
  *   AIM_UNCHECKED_LINE · CREDENTIAL_LINE · HEALTH_LINE · CONSTRAINTS_LINE · NO_KEY_LINE
  *   FREE_TIER_LINE · DRAFT_CAP_LINE · RUN_STARTER_LINE · WRITES_OFF_BANNER · privacyLine
  *   levelPhrase · verdictWord · whyTitle · basisClassNote · labelWithClass · flagReasonLine
+ *   ACTIVITY_QUESTION · activityLeadLine · activityPendingLine · activityRowLine · activitySummaryLines ·
+ *   activityStaleLine · activitySaveLine · activitySuggestedLine · activityPausedLine · aimConflictLine
+ *   (confirm to unlock, contracts §19)
  *   + the formatting, flag, rank, Proficiency, pace and pay lines below.
  */
 import { LIFE_TZ, addDays, dayKeyOf, daysBetween, type DayKey } from "@/lib/life-day";
@@ -42,6 +45,7 @@ import {
   interval,
   stageLabelOf,
   stageOfLevel,
+  type ActivityRow,
   type AimCheck,
   type AimDepth,
   type AimLineView,
@@ -83,7 +87,7 @@ import {
   type WeekQuestKind,
   type WeekQuestUnit,
 } from "@/lib/roadmap-types";
-import { CATALOG, catalogHowOf, type CatalogKey } from "@/lib/roadmap-catalog";
+import { ACTIVITY_CARD_NAME, ACTIVITY_NOTHING_TO_AVOID, CATALOG, catalogHowOf, type CatalogKey } from "@/lib/roadmap-catalog";
 import { AIM_LATER_DAYS } from "@/lib/roadmap-invite";
 
 // ═══ The contract's copy ═════════════════════════════════════════════════════
@@ -1391,9 +1395,20 @@ export function exclusionsLine(xs: readonly ConstraintExclusion[]): string | nul
   return `Left out because of your constraints: ${xs.map((x) => `${KIND_NAME[x.kind] ?? x.kind} ('${x.word}')`).join(", ")}.`;
 }
 
-/** "Your constraints say 'no running' and your aim is 'Run a sub-50 10K'. The plan leaves out running sessions until you change one of them." */
-export function aimConflictLine(word: string, aim: string): string {
-  return `Your constraints say 'no ${word}' and your aim is '${aim}'. The plan leaves out ${word} sessions until you change one of them.`;
+/**
+ * The aim meets the user's own constraint (the lead's decision 6): it quotes
+ * the sentence they wrote, never a "no X" built from it. "You wrote: “Shin
+ * splints flare up if I run more than twice a week”. Your aim is “Run a
+ * sub-50 10K”." Then, with the activity card (`gated`), where to answer it;
+ * without it (an older draft), "If they don't fit together, change one of
+ * them." Null with no sentence to quote. Shown only while unresolved
+ * (roadmap-ui-model aimConflictShownOf).
+ */
+export function aimConflictLine(sentence: string, aim: string, gated = true): string | null {
+  const s = sentence.trim();
+  if (!s) return null;
+  const tail = gated ? `Say in “${ACTIVITY_CARD_NAME}” which sessions the plan should leave out.` : "If they don't fit together, change one of them.";
+  return `You wrote: “${s.replace(/[.!?;:,]+$/u, "")}”. Your aim is “${aim.trim().replace(/[.!?;:,]+$/u, "")}”. ${tail}`;
 }
 
 /** The one session-picks confirm (F-R4-17): "Gemini picked Harder session and Strength session. Your constraints say '…'. Keep them?" */
@@ -1494,4 +1509,196 @@ export function gapSimilarLine(name: string): string {
 /** The second confirm for an edited, ungrounded name. */
 export function gapUngroundedConfirm(name: string): string {
   return `Create a Domain named “${name}”? The app found these words nowhere in your aim, outline, exam or chosen Domains.`;
+}
+
+/// ─── Constraint safety: confirm to unlock (contracts §19) ───
+//
+// The activity card's words. They quote the user's own sentences and name the
+// app's session types; they never read a cue as a diagnosis, never call a
+// session safe or unsafe, and keep HEALTH_LINE beside them on a body or care
+// plan (and a craft plan that asks). The class of a cue (injury, pain …) is
+// never shown. Answering is an explicit act: ticks and Save, or "Nothing to
+// avoid" (ACTIVITY_NOTHING_TO_AVOID); an unticked row is never called "fine"
+// (the lead's decision 1), and no line says the user said so.
+
+/** The card's question (the lead's words), after the quoted words. */
+export const ACTIVITY_QUESTION = "Which activities should the plan avoid?";
+/** Some of the user's words couldn't be read here (CueReading.unparseable): the plan asks rather than guess. */
+export const ACTIVITY_UNREAD_LINE = "Some of your words couldn't be read here, so the plan asks.";
+/** How the list answers (the draft review, the roadmap page and the Start sheet): two explicit acts, never a Save with nothing ticked. */
+export const ACTIVITY_HOW_LINE = `Tick what the plan should avoid, or choose “${ACTIVITY_NOTHING_TO_AVOID}”. You can change this later on the roadmap page.`;
+/** The intake's version: the answer is saved with the plan. */
+export const ACTIVITY_INTAKE_HOW_LINE = `Tick what the plan should avoid, or choose “${ACTIVITY_NOTHING_TO_AVOID}”. Your answer is saved with the plan.`;
+export const ACTIVITY_SAVE_WORD = "Save my answers";
+export const ACTIVITY_CONFIRM_WORD = "Confirm these";
+export const ACTIVITY_CHANGE_WORD = "Change";
+/** The save's toast. */
+export const ACTIVITY_SAVED_LINE = "The plan follows what you said. You can change it on the roadmap page.";
+/** The save's toast on an ACTIVE plan whose unstarted milestones the answers change (R4's ActivityVerdictsResult.replan). */
+export const ACTIVITY_REPLAN_LINE = "They change milestones you haven't started. Re-plan to apply them; started ones stay as they are.";
+/** The intake once the user confirmed (saved after the intake, before the plan is built). */
+export const ACTIVITY_CONFIRMED_LINE = "Confirmed. Your answer is saved with the plan.";
+/** The intake, when the answer couldn't be saved (refused, or the words changed meanwhile): the draft asks again. */
+export const ACTIVITY_NOT_SAVED_LINE = "Your answer about activities wasn't saved. The draft asks again; until then the plan keeps to the sessions it lists.";
+/** The toast when a started practice the user now avoids is taken off Today (decision 4: archived through the existing path, history kept; Undo brings it back). */
+export const ACTIVITY_PAUSED_TITLE = "Taken off Today";
+
+/** A safe kind's words inside activityPendingLine ("easy, mobility and technique practice only"; "planning the week and keeping a log only"). */
+const SAFE_KIND_WORD: Partial<Readonly<Record<CatalogKey, string>>> = {
+  EASY_SESSION: "easy",
+  MOBILITY_SESSION: "mobility",
+  TECHNIQUE_SESSION: "technique",
+  PLAN_AHEAD: "planning the week",
+  KEEP_A_LOG: "keeping a log",
+};
+/** The session words that read as "… practice" together. */
+const SESSION_WORD_KINDS: readonly CatalogKey[] = ["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION"];
+
+/** A quoted sentence of the user's: verbatim, its closing full stop left to the line ("…" kept). */
+function quoteOf(q: string): string {
+  return `“${q.trim().replace(/[.!?;:,]+$/u, "")}”`;
+}
+
+/** What a plan of this track adds once the card is answered, for the lead line with nothing to quote. */
+const ASKS_BEFORE: Partial<Readonly<Record<string, string>>> = {
+  BODY: "harder or longer sessions",
+  CARE: "more care sessions",
+  CRAFT: "harder practice",
+};
+
+/**
+ * The card's lead: "Your words mention “Running causes me knee pain”." The
+ * quotes are the user's sentences (ActivityConfirmView.quotes), verbatim.
+ * With none (a body or care plan asks whatever the words), it claims nothing
+ * about the words: "Before the plan adds harder or longer sessions, it asks
+ * once." (the lead's handoff, §19.5).
+ */
+export function activityLeadLine(quotes: readonly string[], track?: string): string {
+  const qs = quotes.map((q) => q.trim()).filter(Boolean);
+  if (qs.length === 0) return `Before the plan adds ${(track && ASKS_BEFORE[track]) || "more sessions"}, it asks once.`;
+  return `Your words mention ${andList(qs.map(quoteOf))}.`;
+}
+
+/**
+ * What the plan places until the user answers (the lead's words): "Easy,
+ * mobility and technique practice only until you confirm." A care plan's:
+ * "Planning the week and keeping a log only until you confirm." A craft
+ * plan's: "Technique practice only until you confirm."
+ */
+export function activityPendingLine(safeKinds: readonly CatalogKey[]): string {
+  if (safeKinds.length === 0) return "Nothing more is added until you confirm.";
+  const words = safeKinds.map((k) => SAFE_KIND_WORD[k] ?? (KIND_NAME[k] ?? k).toLowerCase());
+  const sessions = safeKinds.every((k) => SESSION_WORD_KINDS.includes(k));
+  const list = `${andList(words)}${sessions ? " practice" : ""}`;
+  return `${list.charAt(0).toUpperCase()}${list.slice(1)} only until you confirm.`;
+}
+
+/** The card asks again after the words changed (ActivityConfirmView.staleDay): "You answered on 3 Oct, before your words changed." */
+export function activityStaleLine(staleDay: DayKey | null | undefined, today?: DayKey): string | null {
+  return staleDay ? `You answered on ${dayLabel(staleDay, today)}, before your words changed.` : null;
+}
+
+/**
+ * One row's line under its name: the user's AVOID and its day, a row the
+ * earlier answer left unticked before the words changed, or a suggestion's
+ * quote ("From your words: “…”"; its box comes pre-ticked; after a stale
+ * answer, both). A row the answer
+ * left unticked (FINE) has no line: the user's act was the card's answer,
+ * never "fine" for that row.
+ */
+export function activityRowLine(row: Pick<ActivityRow, "state" | "prefill" | "reason" | "day" | "staleDay">, today?: DayKey): string | null {
+  if (row.state === "AVOID") return row.day ? `You said to avoid it on ${dayLabel(row.day, today)}` : "You said to avoid it";
+  if (row.state === "FINE") return null;
+  const from = row.reason.trim() ? `From your words: ${quoteOf(row.reason)}` : null;
+  if (row.staleDay) return `Not ticked on ${dayLabel(row.staleDay, today)}, before your words changed${from && row.prefill === "AVOID" ? `. ${from}` : ""}`;
+  if (row.state === "WORDS" || row.prefill === "AVOID") return from;
+  return null;
+}
+
+/** "Easy session (3 Oct)" when the days differ, the day once at the end when they don't. */
+function namesWithDays(rows: readonly Pick<ActivityRow, "kind" | "day">[], today?: DayKey): string {
+  const days = new Set(rows.map((r) => r.day ?? ""));
+  if (days.size === 1) {
+    const d = rows[0]?.day;
+    return `${andList(rows.map((r) => KIND_NAME[r.kind] ?? r.kind))}${d ? ` (${dayLabel(d, today)})` : ""}`;
+  }
+  return andList(rows.map((r) => `${KIND_NAME[r.kind] ?? r.kind}${r.day ? ` (${dayLabel(r.day, today)})` : ""}`));
+}
+
+/**
+ * The answered card's summary (nothing to ask), naming the user's answer and
+ * never a "fine" they didn't say: "You said to avoid: Strength session (5
+ * Oct)." or "You said there's nothing to avoid (5 Oct).", then what the plan
+ * may now include ("The plan can include: Harder session and Longer
+ * session."), and an unanswered suggestion ("Ticked from your words, still in
+ * the plan until you answer: Timed practice."). Empty when no row is shown.
+ */
+export function activitySummaryLines(
+  view: { rows: readonly Pick<ActivityRow, "kind" | "state" | "reason" | "day">[]; answered?: DayKey | null; none?: boolean },
+  today?: DayKey
+): string[] {
+  const out: string[] = [];
+  const avoid = view.rows.filter((r) => r.state === "AVOID");
+  const fine = view.rows.filter((r) => r.state === "FINE");
+  const words = view.rows.filter((r) => r.state === "WORDS");
+  const on = view.answered ? ` (${dayLabel(view.answered, today)})` : "";
+  if (avoid.length > 0) out.push(`You said to avoid: ${namesWithDays(avoid, today)}.`);
+  if (view.none) out.push(avoid.length > 0 ? `You said there's nothing else to avoid${on}.` : `You said there's nothing to avoid${on}.`);
+  if (fine.length > 0) out.push(`The plan can include: ${andList(fine.map((r) => KIND_NAME[r.kind] ?? r.kind))}.`);
+  if (words.length > 0) {
+    const line = activitySuggestedLine(words.map((r) => (r.reason.trim() ? `${KIND_NAME[r.kind] ?? r.kind} (${quoteOf(r.reason)})` : (KIND_NAME[r.kind] ?? r.kind))));
+    if (line) out.push(line);
+  }
+  return out;
+}
+
+/** The suggestions the user hasn't answered: ticked from their words, but nothing is left out until they save (the lead's decision 7). */
+export function activitySuggestedLine(names: readonly string[]): string | null {
+  return names.length > 0 ? `Ticked from your words, still in the plan until you answer: ${names.join(", ")}.` : null;
+}
+
+/**
+ * What the card's button does now, beside it (the act is explicit: the user
+ * sees what Save leaves out and what the plan may then include). With
+ * nothing ticked the button is "Nothing to avoid".
+ */
+export function activitySaveLine(ticked: number, listed: number): string {
+  const n = Math.max(0, listed);
+  const t = Math.max(0, Math.min(ticked, n));
+  if (n === 0) return "";
+  if (t === 0) return n === 1 ? "The plan can then include it." : `The plan can then include all ${n}.`;
+  if (t === n) return n === 1 ? "The plan leaves it out." : `The plan leaves out all ${n}.`;
+  return `The plan leaves out ${t} and can include the other ${n - t === 1 ? "one" : n - t}.`;
+}
+
+/** The Start sheet: the milestone's practices the answer holds back ("Waiting on your answer, not added to Today: Harder session."). */
+export function activityWaitingLine(names: readonly string[]): string | null {
+  return names.length > 0 ? `Waiting on your answer, not added to Today: ${andList(names)}.` : null;
+}
+
+/** The Start sheet: the milestone's practices the user said to avoid (a suggestion never leaves one out). */
+export function activityLeftOutLine(names: readonly string[]): string | null {
+  return names.length > 0 ? `You said to avoid, not added to Today: ${andList(names)}.` : null;
+}
+
+/** A Start sheet practice the answer holds back, in place of its switch. */
+export const ACTIVITY_HELD_WAITING = "Waiting on your answer about activities: not added to Today.";
+export const ACTIVITY_HELD_LEFT_OUT = "You said to avoid it: not added to Today.";
+
+/** The type picker while kinds wait on the answer. */
+export function activityPickerLine(names: readonly string[]): string | null {
+  return names.length > 0 ? `Not offered until you answer “${ACTIVITY_CARD_NAME}”: ${andList(names)}.` : null;
+}
+
+/** The toast's body when started practices the user now avoids are taken off Today (decision 4). */
+export function activityPausedLine(names: readonly string[]): string | null {
+  if (names.length === 0) return null;
+  return `You said to avoid ${names.length === 1 ? "it" : "them"}, so ${andList(names)} ${names.length === 1 ? "is" : "are"} off Today. History is kept; Undo brings ${names.length === 1 ? "it" : "them"} back.`;
+}
+
+/** The toast's title and body when a started practice the user now avoids couldn't be taken off Today (R4's `notPaused`): where to do it. */
+export const ACTIVITY_NOT_PAUSED_TITLE = "Still on Today";
+export function activityNotPausedLine(names: readonly string[]): string | null {
+  if (names.length === 0) return null;
+  return `${andList(names)} couldn't be taken off Today here. Archive ${names.length === 1 ? "it" : "them"} from Today if you want ${names.length === 1 ? "it" : "them"} off.`;
 }

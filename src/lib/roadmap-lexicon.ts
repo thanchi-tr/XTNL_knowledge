@@ -28,7 +28,22 @@
  * CONSTRAINT_GENERIC_WORDS, AREA_GERUNDS, START_TERM_PHRASES, START_NOUN_WORDS,
  * ORDINAL_WORDS, QUOTE_PAIRS; and (fix round 2) the release lists
  * CONSTRAINT_RELEASE_WORDS, CONSTRAINT_RELEASE_STARTS,
- * CONSTRAINT_RELEASE_BLOCKERS and CONSTRAINT_STATE_CUES.
+ * CONSTRAINT_RELEASE_BLOCKERS and CONSTRAINT_STATE_CUES; and (fix round 4,
+ * the constraint reader's unsafe-side misses) CONSTRAINT_EXTRA_CUES,
+ * CONSTRAINT_EXCEPT_WORDS, CONSTRAINT_INJURY_CUES, CONSTRAINT_CUES_AFTER,
+ * CONSTRAINT_VERDICT_WORDS, CONSTRAINT_AFTER_NEGATORS, CONSTRAINT_BODY_PARTS,
+ * CONSTRAINT_ANAPHORA, CONSTRAINT_ITEM_WORDS, CONSTRAINT_SKIP_WORDS,
+ * CONSTRAINT_MIRROR_STARTS and CONSTRAINT_MIRROR_ENDS; and (the hardening
+ * round, pre-fill quality under contracts §19's "confirm to unlock")
+ * CONSTRAINT_MORE_CUES, CONSTRAINT_MORE_INJURY_CUES,
+ * CONSTRAINT_AUTHORITY_CUES, CONSTRAINT_MORE_CUES_AFTER,
+ * CONSTRAINT_CAUSE_WORDS, CONSTRAINT_BODY_STATE_WORDS,
+ * CONSTRAINT_BODY_SIDE_WORDS, CONSTRAINT_TROUBLE_WORDS,
+ * CONSTRAINT_TROUBLE_SKIP_WORDS, CONSTRAINT_CAN_WORDS, CONSTRAINT_WHEN_WORDS
+ * and CONSTRAINT_MORE_SKIP_WORDS; and (the safety-gaps round, contracts §19
+ * decision 7: a suggestion never blocks) CONSTRAINT_GENERIC_KIND_WORDS,
+ * CONSTRAINT_LIMIT_PHRASES, CONSTRAINT_FREQUENCY_PHRASES,
+ * CONSTRAINT_LIMIT_NUMBER_WORDS and CONSTRAINT_GENTLE_PHRASES.
  */
 import type { PracticeMethod } from "./roadmap-types";
 
@@ -459,7 +474,10 @@ export const CONSTRAINT_CUES: readonly string[] = ["no", "not", "avoid", "withou
  * Words that end a cue's scope early (a contrast, not a list): "no running,
  * but swimming is fine". Only once the cue has taken a term (fix round): a
  * break right after a cue ("injured while running") leaves the scope open,
- * so the term after it is still negated.
+ * so the term after it is still negated. Fix round 4: a body part is no such
+ * term ("injured my knee while running" names running), and "but" or
+ * "except" right after a negating cue that has named nothing ends it
+ * (CONSTRAINT_EXCEPT_WORDS: "nothing but swimming").
  */
 export const CONSTRAINT_SCOPE_BREAKS: readonly string[] = ["but", "except", "however", "although", "though", "unless", "while", "yet"];
 
@@ -470,19 +488,38 @@ export const CONSTRAINT_SCOPE_BREAKS: readonly string[] = ["but", "except", "how
  * injury still healing, so running is out" keeps running. A release word is
  * never a negated term itself. A clause runs to the next pause (a comma,
  * colon, dash or bracket), scope break or cue; it releases when it holds a
- * release word before any CONSTRAINT_RELEASE_BLOCKERS word. The rules
- * (negatedTermsOf):
- *   - a clause opened by a pause or by a CONSTRAINT_RELEASE_STARTS word ends
- *     the cue's scope there, even before the cue has taken a term: "injured,
- *     but cleared to run", "knee injury, running is fine", "injured last
- *     year, now fully recovered and running daily";
- *   - the clause right after a state cue (CONSTRAINT_STATE_CUES) that
- *     releases means the cue negates nothing: "knee injury healed, running is
- *     fine", "back pain gone", "doctor says running is fine".
+ * release word before any CONSTRAINT_RELEASE_BLOCKERS word. Where a clause
+ * may release (negatedTermsOf):
+ *   - a clause opened by a pause or by a CONSTRAINT_RELEASE_STARTS word while
+ *     a cue is active, even before the cue has taken a term: "injured, but
+ *     cleared to run", "knee injury, running is fine", "injured last year,
+ *     now fully recovered and running daily";
+ *   - the clause right after a state cue (CONSTRAINT_STATE_CUES): "knee
+ *     injury healed, running is fine", "back pain gone", "doctor says
+ *     running is fine".
+ * A release clears its own clause only (fix round 3; before it, the release
+ * ended the cue's scope for the rest of the sentence and dropped later
+ * exclusions). The cue is held back over the clause and restored, with the
+ * terms it had taken, where the clause ends: at the next pause, scope break
+ * or cue, or, when the clause names an activity before its release word
+ * ("swimming is fine", not "now fully recovered"), at the next "and" or "or"
+ * after that word. The cue then covers the clauses after it, and a scope
+ * break right there answers the release, not the cue. So "knee injury,
+ * swimming ok, running not ok" and "knee injury healed, but running not ok"
+ * name running, "knee injury, swimming is fine and running hurts" names
+ * running (fix round 4: "hurts" is a cue after its term, never a term;
+ * CONSTRAINT_CUES_AFTER), while "injured, but cleared to run" names nothing and
+ * "injured last year, now fully recovered and running daily" names only
+ * last and year. A new cue at the clause's end starts its own scope instead.
  * The terms a cue took before the release stand: "no running, but cleared
  * for swimming" still names running. After a negating cue ("no", "not",
  * "avoid" …) a release word is negated with the rest: "not cleared to run"
- * names run.
+ * names run. Fix round 4 closed the safe-side residual of a continuation:
+ * the clause after a release's "and" or "or", or after its pause, clears too
+ * when it holds a release word of its own or mirrors the release
+ * (CONSTRAINT_MIRROR_STARTS, CONSTRAINT_MIRROR_ENDS), so "knee injury,
+ * swimming fine and running ok" and "… swimming is fine and so is cycling"
+ * name nothing.
  */
 export const CONSTRAINT_RELEASE_WORDS: readonly string[] = ["cleared", "recovered", "healed", "fine", "ok", "okay", "resolved", "gone"];
 
@@ -545,9 +582,11 @@ export const CONSTRAINT_RELEASE_BLOCKERS: readonly string[] = [
 /**
  * The cues that report a state (a condition, or what a doctor said) rather
  * than negate a word; a subset of CONSTRAINT_CUES. A releasing clause right
- * after one means it negates nothing ("knee injury healed", "doctor says
- * running is fine"); otherwise its scope is the usual one ("knee injury,
- * no running", "doctor says running is out").
+ * after one negates nothing in that clause ("knee injury healed", "doctor
+ * says running is fine"), and the cue still covers the clauses after it
+ * ("knee injury healed, but running not ok" names running); otherwise its
+ * scope is the usual one ("knee injury, no running", "doctor says running is
+ * out").
  */
 export const CONSTRAINT_STATE_CUES: readonly string[] = ["injury", "injured", "pain", "doctor says"];
 
@@ -580,6 +619,481 @@ export const CONSTRAINT_GENERIC_WORDS: readonly string[] = [
   "says",
   "said",
   "doctor",
+];
+
+// ─── Fix round 4: the constraint reader's unsafe-side misses (F-R4-17) ──────
+// A negation or a pain word written after its term ("running hurts my knee",
+// "swimming is fine, running not allowed", "Running, jumping, pivoting are
+// out"), a state cue in an earlier sentence ("Knee injury. Running, jumping."),
+// "nothing high-impact", and the safe-side keeps that go with them ("nothing
+// but swimming", "swimming doesn't hurt", "swimming fine and cycling ok").
+// negatedTermsOf reads them under the rules constraint.after,
+// constraint.carry and constraint.release, constraintExclusionsOf a compound's
+// last part under constraint.compound.
+
+/**
+ * Negation cues the spec's 12 don't hold, read like CONSTRAINT_CUES (a cue
+ * before its term, its scope to the end of the sentence): "nothing
+ * high-impact", "nothing too strenuous". A scope break right after one ends it
+ * with nothing negated: "nothing but swimming" keeps swimming (as "no exercise
+ * except walking" keeps walking). Each is a rule of its own ("cue.nothing").
+ */
+export const CONSTRAINT_EXTRA_CUES: readonly string[] = ["nothing"];
+
+/**
+ * Scope breaks (CONSTRAINT_SCOPE_BREAKS) that, right after a negating cue
+ * that has named nothing, say what is left: "nothing but swimming", "no
+ * exercise except walking", "can't do anything but walk" name nothing
+ * (constraint.release). The other breaks leave such a scope open ("not yet
+ * cleared to run" names run), and a state cue's scope stays open after any
+ * ("injured while running").
+ */
+export const CONSTRAINT_EXCEPT_WORDS: readonly string[] = ["but", "except"];
+
+/**
+ * Injury cues: state cues (CONSTRAINT_STATE_CUES' kind) for the injury words
+ * a user writes instead of "injury", matched by stem ("sprained", "sprains",
+ * "fractured"): "tore my ACL running", "torn ACL from jumping", "sprained my
+ * ankle sprinting", "stress fracture from running". Like any state cue, one
+ * that ends its sentence having taken nothing but a body part
+ * (CONSTRAINT_BODY_PARTS) covers the next sentence ("I tore my ACL. Running,
+ * jumping, pivoting."; constraint.carry). Each is a rule of its own.
+ */
+export const CONSTRAINT_INJURY_CUES: readonly string[] = ["tore", "torn", "sprain", "fracture"];
+
+/**
+ * Cues written after their term (constraint.after): a pain word or a verdict
+ * that negates the words before it in its clause ("running hurts my knee",
+ * "jumping is painful", "running is out", "squats are off limits"), back
+ * across a list of bare items ("Running, jumping, pivoting are out"; "running
+ * and jumping hurt"), never into a clause that clears ("swimming is fine,
+ * running hurts" names running only) nor across a clause with more than a
+ * bare item ("I love cycling, running hurts" names running only). With no
+ * term before it, or only a body part ("my knee hurts when I run", "it hurts
+ * to jump", "Off limits: running"), it reads the clause after it; with only a
+ * pronoun ("I love running but it hurts"), the clause before it. Matched as
+ * written (apostrophes closed, a hyphenated compound as one word), longest
+ * first; never a term. Each is a rule of its own ("cue.hurts", "cue.is out").
+ * A negation right before one (CONSTRAINT_AFTER_NEGATORS: "running doesn't
+ * hurt", "squats aren't too much") clears its clause instead
+ * (constraint.release).
+ */
+export const CONSTRAINT_CUES_AFTER: readonly string[] = [
+  "hurts",
+  "hurt",
+  "hurting",
+  "painful",
+  "aches",
+  "aching",
+  "is out of the question",
+  "are out of the question",
+  "out of the question",
+  "is out",
+  "are out",
+  "off limits",
+  "off-limits",
+  "off the table",
+  "forbidden",
+  "banned",
+  "no-go",
+  "too much",
+  "too hard",
+  "risky",
+  "unsafe",
+];
+
+/**
+ * Words that, right after a negating cue (skipping function and filler
+ * words), make it a verdict on the words before it: "running not allowed",
+ * "running is not recommended", "visits are not possible", "lifting is not an
+ * option", "running is not my thing" (constraint.after). A release word does
+ * the same ("running is not ok"). Never terms.
+ */
+export const CONSTRAINT_VERDICT_WORDS: readonly string[] = [
+  "allowed",
+  "possible",
+  "recommended",
+  "advised",
+  "advisable",
+  "permitted",
+  "safe",
+  "option",
+  "idea",
+  "wise",
+  "good",
+  "great",
+  "ideal",
+  "doable",
+  "manageable",
+  "sensible",
+  "realistic",
+  "thing",
+  "happening",
+];
+
+/**
+ * A negation right before a CONSTRAINT_CUES_AFTER word (skipping filler and
+ * CONSTRAINT_SKIP_WORDS): the pain or verdict is denied, so its clause clears
+ * what it names ("knee injury, swimming doesn't hurt, running does" keeps
+ * swimming; "no longer hurts", "isn't too painful", "is not out of the
+ * question"). Apostrophes closed.
+ */
+export const CONSTRAINT_AFTER_NEGATORS: readonly string[] = ["not", "no", "never", "isnt", "arent", "wasnt", "werent", "doesnt", "dont", "didnt", "wont", "hardly", "barely", "rarely"];
+
+/**
+ * Body parts, matched by stem: a pain word whose clause before it names only
+ * these ("my knee hurts when I run") also reads the clause after it, and a
+ * state cue that has taken only these ("I tore my ACL.") covers the next
+ * sentence. They are terms as before ("knee injury" negates knee).
+ */
+export const CONSTRAINT_BODY_PARTS: readonly string[] = [
+  "knee", "knees", "back", "hip", "hips", "ankle", "ankles", "shoulder", "shoulders", "wrist", "wrists", "neck", "foot", "feet",
+  "leg", "legs", "elbow", "elbows", "hamstring", "hamstrings", "achilles", "calf", "calves", "shin", "shins", "joint", "joints",
+  "spine", "heel", "heels", "toe", "toes", "arm", "arms", "hand", "hands", "chest", "acl", "mcl", "meniscus", "tendon", "tendons",
+  "ligament", "ligaments", "muscle", "muscles", "groin", "quad", "quads", "glute", "glutes", "pelvis", "head", "eye", "eyes", "body",
+];
+
+/**
+ * Pronouns standing for an activity named before them: a pain or verdict word
+ * whose clause holds only one of these reads the clause before it ("I love
+ * running but it hurts", "I used to run. It hurts now.", "lifting? that's
+ * not allowed"). Apostrophes closed ("that's" → "thats").
+ */
+export const CONSTRAINT_ANAPHORA: readonly string[] = ["it", "its", "that", "thats", "this", "which", "they", "theyre", "these", "those", "both"];
+
+/** Words a bare list item may hold beside its terms ("the gym, heavy weights and any jumping are out"). */
+export const CONSTRAINT_ITEM_WORDS: readonly string[] = ["the", "a", "an", "my", "any", "some", "all", "our"];
+
+/**
+ * Words never read as a term (linking verbs and adverbs around an activity):
+ * "running makes my knee hurt" names running and knee, not makes; "running
+ * still hurts", "can't go running", "no jumping either". Unlike
+ * CONSTRAINT_FILLER_WORDS they change nothing in rev 3's reading.
+ */
+export const CONSTRAINT_SKIP_WORDS: readonly string[] = [
+  "still", "always", "even", "just", "also", "again", "anymore", "ever", "usually", "sometimes", "often", "currently", "lately",
+  "recently", "either", "makes", "make", "made", "gets", "get", "got", "feels", "feel", "felt", "seems", "seem", "causes", "gives",
+  "go", "goes", "going", "doing", "done", "after", "during", "im", "ive", "id",
+];
+
+/**
+ * A clause after a release that clears the same way (constraint.release),
+ * joined by "and" or "or" or after a pause: it starts with one of
+ * CONSTRAINT_MIRROR_STARTS ("swimming is fine and so is cycling") or ends with
+ * one of CONSTRAINT_MIRROR_ENDS ("swimming is fine and cycling too"), with no
+ * negation, blocker or cue in it. A clause after a release that holds a
+ * release word of its own clears too ("swimming fine and running ok").
+ */
+export const CONSTRAINT_MIRROR_STARTS: readonly string[] = ["so is", "so are", "so does", "so do", "as is", "as are"];
+export const CONSTRAINT_MIRROR_ENDS: readonly string[] = ["too", "also", "as well"];
+
+// ─── Hardening round: pre-fill quality (contracts §19, "confirm to unlock") ──
+// Constraint safety no longer rests on these lists: on a BODY or CARE plan any
+// cue (roadmap-types constraintCuesOf) or any constraints at all hold every
+// unsafe kind until the user answers, kind by kind. What the reader names here
+// only PRE-FILLS that answer (an "avoid" pre-ticked, quoting the user's own
+// sentence), so these lists serve its quality: the verifier's 19 unsafe-side
+// misses ("Running causes me knee pain.", "Never run on my bad knee.", "Knee
+// surgery two weeks ago. Running and jumping."), and its over-reaches ("No
+// problems with running or lifting.", "Can't run, can't jump, can lift.",
+// "Sprained ankle. Swimming three times a week is my plan."). negatedTermsOf
+// reads them under the rules it already had (cue.<entry>, constraint.after,
+// constraint.carry, constraint.release) and one more, constraint.body.
+
+/**
+ * More negating cues read before their term, as CONSTRAINT_CUES are (each a
+ * rule "cue.<entry>"): "Never run on my bad knee", "I shouldn't run until my
+ * knee heals", "I'm not supposed to lift anything heavy" (longest first, so
+ * not "not" alone), "stay away from running", "the doctor wants me off
+ * running". Like any negating cue, one whose clause names nothing after it
+ * judges what came before ("Running? Never.").
+ */
+export const CONSTRAINT_MORE_CUES: readonly string[] = [
+  "never",
+  "shouldn't",
+  "mustn't",
+  "not supposed to",
+  "stay away from",
+  "keep away from",
+  "steer clear of",
+  "stay off",
+  "keep off",
+  "me off",
+];
+
+/**
+ * More injury cues: state cues for the words a user writes instead of
+ * "injury", matched by stem like CONSTRAINT_INJURY_CUES ("surgeries",
+ * "strained", "ruptured"): "I get shin splints from running", "Knee surgery
+ * two weeks ago. Running and jumping." (one that names nothing but a body
+ * part or a time covers the next sentence, constraint.carry), "hamstring
+ * strain from sprinting". Each a rule "cue.<entry>".
+ */
+export const CONSTRAINT_MORE_INJURY_CUES: readonly string[] = [
+  "surgery",
+  "operation",
+  "replacement",
+  "splints",
+  "strain",
+  "hernia",
+  "tendinitis",
+  "tendonitis",
+  "fasciitis",
+  "arthritis",
+  "sciatica",
+  "broke",
+  "broken",
+  "dislocated",
+  "rupture",
+  "concussion",
+];
+
+/**
+ * Who said it: state cues like "doctor says" ("My doctor said absolutely
+ * not", "the doctor wants me off running", "physio told me to stay away from
+ * running"). Matched as written. A read back over one passes through it as
+ * if the sentence started after it, so "Running? My doctor said absolutely
+ * not." reads running from the sentence before, as "Running? Not anymore."
+ * does. "doctor says" (CONSTRAINT_CUES) reads the same way. Each a rule
+ * "cue.<entry>".
+ */
+export const CONSTRAINT_AUTHORITY_CUES: readonly string[] = [
+  "doctor said",
+  "doctor told me",
+  "doctor wants",
+  "physio says",
+  "physio said",
+  "physio told me",
+  "physio wants",
+  "gp says",
+  "gp said",
+  "surgeon says",
+  "surgeon said",
+];
+
+/**
+ * More cues written after their term, read like CONSTRAINT_CUES_AFTER (each a
+ * rule "cue.<entry>"; matched as written, longest first; a negation right
+ * before one denies it: "running doesn't bother me"): "Lifting heavy weights
+ * aggravates my back", "Lifting overhead bothers my shoulder", "Squats and
+ * lunges kill my knees", "Running makes my knee swell", "my knees get sore
+ * from running", "Running is a bad idea", "Running is bad for my knees",
+ * "Running is a problem" (never "is not a problem"), "Running is ruled out",
+ * "it's running that kills me", "Jumping makes my back spasm", "My knee
+ * gives out when I run", "Running is hard on my knees", "Burpees are brutal
+ * on my wrists".
+ */
+export const CONSTRAINT_MORE_CUES_AFTER: readonly string[] = [
+  "aggravates",
+  "aggravate",
+  "aggravated",
+  "bothers",
+  "bother",
+  "bothered",
+  "irritates",
+  "irritate",
+  "flares up",
+  "flare up",
+  "kills my",
+  "kill my",
+  "wrecks my",
+  "wreck my",
+  "swell",
+  "swells",
+  "swelling",
+  "swollen",
+  "sore",
+  "ache",
+  "bad idea",
+  "bad for",
+  "is a problem",
+  "are a problem",
+  "ruled out",
+  "kills me",
+  "killing me",
+  "kill me",
+  "spasm",
+  "spasms",
+  "gives out",
+  "give out",
+  "hard on",
+  "tough on",
+  "brutal on",
+  "rough on",
+];
+
+/**
+ * A cause before a pain or injury cue: the cue names what caused it, read
+ * back over its clause (constraint.after): "Running causes me knee pain",
+ * "Running gives me shin pain", "Running = pain" ("=", "->" and "→" read as
+ * "equals"), "Jumping triggers my back pain". Without one, a pain cue at its
+ * clause's end reads nothing back ("Swimming helps my back pain" names
+ * nothing). A negation before the cause denies it ("Running never causes me
+ * pain", CONSTRAINT_TROUBLE_WORDS). Never terms.
+ */
+export const CONSTRAINT_CAUSE_WORDS: readonly string[] = [
+  "causes",
+  "cause",
+  "caused",
+  "causing",
+  "gives",
+  "give",
+  "gave",
+  "giving",
+  "triggers",
+  "trigger",
+  "triggered",
+  "brings",
+  "bring",
+  "brought",
+  "leads",
+  "lead",
+  "led",
+  "equals",
+  "means",
+  "worsens",
+  "worsen",
+  "worsened",
+];
+
+/**
+ * A state word before a body part (CONSTRAINT_BODY_PARTS, with up to two
+ * CONSTRAINT_BODY_SIDE_WORDS between): a state cue (the rule
+ * constraint.body), so "Bad knees. Jumping and running." covers the next
+ * sentence as "Knee injury. …" does, and "bad knee, so no running" reads as
+ * before. Never before anything else ("a bad idea" is CONSTRAINT_MORE_CUES_AFTER's,
+ * "weak at maths" names nothing). Never terms.
+ */
+export const CONSTRAINT_BODY_STATE_WORDS: readonly string[] = [
+  "bad",
+  "weak",
+  "dodgy",
+  "stiff",
+  "arthritic",
+  "achy",
+  "damaged",
+  "gammy",
+  "wonky",
+  "dicky",
+  "busted",
+  "creaky",
+  "unstable",
+  "fragile",
+  "tight",
+];
+
+/** Words between a CONSTRAINT_BODY_STATE_WORDS word and its body part ("bad left knee", "stiff lower back", "weak both ankles"). */
+export const CONSTRAINT_BODY_SIDE_WORDS: readonly string[] = ["left", "right", "lower", "upper", "both", "my", "the"];
+
+/**
+ * Trouble denied: a negation (CONSTRAINT_AFTER_NEGATORS, or "without") right
+ * before one of these, past CONSTRAINT_TROUBLE_SKIP_WORDS, body parts, cause
+ * words, filler and function words (never "a", "an", "the"), clears its clause
+ * (constraint.release): "No problems with running or lifting", "no issues
+ * with squats", "I have no knee pain when running", "Running never causes me
+ * pain", "running without pain". "Lifting is not a problem, running is."
+ * keeps its old reading (running named; the article blocks it).
+ */
+export const CONSTRAINT_TROUBLE_WORDS: readonly string[] = ["problem", "problems", "issue", "issues", "trouble", "troubles", "pain", "discomfort", "complaints", "niggles"];
+
+/** Words a trouble denial may skip between its negation and its trouble word ("never had any real problems with running"). */
+export const CONSTRAINT_TROUBLE_SKIP_WORDS: readonly string[] = ["any", "real", "major", "big", "much", "had", "have", "has", "got", "get", "gets", "ever"];
+
+/**
+ * A positive "can" that opens a clause (a pause, a join, a contrast, "so" or
+ * "then" before it, with only function words, pronouns and skip words
+ * between) ends the cue's scope (constraint.release): "Can't run, can't
+ * jump, can lift" names run and jump, never lift; "no running so I can swim"
+ * names running. Not before a negation ("can hardly walk" stays named).
+ */
+export const CONSTRAINT_CAN_WORDS: readonly string[] = ["can", "could"];
+
+/**
+ * Time words, never terms (beside SPELLED_NUMBER_WORDS and DATE_WORDS):
+ * "Knee surgery two weeks ago" has named nothing but a time, so it covers the
+ * next sentence; "no visits for two weeks" no longer leaves out "Plan the
+ * week ahead".
+ */
+export const CONSTRAINT_WHEN_WORDS: readonly string[] = [
+  "ago", "day", "days", "week", "weeks", "weekly", "month", "months", "monthly", "year", "years", "today", "tonight", "tomorrow",
+  "yesterday", "moment", "past", "last", "next", "recently", "recent", "since", "weekend", "weekends", "weekday", "weekdays",
+  "morning", "mornings", "evening", "evenings", "night", "nights", "few", "couple", "several", "being",
+  // The safety-gaps round: a count of times ("three times a week") never names Timed practice.
+  "times",
+];
+
+/**
+ * More words never read as a term (CONSTRAINT_SKIP_WORDS' kind): a side
+ * ("right now" named "right"), a degree or stance ("My doctor said absolutely
+ * not" named "absolutely"; "strictly off-limits"), "off" ("wants me off
+ * running"), and who said it ("banned by my physio").
+ */
+export const CONSTRAINT_MORE_SKIP_WORDS: readonly string[] = [
+  "right", "left", "lower", "upper", "off", "absolutely", "definitely", "strictly", "totally", "completely", "certainly", "seriously",
+  "honestly", "basically", "literally", "probably", "physio", "physiotherapist", "gp", "surgeon", "told", "wants",
+];
+
+// ─── The safety-gaps round: a suggestion never blocks (contracts §19, decision 7) ──
+// What the reader names is a pre-ticked suggestion on the activity card, quoting
+// the user's own sentence; it never blocks a kind and never unlocks one. These
+// lists keep it from suggesting what the user didn't say to avoid: "My GP said to
+// take it easy" never names the Easy session, "No timed practice" names Timed
+// practice and not Writing practice, "Shin splints flare up if I run more than
+// twice a week" holds running to a limit and names nothing. Each is read under a
+// rule of its own (constraint.gentle, constraint.generic, constraint.limit).
+
+/**
+ * Words of a type's label too general to name it (constraint.generic): a term
+ * whose stem is one of these meets no type, through its own words or its fill,
+ * and no aim. "No timed practice" names Timed practice by "timed", never
+ * Writing practice by "practice"; "I can't do problem sets on weekdays" never
+ * names "Set up what you need"; "No group study" never names "Study {domains}"
+ * (every Field type is study); "No sessions after 9pm" names no BODY session.
+ * They stay terms for the reader's scope (only the match skips them).
+ */
+export const CONSTRAINT_GENERIC_KIND_WORDS: readonly string[] = [
+  "practice", "practices", "practise", "practises", "practising", "practicing", "session", "sessions", "set", "sets", "study",
+  "studies", "studying", "up", "need", "what", "keep", "over", "own", "words", "check", "checking",
+];
+
+/**
+ * A limit, not an exclusion (constraint.limit): a term a limit follows in its
+ * clause ("running more than twice a week", "no running two days in a row"),
+ * or one a limit and a number come before ("no more than two runs a week",
+ * "max 20 minutes of running"), is held to that limit: the reader names
+ * nothing for it. The user can still do it; the card asks about the plan's
+ * gated kinds whatever the reader names. Matched as written, apostrophes
+ * closed, as a run of whole words. A schedule ("on weekdays", "for now",
+ * "for six weeks") is no limit: it still names its term.
+ */
+export const CONSTRAINT_LIMIT_PHRASES: readonly string[] = [
+  "more than", "less than", "fewer than", "longer than", "further than", "farther than", "faster than", "heavier than", "at most",
+  "at a time", "in a row", "back to back", "back-to-back", "max", "maximum",
+];
+
+/**
+ * A frequency that is a limit only when the clause judges it (constraint.limit):
+ * a pain or verdict word after it ("Calling every day is too much", "Running
+ * daily hurts my shins") or a negating cue before it ("no running every
+ * day"). Without one it says what the user does ("knee injury, running
+ * daily" still names running).
+ */
+export const CONSTRAINT_FREQUENCY_PHRASES: readonly string[] = [
+  "every day", "every night", "every evening", "every morning", "every other day", "each day", "daily", "nightly", "too often",
+];
+
+/** A limit before a number (constraint.limit): "running over 5K hurts", "no lifting above 20 kg", "nothing beyond 30 minutes". */
+export const CONSTRAINT_LIMIT_NUMBER_WORDS: readonly string[] = ["over", "above", "beyond", "past"];
+
+/**
+ * Advice to go gently, never a term (constraint.gentle): "My GP said to take
+ * it easy for a month" names nothing, so the Easy session is never suggested
+ * for avoiding because of "easy". Matched as written, apostrophes closed, as a
+ * run of whole words.
+ */
+export const CONSTRAINT_GENTLE_PHRASES: readonly string[] = [
+  "take it easy", "taking it easy", "take things easy", "taking things easy", "go easy", "going easy", "easy does it",
+  "keep it easy", "keep it light", "keep things light", "take it slow", "taking it slow", "take it slowly", "go slow", "go gently",
 ];
 
 /**

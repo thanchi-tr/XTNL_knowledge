@@ -1,5 +1,5 @@
 {
-  "sha256": "9d542fd58ec62bcef8a335da00490589e98f8ad260a5b94162db8341d3146d9d",
+  "sha256": "25b08ff54d41059da9ec4ed6747a5811a32e6cc2afbe6151a06e17462cb5f81a",
   "counts": {
     "runs": 162,
     "A": 5000,
@@ -13,9 +13,12 @@
     "E_clash": 303,
     "E_oneSource": 246,
     "EG": 2304,
-    "K": 1821,
+    "K": 3007,
     "K_release": 274,
-    "K_overExclusion": 1031,
+    "K_postfix": 471,
+    "K_vocab": 617,
+    "K_suggest": 98,
+    "K_overExclusion": 2103,
     "M": 2200,
     "F": 0
   },

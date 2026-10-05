@@ -19,6 +19,16 @@
  *   deterministic match and changed by the user) · How hard (the share of the
  *   usual pace the plan counts on) · New cards a week (required when the app
  *   needs a pace to date the plan) · Reality check · Constraints · Advanced.
+ * On a body or care track Area (always), or a craft one whose words carry a
+ * cue, the activity question opens under Constraints (contracts §19,
+ * IntakeActivities): which activities the plan should avoid, a box pre-ticked
+ * where the user's own words suggest it. [Confirm these] (a box ticked) or
+ * [Nothing to avoid] keeps the answer on the form, with the key of the words
+ * it was given against; it is saved right after the intake
+ * (setActivityVerdicts), before the plan is built, and only while the words
+ * on the form are still those. Unconfirmed, or refused because the words
+ * changed, the draft asks, and the plan keeps to the track's easy kinds until
+ * it is answered.
  * A life-track Area keeps rev 3's: a chosen date (12 months by default),
  * Where you're starting, no depth.
  *
@@ -76,9 +86,11 @@ import {
   SYLLABUS_MAX_LINES,
   TYPICAL_HOURS_MAX,
   TYPICAL_HOURS_MIN,
+  cueTextsOf,
   examPrefillOf,
   floorBase,
   milestoneCountFor,
+  type ActivityCardAnswer,
   type CoverageBreakdown,
   type DateMode,
   type DepthKey,
@@ -93,6 +105,7 @@ import { VAGUE_AIM_IDLE_MS, vagueAimHint } from "@/lib/roadmap-invite";
 import { takeAimHandoff, type StoredAimHandoff } from "@/lib/roadmap-handoff";
 import { clearSheetDraftIf } from "@/lib/idea-handoff";
 import {
+  ACTIVITY_NOT_SAVED_LINE,
   AIM_LONG_HINT,
   COVERAGE_TITLE,
   EXAM_DATE_LABEL,
@@ -139,6 +152,8 @@ import { ROADMAP_HREF } from "./roadmap-links";
 import { useRoadmapRuntime } from "./roadmap-runtime";
 import { INTAKE_STORAGE_KEY, readStoredIntake, writeStoredIntake } from "./roadmap-autosave";
 import { GlyphButton, RoadmapGlyph } from "./RoadmapGlyph";
+import { IntakeActivities } from "./ActivityConfirm";
+import { intakeActivityOf } from "./roadmap-ui-model";
 import type { LiveGates } from "./GapPanel";
 import "@/components/library/study.css";
 import "./roadmap.css";
@@ -796,6 +811,8 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Path | null>(null);
   const [vague, setVague] = useState(false);
+  // Constraint safety (contracts §19): the activity card's answer the user confirmed on this form, with its words' key (saved right after the intake).
+  const [activityAnswer, setActivityAnswer] = useState<ActivityCardAnswer | null>(null);
   const loaded = useRef(false);
   // Set by the user's own edits only: a visit that changes nothing stores nothing.
   const dirty = useRef(false);
@@ -910,6 +927,21 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
   const askCards = fieldArea && (newCardsRequired || asksNewCards(field, d.domainIds));
   const exam = trackArea ? d.exam.trim().length > 0 : examAnswerOf(d);
   const emptyLibrary = fieldArea && field!.domains.length === 0;
+  // Constraint safety (contracts §19): a body or care track Area asks which activities to avoid, from the words as typed; a craft one when its words carry a cue.
+  const gatedTrack = trackArea && (d.areaTrack === "BODY" || d.areaTrack === "CARE" || d.areaTrack === "CRAFT") ? d.areaTrack : null;
+  const storedActivities = view.draft?.intake.activities ?? null;
+  const activity = useMemo(() => {
+    if (!gatedTrack) return null;
+    const examLabel = exam ? d.exam.trim() || null : null;
+    const texts = cueTextsOf({
+      constraints: d.constraints.trim() || null,
+      aim: d.aim.replace(/\s+/g, " ").trim(),
+      examLabel,
+      typicalHoursSource: d.typicalHours.trim() && d.typicalSource.trim() ? d.typicalSource.trim() : null,
+      syllabus: lines.length > 0 ? { lines, source: d.syllabusSource.trim() || null } : null,
+    });
+    return intakeActivityOf({ track: gatedTrack, texts, exam, practicesAllowed: true, examLabel, stored: storedActivities });
+  }, [gatedTrack, exam, d.exam, d.constraints, d.aim, d.typicalHours, d.typicalSource, d.syllabusSource, lines, storedActivities]);
 
   const pickField = (f: IntakeFieldOption) => {
     edit((x) => ({
@@ -949,6 +981,11 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
       // The capture sheet kept its line until the intake saved (F-R4-7): now it goes, if its aim reached this intake and it is still the same line.
       if (storage && handoff?.sheetText && clearsCaptureLine(handoff, handoffUsed)) clearSheetDraftIf(handoff.sheetText);
       const id = saved.value.roadmapId;
+      // The activity card's answer confirmed on this form, given against these words (contracts §19; its key). Not saved (refused, or the words changed): the draft asks again.
+      if (activity && activityAnswer && activityAnswer.key === activity.key) {
+        const answered = await runtime.actions.setActivityVerdicts(id, activityAnswer).catch(() => null);
+        if (!answered?.ok) pushToast({ title: "Activity answer not saved", body: ACTIVITY_NOT_SAVED_LINE });
+      }
       const next = path === "GEMINI" ? await runtime.actions.draftRoadmap(id) : path === "STARTER" ? await runtime.actions.buildStarter(id) : await runtime.actions.startManual(id);
       if (!next.ok) {
         setError(next.error);
@@ -1378,8 +1415,15 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
               </span>
             </label>
             <textarea id={ids.constraints} className="st-input" rows={2} maxLength={CONSTRAINTS_MAX} value={d.constraints} onChange={(e) => set("constraints", e.target.value)} />
-            <p className="st-hint">The app leaves out practice types your constraints rule out, and lists each one with its word.</p>
+            <p className="st-hint">
+              {gatedTrack === "CRAFT"
+                ? "If your words name a limit or a strain, the app asks which activities to avoid before it places them."
+                : gatedTrack
+                  ? "On a body or care plan the app asks which activities to avoid before it places them."
+                  : "The app ticks the practice types your constraints seem to rule out, quoting your words; nothing is left out until you say so."}
+            </p>
           </div>
+          {activity && <IntakeActivities view={activity.view} keyNow={activity.key} confirmed={activityAnswer} onConfirm={setActivityAnswer} today={view.today} />}
           <details className="rm-adv">
             <summary>
               <Icon name="chev" />

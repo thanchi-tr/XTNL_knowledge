@@ -35,7 +35,18 @@
  *   K  constraints (≥ 1,500)   phrasings × every BODY and CARE kind × English, Vietnamese, Japanese;
  *                              and (fix round 3) the "release" sub-class, last: a clause that clears
  *                              one activity before a later exclusion, and one phrasing per entry of
- *                              the release lists, each with the kinds it must keep as well as exclude
+ *                              the release lists, each with the kinds it must keep as well as exclude;
+ *                              and (fix round 4) the "postfix" sub-class, after it: a negation or pain
+ *                              word after its term with no cue before it, a cue in an earlier sentence,
+ *                              a pronoun or an elliptical negation, a compound, their non-English and
+ *                              mixed forms, and the safe-side keeps beside them (own seed, appended, so
+ *                              the older corpus hashes as it did); and (the hardening round) the "vocab"
+ *                              sub-class, after it: how people say it, and the fill over-reach; and (the
+ *                              safety-gaps round) the "suggest" sub-class, last: a limit ("more than
+ *                              twice a week"), advice to go gently ("take it easy") and a word too
+ *                              general to name a type ("sessions") keep their kinds, beside an exclusion
+ *                              that stands, plus Field lines a body sentence or a generic word must not
+ *                              reach (own seed, appended, so the older corpus hashes as it did)
  *   M  metamorphic             M1–M7 base/variant pairs over checkLabel and groundingOf
  *   F  real-reply mutations    100 per blessed probe reply (none until F-R4-23's probe is blessed)
  *
@@ -78,7 +89,7 @@ export function mulberry32(seed: number): () => number {
 }
 
 /** The fixed seeds, one per family. */
-export const HOSTILE_SEEDS = { A: 0xa11ce, B: 0xb0b, C: 0xc0ffee, D: 0xd00d, E: 0xe1e1, EG: 0xe6e6, K: 0x4b4b, M: 0x3e3e, F: 0xf00f, MARK: 0x5eed } as const;
+export const HOSTILE_SEEDS = { A: 0xa11ce, B: 0xb0b, C: 0xc0ffee, D: 0xd00d, E: 0xe1e1, EG: 0xe6e6, K: 0x4b4b, M: 0x3e3e, F: 0xf00f, MARK: 0x5eed, K_POSTFIX: 0x4b04, K_VOCAB: 0x4b05, K_SUGGEST: 0x4b06 } as const;
 
 /** The spec's family counts (F-R4-22, Constants): the generator meets each exactly or as a floor. */
 export const FAMILY_TARGETS = { A: 5000, B: 1000, C: 2000, D: 2000, E_REPLIES: 1700, E_STRINGS: 20000, EG: 2000, K: 1500, F_PER_REPLY: 100 } as const;
@@ -554,8 +565,8 @@ export interface ConstraintCase {
   mustKeep?: string[];
   /** English with a cue: the parser reads it (recall, and the release sub-class's keeps). False for vi, ja and cue-less (the confirm covers them). */
   parsed: boolean;
-  /** "release": K's release sub-class (fix round 3); absent on every older case, so they hash as they did. */
-  sub?: "release";
+  /** "release": K's release sub-class (fix round 3); "postfix": the reader's unsafe-side misses (fix round 4); "vocab": how people say it, and the fill over-reach (the hardening round); "suggest": a suggestion never blocks, a limit, advice to go gently and a word too general to name a type keep their kinds (the safety-gaps round); absent on every older case, so they hash as they did. */
+  sub?: "release" | "postfix" | "vocab" | "suggest";
   /** The session picks the confirm reply holds (at least one kind outside BODY_SAFE_KINDS where the enum has one). */
   picks: string[];
 }
@@ -1551,6 +1562,248 @@ class Builder {
         this.corpus.overExclusion.push({ id: `X${this.corpus.overExclusion.length}`, constraints: c.constraints, fieldRun: fieldRun.id });
       }
     }
+    // Fix round 4, after every older case and line.
+    this.familyKPostfix(fieldRun?.id ?? null);
+    // The hardening round, after every older case and line.
+    this.familyKVocab(fieldRun?.id ?? null);
+    // The safety-gaps round, after every older case and line.
+    this.familyKSuggest(fieldRun?.id ?? null);
+  }
+
+  /**
+   * K's postfix sub-class (fix round 4: the reader's unsafe-side misses). Each
+   * phrasing (grammar.ts POSTFIX_TEMPLATES) must exclude every kind {t}, {t2}
+   * and {t3} name (recall 100%, the bar's existing item) and keep every kind
+   * only {o} and {o2} name (0 over-exclusions); a compound excludes the kinds
+   * its last part names; the non-English and mixed forms must raise the
+   * confirm. Every English BODY phrasing joins the Field over-exclusion lines.
+   * Its own seed, and appended after every older case and line, so digestOf
+   * over the corpus without these cases is the older pin.
+   */
+  private familyKPostfix(fieldRunId: string | null): void {
+    const rng = new Rng(HOSTILE_SEEDS.K_POSTFIX);
+    const cases = this.corpus.constraints;
+    const firstNew = cases.length;
+    const template = (track: "BODY" | "CARE") => {
+      const r = this.corpus.runs.find((x) => x.track === track && x.variant === "base" && x.intake.constraints == null) ?? this.corpus.runs.find((x) => x.track === track && x.variant === "base");
+      if (!r) throw new Error(`hostile generator: no ${track} pack for family K`);
+      return r;
+    };
+    const seen = new Set<string>();
+    const add = (c: Omit<ConstraintCase, "id" | "run" | "picks" | "sub">) => {
+      const key = `${c.track}\u0000${c.constraints}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const run = template(c.track);
+      cases.push({ ...c, id: `K${cases.length}`, run: run.id, picks: picksFor(run, c.mustExclude, rng), sub: "postfix" });
+    };
+    for (const track of ["BODY", "CARE"] as const) {
+      const run = template(track);
+      const kinds = [...run.enums.practice, ...run.enums.step, ...run.enums.checkpoint];
+      const aim = G.K_AIMS[track].neutral;
+      const terms = track === "BODY" ? G.BODY_TERMS : G.CARE_TERMS;
+      const ex = (t: string) => exclusionsOf(t, kinds, run.track, aim);
+      const fill = (tpl: G.PostfixTemplate, lang: "en" | "vi" | "ja") => {
+        const [o, o2] = tpl.text.includes("{o}") ? rng.sample(G.RELEASE_CLEARED[track], 2) : [];
+        const kept = [o, tpl.text.includes("{o2}") ? o2 : undefined].filter((x): x is string => x != null);
+        const keepKinds = [...new Set(kept.flatMap(ex))].sort();
+        // The excluded activities: each names a kind, none a kind a kept activity names.
+        const pool = terms.filter((t) => ex(t).length > 0 && !ex(t).some((k) => keepKinds.includes(k)));
+        const [t, t2, t3] = rng.sample(pool, 3);
+        const slots: [string, string | undefined][] = [["{o2}", o2], ["{o}", o], ["{t3}", t3], ["{t2}", t2], ["{t}", t]];
+        let constraints = tpl.text;
+        const negs: string[] = [];
+        for (const [slot, value] of slots) {
+          if (!constraints.includes(slot)) continue;
+          if (value == null) throw new Error(`hostile generator: no fill for ${slot} in "${tpl.text}"`);
+          constraints = constraints.replace(slot, value);
+          if (slot.startsWith("{t")) negs.unshift(value);
+        }
+        assertQuiet(constraints, [...kept, ...negs], kinds, run.track, aim);
+        const must = [...new Set(negs.flatMap(ex))].sort();
+        add({ lang, track, constraints, aim, cues: [...tpl.cues], terms: negs, mustExclude: must, mustKeep: keepKinds.filter((k) => !must.includes(k)), parsed: true });
+      };
+      for (const tpl of G.POSTFIX_TEMPLATES[track]) for (let i = 0; i < 6; i++) fill(tpl, "en");
+      if (track === "BODY") {
+        for (const c of G.POSTFIX_COMPOUNDS) {
+          for (const tpl of G.POSTFIX_COMPOUND_TEMPLATES) {
+            const constraints = tpl.text.replace("{c}", c.term);
+            assertQuiet(constraints, c.term, kinds, run.track, aim);
+            const must = [...new Set(c.heads.flatMap(ex))].sort();
+            if (must.length === 0) throw new Error(`hostile generator: the compound "${c.term}" names no kind`);
+            add({ lang: "en", track, constraints, aim, cues: [...tpl.cues], terms: [c.term], mustExclude: must, mustKeep: [], parsed: true });
+          }
+        }
+        for (const tpl of G.POSTFIX_MIXED) for (let i = 0; i < 4; i++) fill(tpl, tpl.lang);
+      }
+      for (const lang of ["vi", "ja"] as const) {
+        const suffixes = (lang === "vi" ? G.VI_SUFFIXES : G.JA_SUFFIXES).slice(0, 3);
+        for (const text of G.POSTFIX_FOREIGN[lang][track]) for (const suffix of suffixes) add({ lang, track, constraints: `${text}${suffix}`, aim, cues: [], terms: [], mustExclude: [], mustKeep: [], parsed: false });
+      }
+    }
+    // Over-exclusion: every new English BODY phrasing against a Field run's kinds, after every older line.
+    if (fieldRunId) {
+      const seenX = new Set(this.corpus.overExclusion.map((x) => x.constraints));
+      for (const c of cases.slice(firstNew)) {
+        if (c.track !== "BODY" || c.lang !== "en" || !c.parsed || seenX.has(c.constraints)) continue;
+        seenX.add(c.constraints);
+        this.corpus.overExclusion.push({ id: `X${this.corpus.overExclusion.length}`, constraints: c.constraints, fieldRun: fieldRunId });
+      }
+    }
+  }
+
+  /**
+   * K's vocab sub-class (the hardening round: contracts §19 makes the reader
+   * a pre-fill only, and the verifier's still-open #1, #3 and #4). Each
+   * phrasing of grammar.ts VOCAB_TEMPLATES (how people say it, not the
+   * lexicon's own list) must exclude every kind {t} and {t2} name and keep
+   * every kind only {o} and {o2} name; each FILL_OVER_KEEP line, on its own
+   * aim, must keep every kind the aim fills with its word. Every English
+   * BODY phrasing, and each FILL_OVER_FIELD line over the Field run's Domain
+   * names and aim words, joins the over-exclusion lines (0 Field kinds
+   * excluded). Its own seed, and appended after every older case and line,
+   * so digestOf over the corpus without these is the older pin.
+   */
+  private familyKVocab(fieldRunId: string | null): void {
+    const rng = new Rng(HOSTILE_SEEDS.K_VOCAB);
+    const cases = this.corpus.constraints;
+    const firstNew = cases.length;
+    const template = (track: "BODY" | "CARE") => {
+      const r = this.corpus.runs.find((x) => x.track === track && x.variant === "base" && x.intake.constraints == null) ?? this.corpus.runs.find((x) => x.track === track && x.variant === "base");
+      if (!r) throw new Error(`hostile generator: no ${track} pack for family K`);
+      return r;
+    };
+    const seen = new Set<string>();
+    const add = (c: Omit<ConstraintCase, "id" | "run" | "picks" | "sub">) => {
+      const key = `${c.track}\u0000${c.aim}\u0000${c.constraints}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const run = template(c.track);
+      cases.push({ ...c, id: `K${cases.length}`, run: run.id, picks: picksFor(run, c.mustExclude, rng), sub: "vocab" });
+    };
+    for (const track of ["BODY", "CARE"] as const) {
+      const run = template(track);
+      const kinds = [...run.enums.practice, ...run.enums.step, ...run.enums.checkpoint];
+      const aim = G.K_AIMS[track].neutral;
+      const terms = track === "BODY" ? G.BODY_TERMS : G.CARE_TERMS;
+      const ex = (t: string, a = aim) => exclusionsOf(t, kinds, run.track, a);
+      for (const tpl of G.VOCAB_TEMPLATES[track]) {
+        for (let i = 0; i < 6; i++) {
+          const [o, o2] = tpl.text.includes("{o}") ? rng.sample(G.RELEASE_CLEARED[track], 2) : [];
+          const kept = [o, tpl.text.includes("{o2}") ? o2 : undefined].filter((x): x is string => x != null);
+          const keepKinds = [...new Set(kept.flatMap((k) => ex(k)))].sort();
+          const pool = terms.filter((t) => ex(t).length > 0 && !ex(t).some((k) => keepKinds.includes(k)));
+          const [t, t2] = rng.sample(pool, 2);
+          const slots: [string, string | undefined][] = [["{o2}", o2], ["{o}", o], ["{t2}", t2], ["{t}", t]];
+          let constraints = tpl.text;
+          const negs: string[] = [];
+          for (const [slot, value] of slots) {
+            if (!constraints.includes(slot)) continue;
+            if (value == null) throw new Error(`hostile generator: no fill for ${slot} in "${tpl.text}"`);
+            constraints = constraints.replace(slot, value);
+            if (slot.startsWith("{t")) negs.unshift(value);
+          }
+          assertQuiet(constraints, [...kept, ...negs, ...(tpl.quiet ?? [])], kinds, run.track, aim);
+          const must = [...new Set(negs.flatMap((n) => ex(n)))].sort();
+          add({ lang: "en", track, constraints, aim, cues: [...tpl.cues], terms: negs, mustExclude: must, mustKeep: keepKinds.filter((k) => !must.includes(k)), parsed: true });
+        }
+      }
+      // The fill over-reach, on the aim each line names: no kind the aim fills with the user's word leaves.
+      for (const line of G.FILL_OVER_KEEP) {
+        if (line.track !== track) continue;
+        const keep = ex(line.f, line.aim);
+        if (keep.length === 0) throw new Error(`hostile generator: "${line.f}" fills no kind on the aim "${line.aim}"`);
+        add({ lang: "en", track, constraints: line.text, aim: line.aim, cues: [...line.cues], terms: [], mustExclude: [], mustKeep: keep, parsed: true });
+      }
+    }
+    // Over-exclusion: every new English BODY phrasing, then the fill lines, against the Field run, after every older line.
+    if (fieldRunId) {
+      const fieldRun = this.corpus.runs.find((r) => r.id === fieldRunId);
+      const seenX = new Set(this.corpus.overExclusion.map((x) => x.constraints));
+      const push = (constraints: string) => {
+        if (seenX.has(constraints)) return;
+        seenX.add(constraints);
+        this.corpus.overExclusion.push({ id: `X${this.corpus.overExclusion.length}`, constraints, fieldRun: fieldRunId });
+      };
+      for (const c of cases.slice(firstNew)) if (c.track === "BODY" && c.lang === "en" && c.parsed) push(c.constraints);
+      if (fieldRun) {
+        const names = fieldRun.listed.filter((d) => fieldRun.required.includes(d.id)).map((d) => d.name);
+        // The aim's words no Field type's own words hold ("Pass", "actuarial", "probability"; never "exam", EXAM_DAY's keyword).
+        const own = CATALOG.filter((e) => e.tracks.includes("FIELD")).flatMap((e) => [...e.keywords, ...(catalogTemplateOf(e, "FIELD").replace(/\{[a-z]+\}/g, " ").match(/[\p{L}\p{M}'’-]+/gu) ?? [])]);
+        const aimWords = contentWords(fieldRun.intake.aim).filter((w) => !own.some((k) => sameStem(k, w)));
+        if (names.length < 2 || aimWords.length === 0) throw new Error("hostile generator: the Field run has under two Domains or no aim word for the fill lines");
+        for (const tpl of G.FILL_OVER_FIELD) {
+          if (tpl.includes("{A}")) for (const a of aimWords) push(tpl.replace("{A}", a));
+          else for (const [d, d2] of [[names[0], names[1]], [names[1], names[0]]]) push(tpl.replace("{D}", d).replace("{D2}", d2));
+        }
+      }
+    }
+  }
+
+  /**
+   * K's suggest sub-class (the safety-gaps round: contracts §19, the lead's
+   * decision 7, a suggestion never blocks). Each phrasing of grammar.ts
+   * SUGGEST_TEMPLATES must exclude every kind {t} names (recall 100%) and keep
+   * every kind only {l} (an activity held to a limit) or its `keep` words
+   * (advice to go gently, a word too general to name a type) name. Every
+   * English BODY phrasing, then each FIELD_SUGGEST_LINES line, joins the
+   * over-exclusion lines (0 Field kinds excluded). Its own seed, and appended
+   * after every older case and line, so digestOf over the corpus without
+   * these is the older pin.
+   */
+  private familyKSuggest(fieldRunId: string | null): void {
+    const rng = new Rng(HOSTILE_SEEDS.K_SUGGEST);
+    const cases = this.corpus.constraints;
+    const firstNew = cases.length;
+    const template = (track: "BODY" | "CARE") => {
+      const r = this.corpus.runs.find((x) => x.track === track && x.variant === "base" && x.intake.constraints == null) ?? this.corpus.runs.find((x) => x.track === track && x.variant === "base");
+      if (!r) throw new Error(`hostile generator: no ${track} pack for family K`);
+      return r;
+    };
+    const seen = new Set<string>();
+    const add = (c: Omit<ConstraintCase, "id" | "run" | "picks" | "sub">) => {
+      const key = `${c.track}\u0000${c.aim}\u0000${c.constraints}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const run = template(c.track);
+      cases.push({ ...c, id: `K${cases.length}`, run: run.id, picks: picksFor(run, c.mustExclude, rng), sub: "suggest" });
+    };
+    for (const track of ["BODY", "CARE"] as const) {
+      const run = template(track);
+      const kinds = [...run.enums.practice, ...run.enums.step, ...run.enums.checkpoint];
+      const aim = G.K_AIMS[track].neutral;
+      const terms = track === "BODY" ? G.BODY_TERMS : G.CARE_TERMS;
+      const ex = (t: string) => exclusionsOf(t, kinds, run.track, aim);
+      const named = terms.filter((t) => ex(t).length > 0);
+      for (const tpl of G.SUGGEST_TEMPLATES[track]) {
+        for (let i = 0; i < 6; i++) {
+          const l = tpl.text.includes("{l}") ? rng.pick(named) : undefined;
+          const held = l ? ex(l) : [];
+          // The excluded activity names no kind the held one does, so its recall and the limit's keep never overlap.
+          const pool = named.filter((t) => !ex(t).some((k) => held.includes(k)));
+          const t = tpl.text.includes("{t}") ? rng.pick(pool) : undefined;
+          let constraints = tpl.text;
+          if (l != null) constraints = constraints.replace("{l}", l);
+          if (t != null) constraints = constraints.replace("{t}", t);
+          const negs = t != null ? [t] : [];
+          assertQuiet(constraints, [...(l != null ? [l] : []), ...negs, ...(tpl.quiet ?? []), ...(tpl.keep ?? [])], kinds, run.track, aim);
+          const must = [...new Set(negs.flatMap(ex))].sort();
+          const keep = [...new Set([...held, ...(tpl.keep ?? []).flatMap(ex)])].filter((k) => !must.includes(k)).sort();
+          add({ lang: "en", track, constraints, aim, cues: [...tpl.cues], terms: negs, mustExclude: must, mustKeep: keep, parsed: true });
+        }
+      }
+    }
+    // Over-exclusion: every new English BODY phrasing, then the Field lines, against the Field run, after every older line.
+    if (fieldRunId) {
+      const seenX = new Set(this.corpus.overExclusion.map((x) => x.constraints));
+      const push = (constraints: string) => {
+        if (seenX.has(constraints)) return;
+        seenX.add(constraints);
+        this.corpus.overExclusion.push({ id: `X${this.corpus.overExclusion.length}`, constraints, fieldRun: fieldRunId });
+      };
+      for (const c of cases.slice(firstNew)) if (c.track === "BODY" && c.lang === "en" && c.parsed) push(c.constraints);
+      for (const line of G.FIELD_SUGGEST_LINES) push(line);
+    }
   }
 
   // ── M ──────────────────────────────────────────────────────────────────────
@@ -1858,6 +2111,9 @@ class Builder {
       EG: c.recombined.length,
       K: c.constraints.length,
       K_release: c.constraints.filter((k) => k.sub === "release").length,
+      K_postfix: c.constraints.filter((k) => k.sub === "postfix").length,
+      K_vocab: c.constraints.filter((k) => k.sub === "vocab").length,
+      K_suggest: c.constraints.filter((k) => k.sub === "suggest").length,
       K_overExclusion: c.overExclusion.length,
       M: c.meta.length,
       F: by("F"),

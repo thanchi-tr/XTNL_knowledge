@@ -41,6 +41,7 @@ import {
   resolveDomain,
   returnStarting,
   saveIntake,
+  setActivityVerdicts,
   setAimFigure,
   setAimSuggestions,
   setLineDomain,
@@ -103,6 +104,18 @@ export interface RoadmapActions {
   confirmDomainAdditions: typeof confirmDomainAdditions;
   /** A body or care plan's one session-picks confirm (F-R4-17). */
   confirmSessionPicks: typeof confirmSessionPicks;
+  /**
+   * Constraint safety (contracts §19): the activity card's answer
+   * (ActivityCardAnswer: the kinds ticked to avoid, or "Nothing to avoid",
+   * with the key of the words it was shown against), stored on the roadmap
+   * (R4's setActivityVerdicts → setActivityVerdictsCore → answerActivityCard).
+   * No reason is sent: the server quotes the user's own sentence. Words
+   * changed meanwhile: refused (ACTIVITY_ANSWER_STALE) and the card asks
+   * again. Its `replan` says an ACTIVE plan's unstarted milestones hold kinds
+   * the answer changes; its `paused` names the started practices it took off
+   * Today (decision 4; the notice's Undo is unarchiveTask).
+   */
+  setActivityVerdicts: typeof setActivityVerdicts;
   /** Move an outline line to another milestone, or tie it to another Domain (F-R4-21). */
   moveLine: typeof moveLine;
   setLineDomain: typeof setLineDomain;
@@ -156,6 +169,7 @@ export const LIVE_ACTIONS: RoadmapActions = {
   lowerDepth,
   confirmDomainAdditions,
   confirmSessionPicks,
+  setActivityVerdicts,
   moveLine,
   setLineDomain,
   setAimFigure,
@@ -204,6 +218,7 @@ export const FIXTURE_ACTIONS: RoadmapActions = {
   lowerDepth: refuse,
   confirmDomainAdditions: refuse,
   confirmSessionPicks: refuse,
+  setActivityVerdicts: refuse,
   moveLine: refuse,
   setLineDomain: refuse,
   setAimFigure: refuse,

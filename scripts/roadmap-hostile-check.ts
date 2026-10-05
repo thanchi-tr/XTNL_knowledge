@@ -41,7 +41,11 @@
  *       every BODY/CARE plan with constraints; 0 Field kinds excluded by a
  *       body constraint; and (fix round 3) 0 kinds excluded that a release
  *       clause cleared ("knee injury, stretching is fine, running not ok"
- *       keeps MOBILITY_SESSION; its recall needs running's kinds out)
+ *       keeps MOBILITY_SESSION; its recall needs running's kinds out), nor
+ *       (the safety-gaps round, contracts §19 decision 7: what the reader
+ *       names is a suggestion, never a block) one only a limit, advice to go
+ *       gently or a word too general to name a type names; H6 also traces
+ *       the over-exclusion lines (a rule only a Field plan reaches)
  *   M   M1–M7 hold on checkLabel and groundingOf
  * plus the corpus pin (sha256 and family counts; `--bless` rewrites it), the
  * corpus's own audit against an independent reading of F-R4-20 (C0), and the
@@ -973,7 +977,7 @@ async function main(): Promise<number> {
       }
     }
     const langs = ["en", "vi", "ja"].map((l) => `${l} ${corpus.constraints.filter((x) => x.lang === l).length}`).join(" · ");
-    item("K 100% exclusion recall on English phrasings (every labelled kind left out of the run's enum)", canExclude && recallMiss === 0 && recallCases > 0, canExclude ? `${recallMiss} of ${recallCases} English cases missed a kind (cases: ${langs})` : pending(["constraintExclusionsOf"]));
+    item("K 100% exclusion recall on English phrasings (every labelled kind pre-ticked on the activity card: a suggestion, never a block, contracts §19 decision 7)", canExclude && recallMiss === 0 && recallCases > 0, canExclude ? `${recallMiss} of ${recallCases} English cases missed a kind (cases: ${langs})` : pending(["constraintExclusionsOf"]));
     item(
       "K the confirm is raised on every BODY/CARE plan with constraints (Vietnamese, Japanese, cue-less and English alike)",
       canValidate && confirmMiss === 0 && confirmCases > 0 && confirmVacuous / Math.max(1, confirmCases) <= CONFIRM_VACUOUS_MAX,
@@ -981,10 +985,11 @@ async function main(): Promise<number> {
     );
     item("K 0 Field kinds excluded by a body constraint (over-exclusion)", canExclude && over === 0 && corpus.overExclusion.length > 0, canExclude ? `${over} of ${corpus.overExclusion.length} body phrasings excluded a Field kind` : pending(["constraintExclusionsOf"]));
     const releaseCases = corpus.constraints.filter((x) => x.sub === "release").length;
+    const suggestCases = corpus.constraints.filter((x) => x.sub === "suggest").length;
     item(
-      "K 0 kinds excluded that a release clause cleared, and the release never drops a later exclusion (\"knee injury, stretching is fine, running not ok\": MOBILITY_SESSION in, running's kinds out)",
-      canExclude && keepMiss === 0 && keepCases > 0 && releaseCases > 0,
-      canExclude ? `${keepMiss} of ${keepCases} release cases excluded a kind the user cleared; ${releaseCases} release cases in the recall above` : pending(["constraintExclusionsOf"])
+      "K 0 kinds excluded that a release clause cleared, and the release never drops a later exclusion (\"knee injury, stretching is fine, running not ok\": MOBILITY_SESSION in, running's kinds out); nor (the safety-gaps round) any kind only a limit, advice to go gently or a word too general to name a type names (\"no running more than twice a week, no jumping\": LONGER_SESSION in)",
+      canExclude && keepMiss === 0 && keepCases > 0 && releaseCases > 0 && suggestCases > 0,
+      canExclude ? `${keepMiss} of ${keepCases} keep cases excluded a kind the user's words keep; ${releaseCases} release and ${suggestCases} suggest cases in the recall above` : pending(["constraintExclusionsOf"])
     );
   }
   const kMs = Date.now() - tK;
@@ -1112,6 +1117,17 @@ async function main(): Promise<number> {
           example("H5", `${kc.id} constraintExclusionsOf threw: ${errText(err)}`);
         }
       }
+      // The safety-gaps round: the over-exclusion lines are constraint cases too (on the Field run), so a rule only a Field
+      // plan reaches (constraint.field-body: a body sentence names no Field kind) is traced there.
+      for (const x of corpus.overExclusion) {
+        try {
+          const fieldRun = runOf(x.fieldRun);
+          seam.exclusions(x.constraints, [...fieldRun.enums.practice, ...fieldRun.enums.step, ...fieldRun.enums.checkpoint], fieldRun, names ? { trace: traceInto(x.id) } : undefined);
+        } catch (err) {
+          throws++;
+          example("H5", `${x.id} constraintExclusionsOf threw: ${errText(err)}`);
+        }
+      }
     }
     const required = ["NUMBER", "LOOKS_LIKE_RESOURCE", "PROPER_NOUN", "CLAIM_WORDS", "ABOUT_YOU", "CONSTRAINT_CONFLICT", "HEALTH", "LANGUAGE_UNCHECKED"];
     const flagMissing = required.filter((f) => !flagsSeen.get(f));
@@ -1138,7 +1154,7 @@ async function main(): Promise<number> {
       item(
         "H6 every rule the bar requires fires on at least one case (R3's H6_RULE_NAMES, plus every cue.*, resource.*, flag.* and constraint.* rule a case can reach; R3's trace)",
         never.length === 0,
-        `${never.length ? `never fired: ${never.join(", ")}` : `${required.length} rules fired over ${strings.length + corpus.constraints.length} cases`} (R3 names ${names.required.length}; the bar adds ${added.length}: ${added.join(", ") || "none"})${unnamed.length ? `; traced but unnamed: ${unnamed.join(", ")}` : ""}`
+        `${never.length ? `never fired: ${never.join(", ")}` : `${required.length} rules fired over ${strings.length + corpus.constraints.length + corpus.overExclusion.length} cases`} (R3 names ${names.required.length}; the bar adds ${added.length}: ${added.join(", ") || "none"})${unnamed.length ? `; traced but unnamed: ${unnamed.join(", ")}` : ""}`
       );
       console.log(`— H6: the overlap matrix (cases both rules fired on, by R3's trace; ${((Date.now() - tH6) / 1000).toFixed(1)} s) —`);
       const req = required;

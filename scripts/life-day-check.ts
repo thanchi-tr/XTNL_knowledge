@@ -249,15 +249,27 @@ for (const tz of [SYD, BNE]) {
   // after the rituals, roadmap.md Acceptance; goals-close follows character (the rev-3 fix
   // round's lane L check); roadmap revision 4 appends roadmap-invite and roadmap-hostile
   // after the seven, roadmap-rev4.md Acceptance), and the backfill has its script.
+  // At rev-4 integration (roadmap-contracts.md §16.6) the two checks that print PENDING
+  // lines run with --strict, so a lane's open item left behind fails life:check.
   const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> }).scripts;
   const ROADMAP_LIFE_CHECKS = ["roadmap-contract", "roadmap-measures", "throughput", "roadmap-realism", "roadmap-model", "roadmap-server", "roadmap-quests", "roadmap-invite", "roadmap-hostile"];
-  const all = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "character", "goals-close", "settle", "duty", "duty-actions", "rituals", ...ROADMAP_LIFE_CHECKS].map((n) => `scripts/${n}-check.ts`);
+  const STRICT_LIFE_CHECKS = new Set(["today-ui", "roadmap-contract"]);
+  const names = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "character", "goals-close", "settle", "duty", "duty-actions", "rituals", ...ROADMAP_LIFE_CHECKS];
+  const all = names.map((n) => `scripts/${n}-check.ts`);
   const lifeCheck = scripts["life:check"] ?? "";
   check(
     "package.json life:check chains every life check with &&, and each exists",
-    lifeCheck === all.map((f) => `tsx ${f}`).join(" && ") && all.every((f) => existsSync(resolve(ROOT, f))),
+    lifeCheck === names.map((n) => `tsx scripts/${n}-check.ts${STRICT_LIFE_CHECKS.has(n) ? " --strict" : ""}`).join(" && ") && all.every((f) => existsSync(resolve(ROOT, f))),
     lifeCheck
   );
+  for (const n of STRICT_LIFE_CHECKS) {
+    check(
+      `package.json life:check runs ${n}-check with --strict (a PENDING line fails it), and ${n}:strict runs it the same way on its own`,
+      lifeCheck.includes(`tsx scripts/${n}-check.ts --strict && `) && scripts[`${n}:strict`] === `tsx scripts/${n}-check.ts --strict`,
+      scripts[`${n}:strict`] ?? "missing"
+    );
+  }
+  check("package.json today-ui:check runs scripts/today-ui-check.ts on its own too", scripts["today-ui:check"] === "tsx scripts/today-ui-check.ts", scripts["today-ui:check"] ?? "missing");
   check(
     "package.json db:backfill-activity runs the backfill script",
     scripts["db:backfill-activity"] === "tsx scripts/backfill-activity.ts" && existsSync(resolve(ROOT, "scripts/backfill-activity.ts"))

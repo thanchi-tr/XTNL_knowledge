@@ -498,4 +498,25 @@
   /* ---------- sheets ---------- */
   .rm-sheet-ol { list-style: decimal; padding-left: 20px; font-size: 13px; line-height: 18px; color: var(--ink-1); }
   .rm-sheet-ol b { color: var(--ink-0); font-weight: 600; }
+
+  /* ---------- confirm to unlock (contracts §19): which activities to avoid ----------
+     Ink only: a ticked box is a word ("avoid"), never a colour; nothing red, no --owed. */
+  .rm-avd { padding: 14px; min-width: 0; }
+  .rm-avd-in { padding: 12px; margin: 0 0 12px; }
+  .rm-avd-set { border: 0; margin: 0; padding: 0; min-width: 0; }
+  .rm-avd-q { display: block; padding: 0; font-size: 14px; line-height: 19px; color: var(--ink-0); overflow-wrap: anywhere; margin: 0; }
+  .rm-avd-m { font-size: 13px; line-height: 18px; color: var(--ink-2); overflow-wrap: anywhere; margin: 6px 0 0; }
+  .rm-avd-p { font-size: 13px; line-height: 18px; font-weight: 600; color: var(--ink-0); margin: 8px 0 0; }
+  .rm-avd-ms { margin: 0 0 8px; }
+  .rm-avd-list { list-style: none; margin: 10px 0 0; padding: 0; }
+  .rm-avd-row { border-top: 1px solid var(--line-1); padding: 0 0 6px; }
+  .rm-avd-hit { display: flex; align-items: center; gap: 12px; min-height: 44px; cursor: pointer; font: 500 15px/20px var(--font-ui); color: var(--ink-0); }
+  .rm-avd-box { width: 22px; height: 22px; flex: none; margin: 0; accent-color: var(--ink-0); cursor: pointer; }
+  .rm-avd-n { min-width: 0; overflow-wrap: anywhere; }
+  .rm-avd-w { font-size: 13px; line-height: 18px; color: var(--ink-1); overflow-wrap: anywhere; margin: -6px 0 0 34px; }
+  .rm-avd-set:disabled .rm-avd-hit { cursor: default; color: var(--ink-2); }
+  .rm-avd-sum { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+  .rm-avd-sum .rm-avd-m { color: var(--ink-1); }
+  .rm-avd-sum .rm-avd-m:first-child { margin-top: 0; }
+  .rm-avd-sum .rm-ilink { margin: -4px 0; }
 }

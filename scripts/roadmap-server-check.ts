@@ -53,6 +53,29 @@ import "./_no-model";
  * weekQuestSetFor and loadWeekQuests over the fake world (a round trip); the
  * bar's named views with the week-quests view; NO_PACE refused at intake.
  *
+ * Finishing round (contracts §17.3, lane R4): Start counts each card key as
+ * it counts (3 multiple-choice cards at or above L: its reading, R1's detail
+ * and its v0ByKey are the recall count; no first `rc` reading or v0; the
+ * Start sheet's preview hands R6 the same v0s), and a spare-only REALISTIC
+ * intake with no pace saves and drafts dated on the cards held (option (b)).
+ *
+ * Confirm to unlock (contracts §19, lane R4): every plan path honours the
+ * one gate — the code-built plan with the real R2 and R3 ("Running causes me
+ * knee pain." places only the safe sessions), the Gemini keys-only placement
+ * (picks of gated kinds dropped and reported; after the user's answer the
+ * session-picks confirm stays a second layer), the answer on a DRAFT (the
+ * plan follows; an intake save keeps the answer; new words ask again), its
+ * refusals and guard, a pick from the type list, accept, Start (no task for
+ * a held kind), the week quests (Start's set and R6's own reading) and the
+ * re-plan. The safety-gaps round (the lead's decisions): a BODY plan with no
+ * constraints asks (1), a CRAFT plan asks on a cue (1), the answer is the
+ * card's ActivityCardAnswer — no tick is refused and "Nothing to avoid" is
+ * the all-clear (1), a stale key is refused (3, the verifier's S12) — a
+ * waiting CARE plan places its safe kinds and every refusal meanwhile points
+ * at the card (2, S6), an AVOID after Start pauses the started task (4, S7),
+ * a kept pick of a kind whose answer went stale is held (5, S1), and a Field
+ * plan's "No timed practice" is a pre-ticked suggestion, never a block (7).
+ *
  * Cases that exercise another lane's real code (R1's readings, lane L's
  * prepareRoadmapGoalClose) go green at integration in those lanes' checks.
  */
@@ -94,6 +117,7 @@ import {
   milestoneCountFor,
   retryReadDaysOf,
   startStatedInputOf,
+  type ActivityCardAnswer,
   type CardState,
   type EndStateTerm,
   type ValidationIntegrity,
@@ -113,7 +137,17 @@ import {
 import type { ParsedCapture } from "../src/lib/life-types";
 import * as R1 from "../src/lib/roadmap-proficiency";
 import * as REALISM from "../src/lib/roadmap-realism";
-import { catalogEntryOf, catalogLabelOf } from "../src/lib/roadmap-catalog";
+import {
+  ACTIVITY_ANSWER_REFUSAL,
+  ACTIVITY_ANSWER_STALE,
+  ACTIVITY_CARD_NAME,
+  ACTIVITY_NOTHING_TICKED,
+  ACTIVITY_PENDING_POINTER,
+  activityConfirmOf,
+  catalogEntryOf,
+  catalogLabelOf,
+  type CatalogKey,
+} from "../src/lib/roadmap-catalog";
 import type { QuestMilestoneFacts, QuestStore } from "../src/lib/roadmap-quests-server";
 import { AIM_PROMPT_COOKIE, aimPromptOf } from "../src/lib/roadmap-invite";
 import { reusableSamplesOf } from "../src/lib/roadmap-model";
@@ -263,7 +297,8 @@ class FakeWorld {
             g.statuses.includes(r.status as never) &&
             (g.version == null || r.version === g.version) &&
             (g.archiveReason == null || r.archiveReason === g.archiveReason) &&
-            (!g.depthNull || r.depth == null)
+            (!g.depthNull || r.depth == null) &&
+            (g.updatedAt == null || r.updatedAt.getTime() === g.updatedAt.getTime())
         );
       case "NO_STARTED_MILESTONE":
         return !t.roadmapMilestone.some((m) => m.roadmapId === g.roadmapId && (m.status === "STARTING" || m.status === "STARTED"));
@@ -1006,7 +1041,26 @@ function questStoreOf(w: FakeWorld): QuestStore {
         for (const m of rows) {
           const goal = m.goalId ? w.templates.find((t) => t.id === m.goalId) : undefined;
           out.push({
-            roadmap: { id: r.id, status: r.status, fieldId: r.fieldId, track: r.track, depth: r.depth ?? null, hoursPerWeek: r.hoursPerWeek, intensity: r.intensity, startPoint: r.startPoint, typicalHours: r.typicalHours, typicalHoursSource: r.typicalHoursSource, targetDay: r.targetDay, practicesAllowed: r.practicesAllowed },
+            roadmap: {
+              id: r.id,
+              status: r.status,
+              fieldId: r.fieldId,
+              track: r.track,
+              depth: r.depth ?? null,
+              hoursPerWeek: r.hoursPerWeek,
+              intensity: r.intensity,
+              startPoint: r.startPoint,
+              typicalHours: r.typicalHours,
+              typicalHoursSource: r.typicalHoursSource,
+              targetDay: r.targetDay,
+              practicesAllowed: r.practicesAllowed,
+              // The gate's words and the stored answers, as the Prisma store reads them (contracts §19).
+              aim: r.aim,
+              constraints: r.constraints,
+              examLabel: r.examLabel,
+              syllabus: clone(r.syllabus ?? null),
+              coverage: clone(r.coverage ?? null),
+            },
             milestone: { id: m.id, lineageId: m.lineageId, ord: m.ord, title: m.title, status: m.status, startedDay: m.startedDay, dueDay: m.dueDay, feasibility: clone(m.feasibility), goalId: m.goalId, version: m.version, createdAt: m.createdAt, stage: m.stage ?? null },
             goal: goal ? { id: goal.id, dueDay: goal.dueDay, closed: goal.closedScore != null, closedDay: null, archivedDay: goal.archivedAt ? todayKey(goal.archivedAt) : null } : null,
             place: place.get(m.lineageId) ?? m.ord,
@@ -1019,7 +1073,7 @@ function questStoreOf(w: FakeWorld): QuestStore {
     parts: async (milestoneId) => ({
       items: w.t.roadmapItem
         .filter((i) => i.milestoneId === milestoneId)
-        .map((i) => ({ id: i.id, lineageId: i.lineageId, kind: i.kind, ord: i.ord, label: i.label, origin: i.origin, decision: i.decision, domainId: i.domainId, proposedName: i.proposedName, flags: [...(i.flags ?? [])], templateId: i.templateId, rule: i.rule, durationBand: i.durationBand, outOf: i.outOf, bar: i.bar, addToToday: i.addToToday })),
+        .map((i) => ({ id: i.id, lineageId: i.lineageId, kind: i.kind, ord: i.ord, label: i.label, origin: i.origin, decision: i.decision, domainId: i.domainId, proposedName: i.proposedName, flags: [...(i.flags ?? [])], templateId: i.templateId, rule: i.rule, durationBand: i.durationBand, outOf: i.outOf, bar: i.bar, addToToday: i.addToToday, catalogKey: i.catalogKey ?? null })),
       measures: w.t.roadmapMeasure
         .filter((x) => x.milestoneId === milestoneId)
         .map((x) => ({ kind: x.kind, role: x.role, scope: clone(x.scope), minLevel: x.minLevel, target: x.target, baseline: x.baseline, rateSource: x.rateSource, measureKey: x.measureKey })),
@@ -1121,9 +1175,18 @@ async function newDraft(w: FakeWorld, intake: Intake = INTAKE): Promise<string> 
   return res.value.roadmapId;
 }
 
-/** A DRAFT roadmap with REPLY drafted (through the real claim and the background half). */
-async function drafted(w: FakeWorld, reply: unknown = REPLY, intake: Intake = INTAKE): Promise<string> {
+/**
+ * A DRAFT roadmap with REPLY drafted (through the real claim and the
+ * background half). `nothingToAvoid`: the user answers the activity card
+ * with "Nothing to avoid" first (contracts §19: a BODY or CARE plan asks
+ * whatever the words, so its gated picks reach the draft only after it).
+ */
+async function drafted(w: FakeWorld, reply: unknown = REPLY, intake: Intake = INTAKE, nothingToAvoid = false): Promise<string> {
   const id = await newDraft(w, intake);
+  if (nothingToAvoid) {
+    const said = await answerCard(id, depsFor(w), [], { none: true });
+    if (!said.ok) throw new Error(`fixture answer: ${said.error}`);
+  }
   const tasks: (() => Promise<void> | void)[] = [];
   const deps = depsFor(w, { defer: (t) => tasks.push(t), callModel: async () => reply, clock: () => NOW });
   const claim = await S.claimDraftCore(USER, id, { force: true }, NOW, deps);
@@ -1135,6 +1198,26 @@ async function drafted(w: FakeWorld, reply: unknown = REPLY, intake: Intake = IN
 const rowsOf = (w: FakeWorld, roadmapId: string, version?: number) =>
   w.t.roadmapMilestone.filter((m) => m.roadmapId === roadmapId && (version == null || m.version === version)).sort((a, b) => a.version - b.version || a.ord - b.ord);
 const itemsOf = (w: FakeWorld, milestoneId: string) => w.t.roadmapItem.filter((i) => i.milestoneId === milestoneId).sort((a, b) => a.ord - b.ord);
+/** The answers stored on a roadmap row (Roadmap.coverage["$activities"], contracts §19.3). */
+const intakeActivitiesOf = (w: FakeWorld, roadmapId: string) => activityConfirmOf(w.t.roadmap.find((r) => r.id === roadmapId)?.coverage);
+
+/**
+ * The activity card's answer as the page sends it (contracts §19.3, R5's
+ * activityCardAnswerOf): the key of the words the card was shown with (the
+ * page's view), the boxes ticked to avoid, or "Nothing to avoid".
+ */
+async function cardAnswerOf(deps: RoadmapDeps, avoid: readonly string[], nothingToAvoid = false, now = NOW): Promise<ActivityCardAnswer> {
+  const view = await S.loadRoadmapView(USER, now, deps);
+  const key = view.activityConfirm?.key ?? view.draft?.activityConfirm?.key;
+  if (!key) throw new Error("fixture: no activity card to answer");
+  return { key, avoid: [...avoid] as CatalogKey[], nothingToAvoid };
+}
+
+/** The user answers the card as the page shows it now: setActivityVerdictsCore with cardAnswerOf's answer. */
+async function answerCard(id: string, deps: RoadmapDeps, avoid: readonly string[], opts: { none?: boolean; now?: Date } = {}) {
+  const now = opts.now ?? NOW;
+  return S.setActivityVerdictsCore(USER, id, await cardAnswerOf(deps, avoid, opts.none === true, now), now, deps);
+}
 const measuresOf = (w: FakeWorld, milestoneId: string) => w.t.roadmapMeasure.filter((x) => x.milestoneId === milestoneId);
 
 /**
@@ -1826,7 +1909,8 @@ async function main() {
       const r = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w));
       check("a placeholder practice refuses Start ('Name this practice')", !r.ok && /Name this practice/.test(r.ok ? "" : r.error), json(r));
       const off = await S.startMilestoneCore(USER, m1.id, { ...START_ALL, practicesOff: [placeholder.lineageId] }, NOW, depsFor(w));
-      eq("every practice off on a practice-only milestone refuses", off.ok ? "ok" : off.error, S.NOTHING_MEASURES);
+      // Contracts §19: a BODY plan's activity card waits until answered (decision 1), so the refusal points at it (decision 2).
+      eq("every practice off on a practice-only milestone refuses, pointing at the activity card that still waits", off.ok ? "ok" : off.error, `${S.NOTHING_MEASURES} ${ACTIVITY_PENDING_POINTER}`);
       const named = await S.startMilestoneCore(USER, m1.id, { ...START_ALL, edits: { [placeholder.id]: { label: "Easy runs" } } }, NOW, depsFor(w));
       check("…naming it lets Start through", named.ok && w.templates.some((t) => t.kind === "HABIT" && t.title === "Easy runs"), json(named));
     }
@@ -3116,11 +3200,47 @@ async function main() {
   }
   {
     // A body plan with constraints (F-R4-17): Gemini's session picks wait for one confirm; "easy, mobility and technique" replaces them.
-    const w = world();
+    // Confirm to unlock (contracts §19): that confirm is now a second layer. A pick of a gated kind reaches the draft only once
+    // the user answered the card without ticking it (here "Nothing to avoid" on the intake's card, before the draft);
+    // without the answer the gate drops it.
     const bodyIntake: Intake = { ...INTAKE, aim: "Get back to running", fieldId: null, track: "BODY", domainIds: [], constraints: "knee injury, no running" };
-    const id = await drafted(w, { milestones: [{ practices: [{ name: "a", method: "X" }] }, { practices: [{ name: "b", method: "X" }] }] }, bodyIntake);
+    const bodyReply = { milestones: [{ practices: [{ name: "a", method: "X" }] }, { practices: [{ name: "b", method: "X" }] }] };
+    const w0 = world();
+    const id0 = await drafted(w0, bodyReply, bodyIntake);
+    const view0 = await S.loadRoadmapView(USER, NOW, depsFor(w0));
+    const picks0 = rowsOf(w0, id0, 1).flatMap((m) => itemsOf(w0, m.id)).filter((i) => i.notes.includes("GEMINI_PICK"));
+    const run0 = w0.t.roadmapRun.find((r) => r.kind === "GEMINI");
+    check(
+      "without the user's answer the gate drops Gemini's picks of gated kinds (none reaches a row, no session-picks confirm), and the report says so (CONSTRAINT, no words)",
+      picks0.length === 0 && view0.draft?.sessionPicks == null && ((run0?.report as ValidationReport | null)?.dropped ?? []).filter((d) => d.code === "CONSTRAINT" && d.label === "").length === 2,
+      json([picks0.map((i) => i.catalogKey), view0.draft?.sessionPicks, (run0?.report as ValidationReport | null)?.dropped])
+    );
+    const card0 = view0.draft?.activityConfirm;
+    check(
+      "…the draft carries the confirm card: on, the user's words quoted, the gated kinds pending (Harder pre-ticked avoid from 'no running'), the safe kinds placed meanwhile",
+      !!card0 && card0.on && card0.quotes.includes("knee injury, no running") && card0.pending >= 5 && card0.rows.find((r) => r.kind === "HARDER_SESSION")?.prefill === "AVOID" && json(card0.safeKinds) === json(["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION"]) && json(view0.activityConfirm) === json(card0),
+      json(card0)
+    );
+    eq("…the exclusions line names what the user's words left out, with their word (the same gate)", view0.draft?.exclusions, [{ kind: "HARDER_SESSION", word: "running" }]);
+    const w = world();
+    const id = await newDraft(w, bodyIntake);
+    const untouched = await answerCard(id, depsFor(w), []);
+    eq("a Save with nothing ticked is no answer: refused (it names “Nothing to avoid”), nothing stored", [errOf(untouched), intakeActivitiesOf(w, id)], [ACTIVITY_NOTHING_TICKED, null]);
+    const said = await answerCard(id, depsFor(w), [], { none: true });
+    const stored0 = intakeActivitiesOf(w, id);
+    check(
+      "the user's “Nothing to avoid”, given before the draft, is stored as the card's answer (no AVOID, no FINE written; no rows to re-sync yet)",
+      said.ok && said.value.replan === false && json(said.value.paused) === "[]" && stored0?.answered?.none === true && stored0.answered.asked.includes("HARDER_SESSION") && json(stored0.kinds) === "{}",
+      json([said, stored0])
+    );
+    {
+      const tasks: (() => Promise<void> | void)[] = [];
+      const claim = await S.claimDraftCore(USER, id, { force: true }, NOW, depsFor(w, { defer: (t) => tasks.push(t), callModel: async () => bodyReply, clock: () => NOW }));
+      if (!claim.ok) throw new Error(`fixture claim: ${claim.error}`);
+      for (const t of tasks) await t();
+    }
     const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
-    check("the draft shows the pending picks with the user's constraints quoted, and the exclusions with their words", view.draft?.sessionPicks?.decision === "PENDING" && view.draft.sessionPicks.constraints === "knee injury, no running" && json(view.draft.exclusions) === json([{ kind: "HARDER_SESSION", word: "running" }]), json([view.draft?.sessionPicks, view.draft?.exclusions]));
+    check("the draft shows the pending picks with the user's constraints quoted; the kind they said is fine isn't listed as left out", view.draft?.sessionPicks?.decision === "PENDING" && view.draft.sessionPicks.constraints === "knee injury, no running" && json(view.draft.exclusions) === "[]" && json(view.draft.sessionPicks.kinds) === json(["HARDER_SESSION"]), json([view.draft?.sessionPicks, view.draft?.exclusions]));
     eq("a pending session-picks decision blocks accept", errOf(await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w))), S.CONFIRM_PICKS);
     eq("…the confirm refuses with writes off", errOf(await S.confirmSessionPicksCore(USER, id, "EASY", NOW, { ...depsFor(w), env: WRITES_OFF })), ROADMAP_WRITES_OFF);
     const easy = await S.confirmSessionPicksCore(USER, id, "EASY", NOW, depsFor(w));
@@ -3657,14 +3777,30 @@ async function main() {
     });
     const lose: Intake = { ...INTAKE, aim: "Lose 8 kg", fieldId: null, track: "BODY", domainIds: [], constraints: "pregnant" };
     const reply = { milestones: [{ practices: [{ name: "a", method: "X" }] }, {}] };
-    const draftWith = async (w: FakeWorld) => {
+    // Confirm to unlock (contracts §19): the activity itself and the session are gated; the user answers the card first
+    // ("Nothing to avoid" on the intake's card), so the picks reach the draft and this second-layer confirm still holds them.
+    const draftWith = async (w: FakeWorld, fine = true) => {
       const id = await newDraft(w, lose);
+      if (fine) {
+        const said = await answerCard(id, depsFor(w), [], { none: true });
+        if (!said.ok) throw new Error(`fixture answers: ${said.error}`);
+      }
       const tasks: (() => Promise<void> | void)[] = [];
       const claim = await S.claimDraftCore(USER, id, { force: true }, NOW, depsFor(w, { lanes: pregnant(w), defer: (t) => tasks.push(t), callModel: async () => reply, clock: () => NOW }));
       if (!claim.ok) throw new Error(`fixture claim: ${claim.error}`);
       for (const t of tasks) await t();
       return id;
     };
+    {
+      const g = world();
+      const gid = await draftWith(g, false);
+      const kinds = rowsOf(g, gid, 1).flatMap((m) => itemsOf(g, m.id)).filter((i) => i.decision !== "REMOVED").map((i) => i.catalogKey);
+      check(
+        "'pregnant' with no answer: the picked FULL_ATTEMPT step, PERFORMANCE_CHECK checkpoint and Harder session never reach the draft (the gate, whatever the parser read)",
+        !kinds.some((k) => k === "FULL_ATTEMPT" || k === "PERFORMANCE_CHECK" || k === "HARDER_SESSION"),
+        json(kinds)
+      );
+    }
     const w = world();
     const id = await draftWith(w);
     const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
@@ -3789,7 +3925,8 @@ async function main() {
     // addItem: a Domain on a depth plan is refused (pinned in the drafting section); a legacy life-track plan is replaced.
     const w = world();
     const trackIntake: Intake = { ...INTAKE, aim: "Run a 10K", fieldId: null, track: "BODY", domainIds: [] };
-    const id = await drafted(w, { milestones: [{ practices: [{ name: "a", method: "X" }] }, { practices: [{ name: "b", method: "X" }] }] }, trackIntake);
+    // Contracts §19 (decision 1): a BODY plan asks whatever the words, so the user's "Nothing to avoid" comes first.
+    const id = await drafted(w, { milestones: [{ practices: [{ name: "a", method: "X" }] }, { practices: [{ name: "b", method: "X" }] }] }, trackIntake, true);
     const acc = await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w));
     check("fixture: an accepted life-track plan", acc.ok, json(acc));
     for (const m of rowsOf(w, id)) m.stage = null;
@@ -4125,6 +4262,62 @@ async function main() {
     check("…the Aim card counts those quests (0 of n done) and knows the week is frozen", card?.weekQuests?.total === set?.quests.length && card?.weekQuests?.done === 0 && card.questWeekUnfrozen === false, json([card?.weekQuests, card?.questWeekUnfrozen]));
   }
 
+  console.log("— rev 4 finishing round: Start counts each card key as it counts (R6 → R4, contracts §17.3) —");
+  {
+    // Probability holds 12 recall cards at level 6+ and, here, 3 multiple-choice cards at or above L (6, 9 and 12). A depth
+    // key (`r`, `rc`) never counts multiple choice, so Start's reading and its v0 (the RAISE floor b0 = max(v0, baseline))
+    // must be 12, not 15. An `rc` key's first reading is R1's (clean entry needs the ledger), so Start writes none for it.
+    const mc = (level: number) => ({ ...card("d-prob", level), type: "MULTI" });
+    const startWith = async (segments: { prob: "r" | "rc" | null; inf: "r" | "rc" | null }) => {
+      const w = world();
+      w.tree[0].domains[0].cards.push(mc(6), mc(9), mc(12));
+      const id = await accepted(w);
+      const [m1] = rowsOf(w, id, 1);
+      const keyOf = (d: string, seg: "r" | "rc" | null) => cardsAtLevelKey([d], 6, seg);
+      const keys = { prob: keyOf("d-prob", segments.prob), inf: keyOf("d-inf", segments.inf) };
+      for (const x of measuresOf(w, m1.id)) {
+        const d = (x.scope as { domainIds?: string[] } | null)?.domainIds;
+        if (x.kind !== "CARDS_AT_LEVEL" || d?.length !== 1) continue;
+        if (d[0] === "d-prob") Object.assign(x, { measureKey: keys.prob, minLevel: 6 });
+        if (d[0] === "d-inf") Object.assign(x, { measureKey: keys.inf, minLevel: 6 });
+      }
+      // Today's readings from accept are cleared, so every reading of these keys below is Start's own.
+      w.t.readings = w.t.readings.filter((r) => r.measureKey !== keys.prob && r.measureKey !== keys.inf);
+      const seen: { source: string; overrides: Record<string, unknown> }[] = [];
+      const fx = lanesFor(w);
+      const spy = (source: string): Partial<RoadmapLanes> => ({
+        ...fx,
+        weekQuestSetFor: (userId, milestoneId, weekStart, now, opts) => {
+          seen.push({ source, overrides: { ...((opts?.overrides ?? {}) as Record<string, unknown>) } });
+          return fx.weekQuestSetFor!(userId, milestoneId, weekStart, now, opts);
+        },
+      });
+      const preview = await S.startPreview(USER, m1.id, NOW, depsFor(w, { lanes: spy("preview") }));
+      const st = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w, { lanes: spy("start") }));
+      const readingOf = (key: string) => w.t.readings.find((r) => r.measureKey === key && r.day === TODAY && r.source === "COMPUTED") ?? null;
+      const ms = measuresOf(w, m1.id).filter((x) => x.kind === "CARDS_AT_LEVEL").map((x) => x.measureKey);
+      return { w, m1, st, preview, keys, ms, prob: readingOf(keys.prob), inf: readingOf(keys.inf), start: seen.find((s) => s.source === "start")?.overrides, pre: seen.find((s) => s.source === "preview")?.overrides };
+    };
+    const r = await startWith({ prob: "r", inf: "r" });
+    check("fixture: Start keeps both `r` keys of the first stage (one per Domain)", r.st.ok && r.ms.includes(r.keys.prob) && r.ms.includes(r.keys.inf), json([r.st, r.ms]));
+    eq("with 3 multiple-choice cards at or above L, Start's reading of Probability's `r` key is its recall count (12, not 15)", r.prob?.value, 12);
+    eq(
+      "…its detail is R1's own cardsAtLevelValue over the same cards (the 3 multiple-choice cards named as not counted), so R1's later reading that day finds nothing to change",
+      r.prob?.detail,
+      { byDomain: { "d-prob": 12 }, retryEntries: 0, retryByDomain: { "d-prob": 0 }, notCounted: { "d-prob": 3 } }
+    );
+    eq("…and Inference's `r` reading is its 4", r.inf?.value, 4);
+    eq("Start hands R6 a v0 per key (v0ByKey), each the recall count, and no single v0", [r.start?.v0ByKey, "v0" in (r.start ?? {})], [{ [r.keys.prob]: 12, [r.keys.inf]: 4 }, false]);
+    eq("…the Start sheet's 'Week quests if you start now' reads the same v0 per key, so it shows the set Start freezes", r.pre?.v0ByKey, r.start?.v0ByKey);
+    const rc = await startWith({ prob: "r", inf: "rc" });
+    check("an `rc` key (the depth, clean entry): Start writes no first reading for it (R1's, from the ledger), as accept leaves it", rc.st.ok && rc.inf == null && rc.prob?.value === 12, json([rc.st, rc.inf, rc.prob?.value]));
+    eq("…and takes no v0 for it: R6 counts it from its own clean-entry read; the `r` key keeps its 12", [rc.start?.v0ByKey, rc.pre?.v0ByKey], [{ [rc.keys.prob]: 12 }, { [rc.keys.prob]: 12 }]);
+    const rcOnly = await startWith({ prob: "rc", inf: "rc" });
+    check("a final stage of `rc` keys only: no card reading at Start, an empty v0ByKey, and the set still frozen", rcOnly.st.ok && rcOnly.prob == null && rcOnly.inf == null && json(rcOnly.start?.v0ByKey) === "{}" && rcOnly.w.t.questWeeks.length === 1, json([rcOnly.st, rcOnly.start, rcOnly.w.t.questWeeks.length]));
+    const legacy = await startWith({ prob: null, inf: null });
+    eq("a rev-3 key (no segment) still counts every card, multiple choice included, as its readings do (15)", [legacy.prob?.value, legacy.prob?.detail, legacy.start?.v0ByKey], [15, { byDomain: { "d-prob": 15 } }, { [legacy.keys.prob]: 15, [legacy.keys.inf]: 4 }]);
+  }
+
   // ═══ With the real lanes (PENDING until R1, R2 and R3 land; green at integration) ═══
   console.log("— with the real lanes —");
   let pendingCount = 0;
@@ -4294,6 +4487,50 @@ async function main() {
     return [!r.ok && /pace|cards a week/i.test(errOf(r)) && w.t.roadmap.length === 1 && withPace.ok, json([r, withPace.ok])];
   });
 
+  await integration("finishing round: a spare-only REALISTIC intake with no pace saves and drafts dated on the cards held, rate null (option (b), contracts §16.10; R2)", async () => {
+    // Every Domain already holds its count n_d in recall cards: Probability 42 (n 34), Inference 30 (n 25, the floor). The new
+    // cards WRITE_MARGIN asks (writeNeedOf: 3 each) are its spare alone, so no pace is needed: RoadmapForm's newCardsRequiredOf
+    // leaves the pace optional, and the server path it relies on must save, draft and date the plan on the cards held.
+    const spareWorld = (infCards: number) => {
+      const w = world();
+      w.tree[0].domains[0].cards = [...Array(12)].map(() => card("d-prob", 6)).concat([...Array(30)].map(() => card("d-prob", 3)));
+      w.tree[0].domains[1].cards = [...Array(infCards)].map(() => card("d-inf", 6));
+      return w;
+    };
+    const intake: Intake = { ...INTAKE, dateMode: "REALISTIC", newCardsPerWeek: null };
+    const w = spareWorld(30);
+    requireRealStages(w, intake);
+    const spare = [coveragePolicyOf(42, 0).n, coveragePolicyOf(30, 0).n];
+    if (spare[0] > 42 || spare[1] > 30) return [false, `fixture: a Domain short of its count ${json(spare)}`];
+    const saved = await S.saveIntakeCore(USER, intake, NOW, realDeps(w));
+    if (!saved.ok) return [false, `saveIntakeCore refused a spare-only intake: ${saved.error}`];
+    const built = await S.buildStarterCore(USER, saved.value.roadmapId, NOW, realDeps(w));
+    if (!built.ok) return [false, `the starter refused it: ${built.error}`];
+    const view = await S.loadRoadmapView(USER, NOW, realDeps(w));
+    const dc = view.draft?.dateCheck ?? null;
+    const road = w.t.roadmap.find((r) => r.id === saved.value.roadmapId);
+    const rows = rowsOf(w, saved.value.roadmapId, 1);
+    // The control: Inference with 9 cards is short of its 25, so the same intake still needs the pace.
+    const short = spareWorld(9);
+    const refused = await S.saveIntakeCore(USER, intake, NOW, realDeps(short));
+    return [
+      rows.length > 0 &&
+        rows.every((m) => m.stage != null) &&
+        dc != null &&
+        dc.D_real != null &&
+        dc.rateAsked === null &&
+        dc.D_full === dc.D_real &&
+        !dc.dateOrigin.calibrating.includes("pace") &&
+        dc.basis[0]?.startsWith("With only the cards you hold") === true &&
+        road?.dateMode === "REALISTIC" &&
+        road.targetDay === dc.D_real &&
+        !refused.ok &&
+        /pace|cards a week/i.test(errOf(refused)) &&
+        short.t.roadmap.length === 0,
+      json({ rows: rows.length, dc: dc && { D_real: dc.D_real, D_full: dc.D_full, rateAsked: dc.rateAsked, basis0: dc.basis[0], calibrating: dc.dateOrigin.calibrating }, target: road?.targetDay, refused }),
+    ];
+  });
+
   await integration("fix round 2: hostileViewsOf names its views, and adds the week-quests view of the first milestone as if started (R7's handoff; R2, R6)", async () => {
     const intake: Intake = { ...INTAKE, dateMode: "REALISTIC", newCardsPerWeek: 20 };
     const domains = [
@@ -4367,6 +4604,446 @@ async function main() {
       named(added.after);
     return [ok, json({ left: { pending: left.pending, before: left.before.slice(0, 3), after: left.after.slice(0, 3), decided: left.decided }, added: { after: added.after.slice(0, 3), decided: added.decided, comb: added.comb } })];
   });
+
+  // ═══ Confirm to unlock (contracts §19): every plan path honours the one gate ═══
+  //
+  // The lead's rules (the safety-gaps round, decisions 1–8): every BODY or CARE plan asks once, whatever the user wrote
+  // (cue or not, constraints empty or not); a CRAFT plan asks on a cue; a Field Area never asks, and its parser
+  // suggestions are pre-ticked boxes, never a block. Until the user answers the card under their current words — an
+  // explicit act (ticks and Save, or "Nothing to avoid") carrying the words' key — every plan path (the code-built starter
+  // and ladder, the Gemini keys-only placement, re-plans, Start and the week quests) places only the track's safe kinds
+  // (CARE's: planning the week and keeping a log), and every refusal meanwhile points at the card. After the answer the
+  // kinds the card listed and the user left unticked are placed and the ticked never appear; a stale key is refused; an
+  // AVOID after Start pauses the started task; a kept pick of a kind that waits again is held.
+  console.log("— confirm to unlock (§19): every plan path honours the gate —");
+  const GATED_BODY = ["HARDER_SESSION", "LONGER_SESSION", "STRENGTH_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK", "MOCK_TEST"];
+  const SAFE = ["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION"];
+  /** Each row's live catalog kinds, in ord (the plan's draft or accepted version). */
+  const kindsIn = (w: FakeWorld, id: string, version = 1): string[][] =>
+    rowsOf(w, id, version)
+      .filter((m) => m.status !== "DISCARDED")
+      .map((m) => itemsOf(w, m.id).filter((i) => i.decision !== "REMOVED" && i.catalogKey).map((i) => i.catalogKey as string));
+  /** A refusal while the card waits: the message, then roadmap-catalog's pointer at the card (withActivityPointer). */
+  const pointed = (message: string) => `${message}${/[.!?…]$/.test(message) ? "" : "."} ${ACTIVITY_PENDING_POINTER}`;
+  const examIntake: Intake = { ...INTAKE, dateMode: "REALISTIC", newCardsPerWeek: 20, examLabel: "SOA Exam P", examDay: addDays(TODAY, 120) };
+  const runIntake: Intake = { ...INTAKE, aim: "Run a sub-50 10K", fieldId: null, track: "BODY", domainIds: [], constraints: "Running causes me knee pain.", dateMode: "CHOSEN", targetDay: addDays(TODAY, 300) };
+  const careIntake: Intake = { ...INTAKE, aim: "Support Mum's care at home", fieldId: null, track: "CARE", domainIds: [], constraints: "No visits on weekdays, phone calls only.", dateMode: "CHOSEN", targetDay: addDays(TODAY, 300) };
+  const craftIntake: Intake = { ...INTAKE, aim: "Play a piece on the piano", fieldId: null, track: "CRAFT", domainIds: [], constraints: null, dateMode: "CHOSEN", targetDay: addDays(TODAY, 300) };
+  const kneeIntake: Intake = { ...INTAKE, aim: "Get back to running", fieldId: null, track: "BODY", domainIds: [], constraints: "knee injury, no running" };
+  const ROLE_KINDS = ["RECALL_DRILLS", "READ_AND_CARD", "LISTEN_AND_REPEAT", "EXPLAIN_IT", "PROBLEM_SETS", "WRITING_PRACTICE", "MISTAKE_REVIEW", "SAY_IT_ALOUD", "BUILD_SOMETHING", "RUN_THROUGHS"];
+  /** The code-built starter for an intake (real R2, R3), with its rows and the page's view. */
+  const built = async (intake: Intake) => {
+    const w = world();
+    const id = await newDraft(w, intake);
+    const res = await S.buildStarterCore(USER, id, NOW, realDeps(w));
+    if (!res.ok) throw new Error(`${intake.constraints}: ${res.error}`);
+    const view = await S.loadRoadmapView(USER, NOW, realDeps(w));
+    return { w, id, rows: kindsIn(w, id), view, card: view.draft?.activityConfirm ?? null };
+  };
+
+  await integration("§19 decision 7: a Field plan's 'No timed practice' is a suggestion, never a block — the code-built plan still places Timed practice and the card shows its row pre-ticked with the user's sentence; Save with it ticked is the user's AVOID and the draft drops it, each stage keeping a practice of its role (real R2, R3)", async () => {
+    requireRealStages(world(), examIntake);
+    const control = await built({ ...examIntake, constraints: null });
+    const timed = await built({ ...examIntake, constraints: "No timed practice, it stresses me out." });
+    const mock = await built({ ...examIntake, constraints: "No mock tests please." });
+    const row = timed.card?.rows.find((r) => r.kind === "TIMED_PRACTICE");
+    const said = await answerCard(timed.id, realDeps(timed.w), ["TIMED_PRACTICE"], { now: at(1_000) });
+    const avoided = kindsIn(timed.w, timed.id);
+    const all = (rows: string[][]) => rows.flat();
+    return [
+      all(control.rows).includes("TIMED_PRACTICE") &&
+        all(control.rows).includes("MOCK_TEST") &&
+        json(timed.rows) === json(control.rows) &&
+        json(mock.rows) === json(control.rows) &&
+        json(timed.view.draft?.exclusions) === "[]" &&
+        timed.card?.on === false &&
+        row?.state === "WORDS" &&
+        row.prefill === "AVOID" &&
+        /timed practice/i.test(row.reason) &&
+        said.ok &&
+        intakeActivitiesOf(timed.w, timed.id)?.kinds.TIMED_PRACTICE?.verdict === "AVOID" &&
+        !all(avoided).includes("TIMED_PRACTICE") &&
+        // Every stage keeps a practice of its role: the requirement takes the next kind the gate leaves in.
+        avoided.every((r, i) => r.some((k) => ROLE_KINDS.includes(k)) || !control.rows[i].some((k) => ROLE_KINDS.includes(k))),
+      json({ control: control.rows, timed: timed.rows, mock: mock.rows, row, said, avoided }),
+    ];
+  });
+
+  await integration("§19 a Field plan is never gated by a body cue, and a term the plan fills into every label names no kind: 'Inference is too hard' leaves the plan as it was (finding #1 held here; real R2, R3)", async () => {
+    requireRealStages(world(), examIntake);
+    const control = await built({ ...examIntake, constraints: null });
+    const hard = await built({ ...examIntake, constraints: "Inference is too hard for me, I need extra time on it." });
+    const knee = await built({ ...examIntake, constraints: "Bad knee, my back hurts." });
+    return [
+      json(hard.rows) === json(control.rows) && json(hard.view.draft?.exclusions) === "[]" && json(knee.rows) === json(control.rows) && hard.card == null && knee.card == null,
+      json({ control: control.rows, hard: hard.rows, knee: knee.rows, ex: hard.view.draft?.exclusions, card: knee.card }),
+    ];
+  });
+
+  await integration("§19 BODY, a cue the parser reads nothing from ('Running causes me knee pain.'): the starter places only the safe sessions, no performance check, and the draft says so (real R2)", async () => {
+    const b = await built(runIntake);
+    const pending = (b.card?.rows ?? []).filter((r) => r.state === "PENDING").map((r) => r.kind);
+    return [
+      b.rows.length > 1 &&
+        b.rows.every((r) => r.length > 0 && r.every((k) => SAFE.includes(k))) &&
+        !!b.card &&
+        b.card.on &&
+        json(b.card.quotes) === json(["Running causes me knee pain"]) &&
+        ["HARDER_SESSION", "LONGER_SESSION", "STRENGTH_SESSION", "PERFORMANCE_CHECK"].every((k) => pending.includes(k as never)) &&
+        json(b.card.safeKinds) === json(SAFE) &&
+        // Whatever the parser suggests and the gate holds is listed as left out, and none of it is placed.
+        (b.view.draft?.exclusions ?? []).every((x) => !b.rows.flat().includes(x.kind)),
+      json({ rows: b.rows, card: b.card }),
+    ];
+  });
+
+  await integration("§19 decision 1: a BODY plan asks whatever the user wrote — no constraints and a plain aim: only the safe sessions and no performance check until the card is answered, yet the draft is acceptable and Start puts only the safe sessions on Today; a refusal meanwhile points at the card; “Nothing to avoid” places Longer from the third stage and the performance check (real R2)", async () => {
+    const plain = await built({ ...runIntake, constraints: null });
+    const view0 = plain.view;
+    // A second, accepted copy: Start while the card waits (only the safe sessions get a Today task), and a refusal points at it.
+    const acc = await S.acceptCore(USER, plain.id, { overAccepted: false }, NOW, realDeps(plain.w));
+    const m1 = rowsOf(plain.w, plain.id, 1)[0];
+    const gateOff = await S.startPreview(USER, m1.id, NOW, realDeps(plain.w, { goalsLive: false }));
+    const st = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, realDeps(plain.w));
+    const started = itemsOf(plain.w, m1.id).filter((i) => i.templateId).map((i) => i.catalogKey as string);
+    const fresh = await built({ ...runIntake, constraints: null });
+    const said = await answerCard(fresh.id, realDeps(fresh.w), [], { none: true, now: at(1_000) });
+    const after = kindsIn(fresh.w, fresh.id);
+    return [
+      plain.rows.length > 2 &&
+        plain.rows.every((r) => r.length > 0 && r.every((k) => SAFE.includes(k))) &&
+        !!plain.card &&
+        plain.card.on &&
+        plain.card.pending >= 4 &&
+        json(plain.card.safeKinds) === json(SAFE) &&
+        view0.draft?.acceptable === true &&
+        acc.ok &&
+        gateOff?.refusal === pointed(S.GATE_OFF) &&
+        st.ok &&
+        started.length > 0 &&
+        started.every((k) => SAFE.includes(k)) &&
+        said.ok &&
+        after.slice(2).every((r) => r.includes("LONGER_SESSION")) &&
+        after[after.length - 1].includes("PERFORMANCE_CHECK") &&
+        !after.flat().some((k) => k === "HARDER_SESSION" || k === "STRENGTH_SESSION"),
+      json({ rows: plain.rows, card: plain.card, acceptable: view0.draft?.acceptable, acc, refusal: gateOff?.refusal, st, started, said, after }),
+    ];
+  });
+
+  await integration("§19 decision 1: a CRAFT plan asks on a cue — 'Wrist tendinitis, can't play more than 20 minutes.' places only the technique session (no slow drills, run-throughs or performance check) and the card asks; a plain CRAFT plan is built as before with no card (real R2)", async () => {
+    const plain = await built(craftIntake);
+    const wrist = await built({ ...craftIntake, constraints: "Wrist tendinitis, can't play more than 20 minutes." });
+    const pending = (wrist.card?.rows ?? []).filter((r) => r.state === "PENDING").map((r) => r.kind);
+    return [
+      plain.rows.flat().includes("SLOW_DRILLS") &&
+        plain.rows.flat().includes("PERFORMANCE_CHECK") &&
+        plain.card == null &&
+        wrist.rows.flat().length > 0 &&
+        wrist.rows.every((r) => r.every((k) => k === "TECHNIQUE_SESSION")) &&
+        wrist.card?.on === true &&
+        json(wrist.card.safeKinds) === json(["TECHNIQUE_SESSION"]) &&
+        ["SLOW_DRILLS", "RUN_THROUGHS", "PERFORMANCE_CHECK"].every((k) => pending.includes(k as never)),
+      json({ plain: plain.rows, wrist: wrist.rows, card: wrist.card }),
+    ];
+  });
+
+  await integration("§19 the user's answer on a DRAFT: the plan follows in the same write (the kinds the card listed and the user left unticked are placed where the starter places them, the ticked never); a second answer replaces the ticks; an intake save keeps the answer; new words ask again (the released kinds wait, every AVOID stands) and an answer given against the old words is refused (decision 3, the verifier's S12) (real R2)", async () => {
+    const w = world();
+    const id = await newDraft(w, runIntake);
+    const b0 = await S.buildStarterCore(USER, id, NOW, realDeps(w));
+    if (!b0.ok) return [false, b0.error];
+    const before = kindsIn(w, id);
+    const said = await answerCard(id, realDeps(w), ["STRENGTH_SESSION"], { now: at(1_000) });
+    const fine = kindsIn(w, id);
+    const gatedIn = (rows: string[][]) => rows.flat().filter((k) => GATED_BODY.includes(k));
+    const stored = intakeActivitiesOf(w, id);
+    const avoid = await answerCard(id, realDeps(w), ["STRENGTH_SESSION", "LONGER_SESSION"], { now: at(2_000) });
+    const avoided = kindsIn(w, id);
+    // The intake saved again with the same words keeps the answer.
+    const resaved = await S.saveIntakeCore(USER, runIntake, at(3_000), realDeps(w));
+    const kept = intakeActivitiesOf(w, id);
+    // Tab A shows the card for these words; tab B saves new words; tab A's "Nothing to avoid" then lands (S12).
+    const tabA = await cardAnswerOf(realDeps(w), [], true, at(3_500));
+    const reworded = await S.saveIntakeCore(USER, { ...runIntake, constraints: "Running causes me knee pain. Torn ACL, surgery next month." }, at(4_000), realDeps(w));
+    const stale = kindsIn(w, id);
+    const view = await S.loadRoadmapView(USER, at(5_000), realDeps(w));
+    const rowOf = (k: string) => view.draft?.activityConfirm?.rows.find((r) => r.kind === k);
+    const storedStale = intakeActivitiesOf(w, id);
+    const late = await S.setActivityVerdictsCore(USER, id, tabA, at(6_000), realDeps(w));
+    const ok =
+      said.ok &&
+      said.value.replan === false &&
+      gatedIn(before).length === 0 &&
+      json(Array.from(new Set(gatedIn(fine))).sort()) === json(["LONGER_SESSION", "PERFORMANCE_CHECK"]) &&
+      fine[fine.length - 1].includes("PERFORMANCE_CHECK") &&
+      !fine.flat().includes("STRENGTH_SESSION") &&
+      stored?.kinds.STRENGTH_SESSION?.verdict === "AVOID" &&
+      stored.kinds.STRENGTH_SESSION.reason === "Running causes me knee pain" &&
+      stored.kinds.LONGER_SESSION == null &&
+      stored.answered?.none === false &&
+      stored.answered.asked.includes("LONGER_SESSION") &&
+      avoid.ok &&
+      !avoided.flat().includes("LONGER_SESSION") &&
+      avoided.flat().includes("PERFORMANCE_CHECK") &&
+      resaved.ok &&
+      kept?.answered != null &&
+      kept.kinds.LONGER_SESSION?.verdict === "AVOID" &&
+      reworded.ok &&
+      !stale.flat().includes("PERFORMANCE_CHECK") &&
+      rowOf("PERFORMANCE_CHECK")?.state === "PENDING" &&
+      rowOf("PERFORMANCE_CHECK")?.staleDay === TODAY &&
+      rowOf("LONGER_SESSION")?.state === "AVOID" &&
+      errOf(late) === ACTIVITY_ANSWER_STALE &&
+      json(intakeActivitiesOf(w, id)) === json(storedStale) &&
+      json(kindsIn(w, id)) === json(stale);
+    return [ok, json({ said, before, fine, stored, avoided, kept, stale, pc: rowOf("PERFORMANCE_CHECK"), late })];
+  });
+
+  await integration("§19 decision 2: a waiting CARE plan is never a dead end — the starter places planning the week (and keeping a log from the third stage), no care session or performance check, and the draft is acceptable; a refusal meanwhile points at the card; the answer leaving Check-in ticked (pre-ticked from the user's words) places Set time and never Check-in (real R2)", async () => {
+    const b = await built(careIntake);
+    const checkIn = b.card?.rows.find((r) => r.kind === "CHECK_IN");
+    // A refusal while the card waits points at it: the first milestone's title emptied, accept refuses and names the card.
+    const m1 = rowsOf(b.w, b.id, 1)[0];
+    const title = m1.title;
+    m1.title = "";
+    const named = errOf(await S.acceptCore(USER, b.id, { overAccepted: false }, NOW, realDeps(b.w)));
+    m1.title = title;
+    const said = await answerCard(b.id, realDeps(b.w), ["CHECK_IN"], { now: at(1_000) });
+    const after = kindsIn(b.w, b.id);
+    return [
+      b.rows.length > 2 &&
+        b.rows.every((r) => r.length > 0 && r.every((k) => k === "PLAN_AHEAD" || k === "KEEP_A_LOG")) &&
+        b.rows[0].includes("PLAN_AHEAD") &&
+        b.rows[b.rows.length - 1].includes("KEEP_A_LOG") &&
+        b.card?.on === true &&
+        json(b.card.safeKinds) === json(["PLAN_AHEAD", "KEEP_A_LOG"]) &&
+        checkIn?.state === "PENDING" &&
+        checkIn.prefill === "AVOID" &&
+        b.view.draft?.acceptable === true &&
+        named === pointed("Name milestone 1.") &&
+        said.ok &&
+        after.every((r) => r.includes("SET_TIME")) &&
+        !after.flat().includes("CHECK_IN"),
+      json({ before: b.rows, card: b.card, acceptable: b.view.draft?.acceptable, named, said, after }),
+    ];
+  });
+
+  {
+    // The answer's refusals, its one writer and its guard (fixture lanes).
+    const w = world();
+    const id = await newDraft(w, kneeIntake);
+    const key = (await cardAnswerOf(depsFor(w), [])).key;
+    const card = (avoid: readonly string[], none = false, k = key): ActivityCardAnswer => ({ key: k, avoid: [...avoid] as CatalogKey[], nothingToAvoid: none });
+    eq("setActivityVerdicts refuses with writes off", errOf(await S.setActivityVerdictsCore(USER, id, card(["LONGER_SESSION"]), NOW, { ...depsFor(w), env: WRITES_OFF })), ROADMAP_WRITES_OFF);
+    eq(
+      "…refuses a kind off the plan's track (a Field kind on a BODY plan), a prototype name, ticks together with “Nothing to avoid”, a malformed answer and none at all (ACTIVITY_ANSWER_REFUSAL)",
+      [
+        errOf(await S.setActivityVerdictsCore(USER, id, card(["RECALL_DRILLS"]), NOW, depsFor(w))),
+        errOf(await S.setActivityVerdictsCore(USER, id, card(["__proto__"]), NOW, depsFor(w))),
+        errOf(await S.setActivityVerdictsCore(USER, id, card(["LONGER_SESSION"], true), NOW, depsFor(w))),
+        errOf(await S.setActivityVerdictsCore(USER, id, { key, avoid: "LONGER_SESSION" } as unknown as ActivityCardAnswer, NOW, depsFor(w))),
+        errOf(await S.setActivityVerdictsCore(USER, id, null as unknown as ActivityCardAnswer, NOW, depsFor(w))),
+      ],
+      Array(5).fill(ACTIVITY_ANSWER_REFUSAL)
+    );
+    eq(
+      "…refuses a Save with nothing ticked (ACTIVITY_NOTHING_TICKED: an unticked row is never taken as fine) and an answer given against other words (ACTIVITY_ANSWER_STALE); nothing is stored",
+      [errOf(await S.setActivityVerdictsCore(USER, id, card([]), NOW, depsFor(w))), errOf(await S.setActivityVerdictsCore(USER, id, card([], true, "k1-00000000"), NOW, depsFor(w))), intakeActivitiesOf(w, id)],
+      [ACTIVITY_NOTHING_TICKED, ACTIVITY_ANSWER_STALE, null]
+    );
+    check("…refuses another user's roadmap", !(await S.setActivityVerdictsCore("someone-else", id, card(["LONGER_SESSION"]), NOW, depsFor(w))).ok);
+    // Typed coverage figures share the column: the answer keeps them, and the stored reason is the server's quote.
+    const row = () => w.t.roadmap.find((r) => r.id === id) as RoadmapRec;
+    row().coverage = { "d-prob": 30 };
+    const said = await S.setActivityVerdictsCore(USER, id, card(["LONGER_SESSION"]), NOW, depsFor(w));
+    check(
+      "the answer is stored under Roadmap.coverage['$activities'] beside the typed figures (coverageJsonOf, the one writer), the reason quoted from the user's words, and no FINE is ever written",
+      said.ok && (row().coverage as Record<string, unknown>)["d-prob"] === 30 && intakeActivitiesOf(w, id)?.kinds.LONGER_SESSION?.reason === "knee injury, no running" && !json(row().coverage).includes("FINE"),
+      json(row().coverage)
+    );
+    // An answer racing an intake save of the same words: the guard on the row as read makes the later one re-read, never overwrite.
+    const both = await Promise.all([S.setActivityVerdictsCore(USER, id, card(["STRENGTH_SESSION"]), at(5_000), depsFor(w)), S.saveIntakeCore(USER, kneeIntake, at(6_000), depsFor(w))]);
+    const stored = intakeActivitiesOf(w, id);
+    check(
+      "an answer and an intake save at once: both land, neither drops the other's write (the second answer's ticks replace the first's)",
+      both.every((r) => r.ok) && stored?.kinds.STRENGTH_SESSION?.verdict === "AVOID" && stored.kinds.LONGER_SESSION == null && stored.answered != null,
+      json([both, stored])
+    );
+    check("…the guard's SQL reads the row's updatedAt", SERVER_SRC.includes('const unwritten = g.updatedAt != null ? Prisma.sql`AND "updatedAt" = ${g.updatedAt}`'));
+    check("…intakeOf reads the answers with activityConfirmOf, intakeData writes the column with coverageJsonOf", /activities: activityConfirmOf\(r\.coverage\)/.test(SERVER_SRC) && /coverage: coverageJsonOf\(i\.coverage \?\? null, i\.activities \?\? null\)/.test(SERVER_SRC));
+    const ACTION_SRC = readFileSync(join(__dirname, "../src/app/actions/roadmap.ts"), "utf8");
+    check(
+      "the action takes an ActivityCardAnswer and cleans its shape (a string key, an array of strings, a boolean); the earlier per-kind list is refused, never read as an answer",
+      /export async function setActivityVerdicts\(roadmapId: string, answer: ActivityCardAnswer\)/.test(ACTION_SRC) &&
+        /typeof o\.key !== "string"/.test(ACTION_SRC) &&
+        /avoid\.every\(\(k\) => typeof k === "string"\)/.test(ACTION_SRC) &&
+        /typeof o\.nothingToAvoid !== "boolean"/.test(ACTION_SRC) &&
+        /!Array\.isArray\(answer\)/.test(ACTION_SRC)
+    );
+  }
+
+  {
+    // A pick from the type list: a kind the gate blocks is added only once the user's answer leaves it unticked.
+    const w = world();
+    const id = await drafted(w, { milestones: [{ practices: [] }, {}] }, kneeIntake);
+    const m1 = () => rowsOf(w, id, 1)[0];
+    const waits = await S.addItemCore(USER, m1().id, { kind: "PRACTICE", catalogKey: "LONGER_SESSION" }, NOW, depsFor(w));
+    const safe = await S.addItemCore(USER, m1().id, { kind: "PRACTICE", catalogKey: "MOBILITY_SESSION" }, NOW, depsFor(w));
+    await answerCard(id, depsFor(w), ["TECHNIQUE_SESSION"]);
+    const fine = await S.addItemCore(USER, m1().id, { kind: "PRACTICE", catalogKey: "LONGER_SESSION" }, NOW, depsFor(w));
+    const avoided = await S.addItemCore(USER, m1().id, { kind: "PRACTICE", catalogKey: "TECHNIQUE_SESSION" }, NOW, depsFor(w));
+    eq("a pick of a gated kind waits for the user's answer; a safe one is added; once the answer leaves it unticked it is; an avoided safe one isn't", [errOf(waits), safe.ok, fine.ok, errOf(avoided)], [S.ACTIVITY_WAITING_PICK, true, true, S.ACTIVITY_AVOIDED_PICK]);
+    check(
+      "…the gate's refusals name the card (“Activities to avoid”) and the act, never “fine”, so no second pointer is added",
+      [S.ACTIVITY_WAITING_PICK, S.ACTIVITY_AVOIDED_PICK, S.ACTIVITY_WAITING_START].every((m) => m.includes(ACTIVITY_CARD_NAME) && !m.includes(ACTIVITY_PENDING_POINTER) && !/\bfine\b/i.test(m)) && !/\bfine\b/i.test(S.ACTIVITY_HELD_IN_DRAFT)
+    );
+  }
+
+  {
+    // An accepted plan: the answer offers a re-plan; Start holds the avoided kind back (no task, no quest); an AVOID after
+    // Start pauses the started task (decision 4); the re-plan drops it.
+    const QS = await import("../src/lib/roadmap-quests-server");
+    const w = world();
+    const id = await newDraft(w, kneeIntake);
+    await answerCard(id, depsFor(w), ["LONGER_SESSION"]);
+    {
+      const tasks: (() => Promise<void> | void)[] = [];
+      const reply = { milestones: [{ practices: [{ name: "a", method: "X" }, { name: "b", method: "X" }] }, { practices: [{ name: "c", method: "X" }] }] };
+      await S.claimDraftCore(USER, id, { force: true }, NOW, depsFor(w, { defer: (t) => tasks.push(t), callModel: async () => reply, clock: () => NOW }));
+      for (const t of tasks) await t();
+    }
+    const kept = await S.confirmSessionPicksCore(USER, id, "KEEP", NOW, depsFor(w));
+    const acc = await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w));
+    const m1 = rowsOf(w, id, 1)[0];
+    const harder = itemsOf(w, m1.id).find((i) => i.catalogKey === "HARDER_SESSION");
+    const strength = itemsOf(w, m1.id).find((i) => i.catalogKey === "STRENGTH_SESSION");
+    const said = await answerCard(id, depsFor(w), ["LONGER_SESSION", "HARDER_SESSION"]);
+    check(
+      "on an ACTIVE plan the answer rewrites nothing accepted and offers a re-plan (an unstarted milestone holds a kind it now blocks); nothing started, so nothing is paused",
+      kept.ok && acc.ok && said.ok && said.value.replan === true && json(said.value.paused) === "[]" && itemsOf(w, m1.id).some((i) => i.catalogKey === "HARDER_SESSION" && i.decision !== "REMOVED"),
+      json([kept, acc, said])
+    );
+    const store = questStoreOf(w);
+    const lanes: Partial<RoadmapLanes> = {
+      ...lanesFor(w),
+      weekQuestSetFor: (userId, milestoneId, weekStart, now, opts) => QS.weekQuestSetFor(userId, milestoneId, weekStart, now, { ...opts, store, env: WRITES_ON }),
+      loadWeekQuests: (userId, now) => QS.loadWeekQuests(userId, now, { store, env: WRITES_ON }),
+    };
+    const preview = await S.startPreview(USER, m1.id, NOW, depsFor(w, { lanes }));
+    check(
+      "the Start sheet lists no practice the answer holds back (only Strength session goes to Today)",
+      json(preview?.practices.map((p) => p.lineageId)) === json([strength?.lineageId]) && !(preview?.todayRows ?? []).some((r) => r.itemId === harder?.id),
+      json(preview?.practices)
+    );
+    const st = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w, { lanes }));
+    const started = itemsOf(w, m1.id);
+    const titles = w.templates.map((t) => t.title);
+    const set = w.t.questWeeks.find((q) => q.milestoneId === m1.id)?.set;
+    const practiceQuests = (set?.quests ?? []).filter((q) => q.kind === "PRACTICE").map((q) => (q as { templateId: string }).templateId);
+    const strengthTpl = started.find((i) => i.catalogKey === "STRENGTH_SESSION")?.templateId;
+    check(
+      "Start creates no task for the held kind (off Today on the started milestone), the other practice starts, and the week's quests name only it",
+      st.ok && !titles.includes(harder?.label ?? "-") && titles.includes(strength?.label ?? "-") && started.find((i) => i.catalogKey === "HARDER_SESSION")?.addToToday === false && json(practiceQuests) === json([strengthTpl]),
+      json([st, titles, practiceQuests, strengthTpl])
+    );
+    // Decision 4: the AVOID after Start pauses the started practice's Today task at once (archived through the task path,
+    // never deleted), and the answer names it for the page's quiet notice and its Undo (the Today task's unarchive).
+    const templatesBefore = w.templates.length;
+    const after = await answerCard(id, depsFor(w), ["LONGER_SESSION", "HARDER_SESSION", "STRENGTH_SESSION"], { now: at(1_000) });
+    const tpl = w.templates.find((t) => t.id === strengthTpl);
+    check(
+      "decision 4: an AVOID given after Start pauses the started practice's Today task at once — archived through the task path, never deleted — and lists it for the notice and its Undo",
+      after.ok &&
+        !!tpl &&
+        tpl.archivedAt != null &&
+        w.templates.length === templatesBefore &&
+        json(after.value.paused) === json([{ templateId: strengthTpl, title: tpl.title, kind: "STRENGTH_SESSION", deferredTo: null }]) &&
+        json(after.value.notPaused) === "[]",
+      json([after, tpl])
+    );
+    // The user brings it back (Undo); answering again with the same ticks pauses nothing again.
+    if (tpl) tpl.archivedAt = null;
+    const again = await answerCard(id, depsFor(w), ["LONGER_SESSION", "HARDER_SESSION", "STRENGTH_SESSION"], { now: at(1_500) });
+    check("…a kind already avoided before an answer isn't paused again (the user brought its task back with Undo)", again.ok && json(again.value.paused) === "[]" && tpl?.archivedAt == null, json(again));
+    // The archive refused (still on Today: the page names it), then deferred (a must once Duty is live: its pending day).
+    const ioWith = (archiveTemplate: RoadmapIo["archiveTemplate"]): RoadmapDeps => depsFor(w, { io: { ...w.io(), archiveTemplate } });
+    await answerCard(id, depsFor(w), ["LONGER_SESSION", "HARDER_SESSION"], { now: at(1_600) });
+    const refusedArchive = await answerCard(id, ioWith(async () => ({ ok: false, error: "Something changed at the same moment. Try again." })), ["LONGER_SESSION", "HARDER_SESSION", "STRENGTH_SESSION"], { now: at(1_700) });
+    await answerCard(id, depsFor(w), ["LONGER_SESSION", "HARDER_SESSION"], { now: at(1_800) });
+    const deferred = await answerCard(id, ioWith(async () => ({ ok: true, deferredTo: addDays(TODAY, 7) })), ["LONGER_SESSION", "HARDER_SESSION", "STRENGTH_SESSION"], { now: at(1_900) });
+    check(
+      "…an archive the task path refuses is listed as still on Today (notPaused), never thrown; a must's deferred archive carries the day it leaves Today",
+      refusedArchive.ok &&
+        json(refusedArchive.value.paused) === "[]" &&
+        json(refusedArchive.value.notPaused.map((t) => t.templateId)) === json([strengthTpl]) &&
+        deferred.ok &&
+        json(deferred.value.paused.map((t) => [t.templateId, t.deferredTo])) === json([[strengthTpl, addDays(TODAY, 7)]]),
+      json([refusedArchive, deferred])
+    );
+    // The answer after Start: next week's set (R6 reads the gate from the row's own words and answers) holds no quest for it.
+    const nextWeek = await QS.weekQuestSetFor(USER, m1.id, addDays(weekStartKeyOf(TODAY), 7), at(2_000), { store, env: WRITES_ON });
+    check("an answer given after Start: the next week's quests skip the avoided practice (R6's own reading of the gate)", !!nextWeek && !(nextWeek.quests ?? []).some((q) => q.kind === "PRACTICE"), json(nextWeek?.quests));
+    const re = await S.replanCore(USER, id, "REFIT", at(3_000), depsFor(w));
+    const replanned = rowsOf(w, id, 2).flatMap((m) => itemsOf(w, m.id)).filter((i) => i.decision !== "REMOVED").map((i) => i.catalogKey);
+    check("the re-plan keeps no avoided kind (the user's kept pick of it is REMOVED, their own decision)", re.ok && !replanned.includes("HARDER_SESSION") && !replanned.includes("STRENGTH_SESSION"), json([re, replanned]));
+  }
+
+  {
+    // Decision 5 (the verifier's S1): a Gemini pick the user kept is theirs (CHECKED). When their words change, the card
+    // asks again and the kept pick is held: it stays their row, but accept refuses (pointing at the card) until they answer.
+    const w = world();
+    const id = await newDraft(w, kneeIntake);
+    await answerCard(id, depsFor(w), [], { none: true });
+    {
+      const tasks: (() => Promise<void> | void)[] = [];
+      const reply = { milestones: [{ practices: [{ name: "a", method: "X" }] }, { practices: [{ name: "b", method: "X" }] }] };
+      await S.claimDraftCore(USER, id, { force: true }, NOW, depsFor(w, { defer: (t) => tasks.push(t), callModel: async () => reply, clock: () => NOW }));
+      for (const t of tasks) await t();
+    }
+    const kept = await S.confirmSessionPicksCore(USER, id, "KEEP", NOW, depsFor(w));
+    const live = () => rowsOf(w, id, 1).flatMap((m) => itemsOf(w, m.id)).filter((i) => i.catalogKey === "HARDER_SESSION" && i.decision !== "REMOVED");
+    const keptRows = live().map((i) => [i.lineageId, i.decision]);
+    const reworded = await S.saveIntakeCore(USER, { ...kneeIntake, constraints: "knee injury, no running. Torn ACL, surgery next month." }, at(1_000), depsFor(w));
+    const held = live().map((i) => [i.lineageId, i.decision]);
+    const view = await S.loadRoadmapView(USER, at(2_000), depsFor(w));
+    const refused = errOf(await S.acceptCore(USER, id, { overAccepted: false }, at(2_000), depsFor(w)));
+    const answered = await answerCard(id, depsFor(w), [], { none: true, now: at(3_000) });
+    const acc = await S.acceptCore(USER, id, { overAccepted: false }, at(4_000), depsFor(w));
+    check(
+      "decision 5: a kept pick of a kind whose answer went stale stays the user's row but is held — the draft isn't acceptable and accept refuses, pointing at the card; answering again lets it through",
+      kept.ok &&
+        keptRows.length > 0 &&
+        keptRows.every(([, d]) => d === "CHECKED") &&
+        reworded.ok &&
+        json(held) === json(keptRows) &&
+        view.draft?.acceptable === false &&
+        view.draft.activityConfirm?.rows.find((r) => r.kind === "HARDER_SESSION")?.state === "PENDING" &&
+        refused === pointed(S.ACTIVITY_HELD_IN_DRAFT) &&
+        answered.ok &&
+        json(live().map((i) => [i.lineageId, i.decision])) === json(keptRows) &&
+        acc.ok,
+      json({ kept, keptRows, held, acceptable: view.draft?.acceptable, refused, answered, acc })
+    );
+  }
+
+  {
+    // A draft that still holds a kind the gate now blocks never becomes the plan.
+    const w = world();
+    const id = await newDraft(w, kneeIntake);
+    await answerCard(id, depsFor(w), ["LONGER_SESSION"]);
+    {
+      const tasks: (() => Promise<void> | void)[] = [];
+      const reply = { milestones: [{ practices: [{ name: "a", method: "X" }] }, { practices: [{ name: "b", method: "X" }] }] };
+      await S.claimDraftCore(USER, id, { force: true }, NOW, depsFor(w, { defer: (t) => tasks.push(t), callModel: async () => reply, clock: () => NOW }));
+      for (const t of tasks) await t();
+    }
+    // The answer made stale under the draft (as a row written before this round could hold it): the gate blocks the pick again.
+    const row = w.t.roadmap.find((r) => r.id === id) as RoadmapRec;
+    const stored = intakeActivitiesOf(w, id);
+    row.coverage = { $activities: { ...stored, key: "k1-00000000" } };
+    const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
+    eq("accept refuses a draft that still holds a kind the gate now blocks, and points at the card", [view.draft?.acceptable, errOf(await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w)))], [false, pointed(S.ACTIVITY_HELD_IN_DRAFT)]);
+  }
 
   if (failed > 0) {
     console.log(`\nroadmap-server-check: ${passed} passed, ${failed} FAILED${pendingCount ? `, ${pendingCount} pending other lanes` : ""}`);

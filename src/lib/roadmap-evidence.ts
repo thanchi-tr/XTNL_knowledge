@@ -18,9 +18,11 @@
  *
  * The pack also carries the run's facts (`run`, PackRun in roadmap-validate):
  * the slots, the run's enums (roadmap-catalog catalogKindsFor with the
- * constraint filter's exclusions left out), the exam answer, whether the gap
- * slot is issued (ROADMAP_GAPS_LIVE and the user's switch, on a Field Area),
- * the exclusions with their words and the aim conflict. The response schema
+ * activity gate's blocked kinds left out: contracts §19.5, the safety-gaps
+ * round; the reader's exclusions only suggest), the exam answer, whether the
+ * gap slot is issued (ROADMAP_GAPS_LIVE and the user's switch, on a Field
+ * Area), the blocked kinds, the exclusions with their words and the aim
+ * conflict (with the user's sentence). The response schema
  * is built from the pack alone (roadmap-validate keysOnlySchemaOf), so a
  * reuse checks a stored reply against the current run's schema.
  *
@@ -69,8 +71,8 @@ import {
   type PracticeMethod,
   type StartPoint,
 } from "./roadmap-types";
-import { catalogKindsFor, catalogTrackOf, type CatalogKey } from "./roadmap-catalog";
-import { aimConflictOf, constraintExclusionsOf, examAnswerOf, packRunOf, type PackRun } from "./roadmap-validate";
+import { activityGateOf, catalogKindsFor, catalogTrackOf, type CatalogKey } from "./roadmap-catalog";
+import { aimConflictOf, constraintExclusionsOf, examAnswerOf, packRunOf, runExclusionsOf, type PackRun } from "./roadmap-validate";
 
 /** One Domain the pack may list (counts from loadFieldTree; atTop = cards at TOP_LEVEL or above). */
 export interface EvidenceDomain {
@@ -323,23 +325,30 @@ export function buildEvidencePack(input: EvidenceInput): EvidencePackV3 {
     });
   }
 
-  // The run's enums: the catalog's kinds for the track, exam and practices, the constraint filter's exclusions left out.
+  // The run's enums (contracts §19.5): the catalog's kinds for the track, exam and practices, less every kind the activity
+  // gate blocks — PENDING (a BODY or CARE plan, or a CRAFT plan whose words carry a cue, before the user answers the activity
+  // card under their current words) and AVOID (the user's own). The reader's exclusions only suggest (decision 7): they are
+  // the card's pre-ticks, so a kind they name that the gate doesn't block stays in. Gemini never sees a kind the plan can't
+  // place, and an answer given on the card changes the enums, so the glossary lines and the inputHash change with it.
   const chosenNames = listed.filter((x) => x.chosen).map((x) => x.d.name);
   const base = { track, exam, practicesAllowed };
   const offered = [...catalogKindsFor("PRACTICE", base), ...catalogKindsFor("STEP", base), ...catalogKindsFor("CHECKPOINT", base)];
-  const exclusions = constraintExclusionsOf(intake.constraints, offered, { track, domains: chosenNames, aim: intake.aim, exam: exam ? intake.examLabel : null });
-  const excluded = exclusions.map((e) => e.kind);
+  const suggestions = constraintExclusionsOf(intake.constraints, offered, { track, domains: chosenNames, aim: intake.aim, exam: exam ? intake.examLabel : null });
+  const gate = activityGateOf(intake, suggestions);
+  const held = new Set<string>(gate.blocked);
+  const blocked = offered.filter((k) => held.has(k));
   const run: PackRun = {
     track,
     slots,
     depth,
     otherKeys,
-    practiceKinds: catalogKindsFor("PRACTICE", { ...base, excluded }),
-    stepKinds: catalogKindsFor("STEP", { ...base, excluded }),
-    checkpointKinds: catalogKindsFor("CHECKPOINT", { ...base, excluded }),
+    practiceKinds: catalogKindsFor("PRACTICE", { ...base, excluded: blocked }),
+    stepKinds: catalogKindsFor("STEP", { ...base, excluded: blocked }),
+    checkpointKinds: catalogKindsFor("CHECKPOINT", { ...base, excluded: blocked }),
     exam,
     gaps: !trackArea && (input.gapsLive ?? ROADMAP_GAPS_LIVE) === true && intake.suggestAreas === true,
-    exclusions,
+    blocked,
+    exclusions: runExclusionsOf(suggestions, gate),
     aimConflict: aimConflictOf(intake.constraints, intake.aim),
   };
 

@@ -107,6 +107,14 @@ export interface MilestoneCardContext {
   moves?: OutlineMoves | null;
   /** A BODY track plan: its sessions carry HEALTH_LINE. */
   body?: boolean;
+  /**
+   * Constraint safety (contracts §19): while the plan waits on the user's
+   * answer about activities, "Easy, mobility and technique practice only
+   * until you confirm." (a care plan's "Planning the week and keeping a log
+   * only until you confirm.", a craft plan's "Technique practice only …")
+   * under What to practise; null otherwise.
+   */
+  practiceOnly?: string | null;
 }
 
 const KIND_ORDER = ["DOMAIN", "TOPIC", "PRACTICE", "STEP", "CHECKPOINT"] as const;
@@ -485,7 +493,8 @@ function MilestoneBody({
       >
         <ItemsOf m={m} kind="TOPIC" stage="draft" ctx={ctx} />
       </Section>
-      <Section title="What to practise" cap="sessions and minutes set by the app" show={has("PRACTICE")}>
+      <Section title="What to practise" cap="sessions and minutes set by the app" show={has("PRACTICE") || Boolean(ctx.practiceOnly)}>
+        {ctx.practiceOnly && <p className="rm-avd-p rm-avd-ms">{ctx.practiceOnly}</p>}
         <ItemsOf m={m} kind="PRACTICE" stage="draft" ctx={ctx} />
         {ctx.body && <p className="rm-it-why">{HEALTH_LINE}</p>}
       </Section>

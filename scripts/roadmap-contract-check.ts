@@ -2274,6 +2274,573 @@ console.log("— rev 4: the migration —");
   );
 }
 
+// ═══ Constraint safety: confirm to unlock (contracts §19) ════════════════════
+//
+// The lead's rule: every BODY or CARE plan asks once, whatever the user wrote; a CRAFT plan asks when any of the user's
+// texts carries a cue or can't be read. Until the user answers the activity card under their current words (ticks and
+// Save, or "Nothing to avoid"; never an unticked row by itself), every plan path places only the track's safe kinds for
+// its practice and the activity itself. The answer carries the words' key. The parser's exclusions only suggest (a
+// pre-ticked box), never block. Field practice is never gated by a body cue. Pure parts in full here; the adoption by
+// each plan path is the PENDING lines.
+
+console.log("— confirm to unlock (§19): the cue detector —");
+{
+  const cuesOf = (text: string, src: RT.CueSource = "CONSTRAINTS") => RT.constraintCuesOf(text, src);
+  const brief = (r: RT.CueReading) => r.cues.map((c) => [c.cls, c.cue, c.quote]);
+  // The verifier's 19 unsafe-side misses (hardening round, ver.still_open #3): the parser excluded nothing for each.
+  const verifierMisses = [
+    "Running causes me knee pain.",
+    "Running gives me shin pain.",
+    "Running = pain.",
+    "Never run on my bad knee.",
+    "I shouldn't run until my knee heals.",
+    "Knee surgery two weeks ago. Running and jumping.",
+    "Bad knees. Jumping and running.",
+    "Weights are a no-go and so is running.",
+    "Running is something I can't do right now.",
+    "Running? My doctor said absolutely not.",
+    "Running aggravates my knee.",
+    "Running bothers my hip.",
+    "Running would kill my knees.",
+    "My ankle tends to swell after running.",
+    "I have to stay away from running.",
+    "I'm off running for now.",
+    "Shin splints from running.",
+    "pregnant",
+    "heart condition",
+  ];
+  const silent = verifierMisses.filter((t) => !cuesOf(t).hasCue || cuesOf(t).cues.length === 0);
+  check("every one of the verifier's 19 unsafe-side misses raises a quoted cue (the parser read none of them)", silent.length === 0, silent.join(" | "));
+  eq("'Never run on my bad knee.' quotes the limit and the body part, folded into the longest span", brief(cuesOf("Never run on my bad knee.")), [
+    ["AVOID", "never", "Never"],
+    ["BODY_PART", "my + knee", "my bad knee"],
+  ]);
+  eq("'Running causes me knee pain.': the bare joint and the pain word", brief(cuesOf("Running causes me knee pain.")), [
+    ["BODY_PART", "knee", "knee"],
+    ["PAIN", "pain", "pain"],
+  ]);
+  {
+    const text = "I tore my ACL last spring and it still aches when I squat deep. Doctor says no jumping for now, but cycling is fine.";
+    const r = cuesOf(text);
+    eq("a two-sentence constraint: each cue with its own sentence, verbatim", r.cues.map((c) => [c.cue, c.quote, c.clause]), [
+      ["tore", "tore", "I tore my ACL last spring and it still aches when I squat deep"],
+      ["my + acl", "my ACL", "I tore my ACL last spring and it still aches when I squat deep"],
+      ["aches", "aches", "I tore my ACL last spring and it still aches when I squat deep"],
+      ["doctor*", "Doctor", "Doctor says no jumping for now, but cycling is fine"],
+      ["no", "no", "Doctor says no jumping for now, but cycling is fine"],
+    ]);
+    check("every quote is text.slice(start, end), and every clause a verbatim part of the text", r.cues.every((c) => text.slice(c.start, c.end) === c.quote && text.includes(c.clause)));
+  }
+  check("Field and CARE phrasings the verifier probed raise a cue too ('too hard', 'too much', 'painful')", ["Inference is too hard for me, I need extra time on it.", "Mum's care is too much for me alone", "Visiting Grandma is painful since Grandpa died, but I want to."].every((t) => cuesOf(t).hasCue));
+  // Controls: aims with no limit in them raise nothing (a false cue on a terse aim would make the confirm routine).
+  const quietAims = [
+    "Run a sub-50 10K",
+    "Swim 1 km without stopping",
+    "Run 5k without walk breaks",
+    "Lose 8 kg",
+    "Run a marathon",
+    "Support Mum's care at home",
+    "Bench press 100kg",
+    "Hip thrust 100kg",
+    "Sub 3 hour marathon PB",
+    "Lower my resting heart rate",
+    "Walk 10,000 steps a day",
+    "Get back to running",
+    "Touch my toes",
+    "Do the splits",
+    "Train with dedication",
+    "Pass the army fitness test",
+  ];
+  const loud = quietAims.filter((a) => cuesOf(a, "AIM").hasCue);
+  check("16 everyday BODY and CARE aims raise no cue (benign phrasings, the aim-only rules, the slip guard)", loud.length === 0, loud.join(" | "));
+  check("an aim that names a limit does ('Recover from knee surgery and run 5k', 'Improve my health', 'Quit smoking')", ["Recover from knee surgery and run 5k", "Improve my health", "Quit smoking"].every((a) => cuesOf(a, "AIM").hasCue));
+  check(
+    "the constraint-only words and bare joints are read in the constraints and notes, never the aim ('Hip thrust 100kg', 'Mornings only')",
+    !cuesOf("Hip thrust 100kg", "AIM").hasCue && cuesOf("Hip thrust 100kg", "CONSTRAINTS").hasCue && cuesOf("Hip thrust 100kg", "NOTES").hasCue && !cuesOf("Mornings only", "AIM").hasCue && cuesOf("Mornings only").hasCue
+  );
+  check("'my knee' is a cue anywhere, 'my back' only outside the aim, 'bad back' anywhere", cuesOf("Strengthen my knees", "AIM").hasCue && !cuesOf("Get my back strong", "AIM").hasCue && cuesOf("Watch my back", "CONSTRAINTS").hasCue && cuesOf("Despite a bad back", "AIM").hasCue);
+  check("'back problems' and 'leg issues' are cues (a body part before a trouble word)", cuesOf("Back problems", "AIM").hasCue && cuesOf("leg issues", "AIM").hasCue);
+  // Slips, guards and contractions.
+  eq("a one-letter slip of a long cue word is a cue in its class ('injry', 'surgury', 'pregant')", ["injry to my kne", "had surgury in may", "pregant"].map((t) => cuesOf(t).cues.filter((c) => c.cue.startsWith("~")).map((c) => [c.cls, c.cue])), [
+    [["INJURY", "~injury"]],
+    [["INJURY", "~surgery"]],
+    [["HEALTH", "~pregnant"]],
+  ]);
+  check("…but not a guarded real word ('Spain', 'meditation', 'selling') and not 'ill' from \"I'll\"", !cuesOf("Trip to Spain in June").hasCue && !cuesOf("Daily meditation", "AIM").hasCue && !cuesOf("Help with selling the house", "AIM").hasCue && !cuesOf("I'll be fine", "AIM").hasCue && cuesOf("I was ill in May").hasCue);
+  const unmatched = RT.CUE_FUZZY_WORDS.filter((w) => !cuesOf(w).cues.some((c) => !c.cue.startsWith("~")));
+  check("every slip word is itself in a vocabulary (the slip rule only adds typos)", unmatched.length === 0, unmatched.join(", "));
+  check("no slip guard word, suffix guard word or benign phrase raises a cue word", [...RT.CUE_FUZZY_GUARD, ...RT.CUE_SUFFIX_GUARD].every((w) => cuesOf(w).cues.length === 0) && RT.CUE_BENIGN_PHRASES.every((p) => !cuesOf(p.replace(/\*$/, ""), "AIM").hasCue));
+  // Other languages and unreadable text.
+  const readOf = (t: string) => {
+    const r = cuesOf(t);
+    return [r.hasCue, r.unparseable];
+  };
+  eq(
+    "Japanese, Vietnamese, French and an emoji are unparseable (a cue); Spanish, German compounds and 'No puedo' are read by their words",
+    ["膝が痛い", "Tôi bị đau đầu gối", "J'ai mal au genou", "🤕", "Me duele la rodilla", "Ich habe Knieschmerzen", "No puedo correr"].map(readOf),
+    [[true, true], [true, true], [true, true], [true, true], [true, false], [true, true], [true, false]]
+  );
+  check("a German compound names its pain root ('Knieschmerzen' → *schmerz*)", cuesOf("Knieschmerzen").cues.some((c) => c.cls === "LANGUAGE" && c.cue === "*schmerz*"));
+  check("three or more words with no English word the app knows are unparseable; 'Sub 3 hour marathon PB' is English", cuesOf("Rodilla mala siempre").unparseable && !cuesOf("Sub 3 hour marathon PB", "AIM").unparseable);
+  check("text past CUE_TEXT_MAX is unparseable; a non-string or blank reads as no cue; nothing throws", cuesOf("a".repeat(RT.CUE_TEXT_MAX + 1)).unparseable && !RT.constraintCuesOf(null).hasCue && !RT.constraintCuesOf(42 as unknown as string).hasCue && !RT.constraintCuesOf("   ").hasCue);
+  check("hasCue is cues or unparseable, nothing else", [...verifierMisses, ...quietAims, "膝が痛い", "Evenings"].every((t) => {
+    const r = cuesOf(t);
+    return r.hasCue === (r.cues.length > 0 || r.unparseable);
+  }));
+  check("'Evenings' and 'Weekday evenings, weekend mornings' hold no cue word (the non-empty rule gates them, below)", !cuesOf("Evenings").hasCue && !cuesOf("Weekday evenings, weekend mornings").hasCue);
+  // The user's own sentence.
+  eq("userClauseOf: the sentence holding the word, verbatim, case-insensitive; a stem's first four letters; '' without it", [
+    RT.userClauseOf("Knee injury. No running, it hurts my knee! Swimming is fine.", "running"),
+    RT.userClauseOf("Knee injury. No jumps for now.", "jumping"),
+    RT.userClauseOf("Knee injury.", "swimming"),
+    RT.userClauseOf(null, "x"),
+  ], ["No running, it hurts my knee", "No jumps for now", "", ""]);
+  {
+    const long = `My physio says ${"the knee needs care and time and patience, ".repeat(6)}so no running until spring`;
+    const q = RT.userClauseOf(long, "running");
+    check(`a long sentence is cut at word edges around the word, '…' where cut, within ACTIVITY_REASON_MAX (${RT.ACTIVITY_REASON_MAX})`, q.startsWith("…") && q.includes("no running until spring") && q.length <= RT.ACTIVITY_REASON_MAX, `${q.length}: ${q}`);
+  }
+  // The words' fingerprint and the texts read.
+  const k1 = RT.cueKeyOf({ constraints: "Knee  injury", aim: "Run", notes: [] });
+  check("cueKeyOf: 'k1-' and 8 hex; case, spacing and empty notes ignored; any word change changes it", /^k1-[0-9a-f]{8}$/.test(k1) && k1 === RT.cueKeyOf({ constraints: "knee injury", aim: "run", notes: [null, ""] }) && k1 !== RT.cueKeyOf({ constraints: "knee injury, no running", aim: "run" }) && k1 !== RT.cueKeyOf({ constraints: "knee injury", aim: "run 5k" }));
+  eq(
+    "cueTextsOf reads the constraints, the aim and the notes (exam label, hours source, outline source and lines; empty ones left out)",
+    RT.cueTextsOf({ constraints: "No jumping", aim: "Pass the fitness test", examLabel: "Army PT test", typicalHoursSource: "", syllabus: { lines: ["Sprints", " "], source: "Coach's sheet" } }),
+    { constraints: "No jumping", aim: "Pass the fitness test", notes: ["Army PT test", "Coach's sheet", "Sprints"] }
+  );
+  {
+    const r = RT.cueReadingOf({ constraints: "Evenings", aim: "Recover from knee surgery", notes: ["Physio plan"] });
+    eq("cueReadingOf tags each cue with its source (and a note's index)", r.cues.map((c) => [c.source, c.note ?? null, c.quote]), [
+      ["AIM", null, "Recover"],
+      ["AIM", null, "knee surgery"],
+      ["AIM", null, "surgery"],
+      ["NOTES", 0, "Physio"],
+    ]);
+  }
+}
+
+// The second verifier's aim-only misses (ver.still_open #1), the CRAFT cues, and the short non-English aims (#8).
+{
+  const cuesOf = (text: string, src: RT.CueSource = "CONSTRAINTS") => RT.constraintCuesOf(text, src);
+  const aimMisses = [
+    "Run 10K after ACL reconstruction",
+    "Return to lifting after rotator cuff repair",
+    "Run a marathon after having twins",
+    "Run again after knee reconstruction",
+    "Rebuild strength post-stroke",
+    "Run a 10K after breaking my leg",
+    "Train for a 5K despite MS",
+    "Return to sport after ACL",
+    "Run after a knee scope",
+    "Lift again after labrum repair",
+    "Run after meniscectomy",
+    "Get fit after a hysterectomy",
+    "Swim after mastectomy",
+    "Walk 5k after DVT",
+    "Exercise after a TIA",
+    "Build stamina with POTS",
+    "Yoga for fibromyalgia",
+    "Run after pneumonia",
+    "Hike after spinal fusion",
+    "Walk after ankle fusion",
+    "Climb after a collarbone break",
+    "Swim with a detached retina",
+    "Run after Achilles reconstruction",
+    "Walk again after a fall",
+  ];
+  const silent = aimMisses.filter((a) => cuesOf(a, "AIM").cues.length === 0);
+  check("the verifier's aim-only misses each raise a quoted cue in the aim (operations, conditions, injury sites, a fall, twins, capitals)", silent.length === 0, silent.join(" | "));
+  eq("…an injury site is bare anywhere ('ACL'), a joint before an operation is one ('knee scope'), a capital condition is one ('MS'), a medical ending is one ('meniscectomy')", ["Return to sport after ACL", "Run after a knee scope", "Train for a 5K despite MS", "Run after meniscectomy"].map((a) => cuesOf(a, "AIM").cues.map((c) => c.cue)), [["acl"], ["knee + scope"], ["despite", "MS"], ["*ectomy"]]);
+  check("the hardening round's K phrasings raise one too ('running has been ruled out', 'deadlifts is a bad idea for me', 'admin is a problem for me', 'racing and sprinting kill me')", ["running has been ruled out", "deadlifts is a bad idea for me", "admin is a problem for me", "racing and sprinting kill me"].every((t) => cuesOf(t).cues.length > 0));
+  check("craft cues raise one ('Wrist tendinitis, can't play more than 20 minutes.', 'Play guitar with RSI', 'Sing without voice strain')", ["Wrist tendinitis, can't play more than 20 minutes.", "Play guitar with RSI", "Sing without voice strain"].every((t) => cuesOf(t, "AIM").cues.length > 0));
+  check(
+    "capitals are a condition only as written and not in a shouted text ('I have POTS' is one; 'Throw 10 pots on the wheel' and 'THROW 10 POTS' are not); a guarded ending is not ('dichotomy', 'nostalgia')",
+    cuesOf("I have POTS").cues.some((c) => c.cue === "POTS") && json(cuesOf("MS and POTS").cues.map((c) => c.cue)) === json(["MS", "POTS"]) && !cuesOf("Throw 10 pots on the wheel", "AIM").hasCue && cuesOf("THROW 10 POTS", "AIM").cues.length === 0 && cuesOf("The mind-body dichotomy", "AIM").cues.length === 0 && cuesOf("Nostalgia trip", "AIM").cues.length === 0
+  );
+  const craftAims = ["Learn guitar", "Play Clair de Lune", "Grade 5 piano", "Throw 10 pots on the wheel", "Learn to knit a sweater", "Paint 12 watercolours", "Write a novel", "Repair furniture", "Learn bike repair"];
+  const bodyShort = ["Powerlifting", "Calisthenics", "Marathon", "Yoga", "Bouldering V5"];
+  const loud = [...craftAims, ...bodyShort].filter((a) => cuesOf(a, "AIM").hasCue);
+  check("everyday craft aims and one-word English body aims raise no cue and read as English ('Repair furniture', 'Powerlifting', 'Marathon')", loud.length === 0, loud.join(" | "));
+  const shortForeign = ["Correr 10K", "Einen Marathon laufen", "Lari 10K", "Chay 10km", "Hardlopen 10 km", "Biegać 5 km", "Tennis spielen"];
+  const read = shortForeign.filter((a) => !cuesOf(a, "AIM").unparseable);
+  check("a short aim in another language is unparseable (a cue): a loan word ('Marathon', 'km', 'Tennis') or a number ('10K') doesn't make it English (the lead's decision 8)", read.length === 0, read.join(" | "));
+  check("…in the constraints too ('Abends'); a note needs CUE_LANGUAGE_MIN_WORDS such words ('SOA Exam P', 'Arpeggios' are read)", cuesOf("Abends").unparseable && !cuesOf("SOA Exam P", "NOTES").unparseable && !cuesOf("Arpeggios", "NOTES").unparseable && cuesOf("Rodilla mala siempre", "NOTES").unparseable);
+}
+
+console.log("— confirm to unlock (§19): the gate —");
+{
+  const BODY_ALL = CAT.CATALOG.filter((e) => e.tracks.includes("BODY")).map((e) => e.key);
+  const FIELD_ALL = CAT.CATALOG.filter((e) => e.tracks.includes("FIELD")).map((e) => e.key);
+  const CRAFT_ALL = CAT.CATALOG.filter((e) => e.tracks.includes("CRAFT")).map((e) => e.key);
+  // The safe kinds and the tracks that ask.
+  eq("CatalogEntry.safe marks the body sessions and, on CARE, planning the week and keeping a log (the lead's decision 2)", CAT.CUE_SAFE_KINDS, ["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION", "PLAN_AHEAD", "KEEP_A_LOG"]);
+  eq("cueSafeKindsOf per track: BODY is BODY_SAFE_KINDS; CARE plans the week and keeps a log; CRAFT has the technique session; FIELD none", (["BODY", "CARE", "CRAFT", "FIELD"] as const).map((t) => CAT.cueSafeKindsOf(t)), [[...CAT.BODY_SAFE_KINDS], ["PLAN_AHEAD", "KEEP_A_LOG"], ["TECHNIQUE_SESSION"], []]);
+  check("isCueSafeKind reads own properties only", CAT.isCueSafeKind("EASY_SESSION") && CAT.isCueSafeKind("KEEP_A_LOG") && !CAT.isCueSafeKind("HARDER_SESSION") && !CAT.isCueSafeKind("__proto__") && !CAT.isCueSafeKind("constructor"));
+  eq("BODY and CARE always ask; CRAFT asks on a cue; CUE_GATED_TRACKS is their union in CATALOG_TRACKS order", [CAT.ACTIVITY_ALWAYS_ASK_TRACKS, CAT.ACTIVITY_CUE_ASK_TRACKS, CAT.CUE_GATED_TRACKS], [["BODY", "CARE"], ["CRAFT"], ["CRAFT", "BODY", "CARE"]]);
+  eq("cueGatedKindsOf: every practice on the track that is not safe, and the activity itself; nothing on FIELD or DUTY", (["BODY", "CARE", "CRAFT", "FIELD", "DUTY"] as const).map((t) => CAT.cueGatedKindsOf(t)), [
+    ["HARDER_SESSION", "LONGER_SESSION", "STRENGTH_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK", "MOCK_TEST"],
+    ["SET_TIME", "CHECK_IN", "ADMIN_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK", "MOCK_TEST"],
+    ["SLOW_DRILLS", "RUN_THROUGHS", "WITH_A_PARTNER", "FULL_ATTEMPT", "PERFORMANCE_CHECK", "MOCK_TEST"],
+    [],
+    [],
+  ]);
+  check("SET_UP and BOOK_EXAM (preparation) and EXAM_DAY (the user's date) are never gated", ["SET_UP", "BOOK_EXAM", "EXAM_DAY"].every((k) => CAT.CUE_GATED_TRACKS.every((t) => !CAT.cueGatedKindsOf(t).includes(k as CAT.CatalogKey))));
+  const DAY = "2026-10-05" as DayKey;
+  const DAY2 = "2026-10-06" as DayKey;
+  const stateOf = (track: CAT.CatalogTrack, constraints: string | null, aim = "Run a sub-50 10K", exclusions: RT.ConstraintExclusion[] = [], extra: Partial<CAT.ConstraintsStateInput> = {}) =>
+    CAT.constraintsStateOf({ track, texts: { constraints, aim }, exclusions, ...extra });
+  const card = (s: RT.ConstraintsState, avoid: CAT.CatalogKey[], nothingToAvoid = false, key = s.key): RT.ActivityCardAnswer => ({ key, avoid, nothingToAvoid });
+
+  // Decision 1: BODY and CARE ask whatever the user wrote; safety never depends on the cue detector.
+  const plain = stateOf("BODY", null);
+  const gp = CAT.allowedKindsFor(plain, null);
+  eq("BODY with no constraints and a plain aim asks: only the safe sessions and the preparation steps are placed", [gp.on, gp.allowed], [true, ["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION", "SET_UP", "BOOK_EXAM", "EXAM_DAY"]]);
+  eq("…and it asks about the rest (no exam: no mock test row)", gp.pending, ["HARDER_SESSION", "LONGER_SESSION", "STRENGTH_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK"]);
+  check("allowed and blocked split the track's kinds, disjoint, in CATALOG order", json([...gp.allowed, ...gp.blocked].sort()) === json([...BODY_ALL].sort()) && !gp.allowed.some((k) => gp.blocked.includes(k)) && json(gp.blocked) === json(BODY_ALL.filter((k) => gp.blocked.includes(k))));
+  {
+    const texts: [string | null, string][] = [
+      [null, "Run a sub-50 10K"],
+      ["", "Lose 8 kg"],
+      ["Weekday evenings, weekend mornings", "Run a marathon"],
+      ["Running causes me knee pain.", "Run a sub-50 10K"],
+      ["膝が痛い", "Run a sub-50 10K"],
+      [null, "Run 10K after ACL reconstruction"],
+      [null, "Correr 10K"],
+    ];
+    const leaks: string[] = [];
+    for (const track of ["BODY", "CARE"] as const)
+      for (const [c, a] of texts) {
+        const g = CAT.allowedKindsFor(stateOf(track, c, a), null);
+        if (!g.on || CAT.cueGatedKindsOf(track).some((k) => g.allowed.includes(k))) leaks.push(`${track}: ${c ?? "∅"} / ${a}`);
+      }
+    check("BODY and CARE ask on any words — empty, plain, cue-less constraints, a cue, unreadable text, an aim-only cue — and place no gated kind unanswered", leaks.length === 0, leaks.join(" | "));
+  }
+  const care = stateOf("CARE", null, "Support Mum's care at home");
+  const gc = CAT.allowedKindsFor(care, null);
+  eq("CARE asks too, and is never empty meanwhile: it plans the week and keeps a log (decision 2)", [gc.on, gc.pending, gc.allowed], [true, ["SET_TIME", "CHECK_IN", "ADMIN_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK"], ["PLAN_AHEAD", "KEEP_A_LOG", "SET_UP", "BOOK_EXAM", "EXAM_DAY"]]);
+  eq("…with practices off, only the activity itself is asked about", CAT.allowedKindsFor(stateOf("CARE", "Mum's care is too much for me alone", "Support Mum's care at home", [], { practicesAllowed: false }), null).pending, ["FULL_ATTEMPT", "PERFORMANCE_CHECK"]);
+
+  // CRAFT asks on a cue (or unreadable text) in any of the user's texts; FIELD and DUTY never ask.
+  {
+    const quiet = CAT.allowedKindsFor(stateOf("CRAFT", null, "Learn guitar"), null);
+    check("CRAFT with a plain aim and no constraints: off, every CRAFT kind is placed, no row", !quiet.on && json(quiet.allowed) === json(CRAFT_ALL) && quiet.rows.length === 0);
+    const wrist = stateOf("CRAFT", "Wrist tendinitis, can't play more than 20 minutes.", "Play Clair de Lune");
+    const gw = CAT.allowedKindsFor(wrist, null);
+    eq("CRAFT with 'Wrist tendinitis, can't play more than 20 minutes.': it asks; only the technique session and the preparation steps are placed", [gw.on, gw.pending, gw.allowed], [true, ["SLOW_DRILLS", "RUN_THROUGHS", "WITH_A_PARTNER", "FULL_ATTEMPT", "PERFORMANCE_CHECK"], ["TECHNIQUE_SESSION", "SET_UP", "BOOK_EXAM", "EXAM_DAY"]]);
+    check("…a cue in the aim or a note, or a short aim in another language, turns it on too", CAT.allowedKindsFor(stateOf("CRAFT", null, "Play guitar with RSI"), null).on && CAT.allowedKindsFor(CAT.constraintsStateOf({ track: "CRAFT", texts: { constraints: null, aim: "Sing jazz standards", notes: ["Voice strain after an hour"] } }), null).on && CAT.allowedKindsFor(stateOf("CRAFT", null, "Gitarre lernen"), null).on);
+  }
+  check("DUTY never asks, whatever the words", (() => {
+    const g = CAT.allowedKindsFor(stateOf("DUTY", "My knee hurts, doctor says rest"), null);
+    return !g.on && g.blocked.length === 0;
+  })());
+
+  // Decision 7: the parser's reading suggests (a pre-ticked box) and never blocks.
+  const field = stateOf("FIELD", "Knee injury, it hurts to sit long. No timed practice, it stresses me out.", "Pass SOA Exam P", [{ kind: "TIMED_PRACTICE", word: "timed" }], { exam: true });
+  const gf = CAT.allowedKindsFor(field, null);
+  check("FIELD with a body cue and 'No timed practice': off, every Field kind is placed, and Timed practice is a pre-ticked suggestion (WORDS), not a block", !gf.on && gf.blocked.length === 0 && json(gf.allowed) === json(FIELD_ALL) && json(gf.rows.map((r) => [r.kind, r.state, r.prefill, r.reason])) === json([["TIMED_PRACTICE", "WORDS", "AVOID", "No timed practice, it stresses me out"]]));
+  {
+    const easy = stateOf("BODY", "My GP said to take it easy for a month", "Run a sub-50 10K", [{ kind: "EASY_SESSION", word: "easy" }]);
+    const ge = CAT.allowedKindsFor(easy, null);
+    check("'take it easy' never blocks Easy session: a pre-ticked suggestion, still placed", ge.allowed.includes("EASY_SESSION") && ge.rows.find((r) => r.kind === "EASY_SESSION")?.state === "WORDS");
+  }
+  const pre = stateOf("BODY", "Running causes me knee pain.", "Run a sub-50 10K", [{ kind: "HARDER_SESSION", word: "running" }, { kind: "LONGER_SESSION", word: "running" }, { kind: "RECALL_DRILLS", word: "running" }]);
+  const knee = stateOf("BODY", "Running causes me knee pain.");
+  const g1 = CAT.allowedKindsFor(pre, null);
+  eq(
+    "on a gated kind the parser's reading pre-ticks the box with the user's own sentence (an off-track kind is dropped)",
+    g1.rows.filter((r) => r.prefill).map((r) => [r.kind, r.state, r.prefill, r.reason, r.cls]),
+    [
+      ["HARDER_SESSION", "PENDING", "AVOID", "Running causes me knee pain", null],
+      ["LONGER_SESSION", "PENDING", "AVOID", "Running causes me knee pain", null],
+    ]
+  );
+  check("…and leaves allowed and blocked exactly as without it", json(g1.allowed) === json(CAT.allowedKindsFor(knee, null).allowed) && json(g1.blocked) === json(CAT.allowedKindsFor(knee, null).blocked));
+
+  // The card's answer (decisions 1 and 3).
+  check("Save with nothing ticked is not an answer: refused (ACTIVITY_NOTHING_TICKED, which names “Nothing to avoid”), and nothing unlocks", (() => {
+    const r = CAT.answerActivityCard(null, pre, card(pre, []), DAY);
+    return !r.ok && r.error === CAT.ACTIVITY_NOTHING_TICKED && CAT.ACTIVITY_NOTHING_TICKED.includes(CAT.ACTIVITY_NOTHING_TO_AVOID);
+  })());
+  check("an answer given against other words is refused (ACTIVITY_ANSWER_STALE): the card asks again under the new words", (() => {
+    const w2 = CAT.constraintsStateOf({ track: "BODY", texts: { constraints: "Running causes me knee pain. Torn ACL, surgery next month.", aim: "Run a sub-50 10K" } });
+    const r = CAT.answerActivityCard(null, w2, card(pre, ["STRENGTH_SESSION"]), DAY);
+    return !r.ok && r.error === CAT.ACTIVITY_ANSWER_STALE;
+  })());
+  check(
+    "answerActivityCard refuses an off-track, codeOnly, unknown or prototype kind, ticks with “Nothing to avoid”, a malformed answer and a bad day (ACTIVITY_ANSWER_REFUSAL)",
+    [
+      CAT.answerActivityCard(null, pre, card(pre, ["RECALL_DRILLS"]), DAY),
+      CAT.answerActivityCard(null, pre, card(pre, ["EXAM_DAY"]), DAY),
+      CAT.answerActivityCard(null, pre, card(pre, ["__proto__" as CAT.CatalogKey]), DAY),
+      CAT.answerActivityCard(null, pre, card(pre, ["STRENGTH_SESSION"], true), DAY),
+      CAT.answerActivityCard(null, pre, { key: pre.key, avoid: "STRENGTH_SESSION", nothingToAvoid: false } as unknown as RT.ActivityCardAnswer, DAY),
+      CAT.answerActivityCard(null, pre, { key: pre.key, avoid: [] } as unknown as RT.ActivityCardAnswer, DAY),
+      CAT.answerActivityCard(null, pre, null as unknown as RT.ActivityCardAnswer, DAY),
+      CAT.answerActivityCard(null, pre, card(pre, ["STRENGTH_SESSION"]), "2026-02-30" as DayKey),
+    ].every((r) => !r.ok && r.error === CAT.ACTIVITY_ANSWER_REFUSAL)
+  );
+  const ticked = CAT.answerActivityCard(null, pre, card(pre, ["HARDER_SESSION", "STRENGTH_SESSION"]), DAY);
+  check("ticks and Save answer the card under the words' key", ticked.ok && ticked.value.key === pre.key);
+  if (ticked.ok) {
+    eq("…storing each tick as an AVOID with the day and the server's quote (the suggestion's sentence, else the first cue's), and the card's answer with the kinds it listed; no FINE is written for an unticked row", ticked.value, {
+      key: pre.key,
+      kinds: {
+        HARDER_SESSION: { verdict: "AVOID", day: DAY, reason: "Running causes me knee pain" },
+        STRENGTH_SESSION: { verdict: "AVOID", day: DAY, reason: "Running causes me knee pain" },
+      },
+      answered: { day: DAY, asked: ["HARDER_SESSION", "LONGER_SESSION", "STRENGTH_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK"], none: false },
+    });
+    const g2 = CAT.allowedKindsFor(pre, ticked.value);
+    eq("…then the ticked kinds are avoided and the rest the card listed are placed (FINE rows, YOURS, with the answer's day); nothing waits (a mock test, never listed without an exam, stays held)", [g2.answered, g2.pending, g2.blocked, g2.rows.map((r) => [r.kind, r.state, r.day, r.cls, r.prefill])], [
+      DAY,
+      [],
+      ["HARDER_SESSION", "STRENGTH_SESSION", "MOCK_TEST"],
+      [
+        ["HARDER_SESSION", "AVOID", DAY, "YOURS", null],
+        ["LONGER_SESSION", "FINE", DAY, "YOURS", null],
+        ["STRENGTH_SESSION", "AVOID", DAY, "YOURS", null],
+        ["FULL_ATTEMPT", "FINE", DAY, "YOURS", null],
+        ["PERFORMANCE_CHECK", "FINE", DAY, "YOURS", null],
+      ],
+    ]);
+    // A changed answer replaces the ticks; an earlier AVOID keeps its first day.
+    const changed = CAT.answerActivityCard(ticked.value, pre, card(pre, ["STRENGTH_SESSION", "PERFORMANCE_CHECK"]), DAY2);
+    check(
+      "answering again replaces the card's ticks (Harder session unticked is placed), a kind ticked again keeps its first day, a new tick gets today's",
+      changed.ok && !("HARDER_SESSION" in changed.value.kinds) && changed.value.kinds.STRENGTH_SESSION?.day === DAY && changed.value.kinds.PERFORMANCE_CHECK?.day === DAY2 && CAT.allowedKindsFor(pre, changed.value).allowed.includes("HARDER_SESSION")
+    );
+    // The words change: the card asks again; an AVOID stands.
+    const edited = stateOf("BODY", "Running causes me knee pain. I tore my ACL in August.", "Run a sub-50 10K", [{ kind: "HARDER_SESSION", word: "running" }]);
+    const g3 = CAT.allowedKindsFor(edited, ticked.value);
+    const longer = g3.rows.find((r) => r.kind === "LONGER_SESSION");
+    check("after the words change the card asks again: what its answer placed waits (with the old day shown), and an AVOID stands", g3.answered === null && g3.staleDay === DAY && !g3.allowed.includes("LONGER_SESSION") && longer?.state === "PENDING" && longer.staleDay === DAY && g3.rows.find((r) => r.kind === "STRENGTH_SESSION")?.state === "AVOID" && json(g3.pending) === json(["LONGER_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK"]));
+    const view3 = CAT.activityConfirmViewOf(edited, g3);
+    check("…and the view carries the new key, no answer and the stale day", view3.key === edited.key && view3.key !== pre.key && view3.answered === null && view3.staleDay === DAY && view3.pending === 3);
+    const old = CAT.answerActivityCard(ticked.value, edited, card(edited, ["LONGER_SESSION"], false, pre.key), DAY2);
+    check("…an answer carrying the old key is refused there (decision 3)", !old.ok && old.error === CAT.ACTIVITY_ANSWER_STALE);
+  }
+  // "Nothing to avoid": the explicit all-clear.
+  const none = CAT.answerActivityCard(null, pre, card(pre, [], true), DAY);
+  check("“Nothing to avoid” answers the card: every listed kind is placed, no AVOID is stored, and the view says so (none)", (() => {
+    if (!none.ok) return false;
+    const g = CAT.allowedKindsFor(pre, none.value);
+    const v = CAT.activityConfirmViewOf(pre, g);
+    return Object.keys(none.value.kinds).length === 0 && none.value.answered?.none === true && json(g.allowed) === json(BODY_ALL.filter((k) => k !== "MOCK_TEST")) && json(g.blocked) === json(["MOCK_TEST"]) && g.pending.length === 0 && v.none && v.answered === DAY && g.rows.every((r) => r.state === "FINE" && r.cls === "YOURS");
+  })());
+  check("…and it clears the card's earlier ticks, while an AVOID the card didn't list stands (practices off: Strength session isn't on the card)", (() => {
+    const prev: RT.ActivityConfirm = { key: pre.key, kinds: { STRENGTH_SESSION: { verdict: "AVOID", day: DAY, reason: "" }, FULL_ATTEMPT: { verdict: "AVOID", day: DAY, reason: "" } } };
+    const off = stateOf("BODY", "Running causes me knee pain.", "Run a sub-50 10K", [], { practicesAllowed: false });
+    const r = CAT.answerActivityCard({ ...prev, key: off.key }, off, card(off, [], true), DAY2);
+    return r.ok && r.value.kinds.STRENGTH_SESSION?.verdict === "AVOID" && !("FULL_ATTEMPT" in r.value.kinds);
+  })());
+  check("a gated kind the card didn't list when it was answered still waits under the same words", (() => {
+    const conf: RT.ActivityConfirm = { key: pre.key, kinds: {}, answered: { day: DAY, asked: ["HARDER_SESSION", "STRENGTH_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK"], none: true } };
+    const g = CAT.allowedKindsFor(pre, conf);
+    return json(g.pending) === json(["LONGER_SESSION"]) && g.allowed.includes("HARDER_SESSION");
+  })());
+  check("a stored per-kind FINE (the earlier card's) is never read: the kind waits, and activityConfirmOf drops it", (() => {
+    const conf: RT.ActivityConfirm = { key: pre.key, kinds: { HARDER_SESSION: { verdict: "FINE", day: DAY, reason: "" } } };
+    const back = CAT.activityConfirmOf({ $activities: conf });
+    return CAT.allowedKindsFor(pre, conf).pending.includes("HARDER_SESSION") && !!back && Object.keys(back.kinds).length === 0;
+  })());
+  // A suggestion left ticked is the user's tick; unticked it is declined.
+  {
+    const r = CAT.answerActivityCard(null, field, card(field, ["TIMED_PRACTICE"]), DAY);
+    const g = r.ok ? CAT.allowedKindsFor(field, r.value) : null;
+    check("on a Field plan a suggestion left ticked and saved is the user's AVOID (it quotes their sentence); “Nothing to avoid” declines it (FINE)", !!g && g.blocked.includes("TIMED_PRACTICE") && g.rows[0].state === "AVOID" && g.rows[0].reason === "No timed practice, it stresses me out" && (() => {
+      const n = CAT.answerActivityCard(null, field, card(field, [], true), DAY);
+      return n.ok && CAT.allowedKindsFor(field, n.value).rows[0].state === "FINE";
+    })());
+  }
+  // The earlier per-kind form, read as ticks (deprecated).
+  check("answerActivities (deprecated) reads a list of FINEs as no tick: refused, so the old one-tap unlock is gone", (() => {
+    const r = CAT.answerActivities(null, pre, [{ kind: "HARDER_SESSION", verdict: "FINE" }, { kind: "LONGER_SESSION", verdict: "FINE" }, { kind: "STRENGTH_SESSION", verdict: "FINE" }, { kind: "FULL_ATTEMPT", verdict: "FINE" }, { kind: "PERFORMANCE_CHECK", verdict: "FINE" }], DAY);
+    return !r.ok && r.error === CAT.ACTIVITY_NOTHING_TICKED;
+  })());
+  check("…and a list with an AVOID as the card's ticks (answered under the current key)", (() => {
+    const r = CAT.answerActivities(null, pre, [{ kind: "HARDER_SESSION", verdict: "FINE" }, { kind: "STRENGTH_SESSION", verdict: "AVOID" }], DAY);
+    return r.ok && json(Object.keys(r.value.kinds)) === json(["STRENGTH_SESSION"]) && r.value.answered?.day === DAY && CAT.allowedKindsFor(pre, r.value).allowed.includes("HARDER_SESSION");
+  })());
+  check(
+    "…refusing an off-track kind, a codeOnly kind, an unknown or prototype key, a bad verdict, a bad day and no answer",
+    [
+      CAT.answerActivities(null, pre, [{ kind: "RECALL_DRILLS", verdict: "AVOID" }], DAY),
+      CAT.answerActivities(null, pre, [{ kind: "EXAM_DAY", verdict: "AVOID" }], DAY),
+      CAT.answerActivities(null, pre, [{ kind: "__proto__" as CAT.CatalogKey, verdict: "AVOID" }], DAY),
+      CAT.answerActivities(null, pre, [{ kind: "HARDER_SESSION", verdict: "MAYBE" as RT.ActivityVerdict }], DAY),
+      CAT.answerActivities(null, pre, [{ kind: "HARDER_SESSION", verdict: "AVOID" }], "2026-02-30" as DayKey),
+      CAT.answerActivities(null, pre, [], DAY),
+    ].every((r) => !r.ok && r.error === CAT.ACTIVITY_ANSWER_REFUSAL)
+  );
+
+  // The view field.
+  {
+    const s = CAT.constraintsStateOf({ track: "BODY", texts: { constraints: "Evenings only. Running causes me knee pain.", aim: "Recover from knee surgery and run 5k", notes: ["Physio plan"] } });
+    const v = CAT.activityConfirmViewOf(s, CAT.allowedKindsFor(s, null));
+    eq("activityConfirmViewOf: the words' key, up to 3 of the user's sentences (constraints first, then the aim), the safe kinds, the rows to answer, no answer yet", [v.on, v.key === s.key, v.quotes, v.safeKinds, v.pending, v.unparseable, v.answered, v.none, v.staleDay], [
+      true,
+      true,
+      ["Evenings only", "Running causes me knee pain", "Recover from knee surgery and run 5k"],
+      ["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION"],
+      5,
+      false,
+      null,
+      false,
+      null,
+    ]);
+    const cueless = CAT.constraintsStateOf({ track: "BODY", texts: { constraints: "Weekday evenings, weekend mornings", aim: "Run a sub-50 10K" } });
+    eq("…with no cue word it quotes the constraints' first sentence; unreadable text is quoted and flagged; a plain BODY plan asks with no quote; CARE places its two meanwhile", [
+      CAT.activityConfirmViewOf(cueless, CAT.allowedKindsFor(cueless, null)).quotes,
+      (() => {
+        const u = CAT.constraintsStateOf({ track: "BODY", texts: { constraints: "膝が痛い", aim: "Run a sub-50 10K" } });
+        const vu = CAT.activityConfirmViewOf(u, CAT.allowedKindsFor(u, null));
+        return [vu.quotes, vu.unparseable];
+      })(),
+      (() => {
+        const vp = CAT.activityConfirmViewOf(plain, gp);
+        return [vp.on, vp.quotes, vp.pending];
+      })(),
+      CAT.activityConfirmViewOf(care, gc).safeKinds,
+    ], [["Weekday evenings, weekend mornings"], [["膝が痛い"], true], [true, [], 5], ["PLAN_AHEAD", "KEEP_A_LOG"]]);
+    const vf = CAT.activityConfirmViewOf(field, gf);
+    check("…a Field card of suggestions only: off, nothing pending, no safe kinds, and it quotes the suggestion's sentence", !vf.on && vf.pending === 0 && vf.safeKinds.length === 0 && json(vf.quotes) === json(["No timed practice, it stresses me out"]) && vf.rows.length === 1);
+    const quietCraft = CAT.constraintsStateOf({ track: "CRAFT", texts: { constraints: null, aim: "Learn guitar" } });
+    const vo = CAT.activityConfirmViewOf(quietCraft, CAT.allowedKindsFor(quietCraft, null));
+    check("…off with nothing to suggest, it quotes nothing and shows no row", !vo.on && vo.quotes.length === 0 && vo.rows.length === 0 && vo.pending === 0 && vo.safeKinds.length === 0);
+  }
+  check("isPlaceableKind: an item with no catalog type (the user's words) is placeable; a blocked type is not; a suggestion is", CAT.isPlaceableKind(gp, null) && CAT.isPlaceableKind(gp, "Run with Sam") && CAT.isPlaceableKind(gp, "EASY_SESSION") && !CAT.isPlaceableKind(gp, "HARDER_SESSION") && CAT.isPlaceableKind(gf, "TIMED_PRACTICE"));
+  // A refusal while the card waits points at it (decision 2).
+  {
+    const msg = "No measurable part in milestone 1 — add a Domain or a practice.";
+    const answeredGate = none.ok ? CAT.allowedKindsFor(pre, none.value) : gp;
+    eq("withActivityPointer: a refusal while the card waits points at it (once); unchanged when nothing waits or the gate is off", [CAT.withActivityPointer(gc, msg), CAT.withActivityPointer(gc, CAT.withActivityPointer(gc, msg)), CAT.withActivityPointer(answeredGate, msg), CAT.withActivityPointer(gf, msg), CAT.withActivityPointer(gc, "Refused")], [
+      `${msg} ${CAT.ACTIVITY_PENDING_POINTER}`,
+      `${msg} ${CAT.ACTIVITY_PENDING_POINTER}`,
+      msg,
+      msg,
+      `Refused. ${CAT.ACTIVITY_PENDING_POINTER}`,
+    ]);
+    check("…the pointer names the card (ACTIVITY_CARD_NAME), and no refusal or card word calls a session safe", CAT.ACTIVITY_PENDING_POINTER.includes(CAT.ACTIVITY_CARD_NAME) && [CAT.ACTIVITY_PENDING_POINTER, CAT.ACTIVITY_ANSWER_REFUSAL, CAT.ACTIVITY_NOTHING_TICKED, CAT.ACTIVITY_ANSWER_STALE, CAT.ACTIVITY_NOTHING_TO_AVOID, CAT.ACTIVITY_CARD_NAME].every((w) => !/\b(safe|cleared|approved|risk)\b/i.test(w)));
+  }
+  // From an intake (what every plan path holds).
+  {
+    const intake: RT.Intake = {
+      aim: "Run a sub-50 10K",
+      fieldId: null,
+      track: "BODY",
+      domainIds: [],
+      targetDay: "2027-04-04",
+      hoursPerWeek: 4,
+      newCardsPerWeek: null,
+      typicalHours: null,
+      typicalHoursSource: null,
+      syllabus: null,
+      startPoint: "BASICS",
+      intensity: "STEADY",
+      practicesAllowed: true,
+      constraints: null,
+      examLabel: null,
+    };
+    const ex = [{ kind: "HARDER_SESSION" as const, word: "jumping" }];
+    const g = CAT.activityGateOf(intake, ex);
+    const s = CAT.constraintsStateOfIntake(intake, ex);
+    const ans = CAT.answerActivityCard(null, s, card(s, ["HARDER_SESSION"]), DAY);
+    const g2 = ans.ok ? CAT.activityGateOf({ ...intake, activities: ans.value }, ex) : null;
+    check("activityGateOf(intake) reads the intake's texts (an empty Constraints box still asks on BODY) and its stored answer (Intake.activities)", g.on && !g.allowed.includes("LONGER_SESSION") && !!g2 && g2.allowed.includes("LONGER_SESSION") && !g2.allowed.includes("HARDER_SESSION"));
+  }
+  // The rule as a property, over every gated track, suggestion set and answer (not a sample).
+  {
+    const broke: string[] = [];
+    const cases: [CAT.CatalogTrack, string | null, string][] = [
+      ["BODY", null, "Run a sub-50 10K"],
+      ["BODY", "My knee hurts", "Run a sub-50 10K"],
+      ["CARE", null, "Support Mum's care at home"],
+      ["CARE", "Weekends only", "Support Mum's care at home"],
+      ["CRAFT", "My wrist hurts", "Play Clair de Lune"],
+      ["FIELD", "No timed practice", "Pass SOA Exam P"],
+    ];
+    for (const [track, constraints, aim] of cases) {
+      const ks = CAT.CATALOG.filter((e) => e.tracks.includes(track) && !e.codeOnly).map((e) => e.key);
+      for (let mask = 0; mask < 64; mask++) {
+        const ex = ks.filter((_, i) => (mask >> (i % 6)) & 1 && i % 2 === mask % 2).map((kind) => ({ kind, word: "it" }));
+        const s0 = stateOf(track, constraints, aim, [], { exam: true });
+        const s1 = stateOf(track, constraints, aim, ex, { exam: true });
+        const kinds: Partial<Record<CAT.CatalogKey, RT.ActivityConfirmEntry>> = {};
+        ks.forEach((k, i) => {
+          if ((mask + i) % 3 === 0) kinds[k] = { verdict: "FINE", day: DAY, reason: "" };
+          else if ((mask + i) % 5 === 0) kinds[k] = { verdict: "AVOID", day: DAY, reason: "" };
+        });
+        const asked = ks.filter((_, i) => (mask + i) % 4 !== 1);
+        const confs: (RT.ActivityConfirm | null)[] = [null, { key: s0.key, kinds }, { key: "k1-00000000", kinds, answered: { day: DAY, asked: ks, none: false } }, { key: s0.key, kinds, answered: { day: DAY, asked, none: false } }];
+        for (const conf of confs) {
+          const a0 = CAT.allowedKindsFor(s0, conf);
+          const a1 = CAT.allowedKindsFor(s1, conf);
+          // A suggestion never blocks and never unlocks: the same split with or without it.
+          if (json(a0.blocked) !== json(a1.blocked)) broke.push(`${track} ${mask}: a suggestion moved a kind`);
+          const fresh = conf?.answered && conf.key === s1.key ? conf.answered : null;
+          for (const k of CAT.cueGatedKindsOf(track)) {
+            const avoided = conf?.kinds[k]?.verdict === "AVOID";
+            // On BODY and CARE (always) and CRAFT here (a cue), a gated kind is placed only under a current card answer that listed it, and never when avoided.
+            if (a1.allowed.includes(k) && (avoided || !fresh || !fresh.asked.includes(k))) broke.push(`${track} ${mask}: ${k} placed unanswered`);
+          }
+          for (const k of ks) {
+            const avoided = conf?.kinds[k]?.verdict === "AVOID";
+            if (avoided && a1.allowed.includes(k)) broke.push(`${track} ${mask}: ${k} avoided but placed`);
+            if (CAT.isCueSafeKind(k) && a1.blocked.includes(k) && !avoided) broke.push(`${track} ${mask}: safe ${k} blocked`);
+          }
+          if (track === "FIELD" && a1.blocked.some((k) => conf?.kinds[k]?.verdict !== "AVOID")) broke.push(`FIELD ${mask}: blocked without an AVOID`);
+        }
+      }
+    }
+    check("property (6 cases × 64 suggestion sets × 4 answers): a suggestion never moves a kind; a gated kind is placed only under a current answer that listed it and never when avoided; a safe kind and a Field kind are blocked only by the user's AVOID", broke.length === 0, broke.slice(0, 5).join(" | "));
+  }
+  // Where the answers are stored: Roadmap.coverage, under a key no Domain id can take.
+  {
+    const conf: RT.ActivityConfirm = { key: "k1-1234abcd", kinds: { STRENGTH_SESSION: { verdict: "AVOID", day: DAY, reason: "Running causes me knee pain" } }, answered: { day: DAY, asked: ["HARDER_SESSION", "STRENGTH_SESSION"], none: false } };
+    const stored = CAT.coverageJsonOf({ dom1: 40, dom2: 55 }, conf);
+    eq("coverageJsonOf keeps the typed figures and adds the answers under ACTIVITY_CONFIRM_KEY ('$activities')", stored, { dom1: 40, dom2: 55, $activities: conf });
+    check("activityConfirmOf reads them back exactly (a JSON round trip)", json(CAT.activityConfirmOf(JSON.parse(JSON.stringify(stored)))) === json(conf));
+    const nothing: RT.ActivityConfirm = { key: "k1-1234abcd", kinds: {}, answered: { day: DAY, asked: ["HARDER_SESSION"], none: true } };
+    check("“Nothing to avoid” is stored too (an answer with no AVOID), and read back", json(CAT.activityConfirmOf(CAT.coverageJsonOf(null, nothing))) === json(nothing));
+    const figures: Record<string, number> = {};
+    for (const [k, v] of Object.entries(stored ?? {})) if (typeof v === "number") figures[k] = v;
+    check("the coverage figures read as before (intakeOf keeps numbers only), and a figures-only or empty value stays as it was", json(figures) === json({ dom1: 40, dom2: 55 }) && json(CAT.coverageJsonOf({ dom1: 40 }, null)) === json({ dom1: 40 }) && CAT.coverageJsonOf(null, null) === null && CAT.coverageJsonOf(null, { key: "k1-1234abcd", kinds: {} }) === null);
+    check("the coverage input can't write answers: a '$activities' or '__proto__' figure is dropped", json(CAT.coverageJsonOf(JSON.parse('{"$activities":3,"__proto__":4}') as Record<string, number>, null)) === "null");
+    const hostile = JSON.parse(
+      `{"$activities":{"key":"k1-1234abcd","kinds":{"__proto__":{"verdict":"AVOID","day":"${DAY}","reason":"x"},"constructor":{"verdict":"AVOID","day":"${DAY}"},"HARDER_SESSION":{"verdict":"MAYBE","day":"${DAY}"},"LONGER_SESSION":{"verdict":"AVOID","day":"2026-02-30"},"STRENGTH_SESSION":{"verdict":"FINE","day":"${DAY}"},"EASY_SESSION":{"verdict":"AVOID","day":"${DAY}","reason":${JSON.stringify("x".repeat(500))}}},"answered":{"day":"${DAY}","asked":["__proto__","EASY_SESSION","NOPE","HARDER_SESSION","EASY_SESSION",3],"none":"yes"}}}`
+    );
+    const back = CAT.activityConfirmOf(hostile);
+    eq("activityConfirmOf reads own catalog keys only: an AVOID with a valid day (its reason cut to ACTIVITY_REASON_MAX), never a FINE; the answer's catalog keys, deduped, in CATALOG order; none only when true", back ? [Object.entries(back.kinds).map(([k, v]) => [k, v?.verdict, v?.reason.length]), back.answered] : null, [[["EASY_SESSION", "AVOID", RT.ACTIVITY_REASON_MAX]], { day: DAY, asked: ["EASY_SESSION", "HARDER_SESSION"], none: false }]);
+    check("…an answer with a bad day is dropped (the AVOIDs stand), and null when absent or malformed", !CAT.activityConfirmOf({ $activities: { key: "k", kinds: {}, answered: { day: "2026-02-30", asked: [], none: true } } })?.answered && [null, [], {}, { $activities: [] }, { $activities: { key: 3, kinds: {} } }, { $activities: { key: "k", kinds: [] } }].every((x) => CAT.activityConfirmOf(x) === null));
+  }
+}
+
+// The plan paths' adoption of the gate (contracts §19.5): each passes once its owner lands it; --strict fails one still pending.
+{
+  const has = (f: string, re: RegExp) => existsSync(join(ROOT, f)) && re.test(read(f));
+  const roadmapComponents = readdirSync(join(ROOT, "src/components/roadmap")).filter((f) => /\.tsx?$/.test(f)).map((f) => `src/components/roadmap/${f}`);
+  pending("roadmap-server.ts intakeOf reads Intake.activities with activityConfirmOf, and intakeData writes Roadmap.coverage with coverageJsonOf", has("src/lib/roadmap-server.ts", /activityConfirmOf\(/) && has("src/lib/roadmap-server.ts", /coverageJsonOf\(/), "R4");
+  pending(
+    "roadmap-server.ts setActivityVerdictsCore answers the card through answerActivityCard (its key: words changed meanwhile ask again), never the per-kind answerActivities; src/app/actions/roadmap.ts setActivityVerdicts takes an ActivityCardAnswer",
+    has("src/lib/roadmap-server.ts", /export (async )?function setActivityVerdictsCore\b/) && has("src/lib/roadmap-server.ts", /answerActivityCard\(/) && !has("src/lib/roadmap-server.ts", /\banswerActivities\(/) && has("src/app/actions/roadmap.ts", /export (async )?function setActivityVerdicts\b/) && has("src/app/actions/roadmap.ts", /\bActivityCardAnswer\b/),
+    "R4"
+  );
+  pending("roadmap-server.ts builds every plan path's gate with allowedKindsFor (or activityGateOf) and fills DraftView/RoadmapView.activityConfirm", has("src/lib/roadmap-server.ts", /allowedKindsFor\(|activityGateOf\(/) && has("src/lib/roadmap-server.ts", /activityConfirmViewOf\(/), "R4");
+  pending("roadmap-server.ts points a refusal at the card while it waits (withActivityPointer: accept, Start, a pick), so a waiting plan is never a dead end", has("src/lib/roadmap-server.ts", /withActivityPointer\(/), "R4");
+  pending("roadmap-evidence.ts leaves the gate's blocked kinds out of the run's enums (the Gemini keys-only path)", has("src/lib/roadmap-evidence.ts", /allowedKindsFor\(|activityGateOf\(/), "R3");
+  pending("roadmap-realism.ts places kinds through the gate (starterLadder, stageLadderOf, trackLadderOf, syncStagePractices), not bodySafeOf's non-empty test", has("src/lib/roadmap-realism.ts", /allowedKindsFor\(|activityGateOf\(|isPlaceableKind\(|ActivityGate\b/) && !has("src/lib/roadmap-realism.ts", /const bodySafeOf\b/), "R2");
+  pending("the week quests skip a practice the gate blocks (roadmap-quests.ts or roadmap-quests-server.ts)", has("src/lib/roadmap-quests.ts", /isPlaceableKind\(|ActivityGate\b|activityGateOf\(/) || has("src/lib/roadmap-quests-server.ts", /isPlaceableKind\(|ActivityGate\b|activityGateOf\(/), "R6");
+  pending("a roadmap component renders the confirm card from activityConfirm (with the HEALTH_LINE on BODY)", roadmapComponents.some((f) => /\.activityConfirm\b/.test(read(f))), "R5");
+  pending(
+    "the card sends the card's answer with the view's key (roadmap-ui-model activityCardAnswerOf: null with nothing ticked), offers “Nothing to avoid” (ACTIVITY_NOTHING_TO_AVOID), never sends FINE for an unticked row (no activityAnswersOf), and no copy says “You said fine”",
+    has("src/components/roadmap/roadmap-ui-model.ts", /export function activityCardAnswerOf\b/) &&
+      !has("src/components/roadmap/roadmap-ui-model.ts", /export function activityAnswersOf\b/) &&
+      roadmapComponents.some((f) => /\bACTIVITY_NOTHING_TO_AVOID\b/.test(read(f))) &&
+      !has("src/components/roadmap/roadmap-copy.ts", /You said fine/),
+    "R5"
+  );
+}
+
 // ═══ Plan-born tasks: no model sizes or explains one (contracts §15.6, §16.4; the lead's half) ═══
 //
 // The Resize channel was: TaskDrawer's Resize → resizeTask → resizableCore → applySizing(force) → sizeLifeTask, whose

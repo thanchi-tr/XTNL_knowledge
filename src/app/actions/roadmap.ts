@@ -30,6 +30,14 @@
  * the plan). The year-long 'off' cookie is never written any more;
  * dismissAimPrompt is now "Not now" until the Aim card moves off it.
  *
+ * Confirm to unlock (contracts §19.5): setActivityVerdicts stores the user's
+ * answer to the activity card (ActivityCardAnswer: the kinds ticked to avoid,
+ * or "Nothing to avoid", with the key of the words it was given against) on
+ * the roadmap; the server refuses a stale key (the card asks again) and
+ * quotes the reason from the user's own words, and every later plan path
+ * reads it. An AVOID given after Start pauses the started task (the result's
+ * `paused`; the Today task's own unarchiveTask undoes it).
+ *
  * Contract: docs/life-plan/roadmap-contracts.md §R4.
  */
 import { after } from "next/server";
@@ -61,6 +69,7 @@ import {
   resolveDomainCore,
   returnStartingCore,
   saveIntakeCore,
+  setActivityVerdictsCore,
   setAimFigureCore,
   setAimSuggestionsCore,
   setLineDomainCore,
@@ -72,12 +81,14 @@ import {
   startPreview,
   undoAcceptCore,
   undoDiscardCore,
+  type ActivityVerdictsResult,
   type AimCookieJar,
   type NewItem,
   type RoadmapDeps,
 } from "@/lib/roadmap-server";
 import {
   type AcceptChoices,
+  type ActivityCardAnswer,
   type AimDepth,
   type DomainResolution,
   type Intake,
@@ -90,6 +101,7 @@ import {
   type StartChoices,
   type StartPreview,
 } from "@/lib/roadmap-types";
+import { ACTIVITY_ANSWER_REFUSAL, type CatalogKey } from "@/lib/roadmap-catalog";
 import { createDomain } from "./taxonomy";
 
 const SAVE_FAILED = "Couldn't save that. Try again.";
@@ -378,6 +390,32 @@ export async function confirmDomainAdditions(roadmapId: string, version: number,
 export async function confirmSessionPicks(roadmapId: string, choice: "KEEP" | "EASY"): Promise<RoadmapActionResult<null>> {
   if (!isRef(roadmapId) || (choice !== "KEEP" && choice !== "EASY")) return { ok: false, error: NO_REF };
   return act("confirmSessionPicks", true, (userId, now) => confirmSessionPicksCore(userId, roadmapId, choice, now, depsOf()));
+}
+
+/**
+ * The user's answer to the activity card (confirm to unlock, contracts
+ * §19.5): ActivityCardAnswer — the words' key the card was shown with, the
+ * kinds ticked to avoid, and whether they chose "Nothing to avoid". Only
+ * these are read from the client, cleaned to their shape (a string key, an
+ * array of strings, a boolean); a malformed answer is refused, never read as
+ * "nothing to avoid", and the reason is never sent (the server quotes the
+ * user's own words). A key other than the words' current one is refused
+ * (ACTIVITY_ANSWER_STALE: the page re-reads and the card asks again). On a
+ * draft the plan follows in the same write; on an accepted plan `replan`
+ * says whether to offer a re-plan, and `paused` lists the started tasks an
+ * AVOID took off Today (Undo: unarchiveTask). The earlier per-kind list
+ * (ActivityAnswer[]) is refused like any malformed answer: it carries no
+ * key, so the server couldn't tell which words it was given against.
+ */
+export async function setActivityVerdicts(roadmapId: string, answer: ActivityCardAnswer): Promise<RoadmapActionResult<ActivityVerdictsResult>> {
+  if (!isRef(roadmapId)) return { ok: false, error: NO_REF };
+  const o: Partial<Record<keyof ActivityCardAnswer, unknown>> | null = answer && typeof answer === "object" && !Array.isArray(answer) ? (answer as Partial<Record<keyof ActivityCardAnswer, unknown>>) : null;
+  const avoid = o && Array.isArray(o.avoid) ? (o.avoid as unknown[]) : null;
+  if (!o || typeof o.key !== "string" || o.key.length > 64 || !avoid || avoid.length > 64 || !avoid.every((k) => typeof k === "string") || typeof o.nothingToAvoid !== "boolean") {
+    return { ok: false, error: ACTIVITY_ANSWER_REFUSAL };
+  }
+  const clean: ActivityCardAnswer = { key: o.key, avoid: avoid as CatalogKey[], nothingToAvoid: o.nothingToAvoid };
+  return act("setActivityVerdicts", true, (userId, now) => setActivityVerdictsCore(userId, roadmapId, clean, now, depsOf()));
 }
 
 /** Moves an outline line to another milestone (F-R4-21). */

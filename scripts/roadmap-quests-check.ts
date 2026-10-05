@@ -58,6 +58,7 @@ import { dirname, join, resolve } from "node:path";
 import { LIFE_TZ, addDays, dayStartOf, daysBetween, weekdayOf, zonedToInstant, type DayKey } from "../src/lib/life-day";
 import type { RestRow } from "../src/lib/duty-rule";
 import type { InstanceLike } from "../src/lib/habit";
+import type { Track } from "../src/lib/life-types";
 import {
   CARD_WRITE_MIN,
   C_PRIOR,
@@ -71,6 +72,7 @@ import {
   bestReach,
   cardsAtLevelKey,
   checkpointLogPrefix,
+  cueTextsOf,
   domainName,
   positionCountOf,
   floorBase,
@@ -137,6 +139,7 @@ import {
   questErrorText,
   questLabelOf,
   questPlaceOfTemplate,
+  questGateOf,
   questProgressFor,
   raiseEvidenceOf,
   scheduledPlacesOf,
@@ -151,10 +154,12 @@ import {
   type QuestMeasureRow,
   type QuestMilestoneFacts,
   type QuestReviewRow,
+  type QuestRoadmapRow,
   type QuestStore,
   type QuestTemplateRow,
   type StoredQuestWeek,
 } from "../src/lib/roadmap-quests-server";
+import { activityConfirmOf, answerActivityCard, catalogTrackOf, constraintsStateOf, coverageJsonOf, type CatalogKey } from "../src/lib/roadmap-catalog";
 
 const ROOT = join(__dirname, "..");
 const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
@@ -1270,14 +1275,28 @@ function greps() {
     "the ADD basis names the spare from WRITE_MARGIN (addSpareText: pct(WRITE_MARGIN − 1) and writeNeedOf), never a typed percentage",
     !/\d+% spare/.test(code(quests)) && /pct\(WRITE_MARGIN - 1\)\}% spare/.test(code(quests)) && /\$\{addSpareText\(r\.c\.target\)\}/.test(code(quests))
   );
-  // Fix round 2, R6 → R4 (tracked here, never failed here: roadmap-server.ts is R4's). Start's set reads its v0 from Start's
-  // overrides, and every later read of Start's week from the started-day reading, so both must count a key as R1 does:
-  // recall cards only with a segment, no first `rc` reading (acceptCore already leaves that to R1's ledger read), per key.
-  const startCountsAll = /const live = liveCount\(ctx, parsed\.domainIds, parsed\.level\);\s*v0 = live\.value;/.test(code(read("src/lib/roadmap-server.ts")));
-  if (startCountsAll)
-    console.log(
-      "  PENDING (R4): finishStartCore's started-day CARDS_AT_LEVEL reading and Start's v0 use liveCount without the segment (multiple-choice cards and `rc` retry entries counted): use liveCountOfKey, write no first `rc` reading, and pass v0ByKey"
+  // Fix round 2, R6 → R4 (landed in the finishing round). Start's set reads its v0 from Start's overrides, and every later
+  // read of Start's week from the started-day reading, so both count a key as R1 does: recall cards only with a segment, no
+  // first `rc` reading (acceptCore leaves that to R1's ledger read), per key. roadmap-server-check pins the behaviour (3
+  // multiple-choice cards at or above L: Start's reading and v0 are the recall count); this pins the shape R6 reads.
+  {
+    const server = code(read("src/lib/roadmap-server.ts"));
+    const finish = /export async function finishStartCore\([\s\S]*?\n\}\n/.exec(server)?.[0] ?? "";
+    const counts = /function startCountsOf\([\s\S]*?\n\}\n/.exec(server)?.[0] ?? "";
+    check(
+      "R4's finishStartCore and startPreview hand R6 v0ByKey from startCountsOf (R1's cardsAtLevelValue per key, no `rc` count), never one v0 counted over every card",
+      finish.length > 0 &&
+        /startCountsOf\(ctx, row\.measures\)/.test(finish) &&
+        /v0ByKey: v0ByKeyOf\(counts\)/.test(finish) &&
+        !/\bliveCount\(/.test(finish) &&
+        !/\bv0\s*[:=]/.test(finish) &&
+        /segment === "rc"\) continue;/.test(counts) &&
+        /measures\.cardsAtLevelValue\(/.test(counts) &&
+        /v0ByKey: v0ByKeyOf\(startCountsOf\(ctx, row\.measures\)\)/.test(server) &&
+        !/\bv0: f\.hw\.live\b/.test(server),
+      json({ finish: finish.length, counts: counts.length })
     );
+  }
 
   console.log("— SQL against the migration —");
   const migration = read("prisma/migrations/20261101000000_life_roadmap/migration.sql");
@@ -2337,7 +2356,11 @@ async function rev4() {
     db.readings = [];
     const store = storeOf(db);
     const startAt = at(thu, 10);
-    const started = await weekQuestSetFor(U, "ms2", wk1, startAt, { store, overrides: { startedDay: thu, snapshot: snap, templateIds: { "lin-p1": "t-bt", "lin-s1": "t-s1" } } });
+    // Start's v0 per key, as R4's finishStartCore hands it over (startCountsOf: each key's recall count, the Start readings below).
+    const startV0 = { [cardsAtLevelKey(["d-inf"], 6, "r")]: 10, [cardsAtLevelKey(["d-risk"], 6, "r")]: 8 };
+    const started = await weekQuestSetFor(U, "ms2", wk1, startAt, { store, overrides: { startedDay: thu, snapshot: snap, templateIds: { "lin-p1": "t-bt", "lin-s1": "t-s1" }, v0ByKey: startV0 } });
+    // The count before the finishing round (every card, Inference's 3 multiple-choice cards too): 13.
+    const overCounted = await weekQuestSetFor(U, "ms2", wk1, startAt, { store, overrides: { startedDay: thu, snapshot: snap, templateIds: { "lin-p1": "t-bt", "lin-s1": "t-s1" }, v0ByKey: { ...startV0, [cardsAtLevelKey(["d-inf"], 6, "r")]: 13 } } });
     // The finish transaction: STARTED with the snapshot (a JSON column), the goal, the items' templates, the Start readings
     // (each measure's recall cards at level 6+: Inference 10, its 3 multiple-choice cards left out; Risk Management 8), Start's set.
     ms.status = "STARTED";
@@ -2360,6 +2383,11 @@ async function rev4() {
       "Start's set (from its overrides) is generator 2, with an ADD part per Domain, and is the set its rows give once written (quests and basis but the read-at line)",
       [wrote, started?.generator, partsOf(started, "ADD"), canon(fromRows?.quests) === canon(started?.quests), canon(fromRows?.basis.slice(1)) === canon(started?.basis.slice(1))],
       [1, 2, ["d-inf", "d-risk"], true, true]
+    );
+    eq(
+      "… Start's v0 per key is its readings' recall count, so its set is the rows' set; a v0 counted over every card (Inference 13, multiple choice in) would freeze another set",
+      [canon(overCounted?.quests) === canon(fromRows?.quests) && canon(overCounted?.basis.slice(1)) === canon(fromRows?.basis.slice(1))],
+      [false]
     );
     const render = await freezeWeekQuests(U, later, "RENDER", { ...ON, store });
     const load = await loadWeekQuests(U, later, { ...ON, store });
@@ -2413,11 +2441,98 @@ async function rev4() {
   }
 }
 
+/**
+ * Confirm to unlock (contracts §19, the safety-gaps round; lane R4's cases
+ * on R6's own reading): the week reads the plan's gate from the roadmap row's
+ * words and stored answer (questGateOf). Every BODY or CARE plan asks
+ * whatever its words (decision 1), a CRAFT plan on a cue, a Field Area never;
+ * only the card's answer under the current words releases a kind (a stored
+ * per-kind FINE never does), an AVOID stands across new words, and CARE's
+ * safe kinds never wait (decision 2).
+ */
+async function gate19() {
+  console.log("— confirm to unlock (§19): the week's own gate —");
+  const U = "user1";
+  const DAY: DayKey = "2026-10-05";
+  const row = (o: Partial<QuestRoadmapRow> = {}): QuestRoadmapRow => ({
+    id: "rm1",
+    status: "ACTIVE",
+    fieldId: null,
+    track: "BODY",
+    depth: null,
+    hoursPerWeek: 5,
+    intensity: "STEADY",
+    startPoint: "BASICS",
+    typicalHours: null,
+    typicalHoursSource: null,
+    targetDay: addDays(M, 300),
+    practicesAllowed: true,
+    aim: "Run a sub-50 10K",
+    constraints: null,
+    examLabel: null,
+    syllabus: null,
+    coverage: null,
+    ...o,
+  });
+  const stateOf = (r: QuestRoadmapRow) =>
+    constraintsStateOf({
+      track: catalogTrackOf({ fieldId: r.fieldId, track: r.track as Track }),
+      texts: cueTextsOf({ constraints: r.constraints ?? null, aim: r.aim ?? "", examLabel: r.examLabel ?? null, typicalHoursSource: r.typicalHoursSource, syllabus: null }),
+      exam: !!r.examLabel,
+      practicesAllowed: r.practicesAllowed,
+    });
+  /** The row once the user answered its card under its words (R4 stores answerActivityCard's result in Roadmap.coverage). */
+  const answered = (r: QuestRoadmapRow, avoid: readonly string[] = []): QuestRoadmapRow => {
+    const st = stateOf(r);
+    const res = answerActivityCard(activityConfirmOf(r.coverage), st, { key: st.key, avoid: [...avoid] as CatalogKey[], nothingToAvoid: avoid.length === 0 }, DAY);
+    if (!res.ok) throw new Error(`fixture answer: ${res.error}`);
+    return { ...r, coverage: coverageJsonOf(null, res.value) };
+  };
+  const blocked = (r: QuestRoadmapRow): string[] | null => questGateOf(r)?.blocked ?? null;
+  const has = (r: QuestRoadmapRow, k: string) => (blocked(r) ?? []).includes(k);
+  const body = row();
+  eq(
+    "decision 1: a BODY plan with no constraints and a plain aim holds every gated kind until its card is answered; the safe sessions never wait",
+    [["HARDER_SESSION", "LONGER_SESSION", "STRENGTH_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK"].every((k) => has(body, k)), ["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION"].some((k) => has(body, k))],
+    [true, false]
+  );
+  eq("…after “Nothing to avoid” only the Mock test the card never listed (no exam) still waits", blocked(answered(body)), ["MOCK_TEST"]);
+  const avoided = answered(body, ["STRENGTH_SESSION"]);
+  eq("…an answer ticking Strength holds Strength and releases Longer", [has(avoided, "STRENGTH_SESSION"), has(avoided, "LONGER_SESSION")], [true, false]);
+  const reworded = { ...avoided, constraints: "Shin splints flare up if I run more than twice a week." };
+  eq("…new words ask again: Longer waits once more, and the AVOID on Strength stands", [has(reworded, "LONGER_SESSION"), has(reworded, "STRENGTH_SESSION")], [true, true]);
+  const oldFine = row({ coverage: { $activities: { key: stateOf(body).key, kinds: { LONGER_SESSION: { verdict: "FINE", day: DAY, reason: "" } } } } });
+  check("a per-kind FINE stored by the earlier card releases nothing (it may have been a row the user left unticked)", has(oldFine, "LONGER_SESSION"));
+  const care = row({ track: "CARE", aim: "Support Mum's care at home" });
+  eq("decision 2: a CARE plan with no constraints waits on its card for its care sessions, never for planning the week or keeping a log", [has(care, "SET_TIME"), has(care, "PLAN_AHEAD"), has(care, "KEEP_A_LOG")], [true, false, false]);
+  const craft = row({ track: "CRAFT", aim: "Play a piece on the piano" });
+  const wrist = { ...craft, constraints: "Wrist tendinitis, can't play more than 20 minutes." };
+  eq("decision 1: a CRAFT plan waits only on a cue ('Wrist tendinitis, …'); its technique session never waits", [blocked(craft), has(wrist, "RUN_THROUGHS"), has(wrist, "TECHNIQUE_SESSION")], [[], true, false]);
+  eq("a Field Area never waits on a body cue", blocked(row({ fieldId: "f-trading", track: "CRAFT", constraints: "Bad knee, my back hurts." })), []);
+
+  // End to end: a BODY plan's week holds no quest for a practice of a kind that waits on the card, and holds it once answered.
+  const rowsFor = async (roadmap: Partial<QuestRoadmapRow>) => {
+    const db = dbOf();
+    db.facts[0].roadmap = { ...db.facts[0].roadmap, fieldId: null, track: "BODY", depth: null, aim: "Run a sub-50 10K", constraints: null, examLabel: null, syllabus: null, ...roadmap };
+    db.facts[0].milestone.stage = "STAGE_1";
+    db.measures.ms2 = [];
+    db.items.ms2 = db.items.ms2.filter((i) => i.kind !== "DOMAIN").map((i) => (i.kind === "PRACTICE" ? { ...i, catalogKey: "LONGER_SESSION" } : i));
+    const load = await loadWeekQuests(U, at(addDays(W(1), 2), 10), { ...ON, store: storeOf(db) });
+    return (load?.view.rows ?? []).map((r) => r.kind);
+  };
+  eq(
+    "a BODY plan's Longer session gets no quest while the card waits (no constraints at all), and gets one once the user answered “Nothing to avoid”",
+    [await rowsFor({}), await rowsFor({ coverage: answered(body).coverage })],
+    [[], ["PRACTICE"]]
+  );
+}
+
 async function main() {
   await server();
   await fixRound();
   fixRound2();
   await rev4();
+  await gate19();
   greps();
   if (failed > 0) {
     console.log(`\nroadmap-quests-check: ${passed} passed, ${failed} FAILED`);

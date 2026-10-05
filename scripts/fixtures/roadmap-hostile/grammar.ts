@@ -429,6 +429,428 @@ export const RELEASE_ENTRY_TEMPLATES: Readonly<Record<string, string>> = {
   barely: "knee injury, barely cleared for {t}",
 };
 
+// ═══ Family K, sub-class "postfix": the reader's unsafe-side misses (fix round 4) ═══
+
+/**
+ * One phrasing of K's postfix sub-class (fix round 4: the verifier's probe
+ * and the lead's list; before it, K's grammar always put a cue before its
+ * term, so the 100% recall item could not see these). {t}, {t2} and {t3} are
+ * activities the phrasing excludes, {o} and {o2} ones it clears or prefers
+ * (they must stay in), {c} a compound whose last part names the activity
+ * ("high-impact"). `cues`: the negation cues it holds, as the bar counts them
+ * (a CUE_TEMPLATES key, a cue after its term, or one of POSTFIX_PREFIX_CUES),
+ * frozen here so the corpus never moves with the lexicon. The words around
+ * the slots hit no kind, template word or K aim word on the track
+ * (generate.ts asserts it).
+ */
+export interface PostfixTemplate {
+  text: string;
+  cues: readonly string[];
+}
+
+/** The cues written after their term that the sub-class holds (roadmap-lexicon.ts CONSTRAINT_CUES_AFTER at fix round 4), each the only cue of at least one phrasing. */
+export const POSTFIX_AFTER_CUES: readonly string[] = [
+  "hurts", "hurt", "hurting", "painful", "aches", "aching", "is out of the question", "are out of the question", "out of the question", "is out", "are out",
+  "off limits", "off-limits", "off the table", "forbidden", "banned", "no-go", "too much", "too hard", "risky", "unsafe",
+];
+
+/** The cues before their term the sub-class adds (CONSTRAINT_EXTRA_CUES, CONSTRAINT_INJURY_CUES at fix round 4; "sprain" is "sprained" by stem). */
+export const POSTFIX_PREFIX_CUES: readonly string[] = ["nothing", "tore", "torn", "sprain", "fracture"];
+
+export const POSTFIX_TEMPLATES: Readonly<Record<"BODY" | "CARE", readonly PostfixTemplate[]>> = {
+  BODY: [
+    // A pain or verdict word after its term, no cue before it.
+    { text: "{t} hurts", cues: ["hurts"] },
+    { text: "{t} hurts my knee", cues: ["hurts"] },
+    { text: "{t} really hurts my back", cues: ["hurts"] },
+    { text: "{t} hurt my knees", cues: ["hurt"] },
+    { text: "{t} and {t2} hurt", cues: ["hurt"] },
+    { text: "{t} is hurting my hip", cues: ["hurting"] },
+    { text: "{t} is painful", cues: ["painful"] },
+    { text: "{t} is too painful for my knee", cues: ["painful"] },
+    { text: "my knee aches after {t}", cues: ["aches"] },
+    { text: "aching knees from {t}", cues: ["aching"] },
+    { text: "{t} is out", cues: ["is out"] },
+    { text: "{t} is out for now", cues: ["is out"] },
+    { text: "{t}, {t2} and {t3} are out", cues: ["are out"] },
+    { text: "{t} is out of the question", cues: ["is out of the question"] },
+    { text: "{t} and {t2} are out of the question", cues: ["are out of the question"] },
+    { text: "out of the question: {t}", cues: ["out of the question"] },
+    { text: "{t} is off limits", cues: ["off limits"] },
+    { text: "off-limits: {t}, {t2}, {t3}", cues: ["off-limits"] },
+    { text: "{t} is off the table", cues: ["off the table"] },
+    { text: "{t} is forbidden", cues: ["forbidden"] },
+    { text: "{t} banned by my physio", cues: ["banned"] },
+    { text: "{t} is a no-go", cues: ["no-go"] },
+    { text: "{t} is too much for my knees", cues: ["too much"] },
+    { text: "{t} is too hard on my back", cues: ["too hard"] },
+    { text: "{t} is risky with my back", cues: ["risky"] },
+    { text: "{t} is unsafe for me", cues: ["unsafe"] },
+    // A negation after its term: a verdict follows it, or it names nothing after it.
+    { text: "{t} not allowed", cues: ["not"] },
+    { text: "{t} is not allowed", cues: ["not"] },
+    { text: "{t} is not recommended", cues: ["not"] },
+    { text: "{t} is not an option", cues: ["not"] },
+    { text: "{t} is a no", cues: ["no"] },
+    { text: "{t}? No.", cues: ["no"] },
+    { text: "{t} I can't do", cues: ["can't"] },
+    { text: "{t}? Not anymore.", cues: ["not"] },
+    // A cleared or preferred activity beside it: {o} stays in.
+    { text: "{o} is fine, {t} not allowed", cues: ["not"] },
+    { text: "{o} is fine but {t} hurts", cues: ["hurts"] },
+    { text: "{o} is fine and {t} hurts", cues: ["hurts"] },
+    { text: "{o} is ok, {t} is out", cues: ["is out"] },
+    { text: "{o} doesn't hurt but {t} is out", cues: ["is out"] },
+    { text: "{t} hurts, {o} doesn't", cues: ["hurts"] },
+    { text: "I love {o}, {t} hurts", cues: ["hurts"] },
+    // A pronoun or a body part before it: the clause before or after it.
+    { text: "it hurts to do {t}", cues: ["hurts"] },
+    { text: "my knee hurts when {t}", cues: ["hurts"] },
+    { text: "I love {t} but it hurts", cues: ["hurts"] },
+    { text: "I used to love {t}. It hurts now.", cues: ["hurts"] },
+    { text: "{t} is my favourite but my knee hurts", cues: ["hurts"] },
+    { text: "injured my knee while {t}", cues: ["injured"] },
+    // A cue in an earlier sentence.
+    { text: "Knee injury. {t}, {t2} and {t3}.", cues: ["injury"] },
+    { text: "Injured my back. {t} and {t2}.", cues: ["injured"] },
+    { text: "Back pain. {t} for now.", cues: ["pain"] },
+    { text: "I tore my ACL. {t}, {t2}, {t3} are out.", cues: ["tore", "are out"] },
+    { text: "I tore my ACL. {t}, {t2} and {t3}.", cues: ["tore"] },
+    { text: "torn ACL from {t}", cues: ["torn"] },
+    { text: "Torn ACL. {t} hurts.", cues: ["torn", "hurts"] },
+    { text: "sprained my ankle while {t}", cues: ["sprain"] },
+    { text: "Sprained ankle. {t} and {t2}.", cues: ["sprain"] },
+    { text: "stress fracture from {t}", cues: ["fracture"] },
+    { text: "Knee injury. {t} hurts.", cues: ["injury", "hurts"] },
+    { text: "doctor said no {t}", cues: ["no"] },
+    // The safe side: only what is left, a denied pain, a release that continues.
+    { text: "nothing but {o}", cues: ["nothing"] },
+    { text: "no exercise except {o}", cues: ["no"] },
+    { text: "knee injury, {o} doesn't hurt, {t} does hurt", cues: ["injury"] },
+    { text: "knee injury, {o} fine and {o2} ok", cues: ["injury"] },
+    { text: "knee injury, {o} is fine and so is {o2}", cues: ["injury"] },
+    { text: "knee injury, {o} is fine and {o2} too", cues: ["injury"] },
+  ],
+  CARE: [
+    { text: "{t} is not possible", cues: ["not"] },
+    { text: "{t} not possible on weekends", cues: ["not"] },
+    { text: "{t} is not an option right now", cues: ["not"] },
+    { text: "{t} is too much for me", cues: ["too much"] },
+    { text: "{t} and {t2} are too much", cues: ["too much"] },
+    { text: "{t} is out for now", cues: ["is out"] },
+    { text: "{t} is off the table", cues: ["off the table"] },
+    { text: "{o} is fine, {t} is not possible", cues: ["not"] },
+    { text: "nothing but {o}", cues: ["nothing"] },
+  ],
+};
+
+/** Compounds a user writes for an activity ({c}): the bar excludes every kind its last part names ("nothing high-impact" leaves out the Harder session). */
+export const POSTFIX_COMPOUNDS: readonly { term: string; heads: readonly string[] }[] = [
+  { term: "high-impact", heads: ["impact"] },
+  { term: "long-distance", heads: ["distance"] },
+  { term: "heavy-lifting", heads: ["lifting"] },
+  { term: "hill-sprints", heads: ["sprints"] },
+  { term: "box-jumps", heads: ["jumps"] },
+];
+
+/** The phrasings a compound fills. */
+export const POSTFIX_COMPOUND_TEMPLATES: readonly PostfixTemplate[] = [
+  { text: "nothing {c}", cues: ["nothing"] },
+  { text: "nothing {c} for now", cues: ["nothing"] },
+  { text: "avoid anything {c}", cues: ["avoid"] },
+  { text: "{c} is out", cues: ["is out"] },
+];
+
+/**
+ * Non-English phrasings of a negation or pain after its term: the parser
+ * reads English only, so each must raise the confirm (never silently
+ * trusted). Vietnamese: "running hurts my knee", "jumping hurts", "swimming
+ * is ok, running is not", "weights are forbidden", "my knee hurts when I
+ * run"; "calling is too much", "visiting at weekends is impossible".
+ * Japanese: "running hurts my knee", "jumping is forbidden", "swimming is
+ * fine, running is no good", "squats are impossible"; "calls are a burden",
+ * "weekend visits are impossible".
+ */
+export const POSTFIX_FOREIGN: Readonly<Record<"vi" | "ja", Readonly<Record<"BODY" | "CARE", readonly string[]>>>> = {
+  vi: {
+    BODY: ["chạy bộ làm đau gối", "nhảy thì đau", "bơi thì được, chạy bộ thì không", "tập tạ bị cấm", "đầu gối đau khi chạy"],
+    CARE: ["gọi điện thì quá sức", "đi thăm cuối tuần là không thể"],
+  },
+  ja: {
+    BODY: ["ランニングは膝が痛い", "ジャンプは禁止です", "水泳は大丈夫、ランニングはダメ", "スクワットは無理"],
+    CARE: ["電話は負担が大きい", "週末の訪問は無理"],
+  },
+};
+
+/** Mixed phrasings: an English part the parser reads ({t} must be excluded) beside a non-English one it can't; the confirm must still be raised. */
+export const POSTFIX_MIXED: readonly (PostfixTemplate & { lang: "vi" | "ja" })[] = [
+  { text: "{t} hurts, nhảy cũng đau", cues: ["hurts"], lang: "vi" },
+  { text: "bơi thì được, {t} not allowed", cues: ["not"], lang: "vi" },
+  { text: "{t} is out, ジャンプも痛い", cues: ["is out"], lang: "ja" },
+];
+
+// ═══ Family K, sub-class "vocab": how people say it (the hardening round) ═══
+
+/**
+ * One phrasing of K's vocab sub-class. As PostfixTemplate; `quiet`: words of
+ * the phrasing that a kind's own words hold but the reader takes as part of
+ * its cue, never a term ("flare up" holds "up", which "Set up what you need"
+ * holds too): the generator's self-check leaves them out, nothing else.
+ */
+export interface VocabTemplate extends PostfixTemplate {
+  quiet?: readonly string[];
+}
+
+/**
+ * K's vocab sub-class (the hardening round, contracts §19; the verifier's
+ * still-open #3 and its recommendation to R7: K's postfix recall used a
+ * frozen copy of the lexicon's own cue list, so 100% measured sentence
+ * shape, not vocabulary). These phrasings are written from how people
+ * describe an injury or a limit (the verifier's 40 fresh BODY probes, its 19
+ * misses among them, and more of their kind), not copied from
+ * roadmap-lexicon.ts: a word here the reader doesn't know is a K miss.
+ * Slots and `cues` as POSTFIX_TEMPLATES (a label per phrasing; one whose only
+ * label it is must exclude every kind it names). Frozen here, so the corpus
+ * never moves with the lexicon. Since §19 the reader only pre-fills the
+ * confirm (the gate holds every unsafe kind on a BODY or CARE plan with any
+ * constraints), so a miss here costs a pre-ticked box, not safety; the bar
+ * still holds it to 100%.
+ */
+export const VOCAB_TEMPLATES: Readonly<Record<"BODY" | "CARE", readonly VocabTemplate[]>> = {
+  BODY: [
+    // A cause before a pain word.
+    { text: "{t} causes me knee pain", cues: ["causes … pain"] },
+    { text: "{t} gives me shin pain", cues: ["gives … pain"] },
+    { text: "{t} = pain", cues: ["= pain"] },
+    { text: "{t} -> pain", cues: ["= pain"] },
+    { text: "{t} triggers my back pain", cues: ["triggers … pain"] },
+    { text: "{t} and {t2} bring on knee pain", cues: ["brings on … pain"] },
+    { text: "{t} leads to hip pain", cues: ["leads to … pain"] },
+    // A verb after its term.
+    { text: "{t} aggravates my back", cues: ["aggravates"] },
+    { text: "{t} and {t2} aggravate my knee", cues: ["aggravate"] },
+    { text: "{t} aggravated my achilles", cues: ["aggravated"] },
+    { text: "{t} bothers my shoulder", cues: ["bothers"] },
+    { text: "{t} and {t2} bother my knees", cues: ["bother"] },
+    { text: "{t} bothered my hip", cues: ["bothered"] },
+    { text: "{t} irritates my knee", cues: ["irritates"] },
+    { text: "{t} and {t2} irritate my shins", cues: ["irritate"] },
+    { text: "{t} flares up my back", cues: ["flares up"], quiet: ["up"] },
+    { text: "my back can flare up after {t}", cues: ["flare up"], quiet: ["up"] },
+    { text: "{t} kills my knees", cues: ["kills my"] },
+    { text: "{t} and {t2} kill my knees", cues: ["kill my"] },
+    { text: "{t} wrecks my back", cues: ["wrecks my"] },
+    { text: "{t} and {t2} wreck my knees", cues: ["wreck my"] },
+    { text: "{t} makes my knee swell", cues: ["swell"] },
+    { text: "my ankle swells after {t}", cues: ["swells"] },
+    { text: "swelling in my knee after {t}", cues: ["swelling"] },
+    { text: "my knee gets swollen from {t}", cues: ["swollen"] },
+    { text: "my knees get sore from {t}", cues: ["sore"] },
+    { text: "my knee will ache after {t}", cues: ["ache"] },
+    // A verdict after its term.
+    { text: "{t} is a bad idea with my shin splints", cues: ["bad idea", "splints"] },
+    { text: "{t} is a bad idea for me", cues: ["bad idea"] },
+    { text: "{t} is bad for my knees", cues: ["bad for"] },
+    { text: "{t} is a problem for my back", cues: ["is a problem"] },
+    { text: "{t} and {t2} are a problem", cues: ["are a problem"] },
+    { text: "{t} has been ruled out", cues: ["ruled out"] },
+    { text: "{t} is something I can't do right now", cues: ["can't"] },
+    // A negation before its term.
+    { text: "never {t} again", cues: ["never"] },
+    { text: "I shouldn't do {t} until my knee heals", cues: ["shouldn't"] },
+    { text: "I mustn't do {t}", cues: ["mustn't"] },
+    { text: "I'm not supposed to do {t}", cues: ["not supposed to"] },
+    { text: "stay away from {t} for six weeks", cues: ["stay away from"] },
+    { text: "keep away from {t}", cues: ["keep away from"] },
+    { text: "steer clear of {t}", cues: ["steer clear of"] },
+    { text: "stay off {t} for a month", cues: ["stay off"] },
+    { text: "keep off {t} for now", cues: ["keep off"] },
+    { text: "they want me off {t} for now", cues: ["me off"] },
+    // An injury word, and who said it.
+    { text: "I get shin splints from {t}", cues: ["splints"] },
+    { text: "Knee surgery two weeks ago. {t} and {t2}.", cues: ["surgery"] },
+    { text: "Operation last month. {t} for now.", cues: ["operation"] },
+    { text: "Hip replacement last year. {t} and {t2}.", cues: ["replacement"] },
+    { text: "hamstring strain from {t}", cues: ["strain"] },
+    { text: "hernia from {t}", cues: ["hernia"] },
+    { text: "tendinitis from {t}", cues: ["tendinitis"] },
+    { text: "tendonitis from {t}", cues: ["tendonitis"] },
+    { text: "plantar fasciitis from {t}", cues: ["fasciitis"] },
+    { text: "Arthritis in my knees. {t} and {t2}.", cues: ["arthritis"] },
+    { text: "sciatica from {t}", cues: ["sciatica"] },
+    { text: "I broke my ankle while {t}", cues: ["broke"] },
+    { text: "broken wrist from {t}", cues: ["broken"] },
+    { text: "dislocated my shoulder while {t}", cues: ["dislocated"] },
+    { text: "ruptured my achilles while {t}", cues: ["rupture"] },
+    { text: "concussion from {t}", cues: ["concussion"] },
+    { text: "{t}? My doctor said absolutely not.", cues: ["doctor said", "not"] },
+    { text: "{t}? Doctor said no.", cues: ["doctor said", "no"] },
+    { text: "my doctor said skip {t}", cues: ["doctor said"] },
+    { text: "doctor told me to skip {t}", cues: ["doctor told me"] },
+    { text: "the doctor wants me to skip {t}", cues: ["doctor wants"] },
+    { text: "physio says skip {t}", cues: ["physio says"] },
+    { text: "my physio said to skip {t}", cues: ["physio said"] },
+    { text: "physio told me to skip {t}", cues: ["physio told me"] },
+    { text: "physio told me to stay away from {t}", cues: ["physio told me", "stay away from"] },
+    { text: "my physio wants less {t}", cues: ["physio wants"] },
+    { text: "GP says skip {t}", cues: ["gp says"] },
+    { text: "GP said to skip {t}", cues: ["gp said"] },
+    { text: "surgeon says skip {t}", cues: ["surgeon says"] },
+    { text: "surgeon said to skip {t}", cues: ["surgeon said"] },
+    // A state word before a body part.
+    { text: "Bad knees. {t} and {t2}.", cues: ["bad <body part>"] },
+    { text: "Dodgy left knee. {t}, {t2}.", cues: ["dodgy <body part>"] },
+    { text: "stiff lower back from {t}", cues: ["stiff <body part>"] },
+    // A mirror of a negative verdict.
+    { text: "{t} is a no-go and so is {t2}", cues: ["no-go"] },
+    { text: "{t} hurts, {t2} too", cues: ["hurts"] },
+    { text: "{t} hurts. So does {t2}.", cues: ["hurts"] },
+    { text: "{t} is out and so is {t2}", cues: ["is out"] },
+    // The safe side: what the user clears or keeps stays in.
+    { text: "No problems with {o} or {o2}.", cues: [] },
+    { text: "no problems with {o} or {o2}, but {t} hurts", cues: ["hurts"] },
+    { text: "no pain when {o}, {t} is out", cues: ["is out"] },
+    { text: "{o} never causes me pain, {t} hurts", cues: ["hurts"] },
+    { text: "{o} is no problem, {t} is out", cues: ["is out"] },
+    { text: "can't do {t}, can do {o}", cues: ["can't"] },
+    { text: "no {t} so I can do {o}", cues: ["no"] },
+    { text: "{o} doesn't bother me but {t} does hurt", cues: ["hurt"] },
+    { text: "{o} used to hurt but it's fine now, {t} is out", cues: ["is out"] },
+    { text: "weekends are off limits for {o}, {t} hurts", cues: ["hurts"] },
+    // More verbs and verdicts after their term.
+    { text: "{o} is fine, it's {t} that kills me", cues: ["kills me"] },
+    { text: "{t} is killing me", cues: ["killing me"] },
+    { text: "{t} and {t2} kill me", cues: ["kill me"] },
+    { text: "{t} makes my back spasm", cues: ["spasm"] },
+    { text: "spasms in my calves after {t}", cues: ["spasms"] },
+    { text: "my knee gives out when {t}", cues: ["gives out"] },
+    { text: "my ankles give out during {t}", cues: ["give out"] },
+    { text: "{t} is hard on my knees", cues: ["hard on"] },
+    { text: "{t} is tough on my joints", cues: ["tough on"] },
+    { text: "{t} is brutal on my wrists", cues: ["brutal on"] },
+    { text: "{t} is rough on my back", cues: ["rough on"] },
+  ],
+  CARE: [
+    { text: "{t} is a problem for me", cues: ["is a problem"] },
+    { text: "{t} has been ruled out", cues: ["ruled out"] },
+    { text: "{t} is a bad idea right now", cues: ["bad idea"] },
+    { text: "I shouldn't take on {t}", cues: ["shouldn't"] },
+    { text: "never any {t} on weekdays", cues: ["never"] },
+    { text: "stay away from {t} for now", cues: ["stay away from"] },
+    { text: "{t} is out and so is {t2}", cues: ["is out"] },
+    { text: "no problems with {o}, {t} is too much", cues: ["too much"] },
+  ],
+};
+
+/**
+ * The fill over-reach (the verifier's still-open #1 and #4): a word the plan
+ * fills into a label (a Domain name, an aim word) read after its cue, carried
+ * or in a state cue's scope must never leave a kind out through that fill.
+ * Field lines ({D}, {D2}: the Field run's Domain names; {A}: a content word of
+ * its aim that no Field type's own words hold) join the over-exclusion lines
+ * (0 Field kinds excluded). The K lines are keep cases on their own aim:
+ * {f} is the aim word, and every kind the aim fills with it must stay in.
+ */
+export const FILL_OVER_FIELD: readonly string[] = [
+  "{D} is too hard for me, I need extra time on it.",
+  "{D} hurts my brain",
+  "{D} hurts, {D2} is fine.",
+  "{D} is too much on weekdays.",
+  "{D} is a problem for me",
+  "{D}? Not on weekdays.",
+  "{D} is painful",
+  "{D} kills my motivation",
+  "{D} is a bad idea right now",
+  "{D} and {D2} are out of the question this month",
+  "Knee injury. {D} and {D2}.",
+  "Knee injury, {D} is hard",
+  "{A} is too much",
+  "{A} stuff is off the table",
+];
+
+export const FILL_OVER_KEEP: readonly { track: "BODY" | "CARE"; aim: string; f: string; text: string; cues: readonly string[] }[] = [
+  { track: "BODY", aim: "Feel fitter by summer", f: "fitter", text: "Knee injury. I'd like to get fitter.", cues: ["injury"] },
+  { track: "BODY", aim: "Feel fitter by summer", f: "fitter", text: "Knee injury, I'd like to get fitter", cues: ["injury"] },
+  { track: "BODY", aim: "Swim 1 km without stopping", f: "Swimming", text: "Sprained ankle. Swimming three times a week is my plan.", cues: ["sprain"] },
+  { track: "CARE", aim: "Support Mum's care at home", f: "Mum's care", text: "Mum's care is too much for me alone", cues: ["too much"] },
+  { track: "CARE", aim: "Support Mum's care at home", f: "Mum's care", text: "Mum's care? Too much.", cues: ["too much"] },
+  { track: "CARE", aim: "Support Mum's care at home", f: "Mum's care", text: "Back pain. Mum's care too.", cues: ["pain"] },
+];
+
+// ═══ Family K, sub-class "suggest": a suggestion never blocks (the safety-gaps round) ═══
+
+/**
+ * One phrasing of K's suggest sub-class (contracts §19, the lead's decision 7:
+ * what the reader names is a pre-ticked suggestion, never a block, and it no
+ * longer suggests what the user didn't say to avoid). {l} is an activity the
+ * phrasing holds to a limit ("more than twice a week", "two days in a row",
+ * "over 5K", "every day" judged "too much"): the user can still do it, so
+ * every kind only {l} names must stay in. {t} is an activity it still
+ * excludes (recall 100%, as every K case). `keep`: words of the phrasing that
+ * name kinds the user never said to avoid (advice to go gently, "easy"; a
+ * word too general to name a type, "sessions"): every kind only they name
+ * must stay in too. `quiet` and `cues` as VocabTemplate's (the generator's
+ * self-check leaves `quiet` and `keep` words out). Frozen here, so the corpus
+ * never moves with the lexicon. Each cue label is one older cases already
+ * fire, so H6's per-cue item reads only those.
+ */
+export interface SuggestTemplate extends VocabTemplate {
+  keep?: readonly string[];
+}
+
+export const SUGGEST_TEMPLATES: Readonly<Record<"BODY" | "CARE", readonly SuggestTemplate[]>> = {
+  BODY: [
+    // A limit, not an exclusion (the verifier's "Shin splints flare up if I run more than twice a week").
+    { text: "no {l} more than twice a week", cues: ["no"] },
+    { text: "I can't do {l} more than three times a week", cues: ["can't"] },
+    { text: "{l} more than twice a week hurts my knee", cues: ["hurts"] },
+    { text: "my shins flare up if I do {l} more than twice a week", cues: ["flare up"], quiet: ["up"] },
+    { text: "no {l} two days in a row", cues: ["no"] },
+    { text: "max 20 minutes of {l}", cues: [] },
+    { text: "{l} over 5K hurts my knee", cues: ["hurts"] },
+    { text: "{l} daily is too much for my knees", cues: ["too much"] },
+    { text: "no more than two sessions of {l} a week", cues: ["no"], quiet: ["sessions"], keep: ["sessions"] },
+    // A limit beside a later exclusion: the exclusion stands.
+    { text: "no {l} more than twice a week, no {t}", cues: ["no"] },
+    { text: "{l} more than twice a week hurts, {t} is out", cues: ["hurts", "is out"] },
+    // Advice to go gently names nothing (the verifier's "My GP said to take it easy for a month").
+    { text: "My GP said to take it easy for a month", cues: ["gp said"], quiet: ["easy"], keep: ["easy"] },
+    { text: "Take it easy, no {t}", cues: ["no"], quiet: ["easy"], keep: ["easy"] },
+    { text: "physio says go easy for now, no {t}", cues: ["physio says", "no"], quiet: ["easy"], keep: ["easy"] },
+    // A word too general to name a type ("No timed practice" never names Writing practice).
+    { text: "No sessions after 9pm", cues: ["no"], quiet: ["sessions"], keep: ["sessions"] },
+    { text: "no {t} sessions", cues: ["no"], quiet: ["sessions"], keep: ["sessions"] },
+  ],
+  CARE: [
+    { text: "{l} every day is too much", cues: ["too much"] },
+    { text: "no {l} more than twice a month", cues: ["no"] },
+    { text: "can't manage {l} more than twice a month, no {t}", cues: ["can't", "no"] },
+    { text: "No sessions on Sundays", cues: ["no"], quiet: ["sessions"], keep: ["sessions"] },
+  ],
+};
+
+/**
+ * Field lines the suggest sub-class adds to the over-exclusion lines (0 Field
+ * kinds excluded): a body sentence never names a Field kind (knowledge
+ * practice is never held by a body cue: "No writing by hand, I have RSI in my
+ * wrist"), a word too general to name a type names none ("No group study"),
+ * and a limit names nothing ("Problem sets more than twice a week is too
+ * much"). The verifier's over-reaches, and more of their kind.
+ */
+export const FIELD_SUGGEST_LINES: readonly string[] = [
+  "No writing by hand, I have RSI in my wrist.",
+  "Writing by hand hurts my wrist.",
+  "No reading on screens, my eyes are strained.",
+  "Knee injury. Writing and reading.",
+  "Back pain, so no long writing sessions.",
+  "No group study.",
+  "No practice on Sundays.",
+  "No study sessions after 9pm.",
+  "Problem sets more than twice a week is too much.",
+  "No timed practice more than once a week.",
+  "Mock tests more than once a month are too much.",
+];
+
 // ═══ Family E, sub-class "clash": one-source claims the flags must hide ═══════
 
 /**

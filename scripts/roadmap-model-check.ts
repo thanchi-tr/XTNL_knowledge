@@ -88,12 +88,25 @@
  * running not ok" → running; "bad knee, so no running; swimming is fine; no
  * jumping either" → running, jumping), through the filter on the verifier's
  * "Run a sub-50 10K" probe.
+ *
+ * Revision 4 fix round 4 (the constraint reader's unsafe-side misses): a
+ * negation or a pain word after its term with no cue before it ("swimming is
+ * fine, running not allowed", "running hurts my knee", "jumping is painful",
+ * "Running, jumping, pivoting are out"; constraint.after), a cue in an
+ * earlier sentence ("Knee injury. Running hurts.", "I tore my ACL. Running,
+ * jumping, pivoting."; constraint.carry), "nothing high-impact"
+ * (constraint.compound), a pronoun or an elliptical negation; the safe side
+ * ("nothing but swimming", "swimming doesn't hurt", "swimming fine and
+ * running ok", "… and so is cycling", "I love cycling, running hurts"); each
+ * rule off restores the old reading; non-English never parses and always
+ * raises the confirm.
  */
 import "./_no-model";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { geminiClientOrNull, hasGeminiKey } from "../src/lib/gemini";
 import {
+  ACTIVITY_REASON_MAX,
   ALARM_CORPUS_MAX,
   BLOCKING_FLAGS,
   PACK_MAX_DOMAINS,
@@ -112,6 +125,7 @@ import {
   SEED_BASE,
   SEED_OFFSETS,
   UNVERIFIED_ALARM,
+  constraintCuesOf,
   countsTowardDraftCap,
   domainName,
   integrityVerdictOf,
@@ -126,9 +140,23 @@ import {
   type PlanWindow,
   type ValidatedDraft,
 } from "../src/lib/roadmap-types";
-import { CLAIM_WORDS } from "../src/lib/roadmap-lexicon";
+import { CLAIM_WORDS, CONSTRAINT_AUTHORITY_CUES, CONSTRAINT_CUES_AFTER, CONSTRAINT_MORE_CUES, CONSTRAINT_MORE_CUES_AFTER, CONSTRAINT_MORE_INJURY_CUES } from "../src/lib/roadmap-lexicon";
 import { CATALOG_GLOSS, buildEvidencePack, domainIdsHashOf, inputHashMaterial, methodsForRun, packUserContent, systemInstructionOf, type EvidenceDomain, type EvidenceInput } from "../src/lib/roadmap-evidence";
-import { BODY_SAFE_KINDS, CATALOG, catalogKindsFor, catalogLabelOf, catalogOriginOf, catalogTrackOf, type CatalogKey } from "../src/lib/roadmap-catalog";
+import {
+  BODY_SAFE_KINDS,
+  CATALOG,
+  activityGateOf,
+  allowedKindsFor,
+  answerActivityCard,
+  catalogKindsFor,
+  catalogLabelOf,
+  catalogOriginOf,
+  catalogTrackOf,
+  constraintsStateOfIntake,
+  cueGatedKindsOf,
+  cueSafeKindsOf,
+  type CatalogKey,
+} from "../src/lib/roadmap-catalog";
 import { CORPUS_DIR, keysOnlyContextOf, packOf, readCorpus, readProbeFixtures } from "./fixtures/roadmap-corpus/corpus";
 import {
   CALL_REFUSED,
@@ -173,7 +201,10 @@ import {
   keysOnlySchemaOf,
   negatedTermsOf,
   normaliseReportPath,
+  packRunOf,
+  runExclusionsOf,
   sessionConfirmNeeded,
+  unresolvedAimConflictOf,
   validateKeysOnly,
   bulkKeepAllowed,
   checkLabel,
@@ -294,10 +325,35 @@ function legacyPackOf(pack: EvidencePack, windows: readonly PlanWindow[] | undef
   return { ...pack, milestoneCount: Math.max(1, (windows ?? []).length) };
 }
 
-/** A v3 run: the pack (depth 12 on a Field Area unless set), its schema, and the KeysOnlyContext R4 builds (brands made here, as R4 makes them). */
-function setup3(over: Partial<Intake> = {}, opts: { evidence?: EvidenceDomain[]; areaName?: string; gapsLive?: boolean } = {}) {
-  const intake = intakeOf({ depth: over.fieldId === null ? null : 12, dateMode: "REALISTIC", ...over });
+/**
+ * The safety-gaps round (contracts §19): the intake with the activity card answered under its current words, as the user's
+ * Save sends it (ActivityCardAnswer): `avoid` ticked, or "preticks" (the card's pre-ticked suggestions left ticked, and any
+ * stored AVOID), or "Nothing to avoid" when nothing is ticked. The suggestions are the reader's over the run's kinds with the
+ * plan's fill, as buildEvidencePack reads them.
+ */
+function cardOf(intake: Intake, domainNames: readonly string[] = []) {
+  const track = catalogTrackOf(intake);
+  const exam = examAnswerOf(intake);
+  const base = { track, exam, practicesAllowed: intake.fieldId == null || intake.practicesAllowed !== false };
+  const offered = [...catalogKindsFor("PRACTICE", base), ...catalogKindsFor("STEP", base), ...catalogKindsFor("CHECKPOINT", base)];
+  const suggestions = constraintExclusionsOf(intake.constraints, offered, { track, domains: domainNames, aim: intake.aim, exam: exam ? intake.examLabel : null });
+  const state = constraintsStateOfIntake(intake, suggestions);
+  return { state, gate: allowedKindsFor(state, intake.activities ?? null) };
+}
+
+function answeredIntake(intake: Intake, avoid: "preticks" | readonly CatalogKey[] = "preticks", domainNames: readonly string[] = []): Intake {
+  const { state, gate } = cardOf(intake, domainNames);
+  const ticks = avoid === "preticks" ? gate.rows.filter((r) => r.prefill === "AVOID" || r.state === "AVOID").map((r) => r.kind) : [...avoid];
+  const res = answerActivityCard(intake.activities ?? null, state, { key: state.key, avoid: ticks, nothingToAvoid: ticks.length === 0 }, TODAY);
+  if (!res.ok) throw new Error(`answeredIntake: ${res.error}`);
+  return { ...intake, activities: res.value };
+}
+
+/** A v3 run: the pack (depth 12 on a Field Area unless set), its schema, and the KeysOnlyContext R4 builds (brands made here, as R4 makes them). `answer`: the activity card answered first (answeredIntake). */
+function setup3(over: Partial<Intake> = {}, opts: { evidence?: EvidenceDomain[]; areaName?: string; gapsLive?: boolean } = {}, answer?: "preticks" | readonly CatalogKey[]) {
+  const asked = intakeOf({ depth: over.fieldId === null ? null : 12, dateMode: "REALISTIC", ...over });
   const evidence = opts.evidence ?? EVIDENCE;
+  const intake = answer ? answeredIntake(asked, answer, evidence.filter((d) => asked.domainIds.includes(d.id)).map((d) => d.name)) : asked;
   const areaName = opts.areaName ?? "Actuarial";
   const pack = buildEvidencePack({ intake, areaName, domains: evidence, ...(opts.gapsLive !== undefined ? { gapsLive: opts.gapsLive } : {}) });
   const names: Record<string, string> = {};
@@ -483,9 +539,13 @@ async function main() {
     );
     const knee = setup3({ fieldId: null, track: "BODY", domainIds: [], depth: null, constraints: "knee injury, no running" }, { areaName: "Body" }).schema;
     const bodyKinds = (((stageOf(knee, "STAGE_1").properties as M).practices as M).items as M).properties as M;
-    check("the constraint filter empties the run's enum of the excluded kinds (no running: no harder or longer session)", !JSON.stringify(bodyKinds).includes("HARDER_SESSION") && !JSON.stringify(bodyKinds).includes("LONGER_SESSION") && JSON.stringify(bodyKinds).includes("EASY_SESSION"));
+    check("the activity gate empties the run's enum of the kinds it holds (a BODY plan before the card's answer: no harder or longer session)", !JSON.stringify(bodyKinds).includes("HARDER_SESSION") && !JSON.stringify(bodyKinds).includes("LONGER_SESSION") && JSON.stringify(bodyKinds).includes("EASY_SESSION"));
+    // The safety-gaps round (contracts §19, decision 7): the reader's "No teacher" is a suggestion (the card's pre-tick), never a
+    // block, so the run still offers the type until the user ticks it.
     const coach = setup3({ constraints: "No teacher; I practise alone" }).schema;
-    check("\"No teacher\" leaves WITH_A_PARTNER out of the practice enum", !JSON.stringify(coach).includes("WITH_A_PARTNER") && JSON.stringify(noExam).includes("WITH_A_PARTNER"));
+    check("\"No teacher\" on a Field plan keeps WITH_A_PARTNER in the practice enum (a suggestion never blocks)", JSON.stringify(coach).includes("WITH_A_PARTNER") && JSON.stringify(noExam).includes("WITH_A_PARTNER"));
+    const coachTicked = setup3({ constraints: "No teacher; I practise alone" }, {}, "preticks").schema;
+    check("… and once the user leaves its pre-tick ticked and saves the card, it leaves (the user's AVOID)", !JSON.stringify(coachTicked).includes("WITH_A_PARTNER"));
 
     // The gap slot: only with ROADMAP_GAPS_LIVE (or the lead's override) AND the user's switch, on a Field Area.
     check("ROADMAP_GAPS_LIVE is false in this build (decision 51)", ROADMAP_GAPS_LIVE === false);
@@ -562,10 +622,69 @@ async function main() {
     eq("the keymap resolves D-keys to ids, server-side only", pack.keymap.domains, { D1: ID.prob, D2: ID.inf, D3: ID.calc, D4: ID.lin, D5: "cm1host0a1b2c3d4e5f6g7h8i" });
     eq("the run's facts: slots, depth, the unchosen keys, the exam answer, no gap slot", [pack.run.slots.length, pack.run.depth, pack.run.otherKeys, pack.run.exam, pack.run.gaps], [5, 12, ["D3", "D4", "D5"], true, false]);
     check(
-      "the run's enums are catalogKindsFor with the constraint exclusions left out",
-      JSON.stringify(pack.run.practiceKinds) === JSON.stringify(catalogKindsFor("PRACTICE", { track: "FIELD", exam: true, practicesAllowed: true, excluded: pack.run.exclusions.map((e) => e.kind) })) &&
-        JSON.stringify(pack.run.stepKinds) === JSON.stringify(catalogKindsFor("STEP", { track: "FIELD", exam: true, practicesAllowed: true, excluded: pack.run.exclusions.map((e) => e.kind) }))
+      "the run's enums are catalogKindsFor with the gate's blocked kinds left out (run.blocked)",
+      JSON.stringify(pack.run.practiceKinds) === JSON.stringify(catalogKindsFor("PRACTICE", { track: "FIELD", exam: true, practicesAllowed: true, excluded: pack.run.blocked })) &&
+        JSON.stringify(pack.run.stepKinds) === JSON.stringify(catalogKindsFor("STEP", { track: "FIELD", exam: true, practicesAllowed: true, excluded: pack.run.blocked }))
     );
+
+    // The safety-gaps round (contracts §19.5, R3's PENDING line): the run's enums leave out every kind the activity gate blocks
+    // (PENDING: waiting on the card's answer under the current words; AVOID: the user's own), and only those: the reader's
+    // exclusions are the card's pre-ticks (decision 7), never a block.
+    {
+      const runKinds = (p: { run: { practiceKinds: CatalogKey[]; stepKinds: CatalogKey[]; checkpointKinds: CatalogKey[] } }) => [...p.run.practiceKinds, ...p.run.stepKinds, ...p.run.checkpointKinds];
+      const bodyOver = { fieldId: null, track: "BODY" as const, domainIds: [], depth: null, aim: "Run a sub-50 10K" };
+      const asked = setup3({ ...bodyOver, constraints: null }, { areaName: "Body" });
+      eq(
+        "a BODY plan with empty constraints asks anyway: before the card's answer the run offers only the safe practices, and no harder, longer or strength session, full attempt or performance check",
+        [asked.pack.run.practiceKinds, asked.pack.run.blocked],
+        [["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION"], ["HARDER_SESSION", "LONGER_SESSION", "STRENGTH_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK"]]
+      );
+      check("… run.blocked is exactly activityGateOf(intake).blocked on the kinds the run would offer", JSON.stringify(asked.pack.run.blocked) === JSON.stringify(activityGateOf(asked.intake).blocked.filter((k) => k !== "MOCK_TEST" && k !== "EXAM_DAY")));
+      const none = setup3({ ...bodyOver, constraints: null }, { areaName: "Body" }, []);
+      check("after \"Nothing to avoid\" under the current words, every BODY kind is offered and nothing is blocked", none.pack.run.blocked?.length === 0 && ["HARDER_SESSION", "LONGER_SESSION", "STRENGTH_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK"].every((k) => runKinds(none.pack).includes(k as CatalogKey)), JSON.stringify(none.pack.run.blocked));
+      const avoidStrength = setup3({ ...bodyOver, constraints: null }, { areaName: "Body" }, ["STRENGTH_SESSION"]);
+      eq("after ticking Strength session, only the user's AVOID is left out", avoidStrength.pack.run.blocked, ["STRENGTH_SESSION"]);
+      const stale = buildEvidencePack({ intake: { ...none.intake, constraints: "torn ACL, surgery next month" }, areaName: "Body", domains: [] });
+      eq("an answer given under other words is no answer (the words changed: the card asks again): the gated kinds are blocked again", stale.run.blocked, ["HARDER_SESSION", "LONGER_SESSION", "STRENGTH_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK"]);
+      check("… and an AVOID stands across the words' change", buildEvidencePack({ intake: { ...avoidStrength.intake, constraints: "torn ACL" }, areaName: "Body", domains: [] }).run.blocked?.includes("STRENGTH_SESSION") === true);
+      check(
+        "the card's answer changes the run's glossary, so the inputHash material changes and no reply drafted before it is reused",
+        inputHashMaterial(asked.pack, asked.intake, ROADMAP_MODEL, ROADMAP_SAMPLES) !== inputHashMaterial(none.pack, none.intake, ROADMAP_MODEL, ROADMAP_SAMPLES) && packUserContent(none.pack).includes("HARDER_SESSION") && !packUserContent(asked.pack).includes("HARDER_SESSION")
+      );
+      const knee = setup3({ ...bodyOver, constraints: "knee injury, no running" }, { areaName: "Body" });
+      eq(
+        "\"knee injury, no running\" before the answer: run.exclusions lists the blocked kinds its words name, with the word (what the run leaves out because of them)",
+        knee.pack.run.exclusions,
+        [{ kind: "HARDER_SESSION", word: "running" }, { kind: "LONGER_SESSION", word: "running" }, { kind: "FULL_ATTEMPT", word: "running" }, { kind: "PERFORMANCE_CHECK", word: "running" }]
+      );
+      check("… while SET_UP (named through the aim, never gated) stays offered: a suggestion never blocks", runKinds(knee.pack).includes("SET_UP"));
+      const kneeTicked = setup3({ ...bodyOver, constraints: "knee injury, no running" }, { areaName: "Body" }, "preticks");
+      check(
+        "… once the user saves the card with its pre-ticks, the running kinds and SET_UP stay out (the user's AVOID) and the strength session comes back",
+        ["HARDER_SESSION", "LONGER_SESSION", "SET_UP", "FULL_ATTEMPT", "PERFORMANCE_CHECK"].every((k) => !runKinds(kneeTicked.pack).includes(k as CatalogKey)) && runKinds(kneeTicked.pack).includes("STRENGTH_SESSION"),
+        JSON.stringify(runKinds(kneeTicked.pack))
+      );
+      const care = setup3({ fieldId: null, track: "CARE", domainIds: [], depth: null, aim: "Look after my dad well", constraints: "Weekends only." }, { areaName: "Care" });
+      eq("a CARE plan before the answer offers its two safe practices (decision 2), never a dead end", care.pack.run.practiceKinds, cueSafeKindsOf("CARE"));
+      const craftArea = { fieldId: null, track: "CRAFT" as const, domainIds: [], depth: null, aim: "Play Clair de Lune" };
+      check("a CRAFT plan whose words carry no cue is not gated: every craft practice is offered", setup3({ ...craftArea, constraints: null }, { areaName: "Piano" }).pack.run.blocked?.length === 0);
+      eq(
+        "a CRAFT plan with a cue (\"wrist RSI, keep sessions short\") holds its gated kinds until the answer",
+        setup3({ ...craftArea, constraints: "wrist RSI, keep sessions short" }, { areaName: "Piano" }).pack.run.blocked,
+        cueGatedKindsOf("CRAFT").filter((k) => k !== "MOCK_TEST")
+      );
+      const field = setup3({ constraints: "No Inference for now." });
+      check(
+        "on a Field plan the reader's \"No Inference for now.\" blocks nothing: every Field kind stays in the enums (the verifier's 19), and run.exclusions is empty",
+        field.pack.run.blocked?.length === 0 && field.pack.run.exclusions.length === 0 && JSON.stringify(field.pack.run.practiceKinds) === JSON.stringify(catalogKindsFor("PRACTICE", { track: "FIELD", exam: false, practicesAllowed: true })),
+        JSON.stringify(field.pack.run.exclusions)
+      );
+      // The run's enums and the gate agree on every plan: no blocked kind offered, every offered kind placeable.
+      const cases = [asked, none, avoidStrength, knee, kneeTicked, care, field, setup3({ ...craftArea, constraints: "wrist RSI" }, { areaName: "Piano" })];
+      check("on every plan above, no kind the gate blocks is in the run's enums", cases.every((c) => runKinds(c.pack).every((k) => !activityGateOf(c.intake).blocked.includes(k))));
+      const old = packRunOf({ run: { ...knee.pack.run, blocked: undefined } });
+      check("packRunOf reads run.blocked back, and a pack written before it reads its exclusions' kinds", JSON.stringify(packRunOf(knee.pack)?.blocked) === JSON.stringify(knee.pack.run.blocked) && JSON.stringify(old?.blocked) === JSON.stringify(knee.pack.run.exclusions.map((x) => x.kind)));
+    }
 
     const many: EvidenceDomain[] = Array.from({ length: 50 }, (_, i) => ({ id: `cm1many${String(i).padStart(2, "0")}b2c3d4e5f6g7h8`, name: `Domain ${i}`, fieldId: ID.field, cards: i, atSix: 0, atTop: 0, chosen: false }));
     const big = setup3({ domainIds: [many[3].id] }, { evidence: many }).pack;
@@ -1703,11 +1822,18 @@ async function main() {
     check("an examOnly kind on a non-exam aim is ENUM under the run's schema", integrityOf(eo, examOnly.schema).verdict === "REJECTED");
     const eov = validateKeysOnly(eo, { ...examOnly.ctx, schema: permissive(examOnly.schema, ["MOCK_TEST"]) });
     check("… and past it, the validator drops it ('only for an aim with an exam')", eov.milestones[0].items.every((i) => i.catalogKey !== "MOCK_TEST") && eov.report.dropped.some((e) => /only for an aim with an exam/.test(e.reason)));
-    const noTeacher = setup3({ syllabus: OUTLINE, constraints: "No teacher" });
+    // The safety-gaps round (decision 7): the run leaves out what the user's words name and the gate blocks; a suggestion alone
+    // never drops a pick. "No teacher" ticked on the card (the user's AVOID) is dropped past a permissive schema; untouched, it stays.
+    const noTeacher = setup3({ syllabus: OUTLINE, constraints: "No teacher" }, {}, "preticks");
     const nt = cleanReply();
     ((nt.stages as M).FOUNDATION as M).practices = [{ kind: "WITH_A_PARTNER" }];
     const ntv = validateKeysOnly(nt, { ...noTeacher.ctx, schema: permissive(noTeacher.schema, ["WITH_A_PARTNER"]) });
-    check("a kind the constraint filter excluded is dropped as CONSTRAINT (defence in depth)", ntv.milestones[0].items.every((i) => i.catalogKey !== "WITH_A_PARTNER") && ntv.report.dropped.some((e) => e.code === "CONSTRAINT"));
+    check("a kind the run left out because of the user's words (their AVOID) is dropped as CONSTRAINT (defence in depth)", ntv.milestones[0].items.every((i) => i.catalogKey !== "WITH_A_PARTNER") && ntv.report.dropped.some((e) => e.code === "CONSTRAINT"));
+    const suggested = setup3({ syllabus: OUTLINE, constraints: "No teacher" });
+    const sv0 = validateKeysOnly(nt, suggested.ctx);
+    check("… while the same words unanswered are only a suggestion: the pick stays, with no CONSTRAINT drop", sv0.milestones[0].items.some((i) => i.catalogKey === "WITH_A_PARTNER") && !sv0.report.dropped.some((e) => e.code === "CONSTRAINT") && (sv0.exclusions ?? []).length === 0);
+    const legacy = validateKeysOnly(nt, { ...suggested.ctx, pack: { ...suggested.pack, run: undefined } as unknown as typeof suggested.pack, schema: permissive(suggested.schema, ["WITH_A_PARTNER"]) });
+    check("… and a pack with no run facts reads the gate the same way (no drop by a suggestion alone)", legacy.milestones[0]?.items.some((i) => i.catalogKey === "WITH_A_PARTNER") === true && (legacy.exclusions ?? []).length === 0, JSON.stringify(legacy.exclusions));
     const salv = cleanReply();
     ((salv.stages as M).FOUNDATION as M).practices = [{ kind: "RECALL_DRILLS" }, { kind: "PROBLEM_SETS" }, { kind: "EXPLAIN_IT" }, { kind: "MISTAKE_REVIEW" }];
     const sv = validateKeysOnly(salv, s3.ctx);
@@ -1719,14 +1845,16 @@ async function main() {
     );
     const noFill = validateKeysOnly(cleanReply(), { ...s3.ctx, fill: undefined });
     check("without the branded fill a {domains} or {aim} label can't be written: that pick is dropped, never given invented words", itemsOf(noFill).every((i) => i.origin !== catalogOriginOf()) && noFill.report.dropped.some((e) => /couldn't write its name/.test(e.reason)));
-    const body = setup3({ fieldId: null, track: "BODY", domainIds: [], depth: null, constraints: "knee injury, no running" }, { areaName: "Body" });
+    // The safety-gaps round: a BODY plan asks before anything unsafe is offered, so these runs follow the card's answer (its
+    // pre-ticks left ticked: the running kinds avoided, the strength session released).
+    const body = setup3({ fieldId: null, track: "BODY", domainIds: [], depth: null, constraints: "knee injury, no running" }, { areaName: "Body" }, "preticks");
     const easy = { stages: Object.fromEntries(["STAGE_1", "STAGE_2", "STAGE_3", "STAGE_4", "STAGE_5"].map((s) => [s, { practices: [{ kind: "EASY_SESSION" }, { kind: "STRENGTH_SESSION" }], steps: [] }])) };
     const bv = validateKeysOnly(easy, { ...body.ctx, fill: undefined });
     check("a fill-free label (Easy session) needs no brand", itemsOf(bv).filter((i) => i.catalogKey === "EASY_SESSION").every((i) => i.label === "Easy session"));
     check("a BODY plan's milestones carry HEALTH_LINE", bv.milestones.every((m) => m.notes.includes("HEALTH_LINE")));
     eq("a BODY plan with constraints: the session picks are PENDING, quoting the constraints", bv.sessionPicks, { kinds: ["EASY_SESSION", "STRENGTH_SESSION"], constraints: "knee injury, no running", decision: "PENDING" });
     check("… and its exclusions name their word", JSON.stringify(bv.exclusions) === JSON.stringify([{ kind: "HARDER_SESSION", word: "running" }, { kind: "LONGER_SESSION", word: "running" }]));
-    const freeBody = setup3({ fieldId: null, track: "BODY", domainIds: [], depth: null, constraints: "   " }, { areaName: "Body" });
+    const freeBody = setup3({ fieldId: null, track: "BODY", domainIds: [], depth: null, constraints: "   " }, { areaName: "Body" }, []);
     check("a BODY plan with empty constraints needs no confirm", validateKeysOnly(easy, freeBody.ctx).sessionPicks === null);
     // Fix round (lens 1 minor, lane 0's SESSION_PICK_KINDS): the confirm holds FULL_ATTEMPT and PERFORMANCE_CHECK too. A cue-less
     // constraint ("pregnant") excludes nothing, so a Gemini "Performance check: <aim>" in the last stage must wait for the quoted confirm.
@@ -1735,9 +1863,11 @@ async function main() {
       if (!lk) check("the lose-8kg pack is in the corpus", false);
       else {
         const preg = { ...lk, input: { ...lk.input, intake: { ...lk.input.intake, constraints: "pregnant" } } };
-        const lpack = packOf(preg);
+        // The card answered ("Nothing to avoid": "pregnant" names no kind), so the run offers the activity itself.
+        const pregAnswered = { ...preg, input: { ...preg.input, intake: answeredIntake(preg.input.intake) } };
+        const lpack = packOf(pregAnswered);
         let n = 0;
-        const lctx = keysOnlyContextOf(preg, lpack, { makeId: () => `preg-${++n}` });
+        const lctx = keysOnlyContextOf(pregAnswered, lpack, { makeId: () => `preg-${++n}` });
         const lastSlot = lpack.run.slots[lpack.run.slots.length - 1];
         const stagesWith = (last: Record<string, unknown>) => ({ stages: Object.fromEntries(lpack.run.slots.map((s) => [s, s === lastSlot ? last : { practices: [], steps: [] }])) });
         const perf = validateKeysOnly(stagesWith({ practices: [], steps: [{ kind: "FULL_ATTEMPT" }, { kind: "SET_UP" }], checkpoint: "PERFORMANCE_CHECK" }), lctx);
@@ -1750,7 +1880,8 @@ async function main() {
         );
         const setUpOnly = validateKeysOnly(stagesWith({ practices: [], steps: [{ kind: "SET_UP" }] }), lctx);
         check("… SET_UP names preparation, not the activity: alone it raises no confirm", setUpOnly.report.integrity?.verdict === "CLEAN" && setUpOnly.sessionPicks === null);
-        const knee = validateKeysOnly(stagesWith({ practices: [{ kind: "EASY_SESSION" }], steps: [], checkpoint: "PERFORMANCE_CHECK" }), keysOnlyContextOf(lk, packOf(lk), { makeId: () => `knee-${++n}` }));
+        const lkAnswered = { ...lk, input: { ...lk.input, intake: answeredIntake(lk.input.intake, []) } };
+        const knee = validateKeysOnly(stagesWith({ practices: [{ kind: "EASY_SESSION" }], steps: [], checkpoint: "PERFORMANCE_CHECK" }), keysOnlyContextOf(lkAnswered, packOf(lkAnswered), { makeId: () => `knee-${++n}` }));
         check("… and on the pack's own \"knee injury, no running\" a practice and the checkpoint are both held", JSON.stringify(knee.sessionPicks?.kinds) === JSON.stringify(["EASY_SESSION", "PERFORMANCE_CHECK"]), JSON.stringify(knee.sessionPicks));
       }
     }
@@ -1801,7 +1932,8 @@ async function main() {
         ["injured, but cleared to run", []],
         ["injured but cleared to run", []],
         ["knee injury healed, running is fine", []],
-        ["injured last year, now fully recovered and running daily", ["last", "year"]],
+        // Hardening round: a time names nothing (CONSTRAINT_WHEN_WORDS), so "last" and "year" are no longer read.
+        ["injured last year, now fully recovered and running daily", []],
         ["injured last year and fully recovered", []],
         ["doctor says running is fine", []],
         ["back pain gone, lifting ok", []],
@@ -1881,7 +2013,8 @@ async function main() {
       eq("a release word that opens its clause clears it whole: \"knee injury, physio cleared me for running\" → []", words("knee injury, physio cleared me for running"), []);
       eq("… \"knee injury, physio said fine to run\" → []", words("knee injury, physio said fine to run"), []);
       eq("… \"knee injury fully healed and back to stretching\" → [] (a degree word names no activity)", words("knee injury fully healed and back to stretching"), []);
-      eq("… while \"knee injury, cycling is fine or running hurts\" names running, hurts (the clause named cycling, so it ends at 'or')", words("knee injury, cycling is fine or running hurts"), ["running", "hurts"]);
+      // Fix round 4: "hurts" is a cue after its term now (CONSTRAINT_CUES_AFTER), never a term itself; the release still ends at "or".
+      eq("… while \"knee injury, cycling is fine or running hurts\" names running (the clause named cycling, so it ends at 'or'; 'hurts' is a cue, no term)", words("knee injury, cycling is fine or running hurts"), ["running"]);
       // With the rule off, the cleared activities are named again (the release is what clears them, and nothing else changes).
       check(
         "with constraint.release off, \"knee injury, swimming ok, running not ok\" names swimming and running (the rule clears swimming only)",
@@ -1894,7 +2027,7 @@ async function main() {
         ["HARDER_SESSION", "LONGER_SESSION", "SET_UP", "FULL_ATTEMPT", "PERFORMANCE_CHECK"].every((k) => probe.some((x) => x.kind === k && x.word === "running")) && !probe.some((x) => x.kind === "EASY_SESSION"),
         JSON.stringify(probe)
       );
-      eq("… with the aim-conflict line's word", aimConflictOf("knee injury, swimming ok, running not ok", "Run a sub-50 10K"), { word: "running" });
+      eq("… with the aim-conflict line's word and the user's own sentence", aimConflictOf("knee injury, swimming ok, running not ok", "Run a sub-50 10K"), { word: "running", quote: "knee injury, swimming ok, running not ok" });
       check("… and \"Easy runs\" is a CONSTRAINT_CONFLICT under it", hint("knee injury, swimming ok, running not ok"));
       const stretch = ex("knee injury, stretching is fine, lifting is out", allBody, { track: "BODY", aim: "Feel fitter by summer" });
       check(
@@ -1903,10 +2036,438 @@ async function main() {
         JSON.stringify(stretch)
       );
     }
-    check("generic words are skipped: \"no time on weekdays\" never removes SET_TIME", !ex("no time on weekdays", catalogKindsFor("PRACTICE", { track: "CARE", exam: false, practicesAllowed: true }), { track: "CARE", aim: "Visit my mum" }).some((x) => x.kind === "SET_TIME"));
+    // Fix round 4: the reader's unsafe-side misses (the verifier's probe and the lead's list): a negation or a pain word written
+    // after its term with no cue before it, a cue in an earlier sentence, "nothing high-impact"; and the safe side that goes
+    // with them. [constraints, the words it must name, the words it must not name].
+    {
+      const words = (c: string, opts?: RuleOpts) => negatedTermsOf(c, opts).map((t) => t.word);
+      const named: [string, string[], string[]][] = [
+        // A negation or a pain word after its term, no earlier cue (constraint.after).
+        ["swimming is fine, running not allowed", ["running"], ["swimming"]],
+        ["running hurts my knee", ["running"], []],
+        ["jumping is painful", ["jumping"], []],
+        ["can't do squats", ["squats"], []],
+        ["doctor said no lifting", ["lifting"], []],
+        ["avoid impact", ["impact"], []],
+        ["running hurts", ["running"], []],
+        ["running and jumping hurt", ["running", "jumping"], []],
+        ["Running, jumping, pivoting are out", ["running", "jumping", "pivoting"], []],
+        ["Running, the gym and heavy weights are off limits", ["running", "gym", "heavy", "weights"], []],
+        ["running is not recommended", ["running"], ["recommended"]],
+        ["lifting is not an option", ["lifting"], ["option"]],
+        ["running is not my thing", ["running"], ["thing"]],
+        ["running is a no", ["running"], []],
+        ["squats I can't do", ["squats"], []],
+        ["running is out of the question", ["running"], ["question"]],
+        ["running is too much for my knees", ["running"], []],
+        ["Off limits: running, jumping", ["running", "jumping"], []],
+        ["visits are not possible on weekends", ["visits"], ["possible"]],
+        ["running makes my knee hurt", ["running"], ["makes"]],
+        ["I'm not allowed to run", ["run"], ["im"]],
+        ["running now hurts", ["running"], []],
+        // Nothing but a body part before it: the clause after; only a pronoun: the clause before; nothing: the sentence before.
+        ["my knee hurts when I run", ["run"], []],
+        ["my knee aches after running", ["running"], ["after"]],
+        ["it hurts to run, jump or squat", ["run", "jump", "squat"], []],
+        ["it hurts so much to run", ["run"], []],
+        ["I love running but it hurts", ["running"], []],
+        ["I used to love running. It hurts now.", ["running"], []],
+        ["lifting? that's not allowed", ["lifting"], []],
+        ["Running? Not anymore.", ["running"], []],
+        ["Running? Painful.", ["running"], []],
+        // A cue in an earlier sentence (constraint.carry), and the cue after its term in the later one.
+        ["Knee injury. Running hurts.", ["running"], []],
+        ["I tore my ACL. Running, jumping, pivoting are out.", ["running", "jumping", "pivoting"], []],
+        ["Knee injury. Running, jumping, pivoting.", ["running", "jumping", "pivoting"], []],
+        ["I tore my ACL. Running, jumping and pivoting.", ["running", "jumping", "pivoting"], []],
+        ["Sprained my ankle. Running and jumping.", ["running", "jumping"], []],
+        ["My knee hurts. Running and jumping.", ["running", "jumping"], []],
+        ["torn ACL from running", ["running"], []],
+        ["stress fracture from sprinting", ["sprinting"], []],
+        ["nothing high-impact", ["high-impact"], []],
+        // The safe side: a cleared or preferred activity is never named.
+        ["swimming is fine and running hurts", ["running"], ["swimming"]],
+        ["swimming is fine but running hurts", ["running"], ["swimming"]],
+        ["I love cycling, running hurts", ["running"], ["cycling", "love"]],
+        ["I like swimming and running hurts", ["running"], ["swimming"]],
+        ["running hurts my knee so I swim instead", ["running"], ["swim"]],
+        ["my knee hurts when I run, so I swim instead", ["run"], ["swim"]],
+        ["my knee hurts when I run and I want to swim", ["run"], ["swim"]],
+        ["knee injury, swimming doesn't hurt, running does hurt", ["running"], ["swimming"]],
+        ["knee injury, swimming does not hurt, running hurts", ["running"], ["swimming"]],
+        ["swimming doesn't hurt but running is out", ["running"], ["swimming"]],
+        ["running hurts, swimming doesn't", ["running"], ["swimming"]],
+        ["knee injury, swimming is fine and running hurts too", ["running"], ["swimming"]],
+        ["knee injury, swimming is fine, running hurts too", ["running"], ["swimming"]],
+        ["Knee injury. Swimming is fine. Running hurts.", ["running"], ["swimming"]],
+        // A body part with nothing after it reads the clause before it, within its sentence only.
+        ["running is my favourite but my knee hurts", ["running"], []],
+        ["swimming is fine but my knee hurts", ["knee"], ["swimming"]],
+        ["Swimming is great. My knee hurts.", ["knee"], ["swimming"]],
+        ["injured my knee while running", ["running"], []],
+        ["sprained my ankle while sprinting", ["sprinting"], []],
+      ];
+      for (const [c, must, never] of named) {
+        const got = words(c);
+        check(`fix round 4: "${c}" names ${must.join(", ")}${never.length ? `, not ${never.join(", ")}` : ""}`, must.every((w) => got.includes(w)) && !never.some((w) => got.includes(w)), JSON.stringify(got));
+      }
+      // The safe side: these name nothing at all.
+      const none = [
+        "nothing but swimming",
+        "no exercise except walking",
+        "can't do anything but walk",
+        "running doesn't hurt",
+        "running no longer hurts",
+        "squats aren't too much",
+        "knee injury, swimming fine and running ok",
+        "knee injury, swimming is fine and so is cycling",
+        "knee injury, swimming is fine and cycling too",
+        "knee injury, swimming is fine, cycling too",
+        "Knee injury. Swimming is fine.",
+        "Knee injury healed. Running daily.",
+      ];
+      for (const c of none) eq(`fix round 4, the safe side: "${c}" names nothing`, words(c), []);
+      // The verifier's safe-side residuals are closed: a continuation of the cleared activity is cleared too.
+      check("the release continues: \"…, swimming fine and running ok\" and \"… and so is cycling\" exclude no BODY kind", ex("knee injury, swimming fine and running ok", allBody, { track: "BODY", aim: "Feel fitter by summer" }).length === 0 && ex("knee injury, swimming is fine and so is cycling", allBody, { track: "BODY", aim: "Feel fitter by summer" }).length === 0);
+      // The cue after its term reaches no further than its own clause and a list of bare items.
+      eq("\"I tore my ACL. Running, jumping, pivoting are out.\" names exactly acl, running, jumping, pivoting", words("I tore my ACL. Running, jumping, pivoting are out."), ["acl", "running", "jumping", "pivoting"]);
+      eq("\"swimming is fine, running not allowed\" names exactly running, by 'not'", negatedTermsOf("swimming is fine, running not allowed").map((t) => [t.word, t.cue]), [["running", "cue.not"]]);
+      eq("\"running hurts my knee\" names exactly running, by 'hurts'", negatedTermsOf("running hurts my knee").map((t) => [t.word, t.cue]), [["running", "cue.hurts"]]);
+      // Through the filter, the aim line and the flag.
+      const fit = { track: "BODY" as const, aim: "Feel fitter by summer" };
+      const notAllowed = ex("swimming is fine, running not allowed", allBody, fit);
+      check(
+        "\"swimming is fine, running not allowed\" removes HARDER_SESSION and LONGER_SESSION by 'running' and keeps MOBILITY_SESSION and EASY_SESSION",
+        ["HARDER_SESSION", "LONGER_SESSION"].every((k) => notAllowed.some((x) => x.kind === k && x.word === "running")) && !notAllowed.some((x) => x.kind === "MOBILITY_SESSION" || x.kind === "EASY_SESSION"),
+        JSON.stringify(notAllowed)
+      );
+      check("\"jumping is painful\" removes HARDER_SESSION by 'jumping'", ex("jumping is painful", allBody, fit).some((x) => x.kind === "HARDER_SESSION" && x.word === "jumping"));
+      check("\"can't do squats\" removes STRENGTH_SESSION by 'squats'", ex("can't do squats", allBody, fit).some((x) => x.kind === "STRENGTH_SESSION" && x.word === "squats"));
+      check("\"I tore my ACL. Running, jumping, pivoting are out.\" removes HARDER_SESSION and LONGER_SESSION", ["HARDER_SESSION", "LONGER_SESSION"].every((k) => ex("I tore my ACL. Running, jumping, pivoting are out.", allBody, fit).some((x) => x.kind === k)));
+      const impact = ex("nothing high-impact", allBody, fit);
+      check("\"nothing high-impact\" removes HARDER_SESSION by its last part (constraint.compound), with the word as written", impact.some((x) => x.kind === "HARDER_SESSION" && x.word === "high-impact") && !impact.some((x) => x.kind === "EASY_SESSION"), JSON.stringify(impact));
+      check("\"avoid long-distance runs\" removes LONGER_SESSION; \"no box-jumps\" HARDER_SESSION", ex("avoid long-distance runs", allBody, fit).some((x) => x.kind === "LONGER_SESSION") && ex("no box-jumps", allBody, fit).some((x) => x.kind === "HARDER_SESSION"));
+      check("a compound's first part is never read: a pianist's \"no run-throughs\" keeps every other CRAFT kind", ex("no run-throughs", catalogKindsFor("PRACTICE", { track: "CRAFT", exam: false, practicesAllowed: true }), { track: "CRAFT", aim: "Play Clair de Lune" }).every((x) => x.kind === "RUN_THROUGHS"));
+      eq("… nor a general last part: \"no full-time care\" leaves every CARE kind in ('time' is a generic word, SET_TIME keeps)", ex("no full-time care", catalogKindsFor("PRACTICE", { track: "CARE", exam: false, practicesAllowed: true }), { track: "CARE", aim: "Look after my dad well" }), []);
+      eq("the aim line reads a cue after its term: \"running hurts my knee\" against \"Run a sub-50 10K\"", aimConflictOf("running hurts my knee", "Run a sub-50 10K"), { word: "running", quote: "running hurts my knee" });
+      eq("… and a compound's last part: \"nothing high-impact\" against \"Impact training twice a week\"", aimConflictOf("nothing high-impact", "Impact training twice a week"), { word: "high-impact", quote: "nothing high-impact" });
+      const hint4 = (c: string) => checkLabel("Easy runs", { ...labelContextFor(intakeOf({ constraints: c }), "Fitness", [], "PRACTICE"), constraints: c, track: "BODY" }).flags.includes("CONSTRAINT_CONFLICT");
+      check("an editor hint \"Easy runs\" is a CONSTRAINT_CONFLICT under \"running hurts my knee\" and \"Knee injury. Running hurts.\", and none under \"running doesn't hurt\"", hint4("running hurts my knee") && hint4("Knee injury. Running hurts.") && !hint4("running doesn't hurt"));
+      const fieldKinds = catalogKindsFor("PRACTICE", { track: "FIELD", exam: true, practicesAllowed: true });
+      const fieldFill = { track: "FIELD" as const, domains: [dn("Probability")], aim: "Pass the actuarial exam", exam: "Exam P" };
+      eq(
+        "no Field kind is excluded by the new phrasings (over-exclusion 0)",
+        ["running makes my knee hurt", "I tore my ACL. Running, jumping, pivoting are out.", "my knee hurts when I run, so I swim instead", "Running? Not anymore.", "nothing high-impact", "can't go running"].flatMap((c) => ex(c, fieldKinds, fieldFill)),
+        []
+      );
+      // Each new rule is what reads its phrasing: off, the old reading stands; traced, it fires.
+      const off = (rule: string): RuleOpts => ({ rules: { [rule]: false } });
+      eq("with constraint.after off, \"running hurts my knee\" and \"swimming is fine, running not allowed\" name what the old reading did (nothing)", [words("running hurts my knee", off("constraint.after")), words("swimming is fine, running not allowed", off("constraint.after"))], [[], []]);
+      eq("with constraint.carry off, \"Knee injury. Running, jumping, pivoting.\" names nothing", words("Knee injury. Running, jumping, pivoting.", off("constraint.carry")), []);
+      check("with constraint.compound off, \"nothing high-impact\" excludes no BODY kind (on, it does)", ex("nothing high-impact", allBody, fit).length > 0 && constraintExclusionsOf("nothing high-impact", allBody, fit, off("constraint.compound")).length === 0);
+      eq("with cue.hurts off, \"running hurts my knee\" reads 'hurts' as an ordinary word again", words("running hurts my knee", off("cue.hurts")), []);
+      eq("with constraint.release off, \"nothing but swimming\" names swimming again", words("nothing but swimming", off("constraint.release")), ["swimming"]);
+      const fired4: string[] = [];
+      const trace = { trace: (r: string) => fired4.push(r) };
+      negatedTermsOf("running hurts my knee", trace);
+      negatedTermsOf("Knee injury. Running, jumping.", trace);
+      constraintExclusionsOf("nothing high-impact", allBody, fit, trace);
+      check(
+        "… and the trace names constraint.after, cue.hurts, constraint.carry, constraint.compound and cue.nothing; each is a named rule, none in R3's own H6 list",
+        ["constraint.after", "cue.hurts", "constraint.carry", "constraint.compound", "cue.nothing"].every((r) => fired4.includes(r) && RULE_NAMES.includes(r)) && !["constraint.after", "constraint.carry", "constraint.compound"].some((r) => H6_RULE_NAMES.includes(r)),
+        fired4.join(", ")
+      );
+      // Non-English is never silently trusted: it parses to nothing, and the confirm is raised on a BODY or CARE plan whatever
+      // the parser read. A mixed phrasing parses its English part and still raises the confirm.
+      const vi = ["chạy bộ làm đau gối", "nhảy thì đau", "bơi thì được, chạy bộ thì không"];
+      const ja = ["ランニングは膝が痛い", "ジャンプは禁止です", "水泳は大丈夫、ランニングはダメ"];
+      check("Vietnamese and Japanese cues after their term parse to nothing, and each raises the confirm on BODY and CARE", [...vi, ...ja].every((c) => words(c).length === 0 && sessionConfirmNeeded("BODY", c) && sessionConfirmNeeded("CARE", c)));
+      check("a mixed phrasing parses its English part (\"running hurts, nhảy cũng đau\" names running) and still raises the confirm", words("running hurts, nhảy cũng đau").includes("running") && sessionConfirmNeeded("BODY", "running hurts, nhảy cũng đau"));
+    }
+    // Hardening round (contracts §19, "confirm to unlock"): the parser only PRE-FILLS the confirm (a pre-ticked "avoid"
+    // quoting the user's sentence); safety is the gate's. These pin its quality: the verifier's 19 unsafe-side misses (its
+    // still-open #3), the fill regression (#1: a term read after its cue met a Domain name, the aim or the exam) and the
+    // over-reaches (#4: carry, "No problems with …", "can lift").
+    {
+      const words = (c: string, opts?: RuleOpts) => negatedTermsOf(c, opts).map((t) => t.word);
+      const fit = { track: "BODY" as const, aim: "Feel fitter by summer" };
+      const H: CatalogKey = "HARDER_SESSION";
+      const LG: CatalogKey = "LONGER_SESSION";
+      const S: CatalogKey = "STRENGTH_SESSION";
+      // [constraints, the words it must name, the kinds it must leave out on a BODY plan].
+      const misses: [string, string[], CatalogKey[]][] = [
+        ["My physio told me to stay away from running for six weeks.", ["running"], [H, LG]],
+        ["Running is a bad idea with my shin splints.", ["running"], [H, LG]],
+        ["I shouldn't run until my knee heals.", ["run"], [H, LG]],
+        ["Running makes my knee swell.", ["running"], [H, LG]],
+        ["Lifting heavy weights aggravates my back.", ["lifting", "weights"], [S]],
+        ["Running? My doctor said absolutely not.", ["running"], [H, LG]],
+        ["Squats and lunges kill my knees.", ["squats"], [S]],
+        ["Swimming's great but running aggravates my Achilles.", ["running"], [H, LG]],
+        ["Running causes me knee pain.", ["running"], [H, LG]],
+        ["Running gives me shin pain.", ["running"], [H, LG]],
+        ["Running = pain.", ["running"], [H, LG]],
+        ["Knee surgery two weeks ago. Running and jumping.", ["running", "jumping"], [H, LG]],
+        ["Running is something I can't do right now.", ["running"], [H, LG]],
+        ["Lifting overhead bothers my shoulder.", ["lifting"], [S]],
+        ["I get shin splints from running.", ["running"], [H, LG]],
+        ["The doctor wants me off running for a month.", ["running"], [H, LG]],
+        ["Bad knees. Jumping and running.", ["jumping", "running"], [H, LG]],
+        ["Weights are a no-go and so is running.", ["weights", "running"], [H, LG, S]],
+        ["Never run on my bad knee.", ["run"], [H, LG]],
+      ];
+      for (const [c, must, kinds] of misses) {
+        const got = words(c);
+        const out = ex(c, allBody, fit);
+        check(
+          `hardening: "${c}" names ${must.join(", ")} and leaves out ${kinds.join(", ")} (EASY_SESSION and MOBILITY_SESSION stay)`,
+          must.every((w) => got.includes(w)) && kinds.every((k) => out.some((x) => x.kind === k)) && !out.some((x) => x.kind === "EASY_SESSION" || x.kind === "MOBILITY_SESSION"),
+          `${JSON.stringify(got)} → ${JSON.stringify(out)}`
+        );
+      }
+      // The parser never pre-fills from a text the cue detector calls cue-less: the gate is on wherever a pre-fill is.
+      const quiet = misses.map(([c]) => c).filter((c) => !constraintCuesOf(c).hasCue);
+      check("… and the cue detector (roadmap-types constraintCuesOf) raises a cue on every one of them, so the gate is on wherever the parser pre-fills", quiet.length === 0, quiet.join(" | "));
+      eq("… the junk words are gone: \"Running is something I can't do right now.\" names running only ('right' is a skip word)", words("Running is something I can't do right now."), ["running"]);
+      eq("… \"Running? My doctor said absolutely not.\" names running only (the read passes through who said it; 'absolutely' is a skip word)", words("Running? My doctor said absolutely not."), ["running"]);
+      eq("… the aim line reads a cause: \"Running causes me knee pain.\" against \"Run a sub-25 5K\"", aimConflictOf("Running causes me knee pain.", "Run a sub-25 5K"), { word: "running", quote: "Running causes me knee pain." });
+      eq("… and a mirror: \"Weights are a no-go and so is running.\" against \"Run a sub-25 5K\"", aimConflictOf("Weights are a no-go and so is running.", "Run a sub-25 5K"), { word: "running", quote: "Weights are a no-go and so is running." });
+      // More of the same vocabulary, and a mirror of a negative verdict across a pause or a sentence.
+      const more: [string, string[], string[]][] = [
+        ["Running hurts, jumping too.", ["running", "jumping"], []],
+        ["Running hurts. So does jumping.", ["running", "jumping"], []],
+        ["Running hurts my knee, and so does jumping.", ["running", "jumping"], []],
+        ["No running. Jumping too.", ["running", "jumping"], []],
+        ["Running and jumping cause knee pain.", ["running", "jumping"], []],
+        ["Jumping triggers my back pain.", ["jumping"], []],
+        ["Running -> pain", ["running"], []],
+        ["I'm not supposed to lift anything heavy.", ["lift", "heavy"], ["supposed"]],
+        ["steer clear of sprinting", ["sprinting"], []],
+        ["keep off the treadmill", ["treadmill"], []],
+        ["hamstring strain from sprinting", ["sprinting"], []],
+        ["I broke my ankle while jumping", ["jumping"], []],
+        ["Arthritis in my knees. Running and jumping.", ["running", "jumping"], []],
+        ["Operation last month. Lifting for now.", ["lifting"], []],
+        ["Physio told me lifting is out", ["lifting"], []],
+        ["Running? Physio says it's too risky.", ["running"], []],
+        ["my knees get sore from running", ["running"], []],
+        ["Running is bad for my knees", ["running"], []],
+        ["Lifting is a problem for my back", ["lifting"], []],
+        ["Running has been ruled out", ["running"], []],
+        ["Asthma, so sprinting and long runs are risky.", ["sprinting", "runs"], []],
+        ["Dodgy left knee. Jumping and running.", ["jumping", "running"], []],
+        ["Never running again.", ["running"], []],
+        ["Running? Never.", ["running"], []],
+        ["Lifting is fine, it's running that kills me.", ["running"], ["lifting"]],
+        ["Jumping makes my back spasm.", ["jumping"], []],
+        ["My knee gives out when I run downhill.", ["run"], []],
+        ["Running is hard on my knees", ["running"], []],
+        ["Burpees are brutal on my wrists.", ["burpees"], []],
+      ];
+      for (const [c, must, never] of more) {
+        const got = words(c);
+        check(`hardening: "${c}" names ${must.join(", ")}${never.length ? `, not ${never.join(", ")}` : ""}`, must.every((w) => got.includes(w)) && !never.some((w) => got.includes(w)), JSON.stringify(got));
+      }
+      // The safe side (finding #4): trouble denied, a positive "can", a sentence of its own after a cue, no cause.
+      const safe: [string, string[], string[]][] = [
+        ["No problems with running or lifting.", [], ["running", "lifting"]],
+        ["No issues with squats", [], ["squats"]],
+        ["I have no knee pain when running.", [], ["running"]],
+        ["Running never causes me pain.", [], ["running"]],
+        ["Running doesn't give me any knee pain.", [], ["running"]],
+        ["No pain when running, but jumping hurts.", ["jumping"], ["running"]],
+        ["I can't run without pain.", ["run"], []],
+        ["Can't run, can't jump, can lift.", ["run", "jump"], ["lift"]],
+        ["no running so I can swim", ["running"], ["swim"]],
+        ["Knee injury, can swim, can't run", ["run"], ["swim"]],
+        ["Doctor said I can run, but no jumping", ["jumping"], ["run"]],
+        ["Knee injury. Walking only.", [], ["walking"]],
+        ["Can't run, can hardly walk", ["run", "walk"], []],
+        ["Sprained ankle. Swimming three times a week is my plan.", [], ["swimming", "plan", "week"]],
+        ["Knee injury. I'd like to get fitter.", [], ["like", "fitter"]],
+        ["Lower back pain. Strength work is what my physio wants.", [], ["strength", "work", "lower"]],
+        ["Knee injury. I run three times a week.", [], ["run"]],
+        ["Swimming helps my back pain.", [], ["swimming", "helps"]],
+        ["Running doesn't bother me.", [], ["running"]],
+        ["Lifting is not a problem, running is.", ["running"], ["lifting"]],
+        ["Running hurts. Swimming is fine too.", ["running"], ["swimming"]],
+        // A release whose subject is a pronoun takes back what the cue before it named; a time is what a verdict judges.
+        ["Squats used to hurt but they're fine now.", [], ["squats"]],
+        ["Running hurt, but it's healed now. Jumping is out.", ["jumping"], ["running"]],
+        ["Running hurts my knee, cycling is fine", ["running"], ["cycling"]],
+        ["Weekends are off limits for visits.", [], ["visits"]],
+        ["Mornings are too much, evenings are fine for running", [], ["running"]],
+      ];
+      for (const [c, must, never] of safe) {
+        const got = words(c);
+        check(`hardening, the safe side: "${c}" names ${must.length ? must.join(", ") : "nothing it clears"}${never.length ? `, not ${never.join(", ")}` : ""}`, must.every((w) => got.includes(w)) && !never.some((w) => got.includes(w)), JSON.stringify(got));
+      }
+      const noProblem = ex("No problems with running or lifting.", allBody, fit);
+      eq("\"No problems with running or lifting.\" leaves every BODY kind in", noProblem, []);
+      check("\"Can't run, can't jump, can lift.\" keeps STRENGTH_SESSION and leaves out HARDER_SESSION", (() => {
+        const o = ex("Can't run, can't jump, can lift.", allBody, fit);
+        return o.some((x) => x.kind === H) && !o.some((x) => x.kind === S);
+      })());
+      // The carry and aim-line over-reach (#4): no 'no swimming', no 'no fitter'.
+      check("\"Sprained ankle. Swimming three times a week is my plan.\" gives no aim line against \"Swim 1 km without stopping\"", aimConflictOf("Sprained ankle. Swimming three times a week is my plan.", "Swim 1 km without stopping") === null);
+      check("\"Knee injury. I'd like to get fitter.\" and \"Knee injury, I'd like to get fitter\" give no aim line against \"Feel fitter by summer\"", aimConflictOf("Knee injury. I'd like to get fitter.", "Feel fitter by summer") === null && aimConflictOf("Knee injury, I'd like to get fitter", "Feel fitter by summer") === null);
+      const fitter = ex("Knee injury, I'd like to get fitter", allBody, fit);
+      check("… nor leaves out the aim-filled kinds (SET_UP, FULL_ATTEMPT, PERFORMANCE_CHECK) by 'fitter'", !fitter.some((x) => ["SET_UP", "FULL_ATTEMPT", "PERFORMANCE_CHECK"].includes(x.kind)), JSON.stringify(fitter));
+      // The fill regression (#1): a term read after its cue meets a kind's fill only when it names an activity.
+      const fieldAll = [
+        ...catalogKindsFor("PRACTICE", { track: "FIELD", exam: true, practicesAllowed: true }),
+        ...catalogKindsFor("STEP", { track: "FIELD", exam: true, practicesAllowed: true }),
+        ...catalogKindsFor("CHECKPOINT", { track: "FIELD", exam: true, practicesAllowed: true }),
+      ];
+      const prob = { track: "FIELD" as const, domains: [dn("Probability"), dn("Random variables"), dn("Inference")], aim: "Pass the actuarial probability exam", exam: "Exam P" };
+      const fieldLines = [
+        "Inference is too hard for me, I need extra time on it.",
+        "Probability hurts, Inference is fine.",
+        "Probability is too much on weekdays.",
+        "Random variables hurt my brain lol",
+        "Inference is a problem for me",
+        "Probability? Not on weekdays.",
+        "Actuarial maths is too much",
+      ];
+      eq("on a Field plan, a Domain name, the aim or the exam read after its cue leaves out no kind (the verifier's 19 to 22)", fieldLines.flatMap((c) => ex(c, fieldAll, prob).map((x) => `${c} → ${x.kind}`)), []);
+      check("… and gives no aim line", fieldLines.every((c) => aimConflictOf(c, prob.aim) === null));
+      check("… while a negating cue's own term still meets the fill: \"no Inference\" leaves out the Domain-filled kinds", ex("no Inference", fieldAll, prob).some((x) => x.kind === "RECALL_DRILLS" && x.word === "inference"));
+      const care = [...catalogKindsFor("PRACTICE", { track: "CARE", exam: false, practicesAllowed: true }), ...catalogKindsFor("STEP", { track: "CARE", exam: false, practicesAllowed: true }), ...catalogKindsFor("CHECKPOINT", { track: "CARE", exam: false, practicesAllowed: true })];
+      const mum = { track: "CARE" as const, aim: "Support Mum's care at home" };
+      eq("on a CARE plan, \"Mum's care is too much for me alone\" leaves out no kind (it had left out all 7)", ex("Mum's care is too much for me alone", care, mum), []);
+      check("… and gives no 'no care' aim line", aimConflictOf("Mum's care is too much for me alone", mum.aim) === null);
+      const gran = ex("Visiting Grandma is painful since Grandpa died, but I want to.", care, { track: "CARE", aim: "Visit Grandma every Sunday" });
+      check("\"Visiting Grandma is painful …\" never names 'grandma' (a fill word); CHECK_IN goes by 'visiting', the user's own activity", !gran.some((x) => /grand/.test(x.word)) && gran.some((x) => x.kind === "CHECK_IN" && x.word === "visiting"), JSON.stringify(gran));
+      const runAim = ex("running hurts my knee", allBody, { track: "BODY", aim: "Run a sub-50 10K" });
+      check("… while an activity read after its cue still meets the aim: \"running hurts my knee\" leaves out PERFORMANCE_CHECK and FULL_ATTEMPT on \"Run a sub-50 10K\"", ["PERFORMANCE_CHECK", "FULL_ATTEMPT"].every((k) => runAim.some((x) => x.kind === k && x.word === "running")), JSON.stringify(runAim));
+      // How each term was read (NegatedTerm.read), which the fill rule keys on.
+      eq(
+        "NegatedTerm.read: a negating cue's term has none; after its cue AFTER; carried CARRY; in a state cue's scope STATE",
+        [negatedTermsOf("no running")[0]?.read ?? null, negatedTermsOf("running hurts")[0]?.read, negatedTermsOf("Knee injury. Running, jumping.")[0]?.read, negatedTermsOf("knee injury from running")[0]?.read],
+        [null, "AFTER", "CARRY", "STATE"]
+      );
+      // Each new rule is what reads its phrasing: off, the old reading stands; traced, it fires.
+      const off = (rule: string): RuleOpts => ({ rules: { [rule]: false } });
+      check("with constraint.fill off, \"Inference is too hard for me\" leaves out the Domain-filled Field kinds again (the old reading)", ex("Inference is too hard for me", fieldAll, prob).length === 0 && constraintExclusionsOf("Inference is too hard for me", fieldAll, prob, off("constraint.fill")).length >= 19);
+      eq("with constraint.body off, \"Bad knees. Jumping and running.\" names nothing", words("Bad knees. Jumping and running.", off("constraint.body")), []);
+      eq("with cue.surgery off, \"Knee surgery two weeks ago. Running and jumping.\" names nothing", words("Knee surgery two weeks ago. Running and jumping.", off("cue.surgery")), []);
+      eq("with constraint.release off, \"No problems with running or lifting.\" names running and lifting again", words("No problems with running or lifting.", off("constraint.release")), ["problems", "running", "lifting"]);
+      check("with constraint.after off, \"Running causes me knee pain.\" names no running", !words("Running causes me knee pain.", off("constraint.after")).includes("running"));
+      const fired: string[] = [];
+      const trace = { trace: (r: string) => fired.push(r) };
+      negatedTermsOf("Bad knees. Jumping and running.", trace);
+      constraintExclusionsOf("Inference is too hard for me", fieldAll, prob, trace);
+      check(
+        "… and the trace names constraint.body and constraint.fill; each is a named rule, neither in R3's own H6 list",
+        ["constraint.body", "constraint.fill"].every((r) => fired.includes(r) && RULE_NAMES.includes(r)) && !["constraint.body", "constraint.fill"].some((r) => H6_RULE_NAMES.includes(r)),
+        fired.join(", ")
+      );
+      // Every new cue is a named rule with an example that fires it (the H6 section checks each fires).
+      check(
+        "every new cue (CONSTRAINT_MORE_CUES, CONSTRAINT_MORE_INJURY_CUES, CONSTRAINT_AUTHORITY_CUES) is an H6 rule with a RULE_EXAMPLES input; every CONSTRAINT_MORE_CUES_AFTER entry a named rule",
+        [...CONSTRAINT_MORE_CUES, ...CONSTRAINT_MORE_INJURY_CUES, ...CONSTRAINT_AUTHORITY_CUES].every((c) => H6_RULE_NAMES.includes(`cue.${c.toLowerCase()}`) && typeof RULE_EXAMPLES[`cue.${c.toLowerCase()}`] === "string") &&
+          CONSTRAINT_MORE_CUES_AFTER.every((c) => RULE_NAMES.includes(`cue.${c}`))
+      );
+      // Field over-exclusion by the new vocabulary: 0.
+      eq(
+        "no Field kind is excluded by the new body phrasings (over-exclusion 0)",
+        misses.flatMap(([c]) => ex(c, fieldAll, prob).map((x) => `${c} → ${x.kind}`)),
+        []
+      );
+      check("constraintExclusionsOf and aimConflictOf never throw on the new forms", ["= = =", "->", "can can can", "no problems", "bad", "so is", "doctor said", "Running? My doctor said"].every((g) => neverThrows(() => constraintExclusionsOf(g, allBody, fit)) && neverThrows(() => aimConflictOf(g, "Run"))));
+    }
+    // ── The safety-gaps round (contracts §19, decision 7): what the reader names is a pre-ticked suggestion, never a block,
+    // and it no longer suggests what the user didn't say to avoid. Recall stays (the hostile K bar holds it to 100%).
+    {
+      const fieldAll = [
+        ...catalogKindsFor("PRACTICE", { track: "FIELD", exam: true, practicesAllowed: true }),
+        ...catalogKindsFor("STEP", { track: "FIELD", exam: true, practicesAllowed: true }),
+        ...catalogKindsFor("CHECKPOINT", { track: "FIELD", exam: true, practicesAllowed: true }),
+      ];
+      const prob = { track: "FIELD" as const, domains: [dn("Probability"), dn("Inference")], aim: "Pass SOA Exam P", exam: "SOA Exam P" };
+      const fit = { track: "BODY" as const, aim: "Run a sub-25 5K" };
+      const care = [...catalogKindsFor("PRACTICE", { track: "CARE", exam: false, practicesAllowed: true }), ...catalogKindsFor("STEP", { track: "CARE", exam: false, practicesAllowed: true })];
+      const kinds = (c: string, ks: readonly CatalogKey[], f: Parameters<typeof constraintExclusionsOf>[2], opts?: RuleOpts) => constraintExclusionsOf(c, ks, f, opts).map((x) => x.kind);
+      const off = (rule: string): RuleOpts => ({ rules: { [rule]: false } });
+      // The verifier's over-reaches (ver.still_open, roadmap-validate.ts): each [constraints, plan, fill, what it names now, what the old reading named].
+      const over: [string, readonly CatalogKey[], Parameters<typeof constraintExclusionsOf>[2], CatalogKey[], string, CatalogKey[]][] = [
+        ["My GP said to take it easy for a month", allBody, fit, [], "constraint.gentle", ["EASY_SESSION"]],
+        ["No timed practice, it stresses me out.", fieldAll, prob, ["TIMED_PRACTICE"], "constraint.generic", ["TIMED_PRACTICE", "WRITING_PRACTICE"]],
+        ["I can't do problem sets on weekdays.", fieldAll, prob, ["PROBLEM_SETS"], "constraint.generic", ["PROBLEM_SETS", "SET_UP"]],
+        ["No group study.", fieldAll, prob, [], "constraint.generic", ["READ_AND_CARD"]],
+        ["No writing by hand, I have RSI in my wrist.", fieldAll, prob, [], "constraint.field-body", ["WRITING_PRACTICE", "OUTLINE"]],
+        ["Shin splints flare up if I run more than twice a week.", allBody, fit, [], "constraint.limit", ["HARDER_SESSION", "LONGER_SESSION", "SET_UP", "FULL_ATTEMPT", "PERFORMANCE_CHECK"]],
+        ["Calling every day is too much", care, { track: "CARE", aim: "Call Mum most evenings" }, [], "constraint.limit", ["SET_TIME", "CHECK_IN", "ADMIN_SESSION", "KEEP_A_LOG", "SET_UP", "FULL_ATTEMPT"]],
+      ];
+      for (const [c, ks, f, now, rule, before] of over) {
+        eq(`decision 7: "${c}" suggests ${now.length ? now.join(", ") : "nothing"}`, kinds(c, ks, f), now);
+        eq(`… and with ${rule} off, the old reading's ${before.join(", ")} (the rule is what keeps it out)`, kinds(c, ks, f, off(rule)), before);
+        const fired: string[] = [];
+        constraintExclusionsOf(c, ks, f, { trace: (r) => fired.push(r) });
+        check(`… the trace names ${rule}`, fired.includes(rule), fired.join(", "));
+      }
+      check("each is a named rule, not in R3's own H6 list (the bar requires every constraint.* rule a case reaches)", ["constraint.generic", "constraint.limit", "constraint.gentle", "constraint.field-body"].every((r) => RULE_NAMES.includes(r) && !H6_RULE_NAMES.includes(r)));
+      // Recall stays: a limit holds only its own clause, advice to go gently only its own words, a generic word only itself.
+      const kept: [string, readonly CatalogKey[], Parameters<typeof constraintExclusionsOf>[2], CatalogKey[], CatalogKey[]][] = [
+        ["No running more than twice a week, no jumping.", allBody, { track: "BODY" }, ["HARDER_SESSION"], ["LONGER_SESSION"]],
+        ["Take it easy, no running.", allBody, { track: "BODY" }, ["HARDER_SESSION", "LONGER_SESSION"], ["EASY_SESSION"]],
+        ["no more than two runs a week", allBody, { track: "BODY" }, [], ["HARDER_SESSION", "LONGER_SESSION"]],
+        ["max 20 minutes of running", allBody, { track: "BODY" }, [], ["HARDER_SESSION", "LONGER_SESSION"]],
+        ["Running over 5K hurts my knee", allBody, { track: "BODY" }, [], ["HARDER_SESSION", "LONGER_SESSION"]],
+        ["no running two days in a row", allBody, { track: "BODY" }, [], ["HARDER_SESSION", "LONGER_SESSION"]],
+        ["no running on weekdays", allBody, { track: "BODY" }, ["HARDER_SESSION", "LONGER_SESSION"], []],
+        ["knee injury, running daily", allBody, { track: "BODY" }, ["HARDER_SESSION", "LONGER_SESSION"], []],
+        ["Running daily hurts my shins", allBody, { track: "BODY" }, [], ["HARDER_SESSION", "LONGER_SESSION"]],
+        ["No sessions after 9pm", allBody, { track: "BODY" }, [], ["EASY_SESSION", "HARDER_SESSION", "STRENGTH_SESSION"]],
+        ["No timed practice", fieldAll, prob, ["TIMED_PRACTICE"], ["WRITING_PRACTICE"]],
+        ["No writing practice.", fieldAll, prob, ["WRITING_PRACTICE", "OUTLINE"], []],
+        ["Back pain from visiting", care, { track: "CARE", aim: "Visit Gran every Sunday" }, ["CHECK_IN"], []],
+        ["Knee injury. Writing and reading.", fieldAll, prob, [], ["WRITING_PRACTICE", "READ_AND_CARD"]],
+      ];
+      for (const [c, ks, f, must, never] of kept) {
+        const got = kinds(c, ks, f);
+        check(`decision 7: "${c}" on ${f.track} suggests ${must.length ? must.join(", ") : "nothing"}${never.length ? `, never ${never.join(", ")}` : ""}`, must.every((k) => got.includes(k)) && !never.some((k) => got.includes(k)), JSON.stringify(got));
+      }
+      check("a body sentence suggests BODY and CARE kinds as before (constraint.field-body reads a Field plan only)", kinds("No writing by hand, my wrist hurts. No running.", allBody, { track: "BODY" }).includes("HARDER_SESSION"));
+      // Decision 6: the aim-conflict line quotes the user's own sentence, never "no <word>", and shows only while unresolved.
+      eq("decision 6: the conflict carries the user's sentence (\"Shin splints flare up when I run.\" against \"Run a sub-25 5K\")", aimConflictOf("Shin splints flare up when I run.", "Run a sub-25 5K"), { word: "run", quote: "Shin splints flare up when I run." });
+      eq("… a carried cue quotes from the sentence that carried it", aimConflictOf("Knee injury. Running for now.", "Run a sub-50 10K"), { word: "running", quote: "Knee injury. Running for now." });
+      eq("… a pronoun's referent quotes both sentences", aimConflictOf("I used to run. It hurts now.", "Run a 10K"), { word: "run", quote: "I used to run. It hurts now." });
+      eq("… of several sentences, the one holding the term", aimConflictOf("My GP said to take it easy for a month. No running.", "Run a sub-50 10K"), { word: "running", quote: "No running." });
+      const verbatim = ["Knee injury.\nRunning for now.", "knee injury,  no running!", "Running? Not anymore.", "Squats are fine. Running hurts my knee."];
+      check(
+        "… the quote is the user's own text, verbatim (a substring of the constraints, line breaks and spacing kept), so the line can check it",
+        verbatim.every((c) => {
+          const q = aimConflictOf(c, "Run a 10K")?.quote;
+          return typeof q === "string" && q.length > 0 && c.includes(q);
+        }),
+        JSON.stringify(verbatim.map((c) => aimConflictOf(c, "Run a 10K")))
+      );
+      const long = aimConflictOf(`${"Some long words here ".repeat(5)}and no running at all because of my knee, ${"and then more words ".repeat(5)}`, "Run a 10K");
+      check(`… a long sentence is cut around the term to at most ${ACTIVITY_REASON_MAX} characters, with "…" where cut`, !!long && long.quote.length <= ACTIVITY_REASON_MAX && long.quote.includes("no running") && long.quote.startsWith("…") && long.quote.endsWith("…"), JSON.stringify(long));
+      check("… a limit is no conflict (\"Shin splints flare up if I run more than twice a week.\": the user can run), nor a generic word (\"No practice on Sundays\" against \"Practice piano daily\")", aimConflictOf("Shin splints flare up if I run more than twice a week.", "Run a sub-25 5K") === null && aimConflictOf("No practice on Sundays", "Practice piano daily") === null);
+      const conflict = aimConflictOf("knee injury, no running", "Run a sub-50 10K");
+      const bodyIntake = intakeOf({ fieldId: null, track: "BODY", domainIds: [], depth: null, aim: "Run a sub-50 10K", constraints: "knee injury, no running" });
+      const waiting = activityGateOf(bodyIntake);
+      const answered = activityGateOf(answeredIntake(bodyIntake, []));
+      const avoided = activityGateOf(answeredIntake(bodyIntake, "preticks"));
+      const changed = activityGateOf({ ...answeredIntake(bodyIntake, []), constraints: "knee injury, no running or jumping" });
+      check("unresolvedAimConflictOf: shown while the card waits on the user's answer", JSON.stringify(unresolvedAimConflictOf(conflict, waiting)) === JSON.stringify(conflict) && waiting.answered === null);
+      check("… gone once the card is answered under the current words, whatever the answer (\"Nothing to avoid\" placed the kinds; ticks left them out by the user's choice)", unresolvedAimConflictOf(conflict, answered) === null && unresolvedAimConflictOf(conflict, avoided) === null);
+      check("… back when the words change (the card asks again), and as given with no gate; null with no conflict", unresolvedAimConflictOf(conflict, changed) === conflict && unresolvedAimConflictOf(conflict, null) === conflict && unresolvedAimConflictOf(null, waiting) === null);
+      check("… still shown while a kind waits on the card although an earlier answer stands", unresolvedAimConflictOf(conflict, { answered: "2026-10-05", pending: ["STRENGTH_SESSION"] }) === conflict);
+      // The run's exclusions: what the words name and the gate blocks.
+      eq(
+        "runExclusionsOf keeps a suggestion only where the gate blocks it, with its word",
+        runExclusionsOf([{ kind: "HARDER_SESSION", word: "running" }, { kind: "SET_UP", word: "running" }, { kind: "EASY_SESSION", word: "easy" }], { blocked: ["HARDER_SESSION", "STRENGTH_SESSION"] }),
+        [{ kind: "HARDER_SESSION", word: "running" }]
+      );
+      check("constraintExclusionsOf, aimConflictOf and unresolvedAimConflictOf never throw on the new forms", ["more than", "take it easy", "max", "over 5", "every day hurts", "No practice", "x. y. z."].every((g) => neverThrows(() => constraintExclusionsOf(g, fieldAll, prob)) && neverThrows(() => aimConflictOf(g, "Run")) && neverThrows(() => unresolvedAimConflictOf(aimConflictOf(g, "Run"), waiting))));
+    }
+    check("generic words are skipped: \"no time on weekdays\" never removes SET_TIME",!ex("no time on weekdays", catalogKindsFor("PRACTICE", { track: "CARE", exam: false, practicesAllowed: true }), { track: "CARE", aim: "Visit my mum" }).some((x) => x.kind === "SET_TIME"));
     const field = ex("knee injury, no running", catalogKindsFor("PRACTICE", { track: "FIELD", exam: true, practicesAllowed: true }), { track: "FIELD", domains: [dn("Probability")], aim: "Pass the actuarial exam", exam: "Exam P" });
     eq("no Field kind is excluded by a body constraint", field, []);
-    eq("the aim meets a negated term: one ink line's word", aimConflictOf("knee injury, no running", "Run a sub-50 10K"), { word: "running" });
+    eq("the aim meets a negated term: one ink line's word, and the user's own sentence for the line to quote (decision 6)", aimConflictOf("knee injury, no running", "Run a sub-50 10K"), { word: "running", quote: "knee injury, no running" });
     check("… and none when it doesn't", aimConflictOf("knee injury, no running", "Lose 8 kg without hurting my knee") === null);
     check("constraintExclusionsOf and negatedTermsOf never throw", [null, undefined, 42, {}].every((g) => neverThrows(() => constraintExclusionsOf(g as unknown as string, bodyKinds, { track: "BODY" })) && neverThrows(() => negatedTermsOf(g as unknown as string))));
 
@@ -2096,6 +2657,10 @@ async function main() {
       "cue.injuries": "knee injuries",
       "cue.problems": "knee problems",
     };
+    // Fix round 4: each cue written after its term (CONSTRAINT_CUES_AFTER) fires on "running <cue>".
+    for (const c of CONSTRAINT_CUES_AFTER) MORE_EXAMPLES[`cue.${c}`] = `running ${c}`;
+    // Hardening round: and each of CONSTRAINT_MORE_CUES_AFTER ("cue.sore" keeps rev 3's "sore knee", which fires it too).
+    for (const c of CONSTRAINT_MORE_CUES_AFTER) MORE_EXAMPLES[`cue.${c}`] ??= `running ${c}`;
     const reachable = RULE_NAMES.filter((r) => /^(?:link\.|shape\.|cue\.|resource\.)/.test(r) || r === "grounding" || (r.startsWith("flag.") && r !== "flag.HEALTH" && r !== "flag.AIM_STEP_EARLY"));
     const firesAny = (rule: string): boolean => {
       if (firesOn(rule)) return true;
@@ -2198,8 +2763,20 @@ async function main() {
     return !!i && i.aim === "Sail a dinghy solo" && i.fieldId != null && (i.newDomainNames ?? []).length === 2 && i.domainIds.length === 2 && (i.syllabus?.lines ?? []).length === 6 && i.suggestAreas === true;
   })());
   let replies = 0;
-  for (const e of corpus) {
-    const gapsLive = e.input.intake.suggestAreas === true;
+  for (const asked of corpus) {
+    const gapsLive = asked.input.intake.suggestAreas === true;
+    // The safety-gaps round (contracts §19): the canned replies were drafted for a run whose activity card the user has
+    // answered (its pre-ticks left ticked, else "Nothing to avoid"), as R4 drafts one once the card is answered. A plan whose
+    // card never shows (no gate, no suggestion) is read as it is. Before the answer, the run holds every gated kind back.
+    const chosenNames = asked.input.domains.filter((d) => asked.input.intake.domainIds.includes(d.id)).map((d) => d.name);
+    const card = cardOf(asked.input.intake, chosenNames).gate;
+    const shows = card.on || card.rows.length > 0;
+    const e = shows ? { ...asked, input: { ...asked.input, intake: answeredIntake(asked.input.intake, "preticks", chosenNames) } } : asked;
+    if (shows) {
+      const pending = packOf(asked, { gapsLive });
+      const gated = activityGateOf(asked.input.intake).blocked;
+      check(`${asked.aim} (v3): before the card's answer, the run offers no kind the gate holds`, [...pending.run.practiceKinds, ...pending.run.stepKinds, ...pending.run.checkpointKinds].every((k) => !gated.includes(k)), JSON.stringify(pending.run.blocked));
+    }
     const pack = packOf(e, { gapsLive });
     const prompt = packUserContent(pack);
     const ids = [...e.input.domains.map((d) => d.id), ...e.library.map((d) => d.id), e.areaFieldId ?? ""].filter(Boolean);

@@ -59,8 +59,9 @@
  *   - The clean-entry window is cleanReadDaysOf: retryReadDaysOf at the wider of the acceptance's
  *     interval multiplier and the live loadout's, with the loadout's grace extension
  *     (ReachWindowMods; ReadingsDeps.reachModifiers, else skill-effects loadModifiers on the real
- *     client). R4's CardState and R6's quests read theirs with the live loadout, so R1's window is
- *     never narrower than theirs and the three readers never disagree on a card.
+ *     client). The finishing round gave R4's CardState and R6's quests the same window (the wider
+ *     of the current acceptance's m and the live m, with the live grace), so the three readers
+ *     read one window and never disagree on a card.
  *
  * Shape of a run: one context load (two read waves: the roadmap with its
  * milestones, items, measures and acceptance; then the latest readings, the
@@ -824,11 +825,15 @@ export function cleanLevelsOf(keys: readonly (string | null | undefined)[]): { l
  * loadout's GRACE_EXTENSION days. srs.ts sets a card's due day and grace with
  * the loadout of the day it was reviewed, which neither figure alone bounds;
  * the wider window reads more rows and never changes the answer (the entering
- * pass is the latest row). R4's planContext and R6's quests read theirs as
- * retryReadDaysOf(L, live m, live grace), so this window is never narrower
- * than theirs: a card none of them reads as clean is never counted clean
- * here. Without a loadout (unreadable, or a check's stub) it is
- * retryReadDaysOf(level, m): the acceptance's m and no grace extension.
+ * pass is the latest row). R4's planContext (retryEntriesOf) and R6's quests
+ * (cleanWindowDaysOf) read the same window since the finishing round:
+ * retryReadDaysOf(L, the wider of the current acceptance's m and the live m,
+ * live grace), so for one loadout and one acceptance all three windows are
+ * identical and a card one of them reads as a retry entry is a retry entry
+ * to all three. Without a loadout (unreadable, or a check's stub) it is
+ * retryReadDaysOf(level, m): the acceptance's m and no grace extension; R4
+ * and R6 fall back to the live m when the acceptance is unreadable (R4 reads
+ * none at version 0).
  * Residual (roadmap-types): a grace extension or multiplier since dropped
  * from the loadout, or a ward that shielded the card past its grace.
  */
@@ -849,9 +854,9 @@ export function cleanReadDaysOf(level: number, m: number | null | undefined, liv
  * when such cards exist; an unreadable loadout is logged and the window reads
  * the acceptance's m with no grace extension. R4 counts the same way from its
  * own reads (planContext: CardState.retryEntry for its baselines and live
- * counts, over retryReadDaysOf(L*, live m, live grace)), and R6's quests over
- * the same window; this one is never narrower, so every card figure of a
- * depth plan counts the same cards.
+ * counts), and R6's quests too, each over the same window as this one (the
+ * wider of the acceptance's m and the live m, with the live grace), so every
+ * card figure of a depth plan counts the same cards.
  */
 export async function loadCardCounts(
   client: Pick<RoadmapReadingsClient, "idea" | "activityEvent">,

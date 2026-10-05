@@ -16,8 +16,12 @@
  *   Verdicts     typedTargetVerdict
  *   Start pay    startPayOf
  *   Aim figure   aimFigureOf
+ *   Activities   activityCardOf · activityAsksOf · activitySuggestsOf · activityOpenOf · activityAvoidOf · activityCardAnswerOf ·
+ *                activityNothingToAvoidOf · activityBlockedOf · pickerExcludedOf · activityWaitingOf · heldPracticesOf ·
+ *                practiceOnlyLineOf · rowsAnsweredBy · intakeActivityOf · aimConflictLineOf · pausedOfReply · notPausedOfReply (§19)
  */
 import {
+  ACTIVITY_REASON_MAX,
   PARAGON_MIN_MILESTONES,
   SOURCE_NOTE_MAX,
   TYPICAL_HOURS_MAX,
@@ -30,8 +34,14 @@ import {
   rankIndexAt,
   runWriterOf,
   startStatedInputOf,
+  userClauseOf,
+  type ActivityCardAnswer,
+  type ActivityConfirm,
+  type ActivityConfirmView,
+  type ActivityRow,
   type AimRankView,
   type BlockingFlag,
+  type CueTexts,
   type Decision,
   type ItemDraft,
   type ItemKind,
@@ -55,7 +65,17 @@ import {
   type WeekQuestsView,
 } from "@/lib/roadmap-types";
 import { statedForMilestone } from "@/lib/roadmap-economy";
-import { catalogEntryOf, type CatalogKey } from "@/lib/roadmap-catalog";
+import {
+  activityConfirmViewOf,
+  allowedKindsFor,
+  catalogEntryOf,
+  catalogKindsFor,
+  constraintsStateOf,
+  isCatalogKey,
+  type CatalogKey,
+  type CatalogTrack,
+} from "@/lib/roadmap-catalog";
+import { constraintExclusionsOf } from "@/lib/roadmap-validate";
 import type { DayKey } from "@/lib/life-day";
 import type { Segment } from "@/components/ui/Meter";
 import {
@@ -65,6 +85,8 @@ import {
   RUN_REFUSED_LINE,
   RUN_STARTER_LINE,
   RUN_UNFINISHED_LINE,
+  activityPendingLine,
+  aimConflictLine,
   closedUnreachedLine,
   dayLabel,
   pendingReachLine,
@@ -773,4 +795,221 @@ export function additionsDatesOf(draft: Pick<DraftView, "dateCheck" | "additions
   if (picked.length === 0) return { from, to: null };
   const to = picked.map((a) => a.dateWith as string).sort().pop() ?? null;
   return { from, to };
+}
+
+/// ═══ Constraint safety: confirm to unlock (contracts §19) ════════════════════
+//
+// The confirm card reads the gate's view (DraftView.activityConfirm,
+// RoadmapView.activityConfirm; roadmap-catalog activityConfirmViewOf). The
+// boxes are ticked "avoid"; the parser's reading only pre-ticks a box (a
+// suggestion: it never blocks and never unlocks anything). Answering is an
+// explicit act (the lead's decision 1): Save with at least one box ticked, or
+// "Nothing to avoid". Either sends the card's answer (ActivityCardAnswer)
+// with the key of the words the card was shown against, so an answer given
+// while the words changed elsewhere is refused and the card asks again
+// (decision 3). An unticked row is never sent as "fine", and Save with
+// nothing ticked is never offered.
+
+/** The card to show, or null: off with no rows (a plan with nothing to ask and nothing answered). */
+export function activityCardOf(v: ActivityConfirmView | null | undefined): ActivityConfirmView | null {
+  if (!v || !Array.isArray(v.rows)) return null;
+  return v.on || v.rows.length > 0 ? v : null;
+}
+
+/** The card asks (its list opens by itself, and the plan holds kinds meanwhile): the gate is on and rows wait on the user's answer. */
+export function activityAsksOf(v: Pick<ActivityConfirmView, "on" | "pending"> | null | undefined): boolean {
+  return Boolean(v && v.on && v.pending > 0);
+}
+
+/** Unanswered suggestions (WORDS rows: the user's words name a kind the plan still places): the list opens too, though nothing waits on it (decision 7). */
+export function activitySuggestsOf(v: Pick<ActivityConfirmView, "rows"> | null | undefined): boolean {
+  return Boolean(v && Array.isArray(v.rows) && v.rows.some((r) => r.state === "WORDS"));
+}
+
+/** The card's list is open by itself: it asks, or it carries suggestions to answer. Otherwise it shows the answer, with [Change]. */
+export function activityOpenOf(v: Pick<ActivityConfirmView, "on" | "pending" | "rows"> | null | undefined): boolean {
+  return activityAsksOf(v) || activitySuggestsOf(v);
+}
+
+/**
+ * The boxes ticked "avoid" when the list opens, in row order: the user's own
+ * AVOIDs, and a suggestion (the parser's reading of the user's words) on a
+ * row still to answer, PENDING or WORDS. Never a row the card's answer left
+ * unticked (FINE), and never a plain pending row.
+ */
+export function activityAvoidOf(rows: readonly Pick<ActivityRow, "kind" | "state" | "prefill">[]): CatalogKey[] {
+  return rows.filter((r) => r.state === "AVOID" || r.state === "WORDS" || (r.state === "PENDING" && r.prefill === "AVOID")).map((r) => r.kind);
+}
+
+/**
+ * What Save sends (contracts §19.3): the view's key and every box ticked
+ * "avoid" on the card's rows, in row order (CATALOG order); never a reason
+ * (the server quotes the user's words). Null when nothing is ticked: Save is
+ * then not offered, and the card's button is "Nothing to avoid".
+ */
+export function activityCardAnswerOf(view: Pick<ActivityConfirmView, "key" | "rows">, avoid: Iterable<CatalogKey>): ActivityCardAnswer | null {
+  const ticked = new Set<CatalogKey>(avoid);
+  const kinds = view.rows.filter((r) => ticked.has(r.kind)).map((r) => r.kind);
+  return kinds.length > 0 ? { key: view.key, avoid: kinds, nothingToAvoid: false } : null;
+}
+
+/** "Nothing to avoid" (ACTIVITY_NOTHING_TO_AVOID): the explicit all-clear over the rows shown, with the view's key. */
+export function activityNothingToAvoidOf(view: Pick<ActivityConfirmView, "key">): ActivityCardAnswer {
+  return { key: view.key, avoid: [], nothingToAvoid: true };
+}
+
+/** The kinds no plan path places now (a shown PENDING or AVOID row): the type picker leaves them out. A suggestion (WORDS) is placed, so it is offered. */
+export function activityBlockedOf(v: Pick<ActivityConfirmView, "rows"> | null | undefined): CatalogKey[] {
+  return (v?.rows ?? []).filter((r) => r.state === "PENDING" || r.state === "AVOID").map((r) => r.kind);
+}
+
+/**
+ * The type picker's left-out kinds: with the gate's view, what the gate
+ * holds (PENDING and AVOID; the parser's exclusions are suggestions and
+ * never block). Without it (an older server), the exclusions alone.
+ */
+export function pickerExcludedOf(v: Pick<ActivityConfirmView, "rows"> | null | undefined, exclusions: readonly { kind: CatalogKey }[] | null | undefined): CatalogKey[] {
+  if (!v) return (exclusions ?? []).map((x) => x.kind);
+  return activityBlockedOf(v);
+}
+
+/** The kinds waiting on the user's answer (PENDING rows). */
+export function activityWaitingOf(v: Pick<ActivityConfirmView, "rows"> | null | undefined): CatalogKey[] {
+  return (v?.rows ?? []).filter((r) => r.state === "PENDING").map((r) => r.kind);
+}
+
+/**
+ * A milestone's practices, steps and checkpoint the answer holds back (the
+ * Start sheet; R4's Start creates no task for one): waiting on it (a PENDING
+ * row's kind) or one the user said to avoid (an AVOID row's). A suggestion
+ * never holds one back. An item with no catalog type is the user's own words
+ * and is never held.
+ */
+export function heldPracticesOf(m: Pick<MilestoneDraft, "items">, v: Pick<ActivityConfirmView, "rows"> | null | undefined): { waiting: ItemDraft[]; leftOut: ItemDraft[] } {
+  const stateOf = new Map((v?.rows ?? []).map((r) => [r.kind as string, r.state] as const));
+  const practices = m.items.filter((it) => (it.kind === "PRACTICE" || it.kind === "STEP" || it.kind === "CHECKPOINT") && it.decision !== "REMOVED" && isCatalogKey(it.catalogKey));
+  return {
+    waiting: practices.filter((it) => stateOf.get(it.catalogKey as string) === "PENDING"),
+    leftOut: practices.filter((it) => stateOf.get(it.catalogKey as string) === "AVOID"),
+  };
+}
+
+/** The plan's line while rows wait ("Easy, mobility and technique practice only until you confirm."); null when nothing waits. */
+export function practiceOnlyLineOf(v: Pick<ActivityConfirmView, "on" | "pending" | "safeKinds"> | null | undefined): string | null {
+  return v && activityAsksOf(v) ? activityPendingLine(v.safeKinds) : null;
+}
+
+/**
+ * The rows as the answer would leave them (the intake's card once confirmed
+ * on the form, before it is saved): each ticked row AVOID, every other
+ * listed row placed (FINE), with no day yet. The summary reads them.
+ */
+export function rowsAnsweredBy(rows: readonly ActivityRow[], answer: Pick<ActivityCardAnswer, "avoid">): ActivityRow[] {
+  const ticked = new Set<string>(answer.avoid);
+  return rows.map((r) => (ticked.has(r.kind) ? { ...r, state: "AVOID" as const, day: r.state === "AVOID" ? r.day : null, staleDay: null, cls: "YOURS" as const } : { ...r, state: "FINE" as const, day: null, staleDay: null, cls: "YOURS" as const }));
+}
+
+/** What the intake's card reads: the form's would-be texts and Area, and an open draft's stored answers. */
+export interface IntakeActivityInput {
+  track: CatalogTrack;
+  texts: CueTexts;
+  exam: boolean;
+  practicesAllowed: boolean;
+  /** The examLabel the parser fills labels with (the server's fill). */
+  examLabel: string | null;
+  stored: ActivityConfirm | null | undefined;
+}
+
+/**
+ * The intake's confirm card (the gate run on the form as typed, pure): the
+ * parser's exclusions over the track's offered kinds as the server reads
+ * them (suggestions only), the stored answers of an open draft, and the key
+ * the answer is given against. A parser failure suggests nothing.
+ */
+export function intakeActivityOf(input: IntakeActivityInput): { view: ActivityConfirmView; key: string } {
+  const filter = { track: input.track, exam: input.exam, practicesAllowed: input.practicesAllowed };
+  let exclusions: ReturnType<typeof constraintExclusionsOf> = [];
+  if (input.texts.constraints && input.texts.constraints.trim()) {
+    try {
+      const kinds = [...catalogKindsFor("PRACTICE", filter), ...catalogKindsFor("STEP", filter), ...catalogKindsFor("CHECKPOINT", filter)];
+      exclusions = constraintExclusionsOf(input.texts.constraints, kinds, { track: input.track, domains: [], aim: input.texts.aim, exam: input.examLabel });
+    } catch {
+      exclusions = [];
+    }
+  }
+  const state = constraintsStateOf({ track: input.track, texts: input.texts, exam: input.exam, practicesAllowed: input.practicesAllowed, exclusions });
+  const gate = allowedKindsFor(state, input.stored ?? null);
+  return { view: activityConfirmViewOf(state, gate), key: state.key };
+}
+
+/**
+ * The aim-conflict line (the lead's decision 6), or null. It quotes the
+ * user's own sentence holding the word (userClauseOf over their
+ * constraints; nothing to quote, no line: never a "no X" built from it), and
+ * shows only while the conflict is unresolved:
+ *   - with the activity card on screen, until the card is answered under
+ *     these words (ActivityConfirmView.answered);
+ *   - with the gate's view but no card (nothing to ask), always (nothing is
+ *     left out: the line only points at the clash);
+ *   - without the gate's view (an older draft), while a kind the
+ *     constraints name is still left out (`leftOut`).
+ */
+export function aimConflictLineOf(input: {
+  /** R3's aimConflictOf: the word, and (since the safety-gaps round) `quote`, the user's clause holding it. */
+  conflict: { word: string; quote?: string } | null | undefined;
+  constraints: string | null | undefined;
+  aim: string;
+  confirm: ActivityConfirmView | null | undefined;
+  leftOut: number;
+}): string | null {
+  const word = input.conflict?.word;
+  if (typeof word !== "string" || !word.trim()) return null;
+  // R3's quote when it is the user's own text, verbatim and short enough to quote; else the clause found here.
+  const quote = typeof input.conflict?.quote === "string" ? input.conflict.quote.trim() : "";
+  const verbatim = quote.length > 0 && quote.length <= ACTIVITY_REASON_MAX && typeof input.constraints === "string" && input.constraints.includes(quote);
+  const sentence = verbatim ? quote : userClauseOf(input.constraints, word);
+  if (!sentence) return null;
+  const card = activityCardOf(input.confirm);
+  if (card) return card.answered == null ? aimConflictLine(sentence, input.aim, true) : null;
+  if (input.confirm) return aimConflictLine(sentence, input.aim, false);
+  return input.leftOut > 0 ? aimConflictLine(sentence, input.aim, false) : null;
+}
+
+/** A started practice an answer took off Today (decision 4; R4's PausedTask): its template, and the title Today shows. */
+export interface PausedTemplate {
+  templateId: string;
+  title: string;
+}
+
+/** At most this many tasks are named in one notice. */
+const PAUSED_MAX = 20;
+
+/** One list of R4's reply, read defensively (own property; each entry a template id and a title; deduped). */
+function pausedListOf(reply: unknown, field: "paused" | "notPaused"): PausedTemplate[] {
+  if (!reply || typeof reply !== "object" || !Object.prototype.hasOwnProperty.call(reply, field)) return [];
+  const list = (reply as Record<string, unknown>)[field];
+  if (!Array.isArray(list)) return [];
+  const out: PausedTemplate[] = [];
+  for (const x of list.slice(0, PAUSED_MAX)) {
+    if (!x || typeof x !== "object") continue;
+    const { templateId, title } = x as { templateId?: unknown; title?: unknown };
+    if (typeof templateId === "string" && templateId.trim() && typeof title === "string" && title.trim() && !out.some((p) => p.templateId === templateId)) out.push({ templateId, title: title.trim() });
+  }
+  return out;
+}
+
+/**
+ * The started practices the answer took off Today (the lead's decision 4:
+ * R4's setActivityVerdicts reply, ActivityVerdictsResult.paused, archived
+ * through the existing path with their history kept). [] from a reply that
+ * carries none (an older server, a draft, an answer that avoids nothing
+ * started). The notice's Undo is the existing unarchiveTask, one per task.
+ */
+export function pausedOfReply(reply: unknown): PausedTemplate[] {
+  return pausedListOf(reply, "paused");
+}
+
+/** Those R4 couldn't take off Today (ActivityVerdictsResult.notPaused): still live there, so the notice names them and says where to archive them. */
+export function notPausedOfReply(reply: unknown): PausedTemplate[] {
+  return pausedListOf(reply, "notPaused");
 }

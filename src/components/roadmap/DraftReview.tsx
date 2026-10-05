@@ -24,8 +24,11 @@
  *     [Add both] [Choose…] [Leave out] for an English, non-exam aim; one
  *     toggle per Domain and [Confirm] (no add-all) for an exam or non-English
  *     aim; a Domain past 3 years or a 7th is disabled with its reason;
- *   - the kinds the constraints left out, each with its word, [Allow one];
- *     the aim-conflict line; a body or care plan's one session-picks confirm;
+ *   - the activity card (contracts §19), above the rest; on an older draft
+ *     without it, the kinds the constraints left out, each with its word,
+ *     [Allow one]; the aim-conflict line, quoting the user's own sentence
+ *     and shown only while unresolved (decision 6); a body or care plan's
+ *     one session-picks confirm;
  *   - the Depth line and the date check with its offers (Use the realistic
  *     date, Keep my date, Choose a lower depth…; nothing lowers by itself);
  *   - the arrangement line (Gemini runs only);
@@ -99,7 +102,6 @@ import {
   additionBlockedLine,
   additionEffectLine,
   additionsLine,
-  aimConflictLine,
   byLine,
   depthName,
   exclusionsLine,
@@ -113,7 +115,10 @@ import {
 } from "./roadmap-copy";
 import { ROADMAP_NEW_HREF } from "./roadmap-links";
 import {
+  activityCardOf,
+  activityWaitingOf,
   additionsDatesOf,
+  aimConflictLineOf,
   carriedRowsOf,
   domainIndexOf,
   draftBannerOf,
@@ -122,6 +127,8 @@ import {
   geminiNamedOf,
   isHeldMilestone,
   isKeysOnlyDraft,
+  pickerExcludedOf,
+  practiceOnlyLineOf,
   rankPlanOf,
   rowDomId,
   scheduledOf,
@@ -136,12 +143,23 @@ import { DepthLines } from "./AimHeader";
 import { DateBlock } from "./DateBlock";
 import { GapPanel, type LiveGates } from "./GapPanel";
 import { RoadmapGlyph } from "./RoadmapGlyph";
+import { ActivityConfirmCard, activityHealthOf } from "./ActivityConfirm";
 import "./roadmap.css";
+
+/**
+ * The answers the plan's activity card reads (contracts §19): the draft's own
+ * (DraftView.activityConfirm, from the gate it was built with), else the
+ * living roadmap's. undefined: an older server that sends neither.
+ */
+export function activityConfirmOfView(view: Pick<RoadmapView, "draft" | "activityConfirm">): RoadmapView["activityConfirm"] {
+  return view.draft?.activityConfirm !== undefined ? view.draft.activityConfirm : view.activityConfirm;
+}
 
 /** The editor's scope from the view (the label checks' context, the Domain sheets' library, and the type picker's exclusions). */
 export function editorScopeOf(view: RoadmapView, milestones: readonly MilestoneDraft[], allowed: readonly CatalogKey[] = []): ItemEditorScope | null {
   const h = view.header;
   if (!h) return null;
+  const confirm = activityConfirmOfView(view);
   const syllabusLines = milestones.flatMap((m) => m.items.filter((it) => it.kind === "TOPIC" && it.origin === "SYLLABUS").map((it) => it.label));
   return {
     roadmapId: h.id,
@@ -155,8 +173,10 @@ export function editorScopeOf(view: RoadmapView, milestones: readonly MilestoneD
     syllabusLines,
     milestoneCount: scheduledOf(milestones).filter((m) => !isHeldMilestone(m)).reduce((n, m) => Math.max(n, m.ord), 0),
     today: view.today,
-    excluded: (view.draft?.exclusions ?? []).map((x) => x.kind),
-    allowed,
+    // Constraint safety (contracts §19): with the gate's view, the picker leaves out what the gate holds; the old exclusions otherwise.
+    excluded: pickerExcludedOf(confirm, view.draft?.exclusions),
+    allowed: confirm ? [] : allowed,
+    held: activityWaitingOf(confirm),
   };
 }
 
@@ -305,6 +325,9 @@ function DraftHeader({ header, run, view, mode, next, keysOnly, gates }: { heade
     );
   }
   const bodyTrack = header.area.kind === "TRACK" && header.area.track === "BODY";
+  // The activity card below carries HEALTH_LINE itself on a body or care plan (once per screen).
+  const activityCard = activityCardOf(draft.activityConfirm);
+  const cardHealth = activityCard != null && activityHealthOf(activityCard);
   return (
     <section className="card rm-aim" aria-label="The draft">
       <div className="t-eyebrow">{eyebrow}</div>
@@ -318,7 +341,7 @@ function DraftHeader({ header, run, view, mode, next, keysOnly, gates }: { heade
         </Chip>
       </div>
       {rejected ? <p className="rm-lead">{RUN_REJECTED_LINE}</p> : lead && <p className="rm-lead">{lead}</p>}
-      {keysOnly && bodyTrack && <p className="rm-lead">{HEALTH_LINE}</p>}
+      {keysOnly && bodyTrack && !cardHealth && <p className="rm-lead">{HEALTH_LINE}</p>}
       <div className="rm-lines">
         {run && runSaysMore(run) && <RunFacts run={run} today={view.today} />}
         {header.constraints && !keysOnly && <span>{CONSTRAINTS_LINE}</span>}
@@ -432,16 +455,26 @@ export function AdditionsCard({ view }: { view: RoadmapView }) {
   );
 }
 
-/** The kinds the constraints left out (with [Allow one]) and the aim-conflict line (F-R4-17). */
+/**
+ * The kinds the constraints left out (with [Allow one]) and the aim-conflict
+ * line (F-R4-17). With the gate's view (contracts §19) the activity card
+ * lists the user's words' suggestions with their answer (a suggestion never
+ * leaves anything out), so only the aim-conflict line stays here. That line
+ * quotes the user's own sentence, never a "no X" built from it, and shows
+ * only while unresolved (decision 6; aimConflictLineOf): with the card, until
+ * the card is answered under these words.
+ */
 function ExclusionsCard({ view, allowed, onAllow }: { view: RoadmapView; allowed: readonly CatalogKey[]; onAllow: (k: CatalogKey) => void }) {
   const draft = view.draft!;
-  const xs = (draft.exclusions ?? []).filter((x) => !allowed.includes(x.kind));
+  const confirm = activityConfirmOfView(view);
+  const gated = confirm != null;
+  const xs = gated ? [] : (draft.exclusions ?? []).filter((x) => !allowed.includes(x.kind));
   const line = exclusionsLine(xs);
-  const conflict = draft.aimConflict ? aimConflictLine(draft.aimConflict.word, view.header!.aim) : null;
+  const conflict = aimConflictLineOf({ conflict: draft.aimConflict, constraints: view.header!.constraints, aim: view.header!.aim, confirm, leftOut: xs.length });
   const [allowing, setAllowing] = useState(false);
   if (!line && !conflict && allowed.length === 0) return null;
   return (
-    <section className="card pad rm-excl" aria-label="Left out because of your constraints">
+    <section className="card pad rm-excl" aria-label={gated ? "Your aim and your constraints" : "Left out because of your constraints"}>
       {line && (
         <p className="t-meta rm-ink1" style={{ margin: 0 }}>
           {line}{" "}
@@ -701,6 +734,7 @@ export function DraftReview({
         }
       : null,
     body: header.area.kind === "TRACK" && header.area.track === "BODY",
+    practiceOnly: practiceOnlyLineOf(activityConfirmOfView(view)),
   };
   // The banner names what happened to the latest run; who wrote the rows is the header's (RunView.wrote).
   const banner = mode === "draft" && !runRejectedOf(view.run) ? draftBannerOf(view.run) : null;
@@ -717,6 +751,8 @@ export function DraftReview({
           </section>
         )}
         <DraftHeader header={header} run={view.run} view={view} mode={mode} next={next} keysOnly={keysOnly} gates={gates} />
+        {/* Constraint safety (contracts §19): which activities to avoid. A re-plan's sits on the living roadmap above it. */}
+        {(mode === "draft" || view.activityConfirm === undefined) && <ActivityConfirmCard view={draft.activityConfirm} roadmapId={header.id} today={view.today} place="draft" />}
         {keysOnly && <AdditionsCard view={view} />}
         {keysOnly && <SessionPicksCard view={view} />}
         {keysOnly && <ExclusionsCard view={view} allowed={allowed} onAllow={(k) => setAllowed((a) => (a.includes(k) ? a : [...a, k]))} />}

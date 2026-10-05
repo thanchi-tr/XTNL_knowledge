@@ -97,6 +97,24 @@
  *   View fields       PlanHistoryRow.depthLowered (R4 sets it; R5 keys "depth lowered" on it) ·
  *                     AimCardView.legacyView (the Aim card's legacy banner facts)
  *   Ranks             AssignRankIndices takes R1's optional depth (R4's rankIndicesOf passes it)
+ *
+ * Constraint safety, "confirm to unlock" (contracts §19), lane 0: constraint
+ * safety rests on neither the parser nor the cue detector. Every BODY or
+ * CARE plan asks once (a CRAFT plan when its words carry a cue); the
+ * parser's reading only suggests.
+ *   Cue detector      CueClass · CueSource · CueSpan · CueReading · the CUE_* vocabularies ·
+ *                     constraintCuesOf (text → {hasCue, cues, unparseable}) · CueTexts · cueTextsOf ·
+ *                     cueReadingOf · cueKeyOf · userClauseOf
+ *   The confirmation  ActivityCardAnswer (what the card sends: key, avoid, nothingToAvoid) ·
+ *                     ActivityConfirm (stored, YOURS: key, AVOID kinds, answered) · ActivityCardAnswered ·
+ *                     ActivityConfirmEntry · ActivityVerdict · ActivityAnswer (deprecated per-kind form) ·
+ *                     ACTIVITY_CONFIRM_KEY (its place in Roadmap.coverage) · ACTIVITY_REASON_MAX
+ *   The gate's shapes ConstraintsState · ActivityPrefill · ActivityRowState · ActivityRow · ActivityGate ·
+ *                     ActivityConfirmView (the view field: key, answered, rows …) · Intake.activities ·
+ *                     DraftView.activityConfirm · RoadmapView.activityConfirm
+ *   (roadmap-catalog.ts holds the catalog half: CatalogEntry.safe, CUE_SAFE_KINDS, cueSafeKindsOf,
+ *   the tracks that ask, cueGatedKindsOf, constraintsStateOf, allowedKindsFor, answerActivityCard, the
+ *   refusals, and the reader and writer of the stored answers.)
  * The practice, step and checkpoint catalog is roadmap-catalog.ts; the aim
  * invitation rules are roadmap-invite.ts; the aim handoff is roadmap-handoff.ts.
  */
@@ -110,7 +128,7 @@ import { DURATION_BAND_MINUTES } from "./life-lexicon";
 import type { Category, Track } from "./life-types";
 import type { RoadmapGoalEntry, RoadmapSeriesPoint } from "./goals";
 import type { QuestionType } from "@prisma/client";
-import type { CatalogKey } from "./roadmap-catalog";
+import type { CatalogKey, CatalogTrack } from "./roadmap-catalog";
 
 export type { RoadmapGoalEntry, RoadmapSeriesPoint };
 
@@ -2619,6 +2637,16 @@ export interface Intake {
   replaces?: string | null;
   /** Roadmap.suggestAreas: read only while ROADMAP_GAPS_LIVE; a stored true is ignored while it is false. */
   suggestAreas?: boolean;
+  /**
+   * Constraint safety (contracts §19): the user's per-kind answers, "which
+   * of these are fine for you" (YOURS). Stored in Roadmap.coverage under
+   * ACTIVITY_CONFIRM_KEY (no new column): intakeOf reads it with
+   * roadmap-catalog activityConfirmOf, intakeData keeps it with
+   * coverageJsonOf. saveIntake never takes it from the form; only R4's
+   * setActivityVerdictsCore writes it (answerActivities). Every plan path
+   * reads it through allowedKindsFor. Absent or null: nothing answered.
+   */
+  activities?: ActivityConfirm | null;
 }
 
 /** The exam question's prefill (F-R4-24): isCredentialAim over the aim alone (CREDENTIAL_WORDS widened for this). The user's Yes/No wins. */
@@ -4511,6 +4539,12 @@ export interface DraftView {
   depth?: DepthView | null;
   /** A legacy draft (F-R4-16): no row text is rendered; accept refuses ("Draft it again first"). */
   legacy?: LegacyView | null;
+  /**
+   * Constraint safety (contracts §19): the confirm card, from the same gate
+   * the draft was built with (activityConfirmViewOf). Undefined: not loaded
+   * here; null or `on: false` with no rows: nothing to show.
+   */
+  activityConfirm?: ActivityConfirmView | null;
 }
 
 /** One measure line ("Hold 20 cards at level 6+ in Probability, Inference (now 12)"). */
@@ -4745,4 +4779,910 @@ export interface RoadmapView {
   /** The shown gap names (ROADMAP_GAPS_LIVE only) and the hidden count. */
   gaps?: GapView[];
   gapsHidden?: number;
+  /**
+   * Constraint safety (contracts §19): the confirm card on the living
+   * roadmap (the answers stay editable for the life of the plan). Undefined:
+   * not loaded here; null: nothing to show.
+   */
+  activityConfirm?: ActivityConfirmView | null;
+}
+
+// ═══ Constraint safety: confirm to unlock (contracts §19) ═══════════════════
+//
+// The lead's rule: constraint SAFETY must not depend on the parser, nor on
+// the cue detector. Every BODY or CARE plan, whatever the user wrote (cue or
+// not, constraints empty or not), asks once: until the user answers the
+// activity card under their current words, every plan path places only the
+// catalog's safe types (CatalogEntry.safe: the easy, mobility and technique
+// sessions on BODY; planning the week and keeping a log on CARE) for the
+// track's practice and for the activity itself. A CRAFT plan asks the same
+// way when any of the user's texts carries a cue or can't be read (wrist
+// RSI, voice strain …). Answering takes an explicit act: tick what to avoid
+// and Save, or tap "Nothing to avoid"; an unticked row is never taken as an
+// answer by itself, so Save with nothing ticked unlocks nothing. The answer
+// carries the key of the words it was given against, and a changed text asks
+// again (an AVOID stands). The parser's exclusions (R3's
+// constraintExclusionsOf) only SUGGEST: a pre-ticked box with the user's
+// own sentence quoted. They never block and never unlock anything. Field
+// (knowledge) practice is never gated by a body cue.
+//
+// This half holds the cue detector (pure, high recall, no meaning: a cue is
+// a reason to ask, never a reading of what the user can do; on BODY and CARE
+// it only chooses the words the card quotes), the stored answer's shape and
+// its fingerprint, and the shapes the gate returns. The gate itself
+// (allowedKindsFor) reads the catalog, so it lives in roadmap-catalog.ts.
+// Nothing here claims medical knowledge: the class of a cue is for the
+// checks and the bar, never shown as a diagnosis, and the HEALTH_LINE ("Not
+// medical advice …") stays wherever a BODY or CARE plan shows.
+
+/** What a cue's words name. For the checks and the bar only: the card quotes the user's words, never the class. */
+export type CueClass = "INJURY" | "PAIN" | "HEALTH" | "AVOID" | "BODY_PART" | "LANGUAGE";
+export const CUE_CLASSES: readonly CueClass[] = ["INJURY", "PAIN", "HEALTH", "AVOID", "BODY_PART", "LANGUAGE"];
+
+/** Where the words came from: the Constraints box, the aim, or another text the user typed (cueTextsOf's notes). */
+export type CueSource = "CONSTRAINTS" | "AIM" | "NOTES";
+
+/** One cue, quoted from the user's own words. */
+export interface CueSpan {
+  source: CueSource;
+  /** NOTES only: the note's index in CueTexts.notes. */
+  note?: number;
+  cls: CueClass;
+  /** The vocabulary entry that matched ("pain", "too much", "bad + knee", "my + knee", "~injury" for a one-letter slip). */
+  cue: string;
+  /** The user's words, verbatim: text.slice(start, end). */
+  quote: string;
+  start: number;
+  end: number;
+  /** The sentence holding it, verbatim (userClauseOf; at most ACTIVITY_REASON_MAX characters, "…" where cut). */
+  clause: string;
+}
+
+/** constraintCuesOf's answer. `hasCue` is true when any cue matched or the text can't be read. */
+export interface CueReading {
+  hasCue: boolean;
+  cues: CueSpan[];
+  /**
+   * Text the app can't read as English: another script, mostly accented
+   * letters, a symbol such as an emoji, or words none of which is English
+   * once shared loan words and units are set aside (CUE_LOAN_WORDS: "Correr
+   * 10K", "Einen Marathon laufen"; in the notes, ≥ CUE_LANGUAGE_MIN_WORDS
+   * such words). It counts as a cue.
+   */
+  unparseable: boolean;
+}
+
+/**
+ * The cue vocabularies (normalised: lower case, no accents, no apostrophes —
+ * "can't" is "cant"; words separated by one space and matched as a run of
+ * whole words, a hyphen splitting words, so "no go" matches "no-go"; a final
+ * "*" matches any word that starts with it). High recall by design: a false
+ * cue costs one tap on the confirm card, a missed one could cost an injury.
+ * Each list is exported so the bar can measure and ablate it.
+ */
+export const CUE_INJURY_WORDS: readonly string[] = [
+  "injur*", "tore", "torn", "tear", "sprain*", "strain*", "fractur*", "broke", "broken", "dislocat*", "ruptur*",
+  "pulled a", "pulled my", "pulled muscle", "tweaked", "surger*", "surgeon*", "surgical", "operation", "operations", "operated",
+  "post op", "postop", "replacement", "replaced", "rehab*", "recover*", "heal", "heals", "healing", "healed", "concuss*",
+  "whiplash", "splint*", "tendon*", "tendin*", "bursitis", "fasciitis", "plantar", "sciatica", "hernia*", "herniat*",
+  "slipped disc", "bulging disc", "scar", "scars", "scarring", "stitches", "in a cast", "a cast", "crutch*", "brace", "sling",
+  "wheelchair*", "amputat*", "amputee*", "prosthe*", "limp", "limping", "bruise*", "bruising", "wound", "wounds", "blister*",
+  "rolled my", "twisted my", "turned my ankle", "gave out", "gives out", "give out", "giving out", "buckl*", "flare up",
+  "flare ups", "flared up", "flareup*", "pinched", "nerve", "nerves", "osteo*", "arthrit*", "arthros*", "wear and tear",
+  "degenerat*", "prolaps*", "pelvic floor", "diastasis", "c section", "caesarean", "cesarean", "accident", "accidents",
+  // Operations, falls and breaks the aim names ("after ACL reconstruction", "after breaking my leg", "after a fall").
+  "reconstruction", "reconstructions", "reconstructive", "reconstructed", "breaking my", "break my", "broke my", "a fall",
+  "had a fall", "falls", "fell over", "fell off", "fell down", "keyhole",
+  // Craft and voice: the hands, the voice, the ears (a CRAFT plan asks on these).
+  "rsi", "repetitive strain", "carpal tunnel", "trigger finger", "tennis elbow", "golfers elbow", "dystonia", "nodule*",
+  "hoarse*", "lost my voice", "voice loss", "tinnitus", "hearing loss",
+];
+export const CUE_PAIN_WORDS: readonly string[] = [
+  "pain", "pains", "painful", "painfully", "ache", "aches", "aching", "achy", "achey", "sore", "soreness", "hurt", "hurts",
+  "hurting", "ouch", "agony", "agonising", "agonizing", "tender", "tenderness", "stiff", "stiffness", "cramp*", "spasm*",
+  "swell", "swells", "swelling", "swollen", "inflam*", "numb", "numbness", "tingl*", "throb*", "twinge*", "discomfort",
+  "uncomfortable", "flare", "flares", "irritat*", "aggravat*", "bother", "bothers", "bothering", "bothered", "kills my",
+  "killing my", "kill my", "kills me", "killing me", "niggl*", "acting up", "plays up", "playing up", "play up", "played up",
+  "gives me grief", "giving me grief",
+];
+export const CUE_HEALTH_WORDS: readonly string[] = [
+  "pregnan*", "expecting", "trimester", "postpartum", "post partum", "postnatal", "post natal", "prenatal", "antenatal",
+  "gave birth", "giving birth", "birth", "newborn", "had a baby", "breastfeed*", "breast feeding", "miscarr*", "ivf",
+  "fertility", "menopaus*", "perimenopaus*", "endometriosis", "pcos", "heart", "cardiac", "cardiolog*", "arrhythmi*", "afib",
+  "a fib", "palpitation*", "angina", "blood pressure", "hypertension", "hypotension", "high bp", "low bp", "cholesterol",
+  "a stroke", "had a stroke", "stroke survivor", "mini stroke", "since the stroke", "after the stroke", "his stroke",
+  "her stroke", "their stroke", "mums stroke", "moms stroke", "dads stroke", "pacemaker", "stent",
+  "stents", "bypass", "transplant*", "dialysis", "kidney", "kidneys", "liver", "lung", "lungs", "copd", "asthma*", "inhaler*",
+  "breathless*", "short of breath", "shortness of breath", "breathing problems", "breathing issues", "trouble breathing",
+  "diabet*", "insulin", "blood sugar", "epilep*", "seizure*", "faint*", "dizz*", "vertigo", "lightheaded*", "light headed",
+  "migraine*", "headache*", "cancer", "tumor", "tumors", "tumour", "tumours", "chemo*", "radiotherap*", "radiation",
+  "oncolog*", "leukemia", "leukaemia", "lymphoma", "covid", "long covid", "flu", "fever", "infection*", "virus", "illness*",
+  "ill", "sick", "sickness", "unwell", "disease*", "disorder*", "syndrome*", "condition", "conditions", "chronic*",
+  "fatigue*", "exhaust*", "tired", "no energy", "low energy", "anemi*", "anaemi*", "thyroid", "autoimmun*", "lupus", "crohn*",
+  "colitis", "ibs", "coeliac", "celiac", "allerg*", "anaphyla*", "eating disorder", "anorexi*", "bulimi*", "binge*",
+  "self harm", "depress*", "anxiety", "anxious", "panic*", "ptsd", "trauma*", "mental health", "burnout", "burned out",
+  "burnt out", "burn out", "bipolar", "schizo*", "dementia", "alzheimer*", "parkinson*", "multiple sclerosis",
+  "motor neurone", "cerebral palsy", "disab*", "impair*", "blind", "deaf", "hard of hearing", "mobility issues",
+  "limited mobility", "reduced mobility", "frail*", "elderly", "old age", "my age", "years old", "aged", "senior", "seniors",
+  "overweight", "obese", "obesity", "bmi", "medic*", "meds", "pill", "pills", "prescri*", "steroid*", "blood thinner*",
+  "anticoagul*", "beta blocker*", "doctor*", "doc", "docs", "dr", "gp", "physician*", "specialist*", "consultant", "nurse*",
+  "midwife", "midwives", "physio*", "physiotherap*", "physical therap*", "chiro*", "therapist*", "therapy", "counsel*",
+  "psychiatr*", "psycholog*", "hospital*", "clinic*", "appointment*", "diagnos*", "symptom*", "health", "cleared", "bed rest",
+  "light duties", "light duty", "sick leave", "off work", "off sick", "weight bearing", "medically", "care home", "nursing home",
+  "hospice", "palliative", "end of life",
+  // Conditions and events an aim names with no pain word ("post-stroke", "having twins", "despite fibromyalgia").
+  "post stroke", "my stroke", "post covid", "post viral", "postviral", "twins", "triplets", "having a baby", "dvt", "thrombos*",
+  "embolism", "blood clot*", "clot", "clots", "pneumon*", "fibromyalg*", "scolios*", "kyphos*", "stenos*", "spondyl*",
+  "sclerosis", "cirrhos*", "hypermobil*", "ehlers", "danlos", "cfs", "chronic fatigue", "crps", "tbi", "brain injury",
+  "neuropath*", "retina*", "glaucoma", "cataract*", "haemophil*", "hemophil*", "sickle cell", "gout", "rheumat*", "fibroid*",
+  "prostat*", "stoma", "catheter*", "oxygen", "walking frame", "zimmer", "mobility scooter", "hearing aid*", "bppv", "svt",
+  "ckd", "chf", "hiv", "mnd",
+];
+export const CUE_AVOID_WORDS: readonly string[] = [
+  "no", "not", "never", "none", "nothing", "nor", "neither", "avoid*", "without", "cant", "cannot", "can not", "couldnt",
+  "dont", "doesnt", "didnt", "wont", "wouldnt", "shouldnt", "mustnt", "musnt", "arent", "isnt", "aint", "havent", "hasnt",
+  "unable", "stop", "stopped", "quit", "skip", "skips", "skipped", "limit*", "restrict*", "careful*", "caution*", "gentle", "gently", "gentler",
+  "easy on", "take it easy", "taking it easy", "go easy", "nothing heavy", "low impact", "high impact", "impact", "too much",
+  "too hard", "too heavy", "too intense", "too far", "too fast", "too long", "too often", "too tired", "too old", "too weak",
+  "too risky", "too painful", "risk", "risks", "risky", "unsafe", "danger*", "forbid*", "banned", "ban", "off limits",
+  "out of the question", "is out", "are out", "hate", "hates", "dislike*", "afraid", "scared", "fear*", "nervous", "worr*",
+  "rather not", "prefer not", "stay away", "steer clear", "keep away", "away from", "allowed", "permitted", "supposed to",
+  "except", "instead of", "struggl*", "difficult*", "hard for me", "barely", "hardly", "reduce*", "cut back", "cut down",
+  "back off", "ease off", "ease back", "ease into", "build up slowly", "despite", "in spite of",
+  "ruled out", "rule out", "bad idea", "bad for me", "bad for my", "is a problem", "are a problem", "problem for me", "kill me", "hard on", "tough on", "rough on",
+  "brutal on", "wreck*",
+];
+/**
+ * Read only in the Constraints box and the notes (never the aim, where they
+ * are the aim's own words: "Bench press …", "only …"): limits and the
+ * joint-type body parts, bare ("knee", "lower back").
+ */
+export const CUE_CONSTRAINT_ONLY_WORDS: readonly string[] = ["off", "only", "just", "max", "maximum", "at most", "no more than", "light", "easy", "slowly"];
+/** Joint-type body parts: bare in the constraints and notes; after "my", "her", "Mum's" … anywhere; after an adjective anywhere; before a CUE_JOINT_PROCEDURES word anywhere ("knee scope"). */
+export const CUE_BODY_PARTS: readonly string[] = [
+  "knee", "knees", "kneecap", "kneecaps", "patella", "patellar", "ankle", "ankles", "hip", "hips", "shoulder", "shoulders",
+  "wrist", "wrists", "elbow", "elbows", "spine", "spinal", "vertebra", "vertebrae", "disc", "discs", "disk", "disks", "acl",
+  "mcl", "pcl", "lcl", "meniscus", "menisci", "achilles", "hamstring", "hamstrings", "groin", "rotator cuff", "rotator",
+  "tendon", "tendons", "ligament", "ligaments", "cartilage", "pelvic", "pelvis", "sciatic", "joint", "joints", "neck",
+  "lower back", "upper back", "tailbone", "coccyx", "sacroiliac", "si joint", "it band", "itb", "shin", "shins", "heel",
+  "heels", "arch", "bunion", "bunions", "femur", "tibia", "fibula", "labrum", "labral", "collarbone", "collarbones",
+  "clavicle", "rib", "ribs", "sternum", "scapula", "cervical", "lumbar", "thoracic",
+];
+/**
+ * Body parts that name an injury site rather than an exercise ("ACL",
+ * "rotator cuff", "labrum", "Achilles"): a cue bare anywhere, the aim
+ * included ("Return to sport after ACL", "Run 10K after ACL reconstruction").
+ * The everyday joints ("hip", "knee") stay bare in the constraints and notes
+ * only, where the aim uses them for the exercise ("Hip thrust 100kg").
+ */
+export const CUE_BODY_PARTS_MEDICAL: readonly string[] = [
+  "acl", "mcl", "pcl", "lcl", "meniscus", "menisci", "achilles", "rotator cuff", "labrum", "labral", "patellar", "cartilage",
+  "ligament", "ligaments", "tendon", "tendons", "vertebra", "vertebrae", "spinal", "coccyx", "tailbone", "sacroiliac",
+  "si joint", "sciatic", "cervical", "lumbar", "thoracic", "pelvic", "collarbone", "collarbones", "clavicle",
+];
+/** After a joint-type part, these name an operation or a break ("knee scope", "ankle fusion", "collarbone break"): a cue anywhere, the aim included. */
+export const CUE_JOINT_PROCEDURES: readonly string[] = [
+  "scope", "scoped", "repair", "repaired", "fusion", "fused", "reconstruction", "rebuild", "rebuilt", "op", "ops", "break",
+  "breaks", "broken", "replacement", "replaced", "surgery", "operation",
+];
+/** Other body parts: a cue only after an adjective ("bad back", "weak legs") anywhere, or after "my", "her", "Mum's" … in the constraints and notes. */
+export const CUE_BODY_PARTS_MORE: readonly string[] = [
+  "back", "leg", "legs", "arm", "arms", "foot", "feet", "hand", "hands", "chest", "head", "toe", "toes", "finger", "fingers",
+  "thumb", "thumbs", "calf", "calves", "quad", "quads", "glute", "glutes", "core", "abs", "stomach", "belly", "tummy", "eye",
+  "eyes", "ear", "ears", "muscle", "muscles", "bone", "bones", "body", "jaw", "skin", "retina", "voice", "vocal", "throat",
+  "lung", "lungs", "heart",
+];
+/** Adjectives that make a following body part a cue (up to two words between: "bad left knee", "sore lower back"). */
+export const CUE_BODY_ADJECTIVES: readonly string[] = [
+  "bad", "weak", "dodgy", "gammy", "wonky", "bum", "trick", "creaky", "crook", "stiff", "sore", "tight", "injured", "broken",
+  "twisted", "rolled", "pulled", "tweaked", "torn", "busted", "blown", "wrecked", "fragile", "delicate", "unstable",
+  "arthritic", "swollen", "problem", "problematic", "troublesome", "damaged", "hurt", "painful", "aching", "achy", "numb",
+  "locked", "frozen", "messed", "bruised", "inflamed", "sprained", "strained", "fractured", "dislocated", "replaced", "operated",
+  "detached", "herniated", "bulging", "slipped", "fused", "reconstructed", "repaired", "rebuilt", "artificial",
+];
+/** Whose body part ("my knee", "her hip", "Mum's back"). */
+export const CUE_POSSESSIVES: readonly string[] = ["my", "his", "her", "their", "our", "mums", "moms", "dads", "mothers", "fathers", "grandmas", "grandpas", "nans", "wifes", "husbands", "partners"];
+/** Words between an adjective or possessive and its body part. */
+export const CUE_BODY_FILLERS: readonly string[] = ["my", "his", "her", "their", "our", "left", "right", "lower", "upper", "both", "the", "a", "an", "up", "bad", "weak"];
+/** A body part followed by one of these is a cue anywhere ("back problems", "leg issues"). */
+export const CUE_PART_TROUBLE: readonly string[] = ["problem", "problems", "issue", "issues", "trouble", "troubles", "niggle", "niggles"];
+/**
+ * Pain, injury, health and limit words in other languages, written without
+ * accents (Spanish, Portuguese, French, Italian, German, Dutch, Indonesian
+ * and Malay, Vietnamese, Tagalog, Turkish, Polish). Text in another script
+ * is unparseable whatever it says; these catch a short Latin-script text the
+ * language test can't tell from English ("me duele la rodilla").
+ */
+export const CUE_FOREIGN_WORDS: readonly string[] = [
+  // Spanish
+  "dolor", "dolores", "duele", "duelen", "dolorido", "lesion", "lesiones", "lesionado", "lesionada", "herida", "herido",
+  "lastimado", "lastimada", "rodilla", "rodillas", "espalda", "tobillo", "cadera", "hombro", "muneca", "codo", "embarazada",
+  "embarazo", "medico", "medica", "cirugia", "operacion", "enfermedad", "enfermo", "enferma", "evitar", "no puedo", "nada de",
+  "prohibido", "cansado", "cansada", "mareo",
+  // Portuguese
+  "dor", "dores", "doi", "doem", "lesao", "lesoes", "machucado", "joelho", "joelhos", "costas", "tornozelo", "quadril", "ombro",
+  "gravida", "gravidez", "cirurgia", "doenca", "doente", "nao posso", "nao", "proibido",
+  // French
+  "douleur", "douleurs", "mal au", "mal a", "mal aux", "blessure", "blesse", "blessee", "genou", "genoux", "cheville", "hanche",
+  "epaule", "poignet", "coude", "enceinte", "grossesse", "chirurgie", "medecin", "malade", "maladie", "eviter", "pas de",
+  "ne peux", "interdit",
+  // Italian
+  "dolore", "dolori", "fa male", "infortunio", "ferito", "ginocchio", "ginocchia", "schiena", "caviglia", "anca", "spalla",
+  "polso", "gomito", "incinta", "gravidanza", "chirurgia", "malattia", "malato", "evitare", "non posso", "vietato",
+  // German
+  "schmerz", "schmerzen", "verletzung", "verletzt", "knie", "rucken", "knochel", "hufte", "schulter", "handgelenk", "ellbogen",
+  "schwanger", "schwangerschaft", "arzt", "arztin", "krank", "krankheit", "vermeiden", "kein", "keine", "nicht", "verboten",
+  // Dutch
+  "pijn", "geblesseerd", "enkel", "heup", "schouder", "zwanger", "dokter", "ziek", "ziekte", "vermijden", "geen", "niet",
+  // Indonesian and Malay
+  "sakit", "nyeri", "cedera", "luka", "lutut", "punggung", "pinggang", "bahu", "hamil", "operasi", "hindari", "tidak", "jangan",
+  // Vietnamese
+  "dau", "chan thuong", "bi thuong", "dau goi", "mang thai", "co thai", "bac si", "phau thuat", "benh", "tranh", "khong",
+  // Tagalog
+  "masakit", "tuhod", "likod", "buntis", "bawal", "hindi",
+  // Turkish
+  "agri", "sakatlik", "sakat", "hamile", "doktor", "ameliyat", "hasta", "yasak",
+  // Polish
+  "bol", "boli", "kontuzja", "uraz", "kolano", "kolana", "plecy", "ciaza", "lekarz", "operacja", "chory", "choroba", "unikac", "nie",
+  // Swedish, Norwegian, Danish, Finnish
+  "smert*", "smarta", "ont i", "skade*", "skada*", "gravid", "kipu*", "kipea", "polvi*", "loukkaantu*", "raskaana",
+];
+/** Pain and injury roots inside a compound word ("Knieschmerzen", "rugpijn", "polvikipu"): a cue wherever they sit in a word. */
+export const CUE_FOREIGN_INFIXES: readonly string[] = ["schmerz", "verletz", "pijn", "smert", "kipu"];
+/**
+ * Goal phrasings that hold a cue word but name no limit: their words raise
+ * no cue ("Swim 1 km without stopping", "heart rate zone 2", "recovery runs",
+ * "medicine ball"). Matched like the vocabularies.
+ */
+export const CUE_BENIGN_PHRASES: readonly string[] = [
+  "without stopping", "without stops", "without a stop", "without a break", "without breaks", "without walking",
+  "without a walk break", "without walk breaks", "without walking breaks", "without resting", "without rest", "without a rest",
+  "without pausing", "without a pause", "no stopping", "non stop", "heart rate*", "heartrate*", "recovery run*", "recovery day*",
+  "recovery week*", "recovery session*", "active recovery", "medicine ball*", "binge watch*", "no matter",
+];
+/**
+ * A one-letter slip of one of these (a letter missed, added, changed or two
+ * swapped: "injry", "surgury", "pregant") is a cue, in its word's class.
+ * Only words of 6 or more letters, against words of 5 or more.
+ */
+export const CUE_FUZZY_WORDS: readonly string[] = [
+  "injury", "injured", "injuries", "surgery", "surgeon", "fracture", "fractured", "sprain", "sprained", "painful", "swollen",
+  "swelling", "inflamed", "pregnant", "pregnancy", "postpartum", "arthritis", "tendonitis", "tendinitis", "physio",
+  "physiotherapist", "doctor", "asthma", "diabetes", "diabetic", "hernia", "sciatica", "concussion", "dislocated", "ligament",
+  "cartilage", "meniscus", "achilles", "hamstring", "shoulder", "migraine", "epilepsy", "seizure", "condition", "recovering",
+  "recovery", "operation", "hospital", "medication", "dementia", "disability", "disabled", "chronic", "illness", "fatigue",
+];
+/** Real words one slip from a CUE_FUZZY_WORDS entry that are not a cue ("Spain" is not "sprain", "meditation" not "medication"). */
+export const CUE_FUZZY_GUARD: readonly string[] = [
+  "spain", "spelling", "dwelling", "selling", "smelling", "shelling", "swilling", "meditation", "meditations", "dedication",
+  "sturgeon", "insured", "inflated", "concession", "concessions",
+];
+/** Entries never matched from a contraction ("I'll" is not "ill"). */
+export const CUE_APOSTROPHE_GUARD: readonly string[] = ["ill"];
+/**
+ * Condition names written as capitals, matched only as written ("despite
+ * MS", "I have POTS", "a TIA last year"): in lower case they are everyday
+ * words ("ms", "pots", "als"). Not read in a text that is mostly capitals.
+ */
+export const CUE_ACRONYMS: readonly string[] = ["MS", "POTS", "TIA", "ALS", "RA", "OA", "EDS", "HEDS", "CRPS", "RSI", "TMJ", "TBI", "DVT", "COPD", "IBS", "PCOS", "CFS", "BPPV", "SVT", "MND"];
+/**
+ * Word endings that name an operation or a condition ("meniscectomy",
+ * "arthroscopy", "angioplasty", "bursitis", "fibromyalgia", "neuropathy"): a
+ * word of at least three more letters ending in one is a cue, unless it is
+ * in CUE_SUFFIX_GUARD.
+ */
+export const CUE_MEDICAL_SUFFIXES: readonly string[] = ["ectomy", "ectomies", "otomy", "ostomy", "oscopy", "plasty", "itis", "algia", "opathy"];
+/** Everyday words with those endings ("dichotomy", "nostalgia", "microscopy"). */
+export const CUE_SUFFIX_GUARD: readonly string[] = ["dichotomy", "dichotomies", "nostalgia", "microscopy", "spectroscopy", "stereoscopy", "kaleidoscopy"];
+/**
+ * Words shared by many languages (sports, units, instruments, brands):
+ * they don't make a text English for the word test, so "Einen Marathon
+ * laufen" and "Hardlopen 10 km" read as unparseable. A text of these words
+ * alone ("Marathon", "Yoga") is not unparseable. A word that starts with a
+ * digit ("10K", "5km", "100kg") is a number and counts for neither side.
+ */
+export const CUE_LOAN_WORDS: readonly string[] = [
+  "marathon", "halfmarathon", "km", "kms", "k", "kg", "kgs", "kilo", "kilos", "lb", "lbs", "m", "mi", "min", "mins", "h", "hr",
+  "hrs", "x", "pb", "pr", "vo2", "vo2max", "hiit", "crossfit", "hyrox", "parkrun", "yoga", "pilates", "fitness", "gym",
+  "training", "triathlon", "ironman", "ultra", "trail", "sprint", "cardio", "tennis", "golf", "rugby", "football", "basketball",
+  "volleyball", "badminton", "squash", "hockey", "karate", "judo", "bjj", "jiu", "jitsu", "boxing", "kickboxing", "taekwondo",
+  "muay", "thai", "surf", "surfing", "ski", "skiing", "snowboard", "snowboarding", "parkour", "zumba", "spinning", "jogging",
+  "online", "ok", "app", "piano", "cello", "ukulele", "jazz", "rock", "pop", "blues", "salsa", "tango", "ballet", "crochet",
+  "origami", "karaoke", "manga", "anime", "sudoku", "ielts", "toefl", "dele", "delf", "jlpt", "hsk", "topik",
+];
+/**
+ * English content words common in BODY and CARE aims and constraints: with
+ * ENGLISH_FUNCTION_WORDS, a text holding one of these is not unparseable by
+ * the word test ("Sub 3 hour marathon PB" is English).
+ */
+export const CUE_ENGLISH_WORDS: readonly string[] = [
+  "run", "runs", "running", "jog", "jogging", "walk", "walks", "walking", "hike", "hiking", "swim", "swimming", "bike", "biking",
+  "cycle", "cycling", "ride", "row", "rowing", "lift", "lifting", "squat", "squats", "bench", "press", "deadlift", "pull", "push",
+  "ups", "plank", "yoga", "pilates", "stretch", "stretching", "climb", "climbing", "dance", "dancing", "train", "training",
+  "gym", "weights", "workout", "workouts", "exercise", "fit", "fitter", "fitness", "strong", "stronger", "strength", "lose",
+  "gain", "weight", "kg", "kgs", "lb", "lbs", "km", "mile", "miles", "marathon", "half", "race", "sub", "under", "hour", "hours",
+  "minute", "minutes", "min", "mins", "time", "times", "day", "days", "daily", "week", "weeks", "weekly", "month", "months",
+  "year", "years", "morning", "mornings", "evening", "evenings", "night", "nights", "weekend", "weekends", "weekday",
+  "weekdays", "monday", "mondays", "tuesday", "tuesdays", "wednesday", "wednesdays", "thursday", "thursdays", "friday",
+  "fridays", "saturday", "saturdays", "sunday", "sundays", "every", "each", "per", "twice", "once", "one", "two", "three",
+  "four", "five", "pb", "pr", "personal", "best", "care", "visit", "visits", "call", "calls", "mum", "mom", "dad", "mother",
+  "father", "grandma", "grandpa", "nan", "help", "support", "home", "family", "kids", "children", "work", "job", "school",
+  "after", "before", "until", "about", "more", "most", "very", "really", "also", "get", "keep", "make", "go", "able", "want",
+  "need", "like", "love", "prefer", "plan", "goal", "steps", "step", "sleep", "eat", "eating", "diet", "water", "sugar",
+  "alcohol", "smoking", "drink", "drinking", "less", "fewer", "short", "long", "fast", "slow", "pace", "distance", "sessions",
+  "session", "class", "classes", "coach", "team", "club", "outdoors", "indoors", "early", "late", "only", "just", "thrust",
+  "thrusts", "curl", "curls", "lunge", "lunges", "dip", "dips", "chin", "chins", "handstand", "splits", "sprint", "sprints",
+  "jump", "jumps", "rope", "skipping", "tennis", "football", "soccer", "basketball", "golf", "boxing", "martial", "karate",
+  "judo", "bjj", "surf", "surfing", "ski", "skiing", "skate", "skating", "triathlon", "ironman", "ultra", "trail", "mountain",
+  "summit", "peak", "squash", "badminton", "volleyball", "netball", "rugby", "cricket", "baseball", "paddle", "kayak", "canoe",
+  "sail", "sailing", "spin", "crossfit", "hyrox", "parkrun", "couch", "metres", "meters", "bodyweight", "test", "exam", "pass",
+  "finish", "complete", "learn", "first", "full", "new", "back", "up", "down", "off", "out", "without",
+  // Body aims of one or two words ("Calisthenics", "Kettlebells") and craft aims ("Learn guitar", "Pottery").
+  "calisthenics", "kettlebell", "kettlebells", "flexibility", "mobility", "posture", "balance", "stamina", "endurance",
+  "pushup", "pushups", "pullup", "pullups", "situp", "situps", "burpee", "burpees", "abs", "toes", "hips", "glutes", "muscle",
+  "play", "playing", "practice", "practise", "guitar", "drums", "drum", "violin", "bass", "flute", "trumpet", "saxophone",
+  "sax", "harp", "sing", "singing", "voice", "vocals", "song", "songs", "music", "piece", "pieces", "scales", "choir", "band",
+  "orchestra", "stage", "perform", "recital", "concert", "audition", "paint", "painting", "draw", "drawing", "sketch",
+  "sketching", "art", "craft", "crafts", "pottery", "ceramics", "calligraphy", "lettering", "photography", "photo", "photos",
+  "film", "video", "write", "writing", "poetry", "poem", "poems", "novel", "story", "stories", "book", "books", "read",
+  "reading", "cook", "cooking", "bake", "baking", "bread", "garden", "gardening", "sew", "sewing", "knit", "knitting",
+  "woodwork", "woodworking", "carpentry", "chess", "code", "coding", "programming", "grade", "level", "hand", "hands",
+];
+/**
+ * The detector's word test. A word is English when it is in
+ * ENGLISH_FUNCTION_WORDS, CUE_ENGLISH_WORDS or an English cue vocabulary
+ * (the foreign words excluded) or starts with one of their stems, or has
+ * CUE_ENGLISH_ING_MIN letters or more and ends in "ing" ("Powerlifting",
+ * "Bouldering"; a shorter "-ing" word may be another language's: "pusing").
+ * CUE_LOAN_WORDS and numbers count for neither side. The aim and the
+ * constraints are
+ * unparseable when they hold any other word and none of them is English
+ * (the lead's rule: a short aim in another language, "Correr 10K", "Lari
+ * 10K", asks); a note (an exam's name, an outline line: names and terms
+ * that are naturally short) only with at least this many such words (one
+ * fewer than LANGUAGE_MIN_WORDS, the aim's language test: recall first).
+ */
+export const CUE_LANGUAGE_MIN_WORDS = 3;
+/** A word of at least this many letters ending in "ing" reads as English for the word test. */
+export const CUE_ENGLISH_ING_MIN = 8;
+/** Text longer than this is read up to it and counts as unparseable (no box allows it; a cap on work). */
+export const CUE_TEXT_MAX = 4000;
+/** The confirm card quotes at most this many of the user's sentences. */
+export const CUE_QUOTES_MAX = 3;
+/** A stored reason, and a quoted sentence, hold at most this many characters ("…" where cut). */
+export const ACTIVITY_REASON_MAX = 120;
+
+// ── The detector ──
+
+const CUE_FOLD: Readonly<Record<string, string>> = { "đ": "d", "ø": "o", "ł": "l", "ß": "ss", "æ": "ae", "œ": "oe", "ı": "i", "ð": "d", "þ": "th" };
+/** Lower case, accents and apostrophes removed ("Can’t" → "cant", "Rücken" → "rucken", "đau" → "dau"). */
+const cueNorm = (s: string): string =>
+  s
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[đøłßæœıðþ]/g, (ch) => CUE_FOLD[ch] ?? ch)
+    .replace(/['’ʼ`´]/g, "");
+
+interface CueToken {
+  n: string;
+  /** The token as written (CUE_ACRONYMS are matched on it). */
+  raw: string;
+  start: number;
+  end: number;
+  apos: boolean;
+}
+const CUE_TOKEN_RE = /[\p{L}\p{M}\p{N}]+(?:['’ʼ][\p{L}\p{M}]+)*/gu;
+function cueTokens(text: string): CueToken[] {
+  const out: CueToken[] = [];
+  for (const m of text.matchAll(CUE_TOKEN_RE)) {
+    const start = m.index ?? 0;
+    out.push({ n: cueNorm(m[0]), raw: m[0], start, end: start + m[0].length, apos: /['’ʼ]/.test(m[0]) });
+  }
+  return out;
+}
+
+interface CueEntry {
+  toks: string[];
+  prefix: boolean;
+  cls: CueClass;
+  cue: string;
+  constraintOnly: boolean;
+}
+const compileCues = (list: readonly string[], cls: CueClass, constraintOnly = false): CueEntry[] =>
+  list.map((raw) => {
+    const prefix = raw.endsWith("*");
+    const toks = cueNorm(prefix ? raw.slice(0, -1) : raw)
+      .split(/[\s-]+/)
+      .filter(Boolean);
+    return { toks, prefix, cls, cue: raw, constraintOnly };
+  });
+const CUE_ENTRIES: readonly CueEntry[] = [
+  ...compileCues(CUE_INJURY_WORDS, "INJURY"),
+  ...compileCues(CUE_PAIN_WORDS, "PAIN"),
+  ...compileCues(CUE_HEALTH_WORDS, "HEALTH"),
+  ...compileCues(CUE_AVOID_WORDS, "AVOID"),
+  ...compileCues(CUE_FOREIGN_WORDS, "LANGUAGE"),
+  ...compileCues(CUE_CONSTRAINT_ONLY_WORDS, "AVOID", true),
+  ...compileCues(CUE_BODY_PARTS, "BODY_PART", true),
+  ...compileCues(CUE_BODY_PARTS_MEDICAL, "BODY_PART"),
+];
+const BENIGN_ENTRIES: readonly CueEntry[] = compileCues(CUE_BENIGN_PHRASES, "AVOID");
+const APOS_GUARD = new Set(CUE_APOSTROPHE_GUARD);
+const FUZZY_GUARD = new Set(CUE_FUZZY_GUARD);
+const PART_SET = new Set(CUE_BODY_PARTS.filter((p) => !p.includes(" ")));
+const PART_ALL_SET = new Set([...PART_SET, ...CUE_BODY_PARTS_MORE]);
+const ADJ_SET = new Set(CUE_BODY_ADJECTIVES);
+const POSSESSIVE_SET = new Set(CUE_POSSESSIVES);
+const FILLER_SET = new Set(CUE_BODY_FILLERS);
+const TROUBLE_SET = new Set(CUE_PART_TROUBLE);
+const PROCEDURE_SET = new Set(CUE_JOINT_PROCEDURES);
+const ACRONYM_SET = new Set(CUE_ACRONYMS);
+const SUFFIX_GUARD = new Set(CUE_SUFFIX_GUARD);
+const LOAN_SET = new Set(CUE_LOAN_WORDS.map(cueNorm));
+// Every English vocabulary word counts as English for the word test, beside the function and content words; a
+// vocabulary entry with a final "*" counts by its stem ("recover*": "recovery"), a stem of four letters or more.
+const ENGLISH_LISTS: readonly (readonly string[])[] = [CUE_INJURY_WORDS, CUE_PAIN_WORDS, CUE_HEALTH_WORDS, CUE_AVOID_WORDS, CUE_CONSTRAINT_ONLY_WORDS, CUE_BODY_PARTS, CUE_BODY_PARTS_MEDICAL, CUE_BODY_PARTS_MORE, CUE_BODY_ADJECTIVES, CUE_PART_TROUBLE, CUE_JOINT_PROCEDURES, CUE_BENIGN_PHRASES];
+const ENGLISH_SET = new Set([...ENGLISH_FUNCTION_WORDS, ...CUE_ENGLISH_WORDS, ...ENGLISH_LISTS.flatMap((l) => l.flatMap((e) => cueNorm(e.replace(/\*$/, "")).split(/[\s-]+/)))]);
+const ENGLISH_STEMS: readonly string[] = ENGLISH_LISTS.flatMap((l) => l.filter((e) => e.endsWith("*") && !/[\s-]/.test(e)).map((e) => cueNorm(e.slice(0, -1)))).filter((x) => x.length >= 4);
+/** The word test's English: a known English word or stem, or a long "-ing" word ("Powerlifting"). */
+const englishWord = (w: string): boolean => ENGLISH_SET.has(w) || ENGLISH_STEMS.some((x) => w.startsWith(x)) || (w.length >= CUE_ENGLISH_ING_MIN && w.endsWith("ing") && /^[a-z]+$/.test(w));
+const INFIXES: readonly string[] = CUE_FOREIGN_INFIXES.map(cueNorm);
+
+function entryAt(e: CueEntry, toks: readonly CueToken[], i: number): boolean {
+  const k = e.toks.length;
+  if (k === 0 || i + k > toks.length) return false;
+  for (let j = 0; j < k; j++) {
+    const t = toks[i + j];
+    const want = e.toks[j];
+    const last = j === k - 1;
+    if (last && e.prefix ? !t.n.startsWith(want) : t.n !== want) return false;
+    if (k === 1 && t.apos && APOS_GUARD.has(want)) return false;
+  }
+  return true;
+}
+
+/** Optimal-string-alignment distance, stopping early above 1 (a cap on work: only "is it one slip" is asked). */
+function oneSlip(a: string, b: string): boolean {
+  if (a === b || Math.abs(a.length - b.length) > 1) return false;
+  const n = a.length;
+  const m = b.length;
+  let prev2: number[] = [];
+  let prev = Array.from({ length: m + 1 }, (_, j) => j);
+  for (let i = 1; i <= n; i++) {
+    const cur = [i];
+    let rowMin = i;
+    for (let j = 1; j <= m; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, prev2[j - 2] + 1);
+      cur.push(v);
+      if (v < rowMin) rowMin = v;
+    }
+    if (rowMin > 1) return false;
+    prev2 = prev;
+    prev = cur;
+  }
+  return prev[m] === 1;
+}
+
+/** The class a fuzzy word is matched in: the first vocabulary (injury, pain, health) that holds it exactly. */
+const FUZZY: readonly { w: string; cls: CueClass }[] = CUE_FUZZY_WORDS.map((w) => {
+  const tok: CueToken[] = [{ n: w, raw: w, start: 0, end: w.length, apos: false }];
+  const hit = CUE_ENTRIES.find((e) => (e.cls === "INJURY" || e.cls === "PAIN" || e.cls === "HEALTH") && entryAt(e, tok, 0));
+  return { w, cls: hit?.cls ?? "HEALTH" };
+});
+
+const CLAUSE_BREAK = /[.!?;\n\r。！？；]/;
+
+/** The sentence of `text` around [start, end), verbatim and trimmed; at most `max` characters, cut at word edges with "…". */
+function clauseAt(text: string, start: number, end: number, max: number): string {
+  let a = start;
+  while (a > 0 && !CLAUSE_BREAK.test(text[a - 1])) a--;
+  let b = end;
+  while (b < text.length && !CLAUSE_BREAK.test(text[b])) b++;
+  while (a < b && /\s/.test(text[a])) a++;
+  while (b > a && /\s/.test(text[b - 1])) b--;
+  if (b - a <= max) return text.slice(a, b);
+  // Cut to a window of max - 2 around the span, so the "…" on each side keeps it within max.
+  const room = Math.max(1, max - 2);
+  const span = Math.max(0, end - start);
+  let ws = Math.max(a, start - Math.floor(Math.max(0, room - span) / 2));
+  let we = Math.min(b, ws + room);
+  if (we - ws < room) ws = Math.max(a, we - room);
+  if (we < end) {
+    we = Math.min(b, end);
+    ws = Math.max(a, we - room);
+  }
+  if (ws > a) {
+    const sp = text.indexOf(" ", ws);
+    if (sp >= 0 && sp < start) ws = sp + 1;
+  }
+  if (we < b) {
+    const sp = text.lastIndexOf(" ", we);
+    if (sp > end) we = sp;
+  }
+  return `${ws > a ? "…" : ""}${text.slice(ws, we).trim()}${we < b ? "…" : ""}`;
+}
+
+/**
+ * The user's own sentence holding `needle` (case-insensitive; a stem's first
+ * four letters at a word start when the word itself isn't there), verbatim,
+ * at most `max` characters; "" when the text is empty or holds neither. The
+ * confirm card's reason, and a pre-fill's ("no running, it hurts my knee").
+ */
+export function userClauseOf(text: string | null | undefined, needle: string, max = ACTIVITY_REASON_MAX): string {
+  if (typeof text !== "string" || !text.trim() || typeof needle !== "string" || !needle.trim()) return "";
+  const lower = text.toLowerCase();
+  const n = needle.trim().toLowerCase();
+  let at = lower.indexOf(n);
+  let len = n.length;
+  if (at < 0 && n.length >= 4) {
+    const stem = n.slice(0, 4);
+    const re = new RegExp(`(?:^|[^\\p{L}\\p{N}])(${stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "u");
+    const m = re.exec(lower);
+    if (m) {
+      at = m.index + m[0].length - m[1].length;
+      len = m[1].length;
+    }
+  }
+  if (at < 0) return "";
+  return clauseAt(text, at, at + len, max);
+}
+
+/**
+ * The cue detector (contracts §19): pure, high recall, no meaning. Reads
+ * `text` as words and reports every cue with the user's own words quoted:
+ * the injury, pain, health and avoidance vocabularies and other languages'
+ * pain and limit words anywhere; the injury-site parts
+ * (CUE_BODY_PARTS_MEDICAL: "ACL", "rotator cuff") bare anywhere; a body
+ * part after an adjective ("bad knee") or before a trouble word ("back
+ * problems") anywhere; a joint-type part before an operation or a break
+ * ("knee scope", "ankle fusion") anywhere; a joint-type body part after
+ * "my", "her", "Mum's" … anywhere; a condition written in capitals
+ * (CUE_ACRONYMS: "despite MS"); a word with a medical ending
+ * (CUE_MEDICAL_SUFFIXES: "meniscectomy", "bursitis"); and, in the
+ * constraints and notes only (never the aim), CUE_CONSTRAINT_ONLY_WORDS, the
+ * bare joint-type parts and any part after a possessive. A one-letter slip
+ * of a CUE_FUZZY_WORDS word counts, and so does a CUE_FOREIGN_INFIXES root
+ * inside a compound. A CUE_BENIGN_PHRASES phrase raises nothing. A cue
+ * inside a longer one of its class is folded into it ("my bad knee", not
+ * also "knee"). Negation is not read: "no injuries" is a cue (a reason to
+ * ask, never a verdict). Text the app can't read (CueReading.unparseable)
+ * counts as a cue. Never throws; a non-string reads as empty.
+ */
+export function constraintCuesOf(text: string | null | undefined, source: CueSource = "CONSTRAINTS"): CueReading {
+  if (typeof text !== "string" || !text.trim()) return { hasCue: false, cues: [], unparseable: false };
+  const t = text.length > CUE_TEXT_MAX ? text.slice(0, CUE_TEXT_MAX) : text;
+  const toks = cueTokens(t);
+  const freeText = source !== "AIM";
+  const benign = new Set<number>();
+  for (let i = 0; i < toks.length; i++)
+    for (const e of BENIGN_ENTRIES)
+      if (entryAt(e, toks, i)) for (let j = 0; j < e.toks.length; j++) benign.add(i + j);
+  const found: CueSpan[] = [];
+  const covered = new Set<number>();
+  const letters = t.match(/\p{L}/gu) ?? [];
+  // Capitals are read as an acronym only in a text whose other words aren't mostly capitals ("THROW 10 POTS" is shouting, not a condition).
+  const otherLetters = toks.filter((x) => !ACRONYM_SET.has(x.raw)).flatMap((x) => x.raw.match(/\p{L}/gu) ?? []);
+  const shouting = otherLetters.length > 0 && otherLetters.filter((ch) => ch !== ch.toLowerCase()).length / otherLetters.length > 0.6;
+  // Record tokens i..j as a cue, unless every one of them sits in a benign phrase.
+  const push = (cls: CueClass, cue: string, i: number, j: number) => {
+    let quiet = true;
+    for (let k = i; k <= j; k++) if (!benign.has(k)) quiet = false;
+    if (quiet) return;
+    const start = toks[i].start;
+    const end = toks[j].end;
+    if (!found.some((f) => f.start === start && f.end === end && f.cls === cls)) found.push({ source, cls, cue, quote: t.slice(start, end), start, end, clause: clauseAt(t, start, end, ACTIVITY_REASON_MAX) });
+    for (let q = i; q <= j; q++) covered.add(q);
+  };
+  for (let i = 0; i < toks.length; i++) {
+    for (const e of CUE_ENTRIES) if ((freeText || !e.constraintOnly) && entryAt(e, toks, i)) push(e.cls, e.cue, i, i + e.toks.length - 1);
+    const n = toks[i].n;
+    // An adjective before a body part, up to two filler words between ("bad knee", "sore lower back").
+    if (ADJ_SET.has(n)) {
+      for (let j = i + 1, skipped = 0; j < toks.length && skipped <= 2; j++) {
+        if (PART_ALL_SET.has(toks[j].n)) {
+          push("BODY_PART", `${n} + ${toks[j].n}`, i, j);
+          break;
+        }
+        if (!FILLER_SET.has(toks[j].n)) break;
+        skipped++;
+      }
+    }
+    // Whose body part ("my knee"; in the constraints and notes any part, "my back").
+    if (POSSESSIVE_SET.has(n)) {
+      for (let j = i + 1, skipped = 0; j < toks.length && skipped <= 1; j++) {
+        if (PART_SET.has(toks[j].n) || (freeText && PART_ALL_SET.has(toks[j].n))) {
+          push("BODY_PART", `${n} + ${toks[j].n}`, i, j);
+          break;
+        }
+        if (!FILLER_SET.has(toks[j].n)) break;
+        skipped++;
+      }
+    }
+    // A body part before a trouble word ("back problems", "leg issues").
+    if (PART_ALL_SET.has(n) && i + 1 < toks.length && TROUBLE_SET.has(toks[i + 1].n)) push("BODY_PART", `${n} + ${toks[i + 1].n}`, i, i + 1);
+    // A joint before an operation or a break ("knee scope", "ankle fusion", "collarbone break").
+    if (PART_SET.has(n) && i + 1 < toks.length && PROCEDURE_SET.has(toks[i + 1].n)) push("BODY_PART", `${n} + ${toks[i + 1].n}`, i, i + 1);
+    // A condition written in capitals ("despite MS", "I have POTS").
+    if (!shouting && !covered.has(i) && ACRONYM_SET.has(toks[i].raw)) push("HEALTH", toks[i].raw, i, i);
+    // A pain or injury root inside a compound ("Knieschmerzen").
+    const infix = INFIXES.find((x) => n.length > x.length && n.includes(x));
+    if (infix) push("LANGUAGE", `*${infix}*`, i, i);
+  }
+  // A medical ending ("meniscectomy", "arthroscopy", "bursitis"), on words no cue matched.
+  for (let i = 0; i < toks.length; i++) {
+    const n = toks[i].n;
+    if (covered.has(i) || benign.has(i) || !/^\p{L}+$/u.test(n) || SUFFIX_GUARD.has(n)) continue;
+    const suffix = CUE_MEDICAL_SUFFIXES.find((x) => n.length >= x.length + 3 && n.endsWith(x));
+    if (suffix) push(/itis|algia|opathy/.test(suffix) ? "HEALTH" : "INJURY", `*${suffix}`, i, i);
+  }
+  // One slip of a long cue word ("injry", "surgury"), on words no cue matched.
+  for (let i = 0; i < toks.length; i++) {
+    const n = toks[i].n;
+    if (covered.has(i) || benign.has(i) || n.length < 5 || !/^\p{L}+$/u.test(n) || FUZZY_GUARD.has(n)) continue;
+    const hit = FUZZY.find((f) => f.w.length >= 6 && oneSlip(n, f.w));
+    if (hit) push(hit.cls, `~${hit.w}`, i, i);
+  }
+  // A cue inside a longer one of the same class says nothing more ("knee" inside "my bad knee").
+  const kept = found.filter((c) => !found.some((d) => d !== c && d.cls === c.cls && d.start <= c.start && d.end >= c.end && d.end - d.start > c.end - c.start));
+  kept.sort((x, y) => x.start - y.start || x.end - y.end || CUE_CLASSES.indexOf(x.cls) - CUE_CLASSES.indexOf(y.cls));
+  // Can the app read it at all?
+  let unparseable = text.length > CUE_TEXT_MAX || /\p{Extended_Pictographic}/u.test(t);
+  if (letters.length > 0) {
+    if (letters.some((ch) => !/\p{Script=Latin}/u.test(ch))) unparseable = true;
+    const ascii = letters.filter((ch) => /[A-Za-z]/.test(ch)).length;
+    if (ascii / letters.length < LANGUAGE_ASCII_MIN) unparseable = true;
+    // The word test: the words that are neither numbers ("10K") nor shared loan words ("marathon", "km"), and none English.
+    const ws = toks.filter((x) => /\p{L}/u.test(x.n) && !/^\p{N}/u.test(x.n) && !LOAN_SET.has(x.n)).map((x) => x.n);
+    const least = source === "NOTES" ? CUE_LANGUAGE_MIN_WORDS : 1;
+    if (ws.length >= least && !ws.some(englishWord)) unparseable = true;
+  }
+  return { hasCue: kept.length > 0 || unparseable, cues: kept, unparseable };
+}
+
+/** The texts the cue detector reads for a plan: the Constraints box, the aim, and the user's other words (the notes). */
+export interface CueTexts {
+  constraints: string | null;
+  aim: string | null;
+  /** The exam label, the hours' source note, the outline's source and its lines, in that order (empty ones left out). */
+  notes?: readonly (string | null | undefined)[];
+}
+
+/** The texts of an intake the user typed: every one is read, whatever the track (only BODY and CARE are gated). */
+export function cueTextsOf(intake: Pick<Intake, "constraints" | "aim" | "examLabel" | "typicalHoursSource" | "syllabus">): CueTexts {
+  const notes = [intake.examLabel, intake.typicalHoursSource, intake.syllabus?.source ?? null, ...(intake.syllabus?.lines ?? [])].filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+  return { constraints: intake.constraints ?? null, aim: intake.aim ?? null, notes };
+}
+
+/** constraintCuesOf over every text, in order (constraints, aim, notes), each cue tagged with its source. */
+export function cueReadingOf(texts: CueTexts): CueReading {
+  const parts: CueReading[] = [constraintCuesOf(texts.constraints, "CONSTRAINTS"), constraintCuesOf(texts.aim, "AIM")];
+  const notes = (texts.notes ?? []).filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+  notes.forEach((note, i) => {
+    const r = constraintCuesOf(note, "NOTES");
+    parts.push({ ...r, cues: r.cues.map((c) => ({ ...c, note: i })) });
+  });
+  const cues = parts.flatMap((p) => p.cues);
+  const unparseable = parts.some((p) => p.unparseable);
+  return { hasCue: cues.length > 0 || unparseable, cues, unparseable };
+}
+
+/**
+ * The fingerprint of the words an answer was given against: FNV-1a over the
+ * texts (case and spacing ignored), "k1-" and 8 hex digits. A FINE stored
+ * under another key is stale (the user's words changed: the kind is asked
+ * again); an AVOID never goes stale. No text is stored twice.
+ */
+export function cueKeyOf(texts: CueTexts): string {
+  const clean = (x: unknown) => (typeof x === "string" ? x.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim() : "");
+  const notes = (texts.notes ?? []).map(clean).filter(Boolean);
+  const s = [clean(texts.constraints), clean(texts.aim), ...notes].join("␞");
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `k1-${h.toString(16).padStart(8, "0")}`;
+}
+
+// ── The confirmation (stored, YOURS) ──
+
+/**
+ * A stored verdict for one kind. Only AVOID is written: the user ticked it.
+ * FINE is the earlier per-kind card's word, kept in the type so old rows and
+ * callers still read; it is never written and never unlocks anything (it
+ * may have been a row the user left unticked). What unlocks is the card's
+ * answer (ActivityConfirm.answered).
+ */
+export type ActivityVerdict = "AVOID" | "FINE";
+export const ACTIVITY_VERDICTS: readonly ActivityVerdict[] = ["AVOID", "FINE"];
+
+/** One stored answer. The user's decision (YOURS): only their tap writes it. */
+export interface ActivityConfirmEntry {
+  /** AVOID (FINE only in an earlier row: dropped on read, never written). */
+  verdict: ActivityVerdict;
+  /** The life day they answered. */
+  day: DayKey;
+  /** Why, in the user's own words: the sentence the pre-fill or the first cue quoted (userClauseOf); "" when none. ≤ ACTIVITY_REASON_MAX. */
+  reason: string;
+}
+
+/**
+ * The card's answer as stored: the user answered the activity card under
+ * ActivityConfirm.key, on `day`, about the kinds the card listed then
+ * (`asked`). Every listed kind they didn't tick is placed while the words
+ * stay the same; a kind the card didn't list (another exam, a type added
+ * later) still waits. `none`: the answer was "Nothing to avoid".
+ */
+export interface ActivityCardAnswered {
+  day: DayKey;
+  /** The kinds the card listed when the user answered (and any kind they ticked), in CATALOG order. */
+  asked: CatalogKey[];
+  none: boolean;
+}
+
+/**
+ * The stored confirmation (Roadmap.coverage[ACTIVITY_CONFIRM_KEY]; read with
+ * roadmap-catalog activityConfirmOf, written with coverageJsonOf). Editable
+ * for the life of the plan; every plan path honours it through
+ * allowedKindsFor. An AVOID stands whatever the words; the card's answer
+ * holds only while the words keep `key`.
+ */
+export interface ActivityConfirm {
+  /** cueKeyOf the texts the card was last answered against. */
+  key: string;
+  /** The kinds the user said to avoid (AVOID entries), in CATALOG order. */
+  kinds: Partial<Record<CatalogKey, ActivityConfirmEntry>>;
+  /** The card's answer under `key`; null or absent: not answered (an earlier per-kind row, or only AVOIDs carried over). */
+  answered?: ActivityCardAnswered | null;
+}
+
+/**
+ * The user's answer to the activity card (setActivityVerdicts; roadmap-catalog
+ * answerActivityCard): what to avoid, given against these words. Answering
+ * takes an explicit act: at least one kind ticked, or "Nothing to avoid"
+ * (ACTIVITY_NOTHING_TO_AVOID). A Save with nothing ticked is not an answer
+ * and is refused (ACTIVITY_NOTHING_TICKED), so an unticked row is never
+ * taken as fine by itself. The reason is never sent: the server quotes it.
+ */
+export interface ActivityCardAnswer {
+  /** ActivityConfirmView.key: the words the card was shown against. Words changed meanwhile: refused (ACTIVITY_ANSWER_STALE), and the card asks again. */
+  key: string;
+  /** Every box ticked "avoid" when the user saved (a pre-ticked suggestion left ticked included), on this plan's track. Replaces the card's earlier ticks. */
+  avoid: CatalogKey[];
+  /** The user tapped "Nothing to avoid" (`avoid` is then empty). */
+  nothingToAvoid: boolean;
+}
+
+/**
+ * The earlier per-kind answer (kind and AVOID, FINE or null). Read now only
+ * as ticks on the card (roadmap-catalog answerActivities, deprecated): AVOID
+ * ticks the box, FINE or null unticks it. It carries no key, so it can't
+ * tell words that changed meanwhile: callers move to ActivityCardAnswer.
+ */
+export interface ActivityAnswer {
+  kind: CatalogKey;
+  verdict: ActivityVerdict | null;
+}
+
+/**
+ * Where the answers are stored: this key of the Roadmap.coverage JSON (a
+ * Domain id is a cuid, so it never collides). intakeOf's coverage read keeps
+ * numbers only, so the figures are unaffected; saveIntake's coverage input
+ * keeps only chosen Domain ids, so the form can't write answers through it.
+ */
+export const ACTIVITY_CONFIRM_KEY = "$activities";
+
+// ── The gate's shapes (allowedKindsFor, roadmap-catalog.ts) ──
+
+/** A kind the parser's exclusions named: a pre-ticked box (a suggestion), with the user's sentence. It never blocks and never unlocks anything by itself. */
+export interface ActivityPrefill {
+  kind: CatalogKey;
+  /** The parser's word ("running"). */
+  word: string;
+  /** The user's sentence holding it (userClauseOf over the constraints), or the word. */
+  reason: string;
+}
+
+/** What the gate reads besides the stored answers (roadmap-catalog constraintsStateOf). */
+export interface ConstraintsState {
+  /** The catalog track: FIELD for a Field Area (never gated), else the life track. */
+  track: CatalogTrack;
+  /** examLabel is set (an examOnly kind can be placed). */
+  exam: boolean;
+  practicesAllowed: boolean;
+  texts: CueTexts;
+  /** The Constraints box holds any text. The gate doesn't read it (BODY and CARE always ask); the card quotes it when no cue word matched. */
+  stated: boolean;
+  /** cueReadingOf(texts). */
+  reading: CueReading;
+  /** cueKeyOf(texts): what the card's answer must carry. */
+  key: string;
+  /** The parser's exclusions on this track, one per kind: suggestions. */
+  prefill: ActivityPrefill[];
+}
+
+/**
+ * A kind's state at the gate:
+ *   PENDING  gated, and the card isn't answered under these words: not placed (a suggestion pre-ticks its box)
+ *   AVOID    the user ticked it: not placed, on any plan path, gated or not, whatever the words
+ *   FINE     the user answered the card under these words without ticking it (their Save, or "Nothing to avoid"): placed.
+ *            No per-kind verdict is stored for it; the user's act is the card's answer.
+ *   WORDS    not gated, the user's words suggest avoiding it, no answer yet: placed (a suggestion, its box pre-ticked; never a block)
+ */
+export type ActivityRowState = "PENDING" | "AVOID" | "FINE" | "WORDS";
+
+/** One row of the confirm card (and of the gate's account). */
+export interface ActivityRow {
+  kind: CatalogKey;
+  state: ActivityRowState;
+  /** The gate holds it: the gate is on and the kind is in cueGatedKindsOf(track). */
+  gated: boolean;
+  /** AVOID when the parser's reading of the user's words names it and it isn't answered (PENDING, WORDS): its box comes pre-ticked. Else null. */
+  prefill: "AVOID" | null;
+  /** The user's own words: the stored reason (AVOID), else the suggestion's sentence; "" when none. */
+  reason: string;
+  /** AVOID: the day the user ticked it; FINE: the day they answered the card. Null otherwise. */
+  day: DayKey | null;
+  /** A row the card's earlier answer (under other words) released, now asked again: that answer's day; null otherwise. */
+  staleDay: DayKey | null;
+  /** YOURS on an answered row (AVOID, FINE: the user's decision); null on PENDING and WORDS (code's reading of their words, not a decision). */
+  cls: "YOURS" | null;
+}
+
+/** allowedKindsFor's answer: what every plan path may place, and what to ask. */
+export interface ActivityGate {
+  /** The gate asks: a BODY or CARE plan (always), or a CRAFT plan whose words carry a cue or can't be read. */
+  on: boolean;
+  track: CatalogTrack;
+  /** The state's key (what the card's answer must carry). */
+  key: string;
+  /** The day the card was answered under these words (ActivityConfirm.answered with this key); null while it asks. */
+  answered: DayKey | null;
+  /** That answer was "Nothing to avoid". */
+  none: boolean;
+  /** The day of the card's answer under earlier words (it asks again); null otherwise. */
+  staleDay: DayKey | null;
+  /** Every catalog kind on the track a plan path may place, in CATALOG order (the other filters — exam, practices, stage — still apply). */
+  allowed: CatalogKey[];
+  /** Every catalog kind on the track no plan path may place (PENDING, AVOID), in CATALOG order: pass it as `excluded`. A suggestion (WORDS) is never in it. */
+  blocked: CatalogKey[];
+  /** The rows to ask (PENDING and shown), in CATALOG order. */
+  pending: CatalogKey[];
+  /** Every row to show, in CATALOG order: the gated kinds while on (their exam and practice filters applied), every suggestion, and every AVOID. */
+  rows: ActivityRow[];
+}
+
+/**
+ * The confirm card's view field (DraftView.activityConfirm and
+ * RoadmapView.activityConfirm; roadmap-catalog activityConfirmViewOf). R5
+ * names each kind with its KIND_NAME and never claims medical knowledge:
+ * "Your words mention 'knee pain'. Until you say which of these to avoid,
+ * the plan places only easy, mobility and technique sessions.", with the
+ * HEALTH_LINE beside it on BODY and CARE. Save sends ActivityCardAnswer with
+ * this `key`; "Nothing to avoid" is the explicit all-clear.
+ */
+export interface ActivityConfirmView {
+  /** The card asks on this plan (ActivityGate.on). */
+  on: boolean;
+  track: CatalogTrack;
+  /** The words' key: the card's answer carries it back (ActivityCardAnswer.key). */
+  key: string;
+  /** Up to CUE_QUOTES_MAX of the user's sentences, verbatim: those that raised a cue, else the constraints' first sentence, else (a card of suggestions only) the suggestions' sentences. May be empty on BODY or CARE: those ask whatever the words. */
+  quotes: string[];
+  /** Some of the user's words couldn't be read here ("Some of your words couldn't be read here, so the plan asks."). */
+  unparseable: boolean;
+  rows: ActivityRow[];
+  /** Rows still to answer. */
+  pending: number;
+  /** The day the card was answered under these words; null while it asks (or when it never has). */
+  answered: DayKey | null;
+  /** That answer was "Nothing to avoid". */
+  none: boolean;
+  /** The day of an answer given under earlier words (the card asks again: "You answered on 3 Oct, before your words changed"); null otherwise. */
+  staleDay: DayKey | null;
+  /** What the plan places meanwhile: the safe kinds on this track (cueSafeKindsOf; [] while off). */
+  safeKinds: CatalogKey[];
 }
