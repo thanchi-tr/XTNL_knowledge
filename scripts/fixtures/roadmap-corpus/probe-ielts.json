@@ -772,35 +772,35 @@
     "gapsHidden": 0,
     "unassignedLines": []
   },
-  "expected": null,
-  "blessed": false,
+  "expected": "CLEAN",
+  "blessed": true,
   "labels": {
     "needs": {
       "D3": {
-        "plausible": null
+        "plausible": true
       },
       "D4": {
-        "plausible": null
+        "plausible": true
       }
     },
     "stages": {
       "FOUNDATION": {
-        "practiceFit": null
+        "practiceFit": false
       },
       "FAMILIAR": {
-        "practiceFit": null
+        "practiceFit": false
       },
       "RETAINED": {
-        "practiceFit": null
+        "practiceFit": false
       },
       "FLUENT": {
-        "practiceFit": null
+        "practiceFit": false
       },
       "MASTERED": {
-        "practiceFit": null
+        "practiceFit": false
       }
     },
-    "arrangementKeepsOrder": null,
+    "arrangementKeepsOrder": false,
     "gaps": []
   }
 }

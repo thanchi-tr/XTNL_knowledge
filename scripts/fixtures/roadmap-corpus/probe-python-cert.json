@@ -1266,32 +1266,32 @@
     "gapsHidden": 0,
     "unassignedLines": []
   },
-  "expected": null,
-  "blessed": false,
+  "expected": "CLEAN",
+  "blessed": true,
   "labels": {
     "needs": {
       "D3": {
-        "plausible": null
+        "plausible": false
       }
     },
     "stages": {
       "FOUNDATION": {
-        "practiceFit": null
+        "practiceFit": true
       },
       "FAMILIAR": {
-        "practiceFit": null
+        "practiceFit": true
       },
       "RETAINED": {
-        "practiceFit": null
+        "practiceFit": true
       },
       "FLUENT": {
-        "practiceFit": null
+        "practiceFit": true
       },
       "MASTERED": {
-        "practiceFit": null
+        "practiceFit": false
       }
     },
-    "arrangementKeepsOrder": null,
+    "arrangementKeepsOrder": true,
     "gaps": []
   }
 }

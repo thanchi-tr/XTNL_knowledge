@@ -625,28 +625,28 @@
     "gapsHidden": 0,
     "unassignedLines": []
   },
-  "expected": null,
-  "blessed": false,
+  "expected": "CLEAN",
+  "blessed": true,
   "labels": {
     "needs": {},
     "stages": {
       "STAGE_1": {
-        "practiceFit": null
+        "practiceFit": false
       },
       "STAGE_2": {
-        "practiceFit": null
+        "practiceFit": true
       },
       "STAGE_3": {
-        "practiceFit": null
+        "practiceFit": false
       },
       "STAGE_4": {
-        "practiceFit": null
+        "practiceFit": true
       },
       "STAGE_5": {
-        "practiceFit": null
+        "practiceFit": false
       }
     },
-    "arrangementKeepsOrder": null,
+    "arrangementKeepsOrder": false,
     "gaps": []
   }
 }
