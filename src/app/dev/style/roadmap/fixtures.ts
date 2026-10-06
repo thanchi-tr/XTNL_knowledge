@@ -3128,7 +3128,7 @@ function clausesOf(aim: string, parts: readonly string[]): AimClause[] {
 const src = (n: number): TopicSource[] => Array.from({ length: n }, (_, i) => ({ title: `Example reference ${i + 1}`, uri: `https://example.org/ref-${i + 1}` }));
 
 function topicRow(p: Partial<TopicRowView> & Pick<TopicRowView, "key" | "name" | "cls" | "layer">): TopicRowView {
-  const gemini = p.cls === "LINKED" || p.cls === "NOT_CHECKED" || p.cls === "KEPT" || p.cls === "KEPT_NOT_CHECKED" || p.cls === "PICKED";
+  const gemini = p.cls === "LINKED" || p.cls === "LINKED_ONE" || p.cls === "NOT_CHECKED" || p.cls === "KEPT" || p.cls === "KEPT_NOT_CHECKED" || p.cls === "PICKED";
   return {
     lineageId: `tl-${p.key}`,
     chosen: true,
@@ -3138,7 +3138,7 @@ function topicRow(p: Partial<TopicRowView> & Pick<TopicRowView, "key" | "name" |
     parents: p.layer === 1 ? { kind: "LINKS", keys: [], crossGoal: [] } : { kind: "LAYER", layer: p.layer - 1 },
     children: [],
     votes: gemini ? { form: 3, samples: 3 } : null,
-    sources: p.cls === "LINKED" || p.cls === "KEPT" ? src(2) : [],
+    sources: p.cls === "LINKED" || p.cls === "KEPT" ? src(2) : p.cls === "LINKED_ONE" ? src(1) : [],
     placed: gemini ? "GEMINI" : TOPIC_PLACED_BY[2],
     held: false,
     skipped: false,
@@ -3154,7 +3154,7 @@ function topicLayer(p: Partial<TopicLayerView> & Pick<TopicLayerView, "layer" | 
     kept: false,
     unchosen: p.topics.filter((r) => !r.chosen && r.cls !== "NOT_CHECKED").length,
     hidden: p.topics.filter((r) => r.cls === "NOT_CHECKED").length,
-    geminiNames: p.topics.some((r) => r.cls === "LINKED" || r.cls === "NOT_CHECKED" || r.cls === "KEPT" || r.cls === "KEPT_NOT_CHECKED" || r.cls === "PICKED" || (r.placed === "GEMINI" && !p.kept)),
+    geminiNames: p.topics.some((r) => r.cls === "LINKED" || r.cls === "LINKED_ONE" || r.cls === "NOT_CHECKED" || r.cls === "KEPT" || r.cls === "KEPT_NOT_CHECKED" || r.cls === "PICKED" || (r.placed === "GEMINI" && !p.kept)),
     emptyOffers: null,
     needsParent: 0,
     ...p,
@@ -3196,6 +3196,8 @@ export function topicMapDraftFixture(roadmapId = "rm4", version = 2): TopicMapVi
     topicRow({ key: "T4", name: "Beta two", cls: "LINKED", layer: 2, parents: { kind: "LINKS", keys: ["T2"], crossGoal: [] } }),
     // a 40-character name: three lines inside 138 px, within the row's 60 px
     topicRow({ key: "T6", name: "Beta three with a longer name to wrap it", cls: "LINKED", layer: 2, parents: { kind: "LINKS", keys: ["T1", "T2"], crossGoal: [] } }),
+    // ruling N3: a Gemini name Google linked to exactly 1 source, shown, unticked, «Gemini · Google linked 1 source»
+    topicRow({ key: "T15", name: "Beta four", cls: "LINKED_ONE", layer: 2, chosen: false, parents: { kind: "LINKS", keys: ["T2"], crossGoal: [] }, votes: { form: 1, samples: 3 } }),
   ];
   const l3 = [
     topicRow({ key: "T7", name: "Gamma one", cls: "LINKED", layer: 3, children: ["T11"] }),

@@ -13172,10 +13172,13 @@ function topicClassFor(t: TopicDraft): TopicClass {
     return topicsLib.topicClassOf(t);
   } catch {
     if (t.nameOrigin === "GEMINI") {
-      if (t.decision === "KEPT") return t.grounding === "LINKED" ? "KEPT" : "KEPT_NOT_CHECKED";
+      // Ruling N3: GROUND's WEAK at exactly 1 source is shown (LINKED_ONE), and kept reads KEPT, as LINKED does.
+      const once = t.grounding === "WEAK" && t.sources.length === 1;
+      if (t.decision === "KEPT") return t.grounding === "LINKED" || once ? "KEPT" : "KEPT_NOT_CHECKED";
       if (t.decision === "EDITED") return "YOURS";
       if (t.domainId && !t.bound) return "PICKED";
-      return t.grounding === "LINKED" && t.flags.length === 0 ? "LINKED" : "NOT_CHECKED";
+      if (t.flags.length > 0) return "NOT_CHECKED";
+      return t.grounding === "LINKED" ? "LINKED" : once ? "LINKED_ONE" : "NOT_CHECKED";
     }
     if (t.decision === "EDITED" || t.nameOrigin === "USER") return "YOURS";
     if (t.nameOrigin === "SYLLABUS") return "SYLLABUS";
@@ -14838,7 +14841,8 @@ function domainMarkOf(tree: readonly TreeField[], id: string | null): { id: stri
 
 /**
  * The map's view (TopicMapView): its rating, each band's rows (the names behind the count last, NOT_CHECKED, for the
- * fold to reveal), the cautions, accept's refusal in words (a draft), the requests left, the layer-1 seeds (the Area's
+ * fold to reveal; a Gemini name Google linked to 1 source is a shown row, LINKED_ONE, ruling N3), the cautions, accept's
+ * refusal in words (a draft), the requests left, the layer-1 seeds (the Area's
  * free Domains, each with its mark), the last-layer seeds (your aim's clauses less the split ones and those placed) and,
  * on a draft, [Accept all]'s list (acceptAllListOfMap: what acceptCore's keptAllOf compares).
  */
@@ -14918,7 +14922,8 @@ function topicMapViewOf(
           },
       children: childKeys,
       votes: t.nameOrigin === "GEMINI" ? { form: t.formVotes, samples: t.samples } : null,
-      sources: cls === "LINKED" || cls === "KEPT" ? t.sources.slice(0, GROUND_SOURCES_SHOWN) : [],
+      // The sources Google linked: a LINKED name's, a LINKED_ONE name's one (ruling N3), and a kept one's in its ▸.
+      sources: cls === "LINKED" || cls === "LINKED_ONE" || cls === "KEPT" ? t.sources.slice(0, GROUND_SOURCES_SHOWN) : [],
       placed: t.placedBy,
       held: t.heldDay != null,
       skipped: t.skippedDay != null,
@@ -16549,7 +16554,8 @@ function groundFactsOf(results: readonly model.GroundSampleResult[]): Record<str
 
 /**
  * GROUND's verdicts on the map (§22.9, §22.11, ruling 43), pure: each checked Gemini name takes its verdict and sources;
- * a LINKED name in layer 1 is chosen by default, and a WEAK or NONE one is hidden and so out of the plan — only on a
+ * a LINKED name in layer 1 is chosen by default, and a WEAK or NONE one is out of the plan (a WEAK one at 1 source is
+ * shown, unticked, LINKED_ONE: ruling N3; the rest are hidden) — only on a
  * name you haven't decided (PENDING, unbound). A NOT_RUN key is left as it is.
  */
 function chainGroundedOf(map: t5.TopicMap, record: t5.GroundRunRecord): t5.TopicMap {

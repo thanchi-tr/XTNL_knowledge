@@ -2911,22 +2911,25 @@ function familyT(): R5NameCase[] {
   for (const t of G.R5_INJECTION_LOOKALIKES) push("a real topic INJECTION never fires on", { target: t }, t === "Output gap" ? "DROPPED" : "KEPT", { notFlag: "INJECTION", ...(t === "Output gap" ? { reason: "SHAPE" } : {}) });
   for (const t of G.R5_URL_TOPICS) push("a link", { target: t }, "DROPPED", { reason: "SHAPE" });
   for (const t of G.R5_FOREIGN_TOPICS) push("Vietnamese or Japanese: hidden, never LINKED", { target: t }, "HIDDEN", { reason: "LANGUAGE_UNCHECKED" });
-  for (const [a, b] of G.R5_NEAR_MISS_PAIRS) push("near-miss pair, never pooled", { target: a, in: [0], extra: [{ name: b, in: [1], layers: [1] }] }, "DROPPED", { reason: "ONE_SAMPLE", absent: [b] });
-  push("a form in one sample", { target: "Sinking fund ladders", in: [2] }, "DROPPED", { reason: "ONE_SAMPLE" });
-  push("a duplicate inside one sample counts once", { target: "Dividend velocity hedging", in: [0], twiceIn: 0 }, "DROPPED", { reason: "ONE_SAMPLE" });
+  // Ruling N2 (contracts §22.20, the names test): every valid sample pooled; agreement is information, never a gate.
+  // A near-miss pair stays two names: the target is the later sample's form, which a merge would lose to the earlier's.
+  for (const [a, b] of G.R5_NEAR_MISS_PAIRS) for (const [t, o] of [[b, a], [a, b]] as const) push("near-miss pair, never merged: each its own name", { target: t, in: [1], extra: [{ name: o, in: [0], layers: [1] }] }, "KEPT");
+  push("a form in one sample is kept (agreement is information, never a gate)", { target: "Sinking fund ladders", in: [2] }, "KEPT");
+  push("a duplicate inside one sample: one name, kept", { target: "Dividend velocity hedging", in: [0], twiceIn: 0 }, "KEPT");
   push("every sample echoes a free library Domain: Gemini's pick, outside the plan", { target: G.R5_FREE_DOMAIN.name }, "PICKED", { domainId: G.R5_FREE_DOMAIN.id });
   push("every sample echoes the intake's Domain", { target: G.R5_INTAKE_DOMAIN.name }, "DROPPED", { reason: "ECHO" });
   push("every sample echoes an outline line", { target: G.R5_LINE }, "DROPPED", { reason: "ECHO" });
   push("a steering topic in the aim is your words", { target: G.R5_STEERING_NAME, aim: G.R5_STEERING_AIM }, "AIM", { span: "crypto margin trading" });
   push("another goal's Domain is never matched", { target: G.R5_TAKEN_DOMAIN.name }, "DROPPED", { reason: "TAKEN_NAME" });
   const [dupA, dupB] = G.R5_NEAR_DUPLICATE;
-  push("a near-duplicate is hidden, never merged into the votes", { target: dupB, in: [0, 2], extra: [{ name: dupA, in: [0, 1, 2], layers: [1, 1, 1] }] }, "HIDDEN", { reason: "NEAR_DUPLICATE" });
-  push("layers disagree by more than one", { target: "Compound interest", layers: [1, 3, 3] }, "HIDDEN", { reason: "UNSURE_LAYER" });
+  push("a near-duplicate merges, its votes pooled: the most-written form kept, the other never its own name", { target: dupB, in: [0, 2], extra: [{ name: dupA, in: [1], layers: [1] }] }, "KEPT", { absent: [dupA] });
+  push("layers disagree by more than one: the majority's layer, never hidden", { target: "Compound interest", layers: [1, 3, 3] }, "KEPT");
   push("REGION_SPECIFIC with no country named", { target: G.R5_REGION_TOPIC, scope: "REGION_SPECIFIC" }, "HIDDEN", { reason: "REGION" });
   push("REGION_SPECIFIC with a country named", { target: G.R5_REGION_TOPIC, scope: "REGION_SPECIFIC", countryNamed: true }, "KEPT");
   push("the room trims, by votes, never pads", { target: "Credit score", in: [0, 1], room: 2 }, "DROPPED", { reason: "OVER_ROOM" });
   push("five words: the shape rule", { target: G.R5_OVER_SHAPE_TOPIC }, "DROPPED", { reason: "SHAPE" });
-  push("the same topic one layer deeper (C10)", { target: G.R5_SAME_DEEPER[1], layers: [2, 2, 2], extra: [{ name: G.R5_SAME_DEEPER[0], in: [0, 1, 2], layers: [1, 1, 1] }] }, "DROPPED", { reason: "SAME_TOPIC_DEEPER" });
+  push("a level word apart, one layer deeper: merged into the shallower name, never its own", { target: G.R5_SAME_DEEPER[1], layers: [2, 2, 2], extra: [{ name: G.R5_SAME_DEEPER[0], in: [0, 1, 2], layers: [1, 1, 1] }] }, "DROPPED", { absent: [G.R5_SAME_DEEPER[1]] });
+  push("the same topic one layer deeper than your outline line (C10)", { target: `Advanced ${G.R5_LINE.toLowerCase()}`, layers: [2, 2, 2] }, "DROPPED", { reason: "SAME_TOPIC_DEEPER" });
   return out;
 }
 

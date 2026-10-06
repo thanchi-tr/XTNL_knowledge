@@ -6497,9 +6497,13 @@ export const CHAIN_ROLES: readonly ChainRole[] = ["LAYER", "DEPTH"];
 /** checkLabel's topic-name flags (ruling 3: their own union; BlockingFlag is not widened). */
 export type TopicFlag = "JURISDICTION" | "BRAND" | "ADVICE" | "LEVEL_ONLY" | "INJECTION" | "REGION";
 export const TOPIC_FLAGS: readonly TopicFlag[] = ["JURISDICTION", "BRAND", "ADVICE", "LEVEL_ONLY", "INJECTION", "REGION"];
-/** A topic's provenance class (§22.11): what it shows. Keeping changes only "in the plan", never the class. */
-export type TopicClass = "SYLLABUS" | "YOURS" | "LIBRARY" | "AIM" | "PICKED" | "LINKED" | "NOT_CHECKED" | "KEPT" | "KEPT_NOT_CHECKED";
-export const TOPIC_CLASSES: readonly TopicClass[] = ["SYLLABUS", "YOURS", "LIBRARY", "AIM", "PICKED", "LINKED", "NOT_CHECKED", "KEPT", "KEPT_NOT_CHECKED"];
+/**
+ * A topic's provenance class (§22.11): what it shows. Keeping changes only "in the plan", never the class.
+ * LINKED_ONE (ruling N3, the names test): a GEMINI name GROUND linked to exactly 1 distinct source (WEAK), shown
+ * «Gemini · Google linked 1 source»; kept, it reads KEPT.
+ */
+export type TopicClass = "SYLLABUS" | "YOURS" | "LIBRARY" | "AIM" | "PICKED" | "LINKED" | "LINKED_ONE" | "NOT_CHECKED" | "KEPT" | "KEPT_NOT_CHECKED";
+export const TOPIC_CLASSES: readonly TopicClass[] = ["SYLLABUS", "YOURS", "LIBRARY", "AIM", "PICKED", "LINKED", "LINKED_ONE", "NOT_CHECKED", "KEPT", "KEPT_NOT_CHECKED"];
 export type TopicNote =
   | "NEAR_DUPLICATE"
   | "UNSURE_LAYER"

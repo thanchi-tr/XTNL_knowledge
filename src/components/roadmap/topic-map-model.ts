@@ -62,6 +62,7 @@ export const TOPIC_MARK: Readonly<Record<TopicClass, MarkRef>> = {
   AIM: "m.quote",
   PICKED: "pv.libpick",
   LINKED: "pv.web",
+  LINKED_ONE: "pv.web",
   NOT_CHECKED: "pv.suggest",
   KEPT: "pv.kept",
   KEPT_NOT_CHECKED: "pv.kept",
@@ -75,7 +76,7 @@ export function isOwnWords(cls: TopicClass): boolean {
 }
 /** A Gemini name (the who-word must stay reachable on the card: the layer chip and the row's sheet). */
 export function isGeminiName(cls: TopicClass): boolean {
-  return cls === "LINKED" || cls === "NOT_CHECKED" || cls === "KEPT" || cls === "KEPT_NOT_CHECKED" || cls === "PICKED";
+  return cls === "LINKED" || cls === "LINKED_ONE" || cls === "NOT_CHECKED" || cls === "KEPT" || cls === "KEPT_NOT_CHECKED" || cls === "PICKED";
 }
 /** Your words or your Domain placed by Gemini in a layer not yet kept: «Gemini placed it · not checked» (ruling 62). */
 export function placedByGeminiOf(row: Pick<TopicRowView, "cls" | "placed">, layerKept: boolean): boolean {
@@ -87,6 +88,9 @@ export function rowChipOf(row: TopicRowView, layerKept: boolean): { kind: Honest
   switch (row.cls) {
     case "LINKED":
       return { kind: "gemini-linked", label: geminiLinkedLabel(Math.max(row.sources.length, 2)) };
+    case "LINKED_ONE":
+      // ruling N3: a Gemini name Google linked to exactly 1 source
+      return { kind: "gemini-linked-one", label: geminiLinkedLabel(1) };
     case "PICKED":
       return { kind: "gemini-picked-domain", label: GEMINI_PICKED_DOMAIN_LABEL };
     case "NOT_CHECKED":
@@ -101,23 +105,27 @@ export function rowChipOf(row: TopicRowView, layerKept: boolean): { kind: Honest
 }
 
 /**
- * The one who-word chip of a layer header (D37), the first that applies: gemini-linked (while a LINKED row is
- * unkept; n = the layer's smallest), gemini-picked-domain, gemini-placed, gemini-kept-by-you, gemini-kept.
+ * The one who-word chip of a layer header (D37), the first that applies: gemini-linked (while a LINKED or LINKED_ONE
+ * row is unkept; n = the layer's smallest, gemini-linked-one at 1: ruling N3), gemini-picked-domain, gemini-placed,
+ * gemini-kept-by-you, gemini-kept.
  */
 export function layerChipOf(layer: Pick<TopicLayerView, "topics" | "kept">): { kind: HonestyKind; label: string } | null {
   const rows = layer.topics;
-  const linked = rows.filter((r) => r.cls === "LINKED");
-  if (linked.length > 0 && !layer.kept) return { kind: "gemini-linked", label: geminiLinkedLabel(Math.max(2, Math.min(...linked.map((r) => r.sources.length)))) };
+  const linked = rows.filter((r) => r.cls === "LINKED" || r.cls === "LINKED_ONE");
+  if (linked.length > 0 && !layer.kept) {
+    const n = Math.min(...linked.map((r) => (r.cls === "LINKED_ONE" ? 1 : Math.max(2, r.sources.length))));
+    return n === 1 ? { kind: "gemini-linked-one", label: geminiLinkedLabel(1) } : { kind: "gemini-linked", label: geminiLinkedLabel(n) };
+  }
   if (rows.some((r) => r.cls === "PICKED")) return { kind: "gemini-picked-domain", label: GEMINI_PICKED_DOMAIN_LABEL };
   if (rows.some((r) => placedByGeminiOf(r, layer.kept))) return { kind: "gemini-placed", label: GEMINI_PLACED_LABEL };
-  if (rows.some((r) => r.cls === "KEPT" || (r.cls === "LINKED" && layer.kept))) return { kind: "gemini-kept-by-you", label: GEMINI_KEPT_BY_YOU_LABEL };
+  if (rows.some((r) => r.cls === "KEPT" || ((r.cls === "LINKED" || r.cls === "LINKED_ONE") && layer.kept))) return { kind: "gemini-kept-by-you", label: GEMINI_KEPT_BY_YOU_LABEL };
   if (rows.some((r) => r.cls === "KEPT_NOT_CHECKED")) return { kind: "gemini-kept", label: "Gemini · kept · not checked" };
   return null;
 }
 
-/** A layer-1 row that starts unchosen and carries the 44 px checkbox: PICKED names and revealed NOT_CHECKED names (ruling 62). */
+/** A layer-1 row that starts unchosen and carries the 44 px checkbox: PICKED names, LINKED_ONE names (ruling N3) and revealed NOT_CHECKED names (ruling 62). */
 export function rowStartsUnchosen(row: Pick<TopicRowView, "cls">): boolean {
-  return row.cls === "PICKED" || row.cls === "NOT_CHECKED";
+  return row.cls === "PICKED" || row.cls === "LINKED_ONE" || row.cls === "NOT_CHECKED";
 }
 /** Whether the row shows the "in plan" checkbox: from layer 2 on, and layer 1's rows that start unchosen. */
 export function rowHasCheckbox(row: Pick<TopicRowView, "cls" | "layer">): boolean {

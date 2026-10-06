@@ -17,10 +17,17 @@
  * Code's placement is spelled TOPIC_PLACED_BY[2], never as a literal (ruling 52).
  *
  * Which topics are "hidden" is read from the draft itself, so a stored map
- * and MAP's own output agree: a GEMINI or AIM topic whose notes hold
- * UNSURE_LAYER or NEAR_DUPLICATE, or whose flags hold LANGUAGE_UNCHECKED or
- * REGION (mapAgreementOf's hidden list), and, for the class a view shows, a
- * GEMINI name GROUND has not LINKED (topicClassOf: NOT_CHECKED, fail closed).
+ * and MAP's own output agree: a GEMINI or AIM topic whose flags hold
+ * LANGUAGE_UNCHECKED or REGION (mapAgreementOf's hidden list; a draft stored
+ * before ruling N2 may also hide one by an UNSURE_LAYER or NEAR_DUPLICATE
+ * note), and, for the class a view shows, a GEMINI name GROUND has neither
+ * LINKED nor linked to exactly 1 source (topicClassOf: NOT_CHECKED, fail
+ * closed; ruling N3).
+ *
+ * The names gate pools every valid sample (ruling N2, contracts §22.20, from
+ * the names test of 2026-10-07): near-duplicates merge, agreement (formVotes
+ * of samples) is information shown in the ▸, never a gate, and GROUND decides
+ * what is shown.
  */
 import {
   BREADTH_FALLBACK,
@@ -790,14 +797,17 @@ function agreeNames(spec: AgreeSpec): { shown: Group[]; hidden: Group[] } {
     return v;
   };
 
-  // Step 5 (topic.agree): each vote key counted once per sample.
+  // Step 5: each vote key counted once per sample (then pooled, ruling N2, below).
   const groups = new Map<string, Group>();
+  /** Each exact form's first appearance: a label tie the earliest sample can't break goes to the form written first. */
+  const formSeq = new Map<string, number>();
   for (const o of spec.occurrences) {
     const v = verdictOf(o.raw, o.scope);
     if (v.kind === "drop") {
       countDrop(v.reason, v.form, v.flags);
       continue;
     }
+    if (!formSeq.has(v.form)) formSeq.set(v.form, o.seq);
     let g = groups.get(v.voteKey);
     if (!g) {
       g = {
@@ -827,25 +837,53 @@ function agreeNames(spec: AgreeSpec): { shown: Group[]; hidden: Group[] } {
     g.forms.set(v.form, writers);
   }
 
-  const kept: Group[] = [];
-  for (const g of groups.values()) {
-    g.votes = g.bySample.size;
-    const enough = g.votes >= CONSENSUS_MIN;
-    if (!enough && R.on("topic.agree")) {
-      R.fire("topic.agree");
-      countDrop("ONE_SAMPLE", g.label);
-      continue;
+  // Ruling N2 (the names test, 2026-10-07: 221 names proposed, 61 agreed, because one exact own form in 2 of 3 samples
+  // rarely holds across seeds): every valid sample is pooled. Agreement (formVotes of samples) is information the ▸
+  // shows, never a gate; GROUND decides what is shown (ruling N3).
+  /** The label: your aim's span, else the exact form most samples wrote; a tie goes to the earliest sample's, then to the form written first. */
+  const labelOf = (g: Group): string => {
+    if (g.aim) return g.aim.text;
+    let best: { form: string; n: number; first: number; seq: number } | null = null;
+    for (const [form, samples] of g.forms) {
+      const n = samples.size;
+      const first = Math.min(...samples);
+      const seq = formSeq.get(form) ?? Number.MAX_SAFE_INTEGER;
+      if (!best || n > best.n || (n === best.n && (first < best.first || (first === best.first && seq < best.seq)))) best = { form, n, first, seq };
     }
-    if (!g.aim) {
-      // The label: the form most samples wrote; a tie goes to the earliest sample.
-      let best: { form: string; n: number; first: number } | null = null;
-      for (const [form, samples] of g.forms) {
-        const n = samples.size;
-        const first = Math.min(...samples);
-        if (!best || n > best.n || (n === best.n && first < best.first)) best = { form, n, first };
+    return best ? best.form : g.label;
+  };
+  // Near-duplicates (topic.dedupe): a name within DEDUPE_DICE (stem bigrams) of a higher-voted one, or in its synonyms.ts
+  // group, MERGES into it: one name, voted by every sample that wrote any of its forms. Ranked by votes, then first
+  // appearance; each joins the first pool whose lead it is near (no chaining through a member).
+  const ranked = [...groups.values()].sort((a, b) => b.bySample.size - a.bySample.size || a.firstSeq - b.firstSeq);
+  for (const g of ranked) g.label = labelOf(g);
+  const pools: Group[][] = [];
+  for (const g of ranked) {
+    if (R.on("topic.dedupe")) {
+      const pool = pools.find((p) => stemDiceOf(g.label, p[0].label, spec.opts) >= DEDUPE_DICE || sameSynonymGroup(g.label, p[0].label, spec.opts));
+      if (pool) {
+        R.fire("topic.dedupe");
+        pool.push(g);
+        continue;
       }
-      if (best) g.label = best.form;
     }
+    pools.push([g]);
+  }
+
+  const kept: Group[] = [];
+  for (const pool of pools) {
+    const g = pool.length === 1 ? pool[0] : pooledOf(pool);
+    g.votes = g.bySample.size;
+    // Step 5 (topic.agree): a name one sample wrote is kept (pooled). Off (the ablation), the pre-N2 gate: one seen in fewer
+    // than CONSENSUS_MIN samples is dropped (ONE_SAMPLE).
+    if (g.votes < CONSENSUS_MIN) {
+      if (!R.on("topic.agree")) {
+        countDrop("ONE_SAMPLE", g.label);
+        continue;
+      }
+      R.fire("topic.agree");
+    }
+    g.label = labelOf(g);
     const voters = [...g.bySample.values()].sort((a, b) => a.sample - b.sample);
     g.layerVotes = voters.map((o) => (spec.fixedLayer ?? o.layer));
     const labelVoter = voters.find((o) => o.form === g.label) ?? voters[0];
@@ -855,35 +893,20 @@ function agreeNames(spec: AgreeSpec): { shown: Group[]; hidden: Group[] } {
     kept.push(g);
   }
 
-  // Near-duplicates (topic.dedupe): hidden behind the higher-voted form, never pooled.
-  const ranked = [...kept].sort((a, b) => b.votes - a.votes || a.firstSeq - b.firstSeq);
-  const visible: Group[] = [];
-  for (const g of ranked) {
-    if (R.on("topic.dedupe")) {
-      const near = visible.find((h) => stemDiceOf(g.label, h.label, spec.opts) >= DEDUPE_DICE || sameSynonymGroup(g.label, h.label, spec.opts));
-      if (near) {
-        R.fire("topic.dedupe");
-        g.notes.push("NEAR_DUPLICATE");
-        if (!g.hide) g.hide = "NEAR_DUPLICATE";
-        continue;
-      }
-    }
-    visible.push(g);
-  }
-
-  // Step 6 (topic.layer): the voters' layers agree within 1; the median, a tie going shallower.
+  // Step 6 (topic.layer): the majority layer among the samples that named it, a tie going shallower; never a reason to
+  // hide (ruling N2). Off (the ablation): the earliest sample's layer.
   for (const g of kept) {
     if (spec.fixedLayer !== null) {
       g.layer = spec.fixedLayer;
       continue;
     }
     const lv = g.layerVotes;
-    g.layer = lowerMedian(lv);
-    if (Math.max(...lv) - Math.min(...lv) > 1 && R.on("topic.layer")) {
-      R.fire("topic.layer");
-      g.notes.push("UNSURE_LAYER");
-      if (!g.hide) g.hide = "UNSURE_LAYER";
+    if (!R.on("topic.layer")) {
+      g.layer = lv[0] ?? g.layer;
+      continue;
     }
+    g.layer = majorityLayerOf(lv, g.layer);
+    if (new Set(lv).size > 1) R.fire("topic.layer");
   }
 
   // Step 7 (topic.pick): an exact form-key match to a free Domain you did not choose is Gemini's pick, outside the plan.
@@ -923,8 +946,9 @@ function agreeNames(spec: AgreeSpec): { shown: Group[]; hidden: Group[] } {
     placed.push({ layer: g.layer, name: g.label, lineageId: g.voteKey });
   }
 
-  // Step 9 (topic.trim): to the room, then each layer to LAYER_TOPICS_MAX; by votes, the shallower layer, first appearance. Never padded.
-  const order = [...surviving].sort((a, b) => b.votes - a.votes || a.layer - b.layer || a.firstSeq - b.firstSeq);
+  // Step 9 (topic.trim): to the room, then each layer to LAYER_TOPICS_MAX; by votes, then first appearance (ruling N2).
+  // Never padded.
+  const order = [...surviving].sort((a, b) => b.votes - a.votes || a.firstSeq - b.firstSeq);
   const shown: Group[] = [];
   const hidden: Group[] = [];
   const occupancy = new Map(spec.occupancy);
@@ -951,6 +975,42 @@ function agreeNames(spec: AgreeSpec): { shown: Group[]; hidden: Group[] } {
   }
   for (const g of hidden) bump(report.hidden, g.hide as TopicHideReason);
   return { shown, hidden };
+}
+
+/**
+ * Ruling N2: a pool of near-duplicate vote keys read as one name. Your aim's span leads when one is in it (the label is
+ * then the span), else the highest-voted key; each sample votes once, by its first occurrence of any member; every exact
+ * form keeps its writers (the label's count); flags join, and LANGUAGE_UNCHECKED, then REGION, hides the whole pool.
+ */
+function pooledOf(pool: readonly Group[]): Group {
+  const lead = pool.find((g) => g.aim) ?? pool[0];
+  const bySample = new Map<number, Occurrence & { form: string }>();
+  const forms = new Map<string, Set<number>>();
+  const flags = new Set<string>();
+  let hide: TopicHideReason | null = null;
+  for (const g of pool) {
+    for (const [s, o] of g.bySample) {
+      const cur = bySample.get(s);
+      if (!cur || o.seq < cur.seq) bySample.set(s, o);
+    }
+    for (const [form, writers] of g.forms) {
+      const into = forms.get(form) ?? new Set<number>();
+      for (const s of writers) into.add(s);
+      forms.set(form, into);
+    }
+    for (const f of g.flags) flags.add(f);
+    if (g.hide === "LANGUAGE_UNCHECKED" || (g.hide === "REGION" && hide !== "LANGUAGE_UNCHECKED")) hide = g.hide;
+  }
+  return { ...lead, bySample, forms, flags, hide, firstSeq: Math.min(...pool.map((g) => g.firstSeq)), notes: [...lead.notes] };
+}
+
+/** The layer most of a name's samples gave it; a tie goes shallower (ruling N2). */
+function majorityLayerOf(values: readonly number[], fallback: number): number {
+  const counts = new Map<number, number>();
+  for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
+  let best: { layer: number; n: number } | null = null;
+  for (const [layer, n] of counts) if (!best || n > best.n || (n === best.n && layer < best.layer)) best = { layer, n };
+  return best ? best.layer : fallback;
 }
 
 /** Two names share a synonyms.ts group (their content stems, joined). */
@@ -1558,8 +1618,17 @@ export function topicClassOf(t: TopicDraft): TopicClass {
   if (t.domainId && t.bound) return "LIBRARY";
   if (t.domainId && !t.bound) return "PICKED";
   const kept = t.decision === "KEPT";
-  if (hiddenByAgreement(t) || t.grounding !== "LINKED") return kept ? "KEPT_NOT_CHECKED" : "NOT_CHECKED";
-  return kept ? "KEPT" : "LINKED";
+  if (hiddenByAgreement(t)) return kept ? "KEPT_NOT_CHECKED" : "NOT_CHECKED";
+  if (t.grounding === "LINKED") return kept ? "KEPT" : "LINKED";
+  // Ruling N3 (the names test): GROUND's WEAK at exactly 1 distinct source is shown, «Gemini · Google linked 1 source».
+  // A WEAK with more sources (TITLE mode's TITLE_CHECK) stays behind the fold, as NONE, NOT_RUN and a failed check do.
+  if (linkedOnce(t)) return kept ? "KEPT" : "LINKED_ONE";
+  return kept ? "KEPT_NOT_CHECKED" : "NOT_CHECKED";
+}
+
+/** GROUND's WEAK at exactly 1 distinct source (ruling N3). */
+function linkedOnce(t: TopicDraft): boolean {
+  return t.grounding === "WEAK" && Array.isArray(t.sources) && t.sources.length === 1;
 }
 
 /** ["MERGE_UP", "WRITE_ONE", "SHOW_HIDDEN"], less MERGE_UP on layer 1 and SHOW_HIDDEN with nothing hidden. */

@@ -33,6 +33,7 @@ import {
   GEMINI_KEPT_BY_YOU_FULL,
   GEMINI_KEPT_NOT_CHECKED_FULL,
   GEMINI_LINKED_FULL,
+  GEMINI_LINKED_ONE_FULL,
   GEMINI_NOT_CHECKED_FULL,
   GEMINI_PICKED_DOMAIN_FULL,
   GEMINI_PLACED_FULL,
@@ -76,6 +77,7 @@ export interface LayerBandProps {
 
 const CHIP_FULL: Readonly<Record<string, string>> = {
   "gemini-linked": GEMINI_LINKED_FULL,
+  "gemini-linked-one": GEMINI_LINKED_ONE_FULL,
   "gemini-placed": GEMINI_PLACED_FULL,
   "gemini-picked-domain": GEMINI_PICKED_DOMAIN_FULL,
   "gemini-kept-by-you": GEMINI_KEPT_BY_YOU_FULL,

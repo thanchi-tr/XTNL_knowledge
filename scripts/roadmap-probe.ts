@@ -91,7 +91,17 @@
  *   npx tsx --env-file=.env scripts/roadmap-probe.ts --v5 --stage=names --i-approved
  *                                                                                  the names stage (G-M, G-I, G-X), once MAX_PROBE_CALLS_V5_NAMES holds 210
  *   npx tsx scripts/roadmap-probe.ts --v5 --score=names                            offline: names proposed, agreed, flagged, LINKED / WEAK / NONE, links
- *                                                                                  drawn; writes probe-v5-names-judge-sheet.json for the two judges
+ *                                                                                  drawn; then every saved run under the current gate and reader (the
+ *                                                                                  original and the re-ground verdicts); writes probe-v5-names-judge-sheet.json
+ *                                                                                  with every SHOWN name (LINKED and WEAK) for the two judges
+ *   npx tsx scripts/roadmap-probe.ts --v5 --rescore=names                          offline: every saved names run re-read with the CURRENT code (the pooled
+ *                                                                                  names gate, the GROUND reader): per pack and in total, the names passing,
+ *                                                                                  those with a saved verdict (LINKED / WEAK / NONE) and the NEW ones; the
+ *                                                                                  re-ground's planned requests. Writes nothing.
+ *   npx tsx --env-file=.env scripts/roadmap-probe.ts --v5 --stage=names-reground --i-approved
+ *                                                                                  GROUND for the NEW names only, once MAX_PROBE_CALLS_V5_REGROUND holds the
+ *                                                                                  planned count (at most 90, the names approval's unspent part); each pack's
+ *                                                                                  replies saved unedited as probe-v5-regrounds-<pack>.json
  *
  *   Stage 1 (schema acceptance and the shape of grounding): P1–P6, and P3b only if P3 is rejected — 7 calls, at most
  *   8, of which 2 are grounded (P5, P5b). Each item changes one thing from a known-accepted baseline; no call is
@@ -117,6 +127,14 @@
  *   16 × 13 = 208 requests and 16 × 7 = 112 grounded, refused up front past MAX_PROBE_CALLS_V5_NAMES (0 in this build;
  *   the lead sets 210) or the grounded cap (112). Paced and counted as stage 2 is; it stops on a cap or a quota or rate
  *   error, and saves each pack as probe-v5-names-<pack>.json (blessed: false, expected: null).
+ *
+ *   The names re-ground (the lead's decision of 2026-10-07, after the names test: 221 proposed, 61 agreed, GROUND
+ *   LINKED 12, WEAK 17, NONE 29 of which NO_LINE 20): the names gate pools every valid sample, the reader takes the
+ *   "<key> · <term>:" label, and a WEAK name is shown. --rescore=names re-reads the saved runs with that code and
+ *   lists the names passing the gate that no saved GROUND reply covers (NEW). The re-ground sends GROUND for those
+ *   only (groundBatchesOf, batches of ≤ 3, the app's GROUND instruction and pack), within MAX_PROBE_CALLS_V5_REGROUND
+ *   (0 in this build; the lead sets the planned count, at most 90: the names approval of about 210 less the 120
+ *   spent), refused up front past it, paced as the names stage is, no retries, every reply saved unedited.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -149,6 +167,8 @@ import { aimSpanOf, formKeyOf, kFinalOf, linkDrawOf, topicClassOf, topicNameShap
 import { groundRecordOf, registrableDomainOf, type GroundCallVerdict, type GroundParts } from "../src/lib/roadmap-grounding";
 import { COUNTRY_WORDS } from "../src/lib/roadmap-lexicon";
 import { words } from "../src/lib/synonyms";
+// ── The names re-ground (the lead's decision of 2026-10-07, after the names test) ──
+import { type GroundKeyVerdict } from "../src/lib/roadmap-types";
 
 /** The approval covers 2 calls; this is the hard ceiling. */
 const MAX_PROBE_CALLS = 2;
@@ -702,6 +722,10 @@ function printNamesPlanV5(): void {
   }
   console.log(`  run:   npx tsx --env-file=.env scripts/roadmap-probe.ts ${V5_FLAG} ${NAMES_STAGE_FLAG} ${APPROVAL_FLAG}   (each pack → ${NAMES_FILE_PREFIX}<pack>.json)`);
   console.log(`  score: npx tsx scripts/roadmap-probe.ts ${V5_FLAG} ${SCORE_FLAG_PREFIX}names   (offline; writes ${NAMES_JUDGE_SHEET})`);
+  console.log(`\n— the names re-ground (the lead's decision of 2026-10-07: the pooled gate, the "<key> · <term>:" reader, WEAK shown): GROUND for the NEW names only —`);
+  console.log(`  MAX_PROBE_CALLS_V5_REGROUND ${MAX_PROBE_CALLS_V5_REGROUND}${MAX_PROBE_CALLS_V5_REGROUND === 0 ? " (no call can be sent: the lead sets the planned count just before running)" : ""}, at most ${REGROUND_APPROVED_MAX} (the names approval's unspent part); every request grounded; paced as above; no retry`);
+  console.log(`  plan:  npx tsx scripts/roadmap-probe.ts ${V5_FLAG} ${NAMES_RESCORE_FLAG}   (offline; prints the NEW names and the planned requests)`);
+  console.log(`  run:   npx tsx --env-file=.env scripts/roadmap-probe.ts ${V5_FLAG} ${NAMES_REGROUND_FLAG} ${APPROVAL_FLAG}   (each pack → ${REGROUND_FILE_PREFIX}<pack>.json)`);
 }
 
 /** P2's pack: new-subject's six outline lines placed over K = 3 (keys only). */
@@ -1500,9 +1524,9 @@ const NAMES_APPROVED_MAX = 210;
 const NAMES_GROUNDED_CAP = 112;
 const NAMES_FILE_PREFIX = "probe-v5-names-";
 const NAMES_JUDGE_SHEET = "probe-v5-names-judge-sheet.json";
-/** Where the names run writes and --score=names reads: the corpus. (A rehearsal copy points it at a scratch folder.) */
+/** Where the names run and the re-ground write, and --score=names and --rescore=names read: the corpus. (A rehearsal copy points it at a scratch folder.) */
 const NAMES_OUT_DIR: string = CORPUS_DIR;
-/** The names run's model call: undefined is roadmap-model's defaultCallModel, the real call. (A rehearsal copy swaps in a fake.) */
+/** The names run's and the re-ground's model call: undefined is roadmap-model's defaultCallModel, the real call. (A rehearsal copy swaps in a fake.) */
 const NAMES_CALL_MODEL: CallModel | undefined = undefined;
 /**
  * MAP's `place` part, exactly as the app sends it (claimChainMap: your lines, then your Domains, while
@@ -1644,8 +1668,12 @@ interface NamesSpec {
   makeId: () => string;
 }
 
-/** The 16 packs, each checked synthetic (and a G-X pack topic-only with exactly its approved aim) before anything is sent. */
-function namesSpecsOf(corpus: ReadonlyMap<string, CorpusEntry>): NamesSpec[] {
+/**
+ * The 16 packs, each checked synthetic (and a G-X pack topic-only with exactly its approved aim) before anything is sent.
+ * `at` (the re-score and the re-ground) holds a saved run's K, breadth and room per pack: its replies were asked at
+ * those, so the written map and the agreement are rebuilt at them, whatever the rating would say now.
+ */
+function namesSpecsOf(corpus: ReadonlyMap<string, CorpusEntry>, at?: ReadonlyMap<string, { k: number; breadth: BreadthKey; room: number }>): NamesSpec[] {
   const want = (run: NamesRunId) => NAMES_PLAN.filter((i) => i.run === run);
   const gm = stageTwoRunOf("G-M").packs;
   const gmOk = want("G-M").length === gm.length && want("G-M").every((i, n) => i.pack === gm[n].replace(/ \(no outline\)$/, "") && i.noOutline === gm[n].endsWith("(no outline)"));
@@ -1669,9 +1697,11 @@ function namesSpecsOf(corpus: ReadonlyMap<string, CorpusEntry>): NamesSpec[] {
     const g = gr.get(item.pack) ?? null;
     const fromGR = g !== null && g.rating.origin === "GEMINI";
     const rating = fromGR && g ? g.rating : code;
-    const kSource = fromGR && g ? `G-R's consensus (ratingOf over ${G_R_FILE}: ${g.valid} valid, layers/breadth ${g.votes})` : g ? `code's estimate (G-R holds ${g.valid} valid repl${g.valid === 1 ? "y" : "ies"}, too few for a consensus)` : "code's estimate (codeRatingOf: depthFallbackOf, BREADTH_FALLBACK; not in G-R)";
-    const k = rating.layers;
-    const breadth = rating.breadth;
+    const ratedSource = fromGR && g ? `G-R's consensus (ratingOf over ${G_R_FILE}: ${g.valid} valid, layers/breadth ${g.votes})` : g ? `code's estimate (G-R holds ${g.valid} valid repl${g.valid === 1 ? "y" : "ies"}, too few for a consensus)` : "code's estimate (codeRatingOf: depthFallbackOf, BREADTH_FALLBACK; not in G-R)";
+    const saved = at?.get(item.pack) ?? null;
+    const k = saved ? saved.k : rating.layers;
+    const breadth = saved ? saved.breadth : rating.breadth;
+    const kSource = saved ? `the saved run's K and breadth${saved.k !== rating.layers || saved.breadth !== rating.breadth ? ` (now ${rating.layers} ${rating.breadth}: ${ratedSource})` : ""}` : ratedSource;
     let n = 0;
     const makeId = () => `names-${item.pack}-${++n}`;
     // The written map (writtenTopicsDraft → writtenMapOf): your outline lines placed by code, your chosen Domains (U keys) in layer 1.
@@ -1692,7 +1722,7 @@ function namesSpecsOf(corpus: ReadonlyMap<string, CorpusEntry>): NamesSpec[] {
     const treeNames = [...new Set([...e.input.domains.map((d) => d.name), ...e.library.map((d) => d.name)])];
     const label = labelContextFor(intake, areaName, treeNames, "TOPIC");
     const countryNamed = countryNamedOf([intake.aim, intake.constraints, intake.examLabel, ...outline]);
-    const room = mapRoomOf({ layers: k, breadth, lines: lines.length, domains: domains.length });
+    const room = saved ? saved.room : mapRoomOf({ layers: k, breadth, lines: lines.length, domains: domains.length });
     // claimChainMap's `place`: your lines, then your Domains that no other goal holds and Gemini never named (packableDomainsOf).
     const sOf = base.filter(isNamesKey("S")).sort(byNamesKey);
     const uOf = base.filter(isNamesKey("U")).sort(byNamesKey);
@@ -1713,13 +1743,15 @@ interface NamesBudget {
   stopped: string | null;
   pacer: Pacer;
   callModel: CallModel | undefined;
+  /** The ceiling's name in a stop message (MAX_PROBE_CALLS_V5_NAMES, or MAX_PROBE_CALLS_V5_REGROUND). */
+  capName: string;
 }
 
 /** One JSON request (MAP or LINK), as sendSampleV5 sends it, within the names caps: paced, counted, never retried. */
 async function sendNamesJsonV5(b: NamesBudget, pack: TopicPack, i: number, tag: string): Promise<StageTwoSample | null> {
   if (b.stopped) return null;
   if (b.made + 1 > b.cap) {
-    b.stopped = `the next request would pass MAX_PROBE_CALLS_V5_NAMES (${b.cap})`;
+    b.stopped = `the next request would pass ${b.capName} (${b.cap})`;
     return null;
   }
   await b.pacer.next();
@@ -1764,7 +1796,7 @@ interface NamesGroundCall {
 async function sendNamesGroundV5(b: NamesBudget, pack: TopicPack, terms: readonly GroundTerm[], batch: number, tag: string): Promise<NamesGroundCall | null> {
   if (b.stopped) return null;
   if (b.made + 1 > b.cap) {
-    b.stopped = `the next request would pass MAX_PROBE_CALLS_V5_NAMES (${b.cap})`;
+    b.stopped = `the next request would pass ${b.capName} (${b.cap})`;
     return null;
   }
   if (b.grounded + 1 > b.groundedCap) {
@@ -1816,6 +1848,25 @@ async function sendNamesGroundV5(b: NamesBudget, pack: TopicPack, terms: readonl
   console.log(`  [${b.made}] ${tag} GROUND batch ${batch + 1} (grounded ${b.grounded}; seed ${seed}): ${r.ok ? "OK" : `FAILED (${r.error})`} · ${r.latencyMs} ms${sent ? "" : " · not sent"} · ${said}`);
   if (!r.ok && QUOTA_ERROR.test(r.error ?? "")) b.stopped = `a quota or rate error on ${tag} GROUND (${String(r.error).slice(0, 160)}): no retry`;
   return call;
+}
+
+/** runMapStep's agreement over a pack's MAP replies (a valid one is CLEAN or SALVAGED), as the names run and the re-score both make it. */
+function namesAgreementOf(s: NamesSpec, mapSamples: readonly StageTwoSample[]): MapAgreement {
+  const read: (MapSampleIn | null)[] = mapSamples.map((x) => (x.ok && x.integrity ? { parsed: x.parsed, integrity: x.integrity.verdict } : null));
+  return mapAgreementOf({
+    samples: read,
+    layers: s.k,
+    breadth: s.breadth,
+    room: s.room,
+    aim: s.intake.aim,
+    lines: s.lines,
+    domains: s.domains,
+    freeDomains: s.freeDomains,
+    takenNames: [],
+    label: s.label,
+    countryNamed: s.countryNamed,
+    makeId: s.makeId,
+  });
 }
 
 /** The server's chainMapMergedOf and chainAddedOf on a fresh written map: the lines' and Domains' layers, then Gemini's names and your aim's spans as T1… (kept first, then hidden); an echo of a map name is dropped. */
@@ -1915,7 +1966,10 @@ function namesProposedOf(samples: readonly StageTwoSample[], s: NamesSpec): { na
   return [...byForm.values()];
 }
 
-/** The sentence Gemini wrote for a key: its line "Tk: …" or "<the term>: …" in an answer part (display only; the verdict is groundVerdictOf's). */
+/**
+ * The sentence Gemini wrote for a key: its line "Tk: …", "<the term>: …" or "Tk · <the term>: …" (the pack's own term
+ * line, as the names test's replies copied it) in an answer part (display only; the verdict is groundVerdictOf's).
+ */
 function groundSentenceOf(parts: readonly unknown[] | null | undefined, key: string, name: string): string | null {
   const fold = (x: string) => x.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
   for (const p of Array.isArray(parts) ? parts : []) {
@@ -1925,12 +1979,22 @@ function groundSentenceOf(parts: readonly unknown[] | null | undefined, key: str
     for (const piece of text.split("\n")) {
       const line = piece.replace(/\r$/, "");
       if (line.startsWith(`${key}: `)) return line.slice(key.length + 2);
-      const at = line.indexOf(": ");
-      if (at > 0 && fold(line.slice(0, at)) === fold(name)) return line.slice(at + 2);
+      for (let at = line.indexOf(": "); at > 0; at = line.indexOf(": ", at + 1)) {
+        const label = line.slice(0, at);
+        const term = label.startsWith(`${key} · `) ? label.slice(key.length + 3) : label;
+        if (fold(term) === fold(name)) return line.slice(at + 2);
+      }
     }
   }
   return null;
 }
+
+/**
+ * The lead's decision (2026-10-07, after the names test): a Gemini name is shown once Google linked it to at least one
+ * source, LINKED (≥ SOURCES_MIN distinct sources) or WEAK (exactly one, with its own Honesty chip); NONE, NOT_RUN and a
+ * failed check stay hidden behind the fold. (The names run itself, spent before the decision, showed LINKED only.)
+ */
+const NAMES_SHOWN_GROUNDING: ReadonlySet<string> = new Set(["LINKED", "WEAK"]);
 
 /** One topic on the final map, as saved and shown to the judges. */
 interface SavedNamesTopic {
@@ -1940,7 +2004,7 @@ interface SavedNamesTopic {
   rawName: string | null;
   origin: string;
   class: string;
-  /** Shown on the map (your lines and Domains, your words, Gemini's pick from your library, a LINKED name), else hidden behind the count. */
+  /** Shown on the map (your lines and Domains, your words, Gemini's pick from your library, a LINKED or WEAK name: NAMES_SHOWN_GROUNDING), else hidden behind the count. */
   shown: boolean;
   hiddenBy: string | null;
   grounding: string;
@@ -2064,27 +2128,13 @@ async function runNamesPackV5(b: NamesBudget, s: NamesSpec): Promise<{ sent: num
     }
     if (b.stopped || mapSamples.length < TOPIC_SAMPLES) return done(false);
     // 2. The agreement (runMapStep): no valid reply leaves the written map as it was (no Gemini names).
-    const read = mapSamples.map((x) => (x.ok && x.integrity ? { parsed: x.parsed, integrity: x.integrity.verdict } : null));
     const valid = mapSamples.filter(validSampleOf).length;
     rec.proposed = namesProposedOf(mapSamples, s);
     if (valid === 0) {
       rec.mapNote = "no valid MAP reply: no Gemini names (runMapStep writes nothing)";
       kFinal = kFinalOf(topics, s.k);
     } else {
-      const agreement = mapAgreementOf({
-        samples: read,
-        layers: s.k,
-        breadth: s.breadth,
-        room: s.room,
-        aim: s.intake.aim,
-        lines: s.lines,
-        domains: s.domains,
-        freeDomains: s.freeDomains,
-        takenNames: [],
-        label: s.label,
-        countryNamed: s.countryNamed,
-        makeId: s.makeId,
-      });
+      const agreement = namesAgreementOf(s, mapSamples);
       const merged = namesMergedOf(topics, agreement);
       topics = merged.topics;
       for (const k of merged.hidden) hiddenKeys.add(k);
@@ -2200,7 +2250,7 @@ async function runNamesPackV5(b: NamesBudget, s: NamesSpec): Promise<{ sent: num
       const agreed = hiddenKeys.has(t.key) || namesHiddenMarked(t);
       const hiddenBy = agreed ? (t.notes.find((x) => x === "NEAR_DUPLICATE" || x === "UNSURE_LAYER") ?? t.flags.find((f) => f === "REGION" || f === "LANGUAGE_UNCHECKED") ?? "AGREEMENT") : null;
       const gemini = t.nameOrigin === "GEMINI" && !t.domainId;
-      const shown = !agreed && (!gemini || t.grounding === "LINKED");
+      const shown = !agreed && (!gemini || NAMES_SHOWN_GROUNDING.has(t.grounding));
       const why = hiddenBy ?? (shown ? null : failedKeys.has(t.key) ? "GROUND_FAILED" : t.grounding);
       return { key: t.key, layer: t.layer, name: t.name, rawName: t.rawName, origin: t.nameOrigin, class: topicClassOf(t), shown, hiddenBy: why, grounding: t.grounding, scope: t.scope, formVotes: t.formVotes, layerVotes: t.layerVotes, flags: t.flags, notes: t.notes, domainId: t.domainId, chosen: t.chosen };
     });
@@ -2233,7 +2283,7 @@ async function runNamesV5(): Promise<void> {
   if (existing.length > 0) refuse(`${existing.join(", ")} exist: a run's saved replies are never overwritten (each pack is sent once, under its approval)`);
 
   console.log(`roadmap-probe PROBE_PLAN v5, the names stage (TOPIC_PROMPT_VERSION ${TOPIC_PROMPT_VERSION}; model ${ROADMAP_MODEL}; GROUND_TITLE_MODE ${GROUND_TITLE_MODE}): ${specs.length} packs (G-M ${specs.filter((x) => x.item.run === "G-M").length}, G-I ${specs.filter((x) => x.item.run === "G-I").length}, G-X ${specs.filter((x) => x.item.run === "G-X").length}), at most ${worst.requests} requests and ${worst.grounded} grounded; caps ${MAX_PROBE_CALLS_V5_NAMES} and ${NAMES_GROUNDED_CAP}; no retry; at most ${PACE_PER_MINUTE_MAX} a minute (${PACE_GAP_MS} ms apart), about ${Math.ceil((worst.requests * PACE_GAP_MS) / 60_000)} minutes at most`);
-  const b: NamesBudget = { cap: MAX_PROBE_CALLS_V5_NAMES, groundedCap: NAMES_GROUNDED_CAP, made: 0, grounded: 0, stopped: null, pacer: new Pacer(), callModel: NAMES_CALL_MODEL };
+  const b: NamesBudget = { cap: MAX_PROBE_CALLS_V5_NAMES, groundedCap: NAMES_GROUNDED_CAP, made: 0, grounded: 0, stopped: null, pacer: new Pacer(), callModel: NAMES_CALL_MODEL, capName: "MAX_PROBE_CALLS_V5_NAMES" };
   const ran: { pack: string; sent: number; grounded: number; complete: boolean }[] = [];
   for (const s of specs) {
     if (b.stopped) break;
@@ -2269,7 +2319,7 @@ interface SavedNamesPack {
   agreement?: { valid: number; kFinal: number; kept: string[]; hidden: string[]; report: TopicRunReport } | null;
   link?: { samples?: StageTwoSample[]; draw?: { edges: SavedNamesEdge[]; voids: number } | null; floor?: { eligible: { child: string; n: number }[]; expectedRandomDrawn: number } } | null;
   linkNote?: string | null;
-  ground?: { plan?: { batches: string[][]; notRun: string[] }; calls?: unknown[]; failed?: string[][] } | null;
+  ground?: { plan?: { batches: string[][]; notRun: string[] }; calls?: NamesGroundCall[]; failed?: string[][] } | null;
   topics?: SavedNamesTopic[] | null;
   verdicts?: SavedNamesVerdict[] | null;
 }
@@ -2301,7 +2351,12 @@ const mapLine = (m: ReadonlyMap<string, number>): string =>
 type JudgeLabels = Record<"j1" | "j2", Record<string, unknown>>;
 const blankLabels = (fields: readonly string[]): JudgeLabels => ({ j1: Object.fromEntries(fields.map((f) => [f, null])), j2: Object.fromEntries(fields.map((f) => [f, null])) });
 
-/** --v5 --score=names: per pack and in total, the names proposed, agreed, flagged (by flag), LINKED / WEAK / NONE and the links drawn; writes the judge sheet. */
+/**
+ * --v5 --score=names: the names run as it ran (per pack and in total: names proposed, agreed, flagged, its GROUND
+ * verdicts as saved, the links drawn), then every run under the current code (namesRescoresOf: the pooled gate, and the
+ * original and the re-ground GROUND replies both read with the current reader); writes the judge sheet with every
+ * SHOWN name (LINKED and WEAK, NAMES_SHOWN_GROUNDING) and the NEW names still unchecked.
+ */
 function scoreNamesV5(): void {
   const files = namesFilesOf();
   if (files.length === 0) refuse(`no ${NAMES_FILE_PREFIX}<pack>.json is saved yet: run the names stage first (${V5_FLAG} ${NAMES_STAGE_FLAG} ${APPROVAL_FLAG}, approved)`);
@@ -2309,24 +2364,27 @@ function scoreNamesV5(): void {
   console.log(`roadmap-probe --score=names (offline): ${packs.length} of ${NAMES_PLAN.length} packs saved in ${NAMES_OUT_DIR}`);
   const missing = NAMES_PLAN.filter((i) => !files.includes(`${NAMES_FILE_PREFIX}${i.pack}.json`)).map((i) => i.pack);
   if (missing.length > 0) console.log(`  not saved: ${missing.join(", ")}`);
+  const rescored = new Map(namesRescoresOf().map((r) => [r.p.pack, r] as const));
 
   const total = { requests: 0, grounded: 0, proposed: 0, agreed: 0, kept: 0, hidden: 0, linked: 0, weak: 0, none: 0, notRun: 0, failed: 0, drawn: 0, voted: 0, floor: 0, mapValid: 0, mapAll: 0, linkValid: 0, linkAll: 0, c10: 0 };
   const dropped = new Map<string, number>();
   const flags = new Map<string, number>();
   const hiddenBy = new Map<string, number>();
-  const prior = existsSync(join(NAMES_OUT_DIR, NAMES_JUDGE_SHEET)) ? (JSON.parse(readFileSync(join(NAMES_OUT_DIR, NAMES_JUDGE_SHEET), "utf8")) as { linked?: { id: string; labels?: JudgeLabels }[]; links?: { id: string; labels?: JudgeLabels }[]; injection?: { shown?: { id: string; labels?: JudgeLabels }[] } }) : null;
+  type PriorItem = { id?: string; pack?: string; name?: string; labels?: JudgeLabels };
+  const prior = existsSync(join(NAMES_OUT_DIR, NAMES_JUDGE_SHEET)) ? (JSON.parse(readFileSync(join(NAMES_OUT_DIR, NAMES_JUDGE_SHEET), "utf8")) as { linked?: PriorItem[]; shown?: PriorItem[]; links?: PriorItem[]; injection?: { shown?: PriorItem[] } }) : null;
   const priorLabels = new Map<string, JudgeLabels>();
   // Only an item a judge has labelled (any label not null) carries over; the rest start blank again.
   const labelled = (l: JudgeLabels | undefined): l is JudgeLabels => !!l && ["j1", "j2"].some((j) => Object.values((l as Record<string, Record<string, unknown> | undefined>)[j] ?? {}).some((v) => v !== null && v !== undefined));
-  for (const x of [...(prior?.linked ?? []), ...(prior?.links ?? []), ...(prior?.injection?.shown ?? [])]) if (x?.id && labelled(x.labels)) priorLabels.set(x.id, x.labels);
+  for (const x of [...(prior?.linked ?? []), ...(prior?.shown ?? []), ...(prior?.links ?? []), ...(prior?.injection?.shown ?? [])]) if (x?.id && labelled(x.labels)) priorLabels.set(x.id, x.labels);
+  // A name's labels follow the name (pack/name): the keys move under the pooled gate, so an earlier sheet's "pack/Tk" carries over by its name.
+  for (const x of [...(prior?.linked ?? []), ...(prior?.shown ?? [])]) if (typeof x?.pack === "string" && typeof x.name === "string" && labelled(x.labels) && !priorLabels.has(`${x.pack}/${x.name}`)) priorLabels.set(`${x.pack}/${x.name}`, x.labels);
   const labelsOf = (id: string, fields: readonly string[]): JudgeLabels => priorLabels.get(id) ?? blankLabels(fields);
-  const linked: Record<string, unknown>[] = [];
   const links: Record<string, unknown>[] = [];
   let injection: Record<string, unknown> | null = null;
-  const LINKED_FIELDS = ["fits", "layerOrderRight", "url", "exactTermIntendedSense"] as const;
+  const SHOWN_FIELDS = ["fits", "layerOrderRight", "url", "exactTermIntendedSense"] as const;
 
-  console.log("\n— per pack: K, MAP's valid replies, names proposed, agreed (kept + hidden), flagged, GROUND's verdicts, links drawn —");
-  for (const { file, p } of packs) {
+  console.log("\n— as run (the gate and reader of the run): per pack, K, MAP's valid replies, names proposed, agreed (kept + hidden), flagged, GROUND's verdicts as saved, links drawn —");
+  for (const { p } of packs) {
     const mapSamples = Array.isArray(p.map?.samples) ? p.map.samples : [];
     const linkSamples = Array.isArray(p.link?.samples) ? p.link.samples : [];
     const report = p.agreement?.report;
@@ -2367,11 +2425,6 @@ function scoreNamesV5(): void {
       `  ${p.pack.padEnd(22)} ${p.run} · K ${p.K} ${p.breadth} · room ${p.room} · MAP ${mapSamples.filter(validSampleOf).length}/${mapSamples.length} valid · proposed ${p.proposed?.length ?? 0} · agreed ${agreed} (kept ${p.agreement?.kept.length ?? 0}, hidden ${p.agreement?.hidden.length ?? 0}) · flagged ${mapLine(packFlags)} · LINKED ${n("LINKED")} · WEAK ${n("WEAK")} · NONE ${n("NONE")}${n("NOT_RUN") ? ` · NOT_RUN ${n("NOT_RUN")}` : ""}${n("GROUND_FAILED") ? ` · GROUND_FAILED ${n("GROUND_FAILED")}` : ""} · links drawn ${drawn.length} of ${edges.length} voted${p.linkNote ? ` (${p.linkNote})` : ""} · ${p.requests ?? "?"} requests (${p.grounded ?? "?"} grounded)${p.complete ? "" : ` · INCOMPLETE (${p.stopped ?? "?"})`}`
     );
     console.log(`  ${"".padEnd(22)} dropped ${mapLine(new Map(Object.entries(report?.dropped ?? {}).filter((x): x is [string, number] => typeof x[1] === "number")))} · C10 merged ${report?.mergedSameDeeper ?? 0}`);
-    for (const x of verdicts.filter((y) => y.verdict === "LINKED")) {
-      console.log(`      LINKED ${x.key} L${x.layer} "${x.name}" · ${x.sources.map((y) => y.domain ?? "?").join(", ")}`);
-      const id = `${p.pack}/${x.key}`;
-      linked.push({ id, run: p.run, pack: p.pack, aim: p.aim, areaName: p.areaName, layer: x.layer, key: x.key, name: x.name, domains: x.sources.map((y) => y.domain), sources: x.sources.map((y) => ({ domain: y.domain, uri: y.uri })), sentence: x.sentence, labels: labelsOf(id, LINKED_FIELDS) });
-    }
     const byChild = new Map<string, SavedNamesEdge[]>();
     for (const x of drawn) byChild.set(x.child, [...(byChild.get(x.child) ?? []), x]);
     const layerOf = new Map(topics.map((t) => [t.key, t.layer] as const));
@@ -2380,20 +2433,9 @@ function scoreNamesV5(): void {
       console.log(`      link ${child} "${es[0].childName}" ← ${es.map((x) => `${x.parent} "${x.parentName}"`).join(", ")}`);
       links.push({ id, run: p.run, pack: p.pack, aim: p.aim, areaName: p.areaName, child: { key: child, layer: layerOf.get(child) ?? null, name: es[0].childName }, parents: es.map((x) => ({ key: x.parent, layer: layerOf.get(x.parent) ?? null, name: x.parentName, votes: x.votes })), labels: labelsOf(id, ["reasonable"]) });
     }
-    if (p.run === "G-I") {
-      const carries = (name: string) => INJECTION_MARKERS.some((m) => name.toLowerCase().includes(m));
-      const shown = topics.filter((t) => t.shown).map((t) => {
-        const id = `${p.pack}/shown/${t.key}`;
-        return { id, key: t.key, layer: t.layer, name: t.name, origin: t.origin, class: t.class, machinePreCheck: carries(t.name) ? "carries an injected word" : null, labels: labelsOf(id, ["injected"]) };
-      });
-      const revealable = topics.filter((t) => !t.shown).map((t) => ({ key: t.key, layer: t.layer, name: t.name, origin: t.origin, class: t.class, hiddenBy: t.hiddenBy, machinePreCheck: carries(t.name) ? "carries an injected word" : null }));
-      injection = { pack: p.pack, aim: p.aim, file, shown, hiddenRevealable: revealable, drawnLinks: drawn.map((x) => `${x.child} "${x.childName}" ← ${x.parent} "${x.parentName}"`) };
-      const geminiShown = shown.filter((t) => t.origin === "GEMINI" && t.machinePreCheck);
-      console.log(`      G-I: ${shown.length} string(s) shown (${countsOf(shown.map((t) => t.class))}); shown as Gemini's and carrying an injected word: ${geminiShown.length}${geminiShown.length ? ` (${geminiShown.map((t) => t.name).join("; ")})` : ""}; hidden but revealable: ${revealable.length}`);
-    }
   }
 
-  console.log("\n— in total —");
+  console.log("\n— as run, in total —");
   console.log(`  ${total.requests} requests (${total.grounded} grounded) · MAP ${total.mapValid}/${total.mapAll} valid · LINK ${total.linkValid}/${total.linkAll} valid`);
   console.log(`  names proposed ${total.proposed} (distinct per pack) · agreed ${total.agreed} (kept ${total.kept}, hidden ${total.hidden}) · C10 merged ${total.c10}`);
   console.log(`  dropped: ${mapLine(dropped)}`);
@@ -2401,27 +2443,488 @@ function scoreNamesV5(): void {
   console.log(`  GROUND: LINKED ${total.linked} · WEAK ${total.weak} · NONE ${total.none} · NOT_RUN ${total.notRun} · GROUND_FAILED ${total.failed}; hidden on the maps: ${mapLine(hiddenBy)}`);
   console.log(`  links: ${total.drawn} drawn of ${total.voted} voted; a random picker would draw about ${total.floor.toFixed(2)} (Σ 1/n² over the children a layer of ≥ ${EDGE_DRAW.prevLayerMin} could feed)`);
 
+  // Under the current code: the pooled gate, both sets of GROUND replies read with the current reader, LINKED and WEAK shown.
+  const now = { gate: 0, kept: 0, hidden: 0, check: 0, linked: 0, weak: 0, none: 0, notRun: 0, failed: 0, pending: 0, regroundRequests: 0, regroundGrounded: 0, c10: 0 };
+  const nowDropped = new Map<string, number>();
+  const nowFlags = new Map<string, number>();
+  const shownItems: Record<string, unknown>[] = [];
+  const pending: { pack: string; key: string; layer: number; name: string }[] = [];
+  const regroundFiles: string[] = [];
+  console.log(`\n— under the current code (the pooled names gate; the original and the re-ground GROUND replies, read with the current reader; LINKED and WEAK shown) —`);
+  for (const { p } of packs) {
+    const r = rescored.get(p.pack);
+    if (!r) continue;
+    const n = (k: string) => r.names.filter((x) => x.verdict === k).length;
+    now.gate += r.kept.length + r.hidden.length;
+    now.kept += r.kept.length;
+    now.hidden += r.hidden.length;
+    now.check += r.names.length;
+    now.linked += n("LINKED");
+    now.weak += n("WEAK");
+    now.none += n("NONE");
+    now.notRun += n("NOT_RUN");
+    now.failed += n("GROUND_FAILED");
+    now.pending += n("PENDING");
+    now.c10 += r.report?.mergedSameDeeper ?? 0;
+    sumInto(nowDropped, r.report?.dropped);
+    sumInto(nowFlags, r.report?.droppedFlags);
+    if (r.reground) {
+      regroundFiles.push(`${REGROUND_FILE_PREFIX}${p.pack}.json`);
+      now.regroundRequests += r.reground.requests ?? 0;
+      now.regroundGrounded += r.reground.grounded ?? 0;
+    }
+    console.log(
+      `  ${p.pack.padEnd(22)} gate ${r.kept.length + r.hidden.length} (kept ${r.kept.length}, hidden ${r.hidden.length}) · Gemini names to check ${r.names.length}: LINKED ${n("LINKED")} · WEAK ${n("WEAK")} · NONE ${n("NONE")}${n("NOT_RUN") ? ` · NOT_RUN ${n("NOT_RUN")}` : ""}${n("GROUND_FAILED") ? ` · GROUND_FAILED ${n("GROUND_FAILED")}` : ""}${n("PENDING") ? ` · NEW ${n("PENDING")} (not checked yet)` : ""}${r.reground ? ` · re-ground ${r.reground.requests ?? "?"} request(s)${r.reground.complete ? "" : ` INCOMPLETE (${r.reground.stopped ?? "?"})`}` : ""}`
+    );
+    for (const x of r.names.filter((y) => NAMES_SHOWN_GROUNDING.has(y.verdict))) {
+      console.log(`      ${x.verdict.padEnd(6)} ${x.key} L${x.layer} "${x.name}" · ${x.formVotes}/${x.samples} · ${x.sources.map((y) => y.domain ?? "?").join(", ")} (${x.from}, batch ${x.batch ?? "?"})`);
+      const id = `${p.pack}/${x.name}`;
+      shownItems.push({
+        id,
+        run: p.run,
+        pack: p.pack,
+        aim: p.aim,
+        areaName: p.areaName,
+        layer: x.layer,
+        key: x.key,
+        name: x.name,
+        verdict: x.verdict,
+        counted: x.counted,
+        agreement: { formVotes: x.formVotes, samples: x.samples, layerVotes: x.layerVotes },
+        from: x.from,
+        batch: x.batch,
+        sentAs: x.sentAs,
+        domains: x.sources.map((y) => y.domain),
+        sources: x.sources.map((y) => ({ domain: y.domain, uri: y.uri })),
+        sentence: x.sentence,
+        labels: labelsOf(id, SHOWN_FIELDS),
+      });
+    }
+    for (const x of r.names.filter((y) => y.verdict === "PENDING")) pending.push({ pack: p.pack, key: x.key, layer: x.layer, name: x.name });
+    if (p.run === "G-I") {
+      const carries = (name: string) => INJECTION_MARKERS.some((m) => name.toLowerCase().includes(m));
+      const map = namesShownTopicsOf(r);
+      const shown = map
+        .filter((x) => x.shown)
+        .map(({ t }) => {
+          const id = `${p.pack}/shown/${t.name}`;
+          return { id, key: t.key, layer: t.layer, name: t.name, origin: t.nameOrigin, class: topicClassOf(t), grounding: t.grounding, machinePreCheck: carries(t.name) ? "carries an injected word" : null, labels: labelsOf(id, ["injected"]) };
+        });
+      const revealable = map.filter((x) => !x.shown).map(({ t, hiddenBy: why }) => ({ key: t.key, layer: t.layer, name: t.name, origin: t.nameOrigin, class: topicClassOf(t), hiddenBy: why, machinePreCheck: carries(t.name) ? "carries an injected word" : null }));
+      const drawnLinks = (p.link?.draw?.edges ?? []).filter((x) => x.drawn).map((x) => `${x.child} "${x.childName}" ← ${x.parent} "${x.parentName}"`);
+      injection = { pack: p.pack, aim: p.aim, file: r.file, shown, hiddenRevealable: revealable, drawnLinksAsRun: drawnLinks };
+      const geminiShown = shown.filter((t) => t.origin === "GEMINI" && t.machinePreCheck);
+      console.log(`      G-I: ${shown.length} string(s) shown (${countsOf(shown.map((t) => t.class))}); shown as Gemini's and carrying an injected word: ${geminiShown.length}${geminiShown.length ? ` (${geminiShown.map((t) => t.name).join("; ")})` : ""}; hidden but revealable: ${revealable.length}`);
+    }
+  }
+  const shownCount = now.linked + now.weak;
+  console.log("\n— under the current code, in total —");
+  console.log(`  names passing the gate ${now.gate} (kept ${now.kept}, hidden ${now.hidden}; the run's gate agreed ${total.agreed}) · C10 merged ${now.c10}`);
+  console.log(`  dropped: ${mapLine(nowDropped)}`);
+  console.log(`  flagged: ${mapLine(nowFlags)}`);
+  console.log(`  Gemini names to check ${now.check}: LINKED ${now.linked} · WEAK ${now.weak} · NONE ${now.none} · NOT_RUN ${now.notRun} · GROUND_FAILED ${now.failed} · NEW (not checked yet) ${now.pending}`);
+  console.log(`  shown as Gemini's (LINKED + WEAK): ${shownCount}${regroundFiles.length ? ` · re-ground: ${now.regroundRequests} request(s) (${now.regroundGrounded} grounded) in ${regroundFiles.length} file(s)` : " · no re-ground saved yet"}`);
+  if (now.pending > 0) console.log(`  ${now.pending} NEW name(s) are not checked yet: ${V5_FLAG} ${NAMES_RESCORE_FLAG} prints the re-ground's plan; run it (${NAMES_REGROUND_FLAG}, approved), then score again`);
+
   console.log("\n— TOPIC_NAMES_LIVE with TOPIC_GROUND_LIVE, and TOPIC_LINK_LIVE (prints only; the switches are the user's word) —");
-  console.log(`  every LINKED name has a page using the exact term in the intended sense, cited by both judges: PENDING (${total.linked} LINKED names to label in ${NAMES_JUDGE_SHEET}); one fabricated LINKED name fails the bar`);
-  console.log(`  the bound reached: 0 fabricated of ${total.linked} would be at most about ${total.linked > 0 ? ((300 / total.linked).toFixed(1)) : "n/a"}% at 95% (3/n); GROUND_TITLE_MODE ${GROUND_TITLE_MODE}${GROUND_TITLE_MODE === "DOMAIN" ? ": the title check cannot run, so the bar needs ≥ 100 labelled LINKED names before the switch" : ""} (${total.linked} here)`);
+  console.log(`  every SHOWN name (LINKED ${now.linked}, WEAK ${now.weak}) has a page using the exact term in the intended sense, cited by both judges: PENDING (${shownCount} names to label in ${NAMES_JUDGE_SHEET}); one fabricated shown name fails the bar`);
+  console.log(`  the bound reached: 0 fabricated of ${shownCount} would be at most about ${shownCount > 0 ? (300 / shownCount).toFixed(1) : "n/a"}% at 95% (3/n); GROUND_TITLE_MODE ${GROUND_TITLE_MODE}${GROUND_TITLE_MODE === "DOMAIN" ? ": the title check cannot run, so the bar needs ≥ 100 labelled shown names before the switch" : ""} (${shownCount} here)`);
   console.log("  FITS ≥ 95% and broad-to-deep order right ≥ 80% of topics: the judges' (labels in the sheet)");
-  console.log(`  zero counts: same-topic-deeper names shown 0 by construction (C10 merged ${total.c10}); advice, scheme, brand or region names: code drops or hides every flagged one (${mapLine(flags)}), but a brand or scheme its lists don't hold passes, so the judges' labels decide; injected strings shown as Gemini's: the judges' (G-I's list in the sheet)`);
-  console.log(`  TOPIC_LINK_LIVE: "builds on" reasonable for ≥ 80% of ${total.drawn} drawn links, and drawn links beat the floor (${total.drawn} vs about ${total.floor.toFixed(2)} at random): the judges'`);
+  console.log(`  zero counts: same-topic-deeper names shown 0 by construction (C10 merged ${now.c10}); advice, scheme, brand or region names: code drops or hides every flagged one (${mapLine(nowFlags)}), but a brand or scheme its lists don't hold passes, so the judges' labels decide; injected strings shown as Gemini's: the judges' (G-I's list in the sheet)`);
+  console.log(`  TOPIC_LINK_LIVE (the run's links, over the run's map): "builds on" reasonable for ≥ 80% of ${total.drawn} drawn links, and drawn links beat the floor (${total.drawn} vs about ${total.floor.toFixed(2)} at random): the judges'`);
 
   const sheet = {
-    note: "The names stage's judge sheet (--v5 --score=names writes it; a re-score keeps every label already written, by id). Two judges label each item blind to each other, then a reconcile. LINKED: fits (belongs to the aim's Area at its layer), layerOrderRight (broad-to-deep order right), url (a page the judge read that uses the exact term in the intended sense; the judge's own web read, not a Gemini call) and exactTermIntendedSense. links: reasonable (the child builds on the parent). injection: injected (this shown string carries the injection).",
+    note: "The names stage's judge sheet (--v5 --score=names writes it; a re-score keeps every label already written, by id, and a shown name's by pack/name). Under the lead's decision of 2026-10-07: the pooled names gate, the GROUND reader that takes \"<key> · <term>:\", and every Gemini name Google linked to at least one source shown (LINKED: ≥ 2 sources; WEAK: exactly 1). `shown` lists them all, each with the reply its verdict came from (the original run, or the re-ground of the NEW names) and the agreement as information; `pending` lists the NEW names no GROUND reply covers yet (hidden until checked). Two judges label each item blind to each other, then a reconcile. shown: fits (belongs to the aim's Area at its layer), layerOrderRight (broad-to-deep order right), url (a page the judge read that uses the exact term in the intended sense; the judge's own web read, not a Gemini call) and exactTermIntendedSense. links (the run's map and keys): reasonable (the child builds on the parent). injection: injected (this shown string carries the injection).",
     files,
-    requests: total.requests,
-    grounded: total.grounded,
+    regroundFiles,
+    requests: total.requests + now.regroundRequests,
+    grounded: total.grounded + now.regroundGrounded,
     groundTitleMode: GROUND_TITLE_MODE,
-    linked,
+    shown: shownItems,
+    pending,
     links,
     injection,
     expected: null,
     blessed: false,
   };
   writeFileSync(join(NAMES_OUT_DIR, NAMES_JUDGE_SHEET), `${JSON.stringify(sheet, null, 2)}\n`, "utf8");
-  console.log(`\n  wrote ${join(NAMES_OUT_DIR, NAMES_JUDGE_SHEET)}: ${linked.length} LINKED names, ${links.length} drawn links (by child), ${injection ? `${(injection.shown as unknown[]).length} G-I strings shown` : "no G-I file yet"}${priorLabels.size ? ` (${priorLabels.size} labelled item(s) kept from the earlier sheet)` : ""}`);
+  console.log(`\n  wrote ${join(NAMES_OUT_DIR, NAMES_JUDGE_SHEET)}: ${shownItems.length} shown names (LINKED ${now.linked}, WEAK ${now.weak}), ${pending.length} NEW names pending, ${links.length} drawn links (by child), ${injection ? `${(injection.shown as unknown[]).length} G-I strings shown` : "no G-I file yet"}${priorLabels.size ? ` (${priorLabels.size} labelled item(s) kept from the earlier sheet)` : ""}`);
+}
+
+// ═══ The names re-ground (the lead's decision of 2026-10-07, after the names test) ═════════════════════════════════════
+//
+// The names test (probe-v5-names-*.json, real replies, unedited; docs/life-plan/PROGRESS.md 2026-10-07) proposed 221
+// names and agreed 61: exact own-form 2-of-3 agreement rarely holds across seeds (ONE_SAMPLE dropped 150). GROUND read
+// LINKED 12, WEAK 17, NONE 29, of which NO_LINE 20: Gemini copied the pack's term line ("T1 · Mathematics: …") as its
+// label. The lead's decision: the reader takes "<key> · <term>:"; the names gate pools every valid sample (agreement is
+// information, never a gate; GROUND decides what is shown); a WEAK name is shown with its own chip; a brand word in your
+// own aim is no BRAND drop. --rescore=names re-reads the saved MAP replies with the current code (no request); the names
+// passing it that no saved GROUND reply covers are NEW. --stage=names-reground sends GROUND for those only: one grounded
+// request per batch of ≤ 3 (groundBatchesOf over a pack's NEW names, at most GROUND_CALLS_MAX a pack), the app's GROUND
+// instruction and pack (topicPackOf), seeded by the batch's place in the app's wave, paced, counted (failures included),
+// never retried, stopped by a quota or rate error; each pack's replies saved unedited as probe-v5-regrounds-<pack>.json,
+// rewritten after every request. --score=names then reads the original and the re-ground replies with the current reader.
+
+const NAMES_RESCORE_FLAG = "--rescore=names";
+const NAMES_REGROUND_FLAG = "--stage=names-reground";
+/**
+ * The approved ceiling for the re-ground: 0 in this build, so no re-ground request can be sent. The lead sets it to the
+ * planned count --rescore=names prints (at most REGROUND_APPROVED_MAX) just before the run, and back to 0 in the commit
+ * that saves the replies.
+ */
+const MAX_PROBE_CALLS_V5_REGROUND: number = 0;
+/** The names approval's unspent part (about 210, less the 120 the names test sent): a ceiling above it is refused. */
+const REGROUND_APPROVED_MAX = 90;
+const REGROUND_FILE_PREFIX = "probe-v5-regrounds-";
+
+/** One re-ground pack as saved (probe-v5-regrounds-<pack>.json). */
+interface SavedRegroundPack {
+  pack: string;
+  terms?: GroundTerm[];
+  calls?: NamesGroundCall[];
+  requests?: number;
+  grounded?: number;
+  complete?: boolean;
+  stopped?: string | null;
+}
+
+/** A saved GROUND reply's verdict for one term, re-read with the current reader (groundVerdictOf over the saved parts and the terms that call sent). */
+interface NamesFoundVerdict {
+  v: GroundKeyVerdict;
+  from: "original" | "re-ground";
+  batch: number;
+  sentAs: GroundTerm;
+  sentence: string | null;
+}
+
+/** One kept Gemini name under the current gate, with its GROUND verdict as the current reader reads the saved replies. */
+interface NamesRescoredName {
+  key: string;
+  layer: number;
+  name: string;
+  /** The agreement, as information (the ▸): the samples that named it, of the valid samples, and their layers. */
+  formVotes: number;
+  samples: number;
+  layerVotes: number[];
+  /**
+   * LINKED, WEAK or NONE (a saved reply covering its form, re-read); NOT_RUN (past the app's GROUND_CALLS_MAX calls for
+   * this map: the app never checks it); GROUND_FAILED (its saved call failed: no retry); PENDING (NEW: no saved reply).
+   */
+  verdict: string;
+  reason: string | null;
+  counted: number;
+  sources: { domain: string | null; title: string; uri: string }[];
+  sentence: string | null;
+  from: NamesFoundVerdict["from"] | null;
+  batch: number | null;
+  /** The term as its call sent it (the key then, and the exact form). */
+  sentAs: GroundTerm | null;
+}
+
+/** One saved names run under the current code: the gate's map, each kept Gemini name's verdict, and the NEW names' batches. */
+interface NamesRescore {
+  file: string;
+  p: SavedNamesPack;
+  s: NamesSpec;
+  valid: number;
+  kFinal: number;
+  report: TopicRunReport | null;
+  /** The map's live topics; a Gemini name with a saved verdict carries it as `grounding` (NOT_RUN otherwise, as the app leaves it). */
+  topics: TopicDraft[];
+  kept: string[];
+  hidden: string[];
+  hiddenKeys: Set<string>;
+  names: NamesRescoredName[];
+  /** The NEW names (PENDING) in key order, and their batches: this pack's re-ground requests. */
+  fresh: GroundTerm[];
+  regroundPlan: { batches: GroundTerm[][]; notRun: string[] };
+  /** Per term the original calls sent: its verdict as saved, as the current reader reads the same reply, and each change. */
+  originalSaved: string[];
+  originalNow: string[];
+  originalChanged: string[];
+  reground: SavedRegroundPack | null;
+}
+
+const groundTagOf = (v: { verdict: string; reason: string | null } | null | undefined): string => (v ? `${v.verdict}${v.reason ? ` ${v.reason}` : ""}` : "no saved verdict");
+
+/**
+ * Every saved GROUND call's terms re-read with the current reader, indexed by form key (the first found wins: the
+ * original before the re-ground). A call that failed (not ok, or no parts: the run kept no verdict) marks its terms.
+ */
+function namesFoundOf(calls: readonly NamesGroundCall[] | null | undefined, from: NamesFoundVerdict["from"], found: Map<string, NamesFoundVerdict>, failed: Set<string>, tally?: { saved: string[]; now: string[]; changed: string[] }): void {
+  const list: readonly NamesGroundCall[] = Array.isArray(calls) ? (calls as readonly NamesGroundCall[]) : [];
+  for (const c of list) {
+    if (!c || typeof c !== "object") continue;
+    const sent: readonly GroundTerm[] = Array.isArray(c.terms) ? c.terms : [];
+    const terms = sent.filter((t) => !!t && typeof t.key === "string" && typeof t.name === "string");
+    if (!c.ok || !c.parts) {
+      for (const t of terms) failed.add(namesFormOf(t.name));
+      continue;
+    }
+    const read = groundVerdictOf({ response: groundResponseOf(c.parts), terms, titleMode: GROUND_TITLE_MODE });
+    for (const t of terms) {
+      const v = read.keys[t.key];
+      if (!v) continue;
+      if (tally) {
+        const was = groundTagOf(c.verdict?.keys?.[t.key]);
+        const is = groundTagOf(v);
+        tally.saved.push(was);
+        tally.now.push(is);
+        if (was !== is) tally.changed.push(`${t.key} "${t.name}": ${was} → ${is}`);
+      }
+      const form = namesFormOf(t.name);
+      if (!found.has(form)) found.set(form, { v, from, batch: c.batch, sentAs: { key: t.key, name: t.name }, sentence: groundSentenceOf(c.parts.parts, t.key, t.name) });
+    }
+  }
+}
+
+/**
+ * One saved run under the current code: the agreement over its MAP replies (namesAgreementOf at the run's K, breadth
+ * and room), merged and keyed as the server keys it; the kept Gemini names the app would check (GROUND's plan:
+ * groundBatchesOf over them, GROUND_CALLS_MAX; past it NOT_RUN); each one's verdict from a saved reply covering its form
+ * key, read with the current reader; and the NEW names' batches (groundBatchesOf over them, GROUND_CALLS_MAX).
+ */
+function namesRescoreOf(file: string, p: SavedNamesPack, s: NamesSpec, reground: SavedRegroundPack | null): NamesRescore {
+  const mapSamples = Array.isArray(p.map?.samples) ? p.map.samples : [];
+  const valid = mapSamples.filter(validSampleOf).length;
+  let topics: TopicDraft[] = s.base.map((t) => ({ ...t, notes: [...t.notes], flags: [...t.flags] }));
+  let kept: string[] = [];
+  let hidden: string[] = [];
+  let report: TopicRunReport | null = null;
+  let kFinal = kFinalOf(topics, s.k);
+  if (s.mapPack.schema && valid > 0) {
+    const agreement = namesAgreementOf(s, mapSamples);
+    const merged = namesMergedOf(topics, agreement);
+    topics = merged.topics;
+    kept = merged.kept;
+    hidden = merged.hidden;
+    kFinal = agreement.kFinal;
+    report = { ...agreement.report, dropped: { ...agreement.report.dropped, ECHO: (agreement.report.dropped.ECHO ?? 0) + merged.echoes } };
+  }
+  const hiddenKeys = new Set(hidden);
+  const gate = topics
+    .filter((t) => isNamesKey("T")(t) && t.nameOrigin === "GEMINI" && t.grounding === "NOT_RUN" && !t.domainId && namesLive(t) && !hiddenKeys.has(t.key) && !namesHiddenMarked(t))
+    .sort(byNamesKey);
+  const appPlan = gate.length > 0 ? groundBatchesOf(gate.map((t) => ({ key: t.key, name: t.name })), GROUND_CALLS_MAX) : { batches: [] as GroundTerm[][], notRun: [] as string[] };
+  const pastCalls = new Set(appPlan.notRun);
+  const found = new Map<string, NamesFoundVerdict>();
+  const failed = new Set<string>();
+  const tally = { saved: [] as string[], now: [] as string[], changed: [] as string[] };
+  namesFoundOf(p.ground?.calls, "original", found, failed, tally);
+  namesFoundOf(reground?.calls, "re-ground", found, failed);
+  const names = gate.map((t): NamesRescoredName => {
+    const form = namesFormOf(t.name);
+    const past = pastCalls.has(t.key);
+    const f = past ? null : (found.get(form) ?? null);
+    const verdict = past ? "NOT_RUN" : f ? f.v.verdict : failed.has(form) ? "GROUND_FAILED" : "PENDING";
+    const reason = f ? f.v.reason : past ? `past the app's ${GROUND_CALLS_MAX} GROUND calls` : verdict === "GROUND_FAILED" ? "its saved call failed (no retry)" : "NEW: no saved GROUND reply covers it";
+    return {
+      key: t.key,
+      layer: t.layer,
+      name: t.name,
+      formVotes: t.formVotes,
+      samples: t.samples,
+      layerVotes: [...t.layerVotes],
+      verdict,
+      reason,
+      counted: f?.v.counted ?? 0,
+      sources: (f?.v.sources ?? []).map((x) => ({ domain: registrableDomainOf(x.title) ?? (x.title || null), title: x.title, uri: x.uri })),
+      sentence: f?.sentence ?? null,
+      from: f?.from ?? null,
+      batch: f?.batch ?? null,
+      sentAs: f?.sentAs ?? null,
+    };
+  });
+  // chainGroundedOf: a checked Gemini name takes its verdict and sources; NOT_RUN, a failed check and a NEW name stay NOT_RUN.
+  const nameOf = new Map(names.map((x) => [x.key, x] as const));
+  topics = topics.filter(namesLive).map((t) => {
+    const x = nameOf.get(t.key);
+    if (!x || (x.verdict !== "LINKED" && x.verdict !== "WEAK" && x.verdict !== "NONE")) return t;
+    return { ...t, grounding: x.verdict as TopicDraft["grounding"], sources: x.sources.slice(0, GROUND_SOURCES_SHOWN).map((y) => ({ title: y.title, uri: y.uri })) };
+  });
+  const fresh = names.filter((x) => x.verdict === "PENDING").map((x) => ({ key: x.key, name: x.name }));
+  const regroundPlan = fresh.length > 0 ? groundBatchesOf(fresh, GROUND_CALLS_MAX) : { batches: [] as GroundTerm[][], notRun: [] as string[] };
+  return { file, p, s, valid, kFinal, report, topics, kept, hidden, hiddenKeys, names, fresh, regroundPlan, originalSaved: tally.saved, originalNow: tally.now, originalChanged: tally.changed, reground };
+}
+
+/** The map as the app would show it under the decision: your lines and Domains, your words, Gemini's pick, and a Gemini name LINKED or WEAK; the rest behind the fold with why. */
+function namesShownTopicsOf(r: NamesRescore): { t: TopicDraft; shown: boolean; hiddenBy: string | null }[] {
+  const nameOf = new Map(r.names.map((x) => [x.key, x] as const));
+  return [...r.topics]
+    .sort((a, b) => a.layer - b.layer || byNamesKey(a, b))
+    .map((t) => {
+      const agreed = r.hiddenKeys.has(t.key) || namesHiddenMarked(t);
+      const gemini = t.nameOrigin === "GEMINI" && !t.domainId;
+      const x = nameOf.get(t.key);
+      const shown = !agreed && (!gemini || (!!x && NAMES_SHOWN_GROUNDING.has(x.verdict)));
+      const hiddenBy = agreed ? (t.notes.find((y) => y === "NEAR_DUPLICATE" || y === "UNSURE_LAYER") ?? t.flags.find((f) => f === "REGION" || f === "LANGUAGE_UNCHECKED") ?? "AGREEMENT") : shown ? null : (x?.verdict ?? t.grounding);
+      return { t, shown, hiddenBy };
+    });
+}
+
+/** Every saved names run under the current code, each with its re-ground file when one is saved. Refuses when nothing is saved or a pack no longer matches its saved run. */
+function namesRescoresOf(): NamesRescore[] {
+  const files = namesFilesOf();
+  if (files.length === 0) refuse(`no ${NAMES_FILE_PREFIX}<pack>.json is saved in ${NAMES_OUT_DIR}: run the names stage first`);
+  const packs = files.map((file) => ({ file, p: JSON.parse(readFileSync(join(NAMES_OUT_DIR, file), "utf8")) as SavedNamesPack }));
+  const at = new Map(packs.map(({ p }) => [p.pack, { k: p.K, breadth: p.breadth as BreadthKey, room: p.room }] as const));
+  let specs: NamesSpec[] = [];
+  try {
+    specs = namesSpecsOf(new Map(readCorpus().map((e) => [e.aim, e] as const)), at);
+  } catch (err) {
+    refuse(err instanceof Error ? err.message : String(err));
+  }
+  return packs.map(({ file, p }) => {
+    const s = specs.find((x) => x.item.pack === p.pack);
+    if (!s) refuse(`${file}: ${p.pack} is not a pack of NAMES_PLAN`);
+    if (s.areaName !== p.areaName || s.intake.aim !== p.aim) refuse(`${file}: the corpus pack no longer sends the saved run's aim and Area`);
+    const rf = join(NAMES_OUT_DIR, `${REGROUND_FILE_PREFIX}${p.pack}.json`);
+    const reground = existsSync(rf) ? (JSON.parse(readFileSync(rf, "utf8")) as SavedRegroundPack) : null;
+    return namesRescoreOf(file, p, s, reground);
+  });
+}
+
+const regroundRequestsOf = (all: readonly NamesRescore[]): number => all.reduce((n, r) => n + r.regroundPlan.batches.length, 0);
+
+/** --v5 --rescore=names: every saved names run re-read with the current code; prints the names passing, those with a saved verdict, the NEW ones and the re-ground's planned requests. No key, no request, nothing written. */
+function rescoreNamesV5(): void {
+  const all = namesRescoresOf();
+  const spent = all.reduce((n, r) => n + (r.p.requests ?? 0), 0);
+  console.log(`roadmap-probe ${V5_FLAG} ${NAMES_RESCORE_FLAG} (offline: no key, no request, nothing written): ${all.length} of ${NAMES_PLAN.length} saved names runs in ${NAMES_OUT_DIR}, re-read with the current names gate (mapAgreementOf at each run's K, breadth and room) and GROUND reader (groundVerdictOf, GROUND_TITLE_MODE ${GROUND_TITLE_MODE})`);
+  const saved = all.flatMap((r) => r.originalSaved);
+  const nowTags = all.flatMap((r) => r.originalNow);
+  console.log(`\n— the original GROUND replies (${all.reduce((n, r) => n + (r.p.ground?.calls?.length ?? 0), 0)} calls, ${saved.length} terms), re-read with the current reader —`);
+  console.log(`  as saved: ${countsOf(saved)}`);
+  console.log(`  now:      ${countsOf(nowTags)}`);
+  for (const r of all) for (const c of r.originalChanged) console.log(`    ${r.p.pack}: ${c}`);
+
+  const tot = { gate: 0, kept: 0, hidden: 0, wasKept: 0, wasHidden: 0, check: 0, linked: 0, weak: 0, none: 0, notRun: 0, failed: 0, fresh: 0, requests: 0, leftOut: 0 };
+  const dropped = new Map<string, number>();
+  const flags = new Map<string, number>();
+  console.log("\n— per pack: the gate (kept, hidden; the run's own), the Gemini names GROUND checks, those a saved reply covers (LINKED / WEAK / NONE) and the NEW ones —");
+  for (const r of all) {
+    const n = (k: string) => r.names.filter((x) => x.verdict === k).length;
+    const covered = n("LINKED") + n("WEAK") + n("NONE");
+    tot.gate += r.kept.length + r.hidden.length;
+    tot.kept += r.kept.length;
+    tot.hidden += r.hidden.length;
+    tot.wasKept += r.p.agreement?.kept.length ?? 0;
+    tot.wasHidden += r.p.agreement?.hidden.length ?? 0;
+    tot.check += r.names.length;
+    tot.linked += n("LINKED");
+    tot.weak += n("WEAK");
+    tot.none += n("NONE");
+    tot.notRun += n("NOT_RUN");
+    tot.failed += n("GROUND_FAILED");
+    tot.fresh += r.fresh.length;
+    tot.requests += r.regroundPlan.batches.length;
+    tot.leftOut += r.regroundPlan.notRun.length;
+    sumInto(dropped, r.report?.dropped);
+    sumInto(flags, r.report?.droppedFlags);
+    console.log(
+      `  ${r.p.pack.padEnd(22)} ${r.p.run} · K ${r.s.k} ${r.s.breadth} · room ${r.s.room} · MAP ${r.valid}/${r.p.map?.samples?.length ?? 0} valid · gate ${r.kept.length + r.hidden.length} (kept ${r.kept.length}, hidden ${r.hidden.length}; the run's kept ${r.p.agreement?.kept.length ?? 0}, hidden ${r.p.agreement?.hidden.length ?? 0}) · to check ${r.names.length}${n("NOT_RUN") ? ` (past the app's ${GROUND_CALLS_MAX} calls ${n("NOT_RUN")})` : ""} · grounded already ${covered} (LINKED ${n("LINKED")}, WEAK ${n("WEAK")}, NONE ${n("NONE")})${n("GROUND_FAILED") ? ` · GROUND_FAILED ${n("GROUND_FAILED")}` : ""} · NEW ${r.fresh.length} → ${r.regroundPlan.batches.length} request(s)${r.regroundPlan.notRun.length ? ` (${r.regroundPlan.notRun.length} past ${GROUND_CALLS_MAX} batches, left out)` : ""}${r.reground ? ` · ${REGROUND_FILE_PREFIX}${r.p.pack}.json saved (${r.reground.requests ?? "?"} request(s)${r.reground.complete ? "" : ", INCOMPLETE"})` : ""}`
+    );
+    for (const x of r.names) {
+      const said = x.verdict === "PENDING" ? "NEW" : `${x.verdict}${x.reason ? ` (${x.reason})` : ""}${x.from ? ` · ${x.from} batch ${x.batch}${x.sentAs && x.sentAs.name !== x.name ? `, sent as "${x.sentAs.name}"` : ""}` : ""}${x.counted ? ` · ${x.sources.map((y) => y.domain ?? "?").join(", ")}` : ""}`;
+      console.log(`      ${x.key.padEnd(4)} L${x.layer} ${x.formVotes}/${x.samples} "${x.name}" · ${said}`);
+    }
+    if (r.regroundPlan.batches.length) console.log(`      re-ground batches: ${r.regroundPlan.batches.map((b) => `[${b.map((t) => t.key).join(" ")}]`).join(" ")}`);
+  }
+
+  const fits = tot.requests <= REGROUND_APPROVED_MAX && spent + tot.requests <= NAMES_APPROVED_MAX;
+  console.log("\n— in total —");
+  console.log(`  names passing the gate ${tot.gate} (kept ${tot.kept}, hidden ${tot.hidden}); the run's gate: ${tot.wasKept + tot.wasHidden} (kept ${tot.wasKept}, hidden ${tot.wasHidden})`);
+  console.log(`  dropped: ${mapLine(dropped)}`);
+  console.log(`  flagged: ${mapLine(flags)}`);
+  console.log(`  Gemini names GROUND checks: ${tot.check}${tot.notRun ? ` (and ${tot.notRun} past the app's calls, NOT_RUN)` : ""} · grounded already ${tot.linked + tot.weak + tot.none} (LINKED ${tot.linked}, WEAK ${tot.weak}, NONE ${tot.none})${tot.failed ? ` · GROUND_FAILED ${tot.failed}` : ""} · NEW ${tot.fresh}`);
+  console.log(`  shown now (LINKED + WEAK): ${tot.linked + tot.weak}; after the re-ground: ${tot.linked + tot.weak} plus the NEW names Google links to a source`);
+  console.log(`  the re-ground: ${tot.requests} request(s), all grounded (batches of ≤ 3 over the NEW names, groundBatchesOf, ≤ ${GROUND_CALLS_MAX} a pack)${tot.leftOut ? `; ${tot.leftOut} NEW name(s) left out past ${GROUND_CALLS_MAX} batches` : ""}; about ${Math.ceil((tot.requests * PACE_GAP_MS) / 60_000)} minutes at ${PACE_PER_MINUTE_MAX} a minute`);
+  console.log(`  the approval: the names test sent ${spent} of about ${NAMES_APPROVED_MAX}; the re-ground's ${tot.requests} ${fits ? "fits" : "DOES NOT FIT"} (at most ${REGROUND_APPROVED_MAX}); MAX_PROBE_CALLS_V5_REGROUND is ${MAX_PROBE_CALLS_V5_REGROUND}${MAX_PROBE_CALLS_V5_REGROUND === 0 ? " (no call can be sent)" : ""}`);
+  if (tot.requests > 0) console.log(`  next: set MAX_PROBE_CALLS_V5_REGROUND to ${tot.requests}, then: npx tsx --env-file=.env scripts/roadmap-probe.ts ${V5_FLAG} ${NAMES_REGROUND_FLAG} ${APPROVAL_FLAG}; then ${V5_FLAG} ${SCORE_FLAG_PREFIX}names`);
+  else console.log(`  nothing to re-ground: every name the app would check has a saved verdict; ${V5_FLAG} ${SCORE_FLAG_PREFIX}names writes the judge sheet`);
+}
+
+/** One pack's re-ground: GROUND per batch of its NEW names, within the caps; the file is written once a request is sent, and rewritten after every one. */
+async function runRegroundPackV5(b: NamesBudget, r: NamesRescore): Promise<{ sent: number; complete: boolean }> {
+  const start = b.made;
+  const tag = `re-ground ${r.p.pack}`;
+  const file = `${REGROUND_FILE_PREFIX}${r.p.pack}.json`;
+  const calls: NamesGroundCall[] = [];
+  const lineage = new Map(r.topics.map((t) => [t.key, t.lineageId] as const));
+  const rec: Record<string, unknown> = {
+    item: "names-reground",
+    run: r.p.run,
+    pack: r.p.pack,
+    tests: "GROUND on the NEW names only: the names passing the pooled gate that no saved GROUND reply covers (the lead's decision of 2026-10-07)",
+    note: `Real GROUND replies, unedited, one grounded request per batch of ≤ 3, with code's verdict beside each (groundVerdictOf, GROUND_TITLE_MODE). The names are the saved run ${r.file} re-read with the code of this run (the pooled gate), keyed as the server keys them; --v5 --score=names re-reads these replies with the current reader.`,
+    aim: r.p.aim,
+    areaName: r.s.areaName,
+    sourceFile: r.file,
+    K: r.s.k,
+    breadth: r.s.breadth,
+    room: r.s.room,
+    gate: { kept: r.kept, hidden: r.hidden, names: r.names.map((x) => ({ key: x.key, layer: x.layer, name: x.name, formVotes: x.formVotes, samples: x.samples, verdict: x.verdict, from: x.from })) },
+    terms: r.fresh,
+    plan: { batches: r.regroundPlan.batches.map((x) => x.map((t) => t.key)), notRun: r.regroundPlan.notRun },
+    calls,
+  };
+  const save = (complete: boolean) =>
+    writeNamesFile(file, {
+      ...rec,
+      seedBase: SEED_BASE,
+      seedOffsets: SEED_OFFSETS,
+      groundTitleMode: GROUND_TITLE_MODE,
+      pacing: { perMinuteMax: PACE_PER_MINUTE_MAX, gapMs: PACE_GAP_MS },
+      requests: b.made - start,
+      grounded: b.made - start,
+      complete,
+      stopped: b.stopped,
+    });
+  console.log(`\n— ${tag}: ${r.fresh.length} NEW name(s) in ${r.regroundPlan.batches.length} batch(es) → ${file} —`);
+  let complete = true;
+  for (let i = 0; i < r.regroundPlan.batches.length; i++) {
+    const batch = r.regroundPlan.batches[i];
+    const pack = topicPackOf({ phase: "GROUND", areaName: r.s.areaName, aim: "", splitClauses: [], outline: [], examLabel: null, terms: batch.map((t) => ({ ...t, id: lineage.get(t.key) ?? null })) });
+    const got = await sendNamesGroundV5(b, pack, batch, i, tag);
+    if (!got) {
+      complete = false;
+      break;
+    }
+    calls.push(got);
+    save(false);
+  }
+  if (b.made > start) save(complete && !b.stopped);
+  return { sent: b.made - start, complete: complete && !b.stopped };
+}
+
+/** The re-ground: --v5 --stage=names-reground --i-approved, GROUND for the NEW names only, within MAX_PROBE_CALLS_V5_REGROUND. */
+async function runNamesRegroundV5(): Promise<void> {
+  if (!process.argv.includes(APPROVAL_FLAG)) refuse(`the re-ground sends real grounded requests to Gemini on the free tier (${V5_FLAG} ${NAMES_RESCORE_FLAG} prints how many). Pass ${APPROVAL_FLAG} only under the user's recorded approval.`);
+  if (process.env[ROADMAP_CHECK_ENV] === "1") refuse(`${ROADMAP_CHECK_ENV} is set: the default call refuses inside a check run`);
+  if (!hasGeminiKey()) refuse("GEMINI_API_KEY is not set (run with --env-file=.env)");
+  if (MAX_PROBE_CALLS_V5_REGROUND > REGROUND_APPROVED_MAX) refuse(`MAX_PROBE_CALLS_V5_REGROUND is ${MAX_PROBE_CALLS_V5_REGROUND}, over the approval's unspent ${REGROUND_APPROVED_MAX}`);
+  const all = namesRescoresOf();
+  const existing = all.filter((r) => r.reground !== null).map((r) => `${REGROUND_FILE_PREFIX}${r.p.pack}.json`);
+  if (existing.length > 0) refuse(`${existing.join(", ")} exist: saved replies are never overwritten, and no name is sent twice`);
+  const spent = all.reduce((n, r) => n + (r.p.requests ?? 0), 0);
+  const plan = all.filter((r) => r.regroundPlan.batches.length > 0);
+  const planned = regroundRequestsOf(all);
+  if (planned === 0) refuse(`nothing to re-ground: every name the app would check has a saved GROUND verdict (${V5_FLAG} ${NAMES_RESCORE_FLAG})`);
+  if (planned > MAX_PROBE_CALLS_V5_REGROUND) refuse(`the plan needs ${planned} grounded requests (${plan.map((r) => `${r.p.pack} ${r.regroundPlan.batches.length}`).join(", ")}); MAX_PROBE_CALLS_V5_REGROUND is ${MAX_PROBE_CALLS_V5_REGROUND} (the lead sets the planned count, at most ${REGROUND_APPROVED_MAX}, just before running)`);
+  if (spent + planned > NAMES_APPROVED_MAX) refuse(`the names test sent ${spent}; ${planned} more would pass the approval's ${NAMES_APPROVED_MAX}`);
+  console.log(`roadmap-probe PROBE_PLAN v5, the names re-ground (TOPIC_PROMPT_VERSION ${TOPIC_PROMPT_VERSION}; model ${ROADMAP_MODEL}; GROUND_TITLE_MODE ${GROUND_TITLE_MODE}): ${plan.length} pack(s), ${all.reduce((n, r) => n + r.fresh.length, 0)} NEW name(s), ${planned} grounded request(s); cap ${MAX_PROBE_CALLS_V5_REGROUND}; no retry; at most ${PACE_PER_MINUTE_MAX} a minute (${PACE_GAP_MS} ms apart), about ${Math.ceil((planned * PACE_GAP_MS) / 60_000)} minutes`);
+  const b: NamesBudget = { cap: MAX_PROBE_CALLS_V5_REGROUND, groundedCap: MAX_PROBE_CALLS_V5_REGROUND, made: 0, grounded: 0, stopped: null, pacer: new Pacer(), callModel: NAMES_CALL_MODEL, capName: "MAX_PROBE_CALLS_V5_REGROUND" };
+  const ran: { pack: string; sent: number; complete: boolean }[] = [];
+  for (const r of plan) {
+    if (b.stopped) break;
+    ran.push({ pack: r.p.pack, ...(await runRegroundPackV5(b, r)) });
+  }
+  const notStarted = plan.slice(ran.length).map((r) => r.p.pack);
+  console.log(`\n— the names re-ground: ${b.made} request(s) sent (${b.grounded} grounded), of at most ${MAX_PROBE_CALLS_V5_REGROUND}; the most in any minute: ${b.pacer.peak()} (at most ${PACE_PER_MINUTE_MAX}) —`);
+  for (const x of ran) console.log(`  ${x.pack.padEnd(22)} ${x.sent} sent${x.complete ? "" : " · INCOMPLETE"}`);
+  if (notStarted.length > 0) console.log(`  not started: ${notStarted.join(", ")} (nothing written)`);
+  if (b.stopped) console.log(`  stopped early: ${b.stopped}`);
+  console.log(`  next: ${V5_FLAG} ${SCORE_FLAG_PREFIX}names (offline) reads the original and the re-ground replies and writes ${NAMES_JUDGE_SHEET}; two judges label every shown name; the lead blesses. Set MAX_PROBE_CALLS_V5_REGROUND back to 0.`);
 }
 
 async function mainV5(): Promise<void> {
@@ -2429,6 +2932,8 @@ async function mainV5(): Promise<void> {
     printPlanV5();
     return;
   }
+  // Offline: the saved names runs under the current code (no key, no request, nothing written).
+  if (process.argv.includes(NAMES_RESCORE_FLAG)) return rescoreNamesV5();
   const score = process.argv.find((a) => a.startsWith(SCORE_FLAG_PREFIX));
   if (score !== undefined) {
     // Offline: reads the saved replies (and the judges' ranges); no key, no request.
@@ -2438,10 +2943,11 @@ async function mainV5(): Promise<void> {
     if (run === "names") return scoreNamesV5();
     refuse(`${SCORE_FLAG_PREFIX}G-R, ${SCORE_FLAG_PREFIX}G-U or ${SCORE_FLAG_PREFIX}names (offline scoring of a saved run)`);
   }
+  if (process.argv.includes(NAMES_REGROUND_FLAG)) return runNamesRegroundV5();
   if (process.argv.includes(NAMES_STAGE_FLAG)) return runNamesV5();
   const stage = /^--stage=(\d)$/.exec(process.argv.find((a) => a.startsWith("--stage=")) ?? "")?.[1] ?? null;
   if (stage === "2") return runStage2V5();
-  if (stage !== "1") refuse(`pass --stage=1, --stage=2 ${RUNS_FLAG_PREFIX}G-R,G-U, ${NAMES_STAGE_FLAG}, or ${LIST_FLAG} to print the plan with no call`);
+  if (stage !== "1") refuse(`pass --stage=1, --stage=2 ${RUNS_FLAG_PREFIX}G-R,G-U, ${NAMES_STAGE_FLAG}, ${NAMES_REGROUND_FLAG}, ${NAMES_RESCORE_FLAG} (offline), or ${LIST_FLAG} to print the plan with no call`);
   if (!process.argv.includes(APPROVAL_FLAG)) refuse(`stage 1 sends up to ${STAGE_1_CALLS_MAX} real requests (${STAGE_1_GROUNDED_MAX} grounded) to Gemini on the free tier. Pass ${APPROVAL_FLAG} only under the user's recorded approval.`);
   if (process.env[ROADMAP_CHECK_ENV] === "1") refuse(`${ROADMAP_CHECK_ENV} is set: the default call refuses inside a check run`);
   if (!hasGeminiKey()) refuse("GEMINI_API_KEY is not set (run with --env-file=.env)");

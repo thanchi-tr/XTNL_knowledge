@@ -5362,7 +5362,8 @@ function exactWordsOf(text: string): string[] {
  * The six TopicFlags of a cleaned topic-map name (contracts §22.10), in
  * TOPIC_FLAGS order:
  *   JURISDICTION  a JURISDICTION run (stems, whole words, any case);
- *   BRAND         a BRAND_NAMES run;
+ *   BRAND         a BRAND_NAMES run your aim doesn't hold (ruling N4: "Learn
+ *                 Excel" keeps "Excel formulas");
  *   ADVICE        the first word exactly in ADVICE_VERBS ("Pay off mortgage
  *                 early"; never by stem, so "Investing" passes), or a
  *                 SCHEME_NAMES run anywhere ("Velocity banking");
@@ -5395,7 +5396,10 @@ function topicFlagsOf(cleaned: string, ctx: LabelContext, opts?: RuleOpts): Topi
   const runIn = (phrases: readonly string[][]): boolean => phrases.some((ph) => findPhrase(stems, ph).length > 0);
 
   if (runIn(T.jurisdiction)) set("JURISDICTION");
-  if (runIn(T.brand)) set("BRAND");
+  // Ruling N4 (the names test): a brand your own aim names is your subject, not Gemini's steer ("Learn Excel" keeps
+  // "Excel formulas"). BRAND fires on a brand run the aim doesn't hold; "Microsoft Excel formulas" still fires there.
+  const aimStems = typeof ctx.aim === "string" && ctx.aim ? words(stripInvisibles(ctx.aim.normalize("NFKC"))).map((w) => w.stem) : [];
+  if (T.brand.some((ph) => findPhrase(stems, ph).length > 0 && findPhrase(aimStems, ph).length === 0)) set("BRAND");
   if ((exact.length > 0 && T.advice.has(exact[0])) || runIn(T.schemes)) set("ADVICE");
 
   const level = contentStemsWith(cleaned, L).filter((s) => !T.levelStems.has(s));

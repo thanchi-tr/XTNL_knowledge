@@ -4773,7 +4773,8 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
     ["RUN_PHASES", RT.RUN_PHASES, ["RATE", "MAP", "LINK", "GROUND", "DEEPER"]],
     ["CHAIN_ROLES", RT.CHAIN_ROLES, ["LAYER", "DEPTH"]],
     ["TOPIC_FLAGS", RT.TOPIC_FLAGS, ["JURISDICTION", "BRAND", "ADVICE", "LEVEL_ONLY", "INJECTION", "REGION"]],
-    ["TOPIC_CLASSES", RT.TOPIC_CLASSES, ["SYLLABUS", "YOURS", "LIBRARY", "AIM", "PICKED", "LINKED", "NOT_CHECKED", "KEPT", "KEPT_NOT_CHECKED"]],
+    // Ruling N3 (the names test): LINKED_ONE, a Gemini name Google linked to 1 source, shown «Gemini · Google linked 1 source».
+    ["TOPIC_CLASSES", RT.TOPIC_CLASSES, ["SYLLABUS", "YOURS", "LIBRARY", "AIM", "PICKED", "LINKED", "LINKED_ONE", "NOT_CHECKED", "KEPT", "KEPT_NOT_CHECKED"]],
     [
       "TOPIC_NOTES",
       RT.TOPIC_NOTES,
@@ -4840,7 +4841,7 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
     Same<RT.RunPhase, "RATE" | "MAP" | "LINK" | "GROUND" | "DEEPER">,
     Same<RT.ChainRole, "LAYER" | "DEPTH">,
     Same<RT.TopicFlag, "JURISDICTION" | "BRAND" | "ADVICE" | "LEVEL_ONLY" | "INJECTION" | "REGION">,
-    Same<RT.TopicClass, "SYLLABUS" | "YOURS" | "LIBRARY" | "AIM" | "PICKED" | "LINKED" | "NOT_CHECKED" | "KEPT" | "KEPT_NOT_CHECKED">,
+    Same<RT.TopicClass, "SYLLABUS" | "YOURS" | "LIBRARY" | "AIM" | "PICKED" | "LINKED" | "LINKED_ONE" | "NOT_CHECKED" | "KEPT" | "KEPT_NOT_CHECKED">,
     Same<
       RT.TopicNote,
       | "NEAR_DUPLICATE"

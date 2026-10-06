@@ -62,6 +62,8 @@ export type HonestyKind =
   | "legacy"
   // ── Revision 5, lane 9 (ui-motion.md §15.3; contracts §22.11) ──
   | "gemini-linked"
+  // ruling N3 (contracts §22.20, the names test): a Gemini name Google linked to exactly 1 source, shown on the map
+  | "gemini-linked-one"
   | "gemini-placed"
   | "gemini-picked-domain"
   | "gemini-kept-by-you"
@@ -125,6 +127,7 @@ export const HONESTY_KINDS: Readonly<Record<HonestyKind, HonestyKindDef>> = {
   legacy: { glyph: "m.info", label: "older plan", button: true },
   // ── Revision 5, lane 9 (ui-motion.md §15.3). The labels are roadmap-copy's (callers pass the figure-bearing ones). ──
   "gemini-linked": { glyph: "pv.web", label: "Gemini · Google linked 2 sources", button: true },
+  "gemini-linked-one": { glyph: "pv.web", label: "Gemini · Google linked 1 source", button: true },
   "gemini-placed": { glyph: "pv.suggest", label: "Gemini placed it · not checked", button: true },
   "gemini-picked-domain": { glyph: "pv.libpick", label: "Gemini picked your Domain · not checked", button: true },
   "gemini-kept-by-you": { glyph: "pv.kept", label: "Gemini · kept by you", button: true },
@@ -147,8 +150,9 @@ export const GEMINI_KINDS: readonly HonestyKind[] = [
   "arrangement",
   "sized-by-gemini",
   "edit-numbers",
-  // Revision 5, lane 9 (ui-motion.md §15.3): the six Gemini kinds of the topic map
+  // Revision 5, lane 9 (ui-motion.md §15.3): the six Gemini kinds of the topic map, and ruling N3's linked-one
   "gemini-linked",
+  "gemini-linked-one",
   "gemini-placed",
   "gemini-picked-domain",
   "gemini-kept-by-you",

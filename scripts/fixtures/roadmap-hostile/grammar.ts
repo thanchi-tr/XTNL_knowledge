@@ -1008,18 +1008,18 @@ export const R5_INJECTION_LOOKALIKES: readonly string[] = ["Interest rate", "Rat
 export const R5_URL_TOPICS: readonly string[] = ["investopedia.com", "www dot money"];
 /** Vietnamese and Japanese names: hidden (LANGUAGE_UNCHECKED), revealable, never LINKED. */
 export const R5_FOREIGN_TOPICS: readonly string[] = ["Đầu tư tốt nhất", "Bảo hiểm bắt buộc", "投資の基本"];
-/** Near-miss pairs, each form in one sample only: never pooled, both dropped (F-R5-3 step 5's pinned golden). */
+/** Near-miss pairs (stem Dice just under DEDUPE_DICE), each form in one sample only: never merged, each kept as its own name (ruling N2: one sample's name is kept, pooled). */
 export const R5_NEAR_MISS_PAIRS: readonly (readonly [string, string])[] = [
   ["Mortgage refinancing", "Mortgage financing"],
   ["Asset allocation", "Asset location"],
 ];
-/** A near-duplicate among kept forms (stem Dice ≥ DEDUPE_DICE): hidden behind the higher-voted, never merged into its votes. */
+/** A near-duplicate (stem Dice ≥ DEDUPE_DICE): merged into one name, its votes pooled, the most-written form kept (ruling N2). */
 export const R5_NEAR_DUPLICATE: readonly [string, string] = ["Cash flow analysis", "Cash flow analyses"];
 /** REGION_SPECIFIC with no country named: hidden; with one named: kept. */
 export const R5_REGION_TOPIC = "Tax brackets";
 /** Five words: the shape rule alone drops it. */
 export const R5_OVER_SHAPE_TOPIC = "Personal cash flow budgeting basics plan";
-/** C10 at MAP: the same topic one layer deeper, level words aside. */
+/** The same topic one layer deeper, level words aside: since ruling N2 a near-duplicate pair (Dice 1), merged into the shallower name; C10 at MAP is pinned against an outline line instead. */
 export const R5_SAME_DEEPER: readonly [string, string] = ["Investing", "Advanced investing"];
 /** An outline line (S1) and a library Domain the user did not choose (a free Domain: Gemini's exact echo of it is PICKED). */
 export const R5_LINE = "Budgeting";

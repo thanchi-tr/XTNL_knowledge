@@ -1263,7 +1263,7 @@ export const SCHEME_NAMES: readonly string[] = [
   "dogs of the dow", "baby steps", "latte factor", "coast fire", "lean fire", "fat fire", "barista fire",
 ];
 
-/** BRAND: a firm, product or course brand in a topic name, matched case-insensitively ("vanguard index funds"). Curated: an unlisted brand in lower case can pass (§22.20 item 8). */
+/** BRAND: a firm, product or course brand in a topic name, matched case-insensitively ("vanguard index funds"), unless your aim holds the same run (ruling N4: "Learn Excel" keeps "Excel formulas"). Curated: an unlisted brand in lower case can pass (§22.20 item 8). */
 export const BRAND_NAMES: readonly string[] = [
   "vanguard", "fidelity", "schwab", "charles schwab", "blackrock", "ishares", "robinhood", "etrade", "td ameritrade",
   "interactive brokers", "webull", "sofi", "betterment", "wealthfront", "acorns", "stash", "coinbase", "binance", "kraken",

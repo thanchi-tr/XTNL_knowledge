@@ -23,7 +23,9 @@
  *   6. the live fix (contracts §22.20): P3's Title Case names pass checkLabel
  *      while the eponym rule, acronyms and brands still fire; stripFiguresOf's
  *      goldens (ruling 40 revised: targets stay, money, personal quantities,
- *      dates and schedules go, the live aim's "100k" too); RATE v2's anchors.
+ *      dates and schedules go, the live aim's "100k" too); RATE v2's anchors;
+ *   7. the names test's rulings (contracts §22.20 N2, N4): the pooled names
+ *      gate on piano-reading's real MAP replies, and BRAND's aim exemption.
  *
  * Not here: the hostile bar's families R and L (fixtures/roadmap-hostile)
  * cover every rating pattern and each C-code's firing by code; this file pins
@@ -35,8 +37,10 @@
  *   npx tsx scripts/roadmap-topics-check.ts
  */
 import "./_no-model";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import * as RT from "../src/lib/roadmap-types";
-import { acceptRefusalOf, chainChecksOf, clauseSplitOf, kFinalOf, parentsOf, writtenMapOf, type ChainCheckContext, type WrittenMapInput } from "../src/lib/roadmap-topics";
+import { acceptRefusalOf, chainChecksOf, clauseSplitOf, kFinalOf, mapAgreementOf, parentsOf, writtenMapOf, type ChainCheckContext, type MapSampleIn, type WrittenMapInput } from "../src/lib/roadmap-topics";
 import { RATE_INSTRUCTION, ratingOf, ratingOverrideOf, withMapFillOf, wordCautionsOf, type RateSampleIn } from "../src/lib/roadmap-rating";
 import { checkLabel, type LabelContext } from "../src/lib/roadmap-validate";
 import { stripFiguresOf } from "../src/lib/roadmap-evidence";
@@ -590,6 +594,58 @@ console.log("— the live fix: Title Case topic names, stripFiguresOf, RATE v2 �
   const BRANDS = ["Microsoft Excel Formulas", "Google Sheets Functions", "Photoshop Layers", "TensorFlow Models", "scikit-learn pipelines", "Unity Engine Scripting", "Canon EOS Settings"];
   const PLAIN = ["Word Order", "Window Functions", "Roots of Unity", "Unreal Conditionals", "Canon Law", "Apple Tree Pruning", "Notion of Limits", "Canvas Painting Basics", "Standing Asanas", "Adobe Brick Construction", "After-Effects of War"];
   eq("BRAND: product brands fire (any case); the common words they share stay silent", [BRANDS.map(brandOf), PLAIN.map(brandOf)], [BRANDS.map(() => true), PLAIN.map(() => false)]);
+}
+
+// ═══ 7. The names test's rulings (contracts §22.20 N2, N4; probe-v5-names-*.json, real replies, unedited) ═══
+
+console.log("— the names test: the pooled gate (N2), the brand your aim names (N4) —");
+{
+  // (a) N2 on a real recorded MAP sample set: piano-reading (13 names proposed over 3 samples, 1 agreed by the old
+  // 2-of-3 own-form gate). Pooled, every valid sample counts: the room (7) keeps 7 by votes then first appearance, the
+  // other 6 OVER_ROOM; each layer is the majority of its samples' layers; agreement stays as formVotes, never a gate.
+  const pack = JSON.parse(readFileSync(join(process.cwd(), "scripts/fixtures/roadmap-corpus/probe-v5-names-piano-reading.json"), "utf8"));
+  const mapOf = (rules: Record<string, boolean> = {}) => {
+    let n = 0;
+    return mapAgreementOf(
+      {
+        samples: pack.map.samples.map((s: { ok: boolean; parsed: unknown; integrity?: { verdict: RT.IntegrityVerdict } }): MapSampleIn | null => (s.ok && s.integrity ? { parsed: s.parsed, integrity: s.integrity.verdict } : null)),
+        layers: pack.K,
+        breadth: pack.breadth,
+        room: pack.room,
+        aim: pack.aim,
+        lines: [],
+        domains: pack.domains,
+        freeDomains: pack.freeDomains,
+        takenNames: [],
+        label: { kind: "TOPIC", aim: pack.aim, constraints: null, examLabel: null, syllabusLines: [], areaName: pack.areaName, domainNames: [...pack.domains, ...pack.freeDomains].map((d: { name: string }) => d.name), track: pack.track },
+        countryNamed: pack.countryNamed,
+        makeId: () => `pi-${++n}`,
+      },
+      { rules }
+    );
+  };
+  const named = (a: ReturnType<typeof mapOf>) => [...a.topics, ...a.hidden].filter((t) => t.nameOrigin === "GEMINI").map((t) => `${t.key} L${t.layer} ${t.formVotes}/${t.samples} ${t.name}`);
+  const pooled = mapOf();
+  eq(
+    "N2 pooled gate, piano-reading (real replies): 13 proposed, 1 agreed before → 7 pass (the room), 6 OVER_ROOM, none hidden; 'Musical Notation' (2 of 3, the earliest sample's form beside 'Musical notation') leads",
+    { proposed: pack.proposed.length, before: pack.agreement.kept.length, names: named(pooled), dropped: pooled.report.dropped, hidden: pooled.hidden.length },
+    {
+      proposed: 13,
+      before: 1,
+      names: ["T1 L1 2/3 Musical Notation", "T2 L1 1/3 Acoustics", "T3 L2 1/3 Keyboard Layout", "T4 L2 1/3 Hand Posture", "T5 L3 1/3 Finger Independence", "T6 L3 1/3 Sight Reading", "T7 L3 1/3 Chord Placement"],
+      dropped: { OVER_ROOM: 6 },
+      hidden: 0,
+    }
+  );
+  eq("N2 the ablation: topic.agree off restores the old gate (ONE_SAMPLE), and the recorded agreement's one name comes back", named(mapOf({ "topic.agree": false })), ["T1 L1 2/3 Musical Notation"]);
+
+  // (b) N4: a brand your aim names is your subject ("Learn Excel" keeps "Excel formulas"); a brand it doesn't name still fires.
+  const brand = (name: string, aim: string) => (checkLabel(name, { kind: "TOPIC", aim, constraints: null, examLabel: null, syllabusLines: [], areaName: "Computing", domainNames: [], track: "CRAFT", topicMap: { scope: "GENERAL", countryNamed: false } }).topicFlags ?? []).includes("BRAND");
+  eq(
+    "N4 BRAND: 'Excel formulas' fires under 'Get better at spreadsheets' and is silent under 'Learn Excel'; 'Microsoft Excel Formulas' still fires there (Microsoft is not in the aim)",
+    [brand("Excel formulas", "Get better at spreadsheets"), brand("Excel formulas", "Learn Excel"), brand("Microsoft Excel Formulas", "Learn Excel")],
+    [true, false, true]
+  );
 }
 
 console.log("");

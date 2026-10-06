@@ -2243,6 +2243,7 @@ export const SHORT_CHIP_LABEL: Readonly<Partial<Record<HonestyKind, string>>> = 
   // Revision 5 (ui-motion §15.3): the six Gemini kinds, as HonestyChip draws them (the §15.3 strings below; literal
   // here because those consts are declared after this table).
   "gemini-linked": geminiLinkedLabel(2),
+  "gemini-linked-one": geminiLinkedLabel(1),
   "gemini-placed": "Gemini placed it · not checked",
   "gemini-picked-domain": "Gemini picked your Domain · not checked",
   "gemini-kept-by-you": "Gemini · kept by you",
@@ -2471,6 +2472,8 @@ export function geminiLinkedLabel(n: number): string {
   return `Gemini · Google linked ${plural(n, "source")}`;
 }
 export const GEMINI_LINKED_FULL = "Google linked pages to Gemini's description of this term. It doesn't show the pages use the term, or that it fits you.";
+/** «Gemini · Google linked 1 source» (ruling N3): its (i), word-light — what one source does not show. */
+export const GEMINI_LINKED_ONE_FULL = "Google linked one page to Gemini's description of this term. One page doesn't show the term is in common use, or that it fits you.";
 export const GEMINI_PLACED_LABEL = "Gemini placed it · not checked";
 export const GEMINI_PLACED_FULL = "Gemini chose the layer for your line or your Domain. Keep the layer and the placement becomes yours.";
 export const GEMINI_PICKED_DOMAIN_LABEL = "Gemini picked your Domain · not checked";
@@ -2673,6 +2676,7 @@ export const TOPIC_CLASS_WORDS: Readonly<Record<TopicClass, string>> = {
   AIM: "from your words",
   PICKED: GEMINI_PICKED_DOMAIN_LABEL,
   LINKED: "Gemini's name · Google linked sources to it",
+  LINKED_ONE: "Gemini's name · Google linked 1 source to it",
   NOT_CHECKED: "Gemini · not checked",
   KEPT: GEMINI_KEPT_BY_YOU_LABEL,
   KEPT_NOT_CHECKED: "Gemini · kept · not checked",

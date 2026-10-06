@@ -17,7 +17,10 @@
  * probe stage 1 (probe-v5-P5.json and probe-v5-P5b.json, read as saved,
  * never rewritten): code's verdict on each real term, and the two readings
  * they moved (a segment that starts at its line's label; a line labelled by
- * its term), with what still never counts.
+ * its term), with what still never counts. Last, the names test's real
+ * NO_LINE replies (probe-v5-names-actuarial-probability.json and
+ * probe-v5-names-ielts.json, read as saved): the pack's own "Tk · <term>: "
+ * label (§22.20 ruling N1), and its near forms that stay out.
  *
  * Replies are built by the hostile corpus's canned builder
  * (scripts/fixtures/roadmap-hostile/grounding/canned.ts) from its fragments.
@@ -471,6 +474,66 @@ section("real replies (probe stage 1)", () => {
       ["NONE", "NO_SUPPORT", 0],
       ["NONE", "NOT_FOUND", 0],
       ["NONE", "NOT_FOUND", 0],
+    ]
+  );
+});
+
+// ═══ Real replies (the names test, ruling N1) ════════════════════════════════
+
+/** A saved probe-v5-names pack: its title mode, and each GROUND call's terms, parts and metadata exactly as returned, with the verdict the probe recorded then. */
+interface SavedNames {
+  groundTitleMode: GroundTitleMode;
+  ground: { calls: (SavedGround & { verdict: GroundCallVerdict | null })[] };
+}
+
+section("real replies (the names test)", () => {
+  const callsOf = (file: string) => {
+    const s = JSON.parse(readFileSync(join(__dirname, "fixtures/roadmap-corpus", file), "utf8")) as SavedNames;
+    return s.ground.calls.map((c) => ({ c, now: verdictOf(savedResponseOf(c), c.terms, s.groundTitleMode) }));
+  };
+  const calls = [...callsOf("probe-v5-names-actuarial-probability.json"), ...callsOf("probe-v5-names-ielts.json")];
+  const textOf = (c: SavedGround) => c.parts.parts.map((p) => (p && typeof p === "object" && typeof (p as { text?: unknown }).text === "string" ? (p as { text: string }).text : "")).join("\n");
+  check(
+    "the 4 saved calls (10 names) label every line with the pack's own term line ('T1 · Mathematics: …'), and the probe's reader found no line for any key (NO_LINE)",
+    calls.reduce((n, { c }) => n + c.terms.length, 0) === 10 &&
+      calls.every(({ c }) => c.terms.every((t) => textOf(c).split("\n").some((l) => l.startsWith(`${t.key} · ${t.name}: `)) && c.verdict?.keys[t.key]?.reason === "NO_LINE")),
+    json(calls.map(({ c }) => c.verdict?.keys))
+  );
+  eq(
+    "…read now, every line is found: actuarial 4 LINKED and 4 WEAK (Estimation's second site medium.com is denied), IELTS 2 WEAK; none NO_LINE",
+    calls.map(({ now }) => realOf(now)),
+    [
+      { T1: ["WEAK", null, 1, ["casrai.org"]], T3: ["LINKED", null, 2, ["statisticshowto.com", "pearson.com"]], T4: ["WEAK", null, 1, ["statisticsfundamentals.com"]] },
+      { T5: ["LINKED", null, 2, ["wikipedia.org", "deepai.org"]], T6: ["WEAK", null, 1, ["iitk.ac.in"]], T7: ["WEAK", null, 1, ["britannica.com"]] },
+      { T8: ["LINKED", null, 2, ["ut.ee", "arxiv.org"]], T9: ["LINKED", null, 2, ["libretexts.org", "questionpro.com"]] },
+      { T1: ["WEAK", null, 1, ["onlit.org"]], T2: ["WEAK", null, 1, ["ielts.com.au"]] },
+    ]
+  );
+
+  // The same one-line reply as above (segment from byte 0, two domain sites), labelled in the pack's form and its near forms.
+  const sites: CannedChunk[] = [{ title: "investor.gov" }, { title: "consumerfinance.gov" }];
+  const oneLine = (label: string): GroundSpec => {
+    const line = `${label}: ${F1.sentence}`;
+    return { parts: [{ lines: [line] }], supports: [{ part: 0, line: 0, phrase: line, chunks: [0, 1] }], chunks: sites, queries: [`${F1.name} meaning`] };
+  };
+  const LINKED = ["LINKED", null, 2];
+  const NO_LINE = ["NONE", "NO_LINE", 0];
+  eq(
+    "'T1 · <its term>' counts (the term in any case or spacing); a near form (no spaces, the key in lower case, a hyphen, a bullet, two spaces after the dot, another word form, a leading space) is no line",
+    ["T1 · Cash flow", "T1 · CASH  FLOW", "T1·Cash flow", "t1 · Cash flow", "T1 - Cash flow", "T1 • Cash flow", "T1 ·  Cash flow", "T1 · Cash flows", " T1 · Cash flow"].map((l) => brief(ground(oneLine(l), T1, "DOMAIN"), "T1")),
+    [LINKED, LINKED, NO_LINE, NO_LINE, NO_LINE, NO_LINE, NO_LINE, NO_LINE, NO_LINE]
+  );
+  const both = (label: string, t2: string) => {
+    const v = ground(oneLine(label), [...T1, { key: "T2", name: t2 }], "DOMAIN");
+    return [brief(v, "T1"), brief(v, "T2")];
+  };
+  eq(
+    "…the key must be the term's own: 'T2 · Cash flow' (T2 issued as Emergency fund) names neither; a term two keys share names neither, by a key or alone",
+    [both("T2 · Cash flow", "Emergency fund"), both("T1 · Cash flow", "CASH FLOW"), both("Cash flow", "CASH FLOW")],
+    [
+      [NO_LINE, NO_LINE],
+      [NO_LINE, NO_LINE],
+      [NO_LINE, NO_LINE],
     ]
   );
 });

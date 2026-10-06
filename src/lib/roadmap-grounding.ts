@@ -27,6 +27,13 @@
  * from textStart, so every real support counted nowhere), and a line may be
  * labelled by its term instead of its key. The term's stems are still read
  * only after the label, and everything else stays as §22.9 has it.
+ *
+ * The names test (2026-10-07; scripts/fixtures/roadmap-corpus/
+ * probe-v5-names-*.json, real replies saved unedited) moved one more: 20 of
+ * its 58 checked names were NO_LINE because Gemini copied the pack's own term
+ * line as its label ("T1 · Mathematics: Mathematics provides …"). That label,
+ * the issued key exactly, " · ", then the key's own term read as a term label
+ * is read, now counts too (§22.20 ruling N1).
  */
 import {
   GROUND_KEYS_PER_CALL,
@@ -328,7 +335,16 @@ function nameLabelsOf(terms: readonly GroundTerm[]): NameLabels {
  * another word. Probe P5b (scripts/fixtures/roadmap-corpus/probe-v5-P5b.json,
  * a real reply) labelled every line with the term instead of its key. A label
  * two issued terms share names neither (no line).
+ *
+ * The pack's own form "<key> · <term>" ("T1 · Mathematics: …", as
+ * groundContentsOf sends each term) counts too: the issued key exactly at
+ * byte 0, then " · " exactly (a space, U+00B7, a space), then the term read
+ * as a term label is read above, and that term must be the key's own. A key
+ * paired with another key's term, or with a term two keys share, names
+ * neither; "T1·Mathematics", "t1 · …", "T1 - …" or "T1 ·  …" are no line.
+ * The names test's real replies labelled 20 of 58 names this way.
  */
+const KEY_TERM_LABEL = /^([A-Z][1-9]\d{0,2}) · ([\s\S]+)$/u;
 function countingLineOf(raw: RawLine, issued: ReadonlySet<string>, names: NameLabels | null): GroundLine | null {
   const lineOf = (key: string, label: string, rest: string): GroundLine => ({
     key,
@@ -345,15 +361,17 @@ function countingLineOf(raw: RawLine, issued: ReadonlySet<string>, names: NameLa
   for (let at = raw.text.indexOf(": "); at > 0; at = raw.text.indexOf(": ", at + 1)) {
     const label = raw.text.slice(0, at);
     const rest = raw.text.slice(at + 2);
-    const keys = names.get(labelWordsOf(label));
+    const whole = names.get(labelWordsOf(label));
+    const keyTerm = whole ? null : KEY_TERM_LABEL.exec(label);
+    const keys = whole ?? (keyTerm ? names.get(labelWordsOf(keyTerm[2])) : undefined);
     if (!keys) continue;
-    if (keys.length !== 1 || !issued.has(keys[0]) || rest === "") return null;
+    if (keys.length !== 1 || !issued.has(keys[0]) || rest === "" || (keyTerm !== null && keyTerm[1] !== keys[0])) return null;
     return lineOf(keys[0], label, rest);
   }
   return null;
 }
 
-/** The line map by key (§22.9). It knows the issued keys only, so it reads "Tk: " lines; groundVerdictOf, which has the terms, also reads a line labelled by its term. */
+/** The line map by key (§22.9). It knows the issued keys only, so it reads "Tk: " lines; groundVerdictOf, which has the terms, also reads a line labelled by its term or by "Tk · <its term>". */
 export function groundLinesOf(parts: readonly unknown[], issued: readonly string[]): GroundLine[] {
   try {
     const keys = new Set(arr(issued).filter((k) => typeof k === "string"));
@@ -614,7 +632,7 @@ export function groundVerdictOf(input: GroundVerdictInput, opts?: RuleOpts): Gro
         }
       }
       if (R.on("ground.contiguous")) {
-        // The segment's text after the line's label: the bytes before textStart are the key or the term as a label.
+        // The segment's text after the line's label: the bytes before textStart are the key, the term or "Tk · <term>" as a label.
         const text = typeof segText === "string" ? segText : "";
         const body = startIndex >= owner.textStart ? text : DECODER.decode(ENCODER.encode(text).slice(owner.textStart - startIndex));
         const have = contentStemsOf(body, opts);

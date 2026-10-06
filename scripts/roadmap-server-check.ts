@@ -6975,6 +6975,38 @@ async function main() {
         kindOf(v.t.roadmap.find((r) => r.id === vid)) === "TOPICS",
       json([errOf(unlisted), res, gem && { nameOrigin: gem.nameOrigin, originName: gem.originName }, mine?.nameOrigin, bound?.domainId])
     );
+
+    // Ruling N3 (contracts §22.20, the names test): a Gemini name GROUND linked to exactly 1 source is a shown row, never
+    // behind the fold; a NONE one stays there.
+    const x = world();
+    const xid = await writtenTopics(x, TOPICS_INTAKE);
+    const ONE = "Conditional probability";
+    const NONE_ROW = "Probability ladders";
+    geminiTopicRow(x, xid, "T1", ONE, { decision: "PENDING", chosen: false, grounding: "WEAK", sources: [{ title: "example.edu", uri: "https://example.edu/notes" }], formVotes: 1 });
+    geminiTopicRow(x, xid, "T2", NONE_ROW, { decision: "PENDING", chosen: false, grounding: "NONE", sources: [], formVotes: 1 });
+    const TMM = await import("../src/components/roadmap/topic-map-model");
+    const xmap = (await S.loadRoadmapView(USER, NOW, topicDepsFor(x), xid)).draft?.topicMap ?? null;
+    const l1 = xmap?.layers.find((l) => l.layer === 1) ?? null;
+    const one = l1?.topics.find((r) => r.name === ONE) ?? null;
+    const none = l1?.topics.find((r) => r.name === NONE_ROW) ?? null;
+    const oneChip = { kind: "gemini-linked-one", label: "Gemini · Google linked 1 source" };
+    check(
+      "Gemini names (ruling N3): a WEAK name at 1 source is a shown row (LINKED_ONE: unticked, a layer-1 checkbox, its one source, «Gemini · Google linked 1 source» on the row and the layer), and a NONE name stays in the «n not checked» fold",
+      !!one &&
+        one.cls === "LINKED_ONE" &&
+        !one.chosen &&
+        one.canChoose &&
+        TMM.rowHasCheckbox(one) &&
+        one.sources.length === 1 &&
+        json(TMM.rowChipOf(one, false)) === json(oneChip) &&
+        !!l1 &&
+        json(TMM.layerChipOf(l1)) === json(oneChip) &&
+        !!none &&
+        none.cls === "NOT_CHECKED" &&
+        l1.hidden === 1 &&
+        xmap?.hidden === 1,
+      json({ rows: l1?.topics.map((r) => [r.key, r.name, r.cls, r.chosen, r.sources.length]), hidden: l1?.hidden, chip: l1 && TMM.layerChipOf(l1) })
+    );
   });
 
   await topicBlock("tripwire", async () => {
@@ -7023,9 +7055,10 @@ async function main() {
   //
   // "Gemini names your sub-topics" through the cores the page calls, the chain advanced by the page's own path
   // (roadmap-runtime useTopicChainPoll): load the view; while RoadmapView.topicChain has a step left (done false), call
-  // advanceTopicChain(id, false), let its after() run, load the view again. Then the draft map, the «n not checked» fold,
-  // a row ticked in a layer with nothing chosen, [Keep these] on each layer, the last layer's first fold name kept
-  // ([Keep]) and a specialisation ticked there, Accept with exactly what the footer's confirm sends (topic-map-model
+  // advanceTopicChain(id, false), let its after() run, load the view again. Then the draft map (a WEAK name at 1 site
+  // shown «Gemini · Google linked 1 source», ruling N3), the «n not checked» fold, a row ticked in a layer with nothing
+  // chosen, [Keep these] on each layer, the deepest fold's first name kept ([Keep]) and a specialisation ticked in the
+  // last layer, Accept with exactly what the footer's confirm sends (topic-map-model
   // acceptTopicChoicesOf over the view, the over switch as the footer asks for it), Start refused on milestone 2, and
   // the accepted plan's page as production loads it. Every topic switch is on for this block only
   // (deps.topicSwitches; production passes none), so nothing here reads the TOPIC_* constants.
@@ -7271,23 +7304,29 @@ async function main() {
       const tm = view.draft?.topicMap ?? null;
       const gemini = d.gemini();
       const linked = gemini.filter((t) => t.grounding === "LINKED" && t.flags.length === 0);
-      const unlinked = gemini.filter((t) => !linked.includes(t));
+      // Ruling N3 (the names test): a WEAK name at exactly 1 source is shown, «Gemini · Google linked 1 source».
+      const linkedOne = gemini.filter((t) => t.grounding === "WEAK" && Array.isArray(t.sources) && t.sources.length === 1 && t.flags.length === 0);
+      const unlinked = gemini.filter((t) => !linked.includes(t) && !linkedOne.includes(t));
       const rows = (tm?.layers ?? []).flatMap((l) => l.topics);
       const rowOfLineage = new Map(rows.map((r) => [r.lineageId, r]));
       const shownLinked = rows.filter((r) => r.cls === "LINKED");
+      const shownOne = rows.filter((r) => r.cls === "LINKED_ONE");
       const [chipOk, chipFacts] = tm ? chip(tm) : [false, null];
       check(`names e2e (${tag}): the estimate chip and the bands`, !!tm && chipOk && tm.layers.length === tm.rating.layers, json({ chip: chipFacts, bands: tm?.layers.length, draft: view.draft != null, state: view.state }));
       check(
-        `names e2e (${tag}): only LINKED names appear as Gemini rows «Gemini · Google linked n sources», each with ≥ SOURCES_MIN distinct sites, every one from the reply's groundingChunks`,
+        `names e2e (${tag}): LINKED names appear as Gemini rows «Gemini · Google linked n sources», each with ≥ SOURCES_MIN distinct sites, and WEAK names at 1 site as LINKED_ONE rows «Gemini · Google linked 1 source» (ruling N3: shown, unticked, that one site); every source from the reply's groundingChunks`,
         !!tm &&
           linked.length > 0 &&
+          linkedOne.length > 0 &&
           json(shownLinked.map((r) => r.lineageId).sort()) === json(linked.map((t) => t.lineageId).sort()) &&
-          rows.filter((r) => r.votes != null).every((r) => r.cls === "LINKED" || r.cls === "NOT_CHECKED") &&
-          shownLinked.every((r) => r.sources.length >= SOURCES_MIN && new Set(r.sources.map((s) => s.title)).size === r.sources.length && r.sources.every(fromChunks)),
-        json({ linked: byName(linked), shown: shownLinked.map((r) => [r.key, r.name, r.sources.map((s) => s.title)]), verdicts: d.facts.verdicts })
+          json(shownOne.map((r) => r.lineageId).sort()) === json(linkedOne.map((t) => t.lineageId).sort()) &&
+          rows.filter((r) => r.votes != null).every((r) => r.cls === "LINKED" || r.cls === "LINKED_ONE" || r.cls === "NOT_CHECKED") &&
+          shownLinked.every((r) => r.sources.length >= SOURCES_MIN && new Set(r.sources.map((s) => s.title)).size === r.sources.length && r.sources.every(fromChunks)) &&
+          shownOne.every((r) => !r.chosen && r.sources.length === 1 && r.sources.every(fromChunks) && json(TMM.rowChipOf(r, false)) === json({ kind: "gemini-linked-one", label: "Gemini · Google linked 1 source" })),
+        json({ linked: byName(linked), linkedOne: byName(linkedOne), shown: [...shownLinked, ...shownOne].map((r) => [r.key, r.cls, r.name, r.sources.map((s) => s.title)]), verdicts: d.facts.verdicts })
       );
       check(
-        `names e2e (${tag}): WEAK, NONE and flagged names are listed only in their layer's «n not checked» fold: NOT_CHECKED rows (LayerBand's fold reads them), unticked, no sources, counted in hidden`,
+        `names e2e (${tag}): NONE, NOT_RUN and flagged names are listed only in their layer's «n not checked» fold: NOT_CHECKED rows (LayerBand's fold reads them), unticked, no sources, counted in hidden`,
         !!tm &&
           unlinked.length > 0 &&
           tm.hidden === unlinked.length &&
@@ -7305,9 +7344,11 @@ async function main() {
 
       // Layer by layer, top down, from the view only. Above the last layer: a layer showing nothing chosen ticks its
       // first shown row (its fold's first name, [Show the not-checked ones] → [Keep], when it shows none); then [Keep
-      // these]. The last layer: its fold's first name kept ([Keep]: «Gemini · kept · not checked»), the specialisation
-      // ticked (its first linked Gemini row not chosen yet, else its first shown row), then [Keep these].
+      // these]. The deepest layer with a «n not checked» fold: its fold's first name kept ([Keep]: «Gemini · kept · not
+      // checked»; since ruling N3 a WEAK name is shown, so the last layer's fold may be empty). The last layer: the
+      // specialisation ticked (its first linked Gemini row not chosen yet, else its first shown row), then [Keep these].
       const K = tm?.layers.length ?? 0;
+      const foldLayer = Math.max(0, ...(tm?.layers ?? []).filter((l) => l.topics.some((r) => r.cls === "NOT_CHECKED")).map((l) => l.layer));
       const steps: string[] = [];
       let foldKept: string | null = null;
       let special: string | null = null;
@@ -7316,30 +7357,32 @@ async function main() {
         const rowsHere = lv?.topics ?? [];
         const shown = rowsHere.filter((r) => r.cls !== "NOT_CHECKED");
         const fold = rowsHere.find((r) => r.cls === "NOT_CHECKED") ?? null;
+        if (layer === foldLayer && fold) {
+          foldKept = fold.name;
+          steps.push(`L${layer} keep ${fold.key} from the fold: ${errOf(await S.keepGeminiNameCore(USER, d.id, fold.key, d.later(), d.deps))}`);
+        }
         if (layer < K) {
           if (!shown.some((r) => r.chosen)) {
             if (shown[0]) steps.push(`L${layer} tick ${shown[0].key}: ${errOf(await S.chooseTopicCore(USER, d.id, shown[0].key, true, d.later(), d.deps))}`);
-            else if (fold) steps.push(`L${layer} keep ${fold.key} from the fold: ${errOf(await S.keepGeminiNameCore(USER, d.id, fold.key, d.later(), d.deps))}`);
-            else steps.push(`L${layer}: nothing shown, nothing in the fold`);
+            else if (fold && foldKept !== fold.name) steps.push(`L${layer} keep ${fold.key} from the fold: ${errOf(await S.keepGeminiNameCore(USER, d.id, fold.key, d.later(), d.deps))}`);
+            else if (!fold) steps.push(`L${layer}: nothing shown, nothing in the fold`);
           }
         } else {
-          if (fold) {
-            foldKept = fold.name;
-            steps.push(`L${layer} keep ${fold.key} from the fold: ${errOf(await S.keepGeminiNameCore(USER, d.id, fold.key, d.later(), d.deps))}`);
-          }
           const pick = shown.find((r) => r.cls === "LINKED" && !r.chosen) ?? shown[0] ?? null;
           special = pick?.name ?? null;
           steps.push(`L${layer} specialisation ${pick ? `${pick.key} ${pick.cls}: ${errOf(await S.chooseTopicCore(USER, d.id, pick.key, true, d.later(), d.deps))}` : "none: no row shown"}`);
         }
         steps.push(`L${layer} keep these: ${errOf(await S.keepLayerCore(USER, d.id, layer, d.later(), d.deps))}`);
       }
-      const lastRows = (await S.loadRoadmapView(USER, d.later(), d.deps, d.id)).draft?.topicMap?.layers.find((l) => l.layer === K)?.topics ?? [];
-      const keptRow = lastRows.find((r) => r.name === foldKept) ?? null;
+      const keptView = (await S.loadRoadmapView(USER, d.later(), d.deps, d.id)).draft?.topicMap?.layers ?? [];
+      const lastRows = keptView.find((l) => l.layer === K)?.topics ?? [];
+      const foldRows = keptView.find((l) => l.layer === foldLayer)?.topics ?? [];
+      const keptRow = foldRows.find((r) => r.name === foldKept) ?? null;
       const specialRow = lastRows.find((r) => r.name === special) ?? null;
       check(
-        `names e2e (${tag}): the last layer: the fold's name kept reads «Gemini · kept · not checked» (KEPT_NOT_CHECKED, chosen, no sources), and the specialisation is ticked`,
-        !!keptRow && keptRow.cls === "KEPT_NOT_CHECKED" && keptRow.chosen && keptRow.sources.length === 0 && !!specialRow && specialRow.chosen,
-        json({ steps, last: lastRows.map((r) => `${r.key} ${r.name} ${r.cls}${r.chosen ? " chosen" : ""}`) })
+        `names e2e (${tag}): the deepest fold's name kept reads «Gemini · kept · not checked» (KEPT_NOT_CHECKED, chosen, no sources), and the last layer's specialisation is ticked`,
+        foldLayer > 0 && !!keptRow && keptRow.cls === "KEPT_NOT_CHECKED" && keptRow.chosen && keptRow.sources.length === 0 && !!specialRow && specialRow.chosen,
+        json({ steps, foldLayer, fold: foldRows.map((r) => `${r.key} ${r.name} ${r.cls}${r.chosen ? " chosen" : ""}`), last: lastRows.map((r) => `${r.key} ${r.name} ${r.cls}${r.chosen ? " chosen" : ""}`) })
       );
       // Accept as the footer sends it: the confirm's choices over the view, the over switch on when the footer asks for it.
       const before = await S.loadRoadmapView(USER, d.later(), d.deps, d.id);
