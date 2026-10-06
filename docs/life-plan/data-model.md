@@ -283,6 +283,297 @@ M3 and M5 need no migration. For M5:
 - The launch marker is a code constant, LIFE_LAUNCH_DAY in src/lib/life-economy.ts (plus the non-production override XTNL_LIFE_LAUNCH_DAY), not a column. A code constant survives a 'life' reset.
 - No index is added. The ledger loader groups one user's TRACK rows by (track, day) and (track, compositionKey), and the judge reads through (userId, track, day) and (userId, source, day).
 
+=== ROADMAP REVISION 5: two migrations (docs/life-plan/roadmap-topic-map.md, Migration; roadmap-contracts.md §22, §23) ===
+The roadmap's earlier migrations are documented with their specs:
+- 20261101000000_life_roadmap (roadmap.md, Migration);
+- 20261106000000_life_roadmap_rev4 (roadmap-rev4.md, Migration).
+
+Revision 5's two migrations are documented here.
+- **Who writes them.** Lane 2 writes migration A and lane 5 writes migration B (each the migration.sql and the schema.prisma fields). Lane 0 wrote only this text.
+- **How they are applied.** Each is rehearsed on a disposable local pgvector Postgres. The lead applies each one only with the user's go-ahead, after checking that the Supabase project ref is xtnl-idea (not XTNL_thesis), by PROCEDURE below.
+- **Not pre-approved.** life_roadmap and life_roadmap_rev4 were pre-approved once local tests passed. These two are not, because each rewrites rows (the slot backfill) and adds constraints.
+- Never run migrate dev, migrate reset or db push.
+
+Order:
+1. **A applies before lane 3's push**, which ships the code that reads and writes the five new columns. Until lane 3 is deployed, today's code saves new rows with a NULL slot. That is harmless: a NULL never conflicts in the unique index, and today's guard still allows one open row per user.
+2. **B applies after lane 3's code is live.** Its CHECK needs every insert and reopen path to set the slot, and server-check asserts each one. B also applies before the push that ships code reading B's columns (lanes 8 and 10). As with rev 4, a read that selects a new column falls back on a P2022 naming it, and renders as before.
+
+Prisma 6 cannot declare a partial index or a CHECK. Migration A's two partial unique indexes and both migrations' CHECKs exist only in SQL, in a `///` comment on schema.prisma's Roadmap model, and here. PROCEDURE step 3 therefore deletes any proposal from `migrate diff` to drop them.
+
+=== ROADMAP MIGRATION A: prisma/migrations/20261110000000_life_roadmap_goals (revision 5 F-R5-15, F-R5-20; contracts §23.1; lane 2) ===
+schema.prisma's Roadmap gains five fields, and its status comment gains PAUSED. No other model is edited.
+  /// DRAFT | ACTIVE | PAUSED | DONE | ARCHIVED. DRAFT and ACTIVE hold a seat; PAUSED, DONE and ARCHIVED free it (decision 68).
+  status      String    @default("DRAFT")          // unchanged column; comment only
+  /// Revision 5: the goal's seat, 1..3. Set on every DRAFT and ACTIVE row from lane 3 on; a PAUSED row keeps its last value outside the index (contracts §22.1 ruling 46); null on rows saved before lane 3.
+  /// Not expressible in Prisma 6 (data-model.md): CHECK "Roadmap_slot_range" (slot null or 1..3); partial UNIQUE "Roadmap_userId_slot_open_key" (userId, slot) WHERE status IN ('DRAFT','ACTIVE').
+  slot        Int?
+  /// Revision 5: the user's own name for the goal (at most GOAL_LABEL_MAX, 16 characters); null = the Area name.
+  label       String?
+  pausedAt    DateTime?
+  /// Revision 5: the user's reason for a pause (at most GOAL_PAUSE_REASON_MAX, 120 characters).
+  pauseReason String?
+  /// Revision 5: the client nonce that created the row ([A-Za-z0-9_-]{8,64}), so a double tap returns the same id.
+  /// Not expressible in Prisma 6: partial UNIQUE "Roadmap_userId_createKey_key" (userId, createKey) WHERE createKey IS NOT NULL.
+  createKey   String?
+
+SQL. The file runs as one transaction, so a failed statement leaves nothing half-applied (the rehearsal asserts it):
+```sql
+-- life_roadmap_goals: revision 5 (docs/life-plan/roadmap-topic-map.md, F-R5-15): up to 3 open goals.
+-- Additive: five nullable columns on Roadmap, the slot backfill on open rows, one CHECK and two
+-- partial unique indexes; no foreign key; no column dropped, renamed or retyped.
+-- Target: the xtnl-idea Supabase project ONLY. Rehearse locally first.
+-- PRE-APPLY (abort if it returns a row): no user may hold more than one open roadmap.
+--   SELECT "userId", count(*) FROM "public"."Roadmap" WHERE "status" IN ('DRAFT','ACTIVE') GROUP BY "userId" HAVING count(*) > 1;
+BEGIN;
+ALTER TABLE "public"."Roadmap" ADD COLUMN "slot" INTEGER;
+ALTER TABLE "public"."Roadmap" ADD COLUMN "label" TEXT;
+ALTER TABLE "public"."Roadmap" ADD COLUMN "pausedAt" TIMESTAMP(3);
+ALTER TABLE "public"."Roadmap" ADD COLUMN "pauseReason" TEXT;
+ALTER TABLE "public"."Roadmap" ADD COLUMN "createKey" TEXT;
+UPDATE "public"."Roadmap" SET "slot" = 1 WHERE "status" IN ('DRAFT','ACTIVE');
+ALTER TABLE "public"."Roadmap" ADD CONSTRAINT "Roadmap_slot_range" CHECK ("slot" IS NULL OR "slot" BETWEEN 1 AND 3);
+CREATE UNIQUE INDEX "Roadmap_userId_slot_open_key" ON "public"."Roadmap"("userId", "slot") WHERE "status" IN ('DRAFT','ACTIVE');
+CREATE UNIQUE INDEX "Roadmap_userId_createKey_key" ON "public"."Roadmap"("userId", "createKey") WHERE "createKey" IS NOT NULL;
+COMMIT;
+```
+- **The schema prefix.** The spec writes this SQL without the "public". prefix. The file uses it, as every roadmap migration does (@@schema("public")).
+- **PAUSED needs no DDL.** It is a new TEXT value of status. It sits outside the index predicate, so pausing frees the seat. The paused row keeps its slot value, and resume prefers that seat when it is free.
+- **The 3 in the CHECK** is GOAL_SLOTS_MAX. GOALS_MAX stays 1 until lane 4, so the app allows one open row while the database allows three.
+- **The backfill touches nothing else.** It sets slot = 1 on the open rows only. The aim, version, milestones, readings, quest weeks, Proficiency rows and cookies are keyed by roadmapId and stay as they are: the live plan becomes goal 1, still LEVELS (F-R5-20).
+- **The pre-apply SELECT** holds because decision 15 held: one open row per user, under the per-user advisory lock. If it returns a row, stop and tell the lead. Never pick a winner in SQL.
+- **Why "an open row has a seat" is not a CHECK yet.**
+  - Between the apply and lane 3's deploy, today's code saves new drafts with no slot, and such a CHECK would fail that save.
+  - A NULL slot never conflicts in the unique index, and today's guard still allows only one open row. Lane 3's SLOT_FREE also counts NULL-slot rows (contracts §22.1 ruling 24).
+  - Migration B seats any such row and adds the CHECK, after lane 3's code is live.
+- **The pre-apply grep.**
+  - No DROP at all.
+  - Every ALTER TABLE names "Roadmap", with ADD COLUMN, or ADD CONSTRAINT "Roadmap_slot_range" CHECK.
+  - Both CREATE INDEX lines name "Roadmap".
+  - The one UPDATE is the slot backfill.
+
+=== ROADMAP MIGRATION B: prisma/migrations/20261112000000_life_roadmap_topics (revision 5 F-R5-1, F-R5-2, F-R5-11, F-R5-12, F-R5-15; contracts §22.0, §22.3, §23.1; lane 5) ===
+schema.prisma gains these fields on existing models:
+- **Roadmap:**
+  - `planKind String @default("LEVELS")` (LEVELS | TOPICS; every existing row is LEVELS);
+  - `rating Json?` (RatingRecord, copied to the acceptance);
+  - `splitClauses Json?` (SplitClause[]: the aim's clauses tracked in another goal);
+  - `draftPlan Json?` (DraftPlan, contracts §22.1 ruling 49: an open re-plan draft's {version, planKind, depth, rating} while they differ from the live version's, as a [Break into topics] draft of a LEVELS plan has them. planKind, depth and rating stay the live version's, and change only inside acceptCore's transaction and undoAcceptCore's. Null on every existing row);
+  - the back relations `topics RoadmapTopic[]` and `topicEdges RoadmapTopicEdge[]`;
+  - the slot comment gains the CHECK "Roadmap_slot_open_required".
+- **Domain** (the Gemini mark, decision 63):
+  - `nameOrigin String?` ('GEMINI'; NULL means the user's, as every row is today);
+  - `originName String?` (the name as Gemini gave it). The mark shows while name = originName, so a rename removes it with no other code path changed (roadmap-types geminiNamedOf).
+- **RoadmapMilestone:** `layer Int?` (1..6 on a TOPICS layer milestone) and `chainRole String?` (LAYER | DEPTH). Both are null on every LEVELS row.
+- **RoadmapMeasure:** `topicLineageId String?` (display only; null on LEVELS).
+- **RoadmapRun:**
+  - `phase String?` (RATE | MAP | LINK | GROUND | DEEPER). Null is a run with no model phase: every LEVELS run, and a TOPICS draft built with no model. A GEMINI run with a null phase still counts toward ROADMAP_DRAFTS_PER_DAY as before, and so does phase RATE, the chain head (contracts §22.1 ruling 17);
+  - `grounding Json?` (GroundRunRecord: webSearchQueries, chunk titles and uris, the verdict per key, the title mode, toolUsePromptTokenCount; server only, never in a view);
+  - `requests Int @default(0)` (every model request the run made, against ROADMAP_REQUESTS_PER_DAY and GROUNDED_REQUESTS_PER_DAY; older rows read 0. From lane 10 a LEVELS run writes it too, contracts ruling 66).
+- **RoadmapAcceptance:** `previousPlan Json?` (PreviousPlan, contracts ruling 49: the planKind, depth, rating and domainIds an accept of another kind replaced, which undoAcceptCore restores; null on every existing row and on any accept that keeps the kind).
+
+Two new tables. Like RoadmapMilestone and RoadmapItem, neither has a userId column: ownership is the parent Roadmap's (FK, cascade), and every read goes through a roadmap the user owns. The CONVENTIONS' userId rule is for top-level tables.
+model RoadmapTopic {
+  id          String    @id @default(cuid())
+  roadmapId   String
+  roadmap     Roadmap   @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+  /// The version its map belongs to (a draft or re-plan writes version + 1, as milestones do).
+  version     Int
+  /// Stable across versions; edges and RoadmapMeasure.topicLineageId point at it.
+  lineageId   String
+  /// S<n> (outline line n), U<n> (intake Domain n) or T<n> (every other topic); unique per version.
+  key         String
+  /// 1..6 (LAYERS_MAX).
+  layer       Int
+  /// What is shown: the exact sample form, the aim's own span, your words, or the Domain's name.
+  name        String
+  /// The text exactly as the model returned it (at most 200 characters). Server only, never in a view.
+  rawName     String?
+  /// GEMINI | SYLLABUS | USER | LIBRARY | AIM.
+  nameOrigin  String
+  /// GENERAL | REGION_SPECIFIC; null when the name is not Gemini's.
+  scope       String?
+  /// GEMINI | YOU | CODE: who set its layer.
+  placedBy    String
+  /// LINKED | WEAK | NONE | NOT_RUN | OWN (OWN: a name that was never Gemini's).
+  grounding   String
+  /// At most 5 {title, uri}, from groundingChunks.web only.
+  sources     Json      @default("[]")
+  /// Samples holding the exact form (or the aim's span), 0..3; valid samples of the phase.
+  formVotes   Int       @default(0)
+  samples     Int       @default(0)
+  /// Each voting sample's layer.
+  layerVotes  Json      @default("[]")
+  /// PENDING | KEPT | EDITED | REMOVED | MERGED.
+  decision    String    @default("PENDING")
+  /// The lineage id it was merged into (MERGED).
+  mergedInto  String?
+  chosen      Boolean   @default(false)
+  /// BASE | DEEP (DEEP: chosen in the last layer, the specialisation).
+  role        String    @default("BASE")
+  /// Its Domain once bound or created at accept. No foreign key, like Roadmap.domainIds.
+  domainId    String?
+  /// You bound it ([Use my Domain…], or a seed or a pick you ticked).
+  bound       Boolean   @default(false)
+  /// "Held when you began" (measured at accept).
+  heldDay     DateTime? @db.Date
+  /// "I know this" (your skip).
+  skippedDay  DateTime? @db.Date
+  flags       String[]  @default([])
+  notes       String[]  @default([])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  @@unique([roadmapId, version, key])
+  @@index([roadmapId, version])
+  @@index([domainId])
+  @@schema("public")
+}
+model RoadmapTopicEdge {         // a "builds on" link; the whole-layer default ("after layer N") is no row at all
+  id              String   @id @default(cuid())
+  roadmapId       String
+  roadmap         Roadmap  @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+  version         Int
+  /// For a cross-goal parent: "x:<parentDomainId>" (CROSS_GOAL_PARENT_PREFIX; the Domain is the parent), so one child's edges to two other goals' Domains keep distinct keys (contracts §22.1 ruling 48).
+  parentLineageId String
+  childLineageId  String
+  /// Cross-goal only: the other goal's Domain and roadmap. Read-only: it can open a gate, and pays and counts nothing here.
+  parentDomainId  String?
+  parentRoadmapId String?
+  /// GEMINI | USER | CODE | SYLLABUS | CROSS_GOAL (CODE and SYLLABUS are reserved; nothing writes them in this build).
+  origin          String
+  /// Valid LINK samples that chose it; valid LINK samples for that child.
+  votes           Int      @default(0)
+  samples         Int      @default(0)
+  /// A GEMINI edge counts as a parent only when drawn (3 of 3 valid replies, previous layer of at least 4 kept topics).
+  drawn           Boolean  @default(false)
+  /// PENDING | KEPT | EDITED | REMOVED.
+  decision        String   @default("PENDING")
+  /// OUTLINE | LINE_DOMAIN | NONE (C8).
+  match           String   @default("NONE")
+  createdAt       DateTime @default(now())
+  @@unique([roadmapId, version, parentLineageId, childLineageId], map: "RoadmapTopicEdge_version_parent_child_key")
+  @@schema("public")
+}
+The edge's unique index carries an explicit name. Its default name, "RoadmapTopicEdge_roadmapId_version_parentLineageId_childLineageId_key", is 69 characters, over Postgres's 63, and Postgres would truncate it out from under Prisma.
+
+SQL (one transaction, as A):
+```sql
+-- life_roadmap_topics: revision 5 (docs/life-plan/roadmap-topic-map.md, F-R5-1, F-R5-11, F-R5-12, F-R5-15):
+-- the topic map, the plan kind, the Gemini mark on a Domain, the run phases, and the open-row seat CHECK.
+-- Additive: nullable columns or columns with a default on Roadmap, RoadmapAcceptance, Domain, RoadmapMilestone,
+-- RoadmapMeasure and RoadmapRun; two new tables with foreign keys to Roadmap only; one CHECK; the seat backfill on any open row
+-- with no seat. Nothing is dropped, renamed or retyped. Target: the xtnl-idea Supabase project ONLY.
+-- Rehearse locally first.
+-- PRE-APPLY (abort if it returns a row): no user may hold more than GOAL_SLOTS_MAX (3) open roadmaps.
+--   SELECT "userId", count(*) FROM "public"."Roadmap" WHERE "status" IN ('DRAFT','ACTIVE') GROUP BY "userId" HAVING count(*) > 3;
+-- For the record (expected empty once lane 3 is live; rows saved between A's apply and lane 3's deploy show here):
+--   SELECT "id", "userId", "status" FROM "public"."Roadmap" WHERE "status" IN ('DRAFT','ACTIVE') AND "slot" IS NULL;
+BEGIN;
+-- Seat every open row that has none: each user's unseated rows, oldest first, take that user's free seats, lowest first.
+WITH unseated AS (
+  SELECT "id", "userId", row_number() OVER (PARTITION BY "userId" ORDER BY "createdAt", "id") AS n
+  FROM "public"."Roadmap" WHERE "status" IN ('DRAFT','ACTIVE') AND "slot" IS NULL
+), free AS (
+  SELECT u."userId", s AS slot, row_number() OVER (PARTITION BY u."userId" ORDER BY s) AS n
+  FROM (SELECT DISTINCT "userId" FROM unseated) u CROSS JOIN generate_series(1, 3) AS s
+  WHERE NOT EXISTS (SELECT 1 FROM "public"."Roadmap" o
+                    WHERE o."userId" = u."userId" AND o."status" IN ('DRAFT','ACTIVE') AND o."slot" = s)
+)
+UPDATE "public"."Roadmap" r SET "slot" = f.slot
+FROM unseated x JOIN free f ON f."userId" = x."userId" AND f.n = x.n
+WHERE r."id" = x."id";
+ALTER TABLE "public"."Roadmap" ADD CONSTRAINT "Roadmap_slot_open_required" CHECK ("status" NOT IN ('DRAFT','ACTIVE') OR "slot" IS NOT NULL);
+ALTER TABLE "public"."Roadmap" ADD COLUMN "planKind" TEXT NOT NULL DEFAULT 'LEVELS';
+ALTER TABLE "public"."Roadmap" ADD COLUMN "rating" JSONB;
+ALTER TABLE "public"."Roadmap" ADD COLUMN "splitClauses" JSONB;
+ALTER TABLE "public"."Roadmap" ADD COLUMN "draftPlan" JSONB;
+ALTER TABLE "public"."RoadmapAcceptance" ADD COLUMN "previousPlan" JSONB;
+ALTER TABLE "public"."Domain" ADD COLUMN "nameOrigin" TEXT;
+ALTER TABLE "public"."Domain" ADD COLUMN "originName" TEXT;
+ALTER TABLE "public"."RoadmapMilestone" ADD COLUMN "layer" INTEGER;
+ALTER TABLE "public"."RoadmapMilestone" ADD COLUMN "chainRole" TEXT;
+ALTER TABLE "public"."RoadmapMeasure" ADD COLUMN "topicLineageId" TEXT;
+ALTER TABLE "public"."RoadmapRun" ADD COLUMN "phase" TEXT;
+ALTER TABLE "public"."RoadmapRun" ADD COLUMN "grounding" JSONB;
+ALTER TABLE "public"."RoadmapRun" ADD COLUMN "requests" INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE "public"."RoadmapTopic" (
+    "id" TEXT NOT NULL,
+    "roadmapId" TEXT NOT NULL,
+    "version" INTEGER NOT NULL,
+    "lineageId" TEXT NOT NULL,
+    "key" TEXT NOT NULL,
+    "layer" INTEGER NOT NULL,
+    "name" TEXT NOT NULL,
+    "rawName" TEXT,
+    "nameOrigin" TEXT NOT NULL,
+    "scope" TEXT,
+    "placedBy" TEXT NOT NULL,
+    "grounding" TEXT NOT NULL,
+    "sources" JSONB NOT NULL DEFAULT '[]',
+    "formVotes" INTEGER NOT NULL DEFAULT 0,
+    "samples" INTEGER NOT NULL DEFAULT 0,
+    "layerVotes" JSONB NOT NULL DEFAULT '[]',
+    "decision" TEXT NOT NULL DEFAULT 'PENDING',
+    "mergedInto" TEXT,
+    "chosen" BOOLEAN NOT NULL DEFAULT false,
+    "role" TEXT NOT NULL DEFAULT 'BASE',
+    "domainId" TEXT,
+    "bound" BOOLEAN NOT NULL DEFAULT false,
+    "heldDay" DATE,
+    "skippedDay" DATE,
+    "flags" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "notes" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "RoadmapTopic_pkey" PRIMARY KEY ("id")
+);
+CREATE UNIQUE INDEX "RoadmapTopic_roadmapId_version_key_key" ON "public"."RoadmapTopic"("roadmapId", "version", "key");
+CREATE INDEX "RoadmapTopic_roadmapId_version_idx" ON "public"."RoadmapTopic"("roadmapId", "version");
+CREATE INDEX "RoadmapTopic_domainId_idx" ON "public"."RoadmapTopic"("domainId");
+CREATE TABLE "public"."RoadmapTopicEdge" (
+    "id" TEXT NOT NULL,
+    "roadmapId" TEXT NOT NULL,
+    "version" INTEGER NOT NULL,
+    "parentLineageId" TEXT NOT NULL,
+    "childLineageId" TEXT NOT NULL,
+    "parentDomainId" TEXT,
+    "parentRoadmapId" TEXT,
+    "origin" TEXT NOT NULL,
+    "votes" INTEGER NOT NULL DEFAULT 0,
+    "samples" INTEGER NOT NULL DEFAULT 0,
+    "drawn" BOOLEAN NOT NULL DEFAULT false,
+    "decision" TEXT NOT NULL DEFAULT 'PENDING',
+    "match" TEXT NOT NULL DEFAULT 'NONE',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "RoadmapTopicEdge_pkey" PRIMARY KEY ("id")
+);
+CREATE UNIQUE INDEX "RoadmapTopicEdge_version_parent_child_key" ON "public"."RoadmapTopicEdge"("roadmapId", "version", "parentLineageId", "childLineageId");
+ALTER TABLE "public"."RoadmapTopic" ADD CONSTRAINT "RoadmapTopic_roadmapId_fkey" FOREIGN KEY ("roadmapId") REFERENCES "public"."Roadmap"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "public"."RoadmapTopicEdge" ADD CONSTRAINT "RoadmapTopicEdge_roadmapId_fkey" FOREIGN KEY ("roadmapId") REFERENCES "public"."Roadmap"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+COMMIT;
+```
+- **Why the seat backfill is not the spec's literal "slot = 1".** The spec says "re-run the slot backfill (same pre-apply SELECT)". Lane 4 (GOALS_MAX → 3) lands before lane 5, so by B's apply a user may hold up to 3 open rows. A NULL-slot row could then sit beside a row already at slot 1, and "slot = 1" would break the unique index. This deviation is recorded in contracts §23.10 item 6, and lane 5's HANDOFF line pins both the pre-apply SELECT (count(*) > 3) and this UPDATE.
+  - So the pre-apply bound is GOAL_SLOTS_MAX.
+  - Each unseated row takes its user's lowest free seat, oldest row first.
+  - If a user had more unseated rows than free seats, the CHECK would fail and the transaction would roll back. The pre-apply SELECT rules that out first.
+- **Why draftPlan and previousPlan** (contracts ruling 49). Plan kind, depth and rating are per-row columns, but a [Break into topics] draft lives beside the live LEVELS version until accept. The draft's own kind, depth and rating therefore sit in Roadmap.draftPlan, and the row's columns keep describing the live version, so every reader of goal 1 reads LEVELS byte for byte while the draft exists. acceptCore copies draftPlan into the columns, writes what it replaced to RoadmapAcceptance.previousPlan and clears draftPlan, all in one transaction; undoAcceptCore reverses it. Both columns are nullable JSONB and NULL on every existing row.
+- **Domain's two columns** are nullable and stay NULL on every existing row: every Domain today is the user's. Only accept's FROM_SUGGESTION path for a kept Gemini name writes them (lane 8). A rename leaves originName as it was, which removes the mark.
+- **Nothing else is rewritten.** No column is dropped or altered, and no row is rewritten except the seat backfill. planKind 'LEVELS' and requests 0 come from column defaults, so every existing plan, the user's live goal 1 included, reads exactly as before.
+- **Deletes.** RoadmapTopic and RoadmapTopicEdge rows cascade with their Roadmap. A 'life' reset that archives roadmaps (PAUSED among them from lane 3, reset.ts) deletes no topic row. A topic's domainId has no FK, so a deleted Domain leaves a dangling id that readers treat as unbound, as they treat Roadmap.domainIds.
+- **The pre-apply grep.**
+  - No DROP at all.
+  - Every ALTER TABLE names "Roadmap", "RoadmapAcceptance", "Domain", "RoadmapMilestone", "RoadmapMeasure", "RoadmapRun", "RoadmapTopic" or "RoadmapTopicEdge". The statements allowed are ADD COLUMN, ADD CONSTRAINT "Roadmap_slot_open_required" CHECK, and the two new tables' FKs to Roadmap.
+  - CREATE TABLE and CREATE INDEX name only the two new tables.
+  - The one UPDATE is the seat backfill.
+
+The rehearsal (both migrations, on the disposable local pgvector Postgres, seeded with synthetic rows shaped like production's, never a copy of them) asserts:
+- **A's backfill** sets slot = 1 on exactly the open rows. The index then refuses a second open row at slot 1, the CHECK refuses slot 4, and a PAUSED row at slot 1 beside a new open row at slot 1 is allowed.
+- **The createKey index** refuses the same (userId, createKey) twice and allows any number of NULLs.
+- **B's backfill** seats a NULL-slot open row beside a seated one without conflict. B's CHECK refuses an open row with no slot. The pre-apply SELECT catches a user with 4 open rows.
+- **Defaults.** Every Domain's new columns are NULL. Every Roadmap is planKind 'LEVELS' with draftPlan NULL, and every RoadmapAcceptance has previousPlan NULL. Every older RoadmapRun has requests 0 and phase NULL.
+- **Cross-goal edges.** One child with two cross-goal parents inserts two RoadmapTopicEdge rows ("x:<domainA>" and "x:<domainB>", same version and child) without a unique violation, and a second insert of the same pair is refused.
+- **Goal 1 is unchanged.** Its milestones, readings, quest weeks and Proficiency rows are the same by count and checksum after each migration.
+- **Atomicity.** A forced failure in the last statement leaves nothing applied.
+
 LEDGER VOCABULARY (ActivityEvent.source → sink):
 - REVIEW → DOMAIN, with xp = pointsAwarded, or 0 on a strike or degrade.
 - IDEA_CREATE → DOMAIN.
@@ -393,6 +684,10 @@ PROCEDURE for each migration:
 1. Edit schema.prisma.
 2. Draft the SQL: npx prisma migrate diff --from-url "$DIRECT_URL" --to-schema-datamodel prisma/schema.prisma --script.
 3. Delete DROP INDEX "Idea_embedding_hnsw_idx" and any CREATE INDEX that already exists. Keep only this migration's CREATE TABLE, CREATE INDEX and FK statements, and add the header comment.
+   - In this migration and every later one, also delete any DROP INDEX "Roadmap_userId_slot_open_key", DROP INDEX "Roadmap_userId_createKey_key" or DROP CONSTRAINT "Roadmap_slot_…" that `migrate diff` proposes. Never apply one: dropping them would let a 4th open goal or a duplicate create in past a forgotten guard.
+     - Prisma 6 cannot declare those partial unique indexes and CHECKs (roadmap migrations A and B above), so the diff reads them as drift.
+     - schema.prisma names them in a `///` comment on Roadmap.
+   - The diff cannot produce migrations A and B's partial unique indexes, CHECKs and seat backfills, so they are written by hand, as above.
 4. Rehearse on a disposable local pgvector Postgres (see user_setup).
 5. With the user's go-ahead, verify the Supabase project ref is xtnl-idea (not XTNL_thesis).
 6. npx prisma db execute --file prisma/migrations/<name>/migration.sql --schema prisma/schema.prisma

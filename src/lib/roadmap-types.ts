@@ -127,6 +127,27 @@
  *                     Intake.practiceFamily (the user's answer) · PRACTICE_FAMILY_KEY (its place in Roadmap.coverage)
  * The practice, step and checkpoint catalog is roadmap-catalog.ts; the aim
  * invitation rules are roadmap-invite.ts; the aim handoff is roadmap-handoff.ts.
+ *
+ * Revision 5 (docs/life-plan/roadmap-topic-map.md; contracts §22, §23), lane 0,
+ * the last section of this file. Every switch is false and GOALS_MAX is 1, so
+ * nothing a user can reach changes; LEVELS (every plan today) is unchanged.
+ *   Widened unions    RoadmapStatus PAUSED (decision 68) · ReplanKind TOPICS
+ *   Switches          GOALS_MAX · GOAL_SLOTS_MAX · TOPIC_*_LIVE · TopicSwitches · topicSwitchesOf
+ *   Model and runs    TOPIC_PROMPT_VERSION · TOPIC_SAMPLES · CONSENSUS_MIN · DEDUPE_DICE · EDGE_DRAW ·
+ *                     the GROUND constants · the request caps
+ *   The rating        DiffKey · BreadthKey · the reason unions · RATING_REASON_LABEL · REASON_COHERENCE ·
+ *                     Caution · RatingOrigin · LayerChangeKind · diffKeyOf · layersOfDiff
+ *   Map and chain     PlanKind · TopicDepth · DEPTH_TAIL · the topic, edge, run and chain unions ·
+ *                     ModelTextClass · PREREQS_OPEN · topicRankIndexOf · isTopicDepth
+ *   Goals             SEAT_STATUSES · HOLD_STATUSES · GoalSlot · isGoalSlot · GOAL_LABEL_MAX · GOALS_FULL
+ *   Shapes            the rating record, clauses, topics and edges, the replies, GROUND's record, the
+ *                     actions' inputs, the views, the goals' views; geminiNamedOf · namedPartsOf (the mark)
+ *   Optional fields   on Intake, IntakeView, RoadmapHeader, RoadmapView, DraftView, MilestoneDraft,
+ *                     MeasureSpec, MilestoneRowView, MeasureRowView, AimCardView, WeekQuestRow,
+ *                     WeekQuestsView, WeekQuestSet, AcceptChoices, RealismInput, DepthRankInput, CueTexts,
+ *                     CueSpan, ConstraintsState, ActivityRow and ActivityConfirmView (§22.3's table)
+ * The new modules are roadmap-rating, roadmap-topics, roadmap-grounding and
+ * roadmap-goals (shells until lanes 6 and 3). No word list lives here (ruling 33).
  */
 import { MASTERY_LEVEL, baseIntervalDays, graceDays } from "./xp";
 import { addDays, dayKeyOf, daysBetween, type DayKey } from "./life-day";
@@ -288,9 +309,16 @@ export function roadmapStepErrorsOf(parts: {
 
 // ═══ Unions (TEXT columns, migration life_roadmap) ══════════════════════════
 
-/** Roadmap.status. At most one DRAFT or ACTIVE per user (decision 15). */
-export type RoadmapStatus = "DRAFT" | "ACTIVE" | "DONE" | "ARCHIVED";
-export const ROADMAP_STATUSES: readonly RoadmapStatus[] = ["DRAFT", "ACTIVE", "DONE", "ARCHIVED"];
+/**
+ * Roadmap.status. Revision 5 (decision 68, which supersedes decision 15's
+ * "one open roadmap per user"; contracts §23): a user keeps up to
+ * GOAL_SLOTS_MAX open goals, each DRAFT or ACTIVE one in a seat
+ * (SEAT_STATUSES); GOALS_MAX stays 1 until lane 4, so today's one-open rule
+ * holds. PAUSED frees the seat but still holds the goal's Domains, AVOIDs
+ * and cue texts (HOLD_STATUSES); no path writes it before lane 3.
+ */
+export type RoadmapStatus = "DRAFT" | "ACTIVE" | "PAUSED" | "DONE" | "ARCHIVED";
+export const ROADMAP_STATUSES: readonly RoadmapStatus[] = ["DRAFT", "ACTIVE", "PAUSED", "DONE", "ARCHIVED"];
 
 /** RoadmapMilestone.status. CLOSED, DROPPED and REACHED are derived, never stored. LATER rows have no dates. */
 export type MilestoneStatus = "DRAFT" | "PLANNED" | "STARTING" | "STARTED" | "LATER" | "SUPERSEDED" | "DISCARDED";
@@ -435,8 +463,13 @@ export const REMEDIES: readonly Remedy[] = ["MOVE_DATE", "REFIT_LIGHT", "MOVE_TO
 /** The remedies a depth plan may offer (F-R4-11): never one that lowers a target or drops the depth stage. */
 export const DEPTH_REMEDIES: readonly Remedy[] = ["USE_REALISTIC_DATE", "LOWER_DEPTH"];
 
-/** A re-plan in v1: a re-fit to the user's numbers, or by hand. REDRAFT is Deferred. */
-export type ReplanKind = "REFIT" | "MANUAL";
+/**
+ * A re-plan in v1: a re-fit to the user's numbers, or by hand. REDRAFT is
+ * Deferred. TOPICS (revision 5, contracts §22.2): [Break into topics], which
+ * replanCore refuses ("Pick Re-fit or Edit by hand."); lane 8's
+ * breakIntoTopicsCore is its path.
+ */
+export type ReplanKind = "REFIT" | "MANUAL" | "TOPICS";
 
 /**
  * Behind-pace signals; shown on the Roadmap page and the Aim card only,
@@ -1202,8 +1235,13 @@ export interface RankRow {
  * `depth` (fix round 2, contracts §16.9; R1 already takes it): the plan's
  * depth, which rankIndexForStage reads for a PART at the depth (§15.4). R4's
  * rankIndicesOf passes it rather than re-ranking the rows after the call.
+ *
+ * `planKind` (revision 5, contracts §22.1 ruling 51; lane 7 reads it in R1,
+ * lane 8 passes it): on TOPICS each gate i of G takes topicRankIndexOf(i, G,
+ * top), held, skipped and all-held rows give null and are not counted in G,
+ * and rankIndicesOf skips its by-stage pass. Absent or LEVELS: as above.
  */
-export type AssignRankIndices = (rows: readonly RankRow[], firstByLineage: Readonly<Record<string, number>>, depth?: number | null) => Record<string, number | null>;
+export type AssignRankIndices = (rows: readonly RankRow[], firstByLineage: Readonly<Record<string, number>>, depth?: number | null, planKind?: PlanKind | null) => Record<string, number | null>;
 
 // ═══ Revision 4: depth and coverage (F-R4-9; decisions 36, 53) ══════════════
 //
@@ -1438,8 +1476,13 @@ export function rankIndexForStage(stage: StageKey | string | null | undefined, g
 
 /** topRankIndexOfDepth's input (F-R4-12). */
 export interface DepthRankInput {
-  /** Roadmap.depth; null on a track Area or a legacy plan. */
-  depth: AimDepth | null;
+  /**
+   * Roadmap.depth; null on a track Area or a legacy plan. Revision 5 (contracts
+   * §22.1 ruling 51): widened to TopicDepth, since a TOPICS plan may sit at 6
+   * (its top is STAGE_RANK FAMILIAR, through stageOfLevel); a LEVELS plan only
+   * ever passes an AimDepth, so nothing a LEVELS reader sees changes.
+   */
+  depth: TopicDepth | null;
   /** A track Area (practice only). */
   track: boolean;
   /** The plan has an outside standard: a checkpoint with the user's bar and outOf on the final milestone, or EXAM_DAY (question 7). */
@@ -1452,6 +1495,8 @@ export interface DepthRankInput {
   coverageBelowPolicy: boolean;
   /** A production practice is planned in every stage from Fluent on (F-R4-13). */
   productionPlannedFromFluent: boolean;
+  /** Revision 5 (contracts §22.12; lane 7): TOPICS reads Paragon off the specialisation and the base topics. Absent: LEVELS. */
+  planKind?: PlanKind;
 }
 
 /**
@@ -2705,6 +2750,13 @@ export interface Intake {
    * (roadmap-catalog practiceFamilyOf). Read only on a Field Area.
    */
   practiceFamily?: PracticeFamily | null;
+  // ── Revision 5 (contracts §22.3; lane 3 fills `label`, lane 8 the rest) ──
+  /** Roadmap.planKind: LEVELS (absent: every plan today) or TOPICS (a topic map). */
+  planKind?: PlanKind;
+  /** A TOPICS intake's depth (6, 8, 10 or 12; ruling 14), stored in Roadmap.depth; `depth` is then null. */
+  topicDepth?: TopicDepth | null;
+  /** Roadmap.label: the goal's name in the switcher (yours, ≤ GOAL_LABEL_MAX); null: the Area name with the seat glyph. */
+  label?: string | null;
 }
 
 /** The exam question's prefill (F-R4-24): isCredentialAim over the aim alone (CREDENTIAL_WORDS widened for this). The user's Yes/No wins. */
@@ -3112,6 +3164,11 @@ export interface MeasureSpec {
   unit: string | null;
   itemLineageId: string | null;
   measureKey: string | null;
+  // ── Revision 5 (contracts §22.12; lane 7) ──
+  /** The topic lineage a TOPICS measure counts (RoadmapMeasure.topicLineageId). */
+  topicLineageId?: string | null;
+  /** A checkpoint inside a milestone, never an extra node: PART ("half of layer 1 at level 6") or BETWEEN. */
+  gate?: "PART" | "BETWEEN" | null;
 }
 
 /**
@@ -3170,6 +3227,10 @@ export interface MilestoneDraft {
    * sit in which milestone is Gemini's suggestion."
    */
   arrangedBy?: "GEMINI" | "CODE" | "USER";
+  // ── Revision 5 (contracts §22.12; lane 7) ──
+  /** A TOPICS plan's layer milestone k (1..LAYERS_MAX); null on a depth milestone and on LEVELS. */
+  layer?: number | null;
+  chainRole?: ChainRole | null;
 }
 
 /**
@@ -3542,6 +3603,12 @@ export interface RealismInput {
   calibrating?: CalibratingInput[];
   /** The source writing rate (new cards a life week; measured or typed) before PACE_SHARE; null with none. */
   sourceRate?: number | null;
+  // ── Revision 5 (contracts §22.12, §23.3; lane 7). Both shares default to 1, and 1 is byte-identical (M13). ──
+  /** This goal's share of the week: min(h × 60 × A, rampCap × share). */
+  share?: number;
+  /** Multiplies a FIELD-sourced rate only (ruling 30). */
+  fieldShare?: number;
+  planKind?: PlanKind;
 }
 
 /** "Targets vs your pace" for one card measure. */
@@ -3965,6 +4032,8 @@ export interface WeekQuestSet {
   quests: WeekQuestSpec[];
   basis: string[];
   cappedBy: WeekQuestCap | null;
+  /** Revision 5 (contracts §23.3; lane 3): the share the set was frozen with (Monday 04:00); absent or null with one goal. */
+  share?: { hours: number; of: number } | null;
 }
 
 /** The card measure a week reads (F13 Input). */
@@ -4123,6 +4192,11 @@ export interface WeekQuestRow {
   partsLine?: string;
   /** Revision 4 (F-R4-13): a PRACTICE row of a BODY plan; the component shows HEALTH_LINE as its sub-line (R6 writes only true). */
   health?: boolean;
+  // ── Revision 5 (contracts §23.3; lane 3 fills slot, lane 8 labelParts) ──
+  /** The goal's seat: Today shows its seat glyph. */
+  slot?: GoalSlot | null;
+  /** The label as parts, a Gemini-named Domain marked (namedPartsOf). */
+  labelParts?: NamedPart[];
 }
 
 /** A week's set as a surface shows it. */
@@ -4146,6 +4220,10 @@ export interface WeekQuestsView {
   basis: string[];
   cappedBy: WeekQuestCap | null;
   notes: string[];
+  // ── Revision 5 (contracts §23.3; lane 3) ──
+  slot?: GoalSlot | null;
+  /** This goal's share of the week as of Monday 04:00 ("goal 2's 3 of 7 h"); null with one goal. */
+  share?: { hours: number; of: number } | null;
 }
 
 /** A finished (or settling) week on the roadmap page's "Past week quests". */
@@ -4203,6 +4281,8 @@ export type DomainResolution =
 export interface AcceptChoices {
   /** "Keep it over my hours/pace": stored, shown for good as "Over". */
   overAccepted: boolean;
+  /** Revision 5 (contracts §22.14; lane 8): what a TOPICS draft's confirm named; acceptCore refuses a stale one (RACED). */
+  topicMap?: AcceptTopicChoices | null;
 }
 
 /** startMilestoneCore's choices, from the Start sheet. */
@@ -4392,6 +4472,19 @@ export interface IntakeView {
   dateChips?: IntakeDateChip[];
   /** The measured new-card pace of the Area (new cards a week), when there is one; null: "New cards a week" is asked in REALISTIC mode when a Domain needs new cards. */
   paceRate?: number | null;
+  // ── Revision 5 (contracts §23.5; lane 3) ──
+  /** Every seat 1..GOAL_SLOTS_MAX with the goal in it (or none). */
+  seats?: GoalSeatView[];
+  /** Every open DRAFT intake, one per seat. */
+  drafts?: IntakeDraftView[];
+  /** GOALS_MAX as the page reads it. */
+  goalsMax?: number;
+  /** Σ hours a week of the other DRAFT and ACTIVE goals (hoursRoomOf's `taken`). */
+  hoursTaken?: number;
+  /** Domain id → the seat of the DRAFT, ACTIVE or PAUSED goal holding it (null: a paused goal with no seat): shown "in goal 1", never preselected. */
+  takenDomains?: Record<string, GoalSlot | null>;
+  /** topicSwitchesOf(): which topic-map paths the form offers. */
+  topicSwitches?: TopicSwitches;
 }
 
 /** A "By when" chip: 6 / 12 / 24 months or 3 years, with "· possible" or "· before level 12 is possible" per depth. */
@@ -4536,6 +4629,12 @@ export interface AimCardView {
    * on a revision-4 plan; `legacy` stays the boolean the card keys on.
    */
   legacyView?: LegacyView | null;
+  // ── Revision 5 (contracts §23.5; lane 3) ──
+  slot?: GoalSlot | null;
+  label?: string | null;
+  planKind?: PlanKind;
+  /** A PAUSED goal's card: "paused since 6 Oct", never "behind". */
+  paused?: { since: DayKey } | null;
 }
 
 // ═══ Revision 4: Today's aim line (F-R4-3) ══════════════════════════════════
@@ -4657,6 +4756,16 @@ export interface RoadmapHeader {
   legacy?: boolean;
   /** Fix round (F-R4-16, decision 47): the plan's chosen Domains (Roadmap.domainIds), so "Start again at a depth" carries them into the new intake. */
   domainIds?: string[];
+  // ── Revision 5 (contracts §22.3; lane 3 fills slot, label and paused, lane 8 the rest) ──
+  planKind?: PlanKind;
+  /** Roadmap.slot: the goal's seat (null on a PAUSED, DONE or ARCHIVED goal whose seat was taken). */
+  slot?: GoalSlot | null;
+  label?: string | null;
+  /** The plan's cautions («Not financial advice»), code's (the word lists ∪ the rating's caution reasons). */
+  cautions?: Caution[];
+  rating?: RatingView | null;
+  /** A PAUSED goal: "paused since 6 Oct", with the reason the user gave. */
+  paused?: { since: DayKey; reason: string | null } | null;
 }
 
 /**
@@ -4772,6 +4881,11 @@ export interface DraftView {
    * here; null or `on: false` with no rows: nothing to show.
    */
   activityConfirm?: ActivityConfirmView | null;
+  // ── Revision 5 (contracts §22.3; lane 8 fills topicMap, lane 3 otherGoals) ──
+  /** A TOPICS draft's map (null on LEVELS). */
+  topicMap?: TopicMapView | null;
+  /** Every other goal whose verdict accepting this draft turns TIGHT or OVER ("Goal 1 becomes tight · [Re-date goal 1]"). */
+  otherGoals?: GoalVerdictChange[];
 }
 
 /** One measure line ("Hold 20 cards at level 6+ in Probability, Inference (now 12)"). */
@@ -4799,6 +4913,12 @@ export interface MeasureRowView {
   basisClass: ComputedClass;
   /** The measure's words ("Probability, Inference · cards at level 6+"): an end-state row's EndStateTerm.label (fix round). */
   label?: string;
+  // ── Revision 5 (contracts §22.3; lane 8) ──
+  /** The label as parts, a Gemini-named Domain marked (namedPartsOf). */
+  labelParts?: NamedPart[];
+  topicLineageId?: string | null;
+  /** An earlier layer's CONTEXT row: the level it climbs to ("climbing to 8"). */
+  climbing?: number | null;
 }
 
 export type MilestoneRowState =
@@ -4839,6 +4959,15 @@ export interface MilestoneRowView {
   stage?: StageKey | null;
   gateLevel?: number | null;
   held?: boolean;
+  // ── Revision 5 (contracts §22.3; lane 8) ──
+  layer?: number | null;
+  chainRole?: ChainRole | null;
+  /** A locked layer milestone is a PLANNED row that opens after layer n is reached (ruling 5): not a new state. */
+  opensAfter?: number | null;
+  /** The title as parts, a Gemini-named Domain marked (namedPartsOf). */
+  titleParts?: NamedPart[];
+  /** Every topic of the layer is marked "I know this". */
+  known?: boolean;
 }
 
 /** "Now": the current milestone, expanded (anchor #now). */
@@ -5012,6 +5141,11 @@ export interface RoadmapView {
    * not loaded here; null: nothing to show.
    */
   activityConfirm?: ActivityConfirmView | null;
+  // ── Revision 5 (contracts §22.3; lane 8 fills topicMap, lane 3 goals) ──
+  /** A TOPICS plan's map (null on LEVELS). */
+  topicMap?: TopicMapView | null;
+  /** The goal switcher (null with one goal and GOALS_MAX 1). */
+  goals?: GoalSwitcherView | null;
 }
 
 // ═══ Constraint safety: confirm to unlock (contracts §19) ═══════════════════
@@ -5065,6 +5199,8 @@ export interface CueSpan {
   end: number;
   /** The sentence holding it, verbatim (userClauseOf; at most ACTIVITY_REASON_MAX characters, "…" where cut). */
   clause: string;
+  /** Revision 5 (contracts §23.6; lane 3): the other goal whose words hold this cue; absent or null: this goal's. */
+  goal?: { roadmapId: string; slot: GoalSlot | null } | null;
 }
 
 /** constraintCuesOf's answer. `hasCue` is true when any cue matched or the text can't be read. */
@@ -5694,6 +5830,12 @@ export interface CueTexts {
   aim: string | null;
   /** The exam label, the hours' source note, the outline's source and its lines, in that order (empty ones left out). */
   notes?: readonly (string | null | undefined)[];
+  /**
+   * Revision 5 (contracts §23.6; lane 3): every other DRAFT, ACTIVE and
+   * PAUSED goal's texts, in seat order. Absent or empty: byte-identical to
+   * today (cueReadingOf, and cueKeyOf's "k2-" key).
+   */
+  others?: readonly GoalCueTexts[];
 }
 
 /** The texts of an intake the user typed: every one is read, whatever the track (only BODY and CARE are gated). */
@@ -5885,6 +6027,8 @@ export interface ConstraintsState {
   key: string;
   /** The parser's exclusions on this track, one per kind: suggestions. */
   prefill: ActivityPrefill[];
+  /** Revision 5 (contracts §23.6; lane 3): every other goal's stored AVOIDs (open ones lock, closed ones suggest). Absent: today's gate. */
+  others?: readonly GoalAvoids[];
 }
 
 /**
@@ -5913,6 +6057,11 @@ export interface ActivityRow {
   staleDay: DayKey | null;
   /** YOURS on an answered row (AVOID, FINE: the user's decision); null on PENDING and WORDS (code's reading of their words, not a decision). */
   cls: "YOURS" | null;
+  // ── Revision 5 (contracts §23.6; lane 3) ──
+  /** The goal that stored this AVOID ("from goal 1"; closed: "from an earlier goal"); absent or null: this goal's own row. */
+  from?: { roadmapId: string; slot: GoalSlot | null; closed: boolean } | null;
+  /** Another open goal's AVOID: ticked, and lifted only on the goal that stored it (ruling 27). */
+  locked?: boolean;
 }
 
 /** allowedKindsFor's answer: what every plan path may place, and what to ask. */
@@ -5968,4 +6117,834 @@ export interface ActivityConfirmView {
   staleDay: DayKey | null;
   /** What the plan places meanwhile: the safe kinds on this track (cueSafeKindsOf; [] while off). */
   safeKinds: CatalogKey[];
+  /** Revision 5 (contracts §23.6; lane 3): index-aligned with `quotes`, the seat of the goal each came from (null: this goal). */
+  quoteGoals?: (GoalSlot | null)[];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Revision 5 (contracts §22, §23): the topic map and up to 3 goals. Lane 0.
+// docs/life-plan/roadmap-topic-map.md (draft 2) is the spec. Every switch
+// starts false and GOALS_MAX is 1, so nothing a user can reach changes, and
+// LEVELS (every plan today) is unchanged byte for byte. Only the lane named
+// flips a switch, re-pinning it in roadmap-contract-check in the same commit,
+// on the user's go. No word list lives here (ruling 33).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Switches (§22.2) ──
+
+/**
+ * Open goals a user may keep (DRAFT and ACTIVE, each in a seat). 1 until lane
+ * 4's last commit sets it to 3, and only once lane 3's shares are read in
+ * realism (roadmap-contract-check refuses the flip before; ruling 54). Every
+ * offer of a new seat reads it, never the fixed GOAL_SLOTS_MAX (ruling 53).
+ */
+export const GOALS_MAX: number = 1;
+/** The seats the database's CHECK allows (slot 1..3); GOALS_MAX ≤ it. Never flipped. */
+export const GOAL_SLOTS_MAX = 3;
+/** TOPICS plans (lane 9 flips it). */
+export const TOPIC_PLANS_LIVE: boolean = false;
+/** Gemini's rating, the chain head (lane 13). */
+export const TOPIC_RATE_LIVE: boolean = false;
+/** MAP's placement of your outline lines and Domains (lane 13). */
+export const TOPIC_PLACE_LIVE: boolean = false;
+/** MAP's Gemini topic names; effective only with GROUND (lane 13). */
+export const TOPIC_NAMES_LIVE: boolean = false;
+/** LINK's prerequisite links (lane 13). */
+export const TOPIC_LINK_LIVE: boolean = false;
+/** GROUND, the web check of Gemini's names; effective only with names (lane 13). */
+export const TOPIC_GROUND_LIVE: boolean = false;
+
+/** The six switches, as given or as they take effect (topicSwitchesOf). */
+export interface TopicSwitches {
+  plans: boolean;
+  rate: boolean;
+  place: boolean;
+  names: boolean;
+  link: boolean;
+  ground: boolean;
+}
+
+/**
+ * The effective switches (ruling 16): `plans`; `rate` only under plans;
+ * `place` and `link` only under rate; `names` only under rate and with
+ * `ground`; `ground` only with `names`. A switch left out of `raw` reads its
+ * constant, so with no argument this is the build's own state.
+ */
+export function topicSwitchesOf(raw?: Partial<TopicSwitches>): TopicSwitches {
+  const plans = (raw?.plans ?? TOPIC_PLANS_LIVE) === true;
+  const rate = plans && (raw?.rate ?? TOPIC_RATE_LIVE) === true;
+  const place = rate && (raw?.place ?? TOPIC_PLACE_LIVE) === true;
+  const link = rate && (raw?.link ?? TOPIC_LINK_LIVE) === true;
+  const names = rate && (raw?.names ?? TOPIC_NAMES_LIVE) === true && (raw?.ground ?? TOPIC_GROUND_LIVE) === true;
+  return { plans, rate, place, names, link, ground: names };
+}
+
+// ── Model and runs (§22.2, §22.15) ──
+
+/** The topic phases' prompt version (RATE, MAP, LINK, GROUND, DEEPER); ROADMAP_PROMPT_VERSION 4 stays for LEVELS. A text change is a bump. */
+export const TOPIC_PROMPT_VERSION: number = 1;
+/** Samples per JSON phase. */
+export const TOPIC_SAMPLES = 3;
+/** 1: three requests a phase; 3: one request carrying three candidates (only after probe P6; lane 11 re-pins). */
+export const TOPIC_CANDIDATE_COUNT: 1 | 3 = 1;
+/** A form key is kept when at least this many of TOPIC_SAMPLES samples hold it exactly. */
+export const CONSENSUS_MIN = 2;
+/** Stem-bigram Dice at or above which a kept form hides behind a higher-voted one (never adds votes). */
+export const DEDUPE_DICE = 0.85;
+/** A GEMINI edge is drawn when `agree` of `of` valid LINK samples chose it and the layer before holds at least `prevLayerMin` kept topics. */
+export const EDGE_DRAW: Readonly<{ agree: number; of: number; prevLayerMin: number }> = { agree: 3, of: 3, prevLayerMin: 4 };
+/** Distinct sources GROUND must link to a name's sentence for LINKED. */
+export const SOURCES_MIN = 2;
+export const GROUND_KEYS_PER_CALL = 3;
+/** Two terms whose stem Dice reaches this never share a GROUND call. */
+export const GROUND_PAIR_DICE_MAX = 0.6;
+/** GROUND calls in flight at once. */
+export const GROUND_PARALLEL = 3;
+/** GROUND calls in a breakdown; past it a term is NOT_RUN (hidden). */
+export const GROUND_CALLS_MAX = 7;
+/** GROUND calls in a Go deeper. */
+export const DEEPER_GROUND_CALLS_MAX = 2;
+/** Sources shown in a name's ▸. */
+export const GROUND_SOURCES_SHOWN = 5;
+/** How a grounding chunk's title reads (ruling 35): "TITLE" until probe P5 reads otherwise (lane 11 re-pins). */
+export const GROUND_TITLE_MODE: GroundTitleMode = "TITLE";
+export const GROUND_ABORT_MS = 45_000;
+/** GROUND's backstop: its abort plus 2 s, as ROADMAP_BACKSTOP_MS is ROADMAP_ABORT_MS plus 2 s. */
+export const GROUND_BACKSTOP_MS = GROUND_ABORT_MS + 2_000;
+/**
+ * A RUNNING topic step (one run row: RATE, MAP, LINK, one GROUND wave or
+ * DEEPER) older than this is stale and may be claimed again. Each step runs
+ * in its own invocation within the roadmap pages' maxDuration (60 s; ruling
+ * 47), so a step is never claimed again while it could still be running.
+ */
+export const TOPIC_RUN_STALE_MS = 180_000;
+/** Gemini requests a user may spend a day, across goals (aborted ones, 429s and quota errors included). */
+export const ROADMAP_REQUESTS_PER_DAY = 48;
+/** Grounded (GROUND) requests a user may spend a day. */
+export const GROUNDED_REQUESTS_PER_DAY = 21;
+/** A full breakdown: 3 RATE + 3 MAP + 3 LINK + 7 GROUND. */
+export const BREAKDOWN_REQUESTS_MAX = 16;
+export const BREAKDOWN_REQUESTS_MAX_WITH_CANDIDATES = 10;
+/** A Go deeper: 3 DEEPER + 2 GROUND. */
+export const DEEPER_REQUESTS_MAX = 5;
+export const DEEPER_REQUESTS_MAX_WITH_CANDIDATES = 3;
+
+// ── The rating (§22.2, §22.7) ──
+
+/** Gemini's difficulty estimate: DIFF_k is k build-on layers. */
+export type DiffKey = "DIFF_1" | "DIFF_2" | "DIFF_3" | "DIFF_4" | "DIFF_5" | "DIFF_6";
+export const DIFF_KEYS: readonly DiffKey[] = ["DIFF_1", "DIFF_2", "DIFF_3", "DIFF_4", "DIFF_5", "DIFF_6"];
+export const DIFF_LAYERS: Readonly<Record<DiffKey, number>> = { DIFF_1: 1, DIFF_2: 2, DIFF_3: 3, DIFF_4: 4, DIFF_5: 5, DIFF_6: 6 };
+export const LAYERS_MIN = 1;
+export const LAYERS_MAX = 6;
+
+/** DIFF_k for a whole k in LAYERS_MIN..LAYERS_MAX; anything else null. */
+export function diffKeyOf(layers: number): DiffKey | null {
+  return Number.isInteger(layers) && layers >= LAYERS_MIN && layers <= LAYERS_MAX ? DIFF_KEYS[layers - 1] : null;
+}
+
+/** The layers DIFF_k stands for (k). */
+export function layersOfDiff(key: DiffKey): number {
+  return DIFF_LAYERS[key];
+}
+
+/** How many topics sit side by side in one layer; ordinal in BREADTH_KEYS order. */
+export type BreadthKey = "NARROW" | "MEDIUM" | "WIDE" | "VAST";
+export const BREADTH_KEYS: readonly BreadthKey[] = ["NARROW", "MEDIUM", "WIDE", "VAST"];
+/** Topics a layer: the pre-check reads `min`, the map's room `max`. */
+export const BREADTH_TABLE: Readonly<Record<BreadthKey, { min: number; max: number }>> = {
+  NARROW: { min: 1, max: 2 },
+  MEDIUM: { min: 2, max: 3 },
+  WIDE: { min: 3, max: 5 },
+  VAST: { min: 4, max: 6 },
+};
+/** Breadth in words, for the estimate's (i) sheet only. */
+export const BREADTH_WORD: Readonly<Record<BreadthKey, string>> = { NARROW: "Narrow", MEDIUM: "Medium", WIDE: "Wide", VAST: "Vast" };
+/** Code's breadth when RATE gives none. */
+export const BREADTH_FALLBACK: BreadthKey = "MEDIUM";
+
+export type DepthReason = "LONG_PREREQS" | "FEW_PREREQS" | "ABSTRACT_MATH" | "NEW_LANGUAGE_OR_SCRIPT" | "MOTOR_SKILL" | "MEASURED_STANDARD";
+export const DEPTH_REASONS: readonly DepthReason[] = ["LONG_PREREQS", "FEW_PREREQS", "ABSTRACT_MATH", "NEW_LANGUAGE_OR_SCRIPT", "MOTOR_SKILL", "MEASURED_STANDARD"];
+export type BreadthReason = "SINGLE_SKILL" | "MANY_PARTS" | "MANY_FIELDS" | "ROUTINE_UPKEEP" | "OPEN_ENDED_OUTCOME";
+export const BREADTH_REASONS: readonly BreadthReason[] = ["SINGLE_SKILL", "MANY_PARTS", "MANY_FIELDS", "ROUTINE_UPKEEP", "OPEN_ENDED_OUTCOME"];
+export type CautionReason = "REAL_MONEY" | "HEALTH_RISK" | "REGULATED";
+export const CAUTION_REASONS: readonly CautionReason[] = ["REAL_MONEY", "HEALTH_RISK", "REGULATED"];
+/** RATE's reasons: the 14 above, in this order (the schema's enum). Keys only: shown through RATING_REASON_LABEL, never as text. */
+export type RatingReason = DepthReason | BreadthReason | CautionReason;
+export const RATING_REASONS: readonly RatingReason[] = [...DEPTH_REASONS, ...BREADTH_REASONS, ...CAUTION_REASONS];
+/** Code's words for each reason (decision 76: never "difficulty", "hard" or "level"). */
+export const RATING_REASON_LABEL: Readonly<Record<RatingReason, string>> = {
+  LONG_PREREQS: "has a long chain of basics",
+  FEW_PREREQS: "needs few basics first",
+  ABSTRACT_MATH: "involves abstract maths",
+  NEW_LANGUAGE_OR_SCRIPT: "involves a new language or script",
+  MOTOR_SKILL: "trains a physical skill",
+  MEASURED_STANDARD: "has a set bar to meet",
+  SINGLE_SKILL: "is one skill",
+  MANY_PARTS: "has several parts",
+  MANY_FIELDS: "spans several fields",
+  ROUTINE_UPKEEP: "includes a routine",
+  OPEN_ENDED_OUTCOME: "has an open-ended outcome",
+  REAL_MONEY: "involves real money",
+  HEALTH_RISK: "involves health",
+  REGULATED: "involves rules or law",
+};
+/** A reason that breaks its reply's own difficulty or breadth is dropped from that reply (the reply's votes still count). Absent: always coherent. */
+export const REASON_COHERENCE: Partial<Record<RatingReason, { difficulty?: readonly DiffKey[]; breadth?: readonly BreadthKey[] }>> = {
+  LONG_PREREQS: { difficulty: ["DIFF_3", "DIFF_4", "DIFF_5", "DIFF_6"] },
+  FEW_PREREQS: { difficulty: ["DIFF_1", "DIFF_2"] },
+  SINGLE_SKILL: { breadth: ["NARROW", "MEDIUM"] },
+  MANY_PARTS: { breadth: ["MEDIUM", "WIDE", "VAST"] },
+  MANY_FIELDS: { breadth: ["WIDE", "VAST"] },
+};
+/** The schema's maxItems for `reasons`. */
+export const RATING_REASONS_MAX = 4;
+/** Depth and breadth reasons kept on the record, at most. */
+export const RATING_REASONS_KEPT_MAX = 3;
+/** A depth or breadth reason is kept when at least this many valid replies give it. */
+export const REASON_AGREE_MIN = 2;
+/** A 3-reply spread of this many layers or more reads «Gemini unsure · a–b layers». */
+export const UNSURE_SPREAD = 2;
+/** Code's estimate in layers (depthFallbackOf): a Field, a track; +1 at DEPTH_FALLBACK_OUTLINE_LINES outline lines or more. */
+export const DEPTH_FALLBACK: Readonly<{ FIELD: number; TRACK: number }> = { FIELD: 3, TRACK: 2 };
+export const DEPTH_FALLBACK_OUTLINE_LINES = 20;
+/** A plan's caution chips («Not financial advice»): code's word lists ∪ any valid reply's caution reason; never removed. */
+export type Caution = "FINANCIAL" | "MEDICAL" | "LEGAL";
+export const CAUTIONS: readonly Caution[] = ["FINANCIAL", "MEDICAL", "LEGAL"];
+export const CAUTION_OF_REASON: Readonly<Record<CautionReason, Caution>> = { REAL_MONEY: "FINANCIAL", HEALTH_RISK: "MEDICAL", REGULATED: "LEGAL" };
+/** Whose estimate a plan uses: Gemini's consensus, code's rough one, or yours. */
+export type RatingOrigin = "GEMINI" | "CODE" | "YOURS";
+export const RATING_ORIGINS: readonly RatingOrigin[] = ["GEMINI", "CODE", "YOURS"];
+/** A change to the plan's layer count after the estimate. */
+export type LayerChangeKind = "SET" | "FEWER" | "MERGED" | "DEEPER" | "PLAN_FIRST";
+
+// ── The map and the chain (§22.2) ──
+
+/** Roadmap.planKind: LEVELS (every plan today) or TOPICS (a topic map). */
+export type PlanKind = "LEVELS" | "TOPICS";
+export const PLAN_KINDS: readonly PlanKind[] = ["LEVELS", "TOPICS"];
+/** Chosen topics per goal (DEPTH_DOMAINS_MAX 6 stays for LEVELS). */
+export const TOPICS_MAX = 20;
+export const LAYER_TOPICS_MIN = 1;
+/** = TOPICS_PER_MILESTONE. */
+export const LAYER_TOPICS_MAX = 6;
+/** A base topic's cards at OPEN_LEVEL. */
+export const TOPIC_FLOOR_CARDS = 8;
+/** The level a layer milestone pays at. */
+export const OPEN_LEVEL = 6;
+/** The level the base topics climb to in the depth tail. */
+export const BASE_LEVEL = 8;
+export const DEPTH_MILESTONES_MAX = 2;
+/** Milestones of a TOPICS plan, at most (MAX_MILESTONES 6 stays for LEVELS). */
+export const MAX_MILESTONES_TOPICS = 8;
+
+/**
+ * The milestone cap of a plan kind (ruling 50): MAX_MILESTONES_TOPICS on
+ * TOPICS, else MAX_MILESTONES. acceptCore, the manual edit, maxScheduled and
+ * realism's re-fit split read it (lanes 7 and 8), so LEVELS keeps 6.
+ */
+export function milestoneCapOf(planKind?: PlanKind | null): number {
+  return planKind === "TOPICS" ? MAX_MILESTONES_TOPICS : MAX_MILESTONES;
+}
+export const EDGE_PARENTS_MAX = 3;
+export const EDGE_CHILDREN_MAX = 4;
+/** Children a Go deeper may add (minimum 0). */
+export const DEEPER_CHILDREN_MAX = 4;
+/** A TOPICS plan's depth: 6 (TOPICS only, ruling 14) or an AimDepth. */
+export type TopicDepth = 6 | AimDepth;
+export const TOPIC_DEPTHS: readonly TopicDepth[] = [6, 8, 10, 12];
+
+export function isTopicDepth(v: unknown): v is TopicDepth {
+  return v === 6 || isAimDepth(v);
+}
+
+/** T: the depth milestones after layer K, per depth. */
+export const DEPTH_TAIL: Readonly<Record<TopicDepth, number>> = { 6: 0, 8: 1, 10: 1, 12: 2 };
+
+export type LayerKey = "L1" | "L2" | "L3" | "L4" | "L5" | "L6";
+export const LAYER_KEYS: readonly LayerKey[] = ["L1", "L2", "L3", "L4", "L5", "L6"];
+/** Where a topic's name came from. */
+export type TopicOrigin = "GEMINI" | "SYLLABUS" | "USER" | "LIBRARY" | "AIM";
+export const TOPIC_ORIGINS: readonly TopicOrigin[] = ["GEMINI", "SYLLABUS", "USER", "LIBRARY", "AIM"];
+export type TopicScope = "GENERAL" | "REGION_SPECIFIC";
+export const TOPIC_SCOPES: readonly TopicScope[] = ["GENERAL", "REGION_SPECIFIC"];
+/** Who put a topic in its layer. */
+export type TopicPlacedBy = "GEMINI" | "YOU" | "CODE";
+export const TOPIC_PLACED_BY: readonly TopicPlacedBy[] = ["GEMINI", "YOU", "CODE"];
+export type TopicDecision = "PENDING" | "KEPT" | "EDITED" | "REMOVED" | "MERGED";
+export const TOPIC_DECISIONS: readonly TopicDecision[] = ["PENDING", "KEPT", "EDITED", "REMOVED", "MERGED"];
+/** DEEP: chosen in the last layer (the specialisation). */
+export type TopicRole = "BASE" | "DEEP";
+export const TOPIC_ROLES: readonly TopicRole[] = ["BASE", "DEEP"];
+/** GROUND's verdict on a topic's name; OWN: a name that was never Gemini's. */
+export type TopicGrounding = "LINKED" | "WEAK" | "NONE" | "NOT_RUN" | "OWN";
+export const TOPIC_GROUNDINGS: readonly TopicGrounding[] = ["LINKED", "WEAK", "NONE", "NOT_RUN", "OWN"];
+export type GroundVerdict = "LINKED" | "WEAK" | "NONE";
+export const GROUND_VERDICTS: readonly GroundVerdict[] = ["LINKED", "WEAK", "NONE"];
+export type GroundTitleMode = "TITLE" | "DOMAIN";
+/** CODE and SYLLABUS are reserved (ruling 20): no path writes them in this build, and readers accept them. */
+export type EdgeOrigin = "GEMINI" | "USER" | "CODE" | "SYLLABUS" | "CROSS_GOAL";
+export const EDGE_ORIGINS: readonly EdgeOrigin[] = ["GEMINI", "USER", "CODE", "SYLLABUS", "CROSS_GOAL"];
+export type EdgeDecision = "PENDING" | "KEPT" | "EDITED" | "REMOVED";
+export const EDGE_DECISIONS: readonly EdgeDecision[] = ["PENDING", "KEPT", "EDITED", "REMOVED"];
+/** C8's mark: the edge matches your outline's order, or two lines you tied to Domains. */
+export type EdgeMatch = "OUTLINE" | "LINE_DOMAIN" | "NONE";
+export const EDGE_MATCHES: readonly EdgeMatch[] = ["OUTLINE", "LINE_DOMAIN", "NONE"];
+/** RoadmapRun.phase (null on LEVELS). */
+export type RunPhase = "RATE" | "MAP" | "LINK" | "GROUND" | "DEEPER";
+export const RUN_PHASES: readonly RunPhase[] = ["RATE", "MAP", "LINK", "GROUND", "DEEPER"];
+/** RoadmapMilestone.chainRole: a layer milestone or a depth milestone. */
+export type ChainRole = "LAYER" | "DEPTH";
+export const CHAIN_ROLES: readonly ChainRole[] = ["LAYER", "DEPTH"];
+/** checkLabel's topic-name flags (ruling 3: their own union; BlockingFlag is not widened). */
+export type TopicFlag = "JURISDICTION" | "BRAND" | "ADVICE" | "LEVEL_ONLY" | "INJECTION" | "REGION";
+export const TOPIC_FLAGS: readonly TopicFlag[] = ["JURISDICTION", "BRAND", "ADVICE", "LEVEL_ONLY", "INJECTION", "REGION"];
+/** A topic's provenance class (§22.11): what it shows. Keeping changes only "in the plan", never the class. */
+export type TopicClass = "SYLLABUS" | "YOURS" | "LIBRARY" | "AIM" | "PICKED" | "LINKED" | "NOT_CHECKED" | "KEPT" | "KEPT_NOT_CHECKED";
+export const TOPIC_CLASSES: readonly TopicClass[] = ["SYLLABUS", "YOURS", "LIBRARY", "AIM", "PICKED", "LINKED", "NOT_CHECKED", "KEPT", "KEPT_NOT_CHECKED"];
+export type TopicNote =
+  | "NEAR_DUPLICATE"
+  | "UNSURE_LAYER"
+  | "NEEDS_PARENT"
+  | "DEAD_END"
+  | "DIFFERS_FROM_ORDER"
+  | "NOT_USED"
+  | "PICKED_BY_GEMINI"
+  | "PLACED_BY_GEMINI"
+  | "TRACKED_IN_GOAL"
+  | "PLANNED_LATER"
+  | "HELD_AT_START"
+  | "KNOWN_BY_YOU"
+  | "CROSS_GOAL_PARENT"
+  | "MERGED_BY_YOU"
+  | "ADDED_BY_DEEPER";
+export const TOPIC_NOTES: readonly TopicNote[] = [
+  "NEAR_DUPLICATE",
+  "UNSURE_LAYER",
+  "NEEDS_PARENT",
+  "DEAD_END",
+  "DIFFERS_FROM_ORDER",
+  "NOT_USED",
+  "PICKED_BY_GEMINI",
+  "PLACED_BY_GEMINI",
+  "TRACKED_IN_GOAL",
+  "PLANNED_LATER",
+  "HELD_AT_START",
+  "KNOWN_BY_YOU",
+  "CROSS_GOAL_PARENT",
+  "MERGED_BY_YOU",
+  "ADDED_BY_DEEPER",
+];
+/** Why a Gemini name was dropped: counted, never shown. */
+export type TopicDropReason = "SHAPE" | "FLAG" | "ECHO" | "ONE_SAMPLE" | "SAME_TOPIC_DEEPER" | "OVER_ROOM" | "TAKEN_NAME";
+export const TOPIC_DROP_REASONS: readonly TopicDropReason[] = ["SHAPE", "FLAG", "ECHO", "ONE_SAMPLE", "SAME_TOPIC_DEEPER", "OVER_ROOM", "TAKEN_NAME"];
+/** Why a Gemini name is hidden behind the count (revealable). */
+export type TopicHideReason = "UNSURE_LAYER" | "LANGUAGE_UNCHECKED" | "REGION" | "NEAR_DUPLICATE" | "WEAK" | "NONE" | "NOT_RUN" | "GROUND_FAILED";
+export const TOPIC_HIDE_REASONS: readonly TopicHideReason[] = ["UNSURE_LAYER", "LANGUAGE_UNCHECKED", "REGION", "NEAR_DUPLICATE", "WEAK", "NONE", "NOT_RUN", "GROUND_FAILED"];
+/** The map's rules (chainChecksOf; §22.8's table). */
+export type ChainCheckCode = "C1" | "C2" | "C3" | "C4" | "C5" | "C6" | "C7" | "C8" | "C9" | "C10";
+export const CHAIN_CHECK_CODES: readonly ChainCheckCode[] = ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10"];
+export type ChainEffect = "REFUSED" | "TRIPWIRE" | "BLOCKS" | "DROPPED" | "FALLBACK" | "INFO" | "FLAG" | "MARK" | "MERGED";
+/** chainFitOf's offers, in this order. */
+export type ChainOffer = "USE_REALISTIC_DATE" | "MORE_HOURS" | "PAUSE_GOAL" | "LOWER_DEPTH" | "FEWER_LAYERS" | "PLAN_FIRST_LAYERS";
+export const CHAIN_OFFERS: readonly ChainOffer[] = ["USE_REALISTIC_DATE", "MORE_HOURS", "PAUSE_GOAL", "LOWER_DEPTH", "FEWER_LAYERS", "PLAN_FIRST_LAYERS"];
+/** An empty layer's sheet, in this order (MERGE_UP left out on layer 1, SHOW_HIDDEN with nothing hidden). */
+export type EmptyLayerOffer = "MERGE_UP" | "WRITE_ONE" | "SHOW_HIDDEN";
+export const EMPTY_LAYER_OFFERS: readonly EmptyLayerOffer[] = ["MERGE_UP", "WRITE_ONE", "SHOW_HIDDEN"];
+/** The two allowed classes of model text (ruling 4; PROVENANCE_CLASSES is not widened): the H1 closure and the tripwire read them. */
+export type ModelTextClass = "TOPIC_NAME_LINKED" | "TOPIC_NAME_KEPT";
+export const MODEL_TEXT_CLASSES: readonly ModelTextClass[] = ["TOPIC_NAME_LINKED", "TOPIC_NAME_KEPT"];
+/** Domain.nameOrigin: "GEMINI" for a Domain accept created from a kept Gemini name; null: yours. */
+export type DomainNameOrigin = "GEMINI";
+/** Start's refusal while a layer's prerequisites are open (lane 8's PREREQS_MET guard). */
+export const PREREQS_OPEN = "This layer opens when the one before is reached. Or mark what you already know.";
+
+/**
+ * A cross-goal parent's edge row (origin CROSS_GOAL) stores parentLineageId
+ * "x:<parentDomainId>" (ruling 48): the edge's unique key (roadmapId,
+ * version, parentLineageId, childLineageId) then holds one row per parent
+ * Domain, so a child that builds on two other goals' Domains inserts both.
+ */
+export const CROSS_GOAL_PARENT_PREFIX = "x:";
+
+// The topic map's refusals (ruling 52). They live here, in the hostile V, so
+// the pure modules never hold copy: acceptRefusalOf returns a code, and
+// roadmap-server (and the view's acceptRefusal) map it through ACCEPT_REFUSAL_LINE.
+export const TOPIC_NAME_TAKEN = "A Domain with this name exists here. Use my Domain… instead.";
+export const LAYER_UNKEPT = "Keep every layer first.";
+export const TOPIC_NEEDS_PARENT = "A topic needs a parent: pick one, or remove it.";
+export const LAST_LAYER_EMPTY = "Choose at least one topic in the last layer.";
+export const LAYER_OVER = `A layer holds at most ${LAYER_TOPICS_MAX} topics: move or untick some.`;
+export const TOPICS_OVER = `Choose at most ${TOPICS_MAX} topics.`;
+/** ratingOverrideOf's and setLayersCore's refusal. */
+export const LAYERS_BOUNDS = `Choose ${LAYERS_MIN} to ${LAYERS_MAX} layers.`;
+/** acceptRefusalOf's answer, in the order it checks them (§22.8). */
+export type AcceptRefusalCode = "LAYER_UNKEPT" | "TOPIC_NEEDS_PARENT" | "LAST_LAYER_EMPTY" | "LAYER_OVER" | "TOPICS_OVER" | "TOPIC_NAME_TAKEN";
+export const ACCEPT_REFUSAL_CODES: readonly AcceptRefusalCode[] = ["LAYER_UNKEPT", "TOPIC_NEEDS_PARENT", "LAST_LAYER_EMPTY", "LAYER_OVER", "TOPICS_OVER", "TOPIC_NAME_TAKEN"];
+export const ACCEPT_REFUSAL_LINE: Readonly<Record<AcceptRefusalCode, string>> = {
+  LAYER_UNKEPT,
+  TOPIC_NEEDS_PARENT,
+  LAST_LAYER_EMPTY,
+  LAYER_OVER,
+  TOPICS_OVER,
+  TOPIC_NAME_TAKEN,
+};
+
+/**
+ * A TOPICS plan's rank at gate i of G (§22.12): 1 + ⌊(i − 1)(top − 1) ÷
+ * (G − 1)⌋, so the first gate gives rank 1 and only the last gives `top`.
+ * G = 1 gives top. i is clamped to 1..G and top to 1..RANK_TOP. G 5, top 4
+ * → 1, 1, 2, 3, 4.
+ */
+export function topicRankIndexOf(i: number, gates: number, top: number): number {
+  const g = Number.isFinite(gates) ? Math.max(1, Math.floor(gates)) : 1;
+  const t = Number.isFinite(top) ? Math.max(1, Math.min(RANK_TOP, Math.floor(top))) : 1;
+  if (g === 1) return t;
+  const k = Number.isFinite(i) ? Math.max(1, Math.min(g, Math.floor(i))) : 1;
+  return 1 + Math.floor(((k - 1) * (t - 1)) / (g - 1));
+}
+
+// ── Goals (§23) ──
+
+/** The statuses that hold a seat. */
+export const SEAT_STATUSES: readonly RoadmapStatus[] = ["DRAFT", "ACTIVE"];
+/** The statuses that hold their Domains, AVOIDs and cue texts. */
+export const HOLD_STATUSES: readonly RoadmapStatus[] = ["DRAFT", "ACTIVE", "PAUSED"];
+/** Roadmap.slot: a goal's seat. */
+export type GoalSlot = 1 | 2 | 3;
+export const GOAL_SLOTS: readonly GoalSlot[] = [1, 2, 3];
+
+export function isGoalSlot(v: unknown): v is GoalSlot {
+  return v === 1 || v === 2 || v === 3;
+}
+
+/** Roadmap.label, at most (yours). */
+export const GOAL_LABEL_MAX = 16;
+/** Roadmap.pauseReason, at most. */
+export const GOAL_PAUSE_REASON_MAX = 120;
+/** The refusal with every seat taken; answered only while GOALS_MAX is 3 (ruling 23: at 1 it is ANOTHER_ACTIVE, as today). */
+export const GOALS_FULL = `${GOAL_SLOTS_MAX} goals open. Finish, pause or archive one.`;
+
+// ── The shapes (§22.3). Serialisable: ISO strings and DayKeys, no Date, no function. ──
+
+// The rating (Roadmap.rating, copied to the acceptance).
+export interface RateVote {
+  difficulty: DiffKey;
+  breadth: BreadthKey;
+  reasons: RatingReason[];
+  dropped: RatingReason[];
+}
+export interface LayerChange {
+  kind: LayerChangeKind;
+  from: number;
+  to: number;
+  day: DayKey;
+}
+export interface RatingRecord {
+  /** The estimate the plan uses: consensus, code's or yours. */
+  difficulty: DiffKey;
+  breadth: BreadthKey;
+  /** Kept depth and breadth reasons (≤ RATING_REASONS_KEPT_MAX), then every caution reason any valid reply gave. */
+  reasons: RatingReason[];
+  /** Code's word lists ∪ any valid reply's caution reason (never removed). */
+  cautions: Caution[];
+  /** One per sample; null = no valid reply. */
+  samples: (RateVote | null)[];
+  /** max − min layers over the valid difficulty votes (0 with fewer than 2). */
+  spread: number;
+  origin: RatingOrigin;
+  /** Gemini's consensus before your override and the map's fill. */
+  geminiDifficulty: DiffKey | null;
+  /** K_final once MAP ran. */
+  mapFilled: number | null;
+  /** The RATE run. */
+  runId: string | null;
+  day: DayKey;
+  geminiBreadth: BreadthKey | null;
+  breadthSpread: number;
+  /** «Gemini unsure · low–high layers». */
+  unsure: { low: number; high: number } | null;
+  /** "1 reply said 5 layers" (exactly 1 valid reply). */
+  oneReply: DiffKey | null;
+  /** Reasons dropped by REASON_COHERENCE, for the run's report. */
+  incoherent: number;
+  /** K in the plan now (after the map's fill and your changes). */
+  layers: number;
+  /** "· 4 by you", "· 1 merged by you", "· +1 layer by you", "your choice 6 Oct". */
+  changes: LayerChange[];
+  /** roadmap-rating ratingKeyOf: reused until it changes. */
+  inputKey: string;
+}
+
+// The aim's clauses (clauseSplitOf) and the split-off ones (Roadmap.splitClauses).
+/** text === aim.slice(start, end). */
+export interface AimClause {
+  text: string;
+  start: number;
+  end: number;
+}
+export interface SplitClause {
+  start: number;
+  end: number;
+  text: string;
+  roadmapId: string | null;
+  day: DayKey;
+}
+
+// Topics and edges (RoadmapTopic, RoadmapTopicEdge rows).
+/** From groundingChunks.web only; ≤ GROUND_SOURCES_SHOWN. */
+export interface TopicSource {
+  title: string;
+  uri: string;
+}
+export interface TopicDraft {
+  id: string | null;
+  lineageId: string;
+  /** S<n> (outline line n, 1-based), U<n> (intake Domain n), T<n> (every other topic). */
+  key: string;
+  /** 1..LAYERS_MAX. */
+  layer: number;
+  /** What is shown: the exact sample form, the aim's span, your words, or the Domain's name. */
+  name: string;
+  /** Server only, ≤ RAW_LABEL_MAX; never in a view. */
+  rawName: string | null;
+  nameOrigin: TopicOrigin;
+  scope: TopicScope | null;
+  placedBy: TopicPlacedBy;
+  grounding: TopicGrounding;
+  sources: TopicSource[];
+  /** Samples holding the exact form (or the AIM span), 0..TOPIC_SAMPLES. */
+  formVotes: number;
+  /** Valid samples of the phase. */
+  samples: number;
+  /** Each voting sample's layer. */
+  layerVotes: number[];
+  decision: TopicDecision;
+  /** Lineage id (MERGED). */
+  mergedInto: string | null;
+  chosen: boolean;
+  /** DEEP = chosen in the last layer (the specialisation). */
+  role: TopicRole;
+  domainId: string | null;
+  /** You bound it ([Use my Domain…], or a seed or pick you ticked). */
+  bound: boolean;
+  /** "Held when you began" (measured at accept). */
+  heldDay: DayKey | null;
+  /** "I know this". */
+  skippedDay: DayKey | null;
+  /** TopicFlag | BlockingFlag names that hid or dropped it. */
+  flags: string[];
+  notes: TopicNote[];
+}
+export interface EdgeDraft {
+  id: string | null;
+  /** For a cross-goal parent: CROSS_GOAL_PARENT_PREFIX + parentDomainId ("x:<id>"; the Domain is the parent; ruling 48). */
+  parentLineageId: string;
+  childLineageId: string;
+  /** Cross-goal only. */
+  parentDomainId: string | null;
+  /** Cross-goal only. */
+  parentRoadmapId: string | null;
+  origin: EdgeOrigin;
+  /** Valid LINK samples that chose it. */
+  votes: number;
+  /** Valid LINK samples for that child. */
+  samples: number;
+  /** A GEMINI edge counts as a parent only when drawn. */
+  drawn: boolean;
+  decision: EdgeDecision;
+  /** C8. */
+  match: EdgeMatch;
+}
+export interface TopicMap {
+  layers: number;
+  topics: TopicDraft[];
+  edges: EdgeDraft[];
+}
+export interface TopicRunReport {
+  dropped: Partial<Record<TopicDropReason, number>>;
+  /** By TopicFlag or BlockingFlag. */
+  droppedFlags: Partial<Record<string, number>>;
+  hidden: Partial<Record<TopicHideReason, number>>;
+  incoherentReasons: number;
+  /** C10. */
+  mergedSameDeeper: number;
+  /** NONE mixed with keys. */
+  linkVoids: number;
+  /** Links you kept or picked. */
+  linksConfirmed: number;
+}
+
+// The per-phase replies (as integrityOf reads them against the phase's schema).
+export interface MapNameItem {
+  name: string;
+  scope: TopicScope;
+}
+export interface RateReply {
+  difficulty: DiffKey;
+  breadth: BreadthKey;
+  reasons?: RatingReason[];
+}
+export interface MapReply {
+  place?: Record<string, LayerKey>;
+  names?: Partial<Record<LayerKey, MapNameItem[]>>;
+}
+/** Child key → previous-layer keys, or ["NONE"]. */
+export type LinkReply = Record<string, string[]>;
+export interface DeeperReply {
+  names: MapNameItem[];
+}
+
+// GROUND (RoadmapRun.grounding).
+export type GroundReason =
+  | "NO_METADATA"
+  | "NO_QUERIES"
+  | "NO_LINE"
+  | "DUPLICATE_LINE"
+  | "NOT_FOUND"
+  | "URL_IN_TEXT"
+  | "NO_SEARCH"
+  | "NO_SUPPORT"
+  | "TITLE_CHECK"
+  | "BAD_OFFSETS"
+  | "NOT_RUN"
+  | "TRUNCATED";
+export interface GroundKeyVerdict {
+  key: string;
+  verdict: GroundVerdict;
+  sources: TopicSource[];
+  counted: number;
+  reason: GroundReason | null;
+}
+export interface GroundRunRecord {
+  verdicts: Record<string, GroundKeyVerdict>;
+  /** webSearchQueries, server only. */
+  queries: string[];
+  /** Every web chunk's title and uri, server only. */
+  chunks: TopicSource[];
+  titleMode: GroundTitleMode;
+  titleCheck: "RAN" | "UNAVAILABLE";
+  toolUsePromptTokenCount: number;
+  /** A raw sample was cut at RAW_SAMPLE_MAX: never reused. */
+  truncated: boolean;
+}
+
+// The Gemini mark (Domain.nameOrigin, Domain.originName).
+export interface NamedPart {
+  text: string;
+  geminiNamed: boolean;
+}
+
+/** A Domain carries the Gemini mark: nameOrigin "GEMINI" and its name still the name Gemini gave (your rename removes the mark). */
+export function geminiNamedOf(d: { name: string; nameOrigin?: string | null; originName?: string | null }): boolean {
+  return d.nameOrigin === "GEMINI" && typeof d.originName === "string" && d.name === d.originName;
+}
+
+/**
+ * `text` split at each exact, case-sensitive occurrence of a geminiNamed
+ * name: left to right, the longest name matching at a position first, never
+ * overlapping. The parts join back to `text` exactly; neighbouring plain
+ * text is one part. With no geminiNamed name occurring: [{text, false}];
+ * "" → [].
+ */
+export function namedPartsOf(text: string, domains: readonly { name: string; geminiNamed: boolean }[]): NamedPart[] {
+  if (text === "") return [];
+  const names = [...new Set(domains.filter((d) => d.geminiNamed && d.name.length > 0).map((d) => d.name))].sort((a, b) => b.length - a.length);
+  const out: NamedPart[] = [];
+  let plain = "";
+  let i = 0;
+  while (i < text.length) {
+    const hit = names.find((n) => text.startsWith(n, i));
+    if (hit === undefined) {
+      plain += text[i];
+      i += 1;
+      continue;
+    }
+    if (plain) out.push({ text: plain, geminiNamed: false });
+    plain = "";
+    out.push({ text: hit, geminiNamed: true });
+    i += hit.length;
+  }
+  if (plain) out.push({ text: plain, geminiNamed: false });
+  return out;
+}
+
+// The actions' inputs (§22.14, §23.4).
+/** createKey: a client nonce, [A-Za-z0-9_-]{8,64}. */
+export type SaveTarget = { roadmapId: string } | { createKey: string };
+export interface PauseChoices {
+  aftercare: "KEEP" | "ARCHIVE";
+  reason: string | null;
+}
+/** "Move the date by 23 days?" */
+export interface ResumeChoices {
+  redate: boolean;
+}
+export type LayerSetChange = { kind: "SET" | "FEWER" | "PLAN_FIRST"; layers: number };
+export type TopicEdit = { kind: "RENAME"; name: string } | { kind: "MERGE"; into: string } | { kind: "REMOVE" };
+export type ParentPick = { kind: "LINKS"; keys: string[]; crossGoal: { roadmapId: string; domainId: string }[] } | { kind: "LAYER" };
+export interface AcceptTopicChoices {
+  /** "Creates 9 Domains in Business & Finance": must equal the server's count. */
+  create: number;
+  /** The Gemini names the confirm listed, by name: must equal the server's set. */
+  geminiNamed: string[];
+  /** [Accept all]: what its list showed; null when every layer is kept. */
+  keepAll: { names: string[]; links: number } | null;
+  /**
+   * A TOPICS accept over a live LEVELS milestone (question 8, ruling 49): the
+   * milestone closes there, and its practices are kept on Today or archived,
+   * through the aftercare path. Null when no milestone is live; acceptCore
+   * refuses RACED when one is live and this is null.
+   */
+  aftercare: "KEEP" | "ARCHIVE" | null;
+}
+
+// A re-plan draft of another kind, and what an accept replaced (ruling 49; migration B's columns).
+/**
+ * Roadmap.draftPlan: the open re-plan draft's kind, depth and rating while
+ * they differ from the live version's (a [Break into topics] draft of a
+ * LEVELS plan). The live version's own planKind, depth and rating stay on
+ * the row's columns, which change only inside acceptCore's transaction (and
+ * undoAcceptCore's); every reader of the live plan reads the columns, never
+ * this. Null with no such draft.
+ */
+export interface DraftPlan {
+  /** The draft group's version (the live version + 1). */
+  version: number;
+  planKind: PlanKind;
+  depth: TopicDepth | null;
+  rating: RatingRecord | null;
+}
+/** RoadmapAcceptance.previousPlan: the kind, depth, rating and Domains an accept of another kind replaced; undoAcceptCore restores them. */
+export interface PreviousPlan {
+  planKind: PlanKind;
+  depth: number | null;
+  rating: RatingRecord | null;
+  domainIds: string[];
+}
+
+// The views (lane 8 builds them, lane 9 renders them).
+export interface RatingView {
+  layers: number;
+  origin: RatingOrigin;
+  geminiLayers: number | null;
+  mapFilled: number | null;
+  unsure: { low: number; high: number } | null;
+  oneReply: number | null;
+  replies: (number | null)[];
+  breadth: BreadthKey;
+  room: { min: number; max: number };
+  reasons: RatingReason[];
+  cautions: Caution[];
+  changes: LayerChange[];
+  tail: number;
+  appEstimate: number;
+}
+export interface TopicRowView {
+  key: string;
+  lineageId: string;
+  name: string;
+  cls: TopicClass;
+  layer: number;
+  chosen: boolean;
+  canChoose: boolean;
+  role: TopicRole;
+  level: number | null;
+  /** crossGoal: another goal's Domain (slot null for a PAUSED goal, ruling 55); geminiNamed renders pv.named. */
+  parents: { kind: "LINKS"; keys: string[]; crossGoal: { slot: GoalSlot | null; name: string; geminiNamed: boolean }[] } | { kind: "LAYER"; layer: number };
+  children: string[];
+  votes: { form: number; samples: number } | null;
+  sources: TopicSource[];
+  placed: "GEMINI" | "YOU" | "CODE";
+  held: boolean;
+  skipped: boolean;
+  notes: TopicNote[];
+  domain: { id: string; name: string; geminiNamed: boolean } | null;
+}
+export interface TopicLayerView {
+  layer: number;
+  state: "OPEN" | "AFTER" | "HELD" | "DONE";
+  kept: boolean;
+  topics: TopicRowView[];
+  unchosen: number;
+  hidden: number;
+  geminiNames: boolean;
+  emptyOffers: EmptyLayerOffer[] | null;
+  needsParent: number;
+}
+export interface TopicMapView {
+  roadmapId: string;
+  version: number;
+  rating: RatingView;
+  layers: TopicLayerView[];
+  hidden: number;
+  cautions: Caution[];
+  acceptRefusal: string | null;
+  requestsLeft: { requests: number; grounded: number };
+  /** Your free Domains of the Area, unticked; geminiNamed renders pv.named (a Domain kept from an earlier goal). */
+  layerOneSeeds: { id: string; name: string; geminiNamed: boolean }[];
+  lastLayerSeeds: AimClause[];
+}
+export interface ChainFit {
+  verdict: DateVerdict;
+  minDays: number;
+  layerMin: number[];
+  tailMin: number[];
+  endDay: DayKey | null;
+  offers: ChainOffer[];
+  basis: string;
+  pastSpan: boolean;
+  examMidChain: boolean;
+}
+
+// Goals (§23).
+export interface GoalSeatView {
+  slot: GoalSlot;
+  roadmapId: string | null;
+  status: RoadmapStatus | null;
+  label: string | null;
+  areaName: string | null;
+  hoursPerWeek: number | null;
+}
+export interface IntakeDraftView {
+  roadmapId: string;
+  slot: GoalSlot | null;
+  intake: Intake;
+  savedDay: DayKey;
+  askHours: boolean;
+}
+export interface GoalPillView {
+  roadmapId: string;
+  slot: GoalSlot;
+  label: string;
+  labelIsYours: boolean;
+  status: RoadmapStatus;
+  rankIndex: number | null;
+  proficiency: number | null;
+  current: boolean;
+}
+export interface GoalSwitcherView {
+  pills: GoalPillView[];
+  /** A free seat under the effective cap: open goals < GOALS_MAX (never the fixed 3; ruling 53). */
+  canAdd: boolean;
+  other: { count: number; roadmapIds: string[] };
+}
+export interface GoalVerdictChange {
+  roadmapId: string;
+  slot: GoalSlot | null;
+  label: string;
+  from: DateVerdict | null;
+  to: DateVerdict;
+}
+export interface GoalCueTexts {
+  roadmapId: string;
+  slot: GoalSlot | null;
+  texts: CueTexts;
+}
+export interface GoalAvoids {
+  roadmapId: string;
+  slot: GoalSlot | null;
+  status: RoadmapStatus;
+  track: CatalogTrack;
+  kinds: Partial<Record<CatalogKey, ActivityConfirmEntry>>;
 }

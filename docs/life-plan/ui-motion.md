@@ -2,6 +2,8 @@
 
 Status: build spec, design only (2026-10-05), revision 2. Nothing in it is built yet. Revision 2 applies two critiques (accessibility and performance; honesty of the word cut). §14 lists every finding and what was done with it, and the two decisions left to the user.
 
+Addition (2026-10-06): §15, the topic map and goals, is the UI half of roadmap revision 5 (docs/life-plan/roadmap-topic-map.md; roadmap-contracts.md §22, §23). Lane 0 of revision 5 wrote it. §1–§14 are unchanged by it.
+
 It merges three designs:
 - **A, "show, don't tell"**: copy budgets, motion licences, the InfoTip.
 - **B, an animated glyph language**: the glyph catalogue, idle / active / done shapes, motion tokens, seen-once events.
@@ -2065,3 +2067,451 @@ Two critiques reviewed revision 1: **C1**, accessibility and performance (24 fin
 - **U2. What a dashed line means** (D29, a house rule, so sign-off). Options:
   - (a) keep the house meaning (dashed = calibrating or not yet counted) and let "not checked" be the balloon shapes (recommended: no other component changes);
   - (b) amend redesign.md so dashed means "not checked" everywhere, which forces new treatments for the calibrating PromiseRing, the DaySeal, "Not counted yet" and locked EmblemCoins.
+
+---
+
+## 15. Topic map and goals (roadmap revision 5)
+
+Status: design only (2026-10-06, roadmap revision 5, lane 0). Nothing here is built. It is the UI half of docs/life-plan/roadmap-topic-map.md ("UI at 344 px"), and it holds the marks of roadmap-contracts.md §22.11 and the goals UI of §23.7.
+- **Who builds it.** Lane 4 builds the goals UI (§15.7). Lane 9 builds the topic map UI (§15.4–§15.6) and the new glyphs. Both work on fixtures only, never on the user's own goal.
+- **What stays off.** Every switch is false: TOPIC_PLANS_LIVE, the five TOPIC_*_LIVE phase switches, and `GOALS_MAX` 1. So nothing in this section renders for a user until the lane named turns its switch on, on the user's go.
+- **What still holds.** Everything in §1–§14 holds unchanged: the grammar (§4.1), the licences (§5.2), H1–H17, D1–D31 and the counting method (§3.1). This section only adds.
+- **Names.** Topic, layer, builds on, specialisation, seat and share mean what the spec's Names table says. "The map card" is the topic map on a TOPICS draft or plan. The class names (LINKED, PICKED, KEPT …) are `TopicClass` (contracts §22.2, §22.11).
+
+### 15.0 Decisions (R5)
+
+"Sign-off" means the lead decides, because a shipped meaning or a spec line is read in a stated way.
+
+| ID | Decision | Why | Sign-off |
+|---|---|---|---|
+| D32 | The glyph for «Gemini picked your Domain · not checked» is **`pv.libpick`**, not the spec's `pv.pick`. | `pv.pick` is shipped: "Gemini's choice among the app's options" (HonestyKind `gemini-pick`). Contracts §22.1 ruling 1. | – (ruled) |
+| D33 | **`pv.named` is a glyph-only who-mark**, like the ProvMark glyphs. It sits after a Gemini-named Domain's name wherever that name renders, until the user renames it. Its words, "named by Gemini", are sr-only, and in the card Key where the card has one. The visible word "Gemini" for that name shows on the topic map and in the Domain's own sheet («Gemini · kept by you»). | A 12 px mark inside titles, quest rows and Today rows has no room for a chip. D13 already makes static row marks glyph plus sr plus Key. D25 covers chips, picks and lanes, and those keep their who-word. | decided (contracts ruling 68; the user may reverse it) |
+| D34 | **Line styles.** `pv.libpick` has a dashed balloon rim, because it is not checked (D29). `pv.web` has a solid rim, as the spec draws it, and so does `pv.named`: they claim no check, and their words say what they are. Layer and goal glyphs are never dashed. A locked layer is ink-mute with `m.builds`: never `m.lock`, never dashed, never struck (decision 76). | Dashed means calibrating or not yet counted; the balloon means not checked. A locked layer is neither. | – |
+| D35 | **Text never dims below ink-2.** Where the spec says "goes ink-mute" (trace, locked milestones), glyphs, rails, rings and checks go ink-mute. Names and words stay at ink-2 or darker. | ink-mute is a non-text token (≥ 3:1 in contrast-check). Text needs ≥ 4.5:1. | – |
+| D36 | **[Keep these] is a glyph-only button.** It is the 40 px GlyphButton with `pv.kept`, aria-label "Keep layer {k}". Its words ("Keep these: keeps this layer's names, placements and drawn links. Keeping never marks them checked.") are in the card Key. A tap plays `pv-confirm` in its swap form (§15.9). | It is the spec's "[Keep these] folded into the header glyph" (critique C2.18), and the layer's budget is 6 words. Decision 76: never "Looks right". H3: nothing draws a balloon. | – |
+| D37 | **One who-word chip per layer header; row marks are static.** A layer that holds Gemini names shows one HonestyChip in its header (§15.5 picks which). Each topic row carries only its 16 px class mark, read once through sr. The row's own chip, with its full words, sits in its TopicSheet. | The name box is 138 px at 344. A chip per row would need a 4th line, past the spec's 60 px cap. D13 is the house rule for repeated row marks. | decided (contracts ruling 68; the user may reverse it) |
+| D38 | **Delivery.** The `layer` family is inline (it animates `layer-open`). `pv.web` and `pv.libpick` are inline Gemini provenance glyphs. `pv.library` and `pv.named` are static ProvMark glyphs (the `provmark` defs family). `goal.*` is static, in a new defs family, `goal`. | D3: what animates is inline; what repeats down a page (seat glyphs on Today, the mark beside every kept name) is a `<symbol>` sent once. | – |
+| D39 | **One goal stays byte-identical.** Seat glyphs, per-goal "n more" rows and the goal labels render only while 2 or more goals are open. The switcher never renders at `GOALS_MAX` 1. At 3 it renders with 2 or more open goals, or with one open goal and a free seat ("1 pill and +", so a second goal can be added from the roadmap page; contracts ruling 63). | Spec: "1 goal is byte-identical" (Today rows, the aim line, the Aim card). | – |
+| D40 | **The estimate never moves as a value.** The 6 pips never fill, draw or count up. A re-rate changes the chip only by `estimate-swap`, a CHANGED crossfade. | H3: Gemini-sourced and estimated figures change by crossfade only. | – |
+| D41 | **One horizon air per page with several Aim cards.** On /you with 2 or 3 Aim cards, only the lowest-seat ACTIVE card's band may run the AMBIENT air. The others are SVG. | D17: at most one live context per document. D16: one 5 s budget per session. | – |
+
+### 15.1 New glyphs (drawn to §4.1; pinned by glyph-check once drawn)
+
+Path data is given where this section fixes it. Everything else is drawn to the grammar. Each glyph's words go into `GLYPH_MEANS` (paths/means.ts) exactly as the "Means" column reads.
+
+| Glyph | Means (GLYPH_MEANS) | Shape | States | Delivery |
+|---|---|---|---|---|
+| `layer.1` … `layer.6` | "Layer k of the topic map" | A funnel of 6 stacked bars narrowing downward, bar k filled (below) | idle, active and done as the cairn (below) | inline; `paths/layer.ts`, family `layer` |
+| `pv.web` | "Gemini's name · Google linked sources to it" | A solid-rim balloon (the `BALLOON` path) with a meridian globe inside | idle ink-2; active ink-0 + here-ring when standing alone; done ink-0 at 1.75 | inline; provenance.ts (a Gemini glyph) |
+| `pv.library` | "Your Domain" | Two book spines on a shelf line | static (ProvMark) | static, `provmark` |
+| `pv.libpick` | "Gemini picked one of your Domains · not checked" | The two spines inside a dashed balloon rim (`BALLOON`, `BALLOON_DASH`) | as pv.suggest | inline; provenance.ts (a Gemini glyph) |
+| `pv.named` | "named by Gemini" | The `BALLOON` rim alone, solid, drawn at 12 px (stroke 2) | static (ProvMark) | static, `provmark` |
+| `goal.1` … `goal.3` | "Goal k" (seat k) | Three small rounded seats in a row, seat k filled | idle, active, done (below) | static; `paths/goal.ts`, family `goal` |
+| `goal.paused` | "A paused goal" | The three seats hollow, with a short rest line under them | idle, active, done (below) | static; `paths/goal.ts` |
+
+**Layer** (`paths/layer.ts`):
+- **The bars.** Centres at y = 3.5, 6.9, 10.3, 13.7, 17.1 and 20.5. Half-widths are 9, 7.6, 6.2, 4.8, 3.4 and 2, centred on x 12, so layer 1 at the top is the widest.
+  - The five bars other than k are single strokes with round caps: one `rim` path of five subpaths (`M3 3.5h18M4.4 6.9h15.2…`, bar k left out).
+  - Bar k is a capsule 2.6 units high over its bar's width. Its outline is the `mark` path and its fill the `solid` path, in every state, so "which layer" never depends on state.
+- **States**, as the cairn:
+  - **idle** (a future layer, "after k", or held): ink-2 at 1.5; ink-mute when locked (non-text, ≥ 3:1).
+  - **active** (the open layer: the layer header's glyph and the RouteRail's current node): ink-0, the bars at .8 inside the static here-ring (`HERE_RING`, stroke 1.25). This is the cairn's active cue, used here too, beside words as well as alone.
+  - **done** (the layer's milestone reached, counted): ink-0 at 1.75, plus the 12 px check badge top-right.
+- **Parts:** at most 4 (rim, mark, solid, ring or badge).
+- **Distinct** from `intensity.*` (vertical bars), `ev.counted` (a vertical tally) and `m.queue`. glyph-check asserts that layer.1…layer.6 are pairwise distinct and that bar k's `solid` is present in every state.
+- **Sizes:** 16 in layer headers and the Aim card strip; 24–28 on RouteRail nodes.
+
+**Provenance additions** (provenance.ts; `GEMINI_PV_NAMES` gains `pv.web` and `pv.libpick`, and `PROVMARK_NAMES` gains `pv.library` and `pv.named`):
+- **`pv.web`.** The rim is `BALLOON`, solid. The `mark` is one path of three subpaths: a circle r 3.4 at (12, 11), a meridian ellipse (rx 1.5, ry 3.4) and an equator `M8.6 11h6.8`.
+  - It renders only where its words are reachable on the same card: the layer chip «Gemini · Google linked n sources» in the header, and the same chip in the row's TopicSheet.
+  - It is never alone, and never on a Domain after accept: a kept name's mark is `pv.kept` on the map and `pv.named` everywhere else.
+- **`pv.library`.**
+  - The `rim` is two upright spines: `M6 5.5h3.6v13H6zM11 7.5h3.6v11H11z`, of two heights so they read as books, not as a pause.
+  - The `mark` is the shelf `M4 20h16`.
+  - It is distinct from `s-know` and `quest.bring` (both are open books).
+- **`pv.libpick`.**
+  - The `rim` is `BALLOON` with `BALLOON_DASH`.
+  - The `mark` is two small spines inside it: `M9 8.5h2.2v5.5H9zM12.6 8.5h2.2v5.5h-2.2z`.
+  - It is distinct from `pv.pick` (three option dots with a small balloon) and from `pv.suggest` (an empty balloon).
+- **`pv.named`.**
+  - The `rim` is `BALLOON`, solid, with no inner mark.
+  - It is drawn only at 12 px, at stroke 2, after the name, inside the name's own `data-wc="name"` span, and aria-hidden. One sr-only "named by Gemini" follows it, read once per occurrence.
+  - It is distinct from `pv.integrity` (the same rim with a check) and from `pv.suggest` (dashed).
+  - Every route that can render a kept Gemini name emits the `provmark` defs: the roadmap pages, /you, /today and the library.
+
+**Goal** (`paths/goal.ts`; the static `goal` defs family, ids `gd-{route}-goal.k-{state}`):
+- **The seats.** Three rounded squares, 5 × 5 with rx 1.2, centred at x 5.5, 12 and 18.5 on y 11.5.
+  - **goal.k:** the two other seats and seat k's outline are the `rim` (three subpaths). Seat k's fill is the `solid`.
+  - **goal.paused:** all three seats are hollow (`rim`), with a rest line `M8 17.5h8` (`mark`). It is distinct from `m.pause` (two vertical bars, the WAIT pause button only) and from the kit HeldGlyph rest.
+- **States:**
+  - **idle** (another goal): ink-2.
+  - **active** (the goal on screen): ink-0, plus a short under-bar beneath seat k (`M{cx−2} 17h4`, `mark`), the family's "current" cue. For `goal.paused`: the glyph at .8 inside the here-ring.
+  - **done** (a DONE goal, in "Other goals"): ink-0 plus the check badge. `goal.paused` in done is drawn only in the gallery: a paused goal is never done.
+- **Sizes:** 12 beside Today rows, the Today goal chip and pill labels; 16 in Aim card headers; 28 on the GoalsFullCard.
+- **Default label.** `defaultGoalLabelOf` is the Area name; the seat glyph sits beside it, as a glyph, never as text.
+
+### 15.2 Reused glyphs (no new meaning)
+
+- `m.builds`: "builds on" (a topic's parents, and locked layer milestones).
+- `t.hourglass`: depth milestones, «set by reviews».
+- `m.quote`: your aim's own words (AIM spans and the last-layer clause seeds).
+- `pv.syllabus`, `pv.you`, `pv.suggest`, `pv.kept`.
+- RankSeal (the switcher's pills); the cairn (a topic's level); `i-plus` (the "+" seat and [Write a topic]); `i-flag` ("needs a parent").
+- `pv.checked` keeps its rev-4 meaning: it is never drawn on Gemini output (contracts §22.11).
+
+### 15.3 New HonestyChip kinds (contracts §22.11; lane 9)
+
+Every kind keeps a visible word. A kind whose name starts "gemini", "estimate-gemini" or "estimate-unsure" contains "Gemini" (HonestyChip's development throw). All six go into `GEMINI_KINDS`.
+- Lane 9 writes the full strings in roadmap-copy. Where the spec gives the words, they are quoted. Otherwise the column says what the string must carry.
+- "Button" follows D37: the chip is a button in a layer header, a card heading or a sheet. As a row mark it is static.
+
+| Kind | Glyph | Visible label | Full string | Button? |
+|---|---|---|---|---|
+| `gemini-linked` | pv.web | Gemini · Google linked {n} sources ({n} from the row's `sources`; a layer chip shows the layer's smallest n) | "Google linked pages to Gemini's description of this term. It doesn't show the pages use the term, or that it fits you." Then the sources, "<title> (from Google)" (§15.5) | yes (header, sheet) |
+| `gemini-placed` | pv.suggest | Gemini placed it · not checked | carries: Gemini chose the layer of your line or Domain; keeping the layer makes the placement yours | yes (header, sheet) |
+| `gemini-picked-domain` | pv.libpick | Gemini picked your Domain · not checked | carries: Gemini's name matched one of your Domains exactly; it stays out of the plan until you tick it | yes (header, sheet) |
+| `gemini-kept-by-you` | pv.kept | Gemini · kept by you | carries: Gemini named it, you kept it, and keeping never marks it checked; Google's sources stay in its sheet | yes (header, sheet) |
+| `estimate-gemini` | pv.suggest | {K} layers · Gemini's estimate (question 18's order; contracts ruling 63) | the EstimateChip panel (§15.4) | yes |
+| `estimate-unsure` | pv.suggest | Gemini unsure · {low}–{high} layers | the EstimateChip panel, with the one-tap pick | yes |
+| `estimate-app` | pv.app | App's rough estimate · no Gemini | the EstimateChip panel: code's rule (3 for a Field, +1 at 20 outline lines), advice only | yes |
+| `caution-financial` | m.info | Not financial advice | carries: the plan names study topics, not choices about your money; ask a qualified adviser | yes |
+| `caution-medical` | safe.health | Not medical advice | carries: as above, for health; ask a professional | yes |
+| `caution-legal` | m.info | Not legal advice | carries: as above, for law; ask a qualified adviser | yes |
+
+- **The existing kinds** are reused unchanged: `gemini` («Gemini · not checked», for NOT_CHECKED names and the hidden fold) and `gemini-kept` («Gemini · kept · not checked», for KEPT_NOT_CHECKED).
+- **The caution chips are static at every level** (D11: safety surfaces): `tip-open` is instant, and the card or sheet carries `data-fx="none"`.
+- **A card never shows two medical chips.** A body or care card keeps `health` («Not medical advice · ask a professional»), and `caution-medical` is not added beside it (D12, one per card).
+- **Banned on Gemini output** (roadmap-ui-check): "verified", "found on the web", "found", "exists", "prerequisite", "required" and "You checked this". The copy says "builds on" and "opens after".
+
+### 15.4 The estimate chip (EstimateChip.tsx; lane 9)
+
+It renders `RatingView` (contracts §22.3), wherever the layer count shows: the map card's heading, the chain's heading and the draft's Depth and date card.
+- **The chip.** A HonestyChip button: `estimate-gemini`, `estimate-unsure` (when `unsure`) or `estimate-app` (origin CODE).
+  - When the plan's layers are yours (`changes` holds a SET or FEWER), a "[pv.you] {K} layers · yours" figure comes first, and the Gemini chip stays beside it with Gemini's own number. The who-word never goes away.
+  - When `mapFilled` < `geminiLayers`, the static honesty words "· its map filled {n}" follow the chip (`data-wc="honest"`).
+- **The pips.** 6 pips follow the chip: K solid, the rest hollow; for `unsure`, a bracket under pips low…high.
+  - The pips are aria-hidden, with the spoken twin "4 layers of 6" (or "3 to 5 layers of 6").
+  - They are HTML, 12 px, never an SVG with text.
+- **Its panel (the (i)),** in this order:
+  1. "Gemini's difficulty estimate: how many build-on layers lie between a newcomer and this aim" (decision 76: "difficulty" appears only here);
+  2. the reason labels (`RATING_REASON_LABEL`), and "3 replies: 4, 4, 5" (`replies`; "no reply" for a null);
+  3. the breadth word and its room ("Wide · 3–5 topics a layer"; `BREADTH_WORD`, `room`);
+  4. "its map filled 4";
+  5. each change with its day ("4 by you · 6 Oct", "1 merged by you", "+1 layer by you");
+  6. for `oneReply`, "1 reply said 5 layers" as a one-tap choice; for `unsure`, the low…high choices, the preselected one pressed;
+  7. [Change…] (setLayers; bounds 1–6).
+
+  The words "Difficulty", "hard" and "level" never appear on the chip.
+- **The no-Gemini path.** It shows `estimate-app` with "≈ {appEstimate} layers" (a GlyphStat with `estimate`), then "· your map fills {n}". The estimate is advice only.
+- **Motion.** `estimate-swap` (CHANGED) when the stored layers or origin differ from what this viewer last saw. Nothing else moves (D40).
+- **At 344 and above:** chip, pips and the static words on one row when they fit the 278 px box, otherwise two rows (row gap ≥ 16 px, D31).
+
+### 15.5 The map card (TopicMap.tsx, LayerBand.tsx, TopicMapRow.tsx, TopicSheet.tsx, SourcesSheet.tsx, ParentsSheet.tsx; lane 9)
+
+It renders `TopicMapView` on a TOPICS draft (`DraftView.topicMap`) and plan (`RoadmapView.topicMap`).
+- **Quarantine.** A DRAFT's milestone titles read "Layer {k} of {n}" (the CodeText template, contracts §22.1 ruling 22). Gemini names appear only inside the map card's rows and sheets until accept (contracts §22.11, TOPIC_NAME_LINKED).
+
+**344, top to bottom:**
+1. **The heading.** The EstimateChip (§15.4), the caution chips (one per `cautions` entry) and the card Key (i). The heading has no app words of its own.
+2. **The layers,** stacked from broad (layer 1) to deep (layer K). Each is a LayerBand:
+   - **The header's first row is 44 px:**
+     - `layer.k` (16; active on the open layer, done when reached, ink-mute when locked);
+     - "Layer {k}";
+     - the state word: "open", "after {k−1}", "held" or "done" (`TopicLayerView.state`);
+     - the figure (the layer's chosen count);
+     - flush right, the 40 px keep button (D36). Once the layer is kept, the button becomes a static `pv.kept` mark in ink-0, with sr "Layer {k} kept".
+   - **The header's second row,** only when `geminiNames`, holds the one who-word chip (D37). It is a 24 px visual in a 40 px box, so a header with names is 84 px. The chip is the first that applies, in this order:
+     1. `gemini-linked` (while a LINKED row is unkept);
+     2. `gemini-picked-domain`;
+     3. `gemini-placed`;
+     4. `gemini-kept-by-you`;
+     5. `gemini-kept`.
+
+     The card Key lists every class mark the card uses, with its words.
+   - **"needs a parent".** When `needsParent` > 0, the header's second row also shows "[i-flag] {n} need a parent". It is visible, because it blocks the keep.
+   - **The rows** (TopicMapRow; at least 44 px, growing to 3 lines and at most 60 px):
+     - the class mark (16 px: pv.syllabus, pv.you, pv.library, m.quote, pv.libpick, pv.web, pv.kept or pv.suggest, per contracts §22.11's class table);
+     - the name, `data-wc="name"` (or `"own"` for SYLLABUS, YOURS and AIM);
+     - a 16 px cairn of the stage its Domain holds now, measured and in done state. It is empty before a Domain exists or below level 4. A topic held when you began shows its cairn done, with sr "Held when you began". A topic you skipped shows `pv.you` in the cairn slot, with sr "You said you know this". Neither is struck.
+     - from layer 2 on, and on layer-1 rows that start unchosen (seeds, PICKED names, revealed NOT_CHECKED names; contracts ruling 62), the 44 px "in plan" checkbox (`chosen`; disabled when `canChoose` is false). Its accessible name is "In the plan: {name}". Ticking a topic ticks its parents (the closure that `chooseTopicCore` returns);
+     - the 40 px ▸ button, aria-label "More about {name}", which opens TopicSheet.
+
+     A topic row holds no app word: its name is exempt and its marks are glyphs.
+   - **The folds,** after the rows:
+     - unchosen topics fold into one "+{n}" row (a glyph and a figure, never struck), sr "{n} more topics, not in the plan";
+     - hidden Gemini names fold into one row: [pv.suggest] "{n}" with the `gemini` chip «Gemini · not checked», sr "{n} not checked". A tap reveals them as NOT_CHECKED rows.
+   - **An empty layer** (`emptyOffers` set) shows the state word "empty" and a ▸ that opens the empty-layer sheet: [Merge with the layer above], [Write one], [Show the not-checked ones], in that order. A merge then reads "1 merged by you" in the EstimateChip's static words, and the dropped links show as a count.
+   - **[Write a topic].** In any layer on a draft, a 40 px [i-plus] GlyphButton at the header's right, aria-label "Write a topic in layer {k}", opens the add-topic sheet.
+3. **The foot.** [Accept all] (2 app words). Its confirm sheet lists, layer by layer and by name, every Gemini name and every not-checked link it would keep (`AcceptTopicChoices.keepAll`).
+   - `acceptRefusal` and Accept plan stay in the draft footer (§7.3), not on this card.
+   - The Domain confirm ("Creates 9 Domains in Business & Finance", listing the Gemini names by name) is the accept sheet's.
+
+**Row arithmetic at 344.** The content box is 278 px, with 8 px gaps between the mark, the name, the cairn and the action group. The checkbox and the ▸ sit flush: their boxes touch and never overlap (D31).
+- From layer 2: the name gets 278 − 16 − 16 − 44 − 40 − 24 = **138 px**, about 19 characters a line at 13 px, so a 40-character name takes 3 lines.
+- Layer 1's rows that start chosen have no checkbox: the name gets **182 px**. Its rows that start unchosen (seeds, PICKED, revealed NOT_CHECKED) carry it, at **138 px**, so you can tick them (contracts ruling 62).
+- The parent count is not on the row. It is in the sheet and the trace.
+
+**The last-layer and layer-1 seeds** (the no-Gemini path, [Write the topics]):
+- Layer 1 lists `layerOneSeeds` as unticked `pv.library` rows, each with its checkbox (and `pv.named` after a Gemini-named one). Under the last band shown, the map lists `lastLayerSeeds`, the aim's clauses verbatim with `m.quote` and `data-wc="own"`, never spell-corrected; a ticked one joins that band. The map's K is the bands you fill: trailing empty bands trim at accept (contracts ruling 58).
+- A clause row may carry a 40 px [goal glyph + i-plus] button, aria-label "Track '{clause}' as its own goal". The tap opens a confirm sheet with that question. Once tracked, the row's mark is `goal.k` with sr "tracked in goal {k}".
+- The page-level offers ([Write the topics], [Add your outline], [Track the routine as its own goal], [Keep the level plan]) sit in the draft header's action row, under row 2's budget (§3.2), never on this card.
+
+**Tracing (`trace`, ACT).** Each row's mark and name form one `<button aria-pressed>`. Its accessible name is the topic name, and its aria-describedby points at the sr line "builds on: A, B" or "after layer {k}".
+- Tapping it traces the row:
+  - its parents and children (from `parents` and `children`; "after layer {k}" means the whole layer above) get ink-0 marks and a 2 px ink-0 rail on their inline-start edge;
+  - every other row's marks, rails and checkboxes go ink-mute, and their names stay at ink-2 (D35).
+- A second tap, Escape, or tracing another row ends it. One trace at a time. Nothing is hidden, and nothing moves layout.
+
+**TopicSheet (the ▸; a kit Sheet).** It is the row's tap panel (D13). It holds:
+- the name and its class chip as a button with its full words (§15.3);
+- "builds on: A, B" (each with its mark) or "after layer {k}", and "3 of 3 replies" for a drawn link. This is never shown as a check;
+- the votes for a Gemini name ("2 of 3 replies");
+- the sources "(from Google)", which open SourcesSheet;
+- the caution chips (every Gemini topic's sheet);
+- the notes in words: "near-duplicate of X", "unsure where it goes", "needs a parent", "feeds nothing kept", "differs from your order", "matches your order", "not used", "Held when you began", "you said you know this", "tracked in goal 2", "builds on · goal 1";
+- the actions: Rename, Use my Domain…, Merge into…, Move to layer…, Builds on… (ParentsSheet), Remove, I know this, Keep (a NOT_CHECKED name: «Gemini · kept · not checked»), and Go deeper.
+- **Go deeper** shows its cost first ("uses 5 of today's 48 requests") and the date effect when it would add a layer. Then [Ask]. While the run is out, the sheet's waiting row plays the weave WAIT (§5.2; ≤ 90 s, pausable). "Gemini named nothing narrower." is `NOTHING_DEEPER`, verbatim (contracts ruling 63: "found" stays banned on Gemini output).
+
+**SourcesSheet.** At most `GROUND_SOURCES_SHOWN` (5) rows.
+- Each row is "<title> (from Google)", a link to the chunk uri with rel "noopener noreferrer nofollow" and target "_blank". The sheet claims no host.
+- It holds the `gemini-linked` full string.
+- If Google's display terms require Search Suggestions (spec question 16), they go here, in a sandboxed iframe. Lane 13 decides.
+
+**ParentsSheet.** The first option is "After layer {k}", the default. Then a checkbox per kept topic of the layer above (at most `EDGE_PARENTS_MAX`, 3), then other goals' Domains, read-only ("builds on · goal 1", with `goal.k`). Your picks are yours (`pv.you`).
+
+**At 932 and 1440** (the card spans the main column; a container query at ≥ 640 px of card):
+- The layers become columns, left to right, joined by %-positioned, aria-hidden SVG connectors with no viewBox and no SVG text.
+  - Drawn or picked links are 1.5 px ink-2; a traced link is 2 px ink-0. An unkept Gemini link is 1 px ink-mute: its "not checked" is in the child's sheet, because a line is never a balloon and never dashed.
+  - "After layer {k}" draws one bracket, never n lines.
+- Rows keep their 44 px minimum. Names wrap at the column's width.
+
+### 15.6 The chain (RouteRail, the Aim card strip; lane 9)
+
+- **Nodes.** A TOPICS plan's RouteRail nodes take `layer.k` in place of the cairn (`MilestoneRowView.layer`, `chainRole` LAYER), with the F-R5-9 titles.
+  - A DRAFT reads "Layer {k} of {n}".
+  - After accept, `titleParts` (NamedPart[]) gives the short form ("Cash flow, Debt and interest +2 · layer 1 of 4"), truncated to the 278 px box. `pv.named` sits inside the title after each Gemini-named Domain.
+- **Depth milestones** (`chainRole` DEPTH) take `t.hourglass` and «set by reviews» (kind `schedule`), with the title "{stage}: {domains} to level {L}+". Their line is gated at ≤ 6 app words (§15.10).
+- **Locked nodes** (PLANNED with `opensAfter` set; contracts §22.1 ruling 5) have:
+  - a thin ink-mute ring with `layer.k` idle in ink-mute;
+  - an `m.builds` badge;
+  - the title, and "after {k}" in ink-2.
+
+  They have no `m.lock`, no dash and no strike (D34). Their sr reads "builds on layer {k}; opens when milestone {k} is reached".
+- **Held milestones** (every topic held or skipped; `known` when skipped by you) have:
+  - a thin ink-2 ring with `layer.k` idle, and the word "held";
+  - no rank and no motion;
+  - `pv.you` as a badge when `known`, with sr "you said you know these".
+
+  The kit HeldGlyphs are not used here: they mean held days.
+- **Measures.** MeasureRows of earlier layers read "climbing to 8" (`climbing`) as CONTEXT, with their `labelParts`.
+- **The heading.** The EstimateChip, then, when T > 0, "· +{T} to reach {stage}". For example, «4 layers · Gemini's estimate» · +1 to reach Fluent.
+- **The Aim card strip** shows K_final + T nodes (at most `MAX_MILESTONES_TOPICS`, 8, so at least 34 px a node at 278).
+- **Motion.** `reach` (SEEN, unchanged) on the reached node, then `layer-open` queued after it on the opened node (§15.9). `start` is unchanged. Nothing pulses (H4).
+- **[Break into topics]** joins a LEVELS plan's footer actions (row 6's budget holds), only while TOPIC_PLANS_LIVE.
+- **Copy** (lane 9; roadmap-copy.ts, the line at ~1741):
+  - OUTLINE_EMPTY_GEMINI_TAIL ("Gemini doesn't write topics: it would be guessing.") shows on LEVELS plans only.
+  - On a TOPICS plan it is dropped while Gemini names are off, and reads "Gemini's names stay marked as Gemini's." while they are on. ui-check pins both.
+
+### 15.7 Goals (GoalSwitcher.tsx, GoalsFullCard.tsx, PauseSheet.tsx; lane 4)
+
+Nothing here renders while `GOALS_MAX` is 1 (D39). Lane 4's last commit sets it to 3, on the user's go.
+
+**The switcher** (`GoalSwitcherView`), on /you/roadmap, **above the aim header card at the 312 px page width** (344 − 2 × 16 gutter):
+- **Pills.** Each is 100 px wide, with 6 px gaps (3 pills = 312 px), and 44 px tall. Each is a link to `goalHrefOf("/you/roadmap", id)`, with aria-current="page" on the current one. A pill holds:
+  - RankSeal 20 (the goal's own rank; idle on a draft);
+  - `goal.k` (12) and the label, 12 px, up to 2 lines and then clamped (the full label is in the link's accessible name), `data-wc="name"`, or `"own"` when `labelIsYours`;
+  - a thin 2 px Proficiency arc along the pill's bottom edge, measured only. It is absent on a draft or an unmeasured goal, never dashed, and plays `meter-fill` (SEEN) under that goal's own basis key.
+- **The "+" seat.** While `canAdd` (open goals < `GOALS_MAX`), a 44 × 44 [i-plus] link to /you/roadmap/new, aria-label "Add a goal". 2 pills and "+" take 256 px; 1 pill and "+" take 150 px (D39: at `GOALS_MAX` 3 the switcher shows with one open goal while a seat is free).
+- **Labels are distinct** (`labelClashOf`). The intake asks for one when the default would clash (`LABEL_CLASH`).
+- **"Other goals".** Paused and done goals fold into a `<details>` row under the pills: "Other goals" (2 app words) and the count, led by `goal.paused` when one is paused. Inside, each goal is a link row: `goal.paused` with "paused since {day}", or its RankSeal with "done".
+- **At 932 and 1440:** pills of 160 px with one-line labels. The same order and the same rules.
+
+**GoalsFullCard** (/you/roadmap/new at 3 open, from `IntakeView.seats` and `goalsMax`):
+- three seat glyphs lit (`goal.1`–`goal.3`, 28 px, active), each with its goal's label as a link (`data-wc="name"`);
+- "3 goals open." and [Pause or archive one], which goes to the lowest seat's roadmap page, where Pause and Archive live;
+- `GOALS_FULL` verbatim in its (i). At most 8 app words (§15.10). Static.
+- The capture chip reads `AIM_CHIP_FULL` ("Aim · 3 goals open") and links here. The capture "aim:" handoff and the /you ASK card wait here and keep the aim in sessionStorage (contracts §23.5).
+
+**/you.** One compact AimCard per open goal, in seat order (`loadAimCards`), each at most 14 app words.
+- Each card's header carries `goal.k` (16, aria-hidden; sr "Goal {k}") and the goal's label.
+- The ASK card follows only while fewer than `GOALS_MAX` goals are open (contracts ruling 53; with `GOALS_MAX` 1 that is today's rule).
+- There is no blended %, and no headline across goals.
+- Only the lowest-seat ACTIVE card's horizon may run the air (D41).
+
+**Today:**
+- **Week-quest rows** are round robin by seat (`todayRowsOf`), within WEEK_QUEST_ROWS_TODAY (3).
+  - Each row leads with its 12 px seat glyph, before the KindGlyph.
+  - Each goal with rows left out gets one "[goal.k] {n} more" link to its roadmap page.
+  - With 2 or more goals, the heading drops the milestone ("Week quests · until Sun «pays nothing»"), and the Key names each goal's milestone.
+  - The basis line names the share ("Capacity 2 h 10 · goal 2's 3 of 7 h").
+- **The aim line** stays one line (`aimLinePickOf`), with the seat glyph when 2 or more goals are open.
+- **The ROADMAP goal chip** reads "[goal.2] 2 of 5".
+- **The rest** of Today stays calm (D10): no new motion.
+
+**The pause sheet** (PauseSheet; a kit Sheet laid out as the Aftercare section of RoadmapView):
+- title "Pause {label}";
+- when a milestone is live, the line "Milestone 2 stops; it leaves Today", verbatim;
+- the live milestone's practice rows as Aftercare draws them ([Icon today], title, "on Today · from milestone 2"), with one choice for all of them, [Keep on Today] / [Archive] (`PauseChoices.aftercare`);
+- an optional reason (at most `GOAL_PAUSE_REASON_MAX`, 120 characters, yours);
+- the other goals' verdict changes (`GoalVerdictChange`: "Goal 1 becomes tight · [Re-date goal 1]");
+- "Nothing is archived silently: each waits for your choice." (the Aftercare line), verbatim;
+- the primary [Pause].
+
+It is static: `tip-open` only, with `data-fx="none"`. The same file exports **ResumeSheet**:
+- "Move the date by 23 days?" with [Move it] / [Keep the date] (`ResumeChoices.redate`);
+- `GOALS_FULL` or the hours line (`hoursOverLineOf`) when resume is refused;
+- the verdict-change list.
+
+**A paused goal's page.** The header reads "paused since 6 Oct", never "behind". The Proficiency is frozen, with no meter motion, and the first reading after resume rebases with "since you resumed" (no animation, D8). Its actions are [Resume] and [Archive] (contracts ruling 56), its label, and its activity card, where its own AVOIDs can still be lifted; every other plan action is hidden while `paused` is set. Its "Other goals" row offers the same two.
+
+**The activity card** (§7.8):
+- Another goal's AVOIDs show ticked and locked with "from goal {n}". A closed goal's suggestions show "from an earlier goal".
+- Quotes read "From goal 1: '…'".
+- It stays a static safety surface (D11).
+
+### 15.8 Intake (§7.1)
+
+With TOPIC_PLANS_LIVE false, the intake renders nothing new. Lane 1's prefill fix ("Left out · n", and "Name the areas this needs" with any library) is held to the existing row-1 budgets.
+- **When it is on,** the Area row is followed by the three paths ([Break it down], only while `topicSwitchesOf().rate`; [Write the topics]; [Build from my numbers]). They are a segmented control of 2–4 words each.
+- **Depth 6** (contracts §22.1 ruling 14) appears on the StageLadder only on the two topic paths.
+- **A TOPICS intake fixture** is gated at row 1's Gemini-path budget (≤ 105, fold ≤ 25).
+
+### 15.9 Motion (§4.7 and §5.3 additions)
+
+| Motion | Licence | Full | Calm | Still | Max | In view at hydration |
+|---|---|---|---|---|---|---|
+| `trace` | ACT: tapping a topic row | The related rows' rails go opacity 0→1 (160, `swap`). The other rows' marks switch to ink-mute in the same frame, with no colour animation. Names never change colour (D35). | The same (opacity ≤ 160) | Instant, no transition | 0.16 s | (ACT) |
+| `layer-open` | SEEN: the counted reached count rose, and that reach opened layer k+1. Never on a skip, a hold, a closed-unreached milestone, or an opening through held or skipped parents | On the opened layer's RouteRail node and map header: the `m.builds` badge goes opacity 1→0 (160); the layer glyph goes opacity .4→1 (240); the state word crossfades "after k" → "open" (160 + 160). No draw, no ping, no burst. Queued after `reach` by sequence() | Opacity ≤ 260 | End state | 0.4 s | the layer glyph stamps (scale 1.15→1, 240); nothing is hidden |
+| `pv-confirm`, swap form | ACT: [Keep these], or Keep on a NOT_CHECKED row | The old mark fades out (160) and the new mark and chip word fade in (160). No rim or mark draws, because the new mark (`pv.kept`) is a balloon (H3). The keep button's own glyph then shows its kept look | Opacity swap | Instant | 0.32 s | (ACT) |
+| `estimate-swap` | CHANGED: the stored layers or the origin differ from what this viewer last saw (seen `what` "estimate"; basis: the plan version, or "draft:{version}") | The chip label and the pips crossfade (out 160, in 160). The static change words sit beside them. No fill, draw or count | Opacity ≤ 260 | Instant | 0.32 s | the same crossfade |
+
+- **No loops.** The weave WAIT plays only inside a waiting card or sheet: DraftRunning for a breakdown (≤ 90 s of motion, though the chain's steps may take about 4 minutes, one step per invocation, contracts ruling 47; the static frame follows), and the Go deeper sheet's waiting row.
+- **Calm** is opacity only. **Still** is the end state.
+- `GlyphMotion` gains `trace`, `layer-open` and `estimate-swap`, with these licences in `MOTION_LICENCE`. `pv-confirm` gains its swap form: the helper reads the target's `data-g` and never draws a balloon.
+
+**H18–H20** (§5.3 additions; each is a check in §15.12):
+- **H18.** A trace never hides a row or a name, and never changes text colour below ink-2. Nothing moves layout.
+- **H19.** The estimate's pips never fill, draw or count up. Only `estimate-swap` changes them.
+- **H20.** `layer-open` plays only on a counted reach. A held or skipped layer, a PREREQS_MET opening and a closed-unreached milestone play nothing.
+
+### 15.10 Word budgets (hard gates; §3.2 additions)
+
+Counted by §3.1, in roadmap-ui-check and in ui-audit's DOM count at 344. The ids are WORD_BUDGET_ROWS ids (src/app/dev/style/roadmap/fixtures.ts, and the Today and /you fixtures).
+- Honesty labels are exempt: every chip of §15.3, the who-words, «set by reviews», "· its map filled n".
+- Topic names, Domain names, goal labels and titles are exempt as names, and the user's own lines and clauses as own words.
+
+| # | Screen and state (fixture) | Budget |
+|---|---|---|
+| 13 | Topic map card, per layer: the header and its fold rows, numerals as figures (`topic-map-draft`, Gemini names shown) | ≤ 6 app words per layer, plus ≤ 2 for the card ([Accept all]) |
+| | … no Gemini, "Write the topics" with clause and Domain seeds (`topic-map-write`) | the same |
+| | … accepted plan (`topic-map-plan`) | the same |
+| 14 | GoalsFullCard (`goals-full`) | ≤ 8 |
+| 9 | Aim card, each card with 2 and 3 goals open (`goals-2`, `goals-3` on /you) | ≤ 14 each |
+| 11 | Today aim line with 2 and 3 goals open (`goals-2`, `goals-3`) | ≤ 8 |
+| 10 | Today week quests with 2 and 3 goals open, round robin (`goals-2`, `goals-3`) | ≤ 30 per card, ≤ 8 per line |
+| 15 | The depth milestone line, each depth node (`topic-chain`) | ≤ 6 each |
+
+- **Row 13 adds a rule.** A topic row with any app word fails: its words are names, marks and chips.
+- **For information, not gated:** the switcher's own words ("Other goals"), the sheets and the pause sheet. Lane 4 records their counts in its PR.
+
+### 15.11 Honesty preserved (§8 additions)
+
+Rows marked ✓ are asserted in visible text by §15.12.
+
+| Honesty element | Where | Compact form (always visible) | Full text (one tap; always in the DOM) |
+|---|---|---|---|
+| Gemini · Google linked n sources ✓ | LINKED rows; the layer chip | «[pv.web] Gemini · Google linked 2 sources» (header); [pv.web] on the row | chip → the gemini-linked line + the sources; the row's sheet |
+| Gemini picked your Domain · not checked ✓ | PICKED rows (outside the plan) | [pv.libpick] on the row, unticked; the layer chip when it is first | sr and the sheet; Key |
+| Gemini placed it · not checked ✓ | outline lines and your Domains, placed by Gemini, layer unkept | [pv.syllabus] / [pv.library] on the row; «[pv.suggest] Gemini placed it · not checked» (header) | the sheet; Key |
+| Gemini · kept by you ✓ | kept LINKED names and links | «[pv.kept] Gemini · kept by you» | chip; the sheet keeps the sources |
+| Gemini · not checked, n hidden ✓ | the hidden fold | [pv.suggest] "n" + «Gemini · not checked» | the revealed rows, each with its sheet |
+| Named by Gemini (the Gemini mark) ✓ | every view that renders a `geminiNamed` Domain name: titles, measures, quest rows, Today, the library's Domain list, practice rows | [pv.named] after the name, until you rename it | sr "named by Gemini"; Key; the Domain's sheet |
+| Gemini's estimate / unsure / the app's rough estimate ✓ | the map card, the chain heading, Depth and date | the EstimateChip | its panel (§15.4) |
+| Your layer changes ✓ | beside the estimate | "[pv.you] 4 layers · yours", "· 1 merged by you", "· its map filled 4" | the panel, with days |
+| Not financial / medical / legal advice ✓ | the map card, every Gemini topic's sheet, the plan header | the caution chips | chip → the caution line |
+| Held when you began | topic rows, milestone rows | the cairn done; "held" on a milestone | sr; the sheet; Key |
+| You said you know this | topic rows, milestone rows | [pv.you] in the cairn slot / badge | sr; the sheet (for good) |
+| Builds on / after layer k ✓ | locked nodes; the sheet | [m.builds] + "after 1" | the sheet: "builds on: A, B" or "after layer 1", "3 of 3 replies" |
+| Set by reviews (depth milestones) ✓ | rail | «[t.hourglass] set by reviews» | chip → scheduleBoundLine |
+| Sources from Google ✓ | SourcesSheet | "<title> (from Google)" | – |
+| Paused since a day ✓ | header, Other goals | "paused since 6 Oct"; never "behind" | – |
+| From goal n ✓ | activity card (quotes, locked AVOIDs) | "From goal 1: '…'", "from goal 1" | Key |
+| Goals full ✓ | GoalsFullCard, capture chip | "3 goals open." / "Aim · 3 goals open" | (i): GOALS_FULL |
+| Capacity share ✓ | week quests basis | "goal 2's 3 of 7 h" | the basis sheet |
+
+### 15.12 Checks (lanes 4 and 9; §11 additions)
+
+**glyph-check:**
+- The new glyphs render in idle, active and done, and follow the grammar (§4.1): ≤ 6 paths, `pathLength` and `data-part`, currentColor, no text.
+- layer.1…layer.6 are pairwise distinct, and bar k's `solid` is present in every state. goal.1…goal.3 are pairwise distinct, and `goal.paused` is distinct from `m.pause`.
+- No new glyph duplicates a kit path.
+- **The dash rule** reads: only pv.suggest's family (`pv.suggest`, `pv.kept`, `pv.pick`, `pv.libpick`), `v.unv` and the pending rail node are dashed. `pv.web`, `pv.named`, `layer.*` and `goal.*` carry no dasharray.
+- `pv.named` renders only at 12 px and only as a `<use>` into the provmark defs.
+- **Means:** `GLYPH_MEANS` holds every new name with the words of §15.1.
+- **HonestyChip:** every new kind of §15.3 is listed. `GEMINI_KINDS` holds the six Gemini kinds. The caution kinds are buttons and never animate beyond an instant `tip-open`.
+- **Motion:** `trace`, `layer-open` and `estimate-swap` carry their licences. Under still they make 0 animate calls. Under calm they are opacity only. `layer-open` in view at hydration uses no hiding keyframe (H15). `pv-confirm` toward a balloon draws nothing (H3).
+
+**roadmap-ui-check** (344 first):
+- **Budgets:** every row of §15.10, and the topic-row rule.
+- **Who-words:** every Gemini chip contains "Gemini". A `pv.web` mark renders only in a layer whose header holds `gemini-linked`, or in a sheet beside it. Every `geminiNamed` Domain name renders `pv.named`, in every payload with `NamedPart` (titles, measures, quests, Today rows) and on every surface outside the roadmap (the library's Domain lists, capture's Domain chips, review): the case is named "pv.named: every geminiNamed Domain name renders the mark" (contracts ruling 67). The mark is gone after a rename.
+- **Banned words** (§15.3) never appear on Gemini output.
+- **States:**
+  - locked layer nodes have no `m.lock` and no dash;
+  - unchosen topics are not struck;
+  - held layers give no rank;
+  - the trace leaves every name at ink-2 or darker;
+  - the estimate pips carry no animation class.
+- **Layout:**
+  - the row arithmetic holds (138 / 182 px) and a 40-character name wraps to 3 lines within 60 px;
+  - the switcher fits 312 px (3 pills; 2 pills and "+"), and its labels are distinct;
+  - the layer header's first row is 44 px.
+- **Links:** source links come only from chunk uris, with rel "noopener noreferrer nofollow". Every roadmap href carries `?goal=` once lane 4 lands. "Archive it to start another" is gone.
+- **Intake and copy:** a fresh intake preselects 0 Domains, or only exact aim-word matches (lane 1). OUTLINE_EMPTY_GEMINI_TAIL appears only on LEVELS, and the TOPICS line follows the switches.
+- **One goal:** with one open goal, every pre-revision-5 fixture's markup is byte-identical (D39).
+
+**today-ui-check and you-check:**
+- rows 9, 10 and 11 with 2 and 3 goals;
+- 1 goal byte-identical;
+- seat glyphs only with 2+ goals;
+- no `.shd` or motion added on /today;
+- only one horizon slot may loop on /you (D41).
+
+**ui-audit:** the §15.10 rows at 344, 375, 932 and 1440, in both themes and at the three motion levels. Targets measured on the element: the keep button, ▸, the checkbox, the pills and "+".
+
+**Snapshots.** After each UI lane, the lane screenshots every changed surface at 344 px first, then 932 and 1440, from fixtures only (never the user's own goal), and sends them to the user.
+
+### 15.13 Files
+
+**Glyph system:**
+- `src/components/glyph/paths/layer.ts` and `paths/goal.ts` (new);
+- provenance.ts (pv.web, pv.library, pv.libpick, pv.named);
+- index.ts (the `layer` and `goal` families; `DefsFamily` gains `goal`);
+- means.ts;
+- RouteRail.tsx (layer and depth nodes, `opensAfter`, the held word);
+- HonestyChip.tsx (the kinds of §15.3);
+- src/lib/glyph-motion.ts (`trace`, `layer-open`, `estimate-swap`, the swap form of `pv-confirm`).
+
+**Topic map (lane 9).** In src/components/roadmap:
+- TopicMap.tsx, LayerBand.tsx and TopicMapRow.tsx (§15.14 item 1);
+- TopicSheet.tsx, EstimateChip.tsx, SourcesSheet.tsx and ParentsSheet.tsx;
+- roadmap-copy.ts (the chip strings, the TOPICS outline line);
+- roadmap.css (layout hooks only).
+
+**Goals (lane 4).** In src/components/roadmap: GoalSwitcher.tsx, GoalsFullCard.tsx, PauseSheet.tsx (with ResumeSheet) and roadmap-copy.ts (§23.7's copy).
+
+**Fixtures:**
+- src/app/dev/style/roadmap/fixtures.ts: `topic-map-draft`, `topic-map-write`, `topic-map-plan`, `topic-chain`, `goals-full`, the pause and resume sheets, the switcher at 1, 2 and 3 goals;
+- the Today and /you fixtures: `goals-2`, `goals-3`;
+- src/app/dev/style/glyphs: the new glyphs × states × levels.
+
+Fixture names are neutral (the spec's A1…D2 shape). Fixtures never use the user's aim, figures or Domains.
+
+**Checks:** scripts/glyph-check.ts, roadmap-ui-check.ts, today-ui-check.ts, you-check.ts and ui-audit.mjs.
+
+### 15.14 Open points for the lead (closed by contracts rulings 63 and 68)
+
+1. **TopicRow.tsx already exists** (the rev-3 outline row that MilestoneCard and DraftReview render). Closed: the map's row is **TopicMapRow.tsx**, and contracts §22.18's lane-9 HANDOFF line is re-pinned to it (ruling 63).
+2. **The estimate chip's word order.** Closed: question 18's order, «4 layers · Gemini's estimate» (ruling 63), as §15.3, §15.4 and §15.6 now read.
+3. **The 44 px layer header.** Closed: the who-word chip takes a second header row (84 px in all), as §15.5 says (ruling 68). The alternative (the chip in the first row, the keep button at the layer's foot) stays open for the user.
+4. **A chip per topic row.** Closed as D37: the layer chip plus the row's sheet (ruling 68).
+5. **`pv.named` without a visible "Gemini"** (D33). Closed as D33 (ruling 68); the alternative, a «Gemini» micro-chip after every kept name, stays open for the user.

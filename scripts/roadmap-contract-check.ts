@@ -42,6 +42,10 @@ import { statedForMilestone } from "../src/lib/roadmap-economy";
 import * as CAT from "../src/lib/roadmap-catalog";
 import * as LX from "../src/lib/roadmap-lexicon";
 import * as V from "../src/lib/roadmap-validate";
+import * as RR from "../src/lib/roadmap-rating";
+import * as TP from "../src/lib/roadmap-topics";
+import * as GRD from "../src/lib/roadmap-grounding";
+import * as GL from "../src/lib/roadmap-goals";
 import { packOf, readCorpus } from "./fixtures/roadmap-corpus/corpus";
 import { reviewMarkOf } from "../src/lib/review-facts";
 import { outcomeOf as libraryOutcomeOf } from "../src/components/library/library-model";
@@ -88,13 +92,21 @@ function pending(name: string, ok: boolean, owner: string, detail = "") {
  * integration) fails every one still open.
  */
 const HANDOFFS_DUE = process.argv.includes("--handoffs");
+/**
+ * Revision 5 (contracts §22.18, ruling 37): `--lane=<n>` fails every open
+ * HANDOFF owned by "lane <n>", and nothing else; each lane runs it before it
+ * pushes ("no PENDING line at a lane's end"), while --strict and life:check
+ * pass the other lanes' open lines so the 13 lanes can land one by one.
+ */
+const LANE_ARG = process.argv.find((a) => a.startsWith("--lane=")) ?? null;
+const LANE_DUE = LANE_ARG === null ? null : (/^--lane=([1-9]\d?)$/.exec(LANE_ARG)?.[1] ?? "?");
 let handoffCount = 0;
 function handoff(name: string, ok: boolean, owner: string, detail = "") {
   if (ok) {
     passed++;
     return;
   }
-  if (HANDOFFS_DUE) {
+  if (HANDOFFS_DUE || (LANE_DUE !== null && owner === `lane ${LANE_DUE}`)) {
     check(`${name} (${owner})`, false, detail);
     return;
   }
@@ -110,6 +122,35 @@ const throws = (fn: () => unknown): boolean => {
   }
 };
 const LEVELS = [4, 6, 8, 10, 12];
+/**
+ * Every module a source reaches at run time (`import type` and `export type`
+ * left out), as repo paths, and "pkg:<name>" for a package: the purity pins
+ * of revision 4's three modules and revision 5's four read it.
+ */
+function pureClosure(entry: string): string[] {
+  const seen = new Set<string>();
+  const stack = [join(ROOT, entry)];
+  const SPEC = /(?:\bimport\s+(type\s+)?(?:[^'"`;]*?\s+from\s+)?|\bexport\s+(type\s+)?[^'"`;]*?\s+from\s+)["']([^"']+)["']/g;
+  while (stack.length) {
+    const f = stack.pop() as string;
+    if (seen.has(f)) continue;
+    seen.add(f);
+    if (f.startsWith("pkg:")) continue;
+    const src = readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+    for (const m of src.matchAll(SPEC)) {
+      if (m[1] || m[2]) continue;
+      const spec = m[3];
+      if (!spec.startsWith(".") && !spec.startsWith("@/")) {
+        stack.push(`pkg:${spec}`);
+        continue;
+      }
+      const base = spec.startsWith("@/") ? join(ROOT, "src", spec.slice(2)) : resolve(dirname(f), spec);
+      const hit = ["", ".ts", ".tsx"].map((e) => base + e).find((p) => existsSync(p) && statSync(p).isFile());
+      if (hit) stack.push(hit);
+    }
+  }
+  return [...seen].map((f) => (f.startsWith("pkg:") ? f : relative(ROOT, f).split(sep).join("/")));
+}
 
 // ═══ The guard itself ═══════════════════════════════════════════════════════
 
@@ -1497,7 +1538,7 @@ console.log("— rev 4: stages and ranks —");
   const want = (x: RT.DepthRankInput): number => {
     if (x.track) return x.hasStandard && x.keptStages >= 4 && x.spanDays >= 180 ? 6 : Math.min(x.keptStages, 5);
     if (x.depth === null) return x.keptStages >= 4 ? 6 : Math.min(x.keptStages, 5);
-    const finalRank = { 12: 5, 10: 4, 8: 3 }[x.depth];
+    const finalRank = { 12: 5, 10: 4, 8: 3, 6: 2 }[x.depth];
     return x.depth === 12 && x.hasStandard && !x.coverageBelowPolicy && x.productionPlannedFromFluent ? 6 : finalRank;
   };
   const bad: string[] = [];
@@ -2203,31 +2244,7 @@ console.log("— rev 4: modules and shells —");
   const missing = shells.flatMap(([f, names]) => names.filter((n) => !new RegExp(`export (async )?function ${n}\\b`).test(read(f))).map((n) => `${f}: ${n}`));
   check("every revision-4 export a lane implements exists (a shell until it lands)", missing.length === 0, missing.join(", "));
   check("AimCard takes the revision-4 props (prompt, seed, lastAim) beside promptDismissed", /prompt\?: AimPrompt;/.test(read("src/components/roadmap/AimCard.tsx")) && /seed\?: AimSeed \| null;/.test(read("src/components/roadmap/AimCard.tsx")) && /lastAim\?: LastAimView \| null;/.test(read("src/components/roadmap/AimCard.tsx")));
-  // The three new lane-0 modules are pure: no Prisma, no model, no clock module.
-  const pureClosure = (entry: string): string[] => {
-    const seen = new Set<string>();
-    const stack = [join(ROOT, entry)];
-    const SPEC = /(?:\bimport\s+(type\s+)?(?:[^'"`;]*?\s+from\s+)?|\bexport\s+(type\s+)?[^'"`;]*?\s+from\s+)["']([^"']+)["']/g;
-    while (stack.length) {
-      const f = stack.pop() as string;
-      if (seen.has(f)) continue;
-      seen.add(f);
-      if (f.startsWith("pkg:")) continue;
-      const src = readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
-      for (const m of src.matchAll(SPEC)) {
-        if (m[1] || m[2]) continue;
-        const spec = m[3];
-        if (!spec.startsWith(".") && !spec.startsWith("@/")) {
-          stack.push(`pkg:${spec}`);
-          continue;
-        }
-        const base = spec.startsWith("@/") ? join(ROOT, "src", spec.slice(2)) : resolve(dirname(f), spec);
-        const hit = ["", ".ts", ".tsx"].map((e) => base + e).find((p) => existsSync(p) && statSync(p).isFile());
-        if (hit) stack.push(hit);
-      }
-    }
-    return [...seen].map((f) => (f.startsWith("pkg:") ? f : relative(ROOT, f).split(sep).join("/")));
-  };
+  // The three new lane-0 modules are pure: no Prisma, no model, no clock module (pureClosure, above).
   for (const m of ["src/lib/roadmap-catalog.ts", "src/lib/roadmap-invite.ts", "src/lib/roadmap-handoff.ts"]) {
     const c = pureClosure(m);
     const bad = c.filter((p) => p === "pkg:@prisma/client" || p === "src/lib/prisma.ts" || p === "src/lib/gemini.ts" || p === "src/lib/roadmap-model.ts" || p === "src/lib/roadmap-evidence.ts" || p.startsWith("pkg:@google/genai") || p === "pkg:next/headers" || p === "pkg:next/cache");
@@ -4400,6 +4417,1208 @@ console.log("— the practice progression (§20) —");
   }
 }
 
+// ═══ Revision 5 (§22, §23): the topic map and up to 3 goals, lane 0 ═══════════
+//
+// Lane 0 froze every new export, union, schema, constant and instruction (docs/life-plan/roadmap-contracts.md §22,
+// §23). The four new modules are shells whose functions answer "Not yet" while their STUB markers stand (§22.17).
+// Every switch is false and GOALS_MAX is 1, so no answer a user can see changes, and LEVELS is pinned unchanged. The
+// later lanes' adoption is one HANDOFF line per lane (owner "lane <n>", §22.18): --strict, and with it life:check,
+// passes an open one while the lanes land; --lane=<n> fails that lane's (each lane runs it before it pushes, ruling
+// 37); --handoffs fails every one. A switch's pin moves with the lead's commit that flips it.
+
+/**
+ * The house rules every phase's response schema keeps (§22.4), as tagged
+ * breaches ("TYPE $.a", "FREE_TEXT $.b" …); [] when it keeps them all. A
+ * STRING with no enum is free text only as `name` under a top-level `names`
+ * (FREE_TEXT_ROOTS ["gaps", "names"], ruling 34: rev 4's `gaps` is an array
+ * of strings, MAP's and DEEPER's `names` hold `name`).
+ */
+function schemaHouseRulesOf(schema: unknown): string[] {
+  const out: string[] = [];
+  const own = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
+  const walk = (node: unknown, path: string, root: string | null, key: string | null): void => {
+    if (!node || typeof node !== "object" || Array.isArray(node)) {
+      out.push(`NODE ${path}`);
+      return;
+    }
+    const n = node as Record<string, unknown>;
+    if (n.type !== "OBJECT" && n.type !== "ARRAY" && n.type !== "STRING") out.push(`TYPE ${path}`);
+    for (const b of ["maxLength", "minLength", "pattern", "format"]) if (own(n, b)) out.push(`BOUND ${path}.${b}`);
+    if (own(n, "nullable")) out.push(`NULLABLE ${path}`);
+    for (const k of ["maxItems", "minItems"]) if (own(n, k) && typeof n[k] !== "string") out.push(`ITEMS_NOT_STRING ${path}.${k}`);
+    if (own(n, "enum") && (!Array.isArray(n.enum) || n.enum.length === 0 || n.enum.some((x) => typeof x !== "string"))) out.push(`ENUM ${path}`);
+    const freeOk = (root === "names" && key === "name") || (root === "gaps" && key === "gaps");
+    if (n.type === "STRING" && !own(n, "enum") && !freeOk) out.push(`FREE_TEXT ${path}`);
+    if (n.type === "ARRAY") {
+      if (!own(n, "items")) out.push(`NO_ITEMS ${path}`);
+      else walk(n.items, `${path}.items`, root, key);
+    }
+    if (n.type === "OBJECT") {
+      const props = own(n, "properties") && n.properties && typeof n.properties === "object" && !Array.isArray(n.properties) ? (n.properties as Record<string, unknown>) : {};
+      const keys = Object.keys(props);
+      if (keys.length === 0) out.push(`EMPTY_OBJECT ${path}`);
+      if (own(n, "required") && (!Array.isArray(n.required) || n.required.some((r) => typeof r !== "string" || !keys.includes(r)))) out.push(`REQUIRED ${path}`);
+      if (json(n.propertyOrdering) !== json(keys)) out.push(`ORDERING ${path}`);
+      for (const k of keys) walk(props[k], `${path}.${k}`, root ?? k, k);
+    }
+  };
+  walk(schema, "$", null, null);
+  return out;
+}
+
+/**
+ * The frozen signatures, two ways (§22.18): Exact is TypeScript's identity
+ * relation, so a dropped trailing parameter (required or optional), a
+ * parameter widened to unknown or a narrowed return each fail tsc, where a
+ * one-way assignment would pass them. AllExact holds when every key of E is
+ * exactly the module's.
+ */
+type Exact<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type AllExact<M, E> = { [K in keyof E]-?: K extends keyof M ? Exact<M[K], E[K]> : false }[keyof E] extends true ? true : false;
+
+/** A source's code with its comments removed (a fact about code, never about a comment that names it). */
+const codeOf = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+
+console.log("— revision 5 (§22.2, §23): switches, constants and unions —");
+{
+  // ── The switches (only the lane named flips one, re-pinning it here in the same commit, on the user's go) ──
+  eq(
+    "the switches: GOALS_MAX 1, GOAL_SLOTS_MAX 3, and TOPIC_PLANS/RATE/PLACE/NAMES/LINK/GROUND_LIVE all false",
+    [RT.GOALS_MAX, RT.GOAL_SLOTS_MAX, RT.TOPIC_PLANS_LIVE, RT.TOPIC_RATE_LIVE, RT.TOPIC_PLACE_LIVE, RT.TOPIC_NAMES_LIVE, RT.TOPIC_LINK_LIVE, RT.TOPIC_GROUND_LIVE],
+    [1, 3, false, false, false, false, false, false]
+  );
+  check("GOALS_MAX is within 1..GOAL_SLOTS_MAX (the database's CHECK keeps a slot within 1..3)", RT.GOALS_MAX >= 1 && RT.GOALS_MAX <= RT.GOAL_SLOTS_MAX);
+  {
+    // Ruling 54: lane 4 may lift GOALS_MAX only once lane 3's shares are live, or each of up to 3 goals would plan
+    // against the whole ramp cap and Field pace (decision 69, "one person's week").
+    const capacityBody = /\nfunction capacityOf\b[\s\S]*?\n\}\r?\n/.exec(codeOf(read("src/lib/roadmap-realism.ts")))?.[0] ?? "";
+    const readsShare = /\.share\b/.test(capacityBody);
+    const fillsOther = /\botherGoals\b/.test(codeOf(read("src/lib/roadmap-server.ts")));
+    check(
+      "GOALS_MAX > 1 only once realism's capacityOf reads RealismInput.share and the server fills DraftView.otherGoals (lane 3; ruling 54)",
+      RT.GOALS_MAX === 1 || (readsShare && fillsOther),
+      json({ GOALS_MAX: RT.GOALS_MAX, readsShare, fillsOther })
+    );
+  }
+  const off: RT.TopicSwitches = { plans: false, rate: false, place: false, names: false, link: false, ground: false };
+  const sw = (o: Partial<RT.TopicSwitches>) => RT.topicSwitchesOf(o);
+  eq("topicSwitchesOf() reads the six constants: every path off", RT.topicSwitchesOf(), off);
+  eq("topicSwitchesOf({plans, rate, names}): names is false without ground (the spec's refusal)", sw({ plans: true, rate: true, names: true }), { ...off, plans: true, rate: true });
+  eq("…with ground too, names and ground take effect together", sw({ plans: true, rate: true, names: true, ground: true }), { ...off, plans: true, rate: true, names: true, ground: true });
+  eq("…ground alone is inert (it needs names)", sw({ plans: true, rate: true, ground: true }), { ...off, plans: true, rate: true });
+  eq("…place (and link) without rate is false: TOPIC_PLACE_LIVE alone is inert (ruling 16)", sw({ plans: true, place: true, link: true }), { ...off, plans: true });
+  eq("…place and link take effect under rate", sw({ plans: true, rate: true, place: true, link: true }), { ...off, plans: true, rate: true, place: true, link: true });
+  eq("…and nothing takes effect without plans", sw({ rate: true, place: true, names: true, link: true, ground: true }), off);
+
+  // ── Model and runs ──
+  eq(
+    "the model and run constants at their §22.2 values",
+    {
+      TOPIC_PROMPT_VERSION: RT.TOPIC_PROMPT_VERSION,
+      TOPIC_SAMPLES: RT.TOPIC_SAMPLES,
+      TOPIC_CANDIDATE_COUNT: RT.TOPIC_CANDIDATE_COUNT,
+      CONSENSUS_MIN: RT.CONSENSUS_MIN,
+      DEDUPE_DICE: RT.DEDUPE_DICE,
+      EDGE_DRAW: RT.EDGE_DRAW,
+      SOURCES_MIN: RT.SOURCES_MIN,
+      GROUND_KEYS_PER_CALL: RT.GROUND_KEYS_PER_CALL,
+      GROUND_PAIR_DICE_MAX: RT.GROUND_PAIR_DICE_MAX,
+      GROUND_PARALLEL: RT.GROUND_PARALLEL,
+      GROUND_CALLS_MAX: RT.GROUND_CALLS_MAX,
+      DEEPER_GROUND_CALLS_MAX: RT.DEEPER_GROUND_CALLS_MAX,
+      GROUND_SOURCES_SHOWN: RT.GROUND_SOURCES_SHOWN,
+      GROUND_TITLE_MODE: RT.GROUND_TITLE_MODE,
+      GROUND_ABORT_MS: RT.GROUND_ABORT_MS,
+      GROUND_BACKSTOP_MS: RT.GROUND_BACKSTOP_MS,
+      TOPIC_RUN_STALE_MS: RT.TOPIC_RUN_STALE_MS,
+      ROADMAP_REQUESTS_PER_DAY: RT.ROADMAP_REQUESTS_PER_DAY,
+      GROUNDED_REQUESTS_PER_DAY: RT.GROUNDED_REQUESTS_PER_DAY,
+      BREAKDOWN_REQUESTS_MAX: RT.BREAKDOWN_REQUESTS_MAX,
+      BREAKDOWN_REQUESTS_MAX_WITH_CANDIDATES: RT.BREAKDOWN_REQUESTS_MAX_WITH_CANDIDATES,
+      DEEPER_REQUESTS_MAX: RT.DEEPER_REQUESTS_MAX,
+      DEEPER_REQUESTS_MAX_WITH_CANDIDATES: RT.DEEPER_REQUESTS_MAX_WITH_CANDIDATES,
+    },
+    {
+      TOPIC_PROMPT_VERSION: 1,
+      TOPIC_SAMPLES: 3,
+      TOPIC_CANDIDATE_COUNT: 1,
+      CONSENSUS_MIN: 2,
+      DEDUPE_DICE: 0.85,
+      EDGE_DRAW: { agree: 3, of: 3, prevLayerMin: 4 },
+      SOURCES_MIN: 2,
+      GROUND_KEYS_PER_CALL: 3,
+      GROUND_PAIR_DICE_MAX: 0.6,
+      GROUND_PARALLEL: 3,
+      GROUND_CALLS_MAX: 7,
+      DEEPER_GROUND_CALLS_MAX: 2,
+      GROUND_SOURCES_SHOWN: 5,
+      GROUND_TITLE_MODE: "TITLE",
+      GROUND_ABORT_MS: 45_000,
+      GROUND_BACKSTOP_MS: 47_000,
+      TOPIC_RUN_STALE_MS: 180_000,
+      ROADMAP_REQUESTS_PER_DAY: 48,
+      GROUNDED_REQUESTS_PER_DAY: 21,
+      BREAKDOWN_REQUESTS_MAX: 16,
+      BREAKDOWN_REQUESTS_MAX_WITH_CANDIDATES: 10,
+      DEEPER_REQUESTS_MAX: 5,
+      DEEPER_REQUESTS_MAX_WITH_CANDIDATES: 3,
+    }
+  );
+  check(
+    "the request caps add up: a breakdown is RATE + MAP + LINK at TOPIC_SAMPLES each plus GROUND_CALLS_MAX (16; one request a phase with candidates: 10); a Go deeper is TOPIC_SAMPLES + DEEPER_GROUND_CALLS_MAX (5; 3); both together are 21",
+    RT.BREAKDOWN_REQUESTS_MAX === 3 * RT.TOPIC_SAMPLES + RT.GROUND_CALLS_MAX &&
+      RT.BREAKDOWN_REQUESTS_MAX_WITH_CANDIDATES === 3 + RT.GROUND_CALLS_MAX &&
+      RT.DEEPER_REQUESTS_MAX === RT.TOPIC_SAMPLES + RT.DEEPER_GROUND_CALLS_MAX &&
+      RT.DEEPER_REQUESTS_MAX_WITH_CANDIDATES === 1 + RT.DEEPER_GROUND_CALLS_MAX &&
+      RT.BREAKDOWN_REQUESTS_MAX + RT.DEEPER_REQUESTS_MAX === 21 &&
+      RT.CONSENSUS_MIN <= RT.TOPIC_SAMPLES &&
+      RT.EDGE_DRAW.of === RT.TOPIC_SAMPLES
+  );
+  {
+    // Ruling 47: one step per invocation. A step is RATE, MAP or DEEPER (each ≤ ROADMAP_BACKSTOP_MS), or LINK beside one
+    // GROUND wave of ≤ GROUND_PARALLEL calls (≤ the larger backstop). Each fits the roadmap pages' maxDuration with 10 s for
+    // its writes, and a step killed at maxDuration is never claimed again while it could still be running.
+    const durations = ["src/app/you/roadmap/page.tsx", "src/app/you/roadmap/new/page.tsx"].map((f) => Number(/\nexport const maxDuration = (\d+);/.exec(read(f))?.[1] ?? NaN));
+    const routeMs = Math.min(...durations) * 1000;
+    const stepMs = Math.max(RT.ROADMAP_BACKSTOP_MS, RT.GROUND_BACKSTOP_MS);
+    check(
+      "every topic step fits the roadmap pages' maxDuration (60 s) with 10 s for its writes; GROUND runs in ⌈GROUND_CALLS_MAX ÷ GROUND_PARALLEL⌉ = 3 waves (a Go deeper's in one); TOPIC_RUN_STALE_MS is at least twice maxDuration (ruling 47)",
+      durations.every((d) => d === 60) &&
+        stepMs + 10_000 <= routeMs &&
+        Math.ceil(RT.GROUND_CALLS_MAX / RT.GROUND_PARALLEL) === 3 &&
+        RT.DEEPER_GROUND_CALLS_MAX <= RT.GROUND_PARALLEL &&
+        RT.TOPIC_RUN_STALE_MS >= 2 * routeMs,
+      json({ durations, stepMs, stale: RT.TOPIC_RUN_STALE_MS })
+    );
+  }
+
+  // ── The rating ──
+  eq(
+    "the rating's constants at their §22.2 values",
+    {
+      DIFF_LAYERS: RT.DIFF_LAYERS,
+      LAYERS: [RT.LAYERS_MIN, RT.LAYERS_MAX],
+      BREADTH_TABLE: RT.BREADTH_TABLE,
+      BREADTH_WORD: RT.BREADTH_WORD,
+      BREADTH_FALLBACK: RT.BREADTH_FALLBACK,
+      REASON_COHERENCE: RT.REASON_COHERENCE,
+      RATING_REASONS_MAX: RT.RATING_REASONS_MAX,
+      RATING_REASONS_KEPT_MAX: RT.RATING_REASONS_KEPT_MAX,
+      REASON_AGREE_MIN: RT.REASON_AGREE_MIN,
+      UNSURE_SPREAD: RT.UNSURE_SPREAD,
+      DEPTH_FALLBACK: RT.DEPTH_FALLBACK,
+      DEPTH_FALLBACK_OUTLINE_LINES: RT.DEPTH_FALLBACK_OUTLINE_LINES,
+      CAUTION_OF_REASON: RT.CAUTION_OF_REASON,
+    },
+    {
+      DIFF_LAYERS: { DIFF_1: 1, DIFF_2: 2, DIFF_3: 3, DIFF_4: 4, DIFF_5: 5, DIFF_6: 6 },
+      LAYERS: [1, 6],
+      BREADTH_TABLE: { NARROW: { min: 1, max: 2 }, MEDIUM: { min: 2, max: 3 }, WIDE: { min: 3, max: 5 }, VAST: { min: 4, max: 6 } },
+      BREADTH_WORD: { NARROW: "Narrow", MEDIUM: "Medium", WIDE: "Wide", VAST: "Vast" },
+      BREADTH_FALLBACK: "MEDIUM",
+      REASON_COHERENCE: {
+        LONG_PREREQS: { difficulty: ["DIFF_3", "DIFF_4", "DIFF_5", "DIFF_6"] },
+        FEW_PREREQS: { difficulty: ["DIFF_1", "DIFF_2"] },
+        SINGLE_SKILL: { breadth: ["NARROW", "MEDIUM"] },
+        MANY_PARTS: { breadth: ["MEDIUM", "WIDE", "VAST"] },
+        MANY_FIELDS: { breadth: ["WIDE", "VAST"] },
+      },
+      RATING_REASONS_MAX: 4,
+      RATING_REASONS_KEPT_MAX: 3,
+      REASON_AGREE_MIN: 2,
+      UNSURE_SPREAD: 2,
+      DEPTH_FALLBACK: { FIELD: 3, TRACK: 2 },
+      DEPTH_FALLBACK_OUTLINE_LINES: 20,
+      CAUTION_OF_REASON: { REAL_MONEY: "FINANCIAL", HEALTH_RISK: "MEDICAL", REGULATED: "LEGAL" },
+    }
+  );
+  eq(
+    "RATING_REASON_LABEL: code's 14 phrases (§22.2), one per reason in RATING_REASONS order",
+    RT.RATING_REASONS.map((r) => RT.RATING_REASON_LABEL[r]),
+    [
+      "has a long chain of basics",
+      "needs few basics first",
+      "involves abstract maths",
+      "involves a new language or script",
+      "trains a physical skill",
+      "has a set bar to meet",
+      "is one skill",
+      "has several parts",
+      "spans several fields",
+      "includes a routine",
+      "has an open-ended outcome",
+      "involves real money",
+      "involves health",
+      "involves rules or law",
+    ]
+  );
+  check(
+    'no reason label says "difficulty", "hard" or "level" (decision 76), and every label key is a RatingReason',
+    Object.values(RT.RATING_REASON_LABEL).every((l) => !/\b(difficulty|hard|level)\b/i.test(l)) && json(Object.keys(RT.RATING_REASON_LABEL)) === json(RT.RATING_REASONS)
+  );
+
+  // ── The map and the chain ──
+  eq(
+    "the map's and the chain's constants at their §22.2 values",
+    {
+      TOPICS_MAX: RT.TOPICS_MAX,
+      LAYER_TOPICS: [RT.LAYER_TOPICS_MIN, RT.LAYER_TOPICS_MAX],
+      TOPIC_FLOOR_CARDS: RT.TOPIC_FLOOR_CARDS,
+      OPEN_LEVEL: RT.OPEN_LEVEL,
+      BASE_LEVEL: RT.BASE_LEVEL,
+      DEPTH_MILESTONES_MAX: RT.DEPTH_MILESTONES_MAX,
+      MAX_MILESTONES_TOPICS: RT.MAX_MILESTONES_TOPICS,
+      EDGE: [RT.EDGE_PARENTS_MAX, RT.EDGE_CHILDREN_MAX],
+      DEEPER_CHILDREN_MAX: RT.DEEPER_CHILDREN_MAX,
+      DEPTH_TAIL: RT.DEPTH_TAIL,
+      PREREQS_OPEN: RT.PREREQS_OPEN,
+      CROSS_GOAL_PARENT_PREFIX: RT.CROSS_GOAL_PARENT_PREFIX,
+    },
+    {
+      TOPICS_MAX: 20,
+      LAYER_TOPICS: [1, 6],
+      TOPIC_FLOOR_CARDS: 8,
+      OPEN_LEVEL: 6,
+      BASE_LEVEL: 8,
+      DEPTH_MILESTONES_MAX: 2,
+      MAX_MILESTONES_TOPICS: 8,
+      EDGE: [3, 4],
+      DEEPER_CHILDREN_MAX: 4,
+      DEPTH_TAIL: { 6: 0, 8: 1, 10: 1, 12: 2 },
+      PREREQS_OPEN: "This layer opens when the one before is reached. Or mark what you already know.",
+      CROSS_GOAL_PARENT_PREFIX: "x:",
+    }
+  );
+  eq(
+    "the topic map's refusals (ruling 52): in roadmap-types, in ACCEPT_REFUSAL_CODES order, each its line; then LAYERS_BOUNDS",
+    [...RT.ACCEPT_REFUSAL_CODES.map((c) => RT.ACCEPT_REFUSAL_LINE[c]), RT.LAYERS_BOUNDS],
+    [
+      "Keep every layer first.",
+      "A topic needs a parent: pick one, or remove it.",
+      "Choose at least one topic in the last layer.",
+      "A layer holds at most 6 topics: move or untick some.",
+      "Choose at most 20 topics.",
+      "A Domain with this name exists here. Use my Domain… instead.",
+      "Choose 1 to 6 layers.",
+    ]
+  );
+  check(
+    "…each refusal is also exported under its own name with the same words (LAYER_UNKEPT … TOPIC_NAME_TAKEN), and the line map's keys are the codes in order",
+    RT.ACCEPT_REFUSAL_CODES.every((c) => (RT as unknown as Record<string, unknown>)[c] === RT.ACCEPT_REFUSAL_LINE[c]) && json(Object.keys(RT.ACCEPT_REFUSAL_LINE)) === json(RT.ACCEPT_REFUSAL_CODES)
+  );
+  eq(
+    "milestoneCapOf (ruling 50): TOPICS → MAX_MILESTONES_TOPICS 8; LEVELS, absent or null → MAX_MILESTONES 6",
+    [RT.milestoneCapOf("TOPICS"), RT.milestoneCapOf("LEVELS"), RT.milestoneCapOf(), RT.milestoneCapOf(null)],
+    [8, 6, 6, 6]
+  );
+  check(
+    "a cross-goal parent's lineage ('x:' + its Domain id) never reads as a topic key, and two parent Domains give two lineages, so one child's two cross-goal edges keep distinct unique keys (ruling 48)",
+    !TP.TOPIC_KEY_PATTERN.test(`${RT.CROSS_GOAL_PARENT_PREFIX}d1`) && new Set(["d1", "d2"].map((d) => `${RT.CROSS_GOAL_PARENT_PREFIX}${d}`)).size === 2 && RT.CROSS_GOAL_PARENT_PREFIX.includes(":")
+  );
+  check(
+    "the chain's sizes agree: LAYER_TOPICS_MAX = TOPICS_PER_MILESTONE, MAX_MILESTONES_TOPICS = LAYERS_MAX + DEPTH_MILESTONES_MAX, every DEPTH_TAIL ≤ DEPTH_MILESTONES_MAX",
+    RT.LAYER_TOPICS_MAX === RT.TOPICS_PER_MILESTONE && RT.MAX_MILESTONES_TOPICS === RT.LAYERS_MAX + RT.DEPTH_MILESTONES_MAX && RT.TOPIC_DEPTHS.every((d) => RT.DEPTH_TAIL[d] <= RT.DEPTH_MILESTONES_MAX)
+  );
+
+  // ── Goals (§23) ──
+  eq(
+    "the goals' constants: GOAL_LABEL_MAX 16, GOAL_PAUSE_REASON_MAX 120, and GOALS_FULL's words",
+    [RT.GOAL_LABEL_MAX, RT.GOAL_PAUSE_REASON_MAX, RT.GOALS_FULL],
+    [16, 120, "3 goals open. Finish, pause or archive one."]
+  );
+
+  // ── Every union's list, exactly ──
+  const lists: [string, readonly unknown[], readonly unknown[]][] = [
+    ["ROADMAP_STATUSES", RT.ROADMAP_STATUSES, ["DRAFT", "ACTIVE", "PAUSED", "DONE", "ARCHIVED"]],
+    ["SEAT_STATUSES", RT.SEAT_STATUSES, ["DRAFT", "ACTIVE"]],
+    ["HOLD_STATUSES", RT.HOLD_STATUSES, ["DRAFT", "ACTIVE", "PAUSED"]],
+    ["GOAL_SLOTS", RT.GOAL_SLOTS, [1, 2, 3]],
+    ["DIFF_KEYS", RT.DIFF_KEYS, ["DIFF_1", "DIFF_2", "DIFF_3", "DIFF_4", "DIFF_5", "DIFF_6"]],
+    ["BREADTH_KEYS", RT.BREADTH_KEYS, ["NARROW", "MEDIUM", "WIDE", "VAST"]],
+    ["DEPTH_REASONS", RT.DEPTH_REASONS, ["LONG_PREREQS", "FEW_PREREQS", "ABSTRACT_MATH", "NEW_LANGUAGE_OR_SCRIPT", "MOTOR_SKILL", "MEASURED_STANDARD"]],
+    ["BREADTH_REASONS", RT.BREADTH_REASONS, ["SINGLE_SKILL", "MANY_PARTS", "MANY_FIELDS", "ROUTINE_UPKEEP", "OPEN_ENDED_OUTCOME"]],
+    ["CAUTION_REASONS", RT.CAUTION_REASONS, ["REAL_MONEY", "HEALTH_RISK", "REGULATED"]],
+    [
+      "RATING_REASONS",
+      RT.RATING_REASONS,
+      ["LONG_PREREQS", "FEW_PREREQS", "ABSTRACT_MATH", "NEW_LANGUAGE_OR_SCRIPT", "MOTOR_SKILL", "MEASURED_STANDARD", "SINGLE_SKILL", "MANY_PARTS", "MANY_FIELDS", "ROUTINE_UPKEEP", "OPEN_ENDED_OUTCOME", "REAL_MONEY", "HEALTH_RISK", "REGULATED"],
+    ],
+    ["CAUTIONS", RT.CAUTIONS, ["FINANCIAL", "MEDICAL", "LEGAL"]],
+    ["RATING_ORIGINS", RT.RATING_ORIGINS, ["GEMINI", "CODE", "YOURS"]],
+    ["PLAN_KINDS", RT.PLAN_KINDS, ["LEVELS", "TOPICS"]],
+    ["TOPIC_DEPTHS", RT.TOPIC_DEPTHS, [6, 8, 10, 12]],
+    ["LAYER_KEYS", RT.LAYER_KEYS, ["L1", "L2", "L3", "L4", "L5", "L6"]],
+    ["TOPIC_ORIGINS", RT.TOPIC_ORIGINS, ["GEMINI", "SYLLABUS", "USER", "LIBRARY", "AIM"]],
+    ["TOPIC_SCOPES", RT.TOPIC_SCOPES, ["GENERAL", "REGION_SPECIFIC"]],
+    ["TOPIC_PLACED_BY", RT.TOPIC_PLACED_BY, ["GEMINI", "YOU", "CODE"]],
+    ["TOPIC_DECISIONS", RT.TOPIC_DECISIONS, ["PENDING", "KEPT", "EDITED", "REMOVED", "MERGED"]],
+    ["TOPIC_ROLES", RT.TOPIC_ROLES, ["BASE", "DEEP"]],
+    ["TOPIC_GROUNDINGS", RT.TOPIC_GROUNDINGS, ["LINKED", "WEAK", "NONE", "NOT_RUN", "OWN"]],
+    ["GROUND_VERDICTS", RT.GROUND_VERDICTS, ["LINKED", "WEAK", "NONE"]],
+    ["EDGE_ORIGINS", RT.EDGE_ORIGINS, ["GEMINI", "USER", "CODE", "SYLLABUS", "CROSS_GOAL"]],
+    ["EDGE_DECISIONS", RT.EDGE_DECISIONS, ["PENDING", "KEPT", "EDITED", "REMOVED"]],
+    ["EDGE_MATCHES", RT.EDGE_MATCHES, ["OUTLINE", "LINE_DOMAIN", "NONE"]],
+    ["RUN_PHASES", RT.RUN_PHASES, ["RATE", "MAP", "LINK", "GROUND", "DEEPER"]],
+    ["CHAIN_ROLES", RT.CHAIN_ROLES, ["LAYER", "DEPTH"]],
+    ["TOPIC_FLAGS", RT.TOPIC_FLAGS, ["JURISDICTION", "BRAND", "ADVICE", "LEVEL_ONLY", "INJECTION", "REGION"]],
+    ["TOPIC_CLASSES", RT.TOPIC_CLASSES, ["SYLLABUS", "YOURS", "LIBRARY", "AIM", "PICKED", "LINKED", "NOT_CHECKED", "KEPT", "KEPT_NOT_CHECKED"]],
+    [
+      "TOPIC_NOTES",
+      RT.TOPIC_NOTES,
+      [
+        "NEAR_DUPLICATE",
+        "UNSURE_LAYER",
+        "NEEDS_PARENT",
+        "DEAD_END",
+        "DIFFERS_FROM_ORDER",
+        "NOT_USED",
+        "PICKED_BY_GEMINI",
+        "PLACED_BY_GEMINI",
+        "TRACKED_IN_GOAL",
+        "PLANNED_LATER",
+        "HELD_AT_START",
+        "KNOWN_BY_YOU",
+        "CROSS_GOAL_PARENT",
+        "MERGED_BY_YOU",
+        "ADDED_BY_DEEPER",
+      ],
+    ],
+    ["TOPIC_DROP_REASONS", RT.TOPIC_DROP_REASONS, ["SHAPE", "FLAG", "ECHO", "ONE_SAMPLE", "SAME_TOPIC_DEEPER", "OVER_ROOM", "TAKEN_NAME"]],
+    ["TOPIC_HIDE_REASONS", RT.TOPIC_HIDE_REASONS, ["UNSURE_LAYER", "LANGUAGE_UNCHECKED", "REGION", "NEAR_DUPLICATE", "WEAK", "NONE", "NOT_RUN", "GROUND_FAILED"]],
+    ["CHAIN_CHECK_CODES", RT.CHAIN_CHECK_CODES, ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10"]],
+    ["CHAIN_OFFERS", RT.CHAIN_OFFERS, ["USE_REALISTIC_DATE", "MORE_HOURS", "PAUSE_GOAL", "LOWER_DEPTH", "FEWER_LAYERS", "PLAN_FIRST_LAYERS"]],
+    ["EMPTY_LAYER_OFFERS", RT.EMPTY_LAYER_OFFERS, ["MERGE_UP", "WRITE_ONE", "SHOW_HIDDEN"]],
+    ["MODEL_TEXT_CLASSES", RT.MODEL_TEXT_CLASSES, ["TOPIC_NAME_LINKED", "TOPIC_NAME_KEPT"]],
+    ["ACCEPT_REFUSAL_CODES", RT.ACCEPT_REFUSAL_CODES, ["LAYER_UNKEPT", "TOPIC_NEEDS_PARENT", "LAST_LAYER_EMPTY", "LAYER_OVER", "TOPICS_OVER", "TOPIC_NAME_TAKEN"]],
+  ];
+  const badLists = lists.filter(([, got, want]) => json(got) !== json(want)).map(([n, got]) => `${n} ${json(got)}`);
+  check(`every revision-5 union's list, exactly and in order (${lists.length} lists)`, badLists.length === 0, badLists.join("; "));
+
+  // The unions themselves, compiled by tsc: a member added or removed turns its `true` into a type error here. BlockingFlag,
+  // MilestoneRowState and PROVENANCE_CLASSES are pinned unwidened (rulings 3–5); ItemNote and MilestoneNote are lane 8's.
+  type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+  const unionPins: [
+    Same<RT.RoadmapStatus, "DRAFT" | "ACTIVE" | "PAUSED" | "DONE" | "ARCHIVED">,
+    Same<RT.ReplanKind, "REFIT" | "MANUAL" | "TOPICS">,
+    Same<RT.GoalSlot, 1 | 2 | 3>,
+    Same<typeof RT.TOPIC_CANDIDATE_COUNT, 1 | 3>,
+    Same<RT.DiffKey, "DIFF_1" | "DIFF_2" | "DIFF_3" | "DIFF_4" | "DIFF_5" | "DIFF_6">,
+    Same<RT.BreadthKey, "NARROW" | "MEDIUM" | "WIDE" | "VAST">,
+    Same<RT.DepthReason, "LONG_PREREQS" | "FEW_PREREQS" | "ABSTRACT_MATH" | "NEW_LANGUAGE_OR_SCRIPT" | "MOTOR_SKILL" | "MEASURED_STANDARD">,
+    Same<RT.BreadthReason, "SINGLE_SKILL" | "MANY_PARTS" | "MANY_FIELDS" | "ROUTINE_UPKEEP" | "OPEN_ENDED_OUTCOME">,
+    Same<RT.CautionReason, "REAL_MONEY" | "HEALTH_RISK" | "REGULATED">,
+    Same<RT.RatingReason, RT.DepthReason | RT.BreadthReason | RT.CautionReason>,
+    Same<RT.Caution, "FINANCIAL" | "MEDICAL" | "LEGAL">,
+    Same<RT.RatingOrigin, "GEMINI" | "CODE" | "YOURS">,
+    Same<RT.LayerChangeKind, "SET" | "FEWER" | "MERGED" | "DEEPER" | "PLAN_FIRST">,
+    Same<RT.PlanKind, "LEVELS" | "TOPICS">,
+    Same<RT.TopicDepth, 6 | 8 | 10 | 12>,
+    Same<RT.LayerKey, "L1" | "L2" | "L3" | "L4" | "L5" | "L6">,
+    Same<RT.TopicOrigin, "GEMINI" | "SYLLABUS" | "USER" | "LIBRARY" | "AIM">,
+    Same<RT.TopicScope, "GENERAL" | "REGION_SPECIFIC">,
+    Same<RT.TopicPlacedBy, "GEMINI" | "YOU" | "CODE">,
+    Same<RT.TopicDecision, "PENDING" | "KEPT" | "EDITED" | "REMOVED" | "MERGED">,
+    Same<RT.TopicRole, "BASE" | "DEEP">,
+    Same<RT.TopicGrounding, "LINKED" | "WEAK" | "NONE" | "NOT_RUN" | "OWN">,
+    Same<RT.GroundVerdict, "LINKED" | "WEAK" | "NONE">,
+    Same<RT.GroundTitleMode, "TITLE" | "DOMAIN">,
+    Same<RT.EdgeOrigin, "GEMINI" | "USER" | "CODE" | "SYLLABUS" | "CROSS_GOAL">,
+    Same<RT.EdgeDecision, "PENDING" | "KEPT" | "EDITED" | "REMOVED">,
+    Same<RT.EdgeMatch, "OUTLINE" | "LINE_DOMAIN" | "NONE">,
+    Same<RT.RunPhase, "RATE" | "MAP" | "LINK" | "GROUND" | "DEEPER">,
+    Same<RT.ChainRole, "LAYER" | "DEPTH">,
+    Same<RT.TopicFlag, "JURISDICTION" | "BRAND" | "ADVICE" | "LEVEL_ONLY" | "INJECTION" | "REGION">,
+    Same<RT.TopicClass, "SYLLABUS" | "YOURS" | "LIBRARY" | "AIM" | "PICKED" | "LINKED" | "NOT_CHECKED" | "KEPT" | "KEPT_NOT_CHECKED">,
+    Same<
+      RT.TopicNote,
+      | "NEAR_DUPLICATE"
+      | "UNSURE_LAYER"
+      | "NEEDS_PARENT"
+      | "DEAD_END"
+      | "DIFFERS_FROM_ORDER"
+      | "NOT_USED"
+      | "PICKED_BY_GEMINI"
+      | "PLACED_BY_GEMINI"
+      | "TRACKED_IN_GOAL"
+      | "PLANNED_LATER"
+      | "HELD_AT_START"
+      | "KNOWN_BY_YOU"
+      | "CROSS_GOAL_PARENT"
+      | "MERGED_BY_YOU"
+      | "ADDED_BY_DEEPER"
+    >,
+    Same<RT.TopicDropReason, "SHAPE" | "FLAG" | "ECHO" | "ONE_SAMPLE" | "SAME_TOPIC_DEEPER" | "OVER_ROOM" | "TAKEN_NAME">,
+    Same<RT.TopicHideReason, "UNSURE_LAYER" | "LANGUAGE_UNCHECKED" | "REGION" | "NEAR_DUPLICATE" | "WEAK" | "NONE" | "NOT_RUN" | "GROUND_FAILED">,
+    Same<RT.ChainCheckCode, "C1" | "C2" | "C3" | "C4" | "C5" | "C6" | "C7" | "C8" | "C9" | "C10">,
+    Same<RT.ChainEffect, "REFUSED" | "TRIPWIRE" | "BLOCKS" | "DROPPED" | "FALLBACK" | "INFO" | "FLAG" | "MARK" | "MERGED">,
+    Same<RT.ChainOffer, "USE_REALISTIC_DATE" | "MORE_HOURS" | "PAUSE_GOAL" | "LOWER_DEPTH" | "FEWER_LAYERS" | "PLAN_FIRST_LAYERS">,
+    Same<RT.EmptyLayerOffer, "MERGE_UP" | "WRITE_ONE" | "SHOW_HIDDEN">,
+    Same<RT.ModelTextClass, "TOPIC_NAME_LINKED" | "TOPIC_NAME_KEPT">,
+    Same<RT.DomainNameOrigin, "GEMINI">,
+    Same<RT.AcceptRefusalCode, "LAYER_UNKEPT" | "TOPIC_NEEDS_PARENT" | "LAST_LAYER_EMPTY" | "LAYER_OVER" | "TOPICS_OVER" | "TOPIC_NAME_TAKEN">,
+    // Ruling 51: the rank spread's types (AssignRankIndices takes the plan kind; DepthRankInput.depth a TopicDepth).
+    Same<Parameters<RT.AssignRankIndices>[3], RT.PlanKind | null | undefined>,
+    Same<RT.DepthRankInput["depth"], RT.TopicDepth | null>,
+    Same<
+      RT.GroundReason,
+      "NO_METADATA" | "NO_QUERIES" | "NO_LINE" | "DUPLICATE_LINE" | "NOT_FOUND" | "URL_IN_TEXT" | "NO_SEARCH" | "NO_SUPPORT" | "TITLE_CHECK" | "BAD_OFFSETS" | "NOT_RUN" | "TRUNCATED"
+    >,
+    Same<
+      RT.BlockingFlag,
+      | "NUMBER"
+      | "LOOKS_LIKE_RESOURCE"
+      | "PROPER_NOUN"
+      | "CLAIM_WORDS"
+      | "ABOUT_YOU"
+      | "CONSTRAINT_CONFLICT"
+      | "HEALTH"
+      | "MATCHED_EXISTING"
+      | "TOPIC_OUTSIDE_SCOPE"
+      | "AIM_STEP_EARLY"
+      | "LANGUAGE_UNCHECKED"
+      | "NOT_IN_YOUR_WORDS"
+    >,
+    Same<RT.MilestoneRowState, "REACHED" | "PENDING_REACH" | "CURRENT" | "PLANNED" | "OUTLINE" | "LATER" | "DROPPED" | "SLIPPED" | "PAST_DUE" | "CLOSED_UNREACHED">,
+  ] = [
+    true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+    true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+  ];
+  check(`every revision-5 union compiles to its published members, and BlockingFlag and MilestoneRowState are not widened (tsc; ${unionPins.length} unions)`, unionPins.every((x) => x === true));
+  eq(
+    "PROVENANCE_CLASSES is not widened (ruling 4: the two model-text classes are ModelTextClass)",
+    RT.PROVENANCE_CLASSES,
+    ["MEASURED", "RECORDED", "SELF_REPORTED", "ESTIMATED", "WORKED_OUT", "YOURS", "KEPT_SUGGESTION", "DRAFT"]
+  );
+}
+
+console.log("— revision 5 (§22.0): the nine helpers lane 0 implements —");
+{
+  eq("diffKeyOf 1..6 → DIFF_1..DIFF_6, and layersOfDiff reads each back", [1, 2, 3, 4, 5, 6].map((k) => RT.diffKeyOf(k)).map((d) => (d ? RT.layersOfDiff(d) : null)), [1, 2, 3, 4, 5, 6]);
+  eq("…DIFF_KEYS round-trip through layersOfDiff and diffKeyOf", RT.DIFF_KEYS.map((d) => RT.diffKeyOf(RT.layersOfDiff(d))), [...RT.DIFF_KEYS]);
+  eq("diffKeyOf: 0, 7, 2.5, NaN, −1 and Infinity → null", [0, 7, 2.5, NaN, -1, Infinity].map((k) => RT.diffKeyOf(k)), [null, null, null, null, null, null]);
+  check("isGoalSlot: 1, 2 and 3; never 0, 4, '1', 1.5, NaN, null or undefined", [1, 2, 3].every((v) => RT.isGoalSlot(v)) && ![0, 4, "1", 1.5, NaN, null, undefined].some((v) => RT.isGoalSlot(v)));
+  check(
+    "isTopicDepth: 6, 8, 10 and 12; never 4, 7, 11, 6.5, '6' or null; and isAimDepth still refuses 6 (depth 6 is TOPICS only, ruling 14)",
+    [6, 8, 10, 12].every((v) => RT.isTopicDepth(v)) && ![4, 7, 11, 6.5, "6", null].some((v) => RT.isTopicDepth(v)) && !RT.isAimDepth(6)
+  );
+  eq(
+    "geminiNamedOf: GEMINI with its name unchanged → true; renamed, yours, or no origin name → false",
+    [
+      RT.geminiNamedOf({ name: "Cash flow", nameOrigin: "GEMINI", originName: "Cash flow" }),
+      RT.geminiNamedOf({ name: "Cash flows", nameOrigin: "GEMINI", originName: "Cash flow" }),
+      RT.geminiNamedOf({ name: "Cash flow", nameOrigin: null, originName: "Cash flow" }),
+      RT.geminiNamedOf({ name: "Cash flow", nameOrigin: "GEMINI", originName: null }),
+      RT.geminiNamedOf({ name: "Cash flow" }),
+      RT.geminiNamedOf({ name: "cash flow", nameOrigin: "GEMINI", originName: "Cash flow" }),
+    ],
+    [true, false, false, false, false, false]
+  );
+  const G = (name: string, geminiNamed = true) => ({ name, geminiNamed });
+  const parts = (text: string, ds: { name: string; geminiNamed: boolean }[]) => RT.namedPartsOf(text, ds).map((p) => (p.geminiNamed ? `[${p.text}]` : p.text));
+  eq("namedPartsOf: '' → []", RT.namedPartsOf("", [G("Cash flow")]), []);
+  eq("…no geminiNamed name → the whole text, unmarked", RT.namedPartsOf("Cash flow, Debt · layer 1 of 4", [G("Cash flow", false)]), [{ text: "Cash flow, Debt · layer 1 of 4", geminiNamed: false }]);
+  eq("…a title: the Gemini-named Domain marked, yours not", parts("Cash flow, Debt and interest · layer 1 of 4", [G("Cash flow"), G("Debt and interest", false)]), ["[Cash flow]", ", Debt and interest · layer 1 of 4"]);
+  eq("…the longest name first where two start at one place", parts("Cash flow forecasting and Cash flow", [G("Cash flow"), G("Cash flow forecasting")]), ["[Cash flow forecasting]", " and ", "[Cash flow]"]);
+  eq("…left to right, never overlapping: the leftmost match wins its letters", parts("Interest rate risk", [G("rate risk"), G("Interest rate")]), ["[Interest rate]", " risk"]);
+  eq(
+    "…left to right first, longest only at one position: 'AB CD' with 'B CD' and 'AB' gives [AB] then ' CD' (never [B CD], the globally longest)",
+    parts("AB CD", [G("B CD"), G("AB")]),
+    ["[AB]", " CD"]
+  );
+  eq("…exact and case-sensitive", parts("cash flow and Cash Flow", [G("Cash flow")]), ["cash flow and Cash Flow"]);
+  eq("…back to back", parts("Cash flowCash flow", [G("Cash flow")]), ["[Cash flow]", "[Cash flow]"]);
+  {
+    const cases: [string, { name: string; geminiNamed: boolean }[]][] = [
+      ["Cash flow, Debt and interest · layer 1 of 4", [G("Cash flow"), G("Debt and interest", false)]],
+      ["Cash flow forecasting and Cash flow", [G("Cash flow"), G("Cash flow forecasting")]],
+      ["Interest rate risk", [G("rate risk"), G("Interest rate")]],
+      ["Đầu tư · Bảo hiểm 🙂 Đầu tư", [G("Đầu tư"), G("")]],
+      ["no names here", []],
+    ];
+    const bad = cases.filter(([text, ds]) => {
+      const p = RT.namedPartsOf(text, ds);
+      const plainPairs = p.some((x, i) => i > 0 && !x.geminiNamed && !p[i - 1].geminiNamed);
+      return p.map((x) => x.text).join("") !== text || p.some((x) => x.text === "") || plainPairs;
+    });
+    check("…the parts always join back to the text exactly, none is empty, and no two plain parts sit side by side", bad.length === 0, bad.map(([t]) => t).join(" | "));
+  }
+  eq("topicRankIndexOf: G 5, top 4 → 1, 1, 2, 3, 4 (the golden)", [1, 2, 3, 4, 5].map((i) => RT.topicRankIndexOf(i, 5, 4)), [1, 1, 2, 3, 4]);
+  eq("…G 1 gives top; i clamps to 1..G and top to 1..RANK_TOP", [RT.topicRankIndexOf(1, 1, 4), RT.topicRankIndexOf(0, 5, 4), RT.topicRankIndexOf(9, 5, 4), RT.topicRankIndexOf(5, 5, 99), RT.topicRankIndexOf(5, 5, 0)], [4, 1, 4, RT.RANK_TOP, 1]);
+  {
+    const broke: string[] = [];
+    for (let g = 1; g <= 8; g++)
+      for (let top = 1; top <= 6; top++) {
+        const r = Array.from({ length: g }, (_, k) => RT.topicRankIndexOf(k + 1, g, top));
+        if (r.some((x, k) => k > 0 && x < r[k - 1])) broke.push(`G${g} top${top}: not monotone ${json(r)}`);
+        if (r[g - 1] !== top) broke.push(`G${g} top${top}: the last is not top ${json(r)}`);
+        if (top > 1 && r.slice(0, -1).some((x) => x >= top)) broke.push(`G${g} top${top}: top before the last ${json(r)}`);
+        if (g > 1 && r[0] !== 1) broke.push(`G${g} top${top}: the first is not 1 ${json(r)}`);
+      }
+    check("…over G 1..8 × top 1..6: monotone, top only at the last, the first is 1 when G > 1", broke.length === 0, broke.slice(0, 4).join("; "));
+  }
+  // The signatures of the nine, compiled by tsc both ways (Exact: a dropped or widened parameter, or a narrowed return, fails).
+  type HelperSigs = {
+    isGoalSlot: (v: unknown) => v is RT.GoalSlot;
+    isTopicDepth: (v: unknown) => v is RT.TopicDepth;
+    diffKeyOf: (layers: number) => RT.DiffKey | null;
+    layersOfDiff: (key: RT.DiffKey) => number;
+    topicSwitchesOf: (raw?: Partial<RT.TopicSwitches>) => RT.TopicSwitches;
+    geminiNamedOf: (d: { name: string; nameOrigin?: string | null; originName?: string | null }) => boolean;
+    namedPartsOf: (text: string, domains: readonly { name: string; geminiNamed: boolean }[]) => RT.NamedPart[];
+    topicRankIndexOf: (i: number, gates: number, top: number) => number;
+    milestoneCapOf: (planKind?: RT.PlanKind | null) => number;
+  };
+  const helperSigs: HelperSigs = RT;
+  const helperExact: AllExact<typeof RT, HelperSigs> = true;
+  check(
+    "…and the nine keep their frozen signatures (tsc, both ways)",
+    helperExact &&
+      ["isGoalSlot", "isTopicDepth", "diffKeyOf", "layersOfDiff", "topicSwitchesOf", "geminiNamedOf", "namedPartsOf", "topicRankIndexOf", "milestoneCapOf"].every((n) => typeof (helperSigs as Record<string, unknown>)[n] === "function")
+  );
+}
+
+console.log("— revision 5 (§22.4, §22.5): the schemas and the instructions, as sent —");
+{
+  const doc = read("docs/life-plan/roadmap-contracts.md").replace(/\r\n/g, "\n");
+  const sectionOf = (head: string, next: string): string => {
+    const i = doc.indexOf(head);
+    if (i < 0) return "";
+    const j = doc.indexOf(next, i + head.length);
+    return doc.slice(i, j < 0 ? undefined : j);
+  };
+  const blockAfter = (text: string, marker: string): string | null => {
+    const i = text.indexOf(marker);
+    return i < 0 ? null : (/```[a-z]*\n([\s\S]*?)\n```/.exec(text.slice(i))?.[1] ?? null);
+  };
+  const parse = (t: string | null): unknown => {
+    try {
+      return t === null ? null : (JSON.parse(t) as unknown);
+    } catch {
+      return null;
+    }
+  };
+  const s4 = sectionOf("\n### 22.4 ", "\n### 22.5 ");
+  const s5 = sectionOf("\n### 22.5 ", "\n### 22.6 ");
+  const docRate = parse(blockAfter(s4, "**RATE**"));
+  const docDeeper = parse(blockAfter(s4, "**DEEPER**"));
+  const docLink = parse(blockAfter(s4, "**LINK**"));
+  const mapBlock = blockAfter(s4, "**MAP**") ?? "";
+  const [mapBody, mapItem] = mapBlock.split(/\nITEM = /);
+  const docMap = mapItem ? parse(mapBody.replace(/"items": ITEM\b/g, `"items": ${mapItem}`)) : null;
+  check("§22.4's four schema blocks parse (RATE, MAP with its ITEM, LINK, DEEPER): this check reads the contract itself", docRate !== null && docMap !== null && docLink !== null && docDeeper !== null);
+  eq("RATE_RESPONSE_SCHEMA deep-equals §22.4's block, key order included", RR.RATE_RESPONSE_SCHEMA, docRate);
+  eq("DEEPER_RESPONSE_SCHEMA deep-equals §22.4's block, key order included", TP.DEEPER_RESPONSE_SCHEMA, docDeeper);
+  eq(
+    "both keep the house rules (schemaHouseRulesOf), and so do §22.4's MAP and LINK examples (the shapes lane 6's mapSchemaOf and linkSchemaOf build)",
+    [RR.RATE_RESPONSE_SCHEMA, TP.DEEPER_RESPONSE_SCHEMA, docMap, docLink].map(schemaHouseRulesOf),
+    [[], [], [], []]
+  );
+  const tags = (s: unknown) => [...new Set(schemaHouseRulesOf(s).map((x) => x.split(" ")[0]))].sort();
+  eq(
+    "schemaHouseRulesOf fires on each breach: a type outside OBJECT/ARRAY/STRING, a string bound, nullable, a numeric maxItems, an empty enum, a free STRING, a required key with no property, an ordering that isn't the keys, an OBJECT with none",
+    tags({
+      type: "OBJECT",
+      required: ["a", "z"],
+      propertyOrdering: ["b", "a", "c", "d", "e"],
+      properties: {
+        a: { type: "INTEGER" },
+        b: { type: "STRING", enum: [], nullable: true },
+        c: { type: "ARRAY", maxItems: 4, items: { type: "STRING", maxLength: "10" } },
+        d: { type: "OBJECT", properties: {}, propertyOrdering: [] },
+        e: { type: "STRING", enum: ["X"], pattern: "^X$" },
+      },
+    }),
+    ["BOUND", "EMPTY_OBJECT", "ENUM", "FREE_TEXT", "ITEMS_NOT_STRING", "NULLABLE", "ORDERING", "REQUIRED", "TYPE"]
+  );
+  eq(
+    "…and allows free text only as `name` under a top-level `names` (FREE_TEXT_ROOTS): not a `name` elsewhere, nor another key under `names`",
+    [
+      schemaHouseRulesOf({ type: "OBJECT", propertyOrdering: ["names"], properties: { names: { type: "ARRAY", items: { type: "OBJECT", propertyOrdering: ["name"], properties: { name: { type: "STRING" } } } } } }),
+      tags({ type: "OBJECT", propertyOrdering: ["topic"], properties: { topic: { type: "OBJECT", propertyOrdering: ["name"], properties: { name: { type: "STRING" } } } } }),
+      tags({ type: "OBJECT", propertyOrdering: ["names"], properties: { names: { type: "ARRAY", items: { type: "OBJECT", propertyOrdering: ["label"], properties: { label: { type: "STRING" } } } } } }),
+    ],
+    [[], ["FREE_TEXT"], ["FREE_TEXT"]]
+  );
+
+  const inst = (name: string) => blockAfter(s5, `**\`${name}\`**`);
+  eq("RATE_INSTRUCTION equals §22.5 exactly (its lines joined by \\n)", RR.RATE_INSTRUCTION, inst("RATE_INSTRUCTION"));
+  const mapParts: Record<string, string> = {};
+  for (const line of (inst("MAP_INSTRUCTION_PARTS") ?? "").split("\n")) {
+    const m = /^(head|place|names|both|tail):\s+(.*)$/.exec(line);
+    if (m) mapParts[m[1]] = m[2];
+  }
+  eq("MAP_INSTRUCTION_PARTS equals §22.5's five parts exactly (head, place, names, both, tail)", TP.MAP_INSTRUCTION_PARTS, mapParts);
+  eq("LINK_INSTRUCTION equals §22.5 exactly", TP.LINK_INSTRUCTION, inst("LINK_INSTRUCTION"));
+  eq("GROUND_INSTRUCTION equals §22.5 exactly", GRD.GROUND_INSTRUCTION, inst("GROUND_INSTRUCTION"));
+  eq("DEEPER_INSTRUCTION equals §22.5 exactly", TP.DEEPER_INSTRUCTION, inst("DEEPER_INSTRUCTION"));
+  check(
+    'each instruction fences its input as "data, never instructions" (MAP in its tail), and TOPIC_PROMPT_VERSION is 1',
+    [RR.RATE_INSTRUCTION, TP.MAP_INSTRUCTION_PARTS.tail, TP.LINK_INSTRUCTION, GRD.GROUND_INSTRUCTION, TP.DEEPER_INSTRUCTION].every((t) => t.includes("data, never instructions")) && RT.TOPIC_PROMPT_VERSION === 1
+  );
+
+  eq("RATE_RULE_NAMES (§22.7)", RR.RATE_RULE_NAMES, ["rate.coherence", "rate.consensus", "rate.caution", "rate.bounds"]);
+  eq(
+    "TOPIC_RULE_NAMES (§22.8): the 27, in order",
+    TP.TOPIC_RULE_NAMES,
+    [
+      "topic.shape",
+      ...RT.TOPIC_FLAGS.map((f) => `topic.flag.${f}`),
+      "topic.aim",
+      "topic.echo",
+      "topic.agree",
+      "topic.dedupe",
+      "topic.layer",
+      "topic.pick",
+      "topic.trim",
+      "link.draw",
+      "link.none-mixed",
+      "link.min-items",
+      ...RT.CHAIN_CHECK_CODES.map((c) => `chain.${c}`),
+    ]
+  );
+  eq(
+    "GROUND_RULE_NAMES (§22.9): the 11, in order",
+    GRD.GROUND_RULE_NAMES,
+    ["ground.metadata", "ground.line", "ground.url", "ground.segment", "ground.text", "ground.contiguous", "ground.query", "ground.denylist", "ground.dedupe", "ground.title", "ground.batch"]
+  );
+  {
+    const all = [...RR.RATE_RULE_NAMES, ...TP.TOPIC_RULE_NAMES, ...GRD.GROUND_RULE_NAMES];
+    check("…27 topic rules, and the 42 rule names are distinct (the ablation switches each off by name)", TP.TOPIC_RULE_NAMES.length === 27 && all.length === 42 && new Set(all).size === all.length);
+  }
+  const SUFFIXES = ["co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "com.au", "net.au", "org.au", "edu.au", "gov.au", "co.nz", "org.nz", "govt.nz", "co.jp", "or.jp", "ac.jp", "ne.jp", "com.br", "com.cn", "com.sg", "com.vn", "edu.vn", "co.in", "co.za", "com.hk", "com.my", "com.mx", "co.kr"];
+  check(
+    "MULTI_PART_SUFFIXES holds §22.9's 28 (lane 6 may add more), each a lower-case two-label suffix, none twice",
+    SUFFIXES.every((s) => GRD.MULTI_PART_SUFFIXES.includes(s)) && GRD.MULTI_PART_SUFFIXES.every((s) => /^[a-z]+\.[a-z]+$/.test(s)) && new Set(GRD.MULTI_PART_SUFFIXES).size === GRD.MULTI_PART_SUFFIXES.length,
+    json(SUFFIXES.filter((s) => !GRD.MULTI_PART_SUFFIXES.includes(s)))
+  );
+  check(
+    "LINK_NONE is 'NONE'; TOPIC_KEY_PATTERN is /^(S|U|T)([1-9]\\d{0,2})$/: S1, U12 and T999 match; T0, T1000, T01, s1, X1 and 'S 1' don't",
+    TP.LINK_NONE === "NONE" &&
+      TP.TOPIC_KEY_PATTERN.source === "^(S|U|T)([1-9]\\d{0,2})$" &&
+      TP.TOPIC_KEY_PATTERN.flags === "" &&
+      ["S1", "U12", "T999"].every((k) => TP.TOPIC_KEY_PATTERN.test(k)) &&
+      !["T0", "T1000", "T01", "s1", "X1", "S 1"].some((k) => TP.TOPIC_KEY_PATTERN.test(k))
+  );
+  check("GOAL_PARAM is 'goal' (?goal=<roadmapId>)", GL.GOAL_PARAM === "goal");
+}
+
+console.log("— revision 5 (§22.7–§22.9, §23.2, §22.17): the four modules and their shells —");
+{
+  type ModuleSpec = { file: string; mod: Record<string, unknown>; lane: number; sec: string; consts: string[]; types: string[]; fns: string[] };
+  const MODULES: ModuleSpec[] = [
+    {
+      file: "src/lib/roadmap-rating.ts",
+      mod: RR as unknown as Record<string, unknown>,
+      lane: 6,
+      sec: "§22.7",
+      consts: ["RATE_INSTRUCTION", "RATE_RESPONSE_SCHEMA", "RATE_RULE_NAMES"],
+      types: ["RateSampleIn", "AxisConsensus", "CautionTexts", "RatingInput"],
+      fns: [
+        "coherentReasonsOf",
+        "rateVoteOf",
+        "difficultyConsensusOf",
+        "breadthConsensusOf",
+        "keptReasonsOf",
+        "wordCautionsOf",
+        "cautionsOf",
+        "depthFallbackOf",
+        "ratingOf",
+        "codeRatingOf",
+        "ratingOverrideOf",
+        "withLayerChangeOf",
+        "withMapFillOf",
+        "ratingKeyOf",
+        "trackStageCountOf",
+        "breadthRoomOf",
+        "routineRatedOf",
+      ],
+    },
+    {
+      file: "src/lib/roadmap-topics.ts",
+      mod: TP as unknown as Record<string, unknown>,
+      lane: 6,
+      sec: "§22.8",
+      consts: ["MAP_INSTRUCTION_PARTS", "LINK_INSTRUCTION", "DEEPER_INSTRUCTION", "DEEPER_RESPONSE_SCHEMA", "LINK_NONE", "TOPIC_KEY_PATTERN", "TOPIC_RULE_NAMES"],
+      types: ["MapSampleIn", "MapAgreementInput", "MapAgreement", "LinkSampleIn", "LinkDrawInput", "LinkDraw", "ParentSet", "ChainFinding", "ChainCheckContext", "WrittenMapInput", "WrittenMap", "DeeperAgreementInput", "DeeperAgreement"],
+      fns: [
+        "clauseSplitOf",
+        "routineClausesOf",
+        "formKeyOf",
+        "topicStemsOf",
+        "levelStemsOf",
+        "stemDiceOf",
+        "aimSpanOf",
+        "topicNameShapeOf",
+        "mapInstructionOf",
+        "mapRoomOf",
+        "mapSchemaOf",
+        "mapAgreementOf",
+        "kFinalOf",
+        "linkSchemaOf",
+        "linkDrawOf",
+        "parentsOf",
+        "chainChecksOf",
+        "chooseClosureOf",
+        "specialisationOf",
+        "topicClassOf",
+        "emptyLayerOffersOf",
+        "mergeLayerUpOf",
+        "acceptRefusalOf",
+        "writtenMapOf",
+        "deeperAgreementOf",
+      ],
+    },
+    {
+      file: "src/lib/roadmap-grounding.ts",
+      mod: GRD as unknown as Record<string, unknown>,
+      lane: 6,
+      sec: "§22.9",
+      consts: ["GROUND_INSTRUCTION", "GROUND_RULE_NAMES", "MULTI_PART_SUFFIXES"],
+      types: ["GroundTerm", "GroundParts", "GroundLine", "GroundCallVerdict", "GroundVerdictInput"],
+      fns: ["groundBatchesOf", "groundContentsOf", "groundPartsOf", "groundLinesOf", "groundVerdictOf", "registrableDomainOf", "sourceKeyOf", "isDeniedSource", "hasUrlOf", "groundRecordOf", "groundReusableOf"],
+    },
+    {
+      file: "src/lib/roadmap-goals.ts",
+      mod: GL as unknown as Record<string, unknown>,
+      lane: 3,
+      sec: "§23.2",
+      consts: ["GOAL_PARAM"],
+      types: ["GoalRow", "GoalSeats", "ShareGoal", "GoalShare", "AimLineCandidate"],
+      fns: [
+        "seatsOf",
+        "seatForNewOf",
+        "seatForReopenOf",
+        "sharesOf",
+        "hoursRoomOf",
+        "hoursOverLineOf",
+        "todayRowsOf",
+        "aimLinePickOf",
+        "defaultGoalLabelOf",
+        "goalLabelOf",
+        "labelClashOf",
+        "cleanGoalLabelOf",
+        "goalHrefOf",
+        "goalOfParam",
+        "intakeAutosaveKeyOf",
+      ],
+    },
+  ];
+  // The two shells that refuse rather than throw (§22.17): an action result, never an exception.
+  const REFUSES = new Set(["ratingOverrideOf", "withLayerChangeOf"]);
+  for (const m of MODULES) {
+    if (!existsSync(join(ROOT, m.file))) {
+      check(`${m.file} exists`, false);
+      continue;
+    }
+    const src = read(m.file);
+    const missing = [
+      ...m.consts.filter((n) => !new RegExp(`export const ${n}\\b`).test(src)),
+      ...m.types.filter((n) => !new RegExp(`export (?:interface|type) ${n}\\b`).test(src)),
+      ...m.fns.filter((n) => !new RegExp(`export (?:async )?function ${n}\\b`).test(src) || typeof m.mod[n] !== "function"),
+    ];
+    check(`${m.file}: every export of ${m.sec} is declared (${m.consts.length} constants, ${m.types.length} types, ${m.fns.length} functions)`, missing.length === 0, missing.join(", "));
+    const markers = [...src.matchAll(/\/\/ STUB: lane (\d+) implements \((§[\d.]+)\)(\r?\nexport (?:async )?function (\w+))?/g)];
+    const stray = markers.filter((x) => !x[4]).length;
+    const wrong = markers.filter((x) => x[4] && (Number(x[1]) !== m.lane || x[2] !== m.sec || !m.fns.includes(x[4]))).map((x) => x[4]);
+    check(
+      `${m.file}: every STUB marker sits directly on one of its functions and names lane ${m.lane} (${m.sec})`,
+      stray === 0 && wrong.length === 0,
+      `${stray} stray; ${wrong.join(", ")}`
+    );
+    const stubbed = markers.map((x) => x[4]).filter((n): n is string => typeof n === "string");
+    const answers = stubbed.filter((name) => {
+      const fn = m.mod[name] as (...a: unknown[]) => unknown;
+      if (REFUSES.has(name)) {
+        try {
+          return json(fn()) !== json({ ok: false, error: RT.ROADMAP_NOT_YET });
+        } catch {
+          return true;
+        }
+      }
+      try {
+        fn();
+        return true;
+      } catch (e) {
+        return !(e instanceof Error) || e.message !== `Not yet: ${name}`;
+      }
+    });
+    check(
+      `${m.file}: each of its ${stubbed.length} functions under a STUB marker answers "Not yet: <name>"${m.lane === 6 && m.sec === "§22.7" ? " (ratingOverrideOf and withLayerChangeOf refuse with ROADMAP_NOT_YET)" : ""}`,
+      answers.length === 0,
+      answers.join(", ")
+    );
+  }
+
+  // The frozen signatures, compiled by tsc: each module is assigned to its contract's types (§22.7–§22.9, §23.2), and
+  // pinned both ways (AllExact), so a lane cannot drop a trailing parameter, widen one or narrow a return unseen.
+  type RateSigs = {
+    RATE_INSTRUCTION: string;
+    RATE_RESPONSE_SCHEMA: Readonly<Record<string, unknown>>;
+    RATE_RULE_NAMES: readonly string[];
+    coherentReasonsOf: (difficulty: RT.DiffKey, breadth: RT.BreadthKey, reasons: readonly RT.RatingReason[], opts?: V.RuleOpts) => { kept: RT.RatingReason[]; dropped: RT.RatingReason[] };
+    rateVoteOf: (sample: RR.RateSampleIn | null, opts?: V.RuleOpts) => RT.RateVote | null;
+    difficultyConsensusOf: (votes: readonly (RT.DiffKey | null)[], fallback: RT.DiffKey, opts?: V.RuleOpts) => RR.AxisConsensus<RT.DiffKey>;
+    breadthConsensusOf: (votes: readonly (RT.BreadthKey | null)[], fallback: RT.BreadthKey, opts?: V.RuleOpts) => RR.AxisConsensus<RT.BreadthKey>;
+    keptReasonsOf: (votes: readonly (RT.RateVote | null)[]) => RT.RatingReason[];
+    wordCautionsOf: (texts: RR.CautionTexts, opts?: V.RuleOpts) => RT.Caution[];
+    cautionsOf: (texts: RR.CautionTexts, votes: readonly (RT.RateVote | null)[], opts?: V.RuleOpts) => RT.Caution[];
+    depthFallbackOf: (input: { trackArea: boolean; outlineLines: number }) => RT.DiffKey;
+    ratingOf: (input: RR.RatingInput, opts?: V.RuleOpts) => RT.RatingRecord;
+    codeRatingOf: (input: Omit<RR.RatingInput, "samples" | "runId">) => RT.RatingRecord;
+    ratingOverrideOf: (record: RT.RatingRecord, layers: number, day: DayKey) => RT.RoadmapActionResult<RT.RatingRecord>;
+    withLayerChangeOf: (record: RT.RatingRecord, change: RT.LayerChange) => RT.RoadmapActionResult<RT.RatingRecord>;
+    withMapFillOf: (record: RT.RatingRecord, kFinal: number) => RT.RatingRecord;
+    ratingKeyOf: (input: { aim: string; areaName: string; outline: readonly string[]; examLabel: string | null; splitClauses: readonly RT.SplitClause[] }) => string;
+    trackStageCountOf: (difficulty: RT.DiffKey) => number;
+    breadthRoomOf: (breadth: RT.BreadthKey) => { min: number; max: number };
+    routineRatedOf: (record: RT.RatingRecord | null) => boolean;
+  };
+  type TopicSigs = {
+    MAP_INSTRUCTION_PARTS: Readonly<{ head: string; place: string; names: string; both: string; tail: string }>;
+    LINK_INSTRUCTION: string;
+    DEEPER_INSTRUCTION: string;
+    DEEPER_RESPONSE_SCHEMA: Readonly<Record<string, unknown>>;
+    LINK_NONE: "NONE";
+    TOPIC_KEY_PATTERN: RegExp;
+    TOPIC_RULE_NAMES: readonly string[];
+    clauseSplitOf: (aim: string) => RT.AimClause[];
+    routineClausesOf: (clauses: readonly RT.AimClause[], ratingRoutine: boolean) => { indices: number[]; pick: boolean };
+    formKeyOf: (name: string) => string;
+    topicStemsOf: (name: string, opts?: V.RuleOpts) => string[];
+    levelStemsOf: (name: string, opts?: V.RuleOpts) => string[];
+    stemDiceOf: (a: string, b: string, opts?: V.RuleOpts) => number;
+    aimSpanOf: (name: string, aim: string, opts?: V.RuleOpts) => RT.AimClause | null;
+    topicNameShapeOf: (name: string, opts?: V.RuleOpts) => { ok: true; languageUnchecked: boolean } | { ok: false; clause: string };
+    mapInstructionOf: (parts: { place: boolean; names: boolean }) => string;
+    mapRoomOf: (input: { layers: number; breadth: RT.BreadthKey; lines: number; domains: number }) => number;
+    mapSchemaOf: (input: { layers: number; placeKeys: readonly string[]; names: boolean; breadth: RT.BreadthKey }) => Record<string, unknown> | null;
+    mapAgreementOf: (input: TP.MapAgreementInput, opts?: V.RuleOpts) => TP.MapAgreement;
+    kFinalOf: (topics: readonly Pick<RT.TopicDraft, "layer" | "decision">[], k: number) => number;
+    linkSchemaOf: (topics: readonly Pick<RT.TopicDraft, "key" | "layer" | "decision">[], kFinal: number) => Record<string, unknown> | null;
+    linkDrawOf: (input: TP.LinkDrawInput, opts?: V.RuleOpts) => TP.LinkDraw;
+    parentsOf: (map: RT.TopicMap, key: string) => TP.ParentSet;
+    chainChecksOf: (map: RT.TopicMap, ctx: TP.ChainCheckContext, opts?: V.RuleOpts) => TP.ChainFinding[];
+    chooseClosureOf: (map: RT.TopicMap, key: string) => string[];
+    specialisationOf: (map: RT.TopicMap) => string[];
+    topicClassOf: (t: RT.TopicDraft) => RT.TopicClass;
+    emptyLayerOffersOf: (map: RT.TopicMap, layer: number) => RT.EmptyLayerOffer[];
+    mergeLayerUpOf: (map: RT.TopicMap, layer: number) => { map: RT.TopicMap; droppedLinks: number };
+    acceptRefusalOf: (map: RT.TopicMap, fieldDomainNames: readonly string[]) => RT.AcceptRefusalCode | null;
+    writtenMapOf: (input: TP.WrittenMapInput) => TP.WrittenMap;
+    deeperAgreementOf: (input: TP.DeeperAgreementInput, opts?: V.RuleOpts) => TP.DeeperAgreement;
+  };
+  type GroundSigs = {
+    GROUND_INSTRUCTION: string;
+    GROUND_RULE_NAMES: readonly string[];
+    MULTI_PART_SUFFIXES: readonly string[];
+    groundBatchesOf: (terms: readonly GRD.GroundTerm[], maxCalls: number, opts?: V.RuleOpts) => { batches: GRD.GroundTerm[][]; notRun: string[] };
+    groundContentsOf: (areaName: string, terms: readonly GRD.GroundTerm[]) => string;
+    groundPartsOf: (response: unknown) => GRD.GroundParts | null;
+    groundLinesOf: (parts: readonly unknown[], issued: readonly string[]) => GRD.GroundLine[];
+    groundVerdictOf: (input: GRD.GroundVerdictInput, opts?: V.RuleOpts) => GRD.GroundCallVerdict;
+    registrableDomainOf: (host: string) => string | null;
+    sourceKeyOf: (chunk: RT.TopicSource, mode: RT.GroundTitleMode) => string | null;
+    isDeniedSource: (chunk: RT.TopicSource, mode: RT.GroundTitleMode) => boolean;
+    hasUrlOf: (text: string) => boolean;
+    groundRecordOf: (calls: readonly GRD.GroundCallVerdict[], notRun: readonly string[]) => RT.GroundRunRecord;
+    groundReusableOf: (stored: unknown) => RT.GroundRunRecord | null;
+  };
+  type GoalSigs = {
+    GOAL_PARAM: "goal";
+    seatsOf: (rows: readonly GL.GoalRow[], goalsMax?: number) => GL.GoalSeats;
+    seatForNewOf: (rows: readonly GL.GoalRow[], goalsMax?: number) => RT.GoalSlot | null;
+    seatForReopenOf: (row: Pick<GL.GoalRow, "id" | "slot">, rows: readonly GL.GoalRow[], goalsMax?: number) => RT.GoalSlot | null;
+    sharesOf: (goals: readonly GL.ShareGoal[]) => Record<string, GL.GoalShare>;
+    hoursRoomOf: (goals: readonly GL.ShareGoal[], exceptId: string | null) => { taken: number; left: number };
+    hoursOverLineOf: (taken: number, left: number) => string;
+    todayRowsOf: <T>(perGoal: readonly { slot: RT.GoalSlot; rows: readonly T[] }[], max?: number) => { picked: { slot: RT.GoalSlot; row: T }[]; more: { slot: RT.GoalSlot; count: number }[] };
+    aimLinePickOf: (candidates: readonly GL.AimLineCandidate[], open: number, goalsMax?: number) => GL.AimLineCandidate | null;
+    defaultGoalLabelOf: (row: Pick<GL.GoalRow, "areaName" | "slot">) => string;
+    goalLabelOf: (row: GL.GoalRow) => { text: string; yours: boolean };
+    labelClashOf: (label: string, rows: readonly GL.GoalRow[], exceptId: string | null) => boolean;
+    cleanGoalLabelOf: (raw: unknown) => string | null;
+    goalHrefOf: (base: string, roadmapId: string | null) => string;
+    goalOfParam: (param: unknown, rows: readonly GL.GoalRow[]) => string | null;
+    intakeAutosaveKeyOf: (roadmapId: string | null) => string;
+  };
+  const rateSigs: RateSigs = RR;
+  const topicSigs: TopicSigs = TP;
+  const groundSigs: GroundSigs = GRD;
+  const goalSigs: GoalSigs = GL;
+  const sigsExact: [AllExact<typeof RR, RateSigs>, AllExact<typeof TP, TopicSigs>, AllExact<typeof GRD, GroundSigs>, AllExact<typeof GL, GoalSigs>] = [true, true, true, true];
+  check(
+    "the four modules keep their frozen signatures exactly (tsc, both ways: every export of §22.7–§22.9 and §23.2 is identical to its contract type)",
+    sigsExact.every((x) => x === true) && [rateSigs, topicSigs, groundSigs, goalSigs].every((s) => Object.values(s).some((v) => typeof v === "function"))
+  );
+
+  // Purity (ruling 39) and the hostile V (ruling 38).
+  const FILES = MODULES.map((m) => m.file);
+  const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+  for (const f of FILES) {
+    const c = pureClosure(f);
+    const bad = c.filter(
+      (p) =>
+        p === "pkg:@prisma/client" ||
+        p === "src/lib/prisma.ts" ||
+        p === "src/lib/gemini.ts" ||
+        p === "src/lib/roadmap-model.ts" ||
+        p === "src/lib/roadmap-evidence.ts" ||
+        p === "src/lib/roadmap-server.ts" ||
+        p.startsWith("pkg:@google/genai") ||
+        p === "pkg:next" ||
+        p.startsWith("pkg:next/")
+    );
+    check(`${f} is pure: it reaches no Prisma, model, server, cookie or cache module, and reads no clock`, bad.length === 0 && !/\bnew Date\(\s*\)|Date\.now\(|todayKey\(/.test(strip(read(f))), bad.join(", "));
+  }
+  for (const f of ["src/lib/roadmap-rating.ts", "src/lib/roadmap-goals.ts"]) {
+    const bad = pureClosure(f).filter((p) => p === "src/lib/roadmap-validate.ts" || p === "src/lib/roadmap-realism.ts");
+    check(`${f} is client-safe: it never reaches roadmap-validate or roadmap-realism at run time (types only)`, bad.length === 0, bad.join(", "));
+  }
+  const taintSrc = read("scripts/fixtures/roadmap-hostile/taint.ts");
+  const vFiles = /export const V_SOURCE_FILES: readonly string\[\] = \[([\s\S]*?)\];/.exec(taintSrc)?.[1] ?? null;
+  check(
+    "V_SOURCE_FILES (the hostile V) holds none of the four (they hold prompts, matchers and keys: ruling 38), and still holds roadmap-types",
+    vFiles !== null && !FILES.some((f) => vFiles.includes(`"${f}"`)) && vFiles.includes('"src/lib/roadmap-types.ts"'),
+    vFiles === null ? "V_SOURCE_FILES not found" : ""
+  );
+}
+
+console.log("— revision 5: LEVELS unchanged —");
+{
+  eq(
+    "ROADMAP_PROMPT_VERSION 4, MAX_MILESTONES 6, DEPTH_DOMAINS_MAX 6, RUN_STALE_MS 90 000, ROADMAP_DRAFTS_PER_DAY 5 and TOPICS_PER_MILESTONE 6, as before",
+    [RT.ROADMAP_PROMPT_VERSION, RT.MAX_MILESTONES, RT.DEPTH_DOMAINS_MAX, RT.RUN_STALE_MS, RT.ROADMAP_DRAFTS_PER_DAY, RT.TOPICS_PER_MILESTONE],
+    [4, 6, 6, 90_000, 5, 6]
+  );
+  eq("AIM_DEPTHS stays {MASTERED 12, FLUENT 10, RETAINED 8}", RT.AIM_DEPTHS, { MASTERED: 12, FLUENT: 10, RETAINED: 8 });
+  const statuses = ["RUNNING", "OK", "PARTIAL", "FAILED", "CAPPED", "REUSED"] as const;
+  eq(
+    "countsTowardDraftCap on a row with no phase, as before: every GEMINI status but REUSED; never INHOUSE or MANUAL",
+    [...statuses.map((status) => RT.countsTowardDraftCap({ kind: "GEMINI", status })), RT.countsTowardDraftCap({ kind: "INHOUSE", status: "OK" }), RT.countsTowardDraftCap({ kind: "MANUAL", status: "OK" })],
+    [true, true, true, true, true, false, false, false]
+  );
+  check(
+    "replanUnpointed still refuses every kind but REFIT and MANUAL (so ReplanKind's new TOPICS changes no path; breakIntoTopicsCore is lane 8's)",
+    /async function replanUnpointed\([^\n]*\{\r?\n\s*if \(writesOff\(deps\)\) return fail\(ROADMAP_WRITES_OFF\);\s*if \(kind !== "REFIT" && kind !== "MANUAL"\) return fail\("Pick Re-fit or Edit by hand\."\);/.test(read("src/lib/roadmap-server.ts"))
+  );
+  check("the switches keep LEVELS the only plan kind a user can reach: topicSwitchesOf().plans is false", RT.topicSwitchesOf().plans === false);
+  const doc = read("docs/life-plan/roadmap-contracts.md");
+  check("roadmap-contracts.md holds '## 22.' and '## 23.', and docs/life-plan/roadmap-topic-map.md (the spec) exists", /\n## 22\. /.test(doc) && /\n## 23\. /.test(doc) && existsSync(join(ROOT, "docs/life-plan/roadmap-topic-map.md")));
+}
+
+console.log("— revision 5: the later lanes' handoffs (§22.18; --lane=<n> fails one lane's open lines) —");
+{
+  check("--lane names a lane by number (--lane=<n>)", LANE_DUE !== "?", String(LANE_ARG));
+  const srcOf = (p: string) => (existsSync(join(ROOT, p)) ? read(p) : "");
+  const exported = (text: string, name: string) => new RegExp(`export (?:async )?function ${name}\\b`).test(text);
+  /** A function's text, from its declaration to its closing brace at column 0. */
+  const bodyOf = (text: string, name: string): string => {
+    const m = new RegExp(`\\n(?:export )?(?:async )?function ${name}\\b`).exec(text);
+    if (!m) return "";
+    const rest = text.slice(m.index + 1);
+    const end = rest.search(/\r?\n\}\r?\n/);
+    return end < 0 ? rest : rest.slice(0, end + 3);
+  };
+  const lane = (n: number, title: string, facts: [string, boolean][]) => {
+    const open = facts.filter(([, ok]) => !ok).map(([f]) => f);
+    handoff(`revision 5, lane ${n}: ${title}`, open.length === 0, `lane ${n}`, open.length ? `open: ${open.join("; ")}` : "");
+  };
+  const server = srcOf("src/lib/roadmap-server.ts");
+  const life = (JSON.parse(read("package.json")) as { scripts: Record<string, string> }).scripts["life:check"] ?? "";
+  const serverCheck = srcOf("scripts/roadmap-server-check.ts");
+  /** The server-check goldens §22.14 and §23 name exactly; a lane's line stays open until each is a case there. */
+  const goldens = (names: readonly string[]): [string, boolean][] => names.map((n) => [`roadmap-server-check holds the golden "${n}"`, serverCheck.includes(n)]);
+
+  const form = srcOf("src/components/roadmap/RoadmapForm.tsx");
+  const pickField = /const pickField = [\s\S]*?\n {2}\};/.exec(form)?.[0] ?? "";
+  lane(1, "the prefill fix (F-R5-8)", [
+    ["RoadmapForm's pickField preselects no Domain by its cards (only an aim-word match, lineDomainDefaultOf's rule)", pickField !== "" && !/\.cards > 0/.test(pickField)],
+    ["NamedAreas is offered with any library (no emptyLibrary gate)", /<NamedAreas\b/.test(form) && !/emptyLibrary && <NamedAreas\b/.test(form)],
+  ]);
+
+  const migA = srcOf("prisma/migrations/20261110000000_life_roadmap_goals/migration.sql");
+  const roadmapModel = /model Roadmap \{([\s\S]*?)\n\}/.exec(srcOf("prisma/schema.prisma"))?.[1] ?? "";
+  lane(2, "migration A, the goals (§23.1)", [
+    ["migration 20261110000000_life_roadmap_goals exists", migA !== ""],
+    ["it adds slot, label, pausedAt, pauseReason and createKey", ["slot", "label", "pausedAt", "pauseReason", "createKey"].every((c) => new RegExp(`ADD COLUMN "${c}"`).test(migA))],
+    ["the slot CHECK (1..3)", /CHECK\s*\(\s*"slot" IS NULL OR "slot" BETWEEN 1 AND 3\s*\)/.test(migA)],
+    [
+      "both partial unique indexes",
+      /CREATE UNIQUE INDEX "Roadmap_userId_slot_open_key"[^;]*WHERE "status" IN \('DRAFT',\s*'ACTIVE'\)/.test(migA) && /CREATE UNIQUE INDEX "Roadmap_userId_createKey_key"[^;]*WHERE "createKey" IS NOT NULL/.test(migA),
+    ],
+    ["the pre-apply SELECT (one open row per user)", /PRE-APPLY[\s\S]*SELECT "userId", count\(\*\) FROM (?:"public"\.)?"Roadmap"[\s\S]*HAVING count\(\*\) > 1/.test(migA)],
+    [
+      "schema.prisma's Roadmap has the five fields and the index comment",
+      [/\n\s+slot\s+Int\?/, /\n\s+label\s+String\?/, /\n\s+pausedAt\s+DateTime\?/, /\n\s+pauseReason\s+String\?/, /\n\s+createKey\s+String\?/].every((r) => r.test(roadmapModel)) && /Roadmap_userId_slot_open_key/.test(roadmapModel),
+    ],
+  ]);
+
+  const storeGuard = /export type StoreGuard =([\s\S]*?)\nexport type /.exec(server)?.[1] ?? "";
+  const catalogSrc = srcOf("src/lib/roadmap-catalog.ts");
+  const realism = srcOf("src/lib/roadmap-realism.ts");
+  const typesSrc = read("src/lib/roadmap-types.ts");
+  lane(3, "seats, pause and resume, goals per page, the shares, constraint safety across goals (§23)", [
+    ["roadmap-goals has no STUB marker", !/STUB: lane 3/.test(srcOf("src/lib/roadmap-goals.ts"))],
+    ["StoreGuard holds SLOT_FREE, KEY_FREE and DOMAINS_FREE", ["SLOT_FREE", "KEY_FREE", "DOMAINS_FREE"].every((g) => storeGuard.includes(`g: "${g}"`))],
+    ["saveIntakeCore takes a SaveTarget", /export async function saveIntakeCore\([^)]*\btarget: SaveTarget \| null/.test(server)],
+    ["pauseRoadmapCore, resumeRoadmapCore and setGoalLabelCore exist", ["pauseRoadmapCore", "resumeRoadmapCore", "setGoalLabelCore"].every((n) => exported(server, n))],
+    ["acceptCore no longer refuses ANOTHER_ACTIVE (nor its acceptUnpointed)", exported(server, "acceptCore") && !/\bANOTHER_ACTIVE\b/.test(bodyOf(server, "acceptCore") + bodyOf(server, "acceptUnpointed"))],
+    ["reset.ts's OPEN_ROADMAP holds PAUSED", /const OPEN_ROADMAP\b[^=]*=\s*\[[^\]]*"PAUSED"/.test(srcOf("src/app/actions/reset.ts"))],
+    ["capture reads seatsFree", /\bseatsFree\b/.test(srcOf("src/app/actions/capture.ts") + srcOf("src/components/capture/aim-capture.ts"))],
+    ["loadScopeMap returns the goals' union (RoadmapScopeUnion)", /export async function loadScopeMap\b[^{]*RoadmapScopeUnion/.test(srcOf("src/lib/roadmap-readings.ts"))],
+    ["cueReadingOf reads the other goals' texts (`others`)", /\bothers\b/.test(bodyOf(read("src/lib/roadmap-types.ts"), "cueReadingOf"))],
+    ["allowedKindsFor locks other goals' AVOIDs", /\.others\b/.test(catalogSrc) && /\blocked: true\b/.test(catalogSrc)],
+    ["loadAimCards exists", exported(server, "loadAimCards")],
+    ["archiveRoadmapCore archives a PAUSED goal (its ROADMAP_IS guard holds PAUSED; ruling 56)", /statuses: \[[^\]]*"PAUSED"/.test(bodyOf(server, "archiveRoadmapCore"))],
+    ["realism's capacityOf reads RealismInput.share, and the server fills DraftView.otherGoals (ruling 54)", /\.share\b/.test(bodyOf(realism, "capacityOf")) && /\botherGoals\b/.test(codeOf(server))],
+    ["roadmap-invite offers SET under the effective cap (GOALS_MAX or goalsMax), never the fixed 3 (ruling 53)", /\bGOALS_MAX\b|\bgoalsMax\b|\baimLinePickOf\(/.test(codeOf(srcOf("src/lib/roadmap-invite.ts")))],
+    ["roadmap-catalog exports kindOnEveryTrack", exported(catalogSrc, "kindOnEveryTrack")],
+    ["cueKeyOf emits the 'k3-' key with other goals' texts", /k3-/.test(bodyOf(typesSrc, "cueKeyOf"))],
+    ["quoteGoals is filled (catalog or server)", /\bquoteGoals\b/.test(codeOf(catalogSrc) + codeOf(server))],
+    ...goldens([
+      "goals: archive a PAUSED goal at 3 open frees its seat and its Domains",
+      "XG: goal 1's carpal tunnel gates goal 3's SLOW_DRILLS, RUN_THROUGHS and WITH_A_PARTNER",
+      "XG: goal 1's AVOID of HARDER_SESSION stays locked on goal 2's card",
+      "XG: a closed goal's AVOID suggests nothing while GOALS_MAX is 1",
+    ]),
+  ]);
+
+  lane(4, "the goals UI (§23.7)", [
+    ["GoalSwitcher.tsx, GoalsFullCard.tsx and PauseSheet.tsx exist", ["GoalSwitcher", "GoalsFullCard", "PauseSheet"].every((c) => existsSync(join(ROOT, `src/components/roadmap/${c}.tsx`)))],
+    ["roadmap-links' hrefs take a goal id", /\bgoalHrefOf\b|\bGOAL_PARAM\b|\?goal=/.test(srcOf("src/components/roadmap/roadmap-links.ts"))],
+    ["the intake's autosave key is per goal (intakeAutosaveKeyOf)", /\bintakeAutosaveKeyOf\b/.test(srcOf("src/components/roadmap/roadmap-autosave.ts") + form)],
+  ]);
+
+  const migB = srcOf("prisma/migrations/20261112000000_life_roadmap_topics/migration.sql");
+  const edgeModel = /model RoadmapTopicEdge \{([\s\S]*?)\n\}/.exec(srcOf("prisma/schema.prisma"))?.[1] ?? "";
+  lane(5, "migration B, the topics (§22)", [
+    ["migration 20261112000000_life_roadmap_topics exists", migB !== ""],
+    ["the pre-apply SELECT (at most GOAL_SLOTS_MAX open rows per user)", /PRE-APPLY[\s\S]*SELECT "userId", count\(\*\) FROM (?:"public"\.)?"Roadmap"[\s\S]*HAVING count\(\*\) > 3/.test(migB)],
+    ["the seat backfill (each unseated open row takes its user's lowest free seat)", /UPDATE (?:"public"\.)?"Roadmap" r SET "slot" = f\.slot/.test(migB)],
+    ["the slot CHECK (an open row has a seat)", /CHECK\s*\(\s*"status" NOT IN \('DRAFT',\s*'ACTIVE'\) OR "slot" IS NOT NULL\s*\)/.test(migB)],
+    [
+      "Roadmap.planKind, rating, splitClauses and draftPlan; Domain.nameOrigin and originName; RoadmapMilestone.layer and chainRole; RoadmapMeasure.topicLineageId; RoadmapRun.phase, grounding and requests; RoadmapAcceptance.previousPlan",
+      ["planKind", "rating", "splitClauses", "draftPlan", "nameOrigin", "originName", "layer", "chainRole", "topicLineageId", "phase", "grounding", "requests", "previousPlan"].every((c) => new RegExp(`ADD COLUMN "${c}"`).test(migB)),
+    ],
+    ["the RoadmapTopic and RoadmapTopicEdge tables", /CREATE TABLE (?:"public"\.)?"RoadmapTopic"\s*\(/.test(migB) && /CREATE TABLE (?:"public"\.)?"RoadmapTopicEdge"\s*\(/.test(migB)],
+    ["schema.prisma's RoadmapTopicEdge.parentLineageId comment names the cross-goal 'x:<parentDomainId>' lineage (ruling 48)", /x:<parentDomainId>/.test(edgeModel)],
+  ]);
+
+  const lx = LX as unknown as Record<string, unknown>;
+  const LISTS_6 = [
+    "LEVEL_WORDS",
+    "GENERIC_HEADS",
+    "ADVICE_VERBS",
+    "SCHEME_NAMES",
+    "BRAND_NAMES",
+    "INJECTION_WORDS",
+    "INJECTION_ANYWHERE_WORDS",
+    "INJECTION_DEICTIC_WORDS",
+    "JURISDICTION",
+    "MONEY_CAUTION_WORDS",
+    "LEGAL_WORDS",
+    "ROUTINE_WORDS",
+    "COUNTRY_WORDS",
+    "CURRENCY_WORDS",
+    "AIM_PREAMBLE_PHRASES",
+    "CLAUSE_LEAD_PHRASES",
+    "SOURCE_DENYLIST",
+    "SOURCE_DENY_TITLE_WORDS",
+  ];
+  const generate = srcOf("scripts/fixtures/roadmap-hostile/generate.ts");
+  const validateSrc = srcOf("src/lib/roadmap-validate.ts");
+  lane(6, "the rating, the topics, GROUND, the word lists and the hostile families (§22.7–§22.10, §22.16)", [
+    ["roadmap-rating, roadmap-topics and roadmap-grounding have no STUB marker", ["rating", "topics", "grounding"].every((m) => !/STUB: lane 6/.test(srcOf(`src/lib/roadmap-${m}.ts`)))],
+    ["§22.10's word lists exist in roadmap-lexicon", LISTS_6.every((n) => Array.isArray(lx[n]) || lx[n] instanceof Set)],
+    ["checkLabel sets topicFlags", /\btopicFlags\b/.test(validateSrc)],
+    ["contentStemsOf is exported", exported(validateSrc, "contentStemsOf")],
+    [
+      "families R, T, W, L and X (RT, TN, WG, LN, XG ids) and M8–M14 are in generate.ts",
+      ["RT", "TN", "WG", "LN", "XG"].every((p) => new RegExp("`" + p + "\\$\\{").test(generate)) && [8, 9, 10, 11, 12, 13, 14].every((k) => generate.includes(`"M${k}"`)),
+    ],
+    ["the hostile bar holds the item 'X cross-goal' (family X has no ablation, so the bar is its only gate: ruling 41)", /["'`]X cross-goal\b/.test(srcOf("scripts/roadmap-hostile-check.ts"))],
+    [
+      "roadmap-topics-check and roadmap-grounding-check exist and run in life:check",
+      ["roadmap-topics", "roadmap-grounding"].every((c) => existsSync(join(ROOT, `scripts/${c}-check.ts`)) && life.includes(`tsx scripts/${c}-check.ts`)),
+    ],
+  ]);
+
+  const assignSrc = /export const assignRankIndices = [\s\S]*?\n\}\) satisfies AssignRankIndices;/.exec(srcOf("src/lib/roadmap-proficiency.ts"))?.[0] ?? "";
+  lane(7, "the chain in realism, the rank spread (§22.12)", [
+    ["layeredLadderOf, chainFitOf and chainWriteDaysOf are exported", ["layeredLadderOf", "chainFitOf", "chainWriteDaysOf"].every((n) => exported(realism, n))],
+    ["depthTermsOf takes `levels`", /\blevels\?\s*:/.test(/export function depthTermsOf\(([^)]*)\)/.exec(realism)?.[1] ?? "")],
+    ["R1's assignRankIndices reads planKind (TOPICS spreads its gates by topicRankIndexOf; ruling 51)", /\bplanKind\b/.test(codeOf(assignSrc)) && /\btopicRankIndexOf\(/.test(codeOf(assignSrc))],
+    ["realism's re-fit split reads milestoneCapOf, not MAX_MILESTONES alone (ruling 50)", /\bmilestoneCapOf\(/.test(codeOf(realism))],
+  ]);
+
+  const CORES_8 = [
+    "setLayersCore",
+    "keepLayerCore",
+    "addTopicCore",
+    "editTopicCore",
+    "moveTopicCore",
+    "setParentsCore",
+    "useMyDomainCore",
+    "chooseTopicCore",
+    "skipTopicCore",
+    "keepGeminiNameCore",
+    "mergeLayerUpCore",
+    "breakIntoTopicsCore",
+    "writeTopicsCore",
+    "trackClauseAsGoalCore",
+  ];
+  lane(8, "the TOPICS server path, accept → Domains, the progression parts and the tripwire (§22.13, §22.14)", [
+    ["the §22.14 lane-8 cores exist", CORES_8.every((n) => exported(server, n))],
+    [
+      'CODE_TEMPLATES holds "{domains} · layer {k} of {n}", "Layer {k} of {n}" and "Layer {k} · {n} topics"',
+      ["{domains} · layer {k} of {n}", "Layer {k} of {n}", "Layer {k} · {n} topics"].every((t) => (RT.CODE_TEMPLATES as readonly unknown[]).includes(t)),
+    ],
+    ["the server keeps a re-plan draft's kind in Roadmap.draftPlan and an accept's replaced plan in RoadmapAcceptance.previousPlan (ruling 49)", /\bdraftPlan\b/.test(codeOf(server)) && /\bpreviousPlan\b/.test(codeOf(server))],
+    ["rankIndicesOf passes planKind (no by-stage pass on TOPICS; ruling 51)", /\bplanKind\b/.test(bodyOf(server, "rankIndicesOf"))],
+    ["acceptCore, the manual edit and maxScheduled read milestoneCapOf (ruling 50)", /\bmilestoneCapOf\(/.test(codeOf(server))],
+    ...goldens([
+      "TOPICS draft: goal 1 reads byte-identical LEVELS while a TOPICS draft exists",
+      "TOPICS accept: the live LEVELS milestone closes there, its rank kept",
+      "TOPICS undo: an undone TOPICS accept restores the LEVELS plan's kind, depth, rating and Domains",
+      "TOPICS edges: one child with two cross-goal parents inserts",
+      "TOPICS cap: K=6, L*=12 accepts 8 milestones",
+      "TOPICS ranks: K=4, L*=10 ranks 1, 1, 2, 3, 4",
+      "TOPICS skip: I know this on an unstarted milestone changes its measures in place",
+    ]),
+    ["ItemNote holds TOPIC_MAP", (RT.ITEM_NOTES as readonly string[]).includes("TOPIC_MAP")],
+    ["assertTopicNames exists", exported(server, "assertTopicNames")],
+    ["progressionOf reads ProgressionStageInput.chain", /\n\s+chain\?:/.test(/export interface ProgressionStageInput \{([\s\S]*?)\n\}/.exec(catalogSrc)?.[1] ?? "") && /\.chain\b/.test(catalogSrc)],
+  ]);
+
+  const provenance = srcOf("src/components/glyph/paths/provenance.ts");
+  lane(9, "the topic map UI, the glyphs and the copy fix (§22.11, ui-motion §15)", [
+    [
+      "TopicMap.tsx, LayerBand.tsx, TopicMapRow.tsx, TopicSheet.tsx, EstimateChip.tsx, SourcesSheet.tsx and ParentsSheet.tsx exist (TopicRow.tsx is rev 3's outline row; ruling 63)",
+      ["TopicMap", "LayerBand", "TopicMapRow", "TopicSheet", "EstimateChip", "SourcesSheet", "ParentsSheet"].every((c) => existsSync(join(ROOT, `src/components/roadmap/${c}.tsx`))),
+    ],
+    [
+      'roadmap-ui-check holds the case "pv.named: every geminiNamed Domain name renders the mark" (ruling 67)',
+      srcOf("scripts/roadmap-ui-check.ts").includes("pv.named: every geminiNamed Domain name renders the mark"),
+    ],
+    ["glyph paths layer.ts and goal.ts exist", ["layer", "goal"].every((g) => existsSync(join(ROOT, `src/components/glyph/paths/${g}.ts`)))],
+    ["provenance.ts draws pv.web, pv.library, pv.libpick and pv.named", ["pv.web", "pv.library", "pv.libpick", "pv.named"].every((g) => provenance.includes(`"${g}"`))],
+    ["OUTLINE_EMPTY_GEMINI_TAIL shows on LEVELS only (outlineEmptyLine reads the plan kind)", /\bplanKind\b|"TOPICS"/.test(bodyOf(srcOf("src/components/roadmap/roadmap-copy.ts"), "outlineEmptyLine"))],
+  ]);
+
+  const model = srcOf("src/lib/roadmap-model.ts");
+  const evidence = srcOf("src/lib/roadmap-evidence.ts");
+  const probe = srcOf("scripts/roadmap-probe.ts");
+  lane(10, "the model phases, request counting and the probe plan (§22.6, §22.15)", [
+    ["roadmap-model has requestsToday, topicSamples and groundSamples", ["requestsToday", "topicSamples", "groundSamples"].every((n) => exported(model, n))],
+    ["advanceTopicChainCore exists (one step per invocation; ruling 47)", exported(server, "advanceTopicChainCore")],
+    ["the LEVELS pack strips Roadmap.splitClauses too (ruling 66)", /\bsplitClauses\b/.test(codeOf(evidence))],
+    ["roadmap-evidence has topicPackOf and stripFiguresOf", ["topicPackOf", "stripFiguresOf"].every((n) => exported(evidence, n))],
+    ["roadmap-validate has FREE_TEXT_ROOTS", /export const FREE_TEXT_ROOTS\b/.test(validateSrc)],
+    ["countsTowardDraftCap reads `phase`", /\bphase\b/.test(bodyOf(read("src/lib/roadmap-types.ts"), "countsTowardDraftCap"))],
+    ["the probe holds PROBE_PLAN v5 (P1–P6, G-R … G-I)", /\bv5\b/.test(probe) && /\bP6\b/.test(probe) && /\bG-R\b/.test(probe)],
+  ]);
+}
+
 // ═══ Plan-born tasks: no model sizes or explains one (contracts §15.6, §16.4; the lead's half) ═══
 //
 // The Resize channel was: TaskDrawer's Resize → resizeTask → resizableCore → applySizing(force) → sizeLifeTask, whose
@@ -4771,6 +5990,6 @@ void planBornCases()
       process.exit(1);
     }
     console.log(
-      `\nroadmap-contract-check: ${passed} passed, 0 failed${pendingCount ? `, ${pendingCount} pending (other lanes' adoption of a lane-0 definition; --strict fails them)` : ""}${handoffCount ? `, ${handoffCount} handoffs open (the progression rounds' items, §20.8 and §20.11; --handoffs fails them)` : ""}`
+      `\nroadmap-contract-check: ${passed} passed, 0 failed${pendingCount ? `, ${pendingCount} pending (other lanes' adoption of a lane-0 definition; --strict fails them)` : ""}${handoffCount ? `, ${handoffCount} handoffs open (the progression rounds' items, §20.8 and §20.11, and revision 5's lanes, §22.18; --handoffs fails them all, --lane=<n> one lane's)` : ""}`
     );
   });

@@ -373,10 +373,16 @@ The user's example rank names were not kept: Novice → Apprentice → Adept →
     - Start builds a ParsedCapture in code and calls tasks.ts createTemplateCore with the new option `link: {parentId?, goal?}`. (insertCapture is private; createTemplateCore wraps it and ticks only a done-now capture, which Start never builds.)
     - The goal override is required: captureGoalFields would otherwise read a title as a MANUAL goal.
 
-15. **At most one open roadmap (DRAFT or ACTIVE) per user.**
+15. *(superseded by revision 5 decision 68, docs/life-plan/roadmap-topic-map.md)* **At most one open roadmap (DRAFT or ACTIVE) per user.**
     - It is enforced as a claim-first guard op inside the house's array transaction, behind `pg_advisory_xact_lock(hashtext('roadmap:' || userId))`.
     - /you/roadmap/new edits the open DRAFT instead of creating another.
     - *Reason:* it keeps the MID allowance for the user's own goals and makes a double tap harmless.
+    - *Revision 5:* up to 3 open goals, each in a seat (Roadmap.slot 1..3).
+      - DRAFT and ACTIVE take a seat. The new PAUSED, and DONE and ARCHIVED, free it. A PAUSED goal keeps its Domains.
+      - The per-user advisory lock stays. Under it, the guard becomes SLOT_FREE and KEY_FREE, with saveIntake taking `{roadmapId}` or a `{createKey}` nonce, so a double tap stays harmless (roadmap-contracts.md §23.1).
+      - A partial unique index on (userId, slot) for DRAFT and ACTIVE rows backs the guard in the database (data-model.md, roadmap migration A).
+      - The MID allowance is unchanged: GOAL_RULES.MID's 2 paying per 30 days already spans goals (decision 72).
+      - `GOALS_MAX` stays 1 until revision 5's lane 4, so this decision's behaviour holds byte for byte until then.
 
 16. **Re-planning touches only unstarted milestones.**
     - A re-plan is a new version.
@@ -1052,7 +1058,7 @@ ALTER TABLE "public"."RoadmapQuestWeek" ADD CONSTRAINT "RoadmapQuestWeek_milesto
 The ALTER TABLE lines above name only Roadmap* tables, so the pre-apply grep allows them.
 
 Status and kind values are TEXT, typed by unions in roadmap-types.ts:
-- Roadmap.status: DRAFT | ACTIVE | DONE | ARCHIVED. At most one DRAFT or ACTIVE per user (decision 15).
+- Roadmap.status: DRAFT | ACTIVE | DONE | ARCHIVED. At most one DRAFT or ACTIVE per user (decision 15, superseded by revision 5 decision 68: PAUSED is added, and up to 3 DRAFT or ACTIVE rows are allowed; data-model.md, roadmap migrations A and B).
 - Roadmap.version: the accepted version, 0 before the first acceptance. A draft or re-plan writes its milestones at version + 1 with status DRAFT.
 - Roadmap.syllabus: `{lines: string[], source: string | null}`, YOURS.
 - RoadmapMilestone.status: DRAFT | PLANNED | STARTING | STARTED | LATER | SUPERSEDED | DISCARDED.
