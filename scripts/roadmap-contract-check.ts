@@ -642,10 +642,13 @@ console.log("— seams —");
   check("the migration creates exactly the 8 tables", json(tables) === json(models), json(tables));
   check("the pre-apply grep: no DROP at all, and nothing names a table outside Roadmap*", !/\bDROP\b/i.test(migration) && named.every((t) => models.includes(t)), json(named.filter((t) => !models.includes(t))));
   const later = readdirSync(join(ROOT, "prisma/migrations")).filter((d) => /^\d{14}_/.test(d)).sort();
+  // Revision 5 adds migration A (lane 2) and B (lane 5) after revision 4; nothing else may sort after life_roadmap.
+  const roadmapTail = ["20261101000000_life_roadmap", "20261106000000_life_roadmap_rev4", "20261110000000_life_roadmap_goals", "20261112000000_life_roadmap_topics"];
+  const tail = later.slice(later.indexOf("20261101000000_life_roadmap"));
   check(
-    "20261101000000_life_roadmap is followed only by revision 4's 20261106000000_life_roadmap_rev4, which sorts last",
-    later[later.length - 2] === "20261101000000_life_roadmap" && later[later.length - 1] === "20261106000000_life_roadmap_rev4",
-    later.slice(-3).join(", ")
+    "20261101000000_life_roadmap is followed only by the roadmap's own migrations, in order (rev 4, then revision 5's A and B)",
+    tail.length >= 3 && json(tail) === json(roadmapTail.slice(0, tail.length)),
+    later.slice(-4).join(", ")
   );
 }
 
