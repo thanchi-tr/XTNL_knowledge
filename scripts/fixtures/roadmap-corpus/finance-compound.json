@@ -1,0 +1,61 @@
+{
+  "aim": "finance-compound",
+  "about": "Revision 5 (the Probe plan): a synthetic paraphrase of the live case, never the user's text or figures: a compound aim in a Field Area (investments, a home loan and a monthly budget), no outline, three aim-named Domains chosen and one Domain with cards the aim never names, left out. RATE and MAP send only the Area name and the aim. No v2 drafts and no canned replies.",
+  "probe": false,
+  "today": "2026-10-07",
+  "areaFieldId": "fld_fin",
+  "input": {
+    "intake": {
+      "aim": "Learn to run a household's investments and home loan, and keep the monthly budget on track",
+      "fieldId": "fld_fin",
+      "track": "CRAFT",
+      "domainIds": ["d_fc_invest", "d_fc_loan", "d_fc_budget"],
+      "targetDay": "2027-10-04",
+      "hoursPerWeek": 5,
+      "newCardsPerWeek": 6,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "BASICS",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": null,
+      "examLabel": null
+    },
+    "areaName": "Business & Finance",
+    "domains": [
+      { "id": "d_fc_invest", "name": "Investing Basics", "fieldId": "fld_fin", "cards": 14, "atSix": 3, "atTop": 0, "chosen": true },
+      { "id": "d_fc_loan", "name": "Home Loans", "fieldId": "fld_fin", "cards": 6, "atSix": 1, "atTop": 0, "chosen": true },
+      { "id": "d_fc_budget", "name": "Household Budgeting", "fieldId": "fld_fin", "cards": 8, "atSix": 2, "atTop": 0, "chosen": true },
+      { "id": "d_fc_audit", "name": "Audit Practice", "fieldId": "fld_fin", "cards": 20, "atSix": 9, "atTop": 2, "chosen": false }
+    ],
+    "windows": []
+  },
+  "library": [
+    { "id": "d_fc_invest", "name": "Investing Basics", "fieldId": "fld_fin", "fieldName": "Business & Finance", "cards": 14, "titles": ["Index funds", "Rebalancing a portfolio"], "tags": ["investing"] },
+    { "id": "d_fc_loan", "name": "Home Loans", "fieldId": "fld_fin", "fieldName": "Business & Finance", "cards": 6, "titles": ["Fixed and variable rates"], "tags": ["loans"] },
+    { "id": "d_fc_budget", "name": "Household Budgeting", "fieldId": "fld_fin", "fieldName": "Business & Finance", "cards": 8, "titles": ["Tracking monthly spending"], "tags": ["budget"] },
+    { "id": "d_fc_audit", "name": "Audit Practice", "fieldId": "fld_fin", "fieldName": "Business & Finance", "cards": 20, "titles": ["Sampling in an audit"], "tags": ["audit"] }
+  ],
+  "drafts": [],
+  "v3": {
+    "probe": false,
+    "about": "Revision 5's RATE and MAP pack (probe P1, P3, P6 and run G-R): no v3 replies.",
+    "intake": {
+      "depth": 12,
+      "dateMode": "REALISTIC",
+      "exam": false,
+      "examDay": null,
+      "suggestAreas": false
+    },
+    "replies": []
+  },
+  "v4": {
+    "about": "Revision 5's RATE and MAP pack: no v4 replies.",
+    "replies": []
+  },
+  "v5": {
+    "about": "Revision 5 (the topic map): a RATE and MAP pack for the probe (P1, P3, P6, runs G-R and G-M). It carries no v2 drafts and no canned v3 or v4 replies, so revision 4's drafting families leave it out.",
+    "topicOnly": true
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "aim": "work-presentations",
+  "about": "Revision 5 (the names stage, G-X): a synthetic Field pack, never the user's words: a soft skill: a short build-up, mostly practice. One aim-named Domain chosen, one left out, no outline. MAP sends the Area name and the aim; LINK and GROUND send the Area name and the names. No v2 drafts and no canned replies.",
+  "probe": false,
+  "today": "2026-10-07",
+  "areaFieldId": "fld_comm",
+  "input": {
+    "intake": {
+      "aim": "Give clear, confident presentations at work",
+      "fieldId": "fld_comm",
+      "track": "CRAFT",
+      "domainIds": ["d_wp_present"],
+      "targetDay": "2027-02-01",
+      "hoursPerWeek": 2,
+      "newCardsPerWeek": 4,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "BASICS",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": null,
+      "examLabel": null
+    },
+    "areaName": "Communication",
+    "domains": [
+      { "id": "d_wp_present", "name": "Presentations", "fieldId": "fld_comm", "cards": 5, "atSix": 1, "atTop": 0, "chosen": true },
+      { "id": "d_wp_writing", "name": "Business Writing", "fieldId": "fld_comm", "cards": 9, "atSix": 3, "atTop": 0, "chosen": false }
+    ],
+    "windows": []
+  },
+  "library": [
+    { "id": "d_wp_present", "name": "Presentations", "fieldId": "fld_comm", "fieldName": "Communication", "cards": 5, "titles": ["Opening a talk"], "tags": ["speaking"] },
+    { "id": "d_wp_writing", "name": "Business Writing", "fieldId": "fld_comm", "fieldName": "Communication", "cards": 9, "titles": ["Writing a short email"], "tags": ["writing"] }
+  ],
+  "drafts": [],
+  "v3": {
+    "probe": false,
+    "about": "Revision 5's names-stage pack (G-X): no v3 replies.",
+    "intake": {
+      "depth": 12,
+      "dateMode": "REALISTIC",
+      "exam": false,
+      "examDay": null,
+      "suggestAreas": false
+    },
+    "replies": []
+  },
+  "v4": {
+    "about": "Revision 5's names-stage pack: no v4 replies.",
+    "replies": []
+  },
+  "v5": {
+    "about": "Revision 5 (the topic map): a MAP, LINK and GROUND pack for the names stage (run G-X; it is not in G-R, so K and breadth are code's estimate). It carries no v2 drafts and no canned v3 or v4 replies, so revision 4's drafting families leave it out.",
+    "topicOnly": true
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "aim": "web-basics",
+  "about": "Revision 5 (the names stage, G-X): a synthetic Field pack, never the user's words: a technical craft in three named languages, built one on the other. Three aim-named Domains chosen, one left out, no outline. MAP sends the Area name and the aim; LINK and GROUND send the Area name and the names. No v2 drafts and no canned replies.",
+  "probe": false,
+  "today": "2026-10-07",
+  "areaFieldId": "fld_comp",
+  "input": {
+    "intake": {
+      "aim": "Build a small website with HTML, CSS and JavaScript",
+      "fieldId": "fld_comp",
+      "track": "CRAFT",
+      "domainIds": ["d_wb_html", "d_wb_css", "d_wb_js"],
+      "targetDay": "2027-04-05",
+      "hoursPerWeek": 5,
+      "newCardsPerWeek": 6,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "BASICS",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": null,
+      "examLabel": null
+    },
+    "areaName": "Computing",
+    "domains": [
+      { "id": "d_wb_html", "name": "HTML", "fieldId": "fld_comp", "cards": 6, "atSix": 1, "atTop": 0, "chosen": true },
+      { "id": "d_wb_css", "name": "CSS", "fieldId": "fld_comp", "cards": 4, "atSix": 0, "atTop": 0, "chosen": true },
+      { "id": "d_wb_js", "name": "JavaScript", "fieldId": "fld_comp", "cards": 3, "atSix": 0, "atTop": 0, "chosen": true },
+      { "id": "d_wb_design", "name": "Web Design", "fieldId": "fld_comp", "cards": 7, "atSix": 2, "atTop": 0, "chosen": false }
+    ],
+    "windows": []
+  },
+  "library": [
+    { "id": "d_wb_html", "name": "HTML", "fieldId": "fld_comp", "fieldName": "Computing", "cards": 6, "titles": ["Headings and paragraphs"], "tags": ["markup"] },
+    { "id": "d_wb_css", "name": "CSS", "fieldId": "fld_comp", "fieldName": "Computing", "cards": 4, "titles": ["Selectors and colours"], "tags": ["styles"] },
+    { "id": "d_wb_js", "name": "JavaScript", "fieldId": "fld_comp", "fieldName": "Computing", "cards": 3, "titles": ["Variables and functions"], "tags": ["scripting"] },
+    { "id": "d_wb_design", "name": "Web Design", "fieldId": "fld_comp", "fieldName": "Computing", "cards": 7, "titles": ["Choosing a layout"], "tags": ["design"] }
+  ],
+  "drafts": [],
+  "v3": {
+    "probe": false,
+    "about": "Revision 5's names-stage pack (G-X): no v3 replies.",
+    "intake": {
+      "depth": 12,
+      "dateMode": "REALISTIC",
+      "exam": false,
+      "examDay": null,
+      "suggestAreas": false
+    },
+    "replies": []
+  },
+  "v4": {
+    "about": "Revision 5's names-stage pack: no v4 replies.",
+    "replies": []
+  },
+  "v5": {
+    "about": "Revision 5 (the topic map): a MAP, LINK and GROUND pack for the names stage (run G-X; it is not in G-R, so K and breadth are code's estimate). It carries no v2 drafts and no canned v3 or v4 replies, so revision 4's drafting families leave it out.",
+    "topicOnly": true
+  }
+}

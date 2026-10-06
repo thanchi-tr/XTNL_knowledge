@@ -1384,7 +1384,12 @@ export function RoadmapForm({
 
   const submit = async (path: Path) => {
     setError(null);
-    const { intake: formIntake, problems: p } = intakeOf(d, view.today, { chosen, newCardsRequired, fields: view.fields });
+    // Revision 5, lane 9 (ruling 14): a TOPICS intake carries topicDepth (6 or the depth you chose) with depth null.
+    const topicsPath = path === "TOPICS" || path === "BREAKDOWN";
+    // A topic map's milestones are dated before its topics have Domains (they get them at accept), from the Field's pace
+    // or yours: on a realistic date with none measured ([Break it down], [Write the topics]) the form asks for yours.
+    const topicsPaceNeeded = topicsPath && realistic && asksNewCards(field, d.domainIds);
+    const { intake: formIntake, problems: p } = intakeOf(d, view.today, { chosen, newCardsRequired: newCardsRequired || topicsPaceNeeded, fields: view.fields });
     setProblems(p);
     if (!formIntake) {
       const first = Object.keys(p)[0];
@@ -1392,8 +1397,6 @@ export function RoadmapForm({
       (document.getElementById(`rm-f-${first}`) ?? (first === "domains" ? document.getElementById("rm-f-named") : null))?.scrollIntoView({ block: "center" });
       return;
     }
-    // Revision 5, lane 9 (ruling 14): a TOPICS intake carries topicDepth (6 or the depth you chose) with depth null.
-    const topicsPath = path === "TOPICS" || path === "BREAKDOWN";
     const intake: Intake = topicsPath ? { ...formIntake, planKind: "TOPICS", topicDepth: formIntake.depth ?? 6, depth: null } : formIntake;
     setBusy(path);
     try {

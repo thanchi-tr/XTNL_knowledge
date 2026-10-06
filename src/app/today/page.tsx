@@ -10,7 +10,7 @@ import { loadBossStates } from "@/lib/bosses";
 import { loadNotifications } from "@/lib/notifications";
 import { isLaunched } from "@/lib/life-economy";
 import { maybeMaintainLife } from "@/lib/settlement";
-import { freezeWeekQuests, loadWeekQuests } from "@/lib/roadmap-quests-server";
+import { freezeWeekQuests, loadTodayNamedTitles, loadWeekQuests } from "@/lib/roadmap-quests-server";
 import { loadAimStep } from "@/lib/roadmap-server";
 import { AIM_STEP_COOKIE, aimPromptOf, todayAimLineOf } from "@/lib/roadmap-invite";
 import { AIM_PROMPT_COOKIE, ROADMAP_GOALS_LIVE } from "@/lib/roadmap-types";
@@ -20,6 +20,7 @@ import { TodayBoard } from "@/components/today/TodayBoard";
 import { closeItemsOf } from "@/components/today/board-ui";
 import { WeekQuests } from "@/components/roadmap/WeekQuests";
 import { AimLine } from "@/components/roadmap/AimLine";
+import { NamedMark } from "@/components/glyph/NamedMark";
 
 // The board turns on the clock (a 04:00 day edge, a ten-minute undo window)
 // and on every tick — never statically cache it.
@@ -44,6 +45,9 @@ export default async function TodayPage() {
   // day on 'roadmap' and 'life'; a missing table or column, or a failure,
   // reads as no line) and the request's cookies (the "Not now" snoozes). All
   // cached; a warm load costs nothing.
+  // The live fix (contracts §22.11, ruling 67): each plan-born title's Gemini-named Domain names, so Today marks them.
+  // Started with the wave (cached per life day; a failure reads as none) and awaited after it.
+  const namedTitlesLoad = loadTodayNamedTitles(userId, now).catch(() => ({}) as Record<string, string[]>);
   const [board, streak, bosses, feed, quests, aimStep, jar] = await Promise.all([
     loadTodayBoard(userId, day, now),
     getDailyStreak(userId),
@@ -53,6 +57,7 @@ export default async function TodayPage() {
     loadAimStep(userId, now).catch(() => null),
     cookies(),
   ]);
+  const namedTitles = await namedTitlesLoad;
 
   // Writes a render may owe, after the response and only when owed: the
   // day's first open fixes the quest's target, and a study task the day's
@@ -145,6 +150,7 @@ export default async function TodayPage() {
         footClock={{ time: clock.time, zone: clock.zone, tz: clock.tz }}
         launched={isLaunched(day)}
         questsSlot={questsSlot}
+        namedTitles={Object.keys(namedTitles).length > 0 ? { names: namedTitles, mark: <NamedMark /> } : null}
       />
     </>
   );

@@ -70,7 +70,7 @@ import { groupsOfKey, stem, words } from "./synonyms";
 
 // ═══ Real now (lane 0) ══════════════════════════════════════════════════════
 
-/** MAP's instruction parts (§22.5; TOPIC_PROMPT_VERSION 1): mapInstructionOf joins head, place, names, both and tail with "\n". */
+/** MAP's instruction parts (§22.5; written at TOPIC_PROMPT_VERSION 1, unchanged by version 2's RATE anchors): mapInstructionOf joins head, place, names, both and tail with "\n". */
 export const MAP_INSTRUCTION_PARTS: Readonly<{ head: string; place: string; names: string; both: string; tail: string }> = {
   head: "Break the aim into study topics, in layers from broad to deep. Layer L1 holds the broadest preliminaries; each later layer is narrower and builds on the layer before it. Use only the layers listed.",
   place: "place: put each listed item in the layer where it belongs. S keys are the user's outline lines; U keys are areas the user chose.",

@@ -724,8 +724,9 @@ export async function trackClauseAsGoal(roadmapId: string, clause: number, creat
 // the model call runs in after() under the page's maxDuration, one step per invocation (ruling 47). The roadmap
 // pages export `maxDuration = 60` (src/app/you/roadmap/page.tsx and new/page.tsx), and a Server Action runs under its
 // page's: a "use server" module exports only async functions, so it can't (and needn't) export its own. Every core
-// refuses while its TOPIC_* switch is off — all are false in this build — before it reads anything, so no model call
-// is reachable from here. None refreshes the route: DraftRunning's poll (advanceTopicChain) re-renders as steps settle.
+// refuses while its TOPIC_* switch is off, before it reads anything. None refreshes the route: the page's poll
+// (roadmap-runtime useTopicChainPoll, in DraftRunning's breakdown wait and the draft's TopicChainCard) calls
+// advanceTopicChain every few seconds while RoadmapView.topicChain says a step is left, and re-renders as steps settle.
 
 /** A topic's key on the map (S<n>, U<n> or T<n>; roadmap-topics TOPIC_KEY_PATTERN). */
 const CHAIN_TOPIC_KEY = /^(S|U|T)([1-9]\d{0,2})$/;
@@ -753,8 +754,8 @@ export async function goDeeper(roadmapId: string, key: string): Promise<RoadmapA
 
 /**
  * The chain's next step (ruling 47): the step running now, or the next one claimed and run in after(), or `done`.
- * DraftRunning's poll calls it with `retry` false; GROUND's [Try again] and the resume after the Over pre-check pass
- * true (a capped step, the pre-check's stop or a failed web check is claimed again).
+ * The page's poll calls it with `retry` false; [Try again] (a failed web check, a cap, MAP's replies) and the resume
+ * after the Over pre-check ([Check again], [Fewer layers]) pass true (that step is claimed again).
  */
 export async function advanceTopicChain(roadmapId: string, retry: boolean = false): Promise<RoadmapActionResult<TopicChainStep>> {
   if (!isRef(roadmapId) || (retry !== true && retry !== false)) return { ok: false, error: NO_REF };

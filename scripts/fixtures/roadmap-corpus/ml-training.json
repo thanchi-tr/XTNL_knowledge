@@ -1,0 +1,59 @@
+{
+  "aim": "ml-training",
+  "about": "Revision 5 (the names stage, G-X): a synthetic Field pack, never the user's words: a deep, abstract subject: maths and programming come first. One aim-named Domain chosen, two left out, no outline. MAP sends the Area name and the aim; LINK and GROUND send the Area name and the names. No v2 drafts and no canned replies.",
+  "probe": false,
+  "today": "2026-10-07",
+  "areaFieldId": "fld_comp",
+  "input": {
+    "intake": {
+      "aim": "Understand how machine learning models are trained",
+      "fieldId": "fld_comp",
+      "track": "CRAFT",
+      "domainIds": ["d_ml_ml"],
+      "targetDay": "2027-10-04",
+      "hoursPerWeek": 5,
+      "newCardsPerWeek": 6,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "BASICS",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": null,
+      "examLabel": null
+    },
+    "areaName": "Computing",
+    "domains": [
+      { "id": "d_ml_ml", "name": "Machine Learning", "fieldId": "fld_comp", "cards": 4, "atSix": 0, "atTop": 0, "chosen": true },
+      { "id": "d_ml_linalg", "name": "Linear Algebra", "fieldId": "fld_comp", "cards": 15, "atSix": 6, "atTop": 1, "chosen": false },
+      { "id": "d_ml_stats", "name": "Statistics", "fieldId": "fld_comp", "cards": 9, "atSix": 3, "atTop": 0, "chosen": false }
+    ],
+    "windows": []
+  },
+  "library": [
+    { "id": "d_ml_ml", "name": "Machine Learning", "fieldId": "fld_comp", "fieldName": "Computing", "cards": 4, "titles": ["Training and test data"], "tags": ["models"] },
+    { "id": "d_ml_linalg", "name": "Linear Algebra", "fieldId": "fld_comp", "fieldName": "Computing", "cards": 15, "titles": ["Matrix products"], "tags": ["matrices"] },
+    { "id": "d_ml_stats", "name": "Statistics", "fieldId": "fld_comp", "fieldName": "Computing", "cards": 9, "titles": ["Mean and variance"], "tags": ["statistics"] }
+  ],
+  "drafts": [],
+  "v3": {
+    "probe": false,
+    "about": "Revision 5's names-stage pack (G-X): no v3 replies.",
+    "intake": {
+      "depth": 12,
+      "dateMode": "REALISTIC",
+      "exam": false,
+      "examDay": null,
+      "suggestAreas": false
+    },
+    "replies": []
+  },
+  "v4": {
+    "about": "Revision 5's names-stage pack: no v4 replies.",
+    "replies": []
+  },
+  "v5": {
+    "about": "Revision 5 (the topic map): a MAP, LINK and GROUND pack for the names stage (run G-X; it is not in G-R, so K and breadth are code's estimate). It carries no v2 drafts and no canned v3 or v4 replies, so revision 4's drafting families leave it out.",
+    "topicOnly": true
+  }
+}

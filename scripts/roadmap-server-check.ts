@@ -136,6 +136,12 @@ import {
   TOPIC_NAME_TAKEN,
   geminiNamedOf,
   topicSwitchesOf,
+  TOPIC_PLANS_LIVE,
+  TOPIC_RATE_LIVE,
+  TOPIC_PLACE_LIVE,
+  TOPIC_NAMES_LIVE,
+  TOPIC_LINK_LIVE,
+  TOPIC_GROUND_LIVE,
   ROADMAP_PROMPT_VERSION,
   ROADMAP_WRITES_OFF,
   coveragePolicyOf,
@@ -168,9 +174,14 @@ import {
   type Syllabus,
   type ValidatedDraft,
   type WeekQuestSet,
+  type TopicMapView,
+  DEPTH_TAIL,
+  PREREQS_OPEN,
+  SOURCES_MIN,
 } from "../src/lib/roadmap-types";
 import type { ParsedCapture } from "../src/lib/life-types";
 import * as R1 from "../src/lib/roadmap-proficiency";
+import * as RATING from "../src/lib/roadmap-rating";
 import * as REALISM from "../src/lib/roadmap-realism";
 import * as VALIDATE from "../src/lib/roadmap-validate";
 import {
@@ -187,7 +198,7 @@ import {
 } from "../src/lib/roadmap-catalog";
 import type { QuestMilestoneFacts, QuestStore } from "../src/lib/roadmap-quests-server";
 import { AIM_PROMPT_COOKIE, aimPromptOf } from "../src/lib/roadmap-invite";
-import { reusableSamplesOf } from "../src/lib/roadmap-model";
+import { groundResponseOf, reusableSamplesOf, type ModelRequest } from "../src/lib/roadmap-model";
 import type { CaptureLink } from "../src/lib/tasks";
 import { throughputWindowStart, type ThroughputRows } from "../src/lib/throughput";
 import type { WeightView } from "../src/lib/weight";
@@ -6365,7 +6376,7 @@ async function main() {
     check("goals: a paused goal frees its seat: a new goal takes seat 1 beside it at GOALS_MAX 1", fresh.ok && row?.slot === 1 && w.t.roadmap.find((r) => r.id === paused)?.slot === 1, json([fresh, row?.slot]));
     const view = await S.loadIntakeView(USER, NOW, depsFor(w), row?.id ?? null);
     check(
-      "goals: loadIntakeView carries the seats, the open drafts, GOALS_MAX, the hours other goals take, the Domains they hold (a paused goal's by null) and the switches",
+      "goals: loadIntakeView carries the seats, the open drafts, GOALS_MAX, the hours other goals take, the Domains they hold (a paused goal's by null) and the switches (production deps: the build's TOPIC_* constants as the user set them, read through topicSwitchesOf)",
       view.goalsMax === 1 &&
         view.seats?.length === 3 &&
         view.seats[0].roadmapId === row?.id &&
@@ -6375,9 +6386,10 @@ async function main() {
         view.takenDomains?.["d-prob"] === null &&
         view.takenDomains?.["d-inf"] === null &&
         !("d-risk" in (view.takenDomains ?? {})) &&
-        view.topicSwitches?.plans === false &&
+        json(view.topicSwitches) === json(topicSwitchesOf()) &&
+        view.topicSwitches?.plans === TOPIC_PLANS_LIVE &&
         view.draft?.roadmapId === row?.id,
-      json([view.seats, view.drafts?.map((d) => d.roadmapId), view.hoursTaken, view.takenDomains])
+      json([view.seats, view.drafts?.map((d) => d.roadmapId), view.hoursTaken, view.takenDomains, view.topicSwitches])
     );
     const hours = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Trade with a plan", fieldId: "f-trade", domainIds: ["d-risk"], hoursPerWeek: 40 }, NOW, depsFor(w));
     check("goals: the hours' room reads DRAFT and ACTIVE goals only (a paused goal's hours leave the sum: ruling 25), so 40 h fits one open goal", hours.ok, json(hours));
@@ -6672,11 +6684,48 @@ async function main() {
   };
 
   await topicBlock("TOPICS switches", async () => {
-    // Production deps (no topicSwitches): every TOPIC_* constant is false, so each core refuses before it reads anything.
+    // The six TOPIC_* constants are the user's setting (all on since b388a9b); this block reads them and never sets
+    // them. Production deps (no topicSwitches) gate each core by its switch as the constants set it (ruling 16); with
+    // every switch off by deps.topicSwitches (whatever the constants say), each core refuses before it reads anything.
+    const cores = (deps: RoadmapDeps, id: string) => [
+      ["plans", () => S.writeTopicsCore(USER, id, NOW, deps)],
+      ["plans", () => S.breakIntoTopicsCore(USER, id, NOW, deps)],
+      ["rate", () => S.breakDownCore(USER, id, NOW, deps)],
+      ["rate", () => S.rateAgainCore(USER, id, NOW, deps)],
+      ["names", () => S.goDeeperCore(USER, id, "T1", NOW, deps)],
+      ["rate", () => S.advanceTopicChainCore(USER, id, false, NOW, deps)],
+    ] as const;
+    const built = { plans: TOPIC_PLANS_LIVE, rate: TOPIC_RATE_LIVE, place: TOPIC_PLACE_LIVE, names: TOPIC_NAMES_LIVE, link: TOPIC_LINK_LIVE, ground: TOPIC_GROUND_LIVE };
+    const sw = topicSwitchesOf();
+    eq(
+      "TOPICS switches: production's switches are the build's TOPIC_* constants as the user set them, through ruling 16's chain (rate under plans; place, link under rate; names only with ground)",
+      sw,
+      {
+        plans: built.plans,
+        rate: built.plans && built.rate,
+        place: built.plans && built.rate && built.place,
+        names: built.plans && built.rate && built.names && built.ground,
+        link: built.plans && built.rate && built.link,
+        ground: built.plans && built.rate && built.names && built.ground,
+      }
+    );
+    {
+      const w = world();
+      const id = await newDraft(w, TOPICS_INTAKE);
+      const prod = depsFor(w, { callModel: async () => ({}) });
+      const answers: string[] = [];
+      for (const [, call] of cores(prod, id)) answers.push(errOf(await call()));
+      check(
+        "TOPICS switches: with production deps each core refuses (TOPIC_PLANS_OFF) exactly while its switch is off as the build sets it (writeTopics, breakIntoTopics: plans; breakDown, rateAgain, advanceTopicChain: rate; goDeeper: names)",
+        cores(prod, id).every(([name], i) => (answers[i] === S.TOPIC_PLANS_OFF) === !sw[name]),
+        json([sw, answers])
+      );
+    }
     const w = world();
     const id = await newDraft(w, TOPICS_INTAKE);
     let calls = 0;
-    const prod = depsFor(w, {
+    const off = depsFor(w, {
+      topicSwitches: { plans: false, rate: false, place: false, names: false, link: false, ground: false },
       callModel: async () => {
         calls += 1;
         return {};
@@ -6685,18 +6734,11 @@ async function main() {
     const rowBefore = json(w.t.roadmap.find((r) => r.id === id));
     const applies = w.applies;
     const runs = w.t.roadmapRun.length;
-    const answers = [
-      await S.writeTopicsCore(USER, id, NOW, prod),
-      await S.breakIntoTopicsCore(USER, id, NOW, prod),
-      await S.breakDownCore(USER, id, NOW, prod),
-      await S.rateAgainCore(USER, id, NOW, prod),
-      await S.goDeeperCore(USER, id, "T1", NOW, prod),
-      await S.advanceTopicChainCore(USER, id, false, NOW, prod),
-    ].map(errOf);
-    const sw = topicSwitchesOf();
+    const answers: string[] = [];
+    for (const [, call] of cores(off, id)) answers.push(errOf(await call()));
     check(
-      "TOPICS switches: with every TOPIC_* switch false (production deps) writeTopics, breakIntoTopics, breakDown, rateAgain, goDeeper and advanceTopicChain refuse (TOPIC_PLANS_OFF), the model is never called and nothing is written",
-      Object.values(sw).every((on) => on === false) &&
+      "TOPICS switches: with every TOPIC_* switch off (deps.topicSwitches, whatever the build's constants say) writeTopics, breakIntoTopics, breakDown, rateAgain, goDeeper and advanceTopicChain refuse (TOPIC_PLANS_OFF), the model is never called and nothing is written",
+      json(topicSwitchesOf(off.topicSwitches)) === json({ plans: false, rate: false, place: false, names: false, link: false, ground: false }) &&
         answers.every((a) => a === S.TOPIC_PLANS_OFF) &&
         calls === 0 &&
         w.modelCalls === 0 &&
@@ -6704,7 +6746,7 @@ async function main() {
         w.t.roadmapRun.length === runs &&
         w.t.roadmapTopic.length === 0 &&
         json(w.t.roadmap.find((r) => r.id === id)) === rowBefore,
-      json([sw, answers, calls, w.modelCalls, w.applies - applies])
+      json([answers, calls, w.modelCalls, w.applies - applies])
     );
   });
 
@@ -6974,6 +7016,609 @@ async function main() {
         thrown(() => S.assertNoModelText(rowsTitled(title, "USER"), writeCtx(unchecked))),
       ],
       ["tripwire", "none", "none"]
+    );
+  });
+
+  // ═══ Revision 5: names end to end (recorded replies) ═══════════════════════
+  //
+  // "Gemini names your sub-topics" through the cores the page calls, the chain advanced by the page's own path
+  // (roadmap-runtime useTopicChainPoll): load the view; while RoadmapView.topicChain has a step left (done false), call
+  // advanceTopicChain(id, false), let its after() run, load the view again. Then the draft map, the «n not checked» fold,
+  // a row ticked in a layer with nothing chosen, [Keep these] on each layer, the last layer's first fold name kept
+  // ([Keep]) and a specialisation ticked there, Accept with exactly what the footer's confirm sends (topic-map-model
+  // acceptTopicChoicesOf over the view, the over switch as the footer asks for it), Start refused on milestone 2, and
+  // the accepted plan's page as production loads it. Every topic switch is on for this block only
+  // (deps.topicSwitches; production passes none), so nothing here reads the TOPIC_* constants.
+  //
+  // The replies come from probe stage 1 (scripts/fixtures/roadmap-corpus/probe-v5-P*.json, read, never edited). Where a
+  // recording can't answer the pack the chain sends, the reply is ADAPTED from it by a fixed rule and labelled so in the
+  // facts (`replies`); no name, source or count is invented to make a step pass, and a refused step fails its check
+  // with the refusal:
+  //   RATE    P1 verbatim, for each sample (DIFF_3 / MEDIUM: 3 layers of up to 3 names).
+  //   MAP     P3's names. P3 was recorded for a 4-layer, 5-a-layer pack; a pack asking for other layers or fewer names
+  //           a layer gets P3 ADAPTED to its schema: P3's layers the schema lists, in P3's order, each cut to the
+  //           schema's maxItems (no name changed, none added). A pack P3 fits gets P3 verbatim.
+  //   LINK    P4's shape (each child key → the keys it builds on, enum-checked), keyed to P3's names by BUILDS_ON,
+  //           written for this test: no LINK reply was recorded for P3's names (P4 linked a synthetic list).
+  //   GROUND  P5 verbatim for a batch of exactly P5's three terms; any other batch ADAPTED from P5's shape: one
+  //           "<key>: <sentence>" line a term (P5's own sentence for a term P5 answered, else a plain one naming the
+  //           term as written), P5's groundingChunks as recorded, a term's support citing the chunks P5's support for
+  //           that term cited (for any other term, P5's i-th support's: 2, 1, 3 sites, so LINKED, WEAK, LINKED in
+  //           DOMAIN mode), and P5's query form ("<term> Business Finance meaning definition") a term. MAP's
+  //           REGION_SPECIFIC names (Mortgages and Loans …) are never sent to GROUND, so no batch here is P5's own three
+  //           terms and every GROUND reply is adapted; P5's two other terms keep P5's sentence and cited chunks.
+  //
+  // Two passes, each to Start. A: Gemini's own estimate (P1: 3 layers) on a realistic date, the pace typed (the form
+  // asks for it on [Break it down] when nothing measured one), so MAP gets P3 adapted. B: a chosen date and your 4
+  // layers (setLayersCore SET once RATE settled, before the poll's first advance: the core's own path, since the page
+  // shows the chip only after the chain), the pack P3 was recorded for, so MAP gets P3 verbatim.
+  console.log("— revision 5: names end to end (recorded replies) —");
+  await topicBlock("names end to end", async () => {
+    const TMM = await import("../src/components/roadmap/topic-map-model");
+    const recorded = (item: string) => JSON.parse(readFileSync(join(process.cwd(), "scripts/fixtures/roadmap-corpus", `probe-v5-${item}.json`), "utf8"));
+    const P1 = recorded("P1");
+    const P3 = recorded("P3");
+    const P4 = recorded("P4");
+    const P5 = recorded("P5");
+    type Recorded = { raw: string; finishReason: string; usage: unknown };
+    type GroundVerdicts = Record<string, { verdict: string; sources: { title: string; uri: string }[]; reason: string }>;
+    type ChainRun = RunRec & { phase?: string | null; requests?: number | null; grounding?: { verdicts?: GroundVerdicts } | null };
+    type Term = { key: string; name: string };
+    type Support = { segment: { startIndex?: number; endIndex: number; text: string }; groundingChunkIndices: number[] };
+    // The recorded packs' aim and Area (P1 and P3 were sent for exactly these words).
+    const AIM = "Learn to run a household's investments and home loan, and keep the monthly budget on track";
+    const AREA = "Business & Finance";
+    // What each of P3's names builds on: the LINK reply's choice, by name, keyed through the pack the chain sends.
+    const BUILDS_ON: Record<string, string> = {
+      "Income and Expense Tracking": "Household Finance",
+      "Portfolio Allocation": "Investment Management",
+      "Home Loan Structure": "Mortgages and Loans",
+      "Monthly Budgeting": "Income and Expense Tracking",
+      "Asset Diversification": "Portfolio Allocation",
+      "Interest Rates": "Home Loan Structure",
+      "Expense Categorization": "Monthly Budgeting",
+      "Risk Tolerance": "Asset Diversification",
+      "Loan Refinancing": "Interest Rates",
+    };
+    const P3_REPLY = P3.replies[0] as Recorded & { parsed: { names: Record<string, { name: string; scope: string }[]> } };
+    const P5_META = P5.parts.metadata as { groundingChunks: { web: { title: string; uri: string } }[]; groundingSupports: Support[]; webSearchQueries: string[] };
+    const P5_TERMS = P5.terms as Term[];
+    const P5_LINES = (P5.parts.parts[0].text as string).split("\n");
+    const P5_CHUNKS = P5_META.groundingChunks;
+    const chunks = P5_CHUNKS.map((c) => c.web);
+    const fromChunks = (s: { title: string; uri: string }) => chunks.some((c) => c.title === s.title && c.uri === s.uri);
+    // P5's support for each of its terms (the segment that carries its key's line), and its query form's tail.
+    const p5SupportOf = (key: string) => P5_META.groundingSupports.find((s) => s.segment.text.startsWith(`${key}: `)) as Support;
+    const P5_QUERY_TAIL = (() => {
+      const q = P5_META.webSearchQueries[0];
+      const t = P5_TERMS.find((x) => q.startsWith(x.name));
+      return t ? q.slice(t.name.length) : "";
+    })();
+    const utf8 = (s: string) => new TextEncoder().encode(s).length;
+    /** One GROUND reply for a batch: P5 verbatim for P5's own batch, else P5's shape (see the block's head). */
+    const groundReplyOf = (batch: readonly Term[]): { response: unknown; label: string } => {
+      if (json(batch) === json(P5_TERMS)) return { response: groundResponseOf(P5.parts), label: "P5 verbatim" };
+      const lines: string[] = [];
+      const supports: Support[] = [];
+      let at = 0;
+      batch.forEach((t, i) => {
+        const own = P5_TERMS.findIndex((x) => x.name === t.name);
+        const body = own >= 0 ? P5_LINES[own].replace(/^T\d+: /, "") : `${t.name} is a study topic in ${AREA}.`;
+        const line = `${t.key}: ${body}`;
+        const seg = line.replace(/\.$/, "");
+        const cited = own >= 0 ? p5SupportOf(P5_TERMS[own].key).groundingChunkIndices : P5_META.groundingSupports[i % P5_META.groundingSupports.length].groundingChunkIndices;
+        supports.push({ segment: { ...(at > 0 ? { startIndex: at } : {}), endIndex: at + utf8(seg), text: seg }, groundingChunkIndices: [...cited] });
+        lines.push(line);
+        at += utf8(line) + 1;
+      });
+      const parts = {
+        parts: [{ text: lines.join("\n") }],
+        metadata: { groundingChunks: P5_CHUNKS, groundingSupports: supports, webSearchQueries: batch.map((t) => `${t.name}${P5_QUERY_TAIL}`) },
+        finishReason: P5.parts.finishReason,
+        toolUsePromptTokenCount: P5.parts.toolUsePromptTokenCount,
+        truncated: false,
+      };
+      return { response: groundResponseOf(parts), label: "P5 adapted" };
+    };
+    /** One MAP reply for a pack: P3 verbatim when the pack's schema fits it, else P3 cut to the schema (see the block's head). */
+    const mapReplyOf = (req: ModelRequest): { reply: Recorded; label: string } => {
+      const names = ((req.responseSchema as { properties: Record<string, unknown> }).properties.names ?? { properties: {} }) as { properties: Record<string, { maxItems?: string }>; propertyOrdering?: string[] };
+      const layers = names.propertyOrdering ?? Object.keys(names.properties);
+      const recordedNames = P3_REPLY.parsed.names;
+      const adapted = { names: Object.fromEntries(layers.filter((l) => recordedNames[l]).map((l) => [l, recordedNames[l].slice(0, Number(names.properties[l]?.maxItems ?? recordedNames[l].length))])) };
+      if (json(adapted) === json(P3_REPLY.parsed)) return { reply: P3_REPLY, label: "P3 verbatim" };
+      const max = layers.map((l) => names.properties[l]?.maxItems ?? "-").join("/");
+      return { reply: { raw: JSON.stringify(adapted, null, 2), finishReason: P3_REPLY.finishReason, usage: P3_REPLY.usage }, label: `P3 adapted (${layers.join(" ")}; at most ${max})` };
+    };
+    const byName = (ts: readonly TopicRowRec[]) => ts.map((t) => `${t.key} L${t.layer} ${t.name} [${t.grounding}${t.flags.length ? ` ${t.flags.join(",")}` : ""}]`);
+    // ratingOf over the three recorded RATE replies (the chip's source before MAP fills it).
+    const rated = RATING.ratingOf({
+      samples: [0, 1, 2].map(() => ({ parsed: P1.replies[0].parsed, integrity: "CLEAN" as const })),
+      trackArea: false,
+      outlineLines: 0,
+      texts: { aim: AIM, areaName: AREA, constraints: null },
+      inputKey: "",
+      runId: null,
+      day: TODAY,
+    });
+
+    /** One pass: the form's save, [Break it down], (your layer count), then the page's poll until the chain is done. */
+    const drive = async (yourLayers: number | null, newCardsPerWeek: number | null, day: DayKey | null) => {
+      let sent = 0;
+      const replyOf = (r: Recorded) => ({ candidates: [{ content: { role: "model", parts: [{ text: r.raw }] }, finishReason: r.finishReason }], usageMetadata: r.usage, modelVersion: P1.model, responseId: `rec-${sent}` });
+      const calls: Record<string, number> = {};
+      const replies: string[] = [];
+      const mapPacks: string[] = [];
+      const groundBatches: string[][] = [];
+      const callModel = async (req: ModelRequest): Promise<unknown> => {
+        sent += 1;
+        const props = (req.responseSchema as { properties?: Record<string, unknown> } | null)?.properties ?? {};
+        const phase = req.googleSearch ? "GROUND" : "difficulty" in props ? "RATE" : "names" in props || "place" in props ? "MAP" : "LINK";
+        calls[phase] = (calls[phase] ?? 0) + 1;
+        if (phase === "RATE") {
+          replies.push("RATE: P1 verbatim");
+          return replyOf(P1.replies[0]);
+        }
+        if (phase === "MAP") {
+          mapPacks.push(req.contents);
+          const m = mapReplyOf(req);
+          replies.push(`MAP: ${m.label}`);
+          return replyOf(m.reply);
+        }
+        if (phase === "GROUND") {
+          const batch = [...req.contents.matchAll(/^([STU]\d+) · (.+)$/gm)].map((m) => ({ key: m[1], name: m[2] }));
+          groundBatches.push(batch.map((t) => `${t.key} · ${t.name}`));
+          const g = groundReplyOf(batch);
+          replies.push(`GROUND: ${g.label}`);
+          return g.response;
+        }
+        // LINK, shaped as P4 answered: each child key → the key of what it builds on (enum-checked), else ["NONE"].
+        const keyOfName = new Map([...req.contents.matchAll(/([STU]\d+) · ([^;\n]+)/g)].map((m) => [m[2].trim(), m[1]]));
+        const nameOfKey = new Map([...keyOfName].map(([name, key]) => [key, name]));
+        const schema = req.responseSchema as { required: string[]; properties: Record<string, { items: { enum: string[] } }> };
+        const reply = Object.fromEntries(
+          schema.required.map((child) => {
+            const parent = keyOfName.get(BUILDS_ON[nameOfKey.get(child) ?? ""] ?? "");
+            return [child, parent && schema.properties[child].items.enum.includes(parent) ? [parent] : ["NONE"]];
+          })
+        );
+        replies.push("LINK: P4's shape");
+        return replyOf({ raw: JSON.stringify(reply, null, 2), finishReason: "STOP", usage: P4.replies[0].usage });
+      };
+      const w = world();
+      w.tree.push({ id: "f-fin", name: AREA, level: 1, domains: [] });
+      const tasks: (() => Promise<void> | void)[] = [];
+      // Each tap or poll a second later than the last (a step's run row is stamped when it is claimed).
+      let at = NOW.getTime();
+      const later = () => new Date((at += 1000));
+      const deps = depsFor(w, {
+        topicSwitches: { plans: true, rate: true, place: true, names: true, link: true, ground: true },
+        callModel,
+        defer: (t) => tasks.push(t),
+        clock: () => new Date(at),
+        // The real integrity walk (R3's integrityOf): the fixture lane reads only LEVELS replies.
+        lanes: { ...lanesFor(w), integrityOf: VALIDATE.integrityOf },
+      });
+      // after(): each deferred step runs to its end before the next poll.
+      const settle = async () => {
+        while (tasks.length) await (tasks.shift() as () => Promise<void> | void)();
+      };
+      const chainRuns = () => (w.t.roadmapRun as ChainRun[]).filter((r) => r.phase != null);
+      // The new-aim form on a Field Area, [Break it down] (RoadmapForm's BREAKDOWN path: planKind TOPICS, topicDepth, depth null).
+      const intake: Intake = {
+        ...INTAKE,
+        aim: AIM,
+        fieldId: "f-fin",
+        domainIds: [],
+        planKind: "TOPICS",
+        topicDepth: 12,
+        depth: null,
+        newCardsPerWeek,
+        ...(day ? { dateMode: "CHOSEN" as const, targetDay: day } : { dateMode: "REALISTIC" as const }),
+      };
+      const saved = must(await S.saveIntakeCore(USER, intake, later(), deps), "saveIntake");
+      const id = saved.ok ? saved.value.roadmapId : "";
+      must(await S.breakDownCore(USER, id, later(), deps), "breakDown");
+      await settle();
+      if (yourLayers != null) must(await S.setLayersCore(USER, id, { kind: "SET", layers: yourLayers }, later(), deps), `set ${yourLayers} layers`);
+      // The page's poll (useTopicChainPoll): while the view says a step is left, advance, let after() run, refresh.
+      const polls: string[] = [];
+      let done = false;
+      let pollError: string | null = null;
+      let waited = true;
+      for (let i = 0; i < 16; i++) {
+        const v = await S.loadRoadmapView(USER, later(), deps, id);
+        const chain = v.topicChain ?? null;
+        polls.push(chain ? `${v.state} ${chain.phase ?? "-"}${chain.running ? " running" : ""}${chain.done ? " done" : ""}${chain.stop ? ` ${chain.stop}` : ""}` : `${v.state} (no chain)`);
+        if (!chain || chain.done) {
+          done = chain?.done === true && chain.stop == null;
+          break;
+        }
+        // A fresh DRAFT stays on the wait card (state RUNNING) while a step is left.
+        if (v.state !== "RUNNING") waited = false;
+        const step = await S.advanceTopicChainCore(USER, id, false, later(), deps);
+        if (!step.ok) {
+          pollError = step.error;
+          break;
+        }
+        await settle();
+      }
+      const topicsV1 = () => w.t.roadmapTopic.filter((t) => t.roadmapId === id && t.version === 1 && t.decision !== "REMOVED" && t.decision !== "MERGED");
+      const gemini = () => topicsV1().filter((t) => t.nameOrigin === "GEMINI");
+      const verdicts = Object.assign({}, ...chainRuns().filter((r) => r.phase === "GROUND").map((r) => r.grounding?.verdicts ?? {})) as GroundVerdicts;
+      const mapRun = chainRuns().find((r) => r.phase === "MAP");
+      const mapReport = (mapRun?.report ?? null) as { kept?: string[]; hidden?: string[]; topics?: unknown; kFinal?: number } | null;
+      const kFinal = mapReport?.kFinal ?? null;
+      const facts = {
+        done,
+        waited,
+        pollError,
+        polls,
+        runs: chainRuns().map((r) => [r.phase, r.status, r.error ?? null]),
+        calls,
+        replies,
+        groundBatches,
+        names: byName(gemini()),
+        map: mapReport && { kFinal: mapReport.kFinal, kept: mapReport.kept, hidden: mapReport.hidden },
+        verdicts,
+      };
+      return { w, id, deps, later, chainRuns, topicsV1, gemini, kFinal, mapPacks, replies, facts };
+    };
+
+    /** From the draft map to Start, as the page does it; `tag` names the pass in each check. */
+    const toStart = async (d: Awaited<ReturnType<typeof drive>>, tag: string, chip: (tm: TopicMapView) => [boolean, unknown]) => {
+      const view = await S.loadRoadmapView(USER, d.later(), d.deps, d.id);
+      const tm = view.draft?.topicMap ?? null;
+      const gemini = d.gemini();
+      const linked = gemini.filter((t) => t.grounding === "LINKED" && t.flags.length === 0);
+      const unlinked = gemini.filter((t) => !linked.includes(t));
+      const rows = (tm?.layers ?? []).flatMap((l) => l.topics);
+      const rowOfLineage = new Map(rows.map((r) => [r.lineageId, r]));
+      const shownLinked = rows.filter((r) => r.cls === "LINKED");
+      const [chipOk, chipFacts] = tm ? chip(tm) : [false, null];
+      check(`names e2e (${tag}): the estimate chip and the bands`, !!tm && chipOk && tm.layers.length === tm.rating.layers, json({ chip: chipFacts, bands: tm?.layers.length, draft: view.draft != null, state: view.state }));
+      check(
+        `names e2e (${tag}): only LINKED names appear as Gemini rows «Gemini · Google linked n sources», each with ≥ SOURCES_MIN distinct sites, every one from the reply's groundingChunks`,
+        !!tm &&
+          linked.length > 0 &&
+          json(shownLinked.map((r) => r.lineageId).sort()) === json(linked.map((t) => t.lineageId).sort()) &&
+          rows.filter((r) => r.votes != null).every((r) => r.cls === "LINKED" || r.cls === "NOT_CHECKED") &&
+          shownLinked.every((r) => r.sources.length >= SOURCES_MIN && new Set(r.sources.map((s) => s.title)).size === r.sources.length && r.sources.every(fromChunks)),
+        json({ linked: byName(linked), shown: shownLinked.map((r) => [r.key, r.name, r.sources.map((s) => s.title)]), verdicts: d.facts.verdicts })
+      );
+      check(
+        `names e2e (${tag}): WEAK, NONE and flagged names are listed only in their layer's «n not checked» fold: NOT_CHECKED rows (LayerBand's fold reads them), unticked, no sources, counted in hidden`,
+        !!tm &&
+          unlinked.length > 0 &&
+          tm.hidden === unlinked.length &&
+          unlinked.every((t) => {
+            const r = rowOfLineage.get(t.lineageId);
+            return !!r && r.cls === "NOT_CHECKED" && !r.chosen && r.sources.length === 0;
+          }) &&
+          tm.layers.every((l) => l.hidden === unlinked.filter((t) => t.layer === l.layer).length && l.topics.filter((r) => r.cls === "NOT_CHECKED").length === l.hidden),
+        json({
+          unlinked: byName(unlinked),
+          layers: (tm?.layers ?? []).map((l) => ({ layer: l.layer, hidden: l.hidden, rows: l.topics.map((r) => `${r.key} ${r.cls}${r.chosen ? " chosen" : ""}`) })),
+          hidden: tm?.hidden,
+        })
+      );
+
+      // Layer by layer, top down, from the view only. Above the last layer: a layer showing nothing chosen ticks its
+      // first shown row (its fold's first name, [Show the not-checked ones] → [Keep], when it shows none); then [Keep
+      // these]. The last layer: its fold's first name kept ([Keep]: «Gemini · kept · not checked»), the specialisation
+      // ticked (its first linked Gemini row not chosen yet, else its first shown row), then [Keep these].
+      const K = tm?.layers.length ?? 0;
+      const steps: string[] = [];
+      let foldKept: string | null = null;
+      let special: string | null = null;
+      for (let layer = 1; layer <= K; layer++) {
+        const lv = (await S.loadRoadmapView(USER, d.later(), d.deps, d.id)).draft?.topicMap?.layers.find((l) => l.layer === layer);
+        const rowsHere = lv?.topics ?? [];
+        const shown = rowsHere.filter((r) => r.cls !== "NOT_CHECKED");
+        const fold = rowsHere.find((r) => r.cls === "NOT_CHECKED") ?? null;
+        if (layer < K) {
+          if (!shown.some((r) => r.chosen)) {
+            if (shown[0]) steps.push(`L${layer} tick ${shown[0].key}: ${errOf(await S.chooseTopicCore(USER, d.id, shown[0].key, true, d.later(), d.deps))}`);
+            else if (fold) steps.push(`L${layer} keep ${fold.key} from the fold: ${errOf(await S.keepGeminiNameCore(USER, d.id, fold.key, d.later(), d.deps))}`);
+            else steps.push(`L${layer}: nothing shown, nothing in the fold`);
+          }
+        } else {
+          if (fold) {
+            foldKept = fold.name;
+            steps.push(`L${layer} keep ${fold.key} from the fold: ${errOf(await S.keepGeminiNameCore(USER, d.id, fold.key, d.later(), d.deps))}`);
+          }
+          const pick = shown.find((r) => r.cls === "LINKED" && !r.chosen) ?? shown[0] ?? null;
+          special = pick?.name ?? null;
+          steps.push(`L${layer} specialisation ${pick ? `${pick.key} ${pick.cls}: ${errOf(await S.chooseTopicCore(USER, d.id, pick.key, true, d.later(), d.deps))}` : "none: no row shown"}`);
+        }
+        steps.push(`L${layer} keep these: ${errOf(await S.keepLayerCore(USER, d.id, layer, d.later(), d.deps))}`);
+      }
+      const lastRows = (await S.loadRoadmapView(USER, d.later(), d.deps, d.id)).draft?.topicMap?.layers.find((l) => l.layer === K)?.topics ?? [];
+      const keptRow = lastRows.find((r) => r.name === foldKept) ?? null;
+      const specialRow = lastRows.find((r) => r.name === special) ?? null;
+      check(
+        `names e2e (${tag}): the last layer: the fold's name kept reads «Gemini · kept · not checked» (KEPT_NOT_CHECKED, chosen, no sources), and the specialisation is ticked`,
+        !!keptRow && keptRow.cls === "KEPT_NOT_CHECKED" && keptRow.chosen && keptRow.sources.length === 0 && !!specialRow && specialRow.chosen,
+        json({ steps, last: lastRows.map((r) => `${r.key} ${r.name} ${r.cls}${r.chosen ? " chosen" : ""}`) })
+      );
+      // Accept as the footer sends it: the confirm's choices over the view, the over switch on when the footer asks for it.
+      const before = await S.loadRoadmapView(USER, d.later(), d.deps, d.id);
+      const tmBefore = before.draft?.topicMap ?? null;
+      const choices = tmBefore ? TMM.acceptTopicChoicesOf(tmBefore, { keepAll: false, aftercare: null }) : null;
+      const needsOver = !!before.draft?.feasibility?.over || before.draft?.dateCheck?.verdict === "OVER";
+      const chosenNew = d.topicsV1().filter((t) => t.chosen && !t.domainId);
+      const accepted = choices ? await S.acceptCore(USER, d.id, { overAccepted: needsOver, topicMap: choices }, d.later(), d.deps) : null;
+      const row = d.w.t.roadmap.find((r) => r.id === d.id) as RoadmapRec;
+      const fin = d.w.tree.find((f) => f.id === "f-fin")?.domains ?? [];
+      const geminiNamed = choices?.geminiNamed ?? [];
+      const marked = geminiNamed.map((name) => fin.find((x) => x.name === name)).map((x) => (x ? { name: x.name, nameOrigin: x.nameOrigin ?? null, originName: x.originName ?? null } : null));
+      check(
+        `names e2e (${tag}): [Keep these] on each layer, a specialisation ticked, Accept with the confirm's choices: the plan is TOPICS and every Gemini name it names (the fold's kept name and the specialisation among them) became a Domain marked GEMINI (originName = the name)`,
+        !!accepted &&
+          accepted.ok &&
+          row.status === "ACTIVE" &&
+          kindOf(row) === "TOPICS" &&
+          geminiNamed.length > 0 &&
+          foldKept != null &&
+          geminiNamed.includes(foldKept) &&
+          (specialRow?.cls !== "LINKED" || geminiNamed.includes(specialRow.name)) &&
+          choices?.create === chosenNew.length &&
+          marked.every((x) => x != null && x.nameOrigin === "GEMINI" && x.originName === x.name) &&
+          chosenNew.every((t) => fin.some((x) => x.name === t.name)),
+        json({ steps, foldKept, special, acceptRefusal: tmBefore?.acceptRefusal ?? null, needsOver, choices, chosen: byName(chosenNew), accept: accepted ? errOf(accepted) : "no map", marked })
+      );
+      const ladder = rowsOf(d.w, d.id, 1)
+        .filter((m) => m.status === "PLANNED")
+        .sort((x, y) => x.ord - y.ord);
+      const filled = Math.max(0, ...d.topicsV1().filter((t) => t.chosen).map((t) => t.layer));
+      eq(
+        `names e2e (${tag}): the milestones are the layers in order, then the depth tail (Mastered: 2)`,
+        accepted?.ok ? ladder.map((m) => (m.chainRole === "LAYER" ? `LAYER ${m.layer}` : String(m.chainRole))) : accepted ? errOf(accepted) : "no map",
+        [...Array.from({ length: filled }, (_, i) => `LAYER ${i + 1}`), ...Array.from({ length: DEPTH_TAIL[12] }, () => "DEPTH")]
+      );
+      const m2 = ladder.find((m) => m.chainRole === "LAYER" && m.layer === 2) ?? null;
+      const start2 = m2 ? errOf(await S.startMilestoneCore(USER, m2.id, START_ALL, d.later(), d.deps)) : "no layer-2 milestone";
+      eq(`names e2e (${tag}): milestone 2 refuses Start before milestone 1 is reached (PREREQS_OPEN)`, start2, PREREQS_OPEN);
+      // The accepted plan's page as production loads it (the tripwire in REDACT mode: a kept Gemini-named Domain's name
+      // outside its mark is logged, never thrown). "Toward the aim" names the plan's Domains: each such label carries
+      // its mark (labelParts). The paths the tripwire still logs (the current milestone's title and item labels: the
+      // live fix's open item, no parts there yet) are listed in the detail, not passed as marked.
+      const logged: string[] = [];
+      const warn0 = console.warn;
+      const mode0 = process.env.ROADMAP_CHECK;
+      let planView: Awaited<ReturnType<typeof S.loadRoadmapView>> | null = null;
+      try {
+        console.warn = (m: unknown) => void logged.push(String(m));
+        process.env.ROADMAP_CHECK = "0";
+        planView = await S.loadRoadmapView(USER, d.later(), d.deps, d.id);
+      } finally {
+        console.warn = warn0;
+        process.env.ROADMAP_CHECK = mode0;
+      }
+      const marks = new Set(geminiNamed);
+      const towardRows = (planView?.toward?.measures ?? []).filter((x) => typeof x.label === "string" && [...marks].some((n) => (x.label as string).includes(n)));
+      const tripPaths = logged.map((l) => (JSON.parse(l) as { path?: string }).path ?? l);
+      check(
+        `names e2e (${tag}): the accepted plan's page loads; "Toward the aim" shows each kept Gemini-named Domain with its mark (labelParts, geminiNamed), and the tripwire logs nothing there`,
+        planView?.state === "ACTIVE" &&
+          towardRows.length > 0 &&
+          towardRows.every((x) => (x.labelParts ?? []).some((p) => p.geminiNamed && marks.has(p.text))) &&
+          !tripPaths.some((p) => p.startsWith("toward.")),
+        json({ toward: towardRows.map((x) => x.labelParts), tripwireStillLogs: tripPaths })
+      );
+    };
+
+    // ── Pass A: Gemini's own estimate (3 layers) on a realistic date, 20 new cards a week typed ──
+    const a = await drive(null, 20, null);
+    check(
+      "names e2e (A: Gemini's estimate): the page's poll runs RATE → MAP → LINK ∥ GROUND to done on the recorded replies (MAP: P3 adapted to the 3 rated layers), the draft on the wait card between steps, every step OK",
+      a.facts.done &&
+        a.facts.waited &&
+        a.chainRuns().every((r) => r.status === "OK") &&
+        a.facts.calls.RATE === 3 &&
+        a.facts.calls.MAP === 3 &&
+        a.facts.calls.LINK === 3 &&
+        (a.facts.calls.GROUND ?? 0) >= 1 &&
+        a.replies.filter((r) => r.startsWith("MAP")).every((r) => r.startsWith("MAP: P3 adapted")) &&
+        a.gemini().length > 0,
+      json({ ...a.facts, mapPackSent: a.mapPacks[0] ?? null, mapPackRecorded: P3.contents })
+    );
+    // P5's own terms, re-keyed into the adapted batch, read as P5 recorded them (DOMAIN mode: the chunk titles are sites).
+    const p5Verdict = (name: string) => {
+      const key = a.gemini().find((t) => t.name === name)?.key ?? "";
+      const v = a.facts.verdicts[key];
+      return v ? `${v.verdict} ${v.sources.map((x) => x.title).join(" ")}` : "not checked";
+    };
+    eq(
+      "names e2e (A): P5's own terms in the adapted GROUND replies read as P5's recorded reply does: Household Finance LINKED by uri.edu and grupbancsabadell.com, Investment Management WEAK by wikipedia.org",
+      P5_TERMS.slice(0, 2).map((t) => `${t.name}: ${p5Verdict(t.name)}`),
+      ["Household Finance: LINKED uri.edu grupbancsabadell.com", "Investment Management: WEAK wikipedia.org"]
+    );
+    await toStart(a, "A: Gemini's estimate", (tm) => [
+      tm.rating.layers === (a.kFinal == null ? rated.layers : RATING.withMapFillOf(rated, a.kFinal).layers) && tm.rating.origin === rated.origin && tm.rating.mapFilled === a.kFinal,
+      { chip: { layers: tm.rating.layers, origin: tm.rating.origin, mapFilled: tm.rating.mapFilled }, rated: { layers: rated.layers, origin: rated.origin }, kFinal: a.kFinal },
+    ]);
+
+    // ── Pass B: a chosen date, your 4 layers once RATE settled; MAP gets P3 verbatim (the pack it was recorded for) ──
+    const b = await drive(4, null, addDays(TODAY, 700));
+    check(
+      "names e2e (B: 4 layers set by you): the page's poll runs RATE → MAP → LINK ∥ GROUND to done on the recorded replies (MAP: P3 verbatim), the draft on the wait card between steps, every step OK",
+      b.facts.done &&
+        b.facts.waited &&
+        b.chainRuns().every((r) => r.status === "OK") &&
+        b.facts.calls.RATE === 3 &&
+        b.facts.calls.MAP === 3 &&
+        b.facts.calls.LINK === 3 &&
+        (b.facts.calls.GROUND ?? 0) >= 1 &&
+        b.replies.filter((r) => r.startsWith("MAP")).every((r) => r === "MAP: P3 verbatim") &&
+        b.gemini().length > 0,
+      json(b.facts)
+    );
+    await toStart(b, "B: 4 layers set by you", (tm) => [
+      tm.rating.layers === 4 && tm.rating.origin !== rated.origin && tm.rating.geminiLayers === rated.layers && tm.rating.mapFilled === b.kFinal,
+      { chip: { layers: tm.rating.layers, origin: tm.rating.origin, geminiLayers: tm.rating.geminiLayers, mapFilled: tm.rating.mapFilled }, kFinal: b.kFinal },
+    ]);
+  });
+
+  // ═══ Revision 5 (live fix): the chain's stops as the page reads them (RoadmapView.topicChain) ═══════════════
+  //
+  // The recorded replies again (P1, P3 for 4 layers you set, a NONE-only LINK, P5 verbatim for GROUND, or a 429), the
+  // chain driven as the page's poll and its buttons do: why it stopped (stop, retry, unchecked, line, fit), and that
+  // [Try again] / the poll moves it on. Every topic switch on for this block only (deps.topicSwitches).
+  console.log("— revision 5 (live fix): the chain's stops —");
+  await topicBlock("the chain's stops", async () => {
+    const recorded = (item: string) => JSON.parse(readFileSync(join(process.cwd(), "scripts/fixtures/roadmap-corpus", `probe-v5-${item}.json`), "utf8"));
+    const P1 = recorded("P1");
+    const P3 = recorded("P3");
+    const P4 = recorded("P4");
+    const P5 = recorded("P5");
+    const setup = async (opts: { groundFail: () => boolean; day: DayKey; layers: number }) => {
+      let sent = 0;
+      const replyOf = (r: { raw: string; finishReason: string; usage: unknown }) => ({ candidates: [{ content: { role: "model", parts: [{ text: r.raw }] }, finishReason: r.finishReason }], usageMetadata: r.usage, modelVersion: P1.model, responseId: `rec-${sent}` });
+      const callModel = async (req: ModelRequest): Promise<unknown> => {
+        sent += 1;
+        const props = (req.responseSchema as { properties?: Record<string, unknown> } | null)?.properties ?? {};
+        const phase = req.googleSearch ? "GROUND" : "difficulty" in props ? "RATE" : "names" in props || "place" in props ? "MAP" : "LINK";
+        if (phase === "RATE") return replyOf(P1.replies[0]);
+        if (phase === "MAP") return replyOf(P3.replies[0]);
+        if (phase === "GROUND") {
+          if (opts.groundFail()) throw new Error("429 quota");
+          return groundResponseOf(P5.parts);
+        }
+        const schema = req.responseSchema as { required: string[] };
+        return replyOf({ raw: JSON.stringify(Object.fromEntries(schema.required.map((c) => [c, ["NONE"]]))), finishReason: "STOP", usage: P4.replies[0].usage });
+      };
+      const w = world();
+      w.tree.push({ id: "f-fin", name: "Business & Finance", level: 1, domains: [] });
+      const tasks: (() => Promise<void> | void)[] = [];
+      let at = NOW.getTime();
+      const later = (ms = 1000) => new Date((at += ms));
+      const deps = depsFor(w, {
+        topicSwitches: { plans: true, rate: true, place: true, names: true, link: true, ground: true },
+        callModel,
+        defer: (t) => tasks.push(t),
+        clock: () => new Date(at),
+        lanes: { ...lanesFor(w), integrityOf: VALIDATE.integrityOf },
+      });
+      const settle = async () => {
+        while (tasks.length) await (tasks.shift() as () => Promise<void> | void)();
+      };
+      const intake: Intake = {
+        ...INTAKE,
+        aim: "Learn to run a household's investments and home loan, and keep the monthly budget on track",
+        fieldId: "f-fin",
+        domainIds: [],
+        planKind: "TOPICS",
+        topicDepth: 12,
+        depth: null,
+        newCardsPerWeek: null,
+        dateMode: "CHOSEN",
+        targetDay: opts.day,
+      };
+      const saved = must(await S.saveIntakeCore(USER, intake, later(), deps), "saveIntake");
+      const id = saved.ok ? saved.value.roadmapId : "";
+      must(await S.breakDownCore(USER, id, later(), deps), "breakDown");
+      await settle();
+      must(await S.setLayersCore(USER, id, { kind: "SET", layers: opts.layers }, later(), deps), "set the layers");
+      const view = async () => {
+        const v = await S.loadRoadmapView(USER, later(), deps, id);
+        const c = v.topicChain ?? null;
+        return { state: v.state, chain: c && { done: c.done, phase: c.phase, running: c.running, stale: c.stale, stop: c.stop, retry: c.retry, unchecked: c.unchecked, line: c.line, fit: c.fit && { verdict: c.fit.verdict, offers: c.fit.offers, basis: c.fit.basis } } };
+      };
+      // The page's poll: advance while the view has a step left; a refused advance ends the poll with its error, and the
+      // page refreshes (useTopicChainPoll).
+      const errors: string[] = [];
+      const poll = async () => {
+        for (let i = 0; i < 12; i++) {
+          const v = await view();
+          if (!v.chain || v.chain.done) return v;
+          const st = await S.advanceTopicChainCore(USER, id, false, later(), deps);
+          if (!st.ok) {
+            errors.push(st.error);
+            return view();
+          }
+          await settle();
+        }
+        return view();
+      };
+      return { id, deps, later, settle, view, poll, w, tasks, errors };
+    };
+
+    // A failed web check: every GROUND call fails (a 429), then [Try again] (advanceTopicChain with retry) runs it again.
+    let failing = true;
+    const g = await setup({ groundFail: () => failing, day: addDays(TODAY, 700), layers: 4 });
+    const v1 = await g.poll();
+    failing = false;
+    const retried = await S.advanceTopicChainCore(USER, g.id, true, g.later(), g.deps);
+    await g.settle();
+    const v2 = await g.poll();
+    check(
+      "chain stops: a failed web check stops GROUND_FAILED with the names it left unchecked and [Try again] (ADVANCE) on the draft; the retry runs the wave again and the chain ends with no stop",
+      v1.state === "DRAFT" &&
+        v1.chain?.done === true &&
+        v1.chain.stop === "GROUND_FAILED" &&
+        v1.chain.unchecked > 0 &&
+        v1.chain.retry === "ADVANCE" &&
+        retried.ok &&
+        retried.value.phase === "GROUND" &&
+        v2.chain?.done === true &&
+        v2.chain.stop == null,
+      json({ v1, retried: retried.ok ? retried.value : retried.error, v2 })
+    );
+
+    // A step killed at maxDuration: MAP's after() never runs; past TOPIC_RUN_STALE_MS the wait card goes stale, not done;
+    // the poll's next advance marks it timed out, and the draft shows MAP_FAILED with [Try again].
+    const k = await setup({ groundFail: () => false, day: addDays(TODAY, 700), layers: 4 });
+    const claim = await S.advanceTopicChainCore(USER, k.id, false, k.later(), k.deps);
+    k.tasks.length = 0;
+    const k0 = await k.view();
+    k.later(200_000);
+    const k1 = await k.view();
+    const settled = await S.advanceTopicChainCore(USER, k.id, false, k.later(), k.deps);
+    const k2 = await k.view();
+    check(
+      "chain stops: a step killed mid-run reads running, then stale past TOPIC_RUN_STALE_MS (the wait card, not done); the poll's advance marks it timed out and the draft stops MAP_FAILED with [Try again] (ADVANCE)",
+      claim.ok &&
+        claim.value.phase === "MAP" &&
+        k0.chain?.running === true &&
+        k1.state === "RUNNING" &&
+        k1.chain?.stale === true &&
+        k1.chain.done === false &&
+        settled.ok &&
+        k2.state === "DRAFT" &&
+        k2.chain?.done === true &&
+        k2.chain.stop === "MAP_FAILED" &&
+        k2.chain.retry === "ADVANCE",
+      json({ claim: claim.ok ? claim.value : claim.error, k0, k1, settled: settled.ok ? settled.value : settled.error, k2 })
+    );
+
+    // MAP's realism pre-check: 6 layers by a date 40 days out with no pace: the stop carries its fit (verdict, basis line, offers).
+    const o = await setup({ groundFail: () => false, day: addDays(TODAY, 40), layers: 6 });
+    const vo = await o.poll();
+    check(
+      "chain stops: MAP's pre-check stops OVER or IMPOSSIBLE with its fit (the basis line as the stop's line, [Fewer layers] among the offers) and [Check again] (ADVANCE)",
+      vo.state === "DRAFT" &&
+        vo.chain?.done === true &&
+        (vo.chain.stop === "OVER" || vo.chain.stop === "IMPOSSIBLE") &&
+        vo.chain.fit?.verdict === vo.chain.stop &&
+        vo.chain.line === vo.chain.fit.basis &&
+        vo.chain.fit.offers.includes("FEWER_LAYERS") &&
+        vo.chain.retry === "ADVANCE",
+      json(vo)
+    );
+
+    // A request cap before MAP: the claim is CAPPED, the stop is REQUESTS_CAPPED with the server's own line; then
+    // [Write the topics] replaces the stopped chain (no chain status left on the draft).
+    const c = await setup({ groundFail: () => false, day: addDays(TODAY, 700), layers: 4 });
+    const runs0 = c.w.t.roadmapRun as unknown as Record<string, unknown>[];
+    runs0.push({ ...runs0[runs0.length - 1], id: "fake-used", roadmapId: "other", requests: 47, phase: "MAP", status: "OK" });
+    const vc = await c.poll();
+    const wrote = errOf(await S.writeTopicsCore(USER, c.id, c.later(), c.deps));
+    const vw = await c.view();
+    check(
+      "chain stops: a request cap refuses the poll's advance with the cap's line, then the draft stops REQUESTS_CAPPED with the server's line and [Try again] (ADVANCE); [Write the topics] then replaces the chain (no chain status)",
+      json(c.errors) === json([S.REQUESTS_CAPPED]) && vc.state === "DRAFT" && vc.chain?.done === true && vc.chain.stop === "REQUESTS_CAPPED" && vc.chain.line === S.REQUESTS_CAPPED && vc.chain.retry === "ADVANCE" && wrote === "ok" && vw.chain == null,
+      json({ errors: c.errors, vc, wrote, vw })
     );
   });
 

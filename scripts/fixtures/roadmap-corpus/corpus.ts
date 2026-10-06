@@ -28,6 +28,19 @@
  * read with the legacy v3 schema (keysOnlySchemaV3Of), as the probe's
  * blessed v3 replies are.
  *
+ * Revision 5 (the topic map's Probe plan): finance-compound, finance-injection,
+ * wide-shallow and narrow-deep are topic-only packs (`v5: {about, topicOnly:
+ * true}`): the probe's RATE and MAP send them (Area name, aim, outline, exam
+ * label), and they carry no v2 drafts and no canned v3 or v4 replies. The
+ * corpus reads them like any pack (the property and realism checks run them);
+ * roadmap-model-check's "every pack has a canned reply" and the hostile bar's
+ * drafting families (fixtures/roadmap-hostile/bar.ts readPacks) leave them out.
+ * The names stage (G-X, approved 2026-10-07) adds 10 more topic-only Field
+ * packs, the lead's synthetic aims: cooking-weeknight, photo-manual,
+ * ml-training, piano-reading, garden-vegetables, climate-basics,
+ * work-presentations, roman-history, web-basics and first-aid-home (the
+ * caution case). The probe's MAP, LINK and GROUND send them.
+ *
  * probe-<aim>.json files are the probe's real replies (F-R4-23): raw, parsed,
  * finishReason, usage, latency, modelVersion, integrity, `validated` (the
  * ValidatedDraft, ids from a counter), `blessed`, `expected` (the lead's
@@ -116,6 +129,8 @@ interface RawFixture {
   drafts?: unknown[];
   v3?: { probe?: boolean; about?: string; intake?: V3IntakePatch; replies?: V3Reply[] };
   v4?: { about?: string; replies?: V4Reply[] };
+  /** Revision 5: a topic-only pack (RATE and MAP; no drafts, no canned replies). */
+  v5?: { about?: string; topicOnly?: boolean };
 }
 
 /** One corpus pack as a v3 run's input. */
@@ -133,6 +148,8 @@ export interface CorpusEntry {
   replies: V3Reply[];
   /** The canned v4 replies (contracts §20). */
   repliesV4: V4Reply[];
+  /** Revision 5: a topic-only pack (v5.topicOnly): the probe's RATE and MAP send it; it has no drafts and no canned replies. */
+  topicOnly: boolean;
   v2: RawFixture;
 }
 
@@ -164,6 +181,7 @@ export function readCorpus(dir: string = CORPUS_DIR): CorpusEntry[] {
         library: fx.library ?? [],
         replies: fx.v3?.replies ?? [],
         repliesV4: fx.v4?.replies ?? [],
+        topicOnly: fx.v5?.topicOnly === true,
         v2: fx,
       };
     });

@@ -50,7 +50,7 @@ import { TOPIC_KEY_PATTERN, stemDiceOf, topicStemsOf } from "./roadmap-topics";
 
 // ═══ Real now (lane 0) ══════════════════════════════════════════════════════
 
-/** GROUND's instruction (§22.5; TOPIC_PROMPT_VERSION 1). Sent with no schema and no responseMimeType, tools [{googleSearch: {}}]. */
+/** GROUND's instruction (§22.5; written at TOPIC_PROMPT_VERSION 1, unchanged by version 2's RATE anchors). Sent with no schema and no responseMimeType, tools [{googleSearch: {}}]. */
 export const GROUND_INSTRUCTION: string = [
   "Search the web for each term below, exactly as it is written. Then write one line per term, in the order given, and nothing else:",
   "<key>: <one sentence that uses the term exactly as written and says what it means in the area named above>",

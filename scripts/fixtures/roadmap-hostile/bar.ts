@@ -53,6 +53,10 @@ export function readPacks(dir: string): { packs: CorpusPack[]; probes: ProbeFixt
       continue;
     }
     if (!j.input || typeof j.input !== "object") continue;
+    // Revision 5's topic-only packs (v5.topicOnly: the probe's RATE and MAP packs, no drafts and no canned replies) are not
+    // drafting runs: the families here (and so the pin) leave them out. The topic-map families R–X are code-owned (generateR5Corpus).
+    const v5 = j.v5 && typeof j.v5 === "object" ? (j.v5 as { topicOnly?: unknown }) : null;
+    if (v5?.topicOnly === true) continue;
     packs.push({ ...(j as unknown as CorpusPack), file });
   }
   return { packs, probes };

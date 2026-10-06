@@ -95,6 +95,7 @@ import {
   floorBase,
   keptUnits,
   measured,
+  namedPartsOf,
   plannedUnits,
   reachTable,
   recorded,
@@ -108,6 +109,7 @@ import {
   type DomainName,
   type EvidenceValue,
   type GoalSlot,
+  type NamedPart,
   type PastWeekView,
   type PracticeQuestSpec,
   type QuestEvidence,
@@ -1114,6 +1116,21 @@ export interface WeekQuestsViewInput {
    * carries ?goal=<id> (goalHrefOf). Absent: one goal, exactly as before.
    */
   goal?: { roadmapId: string; slot: GoalSlot } | null;
+  /**
+   * The live fix (contracts §22.11 TOPIC_NAME_KEPT, ruling 67): the Domains whose names the set's words may hold (the
+   * milestone's Domains and the parts'), each with its Gemini mark (geminiNamedOf over Domain.nameOrigin and
+   * originName). A row's label, its parts line and parts, the milestone's title and the notes carry NamedParts
+   * (labelParts, partsLineParts, parts[].geminiNamed, milestoneTitleParts, notesParts), only where a Gemini-named
+   * Domain's name occurs. Absent or none marked: the view is byte-identical to before.
+   */
+  marks?: readonly { id?: string; name: string; geminiNamed: boolean }[] | null;
+}
+
+/** `text` as NamedParts when a marked name occurs in it (namedPartsOf), else null (the payload stays as before). */
+function markedPartsOf(text: string, marks: WeekQuestsViewInput["marks"]): NamedPart[] | null {
+  if (!marks || !marks.some((m) => m.geminiNamed) || typeof text !== "string" || text === "") return null;
+  const parts = namedPartsOf(text, marks);
+  return parts.some((p) => p.geminiNamed) ? parts : null;
 }
 
 /**
@@ -1165,14 +1182,16 @@ function hrefOf(spec: WeekQuestSpec, variant: WeekQuestVariant): string | null {
 }
 
 /** A generator-2 row's parts as the component shows them: its Domain's name, count and verified progress; a part whose Domain is gone is left out. */
-function partsOf(spec: WeekQuestSpec, p: WeekQuestProgress | undefined, names: Readonly<Record<string, DomainName>>): NonNullable<WeekQuestRow["parts"]> | null {
+function partsOf(spec: WeekQuestSpec, p: WeekQuestProgress | undefined, names: Readonly<Record<string, DomainName>>, marks?: WeekQuestsViewInput["marks"]): NonNullable<WeekQuestRow["parts"]> | null {
   if ((spec.kind !== "RAISE" && spec.kind !== "ADD") || !spec.parts || spec.parts.length === 0) return null;
   const out: NonNullable<WeekQuestRow["parts"]> = [];
   for (const part of spec.parts) {
     const name = Object.prototype.hasOwnProperty.call(names, part.domainId) ? names[part.domainId] : null;
     if (!name) continue;
     const got = p?.parts?.find((x) => x.domainId === part.domainId);
-    out.push({ domainId: part.domainId, name, count: part.count, progress: got ? got.progress : 0, done: got ? got.done : false });
+    // The live fix: a part whose Domain carries the Gemini mark says so (its name renders with pv.named).
+    const named = Boolean(marks?.some((m) => m.geminiNamed && m.id === part.domainId && m.name === String(name)));
+    out.push({ domainId: part.domainId, name, count: part.count, progress: got ? got.progress : 0, done: got ? got.done : false, ...(named ? { geminiNamed: true } : {}) });
   }
   return out;
 }
@@ -1180,20 +1199,27 @@ function partsOf(spec: WeekQuestSpec, p: WeekQuestProgress | undefined, names: R
 function rowOf(spec: WeekQuestSpec, p: WeekQuestProgress | undefined, input: WeekQuestsViewInput): WeekQuestRowV2 {
   const progress = p ? p.progress : 0;
   const done = p ? p.done : progress >= spec.count;
-  const parts = partsOf(spec, p, input.domainNames ?? {});
+  const parts = partsOf(spec, p, input.domainNames ?? {}, input.marks);
   let slipLine: string | null = null;
   if (spec.kind === "RAISE" && p?.slipped && p.slipped.from > progress) {
     const n = p.slipped.from - progress;
     slipLine = `${n} ${plural(n, "card", "cards")} slipped back to level ${Math.max(1, spec.minLevel - 1)}${p.slipped.day ? ` on ${weekdayWord(p.slipped.day)}` : ""}`;
   }
   const templateId = spec.kind === "PRACTICE" || spec.kind === "STEP" ? spec.templateId : null;
-  const extra: { parts?: NonNullable<WeekQuestRow["parts"]>; partsLine?: string; health?: true } = {};
+  const extra: { parts?: NonNullable<WeekQuestRow["parts"]>; partsLine?: string; partsLineParts?: NamedPart[]; health?: true; labelParts?: NamedPart[] } = {};
   if (parts) {
     extra.parts = parts;
     const line = questPartsLineOf({ kind: spec.kind, parts }, input.variant);
-    if (line) extra.partsLine = line;
+    if (line) {
+      extra.partsLine = line;
+      const lineParts = markedPartsOf(line, input.marks);
+      if (lineParts) extra.partsLineParts = lineParts;
+    }
   }
   if (spec.kind === "PRACTICE" && input.health) extra.health = true;
+  // The live fix (§22.11): a label holding a kept Gemini-named Domain's name carries it as a marked NamedPart.
+  const labelParts = markedPartsOf(spec.label, input.marks);
+  if (labelParts) extra.labelParts = labelParts;
   return {
     ord: spec.ord,
     kind: spec.kind,
@@ -1282,6 +1308,14 @@ export function weekQuestsViewOf(input: WeekQuestsViewInput): WeekQuestsViewV2 {
   }
   const done = rows.filter((r) => r.done).length;
   const onRoadmap = variant !== "today";
+  // The live fix (§22.11): the title and the notes carry a kept Gemini-named Domain as a marked NamedPart.
+  const notes = onRoadmap ? notesOf(input) : [];
+  const titleParts = markedPartsOf(input.milestone.title, input.marks);
+  const notesParts = notes.map((line) => markedPartsOf(line, input.marks));
+  const marked = {
+    ...(titleParts ? { milestoneTitleParts: titleParts } : {}),
+    ...(notesParts.some((x) => x != null) ? { notesParts: notesParts.map((x, i) => x ?? [{ text: notes[i], geminiNamed: false }]) } : {}),
+  };
   return {
     milestoneId: set.milestoneId,
     milestoneOrd: input.milestone.ord,
@@ -1298,8 +1332,9 @@ export function weekQuestsViewOf(input: WeekQuestsViewInput): WeekQuestsViewV2 {
     writesOff: input.writesOff && !input.frozen,
     basis: onRoadmap ? [...set.basis] : [],
     cappedBy: onRoadmap ? set.cappedBy : null,
-    notes: onRoadmap ? notesOf(input) : [],
+    notes,
     ...(input.goal ? { slot: input.goal.slot, share: set.share ?? shareOfBasis(set.basis) } : {}),
+    ...marked,
   };
 }
 

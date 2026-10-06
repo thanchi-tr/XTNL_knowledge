@@ -27,7 +27,9 @@ import { Fig } from "@/components/glyph/GlyphStat";
 import { ProvMark } from "@/components/glyph/Glyph";
 import { HonestyChip } from "@/components/glyph/HonestyChip";
 import { usePlayOnSeen, type SeenKey } from "@/components/glyph/useSeen";
-import { LAYERS_MAX, LAYERS_MIN, RATING_REASON_LABEL, type RatingView } from "@/lib/roadmap-types";
+import { LAYERS_MAX, LAYERS_MIN, RATING_REASON_LABEL, topicSwitchesOf, type RatingView } from "@/lib/roadmap-types";
+// Fix round: [Rate again] (rateAgain: a new estimate, then the chain as [Break it down]; only while the chain's switch is on).
+import { RATE_AGAIN_WORD } from "./roadmap-copy";
 import {
   CHANGE_LAYERS_WORD,
   ESTIMATE_APP_LEAD,
@@ -119,6 +121,13 @@ export function EstimateChip({ rating, roadmapId, seenKey, tail, today, id, clas
                 {pickLayersWord(n)}
               </button>
             ))}
+        </span>
+      )}
+      {roadmapId && topicSwitchesOf().rate && (
+        <span className="rm-est-ch">
+          <button type="button" className="chip btn-chip" disabled={pending} onClick={() => run((a) => a.rateAgain(roadmapId))}>
+            {RATE_AGAIN_WORD}
+          </button>
         </span>
       )}
       {error && (

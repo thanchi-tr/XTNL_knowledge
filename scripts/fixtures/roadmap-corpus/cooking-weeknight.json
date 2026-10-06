@@ -1,0 +1,57 @@
+{
+  "aim": "cooking-weeknight",
+  "about": "Revision 5 (the names stage, G-X): a synthetic Field pack, never the user's words: a practical, fairly shallow craft: a few basics, then whole meals. One aim-named Domain chosen, one left out, no outline. MAP sends the Area name and the aim; LINK and GROUND send the Area name and the names. No v2 drafts and no canned replies.",
+  "probe": false,
+  "today": "2026-10-07",
+  "areaFieldId": "fld_cook",
+  "input": {
+    "intake": {
+      "aim": "Cook confident weeknight meals from scratch",
+      "fieldId": "fld_cook",
+      "track": "CRAFT",
+      "domainIds": ["d_ck_meals"],
+      "targetDay": "2027-04-05",
+      "hoursPerWeek": 4,
+      "newCardsPerWeek": 5,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "BASICS",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": null,
+      "examLabel": null
+    },
+    "areaName": "Cooking",
+    "domains": [
+      { "id": "d_ck_meals", "name": "Weeknight Meals", "fieldId": "fld_cook", "cards": 6, "atSix": 1, "atTop": 0, "chosen": true },
+      { "id": "d_ck_knife", "name": "Knife Skills", "fieldId": "fld_cook", "cards": 10, "atSix": 3, "atTop": 0, "chosen": false }
+    ],
+    "windows": []
+  },
+  "library": [
+    { "id": "d_ck_meals", "name": "Weeknight Meals", "fieldId": "fld_cook", "fieldName": "Cooking", "cards": 6, "titles": ["One-pan dinners"], "tags": ["meals"] },
+    { "id": "d_ck_knife", "name": "Knife Skills", "fieldId": "fld_cook", "fieldName": "Cooking", "cards": 10, "titles": ["Dicing an onion"], "tags": ["knives"] }
+  ],
+  "drafts": [],
+  "v3": {
+    "probe": false,
+    "about": "Revision 5's names-stage pack (G-X): no v3 replies.",
+    "intake": {
+      "depth": 12,
+      "dateMode": "REALISTIC",
+      "exam": false,
+      "examDay": null,
+      "suggestAreas": false
+    },
+    "replies": []
+  },
+  "v4": {
+    "about": "Revision 5's names-stage pack: no v4 replies.",
+    "replies": []
+  },
+  "v5": {
+    "about": "Revision 5 (the topic map): a MAP, LINK and GROUND pack for the names stage (run G-X; it is not in G-R, so K and breadth are code's estimate). It carries no v2 drafts and no canned v3 or v4 replies, so revision 4's drafting families leave it out.",
+    "topicOnly": true
+  }
+}

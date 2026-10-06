@@ -194,17 +194,23 @@ export function topicsToCreateOf(map: Pick<TopicMapView, "layers">): TopicRowVie
   return map.layers.flatMap((l) => l.topics.filter((r) => r.chosen && r.domain == null));
 }
 
-/** What [Accept all] (keepAll) or a plain accept names: the Domains it creates, the Gemini names among them, what it keeps. */
-export function acceptTopicChoicesOf(map: Pick<TopicMapView, "layers">, opts: { keepAll: boolean; aftercare: "KEEP" | "ARCHIVE" | null }): AcceptTopicChoices {
+/**
+ * What [Accept all] (keepAll) or a plain accept names: the Domains it creates, the Gemini names among them, what it keeps.
+ * keepAll is exactly the server's list (TopicMapView.acceptAll, the rule acceptCore's keptAllOf compares), so the two
+ * never differ (a differing set refuses RACED); a fixture's map without it is read from its rows.
+ */
+export function acceptTopicChoicesOf(map: Pick<TopicMapView, "layers" | "acceptAll">, opts: { keepAll: boolean; aftercare: "KEEP" | "ARCHIVE" | null }): AcceptTopicChoices {
   const create = topicsToCreateOf(map);
   const geminiNamed = create.filter((r) => isGeminiName(r.cls)).map((r) => r.name);
   const unkept = map.layers.filter((l) => !l.kept);
-  const keepAll = opts.keepAll && unkept.length > 0 ? { names: unkept.flatMap((l) => l.topics.filter((r) => r.chosen && isGeminiName(r.cls)).map((r) => r.name)), links: unkept.reduce((a, l) => a + l.topics.filter((r) => r.chosen && r.parents.kind === "LINKS" && r.placed === "GEMINI").reduce((b, r) => b + (r.parents.kind === "LINKS" ? r.parents.keys.length : 0), 0), 0) } : null;
+  const list = acceptAllListOf(map);
+  const keepAll = opts.keepAll && (unkept.length > 0 || list.length > 0) ? { names: list.flatMap((x) => x.names), links: list.reduce((a, x) => a + x.links, 0) } : null;
   return { create: create.length, geminiNamed, keepAll, aftercare: opts.aftercare };
 }
 
-/** [Accept all]'s list, layer by layer: the Gemini names and the not-checked links it would keep. */
-export function acceptAllListOf(map: Pick<TopicMapView, "layers">): { layer: number; names: string[]; links: number }[] {
+/** [Accept all]'s list, layer by layer: the Gemini names and the not-checked links it would keep (the server's own list when the view carries it). */
+export function acceptAllListOf(map: Pick<TopicMapView, "layers" | "acceptAll">): { layer: number; names: string[]; links: number }[] {
+  if (map.acceptAll) return map.acceptAll.map((x) => ({ layer: x.layer, names: [...x.names], links: x.links }));
   return map.layers
     .filter((l) => !l.kept)
     .map((l) => ({

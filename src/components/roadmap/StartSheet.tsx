@@ -86,9 +86,12 @@ import { payBar } from "@/lib/life-economy";
 import {
   AIM_RANKS,
   WEEK_QUEST_EVIDENCE_OF,
+  geminiNamedOf,
+  namedPartsOf,
   provenanceOf,
   type ActivityConfirmView,
   type Decision,
+  type LibraryDomain,
   type MilestoneDraft,
   type Origin,
   type StartChoices,
@@ -140,6 +143,7 @@ import { ACTIVITY_DOM_ID, ActivityConfirmCard } from "./ActivityConfirm";
 import { useRoadmapAction, useRoadmapRuntime } from "./roadmap-runtime";
 import { useItemEditor, type ActTarget } from "./ItemEditor";
 import { ItemRow, StruckLabel, useDisplayLabel } from "./ItemRow";
+import { NamedText, hasNamed } from "@/components/glyph/NamedMark";
 import { PaysLine } from "./PaysLine";
 import { timeSentence } from "./ChecksPanel";
 import { TitleClassChip } from "./ProvenanceChip";
@@ -315,8 +319,24 @@ function TodayKindMark({ row, milestone, track, words }: { row: TodayBoundRow; m
   );
 }
 
+/** The live fix (contracts §22.11, ruling 67): the library's Domains that carry the Gemini mark (geminiNamedOf), by name. */
+export function libraryMarksOf(library: readonly LibraryDomain[] | null | undefined): { name: string; geminiNamed: boolean }[] {
+  return (library ?? []).filter((d) => geminiNamedOf(d)).map((d) => ({ name: d.name, geminiNamed: true }));
+}
+
+/**
+ * A Today-bound label on the sheet: struck NUMBER spans as before; otherwise each kept Gemini-named Domain's name it
+ * holds (the goal's title, a practice's or step's name, the Domain row itself) with pv.named (the live fix, §22.11).
+ */
+export function MarkedLabel({ label, struck, marks }: { label: string; struck?: readonly (readonly [number, number])[] | null; marks: readonly { name: string; geminiNamed: boolean }[] }) {
+  if ((struck && struck.length > 0) || marks.length === 0) return <StruckLabel label={label} struck={struck} />;
+  const parts = namedPartsOf(label, marks);
+  return hasNamed(parts) ? <NamedText parts={parts} /> : <StruckLabel label={label} struck={struck} />;
+}
+
 function TodayRowView({ row, milestone, track }: { row: TodayBoundRow; milestone: MilestoneDraft; track: TrackSigil }) {
   const editor = useItemEditor();
+  const marks = libraryMarksOf(editor?.scope.library);
   const item = row.itemId ? (milestone.items.find((it) => it.id === row.itemId) ?? null) : null;
   const target: ActTarget = item ? { row: editorRowOf(item), item, milestone } : { row: titleItemOf(milestone), item: null, milestone };
   const actions = todayRowActionsOf(row.needs, target.row.flags, canMapOf(editor?.scope.library));
@@ -338,7 +358,7 @@ function TodayRowView({ row, milestone, track }: { row: TodayBoundRow; milestone
       <div className="rm-ss-tr-h">
         <TodayKindMark row={row} milestone={milestone} track={track} words={kindLabel} />
         <p className="rm-it-l" data-wc="name">
-          <StruckLabel label={row.label} struck={row.label === target.row.label ? shown.struck : undefined} />
+          <MarkedLabel label={row.label} struck={row.label === target.row.label ? shown.struck : undefined} marks={marks} />
         </p>
         {"chip" in prov ? <HonestyChip kind={prov.chip} label={prov.chip === "gemini" ? SHORT_GEMINI : SHORT_GEMINI_KEPT} /> : <ProvMark cls={prov.mark} />}
       </div>
@@ -393,10 +413,11 @@ export function useEchoedItem(milestone: MilestoneDraft, itemId: string, label: 
 
 function EchoedLabel({ milestone, itemId, label }: { milestone: MilestoneDraft; itemId: string; label: string }) {
   const { cls, struck } = useEchoedItem(milestone, itemId, label);
+  const editor = useItemEditor();
   return (
     <>
       <p className="rm-it-l" data-wc="name">
-        <StruckLabel label={label} struck={struck} />
+        <MarkedLabel label={label} struck={struck} marks={libraryMarksOf(editor?.scope.library)} />
       </p>
       {(cls === "DRAFT" || cls === "KEPT_SUGGESTION") && (
         <div className="rm-it-chips">

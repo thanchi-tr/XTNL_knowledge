@@ -149,6 +149,7 @@ import { MakeUpCard, OwedRow, OwedSummary } from "./m2/MakeUpCard";
 import { RestBannerCard, YesterdaySettled, type SettledChip as NoticeChip } from "./m2/Notices";
 import { CancelList, FreezeOption, RestControls, SettleFooter, VacationForm } from "./m2/Sheets";
 import { MissPrompt } from "./MissPrompt";
+import { namedOfTitle, type TodayNamedTitles } from "./NamedTitle";
 import { Chip } from "@/components/ui/Chip";
 import { HeldGlyph } from "@/components/ui/Icon";
 
@@ -179,6 +180,13 @@ interface Props {
    * board; buildBoard and todayCountsOf never see it. Absent: no card.
    */
   questsSlot?: ReactNode;
+  /**
+   * The live fix (contracts §22.11, ruling 67): a plan-born template's Gemini-named Domain names, by template id
+   * (roadmap-quests-server loadTodayNamedTitles), and the mark the page renders (<NamedMark/>, passed as a node like
+   * questsSlot). Its title shows each such name with pv.named (NamedTitle over namedPartsOf of the title as it
+   * stands). Absent: every title plain, as before.
+   */
+  namedTitles?: TodayNamedTitles | null;
 }
 
 /** The goal the Close sheet is open on: its preview, and the close's own refusal if it had one. */
@@ -376,7 +384,7 @@ function declaredOf(duty: DutyBoard | null, today: DayKey): DeclaredDay[] {
  * launch the board is the pre-M2 board (debts, which only settlement
  * writes, render whenever they exist).
  */
-export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footClock, launched = false, questsSlot = null }: Props) {
+export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footClock, launched = false, namedTitles, questsSlot = null }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
@@ -1247,6 +1255,8 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
         onMinimum={row.lane === "must" && row.template.mvv ? (from) => complete(row, { mvv: true }, from) : undefined}
         justAdded={justAdded === row.template.id}
         restToday={board.restToday}
+        named={namedOfTitle(namedTitles, row.template.id)}
+        namedMark={namedTitles?.mark}
       >
         <TaskDrawer
           row={row}
@@ -1875,6 +1885,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
               onClose={launched ? openGoalClose : undefined}
               onReschedule={openGoalResched}
               justAdded={justAdded}
+              namedTitles={namedTitles}
             />
             {/* Roadmap F17: the week quests card under the goals. Quiet: no Ask, no count, never red; one line while Close the day is prominent. */}
             {questsSlot != null && questsSlot !== false && (

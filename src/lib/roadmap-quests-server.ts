@@ -132,6 +132,7 @@ import {
   checkpointLogPrefix,
   cueTextsOf,
   domainName,
+  geminiNamedOf,
   isLegacyRoadmap,
   isMissingRev4Column,
   isGoalSlot,
@@ -406,7 +407,13 @@ export interface QuestStore {
   parts(milestoneId: string): Promise<{ items: QuestItemRow[]; measures: QuestMeasureRow[] }>;
   templates(userId: string, ids: readonly string[]): Promise<QuestTemplateRow[]>;
   instances(userId: string, templateIds: readonly string[], from: DayKey, to: DayKey): Promise<QuestInstanceRow[]>;
-  domains(ids: readonly string[]): Promise<{ id: string; name: string; fieldId: string }[]>;
+  /** The live fix: nameOrigin and originName, the Gemini mark's inputs (geminiNamedOf); a store that leaves them out marks nothing. */
+  domains(ids: readonly string[]): Promise<{ id: string; name: string; fieldId: string; nameOrigin?: string | null; originName?: string | null }[]>;
+  /**
+   * The live fix (optional): the Domain ids a milestone's items hold (RoadmapItem.domainId, REMOVED items left out),
+   * the names a practice's or step's label may hold. Absent: only the parts' Domains are read for the mark.
+   */
+  milestoneDomainIds?(milestoneId: string): Promise<string[]>;
   /** Non-archived Ideas in these Domains created before the instant. */
   cards(domainIds: readonly string[], createdBefore: Date): Promise<QuestCardRow[]>;
   lastReadingBefore(userId: string, measureKey: string, day: DayKey): Promise<{ day: DayKey; value: number } | null>;
@@ -1350,9 +1357,17 @@ async function goalWeekOf(store: QuestStore, userId: string, now: Date, opts: Qu
     set = weekQuestsFor(input);
   }
   const partIds = [...new Set(set.quests.flatMap((q) => ((q.kind === "RAISE" || q.kind === "ADD") && q.parts ? q.parts.map((p) => p.domainId) : [])))];
-  const [{ progress, places }, nameRows] = await Promise.all([questProgressFor(store, userId, set, today), partIds.length ? store.domains(partIds) : Promise.resolve([])]);
+  // The live fix (§22.11): the milestone's own Domains too, whose names a practice's or step's label may hold (the mark).
+  const [{ progress, places }, nameRows, itemDomainIds] = await Promise.all([
+    questProgressFor(store, userId, set, today),
+    partIds.length ? store.domains(partIds) : Promise.resolve([]),
+    store.milestoneDomainIds ? store.milestoneDomainIds(open.milestone.id).catch(() => [] as string[]) : Promise.resolve([] as string[]),
+  ]);
+  const otherIds = itemDomainIds.filter((id) => !partIds.includes(id));
+  const otherRows = otherIds.length ? await store.domains(otherIds).catch(() => []) : [];
   const domainNames: Record<string, DomainName> = {};
   for (const row of nameRows) domainNames[row.id] = domainName(row);
+  const marks = [...nameRows, ...otherRows].map((d) => ({ id: d.id, name: d.name, geminiNamed: geminiNamedOf(d) }));
   const snapshot = startSnapshotOfRow(open.milestone.feasibility);
   const raise = set.quests.find((q) => q.kind === "RAISE");
   const level = raise && raise.kind === "RAISE" ? raise.minLevel : (snapshot?.feasibility?.knowledge?.[0]?.level ?? null);
@@ -1368,6 +1383,8 @@ async function goalWeekOf(store: QuestStore, userId: string, now: Date, opts: Qu
     domainNames,
     health: isBodyPlan(open.roadmap),
     ...(openGoalCountOf(list, goals) >= 2 ? { goal: { roadmapId: open.roadmap.id, slot: seatShownOf(open.roadmap.id, open.roadmap.slot, goals, list) } } : {}),
+    // The live fix: the Gemini mark's inputs (absent when no Domain here carries it, so a LEVELS view is unchanged).
+    ...(marks.some((m) => m.geminiNamed) ? { marks } : {}),
   };
   return { set, frozen, progress, view: weekQuestsViewOf({ ...viewInput, variant: "today" }), viewInput };
 }
@@ -1449,6 +1466,55 @@ export async function loadTodayWeekQuests(userId: string, now: Date, opts: Quest
   };
   if (opts.store) return run();
   return cached(`weekQuestsToday:${userId}:${todayKey(now)}`, ["roadmap", "ideas", "life", "activity"], run);
+}
+
+// ═══ The Gemini mark on Today's plan-born titles (the live fix; contracts §22.11, ruling 67) ═══
+
+/**
+ * Each plan-born TaskTemplate (a milestone's MID goal, RoadmapMilestone.goalId, and each practice or step Start
+ * created, RoadmapItem.templateId) with the names of that milestone's Domains that carry the Gemini mark
+ * (geminiNamedOf): Start bakes "{kind}: {Domains}" into the template's title, so Today marks those names at render
+ * time (namedPartsOf over the title as it stands; a renamed Domain is no longer marked, and the user's own tasks are
+ * never read). A template with no such name is left out. Pure.
+ */
+export function todayNamedTitlesOf(
+  milestones: readonly { goalId: string | null; items: readonly { domainId: string | null; templateId: string | null }[] }[],
+  domains: readonly { id: string; name: string; nameOrigin?: string | null; originName?: string | null }[]
+): Record<string, string[]> {
+  const marked = new Map(domains.filter((d) => geminiNamedOf(d)).map((d) => [d.id, d.name] as const));
+  const out: Record<string, string[]> = {};
+  if (marked.size === 0) return out;
+  for (const m of milestones) {
+    const names = [...new Set(m.items.map((it) => (it.domainId ? marked.get(it.domainId) : undefined)).filter((n): n is string => typeof n === "string" && n !== ""))];
+    if (names.length === 0) continue;
+    const ids = [m.goalId, ...m.items.map((it) => it.templateId)].filter((id): id is string => typeof id === "string" && id !== "");
+    for (const id of ids) out[id] = [...new Set([...(Object.prototype.hasOwnProperty.call(out, id) ? out[id] : []), ...names])];
+  }
+  return out;
+}
+
+/**
+ * Today's plan-born titles with their Gemini-named Domain names (todayNamedTitlesOf): templateId → names. Cached
+ * 'todayNamed:<user>:<today>' on ['roadmap', 'ideas', 'fields'] (accept, Start and a Domain rename invalidate them).
+ * Never throws: a failure or a missing table or column reads as {} (Today renders its titles plain, as before).
+ */
+export async function loadTodayNamedTitles(userId: string, now: Date): Promise<Record<string, string[]>> {
+  const run = async (): Promise<Record<string, string[]>> => {
+    try {
+      const milestones = await prisma.roadmapMilestone.findMany({
+        where: { roadmap: { userId }, OR: [{ goalId: { not: null } }, { items: { some: { templateId: { not: null } } } }] },
+        select: { goalId: true, items: { where: { decision: { not: "REMOVED" } }, select: { domainId: true, templateId: true } } },
+      });
+      const ids = [...new Set(milestones.flatMap((m) => m.items.map((it) => it.domainId)).filter((id): id is string => typeof id === "string"))];
+      if (ids.length === 0) return {};
+      const domains = await prisma.domain.findMany({ where: { id: { in: ids }, nameOrigin: "GEMINI" }, select: { id: true, name: true, nameOrigin: true, originName: true } });
+      return todayNamedTitlesOf(milestones, domains);
+    } catch (err) {
+      if (!isMissingRoadmapTable(err) && !isMissingRev4Column(err)) console.error("Today's Gemini marks not loaded:", err);
+      return {};
+    }
+  };
+  return cached(`todayNamed:${userId}:${todayKey(now)}`, ["roadmap", "ideas", "fields"], run);
 }
 
 // ═══ The freeze (decision 23) ═══════════════════════════════════════════════
@@ -1908,7 +1974,12 @@ export const prismaQuestStore: QuestStore = {
     return rows.map((r) => ({ ...r, day: keyOfDateColumn(r.day) }));
   },
   async domains(ids) {
-    return prisma.domain.findMany({ where: { id: { in: [...ids] } }, select: { id: true, name: true, fieldId: true } });
+    // nameOrigin and originName (migration B): the Gemini mark's inputs, as the library pages read them.
+    return prisma.domain.findMany({ where: { id: { in: [...ids] } }, select: { id: true, name: true, fieldId: true, nameOrigin: true, originName: true } });
+  },
+  async milestoneDomainIds(milestoneId) {
+    const rows = await prisma.roadmapItem.findMany({ where: { milestoneId, domainId: { not: null }, decision: { not: "REMOVED" } }, select: { domainId: true } });
+    return [...new Set(rows.map((r) => r.domainId).filter((id): id is string => typeof id === "string"))];
   },
   async cards(domainIds, createdBefore) {
     return prisma.idea.findMany({

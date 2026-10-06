@@ -4213,15 +4213,17 @@ export interface WeekQuestRow {
    * Today shows the first WEEK_QUEST_PARTS_TODAY and "+n more", the roadmap
    * page all. Every count keeps its unit; never a bare "n of N".
    */
-  parts?: { domainId: string; name: DomainName; count: number; progress: number; done: boolean }[];
+  parts?: { domainId: string; name: DomainName; count: number; progress: number; done: boolean; /** The live fix: the part's Domain carries the Gemini mark (geminiNamedOf); set only when true. */ geminiNamed?: boolean }[];
   /** Revision 4 (fix round: on the contract; R6's questPartsLineOf fills it): the variant's parts line, on a RAISE or ADD row with parts. */
   partsLine?: string;
+  /** The live fix (§22.11): partsLine as parts, a Gemini-named Domain marked (namedPartsOf); set only when one is. */
+  partsLineParts?: NamedPart[];
   /** Revision 4 (F-R4-13): a PRACTICE row of a BODY plan; the component shows HEALTH_LINE as its sub-line (R6 writes only true). */
   health?: boolean;
   // ── Revision 5 (contracts §23.3; lane 3 fills slot, lane 8 labelParts) ──
   /** The goal's seat: Today shows its seat glyph. */
   slot?: GoalSlot | null;
-  /** The label as parts, a Gemini-named Domain marked (namedPartsOf). */
+  /** The label as parts, a Gemini-named Domain marked (namedPartsOf). The live fix: R6's view fills it (WeekQuestsViewInput.marks), only when a part is Gemini-named. */
   labelParts?: NamedPart[];
 }
 
@@ -4250,6 +4252,11 @@ export interface WeekQuestsView {
   slot?: GoalSlot | null;
   /** This goal's share of the week as of Monday 04:00 ("goal 2's 3 of 7 h"); null with one goal. */
   share?: { hours: number; of: number } | null;
+  // ── The live fix (contracts §22.11, §22.20): the Gemini mark off the roadmap page; set only when a part is Gemini-named ──
+  /** The milestone's title as parts, a kept Gemini-named Domain marked (namedPartsOf). */
+  milestoneTitleParts?: NamedPart[];
+  /** Each note as parts (index for index with `notes`), present only when some note holds a Gemini-named Domain. */
+  notesParts?: NamedPart[][];
 }
 
 /** A finished (or settling) week on the roadmap page's "Past week quests". */
@@ -4856,6 +4863,8 @@ export interface RunView {
   wrote?: RunWriter | null;
   /** The latest run is CAPPED: show DRAFT_CAP_LINE and claim nothing about the rows shown. */
   capped?: boolean;
+  /** Revision 5 (fix round): a topic chain step's phase (its `stale` reads TOPIC_RUN_STALE_MS); null or absent: a LEVELS run. */
+  phase?: RunPhase | null;
 }
 
 /** The DRAFT state's editor model. */
@@ -5175,6 +5184,8 @@ export interface RoadmapView {
   topicMap?: TopicMapView | null;
   /** The goal switcher (null with one goal and GOALS_MAX 1). */
   goals?: GoalSwitcherView | null;
+  /** A TOPICS draft's Gemini chain (fix round; ruling 47): what the page's poll and its stop line read. Absent: no chain. */
+  topicChain?: TopicChainView | null;
 }
 
 // ═══ Constraint safety: confirm to unlock (contracts §19) ═══════════════════
@@ -6254,8 +6265,8 @@ export function topicSwitchesOf(raw?: Partial<TopicSwitches>): TopicSwitches {
 
 // ── Model and runs (§22.2, §22.15) ──
 
-/** The topic phases' prompt version (RATE, MAP, LINK, GROUND, DEEPER); ROADMAP_PROMPT_VERSION 4 stays for LEVELS. A text change is a bump. */
-export const TOPIC_PROMPT_VERSION: number = 1;
+/** The topic phases' prompt version (RATE, MAP, LINK, GROUND, DEEPER); ROADMAP_PROMPT_VERSION 4 stays for LEVELS. A text change is a bump. 2: the live fix's RATE calibration anchors (contracts §22.5, §22.20). */
+export const TOPIC_PROMPT_VERSION: number = 2;
 /** Samples per JSON phase. */
 export const TOPIC_SAMPLES = 3;
 /**
@@ -6975,6 +6986,15 @@ export interface TopicMapView {
   /** Your free Domains of the Area, unticked; geminiNamed renders pv.named (a Domain kept from an earlier goal). */
   layerOneSeeds: { id: string; name: string; geminiNamed: boolean }[];
   lastLayerSeeds: AimClause[];
+  /**
+   * A draft's [Accept all] list, layer by layer (fixer 2): the shown PENDING Gemini names and the drawn Gemini links
+   * still PENDING into each layer's shown topics; only layers holding either. acceptCore's keptAllOf compares exactly
+   * this set (AcceptTopicChoices.keepAll: the names flat, the links summed), so the sheet and the server never differ.
+   * Absent on a plan (and in fixtures made before it: the client then reads the rows).
+   */
+  acceptAll?: { layer: number; names: string[]; links: number }[];
+  /** A draft over your hours or pace (its feasibility's over, or its date check OVER): [Accept all] asks for the keep-over switch. */
+  needsOver?: boolean;
 }
 export interface ChainFit {
   verdict: DateVerdict;
@@ -6986,6 +7006,47 @@ export interface ChainFit {
   basis: string;
   pastSpan: boolean;
   examMidChain: boolean;
+}
+
+/**
+ * Why a breakdown stopped short (TopicChainView.stop; fix round): MAP's realism pre-check (OVER, IMPOSSIBLE; the
+ * offers are TopicChainView.fit's), a GROUND wave whose web check failed or timed out, a request cap, MAP's replies
+ * failing, a step past TOPIC_RUN_STALE_MS, or a Go deeper that named nothing narrower.
+ */
+export type TopicChainStop = "OVER" | "IMPOSSIBLE" | "GROUND_FAILED" | "REQUESTS_CAPPED" | "GROUNDED_CAPPED" | "MAP_FAILED" | "TIMED_OUT" | "NOTHING_DEEPER";
+export const TOPIC_CHAIN_STOPS: readonly TopicChainStop[] = ["OVER", "IMPOSSIBLE", "GROUND_FAILED", "REQUESTS_CAPPED", "GROUNDED_CAPPED", "MAP_FAILED", "TIMED_OUT", "NOTHING_DEEPER"];
+
+/**
+ * A TOPICS draft's Gemini chain as the page drives it (RoadmapView.topicChain; ruling 47, fix round). The page's poll
+ * (DraftRunning, the draft's chain card) calls advanceTopicChain while `done` is false; the stop says why the chain
+ * ended short and what [Try again] calls. Code's words and figures only: never a Gemini name.
+ */
+export interface TopicChainView {
+  /** The step running, else the newest step's phase. */
+  phase: RunPhase | null;
+  /** A step is RUNNING and younger than TOPIC_RUN_STALE_MS. */
+  running: boolean;
+  /** A step is RUNNING past TOPIC_RUN_STALE_MS (it reads "timed out" at the next claim). */
+  stale: boolean;
+  /** When the newest step was claimed (ISO): the wait card's "started …". */
+  startedAt: string;
+  /** When the chain's head was claimed (ISO): the weave's 90 s of motion count from here, once per breakdown (ui-motion §15.9). */
+  headStartedAt: string;
+  /** Nothing is left for the poll to claim (retry false); the poll stops. */
+  done: boolean;
+  /** Changes whenever a step is claimed or settles (the poll restarts its clock on a change). */
+  key: string;
+  stop: TopicChainStop | null;
+  /** What [Try again] calls: the chain head again (breakDown), the next step with retry (advanceTopicChain), or nothing. */
+  retry: "BREAK_DOWN" | "ADVANCE" | null;
+  /** GROUND_FAILED: the names a failed web check left hidden. */
+  unchecked: number;
+  /** OVER, IMPOSSIBLE: the pre-check's verdict, its basis line and its offers. */
+  fit: ChainFit | null;
+  /** The server's own words for the stop (the caps' lines, NOTHING_DEEPER); null: the page's copy. */
+  line: string | null;
+  /** What Gemini did on this draft since you last wrote it (the header's lead): estimated the layers, mapped the topics. */
+  gemini: { rated: boolean; mapped: boolean };
 }
 
 // Goals (§23).

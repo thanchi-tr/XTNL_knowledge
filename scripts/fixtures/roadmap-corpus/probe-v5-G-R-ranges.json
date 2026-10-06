@@ -1,0 +1,292 @@
+{
+  "run-10k": {
+    "layersLo": 2,
+    "layersHi": 3,
+    "breadth": [
+      "NARROW",
+      "MEDIUM"
+    ],
+    "judges": {
+      "j1": [
+        2,
+        3,
+        [
+          "NARROW",
+          "MEDIUM"
+        ]
+      ],
+      "j2": [
+        2,
+        3,
+        [
+          "NARROW",
+          "MEDIUM"
+        ]
+      ]
+    }
+  },
+  "tax-admin": {
+    "layersLo": 1,
+    "layersHi": 3,
+    "breadth": [
+      "MEDIUM",
+      "WIDE",
+      "NARROW"
+    ],
+    "judges": {
+      "j1": [
+        2,
+        3,
+        [
+          "MEDIUM",
+          "WIDE"
+        ]
+      ],
+      "j2": [
+        1,
+        2,
+        [
+          "NARROW",
+          "MEDIUM"
+        ]
+      ]
+    }
+  },
+  "care-routine": {
+    "layersLo": 1,
+    "layersHi": 2,
+    "breadth": [
+      "MEDIUM",
+      "WIDE"
+    ],
+    "judges": {
+      "j1": [
+        1,
+        2,
+        [
+          "MEDIUM",
+          "WIDE"
+        ]
+      ],
+      "j2": [
+        1,
+        2,
+        [
+          "MEDIUM",
+          "WIDE"
+        ]
+      ]
+    }
+  },
+  "ielts": {
+    "layersLo": 4,
+    "layersHi": 5,
+    "breadth": [
+      "WIDE",
+      "VAST"
+    ],
+    "judges": {
+      "j1": [
+        4,
+        5,
+        [
+          "WIDE",
+          "VAST"
+        ]
+      ],
+      "j2": [
+        4,
+        5,
+        [
+          "WIDE",
+          "VAST"
+        ]
+      ]
+    }
+  },
+  "python-cert": {
+    "layersLo": 2,
+    "layersHi": 3,
+    "breadth": [
+      "MEDIUM",
+      "WIDE"
+    ],
+    "judges": {
+      "j1": [
+        2,
+        3,
+        [
+          "MEDIUM",
+          "WIDE"
+        ]
+      ],
+      "j2": [
+        2,
+        3,
+        [
+          "MEDIUM",
+          "WIDE"
+        ]
+      ]
+    }
+  },
+  "finance-compound": {
+    "layersLo": 2,
+    "layersHi": 3,
+    "breadth": [
+      "WIDE",
+      "VAST",
+      "MEDIUM"
+    ],
+    "judges": {
+      "j1": [
+        2,
+        3,
+        [
+          "WIDE",
+          "VAST"
+        ]
+      ],
+      "j2": [
+        2,
+        3,
+        [
+          "MEDIUM",
+          "WIDE"
+        ]
+      ]
+    }
+  },
+  "actuarial-probability": {
+    "layersLo": 4,
+    "layersHi": 5,
+    "breadth": [
+      "MEDIUM",
+      "WIDE",
+      "NARROW"
+    ],
+    "judges": {
+      "j1": [
+        4,
+        5,
+        [
+          "MEDIUM",
+          "WIDE"
+        ]
+      ],
+      "j2": [
+        4,
+        5,
+        [
+          "NARROW",
+          "MEDIUM"
+        ]
+      ]
+    }
+  },
+  "japanese-work": {
+    "layersLo": 4,
+    "layersHi": 5,
+    "breadth": [
+      "MEDIUM",
+      "WIDE"
+    ],
+    "judges": {
+      "j1": [
+        4,
+        5,
+        [
+          "MEDIUM",
+          "WIDE"
+        ]
+      ],
+      "j2": [
+        4,
+        5,
+        [
+          "MEDIUM",
+          "WIDE"
+        ]
+      ]
+    }
+  },
+  "wide-shallow": {
+    "layersLo": 1,
+    "layersHi": 2,
+    "breadth": [
+      "WIDE",
+      "VAST"
+    ],
+    "judges": {
+      "j1": [
+        1,
+        2,
+        [
+          "WIDE",
+          "VAST"
+        ]
+      ],
+      "j2": [
+        1,
+        2,
+        [
+          "VAST",
+          "WIDE"
+        ]
+      ]
+    }
+  },
+  "narrow-deep": {
+    "layersLo": 5,
+    "layersHi": 6,
+    "breadth": [
+      "NARROW",
+      "MEDIUM"
+    ],
+    "judges": {
+      "j1": [
+        5,
+        6,
+        [
+          "NARROW",
+          "MEDIUM"
+        ]
+      ],
+      "j2": [
+        5,
+        6,
+        [
+          "NARROW",
+          "MEDIUM"
+        ]
+      ]
+    }
+  },
+  "finance-injection": {
+    "layersLo": 2,
+    "layersHi": 3,
+    "breadth": [
+      "MEDIUM",
+      "WIDE",
+      "NARROW"
+    ],
+    "judges": {
+      "j1": [
+        2,
+        3,
+        [
+          "MEDIUM",
+          "WIDE"
+        ]
+      ],
+      "j2": [
+        2,
+        3,
+        [
+          "NARROW",
+          "MEDIUM"
+        ]
+      ]
+    }
+  }
+}

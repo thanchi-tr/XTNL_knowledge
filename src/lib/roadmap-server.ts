@@ -4191,7 +4191,8 @@ function reachOf(ctx: PlanContext, domainIds: readonly string[]): { params: Real
   const r = reachInputsOf(ctx.throughput, ctx.m, { extraStrikes: ctx.extraStrikes ?? 0, graceExtraDays: ctx.graceExtraDays ?? 0 });
   const calibrating = [...r.calibrating];
   const ids = Array.from(new Set(domainIds));
-  const source = ids.length ? rateOf(ctx, ids, ctx.intake.fieldId, ctx.intake.newCardsPerWeek) : { rateSource: "NONE" as RateSource, rate: null };
+  // A TOPICS draft's topics get their Domains at accept, so before it holds one its pace is the Field's, else the one you typed.
+  const source = ids.length || ctx.intake.planKind === "TOPICS" ? rateOf(ctx, ids, ctx.intake.fieldId, ctx.intake.newCardsPerWeek) : { rateSource: "NONE" as RateSource, rate: null };
   if (source.rateSource === "YOURS" && !calibrating.includes("pace")) calibrating.push("pace");
   return { params: r.params, calibrating, sourceRate: source.rate };
 }
@@ -9237,7 +9238,9 @@ function runViewFor(b: RoadmapBundle, run: RunRec, now: Date, wrote: RunView["wr
     modelVersion: run.modelVersion,
     promptVersion: run.promptVersion,
     drafts: run.kind === "GEMINI" ? ROADMAP_SAMPLES : 0,
-    stale: run.status === "RUNNING" && now.getTime() - run.startedAt.getTime() >= RUN_STALE_MS,
+    // A topic step runs one invocation and goes stale at TOPIC_RUN_STALE_MS (ruling 47); a LEVELS run at RUN_STALE_MS.
+    stale: run.status === "RUNNING" && now.getTime() - run.startedAt.getTime() >= (chainPhaseOf(run) ? t5.TOPIC_RUN_STALE_MS : RUN_STALE_MS),
+    ...(chainPhaseOf(run) ? { phase: chainPhaseOf(run) } : {}),
     usualSeconds: usual != null ? Math.round(usual / 1000) : null,
     error: run.error,
     report: reportOf(run.report) ?? (writer && writer.id !== run.id ? reportOf(writer.report) : null),
@@ -9746,7 +9749,10 @@ function draftViewOf(
   facts: { wrote?: RunView["wrote"]; report?: ValidationReport | null } = {}
 ): DraftView | null {
   const group = draftRowsOf(b);
-  if (group.length === 0) return null;
+  // Revision 5: a TOPICS draft with no milestone yet (before its first map, nothing chosen, or a pace still to give)
+  // still has a view: its map (DraftView.topicMap), the estimate chip, the bands and [Write one]; never a dead end.
+  const emptyTopics = group.length === 0 && isTopicsDraft(b);
+  if (group.length === 0 && !emptyTopics) return null;
   if (legacyDraftOf(b)) return legacyDraftViewOf(b, ctx);
   const carriedRows = planRowsOf(b).filter(isCarried);
   const total = positionCountOf([...carriedRows, ...group.filter(scheduled)]);
@@ -9759,6 +9765,7 @@ function draftViewOf(
   const carried = carriedPlanOf(b, group, goals);
   let feasibility: Feasibility;
   try {
+    if (emptyTopics) throw new Error("no milestone to check");
     feasibility = feasibilityFor(e, ctx, drafts, carried);
   } catch {
     feasibility = { today: ctx.today, m: ctx.m, milestones: [], aimCheck: { kind: "unchecked" }, basis: [], remedies: [], impossible: false, over: false };
@@ -10305,7 +10312,8 @@ async function loadRoadmapViewUncached(userId: string, now: Date, deps: RoadmapD
   const view = withTopicViews(e, b, ctx, roadmapViewOfData(e, deps, v, ctx, { today, run, acceptedRun, draft, throughput, wq, pastWeeks, aftercare, weight }), today);
   // The goal switcher (§23.7; lane 4 renders it): absent with one goal while GOALS_MAX is 1, so that page is today's.
   const goals = await goalSwitcherOf(e, userId, b, now);
-  return goals ? { ...view, goals } : view;
+  // Revision 5, lane 10 (fix round; ruling 47): a TOPICS draft's Gemini chain, which the page's poll drives step by step.
+  return withTopicChainView(goals ? { ...view, goals } : view, await topicChainViewFor(e, deps, userId, b, now));
 }
 
 /**
@@ -13190,7 +13198,15 @@ function parentsInMapOf(map: TopicMap, t: TopicDraft): { topics: TopicDraft[]; c
 function topicHasChosenParent(map: TopicMap, t: TopicDraft): boolean {
   if (t.layer <= 1) return true;
   const p = parentsInMapOf(map, t);
-  return p.crossGoal.length > 0 || p.topics.some((x) => x.chosen);
+  if (!p.layer) return p.crossGoal.length > 0 || p.topics.some((x) => x.chosen);
+  // The whole-layer default (C3): the layer before holds a chosen topic. An empty band there (no shown topic: accept
+  // refuses it, LAYER_UNKEPT, until you merge it up, write into it or keep a not-checked name) passes to the band above
+  // it, so your aim's words under an empty band keep without "A topic needs a parent".
+  for (let layer = t.layer - 1; layer >= 1; layer--) {
+    const band = map.topics.filter((x) => topicLive(x) && x.layer === layer && !topicHidden(x));
+    if (band.length > 0) return band.some((x) => x.chosen);
+  }
+  return true;
 }
 
 /** The roles (DEEP: chosen in the last filled layer, the specialisation) and every chosen topic's NEEDS_PARENT note as the map now stands. */
@@ -14056,18 +14072,40 @@ const sameNameSet = (a: readonly string[], b: readonly string[]): boolean => {
   return x.length === y.length && x.every((v, i) => v === y[i]);
 };
 
-/** [Accept all] (AcceptTopicChoices.keepAll): every unkept layer kept as its list showed it (names and links), or null when it no longer reads so. */
+/** A drawn Gemini link still PENDING into a shown live topic: what [Accept all] keeps with the names. */
+const pendingShownLinkOf = (shown: ReadonlySet<string>) => (x: EdgeDraft): boolean => x.origin === "GEMINI" && x.drawn && x.decision === "PENDING" && shown.has(x.childLineageId);
+
+/**
+ * [Accept all]'s list (TopicMapView.acceptAll, the one source the sheet shows and sends): per layer, its shown PENDING
+ * Gemini names (chosen or not: keeping one never puts it in the plan) and the drawn Gemini links still PENDING into
+ * its shown topics; only the layers holding either. keptAllOf compares exactly this set.
+ */
+function acceptAllListOfMap(settled: TopicMap): { layer: number; names: string[]; links: number }[] {
+  const deepest = Math.max(settled.layers, ...settled.topics.filter(topicLive).map((t) => t.layer));
+  const out: { layer: number; names: string[]; links: number }[] = [];
+  for (let layer = 1; layer <= deepest; layer++) {
+    const shown = settled.topics.filter((t) => topicLive(t) && t.layer === layer && !topicHidden(t));
+    const names = shown.filter((t) => t.decision === "PENDING" && t.nameOrigin === "GEMINI").map((t) => t.name);
+    const links = settled.edges.filter(pendingShownLinkOf(new Set(shown.map((t) => t.lineageId)))).length;
+    if (names.length > 0 || links > 0) out.push({ layer, names, links });
+  }
+  return out;
+}
+
+/** [Accept all] (AcceptTopicChoices.keepAll): every unkept layer kept as its list showed it (acceptAllListOfMap: names and links), or null when it no longer reads so. */
 function keptAllOf(map: TopicMap, keepAll: { names: string[]; links: number }): TopicMap | null {
   const settled = settledTopicMapOf(map);
-  const pending = settled.topics.filter((t) => topicLive(t) && t.decision === "PENDING" && !topicHidden(t));
-  const names = pending.filter((t) => t.nameOrigin === "GEMINI").map((t) => t.name);
-  const links = settled.edges.filter((x) => x.origin === "GEMINI" && x.drawn && x.decision === "PENDING");
-  if (!sameNameSet(names, Array.isArray(keepAll.names) ? keepAll.names : []) || keepAll.links !== links.length) return null;
-  const keep = new Set(pending.map((t) => t.lineageId));
+  const list = acceptAllListOfMap(settled);
+  const names = list.flatMap((x) => x.names);
+  const links = list.reduce((n, x) => n + x.links, 0);
+  if (!sameNameSet(names, Array.isArray(keepAll.names) ? keepAll.names : []) || keepAll.links !== links) return null;
+  const shown = settled.topics.filter((t) => topicLive(t) && !topicHidden(t));
+  const keep = new Set(shown.filter((t) => t.decision === "PENDING").map((t) => t.lineageId));
+  const linkKept = pendingShownLinkOf(new Set(shown.map((t) => t.lineageId)));
   return {
     ...settled,
     topics: settled.topics.map((t) => (keep.has(t.lineageId) ? { ...t, decision: "KEPT" as const } : t)),
-    edges: settled.edges.map((x) => (x.origin === "GEMINI" && x.drawn && x.decision === "PENDING" ? { ...x, decision: "KEPT" as const } : x)),
+    edges: settled.edges.map((x) => (linkKept(x) ? { ...x, decision: "KEPT" as const } : x)),
   };
 }
 
@@ -14144,28 +14182,9 @@ async function acceptTopicsStep(
   const taken = await topicTakenDomainOf(e, userId, roadmapId, topicMapDomainsOf(map));
   if (taken) return fail(DOMAIN_TAKEN(taken.slot));
 
-  // Each chosen topic with no Domain gets one, bound at once (a retry or a re-accept creates none again).
-  if (toCreate.length) {
-    const bind: StoreOp[] = [{ op: "guard", guard: { g: "ROADMAP_IS", id: roadmapId, statuses: [b.roadmap.status as RoadmapStatus], version: cur } }];
-    for (const t of toCreate) {
-      let made = await e.io.createDomain(field.id, t.name);
-      if (!made.ok) {
-        // A Domain an interrupted accept created and never bound (exactly this name, empty, held by no goal) is reused.
-        const orphan = field.domains.find((d) => d.name.toLowerCase() === t.name.toLowerCase() && d.cards.length === 0 && !used.has(d.id));
-        const heldElsewhere = orphan ? await topicTakenDomainOf(e, userId, roadmapId, [orphan.id]) : null;
-        if (!orphan || heldElsewhere) return fail(TOPIC_NAME_TAKEN);
-        made = { ok: true, value: { id: orphan.id, name: orphan.name, fieldId: field.id } };
-      }
-      bind.push({ op: "update", table: "roadmapTopic", where: { id: t.id as string, domainId: null }, data: { domainId: made.value.id, updatedAt: now } });
-      if (geminiNamedTopic(t)) bind.push({ op: "domainOrigin", domainId: made.value.id, name: made.value.name });
-      state.created.push(made.value.id);
-      if (geminiNamedTopic(t)) state.createdGemini.push(t.name);
-    }
-    invalidate("fields", "ideas");
-    await e.store.apply(userId, bind);
-    // Re-read either way: the next pass sees every chosen topic bound (a stale bind creates nothing twice: its Domain is reused).
-    return "stale";
-  }
+  // Every refusal runs before any Domain is made: the held topics, the plan, the cap, Impossible and over your hours are
+  // worked out on the map as it stands (its new topics still unbound, as the draft's own rebuild reads them); only an
+  // accept that passes them creates its Domains (below), then re-reads and runs them again over the bound map.
 
   // The held topics (F-R5-10): on a Domain you own or bound that already holds its floor at level 6.
   const today = todayKey(now);
@@ -14225,6 +14244,36 @@ async function acceptTopicsStep(
   if (feasibility.impossible) return fail(pointedAt(gateOf(e, ctx), "A milestone can't be done by its date as planned — use a remedy or change it."));
   const needsOver = !!feasibility.over || feasibility.dateCheck?.verdict === "OVER";
   if (needsOver && !overAccepted) return fail(pointedAt(gateOf(e, ctx), "This plan is over your hours or pace: switch on “Keep it over my hours/pace” to accept it."));
+
+  // Each chosen topic with no Domain gets one, bound at once (a retry or a re-accept creates none again), only now that
+  // every refusal above has passed on the unbound map (a name the Field holds refused there: acceptRefusalOf).
+  if (toCreate.length) {
+    // A fresh goal needs its seat (the transaction's SLOT_FREE): refused here too, before anything is made.
+    if (b.roadmap.status === "DRAFT" && !isGoalSlot(b.roadmap.slot) && seatForReopenOf(goalRowOf(b.roadmap), (e.goals.get(userId) ?? []).map((r) => goalRowOf(r))) == null) return fail(RACED);
+    const bind: StoreOp[] = [{ op: "guard", guard: { g: "ROADMAP_IS", id: roadmapId, statuses: [b.roadmap.status as RoadmapStatus], version: cur } }];
+    for (const t of toCreate) {
+      let made = await e.io.createDomain(field.id, t.name);
+      if (!made.ok) {
+        // A Domain an interrupted accept created and never bound (exactly this name, empty, held by no goal) is reused.
+        const orphan = field.domains.find((d) => d.name.toLowerCase() === t.name.toLowerCase() && d.cards.length === 0 && !used.has(d.id));
+        const heldElsewhere = orphan ? await topicTakenDomainOf(e, userId, roadmapId, [orphan.id]) : null;
+        if (!orphan || heldElsewhere) {
+          // Bind what this pass made, so a retry reuses it rather than leaving it loose; the accept itself is refused.
+          if (bind.length > 1) await e.store.apply(userId, bind);
+          return fail(TOPIC_NAME_TAKEN);
+        }
+        made = { ok: true, value: { id: orphan.id, name: orphan.name, fieldId: field.id } };
+      }
+      bind.push({ op: "update", table: "roadmapTopic", where: { id: t.id as string, domainId: null }, data: { domainId: made.value.id, updatedAt: now } });
+      if (geminiNamedTopic(t)) bind.push({ op: "domainOrigin", domainId: made.value.id, name: made.value.name });
+      state.created.push(made.value.id);
+      if (geminiNamedTopic(t)) state.createdGemini.push(t.name);
+    }
+    invalidate("fields", "ideas");
+    await e.store.apply(userId, bind);
+    // Re-read either way: the next pass sees every chosen topic bound (a stale bind creates nothing twice: its Domain is reused).
+    return "stale";
+  }
 
   // Ords after the carried rows; ranks by planKind (ruling 51): R1 spreads the gates by topicRankIndexOf.
   const baseOrd = Math.max(0, ...planRows.filter(isCarried).map((m) => m.ord));
@@ -14769,9 +14818,10 @@ function domainMarkOf(tree: readonly TreeField[], id: string | null): { id: stri
 }
 
 /**
- * The map's view (TopicMapView): its rating, each band's rows (a name behind the count is counted, never listed, until
- * kept), the cautions, accept's refusal in words (a draft), the requests left, the layer-1 seeds (the Area's free
- * Domains, each with its mark) and the last-layer seeds (your aim's clauses less the split ones and those placed).
+ * The map's view (TopicMapView): its rating, each band's rows (the names behind the count last, NOT_CHECKED, for the
+ * fold to reveal), the cautions, accept's refusal in words (a draft), the requests left, the layer-1 seeds (the Area's
+ * free Domains, each with its mark), the last-layer seeds (your aim's clauses less the split ones and those placed) and,
+ * on a draft, [Accept all]'s list (acceptAllListOfMap: what acceptCore's keptAllOf compares).
  */
 function topicMapViewOf(
   e: Env,
@@ -14810,14 +14860,18 @@ function topicMapViewOf(
     return r ? shownSlotOf(r) : null;
   };
   const rowOf = (t: TopicDraft): TopicRowView => {
-    const cls = topicClassFor(t);
+    const domain0 = domainMarkOf(tree, t.domainId);
+    // A Gemini name you kept whose Domain accept created from it (the Domain carries the Gemini mark and the name) stays
+    // kept by you («Gemini · kept by you», or «· kept · not checked»), never "Gemini picked your Domain".
+    const createdFrom = t.nameOrigin === "GEMINI" && t.decision === "KEPT" && !!t.domainId && !t.bound && !!domain0?.geminiNamed && domain0.name === t.name;
+    const cls = createdFrom ? topicClassFor({ ...t, domainId: null, bound: false }) : topicClassFor(t);
     const parents = parentsInMapOf(map, t);
     const childKeys = map.edges
       .filter((x) => x.parentLineageId === t.lineageId && edgeCounts(x))
       .map((x) => map.topics.find((c) => c.lineageId === x.childLineageId && topicLive(c))?.key)
       .filter((k): k is string => !!k);
     const startsChosen = cls === "SYLLABUS" || cls === "YOURS" || cls === "AIM" || cls === "LINKED" || /^U\d+$/.test(t.key);
-    const domain = domainMarkOf(tree, t.domainId);
+    const domain = domain0;
     const levelOf = (): number | null => {
       for (const f of tree) for (const d of f.domains) if (d.id === t.domainId) return typeof d.level === "number" ? d.level : null;
       return null;
@@ -14872,7 +14926,9 @@ function topicMapViewOf(
       layer,
       state: stateOf(layer),
       kept: keptLayer,
-      topics: shown.map(rowOf),
+      // The names behind "n not checked" are listed after the shown rows (cls NOT_CHECKED, no sources, unticked: outside
+      // the plan until you keep one), so the fold reveals them (§22.11 allows hidden names inside the revealed fold).
+      topics: [...shown.map(rowOf), ...inLayer.filter(topicHidden).map(rowOf)],
       unchosen: shown.filter((t) => !t.chosen).length,
       hidden,
       geminiNames: shown.some((t) => t.nameOrigin === "GEMINI"),
@@ -14915,6 +14971,8 @@ function topicMapViewOf(
     requestsLeft: topicRequestsLeftOf(b, today),
     layerOneSeeds,
     lastLayerSeeds,
+    // [Accept all]'s list from the rule acceptCore's keptAllOf compares (a draft only).
+    ...(opts.draft ? { acceptAll: acceptAllListOfMap(map) } : {}),
   };
 }
 
@@ -14928,7 +14986,8 @@ function topicMapViewOf(
  */
 function withTopicViews(e: Env, b: RoadmapBundle, ctx: PlanContext, view: RoadmapView, today: DayKey): RoadmapView {
   const liveTopics = kindOfRow(b.roadmap) === "TOPICS" && b.roadmap.version >= 1;
-  const draftTopics = !!view.draft && draftRowsOf(b).length > 0 && draftKindFactsOf(b).planKind === "TOPICS";
+  // A TOPICS draft shows its map with or without milestones (an empty or names-less map is never a dead end).
+  const draftTopics = !!view.draft && isTopicsDraft(b);
   if (!liveTopics && !draftTopics) return view;
   const tree = ctx.tree;
   const others = (e.goals.get(b.roadmap.userId) ?? []).filter((r) => r.id !== b.roadmap.id);
@@ -14962,18 +15021,25 @@ function withTopicViews(e: Env, b: RoadmapBundle, ctx: PlanContext, view: Roadma
           }),
         }
       : out.current;
+    // "Toward the aim" names the plan's Domains in its measure labels: a kept Gemini-named one carries its mark there too.
+    const toward = out.toward
+      ? { ...out.toward, measures: out.toward.measures.map((x) => (typeof x.label === "string" ? { ...x, labelParts: namedPartsOf(x.label, marks) } : x)) }
+      : out.toward;
     out = {
       ...out,
       header: out.header ? { ...out.header, planKind: "TOPICS", rating: topicMap.rating, cautions: [...topicMap.cautions] } : out.header,
       topicMap,
       milestones,
       current,
+      toward,
     };
   }
   if (draftTopics && out.draft) {
     const facts = draftKindFactsOf(b);
     const depth = facts.depth ?? AIM_DEPTHS[DEPTH_DEFAULT];
-    const topicMap = topicMapViewOf(e, b, b.roadmap.version + 1, tree, today, { draft: true, rating: facts.rating, depth, others });
+    const topicMap0 = topicMapViewOf(e, b, b.roadmap.version + 1, tree, today, { draft: true, rating: facts.rating, depth, others });
+    // [Accept all] asks for the keep-over switch when the draft is over your hours or pace (the footer's own rule).
+    const topicMap = { ...topicMap0, needsOver: !!out.draft.feasibility.over || out.draft.dateCheck?.verdict === "OVER" };
     out = {
       ...out,
       draft: {
@@ -15061,6 +15127,8 @@ interface TopicStepReport {
   /** MAP: stopped by the realism pre-check (chainFitOf OVER or IMPOSSIBLE); `retry` checks again. */
   over?: boolean;
   verdict?: string;
+  /** The pre-check's whole answer (its basis line and offers), for the view's stop (fix round). */
+  fit?: t5.ChainFit;
   /** MAP and DEEPER: the new rows' keys, kept by the agreement or hidden behind the count, and the agreement's report. */
   kept?: string[];
   hidden?: string[];
@@ -15112,6 +15180,8 @@ interface ChainCtx {
   intake: Intake;
   areaName: string;
   splitClauses: t5.SplitClause[];
+  /** A dry run (the view's `done`, fix round): every decision a claim makes, no reuse read and nothing written. */
+  dry?: boolean;
 }
 
 /** One row a claim writes. `status` FAILED (the MAP pre-check's stop) and REUSED (the stored rating) are written settled and never run. */
@@ -15311,6 +15381,8 @@ function chainNextOf(head: TopicRun, steps: readonly TopicRun[], retry: boolean)
     const m = steps.find((r) => chainPhaseOf(r) === "MAP");
     if (!m) return { kind: "MAP" };
     if (settledOf(m) === "CAPPED" || chainReportOf(m)?.over) return retry ? { kind: "MAP" } : { kind: "DONE" };
+    // A MAP whose replies all failed (or that timed out) is asked again only on your [Try again]; the poll goes on without names.
+    if (retry && settledOf(m) === "FAILED") return { kind: "MAP" };
     return { kind: "S3" };
   }
   return chainUnitsNextOf(ground, links, plan, retry);
@@ -15378,7 +15450,7 @@ async function chainJsonSpecOf(
 ): Promise<StepSpec> {
   const cc = t5.TOPIC_CANDIDATE_COUNT;
   const inputHash = sha256(evidence.topicInputHashMaterial(pack, ROADMAP_MODEL, t5.TOPIC_SAMPLES, cc));
-  const reuseFrom = force ? null : await chainReusableOf(c, phase, inputHash);
+  const reuseFrom = force || c.dry ? null : await chainReusableOf(c, phase, inputHash);
   return {
     phase,
     pack: { packs: [pack], candidateCount: cc, ...extra },
@@ -15408,7 +15480,7 @@ async function chainGroundSpecOf(c: ChainCtx, wave: number, batches: readonly st
     evidence.topicPackOf({ phase: "GROUND", areaName: c.areaName, aim: "", splitClauses: [], outline: [], examLabel: null, terms: terms.map((t) => ({ ...t, id: byKey.get(t.key)?.lineageId ?? null })) })
   );
   const inputHash = sha256(packs.map((p) => evidence.topicInputHashMaterial(p, ROADMAP_MODEL, 1, 1)).join("\n||\n"));
-  const reuseFrom = retry ? null : await chainReusableOf(c, "GROUND", inputHash);
+  const reuseFrom = retry || c.dry ? null : await chainReusableOf(c, "GROUND", inputHash);
   return {
     phase: "GROUND",
     pack: { packs, candidateCount: 1, terms: termsList },
@@ -15463,6 +15535,8 @@ async function chainLinkSpecOf(c: ChainCtx, map: t5.TopicMap, mapRow: RunRec | n
  * new chain's head.
  */
 async function claimChainSteps(c: ChainCtx, specs: readonly StepSpec[], opts: { chain: string | null; draft: boolean }): Promise<Result<TopicChainStep>> {
+  // A dry run (the view's `done`) stops here: a claim would write these rows (a cap writes them CAPPED), so the chain isn't done.
+  if (c.dry) return ok({ runId: null, phase: specs[0]?.phase ?? null, status: (specs[0]?.status ?? "RUNNING") as RunStatus, done: specs.length === 0 });
   const { e, userId, now, today } = c;
   const roadmapId = c.b.roadmap.id;
   const ids = specs.map(() => e.makeId());
@@ -15552,7 +15626,7 @@ async function claimChainMap(c: ChainCtx, head: TopicRun): Promise<Result<TopicC
     const stop: StepSpec = {
       phase: "MAP",
       pack: { packs: [], candidateCount: t5.TOPIC_CANDIDATE_COUNT },
-      report: { over: true, verdict: fit.verdict },
+      report: { over: true, verdict: fit.verdict, fit },
       requests: 0,
       grounded: false,
       inputHash: null,
@@ -15686,6 +15760,23 @@ function chainAncestorNamesOf(map: t5.TopicMap, parent: t5.TopicDraft): string[]
 
 // ── The cores ──
 
+/**
+ * A fresh DRAFT's TOPICS draft whose base map isn't written (chainHeadUnpointed writes it with writeTopicsCore): no
+ * map rows, no chain and no estimate yet; or no row of your lines or intake Domains (S, U keys) while the intake holds
+ * a line, or a Domain of its Field, to place. A base with nothing to place is written once (code's estimate), and never
+ * again over an estimate already stored (your layers set on the chip stay).
+ */
+async function chainBaseMissingOf(e: Env, b: RoadmapBundle, ref: ChainDraftRef): Promise<boolean> {
+  const rows = (b.topics ?? []).filter((t) => t.version === ref.version);
+  if (rows.some((t) => /^[SU]\d+$/.test(t.key))) return false;
+  if (rows.length === 0 && chainRunsOf(b, ref.version).head == null && ref.rating == null) return true;
+  const intake = intakeOf(b.roadmap);
+  if ((intake.syllabus?.lines ?? []).some((l) => typeof l === "string" && l.trim() !== "")) return true;
+  if (intake.domainIds.length === 0) return false;
+  const field = (await e.io.fieldTree()).find((f) => f.id === b.roadmap.fieldId) ?? null;
+  return !!field && intake.domainIds.some((id) => field.domains.some((d) => d.id === id));
+}
+
 /** [Break it down] (and [Rate again] with `force`): the chain head, RATE, claimed under the draft cap (ruling 17). */
 async function chainHeadUnpointed(userId: string, roadmapId: string, force: boolean, now: Date, deps: RoadmapDeps): Promise<Result<{ runId: string; status: RunStatus }>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
@@ -15698,7 +15789,11 @@ async function chainHeadUnpointed(userId: string, roadmapId: string, force: bool
   if (b.roadmap.fieldId == null) return fail(TOPICS_FIELD_ONLY);
   if (b.roadmap.status !== "DRAFT" && b.roadmap.status !== "ACTIVE") return fail(BREAK_DOWN_OPEN_ONLY);
   let ref = chainDraftOf(b);
-  if (!ref) {
+  // A fresh DRAFT the form saved as TOPICS ([Break it down]) is a TOPICS draft before its first map: its base map (your
+  // outline lines, your intake Domains, code's estimate; the clause seeds ride the view) is written first, so MAP places
+  // your lines and Domains instead of running on an empty map. Never over a step still running.
+  const baseMissing = ref != null && b.roadmap.status === "DRAFT" && !youngRunningOf(b.runs, now) && (await chainBaseMissingOf(e, b, ref));
+  if (!ref || baseMissing) {
     // No TOPICS draft yet: lane 8's no-Gemini draft first (ruling 58: a fresh DRAFT; ruling 49: an ACTIVE plan's re-plan draft), then the chain on it.
     const made = b.roadmap.status === "DRAFT" ? await writeTopicsCore(userId, roadmapId, now, deps) : await breakIntoTopicsCore(userId, roadmapId, now, deps);
     if (!made.ok) return fail(made.error);
@@ -15790,26 +15885,80 @@ async function advanceUnpointed(userId: string, roadmapId: string, retry: boolea
   if (!b) return fail(NO_ROADMAP);
   const ref = chainDraftOf(b);
   if (!ref) return ok(CHAIN_NOTHING_LEFT);
-  const { head, steps } = chainRunsOf(b, ref.version);
-  if (!head) return ok(CHAIN_NOTHING_LEFT);
-  const young = youngRunningOf(b.runs, now);
-  if (young) return ok(chainStepOf(young, false));
+  const runs = await chainFullRunsOf(e, b, ref.version);
+  if (!runs) return ok(CHAIN_NOTHING_LEFT);
+  const res = await chainClaimNextOf(e, deps, userId, b, ref, sw, now, runs, retry, false);
+  // Nothing left to claim: a step past TOPIC_RUN_STALE_MS that no claim marked reads FAILED "timed out" now, so the
+  // page leaves its wait card and shows why (a claim marks such a row itself).
+  if (res.ok && res.value.done) await settleStaleChainStepsOf(e, userId, b, now);
+  return res;
+}
+
+/** A map you wrote after a chain's head ([Write the topics] after a breakdown: an OK INHOUSE or MANUAL run of the version, newer) ends that chain. */
+function chainSupersededOf(b: RoadmapBundle, version: number, head: RunRec): boolean {
+  // By time, never by order: [Break it down] writes the base map (an INHOUSE run) in the same instant it claims the head.
+  const at = chainWrittenAtOf(b, version);
+  return at != null && at > head.startedAt.getTime();
+}
+
+/** When you last wrote the draft version's map yourself (its newest OK INHOUSE or MANUAL run), or null. */
+function chainWrittenAtOf(b: RoadmapBundle, version: number): number | null {
+  let at: number | null = null;
+  for (const r of b.runs) {
+    if (r.version === version && chainPhaseOf(r) == null && (r.kind === "INHOUSE" || r.kind === "MANUAL") && r.status === "OK") at = Math.max(at ?? 0, r.startedAt.getTime());
+  }
+  return at;
+}
+
+/** The draft version's newest chain read in full (the reports chainNextOf reads), newest step first; null with none, or one your own write superseded. */
+async function chainFullRunsOf(e: Env, b: RoadmapBundle, version: number): Promise<{ head: TopicRun; steps: TopicRun[] } | null> {
+  const { head, steps } = chainRunsOf(b, version);
+  if (!head || chainSupersededOf(b, version, head)) return null;
   const fullHead = ((await e.store.run(head.id)) ?? head) as TopicRun;
   const fullSteps = (await Promise.all(steps.map((r) => e.store.run(r.id)))).map((r, i) => (r ?? steps[i]) as TopicRun);
-  const next = chainNextOf(fullHead, fullSteps, retry);
-  if (next.kind === "DONE") return ok(chainStepOf(fullSteps[0] ?? fullHead, true));
-  const c = await chainCtxOf(e, deps, userId, b, ref, sw, now);
-  const mapRow = fullSteps.find((r) => chainPhaseOf(r) === "MAP") ?? null;
+  return { head: fullHead, steps: fullSteps };
+}
+
+/**
+ * The chain's next claim (ruling 47): the RUNNING step younger than TOPIC_RUN_STALE_MS, else the next step claimed, else
+ * `done`. `dry` (the view) takes every decision a claim takes and writes nothing, so `done` is exactly the poll's.
+ */
+async function chainClaimNextOf(
+  e: Env,
+  deps: RoadmapDeps,
+  userId: string,
+  b: RoadmapBundle,
+  ref: ChainDraftRef,
+  sw: t5.TopicSwitches,
+  now: Date,
+  runs: { head: TopicRun; steps: TopicRun[] },
+  retry: boolean,
+  dry: boolean
+): Promise<Result<TopicChainStep>> {
+  const young = youngRunningOf(b.runs, now);
+  if (young) return ok(chainStepOf(young, false));
+  const next = chainNextOf(runs.head, runs.steps, retry);
+  if (next.kind === "DONE") return ok(chainStepOf(runs.steps[0] ?? runs.head, true));
+  const c: ChainCtx = { ...(await chainCtxOf(e, deps, userId, b, ref, sw, now)), dry };
+  const mapRow = runs.steps.find((r) => chainPhaseOf(r) === "MAP") ?? null;
   switch (next.kind) {
     case "MAP":
-      return claimChainMap(c, fullHead);
+      return claimChainMap(c, runs.head);
     case "S3":
-      return claimChainS3(c, fullHead, mapRow);
+      return claimChainS3(c, runs.head, mapRow);
     case "UNITS":
-      return claimChainUnits(c, fullHead, next, mapRow);
+      return claimChainUnits(c, runs.head, next, mapRow);
     case "DEEPER_GROUND":
-      return claimDeeperGround(c, fullHead);
+      return claimDeeperGround(c, runs.head);
   }
+}
+
+/** Every topic step of the roadmap still RUNNING past TOPIC_RUN_STALE_MS reads FAILED "timed out" (it can no longer be running: ruling 47). */
+async function settleStaleChainStepsOf(e: Env, userId: string, b: RoadmapBundle, now: Date): Promise<void> {
+  const stale = b.runs.filter((r) => r.status === "RUNNING" && chainPhaseOf(r) != null && now.getTime() - r.startedAt.getTime() >= t5.TOPIC_RUN_STALE_MS);
+  if (stale.length === 0) return;
+  for (const r of stale) await failRun(e, userId, r.id, "timed out", now);
+  invalidate("roadmap");
 }
 
 /**
@@ -15821,6 +15970,161 @@ async function advanceUnpointed(userId: string, roadmapId: string, retry: boolea
  */
 export async function advanceTopicChainCore(userId: string, roadmapId: string, retry: boolean, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<TopicChainStep>> {
   return pointedRefusal(deps, userId, { roadmapId }, await advanceUnpointed(userId, roadmapId, retry === true, now, deps));
+}
+
+// ── The chain's view (fix round; ruling 47): what the page's poll and its stop line read ──
+
+/** The newest row of each GROUND wave, newest first. */
+function chainWaveRowsOf(steps: readonly TopicRun[]): TopicRun[] {
+  const seen = new Set<number>();
+  const out: TopicRun[] = [];
+  for (const r of steps) {
+    if (chainPhaseOf(r) !== "GROUND") continue;
+    const w = chainReportOf(r)?.wave ?? 0;
+    if (seen.has(w)) continue;
+    seen.add(w);
+    out.push(r);
+  }
+  return out;
+}
+
+/** A CAPPED step's cap, by the reason claimChainSteps wrote (the draft cap is the draft banner's, so none here). */
+const chainCapStopOf = (r: RunRec): t5.TopicChainStop | null =>
+  r.status !== "CAPPED" ? null : r.error === "grounded request cap" ? "GROUNDED_CAPPED" : r.error === "request cap" ? "REQUESTS_CAPPED" : null;
+
+/**
+ * Why a done chain stopped short (pure over its rows read in full): a capped step, MAP's pre-check (with its ChainFit),
+ * MAP's replies failing, a failed or timed-out GROUND wave (with the names it left unchecked), a RATE that timed out
+ * before any rating, or a Go deeper that named nothing narrower. No stop: the chain ran to its end.
+ */
+function chainStopOf(head: TopicRun, steps: readonly TopicRun[], map: t5.TopicMap, hasRating: boolean): { stop: t5.TopicChainStop | null; unchecked: number; fit: t5.ChainFit | null } {
+  const none = { stop: null, unchecked: 0, fit: null };
+  if (settledOf(head) === "CAPPED") return { ...none, stop: chainCapStopOf(head) };
+  const ground = steps.filter((r) => chainPhaseOf(r) === "GROUND");
+  if (chainPhaseOf(head) === "DEEPER") {
+    if (chainReportOf(head)?.nothing) return { ...none, stop: "NOTHING_DEEPER" };
+  } else {
+    if (settledOf(head) === "FAILED" && !hasRating) return { ...none, stop: "TIMED_OUT" };
+    const links = steps.filter((r) => chainPhaseOf(r) === "LINK");
+    if (!chainPlanOf([...links, ...ground])) {
+      const m = steps.find((r) => chainPhaseOf(r) === "MAP");
+      if (!m) return none;
+      const rep = chainReportOf(m);
+      if (rep?.over) return { ...none, stop: rep.verdict === "IMPOSSIBLE" ? "IMPOSSIBLE" : "OVER", fit: rep.fit ?? null };
+      if (settledOf(m) === "CAPPED") return { ...none, stop: chainCapStopOf(m) ?? "REQUESTS_CAPPED" };
+      return settledOf(m) === "FAILED" ? { ...none, stop: "MAP_FAILED" } : none;
+    }
+    if (links[0] && settledOf(links[0]) === "CAPPED") return { ...none, stop: chainCapStopOf(links[0]) ?? "REQUESTS_CAPPED" };
+  }
+  const waves = chainWaveRowsOf(ground);
+  const capped = waves.find((r) => settledOf(r) === "CAPPED");
+  if (capped) return { ...none, stop: chainCapStopOf(capped) ?? "GROUNDED_CAPPED" };
+  // A failed wave's names stay NOT_RUN, hidden behind "n not checked" (F-R5-12: GROUND fails → [Try again]).
+  const failedKeys = new Set(
+    waves
+      .filter((r) => settledOf(r) === "FAILED")
+      .flatMap((r) => {
+        const rep = chainReportOf(r);
+        return (r.status === "FAILED" && rep?.failed?.length ? rep.failed : (rep?.batches ?? [])).flat();
+      })
+  );
+  const unchecked = failedKeys.size > 0 ? chainLiveOf(map).filter((t) => failedKeys.has(t.key) && t.nameOrigin === "GEMINI" && t.grounding === "NOT_RUN").length : 0;
+  return unchecked > 0 ? { ...none, stop: "GROUND_FAILED", unchecked } : none;
+}
+
+/** What Gemini did on the draft version since you last wrote its map (the header's lead): a RATE, a MAP or DEEPER that wrote. */
+function chainGeminiOf(b: RoadmapBundle, version: number): { rated: boolean; mapped: boolean } {
+  let rated = false;
+  let mapped = false;
+  const writtenAt = chainWrittenAtOf(b, version) ?? 0;
+  for (const r of b.runs) {
+    if (r.version !== version || r.startedAt.getTime() < writtenAt) continue;
+    const p = chainPhaseOf(r);
+    if (p == null) continue;
+    if (r.status !== "OK" && r.status !== "PARTIAL" && r.status !== "REUSED") continue;
+    if (p === "RATE") rated = true;
+    if (p === "MAP" || p === "DEEPER") mapped = true;
+  }
+  return { rated, mapped };
+}
+
+/**
+ * RoadmapView.topicChain (fix round; ruling 47): a TOPICS draft's newest chain as the page drives it. `done` is exactly
+ * the poll's (a dry claim decides it, writing nothing); a step past its stale mark keeps the poll going once more, so
+ * its advance marks it "timed out". null: no chain on this draft (or your own write superseded it), the chain's switch
+ * is off, or it couldn't be read (logged: the page then shows the draft as it stands).
+ */
+async function topicChainViewFor(e: Env, deps: RoadmapDeps, userId: string, b: RoadmapBundle, now: Date): Promise<t5.TopicChainView | null> {
+  try {
+    const sw = topicSwitchesOf(deps.topicSwitches);
+    if (!sw.rate) return null;
+    const ref = chainDraftOf(b);
+    if (!ref) return null;
+    const runs = await chainFullRunsOf(e, b, ref.version);
+    if (!runs) return null;
+    const rows = [...runs.steps, runs.head];
+    const newest = rows[0];
+    const young = youngRunningOf(b.runs, now);
+    const staleRow = rows.find((r) => r.status === "RUNNING" && now.getTime() - r.startedAt.getTime() >= t5.TOPIC_RUN_STALE_MS) ?? null;
+    const stale = staleRow != null;
+    const off = writesOff(deps);
+    // The dry claim; one that can't be read leaves the chain to the poll, whose advance then says why.
+    const next =
+      !young && !off
+        ? await chainClaimNextOf(e, deps, userId, b, ref, sw, now, runs, false, true).catch((err: unknown): Result<TopicChainStep> => {
+            console.error("roadmap: the chain's next step wasn't read:", err instanceof Error ? err.message.slice(0, 200) : "failed");
+            return fail(RACED);
+          })
+        : null;
+    const done = off || (!young && !stale && (next == null || (next.ok && next.value.done)));
+    const fact = done && !off ? chainStopOf(runs.head, runs.steps, chainMapOf(b, ref), ref.rating != null) : { stop: null, unchecked: 0, fit: null };
+    const headCapped = chainPhaseOf(runs.head) === "RATE" && settledOf(runs.head) === "CAPPED";
+    const retry: t5.TopicChainView["retry"] =
+      fact.stop === "TIMED_OUT" || (headCapped && fact.stop != null)
+        ? "BREAK_DOWN"
+        : fact.stop != null && fact.stop !== "NOTHING_DEEPER" && chainNextOf(runs.head, runs.steps, true).kind !== "DONE"
+          ? "ADVANCE"
+          : null;
+    const line =
+      fact.stop === "REQUESTS_CAPPED"
+        ? REQUESTS_CAPPED
+        : fact.stop === "GROUNDED_CAPPED"
+          ? GROUNDED_CAPPED
+          : fact.stop === "NOTHING_DEEPER"
+            ? NOTHING_DEEPER
+            : (fact.stop === "OVER" || fact.stop === "IMPOSSIBLE") && fact.fit
+              ? fact.fit.basis
+              : null;
+    const phase = young ? chainPhaseOf(young) : staleRow ? chainPhaseOf(staleRow) : !done && next?.ok && next.value.phase ? next.value.phase : chainPhaseOf(newest);
+    return {
+      phase,
+      running: young != null,
+      stale,
+      startedAt: (young ?? newest).startedAt.toISOString(),
+      headStartedAt: runs.head.startedAt.toISOString(),
+      done,
+      key: `${runs.head.id}:${rows.length}:${rows.map((r) => r.status.slice(0, 2)).join("")}:${young?.id ?? "-"}`,
+      stop: fact.stop,
+      retry,
+      unchecked: fact.unchecked,
+      fit: fact.fit,
+      line,
+      gemini: chainGeminiOf(b, ref.version),
+    };
+  } catch (err) {
+    console.error("roadmap: the topic chain's view wasn't read:", err instanceof Error ? err.message.slice(0, 200) : "failed");
+    return null;
+  }
+}
+
+/**
+ * The view with its chain (fix round): a fresh DRAFT's breakdown stays on the wait card between its steps while the
+ * poll claims the next one (ui-motion §15.9: DraftRunning for a breakdown), so the page never flips back and forth.
+ */
+function withTopicChainView(view: RoadmapView, chain: t5.TopicChainView | null): RoadmapView {
+  if (!chain) return view;
+  const waiting = view.state === "DRAFT" && !chain.done && view.run != null;
+  return { ...view, topicChain: chain, ...(waiting ? { state: "RUNNING" as const } : {}) };
 }
 
 // ── Running one step (after()) ──

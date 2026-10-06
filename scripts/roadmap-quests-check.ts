@@ -160,6 +160,7 @@ import {
   raiseEvidenceOf,
   scheduledPlacesOf,
   setOfStored,
+  todayNamedTitlesOf,
   userWideGoalsOf,
   weekQuestInputFor,
   weekQuestSetFor,
@@ -2874,6 +2875,63 @@ async function goals() {
   }
 }
 
+/**
+ * The live fix (contracts §22.11 TOPIC_NAME_KEPT, ruling 67; §22.20): the Gemini mark off the roadmap page. With
+ * WeekQuestsViewInput.marks a kept Gemini-named Domain's name in a row's label, its parts and parts line, the
+ * milestone's title and the notes is a marked NamedPart; with none marked the view is byte-identical; Today's
+ * plan-born titles get their milestone's Gemini-named Domain names (todayNamedTitlesOf), a renamed Domain none.
+ */
+function geminiMark() {
+  console.log("\n— the Gemini mark off the roadmap page (the live fix) —");
+  const wk = W(6);
+  const set = weekQuestsFor(inputOf({ weekStart: wk, startedDay: M, dueDay: raiseDue, snapshot: raiseSnap, card: raiseCard(cards(4, 5, addDays(wk, 2))) }));
+  // A v1-shaped label naming the Domain, so the label's own parts are read too.
+  const named = { ...set, quests: set.quests.map((q) => (q.kind === "RAISE" ? { ...q, label: `Bring ${q.count} cards in Position Sizing to level 6+` } : q)) };
+  const base = { progress: [], variant: "roadmap" as const, milestone: { ord: 1, of: 2, title: "Layer 1: Position Sizing" }, level: 6, frozen: true, writesOff: false, places: {}, domainNames: NAMES };
+  const marks = [
+    { id: "d-ps", name: "Position Sizing", geminiNamed: true },
+    { id: "d-risk", name: "Risk Management", geminiNamed: false },
+  ];
+  const plain = weekQuestsViewOf({ ...base, set: named });
+  const v = weekQuestsViewOf({ ...base, set: named, marks });
+  const row = v.rows.find((r) => r.kind === "RAISE");
+  eq(
+    "a label naming a Gemini-named Domain carries it as a marked NamedPart (labelParts)",
+    row?.labelParts,
+    [
+      { text: `Bring ${row?.count} cards in `, geminiNamed: false },
+      { text: "Position Sizing", geminiNamed: true },
+      { text: " to level 6+", geminiNamed: false },
+    ]
+  );
+  eq("… its part says geminiNamed, and its parts line carries the mark (partsLineParts)", [row?.parts?.[0]?.geminiNamed, row?.partsLineParts?.filter((p) => p.geminiNamed).map((p) => p.text)], [true, ["Position Sizing"]]);
+  eq("… the milestone's title too (milestoneTitleParts)", v.milestoneTitleParts, [
+    { text: "Layer 1: ", geminiNamed: false },
+    { text: "Position Sizing", geminiNamed: true },
+  ]);
+  check(
+    "with no mark (none given, or none Gemini-named) the view is byte-identical to before",
+    json(plain) === json(weekQuestsViewOf({ ...base, set: named, marks: [{ id: "d-ps", name: "Position Sizing", geminiNamed: false }] })) &&
+      !json(plain).includes("Parts") &&
+      !json(plain).includes("geminiNamed"),
+    json(plain).slice(0, 200)
+  );
+  // Today: each plan-born template gets its milestone's Gemini-named Domain names; a renamed Domain (name ≠ originName) none.
+  const titles = todayNamedTitlesOf(
+    [
+      { goalId: "g1", items: [{ domainId: "d-gem", templateId: null }, { domainId: "d-mine", templateId: null }, { domainId: null, templateId: "t-practice" }] },
+      { goalId: "g2", items: [{ domainId: "d-renamed", templateId: "t-step" }] },
+      { goalId: null, items: [{ domainId: "d-mine", templateId: "t-own" }] },
+    ],
+    [
+      { id: "d-gem", name: "Household Finance", nameOrigin: "GEMINI", originName: "Household Finance" },
+      { id: "d-mine", name: "Budgeting", nameOrigin: null, originName: null },
+      { id: "d-renamed", name: "My mortgage", nameOrigin: "GEMINI", originName: "Mortgages and Loans" },
+    ]
+  );
+  eq("Today: the goal and the practice of a milestone with a Gemini-named Domain carry its name; a renamed one and the user's own Domain none", titles, { g1: ["Household Finance"], "t-practice": ["Household Finance"] });
+}
+
 async function main() {
   await server();
   await fixRound();
@@ -2881,6 +2939,7 @@ async function main() {
   await rev4();
   await gate19();
   await goals();
+  geminiMark();
   greps();
   if (failed > 0) {
     console.log(`\nroadmap-quests-check: ${passed} passed, ${failed} FAILED`);

@@ -10,6 +10,7 @@ import { Tick, type TickState } from "@/components/ui/Tick";
 import { cx } from "@/components/ui/cx";
 import { TRACK_LABEL, TRACK_SIGIL, fmtMinutes, fmtXp } from "./format";
 import { hhmmOf, pendingMetaOf, tickNameOf } from "./board-ui";
+import { NamedTitle } from "./NamedTitle";
 import type { RestKind } from "@/lib/duty-economy";
 
 interface Props {
@@ -37,6 +38,9 @@ interface Props {
   justAdded?: boolean;
   /** M2: today's declaration (rest, sick, vacation), so a held row says so and an 'Even on rest days' must keeps 'must'. */
   restToday?: RestKind | null;
+  /** The live fix (contracts §22.11): the Gemini-named Domain names a plan-born title holds; each shows with `namedMark` (the page's pv.named). */
+  named?: readonly string[];
+  namedMark?: ReactNode;
   /** The drawer, when open. */
   children?: ReactNode;
 }
@@ -83,7 +87,7 @@ export function TaskRow(props: Props) {
         <div className="r-main">
           <button type="button" className="r-open" aria-expanded={drawerOpen} aria-controls={drawerOpen ? drawerId : undefined} onClick={props.onToggleDrawer}>
             <span className="r-title today-row-title" data-pending={props.pendingTitle ? "1" : undefined}>
-              {title}
+              {props.pendingTitle ? title : <NamedTitle title={title} named={props.named} mark={props.namedMark} />}
               {props.pendingTitle && <span className="r-saving"> · saving…</span>}
               {props.justAdded && <span className="sr-only">, just added</span>}
             </span>

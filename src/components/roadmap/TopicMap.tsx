@@ -25,6 +25,7 @@ import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } f
 import { cx } from "@/components/ui/cx";
 import { Sheet } from "@/components/ui/Sheet";
 import { Button } from "@/components/ui/Button";
+import { Switch } from "@/components/ui/Tabs";
 import { ActionError } from "@/components/home/ActionError";
 import { Glyph, Mark } from "@/components/glyph/Glyph";
 import { CardKey, type KeyEntry } from "@/components/glyph/InfoTip";
@@ -101,6 +102,8 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
   const [emptyLayer, setEmptyLayer] = useState<number | null>(null);
   const [hiddenOpen, setHiddenOpen] = useState<ReadonlySet<number>>(new Set());
   const [acceptOpen, setAcceptOpen] = useState(false);
+  // [Accept all] over your hours or pace (TopicMapView.needsOver): the footer's own switch, asked here too.
+  const [overKept, setOverKept] = useState(false);
   const [aftercare, setAftercare] = useState<"KEEP" | "ARCHIVE" | null>(null);
   const [trackClause, setTrackClause] = useState<number | null>(null);
   const [mergedNote, setMergedNote] = useState<string | null>(null);
@@ -164,10 +167,12 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
     ...(named ? [{ glyph: "pv.named" as const, words: NAMED_KEY }] : []),
   ];
 
+  // The server's own list (TopicMapView.acceptAll): what the sheet shows is what it sends and what acceptCore compares.
   const acceptList = acceptAllListOf(map);
+  const needsOver = map.needsOver === true;
   const acceptAll = () =>
     run(
-      (a) => a.acceptPlan(map.roadmapId, { overAccepted: false, topicMap: acceptTopicChoicesOf(map, { keepAll: true, aftercare: liveMilestone != null ? aftercare : null }) }),
+      (a) => a.acceptPlan(map.roadmapId, { overAccepted: needsOver && overKept, topicMap: acceptTopicChoicesOf(map, { keepAll: true, aftercare: liveMilestone != null ? aftercare : null }) }),
       (v) => {
         setAcceptOpen(false);
         pushToast({
@@ -333,7 +338,7 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
         onClose={() => setAcceptOpen(false)}
         title={ACCEPT_ALL_WORD}
         footer={
-          <Button variant="primary" block disabled={pending || (liveMilestone != null && aftercare == null)} onClick={acceptAll}>
+          <Button variant="primary" block disabled={pending || (liveMilestone != null && aftercare == null) || (needsOver && !overKept)} onClick={acceptAll}>
             {ACCEPT_ALL_CONFIRM}
           </Button>
         }
@@ -359,6 +364,12 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
               {x.links > 0 && <p className="t-meta">{acceptAllLinksLine(x.links)}</p>}
             </div>
           ))}
+          {needsOver && (
+            <div className="rm-sw">
+              <span className="rm-sw-t">Keep it over my hours/pace</span>
+              <Switch checked={overKept} onChange={setOverKept} label="Keep it over my hours/pace" />
+            </div>
+          )}
           {liveMilestone != null && (
             <div role="radiogroup" aria-label={aftercareGroupLabel(liveMilestone)} className="rm-tm-pick">
               <p className="t-meta" style={{ margin: 0, flexBasis: "100%" }}>

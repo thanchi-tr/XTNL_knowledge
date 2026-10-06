@@ -151,7 +151,8 @@ export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore,
                 <Mark glyph="i-chev" size={16} />
               </button>
             )}
-            {draft && !layer.kept && onKeep && <GlyphButton glyph="pv.kept" size={40} label={keepLayerAria(k)} onClick={() => onKeep(k)} className="rm-tm-keep" />}
+            {/* An empty band (no shown topic) has nothing to keep: its ▸ offers the ways out (merge, write one, the not-checked names). */}
+            {draft && !layer.kept && !empty && onKeep && <GlyphButton glyph="pv.kept" size={40} label={keepLayerAria(k)} onClick={() => onKeep(k)} className="rm-tm-keep" />}
             {draft && layer.kept && (
               <span ref={keptRef} className="rm-tm-kept">
                 <Glyph name="pv.kept" size={20} inherit />

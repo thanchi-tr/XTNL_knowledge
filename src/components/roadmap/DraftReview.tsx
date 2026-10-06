@@ -230,6 +230,10 @@ import { ActivityConfirmCard, activityHealthOf } from "./ActivityConfirm";
 import { TopicMap } from "./TopicMap";
 import { acceptTopicChoicesOf, topicNamesOn, topicPlansOn } from "./topic-map-model";
 import { AFTERCARE_ARCHIVE_WORD, AFTERCARE_KEEP_WORD, aftercareGroupLabel, createsDomainsLine, geminiNamesAmongLine, liveMilestoneClosesLine } from "./roadmap-copy";
+// ── Revision 5, fix round: the Gemini chain's wait, its poll and its stop line (ruling 47) ──
+import { useTopicChainPoll } from "./roadmap-runtime";
+import { CHAIN_STOPPED_LINE, CHANGE_DATE_HOURS_WORD, CHECK_AGAIN_WORD, FEWER_LAYERS_WORD, TRY_AGAIN_WORD, WRITE_TOPICS_WORD, chainLeadLine, chainRunningLine, chainStopLine } from "./roadmap-copy";
+import { LAYERS_MIN, type RoadmapActionResult, type TopicChainView } from "@/lib/roadmap-types";
 import "./roadmap.css";
 
 /**
@@ -330,6 +334,8 @@ export function choicesWaitingOf(draft: Pick<DraftView, "milestones" | "sessionP
 
 /** RunFacts adds to the lead line only for a Gemini run or a report with entries ("built from your numbers" is the lead already). */
 function runSaysMore(run: RunView): boolean {
+  // A topic chain step (revision 5) writes no rows and its report isn't a draft's: the chain's own lead and line say what it did.
+  if (run.phase) return false;
   const r = run.report;
   return run.kind === "GEMINI" || Boolean(r && (r.dropped.length > 0 || r.flagged.length > 0 || r.notes.length > 0 || r.integrity));
 }
@@ -548,8 +554,13 @@ function DraftHeader({ header, run, view, mode, next, keysOnly, gates }: { heade
   // The v4 header names only what the run asked and the reply used (contracts §20), read from the rows on screen.
   const parts = geminiV4PartsOf(draft.milestones, { field: header.area.kind === "FIELD" });
   const choices = picksAreChoicesOf(run);
-  const { eyebrow, lead } = draftLeadOf(writer, mode, draft.nonEnglish, draftHasGeminiWords(draft.milestones), keysOnly, choices, parts);
-  const lanes = draftLanesOf({ writer, keysOnly, choices, parts, nonEnglish: draft.nonEnglish, rejected });
+  const runLead = draftLeadOf(writer, mode, draft.nonEnglish, draftHasGeminiWords(draft.milestones), keysOnly, choices, parts);
+  // A breakdown (revision 5, fix round): Gemini estimated the layers and/or mapped the topics, so the header says so and
+  // never "Built from your numbers." beside them (the topic steps write no rows, so the rows' writer is the base map's).
+  const chainLead = topicChainLeadOf(view);
+  const eyebrow = chainLead && mode === "draft" ? "Draft · not accepted yet" : runLead.eyebrow;
+  const lead = chainLead ?? runLead.lead;
+  const lanes = chainLead ? null : draftLanesOf({ writer, keysOnly, choices, parts, nonEnglish: draft.nonEnglish, rejected });
   const capped = run?.capped === true || run?.status === "CAPPED";
   const geminiLive = (gates?.gemini ?? ROADMAP_GEMINI_LIVE) && view.hasKey;
   // On a keys-only draft the uncovered lines sit under "Lines to look at", with the lines tied to no Domain.
@@ -571,13 +582,15 @@ function DraftHeader({ header, run, view, mode, next, keysOnly, gates }: { heade
     const first = ords.length > 0 ? Math.min(...ords) : null;
     const last = ords.length > 0 ? Math.max(...ords) : null;
     // A re-plan's run in progress: this card is the page's one WAIT loop (the living header's horizon stays SVG).
-    const drafting = run != null && run.status === "RUNNING";
-    const waiting = drafting && !run.stale;
+    // A re-plan's breakdown waits here too, between its steps (its poll is TopicChainCard's).
+    const chain = view.topicChain && !view.topicChain.done ? view.topicChain : null;
+    const drafting = (run != null && run.status === "RUNNING") || chain != null;
+    const waiting = drafting && (chain != null || !(run?.stale ?? false));
     return (
       <section className="card rm-aim rm-dh-rp" aria-label="The re-plan draft" data-wait={waiting ? "" : undefined}>
         {drafting && (
           <div className="rm-band">
-            <DraftWeave stale={run.stale} startedAt={run.startedAt} />
+            <DraftWeave stale={!waiting} startedAt={chain?.headStartedAt ?? run?.startedAt ?? null} />
           </div>
         )}
         <div className="rm-drf-h">
@@ -590,7 +603,7 @@ function DraftHeader({ header, run, view, mode, next, keysOnly, gates }: { heade
           Version {draft.version}
           {first != null && last != null ? ` · ${first === last ? `Milestone ${first}` : `Milestones ${first} to ${last}`}` : ""}. Started milestones stay as they are.
         </p>
-        {drafting && <DraftingLine run={run} />}
+        {drafting && (chain ? <TopicChainLine chain={chain} /> : run && <DraftingLine run={run} />)}
         <LeadLanes lead={lead} lanes={lanes} />
         <div className="rm-lines">
           {run && runSaysMore(run) && <RunFacts run={run} today={view.today} variant="chip" />}
@@ -610,7 +623,7 @@ function DraftHeader({ header, run, view, mode, next, keysOnly, gates }: { heade
   const activityCard = activityCardOf(draft.activityConfirm);
   const cardHealth = activityCard != null && activityHealthOf(activityCard);
   // Google's free tier: what drafting sent may be used (only where a Gemini run wrote this draft).
-  const dataChip = writer === "GEMINI" && view.keyTier === "FREE" ? <HonestyChip kind="data" full={`${FREE_TIER_LINE} ${privacyLine(PACK_SECTIONS)}`} /> : null;
+  const dataChip = (writer === "GEMINI" || chainLead != null) && view.keyTier === "FREE" ? <HonestyChip kind="data" full={`${FREE_TIER_LINE} ${privacyLine(PACK_SECTIONS)}`} /> : null;
   const hz = horizonOfRoadmap(view);
   return (
     <section className="card rm-aim rm-dh" aria-label="The draft" data-wc-block="draft-header" data-wc-fold="">
@@ -1097,7 +1110,8 @@ function DraftFooter({
     );
   }
 
-  if (!draft.acceptable && next && next.measures.every((x) => x.role !== "PAYS")) {
+  // A TOPICS draft is accepted on its map (its refusal shows below): it never asks to add to a milestone.
+  if (!topicMap && !draft.acceptable && next && next.measures.every((x) => x.role !== "PAYS")) {
     return (
       <div className="rm-sticky">
         <Button variant="primary" size="lg" onClick={() => document.getElementById(`rm-add-${next.id}`)?.scrollIntoView({ block: "center" })}>
@@ -1164,9 +1178,12 @@ function DraftFooter({
       <Button variant="primary" size="lg" onClick={accept} disabled={pending || (topicMap != null && topicMap.acceptRefusal != null)}>
         {pending ? "Accepting…" : "Accept plan"}
       </Button>
-      <p className="t-meta">
-        Milestone {next?.ord ?? 1} ready{outlineCount > 0 ? ` · ${outlineCount} in outline` : ""}.{needsOver ? " Kept over, it shows a quiet “Over” chip for good." : ""}
-      </p>
+      {/* A TOPICS draft with no milestone yet (an empty map) has none ready: its refusal above says what to do. */}
+      {(next != null || !topicMap) && (
+        <p className="t-meta">
+          Milestone {next?.ord ?? 1} ready{outlineCount > 0 ? ` · ${outlineCount} in outline` : ""}.{needsOver ? " Kept over, it shows a quiet “Over” chip for good." : ""}
+        </p>
+      )}
       {hint && (
         <p className="t-error" role="alert">
           {hint}
@@ -1239,7 +1256,9 @@ export function DraftReview({
     catalogTrack: stageRun.track,
   };
   // The banner names what happened to the latest run; who wrote the rows is the header's (RunView.wrote).
-  const banner = mode === "draft" && !runRejectedOf(view.run) ? draftBannerOf(view.run) : null;
+  // A topic chain step's own stop is TopicChainCard's line (revision 5, fix round); only a head the daily cap stopped keeps the cap banner.
+  const chainStepRun = view.run?.phase != null && !(view.run.status === "CAPPED" && view.run.error === "daily cap");
+  const banner = mode === "draft" && !runRejectedOf(view.run) && !chainStepRun ? draftBannerOf(view.run) : null;
   const outlineRange = outline.length > 0 ? (outline.length === 1 ? `Milestone ${outline[0].ord}` : `Milestones ${outline[0].ord}–${outline[outline.length - 1].ord}`) : null;
   const geminiArranged = draft.milestones.some((m) => m.arrangedBy === "GEMINI");
   // The arrangement line names only what Gemini arranged that still stands (contracts §20): on a v4 run, the outline's order when
@@ -1315,6 +1334,8 @@ export function DraftReview({
             </section>
           </div>
         )}
+        {/* Revision 5, fix round: the Gemini chain's poll (a re-plan's breakdown) and a stopped breakdown's line, above its map (ruling 47). */}
+        {view.topicChain && <TopicChainCard view={view} mode={mode} />}
         {/* Revision 5, lane 9: a TOPICS draft's map (DraftView.topicMap); its milestones below read "Layer k of n" (ruling 22). */}
         {draft.topicMap && topicPlansOn(gates) && (
           <TopicMap
@@ -1372,8 +1393,15 @@ export function DraftReview({
  * otherwise), the 40 px pause in the heading row (never on the band), the aim, and the run's line
  * verbatim in aria-live beside the route.weave glyph. No bar, no % and nothing that spins; the page
  * refreshes from the database for at most 75 s. A stale run stops the weave at once and says so.
+ * A breakdown (the Gemini chain's steps, revision 5) has its own wait: TopicRunning, whose poll drives it.
  */
 export function DraftRunning({ view }: { view: RoadmapView }) {
+  if (view.topicChain || view.run?.phase) return <TopicRunning view={view} />;
+  return <LevelsRunning view={view} />;
+}
+
+/** A LEVELS draft's wait (the run's line, RUN_STALE_MS, [Build from my numbers] and [Try again]). */
+function LevelsRunning({ view }: { view: RoadmapView }) {
   const runtime = useRoadmapRuntime();
   const { run: act, pending, error } = useRoadmapAction();
   const run = view.run!;
@@ -1437,6 +1465,178 @@ export function DraftRunning({ view }: { view: RoadmapView }) {
       </section>
     </div>
   );
+}
+
+// ── Revision 5, fix round: the Gemini chain's wait, its poll and its stop line (ruling 47; ui-motion §15.9) ──
+
+/** The chain's running line in aria-live beside route.weave: "Gemini · map · started 12 s ago". No bar, no %. */
+function TopicChainLine({ chain }: { chain: TopicChainView }) {
+  return (
+    <div className="rm-drf-run" aria-live="polite">
+      <Glyph name="route.weave" state="active" size={32} />
+      <b className="rm-drf-t">{chainRunningLine(chain.phase, timeSecondsLabel(chain.startedAt))}</b>
+    </div>
+  );
+}
+
+/**
+ * A breakdown's WAIT card (a fresh DRAFT): the same weave card, its line naming the step, and the chain's poll, which
+ * claims each next step until the chain is done (the page stays here between steps). A step past TOPIC_RUN_STALE_MS,
+ * or a poll that can't go on, reads "Breakdown stopped (timed out)" with [Try again] (the chain head again while the
+ * estimate itself stopped, else the next step with retry) and [Write the topics] (your own map; it settles the step).
+ */
+function TopicRunning({ view }: { view: RoadmapView }) {
+  const { run: act, pending, error } = useRoadmapAction();
+  const header = view.header;
+  const run = view.run!;
+  const chain: TopicChainView = view.topicChain ?? {
+    phase: run.phase ?? null,
+    running: run.status === "RUNNING" && !run.stale,
+    stale: run.stale,
+    startedAt: run.startedAt,
+    headStartedAt: run.startedAt,
+    done: true,
+    key: run.id,
+    stop: null,
+    retry: null,
+    unchecked: 0,
+    fit: null,
+    line: null,
+    gemini: { rated: false, mapped: false },
+  };
+  const poll = useTopicChainPoll(header?.id ?? null, view.topicChain ?? null);
+  // A step past its stale mark is the poll's to settle (its advance marks it "timed out"); only one no poll will act on reads stopped.
+  const stale = poll.stalled || poll.error != null || ((run.stale || chain.stale) && (view.topicChain?.done ?? true));
+  const retry = () => {
+    if (!header) return;
+    poll.restart();
+    act((a): Promise<RoadmapActionResult<unknown>> => (chain.phase === "RATE" || chain.retry === "BREAK_DOWN" ? a.breakDown(header.id) : a.advanceTopicChain(header.id, true)));
+  };
+  const shown = error ?? poll.error;
+  return (
+    <div className="rm-stack" data-wc-block="roadmap-drafting">
+      <section className="card rm-aim rm-drf" aria-label="Drafting" data-wait={stale ? undefined : ""}>
+        <div className="rm-band">
+          <DraftWeave stale={stale} startedAt={chain.headStartedAt} />
+        </div>
+        <div className="rm-drf-h">
+          <div className="t-eyebrow">Draft</div>
+          {!stale && <WeavePause label={SHORT_PAUSE_LABEL} />}
+        </div>
+        {header && (
+          <>
+            <p className="rm-aim-t" data-wc="own">
+              {header.aim}
+            </p>
+            <DraftingChips header={header} today={view.today} />
+          </>
+        )}
+        {stale ? (
+          <div className="rm-drf-run rm-drf-stale">
+            <Icon name="clock" />
+            <div className="rm-run-body">
+              <b className="rm-drf-t">{CHAIN_STOPPED_LINE}</b>
+              <p className="t-meta" style={{ marginTop: 4 }}>
+                {chainRunningLine(chain.phase, timeSecondsLabel(chain.startedAt))}
+              </p>
+              {header && (
+                <div className="rm-acts" style={{ marginTop: 12 }}>
+                  <Button variant="primary" disabled={pending} onClick={retry}>
+                    {TRY_AGAIN_WORD}
+                  </Button>
+                  <Button disabled={pending} onClick={() => act((a) => a.writeTopics(header.id))}>
+                    {WRITE_TOPICS_WORD}
+                  </Button>
+                </div>
+              )}
+              {shown && <ActionError>{shown}</ActionError>}
+            </div>
+          </div>
+        ) : (
+          <TopicChainLine chain={chain} />
+        )}
+      </section>
+    </div>
+  );
+}
+
+/**
+ * A TOPICS draft's chain card (above its map): the poll that drives a breakdown still under way (a re-plan's keeps its
+ * page; its header carries the wait line), and a stopped breakdown's line with what to do, word-light:
+ *   - the pre-check (OVER, IMPOSSIBLE): its basis line, then [Fewer layers] (when offered), [Change date or hours],
+ *     [Check again] (the chain resumes: advanceTopicChain with retry) and, on a fresh draft, [Write the topics];
+ *   - a failed web check ("3 not checked · web check failed"), a cap (the server's own line), MAP's replies failing or
+ *     a stopped estimate: [Try again] where a retry can claim something, and [Write the topics] on a fresh draft;
+ *   - "Gemini named nothing narrower." after a Go deeper, alone.
+ * Nothing when the chain ran to its end.
+ */
+export function TopicChainCard({ view, mode }: { view: RoadmapView; mode: "draft" | "replan" }) {
+  const { run: act, pending, error } = useRoadmapAction();
+  const header = view.header;
+  const chain = view.topicChain ?? null;
+  const poll = useTopicChainPoll(header?.id ?? null, chain);
+  if (!header || !chain) return null;
+  const stopped = poll.stalled || poll.error != null;
+  if (!chain.stop && !stopped && !error) return null;
+  const id = header.id;
+  const fresh = mode === "draft" && header.status === "DRAFT";
+  const over = chain.stop === "OVER" || chain.stop === "IMPOSSIBLE";
+  const layers = view.draft?.topicMap?.rating.layers ?? null;
+  const fewer = over && chain.fit?.offers.includes("FEWER_LAYERS") === true && layers != null && layers > LAYERS_MIN ? layers - 1 : null;
+  const resume = () => {
+    poll.restart();
+    act((a): Promise<RoadmapActionResult<unknown>> => (chain.retry === "BREAK_DOWN" ? a.breakDown(id) : a.advanceTopicChain(id, true)));
+  };
+  const canRetry = chain.retry != null || (stopped && !chain.stop);
+  const shown = error ?? poll.error;
+  return (
+    <section className="card rm-note" aria-label="Breakdown" data-wc-block="topic-chain-stop">
+      <RoadmapGlyph name="info" />
+      <div className="rm-run-body">
+        <b>{chain.stop ? chainStopLine(chain.stop, chain.unchecked) : CHAIN_STOPPED_LINE}</b>
+        {chain.line && chain.stop !== "NOTHING_DEEPER" && (
+          <p className="t-meta" style={{ marginTop: 4 }}>
+            {chain.line}
+          </p>
+        )}
+        {chain.stop !== "NOTHING_DEEPER" && (
+          <div className="rm-acts" style={{ marginTop: 8 }}>
+            {fewer != null && (
+              <Button
+                disabled={pending}
+                onClick={() => {
+                  poll.restart();
+                  act(async (a): Promise<RoadmapActionResult<unknown>> => {
+                    const set = await a.setLayers(id, { kind: "FEWER", layers: fewer });
+                    return set.ok ? a.advanceTopicChain(id, true) : set;
+                  });
+                }}
+              >
+                {FEWER_LAYERS_WORD}
+              </Button>
+            )}
+            {over && fresh && <Button href={ROADMAP_NEW_HREF}>{CHANGE_DATE_HOURS_WORD}</Button>}
+            {canRetry && (
+              <Button variant={over ? undefined : "primary"} disabled={pending} onClick={resume}>
+                {over ? CHECK_AGAIN_WORD : TRY_AGAIN_WORD}
+              </Button>
+            )}
+            {fresh && (over || chain.stop === "TIMED_OUT" || chain.stop === "REQUESTS_CAPPED" || stopped) && (
+              <Button disabled={pending} onClick={() => act((a) => a.writeTopics(id))}>
+                {WRITE_TOPICS_WORD}
+              </Button>
+            )}
+          </div>
+        )}
+        {shown && <ActionError>{shown}</ActionError>}
+      </div>
+    </section>
+  );
+}
+
+/** The draft header's lead on a breakdown (who did what), or null to keep the run's own lead. */
+export function topicChainLeadOf(view: Pick<RoadmapView, "topicChain">): string | null {
+  return view.topicChain ? chainLeadLine(view.topicChain.gemini) : null;
 }
 
 /** The drafting card's two settings: the Area and the depth (or the date, by whose it is). */

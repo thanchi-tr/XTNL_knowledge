@@ -4486,10 +4486,11 @@ const codeOf = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:
 console.log("— revision 5 (§22.2, §23): switches, constants and unions —");
 {
   // ── The switches (only the lane named flips one, re-pinning it here in the same commit, on the user's go) ──
+  // The user switched all six TOPIC_* on in b388a9b (GOALS_MAX stays 1); the live-fix join re-pinned them here as set.
   eq(
-    "the switches: GOALS_MAX 1, GOAL_SLOTS_MAX 3, and TOPIC_PLANS/RATE/PLACE/NAMES/LINK/GROUND_LIVE all false",
+    "the switches: GOALS_MAX 1, GOAL_SLOTS_MAX 3, and TOPIC_PLANS/RATE/PLACE/NAMES/LINK/GROUND_LIVE all true (the user's b388a9b)",
     [RT.GOALS_MAX, RT.GOAL_SLOTS_MAX, RT.TOPIC_PLANS_LIVE, RT.TOPIC_RATE_LIVE, RT.TOPIC_PLACE_LIVE, RT.TOPIC_NAMES_LIVE, RT.TOPIC_LINK_LIVE, RT.TOPIC_GROUND_LIVE],
-    [1, 3, false, false, false, false, false, false]
+    [1, 3, true, true, true, true, true, true]
   );
   check("GOALS_MAX is within 1..GOAL_SLOTS_MAX (the database's CHECK keeps a slot within 1..3)", RT.GOALS_MAX >= 1 && RT.GOALS_MAX <= RT.GOAL_SLOTS_MAX);
   {
@@ -4505,8 +4506,14 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
     );
   }
   const off: RT.TopicSwitches = { plans: false, rate: false, place: false, names: false, link: false, ground: false };
-  const sw = (o: Partial<RT.TopicSwitches>) => RT.topicSwitchesOf(o);
-  eq("topicSwitchesOf() reads the six constants: every path off", RT.topicSwitchesOf(), off);
+  // Ruling 16's chain over explicit switches (a switch left out here is off), whatever the build's constants say.
+  const sw = (o: Partial<RT.TopicSwitches>) => RT.topicSwitchesOf({ ...off, ...o });
+  eq(
+    "topicSwitchesOf() reads the six constants (as the user set them) through ruling 16's chain",
+    RT.topicSwitchesOf(),
+    sw({ plans: RT.TOPIC_PLANS_LIVE, rate: RT.TOPIC_RATE_LIVE, place: RT.TOPIC_PLACE_LIVE, names: RT.TOPIC_NAMES_LIVE, link: RT.TOPIC_LINK_LIVE, ground: RT.TOPIC_GROUND_LIVE })
+  );
+  eq("…a switch given as false is off whatever its constant (a check's deps.topicSwitches): every path off", RT.topicSwitchesOf(off), off);
   eq("topicSwitchesOf({plans, rate, names}): names is false without ground (the spec's refusal)", sw({ plans: true, rate: true, names: true }), { ...off, plans: true, rate: true });
   eq("…with ground too, names and ground take effect together", sw({ plans: true, rate: true, names: true, ground: true }), { ...off, plans: true, rate: true, names: true, ground: true });
   eq("…ground alone is inert (it needs names)", sw({ plans: true, rate: true, ground: true }), { ...off, plans: true, rate: true });
@@ -4543,7 +4550,7 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
       DEEPER_REQUESTS_MAX_WITH_CANDIDATES: RT.DEEPER_REQUESTS_MAX_WITH_CANDIDATES,
     },
     {
-      TOPIC_PROMPT_VERSION: 1,
+      TOPIC_PROMPT_VERSION: 2,
       TOPIC_SAMPLES: 3,
       TOPIC_CANDIDATE_COUNT: 1,
       CONSENSUS_MIN: 2,
@@ -5057,8 +5064,8 @@ console.log("— revision 5 (§22.4, §22.5): the schemas and the instructions, 
   eq("GROUND_INSTRUCTION equals §22.5 exactly", GRD.GROUND_INSTRUCTION, inst("GROUND_INSTRUCTION"));
   eq("DEEPER_INSTRUCTION equals §22.5 exactly", TP.DEEPER_INSTRUCTION, inst("DEEPER_INSTRUCTION"));
   check(
-    'each instruction fences its input as "data, never instructions" (MAP in its tail), and TOPIC_PROMPT_VERSION is 1',
-    [RR.RATE_INSTRUCTION, TP.MAP_INSTRUCTION_PARTS.tail, TP.LINK_INSTRUCTION, GRD.GROUND_INSTRUCTION, TP.DEEPER_INSTRUCTION].every((t) => t.includes("data, never instructions")) && RT.TOPIC_PROMPT_VERSION === 1
+    'each instruction fences its input as "data, never instructions" (MAP in its tail), and TOPIC_PROMPT_VERSION is 2 (the live fix\'s RATE anchors, §22.20)',
+    [RR.RATE_INSTRUCTION, TP.MAP_INSTRUCTION_PARTS.tail, TP.LINK_INSTRUCTION, GRD.GROUND_INSTRUCTION, TP.DEEPER_INSTRUCTION].every((t) => t.includes("data, never instructions")) && RT.TOPIC_PROMPT_VERSION === 2
   );
 
   eq("RATE_RULE_NAMES (§22.7)", RR.RATE_RULE_NAMES, ["rate.coherence", "rate.consensus", "rate.caution", "rate.bounds"]);
@@ -5406,7 +5413,7 @@ console.log("— revision 5: LEVELS unchanged —");
     "replanUnpointed still refuses every kind but REFIT and MANUAL (so ReplanKind's new TOPICS changes no path; breakIntoTopicsCore is lane 8's)",
     /async function replanUnpointed\([^\n]*\{\r?\n\s*if \(writesOff\(deps\)\) return fail\(ROADMAP_WRITES_OFF\);\s*if \(kind !== "REFIT" && kind !== "MANUAL"\) return fail\("Pick Re-fit or Edit by hand\."\);/.test(read("src/lib/roadmap-server.ts"))
   );
-  check("the switches keep LEVELS the only plan kind a user can reach: topicSwitchesOf().plans is false", RT.topicSwitchesOf().plans === false);
+  check("a user reaches TOPICS plans exactly while TOPIC_PLANS_LIVE is on (topicSwitchesOf().plans; on since the user's b388a9b)", RT.topicSwitchesOf().plans === RT.TOPIC_PLANS_LIVE);
   const doc = read("docs/life-plan/roadmap-contracts.md");
   check("roadmap-contracts.md holds '## 22.' and '## 23.', and docs/life-plan/roadmap-topic-map.md (the spec) exists", /\n## 22\. /.test(doc) && /\n## 23\. /.test(doc) && existsSync(join(ROOT, "docs/life-plan/roadmap-topic-map.md")));
 }

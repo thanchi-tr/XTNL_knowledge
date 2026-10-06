@@ -1,0 +1,59 @@
+{
+  "aim": "narrow-deep",
+  "about": "Revision 5 (the Probe plan, F-R5-2): a narrow and deep aim in a Field Area: one result that needs several layers built on each other first. Run G-R's bar asks that it rates more layers than wide-shallow and less breadth. Two Domains chosen and one left out, no outline. No v2 drafts and no canned replies.",
+  "probe": false,
+  "today": "2026-10-07",
+  "areaFieldId": "fld_math",
+  "input": {
+    "intake": {
+      "aim": "Read and follow the full proof of the prime number theorem",
+      "fieldId": "fld_math",
+      "track": "CRAFT",
+      "domainIds": ["d_ma_numth", "d_ma_complex"],
+      "targetDay": "2028-04-03",
+      "hoursPerWeek": 6,
+      "newCardsPerWeek": 5,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "BASICS",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": null,
+      "examLabel": null
+    },
+    "areaName": "Mathematics",
+    "domains": [
+      { "id": "d_ma_numth", "name": "Number Theory", "fieldId": "fld_math", "cards": 12, "atSix": 2, "atTop": 0, "chosen": true },
+      { "id": "d_ma_complex", "name": "Complex Analysis", "fieldId": "fld_math", "cards": 5, "atSix": 0, "atTop": 0, "chosen": true },
+      { "id": "d_ma_linalg", "name": "Linear Algebra", "fieldId": "fld_math", "cards": 30, "atSix": 15, "atTop": 4, "chosen": false }
+    ],
+    "windows": []
+  },
+  "library": [
+    { "id": "d_ma_numth", "name": "Number Theory", "fieldId": "fld_math", "fieldName": "Mathematics", "cards": 12, "titles": ["Divisibility and primes", "The Euler product"], "tags": ["primes"] },
+    { "id": "d_ma_complex", "name": "Complex Analysis", "fieldId": "fld_math", "fieldName": "Mathematics", "cards": 5, "titles": ["Contour integrals"], "tags": ["complex"] },
+    { "id": "d_ma_linalg", "name": "Linear Algebra", "fieldId": "fld_math", "fieldName": "Mathematics", "cards": 30, "titles": ["Eigenvalues"], "tags": ["matrices"] }
+  ],
+  "drafts": [],
+  "v3": {
+    "probe": false,
+    "about": "Revision 5's RATE pack (run G-R): no v3 replies.",
+    "intake": {
+      "depth": 12,
+      "dateMode": "REALISTIC",
+      "exam": false,
+      "examDay": null,
+      "suggestAreas": false
+    },
+    "replies": []
+  },
+  "v4": {
+    "about": "Revision 5's RATE pack: no v4 replies.",
+    "replies": []
+  },
+  "v5": {
+    "about": "Revision 5 (the topic map): a RATE pack for the probe (run G-R). It carries no v2 drafts and no canned v3 or v4 replies, so revision 4's drafting families leave it out.",
+    "topicOnly": true
+  }
+}

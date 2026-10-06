@@ -61,7 +61,7 @@ import { usePlayOnSeen, useSeenValue, type SeenKey } from "@/components/glyph/us
 import type { TrackSigil } from "@/components/glyph/paths";
 // Revision 5, lane 9: pv.named after a Gemini-named Domain in a row's label (contracts ruling 67)
 import { NamedText, hasNamed } from "@/components/glyph/NamedMark";
-import { NOT_RECORDED_HERE, type WeekQuestKind, type WeekQuestRow, type WeekQuestVariant, type WeekQuestsView } from "@/lib/roadmap-types";
+import { NOT_RECORDED_HERE, type NamedPart, type WeekQuestKind, type WeekQuestRow, type WeekQuestVariant, type WeekQuestsView } from "@/lib/roadmap-types";
 import { seekTemplate } from "./roadmap-events";
 import {
   HEALTH_LINE,
@@ -188,6 +188,38 @@ export function labelWithNames(label: string): ReactNode {
  */
 export function namedLabelOf(row: Pick<WeekQuestRow, "label" | "labelParts">): ReactNode {
   return hasNamed(row.labelParts) ? <NamedText parts={row.labelParts} /> : labelWithNames(row.label);
+}
+
+/** The NamedParts covering [start, end) of their joined text (a part cut at an edge keeps its mark). */
+export function slicePartsOf(parts: readonly NamedPart[], start: number, end: number): NamedPart[] {
+  const out: NamedPart[] = [];
+  let at = 0;
+  for (const p of parts) {
+    const from = Math.max(start, at);
+    const to = Math.min(end, at + p.text.length);
+    if (to > from) out.push({ text: p.text.slice(from - at, to - at), geminiNamed: p.geminiNamed });
+    at += p.text.length;
+  }
+  return out;
+}
+
+/**
+ * The live fix (contracts §22.11): a PRACTICE's name, a STEP's or a CHECKPOINT's title as the row shows it, cut from the
+ * row's labelParts when its label holds a Gemini-named Domain; null otherwise (the row's own words, unchanged).
+ */
+export function headPartsOf(row: Pick<WeekQuestRow, "kind" | "label" | "labelParts">): NamedPart[] | null {
+  if (!hasNamed(row.labelParts) || !row.labelParts) return null;
+  const head = row.kind === "PRACTICE" ? practiceNameOf(row.label) : row.kind === "STEP" ? stepTitleOf(row.label) : row.kind === "CHECKPOINT" ? checkpointTitleOf(row.label) : null;
+  if (head == null) return null;
+  const at = row.label.indexOf(head);
+  if (at < 0) return null;
+  const parts = slicePartsOf(row.labelParts, at, at + head.length);
+  return hasNamed(parts) ? parts : null;
+}
+
+/** A parts line with each Gemini-named Domain marked (partsLineParts), else each Domain name marked as a name (withDomainNames). */
+function partsLineNode(row: WeekQuestRow, line: string, names: readonly string[]): ReactNode {
+  return hasNamed(row.partsLineParts) ? <NamedText parts={row.partsLineParts} /> : withDomainNames(line, names);
 }
 
 /** The Domain names a set's rows carry (a generator-2 row's parts), longest first: the names its lines may hold. */
@@ -346,7 +378,7 @@ function TodayRow({ row, weekStart, bases, track, names }: { row: WeekQuestRow; 
         {glyph}
         <span className="rm-q-lbl">{namedLabelOf(row)}</span>
         <span className="rm-q-cnt num">{weekQuestCountOf(row)}</span>
-        {partsLineOf(row) && <p className="rm-parts-l">{withDomainNames(partsLineOf(row)!, names)}</p>}
+        {partsLineOf(row) && <p className="rm-parts-l">{partsLineNode(row, partsLineOf(row)!, names)}</p>}
         <RowMeter row={row} from={from} />
         {/* inside the row's link, whose name says the row; the Key says the due days, the quota and the slip in words */}
         <RowAux row={row} weekStart={weekStart} quiet />
@@ -358,13 +390,14 @@ function TodayRow({ row, weekStart, bases, track, names }: { row: WeekQuestRow; 
       <Link className={cx("rm-quest-line", cls)} href={row.href ?? ROADMAP_CHECKPOINT_HREF} aria-label={name}>
         {glyph}
         <span className="rm-q-lbl">
-          {checkpointTitleOf(row.label)}
+          {headPartsOf(row) ? <NamedText parts={headPartsOf(row)} /> : checkpointTitleOf(row.label)}
           <span className="rm-q-dim"> · {weekQuestCountOf(row)}</span> <HonestyChip kind="context-only" label={SHORT_CONTEXT_ONLY} className="rm-wq-ctx" />
         </span>
       </Link>
     );
   }
   const head = row.kind === "PRACTICE" ? practiceNameOf(row.label) : stepTitleOf(row.label);
+  const headParts = headPartsOf(row);
   return (
     <button
       type="button"
@@ -376,7 +409,7 @@ function TodayRow({ row, weekStart, bases, track, names }: { row: WeekQuestRow; 
     >
       {glyph}
       <span className="rm-q-lbl">
-        {withDomainNames(head, names)}
+        {headParts ? <NamedText parts={headParts} /> : withDomainNames(head, names)}
         <span className="rm-q-dim">
           {` · ${weekQuestCountOf(row)}`}
           {!row.done ? placeSuffix(row.place) : ""}
@@ -534,27 +567,32 @@ function nowLabelOf(row: WeekQuestRow): ReactNode {
       return namedLabelOf(row);
     case "PRACTICE": {
       const name = practiceNameOf(row.label);
+      const named = headPartsOf(row);
       return (
         <>
-          <span data-wc="name">{name}</span>
+          <span data-wc="name">{named ? <NamedText parts={named} /> : name}</span>
           {row.label.slice(name.length)}
         </>
       );
     }
-    case "STEP":
+    case "STEP": {
+      const named = headPartsOf(row);
       return (
         <>
           <span className="sr-only">Step: </span>
-          {stepTitleOf(row.label)}
+          {named ? <NamedText parts={named} /> : stepTitleOf(row.label)}
         </>
       );
-    case "CHECKPOINT":
+    }
+    case "CHECKPOINT": {
+      const named = headPartsOf(row);
       return (
         <>
           <span className="sr-only">Checkpoint: </span>
-          {checkpointTitleOf(row.label)}
+          {named ? <NamedText parts={named} /> : checkpointTitleOf(row.label)}
         </>
       );
+    }
   }
 }
 
@@ -607,7 +645,7 @@ function NowRow({ row, view, bases, track, today, onLogCheckpoint, names }: { ro
           </button>
         )}
       </div>
-      {partsLineOf(row) && <p className="rm-parts-l">{withDomainNames(partsLineOf(row)!, names)}</p>}
+      {partsLineOf(row) && <p className="rm-parts-l">{partsLineNode(row, partsLineOf(row)!, names)}</p>}
       <RowMeter row={row} from={from} />
       <RowAux row={row} weekStart={view.weekStart} today={today}>
         {row.kind === "ADD" && row.href && (
@@ -668,11 +706,16 @@ function RoadmapVariant({ view, onLogCheckpoint, onShowBasis, today, shownElsewh
       </div>
       {view.state === "PAST_DUE" && <p className="rm-lag t-meta">{pastDueLine(view.milestoneOrd, null)}. No week quests this week.</p>}
       {view.state === "HELD" && <p className="rm-lag t-meta">A held week: no week quests, and nothing is asked of it.</p>}
-      {notes.map((n) => (
-        <p key={n} className="rm-lag t-meta">
-          {n}
-        </p>
-      ))}
+      {notes.map((n) => {
+        // The live fix (§22.11): a note holding a Gemini-named Domain renders its parts with pv.named.
+        const at = view.notes.indexOf(n);
+        const parts = at >= 0 ? view.notesParts?.[at] : undefined;
+        return (
+          <p key={n} className="rm-lag t-meta">
+            {hasNamed(parts) ? <NamedText parts={parts} /> : n}
+          </p>
+        );
+      })}
       {view.rows.length > 0 && (
         <div className="rm-quest">
           {view.rows.map((row) => (

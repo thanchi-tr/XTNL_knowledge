@@ -76,6 +76,7 @@ import {
   interval,
   positionCountOf,
   provenanceOf,
+  topicSwitchesOf,
   type ActivityCardAnswer,
   type ActivityConfirm,
   type ActivityGate,
@@ -1427,8 +1428,11 @@ async function main() {
     const offRenders = FIXTURE_STATES.filter((s) => !roadmapFixture(s).gates).map((s) => ({ s, r: renders.get(s)! }));
     const geminiButton = offRenders.filter(({ r }) => r.intake.includes("Draft with Gemini") || /Gemini can draft/.test(r.aim)).map(({ s }) => s);
     check("switches: with ROADMAP_GEMINI_LIVE false no render shows [Draft with Gemini]", geminiButton.length === 0, geminiButton.join(", "));
-    const formGemini = offRenders.filter(({ r }) => r.intake && /Gemini/.test(textOf(r.intake))).map(({ s }) => s);
-    check("switches: … nor any Gemini sentence in the form", formGemini.length === 0, formGemini.join(", "));
+    // The topic paths read the build's TOPIC_* constants as the user set them (on since b388a9b): while TOPIC_PLANS_LIVE is
+    // on, [Write the topics]'s own line ("… No Gemini.") is the one sentence naming Gemini an ungated form may hold.
+    const topicPathFree = (text: string) => (topicSwitchesOf().plans ? text.split(copy.WRITE_TOPICS_LINE).join("") : text);
+    const formGemini = offRenders.filter(({ r }) => r.intake && /Gemini/.test(topicPathFree(textOf(r.intake)))).map(({ s }) => s);
+    check("switches: … nor any Gemini sentence in the form (but [Write the topics]'s 'No Gemini.' while TOPIC_PLANS_LIVE)", formGemini.length === 0, formGemini.join(", "));
     const gapsShown = offRenders.filter(({ r }) => /Areas Gemini thinks may need their own Domain|suggest areas you don&#x27;t have yet/.test(r.page + r.intake)).map(({ s }) => s);
     check("switches: with ROADMAP_GAPS_LIVE false no render shows the suggestions switch or the gap panel", gapsShown.length === 0, gapsShown.join(", "));
     check("switches: the lead's gates show the gap panel and the Gemini path", pageOf("draft-gaps").includes("Areas Gemini thinks may need their own Domain") && renders.get("intake-gemini")!.intake.includes("Draft with Gemini") && gapPanelShown([{ itemId: "g", name: "x", source: { kind: "AIM", index: 0 }, similarTo: null }], 0) === false);
@@ -1446,7 +1450,7 @@ async function main() {
       noOutline.includes("What to learn comes from your outline. Gemini doesn't write topics: it would be guessing.") && noOutline.includes("Add your outline") && !noOutline.includes(copy.OUTLINE_EMPTY_EXAM_LINE) && noOutlineExam.includes("Paste the official syllabus so every line has a place in the plan.")
     );
     const emptyLib = flat(renders.get("intake-empty-library")!.intake);
-    check("empty library: 'Name the areas this needs' and the outline pointer, no suggestions and no Gemini", emptyLib.includes(copy.NAME_AREAS_LABEL) && emptyLib.includes(copy.NAME_AREAS_HINT) && !/Gemini|suggest/i.test(emptyLib));
+    check("empty library: 'Name the areas this needs' and the outline pointer, no suggestions and no Gemini (but [Write the topics]'s 'No Gemini.' while TOPIC_PLANS_LIVE)", emptyLib.includes(copy.NAME_AREAS_LABEL) && emptyLib.includes(copy.NAME_AREAS_HINT) && !/Gemini|suggest/i.test(topicPathFree(emptyLib)));
     check("outline: the line-Domain groups, 'Not tied to a Domain' last, a 'Change' select per line", /class="rm-lgroups"/.test(intakeDepth) && intakeDepth.lastIndexOf(">Not tied to a Domain<") > intakeDepth.lastIndexOf(">Inference</span>") && (intakeDepth.match(/aria-label="Change the Domain of S\d+"/g) ?? []).length === 6);
     check("exam: 'Is there an exam or qualification at the end?' with its date, a waypoint", intakeDepthText.includes("Is there an exam or qualification at the end?") && intakeDepthText.includes("When is it? (optional)") && intakeDepthText.includes("Your exam date is a waypoint: the depth goes on past it."));
     check(
@@ -1951,7 +1955,7 @@ async function main() {
       );
       check(
         "option (b): the form reads newCardsRequiredOf (no writeNeedOf left in the form: the spare alone never makes the pace 'needed')",
-        /const newCardsRequired = newCardsRequiredOf\(realistic, coverage, paceMeasured\)/.test(formSrc) && !/writeNeedOf/.test(formSrc) && /intakeOf\(d, view\.today, \{ chosen, newCardsRequired, fields: view\.fields \}\)/.test(formSrc)
+        /const newCardsRequired = newCardsRequiredOf\(realistic, coverage, paceMeasured\)/.test(formSrc) && !/writeNeedOf/.test(formSrc) && /intakeOf\(d, view\.today, \{ chosen, newCardsRequired(?:: newCardsRequired \|\| topicsPaceNeeded)?, fields: view\.fields \}\)/.test(formSrc)
       );
       // Rendered: the same intake with no pace measured anywhere, its draft holding Probability alone, then Probability and Inference.
       const unmeasured = (ids: string[]): typeof depthIntake => ({
@@ -6392,7 +6396,7 @@ async function main() {
         Object.keys(stale1.problems)[0] === "area" &&
         stale1.problems.area === "That Field no longer exists. Pick the Area this grows." &&
         stale1.problems.domains === undefined &&
-        /intakeOf\(d, view\.today, \{ chosen, newCardsRequired, fields: view\.fields \}\)/.test(formSrc1),
+        /intakeOf\(d, view\.today, \{ chosen, newCardsRequired(?:: newCardsRequired \|\| topicsPaceNeeded)?, fields: view\.fields \}\)/.test(formSrc1),
       j1(stale1.problems)
     );
     check(

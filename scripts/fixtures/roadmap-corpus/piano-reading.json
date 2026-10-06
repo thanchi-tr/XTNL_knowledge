@@ -1,0 +1,59 @@
+{
+  "aim": "piano-reading",
+  "about": "Revision 5 (the names stage, G-X): a synthetic Field pack, never the user's words: a motor skill paired with a notation to read; moderate depth. Two aim-named Domains chosen, one left out, no outline. MAP sends the Area name and the aim; LINK and GROUND send the Area name and the names. No v2 drafts and no canned replies.",
+  "probe": false,
+  "today": "2026-10-07",
+  "areaFieldId": "fld_music",
+  "input": {
+    "intake": {
+      "aim": "Read music and play simple pieces on piano",
+      "fieldId": "fld_music",
+      "track": "CRAFT",
+      "domainIds": ["d_pi_read", "d_pi_piano"],
+      "targetDay": "2027-06-07",
+      "hoursPerWeek": 3,
+      "newCardsPerWeek": 4,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "BASICS",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": null,
+      "examLabel": null
+    },
+    "areaName": "Music",
+    "domains": [
+      { "id": "d_pi_read", "name": "Music Reading", "fieldId": "fld_music", "cards": 6, "atSix": 1, "atTop": 0, "chosen": true },
+      { "id": "d_pi_piano", "name": "Piano", "fieldId": "fld_music", "cards": 3, "atSix": 0, "atTop": 0, "chosen": true },
+      { "id": "d_pi_theory", "name": "Music Theory", "fieldId": "fld_music", "cards": 10, "atSix": 2, "atTop": 0, "chosen": false }
+    ],
+    "windows": []
+  },
+  "library": [
+    { "id": "d_pi_read", "name": "Music Reading", "fieldId": "fld_music", "fieldName": "Music", "cards": 6, "titles": ["Notes on the treble staff"], "tags": ["notation"] },
+    { "id": "d_pi_piano", "name": "Piano", "fieldId": "fld_music", "fieldName": "Music", "cards": 3, "titles": ["Hand position at the keyboard"], "tags": ["keyboard"] },
+    { "id": "d_pi_theory", "name": "Music Theory", "fieldId": "fld_music", "fieldName": "Music", "cards": 10, "titles": ["Major scales"], "tags": ["theory"] }
+  ],
+  "drafts": [],
+  "v3": {
+    "probe": false,
+    "about": "Revision 5's names-stage pack (G-X): no v3 replies.",
+    "intake": {
+      "depth": 12,
+      "dateMode": "REALISTIC",
+      "exam": false,
+      "examDay": null,
+      "suggestAreas": false
+    },
+    "replies": []
+  },
+  "v4": {
+    "about": "Revision 5's names-stage pack: no v4 replies.",
+    "replies": []
+  },
+  "v5": {
+    "about": "Revision 5 (the topic map): a MAP, LINK and GROUND pack for the names stage (run G-X; it is not in G-R, so K and breadth are code's estimate). It carries no v2 drafts and no canned v3 or v4 replies, so revision 4's drafting families leave it out.",
+    "topicOnly": true
+  }
+}

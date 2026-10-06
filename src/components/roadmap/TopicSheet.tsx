@@ -100,7 +100,8 @@ export function TopicSheet({ open, onClose, roadmapId, map, row, draft, namesOn,
   const chip = rowChipOf(row, kept);
   const p = parentNamesOf(map, row);
   const rowsByKey = new Map(map.layers.flatMap((l) => l.topics.map((r) => [r.key, r] as const)));
-  const siblings = (layer?.topics ?? []).filter((r) => r.key !== row.key);
+  // Merge targets: the layer's shown rows (a name behind the "not checked" fold is kept first, never merged into).
+  const siblings = (layer?.topics ?? []).filter((r) => r.key !== row.key && r.cls !== "NOT_CHECKED");
   const gemini = isGeminiName(row.cls);
   const done = () => {
     setMode(null);

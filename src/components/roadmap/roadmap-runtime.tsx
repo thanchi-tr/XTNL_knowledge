@@ -12,7 +12,7 @@
  * shows the error in the kit's one error voice (ActionError). On a server
  * with writes off every roadmap action refuses with ROADMAP_WRITES_OFF.
  */
-import { createContext, useCallback, useContext, useMemo, useState, useTransition, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
   acceptPlan,
@@ -78,7 +78,7 @@ import {
 } from "@/app/actions/roadmap";
 import { archiveTask, rescheduleGoal, unarchiveTask } from "@/app/actions/tasks";
 import { createField } from "@/app/actions/taxonomy";
-import type { RoadmapActionResult } from "@/lib/roadmap-types";
+import { DRAFT_REFRESH_MS, TOPIC_RUN_STALE_MS, type RoadmapActionResult, type TopicChainView } from "@/lib/roadmap-types";
 
 /** Every server call the roadmap UI makes, by its real signature. */
 export interface RoadmapActions {
@@ -385,4 +385,66 @@ export function useRoadmapAction() {
     [runtime]
   );
   return { run, pending, error, setError, runtime };
+}
+
+/**
+ * The Gemini chain's poll (ruling 47; fix round). While the view says a breakdown has a step left
+ * (TopicChainView.done false), it asks the server for the next step every DRAFT_REFRESH_MS
+ * (advanceTopicChain with retry false: one step per invocation and idempotent, so two tabs are safe:
+ * a step still running is returned and nothing is claimed) and re-renders the page from the server.
+ * It stops when the server answers done or refuses (the refusal is returned for the card to show),
+ * and when the chain hasn't moved for TOPIC_RUN_STALE_MS plus a poll (`stalled`: the card reads it
+ * as stopped and offers its buttons). `restart` polls again after a tap. A fixture never polls.
+ */
+export function useTopicChainPoll(roadmapId: string | null, chain: TopicChainView | null | undefined): { error: string | null; stalled: boolean; restart: () => void } {
+  const runtime = useRoadmapRuntime();
+  const [nonce, setNonce] = useState(0);
+  const [ended, setEnded] = useState<{ at: string; error: string | null; stalled: boolean } | null>(null);
+  const active = Boolean(roadmapId && chain && !chain.done && !runtime.fixture);
+  // The chain's key changes whenever a step is claimed or settles: the poll's clock starts again there.
+  const at = chain ? `${chain.key}#${nonce}` : "";
+  useEffect(() => {
+    if (!active || !roadmapId) return;
+    let stopped = false;
+    let busy = false;
+    let late = 0;
+    const t0 = Date.now();
+    const end = (error: string | null, stalled: boolean) => {
+      stopped = true;
+      window.clearInterval(id);
+      setEnded({ at, error, stalled });
+    };
+    const tick = async () => {
+      if (stopped || busy) return;
+      if (Date.now() - t0 > TOPIC_RUN_STALE_MS + DRAFT_REFRESH_MS) return end(null, true);
+      busy = true;
+      try {
+        const res = await runtime.actions.advanceTopicChain(roadmapId, false);
+        if (stopped) return;
+        if (!res.ok) end(res.error, false);
+        else if (res.value.done) {
+          stopped = true;
+          window.clearInterval(id);
+          // The refresh below takes the page off the wait; if it still waits a while later, say it stopped.
+          late = window.setTimeout(() => setEnded({ at, error: null, stalled: true }), DRAFT_REFRESH_MS * 2);
+        }
+        runtime.refresh();
+      } catch {
+        // The network: the next poll tries again, and the clock above ends it.
+      } finally {
+        busy = false;
+      }
+    };
+    const id = window.setInterval(() => void tick(), DRAFT_REFRESH_MS);
+    const first = window.setTimeout(() => void tick(), 0);
+    return () => {
+      stopped = true;
+      window.clearInterval(id);
+      window.clearTimeout(first);
+      window.clearTimeout(late);
+    };
+  }, [active, roadmapId, runtime, at]);
+  const mine = ended && ended.at === at ? ended : null;
+  const restart = useCallback(() => setNonce((n) => n + 1), []);
+  return { error: mine?.error ?? null, stalled: mine?.stalled ?? false, restart };
 }

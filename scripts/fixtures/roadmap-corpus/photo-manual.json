@@ -1,0 +1,59 @@
+{
+  "aim": "photo-manual",
+  "about": "Revision 5 (the names stage, G-X): a synthetic Field pack, never the user's words: a craft with a technical base (exposure, focus) and an eye for composition. Two aim-named Domains chosen, one left out, no outline. MAP sends the Area name and the aim; LINK and GROUND send the Area name and the names. No v2 drafts and no canned replies.",
+  "probe": false,
+  "today": "2026-10-07",
+  "areaFieldId": "fld_photo",
+  "input": {
+    "intake": {
+      "aim": "Take sharp, well-composed photos with a manual camera",
+      "fieldId": "fld_photo",
+      "track": "CRAFT",
+      "domainIds": ["d_ph_comp", "d_ph_manual"],
+      "targetDay": "2027-06-07",
+      "hoursPerWeek": 3,
+      "newCardsPerWeek": 5,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "BASICS",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": null,
+      "examLabel": null
+    },
+    "areaName": "Photography",
+    "domains": [
+      { "id": "d_ph_comp", "name": "Composition", "fieldId": "fld_photo", "cards": 8, "atSix": 2, "atTop": 0, "chosen": true },
+      { "id": "d_ph_manual", "name": "Manual Camera Controls", "fieldId": "fld_photo", "cards": 5, "atSix": 1, "atTop": 0, "chosen": true },
+      { "id": "d_ph_edit", "name": "Photo Editing", "fieldId": "fld_photo", "cards": 12, "atSix": 4, "atTop": 1, "chosen": false }
+    ],
+    "windows": []
+  },
+  "library": [
+    { "id": "d_ph_comp", "name": "Composition", "fieldId": "fld_photo", "fieldName": "Photography", "cards": 8, "titles": ["The rule of thirds"], "tags": ["framing"] },
+    { "id": "d_ph_manual", "name": "Manual Camera Controls", "fieldId": "fld_photo", "fieldName": "Photography", "cards": 5, "titles": ["Shutter speed and blur"], "tags": ["exposure"] },
+    { "id": "d_ph_edit", "name": "Photo Editing", "fieldId": "fld_photo", "fieldName": "Photography", "cards": 12, "titles": ["Cropping a print"], "tags": ["editing"] }
+  ],
+  "drafts": [],
+  "v3": {
+    "probe": false,
+    "about": "Revision 5's names-stage pack (G-X): no v3 replies.",
+    "intake": {
+      "depth": 12,
+      "dateMode": "REALISTIC",
+      "exam": false,
+      "examDay": null,
+      "suggestAreas": false
+    },
+    "replies": []
+  },
+  "v4": {
+    "about": "Revision 5's names-stage pack: no v4 replies.",
+    "replies": []
+  },
+  "v5": {
+    "about": "Revision 5 (the topic map): a MAP, LINK and GROUND pack for the names stage (run G-X; it is not in G-R, so K and breadth are code's estimate). It carries no v2 drafts and no canned v3 or v4 replies, so revision 4's drafting families leave it out.",
+    "topicOnly": true
+  }
+}

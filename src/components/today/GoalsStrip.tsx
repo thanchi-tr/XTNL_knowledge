@@ -8,6 +8,7 @@ import { Meter } from "@/components/ui/Meter";
 import { SectionHeader } from "@/components/ui/Tabs";
 import { goalCardCopy } from "./board-ui";
 import { TRACK_SIGIL } from "./format";
+import { NamedTitle, namedOfTitle, type TodayNamedTitles } from "./NamedTitle";
 
 interface Props {
   goals: Record<Horizon, GoalCard[]>;
@@ -25,6 +26,8 @@ interface Props {
   onReschedule?: (goalId: string) => void;
   /** A goal just captured: outlined for a moment, and said (TodayBoard finds it by data-template-id). */
   justAdded?: string | null;
+  /** The live fix (contracts §22.11): a milestone goal's Gemini-named Domain names, by template id, and the page's mark (pv.named). */
+  namedTitles?: TodayNamedTitles | null;
 }
 
 const HORIZON_ORDER: Horizon[] = ["SHORT", "MID", "LONG"];
@@ -82,7 +85,7 @@ function PaysText({ text }: { text: string }) {
  * close pays 0 whatever it stated, so the card never shows '× progress'.
  * No +1 (it is measured from your records), and never an owed tone.
  */
-export function GoalsStrip({ goals, busy, onProgress, launched = false, onClose, onReschedule, justAdded = null }: Props) {
+export function GoalsStrip({ goals, busy, onProgress, launched = false, onClose, onReschedule, justAdded = null, namedTitles }: Props) {
   const list = HORIZON_ORDER.flatMap((h) => goals[h]);
 
   return (
@@ -108,7 +111,7 @@ export function GoalsStrip({ goals, busy, onProgress, launched = false, onClose,
               <div key={g.template.id} className="goal" data-template-id={g.template.id} data-just-added={fresh ? "1" : undefined}>
                 <div className="gh">
                   <b>
-                    {title}
+                    <NamedTitle title={title} named={namedOfTitle(namedTitles, g.template.id)} mark={namedTitles?.mark} />
                     {fresh && <span className="sr-only">, just added</span>}
                   </b>
                   <span className="goal-meta">

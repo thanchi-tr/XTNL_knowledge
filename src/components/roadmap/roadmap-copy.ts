@@ -102,6 +102,8 @@ import { payBar } from "@/lib/life-economy";
 import type { HonestyKind } from "@/components/glyph/HonestyChip";
 // Revision 5, lane 9: the topic map's words (contracts §22.11; ui-motion.md §15).
 import { BREADTH_WORD, type BreadthKey, type Caution, type EmptyLayerOffer, type LayerChange, type PlanKind, type TopicClass, type TopicLayerView, type TopicNote } from "@/lib/roadmap-types";
+// Revision 5, fix round: the Gemini chain's wait and stop lines (ruling 47).
+import type { RunPhase, TopicChainStop } from "@/lib/roadmap-types";
 
 // ═══ The contract's copy ═════════════════════════════════════════════════════
 
@@ -2780,4 +2782,47 @@ export function layerTitleShort(names: readonly string[], k: number, n: number):
   const shown = names.slice(0, 2).join(", ");
   const more = names.length > 2 ? ` +${names.length - 2}` : "";
   return `${shown}${more} · layer ${k} of ${n}`;
+}
+
+// ─── The Gemini chain's wait and stop lines (fix round; ruling 47; word-light, ui-motion §15.9) ───
+
+/** The wait card's step word: "Gemini · map · started 12 s ago". */
+export const CHAIN_STEP_WORD: Readonly<Record<RunPhase, string>> = { RATE: "estimate", MAP: "map", LINK: "links", GROUND: "web check", DEEPER: "go deeper" };
+export function chainRunningLine(phase: RunPhase | null, started: string): string {
+  return `Gemini · ${phase ? CHAIN_STEP_WORD[phase] : "breakdown"} · started ${started}`;
+}
+/** A breakdown step past TOPIC_RUN_STALE_MS, or a poll that couldn't go on. */
+export const CHAIN_STOPPED_LINE = "Breakdown stopped (timed out)";
+export const TRY_AGAIN_WORD = "Try again";
+export const CHECK_AGAIN_WORD = "Check again";
+export const FEWER_LAYERS_WORD = "Fewer layers";
+export const CHANGE_DATE_HOURS_WORD = "Change date, hours or pace";
+export const RATE_AGAIN_WORD = "Rate again";
+/** A stopped breakdown's line (TopicChainView.stop); the server's own words (TopicChainView.line) follow it where it sends them. */
+export function chainStopLine(stop: TopicChainStop, unchecked: number): string {
+  switch (stop) {
+    case "OVER":
+      return "Doesn't fit your date and hours yet.";
+    case "IMPOSSIBLE":
+      return "Can't fit as set.";
+    case "GROUND_FAILED":
+      return `${unchecked} not checked · web check failed`;
+    case "MAP_FAILED":
+      return "Gemini's map didn't come back.";
+    case "TIMED_OUT":
+      return CHAIN_STOPPED_LINE;
+    case "REQUESTS_CAPPED":
+      return "Today's Gemini requests are used up.";
+    case "GROUNDED_CAPPED":
+      return "Today's web checks are used up.";
+    case "NOTHING_DEEPER":
+      return "Gemini named nothing narrower.";
+  }
+}
+/** The draft header's lead on a breakdown: who did what (never "Built from your numbers." beside Gemini's estimate or map). */
+export function chainLeadLine(g: { rated: boolean; mapped: boolean }): string | null {
+  if (g.rated && g.mapped) return "Gemini estimated the layers and mapped the topics. You keep each layer.";
+  if (g.rated) return "Gemini estimated the layers. You keep each layer.";
+  if (g.mapped) return "Gemini mapped the topics. You keep each layer.";
+  return null;
 }

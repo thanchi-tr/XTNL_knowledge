@@ -61,9 +61,11 @@
  *
  * Revision 5, lane 10 (contracts §22.5, §22.6, §23.5; rulings 19, 40, 66):
  *   - The topic phases' packs (topicPackOf): RATE, MAP, LINK, GROUND and DEEPER, each its frozen instruction
- *     (TOPIC_PROMPT_VERSION 1), its exact schema, and only the sections §22.6 names, fenced with asData; the keymap
- *     (key → topic lineage or Domain id) stays on the server. topicInputHashMaterial covers the phase and K.
- *   - stripFiguresOf (ruling 40): every figure and currency token leaves the aim a topic pack sends.
+ *     (TOPIC_PROMPT_VERSION; 2 since the live fix's RATE anchors), its exact schema, and only the sections §22.6
+ *     names, fenced with asData; the keymap (key → topic lineage or Domain id) stays on the server.
+ *     topicInputHashMaterial covers the phase and K.
+ *   - stripFiguresOf (ruling 40, revised by the live fix, §22.20): money, personal quantities, dates, schedules and
+ *     currency leave the aim a topic pack sends; the aim's target or standard ("sub-50 10K", "IELTS 7") stays.
  *   - Split clauses leave every pack (aimLessSplitOf): the topic packs and the LEVELS pack (EvidenceInput
  *     .splitClauses; ruling 66). With none, the LEVELS pack is byte-identical.
  *   - The cross-goal exclusions (packableDomainsOf; §23.5): no pack holds another DRAFT, ACTIVE or PAUSED goal's
@@ -74,7 +76,24 @@
  */
 import { asData } from "./gemini";
 import { words } from "./synonyms";
-import { COACH_EXCLUSIONS, CURRENCY_WORDS, SPELLED_NUMBER_WORDS } from "./roadmap-lexicon";
+import {
+  COACH_EXCLUSIONS,
+  CURRENCY_WORDS,
+  DATE_ABBREVIATIONS,
+  DATE_WORDS,
+  DATE_WORDS_CAPITALISED,
+  FIGURE_BODY_UNITS,
+  FIGURE_BODY_WORDS,
+  FIGURE_CLOCK_WORDS,
+  FIGURE_MONEY_WORDS,
+  FIGURE_PERIOD_ADVERBS,
+  FIGURE_PERIOD_WORDS,
+  FIGURE_PERSONAL_LEADS,
+  FIGURE_RATE_UNITS,
+  FIGURE_TIME_UNITS,
+  FIGURE_YEAR_LEADS,
+  SPELLED_NUMBER_WORDS,
+} from "./roadmap-lexicon";
 import { RATE_INSTRUCTION, RATE_RESPONSE_SCHEMA } from "./roadmap-rating";
 import { DEEPER_INSTRUCTION, DEEPER_RESPONSE_SCHEMA, LINK_INSTRUCTION, linkSchemaOf, mapInstructionOf, mapSchemaOf } from "./roadmap-topics";
 import { GROUND_INSTRUCTION, groundContentsOf } from "./roadmap-grounding";
@@ -642,27 +661,120 @@ const coreOf = (token: string): string =>
     .toLowerCase()
     .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
 
+const foldedWords = (list: readonly string[]): Set<string> => new Set(list.map((w) => w.toLowerCase()));
+/** stripFiguresOf's word sets (roadmap-lexicon FIGURE_*; the live fix, ruling 40 revised, contracts §22.20). */
+const FIG = {
+  money: foldedWords(FIGURE_MONEY_WORDS),
+  bodyUnits: foldedWords(FIGURE_BODY_UNITS),
+  body: foldedWords(FIGURE_BODY_WORDS),
+  personal: foldedWords(FIGURE_PERSONAL_LEADS),
+  time: foldedWords(FIGURE_TIME_UNITS),
+  rate: foldedWords(FIGURE_RATE_UNITS),
+  period: foldedWords(FIGURE_PERIOD_WORDS),
+  periodAdverbs: foldedWords(FIGURE_PERIOD_ADVERBS),
+  clock: foldedWords(FIGURE_CLOCK_WORDS),
+  yearLeads: foldedWords(FIGURE_YEAR_LEADS),
+  months: foldedWords([...DATE_WORDS, ...DATE_WORDS_CAPITALISED, ...DATE_ABBREVIATIONS]),
+  per: new Set(["a", "an", "per", "each", "every"]),
+  /** Words that end a figure's reach as a clause break does. */
+  joiners: new Set(["and", "or", "but", "while", "then", "plus", "also"]),
+};
+const reEsc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+/** A body measure written into its figure ("8kg", "180lbs"). */
+const FIG_BODY_MERGED = new RegExp(`^\\d+(?:[.,]\\d+)?(?:${FIGURE_BODY_UNITS.map(reEsc).join("|")})$`, "iu");
+/** A timeline or an age written into its figure ("6mo", "30-day", "45-year-old", "45yo"). */
+const FIG_TIME_MERGED = /^\d+(?:[.,]\d+)?-?(?:days?|weeks?|wks?|months?|mos?|mths?|years?|yrs?|yo|y\/o)(?:-old)?$/iu;
+/** A schedule written into its figure ("3x", "30min", "2h", "3x/week"). */
+const FIG_RATE_MERGED = /^\d+(?:[.,]\d+)?(?:x|min|mins|h|hr|hrs)(?:\/\p{L}+)?$/iu;
+/** A clock time ("6pm", "7:30am"). */
+const FIG_CLOCK_MERGED = /^\d{1,2}(?:[:.]\d{2})?(?:am|pm|a\.m\.?|p\.m\.?)$/iu;
+/** A numeric date ("12/03", "2026-10-07", "07.10.2026"); a decimal ("7.5") or a range ("10-12") is not. */
+const FIG_DATE_NUMERIC = /^(?:\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}|\d{1,2}\/\d{1,2})$/u;
+/** The packs' own key shapes ("L1", "S2", "T3", "U1", "DIFF_6"): never an aim's target. */
+const FIG_KEY_SHAPED = /^(?:[lstu]\d{1,2}|diff_?\d)$/iu;
+const FIG_YEAR_SHAPED = /^(?:19|20)\d{2}s?$/u;
+
 /**
- * Figure stripping (ruling 40): removes every whitespace-separated token holding a number (\p{N}) or a currency
- * sign (\p{Sc}), every CURRENCY_WORDS word (exact, case-folded), and every SPELLED_NUMBER_WORDS word that stands in
- * an unbroken run of them next to a removed token ("ten thousand dollars" goes whole, "a hundred kanji" stays);
- * then single spaces. The live aim's "100k" is removed. The stored aim never changes. Pure; never throws.
+ * Figure stripping (ruling 40, revised by the live fix; contracts §22.20). A figure is an unbroken run of tokens each
+ * holding a number (\p{N}) or a SPELLED_NUMBER_WORDS word ("sub-50 10K", "ten thousand"). Removed:
+ *   - every token holding a currency sign (\p{Sc}) and every CURRENCY_WORDS word, as before;
+ *   - money: a figure within 3 words of a FIGURE_MONEY_WORDS word, no clause break or joiner between ("a 100k
+ *     portfolio", "save 5000", "retire at 55"), whatever its suffix (k, m, bn);
+ *   - personal quantities: a body measure (a FIGURE_BODY_UNITS unit after it or written into it: "8 kg", "8kg"; a
+ *     FIGURE_BODY_WORDS word within 2 words: "15% body fat"), an age or one's own count (after a FIGURE_PERSONAL_LEADS
+ *     word: "my 40s", "aged 45"; "45 years old", "45-year-old");
+ *   - dates and schedules, which a topic pack never sends (§22.6): a timeline ("in 6 months"), a schedule ("30 minutes
+ *     a day", "3 times a week", "twice a week", "3x"), a clock time ("6pm", "7 am"), a numeric date ("12/03"), a day
+ *     beside a month ("3 March"), a year after a FIGURE_YEAR_LEADS word or ending its clause ("by 2027");
+ *   - the packs' key shapes ("DIFF_6", "L1", "T2", any token with "_" and a digit) and digit strings of 6 or more;
+ *   - a figure touching a removed token (the spelled-number rule: "ten thousand dollars" goes whole).
+ * A removed figure takes its unit, its schedule's period and "old" with it. Every other figure stays: the aim's
+ * target or standard ("Run a sub-50 10K", "Reach IELTS 7", "Pass JLPT N2", "Learn 20 songs", "B2", "a hundred
+ * kanji"). Then single spaces. The live aim's "100k" (beside "portfolio") is removed. The stored aim never changes.
+ * Pure; never throws.
  */
 export function stripFiguresOf(text: string): string {
   const tokens = (typeof text === "string" ? text : "").split(/\s+/u).filter((t) => t.length > 0);
-  const removed = tokens.map((t) => /[\p{N}\p{Sc}]/u.test(t) || currencyWords.has(coreOf(t)));
-  const spelled = tokens.map((t, i) => !removed[i] && spelledNumbers.has(coreOf(t)));
-  const drop = [...removed];
-  for (let i = 0; i < tokens.length; ) {
-    if (!spelled[i]) {
-      i += 1;
+  const n = tokens.length;
+  const core = tokens.map(coreOf);
+  /** A clause break right after token i (its own trailing punctuation). */
+  const breakAfter = tokens.map((t) => /[.,;:!?]["'’”)\]]*$/u.test(t));
+  const open = (j: number): boolean => j > 0 && j < n && !breakAfter[j - 1];
+  const drop = tokens.map((t, i) => /\p{Sc}/u.test(t) || currencyWords.has(core[i]));
+  const isDigit = tokens.map((t) => /\p{N}/u.test(t));
+  const isSpelled = tokens.map((t, i) => !isDigit[i] && spelledNumbers.has(core[i]));
+  /** The words within `reach` of [a, b) in its clause, no break or joiner crossed. */
+  const near = (a: number, b: number, reach: number): number[] => {
+    const out: number[] = [];
+    for (let j = b; j < n && j < b + reach; j++) {
+      if (breakAfter[j - 1] || FIG.joiners.has(core[j])) break;
+      out.push(j);
+    }
+    for (let j = a - 1; j >= 0 && j >= a - reach; j--) {
+      if (breakAfter[j] || FIG.joiners.has(core[j])) break;
+      out.push(j);
+    }
+    return out;
+  };
+  /** A schedule's period starting at j: "a day", "per week", "/week", "daily"; [] when none. */
+  const periodAt = (j: number): number[] => {
+    if (!open(j)) return [];
+    if (FIG.periodAdverbs.has(core[j]) || (tokens[j].startsWith("/") && FIG.period.has(core[j]))) return [j];
+    if (FIG.per.has(core[j]) && open(j + 1) && FIG.period.has(core[j + 1])) return [j, j + 1];
+    return [];
+  };
+  for (let a = 0; a < n; ) {
+    if (!isDigit[a] && !isSpelled[a]) {
+      a += 1;
       continue;
     }
-    let j = i;
-    while (j < tokens.length && spelled[j]) j += 1;
-    // [i, j) is one unbroken run of spelled numbers: it goes when a removed token touches either end.
-    if ((i > 0 && removed[i - 1]) || (j < tokens.length && removed[j])) for (let k = i; k < j; k++) drop[k] = true;
-    i = j;
+    let b = a + 1;
+    while (b < n && (isDigit[b] || isSpelled[b]) && !breakAfter[b - 1]) b += 1;
+    const group = core.slice(a, b);
+    const raw = tokens.slice(a, b);
+    const next = open(b) ? core[b] : "";
+    const prev = open(a) ? core[a - 1] : "";
+    const unitOld = (j: number): number[] => (open(j) && core[j] === "old" ? [j] : []);
+    let take: number[] | null = null;
+    if (raw.some((t) => /_/u.test(t) && /\p{N}/u.test(t)) || group.some((g) => FIG_KEY_SHAPED.test(g))) take = [];
+    else if (group.some((g) => !/\p{L}/u.test(g) && g.replace(/\D/gu, "").length >= 6)) take = [];
+    else if (group.some((g) => FIG_TIME_MERGED.test(g))) take = unitOld(b);
+    else if (group.some((g) => g.split(/[-‐‑–]/u).some((part) => FIG_BODY_MERGED.test(part)) || FIG_CLOCK_MERGED.test(g) || FIG_DATE_NUMERIC.test(g))) take = [];
+    else if (group.some((g) => FIG_RATE_MERGED.test(g))) take = periodAt(b);
+    else if (FIG.bodyUnits.has(next) || FIG.clock.has(next)) take = [b];
+    else if (FIG.time.has(next)) take = [b, ...unitOld(b + 1)];
+    else if (FIG.rate.has(next) && periodAt(b + 1).length > 0) take = [b, ...periodAt(b + 1)];
+    else if (periodAt(b).length > 0) take = periodAt(b);
+    else if (FIG.personal.has(prev) || FIG.months.has(next) || FIG.months.has(prev)) take = [];
+    else if (group.length === 1 && FIG_YEAR_SHAPED.test(group[0]) && (FIG.yearLeads.has(prev) || b >= n || breakAfter[b - 1] || FIG.joiners.has(core[b]))) take = [];
+    else if (near(a, b, 3).some((j) => FIG.money.has(core[j]))) take = [];
+    else if (near(a, b, 2).some((j) => FIG.body.has(core[j]))) take = [];
+    else if ((open(a) && drop[a - 1]) || (open(b) && drop[b])) take = [];
+    if (take) {
+      for (let k = a; k < b; k++) drop[k] = true;
+      for (const j of take) drop[j] = true;
+    }
+    a = b;
   }
   return tokens.filter((_, i) => !drop[i]).join(" ");
 }

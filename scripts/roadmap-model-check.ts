@@ -3318,7 +3318,15 @@ async function main() {
       if (e.aim === "vietnamese-japanese") check(`${tag}: a non-English aim keeps bulk keep off, and no label needs a language tap (code's words)`, v.bulkKeepOff && v.nonEnglish && itemsOf(v).every((i) => i.flags.length === 0));
     }
   }
-  check("every corpus pack has at least one v3 reply", corpus.every((e) => e.replies.length > 0), corpus.filter((e) => e.replies.length === 0).map((e) => e.aim).join(", "));
+  // Revision 5's topic-only packs (v5.topicOnly: finance-compound, finance-injection, wide-shallow, narrow-deep, and the names
+  // stage's 10 G-X packs) are the probe's RATE, MAP, LINK and GROUND packs: they carry no canned keys-only replies, so the two
+  // "every pack" checks read the drafting packs only.
+  const drafting = corpus.filter((e) => !e.topicOnly);
+  check(
+    "every corpus pack has at least one v3 reply (revision 5's topic-only packs aside: they hold none, by design)",
+    drafting.length >= 12 && drafting.every((e) => e.replies.length > 0) && corpus.filter((e) => e.topicOnly).every((e) => e.replies.length === 0 && e.repliesV4.length === 0 && (e.v2.drafts ?? []).length === 0),
+    corpus.filter((e) => (e.topicOnly ? e.replies.length + e.repliesV4.length + (e.v2.drafts ?? []).length > 0 : e.replies.length === 0)).map((e) => e.aim).join(", ")
+  );
   console.log(`  v3 corpus: ${corpus.length} packs, ${replies} canned replies (read with the legacy v3 schema)`);
 
   // ═══ v4: the reply corpus (contracts §20; the canned replies' v4 forms) ═════
@@ -3374,7 +3382,11 @@ async function main() {
       if (e.aim === "vietnamese-japanese") check(`${tag}: a non-English aim keeps bulk keep off, and no label needs a language tap (code's words)`, v.bulkKeepOff && v.nonEnglish && itemsOf(v).every((i) => i.flags.length === 0));
     }
   }
-  check("every corpus pack has at least one v4 reply, and the v4 corpus holds CLEAN, SALVAGED and REJECTED replies", corpus.every((e) => e.repliesV4.length > 0) && ["CLEAN", "SALVAGED", "REJECTED"].every((k) => (verdictsV4.get(k) ?? 0) > 0), corpus.filter((e) => e.repliesV4.length === 0).map((e) => e.aim).join(", "));
+  check(
+    "every corpus pack has at least one v4 reply (revision 5's topic-only packs aside), and the v4 corpus holds CLEAN, SALVAGED and REJECTED replies",
+    drafting.every((e) => e.repliesV4.length > 0) && ["CLEAN", "SALVAGED", "REJECTED"].every((k) => (verdictsV4.get(k) ?? 0) > 0),
+    drafting.filter((e) => e.repliesV4.length === 0).map((e) => e.aim).join(", ")
+  );
   console.log(`  v4 corpus: ${corpus.length} packs, ${repliesV4} canned replies (${[...verdictsV4].map(([k, c]) => `${k} ${c}`).join(" · ")})`);
 
   // ═══ v4: the pick stages over R2's own ladder (the fix round, r3; review 1, finding 10) ═══
@@ -3543,8 +3555,10 @@ async function main() {
     const body = code(probe);
     const imports = Array.from(body.matchAll(/from\s+["']([^"']+)["']/g), (x) => x[1]);
     // Revision 5 (contracts §22.15, PROBE_PLAN v5): stage 1 reads the map's room (roadmap-topics) and stage 2 the GROUND
-    // verdicts (roadmap-grounding); both are pure modules (no prisma, no loader).
-    const allowed = ["node:fs", "node:path", "../src/lib/gemini", "../src/lib/roadmap-types", "../src/lib/roadmap-evidence", "../src/lib/roadmap-model", "../src/lib/roadmap-validate", "../src/lib/roadmap-catalog", "../src/lib/roadmap-topics", "../src/lib/roadmap-grounding", "./fixtures/roadmap-corpus/corpus", "./fixtures/roadmap-corpus/ladder"];
+    // verdicts (roadmap-grounding); stage 2's G-R and G-U read code's estimate and consensus (roadmap-rating: depthFallbackOf,
+    // codeRatingOf, ratingOf). The names stage reads your texts for a country as the server's chainCountryNamedOf does
+    // (roadmap-lexicon COUNTRY_WORDS, synonyms words). All are pure modules (no prisma, no loader).
+    const allowed = ["node:fs", "node:path", "../src/lib/gemini", "../src/lib/roadmap-types", "../src/lib/roadmap-evidence", "../src/lib/roadmap-model", "../src/lib/roadmap-validate", "../src/lib/roadmap-catalog", "../src/lib/roadmap-topics", "../src/lib/roadmap-grounding", "../src/lib/roadmap-rating", "../src/lib/roadmap-lexicon", "../src/lib/synonyms", "./fixtures/roadmap-corpus/corpus", "./fixtures/roadmap-corpus/ladder"];
     return /--i-approved/.test(body) && imports.every((i) => allowed.includes(i)) && !/loadFieldTree|prisma\./.test(body) && !/_no-model/.test(probe);
   })());
   check(

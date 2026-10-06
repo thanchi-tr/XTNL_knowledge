@@ -44,6 +44,11 @@
  * decision 7: a suggestion never blocks) CONSTRAINT_GENERIC_KIND_WORDS,
  * CONSTRAINT_LIMIT_PHRASES, CONSTRAINT_FREQUENCY_PHRASES,
  * CONSTRAINT_LIMIT_NUMBER_WORDS and CONSTRAINT_GENTLE_PHRASES.
+ *
+ * The live fix (roadmap-contracts.md §22.20, rulings L1 and L2): EPONYM_NAMES
+ * and PLACE_COMMON_NOUNS (the Title Case eponym rule for topic-map names), and
+ * the FIGURE_* lists stripFiguresOf reads to keep an aim's target while money,
+ * personal quantities, dates and schedules still leave the topic packs.
  */
 import type { PracticeMethod } from "./roadmap-types";
 
@@ -1332,11 +1337,100 @@ export const COUNTRY_WORDS: readonly string[] = [
   "quebec", "new south wales", "queensland",
 ];
 
+/**
+ * (added; the live fix, contracts §22.20) The Title Case eponym rule (roadmap-validate titleCaseNamesOf): in a topic-map
+ * name written in Title Case, a word after the first that is one of these (case-folded, a possessive 's off) still
+ * names someone, so it is PROPER_NOUN as a mid-label capital is in sentence case ("The Kelly Criterion", "Black-Scholes
+ * Model"). Curated: surnames (and their adjectives) that head eponymous study terms, leaving out surnames that are also
+ * common words in a topic name (miller, fisher, porter, bloom, black, hardy, watt). An unlisted eponym in Title Case can
+ * pass, as an invented name can; GROUND and the Gemini mark stay.
+ */
+export const EPONYM_NAMES: readonly string[] = [
+  // money and economics
+  "kelly", "sharpe", "sortino", "treynor", "markowitz", "scholes", "merton", "fama", "modigliani", "graham", "dodd",
+  "buffett", "bogle", "ramsey", "kiyosaki", "dalio", "elliott", "fibonacci", "gann", "bollinger", "wyckoff", "keynes",
+  "keynesian", "hayek", "ricardo", "ricardian", "coase", "laffer", "okun", "gini", "lorenz", "herfindahl", "pareto", "nash",
+  "kotler", "drucker", "maslow", "herzberg", "deming", "gantt", "dow", "carlo",
+  // mathematics, statistics and computing
+  "bayes", "bayesian", "gauss", "gaussian", "euler", "eulerian", "fourier", "laplace", "laplacian", "taylor", "maclaurin",
+  "newton", "newtonian", "leibniz", "riemann", "riemannian", "lebesgue", "cauchy", "hilbert", "banach", "fermat",
+  "pythagoras", "pythagorean", "euclid", "euclidean", "cartesian", "boolean", "markov", "markovian", "poisson", "bernoulli",
+  "chebyshev", "kolmogorov", "pearson", "spearman", "wilcoxon", "kruskal", "tukey", "bonferroni", "weibull", "kaplan",
+  "meier", "neyman", "lagrange", "lagrangian", "hamilton", "hamiltonian", "jacobi", "jacobian", "hessian", "galois",
+  "abelian", "noether", "dirichlet", "legendre", "bessel", "hermite", "hermitian", "lyapunov", "nyquist", "shannon",
+  "turing", "dijkstra", "huffman", "hamming", "kalman", "bellman", "viterbi", "gibbs",
+  // the sciences
+  "ohm", "kirchhoff", "faraday", "maxwell", "coulomb", "planck", "bohr", "einstein", "schrodinger", "schrödinger",
+  "heisenberg", "kepler", "hooke", "boyle", "avogadro", "archimedes", "doppler", "hubble", "nernst", "arrhenius", "raoult",
+  "dalton", "rutherford", "mendel", "mendelian", "darwin", "darwinian", "lamarck", "linnaeus", "weinberg", "krebs",
+  "michaelis", "menten", "crick",
+  // mind and learning
+  "pavlov", "pavlovian", "freud", "freudian", "piaget", "vygotsky", "kolb", "dunning", "kruger", "jung", "jungian",
+  "erikson", "kohlberg", "bandura", "ebbinghaus", "feynman",
+];
+
+/** (added; the live fix) COUNTRY_WORDS that are also common nouns in a topic name ("Roast Turkey", "China Painting"): the Title Case eponym rule leaves them out. */
+export const PLACE_COMMON_NOUNS: readonly string[] = ["turkey", "china", "chile"];
+
 /** Figure stripping (roadmap-evidence stripFiguresOf, ruling 40): currency words, matched exactly (case-folded). */
 export const CURRENCY_WORDS: readonly string[] = [
   "usd", "eur", "gbp", "aud", "cad", "nzd", "jpy", "cny", "rmb", "vnd", "sgd", "inr", "chf", "hkd", "krw", "dollar", "dollars",
   "buck", "bucks", "pound", "pounds", "quid", "euro", "euros", "yen", "yuan", "dong", "rupee", "rupees",
 ];
+
+// ── (added; the live fix, contracts §22.20, ruling 40 revised) stripFiguresOf keeps the aim's target ──
+// A figure (a token holding a digit, or a run of SPELLED_NUMBER_WORDS) now stays in the aim RATE and MAP read
+// ("sub-50 10K", "IELTS 7", "N2", "20 songs", "B2") unless it is money, a personal quantity, a date or a schedule.
+// Every list is matched exactly on the token's word, case-folded, its leading and trailing punctuation off.
+
+/** A figure within 3 words of one of these (no clause break between) is money: "a 100k portfolio", "save 5000", "retire at 55". */
+export const FIGURE_MONEY_WORDS: readonly string[] = [
+  "portfolio", "portfolios", "invest", "invested", "investing", "investment", "investments", "investor", "stock", "stocks",
+  "shares", "bond", "bonds", "fund", "funds", "etf", "etfs", "crypto", "bitcoin", "mortgage", "mortgages", "loan", "loans",
+  "debt", "debts", "credit", "retire", "retired", "retirement", "pension", "superannuation", "tax", "taxes", "savings",
+  "saving", "save", "saved", "wealth", "finance", "finances", "financial", "money", "cash", "bill", "bills", "rent",
+  "salary", "salaries", "income", "wage", "wages", "pay", "paid", "payment", "payments", "earn", "earned", "earning",
+  "earnings", "owe", "owed", "owing", "spend", "spent", "spending", "budget", "budgets", "cost", "costs", "price", "prices",
+  "fee", "fees", "afford", "worth", "deposit", "deposits", "dividend", "dividends", "revenue", "profit", "profits",
+  "interest", "return", "returns", "yield", "yields", "equity", "capital", "net", "bonus", "expense", "expenses",
+];
+
+/** A figure followed by one of these (or written into it: "8kg", "180lbs") is a body measure: "lose 8 kg". */
+export const FIGURE_BODY_UNITS: readonly string[] = [
+  "kg", "kgs", "kilo", "kilos", "kilogram", "kilograms", "kilogramme", "kilogrammes", "lb", "lbs", "stone", "stones", "bmi",
+];
+
+/** A figure within 2 words of one of these is a body figure: "15% body fat", "a BMI of 24", "blood pressure under 130". */
+export const FIGURE_BODY_WORDS: readonly string[] = [
+  "weight", "weigh", "weighs", "weighing", "weighed", "bodyweight", "body", "fat", "bmi", "waist", "hip", "hips", "chest",
+  "bust", "height", "tall", "blood", "pressure", "cholesterol", "glucose", "sugar", "a1c", "hba1c", "size", "sizes",
+];
+
+/** A figure right after one of these is personal (an age or one's own count): "my 40s", "aged 45", "before I turn 50". */
+export const FIGURE_PERSONAL_LEADS: readonly string[] = ["my", "our", "his", "her", "their", "mine", "age", "aged", "turn", "turning", "turned"];
+
+/** A figure followed by one of these is a timeline or an age ("in 6 months", "45 years old"): the dates RATE never reads. */
+export const FIGURE_TIME_UNITS: readonly string[] = [
+  "day", "days", "week", "weeks", "wk", "wks", "fortnight", "fortnights", "month", "months", "mo", "mos", "mth", "mths",
+  "year", "years", "yr", "yrs", "decade", "decades", "yo",
+];
+
+/** A figure followed by one of these and then a period ("30 minutes a day", "3 times a week") is a schedule: hours are never sent. */
+export const FIGURE_RATE_UNITS: readonly string[] = ["minute", "minutes", "min", "mins", "hour", "hours", "hr", "hrs", "h", "time", "times", "x", "session", "sessions"];
+
+/** The period of a schedule, after "a", "an", "per", "each" or "every" ("a day", "per week"), or on its own ("daily"). */
+export const FIGURE_PERIOD_WORDS: readonly string[] = [
+  "day", "days", "week", "weeks", "night", "nights", "morning", "mornings", "evening", "evenings", "weekday", "weekdays",
+  "weekend", "weekends", "month", "fortnight", "session",
+];
+/** A period word that stands alone after a figure or its unit ("20 minutes daily"). */
+export const FIGURE_PERIOD_ADVERBS: readonly string[] = ["daily", "weekly", "nightly", "monthly", "fortnightly"];
+
+/** A clock time: a figure followed by one of these ("7 am"), or written into it ("6pm"). */
+export const FIGURE_CLOCK_WORDS: readonly string[] = ["am", "pm", "a.m", "p.m", "oclock", "o'clock"];
+
+/** A year-shaped figure (1900–2099) right after one of these, or ending its clause, is a date: "by 2027", "in 2026". */
+export const FIGURE_YEAR_LEADS: readonly string[] = ["by", "in", "before", "until", "till", "since", "after", "during", "of", "from", "end"];
 
 /** clauseSplitOf: the aim's preamble, stripped from a clause's start (a run of whole words, case-insensitive). */
 export const AIM_PREAMBLE_PHRASES: readonly string[] = [

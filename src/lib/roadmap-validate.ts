@@ -117,6 +117,13 @@
  * constraint.compound). The safe side grows with it: "nothing but swimming",
  * "swimming doesn't hurt" and a release that continues ("swimming fine and
  * running ok", "… and so is cycling") name nothing (constraint.release).
+ *
+ * The live fix (contracts §22.20, ruling L1): a topic-map name (kind TOPIC
+ * with LabelContext.topicMap: MAP's and DEEPER's names) in Title Case reads
+ * its capitals as style, as a Domain's name does, so Gemini's real
+ * "Mortgages and Loans" is no PROPER_NOUN; acronyms, inner capitals, the
+ * TopicFlags and the eponym rule (titleCaseNamesOf: a possessive, an
+ * EPONYM_NAMES word or a COUNTRY_WORDS run after the first word) still fire.
  */
 import { compareTwoStrings } from "string-similarity";
 import type { DayKey } from "./life-day";
@@ -933,12 +940,15 @@ interface Derived {
   aimContent: { raw: string; stem: string }[];
   L: Lexicon;
   R: Rules;
+  /** The caller's RuleOpts (the topic-map lists, topicLexiconOf, read by the Title Case eponym rule). */
+  opts?: RuleOpts;
 }
 
 function derive(ctx: Omit<LabelContext, "kind">, opts?: RuleOpts): Derived {
   const L = lexiconOf(opts);
   const R = rulesOf(opts);
   return {
+    opts,
     user: userIndexOf([ctx.aim, ctx.constraints, ctx.examLabel, ...(ctx.syllabusLines ?? []), ctx.areaName, ...(ctx.domainNames ?? [])]),
     nonEnglish: isNonEnglish(ctx.aim),
     constraint: constraintTermsFor(ctx.constraints, L, R, opts),
@@ -1139,7 +1149,13 @@ function runLabelCheck(rawIn: unknown, ctx: LabelContext, d: Derived): LabelChec
 
   // PROPER_NOUN (Latin-script labels)
   if (isLatinLabel(cleaned)) {
-    const titleCase = ctx.kind === "DOMAIN" && isTitleCase(pieces, numbers);
+    // A Domain's name, and (the live fix, contracts §22.20) a topic-map name (kind TOPIC with a topicMap context):
+    // in Title Case the capitals are the label's style, not names ("Mortgages and Loans"). A topic-map name still
+    // names something by the eponym rule (titleCaseNamesOf): a possessive, an EPONYM_NAMES word or a COUNTRY_WORDS run
+    // after its first word ("The Kelly Criterion", "Applying Newton's Laws", "Investing in Japan").
+    const topicName = ctx.kind === "TOPIC" && ctx.topicMap != null;
+    const titleCase = (ctx.kind === "DOMAIN" || topicName) && isTitleCase(pieces, numbers);
+    const titleNames = titleCase && topicName ? titleCaseNamesOf(pieces, stems, cleaned, d.opts) : null;
     for (let i = 0; i < pieces.length; i++) {
       if (numbers.has(i)) continue;
       const p = pieces[i];
@@ -1148,7 +1164,7 @@ function runLabelCheck(rawIn: unknown, ctx: LabelContext, d: Derived): LabelChec
       const acronym = letters.length >= 2 && /^\p{Lu}+$/u.test(letters);
       const inner = /\p{Ll}\p{Lu}/u.test(p.raw);
       // Not the label's first word; after a sentence break (or a stripped enumerator) only a start word may be capitalised.
-      const capital = /^\p{Lu}/u.test(letters) && !openerWord(p, L) && !titleCase;
+      const capital = /^\p{Lu}/u.test(letters) && !openerWord(p, L) && (!titleCase || (titleNames?.has(i) ?? false));
       if (!(acronym || inner || capital)) continue;
       if (userWord(d.user, p)) continue;
       set("PROPER_NOUN", `names "${p.raw}", which you didn't write: the app can't check what it is`);
@@ -5270,6 +5286,9 @@ interface TopicLexicon {
   injection: Set<string>;
   injectionAnywhere: Set<string>;
   deictic: Set<string>;
+  /** The live fix's eponym rule (titleCaseNamesOf): EPONYM_NAMES, case-folded, and COUNTRY_WORDS as stem phrases. */
+  eponyms: Set<string>;
+  places: string[][];
 }
 
 const foldedSet = (list: readonly string[]): Set<string> => new Set(list.map((w) => w.normalize("NFKC").toLowerCase().replace(/’/gu, "'").trim()).filter(Boolean));
@@ -5284,7 +5303,33 @@ function compileTopicLexicon(lx: LexiconModule): TopicLexicon {
     injection: foldedSet(lx.INJECTION_WORDS),
     injectionAnywhere: foldedSet(lx.INJECTION_ANYWHERE_WORDS),
     deictic: foldedSet(lx.INJECTION_DEICTIC_WORDS),
+    eponyms: foldedSet(lx.EPONYM_NAMES ?? []),
+    places: stemPhrases((lx.COUNTRY_WORDS ?? []).filter((w) => !(lx.PLACE_COMMON_NOUNS ?? []).includes(w))),
   };
+}
+
+/**
+ * The eponym rule (the live fix, contracts §22.20): a Title Case topic-map name
+ * reads its capitals as style, as a Domain's name does, except the words that
+ * still name someone or somewhere. Returns the indices of `pieces`, never the
+ * label's first word (as in sentence case, where "Graham method" passes), that
+ *   - are possessive ("Applying Newton's Laws", "Intro to Bayes' Theorem");
+ *   - are in EPONYM_NAMES, case-folded ("The Kelly Criterion", "Black-Scholes Model");
+ *   - sit in a COUNTRY_WORDS run ("Investing in Japan", "New Zealand Tax").
+ * Acronyms and inner capitals ("CAPM", "iShares") stay PROPER_NOUN on every
+ * label, and BRAND_NAMES and JURISDICTION are TopicFlags in any case.
+ */
+function titleCaseNamesOf(pieces: readonly Piece[], stems: readonly string[], cleaned: string, opts?: RuleOpts): Set<number> {
+  const T = topicLexiconOf(opts);
+  const out = new Set<number>();
+  pieces.forEach((p, i) => {
+    if (p.first) return;
+    const tail = cleaned.slice(p.coreEnd - p.raw.length, p.coreEnd) === p.raw;
+    const sPossessive = tail && /s$/iu.test(p.raw) && /^['’]/u.test(cleaned.slice(p.coreEnd));
+    if (p.possessive || sPossessive || T.eponyms.has(p.base)) out.add(i);
+  });
+  for (const ph of T.places) for (const at of findPhrase(stems, ph)) for (let k = 0; k < ph.length; k++) if (!pieces[at + k]?.first) out.add(at + k);
+  return out;
 }
 
 let defaultTopicLexicon: TopicLexicon | null = null;

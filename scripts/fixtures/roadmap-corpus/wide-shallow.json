@@ -1,0 +1,57 @@
+{
+  "aim": "wide-shallow",
+  "about": "Revision 5 (the Probe plan, F-R5-2): a wide and shallow aim in a Field Area: many separate facts side by side and little to build on first. Run G-R's bar asks that it rates fewer layers than narrow-deep and more breadth. One aim-named Domain chosen, no outline. No v2 drafts and no canned replies.",
+  "probe": false,
+  "today": "2026-10-07",
+  "areaFieldId": "fld_geo",
+  "input": {
+    "intake": {
+      "aim": "Know the capital city of every country in the world",
+      "fieldId": "fld_geo",
+      "track": "CRAFT",
+      "domainIds": ["d_ge_capitals"],
+      "targetDay": "2027-04-05",
+      "hoursPerWeek": 2,
+      "newCardsPerWeek": 12,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "BASICS",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": null,
+      "examLabel": null
+    },
+    "areaName": "Geography",
+    "domains": [
+      { "id": "d_ge_capitals", "name": "World Capitals", "fieldId": "fld_geo", "cards": 40, "atSix": 12, "atTop": 2, "chosen": true },
+      { "id": "d_ge_rivers", "name": "Rivers and Lakes", "fieldId": "fld_geo", "cards": 10, "atSix": 3, "atTop": 0, "chosen": false }
+    ],
+    "windows": []
+  },
+  "library": [
+    { "id": "d_ge_capitals", "name": "World Capitals", "fieldId": "fld_geo", "fieldName": "Geography", "cards": 40, "titles": ["Capitals of South America", "Capitals of Western Europe"], "tags": ["capitals"] },
+    { "id": "d_ge_rivers", "name": "Rivers and Lakes", "fieldId": "fld_geo", "fieldName": "Geography", "cards": 10, "titles": ["The longest rivers"], "tags": ["rivers"] }
+  ],
+  "drafts": [],
+  "v3": {
+    "probe": false,
+    "about": "Revision 5's RATE pack (run G-R): no v3 replies.",
+    "intake": {
+      "depth": 12,
+      "dateMode": "REALISTIC",
+      "exam": false,
+      "examDay": null,
+      "suggestAreas": false
+    },
+    "replies": []
+  },
+  "v4": {
+    "about": "Revision 5's RATE pack: no v4 replies.",
+    "replies": []
+  },
+  "v5": {
+    "about": "Revision 5 (the topic map): a RATE pack for the probe (run G-R). It carries no v2 drafts and no canned v3 or v4 replies, so revision 4's drafting families leave it out.",
+    "topicOnly": true
+  }
+}
