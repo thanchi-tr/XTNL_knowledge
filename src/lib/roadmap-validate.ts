@@ -281,7 +281,7 @@ export interface LabelContext {
   milestoneCount?: number;
   /**
    * Revision 5, lane 6 (contracts §22.10): a topic-map name's context. With
-   * it, checkLabel also reads the six TopicFlags into LabelCheck.topicFlags
+   * it, checkLabel also reads the seven TopicFlags into LabelCheck.topicFlags
    * (`scope`: the name's MAP scope; `countryNamed`: your texts name a country).
    * Without it every check reads exactly as before.
    */
@@ -1263,7 +1263,7 @@ function runLabelCheck(rawIn: unknown, ctx: LabelContext, d: Derived): LabelChec
 export function checkLabel(label: string, ctx: LabelContext, opts?: RuleOpts): LabelCheck {
   try {
     const out = runLabelCheck(label, ctx, derive(ctx, opts));
-    // Revision 5, lane 6: with a topic-map context, the six TopicFlags too (contracts §22.10); a dropped label has none.
+    // Revision 5, lane 6: with a topic-map context, the seven TopicFlags too (contracts §22.10); a dropped label has none.
     if (!ctx.topicMap) return out;
     return { ...out, topicFlags: out.drop ? [] : topicFlagsOf(out.cleaned, ctx, opts) };
   } catch {
@@ -5289,6 +5289,10 @@ interface TopicLexicon {
   /** The live fix's eponym rule (titleCaseNamesOf): EPONYM_NAMES, case-folded, and COUNTRY_WORDS as stem phrases. */
   eponyms: Set<string>;
   places: string[][];
+  /** VAGUE_FIELD (ruling N7): FIELD_NAMES and FIELD_ADJECTIVES as stems, and each field's wider fields (FIELD_BRANCHES) as stems. */
+  fields: Set<string>;
+  fieldAdjectives: Set<string>;
+  fieldBranches: Map<string, string[]>;
 }
 
 const foldedSet = (list: readonly string[]): Set<string> => new Set(list.map((w) => w.normalize("NFKC").toLowerCase().replace(/’/gu, "'").trim()).filter(Boolean));
@@ -5305,6 +5309,11 @@ function compileTopicLexicon(lx: LexiconModule): TopicLexicon {
     deictic: foldedSet(lx.INJECTION_DEICTIC_WORDS),
     eponyms: foldedSet(lx.EPONYM_NAMES ?? []),
     places: stemPhrases((lx.COUNTRY_WORDS ?? []).filter((w) => !(lx.PLACE_COMMON_NOUNS ?? []).includes(w))),
+    fields: stemSet(lx.FIELD_NAMES ?? []),
+    fieldAdjectives: stemSet(lx.FIELD_ADJECTIVES ?? []),
+    fieldBranches: new Map(
+      Object.entries(lx.FIELD_BRANCHES ?? {}).map(([field, wider]) => [stem(field.toLowerCase()), (Array.isArray(wider) ? wider : []).map((w) => stem(String(w).toLowerCase()))] as const)
+    ),
   };
 }
 
@@ -5359,7 +5368,7 @@ function exactWordsOf(text: string): string[] {
 }
 
 /**
- * The six TopicFlags of a cleaned topic-map name (contracts §22.10), in
+ * The seven TopicFlags of a cleaned topic-map name (contracts §22.10), in
  * TOPIC_FLAGS order:
  *   JURISDICTION  a JURISDICTION run (stems, whole words, any case);
  *   BRAND         a BRAND_NAMES run your aim doesn't hold (ruling N4: "Learn
@@ -5377,7 +5386,15 @@ function exactWordsOf(text: string): string[] {
  *                 in INJECTION_WORDS with an INJECTION_DEICTIC_WORDS word
  *                 after it (ruling 8: "Rate this …" fires, "Rate of return",
  *                 "Interest rate", "Output gap" and "Nervous system" pass);
- *   REGION        the MAP scope is REGION_SPECIFIC and your texts name no country.
+ *   REGION        the MAP scope is REGION_SPECIFIC and your texts name no country;
+ *   VAGUE_FIELD   (ruling N7, the judged names test) the name is a whole academic
+ *                 field: the stems LEVEL_ONLY reads are exactly one FIELD_NAMES
+ *                 word ("Mathematics", "Physics basics"), or a FIELD_ADJECTIVES
+ *                 word then a FIELD_NAMES word ("Optical Physics"); silent when
+ *                 your words (the aim, the exam label, an outline line, the
+ *                 Area's name) hold that field or a wider one FIELD_BRANCHES
+ *                 names ("Optics" under "Pass A-level physics"). REGION and
+ *                 VAGUE_FIELD hide a name (revealable); the others drop it.
  */
 function topicFlagsOf(cleaned: string, ctx: LabelContext, opts?: RuleOpts): TopicFlag[] {
   const tm = ctx.topicMap;
@@ -5412,6 +5429,19 @@ function topicFlagsOf(cleaned: string, ctx: LabelContext, opts?: RuleOpts): Topi
   if (anywhere || pointed) set("INJECTION");
 
   if (tm.scope === "REGION_SPECIFIC" && tm.countryNamed !== true) set("REGION");
+
+  // Ruling N7 (the judged names test, 2026-10-07): a whole field ("Mathematics", "Acoustics", "Optical Physics") is no
+  // study topic. Hidden behind the fold (roadmap-topics), never dropped; your own words naming the field keep it silent.
+  const field = level.length === 1 ? level[0] : level.length === 2 && T.fieldAdjectives.has(level[0]) ? level[1] : null;
+  if (field !== null && T.fields.has(field)) {
+    const yours = new Set(
+      [ctx.aim, ctx.examLabel, ctx.areaName, ...(Array.isArray(ctx.syllabusLines) ? ctx.syllabusLines : [])]
+        .filter((t): t is string => typeof t === "string" && t !== "")
+        .flatMap((t) => words(stripInvisibles(t.normalize("NFKC"))).map((w) => w.stem))
+    );
+    const wider = T.fieldBranches.get(field) ?? [];
+    if (!yours.has(field) && !wider.some((w) => yours.has(w))) set("VAGUE_FIELD");
+  }
   return TOPIC_FLAGS.filter((f) => found.has(f));
 }
 

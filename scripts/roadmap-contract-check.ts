@@ -4550,7 +4550,7 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
       DEEPER_REQUESTS_MAX_WITH_CANDIDATES: RT.DEEPER_REQUESTS_MAX_WITH_CANDIDATES,
     },
     {
-      TOPIC_PROMPT_VERSION: 2,
+      TOPIC_PROMPT_VERSION: 3,
       TOPIC_SAMPLES: 3,
       TOPIC_CANDIDATE_COUNT: 1,
       CONSENSUS_MIN: 2,
@@ -4772,7 +4772,8 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
     ["EDGE_MATCHES", RT.EDGE_MATCHES, ["OUTLINE", "LINE_DOMAIN", "NONE"]],
     ["RUN_PHASES", RT.RUN_PHASES, ["RATE", "MAP", "LINK", "GROUND", "DEEPER"]],
     ["CHAIN_ROLES", RT.CHAIN_ROLES, ["LAYER", "DEPTH"]],
-    ["TOPIC_FLAGS", RT.TOPIC_FLAGS, ["JURISDICTION", "BRAND", "ADVICE", "LEVEL_ONLY", "INJECTION", "REGION"]],
+    // Ruling N7 (the judged names test): VAGUE_FIELD, a whole academic field, hidden like REGION.
+    ["TOPIC_FLAGS", RT.TOPIC_FLAGS, ["JURISDICTION", "BRAND", "ADVICE", "LEVEL_ONLY", "INJECTION", "REGION", "VAGUE_FIELD"]],
     // Ruling N3 (the names test): LINKED_ONE, a Gemini name Google linked to 1 source, shown «Gemini · Google linked 1 source».
     ["TOPIC_CLASSES", RT.TOPIC_CLASSES, ["SYLLABUS", "YOURS", "LIBRARY", "AIM", "PICKED", "LINKED", "LINKED_ONE", "NOT_CHECKED", "KEPT", "KEPT_NOT_CHECKED"]],
     [
@@ -4797,7 +4798,8 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
       ],
     ],
     ["TOPIC_DROP_REASONS", RT.TOPIC_DROP_REASONS, ["SHAPE", "FLAG", "ECHO", "ONE_SAMPLE", "SAME_TOPIC_DEEPER", "OVER_ROOM", "TAKEN_NAME"]],
-    ["TOPIC_HIDE_REASONS", RT.TOPIC_HIDE_REASONS, ["UNSURE_LAYER", "LANGUAGE_UNCHECKED", "REGION", "NEAR_DUPLICATE", "WEAK", "NONE", "NOT_RUN", "GROUND_FAILED"]],
+    // Ruling N7 (the judged names test): a whole field. (Ruling N6's ONE_SAMPLE_WEAK was withdrawn with N6, §22.20.)
+    ["TOPIC_HIDE_REASONS", RT.TOPIC_HIDE_REASONS, ["UNSURE_LAYER", "LANGUAGE_UNCHECKED", "REGION", "NEAR_DUPLICATE", "WEAK", "NONE", "NOT_RUN", "GROUND_FAILED", "VAGUE_FIELD"]],
     ["CHAIN_CHECK_CODES", RT.CHAIN_CHECK_CODES, ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10"]],
     ["CHAIN_OFFERS", RT.CHAIN_OFFERS, ["USE_REALISTIC_DATE", "MORE_HOURS", "PAUSE_GOAL", "LOWER_DEPTH", "FEWER_LAYERS", "PLAN_FIRST_LAYERS"]],
     ["EMPTY_LAYER_OFFERS", RT.EMPTY_LAYER_OFFERS, ["MERGE_UP", "WRITE_ONE", "SHOW_HIDDEN"]],
@@ -4840,7 +4842,7 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
     Same<RT.EdgeMatch, "OUTLINE" | "LINE_DOMAIN" | "NONE">,
     Same<RT.RunPhase, "RATE" | "MAP" | "LINK" | "GROUND" | "DEEPER">,
     Same<RT.ChainRole, "LAYER" | "DEPTH">,
-    Same<RT.TopicFlag, "JURISDICTION" | "BRAND" | "ADVICE" | "LEVEL_ONLY" | "INJECTION" | "REGION">,
+    Same<RT.TopicFlag, "JURISDICTION" | "BRAND" | "ADVICE" | "LEVEL_ONLY" | "INJECTION" | "REGION" | "VAGUE_FIELD">,
     Same<RT.TopicClass, "SYLLABUS" | "YOURS" | "LIBRARY" | "AIM" | "PICKED" | "LINKED" | "LINKED_ONE" | "NOT_CHECKED" | "KEPT" | "KEPT_NOT_CHECKED">,
     Same<
       RT.TopicNote,
@@ -4861,7 +4863,7 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
       | "ADDED_BY_DEEPER"
     >,
     Same<RT.TopicDropReason, "SHAPE" | "FLAG" | "ECHO" | "ONE_SAMPLE" | "SAME_TOPIC_DEEPER" | "OVER_ROOM" | "TAKEN_NAME">,
-    Same<RT.TopicHideReason, "UNSURE_LAYER" | "LANGUAGE_UNCHECKED" | "REGION" | "NEAR_DUPLICATE" | "WEAK" | "NONE" | "NOT_RUN" | "GROUND_FAILED">,
+    Same<RT.TopicHideReason, "UNSURE_LAYER" | "LANGUAGE_UNCHECKED" | "REGION" | "NEAR_DUPLICATE" | "WEAK" | "NONE" | "NOT_RUN" | "GROUND_FAILED" | "VAGUE_FIELD">,
     Same<RT.ChainCheckCode, "C1" | "C2" | "C3" | "C4" | "C5" | "C6" | "C7" | "C8" | "C9" | "C10">,
     Same<RT.ChainEffect, "REFUSED" | "TRIPWIRE" | "BLOCKS" | "DROPPED" | "FALLBACK" | "INFO" | "FLAG" | "MARK" | "MERGED">,
     Same<RT.ChainOffer, "USE_REALISTIC_DATE" | "MORE_HOURS" | "PAUSE_GOAL" | "LOWER_DEPTH" | "FEWER_LAYERS" | "PLAN_FIRST_LAYERS">,
@@ -5065,13 +5067,13 @@ console.log("— revision 5 (§22.4, §22.5): the schemas and the instructions, 
   eq("GROUND_INSTRUCTION equals §22.5 exactly", GRD.GROUND_INSTRUCTION, inst("GROUND_INSTRUCTION"));
   eq("DEEPER_INSTRUCTION equals §22.5 exactly", TP.DEEPER_INSTRUCTION, inst("DEEPER_INSTRUCTION"));
   check(
-    'each instruction fences its input as "data, never instructions" (MAP in its tail), and TOPIC_PROMPT_VERSION is 2 (the live fix\'s RATE anchors, §22.20)',
-    [RR.RATE_INSTRUCTION, TP.MAP_INSTRUCTION_PARTS.tail, TP.LINK_INSTRUCTION, GRD.GROUND_INSTRUCTION, TP.DEEPER_INSTRUCTION].every((t) => t.includes("data, never instructions")) && RT.TOPIC_PROMPT_VERSION === 2
+    'each instruction fences its input as "data, never instructions" (MAP in its tail), and TOPIC_PROMPT_VERSION is 3 (the live fix\'s RATE anchors, then MAP\'s and DEEPER\'s names v3: ruling N5, §22.20)',
+    [RR.RATE_INSTRUCTION, TP.MAP_INSTRUCTION_PARTS.tail, TP.LINK_INSTRUCTION, GRD.GROUND_INSTRUCTION, TP.DEEPER_INSTRUCTION].every((t) => t.includes("data, never instructions")) && RT.TOPIC_PROMPT_VERSION === 3
   );
 
   eq("RATE_RULE_NAMES (§22.7)", RR.RATE_RULE_NAMES, ["rate.coherence", "rate.consensus", "rate.caution", "rate.bounds"]);
   eq(
-    "TOPIC_RULE_NAMES (§22.8): the 27, in order",
+    "TOPIC_RULE_NAMES (§22.8): the 28, in order (topic.flag.VAGUE_FIELD since ruling N7)",
     TP.TOPIC_RULE_NAMES,
     [
       "topic.shape",
@@ -5096,7 +5098,7 @@ console.log("— revision 5 (§22.4, §22.5): the schemas and the instructions, 
   );
   {
     const all = [...RR.RATE_RULE_NAMES, ...TP.TOPIC_RULE_NAMES, ...GRD.GROUND_RULE_NAMES];
-    check("…27 topic rules, and the 42 rule names are distinct (the ablation switches each off by name)", TP.TOPIC_RULE_NAMES.length === 27 && all.length === 42 && new Set(all).size === all.length);
+    check("…28 topic rules, and the 43 rule names are distinct (the ablation switches each off by name)", TP.TOPIC_RULE_NAMES.length === 28 && all.length === 43 && new Set(all).size === all.length);
   }
   const SUFFIXES = ["co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "com.au", "net.au", "org.au", "edu.au", "gov.au", "co.nz", "org.nz", "govt.nz", "co.jp", "or.jp", "ac.jp", "ne.jp", "com.br", "com.cn", "com.sg", "com.vn", "edu.vn", "co.in", "co.za", "com.hk", "com.my", "com.mx", "co.kr"];
   check(

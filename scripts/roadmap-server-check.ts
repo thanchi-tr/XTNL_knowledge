@@ -6977,21 +6977,25 @@ async function main() {
     );
 
     // Ruling N3 (contracts §22.20, the names test): a Gemini name GROUND linked to exactly 1 source is a shown row, never
-    // behind the fold; a NONE one stays there.
+    // behind the fold, however many samples wrote it (ruling N6, which hid one sample's name, was withdrawn); a NONE one
+    // stays there.
     const x = world();
     const xid = await writtenTopics(x, TOPICS_INTAKE);
     const ONE = "Conditional probability";
     const NONE_ROW = "Probability ladders";
-    geminiTopicRow(x, xid, "T1", ONE, { decision: "PENDING", chosen: false, grounding: "WEAK", sources: [{ title: "example.edu", uri: "https://example.edu/notes" }], formVotes: 1 });
+    const SOLO = "Expectation";
+    geminiTopicRow(x, xid, "T1", ONE, { decision: "PENDING", chosen: false, grounding: "WEAK", sources: [{ title: "example.edu", uri: "https://example.edu/notes" }], formVotes: 2 });
     geminiTopicRow(x, xid, "T2", NONE_ROW, { decision: "PENDING", chosen: false, grounding: "NONE", sources: [], formVotes: 1 });
+    geminiTopicRow(x, xid, "T3", SOLO, { decision: "PENDING", chosen: false, grounding: "WEAK", sources: [{ title: "mathwords.com", uri: "https://mathwords.com/e" }], formVotes: 1 });
     const TMM = await import("../src/components/roadmap/topic-map-model");
     const xmap = (await S.loadRoadmapView(USER, NOW, topicDepsFor(x), xid)).draft?.topicMap ?? null;
     const l1 = xmap?.layers.find((l) => l.layer === 1) ?? null;
     const one = l1?.topics.find((r) => r.name === ONE) ?? null;
     const none = l1?.topics.find((r) => r.name === NONE_ROW) ?? null;
+    const solo = l1?.topics.find((r) => r.name === SOLO) ?? null;
     const oneChip = { kind: "gemini-linked-one", label: "Gemini · Google linked 1 source" };
     check(
-      "Gemini names (ruling N3): a WEAK name at 1 source is a shown row (LINKED_ONE: unticked, a layer-1 checkbox, its one source, «Gemini · Google linked 1 source» on the row and the layer), and a NONE name stays in the «n not checked» fold",
+      "Gemini names (ruling N3; N6 withdrawn): a WEAK name at 1 source is a shown row (LINKED_ONE: unticked, a layer-1 checkbox, its one source, «Gemini · Google linked 1 source» on the row and the layer), whether 2 of 3 or 1 of 3 samples wrote it (votes in the ▸); a NONE name stays in the «n not checked» fold",
       !!one &&
         one.cls === "LINKED_ONE" &&
         !one.chosen &&
@@ -7003,6 +7007,12 @@ async function main() {
         json(TMM.layerChipOf(l1)) === json(oneChip) &&
         !!none &&
         none.cls === "NOT_CHECKED" &&
+        !!solo &&
+        solo.cls === "LINKED_ONE" &&
+        !solo.chosen &&
+        solo.sources.length === 1 &&
+        json(TMM.rowChipOf(solo, false)) === json(oneChip) &&
+        json(solo.votes) === json({ form: 1, samples: 3 }) &&
         l1.hidden === 1 &&
         xmap?.hidden === 1,
       json({ rows: l1?.topics.map((r) => [r.key, r.name, r.cls, r.chosen, r.sources.length]), hidden: l1?.hidden, chip: l1 && TMM.layerChipOf(l1) })

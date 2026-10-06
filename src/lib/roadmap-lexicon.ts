@@ -1248,6 +1248,48 @@ export const LEVEL_WORDS: readonly string[] = [
 /** LEVEL_ONLY and C10: generic heads, left out of a topic's level stems ("Core concepts" names nothing). */
 export const GENERIC_HEADS: readonly string[] = ["concepts", "principles", "topics", "skills", "applications", "strategies", "theory", "knowledge"];
 
+/**
+ * (added, ruling N7: the judged names test of 2026-10-07) VAGUE_FIELD: a whole academic field or discipline. A topic
+ * name whose content words, less function words, DOMAIN_STOP_WORDS, LEVEL_WORDS and GENERIC_HEADS, are exactly one of
+ * these names a field, not a study topic inside it ("Mathematics", "Acoustics", "Semantics", "Physics basics"). It is
+ * hidden behind the fold, never dropped. Left out on purpose, because a syllabus teaches each as one topic: probability,
+ * calculus, algebra, geometry, trigonometry, combinatorics, grammar, syntax, phonetics, pragmatics, orthography,
+ * vocabulary, mechanics, thermodynamics, genetics, ecology, anatomy, physiology, nutrition, accounting, programming; and
+ * music, art and law ("Music Theory" is a syllabus topic once GENERIC_HEADS's "theory" is set aside).
+ */
+export const FIELD_NAMES: readonly string[] = [
+  "mathematics", "maths", "math", "physics", "chemistry", "biology", "science", "sciences", "acoustics", "optics",
+  "semantics", "linguistics", "statistics", "economics", "psychology", "philosophy", "sociology", "anthropology",
+  "archaeology", "history", "geography", "geology", "astronomy", "engineering", "computing", "medicine", "humanities",
+  "literature",
+];
+
+/**
+ * (added, ruling N7) VAGUE_FIELD: an adjective that, followed by a FIELD_NAMES word and nothing else, names a whole field
+ * ("Optical Physics", "Organic Chemistry", "Social Psychology", "Modern History"). "Soil Science" and "Data Science"
+ * stay silent: their first word is a noun, not one of these. ("Applied" is a LEVEL_WORD: "Applied Mathematics" is one
+ * field word.)
+ */
+export const FIELD_ADJECTIVES: readonly string[] = [
+  "optical", "pure", "theoretical", "experimental", "general", "classical", "modern", "ancient", "quantum", "physical",
+  "organic", "inorganic", "analytical", "computational", "mathematical", "statistical", "molecular", "cellular",
+  "cognitive", "social", "behavioural", "behavioral", "clinical", "developmental", "cultural", "political", "natural",
+  "human", "historical", "comparative", "economic", "environmental", "mechanical", "electrical", "civil", "chemical",
+  "biological", "medical",
+];
+
+/**
+ * (added, ruling N7) VAGUE_FIELD stays silent when your words (the aim, the exam label, an outline line or the Area's
+ * name) hold the field, or a wider field it is a branch of here: "Optics" under "Pass A-level physics", "Statistics"
+ * under "GCSE Maths". Matched by stem, as a whole word.
+ */
+export const FIELD_BRANCHES: Readonly<Record<string, readonly string[]>> = {
+  acoustics: ["physics", "sound", "audio"],
+  optics: ["physics", "light"],
+  semantics: ["linguistics"],
+  statistics: ["mathematics", "maths", "math", "data"],
+};
+
 /** ADVICE: a topic name whose first word (exact, case-folded; a hyphenated compound is one word) is one of these is advice, not a topic (ruling 9). */
 export const ADVICE_VERBS: readonly string[] = [
   "pay", "buy", "sell", "refinance", "invest", "consolidate", "avoid", "borrow", "switch", "cancel", "stop", "start",

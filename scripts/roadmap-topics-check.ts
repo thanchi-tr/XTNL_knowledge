@@ -25,7 +25,12 @@
  *      goldens (ruling 40 revised: targets stay, money, personal quantities,
  *      dates and schedules go, the live aim's "100k" too); RATE v2's anchors;
  *   7. the names test's rulings (contracts §22.20 N2, N4): the pooled names
- *      gate on piano-reading's real MAP replies, and BRAND's aim exemption.
+ *      gate on piano-reading's real MAP replies, and BRAND's aim exemption;
+ *   8. the judged names test's rulings (§22.20 N5–N7): MAP's and DEEPER's
+ *      names v3 over the probe-accepted schema; N6 withdrawn (a WEAK name at
+ *      1 source is shown however many samples wrote it, N3) with the fold's
+ *      reasons (topicHideReasonOf); and a whole field hidden (VAGUE_FIELD:
+ *      firing, silent and your-words cases).
  *
  * Not here: the hostile bar's families R and L (fixtures/roadmap-hostile)
  * cover every rating pattern and each C-code's firing by code; this file pins
@@ -40,7 +45,23 @@ import "./_no-model";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as RT from "../src/lib/roadmap-types";
-import { acceptRefusalOf, chainChecksOf, clauseSplitOf, kFinalOf, mapAgreementOf, parentsOf, writtenMapOf, type ChainCheckContext, type MapSampleIn, type WrittenMapInput } from "../src/lib/roadmap-topics";
+import {
+  DEEPER_INSTRUCTION,
+  MAP_INSTRUCTION_PARTS,
+  acceptRefusalOf,
+  chainChecksOf,
+  clauseSplitOf,
+  kFinalOf,
+  mapAgreementOf,
+  mapSchemaOf,
+  parentsOf,
+  topicClassOf,
+  topicHideReasonOf,
+  writtenMapOf,
+  type ChainCheckContext,
+  type MapSampleIn,
+  type WrittenMapInput,
+} from "../src/lib/roadmap-topics";
 import { RATE_INSTRUCTION, ratingOf, ratingOverrideOf, withMapFillOf, wordCautionsOf, type RateSampleIn } from "../src/lib/roadmap-rating";
 import { checkLabel, type LabelContext } from "../src/lib/roadmap-validate";
 import { stripFiguresOf } from "../src/lib/roadmap-evidence";
@@ -569,8 +590,8 @@ console.log("— the live fix: Title Case topic names, stripFiguresOf, RATE v2 �
 
   // (c) RATE v2: the three anchors from probe stage 2's misses, no test aim named, and the version bump.
   check(
-    "RATE v2: the anchors (the stated level counts, routine upkeep is DIFF_1 or DIFF_2, breadth is one layer's topics) and TOPIC_PROMPT_VERSION 2",
-    RT.TOPIC_PROMPT_VERSION === 2 &&
+    "RATE v2: the anchors (the stated level counts, routine upkeep is DIFF_1 or DIFF_2, breadth is one layer's topics); TOPIC_PROMPT_VERSION 3 since MAP's names v3 (ruling N5) left RATE's text as it was",
+    RT.TOPIC_PROMPT_VERSION === 3 &&
       RATE_INSTRUCTION.includes("reach the level the aim states") &&
       RATE_INSTRUCTION.includes("Keeping up a routine or upkeep is DIFF_1 or DIFF_2.") &&
       RATE_INSTRUCTION.includes("not the fields the aim touches") &&
@@ -627,14 +648,15 @@ console.log("— the names test: the pooled gate (N2), the brand your aim names 
   const named = (a: ReturnType<typeof mapOf>) => [...a.topics, ...a.hidden].filter((t) => t.nameOrigin === "GEMINI").map((t) => `${t.key} L${t.layer} ${t.formVotes}/${t.samples} ${t.name}`);
   const pooled = mapOf();
   eq(
-    "N2 pooled gate, piano-reading (real replies): 13 proposed, 1 agreed before → 7 pass (the room), 6 OVER_ROOM, none hidden; 'Musical Notation' (2 of 3, the earliest sample's form beside 'Musical notation') leads",
-    { proposed: pack.proposed.length, before: pack.agreement.kept.length, names: named(pooled), dropped: pooled.report.dropped, hidden: pooled.hidden.length },
+    "N2 pooled gate, piano-reading (real replies): 13 proposed, 1 agreed before → 7 pass (the room), 6 OVER_ROOM; 'Musical Notation' (2 of 3, the earliest sample's form beside 'Musical notation') leads; since ruling N7 'Acoustics' (a whole field) is hidden, keyed and revealable, never dropped",
+    { proposed: pack.proposed.length, before: pack.agreement.kept.length, names: named(pooled), dropped: pooled.report.dropped, hidden: pooled.hidden.map((t) => [t.name, t.flags, topicHideReasonOf(t)]), report: pooled.report.hidden },
     {
       proposed: 13,
       before: 1,
-      names: ["T1 L1 2/3 Musical Notation", "T2 L1 1/3 Acoustics", "T3 L2 1/3 Keyboard Layout", "T4 L2 1/3 Hand Posture", "T5 L3 1/3 Finger Independence", "T6 L3 1/3 Sight Reading", "T7 L3 1/3 Chord Placement"],
+      names: ["T1 L1 2/3 Musical Notation", "T3 L2 1/3 Keyboard Layout", "T4 L2 1/3 Hand Posture", "T5 L3 1/3 Finger Independence", "T6 L3 1/3 Sight Reading", "T7 L3 1/3 Chord Placement", "T2 L1 1/3 Acoustics"],
       dropped: { OVER_ROOM: 6 },
-      hidden: 0,
+      hidden: [["Acoustics", ["VAGUE_FIELD"], "VAGUE_FIELD"]],
+      report: { VAGUE_FIELD: 1 },
     }
   );
   eq("N2 the ablation: topic.agree off restores the old gate (ONE_SAMPLE), and the recorded agreement's one name comes back", named(mapOf({ "topic.agree": false })), ["T1 L1 2/3 Musical Notation"]);
@@ -645,6 +667,131 @@ console.log("— the names test: the pooled gate (N2), the brand your aim names 
     "N4 BRAND: 'Excel formulas' fires under 'Get better at spreadsheets' and is silent under 'Learn Excel'; 'Microsoft Excel Formulas' still fires there (Microsoft is not in the aim)",
     [brand("Excel formulas", "Get better at spreadsheets"), brand("Excel formulas", "Learn Excel"), brand("Microsoft Excel Formulas", "Learn Excel")],
     [true, false, true]
+  );
+}
+
+// ═══ 8. The judged names test's rulings (contracts §22.20 N5–N7; probe-v5-names-judge-sheet.json labels) ═══
+
+console.log("— the judged names test: names v3 (N5), N6 withdrawn (agreement never gates a 1-source name), a whole field (N7) —");
+{
+  // (a) N5: MAP's names v3 and DEEPER v3 carry the judged test's rules; the schema is the one probe P3 accepted (unchanged).
+  const P3 = JSON.parse(readFileSync(join(process.cwd(), "scripts/fixtures/roadmap-corpus/probe-v5-P3.json"), "utf8"));
+  const rules = [
+    "a textbook chapter, a course syllabus or an exam specification",
+    "never coin a compound of your own",
+    "never later exams or the wider profession",
+    "No organisations",
+    "one-word fields like Mathematics, Physics, Acoustics or Semantics",
+  ];
+  check(
+    "N5: MAP's names v3 (standard syllabus terms inside the aim and its stated level, no organisation or whole field, no coined compound, fewer names and an empty deep layer rather than padding) and DEEPER v3, at TOPIC_PROMPT_VERSION 3",
+    RT.TOPIC_PROMPT_VERSION === 3 &&
+      rules.every((r) => MAP_INSTRUCTION_PARTS.names.includes(r)) &&
+      MAP_INSTRUCTION_PARTS.names.includes("Stay inside the aim and the level it states: for an exam, only that exam's syllabus") &&
+      MAP_INSTRUCTION_PARTS.names.includes("leave a deep layer empty rather than pad it") &&
+      rules.filter((r) => r !== "never later exams or the wider profession").every((r) => DEEPER_INSTRUCTION.includes(r)) &&
+      DEEPER_INSTRUCTION.includes("never a later exam or the wider profession") &&
+      DEEPER_INSTRUCTION.includes("Give fewer names rather than pad") &&
+      !/\b(Quick preparations|Speed techniques|Lighting Balance|Mediterranean expansion|Optical Physics|Exam P)\b/i.test(MAP_INSTRUCTION_PARTS.names + DEEPER_INSTRUCTION),
+    MAP_INSTRUCTION_PARTS.names
+  );
+  eq("N5: the names schema is unchanged: mapSchemaOf at K 4, WIDE equals the schema probe P3 sent and Gemini accepted", mapSchemaOf({ layers: 4, placeKeys: [], names: true, breadth: "WIDE" }), P3.schema);
+
+  // (b) N6 withdrawn (the lead, after the offline re-score: it hid 30 good names to remove 5 bad ones, and the shown
+  // names' fabrication rate went 6.6% → 7.2%): GROUND's WEAK at 1 source is shown (LINKED_ONE, N3) whatever the votes;
+  // the fold's reasons (topicHideReasonOf) stay: a hiding flag, then GROUND's verdict.
+  const g = (o: Partial<RT.TopicDraft>) => topic("T1", 2, { nameOrigin: "GEMINI", placedBy: "GEMINI", chosen: false, decision: "PENDING", samples: 3, ...o });
+  const one = [{ title: "example.edu", uri: "https://example.edu/notes" }];
+  const two = [...one, { title: "example.org", uri: "https://example.org/chapter" }];
+  const rows: [string, RT.TopicDraft][] = [
+    ["WEAK 1 source, 2 of 3", g({ grounding: "WEAK", sources: one, formVotes: 2 })],
+    ["WEAK 1 source, 1 of 3", g({ grounding: "WEAK", sources: one, formVotes: 1 })],
+    ["WEAK 1 source, 1 of 1 (one valid sample)", g({ grounding: "WEAK", sources: one, formVotes: 1, samples: 1 })],
+    ["LINKED, 1 of 3", g({ grounding: "LINKED", sources: two, formVotes: 1 })],
+    ["WEAK 1 source, 1 of 3, kept", g({ grounding: "WEAK", sources: one, formVotes: 1, decision: "KEPT" })],
+    ["NONE, 3 of 3", g({ grounding: "NONE", sources: [], formVotes: 3 })],
+    ["WEAK 2 sources, 2 of 3 (TITLE_CHECK)", g({ grounding: "WEAK", sources: two, formVotes: 2 })],
+    ["NOT_RUN, 1 of 3", g({ grounding: "NOT_RUN", sources: [], formVotes: 1 })],
+    ["VAGUE_FIELD, WEAK 1 source, 2 of 3", g({ grounding: "WEAK", sources: one, formVotes: 2, flags: ["VAGUE_FIELD"] })],
+  ];
+  eq(
+    "N6 withdrawn: a WEAK name at 1 source is LINKED_ONE (N3) whether 2 of 3, 1 of 3 or 1 of 1 samples wrote it (kept: KEPT), LINKED needs no agreement; behind the fold topicHideReasonOf says why (NONE, WEAK at 2 sources, NOT_RUN, VAGUE_FIELD before GROUND)",
+    rows.map(([label, t]) => [label, topicClassOf(t), topicHideReasonOf(t)]),
+    [
+      ["WEAK 1 source, 2 of 3", "LINKED_ONE", null],
+      ["WEAK 1 source, 1 of 3", "LINKED_ONE", null],
+      ["WEAK 1 source, 1 of 1 (one valid sample)", "LINKED_ONE", null],
+      ["LINKED, 1 of 3", "LINKED", null],
+      ["WEAK 1 source, 1 of 3, kept", "KEPT", null],
+      ["NONE, 3 of 3", "NOT_CHECKED", "NONE"],
+      ["WEAK 2 sources, 2 of 3 (TITLE_CHECK)", "NOT_CHECKED", "WEAK"],
+      ["NOT_RUN, 1 of 3", "NOT_CHECKED", "NOT_RUN"],
+      ["VAGUE_FIELD, WEAK 1 source, 2 of 3", "NOT_CHECKED", "VAGUE_FIELD"],
+    ]
+  );
+
+  // (c) N7: VAGUE_FIELD fires on a whole field and stays silent on the sub-fields a syllabus teaches as one topic, on a
+  // noun-headed "<noun> Science", and when your words name the field or a wider one it is a branch of.
+  const fieldCtx = (aim: string, o: Partial<LabelContext> = {}): LabelContext => ({ kind: "TOPIC", aim, constraints: null, examLabel: null, syllabusLines: [], areaName: "Study", domainNames: [], track: "CRAFT", topicMap: { scope: "GENERAL", countryNamed: false }, ...o });
+  const vague = (name: string, aim: string, o: Partial<LabelContext> = {}) => (checkLabel(name, fieldCtx(aim, o)).topicFlags ?? []).includes("VAGUE_FIELD");
+  const FIRING: [string, string][] = [
+    ["Mathematics", "Pass the actuarial probability exam"],
+    ["Acoustics", "Read music and play simple pieces on piano"],
+    ["Semantics", "Speak Japanese confidently at work"],
+    ["Optical Physics", "Take sharp, well-composed photos with a manual camera"],
+    ["Physics basics", "Take sharp, well-composed photos with a manual camera"],
+    ["Organic Chemistry", "Cook confident weeknight meals from scratch"],
+  ];
+  const SILENT: [string, string, Partial<LabelContext>?][] = [
+    ["Probability", "Pass the actuarial probability exam"],
+    ["Calculus", "Pass the actuarial probability exam"],
+    ["Grammar", "Speak Japanese confidently at work"],
+    ["Syntax", "Speak Japanese confidently at work"],
+    ["Combinatorics", "Pass the actuarial probability exam"],
+    ["Music Theory", "Read music and play simple pieces on piano"],
+    ["Soil Science", "Grow vegetables in a small backyard garden"],
+    ["Statistical Inference", "Understand how machine learning models are trained"],
+    ["Lens Optics", "Take sharp, well-composed photos with a manual camera"],
+    ["Optics", "Pass A-level physics"],
+    ["Statistics", "Pass GCSE Maths"],
+    ["Organic Chemistry", "Pass A-level chemistry"],
+    ["Ancient History", "Learn the history of the Roman Empire"],
+    ["Psychology", "Get ready for the exam", { examLabel: "AP Psychology" }],
+    ["Linguistics", "Read my course outline", { syllabusLines: ["Introduction to linguistics"] }],
+  ];
+  eq(
+    "N7 VAGUE_FIELD: a whole field fires (one FIELD_NAMES word, a level word aside, or a FIELD_ADJECTIVES word then one); sub-fields, '<noun> Science', 'Music Theory' and a field your aim, exam label or outline names (or a wider one: physics for optics, maths for statistics) stay silent",
+    [FIRING.map(([n, a]) => vague(n, a)), SILENT.map(([n, a, o]) => vague(n, a, o))],
+    [FIRING.map(() => true), SILENT.map(() => false)]
+  );
+  const fieldMap = (rulesOff: Record<string, boolean>) => {
+    let n = 0;
+    const a = mapAgreementOf(
+      {
+        samples: [0, 1, 2].map((): MapSampleIn => ({ parsed: { names: { L1: [{ name: "Mathematics", scope: "GENERAL" }, { name: "Combinatorics", scope: "GENERAL" }] } }, integrity: "CLEAN" })),
+        layers: 2,
+        breadth: "MEDIUM",
+        room: 6,
+        aim: "Pass the actuarial probability exam",
+        lines: [],
+        domains: [],
+        freeDomains: [],
+        takenNames: [],
+        label: fieldCtx("Pass the actuarial probability exam", { areaName: "Statistics" }),
+        countryNamed: false,
+        makeId: () => `vf-${++n}`,
+      },
+      { rules: rulesOff }
+    );
+    return { shown: a.topics.map((t) => t.name), hidden: a.hidden.map((t) => [t.name, t.flags]), report: a.report.hidden, dropped: a.report.dropped };
+  };
+  eq(
+    "N7: VAGUE_FIELD hides, never drops (REGION's way): 'Mathematics' in a pooled MAP is a hidden GEMINI name flagged VAGUE_FIELD, counted in report.hidden; switched off (the ablation) it is shown",
+    [fieldMap({}), fieldMap({ "topic.flag.VAGUE_FIELD": false })],
+    [
+      { shown: ["Combinatorics"], hidden: [["Mathematics", ["VAGUE_FIELD"]]], report: { VAGUE_FIELD: 1 }, dropped: {} },
+      { shown: ["Mathematics", "Combinatorics"], hidden: [], report: {}, dropped: {} },
+    ]
   );
 }
 

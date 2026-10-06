@@ -2926,6 +2926,9 @@ function familyT(): R5NameCase[] {
   push("layers disagree by more than one: the majority's layer, never hidden", { target: "Compound interest", layers: [1, 3, 3] }, "KEPT");
   push("REGION_SPECIFIC with no country named", { target: G.R5_REGION_TOPIC, scope: "REGION_SPECIFIC" }, "HIDDEN", { reason: "REGION" });
   push("REGION_SPECIFIC with a country named", { target: G.R5_REGION_TOPIC, scope: "REGION_SPECIFIC", countryNamed: true }, "KEPT");
+  // Ruling N7 (the judged names test): a whole academic field is hidden, revealable, never dropped; a sub-field is kept.
+  for (const t of G.R5_FIELD_TOPICS) push("a whole academic field: hidden (VAGUE_FIELD), never dropped", { target: t }, "HIDDEN", { reason: "VAGUE_FIELD" });
+  for (const t of G.R5_SUBFIELD_TOPICS) push("a sub-field a syllabus teaches as one topic: kept (VAGUE_FIELD silent)", { target: t }, "KEPT");
   push("the room trims, by votes, never pads", { target: "Credit score", in: [0, 1], room: 2 }, "DROPPED", { reason: "OVER_ROOM" });
   push("five words: the shape rule", { target: G.R5_OVER_SHAPE_TOPIC }, "DROPPED", { reason: "SHAPE" });
   push("a level word apart, one layer deeper: merged into the shallower name, never its own", { target: G.R5_SAME_DEEPER[1], layers: [2, 2, 2], extra: [{ name: G.R5_SAME_DEEPER[0], in: [0, 1, 2], layers: [1, 1, 1] }] }, "DROPPED", { absent: [G.R5_SAME_DEEPER[1]] });

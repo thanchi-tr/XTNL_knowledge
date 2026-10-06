@@ -3571,15 +3571,20 @@ async function main() {
   );
   {
     // Revision 5 (contracts §22.20, N1–N4's join): every v5 ceiling is checked in at 0, the names re-ground's included; the
-    // lead sets one just before an approved run and back to 0 after it, so no committed probe can send a v5 request.
+    // lead sets one just before an approved run and back to 0 after it, so no committed probe can send a v5 request. The
+    // names v3 re-test's (ruling N5; the user's approval of about 90 calls) is one of them, refused over its approval.
     const body = code(read("scripts/roadmap-probe.ts"));
     const ceilings = Array.from(body.matchAll(/const (MAX_PROBE_CALLS_V5\w*): number = (\d+);/g), (x) => [x[1], Number(x[2])] as const);
     const names = ceilings.map(([n]) => n);
     check(
-      "every v5 probe ceiling is 0 as checked in (MAX_PROBE_CALLS_V5, _STAGE_2, _NAMES, _REGROUND), and the re-ground refuses a ceiling over REGROUND_APPROVED_MAX",
-      ["MAX_PROBE_CALLS_V5", "MAX_PROBE_CALLS_V5_STAGE_2", "MAX_PROBE_CALLS_V5_NAMES", "MAX_PROBE_CALLS_V5_REGROUND"].every((n) => names.includes(n)) &&
+      "every v5 probe ceiling is 0 as checked in (MAX_PROBE_CALLS_V5, _STAGE_2, _NAMES, _REGROUND, _V3); the re-ground refuses a ceiling over REGROUND_APPROVED_MAX, and the names v3 re-test one over NAMES_V3_APPROVED_MAX (90) and a plan of 48 MAP + 42 grounded over its ceiling",
+      ["MAX_PROBE_CALLS_V5", "MAX_PROBE_CALLS_V5_STAGE_2", "MAX_PROBE_CALLS_V5_NAMES", "MAX_PROBE_CALLS_V5_REGROUND", "MAX_PROBE_CALLS_V5_V3"].every((n) => names.includes(n)) &&
         ceilings.every(([, v]) => v === 0) &&
-        /if \(MAX_PROBE_CALLS_V5_REGROUND > REGROUND_APPROVED_MAX\) refuse\(/.test(body),
+        /if \(MAX_PROBE_CALLS_V5_REGROUND > REGROUND_APPROVED_MAX\) refuse\(/.test(body) &&
+        /const NAMES_V3_APPROVED_MAX = 90;/.test(body) &&
+        /const NAMES_V3_GROUNDED_BUDGET = 42;/.test(body) &&
+        /if \(MAX_PROBE_CALLS_V5_V3 > NAMES_V3_APPROVED_MAX\) refuse\(/.test(body) &&
+        /if \(mapRequests \+ NAMES_V3_GROUNDED_BUDGET > MAX_PROBE_CALLS_V5_V3\) refuse\(/.test(body),
       ceilings.map(([n, v]) => `${n} ${v}`).join(", ")
     );
   }

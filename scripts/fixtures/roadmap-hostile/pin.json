@@ -47,10 +47,10 @@
     "probe-vietnamese-japanese"
   ],
   "r5": {
-    "sha256": "7f37846e086291134c15025bdfb0048c42725c3c038717c01c624dd624974c9f",
+    "sha256": "cac7dc97d7d4bb2c22b395a60725916f70720a142e50903cf6e784000b1fd0db",
     "counts": {
       "R": 33,
-      "T": 55,
+      "T": 60,
       "W": 30,
       "L": 39,
       "X": 20,

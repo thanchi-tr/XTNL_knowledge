@@ -6265,8 +6265,13 @@ export function topicSwitchesOf(raw?: Partial<TopicSwitches>): TopicSwitches {
 
 // ── Model and runs (§22.2, §22.15) ──
 
-/** The topic phases' prompt version (RATE, MAP, LINK, GROUND, DEEPER); ROADMAP_PROMPT_VERSION 4 stays for LEVELS. A text change is a bump. 2: the live fix's RATE calibration anchors (contracts §22.5, §22.20). */
-export const TOPIC_PROMPT_VERSION: number = 2;
+/**
+ * The topic phases' prompt version (RATE, MAP, LINK, GROUND, DEEPER); ROADMAP_PROMPT_VERSION 4 stays for LEVELS. A text
+ * change is a bump. 2: the live fix's RATE calibration anchors. 3: MAP's and DEEPER's names v3 after the judged names
+ * test (standard syllabus terms inside the aim, no whole fields or coined compounds, no padding; contracts §22.5,
+ * §22.20 ruling N5).
+ */
+export const TOPIC_PROMPT_VERSION: number = 3;
 /** Samples per JSON phase. */
 export const TOPIC_SAMPLES = 3;
 /**
@@ -6494,9 +6499,13 @@ export const RUN_PHASES: readonly RunPhase[] = ["RATE", "MAP", "LINK", "GROUND",
 /** RoadmapMilestone.chainRole: a layer milestone or a depth milestone. */
 export type ChainRole = "LAYER" | "DEPTH";
 export const CHAIN_ROLES: readonly ChainRole[] = ["LAYER", "DEPTH"];
-/** checkLabel's topic-name flags (ruling 3: their own union; BlockingFlag is not widened). */
-export type TopicFlag = "JURISDICTION" | "BRAND" | "ADVICE" | "LEVEL_ONLY" | "INJECTION" | "REGION";
-export const TOPIC_FLAGS: readonly TopicFlag[] = ["JURISDICTION", "BRAND", "ADVICE", "LEVEL_ONLY", "INJECTION", "REGION"];
+/**
+ * checkLabel's topic-name flags (ruling 3: their own union; BlockingFlag is not widened). REGION and VAGUE_FIELD hide a
+ * name (revealable); the others drop it. VAGUE_FIELD (ruling N7, the judged names test): a whole academic field, never a
+ * topic inside it ("Mathematics", "Optical Physics").
+ */
+export type TopicFlag = "JURISDICTION" | "BRAND" | "ADVICE" | "LEVEL_ONLY" | "INJECTION" | "REGION" | "VAGUE_FIELD";
+export const TOPIC_FLAGS: readonly TopicFlag[] = ["JURISDICTION", "BRAND", "ADVICE", "LEVEL_ONLY", "INJECTION", "REGION", "VAGUE_FIELD"];
 /**
  * A topic's provenance class (§22.11): what it shows. Keeping changes only "in the plan", never the class.
  * LINKED_ONE (ruling N3, the names test): a GEMINI name GROUND linked to exactly 1 distinct source (WEAK), shown
@@ -6540,9 +6549,12 @@ export const TOPIC_NOTES: readonly TopicNote[] = [
 /** Why a Gemini name was dropped: counted, never shown. */
 export type TopicDropReason = "SHAPE" | "FLAG" | "ECHO" | "ONE_SAMPLE" | "SAME_TOPIC_DEEPER" | "OVER_ROOM" | "TAKEN_NAME";
 export const TOPIC_DROP_REASONS: readonly TopicDropReason[] = ["SHAPE", "FLAG", "ECHO", "ONE_SAMPLE", "SAME_TOPIC_DEEPER", "OVER_ROOM", "TAKEN_NAME"];
-/** Why a Gemini name is hidden behind the count (revealable). */
-export type TopicHideReason = "UNSURE_LAYER" | "LANGUAGE_UNCHECKED" | "REGION" | "NEAR_DUPLICATE" | "WEAK" | "NONE" | "NOT_RUN" | "GROUND_FAILED";
-export const TOPIC_HIDE_REASONS: readonly TopicHideReason[] = ["UNSURE_LAYER", "LANGUAGE_UNCHECKED", "REGION", "NEAR_DUPLICATE", "WEAK", "NONE", "NOT_RUN", "GROUND_FAILED"];
+/**
+ * Why a Gemini name is hidden behind the count (revealable; roadmap-topics topicHideReasonOf). VAGUE_FIELD (ruling N7):
+ * checkLabel's whole-field flag.
+ */
+export type TopicHideReason = "UNSURE_LAYER" | "LANGUAGE_UNCHECKED" | "REGION" | "NEAR_DUPLICATE" | "WEAK" | "NONE" | "NOT_RUN" | "GROUND_FAILED" | "VAGUE_FIELD";
+export const TOPIC_HIDE_REASONS: readonly TopicHideReason[] = ["UNSURE_LAYER", "LANGUAGE_UNCHECKED", "REGION", "NEAR_DUPLICATE", "WEAK", "NONE", "NOT_RUN", "GROUND_FAILED", "VAGUE_FIELD"];
 /** The map's rules (chainChecksOf; §22.8's table). */
 export type ChainCheckCode = "C1" | "C2" | "C3" | "C4" | "C5" | "C6" | "C7" | "C8" | "C9" | "C10";
 export const CHAIN_CHECK_CODES: readonly ChainCheckCode[] = ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10"];

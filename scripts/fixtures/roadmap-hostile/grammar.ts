@@ -1017,6 +1017,10 @@ export const R5_NEAR_MISS_PAIRS: readonly (readonly [string, string])[] = [
 export const R5_NEAR_DUPLICATE: readonly [string, string] = ["Cash flow analysis", "Cash flow analyses"];
 /** REGION_SPECIFIC with no country named: hidden; with one named: kept. */
 export const R5_REGION_TOPIC = "Tax brackets";
+/** Ruling N7 (the judged names test): whole academic fields, hidden (VAGUE_FIELD; revealable), never dropped. R5_AIM and R5_AREA name none of them. */
+export const R5_FIELD_TOPICS: readonly string[] = ["Economics", "Applied Mathematics", "Social Psychology"];
+/** Ruling N7: sub-fields a syllabus teaches as one topic: VAGUE_FIELD never fires, so they are kept. */
+export const R5_SUBFIELD_TOPICS: readonly string[] = ["Probability", "Accounting"];
 /** Five words: the shape rule alone drops it. */
 export const R5_OVER_SHAPE_TOPIC = "Personal cash flow budgeting basics plan";
 /** The same topic one layer deeper, level words aside: since ruling N2 a near-duplicate pair (Dice 1), merged into the shallower name; C10 at MAP is pinned against an outline line instead. */

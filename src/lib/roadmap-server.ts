@@ -15331,9 +15331,9 @@ const isKeyOf = (prefix: "S" | "U" | "T") => (t: { key: string }): boolean => ne
 const keyNumberOf = (key: string): number => (/^[SUT](\d+)$/.test(key) ? Number(key.slice(1)) : Number.POSITIVE_INFINITY);
 const byTopicKey = (a: { key: string }, b: { key: string }): number => "SUT".indexOf(a.key[0]) - "SUT".indexOf(b.key[0]) || keyNumberOf(a.key) - keyNumberOf(b.key);
 const chainLiveOf = (map: t5.TopicMap): t5.TopicDraft[] => map.topics.filter(topicLive);
-/** A topic the agreement hid (a note or flag says why): it is never sent to LINK or GROUND. */
+/** A topic the agreement hid (a note or flag says why; VAGUE_FIELD, a whole field: ruling N7): it is never sent to LINK or GROUND. */
 const chainHiddenMarked = (t: t5.TopicDraft): boolean =>
-  t.notes.includes("NEAR_DUPLICATE") || t.notes.includes("UNSURE_LAYER") || t.flags.includes("REGION") || t.flags.includes("LANGUAGE_UNCHECKED");
+  t.notes.includes("NEAR_DUPLICATE") || t.notes.includes("UNSURE_LAYER") || t.flags.includes("REGION") || t.flags.includes("LANGUAGE_UNCHECKED") || t.flags.includes("VAGUE_FIELD");
 
 /** The outline lines and the exam label a topic pack may send (the exam's label only with your Yes; never its day). */
 const chainOutlineOf = (intake: Intake): string[] => (intake.syllabus?.lines ?? []).filter((l): l is string => typeof l === "string");
