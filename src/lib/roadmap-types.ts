@@ -6215,17 +6215,17 @@ export const GOALS_MAX: number = 1;
 /** The seats the database's CHECK allows (slot 1..3); GOALS_MAX ≤ it. Never flipped. */
 export const GOAL_SLOTS_MAX = 3;
 /** TOPICS plans (lane 9 flips it). */
-export const TOPIC_PLANS_LIVE: boolean = false;
+export const TOPIC_PLANS_LIVE: boolean = true;
 /** Gemini's rating, the chain head (lane 13). */
-export const TOPIC_RATE_LIVE: boolean = false;
+export const TOPIC_RATE_LIVE: boolean = true;
 /** MAP's placement of your outline lines and Domains (lane 13). */
-export const TOPIC_PLACE_LIVE: boolean = false;
+export const TOPIC_PLACE_LIVE: boolean = true;
 /** MAP's Gemini topic names; effective only with GROUND (lane 13). */
-export const TOPIC_NAMES_LIVE: boolean = false;
+export const TOPIC_NAMES_LIVE: boolean = true;
 /** LINK's prerequisite links (lane 13). */
-export const TOPIC_LINK_LIVE: boolean = false;
+export const TOPIC_LINK_LIVE: boolean = true;
 /** GROUND, the web check of Gemini's names; effective only with names (lane 13). */
-export const TOPIC_GROUND_LIVE: boolean = false;
+export const TOPIC_GROUND_LIVE: boolean = true;
 
 /** The six switches, as given or as they take effect (topicSwitchesOf). */
 export interface TopicSwitches {
