@@ -19,6 +19,14 @@
  * model's text, which is read only to place each key's line. confidenceScores
  * are never read. A thought part counts in partIndex but holds no counting
  * line (it is the model's reasoning, not its answer).
+ *
+ * Probe stage 1 (lane 11; the real replies saved unedited as
+ * scripts/fixtures/roadmap-corpus/probe-v5-P5.json and probe-v5-P5b.json)
+ * moved two readings of §22.9 to what Gemini returns: a support's segment
+ * starts at its line's byte 0, label included (step 3 read only segments
+ * from textStart, so every real support counted nowhere), and a line may be
+ * labelled by its term instead of its key. The term's stems are still read
+ * only after the label, and everything else stays as §22.9 has it.
  */
 import {
   GROUND_KEYS_PER_CALL,
@@ -113,7 +121,7 @@ export interface GroundParts {
   toolUsePromptTokenCount: number | null;
   truncated: boolean;
 }
-/** One counting line "Tk: …" of a Part: byte offsets (UTF-8, per Part). */
+/** One counting line "Tk: …" (or "<the term>: …", read by groundVerdictOf) of a Part: byte offsets (UTF-8, per Part); textStart is the byte after the label's ": ". */
 export interface GroundLine {
   key: string;
   partIndex: number;
@@ -286,27 +294,71 @@ function rawLinesOf(parts: readonly unknown[]): RawLine[] {
   return out;
 }
 
-/** The counting line of `raw`, when it starts at byte 0 with an issued key, ": " and at least one character. */
-function countingLineOf(raw: RawLine, issued: ReadonlySet<string>): GroundLine | null {
-  const m = /^([A-Z][1-9]\d{0,2}): ([\s\S]+)$/u.exec(raw.text);
-  if (!m || !issued.has(m[1])) return null;
-  const rest = m[2];
-  return {
-    key: m[1],
-    partIndex: raw.partIndex,
-    lineStart: raw.start,
-    textStart: raw.start + byteLength(`${m[1]}: `),
-    end: raw.end,
-    notFound: rest.trim().toLowerCase() === "not found",
-    hasUrl: hasUrlOf(rest),
-  };
+/**
+ * A line's body is "NOT FOUND": the two words in any case, any spacing between
+ * them, and nothing else but punctuation or spaces around them ("Not found.",
+ * "**NOT FOUND**"). Such a line is NONE (NOT_FOUND), never LINKED.
+ */
+const NOT_FOUND_BODY = /^[\s\p{P}]*not\s+found[\s\p{P}]*$/iu;
+
+/** A label read for its words only: NFKC, no format characters, lower case, each run of spaces one space; never trimmed (a label must start at byte 0 and end at its ": "). */
+const labelWordsOf = (s: string): string => s.normalize("NFKC").replace(/\p{Cf}/gu, "").toLowerCase().replace(/\s+/gu, " ");
+
+/** An issued term's name, read as labelWordsOf reads a label: its words, case folded, the key that issued it. */
+type NameLabels = ReadonlyMap<string, readonly string[]>;
+function nameLabelsOf(terms: readonly GroundTerm[]): NameLabels {
+  const out = new Map<string, string[]>();
+  for (const t of arr(terms)) {
+    if (!t || typeof t.key !== "string" || typeof t.name !== "string") continue;
+    const words = labelWordsOf(t.name.trim());
+    if (words === "") continue;
+    const keys = out.get(words) ?? [];
+    if (!keys.includes(t.key)) keys.push(t.key);
+    out.set(words, keys);
+  }
+  return out;
 }
 
+/**
+ * The counting line of `raw`. It starts at byte 0 with its label, then ": "
+ * and at least one character. The label is an issued key ("T1: …", exact, as
+ * §22.9 has it) or, when `names` is given, an issued term itself ("Asset
+ * allocation: …"): the term's words in its order, case-insensitive (NFKC, one
+ * space between words), and nothing else, never a stem, a part of the term or
+ * another word. Probe P5b (scripts/fixtures/roadmap-corpus/probe-v5-P5b.json,
+ * a real reply) labelled every line with the term instead of its key. A label
+ * two issued terms share names neither (no line).
+ */
+function countingLineOf(raw: RawLine, issued: ReadonlySet<string>, names: NameLabels | null): GroundLine | null {
+  const lineOf = (key: string, label: string, rest: string): GroundLine => ({
+    key,
+    partIndex: raw.partIndex,
+    lineStart: raw.start,
+    textStart: raw.start + byteLength(`${label}: `),
+    end: raw.end,
+    notFound: NOT_FOUND_BODY.test(rest),
+    hasUrl: hasUrlOf(rest),
+  });
+  const m = /^([A-Z][1-9]\d{0,2}): ([\s\S]+)$/u.exec(raw.text);
+  if (m && issued.has(m[1])) return lineOf(m[1], m[1], m[2]);
+  if (!names || names.size === 0) return null;
+  for (let at = raw.text.indexOf(": "); at > 0; at = raw.text.indexOf(": ", at + 1)) {
+    const label = raw.text.slice(0, at);
+    const rest = raw.text.slice(at + 2);
+    const keys = names.get(labelWordsOf(label));
+    if (!keys) continue;
+    if (keys.length !== 1 || !issued.has(keys[0]) || rest === "") return null;
+    return lineOf(keys[0], label, rest);
+  }
+  return null;
+}
+
+/** The line map by key (§22.9). It knows the issued keys only, so it reads "Tk: " lines; groundVerdictOf, which has the terms, also reads a line labelled by its term. */
 export function groundLinesOf(parts: readonly unknown[], issued: readonly string[]): GroundLine[] {
   try {
     const keys = new Set(arr(issued).filter((k) => typeof k === "string"));
     return rawLinesOf(parts)
-      .map((r) => countingLineOf(r, keys))
+      .map((r) => countingLineOf(r, keys, null))
       .filter((l): l is GroundLine => l !== null);
   } catch {
     return [];
@@ -473,11 +525,12 @@ export function groundVerdictOf(input: GroundVerdictInput, opts?: RuleOpts): Gro
 
     // 2. ground.line and ground.url.
     const issued = new Set(keyList);
+    const names = nameLabelsOf(terms);
     const raw = rawLinesOf(parts.parts);
     const lines: GroundLine[] = [];
     let urlOutside = false;
     for (const r of raw) {
-      const line = countingLineOf(r, issued);
+      const line = countingLineOf(r, issued, names);
       if (line) lines.push(line);
       else if (hasUrlOf(r.text)) urlOutside = true;
     }
@@ -513,7 +566,10 @@ export function groundVerdictOf(input: GroundVerdictInput, opts?: RuleOpts): Gro
       lineOf.set(k, line);
     }
 
-    // 3–4. The supports: inside the key's line after "Tk: ", its bytes exactly, the term's stems as one run.
+    // 3–4. The supports: inside the key's line, reaching past its label, its bytes exactly, and the term's stems as one run in
+    // the part after the label. Real segments start at the line's byte 0 and carry its "T1: " (probe P5,
+    // scripts/fixtures/roadmap-corpus/probe-v5-P5.json: startIndex missing, 191 and 377, each the line's start), so a
+    // segment may begin at the label; the label never counts as the term's use (a term-labelled line names the term there).
     const partBytes = new Map<number, Uint8Array>();
     const bytesOf = (pi: number): Uint8Array | null => {
       if (partBytes.has(pi)) return partBytes.get(pi) ?? null;
@@ -540,7 +596,9 @@ export function groundVerdictOf(input: GroundVerdictInput, opts?: RuleOpts): Gro
       }
       const segmentOn = R.on("ground.segment");
       const owner = [...lineOf.values()].find((l) =>
-        segmentOn ? l.partIndex === partIndex && startIndex >= l.textStart && endIndex <= l.end && endIndex > startIndex : l.partIndex === partIndex && startIndex < l.end && endIndex > l.lineStart
+        segmentOn
+          ? l.partIndex === partIndex && startIndex >= l.lineStart && endIndex > l.textStart && endIndex <= l.end && endIndex > startIndex
+          : l.partIndex === partIndex && startIndex < l.end && endIndex > l.lineStart
       );
       if (!owner) {
         if (segmentOn) R.fire("ground.segment");
@@ -556,7 +614,10 @@ export function groundVerdictOf(input: GroundVerdictInput, opts?: RuleOpts): Gro
         }
       }
       if (R.on("ground.contiguous")) {
-        const have = contentStemsOf(typeof segText === "string" ? segText : "", opts);
+        // The segment's text after the line's label: the bytes before textStart are the key or the term as a label.
+        const text = typeof segText === "string" ? segText : "";
+        const body = startIndex >= owner.textStart ? text : DECODER.decode(ENCODER.encode(text).slice(owner.textStart - startIndex));
+        const have = contentStemsOf(body, opts);
         if (!holdsRun(have, want.get(owner.key) ?? [])) {
           R.fire("ground.contiguous");
           continue;

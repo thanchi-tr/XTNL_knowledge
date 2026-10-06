@@ -473,8 +473,12 @@ async function main() {
 
 const V5_FLAG = "--v5";
 const LIST_FLAG = "--list";
-/** The approved ceiling for stage 1: 0 until the user's approval (no call can be sent in this build). Lane 11 sets it, at most STAGE_1_CALLS_MAX. */
-const MAX_PROBE_CALLS_V5 = 0;
+/**
+ * The approved ceiling for stage 1: 0, so no call can be sent from this build. The user's approval of stage 1
+ * (2026-10-06: at most 8 free-tier calls, 2 grounded) was spent on 2026-10-07 with this set to 8: 7 requests, saved as
+ * scripts/fixtures/roadmap-corpus/probe-v5-P*.json. Any further call needs a new approval.
+ */
+const MAX_PROBE_CALLS_V5: number = 0;
 /** Stage 1's own bound: P1–P6 (7 calls) plus P3b only if P3 is rejected. */
 const STAGE_1_CALLS_MAX = 8;
 /** Stage 1's grounded calls (P5, P5b). */

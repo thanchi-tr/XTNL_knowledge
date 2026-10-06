@@ -6258,7 +6258,12 @@ export function topicSwitchesOf(raw?: Partial<TopicSwitches>): TopicSwitches {
 export const TOPIC_PROMPT_VERSION: number = 1;
 /** Samples per JSON phase. */
 export const TOPIC_SAMPLES = 3;
-/** 1: three requests a phase; 3: one request carrying three candidates (only after probe P6; lane 11 re-pins). */
+/**
+ * 1: three requests a phase; 3: one request carrying three candidates. Stays 1
+ * after probe P6 (scripts/fixtures/roadmap-corpus/probe-v5-P6.json): the model
+ * refused candidateCount 3 with a 400, "Multiple candidates is not enabled for
+ * this model".
+ */
 export const TOPIC_CANDIDATE_COUNT: 1 | 3 = 1;
 /** A form key is kept when at least this many of TOPIC_SAMPLES samples hold it exactly. */
 export const CONSENSUS_MIN = 2;
@@ -6279,8 +6284,17 @@ export const GROUND_CALLS_MAX = 7;
 export const DEEPER_GROUND_CALLS_MAX = 2;
 /** Sources shown in a name's ▸. */
 export const GROUND_SOURCES_SHOWN = 5;
-/** How a grounding chunk's title reads (ruling 35): "TITLE" until probe P5 reads otherwise (lane 11 re-pins). */
-export const GROUND_TITLE_MODE: GroundTitleMode = "TITLE";
+/**
+ * How a grounding chunk's title reads (ruling 35). Re-pinned by lane 11 from
+ * probe P5 (scripts/fixtures/roadmap-corpus/probe-v5-P5.json, a real GROUND
+ * reply saved unedited, and P5b): every groundingChunks[i].web.title is a
+ * registrable DOMAIN ("uri.edu", "wikipedia.org", "westpac.com.au",
+ * "asbfeo.gov.au"), never a page title, and every uri is Google's
+ * vertexaisearch grounding-api-redirect link. So sources count by domain and
+ * the title check is UNAVAILABLE; the spec's fallback applies: the bar needs
+ * the 100-name sample before TOPIC_NAMES_LIVE.
+ */
+export const GROUND_TITLE_MODE: GroundTitleMode = "DOMAIN";
 export const GROUND_ABORT_MS = 45_000;
 /** GROUND's backstop: its abort plus 2 s, as ROADMAP_BACKSTOP_MS is ROADMAP_ABORT_MS plus 2 s. */
 export const GROUND_BACKSTOP_MS = GROUND_ABORT_MS + 2_000;

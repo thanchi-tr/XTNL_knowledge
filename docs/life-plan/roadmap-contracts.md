@@ -5254,6 +5254,14 @@ Lanes 11–13 add no line: probe runs and switches are the user's decisions. A s
     - Code's origin in roadmap-rating and roadmap-topics is spelled through the unions' lists (ruling 52), rather than widening roadmap-ui-check's CODE_WRITERS to the two modules.
     - PROGRESS.md's lane-0 line is outside this step's files; the lead updates it, with item 1's figures, in the commit that lands lane 0.
 
+**Probe stage 1 rulings (lane 11, 2026-10-07; replies in scripts/fixtures/roadmap-corpus/probe-v5-P*.json).** These override the text above where they differ (§22.2's GROUND_TITLE_MODE row, §22.9's line map and step 3, ruling 35, item 7):
+- P1–P4: the RATE, MAP place, MAP names (P3's target schema; P3b not needed) and LINK (minItems "1") schemas are accepted by gemini-3.5-flash-lite; all four replies CLEAN.
+- P5: chunk titles are registrable domains and uris are vertexaisearch redirect links, so GROUND_TITLE_MODE = "DOMAIN" (the title check cannot run; the spec's fallback applies: TOPIC_NAMES_LIVE needs the 100-name labelled sample first).
+- P5: Gemini's support segments start at the line's first byte and include the "T1: " label. A support counts when it starts at the line start or later and reaches past the label; the term is looked for only in the segment's text after the label.
+- P5b: Gemini may label a line with the term itself ("Asset allocation: …") instead of its key. A line counts when it starts at byte 0 with its issued key or with the term (case-insensitive, same words in order, then ": "); two terms sharing a label count neither. A body of NOT FOUND (any case, optional punctuation) is NONE (NOT_FOUND).
+- P6: candidateCount is refused ("Multiple candidates is not enabled for this model"): TOPIC_CANDIDATE_COUNT stays 1, and stage 2 is at most 123 requests (42 grounded).
+- Real verdicts in DOMAIN mode, pinned in roadmap-grounding-check: Household Finance LINKED (2 sites), Mortgages and Loans LINKED (3), Investment Management WEAK (1), Asset allocation WEAK (1), Amortization laddering NONE (NOT_FOUND), Velocity banking NONE (and ADVICE through SCHEME_NAMES).
+
 ## 23. Revision 5: up to 3 goals, and constraint safety across goals (lane 0, first and alone)
 
 **The decision (fixed).** The spec's decisions are 68 to 73 and 77. The user may keep up to 3 open goals. Each goal keeps its own map, chain, quests, Proficiency and rank, and all of them share one person's week. Decision 15 ("one open roadmap per user") is superseded by decision 68, and roadmap.md now says so. Constraint safety (§19) reads every open goal: this closes critic C2's round-1 blocker.

@@ -4556,7 +4556,8 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
       GROUND_CALLS_MAX: 7,
       DEEPER_GROUND_CALLS_MAX: 2,
       GROUND_SOURCES_SHOWN: 5,
-      GROUND_TITLE_MODE: "TITLE",
+      // Re-pinned by lane 11 from probe P5 (scripts/fixtures/roadmap-corpus/probe-v5-P5.json): chunk titles are registrable domains (ruling 35).
+      GROUND_TITLE_MODE: "DOMAIN",
       GROUND_ABORT_MS: 45_000,
       GROUND_BACKSTOP_MS: 47_000,
       TOPIC_RUN_STALE_MS: 180_000,

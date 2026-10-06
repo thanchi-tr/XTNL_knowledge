@@ -13,7 +13,11 @@
  * one source, multi-part suffixes and subdomains, the denylist in DOMAIN mode,
  * one reply read in both title modes, a multibyte line BEFORE another key's
  * line (and character offsets failing closed), malformed replies and the
- * run's NOT_RUN record, and GROUND_SOURCES_SHOWN.
+ * run's NOT_RUN record, and GROUND_SOURCES_SHOWN. Then the real replies of
+ * probe stage 1 (probe-v5-P5.json and probe-v5-P5b.json, read as saved,
+ * never rewritten): code's verdict on each real term, and the two readings
+ * they moved (a segment that starts at its line's label; a line labelled by
+ * its term), with what still never counts.
  *
  * Replies are built by the hostile corpus's canned builder
  * (scripts/fixtures/roadmap-hostile/grounding/canned.ts) from its fragments.
@@ -24,7 +28,10 @@
  *   npx tsx scripts/roadmap-grounding-check.ts
  */
 import "./_no-model";
-import { GROUND_SOURCES_SHOWN, SOURCES_MIN, type GroundTitleMode, type TopicSource } from "../src/lib/roadmap-types";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { GROUND_SOURCES_SHOWN, GROUND_TITLE_MODE, SOURCES_MIN, type GroundTitleMode, type TopicSource } from "../src/lib/roadmap-types";
+import { checkLabel } from "../src/lib/roadmap-validate";
 import {
   groundLinesOf,
   groundPartsOf,
@@ -358,6 +365,113 @@ section("sources shown", () => {
     "…the stored record keeps every chunk (server only) and the cap on shown sources; a stored verdict past the cap is not reused",
     record.chunks.length === chunks.length && back?.verdicts.T1?.sources.length === GROUND_SOURCES_SHOWN && groundReusableOf(tampered) === null,
     json({ chunks: record.chunks.length, reused: back?.verdicts.T1?.sources.length ?? null })
+  );
+});
+
+// ═══ Real replies (probe stage 1) ════════════════════════════════════════════
+
+/** A saved probe-v5 GROUND item: the terms sent and the reply's parts and metadata exactly as returned (unedited evidence). */
+interface SavedGround {
+  terms: GroundTerm[];
+  parts: { parts: unknown[]; metadata: Record<string, unknown> | null; finishReason: string | null; toolUsePromptTokenCount: number | null };
+}
+const savedOf = (file: string): SavedGround => JSON.parse(readFileSync(join(__dirname, "fixtures/roadmap-corpus", file), "utf8")) as SavedGround;
+/** The response the saved parts came from, as roadmap-model's groundResponseOf rebuilds it. */
+const savedResponseOf = (s: SavedGround) => ({
+  candidates: [{ content: { parts: [...s.parts.parts] }, finishReason: s.parts.finishReason, ...(s.parts.metadata ? { groundingMetadata: s.parts.metadata } : {}) }],
+});
+/** Per key: [verdict, reason, counted, the counted sites (chunk titles: domains)]. */
+const realOf = (v: GroundCallVerdict) => Object.fromEntries(Object.values(v.keys).map((k) => [k.key, [k.verdict, k.reason, k.counted, k.sources.map((s) => s.title)]]));
+
+section("real replies (probe stage 1)", () => {
+  eq("GROUND_TITLE_MODE is DOMAIN: P5's chunk titles are registrable domains", GROUND_TITLE_MODE, "DOMAIN");
+
+  // P5: the model wrote "T1: Household finance …" (the term in another case); each support starts at its line's byte 0, "T1: " included.
+  const p5 = savedOf("probe-v5-P5.json");
+  const v5 = verdictOf(savedResponseOf(p5), p5.terms, GROUND_TITLE_MODE);
+  eq(
+    "P5 (real): Household Finance LINKED on 2 sites, Investment Management WEAK on 1 (wikipedia.org), Mortgages and Loans LINKED on 3; a segment from the line's start, its term in another case, counts",
+    realOf(v5),
+    {
+      T1: ["LINKED", null, 2, ["uri.edu", "grupbancsabadell.com"]],
+      T2: ["WEAK", null, 1, ["wikipedia.org"]],
+      T3: ["LINKED", null, 3, ["squareup.com", "westpac.com.au", "asbfeo.gov.au"]],
+    }
+  );
+  const chunkUris = new Set(v5.chunks.map((c) => c.uri));
+  check(
+    "…every source is a groundingChunks entry (a vertexaisearch redirect), none from the model's text",
+    Object.values(v5.keys).every((k) => k.sources.every((s) => chunkUris.has(s.uri) && s.uri.startsWith(REDIRECT))),
+    json(v5.keys)
+  );
+  eq(
+    "…read in TITLE mode, the same reply fails the title check on every key (domains are no page titles): at most WEAK",
+    Object.values(verdictOf(savedResponseOf(p5), p5.terms, "TITLE").keys).map((k) => [k.key, k.verdict, k.reason]),
+    [
+      ["T1", "WEAK", "TITLE_CHECK"],
+      ["T2", "WEAK", "TITLE_CHECK"],
+      ["T3", "WEAK", "TITLE_CHECK"],
+    ]
+  );
+
+  // P5b: the model labelled each line with the term, not its key; its second support straddles the NOT FOUND line and Velocity banking's.
+  const p5b = savedOf("probe-v5-P5b.json");
+  const v5b = verdictOf(savedResponseOf(p5b), p5b.terms, GROUND_TITLE_MODE);
+  eq(
+    "P5b (real, term-labelled lines): Asset allocation WEAK on its 1 site (ebsco.com); Amortization laddering NONE (NOT_FOUND); Velocity banking NONE (NO_SUPPORT: its only support straddles two lines)",
+    realOf(v5b),
+    {
+      T1: ["WEAK", null, 1, ["ebsco.com"]],
+      T2: ["NONE", "NOT_FOUND", 0, []],
+      T3: ["NONE", "NO_SUPPORT", 0, []],
+    }
+  );
+  const ctx = {
+    kind: "TOPIC" as const,
+    aim: "Learn to run a household's investments and home loan, and keep the monthly budget on track",
+    constraints: null,
+    examLabel: null,
+    syllabusLines: [],
+    areaName: "Business & Finance",
+    domainNames: [],
+    track: "DUTY" as const,
+    topicMap: { scope: "GENERAL" as const, countryNamed: false },
+  };
+  eq(
+    "…and in the app GROUND never sees Velocity banking: checkLabel flags it ADVICE (SCHEME_NAMES); Asset allocation and Amortization laddering carry no ADVICE",
+    p5b.terms.map((t) => (checkLabel(t.name, ctx).topicFlags ?? []).includes("ADVICE")),
+    [false, false, true]
+  );
+
+  // The two readings, and what still never counts: one line, its segment from byte 0 to the line's end (as P5's), two domain sites.
+  const sites: CannedChunk[] = [{ title: "investor.gov" }, { title: "consumerfinance.gov" }];
+  const oneLine = (label: string, body: string = F1.sentence): GroundSpec => {
+    const line = `${label}: ${body}`;
+    return { parts: [{ lines: [line] }], supports: [{ part: 0, line: 0, phrase: line, chunks: [0, 1] }], chunks: sites, queries: [`${F1.name} meaning`] };
+  };
+  const labelled = (label: string, body?: string) => brief(ground(oneLine(label, body), T1, "DOMAIN"), "T1");
+  eq(
+    "a line labelled by its key or by its term (any case or spacing) counts; a near label (another word form, a list mark, a bold mark, a leading space, the key in lower case) is no line",
+    ["T1", "Cash flow", "CASH  FLOW", "Cash flows", "- Cash flow", "**Cash flow**", " Cash flow", "t1"].map((l) => labelled(l)),
+    [
+      ["LINKED", null, 2],
+      ["LINKED", null, 2],
+      ["LINKED", null, 2],
+      ["NONE", "NO_LINE", 0],
+      ["NONE", "NO_LINE", 0],
+      ["NONE", "NO_LINE", 0],
+      ["NONE", "NO_LINE", 0],
+      ["NONE", "NO_LINE", 0],
+    ]
+  );
+  eq(
+    "…the label never counts as the term's use: a term-labelled line whose sentence lacks the term adds no source (NO_SUPPORT); NOT FOUND in any case or with punctuation is NOT_FOUND",
+    [labelled("Cash flow", "It is the money moving into and out of a household each month."), labelled("Cash flow", "Not found."), labelled("T1", "**not  found**")],
+    [
+      ["NONE", "NO_SUPPORT", 0],
+      ["NONE", "NOT_FOUND", 0],
+      ["NONE", "NOT_FOUND", 0],
+    ]
   );
 });
 
