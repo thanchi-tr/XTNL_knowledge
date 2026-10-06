@@ -989,6 +989,10 @@
   .rm-in-hard button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
   .rm-in-pct { font-weight: 500; font-variant-numeric: tabular-nums; }
   .rm-in-sg { display: inline-grid; place-items: center; flex: none; color: var(--ink-1); }
+  /* "Left out · n" (F-R5-8, lane 1): the Area's Domains not chosen, folded under the chosen ones; a chip adds one.
+     "+ Domain from another Field" follows the fold: the Area's own Domains come first. */
+  .rm-in-left { margin-top: 10px; }
+  .rm-in-other { margin-top: 6px; }
   .rm-in-key { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; margin-top: -4px; }
   .rm-in-kl { display: block; }
   .rm-in-kl + .rm-in-kl { margin-top: 6px; }

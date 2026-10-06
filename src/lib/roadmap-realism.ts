@@ -26,6 +26,9 @@
  *   motivationTimelineOf · dateCheckOf · lowerDepthPlanOf · dateEffectOf
  *   floorDayOf · syncStagePractices · productionPlannedFromFluentOf
  *
+ * Revision 5, lane 1 (F-R5-8): aimDomainDefaultsOf, the intake's prefill,
+ * on lineDomainDefaultOf's own matcher (namesDomain).
+ *
  * Fix round 2 (contracts §16.10, the WRITE_MARGIN ruling's option (b)): new
  * cards that are only WRITE_MARGIN's spare (every Domain already holds its
  * count n_d) need no pace; with none, the depth is dated on the cards held
@@ -3518,6 +3521,12 @@ function contentStemsOf(text: string): string[] {
     .map((w) => w.stem);
 }
 
+/** Whether a text names a Domain: every content stem of the Domain's name is among the text's stems (a name of stop words only never is). */
+function namesDomain(stems: ReadonlySet<string>, name: string): boolean {
+  const need = contentStemsOf(name);
+  return need.length > 0 && need.every((s) => stems.has(s));
+}
+
 /**
  * The deterministic default Domain of an outline line (F-R4-9, F-R4-24): the
  * chosen Domain whose name's content stems all appear in the line; null with
@@ -3531,12 +3540,27 @@ export function lineDomainDefaultOf(line: string, chosen: readonly { id: string;
   const matched = new Set<string>();
   for (const d of chosen) {
     if (matched.has(d.id)) continue;
-    const need = contentStemsOf(d.name);
-    if (need.length === 0 || !need.every((s) => stems.has(s))) continue;
+    if (!namesDomain(stems, d.name)) continue;
     matched.add(d.id);
     hit = d.id;
   }
   return matched.size === 1 ? hit : null;
+}
+
+/**
+ * The Domains an aim names (F-R5-8, lane 1: the intake's prefill when an
+ * Area is picked): lineDomainDefaultOf's rule over the aim, each Domain whose
+ * name's content stems all appear in it, in the order given. Every match is
+ * kept (the aim names each one; there is no tie to break). With none, the
+ * intake starts with no Domain chosen: "I want to manage a 100k portfolio"
+ * names neither "Fund Management" nor "Trust Fund Architecture"; "Learn fund
+ * management" names "Fund Management".
+ */
+export function aimDomainDefaultsOf(aim: string, domains: readonly { id: string; name: string }[]): string[] {
+  const stems = new Set(contentStemsOf(aim));
+  const out: string[] = [];
+  for (const d of domains) if (!out.includes(d.id) && namesDomain(stems, d.name)) out.push(d.id);
+  return out;
 }
 
 /** The outline lines' Domains for an intake: the user's (Syllabus.lineDomains, kept only within R), else the deterministic default per line. */

@@ -70,7 +70,7 @@ export function RoadmapFixtures({ state }: { state: FixtureState }) {
       {fx.intake && (
         <div style={{ marginTop: fx.view ? 24 : 0 }}>
           {fx.view && <SectionHeader title="Set an aim" aside="/you/roadmap/new" />}
-          <RoadmapForm view={fx.intake} gates={fx.gates} />
+          <RoadmapForm key={state} view={fx.intake} gates={fx.gates} pick={fx.intakePick} />
         </div>
       )}
       {(fx.aim || fx.today) && (

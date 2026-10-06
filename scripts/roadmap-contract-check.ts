@@ -5431,9 +5431,21 @@ console.log("— revision 5: the later lanes' handoffs (§22.18; --lane=<n> fail
 
   const form = srcOf("src/components/roadmap/RoadmapForm.tsx");
   const pickField = /const pickField = [\s\S]*?\n {2}\};/.exec(form)?.[0] ?? "";
+  const realism1 = srcOf("src/lib/roadmap-realism.ts");
   lane(1, "the prefill fix (F-R5-8)", [
     ["RoadmapForm's pickField preselects no Domain by its cards (only an aim-word match, lineDomainDefaultOf's rule)", pickField !== "" && !/\.cards > 0/.test(pickField)],
+    [
+      "…through pickFieldDraft (and the handoff's handoffDraftOf) → domainPrefillOf → realism's aimDomainDefaultsOf, which shares lineDomainDefaultOf's matcher (namesDomain), and no intake path prefills by cards",
+      /\bpickFieldDraft\(/.test(pickField) &&
+        /\bdomainPrefillOf\(/.test(bodyOf(form, "pickFieldDraft")) &&
+        /\bdomainPrefillOf\(/.test(bodyOf(form, "handoffDraftOf")) &&
+        /\baimDomainDefaultsOf\(/.test(bodyOf(form, "domainPrefillOf")) &&
+        /\bnamesDomain\(/.test(bodyOf(realism1, "aimDomainDefaultsOf")) &&
+        /\bnamesDomain\(/.test(bodyOf(realism1, "lineDomainDefaultOf")) &&
+        !/\.cards > 0/.test(form),
+    ],
     ["NamedAreas is offered with any library (no emptyLibrary gate)", /<NamedAreas\b/.test(form) && !/emptyLibrary && <NamedAreas\b/.test(form)],
+    ["roadmap-ui-check pins the prefill (the live case's 0, an aim-word match, the Left-out fold, named areas beside a library)", srcOf("scripts/roadmap-ui-check.ts").includes("lane 1 golden (the live case)")],
   ]);
 
   const migA = srcOf("prisma/migrations/20261110000000_life_roadmap_goals/migration.sql");

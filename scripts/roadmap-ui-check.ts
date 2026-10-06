@@ -64,6 +64,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   AIM_RANKS,
   BLOCKING_FLAGS,
+  DEPTH_DOMAINS_MAX,
   ORIGINS,
   PACK_MAX_DOMAINS,
   PACK_SECTIONS,
@@ -183,7 +184,7 @@ async function main() {
       page = fx.view ? R(createElement(RoadmapScreen, { view: fx.view, startPreview: fx.startPreview, gates: fx.gates })) : "";
       aim = fx.aim ? R(createElement(AimCard, { view: fx.aim, today: fx.view?.today, autosaveAim: null })) : "";
       today = fx.today ? R(createElement(WeekQuests, { variant: "today", view: fx.today })) : "";
-      intake = fx.intake ? R(createElement(RoadmapForm, { view: fx.intake, gates: fx.gates })) : "";
+      intake = fx.intake ? R(createElement(RoadmapForm, { view: fx.intake, gates: fx.gates, pick: fx.intakePick })) : "";
     } catch (err) {
       check(`render: the '${s}' fixture renders`, false, String(err).slice(0, 300));
     }
@@ -1950,7 +1951,7 @@ async function main() {
       );
       check(
         "option (b): the form reads newCardsRequiredOf (no writeNeedOf left in the form: the spare alone never makes the pace 'needed')",
-        /const newCardsRequired = newCardsRequiredOf\(realistic, coverage, paceMeasured\)/.test(formSrc) && !/writeNeedOf/.test(formSrc) && /intakeOf\(d, view\.today, \{ chosen, newCardsRequired \}\)/.test(formSrc)
+        /const newCardsRequired = newCardsRequiredOf\(realistic, coverage, paceMeasured\)/.test(formSrc) && !/writeNeedOf/.test(formSrc) && /intakeOf\(d, view\.today, \{ chosen, newCardsRequired, fields: view\.fields \}\)/.test(formSrc)
       );
       // Rendered: the same intake with no pace measured anywhere, its draft holding Probability alone, then Probability and Inference.
       const unmeasured = (ids: string[]): typeof depthIntake => ({
@@ -5889,7 +5890,7 @@ async function main() {
 
     // ── The intake (screen 1) ──
     const intakeOf7 = (s: FixtureState) => renders.get(s)!.intake;
-    const INTAKE7: FixtureState[] = ["intake", "intake-gemini", "intake-empty-library", "intake-confirm", "intake-depth", "no-key"];
+    const INTAKE7: FixtureState[] = ["intake", "intake-gemini", "intake-empty-library", "intake-confirm", "intake-depth", "no-key", "intake-left-out"];
     const rootBad7 = INTAKE7.filter((s) => {
       const root = outer7(intakeOf7(s), /data-wc-block="intake"/)[0] ?? "";
       return !(root.length > 0 && /\sdata-fx="none"/.test(openTag7(root)) && !/class="shd|<canvas| title="|data-play/.test(root));
@@ -6030,7 +6031,7 @@ async function main() {
     r0Gate("words", WORD_BUDGET_ROWS.filter((r) => r.row === 1 || r.row === 8).map((r) => r.id), "R7");
     r0Gate("honesty", ["health-chip-activities", "review-gap-intake", "not-timed", "data-intake", "practice-only", "plan-can-include"], "R7");
     r0Gate("survival", [...R0_RESULTS.survival.keys()].filter((k) => /^(intake|intake-gemini|intake-confirm|draft-confirm|active-answered)\//.test(k)), "R7");
-    r0Gate("taps", ["intake/intake", "intake-gemini/intake", "intake-empty-library/intake", "intake-confirm/intake", "intake-depth/intake", "no-key/intake"], "R7");
+    r0Gate("taps", ["intake/intake", "intake-gemini/intake", "intake-empty-library/intake", "intake-confirm/intake", "intake-depth/intake", "no-key/intake", "intake-left-out/intake"], "R7");
   }
   // ===== /R7 =====
 
@@ -6133,6 +6134,291 @@ async function main() {
     check("RZ ui-audit: --budgets hard gates every §3.2 row on its own /dev/style/roadmap?state= by the same blocks, budget and fold", auditRows.size === WORD_BUDGET_ROWS.length && auditDrift.length === 0, auditDrift.map((r) => r.id).join(", "));
   }
   // ===== /RZ =====
+
+  // ===== Rev 5 lane 1: the prefill fix (roadmap-topic-map.md F-R5-8; contracts §22.18 lane 1) =====
+  // Picking an Area preselects 0 Domains, or only the ones the aim names (every content stem of the name in the aim:
+  // lineDomainDefaultOf's rule); the rest fold under "Left out · n"; "Name the areas this needs" with any library.
+  console.log("— revision 5, lane 1: the prefill fix (F-R5-8) —");
+  {
+    const f1 = await import("../src/components/roadmap/RoadmapForm");
+    const realism1 = await import("../src/lib/roadmap-realism");
+    const server1 = await import("../src/lib/roadmap-server");
+    const j1 = (x: unknown) => JSON.stringify(x);
+    const opt1 = (id: string, name: string, cards = 20) => ({ id, name, cards, atSix: 0, atTop: 0, paceMeasured: true, nonRecall: 0 });
+    const field1 = (domains: ReturnType<typeof opt1>[]) => ({ id: "f-x", name: "X", level: 3, cards: domains.reduce((n, d) => n + d.cards, 0), inMaintenance: false, paceMeasured: true, domains });
+    const T1 = "2026-10-06";
+    const picked1 = (aim: string, f: ReturnType<typeof field1>, taken?: Record<string, 1 | 2 | 3 | null>) => f1.pickFieldDraft({ ...emptyIntakeDraft(T1), aim }, f, taken);
+    type StoredAimHandoffT = Parameters<typeof f1.handoffDraftOf>[1];
+    /** A function's text, from its declaration to its closing brace at column 0 (roadmap-contract-check's bodyOf). */
+    const bodyOf = (text: string, name: string): string => {
+      const m = new RegExp(`\\n(?:export )?(?:async )?function ${name}\\b`).exec(text);
+      if (!m) return "";
+      const rest = text.slice(m.index + 1);
+      const end = rest.search(/\r?\n\}\r?\n/);
+      return end < 0 ? rest : rest.slice(0, end + 3);
+    };
+
+    // The live case (spec "The live case under revision 5", step 1): its aim names none of the four Domains.
+    const LIVE_AIM = "I want to able to manage a 100k portfolio. while manage a morgate. as well as keep all bill, goal on target.";
+    const live = field1([opt1("d1", "Fund Management (XTNL)", 40), opt1("d2", "Quantitative Resource Allocation", 30), opt1("d3", "Trust Fund Architecture", 12), opt1("d4", "Operational Logistics", 9)]);
+    const livePick = picked1(LIVE_AIM, live);
+    check(
+      "lane 1 golden (the live case): picking the Area for 'I want to able to manage a 100k portfolio. …' preselects 0 of Fund Management (XTNL), Quantitative Resource Allocation, Trust Fund Architecture, Operational Logistics (all hold cards)",
+      livePick.fieldId === "f-x" && j1(livePick.domainIds) === "[]" && j1(f1.domainPrefillOf(LIVE_AIM, live)) === "[]",
+      j1(livePick.domainIds)
+    );
+    const fm = field1([opt1("fm", "Fund Management"), opt1("ta", "Trust Fund Architecture"), opt1("ol", "Operational Logistics")]);
+    check(
+      "lane 1 golden (a match): 'learn fund management' preselects Fund Management only; 'Fund Management (XTNL)' is not named by it (every content stem of the name must be in the aim)",
+      j1(picked1("learn fund management", fm).domainIds) === j1(["fm"]) && j1(f1.domainPrefillOf("learn fund management", live)) === "[]",
+      j1(picked1("learn fund management", fm).domainIds)
+    );
+    const pi = field1([opt1("p", "Probability"), opt1("i", "Inference"), opt1("c", "Calculus", 0), opt1("b", "Basics", 90)]);
+    check(
+      "lane 1: every Domain the aim names is kept (no tie rule: 'Probability for inference' keeps both), stems match ('Inferences'), a name of stop words only ('Basics', 90 cards) never, an empty aim chooses none",
+      j1(f1.domainPrefillOf("Probability for inference", pi)) === j1(["p", "i"]) &&
+        j1(f1.domainPrefillOf("Bayesian inferences, basics first", pi)) === j1(["i"]) &&
+        j1(f1.domainPrefillOf("", pi)) === "[]" &&
+        realism1.lineDomainDefaultOf("Probability for inference", pi.domains) === null
+    );
+    check(
+      "lane 1: cards choose nothing — a Domain the aim names with 0 cards is chosen, one with 90 cards it doesn't name is not",
+      j1(f1.domainPrefillOf("Calculus refresher", pi)) === j1(["c"]) && !f1.domainPrefillOf("Calculus refresher", pi).includes("b")
+    );
+    check(
+      "lane 1: a Domain another goal holds (IntakeView.takenDomains) is never preselected; at most DEPTH_DOMAINS_MAX are",
+      j1(picked1("Probability for inference", pi, { p: 1 }).domainIds) === j1(["i"]) &&
+        f1.domainPrefillOf("a b c d e f g", field1(["a", "b", "c", "d", "e", "f", "g"].map((x) => opt1(`d-${x}`, `${x}${x}${x}word${x}`)))).length === 0 &&
+        f1.domainPrefillOf("alpha beta gamma delta epsilon zeta eta", field1(["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta"].map((x) => opt1(`d-${x}`, x)))).length === DEPTH_DOMAINS_MAX
+    );
+    check(
+      "lane 1: realism's aimDomainDefaultsOf is lineDomainDefaultOf's rule, not a fork (both read namesDomain); a line's single match is the aim's match",
+      /if \(!namesDomain\(stems, d\.name\)\) continue;/.test(read("src/lib/roadmap-realism.ts")) &&
+        /namesDomain\(stems, d\.name\)\) out\.push/.test(read("src/lib/roadmap-realism.ts")) &&
+        ["Conditional probability and Bayes", "Bayesian inferences", "Calculus refresher"].every((l) => j1(realism1.aimDomainDefaultsOf(l, pi.domains)) === j1([realism1.lineDomainDefaultOf(l, pi.domains)].filter(Boolean)))
+    );
+    const formSrc1 = code(read("src/components/roadmap/RoadmapForm.tsx"));
+    const pickField1 = /const pickField = [\s\S]*?\n {2}\};/.exec(formSrc1)?.[0] ?? "";
+    check(
+      "lane 1 (source): pickField takes pickFieldDraft (domainPrefillOf → aimDomainDefaultsOf); no intake path prefills by cards (the handoff merge is handoffDraftOf, which takes domainPrefillOf too)",
+      /edit\(\(x\) => pickFieldDraft\(x, f, view\.takenDomains\)\)/.test(pickField1) &&
+        /domainIds: domainPrefillOf\(x\.aim, f, taken\)/.test(formSrc1) &&
+        /return aimDomainDefaultsOf\(aim, free\)\.slice\(0, DEPTH_DOMAINS_MAX\)/.test(formSrc1) &&
+        /domainPrefillOf\(h\.aim\.slice\(0, AIM_MAX\), field, taken\)/.test(bodyOf(formSrc1, "handoffDraftOf")) &&
+        /const next = handoffDraftOf\(\{ \.\.\.emptyIntakeDraft\(view\.today\), \.\.\.\(stored \?\? \{\}\) \}, h, view\.fields, view\.takenDomains\);/.test(formSrc1) &&
+        !/\.cards > 0/.test(formSrc1)
+    );
+    // The handoff merge (an aim handed over with no DRAFT open): the old plan's own Domains when carried, else the aim's.
+    const hand1 = (p: Partial<StoredAimHandoffT>) => f1.handoffDraftOf(emptyIntakeDraft(T1), { aim: LIVE_AIM, areaFieldId: "f-x", ...p }, [live]);
+    check(
+      "lane 1 golden (the handoff): the live case's aim handed over with its Area and no Domains lands with 0 chosen; with the old plan's Domains, exactly those; 'learn fund management' handed over chooses Fund Management; a track Area or another Field's id changes nothing here",
+      j1(hand1({}).domainIds) === "[]" &&
+        hand1({}).fieldId === "f-x" &&
+        j1(hand1({ domainIds: ["d3", "d4"] }).domainIds) === j1(["d3", "d4"]) &&
+        j1(f1.handoffDraftOf(emptyIntakeDraft(T1), { aim: "learn fund management", areaFieldId: "f-x" }, [fm].map((f) => ({ ...f, id: "f-x" }))).domainIds) === j1(["fm"]) &&
+        j1(hand1({ areaFieldId: null, track: "BODY" }).domainIds) === "[]" &&
+        hand1({ areaFieldId: null, track: "BODY" }).areaTrack === "BODY" &&
+        hand1({ areaFieldId: "f-gone" }).fieldId === null,
+      j1([hand1({}).domainIds, hand1({ domainIds: ["d3", "d4"] }).domainIds])
+    );
+    // Pick time only (spec: "pickField preselects"): the aim's own edit writes the aim alone, so it never moves a chip
+    // (no chip jumps while typing; a Domain the user took out never comes back). An empty aim picks none.
+    check(
+      "lane 1: the prefill runs when the Area is picked, never on an aim edit — an empty aim then picks 0, picking the Area again re-reads the aim, and the aim's onChange is set(\"aim\", …), which writes only its own key; the Key line says what the form starts with",
+      j1(picked1("", live).domainIds) === "[]" &&
+        j1(picked1("", fm).domainIds) === "[]" &&
+        /onChange=\{\(e\) => set\("aim", e\.target\.value\)\}/.test(formSrc1) &&
+        /const set = <K extends keyof IntakeDraft>\(k: K, v: IntakeDraft\[K\]\) => edit\(\(x\) => \(\{ \.\.\.x, \[k\]: v \}\)\);/.test(formSrc1) &&
+        j1(f1.pickFieldDraft({ ...picked1("", fm), aim: "learn fund management" }, fm).domainIds) === j1(["fm"]) &&
+        / start chosen\.$/.test(copy.DOMAINS_PREFILL_LINE)
+    );
+
+    // A saved intake (a draft, a re-plan, an edit) loads its own Domains unchanged, even ones the aim doesn't name.
+    const depthV1 = roadmapFixture("intake-depth").intake!;
+    const savedCa = { ...depthV1, draft: { ...depthV1.draft!, intake: { ...depthV1.draft!.intake, domainIds: ["d-ca"] } } };
+    const savedHtml = R(createElement(RoadmapForm, { view: savedCa }));
+    const pressed1 = (h: string) => [...(/<div class="rm-dchips" role="group" aria-label="Domains">([\s\S]*?)<\/div>/.exec(h)?.[1] ?? "").matchAll(/aria-pressed="true"><b data-wc="name">([^<]+)<\/b>/g)].map((m) => m[1]);
+    // "Left out · n": the count a figure (aria-hidden) with its spoken twin ("4 Domains"), the dot hidden from speech.
+    const leftOut1 = (h: string) =>
+      /<details class="rm-adv rm-in-left"( open="")?><summary><svg [\s\S]*?<\/svg>Left out<span aria-hidden="true"> · <\/span><span class="mg-fig"><span aria-hidden="true">(\d+)<\/span><span class="sr-only">(\d+ Domains?)<\/span><\/span><\/summary><div class="rm-adv-b"><div class="rm-dchips" role="group" aria-label="Left out">([\s\S]*?)<\/div><\/div><\/details>/.exec(
+        h
+      );
+    // A fold chip is an action button (no aria-pressed: it can never be heard as a toggle), named "Add <Domain>".
+    const outNames1 = (h: string) => [...(leftOut1(h)?.[4] ?? "").matchAll(/<button type="button" class="rm-dchip"><span class="sr-only">Add <\/span><b data-wc="name">([^<]+)<\/b>/g)].map((m) => m[1]);
+    check(
+      "lane 1: a saved intake keeps its saved Domains (draftOfIntake; Calculus, which the aim doesn't name, stays chosen) and the rest fold under 'Left out · 4'",
+      j1(f1.draftOfIntake(savedCa.draft!.intake).domainIds) === j1(["d-ca"]) && j1(pressed1(savedHtml)) === j1(["Calculus"]) && leftOut1(savedHtml)?.[2] === "4" && j1(outNames1(savedHtml)) === j1(["Probability", "Inference", "Linear Algebra", "Risk Management"]),
+      j1([pressed1(savedHtml), leftOut1(savedHtml)?.[2], outNames1(savedHtml)])
+    );
+
+    // The fixture (rendered at 344 by ui-audit): the live case's shape with neutral names.
+    const lo = renders.get("intake-left-out")!.intake;
+    const loFx = roadmapFixture("intake-left-out");
+    check(
+      "lane 1 fixture: intake-left-out's Field and aim give 0 preselected by the real pickFieldDraft (its pick runs through the form's own draft)",
+      loFx.intakePick != null && f1.domainPrefillOf(loFx.intakePick.aim, loFx.intake!.fields.find((f) => f.id === loFx.intakePick!.fieldId)!).length === 0 && loFx.intake!.draft === null
+    );
+    check(
+      "lane 1 rendered: picking the Area chose 0 — no chosen group, «0/6» (spoken, in a polite live region), and 'Left out · 4' closed (one tap to open; '4 Domains' spoken), each of the 4 an 'Add' chip",
+      pressed1(lo).length === 0 &&
+        !/aria-label="Domains"/.test(lo) &&
+        /<span class="rm-opt" aria-live="polite"><span class="mg-fig"><span aria-hidden="true">0\/6<\/span><span class="sr-only">0 chosen, up to 6<\/span><\/span><\/span>/.test(lo) &&
+        leftOut1(lo)?.[1] === undefined &&
+        leftOut1(lo)?.[2] === "4" &&
+        leftOut1(lo)?.[3] === "4 Domains" &&
+        j1(outNames1(lo)) === j1(["Fund Management", "Resource Allocation", "Trust Structures", "Logistics"]),
+      j1([pressed1(lo), leftOut1(lo)?.[2], leftOut1(lo)?.[3], outNames1(lo)])
+    );
+    // The fold reuses no glyph (ui-motion §15.2: m.minus means "less", the Hours stepper's): the chevron and the words.
+    const domRow1 = (h: string) => /<div class="rm-f" id="rm-f-domains">[\s\S]*?<\/details>[\s\S]*?<\/div>/.exec(h)?.[0] ?? "";
+    check(
+      "lane 1: the fold draws no glyph of its own (no m.minus in the Domains row, no Key entry for it); the card Key's glyphs are m.verbatim's alone, as before lane 1",
+      domRow1(lo).length > 0 &&
+        !/data-g="m\.minus"/.test(domRow1(lo)) &&
+        /<FormKey entries=\{\[\{ glyph: "m\.verbatim", words: GLYPH_MEANS\["m\.verbatim"\] \}\]\} rows=/.test(formSrc1) &&
+        !/SummaryGlyph name="m\.minus"/.test(formSrc1)
+    );
+    // Order: chosen chips, then "Left out · n" (the Area's own), then "+ Domain from another Field", then the named areas.
+    const at1 = (h: string, x: string) => h.indexOf(x);
+    check(
+      "lane 1 rendered: the Area's own Domains come first — the chosen group, then 'Left out · n', then '+ Domain from another Field', then 'Name the areas this needs' (intake-depth and intake-left-out)",
+      [renders.get("intake-depth")!.intake, lo].every((h) => at1(h, 'class="rm-adv rm-in-left"') > 0 && at1(h, 'class="rm-adv rm-in-left"') < at1(h, "+ Domain from another Field") && at1(h, "+ Domain from another Field") < at1(h, copy.NAME_AREAS_LABEL)) &&
+        at1(renders.get("intake-depth")!.intake, 'aria-label="Domains"') < at1(renders.get("intake-depth")!.intake, 'class="rm-adv rm-in-left"')
+    );
+    // Focus never falls to <body> when the tapped chip unmounts (static markup can't focus: the rule and its wiring).
+    check(
+      "lane 1 focus: a chip's move sends focus to the next chip of the group it left, else the one before, else the fold's summary (taken out) or the chip it became (added); un-choosing opens the fold",
+      f1.chipFocusAfterOf(["a", "b", "c"], "b", "") === "c" &&
+        f1.chipFocusAfterOf(["a", "b", "c"], "c", "") === "b" &&
+        f1.chipFocusAfterOf(["a"], "a", "") === "" &&
+        f1.chipFocusAfterOf(["x", "y"], "x", "x") === "y" &&
+        f1.chipFocusAfterOf(["y"], "y", "y") === "y" &&
+        f1.chipFocusAfterOf([], "z", "z") === "z" &&
+        /focusAfter\.current = chipFocusAfterOf\(chosenChips, id, ""\);[\s\S]{0,160}setLeftOpen\(true\);[\s\S]{0,40}toggleDomain\(id\);/.test(formSrc1) &&
+        /focusAfter\.current = chipFocusAfterOf\(leftOut\.map\(\(dm\) => dm\.id\), id, id\);\s*chooseDomain\(id\);/.test(formSrc1) &&
+        /\(\(to \? chipEls\.current\.get\(to\) : null\) \?\? leftSummary\.current \?\? otherAdd\.current\)\?\.focus\(\);\s*\}, \[d\.domainIds\]\);/.test(formSrc1) &&
+        (formSrc1.match(/onClick=\{\(\) => unchooseChip\((?:dm\.)?id\)\}/g) ?? []).length === 2 &&
+        /onClick=\{\(\) => chooseLeftOut\(dm\.id\)\}/.test(formSrc1) &&
+        /<details className="rm-adv rm-in-left" open=\{leftOpen\} onToggle=\{\(e\) => setLeftOpen\(e\.currentTarget\.open\)\}>\s*<summary ref=\{leftSummary\}>/.test(formSrc1)
+    );
+    const depthHtml1 = renders.get("intake-depth")!.intake;
+    check(
+      "lane 1 rendered: the fold counts what is not chosen — intake-depth (2 of 5 chosen) reads 'Left out · 3'; every Domain chosen shows no fold",
+      leftOut1(depthHtml1)?.[2] === "3" &&
+        j1(pressed1(depthHtml1)) === j1(["Probability", "Inference"]) &&
+        !R(createElement(RoadmapForm, { view: { ...depthV1, draft: { ...depthV1.draft!, intake: { ...depthV1.draft!.intake, domainIds: depthV1.fields[0].domains.map((x) => x.id) } } } })).includes("rm-in-left")
+    );
+    const namedRoom1 = (h: string) => /<label class="st-label" for="[^"]+">Name the areas this needs <span class="rm-opt">up to (\d+)<\/span><\/label>/.exec(h)?.[1] ?? null;
+    const emptyLib1 = renders.get("intake-empty-library")!.intake;
+    const namedInput1 = (h: string) => /<input id="[^"]+" class="st-input"[^>]*placeholder="An area, in your words"[^>]*>/.exec(h)?.[0] ?? null;
+    const described1 = (h: string) => / aria-describedby="[^"]+"/.test(namedInput1(h) ?? "");
+    check(
+      "lane 1 rendered: 'Name the areas this needs' is offered with a library (intake-left-out, intake-depth) as with none (intake-empty-library); its room is what DEPTH_DOMAINS_MAX leaves beside the chosen (6, 4, 6); the outline hint describes it on the empty library only (rev 4's words, unchanged there)",
+      namedRoom1(lo) === "6" &&
+        namedRoom1(depthHtml1) === "4" &&
+        namedRoom1(emptyLib1) === "6" &&
+        emptyLib1.includes(copy.NAME_AREAS_HINT) &&
+        described1(emptyLib1) &&
+        [lo, depthHtml1].every((h) => !h.includes(copy.NAME_AREAS_HINT) && namedInput1(h) != null && !described1(h)),
+      j1([namedRoom1(lo), namedRoom1(depthHtml1), namedRoom1(emptyLib1), namedInput1(lo)])
+    );
+    // One cap for Enter, Add and a Domain typed by its name: chosen + named ≤ DEPTH_DOMAINS_MAX (intakeOf's, the server's).
+    const lib1 = [{ id: "fm", name: "Fund Management" }, { id: "ta", name: "Trust Fund Architecture" }];
+    const six1 = ["a", "b", "c", "d", "e", "f"];
+    check(
+      "lane 1 named areas: a name the Area has picks that Domain ('fund  management' → Fund Management), or just clears when it is chosen; a new name is added; nothing past the cap (6 chosen: no pick, no name; 4 chosen + 2 named: full), no empty text, no name twice",
+      j1(f1.namedAreaAddOf(" fund  management ", [], ["ta"], lib1)) === j1({ kind: "pick", id: "fm" }) &&
+        j1(f1.namedAreaAddOf("Fund Management", [], ["fm"], lib1)) === j1({ kind: "chosen" }) &&
+        j1(f1.namedAreaAddOf("Mortgage", ["Budgeting"], ["fm"], lib1)) === j1({ kind: "name", name: "Mortgage" }) &&
+        f1.namedAreaAddOf("Fund Management", [], six1, lib1) === null &&
+        f1.namedAreaAddOf("Mortgage", [], six1, lib1) === null &&
+        f1.namedAreaAddOf("Mortgage", ["A1", "B2"], ["a", "b", "c", "d"], lib1) === null &&
+        f1.namedAreaAddOf("Mortgage", ["A1"], ["a", "b", "c", "d"], lib1) != null &&
+        f1.namedAreaAddOf("   ", [], [], lib1) === null &&
+        f1.namedAreaAddOf("mortgage", ["Mortgage"], [], lib1) === null &&
+        /const next = namedAreaAddOf\(text, names, chosen, onPick \? library : \[\]\);/.test(formSrc1) &&
+        /<Button onClick=\{add\} disabled=\{!text\.trim\(\) \|\| full\}>/.test(formSrc1)
+    );
+    const draftWith1 = (domainIds: string[], newDomainNames: string[]) => R(createElement(RoadmapForm, { view: { ...depthV1, draft: { ...depthV1.draft!, intake: { ...depthV1.draft!.intake, domainIds, newDomainNames } } } }));
+    const namedFig1 = (h: string) => /Name the areas this needs <span class="rm-opt"><span class="mg-fig"><span aria-hidden="true">(\d+\/6)<\/span><span class="sr-only">\d+ chosen, up to 6<\/span><\/span><\/span><\/label>/.exec(h)?.[1] ?? null;
+    const all5 = depthV1.fields[0].domains.map((x) => x.id);
+    check(
+      "lane 1 rendered: once the cap is full the named areas' label reads the count against it ('6/6', never 'up to 0'); over it (names first, then Domains) '8/6', as the Domains count; with room, 'up to n'",
+      all5.length === 5 &&
+        namedFig1(draftWith1(all5, ["Mortgage"])) === "6/6" &&
+        namedFig1(draftWith1(all5, ["Mortgage", "Budgeting", "Bills"])) === "8/6" &&
+        /<span aria-hidden="true">8\/6<\/span><span class="sr-only">8 chosen, up to 6<\/span>/.test(draftWith1(all5, ["Mortgage", "Budgeting", "Bills"])) &&
+        namedRoom1(draftWith1(all5.slice(0, 2), ["Mortgage"])) === "4" &&
+        !/up to 0/.test(draftWith1(all5, ["Mortgage"])),
+      j1([namedFig1(draftWith1(all5, ["Mortgage"])), namedFig1(draftWith1(all5, ["Mortgage", "Budgeting", "Bills"]))])
+    );
+    check(
+      "lane 1 copy: the Domains' Key line says what starts chosen ('Domains named in your aim start chosen.', no garden path) in fewer words than the old prefill line; no render says 'Prefilled with the … Domains that hold cards'",
+      copy.DOMAINS_PREFILL_LINE === "Domains named in your aim start chosen." &&
+        copy.DOMAINS_PREFILL_LINE.split(/\s+/).length < "Prefilled with the Trading Domains that hold cards.".split(/\s+/).length &&
+        lo.includes(copy.DOMAINS_PREFILL_LINE) &&
+        [...renders.values()].every((r) => !/Prefilled with the .* Domains that hold cards/.test(r.intake)) &&
+        copy.LEFT_OUT_WORD === "Left out"
+    );
+
+    // 0 chosen and 0 named: every plan path refuses it (realism's "Choose at least one Domain for this aim."), so the form
+    // refuses before it saves, naming what the user can do on that form.
+    const fieldBase1 = { ...emptyIntakeDraft(T1), aim: "learn fund management", fieldId: "f-x" };
+    const none1 = intakeOf({ ...fieldBase1, domainIds: [] }, T1);
+    const noneLib1 = intakeOf({ ...fieldBase1, domainIds: [] }, T1, { fields: [{ id: "f-x", domains: live.domains }] });
+    const noneEmpty1 = intakeOf({ ...fieldBase1, domainIds: [] }, T1, { fields: [{ id: "f-x", domains: [] }] });
+    const namedOnly1 = intakeOf({ ...fieldBase1, domainIds: [], newDomainNames: ["Mortgage"] }, T1, { fields: [{ id: "f-x", domains: [] }] });
+    const over1 = intakeOf({ ...fieldBase1, domainIds: ["a", "b", "c", "d", "e"], newDomainNames: ["Mortgage", "Budgeting"] }, T1);
+    check(
+      "lane 1: a Field intake with 0 Domains chosen and 0 named is refused before it saves — with a library 'Choose a Domain or name an area for this aim.', an empty library 'Name at least one area this needs.' (the plan paths keep 'Choose at least one Domain for this aim.'); one named area is enough; chosen + named over 6 keeps its refusal; a track Area is untouched",
+      none1.intake === null &&
+        none1.problems.domains === copy.NO_DOMAINS_LINE &&
+        noneLib1.problems.domains === copy.NO_DOMAINS_LINE &&
+        noneEmpty1.problems.domains === copy.NO_AREAS_NAMED_LINE &&
+        copy.NO_DOMAINS_LINE === "Choose a Domain or name an area for this aim." &&
+        copy.NO_AREAS_NAMED_LINE === "Name at least one area this needs." &&
+        read("src/lib/roadmap-realism.ts").includes('const NO_DOMAINS_ERROR = "Choose at least one Domain for this aim.";') &&
+        j1(namedOnly1.intake?.newDomainNames) === j1(["Mortgage"]) &&
+        over1.problems.domains === `A plan holds up to ${DEPTH_DOMAINS_MAX} Domains.` &&
+        intakeOf({ ...emptyIntakeDraft(T1, "TRACK"), aim: "Run 10 km", areaTrack: "BODY" }, T1).problems.domains === undefined,
+      j1([none1.problems, noneEmpty1.problems, namedOnly1.problems, over1.problems])
+    );
+    // A Field the form no longer lists (a stored form or a draft whose Field went): field is null there, so the Domains
+    // row and the named areas don't render — the refusal is the Area's, under the picker, and submit scrolls to it.
+    const stale1 = intakeOf({ ...fieldBase1, fieldId: "f-gone", domainIds: [] }, T1, { fields: [{ id: "f-x", domains: live.domains }] });
+    check(
+      "lane 1: a stored form whose Field is gone, with 0 Domains, is refused at the Area ('That Field no longer exists. Pick the Area this grows.'), first, with no unseen Domains refusal; the form passes view.fields",
+      stale1.intake === null &&
+        Object.keys(stale1.problems)[0] === "area" &&
+        stale1.problems.area === "That Field no longer exists. Pick the Area this grows." &&
+        stale1.problems.domains === undefined &&
+        /intakeOf\(d, view\.today, \{ chosen, newCardsRequired, fields: view\.fields \}\)/.test(formSrc1),
+      j1(stale1.problems)
+    );
+    check(
+      "lane 1: the empty library's refusal sits inside 'Name the areas this needs' (its .rm-f, under the input; no Domains row there) and submit scrolls to it",
+      /problem=\{emptyLibrary \? problem\("domains"\) : null\}/.test(formSrc1) &&
+        /\)\}\s*\{problem\}\s*<\/div>\s*\);\s*\}/.test(bodyOf(formSrc1, "NamedAreas")) &&
+        /first === "domains" \? document\.getElementById\("rm-f-named"\)/.test(formSrc1)
+    );
+    const ctx1 = { today: T1, fields: [{ id: "f-x", domains: [{ id: "fm", name: "Fund Management" }, { id: "ta", name: "Trust Fund Architecture" }] }] };
+    const sv1 = (p: Record<string, unknown>) => server1.validateIntake({ aim: "learn fund management", fieldId: "f-x", hoursPerWeek: 5, startPoint: "BASICS", intensity: "STEADY", practicesAllowed: true, depth: 12, dateMode: "REALISTIC", ...p }, ctx1);
+    const svNamed = sv1({ domainIds: ["fm"], newDomainNames: ["Mortgage"] });
+    const svOver = sv1({ domainIds: ["fm", "ta"], newDomainNames: ["A1", "B2", "C3", "D4", "E5"] });
+    const svOwn = sv1({ domainIds: [], newDomainNames: ["fund management"] });
+    check(
+      "lane 1 (server unchanged, one cap): validateIntake takes named areas beside a library; chosen + named over DEPTH_DOMAINS_MAX is TOO_MANY_DOMAINS, as the form's; a name the Area has is refused ('pick it instead'), which the form turns into choosing that Domain",
+      svNamed.ok && j1(svNamed.value.newDomainNames) === j1(["Mortgage"]) && !svOver.ok && svOver.error === server1.TOO_MANY_DOMAINS && !svOwn.ok && /pick it instead/.test(svOwn.error) && /library=\{field\.domains\}/.test(formSrc1) && /onPick=\{chooseDomain\}/.test(formSrc1),
+      j1([svNamed, svOver, svOwn])
+    );
+    const row1 = WORD_BUDGET_ROWS.find((r) => r.id === "s1-intake-left-out");
+    check(
+      "lane 1 words: intake-left-out is a §3.2 row-1 budget row (the blank intake's 90, fold 25: ui-motion §15.8 holds lane 1 to the row-1 budgets), hard-gated with R7's row-1 gates and on ui-audit's --budgets",
+      row1 != null && row1.row === 1 && row1.fixture === "intake-left-out" && row1.budget === 90 && row1.budget === WORD_BUDGET_ROWS.find((r) => r.id === "s1-intake-blank")?.budget && row1.fold === 25 && R0_RESULTS.words.get("s1-intake-left-out")?.ok === true,
+      R0_RESULTS.words.get("s1-intake-left-out")?.detail
+    );
+  }
+  // ===== /Rev 5 lane 1 =====
   void r0Gate;
 
   console.log(`\nroadmap-ui-check: ${passed} passed, ${failed} failed`);

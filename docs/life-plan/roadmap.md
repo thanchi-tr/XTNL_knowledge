@@ -1238,7 +1238,7 @@ The fields, and why the planner needs each one:
    - **A life track, practice only**: Body, Care, Duty or Craft, for an aim with no cards to hold (a 10K, a care routine). The plan then has practices and steps only, and fieldId is null.
    - The model never picks the Area.
 3. **Practices count toward** (a Segmented control in the main form; a Field Area defaults to Craft; a track Area is fixed to that track).
-4. **Domains you already have** (a Field Area only): multi-select chips, prefilled with the Area's Domains that hold cards, plus "Add a Domain from another Field". Each chip shows its real card count and its count at level 6+.
+4. **Domains you already have** (a Field Area only): multi-select chips. Revision 5 (F-R5-8): only Domains whose name's content stems all appear in the aim start chosen; the rest fold under "Left out · n", one tap each to add (this replaced "prefilled with the Area's Domains that hold cards"). Plus "Add a Domain from another Field". Each chip shows its real card count and its count at level 6+.
 5. **By when**: a date, or the chips 3 / 6 / 12 / 24 months and 3 years.
    - Under 35 days: "Too short for a roadmap — capture it as a goal on Today."
    - Over 1,080 days is refused: "Set where you want to be in 3 years; planning further out comes later."

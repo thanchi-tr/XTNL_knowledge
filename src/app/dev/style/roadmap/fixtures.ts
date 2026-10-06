@@ -29,6 +29,8 @@
  * Confirm to unlock (contracts §19; CONFIRM_STATES, built with the real gate):
  *   draft-confirm · draft-words · draft-care · draft-craft · active-confirm ·
  *   active-answered · intake-confirm.
+ * Revision 5, lane 1 (F-R5-8): intake-left-out, a Field just picked for an
+ *   aim that names none of its Domains (RoadmapFixture.intakePick).
  *
  * draft-live is shaped like R4's view builder output with none of the fields
  * the server derives on read: no `library`, no `struck`/`reasons`, no title
@@ -183,6 +185,7 @@ export const FIXTURE_STATES = [
   "since-line",
   "run-stale",
   "writes-off",
+  "intake-left-out",
 ] as const;
 export type FixtureState = (typeof FIXTURE_STATES)[number];
 
@@ -1018,6 +1021,11 @@ export interface RoadmapFixture {
    * event plays once; without them every surface is a first view (no motion).
    */
   seen?: readonly SeenSeed[];
+  /**
+   * Revision 5, lane 1 (F-R5-8): the intake as the user leaves it a moment after picking the Area: the aim as typed,
+   * then this Field picked, with no open DRAFT. RoadmapForm runs pickField's own draft (pickFieldDraft) over it.
+   */
+  intakePick?: { aim: string; fieldId: string };
 }
 
 function intakeFixture(hasKey: boolean): IntakeView {
@@ -1044,6 +1052,31 @@ function intakeFixture(hasKey: boolean): IntakeView {
     ],
     tracked: { kind: "measured", median: 550, p25: 380, weeks: 4 },
   };
+}
+
+/**
+ * Revision 5, lane 1 (F-R5-8): the live case's shape with neutral names. A compound aim (a portfolio, a mortgage, a
+ * routine) names none of the Area's four Domains, so picking the Area chooses none of them.
+ */
+export const LEFT_OUT_AIM = "Manage a 100k portfolio and a mortgage, and keep every bill and goal on target";
+
+function leftOutIntakeFixture(): IntakeView {
+  const base = intakeFixture(true);
+  const finance: IntakeFieldOption = {
+    id: "f-fin",
+    name: "Finance",
+    level: 4,
+    cards: 112,
+    inMaintenance: false,
+    paceMeasured: true,
+    domains: [
+      { id: "d-fm", name: "Fund Management", cards: 38, atSix: 12, atTop: 1, paceMeasured: true, nonRecall: 0 },
+      { id: "d-ra", name: "Resource Allocation", cards: 31, atSix: 9, atTop: 0, paceMeasured: true, nonRecall: 0 },
+      { id: "d-ts", name: "Trust Structures", cards: 25, atSix: 6, atTop: 0, paceMeasured: true, nonRecall: 0 },
+      { id: "d-lg", name: "Logistics", cards: 18, atSix: 4, atTop: 0, paceMeasured: true, nonRecall: 0 },
+    ],
+  };
+  return { ...base, fields: [finance, ...base.fields], m: 1, paceRate: 3 };
 }
 
 /** The rank a milestone gives when reached: its plan rankIndex when above the rank held, else none (it keeps the rank). */
@@ -1296,6 +1329,9 @@ export const WORD_BUDGET_ROWS: readonly WordBudgetRow[] = [
   { id: "s1-intake-empty-library", row: 1, fixture: "intake-empty-library", surface: "intake", blocks: [B.intake], budget: 110, fold: 25 },
   { id: "s1-intake-body", row: 1, fixture: "intake-confirm", surface: "intake", blocks: [B.intake], budget: 130, fold: 25 },
   { id: "s1-intake-depth", row: 1, fixture: "intake-depth", surface: "intake", blocks: [B.intake], budget: 150, fold: 25 },
+  // Revision 5, lane 1 (F-R5-8; ui-motion §15.8: held to the existing row-1 budgets): a Field just picked, nothing chosen,
+  // "Left out · 4" and the named areas beside a library: a blank intake with its Area picked, on the blank intake's budget.
+  { id: "s1-intake-left-out", row: 1, fixture: "intake-left-out", surface: "intake", blocks: [B.intake], budget: 90, fold: 25 },
   { id: "s2-draft-header-v4", row: 2, fixture: "draft-v4", surface: "page", blocks: [B.draftHeader, B.draftDate], budget: 90, fold: 25 },
   { id: "s2-draft-header-count-gate", row: 2, fixture: "count-gate", surface: "page", blocks: [B.draftHeader, B.draftDate], budget: 70, fold: 25 },
   { id: "s2-draft-header-mixed", row: 2, fixture: "draft-mixed", surface: "page", blocks: [B.draftHeader, B.draftDate], budget: 40, fold: 25 },
@@ -1420,6 +1456,16 @@ function fixtureOf(state: FixtureState): RoadmapFixture {
       return { view: EMPTY_VIEW(false), intake: intakeFixture(false), aim: EMPTY_AIM(false), today: null, startPreview: null, note: "No Gemini key: Build from my numbers is primary, Write it myself beside it, never a disabled button." };
     case "intake":
       return { view: null, intake: intakeFixture(true), aim: null, today: null, startPreview: null, note: "The intake with a key on the free tier: the privacy line and the free-tier line sit under Advanced." };
+    case "intake-left-out":
+      return {
+        view: null,
+        intake: leftOutIntakeFixture(),
+        intakePick: { aim: LEFT_OUT_AIM, fieldId: "f-fin" },
+        aim: null,
+        today: null,
+        startPreview: null,
+        note: "Revision 5, lane 1 (F-R5-8): the aim typed, then the Area picked. The aim names none of the Area's Domains, so none is chosen: all 4 wait under 'Left out · 4', one tap to add each, and 'Name the areas this needs' sits beside the library.",
+      };
     case "running": {
       const v = draftView(false);
       return {

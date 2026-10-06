@@ -996,7 +996,8 @@ export function legacyAimActionOf(state: AimCardView["state"]): LegacyAimAction 
  * "Start again at a depth"'s handoff (F-R4-16): the aim, the Area and the
  * plan's Domains, and `replaces`. Never a URL. `domainIds` come from the
  * view when it carries them (RoadmapHeader.domainIds or LegacyView.domainIds;
- * the contract §15.11); without them the form preselects the Area's Domains.
+ * the contract §15.11); without them the form preselects only the Area's Domains the aim
+ * names (F-R5-8).
  */
 export function restartHandoffOf(plan: {
   aim: string;

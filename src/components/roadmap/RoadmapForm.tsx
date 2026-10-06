@@ -10,9 +10,16 @@
  *   Aim (verbatim, never rewritten; "Think a year or more out"; a quiet hint
  *   when it reads vague, never blocking, never editing) · Area · Depth
  *   (Mastered · level 12 by default; a lower depth is the user's choice) ·
- *   Domains, with "How many cards each Domain needs" (every term of every
- *   Domain's count, Edit, the lines tied to no Domain) or, with none, "Name
- *   the areas this needs" · By when ("When realistic" first and pressed; each
+ *   Domains: picking the Area chooses only the ones the aim names (F-R5-8,
+ *   lane 1: domainPrefillOf, lineDomainDefaultOf's rule; cards held choose
+ *   nothing; at that moment only, a later aim edit never moves a chip), the
+ *   rest folded under "Left out · n", one tap to add each (focus follows the
+ *   chip that moved); "+ Domain from another Field"; "Name the areas this
+ *   needs" with any library (chosen and named together up to
+ *   DEPTH_DOMAINS_MAX; none of either is refused before saving, naming what
+ *   the user can do there); "How many cards each Domain needs" (every term
+ *   of every Domain's count, Edit, the lines tied to no Domain) · By when
+ *   ("When realistic" first and pressed; each
  *   chosen chip with its floor verdict, none hidden or disabled) · Hours ·
  *   Exam (Yes / No, prefilled from the aim, with its name and its optional
  *   date: a waypoint) · Outline (each line's Domain, prefilled by a
@@ -141,7 +148,7 @@ import {
   type PracticeFamily,
   type StartPoint,
 } from "@/lib/roadmap-types";
-import { coverageOf, lineDomainDefaultOf } from "@/lib/roadmap-realism";
+import { aimDomainDefaultsOf, coverageOf, lineDomainDefaultOf } from "@/lib/roadmap-realism";
 import { VAGUE_AIM_IDLE_MS, vagueAimHint } from "@/lib/roadmap-invite";
 import { takeAimHandoff, type StoredAimHandoff } from "@/lib/roadmap-handoff";
 import { clearSheetDraftIf } from "@/lib/idea-handoff";
@@ -151,7 +158,11 @@ import {
   AIM_LONG_HINT,
   APP_LANE_ITEMS,
   COVERAGE_TITLE,
+  DOMAINS_PREFILL_LINE,
   GEMINI_LANE_ITEM,
+  LEFT_OUT_WORD,
+  NO_AREAS_NAMED_LINE,
+  NO_DOMAINS_LINE,
   SHORT_AIM_LABEL,
   SHORT_ANYTHING_TO_AVOID,
   SHORT_DATA,
@@ -256,7 +267,7 @@ export interface IntakeDraft {
   lineDomainBy?: Record<string, string>;
   /** Typed coverage figures by Domain id (YOURS). */
   coverage?: Record<string, string>;
-  /** An empty library's "Name the areas this needs". */
+  /** "Name the areas this needs" (any library since F-R5-8; chosen and named together hold up to DEPTH_DOMAINS_MAX). */
   newDomainNames?: string[];
   /** Area suggestions (only while ROADMAP_GAPS_LIVE). */
   suggestAreas?: boolean;
@@ -371,13 +382,105 @@ export function lineDomainsOf(lines: readonly string[], d: Pick<IntakeDraft, "li
   });
 }
 
-/** The client's checks (the server re-validates every field). Returns the Intake, or the first problem per field. */
-export function intakeOf(d: IntakeDraft, today: string, opts: { chosen?: readonly { id: string; name: string }[]; newCardsRequired?: boolean } = {}): { intake: Intake | null; problems: Partial<Record<IntakeField, string>> } {
+/**
+ * The Domains a Field Area starts with (F-R5-8, lane 1): none, except each Domain of the Field whose name's content
+ * stems all appear in the aim (realism's aimDomainDefaultsOf, lineDomainDefaultOf's own rule), never one another goal
+ * holds (IntakeView.takenDomains), at most DEPTH_DOMAINS_MAX. Cards held choose nothing. The rest wait under
+ * "Left out · n", one tap to add each.
+ */
+export function domainPrefillOf(aim: string, field: Pick<IntakeFieldOption, "domains">, taken?: IntakeView["takenDomains"]): string[] {
+  const free = field.domains.filter((dm) => !(taken && Object.prototype.hasOwnProperty.call(taken, dm.id)));
+  return aimDomainDefaultsOf(aim, free).slice(0, DEPTH_DOMAINS_MAX);
+}
+
+/**
+ * Where focus goes once a Domain chip moves between "Domains" and "Left out" (F-R5-8; the tapped button unmounts):
+ * the next chip of the group it left, else the one before it, else `last` (the fold's summary, or the chip it became).
+ */
+export function chipFocusAfterOf(group: readonly string[], id: string, last: string): string {
+  const i = group.indexOf(id);
+  return (i < 0 ? undefined : (group[i + 1] ?? group[i - 1])) ?? last;
+}
+
+/**
+ * What "Name the areas this needs" does with the typed text (F-R4-24; any library since F-R5-8), Enter and Add alike.
+ * One cap with the chosen Domains, as intakeOf's and the server's: chosen and named together hold up to
+ * DEPTH_DOMAINS_MAX. A name the Area already has is that Domain ("pick": chosen instead, as the server would refuse it
+ * as a new one; "chosen": it already is, the text just clears); any other is a new name. null: nothing to do (no text,
+ * a name already listed, or no room left).
+ */
+export function namedAreaAddOf(
+  text: string,
+  names: readonly string[],
+  chosen: readonly string[],
+  library: readonly { id: string; name: string }[]
+): { kind: "pick"; id: string } | { kind: "chosen" } | { kind: "name"; name: string } | null {
+  const n = text.replace(/\s+/g, " ").trim();
+  if (!n) return null;
+  const full = names.length >= Math.max(0, DEPTH_DOMAINS_MAX - chosen.length);
+  const own = library.find((x) => x.name.replace(/\s+/g, " ").trim().toLowerCase() === n.toLowerCase());
+  if (own) return chosen.includes(own.id) ? { kind: "chosen" } : full ? null : { kind: "pick", id: own.id };
+  if (full || names.some((x) => x.toLowerCase() === n.toLowerCase())) return null;
+  return { kind: "name", name: n };
+}
+
+/**
+ * The form once a Field is picked as the Area (pickField): the Field, the track, the date mode, and the Domains the
+ * aim names (domainPrefillOf). A saved intake never passes here: a draft, a re-plan or an edit loads its own Domains.
+ */
+export function pickFieldDraft(x: IntakeDraft, f: IntakeFieldOption, taken?: IntakeView["takenDomains"]): IntakeDraft {
+  return {
+    ...x,
+    fieldId: f.id,
+    areaTrack: null,
+    track: x.areaTrack ? DEFAULT_FIELD_TRACK : x.track,
+    domainIds: domainPrefillOf(x.aim, f, taken),
+    // A Field Area dates the plan when realistic, unless a date was handed over or picked.
+    dateMode: x.areaTrack ? "REALISTIC" : (x.dateMode ?? "REALISTIC"),
+  };
+}
+
+/**
+ * The form an aim handed over fills when no DRAFT is open (the /you card, a long goal, capture, "Start again at a
+ * depth"): its aim; its date; the Area when its Field is one of the intake's (or a track Area with its track), with the
+ * old plan's own Domains when the handoff carried them, otherwise only the ones the aim names (domainPrefillOf, as
+ * pickField; F-R5-8); and what it replaces. `base` is the stored unsent form, or a blank one.
+ */
+export function handoffDraftOf(
+  base: IntakeDraft,
+  h: Pick<StoredAimHandoff, "aim" | "targetDay" | "areaFieldId" | "track" | "domainIds" | "replaces">,
+  fields: readonly IntakeFieldOption[],
+  taken?: IntakeView["takenDomains"]
+): IntakeDraft {
+  const field = h.areaFieldId ? fields.find((f) => f.id === h.areaFieldId) : null;
+  return {
+    ...base,
+    aim: h.aim.slice(0, AIM_MAX),
+    ...(h.targetDay ? { targetDay: h.targetDay, dateMode: "CHOSEN" as const } : {}),
+    ...(field ? { fieldId: field.id, areaTrack: null, track: h.track ?? base.track, domainIds: h.domainIds?.length ? [...h.domainIds] : domainPrefillOf(h.aim.slice(0, AIM_MAX), field, taken) } : {}),
+    ...(!field && h.areaFieldId === null && h.track ? { fieldId: null, areaTrack: h.track, track: h.track, domainIds: [], dateMode: "CHOSEN" as const } : {}),
+    ...(h.replaces ? { replaces: h.replaces } : {}),
+  };
+}
+
+/**
+ * The client's checks (the server re-validates every field). Returns the Intake, or the first problem per field.
+ * `fields` (the form passes IntakeView.fields): a Field Area the form no longer lists (a stored form or a draft whose
+ * Field went) asks for the Area again, where the form can show it; an empty library's "no Domain" asks for a name.
+ */
+export function intakeOf(
+  d: IntakeDraft,
+  today: string,
+  opts: { chosen?: readonly { id: string; name: string }[]; newCardsRequired?: boolean; fields?: readonly Pick<IntakeFieldOption, "id" | "domains">[] } = {}
+): { intake: Intake | null; problems: Partial<Record<IntakeField, string>> } {
   const problems: Partial<Record<IntakeField, string>> = {};
   const aim = d.aim.replace(/\s+/g, " ").trim();
   if (!aim) problems.aim = "Say what you want to be able to do.";
   else if (aim.length > AIM_MAX) problems.aim = `At most ${AIM_MAX} characters.`;
+  // undefined: not known here (no `fields`); null: a Field the form no longer lists.
+  const areaField = d.fieldId && opts.fields ? (opts.fields.find((f) => f.id === d.fieldId) ?? null) : undefined;
   if (!d.fieldId && !d.areaTrack) problems.area = "Pick the Area this grows: one of your Fields, or a life track.";
+  else if (areaField === null) problems.area = "That Field no longer exists. Pick the Area this grows.";
   const trackArea = !d.fieldId;
   const realistic = !trackArea && d.dateMode === "REALISTIC";
   if (!realistic) {
@@ -417,6 +520,9 @@ export function intakeOf(d: IntakeDraft, today: string, opts: { chosen?: readonl
   else if (d.syllabusSource.length > SOURCE_NOTE_MAX) problems.syllabus = `The source at most ${SOURCE_NOTE_MAX} characters.`;
   const named = trackArea ? [] : (d.newDomainNames ?? []).map((n) => n.replace(/\s+/g, " ").trim()).filter(Boolean);
   if (!trackArea && d.domainIds.length + named.length > DEPTH_DOMAINS_MAX) problems.domains = `A plan holds up to ${DEPTH_DOMAINS_MAX} Domains.`;
+  // None chosen or named (F-R5-8: the form now starts with none): every plan path refuses it, so the form says so before
+  // it saves, in words naming what the user can do there (an empty library has only "Name the areas this needs").
+  else if (!trackArea && areaField !== null && d.domainIds.length + named.length === 0) problems.domains = areaField?.domains.length === 0 ? NO_AREAS_NAMED_LINE : NO_DOMAINS_LINE;
   const coverage: Record<string, number> = {};
   if (!trackArea) {
     for (const [id, raw] of Object.entries(d.coverage ?? {})) {
@@ -568,7 +674,8 @@ export function clearsCaptureLine(handoff: Pick<StoredAimHandoff, "source" | "sh
  * applies it (fix round 2, lens 3 #17): the Area when its Field is one of
  * the intake's (or a track Area came with its track); the Domains only when
  * the handoff carried the old plan's own — otherwise the form preselects
- * the Area's Domains with cards. The 'restart' note names only these.
+ * only the Domains the aim names (domainPrefillOf, F-R5-8). The 'restart'
+ * note names only these.
  */
 export function handoffCarriedOf(h: Pick<StoredAimHandoff, "areaFieldId" | "track" | "domainIds">, fields: readonly Pick<IntakeFieldOption, "id">[]): { area: boolean; domains: boolean } {
   const field = h.areaFieldId ? fields.some((f) => f.id === h.areaFieldId) : false;
@@ -854,20 +961,49 @@ function SummaryGlyph({ name }: { name: "quest.checkpoint" | "pv.syllabus" }) {
   );
 }
 
-/** "Name the areas this needs" (F-R4-24): an empty library's Domains, the user's own names, created in the Area Field when the intake saves. Its hint is the field's description, in the card Key. */
-function NamedAreas({ names, onChange, room, describedBy }: { names: readonly string[]; onChange: (n: string[]) => void; room: number; describedBy?: string }) {
+/**
+ * "Name the areas this needs" (F-R4-24; any library since F-R5-8): the user's own names, created in the Area Field
+ * when the intake saves. One cap with the chosen Domains (`chosen`), as intakeOf's and the server's: chosen and named
+ * together hold up to DEPTH_DOMAINS_MAX, so the label reads the names' room ("up to n") while there is one, and the
+ * count against the cap once it is full. A name the Area already has is that Domain, chosen instead (the server
+ * refuses it as a new one: "pick it instead"), within the same cap. Enter and Add agree. Its hint (an empty library
+ * only) is the field's description, in the card Key; `problem` is the empty library's refusal, under the field.
+ */
+function NamedAreas({
+  names,
+  onChange,
+  chosen,
+  describedBy,
+  library = [],
+  onPick,
+  problem,
+}: {
+  names: readonly string[];
+  onChange: (n: string[]) => void;
+  chosen: readonly string[];
+  describedBy?: string;
+  library?: readonly { id: string; name: string }[];
+  onPick?: (id: string) => void;
+  problem?: ReactNode;
+}) {
   const [text, setText] = useState("");
   const id = useId();
+  // The names the plan still holds beside the chosen Domains; full when no name (and no Domain picked by its name) fits.
+  const room = Math.max(0, DEPTH_DOMAINS_MAX - chosen.length);
+  const full = names.length >= room;
+  const total = chosen.length + names.length;
   const add = () => {
-    const n = text.replace(/\s+/g, " ").trim();
-    if (!n || names.some((x) => x.toLowerCase() === n.toLowerCase()) || names.length >= room) return;
-    onChange([...names, n]);
+    const next = namedAreaAddOf(text, names, chosen, onPick ? library : []);
+    if (!next) return;
+    if (next.kind === "pick") onPick?.(next.id);
+    else if (next.kind === "name") onChange([...names, next.name]);
     setText("");
   };
   return (
     <div className="rm-f" id="rm-f-named">
       <label className="st-label" htmlFor={id}>
-        {NAME_AREAS_LABEL} <span className="rm-opt">up to {room}</span>
+        {NAME_AREAS_LABEL}{" "}
+        <span className="rm-opt">{full ? <Fig compact={`${total}/${DEPTH_DOMAINS_MAX}`} speech={`${total} chosen, up to ${DEPTH_DOMAINS_MAX}`} /> : `up to ${room}`}</span>
       </label>
       <div className="rm-named">
         <input
@@ -885,7 +1021,7 @@ function NamedAreas({ names, onChange, room, describedBy }: { names: readonly st
             }
           }}
         />
-        <Button onClick={add} disabled={!text.trim() || names.length >= room}>
+        <Button onClick={add} disabled={!text.trim() || full}>
           Add
         </Button>
       </div>
@@ -899,6 +1035,7 @@ function NamedAreas({ names, onChange, room, describedBy }: { names: readonly st
           ))}
         </div>
       )}
+      {problem}
     </div>
   );
 }
@@ -1013,12 +1150,25 @@ function LineDomainGroups({
   );
 }
 
-export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures only: draw a lead-only state. */ gates?: LiveGates }) {
+export function RoadmapForm({
+  view,
+  gates,
+  pick,
+}: {
+  view: IntakeView;
+  /** Fixtures only: draw a lead-only state. */ gates?: LiveGates;
+  /** Fixtures only: the aim as typed, then this Field picked (pickField's own draft), with no open DRAFT. */ pick?: { aim: string; fieldId: string };
+}) {
   const runtime = useRoadmapRuntime();
   const ids = { aim: useId(), date: useId(), hours: useId(), newCards: useId(), typical: useId(), source: useId(), constraints: useId(), exam: useId(), examDay: useId(), syllabus: useId(), sylSource: useId() };
   // The card Keys' lines the controls read as their descriptions (D13), and the labels the custom groups name.
   const keyIds = { aim: useId(), area: useId(), named: useId(), date: useId(), hours: useId(), hard: useId(), constraints: useId(), newCards: useId(), depthLabel: useId(), depthGroup: useId(), hardLabel: useId() };
-  const [d, setD] = useState<IntakeDraft>(() => (view.draft ? draftOfIntake(view.draft.intake) : emptyIntakeDraft(view.today)));
+  const [d, setD] = useState<IntakeDraft>(() => {
+    if (view.draft) return draftOfIntake(view.draft.intake);
+    const blank = emptyIntakeDraft(view.today);
+    const picked = pick ? view.fields.find((f) => f.id === pick.fieldId) : undefined;
+    return pick && picked ? pickFieldDraft({ ...blank, aim: pick.aim.slice(0, AIM_MAX) }, picked, view.takenDomains) : blank;
+  });
   const [restored, setRestored] = useState(false);
   const [handoff, setHandoff] = useState<StoredAimHandoff | null>(null);
   // The handed-over aim reached the form (the no-draft merge, or "Use it" on an open draft): only then does the capture line go.
@@ -1027,6 +1177,14 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [areaOpen, setAreaOpen] = useState(false);
   const [othersOpen, setOthersOpen] = useState(false);
+  // "Left out · n" (F-R5-8): the user's own toggle; un-choosing a Domain opens it, so the chip stays in sight.
+  const [leftOpen, setLeftOpen] = useState(false);
+  // A Domain chip that moves between "Domains" and "Left out" unmounts the button that had focus: the Domain id whose
+  // chip takes focus once the move renders ("" for none), then the fold's summary, then "+ Domain from another Field".
+  const focusAfter = useRef<string | null>(null);
+  const chipEls = useRef(new Map<string, HTMLButtonElement>());
+  const leftSummary = useRef<HTMLElement>(null);
+  const otherAdd = useRef<HTMLButtonElement>(null);
   const [problems, setProblems] = useState<Partial<Record<IntakeField, string>>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Path | null>(null);
@@ -1060,16 +1218,8 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
     }
     const stored = readStored();
     if (h) {
-      const base: IntakeDraft = { ...emptyIntakeDraft(view.today), ...(stored ?? {}) };
-      const field = h.areaFieldId ? view.fields.find((f) => f.id === h.areaFieldId) : null;
-      const next: IntakeDraft = {
-        ...base,
-        aim: h.aim.slice(0, AIM_MAX),
-        ...(h.targetDay ? { targetDay: h.targetDay, dateMode: "CHOSEN" as const } : {}),
-        ...(field ? { fieldId: field.id, areaTrack: null, track: h.track ?? base.track, domainIds: h.domainIds?.length ? [...h.domainIds] : field.domains.filter((x) => x.cards > 0).map((x) => x.id) } : {}),
-        ...(!field && h.areaFieldId === null && h.track ? { fieldId: null, areaTrack: h.track, track: h.track, domainIds: [], dateMode: "CHOSEN" as const } : {}),
-        ...(h.replaces ? { replaces: h.replaces } : {}),
-      };
+      // The old plan's own Domains when the handoff carried them; otherwise only the ones the aim names (F-R5-8), as pickField.
+      const next = handoffDraftOf({ ...emptyIntakeDraft(view.today), ...(stored ?? {}) }, h, view.fields, view.takenDomains);
       dirty.current = true;
       setD(next);
       setHandoff(h);
@@ -1086,7 +1236,7 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
       setD({ ...emptyIntakeDraft(view.today), ...stored });
       setRestored(true);
     }
-  }, [view.draft, view.today, view.fields, storage]);
+  }, [view.draft, view.today, view.fields, view.takenDomains, storage]);
 
   // [Add your outline] and the draft's unassigned-lines link land on #syllabus: open the disclosure and put the cursor in its box.
   useEffect(() => {
@@ -1110,6 +1260,14 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
     const t = window.setTimeout(() => writeStored(d), 400);
     return () => window.clearTimeout(t);
   }, [d, storage]);
+
+  // Focus follows a Domain chip's move (F-R5-8): never left on <body> when the tapped chip unmounts.
+  useEffect(() => {
+    const to = focusAfter.current;
+    if (to == null) return;
+    focusAfter.current = null;
+    ((to ? chipEls.current.get(to) : null) ?? leftSummary.current ?? otherAdd.current)?.focus();
+  }, [d.domainIds]);
 
   // The vague-aim hint (F-R4-4): after a pause in typing, never blocking, never editing; it clears as soon as the aim reads well.
   useEffect(() => {
@@ -1164,6 +1322,10 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
   // The practice family (contracts §20.11): the user's answer, else the aim's prefill.
   const family = practiceFamilyAnswerOf(d);
   const emptyLibrary = fieldArea && field!.domains.length === 0;
+  // The Area's Domains not chosen (the aim doesn't name them, or the user took them out): folded under "Left out · n", one tap to add each (F-R5-8).
+  const leftOut = field ? field.domains.filter((dm) => !d.domainIds.includes(dm.id)) : [];
+  // The chosen chips in the order they render: the Area's own, then those from other Fields.
+  const chosenChips = field ? [...field.domains.filter((dm) => d.domainIds.includes(dm.id)).map((dm) => dm.id), ...d.domainIds.filter((id) => !field.domains.some((dm) => dm.id === id) && allDomains.has(id))] : [];
   // Constraint safety (contracts §19): a body or care track Area asks which activities to avoid, from the words as typed; a craft one when its words carry a cue.
   const gatedTrack = trackArea && (d.areaTrack === "BODY" || d.areaTrack === "CARE" || d.areaTrack === "CRAFT") ? d.areaTrack : null;
   const storedActivities = view.draft?.intake.activities ?? null;
@@ -1180,16 +1342,9 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
     return intakeActivityOf({ track: gatedTrack, texts, exam, practicesAllowed: true, examLabel, stored: storedActivities });
   }, [gatedTrack, exam, d.exam, d.constraints, d.aim, d.typicalHours, d.typicalSource, d.syllabusSource, lines, storedActivities]);
 
+  // Picking a Field preselects only the Domains the aim names (F-R5-8): the rest fold under "Left out · n".
   const pickField = (f: IntakeFieldOption) => {
-    edit((x) => ({
-      ...x,
-      fieldId: f.id,
-      areaTrack: null,
-      track: x.areaTrack ? DEFAULT_FIELD_TRACK : x.track,
-      domainIds: f.domains.filter((dm) => dm.cards > 0).map((dm) => dm.id),
-      // A Field Area dates the plan when realistic, unless a date was handed over or picked.
-      dateMode: x.areaTrack ? "REALISTIC" : (x.dateMode ?? "REALISTIC"),
-    }));
+    edit((x) => pickFieldDraft(x, f, view.takenDomains));
     setAreaOpen(false);
   };
   const pickTrack = (t: Track) => {
@@ -1197,15 +1352,37 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
     setAreaOpen(false);
   };
   const toggleDomain = (id: string) => edit((x) => ({ ...x, domainIds: x.domainIds.includes(id) ? x.domainIds.filter((y) => y !== id) : [...x.domainIds, id] }));
+  const chooseDomain = (id: string) => edit((x) => (x.domainIds.includes(id) ? x : { ...x, domainIds: [...x.domainIds, id] }));
+  // A chosen chip taken out: the Area's own goes under "Left out" (opened); focus moves to the next chosen chip, else the fold.
+  const unchooseChip = (id: string) => {
+    focusAfter.current = chipFocusAfterOf(chosenChips, id, "");
+    if (field?.domains.some((dm) => dm.id === id)) setLeftOpen(true);
+    toggleDomain(id);
+  };
+  // A Domain added from "Left out": focus moves to the next one left out, else to the chip it became.
+  const chooseLeftOut = (id: string) => {
+    focusAfter.current = chipFocusAfterOf(leftOut.map((dm) => dm.id), id, id);
+    chooseDomain(id);
+  };
+  // The chip's button by Domain id, for focusAfter (React 19's ref cleanup drops it only while it is still this one).
+  const chipRef = (id: string) => (el: HTMLButtonElement | null) => {
+    if (!el) return;
+    const els = chipEls.current;
+    els.set(id, el);
+    return () => {
+      if (els.get(id) === el) els.delete(id);
+    };
+  };
   const pickDate = (day: string) => edit((x) => ({ ...x, targetDay: day, dateMode: "CHOSEN" }));
 
   const submit = async (path: Path) => {
     setError(null);
-    const { intake, problems: p } = intakeOf(d, view.today, { chosen, newCardsRequired });
+    const { intake, problems: p } = intakeOf(d, view.today, { chosen, newCardsRequired, fields: view.fields });
     setProblems(p);
     if (!intake) {
       const first = Object.keys(p)[0];
-      document.getElementById(`rm-f-${first}`)?.scrollIntoView({ block: "center" });
+      // An empty library has no Domains row: its refusal sits under "Name the areas this needs".
+      (document.getElementById(`rm-f-${first}`) ?? (first === "domains" ? document.getElementById("rm-f-named") : null))?.scrollIntoView({ block: "center" });
       return;
     }
     setBusy(path);
@@ -1431,49 +1608,89 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
             <div className="rm-f" id="rm-f-domains">
               <span className="st-label">
                 Domains{" "}
-                <span className="rm-opt">
-                  <Fig compact={`${d.domainIds.length}/${DEPTH_DOMAINS_MAX}`} speech={`${d.domainIds.length} chosen, up to ${DEPTH_DOMAINS_MAX}`} />
+                {/* Spoken as the count changes ("1 chosen, up to 6"): a chip's move is heard, not only seen. */}
+                <span className="rm-opt" aria-live="polite">
+                  <Fig compact={`${d.domainIds.length + named.length}/${DEPTH_DOMAINS_MAX}`} speech={`${d.domainIds.length + named.length} chosen, up to ${DEPTH_DOMAINS_MAX}`} />
                 </span>
               </span>
-              <div className="rm-dchips" role="group" aria-label="Domains">
-                {field.domains.map((dm) => (
-                  <button key={dm.id} type="button" className="rm-dchip" aria-pressed={d.domainIds.includes(dm.id)} onClick={() => toggleDomain(dm.id)}>
-                    <b data-wc="name">{dm.name}</b>
-                    <Fig compact={domainChipCompact(dm)} speech={domainChipCount(dm)} />
-                  </button>
-                ))}
-                {d.domainIds
-                  .filter((id) => !field.domains.some((dm) => dm.id === id))
-                  .map((id) => {
-                    const dm = allDomains.get(id);
-                    if (!dm) return null;
-                    return (
-                      <button key={id} type="button" className="rm-dchip" aria-pressed onClick={() => toggleDomain(id)}>
+              {chosenChips.length > 0 && (
+                <div className="rm-dchips" role="group" aria-label="Domains">
+                  {field.domains
+                    .filter((dm) => d.domainIds.includes(dm.id))
+                    .map((dm) => (
+                      <button key={dm.id} ref={chipRef(dm.id)} type="button" className="rm-dchip" aria-pressed onClick={() => unchooseChip(dm.id)}>
                         <b data-wc="name">{dm.name}</b>
-                        <span>
-                          <span data-wc="name">{dm.fieldName}</span> · <Fig compact={domainChipCompact(dm)} speech={domainChipCount(dm)} />
-                        </span>
+                        <Fig compact={domainChipCompact(dm)} speech={domainChipCount(dm)} />
                       </button>
-                    );
-                  })}
-                <button type="button" className="rm-dchip rm-dchip-add" onClick={() => setOthersOpen(true)}>
+                    ))}
+                  {d.domainIds
+                    .filter((id) => !field.domains.some((dm) => dm.id === id))
+                    .map((id) => {
+                      const dm = allDomains.get(id);
+                      if (!dm) return null;
+                      return (
+                        <button key={id} ref={chipRef(id)} type="button" className="rm-dchip" aria-pressed onClick={() => unchooseChip(id)}>
+                          <b data-wc="name">{dm.name}</b>
+                          <span>
+                            <span data-wc="name">{dm.fieldName}</span> · <Fig compact={domainChipCompact(dm)} speech={domainChipCount(dm)} />
+                          </span>
+                        </button>
+                      );
+                    })}
+                </div>
+              )}
+              {leftOut.length > 0 && (
+                <details className="rm-adv rm-in-left" open={leftOpen} onToggle={(e) => setLeftOpen(e.currentTarget.open)}>
+                  <summary ref={leftSummary}>
+                    <Icon name="chev" />
+                    {LEFT_OUT_WORD}
+                    <span aria-hidden="true"> · </span>
+                    <Fig compact={String(leftOut.length)} speech={plural(leftOut.length, "Domain")} />
+                  </summary>
+                  <div className="rm-adv-b">
+                    <div className="rm-dchips" role="group" aria-label={LEFT_OUT_WORD}>
+                      {/* Action buttons, not toggles: a tap adds the Domain to the plan (its chip moves up, focus to the next). */}
+                      {leftOut.map((dm) => (
+                        <button key={dm.id} ref={chipRef(dm.id)} type="button" className="rm-dchip" onClick={() => chooseLeftOut(dm.id)}>
+                          <span className="sr-only">Add </span>
+                          <b data-wc="name">{dm.name}</b>
+                          <Fig compact={domainChipCompact(dm)} speech={domainChipCount(dm)} />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </details>
+              )}
+              <div className="rm-dchips rm-in-other">
+                <button ref={otherAdd} type="button" className="rm-dchip rm-dchip-add" onClick={() => setOthersOpen(true)}>
                   <b>+ Domain from another Field</b>
                 </button>
               </div>
               {problem("domains")}
+            </div>
+          )}
+          {field && (
+            <NamedAreas
+              names={named}
+              onChange={(n) => set("newDomainNames", n)}
+              chosen={d.domainIds}
+              describedBy={emptyLibrary ? keyIds.named : undefined}
+              library={field.domains}
+              onPick={chooseDomain}
+              problem={emptyLibrary ? problem("domains") : null}
+            />
+          )}
+          {field && (coverage.length > 0 || problems.coverage) && (
+            <div className="rm-f">
               <CoverageDisclosure
                 rows={coverage}
                 typed={d.coverage ?? {}}
                 onType={(id, v) => edit((x) => ({ ...x, coverage: { ...(x.coverage ?? {}), [id]: v } }))}
                 unassigned={unassigned}
-                overMax={d.domainIds.length >= DEPTH_DOMAINS_MAX}
+                overMax={d.domainIds.length + named.length >= DEPTH_DOMAINS_MAX}
               />
               {problem("coverage")}
             </div>
-          )}
-          {emptyLibrary && <NamedAreas names={named} onChange={(n) => set("newDomainNames", n)} room={DEPTH_DOMAINS_MAX} describedBy={keyIds.named} />}
-          {emptyLibrary && named.length > 0 && (
-            <CoverageDisclosure rows={coverage} typed={d.coverage ?? {}} onType={() => undefined} unassigned={unassigned} overMax={named.length >= DEPTH_DOMAINS_MAX} />
           )}
           <FormKey entries={[{ glyph: "m.verbatim", words: GLYPH_MEANS["m.verbatim"] }]} rows={field && !emptyLibrary ? field.domains.map((dm) => `${dm.name}: ${domainChipCount(dm)}`) : undefined}>
             <KeyLine id={keyIds.aim}>What do you want to be able to do? {AIM_LONG_HINT} Shown exactly as you wrote it, everywhere. Never rewritten.</KeyLine>
@@ -1481,7 +1698,7 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
               {`One of your Fields, or a life track for an aim that is practice only. Only you pick the Area.${field?.inMaintenance ? " This Field is excused from quotas and Boss." : ""}`}
             </KeyLine>
             {trackArea && d.areaTrack && <KeyLine>{`Practices count toward ${TRACK_WORD[d.areaTrack]} — fixed by the Area. The plan has practices and steps only; there are no cards to hold.`}</KeyLine>}
-            {field && !emptyLibrary && <KeyLine>{`Prefilled with the ${field.name} Domains that hold cards. Counts are your cards today; the plan counts every card type but multiple choice.`}</KeyLine>}
+            {field && !emptyLibrary && <KeyLine>{`${DOMAINS_PREFILL_LINE} Counts are your cards today; the plan counts every card type but multiple choice.`}</KeyLine>}
             {emptyLibrary && <KeyLine id={keyIds.named}>{NAME_AREAS_HINT}</KeyLine>}
           </FormKey>
         </section>

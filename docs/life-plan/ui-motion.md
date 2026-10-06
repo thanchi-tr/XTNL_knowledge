@@ -166,6 +166,7 @@ Each lane adds the `data-wc` attributes for the surfaces it builds. A `data-wc` 
 | 1 | Intake: blank | 247 | ≤ 90 | ≤ 25 |
 | | Intake: Gemini path on | 268 | ≤ 105 | ≤ 25 |
 | | Intake: empty library | 451 | ≤ 110 | ≤ 25 |
+| | Intake: Area picked, nothing chosen (intake-left-out; rev 5 lane 1) | 77 | ≤ 90 | ≤ 25 |
 | | Intake: body (intake-confirm) | 476 | ≤ 130 | ≤ 25 |
 | | Intake: depth | 611 | ≤ 150 | ≤ 25 |
 | 2 | Draft header + run facts + Depth and date: draft-v4 | 454 | ≤ 90 | ≤ 25 |

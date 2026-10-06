@@ -2280,9 +2280,22 @@ async function aimPageRenderChecks() {
     );
     const bare = card.legacyRestartHandoffOf({ ...open, legacyView: undefined });
     check(
-      "aim card (fix round 2): without legacyView (a loader that doesn't fill it) the handoff invents no Domains: the form preselects the Area's, and the Area still travels",
+      "aim card (fix round 2): without legacyView (a loader that doesn't fill it) the handoff invents no Domains, and the Area still travels",
       bare != null && bare.domainIds === undefined && bare.areaFieldId === (open.area?.kind === "FIELD" ? open.area.fieldId : null),
       JSON.stringify(bare)
+    );
+    // The form's side (F-R5-8, RoadmapForm.handoffDraftOf): with no Domains carried it chooses only the ones the aim
+    // names, so a Domain of the Area that holds cards but isn't named stays out; carried ones are kept as they came.
+    const form = await import("../src/components/roadmap/RoadmapForm");
+    const areaId = bare?.areaFieldId ?? null;
+    const area = { id: areaId ?? "-", name: "Area", level: 3, cards: 40, inMaintenance: false, paceMeasured: true, domains: [{ id: "d-unnamed", name: "Zyzzyva Quorum", cards: 40, atSix: 9, atTop: 1, paceMeasured: true }] };
+    const blank = form.emptyIntakeDraft("2026-10-06");
+    const fromBare = bare ? form.handoffDraftOf(blank, bare, [area]) : null;
+    const fromOwn = h ? form.handoffDraftOf(blank, { ...h, areaFieldId: areaId }, [area]) : null;
+    check(
+      "aim card → form (F-R5-8): the restart handoff with no Domains lands with the Area and 0 Domains chosen (one holding 40 cards the aim doesn't name stays out); with the old plan's Domains, those exactly",
+      areaId != null && fromBare?.fieldId === areaId && JSON.stringify(fromBare?.domainIds) === "[]" && fromBare?.aim === open.aim && JSON.stringify(fromOwn?.domainIds) === JSON.stringify(h?.domainIds) && (h?.domainIds?.length ?? 0) > 0,
+      JSON.stringify([fromBare?.domainIds, fromOwn?.domainIds])
     );
   } catch (err) {
     check("aim fixtures page (fix round 2): the legacy card renders and its helpers import", false, err instanceof Error ? err.message : String(err));

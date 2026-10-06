@@ -1073,7 +1073,8 @@ export function aimLineCopy(v: AimLineView): { lead: string; rest: string } {
  * 'restart' names only what the form really took over (fix round 2, lens 3
  * #17): its aim always; the Area when the handoff's Area was applied; its
  * Domains only when the handoff carried the old plan's own (otherwise the
- * form preselects the Area's Domains, which were not "carried over").
+ * form preselects only the Domains the aim names, which were not "carried
+ * over").
  */
 export function handoffNote(source: "you" | "goal" | "capture" | "restart", aim: string, carried?: { area: boolean; domains: boolean }): string {
   switch (source) {
@@ -1130,6 +1131,23 @@ export const EXAM_DATE_LABEL = "When is it? (optional)";
 export const OUTLINE_EXAM_LABEL = "Official syllabus: paste the topic list from the official source";
 export const OUTLINE_LABEL = "Your outline: what this covers, one per line — from an official source or your own list";
 export const LINE_NO_DOMAIN = "Not tied to a Domain";
+/**
+ * The Domains of a Field Area (F-R5-8, lane 1): picking the Area chooses only the ones the aim names (at that moment;
+ * a later aim edit never moves a chip, and picking the Area again re-reads the aim); the rest fold under
+ * "Left out · n" (the count a figure with its spoken twin), one tap to add each. The card Key says what the form starts
+ * with, in fewer words than rev 4's "Prefilled with the <Field> Domains that hold cards." No glyph of its own: m.minus
+ * already means "less" (ui-motion §15.2 gives a reused glyph no new meaning).
+ */
+export const LEFT_OUT_WORD = "Left out";
+export const DOMAINS_PREFILL_LINE = "Domains named in your aim start chosen.";
+/**
+ * A Field intake with no Domain chosen and none named (F-R5-8, lane 1: the form starts with none): refused before it
+ * saves, naming what the user can do on that form. With a library: choose one, or name one. An empty library has no
+ * Domains row, so it asks only for a name, under "Name the areas this needs". (The plan paths' own refusal stays
+ * realism's "Choose at least one Domain for this aim.")
+ */
+export const NO_DOMAINS_LINE = "Choose a Domain or name an area for this aim.";
+export const NO_AREAS_NAMED_LINE = "Name at least one area this needs.";
 export const NAME_AREAS_LABEL = "Name the areas this needs";
 export const NAME_AREAS_HINT = "Not sure what it covers? Paste the official outline or syllabus from a source you trust, one topic per line.";
 export const COVERAGE_TITLE = "How many cards each Domain needs";
