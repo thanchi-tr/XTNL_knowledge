@@ -37,7 +37,7 @@
 import "./_no-model";
 import * as RT from "../src/lib/roadmap-types";
 import { acceptRefusalOf, chainChecksOf, clauseSplitOf, kFinalOf, parentsOf, writtenMapOf, type ChainCheckContext, type WrittenMapInput } from "../src/lib/roadmap-topics";
-import { RATE_INSTRUCTION, ratingOf, ratingOverrideOf, withMapFillOf, type RateSampleIn } from "../src/lib/roadmap-rating";
+import { RATE_INSTRUCTION, ratingOf, ratingOverrideOf, withMapFillOf, wordCautionsOf, type RateSampleIn } from "../src/lib/roadmap-rating";
 import { checkLabel, type LabelContext } from "../src/lib/roadmap-validate";
 import { stripFiguresOf } from "../src/lib/roadmap-evidence";
 import { layeredLadderOf, stageLadderOf, type ChainTopicInput, type StageLadderResult, type TopicChainInput } from "../src/lib/roadmap-realism";
@@ -574,6 +574,22 @@ console.log("— the live fix: Title Case topic names, stripFiguresOf, RATE v2 �
       RATE_INSTRUCTION.split("\n").length === 11,
     RATE_INSTRUCTION
   );
+
+  // (d) The word lists: a first-aid aim shows «Not medical advice» (MEDICAL_CAUTION_WORDS), an emergency fund or a burn
+  // rate doesn't; BRAND_NAMES holds the product brands as runs, never the common words that share them.
+  eq(
+    "cautions: first aid and emergency care fire MEDICAL; 'an emergency fund' and 'a burn rate' stay financial only",
+    [
+      wordCautionsOf({ aim: "Learn first aid for common home emergencies", areaName: "Health", constraints: null }),
+      wordCautionsOf({ aim: "Learn CPR and how to treat burns and wounds", areaName: "Craft", constraints: null }),
+      wordCautionsOf({ aim: "Build a six-month emergency fund and lower my startup's burn rate", areaName: "Business & Finance", constraints: null }),
+    ],
+    [["MEDICAL"], ["MEDICAL"], ["FINANCIAL"]]
+  );
+  const brandOf = (name: string) => (checkLabel(name, ctx()).topicFlags ?? []).includes("BRAND");
+  const BRANDS = ["Microsoft Excel Formulas", "Google Sheets Functions", "Photoshop Layers", "TensorFlow Models", "scikit-learn pipelines", "Unity Engine Scripting", "Canon EOS Settings"];
+  const PLAIN = ["Word Order", "Window Functions", "Roots of Unity", "Unreal Conditionals", "Canon Law", "Apple Tree Pruning", "Notion of Limits", "Canvas Painting Basics", "Standing Asanas", "Adobe Brick Construction", "After-Effects of War"];
+  eq("BRAND: product brands fire (any case); the common words they share stay silent", [BRANDS.map(brandOf), PLAIN.map(brandOf)], [BRANDS.map(() => true), PLAIN.map(() => false)]);
 }
 
 console.log("");

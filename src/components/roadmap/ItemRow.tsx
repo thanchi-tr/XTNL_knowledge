@@ -49,7 +49,8 @@ import { ActionError } from "@/components/home/ActionError";
 import { KindGlyph, Mark, ProvMark, type QuestKind } from "@/components/glyph/Glyph";
 import type { TrackSigil } from "@/components/glyph/paths";
 import { playGlyph } from "@/lib/glyph-motion";
-import type { BlockingFlag, ItemDraft, MilestoneDraft } from "@/lib/roadmap-types";
+import { geminiNamedOf, namedPartsOf, type BlockingFlag, type ItemDraft, type LibraryDomain, type MilestoneDraft } from "@/lib/roadmap-types";
+import { NamedText, hasNamed } from "@/components/glyph/NamedMark";
 import { FlagChips, FlagReasons } from "./FlagChips";
 import { GeminiPickChip, ProvenanceChip, ROW_DEFS, provMarkOf, provMarkWords } from "./ProvenanceChip";
 import { useItemEditor, type ActTarget, type ItemEditorScope } from "./ItemEditor";
@@ -133,12 +134,28 @@ export function CatalogChip({
   return <ProvMark cls={by === "APP" ? "app-added" : "you"} words={words} size={16} defs={ROW_DEFS} className={className} />;
 }
 
-/** A milestone's title outside its editor row (a card's header, Now): as written, with its NUMBER spans struck. */
+/** The live fix (contracts §22.11, ruling 67): the library's Domains that carry the Gemini mark (geminiNamedOf), by name. */
+export function libraryMarksOf(library: readonly LibraryDomain[] | null | undefined): { name: string; geminiNamed: boolean }[] {
+  return (library ?? []).filter((d) => geminiNamedOf(d)).map((d) => ({ name: d.name, geminiNamed: true }));
+}
+
+/**
+ * A label in its words: struck NUMBER spans as before; otherwise each kept Gemini-named Domain's name it holds (a
+ * milestone's title, a row's label, a refusal naming one) with pv.named (the live fix, §22.11). With no Gemini-named
+ * Domain in `marks` it renders exactly as StruckLabel, so a LEVELS page's markup is unchanged.
+ */
+export function MarkedLabel({ label, struck, marks }: { label: string; struck?: readonly (readonly [number, number])[] | null; marks: readonly { name: string; geminiNamed: boolean }[] }) {
+  if ((struck && struck.length > 0) || marks.length === 0) return <StruckLabel label={label} struck={struck} />;
+  const parts = namedPartsOf(label, marks);
+  return hasNamed(parts) ? <NamedText parts={parts} /> : <StruckLabel label={label} struck={struck} />;
+}
+
+/** A milestone's title outside its editor row (a card's header, Now): as written, with its NUMBER spans struck and its Gemini-named Domains marked. */
 export function MilestoneTitleText({ milestone }: { milestone: MilestoneDraft }) {
   const editor = useItemEditor();
   const row = titleItemOf(milestone);
   const shown = useDisplayLabel(row, milestone, editor?.scope);
-  return <StruckLabel label={row.label} struck={shown.struck} />;
+  return <MarkedLabel label={row.label} struck={shown.struck} marks={libraryMarksOf(editor?.scope.library)} />;
 }
 
 /** The plan's own track sigil (a practice's KindGlyph; ui-motion.md §4.4): a Field plan's is knowledge's. */
@@ -275,7 +292,7 @@ export function ItemRow({
 
   const label = (
     <p className="rm-it-l" data-wc={own ? "own" : "name"}>
-      <StruckLabel label={row.label} struck={shown.struck} />
+      <MarkedLabel label={row.label} struck={shown.struck} marks={libraryMarksOf(editor?.scope.library)} />
     </p>
   );
 

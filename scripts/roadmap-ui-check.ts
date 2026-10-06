@@ -6543,6 +6543,35 @@ async function main() {
       bad9.push("geminiNamedOf: the mark outlives a rename, or marks a Domain Gemini never named");
     check("pv.named: every geminiNamed Domain name renders the mark", bad9.length === 0, bad9.join(" | "));
 
+    // The live fix, after accept: the Now card's title and item labels (a step's, the checkpoint's) and the Start sheet's
+    // checkpoint-bar refusal mark a kept Gemini-named Domain (the library's geminiNamedOf); the same library with that
+    // Domain unmarked draws no mark there (a LEVELS page's markup is unchanged).
+    {
+      const ssA = await import("../src/components/roadmap/StartSheet");
+      const { ItemEditor: EditorA } = await import("../src/components/roadmap/ItemEditor");
+      const { editorScopeOf: scopeOfA } = await import("../src/components/roadmap/DraftReview");
+      const HF = "Household Finance";
+      const libA = (lib: RoadmapView["library"], named: boolean) => [...(lib ?? []), { ...(lib ?? [])[0]!, id: "d-hf", name: HF, sample: undefined, ...(named ? { nameOrigin: "GEMINI", originName: HF } : {}) }];
+      const cmA = cur9.milestone;
+      const itemsA = cmA.items.map((it) => (it.kind === "CHECKPOINT" ? { ...it, label: `Self-test: ${HF}`, bar: null, outOf: null } : it));
+      const stepA = { ...cmA.items[0], id: "it-hf", lineageId: "itl-hf", kind: "STEP" as const, ord: 99, label: `Read the ${HF} notes`, domainId: null, templateId: null };
+      const nowA = (named: boolean): RoadmapView => ({ ...pv9, library: libA(pv9.library, named), current: { ...cur9, milestone: { ...cmA, title: `${HF} · layer 2 of 4`, items: [...itemsA, stepA] } } });
+      const pageA = R(createElement(RoadmapScreen, { view: nowA(true), gates: pfx9.gates }));
+      const plainA = R(createElement(RoadmapScreen, { view: nowA(false), gates: pfx9.gates }));
+      const sfx = roadmapFixture("start-refit");
+      const sv = { ...sfx.view!, library: libA(sfx.view!.library, true) };
+      const sp = { ...sfx.startPreview!, canStart: false, refusal: null, todayRows: [], blockers: [`Set the bar for the checkpoint “Self-test: ${HF}”.`] };
+      // eslint-disable-next-line react/no-children-prop
+      const sheetA = R(createElement(EditorA, { scope: scopeOfA(sv, [sv.current!.milestone])!, children: createElement(ssA.StartSheetBody, { preview: sp, milestone: sv.current!.milestone, today: sv.today, activityConfirm: sv.activityConfirm, roadmapId: sv.header!.id, onClose: () => undefined }) }));
+      const onPage = occ9(pageA, HF);
+      const onSheet = occ9(sheetA, HF);
+      check(
+        "pv.named (the live fix): the Now card's title, a step's and the checkpoint's labels, and the Start sheet's checkpoint-bar refusal mark a Gemini-named Domain; unmarked in the library, none",
+        onPage.length === 3 && onPage.every((x) => x.marked) && marks9(pageA) === marks9(plainA) + 3 && occ9(plainA, HF).every((x) => !x.marked) && onSheet.length === 1 && onSheet[0].marked,
+        JSON.stringify({ onPage, onSheet, marks: [marks9(pageA), marks9(plainA)] })
+      );
+    }
+
     // ── 2. Words (§15.10 row 13): ≤ 6 app words per layer (its header and folds), ≤ 2 for the card ([Accept all], drafts
     //    only), on the three map fixtures, each layer its own block; a topic row holds no app word ──
     const fail13: string[] = [];
@@ -6610,6 +6639,33 @@ async function main() {
     );
   }
   // ===== /Rev 5 lane 9 =====
+
+  // ── Fixer B (contracts ruling 58): [Break it down] on a TOPICS draft no Gemini chain is on — your [Write the topics] map
+  //    on a fresh draft, and a [Break into topics] re-plan — as the intake offers it (the chain's switch, a key); the
+  //    button alone, outside the map card (row 13's budgets hold); none once a chain is on, and none in the fixtures. ──
+  console.log("— revision 5, fixer B: [Break it down] on a TOPICS draft —");
+  {
+    const { DraftReview: DraftB, breakDownOfferedOf } = await import("../src/components/roadmap/DraftReview");
+    const wfx = roadmapFixture("topic-map-write");
+    const gB = { ...wfx.gates, gemini: true };
+    const vB: RoadmapView = { ...wfx.view!, hasKey: true };
+    const offerB = (html: string) => /<div class="rm-acts" data-break-down=""><button[^>]*>Break it down<\/button><\/div>/.exec(html)?.[0] ?? "";
+    const freshB = R(createElement(DraftB, { view: vB, gates: gB }));
+    const replanB = R(createElement(DraftB, { view: { ...vB, header: { ...vB.header!, status: "ACTIVE" } }, mode: "replan", gates: gB }));
+    const chained = { ...vB, topicChain: { done: true } as unknown as RoadmapView["topicChain"] };
+    check(
+      "break it down (ruling 58): a TOPICS draft with no chain offers [Break it down] (the button alone, once, outside the map card) on a fresh draft and on a re-plan; none with a chain on, with no key or with the chain's switch off, and none in the fixtures",
+      offerB(freshB) !== "" &&
+        offerB(replanB) !== "" &&
+        freshB.split(">Break it down<").length === 2 &&
+        freshB.indexOf(offerB(freshB)) < freshB.indexOf('class="card rm-tm"') &&
+        !breakDownOfferedOf(chained, gB) &&
+        !breakDownOfferedOf({ ...vB, hasKey: false }, gB) &&
+        !breakDownOfferedOf(vB, wfx.gates) &&
+        !(renders.get("topic-map-write")?.page ?? "").includes("Break it down"),
+      JSON.stringify({ fresh: offerB(freshB) !== "", replan: offerB(replanB) !== "" })
+    );
+  }
   void r0Gate;
 
   console.log(`\nroadmap-ui-check: ${passed} passed, ${failed} failed`);

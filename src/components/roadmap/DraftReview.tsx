@@ -234,6 +234,9 @@ import { AFTERCARE_ARCHIVE_WORD, AFTERCARE_KEEP_WORD, aftercareGroupLabel, creat
 import { useTopicChainPoll } from "./roadmap-runtime";
 import { CHAIN_STOPPED_LINE, CHANGE_DATE_HOURS_WORD, CHECK_AGAIN_WORD, FEWER_LAYERS_WORD, TRY_AGAIN_WORD, WRITE_TOPICS_WORD, chainLeadLine, chainRunningLine, chainStopLine } from "./roadmap-copy";
 import { LAYERS_MIN, type RoadmapActionResult, type TopicChainView } from "@/lib/roadmap-types";
+// ── Revision 5 (fixer B): [Break it down] on a TOPICS draft no chain is on (ruling 58) ──
+import { topicSwitchesOf } from "@/lib/roadmap-types";
+import { BREAK_IT_DOWN_WORD } from "./roadmap-copy";
 import "./roadmap.css";
 
 /**
@@ -1336,6 +1339,8 @@ export function DraftReview({
         )}
         {/* Revision 5, fix round: the Gemini chain's poll (a re-plan's breakdown) and a stopped breakdown's line, above its map (ruling 47). */}
         {view.topicChain && <TopicChainCard view={view} mode={mode} />}
+        {/* Fixer B (ruling 58): [Break it down] on a TOPICS draft no chain is on (after [Write the topics], or a [Break into topics] re-plan). */}
+        {draft.topicMap && <BreakDownOffer view={view} gates={gates} />}
         {/* Revision 5, lane 9: a TOPICS draft's map (DraftView.topicMap); its milestones below read "Layer k of n" (ruling 22). */}
         {draft.topicMap && topicPlansOn(gates) && (
           <TopicMap
@@ -1631,6 +1636,37 @@ export function TopicChainCard({ view, mode }: { view: RoadmapView; mode: "draft
         {shown && <ActionError>{shown}</ActionError>}
       </div>
     </section>
+  );
+}
+
+/**
+ * [Break it down] on a TOPICS draft no Gemini chain is on (ruling 58): your [Write the topics] map on a fresh draft, or
+ * the [Break into topics] re-plan of an accepted plan. As the intake offers it: a Field's open goal, while the chain's
+ * switch is on (a fixture: its lead-only `gemini`) and a key is set.
+ */
+export function breakDownOfferedOf(view: RoadmapView, gates?: LiveGates): boolean {
+  const h = view.header;
+  if (!h || !view.draft?.topicMap || view.topicChain || view.writesOff || h.area.kind !== "FIELD") return false;
+  if (h.status !== "DRAFT" && h.status !== "ACTIVE") return false;
+  return topicPlansOn(gates) && (gates?.topics === true ? Boolean(gates.gemini) : topicSwitchesOf().rate) && view.hasKey;
+}
+
+/**
+ * The offer itself: the same breakDown as the intake's path, on the map as it stands; the page's chain poll then takes it
+ * step by step (the wait card on a fresh draft, TopicChainCard on a re-plan). Word-light: the button alone, outside the
+ * map card's row-13 budget.
+ */
+function BreakDownOffer({ view, gates }: { view: RoadmapView; gates?: LiveGates }) {
+  const { run: act, pending, error } = useRoadmapAction();
+  const id = view.header?.id ?? null;
+  if (!id || !breakDownOfferedOf(view, gates)) return null;
+  return (
+    <div className="rm-acts" data-break-down="">
+      <Button disabled={pending} onClick={() => act((a) => a.breakDown(id))}>
+        {BREAK_IT_DOWN_WORD}
+      </Button>
+      {error && <ActionError>{error}</ActionError>}
+    </div>
   );
 }
 

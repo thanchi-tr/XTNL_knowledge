@@ -173,7 +173,7 @@ import { AimHeader, AreaChipShort, spaced } from "./AimHeader";
 import { TowardAim } from "./TowardAim";
 import { MeasureRow, evidenceOfCaption, measureFractionOf } from "./MeasureRow";
 import { DomainItemRow, DomainRow } from "./DomainRow";
-import { ItemRow, MilestoneTitleText, trackSigilOf } from "./ItemRow";
+import { ItemRow, MarkedLabel, MilestoneTitleText, libraryMarksOf, trackSigilOf } from "./ItemRow";
 import { StruckLabel } from "./StruckLabel";
 import { TopicRow } from "./TopicRow";
 import { PracticeRow } from "./PracticeRow";
@@ -391,6 +391,8 @@ function NowSection({ view, current, onStartOpen, seen }:{ view: RoadmapView; cu
   const m = current.milestone;
   const today = view.today;
   const index = useMemo(() => domainIndexOf(view), [view]);
+  // The live fix (§22.11): a kept Gemini-named Domain's name in a step's words keeps pv.named (the title and the ItemRows read the editor's library).
+  const namedMarks = useMemo(() => libraryMarksOf(view.library), [view.library]);
   const [basis, setBasis] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [resched, setResched] = useState(false);
@@ -695,7 +697,7 @@ function NowSection({ view, current, onStartOpen, seen }:{ view: RoadmapView; cu
                   <KindGlyph kind="step" state="done" size={20} />
                   <div>
                     <p className="rm-it-l" data-wc={cls === "YOURS" ? "own" : undefined}>
-                      {it.label}
+                      <MarkedLabel label={it.label} marks={namedMarks} />
                     </p>
                     <div className="rm-it-m">done {dayWithWeekday(done, today)}</div>
                   </div>
@@ -705,7 +707,7 @@ function NowSection({ view, current, onStartOpen, seen }:{ view: RoadmapView; cu
                   <KindGlyph kind="step" state="idle" size={20} />
                   <div>
                     <p className="rm-it-l" data-wc={cls === "YOURS" ? "own" : undefined}>
-                      {it.label}
+                      <MarkedLabel label={it.label} marks={namedMarks} />
                     </p>
                     {started && it.templateId && (
                       <div className="rm-it-m">

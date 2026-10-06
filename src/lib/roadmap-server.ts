@@ -2918,6 +2918,11 @@ export const DRAFT_IT_AGAIN = "Draft it again first: this draft was made before 
 export const START_AGAIN_AT_DEPTH = "Start again at a depth first: this plan was made before plans aimed at a depth.";
 /** A legacy DRAFT (no depth) is drafted only after its intake is saved with one: "[Draft it again]" opens the intake form. */
 export const PICK_A_DEPTH_FIRST = "Pick a depth in the intake first: this draft was made before plans aimed at a depth.";
+/**
+ * A level plan's path (draftRoadmap, redraft, buildStarter, startManual) on a row saved as TOPICS: refused before it reads
+ * or writes anything, so a level ladder never lands on a topic plan (revision 5; the topic paths are breakDown and writeTopics).
+ */
+export const LEVELS_PATH_ON_TOPICS = "This goal is planned by topics. Break it down, or write the topics yourself.";
 
 /**
  * The server's validation of an intake (the browser's values are never
@@ -4986,6 +4991,7 @@ async function claimDraftUnpointed(
   const first = await e.store.bundle(userId, roadmapId);
   if (!first) return fail(NO_ROADMAP);
   if (first.roadmap.status !== "DRAFT") return fail("Only a draft roadmap is drafted; re-plan an accepted one.");
+  if (kindOfRow(first.roadmap) === "TOPICS") return fail(LEVELS_PATH_ON_TOPICS);
   if (first.roadmap.fieldId != null && depthOf(first.roadmap) == null) return fail(PICK_A_DEPTH_FIRST);
   const ctx = await planContext(e, userId, first.roadmap, now);
   // The pack's windows are the stage ladder's (F-R4-10): the plan Gemini arranges is the one code dated.
@@ -5026,6 +5032,7 @@ async function claimDraftUnpointed(
     const b = await e.store.bundle(userId, roadmapId);
     if (!b) return fail(NO_ROADMAP);
     if (b.roadmap.status !== "DRAFT") return fail("Only a draft roadmap is drafted; re-plan an accepted one.");
+    if (kindOfRow(b.roadmap) === "TOPICS") return fail(LEVELS_PATH_ON_TOPICS);
     const plan = claimPlanOf(roadmapId, b.runs, await e.store.runsOfDay(userId, today), now);
     if (plan.kind === "RUNNING") return fail(DRAFT_RUNNING);
     if (plan.kind === "CAPPED") {
@@ -5430,6 +5437,7 @@ async function buildInHouse(userId: string, roadmapId: string, kind: "INHOUSE" |
     const b = await e.store.bundle(userId, roadmapId);
     if (!b) return fail(NO_ROADMAP);
     if (b.roadmap.status !== "DRAFT") return fail("Only a draft roadmap is built this way; re-plan an accepted one.");
+    if (kindOfRow(b.roadmap) === "TOPICS") return fail(LEVELS_PATH_ON_TOPICS);
     if (b.roadmap.fieldId != null && depthOf(b.roadmap) == null) return fail(PICK_A_DEPTH_FIRST);
     const ctx = await planContext(e, userId, b.roadmap, now);
     let built: { plan: MilestoneDraft[]; feasibility: Feasibility; report: ValidationReport | null };
@@ -10309,7 +10317,15 @@ async function loadRoadmapViewUncached(userId: string, now: Date, deps: RoadmapD
     if (otherGoals) draft.otherGoals = otherGoals;
   }
   // Revision 5, lane 8 (§22.14 Loaders): a TOPICS plan's or draft's map, rating, cautions and NamedPart payloads (LEVELS: the view itself).
-  const view = withTopicViews(e, b, ctx, roadmapViewOfData(e, deps, v, ctx, { today, run, acceptedRun, draft, throughput, wq, pastWeeks, aftercare, weight }), today);
+  // Its requests left are the user's across goals today (§22.15: the caps are per user), so a map reads today's runs of every goal.
+  const dayRuns =
+    kindOfRow(b.roadmap) === "TOPICS" || isTopicsDraft(b)
+      ? await e.store.runsOfDay(userId, today).catch((err: unknown) => {
+          console.error("roadmap: today's runs weren't read (the map counts this goal's alone):", err instanceof Error ? err.message.slice(0, 200) : "failed");
+          return null;
+        })
+      : null;
+  const view = withTopicViews(e, b, ctx, roadmapViewOfData(e, deps, v, ctx, { today, run, acceptedRun, draft, throughput, wq, pastWeeks, aftercare, weight }), today, dayRuns);
   // The goal switcher (§23.7; lane 4 renders it): absent with one goal while GOALS_MAX is 1, so that page is today's.
   const goals = await goalSwitcherOf(e, userId, b, now);
   // Revision 5, lane 10 (fix round; ruling 47): a TOPICS draft's Gemini chain, which the page's poll drives step by step.
@@ -14800,10 +14816,13 @@ function ratingViewOfRecord(record: RatingRecord, depth: TopicDepth, trackArea: 
   };
 }
 
-/** Today's Gemini requests left (lane 10's requestsToday over the user's runs; none counted when it can't answer). */
-function topicRequestsLeftOf(b: RoadmapBundle, today: DayKey): { requests: number; grounded: number } {
+/**
+ * Today's Gemini requests left (lane 10's requestsToday over the runs given: the user's runs of the day across goals, as
+ * the caps count them, §22.15; none counted when it can't answer).
+ */
+function topicRequestsLeftOf(runs: readonly RunRec[], today: DayKey): { requests: number; grounded: number } {
   try {
-    const used = model.requestsToday(b.runs, today);
+    const used = model.requestsToday(runs, today);
     return { requests: Math.max(0, ROADMAP_REQUESTS_PER_DAY - used.requests), grounded: Math.max(0, GROUNDED_REQUESTS_PER_DAY - used.grounded) };
   } catch {
     return { requests: ROADMAP_REQUESTS_PER_DAY, grounded: GROUNDED_REQUESTS_PER_DAY };
@@ -14829,7 +14848,8 @@ function topicMapViewOf(
   version: number,
   tree: readonly TreeField[],
   today: DayKey,
-  opts: { draft: boolean; rating: RatingRecord | null; depth: TopicDepth; others: readonly RoadmapRec[] }
+  /** dayRuns: the user's runs of `today` across goals (store.runsOfDay), for requestsLeft; null reads this goal's alone. */
+  opts: { draft: boolean; rating: RatingRecord | null; depth: TopicDepth; others: readonly RoadmapRec[]; dayRuns?: readonly RunRec[] | null }
 ): TopicMapView {
   const field = tree.find((f) => f.id === b.roadmap.fieldId) ?? null;
   const map = settledTopicMapOf(mapOfVersion(b, version, opts.rating?.layers ?? null));
@@ -14968,7 +14988,7 @@ function topicMapViewOf(
     hidden: hiddenAll,
     cautions: [...ratingView.cautions],
     acceptRefusal,
-    requestsLeft: topicRequestsLeftOf(b, today),
+    requestsLeft: topicRequestsLeftOf(opts.dayRuns ?? b.runs, today),
     layerOneSeeds,
     lastLayerSeeds,
     // [Accept all]'s list from the rule acceptCore's keptAllOf compares (a draft only).
@@ -14982,9 +15002,10 @@ function topicMapViewOf(
  * (a locked layer: "after 1"), titleParts and `known`, and the current milestone's measures' topicLineageId, "climbing
  * to 8" and labelParts; on a TOPICS draft, DraftView.topicMap with accept's refusal (the draft is acceptable only
  * when the map is). Then the tripwire over the whole payload (assertTopicNames: REDACT, THROW under ROADMAP_CHECK). A
- * LEVELS plan with no TOPICS draft returns `view` itself.
+ * LEVELS plan with no TOPICS draft returns `view` itself. `dayRuns`: the user's runs of today across goals, which the
+ * maps' requestsLeft count (the caps are per user); null counts this goal's runs alone.
  */
-function withTopicViews(e: Env, b: RoadmapBundle, ctx: PlanContext, view: RoadmapView, today: DayKey): RoadmapView {
+function withTopicViews(e: Env, b: RoadmapBundle, ctx: PlanContext, view: RoadmapView, today: DayKey, dayRuns: readonly RunRec[] | null = null): RoadmapView {
   const liveTopics = kindOfRow(b.roadmap) === "TOPICS" && b.roadmap.version >= 1;
   // A TOPICS draft shows its map with or without milestones (an empty or names-less map is never a dead end).
   const draftTopics = !!view.draft && isTopicsDraft(b);
@@ -14995,7 +15016,7 @@ function withTopicViews(e: Env, b: RoadmapBundle, ctx: PlanContext, view: Roadma
   if (liveTopics) {
     const depth = topicDepthOfRow(b.roadmap) ?? AIM_DEPTHS[DEPTH_DEFAULT];
     const rating = storedRatingOf(b.roadmap.rating);
-    const topicMap = topicMapViewOf(e, b, b.roadmap.version, tree, today, { draft: false, rating, depth, others });
+    const topicMap = topicMapViewOf(e, b, b.roadmap.version, tree, today, { draft: false, rating, depth, others, dayRuns });
     const marks = tree.flatMap((f) => f.domains.map((d) => ({ name: d.name, geminiNamed: geminiNamedOf(d) })));
     const liveMap = mapOfVersion(b, b.roadmap.version);
     const rowById = new Map(b.milestones.map((m) => [m.id, m]));
@@ -15037,7 +15058,7 @@ function withTopicViews(e: Env, b: RoadmapBundle, ctx: PlanContext, view: Roadma
   if (draftTopics && out.draft) {
     const facts = draftKindFactsOf(b);
     const depth = facts.depth ?? AIM_DEPTHS[DEPTH_DEFAULT];
-    const topicMap0 = topicMapViewOf(e, b, b.roadmap.version + 1, tree, today, { draft: true, rating: facts.rating, depth, others });
+    const topicMap0 = topicMapViewOf(e, b, b.roadmap.version + 1, tree, today, { draft: true, rating: facts.rating, depth, others, dayRuns });
     // [Accept all] asks for the keep-over switch when the draft is over your hours or pace (the footer's own rule).
     const topicMap = { ...topicMap0, needsOver: !!out.draft.feasibility.over || out.draft.dateCheck?.verdict === "OVER" };
     out = {
@@ -15097,6 +15118,34 @@ export const GROUNDED_CAPPED = model.GROUNDED_CAP_LINE;
 export const NOTHING_DEEPER = "Gemini named nothing narrower.";
 /** [Break it down] on a goal that is neither a draft nor active (paused, done or archived). */
 const BREAK_DOWN_OPEN_ONLY = "Only an open goal's topics are broken down: resume it first.";
+/**
+ * A claim refused at its own chain's cap (§22.15: a breakdown ≤ BREAKDOWN_REQUESTS_MAX, a Go deeper ≤
+ * DEEPER_REQUESTS_MAX): the CAPPED rows' reason. It answers REQUESTS_CAPPED, and the stop offers no [Try again].
+ */
+const CHAIN_CAP_REASON = "chain cap";
+
+/** What one chain may send in all: a Go deeper's (a DEEPER head) or a breakdown's (a RATE head), by TOPIC_CANDIDATE_COUNT. */
+function chainRequestsMaxOf(head: t5.RunPhase | null): number {
+  const candidates = t5.TOPIC_CANDIDATE_COUNT === 3;
+  if (head === "DEEPER") return candidates ? t5.DEEPER_REQUESTS_MAX_WITH_CANDIDATES : t5.DEEPER_REQUESTS_MAX;
+  return candidates ? t5.BREAKDOWN_REQUESTS_MAX_WITH_CANDIDATES : t5.BREAKDOWN_REQUESTS_MAX;
+}
+
+/**
+ * A chain's requests so far (RoadmapRun.requests of its head and of every step after it, as claimed or sent; CAPPED and
+ * REUSED rows carry none) and its head's phase. A new head (`chain` null) has spent none. null: the draft's newest chain
+ * is another one (a later [Break it down], [Rate again] or [Go deeper] won), so this claim raced.
+ */
+function chainSpentOf(b: RoadmapBundle, version: number, chain: string | null): { head: t5.RunPhase | null; requests: number } | null {
+  if (chain == null) return { head: null, requests: 0 };
+  const { head, steps } = chainRunsOf(b, version);
+  if (!head || head.id !== chain) return null;
+  const sent = (r: RunRec): number => {
+    const n = (r as TopicRun).requests;
+    return typeof n === "number" && Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+  };
+  return { head: chainPhaseOf(head), requests: [head, ...steps].reduce((n, r) => n + sent(r), 0) };
+}
 
 /** advanceTopicChainCore's answer (§22.14): the step running or just claimed, or `done` when nothing is left to claim. */
 export interface TopicChainStep {
@@ -15575,6 +15624,13 @@ async function claimChainSteps(c: ChainCtx, specs: readonly StepSpec[], opts: { 
     const used = model.requestsToday(day as TopicRun[], today);
     if (need > 0 && used.requests + need > t5.ROADMAP_REQUESTS_PER_DAY) return capped(REQUESTS_CAPPED, "request cap");
     if (needGrounded > 0 && used.grounded + needGrounded > t5.GROUNDED_REQUESTS_PER_DAY) return capped(GROUNDED_CAPPED, "grounded request cap");
+    // The chain's own cap (§22.15): a breakdown sends at most BREAKDOWN_REQUESTS_MAX and a Go deeper DEEPER_REQUESTS_MAX in
+    // all, a failed wave run again or a capped step claimed again included (NO_RECENT_RUNNING keeps a twin claim out).
+    if (need > 0) {
+      const spent = chainSpentOf(b, c.ref.version, opts.chain);
+      if (!spent) return fail(RACED);
+      if (spent.requests + need > chainRequestsMaxOf(spent.head ?? specs[0]?.phase ?? null)) return capped(REQUESTS_CAPPED, CHAIN_CAP_REASON);
+    }
     const ops: StoreOp[] = [
       { op: "guard", guard: { g: "ROADMAP_IS", id: roadmapId, statuses: [b.roadmap.status as RoadmapStatus], version: b.roadmap.version } },
       { op: "guard", guard: { g: "NO_RECENT_RUNNING", roadmapId, since: new Date(now.getTime() - t5.TOPIC_RUN_STALE_MS) } },
@@ -15988,9 +16044,9 @@ function chainWaveRowsOf(steps: readonly TopicRun[]): TopicRun[] {
   return out;
 }
 
-/** A CAPPED step's cap, by the reason claimChainSteps wrote (the draft cap is the draft banner's, so none here). */
+/** A CAPPED step's cap, by the reason claimChainSteps wrote (the draft cap is the draft banner's, so none here; the chain's own cap reads as the request cap). */
 const chainCapStopOf = (r: RunRec): t5.TopicChainStop | null =>
-  r.status !== "CAPPED" ? null : r.error === "grounded request cap" ? "GROUNDED_CAPPED" : r.error === "request cap" ? "REQUESTS_CAPPED" : null;
+  r.status !== "CAPPED" ? null : r.error === "grounded request cap" ? "GROUNDED_CAPPED" : r.error === "request cap" || r.error === CHAIN_CAP_REASON ? "REQUESTS_CAPPED" : null;
 
 /**
  * Why a done chain stopped short (pure over its rows read in full): a capped step, MAP's pre-check (with its ChainFit),
@@ -16079,10 +16135,12 @@ async function topicChainViewFor(e: Env, deps: RoadmapDeps, userId: string, b: R
     const done = off || (!young && !stale && (next == null || (next.ok && next.value.done)));
     const fact = done && !off ? chainStopOf(runs.head, runs.steps, chainMapOf(b, ref), ref.rating != null) : { stop: null, unchecked: 0, fit: null };
     const headCapped = chainPhaseOf(runs.head) === "RATE" && settledOf(runs.head) === "CAPPED";
+    // A chain stopped at its own cap (CHAIN_CAP_REASON): [Try again] would only be refused again ([Rate again] starts a new one).
+    const spent = fact.stop === "REQUESTS_CAPPED" && rows.find((r) => r.status === "CAPPED")?.error === CHAIN_CAP_REASON;
     const retry: t5.TopicChainView["retry"] =
       fact.stop === "TIMED_OUT" || (headCapped && fact.stop != null)
         ? "BREAK_DOWN"
-        : fact.stop != null && fact.stop !== "NOTHING_DEEPER" && chainNextOf(runs.head, runs.steps, true).kind !== "DONE"
+        : fact.stop != null && fact.stop !== "NOTHING_DEEPER" && !spent && chainNextOf(runs.head, runs.steps, true).kind !== "DONE"
           ? "ADVANCE"
           : null;
     const line =

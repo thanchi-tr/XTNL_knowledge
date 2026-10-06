@@ -86,12 +86,9 @@ import { payBar } from "@/lib/life-economy";
 import {
   AIM_RANKS,
   WEEK_QUEST_EVIDENCE_OF,
-  geminiNamedOf,
-  namedPartsOf,
   provenanceOf,
   type ActivityConfirmView,
   type Decision,
-  type LibraryDomain,
   type MilestoneDraft,
   type Origin,
   type StartChoices,
@@ -142,8 +139,7 @@ import { activityAsksOf, canMapOf, capacityFlagsOf, editorRowOf, heldPracticesOf
 import { ACTIVITY_DOM_ID, ActivityConfirmCard } from "./ActivityConfirm";
 import { useRoadmapAction, useRoadmapRuntime } from "./roadmap-runtime";
 import { useItemEditor, type ActTarget } from "./ItemEditor";
-import { ItemRow, StruckLabel, useDisplayLabel } from "./ItemRow";
-import { NamedText, hasNamed } from "@/components/glyph/NamedMark";
+import { ItemRow, MarkedLabel, libraryMarksOf, useDisplayLabel } from "./ItemRow";
 import { PaysLine } from "./PaysLine";
 import { timeSentence } from "./ChecksPanel";
 import { TitleClassChip } from "./ProvenanceChip";
@@ -317,21 +313,6 @@ function TodayKindMark({ row, milestone, track, words }: { row: TodayBoundRow; m
       <span className="sr-only">{words}</span>
     </span>
   );
-}
-
-/** The live fix (contracts §22.11, ruling 67): the library's Domains that carry the Gemini mark (geminiNamedOf), by name. */
-export function libraryMarksOf(library: readonly LibraryDomain[] | null | undefined): { name: string; geminiNamed: boolean }[] {
-  return (library ?? []).filter((d) => geminiNamedOf(d)).map((d) => ({ name: d.name, geminiNamed: true }));
-}
-
-/**
- * A Today-bound label on the sheet: struck NUMBER spans as before; otherwise each kept Gemini-named Domain's name it
- * holds (the goal's title, a practice's or step's name, the Domain row itself) with pv.named (the live fix, §22.11).
- */
-export function MarkedLabel({ label, struck, marks }: { label: string; struck?: readonly (readonly [number, number])[] | null; marks: readonly { name: string; geminiNamed: boolean }[] }) {
-  if ((struck && struck.length > 0) || marks.length === 0) return <StruckLabel label={label} struck={struck} />;
-  const parts = namedPartsOf(label, marks);
-  return hasNamed(parts) ? <NamedText parts={parts} /> : <StruckLabel label={label} struck={struck} />;
 }
 
 function TodayRowView({ row, milestone, track }: { row: TodayBoundRow; milestone: MilestoneDraft; track: TrackSigil }) {
@@ -879,7 +860,10 @@ export function StartSheetBody({ preview: p, milestone, today, activityConfirm, 
             </div>
           </>
         ) : (
-          <p className="t-meta">{p.blockers[0] ?? p.refusal ?? "Start isn't offered yet."}</p>
+          // The refusal names a row in its words ("Set the bar for the checkpoint “Self-test: …”"): a Gemini-named Domain there keeps its mark.
+          <p className="t-meta">
+            <MarkedLabel label={p.blockers[0] ?? p.refusal ?? "Start isn't offered yet."} marks={libraryMarksOf(editor?.scope.library)} />
+          </p>
         )}
         {error && <ActionError>{error}</ActionError>}
       </div>

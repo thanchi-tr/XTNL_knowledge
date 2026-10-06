@@ -1493,7 +1493,7 @@ const NAMES_STAGE_FLAG = "--stage=names";
  * The approved ceiling for the names stage: 0 in this build, so no names request can be sent. The lead sets it to 210
  * (the approval's count) just before the run, and back to 0 in the commit that saves the replies.
  */
-const MAX_PROBE_CALLS_V5_NAMES: number = 0;
+const MAX_PROBE_CALLS_V5_NAMES: number = 0; // spent 2026-10-07 on the full names test (the user's approval of about 210)
 /** The approval's bound: a ceiling above it is refused, whatever the constant says. */
 const NAMES_APPROVED_MAX = 210;
 /** The grounded cap (the approval: about 110 grounded): GROUND_CALLS_MAX (7) for each of the 16 packs. */

@@ -1272,6 +1272,30 @@ export const BRAND_NAMES: readonly string[] = [
   "rocket mortgage", "quicken loans", "lendingtree", "hargreaves lansdown", "aj bell", "nutmeg", "moneybox", "freetrade",
   "trading 212", "etoro", "plus500", "commsec", "selfwealth", "raiz", "spaceship", "pocketsmith", "coursera", "udemy",
   "khan academy", "duolingo", "skillshare", "masterclass",
+  // (added, the live fix) product, software, camera and platform brands a topic name may hold. A brand that is also a
+  // common word in a study topic's name is listed only in a run that names the product ("microsoft word", not "word
+  // order"; "microsoft windows", not "window functions"; "unity engine", not "roots of unity"; "unreal engine", not
+  // "unreal conditionals"; "canon eos", not "canon law"; "apple watch", not "apple trees"; "amazon fba", not "amazon
+  // rainforest"; "notion app", not "notion of limits"). The join narrowed seven more the same way ("adobe acrobat", not
+  // "adobe brick"; "adobe after effects", not "the after-effects of war"; "tableau software", not "the analytic tableau";
+  // "microsoft azure", not "azure pigments"; "asana app", not "standing asanas"; "peloton bike", not "peloton tactics";
+  // "android studio", not "androids in fiction") and left Canva out: its stem is canvas's ("canvas painting").
+  "microsoft", "microsoft word", "ms word", "excel", "powerpoint", "microsoft office", "ms office", "office 365", "microsoft 365",
+  "onenote", "sharepoint", "power bi", "microsoft windows", "windows server", "windows os", "google", "google sheets", "google docs",
+  "google slides", "google analytics", "google ads", "google cloud", "gcp", "adobe acrobat", "adobe creative cloud", "adobe xd",
+  "photoshop", "lightroom", "adobe illustrator", "indesign", "premiere pro", "adobe after effects", "final cut pro",
+  "davinci resolve", "figma", "sketchup", "autocad", "solidworks", "procreate", "tableau software", "tableau desktop",
+  "tableau public", "tableau dashboards", "apple inc", "apple watch", "apple pay", "iphone", "ipad", "macbook", "macos", "mac os",
+  "android studio", "android os", "android app", "android phone", "android development", "aws", "amazon web services",
+  "amazon fba", "amazon kdp", "microsoft azure", "azure cloud", "azure devops", "azure functions", "salesforce", "hubspot",
+  "mailchimp", "shopify", "wordpress", "wix", "squarespace", "webflow", "notion app", "notion workspace", "notion templates",
+  "notion databases", "jira", "trello", "asana app", "github", "gitlab", "cisco", "quickbooks", "xero", "freshbooks", "turbotax",
+  "chatgpt", "openai",
+  "midjourney", "tensorflow", "pytorch", "keras", "scikit-learn", "sklearn", "hugging face", "huggingface", "unity engine",
+  "unity3d", "unity 3d", "unity editor", "unreal engine", "roblox", "minecraft", "canon eos", "canon camera", "nikon", "sony",
+  "fujifilm", "panasonic", "lumix", "leica", "gopro", "dji", "hasselblad", "pentax", "garmin", "fitbit", "strava", "peloton bike", "peloton app",
+  "myfitnesspal", "youtube", "tiktok", "instagram", "facebook", "linkedin", "pinterest", "etsy", "ebay", "spotify", "edx",
+  "codecademy", "datacamp",
 ];
 
 /** INJECTION (ruling 8, case b): a first word (exact, case-folded) from this list, with an INJECTION_DEICTIC_WORDS word anywhere in the name. */
@@ -1317,6 +1341,20 @@ export const LEGAL_WORDS: readonly string[] = [
   "visas", "immigration", "citizenship", "divorce", "custody", "patent", "patents", "trademark", "trademarks", "copyright",
   "licence", "license", "licensing", "compliance", "regulation", "regulations", "regulatory", "statute", "gdpr", "liability",
 ];
+
+/**
+ * (added, the live fix) The «Not medical advice» caution beside HEALTH_WORDS, over the aim, the Area name and the
+ * constraints: first aid and emergency care. wordCautionsOf reads it; checkLabel's HEALTH flag still reads
+ * HEALTH_WORDS alone. High recall by design, less MEDICAL_CAUTION_EXCEPT's runs.
+ */
+export const MEDICAL_CAUTION_WORDS: readonly string[] = [
+  "first aid", "cpr", "resuscitation", "resuscitate", "rescue breaths", "chest compressions", "defibrillator", "cardiac arrest",
+  "heart attack", "recovery position", "heimlich", "emergency", "ambulance", "paramedic", "wound", "burn", "choking",
+  "tourniquet", "sprain", "concussion", "allergic reaction", "anaphylaxis", "epipen",
+];
+
+/** (added, the live fix) Runs that name no medical matter ("an emergency fund", "a startup's burn rate"): MEDICAL_CAUTION_WORDS skips a word inside one. */
+export const MEDICAL_CAUTION_EXCEPT: readonly string[] = ["emergency fund", "emergency savings", "emergency cash", "emergency account", "burn rate"];
 
 /** A routine clause of the aim (routineClausesOf): [Track '<clause>' as its own goal?] when Gemini is off. */
 export const ROUTINE_WORDS: readonly string[] = [

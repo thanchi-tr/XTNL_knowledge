@@ -7620,6 +7620,60 @@ async function main() {
       json(c.errors) === json([S.REQUESTS_CAPPED]) && vc.state === "DRAFT" && vc.chain?.done === true && vc.chain.stop === "REQUESTS_CAPPED" && vc.chain.line === S.REQUESTS_CAPPED && vc.chain.retry === "ADVANCE" && wrote === "ok" && vw.chain == null,
       json({ errors: c.errors, vc, wrote, vw })
     );
+
+    // ── Fixer B: the chain's own cap, the requests left across goals, and the level paths on a TOPICS row ──
+    const RT5 = await import("../src/lib/roadmap-types");
+    type Row5 = { roadmapId: string; status: string; error: string | null; phase?: string | null; requests?: number | null };
+    // Every web check fails (a 429 counts), and [Try again] runs the wave again until the breakdown's own cap is spent.
+    const x = await setup({ groundFail: () => true, day: addDays(TODAY, 700), layers: 4 });
+    await x.poll();
+    const rows5 = () => x.w.t.roadmapRun as unknown as Row5[];
+    const chainSent = () => rows5().filter((r) => r.roadmapId === x.id && r.phase != null).reduce((n, r) => n + (r.requests ?? 0), 0);
+    const tries: string[] = [];
+    for (let i = 0; i < RT5.BREAKDOWN_REQUESTS_MAX; i++) {
+      const st = await S.advanceTopicChainCore(USER, x.id, true, x.later(), x.deps);
+      tries.push(errOf(st));
+      if (!st.ok) break;
+      await x.settle();
+    }
+    const capRows = rows5().filter((r) => r.roadmapId === x.id && r.status === "CAPPED");
+    const vx = await x.view();
+    check(
+      "chain cap: a failed wave tried again until the breakdown's BREAKDOWN_REQUESTS_MAX is spent: the next [Try again] is refused with the cap's line and sends nothing (CAPPED, 0 requests); the stop is REQUESTS_CAPPED with no [Try again]; the chain's requests never pass the cap",
+      tries.length >= 2 &&
+        tries.slice(0, -1).every((t) => t === "ok") &&
+        tries[tries.length - 1] === S.REQUESTS_CAPPED &&
+        capRows.length > 0 &&
+        capRows.every((r) => (r.requests ?? 0) === 0) &&
+        chainSent() <= RT5.BREAKDOWN_REQUESTS_MAX &&
+        vx.chain?.done === true &&
+        vx.chain.stop === "REQUESTS_CAPPED" &&
+        vx.chain.retry == null,
+      json({ tries, sent: chainSent(), capRows: capRows.length, vx })
+    );
+    // The map's requests left are the user's across goals today: another goal's 7 requests count.
+    const own = rows5().filter((r) => r.roadmapId === x.id).reduce((n, r) => n + (r.requests ?? 0), 0);
+    const xr = x.w.t.roadmapRun as unknown as Record<string, unknown>[];
+    xr.push({ ...xr[xr.length - 1], id: "other-goal-run", roadmapId: "other", requests: 7, phase: "RATE", status: "OK" });
+    const left = (await S.loadRoadmapView(USER, x.later(), x.deps, x.id)).draft?.topicMap?.requestsLeft ?? null;
+    check(
+      "requests left: TopicMapView.requestsLeft (Go deeper's cost and disabled state) counts the user's requests of every goal today, not this roadmap's alone",
+      left != null && left.requests === Math.max(0, RT5.ROADMAP_REQUESTS_PER_DAY - own - 7),
+      json({ left, own })
+    );
+    // A level plan's path on a row saved as TOPICS refuses with its own line before it writes anything.
+    const before5 = rows5().length;
+    const levels = [
+      errOf(await S.buildStarterCore(USER, x.id, x.later(), x.deps)),
+      errOf(await S.startManualCore(USER, x.id, x.later(), x.deps)),
+      errOf(await S.claimDraftCore(USER, x.id, { force: false }, x.later(), { ...x.deps, geminiLive: true })),
+      errOf(await S.claimDraftCore(USER, x.id, { force: true }, x.later(), { ...x.deps, geminiLive: true })),
+    ];
+    check(
+      "LEVELS on a TOPICS row: buildStarter, startManual, draftRoadmap and redraft refuse with LEVELS_PATH_ON_TOPICS and write no run",
+      levels.every((l) => l === S.LEVELS_PATH_ON_TOPICS) && rows5().length === before5,
+      json(levels)
+    );
   });
 
   if (failed > 0) {

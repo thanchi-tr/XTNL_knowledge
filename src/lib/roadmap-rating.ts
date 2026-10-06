@@ -318,7 +318,14 @@ function holdsRun(stems: readonly string[], phrase: readonly string[]): boolean 
 }
 
 /** The roadmap-lexicon lists the cautions read (RuleOpts.lexicon may replace any of them). */
-type CautionList = "MONEY_CAUTION_WORDS" | "BUDGET_WORDS" | "SPEND_WORDS" | "HEALTH_WORDS" | "LEGAL_WORDS";
+type CautionList = "MONEY_CAUTION_WORDS" | "BUDGET_WORDS" | "SPEND_WORDS" | "HEALTH_WORDS" | "MEDICAL_CAUTION_WORDS" | "MEDICAL_CAUTION_EXCEPT" | "LEGAL_WORDS";
+
+/** `stems` with every run of an `except` phrase blanked, so no caution phrase can match a word inside one ("emergency fund"). */
+function maskedRuns(stems: readonly string[], except: readonly string[][]): string[] {
+  const out = [...stems];
+  for (const ph of except) for (let i = 0; i + ph.length <= out.length; i++) if (ph.every((p, k) => stems[i + k] === p)) for (let k = 0; k < ph.length; k++) out[i + k] = "";
+  return out;
+}
 
 /** The caution word lists over the aim, the Area name and the constraints. */
 export function wordCautionsOf(texts: CautionTexts, opts?: RuleOpts): Caution[] {
@@ -331,13 +338,18 @@ export function wordCautionsOf(texts: CautionTexts, opts?: RuleOpts): Caution[] 
       return Array.isArray(given) ? (given as readonly string[]) : LX[name];
     };
     const sources = [texts?.aim, texts?.areaName, texts?.constraints].filter((t): t is string => typeof t === "string" && t.trim() !== "").map((t) => words(t.slice(0, 4000)).map((w) => w.stem));
-    const hits = (lists: CautionList[]): boolean => {
+    const hits = (lists: CautionList[], except?: CautionList): boolean => {
       const phrases = lists.flatMap((n) => phrasesOf(pick(n)));
-      return sources.some((stems) => phrases.some((ph) => holdsRun(stems, ph)));
+      const skip = except ? phrasesOf(pick(except)) : [];
+      return sources.some((stems) => {
+        const s = skip.length > 0 ? maskedRuns(stems, skip) : stems;
+        return phrases.some((ph) => holdsRun(s, ph));
+      });
     };
     const found = new Set<Caution>();
     if (hits(["MONEY_CAUTION_WORDS", "BUDGET_WORDS", "SPEND_WORDS"])) found.add("FINANCIAL");
-    if (hits(["HEALTH_WORDS"])) found.add("MEDICAL");
+    // The live fix: first aid and emergency care (MEDICAL_CAUTION_WORDS, less MEDICAL_CAUTION_EXCEPT's runs) beside HEALTH_WORDS.
+    if (hits(["HEALTH_WORDS"]) || hits(["MEDICAL_CAUTION_WORDS"], "MEDICAL_CAUTION_EXCEPT")) found.add("MEDICAL");
     if (hits(["LEGAL_WORDS"])) found.add("LEGAL");
     if (found.size > 0) R.fire("rate.caution");
     return CAUTIONS.filter((c) => found.has(c));
