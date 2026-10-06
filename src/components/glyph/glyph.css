@@ -207,6 +207,28 @@
   .mg-cg-r[data-k="have"] .mg-cg-b > i { background: var(--ink-0); }
   .mg-cg-f { font: 600 12px/16px var(--font-ui); color: var(--ink-0); white-space: nowrap; font-variant-numeric: tabular-nums; }
   .mg-cg-v { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+  /* ===== Revision 5, lane 9 (ui-motion.md §15.1, §15.6, D34, D35) =====
+     RouteRail's TOPICS nodes: layer.k inside the ring (ink-2), a locked layer's glyph in ink-mute (non-text,
+     ≥ 3:1) and its m.builds badge; a held layer's ring in ink-2. Never dashed, never struck. "after k"
+     stays ink-2 text (D35). An opened layer's m.builds rests hidden: layer-open fades it from 1 to 0. */
+  .mg-rr-node .mg-rr-l2 path { stroke: var(--ink-2); }
+  .mg-rr-node .mg-rr-l2 path[fill] { fill: var(--ink-2); stroke: none; }
+  .mg-rr-node .mg-rr-lm path { stroke: var(--ink-mute); }
+  .mg-rr-node .mg-rr-lm path[fill] { fill: var(--ink-mute); stroke: none; }
+  .mg-rr-node :where(g[data-g^="layer."]) path[fill] { fill: var(--ink-0); stroke: none; }
+  .mg-rr-node .mg-rr-held { stroke: var(--ink-2); stroke-width: 1; }
+  .mg-rr-node g[data-g^="layer."] { transform-box: fill-box; transform-origin: center; }
+  .mg-rr-badge.mg-rr-lo { opacity: 0; }
+  .mg-rr-after { color: var(--ink-2); }
+  /* a depth node's line: «set by reviews», then "after k" (ui-motion §15.10 row 15) */
+  .mg-rr-dl { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+  .mg-rr-row[data-state="PLANNED"]:has([data-rr-badge="builds"]) .mg-rr-title { color: var(--ink-1); }
+  /* the layer glyph in a chip, a header or a strip: ink by state; locked: ink-mute (the caller's mg-lk) */
+  .mg.mg-lk { color: var(--ink-mute); }
+  /* pv.named: a 12 px mark after a Gemini-named Domain's name, inside the name's own span (D33) */
+  .mg-nm { display: inline-flex; vertical-align: -1px; margin-left: 3px; color: var(--ink-2); }
+  .mg-nm .mg { width: 12px; height: 12px; }
 }
 
 @layer effects {

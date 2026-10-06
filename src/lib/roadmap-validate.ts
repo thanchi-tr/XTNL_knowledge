@@ -196,6 +196,8 @@ import {
   type ValidationIntegrity,
 } from "./roadmap-types";
 import type { DomainName, YoursText } from "./roadmap-types";
+// ── Revision 5, lane 6 ── (checkLabel's topic-name flags, contracts §22.10)
+import { TOPIC_FLAGS, type TopicFlag, type TopicScope } from "./roadmap-types";
 import {
   CATALOG,
   CATALOG_TRACKS,
@@ -270,6 +272,13 @@ export interface LabelContext {
   /** The milestone's place and the plan's count (AIM_STEP_EARLY). */
   milestoneOrd?: number;
   milestoneCount?: number;
+  /**
+   * Revision 5, lane 6 (contracts §22.10): a topic-map name's context. With
+   * it, checkLabel also reads the six TopicFlags into LabelCheck.topicFlags
+   * (`scope`: the name's MAP scope; `countryNamed`: your texts name a country).
+   * Without it every check reads exactly as before.
+   */
+  topicMap?: { scope: TopicScope | null; countryNamed: boolean } | null;
 }
 
 /** One label's checks: blocking flags, struck NUMBER spans, a drop ("contained a link"), the cleaned text (whitespace, controls, a leading enumerator, the cap). */
@@ -280,6 +289,8 @@ export interface LabelCheck {
   drop: DropReason | null;
   /** Each flag's reason in words, naming what set it ("names \"Kestrel\", which you didn't write"). */
   reasons?: Partial<Record<BlockingFlag, string>>;
+  /** Revision 5, lane 6: the topic-name flags, in TOPIC_FLAGS order; set only with LabelContext.topicMap, empty when none fires. */
+  topicFlags?: TopicFlag[];
 }
 
 /** A proposed Domain name against the user's Domains (F6 step 5). Every non-exact or cross-Field match is MATCHED_EXISTING. */
@@ -1235,9 +1246,13 @@ function runLabelCheck(rawIn: unknown, ctx: LabelContext, d: Derived): LabelChec
  */
 export function checkLabel(label: string, ctx: LabelContext, opts?: RuleOpts): LabelCheck {
   try {
-    return runLabelCheck(label, ctx, derive(ctx, opts));
+    const out = runLabelCheck(label, ctx, derive(ctx, opts));
+    // Revision 5, lane 6: with a topic-map context, the six TopicFlags too (contracts §22.10); a dropped label has none.
+    if (!ctx.topicMap) return out;
+    return { ...out, topicFlags: out.drop ? [] : topicFlagsOf(out.cleaned, ctx, opts) };
   } catch {
-    return { cleaned: typeof label === "string" ? label.trim() : "", flags: [], struck: [], drop: "BAD_SHAPE", reasons: {} };
+    const failed: LabelCheck = { cleaned: typeof label === "string" ? label.trim() : "", flags: [], struck: [], drop: "BAD_SHAPE", reasons: {} };
+    return ctx?.topicMap ? { ...failed, topicFlags: [] } : failed;
   }
 }
 
@@ -2421,6 +2436,15 @@ const WALK_MAX = 250_000;
 /** Looking for text under an extra or mistyped value reads at most this many nodes (past it: text, conservatively). */
 const SCAN_MAX = 20_000;
 
+// ── Revision 5, lane 10 (contracts §22.4, ruling 34) ──
+/**
+ * The top-level properties under which a STRING node with no enum is free text (the walk's one exception to
+ * FREE_TEXT): rev 4's `gaps` and revision 5's `names` (MAP's per-layer names and DEEPER's names, each item's `name`).
+ * A free STRING anywhere else is FREE_TEXT, as before; an enum STRING under them is still checked against its enum.
+ * No LEVELS schema holds a `names` property, so a LEVELS reply walks exactly as before.
+ */
+export const FREE_TEXT_ROOTS: readonly string[] = ["gaps", "names"];
+
 interface Walk {
   schema: unknown;
   out: IntegrityViolation[];
@@ -2504,7 +2528,7 @@ function walkNode(value: unknown, node: unknown, path: Seg[], w: Walk, gapsText:
         if (holdsText(child)) addViolation(w, "FREE_TEXT", [...path, key]);
         continue;
       }
-      walkNode(child, props[key], [...path, key], w, gapsText || (path.length === 0 && key === "gaps"));
+      walkNode(child, props[key], [...path, key], w, gapsText || (path.length === 0 && FREE_TEXT_ROOTS.includes(key)));
     }
     const required = Array.isArray(node.required) ? node.required : [];
     for (const key of required) if (typeof key === "string" && !hasOwn(value, key)) addViolation(w, "MISSING_REQUIRED", [...path, key]);
@@ -3983,10 +4007,23 @@ export function groundingSourcesOf(
 }
 
 /** A text's content stems in order: format characters removed, function words and DOMAIN_STOP_WORDS left out. */
-function contentStemsOf(text: string, L: Lexicon): string[] {
+function contentStemsWith(text: string, L: Lexicon): string[] {
   return words(stripInvisibles(text.normalize("NFKC")))
     .filter((w) => !FUNCTION.has(w.raw.toLowerCase()) && !L.stopStems.has(w.stem))
     .map((w) => w.stem);
+}
+
+/**
+ * Revision 5, lane 6 (contracts §22.10): the content stems groundingOf reads,
+ * exported unchanged (the topic map's form stems, agreement's near-duplicate
+ * Dice, GROUND's contiguous runs). `opts.lexicon` may replace DOMAIN_STOP_WORDS.
+ */
+export function contentStemsOf(text: string, opts?: RuleOpts): string[] {
+  try {
+    return typeof text === "string" ? contentStemsWith(text, lexiconOf(opts)) : [];
+  } catch {
+    return [];
+  }
 }
 
 /** negatedStemsOf at the default rules and lexicon, by text (a pure function of it). */
@@ -4036,7 +4073,7 @@ export function groundingOf(name: string, sources: readonly GroundSource[], opts
     const list = Array.isArray(sources) ? sources.filter((s) => s && typeof s.text === "string") : [];
     if (!R.on("grounding")) return list.length > 0 ? { grounded: true, source: list[0] } : { grounded: false };
     const L = lexiconOf(opts);
-    const want = typeof name === "string" ? contentStemsOf(name, L) : [];
+    const want = typeof name === "string" ? contentStemsWith(name, L) : [];
     if (want.length > 0) {
       for (const s of list) {
         if (s.kind === "CONSTRAINTS") {
@@ -5215,3 +5252,130 @@ export const RULE_EXAMPLES: Readonly<Record<string, string>> = {
   "cue.surgeon says": "surgeon says running is out",
   "cue.surgeon said": "surgeon said running is out",
 };
+
+// ── Revision 5, lane 6 ──
+// checkLabel's topic-name flags (contracts §22.10; rulings 3, 8, 9 and 64) and
+// the link test GROUND's text reader shares (roadmap-grounding hasUrlOf). Each
+// flag fires through the rule `topic.flag.<FLAG>` (roadmap-topics
+// TOPIC_RULE_NAMES), which RuleOpts can switch off for the ablation; the word
+// lists are roadmap-lexicon's, replaceable through RuleOpts.lexicon.
+
+interface TopicLexicon {
+  jurisdiction: string[][];
+  brand: string[][];
+  schemes: string[][];
+  /** LEVEL_WORDS and GENERIC_HEADS, as stems. */
+  levelStems: Set<string>;
+  advice: Set<string>;
+  injection: Set<string>;
+  injectionAnywhere: Set<string>;
+  deictic: Set<string>;
+}
+
+const foldedSet = (list: readonly string[]): Set<string> => new Set(list.map((w) => w.normalize("NFKC").toLowerCase().replace(/’/gu, "'").trim()).filter(Boolean));
+
+function compileTopicLexicon(lx: LexiconModule): TopicLexicon {
+  return {
+    jurisdiction: stemPhrases(lx.JURISDICTION),
+    brand: stemPhrases(lx.BRAND_NAMES),
+    schemes: stemPhrases(lx.SCHEME_NAMES),
+    levelStems: stemSet([...lx.LEVEL_WORDS, ...lx.GENERIC_HEADS]),
+    advice: foldedSet(lx.ADVICE_VERBS),
+    injection: foldedSet(lx.INJECTION_WORDS),
+    injectionAnywhere: foldedSet(lx.INJECTION_ANYWHERE_WORDS),
+    deictic: foldedSet(lx.INJECTION_DEICTIC_WORDS),
+  };
+}
+
+let defaultTopicLexicon: TopicLexicon | null = null;
+const injectedTopicLexicons = new WeakMap<object, TopicLexicon>();
+function topicLexiconOf(opts?: RuleOpts): TopicLexicon {
+  const given = opts?.lexicon;
+  if (!given || typeof given !== "object") return (defaultTopicLexicon ??= compileTopicLexicon(LX));
+  const hit = injectedTopicLexicons.get(given);
+  if (hit) return hit;
+  const compiled = compileTopicLexicon({ ...LX, ...given } as LexiconModule);
+  injectedTopicLexicons.set(given, compiled);
+  return compiled;
+}
+
+/**
+ * A name's whitespace words, case-folded, each without its leading and
+ * trailing punctuation: a hyphenated compound stays one word ("stop-loss"),
+ * as ADVICE's and INJECTION's exact first word reads it (rulings 8 and 9).
+ */
+function exactWordsOf(text: string): string[] {
+  return stripInvisibles(text.normalize("NFKC"))
+    .toLowerCase()
+    .replace(/’/gu, "'")
+    .split(" ")
+    .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
+    .filter(Boolean);
+}
+
+/**
+ * The six TopicFlags of a cleaned topic-map name (contracts §22.10), in
+ * TOPIC_FLAGS order:
+ *   JURISDICTION  a JURISDICTION run (stems, whole words, any case);
+ *   BRAND         a BRAND_NAMES run;
+ *   ADVICE        the first word exactly in ADVICE_VERBS ("Pay off mortgage
+ *                 early"; never by stem, so "Investing" passes), or a
+ *                 SCHEME_NAMES run anywhere ("Velocity banking");
+ *   LEVEL_ONLY    no stem left once function words, DOMAIN_STOP_WORDS,
+ *                 LEVEL_WORDS and GENERIC_HEADS are out ("Core concepts"), or
+ *                 every stem left is the Area's: equal to a stem of its name,
+ *                 or starting with one of 5 letters or more (ruling 64:
+ *                 "Financial basics" in Business & Finance fires, "Financial
+ *                 statements" does not);
+ *   INJECTION     an INJECTION_ANYWHERE_WORDS word anywhere, or a first word
+ *                 in INJECTION_WORDS with an INJECTION_DEICTIC_WORDS word
+ *                 after it (ruling 8: "Rate this …" fires, "Rate of return",
+ *                 "Interest rate", "Output gap" and "Nervous system" pass);
+ *   REGION        the MAP scope is REGION_SPECIFIC and your texts name no country.
+ */
+function topicFlagsOf(cleaned: string, ctx: LabelContext, opts?: RuleOpts): TopicFlag[] {
+  const tm = ctx.topicMap;
+  if (!tm || typeof cleaned !== "string" || !cleaned) return [];
+  const R = rulesOf(opts);
+  const L = lexiconOf(opts);
+  const T = topicLexiconOf(opts);
+  const stems = words(stripInvisibles(cleaned.normalize("NFKC"))).map((w) => w.stem);
+  const exact = exactWordsOf(cleaned);
+  const found = new Set<TopicFlag>();
+  const set = (flag: TopicFlag) => {
+    if (found.has(flag) || !R.on(`topic.flag.${flag}`)) return;
+    found.add(flag);
+    R.fire(`topic.flag.${flag}`);
+  };
+  const runIn = (phrases: readonly string[][]): boolean => phrases.some((ph) => findPhrase(stems, ph).length > 0);
+
+  if (runIn(T.jurisdiction)) set("JURISDICTION");
+  if (runIn(T.brand)) set("BRAND");
+  if ((exact.length > 0 && T.advice.has(exact[0])) || runIn(T.schemes)) set("ADVICE");
+
+  const level = contentStemsWith(cleaned, L).filter((s) => !T.levelStems.has(s));
+  const area = new Set(contentStemsWith(typeof ctx.areaName === "string" ? ctx.areaName : "", L));
+  const areaDerived = (s: string): boolean => area.has(s) || [...area].some((a) => Array.from(a).length >= 5 && s.startsWith(a));
+  if (level.length === 0 || level.every(areaDerived)) set("LEVEL_ONLY");
+
+  const anywhere = exact.some((w) => T.injectionAnywhere.has(w));
+  const pointed = exact.length > 0 && T.injection.has(exact[0]) && exact.slice(1).some((w) => T.deictic.has(w));
+  if (anywhere || pointed) set("INJECTION");
+
+  if (tm.scope === "REGION_SPECIFIC" && tm.countryNamed !== true) set("REGION");
+  return TOPIC_FLAGS.filter((f) => found.has(f));
+}
+
+/**
+ * Whether a text holds a link by the label rules (every link rule on: a
+ * scheme, "www", a bare or defanged domain, an IP, a path). GROUND's reader
+ * calls it on each line of the reply (roadmap-grounding hasUrlOf); an error
+ * reads as a link, so the verdict fails closed.
+ */
+export function linkInTextOf(text: string): boolean {
+  try {
+    return typeof text === "string" && linkRuleOf(text, DEFAULT_LEXICON, DEFAULT_RULES) != null;
+  } catch {
+    return true;
+  }
+}

@@ -36,6 +36,9 @@ export function motionOfGlyph(name: GlyphName): GlyphMotion | null {
   if (name === "m.seal") return "seal-reached";
   if (name.startsWith("intensity.")) return "bars";
   if (name === "flame") return "kindle";
+  // Revision 5, lane 9: pv.web and pv.libpick take pv-confirm's swap form (no draw); a layer plays layer-open
+  if (name === "pv.web" || name === "pv.libpick") return "pv-confirm";
+  if (name.startsWith("layer.")) return "layer-open";
   return null;
 }
 
@@ -52,6 +55,15 @@ export const RAIL_NODES: readonly RailNode[] = [
   { n: 10, state: "HELD", held: "rest", label: "Milestone 10, held, rest", title: "On hold" },
   { n: 11, state: "DROPPED", label: "Milestone 11, dropped", title: "Paper trading" },
   { n: 12, state: "SLIPPED", label: "Milestone 12, slipped", title: "Mastered" },
+];
+
+/** Revision 5, lane 9 (ui-motion.md §15.6): a TOPICS chain, layer nodes and a depth node; neutral names (the A1 … shape). */
+export const TOPIC_RAIL_NODES: readonly RailNode[] = [
+  { n: 1, state: "REACHED", layer: 1, chainRole: "LAYER", label: "Milestone 1 · Alpha one, Alpha two +2 · layer 1 of 4 · reached", title: "Alpha one, Alpha two +2 · layer 1 of 4", aside: "100%" },
+  { n: 2, state: "CURRENT", layer: 2, chainRole: "LAYER", pct: 23, label: "Milestone 2 · Beta one +1 · layer 2 of 4 · current, 23%", title: "Beta one +1 · layer 2 of 4", aside: "23%" },
+  { n: 3, state: "PLANNED", layer: 3, chainRole: "LAYER", opensAfter: 2, label: "Milestone 3 · layer 3 of 4", title: "Gamma one +1 · layer 3 of 4" },
+  { n: 4, state: "PLANNED", layer: 4, chainRole: "LAYER", heldLayer: true, known: true, label: "Milestone 4 · layer 4 of 4", title: "Delta one, Delta two · layer 4 of 4" },
+  { n: 5, state: "PLANNED", chainRole: "DEPTH", opensAfter: 4, label: "Milestone 5 · Fluent: Delta one +1 to level 10+", title: "Fluent: Delta one +1 to level 10+" },
 ];
 
 export const STRIP_NODES: readonly RailNode[] = [

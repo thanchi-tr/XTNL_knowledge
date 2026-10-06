@@ -76,6 +76,29 @@ import "./_no-model";
  * a kept pick of a kind whose answer went stale is held (5, S1), and a Field
  * plan's "No timed practice" is a pre-ticked suggestion, never a block (7).
  *
+ * Revision 5, lane 3 (contracts §23; GOALS_MAX still 1): the fake store holds
+ * SLOT_FREE, KEY_FREE and DOMAINS_FREE as the SQL reads them and migration A's
+ * two partial unique indexes; the re-pins keep today's one-goal answers (a
+ * second goal refused with ANOTHER_ACTIVE, the discard's Undo in today's
+ * words, accept never answering ANOTHER_ACTIVE); the goldens cover the seats
+ * and every insert or reopen setting the slot, createKey idempotence, the
+ * targets, pause, resume and archive from PAUSED, the shares (5/1/5 h), the
+ * verdict re-run (otherGoals), DOMAINS_FREE, the hours' room and the label,
+ * the loaders per goal, Start's duplicate check across goals, and family X's
+ * server paths (§22.14's four named goldens, and an AVOID on one goal pausing
+ * another's started practice).
+ *
+ * Revision 5, lane 8 (contracts §22.13, §22.14; rulings 48–51, 59): §22.14's
+ * seven TOPICS goldens (a re-plan draft beside a live LEVELS plan, its accept
+ * over a live milestone, its undo, two cross-goal parents, the TOPICS cap,
+ * the rank spread, "I know this" in place), and the hallucination guards: a
+ * kept Gemini name becomes a Domain with its mark (a name the Field holds is
+ * refused, a confirm that didn't list it is RACED), the tripwire's two halves
+ * (assertTopicNames on a view, assertNoModelText on a write), and every
+ * TOPICS and model core refusing with the build's switches (no model call).
+ * The cores run with topicSwitches { plans: true }; no model phase runs, so a
+ * Gemini name is a topic row put in the fake store as MAP and GROUND leave it.
+ *
  * Cases that exercise another lane's real code (R1's readings, lane L's
  * prepareRoadmapGoalClose) go green at integration in those lanes' checks.
  */
@@ -99,11 +122,20 @@ import type {
   StoreGuard,
   StoreOp,
   TemplateLite,
+  TopicRowRec,
+  EdgeRowRec,
   TreeField,
   Where,
 } from "../src/lib/roadmap-server";
 import {
+  CROSS_GOAL_PARENT_PREFIX,
+  GOALS_FULL,
+  GOALS_MAX,
+  MAX_MILESTONES,
   ORIGINS,
+  TOPIC_NAME_TAKEN,
+  geminiNamedOf,
+  topicSwitchesOf,
   ROADMAP_PROMPT_VERSION,
   ROADMAP_WRITES_OFF,
   coveragePolicyOf,
@@ -210,6 +242,8 @@ const WRITES_OFF = { NODE_ENV: "development" };
 const CODE_ORIGIN = ORIGINS[1];
 
 if (todayKey(NOW) !== TODAY) throw new Error(`fixture clock: ${todayKey(NOW)}`);
+/** roadmap-server.ts as written (the revision-5 re-pins read it before main's own SERVER_SRC). */
+const SERVER_SRC_TOP = readFileSync(join(process.cwd(), "src/lib/roadmap-server.ts"), "utf8");
 
 // ═══ The in-memory store ════════════════════════════════════════════════════
 
@@ -234,6 +268,9 @@ interface Tables {
   roadmapItem: ItemRec[];
   roadmapMeasure: MeasureRec[];
   roadmapAcceptance: AcceptanceRec[];
+  /** Revision 5, lane 8 (migration B): a TOPICS map's rows (cascade from Roadmap). */
+  roadmapTopic: TopicRowRec[];
+  roadmapTopicEdge: EdgeRowRec[];
   readings: StoredReading[];
   questWeeks: QuestWeekRow[];
 }
@@ -254,7 +291,7 @@ function matches(row: Record<string, unknown>, where: Where): boolean {
 }
 
 class FakeWorld {
-  t: Tables = { roadmap: [], roadmapRun: [], roadmapMilestone: [], roadmapItem: [], roadmapMeasure: [], roadmapAcceptance: [], readings: [], questWeeks: [] };
+  t: Tables = { roadmap: [], roadmapRun: [], roadmapMilestone: [], roadmapItem: [], roadmapMeasure: [], roadmapAcceptance: [], roadmapTopic: [], roadmapTopicEdge: [], readings: [], questWeeks: [] };
   templates: (TemplateLite & { captureKey: string | null; link: CaptureLink | null; parsed: ParsedCapture | null; horizon: string | null })[] = [];
   goalPaid: Record<string, DayKey> = {};
   tree: TreeField[] = [];
@@ -296,6 +333,15 @@ class FakeWorld {
         return !t.roadmap.some((r) => r.userId === userId && (r.status === "DRAFT" || r.status === "ACTIVE") && r.id !== g.exceptId);
       case "NO_OTHER_ACTIVE":
         return !t.roadmap.some((r) => r.userId === userId && r.status === "ACTIVE" && r.id !== g.exceptId);
+      // Revision 5 (contracts §23.1): the seat guards as the SQL reads them (a NULL slot counted: ruling 24).
+      case "SLOT_FREE": {
+        const open = t.roadmap.filter((r) => r.userId === userId && (r.status === "DRAFT" || r.status === "ACTIVE") && r.id !== g.exceptId);
+        return !open.some((r) => r.slot === g.slot) && open.length < GOALS_MAX;
+      }
+      case "KEY_FREE":
+        return !t.roadmap.some((r) => r.userId === userId && r.createKey === g.createKey);
+      case "DOMAINS_FREE":
+        return !t.roadmap.some((r) => r.userId === userId && ["DRAFT", "ACTIVE", "PAUSED"].includes(r.status) && r.id !== g.exceptRoadmapId && r.domainIds.some((d) => g.domainIds.includes(d)));
       case "ROADMAP_IS":
         return t.roadmap.some(
           (r) =>
@@ -311,8 +357,19 @@ class FakeWorld {
         return !t.roadmapMilestone.some((m) => m.roadmapId === g.roadmapId && (m.status === "STARTING" || m.status === "STARTED"));
       case "NO_RECENT_RUNNING":
         return !t.roadmapRun.some((r) => r.roadmapId === g.roadmapId && r.status === "RUNNING" && r.startedAt.getTime() > g.since.getTime());
-      case "GEMINI_RUNS_BELOW":
-        return t.roadmapRun.filter((r) => r.userId === userId && r.day === g.day && r.kind === "GEMINI" && r.status !== "REUSED").length < g.max;
+      case "GEMINI_RUNS_BELOW": {
+        // Revision 5, lane 10 (ruling 17): chain heads only (no phase, or RATE), as the SQL counts them.
+        const phaseOf = (r: RunRec) => (r as RunRec & { phase?: string | null }).phase ?? null;
+        return t.roadmapRun.filter((r) => r.userId === userId && r.day === g.day && r.kind === "GEMINI" && r.status !== "REUSED" && (phaseOf(r) == null || phaseOf(r) === "RATE")).length < g.max;
+      }
+      case "REQUESTS_BELOW": {
+        // Revision 5, lane 10 (§22.15): today's summed requests (every run), and the GROUND rows' alone for the grounded cap.
+        const today = t.roadmapRun.filter((r) => r.userId === userId && r.day === g.day) as (RunRec & { phase?: string | null; requests?: number | null })[];
+        const sum = (rows: typeof today) => rows.reduce((n, r) => n + (r.requests ?? 0), 0);
+        return sum(today) + g.need <= g.max && sum(today.filter((r) => r.phase === "GROUND")) + g.needGrounded <= g.groundedMax;
+      }
+      case "PREREQS_MET":
+        return this.prereqsMet(userId, g.roadmapId, g.milestoneId);
       case "RUN_IS":
         return t.roadmapRun.some((r) => r.id === g.id && r.userId === userId && r.status === g.status);
       case "MILESTONE_IS":
@@ -338,6 +395,60 @@ class FakeWorld {
     }
   }
 
+  /**
+   * Migration A's partial unique indexes as the database holds them (contracts §23.1): (userId, slot) WHERE status IN
+   * ('DRAFT','ACTIVE'), and (userId, createKey) WHERE createKey IS NOT NULL. A write that breaks one is a unique
+   * violation ('duplicate'), so a path that forgot its guard still can't seat two open goals in one slot.
+   */
+  roadmapKeysHold(): boolean {
+    const seats = new Set<string>();
+    const keys = new Set<string>();
+    for (const r of this.t.roadmap) {
+      if ((r.status === "DRAFT" || r.status === "ACTIVE") && r.slot != null) {
+        const k = `${r.userId}:${r.slot}`;
+        if (seats.has(k)) return false;
+        seats.add(k);
+      }
+      if (r.createKey != null) {
+        const k = `${r.userId}:${r.createKey}`;
+        if (keys.has(k)) return false;
+        keys.add(k);
+      }
+    }
+    return true;
+  }
+
+  /** Live cards at OPEN_LEVEL (6) or above in a Domain of the fixture tree, as the PREREQS_MET SQL counts Idea rows. */
+  private cardsAtOpen(domainId: string | null): number {
+    if (!domainId) return 0;
+    for (const f of this.tree) for (const d of f.domains) if (d.id === domainId) return d.cards.filter((c) => c.level >= 6).length;
+    return 0;
+  }
+
+  /** The PREREQS_MET guard as its SQL reads it (revision 5, lane 8; F-R5-10). */
+  private prereqsMet(userId: string, roadmapId: string, milestoneId: string): boolean {
+    const t = this.t;
+    const m = t.roadmapMilestone.find((x) => x.id === milestoneId && x.roadmapId === roadmapId);
+    if (!m || !t.roadmap.some((r) => r.id === roadmapId && r.userId === userId)) return false;
+    const layer = m.layer ?? null;
+    if (t.roadmapMilestone.some((p) => p.roadmapId === m.roadmapId && p.chainRole === "LAYER" && layer != null && p.layer === layer - 1 && p.reachedDay != null && p.status !== "DISCARDED")) return true;
+    const live = (x: TopicRowRec) => x.roadmapId === m.roadmapId && x.version === m.version && x.chosen && x.decision !== "REMOVED" && x.decision !== "MERGED";
+    const counting = (x: EdgeRowRec) => x.roadmapId === m.roadmapId && x.version === m.version && x.decision !== "REMOVED" && (x.origin !== "GEMINI" || x.drawn);
+    const floor = 8; // TOPIC_FLOOR_CARDS
+    for (const c of t.roadmapTopic.filter((x) => live(x) && layer != null && x.layer === layer)) {
+      const own = t.roadmapTopicEdge.filter((x) => counting(x) && x.childLineageId === c.lineageId);
+      for (const p of t.roadmapTopic.filter((x) => live(x) && x.layer === c.layer - 1)) {
+        if (own.length > 0 && !own.some((x) => x.parentLineageId === p.lineageId)) continue;
+        if (p.skippedDay != null || p.heldDay != null) continue;
+        if (p.domainId == null || this.cardsAtOpen(p.domainId) < floor) return false;
+      }
+      for (const x of t.roadmapTopicEdge.filter((e) => e.roadmapId === m.roadmapId && e.version === m.version && e.childLineageId === c.lineageId && e.origin === "CROSS_GOAL" && e.decision !== "REMOVED")) {
+        if (x.parentDomainId == null || this.cardsAtOpen(x.parentDomainId) < floor) return false;
+      }
+    }
+    return true;
+  }
+
   private table(name: Exclude<keyof Tables, "readings" | "questWeeks">): Record<string, unknown>[] {
     return this.t[name] as unknown as Record<string, unknown>[];
   }
@@ -360,6 +471,7 @@ class FakeWorld {
             if (op.table === "roadmapMilestone" && r.goalId != null && rows.some((x) => x.goalId === r.goalId)) return restore("duplicate");
             rows.push(clone(r as Record<string, unknown>));
           }
+          if (op.table === "roadmap" && !this.roadmapKeysHold()) return restore("duplicate");
           break;
         }
         case "update": {
@@ -369,6 +481,7 @@ class FakeWorld {
             const ids = this.t.roadmapMilestone.filter((m) => m.goalId === op.data.goalId);
             if (ids.length > 1) return restore("duplicate");
           }
+          if (op.table === "roadmap" && !this.roadmapKeysHold()) return restore("duplicate");
           break;
         }
         case "delete": {
@@ -416,6 +529,11 @@ class FakeWorld {
           if (!kept.includes(op.templateId)) m.feasibility = { ...f, aftercareKept: [...kept, op.templateId] };
           break;
         }
+        case "domainOrigin":
+          // Revision 5, lane 8 (decision 63): the Gemini mark, only while the Domain still bears that name and no origin.
+          for (const f of this.tree)
+            for (const d of f.domains) if (d.id === op.domainId && d.name === op.name && d.nameOrigin == null) Object.assign(d, { nameOrigin: "GEMINI", originName: op.name });
+          break;
       }
     }
     this.applies++;
@@ -446,6 +564,8 @@ class FakeWorld {
           runs: this.t.roadmapRun.filter((r) => r.roadmapId === roadmapId).sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime()).map(light),
           milestones,
           acceptances: clone(this.t.roadmapAcceptance.filter((a) => a.roadmapId === roadmapId).sort((a, b) => a.acceptedAt.getTime() - b.acceptedAt.getTime())),
+          topics: clone(this.t.roadmapTopic.filter((x) => x.roadmapId === roadmapId).sort((a, b) => a.version - b.version || a.layer - b.layer || a.createdAt.getTime() - b.createdAt.getTime())),
+          edges: clone(this.t.roadmapTopicEdge.filter((x) => x.roadmapId === roadmapId).sort((a, b) => a.version - b.version || a.createdAt.getTime() - b.createdAt.getTime())),
         };
       },
       ownerOf: async (userId, ref) => {
@@ -1270,6 +1390,127 @@ function mark(w: FakeWorld, milestoneId: string, marker: string) {
 
 const START_ALL: Parameters<typeof S.startMilestoneCore>[2] = { target: "STORED", overAccepted: false, practicesOff: [], rules: {}, decisions: {}, edits: {} };
 
+/**
+ * Revision 5: a goal GOALS_MAX 1 can't make yet (lane 4 lifts it to 3): saved through saveIntakeCore by its createKey
+ * while the user's other goals step aside, then put in `slot` with `status`, so a check can hold the states three
+ * seats allow. Nothing else of the row is touched.
+ */
+async function seatedGoal(w: FakeWorld, intake: Intake, slot: number, status = "DRAFT"): Promise<string> {
+  const others = w.t.roadmap.filter((r) => r.userId === USER && ["DRAFT", "ACTIVE", "PAUSED"].includes(r.status));
+  const statuses = others.map((r) => r.status);
+  for (const r of others) r.status = "ARCHIVED";
+  const res = await S.saveIntakeCore(USER, intake, NOW, depsFor(w), { createKey: `seated-goal-${slot}-${w.t.roadmap.length}` });
+  others.forEach((r, i) => (r.status = statuses[i]));
+  if (!res.ok) throw new Error(`fixture goal: ${res.error}`);
+  const row = w.t.roadmap.find((r) => r.id === res.value.roadmapId) as RoadmapRec;
+  row.slot = slot;
+  row.status = status;
+  return row.id;
+}
+
+/** One goal's activity card answered as its own page shows it (?goal=<id>): the key of its words, the boxes ticked, or "Nothing to avoid". */
+async function answerGoalCard(roadmapId: string, deps: RoadmapDeps, avoid: readonly string[], none = false, now = NOW) {
+  const view = await S.loadRoadmapView(USER, now, deps, roadmapId);
+  const key = view.activityConfirm?.key ?? view.draft?.activityConfirm?.key;
+  if (!key) throw new Error("fixture: no activity card to answer on that goal");
+  return S.setActivityVerdictsCore(USER, roadmapId, { key, avoid: [...avoid] as CatalogKey[], nothingToAvoid: none }, now, deps);
+}
+
+/** A goal's card row of one kind, as its own page shows it. */
+async function goalCardRow(roadmapId: string, deps: RoadmapDeps, kind: string) {
+  const view = await S.loadRoadmapView(USER, NOW, deps, roadmapId);
+  return (view.activityConfirm ?? view.draft?.activityConfirm)?.rows.find((r) => r.kind === kind) ?? null;
+}
+
+// ── Revision 5, lane 8: the TOPICS fixtures (contracts §22.13, §22.14) ──
+
+/** A TOPICS case's deps: TOPIC_PLANS_LIVE on for this check only (RoadmapDeps.topicSwitches; production passes none). */
+const topicDepsFor = (w: FakeWorld, extra: Partial<RoadmapDeps> = {}): RoadmapDeps => depsFor(w, { topicSwitches: { plans: true }, ...extra });
+
+/**
+ * A Field goal on Inference alone (4 cards at 6: under TOPIC_FLOOR_CARDS, so its topic pays), dated 300 days out. With
+ * no pace the chain's windows spread evenly to the date (CHOSEN), each at least 35 days for up to 8 milestones, and
+ * layer 1's under FIRST_RANK_MAX_DAYS with 5 (no PART gate in the rank spread).
+ */
+const TOPICS_INTAKE: Intake = { ...INTAKE, aim: "Understand probability theory", domainIds: ["d-inf"], targetDay: addDays(TODAY, 300) };
+
+/** A fixture step that must succeed (a refusal throws, failing the block it runs in by name). */
+function must<R extends { ok: boolean }>(r: R, what: string): R {
+  if (!r.ok) throw new Error(`fixture ${what}: ${(r as unknown as { error?: string }).error ?? "refused"}`);
+  return r;
+}
+
+/**
+ * [Write the topics] on a fresh DRAFT (writeTopicsCore: layer 1 holds the intake's Domain), then, with `typed`, the
+ * bands set to typed.length + 1 (SET: yours) and one topic you type in each band from 2 (it builds on the whole layer
+ * before), so K = typed.length + 1.
+ */
+async function writtenTopics(w: FakeWorld, intake: Intake, typed: readonly string[] = []): Promise<string> {
+  const id = await newDraft(w, intake);
+  const deps = topicDepsFor(w);
+  must(await S.writeTopicsCore(USER, id, NOW, deps), "write the topics");
+  if (typed.length) {
+    must(await S.setLayersCore(USER, id, { kind: "SET", layers: typed.length + 1 }, NOW, deps), "set the layers");
+    for (const [i, name] of typed.entries()) must(await S.addTopicCore(USER, id, i + 2, name, NOW, deps), `add ${name}`);
+  }
+  return id;
+}
+
+/**
+ * A Gemini topic row in the draft's map as MAP and GROUND leave it (3 of 3 samples, linked by 2 sources, no flag) and
+ * kept in layer 1, put in the fake store: the chain that writes it is lane 10's, and no model phase runs here.
+ */
+function geminiTopicRow(w: FakeWorld, roadmapId: string, key: string, name: string, extra: Partial<TopicRowRec> = {}): TopicRowRec {
+  const row: TopicRowRec = {
+    id: w.makeId(),
+    roadmapId,
+    version: (w.t.roadmap.find((r) => r.id === roadmapId)?.version ?? 0) + 1,
+    lineageId: w.makeId(),
+    key,
+    layer: 1,
+    name,
+    rawName: null,
+    nameOrigin: "GEMINI",
+    scope: "GENERAL",
+    placedBy: "GEMINI",
+    grounding: "LINKED",
+    sources: [
+      { title: "Lecture notes", uri: "https://example.edu/notes" },
+      { title: "A textbook chapter", uri: "https://example.org/chapter" },
+    ],
+    formVotes: 3,
+    samples: 3,
+    layerVotes: [1, 1, 1],
+    decision: "KEPT",
+    mergedInto: null,
+    chosen: true,
+    role: "BASE",
+    domainId: null,
+    bound: false,
+    heldDay: null,
+    skippedDay: null,
+    flags: [],
+    notes: [],
+    createdAt: NOW,
+    ...extra,
+  };
+  w.t.roadmapTopic.push(row);
+  return row;
+}
+
+/** acceptCore's choices on a TOPICS draft, as its confirm names them ("Creates n Domains", the Gemini names; the live milestone's practices). */
+const topicAccept = (create: number, geminiNamed: string[] = [], aftercare: "KEEP" | "ARCHIVE" | null = null): Parameters<typeof S.acceptCore>[2] => ({
+  overAccepted: true,
+  topicMap: { create, geminiNamed, keepAll: null, aftercare },
+});
+
+/** Roadmap.planKind as the server reads it (a row with none is LEVELS). */
+const kindOf = (r: RoadmapRec | undefined): string => (r?.planKind === "TOPICS" ? "TOPICS" : "LEVELS");
+
+/** The live plan's parts of the roadmap page (ruling 49: they read the row's columns, never Roadmap.draftPlan). */
+const LIVE_PARTS = ["state", "header", "positions", "rank", "proficiency", "toward", "current", "milestones", "weekQuests", "feasibility", "history", "triggers", "aftercare", "depth", "dateCheck"] as const;
+const livePartsOf = (v: Awaited<ReturnType<typeof S.loadRoadmapView>>): Record<string, string> => Object.fromEntries(LIVE_PARTS.map((k) => [k, json(v[k])]));
+
 async function main() {
   installNoDatabase();
   const errOf = (r: { ok: boolean; error?: string }) => (r.ok ? "ok" : (r as { error: string }).error);
@@ -1349,11 +1590,15 @@ async function main() {
     check("two concurrent intakes both answer ok", a.ok && b.ok, json([a, b]));
     eq("…and leave one DRAFT row", w.t.roadmap.filter((r) => r.status === "DRAFT").length, 1);
     check("…the same roadmap id twice", a.ok && b.ok && a.value.roadmapId === b.value.roadmapId);
+    // Revision 5 (§23.1): the one open goal is seat 1, the second tap's insert met SLOT_FREE and edited it instead.
+    eq("…in seat 1 (every insert sets the slot; the second tap's SLOT_FREE re-read and edited it)", w.t.roadmap.map((r) => r.slot), [1]);
     const again = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Edited aim" }, NOW, depsFor(w));
     check("a second intake edits the open DRAFT", again.ok && w.t.roadmap.length === 1 && w.t.roadmap[0].aim === "Edited aim");
     w.t.roadmap[0].status = "ACTIVE";
     const refused = await S.saveIntakeCore(USER, INTAKE, NOW, depsFor(w));
-    eq("an intake while another roadmap is ACTIVE is refused", refused.ok ? "ok" : refused.error, S.ANOTHER_ACTIVE);
+    // Ruling 23: with GOALS_MAX 1 the ACTIVE goal holds the one seat, and a second goal is refused in today's words.
+    eq("an intake while another roadmap is ACTIVE is refused (no free seat at GOALS_MAX 1: ANOTHER_ACTIVE, today's words; ruling 23)", [GOALS_MAX, refused.ok ? "ok" : refused.error, S.noSeatLine()], [1, S.ANOTHER_ACTIVE, S.ANOTHER_ACTIVE]);
+    check("…and writes nothing", w.t.roadmap.length === 1);
   }
   {
     const w = world();
@@ -1363,7 +1608,14 @@ async function main() {
     const fresh = await S.saveIntakeCore(USER, INTAKE, NOW, depsFor(w));
     check("…so a fresh intake inserts a new DRAFT", fresh.ok && fresh.value.roadmapId !== id && w.t.roadmap.length === 2);
     const undo = await S.undoDiscardCore(USER, id, NOW, depsFor(w));
-    check("the discard's Undo refuses while another roadmap is open", !undo.ok);
+    // Revision 5 (§23.1): the new draft holds the one seat (GOALS_MAX 1), so the discarded one has none to reopen in.
+    eq("the discard's Undo refuses while another roadmap is open (its seat is taken: today's words at GOALS_MAX 1)", undo.ok ? "ok" : undo.error, S.DISCARD_STAYS);
+    check("…and the draft stays discarded", w.t.roadmap.find((r) => r.id === id)?.status === "ARCHIVED");
+    const second = fresh.ok ? fresh.value.roadmapId : "";
+    await S.discardDraftCore(USER, second, NOW, depsFor(w));
+    const back = await S.undoDiscardCore(USER, id, NOW, depsFor(w));
+    const row = w.t.roadmap.find((r) => r.id === id);
+    check("…once the seat is free the Undo reopens it in its old seat (seatForReopenOf: every reopen sets the slot)", back.ok && row?.status === "DRAFT" && row.slot === 1, json([back, row?.status, row?.slot]));
   }
 
   // ═══ F8: drafting ═════════════════════════════════════════════════════════
@@ -1675,8 +1927,18 @@ async function main() {
     })();
     const draftRows = rowsOf(w2, other, 1).map((m) => ({ ...m, id: `${m.id}-b`, roadmapId: id2, status: "DRAFT", version: 1 }));
     w2.t.roadmapMilestone.push(...draftRows);
+    // Revision 5 (§23.1): acceptCore drops ANOTHER_ACTIVE (a draft already holds its seat). This hand-made second
+    // open row (no path makes one at GOALS_MAX 1) shares goal 1's Domains, so DOMAINS_FREE refuses it in words…
     const refused = await S.acceptCore(USER, id2, { overAccepted: false }, NOW, depsFor(w2));
-    eq("accept refuses while another roadmap is ACTIVE", refused.ok ? "ok" : refused.error, S.ANOTHER_ACTIVE);
+    eq("accept refuses a draft whose Domains another goal holds (DOMAINS_FREE at accept, §23.5), never with ANOTHER_ACTIVE", refused.ok ? "ok" : refused.error, S.DOMAIN_TAKEN(1));
+    // …and with Domains of its own, its seat guard (SLOT_FREE beside GOALS_MAX open goals) still never makes a second ACTIVE.
+    (w2.t.roadmap.find((r) => r.id === id2) as RoadmapRec).domainIds = ["d-risk"];
+    const seated = await S.acceptCore(USER, id2, { overAccepted: false }, NOW, depsFor(w2));
+    check(
+      "…a second open row no path makes (two at GOALS_MAX 1) is never accepted into a second ACTIVE, and accept never answers ANOTHER_ACTIVE",
+      !seated.ok && !seated.error.includes(S.ANOTHER_ACTIVE) && w2.t.roadmap.filter((r) => r.status === "ACTIVE").length === 1 && /function acceptUnpointed[\s\S]*?\r?\n\}\r?\n/.exec(SERVER_SRC_TOP)?.[0].includes("ANOTHER_ACTIVE") === false,
+      json(seated)
+    );
   }
   {
     // Writes off: every roadmap action refuses before it reads.
@@ -3172,6 +3434,8 @@ async function main() {
     check("'Start again at a depth': one DRAFT and the old roadmap archived, in one transaction (a double tap included)", a.ok && b.ok && w.t.roadmap.filter((x) => x.status === "DRAFT").length === 1 && old.status === "ARCHIVED" && old.archiveReason === S.replacedReasonOf(TODAY), json([a, b, w.t.roadmap.map((x) => [x.status, x.archiveReason])]));
     const fresh = w.t.roadmap.find((x) => x.status === "DRAFT") as RoadmapRec;
     check("…the new draft is at a depth", fresh.depth === 12);
+    // Revision 5 (§23.1): the replace path inherits the archived row's seat, in the same transaction.
+    check("…and inherits the archived row's seat (the replace path sets the slot)", old.slot === 1 && fresh.slot === old.slot, json([old.slot, fresh.slot]));
     const { w: w2, id: id2 } = await legacyWorld();
     (w2.t.roadmap.find((x) => x.id === id2) as RoadmapRec).depth = 12;
     const set = await S.saveIntakeCore(USER, { ...INTAKE, replaces: id2 }, NOW, depsFor(w2));
@@ -6043,6 +6307,675 @@ async function main() {
       return [examined.length === 0, examined.join(" | ")];
     });
   }
+
+  // ═══ Revision 5: up to 3 goals (contracts §23; lane 3, GOALS_MAX still 1) ════
+  console.log("— revision 5: goals (§23) —");
+  check("goals: GOALS_MAX is still 1 (lane 4 lifts it), so every answer a one-goal user sees is today's", GOALS_MAX === 1);
+  {
+    // Seats while GOALS_MAX is 1 (§23.1, ruling 23), the targets, and createKey idempotence.
+    const w = world();
+    const first = await S.saveIntakeCore(USER, INTAKE, NOW, depsFor(w), { createKey: "goal-key-0001" });
+    check("goals: {createKey} creates a goal in the lowest free seat (1), storing its key", first.ok && w.t.roadmap.length === 1 && w.t.roadmap[0].slot === 1 && w.t.roadmap[0].createKey === "goal-key-0001", json([first, w.t.roadmap.map((r) => [r.slot, r.createKey])]));
+    const firstId = first.ok ? first.value.roadmapId : "";
+    const japanese: Intake = { ...INTAKE, aim: "Trade with a plan", fieldId: "f-trade", domainIds: ["d-risk"] };
+    const second = await S.saveIntakeCore(USER, japanese, NOW, depsFor(w), { createKey: "goal-key-0002" });
+    eq("goals: seat refusal of a 2nd open goal while GOALS_MAX is 1 (ANOTHER_ACTIVE, today's words: ruling 23), writing nothing", [second.ok ? "ok" : second.error, w.t.roadmap.length], [S.ANOTHER_ACTIVE, 1]);
+    const open = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Edited with no target" }, NOW, depsFor(w));
+    check("goals: no target keeps today's rule (the open draft is edited)", open.ok && open.value.roadmapId === firstId && w.t.roadmap.length === 1 && w.t.roadmap[0].aim === "Edited with no target", json(open));
+    const named = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Edited by its id" }, NOW, depsFor(w), { roadmapId: firstId });
+    check("goals: {roadmapId} edits that draft", named.ok && w.t.roadmap.length === 1 && w.t.roadmap[0].aim === "Edited by its id", json(named));
+    const forged = await S.saveIntakeCore(USER, INTAKE, NOW, depsFor(w), { roadmapId: "another-users-goal" });
+    eq("goals: {roadmapId} of no draft of the user's (a forged id) is NO_ROADMAP (family X)", forged.ok ? "ok" : forged.error, S.NO_ROADMAP);
+    const bad = await Promise.all(
+      [{ createKey: "short" }, { createKey: "has spaces in it" }, { roadmapId: "x", createKey: "goal-key-0003" }, { roadmapId: "bad id!" }].map((t) => S.saveIntakeCore(USER, INTAKE, NOW, depsFor(w), t as never))
+    );
+    check("goals: a malformed target (a createKey outside [A-Za-z0-9_-]{8,64}, both keys, a bad id) is refused unread", bad.every((r) => !r.ok && r.error === S.NO_TARGET) && w.t.roadmap.length === 1, json(bad));
+    const repeat = await S.saveIntakeCore(USER, { ...INTAKE, aim: "A repeat of the first save" }, NOW, depsFor(w), { createKey: "goal-key-0001" });
+    check("goals: createKey idempotence: the same key returns the same id later too (the first save stands; nothing written)", repeat.ok && repeat.value.roadmapId === firstId && w.t.roadmap.length === 1 && w.t.roadmap[0].aim === "Edited by its id", json(repeat));
+  }
+  {
+    const w = world();
+    const [a, b] = await Promise.all([1, 2].map(() => S.saveIntakeCore(USER, INTAKE, NOW, depsFor(w), { createKey: "double-tap-0001" })));
+    check("goals: createKey idempotence: two concurrent saves with one key answer one id and leave one row (the seat guard and KEY_FREE re-read)", a.ok && b.ok && a.value.roadmapId === b.value.roadmapId && w.t.roadmap.length === 1, json([a, b, w.t.roadmap.length]));
+    eq("goals: KEY_FREE reads the user's rows as the SQL does", [w.guard(USER, { g: "KEY_FREE", createKey: "double-tap-0001" }), w.guard(USER, { g: "KEY_FREE", createKey: "double-tap-0002" })], [false, true]);
+    eq("goals: SLOT_FREE counts every open row, a NULL slot too (ruling 24), against GOALS_MAX", [w.guard(USER, { g: "SLOT_FREE", slot: 2, exceptId: null }), (() => ((w.t.roadmap[0].slot = null), w.guard(USER, { g: "SLOT_FREE", slot: 1, exceptId: null })))(), w.guard(USER, { g: "SLOT_FREE", slot: 1, exceptId: w.t.roadmap[0].id })], [false, false, true]);
+    w.t.roadmap[0].slot = 1;
+    eq("goals: the (userId, slot) open index refuses a second open row in seat 1 (a unique violation: 'duplicate')", w.applyNow(USER, [{ op: "insert", table: "roadmap", rows: [{ ...w.t.roadmap[0], id: "dup", createKey: null }] }]), "duplicate");
+    const noSeat = await (async () => {
+      const row = w.t.roadmap[0];
+      row.slot = null;
+      const edit = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Old code saved me" }, NOW, depsFor(w));
+      return [edit.ok, row.slot];
+    })();
+    eq("goals: a draft old code saved with no seat takes one at its next save (every open row a lane-3 write leaves has its seat)", noSeat, [true, 1]);
+  }
+  {
+    // DOMAINS_FREE (§23.5), the hours' room (ruling 25) and the label (ruling 26), with a paused goal beside a new one.
+    const w = world();
+    const paused = await accepted(w);
+    const p = await S.pauseRoadmapCore(USER, paused, { aftercare: "KEEP", reason: null }, NOW, depsFor(w));
+    check("fixture: the accepted goal pauses", p.ok, json(p));
+    const taken = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Probability again", label: "Prob 2" }, NOW, depsFor(w));
+    eq("goals: DOMAINS_FREE: a new goal can't take a paused goal's Domain ('in a paused goal': its seat is never named, ruling 55)", taken.ok ? "ok" : taken.error, S.DOMAIN_TAKEN(null));
+    eq("goals: DOMAIN_TAKEN names the seat, and reads 'a paused goal' with none", [S.DOMAIN_TAKEN(2), S.DOMAIN_TAKEN(null)], ["That Domain is in goal 2.", "That Domain is in a paused goal."]);
+    const clash = await S.saveIntakeCore(USER, { ...INTAKE, domainIds: ["d-inf"].filter(() => false), aim: "Statistics, the rest" }, NOW, depsFor(w));
+    eq("goals: a second goal in the paused goal's Area with no label of its own clashes by name (LABEL_CLASH, ruling 26)", clash.ok ? "ok" : clash.error, S.LABEL_CLASH);
+    const fresh = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Trade with a plan", fieldId: "f-trade", domainIds: ["d-risk"] }, NOW, depsFor(w));
+    const row = w.t.roadmap.find((r) => fresh.ok && r.id === fresh.value.roadmapId);
+    check("goals: a paused goal frees its seat: a new goal takes seat 1 beside it at GOALS_MAX 1", fresh.ok && row?.slot === 1 && w.t.roadmap.find((r) => r.id === paused)?.slot === 1, json([fresh, row?.slot]));
+    const view = await S.loadIntakeView(USER, NOW, depsFor(w), row?.id ?? null);
+    check(
+      "goals: loadIntakeView carries the seats, the open drafts, GOALS_MAX, the hours other goals take, the Domains they hold (a paused goal's by null) and the switches",
+      view.goalsMax === 1 &&
+        view.seats?.length === 3 &&
+        view.seats[0].roadmapId === row?.id &&
+        view.seats[1].roadmapId === null &&
+        view.drafts?.map((d) => d.roadmapId).join() === row?.id &&
+        view.hoursTaken === 0 &&
+        view.takenDomains?.["d-prob"] === null &&
+        view.takenDomains?.["d-inf"] === null &&
+        !("d-risk" in (view.takenDomains ?? {})) &&
+        view.topicSwitches?.plans === false &&
+        view.draft?.roadmapId === row?.id,
+      json([view.seats, view.drafts?.map((d) => d.roadmapId), view.hoursTaken, view.takenDomains])
+    );
+    const hours = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Trade with a plan", fieldId: "f-trade", domainIds: ["d-risk"], hoursPerWeek: 40 }, NOW, depsFor(w));
+    check("goals: the hours' room reads DRAFT and ACTIVE goals only (a paused goal's hours leave the sum: ruling 25), so 40 h fits one open goal", hours.ok, json(hours));
+    const resume = await S.resumeRoadmapCore(USER, paused, { redate: false }, NOW, depsFor(w));
+    eq("goals: resume needs a free seat (ANOTHER_ACTIVE at GOALS_MAX 1, GOALS_FULL at 3)", resume.ok ? "ok" : resume.error, S.ANOTHER_ACTIVE);
+    eq("goals: noSeatLine is ANOTHER_ACTIVE while GOALS_MAX is 1, and GOALS_FULL reads its figure", [S.noSeatLine(), GOALS_FULL], [S.ANOTHER_ACTIVE, "3 goals open. Finish, pause or archive one."]);
+  }
+  {
+    // Pause, resume and archive from PAUSED (§23.4).
+    const w = world();
+    const id = await accepted(w);
+    const [m1] = rowsOf(w, id, 1);
+    const started = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w));
+    check("fixture: milestone 1 starts", started.ok, json(started));
+    const goal = w.templates.find((t) => t.kind === "GOAL") as TemplateLite & { archivedAt: Date | null };
+    const practices = itemsOf(w, m1.id).filter((i) => i.kind === "PRACTICE" && i.templateId).map((i) => i.templateId as string);
+    const dw = world();
+    const d = await newDraft(dw);
+    eq("goals: pause works from ACTIVE only (a DRAFT is discarded instead)", errOf(await S.pauseRoadmapCore(USER, d, { aftercare: "KEEP", reason: null }, NOW, depsFor(dw))), S.PAUSE_ONLY_ACTIVE);
+    const p = await S.pauseRoadmapCore(USER, id, { aftercare: "KEEP", reason: "  A busy month  " }, at(1_000), depsFor(w));
+    const r = w.t.roadmap.find((x) => x.id === id) as RoadmapRec;
+    check("goals: pause: PAUSED with pausedAt and the reason, the slot kept (ruling 46), and the live milestone named", p.ok && p.value.closedMilestoneId === m1.id && r.status === "PAUSED" && r.pausedAt?.getTime() === at(1_000).getTime() && r.pauseReason === "A busy month" && r.slot === 1, json([p, r.status, r.pauseReason, r.slot]));
+    const kept = (rowsOf(w, id, 1)[0].feasibility as { aftercareKept?: string[] } | null)?.aftercareKept ?? [];
+    check("goals: pause closes the live milestone as dropped (its goal archived; Start again stays open) and keeps its practices on Today when asked", goal.archivedAt != null && practices.length > 0 && practices.every((t) => kept.includes(t) && w.templates.find((x) => x.id === t)?.archivedAt == null), json([goal.archivedAt, practices, kept]));
+    eq("goals: a paused goal pauses again only from ACTIVE", errOf(await S.pauseRoadmapCore(USER, id, { aftercare: "KEEP", reason: null }, at(2_000), depsFor(w))), S.PAUSE_ONLY_ACTIVE);
+    const view = await S.loadRoadmapView(USER, at(2_000), depsFor(w));
+    check("goals: a paused goal's page reads ACTIVE with header.paused (ruling 66), no seat shown, no triggers, no week quests", view.state === "ACTIVE" && view.header?.paused?.reason === "A busy month" && view.header.paused.since === TODAY && view.header.slot === null && view.triggers.length === 0 && view.weekQuests === null, json([view.state, view.header?.paused, view.header?.slot]));
+    const card = await S.loadAimCard(USER, at(2_000), depsFor(w));
+    check("goals: its Aim card reads ACTIVE with `paused` (never 'behind'), no milestone line", card?.state === "ACTIVE" && card.paused?.since === TODAY && card.milestone == null && card.slot === null, json([card?.state, card?.paused, card?.milestone]));
+    eq("goals: Start on a paused goal is refused in its own words", (await S.startPreview(USER, rowsOf(w, id, 1)[1].id, at(2_000), depsFor(w)))?.refusal, "Resume this goal first.");
+    eq("goals: DONE still needs ACTIVE (ruling 56: resume first, or archive)", errOf(await S.markRoadmapDoneCore(USER, id, "Done anyway", at(2_000), depsFor(w))), "Only an accepted roadmap is marked done.");
+    const resumeAt = new Date(NOW.getTime() + 23 * 86_400_000);
+    const readingsBefore = w.t.readings.length;
+    const res = await S.resumeRoadmapCore(USER, id, { redate: true }, resumeAt, depsFor(w));
+    const back = w.t.roadmap.find((x) => x.id === id) as RoadmapRec;
+    check("goals: resume takes its old seat back, clears the pause, and the re-date is a new version through the re-plan path", res.ok && res.value.slot === 1 && res.value.version === 2 && back.status === "ACTIVE" && back.slot === 1 && back.pausedAt == null && back.pauseReason == null && rowsOf(w, id, 2).length > 0, json([res, back.status, back.slot]));
+    eq("goals: 'Move the date by 23 days?' moves the aim's date by the days paused", back.targetDay, addDays(INTAKE.targetDay, 23));
+    const prof = w.t.readings.slice(readingsBefore).find((x) => x.measureKey === proficiencyKey(id));
+    check("goals: the first reading after resume is a rebase with the cause RESUMED (never a gain)", !!prof && json(prof.detail).includes('"RESUMED"'), json(prof?.detail));
+    eq("goals: resume works from PAUSED only", errOf(await S.resumeRoadmapCore(USER, id, { redate: false }, resumeAt, depsFor(w))), S.RESUME_ONLY_PAUSED);
+    const again = await S.pauseRoadmapCore(USER, id, { aftercare: "ARCHIVE", reason: null }, resumeAt, depsFor(w));
+    const arch = await S.archiveRoadmapCore(USER, id, { reason: "Changed course", archiveGoal: false }, resumeAt, depsFor(w));
+    check("goals: archive from PAUSED (ruling 56): the ROADMAP_IS guard holds PAUSED", again.ok && arch.ok && w.t.roadmap.find((x) => x.id === id)?.status === "ARCHIVED", json([again, arch]));
+  }
+  {
+    // The four lane-3 goldens §22.14 names (contracts §23.4, §23.8; family X's server paths).
+    const w = world();
+    const paused = await accepted(w);
+    await S.pauseRoadmapCore(USER, paused, { aftercare: "KEEP", reason: null }, NOW, depsFor(w));
+    const trade = await seatedGoal(w, { ...INTAKE, aim: "Trade with a plan", fieldId: "f-trade", domainIds: ["d-risk"], hoursPerWeek: 3 }, 1);
+    const run = await seatedGoal(w, { ...INTAKE, aim: "Run a 10K", fieldId: null, track: "BODY", domainIds: [], hoursPerWeek: 3 }, 2);
+    const care = await seatedGoal(w, { ...INTAKE, aim: "Look after my mum", fieldId: null, track: "CARE", domainIds: [], hoursPerWeek: 3 }, 3);
+    const held = w.guard(USER, { g: "DOMAINS_FREE", domainIds: ["d-prob", "d-inf"], exceptRoadmapId: null });
+    const takeBefore = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Trade and probability", fieldId: "f-trade", domainIds: ["d-risk", "d-prob"] }, NOW, depsFor(w), { roadmapId: trade });
+    const arch = await S.archiveRoadmapCore(USER, paused, { reason: "Not now", archiveGoal: false }, NOW, depsFor(w));
+    const takeAfter = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Trade and probability", fieldId: "f-trade", domainIds: ["d-risk", "d-prob"] }, NOW, depsFor(w), { roadmapId: trade });
+    const open = w.t.roadmap.filter((x) => x.status === "DRAFT" || x.status === "ACTIVE").map((x) => [x.id, x.slot]);
+    check(
+      "goals: archive a PAUSED goal at 3 open frees its seat and its Domains",
+      !held &&
+        !takeBefore.ok &&
+        takeBefore.error === S.DOMAIN_TAKEN(null) &&
+        arch.ok &&
+        w.t.roadmap.find((x) => x.id === paused)?.status === "ARCHIVED" &&
+        w.guard(USER, { g: "DOMAINS_FREE", domainIds: ["d-prob", "d-inf"], exceptRoadmapId: trade }) &&
+        takeAfter.ok &&
+        json(open) === json([[trade, 1], [run, 2], [care, 3]]),
+      json([held, takeBefore, arch, takeAfter, open])
+    );
+  }
+  {
+    // XG: goal 1's carpal tunnel gates goal 3's drills (the cue texts are user-wide: §23.6 items 1–3).
+    const w = world();
+    const wrist = await newDraft(w, { ...INTAKE, aim: "Rehab my wrist after carpal tunnel surgery", fieldId: null, track: "BODY", domainIds: [] });
+    const guitar = await seatedGoal(w, { ...INTAKE, aim: "Learn guitar", fieldId: null, track: "CRAFT", domainIds: [], constraints: null }, 3);
+    const deps = depsFor(w);
+    const wristRow = w.t.roadmap.find((x) => x.id === wrist) as RoadmapRec;
+    wristRow.status = "ARCHIVED";
+    const alone = await S.loadRoadmapView(USER, NOW, deps, guitar);
+    wristRow.status = "DRAFT";
+    const both = await S.loadRoadmapView(USER, NOW, deps, guitar);
+    const ac = both.activityConfirm;
+    const pending = new Set((ac?.rows ?? []).filter((x) => x.state === "PENDING").map((x) => x.kind));
+    const fromGoal1 = (ac?.quotes ?? []).findIndex((q) => /carpal tunnel/i.test(q));
+    const built = await S.buildStarterCore(USER, guitar, NOW, deps);
+    const placed = rowsOf(w, guitar).flatMap((m) => itemsOf(w, m.id)).map((i) => i.catalogKey);
+    check(
+      "XG: goal 1's carpal tunnel gates goal 3's SLOW_DRILLS, RUN_THROUGHS and WITH_A_PARTNER",
+      !(alone.activityConfirm?.on ?? false) &&
+        ac?.on === true &&
+        ["SLOW_DRILLS", "RUN_THROUGHS", "WITH_A_PARTNER"].every((k) => pending.has(k as CatalogKey)) &&
+        fromGoal1 >= 0 &&
+        ac.quoteGoals?.[fromGoal1] === 1 &&
+        built.ok &&
+        !placed.some((k) => k === "SLOW_DRILLS" || k === "RUN_THROUGHS" || k === "WITH_A_PARTNER"),
+      json([alone.activityConfirm?.on, ac?.on, [...pending], ac?.quotes, ac?.quoteGoals, built, placed])
+    );
+    check("XG: …and its key is the user-wide 'k3-' one (a change to goal 1's words asks goal 3's card again)", ac?.key.startsWith("k3-") === true && alone.activityConfirm?.key?.startsWith("k3-") !== true, json([ac?.key, alone.activityConfirm?.key]));
+  }
+  {
+    // XG: goal 1's AVOID stays locked on goal 2's card (§23.6 items 4 and 5; rulings 27).
+    const w = world();
+    const body: Intake = { ...INTAKE, fieldId: null, track: "BODY", domainIds: [], hoursPerWeek: 4 };
+    const g1 = await newDraft(w, { ...body, aim: "Run a 10K" });
+    const g2 = await seatedGoal(w, { ...body, aim: "Get stronger at the gym", label: "Gym" }, 2);
+    const deps = depsFor(w);
+    const said = await answerGoalCard(g1, deps, ["HARDER_SESSION"]);
+    const locked = await goalCardRow(g2, deps, "HARDER_SESSION");
+    const none = await answerGoalCard(g2, deps, [], true);
+    const stillLocked = await goalCardRow(g2, deps, "HARDER_SESSION");
+    const tryStore = await answerGoalCard(g2, deps, ["HARDER_SESSION"]);
+    const g2Stored = intakeActivitiesOf(w, g2)?.kinds ?? {};
+    const lift = await answerGoalCard(g1, deps, [], true);
+    const asksAgain = await goalCardRow(g2, deps, "HARDER_SESSION");
+    check(
+      "XG: goal 1's AVOID of HARDER_SESSION stays locked on goal 2's card",
+      said.ok &&
+        locked?.state === "AVOID" &&
+        locked.locked === true &&
+        locked.from?.slot === 1 &&
+        none.ok &&
+        stillLocked?.state === "AVOID" &&
+        stillLocked.locked === true &&
+        !("HARDER_SESSION" in g2Stored) &&
+        lift.ok &&
+        asksAgain?.state === "PENDING" &&
+        !asksAgain.locked,
+      json([said, locked, none, stillLocked, tryStore, g2Stored, lift, asksAgain])
+    );
+  }
+  {
+    // XG: a closed goal's AVOID suggests nothing while GOALS_MAX is 1 (ruling 57).
+    const w = world();
+    const body: Intake = { ...INTAKE, fieldId: null, track: "BODY", domainIds: [], hoursPerWeek: 4 };
+    const g1 = await newDraft(w, { ...body, aim: "Run a 10K" });
+    const said = await answerGoalCard(g1, depsFor(w), ["HARDER_SESSION"]);
+    Object.assign(w.t.roadmap.find((x) => x.id === g1) as RoadmapRec, { status: "ARCHIVED", archivedAt: NOW, archiveReason: "Changed course" });
+    const g2 = await newDraft(w, { ...body, aim: "Get stronger at the gym" });
+    const row = await goalCardRow(g2, depsFor(w), "HARDER_SESSION");
+    check(
+      "XG: a closed goal's AVOID suggests nothing while GOALS_MAX is 1",
+      GOALS_MAX === 1 && said.ok && row?.state === "PENDING" && row.from == null && row.prefill == null && !row.locked,
+      json([said, row])
+    );
+  }
+  {
+    // XG: an AVOID given on goal 2 after goal 1's Start pauses goal 1's started practice of that kind (§23.6 item 7).
+    const w = world();
+    const id = await newDraft(w, kneeIntake);
+    await answerCard(id, depsFor(w), ["LONGER_SESSION"]);
+    {
+      const tasks: (() => Promise<void> | void)[] = [];
+      const reply = { milestones: [{ practices: [{ name: "a", method: "X" }, { name: "b", method: "X" }] }, { practices: [{ name: "c", method: "X" }] }] };
+      await S.claimDraftCore(USER, id, { force: true }, NOW, depsFor(w, { defer: (t) => tasks.push(t), callModel: async () => reply, clock: () => NOW }));
+      for (const t of tasks) await t();
+    }
+    await S.confirmSessionPicksCore(USER, id, "KEEP", NOW, depsFor(w));
+    const acc = await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w));
+    const m1 = rowsOf(w, id, 1)[0];
+    const st = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w));
+    const mobility = itemsOf(w, m1.id).find((i) => i.catalogKey === "MOBILITY_SESSION" && i.templateId);
+    const gym = await seatedGoal(w, { ...INTAKE, aim: "Get stronger at the gym", fieldId: null, track: "BODY", domainIds: [], hoursPerWeek: 3, label: "Gym" }, 2);
+    const said = await answerGoalCard(gym, depsFor(w), ["MOBILITY_SESSION"], false, at(1_000));
+    const measure = w.t.roadmapMeasure.find((x) => x.milestoneId === m1.id && x.kind === "PRACTICE_KEPT" && (x.itemLineageId === mobility?.lineageId || json(x.scope).includes(mobility?.lineageId ?? "-")));
+    check(
+      "XG: an AVOID given on goal 2 after goal 1's Start pauses goal 1's started practice of that kind (the safety pause, as its own AVOID would), and that practice stops counting",
+      acc.ok && st.ok && !!mobility && said.ok && w.paused.includes(mobility.templateId as string) && said.value.paused.some((x) => x.templateId === mobility.templateId) && measure?.role === "CONTEXT" && !("MOBILITY_SESSION" in (intakeActivitiesOf(w, id)?.kinds ?? {})),
+      json([acc, st, mobility?.templateId, said, w.paused, measure?.role])
+    );
+  }
+  {
+    // One person's week: the shares (§23.3, ruling 54) and the verdict re-run (otherGoals).
+    const w = world();
+    const seen: Record<string, { share?: number; fieldShare?: number }[]> = {};
+    const spy = (who: string): Partial<RoadmapLanes> => ({
+      ...lanesFor(w),
+      feasibilityOf: (plan, input) => {
+        (seen[who] ??= []).push({ ...("share" in input ? { share: input.share } : {}), ...("fieldShare" in input ? { fieldShare: input.fieldShare } : {}) });
+        return lanesFor(w).feasibilityOf!(plan, input);
+      },
+    });
+    const g1 = await newDraft(w, { ...INTAKE, aim: "Probability for the exam", domainIds: ["d-prob"], hoursPerWeek: 5 });
+    await S.buildStarterCore(USER, g1, NOW, depsFor(w, { lanes: spy("alone") }));
+    eq("goals: one goal's realism input carries no share (byte-identical: 1 is left out)", seen.alone?.[0], {});
+    const g2 = await seatedGoal(w, { ...INTAKE, aim: "Run a 10K", fieldId: null, track: "BODY", domainIds: [], hoursPerWeek: 1 }, 2);
+    const g3 = await seatedGoal(w, { ...INTAKE, aim: "Inference, properly", domainIds: ["d-inf"], hoursPerWeek: 5, label: "Inference" }, 3);
+    await S.buildStarterCore(USER, g1, NOW, depsFor(w, { lanes: spy("g1") }));
+    await S.buildStarterCore(USER, g2, NOW, depsFor(w, { lanes: spy("g2") }));
+    await S.buildStarterCore(USER, g3, NOW, depsFor(w, { lanes: spy("g3") }));
+    const near = (a: number | undefined, b: number) => a != null && Math.abs(a - b) < 1e-9;
+    check(
+      "goals: shares 5/1/5 h: goals of 5, 1 and 5 h get 5/11, 1/11 and 5/11 of the week, and the two Statistics goals half its Field pace each (a track goal's is 1)",
+      near(seen.g1?.[0]?.share, 5 / 11) && near(seen.g2?.[0]?.share, 1 / 11) && near(seen.g3?.[0]?.share, 5 / 11) && near(seen.g1?.[0]?.fieldShare, 0.5) && near(seen.g3?.[0]?.fieldShare, 0.5) && seen.g2?.[0]?.fieldShare === undefined,
+      json(seen)
+    );
+    // The verdict re-run: accepting goal 2's draft would turn goal 1 (ACTIVE) TIGHT at its new share.
+    const v = world();
+    const a1 = await accepted(v);
+    const d2 = await seatedGoal(v, { ...INTAKE, aim: "Trade with a plan", fieldId: "f-trade", domainIds: ["d-risk"], hoursPerWeek: 5 }, 2);
+    await S.buildStarterCore(USER, d2, NOW, depsFor(v));
+    const tight: Partial<RoadmapLanes> = {
+      ...lanesFor(v),
+      feasibilityOf: (plan, input) => {
+        const f = lanesFor(v).feasibilityOf!(plan, input);
+        const goal1 = input.scopes.some((x) => x.domainIds.includes("d-prob"));
+        return goal1 && input.share != null && input.share < 1 ? { ...f, milestones: f.milestones.map((m) => ({ ...m, worst: "TIGHT" as const, time: { ...m.time, verdict: "TIGHT" as const } })) } : f;
+      },
+    };
+    const view = await S.loadRoadmapView(USER, NOW, depsFor(v, { lanes: tight }), d2);
+    const alone = await S.loadRoadmapView(USER, NOW, depsFor(world(), { lanes: tight }));
+    check(
+      "goals: the verdict re-run: the accept sheet lists each ACTIVE goal accepting this draft turns TIGHT or OVER (DraftView.otherGoals: 'Goal 1 becomes tight')",
+      json(view.draft?.otherGoals) === json([{ roadmapId: a1, slot: 1, label: "Statistics", from: "FITS", to: "TIGHT" }]) && alone.draft == null,
+      json(view.draft?.otherGoals)
+    );
+    const one = world();
+    const solo = await drafted(one);
+    const soloView = await S.loadRoadmapView(USER, NOW, depsFor(one), solo);
+    check("goals: with one goal the draft view carries no otherGoals (byte-identical)", !!soloView.draft && !("otherGoals" in soloView.draft), json(Object.keys(soloView.draft ?? {})));
+  }
+  {
+    // The loaders per goal (§23.5) and Start's duplicate check across goals (§23.3).
+    const w = world();
+    const g1 = await accepted(w);
+    const g2 = await seatedGoal(w, { ...INTAKE, aim: "Trade with a plan", fieldId: "f-trade", domainIds: ["d-risk"], hoursPerWeek: 3 }, 2);
+    const deps = depsFor(w);
+    const first = await S.loadRoadmapView(USER, NOW, deps);
+    const second = await S.loadRoadmapView(USER, NOW, deps, g2);
+    const forged = await S.loadRoadmapView(USER, NOW, deps, "someone-elses-goal");
+    check("goals: loadRoadmapView shows the goal named, else the lowest seat's (a forged id never reads: family X)", first.header?.id === g1 && second.header?.id === g2 && forged.header?.id === g1 && second.header?.slot === 2 && first.header?.slot === 1, json([first.header?.id, second.header?.id, forged.header?.id]));
+    check(
+      "goals: RoadmapView.goals (the switcher): one pill per open goal in seat order, the current one marked, its label the Area's name or yours, its rank; canAdd only under GOALS_MAX (ruling 53)",
+      json(first.goals?.pills.map((p) => [p.roadmapId, p.slot, p.current, p.label, p.labelIsYours, p.status])) === json([[g1, 1, true, "Statistics", false, "ACTIVE"], [g2, 2, false, "Trading", false, "DRAFT"]]) &&
+        first.goals?.pills[0].rankIndex != null &&
+        second.goals?.pills[1].current === true &&
+        first.goals?.canAdd === false &&
+        first.goals?.other.count === 0,
+      json(first.goals)
+    );
+    const cards = await S.loadAimCards(USER, NOW, deps);
+    const card = await S.loadAimCard(USER, NOW, deps);
+    check("goals: loadAimCards gives one card per open goal in seat order; loadAimCard keeps the lowest seat's", json(cards.map((c) => [c.roadmapId, c.slot])) === json([[g1, 1], [g2, 2]]) && card?.roadmapId === g1, json(cards.map((c) => [c.roadmapId, c.slot])));
+    const single = world();
+    await accepted(single);
+    const soloCards = await S.loadAimCards(USER, NOW, depsFor(single));
+    const soloCard = await S.loadAimCard(USER, NOW, depsFor(single));
+    check("goals: with one goal loadAimCards is [loadAimCard's card]", json(soloCards) === json([soloCard]));
+    const soloView = await S.loadRoadmapView(USER, NOW, depsFor(single));
+    check("goals: with one goal the page carries no switcher (RoadmapView.goals absent: today's page)", soloView.state === "ACTIVE" && !("goals" in soloView), json(Object.keys(soloView)));
+    // Start's duplicate check reads every other goal's carried practices: goal 1's started practice is "already on Today from goal 1".
+    const [m1] = rowsOf(w, g1, 1);
+    await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, deps);
+    const practice = itemsOf(w, m1.id).find((i) => i.kind === "PRACTICE" && i.templateId) as ItemRec;
+    const g3 = await seatedGoal(w, { ...INTAKE, aim: "Inference, properly", domainIds: ["d-inf"], hoursPerWeek: 3, label: "Inference" }, 3);
+    await S.buildStarterCore(USER, g3, NOW, deps);
+    const d3 = rowsOf(w, g3, 1)[0];
+    const ownPractice = d3 ? itemsOf(w, d3.id).find((i) => i.kind === "PRACTICE") : undefined;
+    if (ownPractice) ownPractice.label = practice.label;
+    (w.t.roadmap.find((x) => x.id === g3) as RoadmapRec).status = "ACTIVE";
+    (w.t.roadmap.find((x) => x.id === g3) as RoadmapRec).version = 1;
+    for (const m of rowsOf(w, g3, 1)) m.status = "PLANNED";
+    const preview = d3 ? await S.startPreview(USER, d3.id, NOW, deps) : null;
+    const row = preview?.practices.find((x) => x.itemId === ownPractice?.id);
+    check(
+      "goals: alreadyOnToday checks every open goal's carried practices ('already on Today from goal 1'), so Start never makes a duplicate task",
+      !!row && row.on === false && row.alreadyOnToday?.templateId === practice.templateId && (row.alreadyOnToday as { fromGoal?: number | null }).fromGoal === 1,
+      json([row, practice.label])
+    );
+  }
+
+  // ═══ Revision 5, lane 8: the topic map's server path (contracts §22.13, §22.14; rulings 48–51, 59) ════
+  //
+  // The TOPICS cores run with topicSwitches { plans: true } (TOPIC_PLANS_LIVE is false in this build). No model phase
+  // runs: a Gemini name is a topic row put in the fake store as MAP and GROUND would leave it (geminiTopicRow).
+  console.log("— revision 5: the topic map (§22.13, §22.14) —");
+  /** One TOPICS block; a fixture step that throws fails the block by name instead of ending the run. */
+  const topicBlock = async (name: string, run: () => Promise<void>): Promise<void> => {
+    try {
+      await run();
+    } catch (err) {
+      check(`${name} (the block threw)`, false, err instanceof Error ? err.message : String(err));
+    }
+  };
+  /** What a call threw: nothing, the tripwire's ModelTextError, or anything else. */
+  const thrown = (f: () => unknown): "none" | "tripwire" | "other" => {
+    try {
+      f();
+      return "none";
+    } catch (err) {
+      return err instanceof S.ModelTextError ? "tripwire" : "other";
+    }
+  };
+
+  await topicBlock("TOPICS switches", async () => {
+    // Production deps (no topicSwitches): every TOPIC_* constant is false, so each core refuses before it reads anything.
+    const w = world();
+    const id = await newDraft(w, TOPICS_INTAKE);
+    let calls = 0;
+    const prod = depsFor(w, {
+      callModel: async () => {
+        calls += 1;
+        return {};
+      },
+    });
+    const rowBefore = json(w.t.roadmap.find((r) => r.id === id));
+    const applies = w.applies;
+    const runs = w.t.roadmapRun.length;
+    const answers = [
+      await S.writeTopicsCore(USER, id, NOW, prod),
+      await S.breakIntoTopicsCore(USER, id, NOW, prod),
+      await S.breakDownCore(USER, id, NOW, prod),
+      await S.rateAgainCore(USER, id, NOW, prod),
+      await S.goDeeperCore(USER, id, "T1", NOW, prod),
+      await S.advanceTopicChainCore(USER, id, false, NOW, prod),
+    ].map(errOf);
+    const sw = topicSwitchesOf();
+    check(
+      "TOPICS switches: with every TOPIC_* switch false (production deps) writeTopics, breakIntoTopics, breakDown, rateAgain, goDeeper and advanceTopicChain refuse (TOPIC_PLANS_OFF), the model is never called and nothing is written",
+      Object.values(sw).every((on) => on === false) &&
+        answers.every((a) => a === S.TOPIC_PLANS_OFF) &&
+        calls === 0 &&
+        w.modelCalls === 0 &&
+        w.applies === applies &&
+        w.t.roadmapRun.length === runs &&
+        w.t.roadmapTopic.length === 0 &&
+        json(w.t.roadmap.find((r) => r.id === id)) === rowBefore,
+      json([sw, answers, calls, w.modelCalls, w.applies - applies])
+    );
+  });
+
+  await topicBlock("TOPICS draft and undo", async () => {
+    // A LEVELS goal broken into topics (ruling 49): the draft's kind rides Roadmap.draftPlan until accept.
+    const w = world();
+    const id = await accepted(w);
+    const deps = topicDepsFor(w);
+    const row = () => w.t.roadmap.find((r) => r.id === id) as RoadmapRec;
+    const live0 = { depth: row().depth ?? null, rating: json(row().rating ?? null), domainIds: json(row().domainIds) };
+    const view0 = livePartsOf(await S.loadRoadmapView(USER, NOW, deps));
+    const broke = await S.breakIntoTopicsCore(USER, id, NOW, deps);
+    // An edit of the draft (a topic you type) rebuilds its rows; the live plan still never moves.
+    const added = await S.addTopicCore(USER, id, 1, "Bayesian updating", NOW, deps);
+    const view1 = await S.loadRoadmapView(USER, NOW, deps);
+    const parts1 = livePartsOf(view1);
+    const moved = LIVE_PARTS.filter((k) => parts1[k] !== view0[k]);
+    const dp = row().draftPlan as { version?: number; planKind?: string; depth?: number | null } | null;
+    check(
+      "TOPICS draft: goal 1 reads byte-identical LEVELS while a TOPICS draft exists",
+      broke.ok &&
+        broke.value.version === 2 &&
+        added.ok &&
+        row().version === 1 &&
+        kindOf(row()) === "LEVELS" &&
+        (row().depth ?? null) === live0.depth &&
+        json(row().rating ?? null) === live0.rating &&
+        json(row().domainIds) === live0.domainIds &&
+        dp?.version === 2 &&
+        dp.planKind === "TOPICS" &&
+        dp.depth === live0.depth &&
+        moved.length === 0 &&
+        view1.draft?.topicMap != null,
+      json([broke, added, row().planKind, row().depth, dp, moved])
+    );
+
+    const res = await S.acceptCore(USER, id, topicAccept(1), NOW, deps);
+    const created = w.tree.flatMap((f) => f.domains).find((d) => d.name === "Bayesian updating");
+    const took = { kind: kindOf(row()), version: row().version, draftPlan: row().draftPlan ?? null, domainIds: [...row().domainIds] };
+    const undo = await S.undoAcceptCore(USER, id, 2, NOW, deps);
+    const back = row().draftPlan as { version?: number; planKind?: string } | null;
+    const topic = w.t.roadmapTopic.find((t) => t.roadmapId === id && t.version === 2 && t.name === "Bayesian updating");
+    check(
+      "TOPICS undo: an undone TOPICS accept restores the LEVELS plan's kind, depth, rating and Domains",
+      res.ok &&
+        took.kind === "TOPICS" &&
+        took.version === 2 &&
+        took.draftPlan == null &&
+        !!created &&
+        took.domainIds.includes(created.id) &&
+        undo.ok &&
+        row().version === 1 &&
+        kindOf(row()) === "LEVELS" &&
+        (row().depth ?? null) === live0.depth &&
+        json(row().rating ?? null) === live0.rating &&
+        json(row().domainIds) === live0.domainIds &&
+        // The draft is a TOPICS draft again, and the Domain the accept created stays, bound to its topic (a re-accept creates none).
+        back?.version === 2 &&
+        back.planKind === "TOPICS" &&
+        rowsOf(w, id, 2).length > 0 &&
+        rowsOf(w, id, 2).every((m) => m.status === "DRAFT" || m.status === "LATER") &&
+        topic?.domainId === created.id &&
+        w.domainsCreated.length === 1,
+      json([res, took, undo, row().planKind, row().depth, row().domainIds, back, topic?.domainId])
+    );
+  });
+
+  await topicBlock("TOPICS accept", async () => {
+    // The re-plan's accept over a live LEVELS milestone (ruling 49, question 8).
+    const w = world();
+    const id = await accepted(w);
+    const deps = topicDepsFor(w);
+    const row = () => w.t.roadmap.find((r) => r.id === id) as RoadmapRec;
+    const [m1] = rowsOf(w, id, 1);
+    must(await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w)), "start milestone 1");
+    const rank = w.t.roadmapMilestone.find((m) => m.id === m1.id)?.rankIndex ?? null;
+    must(await S.breakIntoTopicsCore(USER, id, NOW, deps), "break into topics");
+    const unasked = await S.acceptCore(USER, id, topicAccept(0), NOW, deps);
+    const untouched = kindOf(row()) === "LEVELS" && row().version === 1;
+    const res = await S.acceptCore(USER, id, topicAccept(0, [], "KEEP"), NOW, deps);
+    const m = w.t.roadmapMilestone.find((x) => x.id === m1.id) as MilestoneRec;
+    const goal = w.templates.find((t) => t.id === m.goalId);
+    const practices = itemsOf(w, m1.id).filter((i) => i.kind === "PRACTICE" && i.templateId).map((i) => i.templateId as string);
+    const kept = (m.feasibility as { aftercareKept?: string[] } | null)?.aftercareKept ?? [];
+    const marks = w.t.roadmapAcceptance.find((a) => a.roadmapId === id && a.version === 2)?.feasibility as { topicsClosedLive?: string } | null | undefined;
+    check(
+      "TOPICS accept: the live LEVELS milestone closes there, its rank kept",
+      errOf(unasked) === S.RACED &&
+        untouched &&
+        res.ok &&
+        kindOf(row()) === "TOPICS" &&
+        row().version === 2 &&
+        // Closed unreached there (its goal archived), never superseded, its rank as stored; the other LEVELS rows superseded.
+        rank != null &&
+        m.rankIndex === rank &&
+        m.reachedDay == null &&
+        m.status !== "SUPERSEDED" &&
+        goal?.archivedAt != null &&
+        marks?.topicsClosedLive === m1.id &&
+        rowsOf(w, id, 1)
+          .filter((x) => x.id !== m1.id)
+          .every((x) => x.status === "SUPERSEDED") &&
+        // [Keep on Today]: its practices stay, recorded as kept.
+        practices.length > 0 &&
+        practices.every((t) => kept.includes(t) && w.templates.find((x) => x.id === t)?.archivedAt == null),
+      json([errOf(unasked), res, rank, [m.status, m.rankIndex, m.reachedDay], goal?.archivedAt, marks?.topicsClosedLive, practices, kept])
+    );
+    const undo = await S.undoAcceptCore(USER, id, 2, NOW, deps);
+    eq("TOPICS undo: an accept that closed a live LEVELS milestone stays (ACCEPT_CLOSED_LIVE)", [errOf(undo), row().version, kindOf(row())], [S.ACCEPT_CLOSED_LIVE, 2, "TOPICS"]);
+  });
+
+  await topicBlock("TOPICS edges", async () => {
+    // A child that builds on two other goals' Domains (ruling 48): two rows under (roadmapId, version, parentLineageId, childLineageId).
+    const w = world();
+    const g1 = await newDraft(w, TOPICS_INTAKE);
+    const g2 = await seatedGoal(w, { ...INTAKE, aim: "Trade with a plan", fieldId: "f-trade", domainIds: ["d-risk"], hoursPerWeek: 3 }, 2);
+    const g3 = await seatedGoal(w, { ...INTAKE, aim: "Probability, properly", domainIds: ["d-prob"], hoursPerWeek: 3, label: "Probability" }, 3);
+    const deps = topicDepsFor(w);
+    must(await S.writeTopicsCore(USER, g1, NOW, deps), "write the topics");
+    must(await S.setLayersCore(USER, g1, { kind: "SET", layers: 2 }, NOW, deps), "two layers");
+    const added = must(await S.addTopicCore(USER, g1, 2, "Bayesian updating", NOW, deps), "a layer-2 topic");
+    const key = added.ok ? added.value.key : "";
+    const res = await S.setParentsCore(USER, g1, key, { kind: "LINKS", keys: [], crossGoal: [{ roadmapId: g2, domainId: "d-risk" }, { roadmapId: g3, domainId: "d-prob" }] }, NOW, deps);
+    const child = w.t.roadmapTopic.find((t) => t.roadmapId === g1 && t.version === 1 && t.key === key);
+    const edges = w.t.roadmapTopicEdge.filter((x) => x.roadmapId === g1 && x.version === 1);
+    const unique = new Set(edges.map((x) => `${x.roadmapId}|${x.version}|${x.parentLineageId}|${x.childLineageId}`));
+    check(
+      "TOPICS edges: one child with two cross-goal parents inserts",
+      res.ok &&
+        !!child &&
+        edges.length === 2 &&
+        unique.size === 2 &&
+        edges.every((x) => x.childLineageId === child.lineageId && x.origin === "CROSS_GOAL" && x.parentDomainId != null && x.parentLineageId === `${CROSS_GOAL_PARENT_PREFIX}${x.parentDomainId}`) &&
+        json(edges.map((x) => `${x.parentRoadmapId}:${x.parentDomainId}`).sort()) === json([`${g2}:d-risk`, `${g3}:d-prob`].sort()),
+      json([res, edges.map((x) => [x.parentLineageId, x.childLineageId, x.origin, x.parentRoadmapId])])
+    );
+  });
+
+  await topicBlock("TOPICS cap", async () => {
+    // K = 6 and L* = 12: six layer milestones and the depth tail (Fluent, Mastered), past LEVELS' MAX_MILESTONES (ruling 50).
+    const w = world();
+    const id = await writtenTopics(w, { ...TOPICS_INTAKE, depth: 12 }, ["Bayes rule", "Markov chains", "Random walks", "Martingales", "Brownian motion"]);
+    const res = await S.acceptCore(USER, id, topicAccept(5), NOW, topicDepsFor(w));
+    const planned = rowsOf(w, id, 1).filter((m) => m.status === "PLANNED");
+    check(
+      "TOPICS cap: K=6, L*=12 accepts 8 milestones",
+      res.ok && planned.length === 8 && planned.length > MAX_MILESTONES && planned.filter((m) => m.chainRole === "LAYER").length === 6 && planned.filter((m) => m.chainRole === "DEPTH").length === 2,
+      json([res, planned.map((m) => [m.chainRole, m.layer, m.stage])])
+    );
+  });
+
+  await topicBlock("TOPICS ranks and skip", async () => {
+    // K = 4 and L* = 10: four layers and Fluent, G = 5 gates spread to the depth's rank (ruling 51).
+    const w = world();
+    const deps = topicDepsFor(w);
+    const id = await writtenTopics(w, { ...TOPICS_INTAKE, depth: 10 }, ["Bayes rule", "Markov chains", "Martingales"]);
+    const res = await S.acceptCore(USER, id, topicAccept(3), NOW, deps);
+    const planned = () => rowsOf(w, id, 1).filter((m) => m.status === "PLANNED");
+    check(
+      "TOPICS ranks: K=4, L*=10 ranks 1, 1, 2, 3, 4",
+      res.ok && json(planned().map((m) => m.rankIndex)) === json([1, 1, 2, 3, 4]) && json(planned().map((m) => m.chainRole)) === json(["LAYER", "LAYER", "LAYER", "LAYER", "DEPTH"]),
+      json([res, planned().map((m) => [m.chainRole, m.layer, m.stage, m.rankIndex])])
+    );
+    // "I know this" on layer 1's topic (ruling 59): milestone 1 is PLANNED (unstarted); in place, no new version, no re-spread.
+    const t1 = w.t.roadmapTopic.find((t) => t.roadmapId === id && t.version === 1 && t.layer === 1 && t.chosen && t.decision !== "REMOVED");
+    const ids0 = json(rowsOf(w, id).map((m) => m.id));
+    const paid0 = w.t.roadmapMeasure.filter((x) => x.topicLineageId === t1?.lineageId && x.role === "PAYS" && planned().some((m) => m.id === x.milestoneId)).map((x) => x.id);
+    const skip = await S.skipTopicCore(USER, id, t1?.key ?? "", true, NOW, deps);
+    const after = w.t.roadmapTopic.find((t) => t.id === t1?.id);
+    check(
+      "TOPICS skip: I know this on an unstarted milestone changes its measures in place",
+      skip.ok &&
+        paid0.length > 0 &&
+        paid0.every((mid) => w.t.roadmapMeasure.find((x) => x.id === mid)?.role === "CONTEXT") &&
+        json(rowsOf(w, id).map((m) => m.id)) === ids0 &&
+        w.t.roadmap.find((r) => r.id === id)?.version === 1 &&
+        after?.skippedDay === TODAY &&
+        after.notes.includes("KNOWN_BY_YOU") &&
+        // Milestone 1's every topic known: it gives no rank; G stays as accepted (the others keep theirs).
+        json(planned().map((m) => m.rankIndex)) === json([null, 1, 2, 3, 4]),
+      json([skip, t1?.key, paid0.map((mid) => w.t.roadmapMeasure.find((x) => x.id === mid)?.role), after?.skippedDay, planned().map((m) => m.rankIndex)])
+    );
+  });
+
+  await topicBlock("Gemini names", async () => {
+    // A kept Gemini name equal, once folded (formKeyOf: case and plural), to a Domain of the Field the map doesn't use.
+    const w = world();
+    const id = await writtenTopics(w, TOPICS_INTAKE);
+    geminiTopicRow(w, id, "T1", "Probabilities");
+    const taken = await S.acceptCore(USER, id, topicAccept(1, ["Probabilities"]), NOW, topicDepsFor(w));
+    check(
+      "Gemini names: accept refuses a kept Gemini name equal (normalised) to a Domain the Field holds (TOPIC_NAME_TAKEN), creating nothing",
+      errOf(taken) === TOPIC_NAME_TAKEN && w.domainsCreated.length === 0 && w.t.roadmap.find((r) => r.id === id)?.status === "DRAFT",
+      json([taken, w.domainsCreated])
+    );
+
+    // A kept Gemini name becomes a Domain with the mark; the topic you typed beside it gets a Domain without one.
+    const v = world();
+    const vid = await writtenTopics(v, TOPICS_INTAKE);
+    const GEM = "Conditional expectation";
+    const MINE = "Moment generating functions";
+    const gemRow = geminiTopicRow(v, vid, "T1", GEM);
+    must(await S.addTopicCore(USER, vid, 1, MINE, NOW, topicDepsFor(v)), "a topic you type");
+    const unlisted = await S.acceptCore(USER, vid, topicAccept(2, []), NOW, topicDepsFor(v));
+    const createdUnlisted = v.domainsCreated.length;
+    const res = await S.acceptCore(USER, vid, topicAccept(2, [GEM]), NOW, topicDepsFor(v));
+    const domains = v.tree.find((f) => f.id === "f-stats")?.domains ?? [];
+    const gem = domains.find((d) => d.name === GEM);
+    const mine = domains.find((d) => d.name === MINE);
+    const bound = v.t.roadmapTopic.find((t) => t.roadmapId === vid && t.lineageId === gemRow.lineageId);
+    const markedBefore = !!gem && geminiNamedOf(gem);
+    if (gem) gem.name = `${GEM} (my notes)`; // the library's rename
+    check(
+      "Gemini names: accept turns a kept Gemini name into a Domain with nameOrigin GEMINI and originName (the mark stays until a rename; your typed topic's Domain has none), and a confirm that didn't name it is RACED with nothing created",
+      errOf(unlisted) === S.RACED &&
+        createdUnlisted === 0 &&
+        res.ok &&
+        gem?.nameOrigin === "GEMINI" &&
+        gem.originName === GEM &&
+        markedBefore &&
+        !geminiNamedOf(gem) &&
+        !!mine &&
+        (mine.nameOrigin ?? null) === null &&
+        !geminiNamedOf(mine) &&
+        bound?.domainId === gem.id &&
+        kindOf(v.t.roadmap.find((r) => r.id === vid)) === "TOPICS",
+      json([errOf(unlisted), res, gem && { nameOrigin: gem.nameOrigin, originName: gem.originName }, mine?.nameOrigin, bound?.domainId])
+    );
+  });
+
+  await topicBlock("tripwire", async () => {
+    // §22.11's one writer: a Gemini topic name you haven't kept never reaches a plan view or a written row.
+    const w = world();
+    const NAME = "Stochastic calculus";
+    const unchecked = S.topicOfRec(geminiTopicRow(w, "r-scratch", "T1", NAME, { decision: "PENDING", grounding: "NOT_RUN", formVotes: 2 }));
+    const kept: typeof unchecked = { ...unchecked, decision: "KEPT" };
+    const noDomains: { id: string; name: string; nameOrigin: string | null; originName: string | null }[] = [];
+    const inMap = { draft: { topicMap: { layers: [{ layer: 2, topics: [{ key: "T1", name: NAME }] }] } } };
+    const leaked = { ...inMap, milestones: [{ id: "m2", title: `${NAME} · layer 2 of 3`, layer: 2 }] };
+    const redacted = S.assertTopicNames(leaked, { topics: [unchecked], domains: noDomains }, "REDACT") as typeof leaked;
+    // A kept Gemini-named Domain reads only through its mark: a …Parts sibling (or geminiNamed: true on its holder).
+    const marked = { topics: [], domains: [{ id: "d-gem", name: NAME, nameOrigin: "GEMINI", originName: NAME }] };
+    const bare = { current: { measures: [{ label: `${NAME} · cards at level 6+` }] } };
+    const parted = { current: { measures: [{ label: `${NAME} · cards at level 6+`, labelParts: [{ text: NAME, geminiNamed: true }, { text: " · cards at level 6+", geminiNamed: false }] }] } };
+    check(
+      "tripwire: assertTopicNames refuses a Gemini name not kept by you in a plan view (a milestone title: THROW in checks, 'Layer 2' under REDACT), passes it inside the map and once kept, and a kept Gemini-named Domain only through its mark",
+      thrown(() => S.assertTopicNames(leaked, { topics: [unchecked], domains: noDomains }, "THROW")) === "tripwire" &&
+        S.assertTopicNames(inMap, { topics: [unchecked], domains: noDomains }, "THROW") === inMap &&
+        redacted.milestones[0].title === "Layer 2" &&
+        redacted.draft.topicMap.layers[0].topics[0].name === NAME &&
+        leaked.milestones[0].title.startsWith(NAME) &&
+        S.assertTopicNames(leaked, { topics: [kept], domains: noDomains }, "THROW") === leaked &&
+        thrown(() => S.assertTopicNames(bare, marked, "THROW")) === "tripwire" &&
+        S.assertTopicNames(parted, marked, "THROW") === parted,
+      json([redacted.milestones[0].title, thrown(() => S.assertTopicNames(bare, marked, "THROW"))])
+    );
+    const rowsTitled = (title: string, titleOrigin: MilestoneDraft["titleOrigin"]): MilestoneDraft[] => [
+      { id: null, lineageId: "lin-tw", version: 1, ord: 1, title, titleOrigin, titleDecision: "PENDING", windowStart: null, dueDay: null, status: "DRAFT", rankIndex: null, overAccepted: false, items: [], measures: [], notes: [], stage: "FAMILIAR" },
+    ];
+    const writeCtx = (t: typeof unchecked): Parameters<typeof S.assertNoModelText>[1] => ({ roadmapId: "r-scratch", syllabusLines: [], domainNames: {}, rev4: true, topics: [t], domains: noDomains });
+    const title = `${NAME} · layer 2 of 3`;
+    eq(
+      "tripwire: assertNoModelText (the one writer) refuses a code title holding a Gemini topic name not kept by you, and passes it once kept or in your own words",
+      [
+        thrown(() => S.assertNoModelText(rowsTitled(title, CODE_ORIGIN), writeCtx(unchecked))),
+        thrown(() => S.assertNoModelText(rowsTitled(title, CODE_ORIGIN), writeCtx(kept))),
+        thrown(() => S.assertNoModelText(rowsTitled(title, "USER"), writeCtx(unchecked))),
+      ],
+      ["tripwire", "none", "none"]
+    );
+  });
 
   if (failed > 0) {
     console.log(`\nroadmap-server-check: ${passed} passed, ${failed} FAILED${pendingCount ? `, ${pendingCount} pending other lanes` : ""}`);

@@ -226,6 +226,10 @@ import { DateBlock } from "./DateBlock";
 import { GapPanel, type LiveGates } from "./GapPanel";
 import { RoadmapGlyph } from "./RoadmapGlyph";
 import { ActivityConfirmCard, activityHealthOf } from "./ActivityConfirm";
+// ── Revision 5, lane 9: a TOPICS draft's map card (only while TOPIC_PLANS_LIVE, or a fixture's lead-only gate) ──
+import { TopicMap } from "./TopicMap";
+import { acceptTopicChoicesOf, topicNamesOn, topicPlansOn } from "./topic-map-model";
+import { AFTERCARE_ARCHIVE_WORD, AFTERCARE_KEEP_WORD, aftercareGroupLabel, createsDomainsLine, geminiNamesAmongLine, liveMilestoneClosesLine } from "./roadmap-copy";
 import "./roadmap.css";
 
 /**
@@ -883,7 +887,7 @@ export function sessionSwapOfView(view: Pick<RoadmapView, "header" | "draft" | "
  * where Gemini may be named (`gemini`: its path live with a key, or a draft
  * Gemini arranged); otherwise "What to learn comes from your outline." alone.
  */
-function OutlineLines({ view, next, gemini }: { view: RoadmapView; next: MilestoneDraft | null; gemini: boolean }) {
+function OutlineLines({ view, next, gemini, namesLive = false }: { view: RoadmapView; next: MilestoneDraft | null; gemini: boolean; namesLive?: boolean }) {
   const draft = view.draft!;
   const header = view.header!;
   const unassigned = unassignedLinesLine(draft.unassignedLines ?? [], (draft.depth?.coverage.length ?? 0) >= DEPTH_DOMAINS_MAX);
@@ -891,7 +895,7 @@ function OutlineLines({ view, next, gemini }: { view: RoadmapView; next: Milesto
     return (
       <section className="card pad rm-lines-card" aria-label="What to learn">
         <p className="t-meta rm-ink1" style={{ margin: 0 }}>
-          {outlineEmptyLine(gemini)}
+          {outlineEmptyLine(gemini, view.draft?.topicMap ? "TOPICS" : (header.planKind ?? "LEVELS"), namesLive)}
         </p>
         {header.examLabel && <p className="t-meta rm-ink1">{OUTLINE_EMPTY_EXAM_LINE}</p>}
         <div className="rm-acts">
@@ -1020,6 +1024,7 @@ function DraftFooter({
   over,
   setOver,
   choices,
+  topics = false,
 }: {
   view: RoadmapView;
   next: MilestoneDraft | null;
@@ -1029,11 +1034,17 @@ function DraftFooter({
   setOver: (v: boolean) => void;
   /** Gemini's practice choices accept waits on (choicesWaitingOf). */
   choices: { all: readonly EditorRow[]; outside: readonly EditorRow[] };
+  /** Revision 5, lane 9: TOPIC_PLANS_LIVE (or a fixture's gate): a TOPICS draft's accept names what it creates. */
+  topics?: boolean;
 }) {
   const draft = view.draft!;
   const header = view.header!;
   const { run, pending, error, runtime } = useRoadmapAction();
   const [hint, setHint] = useState<string | null>(null);
+  // Revision 5, lane 9: a TOPICS draft (ruling 49, §22.14): its refusal, what accept creates, and a live milestone's practices.
+  const topicMap = topics ? (draft.topicMap ?? null) : null;
+  const liveOrd = topicMap && mode === "replan" ? liveMilestoneOrdOf(view) : null;
+  const [aftercare, setAftercare] = useState<"KEEP" | "ARCHIVE" | null>(null);
   const undecided = next ? undecidedOf(next) : [];
   const f = draft.feasibility;
   // Only a milestone of this draft can be fixed here: a started (carried) one listed first never names the footer (fix round 2's carry-over).
@@ -1102,9 +1113,13 @@ function DraftFooter({
       setHint("Turn on “Keep it over my hours/pace” first: this plan asks more than your hours or pace.");
       return;
     }
+    if (liveOrd != null && aftercare == null) {
+      setHint(liveMilestoneClosesLine(liveOrd));
+      return;
+    }
     setHint(null);
     run(
-      (a) => a.acceptPlan(header.id, { overAccepted: over }),
+      (a) => a.acceptPlan(header.id, topicMap ? { overAccepted: over, topicMap: acceptTopicChoicesOf(topicMap, { keepAll: false, aftercare: liveOrd != null ? aftercare : null }) } : { overAccepted: over }),
       (v) =>
         pushToast({
           title: "Plan accepted",
@@ -1123,7 +1138,30 @@ function DraftFooter({
           <Switch checked={over} onChange={setOver} label="Keep it over my hours/pace" />
         </div>
       )}
-      <Button variant="primary" size="lg" onClick={accept} disabled={pending}>
+      {topicMap && (
+        <div className="rm-tm-acc" style={{ flexBasis: "100%" }}>
+          {topicMap.acceptRefusal && (
+            <p className="t-error" role="alert">
+              {topicMap.acceptRefusal}
+            </p>
+          )}
+          <TopicCreatesLine map={topicMap} areaName={header.area.kind === "FIELD" ? header.area.name : TRACK_WORD[header.area.track]} />
+          {liveOrd != null && (
+            <div role="radiogroup" aria-label={aftercareGroupLabel(liveOrd)} className="rm-tm-pick">
+              <p className="t-meta" style={{ margin: 0, flexBasis: "100%" }}>
+                {liveMilestoneClosesLine(liveOrd)}
+              </p>
+              <button type="button" className="chip btn-chip" role="radio" aria-checked={aftercare === "KEEP"} onClick={() => setAftercare("KEEP")}>
+                {AFTERCARE_KEEP_WORD}
+              </button>
+              <button type="button" className="chip btn-chip" role="radio" aria-checked={aftercare === "ARCHIVE"} onClick={() => setAftercare("ARCHIVE")}>
+                {AFTERCARE_ARCHIVE_WORD}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      <Button variant="primary" size="lg" onClick={accept} disabled={pending || (topicMap != null && topicMap.acceptRefusal != null)}>
         {pending ? "Accepting…" : "Accept plan"}
       </Button>
       <p className="t-meta">
@@ -1277,6 +1315,18 @@ export function DraftReview({
             </section>
           </div>
         )}
+        {/* Revision 5, lane 9: a TOPICS draft's map (DraftView.topicMap); its milestones below read "Layer k of n" (ruling 22). */}
+        {draft.topicMap && topicPlansOn(gates) && (
+          <TopicMap
+            map={draft.topicMap}
+            mode="draft"
+            gates={gates}
+            seenBasis={`draft/${draft.version}`}
+            today={view.today}
+            canTrack={view.goals?.canAdd === true}
+            liveMilestone={mode === "replan" ? liveMilestoneOrdOf(view) : null}
+          />
+        )}
         {keysOnly && arrangement && (
           <section className="card rm-arr">
             <Chips className="rm-arr-b">
@@ -1306,10 +1356,10 @@ export function DraftReview({
             </div>
           )}
         </div>
-        {keysOnly && mode === "draft" && <OutlineLines view={view} next={next} gemini={geminiNamedOf((gates?.gemini ?? ROADMAP_GEMINI_LIVE) && view.hasKey, view.run)} />}
+        {keysOnly && mode === "draft" && <OutlineLines view={view} next={next} gemini={geminiNamedOf((gates?.gemini ?? ROADMAP_GEMINI_LIVE) && view.hasKey, view.run)} namesLive={topicNamesOn(gates)} />}
         <GapPanel gaps={draft.gaps} hidden={draft.gapsHidden} scope={scope} gates={gates} />
         <div id="rm-accept">
-          <DraftFooter view={view} next={next} outlineCount={outline.filter((m) => !isHeldMilestone(m)).length} mode={mode} over={over} setOver={setOver} choices={choices} />
+          <DraftFooter view={view} next={next} outlineCount={outline.filter((m) => !isHeldMilestone(m)).length} mode={mode} over={over} setOver={setOver} choices={choices} topics={topicPlansOn(gates)} />
         </div>
       </div>
     </ItemEditor>
@@ -1408,5 +1458,37 @@ function DraftingChips({ header, today }: { header: RoadmapHeader; today: string
         </Chip>
       )}
     </Chips>
+  );
+}
+
+// ── Revision 5, lane 9: a TOPICS accept (contracts §22.14, ruling 49) ──
+
+/** The live LEVELS milestone a TOPICS re-plan's accept would close (STARTING or STARTED), or null. */
+export function liveMilestoneOrdOf(view: Pick<RoadmapView, "current">): number | null {
+  const c = view.current;
+  return c && (c.goalId != null || c.starting) ? c.milestone.ord : null;
+}
+
+/** "Creates 9 Domains in Business & Finance." and, by name, the Gemini names among them (the accept names what it does). */
+function TopicCreatesLine({ map, areaName }: { map: NonNullable<NonNullable<RoadmapView["draft"]>["topicMap"]>; areaName: string }) {
+  const choices = acceptTopicChoicesOf(map, { keepAll: false, aftercare: null });
+  if (choices.create === 0) return null;
+  return (
+    <p className="t-meta" style={{ margin: 0 }}>
+      {createsDomainsLine(choices.create, areaName)}
+      {choices.geminiNamed.length > 0 && (
+        <>
+          {" "}
+          {geminiNamesAmongLine()}{" "}
+          {choices.geminiNamed.map((n, i) => (
+            <span key={n}>
+              {i > 0 ? ", " : ""}
+              <span data-wc="name">{n}</span>
+            </span>
+          ))}
+          .
+        </>
+      )}
+    </p>
   );
 }

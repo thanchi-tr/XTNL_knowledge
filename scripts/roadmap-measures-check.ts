@@ -14,6 +14,15 @@
  * counts); a PART at the depth gives the gate below's rank; a same-version
  * end-state change rebuilds the Proficiency basis and words it as a depth
  * change; ProficiencyToward is the contract's.
+ * Revision 5 (roadmap-contracts.md §23.3, §23.4; lane 3): the writers run every
+ * ACTIVE goal on its own context, in seat order, each guarded on its own (an
+ * error named by its seat); one goal through the goal list is the one-context
+ * run byte for byte; the scope map is the goals' union and a hook runs only
+ * the goals whose scope matched; the real reads ask for ACTIVE goals only (a
+ * PAUSED goal is never read); RESUMED rebases on the same basis, never a
+ * gain; Today's goal chip and the goal series' seat show only with 2 or more
+ * goals open (nothing more is read while GOALS_MAX is 1). Re-pinned: the
+ * hooks' injected scope maps are unions of one goal.
  *
  * No database, no clock, no model: scripts/_no-model.ts is imported first;
  * DATABASE_URL is blanked to an unroutable address before the server module
@@ -38,6 +47,7 @@ import * as RT from "../src/lib/roadmap-types";
 import { statedForMilestone } from "../src/lib/roadmap-economy";
 import { RESET_ARCHIVE_NOTE, resetArchiveReason } from "../src/lib/reset-scopes";
 import { ZERO_REASON_LINE, zeroReasonWords } from "../src/components/roadmap/roadmap-copy";
+import { roadmapGoalCardOf } from "../src/lib/today-board";
 import type * as RR from "../src/lib/roadmap-readings";
 
 const ROOT = join(__dirname, "..");
@@ -520,7 +530,8 @@ async function main() {
     const c5 = ctxOf({ milestones: [practiceMs()], templates: { tb: { rule: "TARGET:1/W", startDay: MON, instances: ticks(5) } } });
     const c4 = ctxOf({ milestones: [practiceMs()], templates: { tb: { rule: "TARGET:1/W", startDay: MON, instances: undone } } });
     let loads = 0;
-    const deps = (day: DayKey, c: RR.RoadmapContext) => ({ env: ON, client, now: at(day), loadScopeMap: async () => R.scopeMapOf({ roadmapId: RID, milestones: c.milestones, endState: [] }), loadContext: async () => (loads++, fromStore(store, c, day)) });
+    // Revision 5 (lane 3 re-pin): the scope map is the goals' union; one goal is a union of one.
+    const deps = (day: DayKey, c: RR.RoadmapContext) => ({ env: ON, client, now: at(day), loadScopeMap: async () => ({ goals: [R.scopeMapOf({ roadmapId: RID, milestones: c.milestones, endState: [] })] }), loadContext: async () => (loads++, fromStore(store, c, day)) });
     await R.recordPracticeForTemplate(UID, "tb", deps(X, c5));
     eq("the tick pends the reach", store.milestones.get("mp")?.reachPendingDay, X);
     await R.recordPracticeForTemplate(UID, "tb", deps(addDays(X, 1), c4));
@@ -554,7 +565,8 @@ async function main() {
     // recordCardsForReview: only on a crossing; an evening review on the due day writes the due day's reading.
     const store = new Store();
     const client = stubClient(store);
-    const map: RR.RoadmapScopeMap = { roadmapId: RID, cards: [{ measureKey: K6, domainIds: [D_P], level: 6 }], templateIds: [] };
+    // Revision 5 (lane 3 re-pin): the scope map is the goals' union; one goal is a union of one.
+    const map: RR.RoadmapScopeUnion = { goals: [{ roadmapId: RID, cards: [{ measureKey: K6, domainIds: [D_P], level: 6 }], templateIds: [] }] };
     let loads = 0;
     const base = ctxOf({ milestones: [cardsMs()], histogram: hist([D_P, 6, 14]) });
     const deps = (now: Date) => ({ env: ON, client, now, loadScopeMap: async () => map, loadContext: async () => (loads++, fromStore(store, base, todayKey(now))) });
@@ -576,7 +588,7 @@ async function main() {
     let loads = 0;
     const base = ctxOf({ milestones: [cardsMs()], histogram: hist([D_P, 6, 20]) });
     const loadContext = async () => (loads++, base);
-    const loadScopeMap = async () => (loads++, R.scopeMapOf({ roadmapId: RID, milestones: base.milestones, endState: [] }));
+    const loadScopeMap = async () => (loads++, { goals: [R.scopeMapOf({ roadmapId: RID, milestones: base.milestones, endState: [] })] });
     const full = await R.recordRoadmapReadings(UID, at("2026-11-04"), { env: OFF, caller: "LIFE_CRON", client, loadContext });
     await R.recordCardsForReview(UID, "i", D_P, 5, 6, { env: OFF, client, loadContext, loadScopeMap, now: at("2026-11-04") });
     await R.recordPracticeForTemplate(UID, "tb", { env: OFF, client, loadContext, loadScopeMap, now: at("2026-11-04") });
@@ -1422,6 +1434,22 @@ async function main() {
       client: seriesStub([paidCopy], [{ id: "g-o2", stated: 0 }], [{ dedupeKey: "mp:GOAL:g-o1", day: dateColumn("2026-10-15") }]),
     });
     eq("fix round 2: the loader passes its day, so in the next year the same copy reads '… already paid on 15 Oct 2026'", nextYear["g-o2"]?.zeroReason, "this milestone already paid on 15 Oct 2026");
+
+    // Revision 5 (lane 3): once GOALS_MAX > 1 each entry carries its goal's seat (one count in the same wave); while it is 1, nothing more is read.
+    let seatCounts = 0;
+    const seatStub = (status: string, slot: number | null) =>
+      ({
+        ...(seriesStub([{ ...dbMs("o2", "g-o2", "2026-10-20T01:00:00.000Z"), roadmap: { ...roadmapOf, status, slot } }], [{ id: "g-o2", stated: 6 }], []) as unknown as Record<string, unknown>),
+        roadmap: { count: async () => (seatCounts++, 2) },
+      }) as unknown as RR.RoadmapReadingsClient;
+    const oneSeat = await R.loadRoadmapGoalSeries(UID, ["g-o2"], today, { client: seatStub("ACTIVE", 2) });
+    const manySeats = await R.loadRoadmapGoalSeries(UID, ["g-o2"], today, { client: seatStub("ACTIVE", 2), goalsMax: 3 });
+    const pausedSeat = await R.loadRoadmapGoalSeries(UID, ["g-o2"], today, { client: seatStub("PAUSED", 2), goalsMax: 3 });
+    eq(
+      "goals: the goal series reads no seat while GOALS_MAX is 1 (the entry exactly as before); once GOALS_MAX > 1, its seat and the open goals' count; a paused goal shows no seat (ruling 55)",
+      ["seat" in (oneSeat["g-o2"] ?? {}), manySeats["g-o2"]?.seat, pausedSeat["g-o2"]?.seat, seatCounts, RT.GOALS_MAX],
+      [false, { slot: 2, open: 2 }, { slot: null, open: 2 }, 2, 1]
+    );
   }
 
   // ═══ Revision 4 (F-R4-8, F-R4-9, F-R4-12, F-R4-16; roadmap-contracts.md §14) ═══
@@ -2232,15 +2260,16 @@ async function main() {
     eq("two acceptances of one version: the loader reads the later record's end state (the lowered depth's)", tied?.acceptance?.endState.map((t) => t.measureKey), [K10I]);
     eq("… ordering by version, then acceptedAt (acceptanceOrderBy), newest first, take 1", [(accArgs as { orderBy?: unknown } | null)?.orderBy, (accArgs as { take?: number } | null)?.take], [RT.acceptanceOrderBy(), 1]);
     const scopeArgs: unknown[] = [];
+    // Revision 5 (lane 3 re-pin): the scope map reads every ACTIVE goal (findMany) and answers the goals' union.
     const scope = await R.loadScopeMap("u-acceptance-tie", {
       roadmap: {
-        findFirst: async (args: { select: { acceptances: { orderBy?: unknown; take?: number } } }) => {
+        findMany: async (args: { select: { acceptances: { orderBy?: unknown; take?: number } } }) => {
           scopeArgs.push(args.select.acceptances);
-          return { id: RID, milestones: [], acceptances: ordered(accs, args.select.acceptances.orderBy, args.select.acceptances.take) };
+          return [{ id: RID, slot: 1, milestones: [], acceptances: ordered(accs, args.select.acceptances.orderBy, args.select.acceptances.take) }];
         },
       },
     } as unknown as RR.RoadmapReadingsClient);
-    eq("… and so does the event writers' scope map (its end-state card keys are the lowered depth's)", [scope?.cards.map((c) => c.measureKey), (scopeArgs[0] as { orderBy?: unknown }).orderBy], [[K10I], RT.acceptanceOrderBy()]);
+    eq("… and so does the event writers' scope map (its end-state card keys are the lowered depth's)", [scope?.goals.map((g) => g.cards.map((c) => c.measureKey)), (scopeArgs[0] as { orderBy?: unknown }).orderBy], [[[K10I]], RT.acceptanceOrderBy()]);
     check(
       "roadmap-readings.ts has no `take: 1` acceptance read ordered by version alone",
       !/orderBy\s*:\s*\{\s*version\s*:\s*"desc"(\s+as\s+const)?\s*\}\s*,\s*take\s*:\s*1/.test(read("src/lib/roadmap-readings.ts")) && (read("src/lib/roadmap-readings.ts").match(/orderBy:\s*acceptanceOrderBy\(\)/g) ?? []).length === 2
@@ -2508,6 +2537,157 @@ async function main() {
       /CARDS_AT_LEVEL\\\||PRACTICE_KEPT\\\||startsWith\(["'`]CARDS_AT_LEVEL|startsWith\(["'`]PRACTICE_KEPT|measureKey\.split\(/.test(read(f))
     );
     check("R1's files parse measure keys only through parseMeasureKey (which honours `r` and `rc`)", offenders.length === 0, offenders.join(", "));
+  }
+
+  // ═══ Revision 5: readings per goal (contracts §23.3, §23.4; lane 3) ═══════
+
+  console.log("— revision 5: readings per goal, the scope union, RESUMED and Today's goal chip (§23.3, §23.4; lane 3) —");
+  {
+    const R2 = "r2";
+    const today = "2026-11-04";
+    const K6X = RT.cardsAtLevelKey([D_X], 6);
+    const tb = { tb: { rule: "TARGET:1/W", startDay: MON, instances: ticks(2) } };
+    const goal1 = ctxOf({ milestones: [cardsMs(), practiceMs()], templates: tb, histogram: hist([D_P, 6, 14], [D_X, 6, 3]) });
+    const goal2 = ctxOf({
+      roadmap: { id: R2, status: "ACTIVE", version: 1, reachedDay: null, archiveReason: null },
+      milestones: [ms({ id: "mx", ord: 1, measures: [cardsMeasure("mx1", [D_X], 6, 20, 0)] })],
+      histogram: hist([D_P, 6, 14], [D_X, 6, 3]),
+    });
+    const byId: Record<string, RR.RoadmapContext> = { [RID]: goal1, [R2]: goal2 };
+    const goalDeps = (store: Store, seen: string[] = []) => ({
+      env: ON,
+      client: stubClient(store),
+      loadGoals: async () => [RID, R2],
+      loadContext: async (q: RR.ContextQuery, day: DayKey) => {
+        seen.push(q.roadmapId ?? "?");
+        const c = q.roadmapId ? byId[q.roadmapId] : undefined;
+        return c ? fromStore(store, c, day) : null;
+      },
+    });
+
+    // runForActiveGoals: one context per ACTIVE goal, in seat order, each written on its own.
+    const store = new Store();
+    const seen: string[] = [];
+    const run = await R.recordRoadmapReadings(UID, at(today), { ...goalDeps(store, seen), caller: "LIFE_CRON" });
+    eq(
+      "goals: the full writer runs every ACTIVE goal on its own context, in seat order, each goal's readings and PROFICIENCY written",
+      [seen, run.skipped, run.error ?? null, store.get(K6, today)?.value, store.get(K6X, today)?.value, store.get(RT.proficiencyKey(RID), today) != null, store.get(RT.proficiencyKey(R2), today) != null],
+      [[RID, R2], null, null, 14, 3, true, true]
+    );
+    const solo = new Store();
+    const soloList = await R.recordRoadmapReadings(UID, at(today), { env: ON, caller: "LIFE_CRON", client: stubClient(solo), loadGoals: async () => [RID], loadContext: async (_q, day) => fromStore(solo, goal1, day) });
+    const single = new Store();
+    const singleRun = await R.recordRoadmapReadings(UID, at(today), { env: ON, caller: "LIFE_CRON", client: stubClient(single), loadContext: async (_q, day) => fromStore(single, goal1, day) });
+    eq(
+      "goals: one goal through the goal list writes exactly what the one-context run writes (the same run, rows and SQL)",
+      [json(soloList) === json(singleRun), json([...solo.readings.values()].map((r) => [r.measureKey, r.value])) === json([...single.readings.values()].map((r) => [r.measureKey, r.value])), json(solo.sql) === json(single.sql)],
+      [true, true, true]
+    );
+
+    // Each goal is guarded on its own: one goal's failure never stops another's readings, and its error names its seat.
+    const s2 = new Store();
+    const failing = await quietly(() =>
+      R.recordRoadmapReadings(UID, at(today), {
+        env: ON,
+        caller: "LIFE_CRON",
+        client: stubClient(s2),
+        loadGoals: async () => [RID, R2],
+        loadContext: async (q, day) => {
+          if (q.roadmapId === RID) throw new Error("connection reset");
+          return fromStore(s2, goal2, day);
+        },
+      })
+    );
+    eq(
+      "goals: goal 1's failure leaves goal 2's readings written, and comes back named by its seat (roadmapStepErrorsOf carries it)",
+      [failing.skipped, failing.error, s2.get(K6X, today)?.value, s2.get(K6, today) ?? null, RT.roadmapStepErrorsOf({ readings: failing })],
+      [null, "goal 1: connection reset", 3, null, ["readings: goal 1: connection reset"]]
+    );
+    const none = await R.recordRoadmapReadings(UID, at(today), { env: ON, caller: "LIFE_CRON", client: stubClient(new Store()), loadGoals: async () => [], loadContext: async () => goal1 });
+    eq("goals: no ACTIVE goal reads NO_ROADMAP, as before", none, { written: 0, reaches: 0, skipped: "NO_ROADMAP" });
+
+    // The scope union: a hook runs only the goals whose scope matched.
+    const union: RR.RoadmapScopeUnion = {
+      goals: [R.scopeMapOf({ roadmapId: RID, milestones: goal1.milestones, endState: [] }), R.scopeMapOf({ roadmapId: R2, milestones: goal2.milestones, endState: [] })],
+    };
+    eq(
+      "goals: the union's tests — a level change in Elsewhere moves goal 2's scope only, the Backtest template is goal 1's, a Domain in no scope moves none",
+      [R.goalsMovedByReview(union, D_X, 5, 6), R.goalsMovedByReview(union, D_P, 5, 6), R.goalsHoldingTemplate(union, "tb"), R.goalsMovedByReview(union, D_I, 5, 6), R.goalsMovedByReview(null, D_X, 5, 6)],
+      [[R2], [RID], [RID], [], []]
+    );
+    const s3 = new Store();
+    const hookSeen: string[] = [];
+    const hook = { ...goalDeps(s3, hookSeen), now: at(today), loadScopeMap: async () => union };
+    await R.recordCardsForReview(UID, "idea1", D_X, 5, 6, hook);
+    eq("goals: a review in goal 2's Domain runs only goal 2", [hookSeen, s3.get(K6X, today)?.value, s3.get(K6, today) ?? null], [[R2], 3, null]);
+    hookSeen.length = 0;
+    await R.recordPracticeForTemplate(UID, "tb", hook);
+    eq("goals: a tick of goal 1's practice runs only goal 1", [hookSeen, s3.get(K6, today)?.value], [[RID], 14]);
+    hookSeen.length = 0;
+    await R.recordCardsForReview(UID, "idea1", D_I, 5, 6, hook);
+    await R.recordPracticeForTemplate(UID, "elsewhere", hook);
+    eq("goals: a review or a tick in no goal's scope reads nothing", hookSeen, []);
+
+    // The real reads: every ACTIVE goal in one wave-1 query, never a PAUSED one, in seat order.
+    const scopeWhere: unknown[] = [];
+    const real = await R.loadScopeMap("u-goals-scope", {
+      roadmap: {
+        findMany: async (args: { where: unknown }) => {
+          scopeWhere.push(args.where);
+          return [
+            { id: "rB", slot: 2, milestones: [], acceptances: [] },
+            { id: "rN", slot: null, milestones: [], acceptances: [] },
+            { id: "rA", slot: 1, milestones: [], acceptances: [] },
+          ];
+        },
+      },
+    } as unknown as RR.RoadmapReadingsClient);
+    eq(
+      "goals: loadScopeMap reads the ACTIVE goals only (a PAUSED goal has no scope) and answers them in seat order, a NULL slot last",
+      [scopeWhere, real?.goals.map((g) => g.roadmapId)],
+      [[{ userId: "u-goals-scope", status: "ACTIVE" }], ["rA", "rB", "rN"]]
+    );
+    const fullWhere: unknown[] = [];
+    const noGoal = await R.recordRoadmapReadings("u-goals-none", at(today), {
+      env: ON,
+      caller: "LIFE_CRON",
+      client: { roadmap: { findMany: async (args: { where: unknown }) => (fullWhere.push(args.where), []) } } as unknown as RR.RoadmapReadingsClient,
+    });
+    eq(
+      "goals: the full writer's one wave-1 read asks for the ACTIVE goals only (PAUSED skipped), and with none reads NO_ROADMAP",
+      [fullWhere, noGoal],
+      [[{ userId: "u-goals-none", status: { in: ["ACTIVE"] } }], { written: 0, reaches: 0, skipped: "NO_ROADMAP" }]
+    );
+    eq("goals: bySeatOf orders by slot, a NULL slot last, then id", R.bySeatOf([{ id: "b", slot: null }, { id: "c", slot: 3 }, { id: "a", slot: null }, { id: "d", slot: 1 }]).map((x) => x.id), ["d", "c", "a", "b"]);
+
+    // RESUMED (contracts §23.4): the first reading after a resume is a rebase, never a gain, even on the same basis.
+    const basis: RT.ProficiencyBasis = { basisVersion: 1, cards: [{ measureKey: K6, domainIds: [D_P], level: 6, target: 20 }], practice: [], scheduled: 1 };
+    const pin = (day: DayKey, histogram: Record<string, Record<number, number>>, previous: RT.Reading | null, decision?: { cause: RT.ProficiencyRebaseCause }) =>
+      PF.proficiencyReadingOf({ roadmapId: RID, today: day, basis, histogram, domainNames: NAMES, kept: {}, reached: 0, reachedOnTicks: false, previous, ...(decision ? { decision } : {}) });
+    const paused = pin("2026-10-06", hist([D_P, 6, 8]), null);
+    const prev = reading(paused.measureKey, paused.day, paused.value, paused.detail);
+    const plain = pin(today, hist([D_P, 6, 16]), prev);
+    const resumed = pin(today, hist([D_P, 6, 16]), prev, { cause: "RESUMED" });
+    eq(
+      "RESUMED: a resume's reading rebases 'since you resumed' from the paused value, even on the same basis; the same basis without it never rebases",
+      [plain.detail.rebased, resumed.detail.rebased, resumed.value === plain.value],
+      [null, { on: today, from: paused.value, cause: "RESUMED", detail: "since you resumed" }, true]
+    );
+    const cur = reading(resumed.measureKey, resumed.day, resumed.value, JSON.parse(JSON.stringify(resumed.detail)));
+    eq(
+      "RESUMED: the stored detail reads its cause back, and the week shows the rebase, never a gain",
+      [PF.parseProficiencyDetail(cur.detail)?.rebased?.cause, PF.proficiencyChangeOf(cur, prev, today)?.kind, PF.rebaseDetailOf(basis, basis, "RESUMED")],
+      ["RESUMED", "rebased", "since you resumed"]
+    );
+
+    // Today's goal chip (contracts §23.3; D39): the seat only with 2 or more goals open.
+    const entry = { series: [], ord: 2, of: 5, zeroReason: null, note: null };
+    const chip = (seat?: { slot: RT.GoalSlot | null; open: number }) => roadmapGoalCardOf({ goalMp: 6 }, { steps: [], readings: [] }, today, today, seat ? { ...entry, seat } : entry);
+    eq(
+      "Today's goal chip: one goal reads 'Roadmap · milestone 2 of 5' with no seat (as before); with 2 or more open, '2 of 5' after its seat glyph; a paused goal's entry shows none",
+      [chip().chip, "slot" in chip(), chip({ slot: 1, open: 1 }).chip, chip({ slot: 2, open: 2 }).chip, chip({ slot: 2, open: 2 }).slot, chip({ slot: null, open: 3 }).chip, "slot" in chip({ slot: null, open: 3 })],
+      ["Roadmap · milestone 2 of 5", false, "Roadmap · milestone 2 of 5", "2 of 5", 2, "Roadmap · milestone 2 of 5", false]
+    );
   }
 
   // ═══ Greps: isolation and names ═════════════════════════════════════════

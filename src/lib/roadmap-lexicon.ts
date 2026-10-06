@@ -1224,3 +1224,139 @@ export const URL_TLDS: readonly string[] = [
   "dev", "ai", "me", "tv", "us", "ca", "nz", "in", "ly", "gg", "xyz", "site", "online",
   "academy", "courses", "school", "link", "page", "blog", "biz", "eu", "vn",
 ];
+
+// ── Revision 5, lane 6 ──
+// The topic map's word lists (contracts §22.10; spec F-R5-2, F-R5-3, F-R5-5,
+// F-R5-7, F-R5-13). They live only here (ruling 33): roadmap-types, which the
+// hostile V reads, holds none. Matching is roadmap-validate's: synonyms.ts
+// words and stems, a multi-word entry as a run of whole words,
+// case-insensitive. The exceptions: ADVICE's and INJECTION's first word is
+// exact (rulings 8 and 9), and CURRENCY_WORDS is exact. The spec's lists are
+// kept whole; additions are marked "(added)".
+
+/** LEVEL_ONLY and C10: level words, left out of a topic's level stems (levelStemsOf). */
+export const LEVEL_WORDS: readonly string[] = [
+  "basic", "basics", "intro", "introduction", "fundamentals", "foundations", "intermediate", "advanced",
+  "expert", "mastery", "core", "essentials", "overview", "applied", "practical", "beginner",
+];
+
+/** LEVEL_ONLY and C10: generic heads, left out of a topic's level stems ("Core concepts" names nothing). */
+export const GENERIC_HEADS: readonly string[] = ["concepts", "principles", "topics", "skills", "applications", "strategies", "theory", "knowledge"];
+
+/** ADVICE: a topic name whose first word (exact, case-folded; a hyphenated compound is one word) is one of these is advice, not a topic (ruling 9). */
+export const ADVICE_VERBS: readonly string[] = [
+  "pay", "buy", "sell", "refinance", "invest", "consolidate", "avoid", "borrow", "switch", "cancel", "stop", "start",
+  "take", "increase", "reduce", "maximise", "minimise",
+  // (added) the US spellings
+  "maximize", "minimize",
+];
+
+/** ADVICE: a named money scheme anywhere in a topic name (a run of whole words). */
+export const SCHEME_NAMES: readonly string[] = [
+  "velocity banking", "infinite banking", "bank on yourself", "be your own bank", "smith manoeuvre", "smith maneuver",
+  "mortgage acceleration", "money merge account", "debt snowball", "debt avalanche", "dividend snowball", "wheel strategy",
+  "dogs of the dow", "baby steps", "latte factor", "coast fire", "lean fire", "fat fire", "barista fire",
+];
+
+/** BRAND: a firm, product or course brand in a topic name, matched case-insensitively ("vanguard index funds"). Curated: an unlisted brand in lower case can pass (§22.20 item 8). */
+export const BRAND_NAMES: readonly string[] = [
+  "vanguard", "fidelity", "schwab", "charles schwab", "blackrock", "ishares", "robinhood", "etrade", "td ameritrade",
+  "interactive brokers", "webull", "sofi", "betterment", "wealthfront", "acorns", "stash", "coinbase", "binance", "kraken",
+  "revolut", "monzo", "paypal", "venmo", "quicken", "ynab", "you need a budget", "personal capital", "empower", "morningstar",
+  "motley fool", "investopedia", "nerdwallet", "credit karma", "experian", "equifax", "transunion", "fico", "zillow", "redfin",
+  "rocket mortgage", "quicken loans", "lendingtree", "hargreaves lansdown", "aj bell", "nutmeg", "moneybox", "freetrade",
+  "trading 212", "etoro", "plus500", "commsec", "selfwealth", "raiz", "spaceship", "pocketsmith", "coursera", "udemy",
+  "khan academy", "duolingo", "skillshare", "masterclass",
+];
+
+/** INJECTION (ruling 8, case b): a first word (exact, case-folded) from this list, with an INJECTION_DEICTIC_WORDS word anywhere in the name. */
+export const INJECTION_WORDS: readonly string[] = ["ignore", "disregard", "instruction", "instructions", "prompt", "system", "assistant", "output", "respond", "rate", "answer"];
+
+/** (added, ruling 8, case a) INJECTION fires on any of these words anywhere in a topic name (exact, case-folded). */
+export const INJECTION_ANYWHERE_WORDS: readonly string[] = ["ignore", "disregard", "instruction", "instructions"];
+
+/** (added, ruling 8, case b) The pointing words that turn an INJECTION_WORDS first word into an instruction ("Rate this …", "Respond only …", "Output the above"). */
+export const INJECTION_DEICTIC_WORDS: readonly string[] = ["this", "that", "above", "previous", "prior", "earlier", "following", "all", "only", "me", "you", "your", "my", "instead", "now"];
+
+/** JURISDICTION: a rule, scheme or account that holds in one country (finance, legal, the national health schemes). */
+export const JURISDICTION: readonly string[] = [
+  // finance
+  "isa", "isas", "lifetime isa", "401(k)", "401k", "roth ira", "ira", "superannuation", "super fund", "negative gearing",
+  "offset account", "rrsp", "tfsa", "kiwisaver", "stamp duty", "lenders mortgage insurance", "tracker mortgage",
+  "franking credits", "council tax", "help to buy", "escrow account",
+  // (added) finance
+  "sipp", "premium bonds", "cpf", "mpf", "epf", "ppf", "529 plan", "hsa", "fha loan", "va loan", "first home super saver",
+  // legal
+  "small claims court", "probate",
+  // (added) legal
+  "conveyancing", "county court",
+  // health (the national schemes)
+  "medicare", "medicaid", "nhs", "obamacare", "affordable care act", "medisave", "medishield", "ohip", "pbs",
+];
+
+/** The «Not financial advice» caution (with BUDGET_WORDS and SPEND_WORDS), over the aim, the Area name and the constraints. High recall by design. */
+export const MONEY_CAUTION_WORDS: readonly string[] = [
+  "portfolio", "invest", "investing", "investment", "investments", "investor", "stock", "stocks", "shares", "share market",
+  "stock market", "bond", "bonds", "fund", "funds", "etf", "index fund", "crypto", "cryptocurrency", "bitcoin", "trading",
+  "forex", "stock options", "options trading", "futures trading", "mortgage", "mortgages", "loan", "loans", "debt", "debts",
+  "credit card", "credit score", "interest rate", "interest rates", "compound interest", "retirement", "retire", "pension",
+  "superannuation", "tax", "taxes", "taxation", "savings", "insurance", "wealth", "finance", "finances", "financial", "money",
+  "bill", "bills", "rent", "property investment", "real estate", "dividend", "dividends", "annuity", "refinance",
+  "refinancing", "broker", "brokerage", "net worth", "income", "salary", "wages", "expenses", "cash flow", "bank", "banking",
+];
+
+/** The «Not legal advice» caution, over the aim, the Area name and the constraints. */
+export const LEGAL_WORDS: readonly string[] = [
+  "law", "laws", "legal", "lawyer", "lawyers", "solicitor", "attorney", "court", "courts", "lawsuit", "litigation", "contract",
+  "contracts", "lease", "tenancy", "tenant", "landlord", "will and testament", "estate planning", "probate", "trust law", "visa",
+  "visas", "immigration", "citizenship", "divorce", "custody", "patent", "patents", "trademark", "trademarks", "copyright",
+  "licence", "license", "licensing", "compliance", "regulation", "regulations", "regulatory", "statute", "gdpr", "liability",
+];
+
+/** A routine clause of the aim (routineClausesOf): [Track '<clause>' as its own goal?] when Gemini is off. */
+export const ROUTINE_WORDS: readonly string[] = [
+  "keep", "keeping", "stay", "staying", "maintain", "maintaining", "routine", "routines", "habit", "habits", "daily", "weekly",
+  "monthly", "every day", "every week", "every month", "each day", "each week", "each month", "on track", "on target",
+  "on top of", "up to date", "bill", "bills", "chores", "upkeep", "tidy",
+];
+
+/** REGION: your texts name a country (LabelContext.topicMap.countryNamed); a REGION_SPECIFIC name with none is hidden. */
+export const COUNTRY_WORDS: readonly string[] = [
+  "united states", "usa", "america", "american", "united kingdom", "uk", "britain", "great britain", "british", "england",
+  "scotland", "scottish", "wales", "welsh", "northern ireland", "ireland", "irish", "australia", "australian", "aussie",
+  "new zealand", "canada", "canadian", "india", "singapore", "hong kong", "malaysia", "philippines", "south africa", "nigeria",
+  "kenya", "germany", "france", "spain", "italy", "netherlands", "belgium", "switzerland", "sweden", "norway", "denmark",
+  "finland", "poland", "portugal", "greece", "austria", "japan", "china", "south korea", "korea", "vietnam", "viet nam",
+  "thailand", "indonesia", "brazil", "mexico", "argentina", "chile", "colombia", "uae", "united arab emirates", "saudi arabia",
+  "israel", "turkey", "egypt", "pakistan", "bangladesh", "sri lanka", "taiwan", "california", "texas", "new york", "ontario",
+  "quebec", "new south wales", "queensland",
+];
+
+/** Figure stripping (roadmap-evidence stripFiguresOf, ruling 40): currency words, matched exactly (case-folded). */
+export const CURRENCY_WORDS: readonly string[] = [
+  "usd", "eur", "gbp", "aud", "cad", "nzd", "jpy", "cny", "rmb", "vnd", "sgd", "inr", "chf", "hkd", "krw", "dollar", "dollars",
+  "buck", "bucks", "pound", "pounds", "quid", "euro", "euros", "yen", "yuan", "dong", "rupee", "rupees",
+];
+
+/** clauseSplitOf: the aim's preamble, stripped from a clause's start (a run of whole words, case-insensitive). */
+export const AIM_PREAMBLE_PHRASES: readonly string[] = [
+  "i want to", "i wanna", "i would like to", "i'd like to", "id like to", "i need to", "i hope to", "i plan to", "i aim to",
+  "i wish to", "i will", "i want", "to be able to", "be able to", "able to",
+];
+
+/** clauseSplitOf: a clause's leading joiner, stripped from its start (a run of whole words, case-insensitive). */
+export const CLAUSE_LEAD_PHRASES: readonly string[] = ["while", "as well as", "and also", "and", "also", "plus", "then"];
+
+/** GROUND's source denylist (ground.denylist): a chunk whose registrable domain is one of these never counts as a source. */
+export const SOURCE_DENYLIST: readonly string[] = [
+  "reddit.com", "quora.com", "stackexchange.com", "stackoverflow.com", "answers.com", "yahoo.com", "medium.com", "linkedin.com",
+  "facebook.com", "twitter.com", "x.com", "instagram.com", "tiktok.com", "youtube.com", "pinterest.com", "wikihow.com",
+  "scribd.com", "coursehero.com", "chegg.com", "brainly.com", "studocu.com", "slideshare.net", "prezi.com", "blogspot.com",
+  "wordpress.com", "substack.com", "tumblr.com", "fandom.com", "quizlet.com", "bing.com", "google.com",
+];
+
+/** GROUND's denylist by title: a chunk whose title's last " - X", " | X" or " — X" segment names one of these sites. */
+export const SOURCE_DENY_TITLE_WORDS: readonly string[] = [
+  "reddit", "quora", "stack exchange", "stack overflow", "medium", "linkedin", "facebook", "youtube", "pinterest", "wikihow",
+  "scribd", "course hero", "chegg", "brainly", "studocu", "slideshare", "tiktok", "instagram", "quizlet", "yahoo answers",
+];

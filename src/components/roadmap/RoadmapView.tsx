@@ -195,6 +195,13 @@ import { RoadmapGlyph } from "./RoadmapGlyph";
 import { TitleClassChip } from "./ProvenanceChip";
 import { DateBlock } from "./DateBlock";
 import { GapPanel, type LiveGates } from "./GapPanel";
+// ── Revision 5, lane 9: a TOPICS plan's map card and chain nodes, [Break into topics] (only while TOPIC_PLANS_LIVE) ──
+import { NamedText } from "@/components/glyph/NamedMark";
+import { TopicMap } from "./TopicMap";
+import { railNodeTopicFieldsOf, topicPlansOn } from "./topic-map-model";
+import { BREAK_INTO_TOPICS_LINE, BREAK_INTO_TOPICS_WORD, tailToReachLine } from "./roadmap-copy";
+import { EstimateChip } from "./EstimateChip";
+import { STAGE_NAMES as TOPIC_STAGE_NAMES, stageOfLevel as topicStageOfLevel, type RatingView } from "@/lib/roadmap-types";
 import { ActivityConfirmCard } from "./ActivityConfirm";
 import "./roadmap.css";
 
@@ -967,6 +974,7 @@ function MilestonesList({
   depthLine,
   seen,
   startTick,
+  chain = null,
 }: {
   rows: readonly MilestoneRowView[];
   today: string;
@@ -982,20 +990,30 @@ function MilestonesList({
   seen?: SeenBases | null;
   /** Bumped after the user's own Start (ACT). */
   startTick?: number;
+  /** Revision 5, lane 9 (ui-motion §15.6): a TOPICS plan's chain heading: the EstimateChip, then "· +1 to reach Fluent". */
+  chain?: { rating: RatingView; tail: string | null; roadmapId: string } | null;
 }) {
   const plan = rankPlanOfRows(rows);
   const model = railNodesOf(rows, { today, plan });
   // railNodesOf keeps the rows in place order with LATER left out, one node per row.
   const placed = rows.filter((x) => x.state !== "LATER").sort((a, b) => a.ord - b.ord);
   const later = rows.filter((r) => r.state === "LATER").sort((a, b) => a.ord - b.ord);
-  const title = (r: MilestoneRowView) => (
-    <span data-wc="name">
-      <b>
-        <StruckLabel label={r.title} struck={r.titleStruck} />
-      </b>
-      <TitleClassChip cls={r.titleClass} />
-    </span>
-  );
+  const title = (r: MilestoneRowView) =>
+    r.titleParts && r.titleParts.length > 0 ? (
+      // Revision 5, lane 9: a TOPICS title in NamedParts (the 344 short form), pv.named after each Gemini-named Domain
+      <span data-wc="name">
+        <b>
+          <NamedText parts={r.titleParts} />
+        </b>
+      </span>
+    ) : (
+      <span data-wc="name">
+        <b>
+          <StruckLabel label={r.title} struck={r.titleStruck} />
+        </b>
+        <TitleClassChip cls={r.titleClass} />
+      </span>
+    );
   const nodes: RailNode[] = model.map((n, i) => {
     const r: MilestoneRowView | undefined = placed[i];
     const entry = r ? plan[r.id] : undefined;
@@ -1003,18 +1021,21 @@ function MilestonesList({
     const givesFull = giving ? givesRankLine(entry.rankIndex, true) : null;
     const idx = entry?.rankIndex ?? 0;
     const pct = r && !n.heldAtStart && r.percent != null && n.state !== "CLOSED_UNREACHED" ? `${r.percent}%` : null;
+    // Revision 5, lane 9: a TOPICS row's layer, role, lock and hold ({} on LEVELS: the node is unchanged). A held layer is not a reach.
+    const topic = r ? railNodeTopicFieldsOf(r) : {};
     return {
+      ...topic,
       n: n.n,
       // RouteRail badges every OUTLINE node with Gemini's balloon; an outline row in the app's words is drawn as the same
       // thin ring without it (its words still say "Outline"), so the badge never claims Gemini wrote it (D25, D27).
-      state: n.state === "OUTLINE" && !n.gemini ? "PLANNED" : n.state,
+      state: topic.heldLayer && r ? r.state : n.state === "OUTLINE" && !n.gemini ? "PLANNED" : n.state,
       label: `${n.label}${n.gemini && n.titleClass ? ` · ${PROVENANCE_WORDS[n.titleClass === "KEPT_SUGGESTION" ? "KEPT_SUGGESTION" : "DRAFT"]}` : ""}${pct ? ` · ${pct}` : ""}`,
       title: r ? title(r) : n.title,
-      meta: n.meta ?? undefined,
+      meta: topic.heldLayer ? undefined : (n.meta ?? undefined),
       aside: pct ?? undefined,
       pct: n.pct,
       gate: n.gate ?? undefined,
-      rankIndex: n.rankIndex,
+      rankIndex: topic.heldLayer ? null : n.rankIndex,
       countsFrom: n.countsFrom ?? undefined,
       closedPct: n.closedPct,
       more: (
@@ -1063,6 +1084,11 @@ function MilestonesList({
     <div className="rm-o4" data-wc-block="milestones">
       <SectionHeader title="Milestones" aside={`${positions} · to ${dayLabel(targetDay, today)}`} />
       <section className="card rm-ml-card" aria-label="Milestones">
+        {chain && (
+          <div className="rm-ml-chain">
+            <EstimateChip rating={chain.rating} tail={chain.tail} seenKey={seenBaseOf(seen ?? null, "plan")} today={today} />
+          </div>
+        )}
         <RouteRail nodes={nodes} seenKey={seenBaseOf(seen ?? null, "plan")} startTick={startTick} label="Milestones" className="rm-rail" />
         {(depthLine || paragon) && (
           <div className="rm-ml-foot">
@@ -1275,9 +1301,10 @@ function Aftercare({ view }: { view: RoadmapView }) {
   );
 }
 
-function Footer({ view, current, onReplan }: { view: RoadmapView; current: CurrentMilestoneView | null; onReplan: () => void }) {
+function Footer({ view, current, onReplan, topics = false }: { view: RoadmapView; current: CurrentMilestoneView | null; onReplan: () => void; topics?: boolean }) {
   const [archive, setArchive] = useState(false);
   const [done, setDone] = useState(false);
+  const [breakOpen, setBreakOpen] = useState(false);
   const header = view.header!;
   // DONE or ARCHIVED (a reset's archive included): no dead end — the next aim, and the history kept.
   if (header.status === "DONE" || header.status === "ARCHIVED")
@@ -1301,6 +1328,13 @@ function Footer({ view, current, onReplan }: { view: RoadmapView; current: Curre
         </Button>
       )}
       <Button onClick={onReplan}>Re-plan</Button>
+      {/* Revision 5, lane 9: [Break into topics] joins a LEVELS plan's actions only while TOPIC_PLANS_LIVE (row 6's budget holds) */}
+      {topics && header.planKind !== "TOPICS" && !view.draft && (
+        <>
+          <Button onClick={() => setBreakOpen(true)}>{BREAK_INTO_TOPICS_WORD}</Button>
+          <BreakIntoTopicsSheet open={breakOpen} onClose={() => setBreakOpen(false)} roadmapId={header.id} />
+        </>
+      )}
       <Button variant="danger" onClick={() => setArchive(true)}>
         Archive
       </Button>
@@ -1375,6 +1409,11 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
           </div>
         )}
         {!closed && current && <NowSection view={view} current={current} onStartOpen={() => setStart(true)} seen={seen} />}
+        {view.topicMap && topicPlansOn(gates) && (
+          <div className="rm-o4">
+            <TopicMap map={view.topicMap} mode="plan" gates={gates} seenBasis={seen?.plan ?? null} today={view.today} />
+          </div>
+        )}
         {view.milestones.length > 0 && (
           <MilestonesList
             rows={view.milestones}
@@ -1386,6 +1425,7 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
             depthLine={depthListLine(view)}
             seen={seen}
             startTick={startSeen.tick}
+            chain={topicChainOf(view, topicPlansOn(gates))}
           />
         )}
         {!closed && <GapPanel gaps={view.gaps} hidden={view.gapsHidden} scope={scope} gates={gates} />}
@@ -1394,7 +1434,7 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
             <ActivityConfirmCard view={view.activityConfirm} roadmapId={header.id} today={view.today} place="plan" onReplan={() => setReplan(true)} />
           </div>
         )}
-        <Footer view={view} current={current} onReplan={() => setReplan(true)} />
+        <Footer view={view} current={current} onReplan={() => setReplan(true)} topics={topicPlansOn(gates)} />
       </div>
       <div className="rm-col">
         {view.toward && (
@@ -1559,3 +1599,34 @@ export function RoadmapScreen({
   );
 }
 
+// ── Revision 5, lane 9: [Break into topics] (contracts §22.14 breakIntoTopicsCore; ruling 49) ──
+
+/** A TOPICS re-plan draft of this LEVELS plan (version + 1); the plan stays live until the map is accepted. */
+function BreakIntoTopicsSheet({ open, onClose, roadmapId }: { open: boolean; onClose: () => void; roadmapId: string }) {
+  const { run, pending, error } = useRoadmapAction();
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title={BREAK_INTO_TOPICS_WORD}
+      footer={
+        <Button variant="primary" block disabled={pending} onClick={() => run((a) => a.breakIntoTopics(roadmapId), () => onClose())}>
+          {BREAK_INTO_TOPICS_WORD}
+        </Button>
+      }
+    >
+      <p className="t-meta" style={{ margin: 0 }}>
+        {BREAK_INTO_TOPICS_LINE}
+      </p>
+      {error && <ActionError>{error}</ActionError>}
+    </Sheet>
+  );
+}
+
+/** Revision 5, lane 9: a TOPICS plan's chain heading (the estimate, and the depth tail "+1 to reach Fluent"); null on LEVELS or with the switch off. */
+export function topicChainOf(view: Pick<RoadmapView, "header">, on: boolean): { rating: RatingView; tail: string | null; roadmapId: string } | null {
+  const h = view.header;
+  if (!on || !h || h.planKind !== "TOPICS" || !h.rating) return null;
+  const stage = h.depth ? topicStageOfLevel(h.depth) : null;
+  return { rating: h.rating, tail: h.rating.tail > 0 && stage ? tailToReachLine(h.rating.tail, TOPIC_STAGE_NAMES[stage]) : null, roadmapId: h.id };
+}

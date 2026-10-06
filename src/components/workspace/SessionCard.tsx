@@ -21,6 +21,8 @@ import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { Icon, Sigil } from "@/components/ui/Icon";
 import { cx } from "@/components/ui/cx";
+// Revision 5, lane 9 (contracts ruling 67): pv.named after a Domain Gemini named
+import { DomainName } from "@/components/glyph/NamedMark";
 import { FormatAnswer, formatPrompt } from "./FormatAnswer";
 import { answerText, sameOption, type RunCard } from "./review-model";
 
@@ -97,7 +99,7 @@ export function SessionCard({ card, today, phase, expected, picked, onAnswer }: 
     <>
       <div className="rv-ctx">
         <span>
-          <Sigil track="know" /> <b>{card.domainName}</b> · {card.fieldName}
+          <Sigil track="know" /> <b>{card.domainGeminiNamed ? <DomainName name={card.domainName} geminiNamed /> : card.domainName}</b> · {card.fieldName}
         </span>
         <span>Idea level {card.level}</span>
       </div>

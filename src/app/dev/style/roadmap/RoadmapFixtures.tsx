@@ -19,7 +19,9 @@ import { RoadmapForm } from "@/components/roadmap/RoadmapForm";
 import { AimCard } from "@/components/roadmap/AimCard";
 import { WeekQuests } from "@/components/roadmap/WeekQuests";
 import { SectionHeader } from "@/components/ui/Tabs";
-import { FIXTURE_STATES, REV4_STATES, roadmapFixture, type FixtureState } from "./fixtures";
+import { FIXTURE_STATES, REV4_STATES, TOPIC_STATES, roadmapFixture, type FixtureState } from "./fixtures";
+// Revision 5, lane 9: the map card alone, for the sheet states (a row's sheet open at mount)
+import { TopicMap } from "@/components/roadmap/TopicMap";
 
 /**
  * UI motion (ui-motion.md §11.7–§11.8, RZ): a SEEN state's fixture says what "this viewer last saw" (fx.seen). Its
@@ -50,7 +52,7 @@ export function RoadmapFixtures({ state }: { state: FixtureState }) {
     <FixtureRoadmapProvider>
       <SeenSeeds state={state} seeds={fx.seen} />
       <nav className="rm-fx-nav" aria-label="Roadmap fixture states">
-        {FIXTURE_STATES.filter((s) => !(REV4_STATES as readonly string[]).includes(s)).map((s) => (
+        {FIXTURE_STATES.filter((s) => !(REV4_STATES as readonly string[]).includes(s) && !(TOPIC_STATES as readonly string[]).includes(s)).map((s) => (
           <Link key={s} className="chip btn-chip" aria-current={s === state ? "page" : undefined} href={`/dev/style/roadmap?state=${s}`}>
             {s}
           </Link>
@@ -63,10 +65,18 @@ export function RoadmapFixtures({ state }: { state: FixtureState }) {
           </Link>
         ))}
       </nav>
+      <nav className="rm-fx-nav" aria-label="Roadmap fixture states, revision 5">
+        {TOPIC_STATES.map((s) => (
+          <Link key={s} className="chip btn-chip" aria-current={s === state ? "page" : undefined} href={`/dev/style/roadmap?state=${s}`}>
+            {s}
+          </Link>
+        ))}
+      </nav>
       <p className="t-meta" style={{ margin: "0 0 16px" }}>
         Fixtures: every figure here is made up. {fx.note}
       </p>
-      {fx.view && <RoadmapScreen view={fx.view} startPreview={fx.startPreview} gates={fx.gates} />}
+      {fx.topicMap && <TopicMap key={state} map={fx.topicMap.map} mode={fx.topicMap.mode} gates={fx.gates} fixtureOpen={fx.topicMap.open ?? null} today={fx.view?.today} />}
+      {fx.view && !fx.topicMap && <RoadmapScreen view={fx.view} startPreview={fx.startPreview} gates={fx.gates} />}
       {fx.intake && (
         <div style={{ marginTop: fx.view ? 24 : 0 }}>
           {fx.view && <SectionHeader title="Set an aim" aside="/you/roadmap/new" />}

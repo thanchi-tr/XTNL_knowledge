@@ -106,6 +106,7 @@ import {
   writingPlanOf,
   type StageLadderResult,
 } from "../src/lib/roadmap-realism";
+import { sharesOf } from "../src/lib/roadmap-goals";
 
 let passed = 0;
 let failed = 0;
@@ -2873,6 +2874,121 @@ console.log("— the practice progression on every built plan (contracts §20; R
     "order: the outline split across the six kept stages in the reply's order (each line once; an unknown or repeated entry left out), every label the user's line; without one, the user's order",
     [linesOf(ordered.plan), ordered.plan.flatMap((m) => m.items.filter((i) => i.kind === "TOPIC").map((i) => i.label === outline!.lines[i.syllabusRef!])).every(Boolean), linesOf(plain.plan)],
     [[[7, 6], [5, 4], [3], [2], [1], [0]], true, [[0, 1], [2, 3], [4], [5], [6], [7]]]
+  );
+}
+
+// ═══ Revision 5: one person's week (contracts §23.3, ruling 54; lane 3) ═════
+//
+// Up to 3 goals share one person's week: capacityOf (through availableFor and every judging path) reads
+// RealismInput.share, weekMin_g = min(h_g × 60 × A, rampCap × s_g), and a FIELD-sourced pace is multiplied by
+// RealismInput.fieldShare (ruling 30: a Domain's own pace and a typed rate are not split). Both default to 1, and 1 is
+// byte-identical (M13): today's single-goal user sees no change while GOALS_MAX is 1.
+
+console.log("— revision 5: one person's week, the shares (contracts §23.3; lane 3) —");
+{
+  const ONE = { share: 1, fieldShare: 1 } as const;
+  // M13: share 1 and fieldShare 1 change nothing, on every path the engine has.
+  const runFit = fitPlan(runPlan({ sessions: 4, band: "D60" }), input({ targetDay: D(69), trackArea: true }));
+  const ramp = input({ targetDay: D(69), trackArea: true, hoursPerWeek: 15, throughput: tp({ p: null, tracked: 180 }) });
+  const fresh = input({ targetDay: D(69), trackArea: true, hoursPerWeek: 15, throughput: tp({ p: null }) });
+  const adh = input({ hoursPerWeek: 10, throughput: tp({ adherence: 0.5, tracked: 2000 }) });
+  const held = input({ heldDays: [D(7), D(8), D(9)] });
+  check(
+    "M13: availableFor at share 1 and fieldShare 1 is byte-identical to no share (ramp, calibrating, adherence, held days)",
+    [ramp, fresh, adh, held].every((x) => [D(0), D(7), D(63)].every((w) => json(availableFor(w, { ...x, ...ONE })) === json(availableFor(w, x))))
+  );
+  check("M13: a judged plan at share 1 is byte-identical (the ramp case, its OVER and its basis)", json(feasibilityOf(runFit, { ...ramp, ...ONE })) === json(feasibilityOf(runFit, ramp)));
+  const sc = workedScope();
+  const worked = fitPlan([workedMilestone()], input({ scopes: [sc] }));
+  check(
+    "M13: the worked example's fit and judgement at share 1 are byte-identical",
+    json(fitPlan([workedMilestone()], input({ scopes: [sc], ...ONE }))) === json(worked) && json(feasibilityOf(worked, input({ scopes: [sc], ...ONE }))) === json(feasibilityOf(worked, input({ scopes: [sc] })))
+  );
+  const fa = scopeOf(["a"], [], "FIELD", 6);
+  const fb = scopeOf(["b"], [], "FIELD", 6);
+  const twoPlan = [
+    ms({ lineageId: "m1", ord: 1, dueDay: D(69), items: [dom("a", "Alpha")], measures: [cardMeasure(["a"], 6, 10, "WORKED_OUT", 0)] }),
+    ms({ lineageId: "m2", ord: 2, windowStart: D(70), dueDay: D(139), items: [dom("b", "Beta")], measures: [cardMeasure(["b"], 8, 10, "WORKED_OUT", 0)] }),
+  ];
+  const twoIn = input({ targetDay: D(139), scopes: [fa, fb] });
+  check(
+    "M13: a Field-paced plan's writing and judgement at fieldShare 1 are byte-identical",
+    json(writingPlanOf(twoPlan, { ...twoIn, ...ONE })) === json(writingPlanOf(twoPlan, twoIn)) && json(feasibilityOf(twoPlan, { ...twoIn, ...ONE })) === json(feasibilityOf(twoPlan, twoIn))
+  );
+  const packOne = ladder4("pack at share 1", stageLadderOf(packIk, { ...packIn, ...ONE }, names4, mk4));
+  const packNone = ladder4("pack, no share", stageLadderOf(packIk, packIn, names4, mk4));
+  check(
+    "M13: a depth plan at share 1 and fieldShare 1 builds the same ladder (stages, dates, coverage, stage days) and writes the same cards",
+    json(shape(packOne.plan)) === json(shape(packNone.plan)) &&
+      json(stageDaysOf(packOne)) === json(stageDaysOf(packNone)) &&
+      json(packOne.coverage) === json(packNone.coverage) &&
+      json(writingPlanOf(packOne.plan, judgeIn({ ...packIn, ...ONE }, packOne.plan))) === json(writingPlanOf(packOne.plan, judgeIn(packIn, packOne.plan))),
+    json([shape(packOne.plan), shape(packNone.plan)])
+  );
+
+  // The golden (F-R5-16, contracts §22.12): goals of 5, 1 and 5 h at RAMP_FLOOR_MIN 120 get about 55, 11 and 55 minutes.
+  const goals = [
+    { roadmapId: "g1", status: "ACTIVE" as const, hoursPerWeek: 5, fieldId: "f1" },
+    { roadmapId: "g2", status: "ACTIVE" as const, hoursPerWeek: 1, fieldId: null },
+    { roadmapId: "g3", status: "DRAFT" as const, hoursPerWeek: 5, fieldId: "f2" },
+  ];
+  const shares = sharesOf(goals);
+  // Tracked 60 min a week: the ramp cap is max(RAMP_FLOOR_MIN, 1.5 × 60) = 120 for the user, whatever each goal declares.
+  const atFloor = (g: (typeof goals)[number]) => availableFor(D(7), input({ hoursPerWeek: g.hoursPerWeek, share: shares[g.roadmapId].share, fieldShare: shares[g.roadmapId].fieldShare, throughput: tp({ p: 0.8, tracked: 60 }) }));
+  const mins = goals.map((g) => atFloor(g).minutes);
+  check(
+    "the 5/1/5 h golden at RAMP_FLOOR_MIN 120: about 55, 11 and 55 minutes a week (120 × 5/11, 120 × 1/11, 120 × 5/11), each with the ramp binding",
+    RT.RAMP_FLOOR_MIN === 120 && json(mins.map((m) => Math.round(m))) === json([55, 11, 55]) && goals.every((g) => atFloor(g).rampBinds),
+    json(mins)
+  );
+  near("… and together they take exactly the user's one ramp cap (120 min), never three", mins.reduce((s, m) => s + m, 0), 120, 1e-9);
+  check(
+    "a goal's own declared hours still bind under its share of the ramp: 1 h × 0.7 = 42 min against 120 × 10/11 ≈ 109 (5 h and 1 h at the floor)",
+    Math.abs(availableFor(D(7), input({ hoursPerWeek: 1, share: 10 / 11, throughput: tp({ p: 0.8, tracked: 60 }) })).minutes - 42) < 1e-9 && !availableFor(D(7), input({ hoursPerWeek: 1, share: 10 / 11, throughput: tp({ p: 0.8, tracked: 60 }) })).rampBinds
+  );
+  check(
+    "with no tracked history (no ramp cap yet), a goal plans on its own declared hours: the share splits the tracked time, not your hours (5 h × 0.7 = 210)",
+    availableFor(D(7), input({ hoursPerWeek: 5, share: 5 / 11, throughput: tp({ p: 0.8 }) })).minutes === 210
+  );
+  check(
+    "a share outside [0, 1] is clamped and a non-number reads 1 (2 → the whole cap; NaN → as absent)",
+    json(availableFor(D(7), { ...ramp, share: 2 })) === json(availableFor(D(7), ramp)) && json(availableFor(D(7), { ...ramp, share: Number.NaN })) === json(availableFor(D(7), ramp)) && availableFor(D(7), { ...ramp, share: -1 }).minutes === 0
+  );
+  const tShared = feasibilityOf(runFit, { ...ramp, share: 5 / 11 }).milestones[0].time;
+  check(
+    "the basis names the shared ramp: 'Your tracked time limits all your goals; this one plans on 45% of it, ≈ 55 min a week.'",
+    tShared.basis.some((b) => b.startsWith("You've tracked ≈ 3 h a week of tasks") && b.endsWith("Your tracked time limits all your goals; this one plans on 45% of it, ≈ 55 min a week.")),
+    json(tShared.basis)
+  );
+  check("… and the single-goal basis never says so", !feasibilityOf(runFit, ramp).milestones[0].time.basis.some((b) => b.includes("all your goals")));
+
+  // The Field pace share (ruling 30): a FIELD rate is split; a Domain's own (SCOPE) and a typed one (YOURS) are not.
+  const half = { fieldShare: 0.5 };
+  const fa3 = scopeOf(["a"], [], "FIELD", 3);
+  const fb3 = scopeOf(["b"], [], "FIELD", 3);
+  check(
+    "fieldShare 0.5 on a Field pace of 6 writes and judges exactly as a pace of 3 (the writing plan, every week, and the judgement)",
+    json(writingPlanOf(twoPlan, { ...twoIn, ...half })) === json(writingPlanOf(twoPlan, input({ targetDay: D(139), scopes: [fa3, fb3] }))) &&
+      json(feasibilityOf(twoPlan, { ...twoIn, ...half })) === json(feasibilityOf(twoPlan, input({ targetDay: D(139), scopes: [fa3, fb3] })))
+  );
+  const own = scopeOf(["b"], [], "SCOPE", 4);
+  const typed = scopeOf(["b"], [], "YOURS", 4);
+  check(
+    "… a Domain's own pace (SCOPE) and a typed rate (YOURS) are not split: only the FIELD scope halves",
+    json(feasibilityOf(twoPlan, input({ targetDay: D(139), scopes: [fa, own], ...half }))) === json(feasibilityOf(twoPlan, input({ targetDay: D(139), scopes: [fa3, own] }))) &&
+      json(feasibilityOf(twoPlan, input({ targetDay: D(139), scopes: [fa, typed], ...half }))) === json(feasibilityOf(twoPlan, input({ targetDay: D(139), scopes: [fa3, typed] })))
+  );
+  const fieldHalf = ladder4("pack at fieldShare 0.5", stageLadderOf(packIk, { ...packIn, ...half }, names4, mk4));
+  const paceThree = ladder4("pack at a pace of 3", stageLadderOf(packIk, in4({ intensity: "LIGHT", reach: P(0.8), sourceRate: 3 }, [scope4(["prob", "inf"], [...probCards, ...infCards], 3)]), names4, mk4));
+  check(
+    "a depth plan's Field source rate (R4's sourceRate 6) at fieldShare 0.5 dates as a source of 3: the same stages and stage days",
+    json(shape(fieldHalf.plan)) === json(shape(paceThree.plan)) && json(stageDaysOf(fieldHalf)) === json(stageDaysOf(paceThree)) && json(stageDaysOf(fieldHalf)) !== json(stageDaysOf(packNone)),
+    json([stageDaysOf(fieldHalf), stageDaysOf(paceThree), stageDaysOf(packNone)])
+  );
+  const yoursPack = in4({ intensity: "LIGHT", reach: P(0.8), sourceRate: 6 }, [scope4(["prob", "inf"], [...probCards, ...infCards], 6, "YOURS")]);
+  check(
+    "… a typed source rate (YOURS) on a depth plan is never split",
+    json(stageDaysOf(ladder4("typed, fieldShare 0.5", stageLadderOf(packIk, { ...yoursPack, ...half }, names4, mk4)))) === json(stageDaysOf(ladder4("typed", stageLadderOf(packIk, yoursPack, names4, mk4))))
   );
 }
 

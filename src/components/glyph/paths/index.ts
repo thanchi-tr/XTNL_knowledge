@@ -9,9 +9,15 @@
  *   syllabus) — the "provmark" defs family.
  *
  *   glyphParts(name, state, opts) → Part[]   the parts for one glyph in one state
+ *
+ * Revision 5, lane 9 (ui-motion.md §15.1, D38): the `layer` family is inline (it animates
+ * layer-open); pv.web and pv.libpick join the inline Gemini glyphs; pv.library and pv.named join the
+ * provmark defs; the `goal` family is static, in its own defs family, `goal`.
  */
 import { EVIDENCE, EVIDENCE_NAMES, type EvidenceName } from "./evidence";
 import { FLAME_ALIAS, FLAME_NAMES, flameParts, type FlameAlias, type FlameName } from "./flame";
+import { GOAL_NAMES, goalParts, type GoalName } from "./goal";
+import { LAYER_NAMES, layerParts, type LayerName } from "./layer";
 import { MISC, MISC_NAMES, type MiscName } from "./misc";
 import { GLYPH_STATES, P, flatParts, withState, type GlyphState, type Part } from "./part";
 import { GEMINI_PV_NAMES, PROVENANCE, PROVMARK_NAMES, type ProvenanceName } from "./provenance";
@@ -27,12 +33,13 @@ export { GLYPH_STATES, flatParts, type GlyphState, type Part };
 export type { FlameAlias, StageGate, TrackSigil };
 export { FLAME_ALIAS };
 
-export type FamilyId = "stage" | "rank" | "quest" | "evidence" | "provenance" | "safety" | "session" | "verdict" | "time" | "misc" | "flame";
-/** The static families GlyphDefs can emit. */
-export type DefsFamily = "evidence" | "safety" | "session" | "time" | "provmark";
-export const DEFS_FAMILIES: readonly DefsFamily[] = ["evidence", "safety", "session", "time", "provmark"];
+export type FamilyId = "stage" | "rank" | "quest" | "evidence" | "provenance" | "safety" | "session" | "verdict" | "time" | "misc" | "flame" | "layer" | "goal";
+/** The static families GlyphDefs can emit (revision 5 adds `goal`). */
+export type DefsFamily = "evidence" | "safety" | "session" | "time" | "provmark" | "goal";
+export const DEFS_FAMILIES: readonly DefsFamily[] = ["evidence", "safety", "session", "time", "provmark", "goal"];
 
-export type GlyphName = StageName | RankName | QuestName | EvidenceName | ProvenanceName | SafetyName | SessionName | VerdictName | TimeName | MiscName | FlameName;
+export type GlyphName = StageName | RankName | QuestName | EvidenceName | ProvenanceName | SafetyName | SessionName | VerdictName | TimeName | MiscName | FlameName | LayerName | GoalName;
+export type { GoalName, LayerName };
 
 export interface GlyphInfo {
   family: FamilyId;
@@ -78,6 +85,11 @@ export const GLYPH_INFO: Readonly<Record<GlyphName, GlyphInfo>> = {
   "pv.you": info("provenance", "provmark"),
   "pv.checked": info("provenance", "provmark"),
   "pv.syllabus": info("provenance", "provmark"),
+  // ── Revision 5, lane 9 ──
+  "pv.web": info("provenance", null),
+  "pv.libpick": info("provenance", null),
+  "pv.library": info("provenance", "provmark"),
+  "pv.named": info("provenance", "provmark"),
   "safe.health": info("safety", "safety"),
   "safe.strike": info("safety", "safety"),
   "safe.in": info("safety", "safety"),
@@ -125,6 +137,17 @@ export const GLYPH_INFO: Readonly<Record<GlyphName, GlyphInfo>> = {
   "m.down": info("misc", null),
   "m.info": info("misc", null),
   flame: info("flame", null),
+  // ── Revision 5, lane 9 ──
+  "layer.1": info("layer", null),
+  "layer.2": info("layer", null),
+  "layer.3": info("layer", null),
+  "layer.4": info("layer", null),
+  "layer.5": info("layer", null),
+  "layer.6": info("layer", null),
+  "goal.1": info("goal", "goal"),
+  "goal.2": info("goal", "goal"),
+  "goal.3": info("goal", "goal"),
+  "goal.paused": info("goal", "goal"),
 };
 
 export const GLYPH_NAMES: readonly GlyphName[] = [
@@ -140,6 +163,8 @@ export const GLYPH_NAMES: readonly GlyphName[] = [
   ...TIME_NAMES,
   ...MISC_NAMES,
   ...FLAME_NAMES,
+  ...LAYER_NAMES,
+  ...GOAL_NAMES,
 ];
 
 export const FAMILY_NAMES: Readonly<Record<FamilyId, readonly GlyphName[]>> = {
@@ -154,6 +179,8 @@ export const FAMILY_NAMES: Readonly<Record<FamilyId, readonly GlyphName[]>> = {
   time: TIME_NAMES,
   misc: MISC_NAMES,
   flame: FLAME_NAMES,
+  layer: LAYER_NAMES,
+  goal: GOAL_NAMES,
 };
 
 /** The glyph names a GlyphDefs family emits. */
@@ -211,6 +238,10 @@ export function glyphParts(name: GlyphName, state: GlyphState, o: GlyphOpts = {}
       return withState(timeParts(name as TimeName, o.n), state);
     case "misc":
       return withState(MISC[name as MiscName](), state);
+    case "layer":
+      return layerParts(name as LayerName, state);
+    case "goal":
+      return goalParts(name as GoalName, state);
     default:
       return [];
   }

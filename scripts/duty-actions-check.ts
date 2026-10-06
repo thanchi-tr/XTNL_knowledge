@@ -1185,8 +1185,8 @@ console.log("— F18 reset —");
   );
   const archive = reset.slice(reset.indexOf("async function archiveRoadmapsForReset("));
   check(
-    "roadmap: the archive sets ARCHIVED on DRAFT and ACTIVE roadmaps with 'measures removed by a reset on <day>', and is 0 before the migration",
-    /const OPEN_ROADMAP: RoadmapStatus\[\] = \["DRAFT", "ACTIVE"\];/.test(reset) &&
+    "roadmap: the archive sets ARCHIVED on DRAFT, ACTIVE and PAUSED roadmaps (revision 5: a paused goal would resume over deleted cards) with 'measures removed by a reset on <day>', and is 0 before the migration",
+    /const OPEN_ROADMAP: RoadmapStatus\[\] = \["DRAFT", "ACTIVE", "PAUSED"\];/.test(reset) &&
       /where: \{ userId, status: \{ in: OPEN_ROADMAP \} \}/.test(archive) &&
       /status: "ARCHIVED" satisfies RoadmapStatus, archivedAt: now, archiveReason: resetArchiveReason\(/.test(archive) &&
       /if \(isMissingRoadmapTable\(err\)\) return 0;\s*throw err;/.test(archive) &&

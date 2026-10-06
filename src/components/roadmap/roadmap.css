@@ -702,6 +702,7 @@
   .rm-mr-lv { font-weight: 500; color: var(--ink-2); white-space: nowrap; }
   .rm-mr-f { margin: 6px 0 0; }
   .rm-mr-gain { font-variant-numeric: tabular-nums; }
+  .rm-mr-climb { font-variant-numeric: tabular-nums; }
   .rm-mr-d { margin: 0; }
   .rm-mr-s { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 40px; margin: -4px 0 -8px; list-style: none; cursor: pointer; }
   .rm-mr-s::-webkit-details-marker { display: none; }
@@ -1000,4 +1001,101 @@
   .rm-in-lanes { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 14px 4px 0; }
   .rm-sticky > .rm-in-path { flex-basis: 100%; }
   /* ===== /R7 ===== */
+
+  /* ===== Revision 5, lane 9: the topic map, the estimate chip (ui-motion.md §15.4–§15.5, D31, D35–D37, H18) =====
+     Layout hooks only; ink only; the theme's tokens (light and dark) colour everything. 344 first: the content
+     box is 278 px; a row is [mark 16][name][cairn 16][☐ 44][▸ 40] with 8 px gaps, so the name gets 138 px
+     from layer 2 on and 182 px on layer 1's chosen rows. Rows ≥ 44 px, ≤ 3 lines, ≤ 60 px. Targets are
+     real boxes (40/44). A trace changes marks, rails and checkboxes to ink-mute by class (no colour
+     animation); names stay at ink-1 (D35); nothing moves layout. From 640 px of card the layers are columns. */
+  .rm-tm { padding: 16px 16px 12px; container-type: inline-size; min-width: 0; }
+  .rm-tm-head { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 16px; }
+  .rm-tm-head > button[data-tip] { margin-left: auto; }
+  .rm-tm-caut { display: inline-flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 16px; }
+  .rm-tm-kl { display: block; margin-bottom: 8px; }
+  .rm-tm-layers { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+  .rm-tm-band { min-width: 0; border-top: 1px solid var(--line-1); padding-top: 4px; }
+  .rm-tm-band:first-child { border-top: 0; padding-top: 0; }
+  .rm-tm-hd { display: flex; flex-direction: column; }
+  .rm-tm-h1 { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+  .rm-tm-ht { margin: 0; font: 600 14px/19px var(--font-ui); color: var(--ink-0); }
+  .rm-tm-sw { font-size: 13px; line-height: 18px; color: var(--ink-2); }
+  .rm-tm-n { font: 600 13px/18px var(--font-ui); font-variant-numeric: tabular-nums; color: var(--ink-1); }
+  .rm-tm-hacts { margin-left: auto; display: flex; align-items: center; gap: 4px; flex: none; }
+  .rm-tm-kept { display: inline-grid; place-items: center; width: 40px; height: 40px; color: var(--ink-0); }
+  .rm-tm-h2 { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 16px; min-height: 40px; }
+  .rm-tm-np { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; line-height: 18px; color: var(--ink-0); }
+  .rm-tm-fold { display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0; border: 0; background: none; color: var(--ink-1); font: 600 13px/18px var(--font-ui); cursor: pointer; text-align: left; }
+  .rm-tm-fold-h { cursor: default; flex-wrap: wrap; column-gap: 8px; }
+  .rm-tm-foldb { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; min-width: 44px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+  .rm-tm-rows { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+  .rm-tm-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 16px auto; column-gap: 8px; align-items: center; min-height: 44px; max-height: 60px; }
+  .rm-tm-rail { position: absolute; left: -8px; top: 6px; bottom: 6px; width: 2px; border-radius: 1px; background: var(--ink-0); opacity: 0; pointer-events: none; }
+  .rm-tm-hit { display: grid; grid-template-columns: 16px minmax(0, 1fr); column-gap: 8px; align-items: center; min-height: 44px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; min-width: 0; }
+  .rm-tm-hit-static { cursor: default; }
+  .rm-tm-mark { display: inline-grid; place-items: center; width: 16px; height: 16px; color: var(--ink-1); }
+  .rm-tm-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; font: 400 13px/18px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+  .rm-tm-lv { display: inline-grid; place-items: center; width: 16px; height: 16px; color: var(--ink-1); }
+  .rm-tm-acts { display: flex; align-items: center; gap: 0; flex: none; }
+  .rm-tm-ck { display: inline-grid; place-items: center; width: 44px; height: 44px; cursor: pointer; }
+  .rm-tm-more { display: inline-grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 10px; background: none; color: var(--ink-2); cursor: pointer; }
+  .rm-tm-more:hover, .rm-tm-hit:hover .rm-tm-name { color: var(--ink-0); }
+  .rm-tm-row[data-chosen] .rm-tm-name { font-weight: 500; }
+  /* hooks the components name: the seed lists and the two folds are row lists; a row with a checkbox keeps the 44 px floor */
+  .rm-tm-seeds, .rm-tm-rows-more, .rm-tm-rows-hidden, .rm-tm-sheet { min-width: 0; }
+  .rm-tm-row-ck { min-height: 44px; }
+  .rm-tm-write, .rm-tm-keep { flex: none; }
+  /* trace: the traced row and its parents and children light; the rest go ink-mute (marks, rails, boxes) */
+  .rm-tm-row[data-trace="self"] .rm-tm-rail, .rm-tm-row[data-trace="rel"] .rm-tm-rail { opacity: 1; }
+  .rm-tm-row[data-trace="self"] .rm-tm-mark, .rm-tm-row[data-trace="rel"] .rm-tm-mark { color: var(--ink-0); }
+  .rm-tm-row[data-trace="other"] .rm-tm-mark, .rm-tm-row[data-trace="other"] .rm-tm-lv, .rm-tm-row[data-trace="other"] .rm-tm-ck, .rm-tm-row[data-trace="other"] .rm-tm-more { color: var(--ink-mute); }
+  .rm-tm-row[data-trace="other"] .rm-tm-ck input { opacity: .55; }
+  .rm-tm-row[data-trace="other"] .rm-tm-name { color: var(--ink-1); }
+  .rm-tm-hit[aria-pressed="true"] { outline: 0; }
+  .rm-tm-hit[aria-pressed="true"] .rm-tm-name { font-weight: 600; }
+  .rm-tm-locked .rm-tm-ht { color: var(--ink-1); }
+  .rm-tm-foot { display: flex; justify-content: flex-end; margin-top: 12px; }
+  .rm-tm-note { margin: 8px 0 0; }
+  .rm-tm-track { position: relative; color: var(--ink-1); }
+  .rm-tm-track > svg:last-child { position: absolute; right: 6px; bottom: 6px; width: 12px; height: 12px; }
+  /* the sheets */
+  .rm-tm-sl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .rm-tm-pn { display: inline-flex; align-items: center; gap: 3px; }
+  .rm-tm-acts-s, .rm-tm-pick { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 16px; }
+  .rm-tm-form { display: flex; flex-direction: column; gap: 8px; }
+  .rm-tm-deeper { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+  .rm-tm-src { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+  .rm-tm-src li { padding: 10px 0; border-top: 1px solid var(--line-1); font-size: 13px; line-height: 18px; }
+  .rm-tm-srca { color: var(--ink-0); text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; display: inline-block; min-height: 24px; }
+  .rm-tm-ps { display: flex; flex-direction: column; margin: 0; padding: 0; border: 0; }
+  .rm-tm-pr { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 14px; line-height: 19px; color: var(--ink-0); }
+  .rm-tm-pr input[type="radio"] { width: 22px; height: 22px; margin: 0; accent-color: var(--ink-0); }
+  .rm-tm-pr-ro { color: var(--ink-1); }
+  /* the estimate chip: chip, pips and the static words on one row when they fit 278 px, else two (row gap ≥ 16) */
+  .rm-est { display: inline-flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 16px; min-width: 0; }
+  .rm-est-yours { display: inline-flex; align-items: center; gap: 4px; font: 500 12px/16px var(--font-ui); color: var(--ink-0); }
+  .rm-est-pips { display: inline-flex; align-items: center; }
+  .rm-est-pp { display: inline-grid; grid-template-columns: repeat(6, 12px); gap: 3px; }
+  .rm-est-pp i { position: relative; display: block; width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--ink-1); }
+  .rm-est-pp i[data-on] { background: var(--ink-0); box-shadow: none; }
+  .rm-est-pp i[data-br]::after { content: ""; position: absolute; left: -2px; right: -2px; bottom: -4px; height: 1.5px; background: var(--ink-1); }
+  .rm-est-app { display: inline-flex; align-items: center; gap: 6px; font: 500 12px/16px var(--font-ui); color: var(--ink-1); }
+  .rm-est-tail { font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .rm-est [data-wc="honest"] { font-size: 12px; line-height: 16px; color: var(--ink-1); }
+  .rm-est-l { display: block; }
+  .rm-est-l + .rm-est-l { margin-top: 6px; }
+  .rm-est-ch { display: flex; flex-wrap: wrap; column-gap: 8px; row-gap: 16px; margin-top: 10px; }
+  /* 932 and 1440: the layers become columns, left to right (rows keep their 44 px; names wrap at the column) */
+  @container (min-width: 640px) {
+    .rm-tm-layers { display: grid; grid-template-columns: repeat(var(--tm-n, 3), minmax(0, 1fr)); gap: 0 16px; align-items: start; }
+    .rm-tm-band { border-top: 0; padding-top: 0; border-left: 1px solid var(--line-1); padding-left: 12px; }
+    .rm-tm-band:first-child { border-left: 0; padding-left: 0; }
+  }
+  /* the intake's topic paths (F-R5-7), under the level plan's buttons; the accept's TOPICS lines in the draft footer */
+  .rm-in-topics { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .rm-tm-acc { display: flex; flex-direction: column; gap: 8px; }
+  .rm-tm-acc > .t-error { margin: 0; }
+  /* the chain's heading on a TOPICS plan's Milestones card: the EstimateChip, then "· +1 to reach Fluent" */
+  .rm-ml-chain { margin: 0 0 12px; }
+  /* ===== /Revision 5, lane 9 ===== */
 }

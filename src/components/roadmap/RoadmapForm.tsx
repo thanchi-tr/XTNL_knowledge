@@ -229,6 +229,10 @@ import { GlyphButton, RoadmapGlyph } from "./RoadmapGlyph";
 import { IntakeActivities } from "./ActivityConfirm";
 import { geminiAsksOf, intakeActivityOf } from "./roadmap-ui-model";
 import type { LiveGates } from "./GapPanel";
+// ── Revision 5, lane 9: the TOPICS paths ([Write the topics]; [Break it down] only while topicSwitchesOf().rate), behind TOPIC_PLANS_LIVE ──
+import { topicSwitchesOf } from "@/lib/roadmap-types";
+import { topicPlansOn } from "./topic-map-model";
+import { BREAK_IT_DOWN_WORD, TOPIC_PATHS_LABEL, WRITE_TOPICS_LINE, WRITE_TOPICS_WORD } from "./roadmap-copy";
 import "@/components/library/study.css";
 import "./roadmap.css";
 
@@ -704,7 +708,7 @@ export function coveragePreviewOf(
   });
 }
 
-type Path = "GEMINI" | "STARTER" | "MANUAL";
+type Path = "GEMINI" | "STARTER" | "MANUAL" | "TOPICS" | "BREAKDOWN";
 
 /** The on-screen keyboard's height (visualViewport), so the sticky submit rides on it (AddIdeaForm's pattern). */
 function useKeyboardInset(): number {
@@ -1202,6 +1206,9 @@ export function RoadmapForm({
   const storage = !runtime.fixture;
   const geminiLive = (gates?.gemini ?? ROADMAP_GEMINI_LIVE) && view.hasKey;
   const gapsLive = gates?.gaps ?? ROADMAP_GAPS_LIVE;
+  // Revision 5, lane 9 (F-R5-7; ui-motion §15.8): with TOPIC_PLANS_LIVE off the intake renders nothing new.
+  const topicsLive = topicPlansOn(gates);
+  const breakDownLive = topicsLive && (gates?.topics === true ? Boolean(gates.gemini) : topicSwitchesOf().rate) && view.hasKey;
 
   // Restore the unsent form after mount (storage exists only in the browser); the server's open DRAFT wins.
   // An aim handed over (the /you card, a long goal, capture, a plan made before depths) fills it, once.
@@ -1377,14 +1384,17 @@ export function RoadmapForm({
 
   const submit = async (path: Path) => {
     setError(null);
-    const { intake, problems: p } = intakeOf(d, view.today, { chosen, newCardsRequired, fields: view.fields });
+    const { intake: formIntake, problems: p } = intakeOf(d, view.today, { chosen, newCardsRequired, fields: view.fields });
     setProblems(p);
-    if (!intake) {
+    if (!formIntake) {
       const first = Object.keys(p)[0];
       // An empty library has no Domains row: its refusal sits under "Name the areas this needs".
       (document.getElementById(`rm-f-${first}`) ?? (first === "domains" ? document.getElementById("rm-f-named") : null))?.scrollIntoView({ block: "center" });
       return;
     }
+    // Revision 5, lane 9 (ruling 14): a TOPICS intake carries topicDepth (6 or the depth you chose) with depth null.
+    const topicsPath = path === "TOPICS" || path === "BREAKDOWN";
+    const intake: Intake = topicsPath ? { ...formIntake, planKind: "TOPICS", topicDepth: formIntake.depth ?? 6, depth: null } : formIntake;
     setBusy(path);
     try {
       const saved = await runtime.actions.saveIntake(intake);
@@ -1400,7 +1410,8 @@ export function RoadmapForm({
         const answered = await runtime.actions.setActivityVerdicts(id, activityAnswer).catch(() => null);
         if (!answered?.ok) pushToast({ title: "Activity answer not saved", body: ACTIVITY_NOT_SAVED_LINE });
       }
-      const next = path === "GEMINI" ? await runtime.actions.draftRoadmap(id) : path === "STARTER" ? await runtime.actions.buildStarter(id) : await runtime.actions.startManual(id);
+      // Revision 5, lane 9: the topic paths after the level plan's three (TOPICS: [Write the topics]; BREAKDOWN: [Break it down]).
+      const next = path === "GEMINI" ? await runtime.actions.draftRoadmap(id) : path === "STARTER" ? await runtime.actions.buildStarter(id) : path === "TOPICS" ? await runtime.actions.writeTopics(id) : path === "BREAKDOWN" ? await runtime.actions.breakDown(id) : await runtime.actions.startManual(id);
       if (!next.ok) {
         setError(next.error);
         return;
@@ -2064,6 +2075,20 @@ export function RoadmapForm({
                 <HonestyChip kind="no-key" label={SHORT_NO_KEY} full={NO_KEY_LINE} />
               </Chips>
             </>
+          )}
+          {topicsLive && field && (
+            // Revision 5, lane 9: the topic paths for a Field Area (2–4 words each); the level plan stays the primary path above.
+            <div className="rm-in-topics" role="group" aria-label={TOPIC_PATHS_LABEL}>
+              {breakDownLive && (
+                <Button size="lg" disabled={busy != null} onClick={() => void submit("BREAKDOWN")}>
+                  {busy === "BREAKDOWN" ? "Saving…" : BREAK_IT_DOWN_WORD}
+                </Button>
+              )}
+              <Button size="lg" disabled={busy != null} onClick={() => void submit("TOPICS")}>
+                {busy === "TOPICS" ? "Opening…" : WRITE_TOPICS_WORD}
+              </Button>
+              <InfoTip topic={WRITE_TOPICS_WORD.toLowerCase()}>{WRITE_TOPICS_LINE}</InfoTip>
+            </div>
           )}
           {view.activeRoadmapId && !d.replaces && (
             <>

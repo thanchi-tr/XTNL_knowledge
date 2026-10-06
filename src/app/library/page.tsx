@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { loadLibraryTree } from "@/lib/queries";
 import { LibrarySearch } from "@/components/library/LibrarySearch";
 import type { LibraryField, LibraryIdea } from "@/components/library/library-model";
+// Revision 5, lane 9 (contracts ruling 67): the Gemini mark on a Domain Gemini named, until you rename it.
+import { geminiNamedOf } from "@/lib/roadmap-types";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +43,7 @@ export default async function LibraryPage() {
         fieldName: f.name,
         domainId: d.id,
         domainName: d.name,
+        domainGeminiNamed: geminiNamedOf(d),
         // Node data from the dedup pipeline. Nullable on anything created
         // before it existed, so every consumer treats it as optional.
         title: i.title,
@@ -59,7 +62,7 @@ export default async function LibraryPage() {
     id: f.id,
     name: f.name,
     level: f.level,
-    domains: f.domains.map((d) => ({ id: d.id, name: d.name })),
+    domains: f.domains.map((d) => ({ id: d.id, name: d.name, geminiNamed: geminiNamedOf(d) })),
   }));
 
   // Tag vocabulary, ranked by frequency so the most useful filters lead.

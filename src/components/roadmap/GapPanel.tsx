@@ -49,6 +49,9 @@ import type { ItemEditorScope } from "./ItemEditor";
 export interface LiveGates {
   gemini?: boolean;
   gaps?: boolean;
+  // ── Revision 5, lane 9: TOPIC_PLANS_LIVE and the Gemini names, for a fixture's lead-only topic-map state (topic-map-model TopicGates) ──
+  topics?: boolean;
+  topicNames?: boolean;
 }
 
 /** The panel shows only while ROADMAP_GAPS_LIVE (or a fixture's lead-only state) and there is something to say. */

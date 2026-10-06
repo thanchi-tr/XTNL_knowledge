@@ -67,6 +67,7 @@ import { MAX_CAPTURE_CHARS, parseCapture, sanitizeCaptureInput } from "../src/li
 import * as aimCapture from "../src/components/capture/aim-capture";
 import {
   AIM_CHIP,
+  AIM_CHIP_FULL,
   AIM_CHIP_SET,
   AIM_FORM_HREF,
   AIM_LONG_GOAL_NOTE,
@@ -74,6 +75,7 @@ import {
   AIM_OPEN_FORM,
   AIM_OPEN_ROADMAP,
   AIM_ROADMAP_HREF,
+  CAPTURE_AIM_READ_MAX,
   MAKE_IT_AN_AIM,
   OPEN_ROADMAP_STATUSES,
   aimActionOf,
@@ -91,10 +93,11 @@ import {
   offersAim,
   readCaptureAim,
   readCaptureAimPrompt,
+  type CaptureAim,
 } from "../src/components/capture/aim-capture";
 import { AIM_LATER_DAYS, AIM_PROMPT_COOKIE, aimPromptOf, hideCookieValue, laterCookieValue, onCookieValue, type AimPrompt } from "../src/lib/roadmap-invite";
 import { AIM_HANDOFF_KEY, aimLineOf, takeAimHandoff, writeAimHandoff, type AimHandoffStorage } from "../src/lib/roadmap-handoff";
-import { AIM_MAX, REV4_COLUMNS } from "../src/lib/roadmap-types";
+import { AIM_MAX, GOALS_MAX, GOAL_SLOTS_MAX, REV4_COLUMNS, SEAT_STATUSES } from "../src/lib/roadmap-types";
 import { captureShapeOf } from "../src/lib/capture-shape";
 import { parseRule } from "../src/lib/recurrence";
 import { completionBlockOf, placeOf, statsFor, type BoardData, type BoardInstance, type BoardTemplate } from "../src/lib/today-board";
@@ -1068,11 +1071,31 @@ async function aimCaptureChecks(): Promise<void> {
     `${asTask.mode} “${asTask.title}”`
   );
 
-  // The open roadmap: the vocabulary's one read.
-  check("vocab aim: the statuses read are the open ones, DRAFT and ACTIVE", JSON.stringify([...OPEN_ROADMAP_STATUSES]) === JSON.stringify(["DRAFT", "ACTIVE"]));
+  // The open goals: the vocabulary's one read (revision 5, contracts §23.5: {open, seatsFree, drafts}).
+  const js = (v: unknown) => JSON.stringify(v);
+  const A = (open: number, seatsFree: number, drafts: number): CaptureAim => ({ open, seatsFree, drafts });
+  // With GOALS_MAX 1: no goal open, one open draft, one open ACTIVE goal.
+  const NONE = A(0, 1, 0);
+  const DRAFT1 = A(1, 0, 1);
+  const ACTIVE1 = A(1, 0, 0);
   check(
-    "vocab aim: no open row is NONE, a DRAFT is DRAFT, an ACTIVE wins over a DRAFT",
-    captureAimOf([]) === "NONE" && captureAimOf(["DRAFT"]) === "DRAFT" && captureAimOf(["ACTIVE"]) === "ACTIVE" && captureAimOf(["DRAFT", "ACTIVE"]) === "ACTIVE" && captureAimOf(["DONE", "ARCHIVED"]) === "NONE"
+    "vocab aim: the statuses read are the ones that hold a seat, DRAFT and ACTIVE (SEAT_STATUSES: a PAUSED goal frees its seat), at most one past the seats the database allows",
+    js([...OPEN_ROADMAP_STATUSES]) === js(["DRAFT", "ACTIVE"]) && js([...OPEN_ROADMAP_STATUSES]) === js(SEAT_STATUSES) && CAPTURE_AIM_READ_MAX === GOAL_SLOTS_MAX + 1 && CAPTURE_AIM_READ_MAX === 4
+  );
+  check(
+    "vocab aim (GOALS_MAX 1): no open row is no goal open with the one seat free, a DRAFT is one open draft, an ACTIVE one open goal, a DRAFT beside an ACTIVE two open; DONE, ARCHIVED and PAUSED hold no seat",
+    GOALS_MAX === 1 &&
+      js(captureAimOf([])) === js(NONE) &&
+      js(captureAimOf(["DRAFT"])) === js(DRAFT1) &&
+      js(captureAimOf(["ACTIVE"])) === js(ACTIVE1) &&
+      js(captureAimOf(["DRAFT", "ACTIVE"])) === js(A(2, 0, 1)) &&
+      js(captureAimOf(["DONE", "ARCHIVED", "PAUSED"])) === js(NONE) &&
+      js(captureAimOf(["PAUSED", "ACTIVE"])) === js(ACTIVE1),
+    js([captureAimOf([]), captureAimOf(["DRAFT"]), captureAimOf(["ACTIVE"])])
+  );
+  check(
+    "vocab aim (at lane 4's 3 seats): the free seats count down 3, 2, 1, 0 as goals open, and a paused goal's seat stays free",
+    js([0, 1, 2, 3].map((n) => captureAimOf(Array(n).fill("ACTIVE"), 3).seatsFree)) === js([3, 2, 1, 0]) && js(captureAimOf(["DRAFT", "ACTIVE", "PAUSED"], 3)) === js(A(2, 1, 1))
   );
   const missingTable = Object.assign(new Error("The table `public.Roadmap` does not exist in the current database."), { code: "P2021", meta: { modelName: "Roadmap", table: "public.Roadmap" } });
   const missingRelation = Object.assign(new Error('relation "public.Roadmap" does not exist'), { code: "42P01" });
@@ -1090,10 +1113,14 @@ async function aimCaptureChecks(): Promise<void> {
     readCaptureAim(async () => ["DRAFT"]),
     readCaptureAim(async () => "DRAFT" as unknown as readonly unknown[]),
   ]);
-  check("vocab aim: a missing Roadmap table (life_roadmap not applied) is NONE (P2021 and 42P01)", aMissing === "NONE" && aRelation === "NONE", `${aMissing} ${aRelation}`);
-  check("vocab aim: any other failure is unknown, never a guessed NONE (a missing column, a pool timeout, a malformed answer)", aColumn === undefined && aPool === undefined && aBad === undefined, `${aColumn} ${aPool} ${aBad}`);
-  check("vocab aim: a read that answers is its state", aNone === "NONE" && aDraft === "DRAFT");
-  check("vocab aim: the sheet trusts only the three states", isCaptureAim("NONE") && isCaptureAim("DRAFT") && isCaptureAim("ACTIVE") && !isCaptureAim("DONE") && !isCaptureAim(undefined) && !isCaptureAim(null) && !isCaptureAim("none"));
+  check("vocab aim: a missing Roadmap table (life_roadmap not applied) is no goal open, every seat free (P2021 and 42P01)", js(aMissing) === js(NONE) && js(aRelation) === js(NONE), `${js(aMissing)} ${js(aRelation)}`);
+  check("vocab aim: any other failure is unknown, never a guessed 'no goal open' (a missing column, a pool timeout, a malformed answer)", aColumn === undefined && aPool === undefined && aBad === undefined, `${js(aColumn)} ${js(aPool)} ${js(aBad)}`);
+  check("vocab aim: a read that answers is its count", js(aNone) === js(NONE) && js(aDraft) === js(DRAFT1));
+  check(
+    "vocab aim: the sheet trusts only three whole counts, the drafts within the open goals and the free seats within GOAL_SLOTS_MAX (revision 4's strings, a missing count, a negative, a fraction and an array are unknown)",
+    [NONE, DRAFT1, ACTIVE1, A(3, 0, 1), A(0, 3, 0)].every(isCaptureAim) &&
+      ![undefined, null, "NONE", "DRAFT", "ACTIVE", [], {}, { open: 1, seatsFree: 0 }, A(1, 0, 2), A(-1, 1, 0), A(0.5, 1, 0), A(0, 4, 0), { ...NONE, open: "0" }].some(isCaptureAim)
+  );
 
   // The user's "no" (fix round 2): the vocabulary's aimPrompt, aimPromptOf over the stored switch and the snooze cookie.
   const missingAimSuggestions = Object.assign(new Error("The column `LifeSettings.aimSuggestions` does not exist in the current database."), { code: "P2022", meta: { column: "LifeSettings.aimSuggestions" } });
@@ -1130,7 +1157,7 @@ async function aimCaptureChecks(): Promise<void> {
     promptCases.every(([, , cookie, sw], i) => promptGot[i] === undefined || promptGot[i] === aimPromptOf(cookie, sw, TODAY)) && promptGot.filter((g) => g !== undefined).length === promptCases.length - 3 && AIM_PROMPT_COOKIE.length > 0
   );
   check("vocab prompt: the sheet trusts only the four states", ["ASK", "LATER", "HIDDEN", "OFF"].every(isCaptureAimPrompt) && ![undefined, null, "ask", "ON", "", 1].some(isCaptureAimPrompt));
-  const fresh = { day: TODAY, at: 1_000_000, aimPrompt: "ASK" as AimPrompt, aim: "NONE" as const };
+  const fresh = { day: TODAY, at: 1_000_000, aimPrompt: "ASK" as AimPrompt, aim: NONE };
   const keptFresh = aimPromptOnOpen(fresh, TODAY, 1_000_000 + VOCAB_FRESH_MS - 1, VOCAB_FRESH_MS);
   const droppedOld = aimPromptOnOpen(fresh, TODAY, 1_000_000 + VOCAB_FRESH_MS, VOCAB_FRESH_MS);
   const droppedDay = aimPromptOnOpen(fresh, addDays(TODAY, 1), 1_000_001, VOCAB_FRESH_MS);
@@ -1141,7 +1168,7 @@ async function aimCaptureChecks(): Promise<void> {
     keptFresh === fresh &&
       droppedOld !== null &&
       droppedOld.aimPrompt === undefined &&
-      droppedOld.aim === "NONE" &&
+      droppedOld.aim === NONE &&
       droppedOld.at === fresh.at &&
       fresh.aimPrompt === "ASK" &&
       droppedDay !== null &&
@@ -1154,7 +1181,7 @@ async function aimCaptureChecks(): Promise<void> {
   );
 
   // The button, the chip and the counter.
-  const states = [undefined, null, "NONE", "DRAFT", "ACTIVE", "junk"] as const;
+  const states = [undefined, null, NONE, DRAFT1, ACTIVE1, "junk"] as const;
   const acts = states.map((s) => aimActionOf(s as Parameters<typeof aimActionOf>[0]));
   check(
     "aim button: never empty, and only ever one of the three fixed paths' words",
@@ -1171,8 +1198,39 @@ async function aimCaptureChecks(): Promise<void> {
   check("aim button: the footer says what Enter does instead of 'Enter saves'", acts.every((a) => /^Enter opens /.test(a.keyHint) && /^Enter opens /.test(a.touchHint) && !/saves/.test(a.keyHint)));
   check(
     "aim chip: 'Aim → roadmap form', and 'Aim · one is already set' with an ACTIVE roadmap",
-    AIM_CHIP === "Aim → roadmap form" && AIM_CHIP_SET === "Aim · one is already set" && aimChipLabel("ACTIVE") === AIM_CHIP_SET && aimChipLabel("DRAFT") === AIM_CHIP && aimChipLabel("NONE") === AIM_CHIP && aimChipLabel(undefined) === AIM_CHIP
+    AIM_CHIP === "Aim → roadmap form" && AIM_CHIP_SET === "Aim · one is already set" && aimChipLabel(ACTIVE1) === AIM_CHIP_SET && aimChipLabel(DRAFT1) === AIM_CHIP && aimChipLabel(NONE) === AIM_CHIP && aimChipLabel(undefined) === AIM_CHIP
   );
+  {
+    // Revision 5 (contracts §23.5): above one seat an 'aim:' line hands off whenever a seat is free; with every seat taken the
+    // chip reads AIM_CHIP_FULL and the form's page (the GoalsFullCard) holds the aim. Never at GOALS_MAX 1 (byte-identical).
+    const free3 = [A(0, 3, 0), A(1, 2, 1), A(1, 2, 0), A(2, 1, 2)];
+    const full3 = [A(3, 0, 0), A(3, 0, 3), A(4, 0, 1)];
+    check(
+      "goals (3 seats): with a seat free the aim line opens the aim form for a new goal and hands the aim over, an open draft or an ACTIVE goal beside it notwithstanding; the chip stays 'Aim → roadmap form'",
+      free3.every((a) => {
+        const act = aimActionOf(a, 3);
+        return act.label === AIM_OPEN_FORM && act.href === AIM_FORM_HREF && act.handoff && aimChipLabel(a, 3) === AIM_CHIP;
+      })
+    );
+    check(
+      "goals (3 seats): with every seat taken the chip reads AIM_CHIP_FULL 'Aim · 3 goals open' (in place of 'one is already set') and the line goes to the form's page, the GoalsFullCard, handing the aim over to wait there",
+      AIM_CHIP_FULL === "Aim · 3 goals open" &&
+        full3.every((a) => {
+          const act = aimActionOf(a, 3);
+          return aimChipLabel(a, 3) === AIM_CHIP_FULL && act.href === AIM_FORM_HREF && act.handoff && act.label === AIM_OPEN_FORM;
+        })
+    );
+    check(
+      "goals: at GOALS_MAX 1 the full-seats copy never shows; one open goal reads as before (a DRAFT: 'Open your draft' with the handoff; an ACTIVE one: 'Open your roadmap', no handoff, 'one is already set')",
+      [NONE, DRAFT1, ACTIVE1, A(2, 0, 1), undefined].every((a) => aimChipLabel(a) !== AIM_CHIP_FULL && aimChipLabel(a, 1) !== AIM_CHIP_FULL) &&
+        aimActionOf(DRAFT1).label === AIM_OPEN_DRAFT &&
+        aimActionOf(DRAFT1).handoff &&
+        aimActionOf(ACTIVE1).label === AIM_OPEN_ROADMAP &&
+        !aimActionOf(ACTIVE1).handoff &&
+        aimActionOf(A(2, 0, 1)).label === AIM_OPEN_ROADMAP &&
+        aimChipLabel(A(2, 0, 1)) === AIM_CHIP_SET
+    );
+  }
   check("aim counter: 'n / 140' only past the form's 140 (counted as the form counts)", AIM_MAX === 140 && aimCounterOf("x".repeat(140)) === null && aimCounterOf("x".repeat(141)) === "141 / 140" && aimCounterOf("") === null);
 
   // The handoff: sessionStorage, the line as sheetText, never a URL.
@@ -1199,17 +1257,21 @@ async function aimCaptureChecks(): Promise<void> {
   check("long goal: 'goal long:', '#long' and a goal dated over 180 days out are long goals", longLines.every((t) => isLongGoalLine(p(t))), longLines.filter((t) => !isLongGoalLine(p(t))).join(" | "));
   check("long goal: a goal with no horizon, MID, SHORT, a task, a bare '#long' (no title), an idea and an aim line are not", notLong.every((t) => !isLongGoalLine(p(t))), notLong.filter((t) => isLongGoalLine(p(t))).join(" | "));
   const prompts = ["ASK", "LATER", "HIDDEN", "OFF", undefined, null] as const;
-  const offerTable = longLines.flatMap((t) => (["NONE", "DRAFT", "ACTIVE", undefined] as const).flatMap((a) => prompts.map((q) => [t, a, q, offersAim(p(t), a, q)] as const)));
+  const offerTable = longLines.flatMap((t) => [NONE, DRAFT1, ACTIVE1, undefined].flatMap((a) => prompts.map((q) => [t, a, q, offersAim(p(t), a, q)] as const)));
   check(
-    "'Make it an aim' shows only for a long goal with no roadmap open (NONE), never with a DRAFT, an ACTIVE roadmap or an unknown state",
-    offerTable.filter(([, , q]) => q === "ASK").every(([, a, , o]) => o === (a === "NONE")) && notLong.every((t) => !offersAim(p(t), "NONE", "ASK")),
-    JSON.stringify(offerTable.filter(([, a, q, o]) => q === "ASK" && o !== (a === "NONE")))
+    "'Make it an aim' shows only for a long goal with no roadmap open (GOALS_MAX 1: the one seat free), never with a DRAFT, an ACTIVE roadmap or an unknown state",
+    offerTable.filter(([, , q]) => q === "ASK").every(([, a, , o]) => o === (a === NONE)) && notLong.every((t) => !offersAim(p(t), NONE, "ASK")),
+    JSON.stringify(offerTable.filter(([, a, q, o]) => q === "ASK" && o !== (a === NONE)))
+  );
+  check(
+    "'Make it an aim' (3 seats): offered while a seat is free, an open goal beside it notwithstanding; never with every seat taken",
+    longLines.every((t) => offersAim(p(t), A(1, 2, 1), "ASK") && offersAim(p(t), A(2, 1, 0), "ASK") && !offersAim(p(t), A(3, 0, 0), "ASK") && !offersAim(p(t), A(1, 2, 1), "LATER"))
   );
   // Fix round 2 (decision 34: "Not now" quiets every set-an-aim suggestion; the lasting no is the user's).
   check(
     "'Make it an aim' is a set-an-aim suggestion: only while the prompt is ASK; never after \"Don't suggest this\" or the Settings switch (OFF), never in a 4-week \"Not now\" (LATER, HIDDEN), never when the prompt is unknown",
-    offerTable.every(([, a, q, o]) => o === (a === "NONE" && q === "ASK")) && offerTable.filter(([, a, q]) => a === "NONE" && q !== "ASK").length === longLines.length * 5,
-    JSON.stringify(offerTable.filter(([, a, q, o]) => o !== (a === "NONE" && q === "ASK")))
+    offerTable.every(([, a, q, o]) => o === (a === NONE && q === "ASK")) && offerTable.filter(([, a, q]) => a === NONE && q !== "ASK").length === longLines.length * 5,
+    JSON.stringify(offerTable.filter(([, a, q, o]) => o !== (a === NONE && q === "ASK")))
   );
   check("'Make it an aim': the copy", AIM_LONG_GOAL_NOTE === "Long-term? Make it your aim: the app plans milestones and measures them." && MAKE_IT_AN_AIM === "Make it an aim");
   const rewrites: [string, string, string][] = [
@@ -1256,23 +1318,25 @@ async function aimCaptureChecks(): Promise<void> {
     const qcSrc = strip(readFileSync(join(__dirname, "..", "src/components/capture/QuickCapture.tsx"), "utf8"));
     const uiSrc = strip(readFileSync(join(__dirname, "..", "src/components/capture/capture-ui.ts"), "utf8"));
     check(
-      "goal menu: 'New aim' (after 'New goal') only with no roadmap open and no prefix; the sheet passes the open roadmap to the row",
-      withAim("NONE").join() === "goal-new,goal-new-aim,goal-none" &&
-        ["DRAFT", "ACTIVE", undefined].every((a) => !withAim(a).includes("goal-new-aim")) &&
-        !withAim("NONE", true).includes("goal-new-aim") &&
+      "goal menu: 'New aim' (after 'New goal') only with no roadmap open (a seat free) and no prefix; the sheet passes the open goals to the row",
+      withAim(NONE).join() === "goal-new,goal-new-aim,goal-none" &&
+        [DRAFT1, ACTIVE1, undefined, null, "NONE"].every((a) => !withAim(a).includes("goal-new-aim")) &&
+        !withAim(NONE, true).includes("goal-new-aim") &&
+        withAim(A(1, 2, 1)).includes("goal-new-aim") &&
+        !withAim(A(3, 0, 0)).includes("goal-new-aim") &&
         /insertMenuOptions\(menu, \{ today, goals, hasMode, aim \}\)/.test(rowSrc) &&
         /<InsertRow [^>]*aim=\{editing \? undefined : vocab\?\.aim\}/.test(qcSrc),
-      withAim("NONE").join()
+      withAim(NONE).join()
     );
     check(
       "goal menu: 'New aim' sits between 'New goal' and the goals to link, while the goals load and once they have loaded",
-      withAim("NONE", false, null).join() === "goal-new,goal-new-aim,goal-loading" &&
-        withAim("NONE", false, [{ id: "g1", title: "Run a marathon" }]).join() === "goal-new,goal-new-aim,goal-links,goal-to-g1" &&
-        withAim("ACTIVE", false, [{ id: "g1", title: "Run a marathon" }]).join() === "goal-new,goal-links,goal-to-g1" &&
-        withAim("NONE", true, [{ id: "g1", title: "Run a marathon" }]).join() === "goal-links,goal-to-g1",
-      JSON.stringify([withAim("NONE", false, null), withAim("NONE", false, [{ id: "g1", title: "Run a marathon" }])])
+      withAim(NONE, false, null).join() === "goal-new,goal-new-aim,goal-loading" &&
+        withAim(NONE, false, [{ id: "g1", title: "Run a marathon" }]).join() === "goal-new,goal-new-aim,goal-links,goal-to-g1" &&
+        withAim(ACTIVE1, false, [{ id: "g1", title: "Run a marathon" }]).join() === "goal-new,goal-links,goal-to-g1" &&
+        withAim(NONE, true, [{ id: "g1", title: "Run a marathon" }]).join() === "goal-links,goal-to-g1",
+      JSON.stringify([withAim(NONE, false, null), withAim(NONE, false, [{ id: "g1", title: "Run a marathon" }])])
     );
-    const opt = goalMenu({ today: TODAY, goals: [], aim: "NONE" }).find((c) => c.id === "goal-new-aim");
+    const opt = goalMenu({ today: TODAY, goals: [], aim: NONE }).find((c) => c.id === "goal-new-aim");
     check(
       "goal menu: 'New aim' inserts the 'aim: ' prefix, named for a screen reader ('New aim: Add “aim:” to the line'), and is never disabled",
       !!opt && opt.label === "New aim" && opt.name === "New aim: Add “aim:” to the line" && opt.insert?.text === "aim: " && opt.insert.field === "mode" && !opt.disabled && !opt.menu && !opt.eyebrow,
@@ -1412,9 +1476,9 @@ async function aimCaptureChecks(): Promise<void> {
   const actions = strip(readFileSync(join(ROOT, "src/app/actions/capture.ts"), "utf8"));
   const loader = actions.slice(actions.indexOf("const loadCaptureAim = "), actions.indexOf("type VocabWords"));
   check(
-    "action: the vocabulary's aim is one read cached on 'roadmap', of the open rows' status only (no revision-4 column), through readCaptureAim",
+    "action: the vocabulary's aim is one read cached on 'roadmap', of the seat-holding rows' status only (no revision-4 column), at most CAPTURE_AIM_READ_MAX rows, through readCaptureAim",
     /readCaptureAim\(\(\) =>\s*cached\(`captureAim:\$\{userId\}`, \["roadmap"\], async \(\) => \{/.test(loader) &&
-      /prisma\.roadmap\.findMany\(\{\s*where: \{ userId, status: \{ in: \[\.\.\.OPEN_ROADMAP_STATUSES\] \} \},\s*select: \{ status: true \},\s*take: 2,\s*\}\)/.test(loader) &&
+      /prisma\.roadmap\.findMany\(\{\s*where: \{ userId, status: \{ in: \[\.\.\.OPEN_ROADMAP_STATUSES\] \} \},\s*select: \{ status: true \},\s*take: CAPTURE_AIM_READ_MAX,\s*\}\)/.test(loader) &&
       !REV4_COLUMNS.some((c) => new RegExp(`\\b${c}\\b`).test(loader)),
     `loader: ${loader.length} chars`
   );
@@ -1441,9 +1505,11 @@ async function aimCaptureChecks(): Promise<void> {
     `prompt loader: ${promptLoader.length} chars`
   );
   check(
-    "action: CaptureVocabulary.aim and .aimPrompt are optional, typed 'NONE' | 'DRAFT' | 'ACTIVE' and roadmap-invite's AimPrompt",
+    "action: CaptureVocabulary.aim and .aimPrompt are optional, typed aim-capture's CaptureAim ({open, seatsFree, drafts}; revision 5) and roadmap-invite's AimPrompt",
     /\n  aim\?: CaptureAim;\s*aimPrompt\?: AimPrompt;\s*\}/.test(actions) &&
-      /export type CaptureAim = "NONE" \| "DRAFT" \| "ACTIVE";/.test(actions) &&
+      /export type CaptureAim = CaptureAimView;/.test(actions) &&
+      /type CaptureAim as CaptureAimView \} from "@\/components\/capture\/aim-capture";/.test(actions) &&
+      /export interface CaptureAim \{\s*open: number;\s*seatsFree: number;\s*drafts: number;\s*\}/.test(readFileSync(join(ROOT, "src/components/capture/aim-capture.ts"), "utf8")) &&
       /import \{ AIM_PROMPT_COOKIE, type AimPrompt \} from "@\/lib\/roadmap-invite";/.test(actions)
   );
 

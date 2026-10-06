@@ -48,6 +48,20 @@
  *     depth's record) rebuilds the basis and rebases as REPLAN in the depth's words.
  *   - endStateTowardOf · depthChangeLineOf: Plan history's "lowered the depth Mastered →
  *     Fluent" for an isDepthLoweringRecord row (R4's historyOf reads it; §15.7).
+ * Revision 5 (roadmap-contracts.md §23.4, §22.1 ruling 5; lane 3), compatible:
+ *   - ProficiencyRebaseCause RESUMED: the first reading after a paused goal resumes is a
+ *     rebase "since you resumed", never a gain, even on the same basis (the reviews done
+ *     while paused count in card state, but no reading was written during the pause).
+ *     A plan decision passes it (proficiencyReadingOf's `decision`); its words are
+ *     rebaseDetailOf's, and the stored detail parses it back.
+ * Revision 5 (roadmap-contracts.md §22.12, ruling 51; lane 7), compatible:
+ *   - assignRankIndices(rows, firstByLineage, depth?, planKind?): TOPICS spreads the ranks
+ *     over its counted gates (topicRankIndexOf), TopicRankFields marking held, skipped and
+ *     PART rows; LEVELS (absent) is unchanged.
+ *   - The TOPICS end state is mixed-level (realism depthTermsOf with `levels`: the
+ *     specialisation at L*, the base topics at 8, both `rc`): the formula already weighs
+ *     each term at its own level, and proficiencyTowardOf reads the highest `rc` term, L*.
+ *     Paragon on TOPICS is roadmap-types topRankIndexOfDepth's planKind branch.
  */
 import { addDays, daysBetween, weekStartKeyOf, type DayKey } from "./life-day";
 import { countsOfHistogram, levelEntriesOf, type CardCounts, type LevelHistogram } from "./roadmap-measures";
@@ -60,7 +74,10 @@ import {
   RANK_NEW_DAYS,
   RANK_TOP,
   REACH_CONFIRM_DAYS,
+  STAGE_KEYS,
+  STAGE_LEVEL,
   STAGE_NAMES,
+  STAGE_RANK,
   TRACK_STAGE_KEYS,
   aimRankName,
   measured,
@@ -73,6 +90,8 @@ import {
   stageOfLevel,
   topRankIndexOf,
   topRankIndexOfDepth,
+  topicRankIndexOf,
+  type PlanKind,
   type AimRankLadderRow,
   type AimRankView,
   type AssignRankIndices,
@@ -233,6 +252,7 @@ export function rebaseDetailOf(
   names: Readonly<Record<string, string>> = {},
   domainNames: Readonly<Record<string, string>> = {}
 ): string {
+  if (cause === "RESUMED") return "since you resumed";
   if (cause === "UNDO") return "the plan's last change was undone";
   if (cause === "SWITCHED_OFF") {
     const gone = before.practice.filter((p) => !after.practice.some((q) => q.itemLineageId === p.itemLineageId));
@@ -515,7 +535,7 @@ function parseBasis(v: unknown): ProficiencyBasis | null {
 
 function parseRebase(v: unknown): ProficiencyRebase | null {
   if (!isObj(v) || typeof v.on !== "string" || typeof v.from !== "number" || typeof v.cause !== "string") return null;
-  const causes: readonly string[] = ["ACCEPTED", "REPLAN", "UNDO", "SWITCHED_OFF"];
+  const causes: readonly string[] = ["ACCEPTED", "REPLAN", "UNDO", "SWITCHED_OFF", "RESUMED"];
   if (!causes.includes(v.cause)) return null;
   return { on: v.on, from: v.from, cause: v.cause as ProficiencyRebaseCause, detail: typeof v.detail === "string" ? v.detail : "" };
 }
@@ -620,6 +640,9 @@ export interface ProficiencyReadingInput {
  * a version, changed card terms are a plan decision such as a lowered depth,
  * and only a practice change alone is a switch-off). Otherwise the previous
  * rebase is carried forward, so "Changed on …" can show until the week ends.
+ * Revision 5: a RESUMED decision rebases even on the same basis ("since you
+ * resumed"): the value moved while no reading was written, and it is never
+ * shown as a gain.
  */
 export function proficiencyReadingOf(input: ProficiencyReadingInput): { measureKey: string; day: DayKey; value: number; detail: ProficiencyDetailR1 } {
   const counts = input.counts ?? countsOfHistogram(input.histogram);
@@ -634,7 +657,8 @@ export function proficiencyReadingOf(input: ProficiencyReadingInput): { measureK
   // A reading of another version (v1 before revision 4) is another formula: never rebased against, never carried.
   const sameFormula = prev != null && prev.v === PROFICIENCY_VERSION;
   let rebased: ProficiencyRebase | null = sameFormula ? (prev?.rebased ?? null) : null;
-  if (sameFormula && prev && input.previous && basisSignature(prev.basis) !== basisSignature(input.basis)) {
+  const resumed = input.decision?.cause === "RESUMED";
+  if (sameFormula && prev && input.previous && (resumed || basisSignature(prev.basis) !== basisSignature(input.basis))) {
     const cause: ProficiencyRebaseCause = input.decision?.cause ?? rebaseCauseOf(prev.basis, input.basis);
     rebased = { on: input.today, from: clamp01(input.previous.value), cause, detail: rebaseDetailOf(prev.basis, input.basis, cause, input.decision?.names ?? {}, input.domainNames) };
   }
@@ -766,12 +790,49 @@ export function proficiencyViewOf(current: Reading, beforeThisWeek: Reading | nu
  * optional, and roadmap-types' AssignRankIndices types it (fix round 2,
  * contracts §16.9), so R4's rankIndicesOf passes the plan's depth through
  * RoadmapLanes and needs no re-rank after the call.
+ *
+ * Revision 5, lane 7 (contracts §22.12, ruling 51): `planKind` TOPICS spreads
+ * the ranks over the plan's counted gates, since every layer milestone is
+ * FAMILIAR and ranking by stage would give each one Journeyman. The gates, in
+ * plan order (carried first, by ord; one per lineage), are each row's PART
+ * checkpoint when it holds one (TopicRankFields.part: "half of layer 1 at
+ * level 6"), then the row itself. Gate i of G takes topicRankIndexOf(i, G,
+ * top), top = STAGE_RANK of L* (`depth`: 6 gives Journeyman, 12 Virtuoso),
+ * never above the lineage's first value. Held, skipped and all-held rows
+ * (TopicRankFields.held, .skipped) get null and are not counted in G; a
+ * carried row keeps its stored index. The PART's own rank is gate 1's. G is
+ * fixed here, at accept: a later skip only sets that row's index to null (the
+ * server's), with no re-spread. Absent or LEVELS: as above, unchanged.
  */
-export const assignRankIndices = ((rows: readonly RankRow[], firstByLineage: Readonly<Record<string, number>>, depth?: number | null): Record<string, number | null> => {
+export const assignRankIndices = ((rows: readonly RankRow[], firstByLineage: Readonly<Record<string, number>>, depth?: number | null, planKind?: PlanKind | null): Record<string, number | null> => {
   const out: Record<string, number | null> = {};
   const byOrd = (a: { ord: number; id: string }, b: { ord: number; id: string }) => a.ord - b.ord || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   const carried = rows.filter((r) => !r.later && r.carried).sort(byOrd);
   const fresh = rows.filter((r) => !r.later && !r.carried).sort(byOrd);
+  // ── Revision 5, lane 7: a TOPICS plan's rank spread (contracts §22.12, ruling 51) ──
+  if (planKind === "TOPICS") {
+    const counted = (r: RankRow): boolean => (r as TopicRankRow).held !== true && (r as TopicRankRow).skipped !== true;
+    const gateOf = new Map<string, number>();
+    let gates = 0;
+    for (const r of [...carried, ...fresh]) {
+      if (!counted(r) || gateOf.has(r.lineageId)) continue;
+      if ((r as TopicRankRow).part === true) gates += 1;
+      gates += 1;
+      gateOf.set(r.lineageId, gates);
+    }
+    const top = topicTopRankOf(depth);
+    const spreadOf = (r: RankRow): number | null => {
+      const i = gateOf.get(r.lineageId);
+      if (!counted(r) || i == null) return null;
+      const spread = topicRankIndexOf(i, gates, top);
+      const first = firstByLineage[r.lineageId];
+      return Math.max(1, first != null && Number.isFinite(first) ? Math.min(spread, first) : spread);
+    };
+    for (const r of carried) out[r.id] = counted(r) ? (r.rankIndex ?? spreadOf(r)) : null;
+    for (const r of fresh) out[r.id] = spreadOf(r);
+    for (const r of rows) if (r.later) out[r.id] = null;
+    return out;
+  }
   const placeOf = new Map<string, number>();
   let place = 0;
   const placeFor = (lineageId: string): number => {
@@ -806,6 +867,33 @@ export interface StageRankFields {
 
 /** A RankRow that carries its stage (revision 4). Assignable to RankRow, so assignRankIndices takes it as it is. */
 export type StageRankRow = RankRow & StageRankFields;
+
+// ── Revision 5, lane 7 (contracts §22.12, ruling 51) ──
+
+/**
+ * What a TOPICS row tells assignRankIndices (planKind TOPICS; lane 8's
+ * rankIndicesOf passes them beside the stage): `held` (HELD_AT_START, or a
+ * layer whose every topic is held), `skipped` (every topic of the row marked
+ * "I know this"): either gives null and is not counted in G; `part`: the row
+ * holds the PART checkpoint ("half of layer 1 at level 6", MeasureSpec.gate
+ * PART), one more gate just before it.
+ */
+export interface TopicRankFields {
+  held?: boolean;
+  skipped?: boolean;
+  part?: boolean;
+}
+
+/** A RankRow of a TOPICS plan (assignable to RankRow). */
+export type TopicRankRow = StageRankRow & TopicRankFields;
+
+/** A TOPICS plan's top milestone rank (contracts §22.12): STAGE_RANK of the gate at L* (6 → Journeyman, 12 → Virtuoso); 12's without a depth. */
+function topicTopRankOf(depth?: number | null): number {
+  const L = typeof depth === "number" && Number.isFinite(depth) ? Math.floor(depth) : STAGE_LEVEL.MASTERED;
+  let top = 1;
+  for (const k of STAGE_KEYS) if (STAGE_LEVEL[k] <= L) top = Math.max(top, STAGE_RANK[k]);
+  return top;
+}
 
 const TRACK_STAGES: ReadonlySet<string> = new Set(TRACK_STAGE_KEYS);
 

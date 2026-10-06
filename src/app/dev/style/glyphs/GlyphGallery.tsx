@@ -28,7 +28,7 @@ import { TimeBar } from "@/components/glyph/TimeBar";
 import { FAMILY_NAMES, GLYPH_INFO, type FamilyId, type GlyphName, type GlyphState } from "@/components/glyph/paths";
 import { GLYPH_MEANS } from "@/components/glyph/paths/means";
 import { RANK_WORDS } from "@/components/glyph/paths/rank";
-import { LEVELS, PIP_DAYS, RAIL_NODES, STATS, STATS_CALIBRATING, STRIP_NODES, THEMES, TIMEBARS, motionOfGlyph, type GalleryLevel, type GalleryTheme } from "./fixtures";
+import { LEVELS, PIP_DAYS, RAIL_NODES, STATS, STATS_CALIBRATING, STRIP_NODES, THEMES, TIMEBARS, TOPIC_RAIL_NODES, motionOfGlyph, type GalleryLevel, type GalleryTheme } from "./fixtures";
 import "./glyphs.css";
 
 const STATES: readonly GlyphState[] = ["idle", "active", "done"];
@@ -44,6 +44,9 @@ const FAMILIES: readonly { id: FamilyId; title: string; note: string }[] = [
   { id: "time", title: "Time and pace", note: "static, ink" },
   { id: "misc", title: "Misc", note: "inline" },
   { id: "flame", title: "Flame (phase 3)", note: "inline · kindle (SEEN); idle unlit, active lit, done kept" },
+  // Revision 5, lane 9 (ui-motion.md §15.1)
+  { id: "layer", title: "Layer · the topic map", note: "inline · layer-open (SEEN); never dashed; locked is ink-mute beside m.builds" },
+  { id: "goal", title: "Goal seats", note: "static · <use> into GlyphDefs (the goal family)" },
 ];
 
 interface CallRecord {
@@ -245,6 +248,7 @@ function Composites({ play }: { play: PlayFn }) {
   const kgRef = useRef<HTMLDivElement>(null);
   const sealRef = useRef<HTMLDivElement>(null);
   const railRef = useRef<HTMLDivElement>(null);
+  const topicRailRef = useRef<HTMLDivElement>(null);
   const tbRef = useRef<HTMLDivElement>(null);
   const payRef = useRef<HTMLSpanElement>(null);
   const meterRef = useRef<HTMLDivElement>(null);
@@ -365,6 +369,16 @@ function Composites({ play }: { play: PlayFn }) {
         <div className="gxl-row">
           <Play label="Play start on the current node" onPlay={() => setStartTick((t) => t + 1)} />
           <Play label="Play reach on milestone 2" onPlay={() => play(railRef.current?.querySelector('[data-n="2"]'), "reach")} />
+        </div>
+      </Box>
+
+      <Box title="RouteRail · topics (revision 5)" note="Layer nodes, a locked node (m.builds, after 2: no padlock, no dash), a held layer you know, a depth node.">
+        <div ref={topicRailRef}>
+          <RouteRail nodes={TOPIC_RAIL_NODES} label="Topic milestones (fixture)" />
+        </div>
+        <RouteRail nodes={TOPIC_RAIL_NODES} orientation="strip" label="Topic milestones strip (fixture)" />
+        <div className="gxl-row">
+          <Play label="Play layer-open on milestone 2" onPlay={() => play(topicRailRef.current?.querySelector('[data-n="2"]'), "layer-open")} />
         </div>
       </Box>
 

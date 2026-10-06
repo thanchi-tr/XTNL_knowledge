@@ -44,6 +44,8 @@
  *                WeekQuestRow and WeekQuestsView, which now carry partsLine
  *                and health; isRetryEntry and ReviewRowLike moved to
  *                roadmap-types as isRetryEntry and ReviewLedgerRow)
+ *   added by lane 3 (revision 5, contracts §23.3): WeekQuestShare · shareLineOf · shareOfBasis ·
+ *                WeekQuestInputExtras.share · WeekQuestsViewInput.goal
  *
  * Every count is WORKED_OUT and every basis line says what produced it. The
  * basis lines are stored with the frozen set (RoadmapQuestWeek.basis), so
@@ -52,7 +54,19 @@
  * "Sessions:", "Step:", "Checkpoint:", "Capacity:", "Week:") so the sheet can
  * group them; the roadmap page's notes are picked out of them by
  * WEEK_QUEST_NOTE_PATTERNS.
+ *
+ * Revision 5 (contracts §23.3; lane 3): one set per goal. A goal that shares
+ * the week with other open goals freezes its set at its share (roadmap-goals
+ * sharesOf, read when the set is frozen: the cron's just after Monday 04:00),
+ * and the capacity line names it ("Capacity: ≈ 2 h 10 this week (…) · goal
+ * 2's 3 of 7 h."). That line is where the share is stored (RoadmapQuestWeek
+ * has no column for it): shareOfBasis reads WeekQuestSet.share back from a
+ * frozen set's basis. With one goal there is no share, no such words and no
+ * `share` key: every set and view is exactly as before. A view of a goal
+ * among 2 or more open goals (WeekQuestsViewInput.goal) carries its seat on
+ * the view and on each row, and its roadmap links carry ?goal=<id>.
  */
+import { goalHrefOf } from "./roadmap-goals";
 import { LIFE_TZ, addDays, daysBetween, weekdayOf, type DayKey } from "./life-day";
 import { WEEKDAY_SHORT, describeRule, parseRule } from "./recurrence";
 import {
@@ -93,6 +107,7 @@ import {
   type CodeText,
   type DomainName,
   type EvidenceValue,
+  type GoalSlot,
   type PastWeekView,
   type PracticeQuestSpec,
   type QuestEvidence,
@@ -253,6 +268,51 @@ export const WEEK_QUEST_NOTE_PATTERNS: readonly RegExp[] = [
  */
 export interface WeekQuestInputExtras {
   loadout?: { extraStrikes?: number; graceExtraDays?: number } | null;
+  /**
+   * Revision 5 (contracts §23.3; lane 3): this goal's share of the week
+   * when it shares it with other open goals (roadmap-goals sharesOf, as
+   * the set is frozen), with its seat. The capacity was read at this
+   * share (RealismInput.share); the capacity line names it, and the set
+   * keeps it (WeekQuestSet.share). Absent or null: one goal, as before.
+   */
+  share?: WeekQuestShare | null;
+}
+
+/** A goal's share of the week as a set is frozen with it (contracts §23.3): "goal 2's 3 of 7 h". */
+export interface WeekQuestShare {
+  slot: GoalSlot;
+  /** This goal's hours a week (yours). */
+  hours: number;
+  /** Every open (DRAFT and ACTIVE) goal's hours together. */
+  of: number;
+}
+
+/** Hours as the share line writes them: whole hours plain, else one decimal ("3", "7.5"). */
+function shareHoursText(h: number): string {
+  const v = Number.isFinite(h) ? Math.max(0, h) : 0;
+  return Number.isInteger(v) ? String(v) : v.toFixed(1).replace(/\.0$/, "");
+}
+
+/** The share as the capacity line names it: "goal 2's 3 of 7 h". */
+export function shareLineOf(share: WeekQuestShare): string {
+  return `goal ${share.slot}'s ${shareHoursText(share.hours)} of ${shareHoursText(share.of)} h`;
+}
+
+/** The capacity line's share, as shareLineOf writes it at the line's end. */
+const SHARE_IN_CAPACITY = /^Capacity: .* · goal ([1-3])'s (\d+(?:\.\d)?) of (\d+(?:\.\d)?) h\.$/;
+
+/**
+ * WeekQuestSet.share read back from a set's basis (revision 5): the hours
+ * its capacity line names, or null when the line names none (one goal, an
+ * empty set, a set frozen before revision 5). The line is code's own
+ * template (shareLineOf), so this is the frozen share, never a recomputation.
+ */
+export function shareOfBasis(basis: readonly string[]): { hours: number; of: number } | null {
+  for (const line of basis) {
+    const m = SHARE_IN_CAPACITY.exec(line);
+    if (m) return { hours: Number(m[2]), of: Number(m[3]) };
+  }
+  return null;
 }
 
 /** The reach inputs a week keeps from Start (F-R4-14), and the ones that were the app's assumption then. */
@@ -806,7 +866,9 @@ export function weekQuestsFor(input: WeekQuestInput & WeekQuestInputExtras): Wee
   }
 
   // 8. Time: the plan's minutes against the week's capacity (the practices are still asked for).
-  basis.push(`Capacity: ${minutesText(availE)} this week (${capacityWords}).`);
+  // Revision 5: a goal sharing the week names its share, which the set keeps (shareOfBasis reads it back).
+  const share = input.share ?? null;
+  basis.push(`Capacity: ${minutesText(availE)} this week (${capacityWords})${share ? ` · ${shareLineOf(share)}` : ""}.`);
   const planMin = practiceMin + reviewMin + stepMin;
   if (planMin > availE + EPS) {
     basis.push(`Capacity: This week's plan is more than the time you've shown (${minutesText(planMin)} of ${minutesText(availE)}); the practices are still asked for, as the plan's own.`);
@@ -817,7 +879,7 @@ export function weekQuestsFor(input: WeekQuestInput & WeekQuestInputExtras): Wee
   const sorted = built.map((b, i) => ({ b, i })).sort((x, y) => order[x.b.kind] - order[y.b.kind] || x.i - y.i);
   const quests = sorted.slice(0, WEEK_QUESTS_PER_WEEK_MAX).map(({ b }, i) => ({ ...b, ord: i + 1 }) as WeekQuestSpec);
   if (quests.length === 0) basis.push("Week: nothing to ask this week.");
-  return { ...head, state: "OPEN", quests, basis, cappedBy };
+  return { ...head, state: "OPEN", quests, basis, cappedBy, ...(share ? { share: { hours: share.hours, of: share.of } } : {}) };
 }
 
 // ═══ Verification (F14) ═════════════════════════════════════════════════════
@@ -1045,6 +1107,13 @@ export interface WeekQuestsViewInput {
   domainNames?: Readonly<Record<string, DomainName>> | null;
   /** Added by R6 (rev 4, optional): a BODY-track plan; its PRACTICE rows carry `health` (HEALTH_LINE as the row's sub-line, F-R4-13). */
   health?: boolean;
+  /**
+   * Revision 5 (contracts §23.3, §23.5; lane 3): the goal, only while 2 or
+   * more goals are open (D39): the view and each row carry its seat (Today's
+   * seat glyph), the view its frozen share, and a link to the roadmap page
+   * carries ?goal=<id> (goalHrefOf). Absent: one goal, exactly as before.
+   */
+  goal?: { roadmapId: string; slot: GoalSlot } | null;
 }
 
 /**
@@ -1139,9 +1208,16 @@ function rowOf(spec: WeekQuestSpec, p: WeekQuestProgress | undefined, input: Wee
     slipLine,
     seekTemplateId: input.variant === "today" ? templateId : null,
     place: templateId ? (input.places[templateId] ?? null) : null,
-    href: hrefOf(spec, input.variant),
+    href: goalLinkOf(hrefOf(spec, input.variant), input.goal),
     ...extra,
+    ...(input.goal ? { slot: input.goal.slot } : {}),
   };
+}
+
+/** A link to the roadmap page names its goal while 2 or more are open (revision 5); every other link, and every link with one goal, is unchanged. */
+function goalLinkOf(href: string | null, goal: WeekQuestsViewInput["goal"]): string | null {
+  if (!href || !goal || !href.startsWith("/you/roadmap")) return href;
+  return goalHrefOf(href, goal.roadmapId);
 }
 
 /**
@@ -1223,6 +1299,7 @@ export function weekQuestsViewOf(input: WeekQuestsViewInput): WeekQuestsViewV2 {
     basis: onRoadmap ? [...set.basis] : [],
     cappedBy: onRoadmap ? set.cappedBy : null,
     notes: onRoadmap ? notesOf(input) : [],
+    ...(input.goal ? { slot: input.goal.slot, share: set.share ?? shareOfBasis(set.basis) } : {}),
   };
 }
 

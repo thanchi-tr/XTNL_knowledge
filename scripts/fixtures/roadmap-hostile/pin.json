@@ -45,5 +45,22 @@
     "probe-python-cert",
     "probe-run-10k",
     "probe-vietnamese-japanese"
-  ]
+  ],
+  "r5": {
+    "sha256": "cb34e62cd45d1850b3d4dd780da05c6012ff6952e71f658b8b113306b83addd3",
+    "counts": {
+      "R": 33,
+      "T": 52,
+      "W": 30,
+      "L": 39,
+      "X": 20,
+      "M-M8": 4,
+      "M-M9": 4,
+      "M-M10": 2,
+      "M-M11": 3,
+      "M-M12": 9,
+      "M-M13": 2,
+      "M-M14": 3
+    }
+  }
 }

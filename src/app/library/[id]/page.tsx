@@ -8,6 +8,9 @@ import { PageActions } from "@/components/ui/Tabs";
 import { IdeaDetailPage } from "@/components/library/IdeaDetail";
 import { historyOf, ideaHeadline, type LibraryIdea } from "@/components/library/library-model";
 import "@/components/library/study.css";
+// Revision 5, lane 9 (contracts ruling 67): pv.named after a Domain Gemini named
+import { DomainName } from "@/components/glyph/NamedMark";
+import { geminiNamedOf } from "@/lib/roadmap-types";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +36,8 @@ const loadIdea = cache(async (id: string) => {
       dueDate: true,
       failedAttempts: true,
       createdAt: true,
-      domain: { select: { id: true, name: true, field: { select: { id: true, name: true } } } },
+      // nameOrigin and originName: the Gemini mark (revision 5, lane 9; contracts ruling 67; migration B's Domain columns)
+      domain: { select: { id: true, name: true, nameOrigin: true, originName: true, field: { select: { id: true, name: true } } } },
     },
   });
 });
@@ -80,6 +84,7 @@ export default async function IdeaPage({ params }: { params: Promise<{ id: strin
     fieldName: row.domain.field.name,
     domainId: row.domain.id,
     domainName: row.domain.name,
+    domainGeminiNamed: geminiNamedOf(row.domain),
     title: row.title,
     corePremise: row.corePremise,
     tags: row.tags,
@@ -101,7 +106,7 @@ export default async function IdeaPage({ params }: { params: Promise<{ id: strin
       <div className="idea-page">
         <header className="card idea-head">
           <div className="t-eyebrow">
-            {idea.domainName} · {idea.fieldName}
+            {idea.domainGeminiNamed ? <DomainName name={idea.domainName} geminiNamed /> : idea.domainName} · {idea.fieldName}
           </div>
           <h2 className="t-display-m">{headline}</h2>
           {idea.corePremise && idea.corePremise !== headline && (

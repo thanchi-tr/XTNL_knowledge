@@ -244,7 +244,9 @@ function captureQuietedByPrompt(): boolean {
   const offer = offersAim as unknown as (parsed: unknown, aim: unknown, prompt: unknown) => boolean;
   const long = { mode: "GOAL", horizon: "LONG", title: "Hold a conversation in Japanese" };
   try {
-    return offer(long, "NONE", "ASK") === true && (["LATER", "HIDDEN", "OFF"] as const).every((p) => offer(long, "NONE", p) === false);
+    // No goal open, the one seat free (aim-capture's CaptureAim since revision 5: {open, seatsFree, drafts}).
+    const none = { open: 0, seatsFree: 1, drafts: 0 };
+    return offer(long, none, "ASK") === true && (["LATER", "HIDDEN", "OFF"] as const).every((p) => offer(long, none, p) === false);
   } catch {
     return false;
   }

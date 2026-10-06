@@ -14,6 +14,8 @@ import { BOON_META } from "@/lib/boon-meta";
 import { DEBUFF_META } from "@/lib/debuff-meta";
 import { MASTERY_LEVEL } from "@/lib/xp";
 import { questTargetOf } from "@/lib/review-facts";
+// Revision 5, lane 9 (contracts ruling 67): the Gemini mark on a Domain Gemini named
+import { geminiNamedOf } from "@/lib/roadmap-types";
 import { LoadoutStrip } from "@/components/skills/LoadoutStrip";
 import { WorkspaceView, type WorkspaceField } from "@/components/workspace/WorkspaceView";
 import type { RecentIdea, ReviewEffects } from "@/components/workspace/ReviewHub";
@@ -76,6 +78,7 @@ export default async function ReviewPage() {
             // A MULTI card's payload is only its options; its retrieval question is the prompt. Never the answer.
             prompt: idea.questionType === "MULTI" ? idea.atomicPrompt?.trim() || null : null,
             domainName: domain.name,
+            domainGeminiNamed: geminiNamedOf(domain),
             fieldName: field.name,
             lastSeenDay: lastSeen.byIdea[idea.id] ?? null,
             overdue: daysUntilDue(idea.dueDate, now) < 0,
@@ -92,7 +95,7 @@ export default async function ReviewPage() {
   after(() => recordDayOpen(userId, totalDue, now));
 
   // The soonest thing that is *not* due yet, so an empty queue can say when to come back.
-  const allIdeas = allFields.flatMap((f) => f.domains.flatMap((d) => d.ideas.map((i) => ({ idea: i, domainName: d.name }))));
+  const allIdeas = allFields.flatMap((f) => f.domains.flatMap((d) => d.ideas.map((i) => ({ idea: i, domainName: d.name, domainGeminiNamed: geminiNamedOf(d) }))));
   const notYetDue = allIdeas.filter(({ idea }) => !isDue(idea.dueDate, now)).sort((a, b) => a.idea.dueDate.getTime() - b.idea.dueDate.getTime());
   const nextDate = notYetDue[0]?.idea.dueDate ?? null;
   const upcoming = nextDate
@@ -137,12 +140,13 @@ export default async function ReviewPage() {
     .map((id) => byId.get(id))
     .filter((x): x is NonNullable<typeof x> => x != null && !isDue(x.idea.dueDate, now))
     .slice(0, 4)
-    .map(({ idea, domainName }) => {
+    .map(({ idea, domainName, domainGeminiNamed }) => {
       const days = daysUntilDue(idea.dueDate, now);
       return {
         id: idea.id,
         title: idea.title?.trim() || displayQuestion(idea.questionType, idea.question),
         domainName,
+        domainGeminiNamed,
         nextLabel: days === 1 ? "next tomorrow" : `next in ${days} days`,
         level: idea.level,
         mastered: idea.level >= MASTERY_LEVEL,

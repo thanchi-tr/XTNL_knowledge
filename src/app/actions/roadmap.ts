@@ -45,7 +45,15 @@
  * Start, a pick, a re-plan, an edit, a build — points at the card (the cores'
  * pointedRefusal, decision 2).
  *
- * Contract: docs/life-plan/roadmap-contracts.md §R4.
+ * Revision 5 (contracts §23.1, §23.4; lane 3): up to GOALS_MAX goals.
+ * saveIntake takes a SaveTarget — {roadmapId} edits that draft, {createKey}
+ * (a client nonce) creates one in the lowest free seat, so a double tap
+ * returns the same id; none keeps today's rule (the open draft, else a new
+ * one). pauseRoadmap, resumeRoadmap and setGoalLabel are the goal sheets'
+ * actions (lane 4 renders them). GOALS_MAX is 1, so a second open goal is
+ * refused as before (ANOTHER_ACTIVE) and no answer changes.
+ *
+ * Contract: docs/life-plan/roadmap-contracts.md §R4, §23.
  */
 import { after } from "next/server";
 import { cookies } from "next/headers";
@@ -74,13 +82,16 @@ import {
   lowerDepthCore,
   markRoadmapDoneCore,
   moveLineCore,
+  pauseRoadmapCore,
   replanCore,
   resolveDomainCore,
+  resumeRoadmapCore,
   returnStartingCore,
   saveIntakeCore,
   setActivityVerdictsCore,
   setAimFigureCore,
   setAimSuggestionsCore,
+  setGoalLabelCore,
   setLineDomainCore,
   snoozeAimPromptCore,
   snoozeAimStepCore,
@@ -100,18 +111,43 @@ import {
   type ActivityCardAnswer,
   type AimDepth,
   type DomainResolution,
+  type GoalSlot,
   type Intake,
   type ItemDecisionChoice,
   type ItemEdit,
+  type PauseChoices,
   type ReplanKind,
   type Remedy,
+  type ResumeChoices,
   type RoadmapActionResult,
   type RunStatus,
+  type SaveTarget,
   type StartChoices,
   type StartPreview,
 } from "@/lib/roadmap-types";
 import { ACTIVITY_ANSWER_REFUSAL, type CatalogKey } from "@/lib/roadmap-catalog";
 import { createDomain } from "./taxonomy";
+// ── Revision 5, lane 8 (contracts §22.14): the TOPICS map's actions ──
+import {
+  addTopicCore,
+  breakIntoTopicsCore,
+  chooseTopicCore,
+  editTopicCore,
+  keepGeminiNameCore,
+  keepLayerCore,
+  mergeLayerUpCore,
+  moveTopicCore,
+  setLayersCore,
+  setParentsCore,
+  skipTopicCore,
+  trackClauseAsGoalCore,
+  // Aliased: a "use" call name reads as a React hook to eslint (react-hooks/rules-of-hooks); the core is the contract's useMyDomainCore.
+  useMyDomainCore as bindMyDomainCore,
+  writeTopicsCore,
+} from "@/lib/roadmap-server";
+import { LAYERS_MAX, LAYERS_MIN, type LayerSetChange, type ParentPick, type TopicDepth, type TopicEdit } from "@/lib/roadmap-types";
+// ── Revision 5, lane 10 (contracts §22.14, §22.15): the model phases' cores ──
+import { advanceTopicChainCore, breakDownCore, goDeeperCore, rateAgainCore, type TopicChainStep } from "@/lib/roadmap-server";
 
 const SAVE_FAILED = "Couldn't save that. Try again.";
 const NO_REF = "That's no longer here. Refresh and try again.";
@@ -125,6 +161,26 @@ function depsOf(): RoadmapDeps {
 }
 
 const isRef = (s: unknown): s is string => typeof s === "string" && s.length > 0 && s.length <= 64;
+/** A goal's createKey: the client's nonce (roadmap-types SaveTarget). */
+const CREATE_KEY = /^[A-Za-z0-9_-]{8,64}$/;
+/** A label or a pause reason is short text the core cleans (cleanGoalLabelOf, GOAL_PAUSE_REASON_MAX); anything past this is refused unread. */
+const TEXT_MAX = 2_000;
+
+/**
+ * saveIntake's target, cleaned to its shape (contracts §23.1): absent or
+ * null → null (today's rule); {roadmapId} (a reference) → that draft;
+ * {createKey} (8 to 64 of A-Z, a-z, 0-9, '_' and '-') → a new goal. Only
+ * the one key is read; anything else is malformed (undefined), and refused.
+ */
+function saveTargetOf(t: unknown): SaveTarget | null | undefined {
+  if (t === undefined || t === null) return null;
+  if (typeof t !== "object" || Array.isArray(t)) return undefined;
+  const o = t as Partial<Record<"roadmapId" | "createKey", unknown>>;
+  if (o.roadmapId !== undefined && o.createKey !== undefined) return undefined;
+  if (o.roadmapId !== undefined) return isRef(o.roadmapId) ? { roadmapId: o.roadmapId } : undefined;
+  if (typeof o.createKey === "string" && CREATE_KEY.test(o.createKey)) return { createKey: o.createKey };
+  return undefined;
+}
 
 /** Runs a core with the server's user id; never throws. `refreshOnOk` re-renders the current route in the same response. */
 async function act<T>(label: string, refreshOnOk: boolean, fn: (userId: string, now: Date) => Promise<RoadmapActionResult<T>>): Promise<RoadmapActionResult<T>> {
@@ -140,9 +196,18 @@ async function act<T>(label: string, refreshOnOk: boolean, fn: (userId: string, 
 
 // ── Intake and drafting (F2, F7, F8) ────────────────────────────────────────
 
-/** The intake: update the open DRAFT or insert one (claim-first; one row on a double tap). The server re-validates every field. */
-export async function saveIntake(intake: Intake): Promise<RoadmapActionResult<{ roadmapId: string }>> {
-  return act("saveIntake", false, (userId, now) => saveIntakeCore(userId, intake, now, depsOf()));
+/**
+ * The intake: with no target, update the open DRAFT or insert one
+ * (claim-first; one row on a double tap); with {roadmapId}, edit that draft
+ * (it must be the user's DRAFT); with {createKey}, create a goal in the
+ * lowest free seat, the same key returning the same id (contracts §23.1).
+ * No free seat: ANOTHER_ACTIVE while GOALS_MAX is 1, GOALS_FULL at 3. The
+ * server re-validates every field.
+ */
+export async function saveIntake(intake: Intake, target: SaveTarget | null = null): Promise<RoadmapActionResult<{ roadmapId: string }>> {
+  const clean = saveTargetOf(target);
+  if (clean === undefined) return { ok: false, error: NO_REF };
+  return act("saveIntake", false, (userId, now) => saveIntakeCore(userId, intake, now, depsOf(), clean));
 }
 
 /** "Draft with Gemini": claims a RUNNING run (or reuses one) and returns at once; the call runs in after(). */
@@ -308,6 +373,45 @@ export async function markRoadmapDone(roadmapId: string, reason: string | null):
   return act("markRoadmapDone", true, (userId, now) => markRoadmapDoneCore(userId, roadmapId, reason, now, depsOf()));
 }
 
+// ── Goals: pause, resume, the label (revision 5; contracts §23.4) ──────────
+
+/**
+ * [Pause] (from ACTIVE only; a DRAFT is discarded instead): a live milestone
+ * closes as dropped and its practices are kept on Today or archived
+ * (`choices.aftercare`, the aftercare path); the goal turns PAUSED with
+ * `choices.reason` (≤ GOAL_PAUSE_REASON_MAX), keeps its seat number, its
+ * Domains and its AVOIDs, and frees its seat. Only the two choices are read,
+ * cleaned to their shape.
+ */
+export async function pauseRoadmap(roadmapId: string, choices: PauseChoices): Promise<RoadmapActionResult<{ closedMilestoneId: string | null }>> {
+  if (!isRef(roadmapId)) return { ok: false, error: NO_REF };
+  const o: Partial<Record<keyof PauseChoices, unknown>> | null = choices && typeof choices === "object" && !Array.isArray(choices) ? (choices as Partial<Record<keyof PauseChoices, unknown>>) : null;
+  if (!o || (o.aftercare !== "KEEP" && o.aftercare !== "ARCHIVE") || !(o.reason === null || o.reason === undefined || (typeof o.reason === "string" && o.reason.length <= TEXT_MAX))) {
+    return { ok: false, error: NO_REF };
+  }
+  const clean: PauseChoices = { aftercare: o.aftercare, reason: typeof o.reason === "string" ? o.reason : null };
+  return act("pauseRoadmap", true, (userId, now) => pauseRoadmapCore(userId, roadmapId, clean, now, depsOf()));
+}
+
+/**
+ * [Resume] (from PAUSED only): it needs a free seat (else GOALS_FULL, or
+ * ANOTHER_ACTIVE at GOALS_MAX 1) and room in the week's hours, takes its old
+ * seat when free, and with `choices.redate` moves the unstarted rows by the
+ * days paused, as a new version (`version`).
+ */
+export async function resumeRoadmap(roadmapId: string, choices: ResumeChoices): Promise<RoadmapActionResult<{ slot: GoalSlot; version: number | null }>> {
+  if (!isRef(roadmapId)) return { ok: false, error: NO_REF };
+  const redate = choices && typeof choices === "object" && !Array.isArray(choices) ? (choices as Partial<Record<keyof ResumeChoices, unknown>>).redate : undefined;
+  if (redate !== true && redate !== false) return { ok: false, error: NO_REF };
+  return act("resumeRoadmap", true, (userId, now) => resumeRoadmapCore(userId, roadmapId, { redate }, now, depsOf()));
+}
+
+/** The goal's own label (≤ GOAL_LABEL_MAX, distinct among DRAFT, ACTIVE and PAUSED goals); null goes back to the Area's name. */
+export async function setGoalLabel(roadmapId: string, label: string | null): Promise<RoadmapActionResult<null>> {
+  if (!isRef(roadmapId) || !(label === null || (typeof label === "string" && label.length <= TEXT_MAX))) return { ok: false, error: NO_REF };
+  return act("setGoalLabel", true, (userId, now) => setGoalLabelCore(userId, roadmapId, label, now, depsOf()));
+}
+
 /**
  * Practice aftercare's [Keep on Today]: the finished milestone stops asking
  * about that practice (StartSnapshot.aftercareKept); the task itself stays
@@ -383,8 +487,11 @@ export async function snoozeAimStep(kind: "DRAFT" | "START", id: string): Promis
   }
 }
 
-/** [Choose a lower depth…] (F-R4-11): the only path that lowers a depth, shown on the plan for good. */
-export async function lowerDepth(roadmapId: string, to: AimDepth, reason: "CHOICE" | "EXAM"): Promise<RoadmapActionResult<null>> {
+/**
+ * [Choose a lower depth…] (F-R4-11): the only path that lowers a depth, shown on the plan for good. Revision 5, lane 8
+ * (ruling 50): `to` is a TopicDepth; 6 is a TOPICS plan's only (the core refuses it on LEVELS, in today's words).
+ */
+export async function lowerDepth(roadmapId: string, to: AimDepth | TopicDepth, reason: "CHOICE" | "EXAM"): Promise<RoadmapActionResult<null>> {
   if (!isRef(roadmapId)) return { ok: false, error: NO_REF };
   return act("lowerDepth", true, (userId, now) => lowerDepthCore(userId, roadmapId, to, reason, now, depsOf()));
 }
@@ -493,4 +600,163 @@ export async function hideAimPrompt(): Promise<RoadmapActionResult<null>> {
 export async function keepCalibratedDates(roadmapId: string): Promise<RoadmapActionResult<null>> {
   if (!isRef(roadmapId)) return { ok: false, error: NO_REF };
   return act("keepCalibratedDates", true, (userId, now) => keepCalibratedDatesCore(userId, roadmapId, now, depsOf()));
+}
+
+// ═══ Revision 5, lane 8: the TOPICS map (contracts §22.14; behind TOPIC_PLANS_LIVE) ═════════════
+//
+// Each takes the roadmap's id and the map's own references (a topic's key S<n>, U<n> or T<n>; a layer 1..6), cleans
+// every argument to its shape (anything else is NO_REF, never read), calls its core and never throws. The cores refuse
+// with TOPIC_PLANS_OFF while TOPIC_PLANS_LIVE is false, so nothing here changes a page a user can reach today.
+
+/** A topic's key on the map (roadmap-topics TOPIC_KEY_PATTERN). */
+const TOPIC_KEY = /^(S|U|T)([1-9]\d{0,2})$/;
+const isTopicKey = (k: unknown): k is string => typeof k === "string" && TOPIC_KEY.test(k);
+const isLayer = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= LAYERS_MIN && n <= LAYERS_MAX;
+const asObject = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
+
+/** [Write the topics] (ruling 58): the no-Gemini TOPICS draft of a fresh draft. The intake page navigates itself. */
+export async function writeTopics(roadmapId: string): Promise<RoadmapActionResult<{ version: number }>> {
+  if (!isRef(roadmapId)) return { ok: false, error: NO_REF };
+  return act("writeTopics", false, (userId, now) => writeTopicsCore(userId, roadmapId, now, depsOf()));
+}
+
+/** [Break into topics] (ruling 49): an accepted LEVELS plan's TOPICS re-plan draft (version + 1; the live plan stays until accept). */
+export async function breakIntoTopics(roadmapId: string): Promise<RoadmapActionResult<{ version: number }>> {
+  if (!isRef(roadmapId)) return { ok: false, error: NO_REF };
+  return act("breakIntoTopics", true, (userId, now) => breakIntoTopicsCore(userId, roadmapId, now, depsOf()));
+}
+
+/** The bands: SET (your count), FEWER, or PLAN_FIRST (the layers past N leave the plan as a note). */
+export async function setLayers(roadmapId: string, change: LayerSetChange): Promise<RoadmapActionResult<null>> {
+  const o = asObject(change);
+  if (!isRef(roadmapId) || !o || (o.kind !== "SET" && o.kind !== "FEWER" && o.kind !== "PLAN_FIRST") || !isLayer(o.layers)) return { ok: false, error: NO_REF };
+  const clean: LayerSetChange = { kind: o.kind, layers: o.layers };
+  return act("setLayers", true, (userId, now) => setLayersCore(userId, roadmapId, clean, now, depsOf()));
+}
+
+/** [Keep these] on one layer. */
+export async function keepLayer(roadmapId: string, layer: number): Promise<RoadmapActionResult<{ kept: number }>> {
+  if (!isRef(roadmapId) || !isLayer(layer)) return { ok: false, error: NO_REF };
+  return act("keepLayer", true, (userId, now) => keepLayerCore(userId, roadmapId, layer, now, depsOf()));
+}
+
+/** [Write one]: a topic you name in a band (a free Domain's name in layer 1 is that seed; one of your aim's clauses in the last band is that clause). */
+export async function addTopic(roadmapId: string, layer: number, name: string): Promise<RoadmapActionResult<{ key: string }>> {
+  if (!isRef(roadmapId) || !isLayer(layer) || typeof name !== "string" || name.length > TEXT_MAX) return { ok: false, error: NO_REF };
+  return act("addTopic", true, (userId, now) => addTopicCore(userId, roadmapId, layer, name, now, depsOf()));
+}
+
+/** A topic's ▸ sheet: Rename, Merge into…, or Remove. */
+export async function editTopic(roadmapId: string, key: string, edit: TopicEdit): Promise<RoadmapActionResult<null>> {
+  const o = asObject(edit);
+  if (!isRef(roadmapId) || !isTopicKey(key) || !o) return { ok: false, error: NO_REF };
+  let clean: TopicEdit;
+  if (o.kind === "RENAME" && typeof o.name === "string" && o.name.length <= TEXT_MAX) clean = { kind: "RENAME", name: o.name };
+  else if (o.kind === "MERGE" && isTopicKey(o.into)) clean = { kind: "MERGE", into: o.into };
+  else if (o.kind === "REMOVE") clean = { kind: "REMOVE" };
+  else return { ok: false, error: NO_REF };
+  return act("editTopic", true, (userId, now) => editTopicCore(userId, roadmapId, key, clean, now, depsOf()));
+}
+
+/** [Move to layer…] (on a draft only). */
+export async function moveTopic(roadmapId: string, key: string, layer: number): Promise<RoadmapActionResult<null>> {
+  if (!isRef(roadmapId) || !isTopicKey(key) || !isLayer(layer)) return { ok: false, error: NO_REF };
+  return act("moveTopic", true, (userId, now) => moveTopicCore(userId, roadmapId, key, layer, now, depsOf()));
+}
+
+/** [Builds on…]: topics of the layer before and other goals' Domains (read-only), or the whole layer before. */
+export async function setParents(roadmapId: string, key: string, pick: ParentPick): Promise<RoadmapActionResult<null>> {
+  const o = asObject(pick);
+  if (!isRef(roadmapId) || !isTopicKey(key) || !o) return { ok: false, error: NO_REF };
+  let clean: ParentPick;
+  if (o.kind === "LAYER") clean = { kind: "LAYER" };
+  else if (o.kind === "LINKS" && Array.isArray(o.keys) && o.keys.length <= 16 && o.keys.every(isTopicKey) && Array.isArray(o.crossGoal) && o.crossGoal.length <= 8) {
+    const cross: { roadmapId: string; domainId: string }[] = [];
+    for (const c of o.crossGoal as unknown[]) {
+      const x = asObject(c);
+      if (!x || !isRef(x.roadmapId) || !isRef(x.domainId)) return { ok: false, error: NO_REF };
+      cross.push({ roadmapId: x.roadmapId, domainId: x.domainId });
+    }
+    clean = { kind: "LINKS", keys: [...(o.keys as string[])], crossGoal: cross };
+  } else return { ok: false, error: NO_REF };
+  return act("setParents", true, (userId, now) => setParentsCore(userId, roadmapId, key, clean, now, depsOf()));
+}
+
+/** [Use my Domain…]: the topic bound to one of the Area's free Domains; null unbinds it. */
+export async function useMyDomain(roadmapId: string, key: string, domainId: string | null): Promise<RoadmapActionResult<null>> {
+  if (!isRef(roadmapId) || !isTopicKey(key) || (domainId !== null && !isRef(domainId))) return { ok: false, error: NO_REF };
+  return act("useMyDomain", true, (userId, now) => bindMyDomainCore(userId, roadmapId, key, domainId, now, depsOf()));
+}
+
+/** A topic's tick (with what it builds on) or untick; `chosen` lists the keys the tick chose. */
+export async function chooseTopic(roadmapId: string, key: string, chosen: boolean): Promise<RoadmapActionResult<{ chosen: string[] }>> {
+  if (!isRef(roadmapId) || !isTopicKey(key) || (chosen !== true && chosen !== false)) return { ok: false, error: NO_REF };
+  return act("chooseTopic", true, (userId, now) => chooseTopicCore(userId, roadmapId, key, chosen, now, depsOf()));
+}
+
+/** "I know this" (on a draft, or on an unstarted milestone of an accepted TOPICS plan, for good). */
+export async function skipTopic(roadmapId: string, key: string, skip: boolean): Promise<RoadmapActionResult<null>> {
+  if (!isRef(roadmapId) || !isTopicKey(key) || (skip !== true && skip !== false)) return { ok: false, error: NO_REF };
+  return act("skipTopic", true, (userId, now) => skipTopicCore(userId, roadmapId, key, skip, now, depsOf()));
+}
+
+/** [Keep] on a Gemini name behind the count («Gemini · kept · not checked»). */
+export async function keepGeminiName(roadmapId: string, key: string): Promise<RoadmapActionResult<null>> {
+  if (!isRef(roadmapId) || !isTopicKey(key)) return { ok: false, error: NO_REF };
+  return act("keepGeminiName", true, (userId, now) => keepGeminiNameCore(userId, roadmapId, key, now, depsOf()));
+}
+
+/** [Merge with the layer above] on an empty layer; `droppedLinks` counts the links between the merged layers. */
+export async function mergeLayerUp(roadmapId: string, layer: number): Promise<RoadmapActionResult<{ droppedLinks: number }>> {
+  if (!isRef(roadmapId) || !isLayer(layer)) return { ok: false, error: NO_REF };
+  return act("mergeLayerUp", true, (userId, now) => mergeLayerUpCore(userId, roadmapId, layer, now, depsOf()));
+}
+
+/** [Track as its own goal] (ruling 31): one of the aim's clauses becomes a DUTY draft in a free seat; the same createKey returns the same id. */
+export async function trackClauseAsGoal(roadmapId: string, clause: number, createKey: string): Promise<RoadmapActionResult<{ roadmapId: string }>> {
+  if (!isRef(roadmapId) || !Number.isInteger(clause) || clause < 0 || clause > 64 || typeof createKey !== "string" || !CREATE_KEY.test(createKey)) return { ok: false, error: NO_REF };
+  return act("trackClauseAsGoal", true, (userId, now) => trackClauseAsGoalCore(userId, roadmapId, clause, createKey, now, depsOf()));
+}
+
+// ═══ Revision 5, lane 10: the model phases (contracts §22.14, §22.15; ruling 47) ═══════════════════════════════════
+//
+// [Break it down], [Rate again], [Go deeper] and the chain's poll. Each claims at most one step and returns at once;
+// the model call runs in after() under the page's maxDuration, one step per invocation (ruling 47). The roadmap
+// pages export `maxDuration = 60` (src/app/you/roadmap/page.tsx and new/page.tsx), and a Server Action runs under its
+// page's: a "use server" module exports only async functions, so it can't (and needn't) export its own. Every core
+// refuses while its TOPIC_* switch is off — all are false in this build — before it reads anything, so no model call
+// is reachable from here. None refreshes the route: DraftRunning's poll (advanceTopicChain) re-renders as steps settle.
+
+/** A topic's key on the map (S<n>, U<n> or T<n>; roadmap-topics TOPIC_KEY_PATTERN). */
+const CHAIN_TOPIC_KEY = /^(S|U|T)([1-9]\d{0,2})$/;
+
+/**
+ * [Break it down] (F-R5-7): Gemini's map of the goal's TOPICS draft (one is written first, with no model, when the
+ * goal has none). Claims the chain head, RATE (one of the day's drafts), and returns at once with the RUNNING run.
+ */
+export async function breakDown(roadmapId: string): Promise<RoadmapActionResult<{ runId: string; status: RunStatus }>> {
+  if (!isRef(roadmapId)) return { ok: false, error: NO_REF };
+  return act("breakDown", false, (userId, now) => breakDownCore(userId, roadmapId, now, depsOf()));
+}
+
+/** [Rate again]: Gemini's difficulty estimate asked again (no reuse, new seeds), then the chain as [Break it down]. */
+export async function rateAgain(roadmapId: string): Promise<RoadmapActionResult<{ runId: string; status: RunStatus }>> {
+  if (!isRef(roadmapId)) return { ok: false, error: NO_REF };
+  return act("rateAgain", false, (userId, now) => rateAgainCore(userId, roadmapId, now, depsOf()));
+}
+
+/** [Go deeper] on one topic: narrower topics under it, then their web check (the next step). Allowed only while Gemini's names are on. */
+export async function goDeeper(roadmapId: string, key: string): Promise<RoadmapActionResult<{ runId: string; status: RunStatus }>> {
+  if (!isRef(roadmapId) || typeof key !== "string" || !CHAIN_TOPIC_KEY.test(key)) return { ok: false, error: NO_REF };
+  return act("goDeeper", false, (userId, now) => goDeeperCore(userId, roadmapId, key, now, depsOf()));
+}
+
+/**
+ * The chain's next step (ruling 47): the step running now, or the next one claimed and run in after(), or `done`.
+ * DraftRunning's poll calls it with `retry` false; GROUND's [Try again] and the resume after the Over pre-check pass
+ * true (a capped step, the pre-check's stop or a failed web check is claimed again).
+ */
+export async function advanceTopicChain(roadmapId: string, retry: boolean = false): Promise<RoadmapActionResult<TopicChainStep>> {
+  if (!isRef(roadmapId) || (retry !== true && retry !== false)) return { ok: false, error: NO_REF };
+  return act("advanceTopicChain", false, (userId, now) => advanceTopicChainCore(userId, roadmapId, retry, now, depsOf()));
 }

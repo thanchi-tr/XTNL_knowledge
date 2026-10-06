@@ -14,8 +14,15 @@
  * storage, a throwing accessor, a quota error or malformed JSON reads as
  * "nothing there" and never throws. `storage` and `now` are the test seams.
  *
- *   AIM_HANDOFF_KEY · AIM_HANDOFF_TTL_MS · AIM_HANDOFF_AIM_MAX · AimHandoff · AimHandoffSource ·
- *   writeAimHandoff · takeAimHandoff · aimLineOf
+ * Revision 5 (contracts §23.5; lane 3): with every seat taken (GOALS_MAX
+ * goals open), /you/roadmap/new shows the GoalsFullCard instead of the form,
+ * so nothing takes the aim. The card holds it (holdAimHandoff): the entry
+ * stays in sessionStorage, marked held, for AIM_HANDOFF_HOLD_MS instead of
+ * AIM_HANDOFF_TTL_MS, until a seat frees and the form takes it. With
+ * GOALS_MAX 1 no card holds one, so every handoff reads as before.
+ *
+ *   AIM_HANDOFF_KEY · AIM_HANDOFF_TTL_MS · AIM_HANDOFF_HOLD_MS · AIM_HANDOFF_AIM_MAX · AimHandoff · AimHandoffSource ·
+ *   writeAimHandoff · takeAimHandoff · holdAimHandoff · aimLineOf
  */
 import type { Track } from "./life-types";
 
@@ -23,6 +30,8 @@ import type { Track } from "./life-types";
 export const AIM_HANDOFF_KEY = "xtnl:roadmap:aim-handoff";
 /** A handoff older than this is dropped (and removed). */
 export const AIM_HANDOFF_TTL_MS = 600_000;
+/** A handoff the GoalsFullCard holds (every seat taken) waits this long from its last hold, for a seat to free (contracts §23.5). */
+export const AIM_HANDOFF_HOLD_MS = 86_400_000;
 /** The aim is cut to this many characters on write and on take (the form clamps to AIM_MAX itself). */
 export const AIM_HANDOFF_AIM_MAX = 500;
 
@@ -47,9 +56,11 @@ export interface AimHandoff {
   replaces?: string;
 }
 
-/** A stored handoff: the entry plus when it was written (epoch ms). */
+/** A stored handoff: the entry plus when it was written, or last held (epoch ms). */
 export interface StoredAimHandoff extends AimHandoff {
   at: number;
+  /** The GoalsFullCard holds it until a seat frees: it waits AIM_HANDOFF_HOLD_MS from `at` (absent: AIM_HANDOFF_TTL_MS). */
+  held?: true;
 }
 
 /** The slice of Web Storage the handoff touches. */
@@ -116,10 +127,34 @@ export function writeAimHandoff(h: AimHandoff, storage?: AimHandoffStorage | nul
 }
 
 /**
+ * The stored entry, read: null when it is malformed, older than its wait
+ * (AIM_HANDOFF_TTL_MS, or AIM_HANDOFF_HOLD_MS once held) or stamped
+ * implausibly in the future. The aim is cut to AIM_HANDOFF_AIM_MAX.
+ */
+function readStored(raw: string, now: number): StoredAimHandoff | null {
+  let v: unknown;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const h = v as Record<string, unknown>;
+  if (typeof h.aim !== "string" || h.aim.length > FIELD_MAX || !SOURCES.includes(h.source as AimHandoffSource)) return null;
+  if (typeof h.at !== "number" || !Number.isFinite(h.at)) return null;
+  const held = h.held === true;
+  const age = now - h.at;
+  if (age > (held ? AIM_HANDOFF_HOLD_MS : AIM_HANDOFF_TTL_MS) || age < -SKEW_MS) return null;
+  const aim = cutAim(h.aim);
+  if (!aim) return null;
+  return { aim, source: h.source as AimHandoffSource, ...cleanOptional(h), at: h.at, ...(held ? { held: true as const } : {}) };
+}
+
+/**
  * Reads the handoff and removes it (one use, whatever it turns out to be).
- * Null when there is none, when it is older than AIM_HANDOFF_TTL_MS (or
- * stamped implausibly in the future), or when it is malformed. The aim is cut
- * to AIM_HANDOFF_AIM_MAX. Never throws.
+ * Null when there is none, when it is older than AIM_HANDOFF_TTL_MS (a held
+ * one: AIM_HANDOFF_HOLD_MS), or stamped implausibly in the future, or when
+ * it is malformed. The aim is cut to AIM_HANDOFF_AIM_MAX. Never throws.
  */
 export function takeAimHandoff(now?: number, storage?: AimHandoffStorage | null): StoredAimHandoff | null {
   try {
@@ -137,21 +172,50 @@ export function takeAimHandoff(now?: number, storage?: AimHandoffStorage | null)
     } catch {
       /* the entry stays; the next take rejects it again once it expires */
     }
-    let v: unknown;
+    return readStored(raw, now ?? Date.now());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The GoalsFullCard's hold (contracts §23.5): every seat is taken, so the
+ * aim waits for one to free. Reads the handoff without taking it; a valid
+ * one is written back marked held and stamped `now`, so it waits
+ * AIM_HANDOFF_HOLD_MS more, and is returned (the card may say an aim is
+ * waiting; the form takes it once a seat frees). An expired or malformed
+ * entry is removed. Null when there is none, or storage is missing or
+ * throws; when the write back fails the entry is returned as it was. Never
+ * throws.
+ */
+export function holdAimHandoff(now?: number, storage?: AimHandoffStorage | null): StoredAimHandoff | null {
+  try {
+    const store = storeOf(storage);
+    if (!store) return null;
+    let raw: string | null;
     try {
-      v = JSON.parse(raw);
+      raw = store.getItem(AIM_HANDOFF_KEY);
     } catch {
       return null;
     }
-    if (!v || typeof v !== "object" || Array.isArray(v)) return null;
-    const h = v as Record<string, unknown>;
-    if (typeof h.aim !== "string" || h.aim.length > FIELD_MAX || !SOURCES.includes(h.source as AimHandoffSource)) return null;
-    if (typeof h.at !== "number" || !Number.isFinite(h.at)) return null;
-    const age = (now ?? Date.now()) - h.at;
-    if (age > AIM_HANDOFF_TTL_MS || age < -SKEW_MS) return null;
-    const aim = cutAim(h.aim);
-    if (!aim) return null;
-    return { aim, source: h.source as AimHandoffSource, ...cleanOptional(h), at: h.at };
+    if (raw === null) return null;
+    const t = now ?? Date.now();
+    const h = readStored(raw, t);
+    if (!h) {
+      try {
+        store.removeItem(AIM_HANDOFF_KEY);
+      } catch {
+        /* the next read rejects it again */
+      }
+      return null;
+    }
+    const held: StoredAimHandoff = { ...h, at: t, held: true };
+    try {
+      store.setItem(AIM_HANDOFF_KEY, JSON.stringify(held));
+    } catch {
+      return h;
+    }
+    return held;
   } catch {
     return null;
   }

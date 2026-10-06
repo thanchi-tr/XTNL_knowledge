@@ -3542,7 +3542,9 @@ async function main() {
     const probe = read("scripts/roadmap-probe.ts");
     const body = code(probe);
     const imports = Array.from(body.matchAll(/from\s+["']([^"']+)["']/g), (x) => x[1]);
-    const allowed = ["node:fs", "node:path", "../src/lib/gemini", "../src/lib/roadmap-types", "../src/lib/roadmap-evidence", "../src/lib/roadmap-model", "../src/lib/roadmap-validate", "../src/lib/roadmap-catalog", "./fixtures/roadmap-corpus/corpus", "./fixtures/roadmap-corpus/ladder"];
+    // Revision 5 (contracts §22.15, PROBE_PLAN v5): stage 1 reads the map's room (roadmap-topics) and stage 2 the GROUND
+    // verdicts (roadmap-grounding); both are pure modules (no prisma, no loader).
+    const allowed = ["node:fs", "node:path", "../src/lib/gemini", "../src/lib/roadmap-types", "../src/lib/roadmap-evidence", "../src/lib/roadmap-model", "../src/lib/roadmap-validate", "../src/lib/roadmap-catalog", "../src/lib/roadmap-topics", "../src/lib/roadmap-grounding", "./fixtures/roadmap-corpus/corpus", "./fixtures/roadmap-corpus/ladder"];
     return /--i-approved/.test(body) && imports.every((i) => allowed.includes(i)) && !/loadFieldTree|prisma\./.test(body) && !/_no-model/.test(probe);
   })());
   check(

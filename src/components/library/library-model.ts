@@ -41,6 +41,8 @@ export interface LibraryIdea {
   fieldName: string;
   domainId: string;
   domainName: string;
+  /** Revision 5, lane 9 (contracts ruling 67): the Domain carries the Gemini mark (geminiNamedOf); absent or false: none. */
+  domainGeminiNamed?: boolean;
   /** Node data from the dedup pipeline; null on anything created before it. */
   title: string | null;
   corePremise: string | null;
@@ -60,7 +62,8 @@ export interface LibraryField {
   id: string;
   name: string;
   level: number;
-  domains: { id: string; name: string }[];
+  /** geminiNamed (revision 5, lane 9; contracts ruling 67): the Domain carries the Gemini mark until you rename it. */
+  domains: { id: string; name: string; geminiNamed?: boolean }[];
 }
 
 export const COLLECTION_LABELS: readonly CollectionLabel[] = ["BOOK", "ACTIONABLE", "PROPOSAL"];

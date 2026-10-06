@@ -17,11 +17,22 @@
  *
  *   Constants   AIM_LATER_DAYS · AIM_PROMPT_LATER_MAX_AGE_S · AIM_AWAY_DAYS · AIM_BACKOFF_FRESH_DAYS ·
  *               AIM_INVITE_SINCE · AIM_DRAFT_SHOWS_MAX · AIM_START_DAILY_DAYS · AIM_DONE_SHOW_DAYS ·
- *               AIM_STEP_COOKIE · AIM_STEP_SNOOZE_DAYS · AIM_STEP_COOKIE_MAX_AGE_S · VAGUE_AIM_WORDS · VAGUE_AIM_IDLE_MS
+ *               AIM_STEP_COOKIE · AIM_STEP_SNOOZE_DAYS · AIM_STEP_COOKIE_MAX_AGE_S · AIM_STEP_COOKIE_ENTRIES_MAX ·
+ *               VAGUE_AIM_WORDS · VAGUE_AIM_IDLE_MS
  *   The prompt  AimPrompt · aimPromptOf · laterCookieValue · hideCookieValue · onCookieValue · askAnchorOf
  *   The seed    AimSeed · longGoalSeedOf
- *   Today       isFreshStartDay · freshStartDaysBetween · AimStepKind · stepCookieValue · stepSnoozed · todayAimLineOf
+ *   Today       isFreshStartDay · freshStartDaysBetween · AimStepKind · stepCookieValue · stepCookieValueOf ·
+ *               stepSnoozed · todayAimLineOf · aimLineCandidateOf · aimLineDraftHrefOf · aimLineStartHrefOf
  *   The intake  vagueAimHint
+ *
+ * Revision 5 (contracts §23.3, §23.5, ruling 53; lane 3): up to GOALS_MAX
+ * open goals share one aim line. Today's SET is offered only while the open
+ * goals number fewer than the effective cap (GOALS_MAX, never the fixed 3),
+ * and with `goals` the one line is roadmap-goals aimLinePickOf's pick: a
+ * ready START (lowest seat), then a waiting DRAFT, then SET. The step cookie
+ * holds up to AIM_STEP_COOKIE_ENTRIES_MAX entries, one per hidden line.
+ * GOALS_MAX is 1 and no caller passes `goals` yet, so every answer is
+ * revision 4's, byte for byte.
  */
 import { addDays, daysBetween, weekdayOf, type DayKey } from "./life-day";
 import {
@@ -29,14 +40,20 @@ import {
   AIM_PROMPT_COOKIE,
   CREDENTIAL_WORDS,
   ENGLISH_FUNCTION_WORDS,
+  GOALS_MAX,
+  GOAL_SLOTS,
+  GOAL_SLOTS_MAX,
   SPAN_MAX_DAYS,
   SPAN_MIN_DAYS,
   aimRankName,
+  isGoalSlot,
   stageLabelOf,
   type AimLineView,
   type AimStep,
   type AimStepMilestone,
+  type GoalSlot,
 } from "./roadmap-types";
+import { aimLinePickOf, goalHrefOf, type AimLineCandidate } from "./roadmap-goals";
 import type { GoalLadder, GoalLadderItem } from "./goals";
 
 export { AIM_PROMPT_COOKIE };
@@ -69,11 +86,13 @@ export const AIM_DRAFT_SHOWS_MAX = 3;
 export const AIM_START_DAILY_DAYS = 7;
 /** A DONE roadmap leads the Aim card, and Today's SET reads "Your last aim is done", this many days after it ended. */
 export const AIM_DONE_SHOW_DAYS = 28;
-/** The cookie that hides one DRAFT or START line ('<kind>:<id>:<day>'). */
+/** The cookie that hides a DRAFT or START line ('<kind>:<id>:<day>'; with several goals, up to AIM_STEP_COOKIE_ENTRIES_MAX entries joined by '.'). */
 export const AIM_STEP_COOKIE = "xtnl-aim-step";
 /** "Not now: hide this for a week" on a DRAFT or START line. */
 export const AIM_STEP_SNOOZE_DAYS = 7;
 export const AIM_STEP_COOKIE_MAX_AGE_S = 8 * 24 * 60 * 60;
+/** The step cookie keeps this many hidden lines at once (one per goal's line: contracts §23.3), the latest first. */
+export const AIM_STEP_COOKIE_ENTRIES_MAX = 3;
 /** Verbs that say nothing about what the user will be able to do (vagueAimHint), longest matched first. */
 export const VAGUE_AIM_WORDS: readonly string[] = ["get better", "improve", "learn more", "be good at", "understand", "know more", "get into", "learn"];
 /** The intake's vague-aim hint appears after this much idle typing (ms). */
@@ -244,18 +263,56 @@ export function freshStartDaysBetween(a: DayKey, b: DayKey): number {
 /** The two lines "Not now" can hide for a week. */
 export type AimStepKind = "DRAFT" | "START";
 
-/** "Not now" on a DRAFT or START line: AIM_STEP_COOKIE = '<kind>:<roadmapId|milestoneId>:<today>' (maxAge AIM_STEP_COOKIE_MAX_AGE_S). */
+/** One entry of AIM_STEP_COOKIE: '<kind>:<roadmapId|milestoneId>:<today>' (revision 4's whole value; maxAge AIM_STEP_COOKIE_MAX_AGE_S). */
 export function stepCookieValue(kind: AimStepKind, id: string, today: DayKey): string {
   return `${kind}:${id}:${today}`;
 }
 
 const STEP = /^(DRAFT|START):([A-Za-z0-9_-]{1,64}):(\d{4}-\d{2}-\d{2})$/;
+/** Between the step cookie's entries: no kind, id or day holds it. */
+const STEP_JOIN = ".";
 
-/** The line for this kind and id is hidden: the cookie names it, and today is within AIM_STEP_SNOOZE_DAYS of its day. Another id shows. */
+interface StepEntry {
+  kind: AimStepKind;
+  id: string;
+  day: DayKey;
+}
+
+/** The step cookie's well-formed entries, in its order, each line once (the first wins); a malformed entry is skipped, never trusted. */
+function stepEntriesOf(stepCookie: string | null | undefined): StepEntry[] {
+  if (typeof stepCookie !== "string" || stepCookie === "") return [];
+  const out: StepEntry[] = [];
+  const seen = new Set<string>();
+  for (const part of stepCookie.split(STEP_JOIN)) {
+    const m = STEP.exec(part);
+    if (!m || !isDayKey(m[3]) || seen.has(`${m[1]}:${m[2]}`)) continue;
+    seen.add(`${m[1]}:${m[2]}`);
+    out.push({ kind: m[1] as AimStepKind, id: m[2], day: m[3] });
+  }
+  return out;
+}
+
+/** The entry hides its line today: today is within AIM_STEP_SNOOZE_DAYS of its day. */
+const hidesOn = (e: StepEntry, today: DayKey): boolean => today >= e.day && today < addDays(e.day, AIM_STEP_SNOOZE_DAYS);
+
+/**
+ * "Not now" on a DRAFT or START line (contracts §23.3): AIM_STEP_COOKIE's
+ * next value. The new entry first, then the entries of `prev` that still
+ * hide another line today (a malformed or spent entry, and the same line's
+ * older one, go), at most AIM_STEP_COOKIE_ENTRIES_MAX in all, joined by '.'.
+ * With no earlier entry it is stepCookieValue(kind, id, today), revision 4's
+ * value byte for byte.
+ */
+export function stepCookieValueOf(prev: string | null, kind: AimStepKind, id: string, today: DayKey): string {
+  const kept = stepEntriesOf(prev)
+    .filter((e) => !(e.kind === kind && e.id === id) && hidesOn(e, today))
+    .map((e) => stepCookieValue(e.kind, e.id, e.day));
+  return [stepCookieValue(kind, id, today), ...kept].slice(0, AIM_STEP_COOKIE_ENTRIES_MAX).join(STEP_JOIN);
+}
+
+/** The line for this kind and id is hidden: an entry of the cookie (every one is read) names it, and today is within AIM_STEP_SNOOZE_DAYS of its day. Another id shows; a malformed entry hides nothing. */
 export function stepSnoozed(stepCookie: string | null | undefined, kind: AimStepKind, id: string, today: DayKey): boolean {
-  const m = typeof stepCookie === "string" ? STEP.exec(stepCookie) : null;
-  if (!m || m[1] !== kind || m[2] !== id || !isDayKey(m[3])) return false;
-  return today >= m[3] && today < addDays(m[3], AIM_STEP_SNOOZE_DAYS);
+  return stepEntriesOf(stepCookie).some((e) => e.kind === kind && e.id === id && hidesOn(e, today));
 }
 
 /** What todayAimLineOf reads. `prompt` is aimPromptOf(cookie, setting, today); `cookie` is AIM_PROMPT_COOKIE's value (the anchor). */
@@ -267,11 +324,43 @@ export interface TodayAimLineInput {
   today: DayKey;
   /** ROADMAP_GOALS_LIVE (or a check's override): while false, START never shows. */
   goalsLive: boolean;
+  /**
+   * Revision 5 (contracts §23.3, ruling 53; lane 3): the user's open goals
+   * (DRAFT and ACTIVE), one AimLineCandidate each (roadmap-goals), in any
+   * order. step.open is the goal this call can render: its `ready` is
+   * computed here; every other goal's is the caller's (aimLineCandidateOf
+   * over that goal's step). A SET candidate given here is ignored: SET is
+   * this function's own rule. The one line is aimLinePickOf's pick (a ready
+   * START, lowest seat; then a waiting DRAFT; then SET, only while the open
+   * goals number fewer than the cap). When it is another goal's line this
+   * call gives null, and that goal's own call gives it. The DRAFT and START
+   * hrefs then carry ?goal=<id> (goalHrefOf). Absent: the one open goal in
+   * step.open, revision 4's rule and hrefs byte for byte.
+   */
+  goals?: readonly AimLineCandidate[];
+  /** The effective cap SET reads (default GOALS_MAX, never the fixed 3; a check's override). */
+  goalsMax?: number;
 }
 
 export const AIM_LINE_SET_HREF = "/you/roadmap/new";
 export const AIM_LINE_DRAFT_HREF = "/you/roadmap";
 export const AIM_LINE_START_HREF = "/you/roadmap#now";
+
+/** The DRAFT line's href for one goal (contracts §23.5): "/you/roadmap?goal=<id>" (goalHrefOf); null gives AIM_LINE_DRAFT_HREF, revision 4's. */
+export function aimLineDraftHrefOf(roadmapId: string | null): string {
+  return typeof roadmapId === "string" && roadmapId !== "" ? goalHrefOf(AIM_LINE_DRAFT_HREF, roadmapId) : AIM_LINE_DRAFT_HREF;
+}
+
+/** The START line's href for one goal: "/you/roadmap?goal=<id>#now" (the anchor kept at the end); null gives AIM_LINE_START_HREF. */
+export function aimLineStartHrefOf(roadmapId: string | null): string {
+  return typeof roadmapId === "string" && roadmapId !== "" ? goalHrefOf(AIM_LINE_START_HREF, roadmapId) : AIM_LINE_START_HREF;
+}
+
+/** The effective cap: a whole number within 1..GOAL_SLOTS_MAX; GOALS_MAX when absent or not a number (as roadmap-goals reads it). */
+function capOf(goalsMax: number | undefined): number {
+  const n = typeof goalsMax === "number" && Number.isFinite(goalsMax) ? Math.floor(goalsMax) : GOALS_MAX;
+  return Math.max(1, Math.min(GOAL_SLOTS_MAX, n));
+}
 
 /** The next milestone START names, its ready day, and the rank it gives; null when none applies. */
 function startOf(open: Extract<NonNullable<AimStep["open"]>, { kind: "ACTIVE" }>, today: DayKey): { next: AimStepMilestone; ready: DayKey; givesIndex: number | null } | null {
@@ -290,42 +379,29 @@ function startOf(open: Extract<NonNullable<AimStep["open"]>, { kind: "ACTIVE" }>
 }
 
 /**
- * Today's one quiet aim line (decisions 35, 49), data only (R5's AimLine
- * renders the copy). At most one applies, by the open roadmap:
- *   none open → SET, when the prompt is ASK, today is a fresh-start day and
- *     the back-off allows it (fewer than AIM_BACKOFF_FRESH_DAYS fresh-start
- *     days in [askAnchorOf(…), today), or today is the 1st). Variant NEXT
- *     (the latest DONE ended within AIM_DONE_SHOW_DAYS), else BACK (the first
- *     day back), else MONTH (the 1st), else WEEK;
- *   a DRAFT (no RUNNING run), saved on day s before today → DRAFT on s + 1,
- *     then on fresh-start days, AIM_DRAFT_SHOWS_MAX days in all;
- *   ACTIVE with goalsLive, no milestone open, the next PLANNED one unreached,
- *     not LATER and not past due, ready (the day after the later of the
- *     acceptance and the previous milestone's close) → START on its first
- *     AIM_START_DAILY_DAYS ready days, then on fresh-start days.
- * The prompt (the Settings switch) silences SET only; DRAFT and START are the
- * user's own pending work, hidden for a week by "Not now" (stepSnoozed).
+ * SET (no line of an open goal applies): the prompt is ASK, today is a
+ * fresh-start day and the back-off allows it. The cap is the caller's.
  */
-export function todayAimLineOf(input: TodayAimLineInput): AimLineView | null {
-  const { step, prompt, cookie, stepCookie, today, goalsLive } = input;
-  if (!step) return null;
-  const open = step.open;
-  const fresh = isFreshStartDay(today, step.lastOpenBefore);
-  if (!open) {
-    if (prompt !== "ASK" || !fresh) return null;
-    const first = isFirstOfMonth(today);
-    if (!first && freshStartDaysBetween(askAnchorOf(cookie, step.lastClosedDay, step.epochDay), today) >= AIM_BACKOFF_FRESH_DAYS) return null;
-    const back = !!step.lastOpenBefore && daysBetween(step.lastOpenBefore, today) > AIM_AWAY_DAYS;
-    const variant = step.lastDoneDay && daysBetween(step.lastDoneDay, today) < AIM_DONE_SHOW_DAYS ? "NEXT" : back ? "BACK" : first ? "MONTH" : "WEEK";
-    return { kind: "SET", variant, href: AIM_LINE_SET_HREF };
-  }
+function setLineOf(step: AimStep, input: TodayAimLineInput, fresh: boolean): AimLineView | null {
+  const { prompt, cookie, today } = input;
+  if (prompt !== "ASK" || !fresh) return null;
+  const first = isFirstOfMonth(today);
+  if (!first && freshStartDaysBetween(askAnchorOf(cookie, step.lastClosedDay, step.epochDay), today) >= AIM_BACKOFF_FRESH_DAYS) return null;
+  const back = !!step.lastOpenBefore && daysBetween(step.lastOpenBefore, today) > AIM_AWAY_DAYS;
+  const variant = step.lastDoneDay && daysBetween(step.lastDoneDay, today) < AIM_DONE_SHOW_DAYS ? "NEXT" : back ? "BACK" : first ? "MONTH" : "WEEK";
+  return { kind: "SET", variant, href: AIM_LINE_SET_HREF };
+}
+
+/** One open goal's own line, DRAFT or START, or null when it doesn't show today. `goalId` puts ?goal=<id> on its href (null: revision 4's href). */
+function goalLineOf(open: NonNullable<AimStep["open"]>, input: TodayAimLineInput, fresh: boolean, goalId: string | null): AimLineView | null {
+  const { stepCookie, today, goalsLive } = input;
   if (open.kind === "DRAFT") {
     if (open.running || today <= open.savedDay) return null;
     if (stepSnoozed(stepCookie, "DRAFT", open.roadmapId, today)) return null;
     const firstShow = addDays(open.savedDay, 1);
     if (today !== firstShow && !fresh) return null;
     const prior = today > firstShow ? 1 + freshStartDaysBetween(addDays(firstShow, 1), today) : 0;
-    return prior < AIM_DRAFT_SHOWS_MAX ? { kind: "DRAFT", roadmapId: open.roadmapId, href: AIM_LINE_DRAFT_HREF } : null;
+    return prior < AIM_DRAFT_SHOWS_MAX ? { kind: "DRAFT", roadmapId: open.roadmapId, href: aimLineDraftHrefOf(goalId) } : null;
   }
   if (!goalsLive) return null;
   const s = startOf(open, today);
@@ -338,8 +414,80 @@ export function todayAimLineOf(input: TodayAimLineInput): AimLineView | null {
     ord: s.next.ord,
     stageName: open.track ? null : stageLabelOf(s.next.stage, s.next.gateLevel),
     givesRank: s.givesIndex != null ? aimRankName(s.givesIndex) : null,
-    href: AIM_LINE_START_HREF,
+    href: aimLineStartHrefOf(goalId),
   };
+}
+
+const candidateKindOf = (open: NonNullable<AimStep["open"]>): "DRAFT" | "START" => (open.kind === "DRAFT" ? "DRAFT" : "START");
+
+/**
+ * Today's one quiet aim line (decisions 35, 49), data only (R5's AimLine
+ * renders the copy). At most one applies:
+ *   no open goal's line → SET, while the open goals number fewer than the
+ *     cap (GOALS_MAX: with 1, only with no goal open), when the prompt is
+ *     ASK, today is a fresh-start day and the back-off allows it (fewer than
+ *     AIM_BACKOFF_FRESH_DAYS fresh-start days in [askAnchorOf(…), today), or
+ *     today is the 1st). Variant NEXT (the latest DONE ended within
+ *     AIM_DONE_SHOW_DAYS), else BACK (the first day back), else MONTH (the
+ *     1st), else WEEK;
+ *   a DRAFT (no RUNNING run), saved on day s before today → DRAFT on s + 1,
+ *     then on fresh-start days, AIM_DRAFT_SHOWS_MAX days in all;
+ *   ACTIVE with goalsLive, no milestone open, the next PLANNED one unreached,
+ *     not LATER and not past due, ready (the day after the later of the
+ *     acceptance and the previous milestone's close) → START on its first
+ *     AIM_START_DAILY_DAYS ready days, then on fresh-start days.
+ * The prompt (the Settings switch) silences SET only; DRAFT and START are the
+ * user's own pending work, hidden for a week by "Not now" (stepSnoozed).
+ * With `goals` (revision 5), the pick across goals is aimLinePickOf's.
+ */
+export function todayAimLineOf(input: TodayAimLineInput): AimLineView | null {
+  const { step, today } = input;
+  if (!step) return null;
+  const open = step.open;
+  const fresh = isFreshStartDay(today, step.lastOpenBefore);
+  const cap = capOf(input.goalsMax);
+  if (!input.goals) {
+    // One open goal at most (revision 4's input): its own line, else SET under the cap (with GOALS_MAX 1, only with none open).
+    const own = open ? goalLineOf(open, input, fresh, null) : null;
+    if (own) return own;
+    return (open ? 1 : 0) < cap ? setLineOf(step, input, fresh) : null;
+  }
+  // Revision 5: every open goal is a candidate; this step's goal is read here, the others as the caller gave them.
+  const others: AimLineCandidate[] = [];
+  const seen = new Set<string>(open ? [open.roadmapId] : []);
+  for (const c of input.goals) {
+    if (!c || typeof c !== "object" || typeof c.roadmapId !== "string" || c.kind === "SET" || seen.has(c.roadmapId)) continue;
+    seen.add(c.roadmapId);
+    others.push(c);
+  }
+  const taken = new Set<number>(others.map((c) => c.slot));
+  const given = open ? input.goals.find((c) => c && c.roadmapId === open.roadmapId && isGoalSlot(c.slot)) : undefined;
+  const freeSlot: GoalSlot = GOAL_SLOTS.find((s) => !taken.has(s)) ?? GOAL_SLOTS[GOAL_SLOTS.length - 1];
+  const own = open ? goalLineOf(open, input, fresh, open.roadmapId) : null;
+  const set = setLineOf(step, input, fresh);
+  const candidates: AimLineCandidate[] = [
+    ...others,
+    ...(open ? [{ roadmapId: open.roadmapId, slot: given?.slot ?? freeSlot, kind: candidateKindOf(open), ready: own !== null }] : []),
+    ...(set ? [{ roadmapId: "", slot: freeSlot, kind: "SET" as const, ready: true }] : []),
+  ];
+  const pick = aimLinePickOf(candidates, others.length + (open ? 1 : 0), cap);
+  if (!pick) return null;
+  if (pick.kind === "SET") return set;
+  return open && pick.roadmapId === open.roadmapId ? own : null;
+}
+
+/**
+ * Revision 5 (contracts §23.3): step.open's candidate for the one aim line,
+ * which the caller passes in every other goal's call (TodayAimLineInput.goals):
+ * DRAFT, or START for an ACTIVE goal, `ready` when its own line shows today
+ * (todayAimLineOf's rules: the show days, the snooze, goalsLive). Null with
+ * no open goal in the step.
+ */
+export function aimLineCandidateOf(input: TodayAimLineInput, slot: GoalSlot): AimLineCandidate | null {
+  const { step } = input;
+  if (!step || !step.open) return null;
+  const line = goalLineOf(step.open, input, isFreshStartDay(input.today, step.lastOpenBefore), null);
+  return { roadmapId: step.open.roadmapId, slot, kind: candidateKindOf(step.open), ready: line !== null };
 }
 
 // ═══ The intake: the vague-aim hint (F-R4-4) ════════════════════════════════

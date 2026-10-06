@@ -561,7 +561,7 @@ export function insertMenuOptions(
     today: DayKey;
     goals: readonly { id: string; title: string }[] | null;
     hasMode?: boolean;
-    /** The open roadmap (CaptureVocabulary.aim); unknown (undefined) until a load says, and then 'New aim' waits. */
+    /** The open goals (CaptureVocabulary.aim: 'New aim' while a seat is free); unknown (undefined) until a load says, and then 'New aim' waits. */
     aim?: CaptureAim;
   }
 ): InsertChip[] {
@@ -608,7 +608,8 @@ export function insertMenuOptions(
       if (!ctx.hasMode) {
         const newGoal: Insert = { text: "goal: ", field: "mode" };
         out.push({ id: "goal-new", label: "New goal", name: `New goal: ${insertChipLabel(newGoal)}`, insert: newGoal });
-        if (ctx.aim === "NONE") {
+        // A seat free (contracts §23.5; with GOALS_MAX 1: no roadmap open). Unknown still waits.
+        if ((ctx.aim?.seatsFree ?? 0) > 0) {
           const newAim: Insert = { text: "aim: ", field: "mode" };
           out.push({ id: "goal-new-aim", label: "New aim", name: `New aim: ${insertChipLabel(newAim)}`, insert: newAim });
         }

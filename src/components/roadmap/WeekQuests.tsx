@@ -59,6 +59,8 @@ import { CardKey, type KeyEntry } from "@/components/glyph/InfoTip";
 import { PipStrip, type PipDay } from "@/components/glyph/PipStrip";
 import { usePlayOnSeen, useSeenValue, type SeenKey } from "@/components/glyph/useSeen";
 import type { TrackSigil } from "@/components/glyph/paths";
+// Revision 5, lane 9: pv.named after a Gemini-named Domain in a row's label (contracts ruling 67)
+import { NamedText, hasNamed } from "@/components/glyph/NamedMark";
 import { NOT_RECORDED_HERE, type WeekQuestKind, type WeekQuestRow, type WeekQuestVariant, type WeekQuestsView } from "@/lib/roadmap-types";
 import { seekTemplate } from "./roadmap-events";
 import {
@@ -178,6 +180,14 @@ export function labelWithNames(label: string): ReactNode {
     );
   }
   return label;
+}
+
+/**
+ * Revision 5, lane 9 (contracts ruling 67): a row whose label carries a Gemini-named Domain (WeekQuestRow.labelParts,
+ * namedPartsOf) renders its parts with pv.named after each such name; every other row is labelWithNames, unchanged.
+ */
+export function namedLabelOf(row: Pick<WeekQuestRow, "label" | "labelParts">): ReactNode {
+  return hasNamed(row.labelParts) ? <NamedText parts={row.labelParts} /> : labelWithNames(row.label);
 }
 
 /** The Domain names a set's rows carry (a generator-2 row's parts), longest first: the names its lines may hold. */
@@ -334,7 +344,7 @@ function TodayRow({ row, weekStart, bases, track, names }: { row: WeekQuestRow; 
     return (
       <Link className={cx("rm-quest-row", cls)} href={href} aria-label={name}>
         {glyph}
-        <span className="rm-q-lbl">{labelWithNames(row.label)}</span>
+        <span className="rm-q-lbl">{namedLabelOf(row)}</span>
         <span className="rm-q-cnt num">{weekQuestCountOf(row)}</span>
         {partsLineOf(row) && <p className="rm-parts-l">{withDomainNames(partsLineOf(row)!, names)}</p>}
         <RowMeter row={row} from={from} />
@@ -392,10 +402,31 @@ export function weekQuestKeyEntriesOf(view: Pick<WeekQuestsView, "rows">, track?
 
 /** Every row's own words, as the Key lists them: its label and place, then its due days, quota and slip ("Bring 3 cards …: 1 comes due Tue, 2 Wed, 1 Sat"). */
 export function weekQuestKeyRowsOf(view: Pick<WeekQuestsView, "rows">): string[] {
-  return weekQuestRowsForToday(view.rows).map((row) => {
-    const extras = weekQuestRowExtrasOf(row);
-    return `${row.label}${placeSuffix(row.place)}${extras.length ? `: ${extras.join(" · ")}` : ""}`;
-  });
+  return weekQuestRowsForToday(view.rows).map((row) => `${row.label}${keyRowTailOf(row)}`);
+}
+
+/** A Key row's words after its label: its place, then its due days, quota and slip. */
+function keyRowTailOf(row: WeekQuestRow): string {
+  const extras = weekQuestRowExtrasOf(row);
+  return `${placeSuffix(row.place)}${extras.length ? `: ${extras.join(" · ")}` : ""}`;
+}
+
+/**
+ * The Key's rows as drawn (revision 5, lane 9; contracts ruling 67): a label carrying a Gemini-named Domain renders its
+ * parts with pv.named after each such name (the Key's panel shows on one tap); every other row is weekQuestKeyRowsOf's
+ * string, unchanged.
+ */
+function weekQuestKeyRowNodesOf(view: Pick<WeekQuestsView, "rows">): ReactNode[] {
+  return weekQuestRowsForToday(view.rows).map((row) =>
+    hasNamed(row.labelParts) ? (
+      <>
+        <NamedText parts={row.labelParts} />
+        {keyRowTailOf(row)}
+      </>
+    ) : (
+      `${row.label}${keyRowTailOf(row)}`
+    )
+  );
 }
 
 function TodayCard({ view, bases, track }: { view: WeekQuestsView; bases: SeenBases | null; track?: TrackSigil }) {
@@ -451,7 +482,7 @@ function TodayCard({ view, bases, track }: { view: WeekQuestsView; bases: SeenBa
               <HonestyChip kind="pays-nothing" label={SHORT_PAYS_NOTHING} sr={footer} />
               {health && <HealthChip />}
             </Chips>
-            <CardKey topic="week quests" entries={weekQuestKeyEntriesOf(view, track)} rows={weekQuestKeyRowsOf(view)}>
+            <CardKey topic="week quests" entries={weekQuestKeyEntriesOf(view, track)} rows={weekQuestKeyRowNodesOf(view)}>
               <span className="rm-wq-kl">{weekQuestsLegend(kinds)}</span>
               <span className="rm-wq-kl">{footer}</span>
             </CardKey>
@@ -500,7 +531,7 @@ function nowLabelOf(row: WeekQuestRow): ReactNode {
   switch (row.kind) {
     case "RAISE":
     case "ADD":
-      return labelWithNames(row.label);
+      return namedLabelOf(row);
     case "PRACTICE": {
       const name = practiceNameOf(row.label);
       return (

@@ -47,9 +47,15 @@
  *       gently or a word too general to name a type names; H6 also traces
  *       the over-exclusion lines (a rule only a Field plan reaches)
  *   M   M1–M7 hold on checkLabel and groundingOf
- * plus the corpus pin (sha256 and family counts; `--bless` rewrites it), the
- * corpus's own audit against an independent reading of F-R4-20 (C0), and the
- * runtime budget (H1–H5 and K ≤ 30 s).
+ *   R, T, W, L, X and M8–M14 (revision 5, contracts §22.16 and §23.8): the
+ *       topic-map families' own corpus (generateR5Corpus) through bar.ts's
+ *       r5BarOf, pure (no seam); every item gates, and X's "X cross-goal: …"
+ *       is family X's only gate (no ablation: ruling 41)
+ * plus the corpus pin (sha256 and family counts; `--bless` rewrites it; the
+ * topic-map families pinned beside it in pin.json's `r5` line, append-only),
+ * the corpus's own audit against an independent reading of F-R4-20 (C0), and
+ * the runtime budgets (H1–H5 and K ≤ BUDGET_S; the topic-map families in their
+ * own line, BUDGET_R5_S: ruling 36).
  *
  * R4's views are built for every REJECTED reply, every reply whose keys and
  * values outside `gaps` hold a token of T, and a fixed sample of the rest
@@ -66,7 +72,7 @@
  * first; no model is ever called.
  *
  *   npx tsx scripts/roadmap-hostile-check.ts               the bar
- *   npx tsx scripts/roadmap-hostile-check.ts --bless       re-pin the corpus (the lead, after review)
+ *   npx tsx scripts/roadmap-hostile-check.ts --bless       re-pin the corpus and its r5 line (the lead, after review)
  *   npx tsx scripts/roadmap-hostile-check.ts --reference   lane R7's literal reading stands in for R3 to
  *                                                          exercise the bar's plumbing: NOT the bar (exit 2)
  */
@@ -77,8 +83,8 @@ import { catalogKindsFor } from "../src/lib/roadmap-catalog";
 import * as LX from "../src/lib/roadmap-lexicon";
 import { DROP_REASON, FLAG_REASON, KEYS_ONLY_REASONS } from "../src/lib/roadmap-validate";
 import { BLOCKING_FLAGS, CREDENTIAL_WORDS, GAPS_MAX, REPORT_EXTRA_SEGMENT, REPORT_PATH_SEGMENT_MAX, integrityVerdictOf, type DraftFromReplyResult, type MilestoneDraft, type ValidatedDraft, type ValidationIntegrity } from "../src/lib/roadmap-types";
-import { closureOf, digestOf, draftGapRows, emptyStage, geminiRowAt, kindOrderOf, norm, quarantineExceptions, readPacks, schemaDiff, sha, short, structuralExceptions, viewGapPanel, viewQuarantineExceptions, type Closure, type Pin } from "./fixtures/roadmap-hostile/bar";
-import { FAMILY_TARGETS, deriveConstraintRun, generateCorpus, type HostileRun, type MetaCase, type RecombinedCase } from "./fixtures/roadmap-hostile/generate";
+import { BUDGET_R5_S, closureOf, digestOf, draftGapRows, emptyStage, geminiRowAt, kindOrderOf, norm, quarantineExceptions, r5BarOf, r5DigestOf, readPacks, schemaDiff, sha, short, structuralExceptions, viewGapPanel, viewQuarantineExceptions, type Closure, type Pin, type R5BarItem } from "./fixtures/roadmap-hostile/bar";
+import { FAMILY_TARGETS, deriveConstraintRun, generateCorpus, generateR5Corpus, type HostileRun, type MetaCase, type R5Corpus, type RecombinedCase } from "./fixtures/roadmap-hostile/generate";
 import { URL_FORMS } from "./fixtures/roadmap-hostile/grammar";
 import { referenceVerdict } from "./fixtures/roadmap-hostile/reference";
 import { BarSeam, DEFAULT_VIEW_NAMES, SHAPE_WORD_CLAUSES, h6RequiredOf, type SeamStatus } from "./fixtures/roadmap-hostile/seam";
@@ -131,6 +137,20 @@ const GENKI = "Genki textbook";
  * the catalog's own templates render.
  */
 const GUARDED_WORDS: readonly string[] = [...HOSTILE_CANON, ...LX.CLAIM_WORDS, ...LX.RESOURCE_WORDS, ...LX.SPEND_WORDS, ...CREDENTIAL_WORDS].filter((w) => !/\s/.test(w.trim()));
+/**
+ * Revision 5 (contracts §22.16): the topic-map families' bar items, named as
+ * r5BarOf names them. X's is "X cross-goal: …" (its count and scope follow the
+ * colon); it is family X's only gate (ruling 41), so an item r5BarOf doesn't
+ * return fails the bar rather than passing by being absent.
+ */
+const X_ITEM = "X cross-goal";
+const R5_ITEMS: readonly string[] = ["R", "T", "W", "L", X_ITEM, "M-M8", "M-M9", "M-M10", "M-M11", "M-M12", "M-M13", "M-M14"];
+/** pin.json's r5 line, beside the older digest (append-only: the older fields are as they were). */
+interface R5Pin {
+  sha256: string;
+  counts: Record<string, number>;
+}
+type PinFile = Pin & { r5?: R5Pin };
 
 // ═══ Reporting ═══════════════════════════════════════════════════════════════
 
@@ -170,17 +190,50 @@ async function main(): Promise<number> {
   console.log(`  ${JSON.stringify(corpus.counts)}`);
   console.log(`  sha256 ${digest}`);
   if (!packs.some((p) => p.file === "new-subject")) console.log("  note: roadmap-corpus/new-subject.json (R3, F-R4-23) isn't written yet; when it lands the corpus changes and the lead re-blesses");
-  if (BLESS) {
-    const fresh: Pin = { sha256: digest, counts: corpus.counts, packs: packHashes, probes: corpus.probes };
-    writeFileSync(PIN_FILE, `${JSON.stringify(fresh, null, 2)}\n`);
-    console.log(`  blessed: wrote scripts/fixtures/roadmap-hostile/pin.json`);
+  // Revision 5 (§22.16): the topic-map families' own corpus, hashed apart (r5DigestOf) so the older digest above never moves.
+  const tR5Gen = Date.now();
+  let r5: R5Corpus | null = null;
+  let r5Error = "";
+  try {
+    r5 = generateR5Corpus();
+  } catch (err) {
+    r5Error = `generateR5Corpus threw: ${errText(err)}`;
   }
-  const pin: Pin | null = existsSync(PIN_FILE) ? (JSON.parse(readFileSync(PIN_FILE, "utf8")) as Pin) : null;
+  const r5GenMs = Date.now() - tR5Gen;
+  const r5Pin: R5Pin | null = r5 ? { sha256: r5DigestOf(r5), counts: r5.counts } : null;
+  console.log(`— r5 corpus (R, T, W, L, X, M8–M14; §22.16) — ${r5Pin ? `generated in ${r5GenMs} ms` : r5Error}`);
+  if (r5Pin) {
+    console.log(`  ${JSON.stringify(r5Pin.counts)}`);
+    console.log(`  sha256 ${r5Pin.sha256}`);
+    console.log(`  the pin --bless would write: the older lines as above, plus "r5": ${JSON.stringify(r5Pin)}`);
+  }
+  if (BLESS) {
+    if (!r5Pin) console.log(`  NOT blessed: ${r5Error} (a pin covers the whole corpus)`);
+    else {
+      const fresh: PinFile = { sha256: digest, counts: corpus.counts, packs: packHashes, probes: corpus.probes, r5: r5Pin };
+      writeFileSync(PIN_FILE, `${JSON.stringify(fresh, null, 2)}\n`);
+      console.log(`  blessed: wrote scripts/fixtures/roadmap-hostile/pin.json`);
+    }
+  }
+  const pin: PinFile | null = existsSync(PIN_FILE) ? (JSON.parse(readFileSync(PIN_FILE, "utf8")) as PinFile) : null;
   if (!pin) item("PIN the corpus is pinned (sha256 and counts)", false, "no pin.json: review the corpus, then run with --bless");
   else {
     const changed = Object.keys({ ...pin.packs, ...packHashes }).filter((k) => pin.packs[k] !== packHashes[k]);
     const why = changed.length ? `packs changed: ${changed.join(", ")}` : "the generator's output changed";
     item("PIN the generator's whole output equals its pinned sha256", pin.sha256 === digest, pin.sha256 === digest ? digest.slice(0, 16) : `pinned ${pin.sha256.slice(0, 16)}, now ${digest.slice(0, 16)}: ${why}. Review, then --bless`);
+  }
+  {
+    const was = pin?.r5 ?? null;
+    let why = "";
+    if (!r5Pin) why = r5Error;
+    else if (!was) why = "pin.json has no r5 line yet: review the r5 corpus, then --bless (append-only: the older sha256 stays as pinned)";
+    else if (was.sha256 !== r5Pin.sha256) {
+      const before = was.counts ?? {};
+      const now = r5Pin.counts;
+      const moved = Object.keys({ ...before, ...now }).filter((k) => before[k] !== now[k]);
+      why = `pinned ${was.sha256.slice(0, 16)}, now ${r5Pin.sha256.slice(0, 16)}: ${moved.length ? `counts moved: ${moved.map((k) => `${k} ${before[k] ?? 0}→${now[k] ?? 0}`).join(", ")}` : "the generator's output changed"}. Review, then --bless`;
+    }
+    item("PIN r5 the topic-map families' corpus (R, T, W, L, X, M8–M14) equals pin.json's r5 sha256, pinned beside the older one", r5Pin != null && was != null && was.sha256 === r5Pin.sha256, why || (r5Pin ? r5Pin.sha256.slice(0, 16) : ""));
   }
   const n = corpus.counts;
   const countsOk =
@@ -1071,6 +1124,32 @@ async function main(): Promise<number> {
     }
   }
 
+  // ── R, T, W, L, X and M8–M14: the topic-map families (rev 5, §22.16, §23.8) ──
+  // Pure: r5BarOf calls roadmap-rating, -topics, -grounding, -goals, -catalog and -evidence directly (no seam), so
+  // --reference changes nothing here. Every item gates; a case that throws is a failure (bar.ts `guarded`), never a pass.
+  const tR5 = Date.now();
+  let r5Items: R5BarItem[] = [];
+  if (r5) {
+    try {
+      r5Items = r5BarOf(r5);
+    } catch (err) {
+      r5Error = `r5BarOf threw: ${errText(err)}`;
+    }
+  }
+  const r5BarMs = Date.now() - tR5;
+  {
+    console.log(`— R, T, W, L, X and M8–M14 (the topic-map families, pure, no seam): ${r5Items.length} items, ${r5Items.filter((b) => !b.ok).length} failed, ${r5BarMs} ms —`);
+    for (const b of r5Items) {
+      const fam = b.name.startsWith(X_ITEM) ? "X" : b.name;
+      console.log(`  ${b.ok ? "PASS" : "FAIL"}  ${(fam === "X" ? X_ITEM : b.name).padEnd(13)} ${String(r5?.counts[fam] ?? "?").padStart(5)} cases · ${b.failures.length} failed`);
+      item(b.name, b.ok, b.detail);
+      for (const f of b.failures) example(`R5-${fam}`, f);
+    }
+    for (const x of R5_ITEMS.filter((n) => !r5Items.some((b) => b.name === n || b.name.startsWith(`${n}:`)))) {
+      item(`${x}${x === X_ITEM ? ": family X's only gate (ruling 41)" : ""} (§22.16)`, false, `missing from the bar: ${r5Error || "r5BarOf returned no such item"}`);
+    }
+  }
+
   // ── H6: every rule fires ────────────────────────────────────────────────
   {
     const strings = [
@@ -1228,6 +1307,12 @@ async function main(): Promise<number> {
     `BUDGET H1–H5 and K run in ≤ ${BUDGET_S} s`,
     canIntegrity && barSeconds <= BUDGET_S,
     `${barSeconds.toFixed(1)} s (replies ${sec(replyMs)} s: the walk ${sec(spent.integrity)} · T ${sec(spent.taint)} · validation and its checks ${sec(spent.validate)} · R4's views ${sec(spent.views)} · R4's step alone ${sec(spent.r4)}; gap strings ${sec(gapMs)} s · the flags alone ${sec(layersMs)} s · K ${sec(kMs)} s); the whole check ${sec(Date.now() - started)} s`
+  );
+  // The topic-map families' own line (ruling 36), never added to the one above.
+  item(
+    `BUDGET R, T, W, L, X and M8–M14 run in ≤ ${BUDGET_R5_S} s (their own line beside H1–H5 and K's ${BUDGET_S} s)`,
+    r5Items.length > 0 && (r5GenMs + r5BarMs) / 1000 <= BUDGET_R5_S,
+    `${((r5GenMs + r5BarMs) / 1000).toFixed(2)} s (generating ${r5GenMs} ms · the bar ${r5BarMs} ms)`
   );
 
   // ── The verdict ─────────────────────────────────────────────────────────

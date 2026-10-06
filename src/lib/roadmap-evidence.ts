@@ -58,10 +58,38 @@
  * hold (a Field plan starting at PART@8 has no Foundation or Familiar row; a
  * short track plan keeps two of the five stage keys). The outline's order is
  * optional (rule 2: leave it out to keep the outline's own order).
+ *
+ * Revision 5, lane 10 (contracts §22.5, §22.6, §23.5; rulings 19, 40, 66):
+ *   - The topic phases' packs (topicPackOf): RATE, MAP, LINK, GROUND and DEEPER, each its frozen instruction
+ *     (TOPIC_PROMPT_VERSION 1), its exact schema, and only the sections §22.6 names, fenced with asData; the keymap
+ *     (key → topic lineage or Domain id) stays on the server. topicInputHashMaterial covers the phase and K.
+ *   - stripFiguresOf (ruling 40): every figure and currency token leaves the aim a topic pack sends.
+ *   - Split clauses leave every pack (aimLessSplitOf): the topic packs and the LEVELS pack (EvidenceInput
+ *     .splitClauses; ruling 66). With none, the LEVELS pack is byte-identical.
+ *   - The cross-goal exclusions (packableDomainsOf; §23.5): no pack holds another DRAFT, ACTIVE or PAUSED goal's
+ *     Domains or any Gemini-named Domain (EvidenceInput.excludeDomainIds on the LEVELS pack).
+ *
+ *   topicPackOf · TopicPack · TopicPackInput · topicInputHashMaterial · stripFiguresOf · aimLessSplitOf ·
+ *   packableDomainsOf · TOPIC_PACK_SECTIONS
  */
 import { asData } from "./gemini";
 import { words } from "./synonyms";
-import { COACH_EXCLUSIONS } from "./roadmap-lexicon";
+import { COACH_EXCLUSIONS, CURRENCY_WORDS, SPELLED_NUMBER_WORDS } from "./roadmap-lexicon";
+import { RATE_INSTRUCTION, RATE_RESPONSE_SCHEMA } from "./roadmap-rating";
+import { DEEPER_INSTRUCTION, DEEPER_RESPONSE_SCHEMA, LINK_INSTRUCTION, linkSchemaOf, mapInstructionOf, mapSchemaOf } from "./roadmap-topics";
+import { GROUND_INSTRUCTION, groundContentsOf } from "./roadmap-grounding";
+import {
+  BREADTH_FALLBACK,
+  BREADTH_TABLE,
+  GROUND_KEYS_PER_CALL,
+  LAYER_KEYS,
+  LAYERS_MAX,
+  LAYERS_MIN,
+  TOPIC_PROMPT_VERSION,
+  type BreadthKey,
+  type RunPhase,
+  type SplitClause,
+} from "./roadmap-types";
 import {
   AIM_DEPTHS,
   AIM_MAX,
@@ -132,6 +160,15 @@ export interface EvidenceInput {
    * switch are both on.
    */
   gapsLive?: boolean;
+  // ── Revision 5, lane 10 (ruling 66; §23.5) ──
+  /** Roadmap.splitClauses: each clause leaves the aim the pack sends (aimLessSplitOf). Absent or empty: the aim as typed (byte-identical). */
+  splitClauses?: readonly SplitClause[] | null;
+  /**
+   * The Domains no pack may hold (§23.5): every Domain another DRAFT, ACTIVE or PAUSED goal holds and every
+   * Gemini-named Domain (the ids packableDomainsOf leaves out). They are never listed, chosen or not. Absent or
+   * empty: every Domain as before.
+   */
+  excludeDomainIds?: readonly string[] | null;
 }
 
 /** The v3 pack: the frozen EvidencePack plus the run's facts. Stored whole on RoadmapRun.pack (JSON). */
@@ -316,11 +353,14 @@ export function methodsForRun(constraints: string | null, practicesAllowed: bool
   return PRACTICE_METHODS.filter((m) => !(noCoach && m === "COACHED_SESSION"));
 }
 
-/** The Domains the pack lists, in order: the chosen ones (in the user's order), then the Area's others by card count; at most PACK_MAX_DOMAINS. */
-function orderedDomains(intake: Intake, domains: readonly EvidenceDomain[]): { d: EvidenceDomain; chosen: boolean }[] {
+/**
+ * The Domains the pack lists, in order: the chosen ones (in the user's order), then the Area's others by card count; at most PACK_MAX_DOMAINS.
+ * Revision 5 (§23.5): a Domain in `exclude` (another goal's, or Gemini-named) is never listed.
+ */
+function orderedDomains(intake: Intake, domains: readonly EvidenceDomain[], exclude: ReadonlySet<string> = new Set()): { d: EvidenceDomain; chosen: boolean }[] {
   if (intake.fieldId == null) return [];
   const byId = new Map<string, EvidenceDomain>();
-  for (const d of Array.isArray(domains) ? domains : []) if (d && typeof d.id === "string" && !byId.has(d.id)) byId.set(d.id, d);
+  for (const d of Array.isArray(domains) ? domains : []) if (d && typeof d.id === "string" && !byId.has(d.id) && !exclude.has(d.id)) byId.set(d.id, d);
   const chosenIds = new Set<string>();
   const out: EvidenceDomain[] = [];
   for (const id of intake.domainIds ?? []) {
@@ -370,7 +410,8 @@ export function buildEvidencePack(input: EvidenceInput): EvidencePackV3 {
   const pickSlots = askFor ? slots.filter((s) => askFor.has(s)) : slots;
 
   const keymap: PackKeymap = { domains: {}, syllabus: {} };
-  const listed = orderedDomains(intake, input.domains);
+  const excluded = new Set((Array.isArray(input.excludeDomainIds) ? input.excludeDomainIds : []).filter((id): id is string => typeof id === "string"));
+  const listed = orderedDomains(intake, input.domains, excluded);
   const keyOfId = new Map<string, string>();
   const domains: PackDomainLine[] = listed.map(({ d }, i) => {
     const key = `D${i + 1}`;
@@ -431,7 +472,8 @@ export function buildEvidencePack(input: EvidenceInput): EvidencePackV3 {
   };
 
   const area = packText(input.areaName, PACK_NAME_MAX);
-  const aim = packText(intake.aim, AIM_MAX);
+  // Revision 5 (ruling 66): a clause tracked in another goal leaves the aim this pack sends; with none, the aim as typed.
+  const aim = packText(aimLessSplitOf(intake.aim, input.splitClauses ?? []), AIM_MAX);
   const constraints = packText(intake.constraints ?? "", CONSTRAINTS_MAX);
   const examName = exam ? packText(intake.examLabel ?? "", EXAM_MAX) : "";
   const stagesLine = depth == null ? slots.join(" · ") : slots.map((s) => `${s} (level ${STAGE_LEVEL[s as GateStage]})`).join(" · ");
@@ -540,5 +582,299 @@ export function inputHashMaterial(pack: EvidencePack, intake: Intake, model: str
     `keys:${keys.join(",")}`,
     `gaps:${gaps}|live:${ROADMAP_GAPS_LIVE}`,
     `system:${JSON.stringify(systemInstructionOf(gaps))}`,
+  ].join("\n|\n");
+}
+
+// ═══ Revision 5, lane 10: the topic phases' packs (contracts §22.5, §22.6; rulings 19, 40, 66) ═══
+
+const CONNECTOR_TAIL = /(?:\s|[,;:]|\b(?:and also|as well as|and|also|while|plus|then)\b)+$/iu;
+const CONNECTOR_HEAD = /^(?:\s|[,;:]|\b(?:and also|as well as|and|also|while|plus|then)\b)+/iu;
+
+/**
+ * The aim less every clause in Roadmap.splitClauses (ruling 66; §22.6 "split clauses leave every pack"): each clause
+ * is cut where its stored offsets still hold its text, else at its first occurrence; a clause no longer in the aim
+ * cuts nothing. The cut leaves no doubled punctuation and no dangling connector ("and", "while" …) at either end.
+ * With no split clause the aim comes back exactly as given (the LEVELS pack stays byte-identical). The stored aim
+ * never changes. Pure; never throws.
+ */
+export function aimLessSplitOf(aim: string, splitClauses: readonly SplitClause[] | null | undefined): string {
+  const text = typeof aim === "string" ? aim : "";
+  const list = (Array.isArray(splitClauses) ? splitClauses : []).filter((c): c is SplitClause => !!c && typeof c === "object" && typeof c.text === "string" && c.text.trim() !== "");
+  if (list.length === 0 || text === "") return text;
+  const spans: [number, number][] = [];
+  for (const c of list) {
+    const atOffsets = Number.isInteger(c.start) && Number.isInteger(c.end) && c.start >= 0 && c.end <= text.length && text.slice(c.start, c.end) === c.text;
+    const start = atOffsets ? c.start : text.indexOf(c.text);
+    if (start < 0) continue;
+    spans.push([start, start + c.text.length]);
+  }
+  if (spans.length === 0) return text;
+  // Overlapping or touching spans merge; then cut from the end so earlier offsets hold.
+  spans.sort((a, b) => a[0] - b[0]);
+  const merged: [number, number][] = [];
+  for (const s of spans) {
+    const last = merged[merged.length - 1];
+    if (last && s[0] <= last[1]) last[1] = Math.max(last[1], s[1]);
+    else merged.push([s[0], s[1]]);
+  }
+  let out = text;
+  for (let i = merged.length - 1; i >= 0; i--) {
+    const [s, e] = merged[i];
+    const before = out.slice(0, s).replace(CONNECTOR_TAIL, "");
+    const after = out.slice(e).replace(CONNECTOR_HEAD, "");
+    out = before && after ? `${before}, ${after}` : before || after;
+  }
+  return out
+    .replace(/\s+/gu, " ")
+    .replace(/\s+([,;.!?。；！？])/gu, "$1")
+    .replace(/([,;])(?:\s*[,;])+/gu, "$1")
+    .replace(CONNECTOR_TAIL, "")
+    .replace(CONNECTOR_HEAD, "")
+    .trim();
+}
+
+const spelledNumbers = new Set(SPELLED_NUMBER_WORDS.map((w) => w.toLowerCase()));
+const currencyWords = new Set(CURRENCY_WORDS.map((w) => w.toLowerCase()));
+/** A token's word, for the exact lists: case-folded, with its leading and trailing punctuation off ("dollars," → "dollars"). */
+const coreOf = (token: string): string =>
+  token
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+
+/**
+ * Figure stripping (ruling 40): removes every whitespace-separated token holding a number (\p{N}) or a currency
+ * sign (\p{Sc}), every CURRENCY_WORDS word (exact, case-folded), and every SPELLED_NUMBER_WORDS word that stands in
+ * an unbroken run of them next to a removed token ("ten thousand dollars" goes whole, "a hundred kanji" stays);
+ * then single spaces. The live aim's "100k" is removed. The stored aim never changes. Pure; never throws.
+ */
+export function stripFiguresOf(text: string): string {
+  const tokens = (typeof text === "string" ? text : "").split(/\s+/u).filter((t) => t.length > 0);
+  const removed = tokens.map((t) => /[\p{N}\p{Sc}]/u.test(t) || currencyWords.has(coreOf(t)));
+  const spelled = tokens.map((t, i) => !removed[i] && spelledNumbers.has(coreOf(t)));
+  const drop = [...removed];
+  for (let i = 0; i < tokens.length; ) {
+    if (!spelled[i]) {
+      i += 1;
+      continue;
+    }
+    let j = i;
+    while (j < tokens.length && spelled[j]) j += 1;
+    // [i, j) is one unbroken run of spelled numbers: it goes when a removed token touches either end.
+    if ((i > 0 && removed[i - 1]) || (j < tokens.length && removed[j])) for (let k = i; k < j; k++) drop[k] = true;
+    i = j;
+  }
+  return tokens.filter((_, i) => !drop[i]).join(" ");
+}
+
+/**
+ * The Domains a pack may hold (§23.5): the ids of `domains` that no other DRAFT, ACTIVE or PAUSED goal holds
+ * (`others`, those goals' Domain ids) and that Gemini did not name (Domain.nameOrigin "GEMINI"), each once, in the
+ * order given. The server passes the user's Domains through it: the LEVELS pack (EvidenceInput.excludeDomainIds is
+ * the rest) and the topic packs (MAP's free Domains and `place` items). Pure.
+ */
+export function packableDomainsOf(domains: readonly { id: string; nameOrigin: string | null }[], others: readonly string[]): string[] {
+  const held = new Set((Array.isArray(others) ? others : []).filter((id) => typeof id === "string"));
+  const out: string[] = [];
+  for (const d of Array.isArray(domains) ? domains : []) {
+    if (!d || typeof d.id !== "string" || held.has(d.id) || d.nameOrigin === "GEMINI" || out.includes(d.id)) continue;
+    out.push(d.id);
+  }
+  return out;
+}
+
+/** What topicPackOf takes (§22.6). Lane 10's optional `id` on an item fills the keymap (a topic's lineage or a Domain's id). */
+export interface TopicPackInput {
+  phase: RunPhase;
+  areaName: string;
+  aim: string;
+  splitClauses: readonly SplitClause[];
+  outline: readonly string[];
+  /** The exam's label, only with your Yes; never its day. */
+  examLabel: string | null;
+  /** K (MAP: the layers asked; LINK: K_final). */
+  layers?: number;
+  breadth?: BreadthKey;
+  /** MAP's room for Gemini names (mapRoomOf); 0 or absent: no `names` part. */
+  room?: number;
+  /** MAP's `place` items (S keys in line order, then U keys in intake order); empty or absent: no `place` part. */
+  place?: readonly { key: string; text: string; id?: string | null }[];
+  /** LINK: the kept topics with their layers. */
+  topics?: readonly { key: string; name: string; layer: number; id?: string | null }[];
+  /** GROUND: at most GROUND_KEYS_PER_CALL terms. */
+  terms?: readonly { key: string; name: string; id?: string | null }[];
+  /** DEEPER: the topic and its ancestors' names, shallowest first. */
+  topic?: { key: string; name: string; ancestors: readonly string[]; id?: string | null };
+}
+
+/** One phase's pack: what is sent (contents, instruction, schema) and the server-only keymap. `layers` (lane 10's optional field) is K, for the hash. */
+export interface TopicPack {
+  phase: RunPhase;
+  promptVersion: number;
+  contents: string;
+  instruction: string;
+  /** null: GROUND (plain text), or a phase with nothing to ask (never sent). */
+  schema: Record<string, unknown> | null;
+  /** key → topic lineage or Domain id; server only, never sent. */
+  keymap: Record<string, string>;
+  layers?: number | null;
+}
+
+/** The fenced sections each phase may send, in order (§22.6); a section with nothing in it is left out. */
+export const TOPIC_PACK_SECTIONS: Readonly<Record<RunPhase, readonly string[]>> = {
+  RATE: ["area", "aim", "outline", "exam"],
+  MAP: ["area", "aim", "outline", "exam", "plan", "place"],
+  LINK: ["area", "topics"],
+  GROUND: ["area", "terms"],
+  DEEPER: ["area", "topic", "above"],
+};
+
+const layersIn = (k: unknown): number => (typeof k === "number" && Number.isFinite(k) ? Math.max(LAYERS_MIN, Math.min(LAYERS_MAX, Math.floor(k))) : LAYERS_MIN);
+const keyOk = (k: unknown): k is string => typeof k === "string" && /^(S|U|T)([1-9]\d{0,2})$/.test(k);
+const nameIn = (key: string, text: string): string => packText(text, key.startsWith("S") ? SYLLABUS_LINE_MAX : PACK_NAME_MAX);
+
+/**
+ * One topic phase's pack (§22.6), sent exactly as built:
+ *   RATE    area · aim (stripFiguresOf, less every split clause) · outline (one line each) · exam (the label, with your
+ *           Yes) — never Domains, depth, hours, dates, the exam's day or the constraints;
+ *   MAP     the RATE sections, then plan ("Layers: L1, L2, L3, L4." and, with names, "Names: up to 5 a layer, 12 in
+ *           all.") and place ("S1 · <line>", "U1 · <Domain name>"); the schema is mapSchemaOf, the instruction
+ *           mapInstructionOf, each part only when it has something to do (with neither the schema is null: never sent);
+ *   LINK    area · topics ("L2: T5 · Emergency fund; T6 · Mortgage repayment"), every layer up to K — never the aim
+ *           (ruling 19); the schema is linkSchemaOf over those topics and K;
+ *   GROUND  area · terms ("T1 · Cash flow"; at most GROUND_KEYS_PER_CALL); no schema (plain text);
+ *   DEEPER  area · topic (its name) · above (its ancestors' names, "; "-joined, shallowest first).
+ * Every interpolated string goes through packText and every section is fenced with asData, so nothing inside one can
+ * close it. The instructions are the frozen §22.5 constants (TOPIC_PROMPT_VERSION). The keymap stays on the server.
+ * Pure; it throws only where a lane-6 schema builder does (the server builds packs inside its own try).
+ */
+export function topicPackOf(input: TopicPackInput): TopicPack {
+  const phase = input.phase;
+  const area = packText(input.areaName ?? "", PACK_NAME_MAX);
+  const keymap: Record<string, string> = {};
+  const sections: [string, string][] = [["area", area]];
+  let instruction = "";
+  let schema: Record<string, unknown> | null = null;
+  let layers: number | null = null;
+  let groundContents: string | null = null;
+
+  const rateSections = (): [string, string][] => {
+    const aim = packText(stripFiguresOf(aimLessSplitOf(input.aim ?? "", input.splitClauses ?? [])), AIM_MAX);
+    const outline = (Array.isArray(input.outline) ? input.outline : [])
+      .slice(0, SYLLABUS_MAX_LINES)
+      .map((l) => packText(typeof l === "string" ? l : "", SYLLABUS_LINE_MAX))
+      .filter(Boolean);
+    const exam = packText(input.examLabel ?? "", EXAM_MAX);
+    return [
+      ["aim", aim],
+      ["outline", outline.join("\n")],
+      ["exam", exam],
+    ];
+  };
+
+  switch (phase) {
+    case "RATE": {
+      sections.push(...rateSections());
+      instruction = RATE_INSTRUCTION;
+      schema = { ...RATE_RESPONSE_SCHEMA };
+      break;
+    }
+    case "MAP": {
+      const k = layersIn(input.layers);
+      layers = k;
+      const breadth: BreadthKey = input.breadth && BREADTH_TABLE[input.breadth] ? input.breadth : BREADTH_FALLBACK;
+      const room = typeof input.room === "number" && Number.isFinite(input.room) ? Math.max(0, Math.floor(input.room)) : 0;
+      const names = room > 0;
+      const place = (Array.isArray(input.place) ? input.place : []).filter((p) => p && keyOk(p.key) && !p.key.startsWith("T"));
+      const seen = new Set<string>();
+      const placeLines: string[] = [];
+      for (const p of place) {
+        if (seen.has(p.key)) continue;
+        seen.add(p.key);
+        keymap[p.key] = typeof p.id === "string" ? p.id : "";
+        placeLines.push(`${p.key} · ${nameIn(p.key, p.text ?? "")}`);
+      }
+      const placeKeys = [...seen];
+      const plan = [`Layers: ${LAYER_KEYS.slice(0, k).join(", ")}.`, ...(names ? [`Names: up to ${BREADTH_TABLE[breadth].max} a layer, ${room} in all.`] : [])];
+      sections.push(...rateSections(), ["plan", plan.join("\n")], ["place", placeLines.join("\n")]);
+      instruction = mapInstructionOf({ place: placeKeys.length > 0, names });
+      schema = placeKeys.length > 0 || names ? mapSchemaOf({ layers: k, placeKeys, names, breadth }) : null;
+      break;
+    }
+    case "LINK": {
+      const topics = (Array.isArray(input.topics) ? input.topics : []).filter((t) => t && keyOk(t.key) && Number.isInteger(t.layer) && t.layer >= LAYERS_MIN && t.layer <= LAYERS_MAX);
+      const k = typeof input.layers === "number" ? layersIn(input.layers) : layersIn(Math.max(LAYERS_MIN, ...topics.map((t) => t.layer)));
+      layers = k;
+      const shown = topics.filter((t) => t.layer <= k);
+      const lines: string[] = [];
+      for (let layer = LAYERS_MIN; layer <= k; layer++) {
+        const here = shown.filter((t) => t.layer === layer);
+        if (here.length === 0) continue;
+        for (const t of here) keymap[t.key] = typeof t.id === "string" ? t.id : "";
+        lines.push(`L${layer}: ${here.map((t) => `${t.key} · ${nameIn(t.key, t.name ?? "")}`).join("; ")}`);
+      }
+      sections.push(["topics", lines.join("\n")]);
+      instruction = LINK_INSTRUCTION;
+      schema = shown.length > 0 ? linkSchemaOf(shown.map((t) => ({ key: t.key, layer: t.layer, decision: "PENDING" as const })), k) : null;
+      break;
+    }
+    case "GROUND": {
+      const terms = (Array.isArray(input.terms) ? input.terms : []).filter((t) => t && keyOk(t.key) && typeof t.name === "string" && t.name.trim() !== "").slice(0, GROUND_KEYS_PER_CALL);
+      for (const t of terms) keymap[t.key] = typeof t.id === "string" ? t.id : "";
+      // GROUND's contents are roadmap-grounding groundContentsOf's (§22.9): one definition of what a web check sends.
+      groundContents = groundContentsOf(input.areaName ?? "", terms.map((t) => ({ key: t.key, name: t.name })));
+      instruction = GROUND_INSTRUCTION;
+      schema = null;
+      break;
+    }
+    case "DEEPER": {
+      const t = input.topic;
+      if (t && keyOk(t.key)) {
+        keymap[t.key] = typeof t.id === "string" ? t.id : "";
+        const above = (Array.isArray(t.ancestors) ? t.ancestors : []).map((a) => packText(typeof a === "string" ? a : "", PACK_NAME_MAX)).filter(Boolean);
+        sections.push(["topic", nameIn(t.key, t.name ?? "")], ["above", above.join("; ")]);
+      }
+      instruction = DEEPER_INSTRUCTION;
+      schema = t && keyOk(t.key) ? { ...DEEPER_RESPONSE_SCHEMA } : null;
+      break;
+    }
+  }
+  const contents =
+    groundContents ??
+    sections
+      .filter(([, text]) => text !== "")
+      .map(([id, text]) => asData(id, text))
+      .join("\n");
+  return { phase, promptVersion: TOPIC_PROMPT_VERSION, contents, instruction, schema, keymap, layers };
+}
+
+/** A keymap as stable JSON: its keys sorted, so two packs that issue the same keys hash alike. */
+const keymapJson = (keymap: Readonly<Record<string, string>>): string =>
+  JSON.stringify(
+    Object.fromEntries(
+      Object.keys(keymap ?? {})
+        .sort()
+        .map((k) => [k, keymap[k]])
+    )
+  );
+
+/**
+ * The canonical string the server hashes (sha256) into a topic run's RoadmapRun.inputHash (§22.6): the phase, K,
+ * TOPIC_PROMPT_VERSION, the exact instruction, the schema's JSON, the contents, the keymap, the model, the samples and
+ * candidateCount. So a reply is reused (ROADMAP_REUSE_DAYS) only for exactly what it was given, under the same phase
+ * and K, and a key never resolves to another topic or Domain than the reply was written for.
+ */
+export function topicInputHashMaterial(pack: TopicPack, model: string, samples: number, candidateCount: number): string {
+  return [
+    `phase:${pack.phase}`,
+    `layers:${pack.layers ?? "-"}`,
+    `prompt:${pack.promptVersion}`,
+    `model:${model}`,
+    `samples:${samples}`,
+    `candidates:${candidateCount}`,
+    `instruction:${JSON.stringify(pack.instruction)}`,
+    `schema:${JSON.stringify(pack.schema ?? null)}`,
+    `keymap:${keymapJson(pack.keymap)}`,
+    `contents:\n${pack.contents}`,
   ].join("\n|\n");
 }

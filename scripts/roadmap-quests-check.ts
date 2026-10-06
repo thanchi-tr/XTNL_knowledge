@@ -45,6 +45,20 @@
  * a render keeps Start's row, and the next cron reads the StartSnapshot back
  * from its JSON column.
  *
+ * Revision 5 (roadmap-contracts.md §23.3, §23.6; lane 3): up to 3 goals. One
+ * goal is byte-identical (a store that reads the goals gives the same rows,
+ * sets and views as one that reads none); openOf groups by roadmap and
+ * orders by seat; one set is frozen per goal, at its share of the week (the
+ * capacity line names it and the stored set reads it back), a failure named
+ * by its seat; a PAUSED goal freezes and shows nothing and its hours leave
+ * the share; loadWeekQuests picks a goal; loadPastWeeks hides only that
+ * goal's current set; Today's rows go round robin by seat; links carry
+ * ?goal= with 2 or more goals open; and the week's gate is user-wide (the
+ * XG cases: another goal's cue and AVOID gate this goal's week, a closed
+ * goal's AVOID is not read while GOALS_MAX is 1). Re-pinned: the SQL column
+ * check reads migration A's columns, and the greps read every file with LF
+ * line ends.
+ *
  * Pure: no database, no clock, no model. The server functions run against an
  * in-memory QuestStore that keeps the two write rules (ON CONFLICT DO
  * NOTHING; UPDATE … WHERE finalizedAt IS NULL). scripts/_no-model.ts is
@@ -62,6 +76,7 @@ import type { Track } from "../src/lib/life-types";
 import {
   CARD_WRITE_MIN,
   C_PRIOR,
+  GOALS_MAX,
   NON_RECALL_TYPES,
   P_PRIOR,
   RHO_PRIOR,
@@ -134,6 +149,7 @@ import {
   heldDaysAsOf,
   isLegacyFacts,
   loadPastWeeks,
+  loadTodayWeekQuests,
   loadWeekQuests,
   openMilestoneOf,
   questErrorText,
@@ -144,11 +160,14 @@ import {
   raiseEvidenceOf,
   scheduledPlacesOf,
   setOfStored,
+  userWideGoalsOf,
   weekQuestInputFor,
   weekQuestSetFor,
+  weekShareOf,
   weekQuestsViewFor,
   type QuestCapacity,
   type QuestCardRow,
+  type QuestGoalRow,
   type QuestInstanceRow,
   type QuestItemRow,
   type QuestMeasureRow,
@@ -162,7 +181,8 @@ import {
 import { activityConfirmOf, answerActivityCard, catalogTrackOf, constraintsStateOf, coverageJsonOf, type CatalogKey } from "../src/lib/roadmap-catalog";
 
 const ROOT = join(__dirname, "..");
-const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
+/** A source file's text with its line ends read as LF, so the greps hold whichever ends a checkout or an editor wrote. */
+const read = (p: string) => readFileSync(join(ROOT, p), "utf8").replace(/\r\n/g, "\n");
 let passed = 0;
 let failed = 0;
 function check(name: string, ok: boolean, detail = "") {
@@ -829,12 +849,14 @@ interface FakeDb {
   weeks: StoredQuestWeek[];
   /** REVIEW ledger rows (the clean-entry read). */
   reviews?: QuestReviewRow[];
+  /** Revision 5: the user's goals (QuestStore.goals); absent, the store reads none. */
+  goals?: QuestGoalRow[];
 }
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 0));
 
 function storeOf(db: FakeDb): QuestStore {
-  return {
+  const store: QuestStore = {
     async milestones(_userId, scope) {
       await tick();
       if ("active" in scope) return db.facts.filter((f) => f.roadmap.status === "ACTIVE");
@@ -934,6 +956,15 @@ function storeOf(db: FakeDb): QuestStore {
       return 1;
     },
   };
+  // Revision 5: a fixture with goals reads them (QuestStore.goals); without, the store reads none (one goal, as before).
+  if (db.goals) {
+    const goals = db.goals;
+    store.goals = async () => {
+      await tick();
+      return goals.map((g) => ({ ...g }));
+    };
+  }
+  return store;
 }
 
 /** The ADD milestone as rows: Risk Management to level 6+, started Monday M, a practice, a step and a checkpoint. */
@@ -1302,10 +1333,12 @@ function greps() {
   const migration = read("prisma/migrations/20261101000000_life_roadmap/migration.sql");
   // Revision 4's additive columns (Roadmap.depth, RoadmapMilestone.stage, …), which the milestone query reads.
   const rev4 = read("prisma/migrations/20261106000000_life_roadmap_rev4/migration.sql");
+  // Revision 5 (lane 3 re-pin): migration A's goal columns (Roadmap.slot, which the milestone query reads for the seat order).
+  const goalsA = read("prisma/migrations/20261110000000_life_roadmap_goals/migration.sql");
   const tableCols = (table: string) => {
     const m = new RegExp(`CREATE TABLE "public"\\."${table}" \\(([\\s\\S]*?)\\n\\);`).exec(migration);
     const cols = new Set(m ? [...m[1].matchAll(/^\s*"(\w+)"/gm)].map((x) => x[1]) : []);
-    for (const a of rev4.matchAll(new RegExp(`ALTER TABLE "public"\\."${table}" ADD COLUMN "(\\w+)"`, "g"))) cols.add(a[1]);
+    for (const added of [rev4, goalsA]) for (const a of added.matchAll(new RegExp(`ALTER TABLE "public"\\."${table}" ADD COLUMN "(\\w+)"`, "g"))) cols.add(a[1]);
     return cols;
   };
   const server = read("src/lib/roadmap-quests-server.ts");
@@ -2527,12 +2560,327 @@ async function gate19() {
   );
 }
 
+// ═══ Revision 5: up to 3 goals (contracts §23.3, §23.4, §23.6; lane 3) ═════
+
+/** One of the user's goals as QuestStore.goals reads it, from a fact's roadmap. */
+function goalRowOf(r: QuestRoadmapRow, o: Partial<QuestGoalRow> = {}): QuestGoalRow {
+  return {
+    id: r.id,
+    status: r.status,
+    slot: r.slot ?? null,
+    hoursPerWeek: r.hoursPerWeek,
+    fieldId: r.fieldId,
+    track: r.track,
+    aim: r.aim ?? null,
+    constraints: r.constraints ?? null,
+    examLabel: r.examLabel ?? null,
+    syllabus: r.syllabus ?? null,
+    typicalHoursSource: r.typicalHoursSource,
+    coverage: r.coverage ?? null,
+    ...o,
+  };
+}
+
+/**
+ * Two goals: goal 1 (rm1, seat 1, 8 h, Trading) is dbOf's ADD milestone at
+ * place 2; goal 2 (rm2, seat 2, 4 h, Japanese) holds the same plan over its
+ * own Domain (Kana) at place 1. So a read that compared places across
+ * roadmaps (before revision 5) would pick goal 2's milestone first.
+ */
+function twoGoalsOf(o: { slot1?: number | null; slot2?: number | null; status2?: string; hours2?: number } = {}): FakeDb {
+  const db = dbOf();
+  const f1 = db.facts[0];
+  f1.roadmap.slot = o.slot1 === undefined ? 1 : o.slot1;
+  const kanaKey = cardsAtLevelKey(["d-kana"], 6, "r");
+  const f2: QuestMilestoneFacts = {
+    roadmap: { ...f1.roadmap, id: "rm2", slot: o.slot2 === undefined ? 2 : o.slot2, status: o.status2 ?? "ACTIVE", hoursPerWeek: o.hours2 ?? 4, fieldId: "f-lang" },
+    milestone: { ...f1.milestone, id: "ms7", lineageId: "lin-ms7", ord: 1, title: "Kana by heart", goalId: "g7" },
+    goal: f1.goal ? { ...f1.goal, id: "g7" } : null,
+    place: 1,
+    of: 2,
+  };
+  db.facts.push(f2);
+  db.items.ms7 = db.items.ms2.map((i) => ({
+    ...i,
+    id: `${i.id}-7`,
+    lineageId: `${i.lineageId}-7`,
+    domainId: i.domainId ? "d-kana" : null,
+    label: i.kind === "DOMAIN" ? "Kana" : i.label,
+    templateId: i.templateId ? `${i.templateId}-7` : null,
+  }));
+  db.measures.ms7 = db.measures.ms2.map((m) => ({ ...m, scope: { domainIds: ["d-kana"] }, measureKey: kanaKey }));
+  db.templates.push(...db.templates.map((t) => ({ ...t, id: `${t.id}-7` })));
+  db.domains.push({ id: "d-kana", name: "Kana", fieldId: "f-lang" });
+  db.ideas.push(...db.ideas.filter((i) => i.domainId === "d-risk").map((i) => ({ ...i, id: `${i.id}-k`, domainId: "d-kana" })));
+  db.readings.push({ measureKey: kanaKey, day: M, value: 8 });
+  db.quotas.push({ fieldId: "f-lang", name: "Japanese", quota: 2 });
+  db.goals = [goalRowOf(f1.roadmap), goalRowOf(f2.roadmap)];
+  return db;
+}
+
+async function goals() {
+  console.log("— revision 5: up to 3 goals (§23.3, §23.4, §23.6) —");
+  const U = "user1";
+  const mon = at(W(1), 4, 15);
+  const wed = at(addDays(W(1), 2), 10);
+  const capLine = (set: WeekQuestSet | null | undefined) => set?.basis.find((b) => b.startsWith("Capacity: ") && !/plan is more than/.test(b)) ?? null;
+
+  {
+    // One goal: a store that reads the goals (the goal itself only) gives exactly the store that reads none.
+    const bare = dbOf();
+    const withGoal = dbOf();
+    withGoal.goals = [goalRowOf(withGoal.facts[0].roadmap, { slot: 1 })];
+    const [a, b] = [storeOf(bare), storeOf(withGoal)];
+    const [fa, fb] = [await freezeWeekQuests(U, mon, "CRON", { ...ON, store: a }), await freezeWeekQuests(U, mon, "CRON", { ...ON, store: b })];
+    const [la, lb] = [await loadWeekQuests(U, wed, { ...ON, store: a }), await loadWeekQuests(U, wed, { ...ON, store: b })];
+    eq(
+      "goals: one goal is byte-identical — the same freeze, the same stored row, the same set and view (no share, no seat, no ?goal= link)",
+      [json(fa) === json(fb), canon(bare.weeks) === canon(withGoal.weeks), canon(la) === canon(lb), "share" in (lb?.set ?? {}), "slot" in (lb?.view ?? {}), (lb?.view.rows ?? []).some((r) => "slot" in r || /\?goal=/.test(r.href ?? ""))],
+      [true, true, true, false, false, false]
+    );
+    eq("… and its capacity line names no share", [capLine(lb?.set)?.includes("goal 1's") ?? null, setOfStored(withGoal.weeks[0]).share ?? null], [false, null]);
+    const today = await loadTodayWeekQuests(U, wed, { ...ON, store: b });
+    eq(
+      "goals: Today's merged rows for one goal are its first 3 Today rows, byte for byte (todayRowsOf's golden), each with seat 1, and 'n more' counts the rest",
+      [canon(today?.rows.map(({ slot, ...r }) => (void slot, r))) === canon(lb?.view.rows.slice(0, 3)), today?.rows.map((r) => r.slot), today?.more],
+      [true, (lb?.view.rows ?? []).slice(0, 3).map(() => 1), (lb?.view.rows.length ?? 0) > 3 ? [{ slot: 1, count: (lb?.view.rows.length ?? 0) - 3, href: "/you/roadmap?goal=rm1" }] : []]
+    );
+  }
+
+  {
+    // openOf groups by roadmap: places are compared only inside one roadmap; the lowest seat comes first.
+    const db = twoGoalsOf();
+    eq("goals: openOf is per roadmap — goal 1's milestone (place 2) is the lowest seat's, never goal 2's place 1", openMilestoneOf(db.facts)?.milestone.id, "ms2");
+    const swapped = twoGoalsOf({ slot1: 2, slot2: 1 });
+    eq("… and seats, not places, order the goals (goal 2 in seat 1 comes first)", openMilestoneOf(swapped.facts)?.milestone.id, "ms7");
+    const legacy = twoGoalsOf({ slot1: null, slot2: 3 });
+    eq("… a row saved before lane 3 (slot NULL) sits after every seated goal", openMilestoneOf(legacy.facts)?.milestone.id, "ms7");
+  }
+
+  {
+    // A freeze per goal, each at its share of the week (8 h and 4 h of 12 h), named in the capacity line and kept with the set.
+    const db = twoGoalsOf();
+    const store = storeOf(db);
+    const shares: unknown[] = [];
+    const cap = store.capacity.bind(store);
+    store.capacity = async (u, r, w, share) => {
+      shares.push([r.id, share ?? null]);
+      return cap(u, r, w, share);
+    };
+    const cron = await freezeWeekQuests(U, mon, "CRON", { ...ON, store });
+    eq("goals: the cron freezes one set per goal", [cron, db.weeks.map((w) => [w.roadmapId, w.milestoneId]).sort()], [{ froze: 2, skipped: null }, [["rm1", "ms2"], ["rm2", "ms7"]]]);
+    eq(
+      "goals: each goal's capacity is read at its share of the week (sharesOf: 8 of 12 h and 4 of 12 h; one Field each, so each keeps its Field pace)",
+      shares.map((x) => json(x)).sort(),
+      [json(["rm1", { share: 8 / 12, fieldShare: 1 }]), json(["rm2", { share: 4 / 12, fieldShare: 1 }])].sort()
+    );
+    const s1 = setOfStored(db.weeks.find((w) => w.roadmapId === "rm1")!);
+    const s2 = setOfStored(db.weeks.find((w) => w.roadmapId === "rm2")!);
+    eq(
+      "goals: the capacity line names the share ('· goal 2's 4 of 12 h.'), and the stored set reads it back (WeekQuestSet.share)",
+      [/ · goal 1's 8 of 12 h\.$/.test(capLine(s1) ?? ""), / · goal 2's 4 of 12 h\.$/.test(capLine(s2) ?? ""), s1.share, s2.share],
+      [true, true, { hours: 8, of: 12 }, { hours: 4, of: 12 }]
+    );
+    const direct = await weekQuestSetFor(U, "ms7", W(1), mon, { store });
+    check("… the stored set is the generated set, its share included", canon(s2) === canon(direct), canon(direct));
+    const again = await freezeWeekQuests(U, at(addDays(W(1), 1), 9), "RENDER", { ...ON, store });
+    eq("… and a later render finds both and writes nothing", [again, db.weeks.length], [{ froze: 0, skipped: null }, 2]);
+    const load2 = await loadWeekQuests(U, wed, { ...ON, store, roadmapId: "rm2" });
+    eq("goals: with 2 goals open the view carries its seat and share, and each row its seat", [load2?.view.slot, load2?.view.share, [...new Set(load2?.view.rows.map((r) => r.slot))]], [2, { hours: 4, of: 12 }, [2]]);
+    // The links to the roadmap page (RAISE's "#now", the checkpoint's) name their goal while 2 or more are open, and only then.
+    const wk = W(1);
+    const raise: RaiseQuestSpec = { ord: 1, kind: "RAISE", label: "Bring 5 cards to level 6+", count: 5, unit: "card", evidence: "TESTED", from: wk, to: addDays(wk, 6), measureKey: "k", domainIds: ["d"], minLevel: 6, floor: 10, dueDays: [], bestCase: false };
+    const cp: CheckpointQuestSpec = { ord: 2, kind: "CHECKPOINT", label: "Checkpoint: Mock test · log your score", count: 1, unit: "log", evidence: "SELF_REPORTED", from: wk, to: addDays(wk, 6), itemLineageId: "lin-cp" };
+    const set: WeekQuestSet = { weekStart: wk, milestoneId: "m", state: "OPEN", generator: 2, quests: [raise, cp], basis: [], cappedBy: null };
+    const viewOf = (goal?: { roadmapId: string; slot: 1 | 2 | 3 }) => weekQuestsViewOf({ set, progress: [], variant: "today", milestone: { ord: 1, of: 2, title: "t" }, level: 6, frozen: true, writesOff: false, places: {}, ...(goal ? { goal } : {}) });
+    eq(
+      "goals: a link to the roadmap page carries ?goal=<id> before its anchor while 2 or more goals are open; with one goal it is unchanged",
+      [viewOf({ roadmapId: "rm2", slot: 2 }).rows.map((r) => r.href), viewOf().rows.map((r) => r.href)],
+      [["/you/roadmap?goal=rm2#now", "/you/roadmap?goal=rm2#checkpoint"], ["/you/roadmap#now", "/you/roadmap#checkpoint"]]
+    );
+  }
+
+  {
+    // The 5/1/5 h golden on the week (§23.3): three goals, goal 2 has 1 h of 11 h.
+    const r = (id: string, slot: number, hoursPerWeek: number, fieldId: string | null): QuestGoalRow => ({ id, status: "ACTIVE", slot, hoursPerWeek, fieldId, track: "CRAFT", aim: null, constraints: null, examLabel: null, syllabus: null, typicalHoursSource: null, coverage: null });
+    const three = [r("g1", 1, 5, "f-a"), r("g2", 2, 1, "f-a"), r("g3", 3, 5, null)];
+    const s = weekShareOf(three, { id: "g2", hoursPerWeek: 1, fieldId: "f-a", slot: 2 });
+    eq("goals: 5, 1 and 5 h — goal 2's week share is 1/11 and its Field pace share 1/6 (goal 1 shares Field f-a)", s && [s.share, s.fieldShare, s.hours, s.of, s.slot], [1 / 11, 1 / 6, 1, 11, 2]);
+    const paused = weekShareOf([r("g1", 1, 5, "f-a"), { ...r("g2", 2, 1, "f-a"), status: "PAUSED" }], { id: "g1", hoursPerWeek: 5, fieldId: "f-a", slot: 1 });
+    eq("goals: a PAUSED goal's hours leave the sum: the other goal has the whole week again (no share)", paused, null);
+    eq("goals: one goal has no share", weekShareOf([r("g1", 1, 5, null)], { id: "g1", hoursPerWeek: 5, fieldId: null, slot: 1 }), null);
+  }
+
+  {
+    // A PAUSED goal freezes nothing, shows nothing, and its hours leave the share.
+    const db = twoGoalsOf({ status2: "PAUSED" });
+    db.goals = db.goals!.map((g) => (g.id === "rm2" ? { ...g, status: "PAUSED" } : g));
+    const store = storeOf(db);
+    const cron = await freezeWeekQuests(U, mon, "CRON", { ...ON, store });
+    eq("goals: a PAUSED goal freezes nothing: only goal 1's set, at the whole week (no share named)", [cron, db.weeks.map((w) => w.roadmapId), setOfStored(db.weeks[0]).share ?? null], [{ froze: 1, skipped: null }, ["rm1"], null]);
+    eq("… loadWeekQuests for the paused goal is null, and Today shows only goal 1's rows", [await loadWeekQuests(U, wed, { ...ON, store, roadmapId: "rm2" }), [...new Set((await loadTodayWeekQuests(U, wed, { ...ON, store }))?.rows.map((r) => r.slot))]], [null, [1]]);
+  }
+
+  {
+    // loadWeekQuests picks a goal; absent, the lowest-seat ACTIVE goal; never another user's or another goal's.
+    const db = twoGoalsOf();
+    const store = storeOf(db);
+    const ids = async (o: { roadmapId?: string | null }) => (await loadWeekQuests(U, wed, { ...ON, store, ...o }))?.set.milestoneId ?? null;
+    eq("goals: loadWeekQuests reads the goal asked for, else the lowest seat's; an id that is not one of the user's ACTIVE goals reads null", [await ids({ roadmapId: "rm2" }), await ids({}), await ids({ roadmapId: null }), await ids({ roadmapId: "rm-forged" })], ["ms7", "ms2", "ms2", null]);
+    const closed = twoGoalsOf();
+    closed.facts[0].goal = { ...closed.facts[0].goal!, closed: true, closedDay: M };
+    eq("… and a lowest-seat goal with no open milestone shows none, never goal 2's week", await loadWeekQuests(U, wed, { ...ON, store: storeOf(closed) }), null);
+  }
+
+  {
+    // loadPastWeeks hides only that goal's current set, even when another goal's milestone has the lower place.
+    const db = twoGoalsOf();
+    const store = storeOf(db);
+    await freezeWeekQuests(U, at(W(0), 4, 15), "CRON", { ...ON, store });
+    await freezeWeekQuests(U, mon, "CRON", { ...ON, store });
+    const past = await loadPastWeeks(U, "rm1", addDays(W(1), 2), { store });
+    eq("goals: loadPastWeeks hides only goal 1's current set (goal 2's place-1 milestone never hides it), and lists only goal 1's weeks", past.map((p) => p.weekStart), [W(0)]);
+  }
+
+  {
+    // Today: round robin by seat (2 goals: 2 and 1, the lower seat first), each row with its seat, "n more" per goal.
+    const db = twoGoalsOf();
+    const store = storeOf(db);
+    const [l1, l2, today] = [await loadWeekQuests(U, wed, { ...ON, store, roadmapId: "rm1" }), await loadWeekQuests(U, wed, { ...ON, store, roadmapId: "rm2" }), await loadTodayWeekQuests(U, wed, { ...ON, store })];
+    const n1 = l1?.view.rows.length ?? 0;
+    const n2 = l2?.view.rows.length ?? 0;
+    eq(
+      "goals: Today with 2 goals gives 2 rows of goal 1 then 1 of goal 2, in each goal's own Today order; 'n more' leads to each roadmap page ?goal=<id>",
+      [today?.rows.map((r) => [r.slot, r.ord]), today?.more],
+      [
+        [[1, l1?.view.rows[0].ord], [1, l1?.view.rows[1].ord], [2, l2?.view.rows[0].ord]],
+        [
+          { slot: 1, count: n1 - 2, href: "/you/roadmap?goal=rm1" },
+          { slot: 2, count: n2 - 1, href: "/you/roadmap?goal=rm2" },
+        ].filter((m) => m.count > 0),
+      ]
+    );
+  }
+
+  {
+    // A failure stops only its goal's freeze, named by its seat.
+    const db = twoGoalsOf();
+    const store = storeOf(db);
+    const parts = store.parts.bind(store);
+    store.parts = async (id) => {
+      if (id === "ms7") throw new Error("parts read failed");
+      return parts(id);
+    };
+    const quiet = console.error;
+    console.error = () => {};
+    const run = await freezeWeekQuests(U, mon, "CRON", { ...ON, store }).finally(() => (console.error = quiet));
+    eq("goals: goal 2's failure leaves goal 1's set frozen, and comes back named by its seat", [run, db.weeks.map((w) => w.roadmapId)], [{ froze: 1, skipped: null, error: "goal 2: parts read failed" }, ["rm1"]]);
+    eq("… roadmapStepErrorsOf carries it to the cron's errors", roadmapStepErrorsOf({ freeze: run }), ["freeze: goal 2: parts read failed"]);
+  }
+
+  console.log("— revision 5: the week's gate across goals (§23.6 item 7) —");
+  {
+    const DAY: DayKey = "2026-10-05";
+    const row = (o: Partial<QuestRoadmapRow>): QuestRoadmapRow => ({
+      id: "rm1",
+      status: "ACTIVE",
+      fieldId: null,
+      track: "CRAFT",
+      depth: null,
+      hoursPerWeek: 5,
+      intensity: "STEADY",
+      startPoint: "BASICS",
+      typicalHours: null,
+      typicalHoursSource: null,
+      targetDay: addDays(M, 300),
+      practicesAllowed: true,
+      aim: "",
+      constraints: null,
+      examLabel: null,
+      syllabus: null,
+      coverage: null,
+      slot: 1,
+      ...o,
+    });
+    const blocked = (r: QuestRoadmapRow, all: readonly QuestRoadmapRow[] = [], goalsMax?: number) => questGateOf(r, userWideGoalsOf(all.map((x) => goalRowOf(x)), r.id, goalsMax))?.blocked ?? null;
+    const has = (r: QuestRoadmapRow, k: string, all: readonly QuestRoadmapRow[] = []) => (blocked(r, all) ?? []).some((x) => x === k);
+
+    // XG (the week's half of the server golden): BODY "rehab my wrist after carpal tunnel surgery" + CRAFT "learn guitar".
+    const wrist = row({ id: "rm1", slot: 1, track: "BODY", aim: "Rehab my wrist after carpal tunnel surgery" });
+    const guitar = row({ id: "rm3", slot: 3, track: "CRAFT", aim: "Learn guitar" });
+    const KINDS = ["SLOW_DRILLS", "RUN_THROUGHS", "WITH_A_PARTNER"];
+    eq(
+      "XG (week quests): goal 1's carpal tunnel gates goal 3's SLOW_DRILLS, RUN_THROUGHS and WITH_A_PARTNER; alone, goal 3's guitar asks nothing",
+      [KINDS.every((k) => has(guitar, k, [wrist, guitar])), KINDS.some((k) => has(guitar, k))],
+      [true, false]
+    );
+    eq("XG (week quests): with no other goal the gate is goal 3's own, byte for byte", json(questGateOf(guitar, userWideGoalsOf([goalRowOf(guitar)], guitar.id))), json(questGateOf(guitar)));
+
+    // XG: goal 1's AVOID of HARDER_SESSION stays blocked on goal 2's week, even after goal 2 answered "Nothing to avoid" under the user-wide key.
+    const avoidCoverage = (r: QuestRoadmapRow, all: readonly QuestRoadmapRow[], avoid: readonly string[]) => {
+      const goals = userWideGoalsOf(all.map((x) => goalRowOf(x)), r.id);
+      const own = cueTextsOf({ constraints: r.constraints ?? null, aim: r.aim ?? "", examLabel: r.examLabel ?? null, typicalHoursSource: r.typicalHoursSource, syllabus: null });
+      const st = constraintsStateOf({ track: catalogTrackOf({ fieldId: r.fieldId, track: r.track as Track }), texts: goals && goals.texts.length > 0 ? { ...own, others: goals.texts } : own, exam: false, practicesAllowed: true, ...(goals ? { others: goals.avoids } : {}) });
+      const res = answerActivityCard(activityConfirmOf(r.coverage), st, { key: st.key, avoid: [...avoid] as CatalogKey[], nothingToAvoid: avoid.length === 0 }, DAY);
+      if (!res.ok) throw new Error(`fixture answer: ${res.error}`);
+      return coverageJsonOf(null, res.value);
+    };
+    const run1 = row({ id: "rm1", slot: 1, track: "BODY", aim: "Run a sub-50 10K" });
+    const run2 = row({ id: "rm2", slot: 2, track: "BODY", aim: "Swim 2 km" });
+    const g1 = { ...run1, coverage: avoidCoverage(run1, [run1], ["HARDER_SESSION"]) };
+    const g2 = { ...run2, coverage: avoidCoverage(run2, [g1, run2], []) };
+    eq(
+      "XG (week quests): goal 1's AVOID of HARDER_SESSION stays blocked on goal 2's week after goal 2's “Nothing to avoid”; goal 2's other kinds are released",
+      [has(g2, "HARDER_SESSION", [g1, g2]), has(g2, "LONGER_SESSION", [g1, g2])],
+      [true, false]
+    );
+    const p1 = { ...g1, status: "PAUSED" };
+    eq("XG (week quests): a PAUSED goal's AVOID still holds on goal 2's week (HOLD_STATUSES)", has(g2, "HARDER_SESSION", [p1, g2]), true);
+    const lifted = { ...run1, coverage: avoidCoverage(run1, [run1], []) };
+    eq("… and once goal 1 lifts it, goal 2's week asks for it again (its card's words changed for every goal: never released silently)", has(g2, "HARDER_SESSION", [lifted, g2]), true);
+
+    // XG: a closed goal's AVOID suggests nothing while GOALS_MAX is 1 (ruling 57).
+    const archived = { ...g1, status: "ARCHIVED" };
+    const wide = userWideGoalsOf([goalRowOf(archived), goalRowOf(run2)], "rm2");
+    const wide3 = userWideGoalsOf([goalRowOf(archived), goalRowOf(run2)], "rm2", 3);
+    eq(
+      "XG (week quests): a closed goal's AVOID suggests nothing while GOALS_MAX is 1 (it is not read), and is read, as closed, once GOALS_MAX > 1",
+      [GOALS_MAX, wide, wide3?.avoids.map((a) => [a.roadmapId, a.status, a.slot, Object.keys(a.kinds)])],
+      [1, null, [["rm1", "ARCHIVED", null, ["HARDER_SESSION"]]]]
+    );
+    const pausedWide = userWideGoalsOf([goalRowOf({ ...g1, status: "PAUSED", slot: 1 }), goalRowOf(run2)], "rm2");
+    eq("… a PAUSED goal's words and AVOIDs are read with no seat (ruling 55)", [pausedWide?.texts.map((t) => t.slot), pausedWide?.avoids.map((a) => a.slot)], [[null], [null]]);
+
+    // End to end: the fixture week of goal 2 (a BODY plan) holds no quest for a kind goal 1 avoids.
+    const db = twoGoalsOf();
+    const f2 = db.facts[1];
+    f2.roadmap = { ...f2.roadmap, fieldId: null, track: "BODY", depth: null, aim: run2.aim, constraints: null, examLabel: null, syllabus: null, coverage: g2.coverage };
+    f2.milestone.stage = "STAGE_1";
+    db.measures.ms7 = [];
+    db.items.ms7 = db.items.ms7.filter((i) => i.kind !== "DOMAIN").map((i) => (i.kind === "PRACTICE" ? { ...i, catalogKey: "HARDER_SESSION" } : i));
+    const kindsOf = async (goalRows: QuestGoalRow[]) => {
+      db.goals = goalRows;
+      return ((await loadWeekQuests(U, wed, { ...ON, store: storeOf(db), roadmapId: "rm2" }))?.view.rows ?? []).map((r) => r.kind);
+    };
+    const withGoal1 = await kindsOf([goalRowOf(g1), goalRowOf(f2.roadmap)]);
+    // The same week of goal 2 alone, its card answered "Nothing to avoid" with no other goal: its Harder session is asked.
+    f2.roadmap = { ...f2.roadmap, coverage: avoidCoverage(run2, [run2], []) };
+    const alone = await kindsOf([goalRowOf(f2.roadmap)]);
+    eq(
+      "XG (week quests): goal 2's week has no quest for its Harder session while goal 1 avoids it; alone, with its card answered, it has one",
+      [withGoal1.includes("PRACTICE"), alone.includes("PRACTICE")],
+      [false, true]
+    );
+  }
+}
+
 async function main() {
   await server();
   await fixRound();
   fixRound2();
   await rev4();
   await gate19();
+  await goals();
   greps();
   if (failed > 0) {
     console.log(`\nroadmap-quests-check: ${passed} passed, ${failed} FAILED`);

@@ -21,6 +21,12 @@
  *     never a keyframe that hides, zeroes or un-draws a part (H15).
  *   - Estimates, Gemini-sourced, unverified, best-case and stated figures never animate as values:
  *     date-moved and pay-swap are crossfades only (H3).
+ *
+ * Revision 5, lane 9 (ui-motion.md §15.9, H18–H20): `trace` (ACT: the traced rows' rails fade in; nothing
+ * hides, no colour animates), `layer-open` (SEEN: only on a counted reach that opened layer k+1; queued
+ * after `reach`), `estimate-swap` (CHANGED: the estimate chip's label and pips crossfade; never a fill,
+ * draw or count), and pv-confirm's swap form (toward a balloon glyph it only crossfades: it never draws
+ * a balloon, H3).
  */
 import { announce as celebrateAnnounce } from "./celebrate";
 import { DUR, EASE, burst as gatewayBurst, center, motionLevel, play, type PlayOptions } from "./motion";
@@ -48,7 +54,11 @@ export type GlyphMotion =
   | "horizon-front"
   | "seal-reached"
   | "tip-open"
-  | "kindle";
+  | "kindle"
+  // ── Revision 5, lane 9 ──
+  | "trace"
+  | "layer-open"
+  | "estimate-swap";
 
 /** Each motion's one licence (§4.7). playGlyph refuses any other. */
 export const MOTION_LICENCE: Readonly<Record<GlyphMotion, Licence>> = {
@@ -70,6 +80,10 @@ export const MOTION_LICENCE: Readonly<Record<GlyphMotion, Licence>> = {
   "seal-reached": "SEEN",
   "tip-open": "ACT",
   kindle: "SEEN",
+  // ── Revision 5, lane 9 (ui-motion.md §15.9) ──
+  trace: "ACT",
+  "layer-open": "SEEN",
+  "estimate-swap": "CHANGED",
 };
 export const GLYPH_MOTIONS = Object.keys(MOTION_LICENCE) as GlyphMotion[];
 
@@ -100,7 +114,7 @@ export const GLYPH_DUR = {
 } as const;
 
 /** Chain motions queue one at a time per page (H13); a lower order plays first (reach before rank-rise). */
-export const CHAIN_ORDER: Readonly<Partial<Record<GlyphMotion, number>>> = { reach: 1, build: 1, "rank-rise": 2, "seal-reached": 3 };
+export const CHAIN_ORDER: Readonly<Partial<Record<GlyphMotion, number>>> = { reach: 1, build: 1, "layer-open": 1.5, "rank-rise": 2, "seal-reached": 3 };
 /** More SEEN events than this pending at mount: none plays (H13). */
 export const SINCE_MAX = 6;
 
@@ -148,6 +162,12 @@ function go(el: El | null | undefined, frames: Keyframe[], opts: PlayOptions = {
 }
 
 const done = (ps: Promise<void>[]): Promise<void> => Promise.all(ps).then(() => undefined);
+
+/**
+ * Revision 5, lane 9: the balloon glyphs (the "not checked" family and the Gemini name marks). pv-confirm toward
+ * one of them takes its swap form: a crossfade, never a draw (H3: nothing draws a balloon).
+ */
+export const BALLOON_GLYPHS: readonly string[] = ["pv.suggest", "pv.kept", "pv.pick", "pv.integrity", "pv.web", "pv.libpick", "pv.named"];
 
 export function isSafetySurface(el: El | null | undefined): boolean {
   if (!el) return false;
@@ -298,10 +318,20 @@ const MOTIONS: Readonly<Record<GlyphMotion, MotionFn>> = {
     return go(p, DRAW(), { duration: GLYPH_DUR.check, delay: GLYPH_DUR.checkDelay });
   },
 
-  /** ACT · I checked this / Keep: the balloon fades out while a solid rim draws; the check draws; the word fades in. */
+  /**
+   * ACT · I checked this / Keep: the balloon fades out while a solid rim draws; the check draws; the word fades in.
+   * Revision 5 (§15.9), the swap form: toward a balloon glyph ([Keep these] → pv.kept) the old mark fades out (160) and
+   * the new mark and chip word fade in (160); no rim or mark draws.
+   */
   "pv-confirm"(svg, o) {
     const ps: Promise<void>[] = [];
     if (o.fromEl) ps.push(go(o.fromEl, [{ opacity: 1 }, { opacity: 0 }], { duration: GLYPH_DUR.swap, fill: "none" }));
+    const target = svg.matches?.("svg") ? svg : one(svg, "svg[data-g]");
+    if (BALLOON_GLYPHS.includes(target?.getAttribute("data-g") ?? "")) {
+      ps.push(go(target, [{ opacity: 0 }, { opacity: 1 }], { duration: GLYPH_DUR.swap, delay: o.fromEl ? GLYPH_DUR.swap : 0 }));
+      if (o.labelEl) ps.push(go(o.labelEl, [{ opacity: 0 }, { opacity: 1 }], { duration: GLYPH_DUR.swap, delay: o.fromEl ? GLYPH_DUR.swap : 0 }));
+      return done(ps);
+    }
     ps.push(go(one(svg, '[data-part="rim"]'), DRAW({ opacity: 0 }, { opacity: 1 }), { duration: 240 }));
     ps.push(go(one(svg, '[data-part="mark"]'), DRAW(), { duration: GLYPH_DUR.check, delay: 200 }));
     if (o.labelEl) ps.push(go(o.labelEl, [{ opacity: 0 }, { opacity: 1 }], { duration: GLYPH_DUR.swap }));
@@ -402,6 +432,44 @@ const MOTIONS: Readonly<Record<GlyphMotion, MotionFn>> = {
   /** ACT · an InfoTip or chip opens: the panel's opacity 0 → 1 (160). Instant on a safety surface (playGlyph never reaches here there). */
   "tip-open"(panel) {
     return go(panel, [{ opacity: 0 }, { opacity: 1 }], { duration: GLYPH_DUR.swap });
+  },
+
+  /**
+   * ACT · Revision 5 (§15.9): a topic row traced. Its parents' and children's rails (`[data-trace="rel"] .rm-tm-rail`)
+   * fade in (160); every other row's marks switch to ink-mute in the same frame by class, with no colour animation.
+   * Names never change colour (D35), nothing hides, nothing moves layout (H18). Calm: the same; still: nothing.
+   */
+  trace(card) {
+    return done(all(card, '[data-trace="rel"] .rm-tm-rail').map((r) => go(r, [{ opacity: 0 }, { opacity: 1 }], { duration: GLYPH_DUR.swap })));
+  },
+
+  /**
+   * SEEN · Revision 5 (§15.9, H20): a counted reach opened layer k+1. On the opened node or header: the m.builds
+   * badge (`[data-lo="badge"]`, at rest opacity 0) goes 1 → 0 (160); the layer glyph .4 → 1 (240); the state word
+   * (`[data-lo="word"]`) crossfades "after k" → "open" (160 + 160; `text` swaps in at mid-fade). In view at
+   * hydration: the layer glyph stamps (1.15 → 1, 240), nothing hides (H15). Queued after `reach` (CHAIN_ORDER).
+   */
+  "layer-open"(el, o) {
+    const glyph = el.matches?.('svg[data-g^="layer."]') ? el : one(el, 'svg[data-g^="layer."]');
+    if (o.accent) return go(glyph, [{ transform: "scale(1.15)" }, { transform: "scale(1)" }], { duration: 240, easing: EASE.stamp });
+    const word = one(el, '[data-lo="word"]');
+    if (word && o.text != null) {
+      if (motionLevel() === "still") word.textContent = o.text;
+      else setTimeout(() => (word.textContent = o.text!), GLYPH_DUR.swap);
+    }
+    return done([
+      go(one(el, '[data-lo="badge"]'), [{ opacity: 1 }, { opacity: 0 }], { duration: GLYPH_DUR.swap }),
+      go(glyph, [{ opacity: 0.4 }, { opacity: 1 }], { duration: 240 }),
+      go(word, [{ opacity: 1 }, { opacity: 0, offset: 0.5 }, { opacity: 1 }], { duration: 2 * GLYPH_DUR.swap, fill: "none" }),
+    ]);
+  },
+
+  /**
+   * CHANGED · Revision 5 (§15.9, D40, H19): the stored layers or origin differ from what this viewer last saw: the
+   * chip's label and the pips crossfade (out 160, in 160). No fill, draw or count; in view at hydration the same.
+   */
+  "estimate-swap"(el) {
+    return go(el, [{ opacity: 1 }, { opacity: 0, offset: 0.5 }, { opacity: 1 }], { duration: 2 * GLYPH_DUR.swap, fill: "none" });
   },
 
   /** SEEN (phase 3) · the streak rose: scaleY .55 → 1 from the bottom, then the core flickers twice. */

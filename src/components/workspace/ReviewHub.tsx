@@ -11,6 +11,8 @@
  * rendered by the server page and handed to the hub as a node.
  */
 import Link from "next/link";
+// Revision 5, lane 9 (contracts ruling 67): pv.named after a Domain Gemini named
+import { DomainName } from "@/components/glyph/NamedMark";
 import { formatExpiry } from "@/lib/format-date";
 import { Chip } from "@/components/ui/Chip";
 import { SectionHeader } from "@/components/ui/Tabs";
@@ -44,6 +46,8 @@ export interface RecentIdea {
   id: string;
   title: string;
   domainName: string;
+  /** Revision 5, lane 9 (contracts ruling 67): the Domain carries the Gemini mark. */
+  domainGeminiNamed?: boolean;
   /** "next in 71 days", "due today". */
   nextLabel: string;
   level: number;
@@ -103,7 +107,7 @@ export function RecentIdeas({ ideas }: { ideas: RecentIdea[] }) {
             <div style={{ minWidth: 0 }}>
               <b title={i.title}>{i.title}</b>
               <span className="t-meta">
-                <span>{i.domainName}</span>
+                {i.domainGeminiNamed ? <DomainName name={i.domainName} geminiNamed /> : <span>{i.domainName}</span>}
                 <span>{i.nextLabel}</span>
               </span>
             </div>

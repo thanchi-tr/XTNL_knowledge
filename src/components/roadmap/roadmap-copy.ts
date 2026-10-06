@@ -100,6 +100,8 @@ import { AIM_LATER_DAYS } from "@/lib/roadmap-invite";
 import { payBar } from "@/lib/life-economy";
 // Type only (erased): the chip kinds the short labels name (ui-motion.md §4.6).
 import type { HonestyKind } from "@/components/glyph/HonestyChip";
+// Revision 5, lane 9: the topic map's words (contracts §22.11; ui-motion.md §15).
+import { BREADTH_WORD, type BreadthKey, type Caution, type EmptyLayerOffer, type LayerChange, type PlanKind, type TopicClass, type TopicLayerView, type TopicNote } from "@/lib/roadmap-types";
 
 // ═══ The contract's copy ═════════════════════════════════════════════════════
 
@@ -578,6 +580,8 @@ export const NOTE_WORD: Readonly<Record<ItemNote, string>> = {
   NOT_CHOSEN: "suggested by Gemini · not added yet",
   FROM_SUGGESTION: "named from Gemini's pick of your words, created by you",
   PRODUCTION_ADDED: "added by the app",
+  // ── Revision 5, lane 8 (ruling 5): a Domain the accept created from a topic you chose on the map. ──
+  TOPIC_MAP: "created from your topic map",
 };
 
 /** A milestone note's line. */
@@ -591,6 +595,8 @@ export const MILESTONE_NOTE_LINE: Readonly<Record<MilestoneNote, string>> = {
   LONG_WINDOW: "Writing these cards takes many weeks. Write more a week, or narrow the aim.",
   NO_PRODUCTION_SLOT: "No practice that uses what you know was added: this milestone already has 3 practices. Swap one for a practice type that does.",
   DEPTH_LOWERED: "Dropped when the depth was lowered.",
+  // Revision 5 (contracts §22.1 ruling 5; ui-motion §15.11 "You said you know this").
+  KNOWN_BY_YOU: "You said you know these topics, so this layer gives no rank.",
 };
 
 // ═══ Pay (F15; MP only through statedPayoutCopy and the ⬡ glyph) ═════════════
@@ -1757,7 +1763,10 @@ export const CONFIRM_WORD = "Confirm";
  */
 export const OUTLINE_EMPTY_LINE = "What to learn comes from your outline.";
 export const OUTLINE_EMPTY_GEMINI_TAIL = "Gemini doesn't write topics: it would be guessing.";
-export function outlineEmptyLine(gemini: boolean): string {
+export function outlineEmptyLine(gemini: boolean, planKind: PlanKind = "LEVELS", namesLive = false): string {
+  // Revision 5, lane 9 (ui-motion.md §15.6): the Gemini tail shows on LEVELS only. A TOPICS plan drops it while
+  // Gemini names are off, and says TOPIC_NAMES_MARKED_LINE while they are on.
+  if (planKind === "TOPICS") return namesLive ? `${OUTLINE_EMPTY_LINE} ${TOPIC_NAMES_MARKED_LINE}` : OUTLINE_EMPTY_LINE;
   return gemini ? `${OUTLINE_EMPTY_LINE} ${OUTLINE_EMPTY_GEMINI_TAIL}` : OUTLINE_EMPTY_LINE;
 }
 export const OUTLINE_EMPTY_EXAM_LINE = "Paste the official syllabus so every line has a place in the plan.";
@@ -2229,6 +2238,14 @@ export const SHORT_CHIP_LABEL: Readonly<Partial<Record<HonestyKind, string>>> = 
   "not-recorded": SHORT_NOT_RECORDED,
   "library-unchecked": SHORT_LIBRARY_UNCHECKED,
   legacy: SHORT_LEGACY,
+  // Revision 5 (ui-motion §15.3): the six Gemini kinds, as HonestyChip draws them (the §15.3 strings below; literal
+  // here because those consts are declared after this table).
+  "gemini-linked": geminiLinkedLabel(2),
+  "gemini-placed": "Gemini placed it · not checked",
+  "gemini-picked-domain": "Gemini picked your Domain · not checked",
+  "gemini-kept-by-you": "Gemini · kept by you",
+  "estimate-gemini": estimateGeminiLabel(4),
+  "estimate-unsure": estimateUnsureLabel(3, 5),
 };
 
 // ─── Pay: "pays ⬡ 6 × progress «from 70%»" (the ⬡ is the c-mp glyph, drawn by the lane) ───
@@ -2435,4 +2452,332 @@ export function aimLineShort(v: AimLineView): { lead: string; rest: string; glyp
   if (!v.givesRank) return { lead, rest: "Keeps your rank.", glyph: null };
   const after = `Aim rank ${v.givesRank}.`;
   return { lead, rest: `Gives ${after}`, glyph: { rank: AIM_RANKS.indexOf(v.givesRank), before: "Gives", after } };
+}
+
+// ═══ Revision 5, lane 9: the topic map, the estimate and the chain (contracts §22.11; ui-motion.md §15.3–§15.6) ═══
+//
+// Code's words only. A Gemini topic name never passes through here: the map's rows render the view's
+// names as names (data-wc="name"), and every chip on Gemini output keeps the who-word "Gemini" (D25).
+// Banned on Gemini output (ui-motion §15.3): "verified", "found on the web", "found", "exists",
+// "prerequisite", "required", "You checked this". The copy says "builds on" and "opens after".
+// "Difficulty" appears only in ESTIMATE_PANEL_LEAD (decision 76); "hard" and "level" never on the chip.
+
+// ─── The chips (HonestyChip kinds; §15.3) ───
+
+/** «Gemini · Google linked 2 sources» (its n from the row's `sources`; a layer chip shows the layer's smallest n). */
+export function geminiLinkedLabel(n: number): string {
+  return `Gemini · Google linked ${plural(n, "source")}`;
+}
+export const GEMINI_LINKED_FULL = "Google linked pages to Gemini's description of this term. It doesn't show the pages use the term, or that it fits you.";
+export const GEMINI_PLACED_LABEL = "Gemini placed it · not checked";
+export const GEMINI_PLACED_FULL = "Gemini chose the layer for your line or your Domain. Keep the layer and the placement becomes yours.";
+export const GEMINI_PICKED_DOMAIN_LABEL = "Gemini picked your Domain · not checked";
+export const GEMINI_PICKED_DOMAIN_FULL = "Gemini's name matched one of your Domains exactly. It stays out of the plan until you tick it.";
+export const GEMINI_KEPT_BY_YOU_LABEL = "Gemini · kept by you";
+export const GEMINI_KEPT_BY_YOU_FULL = "Gemini named it and you kept it. Keeping never marks it checked. Google's sources stay in its sheet.";
+/** The existing kinds, reused unchanged: «Gemini · not checked» (NOT_CHECKED, the hidden fold) and «Gemini · kept · not checked» (KEPT_NOT_CHECKED). */
+export const GEMINI_NOT_CHECKED_FULL = "Gemini named it, and no check passed for it. It stays out of the plan unless you keep it.";
+export const GEMINI_KEPT_NOT_CHECKED_FULL = "Gemini named it, no check passed for it, and you kept it. Keeping never marks it checked.";
+
+/** The estimate chips (question 18's order; ruling 63): «4 layers · Gemini's estimate». */
+export function estimateGeminiLabel(layers: number): string {
+  return `${plural(layers, "layer")} · Gemini's estimate`;
+}
+/** «Gemini unsure · 3–5 layers». */
+export function estimateUnsureLabel(low: number, high: number): string {
+  return `Gemini unsure · ${low}–${high} layers`;
+}
+export const ESTIMATE_APP_LABEL = "App's rough estimate · no Gemini";
+/** «[pv.you] 4 layers · yours»: the plan's layers are yours (a SET or FEWER change). */
+export function estimateYoursLabel(layers: number): string {
+  return `${plural(layers, "layer")} · yours`;
+}
+/** The no-Gemini path's figure: "≈ 3 layers" (a GlyphStat with `estimate`). */
+export function appEstimateFigure(layers: number): string {
+  return `≈ ${plural(layers, "layer")}`;
+}
+/** "· your map fills 1" (the no-Gemini path) and "· its map filled 4" (Gemini's map filled fewer). */
+export function yourMapFillsLine(n: number): string {
+  return `your map fills ${n}`;
+}
+export function itsMapFilledLine(n: number): string {
+  return `its map filled ${n}`;
+}
+/** The pips' spoken twin: "4 layers of 6", "3 to 5 layers of 6". */
+export function estimatePipsSr(layers: number, unsure: { low: number; high: number } | null, max = 6): string {
+  return unsure ? `${unsure.low} to ${unsure.high} layers of ${max}` : `${plural(layers, "layer")} of ${max}`;
+}
+
+/** The (i) panel, in this order (§15.4). */
+export const ESTIMATE_PANEL_LEAD = "Gemini's difficulty estimate: how many build-on layers lie between a newcomer and this aim";
+export const ESTIMATE_APP_LEAD = "The app's rough estimate, with no Gemini: 3 layers for a Field, one more at 20 outline lines. Advice only: your map's layers are the ones you fill.";
+/** "3 replies: 4, 4, 5" ("no reply" for a reply that gave none). */
+export function estimateRepliesLine(replies: readonly (number | null)[]): string {
+  return `${plural(replies.length, "reply", "replies")}: ${replies.map((r) => (r == null ? "no reply" : String(r))).join(", ")}`;
+}
+/** "Wide · 3–5 topics a layer". */
+export function estimateBreadthLine(breadth: BreadthKey, room: { min: number; max: number }): string {
+  return `${BREADTH_WORD[breadth]} · ${room.min}–${room.max} topics a layer`;
+}
+/** One layer change, with its day: "4 by you · 6 Oct", "1 merged by you", "+1 layer by you", "layers 1–3 first, by you". */
+export function layerChangeLine(c: LayerChange, today?: DayKey): string {
+  const day = ` · ${dayLabel(c.day, today)}`;
+  switch (c.kind) {
+    case "MERGED":
+      return `${Math.max(1, c.from - c.to)} merged by you${day}`;
+    case "DEEPER":
+      return `+${plural(Math.max(1, c.to - c.from), "layer")} by you${day}`;
+    case "PLAN_FIRST":
+      return `layers 1–${c.to} first, by you${day}`;
+    default:
+      return `${c.to} by you${day}`;
+  }
+}
+/** The static change words beside the chip (no day): "· 1 merged by you". */
+export function layerChangeShort(c: LayerChange): string {
+  return layerChangeLine(c).replace(/ · [^·]+$/, "");
+}
+/** "1 reply said 5 layers" (exactly one valid reply): a one-tap choice. */
+export function oneReplyLine(layers: number): string {
+  return `1 reply said ${plural(layers, "layer")}`;
+}
+export const CHANGE_LAYERS_WORD = "Change…";
+export function pickLayersWord(n: number): string {
+  return `Use ${plural(n, "layer")}`;
+}
+
+/** The caution chips (D11: static at every level; a body or care card keeps `health` and never adds caution-medical, D12). */
+export const CAUTION_LABEL: Readonly<Record<Caution, string>> = {
+  FINANCIAL: "Not financial advice",
+  MEDICAL: "Not medical advice",
+  LEGAL: "Not legal advice",
+};
+export const CAUTION_FULL: Readonly<Record<Caution, string>> = {
+  FINANCIAL: "The plan names study topics, not choices about your money. For those, ask a qualified adviser.",
+  MEDICAL: "The plan names study topics, not choices about your health. For those, ask a professional.",
+  LEGAL: "The plan names study topics, not choices about the law. For those, ask a qualified adviser.",
+};
+export const CAUTION_KIND: Readonly<Record<Caution, "caution-financial" | "caution-medical" | "caution-legal">> = {
+  FINANCIAL: "caution-financial",
+  MEDICAL: "caution-medical",
+  LEGAL: "caution-legal",
+};
+
+// ─── The map card (§15.5) ───
+
+/** A layer header's words: "Layer 2", then its state word. */
+export function layerWord(k: number): string {
+  return `Layer ${k}`;
+}
+/** "open", "after 1", "held", "done" (TopicLayerView.state); "empty" when the layer shows no topic. */
+export function layerStateWord(state: TopicLayerView["state"], layer: number, empty = false): string {
+  if (empty) return "empty";
+  if (state === "AFTER") return `after ${Math.max(1, layer - 1)}`;
+  return state === "OPEN" ? "open" : state === "HELD" ? "held" : "done";
+}
+/** The layer header's figure, spoken: "3 in the plan". */
+export function layerChosenSr(n: number): string {
+  return `${n} in the plan`;
+}
+/** [Keep these] (D36): glyph-only; its words are in the card Key. */
+export function keepLayerAria(k: number): string {
+  return `Keep layer ${k}`;
+}
+export function layerKeptSr(k: number): string {
+  return `Layer ${k} kept`;
+}
+export const KEEP_THESE_KEY = "Keep these: keeps this layer's names, placements and drawn links. Keeping never marks them checked.";
+/** "2 need a parent" (visible: it blocks the keep). */
+export function needsParentLine(n: number): string {
+  return `${n} need a parent`;
+}
+export function writeTopicAria(k: number): string {
+  return `Write a topic in layer ${k}`;
+}
+/** The folds' spoken words. */
+export function foldMoreSr(n: number): string {
+  return `${plural(n, "more topic")}, not in the plan`;
+}
+export function foldHiddenSr(n: number): string {
+  return `${n} not checked`;
+}
+export function inPlanAria(name: string): string {
+  return `In the plan: ${name}`;
+}
+export function moreAboutAria(name: string): string {
+  return `More about ${name}`;
+}
+export const ACCEPT_ALL_WORD = "Accept all";
+/** [Accept all]'s confirm: what it would keep, layer by layer (AcceptTopicChoices.keepAll). */
+export const ACCEPT_ALL_LEAD = "Accept all keeps these Gemini names. Keeping never marks them checked.";
+export function acceptAllLinksLine(n: number): string {
+  return `It also keeps ${plural(n, "not-checked link")}.`;
+}
+export const ACCEPT_ALL_CONFIRM = "Keep them all";
+/** A TOPICS accept over a live LEVELS milestone (ruling 49, question 8): it closes there, its rank kept; its practices by your choice. */
+export function liveMilestoneClosesLine(ord: number): string {
+  return `Milestone ${ord} closes here and keeps its rank.`;
+}
+export function aftercareGroupLabel(ord: number): string {
+  return `Milestone ${ord}'s practices`;
+}
+export const AFTERCARE_KEEP_WORD = "Keep them on Today";
+export const AFTERCARE_ARCHIVE_WORD = "Archive them";
+/** The accept's Domain confirm (§22.14): "Creates 9 Domains in Business & Finance." */
+export function createsDomainsLine(n: number, areaName: string): string {
+  return `Creates ${plural(n, "Domain")} in ${areaName}.`;
+}
+/** Before the Gemini names among them, listed by name (each a name, exempt). */
+export function geminiNamesAmongLine(): string {
+  return "Gemini named:";
+}
+/** The empty-layer sheet, in EMPTY_LAYER_OFFERS order. */
+export const EMPTY_LAYER_WORD: Readonly<Record<EmptyLayerOffer, string>> = {
+  MERGE_UP: "Merge with the layer above",
+  WRITE_ONE: "Write one",
+  SHOW_HIDDEN: "Show the not-checked ones",
+};
+export function emptyLayerTitle(k: number): string {
+  return `Layer ${k} is empty`;
+}
+/** The empty layer's ▸: what it opens. */
+export function emptyLayerAria(k: number): string {
+  return `What to do with empty layer ${k}`;
+}
+export function mergedLinksLine(n: number): string {
+  return `${plural(n, "link")} between the two layers dropped.`;
+}
+/** The trace's spoken line and the sheet's: "builds on: A, B" or "after layer 1". */
+export function buildsOnLine(names: readonly string[]): string {
+  return `builds on: ${names.join(", ")}`;
+}
+export function afterLayerLine(k: number): string {
+  return `after layer ${k}`;
+}
+/** A drawn link's agreement, never shown as a check: "3 of 3 replies". */
+export function repliesOfLine(votes: number, samples: number): string {
+  return `${votes} of ${samples} replies`;
+}
+/** A source row: "<title> (from Google)" (SourcesSheet; the sheet claims no host). */
+export function sourceRowText(title: string): string {
+  return `${title} (from Google)`;
+}
+export const SOURCES_TITLE = "Sources (from Google)";
+/** The row marks' words, for the card Key and the rows' sr (D13). */
+export const TOPIC_CLASS_WORDS: Readonly<Record<TopicClass, string>> = {
+  SYLLABUS: "Your outline line",
+  YOURS: "You wrote this",
+  LIBRARY: "Your Domain",
+  AIM: "from your words",
+  PICKED: GEMINI_PICKED_DOMAIN_LABEL,
+  LINKED: "Gemini's name · Google linked sources to it",
+  NOT_CHECKED: "Gemini · not checked",
+  KEPT: GEMINI_KEPT_BY_YOU_LABEL,
+  KEPT_NOT_CHECKED: "Gemini · kept · not checked",
+};
+/** The notes in words (TopicSheet). */
+export const TOPIC_NOTE_WORDS: Readonly<Record<TopicNote, string>> = {
+  NEAR_DUPLICATE: "near-duplicate of another topic",
+  UNSURE_LAYER: "unsure where it goes",
+  NEEDS_PARENT: "needs a parent",
+  DEAD_END: "feeds nothing kept",
+  DIFFERS_FROM_ORDER: "differs from your order",
+  NOT_USED: "not used",
+  PICKED_BY_GEMINI: "picked by Gemini · ticked by you",
+  PLACED_BY_GEMINI: "placed by Gemini",
+  TRACKED_IN_GOAL: "tracked as its own goal",
+  PLANNED_LATER: "a note for a later goal",
+  HELD_AT_START: "Held when you began",
+  KNOWN_BY_YOU: "you said you know this",
+  CROSS_GOAL_PARENT: "builds on another goal's Domain",
+  MERGED_BY_YOU: "merged by you",
+  ADDED_BY_DEEPER: "from Go deeper",
+};
+export const MATCHES_ORDER_LINE = "matches your order";
+export const HELD_TOPIC_SR = "Held when you began";
+export const KNOWN_TOPIC_SR = "You said you know this";
+/** A topic sheet's actions. */
+export const TOPIC_ACTION_WORD = {
+  rename: "Rename",
+  useDomain: "Use my Domain…",
+  merge: "Merge into…",
+  move: "Move to layer…",
+  parents: "Builds on…",
+  remove: "Remove",
+  skip: "I know this",
+  unskip: "I don't know this yet",
+  keep: "Keep",
+  deeper: "Go deeper",
+  ask: "Ask",
+  save: "Save",
+} as const;
+/** Go deeper's cost, shown before [Ask]: "uses 5 of today's 48 requests". */
+export function deeperCostLine(need: number, left: number): string {
+  return `uses ${need} of today's ${left} requests`;
+}
+export const DEEPER_ADDS_LAYER_LINE = "If it names narrower topics in the last layer, the plan gains a layer and the date may move.";
+/** ParentsSheet: the default first, then the layer above's kept topics, then other goals' Domains (read-only). */
+export function parentsLayerOption(k: number): string {
+  return `After layer ${k}`;
+}
+export function parentsTitle(name: string): string {
+  return `${name} builds on`;
+}
+export function crossGoalLine(slot: number | null): string {
+  return slot == null ? "builds on · a paused goal" : `builds on · goal ${slot}`;
+}
+/** A clause seed you can track as its own goal (ruling 31). */
+export function trackClauseAria(clause: string): string {
+  return `Track '${clause}' as its own goal`;
+}
+export function trackClauseQuestion(clause: string): string {
+  return `Track '${clause}' as its own goal?`;
+}
+export function trackedInGoalSr(slot: number | null): string {
+  return slot == null ? "tracked in a paused goal" : `tracked in goal ${slot}`;
+}
+export const TRACK_CLAUSE_WORD = "Track it";
+/** The card Key's extra lines. */
+export const TRACE_KEY = "Tap a topic to trace what it builds on and what builds on it. Nothing moves or hides.";
+export const NAMED_KEY = "named by Gemini: a Domain Gemini named, until you rename it";
+export const BUILDS_ON_KEY = "builds on: opens after the topics it builds on, or the whole layer before";
+
+// ─── The page-level offers and the intake paths (§15.6, §15.8; all behind TOPIC_PLANS_LIVE) ───
+
+export const BREAK_IT_DOWN_WORD = "Break it down";
+export const WRITE_TOPICS_WORD = "Write the topics";
+export const BUILD_FROM_NUMBERS_WORD = "Build from my numbers";
+export const BREAK_INTO_TOPICS_WORD = "Break into topics";
+export const KEEP_LEVEL_PLAN_WORD = "Keep the level plan";
+export const TRACK_ROUTINE_WORD = "Track the routine as its own goal";
+export const TOPIC_PATHS_LABEL = "How to plan it";
+export const WRITE_TOPICS_LINE = "You write the topics, layer by layer, from broad to deep. No Gemini.";
+export const BREAK_INTO_TOPICS_LINE = "Breaks this plan into a topic map, broad to deep. Your plan stays as it is until you accept the map.";
+/** The outline line's TOPICS form while Gemini names are on (outlineEmptyLine). */
+export const TOPIC_NAMES_MARKED_LINE = "Gemini's names stay marked as Gemini's.";
+
+// ─── The chain (§15.6) ───
+
+/** The chain heading's tail when T > 0: "+1 to reach Fluent". */
+export function tailToReachLine(tail: number, stageName: string): string {
+  return `+${tail} to reach ${stageName}`;
+}
+/** An earlier layer's measure as CONTEXT: "climbing to 8". */
+export function climbingToLine(level: number): string {
+  return `climbing to ${level}`;
+}
+/** A locked layer milestone: "after 1" (visible) and its spoken line. */
+export function afterLayerShort(k: number): string {
+  return `after ${k}`;
+}
+export function lockedLayerSr(k: number): string {
+  return `builds on layer ${k}; opens when milestone ${k} is reached`;
+}
+export const HELD_LAYER_WORD = "held";
+export const KNOWN_LAYER_SR = "you said you know these";
+/** The 344 px short title (titleParts' text) truncated to the box: the server's short form passes through. */
+export function layerTitleShort(names: readonly string[], k: number, n: number): string {
+  const shown = names.slice(0, 2).join(", ");
+  const more = names.length > 2 ? ` +${names.length - 2}` : "";
+  return `${shown}${more} · layer ${k} of ${n}`;
 }

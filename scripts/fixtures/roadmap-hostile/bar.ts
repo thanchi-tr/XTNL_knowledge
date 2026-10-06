@@ -21,6 +21,17 @@ import { CODE_TEMPLATES, STAGE_KEYS, STAGE_NAMES, domainName, type DomainName, t
 import type { CorpusPack, HostileCorpus, HostileRun, ProbeFixture } from "./generate";
 import type { BarSeam } from "./seam";
 import { scanStrings, schemaEnumsOf, stringsOf } from "./taint";
+// Revision 5, lane 6: the topic-map families' bar (r5BarOf, at the end of this file).
+import * as RR from "../../../src/lib/roadmap-rating";
+import * as TP from "../../../src/lib/roadmap-topics";
+import * as GRD from "../../../src/lib/roadmap-grounding";
+import * as GOALS from "../../../src/lib/roadmap-goals";
+import { allowedKindsFor, constraintsStateOf, type CatalogKey, type CatalogTrack } from "../../../src/lib/roadmap-catalog";
+import { packableDomainsOf } from "../../../src/lib/roadmap-evidence";
+import { RATING_ORIGINS, SEAT_STATUSES, type GoalSlot, type RoadmapStatus, type TopicDraft, type TopicMap } from "../../../src/lib/roadmap-types";
+import type { LabelContext, RuleOpts } from "../../../src/lib/roadmap-validate";
+import { cannedResponseOf, type GroundSpec } from "./grounding/canned";
+import type { R5Corpus, R5CrossCase, R5GroundCase, R5LinkCase, R5MetaCase, R5NameCase, R5NameInput, R5RatingCase } from "./generate";
 
 export const short = (s: string, n = 90) => {
   const t = s.replace(/[\u0000-\u001f]/g, " ");
@@ -379,4 +390,420 @@ export function schemaDiff(a: unknown, b: unknown, path: string): string[] {
   if (A.items || B.items) out.push(...schemaDiff(A.items, B.items, `${path}[]`));
   return out;
 }
+
+// ═══ Revision 5, lane 6: the topic-map families' bar (contracts §22.16, §23.8) ═══
+//
+// r5BarOf runs generateR5Corpus's cases against roadmap-rating,
+// roadmap-topics and roadmap-grounding (pure: called directly, no seam), and
+// family X's pure cases against roadmap-goals, roadmap-catalog and
+// roadmap-evidence. Its items are named "R", "T", "W", "L", "X cross-goal: …"
+// and "M-M8" … "M-M14" (§22.16). `opts` turns rules off for the ablation;
+// family X never takes it (ruling 41: a safety rule has no off switch), so
+// its item is X's only gate. roadmap-hostile-check runs these within
+// BUDGET_R5_S (ruling 36) and pins r5DigestOf beside the older digest.
+
+/** The new families' own budget line (ruling 36). */
+export const BUDGET_R5_S = 20;
+
+export interface R5BarItem {
+  name: string;
+  ok: boolean;
+  detail: string;
+  failures: string[];
+}
+
+/** The new families' corpus, hashed in its fixed order (pin.json's r5 line; the lead re-blesses it, append-only). */
+export function r5DigestOf(c: R5Corpus): string {
+  const h = createHash("sha256");
+  const z = "\u0000";
+  for (const [name, list] of [
+    ["R", c.rating],
+    ["T", c.names],
+    ["W", c.ground],
+    ["WB", c.batches],
+    ["L", c.links],
+    ["LC", c.chains],
+    ["X", c.cross],
+    ["M", c.meta],
+  ] as const)
+    for (const x of list) h.update(`${name}${z}${JSON.stringify(x)}\n`);
+  return h.digest("hex");
+}
+
+const R5_DAY = "2026-01-05";
+const sameSet = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && [...a].sort().join("\u0000") === [...b].sort().join("\u0000");
+const json = (v: unknown): string => JSON.stringify(v);
+
+/** One family's verdict: every failure named by its case id. */
+function itemOf(name: string, total: number, failures: string[]): R5BarItem {
+  return { name, ok: total > 0 && failures.length === 0, detail: failures.length === 0 ? `${total} cases` : `${failures.length} of ${total} failed: ${failures.slice(0, 4).join(" · ")}`, failures };
+}
+
+/** A case's check, a thrown error being a failure (never a pass). */
+function guarded(id: string, failures: string[], run: () => string | null): void {
+  try {
+    const why = run();
+    if (why) failures.push(`${id}: ${why}`);
+  } catch (e) {
+    failures.push(`${id}: threw ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+// ── R ──
+
+function ratingOfCase(c: R5RatingCase, opts?: RuleOpts, order?: readonly number[]) {
+  const samples = order ? order.map((i) => c.samples[i]) : c.samples;
+  return RR.ratingOf({ samples, trackArea: c.trackArea, outlineLines: c.outlineLines, texts: c.texts, inputKey: "r5", runId: null, day: R5_DAY }, opts);
+}
+
+function checkRating(c: R5RatingCase, opts?: RuleOpts): string | null {
+  const r = ratingOfCase(c, opts);
+  const e = c.expect;
+  const layersOf = (k: string) => Number(k.slice("DIFF_".length));
+  if (r.difficulty !== e.difficulty) return `difficulty ${r.difficulty}, want ${e.difficulty}`;
+  if (r.breadth !== e.breadth) return `breadth ${r.breadth}, want ${e.breadth}`;
+  if (r.origin !== (e.gemini ? RATING_ORIGINS[0] : RATING_ORIGINS[1])) return `origin ${r.origin}`;
+  const unsure = e.unsure ? { low: layersOf(e.unsure[0]), high: layersOf(e.unsure[1]) } : null;
+  if (json(r.unsure) !== json(unsure)) return `unsure ${json(r.unsure)}, want ${json(unsure)}`;
+  if (r.oneReply !== e.oneReply) return `oneReply ${r.oneReply}, want ${e.oneReply}`;
+  if (json(r.cautions) !== json(e.cautions)) return `cautions ${json(r.cautions)}, want ${json(e.cautions)}`;
+  if (e.reasons && json(r.reasons) !== json(e.reasons)) return `reasons ${json(r.reasons)}, want ${json(e.reasons)}`;
+  if (e.incoherent !== undefined && r.incoherent !== e.incoherent) return `incoherent ${r.incoherent}, want ${e.incoherent}`;
+  if (e.nullSamples) {
+    const nulls = r.samples.map((v, i) => (v === null ? i : -1)).filter((i) => i >= 0);
+    if (json(nulls) !== json(e.nullSamples)) return `no-vote samples ${json(nulls)}, want ${json(e.nullSamples)}`;
+  }
+  if (r.layers < 1 || r.layers > 6) return `layers ${r.layers} out of 1..6`;
+  return null;
+}
+
+// ── T ──
+
+const r5LabelOf = (input: R5NameInput): LabelContext => ({
+  kind: "TOPIC",
+  aim: input.aim,
+  constraints: input.constraints,
+  examLabel: null,
+  syllabusLines: input.lines.map((l) => l.text),
+  areaName: input.areaName,
+  domainNames: input.domains.map((d) => d.name),
+  track: "FIELD" as LabelContext["track"],
+});
+
+function mapOfCase(input: R5NameInput, opts?: RuleOpts, order?: readonly number[]): TP.MapAgreement {
+  let id = 0;
+  return TP.mapAgreementOf(
+    {
+      samples: order ? order.map((i) => input.samples[i]) : input.samples,
+      layers: input.layers,
+      breadth: input.breadth,
+      room: input.room,
+      aim: input.aim,
+      lines: input.lines,
+      domains: input.domains,
+      freeDomains: input.freeDomains,
+      takenNames: input.takenNames,
+      label: r5LabelOf(input),
+      countryNamed: input.countryNamed,
+      makeId: () => `r5-${id++}`,
+    },
+    opts
+  );
+}
+
+/** Every exact sample form a case's names part holds (whitespace collapsed, trimmed). */
+function sampleFormsOf(input: R5NameInput): Set<string> {
+  const out = new Set<string>();
+  for (const s of input.samples) {
+    const names = s && typeof s.parsed === "object" && s.parsed !== null ? (s.parsed as Record<string, unknown>).names : null;
+    if (!names || typeof names !== "object") continue;
+    for (const list of Object.values(names as Record<string, unknown>)) for (const item of Array.isArray(list) ? list : []) if (item && typeof item.name === "string") out.add(item.name.replace(/\s+/gu, " ").trim());
+  }
+  return out;
+}
+
+/** The T family's closure: every label an exact sample form, the aim's span, a line or a Domain's name; never LIBRARY unless an intake U key; a non-English name never LINKED. */
+function nameClosure(input: R5NameInput, a: TP.MapAgreement): string | null {
+  const forms = sampleFormsOf(input);
+  const own = new Set([...input.lines.map((l) => l.text), ...input.domains.map((d) => d.name), ...input.freeDomains.map((d) => d.name)]);
+  for (const t of [...a.topics, ...a.hidden]) {
+    if (t.nameOrigin === "AIM") {
+      if (!input.aim.includes(t.name)) return `AIM label "${t.name}" is not the aim's span`;
+      continue;
+    }
+    if (t.nameOrigin === "GEMINI" && !forms.has(t.name) && !(t.domainId && own.has(t.name))) return `label "${t.name}" is no sample form`;
+    if (t.nameOrigin !== "GEMINI" && !own.has(t.name)) return `label "${t.name}" is not yours`;
+    if (TP.topicClassOf(t) === "LIBRARY" && !/^U\d+$/.test(t.key)) return `"${t.name}" shown as your Domain`;
+    if (t.flags.includes("LANGUAGE_UNCHECKED") && TP.topicClassOf({ ...t, grounding: "LINKED" }) !== "NOT_CHECKED") return `"${t.name}" could read LINKED`;
+  }
+  return null;
+}
+
+function checkName(c: R5NameCase, opts?: RuleOpts): string | null {
+  const a = mapOfCase(c.input, opts);
+  const key = TP.formKeyOf(c.target);
+  const model = (t: TopicDraft) => t.nameOrigin === "GEMINI" || t.nameOrigin === "AIM";
+  const shown = a.topics.find((t) => model(t) && TP.formKeyOf(t.name) === key);
+  const hidden = a.hidden.find((t) => model(t) && TP.formKeyOf(t.name) === key);
+  switch (c.expect) {
+    case "KEPT":
+      if (!shown || shown.nameOrigin !== "GEMINI") return `"${c.target}" not kept`;
+      if (TP.topicClassOf(shown) !== "NOT_CHECKED") return `"${c.target}" reads ${TP.topicClassOf(shown)} before GROUND`;
+      break;
+    case "HIDDEN":
+      if (!hidden || shown) return `"${c.target}" not hidden`;
+      if (c.reason && !(hidden.notes as string[]).includes(c.reason) && !hidden.flags.includes(c.reason)) return `"${c.target}" hidden without ${c.reason}`;
+      break;
+    case "DROPPED":
+      if (shown || hidden) return `"${c.target}" not dropped`;
+      if (c.reason && !((a.report.dropped as Record<string, number>)[c.reason] > 0)) return `no ${c.reason} drop (${json(a.report.dropped)})`;
+      if (c.flag && !((a.report.droppedFlags as Record<string, number>)[c.flag] > 0)) return `no ${c.flag} flag (${json(a.report.droppedFlags)})`;
+      break;
+    case "AIM": {
+      const aim = a.topics.find((t) => t.nameOrigin === "AIM");
+      if (!aim || aim.name !== c.span) return `no AIM topic "${c.span}"`;
+      if (a.topics.some((t) => t.nameOrigin === "GEMINI" && TP.formKeyOf(t.name) === key)) return `"${c.target}" credited to Gemini`;
+      break;
+    }
+    case "PICKED": {
+      const p = a.topics.find((t) => t.domainId === c.domainId && t.nameOrigin === "GEMINI");
+      if (!p || p.bound || p.chosen || TP.topicClassOf(p) !== "PICKED") return `"${c.target}" is not Gemini's pick outside the plan`;
+      break;
+    }
+  }
+  if (c.notFlag && (a.report.droppedFlags as Record<string, number>)[c.notFlag] > 0) return `${c.notFlag} fired`;
+  for (const x of c.absent ?? []) if ([...a.topics, ...a.hidden].some((t) => TP.formKeyOf(t.name) === TP.formKeyOf(x))) return `"${x}" pooled or shown`;
+  return nameClosure(c.input, a);
+}
+
+// ── W ──
+
+type GroundCall = { spec: GroundSpec; terms: { key: string; name: string }[]; titleMode: "TITLE" | "DOMAIN" };
+const groundOf = (g: GroundCall, opts?: RuleOpts) => GRD.groundVerdictOf({ response: cannedResponseOf(g.spec), terms: g.terms, titleMode: g.titleMode }, opts);
+const RANK: Record<string, number> = { NONE: 0, WEAK: 1, LINKED: 2 };
+
+function checkGround(c: R5GroundCase, opts?: RuleOpts): string | null {
+  const v = groundOf(c, opts);
+  for (const [k, want] of Object.entries(c.expect)) {
+    const got = v.keys[k];
+    if (!got) return `${k}: no verdict`;
+    if (got.verdict !== want.verdict || got.reason !== want.reason) return `${k}: ${got.verdict}/${got.reason}, want ${want.verdict}/${want.reason}`;
+  }
+  // Sources only from groundingChunks, never from the model's text.
+  const response = cannedResponseOf(c.spec) as { candidates?: { groundingMetadata?: { groundingChunks?: { web: { uri: string } }[] } }[] };
+  const uris = new Set((response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? []).map((g) => g.web.uri));
+  for (const kv of Object.values(v.keys)) for (const s of kv.sources) if (!uris.has(s.uri)) return `${kv.key}: a source not from the chunks`;
+  const reusable = GRD.groundReusableOf(JSON.parse(JSON.stringify(GRD.groundRecordOf([v], []))));
+  if (c.noReuse && reusable !== null) return "a truncated record is reusable";
+  if (!c.noReuse && reusable === null) return "a whole record is not reusable";
+  return null;
+}
+
+// ── L ──
+
+const keyOfLineage = (map: TopicMap) => new Map(map.topics.map((t) => [t.lineageId, t.key] as const));
+
+function drawOf(c: R5LinkCase, opts?: RuleOpts, order?: readonly number[]) {
+  const d = TP.linkDrawOf({ map: c.map, samples: order ? order.map((i) => c.samples[i]) : c.samples, outlineOrder: c.outlineOrder }, opts);
+  const keys = keyOfLineage(c.map);
+  const edge = (e: { parentLineageId: string; childLineageId: string }) => `${keys.get(e.parentLineageId)}>${keys.get(e.childLineageId)}`;
+  return { d, drawn: d.edges.filter((e) => e.drawn).map(edge), edge };
+}
+
+function checkLink(c: R5LinkCase, opts?: RuleOpts): string | null {
+  const { d, drawn, edge } = drawOf(c, opts);
+  if (!sameSet(drawn, c.expect.drawn)) return `drawn ${json(drawn)}, want ${json(c.expect.drawn)}`;
+  if (d.voids !== c.expect.voids) return `voids ${d.voids}, want ${c.expect.voids}`;
+  for (const code of c.expect.findings ?? []) if (!d.findings.some((f) => f.code === code)) return `no ${code} finding`;
+  for (const m of c.expect.marked ?? []) {
+    const e = d.edges.find((x) => edge(x) === m);
+    // C8 adds «matches your order» and never removes the who-word: the edge stays Gemini's and not kept.
+    if (!e || e.match !== "OUTLINE" || e.origin !== "GEMINI" || e.decision !== "PENDING") return `${m}: C8 changed the who-word or missed the mark`;
+  }
+  return null;
+}
+
+// ── X ──
+
+const goalRowOf = (r: { id: string; status: string; slot: number | null }): GOALS.GoalRow => ({
+  id: r.id,
+  status: r.status as RoadmapStatus,
+  slot: r.slot,
+  label: null,
+  fieldId: null,
+  track: "FIELD" as GOALS.GoalRow["track"],
+  areaName: "Area",
+  hoursPerWeek: 5,
+  updatedAt: "2026-01-01T00:00:00.000Z",
+});
+
+function checkCross(c: R5CrossCase): string | null {
+  switch (c.kind) {
+    case "TAKEN": {
+      const a = mapOfCase(c.input);
+      const key = TP.formKeyOf(c.target);
+      if ([...a.topics, ...a.hidden].some((t) => TP.formKeyOf(t.name) === key)) return `another goal's Domain "${c.target}" is in this map`;
+      if (!((a.report.dropped.TAKEN_NAME ?? 0) > 0)) return "not dropped as TAKEN_NAME";
+      return null;
+    }
+    case "PACK": {
+      const got = packableDomainsOf(c.domains, c.others);
+      return json(got) === json(c.expect) ? null : `packable ${json(got)}, want ${json(c.expect)}`;
+    }
+    case "CROSS_PARENT": {
+      const ps = TP.parentsOf(c.map, c.child);
+      if (ps.kind !== "LINKS" || json(ps.crossGoal) !== json(c.expectCross)) return `parents ${json(ps)}`;
+      const keys = new Set(c.map.topics.map((t) => t.key));
+      if (TP.chooseClosureOf(c.map, c.child).some((k) => !keys.has(k))) return "the closure names another goal's Domain";
+      const without = { ...c.map, edges: c.map.edges.filter((e) => e.origin !== "CROSS_GOAL") };
+      if (json(TP.specialisationOf(c.map)) !== json(TP.specialisationOf(without))) return "a cross-goal parent changed the specialisation";
+      if (TP.kFinalOf(c.map.topics, 6) !== TP.kFinalOf(without.topics, 6)) return "a cross-goal parent counted in this map";
+      if (TP.acceptRefusalOf(c.map, []) !== null) return `refused: ${TP.acceptRefusalOf(c.map, [])}`;
+      return null;
+    }
+    case "CUE_GATE": {
+      const state = constraintsStateOf({
+        track: c.track as CatalogTrack,
+        texts: { constraints: null, aim: c.aim, ...(c.others.length > 0 ? { others: c.others.map((o) => ({ roadmapId: o.roadmapId, slot: o.slot as GoalSlot | null, texts: { constraints: o.constraints, aim: o.aim } })) } : {}) },
+      });
+      const gate = allowedKindsFor(state, null);
+      if (gate.on !== c.expectOn) return `gate ${gate.on ? "asks" : "is off"}`;
+      const missing = c.expectPending.filter((k) => !gate.pending.includes(k as CatalogKey));
+      return missing.length === 0 ? null : `${missing.join(", ")} not waiting for the card`;
+    }
+    case "AVOID_LOCK": {
+      const others = c.others.map((o) => ({
+        roadmapId: o.roadmapId,
+        slot: o.slot as GoalSlot | null,
+        status: o.status as RoadmapStatus,
+        track: o.track as CatalogTrack,
+        kinds: Object.fromEntries(o.kinds.map((k) => [k, { verdict: "AVOID" as const, day: R5_DAY, reason: "" }])),
+      }));
+      const state = constraintsStateOf({ track: c.track as CatalogTrack, texts: { constraints: null, aim: c.aim }, others });
+      const first = allowedKindsFor(state, null);
+      const confirmation = c.nothingToAvoid ? { key: state.key, kinds: {}, answered: { day: R5_DAY, asked: [...first.pending], none: true } } : null;
+      const gate = allowedKindsFor(state, confirmation);
+      for (const k of c.expectBlocked) {
+        if (!gate.blocked.includes(k as CatalogKey)) return `${k} released`;
+        const row = gate.rows.find((r) => r.kind === k);
+        if (!row || row.locked !== true) return `${k} not locked`;
+      }
+      return null;
+    }
+    case "FORGED_ID": {
+      const got = GOALS.goalOfParam(c.param, c.rows.map(goalRowOf));
+      return got === c.expect ? null : `goalOfParam ${json(got)}, want ${json(c.expect)}`;
+    }
+    case "TODAY": {
+      const got = GOALS.todayRowsOf(c.perGoal.map((g) => ({ slot: g.slot as GoalSlot, rows: Array.from({ length: g.rows }, (_, i) => `${g.slot}-${i}`) })));
+      const counts = c.perGoal.map((g) => got.picked.filter((p) => p.slot === g.slot).length);
+      return json(counts) === json(c.expectPicked) ? null : `rows ${json(counts)}, want ${json(c.expectPicked)}`;
+    }
+    case "AIM_LINE": {
+      const pick = GOALS.aimLinePickOf(c.candidates.map((x) => ({ ...x, slot: x.slot as GoalSlot })), c.open, c.goalsMax);
+      const got = pick === null ? null : pick.kind === "SET" ? "SET" : pick.roadmapId;
+      return got === c.expect ? null : `aim line ${json(got)}, want ${json(c.expect)}`;
+    }
+    case "SHARES": {
+      const got = GOALS.sharesOf(c.goals.map((g) => ({ ...g, status: g.status as RoadmapStatus })));
+      for (const [id, [num, den]] of Object.entries(c.expect)) if (Math.abs((got[id]?.share ?? -1) - num / den) > 1e-9) return `${id}: share ${got[id]?.share}, want ${num}/${den}`;
+      const seats = c.goals.filter((g) => (SEAT_STATUSES as readonly string[]).includes(g.status));
+      const sum = seats.reduce((s, g) => s + (got[g.roadmapId]?.share ?? 0), 0);
+      return seats.length === 0 || Math.abs(sum - 1) < 1e-9 ? null : `shares sum to ${sum}`;
+    }
+  }
+  return "an unknown X case";
+}
+
+// ── M8–M14 ──
+
+function checkMeta(m: R5MetaCase, c: R5Corpus, opts?: RuleOpts): string | null {
+  const verdicts = (calls: readonly GroundCall[]) => GRD.groundRecordOf(calls.map((g) => groundOf(g, opts)), []).verdicts;
+  const one = (g: GroundCall) => groundOf(g, opts).keys;
+  switch (m.rel) {
+    case "M8": {
+      const a = one(m.base as GroundCall);
+      const b = one(m.variant as GroundCall);
+      for (const k of Object.keys(a)) if (RANK[b[k]?.verdict ?? "NONE"] > RANK[a[k].verdict]) return `${k} rose from ${a[k].verdict} to ${b[k]?.verdict}`;
+      return null;
+    }
+    case "M9":
+    case "M10":
+    case "M11": {
+      const a = one(m.base as GroundCall);
+      const b = one(m.variant as GroundCall);
+      for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) if (a[k]?.verdict !== b[k]?.verdict || a[k]?.counted !== b[k]?.counted) return `${k}: ${a[k]?.verdict}/${a[k]?.counted} vs ${b[k]?.verdict}/${b[k]?.counted}`;
+      return null;
+    }
+    case "M12": {
+      const base = m.base as { family: "T" | "L" | "R"; id: string };
+      const order = (m.variant as { order: number[] }).order;
+      if (base.family === "T") {
+        const x = c.names.find((n) => n.id === base.id);
+        if (!x) return `no T case ${base.id}`;
+        const sig = (a: TP.MapAgreement) => json([...a.topics.map((t) => [TP.formKeyOf(t.name), t.formVotes, t.layer, 0]), ...a.hidden.map((t) => [TP.formKeyOf(t.name), t.formVotes, t.layer, 1])].map((r) => json(r)).sort());
+        return sig(mapOfCase(x.input, opts)) === sig(mapOfCase(x.input, opts, order)) ? null : "MAP agreement moved";
+      }
+      if (base.family === "L") {
+        const x = c.links.find((n) => n.id === base.id);
+        if (!x) return `no L case ${base.id}`;
+        const a = drawOf(x, opts);
+        const b = drawOf(x, opts, order);
+        return sameSet(a.drawn, b.drawn) && a.d.voids === b.d.voids ? null : "LINK draw moved";
+      }
+      const x = c.rating.find((n) => n.id === base.id);
+      if (!x) return `no R case ${base.id}`;
+      const pick = (r: ReturnType<typeof ratingOfCase>) => json([r.difficulty, r.breadth, r.unsure, r.oneReply, r.cautions, r.reasons]);
+      return pick(ratingOfCase(x, opts)) === pick(ratingOfCase(x, opts, order)) ? null : "RATE moved";
+    }
+    case "M13": {
+      const goals = (m.base as { goals: GOALS.ShareGoal[] }).goals;
+      const want = m.variant as { roadmapId: string; share: number; fieldShare: number };
+      const got = GOALS.sharesOf(goals)[want.roadmapId];
+      return got && got.share === want.share && got.fieldShare === want.fieldShare ? null : `one goal's shares ${json(got)}`;
+    }
+    case "M14": {
+      const a = verdicts(m.base as GroundCall[]);
+      const b = verdicts(m.variant as GroundCall[]);
+      for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) if (a[k]?.verdict !== b[k]?.verdict || a[k]?.counted !== b[k]?.counted) return `${k}: ${a[k]?.verdict} vs ${b[k]?.verdict}`;
+      return null;
+    }
+  }
+  return "an unknown relation";
+}
+
+/** The bar's items for families R, T, W, L and X and the relations M8–M14. `opts` (the ablation) never reaches family X. */
+export function r5BarOf(c: R5Corpus, opts?: RuleOpts): R5BarItem[] {
+  const items: R5BarItem[] = [];
+  const run = <T extends { id: string }>(name: string, cases: readonly T[], check: (x: T) => string | null) => {
+    const failures: string[] = [];
+    for (const x of cases) guarded(x.id, failures, () => check(x));
+    items.push(itemOf(name, cases.length, failures));
+  };
+  run("R", c.rating, (x) => checkRating(x, opts));
+  run("T", c.names, (x) => checkName(x, opts));
+  run("W", [...c.ground.map((g) => ({ ...g, batch: false as const })), ...c.batches.map((b) => ({ ...b, batch: true as const }))], (x) => {
+    if (!x.batch) return checkGround(x as R5GroundCase, opts);
+    const b = x as unknown as R5Corpus["batches"][number];
+    const got = GRD.groundBatchesOf(b.terms, b.maxCalls, opts);
+    const keys = got.batches.map((bt) => bt.map((t) => t.key));
+    return json(keys) === json(b.expect.batches) && json(got.notRun) === json(b.expect.notRun) ? null : `batches ${json(keys)} / ${json(got.notRun)}`;
+  });
+  run("L", [...c.links.map((l) => ({ ...l, chain: false as const })), ...c.chains.map((h) => ({ ...h, chain: true as const }))], (x) => {
+    if (!x.chain) return checkLink(x as R5LinkCase, opts);
+    const h = x as unknown as R5Corpus["chains"][number];
+    const codes = TP.chainChecksOf(h.map, h.ctx, opts).map((f) => f.code as string);
+    if (h.silent && codes.includes(h.code)) return `${h.code} fired`;
+    if (!h.silent && !codes.includes(h.code)) return `${h.code} silent (${json(codes)})`;
+    if (h.refusal !== undefined && TP.acceptRefusalOf(h.map, []) !== h.refusal) return `refusal ${TP.acceptRefusalOf(h.map, [])}, want ${h.refusal}`;
+    return null;
+  });
+  // Family X: no ablation (ruling 41); this item is its only gate.
+  const xFailures: string[] = [];
+  for (const x of c.cross) guarded(x.id, xFailures, () => checkCross(x));
+  items.push(itemOf(`X cross-goal: ${c.cross.length} cases (names, packs, cross-goal parents, held Domains, the user-wide gate, locked AVOIDs, forged ids, Today, the aim line, shares)`, c.cross.length, xFailures));
+  for (const rel of ["M8", "M9", "M10", "M11", "M12", "M13", "M14"] as const) run(`M-${rel}`, c.meta.filter((m) => m.rel === rel), (m) => checkMeta(m, c, opts));
+  return items;
+}
+
 

@@ -32,6 +32,10 @@
  *              (ACTIVITY_ANSWER_REFUSAL · ACTIVITY_NOTHING_TICKED · ACTIVITY_ANSWER_STALE) · ACTIVITY_NOTHING_TO_AVOID ·
  *              ACTIVITY_CARD_NAME · ACTIVITY_PENDING_POINTER · withActivityPointer · answerActivities (deprecated) ·
  *              activityConfirmOf · coverageJsonOf (the answers' place in Roadmap.coverage)
+ *   Constraint safety across goals (contracts §23.6; lane 3: the same gate, its inputs read across the user's goals)
+ *              kindOnEveryTrack · ConstraintsStateInput.others · constraintsStateOfIntake's and activityGateOf's
+ *              `goals` · allowedKindsFor's locked rows (another open goal's AVOID) and suggestions (a closed goal's) ·
+ *              activityConfirmViewOf's quoteGoals · answerActivityCard never storing or releasing a locked kind
  *   The practice progression (contracts §20: code owns it on every plan path; Gemini picks at most one kind per stage)
  *              ProgressionRung · ProgressionStageRule · ProgressionTrackRule · PROGRESSION (per track: the stage
  *              rules, rungs, partner, base, opening step, safe stand-ins) · progressionStageKeysOf · CHECKPOINT_RUNG ·
@@ -59,6 +63,7 @@ import {
   ACTIVITY_REASON_MAX,
   CHECKPOINTS_PER_MILESTONE,
   CUE_QUOTES_MAX,
+  HOLD_STATUSES,
   METHOD_DEFAULT_BAND,
   PRACTICES_PER_MILESTONE,
   PRACTICE_BANDS,
@@ -77,7 +82,9 @@ import {
   cueLegacyKeyOf,
   cueReadingOf,
   cueTextsOf,
+  isGoalSlot,
   isPracticeFamily,
+  otherGoalTextsOf,
   practiceBandMinutes,
   practiceFamilyPrefillOf,
   stageOfLevel,
@@ -92,15 +99,22 @@ import {
   type ActivityPrefill,
   type ActivityRow,
   type ActivityRowState,
+  LAYER_TOPICS_MAX,
+  type ChainRole,
   type CheckpointKind,
   type CodeTemplate,
+  type PlanKind,
   type CodeText,
   type ConstraintExclusion,
   type ConstraintsState,
   type CueSource,
+  type CueSpan,
   type CueTexts,
   type DomainName,
   type GateStage,
+  type GoalAvoids,
+  type GoalCueTexts,
+  type GoalSlot,
   type Intake,
   type ItemNote,
   type Origin,
@@ -833,19 +847,48 @@ export interface ConstraintsStateInput {
   /** Default true. */
   practicesAllowed?: boolean;
   exclusions?: readonly ConstraintExclusion[] | null;
+  /**
+   * Revision 5 (contracts §23.6 item 4; lane 3): every other goal's stored
+   * AVOIDs (DRAFT, ACTIVE and PAUSED lock; DONE and ARCHIVED suggest). The
+   * server leaves DONE and ARCHIVED out while GOALS_MAX is 1 (ruling 57).
+   * Absent or empty: today's gate.
+   */
+  others?: readonly GoalAvoids[] | null;
+}
+
+/** Every other goal's words and AVOIDs, as the server reads them across the user's goals (contracts §23.6 item 7). */
+export interface UserWideGoals {
+  /** Every other DRAFT, ACTIVE and PAUSED goal's texts, in seat order (CueTexts.others). */
+  texts: readonly GoalCueTexts[];
+  /** Every other goal's AVOIDs (ConstraintsState.others). */
+  avoids: readonly GoalAvoids[];
 }
 
 const catalogIndex = (k: string): number => CATALOG.findIndex((e) => e.key === k);
+
+/**
+ * A kind that sits on every catalog track (Set up, Book the exam, Full
+ * attempt, Performance check, Mock test, Exam day): another open goal's
+ * AVOID of it holds on every goal's card, whatever its track (contracts
+ * §23.6 item 4; F-R5-19 "an AVOID of a kind that is on every track holds
+ * everywhere"). Any other kind's AVOID holds on its own track's cards.
+ */
+export function kindOnEveryTrack(kind: unknown): boolean {
+  return isCatalogKey(kind) && CATALOG_TRACKS.every((t) => BY_KEY[kind].tracks.includes(t));
+}
 
 /**
  * The gate's input, pure: the cue reading over every text, the key (the
  * track's and the words': cueKeyOf), whether
  * the Constraints box holds anything, and the parser's exclusions as
  * suggestions (one per kind, on this track, in CATALOG order, each with the
- * user's sentence: userClauseOf over the constraints, or the word).
+ * user's sentence: userClauseOf over the constraints, or the word). With
+ * other goals (contracts §23.6): the texts carry their words (CueTexts.others:
+ * the reading and the "k3-" key take them), and `others` their AVOIDs.
  */
 export function constraintsStateOf(input: ConstraintsStateInput): ConstraintsState {
   const { track, texts } = input;
+  const others = Array.isArray(input.others) ? input.others : [];
   const prefill: ActivityPrefill[] = [];
   const seen = new Set<string>();
   for (const x of input.exclusions ?? []) {
@@ -864,12 +907,31 @@ export function constraintsStateOf(input: ConstraintsStateInput): ConstraintsSta
     reading: cueReadingOf(texts),
     key: cueKeyOf(texts, track),
     prefill,
+    ...(others.length > 0 ? { others } : {}),
   };
 }
 
-/** constraintsStateOf for an intake: its catalog track, cueTextsOf, examLabel and practicesAllowed. */
-export function constraintsStateOfIntake(intake: Intake, exclusions?: readonly ConstraintExclusion[] | null): ConstraintsState {
-  return constraintsStateOf({ track: catalogTrackOf(intake), texts: cueTextsOf(intake), exam: !!intake.examLabel, practicesAllowed: intake.practicesAllowed, exclusions });
+/** An intake's texts, with every other goal's words when the server gives them (CueTexts.others); without, exactly cueTextsOf. */
+function userWideTextsOf(intake: Intake, goals: UserWideGoals | null | undefined): CueTexts {
+  const own = cueTextsOf(intake);
+  const texts = goals && Array.isArray(goals.texts) ? goals.texts : [];
+  return texts.length > 0 ? { ...own, others: texts } : own;
+}
+
+/**
+ * constraintsStateOf for an intake: its catalog track, cueTextsOf, examLabel
+ * and practicesAllowed; with `goals` (contracts §23.6 item 7; lane 3), every
+ * other goal's words and AVOIDs too. Without `goals`, today's state.
+ */
+export function constraintsStateOfIntake(intake: Intake, exclusions?: readonly ConstraintExclusion[] | null, goals?: UserWideGoals | null): ConstraintsState {
+  return constraintsStateOf({
+    track: catalogTrackOf(intake),
+    texts: userWideTextsOf(intake, goals),
+    exam: !!intake.examLabel,
+    practicesAllowed: intake.practicesAllowed,
+    exclusions,
+    others: goals && Array.isArray(goals.avoids) ? goals.avoids : null,
+  });
 }
 
 const hasOwn = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
@@ -912,6 +974,47 @@ function onlyTrackOf(asked: readonly CatalogKey[]): CatalogTrack | null {
   return fits.length === 1 ? fits[0] : null;
 }
 
+/** Another goal's stored AVOID of one kind, as this card reads it. */
+interface OtherAvoid {
+  from: { roadmapId: string; slot: GoalSlot | null; closed: boolean };
+  entry: ActivityConfirmEntry;
+}
+
+/** Seat order: slot ascending, no seat last, then the roadmap id (so the lowest seat's AVOID names the row). */
+const goalSeatOrder = (a: GoalAvoids, b: GoalAvoids): number => {
+  const sa = isGoalSlot(a.slot) ? a.slot : 9;
+  const sb = isGoalSlot(b.slot) ? b.slot : 9;
+  return sa - sb || (a.roadmapId < b.roadmapId ? -1 : a.roadmapId > b.roadmapId ? 1 : 0);
+};
+
+/**
+ * The other goals' AVOIDs that reach this card (contracts §23.6 item 4), per
+ * kind on its track: an AVOID stored on the same catalog track, or of a kind
+ * on every track (kindOnEveryTrack). An open goal's (HOLD_STATUSES) locks; a
+ * closed goal's (DONE, ARCHIVED) only suggests. The lowest seat's names a
+ * row. A PAUSED goal shows no seat (ruling 55), and a closed one has none.
+ * No rule here takes an option: family X's safety has no off switch (ruling 41).
+ */
+function otherAvoidsOf(state: Pick<ConstraintsState, "track" | "others">): { locked: Map<CatalogKey, OtherAvoid>; closed: Map<CatalogKey, OtherAvoid> } {
+  const locked = new Map<CatalogKey, OtherAvoid>();
+  const closed = new Map<CatalogKey, OtherAvoid>();
+  const goals = (Array.isArray(state.others) ? state.others : []).filter((g): g is GoalAvoids => !!g && typeof g === "object" && typeof g.roadmapId === "string").sort(goalSeatOrder);
+  for (const g of goals) {
+    const open = HOLD_STATUSES.includes(g.status);
+    if (!open && g.status !== "DONE" && g.status !== "ARCHIVED") continue;
+    const into = open ? locked : closed;
+    for (const e of CATALOG) {
+      if (!e.tracks.includes(state.track) || into.has(e.key)) continue;
+      if (g.track !== state.track && !kindOnEveryTrack(e.key)) continue;
+      const entry = avoidEntryOf(g.kinds, e.key);
+      if (!entry) continue;
+      const slot = open && g.status !== "PAUSED" && isGoalSlot(g.slot) ? g.slot : null;
+      into.set(e.key, { from: { roadmapId: g.roadmapId, slot, closed: !open }, entry });
+    }
+  }
+  return { locked, closed };
+}
+
 /**
  * THE gate (contracts §19), pure: which catalog kinds a plan path may place,
  * and what to ask. ON (activityAsksOn) on every BODY and CARE plan, and on a
@@ -934,6 +1037,21 @@ function onlyTrackOf(asked: readonly CatalogKey[]): CatalogTrack | null {
  * answer; a stored per-kind FINE is never read. A changed text asks again
  * (the earlier answer's day shows as staleDay); an answer given on another
  * track asks again with no stale day; an AVOID stands.
+ *
+ * Across goals (contracts §23.6; lane 3), with ConstraintsState.others:
+ *   - another open goal's AVOID (DRAFT, ACTIVE, PAUSED) of a kind on this
+ *     track, stored on the same track or of a kind on every track
+ *     (kindOnEveryTrack): AVOID, not placed, `locked: true`, `from` that
+ *     goal, its day and reason, class YOURS. It is lifted only on the goal
+ *     that stored it, and it holds over this card's own answer (an AVOID
+ *     given on goal 1 after goal 2's card was answered still blocks there).
+ *     This goal's own AVOID of the same kind is its own row, unlocked;
+ *   - a closed goal's AVOID (DONE, ARCHIVED): a suggestion, its box
+ *     pre-ticked, `from.closed`, only while this card isn't answered under
+ *     its current key (ruling 28); it never blocks by itself;
+ *   - the cue reading and the key take every other goal's words
+ *     (CueTexts.others), so a cue in any goal's words turns a CRAFT card on.
+ * Without others, every answer is today's, byte for byte.
  */
 export function allowedKindsFor(state: ConstraintsState, confirmation: ActivityConfirm | null | undefined): ActivityGate {
   const track = state.track;
@@ -944,8 +1062,11 @@ export function allowedKindsFor(state: ConstraintsState, confirmation: ActivityC
   const kinds = conf && hasOwn(conf, "kinds") ? conf.kinds : null;
   const card = cardAnsweredOf(conf);
   const storedKey = conf?.key;
-  // An answer stored before the track was keyed ("k1-") under the same words holds only where its listed kinds prove the track (§19.11).
-  const legacySameWords = !!card && typeof storedKey === "string" && storedKey.startsWith("k1-") && storedKey === cueLegacyKeyOf(state.texts);
+  const others = otherAvoidsOf(state);
+  // An answer stored before the track was keyed ("k1-") under the same words holds only where its listed kinds prove the track (§19.11),
+  // and only while no other goal's words are read: with them the card's words changed ("k3-"; ruling 29).
+  const legacySameWords =
+    !!card && typeof storedKey === "string" && storedKey.startsWith("k1-") && otherGoalTextsOf(state.texts).length === 0 && storedKey === cueLegacyKeyOf(state.texts);
   const fresh = card && (storedKey === state.key || (legacySameWords && onlyTrackOf(card.asked) === track)) ? card : null;
   // Stale (shown with its day): an answer this track's card gave under other words. Another track's answer, or an unproven legacy one under the same words, asks with no stale day.
   const stale = card && !fresh && !legacySameWords && askedFits(card.asked, track) ? card : null;
@@ -960,35 +1081,41 @@ export function allowedKindsFor(state: ConstraintsState, confirmation: ActivityC
     if (!e.tracks.includes(track)) continue;
     const k = e.key;
     const avoid = avoidEntryOf(kinds, k);
+    // Another open goal's AVOID: ticked and locked here (ruling 27). A closed goal's: a suggestion while this card waits (ruling 28).
+    const lock = avoid ? null : (others.locked.get(k) ?? null);
     const p = prefillBy.get(k);
+    const hint = avoid || lock || fresh || p ? null : (others.closed.get(k) ?? null);
     const gated = gatedSet.has(k);
     let st: ActivityRowState | null;
-    if (avoid) st = "AVOID";
+    if (avoid || lock) st = "AVOID";
     else if (fresh && askedNow.has(k) && (gated || p)) st = "FINE";
     else if (gated) st = "PENDING";
-    else if (p) st = "WORDS";
+    else if (p || hint) st = "WORDS";
     else st = null;
     if (st === "AVOID" || st === "PENDING") blocked.push(k);
     else allowed.push(k);
     if (st === null || !shown(e)) continue;
-    rows.push({
+    const row: ActivityRow = {
       kind: k,
       state: st,
       gated,
-      prefill: (st === "PENDING" || st === "WORDS") && p ? "AVOID" : null,
-      reason: avoid ? avoid.reason : p ? p.reason : "",
-      day: avoid ? avoid.day : st === "FINE" && fresh ? fresh.day : null,
+      prefill: (st === "PENDING" || st === "WORDS") && (p || hint) ? "AVOID" : null,
+      reason: avoid ? avoid.reason : lock ? lock.entry.reason : p ? p.reason : hint ? hint.entry.reason : "",
+      day: avoid ? avoid.day : lock ? lock.entry.day : st === "FINE" && fresh ? fresh.day : null,
       staleDay: st === "PENDING" && stale && askedBefore.has(k) ? stale.day : null,
       cls: st === "AVOID" || st === "FINE" ? "YOURS" : null,
-    });
+    };
+    if (lock) Object.assign(row, { from: { ...lock.from }, locked: true });
+    else if (hint) Object.assign(row, { from: { ...hint.from } });
+    rows.push(row);
     if (st === "PENDING") pending.push(k);
   }
   return { on, track, key: state.key, answered: fresh ? fresh.day : null, none: fresh ? fresh.none : false, staleDay: stale ? stale.day : null, allowed, blocked, pending, rows };
 }
 
-/** The gate for an intake: allowedKindsFor(constraintsStateOfIntake(intake, exclusions), intake.activities). */
-export function activityGateOf(intake: Intake, exclusions?: readonly ConstraintExclusion[] | null): ActivityGate {
-  return allowedKindsFor(constraintsStateOfIntake(intake, exclusions), intake.activities ?? null);
+/** The gate for an intake: allowedKindsFor(constraintsStateOfIntake(intake, exclusions, goals), intake.activities); `goals` (contracts §23.6 item 7) reads it across the user's goals. */
+export function activityGateOf(intake: Intake, exclusions?: readonly ConstraintExclusion[] | null, goals?: UserWideGoals | null): ActivityGate {
+  return allowedKindsFor(constraintsStateOfIntake(intake, exclusions, goals), intake.activities ?? null);
 }
 
 /**
@@ -1019,24 +1146,57 @@ const firstSentenceOf = (text: string | null | undefined, max = ACTIVITY_REASON_
  * the first unreadable text's when only that did). With nothing else to
  * quote, the suggestions' sentences. Rows, the key and the answer's days are
  * the gate's; safeKinds is what the plan places meanwhile (cueSafeKindsOf).
+ *
+ * Across goals (contracts §23.6 item 3; lane 3): the quotes come from this
+ * goal's cues first, then each other goal's (in the reading's order: seat
+ * order), and `quoteGoals[i]` is the seat of the goal quote i came from
+ * (null: this goal, or a paused goal: ruling 55). CUE_QUOTES_MAX stays 3.
+ * Without other goals' words there is no quoteGoals, as today.
  */
 export function activityConfirmViewOf(state: ConstraintsState, gate: ActivityGate): ActivityConfirmView {
   const quotes: string[] = [];
-  const add = (q: string) => {
+  const quoteGoals: (GoalSlot | null)[] = [];
+  const add = (q: string, slot: GoalSlot | null = null) => {
     const t = q.trim();
-    if (t && !quotes.includes(t) && quotes.length < CUE_QUOTES_MAX) quotes.push(t);
+    if (t && !quotes.includes(t) && quotes.length < CUE_QUOTES_MAX) {
+      quotes.push(t);
+      quoteGoals.push(slot);
+    }
   };
+  const others = otherGoalTextsOf(state.texts);
   if (gate.on) {
     const order: readonly CueSource[] = ["CONSTRAINTS", "AIM", "NOTES"];
-    for (const src of order) for (const c of state.reading.cues) if (c.source === src) add(c.clause);
+    // This goal's cues, then each other goal's, in the reading's order.
+    const own: { slot: GoalSlot | null; cues: CueSpan[] } = { slot: null, cues: [] };
+    const groups = [own];
+    const byGoal = new Map<string, { slot: GoalSlot | null; cues: CueSpan[] }>();
+    for (const c of state.reading.cues) {
+      if (!c.goal) {
+        own.cues.push(c);
+        continue;
+      }
+      let g = byGoal.get(c.goal.roadmapId);
+      if (!g) {
+        g = { slot: isGoalSlot(c.goal.slot) ? c.goal.slot : null, cues: [] };
+        byGoal.set(c.goal.roadmapId, g);
+        groups.push(g);
+      }
+      g.cues.push(c);
+    }
+    for (const g of groups) for (const src of order) for (const c of g.cues) if (c.source === src) add(c.clause, g.slot);
     if (quotes.length === 0 && state.stated) add(firstSentenceOf(state.texts.constraints));
     if (quotes.length === 0 && state.reading.unparseable) {
-      const texts = [state.texts.constraints, state.texts.aim, ...(state.texts.notes ?? [])];
-      const unread = texts.find((t) => constraintCuesOf(t).unparseable);
-      if (unread) add(firstSentenceOf(unread));
+      const textsOf = (t: Pick<CueTexts, "constraints" | "aim" | "notes">) => [t.constraints, t.aim, ...(Array.isArray(t.notes) ? t.notes : [])];
+      const texts = [
+        ...textsOf(state.texts).map((text) => ({ text, slot: null as GoalSlot | null })),
+        ...others.flatMap((g) => textsOf(g.texts).map((text) => ({ text, slot: isGoalSlot(g.slot) ? g.slot : null }))),
+      ];
+      const unread = texts.find((t) => constraintCuesOf(t.text).unparseable);
+      if (unread && typeof unread.text === "string") add(firstSentenceOf(unread.text), unread.slot);
     }
   }
-  if (quotes.length === 0) for (const r of gate.rows) if (r.prefill === "AVOID" || r.state === "WORDS") add(r.reason);
+  // With nothing else to quote, this goal's suggestions (a closed goal's suggestion names itself on its row).
+  if (quotes.length === 0) for (const r of gate.rows) if ((r.prefill === "AVOID" || r.state === "WORDS") && !r.from) add(r.reason);
   return {
     on: gate.on,
     track: gate.track,
@@ -1049,6 +1209,7 @@ export function activityConfirmViewOf(state: ConstraintsState, gate: ActivityGat
     none: gate.none,
     staleDay: gate.staleDay,
     safeKinds: gate.on ? cueSafeKindsOf(gate.track) : [],
+    ...(others.length > 0 ? { quoteGoals } : {}),
   };
 }
 
@@ -1076,15 +1237,28 @@ export function withActivityPointer(gate: Pick<ActivityGate, "on" | "pending">, 
   return `${m}${m && !/[.!?…]$/u.test(m) ? "." : ""}${m ? " " : ""}${ACTIVITY_PENDING_POINTER}`;
 }
 
-/** The user's sentence a stored answer quotes: the kind's suggestion, else the first cue's sentence (constraints first), else the constraints' first sentence. */
+/**
+ * The user's sentence a stored answer quotes: the kind's suggestion, else the first cue's sentence (constraints
+ * first; this goal's cues before another goal's, contracts §23.6), else the constraints' first sentence.
+ */
 function reasonFor(state: ConstraintsState, kind: CatalogKey): string {
   const p = state.prefill.find((x) => x.kind === kind);
   if (p?.reason) return p.reason.slice(0, ACTIVITY_REASON_MAX);
-  for (const src of ["CONSTRAINTS", "AIM", "NOTES"] as const) {
-    const c = state.reading.cues.find((x) => x.source === src);
-    if (c?.clause) return c.clause;
-  }
+  for (const own of [true, false])
+    for (const src of ["CONSTRAINTS", "AIM", "NOTES"] as const) {
+      const c = state.reading.cues.find((x) => x.source === src && !x.goal === own);
+      if (c?.clause) return c.clause;
+    }
   return firstSentenceOf(state.texts.constraints);
+}
+
+/**
+ * The kinds locked on this card (contracts §23.6 item 5): another open goal's AVOID with no AVOID of this goal's own
+ * (whose row is then this goal's, unlocked). They are never stored here and never released here (ruling 27).
+ */
+function lockedKindsOf(state: ConstraintsState, prev: ActivityConfirm | null | undefined): Set<CatalogKey> {
+  const prevKinds = prev && typeof prev === "object" && hasOwn(prev, "kinds") ? prev.kinds : null;
+  return new Set([...otherAvoidsOf(state).locked.keys()].filter((k) => !avoidEntryOf(prevKinds, k)));
 }
 
 /**
@@ -1107,22 +1281,33 @@ function reasonFor(state: ConstraintsState, kind: CatalogKey): string {
  * release is per card (the lead's ruling, contracts §19.11): a Save with at
  * least one tick is the user's answer for every row the card listed, so
  * each listed row left unticked is placed.
+ *
+ * Across goals (contracts §23.6 item 5; lane 3): a locked kind (another
+ * open goal's AVOID, shown ticked) in `avoid` is ignored. It is never stored
+ * on this goal, never released, and never in `answered.asked` (ruling 27),
+ * so lifting it on the goal that stored it makes this card ask for it
+ * again. "Nothing to avoid" clears only this goal's own rows; a Save whose
+ * only ticks are locked rows ticks nothing of this goal's own
+ * (ACTIVITY_NOTHING_TICKED).
  */
 export function answerActivityCard(prev: ActivityConfirm | null | undefined, state: ConstraintsState, answer: ActivityCardAnswer, day: DayKey): RoadmapActionResult<ActivityConfirm> {
   const refuse = (error: string) => ({ ok: false as const, error });
   if (!isDayKey(day) || !answer || typeof answer !== "object") return refuse(ACTIVITY_ANSWER_REFUSAL);
-  const { key, avoid, nothingToAvoid } = answer as Partial<ActivityCardAnswer>;
-  if (typeof key !== "string" || !Array.isArray(avoid) || typeof nothingToAvoid !== "boolean" || avoid.length > CATALOG.length) return refuse(ACTIVITY_ANSWER_REFUSAL);
-  for (const k of avoid) {
+  const { key, avoid: sent, nothingToAvoid } = answer as Partial<ActivityCardAnswer>;
+  if (typeof key !== "string" || !Array.isArray(sent) || typeof nothingToAvoid !== "boolean" || sent.length > CATALOG.length) return refuse(ACTIVITY_ANSWER_REFUSAL);
+  for (const k of sent) {
     if (!isCatalogKey(k)) return refuse(ACTIVITY_ANSWER_REFUSAL);
     const entry = BY_KEY[k];
     if (entry.codeOnly || !entry.tracks.includes(state.track)) return refuse(ACTIVITY_ANSWER_REFUSAL);
   }
+  // Another open goal's AVOID is that goal's to lift: ignored here, wherever the client left its tick.
+  const locked = lockedKindsOf(state, prev);
+  const avoid = locked.size > 0 ? sent.filter((k) => !locked.has(k)) : sent;
   if (nothingToAvoid && avoid.length > 0) return refuse(ACTIVITY_ANSWER_REFUSAL);
   if (key !== state.key) return refuse(ACTIVITY_ANSWER_STALE);
   if (!nothingToAvoid && avoid.length === 0) return refuse(ACTIVITY_NOTHING_TICKED);
   const ticks = new Set<string>(avoid);
-  const asked = new Set<string>([...allowedKindsFor(state, prev).rows.map((r) => r.kind), ...ticks]);
+  const asked = new Set<string>([...allowedKindsFor(state, prev).rows.filter((r) => !r.locked).map((r) => r.kind), ...ticks]);
   const prevKinds = prev && typeof prev === "object" && hasOwn(prev, "kinds") ? prev.kinds : null;
   const kinds: Partial<Record<CatalogKey, ActivityConfirmEntry>> = {};
   for (const e of CATALOG) {
@@ -1797,10 +1982,19 @@ export interface ProgressionStageInput {
    * sets nothing, as when it was built). It still counts as first or last.
    */
   carried?: readonly (string | null | undefined)[] | null;
+  // ── Revision 5, lane 8 (contracts §22.13) ──
+  /**
+   * A TOPICS plan's stage: a layer milestone (role LAYER, its layer k, stage FAMILIAR) or a depth milestone (role
+   * DEPTH, layer null, stage RETAINED, FLUENT or MASTERED). Read only with ProgressionInput.planKind TOPICS; absent
+   * there, FAMILIAR reads as the next layer and a later gate as a depth milestone.
+   */
+  chain?: { role: ChainRole; layer: number | null } | null;
 }
 
 /** What progressionOf reads. */
 export interface ProgressionInput {
+  /** Revision 5, lane 8 (§22.13): TOPICS reads the NEW and CARRY parts (topicsProgressionOf); absent or LEVELS: the table above, byte for byte. */
+  planKind?: PlanKind | null;
   track: CatalogTrack;
   /** The plan's stages, in order (held ones included). */
   stages: readonly ProgressionStageInput[];
@@ -1876,6 +2070,12 @@ export interface ProgressionItem {
    * on every other item. Never a kind the stage places otherwise.
    */
   alternate?: PracticeKind;
+  /**
+   * Revision 5, lane 8 (§22.13): on a TOPICS stage, which Domains fill its {domains}: NEW, this layer's (a depth
+   * milestone: the specialisation); CARRY, the layer before's (a depth milestone: the base topics). Absent or null on
+   * a LEVELS stage.
+   */
+  part?: TopicPart | null;
 }
 
 /** One stage's part of the progression. */
@@ -2184,6 +2384,8 @@ function takeTurns(out: ProgressionItem[], taken: Set<string>, at: number, alt: 
  * kind before the last stage.
  */
 export function progressionOf(input: ProgressionInput): Progression {
+  // Revision 5, lane 8 (§22.13): a TOPICS plan's stages take the NEW and CARRY parts; LEVELS reads on unchanged.
+  if (input.planKind === "TOPICS") return topicsProgressionOf(input);
   const track = input.track;
   const exam = input.exam === true;
   const family = progressionFamilyOf(track, input.family);
@@ -2582,6 +2784,8 @@ export function progressionNotesOf(item: Pick<ProgressionItem, "kind" | "slot" |
  *   PICK       Gemini's valid pick (not the default) left out while a slot below it was free or used
  */
 export function progressionViolationsOf(input: ProgressionInput, p: Progression): string[] {
+  // Revision 5, lane 8 (§22.13): a TOPICS plan is held to its own parts (TOPIC_PART, TOPIC_CHECK, TOPIC_CLIMB) and the shared rules.
+  if (input.planKind === "TOPICS") return topicsViolationsOf(input, p);
   const out: string[] = [];
   const track = input.track;
   const exam = input.exam === true;
@@ -2725,6 +2929,387 @@ export function progressionViolationsOf(input: ProgressionInput, p: Progression)
     }
   }
   return out;
+}
+
+// ── Revision 5, lane 8: the TOPICS progression's parts (contracts §22.13) ──────
+//
+// A TOPICS plan's milestones are layer milestones (stage FAMILIAR, one per layer of the map, each paying its own
+// layer's topics at OPEN_LEVEL), then the depth tail (RETAINED, FLUENT, MASTERED; chainRole DEPTH). Each item says
+// whose Domains fill its {domains} (ProgressionItem.part): NEW, this layer's topics (on a depth milestone, the
+// specialisation); CARRY, the layer before's (on a depth milestone, the base topics). There is no BASE: NEW and CARRY
+// are the spaced review.
+//   layer k   practices, within maxPractices, in priority: the NEW focus (the family's FAMILIAR default); EXAM, timed
+//             practice in a run-up only; CARRY, the family's RETAINED default over layer k − 1, from layer 2; on layer 1
+//             only, NEW study (the family's FOUNDATION default). A room for one holds the NEW focus only; in a run-up
+//             it takes turns with timed practice. Steps: CHOOSE_MATERIAL over the NEW Domains on every layer;
+//             BOOK_EXAM on milestone 1 with an exam; the closing FULL_ATTEMPT on the chain's last milestone (unless
+//             it holds the exam: the exam is the attempt). Checkpoint: SELF_TEST on every layer before the last; on
+//             the last layer PERFORMANCE_CHECK (MOCK_TEST for an undated exam held there; a self-test while the exam
+//             comes later in the depth tail, so the checkpoints still escalate).
+//   depth     the NEW focus (the family's row default for that stage, over the specialisation); CARRY, the family's
+//             RETAINED default over the base topics (the next RETAINED candidate when it equals the focus, never a
+//             rung below the layers' own carry, so a base topic's climb holds; none with one layer: no base topics);
+//             the stage's role step; PERFORMANCE_CHECK.
+//   exam      (ruling 44) a dated exam never sits before layer K: in layer K, that milestone holds EXAM_DAY and the
+//             timed practice, no separate mock test; in a depth milestone, the one before holds the run-up (timed
+//             practice and MOCK_TEST) and the exam's own holds EXAM_DAY and the timed practice; undated, the last
+//             milestone holds the run-up and MOCK_TEST. After a dated exam the checkpoints escalate again.
+//   climb     per topic lineage (the layer whose topics a part fills): NEW at layer k → CARRY at layer k + 1 → the
+//             depth CARRY for a base topic; NEW at layer K → each depth focus for the specialisation. A kind never
+//             steps down a rung (a stand-in is exempt).
+// The PERFORMANCE_CHECK on the last layer (and on each depth milestone) is the TOPICS chain's own escalation: the
+// catalog's lastStageOnly reads LEVELS stages, never these.
+
+/** Which Domains fill a TOPICS item's {domains} (ProgressionItem.part; §22.13). */
+export type TopicPart = "NEW" | "CARRY";
+
+/** Each stage's place in the chain: given (ProgressionStageInput.chain), else FAMILIAR is the next layer and any other gate a depth milestone. */
+function topicChainsOf(stages: readonly ProgressionStageInput[]): { role: ChainRole; layer: number | null }[] {
+  let k = 0;
+  return stages.map((s) => {
+    const given = s?.chain && (s.chain.role === "LAYER" || s.chain.role === "DEPTH") ? s.chain : null;
+    const role: ChainRole = given ? given.role : s?.stage === "FAMILIAR" ? "LAYER" : "DEPTH";
+    if (role !== "LAYER") return { role, layer: null };
+    const layer = given && typeof given.layer === "number" && Number.isInteger(given.layer) && given.layer >= 1 ? given.layer : k + 1;
+    k = Math.max(k, layer);
+    return { role, layer };
+  });
+}
+
+/** Where a TOPICS plan's exam sits (ruling 44): its stage, whether it has a day, the run-up's stages and the mock test's. */
+function topicExamOf(
+  input: Pick<ProgressionInput, "exam" | "examStage" | "stages">,
+  live: readonly number[],
+  chains: readonly { role: ChainRole }[],
+  lastLayer: number
+): { examStage: number | null; dated: boolean; runUp: ReadonlySet<number>; mock: number | null } {
+  const last = live.length ? live[live.length - 1] : -1;
+  if (input.exam !== true || last < 0) return { examStage: null, dated: false, runUp: new Set(), mock: null };
+  const n = input.stages.length;
+  const at = typeof input.examStage === "number" && Number.isInteger(input.examStage) && input.examStage >= 0 && input.examStage < n ? input.examStage : null;
+  if (at == null) return { examStage: last, dated: false, runUp: new Set([last]), mock: null };
+  // Never before layer K (the date pre-check refuses it; read as layer K here).
+  const examStage = live.find((i) => i >= Math.max(at, lastLayer)) ?? last;
+  if (chains[examStage]?.role !== "DEPTH") return { examStage, dated: true, runUp: new Set([examStage]), mock: null };
+  const before = [...live].reverse().find((i) => i < examStage) ?? null;
+  return { examStage, dated: true, runUp: new Set(before == null ? [examStage] : [before, examStage]), mock: before };
+}
+
+/** progressionOf on a TOPICS plan (§22.13; see the section's head). Pure and deterministic, the gate respected throughout. */
+function topicsProgressionOf(input: ProgressionInput): Progression {
+  const track = input.track;
+  const exam = input.exam === true;
+  const family = progressionFamilyOf(track, input.family);
+  const rule = progressionRuleFor(track, { family, exam });
+  const blocked = new Set<string>([...(input.gate?.blocked ?? []), ...(input.excluded ?? [])]);
+  const practicesAllowed = input.practicesAllowed === true;
+  const ok = placeableOn(track, { exam, practicesAllowed, blocked });
+  const chains = topicChainsOf(input.stages);
+  const live: number[] = [];
+  input.stages.forEach((s, i) => {
+    if (s?.held !== true) live.push(i);
+  });
+  const first = live.length ? live[0] : -1;
+  const last = live.length ? live[live.length - 1] : -1;
+  const layerStages = live.filter((i) => chains[i].role === "LAYER");
+  const lastLayer = layerStages.length ? layerStages[layerStages.length - 1] : -1;
+  const ex = topicExamOf(input, live, chains, lastLayer);
+  // Base topics exist only with two layers or more (layer K's topics are the specialisation).
+  const baseTopics = chains.filter((c) => c.role === "LAYER").length >= 2;
+  const familiar = stageRuleOf(rule, { stage: "FAMILIAR" });
+  const retained = stageRuleOf(rule, { stage: "RETAINED" });
+  const foundation = stageRuleOf(rule, { stage: "FOUNDATION" });
+  const rungOf = (k: string | null | undefined): number => (k ? (rule.rung[k as PracticeKind] ?? 0) : 0);
+  // The rung a base topic last trained at in the layers: their CARRY (the RETAINED default). The depth carry never falls below it.
+  const layerCarry = (retained?.focus ?? []).filter(ok)[0] ?? null;
+  const withPart = (item: ProgressionItem, part: TopicPart): ProgressionItem => ({ ...item, part });
+  const stages: StageProgression[] = input.stages.map((s, index) => ({
+    index,
+    stage: s.stage,
+    level: progressionLevelOf(s),
+    held: s.held === true,
+    carried: s.held !== true && Array.isArray(s.carried),
+    copy: false,
+    afterExam: s.held !== true && ex.dated && ex.examStage != null && index > ex.examStage,
+    focus: null,
+    practices: [],
+    steps: [],
+    checkpoint: null,
+  }));
+  const isPracticeOnTrack = (k: unknown): k is PracticeKind => {
+    const e = catalogEntryOf(k);
+    return !!e && e.slot === "PRACTICE" && e.tracks.includes(track);
+  };
+
+  // Practices.
+  for (const i of live) {
+    const sp = stages[i];
+    const src = input.stages[i];
+    const layer = chains[i].role === "LAYER";
+    if (sp.carried) {
+      // A milestone under way keeps its kinds and gets nothing new.
+      const kinds = [...new Set((src.carried ?? []).filter(isCatalogKey))].filter((k) => BY_KEY[k].tracks.includes(track));
+      sp.practices = kinds.filter((k) => BY_KEY[k].slot === "PRACTICE").map((k) => itemOf(k, "KEPT"));
+      sp.steps = kinds.filter((k) => BY_KEY[k].slot === "STEP").map((k) => itemOf(k, "KEPT"));
+      const cp = kinds.find((k) => BY_KEY[k].slot === "CHECKPOINT");
+      sp.checkpoint = cp ? itemOf(cp, "KEPT") : null;
+      sp.focus = kinds.find(isPracticeOnTrack) ?? null;
+      continue;
+    }
+    if (!practicesAllowed) continue;
+    const max = maxPracticesAt(input.maxPractices, i);
+    const out: ProgressionItem[] = [];
+    const taken = new Set<string>();
+    const push = (item: ProgressionItem | null) => {
+      if (!item || taken.has(item.kind) || out.length >= max) return;
+      out.push(item);
+      taken.add(item.kind);
+    };
+    const own = layer ? familiar : (stageRuleOf(rule, src) ?? familiar);
+    const shape = progressionShapeOf(track, src);
+    // NEW focus: the stage's default (a blocked one gives way to the next candidate, then a stand-in).
+    const cands = (own?.focus ?? []).filter(ok);
+    const wanted = own?.focus[0] ?? null;
+    let focus: PracticeKind | null = cands[0] ?? null;
+    let standsIn: CatalogKey | null = focus && wanted && focus !== wanted ? wanted : null;
+    if (!focus && wanted) {
+      focus = standInOf(rule, track, wanted, shape, ok, taken);
+      standsIn = focus ? wanted : null;
+    }
+    if (focus) push(withPart(itemOf(focus, "FOCUS", standsIn), "NEW"));
+    // EXAM: timed practice in a run-up; with no room beside the focus, the focus's turn.
+    const runUp = ex.runUp.has(i) && ok("TIMED_PRACTICE");
+    const timedTurn = runUp && out.length >= max;
+    if (runUp) push(withPart(itemOf("TIMED_PRACTICE", "EXAM"), "NEW"));
+    // CARRY: the layer before's topics (a layer from layer 2), or the base topics (a depth milestone).
+    if (layer && (chains[i].layer ?? 1) > 1) {
+      const carry = (retained?.focus ?? []).filter(ok).find((k) => !taken.has(k)) ?? null;
+      if (carry) push(withPart(itemOf(carry, "CARRY"), "CARRY"));
+    } else if (!layer && baseTopics) {
+      const floor = rungOf(layerCarry);
+      const carry = (retained?.focus ?? []).filter(ok).find((k) => k !== focus && !taken.has(k) && rungOf(k) >= floor) ?? null;
+      if (carry) push(withPart(itemOf(carry, "CARRY"), "CARRY"));
+    }
+    // Layer 1 only: NEW study (the family's FOUNDATION default).
+    if (layer && chains[i].layer === 1) {
+      const study = (foundation?.focus ?? []).filter(ok).find((k) => !taken.has(k)) ?? null;
+      if (study) push(withPart(itemOf(study, "PARTNER"), "NEW"));
+    }
+    // Never empty while a practice is placeable: the least demanding one, the stage's role first.
+    if (out.length === 0) {
+      const any = lastResortOf(rule, shape, ok);
+      if (any) push(withPart(itemOf(any, "FOCUS", wanted && !ok(wanted) ? wanted : null), "NEW"));
+    }
+    if (timedTurn) takeTurns(out, taken, 0, "TIMED_PRACTICE", track, ok, true);
+    sp.practices = out;
+    sp.focus = (out.find((x) => x.why === "FOCUS")?.kind ?? null) as PracticeKind | null;
+  }
+
+  // Steps and the checkpoint, escalating (again after a dated exam).
+  let topRung = 0;
+  let restarted = false;
+  for (const i of live) {
+    const sp = stages[i];
+    if (sp.afterExam && !restarted) {
+      topRung = 0;
+      restarted = true;
+    }
+    if (sp.carried) {
+      if (sp.checkpoint) topRung = Math.max(topRung, CHECKPOINT_RUNG[sp.checkpoint.kind as CheckpointKind] ?? 0);
+      continue;
+    }
+    const layer = chains[i].role === "LAYER";
+    const holdsExam = ex.examStage === i;
+    const steps: ProgressionItem[] = [];
+    const addStep = (k: StepKind | null, why: ProgressionWhy) => {
+      if (!k || !ok(k) || steps.some((x) => x.kind === k) || steps.length >= STEPS_PER_MILESTONE) return;
+      if (BY_KEY[k].lastStageOnly && i !== last) return;
+      steps.push(withPart(itemOf(k, why), "NEW"));
+    };
+    if (layer) addStep("CHOOSE_MATERIAL", "OPENING");
+    if (i === first && exam) addStep("BOOK_EXAM", "BOOK");
+    if (i === last && !holdsExam) addStep(rule.closing, "CLOSING");
+    if (!layer) addStep(stageRuleOf(rule, input.stages[i])?.step ?? null, "ROLE");
+    sp.steps = steps.sort((a, b) => STEP_DISPLAY.indexOf(a.why) - STEP_DISPLAY.indexOf(b.why));
+    const examLater = ex.examStage != null && ex.examStage > i;
+    let want: CheckpointKind;
+    if (holdsExam) want = ex.dated ? "EXAM_DAY" : "MOCK_TEST";
+    else if (ex.mock === i) want = "MOCK_TEST";
+    else if (layer && i !== lastLayer) want = "SELF_TEST";
+    else want = examLater ? "SELF_TEST" : "PERFORMANCE_CHECK";
+    const fits = (k: CheckpointKind): boolean => CHECKPOINT_RUNG[k] >= topRung && (k === "EXAM_DAY" ? exam && !blocked.has(k) : ok(k));
+    let cp: ProgressionItem | null = null;
+    if (fits(want)) cp = withPart(itemOf(want, "CHECK"), "NEW");
+    else if (want !== "SELF_TEST" && fits("SELF_TEST")) cp = withPart(itemOf("SELF_TEST", "CHECK", want), "NEW");
+    if (cp && CHECKPOINTS_PER_MILESTONE >= 1) {
+      sp.checkpoint = cp;
+      topRung = Math.max(topRung, CHECKPOINT_RUNG[cp.kind as CheckpointKind]);
+    }
+  }
+  const prep = [...ex.runUp].sort((a, b) => a - b)[0] ?? null;
+  return { track, family, stages, first, last, examStage: ex.examStage, examDated: ex.dated, examPrepStage: prep, mockStage: ex.mock };
+}
+
+/**
+ * progressionViolationsOf on a TOPICS plan (§22.13): the shared rules (HELD, CAP, TRACK, BLOCKED, EXAM, LAST, ESCALATE,
+ * PRACTICE, TURNS) as LEVELS reads them, the TOPICS chain's own escalation aside (PERFORMANCE_CHECK on the last layer
+ * and each depth milestone), and three of its own:
+ *   TOPIC_PART   an item with no part; a CARRY that is not a practice, or on layer 1; a layer from layer 2 (or a depth
+ *                milestone with base topics) without its CARRY while a slot is free and a RETAINED kind is placeable
+ *   TOPIC_CHECK  a layer before the last without its self-test, or holding a performance check; the last layer or a
+ *                depth milestone without its performance check while no exam comes later (each while placeable and
+ *                escalation allows)
+ *   TOPIC_CLIMB  a topic lineage's kind stepping down a rung: NEW (layer k) → CARRY (layer k + 1) → the depth CARRY
+ *                for a base topic; NEW (layer K) → each depth focus for the specialisation (a stand-in is exempt)
+ */
+function topicsViolationsOf(input: ProgressionInput, p: Progression): string[] {
+  const out: string[] = [];
+  const track = input.track;
+  const exam = input.exam === true;
+  const rule = progressionRuleFor(track, { family: input.family, exam });
+  const blocked = new Set<string>([...(input.gate?.blocked ?? []), ...(input.excluded ?? [])]);
+  const practicesOn = input.practicesAllowed === true;
+  const ok = placeableOn(track, { exam, practicesAllowed: practicesOn, blocked });
+  const anyPractice = CATALOG.some((e) => e.slot === "PRACTICE" && ok(e.key));
+  const chains = topicChainsOf(input.stages);
+  const live = input.stages.map((s, i) => (s?.held === true ? -1 : i)).filter((i) => i >= 0);
+  const first = live.length ? live[0] : -1;
+  const last = live.length ? live[live.length - 1] : -1;
+  const layerStages = live.filter((i) => chains[i].role === "LAYER");
+  const lastLayer = layerStages.length ? layerStages[layerStages.length - 1] : -1;
+  const lastLayerNo = lastLayer >= 0 ? (chains[lastLayer].layer ?? 1) : null;
+  const baseTopics = chains.filter((c) => c.role === "LAYER").length >= 2;
+  const ex = topicExamOf(input, live, chains, lastLayer);
+  const retainedCands = (stageRuleOf(rule, { stage: "RETAINED" })?.focus ?? []).filter(ok);
+  const rungOf = (k: string | null | undefined): number | undefined => (k ? rule.rung[k as PracticeKind] : undefined);
+  // The climb, per topic lineage: the layer whose topics a part fills → the rungs it trained at, in stage order.
+  const climb = new Map<number, { at: number; kind: string; rung: number }[]>();
+  const note = (layerNo: number, at: number, kind: string) => {
+    const r = rungOf(kind);
+    if (r == null) return;
+    const list = climb.get(layerNo) ?? [];
+    list.push({ at, kind, rung: r });
+    climb.set(layerNo, list);
+  };
+  let topRung = 0;
+  let restarted = false;
+  for (const s of p.stages) {
+    const at = `stage ${s.index}`;
+    const all = [...s.practices, ...s.steps, ...(s.checkpoint ? [s.checkpoint] : [])];
+    const turns = s.practices.filter((x) => x.alternate);
+    if (s.held) {
+      if (all.length > 0) out.push(`HELD ${at}: holds ${all.map((x) => x.kind).join(", ")}`);
+      continue;
+    }
+    const max = maxPracticesAt(input.maxPractices, s.index);
+    if (ex.dated && ex.examStage != null && s.index > ex.examStage && !restarted) {
+      topRung = 0;
+      restarted = true;
+    }
+    if (s.practices.length > max && !s.carried) out.push(`CAP ${at}: ${s.practices.length} practices`);
+    if (s.steps.length > STEPS_PER_MILESTONE && !s.carried) out.push(`CAP ${at}: ${s.steps.length} steps`);
+    for (const list of [kindsIn(s.practices), s.steps.map((x) => x.kind)]) if (new Set(list).size !== list.length) out.push(`CAP ${at}: a kind twice`);
+    for (const [list, slot] of [
+      [s.practices, "PRACTICE"],
+      [s.steps, "STEP"],
+      [s.checkpoint ? [s.checkpoint] : [], "CHECKPOINT"],
+    ] as const)
+      for (const x of list) {
+        const e = catalogEntryOf(x.kind);
+        if (!e || e.slot !== slot || !e.tracks.includes(track)) out.push(`TRACK ${at}: ${x.kind}`);
+      }
+    if (s.carried) {
+      if (s.checkpoint) topRung = Math.max(topRung, CHECKPOINT_RUNG[s.checkpoint.kind as CheckpointKind] ?? 0);
+      continue;
+    }
+    const chain = chains[s.index];
+    const layer = chain.role === "LAYER";
+    const layerNo = chain.layer ?? 1;
+    const runUp = ex.runUp.has(s.index);
+    const has = (k: string) => s.practices.some((x) => x.kind === k || x.alternate === k);
+    for (const x of all) {
+      const e = catalogEntryOf(x.kind);
+      if (!e) continue;
+      if (blocked.has(x.kind)) out.push(`BLOCKED ${at}: ${x.kind}`);
+      if (e.examOnly && !exam) out.push(`EXAM ${at}: ${x.kind} without an exam`);
+      const chainCheck = x.kind === "PERFORMANCE_CHECK" && (s.index === lastLayer || !layer);
+      if (e.lastStageOnly && s.index !== last && !chainCheck) out.push(`LAST ${at}: ${x.kind} before the last stage`);
+      if (x.kind === "TIMED_PRACTICE" && !runUp) out.push(`EXAM ${at}: TIMED_PRACTICE off the exam's run-up`);
+      if (x.kind === "MOCK_TEST" && s.index !== (ex.dated ? ex.mock : ex.examStage)) out.push(`EXAM ${at}: MOCK_TEST off ${ex.dated ? "the milestone before the exam's" : "the exam's milestone"}`);
+      if (x.kind === "EXAM_DAY" && (!ex.dated || s.index !== ex.examStage)) out.push(`EXAM ${at}: EXAM_DAY off the dated exam's milestone`);
+      if (x.kind === "BOOK_EXAM" && s.index !== first) out.push(`EXAM ${at}: BOOK_EXAM off the first milestone`);
+      if (e.codeOnly && x.kind !== "EXAM_DAY") out.push(`TRACK ${at}: codeOnly ${x.kind}`);
+      if (x.part !== "NEW" && x.part !== "CARRY") out.push(`TOPIC_PART ${at}: ${x.kind} has no part`);
+      else if (x.part === "CARRY" && (x.slot !== "PRACTICE" || (layer && layerNo <= 1))) out.push(`TOPIC_PART ${at}: ${x.kind} carries ${layer ? "on layer 1" : "outside the practices"}`);
+    }
+    for (const x of turns) {
+      const alt = x.alternate as PracticeKind;
+      if (blocked.has(alt)) out.push(`BLOCKED ${at}: ${alt} (a turn)`);
+      if (alt === "TIMED_PRACTICE" && !runUp) out.push(`EXAM ${at}: TIMED_PRACTICE off the exam's run-up (a turn)`);
+      if (track !== "FIELD" || !practiceTurnTemplateOf(x.kind, alt)) out.push(`TURNS ${at}: ${x.kind} takes turns with ${alt}, a pair with no words`);
+    }
+    if (practicesOn && runUp && ok("TIMED_PRACTICE") && !has("TIMED_PRACTICE")) out.push(`EXAM_PREP ${at}: no timed practice in the exam's run-up`);
+    if (!practicesOn && s.practices.length > 0) out.push(`PRACTICE ${at}: practices while they are off`);
+    if (practicesOn && anyPractice && s.practices.length === 0) out.push(`PRACTICE ${at}: no practice`);
+    // TOPIC_PART: the carry is there while it fits (after the focus and the exam's practice).
+    const wantsCarry = layer ? layerNo > 1 : baseTopics;
+    if (practicesOn && wantsCarry && !s.practices.some((x) => x.part === "CARRY") && s.practices.length < max) {
+      const focus = s.practices.find((x) => x.why === "FOCUS")?.kind ?? null;
+      const floor = layer ? 0 : (rungOf(retainedCands[0]) ?? 0);
+      if (retainedCands.some((k) => k !== focus && !has(k) && (rungOf(k) ?? 0) >= floor)) out.push(`TOPIC_PART ${at}: no CARRY over ${layer ? `layer ${layerNo - 1}` : "the base topics"}`);
+    }
+    // TOPIC_CHECK and ESCALATE.
+    const examLater = ex.examStage != null && ex.examStage > s.index;
+    const examHere = ex.examStage === s.index || ex.mock === s.index;
+    const cpKind = s.checkpoint?.kind ?? null;
+    if (layer && s.index !== lastLayer) {
+      if (cpKind === "PERFORMANCE_CHECK") out.push(`TOPIC_CHECK ${at}: a performance check before the last layer`);
+      if (!cpKind && !examHere && ok("SELF_TEST") && CHECKPOINT_RUNG.SELF_TEST >= topRung) out.push(`TOPIC_CHECK ${at}: no self-test on layer ${layerNo}`);
+    } else if (!examHere && !examLater && cpKind !== "PERFORMANCE_CHECK" && ok("PERFORMANCE_CHECK") && CHECKPOINT_RUNG.PERFORMANCE_CHECK >= topRung) {
+      out.push(`TOPIC_CHECK ${at}: no performance check on ${layer ? "the last layer" : "a depth milestone"}`);
+    }
+    if (s.checkpoint) {
+      const r = CHECKPOINT_RUNG[s.checkpoint.kind as CheckpointKind] ?? 0;
+      if (r < topRung) out.push(`ESCALATE ${at}: ${s.checkpoint.kind} after a rung-${topRung} checkpoint`);
+      topRung = Math.max(topRung, r);
+    }
+    // The climb's entries: the focus and the carry, each read for the layer whose topics it fills (stand-ins exempt).
+    for (const x of s.practices) {
+      if (x.standsIn || (x.why !== "FOCUS" && x.why !== "CARRY")) continue;
+      if (layer) {
+        if (x.part === "NEW") note(layerNo, s.index, x.kind);
+        else if (x.part === "CARRY" && layerNo > 1) note(layerNo - 1, s.index, x.kind);
+      } else if (lastLayerNo != null) {
+        if (x.part === "NEW") note(lastLayerNo, s.index, x.kind);
+        else if (x.part === "CARRY") for (let g = 1; g < lastLayerNo; g++) note(g, s.index, x.kind);
+      }
+    }
+  }
+  for (const [layerNo, list] of climb) {
+    const sorted = [...list].sort((a, b) => a.at - b.at);
+    for (let j = 1; j < sorted.length; j++) {
+      if (sorted[j].rung < sorted[j - 1].rung) out.push(`TOPIC_CLIMB stage ${sorted[j].at}: layer ${layerNo}'s topics step down from ${sorted[j - 1].kind} (${sorted[j - 1].rung}) to ${sorted[j].kind} (${sorted[j].rung})`);
+    }
+  }
+  return out;
+}
+
+/** An accepted TOPICS layer milestone's title (ruling 22): "{domains} · layer {k} of {n}" over its Domains (domainsShort); with none, the draft's "Layer {k} of {n}". */
+export function topicLayerTitleOf(names: readonly DomainName[], layer: number, layers: number): CodeText {
+  return names.length ? codeText("{domains} · layer {k} of {n}", { domains: names, k: layer, n: layers }) : codeText("Layer {k} of {n}", { k: layer, n: layers });
+}
+
+/** A TOPICS DRAFT layer milestone's title (ruling 60): "Layer {k} of {n}" (no name before keep). */
+export function topicDraftTitleOf(layer: number, layers: number): CodeText {
+  return codeText("Layer {k} of {n}", { k: layer, n: layers });
+}
+
+/**
+ * A TOPICS DRAFT layer milestone's paying line (ruling 60): "Layer {k} · {n} topics" (the map card names them). A
+ * layer over LAYER_TOPICS_MAX is refused at accept (LAYER_OVER) and reads at that figure here, never a throw.
+ */
+export function topicPayingLineOf(layer: number, topics: number): CodeText {
+  return codeText("Layer {k} · {n} topics", { k: layer, n: Math.min(LAYER_TOPICS_MAX, Math.max(1, Math.floor(topics))) });
 }
 
 // ─── Sizing: code's allocation, one definition (R2's allocate) ─────────────

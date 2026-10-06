@@ -59,7 +59,18 @@ export type HonestyKind =
   | "live"
   | "not-recorded"
   | "library-unchecked"
-  | "legacy";
+  | "legacy"
+  // ── Revision 5, lane 9 (ui-motion.md §15.3; contracts §22.11) ──
+  | "gemini-linked"
+  | "gemini-placed"
+  | "gemini-picked-domain"
+  | "gemini-kept-by-you"
+  | "estimate-gemini"
+  | "estimate-unsure"
+  | "estimate-app"
+  | "caution-financial"
+  | "caution-medical"
+  | "caution-legal";
 
 export interface HonestyKindDef {
   glyph: MarkRef | null;
@@ -112,10 +123,40 @@ export const HONESTY_KINDS: Readonly<Record<HonestyKind, HonestyKindDef>> = {
   "not-recorded": { glyph: "m.info", label: "not recorded here", button: true },
   "library-unchecked": { glyph: "v.unv", label: "library not checked", button: true },
   legacy: { glyph: "m.info", label: "older plan", button: true },
+  // ── Revision 5, lane 9 (ui-motion.md §15.3). The labels are roadmap-copy's (callers pass the figure-bearing ones). ──
+  "gemini-linked": { glyph: "pv.web", label: "Gemini · Google linked 2 sources", button: true },
+  "gemini-placed": { glyph: "pv.suggest", label: "Gemini placed it · not checked", button: true },
+  "gemini-picked-domain": { glyph: "pv.libpick", label: "Gemini picked your Domain · not checked", button: true },
+  "gemini-kept-by-you": { glyph: "pv.kept", label: "Gemini · kept by you", button: true },
+  "estimate-gemini": { glyph: "pv.suggest", label: "4 layers · Gemini's estimate", button: true },
+  "estimate-unsure": { glyph: "pv.suggest", label: "Gemini unsure · 3–5 layers", button: true },
+  "estimate-app": { glyph: "pv.app", label: "App's rough estimate · no Gemini", button: true },
+  "caution-financial": { glyph: "m.info", label: "Not financial advice", button: true },
+  "caution-medical": { glyph: "safe.health", label: "Not medical advice", button: true },
+  "caution-legal": { glyph: "m.info", label: "Not legal advice", button: true },
 };
 export const HONESTY_KIND_NAMES = Object.keys(HONESTY_KINDS) as HonestyKind[];
 /** The kinds whose visible label must carry the who-word "Gemini" (D25). */
-export const GEMINI_KINDS: readonly HonestyKind[] = ["gemini", "gemini-kept", "gemini-pick", "integrity", "constraints", "credential", "arrangement", "sized-by-gemini", "edit-numbers"];
+export const GEMINI_KINDS: readonly HonestyKind[] = [
+  "gemini",
+  "gemini-kept",
+  "gemini-pick",
+  "integrity",
+  "constraints",
+  "credential",
+  "arrangement",
+  "sized-by-gemini",
+  "edit-numbers",
+  // Revision 5, lane 9 (ui-motion.md §15.3): the six Gemini kinds of the topic map
+  "gemini-linked",
+  "gemini-placed",
+  "gemini-picked-domain",
+  "gemini-kept-by-you",
+  "estimate-gemini",
+  "estimate-unsure",
+];
+/** Revision 5, lane 9: the caution kinds, static at every level (D11): their panel opens instantly (the caller wraps them in [data-safety]). */
+export const CAUTION_KINDS: readonly HonestyKind[] = ["caution-financial", "caution-medical", "caution-legal"];
 
 export interface HonestyChipProps {
   kind: HonestyKind;

@@ -260,7 +260,7 @@ export function KindGlyph({ kind, track, evidence, state = "idle", size = 20, wo
 
 // ─── ProvMark ───────────────────────────────────────────────────────────────
 
-export type ProvMarkClass = "app-written" | "app-added" | "app-worked" | "you" | "checked" | "syllabus";
+export type ProvMarkClass = "app-written" | "app-added" | "app-worked" | "you" | "checked" | "syllabus" | "library" | "named";
 /** The exact current words (roadmap-copy provenanceChipWords / PROVENANCE_WORDS; glyph-check asserts they match). */
 export const PROVMARK_WORDS: Readonly<Record<ProvMarkClass, string>> = {
   "app-written": "Written by the app",
@@ -269,6 +269,9 @@ export const PROVMARK_WORDS: Readonly<Record<ProvMarkClass, string>> = {
   you: "You wrote this",
   checked: "You checked this",
   syllabus: "Your syllabus line",
+  // Revision 5, lane 9 (ui-motion.md §15.1, D33): a topic from your Domains; the Gemini mark on a Domain Gemini named
+  library: "Your Domain",
+  named: "named by Gemini",
 };
 export const PROVMARK_GLYPH: Readonly<Record<ProvMarkClass, ProvMarkName>> = {
   "app-written": "pv.app",
@@ -277,6 +280,8 @@ export const PROVMARK_GLYPH: Readonly<Record<ProvMarkClass, ProvMarkName>> = {
   you: "pv.you",
   checked: "pv.checked",
   syllabus: "pv.syllabus",
+  library: "pv.library",
+  named: "pv.named",
 };
 
 export interface ProvMarkProps {
@@ -295,7 +300,8 @@ export interface ProvMarkProps {
 export function ProvMark({ cls, words, size = 16, defs, confirming, className, ref }: ProvMarkProps) {
   return (
     <span ref={ref} className={cx("mg-pm", className)} data-pm={cls}>
-      <Glyph name={PROVMARK_GLYPH[cls]} size={size} defs={defs} inline={confirming} inherit />
+      {/* pv.named is drawn only at 12 px (ui-motion §15.1, D33) */}
+      <Glyph name={PROVMARK_GLYPH[cls]} size={cls === "named" ? 12 : size} defs={defs} inline={confirming} inherit />
       <span className="sr-only">{words ?? PROVMARK_WORDS[cls]}</span>
     </span>
   );

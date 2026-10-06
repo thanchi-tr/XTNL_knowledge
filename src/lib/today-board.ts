@@ -51,8 +51,8 @@ import {
   type GoalProgressRow,
   type RoadmapGoalEntry,
 } from "./goals";
-// Type-only (erased): the zero-reason codes the fallback words must cover.
-import type { StatedZeroReason } from "./roadmap-types";
+// Type-only (erased): the zero-reason codes the fallback words must cover, and a goal's seat (revision 5).
+import type { GoalSlot, StatedZeroReason } from "./roadmap-types";
 import {
   HABIT_WINDOW_DAYS,
   habitStrength,
@@ -297,9 +297,26 @@ export interface BoardData {
    * never measured again ("measures removed by a reset", "replaced by Start
    * again"; its series is empty), keyed by goal id. Read with one query only when
    * such a goal exists; a missing table reads as none. Absent: no roadmap goals.
+   * Revision 5 (contracts §23.3; lane 3): an entry may carry its goal's seat
+   * (RoadmapGoalSeat), which the loader reads only once GOALS_MAX > 1.
    */
-  roadmapGoals?: Record<string, RoadmapGoalEntry>;
+  roadmapGoals?: Record<string, RoadmapGoalEntrySeated>;
 }
+
+/**
+ * Revision 5 (contracts §23.3; lane 3): the seat of a ROADMAP goal's roadmap
+ * beside its BoardData.roadmapGoals entry: the goal's slot (null for a
+ * paused goal, whose stored slot may be another's: ruling 55) and how many
+ * goals are open (DRAFT and ACTIVE). Today's goal chip shows the seat only
+ * with 2 or more goals open (D39).
+ */
+export interface RoadmapGoalSeat {
+  slot: GoalSlot | null;
+  open: number;
+}
+
+/** A BoardData.roadmapGoals entry, with its seat when the loader read one (revision 5). */
+export type RoadmapGoalEntrySeated = RoadmapGoalEntry & { seat?: RoadmapGoalSeat | null };
 
 // ── Small pure helpers ────────────────────────────────────────────────────
 
@@ -970,8 +987,14 @@ export interface RoadmapGoalCard {
   slowest: string | null;
   /** When the binding reading was taken: "measured 09:12", "measured Sat", "measured 3 Oct"; null when the steps bind or before the first reading. */
   measured: string | null;
-  /** "Roadmap · milestone 2 of 3"; null when the milestone's place is unknown (no entry). */
+  /**
+   * "Roadmap · milestone 2 of 3"; null when the milestone's place is unknown
+   * (no entry). Revision 5 (contracts §23.3): with 2 or more goals open the
+   * chip reads "2 of 5" after its goal's seat glyph (`slot`), "[goal.2] 2 of 5".
+   */
   chip: string | null;
+  /** Revision 5 (lane 3): the goal's seat, only while 2 or more goals are open (D39); absent with one goal, whose chip is unchanged. */
+  slot?: GoalSlot | null;
   /** Why it states 0, shown after "pays nothing" ("knowledge is paid by reviews"); null unless goalMp is 0. */
   zeroReason: string | null;
   /**
@@ -1849,13 +1872,16 @@ export function measuredLabelOf(observedAt: string, today: DayKey, tz: string = 
  * the card reads not measured: "not measured yet" while a reading may still
  * come, "not measured" for good (`unmeasured`) when the entry's note says
  * why it never will (an archived roadmap, or a row replaced by Start again).
+ * Revision 5 (contracts §23.3): an entry seated among 2 or more open goals
+ * gives the chip "2 of 5" and its `slot` (the seat glyph before it); with one
+ * goal, or no seat read, the card is exactly as before.
  */
 export function roadmapGoalCardOf(
   g: Pick<BoardTemplate, "goalMp">,
   input: Pick<GoalProgressInput, "steps" | "readings">,
   asOf: DayKey,
   today: DayKey,
-  entry: RoadmapGoalEntry | null
+  entry: RoadmapGoalEntrySeated | null
 ): RoadmapGoalCard {
   const point = roadmapPointAsOf(input.readings, asOf);
   const { done, total } = stepsDoneAsOf(input.steps, asOf);
@@ -1863,14 +1889,17 @@ export function roadmapGoalCardOf(
   const caption = point == null ? null : stepsBind || point.bindingClass !== "MEASURED" ? ROADMAP_CAPTION.SELF_REPORTED : ROADMAP_CAPTION.MEASURED;
   const slowest = point == null ? null : stepsBind ? `${done} of ${total} step${total === 1 ? "" : "s"}` : (point.bindingLabel ?? "").trim() || null;
   const note = entry?.note?.trim() || null;
+  const seat = entry?.seat && entry.seat.open >= 2 && entry.seat.slot != null ? entry.seat.slot : null;
+  const placed = entry != null && entry.ord > 0 && entry.of >= entry.ord;
   return {
     caption,
     slowest,
     measured: point && !stepsBind ? measuredLabelOf(point.observedAt, today) : null,
-    chip: entry && entry.ord > 0 && entry.of >= entry.ord ? `Roadmap · milestone ${entry.ord} of ${entry.of}` : null,
+    chip: placed ? (seat != null ? `${entry.ord} of ${entry.of}` : `Roadmap · milestone ${entry.ord} of ${entry.of}`) : null,
     zeroReason: g.goalMp === 0 ? roadmapZeroReasonText(entry?.zeroReason) : null,
     note,
     unmeasured: point == null && note != null,
+    ...(seat != null ? { slot: seat } : {}),
   };
 }
 

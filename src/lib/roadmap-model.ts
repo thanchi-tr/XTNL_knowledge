@@ -32,14 +32,34 @@
  *   isReusableRun · SAMPLE_ERROR_MAX (fix round 2: the reuse rule for one run, so R4's reuse filter and
  *   reusableRunOf are one definition; runFactsOf marks every stored sample ok: true or false)
  *   NOTHING_TO_ASK (the fix round, r3: a run whose schema has no property is never sent)
+ *
+ * Revision 5, lane 10 (contracts §22.4, §22.15; ruling 47): the model phases in code, every TOPIC_* switch false.
+ *   - ModelRequest gains a tools variant: `responseSchema` null is plain text (GROUND), `googleSearch` sends
+ *     tools [{googleSearch: {}}] with no responseMimeType and no schema, and `candidateCount` (> 1 only after probe P6).
+ *   - topicSamples: one JSON phase (RATE, MAP, LINK, DEEPER) over a roadmap-evidence TopicPack, TOPIC_SAMPLES requests
+ *     (or one request carrying the candidates); readResponse's JSON rule is unchanged.
+ *   - groundSamples: one GROUND wave, one call per pack (a batch of ≤ GROUND_KEYS_PER_CALL terms), ≤ GROUND_PARALLEL
+ *     calls, GROUND_ABORT_MS; its own reader over the raw parts (roadmap-grounding groundPartsOf), never readResponse.
+ *   - Request counting: RoadmapRun.requests (every request: aborted ones, 429s and quota errors included), read by
+ *     requestsToday against ROADMAP_REQUESTS_PER_DAY and GROUNDED_REQUESTS_PER_DAY; draftsCountedToday counts chain
+ *     heads only (roadmap-types countsTowardDraftCap reads `phase`, ruling 17).
+ *   No model call is reachable from the app while TOPIC_* are false: every roadmap-server core that reaches these
+ *   refuses first (topicSwitchesOf), and the default call still refuses under ROADMAP_CHECK.
+ *
+ *   topicSamples · groundSamples · GroundSampleResult · groundResponseOf · candidatesOf · requestsToday ·
+ *   phaseRequestsOf · requestsSentOf · REQUEST_CAP_LINE · GROUNDED_CAP_LINE
  */
 import { ThinkingLevel, type Schema } from "@google/genai";
 import { geminiClientOrNull, withModelTimeout, type GeminiEnv, type ModelResult } from "./gemini";
 import { daysBetween, type DayKey } from "./life-day";
-import { packUserContent, systemInstructionOf } from "./roadmap-evidence";
+import { packUserContent, systemInstructionOf, type TopicPack } from "./roadmap-evidence";
 import { keysOnlySchemaOf, packRunOf, schemaAsksNothing } from "./roadmap-validate";
+import { groundPartsOf, type GroundParts } from "./roadmap-grounding";
 import {
   GEMINI_KEY_TIER,
+  GROUND_ABORT_MS,
+  GROUND_BACKSTOP_MS,
+  GROUND_PARALLEL,
   RAW_SAMPLE_MAX,
   ROADMAP_ABORT_MS,
   ROADMAP_BACKSTOP_MS,
@@ -52,10 +72,13 @@ import {
   SEED_BASE,
   SEED_OFFSETS,
   SEED_REDRAFT_STEP,
+  TOPIC_CANDIDATE_COUNT,
+  TOPIC_SAMPLES,
   countsTowardDraftCap,
   type EvidencePack,
   type GeminiKeyTier,
   type RunKind,
+  type RunPhase,
   type RunStatus,
 } from "./roadmap-types";
 
@@ -81,11 +104,16 @@ export interface ModelRequest {
   systemInstruction: string;
   /** The pack's user content (roadmap-evidence.ts packUserContent). */
   contents: string;
-  responseSchema: Record<string, unknown>;
+  /** Revision 5 (§22.15): null is a plain-text call (GROUND): no responseMimeType, no schema. */
+  responseSchema: Record<string, unknown> | null;
   seed: number;
   maxOutputTokens: number;
   thinkingLow: boolean;
   abortSignal: AbortSignal;
+  /** Revision 5 (§22.15): tools [{googleSearch: {}}] (GROUND only; never together with a schema until probe P7). */
+  googleSearch?: boolean;
+  /** Revision 5 (§22.15): candidates in one request; sent only when > 1 (TOPIC_CANDIDATE_COUNT 3, after probe P6). */
+  candidateCount?: number;
 }
 
 /** One call; resolves to the SDK's response (read loosely: candidates[0].finishReason, promptFeedback, text, usageMetadata …). */
@@ -176,7 +204,11 @@ const checkSet = (env: GeminiEnv): boolean => env[ROADMAP_CHECK_ENV] === "1" || 
  * The real call against `env`'s key: refuses (throws CALL_REFUSED) while
  * ROADMAP_CHECK is '1' in `env` or in process.env, before any client exists;
  * throws NO_KEY when geminiClientOrNull gives null. Both become {ok: false}
- * values in draftSamples. No tools; default temperature.
+ * values in draftSamples. Default temperature. A JSON call (every LEVELS call)
+ * sends exactly what it sent before revision 5: no tools, no candidateCount.
+ * Revision 5: a null schema sends no responseMimeType (GROUND's plain text),
+ * `googleSearch` adds tools [{googleSearch: {}}], and a candidateCount over 1
+ * is sent as given.
  */
 export function geminiCallModel(env: GeminiEnv = process.env): CallModel {
   return async (req) => {
@@ -188,8 +220,9 @@ export function geminiCallModel(env: GeminiEnv = process.env): CallModel {
       contents: [{ role: "user", parts: [{ text: req.contents }] }],
       config: {
         systemInstruction: req.systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: req.responseSchema as Schema,
+        ...(req.responseSchema != null ? { responseMimeType: "application/json", responseSchema: req.responseSchema as Schema } : {}),
+        ...(req.googleSearch === true ? { tools: [{ googleSearch: {} }] } : {}),
+        ...(typeof req.candidateCount === "number" && req.candidateCount > 1 ? { candidateCount: Math.floor(req.candidateCount) } : {}),
         seed: req.seed,
         maxOutputTokens: req.maxOutputTokens,
         abortSignal: req.abortSignal,
@@ -299,6 +332,11 @@ export interface DraftSamplesOpts {
   thinkingLow?: boolean;
   abortMs?: number;
   backstopMs?: number;
+  /**
+   * Revision 5 (lane 10), topicSamples only: the requests a JSON phase sends, 1..TOPIC_SAMPLES (default TOPIC_SAMPLES).
+   * The approved probe sends 1 a planned call (PROBE_PLAN v5); the server never passes it.
+   */
+  samples?: number;
 }
 
 /**
@@ -339,6 +377,187 @@ export async function draftSamples(pack: EvidencePack, n: number, opts: DraftSam
   return Promise.all(Array.from({ length: samples }, (_, i) => one(i)));
 }
 
+// ── Revision 5, lane 10: the topic phases (contracts §22.4, §22.15) ─────────
+
+/**
+ * One response per candidate: a reply carrying more than one candidate
+ * (candidateCount > 1, only after probe P6) is read as that many responses,
+ * each holding one candidate with the reply's promptFeedback, modelVersion,
+ * responseId and usage, so readResponse reads each one exactly as it reads a
+ * single reply. A reply with at most one candidate comes back as itself.
+ */
+export function candidatesOf(response: unknown): unknown[] {
+  const r = asRecord(response);
+  const candidates = r && Array.isArray(r.candidates) ? r.candidates : [];
+  if (!r || candidates.length <= 1) return [response];
+  return candidates.map((c) => ({ candidates: [c], promptFeedback: r.promptFeedback, modelVersion: r.modelVersion, responseId: r.responseId, usageMetadata: r.usageMetadata }));
+}
+
+/** The requests one JSON phase sends: TOPIC_SAMPLES, or 1 when one request carries the candidates (candidateCount > 1). */
+export function phaseRequestsOf(candidateCount: number = TOPIC_CANDIDATE_COUNT, samples: number = TOPIC_SAMPLES): number {
+  const n = Number.isFinite(samples) ? Math.max(1, Math.min(TOPIC_SAMPLES, Math.floor(samples))) : TOPIC_SAMPLES;
+  return Number.isFinite(candidateCount) && candidateCount > 1 ? 1 : n;
+}
+
+/**
+ * The requests a set of samples actually sent (RoadmapRun.requests): every sample that went out, failures included
+ * (an abort, a 429 or a quota error still counts: Google may have received it); a sample never sent (NOTHING_TO_ASK)
+ * is no request. With candidateCount > 1 the samples share one request.
+ */
+export function requestsSentOf(results: readonly SampleResult[], candidateCount: number = 1): number {
+  const sent = (Array.isArray(results) ? results : []).filter((r) => !!r && !(r.ok === false && r.error === NOTHING_TO_ASK)).length;
+  if (sent === 0) return 0;
+  return Number.isFinite(candidateCount) && candidateCount > 1 ? 1 : sent;
+}
+
+/**
+ * One JSON phase's samples (RATE, MAP, LINK, DEEPER; §22.15) over its TopicPack: TOPIC_SAMPLES calls in parallel on
+ * seedBase + SEED_OFFSETS[i] (`opts.samples` fewer, for the approved probe), or, with candidateCount > 1, one call
+ * carrying that many candidates (candidatesOf), padded with failures to the samples asked. Each call is the pack's
+ * instruction, contents and exact schema, ROADMAP_ABORT_MS and the backstop, as draftSamples sends; readResponse's
+ * JSON rule is unchanged. A pack with no schema, a schema asking nothing, or a GROUND pack is never sent (every sample
+ * NOTHING_TO_ASK; groundSamples sends GROUND). Never throws.
+ */
+export async function topicSamples(pack: TopicPack, opts: DraftSamplesOpts & { candidateCount?: number }): Promise<SampleResult[]> {
+  const call = opts.callModel ?? defaultCallModel;
+  const samples = Math.max(1, Math.min(TOPIC_SAMPLES, SEED_OFFSETS.length, Number.isFinite(opts.samples) ? Math.floor(opts.samples as number) : TOPIC_SAMPLES));
+  const schema = pack && typeof pack === "object" ? pack.schema : null;
+  if (!pack || pack.phase === "GROUND" || schema == null || schemaAsksNothing(schema) || typeof pack.contents !== "string" || pack.contents === "") {
+    return Array.from({ length: samples }, () => failure(NOTHING_TO_ASK, { latencyMs: 0 }));
+  }
+  const cc = Number.isFinite(opts.candidateCount) ? Math.floor(opts.candidateCount as number) : TOPIC_CANDIDATE_COUNT;
+  const candidates = cc > 1 ? Math.min(cc, samples) : 1;
+  const backstop = opts.backstopMs ?? ROADMAP_BACKSTOP_MS;
+  const abortMs = opts.abortMs ?? ROADMAP_ABORT_MS;
+  const send = async (i: number): Promise<{ results: SampleResult[] }> => {
+    const req: ModelRequest = {
+      model: opts.model ?? ROADMAP_MODEL,
+      systemInstruction: pack.instruction,
+      contents: pack.contents,
+      responseSchema: schema,
+      seed: opts.seedBase + SEED_OFFSETS[i],
+      maxOutputTokens: ROADMAP_MAX_OUTPUT_TOKENS,
+      thinkingLow: opts.thinkingLow ?? ROADMAP_THINKING_LOW,
+      abortSignal: AbortSignal.timeout(abortMs),
+      ...(candidates > 1 ? { candidateCount: candidates } : {}),
+    };
+    const started = Date.now();
+    const res: ModelResult<unknown> = await withModelTimeout(Promise.resolve().then(() => call(req)), backstop);
+    const latencyMs = Date.now() - started;
+    if (!res.ok) return { results: [failure(res.error, { latencyMs })] };
+    return { results: candidatesOf(res.value).map((one) => readResponse(one, latencyMs)) };
+  };
+  if (candidates > 1) {
+    const { results } = await send(0);
+    const out = results.slice(0, samples);
+    // A failed request (or fewer candidates than asked) fails every missing sample with the request's own error.
+    const why = results.length === 1 && !results[0].ok ? results[0] : null;
+    while (out.length < samples) out.push(why && !why.ok ? { ...why } : failure("fewer candidates than asked", { latencyMs: 0 }));
+    return out;
+  }
+  const all = await Promise.all(Array.from({ length: samples }, (_, i) => send(i)));
+  return all.map((x) => x.results[0] ?? failure("no reply", { latencyMs: 0 }));
+}
+
+/**
+ * One GROUND call's result (§22.15): `parts` is roadmap-grounding groundPartsOf over the reply (candidates[0]'s parts
+ * exactly as returned, thought and tool parts kept, and its groundingMetadata), null when there were none; `raw` is
+ * those parts as JSON, capped at RAW_SAMPLE_MAX (`parts.truncated` then holds: such a run is never reused). Never
+ * readResponse, never JSON-parsed as a reply. `response` (lane 10's optional field) is the reply itself, in memory
+ * only, for groundVerdictOf; it is never stored or logged.
+ */
+export interface GroundSampleResult {
+  ok: boolean;
+  parts: GroundParts | null;
+  error: string | null;
+  latencyMs: number;
+  raw: string | null;
+  response?: unknown;
+}
+
+/**
+ * The minimal reply groundVerdictOf reads, rebuilt from GroundParts (when the reply itself is not at hand): the
+ * first candidate's parts, finishReason and groundingMetadata, and usageMetadata.toolUsePromptTokenCount.
+ */
+export function groundResponseOf(parts: GroundParts | null | undefined): unknown {
+  if (!parts) return null;
+  return {
+    candidates: [{ content: { parts: [...parts.parts] }, finishReason: parts.finishReason, ...(parts.metadata ? { groundingMetadata: parts.metadata } : {}) }],
+    ...(parts.toolUsePromptTokenCount != null ? { usageMetadata: { toolUsePromptTokenCount: parts.toolUsePromptTokenCount } } : {}),
+  };
+}
+
+/** Reads one GROUND reply: a blockReason or any finishReason but STOP fails (the parts still recorded); no parts fails closed. */
+function readGroundResponse(response: unknown, latencyMs: number): GroundSampleResult {
+  const r = asRecord(response);
+  if (!r) return { ok: false, parts: null, error: "empty response", latencyMs, raw: null };
+  const c0 = asRecord((Array.isArray(r.candidates) ? r.candidates : [])[0]);
+  const finishReason = c0 ? str(c0.finishReason) : null;
+  let parts: GroundParts | null = null;
+  try {
+    parts = groundPartsOf(response);
+  } catch {
+    parts = null;
+  }
+  const rawParts = asRecord(c0?.content)?.parts;
+  let raw: string | null = null;
+  let cut = false;
+  if (Array.isArray(rawParts)) {
+    const text = JSON.stringify(rawParts);
+    raw = capRaw(text);
+    cut = raw.length < text.length;
+  }
+  const kept = parts ? { ...parts, truncated: parts.truncated || cut } : null;
+  const blockReason = asRecord(r.promptFeedback)?.blockReason;
+  if (blockReason != null && blockReason !== "") {
+    return { ok: false, parts: kept, error: `blocked: ${typeof blockReason === "string" ? blockReason : JSON.stringify(blockReason)}`, latencyMs, raw, response };
+  }
+  if (finishReason !== "STOP") return { ok: false, parts: kept, error: `finishReason ${finishReason ?? "missing"}`, latencyMs, raw, response };
+  if (!kept) return { ok: false, parts: null, error: "no parts", latencyMs, raw, response };
+  return { ok: true, parts: kept, error: null, latencyMs, raw, response };
+}
+
+/**
+ * One GROUND wave (§22.15, ruling 47): one call per pack (each a batch of at most GROUND_KEYS_PER_CALL terms), at
+ * most GROUND_PARALLEL calls, in parallel; each a plain-text call with tools [{googleSearch: {}}] and no schema,
+ * GROUND_ABORT_MS with the GROUND_BACKSTOP_MS backstop. The results are index-aligned with `packs`: a pack past
+ * GROUND_PARALLEL, or one that is not a GROUND pack with contents, is not sent (NOTHING_TO_ASK). Never throws.
+ */
+export async function groundSamples(packs: readonly TopicPack[], opts: DraftSamplesOpts): Promise<GroundSampleResult[]> {
+  const call = opts.callModel ?? defaultCallModel;
+  const list = Array.isArray(packs) ? packs : [];
+  const backstop = opts.backstopMs ?? GROUND_BACKSTOP_MS;
+  const abortMs = opts.abortMs ?? GROUND_ABORT_MS;
+  const notSent = (error: string): GroundSampleResult => ({ ok: false, parts: null, error, latencyMs: 0, raw: null });
+  return Promise.all(
+    list.map(async (pack, i): Promise<GroundSampleResult> => {
+      if (i >= GROUND_PARALLEL) return notSent(`${NOTHING_TO_ASK} (past GROUND_PARALLEL in one wave)`);
+      if (!pack || pack.phase !== "GROUND" || typeof pack.contents !== "string" || pack.contents === "") return notSent(NOTHING_TO_ASK);
+      const req: ModelRequest = {
+        model: opts.model ?? ROADMAP_MODEL,
+        systemInstruction: pack.instruction,
+        contents: pack.contents,
+        responseSchema: null,
+        googleSearch: true,
+        seed: opts.seedBase + SEED_OFFSETS[i % SEED_OFFSETS.length],
+        maxOutputTokens: ROADMAP_MAX_OUTPUT_TOKENS,
+        thinkingLow: opts.thinkingLow ?? ROADMAP_THINKING_LOW,
+        abortSignal: AbortSignal.timeout(abortMs),
+      };
+      const started = Date.now();
+      const res: ModelResult<unknown> = await withModelTimeout(Promise.resolve().then(() => call(req)), backstop);
+      const latencyMs = Date.now() - started;
+      if (!res.ok) return { ok: false, parts: null, error: res.error, latencyMs, raw: null };
+      return readGroundResponse(res.value, latencyMs);
+    })
+  );
+}
+
+/** The GROUND wave's requests sent (each pack sent is one grounded request, failures included). */
+export function groundRequestsSentOf(results: readonly GroundSampleResult[]): number {
+  return (Array.isArray(results) ? results : []).filter((r) => !!r && !(r.ok === false && typeof r.error === "string" && r.error.startsWith(NOTHING_TO_ASK))).length;
+}
+
 // ── The cap and the reuse (read by R4's claim; F8 steps 3–4) ───────────────
 
 /** The fields of a RoadmapRun row the cap and the reuse read. */
@@ -348,6 +567,10 @@ export interface RunLike {
   /** The life day the run was claimed. */
   day: DayKey;
   inputHash: string | null;
+  /** Revision 5 (§22.15): the run's phase; null or absent on a LEVELS run (a chain head for the draft cap). */
+  phase?: RunPhase | null;
+  /** Revision 5 (§22.15): the model requests the run made (RoadmapRun.requests); absent reads 0. */
+  requests?: number;
 }
 
 /**
@@ -359,6 +582,9 @@ export interface RunLike {
  * call, or one that timed out at our end, may still have reached Google; a
  * CAPPED row is only written once the count is already at the cap, so
  * counting it changes no answer and keeps every reader on one rule.
+ * Revision 5 (ruling 17): chain heads only — a run with no phase (LEVELS) or
+ * phase RATE; MAP, LINK, GROUND and DEEPER count against the request caps
+ * only (requestsToday). The SQL guard GEMINI_RUNS_BELOW reads the same.
  */
 export function draftsCountedToday(runs: readonly RunLike[], today: DayKey): number {
   return runs.filter((r) => r.day === today && countsTowardDraftCap(r)).length;
@@ -376,6 +602,35 @@ export function draftsLeftToday(runs: readonly RunLike[], today: DayKey): number
 
 /** The capped claim's answer (a CAPPED run is written beside it). */
 export const DRAFT_CAP_LINE = `${ROADMAP_DRAFTS_PER_DAY} drafts today — build from your numbers or write it yourself.`;
+
+// ── Revision 5, lane 10: the request caps (contracts §22.15; ruling 66) ─────
+
+/**
+ * Today's model requests across the user's goals (§22.15): RoadmapRun.requests summed over the runs claimed on
+ * `today` (every phase and every LEVELS run: from lane 10 every run row the server writes sets it; a row with none
+ * reads 0), and `grounded`, the GROUND rows' alone (ruling 18). Read against ROADMAP_REQUESTS_PER_DAY and
+ * GROUNDED_REQUESTS_PER_DAY; the REQUESTS_BELOW guard sums the same in SQL. Takes any row with a day, a phase and
+ * a requests count (a RoadmapRun row as roadmap-server reads it), so a RunLike passes too. Never throws.
+ */
+export function requestsToday(
+  runs: readonly (Pick<RunLike, "day"> & { phase?: RunPhase | string | null; requests?: number | null })[],
+  today: DayKey
+): { requests: number; grounded: number } {
+  let requests = 0;
+  let grounded = 0;
+  for (const r of Array.isArray(runs) ? runs : []) {
+    if (!r || typeof r !== "object" || r.day !== today) continue;
+    const n = typeof r.requests === "number" && Number.isFinite(r.requests) ? Math.max(0, Math.floor(r.requests)) : 0;
+    requests += n;
+    if (r.phase === "GROUND") grounded += n;
+  }
+  return { requests, grounded };
+}
+
+/** A topic step refused at ROADMAP_REQUESTS_PER_DAY (roadmap-server REQUESTS_CAPPED; a CAPPED row is written beside it). */
+export const REQUEST_CAP_LINE = "Today's Gemini requests are used up. Write the topics yourself.";
+/** A GROUND wave refused at GROUNDED_REQUESTS_PER_DAY (roadmap-server GROUNDED_CAPPED): its names stay hidden. */
+export const GROUNDED_CAP_LINE = "Today's web checks are used up. Names stay hidden until tomorrow.";
 
 /**
  * The reuse rule for one run (fix round 2: the one definition R4's reuse

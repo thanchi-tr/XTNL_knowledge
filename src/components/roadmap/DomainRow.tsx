@@ -21,7 +21,8 @@ import { ChipButton } from "@/components/ui/Chip";
 import { Sheet } from "@/components/ui/Sheet";
 import { Sigil } from "@/components/ui/Icon";
 import { ProvMark } from "@/components/glyph/Glyph";
-import { provenanceOf } from "@/lib/roadmap-types";
+import { geminiNamedOf, provenanceOf } from "@/lib/roadmap-types";
+import { DomainName } from "@/components/glyph/NamedMark";
 import { addCardHref, libraryDomainHref } from "./roadmap-links";
 import { plural } from "./roadmap-copy";
 import { ItemRow } from "./ItemRow";
@@ -90,7 +91,14 @@ export function DomainRow({ name, domainId, facts, createdNote }: { name: string
     <div className="rm-dr">
       <Sigil track="know" />
       <div>
-        <b data-wc="name">{name}</b>
+        {facts && name === facts.name && geminiNamedOf(facts) ? (
+          // Revision 5, lane 9 (contracts ruling 67): a Domain Gemini named carries pv.named until you rename it
+          <b>
+            <DomainName name={name} geminiNamed />
+          </b>
+        ) : (
+          <b data-wc="name">{name}</b>
+        )}
         {(facts || createdNote) && (
           <div className="t-meta rm-r4-dl">
             {facts && (

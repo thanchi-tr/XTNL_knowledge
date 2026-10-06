@@ -35,6 +35,9 @@ import { goalPercent } from "@/lib/goals";
 import { parseMeasureKey, type MeasureRowView } from "@/lib/roadmap-types";
 import { SHORT_GEMINI, SHORT_GEMINI_KEPT, basisClassNote, levelGapPhrase, measuredLabel, paceLine } from "./roadmap-copy";
 import { seenMeasureWhat } from "./roadmap-ui-model";
+// Revision 5, lane 9: pv.named (contracts ruling 67) and "climbing to 8" (ui-motion §15.6)
+import { NamedText, hasNamed } from "@/components/glyph/NamedMark";
+import { climbingToLine } from "./roadmap-copy";
 
 /** g_m for a measure row: (v − baseline) ÷ (target − baseline), clamped (F10). */
 export function measureFractionOf(row: MeasureRowView): number | null {
@@ -104,8 +107,12 @@ export function MeasureRow({
   const cards = row.kind === "CARDS_AT_LEVEL";
   const value = row.figure ? Number(row.figure.value) : null;
   // The compact head: the Domains and the level ("Position Sizing, Risk Management · L6+"), or "Practice kept".
-  const head =
-    cards && scope ? (
+  const head = hasNamed(row.labelParts) ? (
+    // Revision 5, lane 9 (contracts ruling 67): a Gemini-named Domain in the label carries pv.named, from the view's NamedParts
+    <span data-wc="name">
+      <NamedText parts={row.labelParts} />
+    </span>
+  ) : cards && scope ? (
       <>
         <span data-wc="name">{scope}</span>
         {level != null && (
@@ -152,6 +159,8 @@ export function MeasureRow({
           <span className="rm-mr-l">{head}</span>
           {slowest && " "}
           {slowest && <span className="rm-slow">slowest</span>}
+          {/* Revision 5, lane 9 (ui-motion §15.6): an earlier layer's measure, as context */}
+          {row.climbing != null && <span className="rm-mr-climb"> · {climbingToLine(row.climbing)}</span>}
         </b>
         {pct && <span className="rm-pct">{pct}</span>}
       </div>

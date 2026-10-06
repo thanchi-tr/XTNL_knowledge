@@ -94,19 +94,25 @@ async function deleteLifeRows(userId: string): Promise<Record<string, number>> {
   }
 }
 
-/** The open roadmap statuses (decision 15: at most one DRAFT or ACTIVE per user). */
-const OPEN_ROADMAP: RoadmapStatus[] = ["DRAFT", "ACTIVE"];
+/**
+ * The open roadmap statuses: the goals a reset archives and the danger zone
+ * counts as open. DRAFT and ACTIVE hold a seat; a PAUSED goal (revision 5,
+ * contracts §23.4) holds its Domains and would resume over the cards a reset
+ * deletes, so it is open here too (roadmap-types HOLD_STATUSES).
+ */
+const OPEN_ROADMAP: RoadmapStatus[] = ["DRAFT", "ACTIVE", "PAUSED"];
 
 /**
- * 'ideas' and 'knowledge' (roadmap.md F16 seam 11): the open roadmap's
- * measures count cards and Domains this reset removes, so it is archived
- * with "measures removed by a reset on <day>" (reset-scopes.ts
- * resetArchiveReason). Its readings, quest weeks and Aim rank stay as
- * history; no week quest set is frozen for it again, and its open milestone
- * goal stays on Today with no series, so g is null and it pays 0, "not
- * measured". Like the rest of the reset this is the user's own typed
- * decision, so it runs wherever the ideas are deleted. 0 while the
- * life_roadmap migration is not applied.
+ * 'ideas' and 'knowledge' (roadmap.md F16 seam 11): the open roadmaps'
+ * measures count cards and Domains this reset removes, so each open goal
+ * (DRAFT, ACTIVE and PAUSED: a paused one would resume over deleted cards)
+ * is archived with "measures removed by a reset on <day>" (reset-scopes.ts
+ * resetArchiveReason); its seat and Domains free with it. Its readings,
+ * quest weeks and Aim rank stay as history; no week quest set is frozen for
+ * it again, and its open milestone goal stays on Today with no series, so g
+ * is null and it pays 0, "not measured". Like the rest of the reset this is
+ * the user's own typed decision, so it runs wherever the ideas are deleted.
+ * 0 while the life_roadmap migration is not applied.
  */
 async function archiveRoadmapsForReset(userId: string, now: Date): Promise<number> {
   const today = todayKey(now);

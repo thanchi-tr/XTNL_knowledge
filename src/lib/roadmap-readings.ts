@@ -62,6 +62,16 @@
  *     client). The finishing round gave R4's CardState and R6's quests the same window (the wider
  *     of the current acceptance's m and the live m, with the live grace), so the three readers
  *     read one window and never disagree on a card.
+ * Revision 5 (roadmap-contracts.md §23.3, §23.4; lane 3): up to 3 goals, each measured on its own.
+ *   - runForActiveGoals (private; it replaces runForActive): one context per ACTIVE goal, in seat
+ *     order, each planned, written and guarded on its own, its error named by its seat. A PAUSED
+ *     goal is never read: it has no readings while paused. With one goal a run is exactly as before.
+ *   - loadScopeMap returns RoadmapScopeUnion ({goals: one RoadmapScopeMap per ACTIVE goal}); a
+ *     review or practice hook runs only the goals whose scope matched.
+ *   - A resume writes its RESUMED rebase through proficiencyReadingFor as a plan decision
+ *     (roadmap-proficiency rebases on it even when the basis is unchanged).
+ *   - loadRoadmapGoalSeries adds each goal's seat (RoadmapGoalSeat) once GOALS_MAX > 1, for Today's
+ *     goal chip ("2 of 5" after the seat glyph, only with 2 or more goals open: D39).
  *
  * Shape of a run: one context load (two read waves: the roadmap with its
  * milestones, items, measures and acceptance; then the latest readings, the
@@ -80,6 +90,7 @@ import { isMissingRestDayTable } from "./rest-rules";
 import { RESET_ARCHIVE_NOTE, isResetArchiveReason } from "./reset-scopes";
 import { goalAsOf, type GoalStep, type RoadmapGoalEntry, type RoadmapSeriesPoint } from "./goals";
 import type { InstanceLike } from "./habit";
+import type { RoadmapGoalEntrySeated } from "./today-board";
 import {
   aimReachedOf,
   cardCountsOf,
@@ -107,8 +118,10 @@ import {
 import { basisMatchesEndState, basisWithout, parseProficiencyDetail, proficiencyBasisOf, proficiencyReadingOf } from "./roadmap-proficiency";
 import { practiceRoleOf, type CatalogKey } from "./roadmap-catalog";
 import {
+  GOALS_MAX,
   MILESTONE_NOTES,
   NON_RECALL_TYPES,
+  SEAT_STATUSES,
   PROFICIENCY_VERSION,
   READINGS_THROTTLE_MS,
   ROADMAP_NOT_YET,
@@ -119,6 +132,7 @@ import {
   acceptanceOrderBy,
   checkpointLogPrefix,
   isAimDepth,
+  isGoalSlot,
   isLegacyRoadmap,
   isMissingRev4Column,
   isMissingRoadmapTable,
@@ -182,7 +196,16 @@ export interface ReachWindowMods {
 export interface ReadingsDeps extends RoadmapWriteOpts {
   client?: RoadmapReadingsClient;
   loadContext?: (q: ContextQuery, today: DayKey) => Promise<RoadmapContext | null>;
-  loadScopeMap?: (userId: string) => Promise<RoadmapScopeMap | null>;
+  /** Revision 5 (contracts §23.4): the union of every ACTIVE goal's scope map, in seat order. */
+  loadScopeMap?: (userId: string) => Promise<RoadmapScopeUnion | null>;
+  /**
+   * Revision 5 (contracts §23.4; lane 3): the user's ACTIVE goals' ids in seat
+   * order, which the writers run one by one (runForActiveGoals). Absent: the
+   * real read on the client. With an injected loadContext and no loadGoals,
+   * one goal: the context loadContext gives for {userId, statuses: ACTIVE}
+   * (a check's fixture, exactly as before revision 5).
+   */
+  loadGoals?: (userId: string) => Promise<readonly string[]>;
   /** The time a row is written; readingUpsertOp refuses a row whose day is not today by it. */
   clock?: () => Date;
   /**
@@ -580,12 +603,42 @@ export async function loadRoadmapContext(
   today: DayKey,
   live?: (userId: string) => Promise<ReachWindowMods | null>
 ): Promise<RoadmapContext | null> {
+  const row = await findRoadmapRow(client, whereOfQuery(q));
+  return row ? contextOfRow(client, q, row, today, live) : null;
+}
+
+/** A context query as the roadmap read's where. */
+function whereOfQuery(q: ContextQuery): Prisma.RoadmapWhereInput {
   const where: Prisma.RoadmapWhereInput = { userId: q.userId };
   if (q.roadmapId) where.id = q.roadmapId;
   if (q.goalId) where.milestones = { some: { goalId: q.goalId } };
   if (q.statuses) where.status = { in: q.statuses };
-  const row = await findRoadmapRow(client, where);
-  if (!row) return null;
+  return where;
+}
+
+/**
+ * Revision 5 (contracts §23.4): every roadmap a query matches (one wave-1
+ * read), in seat order (bySeatOf), each with its own wave-2 load, which
+ * runForActiveGoals runs inside that goal's guard.
+ */
+async function loadRoadmapContexts(
+  client: RoadmapReadingsClient,
+  q: ContextQuery,
+  today: DayKey,
+  live?: (userId: string) => Promise<ReachWindowMods | null>
+): Promise<{ roadmapId: string; slot: number | null; load: () => Promise<RoadmapContext> }[]> {
+  const rows = bySeatOf<LoadedRoadmapRow>(await findRoadmapRows(client, whereOfQuery(q), true));
+  return rows.map((row) => ({ roadmapId: row.id, slot: row.slot ?? null, load: () => contextOfRow(client, { ...q, roadmapId: row.id }, row, today, live) }));
+}
+
+/** Wave 2 and the context of one roadmap row (loadRoadmapContext's, after wave 1). */
+async function contextOfRow(
+  client: RoadmapReadingsClient,
+  q: ContextQuery,
+  row: LoadedRoadmapRow,
+  today: DayKey,
+  live?: (userId: string) => Promise<ReachWindowMods | null>
+): Promise<RoadmapContext> {
   const milestones = row.milestones
     .map(milestoneOf)
     .filter((m) => m.status === "STARTING" || m.status === "STARTED" || m.version <= row.version);
@@ -761,47 +814,71 @@ export async function loadRoadmapContext(
   };
 }
 
-/** The first roadmap matching `where`, with its milestones and current acceptance; without the rev-4 columns when they are missing (before the migration). */
-async function findRoadmapRow(client: RoadmapReadingsClient, where: Prisma.RoadmapWhereInput) {
+/**
+ * The roadmaps matching `where`, with their milestones and current
+ * acceptance; without the rev-4 columns when they are missing (before the
+ * migration). `many` false reads the most recently updated one (findFirst,
+ * as before revision 5); true reads every match (findMany), which
+ * runForActiveGoals puts in seat order (revision 5: one wave-1 read for
+ * every ACTIVE goal, so one goal costs what it cost before).
+ */
+async function findRoadmapRows(client: RoadmapReadingsClient, where: Prisma.RoadmapWhereInput, many: boolean) {
   // The current acceptance: newest version, then newest record within it — lowerDepthCore writes a second
   // record inside the same version (contracts §15.7), and `version` alone would tie and could read the
   // end state from before the lowering.
   const acceptances = { where: { undoneAt: null }, orderBy: acceptanceOrderBy(), take: 1, select: { version: true, endState: true, intervalMultiplier: true } };
   const milestoneWhere = { status: { in: LOADED_STATUSES } };
+  const orderBy = { updatedAt: "desc" } as const;
+  const select = {
+    id: true,
+    status: true,
+    version: true,
+    reachedDay: true,
+    archiveReason: true,
+    fieldId: true,
+    depth: true,
+    slot: true,
+    milestones: { where: milestoneWhere, orderBy: { ord: "asc" }, include: { items: true, measures: true } },
+    acceptances,
+  } as const;
+  const legacySelect = {
+    id: true,
+    status: true,
+    version: true,
+    reachedDay: true,
+    archiveReason: true,
+    fieldId: true,
+    milestones: { where: milestoneWhere, orderBy: { ord: "asc" }, omit: { stage: true }, include: { items: { omit: { catalogKey: true } }, measures: true } },
+    acceptances,
+  } as const;
   try {
-    return await client.roadmap.findFirst({
-      where,
-      orderBy: { updatedAt: "desc" },
-      select: {
-        id: true,
-        status: true,
-        version: true,
-        reachedDay: true,
-        archiveReason: true,
-        fieldId: true,
-        depth: true,
-        milestones: { where: milestoneWhere, orderBy: { ord: "asc" }, include: { items: true, measures: true } },
-        acceptances,
-      },
-    });
+    if (many) return await client.roadmap.findMany({ where, orderBy, select });
+    const row = await client.roadmap.findFirst({ where, orderBy, select });
+    return row ? [row] : [];
   } catch (err) {
     if (!isMissingRev4Column(err)) throw err;
-    const row = await client.roadmap.findFirst({
-      where,
-      orderBy: { updatedAt: "desc" },
-      select: {
-        id: true,
-        status: true,
-        version: true,
-        reachedDay: true,
-        archiveReason: true,
-        fieldId: true,
-        milestones: { where: milestoneWhere, orderBy: { ord: "asc" }, omit: { stage: true }, include: { items: { omit: { catalogKey: true } }, measures: true } },
-        acceptances,
-      },
-    });
-    return row ? { ...row, depth: null } : null;
+    // Before the rev-4 migration no seat exists either: every row reads slot null.
+    const rows = many ? await client.roadmap.findMany({ where, orderBy, select: legacySelect }) : [await client.roadmap.findFirst({ where, orderBy, select: legacySelect })];
+    return rows.flatMap((row) => (row ? [{ ...row, depth: null, slot: null }] : []));
   }
+}
+
+/** The first roadmap matching `where` (the most recently updated), or null. */
+async function findRoadmapRow(client: RoadmapReadingsClient, where: Prisma.RoadmapWhereInput) {
+  return (await findRoadmapRows(client, where, false))[0] ?? null;
+}
+
+/** A roadmap row as the context loader reads it. */
+type LoadedRoadmapRow = NonNullable<Awaited<ReturnType<typeof findRoadmapRow>>>;
+
+/**
+ * Revision 5 (contracts §23.2): seat order — slot ascending, a NULL slot
+ * last (a row saved before lane 3), then the roadmap id. One goal reads as
+ * itself.
+ */
+export function bySeatOf<T extends { id: string; slot?: number | null }>(rows: readonly T[]): T[] {
+  const rank = (s: number | null | undefined) => (typeof s === "number" && Number.isFinite(s) ? s : Number.POSITIVE_INFINITY);
+  return [...rows].sort((a, b) => rank(a.slot) - rank(b.slot) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 /** The `rc` levels among measure keys, each with the Domains its keys cover (the clean-entry read's scope). */
@@ -1310,9 +1387,9 @@ const errorText = (err: unknown): string => {
   return text && text.trim() ? text.trim() : "unknown error";
 };
 
-async function runForActive(userId: string, now: Date, d: ReadingsDeps): Promise<ReadingsRun> {
-  const today = todayKey(now);
-  const ctx = await loaderOf(d)({ userId, statuses: ["ACTIVE"] }, today);
+/** One goal's run: its context, its plan and its write (one array transaction). */
+async function runGoal(userId: string, now: Date, d: ReadingsDeps, load: () => Promise<RoadmapContext | null>): Promise<ReadingsRun> {
+  const ctx = await load();
   if (!ctx) return { written: 0, reaches: 0, skipped: "NO_ROADMAP" };
   // A roadmap made before revision 4 is not measured (F-R4-16): "Start again at a depth to measure this aim".
   // RoadmapSkip has no LEGACY word (lane 0's union); NO_ROADMAP reads "no roadmap measured here".
@@ -1320,6 +1397,75 @@ async function runForActive(userId: string, now: Date, d: ReadingsDeps): Promise
   const plan = planRoadmapWrite(ctx, now);
   const done = await applyRoadmapWrite(clientOf(d), userId, ctx.roadmap.id, plan, now);
   return { ...done, skipped: null };
+}
+
+/** One ACTIVE goal as a run reads it: its id (null: a check's one injected context), its seat and its context load. */
+interface ActiveGoalLoad {
+  roadmapId: string | null;
+  slot: number | null;
+  load: () => Promise<RoadmapContext | null>;
+}
+
+/**
+ * The user's ACTIVE goals in seat order, each with its context load
+ * (revision 5). PAUSED, DONE, ARCHIVED and DRAFT goals are never read. The
+ * real read is one wave-1 query for all of them (loadRoadmapContexts); an
+ * injected loadGoals lists them for an injected (or the real) loader; an
+ * injected loadContext alone is one goal, as before revision 5.
+ */
+async function activeGoalsOf(userId: string, today: DayKey, d: ReadingsDeps): Promise<ActiveGoalLoad[]> {
+  const q: ContextQuery = { userId, statuses: ["ACTIVE"] };
+  if (d.loadGoals) {
+    const load = loaderOf(d);
+    const ids = [...new Set(await d.loadGoals(userId))];
+    return ids.map((id) => ({ roadmapId: id, slot: null, load: () => load({ ...q, roadmapId: id }, today) }));
+  }
+  if (d.loadContext) {
+    const load = d.loadContext;
+    return [{ roadmapId: null, slot: null, load: () => load(q, today) }];
+  }
+  return loadRoadmapContexts(clientOf(d), q, today, liveModsOf(d));
+}
+
+/**
+ * Several goals' runs as one ReadingsRun: the counts summed; skipped only
+ * when every goal skipped (MISSING_TABLE first, else the first goal's
+ * reason); each goal's error kept, named by its seat ("goal 2: …"), so the
+ * cron's `errors` say which goal failed (roadmapStepErrorsOf).
+ */
+function mergedRunOf(runs: readonly { slot: number | null; index: number; run: ReadingsRun }[]): ReadingsRun {
+  const written = runs.reduce((s, r) => s + r.run.written, 0);
+  const reaches = runs.reduce((s, r) => s + r.run.reaches, 0);
+  let skipped: ReadingsRun["skipped"] = null;
+  if (runs.length === 0) skipped = "NO_ROADMAP";
+  else if (runs.every((r) => r.run.skipped != null)) skipped = runs.some((r) => r.run.skipped === "MISSING_TABLE") ? "MISSING_TABLE" : runs[0].run.skipped;
+  const errors = runs.filter((r) => r.run.error).map((r) => `goal ${r.slot ?? r.index + 1}: ${r.run.error}`);
+  return { written, reaches, skipped, ...(errors.length > 0 ? { error: errors.join("; ") } : {}) };
+}
+
+/**
+ * The full run over the user's ACTIVE goals (revision 5, contracts §23.4;
+ * it replaces runForActive): one context per goal, in seat order, each
+ * planned, written and guarded on its own, so one goal's failure never
+ * stops another's readings. `only` (a review or practice hook) keeps the
+ * goals whose scope matched. Never throws. With one goal it is the run
+ * before revision 5 byte for byte: the same reads, the same write, the same
+ * guard and the same error text.
+ */
+async function runForActiveGoals(userId: string, now: Date, d: ReadingsDeps, what: string, only: ReadonlySet<string> | null = null): Promise<ReadingsRun> {
+  const today = todayKey(now);
+  return guarded(what, async () => {
+    const all = await activeGoalsOf(userId, today, d);
+    const goals = only ? all.filter((g) => g.roadmapId == null || only.has(g.roadmapId)) : all;
+    if (goals.length === 0) return { written: 0, reaches: 0, skipped: "NO_ROADMAP" };
+    if (goals.length === 1) return runGoal(userId, now, d, goals[0].load);
+    const runs: { slot: number | null; index: number; run: ReadingsRun }[] = [];
+    for (let i = 0; i < goals.length; i++) {
+      const g = goals[i];
+      runs.push({ slot: g.slot, index: i, run: await guarded(`${what}, goal ${g.slot ?? i + 1}`, () => runGoal(userId, now, d, g.load)) });
+    }
+    return mergedRunOf(runs);
+  });
 }
 
 /** A writer's guard: never throws; a missing table reads MISSING_TABLE, anything else is logged and returned. */
@@ -1336,12 +1482,15 @@ async function guarded(what: string, fn: () => Promise<ReadingsRun>): Promise<Re
 /**
  * The full writer: every PAYS measure of STARTING and STARTED milestones and
  * the current end-state measures, the ACTIVE roadmap's PROFICIENCY reading,
- * and the reach rules (and the aim's reachedDay), from one context load.
- * Gated by lifeWritesEnabled(); throttled from the chain (READINGS_THROTTLE_MS
- * per user, in process); never throws: a failure is logged and returned in
- * `error` (ReadingsRun.error, never blank), which lane G's step appends to
- * the cron's `errors` through roadmap-types roadmapStepErrorsOf. A missing
- * table is `skipped: "MISSING_TABLE"`, not an error.
+ * and the reach rules (and the aim's reachedDay), from one context load per
+ * ACTIVE goal (revision 5: runForActiveGoals, each goal guarded on its own;
+ * a PAUSED goal is never read). Gated by lifeWritesEnabled(); throttled from
+ * the chain (READINGS_THROTTLE_MS per user, in process); never throws: a
+ * failure is logged and returned in `error` (ReadingsRun.error, never blank;
+ * with 2 or more goals each failing goal's, named by its seat), which lane
+ * G's step appends to the cron's `errors` through roadmap-types
+ * roadmapStepErrorsOf. A missing table is `skipped: "MISSING_TABLE"`, not an
+ * error.
  */
 export async function recordRoadmapReadings(
   userId: string,
@@ -1354,7 +1503,7 @@ export async function recordRoadmapReadings(
     if (last != null && now.getTime() - last < READINGS_THROTTLE_MS && now.getTime() >= last) return { written: 0, reaches: 0, skipped: "THROTTLED" };
     lastChainRun.set(userId, now.getTime());
   }
-  return guarded("full", () => runForActive(userId, now, opts));
+  return runForActiveGoals(userId, now, opts, "full");
 }
 
 /** The scope map the event writers check before any read (cached on 'roadmap'). */
@@ -1391,14 +1540,38 @@ export function scopeMapOf(input: {
   return { roadmapId: input.roadmapId, cards: Array.from(cards.values()), templateIds: Array.from(tpls).sort() };
 }
 
-/** The real scope map: one query (the ACTIVE roadmap's STARTING and STARTED milestones and the current end state), cached on 'roadmap'. */
-export async function loadScopeMap(userId: string, client: RoadmapReadingsClient = prisma): Promise<RoadmapScopeMap | null> {
-  return cached(`roadmapScope:${userId}`, ["roadmap"], async () => {
+/**
+ * Revision 5 (contracts §23.4; lane 3): the scope maps of every ACTIVE goal,
+ * in seat order. A PAUSED goal has none (it is never measured while paused),
+ * so a review or a tick in its scope runs nothing.
+ */
+export interface RoadmapScopeUnion {
+  goals: RoadmapScopeMap[];
+}
+
+/** The goals of a union whose scope a review's level change moves (recordCardsForReview's test). */
+export function goalsMovedByReview(union: RoadmapScopeUnion | null, domainId: string, oldLevel: number, newLevel: number): string[] {
+  return (union?.goals ?? []).filter((g) => g.cards.some((c) => c.domainIds.includes(domainId) && movesCardCount(oldLevel, newLevel, c))).map((g) => g.roadmapId);
+}
+
+/** The goals of a union whose practices or steps include the template (recordPracticeForTemplate's test). */
+export function goalsHoldingTemplate(union: RoadmapScopeUnion | null, templateId: string): string[] {
+  return (union?.goals ?? []).filter((g) => g.templateIds.includes(templateId)).map((g) => g.roadmapId);
+}
+
+/**
+ * The real scope map: one query (every ACTIVE goal's STARTING and STARTED
+ * milestones and current end state), in seat order (bySeatOf), cached on
+ * 'roadmap'. Null with no ACTIVE goal, as before revision 5.
+ */
+export async function loadScopeMap(userId: string, client: RoadmapReadingsClient = prisma): Promise<RoadmapScopeUnion | null> {
+  return cached(`roadmapScopes:${userId}`, ["roadmap"], async () => {
     try {
-      const row = await client.roadmap.findFirst({
+      const rows = await client.roadmap.findMany({
         where: { userId, status: "ACTIVE" },
         select: {
           id: true,
+          slot: true,
           milestones: {
             where: { status: { in: ["STARTING", "STARTED"] } },
             select: { status: true, measures: { select: { kind: true, role: true, measureKey: true, scope: true } }, items: { select: { kind: true, templateId: true } } },
@@ -1406,16 +1579,20 @@ export async function loadScopeMap(userId: string, client: RoadmapReadingsClient
           acceptances: { where: { undoneAt: null }, orderBy: acceptanceOrderBy(), take: 1, select: { endState: true } },
         },
       });
-      if (!row) return null;
-      return scopeMapOf({
-        roadmapId: row.id,
-        milestones: row.milestones.map((m) => ({
-          status: m.status,
-          measures: m.measures.map((x) => ({ kind: x.kind as MeasureSpec["kind"], role: x.role as MeasureSpec["role"], measureKey: x.measureKey, scope: scopeOf(x.scope) })),
-          items: m.items.map((i) => ({ kind: i.kind as ItemKind, templateId: i.templateId })),
-        })),
-        endState: endStateOf(row.acceptances[0]?.endState),
-      });
+      if (rows.length === 0) return null;
+      return {
+        goals: bySeatOf(rows).map((row) =>
+          scopeMapOf({
+            roadmapId: row.id,
+            milestones: row.milestones.map((m) => ({
+              status: m.status,
+              measures: m.measures.map((x) => ({ kind: x.kind as MeasureSpec["kind"], role: x.role as MeasureSpec["role"], measureKey: x.measureKey, scope: scopeOf(x.scope) })),
+              items: m.items.map((i) => ({ kind: i.kind as ItemKind, templateId: i.templateId })),
+            })),
+            endState: endStateOf(row.acceptances[0]?.endState),
+          })
+        ),
+      };
     } catch (err) {
       if (isMissingRoadmapTable(err)) return null;
       throw err;
@@ -1441,8 +1618,10 @@ export function movesCardCount(oldLevel: number, newLevel: number, card: { level
  * submitReview's event writer: returns at once (no read past the cached scope
  * map) unless the Domain is in the scope of a STARTING, STARTED or end-state
  * CARDS measure whose L lies between the old and new level; then one run
- * (its measures, the reach rules, PROFICIENCY). An evening review on the due
- * day writes the due day's reading (today's life day). Never throws.
+ * (its measures, the reach rules, PROFICIENCY) of each goal whose scope
+ * matched (revision 5; a Domain belongs to one goal, so that is one goal). An
+ * evening review on the due day writes the due day's reading (today's life
+ * day). Never throws.
  */
 export async function recordCardsForReview(
   userId: string,
@@ -1456,9 +1635,10 @@ export async function recordCardsForReview(
   if (!lifeWritesEnabled(opts.env) || oldLevel === newLevel) return;
   const now = opts.now ?? new Date();
   await guarded("review", async () => {
-    const map = await (opts.loadScopeMap ?? ((u: string) => loadScopeMap(u, clientOf(opts))))(userId);
-    if (!map || !map.cards.some((c) => c.domainIds.includes(domainId) && movesCardCount(oldLevel, newLevel, c))) return { written: 0, reaches: 0, skipped: null };
-    return runForActive(userId, now, opts);
+    const union = await (opts.loadScopeMap ?? ((u: string) => loadScopeMap(u, clientOf(opts))))(userId);
+    const goals = goalsMovedByReview(union, domainId, oldLevel, newLevel);
+    if (goals.length === 0) return { written: 0, reaches: 0, skipped: null };
+    return runForActiveGoals(userId, now, opts, "review", new Set(goals));
   });
 }
 
@@ -1466,16 +1646,17 @@ export async function recordCardsForReview(
  * The completion and undo hook's writer: returns at once unless templateId
  * is a practice or step template of a STARTING or STARTED milestone (the
  * scope map cached on 'roadmap'); then one run (that milestone's
- * PRACTICE_KEPT, steps share, reach rules and PROFICIENCY). An undo clears a
- * pending reach. Never throws.
+ * PRACTICE_KEPT, steps share, reach rules and PROFICIENCY) of each goal
+ * holding it (revision 5). An undo clears a pending reach. Never throws.
  */
 export async function recordPracticeForTemplate(userId: string, templateId: string, opts: RoadmapWriteOpts & { now?: Date } & ReadingsDeps = {}): Promise<void> {
   if (!lifeWritesEnabled(opts.env)) return;
   const now = opts.now ?? new Date();
   await guarded("practice", async () => {
-    const map = await (opts.loadScopeMap ?? ((u: string) => loadScopeMap(u, clientOf(opts))))(userId);
-    if (!map || !map.templateIds.includes(templateId)) return { written: 0, reaches: 0, skipped: null };
-    return runForActive(userId, now, opts);
+    const union = await (opts.loadScopeMap ?? ((u: string) => loadScopeMap(u, clientOf(opts))))(userId);
+    const goals = goalsHoldingTemplate(union, templateId);
+    if (goals.length === 0) return { written: 0, reaches: 0, skipped: null };
+    return runForActiveGoals(userId, now, opts, "practice", new Set(goals));
   });
 }
 
@@ -1583,6 +1764,10 @@ export async function readingOpsFor(userId: string, goalId: string, now: Date, o
  * switch-off) measured on today's cards, practice and reaches, rebased
  * against the previous reading with the decision's cause. R4 passes the row
  * to readingUpsertOp. Null without a roadmap.
+ *
+ * Revision 5 (contracts §23.4; lane 3): a resume writes its rebase here as
+ * a plan decision, cause RESUMED ("since you resumed", never a gain), which
+ * roadmap-proficiency rebases even on an unchanged basis.
  */
 export async function proficiencyReadingFor(
   userId: string,
@@ -1694,13 +1879,25 @@ export function goalSeriesEntryOf(f: GoalSeriesFacts): RoadmapGoalEntry {
  * A second read, only for a goal that states 0 and shares its lineage with
  * another goal (a dropped row's, before "Start again"): those goals' paying
  * closes (MP_MINT 'mp:GOAL:<id>' > 0), which date LINEAGE_PAID's words.
+ *
+ * Revision 5 (contracts §23.3; lane 3): once GOALS_MAX > 1 (`goalsMax`, for
+ * the checks), each entry also carries its roadmap's seat (RoadmapGoalSeat:
+ * the slot, null while paused, and the open goals' count, one count in the
+ * same wave), which Today's goal chip reads. While GOALS_MAX is 1 nothing
+ * more is read, and every entry is exactly as before.
  */
-export async function loadRoadmapGoalSeries(userId: string, goalIds: readonly string[], today: DayKey, opts: { client?: RoadmapReadingsClient } = {}): Promise<Record<string, RoadmapGoalEntry>> {
+export async function loadRoadmapGoalSeries(
+  userId: string,
+  goalIds: readonly string[],
+  today: DayKey,
+  opts: { client?: RoadmapReadingsClient; goalsMax?: number } = {}
+): Promise<Record<string, RoadmapGoalEntrySeated>> {
   const ids = Array.from(new Set(goalIds));
   if (ids.length === 0) return {};
   const client = opts.client ?? prisma;
+  const seated = (opts.goalsMax ?? GOALS_MAX) > 1;
   try {
-    const [milestones, readings, stated] = await Promise.all([
+    const [milestones, readings, stated, openGoals] = await Promise.all([
       client.roadmapMilestone.findMany({
         where: { goalId: { in: ids }, roadmap: { userId } },
         // The series reads no rev-4 column, so Today's board never depends on the rev-4 migration.
@@ -1712,6 +1909,8 @@ export async function loadRoadmapGoalSeries(userId: string, goalIds: readonly st
             select: {
               status: true,
               archiveReason: true,
+              // Revision 5: the seat, read only once a second goal can open.
+              ...(seated ? { slot: true } : {}),
               milestones: {
                 where: { status: { in: ["PLANNED", "STARTING", "STARTED"] } },
                 select: { id: true, lineageId: true, ord: true, status: true, version: true, rankIndex: true, createdAt: true, goalId: true },
@@ -1733,6 +1932,7 @@ export async function loadRoadmapGoalSeries(userId: string, goalIds: readonly st
       client.$queryRaw<{ id: string; stated: number | null }[]>(Prisma.sql`
         SELECT "id", "goalMp" AS "stated" FROM "TaskTemplate" WHERE "userId" = ${userId} AND "id" IN (${Prisma.join(ids)})
       `),
+      seated ? client.roadmap.count({ where: { userId, status: { in: [...SEAT_STATUSES] } } }) : Promise.resolve(null),
     ]);
     const all: Reading[] = readings.map((r) => ({
       measureKey: r.measureKey,
@@ -1769,7 +1969,7 @@ export async function loadRoadmapGoalSeries(userId: string, goalIds: readonly st
       }
     }
 
-    const out: Record<string, RoadmapGoalEntry> = {};
+    const out: Record<string, RoadmapGoalEntrySeated> = {};
     for (const row of milestones) {
       if (!row.goalId) continue;
       const m = milestoneOf({ ...row, items: row.items, measures: row.measures });
@@ -1788,6 +1988,11 @@ export async function loadRoadmapGoalSeries(userId: string, goalIds: readonly st
         lineagePaidOn: paid[0] ?? null,
         today,
       });
+      if (openGoals != null) {
+        // A paused goal shows no seat: its stored slot may since be another goal's (ruling 55).
+        const slot = (row.roadmap as { slot?: unknown }).slot;
+        out[row.goalId] = { ...out[row.goalId], seat: { slot: row.roadmap.status !== "PAUSED" && isGoalSlot(slot) ? slot : null, open: openGoals } };
+      }
     }
     return out;
   } catch (err) {

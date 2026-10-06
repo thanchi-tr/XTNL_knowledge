@@ -251,10 +251,13 @@ for (const tz of [SYD, BNE]) {
   // after the seven, roadmap-rev4.md Acceptance), and the backfill has its script.
   // At rev-4 integration (roadmap-contracts.md §16.6) the two checks that print PENDING
   // lines run with --strict, so a lane's open item left behind fails life:check.
+  // Roadmap revision 5 (roadmap-topic-map.md, "New checks, joined to life:check"): roadmap-goals-check runs right
+  // after the rituals, then roadmap-topics-check and roadmap-grounding-check (lane 6), before the roadmap checks
+  // (roadmap-contract-check pins the tail from roadmap-contract on).
   const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> }).scripts;
   const ROADMAP_LIFE_CHECKS = ["roadmap-contract", "roadmap-measures", "throughput", "roadmap-realism", "roadmap-model", "roadmap-server", "roadmap-quests", "roadmap-invite", "roadmap-hostile"];
   const STRICT_LIFE_CHECKS = new Set(["today-ui", "roadmap-contract"]);
-  const names = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "character", "goals-close", "settle", "duty", "duty-actions", "rituals", ...ROADMAP_LIFE_CHECKS];
+  const names = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "character", "goals-close", "settle", "duty", "duty-actions", "rituals", "roadmap-goals", "roadmap-topics", "roadmap-grounding", ...ROADMAP_LIFE_CHECKS];
   const all = names.map((n) => `scripts/${n}-check.ts`);
   const lifeCheck = scripts["life:check"] ?? "";
   check(

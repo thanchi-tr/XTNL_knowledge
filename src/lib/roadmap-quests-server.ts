@@ -76,6 +76,29 @@
  * and coverage; the parts read RoadmapItem.catalogKey, absent before the
  * rev-4 migration). An item with no catalog type is the user's own and is
  * never held back.
+ *
+ * Revision 5 (roadmap-contracts.md §23.3, §23.4, §23.6; lane 3): up to 3
+ * goals, each with its own week. With GOALS_MAX 1 every answer below is the
+ * one-goal answer, byte for byte.
+ *   - openByGoalOf: the open milestone of each ACTIVE goal, places compared
+ *     only inside one roadmap, in seat order (slot, NULL last, then id);
+ *     openOf is the lowest seat's. A PAUSED goal is never read: it freezes
+ *     nothing and shows nothing.
+ *   - One set is frozen per goal (freezeWeekQuests: each goal on its own,
+ *     a failure named by its seat). Its capacity is read at the goal's share
+ *     of the week (roadmap-goals sharesOf over the DRAFT and ACTIVE goals as
+ *     the set is frozen: the cron's just after Monday 04:00; RealismInput
+ *     .share), and the capacity line names it, which is where the set keeps
+ *     it (roadmap-quests shareOfBasis). A goal accepted mid-week freezes its
+ *     own set at its Start and leaves the others' frozen sets alone.
+ *   - loadWeekQuests keeps its signature for one goal; QuestOpts.roadmapId
+ *     picks a goal (absent: the lowest-seat ACTIVE goal). loadPastWeeks
+ *     hides only that goal's current set. loadTodayWeekQuests merges every
+ *     ACTIVE goal's Today rows round robin by seat (roadmap-goals todayRowsOf).
+ *   - The gate (questGateOf) is user-wide (§23.6 item 7): every other
+ *     DRAFT, ACTIVE and PAUSED goal's words and AVOIDs, read with the shares
+ *     (QuestStore.goals); a closed goal's AVOIDs only once GOALS_MAX > 1
+ *     (ruling 57). One goal reads exactly its own gate.
  */
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
@@ -89,15 +112,21 @@ import { parseRule } from "./recurrence";
 import { loadWeeklyQuotas } from "./field-quota";
 import { loadThroughput } from "./throughput-server";
 import { availableFor } from "./roadmap-realism";
-import { activityConfirmOf, allowedKindsFor, catalogTrackOf, constraintsStateOf, isPlaceableKind } from "./roadmap-catalog";
+import { activityConfirmOf, allowedKindsFor, catalogTrackOf, constraintsStateOf, isPlaceableKind, type UserWideGoals } from "./roadmap-catalog";
+import { goalHrefOf, sharesOf, todayRowsOf, type GoalShare } from "./roadmap-goals";
 import type { Track } from "./life-types";
 import { placementOf, ruleOf, type BoardInstance, type BoardTemplate, type Placement } from "./today-board";
 import {
   DECISIONS,
   DECLARED_FACTOR,
+  GOALS_MAX,
+  GOAL_SLOTS,
+  HOLD_STATUSES,
   NON_RECALL_TYPES,
   ORIGINS,
   PRACTICE_BANDS,
+  ROADMAP_STATUSES,
+  SEAT_STATUSES,
   THROUGHPUT_LAG_DAYS,
   acceptanceOrderBy,
   checkpointLogPrefix,
@@ -105,6 +134,7 @@ import {
   domainName,
   isLegacyRoadmap,
   isMissingRev4Column,
+  isGoalSlot,
   isMissingRoadmapTable,
   isQuestWeekFinal,
   isRetryEntry,
@@ -125,6 +155,9 @@ import {
   type CodeText,
   type Decision,
   type DomainName,
+  type GoalAvoids,
+  type GoalCueTexts,
+  type GoalSlot,
   type Intensity,
   type Origin,
   type PastWeekView,
@@ -135,6 +168,7 @@ import {
   type RateSource,
   type RealismInput,
   type ReviewLedgerRow,
+  type RoadmapStatus,
   type RoadmapWriteOpts,
   type StartPoint,
   type StartSnapshot,
@@ -143,6 +177,7 @@ import {
   type WeekQuestInput,
   type WeekQuestPracticeInput,
   type WeekQuestProgress,
+  type WeekQuestRow,
   type WeekQuestSet,
   type WeekQuestSource,
   type WeekQuestSpec,
@@ -156,11 +191,13 @@ import {
   pastWeekOf,
   questProgress,
   questWindowOf,
+  shareOfBasis,
   weekQuestResultsOf,
   weekQuestsFor,
   weekQuestsViewOf,
   type WeekQuestInputExtras,
   type WeekQuestResultsStored,
+  type WeekQuestShare,
   type WeekQuestsViewInput,
 } from "./roadmap-quests";
 
@@ -192,6 +229,29 @@ export interface QuestRoadmapRow {
   examLabel?: string | null;
   syllabus?: unknown;
   coverage?: unknown;
+  /** Revision 5 (contracts §23.1): Roadmap.slot, the goal's seat (1..3); absent or null reads as a row saved before lane 3 (seated last). */
+  slot?: number | null;
+}
+
+/**
+ * Revision 5 (contracts §23.3, §23.6; lane 3): one of the user's goals as a
+ * week reads it besides its own: its hours and Field (the shares), and its
+ * words and stored answers (the user-wide gate).
+ */
+export interface QuestGoalRow {
+  id: string;
+  status: string;
+  slot: number | null;
+  hoursPerWeek: number;
+  fieldId: string | null;
+  track: string;
+  aim: string | null;
+  constraints: string | null;
+  examLabel: string | null;
+  syllabus: unknown;
+  typicalHoursSource: string | null;
+  /** Roadmap.coverage (its "$activities" answers); null before the rev-4 migration. */
+  coverage: unknown;
 }
 
 /** One milestone with its roadmap, its goal and its place among the roadmap's scheduled milestones. */
@@ -362,8 +422,13 @@ export interface QuestStore {
   reviewRows(userId: string, ideaIds: readonly string[], from: DayKey): Promise<QuestReviewRow[]>;
   /** RestDay rows with day in [from, to] (none when the table is missing). */
   restRows(userId: string, from: DayKey, to: DayKey): Promise<RestRow[]>;
-  /** The week's capacity as if read on Monday, as a function of the week's held days (so it joins the read wave). */
-  capacity(userId: string, roadmap: QuestRoadmapRow, weekStart: DayKey): Promise<(heldDays: readonly DayKey[]) => QuestCapacity>;
+  /**
+   * The week's capacity as if read on Monday, as a function of the week's
+   * held days (so it joins the read wave). Revision 5: `share` is this
+   * goal's share of the week (RealismInput.share and fieldShare) when it
+   * shares the week with other open goals; absent with one goal.
+   */
+  capacity(userId: string, roadmap: QuestRoadmapRow, weekStart: DayKey, share?: { share: number; fieldShare: number } | null): Promise<(heldDays: readonly DayKey[]) => QuestCapacity>;
   /** This week's weekly Field quotas (Fields in maintenance excluded). */
   quotas(userId: string, weekStart: DayKey): Promise<{ fieldId: string; name: string; quota: number }[]>;
   /** The current interval multiplier m. */
@@ -377,6 +442,14 @@ export interface QuestStore {
    * none, so the window reads the live m alone.
    */
   acceptanceMultiplier?(userId: string, roadmapId: string): Promise<number | null>;
+  /**
+   * Revision 5 (contracts §23.3, §23.6; lane 3, optional): the user's goals
+   * a week reads besides its own milestone: every DRAFT, ACTIVE and PAUSED
+   * roadmap (and, once GOALS_MAX > 1, DONE and ARCHIVED ones, whose AVOIDs
+   * suggest: ruling 57). Absent (a store that doesn't read them): one goal,
+   * its whole week and its own gate, exactly as before revision 5.
+   */
+  goals?(userId: string): Promise<QuestGoalRow[]>;
   /** Frozen weeks of the user: of one roadmap, not yet finalised, or of one life week (any combination). */
   questWeeks(userId: string, filter: { roadmapId?: string; unfinalized?: boolean; weekStart?: DayKey }): Promise<StoredQuestWeek[]>;
   insertQuestWeek(userId: string, roadmapId: string, set: WeekQuestSet, source: WeekQuestSource, now: Date): Promise<number>;
@@ -386,6 +459,8 @@ export interface QuestStore {
 /** What every function here takes: the write gate's env (RoadmapWriteOpts) and the store. */
 export interface QuestOpts extends RoadmapWriteOpts {
   store?: QuestStore;
+  /** Revision 5 (contracts §23.3): the goal loadWeekQuests reads (one of the user's ACTIVE roadmaps); absent or null: the lowest-seat ACTIVE goal. */
+  roadmapId?: string | null;
 }
 
 /**
@@ -471,27 +546,143 @@ function positionRowOf(f: QuestMilestoneFacts): { id: string; lineageId: string;
   return { id: f.milestone.id, lineageId: f.milestone.lineageId, version: f.milestone.version ?? 0, status: f.milestone.status, createdAt: f.milestone.createdAt ?? null };
 }
 
+/** Seat order (contracts §23.2): slot ascending, a NULL slot last (a row saved before lane 3), then the id. */
+function bySeat<T>(list: readonly T[], seatOf: (x: T) => { id: string; slot: number | null | undefined }): T[] {
+  const rank = (v: number | null | undefined) => (isGoalSlot(v) ? v : Number.POSITIVE_INFINITY);
+  return [...list].sort((a, b) => {
+    const x = seatOf(a);
+    const y = seatOf(b);
+    return rank(x.slot) - rank(y.slot) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0);
+  });
+}
+
 /**
- * The open milestone: a STARTED milestone of an ACTIVE roadmap whose goal is
- * open (not closed, not archived) and which is not superseded (fix round): a
- * dropped row whose "Start again" copy has started is never the open one,
- * even after its goal is unarchived (isSupersededRow), so the week asks
- * nothing of a position twice.
+ * The open milestone of each ACTIVE goal (revision 5: grouped by roadmap, so
+ * places are compared only inside one roadmap), in seat order: a STARTED
+ * milestone of an ACTIVE roadmap whose goal is open (not closed, not
+ * archived) and which is not superseded (fix round): a dropped row whose
+ * "Start again" copy has started is never the open one, even after its goal
+ * is unarchived (isSupersededRow), so the week asks nothing of a position
+ * twice. Within a roadmap, the lowest place (the first such row on a tie).
+ * A PAUSED roadmap is never ACTIVE, so it has none.
  */
-function openOf(list: readonly QuestMilestoneFacts[]): QuestMilestoneFacts | null {
+function openByGoalOf(list: readonly QuestMilestoneFacts[]): QuestMilestoneFacts[] {
   const rowsOf = new Map<string, ReturnType<typeof positionRowOf>[]>();
   for (const f of list) rowsOf.set(f.roadmap.id, [...(rowsOf.get(f.roadmap.id) ?? []), positionRowOf(f)]);
-  const open = list.filter(
-    (f) =>
+  const best = new Map<string, QuestMilestoneFacts>();
+  for (const f of list) {
+    const open =
       f.roadmap.status === "ACTIVE" &&
       f.milestone.status === "STARTED" &&
       f.goal != null &&
       !f.goal.closed &&
       f.goal.archivedDay == null &&
-      !isSupersededRow(positionRowOf(f), rowsOf.get(f.roadmap.id) ?? [])
+      !isSupersededRow(positionRowOf(f), rowsOf.get(f.roadmap.id) ?? []);
+    if (!open) continue;
+    const cur = best.get(f.roadmap.id);
+    if (!cur || f.place < cur.place) best.set(f.roadmap.id, f);
+  }
+  return bySeat([...best.values()], (f) => ({ id: f.roadmap.id, slot: f.roadmap.slot }));
+}
+
+/** The open milestone of the lowest-seat goal that has one (one goal: its open milestone, as before revision 5). */
+function openOf(list: readonly QuestMilestoneFacts[]): QuestMilestoneFacts | null {
+  return openByGoalOf(list)[0] ?? null;
+}
+
+/**
+ * The open milestone a one-goal read shows (loadWeekQuests): the goal named
+ * by `roadmapId` (an ACTIVE roadmap of the user's), else the lowest-seat
+ * ACTIVE goal, read from the facts and, when the store gives them, the
+ * goals (so a lowest-seat goal with no open milestone shows none, never
+ * another goal's). Null when that goal has no open milestone.
+ */
+function openForOf(list: readonly QuestMilestoneFacts[], goals: readonly QuestGoalRow[] | null, roadmapId: string | null | undefined): QuestMilestoneFacts | null {
+  const opens = openByGoalOf(list);
+  if (typeof roadmapId === "string" && roadmapId !== "") return opens.find((f) => f.roadmap.id === roadmapId) ?? null;
+  const active = new Map<string, number | null>();
+  for (const f of list) if (f.roadmap.status === "ACTIVE") active.set(f.roadmap.id, f.roadmap.slot ?? null);
+  for (const g of goals ?? []) if (g.status === "ACTIVE" && !active.has(g.id)) active.set(g.id, g.slot);
+  const lowest = bySeat([...active.entries()].map(([id, slot]) => ({ id, slot })), (x) => x)[0];
+  return lowest ? (opens.find((f) => f.roadmap.id === lowest.id) ?? null) : null;
+}
+
+/** How many goals are open (DRAFT and ACTIVE): from the goals when the store gives them, else the ACTIVE roadmaps among the facts. */
+function openGoalCountOf(list: readonly QuestMilestoneFacts[], goals: readonly QuestGoalRow[] | null): number {
+  if (goals) return new Set(goals.filter((g) => (SEAT_STATUSES as readonly string[]).includes(g.status)).map((g) => g.id)).size;
+  return new Set(list.filter((f) => f.roadmap.status === "ACTIVE").map((f) => f.roadmap.id)).size;
+}
+
+/**
+ * A goal's seat as Today and the share line show it (contracts §23.2): its
+ * slot; a row saved before lane 3 (slot NULL) takes the lowest slot no
+ * other open goal holds.
+ */
+function seatShownOf(id: string, slot: number | null | undefined, goals: readonly QuestGoalRow[] | null, list: readonly QuestMilestoneFacts[] = []): GoalSlot {
+  if (isGoalSlot(slot)) return slot;
+  const held = new Set<number>();
+  for (const g of goals ?? []) if (g.id !== id && (SEAT_STATUSES as readonly string[]).includes(g.status) && isGoalSlot(g.slot)) held.add(g.slot);
+  for (const f of list) if (f.roadmap.id !== id && f.roadmap.status === "ACTIVE" && isGoalSlot(f.roadmap.slot)) held.add(f.roadmap.slot);
+  return GOAL_SLOTS.find((x) => !held.has(x)) ?? 1;
+}
+
+/** The store's goals (revision 5), or null when it doesn't read them (one goal). */
+function goalRowsOf(store: QuestStore, userId: string): Promise<QuestGoalRow[] | null> {
+  return store.goals ? store.goals(userId) : Promise.resolve(null);
+}
+
+/**
+ * This goal's share of the week (contracts §23.3), with its seat, when it
+ * shares the week with another open goal: roadmap-goals sharesOf over the
+ * DRAFT and ACTIVE goals (this one counted as ACTIVE, with its own row's
+ * hours). Null with no other open goal: the whole week, as before (no
+ * share is read, named or kept). A PAUSED goal's hours leave the sum.
+ */
+export function weekShareOf(goals: readonly QuestGoalRow[] | null | undefined, roadmap: Pick<QuestRoadmapRow, "id" | "hoursPerWeek" | "fieldId" | "slot">): (GoalShare & { slot: GoalSlot }) | null {
+  const others = (goals ?? []).filter((g) => g.id !== roadmap.id && (SEAT_STATUSES as readonly string[]).includes(g.status));
+  if (others.length === 0) return null;
+  const shares = sharesOf([
+    { roadmapId: roadmap.id, status: "ACTIVE", hoursPerWeek: roadmap.hoursPerWeek, fieldId: roadmap.fieldId },
+    ...others.map((g) => ({ roadmapId: g.id, status: g.status as RoadmapStatus, hoursPerWeek: g.hoursPerWeek, fieldId: g.fieldId })),
+  ]);
+  const own = shares[roadmap.id];
+  return own ? { ...own, slot: seatShownOf(roadmap.id, roadmap.slot, goals ?? null) } : null;
+}
+
+/** A goal row's words as the gate reads them (cueTextsOf over its intake columns). */
+function cueTextsOfRow(r: { aim?: string | null; constraints?: string | null; examLabel?: string | null; typicalHoursSource?: string | null; syllabus?: unknown }) {
+  const raw = r.syllabus && typeof r.syllabus === "object" ? (r.syllabus as { lines?: unknown; source?: unknown }) : null;
+  const syllabus = raw ? { lines: Array.isArray(raw.lines) ? raw.lines.filter((l): l is string => typeof l === "string") : [], source: typeof raw.source === "string" ? raw.source : null } : null;
+  return cueTextsOf({ constraints: r.constraints ?? null, aim: r.aim ?? "", examLabel: r.examLabel ?? null, typicalHoursSource: r.typicalHoursSource ?? null, syllabus });
+}
+
+/**
+ * The user-wide §19 inputs for one goal's week (contracts §23.6 items 1, 4
+ * and 7): every other DRAFT, ACTIVE and PAUSED goal's words (CueTexts
+ * .others, in seat order) and stored AVOIDs (ConstraintsState.others), and
+ * a DONE or ARCHIVED goal's AVOIDs only once GOALS_MAX > 1 (ruling 57). A
+ * PAUSED or closed goal shows no seat (ruling 55). Null with no other goal:
+ * the goal's own gate, exactly as before.
+ */
+export function userWideGoalsOf(goals: readonly QuestGoalRow[] | null | undefined, roadmapId: string, goalsMax: number = GOALS_MAX): UserWideGoals | null {
+  const others = bySeat(
+    (goals ?? []).filter((g) => g.id !== roadmapId),
+    (g) => g
   );
-  open.sort((a, b) => a.place - b.place);
-  return open[0] ?? null;
+  const holds = (g: QuestGoalRow) => (HOLD_STATUSES as readonly string[]).includes(g.status);
+  const closed = (g: QuestGoalRow) => g.status === "DONE" || g.status === "ARCHIVED";
+  const seatOf = (g: QuestGoalRow): GoalSlot | null => ((SEAT_STATUSES as readonly string[]).includes(g.status) && isGoalSlot(g.slot) ? g.slot : null);
+  const texts: GoalCueTexts[] = others.filter(holds).map((g) => ({ roadmapId: g.id, slot: seatOf(g), texts: cueTextsOfRow(g) }));
+  const avoids: GoalAvoids[] = others
+    .filter((g) => holds(g) || (goalsMax > 1 && closed(g)))
+    .map((g) => ({
+      roadmapId: g.id,
+      slot: seatOf(g),
+      status: g.status as RoadmapStatus,
+      track: catalogTrackOf({ fieldId: g.fieldId, track: (g.track as Track) ?? "CRAFT" }),
+      kinds: activityConfirmOf(g.coverage)?.kinds ?? {},
+    }));
+  return texts.length === 0 && avoids.length === 0 ? null : { texts, avoids };
 }
 
 /**
@@ -539,7 +730,9 @@ export function setOfStored(row: StoredQuestWeek): WeekQuestSet {
   const basis = Array.isArray(row.basis) ? (row.basis as unknown[]).filter((b): b is string => typeof b === "string") : [];
   const state: WeekQuestState = row.state === "HELD" || row.state === "PAST_DUE" ? row.state : "OPEN";
   const cappedBy = row.cappedBy === "CATCHUP" || row.cappedBy === "CAPACITY" ? row.cappedBy : null;
-  return { weekStart: row.weekStart, milestoneId: row.milestoneId, generator: row.generator, state, quests, basis, cappedBy };
+  // Revision 5: the share the set was frozen with, as its capacity line names it (absent with one goal).
+  const share = shareOfBasis(basis);
+  return { weekStart: row.weekStart, milestoneId: row.milestoneId, generator: row.generator, state, quests, basis, cappedBy, ...(share ? { share } : {}) };
 }
 
 function resultsOfStored(row: StoredQuestWeek): WeekQuestResultsStored | null {
@@ -602,14 +795,20 @@ function ownNumberOf(rec: Readonly<Record<string, number>> | null | undefined, k
  * The parser's pre-fill is R4's (Start passes its gate); this reading holds
  * the cue gate and every answer. null when the row carries no words (a
  * store that doesn't read them).
+ *
+ * Revision 5 (contracts §23.6 item 7; lane 3): with `goals`
+ * (userWideGoalsOf), the gate is user-wide: every other open goal's words
+ * (a cue in goal 1's words gates goal 3's CRAFT kinds) and AVOIDs (locked
+ * here; lifted only on the goal that stored them). Without, exactly the
+ * goal's own gate.
  */
-export function questGateOf(r: QuestRoadmapRow): Pick<ActivityGate, "blocked"> | null {
+export function questGateOf(r: QuestRoadmapRow, goals?: UserWideGoals | null): Pick<ActivityGate, "blocked"> | null {
   if (r.aim === undefined && r.constraints === undefined) return null;
-  const raw = r.syllabus && typeof r.syllabus === "object" ? (r.syllabus as { lines?: unknown; source?: unknown }) : null;
-  const syllabus = raw ? { lines: Array.isArray(raw.lines) ? raw.lines.filter((l): l is string => typeof l === "string") : [], source: typeof raw.source === "string" ? raw.source : null } : null;
   const track = catalogTrackOf({ fieldId: r.fieldId, track: (r.track as Track) ?? "CRAFT" });
-  const texts = cueTextsOf({ constraints: r.constraints ?? null, aim: r.aim ?? "", examLabel: r.examLabel ?? null, typicalHoursSource: r.typicalHoursSource, syllabus });
-  const state = constraintsStateOf({ track, texts, exam: !!r.examLabel, practicesAllowed: r.practicesAllowed });
+  const own = cueTextsOfRow({ ...r, typicalHoursSource: r.typicalHoursSource });
+  const texts = goals && goals.texts.length > 0 ? { ...own, others: goals.texts } : own;
+  const others = goals && goals.avoids.length > 0 ? { others: goals.avoids } : {};
+  const state = constraintsStateOf({ track, texts, exam: !!r.examLabel, practicesAllowed: r.practicesAllowed, ...others });
   return allowedKindsFor(state, activityConfirmOf(r.coverage));
 }
 
@@ -667,6 +866,12 @@ async function cleanWindowDaysOf(store: QuestStore, userId: string, roadmapId: s
  * follows; a shield or a degrade before the pass is a retry too, and a later
  * strike at L keeps it one until its next pass). The loadout's strikes and
  * grace come with m.
+ *
+ * Revision 5 (contracts §23.3, §23.6; lane 3): the user's other goals
+ * (`goals`, else QuestStore.goals, read in wave 1) give the week's share
+ * (weekShareOf: the capacity is read at it, and the input carries it for
+ * the capacity line) and the user-wide gate (userWideGoalsOf). With no
+ * other goal, exactly the one-goal input.
  */
 export async function weekQuestInputFor(
   store: QuestStore,
@@ -674,7 +879,8 @@ export async function weekQuestInputFor(
   facts: QuestMilestoneFacts,
   weekStart: DayKey,
   now: Date,
-  overrides: QuestSetOverrides = {}
+  overrides: QuestSetOverrides = {},
+  goals?: readonly QuestGoalRow[] | null
 ): Promise<WeekQuestInputR6 | null> {
   const ms = facts.milestone;
   const snapshot = overrides.snapshot ?? startSnapshotOfRow(ms.feasibility);
@@ -686,8 +892,9 @@ export async function weekQuestInputFor(
   const asOf = dayStartOf(weekStart);
   const lastBefore = addDays(weekStart, -1);
 
-  // Wave 1: the milestone's own rows.
-  const { items, measures } = await store.parts(ms.id);
+  // Wave 1: the milestone's own rows, and (revision 5) the user's goals, which the share and the gate read.
+  const [{ items, measures }, goalRows] = await Promise.all([store.parts(ms.id), goals !== undefined ? Promise.resolve(goals) : goalRowsOf(store, userId)]);
+  const share = weekShareOf(goalRows, facts.roadmap);
   const live = items.filter((i) => i.decision !== "REMOVED");
   const domainOrd = new Map<string, number>();
   for (const d of live) if (d.kind === "DOMAIN" && d.domainId != null && !domainOrd.has(d.domainId)) domainOrd.set(d.domainId, d.ord);
@@ -725,7 +932,7 @@ export async function weekQuestInputFor(
   const templateOf = (i: QuestItemRow) => i.templateId ?? mapped(i);
   // Confirm to unlock (contracts §19): no quest for a practice, step or checkpoint of a kind the plan's gate blocks
   // (waiting on the user's answer, or one they said to avoid); an item with no catalog type is the user's own.
-  const gate = overrides.gate ?? questGateOf(facts.roadmap);
+  const gate = overrides.gate ?? questGateOf(facts.roadmap, userWideGoalsOf(goalRows, facts.roadmap.id));
   const placeable = (i: QuestItemRow) => !gate || isPlaceableKind(gate, i.catalogKey);
   const practiceItems = live.filter((i) => i.kind === "PRACTICE" && i.addToToday && templateOf(i) && placeable(i)).sort((a, b) => a.ord - b.ord);
   const stepItems = live.filter((i) => i.kind === "STEP" && i.addToToday && templateOf(i) && placeable(i)).sort((a, b) => a.ord - b.ord);
@@ -746,7 +953,7 @@ export async function weekQuestInputFor(
     scopeIds.length ? store.cards(scopeIds, asOf) : Promise.resolve([] as QuestCardRow[]),
     Promise.all(cardMeasures.map((x) => v0Of(x.key))),
     store.restRows(userId, weekStart, restTo),
-    store.capacity(userId, facts.roadmap, weekStart),
+    share ? store.capacity(userId, facts.roadmap, weekStart, { share: share.share, fieldShare: share.fieldShare }) : store.capacity(userId, facts.roadmap, weekStart),
     store.quotas(userId, weekStart),
     loadoutOf(),
     cpItem ? store.logDays(userId, checkpointLogPrefix(cpItem.lineageId), null, lastBefore) : Promise.resolve([] as DayKey[]),
@@ -874,6 +1081,7 @@ export async function weekQuestInputFor(
     m,
     cardLevelsReadAt: now.toISOString(),
     loadout: { extraStrikes: loadout.extraStrikes, graceExtraDays: loadout.graceExtraDays },
+    ...(share ? { share: { slot: share.slot, hours: share.hours, of: share.of } satisfies WeekQuestShare } : {}),
   };
 }
 
@@ -1098,22 +1306,46 @@ function defaultStore(opts: QuestOpts): QuestStore {
   return opts.store ?? prismaQuestStore;
 }
 
+/** What one read wave gives every goal's week: the ACTIVE goals' milestones, this week's frozen rows and (revision 5) the user's goals. */
+interface WeekWave {
+  list: QuestMilestoneFacts[];
+  rows: StoredQuestWeek[];
+  goals: QuestGoalRow[] | null;
+}
+
+async function weekWaveOf(store: QuestStore, userId: string, weekStart: DayKey): Promise<WeekWave> {
+  const [list, rows, goals] = await Promise.all([store.milestones(userId, { active: true }), store.questWeeks(userId, { weekStart }), goalRowsOf(store, userId)]);
+  return { list, rows, goals };
+}
+
 async function loadWeekQuestsUncached(userId: string, now: Date, opts: QuestOpts): Promise<WeekQuestsLoad | null> {
   const store = defaultStore(opts);
+  const weekStart = weekStartKeyOf(todayKey(now));
+  // One wave: the open milestones, this week's frozen rows (whichever milestone they belong to) and the goals.
+  const wave = await weekWaveOf(store, userId, weekStart);
+  const open = openForOf(wave.list, wave.goals, opts.roadmapId);
+  if (!open) return null;
+  return goalWeekOf(store, userId, now, opts, open, wave);
+}
+
+/**
+ * One goal's week (revision 5: the body loadWeekQuests had, per goal): its
+ * frozen set, else the live one; its verified progress; its Today view.
+ * Null for a legacy roadmap (F-R4-16: no week quests until "Start again at
+ * a depth") or a milestone with no set. While 2 or more goals are open the
+ * view carries the goal (its seat, its share, ?goal= links: D39).
+ */
+async function goalWeekOf(store: QuestStore, userId: string, now: Date, opts: QuestOpts, open: QuestMilestoneFacts, wave: WeekWave): Promise<WeekQuestsLoad | null> {
   const today = todayKey(now);
   const weekStart = weekStartKeyOf(today);
-  // One wave: the open milestone and this week's frozen rows (whichever milestone they belong to).
-  const [list, rows] = await Promise.all([store.milestones(userId, { active: true }), store.questWeeks(userId, { weekStart })]);
-  const open = openOf(list);
-  if (!open) return null;
-  // A legacy roadmap is not measured (F-R4-16): no week quests until "Start again at a depth".
+  const { list, rows, goals } = wave;
   if (isLegacyFacts(open, list)) return null;
   const key = questWeekKey(open.milestone.id, weekStart);
   const stored = rows.find((r) => r.dedupeKey === key) ?? null;
   let set: WeekQuestSet | null = stored ? setOfStored(stored) : null;
   const frozen = set != null;
   if (!set) {
-    const input = await weekQuestInputFor(store, userId, open, weekStart, now);
+    const input = await weekQuestInputFor(store, userId, open, weekStart, now, {}, goals);
     if (!input) return null;
     set = weekQuestsFor(input);
   }
@@ -1135,6 +1367,7 @@ async function loadWeekQuestsUncached(userId: string, now: Date, opts: QuestOpts
     passRate: snapshot ? { start: { p: snapshot.pStart, calibrating: snapshot.pCalibrating }, now: null } : null,
     domainNames,
     health: isBodyPlan(open.roadmap),
+    ...(openGoalCountOf(list, goals) >= 2 ? { goal: { roadmapId: open.roadmap.id, slot: seatShownOf(open.roadmap.id, open.roadmap.slot, goals, list) } } : {}),
   };
   return { set, frozen, progress, view: weekQuestsViewOf({ ...viewInput, variant: "today" }), viewInput };
 }
@@ -1150,6 +1383,10 @@ async function loadWeekQuestsUncached(userId: string, now: Date, opts: QuestOpts
  * schedules the RENDER freeze in after(). On a server with writes off the
  * live set is labelled "not recorded on this server" (view.writesOff) and
  * may differ between renders there, and only there.
+ *
+ * Revision 5 (contracts §23.3): one goal's week, its signature kept for one
+ * goal. `opts.roadmapId` picks the goal (cached 'weekQuests:<user>:<id>:
+ * <today>'); absent, the lowest-seat ACTIVE goal's (the key as before).
  */
 export async function loadWeekQuests(userId: string, now: Date, opts: QuestOpts = {}): Promise<WeekQuestsLoad | null> {
   const run = async () => {
@@ -1161,7 +1398,57 @@ export async function loadWeekQuests(userId: string, now: Date, opts: QuestOpts 
     }
   };
   if (opts.store) return run();
-  return cached(`weekQuests:${userId}:${todayKey(now)}`, ["roadmap", "ideas", "life", "activity"], run);
+  const goal = typeof opts.roadmapId === "string" && opts.roadmapId !== "" ? `${opts.roadmapId}:` : "";
+  return cached(`weekQuests:${userId}:${goal}${todayKey(now)}`, ["roadmap", "ideas", "life", "activity"], run);
+}
+
+/** Today's week-quest rows across the goals (contracts §23.3): each row with its goal's seat, and per goal the rows left out, with its roadmap page. */
+export interface TodayWeekQuests {
+  rows: (WeekQuestRow & { slot: GoalSlot })[];
+  more: { slot: GoalSlot; count: number; href: string }[];
+}
+
+/**
+ * Today's week quests across every ACTIVE goal (contracts §23.3; lane 3,
+ * which lane 4's Today renders): each goal's Today rows (its OPEN week's
+ * view, open rows first) merged round robin by seat within
+ * WEEK_QUEST_ROWS_TODAY (roadmap-goals todayRowsOf: 1 goal its first 3,
+ * byte-identical to the one goal's view; 2 goals 2 and 1; 3 goals 1 each),
+ * each row with its seat, and per goal the rows left out ("n more", leading
+ * to its roadmap page, ?goal=<id>). A PAUSED, legacy or HELD goal, or one
+ * with nothing asked, gives no row. Null with no row at all (Today shows no
+ * card, as before). Cached 'weekQuestsToday:<user>:<today>' on the same
+ * tags; never throws (a failure reads as null, as loadWeekQuests'). Writes
+ * nothing: each unfrozen goal is frozen by the caller's RENDER freeze
+ * (freezeWeekQuests freezes every goal).
+ */
+export async function loadTodayWeekQuests(userId: string, now: Date, opts: QuestOpts = {}): Promise<TodayWeekQuests | null> {
+  const run = async (): Promise<TodayWeekQuests | null> => {
+    try {
+      const store = defaultStore(opts);
+      const wave = await weekWaveOf(store, userId, weekStartKeyOf(todayKey(now)));
+      const opens = openByGoalOf(wave.list);
+      const loads = await Promise.all(opens.map((open) => goalWeekOf(store, userId, now, opts, open, wave)));
+      const perGoal: { slot: GoalSlot; roadmapId: string; rows: WeekQuestRow[] }[] = [];
+      opens.forEach((open, i) => {
+        const view = loads[i]?.view;
+        if (!view || view.state !== "OPEN" || view.rows.length === 0) return;
+        perGoal.push({ slot: seatShownOf(open.roadmap.id, open.roadmap.slot, wave.goals, wave.list), roadmapId: open.roadmap.id, rows: view.rows });
+      });
+      if (perGoal.length === 0) return null;
+      const merged = todayRowsOf(perGoal.map((g) => ({ slot: g.slot, rows: g.rows })));
+      const idOf = new Map(perGoal.map((g) => [g.slot, g.roadmapId] as const));
+      return {
+        rows: merged.picked.map(({ slot, row }) => ({ ...row, slot })),
+        more: merged.more.map((m) => ({ slot: m.slot, count: m.count, href: goalHrefOf("/you/roadmap", idOf.get(m.slot) ?? null) })),
+      };
+    } catch (err) {
+      if (!isMissingRoadmapTable(err) && !isMissingRev4Column(err)) console.error("week quests (Today) not loaded:", err);
+      return null;
+    }
+  };
+  if (opts.store) return run();
+  return cached(`weekQuestsToday:${userId}:${todayKey(now)}`, ["roadmap", "ideas", "life", "activity"], run);
 }
 
 // ═══ The freeze (decision 23) ═══════════════════════════════════════════════
@@ -1230,24 +1517,47 @@ export function questErrorText(err: unknown): string {
  * Never throws: a missing table is `skipped: "MISSING_TABLE"`; any other
  * failure is logged and returned as `error` (nothing frozen), which the
  * roadmap step reports in the cron's `errors` (F16 seam 8).
+ *
+ * Revision 5 (contracts §23.3; lane 3): one set per ACTIVE goal, each goal's
+ * open milestone frozen on its own (a goal whose set stands, or a legacy
+ * one, is passed over; a PAUSED goal freezes nothing). `froze` counts the
+ * sets inserted; NO_ROADMAP only when no goal has an open, measured
+ * milestone. With 2 or more goals a failure stops only its goal's set and
+ * comes back named by its seat ("goal 2: …"). With one goal, exactly the
+ * one-goal freeze.
  */
 export async function freezeWeekQuests(userId: string, now: Date, source: WeekQuestSource, opts: QuestOpts = {}): Promise<QuestFreezeRun> {
   if (!lifeWritesEnabled(opts.env)) return { froze: 0, skipped: "WRITES_OFF" };
   const store = defaultStore(opts);
   try {
     const weekStart = weekStartKeyOf(todayKey(now));
-    const [list, rows] = await Promise.all([store.milestones(userId, { active: true }), store.questWeeks(userId, { weekStart })]);
-    const open = openOf(list);
-    if (!open) return { froze: 0, skipped: "NO_ROADMAP" };
+    const wave = await weekWaveOf(store, userId, weekStart);
     // A legacy roadmap is not measured (F-R4-16): nothing to freeze.
-    if (isLegacyFacts(open, list)) return { froze: 0, skipped: "NO_ROADMAP" };
-    const key = questWeekKey(open.milestone.id, weekStart);
-    if (rows.some((r) => r.dedupeKey === key)) return { froze: 0, skipped: null };
-    const input = await weekQuestInputFor(store, userId, open, weekStart, now);
-    if (!input) return { froze: 0, skipped: null };
-    const froze = await store.insertQuestWeek(userId, open.roadmap.id, weekQuestsFor(input), source, now);
+    const opens = openByGoalOf(wave.list).filter((open) => !isLegacyFacts(open, wave.list));
+    if (opens.length === 0) return { froze: 0, skipped: "NO_ROADMAP" };
+    const freezeOne = async (open: QuestMilestoneFacts): Promise<number> => {
+      const key = questWeekKey(open.milestone.id, weekStart);
+      if (wave.rows.some((r) => r.dedupeKey === key)) return 0;
+      const input = await weekQuestInputFor(store, userId, open, weekStart, now, {}, wave.goals);
+      if (!input) return 0;
+      return store.insertQuestWeek(userId, open.roadmap.id, weekQuestsFor(input), source, now);
+    };
+    let froze = 0;
+    const errors: string[] = [];
+    if (opens.length === 1) froze = await freezeOne(opens[0]);
+    else {
+      for (const open of opens) {
+        try {
+          froze += await freezeOne(open);
+        } catch (err) {
+          if (isMissingRoadmapTable(err) || isMissingRev4Column(err)) throw err;
+          console.error(`week quests not frozen (goal ${seatShownOf(open.roadmap.id, open.roadmap.slot, wave.goals, wave.list)}):`, err);
+          errors.push(`goal ${seatShownOf(open.roadmap.id, open.roadmap.slot, wave.goals, wave.list)}: ${questErrorText(err)}`);
+        }
+      }
+    }
     if (froze > 0) invalidate("roadmap");
-    return { froze, skipped: null };
+    return errors.length > 0 ? { froze, skipped: null, error: errors.join("; ") } : { froze, skipped: null };
   } catch (err) {
     if (isMissingRoadmapTable(err) || isMissingRev4Column(err)) return { froze: 0, skipped: "MISSING_TABLE" };
     console.error("week quests not frozen:", err);
@@ -1331,7 +1641,9 @@ export async function finalizeQuestWeeks(userId: string, now: Date, opts: QuestO
  * "Past week quests": one line per frozen week of the roadmap except the
  * open milestone's set for this week, newest first (a milestone closed this
  * week keeps its row here). An empty week (held, past due, nothing asked)
- * reads 0 of 0; a week not yet finalised reads "still settling".
+ * reads 0 of 0; a week not yet finalised reads "still settling". Revision 5
+ * (contracts §23.3): only this roadmap's own current set is hidden, so a
+ * goal accepted mid-week leaves every other goal's history as it was.
  */
 export async function loadPastWeeks(userId: string, roadmapId: string, today: DayKey, opts: QuestOpts = {}): Promise<PastWeekView[]> {
   const store = defaultStore(opts);
@@ -1339,7 +1651,7 @@ export async function loadPastWeeks(userId: string, roadmapId: string, today: Da
     const thisWeek = weekStartKeyOf(today);
     const [rows, active] = await Promise.all([store.questWeeks(userId, { roadmapId }), store.milestones(userId, { active: true })]);
     if (rows.length === 0) return [];
-    const open = openOf(active);
+    const open = openByGoalOf(active).find((f) => f.roadmap.id === roadmapId) ?? null;
     const places = new Map<string, number>();
     const missing = rows.map((r) => r.milestoneId).filter((id) => !active.some((f) => f.milestone.id === id));
     const others = missing.length ? await store.milestones(userId, { milestoneIds: [...new Set(missing)] }) : [];
@@ -1395,6 +1707,8 @@ interface MilestoneSqlRow {
   examLabel?: string | null;
   syllabus?: unknown;
   coverage?: unknown;
+  /** Revision 5: Roadmap.slot (read with the rev-4 columns; migration A). */
+  slot?: number | null;
 }
 
 const keyOrNull = (d: Date | null): DayKey | null => (d ? keyOfDateColumn(d) : null);
@@ -1429,6 +1743,7 @@ function factsOf(rows: readonly MilestoneSqlRow[]): QuestMilestoneFacts[] {
           examLabel: r.examLabel ?? null,
           syllabus: r.syllabus ?? null,
           coverage: r.coverage ?? null,
+          slot: r.slot == null ? null : Number(r.slot),
         },
         milestone: {
           id: r.id,
@@ -1480,7 +1795,7 @@ function milestonesSql(userId: string, scope: { active: true } | { milestoneIds:
            r."aim", r."constraints", r."examLabel", r."syllabus",
            m."id", m."lineageId", m."ord", m."title", m."status", m."version", m."startedDay", m."dueDay", m."feasibility", m."goalId", m."createdAt",
            t."id" AS "goalRowId", t."dueDay" AS "goalDueDay", t."closedScore" AS "goalClosedScore", t."completedAt" AS "goalCompletedAt", t."archivedAt" AS "goalArchivedAt"
-           ${rev4 ? Prisma.sql`, r."depth", m."stage", r."coverage"` : Prisma.empty}
+           ${rev4 ? Prisma.sql`, r."depth", m."stage", r."coverage", r."slot"` : Prisma.empty}
     FROM "public"."RoadmapMilestone" m
     JOIN "public"."Roadmap" r ON r."id" = m."roadmapId"
     LEFT JOIN "public"."TaskTemplate" t ON t."id" = m."goalId" AND t."userId" = r."userId"
@@ -1664,7 +1979,7 @@ export const prismaQuestStore: QuestStore = {
       throw err;
     }
   },
-  async capacity(userId, roadmap, weekStart) {
+  async capacity(userId, roadmap, weekStart, share) {
     try {
       const throughput = await loadThroughput(userId, addDays(weekStart, -THROUGHPUT_LAG_DAYS));
       return (heldDays) => {
@@ -1684,6 +1999,8 @@ export const prismaQuestStore: QuestStore = {
             areaInMaintenance: false,
             practicesAllowed: roadmap.practicesAllowed,
             trackArea: roadmap.fieldId == null,
+            // Revision 5: this goal's share of the week (contracts §23.3); absent with one goal.
+            ...(share ? { share: share.share, fieldShare: share.fieldShare } : {}),
           };
           const a = availableFor(weekStart, input);
           return { availableMin: a.minutes, class: a.class, calibrating: a.unverified || a.class === "YOURS" };
@@ -1711,6 +2028,19 @@ export const prismaQuestStore: QuestStore = {
   async acceptanceMultiplier(userId, roadmapId) {
     const a = await prisma.roadmapAcceptance.findFirst({ where: { roadmapId, undoneAt: null, roadmap: { userId } }, orderBy: acceptanceOrderBy(), select: { intervalMultiplier: true } });
     return a ? a.intervalMultiplier : null;
+  },
+  async goals(userId) {
+    // The statuses whose hours, words or AVOIDs a week reads; DONE and ARCHIVED only once their AVOIDs suggest (ruling 57).
+    const statuses = [...(GOALS_MAX > 1 ? ROADMAP_STATUSES : HOLD_STATUSES)];
+    const select = { id: true, status: true, slot: true, hoursPerWeek: true, fieldId: true, track: true, aim: true, constraints: true, examLabel: true, syllabus: true, typicalHoursSource: true } as const;
+    const rows = await prisma.roadmap
+      .findMany({ where: { userId, status: { in: statuses } }, select: { ...select, coverage: true } })
+      .catch(async (err: unknown) => {
+        // Before the rev-4 migration there is no coverage (no stored answer).
+        if (!isMissingRev4Column(err)) throw err;
+        return (await prisma.roadmap.findMany({ where: { userId, status: { in: statuses } }, select })).map((r) => ({ ...r, coverage: null }));
+      });
+    return rows.map((r) => ({ ...r, hoursPerWeek: Number(r.hoursPerWeek), coverage: r.coverage ?? null }));
   },
   async questWeeks(userId, filter) {
     const rows = await prisma.roadmapQuestWeek.findMany({

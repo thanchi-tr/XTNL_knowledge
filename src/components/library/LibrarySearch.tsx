@@ -34,6 +34,8 @@ import { Icon } from "@/components/ui/Icon";
 import { Sheet } from "@/components/ui/Sheet";
 import { PageActions, SectionHeader } from "@/components/ui/Tabs";
 import { IdeaDetail } from "./IdeaDetail";
+// Revision 5, lane 9 (contracts ruling 67): pv.named after a Domain Gemini named
+import { DomainName } from "@/components/glyph/NamedMark";
 import {
   COLLECTION_LABELS,
   COLLECTION_NAME,
@@ -409,7 +411,7 @@ function IdeaRow({ idea, now, onOpen }: { idea: LibraryIdea; now: number; onOpen
       <div style={{ minWidth: 0 }}>
         <b>{idea.questionType === "FORMULA" && !idea.title ? <MathText text={headline} /> : headline}</b>
         <span className="t-meta">
-          <span>{idea.domainName}</span>
+          {idea.domainGeminiNamed ? <DomainName name={idea.domainName} geminiNamed /> : <span>{idea.domainName}</span>}
           <span>{idea.isArchived ? "archived" : mastered ? `mastered · ${dueLabel(idea.dueAt, now)}` : dueLabel(idea.dueAt, now)}</span>
           {idea.failedAttempts > 0 && !idea.isArchived && <span>{plural(idea.failedAttempts, "strike")}</span>}
         </span>
@@ -541,7 +543,7 @@ function FilterSheet({
         <Facet title={f.fields.length > 0 ? "Domains in the chosen fields" : "Domains"}>
           {domains.map((d) => (
             <ChipButton key={d.id} pressed={f.domains.includes(d.id)} onClick={() => onChange({ domains: toggle(f.domains, d.id) })}>
-              {d.name}
+              {d.geminiNamed ? <DomainName name={d.name} geminiNamed /> : d.name}
               {(sameName.get(d.name) ?? 0) > 1 ? ` · ${d.field}` : ""}
             </ChipButton>
           ))}

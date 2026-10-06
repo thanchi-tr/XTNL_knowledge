@@ -5,7 +5,11 @@
  * the long-goal seed, the aim handoff, fresh-start days, Today's aim line
  * (todayAimLineOf: SET with its variants and back-off, DRAFT's three shows,
  * START's daily week and its snooze), the vague-aim hint and the capture
- * line 'aim: …'.
+ * line 'aim: …'. Revision 5 (contracts §23.3, §23.5, ruling 53; lane 3):
+ * the aim-line priority across goals (aimLinePickOf through
+ * TodayAimLineInput.goals), SET hidden at GOALS_MAX open, the multi-entry
+ * step cookie (stepCookieValueOf) and the GoalsFullCard's hold on the aim
+ * handoff (holdAimHandoff).
  *
  * Pure: no database, no clock (every case passes its own day), no model.
  * scripts/_no-model.ts is imported first, like every check that imports a
@@ -25,10 +29,14 @@ import {
   AIM_PROMPT_LATER_MAX_AGE_S,
   AIM_START_DAILY_DAYS,
   AIM_STEP_COOKIE,
+  AIM_STEP_COOKIE_ENTRIES_MAX,
   AIM_STEP_COOKIE_MAX_AGE_S,
   AIM_STEP_SNOOZE_DAYS,
   VAGUE_AIM_IDLE_MS,
   VAGUE_AIM_WORDS,
+  aimLineCandidateOf,
+  aimLineDraftHrefOf,
+  aimLineStartHrefOf,
   aimPromptOf,
   askAnchorOf,
   freshStartDaysBetween,
@@ -38,14 +46,27 @@ import {
   longGoalSeedOf,
   onCookieValue,
   stepCookieValue,
+  stepCookieValueOf,
   stepSnoozed,
   todayAimLineOf,
   vagueAimHint,
   type AimPrompt,
   type SeedGoal,
+  type TodayAimLineInput,
 } from "../src/lib/roadmap-invite";
-import { AIM_HANDOFF_AIM_MAX, AIM_HANDOFF_KEY, AIM_HANDOFF_TTL_MS, aimLineOf, takeAimHandoff, writeAimHandoff, type AimHandoffStorage } from "../src/lib/roadmap-handoff";
-import { AIM_MAX, AIM_PROMPT_COOKIE, type AimLineView, type AimStep, type AimStepMilestone } from "../src/lib/roadmap-types";
+import {
+  AIM_HANDOFF_AIM_MAX,
+  AIM_HANDOFF_HOLD_MS,
+  AIM_HANDOFF_KEY,
+  AIM_HANDOFF_TTL_MS,
+  aimLineOf,
+  holdAimHandoff,
+  takeAimHandoff,
+  writeAimHandoff,
+  type AimHandoffStorage,
+} from "../src/lib/roadmap-handoff";
+import { AIM_MAX, AIM_PROMPT_COOKIE, GOALS_MAX, GOAL_SLOTS_MAX, type AimLineView, type AimStep, type AimStepMilestone, type GoalSlot } from "../src/lib/roadmap-types";
+import type { AimLineCandidate } from "../src/lib/roadmap-goals";
 
 let passed = 0;
 let failed = 0;
@@ -78,8 +99,9 @@ console.log("— constants —");
     [AIM_LATER_DAYS, AIM_PROMPT_LATER_MAX_AGE_S, AIM_AWAY_DAYS, AIM_BACKOFF_FRESH_DAYS, AIM_DRAFT_SHOWS_MAX, AIM_START_DAILY_DAYS, AIM_DONE_SHOW_DAYS],
     [28, 365 * 86400, 7, 4, 3, 7, 28]
   );
-  eq("the step cookie: 'xtnl-aim-step', hidden 7 days, kept 8 days", [AIM_STEP_COOKIE, AIM_STEP_SNOOZE_DAYS, AIM_STEP_COOKIE_MAX_AGE_S], ["xtnl-aim-step", 7, 8 * 86400]);
-  eq("the handoff: 'xtnl:roadmap:aim-handoff', 10 minutes, the aim cut at 500", [AIM_HANDOFF_KEY, AIM_HANDOFF_TTL_MS, AIM_HANDOFF_AIM_MAX], ["xtnl:roadmap:aim-handoff", 600_000, 500]);
+  eq("the step cookie: 'xtnl-aim-step', hidden 7 days, kept 8 days, up to 3 lines at once (revision 5)", [AIM_STEP_COOKIE, AIM_STEP_SNOOZE_DAYS, AIM_STEP_COOKIE_MAX_AGE_S, AIM_STEP_COOKIE_ENTRIES_MAX], ["xtnl-aim-step", 7, 8 * 86400, 3]);
+  eq("the handoff: 'xtnl:roadmap:aim-handoff', 10 minutes, the aim cut at 500; a held one waits a day (revision 5)", [AIM_HANDOFF_KEY, AIM_HANDOFF_TTL_MS, AIM_HANDOFF_AIM_MAX, AIM_HANDOFF_HOLD_MS], ["xtnl:roadmap:aim-handoff", 600_000, 500, 86_400_000]);
+  check("revision 5 is byte-identical until lane 4: GOALS_MAX is 1 (and the seats the database allows 3)", GOALS_MAX === 1 && GOAL_SLOTS_MAX === 3);
   eq("the vague words and the idle time", [VAGUE_AIM_WORDS, VAGUE_AIM_IDLE_MS], [["get better", "improve", "learn more", "be good at", "understand", "know more", "get into", "learn"], 600]);
   check("the prompt cookie is rev 3's name", AIM_PROMPT_COOKIE === "xtnl-aim-prompt");
 }
@@ -207,6 +229,41 @@ console.log("— the handoff —");
   writeAimHandoff({ aim: "Learn piano", source: "restart", areaFieldId: "fld_music", track: "CRAFT", domainIds: ["d1", "d2"], replaces: "rm_old", targetDay: "soon" }, s, at);
   eq("a restart carries its Area, track, Domains and the roadmap it replaces; a malformed field is dropped", takeAimHandoff(at, s), { aim: "Learn piano", source: "restart", areaFieldId: "fld_music", track: "CRAFT", domainIds: ["d1", "d2"], replaces: "rm_old", at });
   check("an empty aim is not written", writeAimHandoff({ aim: "   ", source: "you" }, s, at) === false);
+
+  // Revision 5 (contracts §23.5): with every seat taken the GoalsFullCard holds the aim until a seat frees.
+  const h = memory();
+  writeAimHandoff({ aim: "Learn the cello", source: "capture", sheetText: "aim: Learn the cello" }, h, at);
+  const held = holdAimHandoff(at + 5 * 60_000, h);
+  eq(
+    "hold: the card reads the aim without taking it, marks it held and stamps it now (it stays in sessionStorage)",
+    [held, h.map.has(AIM_HANDOFF_KEY)],
+    [{ aim: "Learn the cello", source: "capture", sheetText: "aim: Learn the cello", at: at + 5 * 60_000, held: true }, true]
+  );
+  eq(
+    "hold: a held aim outlives the 10 minutes and is taken once a seat frees (the form's take), then nothing",
+    [takeAimHandoff(at + 5 * 60_000 + AIM_HANDOFF_TTL_MS + 60_000, h)?.aim ?? null, takeAimHandoff(at + 5 * 60_000 + AIM_HANDOFF_TTL_MS + 60_000, h)],
+    ["Learn the cello", null]
+  );
+  writeAimHandoff({ aim: "Learn the cello", source: "you" }, h, at);
+  holdAimHandoff(at, h);
+  holdAimHandoff(at + AIM_HANDOFF_HOLD_MS - 1, h);
+  check("hold: each hold waits AIM_HANDOFF_HOLD_MS more from now", takeAimHandoff(at + 2 * AIM_HANDOFF_HOLD_MS - 2, h)?.aim === "Learn the cello");
+  writeAimHandoff({ aim: "Learn the cello", source: "you" }, h, at);
+  holdAimHandoff(at, h);
+  check("hold: a held aim past AIM_HANDOFF_HOLD_MS is dropped (and removed)", takeAimHandoff(at + AIM_HANDOFF_HOLD_MS + 1, h) === null && !h.map.has(AIM_HANDOFF_KEY));
+  writeAimHandoff({ aim: "Old", source: "you" }, h, at);
+  check("hold: an aim already past its 10 minutes is not revived (null, and removed)", holdAimHandoff(at + AIM_HANDOFF_TTL_MS + 1, h) === null && !h.map.has(AIM_HANDOFF_KEY));
+  writeAimHandoff({ aim: "First", source: "you" }, h, at);
+  holdAimHandoff(at, h);
+  writeAimHandoff({ aim: "Second", source: "capture" }, h, at + 1000);
+  eq("hold: a new aim written after a hold replaces it, unheld (the latest aim wins)", takeAimHandoff(at + 2000, h), { aim: "Second", source: "capture", at: at + 1000 });
+  h.map.set(AIM_HANDOFF_KEY, "{not json");
+  check(
+    "hold: nothing there, malformed JSON, a throwing storage or none at all give null, never a throw",
+    holdAimHandoff(at, h) === null && !h.map.has(AIM_HANDOFF_KEY) && holdAimHandoff(at, memory()) === null && holdAimHandoff(at, throwing) === null && holdAimHandoff(at, null) === null
+  );
+  h.map.set(AIM_HANDOFF_KEY, JSON.stringify({ aim: "Forged", source: "you", at, held: "yes" }));
+  check("hold: only a held: true mark waits the day (a forged mark reads as unheld)", takeAimHandoff(at + AIM_HANDOFF_TTL_MS + 1, h) === null);
 }
 
 // ═══ Fresh-start days (F-R4-3) ══════════════════════════════════════════════
@@ -375,6 +432,139 @@ console.log("— the aim line —");
   );
   check("no step (a missing table) gives no line", todayAimLineOf({ step: null, prompt: "ASK", cookie: undefined, stepCookie: undefined, today: MON, goalsLive: true }) === null);
   check("DRAFT's three shows are AIM_DRAFT_SHOWS_MAX", AIM_DRAFT_SHOWS_MAX === 3);
+
+  // ═══ Revision 5: one aim line across goals (contracts §23.3, ruling 53; lane 3) ═══
+  const base = (today: DayKey, s: AimStep, extra: Partial<TodayAimLineInput> = {}): TodayAimLineInput => ({
+    step: { ...s, lastOpenBefore: s.lastOpenBefore ?? addDays(today, -1) },
+    prompt: "ASK",
+    cookie: anchor3(today),
+    stepCookie: undefined,
+    today,
+    goalsLive: true,
+    ...extra,
+  });
+  const goalDraft = (id: string, savedDay: DayKey): AimStep => step({ open: { kind: "DRAFT", roadmapId: id, savedDay, running: false } });
+  const goalActive = (id: string, milestones: AimStepMilestone[]): AimStep => step({ open: { kind: "ACTIVE", roadmapId: id, track: false, acceptedDay, milestones } });
+  const cand = (roadmapId: string, slot: GoalSlot, k: AimLineCandidate["kind"], ready: boolean): AimLineCandidate => ({ roadmapId, slot, kind: k, ready });
+
+  // SET is hidden at GOALS_MAX open (ruling 53: the effective cap, never the fixed 3).
+  const quietDraft = goalDraft("rm1", MON); // saved today: its own line does not show
+  eq(
+    "SET is hidden at GOALS_MAX open: with GOALS_MAX 1 one open goal (its line quiet) gives nothing, as in revision 4; at a cap of 3 the same Monday offers SET",
+    [kind(todayAimLineOf(base(MON, quietDraft))), kind(todayAimLineOf(base(MON, quietDraft, { goalsMax: 1 }))), kind(todayAimLineOf(base(MON, quietDraft, { goalsMax: 3 })))],
+    [null, null, "SET WEEK"]
+  );
+  eq(
+    "SET is hidden at GOALS_MAX open (across goals): 3 open of 3 hide it, 2 of 3 offer it, and 1 of 1 hides it",
+    [
+      kind(todayAimLineOf(base(MON, quietDraft, { goals: [cand("rm1", 1, "DRAFT", false), cand("rm2", 2, "START", false), cand("rm3", 3, "START", false)], goalsMax: 3 }))),
+      kind(todayAimLineOf(base(MON, quietDraft, { goals: [cand("rm1", 1, "DRAFT", false), cand("rm2", 2, "START", false)], goalsMax: 3 }))),
+      kind(todayAimLineOf(base(MON, quietDraft, { goals: [cand("rm1", 1, "DRAFT", false)] }))),
+      kind(todayAimLineOf(base(MON, step(), { goals: [] }))),
+    ],
+    [null, "SET WEEK", null, "SET WEEK"]
+  );
+  check("no open goal reads as before with or without the goals list (SET under the back-off)", json(todayAimLineOf(base(MON, step(), { goals: [] }))) === json(todayAimLineOf(base(MON, step()))) && json(todayAimLineOf(base(MON, step()))) === json(line(MON, step(), { cookie: anchor3(MON) })));
+
+  // The priority: a ready START (lowest seat), then a waiting DRAFT (lowest seat), then SET.
+  const g2 = goalActive("rm2", plan());
+  const g1draft = goalDraft("rm1", MON); // on TUE: its first show
+  const c1 = aimLineCandidateOf(base(TUE, g1draft), 1);
+  const c2 = aimLineCandidateOf(base(TUE, g2), 2);
+  eq("aimLineCandidateOf: each goal's own line as a candidate (DRAFT, or START for an ACTIVE goal), ready when it shows today", [c1, c2], [cand("rm1", 1, "DRAFT", true), cand("rm2", 2, "START", true)]);
+  const both = [c1!, c2!];
+  eq(
+    "priority: goal 2's ready START beats goal 1's waiting DRAFT: goal 2's call gives its START (its href carries ?goal=), goal 1's call gives nothing",
+    [todayAimLineOf(base(TUE, g2, { goals: both })), todayAimLineOf(base(TUE, g1draft, { goals: both }))],
+    [{ kind: "START", milestoneId: "m2", ord: 2, stageName: "Familiar", givesRank: "Journeyman", href: "/you/roadmap?goal=rm2#now" }, null]
+  );
+  const snoozed2 = stepCookieValue("START", "m2", TUE);
+  const c2snoozed = aimLineCandidateOf(base(TUE, g2, { stepCookie: snoozed2 }), 2);
+  eq(
+    "priority: with goal 2's START hidden for a week, goal 1's waiting DRAFT is the line (its href carries ?goal=)",
+    [c2snoozed?.ready, todayAimLineOf(base(TUE, g1draft, { stepCookie: snoozed2, goals: [c1!, c2snoozed!] })), todayAimLineOf(base(TUE, g2, { stepCookie: snoozed2, goals: [c1!, c2snoozed!] }))],
+    [false, { kind: "DRAFT", roadmapId: "rm1", href: "/you/roadmap?goal=rm1" }, null]
+  );
+  const g3 = goalActive("rm3", plan());
+  eq(
+    "priority: two ready STARTs, the lower seat wins (whatever order the candidates come in)",
+    [kind(todayAimLineOf(base(TUE, g2, { goals: [cand("rm3", 3, "START", true), cand("rm2", 2, "START", true)] }))), kind(todayAimLineOf(base(TUE, g3, { goals: [cand("rm2", 2, "START", true), cand("rm3", 3, "START", true)] })))],
+    ["START", null]
+  );
+  eq(
+    "priority: a waiting DRAFT beats SET, and a goal whose line is quiet gives way to SET only under the cap",
+    [
+      kind(todayAimLineOf(base(MON, quietDraft, { goals: [cand("rm1", 1, "DRAFT", false), cand("rm2", 2, "DRAFT", true)], goalsMax: 3 }))),
+      kind(todayAimLineOf(base(MON, goalDraft("rm2", addDays(MON, -1)), { goals: [cand("rm1", 1, "DRAFT", false), cand("rm2", 2, "DRAFT", true)], goalsMax: 3 }))),
+    ],
+    [null, "DRAFT"]
+  );
+  eq(
+    "a SET candidate from the caller is ignored: it is no open goal (2 of 3 still offer SET) and never a line of its own (SET is this rule's: the prompt, the fresh-start day, the back-off)",
+    [
+      kind(todayAimLineOf(base(MON, quietDraft, { goals: [cand("rm1", 1, "DRAFT", false), cand("rm2", 2, "START", false), cand("", 3, "SET", true)], goalsMax: 3 }))),
+      kind(todayAimLineOf(base(TUE, goalDraft("rm1", TUE), { goals: [cand("rm1", 1, "DRAFT", false), cand("", 2, "SET", true)], goalsMax: 3 }))),
+    ],
+    ["SET WEEK", null]
+  );
+  // With one goal: the same line as revision 4, only its href carries the goal.
+  const oneGoal: [string, DayKey, AimStep, Partial<TodayAimLineInput>][] = [
+    ["a DRAFT's first show", TUE, draft(MON), {}],
+    ["a DRAFT saved today", MON, draft(MON), {}],
+    ["a START", TUE, active(plan()), {}],
+    ["a START snoozed", TUE, active(plan()), { stepCookie: stepCookieValue("START", "m2", TUE) }],
+    ["a START with goals off", TUE, active(plan()), { goalsLive: false }],
+    ["no goal on a Monday", MON, step(), {}],
+    ["no goal on a Tuesday", TUE, step(), {}],
+  ];
+  const strip = (v: AimLineView | null) => (v ? { ...v, href: v.href.replace(/\?goal=[^#]*/, "") } : null);
+  const oneGoalBad = oneGoal.filter(([, today, s, extra]) => {
+    const input = base(today, s, extra);
+    const c = aimLineCandidateOf(input, 1);
+    return json(strip(todayAimLineOf({ ...input, goals: c ? [c] : [] }))) !== json(todayAimLineOf(input));
+  });
+  check("one goal: the goals list gives revision 4's line in every case (the DRAFT and START hrefs only gain ?goal=)", oneGoalBad.length === 0, oneGoalBad.map(([n]) => n).join(", "));
+  eq(
+    "the hrefs: AIM_LINE_* stay revision 4's; per goal they carry ?goal=<id>, START's anchor kept at the end",
+    [aimLineDraftHrefOf(null), aimLineStartHrefOf(null), aimLineDraftHrefOf("rm1"), aimLineStartHrefOf("rm1")],
+    ["/you/roadmap", "/you/roadmap#now", "/you/roadmap?goal=rm1", "/you/roadmap?goal=rm1#now"]
+  );
+  check("aimLineCandidateOf: no open goal (or no step) gives none", aimLineCandidateOf(base(MON, step()), 1) === null && aimLineCandidateOf({ ...base(MON, step()), step: null }, 1) === null);
+
+  // The step cookie holds up to AIM_STEP_COOKIE_ENTRIES_MAX lines (contracts §23.3).
+  const e1 = stepCookieValueOf(null, "DRAFT", "rm1", MON);
+  const e2 = stepCookieValueOf(e1, "START", "m2", TUE);
+  const e3 = stepCookieValueOf(e2, "START", "m9", THU);
+  const e4 = stepCookieValueOf(e3, "DRAFT", "rm3", addDays(MON, 4));
+  eq(
+    "the step cookie: the first entry is revision 4's value byte for byte; each new one goes first; past 3 the oldest goes",
+    [e1, e2, e3, e4],
+    [stepCookieValue("DRAFT", "rm1", MON), `START:m2:${TUE}.DRAFT:rm1:${MON}`, `START:m9:${THU}.START:m2:${TUE}.DRAFT:rm1:${MON}`, `DRAFT:rm3:${addDays(MON, 4)}.START:m9:${THU}.START:m2:${TUE}`]
+  );
+  eq(
+    "the step cookie: hiding the same line again moves it first with today's day (never twice); a spent or malformed entry goes",
+    [stepCookieValueOf(e3, "START", "m2", addDays(THU, 1)), stepCookieValueOf(e2, "START", "m9", addDays(MON, AIM_STEP_SNOOZE_DAYS)), stepCookieValueOf(`garbage.START:m2:${TUE}.START:../x:${TUE}`, "DRAFT", "rm1", TUE), stepCookieValueOf("", "DRAFT", "rm1", TUE)],
+    [`START:m2:${addDays(THU, 1)}.START:m9:${THU}.DRAFT:rm1:${MON}`, `START:m9:${addDays(MON, AIM_STEP_SNOOZE_DAYS)}.START:m2:${TUE}`, `DRAFT:rm1:${TUE}.START:m2:${TUE}`, `DRAFT:rm1:${TUE}`]
+  );
+  eq(
+    "stepSnoozed reads every entry: each named line is hidden within its own week; a line it doesn't name, a spent entry or a malformed one hides nothing",
+    [
+      stepSnoozed(e3, "DRAFT", "rm1", THU),
+      stepSnoozed(e3, "START", "m2", THU),
+      stepSnoozed(e3, "START", "m9", THU),
+      stepSnoozed(e3, "START", "m3", THU),
+      stepSnoozed(e3, "DRAFT", "rm1", addDays(MON, AIM_STEP_SNOOZE_DAYS)),
+      stepSnoozed(e3, "START", "m2", addDays(MON, AIM_STEP_SNOOZE_DAYS)),
+      stepSnoozed(`garbage.START:m2:${TUE}`, "START", "m2", TUE),
+      stepSnoozed("garbage", "START", "m2", TUE),
+    ],
+    [true, true, true, false, false, true, true, false]
+  );
+  eq(
+    "the aim line reads the multi-entry cookie: two goals' lines hidden at once, each for its own week (the START shows again on the Monday after)",
+    [kind(line(TUE, draft(MON), { stepCookie: e2 })), kind(line(TUE, active(plan()), { stepCookie: e2 })), kind(line(addDays(MON, 14), active(plan()), { stepCookie: e2 }))],
+    [null, null, "START"]
+  );
 }
 
 // ═══ The vague-aim hint (F-R4-4) ════════════════════════════════════════════

@@ -79,7 +79,7 @@ class FText {
   }
 }
 
-type Compound = { tag: string | null; classes: string[]; attrs: { name: string; value: string | null }[]; id: string | null };
+type Compound = { tag: string | null; classes: string[]; attrs: { name: string; value: string | null; prefix?: boolean }[]; id: string | null };
 
 function splitTop(s: string, sep: RegExp): string[] {
   const out: string[] = [];
@@ -119,7 +119,7 @@ function parseCompound(s: string): Compound {
     let m: RegExpExecArray | null;
     if ((m = /^\.([\w-]+)/.exec(rest))) c.classes.push(m[1]);
     else if ((m = /^#([\w-]+)/.exec(rest))) c.id = m[1];
-    else if ((m = /^\[([\w-]+)(?:="([^"]*)")?\]/.exec(rest))) c.attrs.push({ name: m[1], value: m[2] ?? null });
+    else if ((m = /^\[([\w-]+)(?:(\^?)="([^"]*)")?\]/.exec(rest))) c.attrs.push({ name: m[1], value: m[3] ?? null, prefix: m[2] === "^" });
     else throw new Error(`fake DOM: unsupported selector "${s}"`);
     i += m[0].length;
   }
@@ -131,7 +131,7 @@ function matchCompound(el: FEl, c: Compound): boolean {
   if (c.id && el.getAttribute("id") !== c.id) return false;
   const cls = (el.getAttribute("class") ?? "").split(/\s+/);
   if (!c.classes.every((k) => cls.includes(k))) return false;
-  return c.attrs.every((a) => (a.value == null ? el.hasAttribute(a.name) : el.getAttribute(a.name) === a.value));
+  return c.attrs.every((a) => (a.value == null ? el.hasAttribute(a.name) : a.prefix ? (el.getAttribute(a.name) ?? "").startsWith(a.value) : el.getAttribute(a.name) === a.value));
 }
 
 function matchSelector(el: FEl, sel: string): boolean {
@@ -385,7 +385,8 @@ async function main() {
   // ── 1. Grammar ────────────────────────────────────────────────────────────
   console.log("— grammar —");
   const SW = new Set(["1.25", "1.5", "1.75", "2", "2.25"]);
-  const DASHED = new Set(["pv.suggest", "pv.kept", "pv.pick", "v.unv"]);
+  // ui-motion §15.12's dash rule (revision 5): pv.libpick joins pv.suggest's family (D34: not checked).
+  const DASHED = new Set(["pv.suggest", "pv.kept", "pv.pick", "pv.libpick", "v.unv"]);
   const ROLES = new Set(["rim", "mark", "solid", "badge", "ring", "ping"]);
   const gram: string[] = [];
   const inner = new Map<string, string>();
@@ -567,7 +568,8 @@ async function main() {
     /^<svg width="0" height="0" aria-hidden="true"/.test(defsMarkup) &&
       /position:absolute/.test(defsMarkup) &&
       symbols.length === defsList(DEFS_FAMILIES).length &&
-      symbols.every((s) => /^gd-rm-[a-z.-]+-idle$/.test(s.attrs?.id ?? "") && GLYPH_INFO[(s.attrs!.id!.slice(6, -5)) as GName]?.defs != null),
+      // ui-motion §15.1 (revision 5): the goal family's ids carry the seat digit (gd-{route}-goal.k-{state}).
+      symbols.every((s) => /^gd-rm-[a-z0-9.-]+-idle$/.test(s.attrs?.id ?? "") && GLYPH_INFO[(s.attrs!.id!.slice(6, -5)) as GName]?.defs != null),
     `${symbols.length} symbols`
   );
   let badRoute = false;
@@ -790,7 +792,8 @@ async function main() {
   eq(
     "ProvMark: the sr words are the current ones",
     provMarkup.map((m) => /<span class="sr-only">([^<]*)<\/span>/.exec(m)?.[1]),
-    ["Written by the app", "added by the app", "worked out by the app", "You wrote this", "You checked this", "Your syllabus line"]
+    // ui-motion §15.1 (revision 5): PROVMARK_NAMES gains pv.library («Your Domain») and pv.named («named by Gemini», D33).
+    ["Written by the app", "added by the app", "worked out by the app", "You wrote this", "You checked this", "Your syllabus line", "Your Domain", "named by Gemini"]
   );
   eq(
     "ProvMark: the words match roadmap-copy (provenanceChipWords, PROVENANCE_WORDS.WORKED_OUT, the added line)",
@@ -991,6 +994,10 @@ async function main() {
     { motion: "seal-reached", el: () => fake(glyphMarkup("m.seal", "idle")).querySelector("svg") },
     { motion: "tip-open", el: () => fake('<span class="mg-tp">x</span>').querySelector("span") },
     { motion: "kindle", el: () => fake(glyphMarkup("flame", "done")).querySelector("svg") },
+    // Revision 5 (ui-motion §15.9): the topic map's three motions, on the parts their selectors name.
+    { motion: "trace", el: () => fake('<section><ul><li data-trace="self"><span class="rm-tm-rail"></span></li><li data-trace="rel"><span class="rm-tm-rail"></span></li><li data-trace="other"><span class="rm-tm-rail"></span></li></ul></section>').querySelector("section") },
+    { motion: "layer-open", el: () => fake(`<li data-n="2">${glyphMarkup("layer.2", "idle")}<span data-lo="badge">b</span><span data-lo="word">after 1</span></li>`).querySelector("li"), opts: { text: "open" } },
+    { motion: "estimate-swap", el: () => fake('<span class="rm-es"><span>4 layers</span></span>').querySelector("span") },
   ];
   check("motion: every named motion has a fixture here", GM.GLYPH_MOTIONS.every((m) => targets.some((t) => t.motion === m)));
   const lic = (m: (typeof GM.GLYPH_MOTIONS)[number]) => GM.MOTION_LICENCE[m];
@@ -1039,7 +1046,8 @@ async function main() {
   check("calm: the gateway's burst creates 0 motes", body.children.length === gatewayBefore);
   // full: chains created up front, fill 'backwards'
   const fullBad: string[] = [];
-  const CROSSFADES = new Set(["date-moved", "pay-swap"]);
+  // estimate-swap is a crossfade (§15.9); so is layer-open's state word (its [data-lo="word"] part).
+  const CROSSFADES = new Set(["date-moved", "pay-swap", "estimate-swap"]);
   announced.length = 0;
   bursts.length = 0;
   for (const t of targets) {
@@ -1049,7 +1057,8 @@ async function main() {
     for (const c of r.calls) {
       const fill = c.opts.fill;
       const flicker = t.motion === "kindle" && c.el.getAttribute("class")?.includes("mg-core");
-      if (!CROSSFADES.has(t.motion) && !flicker && fill !== "backwards") fullBad.push(`${t.motion}: fill ${fill}`);
+      const wordSwap = t.motion === "layer-open" && c.el.getAttribute("data-lo") === "word";
+      if (!CROSSFADES.has(t.motion) && !flicker && !wordSwap && fill !== "backwards") fullBad.push(`${t.motion}: fill ${fill}`);
     }
     const end = Math.max(0, ...r.calls.map((c) => ((c.opts.delay as number) ?? 0) + ((c.opts.duration as number) ?? 0)));
     if (end > GM.GLYPH_DUR.chainMax) fullBad.push(`${t.motion}: ${end} ms`);

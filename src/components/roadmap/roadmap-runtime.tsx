@@ -55,6 +55,27 @@ import {
   undoAccept,
   undoDiscard,
 } from "@/app/actions/roadmap";
+// ── Revision 5, lane 9: the topic map's actions (contracts §22.14; lanes 8 and 10 implement them) ──
+import {
+  addTopic,
+  advanceTopicChain,
+  breakDown,
+  breakIntoTopics,
+  chooseTopic,
+  editTopic,
+  goDeeper,
+  keepGeminiName,
+  keepLayer,
+  mergeLayerUp,
+  moveTopic,
+  rateAgain,
+  setLayers,
+  setParents,
+  skipTopic,
+  trackClauseAsGoal,
+  useMyDomain,
+  writeTopics,
+} from "@/app/actions/roadmap";
 import { archiveTask, rescheduleGoal, unarchiveTask } from "@/app/actions/tasks";
 import { createField } from "@/app/actions/taxonomy";
 import type { RoadmapActionResult } from "@/lib/roadmap-types";
@@ -145,6 +166,28 @@ export interface RoadmapActions {
   rescheduleGoal: (goalId: string, day: string) => Promise<{ ok: true; value: unknown } | { ok: false; error: string }>;
   /** The intake's "New Field…" (taxonomy createField, after a confirm). */
   createField: (name: string) => Promise<{ ok: true; value: { id: string; name: string } } | { ok: false; error: string }>;
+  // ── Revision 5, lane 9: the topic map (contracts §22.14). Each is its core without userId, now and deps. ──
+  setLayers: typeof setLayers;
+  keepLayer: typeof keepLayer;
+  addTopic: typeof addTopic;
+  editTopic: typeof editTopic;
+  moveTopic: typeof moveTopic;
+  setParents: typeof setParents;
+  useMyDomain: typeof useMyDomain;
+  chooseTopic: typeof chooseTopic;
+  skipTopic: typeof skipTopic;
+  keepGeminiName: typeof keepGeminiName;
+  mergeLayerUp: typeof mergeLayerUp;
+  /** [Break into topics] on an ACTIVE LEVELS plan: a TOPICS re-plan draft (version + 1, Roadmap.draftPlan; ruling 49). */
+  breakIntoTopics: typeof breakIntoTopics;
+  /** [Write the topics]: the no-Gemini TOPICS draft on a fresh DRAFT (ruling 58). */
+  writeTopics: typeof writeTopics;
+  trackClauseAsGoal: typeof trackClauseAsGoal;
+  /** The Gemini chain (lane 10; only while its switches are on): the chain head, a re-rate, Go deeper, the next step. */
+  breakDown: typeof breakDown;
+  rateAgain: typeof rateAgain;
+  goDeeper: typeof goDeeper;
+  advanceTopicChain: typeof advanceTopicChain;
 }
 
 export const LIVE_ACTIONS: RoadmapActions = {
@@ -191,6 +234,25 @@ export const LIVE_ACTIONS: RoadmapActions = {
   unarchiveTask: (id) => unarchiveTask(id),
   rescheduleGoal: (goalId, day) => rescheduleGoal(goalId, day),
   createField: (name) => createField(name),
+  // Revision 5, lane 9
+  setLayers,
+  keepLayer,
+  addTopic,
+  editTopic,
+  moveTopic,
+  setParents,
+  useMyDomain,
+  chooseTopic,
+  skipTopic,
+  keepGeminiName,
+  mergeLayerUp,
+  breakIntoTopics,
+  writeTopics,
+  trackClauseAsGoal,
+  breakDown,
+  rateAgain,
+  goDeeper,
+  advanceTopicChain,
 };
 
 /** What a fixture's buttons answer: nothing is saved there. */
@@ -242,6 +304,25 @@ export const FIXTURE_ACTIONS: RoadmapActions = {
   unarchiveTask: refuse,
   rescheduleGoal: refuse,
   createField: refuse,
+  // Revision 5, lane 9
+  setLayers: refuse,
+  keepLayer: refuse,
+  addTopic: refuse,
+  editTopic: refuse,
+  moveTopic: refuse,
+  setParents: refuse,
+  useMyDomain: refuse,
+  chooseTopic: refuse,
+  skipTopic: refuse,
+  keepGeminiName: refuse,
+  mergeLayerUp: refuse,
+  breakIntoTopics: refuse,
+  writeTopics: refuse,
+  trackClauseAsGoal: refuse,
+  breakDown: refuse,
+  rateAgain: refuse,
+  goDeeper: refuse,
+  advanceTopicChain: refuse,
 };
 
 export interface RoadmapRuntime {

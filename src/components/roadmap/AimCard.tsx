@@ -92,6 +92,8 @@ import { Chips, HonestyChip } from "@/components/glyph/HonestyChip";
 import { InfoTip } from "@/components/glyph/InfoTip";
 import { RankSeal } from "@/components/glyph/RankSeal";
 import { RouteRail, type RailNode } from "@/components/glyph/RouteRail";
+// Revision 5, lane 9: a TOPICS plan's strip nodes (layer.k, locked, held, depth)
+import { railNodeTopicFieldsOf } from "./topic-map-model";
 import { usePlayOnSeen, useSeenEvent } from "@/components/glyph/useSeen";
 import type { RankName } from "@/components/glyph/paths/rank";
 import { DraftWeave } from "@/components/fx/DraftWeave";
@@ -107,7 +109,7 @@ import { pushToast } from "@/components/ui/toast-store";
 import { goalPercent } from "@/lib/goals";
 import { daysBetween, todayKey } from "@/lib/life-day";
 import { BAND, horizonParams } from "@/lib/shader/params";
-import { AIM_MAX, AIM_RANKS, RANK_NEW_DAYS, isAcceptanceReading, type AimCardView, type AreaChip, type LastAimView, type PaceResult, type PracticePace } from "@/lib/roadmap-types";
+import { AIM_MAX, AIM_RANKS, RANK_NEW_DAYS, isAcceptanceReading, type AimCardView, type AreaChip, type LastAimView, type MilestoneRowView, type PaceResult, type PracticePace } from "@/lib/roadmap-types";
 import type { Track } from "@/lib/life-types";
 import type { AimPrompt, AimSeed } from "@/lib/roadmap-invite";
 import { writeAimHandoff, type AimHandoff } from "@/lib/roadmap-handoff";
@@ -653,18 +655,26 @@ export function stripLabelOf(n: Pick<RailNodeModel, "n" | "state" | "pct" | "met
   return `Milestone ${n.n} · ${word}`;
 }
 
-/** The model's rail nodes as RouteRail draws them on the strip. */
-export function stripNodesOf(nodes: readonly RailNodeModel[]): RailNode[] {
-  return nodes.map((n) => ({
-    n: n.n,
-    state: n.state,
-    label: stripLabelOf(n),
-    pct: n.pct,
-    gate: n.gate ?? undefined,
-    rankIndex: n.rankIndex,
-    countsFrom: n.countsFrom ?? undefined,
-    closedPct: n.closedPct,
-  }));
+/**
+ * The model's rail nodes as RouteRail draws them on the strip. Revision 5, lane 9 (ui-motion §15.6): with the
+ * card's rows, a TOPICS row's layer, role, lock and hold ride along (K_final + T nodes); a LEVELS row adds nothing.
+ */
+export function stripNodesOf(nodes: readonly RailNodeModel[], rows?: readonly MilestoneRowView[] | null): RailNode[] {
+  return nodes.map((n) => {
+    const row = rows?.find((r) => r.ord === n.n);
+    const topic = row ? railNodeTopicFieldsOf(row) : {};
+    return {
+      ...topic,
+      n: n.n,
+      state: topic.heldLayer && row ? row.state : n.state,
+      label: stripLabelOf(n),
+      pct: n.pct,
+      gate: n.gate ?? undefined,
+      rankIndex: topic.heldLayer ? null : n.rankIndex,
+      countsFrom: n.countsFrom ?? undefined,
+      closedPct: n.closedPct,
+    };
+  });
 }
 
 /** The pace in ink, compact: "On pace · 7 Mar", "About 3 weeks behind" (pacePhrase's words, the "for" dropped). */
@@ -682,7 +692,7 @@ function MilestoneBlock({ view, today, bases }: { view: CardView; today: string;
   if (!ms) return null;
   const stage = stageWords(ms.stage, ms.gateLevel);
   const strip = railNodes ? (
-    <RouteRail nodes={stripNodesOf(railNodes)} orientation="strip" seenKey={seenBaseOf(bases, "plan")} label="Milestones" className="rm-ac-strip" />
+    <RouteRail nodes={stripNodesOf(railNodes, view.rail)} orientation="strip" seenKey={seenBaseOf(bases, "plan")} label="Milestones" className="rm-ac-strip" />
   ) : null;
   const head = (
     <p className="rm-ac-mh">

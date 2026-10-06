@@ -153,6 +153,10 @@ model Domain {
    * should not make the next submission swing the Domain harder.
    */
   attributeObservations Int               @default(0)
+  /// Revision 5 (roadmap migration B, decision 63): 'GEMINI' when accept created it from a kept Gemini name; null = the user's (every row before revision 5).
+  nameOrigin            String?
+  /// Revision 5: the name as Gemini gave it. The Gemini mark shows while name = originName, so a rename removes it (roadmap-types geminiNamedOf).
+  originName            String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -998,6 +1002,7 @@ model Roadmap {
   status             String              @default("DRAFT")
   /// Revision 5: the goal's seat, 1..3. Set on every DRAFT and ACTIVE row from lane 3 on; a PAUSED row keeps its last value outside the index (contracts §22.1 ruling 46); null on rows saved before lane 3.
   /// Not expressible in Prisma 6 (data-model.md): CHECK "Roadmap_slot_range" (slot null or 1..3); partial UNIQUE "Roadmap_userId_slot_open_key" (userId, slot) WHERE status IN ('DRAFT','ACTIVE').
+  /// Migration B (lane 5): CHECK "Roadmap_slot_open_required" (status NOT IN ('DRAFT','ACTIVE') OR slot IS NOT NULL): an open row always has a seat.
   slot               Int?
   /// Revision 5: the user's own name for the goal (at most GOAL_LABEL_MAX, 16 characters); null = the Area name.
   label              String?
@@ -1007,6 +1012,16 @@ model Roadmap {
   /// Revision 5: the client nonce that created the row ([A-Za-z0-9_-]{8,64}), so a double tap returns the same id.
   /// Not expressible in Prisma 6: partial UNIQUE "Roadmap_userId_createKey_key" (userId, createKey) WHERE createKey IS NOT NULL.
   createKey          String?
+  /// Revision 5 (migration B): LEVELS | TOPICS, the live version's kind; every existing row is LEVELS.
+  planKind           String              @default("LEVELS")
+  /// Revision 5: the RatingRecord (Gemini's difficulty estimate), the live version's; copied to the acceptance.
+  rating             Json?
+  /// Revision 5: SplitClause[]: the aim's clauses tracked in another goal.
+  splitClauses       Json?
+  /// Revision 5: DraftPlan (contracts §22.1 ruling 49): an open re-plan draft's {version, planKind, depth, rating} while they differ from the live version's,
+  /// as a [Break into topics] draft of a LEVELS plan has them. planKind, depth and rating stay the live version's and change only inside acceptCore's
+  /// transaction and undoAcceptCore's. Null on every existing row.
+  draftPlan          Json?
   /// The accepted version; 0 before the first acceptance. A draft or re-plan writes its milestones at version + 1.
   version            Int                 @default(0)
   /// Set at the first acceptance (the end-state anchor); cleared only by that acceptance's Undo.
@@ -1024,6 +1039,8 @@ model Roadmap {
   milestones         RoadmapMilestone[]
   acceptances        RoadmapAcceptance[]
   questWeeks         RoadmapQuestWeek[]
+  topics             RoadmapTopic[]
+  topicEdges         RoadmapTopicEdge[]
 
   @@index([userId, status])
   @@schema("public")
@@ -1063,6 +1080,13 @@ model RoadmapRun {
   error         String?
   startedAt     DateTime  @default(now())
   finishedAt    DateTime?
+  /// Revision 5: RATE | MAP | LINK | GROUND | DEEPER. Null is a run with no model phase (every LEVELS run, and a TOPICS draft built with no model).
+  /// A GEMINI run with a null phase still counts toward ROADMAP_DRAFTS_PER_DAY, and so does phase RATE, the chain head (contracts §22.1 ruling 17).
+  phase         String?
+  /// Revision 5: GroundRunRecord (webSearchQueries, chunk titles and uris, the verdict per key, the title mode, toolUsePromptTokenCount). Server only, never in a view.
+  grounding     Json?
+  /// Revision 5: every model request the run made, against ROADMAP_REQUESTS_PER_DAY and GROUNDED_REQUESTS_PER_DAY; older rows read 0 (a LEVELS run writes it from lane 10, ruling 66).
+  requests      Int       @default(0)
 
   @@index([userId, day])
   @@index([userId, inputHash])
@@ -1108,6 +1132,10 @@ model RoadmapMilestone {
   rankIndex       Int?
   /// Revision 4: FOUNDATION | FAMILIAR | RETAINED | FLUENT | MASTERED | BETWEEN | PART | STAGE_1..STAGE_5; null on rows made before revision 4.
   stage           String?
+  /// Revision 5: 1..6 on a TOPICS layer milestone; null on every LEVELS row.
+  layer           Int?
+  /// Revision 5: LAYER | DEPTH on a TOPICS milestone; null on every LEVELS row.
+  chainRole       String?
   createdAt       DateTime           @default(now())
   items           RoadmapItem[]
   measures        RoadmapMeasure[]
@@ -1175,29 +1203,31 @@ model RoadmapItem {
 /// PRACTICE_KEPT pay (g is their minimum, with the steps' share);
 /// CHECKPOINT is context only. measureKey carries no target.
 model RoadmapMeasure {
-  id            String           @id @default(cuid())
-  milestoneId   String
-  milestone     RoadmapMilestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  id             String           @id @default(cuid())
+  milestoneId    String
+  milestone      RoadmapMilestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
   /// CARDS_AT_LEVEL | PRACTICE_KEPT | CHECKPOINT.
-  kind          String
+  kind           String
   /// PAYS | CONTEXT.
-  role          String
+  role           String
   /// {domainIds} | {itemLineageIds, templateIds} | {itemLineageIds} (a checkpoint's one lineage).
-  scope         Json
-  minLevel      Int?
-  target        Float
+  scope          Json
+  minLevel       Int?
+  target         Float
   /// WORKED_OUT | YOURS.
-  targetSource  String
-  fittedTarget  Float?
+  targetSource   String
+  fittedTarget   Float?
   /// SCOPE | FIELD | YOURS | NONE.
-  rateSource    String?
+  rateSource     String?
   /// The high-water baseline set at acceptance or Start.
-  baseline      Float?
-  baselineDay   DateTime?        @db.Date
-  unit          String?
-  itemLineageId String?
-  measureKey    String?
-  createdAt     DateTime         @default(now())
+  baseline       Float?
+  baselineDay    DateTime?        @db.Date
+  unit           String?
+  itemLineageId  String?
+  measureKey     String?
+  /// Revision 5: the RoadmapTopic lineage it measures (display only); null on LEVELS.
+  topicLineageId String?
+  createdAt      DateTime         @default(now())
 
   @@index([milestoneId])
   @@index([measureKey])
@@ -1244,6 +1274,9 @@ model RoadmapAcceptance {
   intervalMultiplier Float
   overAccepted       Boolean   @default(false)
   undoneAt           DateTime?
+  /// Revision 5: PreviousPlan (contracts ruling 49): the planKind, depth, rating and domainIds an accept of another kind replaced, which undoAcceptCore restores.
+  /// Null on every existing row and on any accept that keeps the kind.
+  previousPlan       Json?
 
   @@index([roadmapId, version])
   @@schema("public")
@@ -1284,5 +1317,98 @@ model RoadmapQuestWeek {
   @@unique([userId, dedupeKey])
   @@index([roadmapId, weekStart])
   @@index([milestoneId])
+  @@schema("public")
+}
+
+// Revision 5 (migration B, lane 5; docs/life-plan/data-model.md, contracts §22).
+// Neither topic table has a userId column: like RoadmapMilestone and RoadmapItem,
+// ownership is the parent Roadmap's (FK, cascade), and every read goes through a
+// roadmap the user owns.
+
+/// One topic of one version's topic map (a TOPICS plan's layer rows).
+model RoadmapTopic {
+  id         String    @id @default(cuid())
+  roadmapId  String
+  roadmap    Roadmap   @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+  /// The version its map belongs to (a draft or re-plan writes version + 1, as milestones do).
+  version    Int
+  /// Stable across versions; edges and RoadmapMeasure.topicLineageId point at it.
+  lineageId  String
+  /// S<n> (outline line n), U<n> (intake Domain n) or T<n> (every other topic); unique per version.
+  key        String
+  /// 1..6 (LAYERS_MAX).
+  layer      Int
+  /// What is shown: the exact sample form, the aim's own span, your words, or the Domain's name.
+  name       String
+  /// The text exactly as the model returned it (at most 200 characters). Server only, never in a view.
+  rawName    String?
+  /// GEMINI | SYLLABUS | USER | LIBRARY | AIM.
+  nameOrigin String
+  /// GENERAL | REGION_SPECIFIC; null when the name is not Gemini's.
+  scope      String?
+  /// GEMINI | YOU | CODE: who set its layer.
+  placedBy   String
+  /// LINKED | WEAK | NONE | NOT_RUN | OWN (OWN: a name that was never Gemini's).
+  grounding  String
+  /// At most 5 {title, uri}, from groundingChunks.web only.
+  sources    Json      @default("[]")
+  /// Samples holding the exact form (or the aim's span), 0..3; valid samples of the phase.
+  formVotes  Int       @default(0)
+  samples    Int       @default(0)
+  /// Each voting sample's layer.
+  layerVotes Json      @default("[]")
+  /// PENDING | KEPT | EDITED | REMOVED | MERGED.
+  decision   String    @default("PENDING")
+  /// The lineage id it was merged into (MERGED).
+  mergedInto String?
+  chosen     Boolean   @default(false)
+  /// BASE | DEEP (DEEP: chosen in the last layer, the specialisation).
+  role       String    @default("BASE")
+  /// Its Domain once bound or created at accept. No foreign key, like Roadmap.domainIds.
+  domainId   String?
+  /// You bound it ([Use my Domain…], or a seed or a pick you ticked).
+  bound      Boolean   @default(false)
+  /// "Held when you began" (measured at accept).
+  heldDay    DateTime? @db.Date
+  /// "I know this" (your skip).
+  skippedDay DateTime? @db.Date
+  flags      String[]  @default([])
+  notes      String[]  @default([])
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([roadmapId, version, key])
+  @@index([roadmapId, version])
+  @@index([domainId])
+  @@schema("public")
+}
+
+/// A "builds on" link; the whole-layer default ("after layer N") is no row at all.
+model RoadmapTopicEdge {
+  id              String   @id @default(cuid())
+  roadmapId       String
+  roadmap         Roadmap  @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+  version         Int
+  /// For a cross-goal parent: "x:<parentDomainId>" (CROSS_GOAL_PARENT_PREFIX; the Domain is the parent), so one child's edges to two other goals' Domains keep distinct keys (contracts §22.1 ruling 48).
+  parentLineageId String
+  childLineageId  String
+  /// Cross-goal only: the other goal's Domain and roadmap. Read-only: it can open a gate, and pays and counts nothing here.
+  parentDomainId  String?
+  parentRoadmapId String?
+  /// GEMINI | USER | CODE | SYLLABUS | CROSS_GOAL (CODE and SYLLABUS are reserved; nothing writes them in this build).
+  origin          String
+  /// Valid LINK samples that chose it; valid LINK samples for that child.
+  votes           Int      @default(0)
+  samples         Int      @default(0)
+  /// A GEMINI edge counts as a parent only when drawn (3 of 3 valid replies, previous layer of at least 4 kept topics).
+  drawn           Boolean  @default(false)
+  /// PENDING | KEPT | EDITED | REMOVED.
+  decision        String   @default("PENDING")
+  /// OUTLINE | LINE_DOMAIN | NONE (C8).
+  match           String   @default("NONE")
+  createdAt       DateTime @default(now())
+
+  // Named explicitly: the default name is 69 characters, over Postgres's 63.
+  @@unique([roadmapId, version, parentLineageId, childLineageId], map: "RoadmapTopicEdge_version_parent_child_key")
   @@schema("public")
 }

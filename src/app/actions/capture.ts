@@ -33,7 +33,7 @@ import {
 import { applySizing } from "@/lib/life-sizing";
 import { fileIdeaDraftCore } from "@/lib/idea-filing";
 import { loadStructureWords, loadVocabulary } from "@/lib/vocabulary";
-import { OPEN_ROADMAP_STATUSES, readCaptureAim, readCaptureAimPrompt } from "@/components/capture/aim-capture";
+import { CAPTURE_AIM_READ_MAX, OPEN_ROADMAP_STATUSES, readCaptureAim, readCaptureAimPrompt, type CaptureAim as CaptureAimView } from "@/components/capture/aim-capture";
 import { AIM_PROMPT_COOKIE, type AimPrompt } from "@/lib/roadmap-invite";
 import type { BoardPlace, CaptureMode, ParsedCapture, TaskKind } from "@/lib/life-types";
 
@@ -520,10 +520,12 @@ export interface CaptureVocabulary {
   /** The unit a bare weigh-in number is read in ('weight 72.4'): the user's, 'kg' when unset or unreadable. */
   weightUnit?: WeightUnit;
   /**
-   * The open roadmap (roadmap-rev4 F-R4-7), for an 'aim: …' line and a long
-   * goal: 'NONE' (no DRAFT or ACTIVE roadmap, or the Roadmap table is not
-   * there yet), 'DRAFT' or 'ACTIVE'. Absent when it could not be read: the
-   * sheet then acts as for 'NONE' but never offers 'Make it an aim'
+   * The open goals (roadmap-rev4 F-R4-7; revision 5, contracts §23.5), for
+   * an 'aim: …' line and a long goal: {open, seatsFree, drafts}, the DRAFT
+   * and ACTIVE goals, the seats left under GOALS_MAX and the open drafts (no
+   * goal open when the Roadmap table is not there yet). An 'aim:' line hands
+   * off whenever a seat is free. Absent when it could not be read: the sheet
+   * then acts as with no goal open but never offers 'Make it an aim'
    * (components/capture/aim-capture.ts).
    */
   aim?: CaptureAim;
@@ -538,8 +540,8 @@ export interface CaptureVocabulary {
   aimPrompt?: AimPrompt;
 }
 
-/** Whether a roadmap is open, as the capture sheet needs it (CaptureVocabulary.aim). */
-export type CaptureAim = "NONE" | "DRAFT" | "ACTIVE";
+/** The open goals, as the capture sheet needs them (CaptureVocabulary.aim): aim-capture's CaptureAim, {open, seatsFree, drafts} (contracts §23.5). */
+export type CaptureAim = CaptureAimView;
 
 // The open goals come from tasks.ts loadOpenGoals: the same list, in the same
 // order, that createTemplateCore matches '^name' against, so the chip's
@@ -555,12 +557,15 @@ const loadRawBefore = (userId: string, day: DayKey) =>
   });
 
 /**
- * Whether a roadmap is open (CaptureVocabulary.aim): one indexed read
- * (Roadmap @@index([userId, status])) of the open rows' status only — never
- * a revision-4 column, so it reads the same before and after that
- * migration — cached on 'roadmap', which every roadmap write invalidates.
- * A missing Roadmap table reads 'NONE'; any other failure, unknown
- * (aim-capture readCaptureAim; never cached, never thrown).
+ * The open goals (CaptureVocabulary.aim): one indexed read (Roadmap
+ * @@index([userId, status])) of the seat-holding rows' status only (DRAFT
+ * and ACTIVE; a PAUSED goal frees its seat) — never a revision-4 or 5
+ * column, so it reads the same before and after those migrations — at most
+ * CAPTURE_AIM_READ_MAX rows, enough to tell every seat is taken, cached on
+ * 'roadmap', which every roadmap write invalidates. aim-capture counts them
+ * into {open, seatsFree, drafts} under GOALS_MAX. A missing Roadmap table
+ * reads as no goal open; any other failure, unknown (aim-capture
+ * readCaptureAim; never cached, never thrown).
  */
 const loadCaptureAim = (userId: string) =>
   readCaptureAim(() =>
@@ -568,7 +573,7 @@ const loadCaptureAim = (userId: string) =>
       const rows = await prisma.roadmap.findMany({
         where: { userId, status: { in: [...OPEN_ROADMAP_STATUSES] } },
         select: { status: true },
-        take: 2,
+        take: CAPTURE_AIM_READ_MAX,
       });
       return rows.map((r) => r.status);
     })
@@ -610,9 +615,9 @@ const loadCaptureAimPrompt = async (userId: string, day: DayKey): Promise<AimPro
  * (`opts.words === true`): a task line never shows it, and a lighter call
  * keeps the sheet's first save from queueing behind it. `recent` and
  * `active` are tasks.ts reads, cached under 'life' (the active titles from
- * the Today board's own cached read); `aim`, whether a roadmap is open, is
- * one read cached under 'roadmap' (loadCaptureAim); `aimPrompt`, whether a
- * set-an-aim suggestion may show, the snooze cookie and one read cached
+ * the Today board's own cached read); `aim`, the open goals and the free
+ * seats, is one read cached under 'roadmap' (loadCaptureAim); `aimPrompt`,
+ * whether a set-an-aim suggestion may show, the snooze cookie and one read cached
  * under 'life' (loadCaptureAimPrompt). Every part fails soft — a sheet with
  * no suggestions and a ≈ price read against an empty day still captures,
  * which is all it must never stop doing.

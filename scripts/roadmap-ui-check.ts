@@ -6419,6 +6419,193 @@ async function main() {
     );
   }
   // ===== /Rev 5 lane 1 =====
+
+  // ===== Rev 5 lane 9: the topic map UI (contracts §22.11, ruling 67; ui-motion.md §15.1 D33, §15.5, §15.10, §15.11) =====
+  // Three cases on the lane-9 fixtures (rendered above, 344 first): the Gemini mark on every Gemini-named Domain name,
+  // §15.10 row 13's word budget, and the hidden fold's quarantine. Each reads the CONTRACT, not the code under test.
+  console.log("— revision 5, lane 9: the topic map (pv.named, row 13, the hidden fold) —");
+  {
+    const wc9 = (await import("./word-count.mjs")) as typeof import("./word-count.mjs");
+    const t9 = await import("../src/lib/roadmap-types");
+    const tm9 = await import("../src/components/roadmap/topic-map-model");
+    const { LayerBand } = await import("../src/components/roadmap/LayerBand");
+    const { NAMED_BY_GEMINI } = await import("../src/components/glyph/NamedMark");
+    const { WORD_BLOCK } = await import("../src/app/dev/style/roadmap/fixtures");
+    const MAPS9 = ["topic-map-draft", "topic-map-write", "topic-map-plan", "topic-chain"] as const;
+    const mapOf9 = (v: RoadmapView) => v.topicMap ?? v.draft?.topicMap ?? null;
+
+    // ── 1. pv.named (D33): after a Gemini-named Domain's name wherever it renders, inside the name's own data-wc="name"
+    //    span, 12 px and aria-hidden, then one sr-only "named by Gemini"; never beside your Domain; gone after a rename ──
+    type N9 = { tag?: string; text?: string; raw?: boolean; attrs?: Record<string, string>; children?: N9[]; parent: N9 | null };
+    const cls9 = (n: N9 | undefined) => (n?.attrs?.class ?? "").split(/\s+/);
+    const isMark9 = (el: N9 | undefined) => el?.tag === "span" && cls9(el).includes("mg-nm");
+    const markOk9 = (el: N9 | undefined, sr: N9 | undefined) =>
+      isMark9(el) &&
+      el!.attrs?.["aria-hidden"] === "true" &&
+      (el!.children ?? []).some((c) => c.tag === "svg" && c.attrs?.["data-g"] === "pv.named" && c.attrs?.width === "12") &&
+      sr?.tag === "span" &&
+      cls9(sr).includes("sr-only") &&
+      (sr.children ?? []).map((c) => c.text ?? "").join("") === NAMED_BY_GEMINI;
+    /** The text nodes a surface draws (tap panels and closed folds included: a name there renders on one tap); sr-only text, glyphs and attributes aside. */
+    const texts9 = (html: string): N9[] => {
+      const out: N9[] = [];
+      const walk = (n: N9) => {
+        for (const c of n.children ?? []) {
+          if (c.text != null) {
+            if (!c.raw) out.push(c);
+          } else if (c.tag !== "svg" && !cls9(c).includes("sr-only")) walk(c);
+        }
+      };
+      walk(wc9.parseMarkup(html) as unknown as N9);
+      return out;
+    };
+    /** Each occurrence of `name` on a surface, and whether pv.named follows it inside the name's own span. */
+    const occ9 = (html: string, name: string) =>
+      texts9(html).flatMap((t) => {
+        const s = t.text ?? "";
+        const sib = t.parent?.children ?? [];
+        const k = sib.indexOf(t);
+        const out: { marked: boolean; text: string }[] = [];
+        for (let i = s.indexOf(name); i >= 0; i = s.indexOf(name, i + 1)) out.push({ marked: i + name.length === s.length && t.parent?.attrs?.["data-wc"] === "name" && markOk9(sib[k + 1], sib[k + 2]), text: s.trim().slice(0, 60) });
+        return out;
+      });
+    const marks9 = (html: string) => (wc9.elementsOf(wc9.parseMarkup(html)) as unknown as N9[]).filter(isMark9).length;
+    /** A view's Domain names as its payload marks them: the map's rows and seeds, another goal's parents, the chain's titleParts. */
+    const namesOf9 = (v: RoadmapView) => {
+      const map = mapOf9(v);
+      const gem = new Set<string>();
+      const mine = new Set<string>();
+      const onMap = new Set<string>();
+      const put = (d: { name: string; geminiNamed: boolean }, shown: boolean) => {
+        (d.geminiNamed ? gem : mine).add(d.name);
+        if (shown && d.geminiNamed) onMap.add(d.name);
+      };
+      for (const l of map?.layers ?? [])
+        for (const r of l.topics) {
+          if (r.domain) put(r.domain, r.chosen);
+          for (const c of r.parents.kind === "LINKS" ? r.parents.crossGoal : []) put(c, false);
+        }
+      for (const d of map?.layerOneSeeds ?? []) put(d, true);
+      for (const m of v.milestones) for (const p of m.titleParts ?? []) if (p.geminiNamed) gem.add(p.text);
+      return { gem, mine, onMap };
+    };
+    const bad9: string[] = [];
+    const surface9 = (id: string, html: string, n: ReturnType<typeof namesOf9>) => {
+      if (!html) return;
+      let marked = 0;
+      for (const name of n.gem) {
+        const o = occ9(html, name);
+        marked += o.filter((x) => x.marked).length;
+        for (const x of o) if (!x.marked) bad9.push(`${id}: «${name}» without the mark in "${x.text}"`);
+        if (n.onMap.has(name) && !o.some((x) => x.marked)) bad9.push(`${id}: «${name}» (on the map) never drawn with the mark`);
+      }
+      for (const name of n.mine) for (const x of occ9(html, name)) if (x.marked) bad9.push(`${id}: the mark beside your «${name}»`);
+      if (marks9(html) !== marked) bad9.push(`${id}: ${marks9(html)} marks, ${marked} after a Gemini-named Domain's name`);
+    };
+    for (const s of MAPS9) {
+      const n = namesOf9(roadmapFixture(s).view!);
+      surface9(`${s}/page`, renders.get(s)?.page ?? "", n);
+      surface9(`${s}/aim`, renders.get(s)?.aim ?? "", { ...n, onMap: new Set<string>() });
+    }
+    // The NamedPart payloads the fixtures leave plain (a measure's label, a week quest's label: the Now section and Today),
+    // on the accepted plan, from namedPartsOf over one of its Gemini-named Domains and one of yours.
+    const pfx9 = roadmapFixture("topic-map-plan");
+    const pv9 = pfx9.view!;
+    const D9 = [
+      { name: "Beta one", geminiNamed: true },
+      { name: "Domain one", geminiNamed: false },
+    ];
+    const lp9 = (label: string) => ({ label, labelParts: t9.namedPartsOf(label, D9) });
+    const cur9 = pv9.current!;
+    const wq9 = pv9.weekQuests!;
+    const partsView9: RoadmapView = {
+      ...pv9,
+      current: { ...cur9, measures: [{ ...cur9.measures[0], ...lp9("Beta one, Domain one · cards at level 8+") }, ...cur9.measures.slice(1)] },
+      weekQuests: { ...wq9, rows: [{ ...wq9.rows[0], ...lp9("Bring 6 cards in Beta one, Domain one to level 8+") }, ...wq9.rows.slice(1)] },
+    };
+    const partsPage9 = R(createElement(RoadmapScreen, { view: partsView9, startPreview: pfx9.startPreview, gates: pfx9.gates }));
+    const partsToday9 = R(createElement(WeekQuests, { variant: "today", view: partsView9.weekQuests! }));
+    const partsNames9 = namesOf9(partsView9);
+    partsNames9.mine.add("Domain one");
+    surface9("topic-map-plan + NamedParts/page", partsPage9, partsNames9);
+    surface9("topic-map-plan + NamedParts/today", partsToday9, { ...partsNames9, onMap: new Set(["Beta one"]) });
+    if (marks9(partsPage9) !== marks9(renders.get("topic-map-plan")?.page ?? "") + 2) bad9.push("the Now section's measure and week quest labels: not one mark each");
+    // Outside the roadmap (the library's Domain lists, review): the same DomainName, gated on the loader's geminiNamedOf.
+    for (const [f, n] of [["src/components/library/LibrarySearch.tsx", 2], ["src/app/library/[id]/page.tsx", 1], ["src/components/workspace/ReviewHub.tsx", 1], ["src/components/workspace/SessionCard.tsx", 1]] as const)
+      if ((code(read(f)).match(/\b\w+\.(?:domainGeminiNamed|geminiNamed) \? <DomainName name=\{[^}]+\} geminiNamed \/>/g) ?? []).length < n) bad9.push(`${f}: a Domain name not drawn through DomainName`);
+    for (const f of ["src/app/library/page.tsx", "src/app/review/page.tsx"]) if (!/\bgeminiNamedOf\(/.test(code(read(f)))) bad9.push(`${f}: the loader never reads geminiNamedOf`);
+    // A rename takes the mark away (geminiNamedOf: the name Gemini gave, unchanged).
+    if (!t9.geminiNamedOf({ name: "Beta one", nameOrigin: "GEMINI", originName: "Beta one" }) || t9.geminiNamedOf({ name: "Beta one (mine)", nameOrigin: "GEMINI", originName: "Beta one" }) || t9.geminiNamedOf({ name: "Beta one", nameOrigin: null, originName: null }))
+      bad9.push("geminiNamedOf: the mark outlives a rename, or marks a Domain Gemini never named");
+    check("pv.named: every geminiNamed Domain name renders the mark", bad9.length === 0, bad9.join(" | "));
+
+    // ── 2. Words (§15.10 row 13): ≤ 6 app words per layer (its header and folds), ≤ 2 for the card ([Accept all], drafts
+    //    only), on the three map fixtures, each layer its own block; a topic row holds no app word ──
+    const fail13: string[] = [];
+    const rows13 = WORD_BUDGET_ROWS.filter((r) => r.row === 13);
+    for (const s of ["topic-map-draft", "topic-map-write", "topic-map-plan"] as const) {
+      const page = renders.get(s)?.page ?? "";
+      const layers = mapOf9(roadmapFixture(s).view!)?.layers.length ?? 0;
+      const draft = s !== "topic-map-plan";
+      const perLayer = rows13.find((r) => r.fixture === s && r.surface === "page" && r.each === true && r.budget === 6 && r.blocks.length === 1 && r.blocks[0] === WORD_BLOCK.topicLayer);
+      const foot = rows13.find((r) => r.fixture === s && r.surface === "page" && r.budget === 2 && r.blocks.length === 1 && r.blocks[0] === WORD_BLOCK.topicMapFoot);
+      if (perLayer == null || R0_RESULTS.words.get(perLayer.id)?.ok !== true) fail13.push(`${s} per layer: ${perLayer ? R0_RESULTS.words.get(perLayer.id)?.detail : "no ≤ 6 each row"}`);
+      if (draft ? foot == null || R0_RESULTS.words.get(foot.id)?.ok !== true : foot != null || page.includes(`data-wc-block="${WORD_BLOCK.topicMapFoot}"`))
+        fail13.push(`${s} card: ${foot ? R0_RESULTS.words.get(foot.id)?.detail : draft ? "no ≤ 2 row" : "a foot on a plan"}`);
+      const blocks = page.split(`data-wc-block="${WORD_BLOCK.topicLayer}"`).length - 1;
+      if (layers === 0 || blocks !== layers) fail13.push(`${s}: ${blocks} layer blocks for ${layers} layers`);
+      const topicRows = page.match(/<li class="rm-tm-row[^"]*"[\s\S]*?<\/li>/g) ?? [];
+      if (topicRows.length === 0) fail13.push(`${s}: no topic rows`);
+      for (const li of topicRows) {
+        const w = wc9.countAppWords(li, { width: 344 }).words;
+        if (w.length > 0) fail13.push(`${s}: a topic row's app words «${w.join(" ")}»`);
+      }
+    }
+    check(
+      "lane 9 words (ui-motion §15.10 row 13): the topic map card holds ≤ 6 app words per layer (each layer's header and folds its own block) and ≤ 2 for the card ([Accept all], drafts only) on topic-map-draft, -write and -plan; a topic row holds no app word",
+      rows13.length >= 5 && fail13.length === 0,
+      fail13.join(" | ")
+    );
+
+    // ── 3. Honesty (§22.11 NOT_CHECKED, taint 0 outside the revealed fold): with Gemini names on, a hidden name shows only
+    //    behind its layer's «n not checked» fold; folded it is on no surface, revealed only in the fold's own rows, unticked ──
+    const fail9h: string[] = [];
+    const dfx9 = roadmapFixture("topic-map-draft");
+    const dmap9 = mapOf9(dfx9.view!)!;
+    const hidden9 = dmap9.layers.flatMap((l) => l.topics.filter((r) => r.cls === "NOT_CHECKED"));
+    if (!tm9.topicNamesOn(dfx9.gates) || hidden9.length < 2 || hidden9.some((r) => r.chosen)) fail9h.push("the fixture: Gemini names on, at least 2 hidden names, none chosen");
+    for (const r of hidden9) if (all.includes(r.name)) fail9h.push(`«${r.name}» on a fixture surface while folded`);
+    const dpage9 = renders.get("topic-map-draft")?.page ?? "";
+    let folded9 = 0;
+    for (const l of dmap9.layers) {
+      const names = l.topics.filter((r) => r.cls === "NOT_CHECKED").map((r) => r.name);
+      const n = names.length;
+      const band = new RegExp(`<section class="rm-tm-band[^"]*" data-layer="${l.layer}"[\\s\\S]*?</section>`).exec(dpage9)?.[0] ?? "";
+      const fold = /<div class="rm-tm-fold rm-tm-fold-h">[\s\S]*?<\/div>/.exec(band)?.[0] ?? "";
+      const foldOk = fold.includes('class="rm-tm-foldb" aria-expanded="false"') && fold.includes(`<span aria-hidden="true">${n}</span><span class="sr-only">${copy.foldHiddenSr(n)}</span>`) && fold.includes('data-hc="gemini"') && fold.includes(`>${copy.SHORT_GEMINI}<`);
+      if (band === "" || (n === 0 ? fold !== "" : !foldOk)) fail9h.push(`layer ${l.layer}: the fold for ${n} hidden`);
+      if (n === 0) continue;
+      folded9 += n;
+      const band9 = (open: boolean) => R(createElement(LayerBand, { map: dmap9, layer: l, draft: true, trace: { self: null, related: new Set<string>() }, onTrace: () => {}, onMore: () => {}, hiddenOpen: open }));
+      const open = band9(true);
+      const closed = band9(false);
+      const ul = /<ul class="rm-tm-rows rm-tm-rows-hidden">[\s\S]*?<\/ul>/.exec(open)?.[0] ?? "";
+      const lis = ul.match(/<li [\s\S]*?<\/li>/g) ?? [];
+      if (lis.length !== n || lis.some((li) => !li.includes('data-cls="NOT_CHECKED"') || li.includes("data-chosen") || / checked=""/.test(li)))
+        fail9h.push(`layer ${l.layer}: revealed, not ${n} unticked NOT_CHECKED rows`);
+      for (const nm of names) if (!ul.includes(nm) || open.replace(ul, "").includes(nm) || closed.includes(nm)) fail9h.push(`layer ${l.layer}: «${nm}» outside the revealed fold`);
+    }
+    if (folded9 !== dmap9.hidden) fail9h.push(`the folds count ${folded9}, the map hides ${dmap9.hidden}`);
+    const hiddenKeys9 = new Set(hidden9.map((r) => r.key));
+    if (tm9.topicsToCreateOf(dmap9).some((r) => hiddenKeys9.has(r.key)) || tm9.acceptAllListOf(dmap9).some((x) => x.names.some((nm) => hidden9.some((r) => r.name === nm))))
+      fail9h.push("a hidden name in what accept creates or [Accept all] keeps");
+    check(
+      "lane 9 honesty (§22.11, ui-motion §15.5): with Gemini names on, a hidden (NOT_CHECKED, not LINKED) Gemini name renders only behind its layer's «n not checked» fold — on no fixture surface while folded, never in the plan rows; revealed, only in the fold's own rows, unticked and out of what accept creates",
+      fail9h.length === 0,
+      fail9h.join(" | ")
+    );
+  }
+  // ===== /Rev 5 lane 9 =====
   void r0Gate;
 
   console.log(`\nroadmap-ui-check: ${passed} passed, ${failed} failed`);

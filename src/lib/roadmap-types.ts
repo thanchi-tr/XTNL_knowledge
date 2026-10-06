@@ -104,7 +104,8 @@
  * parser's reading only suggests.
  *   Cue detector      CueClass · CueSource · CueSpan · CueReading · the CUE_* vocabularies ·
  *                     constraintCuesOf (text → {hasCue, cues, unparseable}) · CueTexts · cueTextsOf ·
- *                     cueReadingOf · cueKeyOf (the track's and the words') · cueLegacyKeyOf (read only) · userClauseOf
+ *                     cueReadingOf · cueKeyOf (the track's and the words') · cueLegacyKeyOf (read only) · userClauseOf ·
+ *                     otherGoalTextsOf (§23.6: the other goals' texts the reading and the "k3-" key take)
  *   The confirmation  ActivityCardAnswer (what the card sends: key, avoid, nothingToAvoid) ·
  *                     ActivityConfirm (stored, YOURS: key, AVOID kinds, answered) · ActivityCardAnswered ·
  *                     ActivityConfirmEntry · ActivityVerdict · ActivityAnswer (deprecated per-kind form) ·
@@ -442,8 +443,9 @@ export const BLOCKING_FLAGS: readonly BlockingFlag[] = [
  *   FROM_SUGGESTION   a DOMAIN item for a Domain the user created from a GAP row
  *   PRODUCTION_ADDED  a production practice code added at Retained and above ("added by the app")
  */
-export type ItemNote = "CHECK_LINK" | "ADDED_TO_SCOPE" | "RAISED" | "STUDY_ADDED" | "PLACEHOLDER" | "GEMINI_PICK" | "NOT_CHOSEN" | "FROM_SUGGESTION" | "PRODUCTION_ADDED";
-export const ITEM_NOTES: readonly ItemNote[] = ["CHECK_LINK", "ADDED_TO_SCOPE", "RAISED", "STUDY_ADDED", "PLACEHOLDER", "GEMINI_PICK", "NOT_CHOSEN", "FROM_SUGGESTION", "PRODUCTION_ADDED"];
+/** Revision 5, lane 8 (ruling 5): TOPIC_MAP marks a Domain item an accept created from a chosen topic of a TOPICS map (the FROM_SUGGESTION path). */
+export type ItemNote = "CHECK_LINK" | "ADDED_TO_SCOPE" | "RAISED" | "STUDY_ADDED" | "PLACEHOLDER" | "GEMINI_PICK" | "NOT_CHOSEN" | "FROM_SUGGESTION" | "PRODUCTION_ADDED" | "TOPIC_MAP";
+export const ITEM_NOTES: readonly ItemNote[] = ["CHECK_LINK", "ADDED_TO_SCOPE", "RAISED", "STUDY_ADDED", "PLACEHOLDER", "GEMINI_PICK", "NOT_CHOSEN", "FROM_SUGGESTION", "PRODUCTION_ADDED", "TOPIC_MAP"];
 
 /** "Targets vs your pace": FITTED for a code-fitted target (no verdict); the rest only for a typed (YOURS) target. */
 export type KnowledgeVerdict = "FITTED" | "FITS" | "TIGHT" | "OVER" | "IMPOSSIBLE";
@@ -1039,9 +1041,17 @@ export const ENGLISH_FUNCTION_WORDS: readonly string[] = [
  * draftsCountedToday / draftCapReached / draftsLeftToday and R4's
  * claimPlanOf read it, and R4's SQL guard mirrors it as
  * `kind = 'GEMINI' AND status <> 'REUSED'`.
+ * ── Revision 5, lane 10 (contracts §22.15, ruling 17): chain heads only. A
+ * run with no phase (every LEVELS run; a row read before migration B) or
+ * phase RATE counts; MAP, LINK, GROUND and DEEPER never count a draft (they
+ * count against the request caps). The SQL guard adds
+ * `AND ("phase" IS NULL OR "phase" = 'RATE')`. A row with no phase reads
+ * exactly as before, so LEVELS is unchanged.
  */
-export function countsTowardDraftCap(run: { kind: RunKind | string; status: RunStatus | string }): boolean {
-  return run.kind === "GEMINI" && run.status !== "REUSED";
+export function countsTowardDraftCap(run: { kind: RunKind | string; status: RunStatus | string; phase?: RunPhase | string | null }): boolean {
+  if (run.kind !== "GEMINI" || run.status === "REUSED") return false;
+  const phase = run.phase ?? null;
+  return phase === null || phase === "RATE";
 }
 
 /**
@@ -1059,9 +1069,12 @@ export const RUN_FALLBACK_STARTER = "STARTER";
  * What a run wrote, or null when it wrote no rows: a CAPPED run (nothing
  * written), a RUNNING run (not yet), and a FAILED run with no starter
  * fallback (the roadmap changed, it was superseded, or the catch path).
- * `fallback` is the stored report's `fallback` field.
+ * `fallback` is the stored report's `fallback` field. Revision 5 (lane 10; contracts §22.15): a topic chain step
+ * (RoadmapRun.phase set: RATE, MAP, LINK, GROUND, DEEPER) writes the map, never milestone rows (code rebuilds those from
+ * the map), so it is never the rows' writer; a LEVELS run has no phase and reads as before.
  */
-export function runWriterOf(run: { kind: RunKind | string; status: RunStatus | string; fallback?: string | null }): RunWriter | null {
+export function runWriterOf(run: { kind: RunKind | string; status: RunStatus | string; fallback?: string | null; phase?: string | null }): RunWriter | null {
+  if (run.phase != null) return null;
   if (run.status === "FAILED") return run.kind === "GEMINI" && run.fallback === RUN_FALLBACK_STARTER ? "STARTER" : null;
   if (run.status !== "OK" && run.status !== "PARTIAL" && run.status !== "REUSED") return null;
   return run.kind === "GEMINI" || run.kind === "INHOUSE" || run.kind === "MANUAL" ? run.kind : null;
@@ -1072,7 +1085,7 @@ export function runWriterOf(run: { kind: RunKind | string; status: RunStatus | s
  * wrote rows. A CAPPED "Draft again" over a Gemini draft therefore still
  * reads Gemini; a FAILED run that wrote nothing never relabels the rows.
  */
-export function rowsWriterOf(runsNewestFirst: readonly { kind: RunKind | string; status: RunStatus | string; fallback?: string | null }[]): RunWriter | null {
+export function rowsWriterOf(runsNewestFirst: readonly { kind: RunKind | string; status: RunStatus | string; fallback?: string | null; phase?: string | null }[]): RunWriter | null {
   for (const r of runsNewestFirst) {
     const w = runWriterOf(r);
     if (w) return w;
@@ -1093,7 +1106,7 @@ export function rowsWriterOf(runsNewestFirst: readonly { kind: RunKind | string;
  * accepted (null, 0 or not a version), or no run of it wrote rows. R4 fills
  * RoadmapView.acceptedRun from it.
  */
-export function acceptedRunOf<T extends { kind: RunKind | string; status: RunStatus | string; fallback?: string | null; version: number }>(
+export function acceptedRunOf<T extends { kind: RunKind | string; status: RunStatus | string; fallback?: string | null; phase?: string | null; version: number }>(
   runsNewestFirst: readonly T[],
   acceptedVersion: number | null | undefined
 ): T | null {
@@ -1519,6 +1532,9 @@ export function topRankIndexOfDepth(input: DepthRankInput): number {
     return Math.min(kept, RANK_MILESTONE_MAX);
   }
   if (input.depth == null) return topRankIndexOf(input.keptStages);
+  // ── Revision 5, lane 7 (contracts §22.12): Paragon on TOPICS needs the specialisation at 12, the base topics at 8 (both by
+  // construction at depth 12), your standard and coverage at policy; otherwise STAGE_RANK of L* (6 → Journeyman), below. ──
+  if (input.planKind === "TOPICS" && input.depth === 12 && input.hasStandard && !input.coverageBelowPolicy) return RANK_TOP;
   if (input.depth === 12 && input.hasStandard && !input.coverageBelowPolicy && input.productionPlannedFromFluent) return RANK_TOP;
   const final = stageOfLevel(input.depth);
   return final ? STAGE_RANK[final] : 0;
@@ -1538,7 +1554,8 @@ export function paragonMissingOf(input: DepthRankInput): ParagonMissing[] {
   if (input.depth !== 12) out.push("DEPTH");
   if (!input.hasStandard) out.push("STANDARD");
   if (input.coverageBelowPolicy) out.push("COVERAGE");
-  if (!input.productionPlannedFromFluent) out.push("PRODUCTION");
+  // Revision 5, lane 7 (contracts §22.12): a TOPICS plan's Paragon asks no production practice.
+  if (!input.productionPlannedFromFluent && input.planKind !== "TOPICS") out.push("PRODUCTION");
   return out;
 }
 
@@ -2360,6 +2377,12 @@ export const CODE_TEMPLATES = [
   "Writing practice one week, listen and repeat the next: {domains}",
   "Writing practice one week, study the next: {domains}",
   "Listen and repeat one week, study the next: {domains}",
+  // ── Revision 5, lane 8 (contracts §22.1 ruling 22, ruling 60): a TOPICS plan's layer titles. An accepted layer
+  // milestone's title names its Domains (domainsShort); a DRAFT's names none (Gemini's names are quarantined until
+  // keep), and its paying line counts the layer's topics.
+  "{domains} · layer {k} of {n}",
+  "Layer {k} of {n}",
+  "Layer {k} · {n} topics",
 ] as const;
 export type CodeTemplate = (typeof CODE_TEMPLATES)[number];
 export interface CodeFill {
@@ -2444,7 +2467,8 @@ export function codeText(template: CodeTemplate, fill: CodeFill = {}): CodeText 
     }
   };
   // One pass: a filled-in name that itself holds "{L}" or "{aim}" is never filled again.
-  if (template.includes("{k}") && template.includes("{n}") && fill.k != null && fill.n != null && fill.k > fill.n) throw new Error("codeText: {k} is past {n}");
+  // "Layer {k} · {n} topics" counts topics in {n}, not layers (revision 5, lane 8): its layer may exceed its count.
+  if (template !== "Layer {k} · {n} topics" && template.includes("{k}") && template.includes("{n}") && fill.k != null && fill.n != null && fill.k > fill.n) throw new Error("codeText: {k} is past {n}");
   return template.replace(/\{(stage|domains|L|k|n|exam|aim)\}/g, (_m, slot: string) => value(slot)) as CodeText;
 }
 
@@ -3183,9 +3207,11 @@ export interface MeasureSpec {
  *                       ("Writing 150 cards at 2 a week takes 75 weeks. Write more a week, or narrow the aim.")
  *   NO_PRODUCTION_SLOT  a stage at Retained or above that needs a production practice and has no free slot
  *   DEPTH_LOWERED       a stage dropped when the depth was lowered ("dropped when the depth was lowered on 5 Oct")
+ *   KNOWN_BY_YOU        revision 5 (contracts §22.1 ruling 5): a TOPICS layer whose every topic you marked "I know this":
+ *                       a held row that gives no rank (roadmap-realism's chain)
  */
-export type MilestoneNote = "NO_STUDY_SLOT" | "NOT_MEASURABLE" | "CARDS_TOO_SMALL" | "HEALTH_LINE" | "HELD_AT_START" | "LONG_WINDOW" | "NO_PRODUCTION_SLOT" | "DEPTH_LOWERED";
-export const MILESTONE_NOTES: readonly MilestoneNote[] = ["NO_STUDY_SLOT", "NOT_MEASURABLE", "CARDS_TOO_SMALL", "HEALTH_LINE", "HELD_AT_START", "LONG_WINDOW", "NO_PRODUCTION_SLOT", "DEPTH_LOWERED"];
+export type MilestoneNote = "NO_STUDY_SLOT" | "NOT_MEASURABLE" | "CARDS_TOO_SMALL" | "HEALTH_LINE" | "HELD_AT_START" | "LONG_WINDOW" | "NO_PRODUCTION_SLOT" | "DEPTH_LOWERED" | "KNOWN_BY_YOU";
+export const MILESTONE_NOTES: readonly MilestoneNote[] = ["NO_STUDY_SLOT", "NOT_MEASURABLE", "CARDS_TOO_SMALL", "HEALTH_LINE", "HELD_AT_START", "LONG_WINDOW", "NO_PRODUCTION_SLOT", "DEPTH_LOWERED", "KNOWN_BY_YOU"];
 
 /** One milestone of a draft or version (mirrors RoadmapMilestone, with its items and measures). */
 export interface MilestoneDraft {
@@ -3603,10 +3629,10 @@ export interface RealismInput {
   calibrating?: CalibratingInput[];
   /** The source writing rate (new cards a life week; measured or typed) before PACE_SHARE; null with none. */
   sourceRate?: number | null;
-  // ── Revision 5 (contracts §22.12, §23.3; lane 7). Both shares default to 1, and 1 is byte-identical (M13). ──
-  /** This goal's share of the week: min(h × 60 × A, rampCap × share). */
+  // ── Revision 5 (contracts §22.12, §23.3; lane 3 reads both shares, ruling 54; lane 7 planKind). Both shares default to 1, and 1 is byte-identical (M13). ──
+  /** This goal's share of the week (roadmap-goals sharesOf): min(h × 60 × A, rampCap × share). */
   share?: number;
-  /** Multiplies a FIELD-sourced rate only (ruling 30). */
+  /** This goal's share of its Field's pace (sharesOf's fieldShare): multiplies a FIELD-sourced rate only (ruling 30). */
   fieldShare?: number;
   planKind?: PlanKind;
 }
@@ -3833,8 +3859,8 @@ export interface ProficiencyParts {
 }
 
 export type ProficiencyClass = "MEASURED" | "SELF_REPORTED";
-/** What changed the basis: shown "Changed on … (was 41%)", never as a gain. */
-export type ProficiencyRebaseCause = "ACCEPTED" | "REPLAN" | "UNDO" | "SWITCHED_OFF";
+/** What changed the basis: shown "Changed on … (was 41%)", never as a gain. RESUMED (contracts §23.4; lane 3): the first reading after a paused goal resumes ("since you resumed"). */
+export type ProficiencyRebaseCause = "ACCEPTED" | "REPLAN" | "UNDO" | "SWITCHED_OFF" | "RESUMED";
 
 export interface ProficiencyRebase {
   on: DayKey;
@@ -5051,6 +5077,9 @@ export interface LibraryDomain {
   atTop: number;
   level: number;
   sample?: string[];
+  /** Revision 5 (migration B; ruling 67): the Gemini mark's inputs (geminiNamedOf), present only on a Domain that has an origin, so a LEVELS view is unchanged. */
+  nameOrigin?: string | null;
+  originName?: string | null;
 }
 
 /** What loadRoadmapView returns for /you/roadmap (F18). Serialisable; rendering writes nothing but the fallback freeze. */
@@ -5844,23 +5873,57 @@ export function cueTextsOf(intake: Pick<Intake, "constraints" | "aim" | "examLab
   return { constraints: intake.constraints ?? null, aim: intake.aim ?? null, notes };
 }
 
-/** constraintCuesOf over every text, in order (constraints, aim, notes), each cue tagged with its source. */
-export function cueReadingOf(texts: CueTexts): CueReading {
+/** One goal's texts read in order (constraints, aim, notes), each cue tagged with its source (and its note's index). */
+function cueReadingsOf(texts: Pick<CueTexts, "constraints" | "aim" | "notes">): CueReading[] {
   const parts: CueReading[] = [constraintCuesOf(texts.constraints, "CONSTRAINTS"), constraintCuesOf(texts.aim, "AIM")];
-  const notes = (texts.notes ?? []).filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+  const notes = (Array.isArray(texts.notes) ? texts.notes : []).filter((x): x is string => typeof x === "string" && x.trim().length > 0);
   notes.forEach((note, i) => {
     const r = constraintCuesOf(note, "NOTES");
     parts.push({ ...r, cues: r.cues.map((c) => ({ ...c, note: i })) });
   });
+  return parts;
+}
+
+/**
+ * The other goals' texts as the gate reads them (contracts §23.6): each
+ * entry with a roadmap id and a texts object, each roadmap once (the first
+ * wins), in the order given (the server's seat order). Empty when absent.
+ */
+export function otherGoalTextsOf(texts: Pick<CueTexts, "others">): GoalCueTexts[] {
+  const out: GoalCueTexts[] = [];
+  const seen = new Set<string>();
+  for (const g of Array.isArray(texts.others) ? texts.others : []) {
+    if (!g || typeof g !== "object" || typeof g.roadmapId !== "string" || !g.texts || typeof g.texts !== "object" || seen.has(g.roadmapId)) continue;
+    seen.add(g.roadmapId);
+    out.push(g);
+  }
+  return out;
+}
+
+/**
+ * constraintCuesOf over every text, in order (constraints, aim, notes), each
+ * cue tagged with its source. Then (contracts §23.6, lane 3) each other
+ * goal's constraints, aim and notes (CueTexts.others, in the order given:
+ * the server's seat order), each of their cues tagged with `goal` =
+ * {roadmapId, slot}; `unparseable` is the OR of all. With `others` absent or
+ * empty, this goal's reading is the whole answer, byte for byte.
+ */
+export function cueReadingOf(texts: CueTexts): CueReading {
+  const parts = cueReadingsOf(texts);
+  const others = otherGoalTextsOf(texts);
+  for (const g of others) {
+    const goal = { roadmapId: g.roadmapId, slot: isGoalSlot(g.slot) ? g.slot : null };
+    for (const r of cueReadingsOf(g.texts)) parts.push({ ...r, cues: r.cues.map((c) => ({ ...c, goal })) });
+  }
   const cues = parts.flatMap((p) => p.cues);
   const unparseable = parts.some((p) => p.unparseable);
   return { hasCue: cues.length > 0 || unparseable, cues, unparseable };
 }
 
 /** The texts as the keys read them (case and spacing ignored, empty notes left out). */
-function cueKeyPartsOf(texts: CueTexts): string[] {
+function cueKeyPartsOf(texts: Pick<CueTexts, "constraints" | "aim" | "notes">): string[] {
   const clean = (x: unknown) => (typeof x === "string" ? x.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim() : "");
-  const notes = (texts.notes ?? []).map(clean).filter(Boolean);
+  const notes = (Array.isArray(texts.notes) ? texts.notes : []).map(clean).filter(Boolean);
   return [clean(texts.constraints), clean(texts.aim), ...notes];
 }
 
@@ -5884,9 +5947,19 @@ function fnv1aHex(s: string): string {
  * card asks again. An AVOID never goes stale. No text is stored twice. The
  * exam flag is not keyed: the exam label is itself a note, and a kind the
  * card didn't list waits anyway (ActivityCardAnswered.asked).
+ *
+ * With other goals' texts (CueTexts.others; contracts §23.6 item 6, ruling
+ * 29) the key is "k3-": FNV-1a over the track, this goal's texts and each
+ * other goal's roadmap id and texts, in roadmap-id order (a goal's seat is
+ * not keyed), so a change to any goal's words asks again on every card
+ * that asks. Without others it is today's "k2-" key, byte for byte.
  */
 export function cueKeyOf(texts: CueTexts, track: CatalogTrack): string {
-  return `k2-${fnv1aHex([typeof track === "string" ? track : "", ...cueKeyPartsOf(texts)].join("␞"))}`;
+  const own = [typeof track === "string" ? track : "", ...cueKeyPartsOf(texts)].join("␞");
+  const others = otherGoalTextsOf(texts);
+  if (others.length === 0) return `k2-${fnv1aHex(own)}`;
+  const sorted = [...others].sort((a, b) => (a.roadmapId < b.roadmapId ? -1 : a.roadmapId > b.roadmapId ? 1 : 0));
+  return `k3-${fnv1aHex([own, ...sorted.map((g) => [g.roadmapId, ...cueKeyPartsOf(g.texts)].join("␞"))].join("␝"))}`;
 }
 
 /**
@@ -6850,8 +6923,12 @@ export interface TopicRowView {
   canChoose: boolean;
   role: TopicRole;
   level: number | null;
-  /** crossGoal: another goal's Domain (slot null for a PAUSED goal, ruling 55); geminiNamed renders pv.named. */
-  parents: { kind: "LINKS"; keys: string[]; crossGoal: { slot: GoalSlot | null; name: string; geminiNamed: boolean }[] } | { kind: "LAYER"; layer: number };
+  /**
+   * crossGoal: another goal's Domain (slot null for a PAUSED goal, ruling 55); geminiNamed renders pv.named. The join
+   * adds its ids (optional) so ParentsSheet can send the cross-goal parents back with setParents (ParentPick.crossGoal):
+   * a save never drops them.
+   */
+  parents: { kind: "LINKS"; keys: string[]; crossGoal: { slot: GoalSlot | null; name: string; geminiNamed: boolean; roadmapId?: string; domainId?: string }[] } | { kind: "LAYER"; layer: number };
   children: string[];
   votes: { form: number; samples: number } | null;
   sources: TopicSource[];

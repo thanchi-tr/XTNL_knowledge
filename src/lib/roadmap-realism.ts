@@ -29,6 +29,17 @@
  * Revision 5, lane 1 (F-R5-8): aimDomainDefaultsOf, the intake's prefill,
  * on lineDomainDefaultOf's own matcher (namesDomain).
  *
+ * Revision 5, lane 7 (contracts §22.12, §23.3; F-R5-2, F-R5-9): the chain.
+ * A TOPICS plan (RealismInput.planKind TOPICS) is one layer milestone per
+ * topic layer, paid at OPEN_LEVEL, then the depth tail "set by reviews".
+ * fitPlan, feasibilityOf, refit, applyRemedy, remedyTargetDay, refitForStart,
+ * startSnapshotOf, writingPlanOf, dateCheckOf, lowerDepthPlanOf and
+ * motivationTimelineOf branch to it before the depth engine (a TOPICS input
+ * may carry a depth); every LEVELS answer is byte-identical.
+ *
+ *   layeredLadderOf · depthTailOf · chainFitOf · chainWriteDaysOf
+ *   depthTermsOf(…, levels) · ChainTopicInput · TopicChainInput · ChainFitInput
+ *
  * Fix round 2 (contracts §16.10, the WRITE_MARGIN ruling's option (b)): new
  * cards that are only WRITE_MARGIN's spare (every Domain already holds its
  * count n_d) need no pace; with none, the depth is dated on the cards held
@@ -297,6 +308,30 @@ import {
   topRankIndexOfDepth,
   writeNeedOf,
   WRITE_MARGIN,
+  // ── Revision 5, lane 7 (contracts §22.12) ──
+  BASE_LEVEL,
+  BREADTH_FALLBACK,
+  BREADTH_TABLE,
+  CHAIN_OFFERS,
+  COVER_FLOOR_CARDS,
+  LAYERS_MAX,
+  LAYERS_MIN,
+  LAYER_TOPICS_MAX,
+  OPEN_LEVEL,
+  STAGE_RANK,
+  TOPIC_FLOOR_CARDS,
+  isTopicDepth,
+  milestoneCapOf,
+  topicRankIndexOf,
+  type BreadthKey,
+  type ChainFit,
+  type ChainOffer,
+  type ChainRole,
+  type CodeTemplate,
+  type PlanKind,
+  type RatingOrigin,
+  type TopicDepth,
+  type TopicRole,
   type AimDepth,
   type CalibratingInput,
   type CardSegment,
@@ -573,19 +608,37 @@ function passRateOf(input: RealismInput): PassRate {
 }
 
 interface Capacity {
-  /** A full week's minutes: min(hours × 60 × A, rampCap). */
+  /** A full week's minutes: min(hours × 60 × A, rampCap × share). */
   weekMin: number;
   declaredMin: number;
   a: number;
   aMeasured: boolean;
+  /** The user's whole ramp cap (every goal's together); null while calibrating. */
   rampCap: number | null;
   trackedMedian: number | null;
   trackedHave: number;
   unverified: boolean;
   class: "ESTIMATED" | "YOURS";
+  /** This goal's part of the ramp cap (rampCap × share) is under its declared minutes. */
   rampBinds: boolean;
+  /** This goal's share of the week (RealismInput.share; 1 with one goal: contracts §23.3, ruling 54). */
+  share: number;
+  /** This goal's share of its Field's pace (RealismInput.fieldShare; it multiplies a FIELD-sourced rate only: ruling 30). */
+  fieldShare: number;
 }
 
+/** A share as the engine reads it: a finite number within [0, 1]; absent (or not a number) reads 1, today's whole week (M13). */
+function shareOf(v: number | undefined): number {
+  return typeof v === "number" && Number.isFinite(v) ? clamp(v, 0, 1) : 1;
+}
+
+/**
+ * The week's minutes for this goal (contracts §23.3, lane 3; ruling 54):
+ * weekMin_g = min(h_g × 60 × A, rampCap × s_g). The ramp cap is the user's
+ * tracked time, which every goal shares, so each goal gets its share of it;
+ * its own declared hours are its own. A share of 1 (one goal, or none given)
+ * is byte-identical to the single-goal engine.
+ */
 function capacityOf(input: RealismInput): Capacity {
   const adh = input.throughput.adherence;
   const aMeasured = adh.kind === "measured";
@@ -593,8 +646,11 @@ function capacityOf(input: RealismInput): Capacity {
   const tracked = input.throughput.trackedMinutes;
   const trackedMedian = tracked.kind === "measured" ? tracked.median : null;
   const rampCap = trackedMedian == null ? null : Math.max(RAMP_FLOOR_MIN, RAMP_ALLOWANCE * trackedMedian);
+  const share = shareOf(input.share);
+  const fieldShare = shareOf(input.fieldShare);
+  const goalCap = rampCap == null ? null : share === 1 ? rampCap : rampCap * share;
   const declaredMin = Math.max(0, input.hoursPerWeek) * 60 * a;
-  const weekMin = rampCap == null ? declaredMin : Math.min(declaredMin, rampCap);
+  const weekMin = goalCap == null ? declaredMin : Math.min(declaredMin, goalCap);
   return {
     weekMin,
     declaredMin,
@@ -605,12 +661,26 @@ function capacityOf(input: RealismInput): Capacity {
     trackedHave: tracked.kind === "calibrating" ? tracked.have : tracked.weeks,
     unverified: !aMeasured || rampCap == null,
     class: rampCap == null ? "YOURS" : "ESTIMATED",
-    rampBinds: rampCap != null && rampCap < declaredMin,
+    rampBinds: goalCap != null && goalCap < declaredMin,
+    share,
+    fieldShare,
   };
 }
 
 /**
- * available(w) = min(hoursPerWeek × 60 × A, rampCap) × non-held days ÷ 7
+ * The input's scopes with a FIELD-sourced rate split by this goal's Field
+ * pace share (RealismInput.fieldShare, read through capacityOf; ruling 30):
+ * goals in one Field write from one Field pace. A Domain's own rate (SCOPE)
+ * is not split, because Domains are exclusive between goals, and neither is
+ * a rate you typed (YOURS). At a share of 1 it is the input's own array.
+ */
+function pacedScopesOf(input: RealismInput, fieldShare: number): RealismScope[] {
+  if (fieldShare === 1) return input.scopes;
+  return input.scopes.map((s) => (s.rateSource === "FIELD" && s.rate != null ? { ...s, rate: s.rate * fieldShare } : s));
+}
+
+/**
+ * available(w) = min(hoursPerWeek × 60 × A, rampCap × share) × non-held days ÷ 7
  * (Constants), the days being the week's own from today on (Monday to
  * Sunday, or from today in the current week). It is not cut at the aim's
  * date (fix round): the week quests (R6, which pass today = weekStart and
@@ -618,7 +688,9 @@ function capacityOf(input: RealismInput): Capacity {
  * the aim's final week and in any week a Reschedule moved past it. The
  * plan's own weeks are cut to each milestone's window where load is (weeksOf).
  * Before calibration A = DECLARED_FACTOR, there is no rampCap and the verdict
- * is unverified (class YOURS: the declared fallback).
+ * is unverified (class YOURS: the declared fallback). With up to 3 goals
+ * (contracts §23.3), `share` is this goal's (RealismInput.share, read by
+ * capacityOf): the week quests freeze each goal's set at its own share.
  */
 export function availableFor(weekStart: DayKey, input: RealismInput): { minutes: number; class: "ESTIMATED" | "YOURS"; unverified: boolean; rampBinds: boolean } {
   const cap = capacityOf(input);
@@ -649,14 +721,16 @@ interface Ctx {
  */
 function contextOf(input: RealismInput): Ctx {
   const cache = new Map<string, RealismScope>();
+  const cap = capacityOf(input);
+  const scopes = pacedScopesOf(input, cap.fieldShare);
   const scopeOf = (domainIds: readonly string[]): RealismScope => {
     const ids = sortedUnique(domainIds);
     const key = ids.join(",");
     const hit = cache.get(key);
     if (hit) return hit;
-    let scope = input.scopes.find((s) => s.key === key) ?? input.scopes.find((s) => sortedUnique(s.domainIds).join(",") === key);
+    let scope = scopes.find((s) => s.key === key) ?? scopes.find((s) => sortedUnique(s.domainIds).join(",") === key);
     if (!scope) {
-      const parts = ids.map((id) => input.scopes.find((s) => s.domainIds.length === 1 && s.domainIds[0] === id)).filter((s): s is RealismScope => !!s);
+      const parts = ids.map((id) => scopes.find((s) => s.domainIds.length === 1 && s.domainIds[0] === id)).filter((s): s is RealismScope => !!s);
       const cards: CardState[] = [];
       for (const p of parts) cards.push(...p.cards);
       const field = parts.find((p) => p.rateSource === "FIELD" && p.rate != null);
@@ -674,7 +748,7 @@ function contextOf(input: RealismInput): Ctx {
     cache.set(key, scope);
     return scope;
   };
-  return { input, today: input.today, m: input.m > 0 ? input.m : 1, held: new Set(input.heldDays), pr: passRateOf(input), cap: capacityOf(input), scopeOf };
+  return { input, today: input.today, m: input.m > 0 ? input.m : 1, held: new Set(input.heldDays), pr: passRateOf(input), cap, scopeOf };
 }
 
 const effectiveCards = (cards: readonly CardState[], today: DayKey): EffectiveCard[] => cards.map((c) => effectiveState(c, today));
@@ -794,6 +868,7 @@ function meanShare(w: Writing, key: string, scope: RealismScope, held: ReadonlyS
  * source sum to at most its rate.
  */
 export function writingPlanOf(plan: readonly MilestoneDraft[], input: RealismInput): { scopeKey: string; rateSource: RealismScope["rateSource"]; weeks: { weekStart: DayKey; cards: number }[] }[] {
+  if (isTopicsInput(input)) return chainWritingPlanOf(plan, input); // Revision 5, lane 7: the staged writing.
   if (isDepthInput(input)) return depthWritingPlanOf(plan, input);
   const ctx = contextOf(input);
   const uses = usesOf(plan, ctx);
@@ -1442,6 +1517,7 @@ function practiceItem(lineageId: string, ord: number, label: string, method: Pra
  * rev 3's allocation.
  */
 export function fitPlan(plan: readonly MilestoneDraft[], input: RealismInput, opts: PlaceOpts = {}): MilestoneDraft[] {
+  if (isTopicsInput(input)) return fitChain(plan, input, depthPlaceOf(opts)); // Revision 5, lane 7: the chain (before the depth engine).
   if (isDepthInput(input)) return fitDepth(plan, input, depthPlaceOf(opts));
   return fitRows(plan, input, opts);
 }
@@ -1784,7 +1860,9 @@ function capacityPhrase(cap: Capacity, hours: number): string {
 
 function rampLine(cap: Capacity, hours: number): string {
   const allowance = cap.rampCap === RAMP_FLOOR_MIN ? "at least 2 h" : hm(cap.rampCap ?? 0);
-  return `You've tracked ${hm(cap.trackedMedian ?? 0)} a week of tasks (task estimates). Plans may add up to +50% (${allowance}) until your tracked time grows; you said ${hours} h.`;
+  const line = `You've tracked ${hm(cap.trackedMedian ?? 0)} a week of tasks (task estimates). Plans may add up to +50% (${allowance}) until your tracked time grows; you said ${hours} h.`;
+  // Several goals share one person's week (contracts §23.3): the ramp binds them all, and this goal plans on its share.
+  return cap.share < 1 ? `${line} Your tracked time limits all your goals; this one plans on ${pct(cap.share)} of it, ${hm(cap.weekMin)} a week.` : line;
 }
 
 interface WeekRow {
@@ -1943,6 +2021,7 @@ function aimCheckOf(ctx: Ctx): AimCheck {
 }
 
 function feasibilityWith(plan: readonly MilestoneDraft[], input: RealismInput, withRemedies: boolean): Feasibility {
+  if (isTopicsInput(input)) return judgeChain(plan, input, withRemedies).fe; // Revision 5, lane 7.
   if (isDepthInput(input)) return judgeDepth(plan, input, withRemedies).fe;
   return judgePlan(plan, input, withRemedies).fe;
 }
@@ -2053,8 +2132,10 @@ function resplit(plan: readonly MilestoneDraft[], input: RealismInput, nFor: (sp
   const base = lastCarried != null && lastCarried >= input.today ? lastCarried : input.today;
   const span = daysBetween(base, input.targetDay);
   const carriedPositions = positionCountOf(carriedAll);
-  let n = clamp(Math.min(nFor(span, unstarted.length, carriedPositions), unstarted.length), 0, MAX_MILESTONES);
-  while (n > 0 && positionCountOf([...carriedAll, ...unstarted.slice(0, n)]) > MAX_MILESTONES) n -= 1;
+  // Revision 5, lane 7 (ruling 50): the cap is the plan kind's (milestoneCapOf: MAX_MILESTONES on LEVELS, so unchanged).
+  const cap = milestoneCapOf(input.planKind);
+  let n = clamp(Math.min(nFor(span, unstarted.length, carriedPositions), unstarted.length), 0, cap);
+  while (n > 0 && positionCountOf([...carriedAll, ...unstarted.slice(0, n)]) > cap) n -= 1;
   const windows = n >= 1 && span >= MILESTONE_MIN_DAYS && daysBetween(input.today, input.targetDay) <= SPAN_MAX_DAYS ? splitSpan(base, input.targetDay, n) : null;
   if (windows && base !== input.today) windows[0] = { start: addDays(base, 1), end: windows[0].end };
   unstarted.forEach((ms, i) => {
@@ -2095,6 +2176,8 @@ const scheduledUnstarted = (plan: readonly MilestoneDraft[]): number => plan.fil
  * "Re-date later milestones" and the CALIBRATED offer run it.
  */
 export function refit(plan: readonly MilestoneDraft[], input: RealismInput, opts: PlaceOpts = {}): MilestoneDraft[] {
+  // Revision 5, lane 7 (ruling 50): a TOPICS plan re-dates through the chain, its layers and topics unchanged, never re-split.
+  if (isTopicsInput(input)) return redateChain(plan, input, "PLAN", opts);
   if (isDepthInput(input)) return redateDepth(plan, input, "PLAN", opts);
   const split = resplit(plan, input, (span, unstarted) => Math.min(unstarted, milestoneCountFor(Math.max(span, 1))));
   return fitRows(split, input, opts);
@@ -2122,6 +2205,7 @@ function movedTo(plan: readonly MilestoneDraft[], input: RealismInput, targetDay
  * D_real (F-R4-11); null past SPAN_MAX_DAYS.
  */
 export function remedyTargetDay(plan: readonly MilestoneDraft[], input: RealismInput): DayKey | null {
+  if (isTopicsInput(input)) return chainRealisticDayOf(plan, input); // Revision 5, lane 7.
   if (isDepthInput(input)) return realisticDayOf(plan, input);
   const first = addDays(input.targetDay, 7 - weekdayOf(input.targetDay) || 7);
   const last = addDays(input.today, SPAN_MAX_DAYS);
@@ -2216,6 +2300,8 @@ function remediesFor(plan: readonly MilestoneDraft[], input: RealismInput, befor
  * changes a depth term).
  */
 export function applyRemedy(plan: readonly MilestoneDraft[], input: RealismInput, remedy: Remedy, opts: PlaceOpts = {}): MilestoneDraft[] {
+  // Revision 5, lane 7: on a TOPICS plan only the realistic date applies (the chain is never squeezed); LOWER_DEPTH is its own action.
+  if (isTopicsInput(input)) return remedy === "USE_REALISTIC_DATE" || remedy === "MOVE_DATE" ? redateChain(plan, input, "REALISTIC", opts) : plan.map(cloneMilestone);
   if (isDepthInput(input)) return remedy === "USE_REALISTIC_DATE" || remedy === "MOVE_DATE" ? redateDepth(plan, input, "REALISTIC", opts) : plan.map(cloneMilestone);
   if (remedy === "MOVE_DATE") {
     const day = remedyTargetDay(plan, input);
@@ -2447,6 +2533,7 @@ export interface StartRefit {
  * (stageDate); the counts and levels never fall (todayCheck is null).
  */
 export function refitForStart(milestone: MilestoneDraft, plan: readonly MilestoneDraft[], input: RealismInput): StartRefit {
+  if (isTopicsInput(input)) return refitForStartChain(milestone, plan, input); // Revision 5, lane 7.
   if (isDepthInput(input)) return refitForStartDepth(milestone, plan, input);
   const ctx = contextOf(input);
   const ms = cloneMilestone(milestone);
@@ -2518,6 +2605,8 @@ function emptyFeasibility(ms: MilestoneDraft): MilestoneFeasibility {
  * cards)) and their weekly need (needRateByDomain).
  */
 export function startSnapshotOf(milestone: MilestoneDraft, refitted: StartRefit, input: RealismInput, startedDay: DayKey): StartSnapshot {
+  // Revision 5, lane 7: a TOPICS row's snapshot is the depth one's, per Domain (its paying measures; it reads no depth).
+  if (isTopicsInput(input)) return startSnapshotDepth(milestone, refitted, input, startedDay);
   if (isDepthInput(input)) return startSnapshotDepth(milestone, refitted, input, startedDay);
   const ctx = contextOf({ ...input, today: startedDay });
   const dueDay = milestone.dueDay ?? refitted.milestone.dueDay ?? startedDay;
@@ -2697,7 +2786,8 @@ interface DepthDomain {
 interface DepthModel {
   input: RealismInput;
   today: DayKey;
-  L: AimDepth;
+  /** L*: an AimDepth on a depth plan; a TOPICS chain's model (revision 5, lane 7) may sit at 6. */
+  L: TopicDepth;
   m: number;
   params: ReachParams;
   calibrating: CalibratingInput[];
@@ -2713,20 +2803,32 @@ interface DepthModel {
   writes: Map<string, Map<string, WriteDay[]>>;
   /** capRateOf's results, per upper bound. */
   caps: Map<string, number>;
+  /**
+   * Revision 5, lane 7: a TOPICS chain's staged writing (each topic's cards in its own layer's window, chainScheduleOf),
+   * which writeDaysAt returns whatever the rate. Absent on every depth plan.
+   */
+  staged?: Map<string, WriteDay[]>;
 }
 
-/** The source rate a depth plan writes from (F-R4-11's r_src): RealismInput.sourceRate when R4 gives it, else the pace of R's union scope (or any scope of R with one). */
+/**
+ * The source rate a depth plan writes from (F-R4-11's r_src): RealismInput.sourceRate when R4 gives it, else the pace
+ * of R's union scope (or any scope of R with one). A FIELD-sourced rate is this goal's share of the Field pace
+ * (RealismInput.fieldShare; contracts §23.3, ruling 30), R4's sourceRate included; a share of 1 changes nothing.
+ */
 function sourceRateOf(input: RealismInput, ids: readonly string[]): { rate: number | null; rateSource: RateSource } {
+  const fieldShare = shareOf(input.fieldShare);
+  const scopes = pacedScopesOf(input, fieldShare);
   const key = sortedUnique(ids).join(",");
-  const exact = input.scopes.find((s) => s.key === key || sortedUnique(s.domainIds).join(",") === key);
+  const exact = scopes.find((s) => s.key === key || sortedUnique(s.domainIds).join(",") === key);
   const found =
     exact && exact.rateSource !== "NONE" && exact.rate != null
       ? exact
-      : input.scopes.find((s) => s.rateSource !== "NONE" && s.rate != null && s.domainIds.some((d) => ids.includes(d)));
+      : scopes.find((s) => s.rateSource !== "NONE" && s.rate != null && s.domainIds.some((d) => ids.includes(d)));
   if (input.sourceRate !== undefined) {
     const r = input.sourceRate;
     if (r == null || !Number.isFinite(r) || r < 0) return { rate: null, rateSource: "NONE" };
-    return { rate: r, rateSource: found ? found.rateSource : "YOURS" };
+    const rateSource = found ? found.rateSource : "YOURS";
+    return { rate: rateSource === "FIELD" && fieldShare !== 1 ? r * fieldShare : r, rateSource };
   }
   return found ? { rate: found.rate as number, rateSource: found.rateSource } : { rate: null, rateSource: "NONE" };
 }
@@ -2770,6 +2872,7 @@ function depthModelOf(input: RealismInput, L: AimDepth, targets: readonly { id: 
  * no held day this is roadmap-types referenceWriteDaysOf exactly.
  */
 function writeDaysAt(model: DepthModel, rate: number): Map<string, WriteDay[]> {
+  if (model.staged) return model.staged;
   const key = String(rate);
   const hit = model.writes.get(key);
   if (hit) return hit;
@@ -2886,7 +2989,9 @@ function strictDepthDayOf(model: DepthModel, rate: number | null): DayKey | null
 /** A depth row's gate level: its card measures' highest level; a gate stage's own level without them. */
 function rowLevelOf(ms: MilestoneDraft): number | null {
   let lv: number | null = null;
-  for (const x of ms.measures) if (x.kind === "CARDS_AT_LEVEL" && x.minLevel != null) lv = Math.max(lv ?? 0, x.minLevel);
+  // Revision 5, lane 7: a TOPICS row's level is its paying measures' (its CONTEXT rows, "climbing to 8", and its PART or
+  // BETWEEN checkpoints never set it); a LEVELS row (no chainRole) reads every card measure, as before.
+  for (const x of ms.measures) if (x.kind === "CARDS_AT_LEVEL" && x.minLevel != null && (ms.chainRole == null || (x.role === "PAYS" && !x.gate))) lv = Math.max(lv ?? 0, x.minLevel);
   if (lv != null) return lv;
   const st = ms.stage;
   return st && (STAGE_KEYS as readonly string[]).includes(st) ? STAGE_LEVEL[st as GateStage] : null;
@@ -3582,16 +3687,24 @@ function lineDomainsOf(intake: Intake, chosen: readonly { id: string; name: stri
  * CARDS_AT_LEVEL|d:<id>|L<L*>|rc, target n_d, targetSource DEPTH (the
  * policy) or YOURS (typed). Never scaled by intensity, fitted to reach or
  * lowered by a remedy: Light, Steady and Push give the same terms.
+ *
+ * Revision 5, lane 7 (contracts §22.1 ruling 45): `depth` widens to a
+ * TopicDepth, and `levels` (Domain id → its end level) gives a mixed-level end
+ * state: a TOPICS plan's specialisation at L*, its base topics at 8 (or at L*
+ * when that is lower), each `rc`. A Domain it doesn't list (or lists with no
+ * whole level 1..20) sits at `depth`. Without `levels`, byte-identical.
  */
-export function depthTermsOf(depth: AimDepth, coverage: readonly CoverageBreakdown[], baselines: Readonly<Record<string, number>>, today: DayKey): EndStateTerm[] {
+export function depthTermsOf(depth: TopicDepth, coverage: readonly CoverageBreakdown[], baselines: Readonly<Record<string, number>>, today: DayKey, levels?: Readonly<Record<string, number>> | null): EndStateTerm[] {
   return coverage.map((c) => {
     const raw = Object.prototype.hasOwnProperty.call(baselines, c.domainId) ? baselines[c.domainId] : 0;
+    const own = levels && Object.prototype.hasOwnProperty.call(levels, c.domainId) ? levels[c.domainId] : undefined;
+    const level = typeof own === "number" && Number.isInteger(own) && own >= 1 && own <= 20 ? own : depth;
     return {
-      measureKey: cardsAtLevelKey([c.domainId], depth, "rc"),
+      measureKey: cardsAtLevelKey([c.domainId], level, "rc"),
       target: c.n,
       baseline: Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0,
       baselineDay: today,
-      label: `${c.name} · cards at level ${depth}+`,
+      label: `${c.name} · cards at level ${level}+`,
       targetSource: c.typed != null ? "YOURS" : "DEPTH",
     };
   });
@@ -3711,6 +3824,15 @@ interface RowProgressionCtx {
    * leaves, and its steps and checkpoint stay the user's.
    */
   addOne?: boolean;
+  /**
+   * Revision 5, lane 7 (contracts §22.13): a TOPICS plan (its rows carry a
+   * chainRole). The progression's input then says so (planKind TOPICS, each
+   * stage's `chain`), a dated exam is never placed in a layer before K (ruling
+   * 44), and an item's {domains} follow its part: NEW the row's own Domains (a
+   * depth row: the specialisation), CARRY the layer before's (a depth row: the
+   * base topics).
+   */
+  topics?: boolean;
 }
 
 /** A row's stage key on the track: its own, else (a Field row without one) its gate level's; null when it has none. */
@@ -3753,7 +3875,10 @@ function chainOf(plan: readonly MilestoneDraft[], c: RowProgressionCtx, maxOf: (
   const stages: ProgressionStageInput[] = rows.map((ms) => {
     const stage = rowStageKeyOf(ms, c.track) as StageKey;
     const level = c.track === "FIELD" ? rowLevelOf(ms) : null;
-    if (isHeldRow(ms)) return { stage, level, held: true };
+    // Revision 5, lane 7: a TOPICS row names its chain role and layer (contracts §22.13, ProgressionStageInput.chain), and
+    // a layer whose every topic is held or known is held. A LEVELS row spreads nothing, so its stage reads as before.
+    const chain = c.topics === true ? { chain: { role: ms.chainRole ?? ("LAYER" as ChainRole), layer: ms.layer ?? null } } : {};
+    if (isHeldRow(ms) || (c.topics === true && isChainHeldRow(ms))) return { stage, level, held: true, ...chain };
     if (!placedHere(ms))
       return {
         stage,
@@ -3762,8 +3887,9 @@ function chainOf(plan: readonly MilestoneDraft[], c: RowProgressionCtx, maxOf: (
           .sort((a, b) => a.ord - b.ord)
           .filter(liveItem)
           .map((i) => i.catalogKey ?? null),
+        ...chain,
       };
-    return { stage, level };
+    return { stage, level, ...chain };
   });
   // Gemini's picks: each DRAFT gate or track stage's live GEMINI_PICK practice, then the reply's own (exact own keys only).
   const keys = progressionStageKeysOf(c.track) as readonly string[];
@@ -3785,6 +3911,15 @@ function chainOf(plan: readonly MilestoneDraft[], c: RowProgressionCtx, maxOf: (
   // after the day, else the last; the run-up is that stage when the exam falls EXAM_PREP_MIN_DAYS or more into its window,
   // else the stage before). No day, no index (the last stage holds the exam).
   const placed = c.exam && c.examDay ? examStagesOf(rows.map((ms, k) => ({ start: ms.windowStart, due: ms.dueDay, held: stages[k].held === true })), c.examDay) : { examStage: null, examPrepStage: null };
+  // Revision 5, lane 7 (ruling 44, decision 79): on a TOPICS plan a dated exam never lands mid-chain. Its stage is layer K at
+  // the earliest; in layer K, layer K holds the run-up too; in a depth milestone, the milestone before holds it.
+  let examStage: number | null = placed.examStage;
+  let examPrepStage: number | null = placed.examPrepStage;
+  if (c.topics === true && c.exam && examStage != null) {
+    const lastLayer = rows.reduce((at, ms, k) => (ms.chainRole === "LAYER" && stages[k].held !== true ? k : at), -1);
+    if (lastLayer >= 0 && examStage < lastLayer) examStage = lastLayer;
+    examPrepStage = rows[examStage]?.chainRole === "DEPTH" ? Math.max(0, examStage - 1) : examStage;
+  }
   return {
     rows,
     input: {
@@ -3792,8 +3927,10 @@ function chainOf(plan: readonly MilestoneDraft[], c: RowProgressionCtx, maxOf: (
       stages,
       practicesAllowed: c.practicesAllowed,
       exam: c.exam,
-      examStage: placed.examStage,
-      examPrepStage: placed.examPrepStage,
+      examStage,
+      examPrepStage,
+      // Revision 5, lane 7: the progression's TOPICS parts read the plan kind (contracts §22.13, ProgressionInput.planKind).
+      ...(c.topics === true ? { planKind: "TOPICS" as PlanKind } : {}),
       // The skills the exam tests (contracts §20.12: a LANGUAGE plan's exam trains each), code's reading of its name.
       ...(c.exam ? { examSkills: languageExamSkillsOf(c.fill.exam ?? "") } : {}),
       family: c.family,
@@ -3860,6 +3997,15 @@ function syncRowsInPlace(plan: MilestoneDraft[], c: RowProgressionCtx): Map<stri
     const want = new Map<string, ProgressionItem>(wanted.map((x) => [x.kind, x]));
     const domains = stageNamesOf(ms, c.names);
     const fill = { track: c.track, domains: domains.length ? domains : undefined, aim: c.fill.aim ?? undefined, exam: c.fill.exam ?? undefined };
+    // Revision 5, lane 7 (contracts §22.13): on a TOPICS row an item's {domains} follow its part, NEW the row's own Domains
+    // and CARRY the layer before's (a depth row: the specialisation and the base topics). A LEVELS row reads `fill` as before.
+    const parts = c.topics === true ? topicPartNamesOf(rows, k, c.names) : null;
+    const namesFor = (x: ProgressionItem): DomainName[] => (parts ? (topicPartOf(x) === "CARRY" ? parts.carry : parts.own) : domains);
+    const fillFor = (x: ProgressionItem): typeof fill => {
+      if (!parts) return fill;
+      const ds = namesFor(x);
+      return { ...fill, domains: ds.length ? ds : undefined };
+    };
     // Code's rows the progression no longer wants (or a second row of one kind) leave, with their checkpoint measure.
     const gone = new Set<string>();
     const seen = new Set<string>();
@@ -3885,7 +4031,7 @@ function syncRowsInPlace(plan: MilestoneDraft[], c: RowProgressionCtx): Map<stri
       it.notes = [...it.notes.filter((n) => n !== "STUDY_ADDED" && n !== "PRODUCTION_ADDED" && n !== "GEMINI_PICK"), ...notes];
       try {
         // A practice that takes turns with another (contracts §20.12) says so in its words; one that no longer does, its own.
-        it.label = progressionLabelOf({ kind: it.catalogKey as CatalogKey, alternate: x.alternate ?? null }, fill);
+        it.label = progressionLabelOf({ kind: it.catalogKey as CatalogKey, alternate: x.alternate ?? null }, fillFor(x));
       } catch {
         // a label that can't be filled keeps its words
       }
@@ -3910,7 +4056,7 @@ function syncRowsInPlace(plan: MilestoneDraft[], c: RowProgressionCtx): Map<stri
         lineageId: c.makeId ? c.makeId() : `${ms.lineageId.slice(0, 40)}-pg-${x.kind.toLowerCase().slice(0, 18)}`,
         ord: nextItemOrd(ms),
         track: c.track,
-        domains,
+        domains: namesFor(x),
         aim: c.fill.aim,
         exam: c.fill.exam,
         notes: progressionNotesOf(x),
@@ -3969,6 +4115,11 @@ function roomWithin(budget: number, fits: number, floor: PracticeBand | null): n
 /** The plan's load as the allocation reads it (a depth plan's at its writing rate), for the room. */
 function roomStateOf(plan: readonly MilestoneDraft[], input: RealismInput): { state: PlanState; ctx: Ctx } {
   const ctx = contextOf(input);
+  // Revision 5, lane 7: a TOPICS plan's load is its chain's (the staged writing at the plan's rate).
+  if (isTopicsInput(input)) {
+    const core = chainCoreOfPlan(plan, input);
+    if (core) return { state: depthStateOf(plan, core.model, ctx, core.rate ?? 0), ctx };
+  }
   if (isDepthInput(input)) {
     const model = depthModelOfPlan(plan, input);
     if (model) {
@@ -4005,6 +4156,8 @@ function rowProgressionCtxOf(
     room,
     names: extra.names,
     makeId: extra.makeId,
+    // Revision 5, lane 7: a plan whose rows carry a chain role is a TOPICS plan (RowProgressionCtx.topics).
+    ...(plan.some((ms) => ms.chainRole != null) ? { topics: true } : {}),
   };
 }
 
@@ -4605,8 +4758,8 @@ function refitForStartDepth(milestone: MilestoneDraft, plan: readonly MilestoneD
   return { milestone: ms, feasibility, todayCheck: null, impossible: verdict === "IMPOSSIBLE", stageDate: { planned, realistic, verdict } };
 }
 
-/** startSnapshotOf's depth branch (see startSnapshotOf). */
-function startSnapshotDepth(milestone: MilestoneDraft, refitted: StartRefit, input: RealismInput & { depth: AimDepth }, startedDay: DayKey): StartSnapshot {
+/** startSnapshotOf's depth branch (see startSnapshotOf); a TOPICS row's too (revision 5, lane 7: it reads no depth, so the input type is widened). */
+function startSnapshotDepth(milestone: MilestoneDraft, refitted: StartRefit, input: RealismInput, startedDay: DayKey): StartSnapshot {
   const ctx = contextOf({ ...input, today: startedDay });
   const dueDay = milestone.dueDay ?? refitted.milestone.dueDay ?? startedDay;
   const derived = reachInputsOf(input.throughput, ctx.m);
@@ -5429,6 +5582,7 @@ function hasStandardOf(plan: readonly MilestoneDraft[]): boolean {
  * `coverageBelowPolicy` to false (the caller knows the coverage choices).
  */
 export function motivationTimelineOf(plan: readonly MilestoneDraft[], input: RealismInput, opts: { hasStandard?: boolean; coverageBelowPolicy?: boolean } = {}): MotivationTimeline {
+  if (isTopicsInput(input)) return chainMotivationTimelineOf(plan, input, opts); // Revision 5, lane 7: the rank spread.
   const today = input.today;
   const rows = planOrder(plan)
     .map((i) => plan[i])
@@ -5503,6 +5657,12 @@ export function dateCheckOf(ladder: readonly MilestoneDraft[], input: RealismInp
     dateOrigin: { origin: dateMode === "REALISTIC" ? "REALISTIC" : "USER", calibrating: [] },
     basis: [line],
   });
+  // Revision 5, lane 7: a TOPICS plan's date check is its chain's (never squeezed: the offers instead).
+  if (isTopicsInput(input)) {
+    const core = chainCoreOfPlan(ladder, input);
+    if (!core) return none("No topic to date: add a topic to this map.");
+    return chainDateCheckOf(core, dateMode, dateMode === "CHOSEN" ? userDate : null, examDay ?? null).check;
+  }
   if (!isDepthInput(input)) return none("Practice only: the plan counts the sessions you tick, not cards, so the date is yours.");
   const model = depthModelOfPlan(ladder, input);
   if (!model) return none("No card measure to date: add a Domain to this plan.");
@@ -5519,8 +5679,12 @@ export function dateCheckOf(ladder: readonly MilestoneDraft[], input: RealismInp
  * had removed that gate, the lowest stage above it becomes it, re-dated to
  * its stage day. Counts never change; no pay, goal or rank is touched here.
  */
-export function lowerDepthPlanOf(plan: readonly MilestoneDraft[], input: RealismInput, to: AimDepth, opts: PlaceOpts = {}): { ok: true; plan: MilestoneDraft[]; dropped: string[] } | { ok: false; error: string } {
+export function lowerDepthPlanOf(plan: readonly MilestoneDraft[], input: RealismInput, to: TopicDepth, opts: PlaceOpts = {}): { ok: true; plan: MilestoneDraft[]; dropped: string[] } | { ok: false; error: string } {
+  // Revision 5, lane 7 (ruling 50): `to` widens to a TopicDepth; a TOPICS plan rebuilds its depth tail (depthTailOf), and
+  // depth 6 is refused on a level plan (whose depths are 8, 10 and 12).
+  if (isTopicsInput(input)) return lowerChainDepthOf(plan, input, to, opts);
   if (!isDepthInput(input)) return { ok: false, error: "This plan has no depth to lower." };
+  if (!isAimDepth(to)) return { ok: false, error: `A level plan goes no lower than ${levelWords(AIM_DEPTHS.RETAINED)}.` };
   const toName = levelWords(to);
   if (!(to < input.depth)) return { ok: false, error: `The depth is already ${levelWords(input.depth)}.` };
   const out = plan.map(cloneMilestone);
@@ -5631,4 +5795,1427 @@ export function floorDayOf(input: { today: DayKey; depth: AimDepth; m: number; n
   const r = input.ratePerWeek;
   const writing = need > 0 && r != null && Number.isFinite(r) && r > 0 ? Math.floor((7 * (need - 1)) / r) : 0;
   return addDays(input.today, writing + floorBase(input.depth, input.m > 0 ? input.m : 1));
+}
+
+// ═══ Revision 5, lane 7: the chain (contracts §22.12, §23.3; roadmap-topic-map.md F-R5-2, F-R5-9) ═══════════════
+// ── Revision 5, lane 7 ──
+//
+// A TOPICS plan (RealismInput.planKind TOPICS; contracts §22) is a topic map's chain from broad to deep:
+//   - layer milestone k (stage FAMILIAR, MilestoneDraft.layer k, chainRole LAYER) pays CARDS_AT_LEVEL on each chosen,
+//     unheld, unskipped layer-k topic at OPEN_LEVEL: TOPIC_FLOOR_CARDS on a base topic, n_d on the specialisation (the
+//     last layer). Held and skipped topics, and every earlier layer's topics ("climbing to 8"), are CONTEXT measures;
+//   - then T = DEPTH_TAIL[L*] depth milestones (depthTailOf; chainRole DEPTH, "set by reviews"): the specialisation
+//     at L* (Fluent's 10 first when L* is 12) and the base topics at 8 (or at L* when that is lower);
+//   - every topic measure carries its topicLineageId; an unbound topic (a draft's, ruling 60) has no Domain in its
+//     scope and no measureKey; a measure at its topic's end level (the specialisation's L*, a base topic's
+//     min(8, L*)) is `rc`, every other `r`;
+//   - writing is staged (chainWriteDaysOf): layer k's new cards are written from its own window's first day (today
+//     for a window under way), split over its topics by their need, so no card is written before its layer's window;
+//   - windows: layer k's is at least layerMin_k = max(MILESTONE_MIN_DAYS, w_k + floorBase(6), practiceNeed_k ÷
+//     weekMin_g) and ends on the Sunday on or after its topics' stage day (roadmap-types stageDayOf: the reach
+//     model); a depth milestone's is at least MILESTONE_MIN_DAYS, to its stage day. The writing rate is the plan's,
+//     PACE_SHARE × r_src (the Field pace at this goal's fieldShare), and the hours are this goal's share (capacityOf).
+//     The chain is never squeezed: a user's earlier date, or a dated exam before layer K's end, reads OVER with the
+//     offers (chainFitOf, the date check); a later date gives the last window the slack;
+//   - PART and BETWEEN are checkpoints inside a milestone (MeasureSpec.gate; CONTEXT, no measureKey), never extra
+//     nodes, so the count stays the estimate's: PART ("half of layer 1 at level 6") on the first layer milestone when
+//     its window is over FIRST_RANK_MAX_DAYS; BETWEEN (each specialisation topic one level below the row's) when a
+//     depth window is over MILESTONE_MAX_DAYS. A window over MILESTONE_MAX_DAYS carries LONG_WINDOW (the Over offers);
+//   - a layer whose every topic is held (HELD_AT_START) or known (KNOWN_BY_YOU) is a held row, dated today, with its
+//     Domains and CONTEXT measures (so the chain reads back from the plan), never fitted, judged or ranked;
+//   - the engine is the depth plan's (a DepthModel over the topics, its writing `staged`), so the knowledge checks,
+//     the load, the room and the allocation read row by row as a depth plan's do.
+
+/** A TOPICS input (RealismInput.planKind TOPICS on a Field Area): its branch is read before the depth engine's (a TOPICS input may carry a depth). */
+function isTopicsInput(input: RealismInput): boolean {
+  return input.planKind === "TOPICS" && !input.trackArea;
+}
+
+/** MilestoneNote KNOWN_BY_YOU (lane 8 adds it to the union with its copy, ruling 5): a layer whose every topic you marked "I know this". */
+const KNOWN_BY_YOU_NOTE: MilestoneNote = "KNOWN_BY_YOU";
+
+/** A chain row nothing is paid on: held when you began (HELD_AT_START) or every topic known (KNOWN_BY_YOU). */
+function isChainHeldRow(ms: MilestoneDraft): boolean {
+  return isHeldRow(ms) || ms.notes.includes(KNOWN_BY_YOU_NOTE);
+}
+
+/** One chosen topic as the chain reads it (contracts §22.12). nd: TOPIC_FLOOR_CARDS for BASE, the coverage policy's n_d for DEEP. */
+export interface ChainTopicInput {
+  lineageId: string;
+  domainId: string | null;
+  role: TopicRole;
+  held: boolean;
+  skipped: boolean;
+  nd: number;
+}
+
+/** The chain layeredLadderOf lays out: each layer's chosen topics (layer order; empty layers are skipped), L*, and a dated exam (absent: the intake's). */
+export interface TopicChainInput {
+  layers: { layer: number; topics: ChainTopicInput[] }[];
+  depth: TopicDepth;
+  examDay?: DayKey | null;
+}
+
+/** chainFitOf's input (the pre-check, before any map call): breadth's `min` × K topics a layer, or `perLayer`, at this goal's shares. */
+export interface ChainFitInput {
+  layers: number;
+  perLayer?: readonly number[];
+  breadth: BreadthKey;
+  depth: TopicDepth;
+  input: RealismInput;
+  origin: RatingOrigin;
+  examDay?: DayKey | null;
+}
+
+/**
+ * The depth tail after layer K (F-R5-9; T = DEPTH_TAIL[depth]), each "set by reviews":
+ *   6: none; 8: RETAINED (the specialisation and the base topics at 8); 10: FLUENT (the specialisation at 10, the
+ *   base topics at 8); 12: FLUENT (10, 8), then MASTERED (the specialisation at 12).
+ * `pays.base` 0: the base topics are not paid there (they were at 8 the milestone before; a CONTEXT measure shows them).
+ */
+export function depthTailOf(depth: TopicDepth): { stage: GateStage; pays: { deep: number; base: number } }[] {
+  switch (depth) {
+    case 8:
+      return [{ stage: "RETAINED", pays: { deep: STAGE_LEVEL.RETAINED, base: BASE_LEVEL } }];
+    case 10:
+      return [{ stage: "FLUENT", pays: { deep: STAGE_LEVEL.FLUENT, base: BASE_LEVEL } }];
+    case 12:
+      return [
+        { stage: "FLUENT", pays: { deep: STAGE_LEVEL.FLUENT, base: BASE_LEVEL } },
+        { stage: "MASTERED", pays: { deep: STAGE_LEVEL.MASTERED, base: 0 } },
+      ];
+    default:
+      return [];
+  }
+}
+
+/**
+ * Staged writing (F-R5-9): each layer's new cards written from its own window's first day at `ratePerWeek`, card j
+ * on start + ⌊7j ÷ rate⌋ (roadmap-types referenceWriteDaysOf's rule, per layer), merged per day. With no rate (null,
+ * 0 or not finite) or no cards, a layer writes nothing. So w_k = ⌊7 × cards_k ÷ rate⌋ bounds layer k's writing.
+ */
+export function chainWriteDaysOf(layers: readonly { cards: number; start: DayKey }[], ratePerWeek: number | null): WriteDay[][] {
+  const r = ratePerWeek != null && Number.isFinite(ratePerWeek) && ratePerWeek > 0 ? ratePerWeek : null;
+  return layers.map((l) => {
+    const n = Number.isFinite(l.cards) ? Math.max(0, Math.floor(l.cards)) : 0;
+    const out: { day: DayKey; count: number }[] = [];
+    if (r == null || n === 0) return out;
+    for (let j = 0; j < n; j++) {
+      const day = addDays(l.start, Math.floor((7 * j) / r));
+      const last = out[out.length - 1];
+      if (last && last.day === day) last.count += 1;
+      else out.push({ day, count: 1 });
+    }
+    return out;
+  });
+}
+
+/** One topic as the chain engine reads it: its layer, role and count, its Domain's cards, and the new cards it needs. */
+interface ChainTopic {
+  lineageId: string;
+  /** The model's key: the bound Domain's id, else "t:" + the lineage (an unbound topic's cards are all still to write). */
+  id: string;
+  domainId: string | null;
+  layer: number;
+  role: TopicRole;
+  held: boolean;
+  skipped: boolean;
+  nd: number;
+  all: CardState[];
+  eff: ReachCard[];
+  live: number;
+  /** writeNeedOf(nd, live) for a paying topic; 0 when held or skipped. */
+  need: number;
+}
+
+/** A topic that pays (neither held when you began nor marked "I know this"). */
+const paysOf = (t: ChainTopic): boolean => !t.held && !t.skipped;
+
+/** A topic's end level (decision 64): the specialisation at L*, every other topic at 8, or at L* when that is lower. */
+const endLevelOf = (t: Pick<ChainTopic, "role">, L: number): number => (t.role === "DEEP" ? L : Math.min(BASE_LEVEL, L));
+
+function chainTopicOf(input: RealismInput, t: ChainTopicInput, layer: number, used: Set<string>): ChainTopic {
+  const domainId = typeof t.domainId === "string" && t.domainId !== "" ? t.domainId : null;
+  // A Domain bound to two topics is read once: the second reads as unbound (no cards of its own).
+  const bound = domainId != null && !used.has(domainId) ? domainId : null;
+  const id = bound ?? `t:${t.lineageId}`;
+  used.add(id);
+  const all = bound ? domainCardsOf(input, bound) : [];
+  const live = all.filter(isRecallCard).length;
+  const role: TopicRole = t.role === "DEEP" ? "DEEP" : "BASE";
+  const nd = typeof t.nd === "number" && Number.isFinite(t.nd) && t.nd >= 1 ? Math.floor(t.nd) : role === "DEEP" ? COVER_FLOOR_CARDS : TOPIC_FLOOR_CARDS;
+  const held = t.held === true;
+  const skipped = !held && t.skipped === true;
+  return { lineageId: t.lineageId, id, domainId, layer, role, held, skipped, nd, all, eff: reachCardsOf(all, input.today), live, need: held || skipped ? 0 : writeNeedOf(nd, live) };
+}
+
+/**
+ * The chain's topics from layeredLadderOf's input: layers in order (an empty one skipped, at most LAYERS_MAX),
+ * renumbered 1..K, each lineage once (its first layer); the last layer's are the specialisation (DEEP), every other
+ * BASE, whatever the input's role says (each keeps its own nd).
+ */
+function chainTopicsOfInput(input: RealismInput, chain: TopicChainInput): { topics: ChainTopic[]; K: number } {
+  const layers = (Array.isArray(chain.layers) ? chain.layers : [])
+    .map((l, i) => ({ l, i }))
+    .filter(({ l }) => l != null && Array.isArray(l.topics) && l.topics.length > 0)
+    .sort((a, b) => (Number(a.l.layer) || 0) - (Number(b.l.layer) || 0) || a.i - b.i)
+    .map(({ l }) => l);
+  const used = new Set<string>();
+  const seen = new Set<string>();
+  const topics: ChainTopic[] = [];
+  let K = 0;
+  for (const l of layers) {
+    if (K >= LAYERS_MAX) break;
+    const fresh = l.topics.filter((t) => t != null && typeof t.lineageId === "string" && t.lineageId !== "" && !seen.has(t.lineageId));
+    if (fresh.length === 0) continue;
+    K += 1;
+    for (const t of fresh) {
+      if (seen.has(t.lineageId)) continue;
+      seen.add(t.lineageId);
+      topics.push(chainTopicOf(input, t, K, used));
+    }
+  }
+  // The specialisation is the last layer's chosen topics (TopicDraft.role), so the plan reads back the same (chainOfPlan).
+  for (const t of topics) t.role = t.layer === K ? "DEEP" : "BASE";
+  return { topics, K };
+}
+
+/** One row of the chain before it is a milestone: a layer (paid at OPEN_LEVEL) or a depth milestone (deep, base; base 0: not paid). */
+interface ChainRowSpec {
+  role: ChainRole;
+  layer: number | null;
+  stage: GateStage;
+  deep: number;
+  base: number;
+}
+
+/** K layer rows, then the depth tail; at most milestoneCapOf("TOPICS") (K ≤ LAYERS_MAX and T ≤ DEPTH_MILESTONES_MAX keep it there). */
+function chainSpecsOf(K: number, L: TopicDepth): ChainRowSpec[] {
+  const out: ChainRowSpec[] = [];
+  for (let k = 1; k <= K; k++) out.push({ role: "LAYER", layer: k, stage: "FAMILIAR", deep: OPEN_LEVEL, base: OPEN_LEVEL });
+  for (const t of depthTailOf(L)) out.push({ role: "DEPTH", layer: null, stage: t.stage, deep: t.pays.deep, base: t.pays.base });
+  return out.slice(0, milestoneCapOf("TOPICS"));
+}
+
+/** A row's paying topics, grouped by the level they pay at: a layer's own at OPEN_LEVEL; a depth row's specialisation at `deep`, its base topics at `base`. */
+function rowPayersOf(topics: readonly ChainTopic[], r: ChainRowSpec): { ts: ChainTopic[]; level: number }[] {
+  if (r.role === "LAYER") return [{ ts: topics.filter((t) => t.layer === r.layer && paysOf(t)), level: OPEN_LEVEL }];
+  const out = [{ ts: topics.filter((t) => paysOf(t) && t.role === "DEEP"), level: r.deep }];
+  if (r.base > 0) out.push({ ts: topics.filter((t) => paysOf(t) && t.role === "BASE"), level: r.base });
+  return out;
+}
+
+/** Every Domain id the input's scopes hold (the pre-check's pace, before any topic is bound). */
+const scopeIdsOf = (input: RealismInput): string[] => sortedUnique(input.scopes.flatMap((s) => s.domainIds));
+
+/** The depth engine's model over the chain's topics (writing is set later, `staged`). The pace is this goal's share of the Field's (sourceRateOf). */
+function chainModelOf(input: RealismInput, L: TopicDepth, topics: readonly ChainTopic[]): DepthModel {
+  const m = input.m > 0 ? input.m : 1;
+  const derived = reachInputsOf(input.throughput, m);
+  const doms: DepthDomain[] = topics.map((t) => ({ id: t.id, all: t.all, eff: t.eff, live: t.live, n: t.nd, need: t.need }));
+  const totalNeed = doms.reduce((s, d) => s + d.need, 0);
+  const bound = sortedUnique(topics.map((t) => t.domainId).filter((id): id is string => id != null));
+  const src = sourceRateOf(input, bound.length > 0 ? bound : scopeIdsOf(input));
+  const calibrating: CalibratingInput[] = input.calibrating ? [...input.calibrating] : [...derived.calibrating];
+  if (!input.calibrating && src.rateSource === "YOURS" && totalNeed > 0 && !calibrating.includes("pace")) calibrating.push("pace");
+  return {
+    input,
+    today: input.today,
+    L,
+    m,
+    params: input.reach ?? derived.params,
+    calibrating,
+    doms,
+    totalNeed,
+    sourceRate: src.rate,
+    rateSource: src.rateSource,
+    share: PACE_SHARE[input.intensity],
+    open: [],
+    writes: new Map(),
+    caps: new Map(),
+  };
+}
+
+/** The chain's writing rate: PACE_SHARE × r_src (snapped as the depth plan's is); null with no pace. The chain never writes faster. */
+function chainRateOf(model: DepthModel): number | null {
+  const src = model.sourceRate;
+  return src != null && src > 0 ? Math.round(model.share * src * 1e9) / 1e9 : null;
+}
+
+/** A layer's paying topics' writing from `start` at `rate`, split by their need (they finish together): topic t's card j on start + ⌊7j ÷ r_t⌋. */
+function topicWritesOf(paying: readonly ChainTopic[], start: DayKey, rate: number): Map<string, WriteDay[]> {
+  const total = paying.reduce((s, t) => s + t.need, 0);
+  const out = new Map<string, WriteDay[]>();
+  for (const t of paying) {
+    const days: { day: DayKey; count: number }[] = [];
+    if (rate > 0 && total > 0 && t.need > 0) {
+      const rt = (rate * t.need) / total;
+      for (let j = 0; j < t.need; j++) {
+        const day = addDays(start, Math.floor((7 * j) / rt));
+        const last = days[days.length - 1];
+        if (last && last.day === day) last.count += 1;
+        else days.push({ day, count: 1 });
+      }
+    }
+    out.set(t.id, days);
+  }
+  return out;
+}
+
+/**
+ * practiceNeed_k (F-R5-2): the minutes a layer needs at the least, writing its new cards and reviewing each to
+ * OPEN_LEVEL (OPEN_LEVEL − 1 passes, retries at the pass rate), plus one session a week at the D15 floor over the
+ * shortest window when practices are allowed. Its days at this goal's weekly minutes bound the layer's window.
+ */
+function chainNeedMinutesOf(cards: number, p: number, practices: boolean): number {
+  const perReview = ((2 - clamp(p, 0, 1)) * REVIEW_SECONDS) / 60;
+  return Math.max(0, cards) * (CARD_WRITE_MIN + (OPEN_LEVEL - 1) * perReview) + (practices ? (MILESTONE_MIN_DAYS / 7) * practiceBandMinutes("D15") : 0);
+}
+
+/** ⌈7 × practiceNeed ÷ weekMin_g⌉ days; Infinity with no minutes in the week. */
+function chainHoursDaysOf(cards: number, weekMin: number, p: number, practices: boolean): number {
+  const need = chainNeedMinutesOf(cards, p, practices);
+  if (!(need > 0)) return 0;
+  return weekMin > 0 ? Math.ceil((7 * need) / weekMin - EPS) : Infinity;
+}
+
+/** A row's stage day: every group's topics at their level (the reach model), each at its end level with clean entry; null past REACH_T_MAX. */
+function chainRowStageDayOf(model: DepthModel, groups: readonly { ts: readonly ChainTopic[]; level: number }[], writes: ReadonlyMap<string, readonly WriteDay[]>): DayKey | null {
+  let out: DayKey = model.today;
+  for (const g of groups) {
+    for (const clean of [true, false]) {
+      const ts = g.ts.filter((t) => (endLevelOf(t, model.L) === g.level) === clean);
+      if (ts.length === 0) continue;
+      const sd = stageDayOf(
+        ts.map((t) => ({ n: t.nd, cards: t.eff, writeDays: writes.get(t.id) ?? [] })),
+        g.level,
+        model.today,
+        model.params,
+        clean ? { cleanAt: g.level } : undefined
+      );
+      if (sd == null) return null;
+      out = maxDay(out, sd);
+    }
+  }
+  return out;
+}
+
+/** A dated window a schedule keeps as it is (a carried or held row's). */
+interface ChainWindow {
+  start: DayKey;
+  due: DayKey;
+}
+
+interface ChainRowDates {
+  start: DayKey;
+  due: DayKey;
+  /** The expected stage day (reach model); null when not dated or past REACH_T_MAX. */
+  stageDay: DayKey | null;
+  /** Nothing to pay: dated today. */
+  held: boolean;
+}
+
+interface ChainSchedule {
+  rows: ChainRowDates[];
+  /** Each topic's writing days (model id → days): the staged writing. */
+  writes: Map<string, WriteDay[]>;
+  /** New cards needed and no pace: the windows share the user's date evenly (or 35 days each, with none). */
+  notDated: boolean;
+  /** A stage day past REACH_T_MAX, or a window no week's minutes can hold. */
+  tooFar: boolean;
+  /** Not dated, and the user's date leaves a window under MILESTONE_MIN_DAYS. */
+  tooSoon: boolean;
+  /** The last row's due day (today with none). */
+  end: DayKey;
+  /** Layer K's due day (null with no unheld layer). */
+  lastLayerDue: DayKey | null;
+}
+
+/**
+ * The chain's dates (see the section's head), in spec order: each unheld row from the day after the one before
+ * (today for the first), its window at least its minimum, due the Sunday on or after its stage day. `fixed` keeps a
+ * row's window (a carried row's, or every row's to read a plan's own writing); a layer row's writing still starts at
+ * the later of its window's first day and today. `userDate` (CHOSEN) gives the last unfixed row the slack when it is
+ * later, and spreads the windows to it when not dated.
+ */
+function chainScheduleOf(
+  model: DepthModel,
+  topics: readonly ChainTopic[],
+  specs: readonly ChainRowSpec[],
+  rate: number | null,
+  ctx: Ctx,
+  opts: { fixed?: readonly (ChainWindow | null)[]; userDate?: DayKey | null } = {}
+): ChainSchedule {
+  const today = model.today;
+  const writes = new Map<string, WriteDay[]>();
+  for (const t of topics) writes.set(t.id, []);
+  const r0 = rate != null && Number.isFinite(rate) && rate > 0 ? rate : null;
+  const notDated = topics.some((t) => t.need > 0) && r0 == null;
+  const fixedAt = (k: number): ChainWindow | null => opts.fixed?.[k] ?? null;
+  const groupsOf = specs.map((r) => rowPayersOf(topics, r));
+  const isHeld = (k: number): boolean => fixedAt(k) == null && groupsOf[k].every((g) => g.ts.length === 0);
+  const movable = specs.map((_, k) => k).filter((k) => fixedAt(k) == null && !isHeld(k));
+  // Not dated: the movable rows share the span from the last kept window (or today) to the user's date.
+  const spreadFrom = specs.reduce<DayKey>((mx, _, k) => {
+    const f = fixedAt(k);
+    return f && f.due > mx ? f.due : mx;
+  }, today);
+  const spreadSpan = opts.userDate ? daysBetween(spreadFrom, opts.userDate) : 0;
+  const tooSoon = notDated && opts.userDate != null && movable.length > 0 && spreadSpan < MILESTONE_MIN_DAYS * movable.length;
+  const rows: ChainRowDates[] = [];
+  let prev: DayKey | null = null;
+  let tooFar = false;
+  specs.forEach((r, k) => {
+    const fixed = fixedAt(k);
+    const groups = groupsOf[k];
+    if (isHeld(k)) {
+      rows.push({ start: today, due: today, stageDay: today, held: true });
+      return;
+    }
+    const anchor: DayKey = prev ?? today;
+    const start = fixed ? fixed.start : prev == null ? today : maxDay(today, addDays(prev, 1));
+    if (r.role === "LAYER" && r0 != null) for (const [id, days] of topicWritesOf(groups[0]?.ts ?? [], maxDay(today, start), r0)) writes.set(id, days);
+    let due: DayKey;
+    let sd: DayKey | null = null;
+    if (fixed) {
+      due = fixed.due;
+      if (!notDated) sd = chainRowStageDayOf(model, groups, writes);
+    } else if (notDated) {
+      const j = movable.indexOf(k) + 1;
+      if (!opts.userDate) due = addDays(anchor, MILESTONE_MIN_DAYS);
+      else due = j === movable.length ? opts.userDate : sundayOnOrAfter(addDays(spreadFrom, Math.round((j * spreadSpan) / movable.length)));
+      due = maxDay(due, start);
+    } else {
+      sd = chainRowStageDayOf(model, groups, writes);
+      let minDays = MILESTONE_MIN_DAYS;
+      let floorDay: DayKey = today;
+      if (r.role === "LAYER") {
+        const cards = (groups[0]?.ts ?? []).reduce((s, t) => s + t.need, 0);
+        const w = cards > 0 ? Math.floor((7 * cards) / (r0 as number)) : 0;
+        minDays = Math.max(minDays, w + floorBase(OPEN_LEVEL, model.m), chainHoursDaysOf(cards, ctx.cap.weekMin, model.params.p, ctx.input.practicesAllowed));
+      } else {
+        // The tail's floors (F-R5-2): the specialisation's last writing day + floorBase(its level), the base topics' last
+        // + floorBase(8), so a depth milestone is never dated before chainFitOf's minimum.
+        for (const g of groups)
+          for (const t of g.ts)
+            for (const wd of writes.get(t.id) ?? []) {
+              const day = addDays(writeDayOf(wd), floorBase(g.level, model.m));
+              if (day > floorDay) floorDay = day;
+            }
+      }
+      if (sd == null || !Number.isFinite(minDays)) {
+        tooFar = true;
+        due = addDays(anchor, Number.isFinite(minDays) ? Math.max(minDays, SPAN_MAX_DAYS + 1) : SPAN_MAX_DAYS + 1);
+      } else due = sundayOnOrAfter(maxDay(maxDay(addDays(anchor, minDays), sd), floorDay));
+    }
+    rows.push({ start, due, stageDay: sd, held: false });
+    prev = prev == null || due > prev ? due : prev;
+  });
+  // A later date of yours (CHOSEN): the last movable row holds the slack, as a depth plan's final stage does.
+  const lastMovable = movable[movable.length - 1];
+  if (!notDated && opts.userDate && lastMovable != null && rows[lastMovable].due < opts.userDate) rows[lastMovable].due = opts.userDate;
+  let lastLayerDue: DayKey | null = null;
+  specs.forEach((r, k) => {
+    if (r.role === "LAYER" && !rows[k].held) lastLayerDue = rows[k].due;
+  });
+  const end = rows.reduce<DayKey>((mx, d) => (!d.held && d.due > mx ? d.due : mx), today);
+  return { rows, writes, notDated, tooFar, tooSoon, end, lastLayerDue };
+}
+
+/** chainFloorOf's result, in days from today: each layer's honest minimum, each tail window's, layer K's end and the total. */
+interface ChainFloor {
+  layerMin: number[];
+  tailMin: number[];
+  lastLayerEnd: number;
+  total: number;
+}
+
+/**
+ * The chain's honest minimum (F-R5-2's pre-check; every review passing on its day, the floors):
+ *   layerMin_k = max(MILESTONE_MIN_DAYS, w_k + floorBase(6), hours(cards_k)), w_k = ⌊7 × cards_k ÷ rate⌋ (Infinity
+ *   writes every card on its layer's first day; no rate with cards to write is Infinity);
+ *   the first tail milestone ends no earlier than max(layer K's end + 35, the specialisation's last writing day +
+ *   floorBase(its level), the last base topic's writing day + floorBase(8)); the second (L* = 12) no earlier than
+ *   max(that + 35, the specialisation's last writing day + floorBase(12)).
+ * A held layer (`held[k]`) takes no time. The specialisation is layer K; the base topics, the layers before.
+ */
+function chainFloorOf(cards: readonly number[], held: readonly boolean[], L: TopicDepth, rate: number | null, hoursDays: (cards: number) => number, m: number): ChainFloor {
+  const layerMin: number[] = [];
+  const lastWrite: (number | null)[] = [];
+  let start = 0;
+  cards.forEach((c, k) => {
+    const n = Math.max(0, Number.isFinite(c) ? c : 0);
+    if (held[k]) {
+      layerMin.push(0);
+      lastWrite.push(null);
+      return;
+    }
+    const w = n === 0 || rate === Infinity ? 0 : rate != null && rate > 0 ? Math.floor((7 * n) / rate) : Infinity;
+    const min = Math.max(MILESTONE_MIN_DAYS, w + floorBase(OPEN_LEVEL, m), hoursDays(n));
+    layerMin.push(min);
+    lastWrite.push(start + w);
+    start += min;
+  });
+  const lastLayerEnd = start;
+  const K = cards.length;
+  const specW = K > 0 ? lastWrite[K - 1] : null;
+  const baseW = lastWrite.slice(0, Math.max(0, K - 1)).reduce<number | null>((mx, w) => (w == null ? mx : mx == null ? w : Math.max(mx, w)), null);
+  const tailMin: number[] = [];
+  let end = lastLayerEnd;
+  for (const t of depthTailOf(L)) {
+    let e = end + MILESTONE_MIN_DAYS;
+    if (specW != null) e = Math.max(e, specW + floorBase(t.pays.deep, m));
+    if (t.pays.base > 0 && baseW != null) e = Math.max(e, baseW + floorBase(t.pays.base, m));
+    tailMin.push(e - end);
+    end = e;
+  }
+  return { layerMin, tailMin, lastLayerEnd, total: end };
+}
+
+/** "6 weeks", "14 months", "4.5 years": a span in code's words. */
+function durationWordsOf(days: number): string {
+  const d = Math.max(0, Math.round(Number.isFinite(days) ? days : 0));
+  if (d < 98) {
+    const w = Math.max(1, Math.round(d / 7));
+    return `${w} ${w === 1 ? "week" : "weeks"}`;
+  }
+  if (d < 730) return `${Math.round(d / 30.44)} months`;
+  return `${Math.round((d / 365.25) * 2) / 2} years`;
+}
+
+/** "5 h", "2.5 h". */
+const hoursWordsOf = (h: number): string => `${Number.isInteger(h) ? h : Math.round(h * 10) / 10} h`;
+
+/** The verdict's named input (contracts §22.12): "With Gemini's estimate of 5 layers, this map needs about 14 months at 5 h a week." */
+function chainBasisLineOf(K: number, origin: RatingOrigin | null, days: number | null, hours: number): string {
+  const layers = `${K} ${K === 1 ? "layer" : "layers"}`;
+  const who = origin === "GEMINI" ? `Gemini's estimate of ${layers}` : origin === "CODE" ? `the app's rough estimate of ${layers}` : origin === "YOURS" ? `your ${layers}` : `these ${layers}`;
+  if (days == null) return `With ${who}, this map can't be dated yet: there is no writing pace. Enter how many new cards a week you'll write.`;
+  return `With ${who}, this map needs about ${durationWordsOf(days)} at ${hoursWordsOf(hours)} a week.`;
+}
+
+const STAGED_LINE = "Each layer's new cards are written in its own window, after the layer before.";
+
+/**
+ * The realism pre-check for a topic map (F-R5-2), run before any map call: breadth's lower figure per layer (or
+ * `perLayer`) × K layers, base topics at TOPIC_FLOOR_CARDS and the last layer at the coverage floor, at this goal's
+ * share of the week and of the Field's pace (RealismInput.share, fieldShare), on the floors (every review passing).
+ *   - minDays and layerMin, tailMin: at the source pace r_src (layerMin_k = max(35, w_k + floorBase(6),
+ *     practiceNeed_k ÷ weekMin_g)); endDay: the same at the plan's pace (PACE_SHARE × r_src); null with no pace;
+ *   - verdict: IMPOSSIBLE past SPAN_MAX_DAYS (pastSpan) or before the floor with every card written on its layer's
+ *     first day; on your date (CHOSEN): FITS from endDay, TIGHT from today + minDays, OVER before; REALISTIC: FITS
+ *     (TIGHT not dated). A window over MILESTONE_MAX_DAYS, or a dated exam before layer K's minimum end
+ *     (examMidChain), reads OVER at the least: the chain is never squeezed;
+ *   - offers (not FITS), in CHAIN_OFFERS order: your realistic date (within SPAN_MAX_DAYS), more hours (the hours
+ *     set a window, or the ramp binds), pause a goal (the week is shared), a lower depth (above 6), fewer layers and
+ *     plan the first layers (K > 1);
+ *   - basis: "With Gemini's estimate of 5 layers, this map needs about 14 months at 5 h a week." (the app's rough
+ *     estimate, your layers), and "Your tracked time limits all your goals." when the ramp binds a shared week.
+ */
+export function chainFitOf(fit: ChainFitInput): ChainFit {
+  const input = fit.input;
+  const L: TopicDepth = isTopicDepth(fit.depth) ? fit.depth : AIM_DEPTHS[DEPTH_DEFAULT];
+  const K = clamp(Number.isFinite(fit.layers) ? Math.floor(fit.layers) : LAYERS_MIN, LAYERS_MIN, LAYERS_MAX);
+  const room = BREADTH_TABLE[fit.breadth] ?? BREADTH_TABLE[BREADTH_FALLBACK];
+  const perLayer = Array.from({ length: K }, (_, k) => {
+    const v = fit.perLayer?.[k];
+    return typeof v === "number" && Number.isFinite(v) && v >= 1 ? Math.min(LAYER_TOPICS_MAX, Math.floor(v)) : room.min;
+  });
+  const cards = perLayer.map((n, k) => n * writeNeedOf(k === K - 1 ? COVER_FLOOR_CARDS : TOPIC_FLOOR_CARDS, 0));
+  const held = cards.map(() => false);
+  const ctx = contextOf(input);
+  const m = ctx.m;
+  const p = (input.reach ?? reachInputsOf(input.throughput, m).params).p;
+  const hours = (c: number): number => chainHoursDaysOf(c, ctx.cap.weekMin, p, input.practicesAllowed);
+  const src = sourceRateOf(input, scopeIdsOf(input)).rate;
+  const rSrc = src != null && src > 0 ? src : null;
+  const rPlan = rSrc != null ? Math.round(PACE_SHARE[input.intensity] * rSrc * 1e9) / 1e9 : null;
+  const atOnce = chainFloorOf(cards, held, L, Infinity, () => 0, m);
+  const min = chainFloorOf(cards, held, L, rSrc ?? Infinity, hours, m);
+  const plan = rPlan != null ? chainFloorOf(cards, held, L, rPlan, hours, m) : null;
+  const today = input.today;
+  const endDay = plan ? addDays(today, plan.total) : null;
+  const pastSpan = min.total > SPAN_MAX_DAYS;
+  const mode: DateMode = input.dateMode ?? "REALISTIC";
+  const userDate = mode === "CHOSEN" ? (input.userDate ?? input.targetDay) : null;
+  let verdict: DateVerdict;
+  if (pastSpan) verdict = "IMPOSSIBLE";
+  else if (userDate == null) verdict = rPlan == null ? "TIGHT" : plan && plan.total > SPAN_MAX_DAYS ? "OVER" : "FITS";
+  else if (userDate < addDays(today, atOnce.total)) verdict = "IMPOSSIBLE";
+  else if (rPlan == null) verdict = "TIGHT";
+  else if (endDay && userDate >= endDay) verdict = "FITS";
+  else if (userDate >= addDays(today, min.total)) verdict = "TIGHT";
+  else verdict = "OVER";
+  const longWindow = [...min.layerMin, ...min.tailMin].some((d) => d > MILESTONE_MAX_DAYS);
+  // The exam day: the fit's own when given (null: none), else the input's.
+  const examDay = fit.examDay !== undefined ? fit.examDay : (input.examDay ?? null);
+  const examMidChain = examDay != null && examDay < addDays(today, min.lastLayerEnd);
+  if ((longWindow || examMidChain) && (verdict === "FITS" || verdict === "TIGHT")) verdict = "OVER";
+  const offers: ChainOffer[] = [];
+  if (verdict !== "FITS") {
+    const hoursBind = cards.some((c) => {
+      const w = rSrc != null ? Math.floor((7 * c) / rSrc) : 0;
+      const h = hours(c);
+      return h > MILESTONE_MIN_DAYS && h > w + floorBase(OPEN_LEVEL, m);
+    });
+    const can: Record<ChainOffer, boolean> = {
+      USE_REALISTIC_DATE: userDate != null && endDay != null && userDate < endDay && plan != null && plan.total <= SPAN_MAX_DAYS,
+      MORE_HOURS: hoursBind || ctx.cap.rampBinds,
+      PAUSE_GOAL: ctx.cap.share < 1,
+      LOWER_DEPTH: L > OPEN_LEVEL,
+      FEWER_LAYERS: K > 1,
+      PLAN_FIRST_LAYERS: K > 1,
+    };
+    for (const o of CHAIN_OFFERS) if (can[o]) offers.push(o);
+  }
+  let basis = chainBasisLineOf(K, fit.origin, rPlan != null && plan ? plan.total : rSrc == null ? null : min.total, input.hoursPerWeek);
+  if (ctx.cap.rampBinds && ctx.cap.share < 1) basis += " Your tracked time limits all your goals.";
+  return { verdict, minDays: min.total, layerMin: min.layerMin, tailMin: min.tailMin, endDay, offers, basis, pastSpan, examMidChain };
+}
+
+/** One topic's card measure on a chain row (see the section's head): `rc` at its end level, its Domain in scope when bound. */
+function topicMeasureOf(t: ChainTopic, level: number, role: "PAYS" | "CONTEXT", L: TopicDepth, rateSource: RateSource, today: DayKey, intake: Intake | null): MeasureSpec {
+  const clean = level === endLevelOf(t, L);
+  return {
+    id: null,
+    kind: "CARDS_AT_LEVEL",
+    role,
+    scope: t.domainId ? { domainIds: [t.domainId] } : {},
+    minLevel: level,
+    target: t.nd,
+    targetSource: t.domainId && intake && typedOf(intake, t.domainId) != null ? "YOURS" : "DEPTH",
+    fittedTarget: null,
+    rateSource,
+    baseline: heldCount(t.all, level, clean),
+    baselineDay: today,
+    unit: "card",
+    itemLineageId: null,
+    measureKey: t.domainId ? cardsAtLevelKey([t.domainId], level, clean ? "rc" : "r") : null,
+    topicLineageId: t.lineageId,
+    gate: null,
+  };
+}
+
+/**
+ * A chain row's topic measures, one per topic: a layer row pays its own paying topics at OPEN_LEVEL (its held and
+ * skipped ones CONTEXT there) and shows every earlier layer's topics climbing to min(8, L*) (CONTEXT); a depth row
+ * pays the specialisation at `deep` and the base topics at `base` (CONTEXT at min(8, L*) when `base` is 0), its held
+ * and skipped topics CONTEXT.
+ */
+function chainRowMeasuresOf(r: ChainRowSpec, topics: readonly ChainTopic[], L: TopicDepth, rateSource: RateSource, today: DayKey, intake: Intake | null): MeasureSpec[] {
+  const out: MeasureSpec[] = [];
+  const climb = Math.min(BASE_LEVEL, L);
+  if (r.role === "LAYER") {
+    for (const t of topics) if (t.layer === r.layer) out.push(topicMeasureOf(t, OPEN_LEVEL, paysOf(t) ? "PAYS" : "CONTEXT", L, rateSource, today, intake));
+    for (const t of topics) if (r.layer != null && t.layer < r.layer) out.push(topicMeasureOf(t, climb, "CONTEXT", L, rateSource, today, intake));
+    return out;
+  }
+  for (const t of topics) {
+    if (t.role === "DEEP") out.push(topicMeasureOf(t, r.deep, paysOf(t) ? "PAYS" : "CONTEXT", L, rateSource, today, intake));
+    else out.push(topicMeasureOf(t, r.base > 0 ? r.base : climb, paysOf(t) && r.base > 0 ? "PAYS" : "CONTEXT", L, rateSource, today, intake));
+  }
+  return out;
+}
+
+/** PART ("half of layer 1 at level 6"): one CONTEXT checkpoint over the layer's paying topics; null under MIN_INCREMENT_CARDS_FLOOR. */
+function partMeasureOf(paying: readonly ChainTopic[], rateSource: RateSource, today: DayKey): MeasureSpec | null {
+  const target = Math.ceil(paying.reduce((s, t) => s + t.nd, 0) / 2);
+  if (target < MIN_INCREMENT_CARDS_FLOOR) return null;
+  const ids = sortedUnique(paying.map((t) => t.domainId).filter((id): id is string => id != null));
+  return {
+    id: null,
+    kind: "CARDS_AT_LEVEL",
+    role: "CONTEXT",
+    scope: ids.length ? { domainIds: ids } : {},
+    minLevel: OPEN_LEVEL,
+    target,
+    targetSource: "WORKED_OUT",
+    fittedTarget: null,
+    rateSource,
+    baseline: paying.reduce((s, t) => s + heldCount(t.all, OPEN_LEVEL, false), 0),
+    baselineDay: today,
+    unit: "card",
+    itemLineageId: null,
+    measureKey: null,
+    topicLineageId: null,
+    gate: "PART",
+  };
+}
+
+/** BETWEEN: each paying specialisation topic one level below the depth row's (CONTEXT checkpoints). */
+function betweenMeasuresOf(r: ChainRowSpec, topics: readonly ChainTopic[], L: TopicDepth, rateSource: RateSource, today: DayKey, intake: Intake | null): MeasureSpec[] {
+  return topics
+    .filter((t) => t.role === "DEEP" && paysOf(t))
+    .map((t) => ({ ...topicMeasureOf(t, r.deep - 1, "CONTEXT", L, rateSource, today, intake), measureKey: null, gate: "BETWEEN" as const }));
+}
+
+/** A row's window as the caps read it: from today for a row starting today, else from the day before its first day (the row before's due). */
+const chainWindowLenOf = (ms: MilestoneDraft, today: DayKey): number => daysBetween(ms.windowStart! <= today ? today : addDays(ms.windowStart!, -1), ms.dueDay!);
+
+/**
+ * The checkpoints and notes that follow a chain row's window (see the section's head): PART on the first unheld
+ * layer row over FIRST_RANK_MAX_DAYS, BETWEEN on a depth row over MILESTONE_MAX_DAYS, LONG_WINDOW on any row over
+ * MILESTONE_MAX_DAYS. `draftsOnly`: only DRAFT rows change (a re-date never touches an accepted or started row).
+ */
+function chainCheckpointsInPlace(
+  plan: MilestoneDraft[],
+  rows: readonly number[],
+  specs: readonly ChainRowSpec[],
+  topics: readonly ChainTopic[],
+  L: TopicDepth,
+  rateSource: RateSource,
+  today: DayKey,
+  intake: Intake | null,
+  draftsOnly: boolean
+): void {
+  let first = true;
+  rows.forEach((i, k) => {
+    const ms = plan[i];
+    const r = specs[k];
+    if (!r || isChainHeldRow(ms) || !isDated(ms)) return;
+    const firstLayer = first && r.role === "LAYER";
+    if (r.role === "LAYER") first = false;
+    if (draftsOnly && ms.status !== "DRAFT") return;
+    const len = chainWindowLenOf(ms, today);
+    ms.measures = ms.measures.filter((x) => !x.gate);
+    setNote(ms, "LONG_WINDOW", len > MILESTONE_MAX_DAYS);
+    if (firstLayer && len > FIRST_RANK_MAX_DAYS) {
+      const part = partMeasureOf(
+        topics.filter((t) => t.layer === r.layer && paysOf(t)),
+        rateSource,
+        today
+      );
+      if (part) ms.measures.push(part);
+    }
+    if (r.role === "DEPTH" && len > MILESTONE_MAX_DAYS) ms.measures.push(...betweenMeasuresOf(r, topics, L, rateSource, today, intake));
+  });
+}
+
+/** The layer titles (contracts §22.1 ruling 22; in CODE_TEMPLATES since lane 8). */
+const LAYER_TITLE: CodeTemplate = "{domains} · layer {k} of {n}";
+const LAYER_DRAFT_TITLE: CodeTemplate = "Layer {k} of {n}";
+
+/**
+ * A chain row's code title (F-R5-9 Titles): a layer "{domains} · layer {k} of {n}" when every topic of it is a named
+ * Domain, else "Layer {k} of {n}" (a draft's Gemini names stay quarantined); a depth row "{stage}: {domains} to level
+ * {L}+" over the specialisation's names; "" when it can't be written (the view's paying line names it).
+ */
+function chainTitleOf(r: ChainRowSpec, K: number, own: readonly (DomainName | null)[]): string {
+  const all = own.length > 0 && own.every((n) => n != null);
+  const domains = own.filter((n): n is DomainName => n != null);
+  try {
+    if (r.role === "LAYER") return all ? codeText(LAYER_TITLE, { domains, k: r.layer ?? 1, n: K }) : codeText(LAYER_DRAFT_TITLE, { k: r.layer ?? 1, n: K });
+    if (all) return codeText("{stage}: {domains} to level {L}+", { stage: STAGE_NAMES[r.stage], domains, level: r.deep });
+  } catch {
+    // a template not landed yet, or a fill it refuses: the fallback below
+  }
+  if (all) {
+    try {
+      return codeText("{domains} to level {L}+", { domains, level: r.role === "LAYER" ? OPEN_LEVEL : r.deep });
+    } catch {
+      // nothing to write
+    }
+  }
+  return "";
+}
+
+/** The topics a chain row names (its DOMAIN items, its title): a layer's own; a depth row's specialisation. */
+const rowTopicsOf = (r: ChainRowSpec, topics: readonly ChainTopic[]): ChainTopic[] => (r.role === "LAYER" ? topics.filter((t) => t.layer === r.layer) : topics.filter((t) => t.role === "DEEP"));
+
+function chainDomainItemOf(lineageId: string, ord: number, domainId: string, name: DomainName): ItemDraft {
+  return {
+    id: null,
+    lineageId,
+    kind: "DOMAIN",
+    ord,
+    label: String(name),
+    rawLabel: null,
+    origin: "USER",
+    decision: "KEPT",
+    domainId,
+    proposedName: null,
+    syllabusRef: null,
+    method: null,
+    sessionsPerWeek: null,
+    durationBand: null,
+    rule: null,
+    planSource: null,
+    checkpointKind: null,
+    outOf: null,
+    bar: null,
+    addToToday: true,
+    templateId: null,
+    flags: [],
+    notes: [],
+  };
+}
+
+/** The chain's coverage (StageLadderResult.coverage): one entry per bound topic, n = its count (TOPIC_FLOOR_CARDS or the specialisation's n_d). */
+function chainCoverageOf(topics: readonly ChainTopic[], names: Readonly<Record<string, DomainName>>, intake: Intake): CoverageBreakdown[] {
+  const out: CoverageBreakdown[] = [];
+  const seen = new Set<string>();
+  for (const t of topics) {
+    if (!t.domainId || seen.has(t.domainId)) continue;
+    seen.add(t.domainId);
+    const pol = coveragePolicyOf(t.live, 0);
+    const typed = typedOf(intake, t.domainId);
+    out.push({
+      domainId: t.domainId,
+      name: Object.prototype.hasOwnProperty.call(names, t.domainId) ? String(names[t.domainId]) : "",
+      live: t.live,
+      nonRecall: t.all.length - t.live,
+      linesTied: 0,
+      linesShared: 0,
+      floor: pol.floor,
+      share: pol.share,
+      outline: pol.outline,
+      policy: t.role === "DEEP" ? pol.n : TOPIC_FLOOR_CARDS,
+      typed,
+      n: t.nd,
+      belowPolicy: t.role === "DEEP" && t.nd < pol.n,
+    });
+  }
+  return out;
+}
+
+const CHAIN_TRACK_ERROR = "A topic map needs an Area with a Field.";
+const CHAIN_EMPTY_ERROR = "Choose at least one topic for this map.";
+const CHAIN_HELD_ERROR = "You already hold every topic on this map, or marked it as known. Add a topic or set a different aim.";
+
+/** What every chain reader shares: the model (its writing staged once a schedule sets it), the topics, the rows' specs and the windows kept. */
+interface ChainBase {
+  model: DepthModel;
+  topics: ChainTopic[];
+  specs: ChainRowSpec[];
+  /** Per spec: a window the re-date keeps (a carried or held row's); null: dated again. */
+  carried: (ChainWindow | null)[];
+  ctx: Ctx;
+  K: number;
+  L: TopicDepth;
+  /** The plan's writing rate (chainRateOf); null with no pace. */
+  rate: number | null;
+}
+
+/**
+ * The date check of a chain (F-R4-11's fields, the chain's rules): D_real the re-dated chain at the plan's pace (null
+ * past SPAN_MAX_DAYS or not dated), D_full at your full pace, D_floor every card on its layer's first day and every
+ * review passing, D_best_pace and D_best_2x the same floors at the plan's pace and at twice yours. On your date:
+ * IMPOSSIBLE before max(D_best_2x, D_floor); FITS from D_real; TIGHT from D_full; OVER before (never a faster
+ * pace asked: rateAsked is the plan's). A dated exam before layer K's realistic end reads OVER at the least.
+ */
+function chainDateCheckOf(base: ChainBase, mode: DateMode, userDate: DayKey | null, examDay: DayKey | null, origin: RatingOrigin | null = null): { check: DateCheck; real: ChainSchedule } {
+  const { model, topics, specs, ctx, K, L } = base;
+  const today = model.today;
+  const rSrc = model.sourceRate != null && model.sourceRate > 0 ? model.sourceRate : null;
+  const need = topics.some((t) => t.need > 0);
+  const real = chainScheduleOf(model, topics, specs, base.rate, ctx, { fixed: base.carried });
+  const notDated = real.notDated;
+  const within = (s: ChainSchedule): DayKey | null => (!s.notDated && !s.tooFar && daysBetween(today, s.end) <= SPAN_MAX_DAYS ? s.end : null);
+  const D_real = within(real);
+  const D_full = need && rSrc != null && rSrc !== base.rate ? within(chainScheduleOf(model, topics, specs, rSrc, ctx, { fixed: base.carried })) : D_real;
+  const cards = Array.from({ length: K }, (_, k) => topics.filter((t) => t.layer === k + 1).reduce((s, t) => s + t.need, 0));
+  const held = Array.from({ length: K }, (_, k) => !topics.some((t) => t.layer === k + 1 && paysOf(t)));
+  const floorAt = (rate: number | null): DayKey => addDays(today, chainFloorOf(cards, held, L, rate, () => 0, model.m).total);
+  const D_floor = floorAt(Infinity);
+  const D_best_pace = notDated ? null : floorAt(base.rate ?? Infinity);
+  const D_best_2x = notDated ? null : floorAt(rSrc != null ? OVER_PACE_FACTOR * rSrc : Infinity);
+  const Du = mode === "REALISTIC" ? D_real : userDate;
+  let verdict: DateVerdict;
+  if (mode === "REALISTIC" || Du == null) verdict = notDated ? "TIGHT" : "FITS";
+  else if (beforeDay(Du, notDated ? D_floor : laterOf(D_best_2x, D_floor))) verdict = "IMPOSSIBLE";
+  else if (notDated) verdict = "TIGHT";
+  else if (!beforeDay(Du, D_real)) verdict = "FITS";
+  else if (!beforeDay(Du, D_full)) verdict = "TIGHT";
+  else verdict = "OVER";
+  const examMid = examDay != null && real.lastLayerDue != null && examDay < real.lastLayerDue;
+  if (examMid && (verdict === "FITS" || verdict === "TIGHT")) verdict = "OVER";
+  const levelOfRow = (k: number): number => (specs[k].role === "LAYER" ? OPEN_LEVEL : specs[k].deep);
+  const reachBy = (by: DayKey): number | null => {
+    let best: number | null = null;
+    real.rows.forEach((d, k) => {
+      if (d.held || d.stageDay == null || d.stageDay > by) return;
+      best = Math.max(best ?? 0, levelOfRow(k));
+    });
+    return best;
+  };
+  const reachByUserDate = mode === "CHOSEN" && Du != null && !notDated && beforeDay(Du, D_real) ? reachBy(Du) : null;
+  const reachByExam = examDay && !notDated ? reachBy(examDay) : null;
+  const dow = (d: DayKey) => `${dowText(d)} ${d.slice(0, 4)}`;
+  const basis: string[] = [];
+  if (notDated) basis.push(chainBasisLineOf(K, origin, null, model.input.hoursPerWeek));
+  else if (D_real == null) basis.push(`${chainBasisLineOf(K, origin, daysBetween(today, real.end), model.input.hoursPerWeek)} That is past 3 years: plan fewer layers, lower the depth, or raise your hours.`);
+  else basis.push(chainBasisLineOf(K, origin, daysBetween(today, D_real), model.input.hoursPerWeek));
+  basis.push(STAGED_LINE);
+  const assumed = assumedLineOf(model);
+  if (assumed) basis.push(assumed);
+  if (mode === "CHOSEN" && Du != null) {
+    if (verdict === "IMPOSSIBLE") basis.push(`Your date, ${dow(Du)}, is before the earliest this map can be reached, even if every review passes and each layer's cards are written on its first day.`);
+    else if (verdict === "TIGHT" && !notDated && !examMid) basis.push("Uses your full usual pace: no margin for a lean week.");
+    else if (verdict === "OVER" && !examMid) basis.push("Your date comes before the realistic one, and the map is never squeezed: use the realistic date, add hours, or plan fewer layers.");
+    if (reachByUserDate != null) basis.push(`By your date the plan reaches ${levelWords(reachByUserDate)}.`);
+  }
+  if (examDay) {
+    if (examMid) basis.push(`Your exam (${dow(examDay)}) comes before layer ${K} can be reached, and an exam never lands mid-map: use a later date, more hours or fewer layers, or plan the first layers now.`);
+    else basis.push(reachByExam != null ? `By your exam (${dow(examDay)}) the plan reaches ${levelWords(reachByExam)}.` : `By your exam (${dow(examDay)}) the plan reaches no milestone yet.`);
+  }
+  return {
+    check: {
+      D_real,
+      D_full,
+      D_best_pace,
+      D_best_2x,
+      D_floor,
+      verdict,
+      rateAsked: need && !notDated && base.rate != null && verdict !== "IMPOSSIBLE" ? ceilTenth(base.rate) : null,
+      reachByUserDate,
+      reachByExam,
+      scheduleBound: false,
+      dateOrigin: { origin: mode === "REALISTIC" ? "REALISTIC" : "USER", calibrating: [...model.calibrating] },
+      basis,
+    },
+    real,
+  };
+}
+
+/**
+ * The topic chain as milestones (contracts §22.12; beside stageLadderOf, which is unchanged): K layer milestones
+ * (one per filled layer, renumbered 1..K), then the depth tail for L* (depthTailOf), dated through the reach model
+ * with staged writing (see the section's head), then fitted (fitPlan's chain branch: the practice progression on
+ * every DRAFT row with items STARTER, in each row's room; a skeleton with NONE).
+ *
+ * L* is chain.depth (else intake.topicDepth, else the default); the exam is chain.examDay when given (null: none),
+ * else the intake's dated exam. The date mode, the user's date and the pace read as stageLadderOf's do. Every row is
+ * DRAFT, its title code's (chainTitleOf), its Domain items the row's named Domains (a layer's own; a depth row's
+ * specialisation); a draft's unbound topics carry their lineage and no Domain (ruling 60).
+ *
+ * Refusals: a track Area (a topic map is a Field path: NO_DOMAINS); no topic (NO_DOMAINS); every topic held or known
+ * (HELD); REALISTIC with new cards to write and no pace (NO_PACE); not dated and your date under 35 days a window
+ * (TOO_SOON); a chain past SPAN_MAX_DAYS (TOO_FAR, with code's figure). A dated exam before layer K's end, or your
+ * earlier date, is not refused: the date check reads OVER and the offers show (the chain is never squeezed).
+ *
+ * The result: stageDays per level (6: layer K's stage day; the tail's levels), the date check, the coverage (one entry
+ * per bound topic), the plan's writing rate, and the mixed-level end state (depthTermsOf with `levels`: the
+ * specialisation at L*, the base topics at min(8, L*)). REFIT re-dates a TOPICS plan through refit's chain branch,
+ * which reads the layers and topics back from the plan's own measures, unchanged.
+ */
+export function layeredLadderOf(
+  intake: Intake,
+  input: RealismInput,
+  chain: TopicChainInput,
+  names: Readonly<Record<string, DomainName>>,
+  makeId: () => string,
+  opts0: StageLadderOpts = {}
+): StageLadderResult {
+  // The one gate (contracts §19): the gate's blocked kinds join `excluded`, as stageLadderOf's do.
+  const opts: StageLadderOpts = { ...opts0, excluded: blockedKindsOf(intake, opts0), gate: GATE_APPLIED };
+  if (input.trackArea || intake.fieldId == null) return { ok: false, reason: "NO_DOMAINS", error: CHAIN_TRACK_ERROR };
+  const L: TopicDepth = isTopicDepth(chain.depth) ? chain.depth : isTopicDepth(intake.topicDepth) ? intake.topicDepth : AIM_DEPTHS[DEPTH_DEFAULT];
+  const tinput: RealismInput = { ...input, trackArea: false, planKind: "TOPICS" };
+  const { topics, K } = chainTopicsOfInput(tinput, chain);
+  if (K === 0) return { ok: false, reason: "NO_DOMAINS", error: CHAIN_EMPTY_ERROR };
+  if (!topics.some(paysOf)) return { ok: false, reason: "HELD", error: CHAIN_HELD_ERROR };
+  const specs = chainSpecsOf(K, L);
+  const model = chainModelOf(tinput, L, topics);
+  const ctx = contextOf(tinput);
+  const rate = chainRateOf(model);
+  const mode: DateMode = intake.dateMode ?? input.dateMode ?? "REALISTIC";
+  const userDate = mode === "CHOSEN" ? (input.userDate ?? intake.targetDay) : null;
+  const examDay = chain.examDay !== undefined ? (chain.examDay ?? null) : aimFillsOf(intake).exam ? (intake.examDay ?? input.examDay ?? null) : null;
+  if (mode === "REALISTIC" && model.totalNeed > 0 && rate == null) return { ok: false, reason: "NO_PACE", error: NO_PACE_ERROR };
+  const sched = chainScheduleOf(model, topics, specs, rate, ctx, { userDate });
+  if (sched.notDated && userDate == null) return { ok: false, reason: "NO_PACE", error: NO_PACE_ERROR };
+  if (sched.tooSoon) return { ok: false, reason: "TOO_SOON", error: TOO_SOON_DATE_ERROR };
+  if (sched.tooFar || daysBetween(model.today, sched.end) > SPAN_MAX_DAYS) {
+    const words = sched.tooFar ? "more than 3 years" : `about ${durationWordsOf(daysBetween(model.today, sched.end))}`;
+    return {
+      ok: false,
+      reason: "TOO_FAR",
+      error: `With these ${K} ${K === 1 ? "layer" : "layers"}, this map needs ${words} at ${hoursWordsOf(input.hoursPerWeek)} a week. Plan fewer layers, lower the depth, or raise your hours.`,
+    };
+  }
+  model.staged = sched.writes;
+
+  const rows: MilestoneDraft[] = specs.map((r, k) => {
+    const d = sched.rows[k];
+    const own = rowTopicsOf(r, topics);
+    const ownNames = own.map((t) => (t.domainId && Object.prototype.hasOwnProperty.call(names, t.domainId) ? names[t.domainId] : null));
+    const ms = blankMilestone(makeId(), k + 1, { start: d.start, end: d.due }, chainTitleOf(r, K, ownNames), CODE, CODE_DECISION);
+    ms.stage = r.stage;
+    ms.layer = r.role === "LAYER" ? r.layer : null;
+    ms.chainRole = r.role;
+    let ord = 0;
+    const seen = new Set<string>();
+    own.forEach((t, j) => {
+      const name = ownNames[j];
+      if (!t.domainId || name == null || seen.has(t.domainId)) return;
+      seen.add(t.domainId);
+      ms.items.push(chainDomainItemOf(makeId(), ord++, t.domainId, name));
+    });
+    ms.measures = chainRowMeasuresOf(r, topics, L, model.rateSource, model.today, intake);
+    if (d.held) ms.notes.push(own.length > 0 && own.every((t) => t.held) ? "HELD_AT_START" : KNOWN_BY_YOU_NOTE);
+    return ms;
+  });
+  chainCheckpointsInPlace(
+    rows,
+    rows.map((_, i) => i),
+    specs,
+    topics,
+    L,
+    model.rateSource,
+    model.today,
+    intake,
+    false
+  );
+  const next: RealismInput = { ...tinput, targetDay: sched.end, dateMode: mode, userDate };
+  const plan = fitChain(rows, next, { makeId, sync: (opts.items ?? "STARTER") === "STARTER", excluded: opts.excluded, intake, picks: opts.picks, names });
+  const dc = chainDateCheckOf({ model, topics, specs, carried: specs.map(() => null), ctx, K, L, rate }, mode, userDate, examDay);
+  const coverage = chainCoverageOf(topics, names, intake);
+  const levels: Record<string, number> = {};
+  const baselines: Record<string, number> = {};
+  for (const t of topics) {
+    if (!t.domainId || Object.prototype.hasOwnProperty.call(levels, t.domainId)) continue;
+    levels[t.domainId] = endLevelOf(t, L);
+    baselines[t.domainId] = heldCount(t.all, endLevelOf(t, L), true);
+  }
+  const stageDays: Record<number, DayKey | null> = {};
+  specs.forEach((r, k) => {
+    const d = sched.rows[k];
+    if (d.held) return;
+    stageDays[r.role === "LAYER" ? OPEN_LEVEL : r.deep] = sched.notDated ? null : d.stageDay;
+  });
+  return {
+    ok: true,
+    plan,
+    stageDays,
+    dateCheck: dc.check,
+    coverage,
+    rate: rate != null && model.totalNeed > 0 ? Math.round(rate * 100) / 100 : null,
+    endState: depthTermsOf(L, coverage, baselines, model.today, levels),
+  };
+}
+
+/** The chain read back from a TOPICS plan's own rows (scheduled, with a chain role, in plan order). */
+interface ChainCore extends ChainBase {
+  /** Plan indices, index-aligned with `specs`. */
+  rows: number[];
+  /** The plan's own windows, every row kept: its staged writing (set on the model). */
+  schedule: ChainSchedule;
+}
+
+/**
+ * A TOPICS plan's chain: its rows (scheduled, with a chainRole), each topic in its own layer (the first layer row, by
+ * layer, whose measures name it: PAYS there pays, CONTEXT is held or known), the specialisation being layer K's, L*
+ * (the highest level a specialisation topic's measure reaches, which a base topic's "climbing to 8" never sets; the
+ * input's TopicDepth without one), and each row's spec (a depth row's from depthTailOf by its stage).
+ */
+function chainOfPlan(plan: readonly MilestoneDraft[], input: RealismInput): { rows: number[]; specs: ChainRowSpec[]; topics: ChainTopic[]; K: number; L: TopicDepth } | null {
+  const rows = planOrder(plan).filter((i) => SCHEDULED.has(plan[i].status) && plan[i].chainRole != null);
+  if (rows.length === 0) return null;
+  const layerRows = rows.filter((i) => plan[i].chainRole === "LAYER").sort((a, b) => (plan[a].layer ?? 0) - (plan[b].layer ?? 0) || plan[a].ord - plan[b].ord);
+  const K = layerRows.reduce((mx, i) => Math.max(mx, plan[i].layer ?? 1), 0);
+  const used = new Set<string>();
+  const seen = new Set<string>();
+  const topics: ChainTopic[] = [];
+  for (const i of layerRows) {
+    const ms = plan[i];
+    const layer = ms.layer ?? 1;
+    const heldRow = ms.notes.includes("HELD_AT_START");
+    for (const x of ms.measures) {
+      if (x.kind !== "CARDS_AT_LEVEL" || !x.topicLineageId || x.gate || seen.has(x.topicLineageId)) continue;
+      seen.add(x.topicLineageId);
+      const pays = x.role === "PAYS";
+      topics.push(
+        chainTopicOf(input, { lineageId: x.topicLineageId, domainId: x.scope.domainIds?.[0] ?? null, role: layer === K ? "DEEP" : "BASE", held: !pays && heldRow, skipped: !pays && !heldRow, nd: x.target }, layer, used)
+      );
+    }
+  }
+  const deep = new Set(topics.filter((t) => t.role === "DEEP").map((t) => t.lineageId));
+  let top = 0;
+  for (const i of rows)
+    for (const x of plan[i].measures) if (x.kind === "CARDS_AT_LEVEL" && x.topicLineageId && deep.has(x.topicLineageId) && !x.gate && x.minLevel != null) top = Math.max(top, x.minLevel);
+  const L: TopicDepth = isTopicDepth(top) ? top : isTopicDepth(input.depth) ? input.depth : AIM_DEPTHS[DEPTH_DEFAULT];
+  const specs: ChainRowSpec[] = rows.map((i) => {
+    const ms = plan[i];
+    if (ms.chainRole === "LAYER") return { role: "LAYER", layer: ms.layer ?? 1, stage: "FAMILIAR", deep: OPEN_LEVEL, base: OPEN_LEVEL };
+    const stage: GateStage = ms.stage && (STAGE_KEYS as readonly string[]).includes(ms.stage) ? (ms.stage as GateStage) : "FLUENT";
+    const tail = depthTailOf(L).find((t) => t.stage === stage);
+    return { role: "DEPTH", layer: null, stage, deep: tail?.pays.deep ?? rowLevelOf(ms) ?? L, base: tail?.pays.base ?? 0 };
+  });
+  return { rows, specs, topics, K, L };
+}
+
+/** chainOfPlan with its model, its rate and the plan's own staged writing (every row's window kept). */
+function chainCoreOfPlan(plan: readonly MilestoneDraft[], input: RealismInput): ChainCore | null {
+  const ch = chainOfPlan(plan, input);
+  if (!ch) return null;
+  const model = chainModelOf(input, ch.L, ch.topics);
+  const ctx = contextOf(input);
+  const rate = chainRateOf(model);
+  const windowOf = (i: number): ChainWindow | null => (isDated(plan[i]) ? { start: plan[i].windowStart as DayKey, due: plan[i].dueDay as DayKey } : null);
+  const schedule = chainScheduleOf(model, ch.topics, ch.specs, rate, ctx, { fixed: ch.rows.map(windowOf) });
+  model.staged = schedule.writes;
+  const carried = ch.rows.map((i) => (CARRIED.has(plan[i].status) || isChainHeldRow(plan[i]) ? windowOf(i) : null));
+  return { ...ch, model, ctx, rate, schedule, carried };
+}
+
+/**
+ * fitPlan's chain branch: on every DRAFT or PLANNED unheld row, each topic measure's key and baseline from today's
+ * cards (`rc` at its topic's end level; a checkpoint keeps none), its code title from its Domains' names; then the
+ * practice progression (contracts §20, §22.13: the chain's parts, within each row's room at the chain's load; `sync`
+ * false sizes a plan the user writes as it stands) and the allocation, the practice measures and NOT_MEASURABLE, as
+ * fitDepth does.
+ */
+function fitChain(
+  plan: readonly MilestoneDraft[],
+  input: RealismInput,
+  opts: { makeId?: () => string; sync?: boolean; excluded?: Iterable<CatalogKey>; intake?: Intake | null; picks?: unknown; names?: Readonly<Record<string, DomainName>> }
+): MilestoneDraft[] {
+  const out = plan.map(cloneMilestone);
+  const core = chainCoreOfPlan(out, input);
+  if (!core) return out;
+  const { ctx, topics, L, K } = core;
+  const byLineage = new Map(topics.map((t) => [t.lineageId, t] as const));
+  core.rows.forEach((i, k) => {
+    const ms = out[i];
+    if (!fittable(ms) || isChainHeldRow(ms)) return;
+    for (const x of ms.measures) {
+      if (x.kind !== "CARDS_AT_LEVEL" || x.minLevel == null || !(x.scope.domainIds?.length)) continue;
+      const t = x.topicLineageId ? byLineage.get(x.topicLineageId) : undefined;
+      const clean = !x.gate && t != null && x.minLevel === endLevelOf(t, L);
+      if (!x.gate) x.measureKey = cardsAtLevelKey(x.scope.domainIds, x.minLevel, clean ? "rc" : "r");
+      x.baseline = x.scope.domainIds.reduce((s, id) => s + heldCount(domainCardsOf(input, id), x.minLevel as number, clean), 0);
+      x.baselineDay = ctx.today;
+      x.fittedTarget = null;
+    }
+    if (ms.titleOrigin === CODE && provenanceOf(CODE, ms.titleDecision) === "WORKED_OUT") {
+      const named = new Map(rowDomainsOf(ms).map((d) => [d.id, opts.names && Object.prototype.hasOwnProperty.call(opts.names, d.id) ? opts.names[d.id] : d.name] as const));
+      const own = rowTopicsOf(core.specs[k], topics).map((t) => (t.domainId ? (named.get(t.domainId) ?? null) : null));
+      const title = chainTitleOf(core.specs[k], K, own);
+      if (title) ms.title = title;
+    }
+  });
+  const rate = core.rate ?? 0;
+  const state = depthStateOf(out, core.model, ctx, rate);
+  const blocked = new Set<string>(opts.excluded ?? []);
+  const focus =
+    opts.sync !== false
+      ? syncRowsInPlace(out, { ...rowProgressionCtxOf("FIELD", input, opts.intake, out, blocked, roomOf(state, ctx), { picks: opts.picks, makeId: opts.makeId, names: opts.names }), topics: true })
+      : placedFocusOf(out);
+  for (const i of planOrder(out)) {
+    const ms = out[i];
+    if (ms.chainRole == null || !fittable(ms) || isChainHeldRow(ms)) continue;
+    const from = maxDay(ms.windowStart!, ctx.today);
+    allocate(ms, state.sim, ctx, from, rowBandFloorOf(ms), focus?.get(ms.lineageId) ?? null);
+    syncPracticeMeasures(ms, from, ctx);
+    setNote(ms, "NOT_MEASURABLE", !ms.measures.some((x) => x.role === "PAYS"));
+  }
+  return out;
+}
+
+/** The chain's remedies: your realistic date (when yours is earlier and the realistic one is within 3 years), a lower depth (above 6). */
+function chainRemediesOf(check: DateCheck, core: ChainBase): Remedy[] {
+  const out: Remedy[] = [];
+  if (check.D_real && check.verdict !== "FITS" && daysBetween(core.model.today, check.D_real) <= SPAN_MAX_DAYS) out.push("USE_REALISTIC_DATE");
+  if (core.L > OPEN_LEVEL) out.push("LOWER_DEPTH");
+  return out;
+}
+
+/** feasibilityOf's chain branch: judgeDepth's checks over the chain's model (its staged writing), with the chain's date check. */
+function judgeChain(plan: readonly MilestoneDraft[], input: RealismInput, withRemedies: boolean): { fe: Feasibility; open: MilestoneFeasibility[] } {
+  const core = chainCoreOfPlan(plan, input);
+  if (!core) {
+    const r = judgePlan(plan, { ...input, planKind: undefined, depth: null }, false);
+    r.fe.reachModel = REACH_MODEL_VERSION;
+    return r;
+  }
+  const { model, ctx } = core;
+  const rate = core.rate ?? 0;
+  const dating = datingOf(input);
+  const check = chainDateCheckOf(core, dating.mode, dating.userDate, dating.examDay).check;
+  const state = depthStateOf(plan, model, ctx, rate);
+  const judged: { mf: MilestoneFeasibility; carried: boolean }[] = [];
+  const open: MilestoneFeasibility[] = [];
+  for (const idx of planOrder(plan)) {
+    const ms = plan[idx];
+    if (!inPlan(ms) || isChainHeldRow(ms) || ms.dueDay! < ctx.today) continue;
+    const mf = depthMilestoneFeasibilityOf(ms, state, model, ctx, rate);
+    judged.push({ mf, carried: CARRIED.has(ms.status) });
+    if (!CARRIED.has(ms.status)) open.push(mf);
+  }
+  // As judgePlan: a row the plan can still change comes before a carried row of its own lineage.
+  const milestones: MilestoneFeasibility[] = [];
+  const placed = new Set<number>();
+  for (let i = 0; i < judged.length; i++) {
+    if (placed.has(i)) continue;
+    if (judged[i].carried) {
+      for (let j = i + 1; j < judged.length; j++) {
+        if (placed.has(j) || judged[j].carried || judged[j].mf.lineageId !== judged[i].mf.lineageId) continue;
+        milestones.push(judged[j].mf);
+        placed.add(j);
+      }
+    }
+    milestones.push(judged[i].mf);
+  }
+  const aimCheck = aimCheckOf(ctx);
+  const basis: string[] = [reachBasisLineOf(model), STAGED_LINE];
+  if (Math.abs(ctx.m - 1) > EPS) basis.push(spacingLine(ctx.m));
+  if (input.areaInMaintenance) basis.push(MAINTENANCE_LINE);
+  basis.push(depthAimLineOf(aimCheck));
+  const impossible = open.some((m) => m.worst === "IMPOSSIBLE") || check.verdict === "IMPOSSIBLE";
+  const over = open.some((m) => m.time.verdict === "OVER" || m.knowledge.some((k) => k.verdict === "OVER")) || check.verdict === "OVER";
+  const remedies = withRemedies && (impossible || over || check.verdict !== "FITS") ? chainRemediesOf(check, core) : [];
+  for (const m of open) m.remedies = m.worst === "IMPOSSIBLE" || m.worst === "OVER" ? [...remedies] : [];
+  return {
+    fe: { today: ctx.today, m: ctx.m, milestones, aimCheck, basis, remedies, impossible, over, reachModel: REACH_MODEL_VERSION, dateCheck: check },
+    open,
+  };
+}
+
+/**
+ * The re-date of a TOPICS plan (refit, USE_REALISTIC_DATE, [Re-date goal N]; ruling 50): the chain read back from
+ * the plan (its layers, topics and counts unchanged, never re-split), every unstarted unheld row dated again from
+ * today's cards with the staged writing ("PLAN": the input's date mode, your later date giving the last window the
+ * slack; "REALISTIC": the chain's own end), started and held rows kept as they are. Re-dated rows come back DRAFT
+ * (the new version R4 writes), their checkpoints and LONG_WINDOW following their windows, then fitted.
+ */
+function redateChain(plan: readonly MilestoneDraft[], input: RealismInput, mode: "PLAN" | "REALISTIC", opts: PlaceOpts = {}): MilestoneDraft[] {
+  const out = plan.map(cloneMilestone);
+  const place = depthPlaceOf(opts);
+  const core = chainCoreOfPlan(out, input);
+  if (!core) return fitChain(out, input, place);
+  const dating = mode === "REALISTIC" ? { mode: "REALISTIC" as DateMode, userDate: null as DayKey | null } : datingOf(input);
+  const sched = chainScheduleOf(core.model, core.topics, core.specs, core.rate, core.ctx, { fixed: core.carried, userDate: dating.mode === "CHOSEN" ? dating.userDate : null });
+  if (sched.notDated && !(dating.mode === "CHOSEN" && dating.userDate)) return fitChain(out, input, place);
+  core.rows.forEach((i, k) => {
+    const ms = out[i];
+    if (core.carried[k] != null || !(ms.status === "DRAFT" || ms.status === "PLANNED")) return;
+    const d = sched.rows[k];
+    ms.windowStart = d.start;
+    ms.dueDay = d.due;
+    ms.status = "DRAFT";
+  });
+  chainCheckpointsInPlace(out, core.rows, core.specs, core.topics, core.L, core.model.rateSource, core.model.today, place.intake ?? null, true);
+  const last = core.rows.reduce<DayKey | null>((mx, i) => (out[i].dueDay && !isChainHeldRow(out[i]) && (mx == null || out[i].dueDay! > mx) ? out[i].dueDay! : mx), null);
+  const next: RealismInput =
+    mode === "REALISTIC" ? { ...input, targetDay: last ?? input.targetDay, dateMode: "REALISTIC", userDate: null } : { ...input, targetDay: last && last > input.targetDay ? last : input.targetDay };
+  return fitChain(out, next, place);
+}
+
+/** The chain's realistic end (re-dated at today's cards, started rows kept); null not dated or past SPAN_MAX_DAYS. */
+function chainRealisticDayOf(plan: readonly MilestoneDraft[], input: RealismInput): DayKey | null {
+  const core = chainCoreOfPlan(plan, input);
+  if (!core) return null;
+  const s = chainScheduleOf(core.model, core.topics, core.specs, core.rate, core.ctx, { fixed: core.carried });
+  return !s.notDated && !s.tooFar && daysBetween(input.today, s.end) <= SPAN_MAX_DAYS ? s.end : null;
+}
+
+/**
+ * refitForStart's chain branch: the row as if it started today, its practices re-allocated at the chain's load, its
+ * checks at today's cards, and its date check (stageDate): realistic is the Sunday on or after its stage day with
+ * its own layer's writing from today; FITS when the planned day is no earlier, else the worst of its card checks
+ * (TIGHT at the least). Counts never fall (todayCheck null).
+ */
+function refitForStartChain(milestone: MilestoneDraft, plan: readonly MilestoneDraft[], input: RealismInput): StartRefit {
+  const ctx = contextOf(input);
+  const ms = cloneMilestone(milestone);
+  ms.windowStart = ctx.today;
+  const others = plan.filter((p) => p.lineageId !== milestone.lineageId && !(milestone.id != null && p.id === milestone.id));
+  const full = [...others.map(cloneMilestone), ms];
+  const core = ms.dueDay != null ? chainCoreOfPlan(full, input) : null;
+  if (!core || ms.dueDay == null) {
+    const state = planStateOf(full, ctx);
+    if (ms.dueDay != null) {
+      allocate(ms, state.sim, ctx, ctx.today, rowBandFloorOf(ms), rowFocusOf(ms));
+      syncPracticeMeasures(ms, ctx.today, ctx);
+    }
+    return { milestone: ms, feasibility: ms.dueDay != null ? milestoneFeasibilityOf(ms, state, ctx, ctx.today, false) : emptyFeasibility(ms), todayCheck: null, impossible: false };
+  }
+  const rate = core.rate ?? 0;
+  const state = depthStateOf(full, core.model, ctx, rate);
+  allocate(ms, state.sim, ctx, ctx.today, rowBandFloorOf(ms), rowFocusOf(ms));
+  syncPracticeMeasures(ms, ctx.today, ctx);
+  const feasibility = depthMilestoneFeasibilityOf(ms, state, core.model, ctx, rate, ctx.today);
+  const planned = ms.dueDay;
+  const k = core.rows.findIndex((i) => full[i] === ms);
+  let realistic: DayKey | null = null;
+  if (k >= 0 && !core.schedule.notDated) {
+    const sd = chainRowStageDayOf(core.model, rowPayersOf(core.topics, core.specs[k]), core.schedule.writes);
+    realistic = sd ? sundayOnOrAfter(sd) : null;
+  }
+  let verdict: DateVerdict;
+  if (realistic != null && !beforeDay(planned, realistic)) verdict = "FITS";
+  else {
+    verdict = "TIGHT";
+    for (const c of feasibility.knowledge) if (c.verdict !== "FITTED" && SEVERITY[c.verdict] > SEVERITY[verdict]) verdict = c.verdict;
+  }
+  return { milestone: ms, feasibility, todayCheck: null, impossible: verdict === "IMPOSSIBLE", stageDate: { planned, realistic, verdict } };
+}
+
+/** writingPlanOf's chain branch: each topic's staged writing per life week (scopeKey: its Domain's id, or "t:" + its lineage when unbound). */
+function chainWritingPlanOf(plan: readonly MilestoneDraft[], input: RealismInput): { scopeKey: string; rateSource: RealismScope["rateSource"]; weeks: { weekStart: DayKey; cards: number }[] }[] {
+  const core = chainCoreOfPlan(plan, input);
+  if (!core) return [];
+  return core.topics
+    .map((t) => {
+      const weeks: { weekStart: DayKey; cards: number }[] = [];
+      for (const w of core.schedule.writes.get(t.id) ?? []) {
+        const ws = weekStartKeyOf(writeDayOf(w));
+        const last = weeks[weeks.length - 1];
+        if (last && last.weekStart === ws) last.cards += writeCountOf(w);
+        else weeks.push({ weekStart: ws, cards: writeCountOf(w) });
+      }
+      return { scopeKey: t.id, rateSource: core.model.rateSource, weeks };
+    })
+    .filter((x) => x.weeks.length > 0)
+    .sort((a, b) => (a.scopeKey < b.scopeKey ? -1 : a.scopeKey > b.scopeKey ? 1 : 0));
+}
+
+/**
+ * lowerDepthPlanOf's chain branch (ruling 50; lane 8's lowerDepthCore writes it): refuses while a started depth
+ * milestone works toward a level above `to`, and when `to` is not below L*. The new tail is depthTailOf(to): the
+ * unstarted depth rows take its stages in order (a started one keeps its own), the rest are DISCARDED with
+ * DEPTH_LOWERED; every unstarted row's topic measures are rebuilt at the new end state (counts never change; a
+ * measure keeps its id), then the chain is re-dated (redateChain). No pay, goal or rank is touched here.
+ */
+function lowerChainDepthOf(plan: readonly MilestoneDraft[], input: RealismInput, to: TopicDepth, opts: PlaceOpts): { ok: true; plan: MilestoneDraft[]; dropped: string[] } | { ok: false; error: string } {
+  if (!isTopicDepth(to)) return { ok: false, error: "Choose Familiar, Retained, Fluent or Mastered." };
+  const out = plan.map(cloneMilestone);
+  const core = chainCoreOfPlan(out, input);
+  if (!core) return { ok: false, error: "This plan has no depth to lower." };
+  if (!(to < core.L)) return { ok: false, error: `The depth is already ${levelWords(core.L)}.` };
+  for (const i of core.rows) {
+    const ms = out[i];
+    if (CARRIED.has(ms.status) && ms.chainRole === "DEPTH" && (rowLevelOf(ms) ?? 0) > to) {
+      const gate = stageOfLevel(to);
+      return { ok: false, error: `Close or drop milestone ${ms.ord} first: it is working toward a level above ${gate ? STAGE_NAMES[gate] : `level ${to}`}.` };
+    }
+  }
+  const tail = depthTailOf(to);
+  const depthRows = core.rows.filter((i) => out[i].chainRole === "DEPTH");
+  const keptStages = new Set(depthRows.filter((i) => CARRIED.has(out[i].status)).map((i) => out[i].stage));
+  const wanted = tail.filter((t) => !keptStages.has(t.stage));
+  const free = depthRows.filter((i) => !CARRIED.has(out[i].status));
+  if (wanted.length > free.length) return { ok: false, error: `There is no milestone left to hold ${levelWords(to)}.` };
+  const dropped: string[] = [];
+  const specOf = new Map<number, ChainRowSpec>();
+  free.forEach((i, j) => {
+    const ms = out[i];
+    const t = wanted[j];
+    if (t) {
+      ms.stage = t.stage;
+      specOf.set(i, { role: "DEPTH", layer: null, stage: t.stage, deep: t.pays.deep, base: t.pays.base });
+      return;
+    }
+    ms.status = "DISCARDED";
+    ms.rankIndex = null;
+    setNote(ms, "DEPTH_LOWERED", true);
+    dropped.push(ms.lineageId);
+  });
+  core.rows.forEach((i, k) => {
+    const ms = out[i];
+    if (ms.status !== "DRAFT" && ms.status !== "PLANNED") return;
+    if (isChainHeldRow(ms)) return;
+    const spec = specOf.get(i) ?? core.specs[k];
+    const ids = new Map(ms.measures.filter((x) => x.kind === "CARDS_AT_LEVEL" && x.topicLineageId && !x.gate).map((x) => [x.topicLineageId as string, x.id] as const));
+    const rebuilt = chainRowMeasuresOf(spec, core.topics, to, core.model.rateSource, core.model.today, opts.intake ?? null).map((x) => ({ ...x, id: ids.get(x.topicLineageId as string) ?? null }));
+    ms.measures = [...rebuilt, ...ms.measures.filter((x) => !(x.kind === "CARDS_AT_LEVEL" && x.topicLineageId && !x.gate))];
+  });
+  return { ok: true, plan: redateChain(out, { ...input, depth: isAimDepth(to) ? to : null }, "PLAN", opts), dropped };
+}
+
+/**
+ * motivationTimelineOf's chain branch: the rank spread (contracts §22.12) at each gate's day (the PART checkpoint at
+ * the middle of its window, at most FIRST_RANK_MAX_DAYS in; then each unheld row's due day), every milestone that
+ * could pay ⬡6 (as motivationTimelineOf), Paragon (topRankIndexOfDepth with planKind TOPICS) and the longest gap.
+ */
+function chainMotivationTimelineOf(plan: readonly MilestoneDraft[], input: RealismInput, opts: { hasStandard?: boolean; coverageBelowPolicy?: boolean }): MotivationTimeline {
+  const today = input.today;
+  const rows = planOrder(plan)
+    .map((i) => plan[i])
+    .filter((ms) => SCHEDULED.has(ms.status) && isDated(ms) && !isChainHeldRow(ms));
+  const longWindow = plan.some((ms) => ms.notes.includes("LONG_WINDOW"));
+  if (rows.length === 0) return { firstRankDay: null, rankDays: [], payDays: [], paragonDay: null, longestGap: 0, longWindow };
+  const fe = feasibilityOf(plan, input);
+  const weeksOfRow = new Map<string, PlanWeek[]>();
+  for (const m of fe.milestones) if (!weeksOfRow.has(m.lineageId)) weeksOfRow.set(m.lineageId, m.weeks);
+  const L = chainOfPlan(plan, input)?.L ?? AIM_DEPTHS[DEPTH_DEFAULT];
+  const dayOf = (ms: MilestoneDraft) => daysBetween(today, ms.dueDay!);
+  const gateDays: number[] = [];
+  for (const ms of rows) {
+    if (ms.measures.some((x) => x.gate === "PART")) {
+      const from = Math.max(0, daysBetween(today, ms.windowStart!));
+      gateDays.push(from + Math.min(FIRST_RANK_MAX_DAYS, Math.floor((dayOf(ms) - from) / 2)));
+    }
+    gateDays.push(dayOf(ms));
+  }
+  const gate = stageOfLevel(L);
+  const topSpread = gate ? STAGE_RANK[gate] : 1;
+  const rankDays: number[] = [];
+  let best = 0;
+  gateDays.forEach((d, i) => {
+    const r = topicRankIndexOf(i + 1, gateDays.length, topSpread);
+    if (r > best) {
+      best = r;
+      rankDays.push(d);
+    }
+  });
+  const payDays: number[] = [];
+  for (const ms of rows) {
+    const practice = livePractices(ms).reduce((s, p) => s + practiceMinutesPerWeekOf(p), 0);
+    const other = otherTrackedMinutesOf(weeksOfRow.get(ms.lineageId) ?? []) ?? 0;
+    if (practice + EPS >= PRACTICE_PAY_FLOOR_MIN && practice + EPS >= PRACTICE_PAY_SHARE * (practice + other)) payDays.push(dayOf(ms));
+  }
+  const last = rows[rows.length - 1];
+  const topRank = topRankIndexOfDepth({
+    depth: L,
+    track: false,
+    hasStandard: opts.hasStandard ?? hasStandardOf(plan),
+    keptStages: rows.length,
+    spanDays: dayOf(last),
+    coverageBelowPolicy: opts.coverageBelowPolicy ?? false,
+    productionPlannedFromFluent: productionPlannedFromFluentOf(plan),
+    planKind: "TOPICS",
+  });
+  const paragonDay = topRank === RANK_TOP ? dayOf(last) : null;
+  const events = [...new Set([...rankDays, ...payDays, ...(paragonDay != null ? [paragonDay] : [])])].sort((a, b) => a - b);
+  let longestGap = 0;
+  let prev = 0;
+  for (const e of events) {
+    longestGap = Math.max(longestGap, e - prev);
+    prev = e;
+  }
+  if (events.length === 0) longestGap = dayOf(last);
+  return { firstRankDay: rankDays[0] ?? null, rankDays, payDays, paragonDay, longestGap, longWindow };
+}
+
+/**
+ * A TOPICS row's Domain names by part (contracts §22.13, ProgressionItem.part): `own` (NEW) the row's own Domains
+ * (a layer's; a depth row's specialisation), `carry` (CARRY) the layer before's (a depth row: every base topic's).
+ */
+function topicPartNamesOf(rows: readonly MilestoneDraft[], k: number, names?: Readonly<Record<string, DomainName>>): { own: DomainName[]; carry: DomainName[] } {
+  const ms = rows[k];
+  const own = stageNamesOf(ms, names);
+  const nameOf = (d: { id: string; name: DomainName }): DomainName => (names && Object.prototype.hasOwnProperty.call(names, d.id) ? names[d.id] : d.name);
+  if (ms.chainRole === "DEPTH") {
+    const deep = new Set(rowDomainsOf(ms).map((d) => d.id));
+    const carry: DomainName[] = [];
+    const seen = new Set<string>();
+    for (const r of rows) {
+      if (r.chainRole !== "LAYER") continue;
+      for (const d of rowDomainsOf(r)) {
+        if (deep.has(d.id) || seen.has(d.id)) continue;
+        seen.add(d.id);
+        carry.push(nameOf(d));
+      }
+    }
+    return { own, carry };
+  }
+  const before = ms.layer != null ? rows.find((r) => r.chainRole === "LAYER" && r.layer === (ms.layer as number) - 1) : undefined;
+  return { own, carry: before ? stageNamesOf(before, names) : [] };
+}
+
+/** An item's part (lane 8's ProgressionItem.part, read as unknown so this file compiles before it lands): NEW, CARRY or none. */
+function topicPartOf(x: ProgressionItem): "NEW" | "CARRY" | null {
+  const part = (x as { part?: unknown }).part;
+  return part === "NEW" || part === "CARRY" ? part : null;
 }
