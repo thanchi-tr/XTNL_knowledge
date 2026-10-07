@@ -6637,6 +6637,30 @@ async function main() {
       fail9h.length === 0,
       fail9h.join(" | ")
     );
+
+    // ── 4. A layer's milestone (§22.20 ruling N8): MAP's title, hurdle and target under the header, Gemini's words
+    //    (data-wc="name"), marked «Gemini's milestone · not checked»; the header block stays within row 13's 6 app words;
+    //    a layer with no milestone renders none ──
+    const failMs: string[] = [];
+    const l1 = dmap9.layers[0];
+    const ms = { layer: l1.layer, title: "Cash-flow determinism & baseline solvency", hurdle: "Eliminating variance in the household burn rate", target: "Six months of non-discretionary expenses held liquid" };
+    const bandMs = (milestone: typeof ms | null) => R(createElement(LayerBand, { map: dmap9, layer: { ...l1, milestone }, draft: true, trace: { self: null, related: new Set<string>() }, onTrace: () => {}, onMore: () => {} }));
+    const withMs = bandMs(ms);
+    const msBlock = /<div class="rm-tm-ms">[\s\S]*?<\/dl>/.exec(withMs)?.[0] ?? "";
+    if (!msBlock.includes(`<p class="rm-tm-mst" data-wc="name">${ms.title.replace(/&/g, "&amp;")}</p>`)) failMs.push("the title");
+    if (!msBlock.includes(`<dt>${copy.MILESTONE_HURDLE_WORD}</dt><dd data-wc="name">${ms.hurdle}</dd>`)) failMs.push("the hurdle");
+    if (!msBlock.includes(`<dt>${copy.MILESTONE_TARGET_WORD}</dt><dd data-wc="name">${ms.target}</dd>`)) failMs.push("the target");
+    const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/'/g, "&#x27;");
+    if (!withMs.includes(`>${esc(copy.GEMINI_MILESTONE_LABEL)}<`) || !/Gemini/.test(copy.GEMINI_MILESTONE_LABEL)) failMs.push(`the who-word chip: ${/<div class="rm-tm-ms">[\s\S]*?<\/div><\/div>/.exec(withMs)?.[0]?.slice(-400)}`);
+    const hd = /<div class="rm-tm-hd" data-wc-block="topic-layer">[\s\S]*?<\/section>/.exec(withMs)?.[0] ?? "";
+    const words = wc9.countAppWords(hd, { width: 344 }).count;
+    if (hd === "" || words > 6) failMs.push(`the header block holds ${words} app words`);
+    if (bandMs(null).includes("rm-tm-ms") || R(createElement(LayerBand, { map: dmap9, layer: l1, draft: true, trace: { self: null, related: new Set<string>() }, onTrace: () => {}, onMore: () => {} })).includes("rm-tm-ms")) failMs.push("a milestone with none");
+    check(
+      "ruling N8: a layer's milestone renders under its header (title, Hurdle, Target as Gemini's words, data-wc=\"name\") with «Gemini's milestone · not checked», within row 13's 6 app words; none without one",
+      failMs.length === 0,
+      failMs.join(" | ")
+    );
   }
   // ===== /Rev 5 lane 9 =====
 

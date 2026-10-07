@@ -7124,6 +7124,8 @@ async function main() {
       "Loan Refinancing": "Interest Rates",
     };
     const P3_REPLY = P3.replies[0] as Recorded & { parsed: { names: Record<string, { name: string; scope: string }[]> } };
+    /** Ruling N8: the milestone this check's MAP reply writes for a layer key (P3 holds none). */
+    const MILESTONE_OF = (l: string) => ({ title: `Stage ${l} of the household plan`, hurdle: `The ${l} hurdle`, target: `The ${l} target` });
     const P5_META = P5.parts.metadata as { groundingChunks: { web: { title: string; uri: string } }[]; groundingSupports: Support[]; webSearchQueries: string[] };
     const P5_TERMS = P5.terms as Term[];
     const P5_LINES = (P5.parts.parts[0].text as string).split("\n");
@@ -7163,15 +7165,23 @@ async function main() {
       };
       return { response: groundResponseOf(parts), label: "P5 adapted" };
     };
-    /** One MAP reply for a pack: P3 verbatim when the pack's schema fits it, else P3 cut to the schema (see the block's head). */
+    /**
+     * One MAP reply for a pack: P3 verbatim when the pack's schema fits it, else P3 cut to the schema (see the block's
+     * head). P3 was recorded at TOPIC_PROMPT_VERSION 2, before ruling N8's `milestones`: when the schema asks for them,
+     * each listed layer gets MILESTONE_OF's, in front of P3's names (labelled "+ milestones"; no name changed).
+     */
     const mapReplyOf = (req: ModelRequest): { reply: Recorded; label: string } => {
-      const names = ((req.responseSchema as { properties: Record<string, unknown> }).properties.names ?? { properties: {} }) as { properties: Record<string, { maxItems?: string }>; propertyOrdering?: string[] };
+      const props = (req.responseSchema as { properties: Record<string, unknown> }).properties;
+      const names = (props.names ?? { properties: {} }) as { properties: Record<string, { maxItems?: string }>; propertyOrdering?: string[] };
       const layers = names.propertyOrdering ?? Object.keys(names.properties);
       const recordedNames = P3_REPLY.parsed.names;
       const adapted = { names: Object.fromEntries(layers.filter((l) => recordedNames[l]).map((l) => [l, recordedNames[l].slice(0, Number(names.properties[l]?.maxItems ?? recordedNames[l].length))])) };
-      if (json(adapted) === json(P3_REPLY.parsed)) return { reply: P3_REPLY, label: "P3 verbatim" };
+      const asked = (props.milestones as { propertyOrdering?: string[] } | undefined)?.propertyOrdering ?? null;
+      const withMs = (body: object) => (asked ? { milestones: Object.fromEntries(asked.map((l) => [l, MILESTONE_OF(l)])), ...body } : body);
+      const plus = asked ? " + milestones" : "";
+      if (json(adapted) === json(P3_REPLY.parsed)) return { reply: asked ? { ...P3_REPLY, raw: JSON.stringify(withMs(P3_REPLY.parsed), null, 2) } : P3_REPLY, label: `P3 verbatim${plus}` };
       const max = layers.map((l) => names.properties[l]?.maxItems ?? "-").join("/");
-      return { reply: { raw: JSON.stringify(adapted, null, 2), finishReason: P3_REPLY.finishReason, usage: P3_REPLY.usage }, label: `P3 adapted (${layers.join(" ")}; at most ${max})` };
+      return { reply: { raw: JSON.stringify(withMs(adapted), null, 2), finishReason: P3_REPLY.finishReason, usage: P3_REPLY.usage }, label: `P3 adapted (${layers.join(" ")}; at most ${max})${plus}` };
     };
     const byName = (ts: readonly TopicRowRec[]) => ts.map((t) => `${t.key} L${t.layer} ${t.name} [${t.grounding}${t.flags.length ? ` ${t.flags.join(",")}` : ""}]`);
     // ratingOf over the three recorded RATE replies (the chip's source before MAP fills it).
@@ -7323,6 +7333,11 @@ async function main() {
       const shownOne = rows.filter((r) => r.cls === "LINKED_ONE");
       const [chipOk, chipFacts] = tm ? chip(tm) : [false, null];
       check(`names e2e (${tag}): the estimate chip and the bands`, !!tm && chipOk && tm.layers.length === tm.rating.layers, json({ chip: chipFacts, bands: tm?.layers.length, draft: view.draft != null, state: view.state }));
+      check(
+        `names e2e (${tag}): each band carries MAP's milestone for its layer (ruling N8: the reply's title, hurdle and target, through RatingRecord.milestones)`,
+        !!tm && tm.layers.length > 0 && tm.layers.every((l) => json(l.milestone) === json({ layer: l.layer, ...MILESTONE_OF(`L${l.layer}`) })),
+        json(tm?.layers.map((l) => l.milestone ?? null))
+      );
       check(
         `names e2e (${tag}): LINKED names appear as Gemini rows «Gemini · Google linked n sources», each with ≥ SOURCES_MIN distinct sites, and WEAK names at 1 site as LINKED_ONE rows «Gemini · Google linked 1 source» (ruling N3: shown, unticked, that one site); every source from the reply's groundingChunks`,
         !!tm &&
@@ -7495,7 +7510,7 @@ async function main() {
     // ── Pass B: a chosen date, your 4 layers once RATE settled; MAP gets P3 verbatim (the pack it was recorded for) ──
     const b = await drive(4, null, addDays(TODAY, 700));
     check(
-      "names e2e (B: 4 layers set by you): the page's poll runs RATE → MAP → LINK ∥ GROUND to done on the recorded replies (MAP: P3 verbatim), the draft on the wait card between steps, every step OK",
+      "names e2e (B: 4 layers set by you): the page's poll runs RATE → MAP → LINK ∥ GROUND to done on the recorded replies (MAP: P3 verbatim, with ruling N8's milestones), the draft on the wait card between steps, every step OK",
       b.facts.done &&
         b.facts.waited &&
         b.chainRuns().every((r) => r.status === "OK") &&
@@ -7503,7 +7518,7 @@ async function main() {
         b.facts.calls.MAP === 3 &&
         b.facts.calls.LINK === 3 &&
         (b.facts.calls.GROUND ?? 0) >= 1 &&
-        b.replies.filter((r) => r.startsWith("MAP")).every((r) => r === "MAP: P3 verbatim") &&
+        b.replies.filter((r) => r.startsWith("MAP")).every((r) => r === "MAP: P3 verbatim + milestones") &&
         b.gemini().length > 0,
       json(b.facts)
     );
@@ -7533,7 +7548,11 @@ async function main() {
         const props = (req.responseSchema as { properties?: Record<string, unknown> } | null)?.properties ?? {};
         const phase = req.googleSearch ? "GROUND" : "difficulty" in props ? "RATE" : "names" in props || "place" in props ? "MAP" : "LINK";
         if (phase === "RATE") return replyOf(P1.replies[0]);
-        if (phase === "MAP") return replyOf(P3.replies[0]);
+        // P3 predates ruling N8: the milestones the schema asks for are added in front of its names.
+        if (phase === "MAP") {
+          const asked = (props.milestones as { propertyOrdering?: string[] } | undefined)?.propertyOrdering ?? [];
+          return replyOf({ ...P3.replies[0], raw: JSON.stringify({ milestones: Object.fromEntries(asked.map((l) => [l, { title: `Stage ${l}`, hurdle: "A hurdle", target: "A target" }])), ...P3.replies[0].parsed }) });
+        }
         if (phase === "GROUND") {
           if (opts.groundFail()) throw new Error("429 quota");
           return groundResponseOf(P5.parts);

@@ -2455,11 +2455,12 @@ const SCAN_MAX = 20_000;
 // ── Revision 5, lane 10 (contracts §22.4, ruling 34) ──
 /**
  * The top-level properties under which a STRING node with no enum is free text (the walk's one exception to
- * FREE_TEXT): rev 4's `gaps` and revision 5's `names` (MAP's per-layer names and DEEPER's names, each item's `name`).
- * A free STRING anywhere else is FREE_TEXT, as before; an enum STRING under them is still checked against its enum.
- * No LEVELS schema holds a `names` property, so a LEVELS reply walks exactly as before.
+ * FREE_TEXT): rev 4's `gaps`, revision 5's `names` (MAP's per-layer names and DEEPER's names, each item's `name`) and
+ * MAP's `milestones` (ruling N8: each layer's title, hurdle and target). A free STRING anywhere else is FREE_TEXT, as
+ * before; an enum STRING under them is still checked against its enum. No LEVELS schema holds a `names` or a
+ * `milestones` property, so a LEVELS reply walks exactly as before.
  */
-export const FREE_TEXT_ROOTS: readonly string[] = ["gaps", "names"];
+export const FREE_TEXT_ROOTS: readonly string[] = ["gaps", "names", "milestones"];
 
 interface Walk {
   schema: unknown;

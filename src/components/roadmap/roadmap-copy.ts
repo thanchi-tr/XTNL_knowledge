@@ -2484,6 +2484,12 @@ export const GEMINI_KEPT_BY_YOU_FULL = "Gemini named it and you kept it. Keeping
 export const GEMINI_NOT_CHECKED_FULL = "Gemini named it, and no check passed for it. It stays out of the plan unless you keep it.";
 export const GEMINI_KEPT_NOT_CHECKED_FULL = "Gemini named it, no check passed for it, and you kept it. Keeping never marks it checked.";
 
+/** A layer's milestone (ruling N8): MAP's title, hurdle and target, marked as Gemini's. */
+export const GEMINI_MILESTONE_LABEL = "Gemini's milestone · not checked";
+export const GEMINI_MILESTONE_FULL = "Gemini wrote this milestone, its hurdle and its target for your aim. No check ran on them. The topics you keep are what the plan holds.";
+export const MILESTONE_HURDLE_WORD = "Hurdle";
+export const MILESTONE_TARGET_WORD = "Target";
+
 /** The estimate chips (question 18's order; ruling 63): «4 layers · Gemini's estimate». */
 export function estimateGeminiLabel(layers: number): string {
   return `${plural(layers, "layer")} · Gemini's estimate`;

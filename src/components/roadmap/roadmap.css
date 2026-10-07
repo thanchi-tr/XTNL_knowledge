@@ -1023,6 +1023,14 @@
   .rm-tm-n { font: 600 13px/18px var(--font-ui); font-variant-numeric: tabular-nums; color: var(--ink-1); }
   .rm-tm-hacts { margin-left: auto; display: flex; align-items: center; gap: 4px; flex: none; }
   .rm-tm-kept { display: inline-grid; place-items: center; width: 40px; height: 40px; color: var(--ink-0); }
+  /* a layer's milestone (ruling N8): Gemini's title, hurdle and target under the header; the words wrap, nothing clips */
+  .rm-tm-ms { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 0 0 8px 24px; min-width: 0; }
+  .rm-tm-mst { margin: 0; font: 600 14px/19px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+  .rm-tm-msl { display: flex; flex-direction: column; gap: 4px; margin: 0; min-width: 0; }
+  .rm-tm-msl > div { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; font-size: 13px; line-height: 18px; }
+  .rm-tm-msl dt { color: var(--ink-2); }
+  .rm-tm-msl dd { margin: 0; color: var(--ink-1); overflow-wrap: anywhere; }
+  .rm-tm-locked .rm-tm-mst { color: var(--ink-1); }
   .rm-tm-h2 { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 16px; min-height: 40px; }
   .rm-tm-np { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; line-height: 18px; color: var(--ink-0); }
   .rm-tm-fold { display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0; border: 0; background: none; color: var(--ink-1); font: 600 13px/18px var(--font-ui); cursor: pointer; text-align: left; }

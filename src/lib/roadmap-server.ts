@@ -13924,6 +13924,11 @@ export async function mergeLayerUpCore(userId: string, roadmapId: string, layer:
       const r = ratingLib.withLayerChangeOf(rating, { kind: "MERGED", from: map.layers, to: Math.max(LAYERS_MIN, map.layers - 1), day: todayKey(now) });
       if (!r.ok) return fail(r.error);
       next = r.value;
+      // Ruling N8: the merged pair keeps the deeper milestone (its target ends the joined stage); the deeper ones renumber.
+      if (Array.isArray(rating.milestones)) {
+        const kept = storedMilestonesOf(rating).filter((m) => m.layer !== layer - 1);
+        next = { ...next, milestones: kept.map((m) => (m.layer >= layer ? { ...m, layer: m.layer - 1 } : m)) };
+      }
     }
     return ok({ map: { ...merged.map, layers: clampBands(map.layers - 1) }, rating: next, value: { droppedLinks: merged.droppedLinks } });
   });
@@ -14839,6 +14844,22 @@ function domainMarkOf(tree: readonly TreeField[], id: string | null): { id: stri
   return null;
 }
 
+/** RatingRecord.milestones as stored (ruling N8), read defensively: each a layer with a title, re-cut to the caps. */
+function storedMilestonesOf(rating: RatingRecord | null): t5.LayerMilestone[] {
+  const raw = rating && Array.isArray(rating.milestones) ? (rating.milestones as unknown[]) : [];
+  const out: t5.LayerMilestone[] = [];
+  for (const m of raw) {
+    if (!m || typeof m !== "object") continue;
+    const r = m as Record<string, unknown>;
+    const layer = r.layer;
+    if (typeof layer !== "number" || !Number.isInteger(layer) || layer < t5.LAYERS_MIN || layer > t5.LAYERS_MAX || out.some((x) => x.layer === layer)) continue;
+    const title = topicsLib.milestoneTextOf(r.title, t5.MILESTONE_TITLE_MAX);
+    if (title === "") continue;
+    out.push({ layer, title, hurdle: topicsLib.milestoneTextOf(r.hurdle, t5.MILESTONE_LINE_MAX), target: topicsLib.milestoneTextOf(r.target, t5.MILESTONE_LINE_MAX) });
+  }
+  return out.sort((a, b) => a.layer - b.layer);
+}
+
 /**
  * The map's view (TopicMapView): its rating, each band's rows (the names behind the count last, NOT_CHECKED, for the
  * fold to reveal; a Gemini name Google linked to 1 source is a shown row, LINKED_ONE, ruling N3), the cautions, accept's
@@ -14933,6 +14954,7 @@ function topicMapViewOf(
   };
   const layers: TopicLayerView[] = [];
   let hiddenAll = 0;
+  const milestones = storedMilestonesOf(opts.rating);
   for (let layer = 1; layer <= map.layers; layer++) {
     const inLayer = map.topics.filter((t) => topicLive(t) && t.layer === layer);
     const shown = inLayer.filter((t) => !topicHidden(t));
@@ -14959,6 +14981,7 @@ function topicMapViewOf(
       geminiNames: shown.some((t) => t.nameOrigin === "GEMINI"),
       emptyOffers,
       needsParent: shown.filter((t) => t.notes.includes("NEEDS_PARENT")).length,
+      milestone: milestones.find((m) => m.layer === layer) ?? null,
     });
   }
   let acceptRefusal: string | null = null;
@@ -16484,7 +16507,8 @@ async function runMapStep(s: StepRun): Promise<void> {
   await persistChainStep(s, { ...facts, report: { ...s.report, verdicts: read.verdicts, kFinal: agreement.kFinal } }, (cur, rating) => {
     const merged = chainMapMergedOf(cur, agreement);
     const topics: t5.TopicRunReport = { ...agreement.report, dropped: { ...agreement.report.dropped, ECHO: (agreement.report.dropped.ECHO ?? 0) + merged.echoes } };
-    return { map: merged.map, rating: rating ? ratingLib.withMapFillOf(rating, agreement.kFinal) : null, report: { kept: merged.kept, hidden: merged.hidden, topics } };
+    // Ruling N8: the milestones ride the rating (Gemini's estimate of the same layers), replaced on every MAP.
+    return { map: merged.map, rating: rating ? { ...ratingLib.withMapFillOf(rating, agreement.kFinal), milestones: agreement.milestones } : null, report: { kept: merged.kept, hidden: merged.hidden, topics } };
   });
 }
 

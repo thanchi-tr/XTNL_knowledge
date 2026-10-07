@@ -9,6 +9,8 @@
  *                         the figure is the layer's chosen count; [Keep these] is the 40 px glyph button
  *                         (pv.kept, "Keep layer k"; its words in the card Key, D36). Once kept: a static
  *                         pv.kept mark, sr "Layer k kept". [Write a topic] (i-plus) on a draft.
+ *   milestone             MAP's milestone for the layer (ruling N8): its title, then "Hurdle" and "Target" lines
+ *                         (Gemini's words, data-wc="name") and «Gemini's milestone · not checked»
  *   header row 2          the one who-word chip (D37; a 24 px visual in a 40 px box: 84 px in all), and
  *                         "[i-flag] 2 need a parent" while any does (it blocks the keep)
  *   rows                  TopicMapRow, chosen first
@@ -34,7 +36,11 @@ import {
   GEMINI_KEPT_NOT_CHECKED_FULL,
   GEMINI_LINKED_FULL,
   GEMINI_LINKED_ONE_FULL,
+  GEMINI_MILESTONE_FULL,
+  GEMINI_MILESTONE_LABEL,
   GEMINI_NOT_CHECKED_FULL,
+  MILESTONE_HURDLE_WORD,
+  MILESTONE_TARGET_WORD,
   GEMINI_PICKED_DOMAIN_FULL,
   GEMINI_PLACED_FULL,
   emptyLayerAria,
@@ -163,6 +169,30 @@ export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore,
             )}
           </span>
         </div>
+        {layer.milestone && (
+          <div className="rm-tm-ms">
+            <p className="rm-tm-mst" data-wc="name">
+              {layer.milestone.title}
+            </p>
+            {(layer.milestone.hurdle || layer.milestone.target) && (
+              <dl className="rm-tm-msl">
+                {layer.milestone.hurdle && (
+                  <div>
+                    <dt>{MILESTONE_HURDLE_WORD}</dt>
+                    <dd data-wc="name">{layer.milestone.hurdle}</dd>
+                  </div>
+                )}
+                {layer.milestone.target && (
+                  <div>
+                    <dt>{MILESTONE_TARGET_WORD}</dt>
+                    <dd data-wc="name">{layer.milestone.target}</dd>
+                  </div>
+                )}
+              </dl>
+            )}
+            <HonestyChip kind="gemini" label={GEMINI_MILESTONE_LABEL} full={GEMINI_MILESTONE_FULL} wrap />
+          </div>
+        )}
         {(chip || layer.needsParent > 0) && (
           <div className="rm-tm-h2">
             {chip && <HonestyChip kind={chip.kind} label={chip.label} full={CHIP_FULL[chip.kind] ?? GEMINI_NOT_CHECKED_FULL} />}

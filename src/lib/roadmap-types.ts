@@ -6269,9 +6269,12 @@ export function topicSwitchesOf(raw?: Partial<TopicSwitches>): TopicSwitches {
  * The topic phases' prompt version (RATE, MAP, LINK, GROUND, DEEPER); ROADMAP_PROMPT_VERSION 4 stays for LEVELS. A text
  * change is a bump. 2: the live fix's RATE calibration anchors. 3: MAP's and DEEPER's names v3 after the judged names
  * test (standard syllabus terms inside the aim, no whole fields or coined compounds, no padding; contracts §22.5,
- * §22.20 ruling N5).
+ * §22.20 ruling N5). 4: MAP plans one milestone a layer (a title, the stage's hurdle and its checkable target) before it
+ * names that milestone's study topics, specific to the aim, and fills every layer (ruling N8).
  */
-export const TOPIC_PROMPT_VERSION: number = 3;
+export const TOPIC_PROMPT_VERSION: number = 4;
+/** A MAP milestone's hurdle or target, at most this many characters (ruling N8; its title takes MILESTONE_TITLE_MAX); longer is cut at a word with "…". */
+export const MILESTONE_LINE_MAX = 240;
 /** Samples per JSON phase. */
 export const TOPIC_SAMPLES = 3;
 /**
@@ -6671,6 +6674,11 @@ export interface RatingRecord {
   geminiDifficulty: DiffKey | null;
   /** K_final once MAP ran. */
   mapFilled: number | null;
+  /**
+   * MAP's milestones, one per layer it wrote (ruling N8): Gemini's words, shown marked as Gemini's and never checked.
+   * Absent on a record written before TOPIC_PROMPT_VERSION 4, and null until MAP ran.
+   */
+  milestones?: LayerMilestone[] | null;
   /** The RATE run. */
   runId: string | null;
   day: DayKey;
@@ -6688,6 +6696,17 @@ export interface RatingRecord {
   changes: LayerChange[];
   /** roadmap-rating ratingKeyOf: reused until it changes. */
   inputKey: string;
+}
+
+/**
+ * One layer's milestone as MAP wrote it (TOPIC_PROMPT_VERSION 4, ruling N8): the stage of capability the layer builds
+ * (title), the hardest problem met there (hurdle) and the checkable standard that shows it is reached (target).
+ */
+export interface LayerMilestone {
+  layer: number;
+  title: string;
+  hurdle: string;
+  target: string;
 }
 
 // The aim's clauses (clauseSplitOf) and the split-off ones (Roadmap.splitClauses).
@@ -6800,6 +6819,8 @@ export interface RateReply {
   reasons?: RatingReason[];
 }
 export interface MapReply {
+  /** TOPIC_PROMPT_VERSION 4 (ruling N8): one milestone a layer, written before the names. */
+  milestones?: Partial<Record<LayerKey, { title: string; hurdle: string; target: string }>>;
   place?: Record<string, LayerKey>;
   names?: Partial<Record<LayerKey, MapNameItem[]>>;
 }
@@ -6989,6 +7010,8 @@ export interface TopicLayerView {
   geminiNames: boolean;
   emptyOffers: EmptyLayerOffer[] | null;
   needsParent: number;
+  /** MAP's milestone for this layer (ruling N8): Gemini's words; absent or null when MAP wrote none. */
+  milestone?: LayerMilestone | null;
 }
 export interface TopicMapView {
   roadmapId: string;

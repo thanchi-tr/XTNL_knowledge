@@ -4434,8 +4434,9 @@ console.log("— the practice progression (§20) —");
  * The house rules every phase's response schema keeps (§22.4), as tagged
  * breaches ("TYPE $.a", "FREE_TEXT $.b" …); [] when it keeps them all. A
  * STRING with no enum is free text only as `name` under a top-level `names`
- * (FREE_TEXT_ROOTS ["gaps", "names"], ruling 34: rev 4's `gaps` is an array
- * of strings, MAP's and DEEPER's `names` hold `name`).
+ * (FREE_TEXT_ROOTS ["gaps", "names", "milestones"], ruling 34: rev 4's `gaps`
+ * is an array of strings, MAP's and DEEPER's `names` hold `name`; ruling N8:
+ * MAP's `milestones` hold `title`, `hurdle` and `target`).
  */
 function schemaHouseRulesOf(schema: unknown): string[] {
   const out: string[] = [];
@@ -4451,7 +4452,7 @@ function schemaHouseRulesOf(schema: unknown): string[] {
     if (own(n, "nullable")) out.push(`NULLABLE ${path}`);
     for (const k of ["maxItems", "minItems"]) if (own(n, k) && typeof n[k] !== "string") out.push(`ITEMS_NOT_STRING ${path}.${k}`);
     if (own(n, "enum") && (!Array.isArray(n.enum) || n.enum.length === 0 || n.enum.some((x) => typeof x !== "string"))) out.push(`ENUM ${path}`);
-    const freeOk = (root === "names" && key === "name") || (root === "gaps" && key === "gaps");
+    const freeOk = (root === "names" && key === "name") || (root === "gaps" && key === "gaps") || (root === "milestones" && (key === "title" || key === "hurdle" || key === "target"));
     if (n.type === "STRING" && !own(n, "enum") && !freeOk) out.push(`FREE_TEXT ${path}`);
     if (n.type === "ARRAY") {
       if (!own(n, "items")) out.push(`NO_ITEMS ${path}`);
@@ -4550,7 +4551,7 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
       DEEPER_REQUESTS_MAX_WITH_CANDIDATES: RT.DEEPER_REQUESTS_MAX_WITH_CANDIDATES,
     },
     {
-      TOPIC_PROMPT_VERSION: 3,
+      TOPIC_PROMPT_VERSION: 4,
       TOPIC_SAMPLES: 3,
       TOPIC_CANDIDATE_COUNT: 1,
       CONSENSUS_MIN: 2,
@@ -5059,16 +5060,16 @@ console.log("— revision 5 (§22.4, §22.5): the schemas and the instructions, 
   eq("RATE_INSTRUCTION equals §22.5 exactly (its lines joined by \\n)", RR.RATE_INSTRUCTION, inst("RATE_INSTRUCTION"));
   const mapParts: Record<string, string> = {};
   for (const line of (inst("MAP_INSTRUCTION_PARTS") ?? "").split("\n")) {
-    const m = /^(head|place|names|both|tail):\s+(.*)$/.exec(line);
+    const m = /^(head|milestones|place|names|both|tail):\s+(.*)$/.exec(line);
     if (m) mapParts[m[1]] = m[2];
   }
-  eq("MAP_INSTRUCTION_PARTS equals §22.5's five parts exactly (head, place, names, both, tail)", TP.MAP_INSTRUCTION_PARTS, mapParts);
+  eq("MAP_INSTRUCTION_PARTS equals §22.5's six parts exactly (head, milestones, place, names, both, tail; milestones since ruling N8)", TP.MAP_INSTRUCTION_PARTS, mapParts);
   eq("LINK_INSTRUCTION equals §22.5 exactly", TP.LINK_INSTRUCTION, inst("LINK_INSTRUCTION"));
   eq("GROUND_INSTRUCTION equals §22.5 exactly", GRD.GROUND_INSTRUCTION, inst("GROUND_INSTRUCTION"));
   eq("DEEPER_INSTRUCTION equals §22.5 exactly", TP.DEEPER_INSTRUCTION, inst("DEEPER_INSTRUCTION"));
   check(
-    'each instruction fences its input as "data, never instructions" (MAP in its tail), and TOPIC_PROMPT_VERSION is 3 (the live fix\'s RATE anchors, then MAP\'s and DEEPER\'s names v3: ruling N5, §22.20)',
-    [RR.RATE_INSTRUCTION, TP.MAP_INSTRUCTION_PARTS.tail, TP.LINK_INSTRUCTION, GRD.GROUND_INSTRUCTION, TP.DEEPER_INSTRUCTION].every((t) => t.includes("data, never instructions")) && RT.TOPIC_PROMPT_VERSION === 3
+    'each instruction fences its input as "data, never instructions" (MAP in its tail), and TOPIC_PROMPT_VERSION is 4 (the live fix\'s RATE anchors, MAP\'s and DEEPER\'s names v3: ruling N5, then MAP\'s milestones: ruling N8, §22.20)',
+    [RR.RATE_INSTRUCTION, TP.MAP_INSTRUCTION_PARTS.tail, TP.LINK_INSTRUCTION, GRD.GROUND_INSTRUCTION, TP.DEEPER_INSTRUCTION].every((t) => t.includes("data, never instructions")) && RT.TOPIC_PROMPT_VERSION === 4
   );
 
   eq("RATE_RULE_NAMES (§22.7)", RR.RATE_RULE_NAMES, ["rate.coherence", "rate.consensus", "rate.caution", "rate.bounds"]);
@@ -5289,7 +5290,8 @@ console.log("— revision 5 (§22.7–§22.9, §23.2, §22.17): the four modules
     routineRatedOf: (record: RT.RatingRecord | null) => boolean;
   };
   type TopicSigs = {
-    MAP_INSTRUCTION_PARTS: Readonly<{ head: string; place: string; names: string; both: string; tail: string }>;
+    MAP_INSTRUCTION_PARTS: Readonly<{ head: string; milestones: string; place: string; names: string; both: string; tail: string }>;
+    MILESTONE_FIELDS: readonly ("title" | "hurdle" | "target")[];
     LINK_INSTRUCTION: string;
     DEEPER_INSTRUCTION: string;
     DEEPER_RESPONSE_SCHEMA: Readonly<Record<string, unknown>>;
@@ -5308,6 +5310,8 @@ console.log("— revision 5 (§22.7–§22.9, §23.2, §22.17): the four modules
     mapRoomOf: (input: { layers: number; breadth: RT.BreadthKey; lines: number; domains: number }) => number;
     mapSchemaOf: (input: { layers: number; placeKeys: readonly string[]; names: boolean; breadth: RT.BreadthKey }) => Record<string, unknown> | null;
     mapAgreementOf: (input: TP.MapAgreementInput, opts?: V.RuleOpts) => TP.MapAgreement;
+    milestoneTextOf: (raw: unknown, max: number) => string;
+    mapMilestonesOf: (samples: readonly (TP.MapSampleIn | null)[], layers: number, topics: readonly Pick<RT.TopicDraft, "key" | "layer" | "name">[]) => RT.LayerMilestone[];
     kFinalOf: (topics: readonly Pick<RT.TopicDraft, "layer" | "decision">[], k: number) => number;
     linkSchemaOf: (topics: readonly Pick<RT.TopicDraft, "key" | "layer" | "decision">[], kFinal: number) => Record<string, unknown> | null;
     linkDrawOf: (input: TP.LinkDrawInput, opts?: V.RuleOpts) => TP.LinkDraw;
