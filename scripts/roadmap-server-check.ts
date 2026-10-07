@@ -6804,6 +6804,48 @@ async function main() {
     );
   });
 
+  await topicBlock("[Break into topics] never writes an empty topic draft (ruling N12)", async () => {
+    // The live goal: an accepted plan whose intake held no Domain of the Area (its Domains rode the plan's items), so the
+    // re-plan map was written with 0 topics and 0 milestones, chainDraftOf found no draft, and [Break it down] refused
+    // "no topic draft after writing it" before Gemini was asked anything.
+    const types = await import("../src/lib/roadmap-types");
+    const levelsOff = { geminiLive: false };
+    const replan = async (strip: (w: FakeWorld, id: string) => void) => {
+      const w = world();
+      const id = await accepted(w);
+      strip(w, id);
+      const res = await S.breakDownCore(USER, id, NOW, topicDepsFor(w, levelsOff));
+      const row = w.t.roadmap.find((r) => r.id === id) as RoadmapRec;
+      const v = row.version + 1;
+      const topics = w.t.roadmapTopic.filter((t) => t.roadmapId === id && t.version === v);
+      const view = await S.loadRoadmapView(USER, NOW, topicDepsFor(w, levelsOff), id);
+      return { res, topics, view, rate: w.t.roadmapRun.some((r) => r.roadmapId === id && (r as { phase?: string | null }).phase === "RATE") };
+    };
+    const liveItems = (w: FakeWorld, id: string) => {
+      const ms = new Set(w.t.roadmapMilestone.filter((m) => m.roadmapId === id).map((m) => m.id));
+      return w.t.roadmapItem.filter((i) => ms.has(i.milestoneId) && i.kind === "DOMAIN");
+    };
+    // (a) No intake Domain: the plan's own Domain items seed layer 1.
+    const a = await replan((w, id) => {
+      (w.t.roadmap.find((r) => r.id === id) as RoadmapRec).domainIds = [];
+    });
+    check(
+      "N12 (a): an accepted plan whose intake holds no Domain: [Break it down] seeds the re-plan map with the plan's own Domain items (layer 1, bound), writes the draft and claims RATE; the page shows the draft and its chain",
+      a.res.ok && a.topics.some((t) => /^U\d+$/.test(t.key) && t.layer === 1 && !!t.domainId) && a.rate && !!a.view.draft && !!a.view.topicChain,
+      json({ res: errOf(a.res), topics: a.topics.map((t) => [t.key, t.layer, t.name]), draft: !!a.view.draft, chain: !!a.view.topicChain })
+    );
+    // (b) No Domain at all: the aim's clauses are placed in the last band (AIM, chosen) so the draft is never empty.
+    const b = await replan((w, id) => {
+      (w.t.roadmap.find((r) => r.id === id) as RoadmapRec).domainIds = [];
+      for (const i of liveItems(w, id)) i.decision = "REMOVED";
+    });
+    check(
+      "N12 (b): with no Domain at all, the aim's clauses are the map's topics (AIM, chosen, the last band): the draft is written, RATE claimed, and the page shows the draft and its chain",
+      b.res.ok && b.topics.length > 0 && b.topics.every((t) => t.nameOrigin === "AIM" && t.chosen) && b.rate && !!b.view.draft && !!b.view.topicChain && types.ROADMAP_GEMINI_LIVE === false,
+      json({ res: errOf(b.res), topics: b.topics.map((t) => [t.key, t.layer, t.name, t.nameOrigin]), draft: !!b.view.draft, chain: !!b.view.topicChain })
+    );
+  });
+
   await topicBlock("TOPICS draft and undo", async () => {
     // A LEVELS goal broken into topics (ruling 49): the draft's kind rides Roadmap.draftPlan until accept.
     const w = world();

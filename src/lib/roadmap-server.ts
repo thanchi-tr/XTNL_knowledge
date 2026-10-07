@@ -13607,6 +13607,43 @@ async function writtenTopicsCore(userId: string, roadmapId: string, mode: "FRESH
   return res;
 }
 
+/**
+ * Ruling N12: a re-plan map with no live topic (no line, no Domain of the Area) takes your aim's offered clauses as its
+ * topics, chosen and yours (AIM, placed by code, the last band), so [Break into topics] never writes an empty draft: an
+ * empty one has no rows, so neither the page nor the chain sees it. Gemini's breakdown then fills the bands above.
+ */
+function withAimSeedsIfEmpty(map: TopicMap, clauses: readonly AimClause[], makeId: () => string): TopicMap {
+  if (map.topics.some(topicLive) || clauses.length === 0) return map;
+  let n = map.topics.reduce((m, t) => (/^T\d+$/.test(t.key) ? Math.max(m, keyNumberOf(t.key)) : m), 0);
+  const added: TopicDraft[] = clauses.map((c) => ({
+    id: null,
+    lineageId: makeId(),
+    key: `T${++n}`,
+    layer: map.layers,
+    name: c.text,
+    rawName: null,
+    nameOrigin: "AIM",
+    scope: null,
+    placedBy: t5.TOPIC_PLACED_BY[2],
+    grounding: "OWN",
+    sources: [],
+    formVotes: 0,
+    samples: 0,
+    layerVotes: [],
+    decision: "KEPT",
+    mergedInto: null,
+    chosen: true,
+    role: "BASE",
+    domainId: null,
+    bound: false,
+    heldDay: null,
+    skippedDay: null,
+    flags: [],
+    notes: [],
+  }));
+  return { ...map, topics: [...map.topics, ...added] };
+}
+
 /** The written map and its milestones for a bundle (writeTopicsCore, breakIntoTopicsCore): the ops applied, or the refusal. */
 async function writtenTopicsDraft(e: Env, userId: string, b: RoadmapBundle, mode: "FRESH" | "REPLAN", now: Date): Promise<Result<{ version: number }> | "stale"> {
   const today = todayKey(now);
@@ -13616,8 +13653,11 @@ async function writtenTopicsDraft(e: Env, userId: string, b: RoadmapBundle, mode
   const intake = intakeOf(b.roadmap);
   const depth: TopicDepth = topicDepthOfRow(b.roadmap) ?? AIM_DEPTHS[DEPTH_DEFAULT];
   const lines = intake.syllabus?.lines ?? [];
-  // The plan's Domains: the intake's (and on an accepted plan the additions you confirmed), each a U key in layer 1.
-  const chosenIds = (mode === "REPLAN" ? requiredDomainsOf(b, planRowsOf(b)) : intake.domainIds).filter((id) => field.domains.some((d) => d.id === id));
+  // The plan's Domains: the intake's (and on an accepted plan the additions you confirmed), each a U key in layer 1. A
+  // re-plan also takes the Domains its live rows show (ruling N12: an intake that held none left the map empty), never a
+  // Gemini addition still waiting for your confirm.
+  const planShown = mode === "REPLAN" ? planRowsOf(b).flatMap((m) => m.items.filter((i) => i.kind === "DOMAIN" && !!i.domainId && i.decision !== "REMOVED" && !(i.origin === "GEMINI" && i.decision === "PENDING" && i.notes.includes("NOT_CHOSEN"))).map((i) => i.domainId as string)) : [];
+  const chosenIds = Array.from(new Set([...(mode === "REPLAN" ? requiredDomainsOf(b, planRowsOf(b)) : intake.domainIds), ...planShown])).filter((id) => field.domains.some((d) => d.id === id));
   const domains = chosenIds.map((id, i) => ({ key: `U${i + 1}`, id, name: field.domains.find((d) => d.id === id)?.name ?? "" }));
   // The layer-1 seeds: the Area's Domains you didn't choose that no other goal holds (§23.5).
   const others = (e.goals.get(userId) ?? []).filter((r) => r.id !== b.roadmap.id && holdsGoal(r));
@@ -13629,7 +13669,8 @@ async function writtenTopicsDraft(e: Env, userId: string, b: RoadmapBundle, mode
   try {
     const inputKey = ratingLib.ratingKeyOf({ aim: b.roadmap.aim, areaName: field.name, outline: lines, examLabel: b.roadmap.examLabel, splitClauses });
     rating = ratingLib.codeRatingOf({ trackArea: false, outlineLines: lines.length, texts: { aim: b.roadmap.aim, areaName: field.name, constraints: b.roadmap.constraints }, inputKey, day: today });
-    map = topicsLib.writtenMapOf({ aim: b.roadmap.aim, lines, layers: rating.layers, domains, library, splitClauses, makeId: e.makeId }).map;
+    const written = topicsLib.writtenMapOf({ aim: b.roadmap.aim, lines, layers: rating.layers, domains, library, splitClauses, makeId: e.makeId });
+    map = mode === "REPLAN" ? withAimSeedsIfEmpty(written.map, written.lastLayerSeeds, e.makeId) : written.map;
   } catch (err) {
     console.error("roadmap: the written topic map wasn't built:", err instanceof Error ? err.message : err);
     return fail("Couldn't write the topic map. Try again.");
