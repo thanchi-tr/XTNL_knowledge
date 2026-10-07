@@ -1069,6 +1069,7 @@
   /* the sheets */
   .rm-tm-sl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; font-size: 13px; line-height: 18px; color: var(--ink-1); }
   .rm-tm-pn { display: inline-flex; align-items: center; gap: 3px; }
+  .rm-tm-idea { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
   .rm-tm-acts-s, .rm-tm-pick { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 16px; }
   .rm-tm-form { display: flex; flex-direction: column; gap: 8px; }
   .rm-tm-deeper { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }

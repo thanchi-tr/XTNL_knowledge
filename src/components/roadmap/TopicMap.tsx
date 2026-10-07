@@ -288,6 +288,7 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
           row={sheetRow}
           draft={draft}
           namesOn={namesOn}
+          ideasOn={map.fieldId !== null}
           initialSub={fixtureOpen && fixtureOpen.key === sheetRow.key && fixtureOpen.sheet !== "topic" ? fixtureOpen.sheet : null}
         />
       )}

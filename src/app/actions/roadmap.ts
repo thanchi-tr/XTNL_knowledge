@@ -134,6 +134,7 @@ import {
   chooseTopicCore,
   editTopicCore,
   keepGeminiNameCore,
+  topicIdeaTargetCore,
   keepLayerCore,
   mergeLayerUpCore,
   moveTopicCore,
@@ -704,6 +705,15 @@ export async function skipTopic(roadmapId: string, key: string, skip: boolean): 
 export async function keepGeminiName(roadmapId: string, key: string): Promise<RoadmapActionResult<null>> {
   if (!isRef(roadmapId) || !isTopicKey(key)) return { ok: false, error: NO_REF };
   return act("keepGeminiName", true, (userId, now) => keepGeminiNameCore(userId, roadmapId, key, now, depsOf()));
+}
+
+/**
+ * [Add an idea here] (ruling N10): the topic's Field and Domain for /add?field=&domain=, a draft topic with none given
+ * one now as accept would (roadmap-server topicIdeaTargetCore). No refresh: the sheet navigates to /add.
+ */
+export async function topicIdeaTarget(roadmapId: string, key: string): Promise<RoadmapActionResult<{ fieldId: string; domainId: string; created: boolean }>> {
+  if (!isRef(roadmapId) || !isTopicKey(key)) return { ok: false, error: NO_REF };
+  return act("topicIdeaTarget", false, (userId, now) => topicIdeaTargetCore(userId, roadmapId, key, now, depsOf()));
 }
 
 /** [Merge with the layer above] on an empty layer; `droppedLinks` counts the links between the merged layers. */

@@ -72,6 +72,7 @@ import {
   setLayers,
   setParents,
   skipTopic,
+  topicIdeaTarget,
   trackClauseAsGoal,
   useMyDomain,
   writeTopics,
@@ -177,6 +178,8 @@ export interface RoadmapActions {
   chooseTopic: typeof chooseTopic;
   skipTopic: typeof skipTopic;
   keepGeminiName: typeof keepGeminiName;
+  /** [Add an idea here] (ruling N10): the topic's Field and Domain, a draft topic given its Domain now. */
+  topicIdeaTarget: typeof topicIdeaTarget;
   mergeLayerUp: typeof mergeLayerUp;
   /** [Break into topics] on an ACTIVE LEVELS plan: a TOPICS re-plan draft (version + 1, Roadmap.draftPlan; ruling 49). */
   breakIntoTopics: typeof breakIntoTopics;
@@ -245,6 +248,7 @@ export const LIVE_ACTIONS: RoadmapActions = {
   chooseTopic,
   skipTopic,
   keepGeminiName,
+  topicIdeaTarget,
   mergeLayerUp,
   breakIntoTopics,
   writeTopics,
@@ -315,6 +319,7 @@ export const FIXTURE_ACTIONS: RoadmapActions = {
   chooseTopic: refuse,
   skipTopic: refuse,
   keepGeminiName: refuse,
+  topicIdeaTarget: refuse,
   mergeLayerUp: refuse,
   breakIntoTopics: refuse,
   writeTopics: refuse,

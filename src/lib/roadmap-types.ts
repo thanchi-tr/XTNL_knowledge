@@ -7034,6 +7034,8 @@ export interface TopicMapView {
   acceptAll?: { layer: number; names: string[]; links: number }[];
   /** A draft over your hours or pace (its feasibility's over, or its date check OVER): [Accept all] asks for the keep-over switch. */
   needsOver?: boolean;
+  /** Ruling N10: the goal's Area Field (where [Add an idea here] files ideas); null on a practice-only Area. Absent in fixtures made before it. */
+  fieldId?: string | null;
 }
 export interface ChainFit {
   verdict: DateVerdict;

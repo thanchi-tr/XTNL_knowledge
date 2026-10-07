@@ -8,7 +8,8 @@
  *   "builds on: A, B" (each with its mark) or "after layer k"; "2 of 3 replies" for a Gemini name
  *   Sources (from Google) → SourcesSheet; the caution chips (every Gemini topic's sheet)
  *   the notes in words ("unsure where it goes", "Held when you began", "you said you know this" …)
- *   the actions: Rename, Use my Domain…, Merge into…, Move to layer…, Builds on…, Remove, I know this,
+ *   the actions: Add an idea here (ruling N10: /add placed in the topic's Domain, a draft topic given one first),
+ *     Rename, Use my Domain…, Merge into…, Move to layer…, Builds on…, Remove, I know this,
  *     Keep (a NOT_CHECKED name: «Gemini · kept · not checked»), Go deeper
  *
  * Go deeper shows its cost first ("uses 5 of today's 48 requests") and what a new layer would do to the
@@ -41,6 +42,7 @@ import {
   SOURCES_TITLE,
   TOPIC_ACTION_WORD,
   TOPIC_CLASS_WORDS,
+  TOPIC_IDEA_KEEPS_LINE,
   TOPIC_NOTE_WORDS,
   afterLayerLine,
   buildsOnLine,
@@ -49,6 +51,7 @@ import {
   repliesOfLine,
 } from "./roadmap-copy";
 import { useRoadmapAction } from "./roadmap-runtime";
+import { addCardHref } from "./roadmap-links";
 import { isGeminiName, parentNamesOf, rowChipOf, topicMarkOf } from "./topic-map-model";
 import { ParentsSheet } from "./ParentsSheet";
 import { SourcesSheet } from "./SourcesSheet";
@@ -89,14 +92,16 @@ export interface TopicSheetProps {
   namesOn: boolean;
   /** Fixtures only: the sources or parents sheet open at mount. */
   initialSub?: "sources" | "parents" | null;
+  /** [Add an idea here] (ruling N10): the goal has a Field to file ideas in. Absent: offered. */
+  ideasOn?: boolean;
 }
 
-export function TopicSheet({ open, onClose, roadmapId, map, row, draft, namesOn, initialSub = null }: TopicSheetProps) {
+export function TopicSheet({ open, onClose, roadmapId, map, row, draft, namesOn, initialSub = null, ideasOn = true }: TopicSheetProps) {
   const [mode, setMode] = useState<Mode>(null);
   const [name, setName] = useState(row.name);
   const [sources, setSources] = useState(initialSub === "sources");
   const [parents, setParents] = useState(initialSub === "parents");
-  const { run, pending, error } = useRoadmapAction();
+  const { run, pending, error, runtime } = useRoadmapAction();
   const layer = map.layers.find((l) => l.layer === row.layer);
   const kept = layer?.kept ?? false;
   const chip = rowChipOf(row, kept);
@@ -180,6 +185,20 @@ export function TopicSheet({ open, onClose, roadmapId, map, row, draft, namesOn,
             </ul>
           )}
 
+          {ideasOn && (
+            <div className="rm-tm-idea">
+              <button
+                type="button"
+                className="chip btn-chip"
+                disabled={pending}
+                onClick={() => run((a) => a.topicIdeaTarget(roadmapId, row.key), (v) => runtime.push(addCardHref(v.fieldId, v.domainId)), { refresh: false })}
+              >
+                <Mark glyph="i-plus" size={12} />
+                {TOPIC_ACTION_WORD.idea}
+              </button>
+              {!row.domain && <p className="t-meta" style={{ margin: 0 }}>{TOPIC_IDEA_KEEPS_LINE}</p>}
+            </div>
+          )}
           <div className="rm-tm-acts-s">
             {draft && (
               <>

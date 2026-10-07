@@ -7526,6 +7526,71 @@ async function main() {
       tm.rating.layers === 4 && tm.rating.origin !== rated.origin && tm.rating.geminiLayers === rated.layers && tm.rating.mapFilled === b.kFinal,
       { chip: { layers: tm.rating.layers, origin: tm.rating.origin, geminiLayers: tm.rating.geminiLayers, mapFilled: tm.rating.mapFilled }, kFinal: b.kFinal },
     ]);
+
+    // ── Pass C (ruling N10): [Add an idea here] on the draft map. A shown Gemini topic with no Domain gets one in the
+    //    Area Field now (Gemini's mark, the topic kept and chosen), a second tap answers the same Domain, an intake
+    //    Domain's topic answers its own, and accept then creates no Domain twice. ──
+    const c = await drive(4, null, addDays(TODAY, 700));
+    const tmC = (await S.loadRoadmapView(USER, c.later(), c.deps, c.id)).draft?.topicMap ?? null;
+    const rowsC = (tmC?.layers ?? []).flatMap((l) => l.topics);
+    const pick = rowsC.find((r) => (r.cls === "LINKED" || r.cls === "LINKED_ONE") && !r.domain) ?? null;
+    const before = (c.w.tree.find((f) => f.id === "f-fin")?.domains ?? []).length;
+    const first = pick ? await S.topicIdeaTargetCore(USER, c.id, pick.key, c.later(), c.deps) : null;
+    const again = pick ? await S.topicIdeaTargetCore(USER, c.id, pick.key, c.later(), c.deps) : null;
+    const finC = c.w.tree.find((f) => f.id === "f-fin")?.domains ?? [];
+    const madeC = first?.ok ? (finC.find((x) => x.id === first.value.domainId) ?? null) : null;
+    const boundC = pick ? (c.topicsV1().find((t) => t.key === pick.key) ?? null) : null;
+    const libRow = rowsC.find((r) => r.domain && /^U\d+$/.test(r.key)) ?? null;
+    const lib = libRow ? await S.topicIdeaTargetCore(USER, c.id, libRow.key, c.later(), c.deps) : null;
+    const gone = await S.topicIdeaTargetCore(USER, c.id, "T999", c.later(), c.deps);
+    check(
+      "ruling N10 [Add an idea here]: a shown Gemini topic with no Domain gets one in the Area Field under its name (unmarked until accept), bound to the topic, which is kept and chosen; a second tap answers the same Domain (created false); an intake Domain's topic answers its own; a gone key refuses",
+      !!pick &&
+        !!first?.ok &&
+        first.value.created &&
+        first.value.fieldId === "f-fin" &&
+        !!madeC &&
+        madeC.name === pick.name &&
+        !madeC.nameOrigin &&
+        finC.length === before + 1 &&
+        !!boundC &&
+        boundC.domainId === first.value.domainId &&
+        boundC.chosen &&
+        boundC.decision === "KEPT" &&
+        !!again?.ok &&
+        again.value.domainId === first.value.domainId &&
+        !again.value.created &&
+        (!libRow || (!!lib?.ok && lib.value.domainId === libRow.domain?.id && !lib.value.created)) &&
+        !gone.ok,
+      json({ pick: pick && [pick.key, pick.name, pick.cls], first, again, made: madeC && { name: madeC.name, nameOrigin: madeC.nameOrigin, originName: madeC.originName }, bound: boundC && { domainId: boundC.domainId, chosen: boundC.chosen, decision: boundC.decision }, lib, gone })
+    );
+    const rowC1 = ((await S.loadRoadmapView(USER, c.later(), c.deps, c.id)).draft?.topicMap?.layers ?? []).flatMap((l) => l.topics).find((r) => r.key === pick?.key) ?? null;
+    // Each layer kept as the page does it (a layer showing nothing chosen ticks its first shown row), then accept.
+    const stepsC: string[] = [];
+    for (const l of tmC?.layers ?? []) {
+      const lv = (await S.loadRoadmapView(USER, c.later(), c.deps, c.id)).draft?.topicMap?.layers.find((x) => x.layer === l.layer);
+      const shownHere = (lv?.topics ?? []).filter((r) => r.cls !== "NOT_CHECKED");
+      if (!shownHere.some((r) => r.chosen) && shownHere[0]) stepsC.push(`L${l.layer} tick: ${errOf(await S.chooseTopicCore(USER, c.id, shownHere[0].key, true, c.later(), c.deps))}`);
+      stepsC.push(`L${l.layer} keep: ${errOf(await S.keepLayerCore(USER, c.id, l.layer, c.later(), c.deps))}`);
+    }
+    const viewC = await S.loadRoadmapView(USER, c.later(), c.deps, c.id);
+    const tmC2 = viewC.draft?.topicMap ?? null;
+    const rowC2 = (tmC2?.layers ?? []).flatMap((l) => l.topics).find((r) => r.key === pick?.key) ?? null;
+    const choicesC = tmC2 ? TMM.acceptTopicChoicesOf(tmC2, { keepAll: false, aftercare: null }) : null;
+    const overC = !!viewC.draft?.feasibility?.over || viewC.draft?.dateCheck?.verdict === "OVER";
+    const acceptedC = choicesC ? await S.acceptCore(USER, c.id, { overAccepted: overC, topicMap: choicesC }, c.later(), c.deps) : null;
+    const named = (c.w.tree.find((f) => f.id === "f-fin")?.domains ?? []).filter((x) => x.name === pick?.name);
+    check(
+      "ruling N10: the view shows the topic kept by you (KEPT, never PICKED) with its Domain (fieldId on the map), and accept binds it as it is: it creates no second Domain of that name, and marks this one Gemini's (originName = the name)",
+      tmC2?.fieldId === "f-fin" &&
+        rowC1?.cls === "KEPT" &&
+        rowC2?.domain?.id === (first?.ok ? first.value.domainId : null) &&
+        !!acceptedC?.ok &&
+        named.length === 1 &&
+        named[0].nameOrigin === "GEMINI" &&
+        named[0].originName === pick?.name,
+      json({ fieldId: tmC2?.fieldId, cls: rowC1?.cls, steps: stepsC, row: rowC2 && { domain: rowC2.domain, cls: rowC2.cls }, accept: acceptedC ? errOf(acceptedC) : "no map", named: named.map((x) => [x.name, x.nameOrigin, x.originName]) })
+    );
   });
 
   // ═══ Revision 5 (live fix): the chain's stops as the page reads them (RoadmapView.topicChain) ═══════════════

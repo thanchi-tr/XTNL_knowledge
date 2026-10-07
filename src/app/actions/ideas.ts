@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { embedText, synthesizeNodeData, generateDistractors } from "@/lib/gemini";
 import { routeFromNearest, createNoveltyDomain, countSimilarInDomain } from "@/lib/domain-discovery";
 import { pickField, type FieldChoice } from "@/lib/field-routing";
+import { topicDomainForIdea, type TopicDomainCandidate } from "@/lib/topic-idea-routing";
 import {
   analyzeCandidate,
   previewCandidate,
@@ -173,6 +174,33 @@ function refillNodeDataLater(ideaId: string, fieldName: string, contentText: str
 }
 
 /**
+ * The Domains your open goals (DRAFT or ACTIVE) hold in `fieldId`: each goal's chosen Domains and its current or draft
+ * map's bound topics (RoadmapTopic.domainId, not removed or merged), by name. Read only when routing would otherwise
+ * make a new Domain. Never throws: a failed read is no candidate, and the idea is filed as before.
+ */
+async function goalTopicDomainsOf(userId: string, fieldId: string): Promise<TopicDomainCandidate[]> {
+  try {
+    const goals = await prisma.roadmap.findMany({ where: { userId, fieldId, status: { in: ["DRAFT", "ACTIVE"] } }, select: { id: true, version: true, domainIds: true } });
+    if (goals.length === 0) return [];
+    const topics = await prisma.roadmapTopic.findMany({
+      where: { roadmapId: { in: goals.map((g) => g.id) }, domainId: { not: null }, decision: { notIn: ["REMOVED", "MERGED"] } },
+      select: { roadmapId: true, version: true, domainId: true },
+    });
+    const ids = new Set<string>(goals.flatMap((g) => g.domainIds));
+    for (const t of topics) {
+      const g = goals.find((x) => x.id === t.roadmapId);
+      if (g && t.domainId && (t.version === g.version || t.version === g.version + 1)) ids.add(t.domainId);
+    }
+    if (ids.size === 0) return [];
+    const domains = await prisma.domain.findMany({ where: { id: { in: [...ids] }, fieldId }, select: { id: true, name: true }, orderBy: { createdAt: "asc" } });
+    return domains.map((d) => ({ domainId: d.id, name: d.name }));
+  } catch (err) {
+    console.error("submitIdea: the goal topics weren't read:", err instanceof Error ? err.message : err);
+    return [];
+  }
+}
+
+/**
  * Server-authoritative Idea creation.
  *
  * Two classifiers run here, in order, and they are not the same thing:
@@ -309,12 +337,16 @@ async function submitIdeaCore(userId: string, input: SubmitIdeaInput): Promise<S
       };
     }
 
-    domain =
-      routing.classification === "NOVELTY"
+    // Before a new Domain is made, a topic your open goals hold in this Field takes the idea when its words name it
+    // (topic-idea-routing.ts, roadmap ruling N10): a topic's Domain starts empty, so no nearest Idea can reach it.
+    const topic = routing.classification === "NOVELTY" ? topicDomainForIdea(contentText, await goalTopicDomainsOf(userId, fieldId)) : null;
+    domain = topic
+      ? await prisma.domain.findUniqueOrThrow({ where: { id: topic.domainId } })
+      : routing.classification === "NOVELTY"
         ? await createNoveltyDomain(fieldId, field.name, contentText, decision.node_data?.tags ?? [])
         : await prisma.domain.findUniqueOrThrow({ where: { id: routing.domainId } });
-    classification = routing.classification;
-    nSimilar = routing.nSimilar;
+    classification = topic ? "EXPANSION" : routing.classification;
+    nSimilar = topic ? await countSimilarInDomain(topic.domainId, embedding) : routing.nSimilar;
   }
 
   const base = XP_BASE[questionType];

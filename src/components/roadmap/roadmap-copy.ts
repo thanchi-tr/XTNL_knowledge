@@ -2719,10 +2719,15 @@ export const TOPIC_ACTION_WORD = {
   skip: "I know this",
   unskip: "I don't know this yet",
   keep: "Keep",
+  /** Ruling N10: files an idea under this topic's Domain (/add, placed). */
+  idea: "Add an idea here",
   deeper: "Go deeper",
   ask: "Ask",
   save: "Save",
 } as const;
+/** [Add an idea here] on a draft topic with no Domain yet: what the tap does first (ruling N10). */
+export const TOPIC_IDEA_KEEPS_LINE = "Your idea is filed under this topic. It gets its own Domain now and stays in the plan.";
+
 /** Go deeper's cost, shown before [Ask]: "uses 5 of today's 48 requests". */
 export function deeperCostLine(need: number, left: number): string {
   return `uses ${need} of today's ${left} requests`;

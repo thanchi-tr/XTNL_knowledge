@@ -710,8 +710,15 @@ const FIG_YEAR_SHAPED = /^(?:19|20)\d{2}s?$/u;
  *   - a figure touching a removed token (the spelled-number rule: "ten thousand dollars" goes whole).
  * A removed figure takes its unit, its schedule's period and "old" with it. Every other figure stays: the aim's
  * target or standard ("Run a sub-50 10K", "Reach IELTS 7", "Pass JLPT N2", "Learn 20 songs", "B2", "a hundred
- * kanji"). Then single spaces. The live aim's "100k" (beside "portfolio") is removed. The stored aim never changes.
- * Pure; never throws.
+ * kanji"). Then single spaces. The stored aim never changes. Pure; never throws.
+ *
+ * Ruling N9 (§22.20): a removed money figure leaves its scale, never its figure, so Gemini still reads how big the aim
+ * is: a currency sign or word touching it, or MONEY_UNSIGNED_MIN and more within 3 words of a FIGURE_MONEY_WORDS word,
+ * makes it money; its value (moneyValueOf: "$100,000", "100k", "1.5m", "ten thousand") becomes scaleWordsOf's "low",
+ * "mid" or "high" n-figure (the leading digit 1–2, 3–6, 7–9; n its digit count), as an adjective before a noun ("manage
+ * a $100000 asset portfolio" → "manage a low six-figure asset portfolio") or else "a … sum" ("Save $5000 for a car" →
+ * "Save a mid four-figure sum for a car"), with the span's end punctuation. Under MONEY_SCALE_MIN, an age ("retire at
+ * 55"), a phone number or a schedule's amount ("$50 a week") is removed with no scale.
  */
 export function stripFiguresOf(text: string): string {
   const tokens = (typeof text === "string" ? text : "").split(/\s+/u).filter((t) => t.length > 0);
@@ -743,6 +750,8 @@ export function stripFiguresOf(text: string): string {
     if (FIG.per.has(core[j]) && open(j + 1) && FIG.period.has(core[j + 1])) return [j, j + 1];
     return [];
   };
+  /** Ruling N9: a money span's first token → its value and last token (the span becomes its scale in words). */
+  const scale = new Map<number, { value: number; last: number }>();
   for (let a = 0; a < n; ) {
     if (!isDigit[a] && !isSpelled[a]) {
       a += 1;
@@ -756,27 +765,121 @@ export function stripFiguresOf(text: string): string {
     const prev = open(a) ? core[a - 1] : "";
     const unitOld = (j: number): number[] => (open(j) && core[j] === "old" ? [j] : []);
     let take: number[] | null = null;
+    /** Ruling N9: a money figure (not a key, a date, a schedule or a body measure) is replaced by its scale, never kept. */
+    let moneyKind = false;
     if (raw.some((t) => /_/u.test(t) && /\p{N}/u.test(t)) || group.some((g) => FIG_KEY_SHAPED.test(g))) take = [];
-    else if (group.some((g) => !/\p{L}/u.test(g) && g.replace(/\D/gu, "").length >= 6)) take = [];
-    else if (group.some((g) => FIG_TIME_MERGED.test(g))) take = unitOld(b);
+    else if (group.some((g) => !/\p{L}/u.test(g) && g.replace(/\D/gu, "").length >= 6)) {
+      take = [];
+      moneyKind = true;
+    } else if (group.some((g) => FIG_TIME_MERGED.test(g))) take = unitOld(b);
     else if (group.some((g) => g.split(/[-‐‑–]/u).some((part) => FIG_BODY_MERGED.test(part)) || FIG_CLOCK_MERGED.test(g) || FIG_DATE_NUMERIC.test(g))) take = [];
     else if (group.some((g) => FIG_RATE_MERGED.test(g))) take = periodAt(b);
     else if (FIG.bodyUnits.has(next) || FIG.clock.has(next)) take = [b];
     else if (FIG.time.has(next)) take = [b, ...unitOld(b + 1)];
     else if (FIG.rate.has(next) && periodAt(b + 1).length > 0) take = [b, ...periodAt(b + 1)];
     else if (periodAt(b).length > 0) take = periodAt(b);
-    else if (FIG.personal.has(prev) || FIG.months.has(next) || FIG.months.has(prev)) take = [];
+    else if (FIG.personal.has(prev) || FIG.months.has(next) || FIG.months.has(prev)) {
+      take = [];
+      // "my 20,000 student loan" is money, "my 40s" an age: the scale's own test below tells them apart.
+      moneyKind = FIG.personal.has(prev) && !FIG.months.has(next) && !FIG.months.has(prev);
+    }
     else if (group.length === 1 && FIG_YEAR_SHAPED.test(group[0]) && (FIG.yearLeads.has(prev) || b >= n || breakAfter[b - 1] || FIG.joiners.has(core[b]))) take = [];
-    else if (near(a, b, 3).some((j) => FIG.money.has(core[j]))) take = [];
-    else if (near(a, b, 2).some((j) => FIG.body.has(core[j]))) take = [];
-    else if ((open(a) && drop[a - 1]) || (open(b) && drop[b])) take = [];
+    else if (near(a, b, 3).some((j) => FIG.money.has(core[j]))) {
+      take = [];
+      moneyKind = true;
+    } else if (near(a, b, 2).some((j) => FIG.body.has(core[j]))) take = [];
+    else if ((open(a) && drop[a - 1]) || (open(b) && drop[b])) {
+      take = [];
+      moneyKind = true;
+    } else if (raw.some((t) => /\p{Sc}/u.test(t))) moneyKind = true;
+    const removed = take !== null || drop.slice(a, b).some(Boolean);
     if (take) {
       for (let k = a; k < b; k++) drop[k] = true;
       for (const j of take) drop[j] = true;
     }
+    if (removed && moneyKind) {
+      // Money it is when a currency sign or word touches it, or it is at least MONEY_UNSIGNED_MIN within 3 words of a
+      // money word: "retire at 55" stays an age and a phone number a number (removed, no scale); "a 100k portfolio"
+      // reads "a low six-figure portfolio".
+      const signed = raw.some((t) => /\p{Sc}/u.test(t)) || (open(a) && currencyWords.has(core[a - 1])) || (open(b) && currencyWords.has(core[b]));
+      const nearMoney = near(a, b, 3).some((j) => FIG.money.has(core[j]));
+      const value = moneyValueOf(raw);
+      if (value !== null && value >= MONEY_SCALE_MIN && (signed || (nearMoney && value >= MONEY_UNSIGNED_MIN))) scale.set(a, { value, last: b - 1 });
+    }
     a = b;
   }
-  return tokens.filter((_, i) => !drop[i]).join(" ");
+  const out: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const sc = scale.get(i);
+    if (sc) {
+      // The span's currency words go with it; the scale takes the span's (or a dropped currency word's) end punctuation.
+      let end = sc.last;
+      while (end + 1 < n && drop[end + 1] && currencyWords.has(core[end + 1]) && !breakAfter[end]) end += 1;
+      const lead = out.length > 0 ? coreOf(out[out.length - 1]) : "";
+      const nextIdx = tokens.findIndex((_, j) => j > end && !drop[j]);
+      const next = nextIdx >= 0 && !breakAfter[end] ? coreOf(tokens[nextIdx]) : "";
+      const asAdjective = next !== "" && /^\p{L}/u.test(next) && !MONEY_SCALE_NOT_NOUN.has(next);
+      const words = scaleWordsOf(sc.value);
+      const phrase = asAdjective ? words : `${lead === "a" || lead === "an" ? "" : "a "}${words} sum`;
+      const tail = /[.,;:!?]["'’”)\]]*$/u.exec(tokens[end])?.[0] ?? "";
+      out.push(`${phrase}${tail}`);
+      continue;
+    }
+    if (!drop[i]) out.push(tokens[i]);
+  }
+  return out.join(" ");
+}
+
+/** A money figure smaller than this is removed with no scale (ruling N9). */
+const MONEY_SCALE_MIN = 100;
+/** Beside a money word but with no currency sign or word, a figure is money only from here ("retire at 55" is an age). */
+const MONEY_UNSIGNED_MIN = 1000;
+/** After a scaled figure these words take "a … sum" ("save a low four-figure sum for a car"), never the adjective. */
+const MONEY_SCALE_NOT_NOUN = new Set(["a", "an", "the", "for", "to", "by", "in", "on", "at", "of", "and", "or", "per", "each", "every", "before", "until", "within", "into", "from", "with", "while", "then", "but", "so"]);
+const SCALE_DIGITS = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
+const SPELLED_VALUE: Readonly<Record<string, number>> = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+};
+const SPELLED_MULT: Readonly<Record<string, number>> = { hundred: 100, hundreds: 100, thousand: 1_000, thousands: 1_000, million: 1_000_000, millions: 1_000_000, billion: 1_000_000_000 };
+const NUMERIC_MULT: Readonly<Record<string, number>> = { k: 1_000, m: 1_000_000, mm: 1_000_000, mil: 1_000_000, mn: 1_000_000, b: 1_000_000_000, bn: 1_000_000_000 };
+
+/** A money figure's value: digits with "," or "." grouping and a k/m/bn suffix ("$100,000", "100k", "1.5m"), spelled numbers ("ten thousand", "2 million"), or null. */
+export function moneyValueOf(raw: readonly string[]): number | null {
+  let total = 0;
+  let current = 0;
+  let any = false;
+  for (const tok of raw) {
+    const t = tok.normalize("NFKC").toLowerCase().replace(/\p{Sc}/gu, "").replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "").replace(/^(?:usd|eur|gbp|aud|cad|nzd|sgd|hkd|chf|inr|jpy)/u, "");
+    if (t === "") continue;
+    const num = /^(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(k|m|mm|mil|mn|b|bn)?$/u.exec(t);
+    if (num) {
+      const base = Number(`${num[1].replace(/,/gu, "")}${num[2] ? `.${num[2]}` : ""}`);
+      if (!Number.isFinite(base)) return null;
+      current += base * (num[3] ? NUMERIC_MULT[num[3]] : 1);
+      any = true;
+    } else if (t in SPELLED_VALUE) {
+      current += SPELLED_VALUE[t];
+      any = true;
+    } else if (t in SPELLED_MULT) {
+      const m = SPELLED_MULT[t];
+      if (m === 100) current = (current || 1) * 100;
+      else {
+        total += (current || 1) * m;
+        current = 0;
+      }
+      any = true;
+    } else return null;
+  }
+  const v = total + current;
+  return any && Number.isFinite(v) && v > 0 ? v : null;
+}
+
+/** A value's scale in words, never its figure (ruling N9): 100,000 → "low six-figure", 450,000 → "mid six-figure", 9,000 → "high four-figure". */
+export function scaleWordsOf(value: number): string {
+  const digits = Math.max(1, Math.floor(Math.log10(Math.max(1, value))) + 1);
+  const lead = value / 10 ** (digits - 1);
+  const band = lead < 3 ? "low" : lead < 7 ? "mid" : "high";
+  return `${band} ${digits < SCALE_DIGITS.length ? SCALE_DIGITS[digits] : "multi"}-figure`;
 }
 
 /**

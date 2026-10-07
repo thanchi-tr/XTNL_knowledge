@@ -24,6 +24,7 @@
  *
  *   npx tsx scripts/idea-capture-check.ts
  */
+import "./_no-model";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {

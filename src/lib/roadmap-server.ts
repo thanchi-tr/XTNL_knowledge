@@ -13166,6 +13166,13 @@ function filledBandsOf(map: TopicMap): number {
   }
 }
 
+/**
+ * A kept Gemini name holding a Domain made for it (ruling N10: [Add an idea here] before accept, or accept itself), not
+ * bound by you and never Gemini's pick of your Domain (PICKED_BY_GEMINI). A tick keeps it unbound, so accept marks the
+ * Domain Gemini's and the row reads kept by you, never "Gemini picked your Domain".
+ */
+const domainMadeForName = (t: TopicDraft): boolean => t.nameOrigin === "GEMINI" && t.decision === "KEPT" && !!t.domainId && !t.bound && !t.notes.includes("PICKED_BY_GEMINI");
+
 /** A topic's provenance class (roadmap-topics topicClassOf); a GEMINI name GROUND hasn't linked reads NOT_CHECKED when that lane can't answer. */
 function topicClassFor(t: TopicDraft): TopicClass {
   try {
@@ -13881,7 +13888,7 @@ export async function chooseTopicCore(userId: string, roadmapId: string, key: st
         ...x,
         chosen: true,
         // A PICKED match or a seed you tick is yours to bind; a not-checked name you tick is kept by you.
-        ...(x.domainId && !x.bound ? { bound: true } : {}),
+        ...(x.domainId && !x.bound && !domainMadeForName(x) ? { bound: true } : {}),
         ...(cls === "NOT_CHECKED" && x.decision === "PENDING" ? { decision: "KEPT" as const } : {}),
       });
     }
@@ -13901,6 +13908,94 @@ export async function keepGeminiNameCore(userId: string, roadmapId: string, key:
     if (t.nameOrigin !== "GEMINI" || topicClassFor(t) !== "NOT_CHECKED") return fail("Only a not-checked Gemini name is kept this way.");
     return ok({ map: withTopicChanged(map, { ...t, decision: "KEPT", chosen: true }), value: null });
   });
+}
+
+/** [Add an idea here] on a goal with no Field (a practice-only Area): there is nowhere to file an idea. */
+export const TOPIC_IDEA_NO_FIELD = "This goal has no Field to file ideas in.";
+
+/**
+ * [Add an idea here] (§22.20 ruling N10): the Field and Domain an idea about this topic is filed in, for
+ * /add?field=&domain= (roadmap-links addCardHref: manual placement, so the idea is labelled with the topic's Domain at
+ * once; dedup still decides MERGE, SATURATION or a new card, and the Domain's own routing takes every later idea that
+ * reads like it). A topic bound to a Domain (your Domain, an accepted topic, an earlier tap) answers at once, on a draft
+ * or a live plan. A draft topic with none gets one the way accept would give it, now rather than at accept:
+ *   - the Area Field's Domain of the topic's exact name when it is free (no other goal holds it, no other topic of the
+ *     map uses it): bound as [Use my Domain…] binds (LIBRARY, chosen, the Domain's name);
+ *   - else taxonomy createDomain in the Area Field under the topic's name, bound as accept binds (the topic keeps its
+ *     words and origin; a Gemini name is kept by you, and its Domain takes Gemini's mark at accept, domainOrigin);
+ *   - a name another goal's Domain or another topic holds refuses TOPIC_NAME_TAKEN (offer [Use my Domain…]).
+ * Either way the topic is chosen with what it builds on (chooseClosureOf), as a tick chooses it, so accept binds it and
+ * creates nothing twice. `created`: a Domain was made for it.
+ */
+export async function topicIdeaTargetCore(
+  userId: string,
+  roadmapId: string,
+  key: string,
+  now: Date,
+  deps: RoadmapDeps = {}
+): Promise<RoadmapActionResult<{ fieldId: string; domainId: string; created: boolean }>> {
+  if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
+  if (typeof key !== "string" || !topicsLib.TOPIC_KEY_PATTERN.test(key)) return fail(TOPIC_GONE);
+  const e = envOf(deps);
+  const b = await e.store.bundle(userId, roadmapId);
+  if (!b) return fail(NO_ROADMAP);
+  const fieldId = b.roadmap.fieldId;
+  if (!fieldId) return fail(TOPIC_IDEA_NO_FIELD);
+  const tree = await e.io.fieldTree();
+  const field = tree.find((f) => f.id === fieldId) ?? null;
+  if (!field) return fail("That Field no longer exists.");
+  const inField = (domainId: string | null): domainId is string => !!domainId && field.domains.some((d) => d.id === domainId);
+  // The map you are looking at: the draft's when there is one, else the live plan's.
+  const draft = isTopicsDraft(b);
+  const shown = mapOfVersion(b, draft ? b.roadmap.version + 1 : b.roadmap.version).topics.find((t) => t.key === key && topicLive(t)) ?? null;
+  if (!shown) return fail(TOPIC_GONE);
+  if (inField(shown.domainId)) return ok({ fieldId, domainId: shown.domainId, created: false });
+  if (!draft) return fail(TOPIC_GONE);
+  if (b.roadmap.status === "PAUSED") return fail("Resume this goal first.");
+
+  // The Domain: the Field's own of this exact name when it is free, else a new one under the topic's name.
+  const same = field.domains.find((d) => d.name.toLowerCase() === shown.name.toLowerCase()) ?? null;
+  let target: { id: string; name: string; made: boolean } | null = null;
+  if (same) {
+    const draftMap = mapOfVersion(b, b.roadmap.version + 1);
+    const usedHere = draftMap.topics.some((t) => t.lineageId !== shown.lineageId && topicLive(t) && t.domainId === same.id);
+    const held = await topicTakenDomainOf(e, userId, roadmapId, [same.id]);
+    if (usedHere || held) return fail(TOPIC_NAME_TAKEN);
+    target = { id: same.id, name: same.name, made: false };
+  } else {
+    const made = await e.io.createDomain(field.id, shown.name);
+    if (!made.ok) return fail(made.error);
+    target = { id: made.value.id, name: made.value.name, made: true };
+  }
+  const domain = target;
+  const res = await topicEdit<{ fieldId: string; domainId: string; created: boolean }>(userId, roadmapId, now, deps, async ({ map }, env) => {
+    const found = liveTopicByKey(map, key);
+    if (!found.ok) return found;
+    const t = found.value;
+    // A race bound it first: its Domain answers (nothing changes).
+    if (t.domainId && t.domainId !== domain.id) return ok({ map, value: { fieldId, domainId: t.domainId, created: false } });
+    let closure: string[];
+    try {
+      closure = topicsLib.chooseClosureOf(map, key);
+    } catch {
+      closure = [];
+    }
+    const others = map.topics.filter((x) => closure.includes(x.key) && x.key !== key && topicLive(x));
+    const taken = await topicTakenDomainOf(env, userId, roadmapId, others.filter((x) => x.domainId).map((x) => x.domainId as string));
+    if (taken) return fail(DOMAIN_TAKEN(taken.slot));
+    let out = map;
+    for (const x of others) {
+      out = withTopicChanged(out, { ...x, chosen: true, ...(x.domainId && !x.bound && !domainMadeForName(x) ? { bound: true } : {}), ...(topicClassFor(x) === "NOT_CHECKED" && x.decision === "PENDING" ? { decision: "KEPT" as const } : {}) });
+    }
+    const bound: TopicDraft = domain.made
+      ? { ...t, domainId: domain.id, chosen: true, ...(t.nameOrigin === "GEMINI" && t.decision === "PENDING" ? { decision: "KEPT" as const } : {}) }
+      : { ...t, domainId: domain.id, bound: true, chosen: true, name: domain.name, nameOrigin: "LIBRARY", grounding: "OWN", sources: [] };
+    out = withTopicChanged(out, bound);
+    return ok({ map: out, value: { fieldId, domainId: domain.id, created: domain.made } });
+  });
+  // Gemini's mark waits for accept (acceptTopicsStep's premade): until then the draft is the user's to change.
+  if (res.ok) invalidate("fields", "ideas");
+  return res;
 }
 
 /**
@@ -14268,6 +14363,11 @@ async function acceptTopicsStep(
   if (feasibility.impossible) return fail(pointedAt(gateOf(e, ctx), "A milestone can't be done by its date as planned — use a remedy or change it."));
   const needsOver = !!feasibility.over || feasibility.dateCheck?.verdict === "OVER";
   if (needsOver && !overAccepted) return fail(pointedAt(gateOf(e, ctx), "This plan is over your hours or pace: switch on “Keep it over my hours/pace” to accept it."));
+
+  // Ruling N10: a Domain [Add an idea here] made for a kept Gemini name before accept (its topic holds it, not bound by
+  // you, of the topic's name, no origin yet) takes Gemini's mark now, as the Domains made below do. Idempotent.
+  const premade = chosen.filter((t) => domainMadeForName(t) && field.domains.some((d) => d.id === t.domainId && d.name === t.name && !d.nameOrigin));
+  if (premade.length) await e.store.apply(userId, premade.map((t) => ({ op: "domainOrigin" as const, domainId: t.domainId as string, name: t.name })));
 
   // Each chosen topic with no Domain gets one, bound at once (a retry or a re-accept creates none again), only now that
   // every refusal above has passed on the unbound map (a name the Field holds refused there: acceptRefusalOf).
@@ -14906,9 +15006,10 @@ function topicMapViewOf(
   };
   const rowOf = (t: TopicDraft): TopicRowView => {
     const domain0 = domainMarkOf(tree, t.domainId);
-    // A Gemini name you kept whose Domain accept created from it (the Domain carries the Gemini mark and the name) stays
-    // kept by you («Gemini · kept by you», or «· kept · not checked»), never "Gemini picked your Domain".
-    const createdFrom = t.nameOrigin === "GEMINI" && t.decision === "KEPT" && !!t.domainId && !t.bound && !!domain0?.geminiNamed && domain0.name === t.name;
+    // A Gemini name you kept whose Domain accept created from it (the Domain carries the Gemini mark and the name), or
+    // [Add an idea here] made for it before accept (ruling N10: the mark comes at accept), stays kept by you («Gemini ·
+    // kept by you», or «· kept · not checked»), never "Gemini picked your Domain" (a pick is noted PICKED_BY_GEMINI).
+    const createdFrom = domainMadeForName(t) && !!domain0 && domain0.name === t.name;
     const cls = createdFrom ? topicClassFor({ ...t, domainId: null, bound: false }) : topicClassFor(t);
     const parents = parentsInMapOf(map, t);
     const childKeys = map.edges
@@ -15019,6 +15120,7 @@ function topicMapViewOf(
     requestsLeft: topicRequestsLeftOf(opts.dayRuns ?? b.runs, today),
     layerOneSeeds,
     lastLayerSeeds,
+    fieldId: b.roadmap.fieldId ?? null,
     // [Accept all]'s list from the rule acceptCore's keptAllOf compares (a draft only).
     ...(opts.draft ? { acceptAll: acceptAllListOfMap(map) } : {}),
   };
