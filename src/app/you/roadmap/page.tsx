@@ -24,12 +24,16 @@ export const maxDuration = 60;
  * freeze is gated by lifeWritesEnabled(), so a server with writes off writes
  * nothing and shows the live set "not recorded on this server".
  */
-export default async function RoadmapPage() {
+export default async function RoadmapPage({ searchParams }: { searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
   const userId = getCurrentUserId();
   const now = new Date();
+  // Revision 5 (§23.5; ruling N15): `?goal=<id>` shows that goal (the loader reads only the user's own rows; anything
+  // else shows the lowest seat's).
+  const { goal } = await searchParams;
+  const goalId = typeof goal === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(goal) ? goal : null;
   let view;
   try {
-    view = await loadRoadmapView(userId, now);
+    view = await loadRoadmapView(userId, now, {}, goalId);
   } catch (err) {
     if (!isMissingRoadmapTable(err)) throw err;
     return (

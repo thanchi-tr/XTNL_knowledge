@@ -2527,7 +2527,7 @@ async function main() {
       flat(storedCard).slice(0, 240)
     );
     const formSrc = code(read("src/components/roadmap/RoadmapForm.tsx"));
-    const iSave = formSrc.indexOf("runtime.actions.saveIntake(intake)");
+    const iSave = formSrc.indexOf("runtime.actions.saveIntake(intake,");
     const iVerdicts = formSrc.indexOf("runtime.actions.setActivityVerdicts(id, activityAnswer)");
     const iBuild = formSrc.indexOf('path === "GEMINI" ? await runtime.actions.draftRoadmap(id)');
     check(

@@ -10380,7 +10380,7 @@ async function loadRoadmapViewUncached(userId: string, now: Date, deps: RoadmapD
         })
       : null;
   const view = withTopicViews(e, b, ctx, roadmapViewOfData(e, deps, v, ctx, { today, run, acceptedRun, draft, throughput, wq, pastWeeks, aftercare, weight }), today, dayRuns);
-  // The goal switcher (§23.7; lane 4 renders it): absent with one goal while GOALS_MAX is 1, so that page is today's.
+  // The goal switcher (§23.7; GoalSwitcher renders it): at GOALS_MAX 3 (ruling N15) present with one goal too, for "New goal".
   const goals = await goalSwitcherOf(e, userId, b, now);
   // Revision 5, lane 10 (fix round; ruling 47): a TOPICS draft's Gemini chain, which the page's poll drives step by step.
   return withTopicChainView(goals ? { ...view, goals } : view, await topicChainViewFor(e, deps, userId, b, now));
@@ -11186,8 +11186,10 @@ async function loadAimStepUncached(userId: string, now: Date, deps: RoadmapDeps)
     lastOpenBefore,
     aimSuggestions: settings?.aimSuggestions ?? null,
   };
-  // Revision 5 (§23.5): the lowest seat's open goal (one open goal: that one, as today).
-  const open = [...rows].filter(isOpen).sort(byOpenSeat)[0] ?? null;
+  // Revision 5 (§23.5): the lowest seat's open goal (one open goal: that one, as today); ruling N15: the count of all.
+  const openRows = [...rows].filter(isOpen).sort(byOpenSeat);
+  if (openRows.length > 1) base.openCount = openRows.length;
+  const open = openRows[0] ?? null;
   if (!open) return base;
   const b = await e.store.bundle(userId, open.id);
   if (!b) return base;

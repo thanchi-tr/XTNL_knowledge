@@ -326,6 +326,17 @@
   .rm-basis li:first-child { border-top: 0; }
   .rm-lag { padding: 8px 0; color: var(--ink-1); margin: 0; }
 
+  /* ---------- the goals row (§23.5; ruling N15): one pill per open goal, then [+ New goal] while a seat is free ---------- */
+  .rm-goals { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 2px 0 14px; }
+  .rm-goals::-webkit-scrollbar { display: none; }
+  .rm-goal-pill { display: inline-flex; align-items: center; gap: 8px; flex: none; min-height: 40px; max-width: 220px; padding: 0 14px 0 6px; border: 1px solid var(--line-1); border-radius: 999px; background: var(--card); color: var(--ink-1); font: 600 13px/18px var(--font-ui); text-decoration: none; }
+  .rm-goal-pill[aria-current="page"] { color: var(--ink-0); border-color: var(--ink-0); }
+  .rm-goal-slot { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--line-1); font-variant-numeric: tabular-nums; flex: none; }
+  .rm-goal-pill[aria-current="page"] .rm-goal-slot { background: var(--ink-0); color: var(--card); }
+  .rm-goal-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rm-goal-st { font-weight: 400; color: var(--ink-2); }
+  .rm-goal-add { padding-left: 12px; border-style: dashed; }
+
   /* ---------- the reference disclosure: one closed toggle at every width (roadmap ruling N14: the plan page leads with
      the aim, the milestone now and the map; capacity, realism, drafting and measuring wait behind one tap) ---------- */
   .rm-ref { min-width: 0; display: flex; flex-direction: column; }

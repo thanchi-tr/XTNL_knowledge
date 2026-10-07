@@ -101,7 +101,7 @@ console.log("— constants —");
   );
   eq("the step cookie: 'xtnl-aim-step', hidden 7 days, kept 8 days, up to 3 lines at once (revision 5)", [AIM_STEP_COOKIE, AIM_STEP_SNOOZE_DAYS, AIM_STEP_COOKIE_MAX_AGE_S, AIM_STEP_COOKIE_ENTRIES_MAX], ["xtnl-aim-step", 7, 8 * 86400, 3]);
   eq("the handoff: 'xtnl:roadmap:aim-handoff', 10 minutes, the aim cut at 500; a held one waits a day (revision 5)", [AIM_HANDOFF_KEY, AIM_HANDOFF_TTL_MS, AIM_HANDOFF_AIM_MAX, AIM_HANDOFF_HOLD_MS], ["xtnl:roadmap:aim-handoff", 600_000, 500, 86_400_000]);
-  check("revision 5 is byte-identical until lane 4: GOALS_MAX is 1 (and the seats the database allows 3)", GOALS_MAX === 1 && GOAL_SLOTS_MAX === 3);
+  check("GOALS_MAX is 3 (ruling N15: up to 3 open goals at any time; the seats the database allows 3)", GOALS_MAX === 3 && GOAL_SLOTS_MAX === 3);
   eq("the vague words and the idle time", [VAGUE_AIM_WORDS, VAGUE_AIM_IDLE_MS], [["get better", "improve", "learn more", "be good at", "understand", "know more", "get into", "learn"], 600]);
   check("the prompt cookie is rev 3's name", AIM_PROMPT_COOKIE === "xtnl-aim-prompt");
 }
@@ -450,20 +450,35 @@ console.log("— the aim line —");
   // SET is hidden at GOALS_MAX open (ruling 53: the effective cap, never the fixed 3).
   const quietDraft = goalDraft("rm1", MON); // saved today: its own line does not show
   eq(
-    "SET is hidden at GOALS_MAX open: with GOALS_MAX 1 one open goal (its line quiet) gives nothing, as in revision 4; at a cap of 3 the same Monday offers SET",
+    "SET is hidden at GOALS_MAX open: at GOALS_MAX 3 (the default, ruling N15) one open goal (its line quiet) offers SET; at a cap of 1 it gives nothing, as in revision 4",
     [kind(todayAimLineOf(base(MON, quietDraft))), kind(todayAimLineOf(base(MON, quietDraft, { goalsMax: 1 }))), kind(todayAimLineOf(base(MON, quietDraft, { goalsMax: 3 })))],
-    [null, null, "SET WEEK"]
+    ["SET WEEK", null, "SET WEEK"]
   );
   eq(
     "SET is hidden at GOALS_MAX open (across goals): 3 open of 3 hide it, 2 of 3 offer it, and 1 of 1 hides it",
     [
       kind(todayAimLineOf(base(MON, quietDraft, { goals: [cand("rm1", 1, "DRAFT", false), cand("rm2", 2, "START", false), cand("rm3", 3, "START", false)], goalsMax: 3 }))),
       kind(todayAimLineOf(base(MON, quietDraft, { goals: [cand("rm1", 1, "DRAFT", false), cand("rm2", 2, "START", false)], goalsMax: 3 }))),
-      kind(todayAimLineOf(base(MON, quietDraft, { goals: [cand("rm1", 1, "DRAFT", false)] }))),
+      kind(todayAimLineOf(base(MON, quietDraft, { goals: [cand("rm1", 1, "DRAFT", false)], goalsMax: 1 }))),
       kind(todayAimLineOf(base(MON, step(), { goals: [] }))),
     ],
     [null, "SET WEEK", null, "SET WEEK"]
   );
+  eq(
+    "ruling N15: Today passes no goals list, so step.openCount hides SET once every seat is taken (3 of 3), offers it at 2 of 3, and its absence counts the one open goal",
+    [
+      kind(todayAimLineOf(base(MON, { ...quietDraft, openCount: 3 }))),
+      kind(todayAimLineOf(base(MON, { ...quietDraft, openCount: 2 }))),
+      kind(todayAimLineOf(base(MON, quietDraft))),
+      kind(todayAimLineOf(base(MON, { ...quietDraft, openCount: Number.NaN }))),
+    ],
+    [null, "SET WEEK", "SET WEEK", "SET WEEK"]
+  );
+  {
+    const beside = todayAimLineOf(base(MON, { ...quietDraft, openCount: 2 }));
+    const alone = todayAimLineOf(base(MON, step()));
+    eq("ruling N15: SET beside an open goal opens a new goal's form (/you/roadmap/new?new=1), never the open draft; with none open, the form as before", [beside?.href, alone?.href], ["/you/roadmap/new?new=1", "/you/roadmap/new"]);
+  }
   check("no open goal reads as before with or without the goals list (SET under the back-off)", json(todayAimLineOf(base(MON, step(), { goals: [] }))) === json(todayAimLineOf(base(MON, step()))) && json(todayAimLineOf(base(MON, step()))) === json(line(MON, step(), { cookie: anchor3(MON) })));
 
   // The priority: a ready START (lowest seat), then a waiting DRAFT (lowest seat), then SET.

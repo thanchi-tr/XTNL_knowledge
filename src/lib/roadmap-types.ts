@@ -4719,6 +4719,8 @@ export interface AimStep {
   lastOpenBefore: DayKey | null;
   /** LifeSettings.aimSuggestions (null: never set, on). */
   aimSuggestions: boolean | null;
+  /** Ruling N15: how many goals are open (DRAFT or ACTIVE), so SET hides once every seat is taken. Absent: `open` alone counts. */
+  openCount?: number;
 }
 
 /**
@@ -6234,7 +6236,7 @@ export interface ActivityConfirmView {
  * realism (roadmap-contract-check refuses the flip before; ruling 54). Every
  * offer of a new seat reads it, never the fixed GOAL_SLOTS_MAX (ruling 53).
  */
-export const GOALS_MAX: number = 1;
+export const GOALS_MAX: number = 3;
 /** The seats the database's CHECK allows (slot 1..3); GOALS_MAX ≤ it. Never flipped. */
 export const GOAL_SLOTS_MAX = 3;
 /** TOPICS plans (lane 9 flips it). */

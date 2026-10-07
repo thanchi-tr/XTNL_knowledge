@@ -1607,8 +1607,8 @@ async function main() {
     check("a second intake edits the open DRAFT", again.ok && w.t.roadmap.length === 1 && w.t.roadmap[0].aim === "Edited aim");
     w.t.roadmap[0].status = "ACTIVE";
     const refused = await S.saveIntakeCore(USER, INTAKE, NOW, depsFor(w));
-    // Ruling 23: with GOALS_MAX 1 the ACTIVE goal holds the one seat, and a second goal is refused in today's words.
-    eq("an intake while another roadmap is ACTIVE is refused (no free seat at GOALS_MAX 1: ANOTHER_ACTIVE, today's words; ruling 23)", [GOALS_MAX, refused.ok ? "ok" : refused.error, S.noSeatLine()], [1, S.ANOTHER_ACTIVE, S.ANOTHER_ACTIVE]);
+    // Ruling N15: at GOALS_MAX 3 a seat is free beside the ACTIVE goal, but a second goal never takes its Domains (§23.5).
+    eq("an intake while another roadmap is ACTIVE would open a 2nd goal, and is refused on the ACTIVE goal's Domains (DOMAIN_TAKEN names its seat; ruling N15)", [GOALS_MAX, refused.ok ? "ok" : refused.error, S.noSeatLine()], [3, S.DOMAIN_TAKEN(1), GOALS_FULL]);
     check("…and writes nothing", w.t.roadmap.length === 1);
   }
   {
@@ -1619,14 +1619,14 @@ async function main() {
     const fresh = await S.saveIntakeCore(USER, INTAKE, NOW, depsFor(w));
     check("…so a fresh intake inserts a new DRAFT", fresh.ok && fresh.value.roadmapId !== id && w.t.roadmap.length === 2);
     const undo = await S.undoDiscardCore(USER, id, NOW, depsFor(w));
-    // Revision 5 (§23.1): the new draft holds the one seat (GOALS_MAX 1), so the discarded one has none to reopen in.
-    eq("the discard's Undo refuses while another roadmap is open (its seat is taken: today's words at GOALS_MAX 1)", undo.ok ? "ok" : undo.error, S.DISCARD_STAYS);
+    // Revision 5 (§23.1, ruling N15): a seat is free, but the new draft now holds the discarded one's Domains.
+    eq("the discard's Undo refuses while another open goal holds its Domains (DOMAIN_TAKEN names its seat)", undo.ok ? "ok" : undo.error, S.DOMAIN_TAKEN(1));
     check("…and the draft stays discarded", w.t.roadmap.find((r) => r.id === id)?.status === "ARCHIVED");
     const second = fresh.ok ? fresh.value.roadmapId : "";
     await S.discardDraftCore(USER, second, NOW, depsFor(w));
     const back = await S.undoDiscardCore(USER, id, NOW, depsFor(w));
     const row = w.t.roadmap.find((r) => r.id === id);
-    check("…once the seat is free the Undo reopens it in its old seat (seatForReopenOf: every reopen sets the slot)", back.ok && row?.status === "DRAFT" && row.slot === 1, json([back, row?.status, row?.slot]));
+    check("…once that goal is discarded too the Undo reopens it in its old seat (seatForReopenOf: every reopen sets the slot)", back.ok && row?.status === "DRAFT" && row.slot === 1, json([back, row?.status, row?.slot]));
   }
 
   // ═══ F8: drafting ═════════════════════════════════════════════════════════
@@ -1939,14 +1939,14 @@ async function main() {
     const draftRows = rowsOf(w2, other, 1).map((m) => ({ ...m, id: `${m.id}-b`, roadmapId: id2, status: "DRAFT", version: 1 }));
     w2.t.roadmapMilestone.push(...draftRows);
     // Revision 5 (§23.1): acceptCore drops ANOTHER_ACTIVE (a draft already holds its seat). This hand-made second
-    // open row (no path makes one at GOALS_MAX 1) shares goal 1's Domains, so DOMAINS_FREE refuses it in words…
+    // open row (hand-made in goal 1's own seat) shares goal 1's Domains, so DOMAINS_FREE refuses it in words…
     const refused = await S.acceptCore(USER, id2, { overAccepted: false }, NOW, depsFor(w2));
     eq("accept refuses a draft whose Domains another goal holds (DOMAINS_FREE at accept, §23.5), never with ANOTHER_ACTIVE", refused.ok ? "ok" : refused.error, S.DOMAIN_TAKEN(1));
     // …and with Domains of its own, its seat guard (SLOT_FREE beside GOALS_MAX open goals) still never makes a second ACTIVE.
     (w2.t.roadmap.find((r) => r.id === id2) as RoadmapRec).domainIds = ["d-risk"];
     const seated = await S.acceptCore(USER, id2, { overAccepted: false }, NOW, depsFor(w2));
     check(
-      "…a second open row no path makes (two at GOALS_MAX 1) is never accepted into a second ACTIVE, and accept never answers ANOTHER_ACTIVE",
+      "…a hand-made open row in goal 1's own seat is never accepted into a second ACTIVE, and accept never answers ANOTHER_ACTIVE",
       !seated.ok && !seated.error.includes(S.ANOTHER_ACTIVE) && w2.t.roadmap.filter((r) => r.status === "ACTIVE").length === 1 && /function acceptUnpointed[\s\S]*?\r?\n\}\r?\n/.exec(SERVER_SRC_TOP)?.[0].includes("ANOTHER_ACTIVE") === false,
       json(seated)
     );
@@ -6319,18 +6319,15 @@ async function main() {
     });
   }
 
-  // ═══ Revision 5: up to 3 goals (contracts §23; lane 3, GOALS_MAX still 1) ════
+  // ═══ Revision 5: up to 3 goals (contracts §23; ruling N15: GOALS_MAX 3) ════
   console.log("— revision 5: goals (§23) —");
-  check("goals: GOALS_MAX is still 1 (lane 4 lifts it), so every answer a one-goal user sees is today's", GOALS_MAX === 1);
+  check("goals: GOALS_MAX is 3 (ruling N15: up to 3 open goals at any time)", GOALS_MAX === 3);
   {
-    // Seats while GOALS_MAX is 1 (§23.1, ruling 23), the targets, and createKey idempotence.
+    // Seats at GOALS_MAX 3 (§23.1), the targets, and createKey idempotence.
     const w = world();
     const first = await S.saveIntakeCore(USER, INTAKE, NOW, depsFor(w), { createKey: "goal-key-0001" });
     check("goals: {createKey} creates a goal in the lowest free seat (1), storing its key", first.ok && w.t.roadmap.length === 1 && w.t.roadmap[0].slot === 1 && w.t.roadmap[0].createKey === "goal-key-0001", json([first, w.t.roadmap.map((r) => [r.slot, r.createKey])]));
     const firstId = first.ok ? first.value.roadmapId : "";
-    const japanese: Intake = { ...INTAKE, aim: "Trade with a plan", fieldId: "f-trade", domainIds: ["d-risk"] };
-    const second = await S.saveIntakeCore(USER, japanese, NOW, depsFor(w), { createKey: "goal-key-0002" });
-    eq("goals: seat refusal of a 2nd open goal while GOALS_MAX is 1 (ANOTHER_ACTIVE, today's words: ruling 23), writing nothing", [second.ok ? "ok" : second.error, w.t.roadmap.length], [S.ANOTHER_ACTIVE, 1]);
     const open = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Edited with no target" }, NOW, depsFor(w));
     check("goals: no target keeps today's rule (the open draft is edited)", open.ok && open.value.roadmapId === firstId && w.t.roadmap.length === 1 && w.t.roadmap[0].aim === "Edited with no target", json(open));
     const named = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Edited by its id" }, NOW, depsFor(w), { roadmapId: firstId });
@@ -6343,14 +6340,39 @@ async function main() {
     check("goals: a malformed target (a createKey outside [A-Za-z0-9_-]{8,64}, both keys, a bad id) is refused unread", bad.every((r) => !r.ok && r.error === S.NO_TARGET) && w.t.roadmap.length === 1, json(bad));
     const repeat = await S.saveIntakeCore(USER, { ...INTAKE, aim: "A repeat of the first save" }, NOW, depsFor(w), { createKey: "goal-key-0001" });
     check("goals: createKey idempotence: the same key returns the same id later too (the first save stands; nothing written)", repeat.ok && repeat.value.roadmapId === firstId && w.t.roadmap.length === 1 && w.t.roadmap[0].aim === "Edited by its id", json(repeat));
+    const sameDomain = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Probability, a second time", label: "Prob 2" }, NOW, depsFor(w), { createKey: "goal-key-0009" });
+    eq("goals: a 2nd goal never takes a Domain goal 1 holds (DOMAIN_TAKEN names its seat), writing nothing", [sameDomain.ok ? "ok" : sameDomain.error, w.t.roadmap.length], [S.DOMAIN_TAKEN(1), 1]);
+    const trading: Intake = { ...INTAKE, aim: "Trade with a plan", fieldId: "f-trade", domainIds: ["d-risk"] };
+    const second = await S.saveIntakeCore(USER, trading, NOW, depsFor(w), { createKey: "goal-key-0002" });
+    const secondRow = w.t.roadmap.find((r) => second.ok && r.id === second.value.roadmapId);
+    check("goals: a 2nd open goal opens beside the first in seat 2 (ruling N15), the first left as it was", second.ok && secondRow?.slot === 2 && secondRow.status === "DRAFT" && w.t.roadmap.length === 2 && w.t.roadmap.find((r) => r.id === firstId)?.aim === "Edited by its id", json([second, secondRow?.slot]));
+    w.tree[0].domains.push({ id: "d-comb", name: "Combinatorics", fieldId: "f-stats", cards: [] });
+    const third = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Count without fear", label: "Counting", domainIds: ["d-comb"] }, NOW, depsFor(w), { createKey: "goal-key-0003" });
+    const thirdRow = w.t.roadmap.find((r) => third.ok && r.id === third.value.roadmapId);
+    check("goals: a 3rd takes seat 3 (its own label beside goal 1's Area: ruling 26)", third.ok && thirdRow?.slot === 3 && w.t.roadmap.length === 3, json([third, thirdRow?.slot]));
+    w.tree[1].domains.push({ id: "d-opt", name: "Options", fieldId: "f-trade", cards: [] });
+    const fourth = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Price options", fieldId: "f-trade", label: "Options", domainIds: ["d-opt"] }, NOW, depsFor(w), { createKey: "goal-key-0004" });
+    eq("goals: a 4th open goal is refused (GOALS_FULL, the figure read from GOAL_SLOTS_MAX), writing nothing", [fourth.ok ? "ok" : fourth.error, w.t.roadmap.length], [GOALS_FULL, 3]);
+    const editSecond = await S.saveIntakeCore(USER, { ...trading, aim: "Trade with a written plan" }, NOW, depsFor(w), { roadmapId: secondRow?.id ?? "" });
+    check("goals: {roadmapId} edits the named draft only, whichever seat it holds", editSecond.ok && w.t.roadmap.find((r) => r.id === secondRow?.id)?.aim === "Trade with a written plan" && w.t.roadmap.find((r) => r.id === firstId)?.aim === "Edited by its id", json(editSecond));
   }
   {
     const w = world();
     const [a, b] = await Promise.all([1, 2].map(() => S.saveIntakeCore(USER, INTAKE, NOW, depsFor(w), { createKey: "double-tap-0001" })));
     check("goals: createKey idempotence: two concurrent saves with one key answer one id and leave one row (the seat guard and KEY_FREE re-read)", a.ok && b.ok && a.value.roadmapId === b.value.roadmapId && w.t.roadmap.length === 1, json([a, b, w.t.roadmap.length]));
     eq("goals: KEY_FREE reads the user's rows as the SQL does", [w.guard(USER, { g: "KEY_FREE", createKey: "double-tap-0001" }), w.guard(USER, { g: "KEY_FREE", createKey: "double-tap-0002" })], [false, true]);
-    eq("goals: SLOT_FREE counts every open row, a NULL slot too (ruling 24), against GOALS_MAX", [w.guard(USER, { g: "SLOT_FREE", slot: 2, exceptId: null }), (() => ((w.t.roadmap[0].slot = null), w.guard(USER, { g: "SLOT_FREE", slot: 1, exceptId: null })))(), w.guard(USER, { g: "SLOT_FREE", slot: 1, exceptId: w.t.roadmap[0].id })], [false, false, true]);
-    w.t.roadmap[0].slot = 1;
+    {
+      // Three open rows fill GOALS_MAX 3; the third saved by old code with no seat still counts.
+      const extra = [2, 3].map((slot) => ({ ...w.t.roadmap[0], id: `seat-${slot}`, slot, createKey: null }) as RoadmapRec);
+      w.t.roadmap.push(...extra);
+      const free = [
+        w.guard(USER, { g: "SLOT_FREE", slot: 2, exceptId: null }),
+        (() => ((extra[1].slot = null), w.guard(USER, { g: "SLOT_FREE", slot: 3, exceptId: null })))(),
+        w.guard(USER, { g: "SLOT_FREE", slot: 3, exceptId: extra[1].id }),
+      ];
+      eq("goals: SLOT_FREE counts every open row, a NULL slot too (ruling 24), against GOALS_MAX 3", free, [false, false, true]);
+      w.t.roadmap.splice(1);
+    }
     eq("goals: the (userId, slot) open index refuses a second open row in seat 1 (a unique violation: 'duplicate')", w.applyNow(USER, [{ op: "insert", table: "roadmap", rows: [{ ...w.t.roadmap[0], id: "dup", createKey: null }] }]), "duplicate");
     const noSeat = await (async () => {
       const row = w.t.roadmap[0];
@@ -6373,11 +6395,11 @@ async function main() {
     eq("goals: a second goal in the paused goal's Area with no label of its own clashes by name (LABEL_CLASH, ruling 26)", clash.ok ? "ok" : clash.error, S.LABEL_CLASH);
     const fresh = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Trade with a plan", fieldId: "f-trade", domainIds: ["d-risk"] }, NOW, depsFor(w));
     const row = w.t.roadmap.find((r) => fresh.ok && r.id === fresh.value.roadmapId);
-    check("goals: a paused goal frees its seat: a new goal takes seat 1 beside it at GOALS_MAX 1", fresh.ok && row?.slot === 1 && w.t.roadmap.find((r) => r.id === paused)?.slot === 1, json([fresh, row?.slot]));
+    check("goals: a paused goal frees its seat: a new goal takes seat 1 beside it (the lowest free seat)", fresh.ok && row?.slot === 1 && w.t.roadmap.find((r) => r.id === paused)?.slot === 1, json([fresh, row?.slot]));
     const view = await S.loadIntakeView(USER, NOW, depsFor(w), row?.id ?? null);
     check(
       "goals: loadIntakeView carries the seats, the open drafts, GOALS_MAX, the hours other goals take, the Domains they hold (a paused goal's by null) and the switches (production deps: the build's TOPIC_* constants as the user set them, read through topicSwitchesOf)",
-      view.goalsMax === 1 &&
+      view.goalsMax === 3 &&
         view.seats?.length === 3 &&
         view.seats[0].roadmapId === row?.id &&
         view.seats[1].roadmapId === null &&
@@ -6394,8 +6416,12 @@ async function main() {
     const hours = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Trade with a plan", fieldId: "f-trade", domainIds: ["d-risk"], hoursPerWeek: 40 }, NOW, depsFor(w));
     check("goals: the hours' room reads DRAFT and ACTIVE goals only (a paused goal's hours leave the sum: ruling 25), so 40 h fits one open goal", hours.ok, json(hours));
     const resume = await S.resumeRoadmapCore(USER, paused, { redate: false }, NOW, depsFor(w));
-    eq("goals: resume needs a free seat (ANOTHER_ACTIVE at GOALS_MAX 1, GOALS_FULL at 3)", resume.ok ? "ok" : resume.error, S.ANOTHER_ACTIVE);
-    eq("goals: noSeatLine is ANOTHER_ACTIVE while GOALS_MAX is 1, and GOALS_FULL reads its figure", [S.noSeatLine(), GOALS_FULL], [S.ANOTHER_ACTIVE, "3 goals open. Finish, pause or archive one."]);
+    check("goals: at GOALS_MAX 3 a seat is free for the resume, but the hours' room refuses it while the open goals take the week (ruling 25)", !resume.ok && resume.error.startsWith("Your goals already take 40 h"), json(resume));
+    const lighter = await S.saveIntakeCore(USER, { ...INTAKE, aim: "Trade with a plan", fieldId: "f-trade", domainIds: ["d-risk"], hoursPerWeek: 5 }, NOW, depsFor(w));
+    const back = await S.resumeRoadmapCore(USER, paused, { redate: false }, NOW, depsFor(w));
+    const pausedRow = w.t.roadmap.find((r) => r.id === paused);
+    check("goals: …and with room it resumes beside the new goal, into the lowest free seat (its own seat 1 is taken: seat 2; ruling N15)", lighter.ok && back.ok && pausedRow?.status === "ACTIVE" && pausedRow.slot === 2, json([lighter, back, pausedRow?.status, pausedRow?.slot]));
+    eq("goals: noSeatLine is GOALS_FULL at GOALS_MAX 3, reading its figure", [S.noSeatLine(), GOALS_FULL], [GOALS_FULL, "3 goals open. Finish, pause or archive one."]);
   }
   {
     // Pause, resume and archive from PAUSED (§23.4).
@@ -6521,7 +6547,7 @@ async function main() {
     );
   }
   {
-    // XG: a closed goal's AVOID suggests nothing while GOALS_MAX is 1 (ruling 57).
+    // XG: at GOALS_MAX 3 (ruling N15) a closed goal's AVOID is read as a suggestion, never a lock (ruling 57).
     const w = world();
     const body: Intake = { ...INTAKE, fieldId: null, track: "BODY", domainIds: [], hoursPerWeek: 4 };
     const g1 = await newDraft(w, { ...body, aim: "Run a 10K" });
@@ -6530,8 +6556,8 @@ async function main() {
     const g2 = await newDraft(w, { ...body, aim: "Get stronger at the gym" });
     const row = await goalCardRow(g2, depsFor(w), "HARDER_SESSION");
     check(
-      "XG: a closed goal's AVOID suggests nothing while GOALS_MAX is 1",
-      GOALS_MAX === 1 && said.ok && row?.state === "PENDING" && row.from == null && row.prefill == null && !row.locked,
+      "XG: at GOALS_MAX 3 a closed goal's AVOID is suggested (prefill AVOID, from the closed goal), never locked (ruling 57)",
+      GOALS_MAX === 3 && said.ok && row?.state === "PENDING" && row.from?.roadmapId === g1 && row.from.closed === true && row.prefill === "AVOID" && !row.locked,
       json([said, row])
     );
   }
@@ -6625,7 +6651,7 @@ async function main() {
       json(first.goals?.pills.map((p) => [p.roadmapId, p.slot, p.current, p.label, p.labelIsYours, p.status])) === json([[g1, 1, true, "Statistics", false, "ACTIVE"], [g2, 2, false, "Trading", false, "DRAFT"]]) &&
         first.goals?.pills[0].rankIndex != null &&
         second.goals?.pills[1].current === true &&
-        first.goals?.canAdd === false &&
+        first.goals?.canAdd === true &&
         first.goals?.other.count === 0,
       json(first.goals)
     );
@@ -6638,7 +6664,11 @@ async function main() {
     const soloCard = await S.loadAimCard(USER, NOW, depsFor(single));
     check("goals: with one goal loadAimCards is [loadAimCard's card]", json(soloCards) === json([soloCard]));
     const soloView = await S.loadRoadmapView(USER, NOW, depsFor(single));
-    check("goals: with one goal the page carries no switcher (RoadmapView.goals absent: today's page)", soloView.state === "ACTIVE" && !("goals" in soloView), json(Object.keys(soloView)));
+    check(
+      "goals: with one goal at GOALS_MAX 3 the page carries the switcher, its one pill current and canAdd on (the way to a 2nd goal: ruling N15)",
+      soloView.state === "ACTIVE" && soloView.goals?.pills.length === 1 && soloView.goals.pills[0].current && soloView.goals.canAdd === true,
+      json(soloView.goals)
+    );
     // Start's duplicate check reads every other goal's carried practices: goal 1's started practice is "already on Today from goal 1".
     const [m1] = rowsOf(w, g1, 1);
     await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, deps);

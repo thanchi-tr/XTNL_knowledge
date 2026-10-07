@@ -31,8 +31,8 @@
  * and with `goals` the one line is roadmap-goals aimLinePickOf's pick: a
  * ready START (lowest seat), then a waiting DRAFT, then SET. The step cookie
  * holds up to AIM_STEP_COOKIE_ENTRIES_MAX entries, one per hidden line.
- * GOALS_MAX is 1 and no caller passes `goals` yet, so every answer is
- * revision 4's, byte for byte.
+ * GOALS_MAX is 3 (ruling N15); Today passes no `goals`, so the lowest
+ * seat's goal speaks and SET hides once step.openCount fills every seat.
  */
 import { addDays, daysBetween, weekdayOf, type DayKey } from "./life-day";
 import {
@@ -343,6 +343,8 @@ export interface TodayAimLineInput {
 }
 
 export const AIM_LINE_SET_HREF = "/you/roadmap/new";
+/** SET beside an open goal (ruling N15): a new goal's form, never the open draft's. */
+export const AIM_LINE_SET_NEW_HREF = "/you/roadmap/new?new=1";
 export const AIM_LINE_DRAFT_HREF = "/you/roadmap";
 export const AIM_LINE_START_HREF = "/you/roadmap#now";
 
@@ -389,7 +391,8 @@ function setLineOf(step: AimStep, input: TodayAimLineInput, fresh: boolean): Aim
   if (!first && freshStartDaysBetween(askAnchorOf(cookie, step.lastClosedDay, step.epochDay), today) >= AIM_BACKOFF_FRESH_DAYS) return null;
   const back = !!step.lastOpenBefore && daysBetween(step.lastOpenBefore, today) > AIM_AWAY_DAYS;
   const variant = step.lastDoneDay && daysBetween(step.lastDoneDay, today) < AIM_DONE_SHOW_DAYS ? "NEXT" : back ? "BACK" : first ? "MONTH" : "WEEK";
-  return { kind: "SET", variant, href: AIM_LINE_SET_HREF };
+  const beside = !!step.open || (typeof step.openCount === "number" && step.openCount > 0);
+  return { kind: "SET", variant, href: beside ? AIM_LINE_SET_NEW_HREF : AIM_LINE_SET_HREF };
 }
 
 /** One open goal's own line, DRAFT or START, or null when it doesn't show today. `goalId` puts ?goal=<id> on its href (null: revision 4's href). */
@@ -447,10 +450,12 @@ export function todayAimLineOf(input: TodayAimLineInput): AimLineView | null {
   const fresh = isFreshStartDay(today, step.lastOpenBefore);
   const cap = capOf(input.goalsMax);
   if (!input.goals) {
-    // One open goal at most (revision 4's input): its own line, else SET under the cap (with GOALS_MAX 1, only with none open).
+    // The lowest seat's goal (revision 4's input): its own line, else SET under the cap (at a cap of 1, only with none
+    // open; at GOALS_MAX 3, hidden once step.openCount fills every seat: ruling N15).
     const own = open ? goalLineOf(open, input, fresh, null) : null;
     if (own) return own;
-    return (open ? 1 : 0) < cap ? setLineOf(step, input, fresh) : null;
+    const openN = Math.max(open ? 1 : 0, typeof step.openCount === "number" && Number.isFinite(step.openCount) ? step.openCount : 0);
+    return openN < cap ? setLineOf(step, input, fresh) : null;
   }
   // Revision 5: every open goal is a candidate; this step's goal is read here, the others as the caller gave them.
   const others: AimLineCandidate[] = [];

@@ -55,7 +55,7 @@
  * goal's current set; Today's rows go round robin by seat; links carry
  * ?goal= with 2 or more goals open; and the week's gate is user-wide (the
  * XG cases: another goal's cue and AVOID gate this goal's week, a closed
- * goal's AVOID is not read while GOALS_MAX is 1). Re-pinned: the SQL column
+ * goal's AVOID is not read at a cap of 1; GOALS_MAX is 3, ruling N15). Re-pinned: the SQL column
  * check reads migration A's columns, and the greps read every file with LF
  * line ends.
  *
@@ -2840,14 +2840,14 @@ async function goals() {
     const lifted = { ...run1, coverage: avoidCoverage(run1, [run1], []) };
     eq("… and once goal 1 lifts it, goal 2's week asks for it again (its card's words changed for every goal: never released silently)", has(g2, "HARDER_SESSION", [lifted, g2]), true);
 
-    // XG: a closed goal's AVOID suggests nothing while GOALS_MAX is 1 (ruling 57).
+    // XG: a closed goal's AVOID suggests nothing at a cap of 1 (ruling 57); at GOALS_MAX 3 (ruling N15) it is read, as closed.
     const archived = { ...g1, status: "ARCHIVED" };
-    const wide = userWideGoalsOf([goalRowOf(archived), goalRowOf(run2)], "rm2");
-    const wide3 = userWideGoalsOf([goalRowOf(archived), goalRowOf(run2)], "rm2", 3);
+    const wide = userWideGoalsOf([goalRowOf(archived), goalRowOf(run2)], "rm2", 1);
+    const wide3 = userWideGoalsOf([goalRowOf(archived), goalRowOf(run2)], "rm2");
     eq(
-      "XG (week quests): a closed goal's AVOID suggests nothing while GOALS_MAX is 1 (it is not read), and is read, as closed, once GOALS_MAX > 1",
+      "XG (week quests): a closed goal's AVOID suggests nothing at a cap of 1 (it is not read), and at GOALS_MAX 3 (the default, ruling N15) is read, as closed",
       [GOALS_MAX, wide, wide3?.avoids.map((a) => [a.roadmapId, a.status, a.slot, Object.keys(a.kinds)])],
-      [1, null, [["rm1", "ARCHIVED", null, ["HARDER_SESSION"]]]]
+      [3, null, [["rm1", "ARCHIVED", null, ["HARDER_SESSION"]]]]
     );
     const pausedWide = userWideGoalsOf([goalRowOf({ ...g1, status: "PAUSED", slot: 1 }), goalRowOf(run2)], "rm2");
     eq("… a PAUSED goal's words and AVOIDs are read with no seat (ruling 55)", [pausedWide?.texts.map((t) => t.slot), pausedWide?.avoids.map((a) => a.slot)], [[null], [null]]);

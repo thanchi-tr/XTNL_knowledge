@@ -197,6 +197,8 @@ export const FIXTURE_STATES = [
   "topic-sheet",
   "topic-sources",
   "topic-parents",
+  // Ruling N15: three open goals, the switcher on top (GoalSwitcher)
+  "goals-three",
 ] as const;
 export type FixtureState = (typeof FIXTURE_STATES)[number];
 
@@ -1539,6 +1541,22 @@ function fixtureOf(state: FixtureState): RoadmapFixture {
     case "active": {
       const v = activeView();
       return { view: v, intake: null, aim: aimFromView(v, "ACTIVE"), today: v.weekQuests, startPreview: null, note: "On pace, with week quests and past weeks." };
+    }
+    case "goals-three": {
+      const base = activeView();
+      const v: RoadmapView = {
+        ...base,
+        goals: {
+          pills: [
+            { roadmapId: "rm1", slot: 1, label: "Trading", labelIsYours: false, status: "ACTIVE", rankIndex: 2, proficiency: 0.31, current: true },
+            { roadmapId: "rm2", slot: 2, label: "Household money", labelIsYours: true, status: "ACTIVE", rankIndex: 1, proficiency: 0.12, current: false },
+            { roadmapId: "rm3", slot: 3, label: "Japanese", labelIsYours: false, status: "DRAFT", rankIndex: null, proficiency: null, current: false },
+          ],
+          canAdd: false,
+          other: { count: 0, roadmapIds: [] },
+        },
+      };
+      return { view: v, intake: null, aim: aimFromView(v, "ACTIVE"), today: v.weekQuests, startPreview: null, note: "Three open goals (ruling N15): the switcher on top, every seat taken, so no New goal." };
     }
     case "behind": {
       const base = activeView();

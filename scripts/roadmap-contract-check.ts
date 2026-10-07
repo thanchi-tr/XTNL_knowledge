@@ -4487,11 +4487,11 @@ const codeOf = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:
 console.log("— revision 5 (§22.2, §23): switches, constants and unions —");
 {
   // ── The switches (only the lane named flips one, re-pinning it here in the same commit, on the user's go) ──
-  // The user switched all six TOPIC_* on in b388a9b (GOALS_MAX stays 1); the live-fix join re-pinned them here as set.
+  // The user switched all six TOPIC_* on in b388a9b, and asked for 3 open goals at any time (ruling N15: GOALS_MAX 3).
   eq(
-    "the switches: GOALS_MAX 1, GOAL_SLOTS_MAX 3, and TOPIC_PLANS/RATE/PLACE/NAMES/LINK/GROUND_LIVE all true (the user's b388a9b)",
+    "the switches: GOALS_MAX 3 (ruling N15), GOAL_SLOTS_MAX 3, and TOPIC_PLANS/RATE/PLACE/NAMES/LINK/GROUND_LIVE all true (the user's b388a9b)",
     [RT.GOALS_MAX, RT.GOAL_SLOTS_MAX, RT.TOPIC_PLANS_LIVE, RT.TOPIC_RATE_LIVE, RT.TOPIC_PLACE_LIVE, RT.TOPIC_NAMES_LIVE, RT.TOPIC_LINK_LIVE, RT.TOPIC_GROUND_LIVE],
-    [1, 3, true, true, true, true, true, true]
+    [3, 3, true, true, true, true, true, true]
   );
   check("GOALS_MAX is within 1..GOAL_SLOTS_MAX (the database's CHECK keeps a slot within 1..3)", RT.GOALS_MAX >= 1 && RT.GOALS_MAX <= RT.GOAL_SLOTS_MAX);
   {
@@ -5510,7 +5510,7 @@ console.log("— revision 5: the later lanes' handoffs (§22.18; --lane=<n> fail
       "goals: archive a PAUSED goal at 3 open frees its seat and its Domains",
       "XG: goal 1's carpal tunnel gates goal 3's SLOW_DRILLS, RUN_THROUGHS and WITH_A_PARTNER",
       "XG: goal 1's AVOID of HARDER_SESSION stays locked on goal 2's card",
-      "XG: a closed goal's AVOID suggests nothing while GOALS_MAX is 1",
+      "XG: at GOALS_MAX 3 a closed goal's AVOID is suggested",
     ]),
   ]);
 

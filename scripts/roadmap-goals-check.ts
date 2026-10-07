@@ -9,10 +9,11 @@
  * answerActivityCard: the AVOID union, the locked rows, a closed goal's
  * suggestion, the cue union and the "k3-" key).
  *
- * GOALS_MAX is 1 while lane 3 lands, so every one-goal answer here is
- * today's: one seat (a 2nd open goal is refused), a share of exactly 1,
- * Today's first 3 rows, SET only with no goal open, and the §19 gate, its
- * reading and its key byte-identical without other goals. The server's
+ * GOALS_MAX is 3 (ruling N15: up to 3 open goals at any time). The
+ * one-goal answers are pinned at an explicit cap of 1: one seat (a 2nd open
+ * goal is refused), a share of exactly 1, Today's first 3 rows, SET only
+ * with no goal open, and the §19 gate, its reading and its key
+ * byte-identical without other goals. The server's
  * paths (SLOT_FREE, KEY_FREE and createKey, DOMAINS_FREE, pause, resume and
  * archive, the family-X goldens) are roadmap-server-check's.
  *
@@ -78,16 +79,18 @@ const share = (roadmapId: string, status: RT.RoadmapStatus, hoursPerWeek: number
 
 console.log("— seats —");
 {
-  eq("GOALS_MAX is still 1 (lane 4 lifts it), GOAL_SLOTS_MAX 3", [RT.GOALS_MAX, RT.GOAL_SLOTS_MAX], [1, 3]);
-  eq("no goal at GOALS_MAX 1: seat 1 is free, not full", GL.seatsOf([]), { open: [], paused: [], free: [1], full: false });
+  eq("GOALS_MAX is 3 (ruling N15: up to 3 open goals at any time), GOAL_SLOTS_MAX 3", [RT.GOALS_MAX, RT.GOAL_SLOTS_MAX], [3, 3]);
+  eq("no goal at GOALS_MAX 3: every seat is free, not full", GL.seatsOf([]), { open: [], paused: [], free: [1, 2, 3], full: false });
+  eq("no goal at a cap of 1: seat 1 is free, not full", GL.seatsOf([], 1), { open: [], paused: [], free: [1], full: false });
   const live = row("live", "ACTIVE", 1);
-  const s1 = GL.seatsOf([live]);
-  check("today's one live plan (seat 1, migration A's backfill) fills GOALS_MAX 1: no free seat, full", json(ids(s1.open)) === json(["live"]) && s1.free.length === 0 && s1.full);
-  check("a 2nd open goal is refused while GOALS_MAX is 1 (seatForNewOf null: the server answers ANOTHER_ACTIVE, as today)", GL.seatForNewOf([live]) === null && GL.seatForNewOf([row("d", "DRAFT", 1)]) === null);
+  const s1 = GL.seatsOf([live], 1);
+  check("one live plan (seat 1, migration A's backfill) fills a cap of 1: no free seat, full", json(ids(s1.open)) === json(["live"]) && s1.free.length === 0 && s1.full);
+  check("a 2nd open goal is refused at a cap of 1 (seatForNewOf null: the server answers ANOTHER_ACTIVE)", GL.seatForNewOf([live], 1) === null && GL.seatForNewOf([row("d", "DRAFT", 1)], 1) === null);
+  check("…and at GOALS_MAX 3 it takes seat 2, and a 3rd seat 3 (ruling N15)", GL.seatForNewOf([live]) === 2 && GL.seatForNewOf([live, row("b", "DRAFT", 2)]) === 3 && GL.seatForNewOf([live, row("b", "DRAFT", 2), row("c", "ACTIVE", 3)]) === null);
   const unseated = row("old", "DRAFT", null);
   check(
-    "ruling 24: a NULL-slot open row (saved by old code) still counts: full at GOALS_MAX 1, and at 3 it takes the lowest seat no other row holds",
-    GL.seatsOf([unseated]).full && GL.seatForNewOf([unseated]) === null && json(GL.seatsOf([unseated], 3).free) === json([2, 3]) && json(GL.seatsOf([row("a", "ACTIVE", 1), unseated], 3).free) === json([3])
+    "ruling 24: a NULL-slot open row (saved by old code) still counts: full at a cap of 1, and at 3 it takes the lowest seat no other row holds",
+    GL.seatsOf([unseated], 1).full && GL.seatForNewOf([unseated], 1) === null && json(GL.seatsOf([unseated], 3).free) === json([2, 3]) && json(GL.seatsOf([row("a", "ACTIVE", 1), unseated], 3).free) === json([3])
   );
   const mixed = [row("n", "DRAFT", null), row("c", "ACTIVE", 3), row("a", "ACTIVE", 1), row("p", "PAUSED", 2), row("x", "ARCHIVED", 2), row("z", "DONE", null)];
   const s3 = GL.seatsOf(mixed, 3);
@@ -127,10 +130,11 @@ console.log("— pause, resume and archive from PAUSED (the seats; §23.4, rulin
     "a paused goal's label still holds its name (ruling 26) and an archived one's does not",
     GL.labelClashOf("Running", afterPause, null) && !GL.labelClashOf("Running", archived, null)
   );
-  // GOALS_MAX 1: pause the one goal and a new one may open; resuming it then is refused (ANOTHER_ACTIVE at 1).
+  // A cap of 1: pause the one goal and a new one may open; resuming it then is refused (ANOTHER_ACTIVE at 1).
   const solo = row("solo", "PAUSED", 1);
-  check("at GOALS_MAX 1, a paused goal frees the seat (seatForNewOf 1) and resumes into it when no other goal is open", GL.seatForNewOf([solo]) === 1 && GL.seatForReopenOf(solo, [solo]) === 1);
-  check("…and with another goal open, resume is refused (ANOTHER_ACTIVE at GOALS_MAX 1)", GL.seatForReopenOf(solo, [solo, row("new", "DRAFT", 1)]) === null);
+  check("at a cap of 1, a paused goal frees the seat (seatForNewOf 1) and resumes into it when no other goal is open", GL.seatForNewOf([solo], 1) === 1 && GL.seatForReopenOf(solo, [solo], 1) === 1);
+  check("…and with another goal open, resume is refused (ANOTHER_ACTIVE at a cap of 1)", GL.seatForReopenOf(solo, [solo, row("new", "DRAFT", 1)], 1) === null);
+  check("…while at GOALS_MAX 3 it resumes into the next free seat (ruling N15)", GL.seatForReopenOf(solo, [solo, row("new", "DRAFT", 1)]) === 2);
   check("undo-discard reopens into the row's old seat; its own row in `rows` never counts against it", GL.seatForReopenOf({ id: "d", slot: 1 }, [row("d", "DRAFT", 1)]) === 1);
   check("a stored slot outside 1..3 reads as none: the reopen takes the lowest free seat", GL.seatForReopenOf({ id: "d", slot: 7 }, [row("a", "ACTIVE", 1)], 3) === 2);
 }
@@ -234,8 +238,8 @@ console.log("— Today: the round robin and the aim line —");
   eq("max is honoured (5 over 2 goals: 3 + 2), and 0 picks nothing", [GL.todayRowsOf([{ slot: 1, rows: rows("a", 9) }, { slot: 2, rows: rows("b", 9) }], 5).picked.length, GL.todayRowsOf([{ slot: 1, rows: rows("a", 9) }], 0).picked.length], [5, 0]);
 
   const c = (roadmapId: string, slot: RT.GoalSlot, kind: GL.AimLineCandidate["kind"], ready = true): GL.AimLineCandidate => ({ roadmapId, slot, kind, ready });
-  eq("GOALS_MAX 1 (the default), no goal open: SET", GL.aimLinePickOf([c("new", 1, "SET")], 0)?.kind, "SET");
-  eq("GOALS_MAX 1, one goal open: SET never shows (today's todayAimLineOf: SET only with no goal open)", GL.aimLinePickOf([c("new", 2, "SET")], 1), null);
+  eq("a cap of 1, no goal open: SET", GL.aimLinePickOf([c("new", 1, "SET")], 0, 1)?.kind, "SET");
+  eq("a cap of 1, one goal open: SET never shows (todayAimLineOf: SET only with no goal open)", GL.aimLinePickOf([c("new", 2, "SET")], 1, 1), null);
   eq(
     "the order: a ready START (lowest seat), then a waiting DRAFT (lowest seat), then SET",
     [
@@ -247,7 +251,7 @@ console.log("— Today: the round robin and the aim line —");
   );
   eq("a candidate that isn't ready never shows", GL.aimLinePickOf([c("s1", 1, "START", false), c("d2", 2, "DRAFT", false)], 2, 3), null);
   eq("at goalsMax 3: SET at 2 open, hidden at 3 open (ruling 53: hidden at GOALS_MAX open)", [GL.aimLinePickOf([c("new", 3, "SET")], 2, 3)?.kind, GL.aimLinePickOf([c("new", 3, "SET")], 3, 3)], ["SET", null]);
-  check("goalsMax defaults to GOALS_MAX, never the fixed 3", json(GL.aimLinePickOf([c("new", 2, "SET")], 1)) === json(GL.aimLinePickOf([c("new", 2, "SET")], 1, RT.GOALS_MAX)) && GL.aimLinePickOf([c("new", 2, "SET")], 1) === null);
+  check("goalsMax defaults to GOALS_MAX (3: SET at 1 open, ruling N15)", json(GL.aimLinePickOf([c("new", 2, "SET")], 1)) === json(GL.aimLinePickOf([c("new", 2, "SET")], 1, RT.GOALS_MAX)) && GL.aimLinePickOf([c("new", 2, "SET")], 1)?.kind === "SET");
 }
 
 // ═══ Labels, links and keys (§23.1, §23.5) ═══════════════════════════════════

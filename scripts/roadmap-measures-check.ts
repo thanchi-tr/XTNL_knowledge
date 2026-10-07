@@ -1410,6 +1410,7 @@ async function main() {
     const seriesStub = (rows: unknown[], stated: { id: string; stated: number | null }[], mints: { dedupeKey: string; day: Date }[]) =>
       ({
         roadmapMilestone: { findMany: async () => rows },
+        roadmap: { count: async () => 1 },
         $queryRaw: async (sql: Prisma.Sql) => (/goalMp/.test(sql.sql) ? stated : [{ measureKey: K6, day: dateColumn("2026-11-04"), value: 15, detail: null, source: "COMPUTED", observedAt: at("2026-11-04") }]),
         activityEvent: {
           findMany: async (args: { where: { dedupeKey: { in: string[] } } }) => {
@@ -1442,13 +1443,13 @@ async function main() {
         ...(seriesStub([{ ...dbMs("o2", "g-o2", "2026-10-20T01:00:00.000Z"), roadmap: { ...roadmapOf, status, slot } }], [{ id: "g-o2", stated: 6 }], []) as unknown as Record<string, unknown>),
         roadmap: { count: async () => (seatCounts++, 2) },
       }) as unknown as RR.RoadmapReadingsClient;
-    const oneSeat = await R.loadRoadmapGoalSeries(UID, ["g-o2"], today, { client: seatStub("ACTIVE", 2) });
-    const manySeats = await R.loadRoadmapGoalSeries(UID, ["g-o2"], today, { client: seatStub("ACTIVE", 2), goalsMax: 3 });
+    const oneSeat = await R.loadRoadmapGoalSeries(UID, ["g-o2"], today, { client: seatStub("ACTIVE", 2), goalsMax: 1 });
+    const manySeats = await R.loadRoadmapGoalSeries(UID, ["g-o2"], today, { client: seatStub("ACTIVE", 2) });
     const pausedSeat = await R.loadRoadmapGoalSeries(UID, ["g-o2"], today, { client: seatStub("PAUSED", 2), goalsMax: 3 });
     eq(
-      "goals: the goal series reads no seat while GOALS_MAX is 1 (the entry exactly as before); once GOALS_MAX > 1, its seat and the open goals' count; a paused goal shows no seat (ruling 55)",
+      "goals: at a cap of 1 the goal series reads no seat (the entry exactly as before); at GOALS_MAX 3 (ruling N15, the default) its seat and the open goals' count; a paused goal shows no seat (ruling 55)",
       ["seat" in (oneSeat["g-o2"] ?? {}), manySeats["g-o2"]?.seat, pausedSeat["g-o2"]?.seat, seatCounts, RT.GOALS_MAX],
-      [false, { slot: 2, open: 2 }, { slot: null, open: 2 }, 2, 1]
+      [false, { slot: 2, open: 2 }, { slot: null, open: 2 }, 2, 3]
     );
   }
 

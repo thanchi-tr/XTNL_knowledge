@@ -47,6 +47,8 @@ import { AIM_MAX, GOALS_MAX, GOAL_SLOTS_MAX, isMissingRev4Column, isMissingRoadm
 
 /** The intake form ('Set an aim'), and the roadmap page an open DRAFT or ACTIVE plan lives on. Fixed paths: nothing typed ever reaches a URL. */
 export const AIM_FORM_HREF = "/you/roadmap/new";
+/** A new goal beside the open ones (ruling N15): its own createKey, never over another goal's draft. */
+export const AIM_NEW_GOAL_HREF = "/you/roadmap/new?new=1";
 export const AIM_ROADMAP_HREF = "/you/roadmap";
 
 // ── The open goals (CaptureVocabulary.aim) ──────────────────────────────────
@@ -119,10 +121,11 @@ export function isCaptureAim(v: unknown): v is CaptureAim {
  * 5), FULL (every seat taken under a cap above one; GOALS_MAX is 1 until
  * lane 4 lifts it to GOAL_SLOTS_MAX).
  */
-type AimState = "NONE" | "DRAFT" | "ACTIVE" | "FULL";
+type AimState = "NONE" | "NEW" | "DRAFT" | "ACTIVE" | "FULL";
 function aimStateOf(aim: CaptureAim | undefined | null, goalsMax: number | undefined): AimState {
   if (!isCaptureAim(aim)) return "NONE";
-  if (capOf(goalsMax) > 1) return aim.seatsFree > 0 ? "NONE" : "FULL";
+  // Several seats: a free one takes the aim as a new goal (beside any open one: NEW), else every seat is taken.
+  if (capOf(goalsMax) > 1) return aim.seatsFree > 0 ? (aim.open > 0 ? "NEW" : "NONE") : "FULL";
   if (aim.open > aim.drafts) return "ACTIVE";
   return aim.drafts > 0 ? "DRAFT" : "NONE";
 }
@@ -208,7 +211,7 @@ export function aimCaptureOf(text: string, reverted: readonly CaptureSpan[] = []
 export interface AimAction {
   /** The primary button's words: never empty, never disabled. */
   label: string;
-  href: typeof AIM_FORM_HREF | typeof AIM_ROADMAP_HREF;
+  href: typeof AIM_FORM_HREF | typeof AIM_NEW_GOAL_HREF | typeof AIM_ROADMAP_HREF;
   /** Whether the aim is handed over (sessionStorage) on the way: not to an ACTIVE roadmap with one seat, which can't take a new aim (with every seat of several taken, the GoalsFullCard holds it). */
   handoff: boolean;
   /** The footer's line in place of the save hints: desktop, then phone. */
@@ -222,6 +225,8 @@ export const AIM_OPEN_ROADMAP = "Open your roadmap";
 
 const AIM_ACTIONS: Record<AimState, AimAction> = {
   NONE: { label: AIM_OPEN_FORM, href: AIM_FORM_HREF, handoff: true, keyHint: "Enter opens the aim form · Esc closes", touchHint: "Enter opens the aim form" },
+  // A seat free beside open goals (ruling N15): the form for a new goal, so the aim never lands on another goal's draft.
+  NEW: { label: AIM_OPEN_FORM, href: AIM_NEW_GOAL_HREF, handoff: true, keyHint: "Enter opens the aim form · Esc closes", touchHint: "Enter opens the aim form" },
   // Every seat taken (GOALS_MAX above 1): the form's page shows the GoalsFullCard, which holds the aim until a seat frees (roadmap-handoff holdAimHandoff).
   FULL: { label: AIM_OPEN_FORM, href: AIM_FORM_HREF, handoff: true, keyHint: "Enter opens the aim form · Esc closes", touchHint: "Enter opens the aim form" },
   DRAFT: { label: AIM_OPEN_DRAFT, href: AIM_ROADMAP_HREF, handoff: true, keyHint: "Enter opens your draft · Esc closes", touchHint: "Enter opens your draft" },

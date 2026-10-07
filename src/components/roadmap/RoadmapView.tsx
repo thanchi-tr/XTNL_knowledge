@@ -134,6 +134,7 @@ import {
   topRankDepthLine,
 } from "./roadmap-copy";
 import { ROADMAP_NEW_HREF, TODAY_HREF, todayTaskHref } from "./roadmap-links";
+import { GoalSwitcher } from "./GoalSwitcher";
 import {
   activityAsksOf,
   aftercareMilestoneIdOf,
@@ -1595,6 +1596,7 @@ export function RoadmapScreen({
   else screen = <LivingRoadmap view={view} startPreview={startPreview} gates={gates} />;
   return (
     <>
+      <GoalSwitcher goals={view.goals} />
       {writesOffNote}
       {screen}
     </>

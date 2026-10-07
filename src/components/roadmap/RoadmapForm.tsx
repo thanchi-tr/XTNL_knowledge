@@ -103,6 +103,7 @@ import {
   AIM_DEPTHS,
   AIM_MAX,
   CONSTRAINTS_MAX,
+  GOALS_FULL,
   COVER_MAX,
   COVER_MIN,
   DEFAULT_FIELD_TRACK,
@@ -152,6 +153,7 @@ import { aimDomainDefaultsOf, coverageOf, lineDomainDefaultOf } from "@/lib/road
 import { VAGUE_AIM_IDLE_MS, vagueAimHint } from "@/lib/roadmap-invite";
 import { takeAimHandoff, type StoredAimHandoff } from "@/lib/roadmap-handoff";
 import { clearSheetDraftIf } from "@/lib/idea-handoff";
+import { goalHrefOf } from "@/lib/roadmap-goals";
 import {
   ACTIVITY_NOT_SAVED_LINE,
   AIM_CALL_PLACEHOLDER,
@@ -1157,8 +1159,11 @@ export function RoadmapForm({
   view,
   gates,
   pick,
+  target = null,
 }: {
   view: IntakeView;
+  /** Ruling N15: a new goal's own createKey (/you/roadmap/new?new=1), so the save never edits another goal's draft. */
+  target?: { createKey: string } | null;
   /** Fixtures only: draw a lead-only state. */ gates?: LiveGates;
   /** Fixtures only: the aim as typed, then this Field picked (pickField's own draft), with no open DRAFT. */ pick?: { aim: string; fieldId: string };
 }) {
@@ -1400,7 +1405,8 @@ export function RoadmapForm({
     const intake: Intake = topicsPath ? { ...formIntake, planKind: "TOPICS", topicDepth: formIntake.depth ?? 6, depth: null } : formIntake;
     setBusy(path);
     try {
-      const saved = await runtime.actions.saveIntake(intake);
+      // The draft this form edits, by its id; a new goal by its createKey; neither: the open draft (as before).
+      const saved = await runtime.actions.saveIntake(intake, view.draft ? { roadmapId: view.draft.roadmapId } : target);
       if (!saved.ok) {
         setError(saved.error);
         return;
@@ -1421,7 +1427,7 @@ export function RoadmapForm({
       }
       if (storage) writeStored(null);
       dirty.current = false;
-      runtime.push(ROADMAP_HREF);
+      runtime.push(goalHrefOf(ROADMAP_HREF, id));
       runtime.refresh();
     } catch {
       setError("That didn't go through. Check your connection and try again; your form is kept.");
@@ -1496,8 +1502,22 @@ export function RoadmapForm({
   // Gemini's lane lists only what the run will ask (geminiAsksOf), in the draft header's order: Domains, order, picks (D25).
   const laneItems = asks ? [...(asks.needs ? [GEMINI_LANE_ITEM.needs] : []), ...(asks.lines > 0 ? [GEMINI_LANE_ITEM.order] : []), ...(asks.picks ? [GEMINI_LANE_ITEM.picks] : [])] : [];
 
+  // Ruling N15: every seat taken (GOALS_MAX open goals) and no draft to edit: a new goal can't save, so say so first.
+  const seatsFull = !view.draft && view.goalsMax != null && (view.seats ?? []).filter((x) => x.roadmapId).length >= view.goalsMax;
+
   return (
     <div className="rm-narrow" data-fx="none" data-wc-block="intake">
+      {seatsFull && (
+        <section className="card rm-note" style={{ marginBottom: 14 }} role="status">
+          <RoadmapGlyph name="info" />
+          <span style={{ flex: 1 }}>
+            {GOALS_FULL}{" "}
+            <Link className="rm-ilink" href={ROADMAP_HREF}>
+              Open your goals
+            </Link>
+          </span>
+        </section>
+      )}
       {view.draft && (
         <section className="card rm-note" style={{ marginBottom: 14 }} data-wc-fold="">
           <RoadmapGlyph name="info" />

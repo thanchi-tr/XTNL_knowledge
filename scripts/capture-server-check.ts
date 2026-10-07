@@ -70,6 +70,7 @@ import {
   AIM_CHIP_FULL,
   AIM_CHIP_SET,
   AIM_FORM_HREF,
+  AIM_NEW_GOAL_HREF,
   AIM_LONG_GOAL_NOTE,
   AIM_OPEN_DRAFT,
   AIM_OPEN_FORM,
@@ -1074,7 +1075,7 @@ async function aimCaptureChecks(): Promise<void> {
   // The open goals: the vocabulary's one read (revision 5, contracts §23.5: {open, seatsFree, drafts}).
   const js = (v: unknown) => JSON.stringify(v);
   const A = (open: number, seatsFree: number, drafts: number): CaptureAim => ({ open, seatsFree, drafts });
-  // With GOALS_MAX 1: no goal open, one open draft, one open ACTIVE goal.
+  // One seat (a cap of 1, passed explicitly: GOALS_MAX is 3, ruling N15): no goal open, one open draft, one open ACTIVE goal.
   const NONE = A(0, 1, 0);
   const DRAFT1 = A(1, 0, 1);
   const ACTIVE1 = A(1, 0, 0);
@@ -1083,15 +1084,19 @@ async function aimCaptureChecks(): Promise<void> {
     js([...OPEN_ROADMAP_STATUSES]) === js(["DRAFT", "ACTIVE"]) && js([...OPEN_ROADMAP_STATUSES]) === js(SEAT_STATUSES) && CAPTURE_AIM_READ_MAX === GOAL_SLOTS_MAX + 1 && CAPTURE_AIM_READ_MAX === 4
   );
   check(
-    "vocab aim (GOALS_MAX 1): no open row is no goal open with the one seat free, a DRAFT is one open draft, an ACTIVE one open goal, a DRAFT beside an ACTIVE two open; DONE, ARCHIVED and PAUSED hold no seat",
-    GOALS_MAX === 1 &&
-      js(captureAimOf([])) === js(NONE) &&
-      js(captureAimOf(["DRAFT"])) === js(DRAFT1) &&
-      js(captureAimOf(["ACTIVE"])) === js(ACTIVE1) &&
-      js(captureAimOf(["DRAFT", "ACTIVE"])) === js(A(2, 0, 1)) &&
-      js(captureAimOf(["DONE", "ARCHIVED", "PAUSED"])) === js(NONE) &&
-      js(captureAimOf(["PAUSED", "ACTIVE"])) === js(ACTIVE1),
-    js([captureAimOf([]), captureAimOf(["DRAFT"]), captureAimOf(["ACTIVE"])])
+    "vocab aim (a cap of 1): no open row is no goal open with the one seat free, a DRAFT is one open draft, an ACTIVE one open goal, a DRAFT beside an ACTIVE two open; DONE, ARCHIVED and PAUSED hold no seat",
+    js(captureAimOf([], 1)) === js(NONE) &&
+      js(captureAimOf(["DRAFT"], 1)) === js(DRAFT1) &&
+      js(captureAimOf(["ACTIVE"], 1)) === js(ACTIVE1) &&
+      js(captureAimOf(["DRAFT", "ACTIVE"], 1)) === js(A(2, 0, 1)) &&
+      js(captureAimOf(["DONE", "ARCHIVED", "PAUSED"], 1)) === js(NONE) &&
+      js(captureAimOf(["PAUSED", "ACTIVE"], 1)) === js(ACTIVE1),
+    js([captureAimOf([], 1), captureAimOf(["DRAFT"], 1), captureAimOf(["ACTIVE"], 1)])
+  );
+  check(
+    "vocab aim: GOALS_MAX is 3 (ruling N15), the default cap: no goal open has 3 seats free, one ACTIVE goal leaves 2",
+    GOALS_MAX === 3 && js(captureAimOf([])) === js(A(0, 3, 0)) && js(captureAimOf(["ACTIVE"])) === js(A(1, 2, 0)),
+    js([captureAimOf([]), captureAimOf(["ACTIVE"])])
   );
   check(
     "vocab aim (at lane 4's 3 seats): the free seats count down 3, 2, 1, 0 as goals open, and a paused goal's seat stays free",
@@ -1105,13 +1110,13 @@ async function aimCaptureChecks(): Promise<void> {
     throw err;
   };
   const [aMissing, aRelation, aColumn, aPool, aNone, aDraft, aBad] = await Promise.all([
-    readCaptureAim(throwing(missingTable)),
-    readCaptureAim(throwing(missingRelation)),
-    readCaptureAim(throwing(missingColumn)),
-    readCaptureAim(throwing(pool)),
-    readCaptureAim(async () => []),
-    readCaptureAim(async () => ["DRAFT"]),
-    readCaptureAim(async () => "DRAFT" as unknown as readonly unknown[]),
+    readCaptureAim(throwing(missingTable), 1),
+    readCaptureAim(throwing(missingRelation), 1),
+    readCaptureAim(throwing(missingColumn), 1),
+    readCaptureAim(throwing(pool), 1),
+    readCaptureAim(async () => [], 1),
+    readCaptureAim(async () => ["DRAFT"], 1),
+    readCaptureAim(async () => "DRAFT" as unknown as readonly unknown[], 1),
   ]);
   check("vocab aim: a missing Roadmap table (life_roadmap not applied) is no goal open, every seat free (P2021 and 42P01)", js(aMissing) === js(NONE) && js(aRelation) === js(NONE), `${js(aMissing)} ${js(aRelation)}`);
   check("vocab aim: any other failure is unknown, never a guessed 'no goal open' (a missing column, a pool timeout, a malformed answer)", aColumn === undefined && aPool === undefined && aBad === undefined, `${js(aColumn)} ${js(aPool)} ${js(aBad)}`);
@@ -1182,23 +1187,23 @@ async function aimCaptureChecks(): Promise<void> {
 
   // The button, the chip and the counter.
   const states = [undefined, null, NONE, DRAFT1, ACTIVE1, "junk"] as const;
-  const acts = states.map((s) => aimActionOf(s as Parameters<typeof aimActionOf>[0]));
+  const acts = states.map((s) => aimActionOf(s as Parameters<typeof aimActionOf>[0], 1));
   check(
     "aim button: never empty, and only ever one of the three fixed paths' words",
-    acts.every((a) => typeof a.label === "string" && a.label.trim().length > 0 && [AIM_FORM_HREF, AIM_ROADMAP_HREF].includes(a.href) && a.keyHint.length > 0 && a.touchHint.length > 0),
+    acts.every((a) => typeof a.label === "string" && a.label.trim().length > 0 && [AIM_FORM_HREF, AIM_NEW_GOAL_HREF, AIM_ROADMAP_HREF].includes(a.href) && a.keyHint.length > 0 && a.touchHint.length > 0),
     JSON.stringify(acts.map((a) => a.label))
   );
   check(
-    "aim button: 'Open the aim form' (→ /you/roadmap/new) with no roadmap or unknown, 'Open your draft' (→ /you/roadmap) with a DRAFT, 'Open your roadmap' (→ /you/roadmap) with an ACTIVE one",
+    "aim button (one seat): 'Open the aim form' (→ /you/roadmap/new) with no roadmap or unknown, 'Open your draft' (→ /you/roadmap) with a DRAFT, 'Open your roadmap' (→ /you/roadmap) with an ACTIVE one",
     acts[0].label === AIM_OPEN_FORM && acts[1].label === AIM_OPEN_FORM && acts[2].label === AIM_OPEN_FORM && acts[5].label === AIM_OPEN_FORM && acts[2].href === "/you/roadmap/new" &&
       acts[3].label === AIM_OPEN_DRAFT && acts[3].href === "/you/roadmap" && acts[4].label === AIM_OPEN_ROADMAP && acts[4].href === "/you/roadmap" &&
       AIM_OPEN_FORM === "Open the aim form" && AIM_OPEN_DRAFT === "Open your draft" && AIM_OPEN_ROADMAP === "Open your roadmap"
   );
-  check("aim button: the aim is handed over except to an ACTIVE roadmap (which can't take a new aim)", acts[2].handoff && acts[3].handoff && !acts[4].handoff && acts[0].handoff);
+  check("aim button (one seat): the aim is handed over except to an ACTIVE roadmap (which can't take a new aim)", acts[2].handoff && acts[3].handoff && !acts[4].handoff && acts[0].handoff);
   check("aim button: the footer says what Enter does instead of 'Enter saves'", acts.every((a) => /^Enter opens /.test(a.keyHint) && /^Enter opens /.test(a.touchHint) && !/saves/.test(a.keyHint)));
   check(
-    "aim chip: 'Aim → roadmap form', and 'Aim · one is already set' with an ACTIVE roadmap",
-    AIM_CHIP === "Aim → roadmap form" && AIM_CHIP_SET === "Aim · one is already set" && aimChipLabel(ACTIVE1) === AIM_CHIP_SET && aimChipLabel(DRAFT1) === AIM_CHIP && aimChipLabel(NONE) === AIM_CHIP && aimChipLabel(undefined) === AIM_CHIP
+    "aim chip (one seat): 'Aim → roadmap form', and 'Aim · one is already set' with an ACTIVE roadmap",
+    AIM_CHIP === "Aim → roadmap form" && AIM_CHIP_SET === "Aim · one is already set" && aimChipLabel(ACTIVE1, 1) === AIM_CHIP_SET && aimChipLabel(DRAFT1, 1) === AIM_CHIP && aimChipLabel(NONE, 1) === AIM_CHIP && aimChipLabel(undefined, 1) === AIM_CHIP
   );
   {
     // Revision 5 (contracts §23.5): above one seat an 'aim:' line hands off whenever a seat is free; with every seat taken the
@@ -1206,11 +1211,12 @@ async function aimCaptureChecks(): Promise<void> {
     const free3 = [A(0, 3, 0), A(1, 2, 1), A(1, 2, 0), A(2, 1, 2)];
     const full3 = [A(3, 0, 0), A(3, 0, 3), A(4, 0, 1)];
     check(
-      "goals (3 seats): with a seat free the aim line opens the aim form for a new goal and hands the aim over, an open draft or an ACTIVE goal beside it notwithstanding; the chip stays 'Aim → roadmap form'",
-      free3.every((a) => {
-        const act = aimActionOf(a, 3);
-        return act.label === AIM_OPEN_FORM && act.href === AIM_FORM_HREF && act.handoff && aimChipLabel(a, 3) === AIM_CHIP;
-      })
+      "goals (3 seats): with a seat free the aim line opens the aim form for a new goal and hands the aim over, an open draft or an ACTIVE goal beside it notwithstanding (then ?new=1, so the aim never lands on another goal's draft: ruling N15); the chip stays 'Aim → roadmap form'",
+      AIM_NEW_GOAL_HREF === "/you/roadmap/new?new=1" &&
+        free3.every((a) => {
+          const act = aimActionOf(a, 3);
+          return act.label === AIM_OPEN_FORM && act.href === (a.open > 0 ? AIM_NEW_GOAL_HREF : AIM_FORM_HREF) && act.handoff && aimChipLabel(a, 3) === AIM_CHIP && js(aimActionOf(a)) === js(act);
+        })
     );
     check(
       "goals (3 seats): with every seat taken the chip reads AIM_CHIP_FULL 'Aim · 3 goals open' (in place of 'one is already set') and the line goes to the form's page, the GoalsFullCard, handing the aim over to wait there",
@@ -1221,14 +1227,14 @@ async function aimCaptureChecks(): Promise<void> {
         })
     );
     check(
-      "goals: at GOALS_MAX 1 the full-seats copy never shows; one open goal reads as before (a DRAFT: 'Open your draft' with the handoff; an ACTIVE one: 'Open your roadmap', no handoff, 'one is already set')",
-      [NONE, DRAFT1, ACTIVE1, A(2, 0, 1), undefined].every((a) => aimChipLabel(a) !== AIM_CHIP_FULL && aimChipLabel(a, 1) !== AIM_CHIP_FULL) &&
-        aimActionOf(DRAFT1).label === AIM_OPEN_DRAFT &&
-        aimActionOf(DRAFT1).handoff &&
-        aimActionOf(ACTIVE1).label === AIM_OPEN_ROADMAP &&
-        !aimActionOf(ACTIVE1).handoff &&
-        aimActionOf(A(2, 0, 1)).label === AIM_OPEN_ROADMAP &&
-        aimChipLabel(A(2, 0, 1)) === AIM_CHIP_SET
+      "goals: at a cap of 1 the full-seats copy never shows; one open goal reads as before (a DRAFT: 'Open your draft' with the handoff; an ACTIVE one: 'Open your roadmap', no handoff, 'one is already set')",
+      [NONE, DRAFT1, ACTIVE1, A(2, 0, 1), undefined].every((a) => aimChipLabel(a, 1) !== AIM_CHIP_FULL) &&
+        aimActionOf(DRAFT1, 1).label === AIM_OPEN_DRAFT &&
+        aimActionOf(DRAFT1, 1).handoff &&
+        aimActionOf(ACTIVE1, 1).label === AIM_OPEN_ROADMAP &&
+        !aimActionOf(ACTIVE1, 1).handoff &&
+        aimActionOf(A(2, 0, 1), 1).label === AIM_OPEN_ROADMAP &&
+        aimChipLabel(A(2, 0, 1), 1) === AIM_CHIP_SET
     );
   }
   check("aim counter: 'n / 140' only past the form's 140 (counted as the form counts)", AIM_MAX === 140 && aimCounterOf("x".repeat(140)) === null && aimCounterOf("x".repeat(141)) === "141 / 140" && aimCounterOf("") === null);
