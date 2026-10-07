@@ -608,8 +608,8 @@ console.log("— the live fix: Title Case topic names, stripFiguresOf, RATE v2 �
 
   // (c) RATE v2: the three anchors from probe stage 2's misses, no test aim named, and the version bump.
   check(
-    "RATE v2: the anchors (the stated level counts, routine upkeep is DIFF_1 or DIFF_2, breadth is one layer's topics); TOPIC_PROMPT_VERSION 4 since MAP's names v3 (ruling N5) and MAP's milestones (ruling N8) left RATE's text as it was",
-    RT.TOPIC_PROMPT_VERSION === 4 &&
+    "RATE v2: the anchors (the stated level counts, routine upkeep is DIFF_1 or DIFF_2, breadth is one layer's topics); TOPIC_PROMPT_VERSION 5 since MAP's names v3 (ruling N5), its milestones (ruling N8) and names v5 (ruling N13) left RATE's text as it was",
+    RT.TOPIC_PROMPT_VERSION === 5 &&
       RATE_INSTRUCTION.includes("reach the level the aim states") &&
       RATE_INSTRUCTION.includes("Keeping up a routine or upkeep is DIFF_1 or DIFF_2.") &&
       RATE_INSTRUCTION.includes("not the fields the aim touches") &&
@@ -705,8 +705,8 @@ console.log("— the judged names test: names v3 (N5), N6 withdrawn (agreement n
   // sources, and "leave a deep layer empty rather than pad it" went (every listed layer is a milestone).
   const mapRules = rules.map((r) => (r === rules[0] ? "a textbook chapter, a practitioner's guide, a course syllabus or an exam specification" : r));
   check(
-    "N5: MAP's names v3 (standard syllabus terms inside the aim and its stated level, no organisation or whole field, no coined compound) and DEEPER v3 (fewer names rather than padding), kept by TOPIC_PROMPT_VERSION 4",
-    RT.TOPIC_PROMPT_VERSION === 4 &&
+    "N5: MAP's names v3 (standard syllabus terms inside the aim and its stated level, no organisation or whole field, no coined compound) and DEEPER v3 (fewer names rather than padding), kept by TOPIC_PROMPT_VERSION 5",
+    RT.TOPIC_PROMPT_VERSION === 5 &&
       mapRules.every((r) => MAP_INSTRUCTION_PARTS.names.includes(r)) &&
       MAP_INSTRUCTION_PARTS.names.includes("Stay inside the aim and the level it states: for an exam, only that exam's syllabus") &&
       rules.filter((r) => r !== "never later exams or the wider profession").every((r) => DEEPER_INSTRUCTION.includes(r)) &&
@@ -969,6 +969,22 @@ console.log("— ideas under a topic (N10): a goal topic's Domain takes the idea
       topicDomainForIdea("mortgage structure", [{ domainId: "a", name: "Mortgage" }, { domainId: "b", name: "Mortgage Structure" }])?.domainId ?? null,
     ],
     ["d-offset", "d-mortgage", "d-budget", "d-ef", null, null, "b"]
+  );
+}
+
+// ═══ 11. No per-layer ceiling (contracts §22.20 N13) ═══
+
+console.log("— no per-layer ceiling (N13) —");
+{
+  // Layer 3 of the illustration with 9 chosen topics (it held 3): accept takes it; the goal's bound is TOPICS_MAX.
+  const m = neutralMap();
+  const extra = ["C4", "C5", "C6", "C7", "C8", "C9"].map((k) => topic(k, 3));
+  const wide: RT.TopicMap = { ...m, topics: [...m.topics, ...extra] };
+  const many: RT.TopicMap = { ...m, topics: [...m.topics, ...Array.from({ length: RT.TOPICS_MAX }, (_, i) => topic(`T${100 + i}`, 3))] };
+  eq(
+    "N13: a layer of 9 chosen topics passes accept (no LAYER_OVER; LAYER_TOPICS_MAX unbounded), and only the goal's TOPICS_MAX (60) still refuses",
+    [RT.LAYER_TOPICS_MAX, RT.TOPICS_MAX, acceptRefusalOf(wide, []), acceptRefusalOf(many, [])],
+    [Number.POSITIVE_INFINITY, 60, null, "TOPICS_OVER"]
   );
 }
 

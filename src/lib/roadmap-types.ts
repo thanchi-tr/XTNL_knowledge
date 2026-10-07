@@ -6282,9 +6282,10 @@ export function topicSwitchesOf(raw?: Partial<TopicSwitches>): TopicSwitches {
  * change is a bump. 2: the live fix's RATE calibration anchors. 3: MAP's and DEEPER's names v3 after the judged names
  * test (standard syllabus terms inside the aim, no whole fields or coined compounds, no padding; contracts §22.5,
  * §22.20 ruling N5). 4: MAP plans one milestone a layer (a title, the stage's hurdle and its checkable target) before it
- * names that milestone's study topics, specific to the aim, and fills every layer (ruling N8).
+ * names that milestone's study topics, specific to the aim, and fills every layer (ruling N8). 5: each name is one
+ * concept, ratio, rule, method or calculation a session or two can master, never the chapter it sits in (ruling N13).
  */
-export const TOPIC_PROMPT_VERSION: number = 4;
+export const TOPIC_PROMPT_VERSION: number = 5;
 /** A MAP milestone's hurdle or target, at most this many characters (ruling N8; its title takes MILESTONE_TITLE_MAX); longer is cut at a word with "…". */
 export const MILESTONE_LINE_MAX = 240;
 /** Samples per JSON phase. */
@@ -6441,11 +6442,14 @@ export type LayerChangeKind = "SET" | "FEWER" | "MERGED" | "DEEPER" | "PLAN_FIRS
 /** Roadmap.planKind: LEVELS (every plan today) or TOPICS (a topic map). */
 export type PlanKind = "LEVELS" | "TOPICS";
 export const PLAN_KINDS: readonly PlanKind[] = ["LEVELS", "TOPICS"];
-/** Chosen topics per goal (DEPTH_DOMAINS_MAX 6 stays for LEVELS). */
-export const TOPICS_MAX = 20;
+/** Chosen topics per goal (DEPTH_DOMAINS_MAX 6 stays for LEVELS). 20 until ruling N13 lifted it with the per-layer ceiling. */
+export const TOPICS_MAX = 60;
 export const LAYER_TOPICS_MIN = 1;
-/** = TOPICS_PER_MILESTONE. */
-export const LAYER_TOPICS_MAX = 6;
+/**
+ * No per-layer ceiling (ruling N13: the user's "remove the ceiling of number of topic per layer"; it was 6, =
+ * TOPICS_PER_MILESTONE, which stays 6 for LEVELS). A layer holds every topic you keep; TOPICS_MAX bounds the goal.
+ */
+export const LAYER_TOPICS_MAX: number = Number.POSITIVE_INFINITY;
 /** A base topic's cards at OPEN_LEVEL. */
 export const TOPIC_FLOOR_CARDS = 8;
 /** The level a layer milestone pays at. */
@@ -6603,7 +6607,8 @@ export const TOPIC_NAME_TAKEN = "A Domain with this name exists here. Use my Dom
 export const LAYER_UNKEPT = "Keep every layer first.";
 export const TOPIC_NEEDS_PARENT = "A topic needs a parent: pick one, or remove it.";
 export const LAST_LAYER_EMPTY = "Choose at least one topic in the last layer.";
-export const LAYER_OVER = `A layer holds at most ${LAYER_TOPICS_MAX} topics: move or untick some.`;
+/** Never answered since ruling N13 (no per-layer ceiling); kept for the refusal code's word table. */
+export const LAYER_OVER = "A layer holds too many topics: move or untick some.";
 export const TOPICS_OVER = `Choose at most ${TOPICS_MAX} topics.`;
 /** ratingOverrideOf's and setLayersCore's refusal. */
 export const LAYERS_BOUNDS = `Choose ${LAYERS_MIN} to ${LAYERS_MAX} layers.`;

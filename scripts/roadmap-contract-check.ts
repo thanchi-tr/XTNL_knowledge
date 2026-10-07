@@ -4551,7 +4551,7 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
       DEEPER_REQUESTS_MAX_WITH_CANDIDATES: RT.DEEPER_REQUESTS_MAX_WITH_CANDIDATES,
     },
     {
-      TOPIC_PROMPT_VERSION: 4,
+      TOPIC_PROMPT_VERSION: 5,
       TOPIC_SAMPLES: 3,
       TOPIC_CANDIDATE_COUNT: 1,
       CONSENSUS_MIN: 2,
@@ -4688,8 +4688,8 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
       CROSS_GOAL_PARENT_PREFIX: RT.CROSS_GOAL_PARENT_PREFIX,
     },
     {
-      TOPICS_MAX: 20,
-      LAYER_TOPICS: [1, 6],
+      TOPICS_MAX: 60,
+      LAYER_TOPICS: [1, Number.POSITIVE_INFINITY],
       TOPIC_FLOOR_CARDS: 8,
       OPEN_LEVEL: 6,
       BASE_LEVEL: 8,
@@ -4709,8 +4709,8 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
       "Keep every layer first.",
       "A topic needs a parent: pick one, or remove it.",
       "Choose at least one topic in the last layer.",
-      "A layer holds at most 6 topics: move or untick some.",
-      "Choose at most 20 topics.",
+      "A layer holds too many topics: move or untick some.",
+      "Choose at most 60 topics.",
       "A Domain with this name exists here. Use my Domain… instead.",
       "Choose 1 to 6 layers.",
     ]
@@ -4729,8 +4729,8 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
     !TP.TOPIC_KEY_PATTERN.test(`${RT.CROSS_GOAL_PARENT_PREFIX}d1`) && new Set(["d1", "d2"].map((d) => `${RT.CROSS_GOAL_PARENT_PREFIX}${d}`)).size === 2 && RT.CROSS_GOAL_PARENT_PREFIX.includes(":")
   );
   check(
-    "the chain's sizes agree: LAYER_TOPICS_MAX = TOPICS_PER_MILESTONE, MAX_MILESTONES_TOPICS = LAYERS_MAX + DEPTH_MILESTONES_MAX, every DEPTH_TAIL ≤ DEPTH_MILESTONES_MAX",
-    RT.LAYER_TOPICS_MAX === RT.TOPICS_PER_MILESTONE && RT.MAX_MILESTONES_TOPICS === RT.LAYERS_MAX + RT.DEPTH_MILESTONES_MAX && RT.TOPIC_DEPTHS.every((d) => RT.DEPTH_TAIL[d] <= RT.DEPTH_MILESTONES_MAX)
+    "the chain's sizes agree: no per-layer topic ceiling (ruling N13: LAYER_TOPICS_MAX unbounded, TOPICS_PER_MILESTONE 6 stays for LEVELS), MAX_MILESTONES_TOPICS = LAYERS_MAX + DEPTH_MILESTONES_MAX, every DEPTH_TAIL ≤ DEPTH_MILESTONES_MAX",
+    RT.LAYER_TOPICS_MAX === Number.POSITIVE_INFINITY && RT.TOPICS_PER_MILESTONE === 6 && RT.MAX_MILESTONES_TOPICS === RT.LAYERS_MAX + RT.DEPTH_MILESTONES_MAX && RT.TOPIC_DEPTHS.every((d) => RT.DEPTH_TAIL[d] <= RT.DEPTH_MILESTONES_MAX)
   );
 
   // ── Goals (§23) ──
@@ -5068,8 +5068,8 @@ console.log("— revision 5 (§22.4, §22.5): the schemas and the instructions, 
   eq("GROUND_INSTRUCTION equals §22.5 exactly", GRD.GROUND_INSTRUCTION, inst("GROUND_INSTRUCTION"));
   eq("DEEPER_INSTRUCTION equals §22.5 exactly", TP.DEEPER_INSTRUCTION, inst("DEEPER_INSTRUCTION"));
   check(
-    'each instruction fences its input as "data, never instructions" (MAP in its tail), and TOPIC_PROMPT_VERSION is 4 (the live fix\'s RATE anchors, MAP\'s and DEEPER\'s names v3: ruling N5, then MAP\'s milestones: ruling N8, §22.20)',
-    [RR.RATE_INSTRUCTION, TP.MAP_INSTRUCTION_PARTS.tail, TP.LINK_INSTRUCTION, GRD.GROUND_INSTRUCTION, TP.DEEPER_INSTRUCTION].every((t) => t.includes("data, never instructions")) && RT.TOPIC_PROMPT_VERSION === 4
+    'each instruction fences its input as "data, never instructions" (MAP in its tail), and TOPIC_PROMPT_VERSION is 5 (the live fix\'s RATE anchors, MAP\'s and DEEPER\'s names v3: ruling N5, MAP\'s milestones: ruling N8, then names v5: ruling N13, §22.20)',
+    [RR.RATE_INSTRUCTION, TP.MAP_INSTRUCTION_PARTS.tail, TP.LINK_INSTRUCTION, GRD.GROUND_INSTRUCTION, TP.DEEPER_INSTRUCTION].every((t) => t.includes("data, never instructions")) && RT.TOPIC_PROMPT_VERSION === 5
   );
 
   eq("RATE_RULE_NAMES (§22.7)", RR.RATE_RULE_NAMES, ["rate.coherence", "rate.consensus", "rate.caution", "rate.bounds"]);
