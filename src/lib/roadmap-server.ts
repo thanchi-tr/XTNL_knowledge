@@ -16022,6 +16022,20 @@ async function chainBaseMissingOf(e: Env, b: RoadmapBundle, ref: ChainDraftRef):
   return !!field && intake.domainIds.some((id) => field.domains.some((d) => d.id === id));
 }
 
+/**
+ * What chainDraftOf read when it found no TOPICS draft right after one was written (a diagnosis, no model words): the
+ * row's status, version and kind, its draftPlan's version and kind, and the topic and milestone rows at the version the
+ * writer reported.
+ */
+function draftReadFactsOf(b: RoadmapBundle, wrote: number): string {
+  const raw = b.roadmap.draftPlan;
+  const dp = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Partial<DraftPlan>) : null;
+  const plan = dp ? `draftPlan v${String(dp.version)} ${String(dp.planKind)}` : `draftPlan ${raw === null || raw === undefined ? "none" : typeof raw}`;
+  const topics = (b.topics ?? []).filter((t) => t.version === wrote).length;
+  const rows = b.milestones.filter((m) => m.version === wrote).length;
+  return `${b.roadmap.status} v${b.roadmap.version} ${kindOfRow(b.roadmap)}, ${plan}, wrote v${wrote}: ${topics} topics, ${rows} milestones`;
+}
+
 /** [Break it down] (and [Rate again] with `force`): the chain head, RATE, claimed under the draft cap (ruling 17). */
 async function chainHeadUnpointed(userId: string, roadmapId: string, force: boolean, now: Date, deps: RoadmapDeps): Promise<Result<{ runId: string; status: RunStatus }>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
@@ -16047,8 +16061,9 @@ async function chainHeadUnpointed(userId: string, roadmapId: string, force: bool
     b = await e.store.bundle(userId, roadmapId);
     ref = b ? chainDraftOf(b) : null;
     if (!b || !ref) {
-      console.warn(JSON.stringify({ evt: "roadmap.raced", where: "breakDown: no topic draft after writing it", status: b?.roadmap.status ?? null, version: b?.roadmap.version ?? null }));
-      return fail(racedWith(["no topic draft after writing it"]));
+      const facts = b ? draftReadFactsOf(b, made.value.version) : "no roadmap";
+      console.warn(JSON.stringify({ evt: "roadmap.raced", where: "breakDown: no topic draft after writing it", facts }));
+      return fail(racedWith([`no topic draft after writing it: ${facts}`]));
     }
   }
   if (youngRunningOf(b.runs, now)) return fail(DRAFT_RUNNING);
