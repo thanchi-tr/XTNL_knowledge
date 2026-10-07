@@ -1711,7 +1711,10 @@ export const prismaRoadmapStore: RoadmapStore = {
       await prisma.$transaction(list);
       return "ok";
     } catch (err) {
-      if (isStaleGuard(err)) return "stale";
+      if (isStaleGuard(err)) {
+        await noteStaleGuards(userId, ops);
+        return "stale";
+      }
       if (isDuplicateActivity(err)) return "duplicate";
       throw err;
     }
@@ -2051,11 +2054,42 @@ const writesOff = (deps: RoadmapDeps): boolean => !lifeWritesEnabled(deps.env);
 
 /** Runs a decide-and-apply step up to ATTEMPTS times; 'stale' re-reads. */
 async function withRetry<T>(step: () => Promise<Result<T> | "stale">): Promise<Result<T>> {
+  lastStaleGuards = null;
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     const res = await step();
     if (res !== "stale") return res;
   }
-  return fail(RACED);
+  return fail(racedWith(lastStaleGuards));
+}
+
+/**
+ * The guards the database refused on the last stale write (the production store's apply; a check's fake store leaves
+ * it null). A write that stays stale after every retry names them in its refusal ("… Try again. (NO_RECENT_RUNNING)")
+ * and in one log line, so a refusal that never clears can be read from the page or the server log. Process-level:
+ * the last stale write wins, which is all a single user's tap needs.
+ */
+let lastStaleGuards: string[] | null = null;
+
+/** RACED, with the guards or the step that kept refusing, when known. */
+function racedWith(why: readonly string[] | null): string {
+  return why && why.length > 0 ? `${RACED} (${why.join(", ")})` : RACED;
+}
+
+/** After a stale write: each guard of `ops` read on its own, outside the transaction; the false ones are logged and kept. */
+async function noteStaleGuards(userId: string, ops: readonly StoreOp[]): Promise<void> {
+  const failing: string[] = [];
+  for (const op of ops) {
+    if (op.op !== "guard") continue;
+    try {
+      const rows = await prisma.$queryRaw<{ ok: boolean }[]>`SELECT (${guardCondition(userId, op.guard)}) AS ok`;
+      if (rows[0]?.ok !== true) failing.push(op.guard.g);
+    } catch (err) {
+      failing.push(`${op.guard.g}?`);
+      console.error("roadmap: a stale guard wasn't read:", err instanceof Error ? err.message.slice(0, 200) : err);
+    }
+  }
+  lastStaleGuards = failing.length > 0 ? failing : ["unknown guard"];
+  console.warn(JSON.stringify({ evt: "roadmap.staleGuard", guards: lastStaleGuards }));
 }
 
 // ═══ Row ↔ draft conversions ════════════════════════════════════════════════
@@ -15763,7 +15797,10 @@ async function claimChainSteps(c: ChainCtx, specs: readonly StepSpec[], opts: { 
     const b = await e.store.bundle(userId, roadmapId);
     if (!b) return fail(NO_ROADMAP);
     const ref = chainDraftOf(b);
-    if (!ref || ref.version !== c.ref.version) return fail(RACED);
+    if (!ref || ref.version !== c.ref.version) {
+      console.warn(JSON.stringify({ evt: "roadmap.raced", where: "chain claim: the draft changed", had: c.ref.version, now: ref?.version ?? null }));
+      return fail(racedWith(["the topic draft changed"]));
+    }
     const young = youngRunningOf(b.runs, now);
     if (young) return opts.chain == null ? fail(DRAFT_RUNNING) : ok(chainStepOf(young, false));
     const day = await e.store.runsOfDay(userId, today);
@@ -16009,7 +16046,10 @@ async function chainHeadUnpointed(userId: string, roadmapId: string, force: bool
     if (!made.ok) return fail(made.error);
     b = await e.store.bundle(userId, roadmapId);
     ref = b ? chainDraftOf(b) : null;
-    if (!b || !ref) return fail(RACED);
+    if (!b || !ref) {
+      console.warn(JSON.stringify({ evt: "roadmap.raced", where: "breakDown: no topic draft after writing it", status: b?.roadmap.status ?? null, version: b?.roadmap.version ?? null }));
+      return fail(racedWith(["no topic draft after writing it"]));
+    }
   }
   if (youngRunningOf(b.runs, now)) return fail(DRAFT_RUNNING);
   const c = await chainCtxOf(e, deps, userId, b, ref, sw, now);
