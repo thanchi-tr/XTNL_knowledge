@@ -228,14 +228,13 @@ import { RoadmapGlyph } from "./RoadmapGlyph";
 import { ActivityConfirmCard, activityHealthOf } from "./ActivityConfirm";
 // ── Revision 5, lane 9: a TOPICS draft's map card (only while TOPIC_PLANS_LIVE, or a fixture's lead-only gate) ──
 import { TopicMap } from "./TopicMap";
-import { acceptTopicChoicesOf, topicNamesOn, topicPlansOn } from "./topic-map-model";
+import { acceptTopicChoicesOf, topicGeminiOn, topicNamesOn, topicPlansOn } from "./topic-map-model";
 import { AFTERCARE_ARCHIVE_WORD, AFTERCARE_KEEP_WORD, aftercareGroupLabel, createsDomainsLine, geminiNamesAmongLine, liveMilestoneClosesLine } from "./roadmap-copy";
 // ── Revision 5, fix round: the Gemini chain's wait, its poll and its stop line (ruling 47) ──
 import { useTopicChainPoll } from "./roadmap-runtime";
 import { CHAIN_STOPPED_LINE, CHANGE_DATE_HOURS_WORD, CHECK_AGAIN_WORD, FEWER_LAYERS_WORD, TRY_AGAIN_WORD, WRITE_TOPICS_WORD, chainLeadLine, chainRunningLine, chainStopLine } from "./roadmap-copy";
 import { LAYERS_MIN, type RoadmapActionResult, type TopicChainView } from "@/lib/roadmap-types";
 // ── Revision 5 (fixer B): [Break it down] on a TOPICS draft no chain is on (ruling 58) ──
-import { topicSwitchesOf } from "@/lib/roadmap-types";
 import { BREAK_IT_DOWN_WORD } from "./roadmap-copy";
 import "./roadmap.css";
 
@@ -1641,14 +1640,15 @@ export function TopicChainCard({ view, mode }: { view: RoadmapView; mode: "draft
 
 /**
  * [Break it down] on a TOPICS draft no Gemini chain is on (ruling 58): your [Write the topics] map on a fresh draft, or
- * the [Break into topics] re-plan of an accepted plan. As the intake offers it: a Field's open goal, while the chain's
- * switch is on (a fixture: its lead-only `gemini`) and a key is set.
+ * the [Break into topics] re-plan of an accepted plan. As the intake offers it: a Field's open goal, on the chain's own
+ * gate (ruling N11, topicGeminiOn: the topic switches and a key, never ROADMAP_GEMINI_LIVE; a fixture: its lead-only
+ * `gemini`).
  */
 export function breakDownOfferedOf(view: RoadmapView, gates?: LiveGates): boolean {
   const h = view.header;
   if (!h || !view.draft?.topicMap || view.topicChain || view.writesOff || h.area.kind !== "FIELD") return false;
   if (h.status !== "DRAFT" && h.status !== "ACTIVE") return false;
-  return topicPlansOn(gates) && (gates?.topics === true ? Boolean(gates.gemini) : topicSwitchesOf().rate) && view.hasKey;
+  return topicGeminiOn(view, gates);
 }
 
 /**

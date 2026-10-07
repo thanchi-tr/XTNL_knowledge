@@ -230,8 +230,7 @@ import { IntakeActivities } from "./ActivityConfirm";
 import { geminiAsksOf, intakeActivityOf } from "./roadmap-ui-model";
 import type { LiveGates } from "./GapPanel";
 // ── Revision 5, lane 9: the TOPICS paths ([Write the topics]; [Break it down] only while topicSwitchesOf().rate), behind TOPIC_PLANS_LIVE ──
-import { topicSwitchesOf } from "@/lib/roadmap-types";
-import { topicPlansOn } from "./topic-map-model";
+import { topicGeminiOn, topicPlansOn } from "./topic-map-model";
 import { BREAK_IT_DOWN_WORD, TOPIC_PATHS_LABEL, WRITE_TOPICS_LINE, WRITE_TOPICS_WORD } from "./roadmap-copy";
 import "@/components/library/study.css";
 import "./roadmap.css";
@@ -1208,7 +1207,8 @@ export function RoadmapForm({
   const gapsLive = gates?.gaps ?? ROADMAP_GAPS_LIVE;
   // Revision 5, lane 9 (F-R5-7; ui-motion §15.8): with TOPIC_PLANS_LIVE off the intake renders nothing new.
   const topicsLive = topicPlansOn(gates);
-  const breakDownLive = topicsLive && (gates?.topics === true ? Boolean(gates.gemini) : topicSwitchesOf().rate) && view.hasKey;
+  // Ruling N11: the chain's own gate (the topic switches and a key), never ROADMAP_GEMINI_LIVE.
+  const breakDownLive = topicsLive && topicGeminiOn(view, gates);
 
   // Restore the unsent form after mount (storage exists only in the browser); the server's open DRAFT wins.
   // An aim handed over (the /you card, a long goal, capture, a plan made before depths) fills it, once.

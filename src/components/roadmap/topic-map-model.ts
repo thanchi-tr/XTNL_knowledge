@@ -48,6 +48,15 @@ export interface TopicGates {
 export function topicPlansOn(gates?: TopicGates | null): boolean {
   return gates?.topics ?? TOPIC_PLANS_LIVE;
 }
+/**
+ * Ruling N11: the topic map's Gemini chain is offered ([Break it down], the one-tap [Break into topics]): the server's
+ * own gate (`topicGemini`: the topic switches and a key, never ROADMAP_GEMINI_LIVE). A fixture's lead-only state
+ * (gates.topics) reads its `gemini` and the view's hasKey instead.
+ */
+export function topicGeminiOn(view: { hasKey: boolean; topicGemini?: boolean }, gates?: { topics?: boolean; gemini?: boolean } | null): boolean {
+  if (!topicPlansOn(gates)) return false;
+  return gates?.topics === true ? Boolean(gates.gemini) && view.hasKey : topicSwitchesOf().rate && view.topicGemini === true;
+}
 export function topicNamesOn(gates?: TopicGates | null): boolean {
   return gates?.topicNames ?? topicSwitchesOf().names;
 }

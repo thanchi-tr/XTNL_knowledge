@@ -4489,6 +4489,12 @@ export interface IntakeFieldOption {
 export interface IntakeView {
   today: DayKey;
   hasKey: boolean;
+  /**
+   * Ruling N11: the topic map's Gemini chain ([Break it down], [Rate again], Go deeper) is offered: the topic switches
+   * on (topicSwitchesOf().rate) and a key set. Independent of ROADMAP_GEMINI_LIVE (LEVELS drafting, kept off) and of
+   * `hasKey`, which reads that switch. Absent (fixtures made before it): off.
+   */
+  topicGemini?: boolean;
   keyTier: GeminiKeyTier;
   writesOff: boolean;
   /** The open DRAFT the page edits ("Continuing your draft from 3 Oct · Discard it"). */
@@ -5096,6 +5102,12 @@ export interface RoadmapView {
   state: RoadmapViewState;
   today: DayKey;
   hasKey: boolean;
+  /**
+   * Ruling N11: the topic map's Gemini chain ([Break it down], [Rate again], Go deeper) is offered: the topic switches
+   * on (topicSwitchesOf().rate) and a key set. Independent of ROADMAP_GEMINI_LIVE (LEVELS drafting, kept off) and of
+   * `hasKey`, which reads that switch. Absent (fixtures made before it): off.
+   */
+  topicGemini?: boolean;
   keyTier: GeminiKeyTier;
   /**
    * This server records nothing (lifeWritesEnabled false). The figures shown

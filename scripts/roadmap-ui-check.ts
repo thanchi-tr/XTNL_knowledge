@@ -6689,6 +6689,27 @@ async function main() {
         !(renders.get("topic-map-write")?.page ?? "").includes("Break it down"),
       JSON.stringify({ fresh: offerB(freshB) !== "", replan: offerB(replanB) !== "" })
     );
+
+    // Ruling N11: in production (no fixture gates) the offer reads the topic chain's own gate, the view's topicGemini (the
+    // topic switches and a key), never hasKey (ROADMAP_GEMINI_LIVE, off): with topicGemini the button shows on a fresh
+    // draft and a re-plan though hasKey is false; without it, none.
+    const { ROADMAP_GEMINI_LIVE: levelsLive } = await import("../src/lib/roadmap-types");
+    const { topicGeminiOn } = await import("../src/components/roadmap/topic-map-model");
+    const prodV: RoadmapView = { ...wfx.view!, hasKey: false, topicGemini: true };
+    const prodFresh = R(createElement(DraftB, { view: prodV }));
+    const prodReplan = R(createElement(DraftB, { view: { ...prodV, header: { ...prodV.header!, status: "ACTIVE" } }, mode: "replan" }));
+    check(
+      "N11 break it down in production: with topicGemini (switches and key) the offer shows on a fresh draft and a re-plan while hasKey (the LEVELS switch, off) is false; without topicGemini, or absent, none; LEVELS drafting's switch stays off",
+      levelsLive === false &&
+        topicGeminiOn(prodV) &&
+        breakDownOfferedOf(prodV) &&
+        offerB(prodFresh) !== "" &&
+        offerB(prodReplan) !== "" &&
+        !breakDownOfferedOf({ ...prodV, topicGemini: false }) &&
+        !breakDownOfferedOf({ ...prodV, topicGemini: undefined }) &&
+        offerB(R(createElement(DraftB, { view: { ...prodV, topicGemini: false } }))) === "",
+      JSON.stringify({ fresh: offerB(prodFresh) !== "", replan: offerB(prodReplan) !== "" })
+    );
   }
   void r0Gate;
 

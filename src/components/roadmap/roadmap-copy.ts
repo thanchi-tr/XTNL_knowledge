@@ -2770,6 +2770,8 @@ export const TRACK_ROUTINE_WORD = "Track the routine as its own goal";
 export const TOPIC_PATHS_LABEL = "How to plan it";
 export const WRITE_TOPICS_LINE = "You write the topics, layer by layer, from broad to deep. No Gemini.";
 export const BREAK_INTO_TOPICS_LINE = "Breaks this plan into a topic map, broad to deep. Your plan stays as it is until you accept the map.";
+/** The same sheet while the topic map's Gemini chain is on (ruling N11): one tap runs Gemini's breakdown. */
+export const BREAK_INTO_TOPICS_GEMINI_LINE = "Gemini breaks this plan into milestones and topics, checked on Google. Your plan stays as it is until you accept the map.";
 /** The outline line's TOPICS form while Gemini names are on (outlineEmptyLine). */
 export const TOPIC_NAMES_MARKED_LINE = "Gemini's names stay marked as Gemini's.";
 

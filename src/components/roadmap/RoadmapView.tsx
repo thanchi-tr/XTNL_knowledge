@@ -198,10 +198,10 @@ import { GapPanel, type LiveGates } from "./GapPanel";
 // ── Revision 5, lane 9: a TOPICS plan's map card and chain nodes, [Break into topics] (only while TOPIC_PLANS_LIVE) ──
 import { NamedText } from "@/components/glyph/NamedMark";
 import { TopicMap } from "./TopicMap";
-import { railNodeTopicFieldsOf, topicPlansOn } from "./topic-map-model";
-import { BREAK_INTO_TOPICS_LINE, BREAK_INTO_TOPICS_WORD, tailToReachLine } from "./roadmap-copy";
+import { railNodeTopicFieldsOf, topicGeminiOn, topicPlansOn } from "./topic-map-model";
+import { BREAK_INTO_TOPICS_GEMINI_LINE, BREAK_INTO_TOPICS_LINE, BREAK_INTO_TOPICS_WORD, tailToReachLine } from "./roadmap-copy";
 import { EstimateChip } from "./EstimateChip";
-import { STAGE_NAMES as TOPIC_STAGE_NAMES, stageOfLevel as topicStageOfLevel, type RatingView } from "@/lib/roadmap-types";
+import { STAGE_NAMES as TOPIC_STAGE_NAMES, stageOfLevel as topicStageOfLevel, type RatingView, type RoadmapActionResult } from "@/lib/roadmap-types";
 import { ActivityConfirmCard } from "./ActivityConfirm";
 import "./roadmap.css";
 
@@ -1303,7 +1303,7 @@ function Aftercare({ view }: { view: RoadmapView }) {
   );
 }
 
-function Footer({ view, current, onReplan, topics = false }: { view: RoadmapView; current: CurrentMilestoneView | null; onReplan: () => void; topics?: boolean }) {
+function Footer({ view, current, onReplan, topics = false, gemini = false }: { view: RoadmapView; current: CurrentMilestoneView | null; onReplan: () => void; topics?: boolean; gemini?: boolean }) {
   const [archive, setArchive] = useState(false);
   const [done, setDone] = useState(false);
   const [breakOpen, setBreakOpen] = useState(false);
@@ -1334,7 +1334,7 @@ function Footer({ view, current, onReplan, topics = false }: { view: RoadmapView
       {topics && header.planKind !== "TOPICS" && !view.draft && (
         <>
           <Button onClick={() => setBreakOpen(true)}>{BREAK_INTO_TOPICS_WORD}</Button>
-          <BreakIntoTopicsSheet open={breakOpen} onClose={() => setBreakOpen(false)} roadmapId={header.id} />
+          <BreakIntoTopicsSheet open={breakOpen} onClose={() => setBreakOpen(false)} roadmapId={header.id} gemini={gemini} />
         </>
       )}
       <Button variant="danger" onClick={() => setArchive(true)}>
@@ -1436,7 +1436,7 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
             <ActivityConfirmCard view={view.activityConfirm} roadmapId={header.id} today={view.today} place="plan" onReplan={() => setReplan(true)} />
           </div>
         )}
-        <Footer view={view} current={current} onReplan={() => setReplan(true)} topics={topicPlansOn(gates)} />
+        <Footer view={view} current={current} onReplan={() => setReplan(true)} topics={topicPlansOn(gates)} gemini={topicGeminiOn(view, gates)} />
       </div>
       <div className="rm-col">
         {view.toward && (
@@ -1603,8 +1603,12 @@ export function RoadmapScreen({
 
 // ── Revision 5, lane 9: [Break into topics] (contracts §22.14 breakIntoTopicsCore; ruling 49) ──
 
-/** A TOPICS re-plan draft of this LEVELS plan (version + 1); the plan stays live until the map is accepted. */
-function BreakIntoTopicsSheet({ open, onClose, roadmapId }: { open: boolean; onClose: () => void; roadmapId: string }) {
+/**
+ * A TOPICS re-plan draft of this LEVELS plan (version + 1); the plan stays live until the map is accepted. With the
+ * topic map's Gemini chain on (ruling N11, `gemini`), one tap is [Break it down] itself: breakDownCore writes the draft
+ * and claims RATE, and the page's chain poll takes it from there; else the app's own map (breakIntoTopicsCore).
+ */
+function BreakIntoTopicsSheet({ open, onClose, roadmapId, gemini = false }: { open: boolean; onClose: () => void; roadmapId: string; gemini?: boolean }) {
   const { run, pending, error } = useRoadmapAction();
   return (
     <Sheet
@@ -1612,13 +1616,13 @@ function BreakIntoTopicsSheet({ open, onClose, roadmapId }: { open: boolean; onC
       onClose={onClose}
       title={BREAK_INTO_TOPICS_WORD}
       footer={
-        <Button variant="primary" block disabled={pending} onClick={() => run((a) => a.breakIntoTopics(roadmapId), () => onClose())}>
+        <Button variant="primary" block disabled={pending} onClick={() => run((a): Promise<RoadmapActionResult<unknown>> => (gemini ? a.breakDown(roadmapId) : a.breakIntoTopics(roadmapId)), () => onClose())}>
           {BREAK_INTO_TOPICS_WORD}
         </Button>
       }
     >
       <p className="t-meta" style={{ margin: 0 }}>
-        {BREAK_INTO_TOPICS_LINE}
+        {gemini ? BREAK_INTO_TOPICS_GEMINI_LINE : BREAK_INTO_TOPICS_LINE}
       </p>
       {error && <ActionError>{error}</ActionError>}
     </Sheet>

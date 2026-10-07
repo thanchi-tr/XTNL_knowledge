@@ -6750,6 +6750,60 @@ async function main() {
     );
   });
 
+  await topicBlock("the topic map's own Gemini gate (ruling N11)", async () => {
+    // The topic chain is offered and claimed on its own gate, the topic switches and a key, never ROADMAP_GEMINI_LIVE
+    // (LEVELS drafting, off): the views' topicGemini, the cores' key check, and [Break into topics] in one tap.
+    const types = await import("../src/lib/roadmap-types");
+    const w = world();
+    const id = await newDraft(w, TOPICS_INTAKE);
+    const levelsOff = { geminiLive: false };
+    const keyed = await S.loadRoadmapView(USER, NOW, depsFor(w, { ...levelsOff, hasKey: true }), id);
+    const keyless = await S.loadRoadmapView(USER, NOW, depsFor(w, { ...levelsOff, hasKey: false }), id);
+    const intakeKeyed = await S.loadIntakeView(USER, NOW, depsFor(w, { ...levelsOff, hasKey: true }));
+    check(
+      "N11 views: with a key and the topic switches on, topicGemini is true while hasKey (ROADMAP_GEMINI_LIVE, off) stays false, on the roadmap view and the intake; with no key it is false",
+      types.ROADMAP_GEMINI_LIVE === false && keyed.topicGemini === true && keyed.hasKey === false && intakeKeyed.topicGemini === true && keyless.topicGemini === false,
+      json({ keyed: [keyed.topicGemini, keyed.hasKey], intake: intakeKeyed.topicGemini, keyless: keyless.topicGemini })
+    );
+
+    let calls = 0;
+    const noKey = topicDepsFor(w, {
+      ...levelsOff,
+      hasKey: false,
+      callModel: async () => {
+        calls += 1;
+        return {};
+      },
+    });
+    const runs0 = w.t.roadmapRun.length;
+    const refused = [await S.breakDownCore(USER, id, NOW, noKey), await S.rateAgainCore(USER, id, NOW, noKey), await S.goDeeperCore(USER, id, "T1", NOW, noKey)].map(errOf);
+    check(
+      "N11 no key: [Break it down], [Rate again] and Go deeper refuse (TOPIC_GEMINI_NO_KEY) before anything is claimed; no Gemini call, no run",
+      refused.every((r) => r === S.TOPIC_GEMINI_NO_KEY) && calls === 0 && w.t.roadmapRun.length === runs0,
+      json({ refused, calls, runs: w.t.roadmapRun.length - runs0 })
+    );
+    const started = await S.breakDownCore(USER, id, NOW, topicDepsFor(w, levelsOff));
+    check(
+      "N11 with a key (a check's callModel) and ROADMAP_GEMINI_LIVE off: [Break it down] claims the chain head (a RATE run)",
+      started.ok && w.t.roadmapRun.some((r) => r.roadmapId === id && (r as { phase?: string | null }).phase === "RATE"),
+      json({ started: errOf(started), runs: w.t.roadmapRun.filter((r) => r.roadmapId === id).map((r) => (r as { phase?: string | null }).phase ?? null) })
+    );
+
+    // One tap on an accepted LEVELS plan: [Break into topics] with the chain on is breakDownCore itself (the re-plan draft
+    // written, then RATE claimed); the LEVELS plan stays live and LEVELS drafting stays refused.
+    const w2 = world();
+    const id2 = await accepted(w2);
+    const one = await S.breakDownCore(USER, id2, NOW, topicDepsFor(w2, levelsOff));
+    const row2 = w2.t.roadmap.find((r) => r.id === id2) as RoadmapRec;
+    const draftTopics = w2.t.roadmapTopic.filter((t) => t.roadmapId === id2 && t.version === row2.version + 1).length;
+    const levels = await S.claimDraftCore(USER, id2, { force: true }, NOW, depsFor(w2, { geminiLive: undefined }));
+    check(
+      "N11 one tap: on an accepted LEVELS plan [Break it down] writes the TOPICS re-plan draft and claims RATE at once; the plan stays ACTIVE LEVELS, and LEVELS drafting still refuses with its switch off",
+      one.ok && row2.status === "ACTIVE" && kindOf(row2) === "LEVELS" && draftTopics > 0 && w2.t.roadmapRun.some((r) => r.roadmapId === id2 && (r as { phase?: string | null }).phase === "RATE") && !levels.ok,
+      json({ one: errOf(one), status: row2.status, kind: kindOf(row2), draftTopics, levels: errOf(levels) })
+    );
+  });
+
   await topicBlock("TOPICS draft and undo", async () => {
     // A LEVELS goal broken into topics (ruling 49): the draft's kind rides Roadmap.draftPlan until accept.
     const w = world();

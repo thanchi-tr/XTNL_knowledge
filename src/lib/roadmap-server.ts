@@ -1227,12 +1227,30 @@ export interface RoadmapDeps extends RoadmapWriteOpts {
    * TOPIC_* constant is false, so every model phase refuses before it reads anything.
    */
   topicSwitches?: Partial<t5.TopicSwitches>;
+  /** Ruling N11: whether a Gemini key is set, as a check sets it; absent: the environment's (gemini.ts hasGeminiKey). */
+  hasKey?: boolean;
 }
 
 /** Gemini drafting is offered only when the switch is on AND a key exists (rev 4 P0). */
 function geminiOffered(): boolean {
   return ROADMAP_GEMINI_LIVE && hasGeminiKey();
 }
+
+/**
+ * Ruling N11: the topic map's Gemini chain is offered on its own gate, the topic switches (topicSwitchesOf().rate) and
+ * a key, never ROADMAP_GEMINI_LIVE (LEVELS drafting, which stays off). The views' `topicGemini`.
+ */
+function topicGeminiOffered(deps: RoadmapDeps = {}): boolean {
+  return topicSwitchesOf(deps.topicSwitches).rate && (deps.hasKey ?? hasGeminiKey());
+}
+
+/** The chain's own key check (ruling N11): a check's injected callModel answers for its key; else the environment's. */
+function topicKeySet(deps: RoadmapDeps): boolean {
+  return deps.hasKey ?? (deps.callModel != null || hasGeminiKey());
+}
+
+/** [Break it down], [Rate again] or Go deeper with no Gemini key: nothing is claimed and no model is called. */
+export const TOPIC_GEMINI_NO_KEY = "Gemini isn't set up on this server, so the breakdown can't run.";
 
 // ═══ Copy the cores answer with (refusals in words) ═════════════════════════
 
@@ -3676,6 +3694,7 @@ export async function loadIntakeView(userId: string, now: Date, deps: RoadmapDep
   return {
     today,
     hasKey: geminiOffered(),
+    topicGemini: topicGeminiOffered(deps),
     keyTier: GEMINI_KEY_TIER,
     writesOff: writesOff(deps),
     draft: draft ? { roadmapId: draft.id, intake: intakeOf(draft), savedDay: dayKeyOf(draft.updatedAt) } : null,
@@ -10250,6 +10269,7 @@ function emptyView(today: DayKey, deps: RoadmapDeps, e: Env): RoadmapView {
     state: "NONE",
     today,
     hasKey: geminiOffered(),
+    topicGemini: topicGeminiOffered(deps),
     keyTier: GEMINI_KEY_TIER,
     writesOff: writesOff(deps),
     goalsLive: e.goalsLive,
@@ -10494,6 +10514,7 @@ function roadmapViewOfData(e: Env, deps: RoadmapDeps, v: ViewData, ctx: PlanCont
     state,
     today,
     hasKey: geminiOffered(),
+    topicGemini: topicGeminiOffered(deps),
     keyTier: GEMINI_KEY_TIER,
     writesOff: writesOff(deps),
     goalsLive: e.goalsLive,
@@ -10560,6 +10581,7 @@ function legacyRoadmapView(
     state,
     today,
     hasKey: geminiOffered(),
+    topicGemini: topicGeminiOffered(deps),
     keyTier: GEMINI_KEY_TIER,
     writesOff: writesOff(deps),
     goalsLive: e.goalsLive,
@@ -15968,6 +15990,8 @@ async function chainHeadUnpointed(userId: string, roadmapId: string, force: bool
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   const sw = topicSwitchesOf(deps.topicSwitches);
   if (!sw.rate) return fail(TOPIC_PLANS_OFF);
+  // Ruling N11: the chain's own gate is the topic switches and a key, never ROADMAP_GEMINI_LIVE; no key, no claim.
+  if (!topicKeySet(deps)) return fail(TOPIC_GEMINI_NO_KEY);
   const e = envOf(deps);
   let b = await e.store.bundle(userId, roadmapId);
   if (!b) return fail(NO_ROADMAP);
@@ -16025,6 +16049,7 @@ async function goDeeperUnpointed(userId: string, roadmapId: string, key: string,
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   const sw = topicSwitchesOf(deps.topicSwitches);
   if (!sw.names) return fail(TOPIC_PLANS_OFF);
+  if (!topicKeySet(deps)) return fail(TOPIC_GEMINI_NO_KEY);
   const e = envOf(deps);
   const b = await e.store.bundle(userId, roadmapId);
   if (!b) return fail(NO_ROADMAP);
