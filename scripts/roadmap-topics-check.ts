@@ -71,6 +71,7 @@ import { moneyValueOf, scaleWordsOf, stripFiguresOf } from "../src/lib/roadmap-e
 import { layeredLadderOf, stageLadderOf, type ChainTopicInput, type StageLadderResult, type TopicChainInput } from "../src/lib/roadmap-realism";
 import { addDays, type DayKey } from "../src/lib/life-day";
 import { topicDomainForIdea } from "../src/lib/topic-idea-routing";
+import { studyFocusOf, type StudyFocusInput } from "../src/lib/roadmap-study";
 
 let passed = 0;
 let failed = 0;
@@ -985,6 +986,53 @@ console.log("— no per-layer ceiling (N13) —");
     "N13: a layer of 9 chosen topics passes accept (no LAYER_OVER; LAYER_TOPICS_MAX unbounded), and only the goal's TOPICS_MAX (60) still refuses",
     [RT.LAYER_TOPICS_MAX, RT.TOPICS_MAX, acceptRefusalOf(wide, []), acceptRefusalOf(many, [])],
     [Number.POSITIVE_INFINITY, 60, null, "TOPICS_OVER"]
+  );
+}
+
+// ═══ 12. The Study page's roadmap focus (contracts §22.20 N14: roadmap-study.ts) ═══
+
+console.log("— the study focus (N14): the open layer, one topic now, the rest folded —");
+{
+  const base: StudyFocusInput = {
+    roadmapId: "rm",
+    goal: "Manage a portfolio",
+    fieldId: "f",
+    fieldName: "Finance",
+    topics: [
+      { key: "T1", layer: 1, name: "Asset Classes", domainId: "a", chosen: true, decision: "KEPT", skipped: false, held: false },
+      { key: "T2", layer: 2, name: "Sharpe Ratio", domainId: "b", chosen: true, decision: "KEPT", skipped: false, held: false },
+      { key: "T3", layer: 2, name: "Correlation Coefficient", domainId: "c", chosen: true, decision: "KEPT", skipped: false, held: false },
+      { key: "T4", layer: 2, name: "Efficient Frontier", domainId: "d", chosen: true, decision: "KEPT", skipped: true, held: false },
+      { key: "T5", layer: 2, name: "Unticked", domainId: "e", chosen: false, decision: "PENDING", skipped: false, held: false },
+    ],
+    milestones: [
+      { layer: 1, title: "Layer 1", status: "STARTED", reached: true },
+      { layer: 2, title: "Layer 2", status: "PLANNED", reached: false },
+      { layer: 3, title: "Layer 3", status: "PLANNED", reached: false },
+    ],
+    geminiMilestones: [{ layer: 2, title: "Construct allocation models", hurdle: "h", target: "t" }],
+    domains: [
+      { id: "a", name: "Asset Classes", level: 7, due: 0, cards: 9 },
+      { id: "b", name: "Sharpe Ratio", level: 6, due: 2, cards: 8 },
+      { id: "c", name: "Correlation Coefficient", level: 3, due: 4, cards: 5 },
+      { id: "d", name: "Efficient Frontier", level: 1, due: 0, cards: 1 },
+      { id: "e", name: "Unticked", level: 0, due: 0, cards: 0 },
+    ],
+  };
+  const f = studyFocusOf(base);
+  eq(
+    "N14 studyFocusOf: the lowest layer not reached is open; its chosen topics only; a topic is done at OPEN_LEVEL or marked known; the first not done is now, the rest folded (to do, then done); Gemini's title for the layer",
+    f && { layer: f.layer, layers: f.layers, title: f.title, gemini: f.geminiTitle, now: f.current?.name, rest: f.rest.map((t) => `${t.name}${t.done ? " ✓" : ""}`), done: f.done, total: f.total, layerDue: f.layerDue },
+    { layer: 2, layers: 3, title: "Construct allocation models", gemini: true, now: "Correlation Coefficient", rest: ["Sharpe Ratio ✓", "Efficient Frontier ✓"], done: 2, total: 3, layerDue: 6 }
+  );
+  eq(
+    "N14: every layer reached gives no focus; a layer whose topics are all done gives current null (it waits for its reach); no Gemini title reads 'Layer k'",
+    [
+      studyFocusOf({ ...base, milestones: base.milestones.map((m) => ({ ...m, reached: true })) }),
+      studyFocusOf({ ...base, domains: base.domains.map((d) => ({ ...d, level: 6 })) })?.current ?? null,
+      studyFocusOf({ ...base, geminiMilestones: [] })?.title,
+    ],
+    [null, null, "Layer 2"]
   );
 }
 

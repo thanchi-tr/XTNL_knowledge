@@ -6644,10 +6644,13 @@ async function main() {
     const failMs: string[] = [];
     const l1 = dmap9.layers[0];
     const ms = { layer: l1.layer, title: "Cash-flow determinism & baseline solvency", hurdle: "Eliminating variance in the household burn rate", target: "Six months of non-discretionary expenses held liquid" };
-    const bandMs = (milestone: typeof ms | null) => R(createElement(LayerBand, { map: dmap9, layer: { ...l1, milestone }, draft: true, trace: { self: null, related: new Set<string>() }, onTrace: () => {}, onMore: () => {} }));
-    const withMs = bandMs(ms);
+    const bandMs = (milestone: typeof ms | null, milestoneOpen?: boolean) => R(createElement(LayerBand, { map: dmap9, layer: { ...l1, milestone }, draft: true, trace: { self: null, related: new Set<string>() }, onTrace: () => {}, onMore: () => {}, milestoneOpen }));
+    const withMs = bandMs(ms, true);
+    // Ruling N14: closed by default, the title and its mark only; the hurdle, target and chip wait behind the tap.
+    const closedMs = bandMs(ms);
+    if (!closedMs.includes(`data-wc="name">${ms.title.replace(/&/g, "&amp;")}</span>`) || !closedMs.includes('aria-expanded="false"') || closedMs.includes(ms.hurdle) || closedMs.includes(ms.target)) failMs.push("closed: the title alone");
     const msBlock = /<div class="rm-tm-ms">[\s\S]*?<\/dl>/.exec(withMs)?.[0] ?? "";
-    if (!msBlock.includes(`<p class="rm-tm-mst" data-wc="name">${ms.title.replace(/&/g, "&amp;")}</p>`)) failMs.push("the title");
+    if (!msBlock.includes(`<span class="rm-tm-mst" data-wc="name">${ms.title.replace(/&/g, "&amp;")}</span>`)) failMs.push("the title");
     if (!msBlock.includes(`<dt>${copy.MILESTONE_HURDLE_WORD}</dt><dd data-wc="name">${ms.hurdle}</dd>`)) failMs.push("the hurdle");
     if (!msBlock.includes(`<dt>${copy.MILESTONE_TARGET_WORD}</dt><dd data-wc="name">${ms.target}</dd>`)) failMs.push("the target");
     const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/'/g, "&#x27;");

@@ -103,7 +103,8 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
   const [hiddenOpen, setHiddenOpen] = useState<ReadonlySet<number>>(new Set());
   const [acceptOpen, setAcceptOpen] = useState(false);
   // [Accept all] over your hours or pace (TopicMapView.needsOver): the footer's own switch, asked here too.
-  const [overKept, setOverKept] = useState(false);
+  // [Accept all] keeps the plan over your hours or pace by default (the user's ask): the switch shows on, and you can turn it off.
+  const [overKept, setOverKept] = useState(true);
   const [aftercare, setAftercare] = useState<"KEEP" | "ARCHIVE" | null>(null);
   const [trackClause, setTrackClause] = useState<number | null>(null);
   const [mergedNote, setMergedNote] = useState<string | null>(null);

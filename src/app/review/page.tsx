@@ -19,7 +19,7 @@ import { geminiNamedOf } from "@/lib/roadmap-types";
 import { LoadoutStrip } from "@/components/skills/LoadoutStrip";
 import { WorkspaceView, type WorkspaceField } from "@/components/workspace/WorkspaceView";
 import type { RecentIdea, ReviewEffects } from "@/components/workspace/ReviewHub";
-import { loadLastSeen, loadReviewDay } from "./review-data";
+import { loadLastSeen, loadReviewDay, loadStudyFocusRows, studyFocusFromRows } from "./review-data";
 
 // Due-ness changes by the second (dueDate <= now) — never let this be
 // statically cached/prerendered.
@@ -50,13 +50,14 @@ export default async function ReviewPage() {
   const userId = getCurrentUserId();
   const today = todayKey(now);
 
-  const [allFields, bosses, day, progression, streak, lastSeen] = await Promise.all([
+  const [allFields, bosses, day, progression, streak, lastSeen, focusRows] = await Promise.all([
     loadFieldTree(),
     loadBossStates(userId),
     loadReviewDay(userId, today),
     loadProgression(userId),
     getDailyStreak(userId),
     loadLastSeen(userId),
+    loadStudyFocusRows(userId),
   ]);
 
   // Day-granular, not instant — see `src/lib/due.ts`. A card due today is
@@ -78,6 +79,7 @@ export default async function ReviewPage() {
             // A MULTI card's payload is only its options; its retrieval question is the prompt. Never the answer.
             prompt: idea.questionType === "MULTI" ? idea.atomicPrompt?.trim() || null : null,
             domainName: domain.name,
+            domainId: domain.id,
             domainGeminiNamed: geminiNamedOf(domain),
             fieldName: field.name,
             lastSeenDay: lastSeen.byIdea[idea.id] ?? null,
@@ -88,6 +90,9 @@ export default async function ReviewPage() {
     .filter((f) => f.cards.length > 0);
 
   const totalDue = fields.reduce((s, f) => s + f.cards.length, 0);
+
+  // Ruling N14: the accepted roadmap's open layer and its one topic now (null without one; never blocks the hub).
+  const focus = studyFocusFromRows(focusRows, allFields, (d) => isDue(d, now));
 
   // The day's first look at the queue fixes the Today quest's target ("clear
   // the 17 that were due this morning"), so cards falling due later cannot
@@ -168,6 +173,7 @@ export default async function ReviewPage() {
       loadoutStrip={loadoutStrip}
       effects={effects}
       recent={recent}
+      focus={focus}
     />
   );
 }

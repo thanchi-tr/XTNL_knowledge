@@ -41,6 +41,8 @@ import { ReviewRunner, type BossRun, type RunPhase } from "./ReviewRunner";
 import { SessionComplete } from "./SessionComplete";
 import { ALL_FIELDS, SessionSummary } from "./SessionSummary";
 import { celebrationRoute, dayKeptOf, questNow, seededOrder, tallyOf, type CardResult, type RunCard } from "./review-model";
+import { RoadmapFocus } from "./RoadmapFocus";
+import type { StudyFocus, StudyTopic } from "@/lib/roadmap-study";
 import "./review.css";
 
 export interface WorkspaceField {
@@ -71,6 +73,8 @@ interface Props {
   /** What changes a review right now: the folded modifiers, boons and penalties. */
   effects: ReviewEffects;
   recent: RecentIdea[];
+  /** The accepted roadmap's open layer and its one topic now (ruling N14); null without one. */
+  focus?: StudyFocus | null;
 }
 
 type Settled = Exclude<BossResolution, { outcome: "rejected" }>;
@@ -117,7 +121,10 @@ function newRun(fields: WorkspaceField[], scope: string, today: DayKey, quest: {
 }
 
 export function WorkspaceView(props: Props) {
-  const { fields, totalDue, bosses, upcoming, scheduledCount, quest, comboCap, today, dayKept, dayStreak, loadoutStrip, effects, recent } = props;
+  const { fields, totalDue, bosses: allBosses, upcoming, scheduledCount, quest, comboCap, today, dayKept, dayStreak, loadoutStrip, effects, recent, focus = null } = props;
+  // Ruling N14: the roadmap's Field leads (its chip selected while it has cards due, its encounter first).
+  const focusField = focus?.fieldName && fields.some((f) => f.name === focus.fieldName && f.cards.length > 0) ? focus.fieldName : null;
+  const bosses = focus?.fieldId ? [...allBosses].sort((a, b) => Number(b.fieldId === focus.fieldId) - Number(a.fieldId === focus.fieldId)) : allBosses;
   const router = useRouter();
   const pathname = usePathname();
   const view = useSearchParams().get("view");
@@ -127,7 +134,7 @@ export function WorkspaceView(props: Props) {
   const resumable = view === "run" && totalDue > 0;
   const [mode, setMode] = useState<Mode>(resumable ? "run" : "hub");
   const [run, setRun] = useState<Run | null>(() => (resumable ? newRun(fields, ALL_FIELDS, today, quest, totalDue) : null));
-  const [selected, setSelected] = useState<string>(ALL_FIELDS);
+  const [selected, setSelected] = useState<string>(focusField ?? ALL_FIELDS);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [boonFor, setBoonFor] = useState<string | null>(null);
   const [bossError, setBossError] = useState<string | null>(null);
@@ -188,6 +195,14 @@ export function WorkspaceView(props: Props) {
     const next = newRun(fields, selected, today, quest, totalDue);
     if (next.queue.length === 0) return;
     enter(next);
+  }
+
+  /** The focus topic's due cards, one tap (ruling N14). */
+  function reviewTopic(topic: StudyTopic) {
+    const base = newRun(fields, ALL_FIELDS, today, quest, totalDue);
+    const cards = fields.flatMap((f) => f.cards).filter((c) => c.domainId === topic.domainId);
+    if (cards.length === 0) return;
+    enter({ ...base, id: `topic:${today}:${topic.domainId}`, queue: seededOrder(cards, `${today}:${topic.domainId}`) });
   }
 
   function challenge(fieldId: string) {
@@ -428,6 +443,7 @@ export function WorkspaceView(props: Props) {
     <div className="page cq-main">
       <div className="rv-hub">
         <div className="rv-col">
+          {focus && <RoadmapFocus focus={focus} onReview={reviewTopic} />}
           <SessionSummary
             quest={quest}
             dueCount={scopeDue}

@@ -15,12 +15,35 @@ import { EffectsCard, RecentIdeas } from "@/components/workspace/ReviewHub";
 import { ReviewRunner, type RunPhase } from "@/components/workspace/ReviewRunner";
 import { SessionComplete } from "@/components/workspace/SessionComplete";
 import { ALL_FIELDS, SessionSummary } from "@/components/workspace/SessionSummary";
+import { RoadmapFocus } from "@/components/workspace/RoadmapFocus";
+import type { StudyFocus } from "@/lib/roadmap-study";
 import { questNow, tallyOf, type CardResult } from "@/components/workspace/review-model";
 import type { ReviewFixtureData } from "./fixtures";
 import { FIXTURE_LABEL, FIXTURE_STATES, type FixtureState } from "./states";
 import "@/components/workspace/review.css";
 
 const TODAY = "2026-10-01";
+
+/** Ruling N14: the hub's roadmap focus, made-up rows (the open layer 2 of 4, one topic now, the rest folded). */
+const FOCUS: StudyFocus = {
+  roadmapId: "rm-fx",
+  goal: "Manage a six-figure multi-asset portfolio",
+  fieldId: "f-fin",
+  fieldName: "Finance",
+  layer: 2,
+  layers: 4,
+  title: "Construct strategic asset allocation and diversification models",
+  geminiTitle: true,
+  current: { key: "T7", name: "Correlation Coefficient", domainId: "d1", level: 3, target: 6, due: 4, cards: 9, done: false },
+  rest: [
+    { key: "T8", name: "Efficient Frontier", domainId: "d2", level: 1, target: 6, due: 0, cards: 2, done: false },
+    { key: "T9", name: "Rebalancing Bands", domainId: "d3", level: 2, target: 6, due: 1, cards: 3, done: false },
+    { key: "T6", name: "Sharpe Ratio", domainId: "d4", level: 6, target: 6, due: 0, cards: 11, done: true },
+  ],
+  done: 1,
+  total: 4,
+  layerDue: 5,
+};
 
 function Nav({ state }: { state: FixtureState }) {
   return (
@@ -77,6 +100,7 @@ export function ReviewFixtures({ state, data, loadoutStrip }: { state: FixtureSt
         <div className="page cq-main">
           <div className="rv-hub">
             <div className="rv-col">
+              {!empty && <RoadmapFocus focus={FOCUS} onReview={() => undefined} />}
               <SessionSummary
                 quest={empty ? { done: 17, target: 15 } : data.questStart}
                 dueCount={empty ? 0 : selected === ALL_FIELDS ? 17 : selected === "Statistics" ? 8 : 5}

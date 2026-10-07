@@ -25,6 +25,8 @@ export interface RunCard {
   /** A MULTI card's retrieval question (Idea.atomicPrompt), when it has one. */
   prompt: string | null;
   domainName: string;
+  /** The card's Domain (roadmap ruling N14: the hub's focus reviews one topic's cards). Absent in fixtures made before it. */
+  domainId?: string;
   /** Revision 5, lane 9 (contracts ruling 67): the Domain carries the Gemini mark (geminiNamedOf); absent or false: none. */
   domainGeminiNamed?: boolean;
   fieldName: string;

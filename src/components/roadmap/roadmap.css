@@ -326,7 +326,8 @@
   .rm-basis li:first-child { border-top: 0; }
   .rm-lag { padding: 8px 0; color: var(--ink-1); margin: 0; }
 
-  /* ---------- the reference disclosure: one at 344, open as a column from 760 ---------- */
+  /* ---------- the reference disclosure: one closed toggle at every width (roadmap ruling N14: the plan page leads with
+     the aim, the milestone now and the map; capacity, realism, drafting and measuring wait behind one tap) ---------- */
   .rm-ref { min-width: 0; display: flex; flex-direction: column; }
   /* The toggle's title keeps its natural width: it never shares a row it would have to shrink in (a flexed title
      next to the meta collapsed to one word a line at 375). Under 600 px of main the meta sits on its own line under
@@ -342,10 +343,6 @@
   .rm-ref-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
   .rm-ref-b { display: flex; flex-direction: column; gap: 16px; padding-top: 16px; }
   .rm-ref:not([data-open]) > .rm-ref-b { display: none; }
-  @container main (min-width: 760px) {
-    .rm-ref-toggle { display: none; }
-    .rm-ref:not([data-open]) > .rm-ref-b, .rm-ref > .rm-ref-b { display: flex; padding-top: 0; }
-  }
   .rm-lever { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
   .rm-lever .t-meta { margin: 0; }
 
@@ -1025,6 +1022,8 @@
   .rm-tm-kept { display: inline-grid; place-items: center; width: 40px; height: 40px; color: var(--ink-0); }
   /* a layer's milestone (ruling N8): Gemini's title, hurdle and target under the header; the words wrap, nothing clips */
   .rm-tm-ms { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 0 0 8px 24px; min-width: 0; }
+  .rm-tm-msb { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0; border: 0; background: none; color: var(--ink-1); font: inherit; text-align: left; cursor: pointer; }
+  .rm-tm-msb[aria-expanded="true"] > svg:last-of-type { transform: rotate(90deg); }
   .rm-tm-mst { margin: 0; font: 600 14px/19px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
   .rm-tm-msl { display: flex; flex-direction: column; gap: 4px; margin: 0; min-width: 0; }
   .rm-tm-msl > div { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; font-size: 13px; line-height: 18px; }

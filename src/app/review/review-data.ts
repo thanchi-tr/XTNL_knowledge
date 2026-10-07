@@ -6,6 +6,7 @@
  *   loadReviewDay(userId, day)   the same, cached under 'activity' (the hub)
  *   readIdeaHistory(userId, id)  one Idea's REVIEW and IDEA_CREATE rows, oldest first (the true facts)
  *   loadLastSeen(userId)         the life day each Idea was last reviewed, cached under 'activity'
+ *   loadStudyFocusRows(userId)   the roadmap focus's rows (ruling N14); studyFocusFromRows assembles it
  *
  * Every one is a single round trip, and the action issues its two inside the
  * same Promise.all as the Idea read, so answering a card still costs one read
@@ -15,6 +16,8 @@ import { prisma } from "@/lib/prisma";
 import { cached } from "@/lib/cache";
 import { dateColumn, dayKeyOf, keyOfDateColumn, type DayKey } from "@/lib/life-day";
 import type { HistoryRow } from "@/lib/review-facts";
+import { studyFocusOf, type StudyFocus } from "@/lib/roadmap-study";
+import type { LayerMilestone } from "@/lib/roadmap-types";
 
 export interface ReviewDay {
   /** REVIEW rows today: the quest's progress (today-board.ts reads the same count). */
@@ -86,5 +89,76 @@ export function loadLastSeen(userId: string): Promise<LastSeen> {
     }
     stamped.sort((a, b) => b.at - a.at);
     return { byIdea, recent: stamped.slice(0, 12).map((s) => s.id) };
+  });
+}
+
+/** The rows the hub's roadmap focus reads (ruling N14), fetched in the page's first wave; null with no accepted TOPICS goal. */
+export interface StudyFocusRows {
+  roadmap: { id: string; aim: string; label: string | null; version: number; fieldId: string | null; rating: unknown };
+  topics: { key: string; layer: number; name: string; domainId: string | null; chosen: boolean; decision: string; skippedDay: Date | null; heldDay: Date | null }[];
+  milestones: { layer: number | null; title: string; status: string; reachedDay: Date | null }[];
+}
+
+/**
+ * The hub's roadmap focus rows: the first open TOPICS goal (lowest seat), its accepted map's topics and its layer
+ * milestones (newest version first). Never throws: a failed read is no focus, never an error on the hub.
+ */
+export async function loadStudyFocusRows(userId: string): Promise<StudyFocusRows | null> {
+  try {
+    const roadmap = await prisma.roadmap.findFirst({
+      where: { userId, status: "ACTIVE", planKind: "TOPICS" },
+      orderBy: [{ slot: "asc" }, { updatedAt: "desc" }],
+      select: { id: true, aim: true, label: true, version: true, fieldId: true, rating: true },
+    });
+    if (!roadmap) return null;
+    const [topics, milestones] = await Promise.all([
+      prisma.roadmapTopic.findMany({
+        where: { roadmapId: roadmap.id, version: roadmap.version },
+        orderBy: [{ layer: "asc" }, { createdAt: "asc" }],
+        select: { key: true, layer: true, name: true, domainId: true, chosen: true, decision: true, skippedDay: true, heldDay: true },
+      }),
+      prisma.roadmapMilestone.findMany({
+        where: { roadmapId: roadmap.id, chainRole: "LAYER", status: { in: ["PLANNED", "STARTING", "STARTED"] } },
+        orderBy: [{ version: "desc" }],
+        select: { layer: true, title: true, status: true, reachedDay: true },
+      }),
+    ]);
+    return { roadmap, topics, milestones };
+  } catch (err) {
+    console.error("review: the roadmap focus wasn't read:", err instanceof Error ? err.message.slice(0, 200) : err);
+    return null;
+  }
+}
+
+/** The focus from its rows and the Field tree the page holds (the Domains' levels and due counts). Pure; never throws. */
+export function studyFocusFromRows(
+  rows: StudyFocusRows | null,
+  fields: readonly { id: string; name: string; domains: readonly { id: string; name: string; level: number; ideas: readonly { dueDate: Date }[] }[] }[],
+  isDue: (d: Date) => boolean
+): StudyFocus | null {
+  if (!rows) return null;
+  const r = rows.roadmap;
+  const field = fields.find((f) => f.id === r.fieldId) ?? null;
+  const domains = fields.flatMap((f) => f.domains.map((d) => ({ id: d.id, name: d.name, level: d.level, cards: d.ideas.length, due: d.ideas.filter((i) => isDue(i.dueDate)).length })));
+  // One row per layer: the newest version's.
+  const seen = new Set<number>();
+  const layerRows = rows.milestones.filter((m): m is typeof m & { layer: number } => {
+    if (m.layer == null || seen.has(m.layer)) return false;
+    seen.add(m.layer);
+    return true;
+  });
+  const rating = r.rating && typeof r.rating === "object" && !Array.isArray(r.rating) ? (r.rating as { milestones?: unknown }) : null;
+  const geminiMilestones = (Array.isArray(rating?.milestones) ? rating.milestones : []).filter(
+    (m): m is LayerMilestone => !!m && typeof m === "object" && typeof (m as LayerMilestone).layer === "number" && typeof (m as LayerMilestone).title === "string"
+  );
+  return studyFocusOf({
+    roadmapId: r.id,
+    goal: r.label?.trim() || r.aim,
+    fieldId: r.fieldId,
+    fieldName: field?.name ?? null,
+    topics: rows.topics.map((t) => ({ key: t.key, layer: t.layer, name: t.name, domainId: t.domainId, chosen: t.chosen, decision: t.decision, skipped: t.skippedDay != null, held: t.heldDay != null })),
+    milestones: layerRows.map((m) => ({ layer: m.layer, title: m.title, status: m.status, reached: m.reachedDay != null })),
+    geminiMilestones,
+    domains,
   });
 }

@@ -23,6 +23,27 @@
   .rv-effect { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-top: 1px solid var(--line-1); }
   .rv-empty { padding: 28px 16px; display: grid; gap: 8px; justify-items: center; text-align: center; }
 
+  /* the roadmap focus (roadmap ruling N14): the open layer and one topic now; the rest folded */
+  .rv-focus { padding: 14px 16px; display: grid; gap: 10px; min-width: 0; }
+  .rv-focus-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .rv-focus-goal { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rv-focus-map { display: inline-grid; place-items: center; width: 40px; height: 40px; margin: -8px -8px -8px 0; color: var(--ink-1); border-radius: 10px; flex: none; }
+  .rv-focus-map:hover { color: var(--ink-0); }
+  .rv-focus-title { margin: 0; font: 600 18px/24px var(--font-display); overflow-wrap: anywhere; }
+  .rv-focus-now { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line-1); border-radius: 12px; min-width: 0; }
+  .rv-focus-row { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .rv-focus-name { flex: 1; min-width: 0; font: 600 16px/22px var(--font-ui); overflow-wrap: anywhere; }
+  .rv-focus-lv { font: 600 14px/20px var(--font-ui); font-variant-numeric: tabular-nums; flex: none; }
+  .rv-focus-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .rv-focus-next { margin-left: auto; }
+  .rv-focus-wait { margin: 0; display: flex; align-items: center; gap: 6px; }
+  .rv-focus-fold { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0; border: 0; background: none; color: var(--ink-1); font: 600 13px/18px var(--font-ui); cursor: pointer; }
+  .rv-focus-fold[aria-expanded="true"] svg { transform: rotate(90deg); }
+  .rv-focus-list { list-style: none; margin: 0; padding: 0; display: grid; }
+  .rv-focus-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; border-top: 1px solid var(--line-1); font-size: 13px; line-height: 18px; }
+  .rv-focus-list li[data-done] .rv-focus-li-name { color: var(--ink-2); }
+  .rv-focus-li-name { min-width: 0; overflow-wrap: anywhere; }
+
   /* encounters */
   .rv-enc { display: flex; gap: 14px; align-items: center; padding: 14px; flex-wrap: wrap; }
   .rv-enc .rv-sig { width: 56px; height: 56px; flex: none; }
