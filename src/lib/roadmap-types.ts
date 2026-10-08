@@ -7066,7 +7066,7 @@ export interface TopicMapView {
    * this set (AcceptTopicChoices.keepAll: the names flat, the links summed), so the sheet and the server never differ.
    * Absent on a plan (and in fixtures made before it: the client then reads the rows).
    */
-  acceptAll?: { layer: number; names: string[]; links: number }[];
+  acceptAll?: { layer: number; names: string[]; links: number; unchecked?: string[] }[];
   /** A draft over your hours or pace (its feasibility's over, or its date check OVER): [Accept all] asks for the keep-over switch. */
   needsOver?: boolean;
   /** Ruling N10: the goal's Area Field (where [Add an idea here] files ideas); null on a practice-only Area. Absent in fixtures made before it. */

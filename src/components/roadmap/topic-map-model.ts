@@ -217,17 +217,28 @@ export function topicsToCreateOf(map: Pick<TopicMapView, "layers">): TopicRowVie
  * never differ (a differing set refuses RACED); a fixture's map without it is read from its rows.
  */
 export function acceptTopicChoicesOf(map: Pick<TopicMapView, "layers" | "acceptAll">, opts: { keepAll: boolean; aftercare: "KEEP" | "ARCHIVE" | null }): AcceptTopicChoices {
-  const create = topicsToCreateOf(map);
-  const geminiNamed = create.filter((r) => isGeminiName(r.cls)).map((r) => r.name);
   const unkept = map.layers.filter((l) => !l.kept);
   const list = acceptAllListOf(map);
-  const keepAll = opts.keepAll && (unkept.length > 0 || list.length > 0) ? { names: list.flatMap((x) => x.names), links: list.reduce((a, x) => a + x.links, 0) } : null;
+  const keepAll = opts.keepAll && (unkept.length > 0 || list.length > 0) ? { names: list.flatMap((x) => [...x.names, ...(x.unchecked ?? [])]), links: list.reduce((a, x) => a + x.links, 0) } : null;
+  // Ruling N17: [Accept all] ticks every name it lists, so the Domains it creates count those too (the server's toCreateOf after keptAllOf).
+  const ticked = keepAll ? acceptAllTickedOf(map, list) : [];
+  const create = [...topicsToCreateOf(map), ...ticked.filter((r) => r.domain == null)];
+  const geminiNamed = create.filter((r) => isGeminiName(r.cls)).map((r) => r.name);
   return { create: create.length, geminiNamed, keepAll, aftercare: opts.aftercare };
 }
 
-/** [Accept all]'s list, layer by layer: the Gemini names and the not-checked links it would keep (the server's own list when the view carries it). */
-export function acceptAllListOf(map: Pick<TopicMapView, "layers" | "acceptAll">): { layer: number; names: string[]; links: number }[] {
-  if (map.acceptAll) return map.acceptAll.map((x) => ({ layer: x.layer, names: [...x.names], links: x.links }));
+/** The rows [Accept all] ticks that aren't ticked yet: the listed Gemini names of each layer (and its not-checked ones). */
+export function acceptAllTickedOf(map: Pick<TopicMapView, "layers">, list: readonly { layer: number; names: string[]; unchecked?: string[] }[]): TopicRowView[] {
+  return list.flatMap((x) => {
+    const named = new Set([...x.names, ...(x.unchecked ?? [])]);
+    const layer = map.layers.find((l) => l.layer === x.layer);
+    return (layer?.topics ?? []).filter((r) => !r.chosen && named.has(r.name) && isGeminiName(r.cls) && r.cls !== "KEPT" && r.cls !== "KEPT_NOT_CHECKED");
+  });
+}
+
+/** [Accept all]'s list, layer by layer: the Gemini names it puts in the plan, a layer's not-checked ones when it shows nothing else, and the not-checked links it keeps (the server's own list when the view carries it). */
+export function acceptAllListOf(map: Pick<TopicMapView, "layers" | "acceptAll">): { layer: number; names: string[]; links: number; unchecked?: string[] }[] {
+  if (map.acceptAll) return map.acceptAll.map((x) => ({ layer: x.layer, names: [...x.names], links: x.links, ...(x.unchecked?.length ? { unchecked: [...x.unchecked] } : {}) }));
   return map.layers
     .filter((l) => !l.kept)
     .map((l) => ({

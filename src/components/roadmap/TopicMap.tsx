@@ -42,6 +42,7 @@ import {
   liveMilestoneClosesLine,
   ACCEPT_ALL_CONFIRM,
   ACCEPT_ALL_LEAD,
+  ACCEPT_ALL_UNCHECKED,
   ACCEPT_ALL_WORD,
   EMPTY_LAYER_WORD,
   KEEP_THESE_KEY,
@@ -388,6 +389,15 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
                   {x.names.map((n) => (
                     <li key={n} data-wc="name">
                       {n}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {(x.unchecked?.length ?? 0) > 0 && (
+                <ul className="rm-basis" data-unchecked="">
+                  {(x.unchecked ?? []).map((n) => (
+                    <li key={n}>
+                      <span data-wc="name">{n}</span> <span className="t-meta">· {ACCEPT_ALL_UNCHECKED}</span>
                     </li>
                   ))}
                 </ul>

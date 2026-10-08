@@ -412,7 +412,7 @@ const HIDE_RANK: Readonly<Partial<Record<TopicHideReason, number>>> = { LANGUAGE
 const strongerHide = (a: TopicHideReason | null, b: TopicHideReason | null): TopicHideReason | null => ((b ? (HIDE_RANK[b] ?? 0) : 0) > (a ? (HIDE_RANK[a] ?? 0) : 0) ? b : a);
 
 /** MAP's hidden list, read from a draft: a GEMINI or AIM topic hidden by agreement (UNSURE_LAYER, NEAR_DUPLICATE) or by a flag (LANGUAGE_UNCHECKED, REGION, VAGUE_FIELD). */
-function hiddenByAgreement(t: TopicDraft): boolean {
+export function hiddenByAgreement(t: TopicDraft): boolean {
   if (t.nameOrigin !== "GEMINI" && t.nameOrigin !== "AIM") return false;
   return (Array.isArray(t.notes) && t.notes.some((n) => HIDE_NOTES.includes(n))) || (Array.isArray(t.flags) && t.flags.some((f) => HIDE_FLAGS.includes(f)));
 }

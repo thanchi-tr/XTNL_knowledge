@@ -2645,7 +2645,9 @@ export function rebreakCostLine(requestsMax: number, left: number): string {
 
 export const ACCEPT_ALL_WORD = "Accept all";
 /** [Accept all]'s confirm: what it would keep, layer by layer (AcceptTopicChoices.keepAll). */
-export const ACCEPT_ALL_LEAD = "Accept all keeps these Gemini names. Keeping never marks them checked.";
+export const ACCEPT_ALL_LEAD = "Accept all puts these Gemini names in your plan. Keeping never marks them checked.";
+/** A layer that showed nothing: its names Google hadn't checked, taken so the milestone isn't empty (ruling N17). */
+export const ACCEPT_ALL_UNCHECKED = "not checked";
 export function acceptAllLinksLine(n: number): string {
   return `It also keeps ${plural(n, "not-checked link")}.`;
 }

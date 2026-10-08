@@ -14294,35 +14294,55 @@ const sameNameSet = (a: readonly string[], b: readonly string[]): boolean => {
 const pendingShownLinkOf = (shown: ReadonlySet<string>) => (x: EdgeDraft): boolean => x.origin === "GEMINI" && x.drawn && x.decision === "PENDING" && shown.has(x.childLineageId);
 
 /**
- * [Accept all]'s list (TopicMapView.acceptAll, the one source the sheet shows and sends): per layer, its shown PENDING
- * Gemini names (chosen or not: keeping one never puts it in the plan) and the drawn Gemini links still PENDING into
- * its shown topics; only the layers holding either. keptAllOf compares exactly this set.
+ * A layer's not-checked Gemini names that [Accept all] takes when the layer shows nothing else (the user's live map,
+ * ruling N17: the last milestone held only names Google hadn't checked, so keeping the shown ones left it empty and
+ * accept refused "Keep every layer first."): PENDING, behind the fold for GROUND's verdict only (never one the
+ * agreement hid: a region, an unchecked language or a whole field).
  */
-function acceptAllListOfMap(settled: TopicMap): { layer: number; names: string[]; links: number }[] {
+function uncheckedForEmptyLayerOf(settled: TopicMap, layer: number): TopicDraft[] {
+  const inLayer = settled.topics.filter((t) => topicLive(t) && t.layer === layer);
+  if (inLayer.some((t) => !topicHidden(t))) return [];
+  return inLayer.filter((t) => t.nameOrigin === "GEMINI" && t.decision === "PENDING" && !t.bound && !topicsLib.hiddenByAgreement(t));
+}
+
+/**
+ * [Accept all]'s list (TopicMapView.acceptAll, the one source the sheet shows and sends): per layer, its shown PENDING
+ * Gemini names and the drawn Gemini links still PENDING into its shown topics, and (a layer showing nothing) its
+ * not-checked names as `unchecked`; only the layers holding any. keptAllOf compares exactly this set. Ruling N17:
+ * accepting all puts every listed name in the plan (kept and ticked), so each layer of the breakdown is a milestone.
+ */
+function acceptAllListOfMap(settled: TopicMap): { layer: number; names: string[]; links: number; unchecked?: string[] }[] {
   const deepest = Math.max(settled.layers, ...settled.topics.filter(topicLive).map((t) => t.layer));
-  const out: { layer: number; names: string[]; links: number }[] = [];
+  const out: { layer: number; names: string[]; links: number; unchecked?: string[] }[] = [];
   for (let layer = 1; layer <= deepest; layer++) {
     const shown = settled.topics.filter((t) => topicLive(t) && t.layer === layer && !topicHidden(t));
     const names = shown.filter((t) => t.decision === "PENDING" && t.nameOrigin === "GEMINI").map((t) => t.name);
     const links = settled.edges.filter(pendingShownLinkOf(new Set(shown.map((t) => t.lineageId)))).length;
-    if (names.length > 0 || links > 0) out.push({ layer, names, links });
+    const unchecked = uncheckedForEmptyLayerOf(settled, layer).map((t) => t.name);
+    if (names.length > 0 || links > 0 || unchecked.length > 0) out.push({ layer, names, links, ...(unchecked.length > 0 ? { unchecked } : {}) });
   }
   return out;
 }
 
-/** [Accept all] (AcceptTopicChoices.keepAll): every unkept layer kept as its list showed it (acceptAllListOfMap: names and links), or null when it no longer reads so. */
+/**
+ * [Accept all] (AcceptTopicChoices.keepAll): every unkept layer kept as its list showed it (acceptAllListOfMap: names,
+ * the not-checked ones of an otherwise empty layer, and links), each listed Gemini name ticked into the plan (ruling
+ * N17), or null when the list no longer reads so (`names` carries the unchecked ones too).
+ */
 function keptAllOf(map: TopicMap, keepAll: { names: string[]; links: number }): TopicMap | null {
   const settled = settledTopicMapOf(map);
   const list = acceptAllListOfMap(settled);
-  const names = list.flatMap((x) => x.names);
+  const names = list.flatMap((x) => [...x.names, ...(x.unchecked ?? [])]);
   const links = list.reduce((n, x) => n + x.links, 0);
   if (!sameNameSet(names, Array.isArray(keepAll.names) ? keepAll.names : []) || keepAll.links !== links) return null;
   const shown = settled.topics.filter((t) => topicLive(t) && !topicHidden(t));
-  const keep = new Set(shown.filter((t) => t.decision === "PENDING").map((t) => t.lineageId));
+  const unchecked = new Set(list.flatMap((x) => uncheckedForEmptyLayerOf(settled, x.layer)).map((t) => t.lineageId));
+  const keep = new Set([...shown.filter((t) => t.decision === "PENDING").map((t) => t.lineageId), ...unchecked]);
+  const tick = (t: TopicDraft): boolean => keep.has(t.lineageId) && t.nameOrigin === "GEMINI";
   const linkKept = pendingShownLinkOf(new Set(shown.map((t) => t.lineageId)));
   return {
     ...settled,
-    topics: settled.topics.map((t) => (keep.has(t.lineageId) ? { ...t, decision: "KEPT" as const } : t)),
+    topics: settled.topics.map((t) => (keep.has(t.lineageId) ? { ...t, decision: "KEPT" as const, ...(tick(t) ? { chosen: true } : {}) } : t)),
     edges: settled.edges.map((x) => (linkKept(x) ? { ...x, decision: "KEPT" as const } : x)),
   };
 }

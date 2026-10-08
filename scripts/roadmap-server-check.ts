@@ -7889,6 +7889,54 @@ async function main() {
     names = fresh;
   });
 
+  // ═══ Ruling N17: [Accept all] on the live map's shape ════════════════════════════════════════════════════════
+  console.log("— ruling N17: Accept all —");
+  await topicBlock("Accept all puts every listed name in the plan (ruling N17)", async () => {
+    const TMM = await import("../src/components/roadmap/topic-map-model");
+    const { LAYER_UNKEPT } = await import("../src/lib/roadmap-types");
+    const w = world();
+    const id = await writtenTopics(w, TOPICS_INTAKE);
+    const deps = topicDepsFor(w);
+    must(await S.setLayersCore(USER, id, { kind: "SET", layers: 5 }, NOW, deps), "five layers");
+    const one = [{ title: "One", uri: "https://example.org/one" }];
+    // The live map's shape: Gemini's names from layer 2 unticked (ruling 43), one Google linked once, and a last layer
+    // that holds only names Google didn't check (behind the fold).
+    geminiTopicRow(w, id, "T30", "Risk Tolerance Profile", { layer: 2, decision: "PENDING", chosen: false });
+    geminiTopicRow(w, id, "T31", "Strategic Asset Allocation", { layer: 2, decision: "PENDING", chosen: false });
+    geminiTopicRow(w, id, "T32", "Loan To Value Ratio", { layer: 3, decision: "PENDING", chosen: false, grounding: "WEAK", sources: one });
+    geminiTopicRow(w, id, "T33", "Liquidity Buffer", { layer: 4, decision: "PENDING", chosen: false });
+    geminiTopicRow(w, id, "T34", "Rebalancing Bands", { layer: 5, decision: "PENDING", chosen: false, grounding: "NONE", sources: [] });
+    geminiTopicRow(w, id, "T35", "Withdrawal Rate", { layer: 5, decision: "PENDING", chosen: false, grounding: "NONE", sources: [] });
+    const view = await S.loadRoadmapView(USER, NOW, deps, id);
+    const tm = view.draft?.topicMap;
+    if (!tm) throw new Error("no topic map");
+    eq(
+      "N17 list: each layer's shown Gemini names, and the last layer's not-checked ones as `unchecked` (it shows nothing else)",
+      tm.acceptAll?.map((x) => [x.layer, [...x.names].sort(), x.unchecked ?? []]),
+      [
+        [2, ["Risk Tolerance Profile", "Strategic Asset Allocation"], []],
+        [3, ["Loan To Value Ratio"], []],
+        [4, ["Liquidity Buffer"], []],
+        [5, [], ["Rebalancing Bands", "Withdrawal Rate"]],
+      ]
+    );
+    const over = !!view.draft?.feasibility?.over || view.draft?.dateCheck?.verdict === "OVER";
+    const plain = await S.acceptCore(USER, id, { overAccepted: over, topicMap: TMM.acceptTopicChoicesOf(tm, { keepAll: false, aftercare: null }) }, NOW, deps);
+    eq("N17: a plain accept on that map still asks you to keep every layer first", plain.ok ? "ok" : plain.error, LAYER_UNKEPT);
+    const choices = TMM.acceptTopicChoicesOf(tm, { keepAll: true, aftercare: null });
+    const res = await S.acceptCore(USER, id, { overAccepted: over, topicMap: choices }, NOW, deps);
+    const row = w.t.roadmap.find((r) => r.id === id) as RoadmapRec;
+    const named = (n: string) => w.t.roadmapTopic.find((t) => t.roadmapId === id && t.name === n && t.version === row.version);
+    const names = ["Risk Tolerance Profile", "Strategic Asset Allocation", "Loan To Value Ratio", "Liquidity Buffer", "Rebalancing Bands", "Withdrawal Rate"];
+    check(
+      "N17: [Accept all] accepts it — every listed name kept and ticked into the plan, the last layer's not-checked ones too (each a Domain made for it), the plan ACTIVE with 5 layers",
+      res.ok && row.status === "ACTIVE" && names.every((n) => named(n)?.chosen === true && named(n)?.decision === "KEPT" && !!named(n)?.domainId) && choices.create === 6,
+      json({ res: res.ok ? res.value : res.error, status: row.status, create: choices.create, rows: names.map((n) => [n, named(n)?.chosen, named(n)?.decision, !!named(n)?.domainId]) })
+    );
+    const layers = Array.from(new Set(rowsOf(w, id, row.version).filter((m) => m.chainRole === "LAYER").map((m) => m.layer))).sort();
+    eq("N17: one layer milestone for each of the 5 layers", layers, [1, 2, 3, 4, 5]);
+  });
+
   // ═══ Revision 5 (live fix): the chain's stops as the page reads them (RoadmapView.topicChain) ═══════════════
   //
   // The recorded replies again (P1, P3 for 4 layers you set, a NONE-only LINK, P5 verbatim for GROUND, or a 429), the
