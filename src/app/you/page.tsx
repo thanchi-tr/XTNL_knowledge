@@ -18,6 +18,9 @@ import { lifeMpCell } from "@/components/home/sheet-math";
 import { AttributeRadar, LifeTracks, MasteryCard, ReadyCallout } from "@/components/home/SheetSections";
 import { AimCard } from "@/components/roadmap/AimCard";
 import { loadSheet } from "./_lib/sheet";
+import { loadMonthDoneCore } from "@/lib/task-style-server";
+import { monthKeyOf } from "@/lib/task-style";
+import { MonthDoneCard } from "@/components/task-style/MonthDoneCard";
 
 export const metadata: Metadata = { title: "Character" };
 
@@ -89,7 +92,10 @@ export default async function YouSheetPage() {
   });
   // One wave: the sheet (cached), the Aim card (cached) and the request's cookies, read on
   // the server so the "Set an aim" card never flashes in and out.
+  // The month's done tasks (the "Done this month" calendar) load beside that wave; a failed read lets the card read it again.
+  const monthRead = loadMonthDoneCore(userId, monthKeyOf(todayKey(now))).catch(() => null);
   const [s, aim, jar] = await Promise.all([loadSheet(userId, now), aimCardOrNull(userId, now), cookies()]);
+  const month = await monthRead;
   questWeekUnfrozen = aim?.questWeekUnfrozen === true;
   // The life day the card's dates are read against, from the same `now` the loaders used: the
   // client component never falls back to its own clock, so the server render and hydration agree
@@ -128,6 +134,7 @@ export default async function YouSheetPage() {
           {s.ready && <ReadyCallout ready={s.ready} balance={s.balance} />}
           {s.lifeNote && <LifeNote />}
           <LifeTracks knowledge={s.knowledge} life={s.life} />
+          <MonthDoneCard today={aimToday} initial={month && month.ok ? month.value : null} />
         </div>
         <div className="you-stack">
           <AttributeRadar radar={s.radar} hasGhost={s.hasGhost} top={s.top} life={{ launched, contributes: s.life.contributions.length > 0 }} />

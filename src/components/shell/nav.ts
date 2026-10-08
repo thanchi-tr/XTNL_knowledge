@@ -67,7 +67,10 @@ export const SECTIONS: readonly Section[] = [
     href: "/train",
     icon: "train",
     prefixes: ["/train"],
-    subs: [{ href: "/train", label: "This week" }],
+    subs: [
+      { href: "/train", label: "This week" },
+      { href: "/train/exercise", label: "Exercise" },
+    ],
   },
   {
     id: "you",

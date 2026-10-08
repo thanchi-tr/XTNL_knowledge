@@ -1,6 +1,7 @@
 "use client";
 
 import "@/components/today/today.css";
+import "@/components/task-style/task-style.css";
 import { useMemo, useRef, useState } from "react";
 import { chime, mark } from "@/lib/celebrate";
 import { Button } from "@/components/ui/Button";

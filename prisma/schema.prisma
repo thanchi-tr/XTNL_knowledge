@@ -942,6 +942,45 @@ model WeightGoal {
   @@schema("public")
 }
 
+// ── Exercise and task style (migration life_exercise_style) ────────────────
+// Additive: two new tables, no existing table altered, no foreign keys. Both
+// are records, never rewards: nothing in the economy reads them.
+// src/lib/exercise-server.ts and src/lib/task-style-server.ts read them fail
+// soft (a missing table reads as nothing logged / no style).
+
+/// One exercise session on Train › Exercise. Only WALK for now.
+model ExerciseSession {
+  id          String   @id @default(cuid())
+  userId      String
+  /// The life day (src/lib/life-day.ts dateColumn).
+  day         DateTime @db.Date
+  /// WALK (src/lib/exercise.ts EXERCISE_KINDS).
+  kind        String   @default("WALK")
+  /// The incline in degrees (0 = flat), as the user set it.
+  angleDeg    Float    @default(0)
+  distanceKm  Float
+  durationMin Float
+  note        String?
+  createdAt   DateTime @default(now())
+
+  @@index([userId, day])
+  @@schema("public")
+}
+
+/// A task's or habit's icon and colour, chosen by the user (src/lib/task-style.ts names them). One row per template.
+model TaskStyle {
+  templateId String   @id
+  userId     String
+  /// A TASK_ICONS name.
+  icon       String?
+  /// A TASK_COLORS name.
+  color      String?
+  updatedAt  DateTime @updatedAt
+
+  @@index([userId])
+  @@schema("public")
+}
+
 // ── Roadmap: an Aim, its drafts, milestones, measures and week quests ─────
 // (migration life_roadmap; docs/life-plan/roadmap.md revision 3, F1)
 //

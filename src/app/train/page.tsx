@@ -43,7 +43,13 @@ export default async function TrainPage() {
           <p className="t-meta" style={{ marginTop: 8 }}>
             Until then, a workout you log as a task on Today still counts for your day and your streak.
           </p>
-          <div style={{ marginTop: 16 }}>
+          <p className="t-meta" style={{ marginTop: 8 }}>
+            Walks you log yourself (incline angle, distance and duration) go on the Exercise tab.
+          </p>
+          <div style={{ marginTop: 16, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Button variant="primary" href="/train/exercise" icon="train">
+              Log a walk
+            </Button>
             <Button variant="secondary" href="/today" icon="today">
               Back to Today
             </Button>

@@ -1257,6 +1257,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
         restToday={board.restToday}
         named={namedOfTitle(namedTitles, row.template.id)}
         namedMark={namedTitles?.mark}
+        taskStyle={current.styles?.[row.template.id] ?? null}
       >
         <TaskDrawer
           row={row}
@@ -1278,6 +1279,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
           onOverride={(n) => work(row.template.id, { kind: "rate", override: n }, () => setBandOverride(row.template.id, n, REFRESH))}
           onResize={() => resize(row)}
           rule={drawerOpen ? drawerRuleOf(row) : null}
+          taskStyle={current.styles?.[row.template.id] ?? null}
         />
       </TaskRow>
     );

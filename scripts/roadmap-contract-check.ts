@@ -645,10 +645,12 @@ console.log("— seams —");
   // Revision 5 adds migration A (lane 2) and B (lane 5) after revision 4; nothing else may sort after life_roadmap.
   const roadmapTail = ["20261101000000_life_roadmap", "20261106000000_life_roadmap_rev4", "20261110000000_life_roadmap_goals", "20261112000000_life_roadmap_topics"];
   const tail = later.slice(later.indexOf("20261101000000_life_roadmap"));
+  // A later migration of another feature (life_exercise_style) may follow them; no roadmap one may come out of order.
+  const roadmapLater = tail.filter((d) => /roadmap/.test(d));
   check(
-    "20261101000000_life_roadmap is followed only by the roadmap's own migrations, in order (rev 4, then revision 5's A and B)",
-    tail.length >= 3 && json(tail) === json(roadmapTail.slice(0, tail.length)),
-    later.slice(-4).join(", ")
+    "20261101000000_life_roadmap is followed by the roadmap's own migrations, in order (rev 4, then revision 5's A and B), and by no other roadmap migration",
+    roadmapLater.length >= 3 && json(roadmapLater) === json(roadmapTail.slice(0, roadmapLater.length)) && json(tail.slice(0, roadmapLater.length)) === json(roadmapLater),
+    later.slice(-5).join(", ")
   );
 }
 
@@ -1001,7 +1003,8 @@ console.log("— _no-model in every check —");
   };
   const offenders: string[] = [];
   for (const f of readdirSync(join(ROOT, "scripts"))) {
-    if (!/\.(ts|mts|mjs)$/.test(f) || f === "_no-model.ts" || f === "roadmap-probe.ts") continue;
+    // The lead-only live probes call the model on purpose (roadmap-probe.ts; ruling N16's roadmap-rebreak-probe.ts).
+    if (!/\.(ts|mts|mjs)$/.test(f) || f === "_no-model.ts" || f === "roadmap-probe.ts" || f === "roadmap-rebreak-probe.ts") continue;
     const src = read(`scripts/${f}`);
     if (!ROADMAP_IMPORT.test(src)) continue;
     if (!firstIsNoModel(src)) offenders.push(f);

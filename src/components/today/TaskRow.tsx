@@ -1,5 +1,7 @@
 "use client";
 
+import type { TaskStyle } from "@/lib/task-style";
+import { TaskIcon } from "@/components/task-style/TaskIcon";
 import { useRef, type ReactNode } from "react";
 import type { BoardRow } from "@/lib/today-board";
 import type { Receipt } from "@/lib/life-types";
@@ -43,6 +45,8 @@ interface Props {
   namedMark?: ReactNode;
   /** The drawer, when open. */
   children?: ReactNode;
+  /** The task's chosen icon and colour (BoardData.styles): drawn before the title when one is set. */
+  taskStyle?: TaskStyle | null;
 }
 
 /**
@@ -87,6 +91,7 @@ export function TaskRow(props: Props) {
         <div className="r-main">
           <button type="button" className="r-open" aria-expanded={drawerOpen} aria-controls={drawerOpen ? drawerId : undefined} onClick={props.onToggleDrawer}>
             <span className="r-title today-row-title" data-pending={props.pendingTitle ? "1" : undefined}>
+              {props.taskStyle && (props.taskStyle.icon || props.taskStyle.color) && <TaskIcon style={props.taskStyle} size={16} className="tsk-row-ico" />}
               {props.pendingTitle ? title : <NamedTitle title={title} named={props.named} mark={props.namedMark} />}
               {props.pendingTitle && <span className="r-saving"> · saving…</span>}
               {props.justAdded && <span className="sr-only">, just added</span>}

@@ -41,9 +41,11 @@ export type CacheTag =
   /** Body weight readings and the weight goal (src/lib/weight-server.ts). */
   | "weight"
   /** The roadmap: Aim, milestones, readings, Proficiency and week quests (src/lib/roadmap-*.ts). */
-  | "roadmap";
+  | "roadmap"
+  /** Exercise sessions (src/lib/exercise-server.ts). */
+  | "exercise";
 
-export const ALL_TAGS: CacheTag[] = ["fields", "ideas", "progress", "life", "activity", "weight", "roadmap"];
+export const ALL_TAGS: CacheTag[] = ["fields", "ideas", "progress", "life", "activity", "weight", "roadmap", "exercise"];
 
 /**
  * Short by design. The cache exists to collapse the several round trips of

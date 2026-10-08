@@ -1,0 +1,82 @@
+@layer theme, base, components, art, effects, utilities;
+/* =====================================================================
+   TASK STYLE — a task's icon and colour, the drawer's month (TaskMonth), the picker (TaskStylePicker) and the
+   profile's month (MonthDoneCard). Namespaced tsk-. Floors: 12 px text, 40 px targets for the month arrows and the
+   picker's options (32 px swatches inside 40 px buttons). Colour is never alone: every icon has its task's name beside
+   it, in its label or in its tooltip.
+   ===================================================================== */
+@layer components {
+  .tsk-ico { flex: none; display: inline-block; vertical-align: middle; }
+
+  /* ---------- the drawer's month ---------- */
+  .tsk-month { display: flex; flex-direction: column; gap: 6px; max-width: 320px; }
+  .tsk-month-h { display: flex; align-items: center; gap: 4px; }
+  .tsk-month-t { flex: 1 1 auto; text-align: center; font: 600 13px/18px var(--font-ui); color: var(--ink-0); }
+  .tsk-nav {
+    flex: none; width: 40px; height: 40px; border-radius: 999px; border: 1px solid var(--line-1); background: none;
+    color: var(--ink-0); font: 600 18px/1 var(--font-ui); cursor: pointer;
+  }
+  .tsk-nav:disabled { opacity: .35; cursor: default; }
+  .tsk-nav:focus-visible, .tsk-opt:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .tsk-cal { width: 100%; border-collapse: separate; border-spacing: 3px; table-layout: fixed; }
+  .tsk-cal th { font: 600 11px/16px var(--font-ui); color: var(--ink-2); text-align: center; }
+  .tsk-cal td { position: relative; height: 34px; border-radius: 8px; text-align: center; vertical-align: middle; background: var(--sunken); }
+  .tsk-cal td:empty { background: none; }
+  .tsk-d { font: 500 12px/16px var(--font-ui); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .tsk-cal td[data-future] .tsk-d { opacity: .5; }
+  .tsk-cal td[data-today] { box-shadow: inset 0 0 0 1.5px var(--ink-1); }
+  .tsk-cal td[data-mark="done"] { background: color-mix(in srgb, var(--tsk-c) 22%, transparent); }
+  .tsk-cal td[data-mark="done"] .tsk-d { position: absolute; top: 1px; left: 4px; font-size: 10px; line-height: 12px; color: var(--ink-1); }
+  .tsk-ck { width: 18px; height: 18px; margin-top: 4px; fill: none; stroke: var(--tsk-c); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  .tsk-cal td[data-mark="missed"]::after {
+    content: ""; position: absolute; left: 50%; bottom: 4px; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%;
+    background: var(--ink-2);
+  }
+  .tsk-err { margin: 0; }
+
+  /* ---------- the picker ---------- */
+  .tsk-pick { display: flex; flex-direction: column; gap: 6px; }
+  .tsk-pick-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .tsk-opt {
+    width: 40px; height: 40px; display: inline-grid; place-items: center; border-radius: 10px;
+    border: 1px solid transparent; background: var(--sunken); cursor: pointer; padding: 0;
+  }
+  .tsk-opt[aria-checked="true"] { border-color: var(--ink-0); background: var(--raised); }
+  .tsk-sw > span { width: 22px; height: 22px; border-radius: 50%; background: var(--tsk-sw); }
+  .tsk-reset { margin-left: 4px; }
+
+  /* ---------- the drawer's section ---------- */
+  .tsk-sec { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line-1); }
+  .tsk-sec-h { margin: 0; }
+  .tsk-sec-grid { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr); gap: 14px; align-items: start; }
+  @media (max-width: 640px) { .tsk-sec-grid { grid-template-columns: minmax(0, 1fr); } }
+
+  /* ---------- the row's icon ---------- */
+  .tsk-row-ico { margin-right: 6px; }
+
+  /* ---------- the profile's month ---------- */
+  .tsk-mdone { display: flex; flex-direction: column; gap: 10px; }
+  .tsk-mdone .tsk-month-h { max-width: none; }
+  .tsk-mcal { width: 100%; border-collapse: separate; border-spacing: 4px; table-layout: fixed; }
+  .tsk-mcal th { font: 600 11px/16px var(--font-ui); color: var(--ink-2); text-align: center; }
+  .tsk-mcal td { height: 64px; padding: 4px; border-radius: 10px; vertical-align: top; background: var(--sunken); }
+  .tsk-mcal td:empty { background: none; }
+  .tsk-mcal td[data-today] { box-shadow: inset 0 0 0 1.5px var(--ink-1); }
+  .tsk-mcal .tsk-d { display: block; text-align: left; }
+  .tsk-icons { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 2px; }
+  .tsk-icons > span { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 5px; cursor: default; }
+  .tsk-icons > span:hover, .tsk-icons > span:focus-visible { background: var(--raised); outline: none; }
+  .tsk-more { font: 600 10px/18px var(--font-ui); color: var(--ink-1); }
+  .tsk-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; padding: 0; list-style: none; }
+  .tsk-legend li { display: inline-flex; align-items: center; gap: 6px; font: 500 12px/18px var(--font-ui); color: var(--ink-1); }
+  .tsk-tip {
+    position: fixed; z-index: 60; pointer-events: none; max-width: 240px; padding: 6px 10px; border-radius: 8px;
+    background: var(--raised); color: var(--ink-0); font: 500 12px/16px var(--font-ui); box-shadow: 0 6px 18px rgb(0 0 0 / .35);
+  }
+  @media (max-width: 480px) {
+    .tsk-mcal { border-spacing: 2px; }
+    .tsk-mcal td { height: 54px; padding: 2px; }
+    .tsk-icons > span { width: 14px; height: 14px; }
+    .tsk-icons svg { width: 12px; height: 12px; }
+  }
+}

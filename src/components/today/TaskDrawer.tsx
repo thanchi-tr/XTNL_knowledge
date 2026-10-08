@@ -12,6 +12,9 @@ import { BAND_BLURB, BAND_LABEL, fmtMinutes, fmtXp } from "./format";
 import { pendingLineOf, ratingGate, tomorrowOffer } from "./board-ui";
 import type { PendingNext } from "@/lib/duty-rule";
 import { dayLabel } from "@/lib/duty-view";
+import type { TaskStyle } from "@/lib/task-style";
+import { TaskMonth } from "@/components/task-style/TaskMonth";
+import { TaskStylePicker } from "@/components/task-style/TaskStylePicker";
 
 /** A slower write this drawer started and is waiting on. */
 export type DrawerWork = { kind: "resize" } | { kind: "rate"; override: number } | { kind: "rename"; title: string };
@@ -43,6 +46,10 @@ interface Props {
   onResize: () => void;
   /** M2 (F3): a must's rule pills and its pending change; null before Duty has a launch day (the pre-M2 drawer). */
   rule?: DrawerRule | null;
+  /** The task's icon and colour (BoardData.styles); the month calendar and the picker show with it. */
+  taskStyle?: TaskStyle | null;
+  /** Fixtures and checks: no month read, no picker (they would call the server). */
+  noMonth?: boolean;
 }
 
 /** M2 (F3): what the drawer offers a must. A weakening is deferred seven days once Duty is live; a strengthening is immediate. */
@@ -246,6 +253,15 @@ export function TaskDrawer(props: Props) {
             Save
           </button>
         </form>
+      )}
+
+      {!props.noMonth && (
+        <section className="tsk-sec" aria-label="Month and look">
+          <div className="tsk-sec-grid">
+            <TaskMonth templateId={t.id} title={t.title} today={props.today} style={props.taskStyle} />
+            <TaskStylePicker key={t.id} templateId={t.id} style={props.taskStyle} />
+          </div>
+        </section>
       )}
 
       <div className="today-size">

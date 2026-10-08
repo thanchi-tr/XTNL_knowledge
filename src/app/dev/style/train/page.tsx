@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import "@/components/train/train.css";
+import "@/components/task-style/task-style.css";
 import { devStyleEnabled } from "../gate";
 import { TrainFixtures } from "./TrainFixtures";
 

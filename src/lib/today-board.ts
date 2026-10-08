@@ -14,6 +14,7 @@
  * rows into decisions. Nothing here throws on odd data: a template with an
  * unparseable rule falls back to a one-off, a missing stat to zero.
  */
+import type { TaskStyle } from "./task-style";
 import { addDays, daysBetween, dayKeyOf, weekdayOf, LIFE_TZ, DAY_START_HOUR, type DayKey } from "./life-day";
 import type {
   ActivityInput,
@@ -261,6 +262,8 @@ export interface PaidRecord {
 
 /** Everything the board is built from, as the server reads it in one wave. Serialisable. */
 export interface BoardData {
+  /** Each template's chosen icon and colour (task-style-server loadTaskStyles); absent or missing: the defaults. */
+  styles?: Record<string, TaskStyle>;
   today: DayKey;
   yesterday: DayKey;
   capacityMin: number;

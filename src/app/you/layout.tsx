@@ -3,6 +3,7 @@ import { YouTabs } from "@/components/home/YouTabs";
 import { YouTabsSlot } from "@/components/home/YouTabsSlot";
 import "@/components/home/you.css";
 import "@/components/skills/skills.css";
+import "@/components/task-style/task-style.css";
 
 /**
  * You (final-you.html): Sheet, Loadout, Moments and Stats. The compact tab

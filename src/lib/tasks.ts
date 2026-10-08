@@ -75,6 +75,7 @@ import {
 import { DUTY_READ_AHEAD_DAYS, DUTY_READ_BACK_DAYS, type DutyBoard, type SettledFact } from "./duty-view";
 import { isMissingRestDayTable } from "./rest-rules";
 import { loadRoadmapGoalSeries } from "./roadmap-readings";
+import { loadTaskStyles } from "./task-style-server";
 import { isMissingRoadmapTable, isRoadmapCaptureKey, isSupersededRow, type PositionRow } from "./roadmap-types";
 import {
   EpochSet,
@@ -783,11 +784,12 @@ function loadDueNow(day: DayKey, now: Date): Promise<number> {
  */
 export async function loadTodayBoard(userId: string, day: DayKey, now: Date = new Date()): Promise<BoardData> {
   return cached(`today:${userId}:${day}`, ["life", "activity", "ideas", "roadmap"], async () => {
-    const [read, dueNow] = await Promise.all([loadBoardCore(userId, day, now), loadDueNow(day, now)]);
+    // Each task's icon and colour (fails soft: none before the life_exercise_style migration).
+    const [read, dueNow, styles] = await Promise.all([loadBoardCore(userId, day, now), loadDueNow(day, now), loadTaskStyles(userId)]);
     // M2: BoardData.duty (duty-view.ts DutyBoard), read in the same wave.
     // Roadmap (F16 seam 3): BoardData.roadmapGoals, the stored series of the open ROADMAP goals.
     const roadmapGoals = await loadBoardRoadmapGoals(userId, read.core.templates, day);
-    return { ...read.core, dueNow, duty: read.duty, roadmapGoals };
+    return { ...read.core, dueNow, duty: read.duty, roadmapGoals, styles };
   });
 }
 

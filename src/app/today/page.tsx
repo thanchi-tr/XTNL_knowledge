@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import "@/components/task-style/task-style.css";
 import { cookies } from "next/headers";
 import { after } from "next/server";
 import { getCurrentUserId } from "@/lib/user";
