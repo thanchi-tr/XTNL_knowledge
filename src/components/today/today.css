@@ -12,8 +12,8 @@
    carries `cq-main`, so .main is the `main` container; every fixed layer
    the board opens is portalled to <body>: ui/Sheet and the ToastDock).
      compact  one column in the order of the .o* classes
-     ≥ 640    Day, Next up, Asks, then the lanes | Goals, Inbox, Close
-     ≥ 1100   Day, Next up, Asks | lanes | side
+     ≥ 640    Day, Next up, then the lanes | Asks, Goals, Inbox, Close
+     ≥ 1100   Day, Next up | lanes | Asks, Goals, Inbox, Close
 
    Motion: transform, opacity and stroke-dashoffset only; every rule rests
    on its final state (Still shows it with nothing moving). Nothing moves

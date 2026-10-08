@@ -3330,7 +3330,8 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
     /\{aimInPlace\.map\(\(p\) => \(\s*<div key=\{p\.key\} className="dev-aim-board" data-state=\{`aim-\$\{p\.key\}`\}>[\s\S]*?<div className="board">\s*<div className="c1" \/>\s*<div className="c2" \/>\s*<div className="c3">\s*<div className="o9">\s*<GoalsStrip[^\n]*?\/>\s*<div className="rm-quests-slot" style=\{AIM_SLOT_STYLE\}>\s*<div className="rm-aim-slot">\s*<AimLine view=\{p\.view\} \/>/.test(
       fxPage
     ) &&
-      /<div className="c3">\s*<div className="o9">\s*<GoalsStrip/.test(boardSrc) &&
+      // The side column may open with the Asks (what needs you) before the goals; the slot is still c3 > o9.
+      /<div className="c3">(?:\s*\{\/\*[\s\S]*?\*\/\})?(?:\s*\{asksOnScreen\.map[\s\S]*?\{asksMore\} more\s*<\/button>\s*\)\})?\s*<div className="o9">\s*<GoalsStrip/.test(boardSrc) &&
       fxPage.indexOf("aimInPlace.map(") >= 0 &&
       fxPage.indexOf("aimInPlace.map(") < fxPage.search(/<div className="dev-grid">\s*\{aimStates\.map\(/) &&
       /key: "in-place", fixture: "set-week"/.test(fxPage) &&

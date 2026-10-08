@@ -118,7 +118,7 @@ export function NextUp({ next, focus, bosses, quota, mustPrice, onKeepMust, busy
         <span className="t-eyebrow">Next up</span>
       </div>
       <h2 id="nu-h" className="t-display-m">
-        Nothing is asking
+        Essentials done
       </h2>
       <p className="t-meta">
         The quest is met and every must is kept. Anything else today is extra.

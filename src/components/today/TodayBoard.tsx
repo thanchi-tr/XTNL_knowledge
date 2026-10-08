@@ -1801,24 +1801,6 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
             />
           </div>
 
-          {asksOnScreen.map((a) => (
-            <AskCard
-              key={a.id}
-              className="o4"
-              title={a.title}
-              detail={a.detail}
-              action={a.action}
-              href={a.href}
-              tone={a.tone}
-              clock={a.clock}
-              onAction={a.id === "yesterday" ? () => setYesterdayOpen(true) : undefined}
-            />
-          ))}
-          {asksMore > 0 && (
-            <button type="button" className="asks-more o4" aria-label={`Show ${asksMore} more`} onClick={() => setAsksExpanded(true)}>
-              {asksMore} more
-            </button>
-          )}
         </div>
 
         <div className="c2" data-tour="today-lanes">
@@ -1878,6 +1860,27 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
         </div>
 
         <div className="c3">
+          {/* What needs you (the Asks: record yesterday, ideas owed, a debuff) heads the side column on a wide board, before
+              the goals and the day's close, so the left column is the day's state and Next up, and the eye runs status →
+              the lanes → what's asking → close. Compact keeps their .o4 place, right after Next up. */}
+          {asksOnScreen.map((a) => (
+            <AskCard
+              key={a.id}
+              className="o4"
+              title={a.title}
+              detail={a.detail}
+              action={a.action}
+              href={a.href}
+              tone={a.tone}
+              clock={a.clock}
+              onAction={a.id === "yesterday" ? () => setYesterdayOpen(true) : undefined}
+            />
+          ))}
+          {asksMore > 0 && (
+            <button type="button" className="asks-more o4" aria-label={`Show ${asksMore} more`} onClick={() => setAsksExpanded(true)}>
+              {asksMore} more
+            </button>
+          )}
           <div className="o9">
             <GoalsStrip
               goals={board.goals}
