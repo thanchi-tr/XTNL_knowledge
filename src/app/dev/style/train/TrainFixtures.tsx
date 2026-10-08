@@ -74,7 +74,8 @@ export function ExerciseStyleFixtures() {
         <p className="t-eyebrow" style={{ margin: "0 0 8px" }}>
           A task&apos;s drawer: its month and its look
         </p>
-        <section className="card pad-l" data-fixture="task-month">
+        {/* As narrow as a board column's drawer, inside a box that clips (as a lane does): the pop-ups must still show whole. */}
+        <section className="card pad-l" data-fixture="task-month" style={{ maxWidth: 340, overflow: "hidden" }}>
           <div className="tsk-sec-grid">
             <TaskMonth templateId="t1" title="Walk 30 minutes" today={EX_TODAY} style={{ icon: "walk", color: "teal" }} load={async (_id, month) => ({ ok: true, value: { month, marks: month === "2026-10" ? { ...TASK_MARKS } : {} } })} />
             <TaskStylePicker templateId="t1" style={{ icon: "walk", color: "teal" }} save={async (_id, st) => ({ ok: true, value: { icon: st.icon as never, color: st.color as never } })} />

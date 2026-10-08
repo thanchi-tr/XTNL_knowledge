@@ -17,6 +17,7 @@ import {
   DEFAULT_TASK_ICON,
   TASK_COLORS,
   TASK_COLOR_NAMES,
+  TASK_ICONS,
   TASK_ICON_NAMES,
   isMonthKey,
   monthDaysOf,
@@ -79,7 +80,14 @@ console.log("— walks (exercise.ts) —");
 
 console.log("— task style (task-style.ts) —");
 {
-  check("20 icons and 10 colours, every colour a hex", TASK_ICON_NAMES.length === 20 && TASK_COLOR_NAMES.length === 10 && Object.values(TASK_COLORS).every((h) => /^#[0-9a-f]{6}$/.test(h)));
+  check(
+    "55 icons (each one stroke path in the 24 grid) and 18 colours, every colour a distinct hex",
+    TASK_ICON_NAMES.length === 55 &&
+      TASK_COLOR_NAMES.length === 18 &&
+      Object.values(TASK_COLORS).every((h) => /^#[0-9a-f]{6}$/.test(h)) &&
+      new Set(Object.values(TASK_COLORS)).size === 18 &&
+      Object.values(TASK_ICONS).every((d) => /^M[\d.\s,A-Za-z-]+$/.test(d) && new Set(Object.values(TASK_ICONS)).size === 55)
+  );
   eq("taskStyleOf drops names outside the sets", [taskStyleOf({ icon: "walk", color: "teal" }), taskStyleOf({ icon: "rocket", color: "#fff" }), taskStyleOf(null)], [{ icon: "walk", color: "teal" }, { icon: null, color: null }, { icon: null, color: null }]);
   const d = shownStyleOf(null);
   check("no style draws the check in slate", d.icon === DEFAULT_TASK_ICON && d.color === DEFAULT_TASK_COLOR && d.hex === TASK_COLORS.slate);
@@ -146,8 +154,8 @@ console.log("— the cards —");
   check("TaskMonth: the month's grid (31 days), today ringed, the next month closed in the current one", (tm.match(/class="tsk-d"/g) ?? []).length === 31 && tm.includes("data-today") && tm.includes('aria-label="Next month" disabled=""') && tm.includes("October 2026"));
   const pk = renderToStaticMarkup(createElement(TaskStylePicker, { templateId: "t1", style: { icon: "walk", color: "teal" }, save: async () => ({ ok: true as const, value: { icon: null, color: null } }) }));
   check(
-    "TaskStylePicker: 20 icon radios and 10 colour radios, each named; the task's own checked; [Default] while a style is set",
-    (pk.match(/aria-label="Icon: /g) ?? []).length === 20 && (pk.match(/aria-label="Colour: /g) ?? []).length === 10 && /aria-checked="true"[^>]*aria-label="Icon: walk"/.test(pk) && /aria-checked="true"[^>]*aria-label="Colour: teal"/.test(pk) && pk.includes("Default")
+    "TaskStylePicker: two small buttons (Icon, Colour) that open their pop-ups, closed at first (no option rendered); [Default] while a style is set",
+    (pk.match(/aria-haspopup="dialog"/g) ?? []).length === 2 && pk.includes(">Icon<") && pk.includes(">Colour<") && !pk.includes('aria-label="Icon: ') && pk.includes("Default") && pk.includes('aria-expanded="false"')
   );
 }
 
