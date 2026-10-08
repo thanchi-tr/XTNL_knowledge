@@ -34,7 +34,7 @@ import { goalGlyphOf } from "@/components/glyph/paths/goal";
 import type { SeenKey } from "@/components/glyph/useSeen";
 import { playGlyph } from "@/lib/glyph-motion";
 import { pushToast } from "@/components/ui/toast-store";
-import { ACCEPT_UNDO_MS, TOPIC_CLASSES, type EmptyLayerOffer, type TopicMapView } from "@/lib/roadmap-types";
+import { ACCEPT_UNDO_MS, REBREAK_REQUESTS_MAX, TOPIC_CLASSES, type EmptyLayerOffer, type TopicMapView } from "@/lib/roadmap-types";
 import {
   AFTERCARE_ARCHIVE_WORD,
   AFTERCARE_KEEP_WORD,
@@ -56,6 +56,16 @@ import {
   inPlanAria,
   layerWord,
   mergedLinksLine,
+  REBREAK_ALL_ARIA,
+  REBREAK_ALL_WORD,
+  REBREAK_CONFIRM,
+  REBREAK_GOES_HEAD,
+  REBREAK_LEAD,
+  REBREAK_NOTHING_GOES,
+  REBREAK_STAYS_LINE,
+  rebreakCostLine,
+  rebreakStartedLine,
+  rebreakTitle,
   trackClauseAria,
   trackClauseQuestion,
   writeTopicAria,
@@ -108,6 +118,8 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
   const [aftercare, setAftercare] = useState<"KEEP" | "ARCHIVE" | null>(null);
   const [trackClause, setTrackClause] = useState<number | null>(null);
   const [mergedNote, setMergedNote] = useState<string | null>(null);
+  // Ruling N16: the re-break's confirm (one layer, or null: every layer not started), never sent without it.
+  const [rebreak, setRebreak] = useState<{ layers: number[] | null } | null>(null);
   const { run, pending, error, runtime } = useRoadmapAction();
   const namesOn = topicNamesOn(gates);
   const seenKey: Omit<SeenKey, "what"> | null = seenBasis ? { roadmapId: map.roadmapId, basis: seenBasis } : null;
@@ -156,6 +168,16 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
     );
   };
 
+  // [Redo] (ruling N16): the layers a re-break would ask again, the ones that stay because they've started, and the names it replaces.
+  const rebreakOpen = draft ? map.layers.filter((l) => l.rebreak === "OPEN").map((l) => l.layer) : [];
+  const rebreakStarted = draft ? map.layers.filter((l) => l.rebreak === "STARTED").map((l) => l.layer) : [];
+  const rebreakAsked = rebreak ? (rebreak.layers ?? rebreakOpen) : [];
+  const rebreakGoes = map.layers.filter((l) => rebreakAsked.includes(l.layer)).map((l) => ({ layer: l.layer, names: l.rebreakGoes ?? [] }));
+  const confirmRebreak = () => {
+    const layers = rebreak?.layers ?? null;
+    run((a) => a.rebreakTopics(map.roadmapId, layers), () => setRebreak(null));
+  };
+
   // The card Key: every class mark the card uses, with its words (D13), and the keep, trace and Gemini-mark lines.
   const used = new Set(map.layers.flatMap((l) => l.topics.map((r) => r.cls)));
   if (map.layerOneSeeds.length > 0) used.add("LIBRARY");
@@ -190,6 +212,12 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
       <div className="rm-tm-head">
         <EstimateChip rating={map.rating} roadmapId={draft ? map.roadmapId : null} seenKey={seenKey} today={today} />
         <CautionChips cautions={map.cautions} />
+        {rebreakOpen.length > 0 && (
+          <button type="button" className="chip btn-chip rm-tm-rball" aria-label={REBREAK_ALL_ARIA} title={REBREAK_ALL_ARIA} disabled={pending} onClick={() => setRebreak({ layers: null })}>
+            <Glyph name="route.weave" size={16} inherit />
+            <span aria-hidden="true">{REBREAK_ALL_WORD}</span>
+          </button>
+        )}
         <CardKey entries={keyEntries} topic="the topic map's marks">
           <span className="rm-tm-kl">{TRACE_KEY}</span>
         </CardKey>
@@ -209,6 +237,7 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
             onKeep={draft ? keep : null}
             onWrite={draft ? (k) => setWriteLayer(k) : null}
             onEmpty={draft ? (k) => setEmptyLayer(k) : null}
+            onRebreak={draft ? (k) => setRebreak({ layers: [k] }) : null}
             seenKey={seenKey}
             openedByReach={i > 0 && map.layers[i - 1].state === "DONE"}
             hiddenOpen={hiddenOpen.has(l.layer)}
@@ -385,6 +414,62 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
               </button>
             </div>
           )}
+          {error && <ActionError>{error}</ActionError>}
+        </div>
+      </Sheet>
+
+      <Sheet
+        open={rebreak != null}
+        onClose={() => setRebreak(null)}
+        title={rebreak ? rebreakTitle(rebreak.layers) : ""}
+        footer={
+          <Button variant="primary" block disabled={pending || rebreakAsked.length === 0} onClick={confirmRebreak}>
+            {REBREAK_CONFIRM}
+          </Button>
+        }
+      >
+        <div className="rm-stack" style={{ gap: 10 }} data-rebreak-confirm="">
+          <p className="t-meta" style={{ margin: 0 }}>
+            {REBREAK_LEAD}
+          </p>
+          {rebreakGoes.some((x) => x.names.length > 0) ? (
+            <>
+              <p className="st-label" style={{ margin: 0 }}>
+                {REBREAK_GOES_HEAD}
+              </p>
+              {rebreakGoes
+                .filter((x) => x.names.length > 0)
+                .map((x) => (
+                  <div key={x.layer}>
+                    <p className="t-meta" style={{ margin: 0 }}>
+                      {layerWord(x.layer)}
+                    </p>
+                    <ul className="rm-basis">
+                      {x.names.map((n) => (
+                        <li key={n} data-wc="name">
+                          {n}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+            </>
+          ) : (
+            <p className="t-meta" style={{ margin: 0 }}>
+              {REBREAK_NOTHING_GOES}
+            </p>
+          )}
+          <p className="t-meta" style={{ margin: 0 }}>
+            {REBREAK_STAYS_LINE}
+          </p>
+          {rebreak?.layers == null && rebreakStarted.length > 0 && (
+            <p className="t-meta" style={{ margin: 0 }}>
+              {rebreakStartedLine(rebreakStarted)}
+            </p>
+          )}
+          <p className="t-meta" style={{ margin: 0 }}>
+            {rebreakCostLine(REBREAK_REQUESTS_MAX, map.requestsLeft.requests)}
+          </p>
           {error && <ActionError>{error}</ActionError>}
         </div>
       </Sheet>

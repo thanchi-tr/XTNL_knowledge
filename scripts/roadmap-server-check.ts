@@ -199,6 +199,8 @@ import {
 import type { QuestMilestoneFacts, QuestStore } from "../src/lib/roadmap-quests-server";
 import { AIM_PROMPT_COOKIE, aimPromptOf } from "../src/lib/roadmap-invite";
 import { groundResponseOf, reusableSamplesOf, type ModelRequest } from "../src/lib/roadmap-model";
+import { REBREAK_INSTRUCTION } from "../src/lib/roadmap-topics";
+import type * as t5 from "../src/lib/roadmap-types";
 import type { CaptureLink } from "../src/lib/tasks";
 import { throughputWindowStart, type ThroughputRows } from "../src/lib/throughput";
 import type { WeightView } from "../src/lib/weight";
@@ -7717,6 +7719,174 @@ async function main() {
         named[0].originName === pick?.name,
       json({ fieldId: tmC2?.fieldId, cls: rowC1?.cls, steps: stepsC, row: rowC2 && { domain: rowC2.domain, cls: rowC2.cls }, accept: acceptedC ? errOf(acceptedC) : "no map", named: named.map((x) => [x.name, x.nameOrigin, x.originName]) })
     );
+  });
+
+  // ═══ Ruling N16: break a milestone down again ═══════════════════════════════════════════════════════════════
+  console.log("— ruling N16: break a milestone down again —");
+  await topicBlock("re-break a milestone (ruling N16)", async () => {
+    type ChainRun = RunRec & { phase?: string | null; report?: unknown };
+    const asked: { contents: string; system: string; schema: unknown; phase: string }[] = [];
+    const replyOf = (parsed: unknown) => ({ candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify(parsed) }] }, finishReason: "STOP" }], usageMetadata: { totalTokenCount: 10 }, modelVersion: "fixture", responseId: `rb-${asked.length}` });
+    const fresh = { L2: ["Sharpe Ratio", "Rebalancing Bands", "Tracking Error", "Correlation Matrix"], L3: ["Offset Account", "Loan to Value Ratio", "Amortisation Schedule", "Kept Name"] };
+    let names: Record<string, string[]> = fresh;
+    const callModel = async (req: ModelRequest): Promise<unknown> => {
+      const props = (req.responseSchema as { properties?: Record<string, unknown> } | null)?.properties ?? {};
+      const phase = req.googleSearch ? "GROUND" : "names" in props && !("milestones" in props) ? "REBREAK" : "OTHER";
+      asked.push({ contents: req.contents, system: req.systemInstruction, schema: req.responseSchema, phase });
+      if (phase !== "REBREAK") throw new Error("not asked here");
+      const layers = ((props.names as { propertyOrdering?: string[] }).propertyOrdering ?? []) as string[];
+      return replyOf({ names: Object.fromEntries(layers.map((l) => [l, (names[l] ?? []).map((name) => ({ name, scope: "GENERAL" }))])) });
+    };
+    const setup = async () => {
+      const w = world();
+      const id = await writtenTopics(w, TOPICS_INTAKE, ["Typed two", "Typed three"]);
+      geminiTopicRow(w, id, "T20", "Old Name A", { layer: 2, decision: "PENDING", chosen: false, grounding: "WEAK", sources: [{ title: "One", uri: "https://example.org/one" }] });
+      geminiTopicRow(w, id, "T21", "Old Name B", { layer: 2, decision: "PENDING", chosen: true });
+      geminiTopicRow(w, id, "T22", "Kept Name", { layer: 3, decision: "KEPT" });
+      geminiTopicRow(w, id, "T23", "Old Name C", { layer: 3, decision: "PENDING", chosen: false });
+      const row = w.t.roadmap.find((r) => r.id === id) as RoadmapRec;
+      const rating = (row.rating ?? null) as Record<string, unknown> | null;
+      if (rating) {
+        row.rating = {
+          ...rating,
+          milestones: [
+            { layer: 1, title: "Read probability spaces", hurdle: "", target: "" },
+            { layer: 2, title: "Allocate equities and gold", hurdle: "Diversify", target: "A drift band under 5%" },
+            { layer: 3, title: "Structure the mortgage", hurdle: "", target: "An offset plan" },
+          ],
+        } as never;
+      }
+      const tasks: (() => Promise<void> | void)[] = [];
+      let at = NOW.getTime();
+      const later = () => new Date((at += 1000));
+      const deps = depsFor(w, {
+        topicSwitches: { plans: true, rate: true, place: true, names: true, link: true, ground: true },
+        geminiLive: false,
+        hasKey: true,
+        callModel,
+        defer: (t) => tasks.push(t),
+        clock: () => new Date(at),
+        // The real integrity walk (the fixture lane reads only LEVELS replies).
+        lanes: { ...lanesFor(w), integrityOf: VALIDATE.integrityOf },
+      });
+      const settle = async () => {
+        while (tasks.length) await (tasks.shift() as () => Promise<void> | void)();
+      };
+      return { w, id, deps, later, settle };
+    };
+    const live = (w: FakeWorld, id: string) => w.t.roadmapTopic.filter((t) => t.roadmapId === id && t.version === 1 && t.decision !== "REMOVED" && t.decision !== "MERGED");
+    const inLayer = (w: FakeWorld, id: string, k: number) => live(w, id).filter((t) => t.layer === k).map((t) => t.name).sort();
+
+    const a = await setup();
+    const view = await S.loadRoadmapView(USER, a.later(), a.deps, a.id);
+    const layers = view.draft?.topicMap?.layers ?? [];
+    check(
+      "N16 view: each draft layer carries its re-break state — layer 1 STARTED (its Domain holds cards), layers 2 and 3 OPEN — and the names a re-break replaces (Gemini's, not kept: ticked or not), never a kept one",
+      json(layers.map((l) => [l.layer, l.rebreak ?? null])) === json([[1, "STARTED"], [2, "OPEN"], [3, "OPEN"]]) &&
+        json(layers.find((l) => l.layer === 2)?.rebreakGoes) === json(["Old Name A", "Old Name B"]) &&
+        json(layers.find((l) => l.layer === 3)?.rebreakGoes) === json(["Old Name C"]),
+      json(layers.map((l) => [l.layer, l.rebreak, l.rebreakGoes]))
+    );
+    const noKeyView = await S.loadRoadmapView(USER, a.later(), { ...a.deps, hasKey: false }, a.id);
+    check("N16 view: with no key nothing is offered (no layer carries a state)", (noKeyView.draft?.topicMap?.layers ?? []).every((l) => l.rebreak === undefined));
+    const runs0 = a.w.t.roadmapRun.length;
+    const refused = [
+      errOf(await S.rebreakTopicsCore(USER, a.id, [1], a.later(), a.deps)),
+      errOf(await S.rebreakTopicsCore(USER, a.id, [2, 1], a.later(), a.deps)),
+      errOf(await S.rebreakTopicsCore(USER, a.id, [9], a.later(), a.deps)),
+      errOf(await S.rebreakTopicsCore(USER, a.id, [], a.later(), a.deps)),
+      errOf(await S.rebreakTopicsCore(USER, a.id, [2], a.later(), { ...a.deps, hasKey: false })),
+      errOf(await S.rebreakTopicsCore(USER, a.id, [2], a.later(), { ...a.deps, topicSwitches: { plans: true, rate: true, names: false } })),
+      errOf(await S.rebreakTopicsCore(USER, "someone-elses", [2], a.later(), a.deps)),
+    ];
+    eq(
+      "N16 refusals: a started milestone (alone or among others), a layer the map hasn't, none asked, no key, Gemini's names off, another user's goal — each before anything is claimed",
+      [refused, a.w.t.roadmapRun.length - runs0, asked.length],
+      [[S.REBREAK_STARTED, S.REBREAK_STARTED, S.NO_TARGET, S.NO_TARGET, S.TOPIC_GEMINI_NO_KEY, S.TOPIC_PLANS_OFF, S.NO_ROADMAP], 0, 0]
+    );
+    const claimed = await S.rebreakTopicsCore(USER, a.id, [2], a.later(), a.deps);
+    const head = (a.w.t.roadmapRun as ChainRun[]).find((r) => r.phase === "REBREAK");
+    check("N16 claim: one REBREAK run (a chain head, never a draft), RUNNING until its after() runs", claimed.ok && head?.status === "RUNNING" && head.kind === "GEMINI", json([errOf(claimed), head?.status]));
+    await a.settle();
+    const sent = asked.filter((x) => x.phase === "REBREAK");
+    check(
+      "N16 pack: three samples, each sending the milestones as they stand (titles and target), the layer asked, and the names the map keeps (never a replaced one); the schema asks layer 2 alone",
+      sent.length === 3 &&
+        sent.every((x) => x.contents.includes("Allocate equities and gold") && x.contents.includes("target: A drift band under 5%") && x.contents.includes("Layers: L2.") && x.contents.includes("Kept Name") && !x.contents.includes("Old Name A")) &&
+        sent.every((x) => json(Object.keys(((x.schema as { properties: { names: { properties: Record<string, unknown> } } }).properties.names.properties))) === json(["L2"])) &&
+        sent.every((x) => x.system === REBREAK_INSTRUCTION),
+      json(sent.map((x) => x.contents.slice(0, 600)))
+    );
+    const added = live(a.w, a.id).filter((t) => t.notes.includes("ADDED_BY_REBREAK"));
+    check(
+      "N16 step: layer 2's undecided Gemini names are gone (ticked or not), Gemini's four new ones are in, unchosen and not yet checked (ADDED_BY_REBREAK); layers 1 and 3 are untouched",
+      json(inLayer(a.w, a.id, 2)) === json(["Correlation Matrix", "Rebalancing Bands", "Sharpe Ratio", "Tracking Error", "Typed two"]) &&
+        added.length === 4 &&
+        added.every((t) => t.layer === 2 && t.grounding === "NOT_RUN" && !t.chosen && t.decision === "PENDING") &&
+        json(inLayer(a.w, a.id, 3)) === json(["Kept Name", "Old Name C", "Typed three"]),
+      json({ l2: inLayer(a.w, a.id, 2), l3: inLayer(a.w, a.id, 3), added: added.map((t) => [t.name, t.layer, t.grounding, t.chosen]) })
+    );
+    const next = await S.advanceTopicChainCore(USER, a.id, false, a.later(), a.deps);
+    const ground = (a.w.t.roadmapRun as ChainRun[]).filter((r) => r.phase === "GROUND");
+    check(
+      "N16 next step: the poll claims GROUND's wave over the four new names (the web check decides what is shown)",
+      next.ok && next.value.phase === "GROUND" && ground.length === 1 && json(((ground[0].report as { batches?: string[][] }).batches ?? []).flat().length) === "4",
+      json([errOf(next), ground.map((r) => r.report)])
+    );
+
+    // GROUND's verdicts on re-broken names (chainGroundedOf): checked ones start chosen in any layer; others as before.
+    {
+      const mapNow = { layers: 3, topics: live(a.w, a.id).map((t) => ({ ...t })) as unknown as t5.TopicMap["topics"], edges: [] } as t5.TopicMap;
+      const byName = (n: string) => mapNow.topics.find((t) => t.name === n) as t5.TopicDraft;
+      const src = (n: number) => Array.from({ length: n }, (_, i) => ({ title: `S${i}`, uri: `https://example.org/${i}` }));
+      const v = (key: string, verdict: t5.GroundVerdict, n: number): t5.GroundKeyVerdict => ({ key, verdict, sources: src(n), counted: n, reason: null });
+      const plain = { ...byName("Sharpe Ratio"), key: "T90", notes: [] as t5.TopicNote[], name: "Plain Linked" };
+      const plainOne = { ...byName("Sharpe Ratio"), key: "T91", notes: [] as t5.TopicNote[], name: "Plain One" };
+      mapNow.topics.push(plain, plainOne);
+      const record = {
+        verdicts: Object.fromEntries([
+          [byName("Sharpe Ratio").key, v(byName("Sharpe Ratio").key, "LINKED", 2)],
+          [byName("Rebalancing Bands").key, v(byName("Rebalancing Bands").key, "WEAK", 1)],
+          [byName("Tracking Error").key, v(byName("Tracking Error").key, "NONE", 0)],
+          ["T90", v("T90", "LINKED", 2)],
+          ["T91", v("T91", "WEAK", 1)],
+        ]),
+        queries: [],
+        chunks: [],
+        titleMode: "OFF",
+        titleCheck: "UNAVAILABLE",
+        toolUsePromptTokenCount: 0,
+        truncated: false,
+      } as unknown as t5.GroundRunRecord;
+      const out = S.chainGroundedOf(mapNow, record);
+      const chosenOf = (n: string) => out.topics.find((t) => t.name === n)?.chosen;
+      eq(
+        "N16 web check: a re-broken name Google linked (2+ sources, or exactly 1) starts chosen in layer 2; one it didn't link doesn't; a breakdown's own layer-2 names keep ruling 43 (unticked)",
+        ["Sharpe Ratio", "Rebalancing Bands", "Tracking Error", "Plain Linked", "Plain One"].map(chosenOf),
+        [true, true, false, false, false]
+      );
+    }
+
+    // Every milestone not started (null), and a reply with nothing new: the map stays as it was, the stop says so.
+    const b = await setup();
+    names = { L2: ["Typed two", "Kept Name"], L3: ["Kept Name", "Typed three"] };
+    const shapeOf = () => json(live(b.w, b.id).map((t) => [t.key, t.name, t.layer, t.decision, t.chosen]).sort((x, y) => String(x[0]).localeCompare(String(y[0]))));
+    const before = shapeOf();
+    const all = await S.rebreakTopicsCore(USER, b.id, null, b.later(), b.deps);
+    await b.settle();
+    const lastSent = asked.filter((x) => x.phase === "REBREAK").slice(-3);
+    const bView = await S.loadRoadmapView(USER, b.later(), b.deps, b.id);
+    check(
+      "N16 all: null asks every milestone not started (L2, L3; layer 1 has cards); echoes only leave the map exactly as it was, and the chain stops with NOTHING_NEW («Gemini named no new topics.»)",
+      all.ok &&
+        lastSent.every((x) => x.contents.includes("Layers: L2, L3.")) &&
+        shapeOf() === before &&
+        bView.topicChain?.done === true &&
+        bView.topicChain.stop === "NOTHING_NEW" &&
+        bView.topicChain.line === S.NOTHING_NEW,
+      json({ all: errOf(all), sent: lastSent.map((x) => x.contents.includes("Layers: L2, L3.")), before, after: shapeOf(), chain: bView.topicChain })
+    );
+    names = fresh;
   });
 
   // ═══ Revision 5 (live fix): the chain's stops as the page reads them (RoadmapView.topicChain) ═══════════════

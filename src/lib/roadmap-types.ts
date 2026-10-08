@@ -6349,6 +6349,11 @@ export const BREAKDOWN_REQUESTS_MAX_WITH_CANDIDATES = 10;
 /** A Go deeper: 3 DEEPER + 2 GROUND. */
 export const DEEPER_REQUESTS_MAX = 5;
 export const DEEPER_REQUESTS_MAX_WITH_CANDIDATES = 3;
+/** A re-break (ruling N16): 3 REBREAK + GROUND's calls for the new names (GROUND_CALLS_MAX). */
+export const REBREAK_REQUESTS_MAX = 10;
+export const REBREAK_REQUESTS_MAX_WITH_CANDIDATES = 8;
+/** A re-break's names a milestone, at most (its schema's maxItems; the agreement keeps up to this many a layer). */
+export const REBREAK_NAMES_MAX = 8;
 
 // ── The rating (§22.2, §22.7) ──
 
@@ -6515,8 +6520,9 @@ export const EDGE_DECISIONS: readonly EdgeDecision[] = ["PENDING", "KEPT", "EDIT
 export type EdgeMatch = "OUTLINE" | "LINE_DOMAIN" | "NONE";
 export const EDGE_MATCHES: readonly EdgeMatch[] = ["OUTLINE", "LINE_DOMAIN", "NONE"];
 /** RoadmapRun.phase (null on LEVELS). */
-export type RunPhase = "RATE" | "MAP" | "LINK" | "GROUND" | "DEEPER";
-export const RUN_PHASES: readonly RunPhase[] = ["RATE", "MAP", "LINK", "GROUND", "DEEPER"];
+/** REBREAK (ruling N16): one or more not-started milestones' topics asked again under the milestones as they stand. */
+export type RunPhase = "RATE" | "MAP" | "LINK" | "GROUND" | "DEEPER" | "REBREAK";
+export const RUN_PHASES: readonly RunPhase[] = ["RATE", "MAP", "LINK", "GROUND", "DEEPER", "REBREAK"];
 /** RoadmapMilestone.chainRole: a layer milestone or a depth milestone. */
 export type ChainRole = "LAYER" | "DEPTH";
 export const CHAIN_ROLES: readonly ChainRole[] = ["LAYER", "DEPTH"];
@@ -6549,7 +6555,8 @@ export type TopicNote =
   | "KNOWN_BY_YOU"
   | "CROSS_GOAL_PARENT"
   | "MERGED_BY_YOU"
-  | "ADDED_BY_DEEPER";
+  | "ADDED_BY_DEEPER"
+  | "ADDED_BY_REBREAK";
 export const TOPIC_NOTES: readonly TopicNote[] = [
   "NEAR_DUPLICATE",
   "UNSURE_LAYER",
@@ -6566,6 +6573,7 @@ export const TOPIC_NOTES: readonly TopicNote[] = [
   "CROSS_GOAL_PARENT",
   "MERGED_BY_YOU",
   "ADDED_BY_DEEPER",
+  "ADDED_BY_REBREAK",
 ];
 /** Why a Gemini name was dropped: counted, never shown. */
 export type TopicDropReason = "SHAPE" | "FLAG" | "ECHO" | "ONE_SAMPLE" | "SAME_TOPIC_DEEPER" | "OVER_ROOM" | "TAKEN_NAME";
@@ -7031,6 +7039,14 @@ export interface TopicLayerView {
   needsParent: number;
   /** MAP's milestone for this layer (ruling N8): Gemini's words; absent or null when MAP wrote none. */
   milestone?: LayerMilestone | null;
+  /**
+   * Ruling N16, a draft's [Break this milestone down again]: OPEN while the layer is not started (none of its topics'
+   * Domains holds a card, and the live plan's layer milestone k is neither started nor reached), STARTED otherwise;
+   * absent when the re-break isn't offered (no Gemini, a plan, writes off).
+   */
+  rebreak?: "OPEN" | "STARTED";
+  /** With `rebreak`: the names a re-break of this layer replaces (Gemini's, not kept by you), listed in its confirm. */
+  rebreakGoes?: string[];
 }
 export interface TopicMapView {
   roadmapId: string;
@@ -7073,8 +7089,9 @@ export interface ChainFit {
  * offers are TopicChainView.fit's), a GROUND wave whose web check failed or timed out, a request cap, MAP's replies
  * failing, a step past TOPIC_RUN_STALE_MS, or a Go deeper that named nothing narrower.
  */
-export type TopicChainStop = "OVER" | "IMPOSSIBLE" | "GROUND_FAILED" | "REQUESTS_CAPPED" | "GROUNDED_CAPPED" | "MAP_FAILED" | "TIMED_OUT" | "NOTHING_DEEPER";
-export const TOPIC_CHAIN_STOPS: readonly TopicChainStop[] = ["OVER", "IMPOSSIBLE", "GROUND_FAILED", "REQUESTS_CAPPED", "GROUNDED_CAPPED", "MAP_FAILED", "TIMED_OUT", "NOTHING_DEEPER"];
+/** NOTHING_NEW (ruling N16): a re-break whose names were all echoes, flagged or dropped. */
+export type TopicChainStop = "OVER" | "IMPOSSIBLE" | "GROUND_FAILED" | "REQUESTS_CAPPED" | "GROUNDED_CAPPED" | "MAP_FAILED" | "TIMED_OUT" | "NOTHING_DEEPER" | "NOTHING_NEW";
+export const TOPIC_CHAIN_STOPS: readonly TopicChainStop[] = ["OVER", "IMPOSSIBLE", "GROUND_FAILED", "REQUESTS_CAPPED", "GROUNDED_CAPPED", "MAP_FAILED", "TIMED_OUT", "NOTHING_DEEPER", "NOTHING_NEW"];
 
 /**
  * A TOPICS draft's Gemini chain as the page drives it (RoadmapView.topicChain; ruling 47, fix round). The page's poll

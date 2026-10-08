@@ -15287,7 +15287,21 @@ function withTopicViews(e: Env, b: RoadmapBundle, ctx: PlanContext, view: Roadma
   if (draftTopics && out.draft) {
     const facts = draftKindFactsOf(b);
     const depth = facts.depth ?? AIM_DEPTHS[DEPTH_DEFAULT];
-    const topicMap0 = topicMapViewOf(e, b, b.roadmap.version + 1, tree, today, { draft: true, rating: facts.rating, depth, others, dayRuns });
+    const topicMap1 = topicMapViewOf(e, b, b.roadmap.version + 1, tree, today, { draft: true, rating: facts.rating, depth, others, dayRuns });
+    // Ruling N16: each layer's [Break this milestone down again] state, offered with Gemini and writes on.
+    let topicMap0 = topicMap1;
+    if (out.topicGemini === true && !out.writesOff) {
+      try {
+        const draftMap = mapOfVersion(b, b.roadmap.version + 1, facts.rating?.layers ?? null);
+        const states = rebreakStatesOf(b, draftMap, tree);
+        topicMap0 = {
+          ...topicMap1,
+          layers: topicMap1.layers.map((l) => (states.has(l.layer) ? { ...l, rebreak: states.get(l.layer), rebreakGoes: chainRebreakStaleOf(draftMap, [l.layer]).sort(byTopicKey).map((t) => t.name) } : l)),
+        };
+      } catch (err) {
+        console.error("roadmap: the re-break states weren't read (none offered):", err instanceof Error ? err.message.slice(0, 200) : "failed");
+      }
+    }
     // [Accept all] asks for the keep-over switch when the draft is over your hours or pace (the footer's own rule).
     const topicMap = { ...topicMap0, needsOver: !!out.draft.feasibility.over || out.draft.dateCheck?.verdict === "OVER" };
     out = {
@@ -15345,6 +15359,8 @@ export const REQUESTS_CAPPED = model.REQUEST_CAP_LINE;
 export const GROUNDED_CAPPED = model.GROUNDED_CAP_LINE;
 /** A Go deeper whose agreement kept nothing (a result line, not a refusal; ruling 63). */
 export const NOTHING_DEEPER = "Gemini named nothing narrower.";
+/** A re-break whose agreement kept nothing new (ruling N16; a result line, not a refusal). */
+export const NOTHING_NEW = "Gemini named no new topics.";
 /** [Break it down] on a goal that is neither a draft nor active (paused, done or archived). */
 const BREAK_DOWN_OPEN_ONLY = "Only an open goal's topics are broken down: resume it first.";
 /**
@@ -15357,6 +15373,7 @@ const CHAIN_CAP_REASON = "chain cap";
 function chainRequestsMaxOf(head: t5.RunPhase | null): number {
   const candidates = t5.TOPIC_CANDIDATE_COUNT === 3;
   if (head === "DEEPER") return candidates ? t5.DEEPER_REQUESTS_MAX_WITH_CANDIDATES : t5.DEEPER_REQUESTS_MAX;
+  if (head === "REBREAK") return candidates ? t5.REBREAK_REQUESTS_MAX_WITH_CANDIDATES : t5.REBREAK_REQUESTS_MAX;
   return candidates ? t5.BREAKDOWN_REQUESTS_MAX_WITH_CANDIDATES : t5.BREAKDOWN_REQUESTS_MAX;
 }
 
@@ -15412,9 +15429,11 @@ interface TopicStepReport {
   hidden?: string[];
   topics?: t5.TopicRunReport;
   kFinal?: number;
-  /** DEEPER: the parent's key, and whether Gemini named nothing narrower. */
+  /** DEEPER: the parent's key, and whether Gemini named nothing narrower (REBREAK: nothing new). */
   parent?: string;
   nothing?: boolean;
+  /** REBREAK (ruling N16): the layers asked again. */
+  layers?: number[];
   /** LINK: the children voided (NONE mixed with keys, an empty list) and the findings. */
   voids?: number;
   findings?: number;
@@ -15623,7 +15642,7 @@ const chainStepOf = (r: RunRec, done: boolean): TopicChainStep => ({ runId: r.id
 /** The draft version's newest chain: its head (the newest RATE or DEEPER row) and the steps after it, newest first (light rows). */
 function chainRunsOf(b: RoadmapBundle, version: number): { head: RunRec | null; steps: RunRec[] } {
   const rows = b.runs.filter((r) => r.version === version && r.kind === "GEMINI" && chainPhaseOf(r) != null);
-  const at = rows.findIndex((r) => chainPhaseOf(r) === "RATE" || chainPhaseOf(r) === "DEEPER");
+  const at = rows.findIndex((r) => chainPhaseOf(r) === "RATE" || chainPhaseOf(r) === "DEEPER" || chainPhaseOf(r) === "REBREAK");
   return at < 0 ? { head: null, steps: [] } : { head: rows[at], steps: rows.slice(0, at) };
 }
 
@@ -15647,7 +15666,7 @@ function chainPlanOf(rows: readonly RunRec[]): GroundPlan | null {
 function chainNextOf(head: TopicRun, steps: readonly TopicRun[], retry: boolean): ChainNext {
   if (settledOf(head) === "CAPPED") return { kind: "DONE" };
   const ground = steps.filter((r) => chainPhaseOf(r) === "GROUND");
-  if (chainPhaseOf(head) === "DEEPER") {
+  if (chainPhaseOf(head) === "DEEPER" || chainPhaseOf(head) === "REBREAK") {
     const rep = chainReportOf(head);
     if (settledOf(head) === "FAILED" || rep?.nothing || (rep?.kept ?? []).length === 0) return { kind: "DONE" };
     const plan = chainPlanOf(ground);
@@ -16000,7 +16019,8 @@ async function claimDeeperGround(c: ChainCtx, head: TopicRun): Promise<Result<To
   const keys = new Set(chainReportOf(head)?.kept ?? []);
   const terms = chainGroundTermsOf(chainLiveOf(map).filter((t) => keys.has(t.key)));
   if (terms.length === 0) return ok(chainStepOf(head, true));
-  const batched = groundingLib.groundBatchesOf(terms, t5.DEEPER_GROUND_CALLS_MAX);
+  // A re-break checks its milestones' new names with a breakdown's GROUND budget (ruling N16); a Go deeper with its own.
+  const batched = groundingLib.groundBatchesOf(terms, chainPhaseOf(head) === "REBREAK" ? t5.GROUND_CALLS_MAX : t5.DEEPER_GROUND_CALLS_MAX);
   const plan: GroundPlan = { batches: batched.batches.map((batch) => batch.map((t) => t.key)), notRun: batched.notRun, link: false };
   const g = await chainGroundSpecOf(c, 1, plan.batches.slice(0, t5.GROUND_PARALLEL), plan, map, false);
   if (!g) return ok(chainStepOf(head, true));
@@ -16185,6 +16205,94 @@ export async function goDeeperCore(userId: string, roadmapId: string, key: strin
   return pointedRefusal(deps, userId, { roadmapId }, await goDeeperUnpointed(userId, roadmapId, key, now, deps));
 }
 
+// ── Break a milestone down again (ruling N16) ──
+
+/** A re-break of a milestone that has started (a card in one of its Domains, or its live layer milestone begun). */
+export const REBREAK_STARTED = "That milestone has started: its cards stay, so its topics do too.";
+/** [Break down every topic again] with every milestone started. */
+export const REBREAK_NONE_OPEN = "Every milestone has started, so there's none to break down again.";
+
+/**
+ * Each layer's re-break state on a map (ruling N16), pure over the bundle and the tree: STARTED when one of the layer's
+ * live topics has a Domain holding a card, or the live plan's layer milestone k has started, been reached or held;
+ * else OPEN.
+ */
+export function rebreakStatesOf(b: RoadmapBundle, map: t5.TopicMap, tree: readonly TreeField[]): Map<number, "OPEN" | "STARTED"> {
+  const cards = new Map<string, number>();
+  for (const f of tree) for (const d of f.domains) cards.set(d.id, Array.isArray(d.cards) ? d.cards.length : 0);
+  const plan = kindOfRow(b.roadmap) === "TOPICS" && b.roadmap.version >= 1 ? planRowsOf(b).filter((m) => m.chainRole === "LAYER" && !superseded(b, m)) : [];
+  const out = new Map<number, "OPEN" | "STARTED">();
+  for (let layer = 1; layer <= map.layers; layer++) {
+    const withCards = map.topics.some((t) => topicLive(t) && t.layer === layer && !!t.domainId && (cards.get(t.domainId) ?? 0) > 0);
+    const m = plan.find((r) => r.layer === layer);
+    const begun = !!m && (isCarried(m) || m.reachedDay != null || heldRow(m));
+    out.set(layer, withCards || begun ? "STARTED" : "OPEN");
+  }
+  return out;
+}
+
+/** The topics a re-break replaces in its layers: Gemini's names you haven't decided or bound (yours, your lines, Domains and aim spans stay). */
+const chainRebreakStaleOf = (map: t5.TopicMap, layers: readonly number[]): t5.TopicDraft[] =>
+  map.topics.filter((t) => topicLive(t) && layers.includes(t.layer) && t.nameOrigin === "GEMINI" && t.decision === "PENDING" && !t.bound);
+
+async function rebreakUnpointed(userId: string, roadmapId: string, layers: readonly number[] | null, now: Date, deps: RoadmapDeps): Promise<Result<{ runId: string; status: RunStatus }>> {
+  if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
+  const sw = topicSwitchesOf(deps.topicSwitches);
+  if (!sw.names) return fail(TOPIC_PLANS_OFF);
+  if (!topicKeySet(deps)) return fail(TOPIC_GEMINI_NO_KEY);
+  if (layers != null && (!Array.isArray(layers) || layers.length === 0 || layers.some((k) => !Number.isInteger(k)))) return fail(NO_TARGET);
+  const e = envOf(deps);
+  const b = await e.store.bundle(userId, roadmapId);
+  if (!b) return fail(NO_ROADMAP);
+  const ref = chainDraftOf(b);
+  if (!ref) return fail(NO_TOPIC_DRAFT);
+  if (youngRunningOf(b.runs, now)) return fail(DRAFT_RUNNING);
+  const c = await chainCtxOf(e, deps, userId, b, ref, sw, now);
+  const map = chainMapOf(c.b, c.ref);
+  const states = rebreakStatesOf(b, map, c.tree);
+  let asked: number[];
+  if (layers == null) {
+    asked = [...states].filter(([, v]) => v === "OPEN").map(([k]) => k);
+    if (asked.length === 0) return fail(REBREAK_NONE_OPEN);
+  } else {
+    asked = Array.from(new Set(layers)).sort((x, y) => x - y);
+    if (asked.some((k) => !states.has(k))) return fail(NO_TARGET);
+    if (asked.some((k) => states.get(k) !== "OPEN")) return fail(REBREAK_STARTED);
+  }
+  const replaced = new Set(chainRebreakStaleOf(map, asked));
+  const pack = evidence.topicPackOf({
+    phase: "REBREAK",
+    areaName: c.areaName,
+    aim: c.intake.aim,
+    splitClauses: c.splitClauses,
+    outline: chainOutlineOf(c.intake),
+    examLabel: chainExamLabelOf(c.intake),
+    layers: map.layers,
+    milestones: storedMilestonesOf(ref.rating),
+    ask: asked,
+    held: chainLiveOf(map)
+      .filter((t) => !replaced.has(t) && !chainHiddenMarked(t))
+      .sort((x, y) => x.layer - y.layer || byTopicKey(x, y))
+      .map((t) => ({ layer: t.layer, name: t.name })),
+  });
+  if (!pack.schema) return fail(NO_TARGET);
+  // You asked for new topics: never a reuse of an earlier reply to the same pack.
+  const spec = await chainJsonSpecOf(c, "REBREAK", pack, { layers: asked }, {}, true);
+  // REBREAK is a chain head but never a draft (ruling 17): only the request caps.
+  const res = await claimChainSteps(c, [spec], { chain: null, draft: false });
+  return res.ok ? ok({ runId: res.value.runId ?? "", status: (res.value.status ?? "RUNNING") as RunStatus }) : fail(res.error);
+}
+
+/**
+ * [Break this milestone down again] and [Break down every topic again] (ruling N16): Gemini names the topics of the
+ * given layers (null: every layer not started) again, under the milestones as they stand; its web check is the next
+ * step. Refuses a layer that has started (REBREAK_STARTED). On the step, the layers' undecided Gemini names go (with
+ * their links) and the new ones come in, ADDED_BY_REBREAK; nothing new leaves the map as it was (NOTHING_NEW).
+ */
+export async function rebreakTopicsCore(userId: string, roadmapId: string, layers: readonly number[] | null, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ runId: string; status: RunStatus }>> {
+  return pointedRefusal(deps, userId, { roadmapId }, await rebreakUnpointed(userId, roadmapId, layers, now, deps));
+}
+
 async function advanceUnpointed(userId: string, roadmapId: string, retry: boolean, now: Date, deps: RoadmapDeps): Promise<Result<TopicChainStep>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   const sw = topicSwitchesOf(deps.topicSwitches);
@@ -16312,6 +16420,9 @@ function chainStopOf(head: TopicRun, steps: readonly TopicRun[], map: t5.TopicMa
   const ground = steps.filter((r) => chainPhaseOf(r) === "GROUND");
   if (chainPhaseOf(head) === "DEEPER") {
     if (chainReportOf(head)?.nothing) return { ...none, stop: "NOTHING_DEEPER" };
+  } else if (chainPhaseOf(head) === "REBREAK") {
+    if (chainReportOf(head)?.nothing) return { ...none, stop: "NOTHING_NEW" };
+    if (settledOf(head) === "FAILED") return { ...none, stop: "MAP_FAILED" };
   } else {
     if (settledOf(head) === "FAILED" && !hasRating) return { ...none, stop: "TIMED_OUT" };
     const links = steps.filter((r) => chainPhaseOf(r) === "LINK");
@@ -16352,7 +16463,7 @@ function chainGeminiOf(b: RoadmapBundle, version: number): { rated: boolean; map
     if (p == null) continue;
     if (r.status !== "OK" && r.status !== "PARTIAL" && r.status !== "REUSED") continue;
     if (p === "RATE") rated = true;
-    if (p === "MAP" || p === "DEEPER") mapped = true;
+    if (p === "MAP" || p === "DEEPER" || p === "REBREAK") mapped = true;
   }
   return { rated, mapped };
 }
@@ -16393,7 +16504,7 @@ async function topicChainViewFor(e: Env, deps: RoadmapDeps, userId: string, b: R
     const retry: t5.TopicChainView["retry"] =
       fact.stop === "TIMED_OUT" || (headCapped && fact.stop != null)
         ? "BREAK_DOWN"
-        : fact.stop != null && fact.stop !== "NOTHING_DEEPER" && !spent && chainNextOf(runs.head, runs.steps, true).kind !== "DONE"
+        : fact.stop != null && fact.stop !== "NOTHING_DEEPER" && fact.stop !== "NOTHING_NEW" && !spent && chainNextOf(runs.head, runs.steps, true).kind !== "DONE"
           ? "ADVANCE"
           : null;
     const line =
@@ -16403,7 +16514,9 @@ async function topicChainViewFor(e: Env, deps: RoadmapDeps, userId: string, b: R
           ? GROUNDED_CAPPED
           : fact.stop === "NOTHING_DEEPER"
             ? NOTHING_DEEPER
-            : (fact.stop === "OVER" || fact.stop === "IMPOSSIBLE") && fact.fit
+            : fact.stop === "NOTHING_NEW"
+              ? NOTHING_NEW
+              : (fact.stop === "OVER" || fact.stop === "IMPOSSIBLE") && fact.fit
               ? fact.fit.basis
               : null;
     const phase = young ? chainPhaseOf(young) : staleRow ? chainPhaseOf(staleRow) : !done && next?.ok && next.value.phase ? next.value.phase : chainPhaseOf(newest);
@@ -16456,6 +16569,7 @@ function chainPhaseAllowed(phase: t5.RunPhase, sw: t5.TopicSwitches): boolean {
     case "GROUND":
       return sw.ground;
     case "DEEPER":
+    case "REBREAK":
       return sw.names;
   }
 }
@@ -16508,6 +16622,9 @@ export async function runTopicStepCore(runId: string, deps: RoadmapDeps = {}): P
         break;
       case "DEEPER":
         await runDeeperStep(s);
+        break;
+      case "REBREAK":
+        await runRebreakStep(s);
         break;
     }
   } catch (err) {
@@ -16807,12 +16924,16 @@ function groundFactsOf(results: readonly model.GroundSampleResult[]): Record<str
  * shown, unticked, LINKED_ONE: ruling N3; the rest are hidden) — only on a
  * name you haven't decided (PENDING, unbound). A NOT_RUN key is left as it is.
  */
-function chainGroundedOf(map: t5.TopicMap, record: t5.GroundRunRecord): t5.TopicMap {
+export function chainGroundedOf(map: t5.TopicMap, record: t5.GroundRunRecord): t5.TopicMap {
   const topics = map.topics.map((t) => {
     const v = record.verdicts[t.key];
     if (!v || v.reason === "NOT_RUN" || t.nameOrigin !== "GEMINI" || !topicLive(t)) return t;
     const undecided = t.decision === "PENDING" && !t.bound;
-    const chosen = !undecided ? t.chosen : v.verdict === "LINKED" ? (t.layer === 1 ? true : t.chosen) : false;
+    // Ruling N16: a milestone you asked to break down again starts with its checked names chosen, in any layer (you asked
+    // for them): LINKED, and a WEAK one Google linked to exactly 1 source (shown, LINKED_ONE: ruling N3).
+    const rebroken = t.notes.includes("ADDED_BY_REBREAK");
+    const oneSource = v.verdict === "WEAK" && v.sources.length === 1;
+    const chosen = !undecided ? t.chosen : v.verdict === "LINKED" ? (t.layer === 1 || rebroken ? true : t.chosen) : rebroken && oneSource;
     return { ...t, grounding: v.verdict, sources: v.sources.slice(0, t5.GROUND_SOURCES_SHOWN), chosen };
   });
   return { ...map, topics };
@@ -16865,6 +16986,53 @@ async function runGroundStep(s: StepRun): Promise<void> {
     { ...facts, grounding: record, status, error: failed.length > 0 ? `${failed.length} web check(s) failed` : null, requests, report: { ...s.report, ...(failed.length ? { failed } : {}) } },
     (map, rating) => ({ map: chainGroundedOf(map, record), rating })
   );
+}
+
+/**
+ * REBREAK (ruling N16): the asked layers' undecided Gemini names (and their links) give way to the agreement's new ones
+ * (ADDED_BY_REBREAK); with nothing new the map stays as it was (NOTHING_NEW). Its GROUND wave is the next step.
+ */
+async function runRebreakStep(s: StepRun): Promise<void> {
+  const pack = s.sp.packs[0];
+  if (!pack) return failChainStep(s, "no pack");
+  const asked = (s.report.layers ?? []).filter((k) => Number.isInteger(k));
+  if (asked.length === 0) return failChainStep(s, "no layer asked");
+  const got = await chainSamplesOf(s, pack);
+  if (!got) return failChainStep(s, "the reused run is gone");
+  const read = chainReadOf(s, got.results, pack.schema);
+  const facts = chainFactsOf(s, got, read.valid);
+  if (read.valid === 0) {
+    await persistChainStep(s, { ...facts, report: { ...s.report, verdicts: read.verdicts } }, null);
+    return;
+  }
+  const cross = await chainCrossGoalOf(s.c);
+  const intake = s.c.intake;
+  const label = labelContextOf(s.c.b, s.c.tree, "TOPIC");
+  const countryNamed = chainCountryNamedOf([intake.aim, intake.constraints, intake.examLabel, ...chainOutlineOf(intake)]);
+  await persistChainStep(s, { ...facts, report: { ...s.report, verdicts: read.verdicts } }, (cur, rating) => {
+    const stale = new Set(chainRebreakStaleOf(cur, asked));
+    const staleIds = new Set([...stale].map((t) => t.lineageId));
+    const base: t5.TopicMap = {
+      ...cur,
+      topics: cur.topics.filter((t) => !stale.has(t)),
+      edges: cur.edges.filter((x) => !staleIds.has(x.parentLineageId) && !staleIds.has(x.childLineageId)),
+    };
+    const agreement = topicsLib.rebreakAgreementOf({
+      samples: read.samples,
+      layers: asked,
+      map: base,
+      freeDomains: chainFreeDomainsOf(s.c, base, cross.held),
+      takenNames: cross.takenNames,
+      aim: intake.aim,
+      label,
+      countryNamed,
+      makeId: s.c.e.makeId,
+    });
+    const added = chainAddedOf(base.topics, [...agreement.topics, ...agreement.hidden], new Set(agreement.hidden), "ADDED_BY_REBREAK");
+    // Nothing new: the old names are never taken away for nothing.
+    if (added.kept.length + added.hidden.length === 0) return { map: cur, rating, report: { kept: [], hidden: [], nothing: true, topics: agreement.report } };
+    return { map: { ...base, topics: [...base.topics, ...added.topics] }, rating, report: { kept: added.kept, hidden: added.hidden, nothing: false, topics: agreement.report } };
+  });
 }
 
 /** DEEPER (§22.8): the children under one topic, one layer down (ADDED_BY_DEEPER); an empty result is NOTHING_DEEPER. Its GROUND wave is the next step. */

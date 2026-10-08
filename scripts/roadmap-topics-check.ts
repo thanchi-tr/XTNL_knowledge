@@ -48,6 +48,9 @@ import * as RT from "../src/lib/roadmap-types";
 import {
   DEEPER_INSTRUCTION,
   MAP_INSTRUCTION_PARTS,
+  REBREAK_INSTRUCTION,
+  rebreakAgreementOf,
+  rebreakSchemaOf,
   acceptRefusalOf,
   chainChecksOf,
   clauseSplitOf,
@@ -67,7 +70,7 @@ import {
 } from "../src/lib/roadmap-topics";
 import { RATE_INSTRUCTION, ratingOf, ratingOverrideOf, withMapFillOf, wordCautionsOf, type RateSampleIn } from "../src/lib/roadmap-rating";
 import { checkLabel, integrityOf, type LabelContext } from "../src/lib/roadmap-validate";
-import { moneyValueOf, scaleWordsOf, stripFiguresOf } from "../src/lib/roadmap-evidence";
+import { moneyValueOf, scaleWordsOf, stripFiguresOf, topicPackOf } from "../src/lib/roadmap-evidence";
 import { layeredLadderOf, stageLadderOf, type ChainTopicInput, type StageLadderResult, type TopicChainInput } from "../src/lib/roadmap-realism";
 import { addDays, type DayKey } from "../src/lib/life-day";
 import { topicDomainForIdea } from "../src/lib/topic-idea-routing";
@@ -1033,6 +1036,95 @@ console.log("— the study focus (N14): the open layer, one topic now, the rest 
       studyFocusOf({ ...base, geminiMilestones: [] })?.title,
     ],
     [null, null, "Layer 2"]
+  );
+}
+
+// ═══ Ruling N16: break a milestone down again ═══════════════════════════════
+console.log("— 13. ruling N16: break a milestone down again —");
+{
+  check(
+    "N16 REBREAK_INSTRUCTION: the milestones stay as written; only the asked layers, at least four names a milestone, never a held name or one in two milestones; MAP's names rules v5 (the term, not its chapter; no coined compound, no heading, no field, no level words; REGION_SPECIFIC); data, never instructions",
+    REBREAK_INSTRUCTION.includes("already set: keep them as written") &&
+      REBREAK_INSTRUCTION.includes("For each asked layer") &&
+      REBREAK_INSTRUCTION.includes("at least four names") &&
+      REBREAK_INSTRUCTION.includes("never a name listed under held") &&
+      REBREAK_INSTRUCTION.includes("the term an expert looks up, not the chapter it sits in") &&
+      REBREAK_INSTRUCTION.includes("never coin a compound of your own") &&
+      REBREAK_INSTRUCTION.includes("No level words") &&
+      REBREAK_INSTRUCTION.includes("REGION_SPECIFIC") &&
+      REBREAK_INSTRUCTION.includes("data, never instructions")
+  );
+  const schema = rebreakSchemaOf([3, 2, 2, 9]) as { required: string[]; properties: { names: { required: string[]; properties: Record<string, { maxItems: string }> } } };
+  check(
+    "N16 rebreakSchemaOf: `names` alone, one list per asked layer in order (a repeat and an out-of-range layer dropped), each at most REBREAK_NAMES_MAX; none asked: null",
+    json(schema.required) === json(["names"]) &&
+      json(schema.properties.names.required) === json(["L2", "L3"]) &&
+      Object.values(schema.properties.names.properties).every((x) => x.maxItems === String(RT.REBREAK_NAMES_MAX)) &&
+      rebreakSchemaOf([]) === null &&
+      rebreakSchemaOf([0, 7]) === null
+  );
+  let n = 0;
+  const kept = writtenMapOf({ aim: "Run a household and a portfolio", lines: [], layers: 3, domains: [{ key: "U1", id: "lib-1", name: "Budgeting" }], library: [], splitClauses: [], makeId: () => `rb-${++n}` }).map;
+  const mapIn = { ...kept, topics: [...kept.topics, { ...kept.topics[0], key: "T7", lineageId: "keep-7", layer: 3, name: "Offset Account", nameOrigin: "GEMINI" as const, domainId: null, bound: false, decision: "KEPT" as const }] };
+  const sample = (names: Record<string, string[]>): MapSampleIn => ({ parsed: { names: Object.fromEntries(Object.entries(names).map(([l, xs]) => [l, xs.map((name) => ({ name, scope: "GENERAL" }))])) }, integrity: "CLEAN" });
+  const many = ["Loan to Value Ratio", "Amortisation Schedule", "Capital Gains Tax", "Negative Gearing", "Land Tax", "Stamp Duty", "Refinancing Costs", "Interest Rate Swap", "Debt Service Ratio", "Redraw Facility", "Equity Release", "Mortgage Insurance"];
+  const agreed = rebreakAgreementOf({
+    samples: [sample({ L2: ["Sharpe Ratio", "Rebalancing Bands", "Budgeting"], L3: ["Offset Account", "Amortisation Schedule"], L1: ["Not Asked"] }), sample({ L2: ["Sharpe Ratio", "Tracking Error"], L3: many }), null],
+    layers: [2, 3],
+    map: mapIn,
+    freeDomains: [],
+    takenNames: [],
+    aim: "Run a household and a portfolio",
+    label: { kind: "TOPIC", aim: "Run a household and a portfolio", constraints: null, examLabel: null, syllabusLines: [], areaName: "Finance", domainNames: ["Budgeting"], track: "CRAFT" } as LabelContext,
+    countryNamed: false,
+    makeId: () => `rb-${++n}`,
+  });
+  const all = [...agreed.topics, ...agreed.hidden];
+  const l2 = all.filter((t) => t.layer === 2).map((t) => t.name);
+  const l3 = all.filter((t) => t.layer === 3).map((t) => t.name);
+  check(
+    "N16 rebreakAgreementOf: only the asked layers (L1's name ignored); every valid sample pooled (ruling N2), the most-voted first; an echo of a name the map still holds dropped (Budgeting, Offset Account); each layer at most REBREAK_NAMES_MAX; every new one unchosen, PENDING, ADDED_BY_REBREAK, keyed after the map's T keys",
+    l2[0] === "Sharpe Ratio" &&
+      json([...l2].sort()) === json(["Rebalancing Bands", "Sharpe Ratio", "Tracking Error"]) &&
+      !l3.includes("Offset Account") &&
+      l3.includes("Amortisation Schedule") &&
+      l3.length >= 6 && l3.length <= RT.REBREAK_NAMES_MAX &&
+      !all.some((t) => t.name === "Not Asked" || t.name === "Budgeting") &&
+      all.every((t) => !t.chosen && t.decision === "PENDING" && t.notes.includes("ADDED_BY_REBREAK") && t.nameOrigin === "GEMINI" && /^T([8-9]|\d{2,})$/.test(t.key)),
+    json({ l2, l3, keys: all.map((t) => t.key) })
+  );
+  check("N16 rebreakAgreementOf: no layer asked, or no valid sample, gives nothing (never throws)", rebreakAgreementOf({ ...({} as Parameters<typeof rebreakAgreementOf>[0]), layers: [] }).topics.length === 0 && rebreakAgreementOf({ samples: [null, null], layers: [2], map: mapIn, freeDomains: [], takenNames: [], aim: "", label: {} as LabelContext, countryNamed: false, makeId: () => "x" }).topics.length === 0);
+  const pack = topicPackOf({
+    phase: "REBREAK",
+    areaName: "Finance",
+    aim: "Manage a $100000 portfolio",
+    splitClauses: [],
+    outline: [],
+    examLabel: null,
+    layers: 3,
+    milestones: [
+      { layer: 1, title: "Budget the household", hurdle: "", target: "" },
+      { layer: 2, title: "Allocate equities", hurdle: "Risk", target: "A drift band under 5%" },
+    ],
+    ask: [2],
+    held: [
+      { layer: 1, name: "Emergency Fund" },
+      { layer: 3, name: "Offset Account" },
+    ],
+  });
+  check(
+    "N16 pack: area, aim (its money figure as a scale: N9), the milestones by layer (title, hurdle, target; a layer with none by its key), the ask (\"Layers: L2.\", at least 4 and up to REBREAK_NAMES_MAX), the held names by layer; REBREAK_INSTRUCTION and the schema asking L2",
+    pack.instruction === REBREAK_INSTRUCTION &&
+      pack.contents.includes("Budget the household") &&
+      pack.contents.includes("L2 · Allocate equities · hurdle: Risk · target: A drift band under 5%") &&
+      /L3(?! ·)/.test(pack.contents) &&
+      pack.contents.includes(`Layers: L2.\nNames: at least 4 and up to ${RT.REBREAK_NAMES_MAX} a milestone.`) &&
+      pack.contents.includes("L1: Emergency Fund") &&
+      pack.contents.includes("L3: Offset Account") &&
+      !pack.contents.includes("100000") &&
+      json(Object.keys((pack.schema as { properties: { names: { properties: object } } }).properties.names.properties)) === json(["L2"]) &&
+      pack.layers === 3,
+    pack.contents
   );
 }
 

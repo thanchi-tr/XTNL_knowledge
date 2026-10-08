@@ -197,6 +197,8 @@ export const FIXTURE_STATES = [
   "topic-sheet",
   "topic-sources",
   "topic-parents",
+  // Ruling N16: [Redo] on the layers not started, and the map's [Redo topics]
+  "topic-rebreak",
   // Ruling N15: three open goals, the switcher on top (GoalSwitcher)
   "goals-three",
 ] as const;
@@ -3373,7 +3375,7 @@ function topicDraftView(map: TopicMapView): RoadmapView {
 const TOPIC_GATES = { topics: true, topicNames: true } as const;
 
 /** The revision-5 topic states (each in FIXTURE_STATES; drawn with the lead-only gate `topics`). */
-export const TOPIC_STATES = ["topic-map-draft", "topic-map-write", "topic-map-plan", "topic-chain", "topic-estimate-unsure", "topic-sheet", "topic-sources", "topic-parents"] as const satisfies readonly FixtureState[];
+export const TOPIC_STATES = ["topic-map-draft", "topic-map-write", "topic-map-plan", "topic-chain", "topic-estimate-unsure", "topic-sheet", "topic-sources", "topic-parents", "topic-rebreak"] as const satisfies readonly FixtureState[];
 type TopicState = (typeof TOPIC_STATES)[number];
 
 function isTopicState(s: FixtureState): s is TopicState {
@@ -3385,6 +3387,21 @@ function topicFixtureOf(state: TopicState): RoadmapFixture {
     case "topic-map-draft": {
       const v = topicDraftView(topicMapDraftFixture());
       return { view: v, intake: null, aim: null, today: null, startPreview: null, gates: TOPIC_GATES, note: "A TOPICS draft with Gemini's names (the lead-only switches drawn on): «4 layers · Gemini's estimate» with its pips, «Not financial advice», each layer's one who-word chip, a PICKED Domain unticked in layer 1, the «+1» unchosen fold, «n not checked» behind a tap, a child that needs a parent, and the draft's milestones titled «Layer k of 4»." };
+    }
+    case "topic-rebreak": {
+      const map0 = topicMapDraftFixture();
+      const titles = ["Mastering cash flow and budgeting foundations", "Allocating equities and gold assets", "Structuring real estate debt and mortgages", "Executing holistic multi asset portfolio management"];
+      const map: TopicMapView = {
+        ...map0,
+        layers: map0.layers.map((l) => ({
+          ...l,
+          milestone: { layer: l.layer, title: titles[l.layer - 1] ?? `Layer ${l.layer}`, hurdle: "", target: "" },
+          rebreak: l.layer === 1 ? ("STARTED" as const) : ("OPEN" as const),
+          rebreakGoes: l.layer === 1 ? [] : l.topics.filter((r) => r.cls === "LINKED" || r.cls === "LINKED_ONE" || r.cls === "NOT_CHECKED").map((r) => r.name),
+        })),
+      };
+      const v = topicDraftView(map);
+      return { view: v, intake: null, aim: null, today: null, startPreview: null, gates: TOPIC_GATES, note: "Ruling N16: each milestone not started carries [Redo] beside its title (layer 1 has cards, so it has none), and the map's head [Redo topics] for every milestone not started; each asks you to confirm, listing what it replaces." };
     }
     case "topic-map-write": {
       const v = topicDraftView(topicMapWriteFixture());

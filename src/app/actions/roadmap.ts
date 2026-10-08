@@ -148,7 +148,7 @@ import {
 } from "@/lib/roadmap-server";
 import { LAYERS_MAX, LAYERS_MIN, type LayerSetChange, type ParentPick, type TopicDepth, type TopicEdit } from "@/lib/roadmap-types";
 // ── Revision 5, lane 10 (contracts §22.14, §22.15): the model phases' cores ──
-import { advanceTopicChainCore, breakDownCore, goDeeperCore, rateAgainCore, type TopicChainStep } from "@/lib/roadmap-server";
+import { advanceTopicChainCore, breakDownCore, goDeeperCore, rateAgainCore, rebreakTopicsCore, type TopicChainStep } from "@/lib/roadmap-server";
 
 const SAVE_FAILED = "Couldn't save that. Try again.";
 const NO_REF = "That's no longer here. Refresh and try again.";
@@ -760,6 +760,16 @@ export async function rateAgain(roadmapId: string): Promise<RoadmapActionResult<
 export async function goDeeper(roadmapId: string, key: string): Promise<RoadmapActionResult<{ runId: string; status: RunStatus }>> {
   if (!isRef(roadmapId) || typeof key !== "string" || !CHAIN_TOPIC_KEY.test(key)) return { ok: false, error: NO_REF };
   return act("goDeeper", false, (userId, now) => goDeeperCore(userId, roadmapId, key, now, depsOf()));
+}
+
+/**
+ * [Break this milestone down again] / [Break down every topic again] (ruling N16): Gemini names the topics of these
+ * layers again (null: every layer not started), keeping the milestones; the page asked you to confirm first.
+ */
+export async function rebreakTopics(roadmapId: string, layers: number[] | null): Promise<RoadmapActionResult<{ runId: string; status: RunStatus }>> {
+  if (!isRef(roadmapId)) return { ok: false, error: NO_REF };
+  if (layers !== null && (!Array.isArray(layers) || layers.length === 0 || layers.length > 6 || !layers.every((k) => Number.isInteger(k) && k >= 1 && k <= 6))) return { ok: false, error: NO_REF };
+  return act("rebreakTopics", false, (userId, now) => rebreakTopicsCore(userId, roadmapId, layers, now, depsOf()));
 }
 
 /**

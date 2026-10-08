@@ -64,6 +64,7 @@ import {
   chooseTopic,
   editTopic,
   goDeeper,
+  rebreakTopics,
   keepGeminiName,
   keepLayer,
   mergeLayerUp,
@@ -190,6 +191,8 @@ export interface RoadmapActions {
   breakDown: typeof breakDown;
   rateAgain: typeof rateAgain;
   goDeeper: typeof goDeeper;
+  /** Ruling N16: a not-started milestone's topics (or every one's: null) asked again, behind a confirm. */
+  rebreakTopics: typeof rebreakTopics;
   advanceTopicChain: typeof advanceTopicChain;
 }
 
@@ -256,6 +259,7 @@ export const LIVE_ACTIONS: RoadmapActions = {
   breakDown,
   rateAgain,
   goDeeper,
+  rebreakTopics,
   advanceTopicChain,
 };
 
@@ -327,6 +331,7 @@ export const FIXTURE_ACTIONS: RoadmapActions = {
   breakDown: refuse,
   rateAgain: refuse,
   goDeeper: refuse,
+  rebreakTopics: refuse,
   advanceTopicChain: refuse,
 };
 

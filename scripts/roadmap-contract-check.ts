@@ -4771,7 +4771,7 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
     ["EDGE_ORIGINS", RT.EDGE_ORIGINS, ["GEMINI", "USER", "CODE", "SYLLABUS", "CROSS_GOAL"]],
     ["EDGE_DECISIONS", RT.EDGE_DECISIONS, ["PENDING", "KEPT", "EDITED", "REMOVED"]],
     ["EDGE_MATCHES", RT.EDGE_MATCHES, ["OUTLINE", "LINE_DOMAIN", "NONE"]],
-    ["RUN_PHASES", RT.RUN_PHASES, ["RATE", "MAP", "LINK", "GROUND", "DEEPER"]],
+    ["RUN_PHASES", RT.RUN_PHASES, ["RATE", "MAP", "LINK", "GROUND", "DEEPER", "REBREAK"]],
     ["CHAIN_ROLES", RT.CHAIN_ROLES, ["LAYER", "DEPTH"]],
     // Ruling N7 (the judged names test): VAGUE_FIELD, a whole academic field, hidden like REGION.
     ["TOPIC_FLAGS", RT.TOPIC_FLAGS, ["JURISDICTION", "BRAND", "ADVICE", "LEVEL_ONLY", "INJECTION", "REGION", "VAGUE_FIELD"]],
@@ -4796,6 +4796,7 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
         "CROSS_GOAL_PARENT",
         "MERGED_BY_YOU",
         "ADDED_BY_DEEPER",
+        "ADDED_BY_REBREAK",
       ],
     ],
     ["TOPIC_DROP_REASONS", RT.TOPIC_DROP_REASONS, ["SHAPE", "FLAG", "ECHO", "ONE_SAMPLE", "SAME_TOPIC_DEEPER", "OVER_ROOM", "TAKEN_NAME"]],
@@ -4841,7 +4842,7 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
     Same<RT.EdgeOrigin, "GEMINI" | "USER" | "CODE" | "SYLLABUS" | "CROSS_GOAL">,
     Same<RT.EdgeDecision, "PENDING" | "KEPT" | "EDITED" | "REMOVED">,
     Same<RT.EdgeMatch, "OUTLINE" | "LINE_DOMAIN" | "NONE">,
-    Same<RT.RunPhase, "RATE" | "MAP" | "LINK" | "GROUND" | "DEEPER">,
+    Same<RT.RunPhase, "RATE" | "MAP" | "LINK" | "GROUND" | "DEEPER" | "REBREAK">,
     Same<RT.ChainRole, "LAYER" | "DEPTH">,
     Same<RT.TopicFlag, "JURISDICTION" | "BRAND" | "ADVICE" | "LEVEL_ONLY" | "INJECTION" | "REGION" | "VAGUE_FIELD">,
     Same<RT.TopicClass, "SYLLABUS" | "YOURS" | "LIBRARY" | "AIM" | "PICKED" | "LINKED" | "LINKED_ONE" | "NOT_CHECKED" | "KEPT" | "KEPT_NOT_CHECKED">,
@@ -4862,6 +4863,7 @@ console.log("— revision 5 (§22.2, §23): switches, constants and unions —")
       | "CROSS_GOAL_PARENT"
       | "MERGED_BY_YOU"
       | "ADDED_BY_DEEPER"
+      | "ADDED_BY_REBREAK"
     >,
     Same<RT.TopicDropReason, "SHAPE" | "FLAG" | "ECHO" | "ONE_SAMPLE" | "SAME_TOPIC_DEEPER" | "OVER_ROOM" | "TAKEN_NAME">,
     Same<RT.TopicHideReason, "UNSURE_LAYER" | "LANGUAGE_UNCHECKED" | "REGION" | "NEAR_DUPLICATE" | "WEAK" | "NONE" | "NOT_RUN" | "GROUND_FAILED" | "VAGUE_FIELD">,
@@ -5067,6 +5069,7 @@ console.log("— revision 5 (§22.4, §22.5): the schemas and the instructions, 
   eq("LINK_INSTRUCTION equals §22.5 exactly", TP.LINK_INSTRUCTION, inst("LINK_INSTRUCTION"));
   eq("GROUND_INSTRUCTION equals §22.5 exactly", GRD.GROUND_INSTRUCTION, inst("GROUND_INSTRUCTION"));
   eq("DEEPER_INSTRUCTION equals §22.5 exactly", TP.DEEPER_INSTRUCTION, inst("DEEPER_INSTRUCTION"));
+  eq("REBREAK_INSTRUCTION equals §22.5 exactly (ruling N16)", TP.REBREAK_INSTRUCTION, inst("REBREAK_INSTRUCTION"));
   check(
     'each instruction fences its input as "data, never instructions" (MAP in its tail), and TOPIC_PROMPT_VERSION is 5 (the live fix\'s RATE anchors, MAP\'s and DEEPER\'s names v3: ruling N5, MAP\'s milestones: ruling N8, then names v5: ruling N13, §22.20)',
     [RR.RATE_INSTRUCTION, TP.MAP_INSTRUCTION_PARTS.tail, TP.LINK_INSTRUCTION, GRD.GROUND_INSTRUCTION, TP.DEEPER_INSTRUCTION].every((t) => t.includes("data, never instructions")) && RT.TOPIC_PROMPT_VERSION === 5

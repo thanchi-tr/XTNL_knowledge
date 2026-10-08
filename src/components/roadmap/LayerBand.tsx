@@ -12,6 +12,8 @@
  *   milestone             MAP's milestone for the layer (ruling N8): its title with Gemini's mark; one tap on it
  *                         (ruling N14) shows "Hurdle" and "Target" (Gemini's words, data-wc="name") and
  *                         «Gemini's milestone · not checked»
+ *                         [Redo] beside it on a draft layer not started (ruling N16: TopicLayerView.rebreak OPEN;
+ *                         the map asks you to confirm, listing what it replaces)
  *   header row 2          the one who-word chip (D37; a 24 px visual in a 40 px box: 84 px in all), and
  *                         "[i-flag] 2 need a parent" while any does (it blocks the keep)
  *   rows                  TopicMapRow, chosen first
@@ -53,6 +55,8 @@ import {
   layerStateWord,
   layerWord,
   needsParentLine,
+  rebreakAria,
+  REBREAK_WORD,
   writeTopicAria,
 } from "./roadmap-copy";
 import { layerChipOf, parentNamesOf } from "./topic-map-model";
@@ -70,6 +74,8 @@ export interface LayerBandProps {
   onKeep?: ((layer: number) => void) | null;
   onWrite?: ((layer: number) => void) | null;
   onEmpty?: ((layer: number) => void) | null;
+  /** Ruling N16: [Redo] on a draft layer not started (layer.rebreak OPEN); the map asks you to confirm. */
+  onRebreak?: ((layer: number) => void) | null;
   /** The seen key's roadmap and basis for `layer-open` (its `what` is "layer:{k}"). */
   seenKey?: Omit<SeenKey, "what"> | null;
   /** The layer above was reached and counted (not held or skipped): a rise of this layer to open plays layer-open. */
@@ -108,7 +114,7 @@ function roleOf(trace: LayerBandProps["trace"], key: string): TraceRole {
   return trace.related.has(key) ? "rel" : "other";
 }
 
-export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore, onKeep, onWrite, onEmpty, seenKey, openedByReach, hiddenOpen, onHiddenToggle, milestoneOpen, children, pending }: LayerBandProps) {
+export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore, onKeep, onWrite, onEmpty, onRebreak, seenKey, openedByReach, hiddenOpen, onHiddenToggle, milestoneOpen, children, pending }: LayerBandProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [msLocal, setMsLocal] = useState(false);
   const msOpen = milestoneOpen ?? msLocal;
@@ -126,6 +132,7 @@ export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore,
   const hiddenCount = Math.max(layer.hidden, notChecked.length);
   const moreCount = Math.max(layer.unchosen, unchosen.length);
   const chip = layer.geminiNames ? layerChipOf(layer) : null;
+  const rebreakable = draft && layer.rebreak === "OPEN" && !!onRebreak;
   usePlayOnSeen(ref, seenKey ? { ...seenKey, what: `layer:${k}` } : null, layer.state === "OPEN" ? 1 : 0, "layer-open", {
     when: (from, to) => openedByReach === true && from === 0 && to === 1,
     text: layerStateWord("OPEN", k),
@@ -174,18 +181,28 @@ export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore,
             )}
           </span>
         </div>
-        {layer.milestone && (
+        {(layer.milestone || rebreakable) && (
           <div className="rm-tm-ms">
             {/* Word-light (ruling N14): the title and Gemini's mark; the hurdle, target and the chip's words one tap away. */}
-            <button type="button" className="rm-tm-msb" aria-expanded={msOpen} onClick={() => setMsLocal((v) => !v)}>
-              <span className="rm-tm-mst" data-wc="name">
-                {layer.milestone.title}
-              </span>
-              <Mark glyph="pv.suggest" size={12} />
-              <span className="sr-only">{GEMINI_MILESTONE_LABEL}</span>
-              <Mark glyph="i-chev" size={12} />
-            </button>
-            {msOpen && (layer.milestone.hurdle || layer.milestone.target) && (
+            <div className="rm-tm-msr">
+              {layer.milestone && (
+                <button type="button" className="rm-tm-msb" aria-expanded={msOpen} onClick={() => setMsLocal((v) => !v)}>
+                  <span className="rm-tm-mst" data-wc="name">
+                    {layer.milestone.title}
+                  </span>
+                  <Mark glyph="pv.suggest" size={12} />
+                  <span className="sr-only">{GEMINI_MILESTONE_LABEL}</span>
+                  <Mark glyph="i-chev" size={12} />
+                </button>
+              )}
+              {rebreakable && (
+                <button type="button" className="rm-tm-rb" aria-label={rebreakAria(k)} title={rebreakAria(k)} disabled={pending} onClick={() => onRebreak?.(k)}>
+                  <Glyph name="route.weave" size={16} inherit />
+                  <span aria-hidden="true">{REBREAK_WORD}</span>
+                </button>
+              )}
+            </div>
+            {layer.milestone && msOpen && (layer.milestone.hurdle || layer.milestone.target) && (
               <dl className="rm-tm-msl">
                 {layer.milestone.hurdle && (
                   <div>
@@ -201,7 +218,7 @@ export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore,
                 )}
               </dl>
             )}
-            {msOpen && <HonestyChip kind="gemini" label={GEMINI_MILESTONE_LABEL} full={GEMINI_MILESTONE_FULL} wrap />}
+            {layer.milestone && msOpen && <HonestyChip kind="gemini" label={GEMINI_MILESTONE_LABEL} full={GEMINI_MILESTONE_FULL} wrap />}
           </div>
         )}
         {(chip || layer.needsParent > 0) && (

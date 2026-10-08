@@ -2618,6 +2618,31 @@ export function inPlanAria(name: string): string {
 export function moreAboutAria(name: string): string {
   return `More about ${name}`;
 }
+// ─── Break a milestone down again (ruling N16) ───
+
+/** The layer's button: one visible word (the layer's word budget), its full words in the label. */
+export const REBREAK_WORD = "Redo";
+export function rebreakAria(k: number): string {
+  return `Break milestone ${k} down again`;
+}
+/** The map's button (every milestone not started). */
+export const REBREAK_ALL_WORD = "Redo topics";
+export const REBREAK_ALL_ARIA = "Break down every milestone not started again";
+export function rebreakTitle(layers: readonly number[] | null): string {
+  return layers && layers.length === 1 ? `Break milestone ${layers[0]} down again?` : "Break down every milestone again?";
+}
+export const REBREAK_LEAD = "Gemini names the topics again under each milestone's title and target. The milestones themselves don't change.";
+export const REBREAK_GOES_HEAD = "Replaced (Gemini's, not kept by you)";
+export const REBREAK_NOTHING_GOES = "Nothing is replaced: Gemini only adds topics.";
+export const REBREAK_STAYS_LINE = "Topics you wrote, your outline lines, your Domains and every layer you kept stay.";
+export function rebreakStartedLine(layers: readonly number[]): string {
+  return layers.length === 1 ? `Milestone ${layers[0]} has started (it has cards), so it stays.` : `Milestones ${layers.join(", ")} have started (they have cards), so they stay.`;
+}
+export const REBREAK_CONFIRM = "Break it down again";
+export function rebreakCostLine(requestsMax: number, left: number): string {
+  return `Uses up to ${requestsMax} of today's ${left} Gemini requests left.`;
+}
+
 export const ACCEPT_ALL_WORD = "Accept all";
 /** [Accept all]'s confirm: what it would keep, layer by layer (AcceptTopicChoices.keepAll). */
 export const ACCEPT_ALL_LEAD = "Accept all keeps these Gemini names. Keeping never marks them checked.";
@@ -2704,6 +2729,7 @@ export const TOPIC_NOTE_WORDS: Readonly<Record<TopicNote, string>> = {
   CROSS_GOAL_PARENT: "builds on another goal's Domain",
   MERGED_BY_YOU: "merged by you",
   ADDED_BY_DEEPER: "from Go deeper",
+  ADDED_BY_REBREAK: "from Break down again",
 };
 export const MATCHES_ORDER_LINE = "matches your order";
 export const HELD_TOPIC_SR = "Held when you began";
@@ -2804,7 +2830,7 @@ export function layerTitleShort(names: readonly string[], k: number, n: number):
 // ─── The Gemini chain's wait and stop lines (fix round; ruling 47; word-light, ui-motion §15.9) ───
 
 /** The wait card's step word: "Gemini · map · started 12 s ago". */
-export const CHAIN_STEP_WORD: Readonly<Record<RunPhase, string>> = { RATE: "estimate", MAP: "map", LINK: "links", GROUND: "web check", DEEPER: "go deeper" };
+export const CHAIN_STEP_WORD: Readonly<Record<RunPhase, string>> = { RATE: "estimate", MAP: "map", LINK: "links", GROUND: "web check", DEEPER: "go deeper", REBREAK: "topics again" };
 export function chainRunningLine(phase: RunPhase | null, started: string): string {
   return `Gemini · ${phase ? CHAIN_STEP_WORD[phase] : "breakdown"} · started ${started}`;
 }
@@ -2834,6 +2860,8 @@ export function chainStopLine(stop: TopicChainStop, unchecked: number): string {
       return "Today's web checks are used up.";
     case "NOTHING_DEEPER":
       return "Gemini named nothing narrower.";
+    case "NOTHING_NEW":
+      return "Gemini named no new topics.";
   }
 }
 /** The draft header's lead on a breakdown: who did what (never "Built from your numbers." beside Gemini's estimate or map). */

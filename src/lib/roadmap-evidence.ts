@@ -95,7 +95,7 @@ import {
   SPELLED_NUMBER_WORDS,
 } from "./roadmap-lexicon";
 import { RATE_INSTRUCTION, RATE_RESPONSE_SCHEMA } from "./roadmap-rating";
-import { DEEPER_INSTRUCTION, DEEPER_RESPONSE_SCHEMA, LINK_INSTRUCTION, linkSchemaOf, mapInstructionOf, mapSchemaOf } from "./roadmap-topics";
+import { DEEPER_INSTRUCTION, DEEPER_RESPONSE_SCHEMA, LINK_INSTRUCTION, REBREAK_INSTRUCTION, linkSchemaOf, mapInstructionOf, mapSchemaOf, rebreakSchemaOf } from "./roadmap-topics";
 import { GROUND_INSTRUCTION, groundContentsOf } from "./roadmap-grounding";
 import {
   BREADTH_FALLBACK,
@@ -103,6 +103,7 @@ import {
   GROUND_KEYS_PER_CALL,
   LAYER_KEYS,
   LAYERS_MAX,
+  REBREAK_NAMES_MAX,
   LAYERS_MIN,
   TOPIC_PROMPT_VERSION,
   type BreadthKey,
@@ -920,6 +921,10 @@ export interface TopicPackInput {
   terms?: readonly { key: string; name: string; id?: string | null }[];
   /** DEEPER: the topic and its ancestors' names, shallowest first. */
   topic?: { key: string; name: string; ancestors: readonly string[]; id?: string | null };
+  /** REBREAK (ruling N16): every layer's milestone as it stands, the layers asked, and the names the map still holds by layer. */
+  milestones?: readonly { layer: number; title: string; hurdle: string; target: string }[];
+  ask?: readonly number[];
+  held?: readonly { layer: number; name: string }[];
 }
 
 /** One phase's pack: what is sent (contents, instruction, schema) and the server-only keymap. `layers` (lane 10's optional field) is K, for the hash. */
@@ -942,6 +947,7 @@ export const TOPIC_PACK_SECTIONS: Readonly<Record<RunPhase, readonly string[]>> 
   LINK: ["area", "topics"],
   GROUND: ["area", "terms"],
   DEEPER: ["area", "topic", "above"],
+  REBREAK: ["area", "aim", "outline", "exam", "milestones", "ask", "held"],
 };
 
 const layersIn = (k: unknown): number => (typeof k === "number" && Number.isFinite(k) ? Math.max(LAYERS_MIN, Math.min(LAYERS_MAX, Math.floor(k))) : LAYERS_MIN);
@@ -1051,6 +1057,33 @@ export function topicPackOf(input: TopicPackInput): TopicPack {
       }
       instruction = DEEPER_INSTRUCTION;
       schema = t && keyOk(t.key) ? { ...DEEPER_RESPONSE_SCHEMA } : null;
+      break;
+    }
+    case "REBREAK": {
+      const inLayers = (k: unknown): k is number => typeof k === "number" && Number.isInteger(k) && k >= LAYERS_MIN && k <= LAYERS_MAX;
+      const asked = Array.from(new Set((Array.isArray(input.ask) ? input.ask : []).filter(inLayers))).sort((a, b) => a - b);
+      const ms = (Array.isArray(input.milestones) ? input.milestones : []).filter((m) => m && inLayers(m.layer)).sort((a, b) => a.layer - b.layer);
+      const k = layersIn(Math.max(LAYERS_MIN, input.layers ?? 0, ...asked, ...ms.map((m) => m.layer)));
+      layers = k;
+      const msLines: string[] = [];
+      for (let layer = LAYERS_MIN; layer <= k; layer++) {
+        const m = ms.find((x) => x.layer === layer);
+        const title = packText(m?.title ?? "", PACK_NAME_MAX * 2);
+        const parts = [`L${layer}${title ? ` · ${title}` : ""}`];
+        if (m?.hurdle) parts.push(`hurdle: ${packText(m.hurdle, SYLLABUS_LINE_MAX)}`);
+        if (m?.target) parts.push(`target: ${packText(m.target, SYLLABUS_LINE_MAX)}`);
+        msLines.push(parts.join(" · "));
+      }
+      const held = (Array.isArray(input.held) ? input.held : []).filter((h) => h && inLayers(h.layer) && typeof h.name === "string" && h.name.trim() !== "");
+      const heldLines: string[] = [];
+      for (let layer = LAYERS_MIN; layer <= k; layer++) {
+        const here = held.filter((h) => h.layer === layer).map((h) => packText(h.name, PACK_NAME_MAX)).filter(Boolean);
+        if (here.length > 0) heldLines.push(`L${layer}: ${here.join("; ")}`);
+      }
+      const ask = asked.length > 0 ? `Layers: ${asked.map((x) => LAYER_KEYS[x - 1]).join(", ")}.\nNames: at least 4 and up to ${REBREAK_NAMES_MAX} a milestone.` : "";
+      sections.push(...rateSections(), ["milestones", msLines.join("\n")], ["ask", ask], ["held", heldLines.join("\n")]);
+      instruction = REBREAK_INSTRUCTION;
+      schema = rebreakSchemaOf(asked);
       break;
     }
   }

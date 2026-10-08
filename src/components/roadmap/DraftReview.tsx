@@ -1598,12 +1598,12 @@ export function TopicChainCard({ view, mode }: { view: RoadmapView; mode: "draft
       <RoadmapGlyph name="info" />
       <div className="rm-run-body">
         <b>{chain.stop ? chainStopLine(chain.stop, chain.unchecked) : CHAIN_STOPPED_LINE}</b>
-        {chain.line && chain.stop !== "NOTHING_DEEPER" && (
+        {chain.line && chain.stop !== "NOTHING_DEEPER" && chain.stop !== "NOTHING_NEW" && (
           <p className="t-meta" style={{ marginTop: 4 }}>
             {chain.line}
           </p>
         )}
-        {chain.stop !== "NOTHING_DEEPER" && (
+        {chain.stop !== "NOTHING_DEEPER" && chain.stop !== "NOTHING_NEW" && (
           <div className="rm-acts" style={{ marginTop: 8 }}>
             {fewer != null && (
               <Button
