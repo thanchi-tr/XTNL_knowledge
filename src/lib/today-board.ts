@@ -748,6 +748,23 @@ export function yesterdayRecordable(
 }
 
 /**
+ * What the server will book for yesterday (a forgotten tick): everything the Yesterday lane offers
+ * (yesterdayRecordable: what was due), and beyond it an open one-off that existed yesterday, or a TARGET habit
+ * (3x/week: one more real day in its period), from the drawer's "Done yesterday". Never an AFTER or EVERY rule off
+ * its day (ticking two days running would farm their consistency), never a study task (reviews complete it).
+ */
+export function yesterdayBookable(
+  t: Pick<BoardTemplate, "recurrence" | "startDay" | "autoMetric" | "dueKind" | "dueDay" | "planDay">,
+  rule: Rule | null,
+  yesterday: DayKey,
+  lastDone: DayKey | null
+): boolean {
+  if (yesterdayRecordable(t, rule, yesterday, lastDone)) return true;
+  if (t.startDay > yesterday || t.autoMetric) return false;
+  return !rule || rule.kind === "TARGET";
+}
+
+/**
  * Why a completion may not be booked on `day`, or null when it may. The
  * day is the server's own: today, or yesterday inside the record window —
  * never another. A one-off may be done on any day it is still open; a
@@ -775,7 +792,7 @@ export function completionBlockOf(a: {
     return expectedToday(t, rule, today, a.lastDone).due ? null : "It isn't due today.";
   }
   if (a.onDay.some((i) => SETTLED_STATUSES.has(i.status))) return "Yesterday is already settled for this task.";
-  return yesterdayRecordable(t, rule, yesterday, a.lastDone) ? null : "Only what was due yesterday can be recorded for yesterday.";
+  return yesterdayBookable(t, rule, yesterday, a.lastDone) ? null : "Only what was due yesterday can be recorded for yesterday.";
 }
 
 /**
@@ -956,6 +973,11 @@ export interface BoardRow {
   pendingNext?: PendingNext | null;
   /** Its steps (subtasks), on today's rows only; absent or null: no steps. */
   steps?: RowSteps | null;
+  /**
+   * A today row whose task can still be ticked for yesterday (yesterdayBookable, not done or judged yesterday): the
+   * drawer's and the Yesterday sheet's "Did it yesterday", with what it pays against yesterday's ledger.
+   */
+  recordYesterday?: { xp: number } | null;
 }
 
 /** A row's steps: the list, the ones ticked today, and how the ticks pay (src/lib/subtasks.ts). */
@@ -1543,6 +1565,16 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
         ? { items: sub.items, done: sub.done, partial: !!paidSteps && paidSteps.done < paidSteps.total, checklist: done.length > 0 && !paidSteps }
         : null;
     if (steps?.partial && state === "done") state = "open";
+    // A forgotten tick: today's row can book yesterday too, when the server would.
+    const onYesterday = (instancesByTpl.get(t.id) ?? []).filter((i) => i.day === yesterday);
+    const recordYesterday =
+      day === today &&
+      lane !== "yesterday" &&
+      !(!rule && t.completedAt) &&
+      !onYesterday.some((i) => isDoneStatus(i.status) || SETTLED_STATUSES.has(i.status)) &&
+      yesterdayBookable(t, rule, yesterday, lastDoneOf((instancesByTpl.get(t.id) ?? []).filter((i) => i.day < today)))
+        ? { xp: planCompletion({ template: t, day: yesterday, today, slot: 0, ledger: ledgerFor(d, yesterday), streakDays: rule && stats ? stats.streakDaysYesterday : 0 }).receipt.xp }
+        : null;
     // A study task that has met its target counts as done even before the
     // after() hook has written its instance; one that has not stays locked.
     if (state === "open" && auto) state = auto.met ? "done" : "locked";
@@ -1583,6 +1615,7 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
           : null,
       pendingNext: pendingNextOf(t, today),
       steps,
+      recordYesterday,
       ...extra,
     };
   };

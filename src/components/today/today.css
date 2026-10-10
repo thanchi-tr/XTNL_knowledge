@@ -65,6 +65,20 @@
 .today-streak { background-image: radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--light) 9%, transparent), transparent 60%), linear-gradient(180deg, var(--raised), var(--card)); }
 .today-streak.kept { background-image: radial-gradient(120% 140% at 0% 0%, var(--light-glow), transparent 62%), linear-gradient(180deg, var(--raised), var(--card)); }
 :is(.today-day, .today-streak) .d-top { display: flex; align-items: center; gap: 12px; }
+/* Record yesterday, under the streak: a quiet link, always there (a forgotten tick). */
+.today-streak-y {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 40px; margin: 6px 0 -8px 64px; padding: 0 2px;
+  border: 0; background: none; color: var(--ink-1); font: 600 13px/18px var(--font-ui); cursor: pointer;
+}
+.today-streak-y:hover { color: var(--ink-0); }
+.today-streak-y:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 6px; }
+/* The Record yesterday sheet's second list: anything else that can be ticked for yesterday. */
+.y-more { display: grid; gap: 8px; margin-top: 16px; }
+.y-more > .t-eyebrow { margin: 0; }
+.y-more-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.y-more-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 48px; padding: 4px 4px 4px 12px; border-radius: 12px; background: var(--sunken); border: 1px solid var(--line-1); }
+.y-more-title { min-width: 0; font: 500 14px/18px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+.y-more-btn { flex: none; }
 :is(.today-day, .today-streak) .d-streak { min-width: 0; }
 :is(.today-day, .today-streak) .streak-line { display: flex; align-items: baseline; gap: 6px; }
 :is(.today-day, .today-streak) .streak-num { font: 600 30px/1 var(--font-display); display: inline-block; min-width: 1.1em; font-variant-numeric: tabular-nums lining-nums; }

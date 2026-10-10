@@ -54,6 +54,8 @@ interface Props {
   noMonth?: boolean;
   /** Fixtures: the step editor's writes (the board uses the server actions). */
   stepsSave?: StepsSave;
+  /** Ticks it for yesterday, when row.recordYesterday says the server would (a forgotten tick). */
+  onYesterday?: () => void;
 }
 
 /** M2 (F3): what the drawer offers a must. A weakening is deferred seven days once Duty is live; a strengthening is immediate. */
@@ -165,6 +167,11 @@ export function TaskDrawer(props: Props) {
         {open && !recurring && row.lane !== "yesterday" && tomorrow.show && (
           <button type="button" className="today-pill" disabled={busy} onClick={props.onTomorrow}>
             Tomorrow
+          </button>
+        )}
+        {row.recordYesterday && props.onYesterday && (
+          <button type="button" className="today-pill" disabled={busy} onClick={props.onYesterday} title="Forgot to tick it? It counts on yesterday, as if ticked then.">
+            Did it yesterday · ≈ {fmtXp(row.recordYesterday.xp)}
           </button>
         )}
         {row.state === "done" && recurring && !study && row.lane !== "yesterday" && (

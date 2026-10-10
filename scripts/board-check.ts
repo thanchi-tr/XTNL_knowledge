@@ -93,6 +93,7 @@ import {
   taskDedupeKey,
   taskEventInput,
   undoEventInput,
+  yesterdayBookable,
   yesterdayRecordable,
   type BoardData,
   type BoardInstance,
@@ -1030,11 +1031,29 @@ const completion = (templateId: string, groupKey: string, p: Partial<LedgerCompl
   const offeredButRefused = [...openOn(TODAY), ...openOn(YESTERDAY)].filter((r) => gate(r.template, r.day) !== null).map((r) => `${r.template.id}@${r.day}`);
   check("every open row the board offers, today or yesterday, the server accepts", offeredButRefused.length === 0, offeredButRefused.join(", "));
   const yesterdayOffered = new Set(b.yesterdayRows.map((r) => r.template.id));
-  const mismatched = templates.filter((x) => (gate(x, YESTERDAY) === null) !== yesterdayOffered.has(x.id)).map((x) => x.id);
+  const laneRefused = [...yesterdayOffered].filter((id) => gate(templates.find((x) => x.id === id)!, YESTERDAY) !== null);
   check(
-    "yesterday: the server books exactly the Yesterday lane — nothing unscheduled, put off, skipped or study-linked",
-    mismatched.length === 0 && yesterdayOffered.has("daily") && yesterdayOffered.has("dlYesterday") && yesterdayOffered.has("wedOnly"),
-    mismatched.length ? `mismatch: ${mismatched.join(", ")}` : [...yesterdayOffered].join(", ")
+    "yesterday: the server books every row the Yesterday lane offers (what was due yesterday)",
+    laneRefused.length === 0 && yesterdayOffered.has("daily") && yesterdayOffered.has("dlYesterday") && yesterdayOffered.has("wedOnly"),
+    laneRefused.join(", ")
+  );
+  // A forgotten tick: beyond the lane, the server books an open one-off or a TARGET habit for yesterday, and today's
+  // rows offer exactly those as "Did it yesterday"; never an AFTER or EVERY rule off its day, a skipped day or a study task.
+  const extra = templates.filter((x) => gate(x, YESTERDAY) === null && !yesterdayOffered.has(x.id));
+  const offeredToday = [...b.must, ...b.todayRows, ...b.anytime].filter((r) => r.recordYesterday);
+  check(
+    "yesterday (forgotten tick): beyond the lane, only an open one-off or a TARGET habit is booked for yesterday",
+    extra.every((x) => !x.recurrence || x.recurrence.startsWith("TARGET:")) && extra.some((x) => x.id === "target") && extra.some((x) => x.id === "undated"),
+    extra.map((x) => x.id).join(", ")
+  );
+  check(
+    "yesterday (forgotten tick): every 'Did it yesterday' a today row offers, the server books, priced on yesterday's ledger",
+    offeredToday.length > 0 && offeredToday.every((r) => gate(r.template, YESTERDAY) === null && (r.recordYesterday?.xp ?? -1) >= 0),
+    offeredToday.map((r) => r.template.id).join(", ")
+  );
+  check(
+    "yesterday (forgotten tick): never an AFTER or EVERY rule off its day, a skipped day or a study task",
+    ["after30", "every100", "skippedY", "studyDaily"].every((id) => gate(templates.find((x) => x.id === id)!, YESTERDAY) !== null && !offeredToday.some((r) => r.template.id === id))
   );
   const notDue = ["monOnly", "after30", "every100"].map((id) => [id, gate(templates.find((x) => x.id === id)!, TODAY)] as const);
   check(
@@ -1051,7 +1070,8 @@ const completion = (templateId: string, groupKey: string, p: Partial<LedgerCompl
   const after = templates.find((x) => x.id === "after30")!;
   const farmed = streakDaysFor(after, parseRule("AFTER:30")!, [inst("after30", ago(2)), inst("after30", ago(1))], TODAY);
   check("AFTER:30 ticked two days running would farm C (60 day-equivalents); the next day's tick is refused", farmed === 60 && gate(after, TODAY) !== null, `farmed ${farmed}`);
-  check("…and yesterdayRecordable never offers AFTER, TARGET or a study task", !yesterdayRecordable(after, parseRule("AFTER:30"), YESTERDAY, null) && !yesterdayRecordable(templates[11], parseRule("TARGET:3/W"), YESTERDAY, null) && !yesterdayRecordable(templates[14], parseRule("DAILY"), YESTERDAY, null));
+  check("…and yesterdayRecordable (the lane) never offers AFTER, TARGET or a study task", !yesterdayRecordable(after, parseRule("AFTER:30"), YESTERDAY, null) && !yesterdayRecordable(templates[11], parseRule("TARGET:3/W"), YESTERDAY, null) && !yesterdayRecordable(templates[14], parseRule("DAILY"), YESTERDAY, null));
+  check("…nor does yesterdayBookable (the server) offer AFTER off its day or a study task", !yesterdayBookable(after, parseRule("AFTER:30"), YESTERDAY, null) && !yesterdayBookable(templates[14], parseRule("DAILY"), YESTERDAY, null));
 }
 
 // ── Concurrent completions: why each one is priced after the last ─────────

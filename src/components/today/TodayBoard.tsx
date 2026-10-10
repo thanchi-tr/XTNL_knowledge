@@ -845,6 +845,22 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
   /** Rows whose tick goes through their steps: today's, with steps, not already paid by a whole tick. */
   const viaSteps = (row: BoardRow) => !!row.steps && !row.steps.checklist && row.state === "open";
 
+  /**
+   * A forgotten tick: today's row ticked for yesterday (completeTask with day 'yesterday', the server's
+   * yesterdayBookable gate). It pays against yesterday's ledger and counts on yesterday, as if ticked then.
+   */
+  function recordYesterday(row: BoardRow) {
+    if (staleDay()) return;
+    dispatch(
+      null,
+      () => completeTask(row.template.id, { day: "yesterday" }, REFRESH),
+      (v) => {
+        presentAll(v.celebrations);
+        setNotice(`Recorded for yesterday: ${row.template.title} · paid ${fmtXp(v.receipt.xp)}. Undo it from Record yesterday.`);
+      }
+    );
+  }
+
   function complete(row: BoardRow, opts: { minutes?: number | null; mvv?: boolean } = {}, from?: Element | null) {
     if (staleDay()) return;
     const id = nextOpId();
@@ -1292,6 +1308,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
           busy={busy}
           working={w}
           onDone={() => (viaSteps(row) ? tickSteps(row, null, true) : complete(row, { minutes }))}
+          onYesterday={() => recordYesterday(row)}
           onMinimum={() => complete(row, { mvv: true })}
           onSkip={() => skip(row)}
           onTomorrow={() => moveToTomorrow(row)}
@@ -1322,6 +1339,10 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
   const plannedTally = laneTally(planned);
   const habitTally = laneTally(habits);
   const yesterdayOpenCount = openCount(board.yesterdayRows);
+  // Today's rows that can still be ticked for yesterday (the Record yesterday sheet's second list), once each.
+  const forgotten = [...board.must, ...board.todayRows, ...board.anytime].filter(
+    (r, i, all) => r.recordYesterday && all.findIndex((x) => x.template.id === r.template.id) === i && !board.yesterdayRows.some((y) => y.template.id === r.template.id)
+  );
   const recordBy = recordByLabel(data.today, clock);
   const asks = todayAsksOf({ yesterdayOpen: yesterdayOpenCount, recordBy, notices });
   const receiptRow = receiptKey ? (lanes.find((r) => r.key === receiptKey) ?? null) : null;
@@ -1797,7 +1818,13 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
               heldNote={ledgerDuty.heldNote}
               sealRef={sealRef}
               cardRef={streakCardRef}
-            />
+            >
+              {/* Always one tap away: what was due yesterday, and anything else forgotten (a tick counts on yesterday). */}
+              <button type="button" className="today-streak-y" aria-haspopup="dialog" onClick={() => setYesterdayOpen(true)}>
+                Record yesterday{yesterdayOpenCount > 0 ? ` · ${yesterdayOpenCount} open` : ""}
+                <Icon name="chev" size={14} />
+              </button>
+            </StreakCard>
             <AskBadge asks={asksOn("streak")} label="your streak" onAction={askAction} />
           </div>
 
@@ -2049,9 +2076,25 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
       >
         {ys.honesty && <p className="y-honesty">{ys.honesty}</p>}
         {board.yesterdayRows.length === 0 ? (
-          <p className="t-meta">Nothing from yesterday is left to record.</p>
+          <p className="t-meta">Nothing that was due yesterday is left to record.</p>
         ) : (
           <div className="card lane-body sheet-rows">{board.yesterdayRows.map(renderRow)}</div>
+        )}
+        {/* A forgotten tick: anything else the server would book for yesterday, one tap each. */}
+        {forgotten.length > 0 && (
+          <section className="y-more" aria-label="Something else you did yesterday">
+            <p className="t-eyebrow">Something else you did yesterday?</p>
+            <ul className="y-more-list">
+              {forgotten.map((r) => (
+                <li key={r.key} className="y-more-row">
+                  <span className="y-more-title">{r.template.title}</span>
+                  <button type="button" className="today-pill y-more-btn" disabled={busyTemplates.has(r.template.id)} onClick={() => recordYesterday(r)}>
+                    Did it yesterday · ≈ {fmtXp(r.recordYesterday!.xp)}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
         {ys.freeze && (
           <FreezeOption label={ys.freeze.label} sub={ys.freeze.sub} checked={ys.freeze.checked} disabled={ys.freeze.disabled || dutyBusy} onChange={spendFreezeNow} />
