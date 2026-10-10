@@ -2873,3 +2873,15 @@ export function chainLeadLine(g: { rated: boolean; mapped: boolean }): string | 
   if (g.mapped) return "Gemini mapped the topics. You keep each layer.";
   return null;
 }
+
+// ── Milestones, step by step: the current one shows; each later one is one deliberate tap away ──
+/** The step button under the rail: "Show milestone 4", and how many wait after it. */
+export function showNextMilestoneLine(n: number, after: number): string {
+  return after > 0 ? `Show milestone ${n} · ${after} more after it` : `Show milestone ${n}`;
+}
+export const HIDE_LATER_MILESTONES = "Hide later milestones";
+/** The topic map's step button: "Show layer 3", and how many wait after it. */
+export function showNextLayerLine(k: number, after: number): string {
+  return after > 0 ? `Show layer ${k} · ${after} more after it` : `Show layer ${k}`;
+}
+export const HIDE_LATER_LAYERS = "Hide later layers";

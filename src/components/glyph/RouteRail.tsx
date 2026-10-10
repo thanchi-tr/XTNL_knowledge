@@ -85,6 +85,8 @@ export interface RailNode {
   heldLayer?: boolean;
   /** The layer's topics marked "I know this" by you: pv.you as a badge, sr "you said you know these". */
   known?: boolean;
+  /** Not shown yet (the vertical rail's step-by-step disclosure): the row is in the markup with `hidden`. */
+  hidden?: boolean;
 }
 
 // ── Revision 5, lane 9: the chain's words (roadmap-copy re-exports them; RouteRail is a glyph composite and imports no copy file) ──
@@ -380,7 +382,7 @@ export function RouteRail({ nodes, orientation = "vertical", seenKey, startTick,
           </>
         );
         return (
-          <li key={x.n} className="mg-rr-row" data-state={x.state} data-n={x.n}>
+          <li key={x.n} className="mg-rr-row" data-state={x.state} data-n={x.n} hidden={x.hidden || undefined}>
             <span className="mg-rr-nw" aria-hidden="true">
               {i > 0 && (
                 <svg className="mg-rr-seg mg-rr-up" data-on={i <= last ? "" : undefined} width="2" height="8" focusable="false">

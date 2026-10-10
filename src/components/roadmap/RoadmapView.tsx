@@ -113,6 +113,7 @@ import {
   SHORT_SECTION,
   START_AGAIN_AT_DEPTH_WORD,
   START_AGAIN_LINE,
+  HIDE_LATER_MILESTONES,
   TIME_FIXED_LINE,
   WRITES_OFF_BANNER,
   dayLabel,
@@ -125,6 +126,7 @@ import {
   paceLine,
   pauseRowLine,
   practiceKeptPausedLine,
+  showNextMilestoneLine,
   shortBar,
   shortBehindNewCards,
   shortDayOf,
@@ -928,6 +930,9 @@ function Triggers({ view, current, onReplan }: { view: RoadmapView; current: Cur
 
 // ── Milestones ──────────────────────────────────────────────────────────────
 
+/** The milestones behind you: reached (counted or not yet), dropped, closed unreached. The rail opens on the first one after them. */
+const MILESTONE_BEHIND: ReadonlySet<string> = new Set(["REACHED", "PENDING_REACH", "DROPPED", "CLOSED_UNREACHED"]);
+
 function StartAgain({ row }: { row: MilestoneRowView }) {
   const { run, pending, error } = useRoadmapAction();
   return (
@@ -996,6 +1001,7 @@ function MilestonesList({
   /** Revision 5, lane 9 (ui-motion §15.6): a TOPICS plan's chain heading: the EstimateChip, then "· +1 to reach Fluent". */
   chain?: { rating: RatingView; tail: string | null; roadmapId: string } | null;
 }) {
+  const [extra, setExtra] = useState(0);
   const plan = rankPlanOfRows(rows);
   const model = railNodesOf(rows, { today, plan });
   // railNodesOf keeps the rows in place order with LATER left out, one node per row.
@@ -1083,6 +1089,12 @@ function MilestonesList({
       more: <p className="t-meta">No dates: a Later milestone gets its dates when a re-plan brings it back.</p>,
     });
   }
+  // Step by step: the milestones up to the first one not behind you show; each later one is one deliberate tap away
+  // ("Show milestone 4"), and stays in the markup, hidden, until then.
+  const focus = nodes.findIndex((x) => !MILESTONE_BEHIND.has(x.state));
+  const through = focus < 0 ? nodes.length - 1 : focus + extra;
+  const stepped = nodes.map((x, i) => (i > through ? { ...x, hidden: true } : x));
+  const waiting = stepped.filter((x) => x.hidden);
   return (
     <div className="rm-o4" data-wc-block="milestones">
       <SectionHeader title="Milestones" aside={`${positions} · to ${dayLabel(targetDay, today)}`} />
@@ -1092,7 +1104,22 @@ function MilestonesList({
             <EstimateChip rating={chain.rating} tail={chain.tail} seenKey={seenBaseOf(seen ?? null, "plan")} today={today} />
           </div>
         )}
-        <RouteRail nodes={nodes} seenKey={seenBaseOf(seen ?? null, "plan")} startTick={startTick} label="Milestones" className="rm-rail" />
+        <RouteRail nodes={stepped} seenKey={seenBaseOf(seen ?? null, "plan")} startTick={startTick} label="Milestones" className="rm-rail" />
+        {(waiting.length > 0 || extra > 0) && (
+          <div className="rm-ml-step">
+            {waiting.length > 0 && (
+              <button type="button" className="rm-ml-next" onClick={() => setExtra((e) => e + 1)}>
+                <Icon name="chev" size={14} aria-hidden="true" />
+                {showNextMilestoneLine(waiting[0].n, waiting.length - 1)}
+              </button>
+            )}
+            {extra > 0 && (
+              <button type="button" className="link rm-ml-less" onClick={() => setExtra(0)}>
+                {HIDE_LATER_MILESTONES}
+              </button>
+            )}
+          </div>
+        )}
         {(depthLine || paragon) && (
           <div className="rm-ml-foot">
             <Glyph name="rank.6" state="idle" size={20} />

@@ -88,6 +88,8 @@ export interface LayerBandProps {
   /** Seeds and clauses rendered after the rows (the no-Gemini path). */
   children?: ReactNode;
   pending?: boolean;
+  /** Not shown yet (the topic map's step-by-step disclosure): the band stays in the markup with `hidden`. */
+  stepHidden?: boolean;
 }
 
 const CHIP_FULL: Readonly<Record<string, string>> = {
@@ -114,7 +116,7 @@ function roleOf(trace: LayerBandProps["trace"], key: string): TraceRole {
   return trace.related.has(key) ? "rel" : "other";
 }
 
-export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore, onKeep, onWrite, onEmpty, onRebreak, seenKey, openedByReach, hiddenOpen, onHiddenToggle, milestoneOpen, children, pending }: LayerBandProps) {
+export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore, onKeep, onWrite, onEmpty, onRebreak, seenKey, openedByReach, hiddenOpen, onHiddenToggle, milestoneOpen, children, pending, stepHidden = false }: LayerBandProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [msLocal, setMsLocal] = useState(false);
   const msOpen = milestoneOpen ?? msLocal;
@@ -148,7 +150,14 @@ export function LayerBand({ map, layer, draft, trace, onTrace, onChoose, onMore,
     <TopicMapRow key={r.key} row={r} parents={parentNamesOf(map, r)} trace={roleOf(trace, r.key)} onTrace={onTrace} onChoose={draft ? onChoose : null} onMore={onMore} pending={pending} />
   );
   return (
-    <section className={cx("rm-tm-band", locked && "rm-tm-locked")} data-layer={k} data-state={layer.state} data-kept={layer.kept ? "" : undefined} aria-labelledby={`rm-tm-h-${k}`}>
+    <section
+      className={cx("rm-tm-band", locked && "rm-tm-locked")}
+      data-layer={k}
+      data-state={layer.state}
+      data-kept={layer.kept ? "" : undefined}
+      aria-labelledby={`rm-tm-h-${k}`}
+      hidden={stepHidden || undefined}
+    >
       <div ref={ref} className="rm-tm-hd" data-wc-block="topic-layer">
         <div className="rm-tm-h1">
           <Glyph name={layerGlyphOf(k)} state={glyphState} size={16} className={locked ? "mg-lk" : undefined} />

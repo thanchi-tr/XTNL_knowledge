@@ -743,6 +743,16 @@
 
   /* The milestones as a rail; the top rank's (i) under it. */
   .rm-ml-card { padding: 6px 14px; }
+  /* Step by step: the next milestone is one tap away, the rest after it one tap each. */
+  .rm-ml-step { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; padding: 4px 0 8px; border-top: 1px dashed var(--line-1); }
+  .rm-ml-next {
+    display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 12px 0 8px; border-radius: 999px;
+    border: 1px solid var(--line-1); background: var(--sunken); color: var(--ink-1); font: 600 13px/18px var(--font-ui); cursor: pointer;
+  }
+  .rm-ml-next svg { transform: rotate(90deg); color: var(--ink-2); }
+  .rm-ml-next:hover { color: var(--ink-0); border-color: var(--line-2); }
+  .rm-ml-less { min-height: 40px; font-size: 13px; }
+  .rm-tm-step { margin-top: 12px; padding-bottom: 0; }
   .rm-rail { margin: 0; }
   .rm-rr-gives { display: flex; align-items: center; gap: 6px; }
   .rm-ml-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; padding: 6px 0; border-top: 1px solid var(--line-1); color: var(--ink-mute); }

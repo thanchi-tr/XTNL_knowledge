@@ -4774,7 +4774,18 @@ async function main() {
           return (li.match(new RegExp(copy.PROVENANCE_WORDS.DRAFT, "g")) ?? []).length >= 3;
         })
     );
-    check("R3 rail: `reach` keys on the plan's basis (no surface), and a user's own Start (goal id null → set) bumps the rail's start tick", /<RouteRail nodes=\{nodes\} seenKey=\{seenBaseOf\(seen \?\? null, "plan"\)\} startTick=\{startTick\}/.test(read("src/components/roadmap/RoadmapView.tsx")) && /tick: !startSeen\.goalId && goalId \? startSeen\.tick \+ 1 : startSeen\.tick/.test(read("src/components/roadmap/RoadmapView.tsx")));
+    check(
+      "R3 rail (step by step): the rows up to the first not behind you show; each later one is in the markup, hidden, one 'Show milestone n' tap away",
+      railRows("active").length === rows("active").length &&
+        (railOf("active").match(/<li class="mg-rr-row" data-state="[A-Z_]+" data-n="\d+" hidden="">/g) ?? []).length === rows("active").filter((r) => r.ord > 2).length &&
+        vis("active").includes(copy.showNextMilestoneLine(3, 3)) &&
+        /const stepped = nodes\.map\(\(x, i\) => \(i > through \? \{ \.\.\.x, hidden: true \} : x\)\);/.test(read("src/components/roadmap/RoadmapView.tsx"))
+    );
+    check(
+      "topic map (step by step): the layers up to the first not done show, the rest hidden in the markup behind 'Show layer k'; [Redo topics] still reaches them",
+      /stepHidden=\{i > stepThrough\}/.test(read("src/components/roadmap/TopicMap.tsx")) && /hidden=\{stepHidden \|\| undefined\}/.test(read("src/components/roadmap/LayerBand.tsx"))
+    );
+    check("R3 rail: `reach` keys on the plan's basis (no surface), and a user's own Start (goal id null → set) bumps the rail's start tick", /<RouteRail nodes=\{stepped\} seenKey=\{seenBaseOf\(seen \?\? null, "plan"\)\} startTick=\{startTick\}/.test(read("src/components/roadmap/RoadmapView.tsx")) && /tick: !startSeen\.goalId && goalId \? startSeen\.tick \+ 1 : startSeen\.tick/.test(read("src/components/roadmap/RoadmapView.tsx")));
     check("R3 rail: the top rank's line (Paragon, or what keeps it closed) sits in the card's (i), in the markup", page("active").includes("Reaching the aim gives the Aim rank Paragon.") && !actVis.includes("Reaching the aim gives") && page("depth-lowered").includes("Top rank on this plan: Expert"));
 
     // 5. The closed and empty screens (D18: no seal on an aim closed unreached; §3.3 screen 12).

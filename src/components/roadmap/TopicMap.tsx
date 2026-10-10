@@ -70,7 +70,10 @@ import {
   trackClauseAria,
   trackClauseQuestion,
   writeTopicAria,
+  HIDE_LATER_LAYERS,
+  showNextLayerLine,
 } from "./roadmap-copy";
+import { Icon } from "@/components/ui/Icon";
 import { useRoadmapAction } from "./roadmap-runtime";
 import { EstimateChip } from "./EstimateChip";
 import { LayerBand } from "./LayerBand";
@@ -121,6 +124,9 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
   const [mergedNote, setMergedNote] = useState<string | null>(null);
   // Ruling N16: the re-break's confirm (one layer, or null: every layer not started), never sent without it.
   const [rebreak, setRebreak] = useState<{ layers: number[] | null } | null>(null);
+  // Step by step: the layers up to the first one not done show; each later one is one deliberate tap away, and stays in
+  // the markup, hidden, until then ([Redo topics] still reaches every layer not started).
+  const [stepExtra, setStepExtra] = useState(0);
   const { run, pending, error, runtime } = useRoadmapAction();
   const namesOn = topicNamesOn(gates);
   const seenKey: Omit<SeenKey, "what"> | null = seenBasis ? { roadmapId: map.roadmapId, basis: seenBasis } : null;
@@ -128,6 +134,9 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
   const rows = rowsByKey(map);
   const sheetRow = sheetKey ? (rows.get(sheetKey) ?? null) : null;
   const lastBand = map.layers.length > 0 ? map.layers[map.layers.length - 1].layer : 1;
+  const stepFocus = map.layers.findIndex((l) => l.state !== "DONE");
+  const stepThrough = stepFocus < 0 ? map.layers.length - 1 : stepFocus + stepExtra;
+  const stepWaiting = map.layers.filter((_, i) => i > stepThrough);
 
   // trace (ACT): the related rails fade in after the user's tap; Escape ends it
   useEffect(() => {
@@ -224,7 +233,7 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
         </CardKey>
       </div>
 
-      <div className="rm-tm-layers" style={{ "--tm-n": map.layers.length } as CSSProperties}>
+      <div className="rm-tm-layers" style={{ "--tm-n": map.layers.length - stepWaiting.length } as CSSProperties}>
         {map.layers.map((l, i) => (
           <LayerBand
             key={l.layer}
@@ -244,6 +253,7 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
             hiddenOpen={hiddenOpen.has(l.layer)}
             onHiddenToggle={toggleHidden}
             pending={pending}
+            stepHidden={i > stepThrough}
           >
             {l.layer === 1 && map.layerOneSeeds.length > 0 && (
               <ul className="rm-tm-rows rm-tm-seeds">
@@ -299,6 +309,21 @@ export function TopicMap({ map, mode, gates, seenBasis, today, canTrack = false,
         ))}
       </div>
 
+      {(stepWaiting.length > 0 || stepExtra > 0) && (
+        <div className="rm-ml-step rm-tm-step">
+          {stepWaiting.length > 0 && (
+            <button type="button" className="rm-ml-next" onClick={() => setStepExtra((e) => e + 1)}>
+              <Icon name="chev" size={14} aria-hidden="true" />
+              {showNextLayerLine(stepWaiting[0].layer, stepWaiting.length - 1)}
+            </button>
+          )}
+          {stepExtra > 0 && (
+            <button type="button" className="link rm-ml-less" onClick={() => setStepExtra(0)}>
+              {HIDE_LATER_LAYERS}
+            </button>
+          )}
+        </div>
+      )}
       {mergedNote && <p className="t-meta rm-tm-note">{mergedNote}</p>}
       {draft && (
         <div className="rm-tm-foot" data-wc-block="topic-map-foot">
