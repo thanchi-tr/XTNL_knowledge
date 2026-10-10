@@ -8,12 +8,14 @@
 
    Two layouts (data-layout):
    - "pinned": under 600 px, and any coarse-pointer sheet. A column pinned
-     to the top of the keyboard (--kb): the header, then a scroll region
-     (the 'Added here' list, the status, unsent lines, the parse chips, the
-     warning, Feeds) that takes all the growth, then a fixed region (the
-     insert or suggestion row, the 52 px line, the 44 px actions, one line
-     of hint). Nothing below the line changes height, so the line never
-     moves while chips appear (the Fold's cover screen, keyboard up).
+     to the top of the keyboard (--kb): a one-row header, then a scroll
+     region (the 'Added here' list, the status, unsent lines, the parse
+     chips in one sideways row, the warning, Feeds) that takes all the
+     growth and sits on the line, then a fixed region (the insert or
+     suggestion row, the line with its primary button beside it, one foot
+     row). The line wraps and grows to three rows; nothing below it changes
+     height, so it never moves while chips appear (the Fold's cover screen,
+     keyboard up: the grabber and the hint step aside for the keys).
    - "panel": a fine pointer from 600 — the centred 560 panel in the
      mockup's order (line, chips, buttons).
 
@@ -59,7 +61,17 @@
 
 /* Pinned: only the region above the line scrolls; the line and its buttons stay put. */
 .capture-sheet[data-layout="pinned"] { gap: 0; overflow: hidden; }
-.capture-sheet[data-layout="pinned"] > .grabber { margin-bottom: 8px; }
+.capture-sheet[data-layout="pinned"] > .grabber { margin-bottom: 4px; }
+/* The header is one 40 px row, its title an eyebrow: the room goes to the line. */
+.capture-sheet[data-layout="pinned"] > .sheet-h { align-items: center; min-height: 40px; }
+.capture-sheet[data-layout="pinned"] > .sheet-h h2 {
+  font: 600 12px/16px var(--font-ui);
+  letter-spacing: .11em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.capture-sheet[data-layout="pinned"][data-kb="1"] { padding-top: 4px; }
+.capture-sheet[data-layout="pinned"][data-kb="1"] > .grabber { display: none; }
 .capture-scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -70,6 +82,8 @@
   gap: 10px;
   padding-top: 10px;
 }
+/* What the scroll region holds sits on the line, never at the top of an empty region. */
+.capture-scroll > :first-child { margin-top: auto; }
 .capture-fixed {
   flex: none;
   display: flex;
@@ -106,19 +120,38 @@
 
 .capture-count { flex: none; align-self: center; }
 
-/* ── The line: 52 px, 16 px text (no zoom on phones) ─────────────────── */
+/* ── The line: 52 px, 16 px text (no zoom on phones) ───────────────────
+   A one-row textarea that wraps a long line and grows with it (the sheet
+   sets its height), up to three rows on a phone and five on the panel. */
 .capture-form { margin: 0; }
 .capture-input {
   display: block;
   width: 100%;
   min-height: 52px;
+  max-height: 96px;
   margin: 0;
-  padding: 0 14px;
+  padding: 14px;
   border-radius: 14px;
   border: 1px solid var(--line-ctl);
   background: var(--sunken);
   color: var(--ink-0);
-  font: 400 16px/1.3 var(--font-ui);
+  font: 400 16px/22px var(--font-ui);
+  resize: none;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+.capture-sheet[data-layout="panel"] .capture-input { max-height: 140px; }
+/* Pinned: the primary button beside the line, its height, under the thumb. */
+.capture-line { display: flex; align-items: flex-end; gap: 8px; }
+.capture-line > .capture-form { flex: 1 1 auto; min-width: 0; }
+.capture-line > .capture-save {
+  flex: none;
+  min-width: 72px;
+  max-width: 136px;
+  min-height: 52px;
+  padding: 0 16px;
+  border-radius: 14px;
+  white-space: nowrap;
 }
 .capture-input::placeholder { color: var(--ink-2); }
 .capture-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
@@ -199,6 +232,15 @@
 
 /* ── Parse chips: one dialect, all quiet ──────────────────────────────── */
 .capture-chips { display: flex; flex-direction: column; gap: 8px; }
+/* Pinned: one sideways row (the chips never stack up over a short sheet). */
+.capture-sheet[data-layout="pinned"] .capture-chip-row {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.capture-sheet[data-layout="pinned"] .capture-chip-row::-webkit-scrollbar { display: none; }
+.capture-sheet[data-layout="pinned"] .capture-chip-row > li { flex: none; max-width: 80%; }
 .capture-chip-row {
   display: flex;
   flex-wrap: wrap;
@@ -348,7 +390,12 @@ button.capture-grade { cursor: pointer; }
   font-size: 13px;
   color: var(--ink-2);
 }
-.capture-keys { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capture-keys { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capture-foot-row > .capture-row-btn { flex: none; }
+/* The keyboard is up: the hint steps aside (the dialog still describes it), and an empty foot row goes. */
+.capture-sheet[data-layout="pinned"][data-kb="1"] .capture-keys { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.capture-sheet[data-layout="pinned"][data-kb="1"] .capture-foot-row { justify-content: flex-end; }
+.capture-sheet[data-layout="pinned"][data-kb="1"] .capture-foot-row:not(:has(> :not(.capture-keys))) { min-height: 0; }
 .capture-idea-link { flex: none; }
 
 /* ── The + button's dot: lines waiting to save (QuickCapture sets the

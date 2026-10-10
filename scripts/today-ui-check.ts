@@ -2101,7 +2101,15 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   const css = strip(read("src/app/capture.css"));
   const chrome = read("src/components/shell/Chrome.tsx");
   const form = /<form className="capture-form" noValidate onSubmit=\{onFormSubmit\}>([\s\S]*?)<\/form>/.exec(quick)?.[1] ?? "";
-  check("enter wiring: only the line sits in the form (no button inside, so any action key submits it)", form.includes("<input") && !form.includes("<button") && (form.match(/<input/g) ?? []).length === 1);
+  check(
+    "enter wiring: only the line sits in the form, a wrapping textarea whose line break submits it (no button inside)",
+    (form.match(/<textarea/g) ?? []).length === 1 &&
+      !form.includes("<input") &&
+      !form.includes("<button") &&
+      /function onLineBreak\(e: Event\) \{[\s\S]*?insertLineBreak[\s\S]*?e\.preventDefault\(\);\s*\(e\.target as HTMLTextAreaElement\)\.form\?\.requestSubmit\(\);/.test(quick) &&
+      quick.includes('addEventListener("beforeinput", onLineBreak)')
+  );
+  check("enter wiring: a line break that slips into the line becomes a space (the line stays one line)", /const raw = \/\[\\r\\n\]\/\.test\(input\) \? input\.replace\(\/\\r\?\\n\/g, " "\) : input;/.test(quick));
   check("enter wiring: enterKeyHint is 'send' on a phone and 'done' on a desktop, never 'next'", quick.includes('enterKeyHint={coarse ? "send" : "done"}') && !/enterKeyHint=["{][^}\n]*next/.test(quick));
   check("enter wiring: an action key mid-composition saves once on compositionend", /onCompositionEnd=\{[\s\S]*?submitAfterComposition\.current[\s\S]*?submit\(/.test(quick));
   check("enter wiring: coarse is read on open (pointer: coarse)", quick.includes('matchMedia("(pointer: coarse)")'));

@@ -213,6 +213,18 @@ const TITLE_MISSING = "Add a few words for the title — only dates and tags are
 
 const noopSubscribe = () => () => {};
 
+/**
+ * The line is a textarea so a long line wraps where it can be read, but Enter
+ * never breaks it: a line break the key rule let through (a phone keyboard's
+ * action key) submits the form instead, as a one-line input's Enter would.
+ */
+function onLineBreak(e: Event) {
+  const type = (e as InputEvent).inputType;
+  if (type !== "insertLineBreak" && type !== "insertParagraph") return;
+  e.preventDefault();
+  (e.target as HTMLTextAreaElement).form?.requestSubmit();
+}
+
 type Origin = "user" | "manual" | "auto" | "batch";
 
 interface Line {
@@ -386,7 +398,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
   const compact = useMediaQuery("(max-width: 599px)");
   const inset = useKeyboardInset(open);
 
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const sheetRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLElement | null>(null);
@@ -502,10 +514,13 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
    * Every edit goes through here, so a reverted chip follows its words as the
    * line changes around them. The line is kept in NFC (the parser's Vietnamese
    * patterns are written in it), but never mid-composition: rewriting the
-   * value under an IME breaks the word being composed.
+   * value under an IME breaks the word being composed. The line wraps on
+   * screen but stays one line: a line break that slips in (a paste, a
+   * keyboard that ignores the Enter rule) becomes a space.
    */
-  const onLineChange = (raw: string) => {
+  const onLineChange = (input: string) => {
     const prev = lineRef.current;
+    const raw = /[\r\n]/.test(input) ? input.replace(/\r?\n/g, " ") : input;
     const next = composingRef.current ? raw : raw.normalize("NFC");
     setLine(next, shiftReverted(prev.text, next, prev.reverted));
     setError(null);
@@ -522,12 +537,22 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
   } = useWordComplete(ideaMode ? (vocab?.words ?? NO_WORDS) : NO_WORDS);
 
   const setInput = useCallback(
-    (el: HTMLInputElement | null) => {
+    (el: HTMLTextAreaElement | null) => {
+      inputRef.current?.removeEventListener("beforeinput", onLineBreak);
       inputRef.current = el;
+      el?.addEventListener("beforeinput", onLineBreak);
       registerField(el);
     },
     [registerField]
   );
+
+  /** The line grows with its text, up to its CSS max-height (three rows on a phone), then scrolls. */
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight + (el.offsetHeight - el.clientHeight)}px`;
+  }, [text, open, compact, paste]);
 
   /** Focus back on the line; `caretAt` places the caret now, or once the new value is in the DOM. */
   const focusInput = useCallback((caretAt?: number) => {
@@ -1368,7 +1393,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
     announce(menuNote(null));
   };
 
-  const onInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const onInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter") {
       const composing = e.nativeEvent.isComposing || composingRef.current;
       const action = enterAction({ coarse, shift: e.shiftKey, composing, source: "key", done: primaryIsDone() });
@@ -1827,7 +1852,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
     }
   };
 
-  const onPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     if (editing) return;
     const raw = e.clipboardData?.getData("text/plain") ?? "";
     const split = splitPastedLines(raw);
@@ -1932,9 +1957,9 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
 
     const form = (
       <form className="capture-form" noValidate onSubmit={onFormSubmit}>
-        <input
+        <textarea
           ref={setInput}
-          type="text"
+          rows={1}
           value={text}
           maxLength={MAX_CAPTURE_CHARS}
           onChange={(e) => onLineChange(e.target.value)}
@@ -1967,6 +1992,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
           aria-describedby="capture-help"
           autoComplete="off"
           autoCapitalize="none"
+          spellCheck={false}
           enterKeyHint={coarse ? "send" : "done"}
         />
       </form>
@@ -2058,36 +2084,38 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
       </>
     );
 
+    // The primary action and the one beside it. The pinned sheet puts the primary beside the line (one thumb, no
+    // reach past the keys) and the other in the foot row; the panel keeps both in a row under the chips.
+    const size = pinned ? "" : " lg";
+    const primaryBtn = paste ? (
+      <button type="button" className={`btn btn-primary capture-save${size}`} onClick={() => submit("button", false)} disabled={paste.lines.length === 0}>
+        Add {paste.lines.length}
+      </button>
+    ) : (
+      <button type="button" className={`btn btn-primary capture-save${size}`} onClick={onPrimary} disabled={primaryDisabled}>
+        {primaryLabel}
+      </button>
+    );
+    const secondaryBtn = paste ? (
+      <button
+        type="button"
+        className={pinned ? "btn btn-quiet capture-row-btn" : "btn btn-secondary lg"}
+        onClick={() => {
+          setPaste(null);
+          focusInput();
+        }}
+      >
+        Cancel
+      </button>
+    ) : canInbox ? (
+      <button type="button" className={pinned ? "btn btn-quiet capture-row-btn" : "btn btn-secondary lg"} onClick={() => submit("button", false, { inbox: true })}>
+        To Inbox
+      </button>
+    ) : null;
     const acts = (
       <div className="capture-acts">
-        {paste ? (
-          <>
-            <button type="button" className={`btn btn-primary capture-save${pinned ? "" : " lg"}`} onClick={() => submit("button", false)} disabled={paste.lines.length === 0}>
-              Add {paste.lines.length}
-            </button>
-            <button
-              type="button"
-              className={`btn btn-secondary${pinned ? "" : " lg"}`}
-              onClick={() => {
-                setPaste(null);
-                focusInput();
-              }}
-            >
-              Cancel
-            </button>
-          </>
-        ) : (
-          <>
-            <button type="button" className={`btn btn-primary capture-save${pinned ? "" : " lg"}`} onClick={onPrimary} disabled={primaryDisabled}>
-              {primaryLabel}
-            </button>
-            {canInbox && (
-              <button type="button" className={`btn btn-secondary${pinned ? "" : " lg"}`} onClick={() => submit("button", false, { inbox: true })}>
-                To Inbox
-              </button>
-            )}
-          </>
-        )}
+        {primaryBtn}
+        {secondaryBtn}
       </div>
     );
 
@@ -2203,10 +2231,13 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
               <div className="capture-fixed">
                 {editingPill}
                 {slot}
-                {form}
-                {acts}
+                <div className="capture-line">
+                  {form}
+                  {primaryBtn}
+                </div>
                 <div className="capture-foot-row" id="capture-help">
                   <span className="capture-keys">{hint}</span>
+                  {secondaryBtn}
                   {ideaLink}
                 </div>
               </div>
