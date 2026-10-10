@@ -74,6 +74,57 @@ export interface DayLedgerProps {
   /** Publishes the figures to the top-bar MiniLedger (off on /dev/style fixtures). */
   publish?: boolean;
   refs?: DayLedgerRefs;
+  /** The streak has its own block (StreakCard): the ledger opens on the Full-day strip. */
+  streakApart?: boolean;
+}
+
+/**
+ * The streak on its own block (Today): the DaySeal, the numeral, the caption,
+ * the held note and the freeze crystals, the same pieces as the ledger's top.
+ * `children` sits in its corner (the Asks' badge).
+ */
+export function StreakCard({
+  streak,
+  caption,
+  freezes,
+  heldNote,
+  sealRef,
+  cardRef,
+  children,
+}: Pick<DayLedgerProps, "streak" | "caption" | "freezes" | "heldNote"> & {
+  sealRef?: RefObject<HTMLDivElement | null>;
+  cardRef?: RefObject<HTMLElement | null>;
+  children?: ReactNode;
+}) {
+  return (
+    <section ref={cardRef} className={cx("card today-streak", streak.kept && "kept")} aria-label="Day streak">
+      <StreakTop streak={streak} caption={caption} freezes={freezes} heldNote={heldNote} sealRef={sealRef} />
+      {children}
+    </section>
+  );
+}
+
+function StreakTop({ streak, caption, freezes, heldNote, sealRef }: Pick<DayLedgerProps, "streak" | "caption" | "freezes" | "heldNote"> & { sealRef?: RefObject<HTMLDivElement | null> }) {
+  return (
+    <div className="d-top">
+      <DaySeal lit={streak.kept} broken={!!streak.broken && !streak.kept} sealRef={sealRef} />
+      <div className="d-streak">
+        <div className="streak-line">
+          <StreakNumber value={streak.count} capped={!!streak.capped} />
+          <span className="streak-word">day streak</span>
+        </div>
+        <p className="streak-cap">{caption}</p>
+        {heldNote && (
+          <div className="held-note">
+            <Chip tone="held" held="freeze">
+              {heldNote}
+            </Chip>
+          </div>
+        )}
+      </div>
+      {freezes && freezes.banked + (freezes.used ?? 0) > 0 && <Freezes {...freezes} />}
+    </div>
+  );
 }
 
 export function DayLedger(props: DayLedgerProps) {
@@ -97,25 +148,8 @@ export function DayLedger(props: DayLedgerProps) {
         : `Full days are counted now; the +${FULL_DAY_MP} MP payout starts with daily settlement.`);
 
   return (
-    <section ref={refs?.tile} className={cx("card today-day", fullDay.full && "full")} aria-label="Day ledger">
-      <div className="d-top">
-        <DaySeal lit={streak.kept} broken={!!streak.broken && !streak.kept} sealRef={refs?.seal} />
-        <div className="d-streak">
-          <div className="streak-line">
-            <StreakNumber value={streak.count} capped={!!streak.capped} />
-            <span className="streak-word">day streak</span>
-          </div>
-          <p className="streak-cap">{props.caption}</p>
-          {props.heldNote && (
-            <div className="held-note">
-              <Chip tone="held" held="freeze">
-                {props.heldNote}
-              </Chip>
-            </div>
-          )}
-        </div>
-        {props.freezes && props.freezes.banked + (props.freezes.used ?? 0) > 0 && <Freezes {...props.freezes} />}
-      </div>
+    <section ref={refs?.tile} className={cx("card today-day", fullDay.full && "full", props.streakApart && "apart")} aria-label="Day ledger">
+      {!props.streakApart && <StreakTop streak={streak} caption={props.caption} freezes={props.freezes} heldNote={props.heldNote} sealRef={refs?.seal} />}
 
       <div className="d-full">
         <span ref={refs?.fullStamp} className={cx("stamp full-stamp", props.stampLanding && "landing")} aria-hidden={!fullDay.full}>

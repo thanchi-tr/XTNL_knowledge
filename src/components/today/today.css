@@ -11,9 +11,13 @@
    Layout: ONE DOM, three orders, by the width of <main> (the board root
    carries `cq-main`, so .main is the `main` container; every fixed layer
    the board opens is portalled to <body>: ui/Sheet and the ToastDock).
-     compact  one column in the order of the .o* classes
-     ≥ 640    Day, Next up, then the lanes | Asks, Goals, Inbox, Close
-     ≥ 1100   Day, Next up | lanes | Asks, Goals, Inbox, Close
+     compact  one column: the streak, the lanes (Must, Planned, Habits, Owed),
+              Next up, the day's ledger, Goals, Inbox, Close
+     ≥ 640    the lanes | Streak, Ledger, Next up, Goals, Inbox, Close
+     ≥ 1100   Streak, Ledger, Next up | lanes | Goals, Inbox, Close
+   The lanes carry the most weight (raised, shaded, the largest headings);
+   the goals the least (flat, quieter). The Asks are badges with a radial
+   pulse on the block they concern (AskBadge), never cards of their own.
 
    Motion: transform, opacity and stroke-dashoffset only; every rule rests
    on its final state (Still shows it with nothing moving). Nothing moves
@@ -26,20 +30,22 @@
 .today-board .board > .c1,
 .today-board .board > .c2,
 .today-board .board > .c3 { display: contents; }
-.today-board .o1 { order: 1; } .today-board .o2 { order: 2; } .today-board .o3 { order: 3; }
-.today-board .o4 { order: 4; } .today-board .o5 { order: 5; } .today-board .o6 { order: 6; }
-.today-board .o7 { order: 7; } .today-board .o8 { order: 8; } .today-board .o9 { order: 9; }
-.today-board .o10 { order: 10; } .today-board .o11 { order: 11; }
-.today-board .o1, .today-board .o2, .today-board .o3, .today-board .o9 { min-width: 0; }
+.today-board .o1 { order: 1; } .today-board .o2 { order: 2; }
+/* The day's tasks and habits come straight after the streak; Next up and the ledger follow them. */
+.today-board .o5 { order: 3; } .today-board .o6 { order: 4; } .today-board .o7 { order: 5; } .today-board .o8 { order: 6; }
+.today-board .o3 { order: 7; } .today-board .o12 { order: 8; } .today-board .o4 { order: 9; }
+.today-board .o9 { order: 10; } .today-board .o10 { order: 11; } .today-board .o11 { order: 12; }
+.today-board .o1, .today-board .o2, .today-board .o3, .today-board .o9, .today-board .o12 { min-width: 0; }
 
 @container main (min-width: 640px) {
   .today-board .board { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 20px; align-items: start; }
   .today-board .board > .c1,
   .today-board .board > .c2,
   .today-board .board > .c3 { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-  .today-board .board > .c1 { grid-column: 1; grid-row: 1; }
-  .today-board .board > .c2 { grid-column: 1; grid-row: 2; }
-  .today-board .board > .c3 { grid-column: 2; grid-row: 1 / span 2; }
+  /* The lanes take the wide column from the top; the streak, the ledger and Next up head the side column. */
+  .today-board .board > .c2 { grid-column: 1; grid-row: 1 / span 2; }
+  .today-board .board > .c1 { grid-column: 2; grid-row: 1; }
+  .today-board .board > .c3 { grid-column: 2; grid-row: 2; }
 }
 @container main (min-width: 1100px) {
   .today-board .board { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, .9fr); }
@@ -52,15 +58,22 @@
 .today-note { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 4px 4px 14px; font-size: 14px; line-height: 20px; color: var(--ink-1); }
 .today-note[data-kind="error"] { border-color: var(--line-ctl); color: var(--ink-0); font-weight: 600; }
 
-/* ── Day ledger ────────────────────────────────────────────────────────── */
+/* ── The streak (its own block) and the Day ledger ─────────────────────── */
 .today-day { padding: 14px 14px 12px; position: relative; overflow: hidden; }
-.today-day .d-top { display: flex; align-items: center; gap: 12px; }
-.today-day .d-streak { min-width: 0; }
-.today-day .streak-line { display: flex; align-items: baseline; gap: 6px; }
-.today-day .streak-num { font: 600 30px/1 var(--font-display); display: inline-block; min-width: 1.1em; font-variant-numeric: tabular-nums lining-nums; }
-.today-day .streak-word { font: 600 15px/1.2 var(--font-display); color: var(--ink-1); }
-.today-day .streak-cap { font-size: 13px; line-height: 18px; color: var(--ink-2); margin-top: 4px; }
-.today-day .streak-cap b { color: var(--ink-0); font-weight: 600; }
+.today-streak { padding: 14px 16px; position: relative; overflow: hidden; }
+/* Shading: a soft light from the seal's corner, warmer once the day is kept. */
+.today-streak { background-image: radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--light) 9%, transparent), transparent 60%), linear-gradient(180deg, var(--raised), var(--card)); }
+.today-streak.kept { background-image: radial-gradient(120% 140% at 0% 0%, var(--light-glow), transparent 62%), linear-gradient(180deg, var(--raised), var(--card)); }
+:is(.today-day, .today-streak) .d-top { display: flex; align-items: center; gap: 12px; }
+:is(.today-day, .today-streak) .d-streak { min-width: 0; }
+:is(.today-day, .today-streak) .streak-line { display: flex; align-items: baseline; gap: 6px; }
+:is(.today-day, .today-streak) .streak-num { font: 600 30px/1 var(--font-display); display: inline-block; min-width: 1.1em; font-variant-numeric: tabular-nums lining-nums; }
+.today-streak .streak-num { font-size: 36px; }
+:is(.today-day, .today-streak) .streak-word { font: 600 15px/1.2 var(--font-display); color: var(--ink-1); }
+:is(.today-day, .today-streak) .streak-cap { font-size: 13px; line-height: 18px; color: var(--ink-2); margin-top: 4px; }
+:is(.today-day, .today-streak) .streak-cap b { color: var(--ink-0); font-weight: 600; }
+/* With the streak apart, the ledger opens on the Full-day strip. */
+.today-day.apart .d-full { margin-top: 0; padding-top: 0; border-top: 0; }
 
 /* The DaySeal: a flame in a dashed ring; lit = the light ring draws and a halo opens; broken = hollow flame. */
 .seal { width: 52px; height: 52px; flex: none; position: relative; }
@@ -130,7 +143,44 @@ html[data-motion="calm"] :is(.seal .ring-lit, .seal .halo, .seal .flame) { trans
 .today-hero > .btn { margin-top: 14px; }
 .today-hero .focus-line + .btn { margin-top: 0; }
 
-/* ── Asks ──────────────────────────────────────────────────────────────── */
+/* ── Asks: a badge in the corner of the block they concern ────────────────
+   A 28 px bell in a 40 px target, on the block's top-right corner; a ring
+   pulses out from it three times, then rests (transform and opacity only;
+   Still and reduced motion show it at rest). Its pop-over opens under it. */
+.ask-host { position: relative; }
+/* An open pop-over sits above the next block's badge. */
+.ask-host:has(.ask-pop) { z-index: 6; }
+.ask-badge-wrap { position: absolute; top: -12px; right: -8px; z-index: 3; }
+.ask-badge {
+  display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 999px;
+  background: none; color: var(--ink-0); cursor: pointer;
+}
+.ask-badge:focus-visible { outline: 2px solid var(--focus); outline-offset: -4px; }
+.ask-badge-dot {
+  position: relative; display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 999px;
+  background: var(--ink-0); color: var(--page); box-shadow: 0 0 0 3px var(--page);
+}
+.ask-badge.owed .ask-badge-dot { background: var(--owed); color: var(--page); }
+.ask-badge-dot::before, .ask-badge-dot::after {
+  content: ""; position: absolute; inset: 0; border-radius: 999px; border: 2px solid var(--ink-0);
+  opacity: 0; pointer-events: none;
+}
+.ask-badge.owed .ask-badge-dot::before, .ask-badge.owed .ask-badge-dot::after { border-color: var(--owed); }
+.ask-badge-dot::before { animation: ask-ping 1.8s var(--ease-out) 3; }
+.ask-badge-dot::after { animation: ask-ping 1.8s var(--ease-out) .6s 3; }
+.ask-badge-n {
+  position: absolute; top: -5px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px;
+  background: var(--page); color: var(--ink-0); border: 1px solid var(--line-2); font: 700 12px/14px var(--font-ui); text-align: center;
+}
+@keyframes ask-ping { 0% { opacity: .7; transform: scale(1); } 100% { opacity: 0; transform: scale(2.1); } }
+html[data-motion="calm"] .ask-badge-dot::before, html[data-motion="calm"] .ask-badge-dot::after { animation-iteration-count: 1; }
+@media (prefers-reduced-motion: reduce) { .ask-badge-dot::before, .ask-badge-dot::after { animation: none; } }
+.ask-pop {
+  position: absolute; top: 40px; right: 0; width: min(340px, calc(100vw - 32px)); display: grid; gap: 8px; padding: 8px;
+  border-radius: 16px; border: 1px solid var(--line-2); background: var(--overlay); box-shadow: var(--shadow-pop);
+}
+.ask-pop .ask-pop-card { background: var(--raised); }
+
 .today-ask { display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 14px; }
 .today-ask .txt { flex: 1; min-width: 0; }
 .today-ask .txt b { font-weight: 600; display: block; }
@@ -142,7 +192,13 @@ html[data-motion="calm"] :is(.seal .ring-lit, .seal .halo, .seal .flame) { trans
 /* ── Lanes ─────────────────────────────────────────────────────────────── */
 .today-lane { position: relative; min-width: 0; }
 .today-lane .lane-h { display: flex; align-items: center; gap: 9px; padding: 0 4px 8px; min-height: 28px; }
-.today-lane .lane-h h2 { font: 700 12px/16px var(--font-ui); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-1); margin: 0; }
+.today-lane .lane-h h2 { font: 700 13px/16px var(--font-ui); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-0); margin: 0; }
+/* The lanes weigh the most on the board: raised and shaded, a light edge on top. */
+.today-lane .lane-body {
+  background-image: linear-gradient(180deg, var(--raised), var(--card) 72px);
+  border-color: var(--line-2);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink-0) 6%, transparent), 0 10px 24px -18px rgb(0 0 0 / .7);
+}
 .today-lane .lane-count { margin-left: auto; font-size: 13px; color: var(--ink-2); white-space: nowrap; }
 .today-lane .lane-stamp { margin-left: auto; }
 .today-lane .lane-stamp + .lane-count { margin-left: 10px; }
@@ -221,7 +277,10 @@ html[data-motion="calm"] .today-lane.fresh .lane-body::before { animation: none;
 .today-band .band-blurb { font-size: 13px; color: var(--ink-2); }
 
 /* ── Side: Goals, Inbox and Anytime, Close the day ────────────────────── */
-.today-goals .goal { padding: 14px; }
+/* The goals weigh less than the lanes: flat, a quieter title. */
+.today-goals > .card { background: color-mix(in srgb, var(--card) 55%, transparent); border-color: var(--line-1); }
+.today-goals .goal { padding: 12px 14px; }
+.today-goals .gh b { font-size: 14px; color: var(--ink-1); }
 .today-goals .goal + .goal { border-top: 1px solid var(--line-1); }
 .today-goals .gh { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
 .today-goals .gh b { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }

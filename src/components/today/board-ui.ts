@@ -465,6 +465,16 @@ export const WEEK_REVIEW_HREF = "/today/week?view=run";
 /** Asks shown before 'n more' (F12: two at most). */
 export const ASKS_VISIBLE = 2;
 
+/**
+ * Where an Ask shows on the board: a badge on the block it concerns, never a card of its own. Recording yesterday
+ * and the weekly review keep the days counting, so they sit on the streak; cards past grace, the ideas owed and a
+ * penalty are about reviewing, so they sit on Next up.
+ */
+export type AskHost = "streak" | "next";
+export function askHostOf(ask: Pick<TodayAsk, "id">): AskHost {
+  return ask.id === "yesterday" || ask.id === WEEK_REVIEW_NOTICE ? "streak" : "next";
+}
+
 /** The Asks on screen: two at most, then 'n more' until expanded. */
 export function asksShown<A>(asks: readonly A[], expanded: boolean): { shown: A[]; more: number } {
   if (expanded || asks.length <= ASKS_VISIBLE) return { shown: [...asks], more: 0 };

@@ -233,6 +233,7 @@ import {
   RECORD_YESTERDAY_EVENT,
   RECORD_YESTERDAY_HREF,
   WEEK_REVIEW_NOTICE,
+  askHostOf,
   asksShown,
   cancellableOf,
   closeItemsOf,
@@ -1063,7 +1064,10 @@ function cssValue(css: string, selector: string, prop: string, media?: string): 
     String(presents.length)
   );
   check("streak caption: 'Kept today, 08:05.' from keptAtOf, with the plain line as its fallback", /keptAtOf\(current\)/.test(boardSrc) && boardSrc.includes("`Kept today, ${hhmmOf(") && boardSrc.includes('"Kept today."'));
-  check("asks: the board passes the Ask's clock to the card", boardSrc.includes("clock={a.clock}") && read("src/components/today/AskCard.tsx").includes('<Icon name="clock"'));
+  check(
+    "asks: the badge's pop-over passes the Ask's clock to the card",
+    read("src/components/today/AskBadge.tsx").includes("clock={a.clock}") && read("src/components/today/AskCard.tsx").includes('<Icon name="clock"')
+  );
 
   // Next up: the focus line wraps inside the card; the estimate is the hub's; the action is full width without `block`.
   const nextUp = code(read("src/components/today/NextUp.tsx"));
@@ -2721,12 +2725,32 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   check("MakeUpCard: its words are makeup-words.ts's, a write-off wears the quiet 'Written off' chip", cardSrc.includes("makeUpWordsOf(item, state)") && /words\.chip === "written-off" \? \(\s*<Chip>Written off<\/Chip>/.test(cardSrc));
   check("drawer: a must's deferred archive dispatches no hide op (the row stays)", /if \(change\?\.effectiveDay\) \{[\s\S]*?dispatch\(null, \(\) => archiveTask\(templateId, REFRESH\)/.test(boardSrc));
   check("the full-day rings count today's held musts as excused (settlement agrees)", boardSrc.includes("fullDayInputOf(withHeldExcused(current, board.must), board, quest)"));
-  check("asks: two at most once Duty is live; before launch every Ask shows, as before M2", boardSrc.includes("asksShown(asks, asksExpanded || !live)"));
   const strip = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
   const today = strip(read("src/components/today/today.css"));
   const atLeast = (name: string, v: number | null, min: number) => check(`touch target: ${name} ≥ ${min}px`, v != null && v >= min, String(v));
   atLeast("'Time off' beside Close the day", cssValue(today, ".today-close .close-off", "min-height"), 44);
-  atLeast("the Asks' 'n more'", cssValue(today, ".asks-more", "min-height"), 40);
+  {
+    // The Asks are badges on the block each concerns (the streak, Next up), every one a tap away; no Ask card on the board.
+    const badge = read("src/components/today/AskBadge.tsx");
+    check(
+      "asks: a badge on the streak and one on Next up, from askHostOf; no Ask card of their own on the board",
+      /<div className="o2 ask-host">\s*<StreakCard[\s\S]*?<AskBadge asks=\{asksOn\("streak"\)\}/.test(boardSrc) &&
+        /<div className="o3 ask-host">\s*<NextUp[\s\S]*?<AskBadge asks=\{asksOn\("next"\)\}/.test(boardSrc) &&
+        boardSrc.includes("asks.filter((a) => askHostOf(a) === host)") &&
+        !boardSrc.includes("<AskCard")
+    );
+    check(
+      "asks: askHostOf puts yesterday and the weekly review on the streak, the rest on Next up",
+      askHostOf({ id: "yesterday" }) === "streak" && askHostOf({ id: WEEK_REVIEW_NOTICE }) === "streak" && askHostOf({ id: "quota" }) === "next" && askHostOf({ id: "overdue" }) === "next"
+    );
+    check(
+      "asks: the badge says what waits in words, opens a dialog pop-over, closes on Escape (focus back) and on a tap outside",
+      badge.includes("aria-label={said}") && badge.includes('role="dialog"') && /e\.key !== "Escape"[\s\S]*?button\.current\?\.focus\(\)/.test(badge) && badge.includes('addEventListener("pointerdown"')
+    );
+    const pulse = /\.ask-badge-dot::before \{ animation: ask-ping [^;]* (\d+); \}/.exec(today)?.[1];
+    check("asks: the badge's radial pulse rings three times, then rests; reduced motion shows it at rest", pulse === "3" && /prefers-reduced-motion: reduce\) \{ \.ask-badge-dot::before, \.ask-badge-dot::after \{ animation: none; \}/.test(today), String(pulse));
+    atLeast("the Asks' badge", cssValue(today, ".ask-badge", "height"), 40);
+  }
   // M2 review (344 px): a long minimum label wraps inside the card instead of spilling past it (.btn is nowrap; the lane body clips).
   const actsBtn = /(^|[}\s])\.makeup \.acts \.btn\s*\{([^}]*)\}/m.exec(today)?.[2] ?? "";
   check("MakeUpCard: its action buttons wrap within the card at 344 px", /white-space:\s*normal/.test(actsBtn) && /max-width:\s*100%/.test(actsBtn), actsBtn);

@@ -64,9 +64,9 @@ import { InboxSheet } from "./InboxSheet";
 import { CapacityPanel } from "./CapacityTile";
 import { ReceiptSheet } from "./ReceiptSheet";
 import { UndoToast, focusUndoOnce } from "./UndoToast";
-import { DayLedger } from "./DayLedger";
+import { DayLedger, StreakCard } from "./DayLedger";
 import { Lane } from "./Lane";
-import { AskCard } from "./AskCard";
+import { AskBadge } from "./AskBadge";
 import { CloseDaySheet } from "./CloseDaySheet";
 import { fmtXp } from "./format";
 import { holdLedger, useAfterFlight } from "./ledger-gate";
@@ -76,7 +76,7 @@ import {
   REMOVE_UNDO_MS,
   SHEET_PARAM,
   YESTERDAY_SHEET,
-  asksShown,
+  askHostOf,
   boardDayEnded,
   cancellableOf,
   capacityChosen,
@@ -431,8 +431,6 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
   /** Plan time off is open, and its vacation form. */
   const [timeOffOpen, setTimeOffOpen] = useState(false);
   const [vacationOpen, setVacationOpen] = useState(false);
-  /** The Asks beyond the first two are shown. */
-  const [asksExpanded, setAsksExpanded] = useState(false);
   /** Close the day's note and mood (never graded). */
   const [note, setNote] = useState("");
   const [mood, setMood] = useState<number | null>(null);
@@ -473,6 +471,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
 
   // Elements the Tier 1 moments light.
   const dayTileRef = useRef<HTMLElement | null>(null);
+  const streakCardRef = useRef<HTMLElement | null>(null);
   const sealRef = useRef<HTMLDivElement | null>(null);
   const fullStampRef = useRef<HTMLSpanElement | null>(null);
   const mustRingRef = useRef<HTMLDivElement | null>(null);
@@ -1182,7 +1181,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
       id,
       text,
       say,
-      sweepEl: primary === "lane-kept" ? mustBodyRef.current : dayTileRef.current,
+      sweepEl: primary === "lane-kept" ? mustBodyRef.current : primary === "day-kept" ? streakCardRef.current : dayTileRef.current,
       burstEl: primary === "full-day" ? fullStampRef.current : primary === "day-kept" ? sealRef.current : ringRef.current,
       ringEl: primary === "day-kept" ? null : primary === "full-day" ? dayTileRef.current : ringRef.current,
     });
@@ -1642,8 +1641,9 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
       }
     : undefined;
 
-  // The Asks: two at most, then 'n more' (once Duty is live; before, every Ask shows, as before M2).
-  const { shown: asksOnScreen, more: asksMore } = asksShown(asks, asksExpanded || !live);
+  // The Asks: a badge on the block each concerns (the streak, Next up), never a card of their own; every one is a tap away.
+  const asksOn = (host: "streak" | "next") => asks.filter((a) => askHostOf(a) === host);
+  const askAction = (a: (typeof asks)[number]) => (a.id === "yesterday" ? () => setYesterdayOpen(true) : undefined);
 
   // The 'y' shortcut on this page opens Record yesterday.
   useEffect(() => {
@@ -1764,8 +1764,24 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
             </div>
           )}
 
-          <div className="o2">
+          {/* The streak is its own block, first on a phone; what waits on the days (record yesterday, the weekly review)
+              is a badge in its corner. */}
+          <div className="o2 ask-host">
+            <StreakCard
+              streak={{ count: shown.streakNow, capped: streak.capped, kept: shown.snapshot.kept, broken: ledgerDuty.broken }}
+              caption={ledgerDuty.caption ?? streakCaption}
+              freezes={ledgerDuty.freezes}
+              heldNote={ledgerDuty.heldNote}
+              sealRef={sealRef}
+              cardRef={streakCardRef}
+            />
+            <AskBadge asks={asksOn("streak")} label="your streak" onAction={askAction} />
+          </div>
+
+          {/* The day's ledger (Full day, life XP, review pts, capacity): after the lanes and Next up on a phone. */}
+          <div className="o12">
             <DayLedger
+              streakApart
               streak={{ count: shown.streakNow, capped: streak.capped, kept: shown.snapshot.kept, broken: ledgerDuty.broken }}
               caption={ledgerDuty.caption ?? streakCaption}
               freezes={ledgerDuty.freezes}
@@ -1782,14 +1798,13 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
               onCapacity={() => setCapacityOpen(true)}
               refs={{
                 tile: dayTileRef,
-                seal: sealRef,
                 fullStamp: fullStampRef,
                 rings: { musts: mustRingRef, quest: questRingRef, life: lifeRingRef },
               }}
             />
           </div>
 
-          <div className="o3">
+          <div className="o3 ask-host">
             <NextUp
               next={next}
               focus={focus}
@@ -1799,8 +1814,8 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
               busy={next.kind === "must" ? busyTemplates.has(next.row.template.id) : false}
               onKeepMust={next.kind === "must" ? () => complete(next.row, {}, null) : undefined}
             />
+            <AskBadge asks={asksOn("next")} label="your reviews" onAction={askAction} />
           </div>
-
         </div>
 
         <div className="c2" data-tour="today-lanes">
@@ -1860,27 +1875,6 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
         </div>
 
         <div className="c3">
-          {/* What needs you (the Asks: record yesterday, ideas owed, a debuff) heads the side column on a wide board, before
-              the goals and the day's close, so the left column is the day's state and Next up, and the eye runs status →
-              the lanes → what's asking → close. Compact keeps their .o4 place, right after Next up. */}
-          {asksOnScreen.map((a) => (
-            <AskCard
-              key={a.id}
-              className="o4"
-              title={a.title}
-              detail={a.detail}
-              action={a.action}
-              href={a.href}
-              tone={a.tone}
-              clock={a.clock}
-              onAction={a.id === "yesterday" ? () => setYesterdayOpen(true) : undefined}
-            />
-          ))}
-          {asksMore > 0 && (
-            <button type="button" className="asks-more o4" aria-label={`Show ${asksMore} more`} onClick={() => setAsksExpanded(true)}>
-              {asksMore} more
-            </button>
-          )}
           <div className="o9">
             <GoalsStrip
               goals={board.goals}
