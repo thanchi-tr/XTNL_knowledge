@@ -243,7 +243,7 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   const strike = trueFactOf({ ...base, correct: false, intervalDays: 1, miss: { kind: "strike", strike: 1, limit: 3 } });
   check("facts: a strike waits and says what is (not) taken", strike.headline === "Not this time" && strike.detail === "Back tomorrow · strike 1 of 3 · nothing else is taken", strike.detail);
   const degraded = trueFactOf({ ...base, correct: false, miss: { kind: "degraded", levelBefore: 6, levelAfter: 5 } });
-  check("facts: a degradation says exactly what it costs", degraded.kind === "degraded" && degraded.detail.includes("level 6 → 5") && degraded.detail.includes("10%"));
+  check("facts: a degradation says exactly what it costs", degraded.kind === "degraded" && degraded.detail.includes("level 6 → 5") && degraded.detail.includes("gives back the 3.4 points that level earned"), degraded.detail);
   const shielded = trueFactOf({ ...base, correct: false, miss: { kind: "shielded", skillName: "Ward of Patience", level: 6 } });
   check("facts: a ward save is a held beat, naming the ward", shielded.kind === "shielded" && shielded.detail.includes("Ward of Patience held level 6"));
   check("facts: deterministic (same history, same sentence)", eq(trueFactOf({ ...base, history: h([["2026-08-28", "pass"]]) }), trueFactOf({ ...base, history: h([["2026-08-28", "pass"]]) })));

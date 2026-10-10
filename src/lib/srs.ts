@@ -22,7 +22,8 @@ import {
   reviewMasteryFraction,
   IDEA_MASTERY_POINTS,
 } from "./mastery";
-import { activityOp, invalidateActivity, recordActivity } from "./activity";
+import { activityOp, invalidateActivity, isDuplicateActivity, recordActivity } from "./activity";
+import { daysOverdueOf, forgetDedupeKey, forgetKeyPrefix, levelLossPoints, levelsForgotten } from "./forgetting";
 import type { ActivityInput } from "./life-types";
 import { getCurrentUserId } from "./user";
 
@@ -31,7 +32,6 @@ import { getCurrentUserId } from "./user";
 // unaffected.
 export { MAX_LEVEL, nextIntervalDays } from "./xp";
 
-const DEGRADATION_YIELD_MULTIPLIER = 0.9;
 const STRIKE_LIMIT = 2; // spec: "If failedAttempts == 2 ... subtract 1 from Idea.level"
 
 function addDays(date: Date, days: number): Date {
@@ -169,8 +169,8 @@ function reviewEvent(ideaId: string, now: Date, xp: number, detail: string): Act
  */
 async function degradeIdea(idea: Idea, now: Date, graceExtraDays: number): Promise<{ newLevel: number; dueDate: Date }> {
   const newLevel = Math.max(1, idea.level - 1);
-  const newYield = idea.yieldPoints * DEGRADATION_YIELD_MULTIPLIER;
-  const yieldDelta = newYield - idea.yieldPoints; // negative
+  // A lost level takes back what earning it paid (forgetting.ts levelLossPoints); level 1 has nothing to lose.
+  const taken = newLevel < idea.level ? levelLossPoints(idea.level) : 0;
   const dueDate = addDays(now, 1);
 
   await prisma.$transaction([
@@ -178,20 +178,21 @@ async function degradeIdea(idea: Idea, now: Date, graceExtraDays: number): Promi
       where: { id: idea.id },
       data: {
         level: newLevel,
-        yieldPoints: newYield,
         failedAttempts: 0,
         dueDate,
         graceEndsAt: graceEndsAt(dueDate, newLevel, graceExtraDays),
       },
     }),
-    prisma.domain.update({
-      where: { id: idea.domainId },
-      data: { totalPoints: { increment: yieldDelta } },
-    }),
+    ...(taken > 0 ? [domainDebitOp(idea.domainId, taken)] : []),
   ]);
   await recalculateLeveling(idea.domainId);
 
   return { newLevel, dueDate };
+}
+
+/** Takes `points` off a Domain's totalPoints, never below 0. */
+function domainDebitOp(domainId: string, points: number) {
+  return prisma.$executeRaw`UPDATE "public"."Domain" SET "totalPoints" = GREATEST(0, "totalPoints" - ${points}) WHERE "id" = ${domainId}`;
 }
 
 /**
@@ -430,32 +431,82 @@ export async function applyReviewResult(
 }
 
 /**
- * Daily Cron target (spec section 3.4): degrade every Idea whose grace
- * period has lapsed with nobody having attempted it — driven purely by
- * `now > graceEndsAt`, independent of failedAttempts, since an Idea nobody
- * ever reviews never accumulates failed attempts in the first place. Routed
- * through the same DEGRADATION_WARD gate as a manual-failure degradation.
+ * Daily Cron target: forgetting (forgetting.ts). Every card past its grace with a level to lose is read against the
+ * forgetting curve: from the level it fell due at and the days it has been overdue since, how many levels it has
+ * forgotten by now. Each level not yet taken is taken now: the card's level, the points earning it paid off its
+ * Domain (never below 0), and one FORGET row per level on the ledger (sink DOMAIN, xp negative, keyed per card, due
+ * date and level, so a second run the same day, or the next, takes nothing twice). The due date is left as it is:
+ * it is the anchor the curve is read from, and a review moves it. Routed through the same DEGRADATION_WARD gate as a
+ * manual degradation. Levels, then the Field's and the character's, follow (recalculateLeveling, once per Domain).
  *
- * Progression is loaded once for the whole batch, not per-Idea — an
- * unattended Cron run is one consistent moment, not N independent ones —
- * and, deliberately, never calls `recordFieldActivity` or writes a ledger
- * row: an automatic degradation for neglect is the opposite of the thing a
- * streak measures. (The old daily streak read `Idea.updatedAt`, which this
- * bumps, so the cron used to keep a streak alive on its own.)
+ * Progression is loaded once for the whole batch: an unattended run is one moment. It never calls
+ * recordFieldActivity: forgetting for neglect is the opposite of what a streak measures.
  */
 export async function degradeOverdueIdeas(now: Date = new Date()): Promise<{ ideaId: string; outcome: ReviewOutcome }[]> {
   const overdue = await prisma.idea.findMany({
-    where: { isArchived: false, graceEndsAt: { lt: now } },
+    where: { isArchived: false, level: { gt: 1 }, graceEndsAt: { lt: now } },
   });
   if (overdue.length === 0) return [];
 
   const userId = getCurrentUserId();
-  const progression = await loadProgressionFresh(userId, now);
+  const [progression, applied] = await Promise.all([
+    loadProgressionFresh(userId, now),
+    prisma.activityEvent.findMany({
+      where: { userId, source: "FORGET", sourceId: { in: overdue.map((i) => i.id) } },
+      select: { dedupeKey: true },
+    }),
+  ]);
+  const keys = applied.map((a) => a.dedupeKey ?? "");
+  const graceExtra = progression.modifiers.graceExtraDays;
 
   const results: { ideaId: string; outcome: ReviewOutcome }[] = [];
+  const touched = new Set<string>();
   for (const idea of overdue) {
-    const outcome = await attemptDegradation(idea, now, userId, progression, 0);
-    results.push({ ideaId: idea.id, outcome });
+    // What this card already forgot since it fell due: its level then is today's plus those.
+    const prefix = forgetKeyPrefix(idea.id, idea.dueDate);
+    const done = keys.filter((k) => k.startsWith(prefix)).length;
+    const anchor = idea.level + done;
+    const want = levelsForgotten(anchor, daysOverdueOf(idea.dueDate, now), graceExtra);
+    if (want <= done) continue;
+
+    const anchorWard = await tryConsumeWardCharge(userId, progression.activeSkills, now);
+    if (anchorWard) {
+      results.push({ ideaId: idea.id, outcome: { outcome: "shielded", level: idea.level, skillName: anchorWard.name, nextCombo: 0, nextDue: idea.dueDate.toISOString() } });
+      continue;
+    }
+
+    const newLevel = anchor - want;
+    const ops: Prisma.PrismaPromise<unknown>[] = [prisma.idea.update({ where: { id: idea.id }, data: { level: newLevel } })];
+    let taken = 0;
+    for (let n = done + 1; n <= want; n++) {
+      const from = anchor - n + 1;
+      const points = levelLossPoints(from);
+      taken += points;
+      ops.push(
+        activityOp(userId, {
+          source: "FORGET",
+          sink: "DOMAIN",
+          occurredAt: now,
+          sourceId: idea.id,
+          xp: -points,
+          countsForStreak: false,
+          detail: `forgot · L${from} → L${from - 1}`,
+          dedupeKey: forgetDedupeKey(idea.id, idea.dueDate, n),
+        })
+      );
+    }
+    if (taken > 0) ops.push(domainDebitOp(idea.domainId, taken));
+    try {
+      await prisma.$transaction(ops);
+    } catch (err) {
+      // Another run took these levels first: what it wrote stands.
+      if (isDuplicateActivity(err)) continue;
+      throw err;
+    }
+    touched.add(idea.domainId);
+    results.push({ ideaId: idea.id, outcome: { outcome: "degraded", previousLevel: idea.level, newLevel, nextCombo: 0, nextDue: idea.dueDate.toISOString() } });
   }
+  for (const domainId of touched) await recalculateLeveling(domainId);
+  if (touched.size > 0) invalidateActivity();
   return results;
 }

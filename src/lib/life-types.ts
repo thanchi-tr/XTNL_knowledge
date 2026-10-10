@@ -127,7 +127,9 @@ export type ActivitySource =
   | "ADJUST"
   | "WORKOUT"
   | "PR"
-  | "STEPS";
+  | "STEPS"
+  /** A level an unreviewed idea forgot (srs.ts degradeOverdueIdeas): sink DOMAIN, xp negative, what earning it paid. */
+  | "FORGET";
 
 /**
  * Where a row's XP counts. DOMAIN: points already credited to a Domain by

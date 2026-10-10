@@ -15,6 +15,10 @@
  */
 import { daysBetween, type DayKey } from "./life-day";
 import { MASTERY_LEVEL } from "./xp";
+import { levelLossPoints } from "./forgetting";
+
+/** "2.4" or "31": points to one decimal, whole when whole. */
+const fmtPoints = (n: number): string => (Math.round(n * 10) / 10).toFixed(Math.round(n * 10) % 10 === 0 ? 0 : 1);
 
 // ── The review quest ──────────────────────────────────────────────────────
 
@@ -211,7 +215,11 @@ export function trueFactOf(input: FactInput): TrueFact {
         ...base,
         kind: "degraded",
         headline: "Not this time",
-        detail: join(["Back tomorrow", `level ${m.levelBefore} → ${m.levelAfter}`, "the Domain gives back 10% of this idea's points"]),
+        detail: join([
+          "Back tomorrow",
+          `level ${m.levelBefore} → ${m.levelAfter}`,
+          m.levelAfter < m.levelBefore ? `the Domain gives back the ${fmtPoints(levelLossPoints(m.levelBefore))} points that level earned` : "nothing else is taken",
+        ]),
       };
     }
     if (m.kind === "shielded") {

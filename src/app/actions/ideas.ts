@@ -673,9 +673,9 @@ export interface DeleteIdeaResult {
  * `yieldPoints` plus the review rewards earned since. Deleting an Idea
  * reverses only its own yield contribution, not the rewards — those were
  * paid for recall that genuinely happened, and confiscating them would
- * punish the user for tidying up. Floored at zero, because
- * `DEGRADATION_YIELD_MULTIPLIER` can have shrunk an Idea's yield below what
- * it originally contributed.
+ * punish the user for tidying up. Floored at zero, because a forgotten or
+ * failed level (forgetting.ts levelLossPoints) can already have taken points
+ * back off the Domain.
  *
  * `IdeaEnrichment` rows cascade with the Idea (see schema.prisma).
  */

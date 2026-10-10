@@ -56,6 +56,8 @@ export const DEFAULT_SINK: Record<ActivitySource, Sink> = {
   WORKOUT: "TRACK",
   PR: "TRACK",
   STEPS: "NONE",
+  // A level an idea forgot takes its points back off its Domain (srs.ts degradeOverdueIdeas).
+  FORGET: "DOMAIN",
 };
 
 /**

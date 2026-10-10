@@ -155,8 +155,10 @@ key-by-key hotspot label match, case/whitespace-insensitive).
 (capped at 12), +2 XP to the Domain, next `dueDate` from the interval
 schedule below; incorrect -> `failedAttempts++` then either a Strike (24h
 reschedule only) or a Degradation (`failedAttempts >= 2` OR past
-`graceEndsAt`: level -1 floored at 1, `yieldPoints *= 0.9` propagated to the
-Domain's `totalPoints`, 24h reschedule). `src/app/actions/review.ts` is the
+`graceEndsAt`: level -1 floored at 1, the Domain's `totalPoints` loses the
+points that level earned — `levelLossPoints` in `src/lib/forgetting.ts`: the
+base of the review that reached it, plus the mastery bonus when it falls from
+level 12; nothing at level 1 — 24h reschedule). `src/app/actions/review.ts` is the
 `submitReview` Server Action wiring `VerificationService` + this state
 machine together — the client only ever sends an answer and gets back
 correct/incorrect plus the outcome, never grades anything itself.
@@ -172,27 +174,25 @@ unevenly-spaced jumps for 9-12) and isolates them to one place so the
 numbers are a one-function change if you have different values in mind.
 
 `src/app/api/cron/degrade/route.ts` + `vercel.json` is the daily 00:00 UTC
-unattended-downgrade job. It runs the *exact same* degradation as a failed
-manual review (`degradeIdea` in `srs.ts` is shared by both call sites), but
-triggered purely by `now > graceEndsAt` rather than by `failedAttempts` —
-this is what catches Ideas nobody ever attempts. Protect it in production by
-setting `CRON_SECRET`; Vercel sends that value back as
+forgetting job (`degradeOverdueIdeas` in `srs.ts`, the model in
+`src/lib/forgetting.ts`). An idea left unreviewed forgets along the power
+forgetting curve spaced repetition uses, R(t) = (1 + t ÷ 9S)⁻¹ with S its
+level's interval (R is 90% on the due day): one level for every 7.5 points
+of recall lost below 90%, never inside its grace period, never below level 1.
+A young card forgets in days, a mature one in months: level 4 loses its first
+level about 6 days past due, level 12 about 5 months past due. Each level
+lost takes back what earning it paid (`levelLossPoints`) off the Domain's
+`totalPoints`, never below 0, and writes a FORGET row on the ledger (sink
+DOMAIN, xp negative), keyed per card, due date and level so a re-run takes
+nothing twice. The due date stays as the anchor the curve is read from; a
+review moves it. Domain, Field and character levels follow. Protect it in
+production by setting `CRON_SECRET`; Vercel sends that value back as
 `Authorization: Bearer <CRON_SECRET>` automatically when the env var is set
 and a `crons` entry exists in `vercel.json`.
 
-**Something to know before you use this on real reviews:** a fresh Idea sits
-at level 1, and `T_grace = max(0, level - 1)` is *zero* at level 1 — so a
-level-1 Idea has no grace period at all. Combined with the seed script's
-staggered due-offsets (`-3` to `+3` days from seed time), most seeded Ideas
-are already past their (zero-length) grace period the moment they're
-seeded, and the Cron will degrade nearly all of them the first time it runs
-against fresh seed data, before anyone's had a chance to review them. This
-was confirmed by actually running the Cron path against the seeded
-database — not a hypothetical. It's a faithful implementation of the exact
-formula, not a bug, but it's worth deciding whether that's the onboarding
-experience you want (e.g. seeding Ideas with a small positive `dueOffsetDays`
-floor, or giving level 1 a nonzero grace period) before Phase 5 puts a UI in
-front of real usage.
+A level-1 card has nothing to forget, so a fresh idea is never drained before
+anyone has had a chance to review it (the old one-level-a-day job took 10% of
+its points every night).
 
 ## Phase 4 — leveling recalculation, skills, and the first page
 
