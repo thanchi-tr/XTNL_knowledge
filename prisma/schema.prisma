@@ -981,6 +981,45 @@ model TaskStyle {
   @@schema("public")
 }
 
+// ── Subtasks (migration life_subtasks) ─────────────────────────────────────
+// Additive: two new tables, no existing table altered, no foreign keys. A task
+// or habit has no steps until the user adds them in its drawer; ticking steps
+// pays a share of the task's own price through its one TASK row (re-priced on
+// each change; src/lib/subtasks-server.ts). Read fail soft: a missing table
+// reads as no steps.
+
+/// One step of a task or habit, added by the user in the task drawer. Removed steps keep their row (archivedAt).
+model TaskSubtask {
+  id         String    @id @default(cuid())
+  userId     String
+  templateId String
+  /// The step's place in its list, from 0.
+  ord        Int
+  title      String
+  createdAt  DateTime  @default(now())
+  archivedAt DateTime?
+
+  @@index([templateId])
+  @@index([userId])
+  @@schema("public")
+}
+
+/// A step ticked on a life day. One row per step per day.
+model TaskSubtaskTick {
+  id         String   @id @default(cuid())
+  userId     String
+  templateId String
+  subtaskId  String
+  /// The life day (src/lib/life-day.ts dateColumn).
+  day        DateTime @db.Date
+  createdAt  DateTime @default(now())
+
+  @@unique([subtaskId, day])
+  @@index([userId, day])
+  @@index([templateId, day])
+  @@schema("public")
+}
+
 // ── Roadmap: an Aim, its drafts, milestones, measures and week quests ─────
 // (migration life_roadmap; docs/life-plan/roadmap.md revision 3, F1)
 //

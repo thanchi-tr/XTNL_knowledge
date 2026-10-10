@@ -15,6 +15,7 @@
  * unparseable rule falls back to a one-off, a missing stat to zero.
  */
 import type { TaskStyle } from "./task-style";
+import { paidByStepsOf, stepsAllowed, type Subtask, type SubtaskDay } from "./subtasks";
 import { addDays, daysBetween, dayKeyOf, weekdayOf, LIFE_TZ, DAY_START_HOUR, type DayKey } from "./life-day";
 import type {
   ActivityInput,
@@ -32,6 +33,7 @@ import type {
   PriceInput,
   Receipt,
   Sink,
+  StepShare,
   TaskKind,
   Timing,
   Track,
@@ -264,6 +266,8 @@ export interface PaidRecord {
 export interface BoardData {
   /** Each template's chosen icon and colour (task-style-server loadTaskStyles); absent or missing: the defaults. */
   styles?: Record<string, TaskStyle>;
+  /** Each template's steps and the ones ticked today (subtasks-server loadSubtasks); absent: no task has steps. */
+  subtasks?: Record<string, SubtaskDay>;
   today: DayKey;
   yesterday: DayKey;
   capacityMin: number;
@@ -457,6 +461,8 @@ export interface PlanInput {
    * caller maps them (makeUpStatusOf, source 'make-up').
    */
   makeUp?: boolean;
+  /** A task broken into steps: the steps ticked of all (life-grade priceTask: K = done ÷ total on a full completion). */
+  steps?: StepShare | null;
 }
 
 export interface CompletionPlan {
@@ -489,6 +495,7 @@ export function planCompletion(p: PlanInput): CompletionPlan {
     repeatN: ledgerRepeatN(t, p.ledger),
     introBefore: ledgerIntroBefore(p.ledger),
     mode,
+    ...(p.steps ? { steps: p.steps } : {}),
   };
   const receipt = priceTask(input, { rawBefore: p.ledger.rawBefore }, t.track);
   // A completion that can never pay (#play, study) records to NONE, so no
@@ -947,6 +954,18 @@ export interface BoardRow {
   streakNote?: "repaired" | "held" | null;
   /** M2 (lane D): a weakening still pending (its effectiveDay is after today): 'must · ends Thu 8 Oct'. */
   pendingNext?: PendingNext | null;
+  /** Its steps (subtasks), on today's rows only; absent or null: no steps. */
+  steps?: RowSteps | null;
+}
+
+/** A row's steps: the list, the ones ticked today, and how the ticks pay (src/lib/subtasks.ts). */
+export interface RowSteps {
+  items: Subtask[];
+  done: string[];
+  /** Paid by its steps for a part (not every step): the row stays open, its tick finishes the rest. */
+  partial: boolean;
+  /** Paid by a whole tick (Done, the minimum, a make-up): the steps are a checklist only. */
+  checklist: boolean;
 }
 
 export interface GoalCard {
@@ -1515,6 +1534,15 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
     const auto = day === today ? autoStateOf(t, counts) : null;
     const projection = planCompletion({ template: t, day, today, slot, ledger: ledgerFor(d, day), streakDays }).receipt;
     let state: RowState = done.length > 0 ? "done" : skipped ? "skipped" : "open";
+    // Steps (today only): ticked steps that paid a part keep the row open, its tick finishing the rest.
+    const sub = day === today && stepsAllowed(t) ? d.subtasks?.[t.id] : undefined;
+    const paidRow = latestDone ? (d.paid[latestDone.id] ?? null) : null;
+    const paidSteps = paidByStepsOf(paidRow?.receipt ?? null);
+    const steps: RowSteps | null =
+      sub && sub.items.length > 0
+        ? { items: sub.items, done: sub.done, partial: !!paidSteps && paidSteps.done < paidSteps.total, checklist: done.length > 0 && !paidSteps }
+        : null;
+    if (steps?.partial && state === "done") state = "open";
     // A study task that has met its target counts as done even before the
     // after() hook has written its instance; one that has not stays locked.
     if (state === "open" && auto) state = auto.met ? "done" : "locked";
@@ -1554,6 +1582,7 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
             )
           : null,
       pendingNext: pendingNextOf(t, today),
+      steps,
       ...extra,
     };
   };

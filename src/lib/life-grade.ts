@@ -7,6 +7,7 @@ import type {
   PricingContext,
   Receipt,
   ReceiptFactor,
+  StepShare,
   Timing,
   Track,
 } from "./life-types";
@@ -397,7 +398,9 @@ export function priceTask(input: PriceInput, ctx: PricingContext, track: Track):
   const D = repeatFactor(n);
   const introBefore = Number.isFinite(input.introBefore) ? Math.max(0, Math.round(input.introBefore)) : 0;
   const V = band === "INTRO" ? introVolumeFactor(introBefore) : 1;
-  const K = PAY_MODE_FACTOR[mode];
+  // A task broken into steps pays the share of them ticked (a full completion only; a minimum, play or study pays its own K).
+  const steps = mode === "FULL" ? stepShareOf(input.steps) : null;
+  const K = steps ? roundTo(steps.done / steps.total, 3) : PAY_MODE_FACTOR[mode];
 
   let effortNote: string | undefined;
   if (reported != null && reported !== minutes) effortNote = `reported ${reported} min, counted ${minutes}`;
@@ -426,7 +429,7 @@ export function priceTask(input: PriceInput, ctx: PricingContext, track: Track):
     },
     { key: "D", label: `${ordinal(n)} today`, value: roundTo(D, 3) },
     { key: "V", label: band === "INTRO" ? `${ordinal(introBefore + 1)} routine today` : "not routine", value: roundTo(V, 3) },
-    { key: "K", label: MODE_LABEL[mode], value: K },
+    { key: "K", label: steps && steps.done < steps.total ? `${steps.done} of ${steps.total} steps` : MODE_LABEL[mode], value: K },
   ];
 
   const raw = roundTo(B * E * T * C * D * V * K, 1);
@@ -442,7 +445,15 @@ export function priceTask(input: PriceInput, ctx: PricingContext, track: Track):
     xp,
     track,
     ...(override !== 0 ? { selfRated: true } : {}),
+    ...(steps ? { steps } : {}),
   };
+}
+
+/** A step share priceTask can use: whole counts, 1 ≤ total ≤ 50, 0 ≤ done ≤ total; anything else is no share. */
+export function stepShareOf(s: StepShare | null | undefined): StepShare | null {
+  if (!s || !Number.isInteger(s.done) || !Number.isInteger(s.total)) return null;
+  if (s.total < 1 || s.total > 50 || s.done < 0 || s.done > s.total) return null;
+  return { done: s.done, total: s.total };
 }
 
 // ── Projection from a stored template ─────────────────────────────────────

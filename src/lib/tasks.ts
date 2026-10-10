@@ -76,6 +76,8 @@ import { DUTY_READ_AHEAD_DAYS, DUTY_READ_BACK_DAYS, type DutyBoard, type Settled
 import { isMissingRestDayTable } from "./rest-rules";
 import { loadRoadmapGoalSeries } from "./roadmap-readings";
 import { loadTaskStyles } from "./task-style-server";
+import { isMissingSubtaskTable, loadSubtasks } from "./subtasks-server";
+import { STEPS_NOT_READY, nextTicks, paidByStepsOf, stepPayOf, stepsAllowed } from "./subtasks";
 import { isMissingRoadmapTable, isRoadmapCaptureKey, isSupersededRow, type PositionRow } from "./roadmap-types";
 import {
   EpochSet,
@@ -785,11 +787,12 @@ function loadDueNow(day: DayKey, now: Date): Promise<number> {
 export async function loadTodayBoard(userId: string, day: DayKey, now: Date = new Date()): Promise<BoardData> {
   return cached(`today:${userId}:${day}`, ["life", "activity", "ideas", "roadmap"], async () => {
     // Each task's icon and colour (fails soft: none before the life_exercise_style migration).
-    const [read, dueNow, styles] = await Promise.all([loadBoardCore(userId, day, now), loadDueNow(day, now), loadTaskStyles(userId)]);
+    // Each task's steps and today's ticked ones (fails soft: none before the life_subtasks migration).
+    const [read, dueNow, styles, subtasks] = await Promise.all([loadBoardCore(userId, day, now), loadDueNow(day, now), loadTaskStyles(userId), loadSubtasks(userId, day)]);
     // M2: BoardData.duty (duty-view.ts DutyBoard), read in the same wave.
     // Roadmap (F16 seam 3): BoardData.roadmapGoals, the stored series of the open ROADMAP goals.
     const roadmapGoals = await loadBoardRoadmapGoals(userId, read.core.templates, day);
-    return { ...read.core, dueNow, duty: read.duty, roadmapGoals, styles };
+    return { ...read.core, dueNow, duty: read.duty, roadmapGoals, styles, subtasks };
   });
 }
 
@@ -1860,6 +1863,223 @@ export async function againCore(userId: string, templateId: string, opts: Comple
   return settleCompletion(userId, read, { day: today, today, slot, minutes: opts.minutes, mvv: opts.mvv, now }, load);
 }
 
+// ── Steps (subtasks) ──────────────────────────────────────────────────────
+
+/** A step tick's result: the steps ticked, and what the task's one TASK row pays now. */
+export interface StepTick {
+  templateId: string;
+  /** The step ids ticked today, after the change. */
+  done: string[];
+  total: number;
+  /** What the task pays now (0 when nothing is paid). */
+  xp: number;
+  /** The change in what the task pays (after − before). */
+  delta: number;
+  /** Every step done and paid in full. */
+  full: boolean;
+  /** The paying row, when one stands. */
+  instanceId: string | null;
+  receipt: Receipt | null;
+}
+
+/** The day's ledger without one of its TASK rows: the base a re-price is read against. */
+function ledgerWithout(ledger: DayLedger, ev: { id: string; xp: number; rawXp: number | null; sink: string }): DayLedger {
+  return {
+    ...ledger,
+    rawBefore: Math.max(0, ledger.rawBefore - (ev.rawXp ?? 0)),
+    lifeXp: ev.sink === "TRACK" ? ledger.lifeXp - ev.xp : ledger.lifeXp,
+    completions: ledger.completions.filter((c) => c.eventId !== ev.id),
+  };
+}
+
+/**
+ * Ticks one of a task's steps today (or every step: `stepId` null), and re-prices what the task pays
+ * (src/lib/subtasks.ts stepPayOf): the share ticked, through the task's one TASK row on slot 0. A change undoes the
+ * row that stood (an UNDO that negates it exactly) and writes the new one under the next attempt's key, in the same
+ * transaction as the ticks, the instance and the guards a completion takes, so the day's ledger always nets to what
+ * the task pays now. Nothing ticked, or a must not finished, pays nothing (the instance reads UNDONE). A task already
+ * paid by a whole tick (Done, its minimum, a make-up) keeps that payment: its steps are only a checklist then.
+ */
+export async function stepTickCore(
+  userId: string,
+  templateId: string,
+  change: { stepId: string | null; done: boolean },
+  now: Date = new Date()
+): Promise<LifeResult<StepTick>> {
+  const today = todayKey(now);
+  const day = today;
+  const load = () => readForCompletion(userId, templateId, today, day, now);
+  for (let attempt = 1; ; attempt++) {
+    const read = await load();
+    if (!read) return fail("That task no longer exists.");
+    const res = await stepTickOnce(userId, read, change, day, today, now);
+    if (res !== RETRY) return res;
+    if (attempt >= SETTLE_ATTEMPTS) return fail("Another tick was being recorded at the same moment. Try again.");
+  }
+}
+
+async function stepTickOnce(
+  userId: string,
+  read: CompletionRead & { row: TemplateRow },
+  change: { stepId: string | null; done: boolean },
+  day: DayKey,
+  today: DayKey,
+  now: Date
+): Promise<LifeResult<StepTick> | typeof RETRY> {
+  const { t, row, history, events } = read;
+  const reason = completableReason(t, row);
+  if (reason) return fail(reason);
+  if (!stepsAllowed(t)) return fail("This task can't have steps.");
+  const dayCol = dateColumn(day);
+
+  let steps: { id: string }[];
+  let ticks: { subtaskId: string }[];
+  try {
+    [steps, ticks] = await Promise.all([
+      prisma.taskSubtask.findMany({ where: { userId, templateId: t.id, archivedAt: null }, orderBy: [{ ord: "asc" }, { createdAt: "asc" }], select: { id: true } }),
+      prisma.taskSubtaskTick.findMany({ where: { userId, templateId: t.id, day: dayCol }, select: { subtaskId: true } }),
+    ]);
+  } catch (err) {
+    if (isMissingSubtaskTable(err)) return fail(STEPS_NOT_READY);
+    throw err;
+  }
+  if (steps.length === 0) return fail("This task has no steps.");
+  const ids = steps.map((s) => s.id);
+  if (change.stepId !== null && !ids.includes(change.stepId)) return fail("That step is no longer here.");
+  const before = new Set(ticks.map((x) => x.subtaskId).filter((id) => ids.includes(id)));
+  const after = nextTicks(ids, before, change);
+  const added = [...after].filter((id) => !before.has(id));
+  const removed = ticks.map((x) => x.subtaskId).filter((id) => !after.has(id));
+
+  const rule = ruleOf(t);
+  const refusal = tickRefusalFor(read, day, today, !!rule);
+  if (refusal) return fail(refusal);
+
+  // The row that pays slot 0 today, if any, and whether steps paid it (then it is re-priced) or a whole tick did.
+  const inst = history.find((i) => i.day === day && i.slot === 0) ?? null;
+  const undone = undoneIds(events);
+  const live = inst ? ([...events].reverse().find((e) => e.source === "TASK" && e.sourceId === inst.id && !undone.has(e.id)) ?? null) : null;
+  const liveSteps = live ? paidByStepsOf(live.receipt) : null;
+  const wholeTick = !!inst && isDoneStatus(inst.status) && !liveSteps;
+
+  const tickOps = (): Prisma.PrismaPromise<unknown>[] => [
+    ...(removed.length > 0 ? [prisma.taskSubtaskTick.deleteMany({ where: { userId, templateId: t.id, day: dayCol, subtaskId: { in: removed } } })] : []),
+    ...(added.length > 0 ? [prisma.taskSubtaskTick.createMany({ data: added.map((subtaskId) => ({ userId, templateId: t.id, subtaskId, day: dayCol })), skipDuplicates: true })] : []),
+  ];
+  const result = (xp: number, delta: number, full: boolean, instanceId: string | null, receipt: Receipt | null): StepTick => ({
+    templateId: t.id,
+    done: ids.filter((id) => after.has(id)),
+    total: ids.length,
+    xp,
+    delta: Math.round(delta * 1000) / 1000,
+    full,
+    instanceId,
+    receipt,
+  });
+  const write = async (ops: Prisma.PrismaPromise<unknown>[]): Promise<LifeResult<StepTick> | typeof RETRY | null> => {
+    try {
+      await prisma.$transaction(ops);
+      return null;
+    } catch (err) {
+      if (isSettledDay(err)) return fail(settledTickMessage(day));
+      if (isStaleRead(err)) return RETRY;
+      if (isMissingSubtaskTable(err)) return fail(STEPS_NOT_READY);
+      if (isDuplicateActivity(err)) return RETRY;
+      throw err;
+    } finally {
+      invalidate("life", "activity");
+    }
+  };
+
+  // Paid by a whole tick: the ticks are a checklist, the payment stands.
+  if (wholeTick) {
+    const ops = tickOps();
+    if (ops.length > 0) {
+      const failed = await write(ops);
+      if (failed) return failed;
+    }
+    return ok(result(inst!.xpPaid ?? live?.xp ?? 0, 0, true, inst!.id, (live?.receipt as unknown as Receipt) ?? null));
+  }
+
+  const pay = stepPayOf({ compulsory: t.compulsory, done: after.size, total: ids.length });
+  const sameShare = pay.kind === "pay" && liveSteps && liveSteps.done === pay.steps.done && liveSteps.total === pay.steps.total;
+  // Nothing to re-price: the share is the one already paid, or nothing was paid and nothing will be.
+  if (sameShare || (pay.kind === "none" && !live)) {
+    const ops = tickOps();
+    if (ops.length > 0) {
+      const failed = await write(ops);
+      if (failed) return failed;
+    }
+    const xp = live?.xp ?? 0;
+    return ok(result(xp, 0, pay.kind === "pay" && pay.steps.done === pay.steps.total, live ? inst!.id : null, (live?.receipt as unknown as Receipt) ?? null));
+  }
+
+  // The first payment on the day must be one the board offers (due today, a one-off still open).
+  if (!live) {
+    const block = completionBlockOf({ t, rule, day, today, lastDone: lastDoneOf(history), onDay: history.filter((i) => i.day === day) });
+    if (block) return fail(block);
+  }
+
+  const ledger = live ? ledgerWithout(read.ledger, live) : read.ledger;
+  const plan =
+    pay.kind === "pay"
+      ? planCompletion({ template: t, day, today, slot: 0, ledger, streakDays: rule ? streakDaysFor(t, rule, history, day) : 0, steps: pay.steps })
+      : null;
+  const full = pay.kind === "pay" && pay.steps.done === pay.steps.total;
+  const undoCount = inst ? events.filter((e) => e.source === "UNDO" && e.sourceId === inst.id).length : 0;
+  const instanceId = inst?.id ?? newId();
+  // A one-off this task's own steps finished is closed; one they no longer finish opens again.
+  const oneOffOpen = !rule && !t.completedAt;
+
+  const ops: Prisma.PrismaPromise<unknown>[] = [
+    lifeLockOp(userId),
+    ...(needsSettledGuard(day, today, now) ? [settledDayGuardOp(userId, day)] : []),
+    freshnessGuardOp(userId, day, read.kneeRows, oneOffOpen ? t.id : null),
+    ...tickOps(),
+  ];
+  if (live) {
+    ops.push(
+      activityOp(
+        userId,
+        undoEventInput(
+          { id: live.id, day: keyOfDateColumn(live.day), sink: live.sink as Sink, track: live.track ? asTrack(live.track) : null, templateId: live.templateId, sourceId: live.sourceId, xp: live.xp, rawXp: live.rawXp },
+          now
+        )
+      )
+    );
+  }
+  if (plan) {
+    const minutes = Math.round(plan.receipt.minutes) || null;
+    ops.push(
+      prisma.taskInstance.upsert({
+        where: { templateId_day_slot: { templateId: t.id, day: dayCol, slot: 0 } },
+        create: { id: instanceId, userId, templateId: t.id, day: dayCol, slot: 0, status: plan.status, source: plan.source, completedAt: now, minutes, xpPaid: plan.receipt.xp },
+        update: { status: plan.status, source: plan.source, completedAt: now, minutes, xpPaid: plan.receipt.xp },
+      }),
+      activityOp(
+        userId,
+        taskEventInput(plan, { templateId: t.id, track: t.track, instanceId, day, slot: 0, attempt: undoCount + (live ? 1 : 0), now })
+      ),
+      prisma.taskTemplate.updateMany({ where: { id: t.id, gradeFrozenAt: null }, data: { gradeFrozenAt: now } })
+    );
+    if (!rule) {
+      ops.push(
+        full
+          ? prisma.taskTemplate.updateMany({ where: { id: t.id, completedAt: null }, data: { completedAt: now } })
+          : prisma.taskTemplate.updateMany({ where: { id: t.id }, data: { completedAt: null } })
+      );
+    }
+  } else if (inst) {
+    ops.push(prisma.taskInstance.update({ where: { id: inst.id }, data: { status: "UNDONE", xpPaid: 0, completedAt: null, minutes: null } }));
+    if (!rule) ops.push(prisma.taskTemplate.updateMany({ where: { id: t.id }, data: { completedAt: null } }));
+  }
+
+  const failed = await write(ops);
+  if (failed) return failed;
+  const xp = plan?.receipt.xp ?? 0;
+  return ok(result(xp, xp - (live?.xp ?? 0), full, plan ? instanceId : null, plan?.receipt ?? null));
+}
+
 // ── Undo ──────────────────────────────────────────────────────────────────
 
 /**
@@ -1891,7 +2111,7 @@ export async function undoCompletionCore(
     prisma.activityEvent.findMany({
       where: { userId, sourceId: instanceId, source: { in: ["TASK", "UNDO"] } },
       orderBy: { occurredAt: "desc" },
-      select: { id: true, day: true, source: true, sink: true, track: true, templateId: true, sourceId: true, xp: true, rawXp: true, occurredAt: true, dedupeKey: true },
+      select: { id: true, day: true, source: true, sink: true, track: true, templateId: true, sourceId: true, xp: true, rawXp: true, occurredAt: true, dedupeKey: true, receipt: true },
     }),
     prisma.lifeSettings.findUnique({ where: { userId }, select: { settledThroughDay: true, epochDay: true } }),
   ]);
@@ -1937,6 +2157,10 @@ export async function undoCompletionCore(
   ];
   if (!inst.template.recurrence) {
     ops.push(prisma.taskTemplate.updateMany({ where: { id: inst.templateId }, data: { completedAt: null } }));
+  }
+  // A tick its steps paid (stepTickCore): undoing it clears that day's ticked steps too, so the list matches the pay.
+  if (paidByStepsOf(ev.receipt)) {
+    ops.push(prisma.taskSubtaskTick.deleteMany({ where: { userId, templateId: inst.templateId, day: inst.day } }));
   }
   try {
     await prisma.$transaction(ops);

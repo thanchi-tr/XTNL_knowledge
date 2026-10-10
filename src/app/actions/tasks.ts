@@ -26,6 +26,7 @@ import {
   setBandOverrideCore,
   setDailyCapacityCore,
   skipCore,
+  stepTickCore,
   templateIdOfInstance,
   unarchiveCore,
   undoCaptureCore,
@@ -35,6 +36,7 @@ import {
   type InboxChoice,
   type LifeResult,
   type RuleChangeOutcome,
+  type StepTick,
 } from "@/lib/tasks";
 import { undoMakeUpCore } from "@/lib/duty";
 import { MAKE_UP_UNDO_ELSEWHERE } from "@/lib/duty-plan";
@@ -195,6 +197,30 @@ export async function completeTask(
           mvv: input?.mvv === true,
         }),
       (v) => !v.duplicate
+    );
+    if (res.ok) recordPracticeAfter(userId, templateId);
+    return res;
+  });
+}
+
+/**
+ * Ticks one of a task's steps today, or every step (`stepId` null), and re-prices what the task pays: the share of its
+ * steps ticked (a must only once all are done). Returns what it pays now, the change, and L3's moments.
+ */
+export async function tickStep(
+  templateId: string,
+  stepId: string | null,
+  done: boolean,
+  opts?: TaskActionOptions
+): Promise<TaskActionResult<WithCelebrations<StepTick>>> {
+  if (!isId(templateId)) return noId();
+  if (stepId !== null && !isId(stepId)) return { ok: false, error: "No step given." };
+  return run("tickStep", opts, async (userId) => {
+    const res = await aroundTick(
+      userId,
+      { scope: "tick", templateIds: [templateId] },
+      () => stepTickCore(userId, templateId, { stepId, done: done === true }),
+      (v) => v.delta !== 0
     );
     if (res.ok) recordPracticeAfter(userId, templateId);
     return res;

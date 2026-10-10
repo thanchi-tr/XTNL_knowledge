@@ -182,6 +182,17 @@ export interface PriceInput {
   /** INTRO completions already made today (V). */
   introBefore: number;
   mode: PayMode;
+  /**
+   * A task broken into steps (src/lib/subtasks.ts): the steps ticked of all. A full completion then pays done ÷ total
+   * of its price (K); a minimum, play or study completion ignores it. Absent or every step done: K is the mode's own.
+   */
+  steps?: StepShare | null;
+}
+
+/** How many of a task's steps are ticked. */
+export interface StepShare {
+  done: number;
+  total: number;
 }
 
 /** The day-level context a price is read against. */
@@ -209,6 +220,8 @@ export interface Receipt {
   xp: number;
   track: Track;
   selfRated?: boolean;
+  /** Paid through its steps (src/lib/subtasks-server.ts): the share it paid for. Such a row is re-priced as steps change. */
+  steps?: StepShare;
 }
 
 // ── Capture ───────────────────────────────────────────────────────────────

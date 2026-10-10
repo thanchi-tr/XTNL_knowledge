@@ -15,9 +15,11 @@ import { dayLabel } from "@/lib/duty-view";
 import type { TaskStyle } from "@/lib/task-style";
 import { TaskMonth } from "@/components/task-style/TaskMonth";
 import { TaskStylePicker } from "@/components/task-style/TaskStylePicker";
+import { stepsAllowed } from "@/lib/subtasks";
+import { StepsEditor, type StepsSave } from "./StepsEditor";
 
 /** A slower write this drawer started and is waiting on. */
-export type DrawerWork = { kind: "resize" } | { kind: "rate"; override: number } | { kind: "rename"; title: string };
+export type DrawerWork = { kind: "resize" } | { kind: "rate"; override: number } | { kind: "rename"; title: string } | { kind: "steps" };
 
 interface Props {
   row: BoardRow;
@@ -50,6 +52,8 @@ interface Props {
   taskStyle?: TaskStyle | null;
   /** Fixtures and checks: no month read, no picker (they would call the server). */
   noMonth?: boolean;
+  /** Fixtures: the step editor's writes (the board uses the server actions). */
+  stepsSave?: StepsSave;
 }
 
 /** M2 (F3): what the drawer offers a must. A weakening is deferred seven days once Duty is live; a strengthening is immediate. */
@@ -141,7 +145,7 @@ export function TaskDrawer(props: Props) {
           </div>
           <div className="today-drawer-row">
             <button type="button" className="today-pill" data-tone="primary" disabled={busy} onClick={props.onDone}>
-              Done · {minutes != null ? fmtMinutes(minutes) : `~${fmtMinutes(row.estMinutes)}`} · ≈ {fmtXp(projection.xp)}
+              Done{row.steps && !row.steps.checklist ? " · every step" : ""} · {minutes != null ? fmtMinutes(minutes) : `~${fmtMinutes(row.estMinutes)}`} · ≈ {fmtXp(projection.xp)}
             </button>
             {t.mvv && props.minimumProjection && (
               <button type="button" className="today-pill" disabled={busy} onClick={props.onMinimum}>
@@ -253,6 +257,10 @@ export function TaskDrawer(props: Props) {
             Save
           </button>
         </form>
+      )}
+      {/* Steps are added here only, deliberately (Edit → Steps): no task has any until then. */}
+      {editing && stepsAllowed(t) && row.lane !== "yesterday" && (
+        <StepsEditor templateId={t.id} items={row.steps?.items ?? []} compulsory={t.compulsory} disabled={busy} save={props.stepsSave} />
       )}
 
       {!props.noMonth && (

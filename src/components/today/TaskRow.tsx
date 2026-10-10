@@ -14,6 +14,8 @@ import { TRACK_LABEL, TRACK_SIGIL, fmtMinutes, fmtXp } from "./format";
 import { hhmmOf, pendingMetaOf, tickNameOf } from "./board-ui";
 import { NamedTitle } from "./NamedTitle";
 import type { RestKind } from "@/lib/duty-economy";
+import { stepsLine } from "@/lib/subtasks";
+import { StepsList } from "./StepsList";
 
 interface Props {
   row: BoardRow;
@@ -47,6 +49,8 @@ interface Props {
   children?: ReactNode;
   /** The task's chosen icon and colour (BoardData.styles): drawn before the title when one is set. */
   taskStyle?: TaskStyle | null;
+  /** Ticks one of the row's steps (row.steps); without it the steps are not drawn. */
+  onStep?: (stepId: string, done: boolean, from: Element | null) => void;
 }
 
 /**
@@ -129,6 +133,9 @@ export function TaskRow(props: Props) {
           aria-haspopup="dialog"
         />
       </div>
+      {row.steps && props.onStep && row.state !== "locked" && (
+        <StepsList steps={row.steps} compulsory={t.compulsory} paidXp={row.paid && !row.paid.undone ? row.paid.xp : null} busy={busy} onStep={props.onStep} />
+      )}
       {drawerOpen && (
         <div id={drawerId} className="r-drawer">
           {props.children}
@@ -153,6 +160,7 @@ function OpenMeta({ row, restToday }: { row: BoardRow; restToday: RestKind | nul
     bits.push(`${n} day${n === 1 ? "" : "s"}${row.streak.capped ? "+" : ""}${row.streakNote ? ` · ${row.streakNote}` : ""}`);
   }
   if (row.progress) bits.push(row.progress.label);
+  if (row.steps) bits.push(stepsLine(row.steps.done.length, row.steps.items.length));
   if (row.ruleLabel && row.strength == null) bits.push(row.ruleLabel);
   if (row.parentTitle) bits.push(`goal: ${row.parentTitle}`);
   // M2: a weakening still pending keeps the row, and says until when ('must · ends Thu 8 Oct').

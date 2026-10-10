@@ -44,6 +44,7 @@ import {
   setBandOverride,
   setDailyCapacity,
   skipTask,
+  tickStep,
   unarchiveTask,
   undoCompletion,
 } from "@/app/actions/tasks";
@@ -823,6 +824,27 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
 
   // ── Writes ──────────────────────────────────────────────────────────────
 
+  /**
+   * A row's steps: one step on or off, or every step (stepId null: the row's tick and the drawer's Done when it has
+   * steps). The server re-prices what the task pays (the share ticked; a must only when all are done); a gain flies
+   * to the ledger like a tick, a loss is said.
+   */
+  function tickSteps(row: BoardRow, stepId: string | null, done: boolean, from?: Element | null) {
+    if (staleDay()) return;
+    work(
+      row.template.id,
+      { kind: "steps" },
+      () => tickStep(row.template.id, stepId, done, REFRESH),
+      (v) => {
+        presentAll(v.celebrations);
+        if (v.delta > 0) markTick(row, v.delta, from);
+        else if (v.delta < 0) announce(`${fmtXp(-v.delta)} life XP taken back with that step.`);
+      }
+    );
+  }
+  /** Rows whose tick goes through their steps: today's, with steps, not already paid by a whole tick. */
+  const viaSteps = (row: BoardRow) => !!row.steps && !row.steps.checklist && row.state === "open";
+
   function complete(row: BoardRow, opts: { minutes?: number | null; mvv?: boolean } = {}, from?: Element | null) {
     if (staleDay()) return;
     const id = nextOpId();
@@ -1244,7 +1266,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
         receiptOpen={receiptKey === key}
         receiptId={receiptIdOf(key)}
         pendingTitle={w?.kind === "rename" ? w.title : null}
-        onTick={(from) => complete(row, { minutes }, from)}
+        onTick={(from) => (viaSteps(row) ? tickSteps(row, null, true, from) : complete(row, { minutes }, from))}
         onUndo={() => undo(row)}
         onToggleDrawer={() => {
           setOpenKey((k) => (k === key ? null : key));
@@ -1257,6 +1279,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
         named={namedOfTitle(namedTitles, row.template.id)}
         namedMark={namedTitles?.mark}
         taskStyle={current.styles?.[row.template.id] ?? null}
+        onStep={(stepId, done, from) => tickSteps(row, stepId, done, from)}
       >
         <TaskDrawer
           row={row}
@@ -1268,7 +1291,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
           minimumProjection={row.template.mvv ? projectRow(current, row, { mvv: true }) : null}
           busy={busy}
           working={w}
-          onDone={() => complete(row, { minutes })}
+          onDone={() => (viaSteps(row) ? tickSteps(row, null, true) : complete(row, { minutes }))}
           onMinimum={() => complete(row, { mvv: true })}
           onSkip={() => skip(row)}
           onTomorrow={() => moveToTomorrow(row)}
