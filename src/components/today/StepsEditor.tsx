@@ -54,7 +54,7 @@ export function StepsEditor({ templateId, items, compulsory, disabled = false, s
                 {i + 1}
               </span>
               <input
-                className="today-input"
+                className="today-input t-steps-ed-in"
                 defaultValue={s.title}
                 maxLength={STEP_TITLE_MAX}
                 aria-label={`Step ${i + 1}`}
@@ -71,16 +71,16 @@ export function StepsEditor({ templateId, items, compulsory, disabled = false, s
                   else if (title !== s.title) runIt(() => save.rename(s.id, title));
                 }}
               />
-              <button type="button" className="today-pill t-steps-ed-x" disabled={off} onClick={() => runIt(() => save.remove(s.id))} aria-label={`Remove step ${i + 1}: ${s.title}`} title="Remove">
+              <button type="button" className="today-pill t-steps-ed-btn t-steps-ed-x" disabled={off} onClick={() => runIt(() => save.remove(s.id))} aria-label={`Remove step ${i + 1}: ${s.title}`} title="Remove">
                 <Icon name="x" size={16} />
               </button>
             </li>
           ))}
         </ol>
       )}
-      <form className="today-drawer-row" onSubmit={onAdd}>
+      <form className="today-drawer-row t-steps-ed-row" onSubmit={onAdd}>
         <input
-          className="today-input"
+          className="today-input t-steps-ed-in"
           value={draft}
           maxLength={STEP_TITLE_MAX}
           placeholder={full ? `${STEPS_MAX} steps at most` : "Add a step"}
@@ -88,7 +88,7 @@ export function StepsEditor({ templateId, items, compulsory, disabled = false, s
           disabled={off || full}
           onChange={(e) => setDraft(e.target.value)}
         />
-        <button type="submit" className="today-pill" disabled={off || full || !draft.trim()}>
+        <button type="submit" className="today-pill t-steps-ed-btn" disabled={off || full || !draft.trim()}>
           {pending ? "Saving…" : "Add"}
         </button>
       </form>

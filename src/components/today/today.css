@@ -258,10 +258,10 @@ html[data-motion="calm"] .today-lane.fresh .lane-body::before { animation: none;
 .t-steps-ed-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .t-steps-ed-list li { display: flex; align-items: center; gap: 8px; }
 .t-steps-ed-n { flex: none; width: 20px; text-align: right; font-size: 12px; color: var(--ink-2); }
-.t-steps-ed .today-input { flex: 1 1 auto; width: auto; }
-.t-steps-ed .today-pill { flex: none; }
-.t-steps-ed .t-steps-ed-x { display: inline-flex; align-items: center; justify-content: center; width: 44px; padding: 0; }
-.t-steps-ed .today-drawer-row { flex-wrap: nowrap; }
+.t-steps-ed-in { flex: 1 1 auto; width: auto; }
+.t-steps-ed-btn { flex: none; }
+.t-steps-ed-x { display: inline-flex; align-items: center; justify-content: center; width: 44px; padding: 0; }
+.t-steps-ed-row { flex-wrap: nowrap; }
 .today-drawer { margin: 0 8px 12px 50px; padding: 12px; border-radius: 12px; background: var(--sunken); border: 1px solid var(--line-2); }
 @container main (max-width: 420px) { .today-drawer { margin-left: 6px; margin-right: 6px; } }
 .today-drawer-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }

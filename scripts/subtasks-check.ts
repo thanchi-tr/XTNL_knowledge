@@ -6,7 +6,10 @@
  * Pure: no database, no clock, no model.
  *
  *   npx tsx scripts/subtasks-check.ts
+ *
+ * scripts/_no-model.ts comes first: the board's modules reach the roadmap's, and no check may reach a model.
  */
+import "./_no-model";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createElement } from "react";

@@ -1059,8 +1059,8 @@ function cssValue(css: string, selector: string, prop: string, media?: string): 
   const boardSrc = code(read("src/components/today/TodayBoard.tsx"));
   const presents = boardSrc.match(/presentAll\(v\.celebrations\)/g) ?? [];
   check(
-    "rewards: the board presents the tick's, Again's, the goal +1's and a goal close's moments (T2/T3)",
-    presents.length === 4 && boardSrc.includes('from "@/components/celebrate/stage"'),
+    "rewards: the board presents the tick's, Again's, a step tick's, the goal +1's and a goal close's moments (T2/T3)",
+    presents.length === 5 && boardSrc.includes('from "@/components/celebrate/stage"'),
     String(presents.length)
   );
   check("streak caption: 'Kept today, 08:05.' from keptAtOf, with the plain line as its fallback", /keptAtOf\(current\)/.test(boardSrc) && boardSrc.includes("`Kept today, ${hhmmOf(") && boardSrc.includes('"Kept today."'));
