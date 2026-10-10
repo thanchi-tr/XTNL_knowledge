@@ -3,6 +3,8 @@ import { after } from "next/server";
 import { loadFieldTree } from "@/lib/queries";
 import { isDue, daysUntilDue } from "@/lib/due";
 import { displayQuestion } from "@/lib/idea-display";
+import { pickCardWording } from "@/lib/idea-variants";
+import { loadVariants } from "@/lib/idea-variants-server";
 import { loadBossStates } from "@/lib/bosses";
 import { recordDayOpen } from "@/lib/tasks";
 import { getCurrentUserId } from "@/lib/user";
@@ -63,7 +65,7 @@ export default async function ReviewPage() {
   // Day-granular, not instant — see `src/lib/due.ts`. A card due today is
   // reviewable today, not from whatever time of day it happened to be
   // scheduled at.
-  const fields: WorkspaceField[] = allFields
+  const dueFields: WorkspaceField[] = allFields
     .map((field) => ({
       id: field.id,
       name: field.name,
@@ -88,6 +90,11 @@ export default async function ReviewPage() {
       ),
     }))
     .filter((f) => f.cards.length > 0);
+
+  // Question variants: each card shows its original wording or one of its other wordings, picked at random each time
+  // the queue loads (idea-variants.ts pickCardWording). Grading reads only the answer, so nothing else changes.
+  const variants = await loadVariants(dueFields.flatMap((f) => f.cards.map((c) => c.id)));
+  const fields: WorkspaceField[] = dueFields.map((f) => ({ ...f, cards: f.cards.map((c) => pickCardWording(c, variants.get(c.id), displayQuestion)) }));
 
   const totalDue = fields.reduce((s, f) => s + f.cards.length, 0);
 

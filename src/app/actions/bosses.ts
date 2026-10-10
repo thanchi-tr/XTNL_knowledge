@@ -4,6 +4,8 @@ import type { QuestionType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/user";
 import { displayQuestion } from "@/lib/idea-display";
+import { pickCardWording } from "@/lib/idea-variants";
+import { loadVariants } from "@/lib/idea-variants-server";
 import { beginBossAttempt, claimBossBoon, resolveBossAttempt, type BossResolution } from "@/lib/bosses";
 import type { ActiveBoonRow, BoonKind } from "@/lib/boon-meta";
 import { captureSnapshot, detectCelebrations } from "@/lib/celebrations";
@@ -71,7 +73,10 @@ export async function startBossEncounter(fieldId: string): Promise<BossActionRes
       fieldName: i.domain.field.name,
     }));
 
-  return { ok: true, value: { fieldId, tier: begun.tier, cards } };
+  // Question variants: the original or another wording, at random (idea-variants.ts).
+  const variants = await loadVariants(cards.map((c) => c.id));
+  const worded = cards.map((c) => pickCardWording(c, variants.get(c.id), displayQuestion));
+  return { ok: true, value: { fieldId, tier: begun.tier, cards: worded } };
 }
 
 export async function resolveBossEncounter(

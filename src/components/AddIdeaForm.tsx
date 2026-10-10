@@ -32,6 +32,7 @@
  * The sticky Create bar rides on the on-screen keyboard (--kb).
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react";
+import { VARIANTS_MAX, VARIANT_MAX_CHARS, variantsAllowed } from "@/lib/idea-variants";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ariaKeysOf, isKey, shortcutOf } from "@/lib/shortcuts";
@@ -216,6 +217,8 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
   const [numericUnit, setNumericUnit] = useState("");
   const [options, setOptions] = useState(["", ""]);
   const [correctIndex, setCorrectIndex] = useState(0);
+  /** Other wordings of the question (idea-variants.ts): a review shows the original or one of these, at random. */
+  const [variants, setVariants] = useState<string[]>([]);
   /** Option rows the model wrote, marked until the author edits them. */
   const [generatedIndices, setGeneratedIndices] = useState<Set<number>>(new Set());
   const [distractorError, setDistractorError] = useState<string | null>(null);
@@ -272,8 +275,9 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
       numericUnit,
       options,
       correctIndex,
+      variants,
     }),
-    [questionType, shortQuestion, shortAnswer, shortCaseSensitive, formulaQuestion, formulaAnswer, clozeText, listPrompt, listItems, orderPrompt, orderItems, numericPrompt, numericValue, numericTolerance, numericUnit, options, correctIndex]
+    [questionType, shortQuestion, shortAnswer, shortCaseSensitive, formulaQuestion, formulaAnswer, clozeText, listPrompt, listItems, orderPrompt, orderItems, numericPrompt, numericValue, numericTolerance, numericUnit, options, correctIndex, variants]
   );
   const contentKey = useMemo(() => addContentKey(content), [content]);
 
@@ -296,6 +300,7 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
     setNumericUnit(c.numericUnit);
     setOptions(c.options);
     setCorrectIndex(c.correctIndex);
+    setVariants(c.variants);
     setGeneratedIndices(new Set());
   }, []);
 
@@ -528,6 +533,7 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
           content,
           domainId: fieldId && domainId !== AUTO_DOMAIN ? domainId : undefined,
           draftId,
+          variants: variantsAllowed(questionType) ? variants : undefined,
         });
       } catch (err) {
         setFormError(err instanceof Error ? err.message : "Couldn't file that. Try again.");
@@ -545,6 +551,8 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
         setPendingContent(null);
         setPreview(null);
         clearContentFields();
+        // The idea stands; its other wordings didn't save (the table not there yet, or a failed write): say so.
+        if (res.variants?.error) setFormError(res.variants.error);
         setCreated({
           ideaId: res.ideaId,
           domainId: res.domainId,
@@ -820,6 +828,7 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
     setNumericUnit("");
     setOptions(["", ""]);
     setCorrectIndex(0);
+    setVariants([]);
     setGeneratedIndices(new Set());
   }
 
@@ -1215,6 +1224,44 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
             {distractorError && <p className="st-error">{distractorError}</p>}
             {generatedIndices.size > 0 && !distractorError && (
               <p className="st-hint">{generatedIndices.size} suggested (dashed): read and edit them before creating.</p>
+            )}
+          </fieldset>
+        )}
+
+        {/* Other ways to ask it: a review shows the original or one of these, picked at random (idea-variants.ts). */}
+        {variantsAllowed(questionType) && (
+          <fieldset className="add-items add-variants" style={{ border: 0, margin: 0, padding: 0 }}>
+            <legend className="st-label">Other ways to ask it</legend>
+            <p className="st-hint">Optional. Each review shows the question or one of these, at random, so you recall the idea rather than one sentence. Same answer for all.</p>
+            {variants.map((v, i) => {
+              const setAt = (next: string) => setVariants((list) => list.map((x, j) => (j === i ? next : x)));
+              return (
+                <div key={i} className="add-item">
+                  <span className="n" aria-hidden="true">
+                    {i + 2}
+                  </span>
+                  <input
+                    type="text"
+                    className="st-input"
+                    aria-label={`Wording ${i + 2}`}
+                    value={v}
+                    maxLength={VARIANT_MAX_CHARS}
+                    placeholder="The same question, asked another way"
+                    onChange={(e) => setAt(e.target.value)}
+                    {...(questionType === "FORMULA" ? {} : prose(setAt))}
+                  />
+                  <Button variant="quiet" aria-label={`Remove wording ${i + 2}`} onClick={() => setVariants((list) => list.filter((_, j) => j !== i))}>
+                    <Icon name="x" />
+                  </Button>
+                </div>
+              );
+            })}
+            {variants.length < VARIANTS_MAX && (
+              <div className="st-row">
+                <Button variant="quiet" icon="plus" onClick={() => setVariants((list) => [...list, ""])}>
+                  Add another wording
+                </Button>
+              </div>
             )}
           </fieldset>
         )}

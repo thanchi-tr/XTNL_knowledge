@@ -981,6 +981,26 @@ model TaskStyle {
   @@schema("public")
 }
 
+// ── Question variants (migration idea_question_variants) ──────────────────
+// Additive: one new table, no existing table altered, no foreign keys. Other
+// wordings of an idea's question (same answer); a review shows one of them,
+// or the original, picked at random (src/lib/idea-variants.ts). Read fail
+// soft: a missing table reads as no variants. Never read by dedup, the
+// embedding or difficulty: those keep the original question.
+
+/// Another way to ask an idea's question: the prompt only (SHORT, FORMULA: the whole question; LIST, ORDER, NUMERIC: its prompt).
+model IdeaVariant {
+  id        String   @id @default(cuid())
+  ideaId    String
+  /// Its place in the idea's list, from 0.
+  ord       Int
+  prompt    String
+  createdAt DateTime @default(now())
+
+  @@index([ideaId])
+  @@schema("public")
+}
+
 // ── Subtasks (migration life_subtasks) ─────────────────────────────────────
 // Additive: two new tables, no existing table altered, no foreign keys. A task
 // or habit has no steps until the user adds them in its drawer; ticking steps

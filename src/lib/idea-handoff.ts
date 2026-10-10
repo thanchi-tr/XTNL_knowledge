@@ -242,6 +242,8 @@ export interface AddContentState {
   numericUnit: string;
   options: string[];
   correctIndex: number;
+  /** Other wordings of the question (idea-variants.ts); empty by default, and a snapshot from before them reads as none. */
+  variants: string[];
 }
 
 /** A fresh form: what the fields hold before anything is typed. */
@@ -263,6 +265,7 @@ export const EMPTY_ADD_CONTENT: AddContentState = {
   numericUnit: "",
   options: ["", ""],
   correctIndex: 0,
+  variants: [],
 };
 
 const TEXT_KEYS = [
@@ -288,12 +291,12 @@ export function isEmptyAddContent(s: AddContentState): boolean {
     const v = s[k].trim();
     if (k === "numericTolerance" ? v !== "" && v !== "0" : v !== "") return false;
   }
-  return LIST_KEYS.every((k) => s[k].every((v) => !v.trim()));
+  return LIST_KEYS.every((k) => s[k].every((v) => !v.trim())) && s.variants.every((v) => !v.trim());
 }
 
 /** A stable key for "has the content changed", in field order. */
 export function addContentKey(s: AddContentState): string {
-  return JSON.stringify([s.type, ...TEXT_KEYS.map((k) => s[k]), ...LIST_KEYS.map((k) => s[k]), s.correctIndex, s.shortCaseSensitive]);
+  return JSON.stringify([s.type, ...TEXT_KEYS.map((k) => s[k]), ...LIST_KEYS.map((k) => s[k]), s.correctIndex, s.shortCaseSensitive, s.variants]);
 }
 
 export type AutosaveEncoding = { kind: "empty" } | { kind: "too-big"; chars: number } | { kind: "ok"; json: string };
@@ -327,6 +330,9 @@ export function decodeAddAutosave(raw: string | null): AddContentState | null {
   const c = s.correctIndex;
   out.correctIndex = Number.isInteger(c) && (c as number) >= 0 && (c as number) < out.options.length ? (c as number) : 0;
   out.shortCaseSensitive = s.shortCaseSensitive === true;
+  // Variants may be empty (unlike the row lists), and a snapshot from before them has none.
+  const variants = s.variants;
+  out.variants = Array.isArray(variants) && variants.length <= AUTOSAVE_ROWS_MAX && variants.every((x) => typeof x === "string") ? [...(variants as string[])] : [];
   return isEmptyAddContent(out) ? null : out;
 }
 

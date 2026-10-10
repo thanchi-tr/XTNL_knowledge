@@ -1,6 +1,8 @@
 "use server";
 
 import { after } from "next/server";
+import { promptOfQuestion, variantsAllowed } from "@/lib/idea-variants";
+import { saveVariantsCore } from "@/lib/idea-variants-server";
 import type { CollectionLabel } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { embedText, synthesizeNodeData, generateDistractors } from "@/lib/gemini";
@@ -76,6 +78,12 @@ export interface SubmitIdeaInput {
    * saturated result keeps it. Validated, at most 64 characters.
    */
   draftId?: string;
+  /**
+   * Other wordings of the question, same answer (idea-variants.ts): a review shows the original or one of these at
+   * random. Only for the formats whose question is a written prompt; cleaned on the server. Saved beside the new
+   * idea (never read by dedup, the embedding or difficulty).
+   */
+  variants?: string[];
 }
 
 export type SubmitIdeaResult =
@@ -97,6 +105,8 @@ export type SubmitIdeaResult =
       focus: { fieldName: string; multiplier: number } | null;
       fieldName: string;
       domainName: string;
+      /** The wordings saved besides the original (0 when none were given), or why they weren't. */
+      variants?: { saved: number; error: string | null };
     }
   | { status: "merged"; targetIdeaId: string; similarity: number; decision: DedupDecision }
   | {
@@ -410,6 +420,13 @@ async function submitIdeaCore(userId: string, input: SubmitIdeaInput): Promise<S
   });
   if (!decision.node_data) refillNodeDataLater(idea.id, field.name, contentText);
 
+  // Other wordings of the question (fail soft: the idea stands without them, and the form says why).
+  let variants: { saved: number; error: string | null } | undefined;
+  if (variantsAllowed(questionType) && Array.isArray(input.variants) && input.variants.length > 0) {
+    const saved = await saveVariantsCore(idea.id, input.variants, promptOfQuestion(questionType, question));
+    variants = saved.ok ? { saved: saved.value.length, error: null } : { saved: 0, error: saved.error };
+  }
+
   return {
     status: "created",
     ideaId: idea.id,
@@ -421,6 +438,7 @@ async function submitIdeaCore(userId: string, input: SubmitIdeaInput): Promise<S
     focus: focusMultiplier > 1 && focus ? { fieldName: focus.fieldName, multiplier: focusMultiplier } : null,
     fieldName: field.name,
     domainName: domain.name,
+    ...(variants ? { variants } : {}),
   };
 }
 
