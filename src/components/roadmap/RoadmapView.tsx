@@ -175,6 +175,7 @@ import { editorScopeOf, DraftReview, DraftRunning } from "./DraftReview";
 import { AimHeader, AreaChipShort, spaced } from "./AimHeader";
 import { TowardAim } from "./TowardAim";
 import { MeasureRow, evidenceOfCaption, measureFractionOf } from "./MeasureRow";
+import { MOSAIC_FROM, MeasureMosaic, tileNameOf } from "./MeasureMosaic";
 import { DomainItemRow, DomainRow } from "./DomainRow";
 import { ItemRow, MarkedLabel, MilestoneTitleText, libraryMarksOf, trackSigilOf } from "./ItemRow";
 import { StruckLabel } from "./StruckLabel";
@@ -614,28 +615,38 @@ function NowSection({ view, current, onStartOpen, seen }:{ view: RoadmapView; cu
         {current.measures.length > 0 &&
           sec(
             "Measures",
-            current.measures
-              .filter((x) => x.kind !== "CHECKPOINT")
-              .map((x) => {
-                const parsed = parseMeasureKey(x.measureKey);
-                const names = parsed?.kind === "CARDS_AT_LEVEL" ? scopeNamesOf(parsed.domainIds, index) : null;
-                const label = x.label ?? (parsed?.kind === "CARDS_AT_LEVEL" ? `Cards at level ${parsed.level}+ in ${names ?? "this milestone's Domains"}` : "Practice kept");
-                return (
-                  <MeasureRow
-                    key={x.measureKey}
-                    row={x}
-                    label={label}
-                    m={view.feasibility?.m ?? 1}
-                    today={today}
-                    slowest={slowest === x.measureKey}
-                    since="since start"
-                    writesOff={view.writesOff}
-                    note={practiceKeptPausedLine(pausedOfMeasure(x, paused), today)}
-                    scope={names}
-                    seen={plan}
-                  />
-                );
-              })
+            (() => {
+              const items = current.measures
+                .filter((x) => x.kind !== "CHECKPOINT")
+                .map((x) => {
+                  const parsed = parseMeasureKey(x.measureKey);
+                  const names = parsed?.kind === "CARDS_AT_LEVEL" ? scopeNamesOf(parsed.domainIds, index) : null;
+                  const label = x.label ?? (parsed?.kind === "CARDS_AT_LEVEL" ? `Cards at level ${parsed.level}+ in ${names ?? "this milestone's Domains"}` : "Practice kept");
+                  return {
+                    key: x.measureKey,
+                    row: x,
+                    name: names ?? tileNameOf(label),
+                    full: (
+                      <MeasureRow
+                        key={x.measureKey}
+                        row={x}
+                        label={label}
+                        m={view.feasibility?.m ?? 1}
+                        today={today}
+                        slowest={slowest === x.measureKey}
+                        since="since start"
+                        writesOff={view.writesOff}
+                        note={practiceKeptPausedLine(pausedOfMeasure(x, paused), today)}
+                        scope={names}
+                        seen={plan}
+                      />
+                    ),
+                  };
+                });
+              // Many measures: a mosaic and one line (the slowest marked as where to look), every row one tap away.
+              if (items.length >= MOSAIC_FROM) return <MeasureMosaic items={items} label="This milestone's measures" focusKey={slowest} />;
+              return items.map((it) => it.full);
+            })()
           )}
 
         {items("DOMAIN").length > 0 &&

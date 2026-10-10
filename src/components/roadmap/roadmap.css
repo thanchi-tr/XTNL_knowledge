@@ -743,6 +743,37 @@
 
   /* The milestones as a rail; the top rank's (i) under it. */
   .rm-ml-card { padding: 6px 14px; }
+  /* Many measures at a glance (MeasureMosaic): a ring for the whole, one line, a mosaic of tiles filled by share. */
+  .rm-mz { display: grid; gap: 12px; padding: 4px 0; }
+  .rm-mz-head { display: flex; align-items: center; gap: 14px; }
+  .rm-mz-ring { flex: none; }
+  .rm-mz-ring-bg { fill: none; stroke: var(--line-1); stroke-width: 6; }
+  .rm-mz-ring-on { fill: none; stroke: var(--ink-0); stroke-width: 6; stroke-linecap: round; }
+  .rm-mz-ring-t { fill: var(--ink-0); font: 600 14px var(--font-display); }
+  .rm-mz-sum { display: grid; gap: 2px; min-width: 0; }
+  .rm-mz-sum b { font: 600 20px/24px var(--font-display); color: var(--ink-0); }
+  .rm-mz-noun { font: 500 13px var(--font-ui); color: var(--ink-2); }
+  .rm-mz-line { font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .rm-mz-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 6px; }
+  .rm-mz-tile {
+    position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; gap: 6px;
+    width: 100%; min-height: 64px; padding: 8px 10px; border-radius: 12px; text-align: left; cursor: pointer;
+    border: 1px solid var(--line-1); background: var(--sunken); color: var(--ink-1);
+  }
+  .rm-mz-tile:hover { border-color: var(--line-2); color: var(--ink-0); }
+  .rm-mz-tile:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .rm-mz-tile[aria-expanded="true"] { border-color: var(--ink-1); }
+  /* The fill rises from the bottom by the tile's share. */
+  .rm-mz-fill { position: absolute; left: 0; right: 0; bottom: 0; height: calc(var(--g, 0) * 100%); background: color-mix(in srgb, var(--ink-0) 14%, transparent); pointer-events: none; }
+  .rm-mz-tile[data-g="full"] { border-color: var(--kept); }
+  .rm-mz-tile[data-g="full"] .rm-mz-fill { background: color-mix(in srgb, var(--kept) 22%, transparent); }
+  .rm-mz-tile[data-next="1"] { border-style: dashed; border-color: var(--ink-1); color: var(--ink-0); }
+  .rm-mz-name { position: relative; font: 600 12px/15px var(--font-ui); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .rm-mz-pct { position: relative; font: 600 13px var(--font-display); color: var(--ink-0); }
+  .rm-mz-tile[data-g="none"] .rm-mz-pct { color: var(--ink-2); }
+  .rm-mz-rows { display: grid; gap: 4px; }
+  .rm-mz-row { min-width: 0; }
+  .rm-mz-all { justify-self: start; min-height: 40px; font-size: 13px; }
   /* Step by step: the next milestone is one tap away, the rest after it one tap each. */
   .rm-ml-step { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; padding: 4px 0 8px; border-top: 1px dashed var(--line-1); }
   .rm-ml-next {

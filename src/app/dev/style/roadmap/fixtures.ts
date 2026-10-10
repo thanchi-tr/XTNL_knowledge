@@ -201,6 +201,7 @@ export const FIXTURE_STATES = [
   "topic-rebreak",
   // Ruling N15: three open goals, the switcher on top (GoalSwitcher)
   "goals-three",
+  "many-measures",
 ] as const;
 export type FixtureState = (typeof FIXTURE_STATES)[number];
 
@@ -1559,6 +1560,20 @@ function fixtureOf(state: FixtureState): RoadmapFixture {
         },
       };
       return { view: v, intake: null, aim: aimFromView(v, "ACTIVE"), today: v.weekQuests, startPreview: null, note: "Three open goals (ruling N15): the switcher on top, every seat taken, so no New goal." };
+    }
+    case "many-measures": {
+      // The screenshot's case: a TOPICS plan with a measure per topic, toward the aim and on the milestone (MeasureMosaic).
+      const base = activeView();
+      const names = ["Emergency Fund", "Liquidity Ratio", "Expense Categorisation", "Net Worth Statement", "Cash Flow Statement", "Budget Variance", "Discretionary Spending", "Debt Service Ratio", "Risk Tolerance Profile", "Strategic Asset Allocation", "Portfolio Variance", "Maximum Drawdown"];
+      const got = [9, 4, 0, 2, 0, 0, 1, 0, 0, 0, 0, 0];
+      const toward = names.map((n, i) =>
+        cardsRow({ measureKey: `CARDS_AT_LEVEL|d:d-mm${i}|L8`, label: `${n} · cards at level 8+`, target: 25, baseline: 0, figure: fig(got[i], "tested by your reviews"), gained: got[i], needed: 25 - got[i], alreadyCounted: null, pace: null })
+      );
+      const mine = names.slice(0, 8).map((n, i) =>
+        cardsRow({ measureKey: `CARDS_AT_LEVEL|d:d-mm${i}|L6`, label: `${n} · cards at level 6+`, target: 8, baseline: 0, figure: fig(Math.min(8, got[i]), "tested by your reviews"), gained: Math.min(8, got[i]), needed: 8 - Math.min(8, got[i]), alreadyCounted: null, pace: null })
+      );
+      const v: RoadmapView = { ...base, toward: { ...base.toward!, measures: toward }, current: { ...base.current!, measures: mine } };
+      return { view: v, intake: null, aim: aimFromView(v, "ACTIVE"), today: v.weekQuests, startPreview: null, note: "A measure per topic: twelve toward the aim, eight on the milestone. Each list is a mosaic and one line, every row a tap away." };
     }
     case "behind": {
       const base = activeView();

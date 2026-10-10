@@ -4781,6 +4781,33 @@ async function main() {
         vis("active").includes(copy.showNextMilestoneLine(3, 3)) &&
         /const stepped = nodes\.map\(\(x, i\) => \(i > through \? \{ \.\.\.x, hidden: true \} : x\)\);/.test(read("src/components/roadmap/RoadmapView.tsx"))
     );
+    {
+      // Many measures (MeasureMosaic): a ring, one line and a tile each, in place of a wall of '0% · +0/25' rows.
+      const mz = await import("../src/components/roadmap/MeasureMosaic");
+      const html = page("many-measures");
+      const tw = elOf(html, 'class="card rm-tw"');
+      check(
+        "measures (mosaic): from five measures, Toward the aim is a mosaic: a tile a measure, every row still in the markup but hidden until asked for",
+        (tw.match(/class="rm-mz-tile"/g) ?? []).length === 12 && (tw.match(/<div class="rm-mr">/g) ?? []).length === 12 && (tw.match(/class="rm-mz-row" hidden=""/g) ?? []).length === 12 && vis("many-measures").includes("Show all 12 as a list")
+      );
+      check(
+        "measures (mosaic): the milestone's eight measures too; four or fewer keep their rows",
+        (html.match(/class="rm-mz-tile"/g) ?? []).length === 20 && !page("active").includes("rm-mz-tile") && mz.MOSAIC_FROM === 5
+      );
+      const row = (key: string, v: number) => ({ key, name: key, row: { kind: "CARDS_AT_LEVEL", figure: { value: String(v) }, target: 10, baseline: 0 } as never });
+      const none = mz.mosaicOf([row("A", 0), row("B", 0)]);
+      const some = mz.mosaicOf([row("A", 10), row("B", 4), row("C", 0)]);
+      check(
+        "measures (mosaic): the line says where to look: where to start when nothing moved, else what's done, the closest not yet done, and what to open next",
+        mz.mosaicLine(none, 2, "topics") === "Nothing has moved yet. Start with A: every card you review there counts." &&
+          mz.mosaicLine(some, 3, "topics") === "1 done. Closest: B at 40%. Open next: C." &&
+          some.order.join() === "A,B,C" &&
+          mz.tileNameOf("Cards at level 6+ in Emergency Fund") === "Emergency Fund" &&
+          mz.tileNameOf("Liquidity Ratio · cards at level 8+") === "Liquidity Ratio",
+        mz.mosaicLine(some, 3, "topics")
+      );
+      check("measures (mosaic): no '+0/25 since you began' wall is visible on the page", !/\+0\/25 since you began/.test(vis("many-measures")));
+    }
     check(
       "topic map (step by step): the layers up to the first not done show, the rest hidden in the markup behind 'Show layer k'; [Redo topics] still reaches them",
       /stepHidden=\{i > stepThrough\}/.test(read("src/components/roadmap/TopicMap.tsx")) && /hidden=\{stepHidden \|\| undefined\}/.test(read("src/components/roadmap/LayerBand.tsx"))

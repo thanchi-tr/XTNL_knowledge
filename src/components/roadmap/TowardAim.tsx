@@ -24,6 +24,7 @@ import { parseMeasureKey, type MilestoneRowView, type TowardAimView } from "@/li
 import { SHORT_CONTEXT_ONLY, SHORT_JUDGE, plural } from "./roadmap-copy";
 import { milestoneSegmentsOf, scopeNamesOf, type LibraryDomain } from "./roadmap-ui-model";
 import { MeasureRow } from "./MeasureRow";
+import { MOSAIC_FROM, MeasureMosaic, tileNameOf } from "./MeasureMosaic";
 
 /** The fixed line that leaves the judgement to the user (the «yours to judge» chip's full text). */
 export function towardJudgeLine(aim: string, cardsArea: boolean): string {
@@ -65,16 +66,26 @@ export function TowardAim({
   const tip = Boolean(kept) || rebase;
   return (
     <section className="card rm-tw" aria-label="Toward the aim">
-      {toward.measures.map((row) => {
-        const parsed = parseMeasureKey(row.measureKey);
-        const names = parsed?.kind === "CARDS_AT_LEVEL" ? scopeNamesOf(parsed.domainIds, domainIndex) : null;
-        const label = row.label ?? (parsed?.kind === "CARDS_AT_LEVEL" ? `${names ?? "The aim's Domains"} · cards at level ${parsed.level}+` : "Practice kept");
-        return (
-          <div key={row.measureKey} className="rm-tw-row">
-            <MeasureRow row={row} label={label} m={m} today={today} since="since you began" writesOff={writesOff} scope={names} seen={seen} />
+      {(() => {
+        const items = toward.measures.map((row) => {
+          const parsed = parseMeasureKey(row.measureKey);
+          const names = parsed?.kind === "CARDS_AT_LEVEL" ? scopeNamesOf(parsed.domainIds, domainIndex) : null;
+          const label = row.label ?? (parsed?.kind === "CARDS_AT_LEVEL" ? `${names ?? "The aim's Domains"} · cards at level ${parsed.level}+` : "Practice kept");
+          return {
+            key: row.measureKey,
+            row,
+            name: names ?? tileNameOf(label),
+            full: <MeasureRow row={row} label={label} m={m} today={today} since="since you began" writesOff={writesOff} scope={names} seen={seen} />,
+          };
+        });
+        // Many measures: a mosaic and one line in place of a wall of rows (every row stays one tap away).
+        if (items.length >= MOSAIC_FROM) return <MeasureMosaic items={items} label="Toward the aim, every measure" />;
+        return items.map((it) => (
+          <div key={it.key} className="rm-tw-row">
+            {it.full}
           </div>
-        );
-      })}
+        ));
+      })()}
       <div className="rm-tw-row rm-tw-ms">
         <span className="rm-tw-k" aria-hidden="true">
           <Mark glyph="m.seal" size={16} />
