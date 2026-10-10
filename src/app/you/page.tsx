@@ -113,8 +113,9 @@ export default async function YouSheetPage() {
   return (
     <>
       <ShellTitle eyebrow="You" title="Character" />
+      {/* The order of weight: the level (the hero, the full width, first), then the attributes, then the aim. */}
       <div className="you-grid">
-        <div className="you-stack">
+        <div className="you-hero">
           <CharacterHero
             level={s.level}
             progress={s.progress}
@@ -130,14 +131,16 @@ export default async function YouSheetPage() {
             owned={s.owned}
             poolSize={s.poolSize}
           />
+        </div>
+        <div className="you-stack">
+          <AttributeRadar radar={s.radar} hasGhost={s.hasGhost} top={s.top} life={{ launched, contributes: s.life.contributions.length > 0 }} />
           {aim && <AimCard view={aim} prompt={prompt} seed={seed} lastAim={aim.lastAim ?? null} promptDismissed={prompt === "OFF"} today={aimToday} />}
           {s.ready && <ReadyCallout ready={s.ready} balance={s.balance} />}
           {s.lifeNote && <LifeNote />}
           <LifeTracks knowledge={s.knowledge} life={s.life} />
-          <MonthDoneCard today={aimToday} initial={month && month.ok ? month.value : null} />
         </div>
         <div className="you-stack">
-          <AttributeRadar radar={s.radar} hasGhost={s.hasGhost} top={s.top} life={{ launched, contributes: s.life.contributions.length > 0 }} />
+          <MonthDoneCard today={aimToday} initial={month && month.ok ? month.value : null} />
           <MasteryCard
             ladder={s.goals}
             launched={launched}

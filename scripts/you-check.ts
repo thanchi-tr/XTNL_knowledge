@@ -1227,9 +1227,19 @@ function literalText(body: string): string {
   check("aim card: loadSheet and the Aim card load in one Promise.all with the cookies", /Promise\.all\(\[\s*loadSheet\(userId, now\),\s*aimCardOrNull\(userId, now\),\s*cookies\(\)\s*\]\)/.test(youCode));
   check("aim card: loadAimCard is called only inside aimCardOrNull's try", (youCode.match(/\bloadAimCard\(/g) ?? []).length === 1 && /async function aimCardOrNull[\s\S]*?try \{\s*return await loadAimCard\(userId, now\);\s*\} catch/.test(youCode));
   const hero = youCode.indexOf("<CharacterHero");
+  const radar = youCode.indexOf("<AttributeRadar");
   const card = youCode.indexOf('{aim && <AimCard view={aim} prompt={prompt} seed={seed} lastAim={aim.lastAim ?? null} promptDismissed={prompt === "OFF"} today={aimToday} />}');
   const ready = youCode.indexOf("{s.ready && <ReadyCallout");
-  check("aim card: rendered only when loaded, directly under CharacterHero and before the ready callout", hero >= 0 && card > hero && ready > card && !/<\/div>|<div/.test(youCode.slice(youCode.indexOf("/>", hero), card)));
+  check(
+    "aim card: the order of weight, the level (the hero, across the grid) > the attributes > the aim: rendered only when loaded, directly under AttributeRadar and before the ready callout",
+    /<div className="you-hero">\s*<CharacterHero/.test(youCode) &&
+      hero >= 0 &&
+      radar > hero &&
+      card > radar &&
+      ready > card &&
+      !/<\/div>|<div/.test(youCode.slice(youCode.indexOf("/>", radar), card)) &&
+      /\.you-hero \{ grid-column: 1 \/ -1;/.test(read("src/components/home/you.css"))
+  );
   check("aim card: no Suspense on /you (the card arrives with the sheet; nothing shifts)", !/Suspense/.test(youCode));
   check(
     "aim card: the card gets the life day from the page's own `now` (todayKey(now)), so it never reads the client's clock and hydration agrees at the 04:00 turn",

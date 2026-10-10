@@ -15,6 +15,28 @@
   .you-grid { display: grid; gap: 16px; }
   @container main (min-width: 760px) { .you-grid { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); align-items: start; } }
   .you-stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  /* The sheet's order of weight: the level (the hero, across the grid, first), then the attributes, then the aim. */
+  .you-hero { grid-column: 1 / -1; min-width: 0; }
+  .you-hero .hero-c {
+    padding: 20px;
+    border-color: var(--line-2);
+    background-image:
+      radial-gradient(90% 120% at 0% 0%, color-mix(in srgb, var(--gold-m) 14%, transparent), transparent 58%),
+      radial-gradient(70% 90% at 100% 100%, color-mix(in srgb, var(--ink-0) 5%, transparent), transparent 60%),
+      linear-gradient(180deg, var(--raised), var(--card));
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink-0) 8%, transparent), 0 18px 36px -24px rgb(0 0 0 / .8);
+  }
+  .you-hero .hc-top h2 { font-size: 34px; line-height: 38px; }
+  /* The crest carries the level: larger, with a glow under it. */
+  .you-hero .hc-top > .crest { width: 112px; height: auto; filter: drop-shadow(0 8px 20px color-mix(in srgb, var(--gold-m) 22%, transparent)); }
+  @container main (min-width: 760px) { .you-hero .hc-top > .crest { width: 132px; } }
+  .you-hero .lvl-line b { font-size: 15px; }
+  .you-hero .purse .v { font-size: 22px; }
+  /* The attributes next: shaded, below the hero's weight. */
+  .you-grid .radar-c {
+    background-image: radial-gradient(80% 70% at 50% 40%, color-mix(in srgb, var(--ink-0) 5%, transparent), transparent 70%), linear-gradient(180deg, var(--raised), var(--card));
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink-0) 6%, transparent);
+  }
 
   /* ---------- hero ---------- */
   .hero-c { padding: 16px; }
@@ -24,7 +46,7 @@
   .lvl-line { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; margin: 16px 0 8px; }
   .lvl-line b { font-weight: 600; }
   .lvl-line .nx { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
-  .blurb { font: italic 400 14px/1.45 var(--font-display-italic); color: var(--ink-2); margin: 8px 0 0; }
+  .blurb { font: italic 400 13px/1.4 var(--font-display-italic); color: var(--ink-2); margin: 8px 0 0; }
   .purse { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-1); }
   .purse > div + div { border-left: 1px solid var(--line-1); padding-left: 12px; }
   .purse .v { font: 600 20px/1 var(--font-display); display: flex; gap: 6px; align-items: center; font-variant-numeric: tabular-nums; flex-wrap: wrap; }
