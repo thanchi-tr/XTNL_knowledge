@@ -149,6 +149,9 @@ import {
 import { LAYERS_MAX, LAYERS_MIN, type LayerSetChange, type ParentPick, type TopicDepth, type TopicEdit } from "@/lib/roadmap-types";
 // ── Revision 5, lane 10 (contracts §22.14, §22.15): the model phases' cores ──
 import { advanceTopicChainCore, breakDownCore, goDeeperCore, rateAgainCore, rebreakTopicsCore, type TopicChainStep } from "@/lib/roadmap-server";
+// ── Ruling N18: an accepted plan's edits ──
+import { editPlanCore } from "@/lib/roadmap-server";
+import type { PlanEdit, PlanEditResult } from "@/lib/roadmap-types";
 
 const SAVE_FAILED = "Couldn't save that. Try again.";
 const NO_REF = "That's no longer here. Refresh and try again.";
@@ -297,6 +300,35 @@ export async function acceptPlan(roadmapId: string, choices: AcceptChoices): Pro
 export async function undoAccept(roadmapId: string, version: number): Promise<RoadmapActionResult<null>> {
   if (!isRef(roadmapId) || !Number.isInteger(version)) return { ok: false, error: NO_REF };
   return act("undoAccept", true, (userId, now) => undoAcceptCore(userId, roadmapId, version, now, depsOf()));
+}
+
+/**
+ * Ruling N18: one edit of an accepted plan from its ▸ edit sheet: rename a milestone, add a topic (one of your
+ * Domains, or a new name) to a milestone or to a new one, or remove one. Accepted as a new version at once; the
+ * toast's Undo is undoAccept with the version it answers.
+ */
+export async function editPlan(roadmapId: string, edit: PlanEdit): Promise<RoadmapActionResult<PlanEditResult>> {
+  const o = asObject(edit);
+  if (!isRef(roadmapId) || !o) return { ok: false, error: NO_REF };
+  const text = (v: unknown): v is string => typeof v === "string" && v.length <= TEXT_MAX;
+  let clean: PlanEdit;
+  if (o.kind === "RENAME" && isRef(o.milestoneId) && text(o.title)) clean = { kind: "RENAME", milestoneId: o.milestoneId, title: o.title };
+  else if (o.kind === "REMOVE_TOPIC" && isRef(o.milestoneId) && isRef(o.domainId)) clean = { kind: "REMOVE_TOPIC", milestoneId: o.milestoneId, domainId: o.domainId };
+  else if (o.kind === "ADD_TOPIC") {
+    const nm = asObject(o.newMilestone);
+    const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 20 ? v : undefined);
+    if (o.milestoneId != null && !isRef(o.milestoneId)) return { ok: false, error: NO_REF };
+    if (o.domainId != null && !isRef(o.domainId)) return { ok: false, error: NO_REF };
+    if (o.name != null && !text(o.name)) return { ok: false, error: NO_REF };
+    clean = {
+      kind: "ADD_TOPIC",
+      milestoneId: isRef(o.milestoneId) ? o.milestoneId : null,
+      newMilestone: nm ? { ...(num(nm.after) !== undefined ? { after: num(nm.after) } : {}), ...(num(nm.level) !== undefined ? { level: num(nm.level) } : {}) } : null,
+      domainId: isRef(o.domainId) ? o.domainId : null,
+      name: text(o.name) ? o.name : null,
+    };
+  } else return { ok: false, error: NO_REF };
+  return act("editPlan", true, (userId, now) => editPlanCore(userId, roadmapId, clean, now, depsOf()));
 }
 
 // ── Start (F15) ─────────────────────────────────────────────────────────────

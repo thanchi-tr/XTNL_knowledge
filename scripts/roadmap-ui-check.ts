@@ -6754,6 +6754,67 @@ async function main() {
   }
   void r0Gate;
 
+  // ── Ruling N18: an accepted plan's edits (the ▸'s edit glyph, the card's "+", the Domain picker) ──
+  console.log("— ruling N18: plan edits —");
+  {
+    const { DomainPicker, planEditToastTitle } = await import("../src/components/roadmap/PlanEditSheet");
+    const pageOf = (s: FixtureState) => renders.get(s)?.page ?? "";
+    const editLabels = (s: FixtureState) => [...pageOf(s).matchAll(/aria-label="Edit milestone (\d+)"/g)].map((m) => Number(m[1]));
+    const unstarted = (s: FixtureState) => roadmapFixture(s).view!.milestones.filter((r) => r.edit).map((r) => r.ord);
+    check(
+      'N18 rail: every unstarted milestone (and none started or reached) carries its edit glyph in its ▸, a 44 px button named by its milestone, never a `title`; the card\'s "+" is a 44 px button named "Add a milestone"',
+      (["active", "topic-map-plan"] as const).every(
+        (s) =>
+          JSON.stringify(editLabels(s)) === JSON.stringify(unstarted(s)) &&
+          editLabels(s).length > 0 &&
+          /<button type="button" class="icon-btn mg-gb" aria-label="Edit milestone \d+">/.test(pageOf(s)) &&
+          /<button type="button" class="icon-btn rm-ml-addbtn" aria-label="Add a milestone">/.test(pageOf(s))
+      ) && !/title="Edit milestone/.test(pageOf("active")),
+      JSON.stringify({ active: [editLabels("active"), unstarted("active")], topics: [editLabels("topic-map-plan"), unstarted("topic-map-plan")] })
+    );
+    check(
+      'N18 rail: a plan with no edits (no PlanEditView: a draft, a done plan, the other fixtures) draws no edit glyph and no "+"',
+      (["behind", "done", "depth-realistic", "draft-v4"] as const).every((s) => !/Edit milestone|Add a milestone/.test(pageOf(s)))
+    );
+    const pe = roadmapFixture("topic-map-plan").view!.planEdit!;
+    const lib = [
+      { id: "d-T7", name: "Gamma one", fieldId: "f-st", fieldName: "Statistics", cards: 12, atSix: 4, atTop: 0, level: 3 },
+      { id: "d-rk", name: "Risk Management", fieldId: "f-st", fieldName: "Statistics", cards: 14, atSix: 3, atTop: 0, level: 2 },
+      { id: "d-T11", name: "Delta one", fieldId: "f-st", fieldName: "Statistics", cards: 5, atSix: 1, atTop: 0, level: 1 },
+      { id: "d-x", name: "Bayesian Methods", fieldId: "f-other", fieldName: "Mathematics", cards: 38, atSix: 30, atTop: 0, level: 5 },
+    ];
+    const picker = R(createElement(DomainPicker, { plan: pe, library: lib, here: ["d-T7"], pending: false, onPick: () => {} }));
+    // The opening tag of the button whose name is `name`.
+    const btnOf = (name: string) => {
+      const at = picker.indexOf(`>${name}<`);
+      const open = picker.lastIndexOf("<button", at);
+      return at < 0 || open < 0 ? "" : picker.slice(open, picker.indexOf(">", open) + 1);
+    };
+    check(
+      "N18 picker: a search labelled for a screen reader over every Field's Domains (the plan's Field first, another Field's with its name and cards); a Domain in this milestone is pressed and off, one another goal holds is off with its seat, one already in this TOPICS plan is off; each a button in a list item",
+      /<label class="sr-only" for="[^"]+">Find one of your Domains, or name a new topic<\/label>/.test(picker) &&
+        /type="search"/.test(picker) &&
+        /aria-pressed="true"/.test(btnOf("Gamma one")) &&
+        /disabled=""/.test(btnOf("Gamma one")) &&
+        /disabled=""/.test(btnOf("Risk Management")) &&
+        picker.includes("in goal 2") &&
+        /disabled=""/.test(btnOf("Delta one")) &&
+        btnOf("Bayesian Methods") !== "" &&
+        !/disabled/.test(btnOf("Bayesian Methods")) &&
+        picker.includes("Mathematics") &&
+        picker.indexOf(">Gamma one<") < picker.indexOf(">Bayesian Methods<") &&
+        !/role="listitem"/.test(picker) &&
+        /<li><button/.test(picker),
+      picker.slice(0, 800)
+    );
+    check(
+      'N18 toast: an add says what it counted ("+38 cards counted"), a new empty Domain "Topic added", a rename "Title saved"',
+      planEditToastTitle({ kind: "ADD_TOPIC", milestoneId: "m3", domainId: "d-x" }, { version: 4, domainId: "d-x", created: false, counted: 38 }) === "+38 cards counted" &&
+        planEditToastTitle({ kind: "ADD_TOPIC", milestoneId: "m3", name: "Odds" }, { version: 4, domainId: "d-n", created: true, counted: 0 }) === "Topic added" &&
+        planEditToastTitle({ kind: "RENAME", milestoneId: "m3", title: "Mine" }, { version: 4, domainId: null, created: false, counted: null }) === "Title saved"
+    );
+  }
+
   console.log(`\nroadmap-ui-check: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exitCode = 1;
   void relative;

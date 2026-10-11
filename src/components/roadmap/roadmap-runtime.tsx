@@ -55,6 +55,8 @@ import {
   undoAccept,
   undoDiscard,
 } from "@/app/actions/roadmap";
+// ── Ruling N18: an accepted plan's edits (rename, a topic added or removed, a new milestone) ──
+import { editPlan } from "@/app/actions/roadmap";
 // ── Revision 5, lane 9: the topic map's actions (contracts §22.14; lanes 8 and 10 implement them) ──
 import {
   addTopic,
@@ -194,6 +196,8 @@ export interface RoadmapActions {
   /** Ruling N16: a not-started milestone's topics (or every one's: null) asked again, behind a confirm. */
   rebreakTopics: typeof rebreakTopics;
   advanceTopicChain: typeof advanceTopicChain;
+  /** Ruling N18: one edit of an accepted plan (a new accepted version; its toast's Undo is undoAccept). */
+  editPlan: typeof editPlan;
 }
 
 export const LIVE_ACTIONS: RoadmapActions = {
@@ -261,6 +265,7 @@ export const LIVE_ACTIONS: RoadmapActions = {
   goDeeper,
   rebreakTopics,
   advanceTopicChain,
+  editPlan,
 };
 
 /** What a fixture's buttons answer: nothing is saved there. */
@@ -333,6 +338,7 @@ export const FIXTURE_ACTIONS: RoadmapActions = {
   goDeeper: refuse,
   rebreakTopics: refuse,
   advanceTopicChain: refuse,
+  editPlan: refuse,
 };
 
 export interface RoadmapRuntime {

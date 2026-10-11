@@ -5661,6 +5661,8 @@ async function main() {
       "confirmDomainAdditionsCore",
       "lowerDepthCore",
       "keepCalibratedDatesCore",
+      // Ruling N18: an accepted plan's edits.
+      "editPlanCore",
     ];
     const unpointed = POINTED.filter((n) => !(new RegExp(`export async function ${n}\\([\\s\\S]*?\\n\\}\\n`).exec(SERVER_SRC)?.[0] ?? "").includes("pointedRefusal("));
     check("…every re-plan, review edit, build, accept and Start core returns through pointedRefusal", unpointed.length === 0, unpointed.join(", "));
@@ -7935,6 +7937,255 @@ async function main() {
     );
     const layers = Array.from(new Set(rowsOf(w, id, row.version).filter((m) => m.chainRole === "LAYER").map((m) => m.layer))).sort();
     eq("N17: one layer milestone for each of the 5 layers", layers, [1, 2, 3, 4, 5]);
+  });
+
+  // ═══ Ruling N18: edits of an accepted plan (rename, a topic added or removed, a new milestone; undo) ═══════════
+  //
+  // The user's words: "allow user to edit the milestone, while adding sub topic to any milestone (existed or none
+  // existed). If existed topic (domain) added then all the card in that topic automatically counted toward the goal."
+  // Every edit is accepted as version + 1 (previousVersion the plan it replaced), so the accept toast's Undo undoes it.
+  console.log("— ruling N18: edits of an accepted plan —");
+  /** A library Domain of 38 cards (20 at level 8, 10 at 6, 8 at 3) the plans don't hold yet. */
+  const withBayes = (w: FakeWorld): void => {
+    const f = w.tree.find((x) => x.id === "f-stats") as TreeField;
+    f.domains.push({ id: "d-bayes", name: "Bayesian Methods", fieldId: "f-stats", cards: [...[...Array(20)].map(() => card("d-bayes", 8)), ...[...Array(10)].map(() => card("d-bayes", 6)), ...[...Array(8)].map(() => card("d-bayes", 3))] });
+  };
+  /** R1's own reading of a card key over the world's cards (roadmap-measures cardsAtLevelValue): every card in scope at the level, no baseline taken off. */
+  const MS = await import("../src/lib/roadmap-measures");
+  const RT18 = await import("../src/lib/roadmap-types");
+  const parseMeasureKeyOf = (key: string) => {
+    const p = RT18.parseMeasureKey(key);
+    return p?.kind === "CARDS_AT_LEVEL" ? p : null;
+  };
+  /** A row's gate level as the server reads it: its first paying card measure's level, else its stage's. */
+  const gateLevelOfRow = (w: FakeWorld, milestoneId: string): number | null => {
+    const pays = measuresOf(w, milestoneId).find((x) => x.kind === "CARDS_AT_LEVEL" && x.role === "PAYS" && x.minLevel != null);
+    if (pays?.minLevel != null) return pays.minLevel;
+    const stage = w.t.roadmapMilestone.find((m) => m.id === milestoneId)?.stage;
+    return stage && stage in RT18.STAGE_LEVEL ? RT18.STAGE_LEVEL[stage as keyof typeof RT18.STAGE_LEVEL] : null;
+  };
+  const S_STAGE_OF = (level: number) => RT18.stageOfLevel(level);
+  const readOf = (w: FakeWorld, key: string): number | null => {
+    const p = parseMeasureKeyOf(key);
+    if (!p) return null;
+    const cards = w.tree.flatMap((f) => f.domains.flatMap((d) => d.cards.map((c) => ({ domainId: d.id, level: c.level, recall: true }))));
+    return MS.cardsAtLevelValue(cards, p.domainIds, p.level, p.segment ?? null).value;
+  };
+  const accOf = (w: FakeWorld, id: string, version: number) => w.t.roadmapAcceptance.filter((a) => a.roadmapId === id && a.version === version && a.undoneAt == null).pop() ?? null;
+  const editErr = (r: { ok: boolean; error?: string }) => (r.ok ? "ok" : (r as { error: string }).error);
+
+  await topicBlock("N18 LEVELS: rename and an existing Domain added", async () => {
+    const w = world();
+    withBayes(w);
+    const id = await accepted(w);
+    const deps = depsFor(w);
+    const row = () => w.t.roadmap.find((r) => r.id === id) as RoadmapRec;
+    const v1 = rowsOf(w, id, 1).filter((m) => m.status === "PLANNED");
+    const [m1, m2] = v1;
+    const view0 = await S.loadRoadmapView(USER, NOW, deps, id);
+    const pe = view0.planEdit;
+    const r2 = view0.milestones.find((r) => r.id === m2.id);
+    check(
+      "N18 view: an accepted LEVELS plan offers its edits (no blocker, the plan's Field, its Domains in the plan, the levels a new milestone may aim at) and each unstarted row its rename, topics and Domains",
+      !!pe && pe.blocked == null && pe.planKind === "LEVELS" && pe.fieldId === "f-stats" && pe.inPlan.includes("d-prob") && pe.levels.length > 0 && r2?.edit?.rename === true && r2.edit.topics === true && r2.edit.domains.map((d) => d.id).includes("d-prob"),
+      json({ pe, edit: r2?.edit })
+    );
+
+    // Rename: your words, a new accepted version, undone by the accept toast's Undo.
+    const renamed = await S.editPlanCore(USER, id, { kind: "RENAME", milestoneId: m2.id, title: "Probability, my way" }, NOW, deps);
+    const v2 = rowsOf(w, id, 2).find((m) => m.lineageId === m2.lineageId);
+    const acc2 = accOf(w, id, 2);
+    check(
+      "N18 rename: an unstarted milestone takes your title (USER, EDITED) in a new accepted version (v2, previousVersion 1, the edit's mark); v1's rows are superseded and no draft is left",
+      renamed.ok && renamed.value.version === 2 && row().version === 2 && v2?.status === "PLANNED" && v2.title === "Probability, my way" && v2.titleOrigin === "USER" && v2.titleDecision === "EDITED" && acc2?.previousVersion === 1 && !!(acc2.feasibility as { planEdit?: unknown }).planEdit && v1.every((m) => w.t.roadmapMilestone.find((x) => x.id === m.id)?.status === "SUPERSEDED") && (await S.loadRoadmapView(USER, NOW, deps, id)).draft == null,
+      json({ renamed: editErr(renamed), v2: v2 && [v2.status, v2.title, v2.titleOrigin, v2.titleDecision], version: row().version })
+    );
+    const undone = await S.undoAcceptCore(USER, id, 2, NOW, deps);
+    check(
+      "N18 undo: the toast's Undo gives v1 back (its rows PLANNED, the title as it was), the edit's rows DISCARDED and no draft left",
+      undone.ok && row().version === 1 && rowsOf(w, id, 1).filter((m) => m.status === "PLANNED").length === v1.length && w.t.roadmapMilestone.find((x) => x.id === m2.id)?.title === m2.title && rowsOf(w, id, 2).every((m) => m.status === "DISCARDED") && (await S.loadRoadmapView(USER, NOW, deps, id)).draft == null,
+      json({ undone: editErr(undone), version: row().version, v2: rowsOf(w, id, 2).map((m) => m.status) })
+    );
+
+    // An existing Domain added to the next milestone: its measure, the plan's Domains, and every card it holds counted.
+    const before = [...row().domainIds];
+    const added = await S.editPlanCore(USER, id, { kind: "ADD_TOPIC", milestoneId: m1.id, domainId: "d-bayes" }, NOW, deps);
+    const v = row().version;
+    const n1 = rowsOf(w, id, v).find((m) => m.lineageId === m1.lineageId) as MilestoneRec;
+    const ms = n1 ? measuresOf(w, n1.id).filter((x) => json(x.scope) === json({ domainIds: ["d-bayes"] })) : [];
+    const key = ms[0]?.measureKey ?? "";
+    const reading = w.t.readings.find((r) => r.measureKey === key && r.day === TODAY);
+    const term = (accOf(w, id, v)?.endState as EndStateTerm[] | undefined)?.find((t) => t.measureKey.includes("d-bayes"));
+    check(
+      "N18 add (LEVELS): an existing Domain added to milestone 1 gets its card measure at the stage's level and a DOMAIN item (yours), joins the plan's Domains and the end state; the answer counts its 38 cards",
+      added.ok && added.value.counted === 38 && added.value.created === false && v === 2 && ms.length === 1 && ms[0].minLevel === gateLevelOfRow(w, n1.id) && itemsOf(w, n1.id).some((i) => i.kind === "DOMAIN" && i.domainId === "d-bayes" && i.origin === "USER") && row().domainIds.includes("d-bayes") && !!term,
+      json({ added: added.ok ? added.value : added.error, v, ms: ms.map((x) => [x.minLevel, x.role, x.measureKey]), domainIds: row().domainIds, term: term?.measureKey })
+    );
+    check(
+      "N18 counted at the next reading: the milestone's new key reads every card already in the Domain at its level (R1's cardsAtLevelValue, no baseline taken off), written at the edit; the end state's term reads them too",
+      !!reading && reading.value === readOf(w, key) && (readOf(w, key) ?? 0) >= 30 && readOf(w, term?.measureKey ?? "") != null,
+      json({ key, reading: reading?.value, r1: readOf(w, key), term: term && [term.measureKey, readOf(w, term.measureKey)] })
+    );
+    const again = await S.editPlanCore(USER, id, { kind: "ADD_TOPIC", milestoneId: rowsOf(w, id, v).find((m) => m.lineageId === m1.lineageId)?.id ?? "", domainId: "d-bayes" }, NOW, deps);
+    eq("N18 add twice: the same Domain on the same milestone is refused", editErr(again), S.PLAN_EDIT_HERE);
+    const undo2 = await S.undoAcceptCore(USER, id, v, NOW, deps);
+    check("N18 undo of an add: the plan's Domains are as they were and the Domain stays in your library", undo2.ok && json(row().domainIds) === json(before) && w.tree.some((f) => f.domains.some((d) => d.id === "d-bayes")), json({ undo: editErr(undo2), domainIds: row().domainIds }));
+  });
+
+  await topicBlock("N18 LEVELS: a new milestone, removal, a started milestone", async () => {
+    const w = world();
+    withBayes(w);
+    const id = await accepted(w);
+    const deps = depsFor(w);
+    const row = () => w.t.roadmap.find((r) => r.id === id) as RoadmapRec;
+    const levels = (await S.loadRoadmapView(USER, NOW, deps, id)).planEdit?.levels ?? [];
+    const level = levels.includes(8) ? 8 : levels[0];
+    const res = await S.editPlanCore(USER, id, { kind: "ADD_TOPIC", milestoneId: null, newMilestone: { level }, domainId: "d-bayes" }, NOW, deps);
+    const v = row().version;
+    const fresh = rowsOf(w, id, v).filter((m) => m.status === "PLANNED");
+    const made = fresh.find((m) => itemsOf(w, m.id).some((i) => i.kind === "DOMAIN" && i.domainId === "d-bayes"));
+    const placed = fresh.map((m) => gateLevelOfRow(w, m.id));
+    check(
+      "N18 new LEVELS milestone: a stage at the level you pick, placed among the stages by level, dated inside the plan, measuring the Domain you add",
+      res.ok && !!made && made.stage === S_STAGE_OF(level) && !!made.windowStart && !!made.dueDay && made.windowStart <= made.dueDay && placed.every((l, i) => i === 0 || (placed[i - 1] ?? 0) <= (l ?? 0)),
+      json({ res: editErr(res), level, rows: fresh.map((m) => [m.ord, m.stage, gateLevelOfRow(w, m.id), m.windowStart, m.dueDay]) })
+    );
+    // Removal: the Domain leaves that milestone (it stays in your library, its cards untouched); the last topic is kept.
+    const holder = rowsOf(w, id, row().version).find((m) => m.status === "PLANNED" && itemsOf(w, m.id).filter((i) => i.kind === "DOMAIN" && i.decision !== "REMOVED").length >= 2) as MilestoneRec;
+    const cards0 = w.tree.flatMap((f) => f.domains).find((d) => d.id === "d-prob")?.cards.length;
+    const removed = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: holder.id, domainId: "d-prob" }, NOW, deps);
+    const after = rowsOf(w, id, row().version).find((m) => m.lineageId === holder.lineageId) as MilestoneRec;
+    check(
+      "N18 remove (LEVELS): the Domain leaves that milestone (its item REMOVED, its measure gone); the Domain and its cards stay, and it stays in the plan while another milestone counts it",
+      removed.ok && itemsOf(w, after.id).some((i) => i.domainId === "d-prob" && i.decision === "REMOVED") && !measuresOf(w, after.id).some((x) => (x.scope as { domainIds?: string[] }).domainIds?.includes("d-prob")) && w.tree.flatMap((f) => f.domains).find((d) => d.id === "d-prob")?.cards.length === cards0 && row().domainIds.includes("d-prob"),
+      json({ removed: editErr(removed), items: itemsOf(w, after.id).map((i) => [i.kind, i.domainId, i.decision]) })
+    );
+    const last = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: after.id, domainId: "d-inf" }, NOW, deps);
+    eq("N18 remove: a milestone keeps at least one topic", editErr(last), S.PLAN_EDIT_LAST_TOPIC);
+    // A started milestone: its title and topics are set (an add goes to a later milestone, or a new one).
+    const first = rowsOf(w, id, row().version).find((m) => m.status === "PLANNED") as MilestoneRec;
+    must(await S.startMilestoneCore(USER, first.id, START_ALL, NOW, deps), "start milestone 1");
+    const onStarted = await S.editPlanCore(USER, id, { kind: "ADD_TOPIC", milestoneId: first.id, domainId: "d-bayes" }, NOW, deps);
+    const named = await S.editPlanCore(USER, id, { kind: "ADD_TOPIC", milestoneId: first.id, name: "Odds ratios" }, NOW, deps);
+    check(
+      "N18 started: an add on a started milestone is refused (PLAN_EDIT_STARTED), and a new name refused there makes no Domain (the dry run runs every refusal first)",
+      editErr(onStarted) === S.PLAN_EDIT_STARTED && editErr(named) === S.PLAN_EDIT_STARTED && w.domainsCreated.length === 0,
+      json({ onStarted: editErr(onStarted), named: editErr(named), made: w.domainsCreated })
+    );
+  });
+
+  await topicBlock("N18 TOPICS: a new topic in a new layer, DOMAINS_FREE, removal, undo", async () => {
+    const w = world();
+    withBayes(w);
+    const id = await writtenTopics(w, { ...TOPICS_INTAKE, depth: 10 }, ["Bayes rule", "Markov chains"]);
+    const deps = topicDepsFor(w);
+    must(await S.acceptCore(USER, id, topicAccept(2), NOW, deps), "accept the topic plan");
+    const row = () => w.t.roadmap.find((r) => r.id === id) as RoadmapRec;
+    const v1 = row().version;
+    const layerRows = (version: number) => rowsOf(w, id, version).filter((m) => m.chainRole === "LAYER" && m.status === "PLANNED").sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
+    const lineages1 = layerRows(v1).map((m) => [m.layer, m.lineageId]);
+    const view0 = await S.loadRoadmapView(USER, NOW, deps, id);
+    check("N18 view (TOPICS): a new layer may follow layers 0..3, and each layer row offers its topics", json(view0.planEdit?.after) === json([0, 1, 2, 3]) && view0.milestones.filter((r) => r.chainRole === "LAYER").every((r) => r.edit?.topics === true), json({ after: view0.planEdit?.after }));
+
+    // A new name in a new layer after layer 3: a Domain at level 0 in the plan's Field (no origin: your name), a layer
+    // milestone measuring it, the layers before it untouched, gating intact (it opens after layer 3).
+    const made0 = w.domainsCreated.length;
+    const res = await S.editPlanCore(USER, id, { kind: "ADD_TOPIC", milestoneId: null, newMilestone: { after: 3 }, name: "Hidden Markov models" }, NOW, deps);
+    const v2 = row().version;
+    const madeDomain = w.tree.flatMap((f) => f.domains).find((d) => d.name === "Hidden Markov models");
+    const topic = w.t.roadmapTopic.find((t) => t.roadmapId === id && t.version === v2 && t.name === "Hidden Markov models");
+    const l4 = layerRows(v2).find((m) => m.layer === 4);
+    const view1 = await S.loadRoadmapView(USER, NOW, deps, id);
+    const node4 = view1.milestones.find((r) => r.id === l4?.id);
+    check(
+      "N18 new name in a new layer: a Domain made at level 0 in the plan's Field with no Gemini origin, a layer-4 topic (yours, chosen) and its milestone paying on it at level 6; layers 1-3 keep their lineages; gating holds (layer 4 opens after 3)",
+      res.ok &&
+        res.value.created === true &&
+        res.value.counted === 0 &&
+        !!madeDomain &&
+        madeDomain.cards.length === 0 &&
+        !madeDomain.nameOrigin &&
+        w.domainsCreated.length === made0 + 1 &&
+        topic?.layer === 4 &&
+        topic.nameOrigin === "USER" &&
+        topic.chosen === true &&
+        !!l4 &&
+        measuresOf(w, l4.id).some((x) => x.role === "PAYS" && x.minLevel === 6 && json(x.scope) === json({ domainIds: [madeDomain.id] })) &&
+        json(layerRows(v2).filter((m) => (m.layer ?? 0) <= 3).map((m) => [m.layer, m.lineageId])) === json(lineages1) &&
+        node4?.opensAfter === 3 &&
+        row().domainIds.includes(madeDomain.id) &&
+        (row().rating as { layers?: number } | null)?.layers === 4,
+      json({ res: editErr(res), made: madeDomain && [madeDomain.id, madeDomain.nameOrigin ?? null], topic: topic && [topic.layer, topic.nameOrigin], l4: !!l4, opensAfter: node4?.opensAfter, layers: (row().rating as { layers?: number } | null)?.layers })
+    );
+    const dup = await S.editPlanCore(USER, id, { kind: "ADD_TOPIC", milestoneId: l4?.id ?? "", name: "hidden  markov MODELS" }, NOW, deps);
+    eq("N18 a new name the Field already holds is refused (pick that Domain), and nothing is made", [editErr(dup), w.domainsCreated.length], [S.PLAN_EDIT_NAME_TAKEN, made0 + 1]);
+
+    // DOMAINS_FREE: a Domain another open goal holds is refused with its seat.
+    await seatedGoal(w, { ...INTAKE, aim: "Probability, properly", domainIds: ["d-prob"], hoursPerWeek: 3, label: "Probability" }, 2, "ACTIVE");
+    const l2 = layerRows(v2).find((m) => m.layer === 2) as MilestoneRec;
+    const taken = await S.editPlanCore(USER, id, { kind: "ADD_TOPIC", milestoneId: l2.id, domainId: "d-prob" }, NOW, deps);
+    eq("N18 DOMAINS_FREE: a Domain goal 2 holds is refused (DOMAIN_TAKEN names its seat), writing nothing", [editErr(taken), row().version], [S.DOMAIN_TAKEN(2), v2]);
+
+    // An existing Domain on layer 2 (its 38 cards counted), then removed: the Domain and its cards stay.
+    const add2 = await S.editPlanCore(USER, id, { kind: "ADD_TOPIC", milestoneId: l2.id, domainId: "d-bayes" }, NOW, deps);
+    const v3 = row().version;
+    const l2b = layerRows(v3).find((m) => m.layer === 2) as MilestoneRec;
+    check(
+      "N18 add (TOPICS): an existing Domain joins layer 2 as a topic bound to it (LIBRARY), its measure on that milestone, the plan's Domains and the end state; 38 cards counted",
+      add2.ok && add2.value.counted === 38 && measuresOf(w, l2b.id).some((x) => json(x.scope) === json({ domainIds: ["d-bayes"] }) && x.minLevel === 6) && w.t.roadmapTopic.some((t) => t.roadmapId === id && t.version === v3 && t.domainId === "d-bayes" && t.nameOrigin === "LIBRARY" && t.layer === 2) && row().domainIds.includes("d-bayes") && ((accOf(w, id, v3)?.endState as EndStateTerm[]) ?? []).some((t) => t.measureKey.includes("d-bayes")),
+      json({ add2: editErr(add2), ms: measuresOf(w, l2b.id).map((x) => [json(x.scope), x.minLevel, x.role]) })
+    );
+    const rm = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: l2b.id, domainId: "d-bayes" }, NOW, deps);
+    const v4 = row().version;
+    const l2c = layerRows(v4).find((m) => m.layer === 2) as MilestoneRec;
+    check(
+      "N18 remove (TOPICS): the topic leaves layer 2 (REMOVED) and stops counting (off the plan's Domains); the Domain and its 38 cards stay in your library",
+      rm.ok && !measuresOf(w, l2c.id).some((x) => json(x.scope) === json({ domainIds: ["d-bayes"] })) && !row().domainIds.includes("d-bayes") && w.t.roadmapTopic.some((t) => t.roadmapId === id && t.version === v4 && t.domainId === "d-bayes" && t.decision === "REMOVED") && w.tree.flatMap((f) => f.domains).find((d) => d.id === "d-bayes")?.cards.length === 38,
+      json({ rm: editErr(rm) })
+    );
+    const lastOne = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: l2c.id, domainId: w.t.roadmapTopic.find((t) => t.roadmapId === id && t.version === v4 && t.layer === 2 && t.chosen && t.decision !== "REMOVED")?.domainId ?? "" }, NOW, deps);
+    eq("N18 remove (TOPICS): a layer keeps at least one topic", editErr(lastOne), S.PLAN_EDIT_LAST_TOPIC);
+
+    // Undo of the new layer: the plan, its map, its Domains and rating as they were; the made Domain stays in the library.
+    const back = await S.undoAcceptCore(USER, id, v4, NOW, deps);
+    check(
+      "N18 undo (TOPICS): the toast's Undo restores the version before (its map and Domains), the undone version's rows DISCARDED and its topic rows gone; no draft",
+      back.ok && row().version === v3 && w.t.roadmapTopic.filter((t) => t.roadmapId === id && t.version === v4).length === 0 && rowsOf(w, id, v4).every((m) => m.status === "DISCARDED") && row().domainIds.includes("d-bayes") && (await S.loadRoadmapView(USER, NOW, deps, id)).draft == null,
+      json({ back: editErr(back), version: row().version })
+    );
+  });
+
+  await topicBlock("N18 TOPICS: a layer between, your title kept", async () => {
+    const w = world();
+    withBayes(w);
+    const id = await writtenTopics(w, { ...TOPICS_INTAKE, depth: 10 }, ["Bayes rule", "Markov chains"]);
+    const deps = topicDepsFor(w);
+    must(await S.acceptCore(USER, id, topicAccept(2), NOW, deps), "accept the topic plan");
+    const row = () => w.t.roadmap.find((r) => r.id === id) as RoadmapRec;
+    const layerRows = () => rowsOf(w, id, row().version).filter((m) => m.chainRole === "LAYER" && m.status === "PLANNED").sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
+    const [, l2a, l3a] = layerRows();
+    must(await S.editPlanCore(USER, id, { kind: "RENAME", milestoneId: l3a.id, title: "Chains, my way" }, NOW, deps), "rename layer 3");
+    const l2 = layerRows().find((m) => m.layer === 2) as MilestoneRec;
+    const res = await S.editPlanCore(USER, id, { kind: "ADD_TOPIC", milestoneId: null, newMilestone: { after: 1 }, domainId: "d-bayes" }, NOW, deps);
+    const rows = layerRows();
+    const topicsOf = (layer: number) => w.t.roadmapTopic.filter((t) => t.roadmapId === id && t.version === row().version && t.layer === layer && t.chosen && t.decision !== "REMOVED").map((t) => t.name);
+    const moved = rows.find((m) => m.lineageId === l3a.lineageId);
+    const movedEdges = w.t.roadmapTopicEdge.filter((x) => x.roadmapId === id && x.version === row().version && x.decision !== "REMOVED" && x.origin !== "CROSS_GOAL");
+    check(
+      "N18 a layer between: after layer 1 the new layer 2 holds the added Domain, the layers after it move down a layer with their lineages (your title kept on the moved layer 4), and no link skips a layer (C1)",
+      res.ok &&
+        json(rows.map((m) => m.layer)) === json([1, 2, 3, 4]) &&
+        json(topicsOf(2)) === json(["Bayesian Methods"]) &&
+        rows.find((m) => m.layer === 3)?.lineageId === l2.lineageId &&
+        l2a.lineageId === l2.lineageId &&
+        moved?.layer === 4 &&
+        moved.title === "Chains, my way" &&
+        movedEdges.every((x) => {
+          const layerOf = (l: string) => w.t.roadmapTopic.find((t) => t.roadmapId === id && t.version === row().version && t.lineageId === l)?.layer ?? 0;
+          return layerOf(x.childLineageId) === layerOf(x.parentLineageId) + 1;
+        }),
+      json({ res: editErr(res), rows: rows.map((m) => [m.layer, m.title, m.lineageId === l3a.lineageId]), l2: topicsOf(2) })
+    );
   });
 
   // ═══ Revision 5 (live fix): the chain's stops as the page reads them (RoadmapView.topicChain) ═══════════════

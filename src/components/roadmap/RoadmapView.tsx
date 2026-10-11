@@ -195,7 +195,10 @@ import { PlanHistory } from "./PlanHistory";
 import { HowMeasuredSheet, WorkedOutSheet } from "./HowMeasuredSheet";
 import { StageWhyLine } from "./MilestoneCard";
 import { PaysLine } from "./PaysLine";
-import { RoadmapGlyph } from "./RoadmapGlyph";
+import { RoadmapGlyph, GlyphButton as RoadmapGlyphButton } from "./RoadmapGlyph";
+// Ruling N18: an accepted plan's edit sheet (rename, a topic added or removed, a new milestone).
+import { PlanEditSheet, type PlanEditTarget } from "./PlanEditSheet";
+import type { PlanEditView } from "@/lib/roadmap-types";
 import { TitleClassChip } from "./ProvenanceChip";
 import { DateBlock } from "./DateBlock";
 import { GapPanel, type LiveGates } from "./GapPanel";
@@ -994,6 +997,9 @@ function MilestonesList({
   seen,
   startTick,
   chain = null,
+  planEdit = null,
+  onEdit,
+  onAdd,
 }: {
   rows: readonly MilestoneRowView[];
   today: string;
@@ -1011,8 +1017,20 @@ function MilestonesList({
   startTick?: number;
   /** Revision 5, lane 9 (ui-motion §15.6): a TOPICS plan's chain heading: the EstimateChip, then "· +1 to reach Fluent". */
   chain?: { rating: RatingView; tail: string | null; roadmapId: string } | null;
+  /** Ruling N18: the accepted plan's edits; a row with `edit` gets its edit glyph in its ▸, and the card a "+" for a new milestone. */
+  planEdit?: PlanEditView | null;
+  onEdit?: (row: MilestoneRowView) => void;
+  onAdd?: () => void;
 }) {
   const [extra, setExtra] = useState(0);
+  const editsOn = !!planEdit && planEdit.blocked == null;
+  const editButton = (r: MilestoneRowView | undefined) =>
+    editsOn && r?.edit && onEdit ? (
+      <p className="rm-ml-edit">
+        <RoadmapGlyphButton glyph="edit" label={`Edit milestone ${r.ord}`} onClick={() => onEdit(r)} />
+      </p>
+    ) : null;
+  const canAdd = editsOn && !!onAdd && ((planEdit?.after.length ?? 0) > 0 || (planEdit?.levels.length ?? 0) > 0);
   const plan = rankPlanOfRows(rows);
   const model = railNodesOf(rows, { today, plan });
   // railNodesOf keeps the rows in place order with LATER left out, one node per row.
@@ -1086,6 +1104,7 @@ function MilestonesList({
             </p>
           )}
           {r && startAgainOffered(r, rows, open) && <StartAgain row={r} />}
+          {editButton(r)}
         </>
       ),
     };
@@ -1097,7 +1116,12 @@ function MilestonesList({
       label: `Milestone ${r.ord} · ${r.title} · Later · no dates`,
       title: title(r),
       meta: "Later",
-      more: <p className="t-meta">No dates: a Later milestone gets its dates when a re-plan brings it back.</p>,
+      more: (
+        <>
+          <p className="t-meta">No dates: a Later milestone gets its dates when a re-plan brings it back.</p>
+          {editButton(r)}
+        </>
+      ),
     });
   }
   // Step by step: the milestones up to the first one not behind you show; each later one is one deliberate tap away
@@ -1129,6 +1153,13 @@ function MilestonesList({
                 {HIDE_LATER_MILESTONES}
               </button>
             )}
+          </div>
+        )}
+        {canAdd && (
+          <div className="rm-ml-add">
+            <button type="button" className="icon-btn rm-ml-addbtn" aria-label="Add a milestone" onClick={onAdd}>
+              <Icon name="plus" />
+            </button>
           </div>
         )}
         {(depthLine || paragon) && (
@@ -1405,6 +1436,8 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
   const current = view.current as CurrentMilestoneView | null;
   const [replan, setReplan] = useState(false);
   const [start, setStart] = useState(Boolean(startPreview));
+  // Ruling N18: the edit sheet's target (a milestone's row, or a new milestone).
+  const [editing, setEditing] = useState<PlanEditTarget | null>(null);
   const index = useMemo(() => domainIndexOf(view), [view]);
   const scope = useMemo(() => editorScopeOf(view, current ? [current.milestone] : []), [view, current]);
   const names = useMemo(() => new Map([...index.values()].map((d) => [d.id, d.name] as const)), [index]);
@@ -1467,6 +1500,9 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
             seen={seen}
             startTick={startSeen.tick}
             chain={topicChainOf(view, topicPlansOn(gates))}
+            planEdit={closed ? null : (view.planEdit ?? null)}
+            onEdit={(row) => setEditing({ kind: "ROW", row })}
+            onAdd={() => setEditing({ kind: "NEW" })}
           />
         )}
         {!closed && <GapPanel gaps={view.gaps} hidden={view.gapsHidden} scope={scope} gates={gates} />}
@@ -1504,6 +1540,7 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
     <>
       {scope ? <ItemEditor scope={scope}>{body}</ItemEditor> : body}
       {!closed && <ReplanSheet open={replan} onClose={() => setReplan(false)} roadmapId={header.id} startedOrd={current?.goalId ? current.milestone.ord : null} />}
+      {!closed && view.planEdit && <PlanEditSheet target={editing} onClose={() => setEditing(null)} plan={view.planEdit} library={view.library} />}
       {!closed && current && scope && (
         <ItemEditor scope={scope}>
           <StartSheet open={start} onClose={() => setStart(false)} milestone={current.milestone} today={view.today} initial={startPreview ?? null} activityConfirm={view.activityConfirm} roadmapId={header.id} heldRank={view.rank?.index ?? null} />

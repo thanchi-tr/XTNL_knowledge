@@ -1165,4 +1165,32 @@
   /* the chain's heading on a TOPICS plan's Milestones card: the EstimateChip, then "· +1 to reach Fluent" */
   .rm-ml-chain { margin: 0 0 12px; }
   /* ===== /Revision 5, lane 9 ===== */
+
+  /* ===== Ruling N18: an accepted plan's edits (the ▸'s edit glyph, the card's "+", the edit sheet) ===== */
+  .rm-ml-edit { display: flex; justify-content: flex-end; margin: 2px 0 0; }
+  .rm-ml-add { display: flex; justify-content: center; padding: 4px 0 8px; border-top: 1px dashed var(--line-1); }
+  .rm-ml-step + .rm-ml-add { border-top: 0; padding-top: 0; }
+  .rm-ml-addbtn { width: 44px; height: 44px; border-radius: 50%; border: 1px dashed var(--line-ctl); color: var(--ink-1); }
+  .rm-ml-addbtn:hover { color: var(--ink-0); border-color: var(--line-2); }
+  .rm-pe { min-width: 0; }
+  .rm-pe-title { display: flex; align-items: center; gap: 8px; }
+  .rm-pe-input { flex: 1; min-width: 0; min-height: 44px; }
+  .rm-pe-save { flex: none; }
+  .rm-pe-place { border: 0; margin: 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .rm-pe-place .rm-dchip { min-width: 44px; align-items: center; }
+  .rm-pe-topics { list-style: none; margin: 0; padding: 0; border-radius: var(--r-card); border: 1px solid var(--line-1); background: var(--raised); overflow: hidden; }
+  .rm-pe-topic { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 4px 4px 4px 12px; }
+  .rm-pe-topic + .rm-pe-topic { border-top: 1px solid var(--line-1); }
+  .rm-pe-add { align-self: flex-start; }
+  .rm-pe-add b { display: inline-flex; align-items: center; gap: 6px; }
+  .rm-pe-picker { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .rm-pe-search { display: flex; align-items: center; gap: 8px; color: var(--ink-2); }
+  .rm-pe-search .st-input { flex: 1; min-width: 0; min-height: 44px; }
+  .rm-pe-list { list-style: none; margin: 0; padding: 0; max-height: min(52dvh, 420px); overflow-y: auto; }
+  .rm-pe-list > li + li .rm-pick { border-top: 1px solid var(--line-1); }
+  .rm-pe-list .rm-pick:disabled { cursor: default; color: var(--ink-2); }
+  .rm-pe-list .rm-pick:disabled b { color: var(--ink-1); }
+  .rm-pe-none { margin: 0; }
+  .rm-pe-new { color: var(--ink-0); }
+  /* ===== /Ruling N18 ===== */
 }

@@ -678,6 +678,8 @@ import {
   type TopicSource,
 } from "./roadmap-types";
 import { topicLayerTitleOf } from "./roadmap-catalog";
+// Ruling N18: an accepted plan's edits.
+import { STAGE_NAMES, TOPICS_MAX, type PlanEdit, type PlanEditResult, type PlanEditView, type MilestoneEditView } from "./roadmap-types";
 
 // ═══ Rows: the roadmap tables as plain records (DATE columns as DayKeys) ════
 
@@ -7405,14 +7407,19 @@ export async function undoAcceptCore(userId: string, roadmapId: string, version:
     // Revision 5, lane 8 (ruling 49): an accept that closed a live milestone stays; one of another kind restores the plan it replaced.
     const topicUndo = topicUndoOf(b, acc, version);
     if (typeof topicUndo === "string") return fail(topicUndo);
+    // Ruling N18: an edit of the accepted plan leaves no draft behind: its rows are DISCARDED, its map's rows go, and the
+    // Domains (and a TOPICS plan's rating) are as they were before it.
+    const edit = planEditMarkOf(acc);
     const prev = version - 1;
     const ops: StoreOp[] = [
       { op: "guard", guard: { g: "ROADMAP_IS", id: roadmapId, statuses: ["ACTIVE"], version } },
       { op: "guard", guard: { g: "ACCEPTANCE_OPEN", id: acc.id } },
       { op: "guard", guard: { g: "NOTHING_STARTED_SINCE", roadmapId, since: acc.acceptedAt } },
-      { op: "update", table: "roadmapMilestone", where: { roadmapId, version, status: "PLANNED" }, data: { status: "DRAFT", rankIndex: null } },
-      { op: "update", table: "roadmapMilestone", where: { roadmapId, version, status: "LATER" }, data: { rankIndex: null } },
+      { op: "update", table: "roadmapMilestone", where: { roadmapId, version, status: "PLANNED" }, data: edit ? { status: "DISCARDED", rankIndex: null } : { status: "DRAFT", rankIndex: null } },
+      { op: "update", table: "roadmapMilestone", where: { roadmapId, version, status: "LATER" }, data: edit ? { status: "DISCARDED", rankIndex: null } : { rankIndex: null } },
     ];
+    if (edit) ops.push({ op: "delete", table: "roadmapTopicEdge", where: { roadmapId, version } }, { op: "delete", table: "roadmapTopic", where: { roadmapId, version } });
+    const editData: Record<string, unknown> = edit ? { domainIds: [...edit.domainIds], ...(edit.rating !== undefined ? { rating: edit.rating } : {}) } : {};
     if (prev >= 1) {
       ops.push(
         { op: "update", table: "roadmapMilestone", where: { roadmapId, version: prev, status: "SUPERSEDED", dueDay: null }, data: { status: "LATER" } },
@@ -7424,7 +7431,7 @@ export async function undoAcceptCore(userId: string, roadmapId: string, version:
         op: "update",
         table: "roadmap",
         where: { id: roadmapId, version },
-        data: { ...(prev >= 1 ? { version: prev, updatedAt: now } : { version: 0, status: "DRAFT", firstAcceptedDay: null, updatedAt: now }), ...topicUndo.roadmapData },
+        data: { ...(prev >= 1 ? { version: prev, updatedAt: now } : { version: 0, status: "DRAFT", firstAcceptedDay: null, updatedAt: now }), ...topicUndo.roadmapData, ...editData },
       },
       { op: "update", table: "roadmapAcceptance", where: { id: acc.id }, data: { undoneAt: now } }
     );
@@ -8104,7 +8111,8 @@ async function startMilestoneUnpointed(userId: string, milestoneId: string, choi
       if (!hw) return fail("This milestone's card measure has no level yet — re-fit the plan.");
       const fitted = ch.target === "FITTED_NOW" && !!refitted.todayCheck && refitted.todayCheck.measureKey === key;
       const target = fitted && refitted.todayCheck ? refitted.todayCheck.fittedNow : card.target;
-      if (target < hw.baseline + minIncrementCards(hw.baseline)) {
+      // A CONTEXT measure (a topic held when it joined, ruling N18; "climbing" rows) pays nothing: it is stamped, never a refusal.
+      if (card.role === "PAYS" && target < hw.baseline + minIncrementCards(hw.baseline)) {
         return fail(
           hw.paidOn
             ? `Already counted up to ${hw.baseline} (paid ${shortDate(hw.paidOn)}) — re-fit to raise the target.`
@@ -8593,6 +8601,860 @@ async function replanUnpointed(userId: string, roadmapId: string, kind: ReplanKi
   });
   invalidate("roadmap");
   return res;
+}
+
+// ═══ Ruling N18: edits of an accepted plan (contracts §22.20) ═══════════════
+//
+// The user's words: "allow user to edit the milestone, while adding sub topic to any milestone (existed or none
+// existed). If existed topic (domain) added then all the card in that topic automatically counted toward the goal."
+// Every edit is an acceptance of an edited copy of the plan: version + 1 written ACTIVE at once, its acceptance record
+// naming the version it replaced, so the accept toast's Undo (undoAcceptCore) gives the plan back, and the Domain set
+// (Roadmap.domainIds, DOMAINS_FREE), the end state, the first readings and Proficiency follow it as an accept's do.
+// Started milestones are carried as a re-plan carries them; only the unstarted ones change.
+
+export const PLAN_EDIT_REPLAN_OPEN = "Finish or discard the re-plan draft first.";
+export const PLAN_EDIT_STARTED = "This milestone has started: add it to a later milestone, or a new one.";
+export const PLAN_EDIT_HELD = "This milestone is held already: add it to another one.";
+export const PLAN_EDIT_IN_PLAN = "That Domain is in this plan already.";
+export const PLAN_EDIT_HERE = "That Domain is in this milestone already.";
+export const PLAN_EDIT_NOT_HERE = "That Domain isn't in this milestone.";
+export const PLAN_EDIT_LAST_TOPIC = "A milestone keeps at least one topic: add another first.";
+export const PLAN_EDIT_DEPTH_ROW = "This milestone measures the last layer's topics: change them on that layer.";
+export const PLAN_EDIT_NAME_TAKEN = "That name is in this Field already: pick that Domain instead.";
+export const PLAN_EDIT_AFTER_STARTED = "A new milestone goes after the ones that have started.";
+export const PLAN_EDIT_PLACE = "Pick where the new milestone goes.";
+export const PLAN_EDIT_GONE = "This milestone is no longer part of the plan.";
+export const PLAN_EDIT_NO_DOMAINS = "A life-track Area has no Domains.";
+export const PLAN_EDIT_NOTHING = "Nothing to change.";
+/** The Domain a new name will make, as the dry run reads it before it is made (never written). */
+const PLAN_EDIT_STAND_IN = "plan-edit-new-domain";
+
+/** The acceptance record's mark of an edit (Feasibility JSON): what Undo restores beside the rows. */
+interface PlanEditMark {
+  kind: PlanEdit["kind"];
+  /** Roadmap.domainIds before the edit. */
+  domainIds: string[];
+  /** A TOPICS plan's rating before the edit (its layers and Gemini's milestones by layer). */
+  rating?: RatingRecord | null;
+}
+type PlanEditMarks = { planEdit?: PlanEditMark };
+
+function planEditMarkOf(a: AcceptanceRec | null): PlanEditMark | null {
+  const f = a?.feasibility;
+  if (!f || typeof f !== "object" || Array.isArray(f)) return null;
+  const m = (f as PlanEditMarks).planEdit;
+  return m && typeof m === "object" && Array.isArray(m.domainIds) ? m : null;
+}
+
+/** Why every edit of an accepted plan waits, in words (PlanEditView.blocked); null when edits are on. */
+function planEditBlockedOf(b: RoadmapBundle): string | null {
+  if (b.roadmap.status === "PAUSED") return "Resume this goal first.";
+  if (b.roadmap.status !== "ACTIVE" || b.roadmap.version < 1) return "Only an accepted plan is edited here.";
+  if (draftRowsOf(b).length > 0 || isTopicsDraft(b)) return PLAN_EDIT_REPLAN_OPEN;
+  if (planRowsOf(b).some((m) => m.status === "STARTING")) return "A milestone is starting: tap Finish starting first.";
+  return null;
+}
+
+/** An edit as the action sent it, cleaned (references, one Domain or one name, a place for a new milestone); else the refusal. */
+function cleanPlanEditOf(raw: unknown): PlanEdit | string {
+  const o = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
+  const ref = (v: unknown): v is string => typeof v === "string" && STEP_REF.test(v);
+  if (!o) return PLAN_EDIT_NOTHING;
+  if (o.kind === "RENAME") return ref(o.milestoneId) && typeof o.title === "string" ? { kind: "RENAME", milestoneId: o.milestoneId, title: o.title } : PLAN_EDIT_NOTHING;
+  if (o.kind === "REMOVE_TOPIC") return ref(o.milestoneId) && ref(o.domainId) ? { kind: "REMOVE_TOPIC", milestoneId: o.milestoneId, domainId: o.domainId } : "Pick a topic to remove.";
+  if (o.kind !== "ADD_TOPIC") return PLAN_EDIT_NOTHING;
+  const nm = o.newMilestone && typeof o.newMilestone === "object" && !Array.isArray(o.newMilestone) ? (o.newMilestone as Record<string, unknown>) : null;
+  const row = ref(o.milestoneId) ? o.milestoneId : null;
+  if ((row == null) === (nm == null)) return PLAN_EDIT_PLACE;
+  const after = nm && typeof nm.after === "number" && Number.isInteger(nm.after) ? nm.after : undefined;
+  const level = nm && typeof nm.level === "number" && Number.isInteger(nm.level) ? nm.level : undefined;
+  if (nm && after === undefined && level === undefined) return PLAN_EDIT_PLACE;
+  const domainId = ref(o.domainId) ? o.domainId : null;
+  const name = typeof o.name === "string" && o.name.trim() ? o.name : null;
+  if ((domainId == null) === (name == null)) return "Pick one of your Domains, or name a new one.";
+  return { kind: "ADD_TOPIC", milestoneId: row, newMilestone: nm ? { ...(after !== undefined ? { after } : {}), ...(level !== undefined ? { level } : {}) } : null, domainId, name };
+}
+
+/**
+ * Ruling N18: one edit of an accepted plan (LEVELS or TOPICS), from the plan page's ▸ edit sheet:
+ *   RENAME        an unstarted milestone's title, your words (titleOrigin USER, EDITED);
+ *   ADD_TOPIC     a sub-topic on an unstarted milestone, or on a new one (TOPICS: a layer after `after`, 0 before layer 1;
+ *                 LEVELS: a stage at `level`, placed among the stages by level): one of your Domains from any Field
+ *                 (DOMAINS_FREE: never one another open goal holds), or a new name (a Domain made at level 0 in the
+ *                 plan's Field, its name yours, never Gemini's; a name the Field holds refuses). The Domain joins the
+ *                 plan's Domains at once (Roadmap.domainIds, the end state), so every card it holds counts toward the
+ *                 goal (`counted`);
+ *   REMOVE_TOPIC  a sub-topic leaves the milestone (the Domain and its cards stay); a milestone keeps at least one.
+ * The edit is accepted as version + 1 in one transaction; undoAcceptCore undoes it (its rows DISCARDED, the Domains
+ * and rating as they were). Refused while a re-plan draft is open, on a started or held milestone (an add), and on a
+ * TOPICS depth milestone (its topics are the last layer's).
+ */
+export async function editPlanCore(userId: string, roadmapId: string, edit: PlanEdit, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<PlanEditResult>> {
+  return pointedRefusal(deps, userId, { roadmapId }, await editPlanUnpointed(userId, roadmapId, edit, now, deps));
+}
+
+/** editPlanCore's work; editPlanCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function editPlanUnpointed(userId: string, roadmapId: string, edit: PlanEdit, now: Date, deps: RoadmapDeps): Promise<RoadmapActionResult<PlanEditResult>> {
+  if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
+  const ed = cleanPlanEditOf(edit);
+  if (typeof ed === "string") return fail(ed);
+  const e = envOf(deps);
+  let made: { id: string; name: string } | null = null;
+  if (ed.kind === "ADD_TOPIC" && ed.name != null) {
+    // A new name: every refusal runs on the plan first, over a stand-in for the Domain (a dry run that writes nothing);
+    // only an edit that passes them makes the Domain (taxonomy createDomain: level 0, no origin, so the name reads yours).
+    const b0 = await e.store.bundle(userId, roadmapId);
+    if (!b0) return fail(NO_ROADMAP);
+    if (b0.roadmap.fieldId == null) return fail(PLAN_EDIT_NO_DOMAINS);
+    const tree0 = await e.io.fieldTree();
+    const field = tree0.find((f) => f.id === b0.roadmap.fieldId) ?? null;
+    if (!field) return fail("That Field no longer exists.");
+    const name = cleanText(ed.name);
+    if (!name) return fail("Name the new topic.");
+    if (Array.from(name).length > LABEL_MAX.DOMAIN) return fail(`Keep the name to ${LABEL_MAX.DOMAIN} characters.`);
+    if (URL_LIKE.test(name)) return fail("A Domain name can't be a link.");
+    if (field.domains.some((d) => normLabel(d.name) === normLabel(name))) return fail(PLAN_EDIT_NAME_TAKEN);
+    const standIn = { id: PLAN_EDIT_STAND_IN, name };
+    const dryTree: TreeField[] = tree0.map((f) => (f.id === field.id ? { ...f, domains: [...f.domains, { id: standIn.id, name, fieldId: f.id, cards: [] }] } : f));
+    const dry = await planEditStepOf({ ...e, io: { ...e.io, fieldTree: async () => dryTree } }, deps, userId, b0, ed, now, standIn);
+    if (!dry.ok) return dry;
+    const created = await e.io.createDomain(field.id, name);
+    if (!created.ok) return fail(created.error);
+    made = { id: created.value.id, name: created.value.name };
+    invalidate("fields", "ideas");
+  }
+  const res = await withRetry<PlanEditResult>(async () => {
+    const b = await e.store.bundle(userId, roadmapId);
+    if (!b) return fail(NO_ROADMAP);
+    const step = await planEditStepOf(e, deps, userId, b, ed, now, made);
+    if (!step.ok) return step;
+    const out = await e.store.apply(userId, step.value.ops);
+    return out === "ok" ? ok(step.value.result) : "stale";
+  });
+  invalidate("roadmap");
+  return res;
+}
+
+/** The edited plan, as editedPlanOps writes it (one accepted version). */
+interface EditedPlan {
+  b: RoadmapBundle;
+  ctx: PlanContext;
+  v: number;
+  today: DayKey;
+  /** The version's rows (status DRAFT or LATER as written; accepted PLANNED by the ops), ords and lineages set. */
+  drafts: MilestoneDraft[];
+  /** Held rows (HELD_AT_START): lineage → their reached day. */
+  held: Map<string, DayKey>;
+  overAccepted: Map<string, boolean>;
+  /** Rank index by lineage. */
+  ranks: Record<string, number | null>;
+  /** The roadmap's columns beside version and updatedAt (domainIds; a TOPICS plan's rating). */
+  roadmapData: Record<string, unknown>;
+  /** The plan's Domains (DOMAINS_FREE). */
+  domainIds: string[];
+  feasibility: Feasibility & PlanEditMarks & { coverage?: CoverageBreakdown[] };
+  endState: EndStateTerm[];
+  /** A TOPICS plan's map at the new version. */
+  map: TopicMap | null;
+  textCtx: ModelTextContext;
+  unstarted: MilestoneBundle[];
+  carriedRows: MilestoneBundle[];
+  /** The carried rows as the Proficiency basis reads them beside the version (LEVELS: carriedPlanOf; TOPICS: none, as acceptTopicsStep). */
+  carried: MilestoneDraft[];
+}
+
+/** An unstarted row copied to version `v` (DRAFT or LATER, no ids), as a re-plan copies it. */
+function editCopyOf(m: MilestoneBundle, v: number): MilestoneDraft {
+  const d = draftOf(m);
+  return {
+    ...d,
+    id: null,
+    version: v,
+    status: (d.status === "LATER" ? "LATER" : "DRAFT") as MilestoneStatus,
+    rankIndex: null,
+    items: d.items.map((i) => ({ ...i, id: null })),
+    measures: d.measures.map((x) => ({ ...x, id: null })),
+  };
+}
+
+/** A Domain the user added to a milestone, as its DOMAIN item: the Domain's name, your choice (USER, EDITED). */
+function editDomainItemOf(lineageId: string, ord: number, d: { id: string; name: string }): ItemDraft {
+  return {
+    id: null,
+    lineageId,
+    kind: "DOMAIN",
+    ord,
+    label: d.name,
+    rawLabel: null,
+    origin: "USER",
+    decision: "EDITED",
+    domainId: d.id,
+    proposedName: null,
+    syllabusRef: null,
+    method: null,
+    sessionsPerWeek: null,
+    durationBand: null,
+    rule: null,
+    planSource: null,
+    checkpointKind: null,
+    outOf: null,
+    bar: null,
+    addToToday: true,
+    templateId: null,
+    flags: [],
+    notes: [],
+  };
+}
+
+/**
+ * The edited row's code-worded practices, steps and checkpoint follow its Domains (ruling N18): a CODE item with a
+ * catalog type whose words no longer read as the app's for the row (codeLabelOk: its own Domains, R) is worded again by
+ * the catalog over the row's own Domains, as a type picked in the Edit sheet is. Yours (EDITED) and a Domain-bound
+ * item are never re-worded.
+ */
+function relabelledCodeItemsOf(b: RoadmapBundle, row: MilestoneDraft, ctx: ModelTextContext, plan: readonly MilestoneDraft[]): MilestoneDraft {
+  const own = row.items
+    .filter((i) => i.kind === "DOMAIN" && liveItem(i) && i.domainId)
+    .map((i) => (Object.prototype.hasOwnProperty.call(ctx.domainNames, i.domainId as string) ? ctx.domainNames[i.domainId as string] : null))
+    .filter((n): n is string => !!n);
+  if (own.length === 0) return row;
+  const track = catalogTrackOf({ fieldId: b.roadmap.fieldId, track: intakeOf(b.roadmap).track });
+  const aim = yoursText("USER", "EDITED", b.roadmap.aim) ?? undefined;
+  const exam = b.roadmap.examLabel ? (yoursText("USER", "EDITED", b.roadmap.examLabel) ?? undefined) : undefined;
+  const code = catalogOriginOf();
+  return {
+    ...row,
+    items: row.items.map((it) => {
+      if (it.origin !== code || it.decision === "EDITED" || !it.catalogKey || it.domainId || codeLabelOk(it, row, ctx, plan)) return it;
+      try {
+        return { ...it, label: String(catalogLabelOf(it.catalogKey, { track, domains: own.map((n) => domainName({ id: "", name: n })), aim, exam })) };
+      } catch {
+        return it;
+      }
+    }),
+  };
+}
+
+/** The levels a new LEVELS milestone may aim at (PlanEditView.levels): the gates up to the depth, from the highest a started stage holds; [] at the cap. */
+function editLevelsOf(b: RoadmapBundle): number[] {
+  const depth = depthOf(b.roadmap);
+  if (b.roadmap.fieldId == null || depth == null || kindOfRow(b.roadmap) === "TOPICS") return [];
+  const rows = planRowsOf(b);
+  if (positionCountOf(rows.filter(scheduled)) + 1 > milestoneCapOf("LEVELS")) return [];
+  const floor = Math.max(0, ...rows.filter((m) => isCarried(m) && !superseded(b, m)).map((m) => gateLevelOf(draftOf(m)) ?? 0));
+  return STAGE_KEYS.map((s) => STAGE_LEVEL[s]).filter((l) => l <= depth && l >= floor);
+}
+
+/** The layers a new TOPICS layer may follow (PlanEditView.after): from the last layer under way to the last one; [] past LAYERS_MAX or under a started depth milestone. */
+function editAftersOf(b: RoadmapBundle): number[] {
+  if (b.roadmap.fieldId == null || kindOfRow(b.roadmap) !== "TOPICS") return [];
+  const rows = planRowsOf(b);
+  const carried = rows.filter((m) => isCarried(m) && !superseded(b, m));
+  if (carried.some((m) => m.chainRole === "DEPTH")) return [];
+  const K = Math.max(0, ...rows.filter((m) => m.chainRole === "LAYER" && m.layer != null).map((m) => m.layer as number));
+  const depth = topicDepthOfRow(b.roadmap) ?? AIM_DEPTHS[DEPTH_DEFAULT];
+  if (K + 1 > LAYERS_MAX || K + 1 + DEPTH_TAIL[depth] > milestoneCapOf("TOPICS")) return [];
+  const from = Math.max(0, ...carried.filter((m) => m.chainRole === "LAYER" && m.layer != null).map((m) => m.layer as number));
+  const out: number[] = [];
+  for (let k = from; k <= K; k++) out.push(k);
+  return out;
+}
+
+/** One edit, read and worked out on the bundle as read: the ops of its accepted version and its answer, or the refusal. */
+async function planEditStepOf(
+  e: Env,
+  deps: RoadmapDeps,
+  userId: string,
+  b: RoadmapBundle,
+  ed: PlanEdit,
+  now: Date,
+  made: { id: string; name: string } | null
+): Promise<Result<{ ops: StoreOp[]; result: PlanEditResult }>> {
+  const blocked = planEditBlockedOf(b);
+  if (blocked) return fail(blocked);
+  if (legacyOf(b)) return fail(START_AGAIN_AT_DEPTH);
+  const topics = kindOfRow(b.roadmap) === "TOPICS";
+  if (topics && !topicSwitchesOf(deps.topicSwitches).plans) return fail(TOPIC_PLANS_OFF);
+  const tree = await e.io.fieldTree();
+  const goals = await carriedGoalsOf(e, userId, b);
+  const unstarted = planRowsOf(b).filter((m) => !isCarried(m) && !dormantCopy(b, m, goals));
+  const target = ed.milestoneId != null ? (b.milestones.find((m) => m.id === ed.milestoneId) ?? null) : null;
+  if (ed.milestoneId != null) {
+    if (!target) return fail(PLAN_EDIT_GONE);
+    if (isCarried(target)) return fail(ed.kind === "RENAME" ? "This milestone has started; its title is on Today now." : PLAN_EDIT_STARTED);
+    if (!unstarted.some((m) => m.id === target.id)) return fail(PLAN_EDIT_GONE);
+  }
+  // The Domain an add or a removal names: one of yours (any Field), or the one made for your new name.
+  let domain: { id: string; name: string; cards: number } | null = null;
+  if (ed.kind !== "RENAME") {
+    if (b.roadmap.fieldId == null) return fail(PLAN_EDIT_NO_DOMAINS);
+    const id = ed.kind === "ADD_TOPIC" ? (made?.id ?? ed.domainId ?? null) : ed.domainId;
+    const facts = id ? domainFactsOf(tree).get(id) : undefined;
+    if (!id || !facts) return fail(made ? "That Domain no longer exists." : "Pick one of your Domains.");
+    domain = { id, name: facts.name, cards: facts.cards.length };
+    if (ed.kind === "ADD_TOPIC" && !made) {
+      const taken = await topicTakenDomainOf(e, userId, b.roadmap.id, [id]);
+      if (taken) return fail(DOMAIN_TAKEN(taken.slot));
+    }
+  }
+  const edited = topics ? await topicsPlanEditOf(e, userId, b, ed, now, target, domain, made != null, unstarted, tree) : await levelsPlanEditOf(e, userId, b, ed, now, target, domain, unstarted, goals, tree);
+  if (!edited.ok) return edited;
+  const ops = await editedPlanOps(e, deps, userId, edited.value, now);
+  if (!ops.ok) return ops;
+  const counted = ed.kind === "ADD_TOPIC" && domain ? domain.cards : null;
+  return ok({ ops: ops.value, result: { version: edited.value.v, domainId: domain?.id ?? null, created: made != null, counted } });
+}
+
+/**
+ * A LEVELS edit (a depth plan's stages, or a track plan's rename): the unstarted rows copied, the change made on one,
+ * the cards re-keyed and baselined as acceptCore does. An added Domain counts on the milestone you add it to, at that
+ * stage's level (target its coverage n_d; CONTEXT when it already holds it: held, as accept holds a stage), and joins
+ * R (Roadmap.domainIds), so the end state reads it at the depth. A new stage sits among the stages by its level and
+ * takes half the window of the stage after it (the stage before it when it is the last).
+ */
+async function levelsPlanEditOf(
+  e: Env,
+  userId: string,
+  b: RoadmapBundle,
+  ed: PlanEdit,
+  now: Date,
+  target: MilestoneBundle | null,
+  domain: { id: string; name: string } | null,
+  unstarted: MilestoneBundle[],
+  goals: ReadonlyMap<string, GoalFacts>,
+  tree: readonly TreeField[]
+): Promise<Result<EditedPlan>> {
+  const cur = b.roadmap.version;
+  const v = cur + 1;
+  const today = todayKey(now);
+  const depth = depthOf(b.roadmap);
+  const planRows = planRowsOf(b);
+  const carriedRows = planRows.filter(isCarried);
+  const R0 = requiredDomainsOf(b, planRows);
+  let drafts = unstarted.map((m) => editCopyOf(m, v));
+  let domainIds = [...b.roadmap.domainIds];
+  const idx = target ? drafts.findIndex((d) => d.lineageId === target.lineageId) : -1;
+  if (target && idx < 0) return fail(PLAN_EDIT_GONE);
+  const liveDomainIds = (d: MilestoneDraft): string[] => d.items.filter((i) => i.kind === "DOMAIN" && liveItem(i) && i.domainId).map((i) => i.domainId as string);
+  const measuresDomain = (d: MilestoneDraft, id: string): boolean => d.measures.some((x) => x.kind === "CARDS_AT_LEVEL" && !x.gate && (x.scope.domainIds ?? []).includes(id));
+  if (ed.kind === "ADD_TOPIC" && domain && !R0.includes(domain.id) && !domainIds.includes(domain.id)) {
+    if (R0.length >= DEPTH_DOMAINS_MAX) return fail(`A plan aimed at a depth counts at most ${DEPTH_DOMAINS_MAX} Domains.`);
+    domainIds = [...domainIds, domain.id];
+  }
+  const ctx = await planContext(e, userId, { ...b.roadmap, domainIds }, now, coveragePriorOf(b), b);
+  const held = new Map<string, DayKey>();
+  for (const m of unstarted) if (heldRow(m)) held.set(m.lineageId, m.reachedDay ?? today);
+
+  if (ed.kind === "RENAME") {
+    const label = userLabel(e, ed.title, "MILESTONE", b, tree);
+    if (!label.ok) return fail(label.error);
+    if (label.value === drafts[idx].title) return fail(PLAN_EDIT_NOTHING);
+    drafts[idx] = { ...drafts[idx], title: label.value, titleOrigin: "USER", titleDecision: "EDITED" };
+  } else if (ed.kind === "ADD_TOPIC" && domain) {
+    if (depth == null) return fail("This plan has no depth to count cards at.");
+    // The Domain's n_d as the end state reads it (coverage over R, its counts frozen at intake; a Domain new to R reads today's).
+    let n: number | null = null;
+    try {
+      n = coverageFor(e, ctx, Array.from(new Set([...R0, domain.id])), ctx.coveragePrior ?? null).find((c) => c.domainId === domain.id)?.n ?? null;
+    } catch (err) {
+      console.error("roadmap: the added Domain's coverage wasn't worked out (its policy stands in):", err instanceof Error ? err.message : err);
+    }
+    const recall = (ctx.domains.get(domain.id)?.cards ?? []).filter((c) => c.type == null || isRecallType(c.type)).length;
+    const measureAt = (level: number, sibling: MeasureSpec | undefined): MeasureSpec => {
+      const key = cardsAtLevelKey([domain.id], level, level >= depth ? "rc" : "r");
+      const live = (liveCountOfKey(ctx, key) ?? liveCount(ctx, [domain.id], level, true)).value;
+      const t = n ?? coveragePolicyOf(recall, 0).n;
+      return {
+        id: null,
+        kind: "CARDS_AT_LEVEL",
+        role: live >= t ? "CONTEXT" : "PAYS",
+        scope: { domainIds: [domain.id] },
+        minLevel: level,
+        target: t,
+        targetSource: "DEPTH",
+        fittedTarget: t,
+        rateSource: sibling?.rateSource ?? null,
+        baseline: live,
+        baselineDay: today,
+        unit: "card",
+        itemLineageId: null,
+        measureKey: key,
+      };
+    };
+    if (target) {
+      if (heldRow(target)) return fail(PLAN_EDIT_HELD);
+      const d = drafts[idx];
+      const level = gateLevelOf(d);
+      if (level == null) return fail("This milestone has no level to count cards at.");
+      if (liveDomainIds(d).includes(domain.id) || measuresDomain(d, domain.id)) return fail(PLAN_EDIT_HERE);
+      if (liveDomainIds(d).length >= DEPTH_DOMAINS_MAX) return fail(`A milestone counts at most ${DEPTH_DOMAINS_MAX} Domains.`);
+      const sibling = d.measures.find((x) => x.kind === "CARDS_AT_LEVEL" && x.role === "PAYS");
+      drafts[idx] = { ...d, items: [...d.items, editDomainItemOf(e.makeId(), Math.max(0, ...d.items.map((i) => i.ord)) + 1, domain)], measures: [...d.measures, measureAt(level, sibling)] };
+    } else {
+      const level = ed.newMilestone?.level;
+      if (level == null || !editLevelsOf(b).includes(level)) return fail(level == null ? PLAN_EDIT_PLACE : "Pick a level up to this plan's depth, from the level a started milestone holds.");
+      const stage = t5.stageOfLevel(level);
+      if (!stage) return fail(PLAN_EDIT_PLACE);
+      const sibling = drafts.flatMap((d) => d.measures).find((x) => x.kind === "CARDS_AT_LEVEL" && x.role === "PAYS");
+      const measure = measureAt(level, sibling);
+      let title = "";
+      try {
+        title = String(t5.codeText("{stage}: {domains} to level {L}+", { stage: STAGE_NAMES[stage], domains: [domainName(domain)], level }));
+      } catch {
+        title = `${STAGE_NAMES[stage]}: ${domainName(domain)}`;
+      }
+      const row: MilestoneDraft = {
+        id: null,
+        lineageId: e.makeId(),
+        version: v,
+        ord: 0,
+        title,
+        titleOrigin: catalogOriginOf(),
+        titleDecision: "KEPT",
+        windowStart: null,
+        dueDay: null,
+        status: "DRAFT",
+        rankIndex: null,
+        overAccepted: false,
+        items: [editDomainItemOf(e.makeId(), 1, domain)],
+        measures: [measure],
+        notes: measure.role === "CONTEXT" ? ["HELD_AT_START"] : [],
+        stage,
+      };
+      // Placed by its level: after the last stage at or below it (the started ones stay first); dated in half a neighbour's window.
+      const scheduledIdx = drafts.map((d, i) => ({ d, i })).filter(({ d }) => d.status !== "LATER");
+      const below = scheduledIdx.filter(({ d }) => (gateLevelOf(d) ?? 0) <= level).pop();
+      const at = below ? below.i + 1 : (scheduledIdx[0]?.i ?? drafts.length);
+      const next = drafts[at] && drafts[at].status !== "LATER" ? drafts[at] : null;
+      const prev = at > 0 && drafts[at - 1].status !== "LATER" ? drafts[at - 1] : null;
+      const halfOf = (s: DayKey, d: DayKey): DayKey => addDays(s, Math.floor(daysBetween(s, d) / 2));
+      if (next?.windowStart && next.dueDay && daysBetween(next.windowStart, next.dueDay) >= 2) {
+        const mid = halfOf(next.windowStart, next.dueDay);
+        row.windowStart = next.windowStart;
+        row.dueDay = mid;
+        drafts[at] = { ...next, windowStart: addDays(mid, 1) };
+      } else if (prev?.windowStart && prev.dueDay && daysBetween(prev.windowStart, prev.dueDay) >= 2) {
+        const mid = halfOf(prev.windowStart, prev.dueDay);
+        row.windowStart = addDays(mid, 1);
+        row.dueDay = prev.dueDay;
+        drafts[at - 1] = { ...prev, dueDay: mid };
+      } else {
+        const lastDue = [...carriedRows.map((m) => m.dueDay), ...drafts.map((d) => d.dueDay)].filter((d): d is DayKey => !!d).sort().pop() ?? null;
+        const start = lastDue && lastDue >= today ? addDays(lastDue, 1) : today;
+        row.windowStart = start;
+        row.dueDay = b.roadmap.targetDay > addDays(start, 34) ? b.roadmap.targetDay : addDays(start, 34);
+      }
+      drafts = [...drafts.slice(0, at), row, ...drafts.slice(at)];
+      if (measure.role === "CONTEXT") held.set(row.lineageId, today);
+    }
+  } else if (ed.kind === "REMOVE_TOPIC" && domain) {
+    const d = drafts[idx];
+    if (!liveDomainIds(d).includes(domain.id) && !measuresDomain(d, domain.id)) return fail(PLAN_EDIT_NOT_HERE);
+    const kept: MeasureSpec[] = [];
+    for (const x of d.measures) {
+      const ids = x.scope.domainIds ?? [];
+      if (x.kind !== "CARDS_AT_LEVEL" || !ids.includes(domain.id)) {
+        kept.push(x);
+        continue;
+      }
+      // A keyless checkpoint over several Domains loses this one; a Domain's own measure goes.
+      const rest = ids.filter((id) => id !== domain.id);
+      if (x.gate && rest.length > 0) kept.push({ ...x, scope: { ...x.scope, domainIds: rest } });
+    }
+    const items = d.items.map((i) => (i.kind === "DOMAIN" && i.domainId === domain.id && liveItem(i) ? { ...i, decision: "REMOVED" as Decision } : i));
+    const after: MilestoneDraft = { ...d, items, measures: kept };
+    if (!after.measures.some((x) => x.role === "PAYS") || liveDomainIds(after).length + after.measures.filter((x) => x.kind === "CARDS_AT_LEVEL" && !x.gate).length === 0) return fail(PLAN_EDIT_LAST_TOPIC);
+    drafts[idx] = after;
+    // The Domain leaves R only when no milestone (a started one included) still counts it.
+    const still = [...carriedRows.map(draftOf), ...drafts].some((m) => liveDomainIds(m).includes(domain.id) || measuresDomain(m, domain.id));
+    if (!still) domainIds = domainIds.filter((id) => id !== domain.id);
+  }
+
+  // The tripwire reads the plan with its Domains as they now stand (R); the row whose Domains changed has its code words follow them.
+  const textCtx: ModelTextContext = { ...modelTextContextOf(b, tree, true), required: requiredDomainsOf({ roadmap: { ...b.roadmap, domainIds } }, [...carriedRows, ...drafts]) };
+  if (ed.kind !== "RENAME" && idx >= 0) drafts[idx] = relabelledCodeItemsOf(b, drafts[idx], textCtx, [...carriedRows.map(draftOf), ...drafts]);
+  // Ords after the carried rows (a "Start again" copy keeps its position's), then every card measure keyed and baselined as acceptCore does.
+  const baseOrd = Math.max(0, ...carriedRows.map((m) => m.ord));
+  const carriedOrdOf = new Map<string, number>();
+  for (const m of carriedRows) if (!carriedOrdOf.has(m.lineageId) || m.ord < (carriedOrdOf.get(m.lineageId) as number)) carriedOrdOf.set(m.lineageId, m.ord);
+  let nextOrd = baseOrd;
+  drafts = drafts.map((d) => ({
+    ...d,
+    ord: carriedOrdOf.get(d.lineageId) ?? ++nextOrd,
+    measures: d.measures.map((x) => {
+      const ids = x.kind === "CARDS_AT_LEVEL" && x.minLevel != null ? (x.scope.domainIds ?? []) : [];
+      if (!ids.length || x.minLevel == null) return x;
+      const key = d.stage == null ? cardsAtLevelKey(ids, x.minLevel) : (x.measureKey ?? cardsAtLevelKey(ids, x.minLevel, depth != null && x.minLevel >= depth ? "rc" : "r"));
+      const live = liveCountOfKey(ctx, key) ?? liveCount(ctx, ids, x.minLevel);
+      return { ...x, measureKey: key, baseline: live.value, baselineDay: today, fittedTarget: x.target };
+    }),
+  }));
+  const carried = carriedPlanOf(b, unstarted, goals);
+  const required = requiredDomainsOf({ roadmap: { ...b.roadmap, domainIds } }, [...carriedRows, ...drafts]);
+  let feasibility: Feasibility | null = null;
+  try {
+    feasibility = feasibilityFor(e, ctx, drafts, carried);
+  } catch (err) {
+    console.error("roadmap: the edited plan's feasibility wasn't worked out (the accepted one stands):", err instanceof Error ? err.message : err);
+  }
+  const base: Feasibility = feasibility ?? feasibilityOfAcceptance(currentAcceptance(b)) ?? { today, m: ctx.m, milestones: [], aimCheck: { kind: "unchecked" }, basis: [], remedies: [], impossible: false, over: false };
+  let coverage: CoverageBreakdown[] | null = null;
+  if (depth != null) {
+    try {
+      coverage = coverageFor(e, ctx, required, ctx.coveragePrior ?? null);
+    } catch (err) {
+      console.error("roadmap: coverage not worked out for the edit:", err instanceof Error ? err.message : err);
+    }
+  }
+  const planForEnd = [...carried.map((d) => ({ draft: d, ord: d.ord })), ...drafts.map((d) => ({ draft: d, ord: d.ord }))];
+  const endState = depth != null ? depthEndStateOf(e, ctx, depth, required, [...carried, ...drafts], b.acceptances, coverage) : endStateFor(ctx, planForEnd, b.acceptances);
+  const stored: EditedPlan["feasibility"] = {
+    ...base,
+    ...(depth != null ? { ...depthRecordsOf(b, unstarted, required, coverage, today), ...(coverage ? { coverage } : {}) } : {}),
+    planEdit: { kind: ed.kind, domainIds: [...b.roadmap.domainIds] },
+  };
+  // One rank place per lineage, as acceptCore ranks a re-plan (by stage on a depth plan).
+  const groupLineages = new Set(drafts.map((d) => d.lineageId));
+  const rankRows = [
+    ...onePerLineage(carriedRows.filter((m) => !groupLineages.has(m.lineageId))).map((m) => ({
+      id: m.id,
+      lineageId: m.lineageId,
+      ord: m.ord,
+      carried: true,
+      later: false,
+      rankIndex: m.rankIndex,
+      stage: m.stage ?? null,
+      gateLevel: gateLevelOf(draftOf(m)),
+      held: heldRow(m),
+    })),
+    ...drafts.map((d) => ({ id: d.lineageId, lineageId: d.lineageId, ord: d.ord, carried: false, later: d.status === "LATER", rankIndex: null, stage: d.stage ?? null, gateLevel: gateLevelOf(d), held: heldRow(d) })),
+  ];
+  const ranks = rankIndicesOf(e, rankRows, firstRankByLineage(b), depth);
+  const overAccepted = new Map(unstarted.map((m) => [m.lineageId, m.overAccepted] as const));
+  return ok({
+    b,
+    ctx,
+    v,
+    today,
+    drafts,
+    held,
+    overAccepted,
+    ranks,
+    roadmapData: { domainIds },
+    domainIds: required,
+    feasibility: stored,
+    endState,
+    map: null,
+    textCtx,
+    unstarted,
+    carriedRows,
+    carried,
+  });
+}
+
+/**
+ * A TOPICS edit: the live map copied to version + 1 with the change (a topic you add, bound to its Domain: LIBRARY, or
+ * USER for a name you made; a topic removed with its links; a new layer, the layers after it renumbered and their
+ * links into the layer before dropped, C1), then the plan rebuilt from the map as Re-fit rebuilds it (layeredPlanOf;
+ * the stages under way left out), each rebuilt row keeping its position's lineage and a title you wrote. A rename
+ * copies the rows and changes the one title. An added topic whose Domain already holds its floor at level 6 is held
+ * (HELD_AT_START), as accept holds it.
+ */
+async function topicsPlanEditOf(
+  e: Env,
+  userId: string,
+  b: RoadmapBundle,
+  ed: PlanEdit,
+  now: Date,
+  target: MilestoneBundle | null,
+  domain: { id: string; name: string } | null,
+  madeForName: boolean,
+  unstarted: MilestoneBundle[],
+  tree: readonly TreeField[]
+): Promise<Result<EditedPlan>> {
+  const cur = b.roadmap.version;
+  const v = cur + 1;
+  const today = todayKey(now);
+  const depth: TopicDepth = topicDepthOfRow(b.roadmap) ?? AIM_DEPTHS[DEPTH_DEFAULT];
+  const rating0 = storedRatingOf(b.roadmap.rating);
+  let rating = rating0;
+  const live = mapOfVersion(b, cur, rating0?.layers ?? null);
+  let map: TopicMap = { ...live, topics: live.topics.map((t) => ({ ...t, id: null })), edges: live.edges.map((x) => ({ ...x, id: null })) };
+  const planRows = planRowsOf(b);
+  const carriedRows = planRows.filter(isCarried);
+  const keptCarried = planRows.filter((m) => isCarried(m) && m.chainRole != null && !superseded(b, m));
+  const keyOf = (m: { chainRole?: string | null; layer?: number | null; stage?: string | null }): string => `${m.chainRole ?? ""}:${m.layer ?? m.stage ?? ""}`;
+  const underWay = new Set(keptCarried.map(keyOf));
+  let oldLayerOf: (layer: number) => number | null = (layer) => layer;
+  const ctx = await topicsContextOf(e, userId, b, depth, now);
+  const held = new Map<string, DayKey>();
+  let drafts: MilestoneDraft[];
+
+  if (ed.kind === "RENAME") {
+    drafts = unstarted.map((m) => editCopyOf(m, v));
+    const idx = drafts.findIndex((d) => d.lineageId === target?.lineageId);
+    if (idx < 0) return fail(PLAN_EDIT_GONE);
+    const label = userLabel(e, ed.title, "MILESTONE", b, tree);
+    if (!label.ok) return fail(label.error);
+    if (label.value === drafts[idx].title) return fail(PLAN_EDIT_NOTHING);
+    drafts[idx] = { ...drafts[idx], title: label.value, titleOrigin: "USER", titleDecision: "EDITED" };
+    for (const m of unstarted) if (heldRow(m)) held.set(m.lineageId, m.reachedDay ?? today);
+  } else {
+    if (!domain) return fail("Pick one of your Domains.");
+    if (target && (target.chainRole !== "LAYER" || target.layer == null)) return fail(PLAN_EDIT_DEPTH_ROW);
+    if (ed.kind === "ADD_TOPIC") {
+      if (target && heldRow(target)) return fail(PLAN_EDIT_HELD);
+      if (map.topics.some((t) => topicLive(t) && t.domainId === domain.id)) return fail(PLAN_EDIT_IN_PLAN);
+      if (chosenLiveTopicsOf(map).length >= TOPICS_MAX) return fail(`A plan holds at most ${TOPICS_MAX} topics.`);
+      let layer: number;
+      if (target) layer = target.layer as number;
+      else {
+        const after = ed.newMilestone?.after;
+        const afters = editAftersOf(b);
+        if (after == null) return fail(PLAN_EDIT_PLACE);
+        if (!afters.includes(after)) return fail(afters.length > 0 && after < afters[0] ? PLAN_EDIT_AFTER_STARTED : `A plan holds at most ${LAYERS_MAX} layers.`);
+        layer = after + 1;
+        // The layers after it move one down; a link into the layer before it would now skip a layer (C1), so the moved
+        // layer's own links go and it builds on the new layer (cross-goal parents stay).
+        const moved = new Set(map.topics.filter((t) => t.layer === layer).map((t) => t.lineageId));
+        map = {
+          ...map,
+          layers: clampBands(Math.max(map.layers, filledBandsOf(map)) + 1),
+          topics: map.topics.map((t) => (t.layer >= layer ? { ...t, layer: t.layer + 1 } : t)),
+          edges: map.edges.flatMap((x) => (!moved.has(x.childLineageId) || x.origin === "CROSS_GOAL" ? [x] : x.origin === "GEMINI" ? [{ ...x, decision: "REMOVED" as const }] : [])),
+        };
+        if (rating && Array.isArray(rating.milestones)) rating = { ...rating, milestones: storedMilestonesOf(rating).map((m) => (m.layer >= layer ? { ...m, layer: m.layer + 1 } : m)) };
+        oldLayerOf = (j) => (j < layer ? j : j === layer ? null : j - 1);
+      }
+      const key = nextTopicKey(map);
+      if (!topicsLib.TOPIC_KEY_PATTERN.test(key)) return fail("This map holds as many topics as it can.");
+      const added: TopicDraft = {
+        id: null,
+        lineageId: e.makeId(),
+        key,
+        layer,
+        name: domain.name,
+        rawName: null,
+        nameOrigin: madeForName ? "USER" : "LIBRARY",
+        scope: null,
+        placedBy: "YOU",
+        grounding: "OWN",
+        sources: [],
+        formVotes: 0,
+        samples: 0,
+        layerVotes: [],
+        decision: "KEPT",
+        mergedInto: null,
+        chosen: true,
+        role: "BASE",
+        domainId: domain.id,
+        bound: !madeForName,
+        heldDay: null,
+        skippedDay: null,
+        flags: [],
+        notes: [],
+      };
+      map = settledTopicMapOf({ ...map, topics: [...map.topics, added] });
+      // Held when you add it, as accept holds a topic: its Domain already holds its floor at level 6.
+      const settled = map.topics.find((t) => t.lineageId === added.lineageId) as TopicDraft;
+      if (cardsAtOpenOf(tree, domain.id) >= topicFloorOf(tree, settled)) map = withTopicChanged(map, { ...settled, heldDay: today, notes: [...settled.notes, "HELD_AT_START" as TopicNote] });
+    } else {
+      const layer = target?.layer as number;
+      const t = map.topics.find((x) => topicLive(x) && x.chosen && x.layer === layer && x.domainId === domain.id);
+      if (!t) return fail(PLAN_EDIT_NOT_HERE);
+      if (!map.topics.some((x) => topicLive(x) && x.chosen && x.layer === layer && x.lineageId !== t.lineageId)) return fail(PLAN_EDIT_LAST_TOPIC);
+      map = withoutTopicLinksOf(withTopicChanged(map, { ...t, decision: "REMOVED", chosen: false }), t.lineageId, "BOTH");
+    }
+    map = settledTopicMapOf(map);
+    const ladder = layeredPlanOf(e, ctx, map, depth, v);
+    if (!ladder.ok) return fail(ladder.error);
+    const rows0 = ladder.plan.filter((m) => !underWay.has(keyOf(m)));
+    const K = Math.max(LAYERS_MIN, ...rows0.map((m) => m.layer ?? 0), ...keptCarried.map((m) => m.layer ?? 0));
+    const oldByKey = new Map(unstarted.map((m) => [keyOf(m), m] as const));
+    drafts = rows0.map((m) => {
+      const oldLayer = m.chainRole === "LAYER" && m.layer != null ? oldLayerOf(m.layer) : null;
+      const old = m.chainRole === "LAYER" ? (oldLayer != null ? oldByKey.get(`LAYER:${oldLayer}`) : undefined) : oldByKey.get(keyOf(m));
+      const yours = !!old && (old.titleOrigin === "USER" || old.titleDecision === "EDITED");
+      const layerIds = m.chainRole === "LAYER" ? Array.from(new Set(map.topics.filter((t) => topicLive(t) && t.chosen && t.layer === m.layer && t.domainId).map((t) => t.domainId as string))) : [];
+      const names = layerIds.map((id) => ctx.domains.get(id)).filter((d): d is DomainFacts => !!d).map((d) => domainName(d));
+      const title = yours && old ? old.title : m.chainRole === "LAYER" && m.layer != null ? String(topicLayerTitleOf(names, m.layer, K)) : m.title;
+      const row: MilestoneDraft = {
+        ...m,
+        lineageId: old?.lineageId ?? m.lineageId,
+        title,
+        ...(yours && old ? { titleOrigin: old.titleOrigin as Origin, titleDecision: old.titleDecision as Decision } : {}),
+        status: (old?.status === "LATER" ? "LATER" : "DRAFT") as MilestoneStatus,
+      };
+      if (heldRow(row)) held.set(row.lineageId, old?.reachedDay ?? today);
+      return row;
+    });
+    const cap = milestoneCapOf("TOPICS");
+    if (new Set([...keptCarried.map((m) => m.lineageId), ...drafts.filter(scheduled).map((d) => d.lineageId)]).size > cap) return fail(`A roadmap holds at most ${cap} milestones; move some to Later.`);
+    if (rating) rating = { ...rating, layers: K };
+  }
+
+  // Ords after the carried rows, then every topic card measure keyed and baselined as acceptTopicsStep does.
+  const baseOrd = Math.max(0, ...carriedRows.map((m) => m.ord));
+  drafts = drafts.map((d, i) => ({
+    ...d,
+    ord: baseOrd + i + 1,
+    measures: d.measures.map((x) => {
+      // A PART or BETWEEN checkpoint stays keyless (its key would collide with its topic's own).
+      if (x.kind !== "CARDS_AT_LEVEL" || x.minLevel == null || x.gate) return x;
+      const lineageDomain = x.topicLineageId ? (map.topics.find((t) => t.lineageId === x.topicLineageId)?.domainId ?? null) : null;
+      const ids = lineageDomain ? [lineageDomain] : (x.scope.domainIds ?? []);
+      if (!ids.length) return x;
+      const key = cardsAtLevelKey(ids, x.minLevel, x.minLevel >= depth ? "rc" : "r");
+      const live0 = liveCountOfKey(ctx, key) ?? liveCount(ctx, ids, x.minLevel, true);
+      return { ...x, scope: { ...x.scope, domainIds: ids }, measureKey: key, baseline: live0.value, baselineDay: today, fittedTarget: x.target };
+    }),
+  }));
+  const feasibility = topicsFeasibilityOf(e, ctx, drafts, keptCarried.map(draftOf));
+  const known = new Set(map.topics.filter((t) => t.heldDay != null || t.skippedDay != null).map((t) => t.lineageId));
+  const allKnown = (d: MilestoneDraft): boolean => {
+    const own = Array.from(new Set(d.measures.map((x) => x.topicLineageId).filter((l): l is string => !!l)));
+    return own.length > 0 && own.every((l) => known.has(l));
+  };
+  const rankRows = [
+    ...onePerLineage(keptCarried.filter((m) => !drafts.some((d) => d.lineageId === m.lineageId))).map((m) => ({
+      id: m.id,
+      lineageId: m.lineageId,
+      ord: m.ord,
+      carried: true,
+      later: false,
+      rankIndex: m.rankIndex,
+      stage: m.stage ?? null,
+      gateLevel: gateLevelOf(draftOf(m)),
+      held: heldRow(m),
+    })),
+    ...drafts.map((d) => ({
+      id: d.lineageId,
+      lineageId: d.lineageId,
+      ord: d.ord,
+      carried: false,
+      later: d.status === "LATER",
+      rankIndex: null,
+      stage: d.stage ?? null,
+      gateLevel: gateLevelOf(d),
+      held: heldRow(d),
+      skipped: allKnown(d),
+      part: d.measures.some((x) => x.gate === "PART"),
+    })),
+  ];
+  const ranks = rankIndicesOf(e, rankRows, firstRankByLineage(b), depth, "TOPICS");
+  const chosen = chosenLiveTopicsOf(map);
+  const chosenIds = Array.from(new Set(chosen.map((t) => t.domainId).filter((d): d is string => !!d)));
+  const levels: Record<string, number> = {};
+  for (const t of chosen) if (t.domainId) levels[t.domainId] = t.role === "DEEP" ? depth : Math.min(BASE_LEVEL, depth);
+  const endState = topicsEndStateOf(e, ctx, depth, chosenIds, levels, drafts, b.acceptances);
+  const overAccepted = new Map(unstarted.map((m) => [m.lineageId, m.overAccepted] as const));
+  return ok({
+    b,
+    ctx,
+    v,
+    today,
+    drafts,
+    held,
+    overAccepted,
+    ranks,
+    roadmapData: { domainIds: chosenIds, rating: rating ? { ...rating } : null },
+    domainIds: chosenIds,
+    feasibility: { ...feasibility, planEdit: { kind: ed.kind, domainIds: [...b.roadmap.domainIds], rating: rating0 } },
+    endState,
+    map,
+    textCtx: topicsTextContextOf(b, tree, map),
+    unstarted,
+    carriedRows,
+    carried: [],
+  });
+}
+
+/**
+ * The edited plan's transaction, as an accept writes it: DOMAINS_FREE, the roadmap at its version and every copied row
+ * in its status (a Start meanwhile makes it stale), the version moved on with the plan's Domains (and a TOPICS plan's
+ * rating), the replaced rows SUPERSEDED, the map (TOPICS), the rows through the one writer (the tripwire) then ACTIVE
+ * (PLANNED or LATER, their ords, ranks and held days), the acceptance record (previousVersion: the plan it replaced;
+ * the edit's mark), the first readings (every card of the next milestone's keys and the end state's) and Proficiency.
+ */
+async function editedPlanOps(e: Env, deps: RoadmapDeps, userId: string, p: EditedPlan, now: Date): Promise<Result<StoreOp[]>> {
+  const roadmapId = p.b.roadmap.id;
+  const cur = p.b.roadmap.version;
+  const ops: StoreOp[] = [
+    ...domainsFreeOps(p.domainIds, roadmapId),
+    { op: "guard", guard: { g: "ROADMAP_IS", id: roadmapId, statuses: ["ACTIVE"], version: cur } },
+    ...p.unstarted.map((m): StoreOp => ({ op: "guard", guard: { g: "MILESTONE_IS", id: m.id, statuses: [m.status as MilestoneStatus] } })),
+    { op: "update", table: "roadmap", where: { id: roadmapId, version: cur }, data: { ...p.roadmapData, version: p.v, updatedAt: now } },
+    { op: "update", table: "roadmapMilestone", where: { roadmapId, version: cur, status: { in: ["PLANNED", "LATER"] } }, data: { status: "SUPERSEDED" } },
+  ];
+  if (p.map) ops.push(...mapRowOps(roadmapId, p.v, p.map, now, e.makeId));
+  try {
+    writeRoadmapRows(ops, { kind: "DRAFT", roadmapId, version: p.v, plan: p.drafts, feasibility: p.feasibility, now, makeId: e.makeId }, p.textCtx);
+  } catch (err) {
+    if (!(err instanceof ModelTextError)) throw err;
+    logRefusedWrite("plan-edit", err);
+    return fail(CHANGE_NOT_SAVED);
+  }
+  for (const d of p.drafts) {
+    const heldDay = p.held.get(d.lineageId) ?? null;
+    ops.push({
+      op: "update",
+      table: "roadmapMilestone",
+      where: { roadmapId, version: p.v, lineageId: d.lineageId, status: d.status === "LATER" ? "LATER" : "DRAFT" },
+      data: {
+        status: d.status === "LATER" ? "LATER" : "PLANNED",
+        ord: d.ord,
+        rankIndex: d.status === "LATER" ? null : (p.ranks[d.lineageId] ?? null),
+        overAccepted: p.overAccepted.get(d.lineageId) ?? false,
+        ...(heldDay ? { reachedDay: heldDay } : {}),
+      },
+    });
+  }
+  const readingRows: ReadingRow[] = [];
+  const next = p.drafts.find((d) => d.status !== "LATER" && !p.held.has(d.lineageId)) ?? null;
+  for (const x of next?.measures ?? []) {
+    const parsed = x.measureKey ? parseMeasureKey(x.measureKey) : null;
+    if (parsed?.kind !== "CARDS_AT_LEVEL" || parsed.segment === "rc" || !x.measureKey || readingRows.some((r) => r.measureKey === x.measureKey)) continue;
+    readingRows.push(measures.cardsReadingRow(x.measureKey, p.today, liveCountOfKey(p.ctx, x.measureKey) ?? liveCount(p.ctx, parsed.domainIds, parsed.level, parsed.segment != null)));
+  }
+  for (const t of p.endState) {
+    if (readingRows.some((r) => r.measureKey === t.measureKey)) continue;
+    const parsed = parseMeasureKey(t.measureKey);
+    if (parsed?.kind !== "CARDS_AT_LEVEL" || parsed.segment === "rc") continue;
+    readingRows.push(measures.cardsReadingRow(t.measureKey, p.today, liveCount(p.ctx, parsed.domainIds, parsed.level, parsed.segment != null)));
+  }
+  const acc = currentAcceptance(p.b);
+  ops.push({
+    op: "insert",
+    table: "roadmapAcceptance",
+    rows: [
+      {
+        id: e.makeId(),
+        roadmapId,
+        version: p.v,
+        day: p.today,
+        acceptedAt: now,
+        previousVersion: cur,
+        feasibility: p.feasibility,
+        endState: p.endState,
+        intervalMultiplier: p.ctx.m,
+        overAccepted: acc?.overAccepted ?? false,
+        undoneAt: null,
+      },
+    ],
+  });
+  const planAfter = [
+    ...p.carried,
+    ...p.drafts.map((d) => ({ ...d, status: (d.status === "LATER" ? "LATER" : "PLANNED") as MilestoneStatus })),
+  ];
+  try {
+    const basis = e.lanes.proficiencyBasisOf({ basisVersion: p.v, endState: p.endState, feasibility: p.feasibility, milestones: planAfter, switchedOff: switchedOffOf(p.carriedRows), heldDays: p.ctx.held });
+    const prof = await proficiencyFor(e, deps, userId, roadmapId, now, basis, "REPLAN", practiceNamesOf([...p.carriedRows, ...p.drafts]));
+    if (prof) readingRows.push(prof);
+  } catch (err) {
+    console.error("roadmap: Proficiency not rebased with the plan's edit:", err);
+  }
+  if (readingRows.length) ops.push({ op: "readings", rows: readingRows, observedAt: now });
+  return ok(ops);
 }
 
 /** ARCHIVED with archivedAt and archiveReason; an open milestone goal is archived only when the user said so (with its undo). History is kept. */
@@ -10565,7 +11427,7 @@ function roadmapViewOfData(e: Env, deps: RoadmapDeps, v: ViewData, ctx: PlanCont
     proficiency: status === "DRAFT" ? null : proficiencyViewFrom(e, v),
     toward: towardOf(e, v, ctx, bodyArea ? weightLineOf(weight) : null),
     current: cur ? currentViewOf(e, v, ctx, cur) : null,
-    milestones: milestoneRowsOf(e, v, rank),
+    milestones: rowEditsOf(b, v.tree, v.templates, milestoneRowsOf(e, v, rank)),
     weekQuests,
     pastWeeks,
     throughput,
@@ -10586,6 +11448,63 @@ function roadmapViewOfData(e: Env, deps: RoadmapDeps, v: ViewData, ctx: PlanCont
     // Confirm to unlock (contracts §19): the answers stay editable for the life of the plan (open plans only, and a
     // paused goal's: an AVOID is lifted only on the goal that stored it, §23.6 item 5, ruling 66).
     activityConfirm: status === "DRAFT" || status === "ACTIVE" || status === "PAUSED" ? activityConfirmFor(e, b.roadmap) : null,
+    // Ruling N18: an accepted plan's edits (the rows' own `edit`, and what the sheet reads beside them).
+    planEdit: planEditViewOf(e, b, v.tree),
+  };
+}
+
+/**
+ * Ruling N18: each unstarted row of an accepted (or paused) plan with what its edit sheet may change: its title, and
+ * its topics on a LEVELS stage or a TOPICS layer (not held; a depth milestone's topics are the last layer's). Its
+ * Domains are its live DOMAIN items. Started, reached and other rows are as they were (no `edit`). Never reads a draft,
+ * so the live plan's parts stay as they are while one exists.
+ */
+function rowEditsOf(b: RoadmapBundle, tree: readonly TreeField[], templates: ReadonlyMap<string, GoalFacts>, rows: MilestoneRowView[]): MilestoneRowView[] {
+  if ((b.roadmap.status !== "ACTIVE" && b.roadmap.status !== "PAUSED") || b.roadmap.version < 1) return rows;
+  const byId = new Map(b.milestones.map((m) => [m.id, m] as const));
+  const facts = domainFactsOf(tree);
+  const topics = kindOfRow(b.roadmap) === "TOPICS";
+  return rows.map((r) => {
+    const m = byId.get(r.id);
+    if (!m || m.version !== b.roadmap.version || (m.status !== "PLANNED" && m.status !== "LATER") || dormantCopy(b, m, templates)) return r;
+    const seen = new Set<string>();
+    const domains: { id: string; name: string }[] = [];
+    for (const i of [...m.items].sort((x, y) => x.ord - y.ord)) {
+      if (i.kind !== "DOMAIN" || !liveItem(i) || !i.domainId || seen.has(i.domainId)) continue;
+      seen.add(i.domainId);
+      domains.push({ id: i.domainId, name: facts.get(i.domainId)?.name ?? i.label });
+    }
+    const canTopics = b.roadmap.fieldId != null && !heldRow(m) && (topics ? m.chainRole === "LAYER" && m.layer != null : depthOf(b.roadmap) != null);
+    const edit: MilestoneEditView = { rename: true, topics: canTopics, domains };
+    return { ...r, edit };
+  });
+}
+
+/** Ruling N18: what an accepted plan's edits read beside its rows (RoadmapView.planEdit); null on a draft, a closed or a legacy plan. */
+function planEditViewOf(e: Env, b: RoadmapBundle, tree: readonly TreeField[]): PlanEditView | null {
+  if ((b.roadmap.status !== "ACTIVE" && b.roadmap.status !== "PAUSED") || b.roadmap.version < 1 || legacyOf(b)) return null;
+  const topics = kindOfRow(b.roadmap) === "TOPICS";
+  const field = b.roadmap.fieldId ? (tree.find((f) => f.id === b.roadmap.fieldId) ?? null) : null;
+  const held: PlanEditView["held"] = [];
+  const seen = new Set<string>();
+  for (const r of (e.goals.get(b.roadmap.userId) ?? []).filter((x) => x.id !== b.roadmap.id && holdsGoal(x)).sort(bySeatOrder)) {
+    for (const id of goalDomainsOf(r)) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      held.push({ domainId: id, slot: shownSlotOf(r) });
+    }
+  }
+  const inPlan = topics ? Array.from(new Set([...goalDomainsOf(b.roadmap), ...topicMapDomainsOf(mapOfVersion(b, b.roadmap.version))])) : requiredDomainsOf(b, planRowsOf(b));
+  return {
+    roadmapId: b.roadmap.id,
+    planKind: topics ? "TOPICS" : "LEVELS",
+    fieldId: field?.id ?? null,
+    fieldName: field?.name ?? null,
+    held,
+    inPlan,
+    after: editAftersOf(b),
+    levels: editLevelsOf(b),
+    blocked: planEditBlockedOf(b),
   };
 }
 

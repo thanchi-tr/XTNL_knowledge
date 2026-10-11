@@ -75,6 +75,7 @@ import {
   type MilestoneDraft,
   type MilestoneFeasibility,
   type MilestoneRowView,
+  type PlanEditView,
   type ProficiencyView,
   type Recorded,
   type RoadmapHeader,
@@ -676,6 +677,19 @@ function rowsActive(): MilestoneRowView[] {
     r(5, "Live trading at small size", "OUTLINE", "2027-08-02", "2027-10-17", null),
     r(6, "Consistency review", "OUTLINE", "2027-10-18", "2027-12-31", null),
   ];
+}
+
+/**
+ * Ruling N18: an accepted plan's edits drawn on a fixture: each unstarted row (Planned, Outline, Later) its edit glyph in
+ * its ▸ (its topics from `domainsOf`; a depth milestone renames only), and the card's "+" for a new milestone. Its
+ * actions refuse (a fixture saves nothing), so the sheet shows the refusal line.
+ */
+function withPlanEditFixture(v: RoadmapView, plan: Omit<PlanEditView, "roadmapId">, domainsOf: (r: MilestoneRowView) => { id: string; name: string }[]): RoadmapView {
+  return {
+    ...v,
+    milestones: v.milestones.map((r) => (r.state === "PLANNED" || r.state === "OUTLINE" || r.state === "LATER" ? { ...r, edit: { rename: true, topics: r.chainRole !== "DEPTH", domains: domainsOf(r) } } : r)),
+    planEdit: { roadmapId: v.header?.id ?? "rm1", ...plan },
+  };
 }
 
 function feasibilityActive(): Feasibility {
@@ -1542,7 +1556,15 @@ function fixtureOf(state: FixtureState): RoadmapFixture {
       return { view: v, intake: null, aim: aimFromView(v, "ACCEPTED"), today: null, startPreview: null, note: "Accepted, not started: Start is hidden while the goal seams are off." };
     }
     case "active": {
-      const v = activeView();
+      // Ruling N18: the unstarted milestones carry their edit glyph in the ▸, and the card its "+" (a new milestone at a level).
+      const v = withPlanEditFixture(
+        activeView(),
+        { planKind: "LEVELS", fieldId: "f-tr", fieldName: "Trading", held: [{ domainId: "d-mp", slot: 2 }], inPlan: ["d-bt", "d-rm", "d-ps", "d-qs"], after: [], levels: [8, 10, 12], blocked: null },
+        () => [
+          { id: "d-bt", name: "Algorithmic Backtesting" },
+          { id: "d-rm", name: "Risk Management" },
+        ]
+      );
       return { view: v, intake: null, aim: aimFromView(v, "ACTIVE"), today: v.weekQuests, startPreview: null, note: "On pace, with week quests and past weeks." };
     }
     case "goals-three": {
@@ -3423,7 +3445,22 @@ function topicFixtureOf(state: TopicState): RoadmapFixture {
       return { view: v, intake: null, aim: null, today: null, startPreview: null, gates: { topics: true }, note: "[Write the topics] with no Gemini (ruling 58): «App's rough estimate · no Gemini», ≈ 3 layers · your map fills 1; your Domains as unticked layer-1 seeds (one named by Gemini in an earlier goal), the aim's three clauses verbatim under the last band, and two bands you haven't filled." };
     }
     case "topic-map-plan": {
-      const v = topicPlanView(topicChainRows({ reached: [1], current: 2 }));
+      // Ruling N18: layers 3 and 4 carry their edit glyph (their topics), the depth milestone renames only, and the card's "+" places a new layer.
+      const topicDomains: Record<number, { id: string; name: string }[]> = {
+        3: [
+          { id: "d-T7", name: "Gamma one" },
+          { id: "d-Y1", name: "My own topic" },
+        ],
+        4: [
+          { id: "d-T11", name: "Delta one" },
+          { id: "d-T12", name: "Delta two" },
+        ],
+      };
+      const v = withPlanEditFixture(
+        topicPlanView(topicChainRows({ reached: [1], current: 2 })),
+        { planKind: "TOPICS", fieldId: "f-st", fieldName: "Statistics", held: [{ domainId: "d-rk", slot: 2 }], inPlan: ["d-T7", "d-T11", "d-T12"], after: [2, 3, 4], levels: [], blocked: null },
+        (r) => (r.layer != null ? (topicDomains[r.layer] ?? []) : [])
+      );
       return { view: v, intake: null, aim: packAim(v, "ACTIVE"), today: null, startPreview: null, gates: TOPIC_GATES, note: "An accepted TOPICS plan: every layer kept, Gemini's names now Domains with the Gemini mark, one held when you began and one you know; the estimate shows «1 merged by you»; the chain's layer nodes, the locked ones «after k» with m.builds, and the depth milestone «set by reviews»." };
     }
     case "topic-chain": {

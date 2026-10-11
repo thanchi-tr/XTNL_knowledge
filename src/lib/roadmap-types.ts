@@ -5011,6 +5011,65 @@ export interface MilestoneRowView {
   titleParts?: NamedPart[];
   /** Every topic of the layer is marked "I know this". */
   known?: boolean;
+  /** Ruling N18: what the plan page's edit sheet may change on this row (an unstarted row of an accepted plan); absent or null: nothing. */
+  edit?: MilestoneEditView | null;
+}
+
+/**
+ * Ruling N18 (contracts §22.20): one milestone of an accepted plan as its edit sheet reads it. Each change goes through
+ * editPlanCore (a new accepted version, undone by the accept toast's Undo).
+ */
+export interface MilestoneEditView {
+  /** Its title can be renamed (any unstarted row). */
+  rename: boolean;
+  /** A topic can be added or removed here (a LEVELS stage or a TOPICS layer, not started and not held). */
+  topics: boolean;
+  /** The Domains this milestone counts, in its order (its own topics; never an earlier layer's "climbing" rows). */
+  domains: { id: string; name: string }[];
+}
+
+/** Ruling N18: what an accepted plan's edits read beside the rows (RoadmapView.planEdit). */
+export interface PlanEditView {
+  roadmapId: string;
+  planKind: PlanKind;
+  /** The Field a new Domain is made in (the plan's Area Field); null on a track Area (no Domains to add). */
+  fieldId: string | null;
+  fieldName: string | null;
+  /** Domains another open goal holds (DOMAINS_FREE): the picker shows them off, with the goal's seat (null: a paused goal). */
+  held: { domainId: string; slot: GoalSlot | null }[];
+  /** Domains this plan already counts (Roadmap.domainIds and the live map's chosen topics). */
+  inPlan: string[];
+  /** A new TOPICS layer may follow these layers (0: before layer 1); [] on LEVELS or when none can be added. */
+  after: number[];
+  /** A new LEVELS milestone may aim at these levels; [] on TOPICS or when none can be added. */
+  levels: number[];
+  /** Why every edit waits (a re-plan draft open, the goal paused, a milestone starting), in words; null when edits are on. */
+  blocked: string | null;
+}
+
+/** Ruling N18: editPlanCore's one change. The milestone is a row of the accepted version; `newMilestone` places a new one. */
+export type PlanEdit =
+  | { kind: "RENAME"; milestoneId: string; title: string }
+  | {
+      kind: "ADD_TOPIC";
+      /** An unstarted milestone, or null with `newMilestone`. */
+      milestoneId: string | null;
+      /** TOPICS: the new layer follows layer `after` (0: before layer 1). LEVELS: the new milestone aims at `level`. */
+      newMilestone?: { after?: number; level?: number } | null;
+      /** One of your Domains (any Field), or a new name (a Domain made at level 0 in the plan's Field, named by you). */
+      domainId?: string | null;
+      name?: string | null;
+    }
+  | { kind: "REMOVE_TOPIC"; milestoneId: string; domainId: string };
+
+/** editPlanCore's answer: the version the edit was accepted as (the toast's Undo names it), and what it counted. */
+export interface PlanEditResult {
+  version: number;
+  /** The Domain added (made, when `created`), or removed; null on a rename. */
+  domainId: string | null;
+  created: boolean;
+  /** The cards that Domain holds now, all of them counted toward the goal from this version (an add); null otherwise. */
+  counted: number | null;
 }
 
 /** "Now": the current milestone, expanded (anchor #now). */
@@ -5200,6 +5259,8 @@ export interface RoadmapView {
   goals?: GoalSwitcherView | null;
   /** A TOPICS draft's Gemini chain (fix round; ruling 47): what the page's poll and its stop line read. Absent: no chain. */
   topicChain?: TopicChainView | null;
+  /** Ruling N18: an accepted plan's edits (rename, add or remove a topic, a new milestone); absent or null on any other state. */
+  planEdit?: PlanEditView | null;
 }
 
 // ═══ Constraint safety: confirm to unlock (contracts §19) ═══════════════════
