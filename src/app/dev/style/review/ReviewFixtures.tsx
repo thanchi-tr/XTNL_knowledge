@@ -190,6 +190,8 @@ export function ReviewFixtures({ state, data, loadoutStrip }: { state: FixtureSt
         }}
         onRetry={() => setPhase({ kind: "ask" })}
         onRequestExit={() => window.location.assign("/dev/style/review?state=hub")}
+        // Fixtures: "I was right" shows on a SHORT or LIST miss and is inert here (nothing is saved).
+        onOverride={() => {}}
       />
     </>
   );

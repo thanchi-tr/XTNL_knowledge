@@ -19,7 +19,7 @@
  */
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { submitReview } from "@/app/actions/review";
+import { overrideReview, submitReview } from "@/app/actions/review";
 import { chooseBossBoon, resolveBossEncounter, startBossEncounter } from "@/app/actions/bosses";
 import type { BossResolution, BossState } from "@/lib/bosses";
 import { BOON_KINDS, BOON_META, type BoonKind } from "@/lib/boon-meta";
@@ -129,6 +129,8 @@ export function WorkspaceView(props: Props) {
   const pathname = usePathname();
   const view = useSearchParams().get("view");
   const { streak, recordResult } = useStreak();
+  /** An "I was right" on its way for the card on screen, or its refusal. */
+  const [override, setOverride] = useState<{ busy: boolean; error: string | null } | null>(null);
   const { prefs, motion } = useMotionPref();
 
   const resumable = view === "run" && totalDue > 0;
@@ -256,6 +258,34 @@ export function WorkspaceView(props: Props) {
     });
   }
 
+  /**
+   * "I was right" on a short answer or a list the checker marked wrong: the server takes the miss back on its own
+   * record and pays the answer as a pass (overrideReview); the result replaces the miss, in the panel and the recap.
+   */
+  function overrideMiss() {
+    const r = runRef.current;
+    if (!r || r.phase.kind !== "answered" || r.phase.result.correct || override?.busy) return;
+    const card = r.queue[r.index];
+    const missed = r.phase.result;
+    if (!card) return;
+    setOverride({ busy: true, error: null });
+    startTransition(async () => {
+      const res = await overrideReview({ ideaId: card.id, combo: missed.combo.before }).catch(() => ({ ok: false as const, error: "No reply from the server. Try again." }));
+      if (!res.ok) {
+        setOverride({ busy: false, error: res.error });
+        return;
+      }
+      recordResult(res.value.combo.next);
+      setRun((cur) => {
+        if (!cur || cur.id !== r.id || cur.phase.kind !== "answered") return cur;
+        const last = cur.results.length - 1;
+        const results = cur.results.map((x, i) => (i === last && x.card.id === card.id ? { ...x, result: res.value } : x));
+        return { ...cur, results, phase: { ...cur.phase, result: res.value } };
+      });
+      setOverride(null);
+    });
+  }
+
   function finish(opts: { retreat?: boolean } = {}) {
     const r = runRef.current;
     if (!r) return;
@@ -287,6 +317,7 @@ export function WorkspaceView(props: Props) {
   function next() {
     const r = runRef.current;
     if (!r || r.phase.kind !== "answered") return;
+    setOverride(null);
     if (r.index + 1 >= r.queue.length) finish();
     else setRun({ ...r, index: r.index + 1, phase: { kind: "ask" } });
   }
@@ -362,6 +393,8 @@ export function WorkspaceView(props: Props) {
           onNext={next}
           onRetry={() => setPhase({ kind: "ask" })}
           onRequestExit={requestExit}
+          onOverride={overrideMiss}
+          override={override}
         />
         <Sheet
           open={confirmOpen}

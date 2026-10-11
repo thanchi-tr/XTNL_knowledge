@@ -430,6 +430,60 @@ export async function applyReviewResult(
   return outcome;
 }
 
+/** How long after a miss it can still be counted as right (overrideReview), and on which formats. */
+export const OVERRIDE_WINDOW_MS = 10 * 60_000;
+export const OVERRIDE_TYPES: readonly string[] = ["SHORT", "LIST"];
+
+/**
+ * The reviewer's own call on a miss the checker made (SHORT and LIST, whose checker matches words, not meaning):
+ * "I was right". Takes back the miss on the server's own record of it, never on the client's word: the idea's latest
+ * REVIEW row must be that miss (xp 0, 'strike', 'degraded' or 'shielded' with the level it was taken at), inside
+ * OVERRIDE_WINDOW_MS, and never overridden before (an ADJUST row keyed 'review-override:<row>' marks it, so a second
+ * tap does nothing). A degradation is undone: the level comes back and so do the points it took (levelLossPoints).
+ * A strike needs nothing undone: the pass that follows (applyReviewResult, correct) resets the strikes and the due
+ * date. A ward charge a shielded miss spent stays spent. Returns the level the answer was given at.
+ */
+export async function undoMissCore(userId: string, ideaId: string, now: Date = new Date()): Promise<{ ok: true; levelBefore: number } | { ok: false; error: string }> {
+  const read = () =>
+    Promise.all([
+      prisma.idea.findUnique({ where: { id: ideaId }, select: { id: true, level: true, questionType: true, domainId: true } }),
+      prisma.activityEvent.findFirst({ where: { userId, source: "REVIEW", sourceId: ideaId }, orderBy: { occurredAt: "desc" }, select: { id: true, xp: true, detail: true, occurredAt: true } }),
+    ]);
+  let [idea, row] = await read();
+  if (!idea) return { ok: false, error: "That idea no longer exists." };
+  if (!OVERRIDE_TYPES.includes(idea.questionType)) return { ok: false, error: "Only a short answer or a list can be counted as right by hand." };
+  const missOf = (r: typeof row) => (r && r.xp === 0 ? /^(strike|degraded|shielded) · L(\d+)/.exec(r.detail ?? "") : null);
+  // The miss's row is written just after its answer is sent: give it a moment once.
+  if (!missOf(row)) {
+    await new Promise((res) => setTimeout(res, 700));
+    [idea, row] = await read();
+    if (!idea) return { ok: false, error: "That idea no longer exists." };
+  }
+  const miss = missOf(row);
+  if (!row || !miss) return { ok: false, error: "There's no missed answer on this idea to count as right." };
+  if (now.getTime() - row.occurredAt.getTime() > OVERRIDE_WINDOW_MS) return { ok: false, error: "Too late: a miss can be counted as right for 10 minutes after it." };
+  const outcome = miss[1];
+  const levelBefore = Number(miss[2]);
+
+  const ops: Prisma.PrismaPromise<unknown>[] = [
+    activityOp(userId, { source: "ADJUST", sink: "NONE", xp: 0, sourceId: ideaId, occurredAt: now, countsForStreak: false, detail: `override · ${outcome} · L${levelBefore}`, dedupeKey: `review-override:${row.id}` }),
+  ];
+  const restore = outcome === "degraded" && idea.level < levelBefore;
+  if (restore) {
+    ops.push(prisma.idea.update({ where: { id: ideaId }, data: { level: levelBefore } }));
+    const refund = levelLossPoints(levelBefore);
+    if (refund > 0) ops.push(prisma.domain.update({ where: { id: idea.domainId }, data: { totalPoints: { increment: refund } } }));
+  }
+  try {
+    await prisma.$transaction(ops);
+  } catch (err) {
+    if (isDuplicateActivity(err)) return { ok: false, error: "Already counted as right." };
+    throw err;
+  }
+  if (restore) await recalculateLeveling(idea.domainId);
+  return { ok: true, levelBefore };
+}
+
 /**
  * Daily Cron target: forgetting (forgetting.ts). Every card past its grace with a level to lose is read against the
  * forgetting curve: from the level it fell due at and the days it has been overdue since, how many levels it has

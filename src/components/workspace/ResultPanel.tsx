@@ -37,6 +37,8 @@ import { play } from "@/lib/motion";
 import { formulaOf, sealsOf, type RunCard } from "./review-model";
 
 export const AUTO_ADVANCE_MS = 1800;
+/** The formats a miss can be counted as right on by hand (srs.ts OVERRIDE_TYPES: the checker matches words). */
+const OVERRIDABLE: ReadonlySet<string> = new Set(["SHORT", "LIST"]);
 
 interface Props {
   open: boolean;
@@ -50,11 +52,18 @@ interface Props {
   onNext: () => void;
   /** Where the "+N" token takes off from (the runner flies it to the session tally). */
   payRef?: RefObject<HTMLSpanElement | null>;
+  /**
+   * "I was right": the reviewer overrides the checker on a short answer or a list it marked wrong (overrideReview).
+   * Absent: not offered. `overriding` while it is on its way; `overrideError` when it was refused.
+   */
+  onOverride?: () => void;
+  overriding?: boolean;
+  overrideError?: string | null;
 }
 
 const noSubscribe = () => () => undefined;
 
-export function ResultPanel({ open, card: cardNow, result: resultNow, answer: answerNow, autoAdvance, isLast, onNext, payRef }: Props) {
+export function ResultPanel({ open, card: cardNow, result: resultNow, answer: answerNow, autoAdvance, isLast, onNext, payRef, onOverride, overriding = false, overrideError = null }: Props) {
   // The portal exists only in the browser; false on the server and during hydration, so the two agree.
   const isClient = useSyncExternalStore(noSubscribe, () => true, () => false);
   // While the panel slides away, it keeps showing the result it slid in with.
@@ -182,6 +191,20 @@ export function ResultPanel({ open, card: cardNow, result: resultNow, answer: an
                   ? "The combo resets to 0. Points already paid stay paid."
                   : `The combo drops to ${result.combo.next}. Points already paid stay paid.`}
               </p>
+              {/* The checker matches words; a right meaning in other words is the reviewer's call to make. */}
+              {onOverride && OVERRIDABLE.has(card.questionType) && (
+                <div className="rv-override">
+                  <p className="t-meta">Same meaning in other words? The checker compares words, so you can count it as right.</p>
+                  <Button variant="secondary" size="lg" block onClick={onOverride} disabled={overriding}>
+                    {overriding ? "Counting it…" : "I was right: count it"}
+                  </Button>
+                  {overrideError && (
+                    <p className="t-meta ink-1" role="alert">
+                      {overrideError}
+                    </p>
+                  )}
+                </div>
+              )}
             </>
           )}
           <div className="rv-acts">

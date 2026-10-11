@@ -74,6 +74,9 @@ interface Props {
   onNext: () => void;
   onRetry: () => void;
   onRequestExit: () => void;
+  /** "I was right": count the missed answer on this card as right (overrideReview); its state, while it is on its way. */
+  onOverride?: () => void;
+  override?: { busy: boolean; error: string | null } | null;
 }
 
 /**
@@ -107,6 +110,8 @@ export function ReviewRunner({
   onNext,
   onRetry,
   onRequestExit,
+  onOverride,
+  override = null,
 }: Props) {
   const card = queue[Math.min(index, queue.length - 1)] ?? null;
   const tallyRef = useRef<HTMLDivElement | null>(null);
@@ -335,6 +340,9 @@ export function ReviewRunner({
         isLast={index + 1 >= queue.length}
         onNext={onNext}
         payRef={payRef}
+        onOverride={onOverride}
+        overriding={override?.busy ?? false}
+        overrideError={override?.error ?? null}
       />
     </>
   );

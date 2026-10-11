@@ -440,6 +440,20 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   check("action: grading stays on the server; the answer returns only after it", /= gradeReview\(\{ questionType: idea\.questionType, answer: idea\.answer, answerCaseSensitive: idea\.answerCaseSensitive, given: input\.userAnswer \}\)/.test(submit) && submit.indexOf("gradeReview(") < submit.indexOf("expected:"));
   check("action: L3's detectCelebrations runs after the write and cannot fail the answer", /detectCelebrations\(before, afterSnap/.test(submit) && /\.catch\(\(\) => \[\]\)/.test(submit));
 
+  // "I was right" (overrideReview): the reviewer overrides the checker on a SHORT or LIST miss, on the server's record.
+  const undo = srs.slice(srs.indexOf("export async function undoMissCore"), srs.indexOf("export async function degradeOverdueIdeas"));
+  check("override: only SHORT and LIST, within 10 minutes of the miss", /OVERRIDE_TYPES: readonly string\[\] = \["SHORT", "LIST"\]/.test(srs) && /OVERRIDE_WINDOW_MS = 10 \* 60_000/.test(srs));
+  check(
+    "override: the miss is read from the idea's own latest REVIEW row (xp 0, its outcome and level), never from the client",
+    /source: "REVIEW", sourceId: ideaId \}, orderBy: \{ occurredAt: "desc" \}/.test(undo) && /r\.xp === 0 \? \/\^\(strike\|degraded\|shielded\) · L\(\\d\+\)\//.test(undo)
+  );
+  check("override: once per miss (an ADJUST row keyed review-override:<row>)", /dedupeKey: `review-override:\$\{row\.id\}`/.test(undo) && /isDuplicateActivity\(err\)\) return \{ ok: false, error: "Already counted as right\." \}/.test(undo));
+  check("override: a degradation is undone: its level and the points it took come back", /ops\.push\(prisma\.idea\.update\(\{ where: \{ id: ideaId \}, data: \{ level: levelBefore \} \}\)\)/.test(undo) && /const refund = levelLossPoints\(levelBefore\);/.test(undo));
+  const over = action.slice(action.indexOf("export async function overrideReview"));
+  check("override: the action takes the miss back first, then records the answer as a pass", over.indexOf("undoMissCore(userId, input.ideaId, now)") > 0 && over.indexOf("undoMissCore(") < over.indexOf("applyReviewResult(idea.id, true, now, combo"));
+  const panelSrc = code(read("src/components/workspace/ResultPanel.tsx"));
+  check("override: the result panel offers 'I was right' on a SHORT or LIST miss only", /OVERRIDABLE: ReadonlySet<string> = new Set\(\["SHORT", "LIST"\]\)/.test(panelSrc) && /\{onOverride && OVERRIDABLE\.has\(card\.questionType\) && \(/.test(panelSrc));
+
   const route = [...walk("src/components/workspace"), ...walk("src/app/review")];
   const withRandom = route.filter((f) => /\.(ts|tsx)$/.test(f) && /Math\.random/.test(code(read(f))));
   check("route: no Math.random in the review route (order is seeded; payouts are fixed)", withRandom.length === 0, withRandom.join(", "));

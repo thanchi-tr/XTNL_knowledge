@@ -4,7 +4,7 @@ import { after } from "next/server";
 import type { ReviewAnswer } from "@/lib/verification";
 import { gradeReview } from "@/lib/answer-judge";
 import type { MeaningVerdict } from "@/lib/meaning-match";
-import { applyReviewResult, readReviewIdea, type ReviewOutcome } from "@/lib/srs";
+import { applyReviewResult, readReviewIdea, undoMissCore, type ReviewOutcome } from "@/lib/srs";
 import { loadProgressionFresh } from "@/lib/skill-effects";
 import { displayAnswer } from "@/lib/idea-display";
 import { daysUntilDue } from "@/lib/due";
@@ -172,4 +172,84 @@ export async function submitReview(input: SubmitReviewInput): Promise<SubmitRevi
     nextDueDay: dayKeyOf(new Date(outcome.nextDue)),
     celebrations,
   };
+}
+
+export interface OverrideReviewInput {
+  ideaId: string;
+  /** The run's combo before the card that was missed (the miss broke it; counting the answer as right restores it). */
+  combo?: number;
+}
+
+/**
+ * "I was right": the reviewer overrides the checker on a miss (SHORT and LIST, whose checker matches words, so a
+ * right meaning in other words can read as wrong). The miss is taken back on the server's own record (srs.ts
+ * undoMissCore: the idea's latest review must be that miss, within 10 minutes, never overridden before; a lost level
+ * and its points come back), then the answer is recorded as a pass, paid as any pass is at the level it was given.
+ * Returns the same result a right answer returns, so the runner shows it in the miss's place.
+ */
+export async function overrideReview(input: OverrideReviewInput): Promise<{ ok: true; value: SubmitReviewResult } | { ok: false; error: string }> {
+  const userId = getCurrentUserId();
+  const now = new Date();
+  const today = todayKey(now);
+  const combo = input.combo ?? 0;
+  try {
+    const undone = await undoMissCore(userId, input.ideaId, now);
+    if (!undone.ok) return undone;
+
+    const [idea, progression, historyRows, day] = await Promise.all([
+      readReviewIdea(input.ideaId),
+      loadProgressionFresh(userId, now),
+      readIdeaHistory(userId, input.ideaId),
+      readReviewDay(userId, today),
+    ]);
+    const outcome = await applyReviewResult(idea.id, true, now, combo, { idea, progression });
+    const advanced = outcome.outcome === "advanced" ? outcome : null;
+    const levelAfter = advanced ? advanced.newLevel : idea.level;
+    if (levelAfter !== idea.level) {
+      after(() =>
+        recordCardsForReview(userId, idea.id, idea.domainId, idea.level, levelAfter, { now }).catch((err: unknown) => {
+          console.error("roadmap: the override's reading was not recorded:", err);
+        })
+      );
+    }
+    const cap = progression.modifiers.comboCap;
+    return {
+      ok: true,
+      value: {
+        correct: true,
+        outcome,
+        expected: displayAnswer(idea.questionType, idea.answer),
+        explanation: idea.corePremise?.trim() || null,
+        judged: null,
+        combo: {
+          before: combo,
+          multiplier: advanced ? advanced.payout.comboMultiplier : 1,
+          cap,
+          capped: advanced ? comboIsCapped(combo, cap) : false,
+          next: outcome.nextCombo,
+          nextMultiplier: comboMultiplier(outcome.nextCombo, cap),
+        },
+        trueFact: trueFactOf({
+          correct: true,
+          today,
+          history: historyOf(historyRows, dayKeyOf(idea.createdAt)),
+          addedDay: dayKeyOf(idea.createdAt),
+          levelBefore: idea.level,
+          levelAfter,
+          failedAttemptsBefore: idea.failedAttempts,
+          mastered: advanced?.mastered ?? false,
+          overdueDays: 0,
+          intervalDays: advanced ? advanced.intervalDays : 1,
+        }),
+        // The miss already counted as today's review; the override is the same answer, not another.
+        quest: { done: day.reviews, target: day.dayOpenQty == null ? null : questTargetOf(day.dayOpenQty, 0, 0) },
+        streakSecured: false,
+        nextDueDay: dayKeyOf(new Date(outcome.nextDue)),
+        celebrations: [],
+      },
+    };
+  } catch (err) {
+    console.error("overrideReview failed:", err);
+    return { ok: false, error: "Couldn't count it as right. Try again." };
+  }
 }

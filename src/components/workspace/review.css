@@ -201,6 +201,9 @@
   .rv-why .row2 { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; padding: 3px 0; }
   .rv-why .row2 span:first-child { color: var(--ink-2); flex: none; }
   .rv-why .row2 b { text-align: right; overflow-wrap: anywhere; min-width: 0; }
+  /* "I was right": the reviewer overrides the checker on a short answer or a list (overrideReview). */
+  .rv-override { display: grid; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line-2); }
+  .rv-override .t-meta { margin: 0; }
 
   /* ---------- recap: the session receipt ---------- */
   .rv-recap { max-width: 640px; margin: 0 auto; padding: 0 16px 28px; display: flex; flex-direction: column; gap: 16px; }
