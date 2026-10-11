@@ -56,6 +56,11 @@ interface Props {
   stepsSave?: StepsSave;
   /** Ticks it for yesterday, when row.recordYesterday says the server would (a forgotten tick). */
   onYesterday?: () => void;
+  /**
+   * A work tab's drawer (work-boards.ts): no price on any button, and no Size panel (a size prices XP, and work pays
+   * none; the server refuses a self-rating or a resize too). Absent: the personal Board's drawer, exactly as before.
+   */
+  work?: boolean;
 }
 
 /** M2 (F3): what the drawer offers a must. A weakening is deferred seven days once Duty is live; a strengthening is immediate. */
@@ -123,6 +128,9 @@ export function TaskDrawer(props: Props) {
     new Date(props.now)
   );
 
+  /** ' · ≈ 3.6' after an action on the personal Board; nothing on a work tab (work pays no XP). */
+  const price = (xp: number) => (props.work ? "" : ` · ≈ ${fmtXp(xp)}`);
+
   const closeEditor = () => {
     setTitle(t.title);
     setEditing(false);
@@ -147,11 +155,13 @@ export function TaskDrawer(props: Props) {
           </div>
           <div className="today-drawer-row">
             <button type="button" className="today-pill" data-tone="primary" disabled={busy} onClick={props.onDone}>
-              Done{row.steps && !row.steps.checklist ? " · every step" : ""} · {minutes != null ? fmtMinutes(minutes) : `~${fmtMinutes(row.estMinutes)}`} · ≈ {fmtXp(projection.xp)}
+              Done{row.steps && !row.steps.checklist ? " · every step" : ""} · {minutes != null ? fmtMinutes(minutes) : `~${fmtMinutes(row.estMinutes)}`}
+              {price(projection.xp)}
             </button>
             {t.mvv && props.minimumProjection && (
               <button type="button" className="today-pill" disabled={busy} onClick={props.onMinimum}>
-                Do minimum: {t.mvv} · ≈ {fmtXp(props.minimumProjection.xp)}
+                Do minimum: {t.mvv}
+                {price(props.minimumProjection.xp)}
               </button>
             )}
           </div>
@@ -160,7 +170,7 @@ export function TaskDrawer(props: Props) {
 
       <div className="today-drawer-row">
         {open && recurring && !t.compulsory && row.lane !== "yesterday" && row.state !== "skipped" && (
-          <button type="button" className="today-pill" disabled={busy} onClick={props.onSkip} title="0 XP; the streak holds">
+          <button type="button" className="today-pill" disabled={busy} onClick={props.onSkip} title={props.work ? "Not today; its streak holds" : "0 XP; the streak holds"}>
             Skip today
           </button>
         )}
@@ -171,12 +181,14 @@ export function TaskDrawer(props: Props) {
         )}
         {row.recordYesterday && props.onYesterday && (
           <button type="button" className="today-pill" disabled={busy} onClick={props.onYesterday} title="Forgot to tick it? It counts on yesterday, as if ticked then.">
-            Did it yesterday · ≈ {fmtXp(row.recordYesterday.xp)}
+            Did it yesterday
+            {price(row.recordYesterday.xp)}
           </button>
         )}
         {row.state === "done" && recurring && !study && row.lane !== "yesterday" && (
-          <button type="button" className="today-pill" disabled={busy} onClick={props.onAgain} title="Once more today; repeat decay applies">
-            Again · ≈ {fmtXp(projection.xp)}
+          <button type="button" className="today-pill" disabled={busy} onClick={props.onAgain} title={props.work ? "Once more today" : "Once more today; repeat decay applies"}>
+            Again
+            {price(projection.xp)}
           </button>
         )}
         <button
@@ -279,96 +291,98 @@ export function TaskDrawer(props: Props) {
         </section>
       )}
 
-      <div className="today-size">
-        <div className="today-size-h">
-          <span className="t-eyebrow">Size</span>
-          <span className={`t-mono ${CHIP_CLASS[chip.tone]}`} title={why ?? undefined}>
-            {chip.label}
-          </span>
-        </div>
+      {!props.work && (
+        <div className="today-size">
+          <div className="today-size-h">
+            <span className="t-eyebrow">Size</span>
+            <span className={`t-mono ${CHIP_CLASS[chip.tone]}`} title={why ?? undefined}>
+              {chip.label}
+            </span>
+          </div>
 
-        <div className="today-bands" role="radiogroup" aria-label="Self-rated size" aria-busy={pendingRate !== null}>
-          {BANDS.map((b, i) => {
-            const allowed = i <= maxIdx;
-            const current = b === effective;
-            const usable = allowed && rating.open;
-            return (
-              <button
-                key={b}
-                type="button"
-                role="radio"
-                aria-checked={current}
-                className="today-band"
-                data-current={current ? "1" : undefined}
-                disabled={locked || !usable || current}
-                onClick={() => props.onOverride(i - machineIdx)}
-                data-allowed={allowed ? undefined : "0"}
-                title={!allowed ? "A self-rating can go at most one band above the machine's" : !rating.open ? "Self-rating is closed until the weekly cooldown ends" : undefined}
-              >
-                <span className="band-name">
-                  {BAND_LABEL[b]}
-                  {i === machineIdx ? " ·" : ""}
-                </span>
-                <span className="band-blurb">
-                  {BAND_BLURB[b]}
-                  {current && pendingRate !== null ? " · saving…" : ""}
-                </span>
+          <div className="today-bands" role="radiogroup" aria-label="Self-rated size" aria-busy={pendingRate !== null}>
+            {BANDS.map((b, i) => {
+              const allowed = i <= maxIdx;
+              const current = b === effective;
+              const usable = allowed && rating.open;
+              return (
+                <button
+                  key={b}
+                  type="button"
+                  role="radio"
+                  aria-checked={current}
+                  className="today-band"
+                  data-current={current ? "1" : undefined}
+                  disabled={locked || !usable || current}
+                  onClick={() => props.onOverride(i - machineIdx)}
+                  data-allowed={allowed ? undefined : "0"}
+                  title={!allowed ? "A self-rating can go at most one band above the machine's" : !rating.open ? "Self-rating is closed until the weekly cooldown ends" : undefined}
+                >
+                  <span className="band-name">
+                    {BAND_LABEL[b]}
+                    {i === machineIdx ? " ·" : ""}
+                  </span>
+                  <span className="band-blurb">
+                    {BAND_BLURB[b]}
+                    {current && pendingRate !== null ? " · saving…" : ""}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <dl>
+            <dt>Why</dt>
+            <dd>{why || "No rule matched; sized as ordinary effort until the AI's answer lands."}</dd>
+            <dt>Machine grade</dt>
+            <dd>
+              {BAND_LABEL[t.band]} · ~{fmtMinutes(t.machineMinutes)}
+              {/* A plan-born task's minutes are the plan's (its practice's band, or a step's grade), never the player's words. */}
+              {t.estMinutes !== t.machineMinutes
+                ? ` · ${planBorn ? "the plan set" : "you said"} ~${fmtMinutes(t.estMinutes)} (counts up to ${fmtMinutes(t.machineMinutes * 2)})`
+                : ""}
+              {/* No model sizes a plan-born task, so a band or model a stale row still carries is not shown as its grade. */}
+              {!planBorn && t.aiBand && t.aiBand !== t.band ? ` · AI said ${BAND_LABEL[t.aiBand]}` : ""}
+            </dd>
+            {!planBorn && t.gradeModel && (
+              <>
+                <dt>Model</dt>
+                <dd className="t-mono">
+                  {t.gradeModel}
+                  {t.gradePromptVersion != null ? ` · prompt v${t.gradePromptVersion}` : ""}
+                </dd>
+              </>
+            )}
+          </dl>
+
+          <div className="today-drawer-row">
+            {t.bandOverride !== 0 && (
+              <button type="button" className="today-pill" disabled={locked || !rating.open} onClick={() => props.onOverride(0)}>
+                Back to the machine&apos;s size
               </button>
-            );
-          })}
+            )}
+            {(canResize || resizing) && (
+              <button
+                type="button"
+                className="today-pill"
+                disabled={locked}
+                aria-busy={resizing}
+                onClick={props.onResize}
+                title="Ask the AI once more, before the size freezes"
+              >
+                {resizing ? "Sizing…" : "Resize"}
+              </button>
+            )}
+            <span className="today-size-note">
+              {!rating.open && rating.nextAt != null
+                ? `Self-rated this week. The size can change again from ${formatExpiry(new Date(rating.nextAt))}.`
+                : t.gradeFrozen
+                  ? "Frozen. A self-rating applies to later ticks and can change once a week."
+                  : "Freezes at the first tick or 24 h after capture."}
+            </span>
+          </div>
         </div>
-
-        <dl>
-          <dt>Why</dt>
-          <dd>{why || "No rule matched; sized as ordinary effort until the AI's answer lands."}</dd>
-          <dt>Machine grade</dt>
-          <dd>
-            {BAND_LABEL[t.band]} · ~{fmtMinutes(t.machineMinutes)}
-            {/* A plan-born task's minutes are the plan's (its practice's band, or a step's grade), never the player's words. */}
-            {t.estMinutes !== t.machineMinutes
-              ? ` · ${planBorn ? "the plan set" : "you said"} ~${fmtMinutes(t.estMinutes)} (counts up to ${fmtMinutes(t.machineMinutes * 2)})`
-              : ""}
-            {/* No model sizes a plan-born task, so a band or model a stale row still carries is not shown as its grade. */}
-            {!planBorn && t.aiBand && t.aiBand !== t.band ? ` · AI said ${BAND_LABEL[t.aiBand]}` : ""}
-          </dd>
-          {!planBorn && t.gradeModel && (
-            <>
-              <dt>Model</dt>
-              <dd className="t-mono">
-                {t.gradeModel}
-                {t.gradePromptVersion != null ? ` · prompt v${t.gradePromptVersion}` : ""}
-              </dd>
-            </>
-          )}
-        </dl>
-
-        <div className="today-drawer-row">
-          {t.bandOverride !== 0 && (
-            <button type="button" className="today-pill" disabled={locked || !rating.open} onClick={() => props.onOverride(0)}>
-              Back to the machine&apos;s size
-            </button>
-          )}
-          {(canResize || resizing) && (
-            <button
-              type="button"
-              className="today-pill"
-              disabled={locked}
-              aria-busy={resizing}
-              onClick={props.onResize}
-              title="Ask the AI once more, before the size freezes"
-            >
-              {resizing ? "Sizing…" : "Resize"}
-            </button>
-          )}
-          <span className="today-size-note">
-            {!rating.open && rating.nextAt != null
-              ? `Self-rated this week. The size can change again from ${formatExpiry(new Date(rating.nextAt))}.`
-              : t.gradeFrozen
-                ? "Frozen. A self-rating applies to later ticks and can change once a week."
-                : "Freezes at the first tick or 24 h after capture."}
-          </span>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

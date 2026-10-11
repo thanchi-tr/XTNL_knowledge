@@ -18,6 +18,7 @@
  */
 import { prisma } from "./prisma";
 import { cached } from "./cache";
+import { PERSONAL_BOARD } from "./work-boards";
 import { DAY_START_HOUR, LIFE_TZ, addDays, dateColumn, dayKeyOf, dayStartOf, keyOfDateColumn, type DayKey } from "./life-day";
 import { heldDaysOf, type RestRow } from "./duty-rule";
 import { ADHERENCE_MIN_MINUTES, CLEARANCE_WINDOW_DAYS, NEW_CARDS_SINCE, PASS_SHARE_WINDOW_DAYS, REVIEW_PASSES_SINCE, THROUGHPUT_LAG_DAYS, type Throughput } from "./roadmap-types";
@@ -93,6 +94,8 @@ async function readThroughputRows(userId: string, finalDay: DayKey): Promise<Thr
       where: {
         userId,
         archivedAt: null,
+        // The personal Board only (work-boards.ts): the roadmap's adherence never reads a work habit.
+        ...PERSONAL_BOARD,
         recurrence: { not: null },
         kind: { in: ["TASK", "HABIT"] },
         band: { in: ADHERENCE_BANDS },

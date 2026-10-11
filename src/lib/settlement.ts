@@ -89,6 +89,7 @@ import { parseRule } from "./recurrence";
 import { isStaleGuard } from "./life-tracks-server";
 import { judgeClosedWeeks, launchGraceDetail, maybeJudgeWeeks, type JudgeResult } from "./life-weeks-server";
 import { getCurrentUserId } from "./user";
+import { PERSONAL_BOARD } from "./work-boards";
 import { shortDate, weekdayName } from "./today-board";
 import {
   planSettlement,
@@ -294,6 +295,8 @@ export async function readSettlementState(
     client.taskTemplate.findMany({
       where: {
         userId,
+        // The personal Board only: a work tab's task (work-boards.ts) is never judged, owed or settled.
+        ...PERSONAL_BOARD,
         kind: { in: ["TASK", "HABIT"] },
         startDay: { lte: dateColumn(to) },
         AND: [
@@ -332,6 +335,7 @@ export async function readSettlementState(
     client.taskInstance.findMany({
       where: {
         userId,
+        template: PERSONAL_BOARD,
         OR: [
           { day: { gte: dateColumn(periodFloor), lte: dateColumn(to) } },
           // A deadline one-off due in the range, done on any day: done early or late, it owes nothing (decision 18).
@@ -387,7 +391,7 @@ export async function readSettlementState(
         `)
       : Promise.resolve([{ n: 0 }]),
     client.taskInstance.findMany({
-      where: { userId, debtOpen: true },
+      where: { userId, debtOpen: true, template: PERSONAL_BOARD },
       select: { id: true, templateId: true, day: true, slot: true, debtXp: true },
     }),
     client.restDay.findMany({
@@ -667,7 +671,8 @@ export function settleGuardSql(userId: string, g: SettleGuard): Prisma.Sql {
     const f = g.fresh;
     clauses.push(
       Prisma.sql`(SELECT COUNT(*) FROM "ActivityEvent" WHERE "userId" = ${userId} AND "day" >= ${f.from}::date AND "day" <= ${f.to}::date) = ${f.events}::int`,
-      Prisma.sql`(SELECT COUNT(*) FROM "TaskInstance" WHERE "userId" = ${userId} AND "day" >= ${f.from}::date AND "day" <= ${f.to}::date) = ${f.instances}::int`,
+      // The read counts the personal Board's instances only (work-boards.ts): so does the guard, so a work tick never stales a settle.
+      Prisma.sql`(SELECT COUNT(*) FROM "TaskInstance" WHERE "userId" = ${userId} AND "day" >= ${f.from}::date AND "day" <= ${f.to}::date AND "templateId" NOT IN (SELECT "id" FROM "TaskTemplate" WHERE "userId" = ${userId} AND "boardId" IS NOT NULL)) = ${f.instances}::int`,
       Prisma.sql`(SELECT COUNT(*) FROM "RestDay" WHERE "userId" = ${userId} AND "day" >= ${f.from}::date AND "day" <= ${f.to}::date AND "cancelledAt" IS NULL) = ${f.rest}::int`
     );
   }

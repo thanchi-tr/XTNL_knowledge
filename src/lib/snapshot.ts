@@ -59,6 +59,7 @@ import { lifeTracksView, notLaunchedView, weekMarkOf, type LifeTracksView } from
 import { TRACKS, type Track } from "./life-types";
 import { parseRule } from "./recurrence";
 import { getSkill, SKILL_POOL } from "./skill-pool";
+import { PERSONAL_BOARD } from "./work-boards";
 import { snapshotUnderLevelRule } from "./xp";
 import { dailyStreakOf, readStreakFacts } from "./streak";
 
@@ -182,7 +183,7 @@ const GOAL_DEPTH_BY_REASON = new Map<string, number>(Object.values(GOAL_RULES).m
 async function readGoals(userId: string): Promise<GoalsPart> {
   const [rows, mints] = await Promise.all([
     prisma.taskTemplate.findMany({
-      where: { userId, kind: "GOAL", closedScore: { not: null } },
+      where: { userId, kind: "GOAL", closedScore: { not: null }, ...PERSONAL_BOARD },
       select: { id: true, title: true, horizon: true, goalMp: true, closedScore: true, krTarget: true, krUnit: true, track: true },
     }),
     prisma.activityEvent.findMany({
@@ -293,14 +294,15 @@ async function readHabits(userId: string, now: Date, templateIds?: readonly stri
   const restFrom = launch != null && today >= launch ? (sinceKey > launch ? sinceKey : launch) : null;
   const [templates, instances, settings, restRows, freezeRows] = await Promise.all([
     prisma.taskTemplate.findMany({
-      where: { userId, archivedAt: null, recurrence: { not: null }, ...(ids ? { id: { in: ids } } : {}) },
+      // The personal Board only (work-boards.ts): a work habit never moves a rung, a streak or a moment.
+      where: { userId, archivedAt: null, recurrence: { not: null }, ...PERSONAL_BOARD, ...(ids ? { id: { in: ids } } : {}) },
       select: { id: true, title: true, recurrence: true, startDay: true, compulsory: true, compulsoryOnRest: true },
     }),
     prisma.taskInstance.findMany({
       where: {
         userId,
         day: { gte: since },
-        ...(ids ? { templateId: { in: ids } } : { template: { archivedAt: null, recurrence: { not: null } } }),
+        ...(ids ? { templateId: { in: ids }, template: PERSONAL_BOARD } : { template: { archivedAt: null, recurrence: { not: null }, ...PERSONAL_BOARD } }),
       },
       select: { templateId: true, day: true, status: true, repaired: true },
     }),

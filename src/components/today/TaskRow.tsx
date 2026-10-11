@@ -51,6 +51,11 @@ interface Props {
   taskStyle?: TaskStyle | null;
   /** Ticks one of the row's steps (row.steps); without it the steps are not drawn. */
   onStep?: (stepId: string, done: boolean, from: Element | null) => void;
+  /**
+   * A work tab's row (work-boards.ts): work pays no XP, so no price pill, no 'paid' and no track (a game word); a
+   * done row reads 'Done 08:05'. Absent: the personal Board's row, exactly as before.
+   */
+  work?: boolean;
 }
 
 /**
@@ -112,7 +117,7 @@ export function TaskRow(props: Props) {
               {props.justAdded && <span className="sr-only">, just added</span>}
             </span>
             <span className="r-meta">
-              {done ? <DoneMeta row={row} paidXp={paid?.xp ?? null} study={study} /> : <OpenMeta row={row} restToday={props.restToday ?? null} />}
+              {done ? <DoneMeta row={row} paidXp={props.work ? null : (paid?.xp ?? null)} study={study} work={props.work} /> : <OpenMeta row={row} restToday={props.restToday ?? null} work={props.work} />}
             </span>
           </button>
           {(minimum || (done && undoable)) && (
@@ -132,20 +137,22 @@ export function TaskRow(props: Props) {
           )}
         </div>
 
-        <PricePill
-          ref={pillRef}
-          value={shownXp}
-          paid={!!paid}
-          kind="xp"
-          subject={t.title}
-          expanded={props.receiptOpen}
-          controls={props.receiptId}
-          onClick={props.onToggleReceipt}
-          aria-haspopup="dialog"
-        />
+        {!props.work && (
+          <PricePill
+            ref={pillRef}
+            value={shownXp}
+            paid={!!paid}
+            kind="xp"
+            subject={t.title}
+            expanded={props.receiptOpen}
+            controls={props.receiptId}
+            onClick={props.onToggleReceipt}
+            aria-haspopup="dialog"
+          />
+        )}
       </div>
       {row.steps && props.onStep && row.state !== "locked" && (
-        <StepsList steps={row.steps} compulsory={t.compulsory} paidXp={row.paid && !row.paid.undone ? row.paid.xp : null} busy={busy} onStep={props.onStep} />
+        <StepsList steps={row.steps} compulsory={t.compulsory} paidXp={!props.work && row.paid && !row.paid.undone ? row.paid.xp : null} busy={busy} onStep={props.onStep} />
       )}
       {drawerOpen && (
         <div id={drawerId} className="r-drawer">
@@ -158,10 +165,10 @@ export function TaskRow(props: Props) {
 
 const HELD_WORD: Record<RestKind, string> = { REST: "rest day", SICK: "sick day", VACATION: "vacation" };
 
-/** The one meta line of an open row: track sigil, rung or length, streak, goal, due with its clock. */
-function OpenMeta({ row, restToday }: { row: BoardRow; restToday: RestKind | null }) {
+/** The one meta line of an open row: track sigil, rung or length, streak, goal, due with its clock. A work row has no track. */
+function OpenMeta({ row, restToday, work }: { row: BoardRow; restToday: RestKind | null; work?: boolean }) {
   const t = row.template;
-  const bits: string[] = [TRACK_LABEL[t.track]];
+  const bits: string[] = work ? [] : [TRACK_LABEL[t.track]];
   if (row.strength != null) bits.push(habitLine(row.strength));
   else if (!row.auto) bits.push(fmtMinutes(row.estMinutes));
   // A run that reaches the edge of the history read is a floor, and says so.
@@ -179,13 +186,13 @@ function OpenMeta({ row, restToday }: { row: BoardRow; restToday: RestKind | nul
   else if (t.compulsory && row.lane !== "must") bits.push("must");
   if (row.heldToday && restToday) bits.push(`${HELD_WORD[restToday]} · ${t.compulsory ? "nothing owed" : "streak holds"}`);
   else if (restToday && t.compulsory && t.compulsoryOnRest && row.lane === "must") bits.push("must · even on rest days");
-  if (t.intrinsic) bits.push("#play");
-  if (t.sizing) bits.push("sizing…");
+  if (t.intrinsic && !work) bits.push("#play");
+  if (t.sizing && !work) bits.push("sizing…");
   if (row.state === "skipped") bits.push("skipped today");
   return (
     <>
       <span className="r-bit">
-        <Sigil track={TRACK_SIGIL[t.track]} />
+        {!work && <Sigil track={TRACK_SIGIL[t.track]} />}
         {bits.join(" · ")}
       </span>
       {row.dueLabel && (
@@ -198,11 +205,11 @@ function OpenMeta({ row, restToday }: { row: BoardRow; restToday: RestKind | nul
   );
 }
 
-/** "Kept 08:05 · paid 3.6 exactly": the receipt equals the price. */
-function DoneMeta({ row, paidXp, study }: { row: BoardRow; paidXp: number | null; study: boolean }) {
+/** "Kept 08:05 · paid 3.6 exactly": the receipt equals the price. A work row: "Done 08:05", nothing paid. */
+function DoneMeta({ row, paidXp, study, work }: { row: BoardRow; paidXp: number | null; study: boolean; work?: boolean }) {
   const at = row.paid ? Date.parse(row.paid.occurredAt) : Number.NaN;
   const time = Number.isFinite(at) ? ` ${hhmmOf(at)}` : "";
-  const word = row.minimum ? "Minimum kept" : "Kept";
+  const word = work ? (row.minimum ? "Minimum done" : "Done") : row.minimum ? "Minimum kept" : "Kept";
   return (
     <>
       <span className="r-bit kept-at">

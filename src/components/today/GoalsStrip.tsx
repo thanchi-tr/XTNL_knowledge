@@ -28,6 +28,8 @@ interface Props {
   justAdded?: string | null;
   /** The live fix (contracts §22.11): a milestone goal's Gemini-named Domain names, by template id, and the page's mark (pv.named). */
   namedTitles?: TodayNamedTitles | null;
+  /** A work tab (work-boards.ts): goals are the game's, so the strip draws nothing there. */
+  off?: boolean;
 }
 
 const HORIZON_ORDER: Horizon[] = ["SHORT", "MID", "LONG"];
@@ -85,7 +87,8 @@ function PaysText({ text }: { text: string }) {
  * close pays 0 whatever it stated, so the card never shows '× progress'.
  * No +1 (it is measured from your records), and never an owed tone.
  */
-export function GoalsStrip({ goals, busy, onProgress, launched = false, onClose, onReschedule, justAdded = null, namedTitles }: Props) {
+export function GoalsStrip({ goals, busy, onProgress, launched = false, onClose, onReschedule, justAdded = null, namedTitles, off = false }: Props) {
+  if (off) return null;
   const list = HORIZON_ORDER.flatMap((h) => goals[h]);
 
   return (

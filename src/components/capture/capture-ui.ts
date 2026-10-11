@@ -46,6 +46,7 @@ import { dayName, placeOf, shortDate, startDayFor, weekdayName, type BoardTempla
 import type { CaptureActiveTitle, CaptureAim, CapturedItem } from "../../app/actions/capture";
 import type { WeightUnit } from "../../lib/weight";
 import { weightToastCopy } from "./weight-capture";
+import { isBoardId, workBoardHref } from "../../lib/work-boards";
 
 /**
  * Where a repeating capture lands when it is not due today: 'Next: Thu'.
@@ -365,6 +366,12 @@ export interface PendingLine extends SentLine {
    * as another day's).
    */
   day?: DayKey;
+  /**
+   * Work tabs (work-boards.ts): the work board the sheet was opened on
+   * (/today/work/<id>), so a retry, even from another page, lands where it
+   * was captured. Absent: the personal Board.
+   */
+  board?: string;
 }
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -374,10 +381,11 @@ const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
  * draws them); the nonce fits the server's key rule (4–64 of [A-Za-z0-9:_-]).
  * The line carries the life day of `now` (todayKey).
  */
-export function stampLine(line: SentLine, seq: number, now: number, rand: string, replaces?: string | null): PendingLine {
+export function stampLine(line: SentLine, seq: number, now: number, rand: string, replaces?: string | null, board?: string | null): PendingLine {
   const salt = rand.replace(/[^A-Za-z0-9]/g, "").slice(0, 10) || "0";
   const out: PendingLine = { text: line.text, reverted: line.reverted, nonce: `${now.toString(36)}-${seq.toString(36)}-${salt}`, at: now, day: todayKey(new Date(now)) };
   if (replaces && ID_RE.test(replaces)) out.replaces = replaces;
+  if (board && isBoardId(board)) out.board = board;
   return out;
 }
 
@@ -386,13 +394,14 @@ export function parsePendingList(raw: unknown): PendingLine[] {
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((p) => {
     if (!p || typeof p !== "object") return [];
-    const { text, reverted, nonce, at, replaces, day } = p as Record<string, unknown>;
+    const { text, reverted, nonce, at, replaces, day, board } = p as Record<string, unknown>;
     if (typeof nonce !== "string" || !/^[A-Za-z0-9:_-]{4,64}$/.test(nonce) || typeof at !== "number" || !Number.isFinite(at)) return [];
     const clean = sanitizeCaptureInput(text, reverted);
     if (!clean.text.trim()) return [];
     const line: PendingLine = { ...clean, nonce, at };
     if (typeof replaces === "string" && ID_RE.test(replaces)) line.replaces = replaces;
     if (typeof day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(day)) line.day = day;
+    if (isBoardId(board)) line.board = board;
     return [line];
   });
 }
@@ -1018,13 +1027,14 @@ export const FILING_WHERE = "filing now. If it looks like one you have, it waits
  * link to the row on Today.
  */
 export function toastCopy(
-  item: Pick<CapturedItem, "id" | "title" | "projectedXp" | "kind" | "doneNow" | "doneNowError" | "duplicate" | "href" | "where" | "filing" | "oldKept" | "weight">,
+  item: Pick<CapturedItem, "id" | "title" | "projectedXp" | "kind" | "doneNow" | "doneNowError" | "duplicate" | "href" | "where" | "filing" | "oldKept" | "weight"> & Partial<Pick<CapturedItem, "board">>,
   ctx: { notMust?: boolean; update?: boolean; offToday?: boolean } = {}
 ): ToastCopy {
   // A weigh-in is a record, not a task: its own copy, no figure, View goes to Train (weight-capture.ts).
   if (item.weight) return weightToastCopy({ where: item.where, duplicate: item.duplicate, weight: item.weight });
   const where = item.where?.label ?? null;
-  const view = ctx.offToday ? { label: "View", href: `/today#t-${item.id}` } : null;
+  // A work tab's line (work-boards.ts) is viewed on its own board.
+  const view = ctx.offToday ? { label: "View", href: `${item.board ? workBoardHref(item.board) : "/today"}#t-${item.id}` } : null;
   const priced = Number.isFinite(item.projectedXp) && item.projectedXp > 0;
   let head: string;
   let title = item.title;

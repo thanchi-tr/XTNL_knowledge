@@ -10,11 +10,13 @@
  *   <Sidebar/>  ≥ 1280      the character card (the profile button), Capture (kbd C; every
  *                           Capture answers c and Alt+N), the three sections with the open
  *                           one's sub-pages, an ink count per section and an owed pill for debt.
+ *                           Tasks lists its work tabs after Board, then the '+' while a slot is free.
  * Counts are ink badges that render nothing at 0; only debt is owed-coloured. Every Capture
  * opens the sheet in the section's mode (nav.ts captureModeOf): an idea on Ideas, a weigh-in
  * on Body, a task elsewhere. On a profile page no tab is current; the profile button is.
  */
 import Link from "next/link";
+import { Fragment } from "react";
 import { usePathname } from "next/navigation";
 import { Badge } from "@/components/ui/Badge";
 import { Crest } from "@/components/ui/Crest";
@@ -22,7 +24,8 @@ import { Icon } from "@/components/ui/Icon";
 import { Meter } from "@/components/ui/Meter";
 import { CAPTURE_ARIA_KEYS } from "@/lib/shortcuts";
 import { openCaptureSheet } from "./capture-bridge";
-import { CAPTURE_LABEL, SECTIONS, activeSub, captureModeOf, sectionOf, type Section, type SectionId } from "./nav";
+import { AddWorkTab } from "./AddWorkTab";
+import { CAPTURE_LABEL, SECTIONS, activeSub, addWorkTabAfter, captureModeOf, sectionOf, subsOf, type Section, type SectionId } from "./nav";
 import { useProfileButton } from "./ProfileMenu";
 import { useShell } from "./shell-store";
 import { crestLabel, levelCaption, type ShellData } from "./shell-types";
@@ -167,10 +170,13 @@ export function Sidebar() {
             </Link>
             {open && (
               <div className="sb-sub">
-                {s.subs.map((p) => (
-                  <Link key={p.href} href={p.href} aria-current={sub === p.href ? "page" : undefined}>
-                    {p.label}
-                  </Link>
+                {subsOf(s.id, s.id === "tasks" ? data?.work?.tabs : null).map((p) => (
+                  <Fragment key={p.href}>
+                    <Link href={p.href} aria-current={sub === p.href ? "page" : undefined}>
+                      {p.label}
+                    </Link>
+                    {s.id === "tasks" && data?.work?.canAdd && p.href === addWorkTabAfter(data.work.tabs) && <AddWorkTab variant="side" />}
+                  </Fragment>
                 ))}
               </div>
             )}

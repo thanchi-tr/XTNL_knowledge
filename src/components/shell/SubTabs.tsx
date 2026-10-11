@@ -5,7 +5,10 @@
  *
  *   <SectionTabs/>   (this file) under the top bar, the current section's sub-pages:
  *                    Ideas (Review · Library · New idea · Roadmap · Fields & Domains),
- *                    Tasks (Board · Weekly review · Rules), Body (This week · Exercise).
+ *                    Tasks (Board · <work tabs> · [+] · Weekly review · Rules), Body (This week · Exercise).
+ *                    The work tabs (2026-10-12) come from the shell's data (ShellData.work, nav.ts
+ *                    subsOf); the '+' (AddWorkTab, "Add a work tab") follows the last of them while
+ *                    a slot is free.
  *                    Rendered once by AppShell; nothing on a profile page, where
  *                    YouTabs (home/YouTabs.tsx) is the strip, nor where a section
  *                    has a single page, nor anywhere outside the three sections.
@@ -30,11 +33,13 @@
  *     so the last tabs never sit off-screen with nothing showing they are
  *     there. A strip that fits shows no fade.
  */
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cx } from "@/components/ui/cx";
-import { activeSub, sectionById, sectionOf, type SubPage } from "./nav";
+import { AddWorkTab } from "./AddWorkTab";
+import { activeSub, addWorkTabAfter, sectionById, sectionOf, subsOf, type SubPage } from "./nav";
+import { useShell } from "./shell-store";
 
 /** The fade's width, and the room left beside the current tab when it is scrolled in. */
 const CUE_PX = 24;
@@ -67,9 +72,11 @@ export interface SubTabsProps {
   extra?: (href: string) => ReactNode;
   /** Part of the shell's chrome: hidden in focus mode, like the bars. */
   chrome?: boolean;
+  /** Something drawn right after one tab (the Tasks strip's '+', after the last work tab or Board). */
+  after?: { href: string; node: ReactNode } | null;
 }
 
-export function SubTabs({ items, current, label, className, extra, chrome }: SubTabsProps) {
+export function SubTabs({ items, current, label, className, extra, chrome, after }: SubTabsProps) {
   const stripRef = useRef<HTMLElement>(null);
   const [fade, setFade] = useState<Fade | null>(null);
 
@@ -104,21 +111,30 @@ export function SubTabs({ items, current, label, className, extra, chrome }: Sub
   return (
     <nav ref={stripRef} className={cx("tabs sub-tabs", className)} aria-label={label} data-fade={fade ?? undefined} data-chrome={chrome ? "" : undefined} style={style}>
       {items.map((s) => (
-        <Link key={s.href} href={s.href} className="tab-s" aria-current={s.href === current ? "page" : undefined}>
-          {s.label}
-          {extra?.(s.href)}
-        </Link>
+        <Fragment key={s.href}>
+          <Link href={s.href} className="tab-s" aria-current={s.href === current ? "page" : undefined}>
+            {s.label}
+            {extra?.(s.href)}
+          </Link>
+          {after && after.href === s.href ? after.node : null}
+        </Fragment>
       ))}
     </nav>
   );
 }
 
-/** The current section's sub-pages under the top bar, on phones. Nothing on a profile page (YouTabs is there) or a one-page section. */
+/**
+ * The current section's sub-pages under the top bar, on phones. Nothing on a profile page (YouTabs is there) or a
+ * one-page section. On Tasks the open work tabs follow Board (subsOf), then the '+' while a slot is free.
+ */
 export function SectionTabs() {
   const pathname = usePathname();
+  const work = useShell((s) => s.data?.work ?? null);
   const id = sectionOf(pathname);
   if (!id) return null;
   const section = sectionById(id);
   if (section.subs.length < 2) return null;
-  return <SubTabs className="sec-tabs" items={section.subs} current={activeSub(pathname)} label={`${section.label} pages`} chrome />;
+  const tasks = id === "tasks";
+  const add = tasks && work?.canAdd ? { href: addWorkTabAfter(work.tabs), node: <AddWorkTab /> } : null;
+  return <SubTabs className="sec-tabs" items={subsOf(id, tasks ? work?.tabs : null)} current={activeSub(pathname)} label={`${section.label} pages`} after={add} chrome />;
 }

@@ -56,6 +56,18 @@ export interface ShellData {
   asks: { count: number; items: ShellAsk[] };
   /** M2 debt: the separate owed pill (the Sidebar's 'n owed', ≥ 1280 px): open debts. Zero until debt exists. */
   owed: { count: number };
+  /**
+   * Work tabs (2026-10-12; a compatible extension): the open work tabs by slot, drawn after Board in the Tasks strip,
+   * and whether a slot is free (the strip's '+', "Add a work tab"). Absent or null: the read failed or has not
+   * arrived, and the strip draws neither (never a '+' it cannot honour).
+   */
+  work?: ShellWorkTabs | null;
+}
+
+/** The Tasks strip's work tabs (ShellData.work): work-boards.ts canAddWorkBoard decides `canAdd`. */
+export interface ShellWorkTabs {
+  tabs: { id: string; name: string }[];
+  canAdd: boolean;
 }
 
 /** The feed's notice ids the shell treats specially (notifications.ts writes them through rituals.ts). */

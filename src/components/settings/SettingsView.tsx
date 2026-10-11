@@ -15,6 +15,8 @@
  *              (roadmap rev 4, F-R4-5: LifeSettings.aimSuggestions through
  *              actions/roadmap setAimSuggestions), the lasting no that holds
  *              on every device.
+ *   Work tabs  the archived work tabs, each with Restore while a place is free
+ *              (WorkTabsSection.tsx; work-boards.ts). A compatible addition.
  *   Keyboard shortcuts
  *              The same grouped list as the '?' sheet (shell/Shortcuts
  *              ShortcutList, read from src/lib/shortcuts.ts) · Replay the tour
@@ -49,6 +51,7 @@ import { Sheet } from "@/components/ui/Sheet";
 import { SectionHeader, Segmented, Skeleton, Switch } from "@/components/ui/Tabs";
 import { formatNumber } from "@/components/ui/format";
 import { AcceptLossRow } from "./DaysControls";
+import { WorkTabsSection, type WorkTabsData } from "./WorkTabsSection";
 import { CAPACITY_PRESETS, clampCapacity, formatCapacity } from "./settings-model";
 import "@/components/library/study.css";
 import "./settings.css";
@@ -70,6 +73,8 @@ export interface SettingsData {
    * Absent: no row (a page that couldn't read it shows no switch that does nothing).
    */
   aimSuggestions?: boolean;
+  /** Work tabs (2026-10-12; optional, a compatible extension): the archived tabs and how many are open. Absent: no section. */
+  workTabs?: WorkTabsData;
 }
 
 /** What the Aim suggestions switch calls: actions/roadmap setAimSuggestions, or a fixture's recorder. A throw (the network) reads as a refusal. */
@@ -103,6 +108,7 @@ export function SettingsView({ data }: { data: SettingsData }) {
       </div>
       <div className="set-stack">
         <DaysSection capacity={data.capacity} duty={data.duty ?? null} aimSuggestions={data.aimSuggestions} />
+        {data.workTabs && <WorkTabsSection data={data.workTabs} />}
         <StudyDataSection data={data} />
       </div>
     </div>

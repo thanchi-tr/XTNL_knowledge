@@ -148,6 +148,7 @@ import { MissPrompt } from "./MissPrompt";
 import { namedOfTitle, type TodayNamedTitles } from "./NamedTitle";
 import { Chip } from "@/components/ui/Chip";
 import { HeldGlyph } from "@/components/ui/Icon";
+import { WorkBoardCard } from "./WorkBoardCard";
 
 interface Props {
   data: BoardData;
@@ -178,6 +179,19 @@ interface Props {
    * stands). Absent: every title plain, as before.
    */
   namedTitles?: TodayNamedTitles | null;
+  /**
+   * A work tab (work-boards.ts; /today/work/<id>): the same board over that tab's own tasks, kept out of the game.
+   * Its header card (WorkBoardCard: the name, rename and archive in its menu) stands where the plan card stands;
+   * there is no life XP, no capacity, no Record yesterday card, no goals, no Close the day, no day moments and no
+   * price on any row. Absent: the personal Board, exactly as before.
+   */
+  work?: WorkBoardView | null;
+}
+
+/** The work tab a board is (TodayBoard's `work`). */
+export interface WorkBoardView {
+  id: string;
+  name: string;
 }
 
 /** The goal the Close sheet is open on: its preview, and the close's own refusal if it had one. */
@@ -382,7 +396,9 @@ function declaredOf(duty: DutyBoard | null, today: DayKey): DeclaredDay[] {
  * launch the board is the pre-M2 board (debts, which only settlement
  * writes, render whenever they exist).
  */
-export function TodayBoard({ data, streak, nowIso, notices, footClock, launched = false, namedTitles, elsewhere = null }: Props) {
+export function TodayBoard({ data, streak, nowIso, notices, footClock, launched = false, namedTitles, work: workTab = null, elsewhere = null }: Props) {
+  /** A work tab: nothing of the game (no XP, no moments, no goals, no plan card). */
+  const isWork = workTab !== null;
   const router = useRouter();
   const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
@@ -802,14 +818,16 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   /** Marks a completion in place and flies its "+N" to the life-XP cell (or the MiniLedger). */
   function markTick(row: BoardRow, xp: number, from: Element | null | undefined) {
     actedAt.current = tapTime();
+    // A work tick pays nothing: no token flies, and its words say only that it is done.
+    const paid = isWork ? 0 : xp;
     const flight = mark({
       kind: "tick",
       id: `tick:${row.key}:${row.slot}`,
-      text: `Kept ${row.template.title} · paid ${fmtXp(xp)} exactly`,
-      amount: xp > 0 ? { kind: "xp", value: xp } : undefined,
+      text: isWork ? `Done: ${row.template.title}` : `Kept ${row.template.title} · paid ${fmtXp(xp)} exactly`,
+      amount: paid > 0 ? { kind: "xp", value: paid } : undefined,
       from: from ?? null,
     });
-    if (xp > 0) holdLedger("xp", flight);
+    if (paid > 0) holdLedger("xp", flight);
   }
 
   // ── Writes ──────────────────────────────────────────────────────────────
@@ -846,7 +864,11 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
       () => completeTask(row.template.id, { day: "yesterday" }, REFRESH),
       (v) => {
         presentAll(v.celebrations);
-        setNotice(`Recorded for yesterday: ${row.template.title} · paid ${fmtXp(v.receipt.xp)}. Undo it from Record yesterday.`);
+        setNotice(
+          isWork
+            ? `Recorded for yesterday: ${row.template.title}.`
+            : `Recorded for yesterday: ${row.template.title} · paid ${fmtXp(v.receipt.xp)}. Undo it from Record yesterday.`
+        );
       }
     );
   }
@@ -881,8 +903,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
         // rung, a finished goal): Seals and Ascensions only, since
         // presentAll skips T1 and the board chimes its own.
         presentAll(v.celebrations);
-        if (v.duplicate) setNotice(`${row.template.title} was already recorded. Nothing is paid twice.`);
-        else if (Math.abs(v.receipt.xp - shown.xp) > 0.05) {
+        if (v.duplicate) setNotice(isWork ? `${row.template.title} was already done.` : `${row.template.title} was already recorded. Nothing is paid twice.`);
+        else if (!isWork && Math.abs(v.receipt.xp - shown.xp) > 0.05) {
           setNotice(`${row.template.title} paid ${fmtXp(v.receipt.xp)} XP, not ≈ ${fmtXp(shown.xp)}: its size or today's total changed since the board loaded.`);
         }
         return { instanceId: v.instanceId, receipt: v.receipt };
@@ -915,7 +937,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     if (!instanceId || instanceId.startsWith("opt:")) return;
     const xp = row.paid?.xp ?? 0;
     dispatch({ id: nextOpId(), kind: "undo", instanceId }, () => undoCompletion(instanceId, REFRESH));
-    announce(`Undone. ${fmtXp(xp)} life XP taken back; nothing else changed.`);
+    announce(isWork ? `Undone. ${row.template.title} is open again.` : `Undone. ${fmtXp(xp)} life XP taken back; nothing else changed.`);
   }
 
   function skip(row: BoardRow) {
@@ -1222,8 +1244,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     const prev = prevSnapshot.current;
     const next = shown.snapshot;
     prevSnapshot.current = next;
-    // Only after a tap: never on arrival, never on a refresh or another tab's work.
-    if (Date.now() - actedAt.current > MOMENT_WINDOW_MS) return;
+    // Only after a tap: never on arrival, never on a refresh or another tab's work. Never on a work tab (not the game).
+    if (isWork || Date.now() - actedAt.current > MOMENT_WINDOW_MS) return;
     const moments = dayMomentsOf(prev, next);
     if (moments.length === 0) return;
     playMoments(moments);
@@ -1275,6 +1297,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
         namedMark={namedTitles?.mark}
         taskStyle={current.styles?.[row.template.id] ?? null}
         onStep={(stepId, done, from) => tickSteps(row, stepId, done, from)}
+        work={isWork}
       >
         <TaskDrawer
           row={row}
@@ -1298,6 +1321,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
           onResize={() => resize(row)}
           rule={drawerOpen ? drawerRuleOf(row) : null}
           taskStyle={current.styles?.[row.template.id] ?? null}
+          work={isWork}
         />
       </TaskRow>
     );
@@ -1777,20 +1801,30 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
           {/* The three sections: what is due in Ideas and Body, one slim strip of links out (the page's slot). */}
           {elsewhere != null && elsewhere !== false && <div className="o2">{elsewhere}</div>}
 
+          {/* A work tab (work-boards.ts): its own card (the name, a line on what work is, rename and archive in its menu)
+              where the plan card stands. Nothing of the game: no capacity, no life XP, no Asks. */}
+          {workTab && (
+            <div className="o2">
+              <WorkBoardCard board={workTab} />
+            </div>
+          )}
+
           {/* The day's plan (capacity, the life XP the ticks paid, Record yesterday), before the lanes on a phone; what
               waits on the Tasks section (record yesterday, the weekly review) is a badge in its corner. */}
-          <div className="o2 ask-host">
-            <PlanCard
-              planned={{ minutes: board.planned, capacity: board.capacity, chosen: chosenCapacity, over: board.over }}
-              onCapacity={() => setCapacityOpen(true)}
-              xp={board.lifeXpToday}
-              pts={board.reviewXpToday}
-              yesterdayOpen={yesterdayOpenCount}
-              onYesterday={() => setYesterdayOpen(true)}
-            >
-              <AskBadge asks={taskAsks} label="today's tasks" onAction={askAction} />
-            </PlanCard>
-          </div>
+          {!isWork && (
+            <div className="o2 ask-host">
+              <PlanCard
+                planned={{ minutes: board.planned, capacity: board.capacity, chosen: chosenCapacity, over: board.over }}
+                onCapacity={() => setCapacityOpen(true)}
+                xp={board.lifeXpToday}
+                pts={board.reviewXpToday}
+                yesterdayOpen={yesterdayOpenCount}
+                onYesterday={() => setYesterdayOpen(true)}
+              >
+                <AskBadge asks={taskAsks} label="today's tasks" onAction={askAction} />
+              </PlanCard>
+            </div>
+          )}
         </div>
 
         <div className="c2" data-tour="today-lanes">
@@ -1850,8 +1884,12 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
         </div>
 
         <div className="c3">
+          {/* A work tab (work-boards.ts) draws no goals (GoalsStrip off). CALL BACKS SLOT (work tabs, a later step): a work
+              tab's "Call backs" section mounts in .o9, where the goals stand on the personal Board; drawn as nothing
+              (.work-callbacks:empty) until it lands, and never on the personal Board. */}
           <div className="o9">
             <GoalsStrip
+              off={isWork}
               goals={board.goals}
               busy={busyGoals || goalClosing || reschedBusy}
               onProgress={progressGoal}
@@ -1861,6 +1899,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
               justAdded={justAdded}
               namedTitles={namedTitles}
             />
+            {isWork && <div className="work-callbacks" data-slot="call-backs" data-board={workTab?.id} />}
           </div>
 
           <section className="card today-side-rows o10" aria-label="Inbox and Anytime">
@@ -1932,33 +1971,35 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
             )}
           </section>
 
-          <section className="card today-close o11" data-prominent={prominent ? "1" : undefined}>
-            <button type="button" className="close-day" onClick={() => setCloseOpen(true)} aria-haspopup="dialog">
-              <span className="ic">
-                <Icon name="moon" />
-              </span>
-              <span className="close-txt">
-                <b>Close the day</b>
-                <span>
-                  {closeItems.length > 0
-                    ? live
-                      ? `${closeItems.length} still open: move it, do a minimum, or leave it.`
-                      : `${closeItems.length} still open: move it, or do a must's minimum.`
-                    : "Nothing left open. Rest well."}
+          {!isWork && (
+            <section className="card today-close o11" data-prominent={prominent ? "1" : undefined}>
+              <button type="button" className="close-day" onClick={() => setCloseOpen(true)} aria-haspopup="dialog">
+                <span className="ic">
+                  <Icon name="moon" />
                 </span>
-              </span>
-              <Icon name="chev" size={16} className="ink-2" />
-            </button>
-            {/* M2: the always-present way to rest, be sick or plan a vacation, once Duty has a launch day. */}
-            {launchDay && (
-              <div className="close-more">
-                <button type="button" className="close-off" onClick={() => setTimeOffOpen(true)} aria-haspopup="dialog">
-                  <HeldGlyph kind="rest" size={18} />
-                  Time off
-                </button>
-              </div>
-            )}
-          </section>
+                <span className="close-txt">
+                  <b>Close the day</b>
+                  <span>
+                    {closeItems.length > 0
+                      ? live
+                        ? `${closeItems.length} still open: move it, do a minimum, or leave it.`
+                        : `${closeItems.length} still open: move it, or do a must's minimum.`
+                      : "Nothing left open. Rest well."}
+                  </span>
+                </span>
+                <Icon name="chev" size={16} className="ink-2" />
+              </button>
+              {/* M2: the always-present way to rest, be sick or plan a vacation, once Duty has a launch day. */}
+              {launchDay && (
+                <div className="close-more">
+                  <button type="button" className="close-off" onClick={() => setTimeOffOpen(true)} aria-haspopup="dialog">
+                    <HeldGlyph kind="rest" size={18} />
+                    Time off
+                  </button>
+                </div>
+              )}
+            </section>
+          )}
 
           <div className="foot-note o11">
             {footClock && <TodayFooter time={footClock.time} zone={footClock.zone} tz={footClock.tz} />}
@@ -1983,6 +2024,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
         onClarify={clarify}
         onClose={closeInbox}
         undo={removal && inboxOpen ? <UndoToast id={removal.opId} verb={removal.verb} title={removal.title} onUndo={undoRemoval} /> : null}
+        work={isWork}
       />
 
       <Sheet
@@ -2007,7 +2049,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
                 <li key={r.key} className="y-more-row">
                   <span className="y-more-title">{r.template.title}</span>
                   <button type="button" className="today-pill y-more-btn" disabled={busyTemplates.has(r.template.id)} onClick={() => recordYesterday(r)}>
-                    Did it yesterday · ≈ {fmtXp(r.recordYesterday!.xp)}
+                    Did it yesterday{isWork ? "" : ` · ≈ ${fmtXp(r.recordYesterday!.xp)}`}
                   </button>
                 </li>
               ))}

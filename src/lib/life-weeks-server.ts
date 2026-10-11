@@ -152,6 +152,8 @@ const maxDay = (a: DayKey, b: DayKey): DayKey => (a > b ? a : b);
  */
 const DUTY_TEMPLATES = {
   kind: { in: ["TASK", "HABIT"] },
+  // The personal Board only (work-boards.ts): a work tab's must is never a week's Duty.
+  boardId: null,
   OR: [{ compulsory: true }, { pendingChange: { not: Prisma.DbNull } }],
 } satisfies Prisma.TaskTemplateWhereInput;
 

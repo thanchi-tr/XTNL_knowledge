@@ -99,12 +99,15 @@ export async function applySizing(templateId: string, opts: { force?: boolean; n
         category: true,
         band: true,
         captureKey: true,
+        boardId: true,
       },
     });
     if (!t) return "missing";
     // A goal pays through its steps and an idea draft is filed, not done:
     // neither is priced, so neither spends a model call or a cap slot.
     if (t.kind === "GOAL" || t.kind === "IDEA_DRAFT") return "done";
+    // A work tab's task (work-boards.ts) pays no XP: nothing to price, so no model call and no cap slot.
+    if (t.boardId) return "done";
 
     // A plan-born task (contracts §15.6, §16.4): whoever calls this — Start
     // defers nothing and Resize is refused first — no copy, cap slot or model

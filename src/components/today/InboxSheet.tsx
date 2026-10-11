@@ -15,6 +15,8 @@ interface Props {
   onClose: () => void;
   /** The Undo line for a Drop made in this sheet, while it lasts (the dock sits under the scrim). */
   undo?: ReactNode;
+  /** A work tab's inbox (work-boards.ts): Today, Tomorrow, Anytime or Drop; never an idea draft or a goal's step. */
+  work?: boolean;
 }
 
 const CHOICES: { choice: Exclude<InboxChoice, "goal">; label: string }[] = [
@@ -42,8 +44,9 @@ const draftHref = (templateId: string): string => `/add?draft=${encodeURICompone
  * trap, focus back to the opener. Drop is undoable for ten seconds, in the
  * sheet.
  */
-export function InboxSheet({ open, items, goals, busy, onClarify, onClose, undo }: Props) {
+export function InboxSheet({ open, items, goals, busy, onClarify, onClose, undo, work = false }: Props) {
   const [pickingGoalFor, setPickingGoalFor] = useState<string | null>(null);
+  const choices = work ? CHOICES.filter((c) => c.choice !== "idea") : CHOICES;
 
   return (
     <Sheet
@@ -82,7 +85,7 @@ export function InboxSheet({ open, items, goals, busy, onClarify, onClose, undo 
                   <b>{t.title}</b>
                 </div>
                 <div className="today-opts" role="group" aria-label={`Sort ${t.title}`}>
-                  {CHOICES.map((c) => (
+                  {choices.map((c) => (
                     <ChipButton
                       key={c.choice}
                       disabled={busy}
@@ -92,7 +95,7 @@ export function InboxSheet({ open, items, goals, busy, onClarify, onClose, undo 
                       {c.label}
                     </ChipButton>
                   ))}
-                  {goals.length > 0 && (
+                  {!work && goals.length > 0 && (
                     <ChipButton disabled={busy} aria-expanded={pickingGoalFor === t.id} onClick={() => setPickingGoalFor((cur) => (cur === t.id ? null : t.id))}>
                       Goal ^
                     </ChipButton>

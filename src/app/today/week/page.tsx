@@ -252,6 +252,8 @@ function StepsList({ live }: { live: boolean }) {
 /** The templates the week's musts come from: every compulsory one and every one with a pending change, archived included. */
 const DUTY_TEMPLATES: Prisma.TaskTemplateWhereInput = {
   kind: { in: ["TASK", "HABIT"] },
+  // The personal Board only (work-boards.ts): the weekly review never reads a work tab.
+  boardId: null,
   OR: [{ compulsory: true }, { pendingChange: { not: Prisma.DbNull } }],
 };
 

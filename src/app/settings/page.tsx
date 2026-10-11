@@ -10,6 +10,8 @@ import { todayKey } from "@/lib/life-day";
 import { AIM_PROMPT_COOKIE, isMissingRev4Column } from "@/lib/roadmap-types";
 import { aimPromptOf } from "@/lib/roadmap-invite";
 import { SettingsView, type SettingsData } from "@/components/settings/SettingsView";
+import { listArchivedWorkBoards, listOpenWorkBoards } from "@/lib/work-boards-server";
+import type { WorkTabsData } from "@/components/settings/WorkTabsSection";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +38,16 @@ async function loadLifeSettings(userId: string) {
   }
 }
 
+/** Settings › Work tabs: the archived tabs and how many are open; null when the read fails (no section then). */
+async function loadWorkTabs(userId: string): Promise<WorkTabsData | null> {
+  try {
+    const [archived, open] = await Promise.all([listArchivedWorkBoards(userId), listOpenWorkBoards(userId)]);
+    return { archived, open: open.length };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * You › Settings: Feedback (per-person prefs, and per-device sound and
  * haptics), Days, Study and data (Fields of interest, and Settings › Data:
@@ -44,7 +56,10 @@ async function loadLifeSettings(userId: string) {
  */
 export default async function SettingsPage() {
   const userId = getCurrentUserId();
+  // Work tabs (work-boards.ts): started with the wave, awaited after it (it fails soft to no section).
+  const workTabsLoad = loadWorkTabs(userId);
   const [life, fields, progression, jar] = await Promise.all([loadLifeSettings(userId), loadFieldFocus(userId), loadProgression(userId), cookies()]);
+  const workTabs = await workTabsLoad;
   const focus = await loadDailyFocus(userId, progression.activeSkills);
   const today = todayKey();
 
@@ -61,6 +76,8 @@ export default async function SettingsPage() {
     // deletes it). The one rule /you and Today read: roadmap-invite aimPromptOf; a 4-week
     // "Not now" snooze (LATER, or HIDDEN after the line's own × or Today's) is not a no, so the switch reads on.
     aimSuggestions: aimPromptOf(jar.get(AIM_PROMPT_COOKIE)?.value, life?.aimSuggestions ?? null, today) !== "OFF",
+    // Work tabs (work-boards.ts): the archived ones, each with Restore while a place is free.
+    ...(workTabs ? { workTabs } : {}),
   };
 
   // layout.tsx is the page and the `main` container (with the You tabs on compact).

@@ -36,6 +36,9 @@ import { loadStructureWords, loadVocabulary } from "@/lib/vocabulary";
 import { CAPTURE_AIM_READ_MAX, OPEN_ROADMAP_STATUSES, readCaptureAim, readCaptureAimPrompt, type CaptureAim as CaptureAimView } from "@/components/capture/aim-capture";
 import { AIM_PROMPT_COOKIE, type AimPrompt } from "@/lib/roadmap-invite";
 import type { BoardPlace, CaptureMode, ParsedCapture, TaskKind } from "@/lib/life-types";
+import { captureShapeOf } from "@/lib/capture-shape";
+import { WORK_BOARD_ARCHIVED, WORK_BOARD_GONE, isBoardId, workKindRefusalOf } from "@/lib/work-boards";
+import { listOpenWorkBoards, loadWorkBoard } from "@/lib/work-boards-server";
 
 /**
  * The capture sheet's server calls: write one line (or a pasted list, or an
@@ -107,6 +110,11 @@ export interface CapturedItem {
   /** An 'idea: Q :: A' draft is being filed as an Idea in the background (fileIdeaDraftCore); no points are shown. */
   filing?: boolean;
   /**
+   * Work tabs (2026-10-12): the work board the line went to (the sheet captured it on /today/work/<id>); absent on
+   * the personal Board. Its 'View' goes to that board, and it has no price (work pays no XP).
+   */
+  board?: string;
+  /**
    * Set when the line was a weigh-in (components/capture/weight-capture.ts):
    * the reading was logged for its life day and no task was written. `id` is
    * then 'weight:<day>', `projectedXp` 0, `href` '/train'; `kind`, `mode` and
@@ -162,6 +170,27 @@ function prepareLine(text: unknown, reverted: unknown, today: DayKey): PreparedL
 /** A key the sheet sent with a line, or none; tasks.ts validates it (cleanCaptureKey). */
 function keyOf(key: unknown): string | null {
   return typeof key === "string" ? key : null;
+}
+
+/**
+ * The board a line is captured into (work-boards.ts): null for the personal
+ * Board (no board sent, as every line before work tabs), else the work tab the
+ * sheet stamped it with, which must still be open. Its list is the strip's own
+ * cached read, so a line pays a query only for a tab that is not open (gone or
+ * archived: said, and the line is kept).
+ */
+async function boardOf(userId: string, board: unknown): Promise<{ ok: true; boardId: string | null } | { ok: false; error: string }> {
+  if (board == null || board === "") return { ok: true, boardId: null };
+  if (!isBoardId(board)) return { ok: false, error: WORK_BOARD_GONE };
+  const open = await listOpenWorkBoards(userId);
+  if (open.some((b) => b.id === board)) return { ok: true, boardId: board };
+  const row = await loadWorkBoard(userId, board);
+  return { ok: false, error: row?.archived ? WORK_BOARD_ARCHIVED : WORK_BOARD_GONE };
+}
+
+/** A work tab takes tasks and habits: the refusal for a goal or an idea draft there (the line is kept), else null. */
+function workLineRefusal(boardId: string | null, parsed: ParsedCapture, today: DayKey): string | null {
+  return boardId ? workKindRefusalOf(captureShapeOf(parsed, today).kind) : null;
 }
 
 // ── Weigh-ins (weight-capture.ts holds the rules; these bind them to the user) ──
@@ -245,6 +274,7 @@ function itemOf(parsed: ParsedCapture, created: CreatedTask, filing: boolean): C
     href: parsed.kind === "IDEA_DRAFT" ? `/add?draft=${encodeURIComponent(created.id)}` : null,
     where: filing ? { lane: "inbox", label: "Inbox · filing" } : created.where,
     ...(filing ? { filing: true } : {}),
+    ...(created.boardId ? { board: created.boardId } : {}),
   };
 }
 
@@ -264,7 +294,8 @@ interface SavedLine {
  * is read before after(), never inside it.
  */
 function afterSave(userId: string, saved: readonly SavedLine[]): void {
-  const toSize = saved.filter((s) => s.parsed.kind !== "IDEA_DRAFT" && s.parsed.kind !== "GOAL" && !s.created.duplicate).map((s) => s.created.id);
+  // A work tab's line pays no XP (work-boards.ts): nothing to size, so no model call.
+  const toSize = saved.filter((s) => s.parsed.kind !== "IDEA_DRAFT" && s.parsed.kind !== "GOAL" && !s.created.duplicate && !s.created.boardId).map((s) => s.created.id);
   const toFile = saved.filter((s) => s.filing).map((s) => s.created.id);
   if (toSize.length > 0) {
     after(async () => {
@@ -300,7 +331,7 @@ function afterSave(userId: string, saved: readonly SavedLine[]): void {
 export async function createFromCapture(
   text: string,
   reverted?: CaptureSpan[],
-  opts?: { refresh?: boolean; captureKey?: string; weightUnit?: WeightUnit }
+  opts?: { refresh?: boolean; captureKey?: string; weightUnit?: WeightUnit; board?: string | null }
 ): Promise<CaptureResult<CapturedItem>> {
   const today = todayKey();
   // A weigh-in ('weight 72.4') is logged, never saved as a task. A resend is
@@ -318,7 +349,12 @@ export async function createFromCapture(
   let created: CreatedTask;
   try {
     userId = getCurrentUserId();
-    created = await createTemplateCore(userId, line.parsed, { rawText: line.text, captureSource: "quick", captureKey: keyOf(opts?.captureKey) });
+    // A line from a work tab (opts.board, work-boards.ts) lands on that tab, tasks and habits only.
+    const scope = await boardOf(userId, opts?.board);
+    if (!scope.ok) return scope;
+    const refusal = workLineRefusal(scope.boardId, line.parsed, today);
+    if (refusal) return { ok: false, error: refusal };
+    created = await createTemplateCore(userId, line.parsed, { rawText: line.text, captureSource: "quick", captureKey: keyOf(opts?.captureKey), boardId: scope.boardId });
   } catch (err) {
     console.error("createFromCapture failed:", err);
     // The sheet keeps the line in local storage until this says ok, so the
@@ -407,6 +443,8 @@ export interface CaptureLineInput {
   text: string;
   reverted?: CaptureSpan[];
   captureKey: string;
+  /** The work tab it was captured on (work-boards.ts); absent: the personal Board. */
+  board?: string | null;
 }
 
 /** One pasted line's outcome, in the order the lines were sent. A failure carries its captureKey so the sheet can file it. */
@@ -452,7 +490,11 @@ export async function createManyFromCapture(
     }
     const prepared = prepareLine(line.text, line.reverted, today);
     if (!prepared.ok) return prepared;
-    const created = await createTemplateCore(userId, prepared.parsed, { rawText: prepared.text, captureSource: "quick", captureKey: line.captureKey });
+    const scope = await boardOf(userId, line.board);
+    if (!scope.ok) return scope;
+    const refusal = workLineRefusal(scope.boardId, prepared.parsed, today);
+    if (refusal) return { ok: false, error: refusal };
+    const created = await createTemplateCore(userId, prepared.parsed, { rawText: prepared.text, captureSource: "quick", captureKey: line.captureKey, boardId: scope.boardId });
     const filing = filesItself(prepared.parsed, created);
     saved.push({ parsed: prepared.parsed, created, filing });
     return { ok: true, value: itemOf(prepared.parsed, created, filing) };

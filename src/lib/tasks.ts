@@ -32,6 +32,7 @@ import {
   type ParsedCapture,
   type Receipt,
   type Sink,
+  type StepShare,
   type TaskKind,
   type Track,
 } from "./life-types";
@@ -79,6 +80,7 @@ import { loadTaskStyles } from "./task-style-server";
 import { isMissingSubtaskTable, loadSubtasks } from "./subtasks-server";
 import { STEPS_NOT_READY, nextTicks, paidByStepsOf, stepPayOf, stepsAllowed } from "./subtasks";
 import { isMissingRoadmapTable, isRoadmapCaptureKey, isSupersededRow, type PositionRow } from "./roadmap-types";
+import { PERSONAL_BOARD, WORK_CLARIFY_REFUSAL, WORK_NO_SIZE, workClarifyAllowed, workKindRefusalOf, type BoardScope } from "./work-boards";
 import {
   EpochSet,
   HISTORY_DAYS,
@@ -219,6 +221,8 @@ const TEMPLATE_SELECT = {
   closedScore: true,
   // Roadmap (F16 seam 3): a roadmap goal is 'rm:<milestoneId>', its practices and steps 'rm:<id>:p<i>' / ':s<i>'.
   captureKey: true,
+  // Work tabs (2026-10-12): null on the personal Board; a work task's ticks take the game-free path (completeWorkCore).
+  boardId: true,
 } satisfies Prisma.TaskTemplateSelect;
 
 /** What every template read selects. Exported for duty.ts (the make-up's pricing read). */
@@ -302,8 +306,10 @@ export function toBoardTemplate(r: TemplateRow, now: Date): BoardTemplate {
     gradeFrozen,
     // life-lexicon.ts's 'sizing…': a lexical grade minutes old whose one AI
     // call has not landed yet. A renamed title is never sized, so never pending,
-    // and neither is a plan-born task ('rm:…'): no model sizes one (decision 50).
+    // and neither is a plan-born task ('rm:…'): no model sizes one (decision 50),
+    // nor a work tab's task (work-boards.ts: work is never sized).
     sizing:
+      r.boardId == null &&
       r.gradeSource === "LEXICAL" &&
       !isRoadmapCaptureKey(r.captureKey) &&
       !gradeFrozen &&
@@ -552,6 +558,8 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
       where: {
         userId,
         archivedAt: null,
+        // The personal Board only (work tabs read loadWorkBoardData; work is never in the game's reads).
+        ...PERSONAL_BOARD,
         // Open work, anything finished since yesterday began (so it can be
         // seen ticked and undone), and every goal's children for its rollup.
         OR: [{ completedAt: null }, { completedAt: { gte: dayStartOf(yesterday) } }, { parentId: { not: null } }],
@@ -560,7 +568,7 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     }),
     prisma.taskInstance.findMany({
-      where: { userId, day: { gte: dateColumn(addDays(today, -HISTORY_DAYS)) } },
+      where: { userId, day: { gte: dateColumn(addDays(today, -HISTORY_DAYS)) }, template: PERSONAL_BOARD },
       select: INSTANCE_SELECT,
     }),
     // The day before yesterday too: the freeze state reads its streak units (M2).
@@ -576,7 +584,7 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
     // included (F12's owed cards), and the restores spent in (today − 7,
     // today] — one per template (MAKEUP_RESTORE_EVERY_DAYS).
     prisma.taskInstance.findMany({
-      where: { userId, OR: [{ debtOpen: true }, { repaired: true, completedAt: { gte: restoreFrom } }] },
+      where: { userId, template: PERSONAL_BOARD, OR: [{ debtOpen: true }, { repaired: true, completedAt: { gte: restoreFrom } }] },
       select: {
         id: true,
         templateId: true,
@@ -784,7 +792,9 @@ function loadDueNow(day: DayKey, now: Date): Promise<number> {
  * ideas tags, since a review changes the quest and a tick changes the rest,
  * and under 'roadmap' for the open roadmap goals' stored series.
  */
-export async function loadTodayBoard(userId: string, day: DayKey, now: Date = new Date()): Promise<BoardData> {
+export async function loadTodayBoard(userId: string, day: DayKey, now: Date = new Date(), board: BoardScope = null): Promise<BoardData> {
+  // A work tab (work-boards.ts): its own game-free read. The personal Board (null) reads as it always has.
+  if (board !== null) return loadWorkBoardData(userId, board, day, now);
   return cached(`today:${userId}:${day}`, ["life", "activity", "ideas", "roadmap"], async () => {
     // Each task's icon and colour (fails soft: none before the life_exercise_style migration).
     // Each task's steps and today's ticked ones (fails soft: none before the life_subtasks migration).
@@ -872,6 +882,8 @@ export interface CreatedTask {
   doneNowError: string | null;
   /** This capture key was already saved (a retried send): the row returned is the one written the first time. */
   duplicate: boolean;
+  /** Work tabs (work-boards.ts): the work board the row is on; null or absent on the personal Board. */
+  boardId?: string | null;
   /**
    * Where it went, in the board's own lane names: today-board placeOf over
    * the inserted row (and the done-now tick, when one went through), the
@@ -892,7 +904,7 @@ const KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 export function loadOpenGoals(userId: string): Promise<{ id: string; title: string }[]> {
   return cached(`captureGoals:${userId}`, ["life"], () =>
     prisma.taskTemplate.findMany({
-      where: { userId, kind: "GOAL", archivedAt: null, completedAt: null, closedScore: null },
+      where: { userId, kind: "GOAL", archivedAt: null, completedAt: null, closedScore: null, ...PERSONAL_BOARD },
       select: { id: true, title: true },
       orderBy: { createdAt: "desc" },
       take: 100,
@@ -940,6 +952,7 @@ export function loadRecentCaptures(userId: string, now: Date = new Date()): Prom
         captureSource: "quick",
         kind: { in: ["TASK", "HABIT"] },
         archivedAt: null,
+        ...PERSONAL_BOARD,
         createdAt: { gte: new Date(now.getTime() - RECENT_CAPTURE_DAYS * 86_400_000) },
       },
       select: { rawText: true },
@@ -1021,7 +1034,7 @@ export async function loadActiveTitles(userId: string, now: Date = new Date()): 
 export async function createTemplateCore(
   userId: string,
   parsed: ParsedCapture,
-  opts: { rawText: string; captureSource: CaptureSource; captureKey?: string | null; now?: Date; link?: CaptureLink }
+  opts: { rawText: string; captureSource: CaptureSource; captureKey?: string | null; now?: Date; link?: CaptureLink; boardId?: BoardScope }
 ): Promise<CreatedTask> {
   const w = await insertCapture(userId, parsed, opts);
   if (!wantsDoneNowTick(parsed, w.t)) return w.created;
@@ -1093,13 +1106,16 @@ interface InsertedCapture {
 async function insertCapture(
   userId: string,
   parsed: ParsedCapture,
-  opts: { rawText: string; captureSource: CaptureSource; captureKey?: string | null; now?: Date; link?: CaptureLink }
+  opts: { rawText: string; captureSource: CaptureSource; captureKey?: string | null; now?: Date; link?: CaptureLink; boardId?: BoardScope }
 ): Promise<InsertedCapture> {
   const now = opts.now ?? new Date();
   const today = todayKey(now);
   const title = parsed.title.trim().replace(/\s+/g, " ").slice(0, TITLE_MAX);
   if (!title) throw new Error("Nothing to add: the line has no title left once its tokens are read.");
   const captureKey = cleanCaptureKey(opts.captureKey);
+  // A work tab (work-boards.ts): tasks and habits only, never linked to a goal, never a study task (the action refuses
+  // a goal or an idea draft first, with WORK_KIND_REFUSAL; this is the backstop). The personal Board: null, as before.
+  const boardId = opts.boardId ?? null;
 
   const typed = typeof parsed.estMinutes === "number" && Number.isFinite(parsed.estMinutes) ? parsed.estMinutes : null;
   const sizing = sizeLexically(title, { tagTrack: parsed.track, minutes: typed });
@@ -1107,14 +1123,17 @@ async function insertCapture(
   const estMinutes = typed != null ? Math.max(1, Math.min(EST_MINUTES_MAX, Math.round(typed))) : machineMinutes;
 
   const { kind, recurrence, startDay, dueDay, dueKind, compulsory, inbox, note } = captureShapeOf(parsed, today);
+  const workRefusal = boardId ? workKindRefusalOf(kind) : null;
+  if (workRefusal) throw new Error(workRefusal);
 
   // A roadmap Start (F16 seam 5) names its parent goal and the goal's measure outright; checked before the write.
   const goal = linkedGoalFields(kind, captureGoalFields(kind, title, parsed.horizon, dueDay, today), opts.link);
-  // '^name': the same matcher and the same list the chip previewed, unless the link named the parent.
-  let parentId: string | null = linkedParentOf(kind, opts.link);
-  if (!parentId && parsed.parentHint && kind !== "GOAL") parentId = matchParentGoal(parsed.parentHint, await loadOpenGoals(userId))?.id ?? null;
+  // '^name': the same matcher and the same list the chip previewed, unless the link named the parent. Never on a work tab.
+  let parentId: string | null = boardId ? null : linkedParentOf(kind, opts.link);
+  if (!boardId && !parentId && parsed.parentHint && kind !== "GOAL") parentId = matchParentGoal(parsed.parentHint, await loadOpenGoals(userId))?.id ?? null;
 
-  const autoMetric = parsed.autoMetric && kind !== "GOAL" ? parsed.autoMetric : null;
+  // A study task completes itself from reviews (the game's): never on a work tab.
+  const autoMetric = parsed.autoMetric && kind !== "GOAL" && !boardId ? parsed.autoMetric : null;
   const autoTarget =
     autoMetric && parsed.autoTarget != null && Number.isFinite(parsed.autoTarget)
       ? Math.max(1, Math.min(500, Math.round(parsed.autoTarget)))
@@ -1157,6 +1176,7 @@ async function insertCapture(
     gradeBasis: sizing.basis.slice(0, 200),
     captureSource: opts.captureSource,
     captureKey,
+    boardId,
   };
 
   const insert = prisma.taskTemplate
@@ -1237,11 +1257,13 @@ function capturedOf(
   const created: CreatedTask = {
     id: row.id,
     title: row.title,
-    projectedXp: planCompletion({ template: t, day: a.today, today: a.today, slot: 0, ledger: ledgerOf(a.today, a.totals, a.events), streakDays: 0 }).receipt.xp,
+    // A work task pays no XP (work-boards.ts): its line says no price.
+    projectedXp: row.boardId ? 0 : planCompletion({ template: t, day: a.today, today: a.today, slot: 0, ledger: ledgerOf(a.today, a.totals, a.events), streakDays: 0 }).receipt.xp,
     describe: describeTemplate(t, a.today),
     completed: false,
     doneNowError: null,
     duplicate: a.duplicate,
+    ...(row.boardId ? { boardId: row.boardId } : {}),
     where: placeOf(t, a.today, a.instances),
   };
   return { created, t, instances: a.instances, minutes: a.minutes, today: a.today, now: a.now };
@@ -1797,6 +1819,9 @@ export async function completeInstanceCore(userId: string, templateId: string, o
   const reason = completableReason(t, row);
   if (reason) return fail(reason);
 
+  // A work tab's task (work-boards.ts): recorded, never paid. No ledger row, no Duty, no price (completeWorkCore).
+  if (row.boardId) return completeWorkCore(userId, read, { day, today, slot: null, minutes: opts.minutes, mvv: opts.mvv, now });
+
   // Done on that day already (a double tap, a retry): the first tick's receipt.
   const repeat = doneOnDay(read, day);
   if (repeat) return repeat;
@@ -1860,6 +1885,7 @@ export async function againCore(userId: string, templateId: string, opts: Comple
   if (!onDay.some((i) => isDoneStatus(i.status))) return fail("Do it once first.");
   const slot = Math.max(...onDay.map((i) => i.slot)) + 1;
   if (slot > SLOT_MAX) return fail("That's plenty for one day.");
+  if (read.row.boardId) return completeWorkCore(userId, read, { day: today, today, slot, minutes: opts.minutes, mvv: opts.mvv, now });
   return settleCompletion(userId, read, { day: today, today, slot, minutes: opts.minutes, mvv: opts.mvv, now }, load);
 }
 
@@ -1926,6 +1952,8 @@ async function stepTickOnce(
   today: DayKey,
   now: Date
 ): Promise<LifeResult<StepTick> | typeof RETRY> {
+  // A work tab's task: its steps are recorded and finish it, and nothing is paid (workStepTick).
+  if (read.row.boardId) return workStepTick(userId, read, change, day, today, now);
   const { t, row, history, events } = read;
   const reason = completableReason(t, row);
   if (reason) return fail(reason);
@@ -2106,7 +2134,7 @@ export async function undoCompletionCore(
   const [inst, events, settings] = await Promise.all([
     prisma.taskInstance.findFirst({
       where: { id: instanceId, userId },
-      select: { id: true, templateId: true, day: true, status: true, source: true, template: { select: { recurrence: true } } },
+      select: { id: true, templateId: true, day: true, status: true, source: true, completedAt: true, template: { select: { recurrence: true, boardId: true } } },
     }),
     prisma.activityEvent.findMany({
       where: { userId, sourceId: instanceId, source: { in: ["TASK", "UNDO"] } },
@@ -2116,6 +2144,8 @@ export async function undoCompletionCore(
     prisma.lifeSettings.findUnique({ where: { userId }, select: { settledThroughDay: true, epochDay: true } }),
   ]);
   if (!inst) return fail("That tick no longer exists.");
+  // A work tab's tick (work-boards.ts): no ledger row to negate; the instance goes back to open (undoWorkCore).
+  if (inst.template.boardId) return undoWorkCore(userId, inst, now);
   if (!isDoneStatus(inst.status)) return ok({ instanceId, xp: 0, templateId: inst.templateId });
   if (inst.source.startsWith("auto:")) return fail("Your reviews completed this one; it can't be undone.");
   if (inst.source === "make-up") return fail(MAKE_UP_UNDO_ELSEWHERE);
@@ -2283,6 +2313,8 @@ const RULE_SELECT = {
   pendingChange: true,
   /** Read, never compared (ruleWhere): an unarchive's roadmap check keys on it (unarchiveCore). */
   krMetric: true,
+  /** Read, never compared: a work tab's task (work-boards.ts) has no Duty, so its rule edits are always immediate. */
+  boardId: true,
 } satisfies Prisma.TaskTemplateSelect;
 
 type RuleReadRow = Prisma.TaskTemplateGetPayload<{ select: typeof RULE_SELECT }>;
@@ -2400,7 +2432,8 @@ async function applyRuleEdit(
     if (row.archivedAt && (edit.kind === "unflag" || edit.kind === "rest" || edit.kind === "cancel")) return fail("That task is archived.");
     const refusal = refusalOf ? await refusalOf(row) : null;
     if (refusal) return fail(refusal);
-    const plan = edit.kind === "safety-pause" ? ok(planSafetyPause(ruleRowOf(row), now)) : planRuleEdit(ruleRowOf(row), edit, { today, now, launched });
+    // A work tab's task has no Duty (work-boards.ts): planned as before launch, so every change is immediate.
+    const plan = edit.kind === "safety-pause" ? ok(planSafetyPause(ruleRowOf(row), now)) : planRuleEdit(ruleRowOf(row), edit, { today, now, launched: launched && !row.boardId });
     if (!plan.ok) return fail(plan.error);
     const out: RuleChangeOutcome = { templateId, effect: plan.value.effect, effectiveDay: plan.value.effectiveDay };
     if (!plan.value.write) return ok(out);
@@ -2812,7 +2845,7 @@ export async function recaptureCore(
   const validOld = typeof oldId === "string" && oldId.length > 0 && oldId.length <= 64;
   const [old, oldTicks, keyRow] = await Promise.all([
     validOld
-      ? prisma.taskTemplate.findFirst({ where: { id: oldId, userId }, select: { createdAt: true, archivedAt: true, rawText: true } })
+      ? prisma.taskTemplate.findFirst({ where: { id: oldId, userId }, select: { createdAt: true, archivedAt: true, rawText: true, boardId: true } })
       : null,
     validOld ? prisma.taskInstance.findMany({ where: { templateId: oldId, userId }, select: { status: true } }) : [],
     captureKey ? prisma.taskTemplate.findFirst({ where: { userId, captureKey }, select: { id: true } }) : null,
@@ -2841,7 +2874,11 @@ export async function recaptureCore(
     return ok({ ...resent, replacedId: oldId, oldKept: false });
   }
 
-  const w = await insertCapture(userId, parsed, { rawText: opts.rawText, captureSource: opts.captureSource ?? "quick", captureKey, now });
+  // An edit stays on its line's board (work-boards.ts): a work line's edit is a work line, tasks and habits only.
+  const boardId = old?.boardId ?? null;
+  const workRefusal = boardId ? workKindRefusalOf(captureShapeOf(parsed, today).kind) : null;
+  if (workRefusal) return { ok: false, error: workRefusal };
+  const w = await insertCapture(userId, parsed, { rawText: opts.rawText, captureSource: opts.captureSource ?? "quick", captureKey, now, boardId });
   // Sent under the old line's own key (a race past the plan's check), the 'new' row IS the old one: taking it back would lose the line.
   if (w.created.id === oldId) return { ok: false, error: RECAPTURE_SAME_KEY };
 
@@ -2878,6 +2915,8 @@ export interface CaptureBatchLine {
   text: unknown;
   reverted: unknown;
   captureKey: string;
+  /** The work tab the line was captured on (work-boards.ts), unchecked: the saver checks it. Absent: the personal Board. */
+  board?: unknown;
 }
 
 export type CaptureBatchOutcome<I> = { ok: true; item: I } | { ok: false; captureKey: string; error: string };
@@ -2914,7 +2953,7 @@ export async function runCaptureBatch<I>(
     else {
       seen.add(key);
       try {
-        const res = await save({ text: raw.text, reverted: raw.reverted, captureKey: key });
+        const res = await save({ text: raw.text, reverted: raw.reverted, captureKey: key, ...(raw.board != null ? { board: raw.board } : {}) });
         out.push(res.ok ? { ok: true, item: res.value } : { ok: false, captureKey: key, error: res.error });
       } catch (err) {
         console.error("Pasted line not saved:", err);
@@ -2949,13 +2988,15 @@ export async function clarifyInboxCore(
   }
   const row = await prisma.taskTemplate.findFirst({ where: { id: templateId, userId, archivedAt: null }, select: RULE_SELECT });
   if (!row) return fail("That item no longer exists.");
+  // A work tab's inbox (work-boards.ts): Today, Tomorrow, Anytime or Drop; never a goal's step or an idea draft.
+  if (row.boardId && !workClarifyAllowed(choice)) return fail(WORK_CLARIFY_REFUSAL);
   const asTask = row.kind === "IDEA_DRAFT" ? "TASK" : undefined;
   const deadline = row.dueKind === "DEADLINE" && !!row.dueDay;
   // M2 (F3, decisions 17 and 31): the classifier on a must. A must leaving
   // the inbox is owed from today, never before (a prior segment rides on the
   // same update); a scheduled must sent back to the inbox as an idea waits
-  // out the akrasia horizon, so it is refused with the way out.
-  const duty = planClarifyRule(ruleRowOf(row), choice, { today, now, launched: isDutyLaunched(today) });
+  // out the akrasia horizon, so it is refused with the way out. A work tab's must has no Duty: as before launch.
+  const duty = planClarifyRule(ruleRowOf(row), choice, { today, now, launched: isDutyLaunched(today) && !row.boardId });
   if (!duty.ok) return fail(duty.error);
   const pendingChange =
     duty.value.pendingChange === undefined
@@ -3117,9 +3158,10 @@ export async function setDailyCapacityCore(userId: string, minutes: number, now:
 export async function setBandOverrideCore(userId: string, templateId: string, override: number, now: Date = new Date()): Promise<LifeResult<{ bandOverride: number }>> {
   const row = await prisma.taskTemplate.findFirst({
     where: { id: templateId, userId, archivedAt: null },
-    select: { band: true, bandOverride: true, bandOverrideAt: true, gradeFrozenAt: true },
+    select: { band: true, bandOverride: true, bandOverrideAt: true, gradeFrozenAt: true, boardId: true },
   });
   if (!row) return fail("That task no longer exists.");
+  if (row.boardId) return fail(WORK_NO_SIZE);
   const clamped = clampBandOverride(asBand(row.band), override);
   if (clamped === row.bandOverride) return ok({ bandOverride: clamped });
   const rating = { firstCompletedAt: row.gradeFrozenAt, bandOverrideAt: row.bandOverrideAt };
@@ -3144,9 +3186,10 @@ export const PLAN_BORN_RESIZE_REFUSAL = "A plan-born task's size comes from its 
 export async function resizableCore(userId: string, templateId: string, now: Date = new Date()): Promise<LifeResult<null>> {
   const row = await prisma.taskTemplate.findFirst({
     where: { id: templateId, userId, archivedAt: null },
-    select: { gradeFrozenAt: true, createdAt: true, gradeAttempts: true, kind: true, title: true, normTitle: true, captureKey: true },
+    select: { gradeFrozenAt: true, createdAt: true, gradeAttempts: true, kind: true, title: true, normTitle: true, captureKey: true, boardId: true },
   });
   if (!row) return fail("That task no longer exists.");
+  if (row.boardId) return fail(WORK_NO_SIZE);
   if (row.kind === "GOAL" || row.kind === "IDEA_DRAFT") return fail("Goals and idea drafts aren't sized; only tasks are.");
   if (isRoadmapCaptureKey(row.captureKey)) return fail(PLAN_BORN_RESIZE_REFUSAL);
   if (isGradeFrozen(row, now)) {
@@ -3205,7 +3248,7 @@ function mayBeDueToday(t: BoardTemplate, today: DayKey): boolean {
 function loadAutoTemplates(userId: string, now: Date): Promise<BoardTemplate[]> {
   return cached(`autoTasks:${userId}`, ["life"], async () => {
     const rows = await prisma.taskTemplate.findMany({
-      where: { userId, archivedAt: null, autoMetric: { in: [...STUDY_METRICS] } },
+      where: { userId, archivedAt: null, autoMetric: { in: [...STUDY_METRICS] }, ...PERSONAL_BOARD },
       select: TEMPLATE_SELECT,
     });
     return rows.map((r) => toBoardTemplate(r, now));
@@ -3292,6 +3335,324 @@ export async function autoCompleteStudyTasks(userId: string, now: Date = new Dat
     }
   }
   return completed;
+}
+
+// ── Work tabs (work-boards.ts) ─────────────────────────────────────────────
+//
+// A work tab's tasks use the board's own lanes and rules (placementOf,
+// completionBlockOf, the recurrence rules, steps, archive), but they are
+// kept out of the game: a tick writes its TaskInstance (DONE, xpPaid 0) and
+// nothing else — no ActivityEvent, so no life XP, no streak unit, no knee,
+// no track, no week, no Full day — and no Duty (no settled-day lock, no
+// debt, no deferred rule edit). Every life-economy reader of TaskTemplate or
+// TaskInstance reads the personal Board only (PERSONAL_BOARD).
+
+/** A work tick's receipt: nothing priced, nothing paid. `steps`: finished by its steps (a checklist that closed it). */
+export function workReceiptOf(track: Track, minutes: number | null, steps?: StepShare | null): Receipt {
+  return { v: "work-0", factors: [], minutes: minutes ?? 0, raw: 0, kneeBefore: 0, xp: 0, track, ...(steps ? { steps } : {}) };
+}
+
+/** A day with nothing in its ledger: what a work board's lanes price against (they show no price). */
+export function emptyLedgerOf(day: DayKey): DayLedger {
+  return { day, rawBefore: 0, lifeXp: 0, completions: [], reviews: 0, reviewXp: 0, ideas: 0, dayOpenQty: null };
+}
+
+/** The share a work instance finished by its steps reports (paidByStepsOf reads it as whole: done = total). */
+const WORK_STEPS_DONE: StepShare = { done: 1, total: 1 };
+
+/** A work instance as the board's paid record reads it: its time, for 'Done 08:05' and the undo window. */
+export interface WorkInstanceRow {
+  id: string;
+  templateId: string;
+  status: string;
+  source: string;
+  minutes?: number | null;
+  completedAt: Date | string | null;
+}
+
+/**
+ * A work board's done instances as BoardData.paid (pure): one record per done
+ * instance, 0 XP, its completedAt as the tick's time (TaskRow's 'Done 08:05'
+ * and canUndo's ten minutes), a step-finished one marked as paid by its steps.
+ */
+export function workPaidOf(rows: readonly WorkInstanceRow[], trackOf: (templateId: string) => Track, fallbackAt: string): Record<string, PaidRecord> {
+  const out: Record<string, PaidRecord> = {};
+  for (const r of rows) {
+    if (!isDoneStatus(r.status)) continue;
+    const at = r.completedAt ? new Date(r.completedAt).toISOString() : fallbackAt;
+    out[r.id] = {
+      eventId: `work:${r.id}`,
+      instanceId: r.id,
+      receipt: workReceiptOf(trackOf(r.templateId), r.minutes ?? null, r.source === "auto:steps" ? WORK_STEPS_DONE : null),
+      occurredAt: at,
+      xp: 0,
+      undone: false,
+    };
+  }
+  return out;
+}
+
+const WORK_INSTANCE_SELECT = { ...INSTANCE_SELECT, completedAt: true, minutes: true } satisfies Prisma.TaskInstanceSelect;
+
+/**
+ * A work board's BoardData for one life day: its open templates (and those
+ * finished since yesterday began, so a tick can be seen and undone), their
+ * recent instances folded into stats, today's steps and styles — and an
+ * empty ledger, no Duty, no goals, no study queue: nothing of the game.
+ * Cached per board and day under 'life' and 'activity' (every task write
+ * clears them).
+ */
+export function loadWorkBoardData(userId: string, boardId: string, day: DayKey, now: Date = new Date()): Promise<BoardData> {
+  return cached(`work:${userId}:${boardId}:${day}`, ["life", "activity"], async () => {
+    const yesterday = addDays(day, -1);
+    const [templateRows, instanceRows, styles, subtasks] = await Promise.all([
+      prisma.taskTemplate.findMany({
+        where: { userId, boardId, archivedAt: null, OR: [{ completedAt: null }, { completedAt: { gte: dayStartOf(yesterday) } }] },
+        select: TEMPLATE_SELECT,
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+      }),
+      prisma.taskInstance.findMany({
+        where: { userId, day: { gte: dateColumn(addDays(day, -HISTORY_DAYS)) }, template: { boardId } },
+        select: WORK_INSTANCE_SELECT,
+      }),
+      loadTaskStyles(userId),
+      loadSubtasks(userId, day),
+    ]);
+    const templates = templateRows.map((r) => toBoardTemplate(r, now));
+    const instances = instanceRows.map(toBoardInstance);
+    const byTpl = new Map<string, BoardInstance[]>();
+    for (const i of instances) {
+      const list = byTpl.get(i.templateId);
+      if (list) list.push(i);
+      else byTpl.set(i.templateId, [i]);
+    }
+    // Each habit's own streak and strength, from its own instances: no settlement cursor, no rest, no freeze (no Duty).
+    const stats: Record<string, TemplateStats> = {};
+    for (const t of templates) {
+      const rule = ruleOf(t);
+      if (rule) stats[t.id] = statsFor(t, rule, byTpl.get(t.id) ?? [], day);
+    }
+    const recentFrom = [`${monthKeyOf(day)}-01`, weekStartKeyOf(day), yesterday].sort()[0];
+    const trackOf = new Map(templates.map((t) => [t.id, t.track]));
+    return {
+      today: day,
+      yesterday,
+      capacityMin: 0,
+      capacitySet: false,
+      templates,
+      instances: instances.filter((i) => i.day >= recentFrom),
+      stats,
+      ledger: { today: emptyLedgerOf(day), yesterday: emptyLedgerOf(yesterday) },
+      paid: workPaidOf(instanceRows, (id) => trackOf.get(id) ?? "DUTY", now.toISOString()),
+      goalQty: {},
+      goalDays: {},
+      dueNow: null,
+      styles,
+      subtasks,
+      roadmapGoals: {},
+    };
+  });
+}
+
+/** Minutes a work tick records: what was reported (clamped), else the estimate. */
+function workMinutesOf(t: Pick<BoardTemplate, "estMinutes">, minutes: number | null | undefined): number {
+  const m = sanitizeWorkMinutes(minutes);
+  return m ?? Math.max(1, Math.round(t.estMinutes));
+}
+
+function sanitizeWorkMinutes(m: unknown): number | null {
+  if (typeof m !== "number" || !Number.isFinite(m) || m <= 0) return null;
+  return Math.max(1, Math.min(EST_MINUTES_MAX, Math.round(m)));
+}
+
+/**
+ * A work task's tick (completeInstanceCore and againCore route here): the
+ * board's own rules decide whether it may be ticked (completionBlockOf, a
+ * one-off done once, today or yesterday only), then one TaskInstance is
+ * written DONE (or DONE_MVV) with xpPaid 0 and, for a one-off, the template
+ * closed — in one array, and nothing else: no ActivityEvent, no lock, no
+ * guard, no settled-day check (work has no Duty). `slot` null: the day's first
+ * tick (a day already done returns that tick, a double tap writes one row).
+ */
+async function completeWorkCore(
+  userId: string,
+  read: CompletionRead & { row: TemplateRow },
+  a: { day: DayKey; today: DayKey; slot: number | null; minutes?: number | null; mvv?: boolean; now: Date }
+): Promise<LifeResult<Completion>> {
+  const { t, history } = read;
+  const rule = ruleOf(t);
+  const onDay = history.filter((i) => i.day === a.day);
+  if (a.slot === null) {
+    const done = onDay.filter((i) => isDoneStatus(i.status)).sort((x, y) => y.slot - x.slot)[0];
+    if (done) {
+      return ok({
+        instanceId: done.id,
+        templateId: t.id,
+        eventId: null,
+        day: a.day,
+        slot: done.slot,
+        receipt: workReceiptOf(t.track, null),
+        status: done.status,
+        source: done.source,
+        occurredAt: a.now.toISOString(),
+        duplicate: true,
+      });
+    }
+    if (!rule && t.completedAt) return fail("Already done.");
+    const block = completionBlockOf({ t, rule, day: a.day, today: a.today, lastDone: lastDoneOf(history), onDay });
+    if (block) return fail(block);
+  }
+  const slot = a.slot ?? 0;
+  const existing = onDay.find((i) => i.slot === slot) ?? null;
+  const status: InstanceStatus = a.mvv && t.mvv ? "DONE_MVV" : "DONE";
+  const source: InstanceSource = a.day < a.today ? "record-yesterday" : "manual";
+  const minutes = workMinutesOf(t, a.minutes);
+  const instanceId = existing?.id ?? newId();
+  const dayCol = dateColumn(a.day);
+  const ops: Prisma.PrismaPromise<unknown>[] = [
+    prisma.taskInstance.upsert({
+      where: { templateId_day_slot: { templateId: t.id, day: dayCol, slot } },
+      create: { id: instanceId, userId, templateId: t.id, day: dayCol, slot, status, source, completedAt: a.now, minutes, xpPaid: 0 },
+      update: { status, source, completedAt: a.now, minutes, xpPaid: 0 },
+    }),
+  ];
+  if (!rule) ops.push(prisma.taskTemplate.updateMany({ where: { id: t.id, completedAt: null }, data: { completedAt: a.now } }));
+  try {
+    await prisma.$transaction(ops);
+  } finally {
+    invalidate("life", "activity");
+  }
+  return ok({
+    instanceId,
+    templateId: t.id,
+    eventId: null,
+    day: a.day,
+    slot,
+    receipt: workReceiptOf(t.track, minutes),
+    status,
+    source,
+    occurredAt: a.now.toISOString(),
+    duplicate: false,
+  });
+}
+
+/**
+ * Undoes a work tick inside the same ten minutes on the same life day as a
+ * personal one (canUndo, so the board's Undo means the same thing): the
+ * instance reads UNDONE again, a one-off reopens, and a tick its steps made
+ * clears that day's ticked steps. No ledger row exists to negate.
+ */
+async function undoWorkCore(
+  userId: string,
+  inst: { id: string; templateId: string; day: Date; status: string; source: string; completedAt: Date | null; template: { recurrence: string | null } },
+  now: Date
+): Promise<LifeResult<{ instanceId: string; xp: number; templateId: string }>> {
+  if (!isDoneStatus(inst.status)) return ok({ instanceId: inst.id, xp: 0, templateId: inst.templateId });
+  const at = inst.completedAt ?? now;
+  if (!canUndo(at, now)) return fail(`Too late to undo: a tick can be undone for ${UNDO_WINDOW_MS / 60_000} minutes, on the same day.`);
+  const ops: Prisma.PrismaPromise<unknown>[] = [
+    prisma.taskInstance.update({ where: { id: inst.id }, data: { status: "UNDONE", xpPaid: 0, completedAt: null, minutes: null } }),
+  ];
+  if (!inst.template.recurrence) ops.push(prisma.taskTemplate.updateMany({ where: { id: inst.templateId }, data: { completedAt: null } }));
+  if (inst.source === "auto:steps") ops.push(prisma.taskSubtaskTick.deleteMany({ where: { userId, templateId: inst.templateId, day: inst.day } }));
+  try {
+    await prisma.$transaction(ops);
+  } finally {
+    invalidate("life", "activity");
+  }
+  return ok({ instanceId: inst.id, xp: 0, templateId: inst.templateId });
+}
+
+/**
+ * A work task's steps (stepTickOnce routes here): the ticks are written; the
+ * last step finishes the task (an instance DONE by its steps, source
+ * auto:steps, 0 XP) and taking one back reopens it. A task ticked whole
+ * keeps its tick: its steps are a checklist then. Nothing is paid either way.
+ */
+async function workStepTick(
+  userId: string,
+  read: CompletionRead & { row: TemplateRow },
+  change: { stepId: string | null; done: boolean },
+  day: DayKey,
+  today: DayKey,
+  now: Date
+): Promise<LifeResult<StepTick>> {
+  const { t, row, history } = read;
+  const reason = completableReason(t, row);
+  if (reason) return fail(reason);
+  if (!stepsAllowed(t)) return fail("This task can't have steps.");
+  const dayCol = dateColumn(day);
+  let steps: { id: string }[];
+  let ticks: { subtaskId: string }[];
+  try {
+    [steps, ticks] = await Promise.all([
+      prisma.taskSubtask.findMany({ where: { userId, templateId: t.id, archivedAt: null }, orderBy: [{ ord: "asc" }, { createdAt: "asc" }], select: { id: true } }),
+      prisma.taskSubtaskTick.findMany({ where: { userId, templateId: t.id, day: dayCol }, select: { subtaskId: true } }),
+    ]);
+  } catch (err) {
+    if (isMissingSubtaskTable(err)) return fail(STEPS_NOT_READY);
+    throw err;
+  }
+  if (steps.length === 0) return fail("This task has no steps.");
+  const ids = steps.map((s) => s.id);
+  if (change.stepId !== null && !ids.includes(change.stepId)) return fail("That step is no longer here.");
+  const before = new Set(ticks.map((x) => x.subtaskId).filter((id) => ids.includes(id)));
+  const after = nextTicks(ids, before, change);
+  const added = [...after].filter((id) => !before.has(id));
+  const removed = ticks.map((x) => x.subtaskId).filter((id) => !after.has(id));
+  const rule = ruleOf(t);
+  const inst = history.find((i) => i.day === day && i.slot === 0) ?? null;
+  const doneBySteps = !!inst && isDoneStatus(inst.status) && inst.source === "auto:steps";
+  const wholeTick = !!inst && isDoneStatus(inst.status) && !doneBySteps;
+  const full = after.size === ids.length;
+
+  const ops: Prisma.PrismaPromise<unknown>[] = [
+    ...(removed.length > 0 ? [prisma.taskSubtaskTick.deleteMany({ where: { userId, templateId: t.id, day: dayCol, subtaskId: { in: removed } } })] : []),
+    ...(added.length > 0 ? [prisma.taskSubtaskTick.createMany({ data: added.map((subtaskId) => ({ userId, templateId: t.id, subtaskId, day: dayCol })), skipDuplicates: true })] : []),
+  ];
+  let instanceId: string | null = wholeTick || doneBySteps ? inst!.id : null;
+  if (!wholeTick && full && !doneBySteps) {
+    // The last step finishes it, on a day the board offers (due today, a one-off still open).
+    if (!rule && t.completedAt) return fail("Already done.");
+    const block = completionBlockOf({ t, rule, day, today, lastDone: lastDoneOf(history), onDay: history.filter((i) => i.day === day) });
+    if (block) return fail(block);
+    instanceId = inst?.id ?? newId();
+    const minutes = workMinutesOf(t, null);
+    ops.push(
+      prisma.taskInstance.upsert({
+        where: { templateId_day_slot: { templateId: t.id, day: dayCol, slot: 0 } },
+        create: { id: instanceId, userId, templateId: t.id, day: dayCol, slot: 0, status: "DONE", source: "auto:steps", completedAt: now, minutes, xpPaid: 0 },
+        update: { status: "DONE", source: "auto:steps", completedAt: now, minutes, xpPaid: 0 },
+      })
+    );
+    if (!rule) ops.push(prisma.taskTemplate.updateMany({ where: { id: t.id, completedAt: null }, data: { completedAt: now } }));
+  } else if (!full && doneBySteps) {
+    // A step taken back reopens what its steps had finished.
+    ops.push(prisma.taskInstance.update({ where: { id: inst!.id }, data: { status: "UNDONE", xpPaid: 0, completedAt: null, minutes: null } }));
+    if (!rule) ops.push(prisma.taskTemplate.updateMany({ where: { id: t.id }, data: { completedAt: null } }));
+    instanceId = null;
+  }
+  if (ops.length > 0) {
+    try {
+      await prisma.$transaction(ops);
+    } catch (err) {
+      if (isMissingSubtaskTable(err)) return fail(STEPS_NOT_READY);
+      throw err;
+    } finally {
+      invalidate("life", "activity");
+    }
+  }
+  const finished = wholeTick || full;
+  return ok({
+    templateId: t.id,
+    done: ids.filter((id) => after.has(id)),
+    total: ids.length,
+    xp: 0,
+    delta: 0,
+    full: finished,
+    instanceId,
+    receipt: instanceId ? workReceiptOf(t.track, null, wholeTick ? null : WORK_STEPS_DONE) : null,
+  });
 }
 
 function newId(): string {

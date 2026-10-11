@@ -82,6 +82,7 @@ import {
   statedGoalMp,
 } from "./life-economy";
 import { isTrack } from "./life-grade";
+import { PERSONAL_BOARD } from "./work-boards";
 import { isStaleGuard, lifeMintLockOp } from "./life-tracks-server";
 import {
   GOAL_ALREADY_CLOSED,
@@ -225,7 +226,7 @@ export async function readGoalCloseInput(userId: string, goalId: string, now: Da
       select: { id: true, track: true, horizon: true, goalMp: true, krMetric: true, krTarget: true, dueDay: true, createdAt: true },
     }),
     prisma.taskTemplate.findMany({
-      where: { userId, parentId: goalId, archivedAt: null, recurrence: null, kind: { not: "GOAL" } },
+      where: { userId, parentId: goalId, archivedAt: null, recurrence: null, kind: { not: "GOAL" }, ...PERSONAL_BOARD },
       select: { completedAt: true },
     }),
     prisma.activityEvent.groupBy({ by: ["day"], where: { userId, source: "GOAL_PROGRESS", templateId: goalId }, _sum: { qty: true } }),
@@ -629,17 +630,18 @@ export async function loadGoalLadderUncached(userId: string, now: Date, deps: Go
   const monday = weekStartKeyOf(today);
   const closedSince = dayStartOf(addDays(today, -LADDER_CLOSED_DAYS));
   const [open, closed, steps, progress, mintRows, week] = await Promise.all([
+    // The personal Board only (work-boards.ts): a work tab holds no goal and no goal's step.
     prisma.taskTemplate.findMany({
-      where: { userId, kind: "GOAL", archivedAt: null, closedScore: null },
+      where: { userId, kind: "GOAL", archivedAt: null, closedScore: null, ...PERSONAL_BOARD },
       select: GOAL_SELECT,
       orderBy: { createdAt: "asc" },
     }),
     prisma.taskTemplate.findMany({
-      where: { userId, kind: "GOAL", closedScore: { not: null }, completedAt: { gte: closedSince } },
+      where: { userId, kind: "GOAL", closedScore: { not: null }, completedAt: { gte: closedSince }, ...PERSONAL_BOARD },
       select: GOAL_SELECT,
     }),
     prisma.taskTemplate.findMany({
-      where: { userId, parentId: { not: null }, archivedAt: null, recurrence: null, kind: { not: "GOAL" }, parent: { kind: "GOAL" } },
+      where: { userId, parentId: { not: null }, archivedAt: null, recurrence: null, kind: { not: "GOAL" }, parent: { kind: "GOAL" }, ...PERSONAL_BOARD },
       select: { parentId: true, completedAt: true },
     }),
     prisma.activityEvent.groupBy({ by: ["templateId", "day"], where: { userId, source: "GOAL_PROGRESS" }, _sum: { qty: true } }),

@@ -18,7 +18,7 @@
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import { runInNewContext } from "node:vm";
-import { CAPTURE_LABEL, DEV_STYLE_PAGES, PROFILE, SECTIONS, activeSub, captureModeOf, groupOf, isProfilePath, longDate, sectionById, sectionOf, titleFor } from "../src/components/shell/nav";
+import { CAPTURE_LABEL, DEV_STYLE_PAGES, PROFILE, SECTIONS, activeSub, captureModeOf, groupOf, isProfilePath, longDate, sectionById, sectionOf, subsOf, titleFor } from "../src/components/shell/nav";
 import { PREPAINT_SCRIPT } from "../src/components/shell/prepaint";
 import { SHELL_CAPTURE_EVENT } from "../src/components/shell/capture-bridge";
 import { CAPTURE_MODE_START, isBareModeStart } from "../src/components/capture/events";
@@ -314,11 +314,18 @@ check(
   check("phone strip: YouTabs renders only on a profile page (nothing on /you/roadmap*, an Ideas page)", /if \(!isProfilePath\(pathname\)\) return null;/.test(you) && /import \{ PROFILE, activeSub, isProfilePath \} from "@\/components\/shell\/nav";/.test(you));
   const sectionTabs = /export function SectionTabs\(\)[\s\S]*?\n\}/.exec(tabs)?.[0] ?? "";
   check(
-    "phone strip: SectionTabs is the current section's sub-pages from nav.ts, nothing on a profile page (sectionOf null) or a one-page section, part of the chrome",
-    /const id = sectionOf\(pathname\);\s*if \(!id\) return null;/.test(sectionTabs) && /if \(section\.subs\.length < 2\) return null;/.test(sectionTabs) && /items=\{section\.subs\} current=\{activeSub\(pathname\)\}/.test(sectionTabs) && /\bchrome\b/.test(sectionTabs),
+    "phone strip: SectionTabs is the current section's sub-pages from nav.ts (subsOf: Tasks adds its work tabs after Board), nothing on a profile page (sectionOf null) or a one-page section, part of the chrome",
+    /const id = sectionOf\(pathname\);\s*if \(!id\) return null;/.test(sectionTabs) && /if \(section\.subs\.length < 2\) return null;/.test(sectionTabs) && /items=\{subsOf\(id, tasks \? work\?\.tabs : null\)\} current=\{activeSub\(pathname\)\}/.test(sectionTabs) && /\bchrome\b/.test(sectionTabs),
     sectionTabs.slice(0, 160)
   );
   check("phone strip: AppShell mounts SectionTabs once, right under the top bar", /<TopBar \/>\s*<SectionTabs \/>\s*<main /.test(strip("src/components/shell/AppShell.tsx")));
+  // Work tabs (2026-10-12): subsOf is nav.ts's own sub-pages, plus the open work tabs after Board on Tasks only; with none it is exactly `subs`.
+  check(
+    "strips: subsOf with no work tab is each group's own sub-pages (every section and the profile), and only Tasks ever takes a work tab",
+    [...SECTIONS.map((x) => x.id), "you" as const].every((id) => JSON.stringify(subsOf(id, null)) === JSON.stringify(sectionById(id).subs) && JSON.stringify(subsOf(id, [])) === JSON.stringify(sectionById(id).subs)) &&
+      SECTIONS.filter((x) => x.id !== "tasks").every((x) => subsOf(x.id, [{ id: "w1", name: "Acme" }]).length === x.subs.length) &&
+      subsOf("tasks", [{ id: "w1", name: "Acme" }]).map((x) => x.href).join() === "/today,/today/work/w1,/today/week,/today/rules"
+  );
   check("phone strip: each tab is a link, aria-current on the current one, data-chrome when it is the shell's", /className="tab-s" aria-current=\{s\.href === current \? "page" : undefined\}/.test(tabs) && /data-chrome=\{chrome \? "" : undefined\}/.test(tabs) && /className=\{cx\("tabs sub-tabs", className\)\}/.test(tabs));
   {
     const css = cssRules(read("src/components/shell/chrome.css"));
@@ -361,7 +368,7 @@ check(
   check("sidebar: the owed pill sits on Tasks", /const owed = s\.id === "tasks" \? data\?\.owed\.count \?\? 0 : 0;/.test(sidebar));
   check("badges: reviews due on Ideas, today's board on Tasks, Body's own count", /if \(id === "ideas"\) return data\.badges\.study;/.test(chrome) && /if \(id === "tasks"\) return data\.badges\.today;/.test(chrome) && /return data\.badges\.train;/.test(chrome));
   check("top bar: the crest is a button that opens the profile menu (data-tour='you-crest'), not a link", /<button type="button" className="crest-btn" aria-label=\{crestLabel\(character\)\} data-tour="you-crest" \{\.\.\.profile\}>/.test(topbar) && !/<Link className="crest-btn"/.test(topbar));
-  check("top bar: from 600 the tabs are the group's (a section's, or the profile's on a profile page)", /const group = groupOf\(pathname\);/.test(topbar) && /items=\{sectionById\(group\)\.subs\}/.test(topbar));
+  check("top bar: from 600 the tabs are the group's (a section's, or the profile's on a profile page; Tasks with its work tabs, nav.ts subsOf)", /const group = groupOf\(pathname\);/.test(topbar) && /items=\{subsOf\(group, tasks \? work\?\.tabs : null\)\}/.test(topbar) && /const tasks = group === "tasks";/.test(topbar));
   check("chrome: no link to /you is left in the chromes (the profile buttons open the menu)", !/href="\/you"|href=\{you\.href\}/.test(chrome + topbar));
   check(
     "capture: every Capture starts the section's mode (captureModeOf) and is named for it (CAPTURE_LABEL)",
@@ -666,7 +673,8 @@ eq("receipt: base × factors to one decimal", receiptTotal(20, [1, 1.1, 1, 1]), 
 
   // notifications.ts: one read for the owed totals and one for the review marker, both failing to 'no line'.
   const feedSrc = read("src/lib/notifications.ts").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
-  check("feed: the owed totals are one aggregate over debtOpen instances", /taskInstance\.aggregate\(\{ where: \{ userId, debtOpen: true \}/.test(feedSrc));
+  // Work tabs (work-boards.ts): the aggregate reads the personal Board only (template: PERSONAL_BOARD); a work task never owes.
+  check("feed: the owed totals are one aggregate over the personal Board's debtOpen instances", /taskInstance\.aggregate\(\{ where: \{ userId, debtOpen: true, template: PERSONAL_BOARD \}/.test(feedSrc));
   check("feed: Duty's rows come from rituals dutyNoticesOf, gated by isDutyLaunched(today)", /dutyNoticesOf\(/.test(feedSrc) && /isDutyLaunched\(lifeDay\)/.test(feedSrc));
   check("feed: the evening musts line says when an open must is owed, only once Duty is live", /dutyLive\s*\?\s*`Still open this evening\. The minimum version counts if time is short; left open, it is owed from \$\{owedFromLine\(lifeDay\)\}\.`/.test(feedSrc));
   check("feed: counts.owed is returned beside today", /counts: \{ due: dueCount, overdue: overdueCount, today, owed \}/.test(feedSrc));

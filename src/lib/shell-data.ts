@@ -29,14 +29,18 @@ import { loadFieldLevels } from "./queries";
 import { loadProgression } from "./skill-effects";
 import { getSkill } from "./skill-pool";
 import { TITLE_BANDS, computeTitle } from "./titles";
-import { askCount, asksFromNotices, characterLevelOf, owedOf, trackLevelsOf, type ShellData } from "../components/shell/shell-types";
+import { askCount, asksFromNotices, characterLevelOf, owedOf, trackLevelsOf, type ShellData, type ShellWorkTabs } from "../components/shell/shell-types";
+import { listOpenWorkBoards } from "./work-boards-server";
+import { canAddWorkBoard } from "./work-boards";
 
 async function build(userId: string): Promise<ShellData> {
-  const [progression, fields, feed, life] = await Promise.all([
+  const [progression, fields, feed, life, work] = await Promise.all([
     loadProgression(userId),
     loadFieldLevels(),
     loadNotifications(userId).catch(() => null),
     loadLifeTracks(userId).catch(() => null),
+    // Work tabs: the Tasks strip's tabs and its '+'. A failed read (the table missing) draws neither.
+    loadWorkTabs(userId),
   ]);
   const launched = life?.launched === true;
   const { level, progress } = characterLevelOf(
@@ -71,7 +75,18 @@ async function build(userId: string): Promise<ShellData> {
     asks: askOf(feed?.notices ?? null),
     // M2: open debts, from the feed's own read (the Sidebar's 'n owed' pill; TabBar and Rail stay ink-only).
     owed: owedOf(feed),
+    work,
   };
+}
+
+/** The open work tabs and whether a slot is free (ShellData.work); null when the read fails. */
+async function loadWorkTabs(userId: string): Promise<ShellWorkTabs | null> {
+  try {
+    const open = await listOpenWorkBoards(userId);
+    return { tabs: open.map((b) => ({ id: b.id, name: b.name })), canAdd: canAddWorkBoard(open) };
+  } catch {
+    return null;
+  }
 }
 
 /** The bell: rows that ask, then effects in play; the count is the asking rows only. */

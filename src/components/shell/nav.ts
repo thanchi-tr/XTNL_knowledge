@@ -12,6 +12,8 @@
  *   captureModeOf(pathname)  what the '+' and the capture hotkey start: an idea, a task or a weigh-in
  *   titleFor(pathname, day?) { eyebrow, title } for the top bar (a page may override it
  *                            with <ShellTitle/>); /today's title is the life day's date
+ *   subsOf(group, work?)     a group's sub-pages, with the work tabs after Board on Tasks
+ *                            (work tabs, 2026-10-12: a compatible addition; SECTIONS stay as they were)
  *
  * Every URL stays where it was: the sections only regroup them. Roadmap
  * (/you/roadmap and its intake, /you/roadmap/new) is an Ideas sub-page,
@@ -21,6 +23,7 @@
  */
 import type { IconName } from "@/components/ui/Icon";
 import type { CaptureMode } from "@/components/capture/events";
+import { WORK_BOARD_PATH, workBoardHref, workBoardIdOf } from "../../lib/work-boards";
 
 export type SectionId = "ideas" | "tasks" | "body";
 /** A section, or the profile menu ("you"). */
@@ -136,6 +139,9 @@ export function sectionById(id: NavGroupId): NavGroup {
 /** The current sub-page's href: the longest href (or alias) the path sits under, in its section or the profile. */
 export function activeSub(pathname: string | null | undefined): string | null {
   if (!pathname) return null;
+  // A work tab (/today/work/<id>) is its own sub-page, never Board's: known from the path, before any data.
+  const work = workBoardIdOf(pathname);
+  if (work) return workBoardHref(work);
   const id = groupOf(pathname);
   if (!id) return null;
   let best: { href: string; len: number } | null = null;
@@ -145,6 +151,31 @@ export function activeSub(pathname: string | null | undefined): string | null {
     }
   }
   return best?.href ?? null;
+}
+
+/** A work tab as the strip shows it (the shell's data: shell-types ShellWorkTabs). */
+export interface WorkTabLink {
+  id: string;
+  name: string;
+}
+
+/**
+ * A group's sub-pages as the strips draw them (SectionTabs, the top bar's
+ * tabs, the sidebar): nav.ts's own, and on Tasks the open work tabs right
+ * after Board (Board · <work tabs> · Weekly review · Rules), each linking to
+ * /today/work/<id>. With no work tab it is exactly the group's `subs`.
+ */
+export function subsOf(id: NavGroupId, work?: readonly WorkTabLink[] | null): SubPage[] {
+  const subs = sectionById(id).subs;
+  if (id !== "tasks" || !work || work.length === 0) return [...subs];
+  const tabs: SubPage[] = work.map((w) => ({ href: workBoardHref(w.id), label: w.name }));
+  const at = subs.findIndex((s) => s.href === "/today") + 1;
+  return [...subs.slice(0, at), ...tabs, ...subs.slice(at)];
+}
+
+/** The href the strip's '+' (Add a work tab) sits after: the last work tab, else Board. */
+export function addWorkTabAfter(work?: readonly WorkTabLink[] | null): string {
+  return work && work.length > 0 ? workBoardHref(work[work.length - 1].id) : "/today";
 }
 
 /** What the '+' (and 'c' / Alt+N) starts on this path: an idea on Ideas, a weigh-in on Body, a task everywhere else. */
@@ -215,6 +246,8 @@ export function titleFor(pathname: string | null | undefined, dayKey?: string): 
   // The intake form sits under the Roadmap tab, which would title it "Roadmap".
   if (under(path, "/you/roadmap/new")) return { eyebrow: "Ideas", title: "Set an aim" };
   if (under(path, "/today/rules")) return { eyebrow: "Tasks", title: "How a day is judged" };
+  // A work tab: its name is data (the page's <ShellTitle/>); until then, 'Work'.
+  if (under(path, WORK_BOARD_PATH)) return { eyebrow: "Tasks", title: "Work" };
   const id = groupOf(path);
   if (!id) return { eyebrow: null, title: "XTNL" };
   const group = sectionById(id);

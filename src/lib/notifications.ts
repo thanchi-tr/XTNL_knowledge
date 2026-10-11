@@ -11,6 +11,7 @@ import { BOON_META } from "./boon-meta";
 import { DEBUFF_META } from "./debuff-meta";
 import { formatExpiry } from "./format-date";
 import { loadTodayCounts, type TodayCounts } from "./tasks";
+import { PERSONAL_BOARD } from "./work-boards";
 import { DAY_START_HOUR, LIFE_TZ, todayKey } from "./life-day";
 import { isDutyLaunched, weekReviewKey } from "./duty-economy";
 import { dutyNoticesOf, owedFromLine, reviewedWeek, type OwedTotals } from "./rituals";
@@ -98,7 +99,7 @@ export interface NotificationFeed {
 /** The life day's open debts: count and Σ debtXp (positive). Null when the read fails: a missing line, never a missing bell. */
 async function loadOwed(userId: string): Promise<OwedTotals | null> {
   try {
-    const agg = await prisma.taskInstance.aggregate({ where: { userId, debtOpen: true }, _count: { _all: true }, _sum: { debtXp: true } });
+    const agg = await prisma.taskInstance.aggregate({ where: { userId, debtOpen: true, template: PERSONAL_BOARD }, _count: { _all: true }, _sum: { debtXp: true } });
     return { count: agg._count._all, debt: Math.max(0, agg._sum.debtXp ?? 0) };
   } catch {
     return null;

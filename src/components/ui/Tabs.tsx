@@ -9,7 +9,7 @@
  *   <Skeleton w h r/> · <SkeletonCard lines/>   static blocks at their final geometry, no shimmer
  */
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { cx } from "./cx";
 
 export function TabLinks({
@@ -17,19 +17,25 @@ export function TabLinks({
   current,
   label,
   className,
+  after,
 }: {
   items: { href: string; label: string }[];
   /** The href that is current (exact). */
   current: string | null;
   label: string;
   className?: string;
+  /** Something drawn right after one tab (the Tasks tabs' '+', Add a work tab). */
+  after?: { href: string; node: ReactNode } | null;
 }) {
   return (
     <nav className={cx("tabs", className)} aria-label={label}>
       {items.map((it) => (
-        <Link key={it.href} href={it.href} className="tab-s" aria-current={it.href === current ? "page" : undefined}>
-          {it.label}
-        </Link>
+        <Fragment key={it.href}>
+          <Link href={it.href} className="tab-s" aria-current={it.href === current ? "page" : undefined}>
+            {it.label}
+          </Link>
+          {after && after.href === it.href ? after.node : null}
+        </Fragment>
       ))}
     </nav>
   );

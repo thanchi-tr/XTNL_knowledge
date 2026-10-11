@@ -11,6 +11,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { cached, invalidate } from "./cache";
+import { PERSONAL_BOARD } from "./work-boards";
 import { dateColumn, keyOfDateColumn, type DayKey } from "./life-day";
 import {
   DONE_MARK_STATUSES,
@@ -103,7 +104,8 @@ export async function loadMonthDoneCore(userId: string, month: MonthKey): Promis
     return await cached(`monthDone:${userId}:${month}`, ["activity", "life"], async () => {
       const [rows, styles] = await Promise.all([
         prisma.taskInstance.findMany({
-          where: { userId, day: monthRange(month), status: { in: [...DONE_MARK_STATUSES] } },
+          // The profile's calendar is the game's: the personal Board only (work-boards.ts).
+          where: { userId, day: monthRange(month), status: { in: [...DONE_MARK_STATUSES] }, template: PERSONAL_BOARD },
           select: { day: true, templateId: true },
           orderBy: [{ day: "asc" }, { completedAt: "asc" }],
         }),

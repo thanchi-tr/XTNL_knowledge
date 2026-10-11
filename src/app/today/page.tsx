@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "@/components/task-style/task-style.css";
 import { after } from "next/server";
+import { redirect } from "next/navigation";
 import { getCurrentUserId } from "@/lib/user";
 import { todayKey } from "@/lib/life-day";
 import { autoCompleteStudyTasks, loadTodayBoard, recordDayOpen } from "@/lib/tasks";
@@ -18,6 +19,7 @@ import { TodayBoard } from "@/components/today/TodayBoard";
 import { DueElsewhere } from "@/components/today/DueElsewhere";
 import { dueElsewhereOf, questsOpenOf, weighInDueOf } from "@/components/today/due-elsewhere";
 import { NamedMark } from "@/components/glyph/NamedMark";
+import { isBoardId, workBoardHref } from "@/lib/work-boards";
 
 // The board turns on the clock (a 04:00 day edge, a ten-minute undo window)
 // and on every tick — never statically cache it.
@@ -34,7 +36,17 @@ export const metadata: Metadata = { title: "Today" };
  * now), and a weigh-in not yet logged (Body, /train). The streak and the
  * Full day are Character's (/you).
  */
-export default async function TodayPage() {
+export default async function TodayPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  // A work tab asked for by the query (/today?board=<id>, the call back reminder's tap URL; work-boards.ts) is its own
+  // page: /today/work/<id>, with any other parameter (callback) kept. Nothing below is read for it.
+  const query = await searchParams;
+  const boardParam = typeof query.board === "string" ? query.board : null;
+  if (boardParam && isBoardId(boardParam)) {
+    const rest = new URLSearchParams();
+    for (const [k, v] of Object.entries(query)) if (k !== "board" && typeof v === "string") rest.set(k, v);
+    const q = rest.toString();
+    redirect(`${workBoardHref(boardParam)}${q ? `?${q}` : ""}`);
+  }
   const now = new Date();
   const userId = getCurrentUserId();
   const day = todayKey(now);

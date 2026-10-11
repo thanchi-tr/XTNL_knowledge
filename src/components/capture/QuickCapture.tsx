@@ -35,6 +35,7 @@ import { dismissToast, getToasts, pushToast, subscribeToasts } from "@/component
 import { CaptureChips } from "./CaptureChips";
 import { StatusLine, TOAST_MS, TOAST_SHORT_MS, dockToastOf, toastSentence, type Toast } from "./CaptureToast";
 import { captureModeOf } from "@/components/shell/nav";
+import { workBoardIdOf } from "@/lib/work-boards";
 import { CAPTURE_EVENT, CAPTURED_EVENT, CAPTURE_MODE_START, isBareModeStart, type CaptureRequest } from "./events";
 import { InsertRow, SuggestRow, type Suggestion } from "./InsertRow";
 import { JustAdded } from "./JustAdded";
@@ -301,6 +302,7 @@ function pendingOf(line: PendingLine): PendingLine {
     at: line.at,
     ...(line.replaces ? { replaces: line.replaces } : {}),
     ...(line.day ? { day: line.day } : {}),
+    ...(line.board ? { board: line.board } : {}),
   };
 }
 
@@ -347,7 +349,9 @@ function settleUnsent(
 export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null } = {}) {
   const pathname = usePathname();
   const router = useRouter();
-  const onToday = pathname === "/today";
+  // A board page: the personal Board, or a work tab (/today/work/<id>, work-boards.ts), whose lines land on that tab.
+  const workBoard = workBoardIdOf(pathname);
+  const onToday = pathname === "/today" || workBoard !== null;
   /** The Train page shows the weight card: a weigh-in saved there refreshes it. */
   const onTrain = pathname === "/train";
   const isClient = useSyncExternalStore(noopSubscribe, () => true, () => false);
@@ -411,6 +415,8 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
   const openRef = useRef(false);
   const coarseRef = useRef(false);
   const onTodayRef = useRef(onToday);
+  /** The work tab the sheet is open on (null: the personal Board): every line stamped now carries it. */
+  const workBoardRef = useRef<string | null>(workBoard);
   const onTrainRef = useRef(onTrain);
   const insetRef = useRef(0);
   /** The toast this sheet has in the dock, and the state key it shows. */
@@ -481,6 +487,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
 
   useLayoutEffect(() => {
     onTodayRef.current = onToday;
+    workBoardRef.current = workBoard;
     onTrainRef.current = onTrain;
     insetRef.current = inset;
     unsentRef.current = unsent;
@@ -816,7 +823,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
         // was lost finds the row it already wrote instead of writing a second.
         res = line.replaces
           ? await recaptureFromCapture(line.replaces, line.text, line.reverted, { refresh: refreshPage, captureKey: line.nonce })
-          : await createFromCapture(line.text, line.reverted, { refresh: refreshPage, captureKey: line.nonce, weightUnit });
+          : await createFromCapture(line.text, line.reverted, { refresh: refreshPage, captureKey: line.nonce, board: line.board ?? null, weightUnit });
       } catch {
         res = null;
       }
@@ -851,7 +858,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
       let res: CaptureManyResult | null;
       try {
         res = await createManyFromCapture(
-          lines.map((l) => ({ text: l.text, reverted: l.reverted, captureKey: l.nonce })),
+          lines.map((l) => ({ text: l.text, reverted: l.reverted, captureKey: l.nonce, ...(l.board ? { board: l.board } : {}) })),
           { refresh: refreshPage, weightUnit }
         );
       } catch {
@@ -1266,7 +1273,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
   const addPasted = () => {
     if (!paste || paste.lines.length === 0) return;
     const now = Date.now();
-    const lines = paste.lines.map((t) => stampLine({ text: t, reverted: [] }, ++seq.current, now, randomSalt()));
+    const lines = paste.lines.map((t) => stampLine({ text: t, reverted: [] }, ++seq.current, now, randomSalt(), null, workBoardRef.current));
     addPending(...lines);
     const o = openingRef.current;
     o.sent += lines.length;
@@ -1342,7 +1349,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
       notMust = gate.action === "save-not-must" && !!read.compulsoryWarning;
     }
     const lineText = opts.inbox && !read.inbox ? toInboxLine(line.text) : line.text;
-    const pending = stampLine({ text: lineText, reverted: line.reverted }, ++seq.current, now, randomSalt(), editing?.oldId ?? null);
+    const pending = stampLine({ text: lineText, reverted: line.reverted }, ++seq.current, now, randomSalt(), editing?.oldId ?? null, workBoardRef.current);
     addPending(pending);
     writeDraft(null);
     if (notMust) notMustRef.current.add(pending.nonce);
@@ -1619,7 +1626,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
     const u = unsentRef.current.find((x) => x.nonce === nonce);
     if (!u) return;
     dropUnsent(u);
-    const fresh = stampNow({ text: u.text, reverted: u.reverted }, ++seq.current);
+    const fresh: PendingLine = { ...stampNow({ text: u.text, reverted: u.reverted }, ++seq.current), ...(u.board ? { board: u.board } : {}) };
     addPending(fresh);
     sendLine(fresh, "manual");
     refocusLine();
