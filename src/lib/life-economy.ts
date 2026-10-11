@@ -54,6 +54,22 @@
  *     floorFactor(restDays) = (7 − restDays)/7 · KeptFloors · keptFloorsOf(restDays)
  *   Full days: LIFE_MP.FULL_DAY is minted by the week judge in the run that writes the DUTY
  *     WEEK row, after the kept tracks and inside LIFE_MP_WEEK_CAP (decision 6).
+ *
+ * Added by momentum L0 (docs/life-plan/momentum.md §A.10, §D.2, §D.3; compatible, INERT):
+ *   Two life-MP models. LIFE_MP, LIFE_MP_WEEK_CAP, CAPPED_REASONS and LIFE_MP_REASONS keep
+ *   today's values: they ARE the pre-momentum model, and every reader that uses them keeps
+ *   today's behaviour. The momentum values live beside them, and a reader picks one with
+ *   momentum.ts lifeMpModelOn(day) / lifeMpModelOfWeek(monday) (this module imports no values,
+ *   so the launch gate lives in momentum.ts). Before MOMENTUM_LAUNCH_DAY, and always while it is
+ *   null, the accessor returns PRE_MOMENTUM_MP_MODEL, which is exactly the constants above.
+ *     MomentumMpReason · MOMENTUM_MP_REASONS · LifeMintReason · MOMENTUM_MP_REASON_LABEL
+ *     MOMENTUM_LIFE_MP {WEEK_KEPT 18, …, PLAN_WEEK 10, MILESTONE 50, CHECKPOINT 12}
+ *     MOMENTUM_LIFE_MP_WEEK_CAP 91 · MOMENTUM_CAPPED_REASONS (+ LIFE_PLAN_WEEK)
+ *     CHEST_REASONS ['LIFE_CHEST'] · LIFE_CHEST_WEEK_CAP 28 · CHEST_MP_OVERFLOW_XP 4
+ *     MpWindowRule · ROADMAP_MP_WINDOWS {LIFE_MILESTONE 50 · 2 per 30 d, LIFE_CHECKPOINT 12 · 2 per 30 d}
+ *     LifeMpModel · PRE_MOMENTUM_MP_MODEL · MOMENTUM_MP_MODEL · lifeMpModelOf(momentumLive)
+ *     isCappedReasonIn(model, r) · isMintReasonIn(model, r) · isChestReasonIn(model, r)
+ *     momentumMintKey(reason, scope) 'mp:<REASON>:<scope>'
  */
 import type { Band, Category, Horizon, KrMetric, Track } from "./life-types";
 import type { DayKey } from "./life-day";
@@ -298,6 +314,10 @@ export const DECAY_GRACE_REASON = "DECAY_GRACE";
  * FULL_DAY row, no MP) and minted by the week judge in the run that writes
  * the week's DUTY WEEK row, after the kept tracks, through the same cap
  * (m2-refit.md decision 6).
+ *
+ * These are the pre-momentum amounts (PRE_MOMENTUM_MP_MODEL). From
+ * MOMENTUM_LAUNCH_DAY a kept week pays MOMENTUM_LIFE_MP.WEEK_KEPT (18): a
+ * minting reader takes momentum.ts lifeMpModelOfWeek(monday).mp instead.
  */
 export const LIFE_MP: Readonly<{ WEEK_KEPT: number; FULL_DAY: number; GOAL_SHORT: number; GOAL_MID: number; GOAL_LONG: number }> = {
   WEEK_KEPT: 1.5,
@@ -312,6 +332,8 @@ export const LIFE_MP: Readonly<{ WEEK_KEPT: number; FULL_DAY: number; GOAL_SHORT
  * a week can pay is 4 × 1.5 + 2 × 1 = 8, so nothing is trimmed until M2 adds
  * full days. With them the most is 4 × 1.5 + 2 × 1 + 7 × 0.5 = 11.5: full
  * days are minted last, so they are what the cap trims (never a kept track).
+ * The pre-momentum cap: from MOMENTUM_LAUNCH_DAY the judge pool is
+ * MOMENTUM_LIFE_MP_WEEK_CAP (91), read through lifeMpModelOfWeek(monday).
  */
 export const LIFE_MP_WEEK_CAP = 8;
 
@@ -389,6 +411,157 @@ export function parseMintDetail(detail: string | null | undefined): { reason: st
   if (at < 0) return { reason: d, why: null };
   const why = d.slice(at + MINT_DETAIL_SEP.length);
   return { reason: d.slice(0, at), why: why ? why : null };
+}
+
+// ── Momentum's life-MP model (momentum.md §A.10; INERT until MOMENTUM_LAUNCH_DAY) ──
+
+/**
+ * The reasons momentum mints under (§A.10, §D.3), each only through
+ * mintLifeMasteryOps (an MP_MINT decision row, plus a ledger entry when > 0).
+ * Kept out of LifeMpReason, whose Record<LifeMpReason, …> readers (the rules
+ * page) list exactly today's five; the launched model's `reasons` carries them.
+ */
+export type MomentumMpReason = "LIFE_PLAN_WEEK" | "LIFE_CHEST" | "LIFE_MILESTONE" | "LIFE_CHECKPOINT";
+export const MOMENTUM_MP_REASONS: readonly MomentumMpReason[] = ["LIFE_PLAN_WEEK", "LIFE_CHEST", "LIFE_MILESTONE", "LIFE_CHECKPOINT"];
+/** Any reason a life mint may carry once momentum is live. */
+export type LifeMintReason = LifeMpReason | MomentumMpReason;
+
+export const MOMENTUM_MP_REASON_LABEL: Readonly<Record<MomentumMpReason, string>> = {
+  LIFE_PLAN_WEEK: "Plan week kept",
+  LIFE_CHEST: "Daily chest",
+  LIFE_MILESTONE: "Roadmap milestone reached",
+  LIFE_CHECKPOINT: "Checkpoint taken",
+};
+
+/**
+ * What each life outcome pays once momentum is live (§A.10). A kept track pays
+ * 18 (BODY 21 with Iron lungs, the perk's +3 in the same pool); a kept plan
+ * week 10 (12 with Trail rations); a milestone 50 and a checkpoint 12, each at
+ * most 2 paying per rolling 30 days (ROADMAP_MP_WINDOWS). Goals and full days
+ * are unchanged.
+ */
+export const MOMENTUM_LIFE_MP: Readonly<{
+  WEEK_KEPT: number;
+  FULL_DAY: number;
+  GOAL_SHORT: number;
+  GOAL_MID: number;
+  GOAL_LONG: number;
+  PLAN_WEEK: number;
+  MILESTONE: number;
+  CHECKPOINT: number;
+}> = {
+  WEEK_KEPT: 18,
+  FULL_DAY: LIFE_MP.FULL_DAY,
+  GOAL_SHORT: LIFE_MP.GOAL_SHORT,
+  GOAL_MID: LIFE_MP.GOAL_MID,
+  GOAL_LONG: LIFE_MP.GOAL_LONG,
+  PLAN_WEEK: 10,
+  MILESTONE: 50,
+  CHECKPOINT: 12,
+};
+
+/**
+ * The judge pool once momentum is live: 91 MP a life week (13 a day). Mint
+ * order: Shorts at close, then BODY (with Iron lungs), DUTY, CRAFT, CARE, then
+ * plan weeks by seat, then full days. The most it can be asked for without
+ * full days is 2 × 1 + 4 × 18 + 3 + 12 = 89 ≤ 91, so no kept track is ever
+ * trimmed; full days and a second plan week are what it trims (92.5 > 91).
+ * Plan weeks mint in the run that writes DUTY, after it: minted before DUTY,
+ * two plan weeks would trim DUTY (balance-horizon 3c-m).
+ */
+export const MOMENTUM_LIFE_MP_WEEK_CAP = 91;
+
+/** The reasons that share MOMENTUM_LIFE_MP_WEEK_CAP: today's three plus kept plan weeks. */
+export const MOMENTUM_CAPPED_REASONS: readonly LifeMintReason[] = [...CAPPED_REASONS, "LIFE_PLAN_WEEK"];
+
+/** The chest's own pool (§A.2): at most LIFE_CHEST_WEEK_CAP MP a life week; MP beyond it pays XP at CHEST_MP_OVERFLOW_XP per MP. */
+export const CHEST_REASONS: readonly MomentumMpReason[] = ["LIFE_CHEST"];
+export const LIFE_CHEST_WEEK_CAP = 28;
+export const CHEST_MP_OVERFLOW_XP = 4;
+
+/** A reason limited by a rolling window rather than a pool: at most `maxPaying` paying mints in (day − windowDays, day]. */
+export interface MpWindowRule {
+  reason: MomentumMpReason;
+  mp: number;
+  maxPaying: number;
+  windowDays: number;
+}
+
+/** §A.8: a milestone pays 50 MP and a checkpoint 12, each at most 2 paying in any rolling 30 days; beyond that a decision row with 0. */
+export const ROADMAP_MP_WINDOWS: Readonly<Record<"LIFE_MILESTONE" | "LIFE_CHECKPOINT", MpWindowRule>> = {
+  LIFE_MILESTONE: { reason: "LIFE_MILESTONE", mp: MOMENTUM_LIFE_MP.MILESTONE, maxPaying: 2, windowDays: 30 },
+  LIFE_CHECKPOINT: { reason: "LIFE_CHECKPOINT", mp: MOMENTUM_LIFE_MP.CHECKPOINT, maxPaying: 2, windowDays: 30 },
+};
+
+/**
+ * One whole life-MP rule set. A reader takes the model in force for the day
+ * it mints or shows (momentum.ts lifeMpModelOn / lifeMpModelOfWeek) instead of
+ * reading LIFE_MP / LIFE_MP_WEEK_CAP / CAPPED_REASONS directly.
+ */
+export interface LifeMpModel {
+  /** false: today's rules (before MOMENTUM_LAUNCH_DAY, and always while it is null). true: momentum.md §A.10. */
+  momentum: boolean;
+  /** What each outcome pays. PLAN_WEEK, MILESTONE and CHECKPOINT are 0 before momentum: nothing pays them. */
+  mp: typeof MOMENTUM_LIFE_MP;
+  /** The judge pool: capped MP per life week, shared by `cappedReasons`. */
+  weekCap: number;
+  cappedReasons: readonly LifeMintReason[];
+  /** Every reason mintLifeMasteryOps may mint under. LIFE_PR is never one. */
+  reasons: readonly LifeMintReason[];
+  /** The chest pool's reasons and cap ([] and 0 before momentum). */
+  chestReasons: readonly MomentumMpReason[];
+  chestWeekCap: number;
+}
+
+/** Today's rules, exactly: the constants above, by reference. */
+export const PRE_MOMENTUM_MP_MODEL: LifeMpModel = {
+  momentum: false,
+  mp: { ...LIFE_MP, PLAN_WEEK: 0, MILESTONE: 0, CHECKPOINT: 0 },
+  weekCap: LIFE_MP_WEEK_CAP,
+  cappedReasons: CAPPED_REASONS,
+  reasons: LIFE_MP_REASONS,
+  chestReasons: [],
+  chestWeekCap: 0,
+};
+
+/** momentum.md §A.10. */
+export const MOMENTUM_MP_MODEL: LifeMpModel = {
+  momentum: true,
+  mp: MOMENTUM_LIFE_MP,
+  weekCap: MOMENTUM_LIFE_MP_WEEK_CAP,
+  cappedReasons: MOMENTUM_CAPPED_REASONS,
+  reasons: [...LIFE_MP_REASONS, ...MOMENTUM_MP_REASONS],
+  chestReasons: CHEST_REASONS,
+  chestWeekCap: LIFE_CHEST_WEEK_CAP,
+};
+
+/** The model for a gate decision already taken (momentum.ts momentumLive). */
+export function lifeMpModelOf(momentumLive: boolean): LifeMpModel {
+  return momentumLive ? MOMENTUM_MP_MODEL : PRE_MOMENTUM_MP_MODEL;
+}
+
+/** Does `reason` share the model's weekly judge pool? */
+export function isCappedReasonIn(model: LifeMpModel, reason: string): boolean {
+  return (model.cappedReasons as readonly string[]).includes(reason);
+}
+
+/** May the model mint under `reason` at all? */
+export function isMintReasonIn(model: LifeMpModel, reason: string): boolean {
+  return (model.reasons as readonly string[]).includes(reason);
+}
+
+/** Does `reason` draw on the model's chest pool? */
+export function isChestReasonIn(model: LifeMpModel, reason: string): boolean {
+  return (model.chestReasons as readonly string[]).includes(reason);
+}
+
+/**
+ * A momentum mint's dedupe key: 'mp:<REASON>:<scope>' — 'mp:LIFE_CHEST:<day>',
+ * 'mp:LIFE_MILESTONE:<lineageId>', 'mp:LIFE_CHECKPOINT:<itemLineageId>',
+ * 'mp:LIFE_PLAN_WEEK:<questWeekId>'.
+ */
+export function momentumMintKey(reason: MomentumMpReason, scope: string): string {
+  return `mp:${reason}:${scope}`;
 }
 
 /**

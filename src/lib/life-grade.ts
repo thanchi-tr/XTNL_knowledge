@@ -2,6 +2,8 @@ import { BANDS, TRACKS } from "./life-types";
 import type {
   Band,
   DueKind,
+  LifePayMode,
+  MomentumFactorKey,
   PayMode,
   PriceInput,
   PricingContext,
@@ -43,6 +45,14 @@ import { STREAK_BONUS_CAP_PERCENT, streakBonusPercent } from "./streak-curve";
 
 /** Stored on every receipt. Bump when any factor below changes meaning; past rows keep theirs. */
 export const FORMULA_VERSION = "life-1";
+/**
+ * Momentum (momentum.md §A.5): a receipt that carries a momentum factor (S
+ * perks, M chain, X crit) is 'life-2'; every other receipt stays 'life-1',
+ * byte for byte. Lane A's priceTask writes it; nothing does before launch.
+ */
+export const FORMULA_VERSION_MOMENTUM = "life-2";
+/** The momentum factors in the order a receipt lists them, after K: raw = round1(B·E·T·C·D·V·K · S · M · X). */
+export const MOMENTUM_FACTOR_KEYS: readonly MomentumFactorKey[] = ["S", "M", "X"];
 
 // ── B: band base ──────────────────────────────────────────────────────────
 
@@ -140,6 +150,15 @@ export const INTRO_VOLUME_LAMBDA = 0.1;
  * not the reward.
  */
 export const PAY_MODE_FACTOR: Record<PayMode, number> = { FULL: 1, MVV: 0.3, PLAY: 0, STUDY: 0 };
+
+/**
+ * K with momentum's SESSION mode (momentum.md §A.6): an EXERCISE habit a
+ * logged walk completed is paid by the walk, so K = 0 ('paid by the walk'),
+ * and its row still counts for the streak. PAY_MODE_FACTOR stays today's four
+ * keys until the rules page lists SESSION (it renders one row per key);
+ * lane A prices SESSION through this table.
+ */
+export const LIFE_PAY_MODE_FACTOR: Readonly<Record<LifePayMode, number>> = { ...PAY_MODE_FACTOR, SESSION: 0 };
 
 // ── The daily knee ────────────────────────────────────────────────────────
 
@@ -362,11 +381,13 @@ const ordinal = (n: number): string => {
 };
 
 const TIMING_LABEL: Record<Timing, string> = { ON_TIME: "on time", LATE: "late", MAKE_UP: "make-up" };
-const MODE_LABEL: Record<PayMode, string> = {
+/** K's label on a receipt. SESSION (momentum.md §A.6) is never priced before launch. */
+export const MODE_LABEL: Readonly<Record<LifePayMode, string>> = {
   FULL: "full",
   MVV: "minimum version",
   PLAY: "play, unpaid",
   STUDY: "paid by reviews",
+  SESSION: "paid by the walk",
 };
 
 /**

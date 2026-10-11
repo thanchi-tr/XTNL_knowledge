@@ -13,7 +13,7 @@
  * the day it is asked about.
  */
 import { addDays, daysBetween, type DayKey } from "./life-day";
-import type { ActivitySource } from "./life-types";
+import type { ActivitySource, AnyActivitySource } from "./life-types";
 
 // ── The bonus curve ─────────────────────────────────────────────────────────
 
@@ -82,8 +82,14 @@ export const STREAK_WINDOW_DAYS = 70;
  * included), goal progress, and the pre-ledger days the cut-over backfill
  * carried over. A workout counts from M4 when it lasts ten minutes; its
  * writer decides.
+ *
+ * Momentum (momentum.md §D.2) adds CHECKPOINT: taking a roadmap checkpoint is
+ * an action. Only momentum-server writes CHECKPOINT rows, and only once
+ * MOMENTUM_LAUNCH_DAY is set, so before launch no row ever reaches this entry
+ * (scripts/momentum-check.ts pins that every source that existed before
+ * momentum counts exactly as it did).
  */
-export const STREAK_SOURCES: ReadonlySet<ActivitySource> = new Set<ActivitySource>([
+export const STREAK_SOURCES: ReadonlySet<AnyActivitySource> = new Set<AnyActivitySource>([
   "REVIEW",
   "IDEA_CREATE",
   "ATTESTATION",
@@ -91,6 +97,7 @@ export const STREAK_SOURCES: ReadonlySet<ActivitySource> = new Set<ActivitySourc
   "TASK",
   "GOAL_PROGRESS",
   "LEGACY_DAY",
+  "CHECKPOINT",
 ]);
 
 /**
@@ -101,8 +108,13 @@ export const STREAK_SOURCES: ReadonlySet<ActivitySource> = new Set<ActivitySourc
  * UNDO has its own −1 unit and must never also add one. A week's verdict
  * (WEEK, dated its Sunday) and a life mint (MP_MINT) are written after the
  * fact: neither may make a past day active.
+ *
+ * Momentum's decision rows join them (momentum.md §D.2): a frozen quest set, a
+ * chest, a milestone (dated its reach day, written lazily), a plan week (dated
+ * its Sunday), a perk, a respec and the nudge's claim are bookkeeping or after
+ * the fact. PR stays out of both lists: its writer always writes false.
  */
-export const NEVER_STREAK_SOURCES: ReadonlySet<ActivitySource> = new Set<ActivitySource>([
+export const NEVER_STREAK_SOURCES: ReadonlySet<AnyActivitySource> = new Set<AnyActivitySource>([
   "STEPS",
   "DAY_OPEN",
   "DEBT",
@@ -118,6 +130,14 @@ export const NEVER_STREAK_SOURCES: ReadonlySet<ActivitySource> = new Set<Activit
   "DEBT_WRITTEN_OFF",
   "FULL_DAY",
   "REPAIR",
+  // Momentum (momentum.md §D.2): decision rows, never an action. Written only from MOMENTUM_LAUNCH_DAY.
+  "QUEST_SET",
+  "CHEST",
+  "MILESTONE",
+  "PLAN_WEEK",
+  "PERK",
+  "RESPEC",
+  "NUDGE",
 ]);
 
 /**
@@ -128,7 +148,7 @@ export const NEVER_STREAK_SOURCES: ReadonlySet<ActivitySource> = new Set<Activit
 export const HELD_SOURCES: readonly ActivitySource[] = ["FREEZE_USE", "REPAIR"];
 
 /** The countsForStreak a row is written with: the writer's choice, within the rules above. */
-export function countsForStreakOf(source: ActivitySource, requested?: boolean | null): boolean {
+export function countsForStreakOf(source: AnyActivitySource, requested?: boolean | null): boolean {
   if (NEVER_STREAK_SOURCES.has(source)) return false;
   return requested ?? STREAK_SOURCES.has(source);
 }

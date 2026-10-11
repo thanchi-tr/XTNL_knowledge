@@ -10,6 +10,9 @@
  *   §1  trackLevel goldens, depth, moreKeptWeeks (F1)
  *   §1b the published economy: MP, cap, goal table, floors, keys, rounding (F1)
  *   §1c launch gates (F1)
+ *   §1e momentum's launched model (momentum.md §A.10, §G.3): the re-pins of §1b on the model
+ *       MOMENTUM_LAUNCH_DAY switches to (cap 91, kept week 18, + LIFE_PLAN_WEEK); §1b keeps
+ *       pinning today's model, which stays in force until then
  *   §1d judging days: lastJudgeableSunday, judgeDayOf (F4 helpers, lane 0)
  *   §2  TRACK_SEED compositions and the life labels and rows (F1)
  *   §3  the one character level, depth first (2026-10-11): goldens, delegation and bit-identity
@@ -129,6 +132,8 @@ import {
   withoutBackfill,
   xpForLevel,
 } from "../src/lib/life-economy";
+import { MOMENTUM_CAPPED_REASONS, MOMENTUM_MP_MODEL, PRE_MOMENTUM_MP_MODEL, isCappedReasonIn, isMintReasonIn, lifeMpModelOf } from "../src/lib/life-economy";
+import { lifeMpModelOfWeek, lifeMpModelOn, momentumLaunchDay } from "../src/lib/momentum";
 import {
   DISPLAY_ORDER,
   LIFE_ROW_PREFIX,
@@ -361,6 +366,35 @@ console.log("\n§1c launch gates");
       lifeWritesEnabled({ NODE_ENV: "production", VERCEL_ENV: "" }) &&
       lifeWritesEnabled({ NODE_ENV: "production", VERCEL_ENV: "preview", XTNL_LIFE_JUDGE: "1" })
   );
+}
+
+// ── §1e momentum's launched model (momentum.md §A.10, §G.3) ───────────────
+// §1b pins today's economy, which stays the one in force until MOMENTUM_LAUNCH_DAY; these are
+// the re-pins on the model the launch switches to (life-economy MOMENTUM_MP_MODEL).
+console.log("\n§1e momentum's launched model");
+{
+  const prod = momentumLaunchDay({ NODE_ENV: "production" });
+  check("until launch the model in force is today's (§1b) on every day", prod === null && lifeMpModelOn("2026-10-12", prod) === PRE_MOMENTUM_MP_MODEL && lifeMpModelOfWeek("2099-12-31", prod) === PRE_MOMENTUM_MP_MODEL && lifeMpModelOf(false) === PRE_MOMENTUM_MP_MODEL);
+  check(
+    "today's model is §1b's constants, by reference",
+    PRE_MOMENTUM_MP_MODEL.mp.WEEK_KEPT === LIFE_MP.WEEK_KEPT && PRE_MOMENTUM_MP_MODEL.weekCap === LIFE_MP_WEEK_CAP && PRE_MOMENTUM_MP_MODEL.cappedReasons === CAPPED_REASONS && PRE_MOMENTUM_MP_MODEL.reasons === LIFE_MP_REASONS
+  );
+  const M = MOMENTUM_MP_MODEL;
+  check(
+    "launched LIFE_MP = {WEEK_KEPT 18, FULL_DAY 0.5, GOAL_SHORT 1, GOAL_MID 6, GOAL_LONG 20, PLAN_WEEK 10, MILESTONE 50, CHECKPOINT 12}",
+    M.mp.WEEK_KEPT === 18 && M.mp.FULL_DAY === 0.5 && M.mp.GOAL_SHORT === 1 && M.mp.GOAL_MID === 6 && M.mp.GOAL_LONG === 20 && M.mp.PLAN_WEEK === 10 && M.mp.MILESTONE === 50 && M.mp.CHECKPOINT === 12
+  );
+  eq("launched LIFE_MP_WEEK_CAP = 91", M.weekCap, 91);
+  check("launched reachable weekly MP = 2 × 1 + 4 × 18 + 3 + 12 = 89 ≤ the cap", GOAL_RULES.SHORT.maxPaying * M.mp.GOAL_SHORT + TRACKS.length * M.mp.WEEK_KEPT + 3 + (M.mp.PLAN_WEEK + 2) === 89 && 89 <= M.weekCap);
+  check(
+    "launched CAPPED_REASONS = today's three + LIFE_PLAN_WEEK; MID, LONG, the chest, milestones and checkpoints are not capped",
+    MOMENTUM_CAPPED_REASONS.join() === "LIFE_WEEK_KEPT,GOAL_SHORT,LIFE_FULL_DAY,LIFE_PLAN_WEEK" &&
+      M.cappedReasons === MOMENTUM_CAPPED_REASONS &&
+      isCappedReasonIn(M, "LIFE_PLAN_WEEK") &&
+      ["GOAL_MID", "GOAL_LONG", "LIFE_CHEST", "LIFE_MILESTONE", "LIFE_CHECKPOINT"].every((r) => !isCappedReasonIn(M, r))
+  );
+  check("launched: LIFE_PR is still reserved and refused as a mint reason", !isMintReasonIn(M, "LIFE_PR") && RESERVED_MP_REASONS.join() === "LIFE_PR");
+  check("cappedMp at 91: 18 with 73 used is 18 (91 exactly); the 90th MP is whole; the 92nd is trimmed; with 91 used 0", cappedMp(18, 73, M.weekCap) === 18 && cappedMp(1, 89, M.weekCap) === 1 && cappedMp(2, 90, M.weekCap) === 1 && cappedMp(1.5, 91, M.weekCap) === 0);
 }
 
 // ── §1d judging days ──────────────────────────────────────────────────────

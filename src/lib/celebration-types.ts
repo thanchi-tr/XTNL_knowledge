@@ -7,6 +7,7 @@
  *
  *   CelebrationTier     0 Mark · 1 Chime · 2 Seal · 3 Ascension
  *   CelebrationKind     every trigger in the reward ladder (redesign.md › Rewards)
+ *   MOMENTUM_T0..T3_KINDS  momentum's kinds (momentum.md §G.1), on the ladder, listed apart until lane D
  *   KIND_TIER           kind → tier, exactly the ladder; nothing else decides loudness
  *   CelebrationEvent    { id, tier, kind, facts, what[], shownAt?, dedupeKey?, createdAt? }
  *   CelebrationFacts    what the event says: eyebrow, title, lines, exact amounts, numeral …
@@ -22,6 +23,9 @@
  *   - Every T2 and T3 carries an exact number (facts.amounts or facts.numeral)
  *     and at least one "What moved" row or a cause line (facts.cause).
  *   - Life XP and review points are separate ledgers; an AmountFact names one.
+ *   - Momentum's chance (a crit, the daily chest) is decided by a seeded HMAC
+ *     roll stored on the ledger row it paid (momentum.md §A.9); a celebration
+ *     only reports that stored outcome, so it stays deterministic too.
  */
 import type { Material } from "./materials";
 
@@ -79,18 +83,40 @@ export const T3_KINDS = [
   "first-ultimate", // the first Ultimate / Transcendent rank
 ] as const;
 
+/**
+ * Momentum's kinds (momentum.md §G.1): L0 fixes their names and tiers, lane D
+ * detects them and lane E presents them. They are on the ladder (KIND_TIER)
+ * now, but in their own lists: celebration-check's coverage loop walks
+ * T2_KINDS and T3_KINDS and fails a kind with no detector and fixture, so
+ * lane D adds MOMENTUM_T2_KINDS and MOMENTUM_T3_KINDS to that loop in the same
+ * change as their detectors. Dedupe keys: momentum.ts MOMENT_KEYS.
+ */
+/** T0 · Mark: a crit's gold numeral ("Crit ×2 · +24"); a chain link ("Chain 3"). */
+export const MOMENTUM_T0_KINDS = ["crit", "chain"] as const;
+/** T1 · Chime: the day's first momentum action (replaces day-kept when both fire on one tick), a quest done, a freeze that held, a common chest. */
+export const MOMENTUM_T1_KINDS = ["momentum-kept", "quest-done", "freeze-held", "chest"] as const;
+/** T2 · Seal: a rare chest, a checkpoint taken, a plan week kept, a perk learned, a run of 7 / 30 / 100 / 365. */
+export const MOMENTUM_T2_KINDS = ["chest-rare", "checkpoint", "plan-week", "perk", "momentum-run"] as const;
+/** T3 · Ascension: a roadmap milestone reached; a capstone perk learned (at most 3 ever). */
+export const MOMENTUM_T3_KINDS = ["milestone", "capstone"] as const;
+
 export type T0Kind = (typeof T0_KINDS)[number];
 export type T1Kind = (typeof T1_KINDS)[number];
 export type T2Kind = (typeof T2_KINDS)[number];
 export type T3Kind = (typeof T3_KINDS)[number];
-export type CelebrationKind = T0Kind | T1Kind | T2Kind | T3Kind;
+export type MomentumKind =
+  | (typeof MOMENTUM_T0_KINDS)[number]
+  | (typeof MOMENTUM_T1_KINDS)[number]
+  | (typeof MOMENTUM_T2_KINDS)[number]
+  | (typeof MOMENTUM_T3_KINDS)[number];
+export type CelebrationKind = T0Kind | T1Kind | T2Kind | T3Kind | MomentumKind;
 
 function tierMap(): Record<CelebrationKind, CelebrationTier> {
   const m = {} as Record<CelebrationKind, CelebrationTier>;
-  for (const k of T0_KINDS) m[k] = 0;
-  for (const k of T1_KINDS) m[k] = 1;
-  for (const k of T2_KINDS) m[k] = 2;
-  for (const k of T3_KINDS) m[k] = 3;
+  for (const k of [...T0_KINDS, ...MOMENTUM_T0_KINDS]) m[k] = 0;
+  for (const k of [...T1_KINDS, ...MOMENTUM_T1_KINDS]) m[k] = 1;
+  for (const k of [...T2_KINDS, ...MOMENTUM_T2_KINDS]) m[k] = 2;
+  for (const k of [...T3_KINDS, ...MOMENTUM_T3_KINDS]) m[k] = 3;
   return m;
 }
 

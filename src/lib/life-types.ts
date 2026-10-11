@@ -132,6 +132,48 @@ export type ActivitySource =
   | "FORGET";
 
 /**
+ * Momentum's ledger vocabulary (docs/life-plan/momentum.md §D.2). Every one is
+ * an append-only decision row, written only once MOMENTUM_LAUNCH_DAY is set
+ * (src/lib/momentum.ts momentumLive), so nothing below is ever written today.
+ *
+ *   QUEST_SET   NONE            'quests:<day>' · 'quests:<day>:swap:<SLOT>:<n>' (receipt QuestSet / QuestSwap)
+ *   CHEST       TRACK or NONE   'chest:<day>' · 'chest:ms:<lineageId>' (receipt ChestReceipt; rawXp NULL)
+ *   MILESTONE   TRACK           'ms:<lineageId>' (120 XP, rawXp NULL, outside the knee)
+ *   CHECKPOINT  TRACK           'cp:<itemLineageId>' (40 XP, rawXp NULL; countsForStreak true: it is an action)
+ *   PLAN_WEEK   TRACK           'pw:<questWeekId>' (30 XP, rawXp NULL, dated the week's Sunday)
+ *   PERK        NONE            'perk:<code>:<epoch>' (qty = cost, detail = code)
+ *   RESPEC      NONE            'respec:<day>'
+ *   NUDGE       NONE            'nudge:<day>' (the evening push's claim)
+ *
+ * Kept as its own union until activity.ts DEFAULT_SINK (a Record over
+ * ActivitySource) spreads MOMENTUM_DEFAULT_SINK: then ActivitySource becomes
+ * `CoreActivitySource | MomentumActivitySource` in one edit (the L0 report
+ * names it). WORKOUT, PR and UNDO already exist.
+ */
+export type MomentumActivitySource = "QUEST_SET" | "CHEST" | "MILESTONE" | "CHECKPOINT" | "PLAN_WEEK" | "PERK" | "RESPEC" | "NUDGE";
+export const MOMENTUM_ACTIVITY_SOURCES: readonly MomentumActivitySource[] = [
+  "QUEST_SET", "CHEST", "MILESTONE", "CHECKPOINT", "PLAN_WEEK", "PERK", "RESPEC", "NUDGE",
+];
+/** Any source a ledger row may carry, momentum's included (the streak lists are typed over this). */
+export type AnyActivitySource = ActivitySource | MomentumActivitySource;
+
+/**
+ * Momentum's lifecycle rows, as a Record so the sinks cannot drift from §D.2:
+ * activity.ts DEFAULT_SINK spreads this when the union joins ActivitySource. A
+ * CHEST that pays only MP (or nothing) is written with sink NONE explicitly.
+ */
+export const MOMENTUM_DEFAULT_SINK: Readonly<Record<MomentumActivitySource, Sink>> = {
+  QUEST_SET: "NONE",
+  CHEST: "TRACK",
+  MILESTONE: "TRACK",
+  CHECKPOINT: "TRACK",
+  PLAN_WEEK: "TRACK",
+  PERK: "NONE",
+  RESPEC: "NONE",
+  NUDGE: "NONE",
+};
+
+/**
  * Where a row's XP counts. DOMAIN: points already credited to a Domain by
  * srs.ts / ideas.ts (recorded, never paid again). TRACK: life XP. NONE: a
  * record only.
@@ -164,6 +206,15 @@ export type Timing = "ON_TIME" | "LATE" | "MAKE_UP";
 
 /** How a completion is paid: in full, as its minimum version, as play (0), or by reviews (0). */
 export type PayMode = "FULL" | "MVV" | "PLAY" | "STUDY";
+/**
+ * Momentum (momentum.md §A.6): an EXERCISE habit completed by a logged walk is
+ * paid by the walk, so its TASK row pays K = 0 ('paid by the walk') and still
+ * counts for the streak. Kept out of PayMode until the rules page's
+ * Record<PayMode, …> (MODE_WORDS) and its one-row-per-PAY_MODE_FACTOR-key table
+ * list it (lane E); life-grade's LIFE_PAY_MODE_FACTOR and MODE_LABEL carry it.
+ */
+export type MomentumPayMode = "SESSION";
+export type LifePayMode = PayMode | MomentumPayMode;
 
 /** Everything priceTask needs about one completion. */
 export interface PriceInput {
@@ -203,6 +254,20 @@ export interface PricingContext {
   rawBefore: number;
 }
 
+/**
+ * Momentum's receipt factors (momentum.md §A.4, §A.5, §B.3), multiplied inside
+ * the knee after K: S the owned perks, M the live chain, X a crit. A receipt
+ * carrying any of them is 'life-2'; every other receipt stays 'life-1' byte for
+ * byte. The board's projection includes S and M, never X.
+ *
+ * ReceiptFactor.key joins them (`… | "K" | MomentumFactorKey`) in lane A's
+ * change, together with ReceiptSheet.tsx FACTOR_NAME, which is a Record over
+ * the key union and would not compile with the union widened alone.
+ */
+export type MomentumFactorKey = "S" | "M" | "X";
+/** Every factor key a receipt may carry once momentum's factors are priced. */
+export type LifeFactorKey = ReceiptFactor["key"] | MomentumFactorKey;
+
 export interface ReceiptFactor {
   key: "B" | "E" | "T" | "C" | "D" | "V" | "K";
   label: string;
@@ -212,7 +277,7 @@ export interface ReceiptFactor {
 
 /** The published breakdown stored on every paying row. */
 export interface Receipt {
-  /** Formula version, e.g. 'life-1'. Past rows are never repriced. */
+  /** Formula version, e.g. 'life-1' ('life-2' once a momentum factor S, M or X is on it). Past rows are never repriced. */
   v: string;
   factors: ReceiptFactor[];
   /** Minutes used for E, after clamps. */

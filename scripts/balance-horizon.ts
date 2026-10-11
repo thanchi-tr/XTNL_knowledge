@@ -34,6 +34,18 @@
  * quests, Proficiency and the Aim rank write no ledger row (no roadmap module
  * holds a ledger writer). It imports roadmap modules, so _no-model is first.
  *
+ * The MOMENTUM block (docs/life-plan/momentum.md §A.10, §G.3) runs the same income model
+ * with the LAUNCHED life-MP model (life-economy MOMENTUM_MP_MODEL: kept tracks 18, the judge
+ * pool 91, the chest pool 28, milestones and checkpoints in 30-day windows) and asserts the
+ * re-pinned values: 1-m the worst case ≤ 36% of knowledge (21.7531 ≤ 22.307), 2-m the horizon
+ * ≥ 10 y (10.15), 3-m the most the judge pool is asked for without full days is
+ * 2 + 4 × 18 + 3 + 12 = 89 ≤ 91 so no kept track is trimmed, 3b-m full days and a second plan
+ * week are what it trims, 3c-m split runs equal one run, 3e-m the four new reasons (the name
+ * ban lifted for exactly these), 4b the steady basket with crit and chain EV ≤ 130 (110.7).
+ * Momentum is inert until MOMENTUM_LAUNCH_DAY, so assertions 1–9b above keep pinning today's
+ * model (PRE_MOMENTUM_MP_MODEL, the constants they read) unchanged, and 0-m pins that the two
+ * are the same.
+ *
  * The LEVELS block (2026-10-11, the level rework's step 2) pins the character
  * level's pace now that the Field level and the character level are depth
  * first (xp.ts fieldLevel, character.ts): a library under steady daily use,
@@ -79,6 +91,8 @@ import { TRACKS, type Band, type Horizon, type Track } from "../src/lib/life-typ
 import { addDays, weekKeyOf, type DayKey } from "../src/lib/life-day";
 import { planWeeks, type WeekJudgeState, type WeekPlan, type WeekTaskRow } from "../src/lib/life-weeks";
 import { CAPPED_REASONS, LIFE_MP_REASONS, RESERVED_MP_REASONS, statedGoalMp, weekRowKey } from "../src/lib/life-economy";
+import { MOMENTUM_MP_MODEL, MOMENTUM_MP_REASONS, PRE_MOMENTUM_MP_MODEL, ROADMAP_MP_WINDOWS, cappedMp, round2 } from "../src/lib/life-economy";
+import { MOMENTUM_LAUNCH_DAY, PERKS, lifeModsOf } from "../src/lib/momentum";
 import { statedForMilestone, type StatedInput } from "../src/lib/roadmap-economy";
 import { captureGoalFields, linkedGoalFields } from "../src/lib/tasks";
 
@@ -705,6 +719,134 @@ function lifeBlock(pool: number, knowledgePerDay: number): number {
   return failures;
 }
 
+// ── MOMENTUM: the launched life-MP model (momentum.md §A.10, §G.3) ────────────
+
+/** Once momentum is live, life MP may add at most this share of the knowledge income, even in the worst case (G.3 pin 1: 0.03 → 0.36). */
+const MOMENTUM_SHARE_CEILING = 0.36;
+/**
+ * The realistic player's luck, as scripts/momentum-sim.ts measures it (momentum.md §C.2): crits add
+ * 7.4% of task XP after the knee and chains 1.7% of raw. The basket itself is priced without luck (4).
+ */
+const LUCK_EV = { crit: 0.074, chain: 0.017 } as const;
+
+/** Judge-pool mints in order, each paying what the weekly cap still allows (the judge's cappedMp). */
+function poolMints(asks: readonly { key: string; amount: number }[], cap: number, used = 0): { key: string; amount: number; paid: number }[] {
+  let u = used;
+  return asks.map((a) => {
+    const paid = cappedMp(a.amount, u, cap);
+    u = round2(u + paid);
+    return { ...a, paid };
+  });
+}
+
+/** Prints the MOMENTUM block; returns the number of failed assertions. */
+function momentumBlock(pool: number, knowledgePerDay: number): number {
+  let failures = 0;
+  const check = (name: string, ok: boolean, detail: string) => {
+    if (!ok) failures += 1;
+    console.log(`  ${ok ? "PASS" : "FAIL"} ${name}: ${detail}`);
+  };
+  const M = MOMENTUM_MP_MODEL;
+  const years = (perDay: number) => pool / perDay / 365;
+  console.log(`\n── Life with momentum: the launched model (inert while MOMENTUM_LAUNCH_DAY is ${MOMENTUM_LAUNCH_DAY ?? "null"}) ──`);
+
+  // Income: both pools full every week, every windowed reason at its densest.
+  const judgePerDay = M.weekCap / 7;
+  const chestPerDay = M.chestWeekCap / 7;
+  const goals = (["MID", "LONG"] as const).map((h) => (GOAL_RULES[h].stated * GOAL_RULES[h].maxPaying) / GOAL_RULES[h].windowDays);
+  const roadmap = Object.values(ROADMAP_MP_WINDOWS).map((w) => (w.mp * w.maxPaying) / w.windowDays);
+  const worst = judgePerDay + chestPerDay + goals.reduce((a, b) => a + b, 0) + roadmap.reduce((a, b) => a + b, 0);
+  const ceiling = MOMENTUM_SHARE_CEILING * knowledgePerDay;
+  console.log(
+    `  worst case: judge ${M.weekCap}/7 ${fmt(judgePerDay, 4)} + chest ${M.chestWeekCap}/7 ${fmt(chestPerDay, 4)} + Mid/Long ${fmt(goals[0] + goals[1], 4)} + milestone & checkpoint ${fmt(roadmap[0] + roadmap[1], 4)} = ${fmt(worst, 4)} MP/day (${fmt((100 * worst) / knowledgePerDay, 2)}% of knowledge)`,
+  );
+
+  console.log("  assertions:");
+  const pre = PRE_MOMENTUM_MP_MODEL;
+  check(
+    "0-m. until launch the model in force is exactly the constants assertions 1–3e pin",
+    !pre.momentum && pre.mp.WEEK_KEPT === LIFE_MP.WEEK_KEPT && pre.mp.FULL_DAY === LIFE_MP.FULL_DAY && pre.weekCap === LIFE_MP_WEEK_CAP && pre.cappedReasons === CAPPED_REASONS && pre.reasons === LIFE_MP_REASONS && pre.chestWeekCap === 0,
+    `kept week ${pre.mp.WEEK_KEPT}, cap ${pre.weekCap}, ${pre.cappedReasons.length} capped reasons, no chest pool`,
+  );
+  check("1-m. worst-case life income ≤ 36% of knowledge", worst <= ceiling + 1e-9 && Math.round(worst * 1e4) === 217531, `${fmt(worst, 4)} ≤ ${fmt(ceiling, 3)} MP/day`);
+  const worstYears = years(knowledgePerDay + worst);
+  check("2-m. whole-pool horizon with worst-case life", worstYears >= MIN_HORIZON_YEARS, `${fmt(worstYears)} y ≥ ${MIN_HORIZON_YEARS} y`);
+
+  // 3-m. The judge pool's most, in mint order: Shorts at close, BODY (with Iron lungs), DUTY, CRAFT, CARE, then plan weeks, then full days.
+  const all = lifeModsOf(new Set(PERKS.map((p) => p.code)));
+  const tracks = TRACKS.map((t) => ({ key: `track:${t}`, amount: M.mp.WEEK_KEPT + (t === "BODY" ? all.bodyKeptMp : 0) }));
+  const planWeek = (n: number) => ({ key: `planweek:${n}`, amount: all.planWeekMp });
+  const fullDays = Array.from({ length: 7 }, (_, d) => ({ key: `fullday:${d}`, amount: M.mp.FULL_DAY }));
+  const shortsMax = GOAL_RULES.SHORT.maxPaying * M.mp.GOAL_SHORT;
+  const most = shortsMax + tracks.reduce((s, a) => s + a.amount, 0) + all.planWeekMp;
+  const one = poolMints([...tracks, planWeek(1)], M.weekCap, shortsMax);
+  check(
+    "3-m. the most the judge pool is asked for without full days fits it: no kept track is ever trimmed",
+    most === 89 && most <= M.weekCap && one.every((m) => m.paid === m.amount),
+    `${GOAL_RULES.SHORT.maxPaying} × ${M.mp.GOAL_SHORT} + ${TRACKS.length} × ${M.mp.WEEK_KEPT} + ${all.bodyKeptMp} (Iron lungs) + ${all.planWeekMp} (a plan week, Trail rations) = ${most} ≤ cap ${M.weekCap}`,
+  );
+
+  // 3b-m. Full days and a second plan week are what the cap trims, whatever the Shorts.
+  const byShorts = [0, 1, 2].map((shorts) => {
+    const ms = poolMints([...tracks, planWeek(1), planWeek(2), ...fullDays], M.weekCap, shorts * M.mp.GOAL_SHORT);
+    const used = round2(shorts * M.mp.GOAL_SHORT + ms.reduce((s, m) => s + m.paid, 0));
+    const trimmed = ms.filter((m) => m.paid < m.amount);
+    return { shorts, ms, used, trimmed };
+  });
+  const askedMost = most + 7 * M.mp.FULL_DAY;
+  check(
+    "3b-m. with full days the capped reasons exceed the cap; a second plan week and the full days are what it trims",
+    askedMost === 92.5 &&
+      askedMost > M.weekCap &&
+      byShorts.every((r) => r.used === M.weekCap && r.ms.filter((m) => m.key.startsWith("track:") || m.key === "planweek:1").every((m) => m.paid === m.amount) && r.trimmed.every((m) => m.key === "planweek:2" || m.key.startsWith("fullday:"))),
+    `${most} + 7 × ${M.mp.FULL_DAY} = ${askedMost} > cap ${M.weekCap}; ` +
+      byShorts.map((r) => `${r.shorts} Shorts → tracks whole, second plan week ${r.ms.find((m) => m.key === "planweek:2")?.paid} of ${all.planWeekMp}, full days ${r.ms.filter((m) => m.key.startsWith("fullday:") && m.paid > 0).length} of 7`).join(" · "),
+  );
+
+  // 3c-m. Settlement holds DUTY back: BODY, CRAFT and CARE mint first, then DUTY, the plan weeks and the full days.
+  const ledger = (ms: readonly { key: string; paid: number }[]) => ms.map((m) => `${m.key}=${m.paid}`).sort().join(",");
+  const trackAsk = (t: string) => tracks.find((x) => x.key === `track:${t}`)!;
+  const splits = [0, 1, 2].map((shorts) => {
+    const used = shorts * M.mp.GOAL_SHORT;
+    const single = poolMints([...tracks, planWeek(1), planWeek(2), ...fullDays], M.weekCap, used);
+    const run1 = poolMints([trackAsk("BODY"), trackAsk("CRAFT"), trackAsk("CARE")], M.weekCap, used);
+    const run2 = poolMints([trackAsk("DUTY"), planWeek(1), planWeek(2), ...fullDays], M.weekCap, round2(used + run1.reduce((s, m) => s + m.paid, 0)));
+    const early = poolMints([trackAsk("BODY"), trackAsk("CRAFT"), trackAsk("CARE"), planWeek(1), planWeek(2), trackAsk("DUTY")], M.weekCap, used);
+    return { shorts, same: ledger(single) === ledger([...run1, ...run2]), dutyIfEarly: early[early.length - 1].paid };
+  });
+  check(
+    "3c-m. split runs (BODY, CRAFT, CARE; then DUTY, the plan weeks and the full days) total and trim exactly as one",
+    splits.every((r) => r.same),
+    splits.map((r) => `${r.shorts} Shorts: split ${r.same ? "=" : "≠"} single`).join(" · "),
+  );
+  console.log(
+    `       (so plan weeks mint in the run that writes DUTY, after it: minted in the first run, two plan weeks would leave DUTY ${splits.map((r) => fmt(r.dutyIfEarly, 0)).join(" / ")} of ${M.mp.WEEK_KEPT} with 0 / 1 / 2 Shorts)`,
+  );
+
+  // 3e-m. The four new reasons; the name ban holds for every other.
+  const json = (x: unknown) => JSON.stringify(x);
+  const momentumReasons = MOMENTUM_MP_REASONS as readonly string[];
+  const reasonsOk =
+    json(M.reasons) === json([...LIFE_MP_REASONS, "LIFE_PLAN_WEEK", "LIFE_CHEST", "LIFE_MILESTONE", "LIFE_CHECKPOINT"]) &&
+    json(RESERVED_MP_REASONS) === json(["LIFE_PR"]) &&
+    !(M.reasons as readonly string[]).includes("LIFE_PR") &&
+    json(M.cappedReasons) === json([...CAPPED_REASONS, "LIFE_PLAN_WEEK"]) &&
+    [...M.reasons, ...RESERVED_MP_REASONS].filter((r) => !momentumReasons.includes(r)).every((r) => !/ROADMAP|AIM|QUEST|PROFICIEN|RANK|MILESTONE/i.test(r));
+  check(
+    "3e-m. momentum adds exactly LIFE_PLAN_WEEK, LIFE_CHEST, LIFE_MILESTONE and LIFE_CHECKPOINT (the name ban lifted for these only)",
+    reasonsOk && Math.round(worst * 1e4) === 217531,
+    `reasons ${M.reasons.join(", ")}; capped + LIFE_PLAN_WEEK; worst ${fmt(worst, 4)} MP/day`,
+  );
+
+  // 4b. The steady basket with the realistic luck: still inside assertion 4's band.
+  const steady = personaOf("steady");
+  const lucky = steady.meanTrackXpPerWeek * (1 + LUCK_EV.crit + LUCK_EV.chain);
+  check("4b. steady basket with crit and chain EV", lucky >= 80 && lucky <= 130, `${fmt(steady.meanTrackXpPerWeek, 1)} × (1 + ${LUCK_EV.crit} + ${LUCK_EV.chain}) = ${fmt(lucky, 1)} XP/week ≤ 130`);
+
+  console.log(failures ? `  MOMENTUM: ${failures} assertion(s) failed` : "  MOMENTUM: all assertions hold");
+  return failures;
+}
+
 // ── LEVELS: depth first (2026-10-11, the level rework's step 2) ─────────────
 
 /** The model's idea: a NUMERIC card (15 points on submission), with no similarity decay. */
@@ -909,7 +1051,7 @@ function main() {
   console.log(`  days to master one idea:    ${DAYS_TO_MASTER} (${fmtYears(DAYS_TO_MASTER)})`);
   console.log(`  days to max one idea:       ${DAYS_TO_MAX} (${fmtYears(DAYS_TO_MAX)})`);
 
-  const failures = lifeBlock(total, perDay) + levelsBlock();
+  const failures = lifeBlock(total, perDay) + momentumBlock(total, perDay) + levelsBlock();
   if (failures > 0) process.exitCode = 1;
 }
 
