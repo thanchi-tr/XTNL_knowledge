@@ -1,7 +1,7 @@
 /**
  * Question variants (src/lib/idea-variants.ts, migration idea_question_variants): other wordings of an idea's
  * question, same answer; each review shows the original or one variant at random. The rules, the wording swap per
- * format, the pick, the form's autosave, and pins on the form, the create action and the review loaders.
+ * format, the pick, the form's autosave, and pins on the form, the create and edit actions and the review loaders.
  *
  *   npx tsx scripts/variants-check.ts
  */
@@ -87,6 +87,8 @@ check("formats: the written-prompt formats take variants; cloze, multiple choice
   const ideas = read("src/app/actions/ideas.ts");
   const core = ideas.slice(ideas.indexOf("async function submitIdeaCore"), ideas.indexOf("export interface PreviewIdeaInput"));
   check("create: variants are saved after the idea, fail soft, never fed to dedup, the embedding or difficulty", core.indexOf("prisma.idea.create(") < core.indexOf("saveVariantsCore(idea.id") && !/embedText\([^)]*variants|estimateDifficulty\([^)]*variants|analyzeCandidate\([^)]*variants/.test(core));
+  const edit = ideas.slice(ideas.indexOf("export async function editIdea"), ideas.indexOf("export async function ideaHistory"));
+  check("edit: the idea editor changes them too, saved against the edited question (idea-edit-check has the rest)", /saveVariantsCore\(existing\.id, input\.variants, promptOfQuestion\(questionType, question\)\)/.test(edit) && !/embedText\([^)]*variants|estimateDifficulty\([^)]*variants/.test(edit));
   const page = read("src/app/review/page.tsx");
   check("review: each due card's wording is picked after the cards are built (the answer never enters the map)", /const fields: WorkspaceField\[\] = dueFields\.map\(\(f\) => \(\{ \.\.\.f, cards: f\.cards\.map\(\(c\) => pickCardWording\(c, variants\.get\(c\.id\), displayQuestion\)\) \}\)\);/.test(page));
   check("bosses: an encounter's cards are worded the same way", /pickCardWording\(c, variants\.get\(c\.id\), displayQuestion\)/.test(read("src/app/actions/bosses.ts")));

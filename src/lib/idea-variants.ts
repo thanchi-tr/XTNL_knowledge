@@ -1,5 +1,6 @@
 /**
- * Question variants: other wordings of an idea's question, with the same answer. The add form takes them; each
+ * Question variants: other wordings of an idea's question, with the same answer. The add form takes them, the idea
+ * editor changes them (variantsEdit); each
  * review shows the original or one variant, picked at random (pickVariantIndex), so the card is recalled from its
  * meaning rather than from one sentence's shape. Grading never reads the question, so nothing else changes.
  *
@@ -11,7 +12,7 @@
  * difficulty keep reading the original question only.
  */
 import type { QuestionType } from "@prisma/client";
-import { decodeListQuestion, decodeNumericQuestion, decodeOrderQuestion } from "./idea-payload";
+import { decodeListQuestion, decodeNumericQuestion, decodeOrderQuestion, type IdeaContent } from "./idea-payload";
 
 /** At most this many variants besides the original. */
 export const VARIANTS_MAX = 6;
@@ -51,6 +52,36 @@ export function promptOfQuestion(type: QuestionType | string, question: string):
   if (type === "ORDER") return decodeOrderQuestion(question).prompt;
   if (type === "NUMERIC") return decodeNumericQuestion(question).prompt;
   return question;
+}
+
+/** The same prompt, read from the content the form sends (what promptOfQuestion reads once it is stored). */
+export function promptOfContent(content: IdeaContent): string {
+  switch (content.type) {
+    case "SHORT":
+    case "FORMULA":
+      return content.question;
+    case "LIST":
+    case "ORDER":
+    case "NUMERIC":
+      return content.prompt;
+    default:
+      return "";
+  }
+}
+
+/**
+ * What an edit writes for the variants: the edited list cleaned against the (possibly edited) question, or null when
+ * that is exactly what is stored. So an edit that leaves the wordings alone never writes them, a removed row is
+ * removed, an empty list removes them all, and a stored wording the new question now repeats is dropped.
+ */
+export function variantsEdit(edited: readonly string[], stored: readonly string[], original: string): string[] | null {
+  const next = cleanVariants([...edited], original);
+  return next.length === stored.length && next.every((v, i) => v === stored[i]) ? null : next;
+}
+
+/** The idea view's count of the other wordings: "+1 wording", "+2 wordings". */
+export function moreWordingsLabel(n: number): string {
+  return `+${n} ${n === 1 ? "wording" : "wordings"}`;
 }
 
 /** The stored question with a variant's prompt in place of the original's: the whole question, or only its prompt. */

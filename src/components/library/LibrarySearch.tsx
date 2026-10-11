@@ -22,7 +22,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { LIBRARY_SEARCH_EVENT, LIBRARY_SEARCH_PARAM, ariaKeysOf } from "@/lib/shortcuts";
 import type { CollectionLabel, QuestionType } from "@prisma/client";
-import { ideaHistory } from "@/app/actions/ideas";
+import { ideaHistory, ideaVariants } from "@/app/actions/ideas";
 import { DIFFICULTY_META, type DifficultyBand } from "@/lib/difficulty";
 import { fieldTier } from "@/lib/field-tier";
 import { QUESTION_TYPES } from "@/lib/idea-payload";
@@ -186,6 +186,28 @@ export function LibrarySearch({ ideas, fields, allTags, now }: Props) {
       cancelled = true;
     };
   }, [openId, histories]);
+
+  // Its other wordings, read afresh on every open (an edit in the sheet changes them); null while they load.
+  const [openVariants, setOpenVariants] = useState<{ id: string; list: string[] } | null>(null);
+  const [variantsOf, setVariantsOf] = useState(openId);
+  if (variantsOf !== openId) {
+    setVariantsOf(openId);
+    setOpenVariants(null);
+  }
+  useEffect(() => {
+    if (!openId) return;
+    let cancelled = false;
+    ideaVariants(openId)
+      .then((list) => {
+        if (!cancelled) setOpenVariants({ id: openId, list });
+      })
+      .catch(() => {
+        if (!cancelled) setOpenVariants({ id: openId, list: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [openId]);
 
   useEffect(() => {
     if (!openId) pushedIdea.current = false;
@@ -375,6 +397,7 @@ export function LibrarySearch({ ideas, fields, allTags, now }: Props) {
               idea={openIdea}
               now={now}
               history={histories[openIdea.id] ?? null}
+              variants={openVariants?.id === openIdea.id ? openVariants.list : null}
               onDeleted={(id) => {
                 setRemoved((s) => new Set(s).add(id));
                 closeDetail();

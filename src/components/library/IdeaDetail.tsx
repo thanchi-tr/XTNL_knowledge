@@ -2,7 +2,7 @@
 
 /**
  * One idea, as the Library's sheet and the /library/[id] page show it:
- * question and answer, the level ring (mastery is a fixed target: 12),
+ * question (its other wordings behind "+n wordings") and answer, the level ring (mastery is a fixed target: 12),
  * next due, the history strip from the life ledger, Edit (any written format, the format too)
  * and a quiet two-step Delete.
  *
@@ -13,11 +13,13 @@
 import { useId, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { deleteIdea, editIdea } from "@/app/actions/ideas";
+import type { EditIdeaResult } from "@/app/actions/ideas";
 import { bandFor, DIFFICULTY_META } from "@/lib/difficulty";
 import { displayAnswer, displayQuestion } from "@/lib/idea-display";
 import { countClozeBlanks, parseCloze } from "@/lib/idea-payload";
 import { EDIT_FORMATS, EDIT_ROWS_MAX, contentOfAddState, editStateOf, switchEditFormat } from "@/lib/idea-edit";
 import type { AddContentState } from "@/lib/idea-handoff";
+import { VARIANTS_MAX, VARIANT_MAX_CHARS, moreWordingsLabel, promptOfContent, variantsAllowed, variantsEdit } from "@/lib/idea-variants";
 import { ShortAnswerOptions } from "./ShortAnswerOptions";
 import { MASTERY_LEVEL } from "@/lib/xp";
 import { MathText } from "@/components/math/MathText";
@@ -45,19 +47,25 @@ interface IdeaDetailProps {
   now: number;
   /** null while loading. */
   history: IdeaHistory | null;
+  /** The question's other wordings (idea-variants.ts), in order; null while loading. */
+  variants: readonly string[] | null;
   /** Called after a delete succeeded (the sheet closes; the page leaves). */
   onDeleted?: (id: string) => void;
 }
 
-export function IdeaDetail({ idea, now, history, onDeleted }: IdeaDetailProps) {
+export function IdeaDetail({ idea, now, history, variants, onDeleted }: IdeaDetailProps) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [armed, setArmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  /** The wordings an edit just stored (they show before the refresh brings them back). */
+  const [savedVariants, setSavedVariants] = useState<readonly string[] | null>(null);
   const [pending, start] = useTransition();
   const mastered = isMastered(idea);
   const formula = idea.questionType === "FORMULA";
+  const wordings = savedVariants ?? variants;
+  const shownWordings = wordings && variantsAllowed(idea.questionType) ? wordings : [];
   const question = displayQuestion(idea.questionType, idea.question);
   const answer = displayAnswer(idea.questionType, idea.answer);
   const band = idea.difficulty > 0 ? DIFFICULTY_META[bandFor(idea.difficulty)] : null;
@@ -81,11 +89,15 @@ export function IdeaDetail({ idea, now, history, onDeleted }: IdeaDetailProps) {
     return (
       <IdeaEditForm
         idea={idea}
+        variants={wordings}
         now={now}
         onCancel={() => setEditing(false)}
-        onSaved={() => {
+        onSaved={(v) => {
           setEditing(false);
           setSaved(true);
+          if (v && "saved" in v) setSavedVariants(v.saved);
+          // The edit stands; its wordings didn't save (the table not there yet, or a failed write): say so.
+          setError(v && "error" in v ? v.error : null);
           router.refresh();
         }}
       />
@@ -97,6 +109,19 @@ export function IdeaDetail({ idea, now, history, onDeleted }: IdeaDetailProps) {
       <section className="card idea-qa" aria-label="Question and answer">
         <div className="t-eyebrow">Question</div>
         <p className="t-body-l">{formula ? <MathText text={question} /> : question}</p>
+        {shownWordings.length > 0 && (
+          <details className="idea-alts">
+            <summary>
+              <Icon name="chev" />
+              {moreWordingsLabel(shownWordings.length)}
+            </summary>
+            <ol start={2} aria-label="Other wordings">
+              {shownWordings.map((w, i) => (
+                <li key={i}>{formula ? <MathText text={w} /> : w}</li>
+              ))}
+            </ol>
+          </details>
+        )}
         <div className="t-eyebrow idea-a-h">Answer</div>
         <p className={formula ? "t-mono" : undefined}>{answer}</p>
       </section>
@@ -207,29 +232,50 @@ export function IdeaDetail({ idea, now, history, onDeleted }: IdeaDetailProps) {
 }
 
 /**
- * Edit in place, any format the add form writes (EDITABLE_TYPES), the format itself included. A correction: no
- * points, no dedup; level, due date, strikes and history stay (idea-edit.ts has the rules, editIdea the write).
+ * Edit in place, any format the add form writes (EDITABLE_TYPES), the format itself included, and the question's
+ * other wordings. A correction: no points, no dedup; level, due date, strikes and history stay (idea-edit.ts has the
+ * rules, editIdea the write). The wordings are sent only when they differ from what is stored (variantsEdit).
  */
-function IdeaEditForm({ idea, now, onCancel, onSaved }: { idea: LibraryIdea; now: number; onCancel: () => void; onSaved: () => void }) {
+function IdeaEditForm({
+  idea,
+  variants,
+  now,
+  onCancel,
+  onSaved,
+}: {
+  idea: LibraryIdea;
+  variants: readonly string[] | null;
+  now: number;
+  onCancel: () => void;
+  onSaved: (variants: EditIdeaResult["variants"]) => void;
+}) {
   const qId = useId();
   const aId = useId();
-  const [state, setState] = useState<AddContentState>(() => editStateOf(idea));
+  const [state, setState] = useState<AddContentState>(() => editStateOf(idea, variants ?? []));
+  // The wordings as stored, which an edit compares against. In the sheet they may arrive after Edit opened.
+  const [stored, setStored] = useState(variants);
+  if (stored === null && variants !== null) {
+    setStored(variants);
+    setState((s) => (s.variants.length === 0 ? { ...s, variants: [...variants] } : s));
+  }
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const set = (patch: Partial<AddContentState>) => setState((s) => ({ ...s, ...patch }));
   const content = contentOfAddState(state);
   const moved = state.type !== idea.questionType;
+  const takesVariants = variantsAllowed(state.type);
 
   function save() {
     if (!content) return;
+    const wordings = takesVariants ? variantsEdit(state.variants, stored ?? [], promptOfContent(content)) : null;
     setError(null);
     start(async () => {
-      const res = await editIdea({ ideaId: idea.id, content });
+      const res = await editIdea({ ideaId: idea.id, content, ...(wordings ? { variants: wordings } : {}) });
       if (!res.ok) {
         setError(res.error);
         return;
       }
-      onSaved();
+      onSaved(res.value.variants);
     });
   }
 
@@ -343,6 +389,21 @@ function IdeaEditForm({ idea, now, onCancel, onSaved }: { idea: LibraryIdea; now
         />
       )}
 
+      {takesVariants && (
+        <EditRows
+          legend="Other wordings"
+          hint="Reviews ask the question or one of these, at random."
+          noun="wording"
+          first={2}
+          min={0}
+          max={VARIANTS_MAX}
+          maxLength={VARIANT_MAX_CHARS}
+          placeholder="Another way to ask it"
+          rows={state.variants}
+          onRows={(rows) => set({ variants: rows })}
+        />
+      )}
+
       <p className="st-note idea-edit-keep">
         {moved && (
           <>
@@ -383,53 +444,72 @@ function EditInput({ label, value, onChange, mono, inputMode }: { label: string;
   );
 }
 
-/** A list's items, an order's steps or multiple choice's options: rows to type, add and remove (two at least). */
+/**
+ * A list's items, an order's steps, multiple choice's options or the question's other wordings: rows to type, add
+ * and remove (`min` at least, two by default; `max` at most), numbered from `first`.
+ */
 function EditRows({
   legend,
+  hint,
   noun,
   rows,
   onRows,
   picked,
   onPick,
+  first = 1,
+  min = 2,
+  max = EDIT_ROWS_MAX,
+  maxLength,
+  placeholder,
 }: {
   legend: string;
+  hint?: string;
   noun: string;
   rows: string[];
   onRows: (rows: string[], removedAt?: number) => void;
   picked?: number;
   onPick?: (i: number) => void;
+  first?: number;
+  min?: number;
+  max?: number;
+  maxLength?: number;
+  placeholder?: string;
 }) {
   const name = useId();
+  const Noun = `${noun[0].toUpperCase()}${noun.slice(1)}`;
   return (
     <fieldset className="add-items" style={{ border: 0, margin: 0, padding: 0 }}>
       <legend className="st-label">{legend}</legend>
+      {hint && <p className="st-hint idea-rows-hint">{hint}</p>}
       {rows.map((row, i) => (
         <div key={i} className="add-item">
           {onPick ? (
             <label className="add-pick">
               <input type="radio" name={name} checked={picked === i} onChange={() => onPick(i)} />
               <span className="sr-only">
-                {noun} {i + 1} is the right one
+                {noun} {i + first} is the right one
               </span>
             </label>
           ) : (
-            <span className="n">{i + 1}</span>
+            <span className="n">{i + first}</span>
           )}
           <input
             type="text"
             className="st-input"
-            aria-label={`${noun[0].toUpperCase()}${noun.slice(1)} ${i + 1}${picked === i ? " (right)" : ""}`}
+            aria-label={`${Noun} ${i + first}${picked === i ? " (right)" : ""}`}
             value={row}
+            maxLength={maxLength}
+            placeholder={placeholder}
             onChange={(e) => onRows(rows.map((r, j) => (j === i ? e.target.value : r)))}
           />
-          {rows.length > 2 && (
-            <Button variant="quiet" aria-label={`Remove ${noun} ${i + 1}`} onClick={() => onRows(rows.filter((_, j) => j !== i), i)}>
+          {rows.length > min && (
+            <Button variant="quiet" aria-label={`Remove ${noun} ${i + first}`} onClick={() => onRows(rows.filter((_, j) => j !== i), i)}>
               <Icon name="x" />
             </Button>
           )}
         </div>
       ))}
-      {rows.length < EDIT_ROWS_MAX && (
+      {rows.length < max && (
         <div className="st-row">
           <Button variant="quiet" icon="plus" onClick={() => onRows([...rows, ""])}>
             Add {noun}
@@ -441,7 +521,7 @@ function EditRows({
 }
 
 /** The /library/[id] page's client half: the same detail, and a delete that leaves for the Library. */
-export function IdeaDetailPage({ idea, now, history }: { idea: LibraryIdea; now: number; history: IdeaHistory }) {
+export function IdeaDetailPage({ idea, now, history, variants }: { idea: LibraryIdea; now: number; history: IdeaHistory; variants: string[] }) {
   const router = useRouter();
-  return <IdeaDetail idea={idea} now={now} history={history} onDeleted={() => router.replace("/library")} />;
+  return <IdeaDetail idea={idea} now={now} history={history} variants={variants} onDeleted={() => router.replace("/library")} />;
 }

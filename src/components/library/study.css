@@ -93,6 +93,19 @@
   .idea-qa p { margin: 4px 0 0; overflow-wrap: anywhere; }
   .idea-qa .t-eyebrow + p { margin-top: 4px; }
   .idea-qa .idea-a-h { margin-top: 12px; }
+  /* The question's other wordings: "+n wordings", a 44 px disclosure under the question. */
+  .idea-alts > summary {
+    min-height: 44px; width: fit-content; max-width: 100%; display: flex; align-items: center; gap: 6px; cursor: pointer; list-style: none;
+    font: 600 13px var(--font-ui); color: var(--ink-2); border-radius: 10px;
+  }
+  .idea-alts > summary::-webkit-details-marker { display: none; }
+  .idea-alts > summary:hover { color: var(--ink-0); }
+  .idea-alts > summary svg.i { transition: transform var(--t-quick) var(--ease-out); }
+  .idea-alts[open] > summary svg.i { transform: rotate(90deg); }
+  .idea-alts ol { margin: 0 0 4px; padding-left: 24px; list-style: decimal outside; color: var(--ink-1); }
+  .idea-alts li { overflow-wrap: anywhere; }
+  .idea-alts li + li { margin-top: 4px; }
+  .idea-alts li::marker { font: 500 13px var(--font-mono); color: var(--ink-2); }
   .idea-lvl { display: flex; gap: 14px; align-items: center; margin-top: 14px; }
   .idea-lvl .pring .ctr b { font: 600 16px/1 var(--font-display); font-variant-numeric: tabular-nums; }
   .idea-hist { margin-top: 16px; }
@@ -103,6 +116,7 @@
   .idea-edit { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
   .idea-edit-types { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .idea-edit-keep b { color: var(--ink-0); font-weight: 600; }
+  .idea-edit .idea-rows-hint { margin: 0; }
   .idea-page { display: flex; flex-direction: column; gap: 16px; padding-top: 8px; }
   .idea-page .idea-head { padding: 16px; }
   .idea-page .idea-head h2 { margin: 6px 0 0; }

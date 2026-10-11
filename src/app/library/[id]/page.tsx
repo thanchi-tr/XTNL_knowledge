@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 import { prisma } from "@/lib/prisma";
 import { ideaHistory } from "@/app/actions/ideas";
+import { loadVariants } from "@/lib/idea-variants-server";
 import { Button } from "@/components/ui/Button";
 import { PageActions } from "@/components/ui/Tabs";
 import { IdeaDetailPage } from "@/components/library/IdeaDetail";
@@ -57,8 +58,8 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 }
 
 /**
- * Study › Library › an idea: question, answer, level ring, history strip,
- * next due, Edit and a quiet Delete. Review results and the recap link here.
+ * Study › Library › an idea: question, answer (and its other wordings), level
+ * ring, history strip, next due, Edit and a quiet Delete. Review results and the recap link here.
  * The Library opens the same detail as a sheet; this is its deep link.
  *
  * The top bar keeps the shell's own "Study / Idea" (nav.titleFor, rendered on
@@ -69,7 +70,7 @@ export default async function IdeaPage({ params }: { params: Promise<{ id: strin
   const { id } = await params;
   const row = await loadIdea(id);
   if (!row) notFound();
-  const { rows, now } = await loadHistory(row.id);
+  const [{ rows, now }, variants] = await Promise.all([loadHistory(row.id), loadVariants([row.id])]);
 
   const idea: LibraryIdea = {
     id: row.id,
@@ -115,7 +116,7 @@ export default async function IdeaPage({ params }: { params: Promise<{ id: strin
             </p>
           )}
         </header>
-        <IdeaDetailPage idea={idea} now={now} history={historyOf(rows)} />
+        <IdeaDetailPage idea={idea} now={now} history={historyOf(rows)} variants={variants.get(idea.id) ?? []} />
       </div>
     </div>
   );

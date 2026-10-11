@@ -2,7 +2,7 @@
 
 import { after } from "next/server";
 import { promptOfQuestion, variantsAllowed } from "@/lib/idea-variants";
-import { saveVariantsCore } from "@/lib/idea-variants-server";
+import { loadVariants, saveVariantsCore } from "@/lib/idea-variants-server";
 import { caseSensitiveAfterEdit, cleanEditContent, isEditFormat } from "@/lib/idea-edit";
 import type { CollectionLabel } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -736,6 +736,17 @@ export interface EditIdeaInput {
   ideaId: string;
   /** Any format the add form writes (idea-edit.ts EDIT_FORMATS); it may differ from the Idea's own. */
   content: IdeaContent;
+  /**
+   * The question's other wordings as edited (idea-variants.ts): sent, they replace the stored ones, cleaned against
+   * the edited question (an empty list removes them); left out, they stay. Only for the formats that take them.
+   */
+  variants?: string[];
+}
+
+export interface EditIdeaResult {
+  ideaId: string;
+  /** Present when wordings were sent: the list now stored, or why it wasn't saved (the edit itself stands). */
+  variants?: { saved: string[] } | { error: string };
 }
 
 /**
@@ -747,10 +758,10 @@ export interface EditIdeaInput {
  * written. Difficulty is re-scored from the new wording (it is a property of
  * the question), and the embedding is refreshed after the response so later
  * duplicate checks read what the card now says. A failed re-embed never loses
- * the edit. Other wordings (idea-variants.ts) stay; a format without variants
- * just doesn't show them.
+ * the edit. Other wordings (idea-variants.ts) are replaced when sent and stay
+ * when not; a format without variants keeps them, unshown.
  */
-export async function editIdea(input: EditIdeaInput): Promise<SkillFreeResult<{ ideaId: string }>> {
+export async function editIdea(input: EditIdeaInput): Promise<SkillFreeResult<EditIdeaResult>> {
   if (typeof input?.ideaId !== "string" || input.ideaId.length === 0 || input.ideaId.length > 64) return { ok: false, error: "That idea no longer exists." };
   const existing = await prisma.idea.findUnique({
     where: { id: input.ideaId },
@@ -777,6 +788,14 @@ export async function editIdea(input: EditIdeaInput): Promise<SkillFreeResult<{ 
   });
   invalidate("ideas");
 
+  // Other wordings, when sent: they replace the stored ones, cleaned against the edited question (fail soft: the
+  // edit stands, and the editor says why they weren't saved).
+  let variants: EditIdeaResult["variants"];
+  if (Array.isArray(input.variants) && variantsAllowed(questionType)) {
+    const saved = await saveVariantsCore(existing.id, input.variants, promptOfQuestion(questionType, question));
+    variants = saved.ok ? { saved: saved.value } : { error: saved.error };
+  }
+
   after(async () => {
     try {
       const embedding = await embedText(embeddingTextFromStored(questionType, question, answer));
@@ -787,7 +806,7 @@ export async function editIdea(input: EditIdeaInput): Promise<SkillFreeResult<{ 
     }
   });
 
-  return { ok: true, value: { ideaId: existing.id } };
+  return { ok: true, value: { ideaId: existing.id, ...(variants ? { variants } : {}) } };
 }
 
 /**
@@ -807,6 +826,12 @@ export async function ideaHistory(ideaId: string): Promise<HistoryRow[]> {
   return rows
     .reverse()
     .map((r) => ({ detail: r.detail, at: r.occurredAt.getTime(), backfill: (r.dedupeKey ?? "").startsWith("bf:") }));
+}
+
+/** An Idea's other wordings, in order, for the Library's sheet (the idea page loads them itself); none on failure. */
+export async function ideaVariants(ideaId: string): Promise<string[]> {
+  if (typeof ideaId !== "string" || ideaId.length === 0 || ideaId.length > 64) return [];
+  return (await loadVariants([ideaId])).get(ideaId) ?? [];
 }
 
 export interface DistractorsInput {

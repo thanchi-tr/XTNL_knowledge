@@ -2,7 +2,7 @@
  * Editing an idea in place: its wording, its answer and its format, while everything it has earned stays (level,
  * due date, grace, strikes, history, points). The idea page's editor and editIdea (actions/ideas.ts) share this.
  *
- *   editStateOf(idea)            the stored idea back into the add form's fields (idea-handoff.ts AddContentState)
+ *   editStateOf(idea, variants)  the stored idea (and its other wordings) back into the add form's fields (idea-handoff.ts AddContentState)
  *   contentOfAddState(state)     the fields → IdeaContent, or null while incomplete (the add form uses it too)
  *   switchEditFormat(state, to)  a format change that carries the prompt (and items, answer) across
  *   cleanEditContent(raw)        the server's check of what the browser sent: trimmed, or the reason it can't be saved
@@ -54,9 +54,12 @@ export function clozeTextOf(question: string, answer: string): string {
 
 const atLeastTwo = (rows: string[]) => (rows.length >= 2 ? rows : [...rows, ...Array(2 - rows.length).fill("")]);
 
-/** The stored idea as the editor's fields. A format the editor doesn't know reads as an empty short answer. */
-export function editStateOf(idea: StoredIdea): AddContentState {
-  const s: AddContentState = { ...EMPTY_ADD_CONTENT, listItems: ["", ""], orderItems: ["", ""], options: ["", ""], variants: [] };
+/**
+ * The stored idea as the editor's fields, its other wordings (idea-variants.ts) included. A format the editor doesn't
+ * know reads as an empty short answer.
+ */
+export function editStateOf(idea: StoredIdea, variants: readonly string[] = []): AddContentState {
+  const s: AddContentState = { ...EMPTY_ADD_CONTENT, listItems: ["", ""], orderItems: ["", ""], options: ["", ""], variants: [...variants] };
   switch (idea.questionType) {
     case "SHORT":
       return { ...s, type: "SHORT", shortQuestion: idea.question, shortAnswer: idea.answer, shortCaseSensitive: idea.answerCaseSensitive };
