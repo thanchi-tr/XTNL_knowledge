@@ -895,6 +895,10 @@ model UserPrefs {
   haptics     String?
   /// next | wait
   autoAdvance String?
+  /// on | off; null = on. The evening momentum push (momentum.md §F; migration 20261220000000_momentum).
+  nudge       String?
+  /// A cosmetic id from momentum.ts COSMETICS; null = the default flame (momentum.md §A.2).
+  flameSkin   String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
