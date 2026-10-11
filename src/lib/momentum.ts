@@ -71,9 +71,9 @@ import type { Track } from "./life-types";
 /**
  * The first life day momentum counts. Null keeps everything inert: no row is
  * written, no UI is shown, and every life-MP reader gets today's model. Set by
- * the lead in the launch commit only.
+ * the lead in the launch commit only. Launched 2026-10-12 (the user's go: "Launch today").
  */
-export const MOMENTUM_LAUNCH_DAY = null as DayKey | null;
+export const MOMENTUM_LAUNCH_DAY = "2026-10-12" as DayKey | null;
 
 /** Outside production, a valid 'YYYY-MM-DD' here overrides MOMENTUM_LAUNCH_DAY (the rehearsal server). */
 export const MOMENTUM_LAUNCH_DAY_ENV = "XTNL_MOMENTUM_LAUNCH_DAY";
