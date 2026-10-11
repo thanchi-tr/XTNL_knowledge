@@ -138,6 +138,7 @@ import {
   characterRaw,
   firstWeekJudgement,
   ghostScores,
+  knowledgeLine,
   knowledgeRow,
   lifeCompositions,
   lifeMpCell,
@@ -161,6 +162,7 @@ import {
   weekdayDayLabel,
   type FieldComposition,
 } from "../src/components/home/sheet-math";
+import { characterRaw as characterRawOf } from "../src/lib/character";
 import { KeptWeeks, endLabelTops, keptCellLabel, trackLinesGeometry } from "../src/components/home/TrackCharts";
 import { LifeTracks } from "../src/components/home/SheetSections";
 import { CharacterHero } from "../src/components/home/CharacterHero";
@@ -428,6 +430,14 @@ function scoresOf(v: (a: string, i: number) => number): AttributeScores {
   check("ghost: unchanged Field levels → the ghost equals today", g !== null && ATTRIBUTES.every((a) => g[a] === scores[a]));
   const g2 = ghostScores(scores, comps, [{ name: "A", level: 5 }]);
   check("ghost: scales the attribute its Field feeds, never above today", g2 !== null && g2[ATTRIBUTES[0]] === scores[ATTRIBUTES[0]] * 0.5 && ATTRIBUTES.every((a) => g2[a] <= scores[a]));
+  // A Field row's level is its breadth (13 for Domains 5, 5, 5, 5); the snapshot holds its depth-first Field level (9).
+  const breadthComps = [{ ...comps[0], level: 13, fieldLevel: 9 }];
+  const g3 = ghostScores(scores, breadthComps, [{ name: "A", level: 9 }]);
+  const g4 = ghostScores(scores, breadthComps, [{ name: "A", level: 4.5 }]);
+  check(
+    "ghost: a Field's week-old level is read in breadth units (breadthAsOf), so an unmoved Field ghosts at today and a halved one at half",
+    g3 !== null && ATTRIBUTES.every((a) => g3[a] === scores[a]) && g4 !== null && g4[ATTRIBUTES[0]] === scores[ATTRIBUTES[0]] * 0.5
+  );
 
   const axes = ATTRIBUTES.map((a, i) => ({ attribute: a, label: a, value: i * 7, sides: 3 + (i % 5), hue: "#fff" }));
   const layout = radarLayout(axes, null);
@@ -480,9 +490,17 @@ const BODY_SEED = comp({ PHYSICAL: 46, STUBBORNNESS: 24, SELF_RESPECT: 20, FAITH
   const shell = characterLevelOf(levels, tracks);
   const raw = characterRaw(levels, tracks);
   check("sheet: character level and progress agree with the shell, with tracks", Math.floor(raw) === shell.level && Math.abs(raw - Math.floor(raw) - shell.progress) < 1e-9);
-  const before = levels.reduce((sum, l) => sum + Math.pow(Math.max(0, l), 0.75), 0);
-  check("sheet: characterRaw(levels) is the Fields-only sum, unchanged for one argument", characterRaw(levels) === before && characterRaw(levels, []) === before && characterRaw(levels, [0, 0, 0, 0]) === before);
-  check("sheet: tracks add L^0.75 each", Math.abs(characterRaw([4, 9, 2], [3, 1]) - (4 ** 0.75 + 9 ** 0.75 + 2 ** 0.75 + 3 ** 0.75 + 1)) < 1e-12);
+  // Depth first (2026-10-11): each level as L^0.95, highest first, the best fully, the next half, the next a quarter …
+  const fieldsOnly = characterRawOf(levels);
+  const byHand = levels.map((l) => Math.pow(Math.max(0, l), 0.95)).sort((a, b) => b - a).reduce((sum, c, i) => sum + c * 0.5 ** i, 0);
+  check(
+    "sheet: characterRaw(levels) is character.ts's Fields-only raw (depth first), unchanged for one argument",
+    characterRaw(levels) === fieldsOnly && characterRaw(levels, []) === fieldsOnly && characterRaw(levels, [0, 0, 0, 0]) === fieldsOnly && Math.abs(fieldsOnly - byHand) < 1e-12
+  );
+  check("sheet: tracks join the Fields in one depth-first list", Math.abs(characterRaw([4, 9, 2], [3, 1]) - (9 ** 0.95 + 4 ** 0.95 / 2 + 3 ** 0.95 / 4 + 2 ** 0.95 / 8 + 1 / 16)) < 1e-12);
+  check("sheet: titleDistance and knowledgeRow floor as the character level does (floor(raw + 1e-9))", titleDistance(15 - 1e-12).current === "Practitioner" && knowledgeRow([{ name: "A", level: 1 }], []).level === 1);
+  const fourFields = [{ name: "A", level: 8 }, { name: "B", level: 2 }];
+  check("knowledge: the line says the best counts fully", knowledgeLine(knowledgeRow(fourFields, [])).startsWith("2 Fields, the best counts fully") && knowledgeLine(knowledgeRow([fourFields[0]], [])).startsWith("1 Field ·"));
 
   // A life row is named as the top-three source with its exact share; a Field keeps its name alone.
   const field = { name: "Stats", level: 4, composition: comp({ PHYSICAL: 10, MIND: 90 }) };

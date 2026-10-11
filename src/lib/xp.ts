@@ -1,4 +1,5 @@
 import type { QuestionType } from "@prisma/client";
+import { dateColumn, keyOfDateColumn, type DayKey } from "./life-day";
 
 // ============================================================================
 // Idea Score Assignment & Diminishing XP Calculus (spec section 4)
@@ -373,8 +374,130 @@ export function domainLevel(totalPoints: number, ideaLevels: number[]): number {
   return Math.min(byPoints, byDepth);
 }
 
+// ── Field level: depth first ────────────────────────────────────────────────
+//
+// Was floor(Σ domainLevel^0.75): every Domain added its whole share however
+// shallow it was, so a Field grew with the number of Domains rather than with
+// what any of them held. Thirty Domains at level 1 read as Field level 30, and
+// the character level summed on top of that (character.ts) put a four-day-old
+// account at level 15. Levels that inflate with every new Domain say nothing.
+//
+// Now the best Domain counts fully, the next half, the next a quarter … A
+// Field is always below twice its best Domain, so its level says how deep you
+// have gone, and breadth is a bonus that tapers instead of a sum without a
+// ceiling. The attribute scores keep reading breadth (fieldBreadth below), so
+// skill unlocks keep the pace scripts/balance-horizon.ts pins.
+
+/** Each next-best entry counts this share of the one before it: 1, ½, ¼ … */
+export const DEPTH_FIRST_SHARE = 0.5;
+
+/**
+ * Added before floor() for the character level (character.ts), whose raw is a
+ * sum of non-integer powers: a raw a hair under a whole number in floating
+ * point still reads as that number. Never for the Field level, which floors
+ * exactly (fieldLevel).
+ */
+export const LEVEL_FLOOR_EPSILON = 1e-9;
+
+/**
+ * Σ v_i × ½^i over the values sorted highest first: the best counts fully,
+ * the next half, the next a quarter … Negative values count as 0. Sorting
+ * first makes the sum independent of input order, so every caller adds the
+ * same floats in the same order. Always below twice the largest value.
+ */
+export function depthFirstRaw(values: readonly number[]): number {
+  const sorted = values.map((v) => Math.max(0, v)).sort((a, b) => b - a);
+  let raw = 0;
+  let share = 1;
+  for (const v of sorted) {
+    raw += v * share;
+    share *= DEPTH_FIRST_SHARE;
+  }
+  return raw;
+}
+
+/** The whole level of a character raw value (character.ts): floor(raw + LEVEL_FLOOR_EPSILON). */
+export function wholeLevel(raw: number): number {
+  return Math.floor(raw + LEVEL_FLOOR_EPSILON);
+}
+
+/** A Field's raw level: depthFirstRaw over its Domain levels. Its fraction is the way to the next Field level. */
+export function fieldLevelRaw(domainLevels: readonly number[]): number {
+  return depthFirstRaw(domainLevels);
+}
+
+/**
+ * A Field's level, depth first: the whole part of fieldLevelRaw, floored
+ * exactly, with no epsilon. No Domains, or only empty ones, is level 0.
+ *
+ * Domain levels are whole numbers and the shares are ½, ¼ …, so the raw is a
+ * sum of integers × powers of two. In floating point that sum is exact only
+ * to 53 bits: 64 Domains at level 1 sum to 2 − 2⁻⁶³, which rounds to exactly
+ * 2.0, and a float floor would print the Field at twice its best Domain. So
+ * the whole part is taken in integers, from the lowest Domain up:
+ * f = L_i + ⌊f ÷ 2⌋, exact because ⌊(L + y/2)⌋ = L + ⌊⌊y⌋/2⌋ for a whole L.
+ * 30, 31 or 64 Domains at level 1 are Field level 1; 40 at level 3 are 5.
+ * A non-integer level (never stored, possible in a fixture) floors the raw.
+ */
 export function fieldLevel(domainLevels: number[]): number {
-  return Math.floor(domainLevels.reduce((sum, lvl) => sum + Math.pow(lvl, 0.75), 0));
+  const sorted = domainLevels.map((l) => Math.max(0, l)).sort((a, b) => b - a);
+  if (!sorted.every(Number.isInteger)) return Math.floor(fieldLevelRaw(sorted));
+  let level = 0;
+  for (let i = sorted.length - 1; i >= 0; i -= 1) level = sorted[i] + Math.floor(level * DEPTH_FIRST_SHARE);
+  return level;
+}
+
+/** Each Domain level counts as L^BREADTH_EXPONENT in a Field's breadth (fieldBreadth). */
+export const BREADTH_EXPONENT = 0.75;
+
+/**
+ * What a Field gives the attribute scores: floor(Σ max(0, L)^0.75) over its
+ * Domain levels, the Field level as it was before the depth-first rule.
+ *
+ * Attributes measure breadth on purpose: an emblem gated on MIND should open
+ * for someone who works many Domains, and the skill pool's thresholds
+ * (skill-pool.ts requiredAttributeScore) were sized against this curve. So
+ * every reader that builds attribute rows from a Field (skill-effects.ts
+ * loadFieldRows, the You sheet's compositions, progress-rate.ts) feeds them
+ * this value from the Field's Domain levels, never the stored Field level,
+ * and the scores are exactly what they were for the same Domain levels.
+ */
+export function fieldBreadth(domainLevels: readonly number[]): number {
+  return Math.floor(domainLevels.reduce((sum, lvl) => sum + Math.pow(Math.max(0, lvl), BREADTH_EXPONENT), 0));
+}
+
+/**
+ * A past Field level in fieldBreadth's units, for the attribute reads that
+ * compare then with now (the You radar's 7-day ghost, progress-rate.ts).
+ * FieldSnapshot stores the Field level and no Domain levels, so then's
+ * breadth is today's scaled by the share of today's Field level that stood
+ * then: exact when the Field has not moved, an estimate when it has. A Field
+ * at level 0 today has breadth 0 too; its past level is returned as it is.
+ */
+export function breadthAsOf(breadthNow: number, fieldLevelNow: number, fieldLevelThen: number): number {
+  return fieldLevelNow > 0 ? breadthNow * (fieldLevelThen / fieldLevelNow) : fieldLevelThen;
+}
+
+/**
+ * The life day the depth-first rule shipped. FieldSnapshot rows (snapshot.ts:
+ * one per Field per day, dated at UTC midnight) written before it hold the
+ * old Σ L^0.75 Field level, so every reader that compares a past snapshot
+ * with today treats them as missing: the You sheet's Knowledge gain and radar
+ * ghost and the Stats deltas (snapshot.ts getGhostLevelsFromDaysAgo), and
+ * progress-rate.ts. For the first week they say "no data yet" instead of
+ * showing a large false drop. No row is deleted.
+ */
+export const LEVEL_RULE_SINCE: DayKey = "2026-10-11";
+
+/** True when a FieldSnapshot row dated `day` was written under the depth-first rule (dated on or after LEVEL_RULE_SINCE). */
+export function snapshotUnderLevelRule(day: Date): boolean {
+  return keyOfDateColumn(day) >= LEVEL_RULE_SINCE;
+}
+
+/** The earliest FieldSnapshot day a window starting at `since` may read: `since`, or the rule's first day when that is later. */
+export function levelRuleSnapshotFloor(since: Date): Date {
+  const start = dateColumn(LEVEL_RULE_SINCE);
+  return since.getTime() > start.getTime() ? since : start;
 }
 
 /**
@@ -382,8 +505,9 @@ export function fieldLevel(domainLevels: number[]): number {
  * `level = floor(sqrt(totalPoints) / DOMAIN_LEVEL_STEP)`: the smallest
  * totalPoints at which a given level is reached is
  * `(DOMAIN_LEVEL_STEP * level)^2`. Field level has no equivalent
- * single-scalar inverse — it's a sum over all sibling Domains' levels raised
- * to 0.75, not a running total on the Field itself — so this is Domain-only.
+ * single-scalar inverse — it is read from all its Domains' levels, depth
+ * first (fieldLevelRaw), not a running total on the Field itself — so this
+ * is Domain-only.
  */
 export function domainLevelProgress(totalPoints: number): {
   level: number;

@@ -64,6 +64,7 @@ import {
   type StoredCelebration,
 } from "../src/lib/celebration-detect";
 import { characterLevelOf, trackLevelsOf } from "../src/components/shell/shell-types";
+import { CHARACTER_EXPONENT } from "../src/lib/character";
 import { emptyLifeLedger, lifeTracksView, type LifeLedger } from "../src/lib/life-tracks";
 import { DEFAULT_PREFS, KIND_TIER, T2_KINDS, T3_KINDS, honestyProblem, makeEvent, type CelebrationEvent } from "../src/lib/celebration-types";
 import { closeRun, enqueue, nextIndex, openRun, registerPresenter } from "../src/lib/celebrate";
@@ -110,7 +111,7 @@ for (const k of [...T2_KINDS, ...T3_KINDS]) {
   const field = byName.get("field-level")!.drafts[0];
   check("merge: a field level folds its domain (claim + What-moved row)", field.claims.includes("domain:d-prob:7") && field.what[0]?.label === "Probability domain");
   const char = byName.get("character-level")!.drafts[0];
-  check("merge: an in-band character level folds field and domain", char.kind === "character-level" && char.claims.includes("field:f-phil:4") && char.claims.includes("domain:d-eth:4"));
+  check("merge: an in-band character level folds field and domain", char.kind === "character-level" && char.claims.includes("field:f-phil:5") && char.claims.includes("domain:d-eth:4"));
   check("merge: in-band title says 'still' and the next title", char.facts.title === "Level 16 · still Practitioner" && (char.facts.lines ?? [])[0] === "Scholar at level 21: 5 levels to go.");
   const band = byName.get("band")!.drafts[0];
   check("merge: the 15 re-forge claims title:Practitioner and level:15", band.kind === "band" && band.claims.includes("title:Practitioner") && band.claims.includes("level:15"));
@@ -139,7 +140,8 @@ for (const k of [...T2_KINDS, ...T3_KINDS]) {
 
 // A jump across several bands (a stale before) is one moment that claims every title and band it passed.
 {
-  const lv = (level: number) => ({ parts: ["levels"], levels: { fields: [{ id: "f", name: "F", level: Math.ceil(Math.pow(level + 0.5, 1 / 0.75)) }], domains: [], ultimates: 0 } }) as ProgressData;
+  // One Field whose level gives character `level` + 0.5 (character.ts: a lone Field counts as L^0.95).
+  const lv = (level: number) => ({ parts: ["levels"], levels: { fields: [{ id: "f", name: "F", level: Math.pow(level + 0.5, 1 / CHARACTER_EXPONENT) }], domains: [], ultimates: 0 } }) as ProgressData;
   const d = diffProgress(lv(13), lv(29));
   const c = d[0]?.claims ?? [];
   check(
@@ -631,7 +633,7 @@ function life() {
     ultimates: 0,
     ...(tracks ? { tracks } : {}),
   });
-  const T = (body: number, duty = 2, craft = 0, care = 0) => ({ BODY: body, DUTY: duty, CRAFT: craft, CARE: care });
+  const T = (body: number, duty = 5, craft = 0, care = 0) => ({ BODY: body, DUTY: duty, CRAFT: craft, CARE: care });
   const settle = (fields: number[], tracks: Record<string, number>, weeks: LedgerRow[]): ProgressData => ({
     parts: ["ledger", "tracks", "levels"],
     ledger: { weeks, prs: [] },
@@ -639,15 +641,15 @@ function life() {
     levels: levels(fields, tracks),
   });
   const charOf = (fields: number[], tracks: Record<string, number>) => characterLevelOf(fields, trackLevelsOf(tracks)).level;
-  check("fixture sanity: Body 3 → 4 keeps the character at 6; Body 4 → 5 lifts it 6 → 7", charOf([3], T(3)) === 6 && charOf([3], T(4)) === 6 && charOf([3], T(5)) === 7);
+  check("fixture sanity: Body 3 → 4 keeps the character at 6; Body 4 → 5 lifts it 6 → 7", charOf([2], T(3)) === 6 && charOf([2], T(4)) === 6 && charOf([2], T(5)) === 7);
   const keptWeek = [week("BODY", { mp: 1.5 }), week("DUTY", { mp: 1.5, key: `week:DUTY:${W}` })];
-  const folded = run(settle([3], T(3), []), settle([3], T(4), keptWeek));
+  const folded = run(settle([2], T(3), []), settle([2], T(4), keptWeek));
   check(
     "settle: a track level-up in the same diff as a kept week folds into the week Seal (claims track:BODY:4, its row leads)",
     folded.length === 1 && folded[0].dedupeKey === "week:2026-W40" && folded[0].claims.includes("track:BODY:4") && folded[0].what[0]?.label === "Body track" && folded[0].what[0]?.value === "L3 → L4",
     `${keys(folded).join()} | ${folded[0]?.claims.join()} | ${JSON.stringify(folded[0]?.what)}`
   );
-  const lifted = run(settle([3], T(4), []), settle([3], T(5), keptWeek));
+  const lifted = run(settle([2], T(4), []), settle([2], T(5), keptWeek));
   check("settle: a track level-up that lifts the character folds into the character moment; the week Seal stays separate (2 moments)", same(keys(lifted), ["level:7", "week:2026-W40"]) && lifted[0].claims.includes("track:BODY:5") && !lifted[1].claims.includes("track:BODY:5"), `${keys(lifted).join()} | ${lifted[0]?.claims.join()}`);
   check("settle: the character moment names the track as its cause", (lifted[0]?.facts.lines ?? [])[0] === "Body reached level 5, which lifted your character level.", (lifted[0]?.facts.lines ?? []).join(" / "));
   check("settle: one kept week is at most one week Seal plus one character or title moment", lifted.filter((d) => d.kind === "week-kept").length === 1 && lifted.length <= 2);
@@ -676,11 +678,11 @@ function life() {
   check("tick: Body L1 → L2 alone is one track-level Seal", ticked.length === 1 && ticked[0].kind === "track-level" && ticked[0].dedupeKey === "track:BODY:2" && ticked[0].tier === 2, keys(ticked).join());
 
   // The launch moment: every track 0 before; one Ascension with the tracks folded in.
-  const launchAfter: ProgressData = { parts: ["levels", "tracks"], levels: levels([10, 4], T(3, 4, 2, 1)), tracks: { levels: T(3, 4, 2, 1) } };
-  const launchBefore: ProgressData = { parts: ["levels", "tracks"], levels: levels([10, 4], T(0, 0, 0, 0)), tracks: { levels: T(0, 0, 0, 0) } };
+  const launchAfter: ProgressData = { parts: ["levels", "tracks"], levels: levels([12, 8], T(3, 4, 2, 1)), tracks: { levels: T(3, 4, 2, 1) } };
+  const launchBefore: ProgressData = { parts: ["levels", "tracks"], levels: levels([12, 8], T(0, 0, 0, 0)), tracks: { levels: T(0, 0, 0, 0) } };
   const launch = run(launchBefore, launchAfter);
   check(
-    "launch: one moment (8 → 16, the bronze re-forge) claiming every track level-up",
+    "launch: one moment (14 → 15, the bronze re-forge) claiming every track level-up",
     launch.length === 1 && launch[0].dedupeKey === "band:bronze" && ["track:BODY:3", "track:DUTY:4", "track:CRAFT:2", "track:CARE:1"].every((k) => launch[0].claims.includes(k)),
     `${keys(launch).join()} | ${launch[0]?.claims.join()}`
   );

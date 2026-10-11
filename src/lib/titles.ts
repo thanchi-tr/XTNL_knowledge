@@ -7,7 +7,7 @@ import { ATTRIBUTES, type AttributeScores } from "./attributes";
  *
  * Two independent halves, because a single scalar cannot say both things:
  *
- *   rank    ← account level (breadth-weighted across every Field)
+ *   rank    ← the character level (depth first over every Field and life track: character.ts)
  *   epithet ← the highest attribute score (what you actually trained)
  *
  * So "Adept of the Deep Archive" and "Adept the Unyielding" are the same

@@ -5,6 +5,14 @@
  * empty, and a Field was summed from those stored values (leveling.ts now recomputes siblings). Levels are
  * derived data, so this only rewrites the two level columns; no Idea, point or Domain is touched.
  *
+ * Step 2 (also 2026-10-11): fieldLevel is depth first (the best Domain counts fully, the next half, the
+ * next a quarter …), so every Field with more than one Domain, or one Domain above level 1, moves. The
+ * attributes read breadth from the Domain levels (xp.ts fieldBreadth), not this column, so no attribute
+ * score moves. FieldSnapshot rows are not rewritten: the ones dated before xp.ts LEVEL_RULE_SINCE hold
+ * the old Field level, and every week-old reader (the You sheet's Knowledge gain and ghost, the Stats
+ * deltas, progress-rate.ts) treats them as missing. The weekly quota reads breadth (field-quota.ts), so it
+ * asks what it asked before.
+ *
  *   npx tsx --env-file=.env scripts/backfill-levels.ts            dry run: prints every change, writes nothing
  *   npx tsx --env-file=.env scripts/backfill-levels.ts --apply    writes the changes in one transaction
  */

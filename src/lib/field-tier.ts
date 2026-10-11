@@ -1,9 +1,9 @@
 /**
  * How a Field's card is decorated, as a function of its level.
  *
- * `fieldLevel` is `floor(Σ domainLevel^0.75)` and has no ceiling, so this is
- * a set of bands rather than a fixed ladder — a Field with thirty mature
- * Domains must still land somewhere sensible.
+ * `fieldLevel` is depth first (the best Domain counts fully, the next half,
+ * the next a quarter …), so a Field stays below twice its best Domain but has
+ * no ceiling of its own: this is a set of bands rather than a fixed ladder.
  *
  * **Colour is not the channel.** A field tile's accent already comes from
  * `fieldColor`, which hashes the name, and that is what tells Trading from
@@ -37,10 +37,12 @@ export interface FieldTierMeta {
 }
 
 /**
- * Bands sized against what the curve actually produces. A Domain at level 5
- * contributes 5^0.75 ≈ 3.3, so a Field with five mature Domains sits near 16
- * and one with twenty sits near 66 — the thresholds are placed where those
- * milestones fall rather than at round numbers that mean nothing here.
+ * Bands sized against the Σ domainLevel^0.75 curve the Field level used
+ * before it went depth first (2026-10-11), where five Domains at level 5 sat
+ * near 16. Depth first, those five read as 9 and a Field reaches 16 with its
+ * Domains near level 9, 32 near level 17: the bands now mark depth, and were
+ * left where they stand (scripts/balance-horizon.ts prints when a steady
+ * player reaches them).
  */
 export const FIELD_TIERS: FieldTierMeta[] = [
   {

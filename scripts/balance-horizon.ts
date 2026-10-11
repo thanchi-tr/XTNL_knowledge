@@ -33,13 +33,29 @@
  * statedForMilestone, and tasks.ts linkedGoalFields at the write); and week
  * quests, Proficiency and the Aim rank write no ledger row (no roadmap module
  * holds a ledger writer). It imports roadmap modules, so _no-model is first.
+ *
+ * The LEVELS block (2026-10-11, the level rework's step 2) pins the character
+ * level's pace now that the Field level and the character level are depth
+ * first (xp.ts fieldLevel, character.ts): a library under steady daily use,
+ * NEW_IDEAS_PER_WEEK ideas over four Domains in one Field (focused) or in
+ * each of three (spread), every due review passed, and the four tracks at
+ * the steady basket with every week kept. Lv 10 ≈ three months and Lv 20 ≈
+ * a year are the targets (L1–L3), with the inflation cases as regressions
+ * (L4–L6); when each title, crest band and Field tier is first reached is
+ * printed, not asserted. The attributes still read breadth (xp.ts
+ * fieldBreadth), so nothing above it moves.
  */
 import "./_no-model";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { SKILL_POOL, requiredAttributeScore } from "../src/lib/skill-pool";
 import { IDEA_MASTERY_POINTS, REVIEW_MASTERY_PER_LEVEL } from "../src/lib/mastery";
-import { MASTERY_LEVEL, MAX_LEVEL, baseIntervalDays } from "../src/lib/xp";
+import type { QuestionType } from "@prisma/client";
+import { MASTERY_BONUS, MASTERY_LEVEL, MAX_LEVEL, XP_BASE, baseIntervalDays, domainLevel, fieldBreadth, fieldLevel, fieldLevelRaw, reviewReward } from "../src/lib/xp";
+import { characterLevel } from "../src/lib/character";
+import { TITLE_BANDS } from "../src/lib/titles";
+import { MATERIALS, crestBandStarts } from "../src/lib/materials";
+import { FIELD_TIERS } from "../src/lib/field-tier";
 import {
   GOAL_DEPTH_CAP,
   GOAL_RULES,
@@ -689,6 +705,153 @@ function lifeBlock(pool: number, knowledgePerDay: number): number {
   return failures;
 }
 
+// ── LEVELS: depth first (2026-10-11, the level rework's step 2) ─────────────
+
+/** The model's idea: a NUMERIC card (15 points on submission), with no similarity decay. */
+const PACE_FORMAT: QuestionType = "NUMERIC";
+/** The days the pacing table prints and pins: about three months, one year, two years. */
+const PACE_DAYS = [90, 365, 730] as const;
+/** How far the band table looks for a first reach: fifteen years, the top of the design horizon. */
+const BAND_HORIZON_DAYS = 15 * 365;
+/** Domains per Field in both libraries, and Fields in the spread one (the focused one has a single Field). */
+const PACE_DOMAINS_PER_FIELD = 4;
+const PACE_SPREAD_FIELDS = 3;
+
+/**
+ * A knowledge library under steady daily use: NEW_IDEAS_PER_WEEK new ideas on
+ * each week's first day, dealt round-robin over `fields` × PACE_DOMAINS_PER_FIELD
+ * Domains, each first reviewed the next day; every due review is passed on its
+ * day at combo 0 and no loadout (xp.ts reviewReward, plus MASTERY_BONUS on the
+ * pass into MASTERY_LEVEL), and comes due again baseIntervalDays of its new level
+ * later. Returns a stepper: call it once per model day (1, 2, 3 …); it returns
+ * each Field's Domain levels at that day's end (xp.ts domainLevel).
+ */
+function knowledgeModel(fields: number): () => number[][] {
+  const domains = Array.from({ length: fields * PACE_DOMAINS_PER_FIELD }, () => ({ points: 0, ideas: [] as { level: number; due: number }[] }));
+  let day = 0;
+  let dealt = 0;
+  return () => {
+    day += 1;
+    if ((day - 1) % 7 === 0) {
+      for (let i = 0; i < NEW_IDEAS_PER_WEEK; i += 1) {
+        const d = domains[dealt % domains.length];
+        dealt += 1;
+        d.points += XP_BASE[PACE_FORMAT];
+        d.ideas.push({ level: 1, due: day + 1 });
+      }
+    }
+    for (const d of domains) {
+      for (const idea of d.ideas) {
+        if (idea.due > day) continue;
+        const next = Math.min(MAX_LEVEL, idea.level + 1);
+        d.points += reviewReward(idea.level) + (next === MASTERY_LEVEL && idea.level < MASTERY_LEVEL ? MASTERY_BONUS : 0);
+        idea.level = next;
+        idea.due = day + baseIntervalDays(next);
+      }
+    }
+    const levels = domains.map((d) => domainLevel(d.points, d.ideas.map((i) => i.level)));
+    return Array.from({ length: fields }, (_, f) => levels.slice(f * PACE_DOMAINS_PER_FIELD, (f + 1) * PACE_DOMAINS_PER_FIELD));
+  };
+}
+
+/** The pre-2026-10-11 rule, for comparison only: Σ L^0.75 for the Field (fieldBreadth is that, floored), and again for the character. */
+function oldCharacterLevel(fieldDomainLevels: readonly number[][], trackLevels: readonly number[]): number {
+  const sum = (levels: readonly number[]) => levels.reduce((s, l) => s + Math.pow(Math.max(0, l), 0.75), 0);
+  return Math.floor(sum(fieldDomainLevels.map((d) => fieldBreadth(d))) + sum(trackLevels));
+}
+
+/** Prints the LEVELS block; returns the number of failed assertions. */
+function levelsBlock(): number {
+  let failures = 0;
+  const check = (name: string, ok: boolean, detail: string) => {
+    if (!ok) failures += 1;
+    console.log(`  ${ok ? "PASS" : "FAIL"} ${name}: ${detail}`);
+  };
+  console.log("\n── Levels: depth first ──────────────────────");
+
+  // The four life tracks at the steady basket, every week kept, no goals: life-economy trackLevel.
+  const xpPerWeek = personaOf("steady").xpPerWeek;
+  const tracksAt = (day: number) => {
+    const weeks = Math.floor(day / 7);
+    return TRACKS.map((t) => trackLevel(xpPerWeek[t] * weeks, weeks));
+  };
+  console.log(
+    `  model: ${NEW_IDEAS_PER_WEEK} ${PACE_FORMAT} ideas (${XP_BASE[PACE_FORMAT]} points) a week over ${PACE_DOMAINS_PER_FIELD} Domains in 1 Field (focused) or in each of ${PACE_SPREAD_FIELDS} (spread), every due review passed; ` +
+      `the tracks at the steady basket (${TRACKS.map((t) => `${TRACK_LABEL[t]} ${fmt(xpPerWeek[t], 1)}`).join(" · ")} XP/week), every week kept`,
+  );
+
+  const spread = knowledgeModel(PACE_SPREAD_FIELDS);
+  const focused = knowledgeModel(1);
+  type Who = "spread" | "focused" | "life";
+  const WHO: readonly Who[] = ["spread", "focused", "life"];
+  const at = new Map<number, Record<Who, { level: number; old: number; fields: number[] }>>();
+  const firstAt = (): Record<Who, number | null> => ({ spread: null, focused: null, life: null });
+  const titleFirst = TITLE_BANDS.map(() => firstAt());
+  const crestFirst = MATERIALS.map(() => firstAt());
+  const tierFirst = FIELD_TIERS.map(() => ({ spread: null as number | null, focused: null as number | null }));
+  for (let day = 1; day <= BAND_HORIZON_DAYS; day += 1) {
+    const tracks = tracksAt(day);
+    const libs = { spread: spread(), focused: focused(), life: [] as number[][] };
+    const now = {} as Record<Who, { level: number; old: number; fields: number[] }>;
+    for (const who of WHO) {
+      const fields = libs[who].map((d) => fieldLevel(d));
+      now[who] = { level: characterLevel(fields, tracks).level, old: oldCharacterLevel(libs[who], tracks), fields };
+      TITLE_BANDS.forEach((b, i) => {
+        if (titleFirst[i][who] == null && now[who].level >= b.min) titleFirst[i][who] = day;
+      });
+      MATERIALS.forEach((m, i) => {
+        if (crestFirst[i][who] == null && now[who].level >= crestBandStarts[m]) crestFirst[i][who] = day;
+      });
+    }
+    FIELD_TIERS.forEach((t, i) => {
+      if (tierFirst[i].spread == null && now.spread.fields[0] >= t.from) tierFirst[i].spread = day;
+      if (tierFirst[i].focused == null && now.focused.fields[0] >= t.from) tierFirst[i].focused = day;
+    });
+    if ((PACE_DAYS as readonly number[]).includes(day)) at.set(day, now);
+  }
+
+  console.log("  character level        spread  focused  life only   (the old Σ L^0.75 rule: spread · focused · life only)");
+  for (const day of PACE_DAYS) {
+    const r = at.get(day)!;
+    console.log(
+      `    day ${String(day).padStart(3)}               ${String(r.spread.level).padStart(4)}  ${String(r.focused.level).padStart(7)}  ${String(r.life.level).padStart(9)}` +
+        `   (${r.spread.old} · ${r.focused.old} · ${r.life.old}; Fields: spread ${r.spread.fields.join(", ")} · focused ${r.focused.fields.join(", ")}; tracks ${tracksAt(day).join(", ")})`,
+    );
+  }
+  const when = (day: number | null) => (day == null ? "—" : day < 365 ? `day ${day}` : `${fmt(day / 365, 1)} y`);
+  console.log(`  title bands, first reached (spread · focused · life only, within ${BAND_HORIZON_DAYS / 365} years; printed, not asserted):`);
+  TITLE_BANDS.forEach((b, i) => {
+    if (b.min === 0) return;
+    console.log(`    ${b.name.padEnd(12)} ${String(b.min).padStart(2)}   ${WHO.map((w) => when(titleFirst[i][w])).join(" · ")}`);
+  });
+  console.log("  crest bands, first reached (spread · focused · life only):");
+  MATERIALS.forEach((m, i) => console.log(`    ${m.padEnd(12)} ${String(crestBandStarts[m]).padStart(2)}   ${WHO.map((w) => when(crestFirst[i][w])).join(" · ")}`));
+  console.log("  Field tiers, first reached (a spread Field · the focused Field):");
+  FIELD_TIERS.forEach((t, i) => {
+    if (t.from === 0) return;
+    console.log(`    ${t.label.padEnd(12)} ${String(t.from).padStart(2)}   ${when(tierFirst[i].spread)} · ${when(tierFirst[i].focused)}`);
+  });
+
+  console.log("  assertions:");
+  const [d90, d365] = [at.get(90)!, at.get(365)!];
+  check("L1. about three months of steady use is about level 10", [d90.spread.level, d90.focused.level].every((l) => l >= 7 && l <= 11), `day 90: spread ${d90.spread.level}, focused ${d90.focused.level} in [7, 11]`);
+  check("L2. a year of steady use is about level 20", [d365.spread.level, d365.focused.level].every((l) => l >= 16 && l <= 26), `day 365: spread ${d365.spread.level}, focused ${d365.focused.level} in [16, 26]`);
+  check("L3. a year of life alone", d365.life.level >= 13 && d365.life.level <= 20, `day 365: life only ${d365.life.level} in [13, 20]`);
+  const zeros = Array.from({ length: 30 }, () => 0);
+  const ones = Array.from({ length: 30 }, () => 1);
+  check("L4. 30 empty Domains are Field level 0", fieldLevel(zeros) === 0, `fieldLevel(30 × 0) = ${fieldLevel(zeros)} (the old rule: ${fieldBreadth(zeros)})`);
+  check(
+    "L5. 30 Domains at level 1 are Field level 1",
+    fieldLevel(ones) === 1 && fieldLevelRaw(ones) < 2,
+    `fieldLevel(30 × 1) = ${fieldLevel(ones)}, raw ${fieldLevelRaw(ones)} < 2 (the old rule: ${fieldBreadth(ones)})`,
+  );
+  const fourAtFive = characterLevel([], [5, 5, 5, 5]).level;
+  check("L6. four tracks at level 5 alone stay at most character level 10", fourAtFive <= 10, `characterLevel([], [5, 5, 5, 5]) = ${fourAtFive} ≤ 10 (the old rule: ${oldCharacterLevel([], [5, 5, 5, 5])})`);
+
+  console.log(failures ? `  LEVELS: ${failures} assertion(s) failed` : "  LEVELS: all assertions hold");
+  return failures;
+}
+
 function main() {
   const byRank = new Map<string, { n: number; cost: number }>();
   let total = 0;
@@ -746,7 +909,7 @@ function main() {
   console.log(`  days to master one idea:    ${DAYS_TO_MASTER} (${fmtYears(DAYS_TO_MASTER)})`);
   console.log(`  days to max one idea:       ${DAYS_TO_MAX} (${fmtYears(DAYS_TO_MAX)})`);
 
-  const failures = lifeBlock(total, perDay);
+  const failures = lifeBlock(total, perDay) + levelsBlock();
   if (failures > 0) process.exitCode = 1;
 }
 

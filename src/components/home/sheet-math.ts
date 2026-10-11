@@ -4,7 +4,7 @@
  * function of real field levels, track levels, attribute scores and
  * snapshots, and a missing input yields null rather than a placeholder.
  *
- *   characterRaw(fields, tracks = [])    Σ L^0.75 over Field and life-track levels (character.ts)
+ *   characterRaw(fields, tracks = [])    depth first over Field and life-track levels (character.ts)
  *   titleDistance(raw, transcendent)     the next title, its level, and the fraction of the
  *                                        way through the current title band (never drops on success)
  *   knowledgeRow(now, weekAgo)           the Knowledge track: level, banked, this week's gain, who grew most
@@ -13,6 +13,7 @@
  *                                        life counts, then Knowledge (Knowledge alone before)
  *   lifeCompositions(contributions)      life rows as radar sources ('Life · Body', source LIFE)
  *   ghostScores(scores, fields, ghosts)  attribute scores 7 days ago, from the Field and life levels then
+ *                                        (a Field's in its breadth units: xp.ts breadthAsOf)
  *   mainSourceOf(a, comps) / mainSource  the row that feeds an attribute most (with its share)
  *   sourceLabel(src)                     'Life · Body +2.8' for a life row, the Field's name otherwise
  *   radarLayout(axes, ghost)             13-gon geometry: rings, spokes, polygons, markers, labels
@@ -31,6 +32,7 @@
 import type { Attribute } from "@prisma/client";
 import { ATTRIBUTES, COMPOSITION_TOTAL, type AttributeScores, type Composition, type FieldContribution } from "@/lib/attributes";
 import { characterRaw as characterRawOf } from "@/lib/character";
+import { breadthAsOf, wholeLevel } from "@/lib/xp";
 import { round2 } from "@/lib/life-economy";
 import { addDays, daysBetween, weekKeyOf, weekStartKeyOf, type DayKey } from "@/lib/life-day";
 import type { LifeTrackRow, WeekMark } from "@/lib/life-tracks";
@@ -40,9 +42,10 @@ import { TITLE_BANDS } from "@/lib/titles";
 // ─── Character level and titles ─────────────────────────────────────────────
 
 /**
- * Σ L^0.75 over the Field levels, then the life-track levels: floor() is the
- * character level, the remainder is the way to the next. With no tracks it
- * is exactly the Fields-only sum it always was (character.ts).
+ * Depth first over the Field levels and the life-track levels together (each
+ * as L^0.95, the best counting fully, the next half, the next a quarter …):
+ * its whole part is the character level (xp.ts wholeLevel), the remainder the
+ * way to the next. A delegate of character.ts, the one formula.
  */
 export function characterRaw(fieldLevels: readonly number[], trackLevels: readonly number[] = []): number {
   return characterRawOf(fieldLevels, trackLevels);
@@ -62,7 +65,7 @@ export interface TitleDistance {
 }
 
 export function titleDistance(raw: number, transcendent = false): TitleDistance {
-  const level = Math.floor(raw);
+  const level = wholeLevel(raw);
   let i = 0;
   for (let k = 0; k < TITLE_BANDS.length; k++) if (level >= TITLE_BANDS[k].min) i = k;
   const band = TITLE_BANDS[i];
@@ -100,20 +103,21 @@ export interface KnowledgeRow {
 }
 
 /**
- * Knowledge is the breadth-weighted Field level (the same Σ L^0.75 as the
- * character level before M5). `weekAgo` is the FieldSnapshot from 7 days ago
- * (empty until a week of snapshots exists: then there is no gain to show).
+ * Knowledge is the character level of the Fields alone (characterRaw with no
+ * tracks: the best Field counts fully, the next half, the next a quarter …).
+ * `weekAgo` is the FieldSnapshot from 7 days ago (empty until a week of
+ * snapshots exists: then there is no gain to show).
  */
 export function knowledgeRow(now: readonly FieldLevelRow[], weekAgo: readonly FieldLevelRow[]): KnowledgeRow {
   const rawNow = characterRaw(now.map((f) => f.level));
-  const level = Math.floor(rawNow);
-  const frac = rawNow - level;
+  const level = wholeLevel(rawNow);
+  const frac = Math.max(0, rawNow - level);
   if (weekAgo.length === 0) {
     return { level, banked: frac, now: frac, gained: null, grewMost: null, fields: now.length };
   }
   const before = new Map(weekAgo.map((g) => [g.name, g.level]));
   const rawThen = characterRaw(now.map((f) => before.get(f.name) ?? 0));
-  const banked = Math.floor(rawThen) === level ? Math.max(0, Math.min(frac, rawThen - level)) : 0;
+  const banked = wholeLevel(rawThen) === level ? Math.max(0, Math.min(frac, rawThen - level)) : 0;
   let grewMost: string | null = null;
   let most = 0;
   for (const f of now) {
@@ -127,7 +131,7 @@ export function knowledgeRow(now: readonly FieldLevelRow[], weekAgo: readonly Fi
 }
 
 export function knowledgeLine(k: KnowledgeRow): string {
-  const fields = `${k.fields} ${k.fields === 1 ? "Field" : "Fields"}, breadth-weighted`;
+  const fields = k.fields === 1 ? "1 Field" : `${k.fields} Fields, the best counts fully`;
   if (k.gained === null) return `${fields} · this week's gain shows once a week of snapshots exists`;
   if (k.gained <= 0.0005) return `${fields} · no Field moved this week`;
   return `${fields} · ${k.grewMost ? `${k.grewMost} grew most this week` : "grew this week"}`;
@@ -195,10 +199,17 @@ export function lifeTrackRows(knowledge: KnowledgeRow, life: { launched: boolean
 
 export interface FieldComposition {
   name: string;
+  /** What the row gives the attributes: a Field's breadth (xp.ts fieldBreadth), a life row's effective level. */
   level: number;
   composition: Composition;
   /** 'LIFE' for a life track's row ('Life · Body'); a Field when absent. */
   source?: "FIELD" | "LIFE";
+  /**
+   * A Field's stored level (depth first), the units its FieldSnapshot is in:
+   * ghostScores converts the week-old level to breadth with it (breadthAsOf).
+   * Absent on life rows, whose week-old level is already in their own units.
+   */
+  fieldLevel?: number;
 }
 
 /**
@@ -215,9 +226,11 @@ export function lifeCompositions(contributions: readonly FieldContribution[]): F
  * snapshot. Compositions and streak bonuses are not snapshotted, so the
  * ghost scales today's score by how much of its Field base existed then:
  *   ghost(A) = score(A) × Σ level_then·w / Σ level_now·w
- * which is exact whenever compositions and streaks did not change, and
- * never invents movement that the Field levels do not show.
- * Returns null without a week-old snapshot.
+ * which never invents movement that the Field levels do not show. A row's
+ * level is what it gives the attributes (a Field's breadth); the snapshot
+ * holds the Field's own level, so a row that carries `fieldLevel` has its
+ * week-old level converted to breadth first (breadthAsOf: exact when the
+ * Field did not move). Returns null without a week-old snapshot.
  */
 export function ghostScores(
   scores: AttributeScores,
@@ -232,8 +245,9 @@ export function ghostScores(
     let baseThen = 0;
     for (const f of fields) {
       const w = f.composition[a] / COMPOSITION_TOTAL;
+      const was = then.get(f.name) ?? 0;
       baseNow += f.level * w;
-      baseThen += (then.get(f.name) ?? 0) * w;
+      baseThen += (f.fieldLevel === undefined ? was : breadthAsOf(f.level, f.fieldLevel, was)) * w;
     }
     out[a] = baseNow > 0 ? Math.round(scores[a] * Math.min(1, baseThen / baseNow) * 100) / 100 : scores[a];
   }

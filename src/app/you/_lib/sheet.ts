@@ -5,7 +5,8 @@
  * is cached under the same tags as the attribute scores it explains.
  *
  * Life (life-tracks-server.ts) joins in one place each: the character level
- * counts the track levels (character.ts, as the shell does), the radar's
+ * counts the track levels (character.ts characterLevelFromRaw, as the shell
+ * counts them through characterLevelOf: one formula), the radar's
  * sources and its 7-days-ago ghost include the life rows ('Life · Body'),
  * and the Life tracks, goal ladder and purse read the same view. Before
  * launch that view is the not-launched one (every level 0, no rows), so the
@@ -31,7 +32,8 @@ import { loadProgression } from "@/lib/skill-effects";
 import { SKILL_POOL, getSkill } from "@/lib/skill-pool";
 import { getGhostLevelsFromDaysAgo, readProgress } from "@/lib/snapshot";
 import { computeTitle, dominantAttribute } from "@/lib/titles";
-import { MASTERY_LEVEL } from "@/lib/xp";
+import { MASTERY_LEVEL, fieldBreadth } from "@/lib/xp";
+import { characterLevelFromRaw } from "@/lib/character";
 import { crestMaterial, type Material } from "@/lib/materials";
 import { themeFor } from "@/lib/attribute-themes";
 import { sidesFor } from "@/lib/skill-form";
@@ -57,7 +59,12 @@ import {
 } from "@/components/home/sheet-math";
 
 
-/** Every Field's effective composition and level (the attribute substrate). */
+/**
+ * Every Field's effective composition and what it gives the attributes (the
+ * attribute substrate): its breadth from its Domain levels (xp.ts
+ * fieldBreadth, as skill-effects.ts loadFieldRows reads it), never the stored
+ * depth-first Field level, which rides along as `fieldLevel` for the ghost.
+ */
 export async function loadFieldCompositions(): Promise<FieldComposition[]> {
   return cached("you:fieldCompositions", ["fields", "ideas"], async () => {
     const fields = await prisma.field.findMany({
@@ -66,7 +73,7 @@ export async function loadFieldCompositions(): Promise<FieldComposition[]> {
         name: true,
         level: true,
         attributes: { select: { attribute: true, weight: true } },
-        domains: { select: { totalPoints: true, attributes: { select: { attribute: true, weight: true } } } },
+        domains: { select: { level: true, totalPoints: true, attributes: { select: { attribute: true, weight: true } } } },
       },
     });
     return fields.map((f) => {
@@ -79,7 +86,12 @@ export async function loadFieldCompositions(): Promise<FieldComposition[]> {
           for (const a of d.attributes) composition[a.attribute] = a.weight;
           return { composition: composition as Composition, totalPoints: d.totalPoints };
         });
-      return { name: f.name, level: f.level, composition: effectiveFieldComposition(own as Composition, domains) };
+      return {
+        name: f.name,
+        level: fieldBreadth(f.domains.map((d) => d.level)),
+        composition: effectiveFieldComposition(own as Composition, domains),
+        fieldLevel: f.level,
+      };
     });
   });
 }
@@ -157,7 +169,7 @@ export async function loadSheet(userId: string, now: Date = new Date()): Promise
     fieldRows.map((f) => f.level),
     TRACKS.map((t) => life.levels[t])
   );
-  const level = Math.floor(raw);
+  const { level, progress } = characterLevelFromRaw(raw);
   // Titles are earned once: counted from the Ultimates you own, not the ones equipped.
   const ultimates = progression.ownedCodes.filter((c) => getSkill(c)?.rank === "ULTIMATE").length;
   const title = computeTitle(level, progression.scores, ultimates);
@@ -186,7 +198,7 @@ export async function loadSheet(userId: string, now: Date = new Date()): Promise
 
   return {
     level,
-    progress: raw - level,
+    progress,
     material: crestMaterial(level, transcendent),
     title: title.rank,
     epithet: title.epithet,

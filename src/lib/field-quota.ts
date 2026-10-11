@@ -3,6 +3,7 @@ import { cached } from "./cache";
 import { applyDebuff } from "./debuffs";
 import { loadMaintenanceIds } from "./field-focus";
 import { addDays, dayKeyOf, dayStartOf, weekStartKeyOf, weekStartOf } from "./life-day";
+import { fieldBreadth } from "./xp";
 
 /**
  * The weekly contribution quota: how many new Ideas each Field owes per week,
@@ -18,6 +19,12 @@ import { addDays, dayKeyOf, dayStartOf, weekStartKeyOf, weekStartOf } from "./li
  * Field asks for one Idea a week; a level-9 Field asks for four; a level-36
  * Field asks for seven. Capped, because the point is a steady habit rather
  * than an escalating tax that eventually makes a strong Field unmaintainable.
+ *
+ * The level it reads is the Field's breadth (xp.ts fieldBreadth of its
+ * Domain levels), not the depth-first Field level: the ask was sized against
+ * that curve, and a Field level that went depth first must not quietly ask
+ * less of a Field with many Domains. Field tiers and the boss unlock read the
+ * depth-first level; they are achievements, the quota is a demand.
  */
 
 /** Nobody is asked for less than this while the Field exists at all. */
@@ -25,8 +32,9 @@ const QUOTA_FLOOR = 1;
 /** Ceiling on the weekly ask, however high a Field climbs. */
 export const QUOTA_CAP = 7;
 
-export function weeklyQuotaFor(fieldLevel: number): number {
-  return Math.min(QUOTA_CAP, QUOTA_FLOOR + Math.floor(Math.sqrt(Math.max(1, fieldLevel))));
+/** The weekly ask for a Field of this breadth (xp.ts fieldBreadth of its Domain levels). */
+export function weeklyQuotaFor(breadth: number): number {
+  return Math.min(QUOTA_CAP, QUOTA_FLOOR + Math.floor(Math.sqrt(Math.max(1, breadth))));
 }
 
 /**
@@ -61,6 +69,7 @@ async function loadQuotasUncached(weekStart: Date): Promise<FieldQuota[]> {
       level: true,
       domains: {
         select: {
+          level: true,
           _count: { select: { ideas: { where: { isArchived: false, createdAt: { gte: weekStart } } } } },
         },
       },
@@ -69,7 +78,7 @@ async function loadQuotasUncached(weekStart: Date): Promise<FieldQuota[]> {
 
   return fields.map((f) => {
     const added = f.domains.reduce((sum, d) => sum + d._count.ideas, 0);
-    const quota = weeklyQuotaFor(f.level);
+    const quota = weeklyQuotaFor(fieldBreadth(f.domains.map((d) => d.level)));
     return {
       fieldId: f.id,
       fieldName: f.name,

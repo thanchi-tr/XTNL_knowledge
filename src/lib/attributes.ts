@@ -244,14 +244,17 @@ export interface FieldContribution {
 export type AttributeScores = Record<Attribute, number>;
 
 /**
- * Attribute scores from Field levels and compositions.
+ * Attribute scores from each row's level and composition.
  *
- * `score(A) = Σ_fields fieldLevel × weight(field, A) / 100`
+ * `score(A) = Σ_rows level × weight(row, A) / 100`
  *
- * Linear in Field level on purpose. Field level is already sub-linear in
- * points (`floor(Σ domainLevel^0.75)`), so compounding another curve here
- * would make high attribute thresholds unreachable in practice rather than
- * merely demanding.
+ * A Field row's level is its breadth, `floor(Σ domainLevel^0.75)` (xp.ts
+ * fieldBreadth), read from its Domain levels, never the stored Field level:
+ * the Field level is depth first (xp.ts fieldLevel), the attributes measure
+ * breadth, so the skill gates keep their pace. Linear in that level on
+ * purpose: it is already sub-linear in points, so compounding another curve
+ * here would make high attribute thresholds unreachable in practice rather
+ * than merely demanding.
  */
 export function computeAttributeScores(contributions: FieldContribution[]): AttributeScores {
   const scores = emptyComposition() as AttributeScores;

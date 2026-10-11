@@ -171,7 +171,7 @@ export default function YouFixturesPage() {
               {TRACKS.map((t) => (
                 <TrackRow key={t.name} {...t} gainKind="xp" seenKey={`fixture:track:${t.name}`} />
               ))}
-              <TrackRow sigil="know" name="Knowledge" level={17} banked={0.44} now={0.52} gainKind="pts" line="6 Fields, breadth-weighted · Statistics grew most this week" seenKey="fixture:track:knowledge" />
+              <TrackRow sigil="know" name="Knowledge" level={17} banked={0.44} now={0.52} gainKind="pts" line="6 Fields, the best counts fully · Statistics grew most this week" seenKey="fixture:track:knowledge" />
             </section>
           </div>
           <div>

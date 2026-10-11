@@ -27,6 +27,7 @@ import {
 import { resolveResonance, foldSetGrants, type LoadoutResonance } from "./loadout-sets";
 import { loadAugments, computeRate, type CapitalRate } from "./capital";
 import { weekStartOf } from "./life-day";
+import { fieldBreadth } from "./xp";
 import type { OwnedAugment } from "./augments";
 import { loadLifeTracks } from "./life-tracks-server";
 
@@ -86,10 +87,11 @@ export interface ProgressionState {
   capitalRate: CapitalRate;
 }
 
-/** One Field as the attribute scores read it: its level and effective composition. */
+/** One Field as the attribute scores read it: its breadth (xp.ts fieldBreadth) and effective composition. */
 export interface FieldRow {
   id: string;
   name: string;
+  /** fieldBreadth of the Field's Domain levels: what the attributes read, never the depth-first Field level. */
   level: number;
   composition: Composition;
 }
@@ -105,6 +107,10 @@ export interface FieldRow {
  * and Idea attribution only *mean* something if they reach this function —
  * this is where automatic assignment stops being a stored label and starts
  * deciding which skills you can unlock.
+ *
+ * The level is the Field's breadth from its Domain levels (xp.ts
+ * fieldBreadth), not the stored Field level: the Field level went depth
+ * first, the attributes did not, so every unlock keeps its pace.
  */
 async function loadFieldRows(): Promise<FieldRow[]> {
   return cached("fieldRows", ["fields", "ideas"], async () => {
@@ -117,10 +123,10 @@ async function loadFieldRows(): Promise<FieldRow[]> {
       select: {
         id: true,
         name: true,
-        level: true,
         attributes: { select: { attribute: true, weight: true } },
         domains: {
           select: {
+            level: true,
             totalPoints: true,
             attributes: { select: { attribute: true, weight: true } },
           },
@@ -143,7 +149,7 @@ async function loadFieldRows(): Promise<FieldRow[]> {
       return {
         id: f.id,
         name: f.name,
-        level: f.level,
+        level: fieldBreadth(f.domains.map((d) => d.level)),
         composition: effectiveFieldComposition(own as Composition, domains),
       };
     });

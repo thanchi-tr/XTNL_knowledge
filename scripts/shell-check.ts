@@ -36,7 +36,7 @@ import {
 import { dutyNoticesOf, owedNotice, reviewedWeek, weekReviewNotice, yesterdayMustsNotice } from "../src/lib/rituals";
 import { RECORD_YESTERDAY_HREF } from "../src/lib/shortcuts";
 import { ATTRIBUTES, computeAttributeScores, emptyComposition, sourcesFor, type Composition, type FieldContribution } from "../src/lib/attributes";
-import { characterRaw } from "../src/lib/character";
+import { characterLevel, characterRaw } from "../src/lib/character";
 import { depthCap, trackDepth, xpForLevel } from "../src/lib/life-economy";
 import { TRACK_SEED } from "../src/lib/life-lexicon";
 import { emptyLifeLedger, keptWeekBonusPercent, lifeContributionRows, lifeContributionsAt, notLaunchedView, type TrackState } from "../src/lib/life-tracks";
@@ -71,7 +71,6 @@ import { phraseMatches } from "../src/components/ui/TypedConfirm";
 import { compile } from "tailwindcss";
 import { approx, formatAmount, formatMultiplier, formatNumber, formatPercent } from "../src/components/ui/format";
 import { divergingBar, factorMoved, receiptTotal } from "../src/components/ui/receipt-math";
-import { fieldLevel } from "../src/lib/xp";
 import { AMBIENT_ROUTES, SHADER_VARS } from "../src/lib/shader/params";
 import { gate, type GateInput } from "../src/lib/shader/gate";
 
@@ -358,21 +357,24 @@ eq("receipt: base × factors to one decimal", receiptTotal(20, [1, 1.1, 1, 1]), 
 
 // ── shell data helpers ──────────────────────────────────────────────────────
 {
-  for (const levels of [[], [1], [4, 9, 2], [16, 16], [30, 1, 7, 12, 3]]) {
-    eq(`character level equals xp.fieldLevel for [${levels}]`, characterLevelOf(levels).level, fieldLevel(levels));
+  // Depth first since 2026-10-11: each level as L^0.95, the best counting fully, the next half … (character.ts).
+  const goldens: [number[], number][] = [[[], 0], [[1], 1], [[4, 9, 2], 10], [[16, 16], 20], [[30, 1, 7, 12, 3], 32]];
+  for (const [levels, golden] of goldens) {
+    eq(`character level for [${levels}] is ${golden}, the one formula's (character.ts characterLevel)`, [characterLevelOf(levels).level, characterLevel(levels).level], [golden, golden]);
   }
   const p = characterLevelOf([4, 9, 2]).progress;
   check("character progress is the fraction toward the next level", p >= 0 && p < 1);
-  // M5: one character level over Fields and life tracks (a compatible extension).
-  const both = 4 ** 0.75 + 9 ** 0.75 + 2 ** 0.75 + 3 ** 0.75 + 1;
+  // M5: one character level over Fields and life tracks (a compatible extension): one depth-first list.
+  const both = 9 ** 0.95 + 4 ** 0.95 / 2 + 3 ** 0.95 / 4 + 2 ** 0.95 / 8 + 1 / 16;
   const withTracks = characterLevelOf([4, 9, 2], [3, 1]);
-  check("character level over Fields and tracks: characterLevelOf([4,9,2], [3,1]).level = floor(Σ both)", withTracks.level === Math.floor(both), `${withTracks.level} vs ${both}`);
+  check("character level over Fields and tracks: characterLevelOf([4,9,2], [3,1]).level = floor(depth first over both) = 10", withTracks.level === Math.floor(both) && withTracks.level === 10, `${withTracks.level} vs ${both}`);
   check("  with progress in [0, 1)", withTracks.progress >= 0 && withTracks.progress < 1 && Math.abs(withTracks.level + withTracks.progress - characterRaw([4, 9, 2], [3, 1])) < 1e-12);
-  for (const levels of [[], [1], [4, 9, 2], [16, 16], [30, 1, 7, 12, 3]]) {
+  for (const [levels] of goldens) {
     const a = characterLevelOf(levels);
     const b = characterLevelOf(levels, []);
     const z = characterLevelOf(levels, trackLevelsOf(notLaunchedView("2026-10-01").levels));
-    check(`no tracks, or not launched (all 0), is today's level for [${levels}]`, a.level === b.level && a.progress === b.progress && z.level === fieldLevel(levels) && z.progress === a.progress);
+    const one = characterLevel(levels);
+    check(`no tracks, or not launched (all 0), is the Fields-only level for [${levels}]`, a.level === b.level && a.progress === b.progress && z.level === one.level && z.progress === one.progress && a.progress === one.progress);
   }
   eq("trackLevelsOf: TRACKS order (Body, Duty, Craft, Care), missing as 0", trackLevelsOf({ DUTY: 3, BODY: 1, OTHER: 9 }), [1, 3, 0, 0]);
   eq("trackLevelsOf: absent is no tracks", [trackLevelsOf(null), trackLevelsOf(undefined)], [[], []]);

@@ -202,7 +202,7 @@ export function AttributeRadar({
           </ul>
         ) : (
           <p className="t-meta" style={{ textAlign: "center" }}>
-            {life.launched ? "Attributes grow from Field levels and life tracks." : "Attributes grow from Field levels. Review an idea and the first one appears."}
+            {life.launched ? "Attributes grow from every Domain you work and from life tracks." : "Attributes grow from every Domain you work. Review an idea and the first one appears."}
           </p>
         )}
       </section>

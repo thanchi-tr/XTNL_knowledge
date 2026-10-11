@@ -13,6 +13,7 @@ import { keyOfDateColumn, todayKey } from "./life-day";
 import { isLaunched } from "./life-economy";
 import { lifeContributionsAt, type LifeLedger } from "./life-tracks";
 import { loadLifeLedger } from "./life-tracks-server";
+import { breadthAsOf, fieldBreadth, levelRuleSnapshotFloor } from "./xp";
 
 /**
  * Observed rates of progress, measured from history rather than assumed.
@@ -99,12 +100,20 @@ async function measureMasteryRate(userId: string, now: Date): Promise<number | n
  * Attribute growth, reconstructed from `FieldSnapshot`.
  *
  * Snapshots store per-Field level over time, and attribute score is a pure
- * function of Field levels and compositions — so replaying today's
+ * function of each Field's breadth and composition — so replaying today's
  * compositions against historical levels gives a defensible "score N days
  * ago". The assumption is that compositions have not changed inside the
  * window; they are user-editable and not versioned, so a recent composition
  * edit will distort this. That is acceptable for an estimate and is why the
  * UI labels the output as approximate.
+ *
+ * Both ends read a Field's breadth (xp.ts fieldBreadth), as the attribute
+ * scores do: now from its Domain levels, then from the snapshot's Field
+ * level converted with breadthAsOf (the snapshot stores the depth-first
+ * Field level and no Domain levels; a Field with no snapshot reads as now).
+ * Snapshots dated before xp.ts LEVEL_RULE_SINCE hold the old Field level and
+ * are not read (levelRuleSnapshotFloor): until a rule-day snapshot is two days
+ * old the rate is unmeasured, never a false drop.
  *
  * M5: once life is launched, the life tracks' attribute rows join both
  * ends — `lifeContributionsAt(ledger, then)` and `(ledger, today)`, with
@@ -123,8 +132,9 @@ async function measureScoreRate(userId: string, now: Date): Promise<{ scorePerDa
         name: true,
         level: true,
         attributes: { select: { attribute: true, weight: true } },
+        domains: { select: { level: true } },
         snapshots: {
-          where: { day: { gte: since } },
+          where: { day: { gte: levelRuleSnapshotFloor(since) } },
           orderBy: { day: "asc" },
           take: 1,
           select: { day: true, level: true },
@@ -161,16 +171,17 @@ async function measureScoreRate(userId: string, now: Date): Promise<{ scorePerDa
   const lifeThen: FieldContribution[] = life ? lifeContributionsAt(life, keyOfDateColumn(oldest)) : [];
   const lifeNow: FieldContribution[] = life ? lifeContributionsAt(life, today) : [];
 
+  const breadth = new Map(fields.map((f) => [f.id, fieldBreadth(f.domains.map((d) => d.level))]));
   const thenScores = computeAttributeScores([
     ...fields.map((f) => ({
       fieldName: f.name,
-      level: f.snapshots[0]?.level ?? f.level,
+      level: breadthAsOf(breadth.get(f.id)!, f.level, f.snapshots[0]?.level ?? f.level),
       composition: compositions.get(f.id)!,
     })),
     ...lifeThen,
   ]);
   const nowScores = computeAttributeScores([
-    ...fields.map((f) => ({ fieldName: f.name, level: f.level, composition: compositions.get(f.id)! })),
+    ...fields.map((f) => ({ fieldName: f.name, level: breadth.get(f.id)!, composition: compositions.get(f.id)! })),
     ...lifeNow,
   ]);
 

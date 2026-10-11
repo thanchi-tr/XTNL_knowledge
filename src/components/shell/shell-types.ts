@@ -13,7 +13,7 @@ import { characterLevel } from "@/lib/character";
 import { TRACKS } from "@/lib/life-types";
 
 export interface ShellCharacter {
-  /** Character level: floor(Σ L^0.75) over the Field levels and, once life is launched (M5), the four track levels. */
+  /** Character level: depth first over the Field levels and, once life is launched (M5), the four track levels (character.ts). */
   level: number | null;
   /** 0..1 toward level + 1. */
   progress: number | null;
@@ -89,12 +89,13 @@ export function crestLabel(c: ShellCharacter | null | undefined): string {
 }
 
 /**
- * The character level and its fraction toward the next: floor(Σ L^0.75) over
- * the Field levels, then the track levels (M5; a compatible extension of
- * this frozen contract), and the remainder. Delegates to lib/character.ts,
- * the one formula. With no tracks it is exactly the pre-M5 number
- * (`.level === xp.fieldLevel(fieldLevels)`). Track levels are the plain
- * levels (trackLevelsOf), never the bonus-scaled ones the attributes read.
+ * The character level and its fraction toward the next: depth first over the
+ * Field levels and the track levels together (M5; a compatible extension of
+ * this frozen contract), each as L^0.95, the best counting fully, the next
+ * half, the next a quarter …, and the remainder. Delegates to
+ * lib/character.ts, the one formula; tracks at level 0 change nothing. Track
+ * levels are the plain levels (trackLevelsOf), never the bonus-scaled ones
+ * the attributes read.
  */
 export function characterLevelOf(fieldLevels: readonly number[], trackLevels: readonly number[] = []): { level: number; progress: number } {
   return characterLevel(fieldLevels, trackLevels);

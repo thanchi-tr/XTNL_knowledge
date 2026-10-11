@@ -62,7 +62,7 @@ import { MATERIALS, crestBandStarts, crestMaterial, medallionMaterial, rankMater
 import { depthOf } from "./skill-form";
 import { getSkill, type SkillRank } from "./skill-pool";
 import { TITLE_BANDS, bandForLevel, computeTitle } from "./titles";
-import { MASTERY_LEVEL } from "./xp";
+import { MASTERY_LEVEL, fieldLevelRaw } from "./xp";
 import { characterLevelOf, trackLevelsOf } from "../components/shell/shell-types";
 
 // ─── Snapshot shape ─────────────────────────────────────────────────────────
@@ -323,9 +323,13 @@ export function rankAt(level: number, ultimates: number): string {
 
 const MAT_INDEX = (m: Material) => MATERIALS.indexOf(m);
 
+/** A Field's raw level from its Domains in the snapshot: xp.ts fieldLevelRaw, depth first. */
 function fieldRaw(fieldId: string, domains: LevelsPart["domains"]): number {
-  return domains.filter((d) => d.fieldId === fieldId).reduce((s, d) => s + Math.pow(Math.max(0, d.level), 0.75), 0);
+  return fieldLevelRaw(domains.filter((d) => d.fieldId === fieldId).map((d) => d.level));
 }
+
+/** The way from a Field's level to the next: the raw's fraction, floored exactly as xp.ts fieldLevel floors it (no epsilon). */
+const fieldFraction = (raw: number) => Math.max(0, raw - Math.floor(raw));
 
 /**
  * Domain, field, character, title and band: one moment per diff, the broadest one.
@@ -350,7 +354,7 @@ function detectLevels(b: LevelsPart, a: LevelsPart, trackUps: readonly Celebrati
     const raw = fieldRaw(d.fieldId, a.domains);
     const lines =
       fname && fieldNow
-        ? [`${fname} field is now ${pct(raw - Math.floor(raw))} to level ${Math.floor(fieldNow.level) + 1}.`]
+        ? [`${fname} field is now ${pct(fieldFraction(raw))} to level ${Math.floor(fieldNow.level) + 1}.`]
         : undefined;
     domainUps.push(
       draft(
@@ -388,7 +392,7 @@ function detectLevels(b: LevelsPart, a: LevelsPart, trackUps: readonly Celebrati
         },
         [
           { label: `${f.name} field`, value: `L${from} → L${to}` },
-          ...(raw > to ? [{ label: `${f.name} to level ${to + 1}`, value: pct(raw - Math.floor(raw)) }] : []),
+          ...(raw > to ? [{ label: `${f.name} to level ${to + 1}`, value: pct(fieldFraction(raw)) }] : []),
         ],
         range(from, to).map((l) => `field:${f.id}:${l}`)
       )
@@ -418,7 +422,7 @@ function detectLevels(b: LevelsPart, a: LevelsPart, trackUps: readonly Celebrati
   const charRows: WhatMoved[] = levelUp
     ? [
         { label: "Character", value: `${cb.level} → ${ca.level}` },
-        { label: "Σ L^0.75", value: `${fmt(rawB, 2)} → ${fmt(rawA, 2)}` },
+        { label: "Raw level", value: `${fmt(rawB, 2)} → ${fmt(rawA, 2)}` },
       ]
     : [];
   // A track names the cause only when no Field moved and the character really rose.

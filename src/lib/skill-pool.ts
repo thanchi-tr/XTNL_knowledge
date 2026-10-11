@@ -259,14 +259,15 @@ export const SYNERGY_MAX_TIER = 5;
  * Attribute score required at a given tier.
  *
  * Super-linear (t^1.55) so tiers separate sharply rather than arriving in a
- * clump. Attribute score is `Σ fieldLevel × weight/100`, so a high tier means
+ * clump. Attribute score is `Σ fieldBreadth × weight/100`, so a high tier means
  * sustained investment in Fields that actually weight that attribute — you
  * cannot arrive there by breadth alone.
  *
  * The coefficient tracks the Domain leveling curve. When `DOMAIN_LEVEL_STEP`
- * went from 2 to 7, Domain levels shrank by 3.5x and Field levels — being
- * `Σ domainLevel^0.75` — by 3.5^0.75 ≈ 2.56x, and attribute score is linear
- * in Field level. Left at 3 this would have made every gate 2.56x harder as a
+ * went from 2 to 7, Domain levels shrank by 3.5x and a Field's breadth — being
+ * `Σ domainLevel^0.75` (xp.ts fieldBreadth, the Field level until the
+ * depth-first rule) — by 3.5^0.75 ≈ 2.56x, and attribute score is linear
+ * in it. Left at 3 this would have made every gate 2.56x harder as a
  * side effect of a change that was about early pacing, quietly pushing the
  * Ultimates out of reach. Scaling by the same factor keeps the tree exactly
  * as reachable as it was: the same amount of work unlocks the same skills,

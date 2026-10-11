@@ -59,6 +59,7 @@ import { lifeTracksView, notLaunchedView, weekMarkOf, type LifeTracksView } from
 import { TRACKS, type Track } from "./life-types";
 import { parseRule } from "./recurrence";
 import { getSkill, SKILL_POOL } from "./skill-pool";
+import { snapshotUnderLevelRule } from "./xp";
 import { dailyStreakOf, readStreakFacts } from "./streak";
 
 // ─── The progress snapshot (celebrations) ───────────────────────────────────
@@ -445,11 +446,16 @@ export interface GhostFieldLevel {
  * The snapshot from exactly 7 days ago, per Field — the "ghost" the Dashboard
  * radar compares against. Returns an empty array until snapshots have
  * actually been accumulating for a week; there's no synthetic fallback.
+ *
+ * Also empty for a day before xp.ts LEVEL_RULE_SINCE: those rows hold the old
+ * Σ L^0.75 Field level, so the Knowledge gain, the radar ghost and the Stats
+ * deltas read "no data yet" rather than a large false drop. Nothing is deleted.
  */
 export const getGhostLevelsFromDaysAgo = cache(async (daysAgo: number): Promise<GhostFieldLevel[]> => {
   return cached(`ghostLevels:${daysAgo}`, ["fields"], async () => {
     const day = truncateToDay(new Date());
     day.setUTCDate(day.getUTCDate() - daysAgo);
+    if (!snapshotUnderLevelRule(day)) return [];
 
     const rows = await prisma.fieldSnapshot.findMany({
       where: { day },

@@ -57,6 +57,8 @@ import {
   type LifeMpReason,
 } from "@/lib/life-economy";
 import { keptWeekBonusPercent } from "@/lib/life-tracks";
+import { BREADTH_EXPONENT, DEPTH_FIRST_SHARE, fieldLevel } from "@/lib/xp";
+import { CHARACTER_EXPONENT, characterLevel } from "@/lib/character";
 import { longDayLabel, mpFigure } from "@/components/home/sheet-math";
 import { CurrencyGlyph } from "@/components/ui/Icon";
 import { SectionHeader } from "@/components/ui/Tabs";
@@ -480,6 +482,70 @@ function TracksRules() {
         A goal states its MP when it is set, and that figure never changes. Closing is final: a goal closed below its bar
         pays nothing. A goal past its due day is carried, never owed, until you reschedule or close it. Goal depth is capped
         at {GOAL_DEPTH_CAP} per track. Goals never pay XP.
+      </p>
+    </Card>
+  );
+}
+
+// ─── Field and character levels ─────────────────────────────────────────────
+
+/** Domain levels for the Field samples: the inputs are examples, every result is xp.ts fieldLevel's. */
+const FIELD_LEVEL_SAMPLES: readonly (readonly number[])[] = [[8], [8, 2], [5, 5, 5, 5], Array.from({ length: 30 }, () => 1)];
+
+/** Field and track levels for the character samples, every result character.ts characterLevel's. */
+const CHARACTER_LEVEL_SAMPLES: readonly { fields: readonly number[]; tracks: readonly number[] }[] = [
+  { fields: [9], tracks: [] },
+  { fields: [9, 9, 9], tracks: [] },
+  { fields: [], tracks: [5, 5, 5, 5] },
+  { fields: [9], tracks: [5, 5, 4, 4] },
+];
+
+/** "30 × 1" for a long run of one level, "5, 5, 5, 5" otherwise. */
+function levelsLabel(levels: readonly number[]): string {
+  return levels.length > 4 && levels.every((l) => l === levels[0]) ? `${levels.length} × ${levels[0]}` : levels.join(", ");
+}
+
+/** "Fields 9, 9, 9 · tracks 5, 5, 4, 4". */
+function characterSampleLabel(s: { fields: readonly number[]; tracks: readonly number[] }): string {
+  const fields = s.fields.length ? `${s.fields.length === 1 ? "Field" : "Fields"} ${levelsLabel(s.fields)}` : "";
+  const tracks = s.tracks.length ? `tracks ${levelsLabel(s.tracks)}` : "";
+  return [fields, tracks].filter(Boolean).join(" · ");
+}
+
+/**
+ * Field and character levels, depth first. The rule's numbers are read from
+ * xp.ts and character.ts, and every sample is computed by them as the page loads.
+ */
+function LevelsRules() {
+  const share = DEPTH_FIRST_SHARE;
+  const many = FIELD_LEVEL_SAMPLES[FIELD_LEVEL_SAMPLES.length - 1];
+  return (
+    <Card title="Field and character levels" sub="Depth first: your best counts fully, the next half, the next a quarter" wide>
+      <Formula>
+        Field level = ⌊best Domain + {share} × next + {share * share} × next + …⌋
+      </Formula>
+      <Formula>
+        character level = ⌊best + {share} × next + {share * share} × next + …⌋ over every Field and track, each as level^{CHARACTER_EXPONENT}
+      </Formula>
+      <p>
+        A Field&apos;s level comes from its Domains, best first: your best Domain counts fully, the next half, the next a
+        quarter, and so on. A Field always stays below twice its best Domain, so its level says how deep you have gone, and
+        each extra Domain adds less than the one before: {many.length} Domains at level {many[0]} make a Field of level{" "}
+        {fieldLevel([...many])}.
+      </p>
+      <p>
+        Your character level is the same rule over your Fields and your life tracks together, each level first taken to the
+        power {CHARACTER_EXPONENT}: the highest counts fully, the next half, the next a quarter. One deep Field or track
+        carries you further than many shallow ones. Your title and crest follow the character level.
+      </p>
+      <Samples head={["Domains", "Field"]} rows={FIELD_LEVEL_SAMPLES.map((d) => [levelsLabel(d), String(fieldLevel([...d]))])} />
+      <Samples
+        head={["levels", "character"]}
+        rows={CHARACTER_LEVEL_SAMPLES.map((s) => [characterSampleLabel(s), String(characterLevel(s.fields, s.tracks).level)])}
+      />
+      <p>
+        Attributes still count breadth: each Field gives them ⌊Σ Domain level^{BREADTH_EXPONENT}⌋ over all its Domains, so
+        working many Domains opens emblems at the same pace as before.
       </p>
     </Card>
   );
@@ -1559,6 +1625,8 @@ export default async function RulesPage() {
         </Card>
 
         <TracksRules />
+
+        <LevelsRules />
 
         {dutyLive ? (
           <DutyRules edge={edge} />

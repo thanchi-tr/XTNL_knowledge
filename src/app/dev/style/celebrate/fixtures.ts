@@ -43,46 +43,46 @@ export function fixtures(): Fixture[] {
   return [
     {
       name: "domain-level",
-      note: "Probability 5 → 6; the Statistics field stays at 4.",
+      note: "Probability 4 → 5 under Regression 7; the Statistics field stays at 9 (7 + 5 ÷ 2).",
       ...character(
-        [["f-stats", "Statistics", 4, [["d-prob", "Probability", 5], ["d-reg", "Regression", 1]]]],
-        [["f-stats", "Statistics", 4, [["d-prob", "Probability", 6], ["d-reg", "Regression", 1]]]]
+        [["f-stats", "Statistics", 9, [["d-reg", "Regression", 7], ["d-prob", "Probability", 4]]]],
+        [["f-stats", "Statistics", 9, [["d-reg", "Regression", 7], ["d-prob", "Probability", 5]]]]
       ),
-      expect: ["domain:d-prob:6"],
+      expect: ["domain:d-prob:5"],
     },
     {
       name: "field-level",
-      note: "Probability 6 → 7 lifts Statistics 4 → 5 (the character stays 13): one Seal, the domain as a What-moved row.",
+      note: "Probability 6 → 7 lifts Statistics 6 → 7 (the character stays 17): one Seal, the domain as a What-moved row.",
       ...character(
-        [["f-econ", "Economics", 16], ["f-stats", "Statistics", 4, [["d-prob", "Probability", 6], ["d-reg", "Regression", 1]]], ["f-phil", "Philosophy", 3]],
-        [["f-econ", "Economics", 16], ["f-stats", "Statistics", 5, [["d-prob", "Probability", 7], ["d-reg", "Regression", 1]]], ["f-phil", "Philosophy", 3]]
+        [["f-econ", "Economics", 16], ["f-stats", "Statistics", 6, [["d-prob", "Probability", 6], ["d-reg", "Regression", 1]]], ["f-phil", "Philosophy", 3]],
+        [["f-econ", "Economics", 16], ["f-stats", "Statistics", 7, [["d-prob", "Probability", 7], ["d-reg", "Regression", 1]]], ["f-phil", "Philosophy", 3]]
       ),
-      expect: ["field:f-stats:5"],
+      expect: ["field:f-stats:7"],
     },
     {
       name: "character-level",
-      note: "Ethics 3 → 4 lifts Philosophy 3 → 4 and the character 15 → 16, inside the bronze band.",
+      note: "Ethics 3 → 4 lifts Philosophy 4 → 5 and the character 15 → 16, inside the bronze band.",
       ...character(
-        [["f-econ", "Economics", 16], ["f-stats", "Statistics", 9], ["f-phil", "Philosophy", 3, [["d-eth", "Ethics", 3], ["d-log", "Logic", 2]]]],
-        [["f-econ", "Economics", 16], ["f-stats", "Statistics", 9], ["f-phil", "Philosophy", 4, [["d-eth", "Ethics", 4], ["d-log", "Logic", 2]]]]
+        [["f-econ", "Economics", 14], ["f-stats", "Statistics", 6], ["f-phil", "Philosophy", 4, [["d-eth", "Ethics", 3], ["d-log", "Logic", 2]]]],
+        [["f-econ", "Economics", 14], ["f-stats", "Statistics", 6], ["f-phil", "Philosophy", 5, [["d-eth", "Ethics", 4], ["d-log", "Logic", 2]]]]
       ),
       expect: ["level:16"],
     },
     {
       name: "band",
-      note: "Character 14 → 15: Practitioner and the bronze re-forge are one Ascension.",
+      note: "Ethics 3 → 4 lifts Philosophy 3 → 4 and the character 14 → 15: Practitioner and the bronze re-forge are one Ascension.",
       ...character(
-        [["f-econ", "Economics", 16], ["f-stats", "Statistics", 9], ["f-phil", "Philosophy", 2, [["d-eth", "Ethics", 2], ["d-log", "Logic", 1]]]],
-        [["f-econ", "Economics", 16], ["f-stats", "Statistics", 9], ["f-phil", "Philosophy", 3, [["d-eth", "Ethics", 3], ["d-log", "Logic", 1]]]]
+        [["f-econ", "Economics", 13], ["f-stats", "Statistics", 6], ["f-phil", "Philosophy", 3, [["d-eth", "Ethics", 3], ["d-log", "Logic", 1]]]],
+        [["f-econ", "Economics", 13], ["f-stats", "Statistics", 6], ["f-phil", "Philosophy", 4, [["d-eth", "Ethics", 4], ["d-log", "Logic", 1]]]]
       ),
       expect: ["band:bronze"],
     },
     {
       name: "title",
-      note: "Character 9 → 10: Student becomes Adept (still iron).",
+      note: "Regression 3 → 4 lifts Statistics 9 → 10 and the character 9 → 10: Student becomes Adept (still iron).",
       ...character(
-        [["f-stats", "Statistics", 10, [["d-prob", "Probability", 6], ["d-inf", "Inference", 6], ["d-reg", "Regression", 3], ["d-sam", "Sampling", 1]]], ["f-econ", "Economics", 7]],
-        [["f-stats", "Statistics", 11, [["d-prob", "Probability", 6], ["d-inf", "Inference", 6], ["d-reg", "Regression", 4], ["d-sam", "Sampling", 1]]], ["f-econ", "Economics", 7]]
+        [["f-stats", "Statistics", 9, [["d-prob", "Probability", 6], ["d-inf", "Inference", 6], ["d-reg", "Regression", 3], ["d-sam", "Sampling", 1]]], ["f-econ", "Economics", 3]],
+        [["f-stats", "Statistics", 10, [["d-prob", "Probability", 6], ["d-inf", "Inference", 6], ["d-reg", "Regression", 4], ["d-sam", "Sampling", 1]]], ["f-econ", "Economics", 3]]
       ),
       expect: ["title:Adept"],
     },
@@ -207,8 +207,8 @@ export function fixtures(): Fixture[] {
       name: "level-drop",
       note: "A level that drops (degradation) never celebrates.",
       ...character(
-        [["f-stats", "Statistics", 9, [["d-prob", "Probability", 7]]]],
-        [["f-stats", "Statistics", 8, [["d-prob", "Probability", 6]]]]
+        [["f-stats", "Statistics", 7, [["d-prob", "Probability", 7]]]],
+        [["f-stats", "Statistics", 6, [["d-prob", "Probability", 6]]]]
       ),
       expect: [],
     },

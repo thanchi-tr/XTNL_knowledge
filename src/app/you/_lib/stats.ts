@@ -20,6 +20,7 @@ import { getSkill } from "@/lib/skill-pool";
 import { getGhostLevelsFromDaysAgo } from "@/lib/snapshot";
 import { getDailyStreak } from "@/lib/streak";
 import { domainLevelProgress, MASTERY_LEVEL } from "@/lib/xp";
+import { characterLevelFromRaw } from "@/lib/character";
 import { characterRaw, shortDayLabel, titleDistance, type TitleDistance } from "@/components/home/sheet-math";
 import type { TrackSeries } from "@/components/home/TrackCharts";
 
@@ -103,7 +104,7 @@ export async function loadStats(userId: string, now = new Date()): Promise<Stats
     tree.map((f) => f.level),
     TRACKS.map((t) => life.levels[t])
   );
-  const level = Math.floor(raw);
+  const { level } = characterLevelFromRaw(raw);
   const ultimates = progression.ownedCodes.filter((c) => getSkill(c)?.rank === "ULTIMATE").length;
   const distance = titleDistance(raw, ultimates > 0);
 

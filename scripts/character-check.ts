@@ -12,7 +12,8 @@
  *   §1c launch gates (F1)
  *   §1d judging days: lastJudgeableSunday, judgeDayOf (F4 helpers, lane 0)
  *   §2  TRACK_SEED compositions and the life labels and rows (F1)
- *   §3  zero-life regression: the character level with no tracks is today's (F1)
+ *   §3  the one character level, depth first (2026-10-11): goldens, delegation and bit-identity
+ *       between callers, the Field level, and the breadth the attributes still read
  *   §2b the ledger row shape: WEEK / MP_MINT keep their track, never streak; instanceOutcome (F2, lane A)
  *   §4  track state from fixture ledgers: replay, streaks, depth, attributes, lines, pips, MP, view (F3, lane A)
  *   §5  the week judge (planWeeks): floors, timing, launch, cap, run size (F4, lane A)
@@ -54,14 +55,14 @@ import "./_no-model";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ATTRIBUTES, computeAttributeScores, type Composition as FullComposition } from "../src/lib/attributes";
-import { characterLevel, characterRaw } from "../src/lib/character";
+import { CHARACTER_EXPONENT, characterLevel, characterLevelFromRaw, characterRaw } from "../src/lib/character";
 import { characterLevelOf } from "../src/components/shell/shell-types";
 import { characterRaw as sheetCharacterRaw } from "../src/components/home/sheet-math";
 import { BAND_BASE, roundTo } from "../src/lib/life-grade";
 import { TRACK_SEED } from "../src/lib/life-lexicon";
 import { addDays, weekKeyOf, weekdayOf, type DayKey } from "../src/lib/life-day";
 import { BANDS, TRACKS, type Category, type Horizon, type InstanceStatus, type KrMetric, type Track } from "../src/lib/life-types";
-import { fieldLevel } from "../src/lib/xp";
+import { LEVEL_RULE_SINCE, breadthAsOf, fieldBreadth, fieldLevel, fieldLevelRaw, levelRuleSnapshotFloor, snapshotUnderLevelRule } from "../src/lib/xp";
 import { activityData } from "../src/lib/activity";
 import { countsForStreakOf } from "../src/lib/streak-curve";
 import { instanceOutcome, outcomesOf } from "../src/lib/habit";
@@ -434,24 +435,150 @@ console.log("\n§2 labels and life rows");
   check("an empty ledger contributes nothing", lifeContributionsAt(emptyLifeLedger("2026-10-05"), "2026-10-20").length === 0);
 }
 
-// ── §3 zero-life regression ───────────────────────────────────────────────
-console.log("\n§3 zero-life regression");
+// ── §3 the one character level, depth first ─────────────────────────────
+// Depth first since 2026-10-11 (step 2 of the level rework): every Field and track level counts as
+// max(0, L)^0.95, sorted highest first, the best fully, the next half, the next a quarter … It was
+// Σ max(0, L)^0.75, under which the character level with no tracks equalled xp.fieldLevel; the
+// pins below keep that section's intent (one formula, every caller delegating, bit-identical floats)
+// on the new rule, and add the Field level and the breadth the attributes still read.
+console.log("\n§3 one character level, depth first");
 {
-  const lists: number[][] = [[], [1], [4, 9, 2], [16, 16], [30, 1, 7, 12, 3]];
-  for (const levels of lists) {
+  /** The rule by hand, independent of xp.ts: each level to the 0.95, highest first, halving shares. */
+  const byHand = (levels: readonly number[]) =>
+    levels
+      .map((l) => Math.pow(Math.max(0, l), 0.95))
+      .sort((a, b) => b - a)
+      .reduce((s, c, i) => s + c * 0.5 ** i, 0);
+  const goldens: [number[], number][] = [
+    [[], 0],
+    [[1], 1],
+    [[4, 9, 2], 10],
+    [[16, 16], 20],
+    [[30, 1, 7, 12, 3], 32],
+  ];
+  for (const [levels, golden] of goldens) {
     const tag = `[${levels.join(",")}]`;
     check(`characterRaw(${tag}) === characterRaw(${tag}, [])`, characterRaw(levels) === characterRaw(levels, []));
-    eq(`characterLevel(${tag}).level === xp.fieldLevel(${tag})`, characterLevel(levels).level, fieldLevel(levels));
+    eq(`characterLevel(${tag}).level = ${golden}`, characterLevel(levels).level, golden);
+    check(`characterRaw(${tag}) is the depth-first sum of L^0.95 by hand`, Math.abs(characterRaw(levels) - byHand(levels)) < 1e-12, `${characterRaw(levels)} vs ${byHand(levels)}`);
     const shell = characterLevelOf(levels);
     const mine = characterLevel(levels);
-    check(`characterLevel(${tag}) equals today's shell characterLevelOf exactly`, shell.level === mine.level && shell.progress === mine.progress);
-    check(`characterRaw(${tag}) equals today's sheet-math characterRaw exactly`, sheetCharacterRaw(levels) === characterRaw(levels));
+    check(`characterLevel(${tag}) equals the shell's characterLevelOf exactly`, shell.level === mine.level && shell.progress === mine.progress);
+    check(`characterRaw(${tag}) equals sheet-math's characterRaw exactly`, sheetCharacterRaw(levels) === characterRaw(levels));
+    const fromRaw = characterLevelFromRaw(characterRaw(levels));
+    check(`characterLevelFromRaw(characterRaw(${tag})) is characterLevel(${tag}) exactly (the sheet and stats read it)`, fromRaw.level === mine.level && fromRaw.progress === mine.progress);
   }
-  const expected = 4 ** 0.75 + 9 ** 0.75 + 2 ** 0.75 + 3 ** 0.75 + 1;
-  check("characterRaw([4,9,2], [3,1]) = 4^0.75 + 9^0.75 + 2^0.75 + 3^0.75 + 1", Math.abs(characterRaw([4, 9, 2], [3, 1]) - expected) < 1e-12, `${characterRaw([4, 9, 2], [3, 1])} vs ${expected}`);
+  const expected = 9 ** 0.95 + 4 ** 0.95 / 2 + 3 ** 0.95 / 4 + 2 ** 0.95 / 8 + 1 / 16;
+  check(
+    "characterRaw([4,9,2], [3,1]) = 9^0.95 + 4^0.95/2 + 3^0.95/4 + 2^0.95/8 + 1/16 (Fields and tracks are one list)",
+    Math.abs(characterRaw([4, 9, 2], [3, 1]) - expected) < 1e-12,
+    `${characterRaw([4, 9, 2], [3, 1])} vs ${expected}`
+  );
   const withTracks = characterLevel([4, 9, 2], [3, 1]);
-  check("characterLevel([4,9,2], [3,1]) = floor of both, progress in [0, 1)", withTracks.level === Math.floor(expected) && withTracks.progress >= 0 && withTracks.progress < 1, `${withTracks.level} + ${withTracks.progress}`);
+  check(
+    "characterLevel([4,9,2], [3,1]) = 10, progress in [0, 1)",
+    withTracks.level === 10 && withTracks.level === Math.floor(expected) && withTracks.progress >= 0 && withTracks.progress < 1,
+    `${withTracks.level} + ${withTracks.progress}`
+  );
   check("tracks at level 0 change nothing", characterRaw([4, 9, 2], [0, 0, 0, 0]) === characterRaw([4, 9, 2]));
+  check(
+    "order never matters: the same levels in any order, split any way between Fields and tracks, give the same bits",
+    characterRaw([4, 9, 2], [3, 1]) === characterRaw([1, 3], [2, 9, 4]) && characterRaw([4, 9, 2], [3, 1]) === characterRaw([9, 4, 3, 2, 1])
+  );
+  eq("4 tracks at level 5 alone: character level 8 (it was 13)", characterLevel([], [5, 5, 5, 5]).level, 8);
+  eq("CHARACTER_EXPONENT is 0.95", CHARACTER_EXPONENT, 0.95);
+  check(
+    "a raw a hair under a whole number reads as it (floor(raw + 1e-9)), progress clamped at 0",
+    characterLevelFromRaw(3 - 1e-12).level === 3 && characterLevelFromRaw(3 - 1e-12).progress === 0 && characterLevelFromRaw(2.5).level === 2 && characterLevelFromRaw(2.5).progress === 0.5
+  );
+
+  // The Field level, depth first (xp.ts fieldLevel): the stored Field.level and every Field badge.
+  const ones = (n: number) => Array.from({ length: n }, () => 1);
+  const fieldGoldens: [string, number[], number][] = [
+    ["no Domains", [], 0],
+    ["30 empty Domains", Array.from({ length: 30 }, () => 0), 0],
+    ["[8]", [8], 8],
+    ["[8,2]", [8, 2], 9],
+    ["[2,8] (order never matters)", [2, 8], 9],
+    ["[5,5,5,5]", [5, 5, 5, 5], 9],
+    ["[16,16]", [16, 16], 24],
+    ["30 Domains at level 1 (raw < 2)", ones(30), 1],
+    ["31 Domains at level 1 (no epsilon lifts it to 2)", ones(31), 1],
+    ["64 Domains at level 1 (the float raw rounds to 2.0; the integer floor does not)", ones(64), 1],
+    ["40 Domains at level 3", Array.from({ length: 40 }, () => 3), 5],
+  ];
+  for (const [tag, levels, golden] of fieldGoldens) eq(`fieldLevel(${tag}) = ${golden}`, fieldLevel(levels), golden);
+  check("30 Domains at level 1: fieldLevelRaw = 2 − 2^-29, below 2", fieldLevelRaw(ones(30)) === 2 - 2 ** -29);
+  check("64 Domains at level 1: the float raw is exactly 2 (2 − 2^-63 rounds), so the Field level is not floor(raw)", fieldLevelRaw(ones(64)) === 2 && fieldLevel(ones(64)) === 1);
+  const exactLists = [[8, 8, 8, 8, 8], [3, 1], [12, 12], [7, 4, 4, 2, 1, 1], ones(31), Array.from({ length: 40 }, () => 3), [0, 9, 0, 5]];
+  check(
+    "fieldLevel is floor(fieldLevelRaw) exactly, no epsilon (wherever the raw is exact), and a Field stays below twice its best Domain",
+    exactLists.every((l) => fieldLevel(l) === Math.floor(fieldLevelRaw(l)) && fieldLevel(l) < 2 * Math.max(...l)),
+    exactLists.map((l) => `${fieldLevel(l)}/${Math.floor(fieldLevelRaw(l))}`).join(" ")
+  );
+
+  // The attributes keep breadth: fieldBreadth is the pre-2026-10-11 xp.ts fieldLevel, bit for bit.
+  const oldFieldLevel = (domainLevels: number[]) => Math.floor(domainLevels.reduce((sum, lvl) => sum + Math.pow(lvl, 0.75), 0));
+  const breadthLists = [[], [0], [1], [4, 9, 2], [16, 16], [30, 1, 7, 12, 3], [5, 5, 5, 5], ones(30), [0, 0, 3, 11, 2, 2, 7]];
+  check(
+    "fieldBreadth(levels) === the old floor(Σ L^0.75) for every list (attribute scores unchanged for the same Domain levels)",
+    breadthLists.every((l) => fieldBreadth(l) === oldFieldLevel(l)),
+    breadthLists.map((l) => `${fieldBreadth(l)}/${oldFieldLevel(l)}`).join(" ")
+  );
+  check(
+    "breadthAsOf: an unmoved Field reads today's breadth exactly; a Field at 0 today reads its past level",
+    breadthAsOf(13, 9, 9) === 13 && breadthAsOf(13, 9, 0) === 0 && breadthAsOf(0, 0, 4) === 4 && Math.abs(breadthAsOf(12, 8, 4) - 6) < 1e-12
+  );
+  const src3 = (p: string) => readFileSync(join(__dirname, "..", p), "utf8").replace(/\r\n/g, "\n");
+  const effects = src3("src/lib/skill-effects.ts");
+  const loadRows = effects.slice(effects.indexOf("async function loadFieldRows"), effects.indexOf("export function scoresWithStreak"));
+  check(
+    "skill-effects loadFieldRows feeds the attributes fieldBreadth of the Domain levels, not the stored Field level",
+    /level: fieldBreadth\(f\.domains\.map\(\(d\) => d\.level\)\)/.test(loadRows) && !/level: f\.level/.test(loadRows)
+  );
+  const sheet = src3("src/app/you/_lib/sheet.ts");
+  const comps = sheet.slice(sheet.indexOf("export async function loadFieldCompositions"), sheet.indexOf("export interface SheetData"));
+  check(
+    "the You sheet's compositions (radar sources and ghost) read fieldBreadth, carrying the Field level for the ghost",
+    /level: fieldBreadth\(f\.domains\.map\(\(d\) => d\.level\)\)/.test(comps) && /fieldLevel: f\.level/.test(comps)
+  );
+  const rate = src3("src/lib/progress-rate.ts");
+  check(
+    "progress-rate measures both ends in breadth (fieldBreadth now, breadthAsOf the snapshot then)",
+    /fieldBreadth\(f\.domains\.map\(\(d\) => d\.level\)\)/.test(rate) &&
+      /breadthAsOf\(breadth\.get\(f\.id\)!, f\.level, f\.snapshots\[0\]\?\.level \?\? f\.level\)/.test(rate) &&
+      !/level: f\.level, composition/.test(rate)
+  );
+  // The weekly quota is a demand: it reads breadth, as the attributes do (Field tiers and the boss unlock read the depth-first level).
+  const quota = src3("src/lib/field-quota.ts");
+  check(
+    "field-quota: every weeklyQuotaFor caller passes fieldBreadth of the Domain levels, never the stored Field level",
+    /weeklyQuotaFor\(fieldBreadth\(f\.domains\.map\(\(d\) => d\.level\)\)\)/.test(quota) && (quota.match(/weeklyQuotaFor\(/g) ?? []).length === 2 && !/weeklyQuotaFor\(f\.level\)/.test(quota)
+  );
+  check("field-tier and the boss unlock stay on the depth-first Field level", /field\.level < BOSS_UNLOCK_LEVEL/.test(src3("src/lib/bosses.ts")) && !/fieldBreadth/.test(src3("src/lib/bosses.ts") + src3("src/lib/field-tier.ts")));
+
+  // Snapshots written before the rule shipped hold the old Field level: every then-vs-now reader treats them as missing.
+  eq("LEVEL_RULE_SINCE is 2026-10-11", LEVEL_RULE_SINCE, "2026-10-11");
+  check(
+    "a FieldSnapshot dated 10 Oct (before the rule) is missing, one dated 11 Oct counts (rows are dated at UTC midnight)",
+    !snapshotUnderLevelRule(new Date("2026-10-10T00:00:00.000Z")) && snapshotUnderLevelRule(new Date("2026-10-11T00:00:00.000Z")) && snapshotUnderLevelRule(new Date("2026-10-18T00:00:00.000Z"))
+  );
+  check(
+    "a 14-day window from 1 Oct reads snapshots from 11 Oct; one from 20 Oct reads from 20 Oct",
+    levelRuleSnapshotFloor(new Date("2026-10-01T00:00:00.000Z")).toISOString() === "2026-10-11T00:00:00.000Z" &&
+      levelRuleSnapshotFloor(new Date("2026-10-20T05:00:00.000Z")).toISOString() === "2026-10-20T05:00:00.000Z"
+  );
+  const snap = src3("src/lib/snapshot.ts");
+  const ghostRead = snap.slice(snap.indexOf("export const getGhostLevelsFromDaysAgo"));
+  check(
+    "the week-ago reader (Knowledge gain, radar ghost, Stats deltas) returns no rows for a day before the rule; progress-rate's window starts no earlier",
+    /if \(!snapshotUnderLevelRule\(day\)\) return \[\];/.test(ghostRead) && /where: \{ day: \{ gte: levelRuleSnapshotFloor\(since\) \} \}/.test(rate)
+  );
+  const stats = src3("src/app/you/_lib/stats.ts");
+  check(
+    "the sheet and stats read the level through characterLevelFromRaw (no floor of their own)",
+    /characterLevelFromRaw\(raw\)/.test(sheet) && /characterLevelFromRaw\(raw\)/.test(stats) && !/Math\.floor\(raw\)/.test(sheet + stats)
+  );
 }
 
 // ── §2b the ledger row shape (F2) ─────────────────────────────────────────
