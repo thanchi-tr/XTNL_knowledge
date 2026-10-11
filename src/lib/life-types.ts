@@ -129,7 +129,9 @@ export type ActivitySource =
   | "PR"
   | "STEPS"
   /** A level an unreviewed idea forgot (srs.ts degradeOverdueIdeas): sink DOMAIN, xp negative, what earning it paid. */
-  | "FORGET";
+  | "FORGET"
+  /** Momentum's rows (momentum.md §D.2): written only by momentum's own writers, each gated on momentumLive(day). */
+  | MomentumActivitySource;
 
 /**
  * Momentum's ledger vocabulary (docs/life-plan/momentum.md §D.2). Every one is

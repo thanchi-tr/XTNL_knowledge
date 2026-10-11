@@ -7,7 +7,8 @@ import { SKILL_POOL } from "./skill-pool";
 import { loadProgressionFresh, unlockBlockers } from "./skill-effects";
 import { dayEndOf, dayKeyOf, dayStartOf } from "./life-day";
 import { activityOp, invalidateActivity, isDuplicateActivity } from "./activity";
-import { DECAY_GRACE_REASON, LIFE_MP_REASONS, mintDetail, round2, type LifeMintInput, type LifeMpReason } from "./life-economy";
+import { DECAY_GRACE_REASON, isMintReasonIn, mintDetail, round2, type LifeMintInput, type LifeMintReason, type LifeMpReason } from "./life-economy";
+import { lifeMpModelOn } from "./momentum";
 import type { ActivityInput } from "./life-types";
 
 /**
@@ -194,7 +195,7 @@ export type LifeMint = LifeMintInput & { now: Date };
 export interface LifeLedgerEntryData {
   userId: string;
   delta: number;
-  reason: LifeMpReason;
+  reason: LifeMintReason;
   detail: string;
 }
 
@@ -211,10 +212,11 @@ export interface LifeLedgerEntryData {
  *
  * The delta is taken as planned (already rounded and capped by the caller);
  * anything negative or not finite reads as 0, so a mint can never debit.
- * LIFE_PR is reserved and refused.
+ * LIFE_PR is reserved and refused. A momentum reason (LIFE_CHEST, LIFE_MILESTONE, …) is refused on a day
+ * before MOMENTUM_LAUNCH_DAY (always, while it is null): the model of the mint's own day decides.
  */
 export function lifeMintData(userId: string, mint: LifeMint): { event: ActivityInput; ledger: LifeLedgerEntryData | null } {
-  if (!(LIFE_MP_REASONS as readonly string[]).includes(mint.reason)) {
+  if (!isMintReasonIn(lifeMpModelOn(mint.day), mint.reason)) {
     throw new Error(`Not a life mastery reason: ${String(mint.reason)}`);
   }
   const delta = Number.isFinite(mint.delta) && mint.delta > 0 ? round2(mint.delta) : 0;

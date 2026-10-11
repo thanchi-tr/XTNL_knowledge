@@ -2,7 +2,7 @@ import { Prisma, type ActivityEvent } from "@prisma/client";
 import { prisma } from "./prisma";
 import { invalidate, type CacheTag } from "./cache";
 import { dateColumn, dayKeyOf } from "./life-day";
-import { TRACKS, type ActivityInput, type ActivitySource, type Sink, type Track } from "./life-types";
+import { MOMENTUM_DEFAULT_SINK, TRACKS, type ActivityInput, type ActivitySource, type Sink, type Track } from "./life-types";
 import { countsForStreakOf } from "./streak-curve";
 
 /**
@@ -58,6 +58,8 @@ export const DEFAULT_SINK: Record<ActivitySource, Sink> = {
   STEPS: "NONE",
   // A level an idea forgot takes its points back off its Domain (srs.ts degradeOverdueIdeas).
   FORGET: "DOMAIN",
+  // Momentum's rows (momentum.md §D.2); each writer still sets its own sink when it pays.
+  ...MOMENTUM_DEFAULT_SINK,
 };
 
 /**

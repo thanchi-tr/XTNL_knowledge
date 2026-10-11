@@ -571,7 +571,8 @@ export function momentumMintKey(reason: MomentumMpReason, scope: string): string
  * why)) plus, only when delta > 0, a MasteryLedgerEntry.
  */
 export interface LifeMintInput {
-  reason: LifeMpReason;
+  /** A momentum reason mints only on a day the launched model is live (mastery.ts lifeMintData). */
+  reason: LifeMintReason;
   /** MP paid, ≥ 0, already rounded and capped. 0 writes the decision row alone. */
   delta: number;
   why?: string | null;

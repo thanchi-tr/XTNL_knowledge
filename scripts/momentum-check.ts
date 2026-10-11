@@ -42,7 +42,7 @@ import {
   type LifeMintReason,
 } from "../src/lib/life-economy";
 import { FORMULA_VERSION, FORMULA_VERSION_MOMENTUM, LIFE_PAY_MODE_FACTOR, MODE_LABEL, PAY_MODE_FACTOR, RAW_WORST_CASE, kneeG } from "../src/lib/life-grade";
-import { MOMENTUM_ACTIVITY_SOURCES, MOMENTUM_DEFAULT_SINK, TRACKS, type ActivitySource } from "../src/lib/life-types";
+import { MOMENTUM_ACTIVITY_SOURCES, MOMENTUM_DEFAULT_SINK, TRACKS, type ActivitySource, type MomentumActivitySource } from "../src/lib/life-types";
 import { NEVER_STREAK_SOURCES, STREAK_SOURCES, countsForStreakOf } from "../src/lib/streak-curve";
 import { KIND_TIER, MOMENTUM_T0_KINDS, MOMENTUM_T1_KINDS, MOMENTUM_T2_KINDS, MOMENTUM_T3_KINDS, T0_KINDS, T1_KINDS, T2_KINDS, T3_KINDS } from "../src/lib/celebration-types";
 import { addDays } from "../src/lib/life-day";
@@ -342,7 +342,7 @@ console.log("\n§7 sources");
 console.log("\n§8 the vocabulary");
 {
   // Every ActivitySource that existed before momentum; the Record makes the list exhaustive at compile time.
-  const BEFORE: Record<ActivitySource, true> = {
+  const BEFORE: Record<Exclude<ActivitySource, MomentumActivitySource>, true> = {
     REVIEW: true, IDEA_CREATE: true, ATTESTATION: true, BOSS: true, LEGACY_DAY: true, DAY_OPEN: true, TASK: true, UNDO: true, GOAL_PROGRESS: true, REFLECTION: true, FULL_DAY: true, REPAIR: true,
     FREEZE_EARN: true, FREEZE_USE: true, WEEK: true, MP_MINT: true, DEBT: true, DEBT_REPAID: true, DEBT_WRITTEN_OFF: true, ADJUST: true, WORKOUT: true, PR: true, STEPS: true, FORGET: true,
   };
@@ -350,7 +350,7 @@ console.log("\n§8 the vocabulary");
   const OLD_STREAK = new Set(["REVIEW", "IDEA_CREATE", "ATTESTATION", "BOSS", "TASK", "GOAL_PROGRESS", "LEGACY_DAY"]);
   const OLD_NEVER = new Set(["STEPS", "DAY_OPEN", "DEBT", "ADJUST", "FREEZE_EARN", "FREEZE_USE", "REFLECTION", "UNDO", "WEEK", "MP_MINT", "DEBT_REPAID", "DEBT_WRITTEN_OFF", "FULL_DAY", "REPAIR"]);
   const oldRule = (s: string, r?: boolean | null) => (OLD_NEVER.has(s) ? false : (r ?? OLD_STREAK.has(s)));
-  const changed = (Object.keys(BEFORE) as ActivitySource[]).filter((s) => [undefined, null, true, false].some((r) => countsForStreakOf(s, r) !== oldRule(s, r)));
+  const changed = (Object.keys(BEFORE) as Exclude<ActivitySource, MomentumActivitySource>[]).filter((s) => [undefined, null, true, false].some((r) => countsForStreakOf(s, r) !== oldRule(s, r)));
   check("every pre-momentum source counts for the streak exactly as before (the new entries are reached only by momentum's writers)", changed.length === 0, changed.join(", "));
   check("NEVER_STREAK_SOURCES gains QUEST_SET, CHEST, MILESTONE, PLAN_WEEK, PERK, RESPEC, NUDGE; a writer cannot override it", ["QUEST_SET", "CHEST", "MILESTONE", "PLAN_WEEK", "PERK", "RESPEC", "NUDGE"].every((s) => NEVER_STREAK_SOURCES.has(s as never) && countsForStreakOf(s as never, true) === false));
   check("STREAK_SOURCES gains CHECKPOINT (an action); PR is in neither list, so it counts only if asked (its writer never asks)", STREAK_SOURCES.has("CHECKPOINT") && countsForStreakOf("CHECKPOINT") && !STREAK_SOURCES.has("PR") && !NEVER_STREAK_SOURCES.has("PR") && countsForStreakOf("PR") === false);
