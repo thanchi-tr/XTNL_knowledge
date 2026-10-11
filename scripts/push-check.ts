@@ -22,7 +22,8 @@
  *     never reachable from a client file; the env names are in .env.example with no values (where it exists:
  *     it is gitignored) and in the docs;
  *   - wiring: the two routes, package.json (dependency, push:check, ui:check), the docs.
- *   - the evening momentum nudge (momentum.md §F; lane D): inert before MOMENTUM_LAUNCH_DAY (nobody is even listed);
+ *   - the evening momentum nudge (momentum.md §F; lane D): inert before MOMENTUM_LAUNCH_DAY or with none (an explicit
+ *     null launch day: nobody is even listed); launched 2026-10-12, so with nothing injected the launch day's 20:30 sends;
  *     only inside [20:00, 22:00) Sydney; only a run of 2+ with nothing kept today; UserPrefs.nudge 'off' respected (its
  *     facts are never read); the claim ('nudge:<day>', a NUDGE row) before the send; at most one nudge a day under
  *     concurrent runs (and the same interleaving against an unguarded claim double-sends, so the test can fail); the
@@ -778,7 +779,25 @@ async function nudges() {
   const prevEnv = process.env.XTNL_MOMENTUM_LAUNCH_DAY;
   delete process.env.XTNL_MOMENTUM_LAUNCH_DAY;
   try {
-    // Inert before launch: MOMENTUM_LAUNCH_DAY is null, so nobody is listed, claimed or sent, even at 20:30.
+    // Inert with no launch day (DispatchDeps.momentumLaunchDay null), so nobody is listed, claimed or sent, even at 20:30.
+    {
+      const log: string[] = [];
+      const store = fakeNudgeStore([{ id: "u1" }], log);
+      const push = fakePushStore([sub("s1")]);
+      const { sender, sent } = fakeSender(log);
+      const r = await reportOf(await runReminderDispatch(authed(), { env: ENV, store: fakeReminderStore([], log), push, sender, now: () => EVENING, timeZone: TZ, nudgeStore: store, momentumLaunchDay: null }));
+      check(
+        "nudge: inert with no launch day (DispatchDeps.momentumLaunchDay null): no user listed, nothing claimed or sent at 20:30",
+        store.lists === 0 && store.claims.size === 0 && sent.length === 0 && r.nudges.considered === 0 && r.nudges.claimed === 0,
+        JSON.stringify(r.nudges)
+      );
+      const direct = await runMomentumNudges(EVENING, { store, push, sender, env: ENV, timeZone: TZ, launchDay: null });
+      check("nudge: an explicit null launch day is inert too", direct.considered === 0 && store.lists === 0);
+      const ahead = await reportOf(await runReminderDispatch(authed(), { env: ENV, store: fakeReminderStore([], log), push, sender, now: () => EVENING, timeZone: TZ, nudgeStore: store, momentumLaunchDay: "2026-10-13" }));
+      check("nudge: inert before launch (a launch day still ahead, 2026-10-13): nobody listed, claimed or sent", ahead.nudges.considered === 0 && store.lists === 0 && store.claims.size === 0 && sent.length === 0, JSON.stringify(ahead.nudges));
+    }
+
+    // Launched: with nothing injected the dispatcher reads MOMENTUM_LAUNCH_DAY (2026-10-12, DAY itself), so 20:30 nudges.
     {
       const log: string[] = [];
       const store = fakeNudgeStore([{ id: "u1" }], log);
@@ -786,12 +805,10 @@ async function nudges() {
       const { sender, sent } = fakeSender(log);
       const r = await reportOf(await runReminderDispatch(authed(), { env: ENV, store: fakeReminderStore([], log), push, sender, now: () => EVENING, timeZone: TZ, nudgeStore: store }));
       check(
-        "nudge: inert before launch (MOMENTUM_LAUNCH_DAY null): no user listed, nothing claimed or sent at 20:30",
-        MOMENTUM_LAUNCH_DAY === null && store.lists === 0 && store.claims.size === 0 && sent.length === 0 && r.nudges.considered === 0 && r.nudges.claimed === 0,
+        "nudge: launched (MOMENTUM_LAUNCH_DAY 2026-10-12, nothing injected): on the launch day at 20:30 the user at risk is listed, claimed and sent once",
+        MOMENTUM_LAUNCH_DAY === "2026-10-12" && DAY === MOMENTUM_LAUNCH_DAY && store.lists === 1 && store.claims.size === 1 && sent.length === 1 && r.nudges.considered === 1 && r.nudges.claimed === 1,
         JSON.stringify(r.nudges)
       );
-      const direct = await runMomentumNudges(EVENING, { store, push, sender, env: ENV, timeZone: TZ, launchDay: null });
-      check("nudge: an explicit null launch day is inert too", direct.considered === 0 && store.lists === 0);
     }
 
     // The window: [20:00, 22:00) in Sydney, nothing before or after (even a late scheduler).

@@ -73,7 +73,7 @@ import {
   type SnapshotPart,
   type StoredCelebration,
 } from "../src/lib/celebration-detect";
-import { MOMENTUM_LAUNCH_DAY, lspThreshold, type ChestReceipt } from "../src/lib/momentum";
+import { MOMENTUM_LAUNCH_DAY, momentumLaunchDay, momentumLive, lspThreshold, type ChestReceipt } from "../src/lib/momentum";
 import { characterLevelOf, trackLevelsOf } from "../src/components/shell/shell-types";
 import { CHARACTER_EXPONENT } from "../src/lib/character";
 import { emptyLifeLedger, lifeTracksView, type LifeLedger } from "../src/lib/life-tracks";
@@ -105,6 +105,25 @@ function check(name: string, ok: boolean, detail = "") {
 }
 const keys = (ds: readonly CelebrationDraft[]) => ds.map((d) => d.dedupeKey);
 const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+/**
+ * Runs `fn` with momentum's launch day overridden (XTNL_MOMENTUM_LAUNCH_DAY, read outside production),
+ * then restores it. MOMENTUM_LAUNCH_DAY is 2026-10-12, so a fixture week on or after it reads the launched
+ * model by default; a launch day still ahead pins today's (pre-launch) model, exactly as no launch day does.
+ */
+function withMomentumLaunch<T>(day: string, fn: () => T): T {
+  const prev = process.env.XTNL_MOMENTUM_LAUNCH_DAY;
+  process.env.XTNL_MOMENTUM_LAUNCH_DAY = day;
+  try {
+    return fn();
+  } finally {
+    if (prev === undefined) delete process.env.XTNL_MOMENTUM_LAUNCH_DAY;
+    else process.env.XTNL_MOMENTUM_LAUNCH_DAY = prev;
+  }
+}
+/** A momentum launch day after every fixture week here: the pre-launch model throughout. */
+const LAUNCH_AHEAD = "2099-12-28";
+/** A blank override reads as unset: MOMENTUM_LAUNCH_DAY itself (2026-10-12), whatever the shell exports. */
+const LAUNCH_CONSTANT = "";
 
 // ── 1. Fixtures: the expected moments, at their tiers, honest ───────────────
 for (const f of fixtures()) {
@@ -864,16 +883,18 @@ async function duty() {
     parts: ["ledger"],
     ledger: { weeks: [week("BODY", 1.5), week("DUTY", 1.5)], prs: [], fullDays: [full("2026-10-12", 0.5), full("2026-10-13", 0.5), full("2026-10-14", 0)] },
   };
-  const seal = diffProgress(before, after);
+  // The week of 12 October is MOMENTUM_LAUNCH_DAY's own week: these pins are today's (pre-launch) model, so they
+  // run with a launch day still ahead; the launched amounts are pinned after them, under the constant.
+  const seal = withMomentumLaunch(LAUNCH_AHEAD, () => diffProgress(before, after));
   check(
     "seal: the week Seal adds '+1.0 MP from 2 full days.' (a trimmed qty-0 day is not counted) and states 4 MP paid",
     seal.length === 1 && (seal[0].facts.lines ?? []).includes("+1.0 MP from 2 full days.") && seal[0].facts.amounts?.[0]?.value === 4 && (seal[0].facts.lines ?? []).includes("+1.5 MP for each kept track."),
     JSON.stringify(seal[0]?.facts)
   );
   check("seal: honest (number and why)", seal.every((d) => honestyProblem(draftToEvent(d, "x")) === null));
-  const old = diffProgress({ parts: ["ledger"], ledger: { weeks: [], prs: [] } }, { parts: ["ledger"], ledger: { weeks: [week("BODY", 1.5)], prs: [] } });
+  const old = withMomentumLaunch(LAUNCH_AHEAD, () => diffProgress({ parts: ["ledger"], ledger: { weeks: [], prs: [] } }, { parts: ["ledger"], ledger: { weeks: [week("BODY", 1.5)], prs: [] } }));
   check("seal: a snapshot without fullDays (stored before M2) still parses and adds no line", old.length === 1 && (old[0].facts.lines ?? []).length === 2);
-  const seen = diffProgress(after, { ...after, ledger: { ...after.ledger!, weeks: [...after.ledger!.weeks, week("CARE", 1.5)] } });
+  const seen = withMomentumLaunch(LAUNCH_AHEAD, () => diffProgress(after, { ...after, ledger: { ...after.ledger!, weeks: [...after.ledger!.weeks, week("CARE", 1.5)] } }));
   check("seal: full days already in the before snapshot are not stated again", seen.length === 1 && !(seen[0].facts.lines ?? []).some((l) => l.includes("full day")), JSON.stringify(seen[0]?.facts.lines));
   const heldOnly = diffProgress(before, { parts: ["ledger"], ledger: { weeks: [{ ...week("CARE"), qty: 0, detail: "Held · 5 rest days" }], prs: [], fullDays: [] } });
   check("seal: a held week (qty 0) is never a moment", heldOnly.length === 0);
@@ -885,8 +906,8 @@ async function duty() {
     parts: ["ledger"],
     ledger: { weeks: [...run1After.ledger!.weeks, week("DUTY", 1.5)], prs: [], fullDays: [full("2026-10-12", 0.5), full("2026-10-13", 0.5)] },
   };
-  const split1 = diffProgress(before, run1After);
-  const split2 = diffProgress(run1After, run2After);
+  const split1 = withMomentumLaunch(LAUNCH_AHEAD, () => diffProgress(before, run1After));
+  const split2 = withMomentumLaunch(LAUNCH_AHEAD, () => diffProgress(run1After, run2After));
   check("split: run 1 is the usual 'week:<W>' Seal (3 of 4)", split1.length === 1 && split1[0].dedupeKey === `week:${W}` && split1[0].facts.title === "3 of 4 tracks kept", keys(split1).join());
   check(
     "split: run 2 plays 'week:<W>+DUTY': '4 of 4 tracks kept' rolled from 3, Duty 'also kept', its 1.5 MP and the 2 full days (2.5 MP), gold",
@@ -917,8 +938,35 @@ async function duty() {
   );
   splitStore.ack("split-u", played2.map((e) => e.id));
   check("split: once shown, never again", (await persistDrafts(splitStore, "split-u", split2, new Date(40_000))).length === 0);
-  const oneRun = diffProgress(before, run2After);
+  const oneRun = withMomentumLaunch(LAUNCH_AHEAD, () => diffProgress(before, run2After));
   check("split: a week judged in one run keeps the one 'week:<W>' Seal (4 of 4, no roll)", oneRun.length === 1 && oneRun[0].dedupeKey === `week:${W}` && oneRun[0].facts.title === "4 of 4 tracks kept" && oneRun[0].facts.numeral?.from === null, keys(oneRun).join());
+
+  // Launched (MOMENTUM_LAUNCH_DAY 2026-10-12, no override): the week of 12 October is momentum's, 18 MP a kept track;
+  // the full days' line is the same.
+  const launchedAfter: ProgressData = { parts: ["ledger"], ledger: { weeks: [week("BODY", 18), week("DUTY", 18)], prs: [], fullDays: after.ledger!.fullDays } };
+  const launchedSeal = withMomentumLaunch(LAUNCH_CONSTANT, () => diffProgress(before, launchedAfter));
+  check(
+    "seal, launched: the week of 12 October states '+18 MP for each kept track.' and '+1.0 MP from 2 full days.' (37 MP paid)",
+    launchedSeal.length === 1 && (launchedSeal[0].facts.lines ?? []).includes("+18 MP for each kept track.") && (launchedSeal[0].facts.lines ?? []).includes("+1.0 MP from 2 full days.") && launchedSeal[0].facts.amounts?.[0]?.value === 37,
+    JSON.stringify(launchedSeal[0]?.facts)
+  );
+  const launchedSame = withMomentumLaunch(LAUNCH_CONSTANT, () => diffProgress(before, after))[0];
+  check("seal, launched: the same 1.5 MP rows (below momentum's 18) read as trimmed by momentum's cap of 91", (launchedSame?.facts.lines ?? []).includes("+3 MP, trimmed by the life week's cap of 91."), JSON.stringify(launchedSame?.facts.lines));
+  const launched1: ProgressData = { parts: ["ledger"], ledger: { weeks: [week("BODY", 18), week("CRAFT", 18), week("CARE", 18)], prs: [], fullDays: [] } };
+  const launched2: ProgressData = { parts: ["ledger"], ledger: { weeks: [...launched1.ledger!.weeks, week("DUTY", 18)], prs: [], fullDays: run2After.ledger!.fullDays } };
+  const launchedSplit = withMomentumLaunch(LAUNCH_CONSTANT, () => diffProgress(launched1, launched2));
+  check(
+    "split, launched: run 2 plays 'week:<W>+DUTY': '4 of 4 tracks kept' from 3, Duty's 18 MP and the 2 full days (19 MP), gold",
+    launchedSplit.length === 1 &&
+      launchedSplit[0].dedupeKey === `week:${W}+DUTY` &&
+      launchedSplit[0].facts.title === "4 of 4 tracks kept" &&
+      launchedSplit[0].facts.numeral?.from === 3 &&
+      (launchedSplit[0].facts.lines ?? []).includes("+18 MP for each kept track.") &&
+      (launchedSplit[0].facts.lines ?? []).includes("+1.0 MP from 2 full days.") &&
+      launchedSplit[0].facts.amounts?.[0]?.value === 19 &&
+      launchedSplit[0].facts.material === "gold",
+    JSON.stringify({ k: launchedSplit[0]?.dedupeKey, f: launchedSplit[0]?.facts })
+  );
 
   // The streak milestone names what held its gaps, now that rest days hold too.
   const s = (current: number, held: number) => ({ parts: ["streak"], streak: { today: "2026-10-21", current, todayActive: true, held } }) as ProgressData;
@@ -1124,7 +1172,7 @@ function momentum() {
   const W = "2026-W42";
   const week = (track: string, mp: number): LedgerRow => ({ key: `week:${track}:${W}`, week: W, track, day: "2026-10-18", xp: 0, qty: 1, detail: "Kept · 4 days · 52.0 raw XP", mp });
   const weekSeal = (rowsIn: LedgerRow[]) => diffProgress({ parts: ["ledger"], ledger: { weeks: [], prs: [] } }, { parts: ["ledger"], ledger: { weeks: rowsIn, prs: [] } })[0];
-  const pre = weekSeal([week("BODY", 1.5), week("CRAFT", 1.5)]);
+  const pre = withMomentumLaunch(LAUNCH_AHEAD, () => weekSeal([week("BODY", 1.5), week("CRAFT", 1.5)]));
   const prev = process.env.XTNL_MOMENTUM_LAUNCH_DAY;
   process.env.XTNL_MOMENTUM_LAUNCH_DAY = "2026-10-05";
   let even, iron, trimmed;
@@ -1140,18 +1188,39 @@ function momentum() {
   check("week Seal: once launched, '+18 MP for each kept track.' (amount 36)", (even?.facts.lines ?? []).includes("+18 MP for each kept track.") && even?.facts.amounts?.[0]?.value === 36, JSON.stringify(even?.facts.lines));
   check("week Seal: Iron lungs' 21 is stated as the total ('+39 MP for 2 kept tracks.')", (iron?.facts.lines ?? []).includes("+39 MP for 2 kept tracks."), JSON.stringify(iron?.facts.lines));
   check("week Seal: a trimmed week names momentum's cap of 91", (trimmed?.facts.lines ?? []).includes("+41 MP, trimmed by the life week's cap of 91."), JSON.stringify(trimmed?.facts.lines));
+  // Under the constant itself (MOMENTUM_LAUNCH_DAY 2026-10-12): the week of 12 October is momentum's, the week before is today's.
+  const constW42 = withMomentumLaunch(LAUNCH_CONSTANT, () => weekSeal([week("BODY", 18), week("CRAFT", 18)]));
+  const W41 = "2026-W41";
+  const weekBefore = withMomentumLaunch(LAUNCH_CONSTANT, () =>
+    diffProgress(
+      { parts: ["ledger"], ledger: { weeks: [], prs: [] } },
+      { parts: ["ledger"], ledger: { weeks: [week("BODY", 1.5), week("CRAFT", 1.5)].map((r) => ({ ...r, key: r.key.replace(W, W41), week: W41, day: "2026-10-11" })), prs: [] } }
+    )
+  )[0];
+  check(
+    "week Seal, launched 2026-10-12: the week of 12 October says '+18 MP for each kept track.'; the week of 5 October (Sunday the 11th) still '+1.5 MP for each kept track.'",
+    (constW42?.facts.lines ?? []).includes("+18 MP for each kept track.") && constW42?.facts.amounts?.[0]?.value === 36 && (weekBefore?.facts.lines ?? []).includes("+1.5 MP for each kept track."),
+    JSON.stringify({ w42: constW42?.facts.lines, w41: weekBefore?.facts.lines })
+  );
 
   // Scopes, and nothing before launch.
   check("scopes: tick reads the momentum run; settle reads the run and the rows", partsOf("tick").includes("momentum") && partsOf("settle").includes("momentum") && partsOf("settle").includes("momentumRows") && !partsOf("tick").includes("momentumRows"));
   check("scopes: review, idea, boss and unlock read no momentum part", (["review", "idea", "boss", "unlock"] as const).every((s) => !partsOf(s).some((p) => p === "momentum" || p === "momentumRows")));
   const snapSrc = read(join(ROOT, "src/lib/snapshot.ts")).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   check(
-    "inert: both momentum parts read nothing before MOMENTUM_LAUNCH_DAY (liveLaunch: momentumLaunchDay + momentumLive)",
-    MOMENTUM_LAUNCH_DAY === null &&
-      (snapSrc.match(/const launch = liveLaunch\(today\);\s*if \(launch == null\) return null;/g) ?? []).length === 2 &&
+    "inert: both momentum parts read nothing before MOMENTUM_LAUNCH_DAY, or with none (liveLaunch: momentumLaunchDay + momentumLive)",
+    (snapSrc.match(/const launch = liveLaunch\(today\);\s*if \(launch == null\) return null;/g) ?? []).length === 2 &&
       /const launch = momentumLaunchDay\(\);\s*if \(launch == null \|\| !momentumLive\(today, launch\)\) return null;/.test(snapSrc) &&
       /momentum: \(\) => readMomentum\(userId, now\)/.test(snapSrc) &&
       /momentumRows: \(\) => readMomentumRows\(userId, now\)/.test(snapSrc)
+  );
+  check(
+    "launched: MOMENTUM_LAUNCH_DAY is 2026-10-12, so liveLaunch's gate opens from that day (not the day before; never with no launch day)",
+    MOMENTUM_LAUNCH_DAY === "2026-10-12" &&
+      momentumLaunchDay({ NODE_ENV: "production" }) === MOMENTUM_LAUNCH_DAY &&
+      momentumLive("2026-10-12", MOMENTUM_LAUNCH_DAY) &&
+      !momentumLive("2026-10-11", MOMENTUM_LAUNCH_DAY) &&
+      !momentumLive("2026-10-12", null)
   );
   const settleWithout = diffProgress({ parts: partsOf("settle") }, { parts: partsOf("settle") });
   check("inert: a settle pair without the momentum parts (before launch) plays nothing", settleWithout.length === 0);

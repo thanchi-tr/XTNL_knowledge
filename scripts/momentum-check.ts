@@ -6,7 +6,8 @@
  *
  *   §1 G1–G10: src/lib/momentum.ts against the sim's goldens. They are restated from
  *      `npx tsx scripts/momentum-sim.ts` (importing the sim would run its year-long Monte Carlo).
- *   §2 the launch gate: MOMENTUM_LAUNCH_DAY is null, the override, and the pre-launch model is
+ *   §2 the launch gate: MOMENTUM_LAUNCH_DAY is 2026-10-12, the override, the null gate (an explicit
+ *      null launch day: nothing live), and the pre-launch model is
  *      exactly today's constants (so every reader of them is unchanged)
  *   §3 the §A.10 MP table: the launched model
  *   §4 key formats (rolls, ledger rows, mints, moments)
@@ -194,18 +195,29 @@ console.log("§1 goldens G1–G10");
 }
 
 // ── §2 the launch gate and the inert pre-launch model ─────────────────────
-console.log("\n§2 the launch gate (inert until the lead sets the day)");
+console.log("\n§2 the launch gate (launched 2026-10-12; the null gate stays pinned through an explicit null)");
 {
-  check("MOMENTUM_LAUNCH_DAY is null (the user has not approved the launch)", MOMENTUM_LAUNCH_DAY === null);
+  check("MOMENTUM_LAUNCH_DAY is 2026-10-12 (the user's approved launch: \"Launch today\")", MOMENTUM_LAUNCH_DAY === "2026-10-12");
   eq("the override's name", MOMENTUM_LAUNCH_DAY_ENV, "XTNL_MOMENTUM_LAUNCH_DAY");
-  eq("production reads the constant only", momentumLaunchDay({ NODE_ENV: "production", XTNL_MOMENTUM_LAUNCH_DAY: "2026-11-02" }), null);
+  eq("production reads the constant only (an override there is ignored)", momentumLaunchDay({ NODE_ENV: "production", XTNL_MOMENTUM_LAUNCH_DAY: "2026-11-02" }), MOMENTUM_LAUNCH_DAY);
   eq("outside production a valid override wins", momentumLaunchDay({ NODE_ENV: "development", XTNL_MOMENTUM_LAUNCH_DAY: " 2026-11-02 " }), "2026-11-02");
-  eq("an invalid override is ignored", momentumLaunchDay({ NODE_ENV: "development", XTNL_MOMENTUM_LAUNCH_DAY: "2026-02-30" }), null);
+  eq("an invalid override is ignored (the constant stands)", momentumLaunchDay({ NODE_ENV: "development", XTNL_MOMENTUM_LAUNCH_DAY: "2026-02-30" }), MOMENTUM_LAUNCH_DAY);
+  eq("a blank override reads as unset (the constant stands)", momentumLaunchDay({ NODE_ENV: "development", XTNL_MOMENTUM_LAUNCH_DAY: "  " }), MOMENTUM_LAUNCH_DAY);
   const prod = momentumLaunchDay({ NODE_ENV: "production" });
-  check("with no launch day nothing is live, on any day", !momentumLive("2026-10-12", prod) && !momentumLive("2099-12-31", prod) && momentumDays("2099-12-31", prod).length === 0);
+  eq("production's launch day is the constant", prod, "2026-10-12");
+  check(
+    "launched: live from 2026-10-12 on, not the day before; momentumDays walks from the launch day",
+    !momentumLive("2026-10-11", prod) && momentumLive("2026-10-12", prod) && momentumLive("2099-12-31", prod) && momentumDays("2026-10-11", prod).length === 0 && JSON.stringify(momentumDays("2026-10-14", prod)) === JSON.stringify(["2026-10-12", "2026-10-13", "2026-10-14"]),
+  );
+  check(
+    "launched: lifeMpModelOn is today's model before 2026-10-12 and momentum's from it; the week of 12 October (Sunday the 18th) is momentum's, the week before is not",
+    lifeMpModelOn("2026-10-11", prod) === PRE_MOMENTUM_MP_MODEL && lifeMpModelOn("2026-10-12", prod) === MOMENTUM_MP_MODEL && lifeMpModelOfWeek("2026-10-12", prod) === MOMENTUM_MP_MODEL && lifeMpModelOfWeek("2026-10-11", prod) === PRE_MOMENTUM_MP_MODEL,
+  );
+  const none = null;
+  check("with no launch day (an explicit null) nothing is live, on any day", !momentumLive("2026-10-12", none) && !momentumLive("2099-12-31", none) && momentumDays("2099-12-31", none).length === 0);
   check("live on and after the launch day only", !momentumLive("2026-11-01", "2026-11-02") && momentumLive("2026-11-02", "2026-11-02") && momentumLive("2026-11-03", "2026-11-02"));
   eq("momentumDays: the launch day through today", momentumDays("2026-11-05", "2026-11-02"), ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05"]);
-  check("lifeMpModelOn: today's model on every day while there is no launch day", lifeMpModelOn("2026-10-12", prod) === PRE_MOMENTUM_MP_MODEL && lifeMpModelOn("2099-12-31", prod) === PRE_MOMENTUM_MP_MODEL);
+  check("lifeMpModelOn: today's model on every day while there is no launch day (an explicit null)", lifeMpModelOn("2026-10-12", none) === PRE_MOMENTUM_MP_MODEL && lifeMpModelOn("2099-12-31", none) === PRE_MOMENTUM_MP_MODEL && lifeMpModelOfWeek("2099-12-31", none) === PRE_MOMENTUM_MP_MODEL);
   check("lifeMpModelOn: the day before launch is today's model; the launch day is momentum's", lifeMpModelOn("2026-11-01", "2026-11-02") === PRE_MOMENTUM_MP_MODEL && lifeMpModelOn("2026-11-02", "2026-11-02") === MOMENTUM_MP_MODEL);
   check(
     "lifeMpModelOfWeek reads the week's Sunday (the weekIsBackfill rule): a Tuesday of a week whose Sunday is the launch day is momentum's; launched the Monday after, it is today's",

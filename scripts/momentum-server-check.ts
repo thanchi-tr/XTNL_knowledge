@@ -8,9 +8,11 @@
  *
  *   npx tsx scripts/momentum-server-check.ts
  *
- *   §1 the gate closed: every writer writes nothing and reads nothing; every loader is inert
+ *   §1 the gate closed (no launch day, or one still ahead, through MomentumDeps.launchDay): every
+ *      writer writes nothing and reads nothing; every loader is inert. Launched (MOMENTUM_LAUNCH_DAY
+ *      2026-10-12, the constant in force): the same day is live
  *   §2 the four readers L0 could not gate return today's values before launch (8 MP, today's
- *      capped reasons) and the launched ones after (91, + LIFE_PLAN_WEEK)
+ *      capped reasons) and the launched ones after (91, + LIFE_PLAN_WEEK), under the constant too
  *   §3 Today's three: PLAN → BODY → TASK, no template in two slots; two concurrent
  *      ensureQuestSet write one row; swaps
  *   §4 work-board templates are never quest candidates
@@ -33,7 +35,7 @@ import { mintDetail, parseMintDetail, round2 } from "../src/lib/life-economy";
 import { closeDecision, type GoalInput } from "../src/lib/goals";
 import { cappedSum } from "../src/lib/goals-server";
 import { emptyLifeLedger, lifeMpInWeek, lifeTracksView, notLaunchedView } from "../src/lib/life-tracks";
-import { MOMENTUM_LAUNCH_DAY, momentumUnitsOf, questIdentity, type QuestSet } from "../src/lib/momentum";
+import { MOMENTUM_LAUNCH_DAY, momentumLaunchDay, momentumUnitsOf, questIdentity, type QuestSet } from "../src/lib/momentum";
 import type { BoardRow, DayLedger } from "../src/lib/today-board";
 import type { ActivityInput } from "../src/lib/life-types";
 import {
@@ -90,9 +92,12 @@ const nowOn = (day: DayKey, hour = 10): Date => {
   return zonedToInstant(y, m, d, hour);
 };
 const NOW = nowOn(TODAY);
+/** A launch day still ahead: the Monday after TODAY's week, so TODAY's whole week is before it. */
+const LATER: DayKey = "2026-10-26";
 const GATE = "XTNL_MOMENTUM_LAUNCH_DAY";
 /** The gate reads process.env on every call; outside production the override wins (a blank one reads as unset). */
-const gateClosed = () => (process.env[GATE] = "");
+const gateConstant = () => (process.env[GATE] = ""); // MOMENTUM_LAUNCH_DAY itself (2026-10-12)
+const gateAhead = () => (process.env[GATE] = LATER);
 const gateOpen = () => (process.env[GATE] = LAUNCH);
 const USER = "u-momentum";
 
@@ -265,12 +270,17 @@ const taskRow = (store: FakeStore, day: DayKey, id: string) =>
 async function main(): Promise<void> {
   // ════ §1 the gate closed ════
   console.log("\n§1 the gate closed");
-  {
-    gateClosed();
-    check("the fixture clock: 10:00 in LIFE_TZ is life day TODAY, 20:00 too", todayKey(NOW) === TODAY && todayKey(nowOn(TODAY, 20)) === TODAY);
-    check("MOMENTUM_LAUNCH_DAY is null (L0), and a blank override reads as unset", MOMENTUM_LAUNCH_DAY === null);
+  gateConstant();
+  check("the fixture clock: 10:00 in LIFE_TZ is life day TODAY, 20:00 too", todayKey(NOW) === TODAY && todayKey(nowOn(TODAY, 20)) === TODAY);
+  check("MOMENTUM_LAUNCH_DAY is 2026-10-12 (launched), and a blank override reads as unset (the constant is in force)", MOMENTUM_LAUNCH_DAY === "2026-10-12" && momentumLaunchDay() === MOMENTUM_LAUNCH_DAY);
+  const closedGates: [string, MomentumDeps][] = [
+    ["no launch day (launchDay null)", { launchDay: null }],
+    ["a launch day still ahead (launchDay after TODAY)", { launchDay: LATER }],
+  ];
+  for (const [gate, closed] of closedGates) {
+    console.log(`  ${gate}`);
     const s = new FakeStore();
-    const d = depsOf(s);
+    const d = depsOf(s, closed);
     const results = {
       ensure: await ensureQuestSet(USER, TODAY, d),
       swap: await swapQuestCore(USER, "TASK", d),
@@ -281,18 +291,30 @@ async function main(): Promise<void> {
       flame: await setFlameSkinCore(USER, "flame-ember", d),
       nudge: await setNudgeCore(USER, false, d),
     };
-    check("ensureQuestSet returns null", results.ensure === null);
+    check(`${gate}: ensureQuestSet returns null`, results.ensure === null);
     check(
-      "swap, chest, perk, respec, flame and nudge refuse with MOMENTUM_NOT_LIVE",
+      `${gate}: swap, chest, perk, respec, flame and nudge refuse with MOMENTUM_NOT_LIVE`,
       [results.swap, results.chest, results.buy, results.respec, results.flame, results.nudge].every((r) => !r.ok && r.error === MOMENTUM_NOT_LIVE),
       j([results.swap, results.chest, results.buy, results.respec, results.flame, results.nudge])
     );
-    check("settleMomentum (even forced) writes nothing", !results.settle.live && !results.settle.wrote);
+    check(`${gate}: settleMomentum (even forced) writes nothing`, !results.settle.live && !results.settle.wrote);
     const lm = await loadMomentum(USER, TODAY, d);
     const lt = await loadLifeTree(USER, d);
     const nf = await loadNudgeFacts(USER, nowOn(TODAY, 20), d);
-    check("loaders are inert: loadMomentum {live: false}, loadLifeTree {live: false}, loadNudgeFacts live false and never at risk", !lm.live && !lt.live && !nf.live && !nf.atRisk && nf.quest === null);
-    check("no write was attempted, no preference saved and nothing was read", s.attempts === 0 && s.commits === 0 && s.prefsWrites === 0 && s.reads === 0 && s.rows.length === 0, j({ attempts: s.attempts, reads: s.reads, prefs: s.prefsWrites }));
+    check(`${gate}: loaders are inert: loadMomentum {live: false}, loadLifeTree {live: false}, loadNudgeFacts live false and never at risk`, !lm.live && !lt.live && !nf.live && !nf.atRisk && nf.quest === null);
+    check(`${gate}: no write was attempted, no preference saved and nothing was read`, s.attempts === 0 && s.commits === 0 && s.prefsWrites === 0 && s.reads === 0 && s.rows.length === 0, j({ attempts: s.attempts, reads: s.reads, prefs: s.prefsWrites }));
+  }
+  {
+    // Launched: no launchDay in the deps reads momentumLaunchDay(), the constant 2026-10-12; TODAY (2026-10-20) is live.
+    const s = new FakeStore();
+    const d = depsOf(s);
+    const set = await ensureQuestSet(USER, TODAY, d);
+    const lm = await loadMomentum(USER, TODAY, d);
+    const lt = await loadLifeTree(USER, d);
+    check("launched (MOMENTUM_LAUNCH_DAY 2026-10-12, no launchDay in the deps): TODAY is live: ensureQuestSet writes Today's three, loadMomentum and loadLifeTree are live", set !== null && s.commits === 1 && lm.live && lt.live, j({ set: set !== null, commits: s.commits, lm: lm.live, lt: lt.live }));
+    const before = new FakeStore();
+    const beforeDeps = depsOf(before, { now: nowOn("2026-10-11") });
+    check("launched: the day before 2026-10-12 is still inert (null set, {live: false}, nothing read)", (await ensureQuestSet(USER, "2026-10-11", beforeDeps)) === null && !(await loadMomentum(USER, "2026-10-11", beforeDeps)).live && before.reads === 0 && before.attempts === 0);
   }
 
   // ════ §2 the four readers ════
@@ -322,7 +344,7 @@ async function main(): Promise<void> {
     ];
     const ledger = { ...emptyLifeLedger("2026-10-01"), mints: mints.map((m, i) => ({ key: `k${i}`, track: null, templateId: null, day: TODAY, qty: m.qty, reason: parseMintDetail(m.detail).reason, why: null })) };
 
-    gateClosed();
+    gateAhead(); // before launch: TODAY's week ends before the launch day (lifeMpModelOf(false), as with no launch day)
     const a = closeDecision(goal(7.5));
     const b = closeDecision(goal(8));
     check("goals.ts: a Short close is trimmed by the 8 MP cap before launch", a.pays === 0.5 && a.why === "trimmed by the life week's 8 MP cap", j(a));
@@ -344,6 +366,14 @@ async function main(): Promise<void> {
     check("after launch: cappedSum adds LIFE_PLAN_WEEK (never the chest pool)", cappedSum(mints, TODAY) === 11.5, String(cappedSum(mints, TODAY)));
     check("after launch: /you shows 91, and lifeMpInWeek adds LIFE_PLAN_WEEK", lifeTracksView(ledger, TODAY, "2026-10-01").mpThisWeek.cap === 91 && lifeMpInWeek(ledger, MONDAY) === 11.5);
     check("a week whose Sunday is before the launch keeps 8 (the weekIsBackfill rule)", notLaunchedView("2026-09-30").mpThisWeek.cap === 8 && lifeMpInWeek(ledger, "2026-09-28") === 0);
+
+    gateConstant(); // launched: MOMENTUM_LAUNCH_DAY 2026-10-12 itself
+    const f = closeDecision(goal(7.5));
+    check("launched (the constant): TODAY's week pays a Short close in full under the 91 MP pool, cappedSum adds LIFE_PLAN_WEEK, /you shows 91", f.pays === 1 && f.why === null && cappedSum(mints, TODAY) === 11.5 && lifeTracksView(ledger, TODAY, "2026-10-01").mpThisWeek.cap === 91 && lifeMpInWeek(ledger, MONDAY) === 11.5, j(f));
+    check(
+      "launched (the constant): the week of 5 October (its Sunday the 11th, before 2026-10-12) keeps 8 and today's capped reasons; the week of 12 October is 91",
+      notLaunchedView("2026-10-07").mpThisWeek.cap === 8 && notLaunchedView("2026-10-12").mpThisWeek.cap === 91 && notLaunchedView("2026-10-12").mpLastWeek.cap === 8 && cappedSum(mints, "2026-10-07") === 1.5 && cappedSum(mints, "2026-10-12") === 11.5
+    );
   }
 
   // ════ §3 Today's three ════

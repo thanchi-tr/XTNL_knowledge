@@ -11,8 +11,8 @@
  *   §1b the published economy: MP, cap, goal table, floors, keys, rounding (F1)
  *   §1c launch gates (F1)
  *   §1e momentum's launched model (momentum.md §A.10, §G.3): the re-pins of §1b on the model
- *       MOMENTUM_LAUNCH_DAY switches to (cap 91, kept week 18, + LIFE_PLAN_WEEK); §1b keeps
- *       pinning today's model, which stays in force until then
+ *       MOMENTUM_LAUNCH_DAY (2026-10-12) switches to (cap 91, kept week 18, + LIFE_PLAN_WEEK); §1b
+ *       keeps pinning today's model, in force before then (and on every day with no launch day)
  *   §1d judging days: lastJudgeableSunday, judgeDayOf (F4 helpers, lane 0)
  *   §2  TRACK_SEED compositions and the life labels and rows (F1)
  *   §3  the one character level, depth first (2026-10-11): goldens, delegation and bit-identity
@@ -369,12 +369,22 @@ console.log("\n§1c launch gates");
 }
 
 // ── §1e momentum's launched model (momentum.md §A.10, §G.3) ───────────────
-// §1b pins today's economy, which stays the one in force until MOMENTUM_LAUNCH_DAY; these are
-// the re-pins on the model the launch switches to (life-economy MOMENTUM_MP_MODEL).
+// §1b pins today's economy, which stays the one in force until MOMENTUM_LAUNCH_DAY (2026-10-12);
+// these are the re-pins on the model the launch switches to (life-economy MOMENTUM_MP_MODEL).
 console.log("\n§1e momentum's launched model");
 {
+  const none = null;
+  check("with no launch day (an explicit null) the model in force is today's (§1b) on every day", lifeMpModelOn("2026-10-12", none) === PRE_MOMENTUM_MP_MODEL && lifeMpModelOfWeek("2099-12-31", none) === PRE_MOMENTUM_MP_MODEL && lifeMpModelOf(false) === PRE_MOMENTUM_MP_MODEL);
   const prod = momentumLaunchDay({ NODE_ENV: "production" });
-  check("until launch the model in force is today's (§1b) on every day", prod === null && lifeMpModelOn("2026-10-12", prod) === PRE_MOMENTUM_MP_MODEL && lifeMpModelOfWeek("2099-12-31", prod) === PRE_MOMENTUM_MP_MODEL && lifeMpModelOf(false) === PRE_MOMENTUM_MP_MODEL);
+  check(
+    "launched 2026-10-12: until then the model in force is today's (§1b); from it, and for its whole week, momentum's",
+    prod === "2026-10-12" &&
+      lifeMpModelOn("2026-10-11", prod) === PRE_MOMENTUM_MP_MODEL &&
+      lifeMpModelOfWeek("2026-10-11", prod) === PRE_MOMENTUM_MP_MODEL &&
+      lifeMpModelOn("2026-10-12", prod) === MOMENTUM_MP_MODEL &&
+      lifeMpModelOfWeek("2026-10-12", prod) === MOMENTUM_MP_MODEL &&
+      lifeMpModelOfWeek("2099-12-31", prod) === MOMENTUM_MP_MODEL
+  );
   check(
     "today's model is §1b's constants, by reference",
     PRE_MOMENTUM_MP_MODEL.mp.WEEK_KEPT === LIFE_MP.WEEK_KEPT && PRE_MOMENTUM_MP_MODEL.weekCap === LIFE_MP_WEEK_CAP && PRE_MOMENTUM_MP_MODEL.cappedReasons === CAPPED_REASONS && PRE_MOMENTUM_MP_MODEL.reasons === LIFE_MP_REASONS
@@ -866,7 +876,23 @@ console.log("\n§4 track state");
       on.edges.body === bodyNow.level / bodyNow.cap &&
       on.judgedWeeks.length === n &&
       on.lastJudgedWeek === on.judgedWeeks[n - 1] &&
-      on.mpThisWeek.cap === LIFE_MP_WEEK_CAP
+      on.mpThisWeek.cap === MOMENTUM_MP_MODEL.weekCap
+  );
+  check("launched: the view's day (EPOCH + 75) is after MOMENTUM_LAUNCH_DAY, so its week's cap is momentum's 91", on.mpThisWeek.cap === 91, String(on.mpThisWeek.cap));
+  // The same view before momentum's launch keeps today's cap (§1b): a launch day still ahead, through the override.
+  const prevMomentumLaunch = process.env.XTNL_MOMENTUM_LAUNCH_DAY;
+  process.env.XTNL_MOMENTUM_LAUNCH_DAY = "2099-12-28";
+  let preMomentum: ReturnType<typeof lifeTracksView>;
+  try {
+    preMomentum = lifeTracksView(ledger, addDays(EPOCH, 75), EPOCH);
+  } finally {
+    if (prevMomentumLaunch === undefined) delete process.env.XTNL_MOMENTUM_LAUNCH_DAY;
+    else process.env.XTNL_MOMENTUM_LAUNCH_DAY = prevMomentumLaunch;
+  }
+  check(
+    "launched, before momentum's launch day: the same levels, rows and judged weeks, and today's cap LIFE_MP_WEEK_CAP (8)",
+    preMomentum.launched && preMomentum.levels.BODY === on.levels.BODY && preMomentum.rows.length === 4 && preMomentum.judgedWeeks.length === n && preMomentum.mpThisWeek.cap === LIFE_MP_WEEK_CAP && LIFE_MP_WEEK_CAP === 8,
+    String(preMomentum.mpThisWeek.cap)
   );
 }
 

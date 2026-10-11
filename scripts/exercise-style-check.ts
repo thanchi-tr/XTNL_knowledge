@@ -354,13 +354,20 @@ console.log("— momentum: what a walk pays (§A.6) —");
     /if \(dayKeyOf\(session\.createdAt\) !== today\) return kept\(\);/.test(srv) && /\.\.\.live\.map\(\(r\) =>\s*activityOp\(\s*userId,\s*reversalInputOf\(/.test(srv) && /prisma\.exerciseSession\.deleteMany\(\{ where: \{ id, userId \} \}\),\s*\];/.test(srv)
   );
   check(
-    "inert before launch: no launch day in production; a walk is the record alone, no moments are taken, a delete is the record's, the view is the record's",
-    momentumLaunchDay({ NODE_ENV: "production" }) === null &&
-      !momentumLive(TODAY, momentumLaunchDay({ NODE_ENV: "production" })) &&
+    "inert before launch (or with no launch day, an explicit null): a walk is the record alone, no moments are taken, a delete is the record's, the view is the record's",
+    !momentumLive(TODAY, null) &&
+      !momentumLive("2099-12-31", null) &&
+      !momentumLive(TODAY, "2026-10-12") &&
       /if \(!momentumLive\(session\.day\)\) return \{ ok: true, value: session \};/.test(srv) &&
       /if \(!momentumLive\(day\)\) return logWalkCore\(userId, raw, now, opts\);/.test(srv) &&
       /if \(momentumLaunchDay\(\) == null\) return deleteRecord\(userId, id\);/.test(srv) &&
       /if \(!opts\.momentum \|\| !momentumLive\(today\) \|\| !view\.ready\) return view;/.test(srv)
+  );
+  const prodLaunch = momentumLaunchDay({ NODE_ENV: "production" });
+  check(
+    "launched: production's launch day is 2026-10-12, so a walk on or after it pays (and one before it, like TODAY's 8 October, is the record alone)",
+    prodLaunch === "2026-10-12" && momentumLive("2026-10-12", prodLaunch) && momentumLive("2026-10-20", prodLaunch) && !momentumLive("2026-10-11", prodLaunch) && !momentumLive(TODAY, prodLaunch),
+    String(prodLaunch)
   );
 }
 

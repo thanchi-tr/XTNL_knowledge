@@ -592,6 +592,8 @@ export interface MomentumDeps {
   /** Writes on read allowed (default lifeWritesEnabled()). */
   writesOn?: boolean;
   moments?: MomentsDeps | false;
+  /** The launch day in force (default momentum.ts momentumLaunchDay()); the checks pass their own, null included. */
+  launchDay?: DayKey | null;
 }
 
 interface Ctx {
@@ -606,7 +608,7 @@ interface Ctx {
 function ctxOf(deps: MomentumDeps = {}): Ctx {
   return {
     now: deps.now ?? new Date(),
-    launch: momentumLaunchDay(),
+    launch: deps.launchDay === undefined ? momentumLaunchDay() : deps.launchDay,
     store: deps.store ?? prismaMomentumStore,
     roll: deps.roll ?? ((key: string) => momentumRoll(key)),
     writesOn: deps.writesOn ?? lifeWritesEnabled(),

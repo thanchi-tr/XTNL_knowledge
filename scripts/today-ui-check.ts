@@ -4312,8 +4312,17 @@ asyncChecks.push(
     const boardSrc = code(read("src/components/today/TodayBoard.tsx"));
     const pageSrc = code(read("src/app/today/page.tsx"));
     check(
-      "momentum inert: MOMENTUM_LAUNCH_DAY is null, so momentumLive is false for every day and a {live: false} view renders nothing at all",
-      M.MOMENTUM_LAUNCH_DAY === null && !M.momentumLive(DAY, M.MOMENTUM_LAUNCH_DAY) && card({ live: false, day: DAY }) === ""
+      "momentum inert: with no launch day (an explicit null) momentumLive is false for every day, and a {live: false} view renders nothing at all",
+      !M.momentumLive(DAY, null) && !M.momentumLive("2099-12-31", null) && !M.momentumLive(DAY, "2026-10-20") && card({ live: false, day: DAY }) === ""
+    );
+    check(
+      "momentum launched: MOMENTUM_LAUNCH_DAY is 2026-10-12, so momentumLive is true from that day (DAY, 19 October, is live) and false the day before",
+      M.MOMENTUM_LAUNCH_DAY === "2026-10-12" &&
+        M.momentumLaunchDay({ NODE_ENV: "production" }) === M.MOMENTUM_LAUNCH_DAY &&
+        M.momentumLive(DAY, M.MOMENTUM_LAUNCH_DAY) &&
+        M.momentumLive("2026-10-12", M.MOMENTUM_LAUNCH_DAY) &&
+        !M.momentumLive("2026-10-11", M.MOMENTUM_LAUNCH_DAY) &&
+        card(live()) !== ""
     );
     check(
       "momentum inert: loadMomentum answers {live: false} before launch without a read (momentum-server's early return)",

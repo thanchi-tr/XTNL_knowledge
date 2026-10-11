@@ -2509,13 +2509,16 @@ async function momentumChecks() {
       /C\.PITY_AFTER/.test(mr) && /MOMENTUM\.CHEST_POOL_CAP/.test(mr) && /MOMENTUM\.CHAIN_WINDOW_MIN/.test(mr) && /f1\(RAW_WORST_CASE_MOMENTUM\)/.test(mr)
   );
   check(
-    "rules momentum: the cards show only once momentum is live (before launch the page is unchanged), with #momentum and #life-tree anchors",
+    "rules momentum: the cards show only once momentum is live (launched 2026-10-12, they show from that day; before it, or with no launch day, the page is unchanged), with #momentum and #life-tree anchors",
     /const momentumOn = momentumLive\(today, momentumLaunch\);/.test(rulesCode) &&
       /\{momentumOn && momentumLaunch && \(\s*<section aria-labelledby="rules-momentum"/.test(rulesCode) &&
       /<Card id="momentum" title="Momentum: the run and its freezes"/.test(mr) &&
       /<Card id="life-tree" title="The Life skill tree"/.test(mr) &&
       rulesCode.indexOf("<MomentumRules") < rulesCode.indexOf("<RoadmapRules") &&
-      !M.momentumLive("2026-10-12", M.MOMENTUM_LAUNCH_DAY)
+      M.MOMENTUM_LAUNCH_DAY === "2026-10-12" &&
+      M.momentumLive("2026-10-12", M.MOMENTUM_LAUNCH_DAY) &&
+      !M.momentumLive("2026-10-11", M.MOMENTUM_LAUNCH_DAY) &&
+      !M.momentumLive("2026-10-12", null)
   );
   check(
     "rules momentum: K publishes SESSION ('paid by the walk') only once live; before, the four modes exactly as before",
