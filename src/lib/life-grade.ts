@@ -25,13 +25,15 @@ import { STREAK_BONUS_CAP_PERCENT, streakBonusPercent } from "./streak-curve";
  * life-sizing.ts), and frozen at its first completion. Everything a
  * completion pays is then this one formula over that frozen size:
  *
- *   raw = B × E × T × C × D × V × K
+ *   raw = B × E × T × C × D × V × K           (× S × M × X once momentum is live: PriceMomentum)
  *   paid = g(R_before + raw) − g(R_before)
  *
  * Pure and client-importable on purpose. The Today board projects '≈ N XP'
  * on every row with the same function the server pays with, so what a row
  * says is exactly what the tick pays — there is no variance roll, nothing
- * random, and no second implementation to drift. /today/rules renders the
+ * random, and no second implementation to drift. (Momentum's crit, X, is the
+ * one published exception: a sealed roll the server decides and stores on
+ * the receipt, never projected.) /today/rules renders the
  * constants below straight from this module, so the published rules and
  * the paying code cannot disagree either.
  *
@@ -391,6 +393,33 @@ export const MODE_LABEL: Readonly<Record<LifePayMode, string>> = {
 };
 
 /**
+ * Momentum's part of one price (momentum.md §A.4, §A.5, §B.3), already
+ * decided by the caller (today-board planCompletion, which reads the perks,
+ * the day's chain and the sealed roll): this module only multiplies and
+ * writes the receipt rows. Each part is a factor after K, inside the knee:
+ *
+ *   raw = round1(B·E·T·C·D·V·K · S · M · X)
+ *
+ * Absent (or every part null), the price is today's byte for byte ('life-1').
+ * A receipt carrying S, M or X is 'life-2' (FORMULA_VERSION_MOMENTUM). The
+ * board's projection passes S and M, never X: a crit is the one published
+ * surprise.
+ */
+export interface PriceMomentum {
+  /** S: the owned task perks that apply (Steady hand, Deep work, Frog eater, Practice makes), by name, and their product. A product of 1 adds no row. */
+  perks?: { mult: number; names: readonly string[] } | null;
+  /** M: the chain's link count for this completion (momentum.ts chainLinksOfDay) and its multiplier (chainMult with the cap in force). 0 links adds no row. */
+  chain?: { links: number; mult: number } | null;
+  /**
+   * X: the sealed roll and what it decided (momentum.ts critOf): `mult` is
+   * the crit's ×2 (×2.5 with Critical mass), 1 on a miss; `note` is the
+   * stored words ('sealed roll 0.031 under 0.080'). Every qualifying
+   * completion on a live day carries it, a miss too, so the roll is on the row.
+   */
+  crit?: { crit: boolean; mult: number; note: string } | null;
+}
+
+/**
  * Prices one completion and returns its receipt — the one function both
  * the Today board (projection) and the server (payment) call.
  *
@@ -398,12 +427,15 @@ export const MODE_LABEL: Readonly<Record<LifePayMode, string>> = {
  * it is exactly what is paid. `xp` keeps 0.001 so a day's paid rows sum to
  * g(ΣR) well inside the reconcile tolerance. Identical input gives an
  * identical receipt, key order included.
+ *
+ * `momentum` (PriceMomentum) adds momentum's S, M and X after K; without it
+ * the receipt is exactly what it always was.
  */
-export function priceTask(input: PriceInput, ctx: PricingContext, track: Track): Receipt {
+export function priceTask(input: PriceInput, ctx: PricingContext, track: Track, momentum?: PriceMomentum | null): Receipt {
   const machineBand = toBand(input.band);
   const override = clampBandOverride(machineBand, input.bandOverride);
   const band = bandAt(bandIndex(machineBand) + override);
-  const mode: PayMode = input.mode in PAY_MODE_FACTOR ? input.mode : "FULL";
+  const mode: LifePayMode = input.mode in LIFE_PAY_MODE_FACTOR ? input.mode : "FULL";
   const timing: Timing = input.timing in TIMING_FACTOR ? input.timing : "ON_TIME";
 
   const typed = Number.isFinite(input.estMinutes) ? Math.round(input.estMinutes) : null;
@@ -421,7 +453,7 @@ export function priceTask(input: PriceInput, ctx: PricingContext, track: Track):
   const V = band === "INTRO" ? introVolumeFactor(introBefore) : 1;
   // A task broken into steps pays the share of them ticked (a full completion only; a minimum, play or study pays its own K).
   const steps = mode === "FULL" ? stepShareOf(input.steps) : null;
-  const K = steps ? roundTo(steps.done / steps.total, 3) : PAY_MODE_FACTOR[mode];
+  const K = steps ? roundTo(steps.done / steps.total, 3) : LIFE_PAY_MODE_FACTOR[mode];
 
   let effortNote: string | undefined;
   if (reported != null && reported !== minutes) effortNote = `reported ${reported} min, counted ${minutes}`;
@@ -453,12 +485,22 @@ export function priceTask(input: PriceInput, ctx: PricingContext, track: Track):
     { key: "K", label: steps && steps.done < steps.total ? `${steps.done} of ${steps.total} steps` : MODE_LABEL[mode], value: K },
   ];
 
-  const raw = roundTo(B * E * T * C * D * V * K, 1);
+  // Momentum's factors (PriceMomentum), after K and inside the knee. None of them: today's receipt exactly.
+  const S = momentum?.perks && Number.isFinite(momentum.perks.mult) && momentum.perks.mult > 0 && momentum.perks.mult !== 1 ? momentum.perks : null;
+  const M = momentum?.chain && Number.isFinite(momentum.chain.mult) && momentum.chain.links > 0 && momentum.chain.mult > 0 ? momentum.chain : null;
+  const X = momentum?.crit && Number.isFinite(momentum.crit.mult) && momentum.crit.mult > 0 ? momentum.crit : null;
+  if (S) factors.push({ key: "S", label: S.names.join(" · ") || "skills", value: roundTo(S.mult, 3) });
+  if (M) factors.push({ key: "M", label: `${Math.round(M.links)} link${Math.round(M.links) === 1 ? "" : "s"}`, value: roundTo(M.mult, 3) });
+  if (X) factors.push({ key: "X", label: X.crit ? "crit" : "no crit", value: X.crit ? X.mult : 1, note: X.note });
+  const hasMomentum = !!(S || M || X);
+
+  const base = B * E * T * C * D * V * K;
+  const raw = roundTo(hasMomentum ? base * (S ? S.mult : 1) * (M ? M.mult : 1) * (X && X.crit ? X.mult : 1) : base, 1);
   const kneeBefore = roundTo(Math.max(0, Number.isFinite(ctx.rawBefore) ? ctx.rawBefore : 0), 3);
   const xp = roundTo(kneePay(kneeBefore, raw), 3);
 
   return {
-    v: FORMULA_VERSION,
+    v: hasMomentum ? FORMULA_VERSION_MOMENTUM : FORMULA_VERSION,
     factors,
     minutes,
     raw,
@@ -582,10 +624,21 @@ export function receiptBandOf(r: unknown): Band | null {
  * The factors a reader needs. B, E, T, C and D always show, even at 1.00,
  * because each is a question the receipt answers (was it on time, was it
  * a repeat); V shows only once routine volume actually eases a price, and
- * K only when the payment is not a plain full one.
+ * K only when the payment is not a plain full one. Momentum's X shows only on
+ * a crit: a miss keeps its sealed roll on the row, unshown.
  */
 export function shownFactors(r: Pick<Receipt, "factors">): ReceiptFactor[] {
-  return r.factors.filter((f) => !((f.key === "V" || f.key === "K") && f.value === 1));
+  return r.factors.filter((f) => !((f.key === "V" || f.key === "K" || f.key === "X") && f.value === 1));
+}
+
+/** The crit a stored receipt carries (its X factor): null when it never rolled (not momentum-qualifying, or before launch). */
+export function receiptCritOf(r: unknown): { crit: boolean; mult: number; note: string | null } | null {
+  if (!r || typeof r !== "object") return null;
+  const factors = (r as { factors?: unknown }).factors;
+  if (!Array.isArray(factors)) return null;
+  const x = factors.find((f): f is ReceiptFactor => !!f && typeof f === "object" && (f as ReceiptFactor).key === "X");
+  if (!x || typeof x.value !== "number") return null;
+  return { crit: x.value > 1, mult: x.value, note: typeof x.note === "string" ? x.note : null };
 }
 
 /** One line, e.g. 'Demanding 20 × 150 min 1.33 × on time 1.00 × one-off 1.00 × 1st today 1.00 = 26.7 · full rate (46 of 100 used today) → Duty'. */

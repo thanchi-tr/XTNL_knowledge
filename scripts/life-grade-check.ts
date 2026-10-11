@@ -9,6 +9,8 @@
  *
  *   npx tsx scripts/life-grade-check.ts
  */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   BAND_BASE,
   CONSISTENCY_CAP,
@@ -27,10 +29,32 @@ import {
   priceTask,
   projectRow,
   receiptBandOf,
+  receiptCritOf,
   selfRatingOpen,
   selfRatingOpensOn,
+  shownFactors,
   timingFor,
 } from "../src/lib/life-grade";
+import {
+  applyOps,
+  buildBoard,
+  linkedTickPlanOf,
+  liveChainOf,
+  momentumFactsOf,
+  planCompletion,
+  projectRow as projectBoardRow,
+  taskEventInput,
+  type BoardData,
+  type BoardTemplate,
+  type DayLedger,
+  type LedgerCompletion,
+  type PlanInput,
+  type PlanMomentum,
+  type PricedTemplate,
+} from "../src/lib/today-board";
+import { RAW_WORST_CASE_MOMENTUM, chainMult, critKey, momentumLive } from "../src/lib/momentum";
+import { roll } from "../src/lib/momentum-roll";
+import { receiptView } from "../src/components/today/ReceiptSheet";
 import {
   AI_UNAVAILABLE_NOTE,
   bandCapFor,
@@ -549,6 +573,341 @@ console.log("— sizing: the prompt fence cannot be closed from inside —");
   const openers = fenced.match(/<\s*task\s*>/gi) ?? [];
   check("asData: a title containing '</task>' (any case or spacing) cannot end the block", closers.length === 1 && openers.length === 1 && fenced.endsWith("</task>"), fenced.replace(/\n/g, "⏎"));
   check("asData: ordinary angle brackets pass through", asData("entry", "a < b and <b>bold</b>").includes("a < b and <b>bold</b>"));
+}
+
+// ═══ MOMENTUM (lane A: perks S, chains M, crits X in the price) ═══════════
+//
+// momentum.md §A.4, §A.5, §A.6, §B.3. MOMENTUM_LAUNCH_DAY is null, so every
+// launched case below passes its launch day explicitly. The rolls use the
+// sim's golden secret (G5), so every crit here is a literal.
+
+const M_DAY = "2026-10-19";
+const M_LAUNCH = "2026-10-12";
+const SECRET = "golden-secret";
+const goldenRoll = (day: string, normTitle: string, k: number) => roll(SECRET, critKey("u1", day, normTitle, k));
+const mLedger = (completions: LedgerCompletion[] = [], rawBefore = 0, day = M_DAY): DayLedger => ({ day, rawBefore, lifeXp: 0, completions, reviews: 0, reviewXp: 0, ideas: 0, dayOpenQty: null });
+const mTpl = (over: Partial<PricedTemplate> = {}): PricedTemplate => ({
+  id: "t-journal",
+  title: "Journal",
+  normTitle: "journal",
+  recurrence: null,
+  dueDay: null,
+  dueKind: null,
+  intrinsic: false,
+  autoMetric: null,
+  mvv: null,
+  track: "CARE",
+  band: "STANDARD",
+  bandOverride: 0,
+  estMinutes: 30,
+  machineMinutes: 30,
+  ...over,
+});
+const mom = (over: Partial<PlanMomentum> = {}): PlanMomentum => ({ launchDay: M_LAUNCH, perks: [], at: "2026-10-19T01:00:00.000Z", roll: goldenRoll, ...over });
+const mPlan = (over: Partial<PlanInput> = {}) => planCompletion({ template: mTpl(), day: M_DAY, today: M_DAY, slot: 0, ledger: mLedger(), streakDays: 0, momentum: mom(), ...over });
+/** A qualifying completion already on the day's ledger (LedgerCompletion.momentum). */
+const done = (groupKey: string, at: string, opts: { crit?: boolean; estEff?: number; raw?: number } = {}): LedgerCompletion => ({
+  eventId: `ev-${groupKey}-${at}`,
+  templateId: `t-${groupKey}`,
+  groupKey,
+  intro: false,
+  raw: opts.raw ?? 10,
+  xp: opts.raw ?? 10,
+  sink: "TRACK",
+  momentum: { at, estEff: opts.estEff ?? 15, crit: !!opts.crit },
+});
+const factor = (r: { factors: { key: string; value: number; label: string; note?: string }[] }, key: string) => r.factors.find((f) => f.key === key);
+
+console.log("— momentum: inert without it, byte for byte —");
+{
+  const inputs: Partial<PriceInput>[] = [
+    { band: "DEMANDING", machineMinutes: 120, estMinutes: 120, minutes: 150 },
+    { band: "INTRO", machineMinutes: 15, estMinutes: 15, recurring: true, streakDays: 30 },
+    { mode: "MVV", recurring: true, streakDays: 40 },
+    { mode: "PLAY" },
+    { mode: "STUDY" },
+    { steps: { done: 2, total: 5 } },
+  ];
+  const same = inputs.every((o) => {
+    const plain = JSON.stringify(price(o, 12.5));
+    return (
+      plain === JSON.stringify(priceTask({ ...base, ...o }, { rawBefore: 12.5 }, "DUTY", undefined)) &&
+      plain === JSON.stringify(priceTask({ ...base, ...o }, { rawBefore: 12.5 }, "DUTY", null)) &&
+      plain === JSON.stringify(priceTask({ ...base, ...o }, { rawBefore: 12.5 }, "DUTY", {})) &&
+      plain === JSON.stringify(priceTask({ ...base, ...o }, { rawBefore: 12.5 }, "DUTY", { perks: { mult: 1, names: [] }, chain: { links: 0, mult: 1 } }))
+    );
+  });
+  check("priceTask: no momentum (absent, null, empty, S 1 and 0 links) is today's receipt byte for byte, 'life-1'", same && price({}).v === "life-1");
+  const t = mTpl({ band: "DEMANDING", estMinutes: 120, machineMinutes: 120 });
+  const before = { template: t, day: M_DAY, today: M_DAY, slot: 0, ledger: mLedger([], 40), streakDays: 0, minutes: 150 };
+  const plain = JSON.stringify(planCompletion(before));
+  const notYet = JSON.stringify(planCompletion({ ...before, momentum: mom({ launchDay: "2026-10-20", perks: ["D_STEADY", "D_DEEP"] }) }));
+  check("planCompletion: a day before the launch day prices exactly as without momentum (and its ledger entry has no momentum)", plain === notYet && !("momentum" in planCompletion(before).completion), notYet.slice(0, 80));
+  check("the gate: MOMENTUM_LAUNCH_DAY null keeps every day dark (momentumLive)", !momentumLive(M_DAY, null) && momentumLive(M_DAY, M_LAUNCH) && !momentumLive("2026-10-11", M_LAUNCH));
+  const t2 = mTpl({ id: "a", title: "Laundry", normTitle: "laundry" });
+  const tplB = { ...t2, kind: "TASK", inbox: false, startDay: "2026-01-01", horizon: null, parentId: null, krMetric: null, krTarget: null, krUnit: null, compulsory: false, autoTarget: null, category: "CHORE", lexicalBand: "STANDARD", aiBand: null, gradeSource: "LEXICAL", gradeConfidence: 0.4, gradeBasis: null, gradeModel: null, gradePromptVersion: null, gradeAttempts: 1, gradeFrozen: true, sizing: false, bandOverrideAt: null, gradeFrozenAt: null, topAttribute: null, note: null, completedAt: null, createdAt: "2026-06-01T00:00:00.000Z", sortOrder: 0 } as BoardTemplate;
+  const data: BoardData = { today: M_DAY, yesterday: "2026-10-18", capacityMin: 240, templates: [tplB], instances: [], stats: {}, ledger: { today: mLedger(), yesterday: mLedger([], 0, "2026-10-18") }, paid: {}, goalQty: {}, dueNow: 0 };
+  const b = buildBoard(data);
+  const row = b.anytime[0];
+  check("board: without BoardData.momentum every projection is 'life-1' with no momentum factor", !!row && row.projection.v === "life-1" && !row.projection.factors.some((f) => f.key === "S" || f.key === "M" || f.key === "X"));
+}
+
+console.log("— momentum: S, the perks (§B.3) —");
+{
+  const tax = (perks: string[], over: Partial<PricedTemplate> = {}) =>
+    mPlan({ template: mTpl({ id: "t-tax", title: "File tax return", normTitle: "file tax return", band: "DEMANDING", estMinutes: 120, machineMinutes: 120, ...over }), minutes: 150, momentum: mom({ perks, roll: null }) }).receipt;
+  const steady = tax(["D_STEADY"]);
+  check("Steady hand: 'File tax return' 26.7 × 1.04 = 27.7, 'life-2', S 'Steady hand ×1.04'", steady.raw === 27.7 && steady.v === "life-2" && factor(steady, "S")?.value === 1.04 && factor(steady, "S")?.label === "Steady hand", describeReceipt(steady));
+  const deep = tax(["D_STEADY", "D_DEEP"]);
+  check("…with Deep work (DEMANDING): 26.67 × 1.04 × 1.08 = 30.0, one S row naming both", deep.raw === 30 && factor(deep, "S")?.value === 1.123 && factor(deep, "S")?.label === "Steady hand · Deep work", describeReceipt(deep));
+  check("Deep work never reaches a STANDARD task", factor(tax(["D_DEEP"], { band: "STANDARD" }), "S") === undefined);
+  const frogT = mTpl({ id: "t-frog" });
+  const frog = (over: Partial<PlanInput>) => mPlan({ template: frogT, momentum: mom({ perks: ["D_FROG"], frogTemplateId: "t-frog", roll: null }), ...over }).receipt;
+  check("Frog eater: today's TASK quest pays ×1.15 (10 → 11.5)", frog({}).raw === 11.5 && factor(frog({}), "S")?.label === "Frog eater");
+  check("…but not Again (slot 1), not a record of yesterday, not another task", factor(frog({ slot: 1 }), "S") === undefined && factor(frog({ day: "2026-10-18" }), "S") === undefined && factor(mPlan({ template: mTpl({ id: "other" }), momentum: mom({ perks: ["D_FROG"], frogTemplateId: "t-frog", roll: null }) }).receipt, "S") === undefined);
+  const practice = (captureKey: string) => mPlan({ template: mTpl({ captureKey }), momentum: mom({ perks: ["P_PRACTICE"], roll: null }) }).receipt;
+  check("Practice makes: a roadmap practice or step ('rm:<id>:p0', ':s1') pays ×1.06; the goal ('rm:<id>') and a plain task do not", practice("rm:ms2:p0").raw === 10.6 && practice("rm:ms2:s1").raw === 10.6 && factor(practice("rm:ms2"), "S") === undefined && factor(practice("q:abc"), "S") === undefined);
+  const mvvS = mPlan({ template: mTpl({ mvv: "5 min" }), mvv: true, momentum: mom({ perks: ["D_STEADY"] }) }).receipt;
+  check("S never reaches the minimum version, #play or a study-linked task", factor(mvvS, "S") === undefined && mvvS.v === "life-1" && factor(mPlan({ template: mTpl({ intrinsic: true }), momentum: mom({ perks: ["D_STEADY"] }) }).receipt, "S") === undefined && factor(mPlan({ template: mTpl({ autoMetric: "REVIEWS" }), momentum: mom({ perks: ["D_STEADY"] }) }).receipt, "S") === undefined);
+}
+
+console.log("— momentum: M, chains (§A.4; the sim's G4) —");
+{
+  // Eight 15-minute tasks, each ticked 20 minutes after the last: every one links.
+  const at = (min: number) => new Date(Date.parse("2026-10-19T00:00:00.000Z") + min * 60_000).toISOString();
+  const est15 = { estMinutes: 15, machineMinutes: 15 };
+  const ms = (cap: string[]) => {
+    const out: number[] = [];
+    const prior: LedgerCompletion[] = [];
+    for (let i = 0; i < 8; i++) {
+      const p = mPlan({ template: mTpl({ id: `c${i}`, title: `Chore ${i}`, normTitle: `chore ${i}`, ...est15 }), ledger: mLedger([...prior]), momentum: mom({ perks: cap, at: at(20 * i), roll: null }) });
+      out.push(factor(p.receipt, "M")?.value ?? 1);
+      prior.push({ ...p.completion, eventId: `e${i}` });
+    }
+    return out;
+  };
+  check("G4: chainMult(0..7) through the price = 1.00 1.03 1.06 1.09 1.12 1.15 1.15 1.15", JSON.stringify(ms([])) === JSON.stringify([1, 1.03, 1.06, 1.09, 1.12, 1.15, 1.15, 1.15]), JSON.stringify(ms([])));
+  check("…Long chain: 7 links, ×1.21", JSON.stringify(ms(["D_CHAIN"])) === JSON.stringify([1, 1.03, 1.06, 1.09, 1.12, 1.15, 1.18, 1.21]), JSON.stringify(ms(["D_CHAIN"])));
+  const linkAfter = (gap: number, est: number, perks: string[] = []) =>
+    factor(mPlan({ template: mTpl({ estMinutes: est, machineMinutes: est }), ledger: mLedger([done("other", at(0))]), momentum: mom({ at: at(gap), roll: null, perks }) }).receipt, "M")?.value ?? 1;
+  check("G4: links (gap 3, est 15) no · (20, 15) yes · (70, 15) no · (100, 90) yes", linkAfter(3, 15) === 1 && linkAfter(20, 15) === 1.03 && linkAfter(70, 15) === 1 && linkAfter(100, 90) === 1.03);
+  check("…Quick link: (70, 15) links within 60 min", linkAfter(70, 15, ["D_LINK"]) === 1.03);
+  const chained = mPlan({ template: mTpl(), ledger: mLedger([done("a", at(0)), done("b", at(20)), done("c", at(40))]), momentum: mom({ at: at(60 + 30), roll: null }) }).receipt;
+  check("a 3-link tick: 10 × 1.09 = 10.9, M '3 links' ×1.09, 'life-2'", chained.raw === 10.9 && factor(chained, "M")?.label === "3 links" && chained.v === "life-2", describeReceipt(chained));
+  const undoneLink = mPlan({ template: mTpl(), ledger: mLedger([done("a", at(0)), done("c", at(40))]), momentum: mom({ at: at(90), roll: null }) }).receipt;
+  check("derived: an undone link drops out (a b c then this is link 3; with b undone, c re-links to a and this is link 2)", factor(undoneLink, "M")?.value === 1.06 && factor(chained, "M")?.value === 1.09, JSON.stringify(factor(undoneLink, "M")));
+  const broken = mPlan({ template: mTpl(), ledger: mLedger([done("a", at(0)), done("c", at(80))]), momentum: mom({ at: at(110), roll: null }) }).receipt;
+  check("…and a gap past the window breaks it: a, then c 80 min later (est 15), so this is link 1", factor(broken, "M")?.value === 1.03, JSON.stringify(factor(broken, "M")));
+  const day3 = mLedger([done("a", at(0)), done("b", at(20)), done("c", at(40))]);
+  const chip = liveChainOf(day3, [], at(70));
+  check("liveChainOf (the card's chip): 'Chain 2', kept by starting the next within 45 min of the last tick", chip?.links === 2 && chip.lastAt === at(40) && chip.untilAt === at(85), JSON.stringify(chip));
+  check("…gone past the window (60 with Quick link), and on a day with no qualifying tick", liveChainOf(day3, [], at(86)) === null && liveChainOf(day3, ["D_LINK"], at(86))?.untilAt === at(100) && liveChainOf(mLedger(), [], at(0)) === null);
+  const nonQ: LedgerCompletion = { eventId: "x", templateId: "t-x", groupKey: "x", intro: false, raw: 3, xp: 3, sink: "TRACK" };
+  check("a non-qualifying row (no momentum facts: #play, the minimum, auto) is no link", factor(mPlan({ ledger: mLedger([nonQ]), momentum: mom({ at: at(30), roll: null }) }).receipt, "M") === undefined);
+  check("the chain stays inside the knee: R_before 90, raw 10.9 pays g(100.9) − g(90)", Math.abs(mPlan({ template: mTpl(), ledger: mLedger([done("a", at(0)), done("b", at(20)), done("c", at(40))], 90), momentum: mom({ at: at(90), roll: null }) }).receipt.xp - kneePay(90, 10.9)) < 0.0005);
+}
+
+console.log("— momentum: X, crits (§A.5; the sim's G5) —");
+{
+  check("G5: roll('golden-secret', critKey('u1', '2026-10-19', 'dishes', 1)) = 0.672194971195", goldenRoll(M_DAY, "dishes", 1).toFixed(12) === "0.672194971195" && critKey("u1", M_DAY, "dishes", 1) === "crit:v1|u1|2026-10-19|dishes|1");
+  const dishes = mPlan({ template: mTpl({ id: "t-dishes", title: "Dishes", normTitle: "dishes" }) }).receipt;
+  check(
+    "a miss still carries its sealed roll: X 'no crit' ×1, note 'sealed roll 0.672, not under 0.080', 'life-2', raw 10",
+    dishes.v === "life-2" && factor(dishes, "X")?.value === 1 && factor(dishes, "X")?.label === "no crit" && factor(dishes, "X")?.note === "sealed roll 0.672, not under 0.080" && dishes.raw === 10,
+    JSON.stringify(factor(dishes, "X"))
+  );
+  check("…and the receipt shows no crit row for it (shownFactors)", !shownFactors(dishes).some((f) => f.key === "X"));
+  const journal = mPlan({}).receipt;
+  check(
+    "a crit: 'journal' k 1 rolls 0.046 < 0.08 → X 'crit' ×2, note 'sealed roll 0.046 under 0.080', 10 → 20",
+    factor(journal, "X")?.value === 2 && factor(journal, "X")?.note === "sealed roll 0.046 under 0.080" && journal.raw === 20 && journal.xp === 20,
+    JSON.stringify(factor(journal, "X"))
+  );
+  const mass = mPlan({ momentum: mom({ perks: ["D_MASS"] }) }).receipt;
+  const luck = mPlan({ momentum: mom({ perks: ["D_LUCK"] }) }).receipt;
+  check("Critical mass pays ×2.5 (25.0); Lucky strike rolls under 0.100", mass.raw === 25 && factor(mass, "X")?.value === 2.5 && factor(luck, "X")?.note === "sealed roll 0.046 under 0.100");
+  check("the crit is inside the knee: R_before 95, raw 20 pays g(115) − g(95)", Math.abs(mPlan({ ledger: mLedger([], 95) }).receipt.xp - kneePay(95, 20)) < 0.0005);
+  // k counts the day's earlier qualifying completions of the same normTitle; 'dishes' k 12 rolls 0.041.
+  const elevenDishes = Array.from({ length: 11 }, (_, i) => done("dishes", `2026-10-19T0${Math.floor(i / 6)}:${String((i % 6) * 10).padStart(2, "0")}:00.000Z`));
+  const twelfth = mPlan({ template: mTpl({ id: "t-dishes", title: "Dishes", normTitle: "dishes" }), ledger: mLedger(elevenDishes) }).receipt;
+  check("k = 1 + the day's qualifying completions of this normTitle: the 12th dishes rolls key …|dishes|12 = 0.041, a crit", factor(twelfth, "X")?.value === 2 && factor(twelfth, "X")?.note === "sealed roll 0.041 under 0.080", JSON.stringify(factor(twelfth, "X")));
+
+  // Undo → re-tick: the undone row leaves the ledger, so the same k, the same roll, the same crit.
+  const tick1 = mPlan({});
+  const afterUndo = mPlan({ ledger: mLedger([]), momentum: mom({ at: "2026-10-19T01:05:00.000Z" }) });
+  check("undo → re-tick gives the same crit (same k 1, same u 0.046, same X)", JSON.stringify(factor(tick1.receipt, "X")) === JSON.stringify(factor(afterUndo.receipt, "X")) && factor(afterUndo.receipt, "X")?.value === 2);
+  const second = mPlan({ ledger: mLedger([{ ...tick1.completion, eventId: "e1" }]), momentum: mom({ at: "2026-10-19T02:00:00.000Z" }) }).receipt;
+  check("…while a second journal on the day is k 2, a different roll", factor(second, "X")?.note !== factor(tick1.receipt, "X")?.note && goldenRoll(M_DAY, "journal", 2) >= 0.08 && factor(second, "X")?.value === 1);
+
+  // The cap: three crits earlier on the day, so a roll under p is a miss.
+  // Two hours apart, so no chain moves the raw.
+  const threeCrits = [done("a", "2026-10-18T18:00:00.000Z", { crit: true }), done("b", "2026-10-18T20:00:00.000Z", { crit: true }), done("c", "2026-10-18T22:00:00.000Z", { crit: true })];
+  const capped = mPlan({ ledger: mLedger(threeCrits) }).receipt;
+  check(
+    "at most 3 crits a life day: the 4th roll under 0.080 is a miss, 'sealed roll 0.046 under 0.080 · 3 crits today already'",
+    factor(capped, "X")?.value === 1 && factor(capped, "X")?.note === "sealed roll 0.046 under 0.080 · 3 crits today already" && capped.raw === 10,
+    JSON.stringify(factor(capped, "X"))
+  );
+  const twoCrits = mPlan({ ledger: mLedger(threeCrits.slice(0, 2)) }).receipt;
+  check("…while two crits earlier still allow the third", factor(twoCrits, "X")?.value === 2);
+  check("receiptCritOf reads a stored X (crit, miss) and nothing else", receiptCritOf(journal)?.crit === true && receiptCritOf(dishes)?.crit === false && receiptCritOf(price({})) === null && receiptCritOf(null) === null);
+
+  // Non-qualifying completions never roll (§A.5): the roll is never even asked.
+  let asked = 0;
+  const spy = (d: string, n: string, k: number) => {
+    asked += 1;
+    return goldenRoll(d, n, k);
+  };
+  const cases: [string, Partial<PlanInput>][] = [
+    ["the minimum version", { template: mTpl({ mvv: "5 min" }), mvv: true }],
+    ["#play (sink NONE)", { template: mTpl({ intrinsic: true }) }],
+    ["a study-linked task (K 0)", { template: mTpl({ autoMetric: "REVIEWS" }) }],
+    ["an auto-completion", { auto: true }],
+    ["a make-up", { makeUp: true }],
+    ["a step share short of the whole task", { steps: { done: 2, total: 5 } }],
+    ["a walk's SESSION tick", { session: true }],
+    ["a day before launch", { day: "2026-10-11", today: "2026-10-11" }],
+  ];
+  const rolled = cases.filter(([, o]) => {
+    asked = 0;
+    const r = mPlan({ ...o, momentum: mom({ roll: spy }) }).receipt;
+    return asked > 0 || r.factors.some((f) => f.key === "X" || f.key === "M");
+  });
+  check("non-qualifying rows never roll and never chain: " + cases.map(([n]) => n).join(", "), rolled.length === 0, rolled.map(([n]) => n).join(", "));
+  check("…while the step tick that completes the task does (5 of 5)", factor(mPlan({ steps: { done: 5, total: 5 } }).receipt, "X")?.value === 2);
+  check("…and a step share short of the whole still takes S (it is a paying full tick)", factor(mPlan({ steps: { done: 2, total: 5 }, momentum: mom({ perks: ["D_STEADY"] }) }).receipt, "S")?.value === 1.04);
+  check("a record of yesterday qualifies, rolled on its own day's key", factor(mPlan({ day: "2026-10-18", ledger: mLedger([], 0, "2026-10-18") }).receipt, "X")?.note?.startsWith(`sealed roll ${goldenRoll("2026-10-18", "journal", 1).toFixed(3)}`) === true);
+}
+
+console.log("— momentum: the worst case and the projection —");
+{
+  check("G10: RAW_WORST_CASE_MOMENTUM = 229.8", RAW_WORST_CASE_MOMENTUM === 229.8, String(RAW_WORST_CASE_MOMENTUM));
+  const worst = priceTask(
+    { ...base, band: "SEVERE", machineMinutes: 240, estMinutes: 480, minutes: 480, recurring: true, streakDays: 64 },
+    { rawBefore: 0 },
+    "DUTY",
+    { perks: { mult: 1.04 * 1.08 * 1.15, names: ["Steady hand", "Deep work", "Frog eater"] }, chain: { links: 7, mult: chainMult(7, 7) }, crit: { crit: true, mult: 2.5, note: "sealed roll 0.010 under 0.100" } }
+  );
+  check("…priceTask's own worst (every task perk, a 7-link chain, a capstone crit) is 229.8, paying g = 183.2 as the day's first", worst.raw === RAW_WORST_CASE_MOMENTUM && worst.xp.toFixed(1) === "183.2", `${worst.raw} → ${worst.xp}`);
+
+  // The board's projection: S and M, never X (§0).
+  const t = { id: "a", title: "Journal", normTitle: "journal", recurrence: null, dueDay: null, dueKind: null, intrinsic: false, autoMetric: null, mvv: null, track: "CARE", band: "STANDARD", bandOverride: 0, estMinutes: 15, machineMinutes: 15, kind: "TASK", inbox: false, startDay: "2026-01-01", horizon: null, parentId: null, krMetric: null, krTarget: null, krUnit: null, compulsory: false, autoTarget: null, category: "SPIRIT", lexicalBand: "STANDARD", aiBand: null, gradeSource: "LEXICAL", gradeConfidence: 0.4, gradeBasis: null, gradeModel: null, gradePromptVersion: null, gradeAttempts: 1, gradeFrozen: true, sizing: false, bandOverrideAt: null, gradeFrozenAt: null, topAttribute: null, note: null, completedAt: null, createdAt: "2026-06-01T00:00:00.000Z", sortOrder: 0 } as BoardTemplate;
+  const asOf = "2026-10-19T01:00:00.000Z";
+  const data = (lastAt: string): BoardData => ({
+    today: M_DAY,
+    yesterday: "2026-10-18",
+    capacityMin: 240,
+    templates: [t],
+    instances: [],
+    stats: {},
+    ledger: { today: mLedger([done("other", lastAt)]), yesterday: mLedger([], 0, "2026-10-18") },
+    paid: {},
+    goalQty: {},
+    dueNow: 0,
+    momentum: { launchDay: M_LAUNCH, perks: ["D_STEADY"], frogTemplateId: null, asOf },
+  });
+  const live = buildBoard(data("2026-10-19T00:50:00.000Z")).anytime[0].projection;
+  check(
+    "projection: S and the live chain (a 15-min task started now, done at its est_eff: 8.33 × 1.04 × 1.03 = 8.9), never X, though 'journal' would crit",
+    live.raw === 8.9 && factor(live, "S")?.value === 1.04 && factor(live, "M")?.value === 1.03 && !live.factors.some((f) => f.key === "X"),
+    describeReceipt(live)
+  );
+  const cold = buildBoard(data("2026-10-19T00:10:00.000Z")).anytime[0].projection;
+  check("…a chain past its window (last tick 50 min before the read) projects no M (8.33 × 1.04 = 8.7)", factor(cold, "M") === undefined && cold.raw === 8.7, describeReceipt(cold));
+  const drawer = projectBoardRow(data("2026-10-19T00:50:00.000Z"), buildBoard(data("2026-10-19T00:50:00.000Z")).anytime[0], { minutes: 30 });
+  check("…the drawer's projectRow prices the same way (S and M, no X)", factor(drawer, "S")?.value === 1.04 && !drawer.factors.some((f) => f.key === "X"));
+  const tap = "2026-10-19T01:05:00.000Z";
+  const opt = applyOps(data("2026-10-19T00:50:00.000Z"), [{ id: "op1", kind: "complete", templateId: "a", day: M_DAY, slot: 0, at: tap }]);
+  const optReceipt = opt.paid["opt:op1"]?.receipt;
+  const optLedger = opt.ledger.today.completions[opt.ledger.today.completions.length - 1];
+  check(
+    "…an optimistic tick prices at the tap (15 min after the last: a link) with S and M and no X, and joins the ledger as a qualifying link",
+    !!optReceipt && factor(optReceipt, "S")?.value === 1.04 && factor(optReceipt, "M")?.value === 1.03 && !optReceipt.factors.some((f) => f.key === "X") && optLedger?.momentum?.at === tap && optLedger.momentum.crit === false,
+    JSON.stringify(optLedger)
+  );
+  const confirmed = applyOps(data("2026-10-19T00:50:00.000Z"), [{ id: "op1", kind: "complete", templateId: "a", day: M_DAY, slot: 0, at: tap, instanceId: "i9", receipt: mPlan({}).receipt }]);
+  check("…and once the server's receipt is back, its crit is what the day's ledger counts", confirmed.ledger.today.completions[confirmed.ledger.today.completions.length - 1]?.momentum?.crit === true);
+}
+
+console.log("— momentum: the facts read on a live day (perks, the frog) —");
+{
+  const row = (source: string, detail: string | null, min: number, receipt: unknown = null) => ({ source, detail, occurredAt: new Date(Date.parse("2026-10-19T00:00:00.000Z") + min * 60_000), receipt });
+  const set = { v: "quests-1", day: M_DAY, quests: [{ slot: "TASK", kind: "TEMPLATE", templateId: "tA", track: "DUTY", raw: 20, score: 30, title: "Tax" }] };
+  const swap = (n: number, templateId: string, day = M_DAY) => ({ v: "quest-swap-1", day, slot: "TASK", n, quest: { slot: "TASK", kind: "TEMPLATE", templateId, track: "DUTY", raw: 10, score: 10, title: "Other" } });
+  const facts = momentumFactsOf(
+    [row("PERK", "D_STEADY", 0), row("PERK", "D_LUCK", 1), row("RESPEC", null, 2), row("PERK", "D_DEEP", 3), row("QUEST_SET", null, 4, set), row("QUEST_SET", null, 5, swap(1, "tB")), row("QUEST_SET", null, 6, swap(2, "tC", "2026-10-18"))],
+    M_DAY,
+    new Date("2026-10-19T01:00:00.000Z")
+  );
+  check("perks owned now: the PERK rows after the latest RESPEC (D_DEEP)", JSON.stringify(facts.perks) === JSON.stringify(["D_DEEP"]), JSON.stringify(facts.perks));
+  check("the frog: today's TASK quest after its latest swap (tB); another day's swap is ignored", facts.frogTemplateId === "tB", String(facts.frogTemplateId));
+  check("…none without a set, or for 'Finish any 2 tasks'", momentumFactsOf([], M_DAY, new Date()).frogTemplateId === null && momentumFactsOf([row("QUEST_SET", null, 0, { v: "quests-1", day: M_DAY, quests: [{ slot: "TASK", kind: "ANY", count: 2, title: "Finish any 2 tasks" }] })], M_DAY, new Date()).frogTemplateId === null);
+  check("a perk learned after the tick does not price it", momentumFactsOf([row("PERK", "D_STEADY", 120)], M_DAY, new Date("2026-10-19T01:00:00.000Z")).perks.length === 0);
+}
+
+console.log("— momentum: one payment for one walk (§A.6, completeLinkedCore) —");
+{
+  const walkTpl = mTpl({ id: "t-walk", title: "Evening walk", normTitle: "evening walk", recurrence: "DAILY", track: "BODY", estMinutes: 30, machineMinutes: 30 });
+  const s = mPlan({ template: walkTpl, session: true, minutes: 45, momentum: mom({ perks: ["D_STEADY"] }) });
+  check(
+    "SESSION: K 0 'paid by the walk', raw 0, sink NONE, source auto:workout, DONE; no perk, chain or crit, so 'life-1'",
+    s.mode === "SESSION" && factor(s.receipt, "K")?.value === 0 && factor(s.receipt, "K")?.label === "paid by the walk" && s.receipt.raw === 0 && s.receipt.xp === 0 && s.sink === "NONE" && s.source === "auto:workout" && s.status === "DONE" && s.receipt.v === "life-1" && !("momentum" in s.completion),
+    describeReceipt(s.receipt)
+  );
+  check("…its minutes are the walk's (E reads 45 min)", s.receipt.minutes === 45);
+  const ev = taskEventInput(s, { templateId: "t-walk", track: "BODY", instanceId: "i1", day: M_DAY, slot: 0, attempt: 0, now: new Date("2026-10-19T08:00:00.000Z"), countsForStreak: true, detail: "completed by a walk" });
+  check("…its TASK row counts for the streak, pays 0 into NONE", ev.countsForStreak === true && ev.xp === 0 && ev.rawXp === 0 && ev.sink === "NONE" && ev.source === "TASK");
+  const exTpl = { kind: "HABIT", category: "EXERCISE", boardId: null, autoMetric: null };
+  const plan = (o: Partial<Parameters<typeof linkedTickPlanOf>[0]>) => linkedTickPlanOf({ template: exTpl, live: true, workoutId: "w1", done: [], ...o });
+  check("an open EXERCISE habit on a live day: write the SESSION tick", plan({}).kind === "write");
+  const sameWalk = plan({ done: [{ instanceId: "i1", slot: 0, workoutId: "w1", raw: 0 }] });
+  check("idempotent: the same walk again writes nothing and answers as the first call (tickedRaw null)", sameWalk.kind === "ticked" && sameWalk.instanceId === "i1" && sameWalk.tickedRaw === null);
+  const ticked = plan({ done: [{ instanceId: "i1", slot: 0, workoutId: null, raw: 11.4 }] });
+  check("already ticked by hand (raw 11.4): nothing written, tickedRaw 11.4, so the walk tops up by max(0, raw − 11.4)", ticked.kind === "ticked" && ticked.tickedRaw === 11.4);
+  const again = plan({ done: [{ instanceId: "i1", slot: 0, workoutId: null, raw: 11.4 }, { instanceId: "i2", slot: 1, workoutId: null, raw: 9.7 }] });
+  check("…ticked twice (Again): the day's ticks together (21.1), the latest instance", again.kind === "ticked" && again.tickedRaw === 21.1 && again.instanceId === "i2");
+  const otherWalk = plan({ done: [{ instanceId: "i1", slot: 0, workoutId: "w0", raw: 0 }] });
+  check("…a second walk after the first linked it: tickedRaw 0 (that tick paid nothing; this walk pays in full)", otherWalk.kind === "ticked" && otherWalk.tickedRaw === 0);
+  const refused = [
+    plan({ template: { ...exTpl, boardId: "b1" } }),
+    plan({ template: { ...exTpl, category: "CHORE" } }),
+    plan({ template: { ...exTpl, kind: "GOAL" } }),
+    plan({ template: { ...exTpl, autoMetric: "REVIEWS" } }),
+    plan({ live: false }),
+  ];
+  check("refused: a work tab's task, a non-EXERCISE template, a goal, a study-linked task, a day momentum is not live on", refused.every((r) => r.kind === "refuse"), refused.map((r) => r.kind).join(","));
+
+  // The server half, by its source: the exact signature, through the tick's own writer (lock, guard, Duty, the board's rule).
+  // A checkout may carry CRLF (core.autocrlf): read the source as LF.
+  const src = (f: string) => readFileSync(resolve(__dirname, f), "utf8").replace(/\r\n/g, "\n");
+  const tasks = src("../src/lib/tasks.ts");
+  const fn = /export async function completeLinkedCore[\s\S]*?\n\}\n/.exec(tasks)?.[0] ?? "";
+  check(
+    "completeLinkedCore(input: { userId, templateId, day, workoutId, minutes, at }) → { ok, instanceId, tickedRaw } | { ok: false, error }",
+    /export async function completeLinkedCore\(input: \{\s*userId: string;\s*templateId: string;\s*day: DayKey;\s*workoutId: string;\s*minutes: number;\s*at: Date;\s*\}\): Promise<\{ ok: true; instanceId: string; tickedRaw: number \| null \} \| \{ ok: false; error: string \}>/.test(fn)
+  );
+  check(
+    "…decides by linkedTickPlanOf on momentumLive(day), then writes through settleCompletion (the lock, the freshness guard) with the walk, after Duty's refusal and the board's rule",
+    /linkedTickPlanOf\(/.test(fn) && /live: momentumLive\(day\)/.test(fn) && /settleCompletion\(/.test(fn) && /workoutId \}/.test(fn) && /tickRefusalFor\(/.test(fn) && /completionBlockOf\(/.test(fn) && /countsForStreak: true/.test(fn)
+  );
+  const settle = /async function settleOnce[\s\S]*?\n\}\n/.exec(tasks)?.[0] ?? "";
+  check("settleOnce: the lock and the guard open the array; a walk's tick is SESSION and its instance carries the workoutId", /lifeLockOp\(userId\)/.test(settle) && /freshnessGuardOp\(/.test(settle) && /session: true/.test(settle) && /workoutId: a\.workoutId/.test(settle));
+  const read = /async function readForCompletion[\s\S]*?\n\}\n/.exec(tasks)?.[0] ?? "";
+  const core = /async function readBoardCore[\s\S]*?\n\}\n/.exec(tasks)?.[0] ?? "";
+  check("inert: the tick's read wave reads the perks and the frog only when momentumLive(day), the board's only when momentumLive(today)", /momentumLive\(day\) \? readMomentumFacts\(/.test(read) && /momentumLive\(today\)/.test(core) && /momentumOn \? readMomentumFacts\(/.test(core));
+  check("the crit is the server's: momentumRoll over critKey(userId, …), never an unkeyed draw", /momentumRoll\(critKey\(userId, day, normTitle, k\)\)/.test(tasks) && !/Math\.random/.test(tasks) && !/Math\.random/.test(src("../src/lib/today-board.ts")));
+}
+
+console.log("— momentum: the receipt sheet —");
+{
+  const crit = mPlan({ template: mTpl({ band: "DEMANDING" }), ledger: mLedger([done("a", "2026-10-19T00:30:00.000Z", { estEff: 30 })]), momentum: mom({ perks: ["D_STEADY"] }) }).receipt;
+  const view = receiptView(crit);
+  const names = view.factors.map((f) => f.label);
+  check("S, M and X read 'Skills', 'Chain', 'Crit' with their words", names.includes("Skills") && names.includes("Chain") && names.includes("Crit") && view.factors.find((f) => f.key === "X")?.detail === "sealed roll 0.046 under 0.080 · set per task per day", JSON.stringify(view.factors.map((f) => [f.label, f.detail, f.mult])));
+  check("…a miss shows no crit row", !receiptView(mPlan({ template: mTpl({ id: "d", normTitle: "dishes" }) }).receipt).factors.some((f) => f.key === "X"));
+  const walk = mPlan({ template: mTpl({ id: "t-walk" }), session: true }).receipt;
+  check("a walk's SESSION tick says why it pays 0: 'Paid by the walk, not twice.'", receiptView(walk).zero === "Paid by the walk, not twice.");
+  check("…while reviews and play keep their words", receiptView(price({ mode: "STUDY" })).zero === "Paid by reviews, not twice." && receiptView(price({ mode: "PLAY" })).zero?.startsWith("Play:") === true);
 }
 
 // The model checks await a stubbed timeout, so they run last and the

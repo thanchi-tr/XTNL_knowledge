@@ -236,7 +236,8 @@ export interface PriceInput {
   repeatN: number;
   /** INTRO completions already made today (V). */
   introBefore: number;
-  mode: PayMode;
+  /** K's mode; SESSION (momentum.md §A.6) is priced through life-grade LIFE_PAY_MODE_FACTOR. */
+  mode: LifePayMode;
   /**
    * A task broken into steps (src/lib/subtasks.ts): the steps ticked of all. A full completion then pays done ÷ total
    * of its price (K); a minimum, play or study completion ignores it. Absent or every step done: K is the mode's own.
@@ -262,16 +263,14 @@ export interface PricingContext {
  * carrying any of them is 'life-2'; every other receipt stays 'life-1' byte for
  * byte. The board's projection includes S and M, never X.
  *
- * ReceiptFactor.key joins them (`… | "K" | MomentumFactorKey`) in lane A's
- * change, together with ReceiptSheet.tsx FACTOR_NAME, which is a Record over
- * the key union and would not compile with the union widened alone.
+ * ReceiptFactor.key carries them (lane A, with ReceiptSheet.tsx FACTOR_NAME).
  */
 export type MomentumFactorKey = "S" | "M" | "X";
 /** Every factor key a receipt may carry once momentum's factors are priced. */
 export type LifeFactorKey = ReceiptFactor["key"] | MomentumFactorKey;
 
 export interface ReceiptFactor {
-  key: "B" | "E" | "T" | "C" | "D" | "V" | "K";
+  key: "B" | "E" | "T" | "C" | "D" | "V" | "K" | MomentumFactorKey;
   label: string;
   value: number;
   note?: string;

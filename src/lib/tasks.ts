@@ -42,11 +42,15 @@ import {
   EST_MINUTES_MAX,
   SIZING_MAX_ATTEMPTS,
   clampBandOverride,
+  estEff,
   isTrack,
+  receiptCritOf,
   selfRatingOpen,
   selfRatingOpensOn,
   toBand,
 } from "./life-grade";
+import { critKey, momentumLaunchDay, momentumLive } from "./momentum";
+import { momentumRoll } from "./momentum-roll";
 import { cleanCaptureKey, matchParentGoal, parseCapture } from "./capture-parse";
 import type { GoalProgressRow } from "./goals";
 import { captureShapeOf } from "./capture-shape";
@@ -97,6 +101,8 @@ import {
   horizonFor,
   isDoneStatus,
   lastDoneOf,
+  linkedTickPlanOf,
+  momentumFactsOf,
   moveBlockOf,
   paidIntroOf,
   placeOf,
@@ -113,11 +119,14 @@ import {
   weekdayName,
   type BoardData,
   type BoardInstance,
+  type BoardMomentum,
   type BoardTemplate,
   type DayLedger,
   type InboxChoice,
   type LedgerCompletion,
+  type MomentumFacts,
   type PaidRecord,
+  type PlanMomentum,
   type TemplateStats,
 } from "./today-board";
 
@@ -382,6 +391,9 @@ export interface TaskEventRow {
   title: string | null;
   band: string | null;
   bandOverride: number | null;
+  /** The template's minutes (est_eff = min(est, 2 × machine)): momentum's chain window reads them on a live day. */
+  estMinutes?: number | null;
+  machineMinutes?: number | null;
 }
 
 export interface DayTotalRow {
@@ -401,15 +413,15 @@ export interface DayTotalRow {
 const daysSql = (days: DayKey[]) => Prisma.join(days.map((d) => Prisma.sql`${d}::date`));
 
 /**
- * The day's TASK and UNDO rows, each joined to its template's normTitle and
- * band: what repeat decay (D) and the INTRO count (V) read, and what an undo
- * negates.
+ * The day's TASK and UNDO rows, each joined to its template's normTitle,
+ * band and minutes: what repeat decay (D), the INTRO count (V) and, on a
+ * momentum day, the chain's window read, and what an undo negates.
  */
 export function readDayTaskEvents(userId: string, days: DayKey[]): Promise<TaskEventRow[]> {
   return prisma.$queryRaw<TaskEventRow[]>`
     SELECT e."id", e."day", e."source", e."sink", e."track", e."templateId", e."sourceId",
            e."xp", e."rawXp", e."occurredAt", e."dedupeKey", e."receipt",
-           t."normTitle", t."title", t."band", t."bandOverride"
+           t."normTitle", t."title", t."band", t."bandOverride", t."estMinutes", t."machineMinutes"
     FROM "ActivityEvent" e
     LEFT JOIN "TaskTemplate" t ON t."id" = e."templateId"
     WHERE e."userId" = ${userId} AND e."day" IN (${daysSql(days)}) AND e."source" IN ('TASK', 'UNDO')
@@ -455,10 +467,31 @@ function undoneIds(events: readonly TaskEventRow[]): Set<string> {
   return out;
 }
 
-export function ledgerOf(day: DayKey, totals: readonly DayTotalRow[], events: readonly TaskEventRow[]): DayLedger {
+/**
+ * A live TASK row's momentum facts (today-board LedgerMomentum): only a row
+ * that rolled qualified (its receipt carries X), so only those chain, count
+ * toward a crit's k and toward the 3-a-day cap.
+ */
+function ledgerMomentumOf(e: TaskEventRow): LedgerCompletion["momentum"] {
+  const crit = receiptCritOf(e.receipt);
+  if (!crit) return undefined;
+  const paidMinutes = (e.receipt as { minutes?: unknown } | null)?.minutes;
+  const fallback = typeof paidMinutes === "number" && Number.isFinite(paidMinutes) ? paidMinutes : 30;
+  const est = e.estMinutes != null && e.machineMinutes != null ? estEff(e.estMinutes, e.machineMinutes) : fallback;
+  return { at: e.occurredAt.toISOString(), estEff: est, crit: crit.crit };
+}
+
+/**
+ * One day's ledger from the wave's totals and TASK/UNDO rows. On a day
+ * momentum is live (momentumLive(day, launchDay)), each qualifying completion
+ * also carries its momentum facts; on any other day the ledger is exactly
+ * what it always was.
+ */
+export function ledgerOf(day: DayKey, totals: readonly DayTotalRow[], events: readonly TaskEventRow[], launchDay: DayKey | null = momentumLaunchDay()): DayLedger {
   const tot = totals.filter((r) => keyOfDateColumn(r.day) === day);
   const evs = events.filter((e) => keyOfDateColumn(e.day) === day);
   const undone = undoneIds(evs);
+  const live = momentumLive(day, launchDay);
   const completions: LedgerCompletion[] = evs
     .filter((e) => e.source === "TASK" && !undone.has(e.id))
     .map((e) => {
@@ -466,6 +499,7 @@ export function ledgerOf(day: DayKey, totals: readonly DayTotalRow[], events: re
       // a later self-rating of its template cannot take it out of today's
       // INTRO count.
       const template = e.band != null ? { band: asBand(e.band), bandOverride: e.bandOverride ?? 0 } : null;
+      const momentum = live ? ledgerMomentumOf(e) : undefined;
       return {
         eventId: e.id,
         templateId: e.templateId,
@@ -474,6 +508,7 @@ export function ledgerOf(day: DayKey, totals: readonly DayTotalRow[], events: re
         raw: e.rawXp ?? 0,
         xp: e.xp,
         sink: e.sink as Sink,
+        ...(momentum ? { momentum } : {}),
       };
     });
   const sum = (pick: (r: DayTotalRow) => number, where: (r: DayTotalRow) => boolean = () => true) =>
@@ -507,6 +542,39 @@ function paidOf(events: readonly TaskEventRow[]): Record<string, PaidRecord> {
     };
   }
   return out;
+}
+
+// ── Momentum's read (momentum.md §A.1, §A.5, §B.3) ────────────────────────
+
+/**
+ * One query, made only on a day momentum is live (the callers gate it on
+ * momentumLive): every PERK and RESPEC row (a few dozen at most) and
+ * today's QUEST_SET rows (the frozen set and its swaps).
+ */
+async function readMomentumFacts(userId: string, today: DayKey, now: Date): Promise<MomentumFacts> {
+  const rows = await prisma.activityEvent.findMany({
+    where: { userId, OR: [{ source: { in: ["PERK", "RESPEC"] } }, { source: "QUEST_SET", day: dateColumn(today) }] },
+    select: { source: true, detail: true, occurredAt: true, receipt: true },
+  });
+  return momentumFactsOf(rows, today, now);
+}
+
+/**
+ * A completion's momentum context (today-board PlanMomentum) on the server:
+ * the facts read in its wave, the tick's own instant, and the sealed roll
+ * (momentum-roll momentumRoll over critKey), which is what makes X a server
+ * decision that the board never projects.
+ */
+function planMomentumOf(userId: string, facts: MomentumFacts | null | undefined, now: Date): PlanMomentum | null {
+  const launchDay = momentumLaunchDay();
+  if (!facts || launchDay == null) return null;
+  return {
+    launchDay,
+    perks: facts.perks,
+    frogTemplateId: facts.frogTemplateId,
+    at: now,
+    roll: (day, normTitle, k) => momentumRoll(critKey(userId, day, normTitle, k)),
+  };
 }
 
 // ── In-process memos that a reset must clear ──────────────────────────────
@@ -549,7 +617,9 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
   const launchDay = dutyLaunchDay();
   const dutyOn = launchDay != null;
   const restoreFrom = dayStartOf(addDays(today, -(MAKEUP_RESTORE_EVERY_DAYS - 1)));
-  const [settings, templateRows, instanceRows, totals, events, goalQtyRows, debtRows, restRows, dutyRows] = await Promise.all([
+  // Momentum (lane A): the perks and today's frog, read only once momentum is live today (BoardData.momentum).
+  const momentumOn = momentumLive(today);
+  const [settings, templateRows, instanceRows, totals, events, goalQtyRows, debtRows, restRows, dutyRows, momentumFacts] = await Promise.all([
     prisma.lifeSettings.findUnique({
       where: { userId },
       select: { dailyCapacityMin: true, capacitySetAt: true, settledThroughDay: true, epochDay: true, debtWriteOff: true },
@@ -628,6 +698,7 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
           select: { source: true, day: true, xp: true, qty: true, templateId: true, dedupeKey: true },
         })
       : Promise.resolve([]),
+    momentumOn ? readMomentumFacts(userId, today, now) : Promise.resolve(null),
   ]);
 
   const templates = templateRows.map((r) => toBoardTemplate(r, now));
@@ -727,6 +798,9 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
   const recentFrom = [monthStart, weekStart, yesterday].sort()[0];
 
   const { goalQty, goalDays } = goalProgressOf(goalQtyRows, templates);
+  const launch = momentumLaunchDay();
+  const momentum: BoardMomentum | null =
+    momentumFacts && launch != null ? { launchDay: launch, perks: momentumFacts.perks, frogTemplateId: momentumFacts.frogTemplateId, asOf: now.toISOString() } : null;
 
   const core: BoardCore = {
     today,
@@ -740,6 +814,7 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
     paid: paidOf(events),
     goalQty,
     goalDays,
+    ...(momentum ? { momentum } : {}),
   };
   return { core, duty, yesterdayMusts };
 }
@@ -1425,12 +1500,16 @@ interface CompletionRead {
   debited?: boolean;
   /** M2: a FREEZE_USE covers the day (yesterday only): nothing more is recorded on it (decision 12). */
   frozen?: boolean;
+  /** Momentum (lane A): the perks and today's frog, read only when momentum is live on the completion's day. Absent: no momentum. */
+  momentum?: MomentumFacts | null;
 }
 
 /**
  * The one read wave a completion needs: the template, its history, the
  * day's ledger, the settlement cursor and epoch, any open debt, and — for a
- * record of yesterday — whether a freeze covers it.
+ * record of yesterday — whether a freeze covers it. On a day momentum is
+ * live, also the perks owned and today's frog (readMomentumFacts), in the
+ * same wave; on any other day nothing more is read.
  */
 async function readForCompletion(
   userId: string,
@@ -1439,7 +1518,7 @@ async function readForCompletion(
   day: DayKey,
   now: Date
 ): Promise<(CompletionRead & { row: TemplateRow }) | null> {
-  const [row, instances, totals, events, settings, debts, frozen] = await Promise.all([
+  const [row, instances, totals, events, settings, debts, frozen, momentum] = await Promise.all([
     prisma.taskTemplate.findFirst({ where: { id: templateId, userId }, select: TEMPLATE_SELECT }),
     prisma.taskInstance.findMany({
       where: { templateId, userId, day: { gte: dateColumn(addDays(today, -HISTORY_DAYS)) } },
@@ -1452,6 +1531,7 @@ async function readForCompletion(
     day < today
       ? prisma.activityEvent.findUnique({ where: { userId_dedupeKey: { userId, dedupeKey: freezeUseKey(day) } }, select: { id: true } })
       : Promise.resolve(null),
+    momentumLive(day) ? readMomentumFacts(userId, today, now) : Promise.resolve(null),
   ]);
   if (!row) return null;
   return {
@@ -1465,6 +1545,7 @@ async function readForCompletion(
     epochDay: settings?.epochDay ? keyOfDateColumn(settings.epochDay) : null,
     debited: debts > 0,
     frozen: !!frozen,
+    ...(momentum ? { momentum } : {}),
   };
 }
 
@@ -1640,6 +1721,8 @@ type SettleArgs = {
   auto?: boolean;
   countsForStreak?: boolean;
   detail?: string | null;
+  /** Momentum §A.6 (completeLinkedCore): the walk that completes the task; prices as SESSION and is stored on the instance. */
+  workoutId?: string;
 };
 
 const RETRY = Symbol("retry");
@@ -1671,6 +1754,8 @@ async function settleOnce(userId: string, read: CompletionRead, a: SettleArgs): 
   if (refusal) return fail(refusal);
 
   const streakDays = rule && !a.auto ? streakDaysFor(t, rule, history, a.day) : 0;
+  // Momentum (lane A): only when its facts were read, i.e. momentum is live on a.day; planCompletion holds the gate too.
+  const momentum = planMomentumOf(userId, read.momentum, a.now);
   const plan = planCompletion({
     template: t,
     day: a.day,
@@ -1681,6 +1766,8 @@ async function settleOnce(userId: string, read: CompletionRead, a: SettleArgs): 
     ledger,
     streakDays,
     auto: a.auto,
+    ...(momentum ? { momentum } : {}),
+    ...(a.workoutId ? { session: true } : {}),
   });
 
   // Each undo of this slot bumps the attempt, so re-completing writes a new
@@ -1720,8 +1807,9 @@ async function settleOnce(userId: string, read: CompletionRead, a: SettleArgs): 
         completedAt: a.now,
         minutes,
         xpPaid: plan.receipt.xp,
+        ...(a.workoutId ? { workoutId: a.workoutId } : {}),
       },
-      update: { status: plan.status, source: plan.source, completedAt: a.now, minutes, xpPaid: plan.receipt.xp },
+      update: { status: plan.status, source: plan.source, completedAt: a.now, minutes, xpPaid: plan.receipt.xp, ...(a.workoutId ? { workoutId: a.workoutId } : {}) },
     }),
     activityOp(userId, event),
     // The grade freezes at the first completion: from here on neither the AI
@@ -1889,6 +1977,94 @@ export async function againCore(userId: string, templateId: string, opts: Comple
   return settleCompletion(userId, read, { day: today, today, slot, minutes: opts.minutes, mvv: opts.mvv, now }, load);
 }
 
+// ── A walk that completes an exercise task (momentum.md §A.6) ─────────────
+
+/** Tries completeLinkedCore makes when its write finds the day already ticked under it (a second device, a retried call). */
+const LINK_ATTEMPTS = 2;
+
+/**
+ * 'One payment for one walk' (momentum.md §A.6), for the walk's writer (lane
+ * B, exercise-server): completes `day`'s instance of a personal EXERCISE
+ * template as source 'auto:workout', the instance carrying `workoutId`, with
+ * a TASK row of pay mode SESSION (K 0, 'paid by the walk', sink NONE,
+ * countsForStreak true), so the walk is the one payment. Written like a tick:
+ * one array behind the completions' lock and the freshness guard
+ * (settleCompletion), and only what the board would accept
+ * (completionBlockOf, Duty's refusals). `minutes` is the walk's, as reported
+ * minutes; `at` is the write's instant, `day` today or yesterday by it.
+ *
+ * Idempotent. When the template is already done on `day`, nothing new is
+ * written: the same walk again answers tickedRaw null, as the first call
+ * did; any other tick answers the raw the day's live TASK rows of the
+ * template paid, and the walk tops itself up by max(0, raw − tickedRaw).
+ * Refused ({ok: false}): a work tab's task, a template that is not EXERCISE
+ * (or is a goal, an idea draft or study-linked), or a day momentum is not
+ * live on (linkedTickPlanOf).
+ */
+export async function completeLinkedCore(input: {
+  userId: string;
+  templateId: string;
+  day: DayKey;
+  workoutId: string;
+  minutes: number;
+  at: Date;
+}): Promise<{ ok: true; instanceId: string; tickedRaw: number | null } | { ok: false; error: string }> {
+  const { userId, templateId, workoutId, at } = input;
+  const today = todayKey(at);
+  const day = resolveDay(input.day, today);
+  if (!day) return { ok: false, error: "A walk completes a task only today or yesterday." };
+  const load = () => readForCompletion(userId, templateId, today, day, at);
+
+  for (let attempt = 1; ; attempt++) {
+    const read = await load();
+    if (!read) return { ok: false, error: "That task no longer exists." };
+    const { t, row } = read;
+    if (row.archivedAt) return { ok: false, error: "That task is archived." };
+
+    // The day's done instances of the template, with the walk each carries and the raw its live TASK rows paid.
+    const doneOnTheDay = read.history.filter((i) => i.day === day && isDoneStatus(i.status));
+    const walks =
+      doneOnTheDay.length > 0 && !row.boardId
+        ? await prisma.taskInstance.findMany({ where: { userId, id: { in: doneOnTheDay.map((i) => i.id) } }, select: { id: true, workoutId: true } })
+        : [];
+    const undone = undoneIds(read.events);
+    const plan = linkedTickPlanOf({
+      template: { kind: t.kind, category: t.category, boardId: row.boardId, autoMetric: t.autoMetric },
+      live: momentumLive(day),
+      workoutId,
+      done: doneOnTheDay.map((i) => {
+        const paid = read.events.filter((e) => e.source === "TASK" && e.sourceId === i.id && !undone.has(e.id));
+        return {
+          instanceId: i.id,
+          slot: i.slot,
+          workoutId: walks.find((w) => w.id === i.id)?.workoutId ?? null,
+          raw: paid.length > 0 ? paid.reduce((s, e) => s + (e.rawXp ?? 0), 0) : null,
+        };
+      }),
+    });
+    if (plan.kind === "refuse") return { ok: false, error: plan.error };
+    if (plan.kind === "ticked") return { ok: true, instanceId: plan.instanceId, tickedRaw: plan.tickedRaw };
+    // Another write landed first (a duplicate answer): read again, and answer from the tick that stands.
+    if (attempt > LINK_ATTEMPTS) return { ok: false, error: "Another tick was being recorded at the same moment. Try again." };
+
+    const rule = ruleOf(t);
+    const refusal = tickRefusalFor(read, day, today, !!rule);
+    if (refusal) return { ok: false, error: refusal };
+    const block = completionBlockOf({ t, rule, day, today, lastDone: lastDoneOf(read.history), onDay: read.history.filter((i) => i.day === day) });
+    if (block) return { ok: false, error: block };
+
+    const minutes = Number.isFinite(input.minutes) && input.minutes > 0 ? input.minutes : null;
+    const res = await settleCompletion(
+      userId,
+      read,
+      { day, today, slot: 0, minutes, now: at, countsForStreak: true, detail: "completed by a walk", workoutId },
+      load
+    );
+    if (!res.ok) return { ok: false, error: res.error };
+    if (!res.value.duplicate) return { ok: true, instanceId: res.value.instanceId, tickedRaw: null };
+  }
+}
+
 // ── Steps (subtasks) ──────────────────────────────────────────────────────
 
 /** A step tick's result: the steps ticked, and what the task's one TASK row pays now. */
@@ -2049,9 +2225,11 @@ async function stepTickOnce(
   }
 
   const ledger = live ? ledgerWithout(read.ledger, live) : read.ledger;
+  // Momentum (lane A): S on any paid share; M and X once the steps complete the task (momentumReachOf). Live days only.
+  const momentum = planMomentumOf(userId, read.momentum, now);
   const plan =
     pay.kind === "pay"
-      ? planCompletion({ template: t, day, today, slot: 0, ledger, streakDays: rule ? streakDaysFor(t, rule, history, day) : 0, steps: pay.steps })
+      ? planCompletion({ template: t, day, today, slot: 0, ledger, streakDays: rule ? streakDaysFor(t, rule, history, day) : 0, steps: pay.steps, ...(momentum ? { momentum } : {}) })
       : null;
   const full = pay.kind === "pay" && pay.steps.done === pay.steps.total;
   const undoCount = inst ? events.filter((e) => e.source === "UNDO" && e.sourceId === inst.id).length : 0;
@@ -2147,6 +2325,7 @@ export async function undoCompletionCore(
   // A work tab's tick (work-boards.ts): no ledger row to negate; the instance goes back to open (undoWorkCore).
   if (inst.template.boardId) return undoWorkCore(userId, inst, now);
   if (!isDoneStatus(inst.status)) return ok({ instanceId, xp: 0, templateId: inst.templateId });
+  if (inst.source === "auto:workout") return fail("Your walk completed this one; it can't be undone.");
   if (inst.source.startsWith("auto:")) return fail("Your reviews completed this one; it can't be undone.");
   if (inst.source === "make-up") return fail(MAKE_UP_UNDO_ELSEWHERE);
   const instDay = keyOfDateColumn(inst.day);

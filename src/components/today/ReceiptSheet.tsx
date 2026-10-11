@@ -6,7 +6,12 @@ import { Receipt, type ReceiptFactor } from "@/components/ui/Receipt";
 import { Sheet } from "@/components/ui/Sheet";
 import { formatNumber } from "@/components/ui/format";
 
-/** The kit's factor names for the life formula's keys (B is the base, shown in the formula). */
+/**
+ * The kit's factor names for the life formula's keys (B is the base, shown in
+ * the formula). S, M and X are momentum's (momentum.md §E.3): the perks
+ * ('Skills ×1.04 · Steady hand'), the chain ('Chain ×1.09 · 3 links') and a
+ * crit ('Crit ×2.00 · sealed roll 0.031 under 0.080 · set per task per day').
+ */
 const FACTOR_NAME: Record<Exclude<LifeFactor["key"], "B">, string> = {
   E: "Effort",
   T: "Timing",
@@ -14,7 +19,17 @@ const FACTOR_NAME: Record<Exclude<LifeFactor["key"], "B">, string> = {
   D: "Repeat",
   V: "Volume",
   K: "Mode",
+  S: "Skills",
+  M: "Chain",
+  X: "Crit",
 };
+
+/** Why a receipt pays 0, by its K label: reviews and a walk already paid; anything else is play. */
+function zeroNote(kLabel: string): string {
+  if (kLabel === "paid by reviews") return "Paid by reviews, not twice.";
+  if (kLabel === "paid by the walk") return "Paid by the walk, not twice.";
+  return "Play: logged and kept in the streak, unpaid.";
+}
 
 /**
  * A life receipt in the kit's words: every factor but the band as a
@@ -33,10 +48,16 @@ export function receiptView(r: LifeReceipt): {
   const base = shown.find((f) => f.key === "B");
   const factors: ReceiptFactor[] = shown
     .filter((f): f is LifeFactor & { key: Exclude<LifeFactor["key"], "B"> } => f.key !== "B")
-    .map((f) => ({ key: f.key, label: FACTOR_NAME[f.key], detail: f.note ? `${f.label} · ${f.note}` : f.label, mult: f.value }));
+    .map((f) => ({
+      key: f.key,
+      label: FACTOR_NAME[f.key],
+      // A crit's sealed roll: the one published surprise, set per task per day (momentum.md §A.5, §E.3).
+      detail: f.key === "X" && f.note ? `${f.note} · set per task per day` : f.note ? `${f.label} · ${f.note}` : f.label,
+      mult: f.value,
+    }));
   const formula = base ? `${base.label} ${base.value} base × factors = ${formatNumber(r.raw, 1)}` : `= ${formatNumber(r.raw, 1)}`;
   const k = r.factors.find((f) => f.key === "K");
-  const zero = k && k.value === 0 ? (k.label === "paid by reviews" ? "Paid by reviews, not twice." : "Play: logged and kept in the streak, unpaid.") : null;
+  const zero = k && k.value === 0 ? zeroNote(k.label) : null;
   const eased = r.raw > 0 && r.xp < r.raw - 0.05;
   const knee = kneeNote(r);
   const note = [

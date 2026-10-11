@@ -29,6 +29,7 @@ import type {
   InstanceSource,
   InstanceStatus,
   KrMetric,
+  LifePayMode,
   PayMode,
   PriceInput,
   Receipt,
@@ -39,7 +40,37 @@ import type {
   Track,
 } from "./life-types";
 import type { Attribute } from "@prisma/client";
-import { STUDY_AUTO_METRICS, UNDO_WINDOW_MINUTES, effBand, estEff, payModeOf, priceTask, receiptBandOf, timingFor } from "./life-grade";
+import {
+  STUDY_AUTO_METRICS,
+  UNDO_WINDOW_MINUTES,
+  effBand,
+  estEff,
+  payModeOf,
+  priceTask,
+  receiptBandOf,
+  receiptCritOf,
+  stepShareOf,
+  timingFor,
+  type PriceMomentum,
+} from "./life-grade";
+import {
+  MOMENTUM,
+  chainLinksOfDay,
+  chainMult,
+  critNote,
+  critOf,
+  isQuestSet,
+  isQuestSwap,
+  lifeModsOf,
+  momentumLive,
+  ownedPerksOf,
+  perkOf,
+  questsInForce,
+  type LifeMods,
+  type PerkCode,
+  type QuestSet,
+  type QuestSwap,
+} from "./momentum";
 import { repeatNOf } from "./life-lexicon";
 import { describeRule, nextDue, occursOn, parseRule, periodProgress, scheduledPerWeek, type Rule } from "./recurrence";
 import {
@@ -126,6 +157,11 @@ export interface PricedTemplate {
   bandOverride: number;
   estMinutes: number;
   machineMinutes: number;
+  /**
+   * Momentum (Practice makes, §B.3): TaskTemplate.captureKey, 'rm:<milestone>:p<i>' / ':s<i>' on a roadmap
+   * practice or step. Only a live momentum price reads it. Absent reads as null.
+   */
+  captureKey?: string | null;
 }
 
 /** A template as the board needs it: the rule, the frozen grade and how it was sized. */
@@ -233,6 +269,24 @@ export interface LedgerCompletion {
   raw: number;
   xp: number;
   sink: Sink;
+  /**
+   * Momentum (momentum.md §A.4, §A.5), on a live day only: present on a
+   * completion that qualified (its receipt carries X, the sealed roll). The
+   * chain is derived from these (when, and the task's est_eff), the crit's k
+   * counts them by groupKey, and the 3-a-day cap counts their crits. Absent
+   * before launch, so a ledger is exactly what it was.
+   */
+  momentum?: LedgerMomentum;
+}
+
+/** A qualifying completion's momentum facts (LedgerCompletion.momentum). */
+export interface LedgerMomentum {
+  /** When it was ticked (ISO): the chain's gap. */
+  at: string;
+  /** Its task's est_eff in minutes: the chain's window. */
+  estEff: number;
+  /** It paid a crit (X > 1). */
+  crit: boolean;
 }
 
 /** One life day's ledger, reduced to what pricing and the tiles read. */
@@ -308,6 +362,29 @@ export interface BoardData {
    * (RoadmapGoalSeat), which the loader reads only once GOALS_MAX > 1.
    */
   roadmapGoals?: Record<string, RoadmapGoalEntrySeated>;
+  /**
+   * Momentum (momentum.md §0, §B.3; lane A): what the rows' '≈ N XP' prices
+   * S and M with. tasks.ts sends it only when momentum is live today
+   * (momentumLive); absent, every projection is exactly today's.
+   */
+  momentum?: BoardMomentum;
+}
+
+/** BoardData.momentum: the perks owned now, today's frog, and the instant a projection prices a tick at. */
+export interface BoardMomentum {
+  /** The launch day in force (momentum.ts momentumLaunchDay): a day before it projects no momentum. */
+  launchDay: DayKey;
+  /** The perks owned now (ownedPerksOf over the PERK and RESPEC rows). */
+  perks: PerkCode[];
+  /** Today's frozen TASK quest's template (Frog eater pays ×1.15 on it), or null. */
+  frogTemplateId: string | null;
+  /**
+   * The read's instant (ISO). A projection prices a tick of a task started
+   * then and finished at its est_eff, so M is the chain it would extend
+   * ("keep it within 45 min"); a client may set it to its own clock to
+   * re-project the chain.
+   */
+  asOf: string;
 }
 
 /**
@@ -463,6 +540,35 @@ export interface PlanInput {
   makeUp?: boolean;
   /** A task broken into steps: the steps ticked of all (life-grade priceTask: K = done ÷ total on a full completion). */
   steps?: StepShare | null;
+  /**
+   * Momentum (momentum.md §A.4, §A.5, §B.3): the perks, the frog, the tick's
+   * instant and (on the server's payment only) the sealed roll. Absent, or a
+   * day before its launchDay: the price is exactly today's ('life-1').
+   */
+  momentum?: PlanMomentum | null;
+  /**
+   * Momentum §A.6, 'one payment for one walk': an EXERCISE task a logged walk
+   * completed (tasks.ts completeLinkedCore). Pay mode SESSION (K 0, 'paid by
+   * the walk'), source auto:workout, sink NONE; never perks, chain or crit.
+   */
+  session?: boolean;
+}
+
+/** PlanInput.momentum: what a live day's price reads beyond the ledger. */
+export interface PlanMomentum {
+  /** The launch day in force (momentum.ts momentumLaunchDay()): a completion dated before it prices exactly as today. */
+  launchDay: DayKey;
+  /** The perks owned now (momentum.ts ownedPerksOf), as lifeModsOf reads them. */
+  perks: readonly string[];
+  /** Today's frozen TASK quest's template (Frog eater), or null. */
+  frogTemplateId?: string | null;
+  /** When the completion lands: the tick's time on the server; a projection's assumed finish (projectionMomentumOf). */
+  at: Date | string;
+  /**
+   * The sealed roll for (life day, normTitle, k): the server's momentumRoll over critKey(userId, …). Absent on every
+   * projection and optimistic tick, so the board never shows X: a crit is the one published surprise.
+   */
+  roll?: ((day: DayKey, normTitle: string, k: number) => number) | null;
 }
 
 export interface CompletionPlan {
@@ -471,16 +577,94 @@ export interface CompletionPlan {
   status: InstanceStatus;
   source: InstanceSource;
   timing: Timing;
-  mode: PayMode;
+  mode: LifePayMode;
   sink: Sink;
   /** How this completion enters the day's ledger, for the next price. */
   completion: Omit<LedgerCompletion, "eventId">;
 }
 
+/** A roadmap practice or step's capture key ('rm:<milestone>:p<i>' / ':s<i>'): Practice makes pays on it (§B.3). */
+const ROADMAP_ITEM_KEY = /^rm:[^:]+:[ps]\d+$/;
+
+export function isRoadmapItemKey(captureKey: string | null | undefined): boolean {
+  return typeof captureKey === "string" && ROADMAP_ITEM_KEY.test(captureKey);
+}
+
+const msOf = (at: Date | string | number): number => (typeof at === "number" ? at : typeof at === "string" ? Date.parse(at) : at.getTime());
+
+/**
+ * Who momentum reaches (momentum.md §A.5, §B.3). `paying`: a full, paying
+ * tick of the player's own: never the minimum, #play, a study-linked task, a
+ * walk's SESSION, a make-up or an auto-completion (S applies). `qualifies`:
+ * the same, and a step tick only once it completes the task (M and X apply,
+ * and the row is a chain link and counts toward k and the 3-a-day cap).
+ */
+export function momentumReachOf(p: Pick<PlanInput, "mvv" | "auto" | "makeUp" | "steps" | "session"> & { mode: LifePayMode }): { paying: boolean; qualifies: boolean } {
+  const share = p.mode === "FULL" ? stepShareOf(p.steps) : null;
+  const paying = p.mode === "FULL" && !p.session && !p.auto && !p.makeUp && (!share || share.done > 0);
+  return { paying, qualifies: paying && (!share || share.done === share.total) };
+}
+
+/**
+ * Momentum's factors for one completion (PriceMomentum) and the ledger facts
+ * it leaves, from the day's ledger as read. Pure. S: the perks that apply;
+ * M: chainLinksOfDay over the day's qualifying completions and this one; X:
+ * only with a roll — critOf on k = 1 + the day's qualifying completions of
+ * this normTitle, under the 3-a-day cap. An undone row is not in the ledger,
+ * so an undo → re-tick reads the same k, the same roll and the same crit.
+ */
+function momentumOf(p: PlanInput, mom: PlanMomentum, mode: LifePayMode): { price: PriceMomentum | null; ledger: LedgerMomentum | undefined } {
+  const t = p.template;
+  const reach = momentumReachOf({ ...p, mode });
+  if (!reach.paying) return { price: null, ledger: undefined };
+  const mods: LifeMods = lifeModsOf(new Set(mom.perks));
+
+  // S (§B.3): Steady hand on every paying tick; Deep work on DEMANDING and SEVERE; Frog eater on today's TASK quest
+  // when it completes it; Practice makes on a roadmap practice or step.
+  const parts: [PerkCode, number][] = [];
+  if (mods.taskFullMult !== 1) parts.push(["D_STEADY", mods.taskFullMult]);
+  const band = effBand(t.band, t.bandOverride);
+  if ((band === "DEMANDING" || band === "SEVERE") && mods.deepMult !== 1) parts.push(["D_DEEP", mods.deepMult]);
+  if (reach.qualifies && p.day === p.today && p.slot === 0 && !!mom.frogTemplateId && mom.frogTemplateId === t.id && mods.frogMult !== 1) parts.push(["D_FROG", mods.frogMult]);
+  if (isRoadmapItemKey(t.captureKey) && mods.practiceMult !== 1) parts.push(["P_PRACTICE", mods.practiceMult]);
+  const perks = parts.length > 0 ? { mult: parts.reduce((m, [, x]) => m * x, 1), names: parts.map(([code]) => perkOf(code)?.name ?? code) } : null;
+  if (!reach.qualifies) return { price: perks ? { perks } : null, ledger: undefined };
+
+  // M (§A.4): the day's qualifying completions and this one, in time order.
+  const atMs = msOf(mom.at);
+  const est = estEff(t.estMinutes, t.machineMinutes);
+  const prior = p.ledger.completions.filter((c): c is LedgerCompletion & { momentum: LedgerMomentum } => !!c.momentum);
+  const rows = prior.map((c) => ({ occurredAt: msOf(c.momentum.at), estEff: c.momentum.estEff })).filter((r) => Number.isFinite(r.occurredAt));
+  rows.push({ occurredAt: Number.isFinite(atMs) ? atMs : 0, estEff: est });
+  const links = chainLinksOfDay(rows, mods.chainWindowMin)[rows.length - 1] ?? 0;
+  const chain = links > 0 ? { links, mult: chainMult(links, mods.chainCap) } : null;
+
+  // X (§A.5): the server's payment only.
+  let crit: PriceMomentum["crit"] = null;
+  if (mom.roll) {
+    const normTitle = groupKeyOf(t);
+    const k = 1 + prior.filter((c) => c.groupKey === normTitle).length;
+    const critsEarlier = prior.filter((c) => c.momentum.crit).length;
+    const o = critOf(mom.roll(p.day, normTitle, k), critsEarlier, mods);
+    const under = Number.isFinite(o.u) && o.u < o.p;
+    const note = o.crit
+      ? critNote(o.u, o.p)
+      : under
+        ? `${critNote(o.u, o.p)} · ${MOMENTUM.CRIT_DAY_MAX} crits today already`
+        : `sealed roll ${o.u.toFixed(3)}, not under ${o.p.toFixed(3)}`;
+    crit = { crit: o.crit, mult: o.crit ? o.X : 1, note };
+  }
+  const price: PriceMomentum = { ...(perks ? { perks } : {}), ...(chain ? { chain } : {}), ...(crit ? { crit } : {}) };
+  return {
+    price: perks || chain || crit ? price : null,
+    ledger: { at: new Date(Number.isFinite(atMs) ? atMs : 0).toISOString(), estEff: est, crit: !!crit?.crit },
+  };
+}
+
 /** Prices one completion. Pure: the same inputs give the same receipt, in the browser and on the server. */
 export function planCompletion(p: PlanInput): CompletionPlan {
   const t = p.template;
-  const mode = modeOf(t, p.mvv);
+  const mode: LifePayMode = p.session ? "SESSION" : modeOf(t, p.mvv);
   const timing = p.makeUp ? timingFor({ makeUp: true, day: p.day }) : timingOf(t, p.day);
   const recurring = !!ruleOf(t);
   const input: PriceInput = {
@@ -495,21 +679,25 @@ export function planCompletion(p: PlanInput): CompletionPlan {
     repeatN: ledgerRepeatN(t, p.ledger),
     introBefore: ledgerIntroBefore(p.ledger),
     mode,
-    ...(p.steps ? { steps: p.steps } : {}),
+    ...(p.steps && !p.session ? { steps: p.steps } : {}),
   };
-  const receipt = priceTask(input, { rawBefore: p.ledger.rawBefore }, t.track);
-  // A completion that can never pay (#play, study) records to NONE, so no
-  // level ever reads it; everything else is life XP on its track, even when
-  // the knee has flattened it to nothing.
-  const sink: Sink = mode === "PLAY" || mode === "STUDY" ? "NONE" : "TRACK";
+  // Momentum, only for a completion dated on or after its launch day (momentumLive); otherwise nothing below changes.
+  const mom = p.momentum && momentumLive(p.day, p.momentum.launchDay) ? momentumOf(p, p.momentum, mode) : null;
+  const receipt = mom?.price ? priceTask(input, { rawBefore: p.ledger.rawBefore }, t.track, mom.price) : priceTask(input, { rawBefore: p.ledger.rawBefore }, t.track);
+  // A completion that can never pay (#play, study, a walk's SESSION) records
+  // to NONE, so no level ever reads it; everything else is life XP on its
+  // track, even when the knee has flattened it to nothing.
+  const sink: Sink = mode === "PLAY" || mode === "STUDY" || mode === "SESSION" ? "NONE" : "TRACK";
   const status: InstanceStatus = mode === "MVV" ? "DONE_MVV" : timing === "LATE" ? "DONE_LATE" : "DONE";
-  const source: InstanceSource = p.auto
-    ? t.autoMetric === "IDEAS"
-      ? "auto:ideas"
-      : "auto:reviews"
-    : p.day < p.today
-      ? "record-yesterday"
-      : "manual";
+  const source: InstanceSource = p.session
+    ? "auto:workout"
+    : p.auto
+      ? t.autoMetric === "IDEAS"
+        ? "auto:ideas"
+        : "auto:reviews"
+      : p.day < p.today
+        ? "record-yesterday"
+        : "manual";
   return {
     input,
     receipt,
@@ -525,8 +713,80 @@ export function planCompletion(p: PlanInput): CompletionPlan {
       raw: receipt.raw,
       xp: receipt.xp,
       sink,
+      ...(mom?.ledger ? { momentum: mom.ledger } : {}),
     },
   };
+}
+
+/**
+ * The momentum a board projection prices with (§0: S and M, never X), or
+ * undefined without BoardData.momentum. The tick is assumed to be a task
+ * started at the read's instant (or just after the day's last qualifying
+ * completion, if that is later) and finished at its est_eff: so M is the
+ * chain that task would extend, the "keep it within 45 min" the chip says.
+ */
+export function projectionMomentumOf(data: Pick<BoardData, "momentum">, t: Pick<PricedTemplate, "estMinutes" | "machineMinutes">, ledger: DayLedger): PlanMomentum | undefined {
+  const m = data.momentum;
+  if (!m) return undefined;
+  let start = msOf(m.asOf);
+  for (const c of ledger.completions) {
+    const at = c.momentum ? msOf(c.momentum.at) : NaN;
+    if (Number.isFinite(at) && (!Number.isFinite(start) || at > start)) start = at;
+  }
+  const at = (Number.isFinite(start) ? start : 0) + estEff(t.estMinutes, t.machineMinutes) * 60_000;
+  return { launchDay: m.launchDay, perks: m.perks, frogTemplateId: m.frogTemplateId, at: new Date(at).toISOString() };
+}
+
+/**
+ * The day's chain as the Momentum card's chip reads it (momentum.md §A.4,
+ * §E.1, 'Chain 2 · keep it within 45 min'): the latest qualifying
+ * completion's link count (chainLinksOfDay over the day's ledger), when it
+ * was ticked, and until when starting the next task keeps the chain (that
+ * tick + the window, 60 min with Quick link). Null when the day has no
+ * qualifying completion, or `at` is past that.
+ */
+export function liveChainOf(ledger: DayLedger, perks: readonly string[], at: Date | string): { links: number; lastAt: string; untilAt: string } | null {
+  const rows = ledger.completions
+    .filter((c): c is LedgerCompletion & { momentum: LedgerMomentum } => !!c.momentum)
+    .map((c) => ({ occurredAt: msOf(c.momentum.at), estEff: c.momentum.estEff }))
+    .filter((r) => Number.isFinite(r.occurredAt));
+  if (rows.length === 0) return null;
+  const windowMin = lifeModsOf(new Set(perks)).chainWindowMin;
+  const links = chainLinksOfDay(rows, windowMin);
+  let last = 0;
+  for (let i = 1; i < rows.length; i++) if (rows[i].occurredAt >= rows[last].occurredAt) last = i;
+  const until = rows[last].occurredAt + windowMin * 60_000;
+  if (msOf(at) > until) return null;
+  return { links: links[last], lastAt: new Date(rows[last].occurredAt).toISOString(), untilAt: new Date(until).toISOString() };
+}
+
+/** What a live day's price reads beyond the ledger (tasks.ts readMomentumFacts): the perks owned now and today's frog. */
+export interface MomentumFacts {
+  perks: PerkCode[];
+  frogTemplateId: string | null;
+}
+
+/** The ledger rows MomentumFacts folds: PERK and RESPEC (all of them) and the day's QUEST_SET rows. */
+export interface MomentumFactRow {
+  source: string;
+  detail: string | null;
+  occurredAt: Date;
+  receipt: unknown;
+}
+
+/**
+ * Pure: the perks owned at `now` (the PERK rows after the latest RESPEC,
+ * momentum.ts ownedPerksOf) and the template of `today`'s TASK quest in
+ * force (the frozen set with each slot's latest swap, questsInForce), or
+ * null with no set, or when the quest is 'Finish any 2 tasks'.
+ */
+export function momentumFactsOf(rows: readonly MomentumFactRow[], today: DayKey, now: Date): MomentumFacts {
+  const perks = [...ownedPerksOf(rows.filter((r) => r.source === "PERK" || r.source === "RESPEC"), now)].sort();
+  const quests = rows.filter((r) => r.source === "QUEST_SET").map((r) => r.receipt);
+  const set = quests.find((q): q is QuestSet => isQuestSet(q) && q.day === today);
+  const swaps = quests.filter((q): q is QuestSwap => isQuestSwap(q) && q.day === today);
+  const task = set ? questsInForce(set, swaps).find((q) => q.slot === "TASK") : undefined;
+  return { perks, frogTemplateId: task && task.slot === "TASK" && task.kind === "TEMPLATE" ? task.templateId : null };
 }
 
 /**
@@ -579,6 +839,50 @@ export function taskEventInput(
     detail: at.detail ?? null,
     dedupeKey: taskDedupeKey(at.templateId, at.keyDay ?? at.day, at.slot, at.attempt),
   };
+}
+
+// ── A walk that completes an exercise task (momentum.md §A.6) ─────────────
+
+/** What completeLinkedCore (tasks.ts) does for one walk: refuse, answer from the day's tick, or write the SESSION tick. */
+export type LinkedTickPlan =
+  | { kind: "refuse"; error: string }
+  | { kind: "ticked"; instanceId: string; tickedRaw: number | null }
+  | { kind: "write" };
+
+export const LINKED_WORK_REFUSAL = "A work tab's task is kept out of the game: a walk can't complete it.";
+export const LINKED_NOT_EXERCISE = "Only an exercise task can be completed by a walk.";
+export const LINKED_KIND_REFUSAL = "Only a task or a habit can be completed by a walk.";
+export const LINKED_STUDY_REFUSAL = "This task completes itself from your reviews.";
+export const LINKED_NOT_LIVE = "A walk completes a task only once momentum is live on its day.";
+
+/**
+ * The 'one payment for one walk' rule, pure (momentum.md §A.6). Refused: a
+ * work tab's task, a template that is not EXERCISE, a goal or an idea draft,
+ * a study-linked task, a day momentum is not live on. When the template is
+ * already done that day, nothing new is written: the same walk again (a
+ * retry) answers tickedRaw null, as the first call did; any other tick
+ * answers the raw the day's live TASK rows of the template paid, so the walk
+ * tops itself up by max(0, raw − tickedRaw). Otherwise the SESSION tick is written.
+ */
+export function linkedTickPlanOf(a: {
+  template: { kind: string; category: string; boardId?: string | null; autoMetric: AutoMetric | null };
+  live: boolean;
+  workoutId: string;
+  /** The day's done instances of the template, each with its workoutId and the rawXp of its live TASK row (null: none). */
+  done: readonly { instanceId: string; slot: number; workoutId: string | null; raw: number | null }[];
+}): LinkedTickPlan {
+  if (a.template.boardId) return { kind: "refuse", error: LINKED_WORK_REFUSAL };
+  if (a.template.category !== "EXERCISE") return { kind: "refuse", error: LINKED_NOT_EXERCISE };
+  if (a.template.kind !== "TASK" && a.template.kind !== "HABIT") return { kind: "refuse", error: LINKED_KIND_REFUSAL };
+  if (a.template.autoMetric && STUDY_METRICS.has(a.template.autoMetric)) return { kind: "refuse", error: LINKED_STUDY_REFUSAL };
+  if (!a.live) return { kind: "refuse", error: LINKED_NOT_LIVE };
+  if (!a.workoutId) return { kind: "refuse", error: "That walk has no id." };
+  if (a.done.length === 0) return { kind: "write" };
+  const same = a.done.find((d) => d.workoutId === a.workoutId);
+  if (same) return { kind: "ticked", instanceId: same.instanceId, tickedRaw: null };
+  const latest = [...a.done].sort((x, y) => y.slot - x.slot)[0];
+  const raw = a.done.reduce((s, d) => s + (d.raw != null && Number.isFinite(d.raw) ? Math.max(0, d.raw) : 0), 0);
+  return { kind: "ticked", instanceId: latest.instanceId, tickedRaw: Math.round(raw * 10) / 10 };
 }
 
 /** The row a TASK row is undone by: its exact negation, so the day's XP, knee base and streak units net to zero. */
@@ -1554,7 +1858,7 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
     const strength = rule && stats ? (doneToday ? stats.strength.ifDone : stats.strength.before) : null;
     const streakDays = rule && stats ? (day === today ? stats.streak.before.days : stats.streakDaysYesterday) : 0;
     const auto = day === today ? autoStateOf(t, counts) : null;
-    const projection = planCompletion({ template: t, day, today, slot, ledger: ledgerFor(d, day), streakDays }).receipt;
+    const projection = planCompletion({ template: t, day, today, slot, ledger: ledgerFor(d, day), streakDays, momentum: projectionMomentumOf(d, t, ledgerFor(d, day)) }).receipt;
     let state: RowState = done.length > 0 ? "done" : skipped ? "skipped" : "open";
     // Steps (today only): ticked steps that paid a part keep the row open, its tick finishing the rest.
     const sub = day === today && stepsAllowed(t) ? d.subtasks?.[t.id] : undefined;
@@ -1573,7 +1877,17 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
       !(!rule && t.completedAt) &&
       !onYesterday.some((i) => isDoneStatus(i.status) || SETTLED_STATUSES.has(i.status)) &&
       yesterdayBookable(t, rule, yesterday, lastDoneOf((instancesByTpl.get(t.id) ?? []).filter((i) => i.day < today)))
-        ? { xp: planCompletion({ template: t, day: yesterday, today, slot: 0, ledger: ledgerFor(d, yesterday), streakDays: rule && stats ? stats.streakDaysYesterday : 0 }).receipt.xp }
+        ? {
+            xp: planCompletion({
+              template: t,
+              day: yesterday,
+              today,
+              slot: 0,
+              ledger: ledgerFor(d, yesterday),
+              streakDays: rule && stats ? stats.streakDaysYesterday : 0,
+              momentum: projectionMomentumOf(d, t, ledgerFor(d, yesterday)),
+            }).receipt.xp,
+          }
         : null;
     // A study task that has met its target counts as done even before the
     // after() hook has written its instance; one that has not stays locked.
@@ -1753,6 +2067,7 @@ export function projectRow(data: BoardData, r: BoardRow, opts: { minutes?: numbe
     mvv: opts.mvv,
     ledger: ledgerFor(data, r.day),
     streakDays: r.streakDays,
+    momentum: projectionMomentumOf(data, r.template, ledgerFor(data, r.day)),
   }).receipt;
 }
 
@@ -2097,13 +2412,18 @@ export function applyOps(data: BoardData, ops: readonly BoardOp[]): BoardData {
       mvv: op.mvv,
       ledger,
       streakDays: stats ? (op.day === d.today ? stats.streak.before.days : stats.streakDaysYesterday) : 0,
+      // Momentum: priced at the tap (S and M; a crit only ever comes back on the server's receipt).
+      ...(d.momentum ? { momentum: { launchDay: d.momentum.launchDay, perks: d.momentum.perks, frogTemplateId: d.momentum.frogTemplateId, at: op.at } } : {}),
     });
     const receipt = op.receipt ?? plan.receipt;
     const instanceId = op.instanceId ?? `opt:${op.id}`;
     const eventId = `opt-ev:${op.id}`;
     d.instances = d.instances.filter((i) => !(i.templateId === t.id && i.day === op.day && i.slot === op.slot));
     d.instances.push({ id: instanceId, templateId: t.id, day: op.day, slot: op.slot, status: plan.status, source: plan.source, xpPaid: receipt.xp });
-    ledger.completions.push({ ...plan.completion, raw: receipt.raw, xp: receipt.xp, eventId });
+    // The server's receipt says whether it crit (its X), so the day's 3-a-day count and the next k read it.
+    const paidCrit = op.receipt ? receiptCritOf(op.receipt) : null;
+    const momentum = plan.completion.momentum && paidCrit ? { ...plan.completion.momentum, crit: paidCrit.crit } : plan.completion.momentum;
+    ledger.completions.push({ ...plan.completion, raw: receipt.raw, xp: receipt.xp, eventId, ...(momentum ? { momentum } : {}) });
     ledger.rawBefore += receipt.raw;
     if (plan.sink === "TRACK") ledger.lifeXp += receipt.xp;
     d.paid[instanceId] = { eventId, instanceId, receipt, occurredAt: op.at, xp: receipt.xp, undone: false };
