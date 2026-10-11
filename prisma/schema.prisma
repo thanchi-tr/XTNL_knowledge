@@ -772,9 +772,15 @@ model TaskTemplate {
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
   instances          TaskInstance[]
+  /// Work boards (2026-10-12): the work tab this task lives on; null = the personal Board. A work task never pays life XP or
+  /// counts for streaks, kept weeks, tracks, goals or quests (work is kept separate from the game, the user's choice).
+  boardId            String?
+  board              WorkBoard?     @relation(fields: [boardId], references: [id], onDelete: Restrict)
+  callBacks          CallBack[]
 
   @@unique([userId, captureKey])
   @@index([userId, archivedAt])
+  @@index([userId, boardId])
   @@index([userId, normTitle])
   @@index([parentId])
   @@schema("public")
@@ -1508,5 +1514,64 @@ model RoadmapTopicEdge {
 
   // Named explicitly: the default name is 69 characters, over Postgres's 63.
   @@unique([roadmapId, version, parentLineageId, childLineageId], map: "RoadmapTopicEdge_version_parent_child_key")
+  @@schema("public")
+}
+
+/// A work tab beside the personal Board (2026-10-12): up to 3 open per user (slot 1..3), each with its own tasks, habits,
+/// musts and call backs. Archived, never deleted: archiving frees the slot and keeps everything; Settings restores it.
+/// Not expressible in Prisma 6: CHECK "WorkBoard_slot_range" (slot 1..3); partial UNIQUE "WorkBoard_userId_slot_open_key"
+/// (userId, slot) WHERE archivedAt IS NULL (migration 20261217000000_work_boards).
+model WorkBoard {
+  id         String         @id @default(cuid())
+  userId     String
+  name       String
+  slot       Int
+  archivedAt DateTime?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  tasks      TaskTemplate[]
+  callBacks  CallBack[]
+
+  @@index([userId, archivedAt])
+  @@schema("public")
+}
+
+/// A call back on a work board: when it happened, how (PHONE | IN_PERSON), a brief as tags (per board), and an optional
+/// call-back task with a reminder (remindAt + remindAction) that the push dispatcher sends once (remindSentAt).
+model CallBack {
+  id           String        @id @default(cuid())
+  userId       String
+  boardId      String
+  board        WorkBoard     @relation(fields: [boardId], references: [id], onDelete: Restrict)
+  at           DateTime
+  action       String
+  tags         String[]      @default([])
+  taskId       String?
+  task         TaskTemplate? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  remindAt     DateTime?
+  remindAction String?
+  remindSentAt DateTime?
+  archivedAt   DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([userId, boardId, at])
+  @@index([remindAt])
+  @@schema("public")
+}
+
+/// A browser's web-push subscription (2026-10-12; call back reminders). One row per endpoint.
+model PushSubscription {
+  id         String    @id @default(cuid())
+  userId     String
+  endpoint   String    @unique
+  p256dh     String
+  auth       String
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  failedAt   DateTime?
+
+  @@index([userId])
   @@schema("public")
 }
