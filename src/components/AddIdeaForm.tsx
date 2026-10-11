@@ -48,8 +48,8 @@ import {
 } from "@/app/actions/ideas";
 import type { FieldBasis } from "@/lib/field-routing";
 import { countClozeBlanks, parseCloze, type IdeaContent } from "@/lib/idea-payload";
+import { contentOfAddState } from "@/lib/idea-edit";
 import { ATTRIBUTE_META } from "@/lib/attributes";
-import { latexToMathjs } from "@/lib/latex";
 import { XP_BASE } from "@/lib/xp";
 import { chime, mark, signedFigure } from "@/lib/celebrate";
 import { useAutocorrect } from "@/components/useAutocorrect";
@@ -63,7 +63,6 @@ import { Chip, ChipButton } from "@/components/ui/Chip";
 import { CurrencyGlyph, Icon } from "@/components/ui/Icon";
 import { SectionHeader, Segmented, Switch } from "@/components/ui/Tabs";
 import { ShortAnswerOptions } from "@/components/library/ShortAnswerOptions";
-import { shortAnswerProblem } from "@/lib/short-answer";
 import { approx, formatNumber } from "@/components/ui/format";
 import {
   ADD_AUTOSAVE_DEBOUNCE_MS,
@@ -458,40 +457,9 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
     return { onKeyUp: autocorrect.onKeyUp, onFocus: () => setLastEdited(() => setter) };
   }
 
+  /** The fields as IdeaContent, null while incomplete (idea-edit.ts; the idea page's editor reads the same rules). */
   function buildContent(): IdeaContent | null {
-    if (questionType === "SHORT") {
-      if (!shortQuestion.trim() || !shortAnswer.trim() || shortAnswerProblem(shortAnswer)) return null;
-      return { type: "SHORT", question: shortQuestion.trim(), answer: shortAnswer.trim(), caseSensitive: shortCaseSensitive };
-    }
-    if (questionType === "FORMULA") {
-      if (!formulaQuestion.trim() || !formulaAnswer.trim()) return null;
-      // Normalised to mathjs on the way out: verifyFormula evaluates the stored string.
-      return { type: "FORMULA", question: formulaQuestion.trim(), answer: latexToMathjs(formulaAnswer) };
-    }
-    if (questionType === "CLOZE") {
-      const text = clozeText.trim();
-      if (!text || countClozeBlanks(text) === 0) return null;
-      return { type: "CLOZE", text };
-    }
-    if (questionType === "LIST") {
-      const items = listItems.map((i) => i.trim()).filter(Boolean);
-      if (!listPrompt.trim() || items.length < 2) return null;
-      return { type: "LIST", prompt: listPrompt.trim(), items };
-    }
-    if (questionType === "ORDER") {
-      const items = orderItems.map((i) => i.trim()).filter(Boolean);
-      if (!orderPrompt.trim() || items.length < 2) return null;
-      return { type: "ORDER", prompt: orderPrompt.trim(), items };
-    }
-    if (questionType === "NUMERIC") {
-      const value = Number.parseFloat(numericValue);
-      const tolerance = Number.parseFloat(numericTolerance || "0");
-      if (!numericPrompt.trim() || !Number.isFinite(value) || !Number.isFinite(tolerance)) return null;
-      return { type: "NUMERIC", prompt: numericPrompt.trim(), value, tolerance: Math.abs(tolerance), unit: numericUnit.trim() || undefined };
-    }
-    const cleaned = options.map((o) => o.trim()).filter(Boolean);
-    if (cleaned.length < 2 || !cleaned[correctIndex]) return null;
-    return { type: "MULTI", options: cleaned, correct: cleaned[correctIndex] };
+    return contentOfAddState(content);
   }
   const ready = buildContent() !== null;
 

@@ -3,6 +3,7 @@
 import { after } from "next/server";
 import { promptOfQuestion, variantsAllowed } from "@/lib/idea-variants";
 import { saveVariantsCore } from "@/lib/idea-variants-server";
+import { caseSensitiveAfterEdit, cleanEditContent, isEditFormat } from "@/lib/idea-edit";
 import type { CollectionLabel } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { embedText, synthesizeNodeData, generateDistractors } from "@/lib/gemini";
@@ -19,7 +20,6 @@ import {
   type EnrichResult,
 } from "@/lib/dedup";
 import { encodeIdeaContent, type IdeaContent } from "@/lib/idea-payload";
-import { shortAnswerProblem } from "@/lib/short-answer";
 import { cardTextFromStored } from "@/lib/novelty";
 import { estimateDifficulty } from "@/lib/difficulty";
 import { embeddingTextFromStored } from "@/lib/embedding-text";
@@ -32,8 +32,7 @@ import { getCurrentUserId } from "@/lib/user";
 import { recalculateLeveling } from "@/lib/leveling";
 import { invalidate } from "@/lib/cache";
 import { recordActivity } from "@/lib/activity";
-import { countClozeBlanks } from "@/lib/idea-payload";
-import { EDITABLE_TYPES, type HistoryRow } from "@/components/library/library-model";
+import type { HistoryRow } from "@/components/library/library-model";
 import {
   IDEA_SYNTH_TIMEOUT_MS,
   embedOrError,
@@ -735,54 +734,44 @@ export async function deleteIdea(ideaId: string): Promise<SkillFreeResult<Delete
 
 export interface EditIdeaInput {
   ideaId: string;
-  /** Must be the Idea's own format; only EDITABLE_TYPES (the text formats) are accepted. */
+  /** Any format the add form writes (idea-edit.ts EDIT_FORMATS); it may differ from the Idea's own. */
   content: IdeaContent;
 }
 
 /**
- * Corrects an Idea's wording in place.
+ * Corrects an Idea in place: its question, its answer, even its format.
  *
  * A correction, not a new submission: no deduplication, no points, no ledger
- * row; level, due date and history are untouched. Difficulty is re-scored
- * from the new wording (it is a property of the question), and the embedding
- * is refreshed after the response so later duplicate checks read what the
- * card now says. A failed re-embed never loses the edit.
+ * row. Everything the idea has earned stays: level, due date, grace, strikes,
+ * history, its Domain and the points it holds. Only what the card asks is
+ * written. Difficulty is re-scored from the new wording (it is a property of
+ * the question), and the embedding is refreshed after the response so later
+ * duplicate checks read what the card now says. A failed re-embed never loses
+ * the edit. Other wordings (idea-variants.ts) stay; a format without variants
+ * just doesn't show them.
  */
 export async function editIdea(input: EditIdeaInput): Promise<SkillFreeResult<{ ideaId: string }>> {
+  if (typeof input?.ideaId !== "string" || input.ideaId.length === 0 || input.ideaId.length > 64) return { ok: false, error: "That idea no longer exists." };
   const existing = await prisma.idea.findUnique({
     where: { id: input.ideaId },
-    select: { id: true, questionType: true },
+    select: { id: true, questionType: true, answerCaseSensitive: true },
   });
   if (!existing) return { ok: false, error: "That idea no longer exists." };
-  if (input.content.type !== existing.questionType) return { ok: false, error: "The format can't change on edit." };
-  if (!EDITABLE_TYPES.includes(existing.questionType)) {
+  if (!isEditFormat(existing.questionType)) {
     return { ok: false, error: "This format can't be edited here yet. Delete it and add it again." };
   }
+  const cleaned = cleanEditContent(input.content);
+  if (!cleaned.ok) return cleaned;
 
-  let content: IdeaContent;
-  if (input.content.type === "SHORT") {
-    const q = input.content.question.trim();
-    const a = input.content.answer.trim();
-    if (!q || !a) return { ok: false, error: "Both the question and the answer are needed." };
-    const problem = shortAnswerProblem(a);
-    if (problem) return { ok: false, error: problem };
-    content = { type: "SHORT", question: q, answer: a, caseSensitive: input.content.caseSensitive === true };
-  } else if (input.content.type === "CLOZE") {
-    const text = input.content.text.trim();
-    if (!text || countClozeBlanks(text) === 0) return { ok: false, error: "Wrap at least one part in {{double braces}} to blank it." };
-    content = { type: "CLOZE", text };
-  } else {
-    return { ok: false, error: "This format can't be edited here yet. Delete it and add it again." };
-  }
-
-  const { question, answer, questionType, answerCaseSensitive } = encodeIdeaContent(content);
+  const { question, answer, questionType } = encodeIdeaContent(cleaned.content);
   await prisma.idea.update({
     where: { id: existing.id },
+    // Only what the card asks: level, dueDate, graceEndsAt, failedAttempts and the points are never written here.
     data: {
       question,
       answer,
-      // Only SHORT carries the choice; a CLOZE edit leaves it as it was.
-      ...(answerCaseSensitive === undefined ? {} : { answerCaseSensitive }),
+      questionType,
+      answerCaseSensitive: caseSensitiveAfterEdit(existing, cleaned.content),
       difficulty: estimateDifficulty(questionType, question, answer).score,
     },
   });

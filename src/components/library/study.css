@@ -101,6 +101,8 @@
   .idea-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
   .idea-acts { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; align-items: center; }
   .idea-edit { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+  .idea-edit-types { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .idea-edit-keep b { color: var(--ink-0); font-weight: 600; }
   .idea-page { display: flex; flex-direction: column; gap: 16px; padding-top: 8px; }
   .idea-page .idea-head { padding: 16px; }
   .idea-page .idea-head h2 { margin: 6px 0 0; }

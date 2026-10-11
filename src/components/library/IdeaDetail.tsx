@@ -3,7 +3,7 @@
 /**
  * One idea, as the Library's sheet and the /library/[id] page show it:
  * question and answer, the level ring (mastery is a fixed target: 12),
- * next due, the history strip from the life ledger, Edit (text formats)
+ * next due, the history strip from the life ledger, Edit (any written format, the format too)
  * and a quiet two-step Delete.
  *
  * History arrives as `history` (null while it loads; the sheet fetches it on
@@ -15,13 +15,15 @@ import { useRouter } from "next/navigation";
 import { deleteIdea, editIdea } from "@/app/actions/ideas";
 import { bandFor, DIFFICULTY_META } from "@/lib/difficulty";
 import { displayAnswer, displayQuestion } from "@/lib/idea-display";
-import { countClozeBlanks, parseCloze, type IdeaContent } from "@/lib/idea-payload";
-import { shortAnswerProblem } from "@/lib/short-answer";
+import { countClozeBlanks, parseCloze } from "@/lib/idea-payload";
+import { EDIT_FORMATS, EDIT_ROWS_MAX, contentOfAddState, editStateOf, switchEditFormat } from "@/lib/idea-edit";
+import type { AddContentState } from "@/lib/idea-handoff";
 import { ShortAnswerOptions } from "./ShortAnswerOptions";
 import { MASTERY_LEVEL } from "@/lib/xp";
 import { MathText } from "@/components/math/MathText";
 import { Button } from "@/components/ui/Button";
-import { Chip } from "@/components/ui/Chip";
+import { Chip, ChipButton } from "@/components/ui/Chip";
+import { Icon } from "@/components/ui/Icon";
 import { SegmentStrip } from "@/components/ui/Meter";
 import { PromiseRing } from "@/components/ui/PromiseRing";
 import { Skeleton } from "@/components/ui/Tabs";
@@ -29,7 +31,6 @@ import {
   COLLECTION_NAME,
   EDITABLE_TYPES,
   TYPE_NAME,
-  clozeTemplate,
   dueSentence,
   historySummary,
   isMastered,
@@ -80,6 +81,7 @@ export function IdeaDetail({ idea, now, history, onDeleted }: IdeaDetailProps) {
     return (
       <IdeaEditForm
         idea={idea}
+        now={now}
         onCancel={() => setEditing(false)}
         onSaved={() => {
           setEditing(false);
@@ -204,25 +206,19 @@ export function IdeaDetail({ idea, now, history, onDeleted }: IdeaDetailProps) {
   );
 }
 
-/** Edit in place, text formats only (EDITABLE_TYPES). A correction: no points, no dedup, level and history untouched. */
-function IdeaEditForm({ idea, onCancel, onSaved }: { idea: LibraryIdea; onCancel: () => void; onSaved: () => void }) {
+/**
+ * Edit in place, any format the add form writes (EDITABLE_TYPES), the format itself included. A correction: no
+ * points, no dedup; level, due date, strikes and history stay (idea-edit.ts has the rules, editIdea the write).
+ */
+function IdeaEditForm({ idea, now, onCancel, onSaved }: { idea: LibraryIdea; now: number; onCancel: () => void; onSaved: () => void }) {
   const qId = useId();
   const aId = useId();
-  const cloze = idea.questionType === "CLOZE";
-  const [question, setQuestion] = useState(cloze ? "" : idea.question);
-  const [answer, setAnswer] = useState(cloze ? "" : idea.answer);
-  const [caseSensitive, setCaseSensitive] = useState(idea.answerCaseSensitive);
-  const [text, setText] = useState(cloze ? clozeTemplate(idea.question, idea.answer) : "");
+  const [state, setState] = useState<AddContentState>(() => editStateOf(idea));
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
-
-  const content: IdeaContent | null = cloze
-    ? text.trim() && countClozeBlanks(text) > 0
-      ? { type: "CLOZE", text }
-      : null
-    : question.trim() && answer.trim() && !shortAnswerProblem(answer)
-      ? { type: "SHORT", question, answer, caseSensitive }
-      : null;
+  const set = (patch: Partial<AddContentState>) => setState((s) => ({ ...s, ...patch }));
+  const content = contentOfAddState(state);
+  const moved = state.type !== idea.questionType;
 
   function save() {
     if (!content) return;
@@ -237,6 +233,15 @@ function IdeaEditForm({ idea, onCancel, onSaved }: { idea: LibraryIdea; onCancel
     });
   }
 
+  const prompt = (label: string, value: string, onChange: (v: string) => void, opts: { mono?: boolean; rows?: number } = {}) => (
+    <div>
+      <label className="st-label" htmlFor={qId}>
+        {label}
+      </label>
+      <textarea id={qId} className={opts.mono ? "st-input t-mono" : "st-input"} rows={opts.rows ?? 3} value={value} onChange={(e) => onChange(e.target.value)} data-autofocus />
+    </div>
+  );
+
   return (
     <form
       className="idea-edit"
@@ -245,41 +250,108 @@ function IdeaEditForm({ idea, onCancel, onSaved }: { idea: LibraryIdea; onCancel
         save();
       }}
     >
-      {cloze ? (
-        <div>
-          <label className="st-label" htmlFor={qId}>
-            Sentence
-          </label>
-          <textarea id={qId} className="st-input" rows={4} value={text} onChange={(e) => setText(e.target.value)} data-autofocus />
-          {text.trim() && countClozeBlanks(text) === 0 ? (
-            <p className="st-hint">No blanks yet: wrap the part to recall in {"{{double braces}}"}.</p>
-          ) : (
-            text.trim() && (
-              <div className="add-preview">
-                <span className="t-eyebrow">Reviewer sees</span>
-                {parseCloze(text).blanked}
-              </div>
-            )
-          )}
+      <div role="group" aria-label="Format">
+        <span className="st-label">Format</span>
+        <div className="idea-edit-types">
+          {EDIT_FORMATS.map((t) => (
+            <ChipButton key={t} pressed={state.type === t} onClick={() => setState((s) => switchEditFormat(s, t))}>
+              {TYPE_NAME[t]}
+            </ChipButton>
+          ))}
         </div>
-      ) : (
+      </div>
+
+      {state.type === "SHORT" && (
         <>
-          <div>
-            <label className="st-label" htmlFor={qId}>
-              Question
-            </label>
-            <textarea id={qId} className="st-input" rows={3} value={question} onChange={(e) => setQuestion(e.target.value)} data-autofocus />
-          </div>
+          {prompt("Question", state.shortQuestion, (v) => set({ shortQuestion: v }))}
           <div>
             <label className="st-label" htmlFor={aId}>
               Answer
             </label>
-            <textarea id={aId} className="st-input" rows={3} value={answer} onChange={(e) => setAnswer(e.target.value)} />
-            <ShortAnswerOptions answer={answer} caseSensitive={caseSensitive} onCaseSensitive={setCaseSensitive} />
+            <textarea id={aId} className="st-input" rows={3} value={state.shortAnswer} onChange={(e) => set({ shortAnswer: e.target.value })} />
+            <ShortAnswerOptions answer={state.shortAnswer} caseSensitive={state.shortCaseSensitive} onCaseSensitive={(v) => set({ shortCaseSensitive: v })} />
           </div>
         </>
       )}
-      <p className="st-note">A correction: level, due date and history stay as they are, and nothing is paid.</p>
+
+      {state.type === "FORMULA" && (
+        <>
+          {prompt("Question", state.formulaQuestion, (v) => set({ formulaQuestion: v }))}
+          <div>
+            <label className="st-label" htmlFor={aId}>
+              Formula
+            </label>
+            <textarea id={aId} className="st-input t-mono" rows={2} value={state.formulaAnswer} onChange={(e) => set({ formulaAnswer: e.target.value })} />
+          </div>
+        </>
+      )}
+
+      {state.type === "CLOZE" && (
+        <div>
+          <label className="st-label" htmlFor={qId}>
+            Sentence
+          </label>
+          <textarea id={qId} className="st-input" rows={4} value={state.clozeText} onChange={(e) => set({ clozeText: e.target.value })} data-autofocus />
+          {state.clozeText.trim() && countClozeBlanks(state.clozeText) === 0 ? (
+            <p className="st-hint">No blanks yet: wrap the part to recall in {"{{double braces}}"}.</p>
+          ) : (
+            state.clozeText.trim() && (
+              <div className="add-preview">
+                <span className="t-eyebrow">Reviewer sees</span>
+                {parseCloze(state.clozeText).blanked}
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      {state.type === "NUMERIC" && (
+        <>
+          {prompt("Question", state.numericPrompt, (v) => set({ numericPrompt: v }), { rows: 2 })}
+          <div className="add-three">
+            <EditInput label="Value" mono inputMode="decimal" value={state.numericValue} onChange={(v) => set({ numericValue: v })} />
+            <EditInput label="Tolerance ±" mono inputMode="decimal" value={state.numericTolerance} onChange={(v) => set({ numericTolerance: v })} />
+            <EditInput label="Unit" value={state.numericUnit} onChange={(v) => set({ numericUnit: v })} />
+          </div>
+        </>
+      )}
+
+      {(state.type === "LIST" || state.type === "ORDER") && (
+        <>
+          {state.type === "LIST"
+            ? prompt("Question", state.listPrompt, (v) => set({ listPrompt: v }), { rows: 2 })
+            : prompt("Question", state.orderPrompt, (v) => set({ orderPrompt: v }), { rows: 2 })}
+          <EditRows
+            legend={state.type === "LIST" ? "Items, in any order" : "Steps, in the correct order"}
+            noun={state.type === "LIST" ? "item" : "step"}
+            rows={state.type === "LIST" ? state.listItems : state.orderItems}
+            onRows={(rows) => set(state.type === "LIST" ? { listItems: rows } : { orderItems: rows })}
+          />
+        </>
+      )}
+
+      {state.type === "MULTI" && (
+        <EditRows
+          legend="Options: mark the right one. Multiple choice has no separate prompt; the options are the card."
+          noun="option"
+          rows={state.options}
+          picked={state.correctIndex}
+          onPick={(i) => set({ correctIndex: i })}
+          onRows={(rows, removedAt) =>
+            setState((s) => ({ ...s, options: rows, correctIndex: removedAt != null && s.correctIndex >= removedAt && s.correctIndex > 0 ? s.correctIndex - 1 : s.correctIndex }))
+          }
+        />
+      )}
+
+      <p className="st-note idea-edit-keep">
+        {moved && (
+          <>
+            <b>Asked as {TYPE_NAME[state.type]}</b> from the next review.{" "}
+          </>
+        )}
+        Kept as it is: level {idea.level}, {idea.isArchived ? "archived" : lowerFirst(dueSentence(idea.dueAt, now))}
+        {idea.failedAttempts > 0 ? `, ${plural(idea.failedAttempts, "strike")}` : ""} and the history. Nothing is paid.
+      </p>
       {error && (
         <p className="st-error" role="alert">
           {error}
@@ -294,6 +366,77 @@ function IdeaEditForm({ idea, onCancel, onSaved }: { idea: LibraryIdea; onCancel
         </Button>
       </div>
     </form>
+  );
+}
+
+const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+
+function EditInput({ label, value, onChange, mono, inputMode }: { label: string; value: string; onChange: (v: string) => void; mono?: boolean; inputMode?: "decimal" }) {
+  const id = useId();
+  return (
+    <div>
+      <label className="st-label" htmlFor={id}>
+        {label}
+      </label>
+      <input id={id} type="text" className={mono ? "st-input t-mono" : "st-input"} inputMode={inputMode} value={value} onChange={(e) => onChange(e.target.value)} />
+    </div>
+  );
+}
+
+/** A list's items, an order's steps or multiple choice's options: rows to type, add and remove (two at least). */
+function EditRows({
+  legend,
+  noun,
+  rows,
+  onRows,
+  picked,
+  onPick,
+}: {
+  legend: string;
+  noun: string;
+  rows: string[];
+  onRows: (rows: string[], removedAt?: number) => void;
+  picked?: number;
+  onPick?: (i: number) => void;
+}) {
+  const name = useId();
+  return (
+    <fieldset className="add-items" style={{ border: 0, margin: 0, padding: 0 }}>
+      <legend className="st-label">{legend}</legend>
+      {rows.map((row, i) => (
+        <div key={i} className="add-item">
+          {onPick ? (
+            <label className="add-pick">
+              <input type="radio" name={name} checked={picked === i} onChange={() => onPick(i)} />
+              <span className="sr-only">
+                {noun} {i + 1} is the right one
+              </span>
+            </label>
+          ) : (
+            <span className="n">{i + 1}</span>
+          )}
+          <input
+            type="text"
+            className="st-input"
+            aria-label={`${noun[0].toUpperCase()}${noun.slice(1)} ${i + 1}${picked === i ? " (right)" : ""}`}
+            value={row}
+            onChange={(e) => onRows(rows.map((r, j) => (j === i ? e.target.value : r)))}
+          />
+          {rows.length > 2 && (
+            <Button variant="quiet" aria-label={`Remove ${noun} ${i + 1}`} onClick={() => onRows(rows.filter((_, j) => j !== i), i)}>
+              <Icon name="x" />
+            </Button>
+          )}
+        </div>
+      ))}
+      {rows.length < EDIT_ROWS_MAX && (
+        <div className="st-row">
+          <Button variant="quiet" icon="plus" onClick={() => onRows([...rows, ""])}>
+            Add {noun}
+          </Button>
+        </div>
+      )}
+    </fieldset>
   );
 }
 

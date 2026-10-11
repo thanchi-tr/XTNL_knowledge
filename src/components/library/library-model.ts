@@ -22,6 +22,7 @@ import { fieldTier, type FieldTier } from "@/lib/field-tier";
 import { displayAnswer, displayQuestion } from "@/lib/idea-display";
 import { LIFE_TZ } from "@/lib/life-day";
 import { QUESTION_TYPES, decodeStringArray } from "@/lib/idea-payload";
+import { EDIT_FORMATS } from "@/lib/idea-edit";
 import { parseReviewDetail } from "@/lib/roadmap-types";
 import { MASTERY_LEVEL, MAX_LEVEL } from "@/lib/xp";
 
@@ -82,8 +83,8 @@ export const TYPE_NAME: Record<QuestionType, string> = {
   DIAGRAM: "Diagram",
 };
 
-/** The formats the idea page can edit in place (text only; the rest are deleted and re-added). */
-export const EDITABLE_TYPES: readonly QuestionType[] = ["SHORT", "CLOZE"];
+/** The formats the idea page can edit in place, and switch between (idea-edit.ts); a diagram is deleted and re-added. */
+export const EDITABLE_TYPES: readonly QuestionType[] = EDIT_FORMATS;
 
 export function isMastered(idea: Pick<LibraryIdea, "level">): boolean {
   return idea.level >= MASTERY_LEVEL;
