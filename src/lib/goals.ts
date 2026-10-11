@@ -4,7 +4,8 @@
  *
  * Spec: docs/life-plan/m5-refit.md F6; contract table:
  * docs/life-plan/m5-contracts.md. Pure and client-importable: it imports
- * life-economy and life-day, never Prisma or today-board. The server half
+ * life-economy, life-day and momentum.ts's gate (all pure), never Prisma or
+ * today-board. The server half
  * (readGoalCloseInput, closeGoalCore, rescheduleGoalCore, loadGoalLadder,
  * stateGoalMp) is goals-server.ts (lane A).
  *
@@ -51,7 +52,6 @@ import {
   GOAL_DEPTH,
   GOAL_DEPTH_CAP,
   GOAL_RULES,
-  LIFE_MP_WEEK_CAP,
   cappedMp,
   goalMintKey,
   goalReasonOf,
@@ -63,6 +63,9 @@ import {
   type LifeMintInput,
 } from "./life-economy";
 import type { Horizon, KrMetric, Track } from "./life-types";
+// The judge pool's cap in force for the close day's life week (momentum.md §A.10): LIFE_MP_WEEK_CAP (8) before
+// MOMENTUM_LAUNCH_DAY, and always while it is null; MOMENTUM_LIFE_MP_WEEK_CAP (91) for a week whose Sunday is on or after it.
+import { lifeMpModelOfWeek } from "./momentum";
 
 /** The refusal a close of a goal that is already closed gets (a double tap, another device or tab). */
 export const GOAL_ALREADY_CLOSED = "Already closed.";
@@ -480,8 +483,10 @@ export function goalLimitWindow(input: GoalInput): GoalLimitWindow {
  *   6. SHORT: 2 already paid in the close day's life week
  *   7. MID: 2 paid in the days (today − 30, today]
  *   8. LONG: 1 paid in the days (today − 91, today]
- * Then SHORT pays stated within the 8 MP life-week cap (trimmed, or 0 'the
- * life week's 8 MP cap is reached'); MID and LONG pay scaled. depth = pays >
+ * Then SHORT pays stated within the life week's judge-pool cap (trimmed, or 0
+ * 'the life week's 8 MP cap is reached'); the cap is the close day's week's
+ * model (momentum.ts lifeMpModelOfWeek): 8 before momentum's launch, 91 from a
+ * week whose Sunday is on or after it. MID and LONG pay scaled. depth = pays >
  * 0 ? min(GOAL_DEPTH[h], 2 − the track's goal depth) : 0. Goals never pay XP.
  */
 export function closeDecision(input: GoalInput): GoalPayout {
@@ -529,9 +534,10 @@ export function closeDecision(input: GoalInput): GoalPayout {
   let pays = scaled;
   let why: string | null = null;
   if (rule.capped) {
-    pays = cappedMp(scaled, input.cappedUsedThisWeek);
-    if (pays <= 0) return refuse(`the life week's ${LIFE_MP_WEEK_CAP} MP cap is reached`);
-    if (pays < scaled) why = `trimmed by the life week's ${LIFE_MP_WEEK_CAP} MP cap`;
+    const cap = lifeMpModelOfWeek(input.today).weekCap;
+    pays = cappedMp(scaled, input.cappedUsedThisWeek, cap);
+    if (pays <= 0) return refuse(`the life week's ${cap} MP cap is reached`);
+    if (pays < scaled) why = `trimmed by the life week's ${cap} MP cap`;
   }
   const depth = Math.max(0, Math.min(GOAL_DEPTH[h], GOAL_DEPTH_CAP - trackGoalDepth(input.goalMints, input.track, ownKey)));
   return { ...base, pays, why, depth };

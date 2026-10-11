@@ -50,12 +50,11 @@ import {
   GOAL_DEPTH_CAP,
   GOAL_RULES,
   KEPT_WEEK_STREAK_DAYS,
-  LIFE_MP_WEEK_CAP,
   TRACK_SHARE_CAP,
   depthCap,
   goalIdOfMintKey,
   isBackfillDetail,
-  isCappedReason,
+  isCappedReasonIn,
   isHeldWeekReceipt,
   isLaunched,
   lifeLaunchDay,
@@ -66,6 +65,9 @@ import {
   xpForLevel,
 } from "./life-economy";
 import { TRACKS, type Composition, type Horizon, type Track } from "./life-types";
+// The judge pool in force for a life week (momentum.md §A.10): LIFE_MP_WEEK_CAP (8) and CAPPED_REASONS before
+// MOMENTUM_LAUNCH_DAY, and always while it is null; 91 and + LIFE_PLAN_WEEK for a week whose Sunday is on or after it.
+import { lifeMpModelOfWeek } from "./momentum";
 import { streakBonusPercent } from "./streak-curve";
 
 // ── Labels ────────────────────────────────────────────────────────────────
@@ -253,14 +255,15 @@ export interface LifeTracksView {
   /** null when not launched. */
   edges: LifeEdges | null;
   /**
-   * Σ capped MP minted in today's life week, against LIFE_MP_WEEK_CAP. Kept
+   * Σ capped MP minted in today's life week, against the week's judge-pool
+   * cap (momentum.ts lifeMpModelOfWeek: 8 before momentum, 91 after). Kept
    * weeks mint on their Sunday but only from the Wednesday after, so this is
    * near 0 most of the week: show mpLastWeek instead.
    */
   mpThisWeek: { used: number; cap: number };
   /**
    * Σ capped MP minted in the last judged life week (lifeMpInWeek of its
-   * Monday), against LIFE_MP_WEEK_CAP: what the hero's 'life MP last week'
+   * Monday), against that week's judge-pool cap: what the hero's 'life MP last week'
    * shows, the same figure as /today/week's footer. weekKey null (used 0)
    * until a week is judged. backfill is true when that week's WEEK rows carry
    * the 'backfill · ' prefix (it closed before launch, so it paid nothing by
@@ -311,8 +314,8 @@ export function notLaunchedView(today: DayKey): LifeTracksView {
     rows: [],
     contributions: [],
     edges: null,
-    mpThisWeek: { used: 0, cap: LIFE_MP_WEEK_CAP },
-    mpLastWeek: { used: 0, cap: LIFE_MP_WEEK_CAP, weekKey: null, backfill: false },
+    mpThisWeek: { used: 0, cap: lifeMpModelOfWeek(today).weekCap },
+    mpLastWeek: { used: 0, cap: lifeMpModelOfWeek(addDays(weekStartKeyOf(today), -7)).weekCap, weekKey: null, backfill: false },
     judgedWeeks: [],
     lastJudgedWeek: null,
   };
@@ -563,12 +566,13 @@ export function judgedWeekKeys(ledger: LifeLedger): string[] {
   return judgedWeekList(ledger).map((w) => w.weekKey);
 }
 
-/** Σ qty of mints whose reason is in CAPPED_REASONS, dated in [monday, monday + 6]. */
+/** Σ qty of mints whose reason shares the judge pool of that week's model (lifeMpModelOfWeek), dated in [monday, monday + 6]. */
 export function lifeMpInWeek(ledger: LifeLedger, monday: DayKey): number {
   const sunday = addDays(monday, 6);
+  const model = lifeMpModelOfWeek(monday);
   let used = 0;
   for (const m of ledger.mints) {
-    if (m.day < monday || m.day > sunday || !isCappedReason(m.reason) || !Number.isFinite(m.qty)) continue;
+    if (m.day < monday || m.day > sunday || !isCappedReasonIn(model, m.reason) || !Number.isFinite(m.qty)) continue;
     used += Math.max(0, m.qty);
   }
   return round2(used);
@@ -629,10 +633,10 @@ export function lifeTracksView(ledger: LifeLedger, today: DayKey, launchDay: Day
     rows,
     contributions: lifeContributionRows(states),
     edges: { body: edgeOf("BODY"), duty: edgeOf("DUTY"), craft: edgeOf("CRAFT"), care: edgeOf("CARE") },
-    mpThisWeek: { used: lifeMpInWeek(ledger, weekStartKeyOf(today)), cap: LIFE_MP_WEEK_CAP },
+    mpThisWeek: { used: lifeMpInWeek(ledger, weekStartKeyOf(today)), cap: lifeMpModelOfWeek(today).weekCap },
     mpLastWeek: {
       used: last ? lifeMpInWeek(ledger, addDays(last.sunday, -6)) : 0,
-      cap: LIFE_MP_WEEK_CAP,
+      cap: lifeMpModelOfWeek(last ? last.sunday : addDays(weekStartKeyOf(today), -7)).weekCap,
       weekKey: last?.weekKey ?? null,
       backfill: last != null && ledger.weeks.some((w) => w.weekKey === last.weekKey && isBackfillDetail(w.detail)),
     },

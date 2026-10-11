@@ -1379,7 +1379,15 @@ console.log("\n§8 review fixes");
   check("C3: a lost race returns 'Something changed; try again.'", /isStaleGuard\(err\)\) return \{ ok: false, error: GOAL_CLOSE_STALE \}/.test(closeCore) && /GOAL_CLOSE_STALE = "Something changed; try again\."/.test(goalsSrv));
   check(
     "C3: the guard re-counts the same filters (MP_MINT, 'mp:GOAL:%', not its own key, qty > 0, the reason, the window) and, for a SHORT, the week's capped MP",
-    /"dedupeKey" LIKE \$\{`\$\{GOAL_MINT_PREFIX\}%`\}/.test(goalsSrv) && /"dedupeKey" <> \$\{goalMintKey\(goalId\)\}/.test(goalsSrv) && /split_part\("detail", \$\{MINT_DETAIL_SEP\}, 1\) = \$\{w\.reason\}/.test(goalsSrv) && /= \$\{w\.paying\}::int/.test(goalsSrv) && /IN \(\$\{Prisma\.join\(\[\.\.\.CAPPED_REASONS\]\)\}\)/.test(goalsSrv)
+    /"dedupeKey" LIKE \$\{`\$\{GOAL_MINT_PREFIX\}%`\}/.test(goalsSrv) && /"dedupeKey" <> \$\{goalMintKey\(goalId\)\}/.test(goalsSrv) && /split_part\("detail", \$\{MINT_DETAIL_SEP\}, 1\) = \$\{w\.reason\}/.test(goalsSrv) && /= \$\{w\.paying\}::int/.test(goalsSrv) &&
+      // Momentum (momentum.md §A.10): the capped reasons are the close week's model's (CAPPED_REASONS before launch).
+      /IN \(\$\{Prisma\.join\(\[\.\.\.lifeMpModelOfWeek\(w\.cappedWeek\.monday\)\.cappedReasons\]\)\}\)/.test(goalsSrv)
+  );
+  check(
+    "C3: the read counts what the guard counts: cappedSum takes the same week's model (isCappedReasonIn over lifeMpModelOfWeek), before launch exactly CAPPED_REASONS",
+    /export function cappedSum\([^)]*day: DayKey\)[\s\S]*?const model = lifeMpModelOfWeek\(day\);[\s\S]*?isCappedReasonIn\(model, parseMintDetail\(r\.detail\)\.reason\)/.test(goalsSrv) &&
+      (goalsSrv.match(/cappedSum\(week, today\)/g) ?? []).length === 2 &&
+      lifeMpModelOf(false).cappedReasons === CAPPED_REASONS
   );
   const judgeSrv = code("src/lib/life-weeks-server.ts");
   const guardBody = goalsSrv.slice(goalsSrv.indexOf("function closeGuardOp("), goalsSrv.indexOf("export async function readGoalCloseInput"));

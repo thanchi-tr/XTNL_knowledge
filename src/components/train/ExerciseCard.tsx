@@ -1,26 +1,54 @@
 "use client";
 
 /**
- * Train › Exercise: walking for now. A record, never a reward (no XP, MP, streak or celebration).
+ * Train › Exercise: walking for now. Before MOMENTUM_LAUNCH_DAY a record, never a reward (no XP, MP, streak or
+ * celebration), and the card is exactly that.
  *
  *   week     this week's sessions, distance, time and climb
  *   log      the incline angle in degrees (with quick chips and its treadmill grade), the distance, the duration and
  *            the day; a live line reads the speed, the pace and the climb before you save
  *   history  the last 90 days, newest first; Delete asks twice
  *
+ * On a live day (view.live; momentum.md §A.6, §E.4) the card only states what the server decided: the pay line
+ * ("Paid +16.6 XP · moderate · 45 effort min", "Logged · walks pay only today or yesterday", "Recorded · faster than
+ * a walk"), the paid XP as a T0 mark, and the server-returned Seals (a personal best) — nothing is priced here. The
+ * form pre-selects "Counts as: <title>" when the server found an exercise habit due today; each paid walk shows its
+ * XP, and Delete says whether it takes the pay back (logged today) or the pay stays.
+ *
  * `actions` are the server actions (page) or fakes (fixtures).
  */
 import { useId, useState, useTransition, type FormEvent } from "react";
 import { addDays, type DayKey } from "@/lib/life-day";
-import { announce } from "@/lib/celebrate";
+import { announce, enqueue, mark } from "@/lib/celebrate";
+import type { CelebrationEvent } from "@/lib/celebration-types";
 import { Button } from "@/components/ui/Button";
 import { ChipButton } from "@/components/ui/Chip";
-import { ANGLE_MAX, cleanWalkInput, durationLabel, paceLabel, walkFactsOf, type ExerciseSessionView } from "@/lib/exercise";
+import {
+  ANGLE_MAX,
+  cleanWalkInput,
+  durationLabel,
+  paceLabel,
+  walkDeleteLine,
+  walkDeleteNote,
+  walkFactsOf,
+  walkPayLine,
+  xpText,
+  type ExerciseSessionView,
+  type WalkDeleteOutcome,
+  type WalkPay,
+} from "@/lib/exercise";
 import type { ExerciseView } from "@/lib/exercise-server";
 
 export interface ExerciseActions {
-  logWalk: (input: { day?: string; angleDeg: number; distanceKm: number; durationMin: number; note?: string }) => Promise<{ ok: true; value: ExerciseSessionView } | { ok: false; error: string }>;
-  deleteExercise: (id: string) => Promise<{ ok: true; value: null } | { ok: false; error: string }>;
+  logWalk: (input: {
+    day?: string;
+    angleDeg: number;
+    distanceKm: number;
+    durationMin: number;
+    note?: string;
+    countsAs?: string | null;
+  }) => Promise<{ ok: true; value: ExerciseSessionView & { pay?: WalkPay; celebrations?: CelebrationEvent[] } } | { ok: false; error: string }>;
+  deleteExercise: (id: string) => Promise<{ ok: true; value: WalkDeleteOutcome | null } | { ok: false; error: string }>;
 }
 
 export const EXERCISE_NOT_READY_LINE = "Exercise logging needs a one-time database update first. Your entries can't be saved until then.";
@@ -45,6 +73,7 @@ export function ExerciseCard({ view, actions }: { view: ExerciseView; actions: E
   const [distance, setDistance] = useState("");
   const [duration, setDuration] = useState("");
   const [day, setDay] = useState<DayKey>(today);
+  const [countsAs, setCountsAs] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null);
@@ -54,8 +83,10 @@ export function ExerciseCard({ view, actions }: { view: ExerciseView; actions: E
   const preview = draft.ok ? walkFactsOf(draft.value) : null;
   const angleNum = num(angle);
   const grade = Number.isFinite(angleNum) && angleNum >= 0 && angleNum <= ANGLE_MAX ? walkFactsOf({ angleDeg: angleNum, distanceKm: 1, durationMin: 1 }).gradePct : null;
+  // "Counts as" (live days only): the habit the server found due today, for a walk dated today.
+  const link = view.live && view.link && day === today ? view.link : null;
 
-  function submit(e: FormEvent) {
+  function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setSaved(null);
     if (!draft.ok) {
@@ -64,15 +95,29 @@ export function ExerciseCard({ view, actions }: { view: ExerciseView; actions: E
     }
     setError(null);
     const v = draft.value;
+    const from = e.currentTarget.querySelector(".wt-log");
+    const linked = link && countsAs ? link.templateId : null;
     start(async () => {
-      const res = await actions.logWalk({ day: v.day, angleDeg: v.angleDeg, distanceKm: v.distanceKm, durationMin: v.durationMin });
+      const res = await actions.logWalk({ day: v.day, angleDeg: v.angleDeg, distanceKm: v.distanceKm, durationMin: v.durationMin, ...(linked ? { countsAs: linked } : {}) });
       if (!res.ok) {
         setError(res.error);
         return;
       }
-      const said = `Logged a ${km(v.distanceKm)} walk, ${durationLabel(v.durationMin)} at ${v.angleDeg}°.`;
-      setSaved(said);
-      announce(said);
+      const pay = res.value.pay;
+      if (pay) {
+        // A live day: say what the server paid, mark the paid XP (T0), then its Seals (a personal best).
+        const line = walkPayLine(pay);
+        setSaved(line);
+        if (pay.kind === "PAID" && pay.xp > 0) {
+          void mark({ kind: "tick", id: `walk:${res.value.id}`, text: `Walked ${km(v.distanceKm)} · paid ${xpText(pay.xp)} XP exactly`, amount: { kind: "xp", value: pay.xp }, from, say: false });
+        }
+        announce(line);
+        for (const ev of res.value.celebrations ?? []) if (ev.tier >= 2) enqueue(ev);
+      } else {
+        const said = `Logged a ${km(v.distanceKm)} walk, ${durationLabel(v.durationMin)} at ${v.angleDeg}°.`;
+        setSaved(said);
+        announce(said);
+      }
       setDistance("");
       setDuration("");
       setDay(today);
@@ -88,7 +133,7 @@ export function ExerciseCard({ view, actions }: { view: ExerciseView; actions: E
       const res = await actions.deleteExercise(s.id);
       setConfirm(null);
       if (!res.ok) setError(res.error);
-      else announce("Walk deleted.");
+      else announce(walkDeleteLine(res.value));
     });
   }
 
@@ -150,6 +195,13 @@ export function ExerciseCard({ view, actions }: { view: ExerciseView; actions: E
           {grade != null ? (grade === 0 ? "Flat ground" : `≈ ${grade}% treadmill grade`) : `An angle from 0° to ${ANGLE_MAX}°`}
           {preview && ` · ${preview.speedKmh} km/h · ${paceLabel(preview.paceMinPerKm)}${preview.climbM > 0 ? ` · climb ${preview.climbM} m` : ""}`}
         </p>
+        {link && (
+          <div className="wt-ex-chips" role="group" aria-label="Counts as">
+            <ChipButton pressed={countsAs} onClick={() => setCountsAs((c) => !c)} disabled={pending}>
+              Counts as: {link.title}
+            </ChipButton>
+          </div>
+        )}
         <Button type="submit" variant="primary" className="wt-log" disabled={pending}>
           Log walk
         </Button>
@@ -169,6 +221,7 @@ export function ExerciseCard({ view, actions }: { view: ExerciseView; actions: E
           <ul className="wt-list">
             {view.sessions.map((s) => {
               const f = walkFactsOf(s);
+              const paid = view.live ? view.paid?.[s.id] : undefined;
               return (
                 <li key={s.id} className="wt-item wt-ex-item">
                   <span className="wt-ex-item-day">{dayWords(s.day, today)}</span>
@@ -179,7 +232,9 @@ export function ExerciseCard({ view, actions }: { view: ExerciseView; actions: E
                     <span className="t-meta wt-ex-item-sub">
                       {f.speedKmh} km/h · {paceLabel(f.paceMinPerKm)}
                       {f.climbM > 0 ? ` · climb ${f.climbM} m` : ""}
+                      {paid ? ` · +${xpText(paid.xp)} XP` : ""}
                     </span>
+                    {paid && confirm === s.id && <span className="t-meta wt-ex-item-sub">{walkDeleteNote(paid)}</span>}
                   </span>
                   <Button variant="quiet" disabled={pending} onClick={() => remove(s)} aria-label={confirm === s.id ? "Tap again to delete this walk" : "Delete this walk"}>
                     {confirm === s.id ? "Sure?" : "Delete"}

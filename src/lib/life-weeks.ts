@@ -60,6 +60,27 @@
  *   WeekTemplate gains compulsory?, compulsoryOnRest?, inbox?, dueKind?, pendingChange?;
  *   WeekInstance gains repaired?; WeekMintRow gains key?; WeekJudgeState gains dutyLaunchDay?,
  *   settledThroughDay?, restDays?, fullDays?; WeekTrackPlan gains held? and restDays?.
+ *
+ * Momentum (lane B, a compatible change; momentum.md §A.6, §A.8, §A.10, §D.2). Every addition is optional and
+ * inert while the state's momentumLaunchDay is absent or null (and MOMENTUM_LAUNCH_DAY is null today): every
+ * existing state and fixture judges, mints and words exactly as before.
+ *
+ *   The MP model  every amount, cap and capped reason is read from momentum.ts lifeMpModelOfWeek(sunday,
+ *                 momentumLaunchDay): today's 1.5 a kept track inside 8 before launch, 18 inside 91 from it.
+ *   Walks         WeekTaskRow.source gains WORKOUT: a walk's row ('workout:<sessionId>', category EXERCISE)
+ *                 counts for BODY like a TASK row (its day, raw and effort minutes, exercise.ts
+ *                 walkCountedEffortOf); a WORKOUT row keyed 'undo:<id>' (a walk under 10 minutes taken back)
+ *                 takes its row back like an UNDO. A TASK row paid by the walk (K 'paid by the walk') adds no
+ *                 effort minutes of its own: the walk's row carries them.
+ *   Perks         WeekJudgeState.perks (owned now): Iron lungs (+3 MP on a kept BODY week), Surveyor and Trail
+ *                 rations (a plan week's XP and MP), Forward camp (80 % of a plan week's quests keeps it).
+ *   Plan weeks    WeekJudgeState.questWeeks: the finalized RoadmapQuestWeek rows of the run's weeks. In the run
+ *                 that writes a live week's DUTY row, after DUTY (and after every kept track), one PLAN_WEEK row
+ *                 ('pw:<questWeekId>', 30 XP, 37.5 with Surveyor, to Roadmap.track, dated the Sunday) and one
+ *                 LIFE_PLAN_WEEK mint ('mp:LIFE_PLAN_WEEK:<questWeekId>', 10 MP, 12 with Trail rations) per kept
+ *                 quest week (≥ 2 quests, all done), at most one per roadmap per life week, by seat, inside the
+ *                 judge pool and before the full days; a trimmed mint is a qty-0 decision row. WeekPlan gains
+ *                 planWeekRows? (only when there is one). Exports WeekQuestWeek · PlanWeekRow · planWeekKept(q, share).
  */
 import { instanceOutcome, targetUnits } from "./habit";
 import { addDays, weekKeyOf, weekStartKeyOf, weekdayOf, type DayKey } from "./life-day";
@@ -69,12 +90,11 @@ import {
   DUTY_MIN_OCCURRENCES,
   HELD_PREFIX,
   HELD_WEEK_REST_DAYS,
-  LIFE_MP,
   WEEK_JUDGE_LAG_DAYS,
   WEEK_JUDGE_MAX_WEEKS,
   cappedMp,
   effortWeightOfB,
-  isCappedReason,
+  isCappedReasonIn,
   keptFloorsOf,
   round2,
   weekIsBackfill,
@@ -85,17 +105,23 @@ import {
 } from "./life-economy";
 import { MAKEUP_RESTORE_DAYS, firstDutyDay, fullDayMintKey, isDutyLaunched, settledFor } from "./duty-economy";
 import { expectedOn, ruleOn, type DutyTemplate } from "./duty-rule";
+import { MODE_LABEL } from "./life-grade";
+import { MOMENTUM, lifeModsOf, lifeMpModelOfWeek, planWeekMintKey } from "./momentum";
+import { walkCountedEffortOf } from "./exercise";
 import { TRACKS, type Category, type InstanceStatus, type Receipt, type TaskKind, type Track } from "./life-types";
 import type { LifeLedger } from "./life-tracks";
 import { WEEKDAY_SHORT, occurrencesBetween, parseRule } from "./recurrence";
 
 // ── State (one fresh read per run) ────────────────────────────────────────
 
-/** A TASK or UNDO row with sink TRACK, joined to its template's category. */
+/** A TASK, UNDO or (momentum) WORKOUT row with sink TRACK, joined to its template's category (a WORKOUT row's is EXERCISE). */
 export interface WeekTaskRow {
   id: string;
-  source: "TASK" | "UNDO";
-  /** An UNDO's 'undo:<id>' names the TASK row it takes back; UNDO rows count for nothing else. */
+  source: "TASK" | "UNDO" | "WORKOUT";
+  /**
+   * An UNDO's 'undo:<id>' names the TASK (or WORKOUT) row it takes back; UNDO rows count for nothing else. A WORKOUT
+   * row is a walk ('workout:<sessionId>') or, keyed 'undo:<id>', the reversal of a walk under 10 minutes.
+   */
   dedupeKey: string | null;
   day: DayKey;
   track: Track;
@@ -176,6 +202,33 @@ export interface WeekJudgeState {
   restDays?: ReadonlySet<DayKey>;
   /** M2: the days with a FULL_DAY row (settled full days), for the full-day mints (decision 6). */
   fullDays?: readonly DayKey[];
+  /**
+   * Momentum: the launch day the MP model is read with (lifeMpModelOfWeek(sunday, momentumLaunchDay)). Absent or
+   * null: today's model for every week, and no plan week. The server passes momentum.ts momentumLaunchDay().
+   */
+  momentumLaunchDay?: DayKey | null;
+  /** Momentum: the perk codes owned (momentum.ts ownedPerksOf, as of the run). Absent: none. */
+  perks?: ReadonlySet<string>;
+  /** Momentum: the finalized RoadmapQuestWeek rows of the run's weeks, for the plan weeks. Absent: none. */
+  questWeeks?: readonly WeekQuestWeek[];
+}
+
+/** One finalized RoadmapQuestWeek, as the plan-week payer reads it (roadmap-quests pastWeekOf's done and total). */
+export interface WeekQuestWeek {
+  /** RoadmapQuestWeek.id: the PLAN_WEEK row's and the mint's key. */
+  id: string;
+  roadmapId: string;
+  /** Roadmap.slot (its seat, 1..3); null reads last. Plan weeks mint by seat. */
+  seat: number | null;
+  /** Roadmap.track: where the plan week's XP goes. */
+  track: Track;
+  /** The roadmap's name on the row's detail line. */
+  title: string;
+  /** The life week's Monday. */
+  weekStart: DayKey;
+  /** Quests counted (an excused one leaves the total) and quests done. */
+  total: number;
+  done: number;
 }
 
 // ── Plans ─────────────────────────────────────────────────────────────────
@@ -201,10 +254,23 @@ export interface WeekPlan {
   tracks: WeekTrackPlan[];
   /**
    * LIFE_WEEK_KEPT mints for kept tracks, in TRACKS order, within the week's
-   * cap; then (M2, in the run that writes DUTY) one LIFE_FULL_DAY mint per
-   * full day, in day order. Empty for backfill.
+   * cap; then (momentum, in the run that writes DUTY) one LIFE_PLAN_WEEK mint
+   * per kept plan week, by seat; then (M2, in the run that writes DUTY) one
+   * LIFE_FULL_DAY mint per full day, in day order. Empty for backfill.
    */
   mints: LifeMintInput[];
+  /** Momentum: the PLAN_WEEK rows this run writes (with their mints above). Present only when there is one. */
+  planWeekRows?: PlanWeekRow[];
+}
+
+/** A kept plan week's PLAN_WEEK row (§A.8): sink TRACK, the roadmap's track, XP outside the knee, dated the Sunday. */
+export interface PlanWeekRow {
+  questWeekId: string;
+  roadmapId: string;
+  track: Track;
+  xp: number;
+  /** 'Plan week kept · <roadmap> · 5 of 5 quests'. */
+  detail: string;
 }
 
 // ── Final helpers (lane 0) ────────────────────────────────────────────────
@@ -355,7 +421,13 @@ function bFactorOf(receipt: Receipt | null): number {
   return typeof b?.value === "number" ? b.value : Number.NaN;
 }
 
-/** Live TASK rows per track and day, for a week's [from, to]: the judge's only view of activity. */
+/** A TASK receipt paid by a walk (momentum's SESSION mode, K 'paid by the walk'): the walk's WORKOUT row carries its effort. */
+function paidByWalk(receipt: Receipt | null): boolean {
+  const k = receipt?.factors?.find((f) => f.key === "K");
+  return k?.label === MODE_LABEL.SESSION && k.value === 0;
+}
+
+/** Live TASK (and, from momentum, WORKOUT) rows per track and day, for a week's [from, to]: the judge's only view of activity. */
 function trackWeekOf(rows: readonly WeekTaskRow[], track: Track, from: DayKey, to: DayKey): TrackWeek {
   const days = new Set<DayKey>();
   let completions = 0;
@@ -367,11 +439,40 @@ function trackWeekOf(rows: readonly WeekTaskRow[], track: Track, from: DayKey, t
     completions += 1;
     if (Number.isFinite(r.rawXp)) raw += r.rawXp;
     if (track === "BODY" && r.category === EFFORT_CATEGORY && r.receipt) {
+      if (r.source === "WORKOUT") {
+        // A walk: its counted effort (a topped-up tick's own minutes already taken off), else minutes × weight of B.
+        const counted = walkCountedEffortOf(r.receipt);
+        const minutes = Number(r.receipt.minutes);
+        if (counted != null) effort += counted;
+        else if (Number.isFinite(minutes) && minutes > 0) effort += minutes * effortWeightOfB(bFactorOf(r.receipt));
+        continue;
+      }
+      if (paidByWalk(r.receipt)) continue;
       const minutes = Number(r.receipt.minutes);
       if (Number.isFinite(minutes) && minutes > 0) effort += minutes * effortWeightOfB(bFactorOf(r.receipt));
     }
   }
   return { days: days.size, completions, raw: round2(raw), effortMinutes: Math.round(effort) };
+}
+
+/** A walk's row: source WORKOUT, keyed 'workout:<sessionId>' (its reversals are keyed 'undo:<id>'). */
+const isWalkRow = (r: WeekTaskRow): boolean => r.source === "WORKOUT" && (r.dedupeKey?.startsWith("workout:") ?? false);
+/** A row that takes another back: an UNDO, or a WORKOUT row keyed 'undo:<id>' (a walk under 10 minutes). */
+const isReversalRow = (r: WeekTaskRow): boolean => (r.source === "UNDO" || r.source === "WORKOUT") && (r.dedupeKey?.startsWith("undo:") ?? false);
+
+/** A plan week is kept (§A.8): ≥ 2 quests counted and all of them done (with Forward camp, ≥ 80 %). */
+export function planWeekKept(q: Pick<WeekQuestWeek, "total" | "done">, keepShare: number = 1): boolean {
+  if (!(q.total >= 2) || !Number.isFinite(q.done)) return false;
+  return q.done >= q.total * Math.min(1, Math.max(0, keepShare)) - 1e-9;
+}
+
+/** Plan weeks mint by seat (null last), then by roadmap and quest week, so a run is deterministic. */
+function bySeat(a: WeekQuestWeek, b: WeekQuestWeek): number {
+  const sa = a.seat ?? Number.POSITIVE_INFINITY;
+  const sb = b.seat ?? Number.POSITIVE_INFINITY;
+  if (sa !== sb) return sa - sb;
+  if (a.roadmapId !== b.roadmapId) return a.roadmapId < b.roadmapId ? -1 : 1;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
 /** Statuses of each template's instances, by day. */
@@ -693,6 +794,14 @@ function countIn(set: ReadonlySet<DayKey> | undefined, from: DayKey, to: DayKey)
  * the kept tracks: a trimmed one is a qty-0 decision row
  * ('full day <d> · trimmed by the weekly cap'), and a key already written is
  * skipped.
+ *
+ * Momentum: the amounts and the cap are the week's model
+ * (lifeMpModelOfWeek(sunday, state.momentumLaunchDay)): exactly the above
+ * until a launch day is passed and reached. On a live week a kept BODY week
+ * pays 18 + Iron lungs' 3, the others 18, inside 91; and in the run that
+ * writes DUTY each kept plan week (planWeekKept, one per roadmap, by seat)
+ * gets its PLAN_WEEK row and a LIFE_PLAN_WEEK mint after the tracks and
+ * before the full days.
  */
 export function planWeeks(state: WeekJudgeState): WeekPlan[] {
   const { launchDay, epochDay } = state;
@@ -701,10 +810,13 @@ export function planWeeks(state: WeekJudgeState): WeekPlan[] {
   const weeks = weeksToJudge(state.today, epochDay, state.judged, state.maxWeeks ?? WEEK_JUDGE_MAX_WEEKS, gate);
   if (weeks.length === 0) return [];
 
-  // An UNDO 'undo:<id>' takes TASK row <id> back; UNDO rows count for nothing else.
+  // An UNDO 'undo:<id>' takes TASK row <id> back; UNDO rows count for nothing else. Momentum: a walk's WORKOUT row
+  // counts like a TASK row, and a WORKOUT row keyed 'undo:<id>' takes a short walk back like an UNDO.
   const undone = new Set<string>();
-  for (const r of state.rows) if (r.source === "UNDO" && r.dedupeKey?.startsWith("undo:")) undone.add(r.dedupeKey.slice(5));
-  const live = state.rows.filter((r) => r.source === "TASK" && !undone.has(r.id));
+  for (const r of state.rows) if (isReversalRow(r)) undone.add(r.dedupeKey!.slice(5));
+  const live = state.rows.filter((r) => (r.source === "TASK" || isWalkRow(r)) && !undone.has(r.id));
+  const momentumLaunch = state.momentumLaunchDay ?? null;
+  const mods = lifeModsOf(state.perks ?? new Set<string>());
   const byTemplate = instancesByTemplate(state.instances);
   const lists = instanceListsByTemplate(state.instances);
   const restDays = state.restDays ?? new Set<DayKey>();
@@ -733,25 +845,57 @@ export function planWeeks(state: WeekJudgeState): WeekPlan[] {
     });
 
     const mints: LifeMintInput[] = [];
+    const planWeekRows: PlanWeekRow[] = [];
     if (!backfill) {
+      // The model in force for this life week (read on its Sunday): today's 1.5 inside 8 before momentum, 18 inside 91 from it.
+      const model = lifeMpModelOfWeek(sunday, momentumLaunch);
       let used = 0;
       for (const m of state.mints) {
-        if (m.day >= monday && m.day <= sunday && isCappedReason(m.reason) && Number.isFinite(m.qty)) used += Math.max(0, m.qty);
+        if (m.day >= monday && m.day <= sunday && isCappedReasonIn(model, m.reason) && Number.isFinite(m.qty)) used += Math.max(0, m.qty);
       }
       used = round2(used);
       for (const t of tracks) {
         if (!t.kept) continue;
-        const delta = cappedMp(LIFE_MP.WEEK_KEPT, used);
+        // Iron lungs: a kept BODY week pays +3, in the same pool (momentum only).
+        const amount = round2(model.mp.WEEK_KEPT + (model.momentum && t.track === "BODY" ? mods.bodyKeptMp : 0));
+        const delta = cappedMp(amount, used, model.weekCap);
         if (!(delta > 0)) continue;
         mints.push({
           reason: "LIFE_WEEK_KEPT",
           delta,
-          why: `kept week ${weekKey}${delta < LIFE_MP.WEEK_KEPT ? " · trimmed by the weekly cap" : ""}`,
+          why: `kept week ${weekKey}${delta < amount ? " · trimmed by the weekly cap" : ""}`,
           dedupeKey: weekKeptMintKey(t.track, weekKey),
           day: sunday,
           track: t.track,
         });
         used = round2(used + delta);
+      }
+      // Plan weeks (momentum §A.8): in the run that writes this week's DUTY row, after it and every kept track, by seat.
+      if (model.momentum && missing.includes("DUTY")) {
+        const planMp = round2(model.mp.PLAN_WEEK + (mods.planWeekMp - MOMENTUM.PLAN_WEEK_MP));
+        const ofWeek = (state.questWeeks ?? []).filter((q) => q.weekStart === monday).sort(bySeat);
+        const paidRoadmaps = new Set(ofWeek.filter((q) => mintKeys.has(planWeekMintKey(q.id))).map((q) => q.roadmapId));
+        for (const q of ofWeek) {
+          if (paidRoadmaps.has(q.roadmapId) || !planWeekKept(q, mods.planKeepShare)) continue;
+          paidRoadmaps.add(q.roadmapId);
+          planWeekRows.push({
+            questWeekId: q.id,
+            roadmapId: q.roadmapId,
+            track: q.track,
+            xp: mods.planWeekXp,
+            detail: `Plan week kept · ${q.title} · ${q.done} of ${q.total} quests`,
+          });
+          const delta = cappedMp(planMp, used, model.weekCap);
+          mints.push({
+            reason: "LIFE_PLAN_WEEK",
+            delta,
+            why: `plan week ${weekKey}${delta < planMp ? " · trimmed by the weekly cap" : ""}`,
+            dedupeKey: planWeekMintKey(q.id),
+            day: sunday,
+            track: q.track,
+          });
+          used = round2(used + delta);
+        }
       }
       // Full days (decision 6): last, in the run that writes this Duty week's DUTY row.
       if (dutyWeek && missing.includes("DUTY")) {
@@ -760,11 +904,11 @@ export function planWeeks(state: WeekJudgeState): WeekPlan[] {
         for (const d of fullDays) {
           const dedupeKey = fullDayMintKey(d);
           if (mintKeys.has(dedupeKey)) continue;
-          const delta = cappedMp(LIFE_MP.FULL_DAY, used);
+          const delta = cappedMp(model.mp.FULL_DAY, used, model.weekCap);
           mints.push({
             reason: "LIFE_FULL_DAY",
             delta,
-            why: `full day ${d}${delta < LIFE_MP.FULL_DAY ? " · trimmed by the weekly cap" : ""}`,
+            why: `full day ${d}${delta < model.mp.FULL_DAY ? " · trimmed by the weekly cap" : ""}`,
             dedupeKey,
             day: d,
             track: null,
@@ -773,6 +917,6 @@ export function planWeeks(state: WeekJudgeState): WeekPlan[] {
         }
       }
     }
-    return { weekKey, monday, sunday, backfill, tracks, mints };
+    return { weekKey, monday, sunday, backfill, tracks, mints, ...(planWeekRows.length > 0 ? { planWeekRows } : {}) };
   });
 }

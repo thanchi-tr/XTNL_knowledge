@@ -49,6 +49,26 @@
  *   - A held week's WEEK row carries receipt {mark: 'held', restDays} (qty 0).
  *     Full-day mints ride in the same array as the DUTY row, after the kept
  *     tracks, under the same life-mint lock.
+ *
+ * Momentum (lane B, compatible; momentum.md §A.6, §A.8, §A.10). Inert while
+ * momentum.ts momentumLaunchDay() is null: no extra read, the same plans.
+ *   - The TASK/UNDO read also takes WORKOUT rows (a walk, 'workout:<id>', and
+ *     a short walk's reversal, 'undo:<id>'), with category EXERCISE: a walk
+ *     counts for BODY's days, raw and effort minutes. Their UNDO rows were
+ *     already read.
+ *   - The state carries the momentum launch day (the MP model of each week:
+ *     18 a kept track inside 91), and, only when a week of the run is live,
+ *     the perks owned now (PERK and RESPEC rows) and the finalized
+ *     RoadmapQuestWeek rows of the run's weeks (done and total through
+ *     roadmap-quests pastWeekOf, the History line's own count).
+ *   - Before reading, a run that writes on a live day first finalizes the
+ *     week quests that have settled (roadmap-quests-server
+ *     finalizeQuestWeeks, idempotent): quest weeks settle on the judge's own
+ *     Wednesday, and the render chain runs the judge before the roadmap step,
+ *     so without it a plan week would never be final in the run that writes
+ *     DUTY.
+ *   - A kept plan week's PLAN_WEEK row rides in the week's array after the
+ *     WEEK rows; its LIFE_PLAN_WEEK mint is planned after the kept tracks.
  */
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
@@ -80,9 +100,14 @@ import {
   type WeekJudgeState,
   type WeekMintRow,
   type WeekPlan,
+  type WeekQuestWeek,
   type WeekTaskRow,
   type WeekTemplate,
 } from "./life-weeks";
+import { momentumLaunchDay, momentumLive, ownedPerksOf, planWeekRowKey } from "./momentum";
+import { finalizeQuestWeeks, setOfStored, type StoredQuestWeek } from "./roadmap-quests-server";
+import { pastWeekOf, type WeekQuestResultsStored } from "./roadmap-quests";
+import { isMissingRoadmapTable } from "./roadmap-types";
 import type { Category, InstanceStatus, Receipt, TaskKind } from "./life-types";
 
 export interface JudgeOptions {
@@ -184,6 +209,7 @@ async function readJudgeState(userId: string, today: DayKey, launchDay: DayKey, 
   };
   const judged = new Set<string>(weekRows.map((r) => r.dedupeKey!));
   const weeks = weeksToJudge(today, epochDay, judged, maxWeeks, gate);
+  const mLaunch = momentumLaunchDay();
   const base = {
     today,
     launchDay,
@@ -195,6 +221,7 @@ async function readJudgeState(userId: string, today: DayKey, launchDay: DayKey, 
     settledThroughDay: gate.settledThroughDay,
     restDays: new Set<DayKey>(),
     fullDays: [] as DayKey[],
+    momentumLaunchDay: mLaunch,
   };
   if (weeks.length === 0) return { ...base, rows: [], templates: [], instances: [], mints: [] };
 
@@ -202,14 +229,18 @@ async function readJudgeState(userId: string, today: DayKey, launchDay: DayKey, 
   const to = weeks[weeks.length - 1].sunday;
   // M2's reads, only for the Duty weeks of the run (none before DUTY_LAUNCH_DAY is set).
   const dutyFrom = gate.dutyLaunchDay != null && to >= gate.dutyLaunchDay ? maxDay(from, gate.dutyLaunchDay) : null;
+  // Momentum's reads, only when a week of the run is live (none while MOMENTUM_LAUNCH_DAY is null): the perks for
+  // every live week, the quest weeks for a live week whose DUTY row this run writes (the plan weeks' run).
+  const liveWeeks = weeks.filter((w) => momentumLive(w.sunday, mLaunch));
+  const planMondays = liveWeeks.filter((w) => w.missing.includes("DUTY")).map((w) => w.monday);
   const noRest: RestRowRaw[] = [];
   const noDays: { source: string; day: Date }[] = [];
-  const [rows, templates, instances, mints, restRows, dutyRows] = await Promise.all([
+  const [rows, templates, instances, mints, restRows, dutyRows, perkRows, questWeeks] = await Promise.all([
     prisma.$queryRaw<TaskRowRaw[]>`
       SELECT e."id", e."source", e."dedupeKey", e."day", e."track", e."templateId", e."rawXp", e."receipt", t."category"
       FROM "ActivityEvent" e
       LEFT JOIN "TaskTemplate" t ON t."id" = e."templateId"
-      WHERE e."userId" = ${userId} AND e."sink" = 'TRACK' AND e."source" IN ('TASK', 'UNDO') AND e."track" IS NOT NULL
+      WHERE e."userId" = ${userId} AND e."sink" = 'TRACK' AND e."source" IN ('TASK', 'UNDO', 'WORKOUT') AND e."track" IS NOT NULL
         AND e."day" >= ${from}::date AND e."day" <= ${to}::date
     `,
     prisma.taskTemplate.findMany({
@@ -255,6 +286,10 @@ async function readJudgeState(userId: string, today: DayKey, launchDay: DayKey, 
           select: { source: true, day: true },
         })
       : Promise.resolve(noDays),
+    liveWeeks.length > 0
+      ? prisma.activityEvent.findMany({ where: { userId, source: { in: ["PERK", "RESPEC"] } }, select: { source: true, detail: true, occurredAt: true } })
+      : Promise.resolve([] as { source: string; detail: string | null; occurredAt: Date }[]),
+    planMondays.length > 0 ? readQuestWeeks(userId, planMondays, today) : Promise.resolve([] as WeekQuestWeek[]),
   ]);
 
   // Held days: the declared ones (pro-rate the floors) and the freeze days (hold, never pro-rate).
@@ -276,7 +311,7 @@ async function readJudgeState(userId: string, today: DayKey, launchDay: DayKey, 
 
   const taskRows: WeekTaskRow[] = [];
   for (const r of rows) {
-    if (!isTrack(r.track) || (r.source !== "TASK" && r.source !== "UNDO")) continue;
+    if (!isTrack(r.track) || (r.source !== "TASK" && r.source !== "UNDO" && r.source !== "WORKOUT")) continue;
     taskRows.push({
       id: r.id,
       source: r.source,
@@ -286,7 +321,8 @@ async function readJudgeState(userId: string, today: DayKey, launchDay: DayKey, 
       templateId: r.templateId,
       rawXp: Number(r.rawXp ?? 0),
       receipt: receiptOf(r.receipt),
-      category: r.category && CATEGORY_SET.has(r.category) ? (r.category as Category) : null,
+      // A walk has no template: it is exercise (momentum.md §A.6, "with category EXERCISE").
+      category: r.source === "WORKOUT" ? "EXERCISE" : r.category && CATEGORY_SET.has(r.category) ? (r.category as Category) : null,
     });
   }
   return {
@@ -294,6 +330,8 @@ async function readJudgeState(userId: string, today: DayKey, launchDay: DayKey, 
     heldDays,
     restDays,
     fullDays: [...fullDays].sort(),
+    ...(liveWeeks.length > 0 ? { perks: ownedPerksOf(perkRows) as ReadonlySet<string> } : {}),
+    ...(questWeeks.length > 0 ? { questWeeks } : {}),
     rows: taskRows,
     templates: templates.map(
       (t): WeekTemplate => ({
@@ -318,9 +356,57 @@ async function readJudgeState(userId: string, today: DayKey, launchDay: DayKey, 
 }
 
 /**
+ * Momentum (§A.8): the finalized RoadmapQuestWeek rows of the given life weeks (their Mondays), each with the
+ * History line's own count (roadmap-quests pastWeekOf: an excused quest leaves the total). Fail soft: a missing
+ * roadmap table, or any failure (logged), reads as none, so the judge still writes the weeks.
+ */
+async function readQuestWeeks(userId: string, mondays: readonly DayKey[], today: DayKey): Promise<WeekQuestWeek[]> {
+  try {
+    const rows = await prisma.roadmapQuestWeek.findMany({
+      where: { userId, finalizedAt: { not: null }, weekStart: { in: mondays.map((d) => dateColumn(d)) } },
+      select: {
+        id: true,
+        userId: true,
+        roadmapId: true,
+        milestoneId: true,
+        weekStart: true,
+        dedupeKey: true,
+        source: true,
+        state: true,
+        generator: true,
+        quests: true,
+        basis: true,
+        cappedBy: true,
+        results: true,
+        finalizedAt: true,
+        createdAt: true,
+        roadmap: { select: { slot: true, track: true, label: true, aim: true } },
+      },
+    });
+    const out: WeekQuestWeek[] = [];
+    for (const { roadmap, ...r } of rows) {
+      if (!isTrack(roadmap.track) || !r.results || typeof r.results !== "object" || Array.isArray(r.results)) continue;
+      const results = r.results as unknown as WeekQuestResultsStored;
+      if (!Array.isArray(results.rows)) continue;
+      const weekStart = keyOfDateColumn(r.weekStart);
+      const stored: StoredQuestWeek = { ...r, weekStart };
+      const view = pastWeekOf(setOfStored(stored), { ...results, heldAfterFreeze: Number(results.heldAfterFreeze) || 0 }, 0, today);
+      if (!view.settled) continue;
+      const title = (roadmap.label?.trim() || roadmap.aim.trim() || "Roadmap").slice(0, 80);
+      out.push({ id: r.id, roadmapId: r.roadmapId, seat: roadmap.slot, track: roadmap.track, title, weekStart, total: view.total, done: view.done });
+    }
+    return out;
+  } catch (err) {
+    if (!isMissingRoadmapTable(err)) console.error("[life-weeks] the plan weeks' quest weeks failed to load; none pay this run", err);
+    return [];
+  }
+}
+
+/**
  * One week's rows, after the life-mint lock: a WEEK row per missing track
- * (a held one with receipt {mark: 'held', restDays}), then its
- * LIFE_WEEK_KEPT mints and, in the run that writes DUTY, its LIFE_FULL_DAY
+ * (a held one with receipt {mark: 'held', restDays}), then (momentum) a
+ * PLAN_WEEK row per kept plan week, then its LIFE_WEEK_KEPT mints, its
+ * LIFE_PLAN_WEEK mints and, in the run that writes DUTY, its LIFE_FULL_DAY
  * mints (each with its ledger entry when it pays).
  */
 function weekOps(userId: string, plan: WeekPlan, now: Date): Prisma.PrismaPromise<unknown>[] {
@@ -339,6 +425,22 @@ function weekOps(userId: string, plan: WeekPlan, now: Date): Prisma.PrismaPromis
         dedupeKey: weekRowKey(t.track, plan.weekKey),
         // The held mark is structural (life-tracks weekMarkOf); the receipt column is free JSON on a WEEK row.
         ...(t.held ? { receipt: heldWeekReceipt(t.restDays ?? 0) as unknown as Receipt } : {}),
+      })
+    ),
+    // A kept plan week (momentum §A.8): its XP to the roadmap's track, outside the knee, dated the Sunday.
+    ...(plan.planWeekRows ?? []).map((p) =>
+      activityOp(userId, {
+        source: "PLAN_WEEK",
+        sink: "TRACK",
+        track: p.track,
+        day: plan.sunday,
+        occurredAt: now,
+        sourceId: p.questWeekId,
+        xp: p.xp,
+        rawXp: null,
+        countsForStreak: false,
+        detail: p.detail,
+        dedupeKey: planWeekRowKey(p.questWeekId),
       })
     ),
     ...plan.mints.flatMap((m) => mintLifeMasteryOps(userId, { ...m, now })),
@@ -384,6 +486,15 @@ export async function judgeClosedWeeks(userId: string, now: Date, opts: JudgeOpt
   if (!write && !opts.dryRun) return none;
 
   const maxWeeks = opts.dryRun && typeof opts.maxWeeks === "number" && opts.maxWeeks >= 1 ? Math.floor(opts.maxWeeks) : WEEK_JUDGE_MAX_WEEKS;
+  // Momentum (§A.8): a plan week pays only once its quest week is final, and quest weeks settle on the judge's own
+  // Wednesday, after it in the render chain: finalize first (idempotent; it holds its own writes gate). Never before launch.
+  if (write && momentumLive(today)) {
+    try {
+      await finalizeQuestWeeks(userId, now);
+    } catch (err) {
+      console.error("[life-weeks] finalizing the week quests before the judge failed", err);
+    }
+  }
   const state = await readJudgeState(userId, today, launchDay, maxWeeks);
   if (!state) return none;
   const plans = planWeeks(state);

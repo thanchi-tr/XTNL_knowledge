@@ -310,8 +310,8 @@ const attrs = (h: string, re: RegExp) => [...h.matchAll(re)].map((m) => m[1]);
     check(`honest (${k}): no exclamation marks`, !t.includes("!"));
   }
   const src = readdirSync(join(ROOT, "src/components/train")).filter((f) => /\.tsx?$/.test(f)).map((f) => read(`src/components/train/${f}`)).join("\n");
-  check("honest: the card never marks, chimes, enqueues or celebrates", !/\b(mark|chime|enqueue|celebrate)\(/.test(src) && !/from "@\/lib\/celebrate"[^;]*\b(mark|chime|enqueue|celebrate)\b/.test(src));
-  check("honest: the card reads no economy module (xp, streak, rewards)", !/@\/lib\/(xp|streak|life-grade|rewards|celebrations)\b/.test(src));
+  check("honest: the card marks the paid XP (T0) and presents only server-returned Seals", trainMoments().ok, trainMoments().why);
+  check("honest: the card may import @/lib/celebrate and momentum.ts display helpers only (no xp, streak, life-grade, life-economy, rewards, mastery, tasks, a roll or a server value)", trainImports(src).ok, trainImports(src).why);
   check("honest: --owed (debt) never colours a weight", !/--owed/.test(read("src/components/train/train.css")) && !/--owed/.test(src));
 }
 
@@ -363,6 +363,54 @@ const CSS = CSS_RAW.replace(/\/\*[\s\S]*?\*\//g, "");
   const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
   check("package: train-check runs in ui:check", /tsx scripts\/train-check\.ts/.test(pkg.scripts["ui:check"]));
   check("package: weight-check and weight-capture-check run in life:check", /scripts\/weight-check\.ts/.test(pkg.scripts["life:check"]) && /scripts\/weight-capture-check\.ts/.test(pkg.scripts["life:check"]));
+}
+
+// ── :313 / :314 (momentum.md §G.3): what a train card may say about pay ─────
+
+function stripCode(s: string): string {
+  return s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+}
+
+/**
+ * The T0 mark is the server's paid XP and nothing else; the only queued moments are the action's own celebrations,
+ * T2/T3 only; before launch (no pay in the answer) the card says exactly what it always did. No train card chimes
+ * or celebrates, and none but ExerciseCard marks or enqueues.
+ */
+function trainMoments(): { ok: boolean; why: string } {
+  const why: string[] = [];
+  for (const f of readdirSync(join(ROOT, "src/components/train")).filter((n) => /\.tsx?$/.test(n))) {
+    const code = stripCode(read(`src/components/train/${f}`));
+    if (/\b(chime|celebrate)\(/.test(code)) why.push(`${f} chimes or celebrates`);
+    const marks = code.match(/\bmark\(/g)?.length ?? 0;
+    const enqueues = code.match(/\benqueue\(/g)?.length ?? 0;
+    if (f !== "ExerciseCard.tsx") {
+      if (marks || enqueues) why.push(`${f} marks or enqueues`);
+      continue;
+    }
+    if (marks !== 1 || !/if \(pay\.kind === "PAID" && pay\.xp > 0\) \{\s*void mark\(\{[\s\S]*?amount: \{ kind: "xp", value: pay\.xp \}/.test(code)) why.push("ExerciseCard's one mark is not the server's paid XP");
+    if (enqueues !== 1 || !/for \(const ev of res\.value\.celebrations \?\? \[\]\) if \(ev\.tier >= 2\) enqueue\(ev\);/.test(code)) why.push("ExerciseCard enqueues something other than the action's T2/T3 celebrations");
+    if (!/const pay = res\.value\.pay;\s*if \(pay\) \{/.test(code) || !/const said = `Logged a \$\{km\(v\.distanceKm\)\} walk, \$\{durationLabel\(v\.durationMin\)\} at \$\{v\.angleDeg\}°\.`;/.test(code)) {
+      why.push("ExerciseCard: without the server's pay it no longer says exactly the record's line");
+    }
+  }
+  return { ok: why.length === 0, why: why.join("; ") };
+}
+
+/** Imports: no economy, ledger or server value; from celebrate only announce, mark and enqueue; from momentum.ts only display helpers. */
+function trainImports(src: string): { ok: boolean; why: string } {
+  const why: string[] = [];
+  const banned = /@\/lib\/(xp|streak|life-grade|life-economy|rewards|celebrations|mastery|tasks|today-board|momentum-roll|momentum-server)\b/.exec(src);
+  if (banned) why.push(`imports ${banned[0]}`);
+  for (const m of src.matchAll(/import \{([^}]*)\} from "@\/lib\/celebrate"/g)) {
+    const extra = m[1].split(",").map((s) => s.trim()).filter((n) => n && !["announce", "mark", "enqueue"].includes(n));
+    if (extra.length) why.push(`from celebrate: ${extra.join(", ")}`);
+  }
+  if (/import \{[^}]*\} from "@\/lib\/[\w-]*-server"/.test(src)) why.push("a server module imported as a value (types only)");
+  for (const m of src.matchAll(/import (?:type )?\{([^}]*)\} from "@\/lib\/momentum"/g)) {
+    const gate = m[1].split(",").map((s) => s.trim()).filter((n) => /^(momentumLive|momentumLaunchDay|lifeMpModel\w*|walkSessionRaw|sessionRaw|exerciseDayRaw|critOf|chestDrop|chestPayout|foldMomentum|lifeModsOf|learnCheck)$/.test(n));
+    if (gate.length) why.push(`from momentum.ts, not a display helper: ${gate.join(", ")}`);
+  }
+  return { ok: why.length === 0, why: why.join("; ") };
 }
 
 // ── Tailwind: no class the card writes is a generated utility ──────────────

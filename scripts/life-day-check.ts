@@ -257,11 +257,12 @@ for (const tz of [SYD, BNE]) {
   // Work tabs (2026-10-12): work-boards-check runs right after subtasks-check (work kept out of the game).
   // Customers (2026-10-12): customers-check runs right after work-boards-check (a work tab's customer list).
   // Momentum (2026-10-12, momentum.md §G.1 L0): momentum-check, balance-horizon and momentum-sim run between
-  // goals-close and settle (the last two are plain scripts, not *-check.ts).
+  // goals-close and settle (the last two are plain scripts, not *-check.ts); momentum-server-check (lane C) follows
+  // momentum-check.
   const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> }).scripts;
   const ROADMAP_LIFE_CHECKS = ["roadmap-contract", "roadmap-measures", "throughput", "roadmap-realism", "roadmap-model", "roadmap-server", "roadmap-quests", "roadmap-invite", "roadmap-hostile"];
   const STRICT_LIFE_CHECKS = new Set(["today-ui", "roadmap-contract"]);
-  const names = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "exercise-style", "subtasks", "work-boards", "customers", "character", "goals-close", "momentum", "balance-horizon", "momentum-sim", "settle", "duty", "duty-actions", "rituals", "roadmap-goals", "roadmap-topics", "roadmap-grounding", ...ROADMAP_LIFE_CHECKS];
+  const names = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "exercise-style", "subtasks", "work-boards", "customers", "character", "goals-close", "momentum", "momentum-server", "balance-horizon", "momentum-sim", "settle", "duty", "duty-actions", "rituals", "roadmap-goals", "roadmap-topics", "roadmap-grounding", ...ROADMAP_LIFE_CHECKS];
   const PLAIN_LIFE_SCRIPTS = new Set(["balance-horizon", "momentum-sim"]);
   const fileOf = (n: string) => `scripts/${n}${PLAIN_LIFE_SCRIPTS.has(n) ? "" : "-check"}.ts`;
   const all = names.map(fileOf);
@@ -283,7 +284,7 @@ for (const tz of [SYD, BNE]) {
     "package.json db:backfill-activity runs the backfill script",
     scripts["db:backfill-activity"] === "tsx scripts/backfill-activity.ts" && existsSync(resolve(ROOT, "scripts/backfill-activity.ts"))
   );
-  for (const [name, file] of [["goals-close:check", "goals-close"], ["settle:check", "settle"], ["duty:check", "duty"], ["duty-actions:check", "duty-actions"], ["rituals:check", "rituals"], ["momentum:check", "momentum"], ...ROADMAP_LIFE_CHECKS.map((n) => [`${n}:check`, n] as const)] as const) {
+  for (const [name, file] of [["goals-close:check", "goals-close"], ["settle:check", "settle"], ["duty:check", "duty"], ["duty-actions:check", "duty-actions"], ["rituals:check", "rituals"], ["momentum:check", "momentum"], ["momentum-server:check", "momentum-server"], ...ROADMAP_LIFE_CHECKS.map((n) => [`${n}:check`, n] as const)] as const) {
     check(`package.json ${name} runs scripts/${file}-check.ts on its own too`, scripts[name] === `tsx scripts/${file}-check.ts`, scripts[name] ?? "missing");
   }
 

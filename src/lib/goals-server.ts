@@ -51,8 +51,9 @@
  * gate); horizon and goalMp never change after creation.
  *
  * Two different goals closed at once (M5 review C3): the limits (2 Shorts a
- * life week, 2 Mids in 30 days, 1 Long in 91) and the Short share of the 8 MP
- * cap are decided from a read made before the write. So a paying close's
+ * life week, 2 Mids in 30 days, 1 Long in 91) and the Short share of the
+ * judge pool's cap (8 MP; 91 for a week momentum is live in: momentum.ts
+ * lifeMpModelOfWeek) are decided from a read made before the write. So a paying close's
  * array opens with the life-mint advisory lock (the week judge takes it too)
  * and a guard that re-counts exactly what the decision counted
  * (goals.ts goalLimitWindow) and divides by zero when another write changed
@@ -67,12 +68,11 @@ import { isDuplicateActivity } from "./activity";
 import { mintLifeMasteryOps } from "./mastery";
 import { addDays, dateColumn, dayKeyOf, dayStartOf, keyOfDateColumn, todayKey, weekStartKeyOf, type DayKey } from "./life-day";
 import {
-  CAPPED_REASONS,
   GOAL_MINT_PREFIX,
   MINT_DETAIL_SEP,
   goalIdOfMintKey,
   goalMintKey,
-  isCappedReason,
+  isCappedReasonIn,
   isDayKey,
   isLaunched,
   lifeLaunchDay,
@@ -82,6 +82,7 @@ import {
   statedGoalMp,
 } from "./life-economy";
 import { isTrack } from "./life-grade";
+import { lifeMpModelOfWeek } from "./momentum";
 import { PERSONAL_BOARD } from "./work-boards";
 import { isStaleGuard, lifeMintLockOp } from "./life-tracks-server";
 import {
@@ -140,10 +141,16 @@ function goalMintRows(
   return out;
 }
 
-/** Σ capped MP (CAPPED_REASONS) among MP_MINT rows. */
-function cappedSum(rows: readonly { qty: number | null; detail: string | null }[]): number {
+/**
+ * Σ capped MP among one life week's MP_MINT rows: the reasons of the judge pool in force for the
+ * week holding `day` (momentum.ts lifeMpModelOfWeek: CAPPED_REASONS before MOMENTUM_LAUNCH_DAY,
+ * and always while it is null; + LIFE_PLAN_WEEK for a week whose Sunday is on or after it).
+ * Exported for scripts/momentum-server-check.ts.
+ */
+export function cappedSum(rows: readonly { qty: number | null; detail: string | null }[], day: DayKey): number {
+  const model = lifeMpModelOfWeek(day);
   let used = 0;
-  for (const r of rows) if (isCappedReason(parseMintDetail(r.detail).reason) && (r.qty ?? 0) > 0) used += r.qty ?? 0;
+  for (const r of rows) if (isCappedReasonIn(model, parseMintDetail(r.detail).reason) && (r.qty ?? 0) > 0) used += r.qty ?? 0;
   return round2(used);
 }
 
@@ -182,7 +189,7 @@ function closeGuardOp(userId: string, goalId: string, w: GoalLimitWindow) {
   const cappedStill = w.cappedWeek
     ? Prisma.sql`AND ROUND(COALESCE((SELECT SUM("qty") FROM "ActivityEvent"
           WHERE "userId" = ${userId} AND "source" = 'MP_MINT' AND "qty" > 0
-            AND split_part("detail", ${MINT_DETAIL_SEP}, 1) IN (${Prisma.join([...CAPPED_REASONS])})
+            AND split_part("detail", ${MINT_DETAIL_SEP}, 1) IN (${Prisma.join([...lifeMpModelOfWeek(w.cappedWeek.monday).cappedReasons])})
             AND "dedupeKey" IS DISTINCT FROM ${goalMintKey(goalId)}
             AND "day" >= ${w.cappedWeek.monday}::date AND "day" <= ${w.cappedWeek.sunday}::date), 0)::numeric, 2)
         = ROUND(${w.cappedWeek.used}::numeric, 2)`
@@ -262,7 +269,7 @@ export async function readGoalCloseInput(userId: string, goalId: string, now: Da
     today,
     launchDay: lifeLaunchDay(),
     goalMints: goalMintRows(mints),
-    cappedUsedThisWeek: cappedSum(week),
+    cappedUsedThisWeek: cappedSum(week, today),
   };
 }
 
@@ -669,7 +676,7 @@ export async function loadGoalLadderUncached(userId: string, now: Date, deps: Go
   const goalMints = goalMintRows(mintRows);
   const mintOf = new Map(goalMints.map((m) => [m.key, m]));
   const whyOf = new Map(mintRows.map((r) => [r.dedupeKey ?? "", parseMintDetail(r.detail).why]));
-  const cappedUsedThisWeek = cappedSum(week);
+  const cappedUsedThisWeek = cappedSum(week, today);
   const launchDay = lifeLaunchDay();
   // Open ROADMAP goals read their milestone's stored series and lineage, only when such a goal exists
   // (one wave, side by side), so the ladder's preview is the close's: one due day, a superseded row

@@ -147,7 +147,7 @@ function guard(): void {
 }
 
 async function loadModules() {
-  const [prismaMod, tasks, duty, settlement, weeks, streak, reset, scopes, cache, board, economy, parse, rule] = await Promise.all([
+  const [prismaMod, tasks, duty, settlement, weeks, streak, reset, scopes, cache, board, economy, parse, rule, momentum] = await Promise.all([
     import("../src/lib/prisma"),
     import("../src/lib/tasks"),
     import("../src/lib/duty"),
@@ -161,8 +161,10 @@ async function loadModules() {
     import("../src/lib/life-economy"),
     import("../src/lib/capture-parse"),
     import("../src/lib/duty-rule"),
+    // The judge pool in force for a week (momentum.md §A.10): 8 MP before MOMENTUM_LAUNCH_DAY, 91 from it.
+    import("../src/lib/momentum"),
   ]);
-  return { prisma: prismaMod.prisma, tasks, duty, settlement, weeks, streak, reset, scopes, cache, board, economy, parse, rule };
+  return { prisma: prismaMod.prisma, tasks, duty, settlement, weeks, streak, reset, scopes, cache, board, economy, parse, rule, momentum };
 }
 type Mods = Awaited<ReturnType<typeof loadModules>>;
 let M!: Mods;
@@ -592,7 +594,8 @@ async function scenarioA(): Promise<void> {
   const firstFull = Math.min(...h.fullDayMints.map((m) => m.occurredAt.getTime()));
   check("the Full days are paid after the kept tracks", g.trackMints.length > 0 && firstFull > gatedTrack && firstFull >= lastTrack);
   check("the first Full day pays 0.5 MP (nothing trimmed below the cap)", h.fullDayMints.some((m) => (m.qty ?? 0) === 0.5), show(h.fullDayMints.map((m) => m.qty)));
-  check("the week's MP stays inside the 8 MP cap", h.cappedMp <= 8 + 1e-9, String(h.cappedMp));
+  const cap = M.momentum.lifeMpModelOfWeek(SUN11).weekCap;
+  check(`the week's MP stays inside the ${cap} MP cap`, h.cappedMp <= cap + 1e-9, String(h.cappedMp));
 }
 
 // ── Scenarios B, C, D, I: freezes and rest ───────────────────────────────
