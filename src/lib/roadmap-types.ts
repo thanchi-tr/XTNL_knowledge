@@ -5022,8 +5022,15 @@ export interface MilestoneRowView {
 export interface MilestoneEditView {
   /** Its title can be renamed (any unstarted row). */
   rename: boolean;
-  /** A topic can be added or removed here (a LEVELS stage or a TOPICS layer, not started and not held). */
+  /** A topic can be added here (a LEVELS stage or a TOPICS layer, not started and not held). */
   topics: boolean;
+  /**
+   * Ruling N24: a topic can be taken off here, behind the typed confirm: an unstarted row that takes topics, or the
+   * live (started, open, not reached) milestone of either kind. Absent: as `topics`.
+   */
+  remove?: boolean;
+  /** Ruling N24: the live milestone (its tasks are on Today: the confirm says they stay). */
+  started?: boolean;
   /** The Domains this milestone counts, in its order (its own topics; never an earlier layer's "climbing" rows). */
   domains: { id: string; name: string }[];
 }
@@ -5060,7 +5067,19 @@ export type PlanEdit =
       domainId?: string | null;
       name?: string | null;
     }
-  | { kind: "REMOVE_TOPIC"; milestoneId: string; domainId: string };
+  /** Ruling N24: `typed` is the topic's name as the confirm's field held it; the server checks it (topicNameMatchesOf). */
+  | { kind: "REMOVE_TOPIC"; milestoneId: string; domainId: string; typed: string };
+
+/**
+ * Ruling N24: the typed confirm of a topic's removal. The name typed matches the topic's when both read the same with
+ * the spaces collapsed, trimmed and case folded ("  bayesian   METHODS " matches "Bayesian Methods"); otherwise exactly
+ * (an accent, a hyphen or a letter more never matches). An empty name never matches.
+ */
+export function topicNameMatchesOf(typed: string, name: string): boolean {
+  const fold = (s: string) => s.normalize("NFC").replace(/\s+/g, " ").trim().toLowerCase();
+  const want = fold(name);
+  return want.length > 0 && fold(typeof typed === "string" ? typed : "") === want;
+}
 
 /** editPlanCore's answer: the version the edit was accepted as (the toast's Undo names it), and what it counted. */
 export interface PlanEditResult {

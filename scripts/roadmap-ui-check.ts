@@ -6762,7 +6762,7 @@ async function main() {
     const editLabels = (s: FixtureState) => [...pageOf(s).matchAll(/aria-label="Edit milestone (\d+)"/g)].map((m) => Number(m[1]));
     const unstarted = (s: FixtureState) => roadmapFixture(s).view!.milestones.filter((r) => r.edit).map((r) => r.ord);
     check(
-      'N18 rail: every unstarted milestone (and none started or reached) carries its edit glyph in its ▸, a 44 px button named by its milestone, never a `title`; the card\'s "+" is a 44 px button named "Add a milestone"',
+      'N18 rail (and N24): every unstarted milestone and the live one (none reached) carries its edit glyph in its ▸, a 44 px button named by its milestone, never a `title`; the card\'s "+" is a 44 px button named "Add a milestone"',
       (["active", "topic-map-plan"] as const).every(
         (s) =>
           JSON.stringify(editLabels(s)) === JSON.stringify(unstarted(s)) &&
@@ -6812,6 +6812,66 @@ async function main() {
       planEditToastTitle({ kind: "ADD_TOPIC", milestoneId: "m3", domainId: "d-x" }, { version: 4, domainId: "d-x", created: false, counted: 38 }) === "+38 cards counted" &&
         planEditToastTitle({ kind: "ADD_TOPIC", milestoneId: "m3", name: "Odds" }, { version: 4, domainId: "d-n", created: true, counted: 0 }) === "Topic added" &&
         planEditToastTitle({ kind: "RENAME", milestoneId: "m3", title: "Mine" }, { version: 4, domainId: null, created: false, counted: null }) === "Title saved"
+    );
+
+    // ── Ruling N24: a topic off any milestone, the live one too, behind the typed confirm ──
+    const { PlanEditBody, RemoveTopicBody } = await import("../src/components/roadmap/PlanEditSheet");
+    const edit2 = (html: string) => [...html.matchAll(/<button type="button" class="icon-btn" aria-haspopup="dialog" aria-label="Remove [^"]+ from milestone \d+">/g)].map((m) => m[0]);
+    const { topicNameMatchesOf } = await import("../src/lib/roadmap-types");
+    const act = roadmapFixture("active").view!;
+    const liveRow = act.milestones.find((r) => r.state === "CURRENT")!;
+    const later = act.milestones.find((r) => r.state === "OUTLINE")!;
+    const liveBody = R(createElement(PlanEditBody, { row: liveRow, plan: act.planEdit!, library: act.library ?? [], onClose: () => {} }));
+    const laterBody = R(createElement(PlanEditBody, { row: later, plan: act.planEdit!, library: act.library ?? [], onClose: () => {} }));
+    const sheetSrc = readFileSync(join(process.cwd(), "src/components/roadmap/PlanEditSheet.tsx"), "utf8");
+    check(
+      "N24 sheet: the live milestone's sheet offers only its topics' × (no title field, no \"+ Topic\"); every × names its topic and milestone and opens a dialog (aria-haspopup), on the live row and an unstarted one alike",
+      edit2(liveBody).length === 2 &&
+        edit2(laterBody).length === 2 &&
+        /aria-label="Remove Algorithmic Backtesting from milestone 2"/.test(liveBody) &&
+        !/rm-pe-input/.test(liveBody) &&
+        !/Add a topic/.test(liveBody) &&
+        /rm-pe-input/.test(laterBody) &&
+        /Add a topic/.test(laterBody),
+      JSON.stringify({ live: edit2(liveBody), later: edit2(laterBody) })
+    );
+    check(
+      "N24 the × opens the typed confirm, never removes at once: its onClick sets the topic being removed, and REMOVE_TOPIC is sent only from the confirm's onConfirm (with the name typed)",
+      /onClick=\{\(\) => setRemoving\(d\)\}/.test(sheetSrc) &&
+        (sheetSrc.match(/kind: "REMOVE_TOPIC"/g) ?? []).length === 1 &&
+        /onConfirm=\{\(typed\) => removing && send\(\{ kind: "REMOVE_TOPIC", milestoneId: row\.id, domainId: removing\.id, typed \}\)\}/.test(sheetSrc) &&
+        /<Sheet open=\{topic != null\} onClose=\{onCancel\} variant="center" title="Remove topic"/.test(sheetSrc),
+      "PlanEditSheet.tsx"
+    );
+    const body = (initial: string, started = false) => R(createElement(RemoveTopicBody, { name: "Risk Management", ord: 2, started, pending: false, initial, onCancel: () => {}, onConfirm: () => {} }));
+    const removeBtn = (html: string) => /<button[^>]*type="submit" class="btn btn-danger"[^>]*>/.exec(html)?.[0] ?? "";
+    check(
+      "N24 confirm: the topic named, \"Type Risk Management to remove\" labelling a field that takes the focus (data-autofocus), Cancel beside a danger Remove (44 px buttons) that stays disabled (announced, and described by the label and the small print) until the field holds the name",
+      /<b data-wc="name">Risk Management<\/b>/.test(body("")) &&
+        /<label class="t-meta" for="[^"]+" id="[^"]+">Type <b class="ink-0" data-wc="name">Risk Management<\/b> to remove<\/label>/.test(body("")) &&
+        /data-autofocus=""/.test(body("")) &&
+        />Cancel</.test(body("")) &&
+        / disabled=""/.test(removeBtn(body(""))) &&
+        /aria-describedby="[^"]+ [^"]+"/.test(removeBtn(body(""))) &&
+        / disabled=""/.test(removeBtn(body("Risk"))) &&
+        / disabled=""/.test(removeBtn(body("Risk Managements"))) &&
+        !/ disabled=""/.test(removeBtn(body("risk management"))) &&
+        !/ disabled=""/.test(removeBtn(body("  RISK   management "))),
+      removeBtn(body("risk management"))
+    );
+    check(
+      "N24 confirm: the small print says the Domain and its cards stay, and on the live milestone that its tasks on Today stay as they are",
+      body("").includes("The Domain and its cards stay.") && !body("").includes("Today") && body("", true).includes("Its tasks on Today stay: edit them there."),
+      body("", true).slice(0, 400)
+    );
+    check(
+      "N24 the name's match: spaces collapsed, trimmed and case folded, otherwise exact (an accent, a letter more or less never matches; an empty name never does)",
+      topicNameMatchesOf("  bayesian   METHODS ", "Bayesian Methods") &&
+        topicNameMatchesOf("Bayesian Methods", "Bayesian  Methods") &&
+        !topicNameMatchesOf("Bayesian Method", "Bayesian Methods") &&
+        !topicNameMatchesOf("Bayésian Methods", "Bayesian Methods") &&
+        !topicNameMatchesOf("", "") &&
+        !topicNameMatchesOf("Bayesian-Methods", "Bayesian Methods")
     );
   }
 

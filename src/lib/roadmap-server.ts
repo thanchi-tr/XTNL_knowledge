@@ -679,7 +679,7 @@ import {
 } from "./roadmap-types";
 import { topicLayerTitleOf } from "./roadmap-catalog";
 // Ruling N18: an accepted plan's edits.
-import { STAGE_NAMES, TOPICS_MAX, type PlanEdit, type PlanEditResult, type PlanEditView, type MilestoneEditView } from "./roadmap-types";
+import { STAGE_NAMES, TOPICS_MAX, topicNameMatchesOf, type PlanEdit, type PlanEditResult, type PlanEditView, type MilestoneEditView } from "./roadmap-types";
 
 // ═══ Rows: the roadmap tables as plain records (DATE columns as DayKeys) ════
 
@@ -2446,7 +2446,7 @@ function codeLabelOk(it: ItemDraft, m: MilestoneDraft, ctx: ModelTextContext, pl
  *     DOMAIN with no Domain, so a future path that stored one would show it.
  * A legacy roadmap (ctx.rev4 false) is never re-checked: its text is hidden.
  */
-export function assertNoModelText(rows: readonly MilestoneDraft[], ctx: ModelTextContext): void {
+export function assertNoModelText(rows: readonly MilestoneDraft[], ctx: ModelTextContext, beside: readonly MilestoneDraft[] = []): void {
   if (!ctx.rev4) return;
   const gaps = new Set(rows.flatMap((m) => m.items.filter((i) => i.kind === "GAP").map((i) => normLabel(i.label))).filter((s) => s.length > 0));
   const code = catalogOriginOf();
@@ -2478,7 +2478,8 @@ export function assertNoModelText(rows: readonly MilestoneDraft[], ctx: ModelTex
         const ownDomainName = it.kind === "DOMAIN" && isDomainsName(ctx, it.domainId, it.label);
         if (!createdFromIt && !ownDomainName) throw new ModelTextError(`a suggestion's name on a plan row (${where})`);
       }
-      if (it.origin === code && !codeLabelOk(it, m, ctx, rows)) throw new ModelTextError(`a ${it.kind.toLowerCase()} that is not the app's wording (${where})`);
+      // `beside`: rows the write leaves as they are (ruling N24: the carried ones), read for a code fill, never checked.
+      if (it.origin === code && !codeLabelOk(it, m, ctx, beside.length ? [...beside, ...rows] : rows)) throw new ModelTextError(`a ${it.kind.toLowerCase()} that is not the app's wording (${where})`);
     }
   }
   // Revision 5, lane 8 (§22.11): on a TOPICS write, no title or label (but yours) holds a Gemini topic name you haven't kept.
@@ -2500,7 +2501,7 @@ export function assertNoModelText(rows: readonly MilestoneDraft[], ctx: ModelTex
  * `others`: the version's other rows as they stay (the tripwire reads the plan whole).
  */
 export type RowWrite =
-  | { kind: "DRAFT"; roadmapId: string; version: number; plan: readonly MilestoneDraft[]; feasibility: Feasibility | null; now: Date; makeId: () => string }
+  | { kind: "DRAFT"; roadmapId: string; version: number; plan: readonly MilestoneDraft[]; feasibility: Feasibility | null; now: Date; makeId: () => string; beside?: readonly MilestoneDraft[] }
   | { kind: "REWRITE"; before: MilestoneBundle; after: MilestoneDraft; now: Date; makeId: () => string; decided: ReadonlySet<string>; others?: readonly MilestoneDraft[] }
   | { kind: "COPY"; roadmapId: string; version: number; copy: MilestoneDraft; row: Record<string, unknown>; now: Date; makeId: () => string }
   | { kind: "PATCH"; table: "roadmapItem" | "roadmapMilestone"; id: string; data: Record<string, unknown>; result: MilestoneDraft; others?: readonly MilestoneDraft[] };
@@ -2516,7 +2517,7 @@ export function writeRoadmapRows(ops: StoreOp[], write: RowWrite, ctx: ModelText
   if (write.kind === "DRAFT") {
     const missing = write.plan.find((d) => d.stage == null);
     if (missing) throw new ModelTextError(`a draft row without a stage (milestone ${missing.ord})`);
-    assertNoModelText(write.plan, { ...ctx, rev4: true });
+    assertNoModelText(write.plan, { ...ctx, rev4: true }, write.beside ?? []);
     const { roadmapId, version, plan, feasibility, now, makeId } = write;
     ops.push({ op: "delete", table: "roadmapMilestone", where: { roadmapId, version, status: { in: ["DRAFT", "LATER", "DISCARDED"] } } });
     const ms: Record<string, unknown>[] = [];
@@ -7419,6 +7420,15 @@ export async function undoAcceptCore(userId: string, roadmapId: string, version:
       { op: "update", table: "roadmapMilestone", where: { roadmapId, version, status: "LATER" }, data: edit ? { status: "DISCARDED", rankIndex: null } : { rankIndex: null } },
     ];
     if (edit) ops.push({ op: "delete", table: "roadmapTopicEdge", where: { roadmapId, version } }, { op: "delete", table: "roadmapTopic", where: { roadmapId, version } });
+    // Ruling N24: a topic taken off the live milestone comes back on its row: its measures as they were (their ids and
+    // order), its items' decisions.
+    const back = edit?.live && b.milestones.some((m) => m.id === edit.live?.milestoneId) ? edit.live : null;
+    if (back) {
+      const touched = back.measures.map((x) => x.spec.id).filter((id): id is string => !!id);
+      if (touched.length) ops.push({ op: "delete", table: "roadmapMeasure", where: { id: { in: touched } } });
+      if (back.measures.length) ops.push({ op: "insert", table: "roadmapMeasure", rows: back.measures.map((x) => ({ ...measureRowOf(back.milestoneId, x.spec, now, e.makeId), createdAt: new Date(x.createdAt) })) });
+      for (const it of back.items) ops.push({ op: "update", table: "roadmapItem", where: { id: it.id }, data: { decision: it.decision, decidedAt: it.decidedAt ? new Date(it.decidedAt) : null } });
+    }
     const editData: Record<string, unknown> = edit ? { domainIds: [...edit.domainIds], ...(edit.rating !== undefined ? { rating: edit.rating } : {}) } : {};
     if (prev >= 1) {
       ops.push(
@@ -8610,7 +8620,8 @@ async function replanUnpointed(userId: string, roadmapId: string, kind: ReplanKi
 // Every edit is an acceptance of an edited copy of the plan: version + 1 written ACTIVE at once, its acceptance record
 // naming the version it replaced, so the accept toast's Undo (undoAcceptCore) gives the plan back, and the Domain set
 // (Roadmap.domainIds, DOMAINS_FREE), the end state, the first readings and Proficiency follow it as an accept's do.
-// Started milestones are carried as a re-plan carries them; only the unstarted ones change.
+// Started milestones are carried as a re-plan carries them; only the unstarted ones change, but for a topic taken off the
+// live milestone (ruling N24: behind a typed confirm), which is written in place on that row in the same transaction.
 
 export const PLAN_EDIT_REPLAN_OPEN = "Finish or discard the re-plan draft first.";
 export const PLAN_EDIT_STARTED = "This milestone has started: add it to a later milestone, or a new one.";
@@ -8626,6 +8637,11 @@ export const PLAN_EDIT_PLACE = "Pick where the new milestone goes.";
 export const PLAN_EDIT_GONE = "This milestone is no longer part of the plan.";
 export const PLAN_EDIT_NO_DOMAINS = "A life-track Area has no Domains.";
 export const PLAN_EDIT_NOTHING = "Nothing to change.";
+// ── Ruling N24: a topic taken off at any time, behind the typed confirm ──
+export const PLAN_EDIT_TYPE_NAME = "Type the topic's name to remove it.";
+export const PLAN_EDIT_LAST_PAYING = "A started milestone keeps at least one paying topic: this one is its last.";
+export const PLAN_EDIT_BEHIND = "This milestone is behind you: its topics stay as they were.";
+export const PLAN_EDIT_SHARED = "This milestone counts that Domain together with others: re-plan to change it.";
 /** The Domain a new name will make, as the dry run reads it before it is made (never written). */
 const PLAN_EDIT_STAND_IN = "plan-edit-new-domain";
 
@@ -8636,8 +8652,16 @@ interface PlanEditMark {
   domainIds: string[];
   /** A TOPICS plan's rating before the edit (its layers and Gemini's milestones by layer). */
   rating?: RatingRecord | null;
+  /** Ruling N24: a topic taken off the live milestone in place: what Undo puts back on that row. */
+  live?: LiveRemovalMark;
 }
 type PlanEditMarks = { planEdit?: PlanEditMark };
+/** The live milestone's rows as they were before a removal (ruling N24): its items' decisions and every measure it touched. */
+interface LiveRemovalMark {
+  milestoneId: string;
+  items: { id: string; decision: string; decidedAt: string | null }[];
+  measures: { spec: MeasureSpec; createdAt: string }[];
+}
 
 function planEditMarkOf(a: AcceptanceRec | null): PlanEditMark | null {
   const f = a?.feasibility;
@@ -8661,7 +8685,11 @@ function cleanPlanEditOf(raw: unknown): PlanEdit | string {
   const ref = (v: unknown): v is string => typeof v === "string" && STEP_REF.test(v);
   if (!o) return PLAN_EDIT_NOTHING;
   if (o.kind === "RENAME") return ref(o.milestoneId) && typeof o.title === "string" ? { kind: "RENAME", milestoneId: o.milestoneId, title: o.title } : PLAN_EDIT_NOTHING;
-  if (o.kind === "REMOVE_TOPIC") return ref(o.milestoneId) && ref(o.domainId) ? { kind: "REMOVE_TOPIC", milestoneId: o.milestoneId, domainId: o.domainId } : "Pick a topic to remove.";
+  if (o.kind === "REMOVE_TOPIC") {
+    if (!ref(o.milestoneId) || !ref(o.domainId)) return "Pick a topic to remove.";
+    // Ruling N24: a removal carries the name as typed in its confirm; the step checks it against the topic's.
+    return typeof o.typed === "string" ? { kind: "REMOVE_TOPIC", milestoneId: o.milestoneId, domainId: o.domainId, typed: o.typed } : PLAN_EDIT_TYPE_NAME;
+  }
   if (o.kind !== "ADD_TOPIC") return PLAN_EDIT_NOTHING;
   const nm = o.newMilestone && typeof o.newMilestone === "object" && !Array.isArray(o.newMilestone) ? (o.newMilestone as Record<string, unknown>) : null;
   const row = ref(o.milestoneId) ? o.milestoneId : null;
@@ -8685,9 +8713,12 @@ function cleanPlanEditOf(raw: unknown): PlanEdit | string {
  *                 plan's Domains at once (Roadmap.domainIds, the end state), so every card it holds counts toward the
  *                 goal (`counted`);
  *   REMOVE_TOPIC  a sub-topic leaves the milestone (the Domain and its cards stay); a milestone keeps at least one.
+ *                 Ruling N24: the live milestone too (in place on its row; its tasks on Today stay as they are), and
+ *                 only with `typed`, the topic's name as typed in the confirm (topicNameMatchesOf).
  * The edit is accepted as version + 1 in one transaction; undoAcceptCore undoes it (its rows DISCARDED, the Domains
- * and rating as they were). Refused while a re-plan draft is open, on a started or held milestone (an add), and on a
- * TOPICS depth milestone (its topics are the last layer's).
+ * and rating as they were, a live removal's measures and items put back). Refused while a re-plan draft is open, on a
+ * started or held milestone (an add), on a milestone behind you, and on a TOPICS depth milestone (its topics are the
+ * last layer's).
  */
 export async function editPlanCore(userId: string, roadmapId: string, edit: PlanEdit, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<PlanEditResult>> {
   return pointedRefusal(deps, userId, { roadmapId }, await editPlanUnpointed(userId, roadmapId, edit, now, deps));
@@ -8761,6 +8792,8 @@ interface EditedPlan {
   carriedRows: MilestoneBundle[];
   /** The carried rows as the Proficiency basis reads them beside the version (LEVELS: carriedPlanOf; TOPICS: none, as acceptTopicsStep). */
   carried: MilestoneDraft[];
+  /** Ruling N24: a topic taken off the live milestone, written in place on that row. */
+  live?: LiveRemoval | null;
 }
 
 /** An unstarted row copied to version `v` (DRAFT or LATER, no ids), as a re-plan copies it. */
@@ -8860,6 +8893,81 @@ function editAftersOf(b: RoadmapBundle): number[] {
   return out;
 }
 
+/** Ruling N24: the plan's live milestone: started, its goal open (not closed or dropped), not reached or pending a reach, no "Start again" copy in its place. */
+function liveRowOf(b: RoadmapBundle, m: MilestoneBundle, goals: ReadonlyMap<string, GoalFacts>): boolean {
+  if (m.status !== "STARTED" || m.reachedDay != null || m.reachPendingDay != null || superseded(b, m)) return false;
+  const goal = m.goalId ? goals.get(m.goalId) : undefined;
+  return !goal || (goal.archivedAt == null && goal.closedScore == null);
+}
+
+/** Ruling N24: a topic taken off the live milestone, in place on its own row (its id, goal, templates and Start figures untouched). */
+interface LiveRemoval {
+  milestoneId: string;
+  /** The row as the plan reads it after (feasibility, the end state's "still counted" test). */
+  after: MilestoneDraft;
+  /** Its DOMAIN items for the Domain (REMOVED). */
+  itemIds: string[];
+  /** Its measures of the topic: deleted (a Domain's own card measure, and every measure of that topic's lineage). */
+  deleted: string[];
+  /** A checkpoint over several Domains (PART, BETWEEN: context): the Domain leaves its scope (and its key, once Start keyed it). */
+  rescoped: { id: string; scope: MeasureScope; measureKey: string | null }[];
+  mark: LiveRemovalMark;
+}
+
+/**
+ * Ruling N24: what taking a Domain (a TOPICS topic: its lineage) off the live milestone changes on that row. Its DOMAIN
+ * item is REMOVED; its own card measure and the topic's other measures go; a checkpoint over several Domains (PART,
+ * BETWEEN: context, it pays nothing) loses it from its scope, and from its key once Start keyed it; a paying measure
+ * over several Domains refuses (PLAN_EDIT_SHARED: its readings are that scope's). The row keeps at least one paying card measure (PLAN_EDIT_LAST_PAYING). Nothing else of the row moves:
+ * its goal, its practices and steps (their tasks stay on Today as they are), its Start baselines, its snapshot.
+ */
+function liveRemovalOf(m: MilestoneBundle, domainId: string, topicLineageId: string | null): LiveRemoval | string {
+  const d = draftOf(m);
+  const items = m.items.filter((i) => i.kind === "DOMAIN" && liveItem(i) && i.domainId === domainId);
+  const deleted: string[] = [];
+  const rescoped: { id: string; scope: MeasureScope; measureKey: string | null }[] = [];
+  const touched: MeasureRec[] = [];
+  const kept: MeasureSpec[] = [];
+  for (const x of m.measures) {
+    const spec = measureSpecOf(x);
+    const ids = spec.scope.domainIds ?? [];
+    const ofTopic = topicLineageId != null && spec.topicLineageId === topicLineageId;
+    if (!ofTopic && !(spec.kind === "CARDS_AT_LEVEL" && ids.includes(domainId))) {
+      kept.push(spec);
+      continue;
+    }
+    touched.push(x);
+    if (!ofTopic && ids.length > 1) {
+      // A context checkpoint (PART, BETWEEN: its gate isn't stored, so a CONTEXT scope over several Domains) pays nothing.
+      if (spec.role === "PAYS" && !spec.gate) return PLAN_EDIT_SHARED;
+      const rest = ids.filter((id) => id !== domainId);
+      const parsed = spec.measureKey ? parseMeasureKey(spec.measureKey) : null;
+      const measureKey = parsed?.kind === "CARDS_AT_LEVEL" ? cardsAtLevelKey(rest, parsed.level, parsed.segment ?? undefined) : null;
+      const scope: MeasureScope = { ...spec.scope, domainIds: rest };
+      rescoped.push({ id: x.id, scope, measureKey });
+      kept.push({ ...spec, scope, measureKey });
+      continue;
+    }
+    deleted.push(x.id);
+  }
+  if (items.length === 0 && touched.length === 0) return PLAN_EDIT_NOT_HERE;
+  const gone = new Set(items.map((i) => i.id));
+  const after: MilestoneDraft = { ...d, items: d.items.map((i) => (i.id && gone.has(i.id) ? { ...i, decision: "REMOVED" as Decision } : i)), measures: kept };
+  if (!after.measures.some((x) => x.kind === "CARDS_AT_LEVEL" && x.role === "PAYS" && !x.gate)) return PLAN_EDIT_LAST_PAYING;
+  return {
+    milestoneId: m.id,
+    after,
+    itemIds: items.map((i) => i.id),
+    deleted,
+    rescoped,
+    mark: {
+      milestoneId: m.id,
+      items: items.map((i) => ({ id: i.id, decision: i.decision, decidedAt: i.decidedAt ? i.decidedAt.toISOString() : null })),
+      measures: touched.map((x) => ({ spec: measureSpecOf(x), createdAt: x.createdAt.toISOString() })),
+    },
+  };
+}
+
 /** One edit, read and worked out on the bundle as read: the ops of its accepted version and its answer, or the refusal. */
 async function planEditStepOf(
   e: Env,
@@ -8881,8 +8989,12 @@ async function planEditStepOf(
   const target = ed.milestoneId != null ? (b.milestones.find((m) => m.id === ed.milestoneId) ?? null) : null;
   if (ed.milestoneId != null) {
     if (!target) return fail(PLAN_EDIT_GONE);
-    if (isCarried(target)) return fail(ed.kind === "RENAME" ? "This milestone has started; its title is on Today now." : PLAN_EDIT_STARTED);
-    if (!unstarted.some((m) => m.id === target.id)) return fail(PLAN_EDIT_GONE);
+    // Ruling N24: a topic comes off the live milestone too; rename and add stay with the unstarted ones.
+    if (isCarried(target)) {
+      if (ed.kind === "RENAME") return fail("This milestone has started; its title is on Today now.");
+      if (ed.kind === "ADD_TOPIC") return fail(PLAN_EDIT_STARTED);
+      if (!liveRowOf(b, target, goals) || !planRowsOf(b).some((m) => m.id === target.id)) return fail(PLAN_EDIT_BEHIND);
+    } else if (!unstarted.some((m) => m.id === target.id)) return fail(PLAN_EDIT_GONE);
   }
   // The Domain an add or a removal names: one of yours (any Field), or the one made for your new name.
   let domain: { id: string; name: string; cards: number } | null = null;
@@ -8892,6 +9004,8 @@ async function planEditStepOf(
     const facts = id ? domainFactsOf(tree).get(id) : undefined;
     if (!id || !facts) return fail(made ? "That Domain no longer exists." : "Pick one of your Domains.");
     domain = { id, name: facts.name, cards: facts.cards.length };
+    // Ruling N24: a removal is the user's deliberate act: the name typed in its confirm is the topic's own.
+    if (ed.kind === "REMOVE_TOPIC" && !topicNameMatchesOf(ed.typed, facts.name)) return fail(PLAN_EDIT_TYPE_NAME);
     if (ed.kind === "ADD_TOPIC" && !made) {
       const taken = await topicTakenDomainOf(e, userId, b.roadmap.id, [id]);
       if (taken) return fail(DOMAIN_TAKEN(taken.slot));
@@ -8933,8 +9047,12 @@ async function levelsPlanEditOf(
   const R0 = requiredDomainsOf(b, planRows);
   let drafts = unstarted.map((m) => editCopyOf(m, v));
   let domainIds = [...b.roadmap.domainIds];
-  const idx = target ? drafts.findIndex((d) => d.lineageId === target.lineageId) : -1;
-  if (target && idx < 0) return fail(PLAN_EDIT_GONE);
+  // Ruling N24: the live milestone is carried, never copied: a removal there is written in place on its row.
+  const liveTarget = target && isCarried(target) ? target : null;
+  let liveEdit: LiveRemoval | null = null;
+  const idx = target && !liveTarget ? drafts.findIndex((d) => d.lineageId === target.lineageId) : -1;
+  if (target && !liveTarget && idx < 0) return fail(PLAN_EDIT_GONE);
+  const carriedAfter = (): MilestoneDraft[] => carriedRows.map((m) => (liveEdit && m.id === liveEdit.milestoneId ? liveEdit.after : draftOf(m)));
   const liveDomainIds = (d: MilestoneDraft): string[] => d.items.filter((i) => i.kind === "DOMAIN" && liveItem(i) && i.domainId).map((i) => i.domainId as string);
   const measuresDomain = (d: MilestoneDraft, id: string): boolean => d.measures.some((x) => x.kind === "CARDS_AT_LEVEL" && !x.gate && (x.scope.domainIds ?? []).includes(id));
   if (ed.kind === "ADD_TOPIC" && domain && !R0.includes(domain.id) && !domainIds.includes(domain.id)) {
@@ -9047,6 +9165,13 @@ async function levelsPlanEditOf(
       drafts = [...drafts.slice(0, at), row, ...drafts.slice(at)];
       if (measure.role === "CONTEXT") held.set(row.lineageId, today);
     }
+  } else if (ed.kind === "REMOVE_TOPIC" && domain && liveTarget) {
+    const removal = liveRemovalOf(liveTarget, domain.id, null);
+    if (typeof removal === "string") return fail(removal);
+    liveEdit = removal;
+    // The Domain leaves R only when no milestone still counts it (the live one as it now stands).
+    const still = [...carriedAfter(), ...drafts].some((m) => liveDomainIds(m).includes(domain.id) || measuresDomain(m, domain.id));
+    if (!still) domainIds = domainIds.filter((id) => id !== domain.id);
   } else if (ed.kind === "REMOVE_TOPIC" && domain) {
     const d = drafts[idx];
     if (!liveDomainIds(d).includes(domain.id) && !measuresDomain(d, domain.id)) return fail(PLAN_EDIT_NOT_HERE);
@@ -9066,13 +9191,13 @@ async function levelsPlanEditOf(
     if (!after.measures.some((x) => x.role === "PAYS") || liveDomainIds(after).length + after.measures.filter((x) => x.kind === "CARDS_AT_LEVEL" && !x.gate).length === 0) return fail(PLAN_EDIT_LAST_TOPIC);
     drafts[idx] = after;
     // The Domain leaves R only when no milestone (a started one included) still counts it.
-    const still = [...carriedRows.map(draftOf), ...drafts].some((m) => liveDomainIds(m).includes(domain.id) || measuresDomain(m, domain.id));
+    const still = [...carriedAfter(), ...drafts].some((m) => liveDomainIds(m).includes(domain.id) || measuresDomain(m, domain.id));
     if (!still) domainIds = domainIds.filter((id) => id !== domain.id);
   }
 
   // The tripwire reads the plan with its Domains as they now stand (R); the row whose Domains changed has its code words follow them.
-  const textCtx: ModelTextContext = { ...modelTextContextOf(b, tree, true), required: requiredDomainsOf({ roadmap: { ...b.roadmap, domainIds } }, [...carriedRows, ...drafts]) };
-  if (ed.kind !== "RENAME" && idx >= 0) drafts[idx] = relabelledCodeItemsOf(b, drafts[idx], textCtx, [...carriedRows.map(draftOf), ...drafts]);
+  const textCtx: ModelTextContext = { ...modelTextContextOf(b, tree, true), required: requiredDomainsOf({ roadmap: { ...b.roadmap, domainIds } }, [...carriedAfter(), ...drafts]) };
+  if (ed.kind !== "RENAME" && idx >= 0) drafts[idx] = relabelledCodeItemsOf(b, drafts[idx], textCtx, [...carriedAfter(), ...drafts]);
   // Ords after the carried rows (a "Start again" copy keeps its position's), then every card measure keyed and baselined as acceptCore does.
   const baseOrd = Math.max(0, ...carriedRows.map((m) => m.ord));
   const carriedOrdOf = new Map<string, number>();
@@ -9089,8 +9214,9 @@ async function levelsPlanEditOf(
       return { ...x, measureKey: key, baseline: live.value, baselineDay: today, fittedTarget: x.target };
     }),
   }));
-  const carried = carriedPlanOf(b, unstarted, goals);
-  const required = requiredDomainsOf({ roadmap: { ...b.roadmap, domainIds } }, [...carriedRows, ...drafts]);
+  // The live milestone as it now stands (ruling N24), at its one due day.
+  const carried = carriedPlanOf(b, unstarted, goals).map((c) => (liveEdit && c.id === liveEdit.milestoneId ? { ...c, items: liveEdit.after.items, measures: liveEdit.after.measures } : c));
+  const required = requiredDomainsOf({ roadmap: { ...b.roadmap, domainIds } }, [...carriedAfter(), ...drafts]);
   let feasibility: Feasibility | null = null;
   try {
     feasibility = feasibilityFor(e, ctx, drafts, carried);
@@ -9111,7 +9237,7 @@ async function levelsPlanEditOf(
   const stored: EditedPlan["feasibility"] = {
     ...base,
     ...(depth != null ? { ...depthRecordsOf(b, unstarted, required, coverage, today), ...(coverage ? { coverage } : {}) } : {}),
-    planEdit: { kind: ed.kind, domainIds: [...b.roadmap.domainIds] },
+    planEdit: { kind: ed.kind, domainIds: [...b.roadmap.domainIds], ...(liveEdit ? { live: liveEdit.mark } : {}) },
   };
   // One rank place per lineage, as acceptCore ranks a re-plan (by stage on a depth plan).
   const groupLineages = new Set(drafts.map((d) => d.lineageId));
@@ -9149,6 +9275,7 @@ async function levelsPlanEditOf(
     unstarted,
     carriedRows,
     carried,
+    live: liveEdit,
   });
 }
 
@@ -9189,6 +9316,7 @@ async function topicsPlanEditOf(
   const ctx = await topicsContextOf(e, userId, b, depth, now);
   const held = new Map<string, DayKey>();
   let drafts: MilestoneDraft[];
+  let liveEdit: LiveRemoval | null = null;
 
   if (ed.kind === "RENAME") {
     drafts = unstarted.map((m) => editCopyOf(m, v));
@@ -9262,7 +9390,12 @@ async function topicsPlanEditOf(
       const layer = target?.layer as number;
       const t = map.topics.find((x) => topicLive(x) && x.chosen && x.layer === layer && x.domainId === domain.id);
       if (!t) return fail(PLAN_EDIT_NOT_HERE);
-      if (!map.topics.some((x) => topicLive(x) && x.chosen && x.layer === layer && x.lineageId !== t.lineageId)) return fail(PLAN_EDIT_LAST_TOPIC);
+      if (target && isCarried(target)) {
+        // Ruling N24: the live layer keeps its row; the topic's measures leave it in place (at least one paying topic stays).
+        const removal = liveRemovalOf(target, domain.id, t.lineageId);
+        if (typeof removal === "string") return fail(removal);
+        liveEdit = removal;
+      } else if (!map.topics.some((x) => topicLive(x) && x.chosen && x.layer === layer && x.lineageId !== t.lineageId)) return fail(PLAN_EDIT_LAST_TOPIC);
       map = withoutTopicLinksOf(withTopicChanged(map, { ...t, decision: "REMOVED", chosen: false }), t.lineageId, "BOTH");
     }
     map = settledTopicMapOf(map);
@@ -9309,7 +9442,12 @@ async function topicsPlanEditOf(
       return { ...x, scope: { ...x.scope, domainIds: ids }, measureKey: key, baseline: live0.value, baselineDay: today, fittedTarget: x.target };
     }),
   }));
-  const feasibility = topicsFeasibilityOf(e, ctx, drafts, keptCarried.map(draftOf));
+  const feasibility = topicsFeasibilityOf(
+    e,
+    ctx,
+    drafts,
+    keptCarried.map((m) => (liveEdit && m.id === liveEdit.milestoneId ? liveEdit.after : draftOf(m)))
+  );
   const known = new Set(map.topics.filter((t) => t.heldDay != null || t.skippedDay != null).map((t) => t.lineageId));
   const allKnown = (d: MilestoneDraft): boolean => {
     const own = Array.from(new Set(d.measures.map((x) => x.topicLineageId).filter((l): l is string => !!l)));
@@ -9359,13 +9497,14 @@ async function topicsPlanEditOf(
     ranks,
     roadmapData: { domainIds: chosenIds, rating: rating ? { ...rating } : null },
     domainIds: chosenIds,
-    feasibility: { ...feasibility, planEdit: { kind: ed.kind, domainIds: [...b.roadmap.domainIds], rating: rating0 } },
+    feasibility: { ...feasibility, planEdit: { kind: ed.kind, domainIds: [...b.roadmap.domainIds], rating: rating0, ...(liveEdit ? { live: liveEdit.mark } : {}) } },
     endState,
     map,
     textCtx: topicsTextContextOf(b, tree, map),
     unstarted,
     carriedRows,
     carried: [],
+    live: liveEdit,
   });
 }
 
@@ -9386,9 +9525,19 @@ async function editedPlanOps(e: Env, deps: RoadmapDeps, userId: string, p: Edite
     { op: "update", table: "roadmap", where: { id: roadmapId, version: cur }, data: { ...p.roadmapData, version: p.v, updatedAt: now } },
     { op: "update", table: "roadmapMilestone", where: { roadmapId, version: cur, status: { in: ["PLANNED", "LATER"] } }, data: { status: "SUPERSEDED" } },
   ];
+  // Ruling N24: a topic off the live milestone, in place on its row (still STARTED): its item REMOVED, its measures gone.
+  if (p.live) {
+    ops.push({ op: "guard", guard: { g: "MILESTONE_IS", id: p.live.milestoneId, statuses: ["STARTED"] } });
+    if (p.live.itemIds.length) ops.push({ op: "update", table: "roadmapItem", where: { id: { in: p.live.itemIds } }, data: { decision: "REMOVED", decidedAt: now } });
+    if (p.live.deleted.length) ops.push({ op: "delete", table: "roadmapMeasure", where: { id: { in: p.live.deleted } } });
+    for (const r of p.live.rescoped) ops.push({ op: "update", table: "roadmapMeasure", where: { id: r.id }, data: { scope: r.scope, measureKey: r.measureKey } });
+  }
   if (p.map) ops.push(...mapRowOps(roadmapId, p.v, p.map, now, e.makeId));
   try {
-    writeRoadmapRows(ops, { kind: "DRAFT", roadmapId, version: p.v, plan: p.drafts, feasibility: p.feasibility, now, makeId: e.makeId }, p.textCtx);
+    // The carried rows as they now stand (the live one after a removal) are read beside the version: a TOPICS layer's
+    // carry practice is worded with the layer before's Domains, which may be under way.
+    const beside = p.carriedRows.map((m) => (p.live && m.id === p.live.milestoneId ? p.live.after : draftOf(m)));
+    writeRoadmapRows(ops, { kind: "DRAFT", roadmapId, version: p.v, plan: p.drafts, feasibility: p.feasibility, now, makeId: e.makeId, beside }, p.textCtx);
   } catch (err) {
     if (!(err instanceof ModelTextError)) throw err;
     logRefusedWrite("plan-edit", err);
@@ -11456,8 +11605,9 @@ function roadmapViewOfData(e: Env, deps: RoadmapDeps, v: ViewData, ctx: PlanCont
 /**
  * Ruling N18: each unstarted row of an accepted (or paused) plan with what its edit sheet may change: its title, and
  * its topics on a LEVELS stage or a TOPICS layer (not held; a depth milestone's topics are the last layer's). Its
- * Domains are its live DOMAIN items. Started, reached and other rows are as they were (no `edit`). Never reads a draft,
- * so the live plan's parts stay as they are while one exists.
+ * Domains are its live DOMAIN items. Ruling N24: the live milestone (started, its goal open, not reached) takes a
+ * topic off (`remove`, `started`), never a rename or an add. Reached and other rows are as they were (no `edit`).
+ * Never reads a draft, so the live plan's parts stay as they are while one exists.
  */
 function rowEditsOf(b: RoadmapBundle, tree: readonly TreeField[], templates: ReadonlyMap<string, GoalFacts>, rows: MilestoneRowView[]): MilestoneRowView[] {
   if ((b.roadmap.status !== "ACTIVE" && b.roadmap.status !== "PAUSED") || b.roadmap.version < 1) return rows;
@@ -11466,7 +11616,10 @@ function rowEditsOf(b: RoadmapBundle, tree: readonly TreeField[], templates: Rea
   const topics = kindOfRow(b.roadmap) === "TOPICS";
   return rows.map((r) => {
     const m = byId.get(r.id);
-    if (!m || m.version !== b.roadmap.version || (m.status !== "PLANNED" && m.status !== "LATER") || dormantCopy(b, m, templates)) return r;
+    if (!m) return r;
+    // Ruling N24: the live milestone takes its topics off too (behind the typed confirm); its title and adds stay set.
+    const live = liveRowOf(b, m, templates);
+    if (!live && (m.version !== b.roadmap.version || (m.status !== "PLANNED" && m.status !== "LATER") || dormantCopy(b, m, templates))) return r;
     const seen = new Set<string>();
     const domains: { id: string; name: string }[] = [];
     for (const i of [...m.items].sort((x, y) => x.ord - y.ord)) {
@@ -11475,7 +11628,12 @@ function rowEditsOf(b: RoadmapBundle, tree: readonly TreeField[], templates: Rea
       domains.push({ id: i.domainId, name: facts.get(i.domainId)?.name ?? i.label });
     }
     const canTopics = b.roadmap.fieldId != null && !heldRow(m) && (topics ? m.chainRole === "LAYER" && m.layer != null : depthOf(b.roadmap) != null);
-    const edit: MilestoneEditView = { rename: true, topics: canTopics, domains };
+    if (live) {
+      if (!canTopics || domains.length === 0) return r;
+      const edit: MilestoneEditView = { rename: false, topics: false, remove: true, started: true, domains };
+      return { ...r, edit };
+    }
+    const edit: MilestoneEditView = { rename: true, topics: canTopics, remove: canTopics, domains };
     return { ...r, edit };
   });
 }

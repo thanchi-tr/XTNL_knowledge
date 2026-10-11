@@ -1192,5 +1192,11 @@
   .rm-pe-list .rm-pick:disabled b { color: var(--ink-1); }
   .rm-pe-none { margin: 0; }
   .rm-pe-new { color: var(--ink-0); }
+  /* Ruling N24: the typed confirm of a topic's removal (a centred dialog over the edit sheet) */
+  .rm-rc { min-width: 0; }
+  .rm-rc-name { margin: 0; font-size: 17px; line-height: 22px; overflow-wrap: anywhere; }
+  .rm-rc-input { min-height: 44px; width: 100%; }
+  .rm-rc-note { margin: 0; }
+  .rm-rc-acts { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
   /* ===== /Ruling N18 ===== */
 }

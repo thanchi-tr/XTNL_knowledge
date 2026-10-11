@@ -313,7 +313,8 @@ export async function editPlan(roadmapId: string, edit: PlanEdit): Promise<Roadm
   const text = (v: unknown): v is string => typeof v === "string" && v.length <= TEXT_MAX;
   let clean: PlanEdit;
   if (o.kind === "RENAME" && isRef(o.milestoneId) && text(o.title)) clean = { kind: "RENAME", milestoneId: o.milestoneId, title: o.title };
-  else if (o.kind === "REMOVE_TOPIC" && isRef(o.milestoneId) && isRef(o.domainId)) clean = { kind: "REMOVE_TOPIC", milestoneId: o.milestoneId, domainId: o.domainId };
+  // Ruling N24: a removal carries the topic's name as typed in its confirm (the core checks it).
+  else if (o.kind === "REMOVE_TOPIC" && isRef(o.milestoneId) && isRef(o.domainId) && text(o.typed)) clean = { kind: "REMOVE_TOPIC", milestoneId: o.milestoneId, domainId: o.domainId, typed: o.typed };
   else if (o.kind === "ADD_TOPIC") {
     const nm = asObject(o.newMilestone);
     const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 20 ? v : undefined);

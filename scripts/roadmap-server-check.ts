@@ -8053,14 +8053,14 @@ async function main() {
     // Removal: the Domain leaves that milestone (it stays in your library, its cards untouched); the last topic is kept.
     const holder = rowsOf(w, id, row().version).find((m) => m.status === "PLANNED" && itemsOf(w, m.id).filter((i) => i.kind === "DOMAIN" && i.decision !== "REMOVED").length >= 2) as MilestoneRec;
     const cards0 = w.tree.flatMap((f) => f.domains).find((d) => d.id === "d-prob")?.cards.length;
-    const removed = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: holder.id, domainId: "d-prob" }, NOW, deps);
+    const removed = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: holder.id, domainId: "d-prob", typed: "Probability" }, NOW, deps);
     const after = rowsOf(w, id, row().version).find((m) => m.lineageId === holder.lineageId) as MilestoneRec;
     check(
       "N18 remove (LEVELS): the Domain leaves that milestone (its item REMOVED, its measure gone); the Domain and its cards stay, and it stays in the plan while another milestone counts it",
       removed.ok && itemsOf(w, after.id).some((i) => i.domainId === "d-prob" && i.decision === "REMOVED") && !measuresOf(w, after.id).some((x) => (x.scope as { domainIds?: string[] }).domainIds?.includes("d-prob")) && w.tree.flatMap((f) => f.domains).find((d) => d.id === "d-prob")?.cards.length === cards0 && row().domainIds.includes("d-prob"),
       json({ removed: editErr(removed), items: itemsOf(w, after.id).map((i) => [i.kind, i.domainId, i.decision]) })
     );
-    const last = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: after.id, domainId: "d-inf" }, NOW, deps);
+    const last = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: after.id, domainId: "d-inf", typed: "Inference" }, NOW, deps);
     eq("N18 remove: a milestone keeps at least one topic", editErr(last), S.PLAN_EDIT_LAST_TOPIC);
     // A started milestone: its title and topics are set (an add goes to a later milestone, or a new one).
     const first = rowsOf(w, id, row().version).find((m) => m.status === "PLANNED") as MilestoneRec;
@@ -8135,7 +8135,7 @@ async function main() {
       add2.ok && add2.value.counted === 38 && measuresOf(w, l2b.id).some((x) => json(x.scope) === json({ domainIds: ["d-bayes"] }) && x.minLevel === 6) && w.t.roadmapTopic.some((t) => t.roadmapId === id && t.version === v3 && t.domainId === "d-bayes" && t.nameOrigin === "LIBRARY" && t.layer === 2) && row().domainIds.includes("d-bayes") && ((accOf(w, id, v3)?.endState as EndStateTerm[]) ?? []).some((t) => t.measureKey.includes("d-bayes")),
       json({ add2: editErr(add2), ms: measuresOf(w, l2b.id).map((x) => [json(x.scope), x.minLevel, x.role]) })
     );
-    const rm = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: l2b.id, domainId: "d-bayes" }, NOW, deps);
+    const rm = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: l2b.id, domainId: "d-bayes", typed: "Bayesian Methods" }, NOW, deps);
     const v4 = row().version;
     const l2c = layerRows(v4).find((m) => m.layer === 2) as MilestoneRec;
     check(
@@ -8143,7 +8143,8 @@ async function main() {
       rm.ok && !measuresOf(w, l2c.id).some((x) => json(x.scope) === json({ domainIds: ["d-bayes"] })) && !row().domainIds.includes("d-bayes") && w.t.roadmapTopic.some((t) => t.roadmapId === id && t.version === v4 && t.domainId === "d-bayes" && t.decision === "REMOVED") && w.tree.flatMap((f) => f.domains).find((d) => d.id === "d-bayes")?.cards.length === 38,
       json({ rm: editErr(rm) })
     );
-    const lastOne = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: l2c.id, domainId: w.t.roadmapTopic.find((t) => t.roadmapId === id && t.version === v4 && t.layer === 2 && t.chosen && t.decision !== "REMOVED")?.domainId ?? "" }, NOW, deps);
+    const lastTopic = w.t.roadmapTopic.find((t) => t.roadmapId === id && t.version === v4 && t.layer === 2 && t.chosen && t.decision !== "REMOVED");
+    const lastOne = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: l2c.id, domainId: lastTopic?.domainId ?? "", typed: lastTopic?.name ?? "" }, NOW, deps);
     eq("N18 remove (TOPICS): a layer keeps at least one topic", editErr(lastOne), S.PLAN_EDIT_LAST_TOPIC);
 
     // Undo of the new layer: the plan, its map, its Domains and rating as they were; the made Domain stays in the library.
@@ -8152,6 +8153,136 @@ async function main() {
       "N18 undo (TOPICS): the toast's Undo restores the version before (its map and Domains), the undone version's rows DISCARDED and its topic rows gone; no draft",
       back.ok && row().version === v3 && w.t.roadmapTopic.filter((t) => t.roadmapId === id && t.version === v4).length === 0 && rowsOf(w, id, v4).every((m) => m.status === "DISCARDED") && row().domainIds.includes("d-bayes") && (await S.loadRoadmapView(USER, NOW, deps, id)).draft == null,
       json({ back: editErr(back), version: row().version })
+    );
+  });
+
+  // ═══ Ruling N24: a topic taken off any milestone, the live one too (behind the typed confirm) ═══════════════
+  //
+  // The user's words: "Allow to remove topic from milestone from road map at any time, even if mile stone start. When
+  // remove the topic, make sure to create a pop up that make user deliberately type the name of the topic to remove it."
+  /** A small Domain the plans don't hold yet (3 cards at level 2: never held, so it pays wherever it is added). */
+  const withOdds = (w: FakeWorld): void => {
+    const f = w.tree.find((x) => x.id === "f-stats") as TreeField;
+    f.domains.push({ id: "d-odds", name: "Odds Ratios", fieldId: "f-stats", cards: [...Array(3)].map(() => card("d-odds", 2)) });
+  };
+  /** A row's g over its paying card measures (R1's milestoneGOn), each read at `valueOf(measure)` today. */
+  const cardsGOf = (w: FakeWorld, milestoneId: string, valueOf: (x: MeasureSpec) => number): number | null => {
+    const specs = measuresOf(w, milestoneId).map((x) => S.measureSpecOf(x)).filter((x) => x.kind === "CARDS_AT_LEVEL" && x.role === "PAYS" && !x.gate && x.measureKey);
+    const readings = specs.map((x) => ({ measureKey: x.measureKey as string, day: TODAY, value: valueOf(x), detail: { byDomain: {} }, source: "COMPUTED" as const, observedAt: NOW.toISOString() }));
+    return MS.milestoneGOn({ id: milestoneId, measures: specs, labels: {} }, readings, [], TODAY).g;
+  };
+
+  await topicBlock("N24 LEVELS: a topic off the live milestone", async () => {
+    const w = world();
+    withOdds(w);
+    const id = await accepted(w);
+    const deps = depsFor(w);
+    const row = () => w.t.roadmap.find((r) => r.id === id) as RoadmapRec;
+    const m1 = rowsOf(w, id, 1).find((m) => m.status === "PLANNED") as MilestoneRec;
+    must(await S.editPlanCore(USER, id, { kind: "ADD_TOPIC", milestoneId: m1.id, domainId: "d-odds" }, NOW, deps), "add Odds Ratios to milestone 1");
+    const first = rowsOf(w, id, row().version).find((m) => m.lineageId === m1.lineageId) as MilestoneRec;
+    must(await S.startMilestoneCore(USER, first.id, START_ALL, NOW, deps), "start milestone 1");
+    const live = () => w.t.roadmapMilestone.find((m) => m.id === first.id) as MilestoneRec;
+    const goal0 = live().goalId;
+    const templates0 = json(w.templates);
+    const probBase0 = measuresOf(w, first.id).find((x) => json(x.scope) === json({ domainIds: ["d-prob"] }))?.baseline;
+    const view0 = await S.loadRoadmapView(USER, NOW, deps, id);
+    const edit0 = view0.milestones.find((r) => r.id === first.id)?.edit;
+    check(
+      "N24 view: the live milestone offers its topics' removal (remove, started) and never a rename or an add",
+      !!edit0 && edit0.remove === true && edit0.started === true && edit0.rename === false && edit0.topics === false && edit0.domains.map((d) => d.id).includes("d-odds"),
+      json(edit0)
+    );
+
+    // The name typed must be the topic's own.
+    const v0 = row().version;
+    const wrong = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: first.id, domainId: "d-inf", typed: "Infer" }, NOW, deps);
+    eq("N24 typed confirm: a name that isn't the topic's is refused, writing nothing", [editErr(wrong), row().version], [S.PLAN_EDIT_TYPE_NAME, v0]);
+
+    // Odds Ratios off the live milestone: no other milestone counts it, so it leaves the plan's Domains and end state.
+    const g0 = cardsGOf(w, first.id, (x) => (x.scope.domainIds?.includes("d-prob") ? x.target : (x.baseline ?? 0)));
+    const offOdds = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: first.id, domainId: "d-odds", typed: "  odds   RATIOS " }, NOW, deps);
+    const accOdds = accOf(w, id, row().version);
+    check(
+      "N24 remove from the live milestone: the topic's measure leaves that row in place (same row, still STARTED, its goal and Start baselines kept), its item is REMOVED, and a Domain no milestone counts any more leaves the plan's Domains and end state",
+      offOdds.ok &&
+        live().status === "STARTED" &&
+        live().goalId === goal0 &&
+        !measuresOf(w, first.id).some((x) => (x.scope as { domainIds?: string[] }).domainIds?.includes("d-odds")) &&
+        itemsOf(w, first.id).some((i) => i.kind === "DOMAIN" && i.domainId === "d-odds" && i.decision === "REMOVED") &&
+        measuresOf(w, first.id).find((x) => json(x.scope) === json({ domainIds: ["d-prob"] }))?.baseline === probBase0 &&
+        !row().domainIds.includes("d-odds") &&
+        !((accOdds?.endState as EndStateTerm[]) ?? []).some((t) => t.measureKey.includes("d-odds")),
+      json({ offOdds: editErr(offOdds), status: live().status, goal: live().goalId === goal0, domainIds: row().domainIds })
+    );
+
+    // Inference off the live milestone: the later milestones still count it, so it stays in the plan; the milestone's
+    // progress is worked out from what it keeps (Probability at its target: g 1, where Inference held it at 0).
+    const vBefore = row().version;
+    const offInf = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: first.id, domainId: "d-inf", typed: "inference" }, NOW, deps);
+    const g1 = cardsGOf(w, first.id, (x) => (x.scope.domainIds?.includes("d-prob") ? x.target : (x.baseline ?? 0)));
+    check(
+      "N24 progress: with Inference's measure gone the live milestone's g reads from the measures it keeps (R1's milestoneGOn: 0 → 1); Inference stays in the plan while a later milestone counts it; the Today templates are untouched",
+      offInf.ok && g0 === 0 && g1 === 1 && row().domainIds.includes("d-inf") && json(w.templates) === templates0 && live().goalId === goal0,
+      json({ offInf: editErr(offInf), g0, g1, domainIds: row().domainIds })
+    );
+    const lastPaying = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: first.id, domainId: "d-prob", typed: "Probability" }, NOW, deps);
+    eq("N24 the live milestone keeps at least one paying topic: its last is refused", editErr(lastPaying), S.PLAN_EDIT_LAST_PAYING);
+
+    // Undo: Inference's measure is back on the live row (its id and figures), its item as it was, the plan's version too.
+    const infMeasure = (accOf(w, id, row().version)?.feasibility as { planEdit?: { live?: { measures: { spec: { id: string } }[] } } })?.planEdit?.live?.measures[0]?.spec.id;
+    const undone = await S.undoAcceptCore(USER, id, row().version, NOW, deps);
+    check(
+      "N24 undo: the accept's Undo puts the topic back on the live milestone (its measure, same id; its item's decision), the version before it again, the milestone still STARTED with its goal",
+      undone.ok && row().version === vBefore && !!infMeasure && measuresOf(w, first.id).some((x) => x.id === infMeasure && json(x.scope) === json({ domainIds: ["d-inf"] })) && itemsOf(w, first.id).some((i) => i.domainId === "d-inf" && i.decision !== "REMOVED") && live().status === "STARTED" && live().goalId === goal0,
+      json({ undone: editErr(undone), version: row().version, ms: measuresOf(w, first.id).map((x) => [x.id, json(x.scope)]) })
+    );
+    // A milestone behind you (reached) keeps its topics.
+    (w.t.roadmapMilestone.find((m) => m.id === first.id) as MilestoneRec).reachedDay = TODAY;
+    const behind = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: first.id, domainId: "d-inf", typed: "Inference" }, NOW, deps);
+    eq("N24 a reached milestone keeps its topics (PLAN_EDIT_BEHIND)", editErr(behind), S.PLAN_EDIT_BEHIND);
+  });
+
+  await topicBlock("N24 TOPICS: a topic off the live layer", async () => {
+    const w = world();
+    withOdds(w);
+    const id = await writtenTopics(w, { ...TOPICS_INTAKE, depth: 10 }, ["Bayes rule"]);
+    const deps = topicDepsFor(w);
+    must(await S.acceptCore(USER, id, topicAccept(1), NOW, deps), "accept the topic plan");
+    const row = () => w.t.roadmap.find((r) => r.id === id) as RoadmapRec;
+    const l1 = () => rowsOf(w, id, row().version).find((m) => m.chainRole === "LAYER" && m.layer === 1 && m.status === "PLANNED") as MilestoneRec;
+    must(await S.editPlanCore(USER, id, { kind: "ADD_TOPIC", milestoneId: l1().id, domainId: "d-odds" }, NOW, deps), "add Odds Ratios to layer 1");
+    const layer1 = l1();
+    for (const i of itemsOf(w, layer1.id)) if (i.kind === "CHECKPOINT" && (i.bar == null || i.outOf == null)) must(await S.editItemCore(USER, i.id, { outOf: 100, bar: 70 }, NOW, deps), "set the checkpoint's bar");
+    must(await S.startMilestoneCore(USER, layer1.id, START_ALL, NOW, deps), "start layer 1");
+    const live = () => w.t.roadmapMilestone.find((m) => m.id === layer1.id) as MilestoneRec;
+    const goal0 = live().goalId;
+    const templates0 = json(w.templates);
+    const odds = w.t.roadmapTopic.find((t) => t.roadmapId === id && t.version === row().version && t.domainId === "d-odds");
+    const res = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: layer1.id, domainId: "d-odds", typed: "Odds Ratios" }, NOW, deps);
+    const v = row().version;
+    const l2 = rowsOf(w, id, v).find((m) => m.chainRole === "LAYER" && m.layer === 2 && m.status === "PLANNED");
+    check(
+      "N24 TOPICS: the topic leaves the live layer in place (its measures by lineage gone, the row still STARTED with its goal), the map at the new version holds it REMOVED, the later layers are rebuilt without it, and it leaves the plan's Domains; the Today templates are untouched",
+      res.ok &&
+        live().status === "STARTED" &&
+        live().goalId === goal0 &&
+        !!odds &&
+        !measuresOf(w, layer1.id).some((x) => x.topicLineageId === odds.lineageId || (x.scope as { domainIds?: string[] }).domainIds?.includes("d-odds")) &&
+        w.t.roadmapTopic.some((t) => t.roadmapId === id && t.version === v && t.lineageId === odds.lineageId && t.decision === "REMOVED") &&
+        !!l2 &&
+        !measuresOf(w, l2.id).some((x) => (x.scope as { domainIds?: string[] }).domainIds?.includes("d-odds")) &&
+        !row().domainIds.includes("d-odds") &&
+        json(w.templates) === templates0,
+      json({ res: editErr(res), status: live().status, domainIds: row().domainIds })
+    );
+    const last = await S.editPlanCore(USER, id, { kind: "REMOVE_TOPIC", milestoneId: layer1.id, domainId: "d-inf", typed: "Inference" }, NOW, deps);
+    eq("N24 TOPICS: the live layer keeps at least one paying topic", editErr(last), S.PLAN_EDIT_LAST_PAYING);
+    const back = await S.undoAcceptCore(USER, id, v, NOW, deps);
+    check(
+      "N24 TOPICS undo: the topic's measures are back on the live layer, the map and Domains as they were",
+      back.ok && measuresOf(w, layer1.id).some((x) => x.topicLineageId === odds?.lineageId) && row().domainIds.includes("d-odds") && w.t.roadmapTopic.filter((t) => t.roadmapId === id && t.version === v).length === 0,
+      json({ back: editErr(back), domainIds: row().domainIds })
     );
   });
 

@@ -681,13 +681,21 @@ function rowsActive(): MilestoneRowView[] {
 
 /**
  * Ruling N18: an accepted plan's edits drawn on a fixture: each unstarted row (Planned, Outline, Later) its edit glyph in
- * its ▸ (its topics from `domainsOf`; a depth milestone renames only), and the card's "+" for a new milestone. Its
- * actions refuse (a fixture saves nothing), so the sheet shows the refusal line.
+ * its ▸ (its topics from `domainsOf`; a depth milestone renames only), the live (Current) milestone its topics' removal
+ * only (ruling N24), and the card's "+" for a new milestone. Its actions refuse (a fixture saves nothing), so the sheet
+ * shows the refusal line.
  */
 function withPlanEditFixture(v: RoadmapView, plan: Omit<PlanEditView, "roadmapId">, domainsOf: (r: MilestoneRowView) => { id: string; name: string }[]): RoadmapView {
   return {
     ...v,
-    milestones: v.milestones.map((r) => (r.state === "PLANNED" || r.state === "OUTLINE" || r.state === "LATER" ? { ...r, edit: { rename: true, topics: r.chainRole !== "DEPTH", domains: domainsOf(r) } } : r)),
+    milestones: v.milestones.map((r) =>
+      r.state === "PLANNED" || r.state === "OUTLINE" || r.state === "LATER"
+        ? { ...r, edit: { rename: true, topics: r.chainRole !== "DEPTH", remove: r.chainRole !== "DEPTH", domains: domainsOf(r) } }
+        : // Ruling N24: the live milestone takes a topic off (behind the typed confirm), never a rename or an add.
+          r.state === "CURRENT" && domainsOf(r).length > 0
+          ? { ...r, edit: { rename: false, topics: false, remove: true, started: true, domains: domainsOf(r) } }
+          : r
+    ),
     planEdit: { roadmapId: v.header?.id ?? "rm1", ...plan },
   };
 }
@@ -3447,6 +3455,10 @@ function topicFixtureOf(state: TopicState): RoadmapFixture {
     case "topic-map-plan": {
       // Ruling N18: layers 3 and 4 carry their edit glyph (their topics), the depth milestone renames only, and the card's "+" places a new layer.
       const topicDomains: Record<number, { id: string; name: string }[]> = {
+        2: [
+          { id: "d-T3", name: "Beta one" },
+          { id: "d-T4", name: "Beta two" },
+        ],
         3: [
           { id: "d-T7", name: "Gamma one" },
           { id: "d-Y1", name: "My own topic" },
