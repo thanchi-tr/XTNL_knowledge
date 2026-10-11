@@ -27,8 +27,21 @@ export async function recalculateLeveling(domainId: string): Promise<{ domainLev
     await prisma.domain.update({ where: { id: domainId }, data: { level: newDomainLevel } });
   }
 
-  const siblingDomains = await prisma.domain.findMany({ where: { fieldId: domain.fieldId } });
-  const levels = siblingDomains.map((d) => (d.id === domainId ? newDomainLevel : d.level));
+  // Every sibling's level is recomputed from its own points and Ideas, never read from its stored
+  // column: a stored level can be stale (Domains created before 2026-10-11 defaulted to level 1 while
+  // empty), and a Field summed from stale levels is how 30 empty Domains read as Field level 30.
+  const siblingDomains = await prisma.domain.findMany({
+    where: { fieldId: domain.fieldId },
+    select: { id: true, level: true, totalPoints: true, ideas: { where: { isArchived: false }, select: { level: true } } },
+  });
+  const staleSiblings: { id: string; level: number }[] = [];
+  const levels = siblingDomains.map((d) => {
+    if (d.id === domainId) return newDomainLevel;
+    const real = domainLevel(d.totalPoints, d.ideas.map((i) => i.level));
+    if (real !== d.level) staleSiblings.push({ id: d.id, level: real });
+    return real;
+  });
+  for (const s of staleSiblings) await prisma.domain.update({ where: { id: s.id }, data: { level: s.level } });
   const newFieldLevel = fieldLevel(levels);
 
   const field = await prisma.field.findUniqueOrThrow({ where: { id: domain.fieldId } });

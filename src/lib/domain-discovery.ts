@@ -2,7 +2,7 @@ import { prisma } from "./prisma";
 import { cleanModelDomainName, embedText, nameNewDomain } from "./gemini";
 import { assignDomainComposition, fieldComposition } from "./attribute-assignment";
 import { toVectorLiteral } from "./vector";
-import { SIMILARITY_NOVELTY_MAX, SIMILARITY_SATURATION_MIN, SIMILARITY_N_SIMILAR_MIN } from "./xp";
+import { SIMILARITY_NOVELTY_MAX, SIMILARITY_SATURATION_MIN, SIMILARITY_N_SIMILAR_MIN, domainLevel } from "./xp";
 import { IDEA_NAMING_TIMEOUT_MS, fallbackDomainName, modelOr } from "./idea-filing";
 
 interface NearestIdea {
@@ -151,7 +151,8 @@ export async function createNoveltyDomain(fieldId: string, fieldName: string, co
     return existing;
   }
 
-  const domain = await prisma.domain.create({ data: { name, fieldId } });
+  // Level 0 until it holds points: an empty Domain never counts toward its Field (leveling.ts).
+  const domain = await prisma.domain.create({ data: { name, fieldId, level: domainLevel(0, []) } });
 
   // A discovered Domain gets the same attribution as a hand-created one.
   // Its name came from a model, but what that name *means* in attribute

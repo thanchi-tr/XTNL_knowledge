@@ -6,6 +6,7 @@ import { invalidate } from "@/lib/cache";
 import { ATTRIBUTES, normaliseComposition, emptyComposition } from "@/lib/attributes";
 import { inferComposition } from "@/lib/attribute-inference";
 import { assignDomainComposition, fieldComposition } from "@/lib/attribute-assignment";
+import { domainLevel, fieldLevel } from "@/lib/xp";
 
 /**
  * Manual taxonomy creation.
@@ -80,6 +81,8 @@ export async function createField(rawName: string): Promise<TaxonomyResult<Creat
     const field = await prisma.field.create({
       data: {
         name,
+        // An empty Field is level 0 (fieldLevel of no Domains), never the column's old default of 1.
+        level: fieldLevel([]),
         attributes: {
           create: ATTRIBUTES.map((attribute) => ({ attribute, weight: composition[attribute] })),
         },
@@ -160,7 +163,9 @@ export async function createDomain(fieldId: string, rawName: string): Promise<Ta
   }
 
   const domain = await prisma.domain.create({
-    data: { name, fieldId },
+    // An empty Domain is level 0 (no points, no Ideas). The column's old default of 1 counted every
+    // new Domain as a full level in its Field, which let a topic plan's Domains inflate the character.
+    data: { name, fieldId, level: domainLevel(0, []) },
     select: { id: true, name: true, fieldId: true },
   });
 

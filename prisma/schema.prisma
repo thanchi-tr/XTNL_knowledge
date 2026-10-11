@@ -122,7 +122,7 @@ enum Attribute {
 model Field {
   id          String             @id @default(cuid())
   name        String             @unique
-  level       Float              @default(1.0)
+  level       Float              @default(0)
   domains     Domain[]
   snapshots   FieldSnapshot[]
   attributes  FieldAttribute[]
@@ -142,7 +142,7 @@ model Domain {
   fieldId               String
   field                 Field             @relation(fields: [fieldId], references: [id], onDelete: Cascade)
   totalPoints           Float             @default(0)
-  level                 Int               @default(1)
+  level                 Int               @default(0)
   ideas                 Idea[]
   attributes            DomainAttribute[]
   /**
