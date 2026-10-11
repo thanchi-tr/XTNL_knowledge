@@ -15,8 +15,11 @@
  *   pool never ships in the root layout's chunk. A backdrop replaces the
  *   generic sky band; the Cataclysm sits at z 16, under the rays, the flash,
  *   the shockwave (17), the words (20) and Skip (21).
- *   Text: kicker in the material colour, display-xl title, epithet, lore, grant
- *   cards, the cost line and the cause line; a gold primary plus quiet Done.
+ *   Text: kicker in the material colour, display-xl title, epithet, the fact
+ *   lines, lore, grant cards, the cost line and the cause line; a gold primary
+ *   plus quiet Done. Momentum's ceremonies (momentum.md §A.8, §E.5: a milestone,
+ *   a capstone) are the other way round: Done is the gold primary and the place
+ *   is the quiet secondary ("See the roadmap", the Life tree), from facts.href.
  *   Still: the final tableau at once, identical words. Calm: fades only.
  *   Full: art flies from the tapped node 640 ms, rims draw 760, notches or
  *   crest edges pop at 32 ms each, then at 1.0 s the flash, one shockwave
@@ -49,6 +52,10 @@ function rayOf(m: Material): string {
 
 export function defaultPrimary(ev: Pick<CelebrationEvent, "kind">): CurtainAction | null {
   switch (ev.kind) {
+    // Momentum (§A.8, §E.5): Done is the gold primary; the quiet secondary leads to the place.
+    case "milestone":
+    case "capstone":
+      return { label: "Done" };
     case "emblem-unlock":
     case "first-ultimate":
       return { label: "Equip now", href: "/you/loadout" };
@@ -56,6 +63,18 @@ export function defaultPrimary(ev: Pick<CelebrationEvent, "kind">): CurtainActio
     case "band":
     case "goal-long":
       return { label: "See your sheet", href: "/you" };
+    default:
+      return null;
+  }
+}
+
+/** The quiet secondary of momentum's ceremonies (§A.8): the roadmap of a milestone, the Life tree of a capstone. */
+export function defaultSecondary(ev: Pick<CelebrationEvent, "kind" | "facts">): CurtainAction | null {
+  switch (ev.kind) {
+    case "milestone":
+      return { label: "See the roadmap", href: ev.facts.href ?? "/you/roadmap" };
+    case "capstone":
+      return { label: "See the Life tree", href: ev.facts.href ?? "/skills/life" };
     default:
       return null;
   }
@@ -92,6 +111,8 @@ export function AscensionCurtain({ ev, art, backdrop, sky, fromEl, primary, repl
   const f = ev.facts;
   const material: Material = f.material ?? "gold";
   const action = primary === undefined ? defaultPrimary(ev) : primary;
+  const secondary = defaultSecondary(ev);
+  const lines = f.lines ?? [];
   const backdropNode = backdrop ?? (ceremonyEventFor(ev, replay) ? <CurtainBackdrop ev={ev} replay={replay} /> : null);
   const titleId = useId();
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -240,6 +261,13 @@ export function AscensionCurtain({ ev, art, backdrop, sky, fromEl, primary, repl
         <div className="cur-kick">{f.kicker ?? f.eyebrow}</div>
         <h2 id={titleId}>{f.title}</h2>
         {f.epithet && <div className="t-epithet">{f.epithet}</div>}
+        {lines.length > 0 && (
+          <div className="cur-lines">
+            {lines.map((l, i) => (
+              <p key={i}>{l}</p>
+            ))}
+          </div>
+        )}
         {f.lore && <p className="cur-lore">{f.lore}</p>}
         {grants.length > 0 && (
           <ul className="grants">
@@ -271,9 +299,15 @@ export function AscensionCurtain({ ev, art, backdrop, sky, fromEl, primary, repl
                 {action.label}
               </Button>
             ))}
-          <Button variant="quiet" onClick={close}>
-            Done
-          </Button>
+          {secondary?.href ? (
+            <Button variant="quiet" href={secondary.href} onClick={() => close()}>
+              {secondary.label}
+            </Button>
+          ) : (
+            <Button variant="quiet" onClick={close}>
+              Done
+            </Button>
+          )}
         </div>
       </div>
     </div>

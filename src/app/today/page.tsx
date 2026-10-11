@@ -20,6 +20,7 @@ import { DueElsewhere } from "@/components/today/DueElsewhere";
 import { dueElsewhereOf, questsOpenOf, weighInDueOf } from "@/components/today/due-elsewhere";
 import { NamedMark } from "@/components/glyph/NamedMark";
 import { isBoardId, workBoardHref } from "@/lib/work-boards";
+import { loadMomentum, settleMomentum } from "@/lib/momentum-server";
 
 // The board turns on the clock (a 04:00 day edge, a ten-minute undo window)
 // and on every tick — never statically cache it.
@@ -51,6 +52,11 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   const userId = getCurrentUserId();
   const day = todayKey(now);
 
+  // Momentum (momentum.md §A.1, §E.1): its lazy writes first (the day's quest set, a past day's ready chest, a
+  // milestone or checkpoint reached), so the board's read below prices today's frog and the card reads them.
+  // Before MOMENTUM_LAUNCH_DAY, or on a server that only reads, it returns at once and writes nothing; it never throws.
+  const settled = await settleMomentum(userId, day, { now });
+
   // One wave: the board's own read (templates, recent instances, the day's
   // ledger, the queue size, and each open ROADMAP goal's stored series —
   // cached per life day), the streak (the day's moments, Record yesterday's
@@ -63,13 +69,15 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   // The live fix (contracts §22.11, ruling 67): each plan-born title's Gemini-named Domain names, so Today marks them.
   // Started with the wave (cached per life day; a failure reads as none) and awaited after it.
   const namedTitlesLoad = loadTodayNamedTitles(userId, now).catch(() => ({}) as Record<string, string[]>);
-  const [board, streak, bosses, feed, quests, weight] = await Promise.all([
+  const [board, streak, bosses, feed, quests, weight, momentum] = await Promise.all([
     loadTodayBoard(userId, day, now),
     getDailyStreak(userId),
     loadBossStates(userId).catch(() => []),
     loadNotifications(userId, now).catch(() => null),
     loadWeekQuests(userId, now).catch(() => null),
     loadWeightView(userId, now).catch(() => null),
+    // {live: false} before launch (no read at all); a failure reads as no card.
+    loadMomentum(userId, day, { now }).catch(() => null),
   ]);
   const namedTitles = await namedTitlesLoad;
 
@@ -129,6 +137,8 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
         launched={isLaunched(day)}
         elsewhere={elsewhere.length > 0 ? <DueElsewhere rows={elsewhere} /> : null}
         namedTitles={Object.keys(namedTitles).length > 0 ? { names: namedTitles, mark: <NamedMark /> } : null}
+        momentum={momentum?.live ? momentum : null}
+        momentumSettled={settled.wrote}
       />
     </>
   );

@@ -4258,6 +4258,339 @@ asyncChecks.push(
   check("colour code css: the code's rules hold no literal colour (#…, rgb(), hsl())", codeRules.length >= 8 && codeRules.every((b) => !/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i.test(b)), String(codeRules.length));
 }
 
+// ═══ Momentum on Today (momentum.md §E.1–§E.3, §G.1 lane E; ui-motion D10) ═══════════════════
+// The Momentum card, its chest sheet and the crit's T0, rendered over fixtures (the card takes its actions as props,
+// so nothing here reaches a server). Critical pins only: inert before launch (no card, Today's markup unchanged),
+// every card target ≥ 44 px at 344, no XP total or meter on the strip, a static flame, the odds in the chest sheet,
+// the crit's gold mark and the notice that ignores what a crit explains, and never a work tab.
+asyncChecks.push(
+  (async () => {
+    const { default: NodeModule } = await import("node:module");
+    const ext = (NodeModule as unknown as { _extensions: Record<string, (m: { exports: unknown }) => void> })._extensions;
+    if (!ext[".css"]) ext[".css"] = (m) => void (m.exports = {});
+    const mc = await import("../src/components/today/MomentumCard");
+    const { ChestBody } = await import("../src/components/today/ChestSheet");
+    const { QuestRows, QUEST_FOOTER, questWhyOf } = await import("../src/components/today/QuestSheet");
+    const M = await import("../src/lib/momentum");
+    const { TONES } = await import("../src/lib/celebrate");
+    const { kneePay } = await import("../src/lib/life-grade");
+    const { FLAME_PATH } = await import("../src/components/glyph/paths/flame");
+    type View = import("../src/lib/momentum-server").MomentumView;
+    type Live = Extract<View, { live: true }>;
+    const strip = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
+    const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    const DAY = "2026-10-19" as DayKey;
+    const NOW = "2026-10-19T03:00:00.000Z";
+    const noop = async () => ({ ok: false as const, error: "fixture" });
+    const actions = { openChest: noop, swapQuest: noop, setFlameSkin: noop };
+    const points = { earned: 5, spent: 3, available: 2, countedXp: 1712, nextAt: 1890, weekCounted: 640, weekCap: 700 };
+    const grid = Array.from({ length: 35 }, (_, i) => ({ day: addDays(DAY, i - 34), mark: (i === 34 ? "active" : i === 33 ? "held" : i < 10 ? "before" : "active") as "active" | "held" | "before" }));
+    const live = (over: Partial<Live> = {}): Live => ({
+      live: true,
+      day: DAY,
+      frozen: true,
+      writesOff: false,
+      done: 1,
+      quests: [
+        { slot: "PLAN", quest: { slot: "PLAN", kind: "REVIEWS", count: 10, title: "Review 10 cards", why: "40 cards due" }, identity: "PLAN:REVIEWS", done: false, swapsLeft: 0 },
+        { slot: "BODY", quest: { slot: "BODY", kind: "MOVE", minutes: 20, title: "Move 20 min", why: "60 of 150 effort min this week" }, identity: "BODY:MOVE:20", done: true, swapsLeft: 0 },
+        { slot: "TASK", quest: { slot: "TASK", kind: "TEMPLATE", templateId: "t1", track: "CRAFT", raw: 23, score: 34.5, title: "Write the report", why: "Your biggest due task" }, identity: "TASK:TEMPLATE:t1", done: false, swapsLeft: 1 },
+      ],
+      chest: { state: "locked", done: 1, of: 3, receipt: null, track: "CRAFT", sinceRare: 3, pityIn: 7, rareBonus: 0, odds: M.chestOdds(0), yesterday: null },
+      run: { current: 12, longest: 41, bank: 2, freezeMax: 2, nextFreezeIn: 4, earned: 3, used: 2, heldInRun: 1, heldYesterday: true, todayKept: true, atRisk: false, grid },
+      chain: { links: 2, mult: 1.06, nextMult: 1.09, lastAt: "2026-10-19T02:40:00.000Z", until: "2026-10-19T03:25:00.000Z", windowMin: 45 },
+      lsp: { DISCIPLINE: points, PATHFINDER: points, VITALITY: points },
+      perks: [],
+      flameSkin: null,
+      trim: null,
+      cosmetics: [],
+      ...over,
+    });
+    const card = (view: View) => renderToStaticMarkup(createElement(mc.MomentumCard, { view, nowIso: NOW, actions, prices: { t1: 23.4 } }));
+
+    // Inert before launch: no card, nothing drawn; the page passes a view only when live; a work tab never shows one.
+    const boardSrc = code(read("src/components/today/TodayBoard.tsx"));
+    const pageSrc = code(read("src/app/today/page.tsx"));
+    check(
+      "momentum inert: MOMENTUM_LAUNCH_DAY is null, so momentumLive is false for every day and a {live: false} view renders nothing at all",
+      M.MOMENTUM_LAUNCH_DAY === null && !M.momentumLive(DAY, M.MOMENTUM_LAUNCH_DAY) && card({ live: false, day: DAY }) === ""
+    );
+    check(
+      "momentum inert: loadMomentum answers {live: false} before launch without a read (momentum-server's early return)",
+      /if \(!momentumLive\(today, ctx\.launch\)\) return \{ live: false, day: today \};/.test(code(read("src/lib/momentum-server.ts")))
+    );
+    check(
+      "momentum inert: the board draws the card only when the view is live and never on a work tab; the page passes a view only when live",
+      /\{!isWork && momentum\?\.live && \(\s*<div className="o1">\s*<MomentumCard /.test(boardSrc) &&
+        (boardSrc.match(/<MomentumCard\b/g) ?? []).length === 1 &&
+        /momentum=\{momentum\?\.live \? momentum : null\}/.test(pageSrc) &&
+        !/momentum/i.test(code(read("src/app/today/work/[boardId]/page.tsx")))
+    );
+    check(
+      "momentum: the page settles momentum (awaited, before the wave) and reads it in the board's one wave (a failure reads as no card)",
+      /const settled = await settleMomentum\(userId, day, \{ now \}\);/.test(pageSrc) &&
+        pageSrc.indexOf("await settleMomentum(") < pageSrc.indexOf("await Promise.all([") &&
+        /loadMomentum\(userId, day, \{ now \}\)\.catch\(\(\) => null\)/.test(/await Promise\.all\(\[([\s\S]*?)\]\);/.exec(pageSrc)?.[1] ?? "") &&
+        /momentumSettled=\{settled\.wrote\}/.test(pageSrc)
+    );
+    check(
+      "momentum: the card sits at the top of the side column (.o1), after the notices and before the Duty card and the strip",
+      boardSrc.indexOf("<MomentumCard") > boardSrc.indexOf('<div role="alert" className="card today-note o1"') &&
+        boardSrc.indexOf("<MomentumCard") < boardSrc.indexOf('{o1 === "settled" && settled && (') &&
+        boardSrc.indexOf("<MomentumCard") < boardSrc.indexOf("{elsewhere != null && elsewhere !== false")
+    );
+
+    // Targets at 344 px: the card's content box is 278 px (16 px gutter, 16 px padding).
+    const css = strip(read("src/components/today/momentum.css"));
+    const v = (sel: string, prop: string) => cssValue(css, sel, prop);
+    check("momentum css: the card pads 16 px sideways (278 px content at 344)", /\.mo-card \{[^}]*padding: 12px 16px;/.test(css));
+    check("momentum touch target: the flame button ≥ 104 × 44 px", (v(".mo-flame", "min-width") ?? 0) >= 104 && (v(".mo-flame", "min-height") ?? 0) >= 44);
+    check("momentum touch target: the chest button 44 × 44 px", [v(".mo-chest", "width"), v(".mo-chest", "min-width"), v(".mo-chest", "height"), v(".mo-chest", "min-height")].every((x) => (x ?? 0) >= 44));
+    const gap = v(".mo-pips", "gap") ?? 99;
+    const pipW = (278 - 2 * gap) / 3;
+    check(
+      "momentum touch target: three pips in one row at 344, each ≥ 44 px tall and ≥ 87 px wide (3 columns, gap 8)",
+      /\.mo-pips \{[^}]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/.test(css) && gap === 8 && pipW >= 87 && (v(".mo-pip", "min-height") ?? 0) >= 44,
+      `${pipW.toFixed(1)} px`
+    );
+    const rowOne = 104 + (3 * 18 + 2 * 2) + 44 + 44 + 3 * 8; // flame, three freezes (Spare flame), "3 of 3" (≈ 44), chest, three gaps
+    check("momentum touch target: row 1 fits 278 px even with three freezes", rowOne <= 278 && (v(".mo-fz svg", "width") ?? 99) <= 18, String(rowOne));
+    check("momentum touch target: flame skins 44 × 44, the odds disclosure 44 tall", (v(".mo-skin", "min-width") ?? 0) >= 44 && (v(".mo-skin", "min-height") ?? 0) >= 44 && (v(".mo-odds summary", "min-height") ?? 0) >= 44);
+    const sizes = [...css.matchAll(/font(?:-size)?:\s*(?:\d{3}\s+)?(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1]));
+    check("momentum type: nothing under 12 px in momentum.css", sizes.length > 0 && sizes.every((n) => n >= 12), sizes.join(","));
+    check("momentum css: tokens only (no hex, rgb() or hsl())", !/#[0-9a-f]{3,8}\b|\b(rgba?|hsla?)\(/i.test(css));
+
+    // No XP total, fill or meter on the strip (§E.1: Today's three is not the dropped daily XP bar).
+    const states = [
+      live(),
+      live({ done: 3, quests: live().quests.map((q) => ({ ...q, done: true, swapsLeft: 0 })), chest: { ...live().chest, state: "ready", done: 3 } }),
+      live({
+        done: 3,
+        quests: live().quests.map((q) => ({ ...q, done: true, swapsLeft: 0 })),
+        chest: { ...live().chest, state: "opened", done: 3, receipt: { v: "chest-1", u1: 0.1, u2: 0.2, tier: "COMMON", item: null, xp: 20, mp: 0, freeze: false, cosmetic: null, pity: false, sinceRare: 3 } },
+      }),
+    ];
+    const htmls = states.map(card);
+    check(
+      "momentum strip: no XP total, no fill and no meter in any state (no 'XP', no <meter>, no progressbar, no width style)",
+      htmls.every((h) => !/XP/.test(h) && !/<meter|role="progressbar"|class="[^"]*\bmeter\b|style="[^"]*width:\s*[\d.]+%/.test(h)),
+      htmls.map((h) => (/.{0,40}XP.{0,20}/.exec(h) ?? [""])[0]).join(" | ")
+    );
+    check(
+      "momentum strip: Today's three are three named, binary pips (Task, Plan, Body) with the run, the freezes and 'n of 3'",
+      (htmls[0].match(/class="mo-pip"/g) ?? []).length === 3 &&
+        /Task<\/span>[\s\S]*Plan<\/span>[\s\S]*Body<\/span>/.test(htmls[0]) &&
+        htmls[0].includes("12 days") &&
+        htmls[0].includes('aria-label="2 freezes banked"') &&
+        />1 of 3</.test(htmls[0].replace(/<!-- -->/g, "")) &&
+        htmls[0].includes("Chain 2 · keep it within 45 min")
+    );
+    check(
+      "momentum strip: collapses to row 1 once 3 of 3 are done and the chest is opened (no pips, no chain)",
+      htmls[2].includes("data-collapsed") && !htmls[2].includes('class="mo-pip"') && !htmls[2].includes("mo-chain") && htmls[1].includes('class="mo-pip"')
+    );
+    check(
+      "momentum strip: the chest reads locked, ready (a lit edge) or opened",
+      htmls[0].includes('data-state="locked"') && htmls[1].includes('data-state="ready"') && htmls[2].includes('data-state="opened"') && /\.mo-chest\[data-state="ready"\]/.test(css)
+    );
+
+    // A static flame: the kit's path, no <animate>, and nothing in momentum.css animates it; the one keyframe is a chest's
+    // contents fading in (opacity only), after a tap, never a loop.
+    const flameCss = [...css.matchAll(/([^{}]*\.mo-flame[^{}]*)\{([^}]*)\}/g)].map((m) => m[2]).join(" ");
+    const keyframes = [...css.matchAll(/@keyframes\s+([\w-]+)\s*\{((?:[^{}]*\{[^{}]*\})*)\s*\}/g)];
+    check(
+      "momentum flame: static (the kit's flame path, no <animate>, no animation or transition on any flame rule, no loop anywhere)",
+      htmls[0].includes(`<path d="${FLAME_PATH}"`) && !/<animate|animation/.test(htmls[0]) && flameCss.length > 0 && !/animation|transition/.test(flameCss) && !/infinite/.test(css)
+    );
+    check(
+      "momentum flame: hollow at a run of 0",
+      card(live({ run: { ...live().run, current: 0, heldYesterday: false } })).includes("data-hollow")
+    );
+    check(
+      "momentum motion: the one keyframe animates opacity only, and only a chest's revealed contents use it",
+      keyframes.length === 1 &&
+        [...keyframes[0][2].matchAll(/([a-z-]+)\s*:/g)].every((d) => d[1] === "opacity") &&
+        (css.match(/animation:/g) ?? []).length === 1 &&
+        /\.mo-contents\[data-reveal\] \{ animation:/.test(css)
+    );
+
+    // The chest sheet: Open, the published odds and the pity count; reveal only on a tap.
+    const chest = live().chest;
+    const run = live().run;
+    const body = (c: typeof chest) => renderToStaticMarkup(createElement(ChestBody, { chest: c, run, trim: null, onOpen: () => {} })).replace(/<!-- -->/g, "");
+    const locked = body(chest);
+    const ready = body({ ...chest, state: "ready", done: 3 });
+    const winds = body({ ...chest, state: "ready", done: 3, rareBonus: 4, odds: M.chestOdds(4) });
+    check(
+      "chest sheet: the Odds are shown, every figure from chestOdds and MOMENTUM.CHEST, with the pity count ('rare in ≤ n')",
+      locked.includes("60% · 20 XP · 28% · 8 MP · 12% rare (freeze 4.8%, hoard 4.2%, cosmetic 3.0%) · a rare at least every 10 chests · rare in ≤ 7 · 3 chests since your last rare") &&
+        /<details class="mo-odds" open="">/.test(locked) &&
+        mc.chestOddsLine(chest) === "60% · 20 XP · 28% · 8 MP · 12% rare (freeze 4.8%, hoard 4.2%, cosmetic 3.0%) · a rare at least every 10 chests · rare in ≤ 7 · 3 chests since your last rare",
+      mc.chestOddsLine(chest)
+    );
+    check("chest sheet: Fair winds shows today's odds (16% rare, from Common)", winds.includes("56% · 20 XP · 28% · 8 MP · 16% rare (freeze 6.4%, hoard 5.6%, cosmetic 4.0%)") && winds.includes("Fair winds"));
+    const openTag = (h: string) => /<button([^>]*)>Open<\/button>/.exec(h)?.[1] ?? "";
+    check(
+      "chest sheet: Open is a full-width primary, enabled only when ready; locked says what is left and that missing it costs nothing",
+      /class="btn btn-primary btn-block"/.test(openTag(locked)) &&
+        /disabled=""/.test(openTag(locked)) &&
+        locked.includes("1 of 3 done") &&
+        locked.includes("missing it costs nothing") &&
+        /class="btn btn-primary btn-block"/.test(openTag(ready)) &&
+        !/disabled/.test(openTag(ready)),
+      `${openTag(locked)} | ${openTag(ready)}`
+    );
+    const sheetSrc = code(read("src/components/today/ChestSheet.tsx"));
+    check(
+      "chest sheet: it opens only on a tap (Open's handler), never on arrival (no effect), and renders ChestBody with ChestOdds",
+      /onOpen=\{\(\) => void openToday\(\)\}/.test(sheetSrc) && (sheetSrc.match(/openChest\(/g) ?? []).length === 1 && !/useEffect/.test(sheetSrc) && /<ChestBody\b/.test(sheetSrc) && /<ChestOdds chest=\{chest\} \/>/.test(sheetSrc)
+    );
+    const rare = { v: "chest-1" as const, u1: 0.95, u2: 0.6, tier: "RARE" as const, item: "HOARD" as const, xp: 40, mp: 12, freeze: false, cosmetic: null, pity: false, sinceRare: 3 };
+    const full = { ...rare, u2: 0.1, item: "FREEZE" as const, xp: 0, mp: 8 };
+    check(
+      "chest sheet: exact contents ('+40 XP → Craft', '+12 MP'; 'Freeze bank full · +8 MP'), and the next hook",
+      JSON.stringify(mc.chestLinesOf(rare, "CRAFT")) === JSON.stringify(["+40 XP → Craft", "+12 MP"]) &&
+        JSON.stringify(mc.chestLinesOf(full, "CRAFT")) === JSON.stringify(["Freeze bank full · +8 MP"]) &&
+        mc.chestTierLabel(rare) === "Rare · Hoard" &&
+        mc.nextHookOf(run) === "Run 12 → 13 tomorrow · freeze bank full" &&
+        mc.nextHookOf({ ...run, bank: 1, todayKept: false, current: 4 }) === "Run 5 → 6 tomorrow · freeze in 4 days",
+      `${mc.chestLinesOf(rare, "CRAFT").join(" | ")} · ${mc.nextHookOf(run)}`
+    );
+
+    // The quest sheet: the row's own price as its why, swaps left, the footer.
+    const rows = renderToStaticMarkup(createElement(QuestRows, { quests: mc.questsInStripOrder(live().quests), prices: { t1: 23.4 } })).replace(/<!-- -->/g, "");
+    check(
+      "quest sheet: why with the row's own '≈ N XP', Go for open quests, Swap with the count left, and the footer",
+      questWhyOf(live().quests[2], { t1: 23.4 }) === "Your biggest due task · ≈ 23.4 XP" &&
+        rows.includes("Swap · 1 left") &&
+        (rows.match(/>Go</g) ?? []).length === 2 &&
+        QUEST_FOOTER === "1 of 3 keeps your run · 3 of 3 opens the chest" &&
+        /\.mo-qrow \{[^}]*min-height: 56px;/.test(css)
+    );
+
+    // The crit (§A.5, §E.3): a gold T0 in place, the mark's tone up a fifth; the notice ignores what X explains.
+    const crit = {
+      v: "life-2",
+      factors: [
+        { key: "B" as const, label: "Standard", value: 10 },
+        { key: "M" as const, label: "2 links", value: 1.06 },
+        { key: "X" as const, label: "crit", value: 2, note: "sealed roll 0.031 under 0.080" },
+      ],
+      minutes: 30,
+      raw: 24,
+      kneeBefore: 0,
+      xp: 24,
+      track: "CRAFT" as const,
+    };
+    const plain = { ...crit, v: "life-1", factors: crit.factors.filter((f) => f.key === "B"), raw: 12, xp: 12 };
+    check(
+      "crit: the mark reads 'Crit ×2 · +24.0' (with the chain), a link alone 'Chain 2', a plain tick nothing",
+      mc.momentumMarkOf(crit)?.kind === "crit" &&
+        mc.momentumMarkOf(crit)?.text === "Crit ×2 · +24.0 · Chain 2" &&
+        mc.momentumMarkOf({ ...crit, factors: crit.factors.filter((f) => f.key !== "X") })?.text === "Chain 2" &&
+        mc.momentumMarkOf(plain) === null,
+      JSON.stringify(mc.momentumMarkOf(crit))
+    );
+    check(
+      "crit: the paid-vs-projected notice ignores the difference X explains, and still says any other",
+      mc.xpWithoutCrit(crit) === kneePay(0, 12) && !mc.paidDiffersFromShown(crit, 12) && mc.paidDiffersFromShown(crit, 10) && !mc.paidDiffersFromShown(plain, 12.04) && mc.paidDiffersFromShown(plain, 12.2)
+    );
+    // The chain is luck too (it depends on when the tap lands): a row projected with a link that the server did not
+    // give (two ticks a minute apart) says nothing; a real change of size still does.
+    const linked = { ...plain, v: "life-2", factors: [plain.factors[0], { key: "M" as const, label: "1 link", value: 1.03 }], raw: 12.4, xp: 12.4 };
+    check(
+      "chain: the notice compares paid and projected without the chain or the crit; a projected link the tap did not get is no notice",
+      !mc.paidDiffersFromShown(plain, linked) && !mc.paidDiffersFromShown(linked, plain) && mc.paidDiffersFromShown({ ...plain, raw: 13, xp: 13 }, linked),
+      `${mc.xpWithoutLuck(plain)} vs ${mc.xpWithoutLuck(linked)}`
+    );
+    const celebrateSrc = code(read("src/lib/celebrate.ts"));
+    check(
+      "crit: the T0 'crit' variant is a gold numeral in place with the mark's tone up a fifth (1976 Hz), and never flies",
+      TONES.crit[0][0] === 1976 && Math.round(TONES.mark[0][0] * 1.5) === 1977 &&
+        /if \(o\.kind === "crit" \|\| o\.kind === "chain"\) \{\s*momentumLabel\([^)]*\);\s*return Promise\.resolve\(\);\s*\}/.test(celebrateSrc) &&
+        /"--tok", "var\(--gold-m\)"/.test(celebrateSrc)
+    );
+    check(
+      "crit: the board marks it after the server pays (a tick, Again, a step that finishes, yesterday recorded), and keeps the old notice gate",
+      (boardSrc.match(/markMomentum\(row, v\.receipt\)/g) ?? []).length === 4 &&
+        /else if \(!isWork && Math\.abs\(v\.receipt\.xp - shown\.xp\) > 0\.05\) \{[^}]*?if \(paidDiffersFromShown\(v\.receipt, shown\)\)/.test(boardSrc) &&
+        /function markMomentum\(row: BoardRow, receipt: Receipt \| null \| undefined\) \{\s*if \(isWork\) return;/.test(boardSrc)
+    );
+  })()
+);
+
+// ═══ Momentum's moments on Today (momentum.md §A.8, §E.2, §G.1; lane D's kinds, lane E's presenters) ═══════════════
+// A tap's answer brings its T1s ('t1:<key>'): momentum-kept replaces the board's own day-kept (one chime for one tick),
+// plus quest-done and freeze-held; the chest sheet plays the server's chest (T1) or chest-rare (T2); a milestone's or a
+// capstone's Ascension shows its fact lines, with Done as the gold primary and the place as the quiet secondary.
+asyncChecks.push(
+  (async () => {
+    const { default: NodeModule } = await import("node:module");
+    const ext = (NodeModule as unknown as { _extensions: Record<string, (m: { exports: unknown }) => void> })._extensions;
+    if (!ext[".css"]) ext[".css"] = (m) => void (m.exports = {});
+    const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    const boardSrc = code(read("src/components/today/TodayBoard.tsx"));
+    check(
+      "momentum T1: every tap's answer (a tick, Again, a step, yesterday recorded) plays the server's momentum-kept, quest-done and freeze-held, loudest first, as one chime",
+      (boardSrc.match(/playMomentumT1\(v\.celebrations\);/g) ?? []).length === 4 &&
+        /const MOMENTUM_TICK_T1: readonly MomentumT1Kind\[\] = \["momentum-kept", "quest-done", "freeze-held"\];/.test(boardSrc) &&
+        /function playMomentumT1\([^)]*\) \{\s*if \(isWork\) return;/.test(boardSrc) &&
+        (boardSrc.slice(boardSrc.indexOf("function playMomentumT1("), boardSrc.indexOf("function playMomentumT1(") + 1600).match(/chime\(/g) ?? []).length === 1
+    );
+    check(
+      "momentum T1: while today's run is open the board holds its own day-kept back (the server's momentum-kept replaces it); otherwise day-kept is as before",
+      /const momentumOpen = !isWork && !!momentum\?\.live && !momentum\.run\.todayKept;/.test(boardSrc) &&
+        /const moments = dayMomentsOf\(prev, next\)\.filter\(\(m\) => !\(m === "day-kept" && momentumOpen\)\);/.test(boardSrc)
+    );
+    const sheetSrc = code(read("src/components/today/ChestSheet.tsx"));
+    check(
+      "chest moments: the sheet presents the server's chest-rare (T2) and chimes its chest (T1, its own id), once; a double tap plays nothing",
+      /presentAll\(v\.celebrations\);/.test(sheetSrc) &&
+        /const t1 = v\.celebrations\.find\(\(e\) => e\.tier === 1 && e\.kind === "chest"\);/.test(sheetSrc) &&
+        /chime\(\{ kind: "chest", id: t1\.id,/.test(sheetSrc) &&
+        /else if \(!v\.duplicate && v\.receipt\.tier !== "RARE"/.test(sheetSrc)
+    );
+    const { AscensionCurtain, defaultPrimary, defaultSecondary } = await import("../src/components/celebrate/AscensionCurtain");
+    const ev = (kind: string, href?: string) =>
+      ({
+        id: `c-${kind}`,
+        tier: 3,
+        kind,
+        facts: {
+          eyebrow: "Milestone reached",
+          kicker: "Milestone reached",
+          title: "Familiar",
+          epithet: "Read the news in Japanese",
+          lines: ["Stage 2 of 5 · 34 days", "Confirmed on your readings, 12 Oct"],
+          grants: ["+120 XP → Craft", "+50 MP"],
+          ...(href ? { href } : {}),
+          material: "gold",
+        },
+        what: [],
+      }) as never;
+    const html = (e: never) => renderToStaticMarkup(createElement(AscensionCurtain, { ev: e, onDone: () => {} }));
+    const ms = html(ev("milestone", "/you/roadmap?r=rm1"));
+    const cap = html(ev("capstone", "/skills/life"));
+    const title = html(ev("title"));
+    check(
+      "ceremony: a milestone's Ascension shows its fact lines (stage and days, the readings' date) between the epithet and the grants",
+      /<div class="t-epithet">[^<]*<\/div><div class="cur-lines"><p>Stage 2 of 5 · 34 days<\/p><p>Confirmed on your readings, 12 Oct<\/p><\/div><ul class="grants">/.test(ms)
+    );
+    check(
+      "ceremony: milestone and capstone close with Done (gold primary) and lead on quietly (See the roadmap → facts.href; See the Life tree → /skills/life)",
+      /<div class="cur-acts"><button type="button" class="btn btn-gold">Done<\/button><a class="btn btn-quiet" href="\/you\/roadmap\?r=rm1">See the roadmap<\/a><\/div>/.test(ms) &&
+        /<button type="button" class="btn btn-gold">Done<\/button><a class="btn btn-quiet" href="\/skills\/life">See the Life tree<\/a>/.test(cap) &&
+        defaultSecondary({ kind: "capstone", facts: { title: "x" } } as never)?.href === "/skills/life" &&
+        defaultPrimary({ kind: "milestone" } as never)?.label === "Done"
+    );
+    check(
+      "ceremony: every other Ascension is unchanged (its gold primary, then a quiet Done)",
+      /<a class="btn btn-gold" href="\/you">See your sheet<\/a><button type="button" class="btn btn-quiet">Done<\/button>/.test(title) && defaultSecondary({ kind: "title", facts: { title: "x" } } as never) === null,
+      (/<div class="cur-acts">[\s\S]*?<\/div>/.exec(title) ?? [""])[0]
+    );
+  })()
+);
+
 // The async checks (withMoments) settle before the tally.
 void Promise.all(asyncChecks).then(() => {
   console.log(`\n${passed} passed, ${failed} failed${pendingCount > 0 ? `, ${pendingCount} PENDING (another lane's; --strict fails them)` : ""}`);

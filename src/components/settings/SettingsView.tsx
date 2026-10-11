@@ -80,6 +80,11 @@ export interface SettingsData {
   aimSuggestions?: boolean;
   /** Work tabs (2026-10-12; optional, a compatible extension): the archived tabs and how many are open. Absent: no section. */
   workTabs?: WorkTabsData;
+  /**
+   * Momentum (momentum.md §E.7; optional): UserPrefs.nudge as on/off, present only once momentum is live
+   * (the page's momentumLive). Absent: Notifications is exactly as before, with no nudge row.
+   */
+  momentum?: { nudge: boolean };
 }
 
 /** What the Aim suggestions switch calls: actions/roadmap setAimSuggestions, or a fixture's recorder. A throw (the network) reads as a refusal. */
@@ -109,7 +114,7 @@ export function SettingsView({ data }: { data: SettingsData }) {
     <div className="set-grid">
       <div className="set-stack">
         <FeedbackSection />
-        <NotificationsSection />
+        {data.momentum ? <NotificationsSection nudge={data.momentum.nudge} /> : <NotificationsSection />}
         <ShortcutsSection />
       </div>
       <div className="set-stack">

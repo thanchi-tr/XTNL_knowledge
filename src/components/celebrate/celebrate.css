@@ -39,6 +39,9 @@
   /* Notches and crest edges pop from their own centre, not the SVG origin. */
   .curtain .cur-art :is(.notch, .edge) { transform-box: fill-box; transform-origin: center; }
   .curtain .cur-acts .btn-quiet { min-width: 88px; }
+  /* The fact lines (a milestone's "Stage 2 of 5 · 34 days", "Confirmed on your readings, 12 Oct"): quiet, centred. */
+  .curtain .cur-lines { margin-top: 10px; display: flex; flex-direction: column; gap: 2px; }
+  .curtain .cur-lines p { margin: 0; font-size: 14px; line-height: 1.4; color: var(--ink-1); }
 
   /* A Moment's art (You › Moments rows). */
   .moment-art { display: inline-grid; place-items: center; flex: none; }

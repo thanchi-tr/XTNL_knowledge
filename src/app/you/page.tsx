@@ -24,6 +24,8 @@ import { loadSheet } from "./_lib/sheet";
 import { loadMonthDoneCore } from "@/lib/task-style-server";
 import { monthKeyOf } from "@/lib/task-style";
 import { MonthDoneCard } from "@/components/task-style/MonthDoneCard";
+import { settleMomentum } from "@/lib/momentum-server";
+import { MomentsPull } from "@/components/today/MomentumCard";
 
 export const metadata: Metadata = { title: "Character" };
 
@@ -80,6 +82,10 @@ export default async function YouSheetPage() {
   // component never falls back to its own clock, so the server render and hydration agree across
   // the 04:00 turn.
   const today = todayKey(now);
+  // Momentum's lazy writes (momentum.md §A.1: the day's quest set, a past day's ready chest, a milestone or a
+  // checkpoint reached) before the sheet reads its XP and MP; their persisted moments are pulled once on arrival.
+  // Before MOMENTUM_LAUNCH_DAY, or on a server that only reads, it returns at once and writes nothing; it never throws.
+  const settled = await settleMomentum(userId, today, { now });
   // One wave: the sheet (cached) and the day cards' reads (Today's cached board and the streak; a failure reads as none).
   // The month's done tasks (the "Done this month" calendar) load beside that wave; a failed read lets the card read it again.
   const monthRead = loadMonthDoneCore(userId, monthKeyOf(today)).catch(() => null);
@@ -91,6 +97,7 @@ export default async function YouSheetPage() {
   return (
     <>
       <ShellTitle eyebrow="You" title="Character" />
+      <MomentsPull when={settled.wrote} />
       {/* The order of weight: the level (the hero, the full width, first), then the attributes, then the day. */}
       <div className="you-grid">
         <div className="you-hero">

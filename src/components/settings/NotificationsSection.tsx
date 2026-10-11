@@ -12,9 +12,15 @@
  *
  * The status is read after mount (pushStatus asks nothing and sends nothing); until then the row says it is
  * checking, so the server and the first client render agree.
+ *
+ *   Evening momentum nudge (momentum.md §E.7; only once momentum is live, when the page passes `nudge`):
+ *                 UserPrefs.nudge through actions/momentum setMomentumNudge. Its words say when it fires: a
+ *                 run of 2+ days with nothing that keeps it done yet, at most once a day, at 20:00.
  */
 import { useEffect, useState } from "react";
 import { PUSH_LINES, disablePush, enablePush, pushStatus, type PushResult } from "@/lib/push-client";
+import { MOMENTUM_NUDGE } from "@/lib/momentum";
+import { setMomentumNudge } from "@/app/actions/momentum";
 import { Button } from "@/components/ui/Button";
 import { SectionHeader, Switch } from "@/components/ui/Tabs";
 
@@ -51,7 +57,52 @@ export function testLineOf(status: number, body: unknown): string {
 /** The states the switch can act on; the others are a line that says why (and how, where there is a way). */
 const TOGGLES = new Set<PushResult["state"]>(["on", "off", "error"]);
 
-export function NotificationsSection() {
+const hh = (h: number) => `${String(h).padStart(2, "0")}:00`;
+/** The evening nudge's row (§E.7), every figure from momentum.ts MOMENTUM_NUDGE. */
+export const NUDGE_COPY = {
+  name: `Evening momentum nudge · ${hh(MOMENTUM_NUDGE.PUSH_FROM_HOUR)}`,
+  note: `Only when your run is ${MOMENTUM_NUDGE.MIN_RUN}+ days and nothing that keeps it is done yet. At most once a day, never after ${hh(MOMENTUM_NUDGE.PUSH_UNTIL_HOUR)}.`,
+  label: "Evening momentum nudge",
+} as const;
+
+/** UserPrefs.nudge, saved on the tap; a refusal or a failed request puts the switch back and says why. */
+function NudgeRow({ initial }: { initial: boolean }) {
+  const [on, setOn] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [line, setLine] = useState<string | null>(null);
+  function flip(next: boolean) {
+    setBusy(true);
+    setLine(null);
+    setOn(next);
+    void setMomentumNudge(next).then(
+      (res) => {
+        if (!res.ok) {
+          setOn(!next);
+          setLine(res.error);
+        }
+        setBusy(false);
+      },
+      () => {
+        setOn(!next);
+        setLine(UNREACHABLE);
+        setBusy(false);
+      }
+    );
+  }
+  return (
+    <div className="set-row">
+      <div className="n">
+        <b>{NUDGE_COPY.name}</b>
+        <span>{NUDGE_COPY.note}</span>
+        {line && <span role="alert">{line}</span>}
+      </div>
+      <Switch checked={on} onChange={flip} disabled={busy} label={NUDGE_COPY.label} />
+    </div>
+  );
+}
+
+/** `nudge`: UserPrefs.nudge as on/off, passed only once momentum is live (absent: no row, as before). */
+export function NotificationsSection({ nudge }: { nudge?: boolean } = {}) {
   const [status, setStatus] = useState<PushResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [testBusy, setTestBusy] = useState(false);
@@ -129,6 +180,7 @@ export function NotificationsSection() {
             {testBusy ? "Sending…" : "Send a test"}
           </Button>
         </div>
+        {nudge !== undefined && <NudgeRow initial={nudge} />}
       </div>
     </section>
   );

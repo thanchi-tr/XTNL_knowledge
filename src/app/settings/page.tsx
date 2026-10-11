@@ -11,6 +11,8 @@ import { AIM_PROMPT_COOKIE, isMissingRev4Column } from "@/lib/roadmap-types";
 import { aimPromptOf } from "@/lib/roadmap-invite";
 import { SettingsView, type SettingsData } from "@/components/settings/SettingsView";
 import { listArchivedWorkBoards, listOpenWorkBoards } from "@/lib/work-boards-server";
+import { momentumLive, nudgeOn } from "@/lib/momentum";
+import { prismaMomentumStore } from "@/lib/momentum-server";
 import type { WorkTabsData } from "@/components/settings/WorkTabsSection";
 
 export const dynamic = "force-dynamic";
@@ -62,6 +64,10 @@ export default async function SettingsPage() {
   const workTabs = await workTabsLoad;
   const focus = await loadDailyFocus(userId, progression.activeSkills);
   const today = todayKey();
+  // Momentum (momentum.md §E.7): the evening nudge's row only once momentum is live. The read fails soft
+  // (a missing row or column reads as on, the stored default); before launch nothing is read.
+  const momentumOn = momentumLive(today);
+  const prefs = momentumOn ? await prismaMomentumStore.prefs(userId).catch(() => null) : null;
 
   const data: SettingsData = {
     capacity: { minutes: life?.dailyCapacityMin ?? DEFAULT_CAPACITY_MIN, set: Boolean(life?.capacitySetAt) },
@@ -78,6 +84,7 @@ export default async function SettingsPage() {
     aimSuggestions: aimPromptOf(jar.get(AIM_PROMPT_COOKIE)?.value, life?.aimSuggestions ?? null, today) !== "OFF",
     // Work tabs (work-boards.ts): the archived ones, each with Restore while a place is free.
     ...(workTabs ? { workTabs } : {}),
+    ...(momentumOn ? { momentum: { nudge: nudgeOn(prefs?.nudge ?? null) } } : {}),
   };
 
   // layout.tsx is the page and the `main` container (with the You tabs on compact).

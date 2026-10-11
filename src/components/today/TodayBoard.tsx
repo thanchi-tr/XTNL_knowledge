@@ -2,6 +2,7 @@
 
 import { TodayFooter } from "./TodayFooter";
 import "./today.css";
+import "./momentum.css";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -23,9 +24,10 @@ import {
 // The server's DailyStreak (streak-curve's plus M2's endedOn, endedAfter, freezeWillCover); type-only, erased from the client bundle.
 import type { DailyStreak } from "@/lib/streak";
 import { fullDayInputOf, fullDayOf } from "@/lib/full-day";
-import { announce, chime, mark } from "@/lib/celebrate";
-import type { T1Kind } from "@/lib/celebration-types";
-import type { PlaceLane } from "@/lib/life-types";
+import { announce, chime, mark, type MomentumT1Kind } from "@/lib/celebrate";
+import type { CelebrationEvent, T1Kind } from "@/lib/celebration-types";
+import type { PlaceLane, Receipt } from "@/lib/life-types";
+import type { MomentumView } from "@/lib/momentum-server";
 import { motionLevel } from "@/lib/motion";
 import { GOAL_ALREADY_CLOSED } from "@/lib/goals";
 import type { CapturedItem } from "@/app/actions/capture";
@@ -141,6 +143,8 @@ import {
   type MakeUpResult,
 } from "@/app/actions/duty";
 import { saveReflection } from "@/app/actions/rituals";
+import { openChest, setFlameSkin, swapQuest } from "@/app/actions/momentum";
+import { MomentumCard, momentumMarkOf, paidDiffersFromShown, type MomentumCardActions } from "./MomentumCard";
 import { MakeUpCard, OwedRow, OwedSummary } from "./m2/MakeUpCard";
 import { RestBannerCard, YesterdaySettled, type SettledChip as NoticeChip } from "./m2/Notices";
 import { CancelList, FreezeOption, RestControls, SettleFooter, VacationForm } from "./m2/Sheets";
@@ -194,6 +198,27 @@ interface Props {
    * slot, with ?callback=<id>'s highlight. Absent or null (the personal Board, or a failed read): no section.
    */
   callBacks?: CallBacksData | null;
+  /**
+   * Momentum (momentum.md §E.1; the page's loadMomentum after settleMomentum): the Momentum card at the top of the
+   * side column. `{live: false}` (before MOMENTUM_LAUNCH_DAY), absent or null: no card, and the board is exactly as
+   * before. A work tab never shows it.
+   */
+  momentum?: MomentumView | null;
+  /** The render's settleMomentum wrote rows: the card asks the celebration host to pull their moments now. */
+  momentumSettled?: boolean;
+}
+
+/** The Momentum card's writes (actions/momentum), passed down so the card imports no server code. */
+const MOMENTUM_ACTIONS: MomentumCardActions = { openChest, swapQuest, setFlameSkin };
+
+/** Momentum's tick T1s the board plays from the server's answer (celebration-detect detectMomentum), loudest first. */
+const MOMENTUM_TICK_T1: readonly MomentumT1Kind[] = ["momentum-kept", "quest-done", "freeze-held"];
+
+/** Each template's open-row price ("≈ N XP") on the board: the Quest sheet's why names the task quest's own. */
+function openPricesOf(rows: readonly BoardRow[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const r of rows) if (r.state === "open" && !(r.template.id in out)) out[r.template.id] = r.projection.xp;
+  return out;
 }
 
 /** The work tab a board is (TodayBoard's `work`). */
@@ -406,7 +431,7 @@ function declaredOf(duty: DutyBoard | null, today: DayKey): DeclaredDay[] {
  * launch the board is the pre-M2 board (debts, which only settlement
  * writes, render whenever they exist).
  */
-export function TodayBoard({ data, streak, nowIso, notices, footClock, launched = false, namedTitles, work: workTab = null, callBacks = null, elsewhere = null }: Props) {
+export function TodayBoard({ data, streak, nowIso, notices, footClock, launched = false, namedTitles, work: workTab = null, callBacks = null, momentum = null, momentumSettled = false, elsewhere = null }: Props) {
   /** A work tab: nothing of the game (no XP, no moments, no goals, no plan card). */
   const isWork = workTab !== null;
   const router = useRouter();
@@ -788,6 +813,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   // ── The board's clock ───────────────────────────────────────────────────
 
   const lanes = useMemo(() => [...board.must, ...board.todayRows, ...board.yesterdayRows, ...board.anytime], [board]);
+  const questPrices = useMemo(() => openPricesOf(lanes), [lanes]);
   const nextTick = useMemo(() => nextBoardTick({ rows: lanes, today: data.today, clockMs: clock }), [lanes, data.today, clock]);
   // One timer to the next moment the screen changes by itself: an Undo
   // expiring, midnight, the day edge. Re-armed whenever the clock moves
@@ -840,6 +866,43 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     if (paid > 0) holdLedger("xp", flight);
   }
 
+  /**
+   * Momentum's Tier 0 once the server has paid (momentum.md §A.4, §E.3): a crit's gold "Crit ×2 · +24" (receiptCritOf
+   * on the paid receipt; never projected), or a chain link's "Chain 3", in place on the row. A work tab pays nothing.
+   */
+  function markMomentum(row: BoardRow, receipt: Receipt | null | undefined) {
+    if (isWork) return;
+    const m = momentumMarkOf(receipt);
+    if (!m) return;
+    const from = boardRef.current?.querySelector(`[data-template-id="${row.template.id}"]`) ?? null;
+    void mark({ kind: m.kind, id: `${m.kind}:${row.key}:${row.slot}`, text: m.text, from });
+  }
+
+  /**
+   * Momentum's Tier 1 from the server's answer to a tap (momentum.md §G.1; ids 't1:<key>'): the run kept today
+   * (it replaces the board's own day-kept chime, which the moments effect holds back while the run is still open),
+   * a quest of Today's three done, a freeze that held. One chime per tap, the loudest; the others ride in its sentence.
+   * The T2/T3s of the same answer are presentAll's.
+   */
+  function playMomentumT1(evs: readonly CelebrationEvent[] | null | undefined) {
+    if (isWork) return;
+    const ones = (evs ?? [])
+      .filter((e) => e.tier === 1 && (MOMENTUM_TICK_T1 as readonly string[]).includes(e.kind))
+      .sort((a, b) => MOMENTUM_TICK_T1.indexOf(a.kind as MomentumT1Kind) - MOMENTUM_TICK_T1.indexOf(b.kind as MomentumT1Kind));
+    const lead = ones[0];
+    if (!lead) return;
+    const words = (e: CelebrationEvent) => [e.facts.eyebrow, e.facts.title].filter(Boolean).join(" · ");
+    const said = (e: CelebrationEvent) => e.facts.say ?? [e.facts.eyebrow, e.facts.title, ...(e.facts.lines ?? [])].filter(Boolean).join(". ");
+    chime({
+      kind: lead.kind as MomentumT1Kind,
+      id: lead.id,
+      text: words(lead),
+      say: ones.map(said).join(" "),
+      sweepEl: document.getElementById("momentum"),
+      ringEl: null,
+    });
+  }
+
   // ── Writes ──────────────────────────────────────────────────────────────
 
   /**
@@ -855,7 +918,11 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
       () => tickStep(row.template.id, stepId, done, REFRESH),
       (v) => {
         presentAll(v.celebrations);
-        if (v.delta > 0) markTick(row, v.delta, from);
+        playMomentumT1(v.celebrations);
+        if (v.delta > 0) {
+          markTick(row, v.delta, from);
+          markMomentum(row, v.receipt);
+        }
         else if (v.delta < 0) announce(`${fmtXp(-v.delta)} life XP taken back with that step.`);
       }
     );
@@ -874,6 +941,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
       () => completeTask(row.template.id, { day: "yesterday" }, REFRESH),
       (v) => {
         presentAll(v.celebrations);
+        playMomentumT1(v.celebrations);
+        if (!v.duplicate) markMomentum(row, v.receipt);
         setNotice(
           isWork
             ? `Recorded for yesterday: ${row.template.title}.`
@@ -913,10 +982,16 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
         // rung, a finished goal): Seals and Ascensions only, since
         // presentAll skips T1 and the board chimes its own.
         presentAll(v.celebrations);
+        playMomentumT1(v.celebrations);
         if (v.duplicate) setNotice(isWork ? `${row.template.title} was already done.` : `${row.template.title} was already recorded. Nothing is paid twice.`);
         else if (!isWork && Math.abs(v.receipt.xp - shown.xp) > 0.05) {
-          setNotice(`${row.template.title} paid ${fmtXp(v.receipt.xp)} XP, not ≈ ${fmtXp(shown.xp)}: its size or today's total changed since the board loaded.`);
+          // A crit (X) and the chain (M, which depends on when the tap lands) are luck: the difference they explain is not
+          // a notice (momentum.md §A.4, §A.5).
+          if (paidDiffersFromShown(v.receipt, shown)) {
+            setNotice(`${row.template.title} paid ${fmtXp(v.receipt.xp)} XP, not ≈ ${fmtXp(shown.xp)}: its size or today's total changed since the board loaded.`);
+          }
         }
+        if (!v.duplicate) markMomentum(row, v.receipt);
         return { instanceId: v.instanceId, receipt: v.receipt };
       }
     );
@@ -938,6 +1013,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     markTick(row, projectRow(current, row, { minutes }).xp, null);
     dispatch(op, () => againTask(row.template.id, { minutes }, REFRESH), (v) => {
       presentAll(v.celebrations);
+      playMomentumT1(v.celebrations);
+      if (!v.duplicate) markMomentum(row, v.receipt);
       return { instanceId: v.instanceId, receipt: v.receipt, slot: v.slot };
     });
   }
@@ -1196,6 +1273,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   const shown = useAfterFlight({ snapshot, streakNow, mustLaneKept }, dayKey);
 
   const prevSnapshot = useRef<DaySnapshot>(shown.snapshot);
+  /** Today's momentum run has no action yet: the first tick's momentum-kept (the server's T1) is this tap's chime. */
+  const momentumOpen = !isWork && !!momentum?.live && !momentum.run.todayKept;
   const shownKey = `${shown.snapshot.kept}|${shown.snapshot.rings.musts}|${shown.snapshot.rings.quest}|${shown.snapshot.rings.life}|${shown.snapshot.full}|${shown.snapshot.mustLane}`;
   const momentCtx = useRef({ streak: shown.streakNow, musts: mustTally.total, today: data.today });
   useEffect(() => {
@@ -1256,7 +1335,9 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     prevSnapshot.current = next;
     // Only after a tap: never on arrival, never on a refresh or another tab's work. Never on a work tab (not the game).
     if (isWork || Date.now() - actedAt.current > MOMENT_WINDOW_MS) return;
-    const moments = dayMomentsOf(prev, next);
+    // Momentum (§G.1): while today's run is still open, the tap's server answer brings momentum-kept, which replaces
+    // the day-kept chime (one chime for one tick); the board holds its own back.
+    const moments = dayMomentsOf(prev, next).filter((m) => !(m === "day-kept" && momentumOpen));
     if (moments.length === 0) return;
     playMoments(moments);
     // `shown` travels with its key.
@@ -1788,6 +1869,12 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
               <Button variant="quiet" onClick={() => setError(null)}>
                 Dismiss
               </Button>
+            </div>
+          )}
+          {/* Momentum (momentum.md §E.1): above the Duty card and the strip, only once it is live; never on a work tab. */}
+          {!isWork && momentum?.live && (
+            <div className="o1">
+              <MomentumCard view={momentum} nowIso={nowIso} actions={MOMENTUM_ACTIONS} prices={questPrices} settled={momentumSettled} />
             </div>
           )}
           {/* M2: one Duty card at most in .o1 (board-ui.ts o1CardOf); never owed-toned, never hiding the Record-yesterday Ask. */}

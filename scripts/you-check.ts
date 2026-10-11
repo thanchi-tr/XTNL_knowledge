@@ -1983,7 +1983,12 @@ async function dayCardsGuardChecks() {
   const quests = text.replace(/week quests?/gi, "").replace(/review quest/gi, "");
   check("rules roadmap: 'quest' only ever as 'week quest(s)' or the daily review quest", !/\bquests?\b/i.test(quests), (quests.match(/.{0,30}\bquests?\b.{0,30}/i) ?? [""])[0]);
   const wq = cards.get("Week quests (not the daily review quest)") ?? "";
-  check("rules roadmap: week quests pay nothing, count nothing on Today, and never link to Review", /pay nothing/.test(wq) && /never link to Review/.test(wq) && /add nothing to Today/.test(wq));
+  // §G.3 re-pin (momentum.md): what week quests pay is WeekQuestPayLine's: before launch the old line verbatim, from it
+  // "a single quest pays nothing; a fully kept plan week pays 30 XP and 10 MP; one plan quest a day is on Today" (§10).
+  check(
+    "rules roadmap (§G.3): the week quests card says what they pay through WeekQuestPayLine (the pre-launch line verbatim; momentumChecks)",
+    /<WeekQuestPayLine live=\{momentumOn\} \/>/.test(parts.find((p) => p.startsWith('Week quests (not the daily review quest)"')) ?? "") && /none pays/.test(wq)
+  );
   check("rules roadmap: week quests publish the catch-up and capacity caps and the Field quota overlap", /catch-up cap/.test(wq) && /capacity\s+cap/.test(wq) && /weekly quota too/.test(wq));
   const prof = `${cards.get("Proficiency") ?? ""}`;
   const profSrc = parts.find((p) => p.startsWith('Proficiency"')) ?? "";
@@ -2449,12 +2454,224 @@ async function r2AimCardChecks() {
 }
 // ===== /R2 =====
 
+// ── 10. Momentum on You, the rules and Settings (momentum.md §B.5, §E.7, §G.3; lane E) ──────────
+// The §G.3 re-pins (the week quests' pay line; the rules page's constants), the Life tab, the /you settle,
+// /today/week's caps from the week's own model, and Settings' evening nudge. Before MOMENTUM_LAUNCH_DAY every
+// one of these renders exactly as it did; the live branches are held to the code that pays.
+async function momentumChecks() {
+  const M = await import("../src/lib/momentum");
+  const LE = await import("../src/lib/life-economy");
+  const { MODE_LABEL } = await import("../src/lib/life-grade");
+  const rules = read("src/app/today/rules/page.tsx");
+  const rulesCode = codeOf(rules);
+  const fnSrc = (name: string) => {
+    const i = rules.indexOf(`function ${name}(`);
+    return i < 0 ? "" : rules.slice(i, rules.indexOf("\n}\n", i));
+  };
+
+  // §G.3 you-check :1986 re-pin: a single quest pays nothing; a fully kept plan week pays 30 XP and 10 MP; one plan
+  // quest a day is on Today. Before launch the line is exactly what it was.
+  const line = fnSrc("WeekQuestPayLine");
+  const flatLine = line.replace(/\s+/g, " ");
+  check(
+    "rules roadmap (§G.3): the week quests card renders WeekQuestPayLine with the page's momentum gate, and nothing else says what week quests pay",
+    /<WeekQuestPayLine live=\{momentumOn\} \/>/.test(fnSrc("RoadmapRules")) && /momentumOn=\{momentumOn\}/.test(rules) && !/<li>Week quests pay nothing/.test(fnSrc("RoadmapRules"))
+  );
+  check(
+    "rules roadmap (§G.3): before launch, week quests pay nothing, add nothing to Today's counts or the bell, and never link to Review (verbatim)",
+    /if \(!live\) return <li>Week quests pay nothing, add nothing to Today&apos;s counts or the bell, never read red, and never link to Review\.<\/li>;/.test(line)
+  );
+  check(
+    "rules roadmap (§G.3): once live, a single week quest pays nothing, a fully kept plan week pays 30 XP and 10 MP (from MOMENTUM), one plan quest a day is on Today, and none links to Review",
+    /A single week quest pays nothing\./.test(flatLine) &&
+      /A fully kept plan week pays \{MOMENTUM\.PLAN_WEEK_XP\} XP and\{" "\} \{mpFigure\(MOMENTUM\.PLAN_WEEK_MP\)\} MP/.test(flatLine) &&
+      /One plan quest a day is on Today, in Today&apos;s three/.test(flatLine) &&
+      /never link to Review/.test(flatLine) &&
+      M.MOMENTUM.PLAN_WEEK_XP === 30 &&
+      M.MOMENTUM.PLAN_WEEK_MP === 10,
+    flatLine.slice(0, 200)
+  );
+
+  // §G.3 you-check :1076-1079: the momentum constants are imported from the code that pays, and the cards type none.
+  const imported = rules.match(/import \{([^}]*)\} from "@\/lib\/momentum"/)?.[1] ?? "";
+  const needed = ["MOMENTUM", "MOMENTUM_START_FREEZES", "MOMENTUM_NUDGE", "RUN_MILESTONES", "QUEST", "TIER_GATE", "PERKS", "BRANCHES", "COSMETICS", "chestOdds", "chainMult", "lifeModsOf", "RAW_WORST_CASE_MOMENTUM", "EX_SESSION_MIN_MINUTES", "EX_PAY_BACK_DAYS", "lifeMpModelOn", "momentumLive", "momentumLaunchDay"];
+  const missing = needed.filter((n) => !new RegExp(`\\b${n}\\b`).test(imported));
+  check("rules momentum (§G.3): the cards' constants are imported from momentum.ts", missing.length === 0, missing.join(", "));
+  const mr = fnSrc("MomentumRules");
+  const body = mr.slice(mr.indexOf("return ("));
+  // A formula's own digits (n(n + 1) / 2, 1 − e^…) are its shape, not a figure; everything else comes from the code.
+  const typed = [...literalText(body.replace(/<Formula>[\s\S]*?<\/Formula>/g, "")).replace(/className="[^"]*"|kind="[^"]*"/g, "").matchAll(/\d+/g)].map((m) => m[0]);
+  check("rules momentum: the Momentum cards type no number by hand (outside their formulas)", mr.length > 3000 && typed.length === 0, typed.join(", "));
+  check(
+    "rules momentum: crit odds, chain and chest odds are published from the code (critP, CRIT_MULT, CRIT_DAY_MAX, chestOdds, PITY_AFTER, the pools)",
+    /pctOf\(MOMENTUM\.CRIT_P\)/.test(mr) && /MOMENTUM\.CRIT_MULT/.test(mr) && /MOMENTUM\.CRIT_DAY_MAX/.test(mr) && /const odds = chestOdds\(\);/.test(mr) &&
+      ["odds.common", "odds.uncommon", "odds.freeze", "odds.hoard", "odds.cosmetic"].every((k) => mr.includes(k)) &&
+      /C\.PITY_AFTER/.test(mr) && /MOMENTUM\.CHEST_POOL_CAP/.test(mr) && /MOMENTUM\.CHAIN_WINDOW_MIN/.test(mr) && /f1\(RAW_WORST_CASE_MOMENTUM\)/.test(mr)
+  );
+  check(
+    "rules momentum: the cards show only once momentum is live (before launch the page is unchanged), with #momentum and #life-tree anchors",
+    /const momentumOn = momentumLive\(today, momentumLaunch\);/.test(rulesCode) &&
+      /\{momentumOn && momentumLaunch && \(\s*<section aria-labelledby="rules-momentum"/.test(rulesCode) &&
+      /<Card id="momentum" title="Momentum: the run and its freezes"/.test(mr) &&
+      /<Card id="life-tree" title="The Life skill tree"/.test(mr) &&
+      rulesCode.indexOf("<MomentumRules") < rulesCode.indexOf("<RoadmapRules") &&
+      !M.momentumLive("2026-10-12", M.MOMENTUM_LAUNCH_DAY)
+  );
+  check(
+    "rules momentum: K publishes SESSION ('paid by the walk') only once live; before, the four modes exactly as before",
+    /SESSION: "Paid by the walk: /.test(rules) &&
+      MODE_LABEL.SESSION === "paid by the walk" &&
+      /Object\.keys\(momentumOn \? LIFE_PAY_MODE_FACTOR : PAY_MODE_FACTOR\) as LifePayMode\[\]/.test(rulesCode)
+  );
+  check(
+    "rules momentum: the intro and the price card change only once live (the pre-launch words verbatim)",
+    /Nothing is random: what a row says is what a tick\s+pays\./.test(rules) && /\{momentumOn \? \(/.test(rulesCode) && /\{momentumOn && \(\s*<p>\s*With momentum a price also takes S, M and X/.test(rulesCode)
+  );
+  const tracks = fnSrc("TracksRules");
+  const pre = M.lifeMpModelOn("2026-10-12", null);
+  const live = M.lifeMpModelOn("2026-10-19", "2026-10-12");
+  check(
+    "rules tracks: the kept-week MP, the cap and the capped reasons come from the model in force (today's constants before launch: 1.5, 8; from launch 18, 91 and kept plan weeks)",
+    /const model = lifeMpModelOn\(today\);/.test(tracks) &&
+      /model\.momentum \? model\.cappedReasons : CAPPED_REASONS/.test(tracks) &&
+      /model\.momentum \? model\.weekCap : LIFE_MP_WEEK_CAP/.test(tracks) &&
+      /mpRows\(dutyLive, model\)/.test(tracks) &&
+      !pre.momentum && pre.weekCap === LE.LIFE_MP_WEEK_CAP && pre.mp.WEEK_KEPT === LE.LIFE_MP.WEEK_KEPT &&
+      live.momentum && live.weekCap === 91 && live.mp.WEEK_KEPT === 18 && live.cappedReasons.includes("LIFE_PLAN_WEEK")
+  );
+
+  // /today/week: the last week's cap and the week card's per-track MP come from that week's own model.
+  const week = codeOf(read("src/app/today/week/page.tsx"));
+  check(
+    "week: the cap and the kept-track MP are lifeMpModelOfWeek(week.monday)'s (the pre-momentum constants before launch, 91 and 18 from it)",
+    /mpFigure\(lifeMpModelOfWeek\(week\.monday\)\.weekCap\)/.test(week) &&
+      /mpFigure\(lifeMpModelOfWeek\(week\.monday\)\.mp\.WEEK_KEPT\)/.test(week) &&
+      !/\bLIFE_MP_WEEK_CAP\b|\bLIFE_MP\.WEEK_KEPT\b/.test(week) &&
+      M.lifeMpModelOfWeek("2026-10-12", null).weekCap === LE.LIFE_MP_WEEK_CAP &&
+      M.lifeMpModelOfWeek("2026-10-12", "2026-10-12").weekCap === 91 &&
+      M.lifeMpModelOfWeek("2026-10-05", "2026-10-12").weekCap === LE.LIFE_MP_WEEK_CAP
+  );
+
+  // /you: momentum's lazy writes before the sheet's one wave; their moments pulled once.
+  const you = codeOf(read("src/app/you/page.tsx"));
+  check(
+    "you: the sheet awaits settleMomentum before its one wave (nothing before launch) and pulls the moments it wrote",
+    /const settled = await settleMomentum\(userId, today, \{ now \}\);/.test(you) &&
+      you.indexOf("await settleMomentum(") < you.indexOf("await Promise.all([") &&
+      /<MomentsPull when=\{settled\.wrote\} \/>/.test(you)
+  );
+
+  // The Life tab (§B.5): hidden before launch; settle then read; the tree's numbers are the server's.
+  const lifePage = codeOf(read("src/app/skills/life/page.tsx"));
+  check(
+    "life tab: /skills/life settles then reads the tree only once live, and shows a calm 'not started yet' card before",
+    /const live = momentumLive\(today\);/.test(lifePage) &&
+      /const settled = live \? await settleMomentum\(userId, today, \{ now \}\) : null;/.test(lifePage) &&
+      /live \? loadLifeTree\(userId, \{ now \}\)/.test(lifePage) &&
+      /hasn&apos;t started yet/.test(lifePage) &&
+      /<PathChips current="LIFE" summary=\{summary\} life=\{live\} \/>/.test(lifePage)
+  );
+  try {
+    const { PathChips } = await import("../src/components/skills/PathChips");
+    const summary = Object.fromEntries(ATTRIBUTES.map((a) => [a, { attribute: a, owned: 0, total: 1, ready: 0, deepest: 0 }])) as never;
+    const hidden = renderToStaticMarkup(createElement(PathChips, { current: ATTRIBUTES[0], summary, life: false }));
+    const shown = renderToStaticMarkup(createElement(PathChips, { current: "LIFE", summary, life: true }));
+    check(
+      "life tab: the Life chip is hidden before launch (thirteen paths exactly) and is the first chip once live, current on /skills/life",
+      !hidden.includes("/skills/life") &&
+        (hidden.match(/class="pchip"/g) ?? []).length === ATTRIBUTES.length &&
+        (shown.match(/class="pchip"/g) ?? []).length === ATTRIBUTES.length + 1 &&
+        /<ul class="pathchips"><li><a class="pchip" aria-current="page"[^>]*href="\/skills\/life">/.test(shown)
+    );
+    const { LifeTree, branchLinesOf } = await import("../src/components/skills/LifeTree");
+    const pts = (earned: number, spent: number, countedXp: number) => ({ earned, spent, available: earned - spent, countedXp, nextAt: M.lspThreshold("DISCIPLINE", earned + 1), weekCounted: 640, weekCap: 700 });
+    const owned = new Set<string>(["D_STEADY", "D_LINK"]);
+    const earned = { DISCIPLINE: 5, PATHFINDER: 0, VITALITY: 0 } as const;
+    const perksOf = (b: "DISCIPLINE" | "PATHFINDER" | "VITALITY") =>
+      M.PERKS.filter((p) => p.branch === b).map((p) => {
+        const c = M.learnCheck(p.code, owned, earned);
+        return {
+          perk: p,
+          state: owned.has(p.code) ? ("owned" as const) : c.ok ? ("learnable" as const) : ("locked" as const),
+          reason: c.ok || owned.has(p.code) ? null : c.reason === "TIER" ? `Spend ${c.need} in Discipline first` : `${c.need} more ${c.need === 1 ? "point" : "points"}`,
+          need: c.ok ? 0 : c.need,
+        };
+      });
+    const tree = {
+      live: true as const,
+      today: "2026-10-19" as DayKey,
+      branches: {
+        DISCIPLINE: { ...pts(5, 2, 1712), perks: perksOf("DISCIPLINE") },
+        PATHFINDER: { ...pts(0, 0, 12), perks: perksOf("PATHFINDER") },
+        VITALITY: { ...pts(0, 0, 3), perks: perksOf("VITALITY") },
+      },
+      owned: ["D_LINK", "D_STEADY"] as never[],
+      epoch: 0,
+      respec: { allowed: false, lastDay: "2026-10-01" as DayKey, nextDay: "2026-10-31" as DayKey, daysLeft: 12, reason: "Next respec in 12 days" },
+    };
+    const noop = async () => ({ ok: false as const, error: "fixture" });
+    const html = renderToStaticMarkup(createElement(LifeTree, { tree: tree as never, learn: noop, respec: noop })).replace(/<!-- -->/g, "");
+    const lines = branchLinesOf("DISCIPLINE", tree.branches.DISCIPLINE as never);
+    check(
+      "life tab: the branch header says '3 to spend · 5 earned', 'Next point: 1,712 of 1,890 task XP' and the week's counted XP against its cap",
+      lines.spend === "3 to spend · 5 earned" && lines.next === "Next point: 1,712 of 1,890 task XP" && lines.week === "This week counts 640 of 700" && html.includes(lines.next),
+      JSON.stringify(lines)
+    );
+    check(
+      "life tab: three branch segments, four tiers, owned ✓ Learned, Learn · n for a learnable perk, and a locked perk's reason",
+      (html.match(/class="lt-seg"/g) ?? []).length === 3 &&
+        (html.match(/class="lt-tier-h"/g) ?? []).length === 4 &&
+        (html.match(/Learned/g) ?? []).length === 2 &&
+        /Learn · 1/.test(html) &&
+        /Spend \d+ in Discipline first/.test(html) &&
+        html.includes("Next respec in 12 days")
+    );
+  } catch (err) {
+    check("life tab: PathChips and LifeTree render over fixture data", false, err instanceof Error ? err.message : String(err));
+  }
+  const css = stripCss(read("src/components/today/momentum.css"));
+  const ruleOf = (sel: string) => new RegExp(`(?:^|[}\\s])${sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`, "m").exec(css)?.[1] ?? "";
+  check(
+    "life tab: the segments are 44 px tall, 10 px apart in three columns; perk cards ≥ 64 px; Learn ≥ 88 px wide (the kit's 44 px button)",
+    /min-height: 44px/.test(ruleOf(".lt-seg")) && /gap: 10px/.test(ruleOf(".lt-switch")) && /repeat\(3, minmax\(0, 1fr\)\)/.test(ruleOf(".lt-switch")) && /min-height: 64px/.test(ruleOf(".lt-perk")) && /min-width: 88px/.test(ruleOf(".lt-learn"))
+  );
+
+  // Settings › Notifications (§E.7): the evening nudge, only once live; the switch is UserPrefs.nudge through setMomentumNudge.
+  try {
+    const { SettingsView } = await import("../src/components/settings/SettingsView");
+    const { NUDGE_COPY } = await import("../src/components/settings/NotificationsSection");
+    const base = { capacity: { minutes: 240, set: true }, focus: null, fields: [], duty: { today: "2026-12-22" as DayKey, launchDay: null, debtWriteOff: false } };
+    const html = (momentum?: { nudge: boolean }) => renderToStaticMarkup(createElement(SettingsView, { data: { ...base, ...(momentum ? { momentum } : {}) } }));
+    const sw = (h: string) => /role="switch" aria-checked="(true|false)" aria-label="Evening momentum nudge"/.exec(h)?.[1] ?? null;
+    check(
+      "settings (momentum): the evening nudge row shows only once live (no row before launch), its switch follows UserPrefs.nudge",
+      sw(html()) === null && !html().includes(NUDGE_COPY.name) && sw(html({ nudge: true })) === "true" && sw(html({ nudge: false })) === "false" && html({ nudge: true }).includes(NUDGE_COPY.note)
+    );
+    check(
+      "settings (momentum): the row's words come from MOMENTUM_NUDGE (20:00, a run of 2+, at most once a day)",
+      NUDGE_COPY.name === "Evening momentum nudge · 20:00" && NUDGE_COPY.note === "Only when your run is 2+ days and nothing that keeps it is done yet. At most once a day, never after 22:00."
+    );
+  } catch (err) {
+    check("settings (momentum): SettingsView renders with the nudge row", false, err instanceof Error ? err.message : String(err));
+  }
+  const notify = codeOf(read("src/components/settings/NotificationsSection.tsx"));
+  const settingsPage = codeOf(read("src/app/settings/page.tsx"));
+  check(
+    "settings (momentum): the switch saves through setMomentumNudge and puts itself back on a refusal; the page reads prefs only once live",
+    /void setMomentumNudge\(next\)\.then\(/.test(notify) &&
+      /if \(!res\.ok\) \{\s*setOn\(!next\);\s*setLine\(res\.error\);\s*\}/.test(notify) &&
+      /const prefs = momentumOn \? await prismaMomentumStore\.prefs\(userId\)\.catch\(\(\) => null\) : null;/.test(settingsPage) &&
+      /\.\.\.\(momentumOn \? \{ momentum: \{ nudge: nudgeOn\(prefs\?\.nudge \?\? null\) \} \} : \{\}\)/.test(settingsPage)
+  );
+}
+
 (async () => {
   await redirects();
   await dayCardsGuardChecks();
   await aimPageRenderChecks();
   await r2AimCardChecks(); // R2 (ui-motion.md §11.4 /you)
   await settingsRenderChecks();
+  await momentumChecks();
   await carryOverChecks();
   const tw = await tailwindUtilities();
   cssChecks(tw.test, tw.via);

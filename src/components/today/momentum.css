@@ -1,0 +1,166 @@
+@layer theme, base, components, art, effects, utilities;
+/* ═══ MOMENTUM (docs/life-plan/momentum.md §E.1, §E.2, §B.5; lane E) ═════════
+   Today's Momentum card, its three sheets (the run, Today's three, the chest)
+   and the Life tab's tree (/skills/life). Imported by TodayBoard.tsx and the
+   /skills/life page.
+
+   Phones first: at 344 px the card's content box is 278 px (16 px gutter,
+   16 px card padding). Row 1: the flame button (≥ 104 × 44), the freezes,
+   "n of 3" and the 44 × 44 chest. Row 2: three 44 px pips in a 3-column grid
+   with an 8 px gap (87 px each at 278). Every target is ≥ 44 px measured on
+   the element itself; text is ≥ 12 px.
+
+   Calm (ui-motion D10, H9): the flame is a static glyph, nothing loops and
+   nothing moves on arrival. The one animation is a chest's contents fading in
+   after a tap (opacity only, --t-slow, well under 1.6 s; none under Still).
+   Colours are tokens only: a skin or a trim is a token, never a literal.
+   ═══════════════════════════════════════════════════════════════════════ */
+@layer components {
+
+/* ── The card ────────────────────────────────────────────────────────── */
+.mo-card { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; }
+.mo-top { display: flex; align-items: center; gap: 8px; min-height: 44px; min-width: 0; }
+.mo-flame {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 104px; min-height: 44px; padding: 0 10px;
+  border-radius: var(--r-ctl); border: 1px solid var(--line-2); background: transparent; color: var(--ink-0);
+  font: 600 14px var(--font-ui); font-variant-numeric: tabular-nums; white-space: nowrap; cursor: pointer;
+}
+.mo-flame:hover { background: var(--raised); }
+.mo-held { color: var(--held); flex: none; }
+.mo-freezes { display: inline-flex; align-items: center; gap: 2px; flex: none; }
+.mo-fz { display: inline-flex; color: var(--ink-mute); opacity: .45; }
+.mo-fz[data-on] { color: var(--held); opacity: 1; }
+.mo-fz svg { width: 18px; height: 18px; }
+.mo-count { font: 600 13px var(--font-ui); color: var(--ink-1); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mo-chest {
+  margin-left: auto; flex: none; display: inline-grid; place-items: center; width: 44px; min-width: 44px; height: 44px; min-height: 44px;
+  border-radius: var(--r-ctl); border: 1px solid var(--line-2); background: transparent; color: var(--ink-1); cursor: pointer;
+}
+.mo-chest:hover { background: var(--raised); }
+/* Ready (or yesterday's waiting): a lit edge, static. */
+.mo-chest[data-state="ready"], .mo-chest[data-state="yesterday"] { border-color: var(--light); box-shadow: 0 0 0 1px var(--light), 0 0 12px var(--light-glow); color: var(--ink-0); }
+.mo-chest[data-state="opened"] { color: var(--ink-2); }
+
+.mo-pips { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.mo-pip {
+  width: 100%; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 4px;
+  border-radius: var(--r-ctl); border: 1px solid var(--line-2); background: transparent; color: var(--ink-1);
+  font: 600 13px var(--font-ui); white-space: nowrap; cursor: pointer;
+}
+.mo-pip:hover { background: var(--raised); }
+.mo-pip[data-done] { border-color: var(--kept); color: var(--ink-0); }
+.mo-pip-on { color: var(--kept); flex: none; }
+.mo-pip-off { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--ink-mute); flex: none; }
+.mo-slot-g { display: inline-flex; color: var(--ink-2); flex: none; }
+.mo-slot-g svg { width: 16px; height: 16px; }
+.mo-chain { margin: 0; font: 500 12px/16px var(--font-ui); color: var(--ink-2); }
+.mo-error { color: var(--owed); }
+
+/* ── The flame and the chest (static glyphs; a skin or a trim is a token) ── */
+.mo-flame-g { --mo-flame: var(--xp); flex: none; }
+.mo-flame-g path { fill: var(--mo-flame); }
+.mo-flame-g[data-hollow] path { fill: none; stroke: var(--ink-mute); stroke-width: 1.5; }
+.mo-flame-g[data-skin="flame-ember"] { --mo-flame: var(--must); }
+.mo-flame-g[data-skin="flame-cobalt"] { --mo-flame: var(--pts); }
+.mo-flame-g[data-skin="flame-verdant"] { --mo-flame: var(--kept); }
+.mo-flame-g[data-skin="flame-aurora"] { --mo-flame: var(--habit); }
+.mo-flame-g[data-skin="flame-obsidian"] { --mo-flame: var(--ink-1); }
+.mo-flame-g[data-skin="flame-gilt"] { --mo-flame: var(--gold-m); }
+.mo-chest-g { --mo-trim: currentColor; fill: none; stroke: var(--mo-trim); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+.mo-chest-g[data-trim="trim-oak"] { --mo-trim: var(--bronze-m); }
+.mo-chest-g[data-trim="trim-iron"] { --mo-trim: var(--iron-m); }
+.mo-chest-g[data-trim="trim-jade"] { --mo-trim: var(--kept); }
+.mo-chest-g[data-trim="trim-ivory"] { --mo-trim: var(--light); }
+.mo-chest-g[data-trim="trim-coral"] { --mo-trim: var(--owed); }
+.mo-chest-g[data-trim="trim-star"] { --mo-trim: var(--gold-m); }
+
+/* ── The Momentum sheet: the run, the 5 × 7 grid, the flame skins ─────── */
+.mo-runbody { display: flex; flex-direction: column; gap: 10px; }
+.mo-runbody p { margin: 0; }
+.mo-runline { font: 600 16px var(--font-ui); color: var(--ink-0); }
+.mo-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin: 0; padding: 0; list-style: none; max-width: 280px; }
+.mo-grid li, .mo-key { aspect-ratio: 1; border-radius: 6px; border: 1px solid var(--line-2); background: transparent; }
+.mo-grid li[data-mark="active"], .mo-key[data-mark="active"] { background: var(--kept); border-color: var(--kept); }
+.mo-grid li[data-mark="held"], .mo-key[data-mark="held"] { background: var(--hatch); border-color: var(--held); }
+.mo-grid li[data-mark="missed"], .mo-key[data-mark="missed"] { border-color: var(--line-ctl); }
+.mo-grid li[data-mark="open"] { border-style: dashed; border-color: var(--line-ctl); }
+.mo-grid li[data-mark="before"] { border-color: var(--line-1); opacity: .5; }
+.mo-legend { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mo-key { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+.mo-skins { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.mo-skin {
+  display: inline-grid; place-items: center; width: 44px; min-width: 44px; height: 44px; min-height: 44px;
+  border-radius: var(--r-ctl); border: 1px solid var(--line-2); background: transparent; cursor: pointer;
+}
+.mo-skin[aria-pressed="true"] { border-color: var(--line-ctl); background: var(--raised); }
+
+/* ── Today's three (the Quest sheet) ──────────────────────────────────── */
+.mo-qrows { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.mo-qrow {
+  display: grid; grid-template-columns: 20px minmax(0, 1fr); column-gap: 10px; row-gap: 8px; align-items: start;
+  min-height: 56px; padding: 10px 4px; border-bottom: 1px solid var(--line-1);
+}
+.mo-qrow[data-focus] { background: var(--hi); border-radius: var(--r-ctl); }
+.mo-qrow .mo-slot-g { padding-top: 2px; }
+.mo-qtext { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mo-qtext b { font: 600 15px/20px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+.mo-qrow[data-done] .mo-qtext b { color: var(--ink-1); }
+.mo-qacts { grid-column: 2; display: flex; gap: 8px; flex-wrap: wrap; }
+.mo-qacts:empty { display: none; }
+.mo-qfoot { margin: 12px 0 4px; }
+
+/* ── The chest sheet ──────────────────────────────────────────────────── */
+.mo-chestsheet { display: flex; flex-direction: column; gap: 16px; }
+.mo-chestbody, .mo-yesterday { display: flex; flex-direction: column; gap: 10px; }
+.mo-chestbody p, .mo-yesterday p { margin: 0; }
+.mo-art { display: grid; place-items: center; padding: 4px 0; color: var(--ink-1); }
+.mo-art .mo-chest-g { width: 120px; height: 120px; stroke-width: 1; }
+.mo-art[data-state="ready"] .mo-chest-g { filter: drop-shadow(0 0 10px var(--light-glow)); }
+.mo-subhead { font: 600 13px var(--font-ui); color: var(--ink-1); }
+.mo-contents { display: flex; flex-direction: column; gap: 6px; }
+.mo-contents p { margin: 0; }
+.mo-contents[data-reveal] { animation: mo-reveal var(--t-slow) var(--ease-out) both; }
+.mo-tier { font: 600 13px var(--font-ui); color: var(--ink-2); text-transform: uppercase; letter-spacing: .06em; }
+.mo-lines { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.mo-lines li { font: 600 17px/22px var(--font-ui); color: var(--ink-0); font-variant-numeric: tabular-nums; }
+.mo-odds { border-top: 1px solid var(--line-1); padding-top: 10px; }
+.mo-odds summary { min-height: 44px; display: flex; align-items: center; font: 600 13px var(--font-ui); color: var(--ink-1); cursor: pointer; }
+.mo-odds p { margin: 0 0 6px; }
+
+@keyframes mo-reveal { from { opacity: 0; } to { opacity: 1; } }
+
+/* ── The Life tab (/skills/life, §B.5) ────────────────────────────────── */
+.lt-wrap { display: flex; flex-direction: column; gap: 16px; margin-top: 12px; max-width: 640px; }
+.lt-switch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.lt-seg {
+  min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 6px;
+  border-radius: var(--r-ctl); border: 1px solid var(--line-2); background: transparent; color: var(--ink-1);
+  font: 600 13px var(--font-ui); white-space: nowrap; cursor: pointer;
+}
+.lt-seg[aria-pressed="true"] { border-color: var(--line-ctl); background: var(--raised); color: var(--ink-0); }
+.lt-badge { min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--r-pill); background: var(--ink-0); color: var(--card); font: 700 12px/20px var(--font-ui); text-align: center; }
+.lt-head { padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
+.lt-head p { margin: 0; }
+.lt-spend { font: 600 18px var(--font-ui); color: var(--ink-0); }
+.lt-bar { height: 4px; border-radius: var(--r-pill); background: var(--sunken); overflow: hidden; }
+.lt-bar > span { display: block; height: 100%; background: var(--ink-1); }
+.lt-tier { display: flex; flex-direction: column; gap: 8px; }
+.lt-tier-h { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 0; font: 600 14px var(--font-ui); color: var(--ink-0); }
+.lt-perks { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.lt-perk { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; min-height: 64px; padding: 10px 14px; }
+.lt-perk[data-state="locked"] { opacity: .78; }
+.lt-perk-name { display: flex; align-items: center; gap: 8px; font: 600 15px/20px var(--font-ui); color: var(--ink-0); }
+.lt-cost { font: 600 12px/18px var(--font-ui); color: var(--ink-2); border: 1px solid var(--line-2); border-radius: var(--r-pill); padding: 0 7px; white-space: nowrap; }
+.lt-perk .t-meta { margin: 2px 0 0; }
+.lt-act { justify-self: end; }
+.lt-learn { min-width: 88px; }
+.lt-owned { display: inline-flex; align-items: center; gap: 4px; font: 600 13px var(--font-ui); color: var(--kept); white-space: nowrap; }
+.lt-why { display: block; font: 500 12px/16px var(--font-ui); color: var(--ink-2); }
+/* A locked perk says why under its effect: on a phone a reason beside it squeezed the name onto two lines. */
+.lt-perk[data-state="locked"] { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.lt-perk[data-state="locked"] .lt-act { justify-self: start; }
+.lt-foot { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.lt-foot p { margin: 0; }
+.lt-calm { padding: 16px; margin-top: 12px; max-width: 640px; }
+.lt-calm p { margin: 0; }
+}

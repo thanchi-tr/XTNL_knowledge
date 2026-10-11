@@ -5,6 +5,9 @@
  *   mark(opts)  → Promise<void>     Tier 0. In place, immediately. Sound 1318 Hz · haptic 8 ms.
  *        Flies "+N" from opts.from to its OWN ledger (ledgerTarget(kind) by default) and
  *        resolves when it lands, so the ledger owner can countTo() + bump().
+ *        Momentum's T0 kinds (momentum.md §E.3): `crit` is the gold numeral in place
+ *        ("Crit ×2 · +24"), its tone the mark's up a fifth (1976 Hz); `chain` ("Chain 3")
+ *        is the same static label in the life-XP hue. Neither flies: the tick already did.
  *   chime(opts)                     Tier 1. In place, < 1 s: sweep + seeded burst of 8.
  *        If opts.ringEl is off-screen, the ToastDock carries a closing mini ring.
  *        Once per id per tab: a second chime with the same id (an effect run
@@ -32,10 +35,12 @@ import {
   type CelebrationEvent,
   type CelebrationTier,
   type CurrencyKind,
+  type MOMENTUM_T0_KINDS,
+  type MOMENTUM_T1_KINDS,
   type T0Kind,
   type T1Kind,
 } from "./celebration-types";
-import { burst, center, fly, formatFigure, inViewport, motionLevel } from "./motion";
+import { burst, center, floater, fly, formatFigure, inViewport, motionLevel } from "./motion";
 import { pushToast } from "../components/ui/toast-store";
 
 const isBrowser = (): boolean => typeof window !== "undefined" && typeof document !== "undefined";
@@ -130,11 +135,13 @@ export function clearLog(): void {
 
 // ─── Sound and haptics (per device, off by default, silent in Still) ────────
 
-export type FeedbackKind = "mark" | "chime" | "seal" | "ascend";
+export type FeedbackKind = "mark" | "chime" | "seal" | "ascend" | "crit";
 
 /** [frequency Hz, delay s, length s]. Fixed pitches per tier. */
 export const TONES: Readonly<Record<FeedbackKind, readonly (readonly [number, number, number])[]>> = {
   mark: [[1318, 0, 0.07]],
+  /** A crit (momentum.md §E.3): the mark's tone up a fifth. */
+  crit: [[1976, 0, 0.09]],
   chime: [
     [784, 0, 0.32],
     [1175, 0.08, 0.38],
@@ -154,6 +161,7 @@ export const TONES: Readonly<Record<FeedbackKind, readonly (readonly [number, nu
 
 export const HAPTICS: Readonly<Record<FeedbackKind, number | readonly number[]>> = {
   mark: 8,
+  crit: [8, 40, 8],
   chime: [12, 40, 18],
   seal: [14, 50, 22, 50, 40],
   ascend: [20, 80, 20, 80, 40, 120, 60],
@@ -237,8 +245,13 @@ const CURRENCY_WORD: Record<CurrencyKind, string> = { xp: "life XP", pts: "revie
 
 // ─── Tier 0 · Mark ──────────────────────────────────────────────────────────
 
+/** Momentum's T0 kinds (celebration-types MOMENTUM_T0_KINDS): the crit's gold numeral and the chain's link count. */
+export type MomentumT0Kind = (typeof MOMENTUM_T0_KINDS)[number];
+/** Momentum's T1 kinds (MOMENTUM_T1_KINDS): a quest done, the day kept, a freeze that held, a common chest. */
+export type MomentumT1Kind = (typeof MOMENTUM_T1_KINDS)[number];
+
 export interface MarkOptions {
-  kind: T0Kind;
+  kind: T0Kind | MomentumT0Kind;
   /** The fact, for the log and the live region ("Kept Morning meds · paid 3.6 exactly"). */
   text: string;
   /** Deterministic id (`tick:<instanceId>`). */
@@ -253,11 +266,31 @@ export interface MarkOptions {
   say?: boolean;
 }
 
+/**
+ * Momentum's T0 label in place (a crit, a chain link): the static floater under
+ * the element it was earned on, in gold for a crit. No flight and no movement,
+ * so it reads the same under Full, Calm and Still (ui-motion D10: Today stays calm).
+ */
+function momentumLabel(near: Element | null | undefined, text: string, crit: boolean): void {
+  if (!isBrowser() || !near) return;
+  floater(near, text, "xp");
+  const el = document.querySelector(".fx")?.lastElementChild;
+  if (crit && el instanceof HTMLElement && el.classList.contains("fx-floater") && el.textContent === text) {
+    el.style.setProperty("--tok", "var(--gold-m)");
+    el.dataset.variant = "crit";
+  }
+}
+
 export function mark(o: MarkOptions): Promise<void> {
-  sound("mark");
-  haptic("mark");
+  const crit = o.kind === "crit";
+  sound(crit ? "crit" : "mark");
+  haptic(crit ? "crit" : "mark");
   writeLog(0, o.kind, o.text);
   if (o.say !== false) announce(o.text);
+  if (o.kind === "crit" || o.kind === "chain") {
+    momentumLabel(o.from ?? o.to ?? null, o.text, crit);
+    return Promise.resolve();
+  }
   if (!o.amount || !isBrowser()) return Promise.resolve();
   const target = o.to !== undefined ? o.to : ledgerTarget(o.amount.kind);
   const text = signedFigure(o.amount.value);
@@ -271,7 +304,7 @@ export function mark(o: MarkOptions): Promise<void> {
 // ─── Tier 1 · Chime ─────────────────────────────────────────────────────────
 
 export interface ChimeOptions {
-  kind: T1Kind;
+  kind: T1Kind | MomentumT1Kind;
   /** Deterministic id; the burst seed. */
   id: string;
   /** "Musts kept", for the log and (by default) the live region. */

@@ -5,7 +5,8 @@ import { Prisma } from "@prisma/client";
 import { getCurrentUserId } from "@/lib/user";
 import { prisma } from "@/lib/prisma";
 import { addDays, dateColumn, dayKeyOf, keyOfDateColumn, todayKey, type DayKey } from "@/lib/life-day";
-import { LIFE_MP, LIFE_MP_WEEK_CAP, isBackfillDetail, isLaunched, lifeWritesEnabled, weekKeptMintKey, withoutBackfill } from "@/lib/life-economy";
+import { isBackfillDetail, isLaunched, lifeWritesEnabled, weekKeptMintKey, withoutBackfill } from "@/lib/life-economy";
+import { lifeMpModelOfWeek } from "@/lib/momentum";
 import {
   DISPLAY_ORDER,
   TRACK_NAME,
@@ -182,7 +183,7 @@ function LastWeekCard({ week, today }: { week: LastWeek; today: DayKey }) {
         <p className="t-meta lw-foot">
           {week.backfill
             ? "That week closed before life MP began, so it paid none. Its kept weeks still raise each track's depth cap."
-            : `Life MP for that week: ${mpFigure(week.used)} of ${mpFigure(LIFE_MP_WEEK_CAP)}`}
+            : `Life MP for that week: ${mpFigure(week.used)} of ${mpFigure(lifeMpModelOfWeek(week.monday).weekCap)}`}
         </p>
       </div>
     </section>
@@ -433,7 +434,8 @@ function weekCardOf(ledger: LifeLedger, week: ReviewedWeek): WeekCardData | null
   const fullMp = fullDays.reduce((s, m) => s + m.qty, 0);
   const trackMp = lw.rows.reduce((s, r) => s + (r.mp ?? 0), 0);
   const duty = lw.rows.find((r) => r.track === "DUTY");
-  const parts = [`${mpFigure(LIFE_MP.WEEK_KEPT)} per kept track`];
+  // The week's own model (momentum.md §A.10): today's amounts for a week before momentum's launch, 18 per kept track from it.
+  const parts = [`${mpFigure(lifeMpModelOfWeek(week.monday).mp.WEEK_KEPT)} per kept track`];
   if (fullDays.length > 0) parts.push(`+${mpFigure(fullMp)} MP from ${fullDays.length} full ${fullDays.length === 1 ? "day" : "days"}`);
   if (duty) parts.push(`Duty's kept-week streak is ${duty.streak}`);
   return {

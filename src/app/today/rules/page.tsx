@@ -42,6 +42,7 @@ import {
   LIFE_MP,
   LIFE_MP_REASON_LABEL,
   LIFE_MP_WEEK_CAP,
+  MOMENTUM_MP_REASON_LABEL,
   TRACK_DEPTH_GRACE,
   TRACK_DEPTH_WEEK_COEF,
   TRACK_LEVEL_STEP,
@@ -54,7 +55,8 @@ import {
   lifeLaunchDay,
   trackDepth,
   xpForLevel,
-  type LifeMpReason,
+  type LifeMintReason,
+  type LifeMpModel,
 } from "@/lib/life-economy";
 import { keptWeekBonusPercent } from "@/lib/life-tracks";
 import { BREADTH_EXPONENT, DEPTH_FIRST_SHARE, fieldLevel } from "@/lib/xp";
@@ -89,6 +91,7 @@ import {
   KNEE_CAP_AT_RAW,
   KNEE_FULL_RATE,
   KNEE_SCALE,
+  LIFE_PAY_MODE_FACTOR,
   PAY_MODE_FACTOR,
   RAW_WORST_CASE,
   RECORD_WINDOW_DAYS,
@@ -119,7 +122,29 @@ import {
 import { CATEGORY_LABEL, CATEGORY_TRACK, DURATION_BAND_MINUTES, LIFE_RULE_COUNT } from "@/lib/life-lexicon";
 import { HABIT_ALPHA, HABIT_RUNGS } from "@/lib/habit";
 import { SIZING_PROMPT_VERSION, TASK_SIZING_MODEL } from "@/lib/gemini";
-import { BANDS, CATEGORIES, DURATION_BANDS, TRACKS, type PayMode, type PriceInput, type Timing } from "@/lib/life-types";
+import { BANDS, CATEGORIES, DURATION_BANDS, TRACKS, type LifePayMode, type PayMode, type PriceInput, type Timing } from "@/lib/life-types";
+import {
+  BRANCHES,
+  COSMETICS,
+  EX_PAY_BACK_DAYS,
+  EX_SESSION_MIN_MINUTES,
+  MOMENTUM,
+  MOMENTUM_NUDGE,
+  MOMENTUM_START_FREEZES,
+  PERKS,
+  QUEST,
+  RAW_WORST_CASE_MOMENTUM,
+  RUN_MILESTONES,
+  TIER_GATE,
+  chainMult,
+  chestOdds,
+  lifeModsOf,
+  lifeMpModelOn,
+  momentumLaunchDay,
+  momentumLive,
+  type Branch,
+  type PerkCode,
+} from "@/lib/momentum";
 import {
   ADHERENCE_FLOOR,
   ADHERENCE_MIN_BAND,
@@ -244,9 +269,9 @@ const f1 = (n: number) => n.toFixed(1);
 const pct = (n: number) => `${Math.round(n * 100)}%`;
 const signed = (n: number) => (n < 0 ? `−${-n}` : `+${n}`);
 
-function Card({ title, sub, children, wide = false }: { title: string; sub?: string; children: ReactNode; wide?: boolean }) {
+function Card({ title, sub, children, wide = false, id }: { title: string; sub?: string; children: ReactNode; wide?: boolean; id?: string }) {
   return (
-    <section className={`card rules-card${wide ? " wide" : ""}`}>
+    <section className={`card rules-card${wide ? " wide" : ""}`} id={id}>
       <h2 className="rules-h">{title}</h2>
       {sub && <p className="t-meta">{sub}</p>}
       <div className="rules-body">{children}</div>
@@ -296,11 +321,12 @@ const TIMING_WORDS: Record<Timing, string> = {
   MAKE_UP: "Making up a missed occurrence",
 };
 
-const MODE_WORDS: Record<PayMode, string> = {
+const MODE_WORDS: Record<LifePayMode, string> = {
   FULL: "An ordinary completion. Compulsory tasks pay the same: the flag raises the stakes, not the reward.",
   MVV: "The task's minimum version ('min: 10 pushups'). No streak bonus.",
   PLAY: "#play: logged and kept in the streak, never paid, so something done for its own sake is not turned into a job.",
   STUDY: "Study-linked ('review 20', 'add 3 ideas'): the reviews and ideas already paid, so the task pays nothing on top.",
+  SESSION: "Paid by the walk: an exercise task a logged walk completed. The walk already paid (Walks, below), so the task pays nothing on top; it still keeps the run.",
 };
 
 const WEEKDAY_AFTER_SUNDAY = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -311,25 +337,38 @@ const WEEKDAY_AFTER_SUNDAY = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thurs
  * judge after the kept tracks (decision 6); before, the row says where its
  * payment comes from.
  */
-function mpRows(dutyLive: boolean): { reason: LifeMpReason; amount: number; per: string; note?: string }[] {
+function mpRows(dutyLive: boolean, model: LifeMpModel): { reason: LifeMintReason; amount: number; per: string; note?: string }[] {
+  // Before momentum's launch, today's constants exactly; from it, the model in force (momentum.md §A.10).
+  const mp = model.momentum ? model.mp : LIFE_MP;
+  const ironLungs = lifeModsOf(new Set<PerkCode>(["V_IRON"])).bodyKeptMp;
   return [
-    { reason: "LIFE_WEEK_KEPT", amount: LIFE_MP.WEEK_KEPT, per: "dated the week's Sunday, paid once the week is judged" },
+    model.momentum
+      ? { reason: "LIFE_WEEK_KEPT", amount: mp.WEEK_KEPT, per: "dated the week's Sunday, paid once the week is judged", note: `${TRACK_LABEL.BODY} +${ironLungs} with Iron lungs` }
+      : { reason: "LIFE_WEEK_KEPT", amount: mp.WEEK_KEPT, per: "dated the week's Sunday, paid once the week is judged" },
     { reason: "GOAL_SHORT", amount: GOAL_RULES.SHORT.stated, per: "at 100%" },
     { reason: "GOAL_MID", amount: GOAL_RULES.MID.stated, per: "× progress" },
     { reason: "GOAL_LONG", amount: GOAL_RULES.LONG.stated, per: "× progress" },
+    ...(model.momentum ? [{ reason: "LIFE_PLAN_WEEK" as const, amount: model.mp.PLAN_WEEK, per: "per kept plan week, after the kept tracks" }] : []),
     dutyLive
-      ? { reason: "LIFE_FULL_DAY", amount: LIFE_MP.FULL_DAY, per: "up to this per Full day", note: "paid when the week is judged, after the kept tracks" }
-      : { reason: "LIFE_FULL_DAY", amount: LIFE_MP.FULL_DAY, per: "per Full day", note: "pays from daily settlement" },
+      ? { reason: "LIFE_FULL_DAY", amount: mp.FULL_DAY, per: "up to this per Full day", note: "paid when the week is judged, after the kept tracks" }
+      : { reason: "LIFE_FULL_DAY", amount: mp.FULL_DAY, per: "per Full day", note: "pays from daily settlement" },
   ];
 }
 
+/** Every life MP reason's name (today's five and momentum's four). */
+const MP_REASON_LABEL: Record<LifeMintReason, string> = { ...LIFE_MP_REASON_LABEL, ...MOMENTUM_MP_REASON_LABEL };
+
 /** How the reasons that share the weekly cap read in a sentence. */
-const CAPPED_WORDS: Record<LifeMpReason, string> = {
+const CAPPED_WORDS: Record<LifeMintReason, string> = {
   LIFE_WEEK_KEPT: "kept weeks",
   GOAL_SHORT: "Short goals",
   LIFE_FULL_DAY: "Full days",
   GOAL_MID: "Mid goals",
   GOAL_LONG: "Long goals",
+  LIFE_PLAN_WEEK: "kept plan weeks",
+  LIFE_CHEST: "chests",
+  LIFE_MILESTONE: "milestones",
+  LIFE_CHECKPOINT: "checkpoints",
 };
 
 /** The level used to illustrate the XP scale. */
@@ -358,7 +397,11 @@ function TracksRules() {
   const year = Math.floor(365 / 7);
   const fullAt = bonusFullAt();
   const pct = (n: number) => (Math.round(n * 10) / 10).toLocaleString("en-GB");
-  const capped = CAPPED_REASONS.map((r) => CAPPED_WORDS[r]);
+  // The life-MP model in force today: today's constants before momentum's launch, momentum.md §A.10 from it.
+  const model = lifeMpModelOn(today);
+  const cappedReasons: readonly LifeMintReason[] = model.momentum ? model.cappedReasons : CAPPED_REASONS;
+  const weekCap = model.momentum ? model.weekCap : LIFE_MP_WEEK_CAP;
+  const capped = cappedReasons.map((r) => CAPPED_WORDS[r]);
   return (
     <Card
       title="Tracks and kept weeks"
@@ -408,9 +451,9 @@ function TracksRules() {
       <div className="rules-scroll">
         <table className="rules-table">
           <tbody>
-            {mpRows(dutyLive).map((r) => (
+            {mpRows(dutyLive, model).map((r) => (
               <tr key={r.reason}>
-                <td className="b">{LIFE_MP_REASON_LABEL[r.reason]}</td>
+                <td className="b">{MP_REASON_LABEL[r.reason]}</td>
                 <td className="num">
                   <span className="cur">
                     <CurrencyGlyph kind="mp" />
@@ -421,7 +464,7 @@ function TracksRules() {
                 <td className="ink-2">
                   {r.per}
                   {r.note ? ` · ${r.note}` : ""}
-                  {(CAPPED_REASONS as readonly string[]).includes(r.reason) ? " · weekly cap" : ""}
+                  {(cappedReasons as readonly string[]).includes(r.reason) ? " · weekly cap" : ""}
                 </td>
               </tr>
             ))}
@@ -429,8 +472,8 @@ function TracksRules() {
         </table>
       </div>
       <p>
-        At most {LIFE_MP_WEEK_CAP} MP a life week from {capped.slice(0, -1).join(", ")} and {capped[capped.length - 1]}{" "}
-        together: Short goals take their share first, then kept tracks, then Full days.
+        At most {weekCap} MP a life week from {capped.slice(0, -1).join(", ")} and {capped[capped.length - 1]}{" "}
+        together: Short goals take their share first, then kept tracks, {model.momentum ? "then kept plan weeks, " : ""}then Full days.
       </p>
       <div className="rules-scroll">
         <table className="rules-table">
@@ -551,6 +594,316 @@ function LevelsRules() {
   );
 }
 
+// ─── Momentum (docs/life-plan/momentum.md; shown only once it is live) ───────────────
+
+const hh = (h: number) => `${String(h).padStart(2, "0")}:00`;
+const pctOf = (share: number) => `${Number((share * 100).toFixed(1))}%`;
+const pctFig = (n: number) => `${Number(n.toFixed(1))}%`;
+const BRANCH_WORD: Record<Branch, string> = { DISCIPLINE: "Discipline", PATHFINDER: "Pathfinder", VITALITY: "Vitality" };
+const BRANCH_SOURCE: Record<Branch, string> = {
+  DISCIPLINE: "the XP your tasks pay, except exercise and roadmap tasks",
+  PATHFINDER: "roadmap practice and step tasks, milestones, checkpoints and kept plan weeks",
+  VITALITY: "walks, personal bests and exercise tasks",
+};
+const TIER_WORD: Record<1 | 2 | 3 | 4, string> = { 1: "Tier I", 2: "Tier II", 3: "Tier III", 4: "Capstone" };
+/** One perk's mods, to publish what a perk changes from the code that applies it. */
+const withPerk = (code: PerkCode) => lifeModsOf(new Set<PerkCode>([code]));
+
+/**
+ * Momentum's published rules (momentum.md §A–§B): the run and its freezes, Today's three and the chest
+ * (its odds from chestOdds, the one function the server's drop table publishes), crits and chains, walks,
+ * the roadmap's pay and the Life skill tree. Every number is read from momentum.ts and the modules that
+ * pay; nothing below is typed by hand. Rendered only once momentum is live (momentumLive), so before
+ * MOMENTUM_LAUNCH_DAY this page is exactly what it was.
+ */
+function MomentumRules({ launchDay }: { launchDay: DayKey }) {
+  const C = MOMENTUM.CHEST;
+  const odds = chestOdds();
+  const winds = chestOdds(withPerk("P_WINDS").windsRareBonus);
+  const D = lifeModsOf(new Set<PerkCode>());
+  const tiers = ([1, 2, 3, 4] as const).map((t) => ({ t, cost: PERKS.find((p) => p.tier === t)?.cost ?? 0, gate: TIER_GATE[t] }));
+  const flames = COSMETICS.filter((c) => c.kind === "FLAME").length;
+  const trims = COSMETICS.length - flames;
+  const longChain = withPerk("D_CHAIN").chainCap;
+  return (
+    <>
+      <Card id="momentum" title="Momentum: the run and its freezes" sub={`In force since ${longDayLabel(launchDay)}`} wide>
+        <Formula>run = momentum days in a row, ending today (or yesterday, while today is still empty)</Formula>
+        <ul className="rules-bullets">
+          <li>
+            A momentum day is a life day with any task of your own ticked (the minimum and #play count), a walk of{" "}
+            {MOMENTUM.EX_STREAK_MIN} minutes or more, or a checkpoint taken; an undo takes its tick back. Reviews alone never
+            count: this run is life&apos;s, and the day streak on Character is unchanged. A work tab is never part of it.
+          </li>
+          <li>
+            A freeze is earned every {MOMENTUM.FREEZE_EVERY} momentum days (a held day doesn&apos;t count toward them), and you
+            start with {MOMENTUM_START_FREEZES}. At most {MOMENTUM.FREEZE_MAX} are held ({withPerk("D_SPARE").freezeMax} with
+            Spare flame); an earn beyond that is lost. Freezes are never bought.
+          </li>
+          <li>
+            A past day with no momentum, while a run is alive and a freeze is banked, is held: one freeze bridges it, and the
+            day itself doesn&apos;t count. Recording yesterday before today ends gives that freeze back.
+          </li>
+          <li>A run of {RUN_MILESTONES.join(", ")} days is a Seal, once ever each.</li>
+          <li>
+            From {hh(MOMENTUM_NUDGE.BELL_FROM_HOUR)} the bell says when a run of {MOMENTUM_NUDGE.MIN_RUN} days or more has nothing
+            yet today. At {hh(MOMENTUM_NUDGE.PUSH_FROM_HOUR)} one push may follow, at most once a day and never after{" "}
+            {hh(MOMENTUM_NUDGE.PUSH_UNTIL_HOUR)}; it can be turned off in Settings › Notifications.
+          </li>
+        </ul>
+      </Card>
+
+      <Card title="Today's three and the chest" sub="Three named actions, picked once a day from your own due list" wide>
+        <ul className="rules-bullets">
+          <li>
+            Plan: today&apos;s roadmap practice, step or checkpoint, or else this week&apos;s card to add, reviews (at most{" "}
+            {QUEST.REVIEWS_MAX}) or one idea.
+          </li>
+          <li>
+            Body: an exercise task due today, else Move {QUEST.MOVE_MINUTES} min ({QUEST.MOVE_EASY_MINUTES} once the
+            week&apos;s {BODY_EFFORT_MINUTES} effort minutes are met).
+          </li>
+          <li>
+            Task: your biggest due task by its price, × {QUEST.COMPULSORY_MULT} for a must and × {QUEST.DEADLINE_MULT} when its
+            deadline is today or past; with none, any {QUEST.ANY_TASKS} tasks. It can be swapped {D.taskSwaps}× a day
+            ({withPerk("D_SWAP").taskSwaps}× with Second look); the plan quest {withPerk("P_SCOUT").planSwaps}× with Scout.
+          </li>
+          <li>
+            One of them keeps the run; all three open the day&apos;s chest. Missing the chest costs nothing, and a chest left
+            unopened opens itself at the day&apos;s end. There is no XP total and no bar: the knee shows only on receipts.
+          </li>
+        </ul>
+        <div className="rules-scroll">
+          <table className="rules-table">
+            <tbody>
+              <tr>
+                <th scope="col" className="t-eyebrow">
+                  Chest
+                </th>
+                <th scope="col" className="t-eyebrow">
+                  Chance
+                </th>
+                <th scope="col" className="t-eyebrow">
+                  Holds
+                </th>
+              </tr>
+              <tr>
+                <td className="b">Common</td>
+                <td className="num">{pctFig(odds.common)}</td>
+                <td className="ink-1">+{C.COMMON.xp} XP</td>
+              </tr>
+              <tr>
+                <td className="b">Uncommon</td>
+                <td className="num">{pctFig(odds.uncommon)}</td>
+                <td className="ink-1">+{C.UNCOMMON.mp} MP</td>
+              </tr>
+              <tr>
+                <td className="b">Rare · freeze</td>
+                <td className="num">{pctFig(odds.freeze)}</td>
+                <td className="ink-1">a freeze; with a full bank, +{C.DUPLICATE_MP} MP</td>
+              </tr>
+              <tr>
+                <td className="b">Rare · hoard</td>
+                <td className="num">{pctFig(odds.hoard)}</td>
+                <td className="ink-1">
+                  +{C.HOARD.xp} XP and +{C.HOARD.mp} MP
+                </td>
+              </tr>
+              <tr>
+                <td className="b">Rare · cosmetic</td>
+                <td className="num">{pctFig(odds.cosmetic)}</td>
+                <td className="ink-1">
+                  one of {flames} flame skins and {trims} chest trims you don&apos;t own; with all owned, +{C.DUPLICATE_MP} MP
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <ul className="rules-bullets">
+          <li>
+            A rare at least every {C.PITY_AFTER} chests. Fair winds: on a day the plan quest is done, a rare is{" "}
+            {pctFig(winds.rare)} instead of {pctFig(odds.rare)} (the points come from Common).
+          </li>
+          <li>
+            At most {MOMENTUM.CHEST_POOL_CAP} MP a life week come from chests; beyond that each MP pays{" "}
+            {MOMENTUM.CHEST_MP_OVERFLOW_XP} XP, so a chest is never empty. A chest&apos;s XP goes to the task quest&apos;s track
+            and counts for no skill branch: luck buys no skill.
+          </li>
+          <li>
+            Every chance here is a sealed roll: a keyed hash of your account, the day and the item, stored on the row it paid.
+            Opening again, undoing and ticking again, or another device gives the same result.
+          </li>
+        </ul>
+      </Card>
+
+      <Card title="Crits and chains" sub="The one published surprise, and a nudge to start the next thing" wide>
+        <Formula>raw = B × E × T × C × D × V × K × S × M × X</Formula>
+        <ul className="rules-bullets">
+          <li>
+            S: your perks that apply to the tick: Steady hand × {withPerk("D_STEADY").taskFullMult}, Deep work ×{" "}
+            {withPerk("D_DEEP").deepMult} on Demanding and Severe, Frog eater × {withPerk("D_FROG").frogMult} on the task quest,
+            Practice makes × {withPerk("P_PRACTICE").practiceMult} on a roadmap task.
+          </li>
+          <li>
+            M, the chain: a full tick links to the one before when it was started within {MOMENTUM.CHAIN_WINDOW_MIN} minutes of
+            finishing it ({withPerk("D_LINK").chainWindowMin} with Quick link) and not sooner than{" "}
+            {pctOf(MOMENTUM.CHAIN_MIN_SHARE)} of its own estimate, so ticking a batch at once never links. Each link adds {MOMENTUM.CHAIN_STEP} to M, for
+            up to {MOMENTUM.CHAIN_CAP} links (× {f2(chainMult(MOMENTUM.CHAIN_CAP))}; {longChain} links, ×{" "}
+            {f2(chainMult(longChain, longChain))}, with Long chain).
+          </li>
+          <li>
+            X, the crit: a full, paying tick of your own (a manual tick, Again, the step that finishes it, or yesterday
+            recorded) crits {pctOf(MOMENTUM.CRIT_P)} of the time ({pctOf(withPerk("D_LUCK").critP)} with Lucky strike) and pays
+            × {MOMENTUM.CRIT_MULT} (× {withPerk("D_MASS").critMult} with Critical mass), at most {MOMENTUM.CRIT_DAY_MAX} a day.
+            Never the minimum, #play, a study task, a make-up, an automatic tick or a work tab. The roll is sealed per task per
+            day, so undoing and ticking again gives the same answer.
+          </li>
+          <li>
+            A row&apos;s ≈ includes S and M, never X: a crit is announced when it lands, and its receipt shows the sealed roll.
+            Everything stays inside the daily knee; the most one completion can now be priced at is{" "}
+            <span className="t-mono">{f1(RAW_WORST_CASE_MOMENTUM)}</span>.
+          </li>
+        </ul>
+      </Card>
+
+      <Card title="Walks" sub="Body XP from a logged walk, through one curve a day">
+        <Formula>
+          X(W) = {MOMENTUM.EX_A} · (1 − e^(−W / {MOMENTUM.EX_H})), W = the day&apos;s weighted minutes, at most {MOMENTUM.EX_DAY_W_CAP}
+        </Formula>
+        <ul className="rules-bullets">
+          <li>
+            A walk&apos;s intensity comes from its pace and slope (the ACSM walking equation): Light, under{" "}
+            {MOMENTUM.EX_MET_MODERATE} MET, counts × {MOMENTUM.EX_PAY_WEIGHT.LIGHT} ({withPerk("V_WARM").lightWeight} with Warm-up);
+            Moderate × {MOMENTUM.EX_PAY_WEIGHT.MODERATE}; Vigorous, from {MOMENTUM.EX_MET_VIGOROUS} MET, ×{" "}
+            {MOMENTUM.EX_PAY_WEIGHT.VIGOROUS}. At most {MOMENTUM.EX_SESSION_MINUTES_CAP} minutes a walk.
+          </li>
+          <li>
+            The curve is the day&apos;s and sits inside the daily knee, so two walks pay exactly what one walk of both would.
+            A walk under {EX_SESSION_MIN_MINUTES} minutes, or faster than {MOMENTUM.EX_SPEED_REFUSE_KMH} km/h, is recorded and
+            pays nothing. A walk pays on its own day or up to {EX_PAY_BACK_DAYS} day back; older ones are records only.
+          </li>
+          <li>
+            A walk that counts as an exercise task completes it, and the task pays nothing on top (K: paid by the walk). A
+            personal best pays {MOMENTUM.PR_XP} XP ({withPerk("V_PACER").prXp} with Pacer), once a measure a life week, after{" "}
+            {MOMENTUM.PR_MIN_PRIOR_SESSIONS} paid walks.
+          </li>
+        </ul>
+      </Card>
+
+      <Card title="What the roadmap pays" sub="Outside the daily knee; counts limit it, not the knee">
+        <div className="rules-scroll">
+          <table className="rules-table">
+            <tbody>
+              <tr>
+                <td className="b">Milestone reached</td>
+                <td className="num">+{MOMENTUM.MILESTONE_XP} XP</td>
+                <td className="num">
+                  <span className="cur">
+                    <CurrencyGlyph kind="mp" />
+                    {mpFigure(MOMENTUM.MILESTONE_MP)}
+                    <span className="sr-only"> MP</span>
+                  </span>
+                </td>
+              </tr>
+              <tr>
+                <td className="b">Checkpoint taken</td>
+                <td className="num">+{MOMENTUM.CHECKPOINT_XP} XP</td>
+                <td className="num">
+                  <span className="cur">
+                    <CurrencyGlyph kind="mp" />
+                    {mpFigure(MOMENTUM.CHECKPOINT_MP)}
+                    <span className="sr-only"> MP</span>
+                  </span>
+                </td>
+              </tr>
+              <tr>
+                <td className="b">Plan week kept</td>
+                <td className="num">+{MOMENTUM.PLAN_WEEK_XP} XP</td>
+                <td className="num">
+                  <span className="cur">
+                    <CurrencyGlyph kind="mp" />
+                    {mpFigure(MOMENTUM.PLAN_WEEK_MP)}
+                    <span className="sr-only"> MP</span>
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <ul className="rules-bullets">
+          <li>
+            Milestone and checkpoint MP: at most {MOMENTUM.ROADMAP_MP_WINDOW_MAX} paying in any {MOMENTUM.ROADMAP_MP_WINDOW_DAYS}{" "}
+            days each. A plan week&apos;s MP shares the weekly cap, after the kept tracks.
+          </li>
+          <li>
+            A milestone held when you began never pays. A checkpoint pays for taking it, never for its score. A plan week is
+            kept when every one of its week quests is done ({pctOf(withPerk("P_CAMP").planKeepShare)} with Forward camp).
+          </li>
+        </ul>
+      </Card>
+
+      <Card id="life-tree" title="The Life skill tree" sub="Discipline, Pathfinder and Vitality: points from doing the thing" wide>
+        <Formula>the n-th point of a branch needs S · n(n + 1) / 2 of its XP, counted up to a weekly cap</Formula>
+        <div className="rules-scroll">
+          <table className="rules-table">
+            <tbody>
+              <tr>
+                <th scope="col" className="t-eyebrow">
+                  Branch
+                </th>
+                <th scope="col" className="t-eyebrow">
+                  S
+                </th>
+                <th scope="col" className="t-eyebrow">
+                  Counted a week
+                </th>
+                <th scope="col" className="t-eyebrow">
+                  From
+                </th>
+              </tr>
+              {BRANCHES.map((b) => (
+                <tr key={b}>
+                  <td className="b">{BRANCH_WORD[b]}</td>
+                  <td className="num">{MOMENTUM.LSP_STEP[b]}</td>
+                  <td className="num">{MOMENTUM.LSP_WEEK_XP_CAP[b]}</td>
+                  <td className="ink-1">{BRANCH_SOURCE[b]}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <ul className="rules-bullets">
+          {tiers.map((x) => (
+            <li key={x.t}>
+              {TIER_WORD[x.t]}: {x.cost} {x.cost === 1 ? "point" : "points"} a perk, {x.gate > 0 ? `once ${x.gate} are spent in the branch` : "open from the start"}.
+            </li>
+          ))}
+          <li>
+            Points are never lost. A respec is free once every {MOMENTUM.RESPEC_EVERY_DAYS} days and gives every point back at
+            once. Each perk&apos;s effect is in exact numbers on the Life tab, and the caps above hold whatever you learn.
+          </li>
+        </ul>
+      </Card>
+    </>
+  );
+}
+
+/**
+ * The week quests' pay line (you-check holds both): before momentum's launch, what it always said; from it
+ * (momentum.md §A.8, §G.3), a single week quest still pays nothing, a fully kept plan week pays, and one
+ * plan quest a day sits in Today's three.
+ */
+function WeekQuestPayLine({ live }: { live: boolean }) {
+  if (!live) return <li>Week quests pay nothing, add nothing to Today&apos;s counts or the bell, never read red, and never link to Review.</li>;
+  return (
+    <li>
+      A single week quest pays nothing. A fully kept plan week pays {MOMENTUM.PLAN_WEEK_XP} XP and{" "}
+      {mpFigure(MOMENTUM.PLAN_WEEK_MP)} MP (What the roadmap pays, above). One plan quest a day is on Today, in Today&apos;s
+      three; week quests add nothing to Today&apos;s counts or the bell, never read red, and never link to Review.
+    </li>
+  );
+}
+
 // ─── Roadmap (roadmap.md F16 seam 12; revision 4: roadmap-rev4.md F-R4-8 to F-R4-13) ───
 
 /** What each week quest kind asks and what checks it (F14, F-R4-14): the row's first words, never "Quest n of N". */
@@ -660,7 +1013,7 @@ const bandMinutes = (stage: "RETAINED" | "FLUENT") => {
  * bare "quest", and that the Proficiency and Aim rank cards keep their words
  * apart from mastery and pay.
  */
-function RoadmapRules({ edge, judgeDay }: { edge: string; judgeDay: string }) {
+function RoadmapRules({ edge, judgeDay, momentumOn = false }: { edge: string; judgeDay: string; momentumOn?: boolean }) {
   const mid = GOAL_RULES.MID;
   const levels = Array.from({ length: TOP_LEVEL }, (_, i) => i + 1);
   // A life track's plan ranks its stages by place (F-R4-12): the k-th kept stage gives the Aim rank at place k.
@@ -1033,7 +1386,7 @@ function RoadmapRules({ edge, judgeDay }: { edge: string; judgeDay: string }) {
             results are written from the {judgeDay} {edge} after its Sunday ({WEEK_QUEST_FINAL_LAG_DAYS} days on), once late
             ticks and make-ups are in.
           </li>
-          <li>Week quests pay nothing, add nothing to Today&apos;s counts or the bell, never read red, and never link to Review.</li>
+          <WeekQuestPayLine live={momentumOn} />
         </ul>
       </Card>
 
@@ -1350,16 +1703,28 @@ export default async function RulesPage() {
   const dutyLaunch = dutyLaunchDay();
   const dutyLive = dutyPhaseOf(today, dutyLaunch) === "live";
   const stakesAhead = preLaunchNotice(today, dutyLaunch);
+  // Momentum (momentum.md): its cards, SESSION in K, S·M·X in the price, only once it is live; before, nothing here changes.
+  const momentumLaunch = momentumLaunchDay();
+  const momentumOn = momentumLive(today, momentumLaunch);
   const settledLine = dutyLive ? dutySettledLine(await loadDutyCursor(getCurrentUserId()), today) : null;
 
   return (
     <div className="page today-rules cq-main">
       <div className="rules-intro">
-        <p className="t-body">
-          How a day is judged, and how a task is sized once and priced every time. Every number here is read from the code
-          that pays, and every example is priced by it as the page loads. Nothing is random: what a row says is what a tick
-          pays.
-        </p>
+        {momentumOn ? (
+          <p className="t-body">
+            How a day is judged, and how a task is sized once and priced every time. Every number here is read from the code
+            that pays, and every example is priced by it as the page loads. Two things are chance, both published below and
+            sealed to the row they pay: a crit and the daily chest. A row&apos;s ≈ never includes a crit; everything else it
+            says is what a tick pays.
+          </p>
+        ) : (
+          <p className="t-body">
+            How a day is judged, and how a task is sized once and priced every time. Every number here is read from the code
+            that pays, and every example is priced by it as the page loads. Nothing is random: what a row says is what a tick
+            pays.
+          </p>
+        )}
         <p className="t-mono ink-2">
           formula {FORMULA_VERSION} · sizing prompt v{SIZING_PROMPT_VERSION}
         </p>
@@ -1424,6 +1789,12 @@ export default async function RulesPage() {
             at is <span className="t-mono">{f1(RAW_WORST_CASE)}</span>: Severe {BAND_BASE.SEVERE} × effort {f2(EFFORT_CAP)} ×
             consistency {f2(CONSISTENCY_CAP)}, whatever is typed or claimed.
           </p>
+          {momentumOn && (
+            <p>
+              With momentum a price also takes S, M and X (Crits and chains, below), and the most one completion can be priced at
+              is <span className="t-mono">{f1(RAW_WORST_CASE_MOMENTUM)}</span>.
+            </p>
+          )}
         </Card>
 
         <Card title="B · Band" sub="Demand per minute and the barrier to start — never length">
@@ -1519,9 +1890,9 @@ export default async function RulesPage() {
           <div className="rules-scroll">
             <table className="rules-table">
               <tbody>
-                {(Object.keys(PAY_MODE_FACTOR) as PayMode[]).map((m) => (
+                {(Object.keys(momentumOn ? LIFE_PAY_MODE_FACTOR : PAY_MODE_FACTOR) as LifePayMode[]).map((m) => (
                   <tr key={m}>
-                    <td className="num w">{f2(PAY_MODE_FACTOR[m])}</td>
+                    <td className="num w">{f2(LIFE_PAY_MODE_FACTOR[m])}</td>
                     <td className="ink-1">{MODE_WORDS[m]}</td>
                   </tr>
                 ))}
@@ -1646,10 +2017,19 @@ export default async function RulesPage() {
         )}
       </div>
 
+      {momentumOn && momentumLaunch && (
+        <section aria-labelledby="rules-momentum" style={{ marginTop: 28 }}>
+          <SectionHeader id="rules-momentum" title="Momentum" aside="chance, stakes and the Life tree · read from the code that pays" />
+          <div className="rules-grid">
+            <MomentumRules launchDay={momentumLaunch} />
+          </div>
+        </section>
+      )}
+
       <section aria-labelledby="rules-roadmap" style={{ marginTop: 28 }}>
         <SectionHeader id="rules-roadmap" title="Roadmap" aside="policy, not facts · read from the code that plans" />
         <div className="rules-grid">
-          <RoadmapRules edge={edge} judgeDay={WEEKDAY_AFTER_SUNDAY[WEEK_QUEST_FINAL_LAG_DAYS % WEEKDAY_AFTER_SUNDAY.length]} />
+          <RoadmapRules edge={edge} judgeDay={WEEKDAY_AFTER_SUNDAY[WEEK_QUEST_FINAL_LAG_DAYS % WEEKDAY_AFTER_SUNDAY.length]} momentumOn={momentumOn} />
         </div>
       </section>
     </div>
