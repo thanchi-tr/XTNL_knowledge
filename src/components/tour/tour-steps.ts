@@ -3,11 +3,17 @@
  * imports it): no DOM, no React.
  *
  *   tourSteps({ keyboard, keyOf?, dutyLive? })   the seven steps, in order
- *   TODAY_COPY / TODAY_DUTY_COPY      the Today step before and once Duty is live (M2)
+ *   TODAY_COPY / TODAY_DUTY_COPY      the Tasks step before and once Duty is live (M2)
  *   copyText(body)                    a step's body as plain text (the check's 160-char budget)
  *   sayKey(key)                       'g t' → ['g', 't'] said "g then t"; 'Shift+?' → '?'
  *   shouldAutoStart(input)            the first-run guard (seen · path · dialog · automation · ?notour)
  *   readSeen / writeSeen              TOUR_SEEN_KEY in a Storage, every access in try/catch
+ *
+ * The stops follow the shell (nav.ts): the welcome names the three sections,
+ * Capture shows the '+' that fits the section, then Ideas, Tasks and Body
+ * each spotlight their tab, the profile step the crest that opens the
+ * profile menu, and the last step the keys (or the phone's icon shortcuts)
+ * with the way back to the tour from Settings. Seven steps, still.
  *
  * Every key the copy names is read from SHORTCUTS (src/lib/shortcuts.ts):
  * the copy holds shortcut ids, never key text. The phone step names no menu
@@ -20,23 +26,25 @@
  * from 1280 are all in the DOM, two of them display:none). A page-specific
  * target ([data-tour="today-lanes"] on /today, [data-tour="you-aim"] then
  * [data-tour="you-hero"] on /you) wins where it exists; elsewhere the step
- * falls back to the shell's own link, which is on every page. A step with no
- * visible target is centred.
+ * falls back to the shell's own link or button, which is on every page. A
+ * step with no visible target is centred.
  *
- * The You step names the aim (roadmap-rev4.md F-R4-6, question 3 approved):
- * copy only, still seven steps, and TOUR_SEEN_KEY is honoured, so nobody who
- * has seen the tour gets it again. Its first target is the Aim card
- * ([data-tour="you-aim"] on its ASK, LATER, active and legacy roots); with
- * no card on screen (suggestions off, or hidden for 4 weeks by the line's own
- * × or Not now on Today's line) the hero takes the spotlight. Like every
- * invitation to set an aim, YOU_COPY never names Gemini and never says earn,
- * mastery, ⬡ or a bare "quest".
+ * The profile step names the aim (roadmap-rev4.md F-R4-6, question 3
+ * approved) and the menu behind the crest: copy only, and TOUR_SEEN_KEY is
+ * honoured, so nobody who has seen the tour gets it again. Its first target
+ * is the Aim card ([data-tour="you-aim"] on its ASK, LATER, active and
+ * legacy roots); with no card on screen (suggestions off, or hidden for 4
+ * weeks by the line's own × or Not now on Today's line) the hero takes the
+ * spotlight, and off /you the profile button does (the rail's crest, the
+ * sidebar's card, the top bar's crest). Like every invitation to set an aim,
+ * YOU_COPY never names Gemini and never says earn, mastery, ⬡ or a bare
+ * "quest".
  */
-import { SECTIONS } from "@/components/shell/nav";
+import { SECTIONS, type SectionId } from "@/components/shell/nav";
 import { keyParts, shortcutOf, type ShortcutId } from "@/lib/shortcuts";
 import { TOUR_SEEN_KEY } from "@/lib/tour-contract";
 
-export type TourStepId = "welcome" | "capture" | "today" | "study" | "you" | "shortcuts" | "done";
+export type TourStepId = "welcome" | "capture" | "ideas" | "tasks" | "body" | "you" | "shortcuts";
 
 /** A piece of a step's body: plain text, or a key read out of SHORTCUTS. */
 export type Seg = string | { keys: string[]; sep: "+" | " then " };
@@ -56,19 +64,30 @@ export interface StepContext {
   keyOf?: (id: ShortcutId) => string;
   /**
    * Duty is live (duty-economy isDutyLaunched(today), from the caller): the
-   * Today step also says what a missed must costs and how it comes back.
+   * Tasks step also says what a missed must costs and how it comes back.
    * Absent or false: the pre-Duty copy, exactly.
    */
   dutyLive?: boolean;
 }
 
-/** The Today step before Duty is live. */
+/** The welcome: the three sections and the one character. */
+export const WELCOME_COPY = "Ideas, Tasks and Body: three sections, and one character that grows from all of them. Here is the short version.";
+/** The '+' fits the section it is pressed in (nav.ts captureModeOf); the line's chips show what it read. */
+export const CAPTURE_COPY = "The + fits the section: an idea, a task or a weigh-in. Type ‘pay rent fri 30m !’ and chips show what it read. Plain rules, no AI guessing.";
+/** Ideas: reviews, and the sub-pages beside them. */
+export const IDEAS_COPY = "Reviews bring an idea back just before you would forget it. Library, Roadmap and your Fields sit beside them.";
+/** The Tasks step before Duty is live. */
 export const TODAY_COPY = "Must, Planned and Habits. Ticking a task pays life XP, and its receipt shows how every number was worked out.";
-/** The Today step once Duty is live (m2-refit F15): the same lanes, plus the stake and the way back, within the 160-character budget. */
+/** The Tasks step once Duty is live (m2-refit F15): the same lanes, plus the stake and the way back, within the 160-character budget. */
 export const TODAY_DUTY_COPY = "Must, Planned and Habits. A tick pays life XP; its receipt shows the sums. A must you miss is owed; make it up within two days and its streak comes back.";
+/** Body: the weigh-in line and the Exercise log. A record, as the Body pages say. */
+export const BODY_COPY = "Log your weight with a line like ‘weight 72.4’, and your walks on Exercise. A record, never a reward.";
 
-/** The You step (F-R4-6): what the character page is, and the aim it can be given. 145 characters, within the 160 budget. */
-export const YOU_COPY = "Your character grows from what you do. Give it an aim and the app plans milestones toward it, then measures them from your own reviews and ticks.";
+/** The profile step (F-R4-6 and the profile menu): what the crest opens, and the aim the character can be given. Within the 160 budget. */
+export const YOU_COPY = "Your crest opens your character, skills and Settings. Give the character an aim and the app plans milestones toward it, measured from your reviews and ticks.";
+
+/** The last step's way back to the tour. */
+export const REPLAY_COPY = "Replay this tour from Settings.";
 
 /** Wait this long on /today after hydration before the first-run tour starts by itself. */
 export const SETTLE_MS = 800;
@@ -81,12 +100,14 @@ export const TOUR_OFF_SESSION_KEY = "xtnl:tour:off";
 /** The shell's capture buttons (Chrome.tsx): the tab bar's +, the rail's and the sidebar's Capture. */
 export const CAPTURE_TARGETS = [".tabbar .tab-plus", ".rail .r-plus", ".sidebar .sb-capture"] as const;
 
-const hrefOf = (id: "today" | "study" | "train" | "you") => SECTIONS.find((s) => s.id === id)!.href;
+/** The profile buttons (Chrome.tsx, TopBar.tsx): the rail's crest, the sidebar's card, and the top bar's crest (< 600) last. */
+export const PROFILE_TARGETS = [".rail .r-you", ".sidebar .sb-char", '[data-tour="you-crest"]'] as const;
+
+const hrefOf = (id: SectionId) => SECTIONS.find((s) => s.id === id)!.href;
 
 /** A section's link in each chrome, in the order they could be visible. */
-function navTargets(id: "today" | "study" | "you"): string[] {
+function navTargets(id: SectionId): string[] {
   const href = hrefOf(id);
-  if (id === "you") return [`.tabbar a[href="${href}"]`, `.rail a[href="${href}"]`, ".sidebar .sb-char"];
   return [`.tabbar a[href="${href}"]`, `.rail a[href="${href}"]`, `.sidebar .sb-sec a[href="${href}"]`];
 }
 
@@ -108,49 +129,49 @@ export const PHONE_SHORTCUTS_COPY = "On a phone with the app installed, long-pre
 export function tourSteps({ keyboard, keyOf = (id) => shortcutOf(id).keys[0], dutyLive = false }: StepContext): TourStep[] {
   const k = (id: ShortcutId): Seg => sayKey(keyOf(id));
   const shortcuts: Seg[] = keyboard
-    ? [k("capture-anywhere"), " captures from anywhere; ", k("capture"), " does too when you are not typing. ", k("go-today"), " opens Today, ", k("go-study"), " Study. Press ", k("help"), " for the full list."]
-    : [PHONE_SHORTCUTS_COPY];
+    ? [k("capture-anywhere"), " captures anywhere; ", k("capture"), " does too when you are not typing. ", k("go-study"), " opens Ideas, ", k("go-today"), " Tasks. ", k("help"), ` lists every key. ${REPLAY_COPY}`]
+    : [`${PHONE_SHORTCUTS_COPY} ${REPLAY_COPY}`];
   return [
     {
       id: "welcome",
       title: "Welcome",
-      body: ["Your day, what you are learning, and one character that grows from both. Here is the short version."],
+      body: [WELCOME_COPY],
       targets: [],
     },
     {
       id: "capture",
       title: "Capture",
-      body: ["Type a line like ‘pay rent fri 30m !’. Chips show what it read: the day, how long, and ! as a Must. Plain rules, no AI guessing."],
+      body: [CAPTURE_COPY],
       targets: [...CAPTURE_TARGETS],
     },
     {
-      id: "today",
-      title: "Today",
-      body: [dutyLive ? TODAY_DUTY_COPY : TODAY_COPY],
-      targets: ['[data-tour="today-lanes"]', ...navTargets("today")],
+      id: "ideas",
+      title: "Ideas",
+      body: [IDEAS_COPY],
+      targets: navTargets("ideas"),
     },
     {
-      id: "study",
-      title: "Study",
-      body: ["Reviews bring an idea back just before you would forget it. The daily quest is a short review that closes one of Today’s rings."],
-      targets: navTargets("study"),
+      id: "tasks",
+      title: "Tasks",
+      body: [dutyLive ? TODAY_DUTY_COPY : TODAY_COPY],
+      targets: ['[data-tour="today-lanes"]', ...navTargets("tasks")],
+    },
+    {
+      id: "body",
+      title: "Body",
+      body: [BODY_COPY],
+      targets: navTargets("body"),
     },
     {
       id: "you",
       title: "You",
       body: [YOU_COPY],
-      targets: ['[data-tour="you-aim"]', '[data-tour="you-hero"]', ...navTargets("you"), '[data-tour="you-crest"]'],
+      targets: ['[data-tour="you-aim"]', '[data-tour="you-hero"]', ...PROFILE_TARGETS],
     },
     {
       id: "shortcuts",
       title: keyboard ? "Shortcuts" : "From the home screen",
       body: shortcuts,
-      targets: [],
-    },
-    {
-      id: "done",
-      title: "That is all",
-      body: ["Replay this tour any time from Settings."],
       targets: [],
     },
   ];
@@ -187,7 +208,7 @@ export function hasNoTour(search: string): boolean {
  */
 export function shouldAutoStart(i: AutoStartInput): boolean {
   if (i.seen || i.automated || i.dialogOpen || i.optedOut) return false;
-  if (i.pathname !== hrefOf("today")) return false;
+  if (i.pathname !== hrefOf("tasks")) return false;
   if (hasNoTour(i.search) || param(i.search, "capture")) return false;
   return true;
 }

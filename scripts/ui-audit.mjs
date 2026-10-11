@@ -279,13 +279,18 @@ const MOTION_ROUTES = (() => {
  * with --budgets hard.
  */
 const WORD_BUDGETS = [
-  // row 11: every Today aim line, every state (≤ 8 app words).
-  { id: "today-aim-line", paths: ["/dev/style/today", "/today"], each: ".rm-aim-line", max: 8 },
+  // row 11: every aim line, every state (≤ 8 app words): the fixtures, and live in the Ideas landing's lead
+  // (/review; the three sections moved it off Today, which still holds the row so a regression shows).
+  { id: "today-aim-line", paths: ["/dev/style/today", "/today", "/review"], each: ".rm-aim-line", max: 8 },
+  // The three sections: Today's one "due elsewhere" strip (due-elsewhere.ts), glyph-led, ≤ 12 app words.
+  { id: "today-due-elsewhere", paths: ["/today"], each: ".today-away", max: 12 },
   // row 9: the Aim card in every state (≤ 14), the card itself (not its SectionHeader).
   { id: "aim-card", paths: ["/dev/style/art/you"], each: "[data-aim-card]", within: "section.card", max: 14 },
   { id: "aim-card", paths: ["/you"], each: "section.card.rm-ac, section.card.rm-ac-call, section.card.rm-ac-empty", max: 14 },
   // row 10: Today's week quests card (30 active / 34 behind / 30 body: the per-state split waits on R1's fixture names).
   { id: "today-week-quests", paths: ["/dev/style/today", "/today"], each: ".rm-quests-slot:not(:has(.rm-aim-slot))", max: 34 },
+  // …and live in the Ideas landing's lead (/review), where it starts as its one summary line.
+  { id: "today-week-quests", paths: ["/review"], each: ".rv-lead-quests", max: 34 },
   ...roadmapWordBudgets(),
 ];
 /** A route's ?state= (the roadmap fixture page's state), or null. */
@@ -656,7 +661,7 @@ const AUDIT = `(() => {
     if (!vis(el) || el.closest('[data-aim-card]')) return;
     out.heights['aim' + (nth++ ? ':' + nth : '')] = Math.round(el.getBoundingClientRect().height);
   });
-  document.querySelectorAll('.rm-quests-slot').forEach((el, i) => {
+  document.querySelectorAll('.rm-quests-slot, .rv-lead-quests').forEach((el, i) => {
     if (vis(el)) out.heights['today-quests' + (i ? ':' + (i + 1) : '')] = Math.round(el.getBoundingClientRect().height);
   });
   // Gated (heightGateProblems): the ASK card (the card, section.rm-ac-call) and every visible Today aim line.

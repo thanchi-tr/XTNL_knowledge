@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import { after } from "next/server";
 import { loadFieldTree } from "@/lib/queries";
 import { isDue, daysUntilDue } from "@/lib/due";
@@ -17,11 +18,16 @@ import { DEBUFF_META } from "@/lib/debuff-meta";
 import { MASTERY_LEVEL } from "@/lib/xp";
 import { questTargetOf } from "@/lib/review-facts";
 // Revision 5, lane 9 (contracts ruling 67): the Gemini mark on a Domain Gemini named
-import { geminiNamedOf } from "@/lib/roadmap-types";
+import { AIM_PROMPT_COOKIE, ROADMAP_GOALS_LIVE, geminiNamedOf } from "@/lib/roadmap-types";
+import { weekQuestsShownOnToday } from "@/lib/today-board";
+import { freezeWeekQuests, loadWeekQuests } from "@/lib/roadmap-quests-server";
+import { loadAimStep } from "@/lib/roadmap-server";
+import { AIM_STEP_COOKIE, aimPromptOf, todayAimLineOf } from "@/lib/roadmap-invite";
 import { LoadoutStrip } from "@/components/skills/LoadoutStrip";
 import { WorkspaceView, type WorkspaceField } from "@/components/workspace/WorkspaceView";
 import type { RecentIdea, ReviewEffects } from "@/components/workspace/ReviewHub";
 import { loadLastSeen, loadReviewDay, loadStudyFocusRows, studyFocusFromRows } from "./review-data";
+import { IdeasLead } from "./IdeasLead";
 
 // Due-ness changes by the second (dueDate <= now) — never let this be
 // statically cached/prerendered.
@@ -36,23 +42,30 @@ function daysLabel(days: number): string {
 }
 
 /**
- * Study › Review: the hub (quest, Start, field chips, loadout, encounters,
- * Recent) and, on the same route, the focus runner and the recap
- * (WorkspaceView; ?view=run in the URL).
+ * Ideas › Review, the Ideas landing (the three sections: Ideas, Tasks, Body):
+ * the hub (quest, Start, field chips, loadout, encounters, Recent) and, on
+ * the same route, the focus runner and the recap (WorkspaceView; ?view=run
+ * in the URL). Its lead, above the workspace, is what moved here from Today
+ * (IdeasLead): this week's roadmap quests or the aim line (or, with no aim,
+ * one link to the roadmap), and the encounters ready.
  *
  * One wave of reads, every one cached and shared with the pages that need
  * the same rows: the Field tree, the Boss roster, today's ledger counts (the
  * quest and whether the day is kept), progression (the combo's ceiling, the
- * loadout strip and what is in effect on a review), the daily streak and
- * each Idea's last review. The answer side of an Idea never leaves this
- * file: the client gets questions.
+ * loadout strip and what is in effect on a review), the daily streak, each
+ * Idea's last review, and the lead's: this life week's quests (roadmap F17:
+ * one cached indexed row once the week is frozen), the aim's step (R4's
+ * loadAimStep, at most 4 indexed reads, cached for the life day) and the
+ * request's cookies (the aim line's "Not now" snoozes). A failure in the
+ * lead's reads reads as no card, never as a failed hub. The answer side of an
+ * Idea never leaves this file: the client gets questions.
  */
 export default async function ReviewPage() {
   const now = new Date();
   const userId = getCurrentUserId();
   const today = todayKey(now);
 
-  const [allFields, bosses, day, progression, streak, lastSeen, focusRows] = await Promise.all([
+  const [allFields, bosses, day, progression, streak, lastSeen, focusRows, quests, aimStep, jar] = await Promise.all([
     loadFieldTree(),
     loadBossStates(userId),
     loadReviewDay(userId, today),
@@ -60,6 +73,9 @@ export default async function ReviewPage() {
     getDailyStreak(userId),
     loadLastSeen(userId),
     loadStudyFocusRows(userId),
+    loadWeekQuests(userId, now).catch(() => null),
+    loadAimStep(userId, now).catch(() => null),
+    cookies(),
   ]);
 
   // Day-granular, not instant — see `src/lib/due.ts`. A card due today is
@@ -105,6 +121,36 @@ export default async function ReviewPage() {
   // the 17 that were due this morning"), so cards falling due later cannot
   // move it. After the response, once per life day; nothing here waits on it.
   after(() => recordDayOpen(userId, totalDue, now));
+
+  // Roadmap F14: this week's quest set, frozen once. The life cron freezes it just after Monday 04:00; a render that
+  // finds none (a failed cron) freezes it after the response, as Today's and the roadmap page's do. freezeWeekQuests
+  // writes only where life writes are on and never throws; a writes-off server shows the live set and schedules nothing.
+  if (quests && !quests.frozen && !quests.view.writesOff) {
+    after(() => freezeWeekQuests(userId, now, "RENDER"));
+  }
+
+  // The lead (moved from Today): the week quests card for an OPEN week with a quest, else the one quiet aim line
+  // (roadmap-invite todayAimLineOf over the step, the prompt from aimPromptOf: the Settings switch and the "Not now"
+  // cookies; the page never branches on the prompt), else, with no goal open at all, one link to the roadmap.
+  const aimCookie = jar.get(AIM_PROMPT_COOKIE)?.value;
+  const aimLine = todayAimLineOf({
+    step: aimStep,
+    prompt: aimPromptOf(aimCookie, aimStep?.aimSuggestions ?? null, today),
+    cookie: aimCookie,
+    stepCookie: jar.get(AIM_STEP_COOKIE)?.value,
+    today,
+    goalsLive: ROADMAP_GOALS_LIVE,
+  });
+  const weekQuests = quests && weekQuestsShownOnToday(quests.view) ? quests.view : null;
+  const noAim = aimStep != null && aimStep.open == null && !((aimStep.openCount ?? 0) > 0);
+  const lead = (
+    <IdeasLead
+      quests={weekQuests}
+      aimLine={weekQuests ? null : aimLine}
+      noAim={noAim}
+      bossesReady={bosses.filter((b) => b.availability.status === "ready").map((b) => b.archetype.name)}
+    />
+  );
 
   // The soonest thing that is *not* due yet, so an empty queue can say when to come back.
   const allIdeas = allFields.flatMap((f) => f.domains.flatMap((d) => d.ideas.map((i) => ({ idea: i, domainName: d.name, domainGeminiNamed: geminiNamedOf(d) }))));
@@ -181,6 +227,7 @@ export default async function ReviewPage() {
       effects={effects}
       recent={recent}
       focus={focus}
+      lead={lead}
     />
   );
 }

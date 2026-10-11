@@ -430,6 +430,16 @@ export function keptAtOf(data: Pick<BoardData, "paid" | "ledger">): string | nul
   return first;
 }
 
+/**
+ * The streak's caption under the numeral (Character's streak card): "Kept today, 08:05." in bold, from keptAtOf,
+ * with the plain "Kept today." as its fallback, then " Safe until 04:00."; else the line that says what keeps it.
+ * Duty's own sentence (dayLedgerDutyOf's caption) replaces it when there is one.
+ */
+export function streakCaptionOf(p: { kept: boolean; keptAt: string | null; count: number }): { lead: string | null; rest: string } {
+  if (p.kept) return { lead: p.keptAt ? `Kept today, ${hhmmOf(Date.parse(p.keptAt))}.` : "Kept today.", rest: " Safe until 04:00." };
+  return { lead: null, rest: p.count > 0 ? "Not kept yet. Any tick or review keeps it." : "Any tick or review starts a streak." };
+}
+
 // ── Asks: what waits on you that the board does not already show ──────────
 
 /** The feed's notice, as Today reads it (lib/notifications.ts, Notice). */
@@ -466,13 +476,14 @@ export const WEEK_REVIEW_HREF = "/today/week?view=run";
 export const ASKS_VISIBLE = 2;
 
 /**
- * Where an Ask shows on the board: a badge on the block it concerns, never a card of its own. Recording yesterday
- * and the weekly review keep the days counting, so they sit on the streak; cards past grace, the ideas owed and a
- * penalty are about reviewing, so they sit on Next up.
+ * Which section an Ask belongs to (the three sections: Ideas, Tasks, Body). Recording yesterday and the weekly
+ * review are the Tasks section's own, so Today shows them as a badge on its plan card (never a card of their own);
+ * cards past grace, the ideas owed and a penalty are about reviewing, so they belong to Ideas: Today never shows
+ * them (the bell still carries every one, and Today's 'due elsewhere' strip counts the due cards).
  */
-export type AskHost = "streak" | "next";
+export type AskHost = "tasks" | "ideas";
 export function askHostOf(ask: Pick<TodayAsk, "id">): AskHost {
-  return ask.id === "yesterday" || ask.id === WEEK_REVIEW_NOTICE ? "streak" : "next";
+  return ask.id === "yesterday" || ask.id === WEEK_REVIEW_NOTICE ? "tasks" : "ideas";
 }
 
 /** The Asks on screen: two at most, then 'n more' until expanded. */

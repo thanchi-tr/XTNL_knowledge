@@ -75,6 +75,11 @@ interface Props {
   recent: RecentIdea[];
   /** The accepted roadmap's open layer and its one topic now (ruling N14); null without one. */
   focus?: StudyFocus | null;
+  /**
+   * The three sections: what moved to the Ideas landing from Today (this week's roadmap quests or the aim line, the
+   * ready encounters' line), rendered by the server page and drawn first in the hub's first column. Hub only.
+   */
+  lead?: ReactNode;
 }
 
 type Settled = Exclude<BossResolution, { outcome: "rejected" }>;
@@ -121,7 +126,7 @@ function newRun(fields: WorkspaceField[], scope: string, today: DayKey, quest: {
 }
 
 export function WorkspaceView(props: Props) {
-  const { fields, totalDue, bosses: allBosses, upcoming, scheduledCount, quest, comboCap, today, dayKept, dayStreak, loadoutStrip, effects, recent, focus = null } = props;
+  const { fields, totalDue, bosses: allBosses, upcoming, scheduledCount, quest, comboCap, today, dayKept, dayStreak, loadoutStrip, effects, recent, focus = null, lead = null } = props;
   // Ruling N14: the roadmap's Field leads (its chip selected while it has cards due, its encounter first).
   const focusField = focus?.fieldName && fields.some((f) => f.name === focus.fieldName && f.cards.length > 0) ? focus.fieldName : null;
   const bosses = focus?.fieldId ? [...allBosses].sort((a, b) => Number(b.fieldId === focus.fieldId) - Number(a.fieldId === focus.fieldId)) : allBosses;
@@ -476,6 +481,7 @@ export function WorkspaceView(props: Props) {
     <div className="page cq-main">
       <div className="rv-hub">
         <div className="rv-col">
+          {lead}
           {focus && <RoadmapFocus focus={focus} onReview={reviewTopic} />}
           <SessionSummary
             quest={quest}

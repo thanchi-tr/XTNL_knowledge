@@ -211,4 +211,8 @@
   /* ---------- empty states ---------- */
   .empty-c { padding: 20px 16px; text-align: center; }
   .empty-c b { display: block; font-weight: 600; margin-bottom: 4px; }
+
+  /* ---------- the one link to the aim and its roadmap (Ideas › Roadmap) ---------- */
+  .you-aim-link { overflow: hidden; }
+  .you-aim-link .collapsed svg { flex: none; }
 }

@@ -66,14 +66,14 @@ export interface Shortcut {
 }
 
 /** The help sheet's groups, in the order it lists them. */
-export const SHORTCUT_GROUPS = ["Capture", "Today", "Go to", "Study", "Help"] as const;
+export const SHORTCUT_GROUPS = ["Capture", "Tasks", "Go to", "Ideas", "Help"] as const;
 export type ShortcutGroup = (typeof SHORTCUT_GROUPS)[number];
 
 /** Two keys of a 'g' sequence must come within this long of each other. */
 export const SEQUENCE_MS = 1500;
 
 export const SHORTCUTS: readonly Shortcut[] = [
-  { id: "capture", keys: ["c"], label: "Capture a task", scope: "global", group: "Capture" },
+  { id: "capture", keys: ["c"], label: "Capture an idea, a task or a weigh-in (by section)", scope: "global", group: "Capture" },
   { id: "capture-anywhere", keys: ["Alt+N"], label: "Capture from anywhere, even while typing", scope: "anywhere", group: "Capture" },
   { id: "new-idea", keys: ["i"], label: "New idea (full form)", scope: "global", href: "/add", group: "Capture" },
   { id: "capture-add", keys: ["Enter"], label: "Add the line (on a phone: add and stay for the next one)", scope: "capture", group: "Capture" },
@@ -81,20 +81,20 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: "idea-create", keys: ["Alt+Enter"], label: "Create the idea", scope: "idea-form", group: "Capture" },
   { id: "idea-blank", keys: ["Alt+B"], label: "Blank the selected words (cloze)", scope: "idea-form", group: "Capture" },
 
-  { id: "record-yesterday", keys: ["y"], label: "Record yesterday", scope: "global", href: "/today?sheet=yesterday", group: "Today" },
+  { id: "record-yesterday", keys: ["y"], label: "Record yesterday", scope: "global", href: "/today?sheet=yesterday", group: "Tasks" },
 
-  { id: "go-today", keys: ["g t"], label: "Today", scope: "global", href: "/today", group: "Go to" },
-  { id: "go-study", keys: ["g s"], label: "Study (review)", scope: "global", href: "/review", group: "Go to" },
+  { id: "go-today", keys: ["g t"], label: "Tasks", scope: "global", href: "/today", group: "Go to" },
+  { id: "go-study", keys: ["g s"], label: "Ideas (review)", scope: "global", href: "/review", group: "Go to" },
   { id: "go-library", keys: ["g l"], label: "Library", scope: "global", href: "/library", group: "Go to" },
-  { id: "go-train", keys: ["g w"], label: "Train", scope: "global", href: "/train", group: "Go to" },
-  { id: "go-you", keys: ["g y"], label: "You", scope: "global", href: "/you", group: "Go to" },
-  { id: "go-week", keys: ["g k"], label: "This week", scope: "global", href: "/today/week", group: "Go to" },
+  { id: "go-train", keys: ["g w"], label: "Body", scope: "global", href: "/train", group: "Go to" },
+  { id: "go-you", keys: ["g y"], label: "Character", scope: "global", href: "/you", group: "Go to" },
+  { id: "go-week", keys: ["g k"], label: "Weekly review", scope: "global", href: "/today/week", group: "Go to" },
   { id: "settings", keys: [","], label: "Settings", scope: "global", href: "/settings", group: "Go to" },
   { id: "search", keys: ["/"], label: "Search the library", scope: "global", href: "/library", group: "Go to" },
 
-  { id: "start-review", keys: ["r"], label: "Start a review", scope: "global", href: "/review", group: "Study" },
-  { id: "review-answer", keys: ["1-9"], label: "Pick an answer (multiple choice)", scope: "review", group: "Study" },
-  { id: "review-next", keys: ["Enter", "→"], label: "Next card", scope: "review", group: "Study" },
+  { id: "start-review", keys: ["r"], label: "Start a review", scope: "global", href: "/review", group: "Ideas" },
+  { id: "review-answer", keys: ["1-9"], label: "Pick an answer (multiple choice)", scope: "review", group: "Ideas" },
+  { id: "review-next", keys: ["Enter", "→"], label: "Next card", scope: "review", group: "Ideas" },
 
   { id: "help", keys: ["Shift+?"], label: "Show these shortcuts", scope: "global", group: "Help" },
 ];
@@ -102,7 +102,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
 /**
  * Keys that keep their ordinary meaning everywhere; shown in the help sheet's
  * footnote, never bound as page-wide shortcuts. Two of them also do one app
- * thing where nothing else would take the key: Enter on Study's hub
+ * thing where nothing else would take the key: Enter on Review's hub
  * (WorkspaceView: nothing focused, cards due) and Ctrl/Cmd+Z outside a text
  * field while the capture's Added toast shows (QuickCapture, capture-ui
  * isUndoCaptureKey).
@@ -110,7 +110,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
 export const STANDARD_KEYS: readonly { keys: string; label: string }[] = [
   { keys: "Esc", label: "closes a sheet or dialog" },
   { keys: "Tab", label: "moves between controls" },
-  { keys: "Enter", label: "presses the focused button (on Study, with nothing focused and cards due, it starts a review)" },
+  { keys: "Enter", label: "presses the focused button (on Review, with nothing focused and cards due, it starts a review)" },
   { keys: "Ctrl+Z", label: "undoes typing (in the capture line it also brings a chip back) and, outside a text field with the Added toast showing, takes that capture back" },
 ];
 
@@ -284,7 +284,7 @@ export const GLOBAL_HANDLED: readonly Shortcut[] = SHORTCUTS.filter((s) => s.sco
 /** First keys of the sequences ('g'). */
 export const SEQUENCE_PREFIXES: ReadonlySet<string> = new Set(GLOBAL_HANDLED.flatMap((s) => s.keys.filter((k) => k.includes(" ")).map((k) => k.split(" ")[0])));
 
-/** The sequences a prefix leads to, for the 'g…' hint: [{ key: 't', label: 'Today' }, …]. */
+/** The sequences a prefix leads to, for the 'g…' hint: [{ key: 't', label: 'Tasks' }, …]. */
 export function sequenceTargets(prefix: string): { key: string; label: string; id: ShortcutId }[] {
   return GLOBAL_HANDLED.flatMap((s) => s.keys.filter((k) => k.startsWith(`${prefix} `)).map((k) => ({ key: k.slice(prefix.length + 1), label: s.label, id: s.id })));
 }

@@ -8,14 +8,22 @@
  * runtime is reached (import() only), /today and /review never reaching a
  * shader slot or the runtime, and no 3D library. No DB, no browser.
  *
+ * The three sections (Ideas · Tasks · Body): the nav model, the profile menu
+ * (Character, Skills, Loadout, Moments, Stats, Settings, out of the tabs),
+ * the '+' that starts the section's mode, and the chrome's source (three
+ * tabs and the +, the profile buttons, the menu sheet, chrome.css).
+ *
  * Run: npx tsx scripts/shell-check.ts
  */
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import { runInNewContext } from "node:vm";
-import { DEV_STYLE_PAGES, SECTIONS, activeSub, longDate, sectionOf, titleFor } from "../src/components/shell/nav";
+import { CAPTURE_LABEL, DEV_STYLE_PAGES, PROFILE, SECTIONS, activeSub, captureModeOf, groupOf, isProfilePath, longDate, sectionById, sectionOf, titleFor } from "../src/components/shell/nav";
 import { PREPAINT_SCRIPT } from "../src/components/shell/prepaint";
 import { SHELL_CAPTURE_EVENT } from "../src/components/shell/capture-bridge";
+import { CAPTURE_MODE_START, isBareModeStart } from "../src/components/capture/events";
+import { parseWeightLine } from "../src/lib/weight";
+import { parseCapture } from "../src/lib/capture-parse";
 import {
   EFFECTS_GROUP,
   LISTED_ONLY_NOTICE_IDS,
@@ -27,6 +35,7 @@ import {
   asksFromNotices,
   asksOfYou,
   characterLevelOf,
+  crestLabel,
   levelCaption,
   listedOnly,
   owedOf,
@@ -98,28 +107,77 @@ function checkPending(name: string, problems: string[], pending: Record<string, 
 }
 const eq = (name: string, got: unknown, want: unknown) => check(name, JSON.stringify(got) === JSON.stringify(want), `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
 
-// ── nav: Today · Study · + · Train · You ───────────────────────────────────
-eq("nav: sections in order", SECTIONS.map((s) => s.id), ["today", "study", "train", "you"]);
-eq("nav: /today is Today", sectionOf("/today"), "today");
-eq("nav: /today/week is Today", sectionOf("/today/week"), "today");
-eq("nav: /review, /workspace, /library/x, /add, /taxonomy are Study", ["/review", "/workspace", "/library/abc", "/add", "/taxonomy"].map(sectionOf), ["study", "study", "study", "study", "study"]);
-eq("nav: /skills/mind, /dashboard, /settings, /dev/style are You", ["/skills/mind", "/dashboard", "/settings", "/dev/style"].map(sectionOf), ["you", "you", "you", "you"]);
-eq("nav: /train is Train", sectionOf("/train"), "train");
-eq("nav: /todayx is nothing (prefix, not substring)", sectionOf("/todayx"), null);
-eq("nav: the longest sub wins", ["/today", "/today/week", "/today/rules", "/you/loadout", "/skills/mind", "/taxonomy", "/workspace"].map(activeSub), [
-  "/today",
-  "/today/week",
-  "/today/rules",
-  "/you/loadout",
-  "/skills",
-  "/structure",
-  "/review",
+// ── nav: Ideas · Tasks · + · Body, and the profile menu out of the tabs ────
+eq("nav: exactly three sections, in order: Ideas, Tasks, Body", SECTIONS.map((s) => [s.id, s.label, s.href]), [
+  ["ideas", "Ideas", "/review"],
+  ["tasks", "Tasks", "/today"],
+  ["body", "Body", "/train"],
 ]);
+eq("nav: Ideas' sub-pages: Review, Library, New idea, Roadmap, Fields & Domains", sectionById("ideas").subs.map((s) => [s.label, s.href, s.also ?? []]), [
+  ["Review", "/review", ["/workspace"]],
+  ["Library", "/library", []],
+  ["New idea", "/add", []],
+  ["Roadmap", "/you/roadmap", []],
+  ["Fields & Domains", "/structure", ["/taxonomy"]],
+]);
+eq("nav: Tasks' sub-pages: Board, Weekly review, Rules", sectionById("tasks").subs.map((s) => [s.label, s.href]), [
+  ["Board", "/today"],
+  ["Weekly review", "/today/week"],
+  ["Rules", "/today/rules"],
+]);
+eq("nav: Body's sub-pages: This week, Exercise", sectionById("body").subs.map((s) => [s.label, s.href]), [
+  ["This week", "/train"],
+  ["Exercise", "/train/exercise"],
+]);
+eq("nav: the profile menu: Character, Skills, Loadout, Moments, Stats, Settings (each with its icon)", [PROFILE.id, PROFILE.label, PROFILE.subs.map((s) => [s.label, s.href, s.icon ?? null])], [
+  "you",
+  "You",
+  [
+    ["Character", "/you", "sheet"],
+    ["Skills", "/skills", "tree"],
+    ["Loadout", "/you/loadout", "sword"],
+    ["Moments", "/you/moments", "star"],
+    ["Stats", "/you/stats", "chart"],
+    ["Settings", "/settings", "gear"],
+  ],
+]);
+check("nav: sectionById('you') is the profile menu (YouTabs reads it on compact)", sectionById("you") === PROFILE);
+eq("nav: /today, /today/week, /today/rules are Tasks", ["/today", "/today/week", "/today/rules"].map(sectionOf), ["tasks", "tasks", "tasks"]);
+eq(
+  "nav: /review, /workspace, /library/x, /add, /structure, /taxonomy, /you/roadmap, /you/roadmap/new are Ideas",
+  ["/review", "/workspace", "/library/abc", "/add", "/structure", "/taxonomy", "/you/roadmap", "/you/roadmap/new"].map(sectionOf),
+  ["ideas", "ideas", "ideas", "ideas", "ideas", "ideas", "ideas", "ideas"]
+);
+eq("nav: /train and /train/exercise are Body", ["/train", "/train/exercise"].map(sectionOf), ["body", "body"]);
+{
+  const profilePaths = ["/you", "/you/loadout", "/you/moments", "/you/stats", "/skills", "/skills/mind", "/settings", "/overview", "/dashboard"];
+  eq("nav: the profile pages light no tab (sectionOf null)", profilePaths.map(sectionOf), profilePaths.map(() => null));
+  eq("nav: … they are profile pages (isProfilePath), in the 'you' group", profilePaths.map((p) => [isProfilePath(p), groupOf(p)]), profilePaths.map(() => [true, "you"]));
+  eq("nav: /you/roadmap and its intake are Ideas, never the profile (the longer prefix wins)", ["/you/roadmap", "/you/roadmap/new"].map((p) => [isProfilePath(p), groupOf(p)]), [[false, "ideas"], [false, "ideas"]]);
+}
+eq("nav: /dev/style, /todayx, /youx and / are in no group (prefix, not substring)", ["/dev/style", "/todayx", "/youx", "/"].map((p) => [sectionOf(p), isProfilePath(p), groupOf(p)]), [
+  [null, false, null],
+  [null, false, null],
+  [null, false, null],
+  [null, false, null],
+]);
+eq("nav: no path is nothing", [sectionOf(null), isProfilePath(undefined), groupOf(null), activeSub(null)], [null, false, null, null]);
+eq(
+  "nav: the longest sub wins",
+  ["/today", "/today/week", "/today/rules", "/you/loadout", "/skills/mind", "/taxonomy", "/workspace", "/you/roadmap/new", "/overview", "/dashboard", "/train/exercise"].map(activeSub),
+  ["/today", "/today/week", "/today/rules", "/you/loadout", "/skills", "/structure", "/review", "/you/roadmap", "/you", "/you/stats", "/train/exercise"]
+);
 eq("nav: longDate is the life day's own calendar date", longDate("2026-10-01"), "Thursday, 1 October");
-eq("nav: /today title is the date", titleFor("/today", "2026-10-01"), { eyebrow: "Today", title: "Thursday, 1 October" });
-eq("nav: /today/rules title", titleFor("/today/rules"), { eyebrow: "Today", title: "How a day is judged" });
-eq("nav: /add title", titleFor("/add"), { eyebrow: "Study", title: "New idea" });
-eq("nav: /library/[id] title", titleFor("/library/xyz"), { eyebrow: "Study", title: "Idea" });
+eq("nav: /today title is the date, under the board's own 'Today' (its ShellTitle, so nothing swaps)", titleFor("/today", "2026-10-01"), { eyebrow: "Today", title: "Thursday, 1 October" });
+eq("nav: /today/rules title", titleFor("/today/rules"), { eyebrow: "Tasks", title: "How a day is judged" });
+eq("nav: /today/week title", titleFor("/today/week"), { eyebrow: "Tasks", title: "Weekly review" });
+eq("nav: /add title", titleFor("/add"), { eyebrow: "Ideas", title: "New idea" });
+eq("nav: /library/[id] title", titleFor("/library/xyz"), { eyebrow: "Ideas", title: "Idea" });
+eq("nav: /structure title", titleFor("/structure"), { eyebrow: "Ideas", title: "Fields & Domains" });
+eq("nav: /train and /train/exercise titles", [titleFor("/train"), titleFor("/train/exercise")], [
+  { eyebrow: "Body", title: "This week" },
+  { eyebrow: "Body", title: "Exercise" },
+]);
 eq("nav: /dev/style title", titleFor("/dev/style"), { eyebrow: "Dev · Style", title: "Style" });
 eq("nav: each /dev/style fixture route has its own title (no ShellTitle swap)", ["/dev/style/today", "/dev/style/review", "/dev/style/celebrate", "/dev/style/art/ladder", "/dev/style/settings"].map((p) => titleFor(p).title), [
   "Today fixtures",
@@ -128,14 +186,29 @@ eq("nav: each /dev/style fixture route has its own title (no ShellTitle swap)", 
   "Art",
   "Settings fixtures",
 ]);
-eq("nav: /you is the Character sheet on first paint (the server-rendered title)", titleFor("/you"), { eyebrow: "You", title: "Character" });
-eq("nav: /you/loadout keeps its sub-page title", titleFor("/you/loadout"), { eyebrow: "You", title: "Loadout" });
+eq("nav: /you is the Character on first paint (the server-rendered title)", titleFor("/you"), { eyebrow: "You", title: "Character" });
+eq("nav: the profile pages keep their titles under 'You'", ["/you/loadout", "/skills", "/you/moments", "/you/stats", "/settings"].map((p) => titleFor(p)), [
+  { eyebrow: "You", title: "Loadout" },
+  { eyebrow: "You", title: "Skills" },
+  { eyebrow: "You", title: "Moments" },
+  { eyebrow: "You", title: "Stats" },
+  { eyebrow: "You", title: "Settings" },
+]);
 eq("nav: unknown path", titleFor("/nowhere"), { eyebrow: null, title: "XTNL" });
 check(
   "nav: every /dev/style page in the strip exists",
   DEV_STYLE_PAGES.every((p) => existsSync(join(ROOT, "src/app", p.href, "page.tsx"))),
   DEV_STYLE_PAGES.filter((p) => !existsSync(join(ROOT, "src/app", p.href, "page.tsx"))).map((p) => p.href).join(", ")
 );
+{
+  // Every URL stays where it was: each sub-page (and profile row) is a real route, or a redirect next.config owns.
+  // /workspace and /taxonomy are next.config redirects; /overview and /dashboard are 308 route handlers.
+  const REDIRECTED = new Set(["/workspace", "/taxonomy", "/overview", "/dashboard"]);
+  const routeOf = (href: string) => join(ROOT, "src/app", href, "page.tsx");
+  const all = [...SECTIONS.flatMap((s) => s.subs), ...PROFILE.subs].flatMap((s) => [s.href, ...(s.also ?? [])]);
+  const missing = all.filter((h) => !REDIRECTED.has(h) && !existsSync(routeOf(h)));
+  check("nav: every sub-page and profile row is an existing route (no route moved)", missing.length === 0, missing.join(", "));
+}
 {
   // A static title known from the path belongs in titleFor: a <ShellTitle/> with
   // only literal props paints one title on the server and swaps after hydration.
@@ -160,58 +233,186 @@ check(
   check("nav: no page overrides the top bar with a literal title titleFor does not already give", mismatched.length === 0, mismatched.map((m) => m.join(" ")).join("; "));
 }
 {
-  const all = SECTIONS.flatMap((s) => s.subs.map((x) => x.href));
-  check("nav: every sub-page href is unique", new Set(all).size === all.length, all.join(" "));
+  const all = [...SECTIONS, PROFILE].flatMap((s) => s.subs.map((x) => x.href));
+  check("nav: every sub-page href is unique (sections and the profile together)", new Set(all).size === all.length, all.join(" "));
   check("nav: every sub-page sits in its own section", SECTIONS.every((s) => s.subs.every((x) => sectionOf(x.href) === s.id)));
+  check("nav: every profile row is a profile page", PROFILE.subs.every((x) => isProfilePath(x.href) && activeSub(x.href) === x.href));
+}
+
+// ── the '+' adapts: the section's capture mode ─────────────────────────────
+{
+  eq(
+    "capture mode: Ideas starts an idea, Body a weigh-in, Tasks, the profile and anything else a task",
+    ["/review", "/library/abc", "/add", "/you/roadmap", "/structure", "/today", "/today/week", "/train", "/train/exercise", "/you", "/settings", "/dev/style", "/nowhere"].map(captureModeOf),
+    ["idea", "idea", "idea", "idea", "idea", "task", "task", "body", "body", "task", "task", "task", "task"]
+  );
+  eq("capture mode: no path is a task", [captureModeOf(null), captureModeOf(undefined)], ["task", "task"]);
+  eq("capture mode: each mode starts the line with its own grammar (task: empty, idea: 'idea: ', body: 'weight ')", CAPTURE_MODE_START, { task: null, idea: "idea: ", body: "weight " });
+  const today = "2026-10-11";
+  check("capture mode: the idea start reads as an idea line once it has words (parseCapture mode IDEA)", parseCapture(`${CAPTURE_MODE_START.idea}What is entropy :: disorder`, { today }).mode === "IDEA");
+  check("capture mode: the body start reads as a weigh-in once it has a number (parseWeightLine), and not before", parseWeightLine(`${CAPTURE_MODE_START.body}72.4`, today, "kg")?.kg === 72.4 && parseWeightLine(CAPTURE_MODE_START.body ?? "", today, "kg") === null);
+  eq(
+    "capture mode: a line that is only a mode's start is no draft (the next mode replaces it); words after it are kept",
+    ["idea: ", "weight ", " Idea:  ", "WEIGHT", "idea: what is entropy", "weight 72.4", "", "   ", "pay rent"].map(isBareModeStart),
+    [true, true, true, true, false, false, false, false, false]
+  );
+  check("capture mode: every Capture's name holds the visible word 'Capture'", Object.values(CAPTURE_LABEL).every((l) => l.startsWith("Capture ")), Object.values(CAPTURE_LABEL).join(" | "));
+  eq("capture mode: the names", CAPTURE_LABEL, { task: "Capture a task", idea: "Capture an idea", body: "Capture a weigh-in" });
 }
 
 // ── roadmap (lane Y, F16 seam 10 and F23): the Roadmap sub, "Set an aim", the fixtures page, the strip at 344 ──
-// nav.ts is lane L's (seam 10), and YouTabs.tsx is lane Y's since roadmap revision 4 (a rev-3 carry-over):
-// anything the strip lacks is a FAIL now that both its fixes have landed.
+// Since the three sections, Roadmap is an Ideas sub-page (its URL unchanged); the You strip (YouTabs, compact)
+// lists the profile menu's pages. Anything the strip lacks is a FAIL.
 {
-  const you = SECTIONS.find((s) => s.id === "you");
-  const labels = (you?.subs ?? []).map((s) => s.label);
-  const want = ["Sheet", "Roadmap", "Skills", "Loadout", "Moments", "Stats", "Settings"];
+  const labels = PROFILE.subs.map((s) => s.label);
+  const want = ["Character", "Skills", "Loadout", "Moments", "Stats", "Settings"];
   const navProblems: string[] = [];
-  if (labels.join(", ") !== want.join(", ")) navProblems.push(`You subs read "${labels.join(", ")}"`);
-  const roadmapSub = you?.subs.find((s) => s.label === "Roadmap");
-  if (roadmapSub && roadmapSub.href !== "/you/roadmap") navProblems.push(`the Roadmap sub links to ${roadmapSub.href}`);
+  if (labels.join(", ") !== want.join(", ")) navProblems.push(`profile rows read "${labels.join(", ")}"`);
+  const roadmapSub = sectionById("ideas").subs.find((s) => s.label === "Roadmap");
+  if (!roadmapSub) navProblems.push("Ideas has no Roadmap sub");
+  else if (roadmapSub.href !== "/you/roadmap") navProblems.push(`the Roadmap sub links to ${roadmapSub.href}`);
   const title = (p: string) => {
     const t = titleFor(p);
     return `${t.eyebrow ?? ""} · ${t.title}`;
   };
-  if (title("/you/roadmap") !== "You · Roadmap") navProblems.push(`/you/roadmap is titled "${title("/you/roadmap")}"`);
-  if (title("/you/roadmap/new") !== "You · Set an aim") navProblems.push(`/you/roadmap/new is titled "${title("/you/roadmap/new")}"`);
+  if (title("/you/roadmap") !== "Ideas · Roadmap") navProblems.push(`/you/roadmap is titled "${title("/you/roadmap")}"`);
+  if (title("/you/roadmap/new") !== "Ideas · Set an aim") navProblems.push(`/you/roadmap/new is titled "${title("/you/roadmap/new")}"`);
   if (activeSub("/you/roadmap/new") !== "/you/roadmap") navProblems.push(`/you/roadmap/new lights ${activeSub("/you/roadmap/new")}`);
   if (activeSub("/you/roadmap") !== "/you/roadmap") navProblems.push(`/you/roadmap lights ${activeSub("/you/roadmap")}`);
   const dev = DEV_STYLE_PAGES.find((p) => p.href === "/dev/style/roadmap");
   if (!dev) navProblems.push("no DEV_STYLE_PAGES entry for /dev/style/roadmap");
   else if (dev.label !== "Roadmap fixtures") navProblems.push(`the roadmap fixtures entry is labelled "${dev.label}"`);
   if (titleFor("/dev/style/roadmap").title !== "Roadmap fixtures") navProblems.push(`/dev/style/roadmap is titled "${titleFor("/dev/style/roadmap").title}"`);
-  // Nothing pending: lane L landed nav.ts's seam 10. (The fixtures page itself is R5's; the
-  // "every /dev/style page in the strip exists" check above holds it.)
-  checkPending("nav (roadmap): You subs Sheet, Roadmap, Skills, Loadout, Moments, Stats, Settings; 'Set an aim'; the roadmap fixtures entry", navProblems, {});
-  // The settled page (/you, Sheet) keeps its title; Roadmap is a sub, not a section.
-  eq("nav (roadmap): /you stays Character, and /you/roadmap sits in You", [titleFor("/you").title, sectionOf("/you/roadmap"), sectionOf("/you/roadmap/new")], ["Character", "you", "you"]);
+  checkPending("nav (roadmap): Roadmap is Ideas' sub at /you/roadmap; 'Set an aim'; the profile rows; the roadmap fixtures entry", navProblems, {});
+  // The settled page (/you, Character) keeps its title; Roadmap is a sub, not a section.
+  eq("nav (roadmap): /you stays Character, and /you/roadmap sits in Ideas", [titleFor("/you").title, sectionOf("/you/roadmap"), sectionOf("/you/roadmap/new")], ["Character", "ideas", "ideas"]);
 
   // At 344 the content is 312 px. A tab is its label (≥ 7 px a character at 600 14px, a lower bound)
-  // plus 28 px of padding, with 4 px gaps: seven tabs need far more than 312, so the strip scrolls,
+  // plus 28 px of padding, with 4 px gaps: six tabs need far more than 312, so the strip scrolls,
   // and the current tab can sit out of view unless the strip scrolls it in and shows that more is there.
   const widthAt = (names: readonly string[]) => names.reduce((w, n) => w + n.length * 7 + 28, 0) + 4 * (names.length - 1);
   check(`tabs at 344 (roadmap): the You strip (${widthAt(want)} px at least) is wider than the 312 px content, so it scrolls`, widthAt(want) > 312);
-  // Landed in roadmap revision 4 (lane Y's carry-over; YouTabs.tsx): the strip moves its own scrollLeft
-  // to the current tab on every route (never scrollIntoView, which could also move the page), and the
-  // edge with more tabs past it fades (an inline mask, data-fade start/end/both; none when the strip fits).
-  const tabs = read("src/components/home/YouTabs.tsx").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+  // Landed in roadmap revision 4 (lane Y's carry-over; YouTabs.tsx), now the shell's one strip (SubTabs.tsx,
+  // which YouTabs and the sections' SectionTabs both render): the strip moves its own scrollLeft to the current
+  // tab on every route (never scrollIntoView, which could also move the page), and the edge with more tabs past
+  // it fades (an inline mask, data-fade start/end/both; none when the strip fits).
+  const strip = (f: string) => read(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+  const tabs = strip("src/components/shell/SubTabs.tsx");
+  const you = strip("src/components/home/YouTabs.tsx");
   const youCss = cssRules(read("src/components/home/you.css"));
   const stripProblems: string[] = [];
-  if (!/\.scrollLeft\s*[+-]?=|\.scrollTo\(/.test(tabs) || !/\[current\]\);/.test(tabs)) stripProblems.push("YouTabs never scrolls the current tab into view");
-  if (/scrollIntoView\(/.test(tabs)) stripProblems.push("YouTabs scrolls with scrollIntoView (it can move the page)");
+  if (!/\.scrollLeft\s*[+-]?=|\.scrollTo\(/.test(tabs) || !/\[current\]\);/.test(tabs)) stripProblems.push("SubTabs never scrolls the current tab into view");
+  if (/scrollIntoView\(/.test(tabs + you)) stripProblems.push("the strip scrolls with scrollIntoView (it can move the page)");
   const inlineCue = /maskImage: MASK\[fade\]/.test(tabs) && /WebkitMaskImage: MASK\[fade\]/.test(tabs) && /data-fade=\{fade \?\? undefined\}/.test(tabs);
-  if (!inlineCue && !youCss.some((r) => /\.you-tabs/.test(r.selector) && /mask-image|linear-gradient/.test(r.body))) stripProblems.push("the You tab strip has no scroll cue");
-  if (!/if \(max <= 1\) return null;/.test(tabs)) stripProblems.push("the You tab strip's cue shows even when every tab fits");
+  if (!inlineCue && !youCss.some((r) => /\.you-tabs/.test(r.selector) && /mask-image|linear-gradient/.test(r.body))) stripProblems.push("the tab strip has no scroll cue");
+  if (!/if \(max <= 1\) return null;/.test(tabs)) stripProblems.push("the tab strip's cue shows even when every tab fits");
+  if (!/<SubTabs\s[\s\S]*?className="you-tabs"[\s\S]*?items=\{PROFILE\.subs\}[\s\S]*?current=\{activeSub\(pathname\)\}/.test(you)) stripProblems.push("YouTabs does not render the shell's strip over PROFILE.subs");
   // Nothing pending: lane Y landed both (the two keys handed to the lead are deleted).
   checkPending("tabs at 344 (roadmap): the current tab is scrolled into view, and the strip keeps a scroll cue", stripProblems, {});
+
+  // The phone strips (< 600): the sections' under the top bar (SectionTabs), the profile's in its pages (YouTabs); never both.
+  check("phone strip: YouTabs renders only on a profile page (nothing on /you/roadmap*, an Ideas page)", /if \(!isProfilePath\(pathname\)\) return null;/.test(you) && /import \{ PROFILE, activeSub, isProfilePath \} from "@\/components\/shell\/nav";/.test(you));
+  const sectionTabs = /export function SectionTabs\(\)[\s\S]*?\n\}/.exec(tabs)?.[0] ?? "";
+  check(
+    "phone strip: SectionTabs is the current section's sub-pages from nav.ts, nothing on a profile page (sectionOf null) or a one-page section, part of the chrome",
+    /const id = sectionOf\(pathname\);\s*if \(!id\) return null;/.test(sectionTabs) && /if \(section\.subs\.length < 2\) return null;/.test(sectionTabs) && /items=\{section\.subs\} current=\{activeSub\(pathname\)\}/.test(sectionTabs) && /\bchrome\b/.test(sectionTabs),
+    sectionTabs.slice(0, 160)
+  );
+  check("phone strip: AppShell mounts SectionTabs once, right under the top bar", /<TopBar \/>\s*<SectionTabs \/>\s*<main /.test(strip("src/components/shell/AppShell.tsx")));
+  check("phone strip: each tab is a link, aria-current on the current one, data-chrome when it is the shell's", /className="tab-s" aria-current=\{s\.href === current \? "page" : undefined\}/.test(tabs) && /data-chrome=\{chrome \? "" : undefined\}/.test(tabs) && /className=\{cx\("tabs sub-tabs", className\)\}/.test(tabs));
+  {
+    const css = cssRules(read("src/components/shell/chrome.css"));
+    const body = (sel: string, at?: RegExp) => css.find((r) => r.selector.replace(/\s+/g, " ").trim() === sel && (at ? r.at.some((a) => at.test(a)) : !r.at.some((a) => /^@media/.test(a))))?.body ?? "";
+    check("phone strip: 44 px tabs in both strips (nav.sub-tabs .tab-s)", /min-height:\s*44px/.test(body("nav.sub-tabs .tab-s")));
+    check("phone strip: the section strip keeps the page's 16 px gutter and leaves from 600 (the top bar carries the tabs there)", /padding:\s*2px 16px/.test(body("nav.sec-tabs")) && /display:\s*none/.test(body("nav.sec-tabs", /min-width:\s*600px/)));
+    check("phone strip: the profile strip leaves from 600 too (you.css)", youCss.some((r) => r.at.some((a) => /min-width:\s*600px/.test(a)) && /\.you-tabs/.test(r.selector) && /display:\s*none/.test(r.body)));
+  }
+  eq(
+    "phone strip: each section's tabs, from nav.ts (Ideas 5, Tasks 3, Body 2; all over one page, so all shown)",
+    SECTIONS.map((x) => [x.id, x.subs.length]),
+    [["ideas", 5], ["tasks", 3], ["body", 2]]
+  );
+  check(`tabs at 344: the Ideas strip (${widthAt(sectionById("ideas").subs.map((x) => x.label))} px at least) scrolls, so its cue matters`, widthAt(sectionById("ideas").subs.map((x) => x.label)) > 312);
+}
+
+// ── the chrome's source: three tabs and the +, the profile buttons and menu ─
+{
+  const code = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+  const chrome = code(read("src/components/shell/Chrome.tsx"));
+  const topbar = code(read("src/components/shell/TopBar.tsx"));
+  const menu = code(read("src/components/shell/ProfileMenu.tsx"));
+  const shell = code(read("src/components/shell/AppShell.tsx"));
+  const bridge = code(read("src/components/shell/capture-bridge.ts"));
+  const quick = code(read("src/components/capture/QuickCapture.tsx"));
+  const fn = (src: string, name: string) => new RegExp(`export function ${name}\\(\\)[\\s\\S]*?\\n\\}`).exec(src)?.[0] ?? "";
+  const tabBar = fn(chrome, "TabBar");
+  const rail = fn(chrome, "Rail");
+  const sidebar = fn(chrome, "Sidebar");
+  check(
+    "tab bar: Ideas · Tasks · + · Body, and nothing else (no You tab)",
+    /\{tab\(ideas\)\}\s*\{tab\(tasks\)\}\s*<button type="button" className="tab tab-plus"[\s\S]*?<\/button>\s*\{tab\(body\)\}\s*<\/nav>/.test(tabBar) && /const \[ideas, tasks, body\] = SECTIONS;/.test(tabBar) && !/href=\{you|href="\/you"|<Crest/.test(tabBar),
+    tabBar.slice(0, 120)
+  );
+  check("rail: Capture, the three sections, then the profile button (the crest, 'You')", /className="r-plus"[\s\S]*SECTIONS\.map[\s\S]*rail-grow[\s\S]*<button type="button" className="r-you" aria-label=\{crestLabel\(data\?\.character\)\} \{\.\.\.profile\}>\s*<Crest[^>]*size=\{34\}[^>]*\/>\s*You\s*<\/button>/.test(rail));
+  check(
+    "sidebar: the character card is the profile button (its button covers the card; the meter stays outside it), then Capture, then the three sections",
+    /<div className="sb-char">[\s\S]*?<button type="button" className="sb-me" aria-label=\{crestLabel\(c\)\} \{\.\.\.profile\}>[\s\S]*?<\/button>[\s\S]*?<Meter [\s\S]*?className="btn btn-primary btn-block sb-capture"[\s\S]*SECTIONS\.map/.test(sidebar) && !/<Link className="sb-char"/.test(sidebar)
+  );
+  check("sidebar: the owed pill sits on Tasks", /const owed = s\.id === "tasks" \? data\?\.owed\.count \?\? 0 : 0;/.test(sidebar));
+  check("badges: reviews due on Ideas, today's board on Tasks, Body's own count", /if \(id === "ideas"\) return data\.badges\.study;/.test(chrome) && /if \(id === "tasks"\) return data\.badges\.today;/.test(chrome) && /return data\.badges\.train;/.test(chrome));
+  check("top bar: the crest is a button that opens the profile menu (data-tour='you-crest'), not a link", /<button type="button" className="crest-btn" aria-label=\{crestLabel\(character\)\} data-tour="you-crest" \{\.\.\.profile\}>/.test(topbar) && !/<Link className="crest-btn"/.test(topbar));
+  check("top bar: from 600 the tabs are the group's (a section's, or the profile's on a profile page)", /const group = groupOf\(pathname\);/.test(topbar) && /items=\{sectionById\(group\)\.subs\}/.test(topbar));
+  check("chrome: no link to /you is left in the chromes (the profile buttons open the menu)", !/href="\/you"|href=\{you\.href\}/.test(chrome + topbar));
+  check(
+    "capture: every Capture starts the section's mode (captureModeOf) and is named for it (CAPTURE_LABEL)",
+    /const mode = captureModeOf\(usePathname\(\)\);\s*return \{ label: CAPTURE_LABEL\[mode\], open: \(\) => openCaptureSheet\(mode\) \};/.test(chrome) &&
+      (chrome.match(/aria-label=\{capture\.label\}/g) ?? []).length === 3 &&
+      (chrome.match(/onClick=\{capture\.open\}/g) ?? []).length === 3
+  );
+  check("capture: the bridge sends the mode in the event's detail", /detail: mode \? \{ mode \} : \{\}/.test(bridge));
+  check(
+    "capture: QuickCapture starts the line from CAPTURE_MODE_START (replacing only a bare start, never a draft), and its hotkey asks for the section's mode",
+    /const start = request\?\.text \?\? \(request\?\.mode \? CAPTURE_MODE_START\[request\.mode\] : null\);/.test(quick) &&
+      /if \(request\?\.mode && request\.text === undefined && isBareModeStart\(next\.text\)\) next = \{ text: start \?\? "", reverted: \[\] \};\s*else if \(start && !next\.text\.trim\(\)\)/.test(quick) &&
+      /openSheet\(\{ mode: captureModeOf\(pathname\) \}\);/.test(quick)
+  );
+  check(
+    "profile menu: every profile button carries aria-haspopup dialog, aria-expanded, aria-controls while open, and aria-current on a profile page",
+    /"aria-haspopup": "dialog",\s*"aria-expanded": open,\s*"aria-controls": open \? PROFILE_MENU_ID : undefined,\s*"aria-current": isProfilePath\(pathname\) \? "true" : undefined,\s*onClick: openProfileMenu,/.test(menu)
+  );
+  check(
+    "profile menu: the kit Sheet (heading, focus trap, Esc, focus back), its rows PROFILE's, the current one aria-current, closing as a row navigates",
+    /<Sheet open=\{open\} onClose=\{closeProfileMenu\} title=\{PROFILE\.label\}[^>]*id=\{PROFILE_MENU_ID\}>/.test(menu) &&
+      /PROFILE\.subs\.map\(/.test(menu) &&
+      /aria-current=\{current === p\.href \? "page" : undefined\}/.test(menu) &&
+      /onNavigate=\{closeProfileMenu\}/.test(menu) &&
+      /useEffect\(\(\) => \{\s*closeProfileMenu\(\);\s*\}, \[pathname\]\);/.test(menu)
+  );
+  check("profile menu: AppShell mounts the one menu", (shell.match(/<ProfileMenu \/>/g) ?? []).length === 1);
+  eq("profile button: its name holds the visible words ('You', the title)", [crestLabel(null), crestLabel({ level: 14, progress: 0.5, material: "iron", title: "Adept", epithet: "of the Deep Archive", nextTitle: null, nextTitleAt: null, tracks: null, transcendent: false })], [
+    "You",
+    "You: character level 14, Adept of the Deep Archive",
+  ]);
+
+  const css = cssRules(read("src/components/shell/chrome.css"));
+  const rule = (sel: string) => css.find((r) => r.selector.replace(/\s+/g, " ").trim() === sel)?.body ?? "";
+  check("chrome.css: the tab bar lays out four cells, outranking components.css's .tabbar", /grid-template-columns:\s*repeat\(4, 1fr\)/.test(rule("nav.tabbar")));
+  check("chrome.css: the crest is a bare button; current on a profile page", /border:\s*0/.test(rule("button.crest-btn")) && /background:\s*var\(--raised\)/.test(rule('button.crest-btn[aria-current="true"]')));
+  check("chrome.css: the rail's profile button shows current", /background:\s*var\(--raised\)/.test(rule('.rail button.r-you[aria-current="true"]')));
+  check("chrome.css: the sidebar card's button covers the card and keeps a visible focus ring", /position:\s*absolute/.test(rule(".sb-me::after")) && /inset:\s*0/.test(rule(".sb-me::after")) && /outline:\s*2px solid var\(--focus\)/.test(rule(".sb-me:focus-visible::after")) && /position:\s*relative/.test(rule(".sidebar .sb-char")));
+  const row = rule(".pm-row");
+  const px = (body: string, prop: string) => Number(new RegExp(`(?:^|;|\\s)${prop}\\s*:\\s*([\\d.]+)px`).exec(body)?.[1] ?? 0);
+  check("chrome.css: a menu row is a 48 px target with 15 px text", px(row, "min-height") >= 44 && /font:\s*600 15px/.test(row));
+  check("chrome.css: the current row is raised", /background:\s*var\(--raised\)/.test(rule('.pm-row[aria-current="page"]')));
+  const wideTabs = css.find((r) => r.selector.replace(/\s+/g, " ").trim() === '.topbar[data-group="you"] .tb-tabs' && r.at.some((a) => /min-width:\s*1280px/.test(a)));
+  check(
+    "chrome.css: from 1280 a profile page keeps its tabs in the top bar (the sidebar lists only the sections), marked by the header's data-group",
+    !!wideTabs && /display:\s*flex/.test(wideTabs.body) && /data-group=\{group \?\? undefined\}/.test(topbar)
+  );
+  const raw = read("src/components/shell/chrome.css").replace(/\/\*[\s\S]*?\*\//g, "");
+  check("chrome.css: tokens only (no hex, rgb() or hsl()), so Night and Vellum both hold", !/#[0-9a-f]{3,8}\b|\b(rgba?|hsla?)\(/i.test(raw));
+  check("chrome.css: in @layer components, after the layer order", raw.trimStart().startsWith("@layer theme, base, components, art, effects, utilities;") && /@layer components \{/.test(raw));
+  check("chrome.css: imported by Chrome.tsx", /import "\.\/chrome\.css";/.test(read("src/components/shell/Chrome.tsx")));
 }
 
 // ── the pre-paint script agrees with parsePrefs/resolveMotion ──────────────

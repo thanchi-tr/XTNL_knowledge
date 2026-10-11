@@ -102,12 +102,17 @@ import {
   receiptIdOf,
   recordByLabel,
   rowMinutes,
+  streakCaptionOf,
   tickLabelOf,
   todayLaneNote,
   tomorrowOffer,
   undoExpiryOf,
   upcomingOf,
 } from "../src/components/today/board-ui";
+// The three sections: Today's "due elsewhere" strip and Character's day cards (moved off Today).
+import { BODY_HREF, IDEAS_HREF, dueElsewhereOf, questsOpenOf, weighInDueOf } from "../src/components/today/due-elsewhere";
+import { DueElsewhere } from "../src/components/today/DueElsewhere";
+import { dayCardsOf } from "../src/components/home/day-cards";
 import { isUndoCaptureKey, nextOccurrenceNote, toInboxLine } from "../src/components/capture/capture-ui";
 import {
   ACTIVE_SCAN_MAX,
@@ -1063,7 +1068,27 @@ function cssValue(css: string, selector: string, prop: string, media?: string): 
     presents.length === 6 && boardSrc.includes('from "@/components/celebrate/stage"'),
     String(presents.length)
   );
-  check("streak caption: 'Kept today, 08:05.' from keptAtOf, with the plain line as its fallback", /keptAtOf\(current\)/.test(boardSrc) && boardSrc.includes("`Kept today, ${hhmmOf(") && boardSrc.includes('"Kept today."'));
+  // The three sections: the streak moved to Character (/you). Its caption is board-ui's streakCaptionOf, fed keptAtOf
+  // over Today's own board data by day-cards.ts, and the board itself draws no streak.
+  {
+    const uiSrc = code(read("src/components/today/board-ui.ts"));
+    const cardsSrc = code(read("src/components/home/day-cards.ts"));
+    const at = new Date(Date.UTC(2026, 9, 1, 6, 5)).toISOString(); // a first tick; the caption says it in the life zone (hhmmOf)
+    const kept = streakCaptionOf({ kept: true, keptAt: at, count: 4 });
+    check(
+      "streak caption (Character): 'Kept today, 08:05.' from keptAtOf, with the plain line as its fallback, then 'Safe until 04:00.'",
+      uiSrc.includes("`Kept today, ${hhmmOf(") &&
+        uiSrc.includes('"Kept today."') &&
+        /keptAt: kept \? keptAtOf\(data\) : null/.test(cardsSrc) &&
+        kept.lead === `Kept today, ${hhmmOf(Date.parse(at))}.` &&
+        kept.rest === " Safe until 04:00." &&
+        streakCaptionOf({ kept: true, keptAt: null, count: 4 }).lead === "Kept today." &&
+        streakCaptionOf({ kept: false, keptAt: null, count: 4 }).rest === "Not kept yet. Any tick or review keeps it." &&
+        streakCaptionOf({ kept: false, keptAt: null, count: 0 }).rest === "Any tick or review starts a streak." &&
+        !/keptAtOf|<StreakCard|streakCaption/.test(boardSrc),
+      JSON.stringify(kept)
+    );
+  }
   check(
     "asks: the badge's pop-over passes the Ask's clock to the card",
     read("src/components/today/AskBadge.tsx").includes("clock={a.clock}") && read("src/components/today/AskCard.tsx").includes('<Icon name="clock"')
@@ -2730,18 +2755,25 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   const atLeast = (name: string, v: number | null, min: number) => check(`touch target: ${name} ≥ ${min}px`, v != null && v >= min, String(v));
   atLeast("'Time off' beside Close the day", cssValue(today, ".today-close .close-off", "min-height"), 44);
   {
-    // The Asks are badges on the block each concerns (the streak, Next up), every one a tap away; no Ask card on the board.
+    // The Asks are a badge on the block they concern, every one a tap away; no Ask card on the board. The three
+    // sections: Today shows the Tasks section's Asks only (record yesterday, the weekly review), on the plan card;
+    // Ideas' (cards past grace, the quota, a penalty) stay in the bell, never on Today.
     const badge = read("src/components/today/AskBadge.tsx");
     check(
-      "asks: a badge on the streak and one on Next up, from askHostOf; no Ask card of their own on the board",
-      /<div className="o2 ask-host">\s*<StreakCard[\s\S]*?<AskBadge asks=\{asksOn\("streak"\)\}/.test(boardSrc) &&
-        /<div className="o3 ask-host">\s*<NextUp[\s\S]*?<AskBadge asks=\{asksOn\("next"\)\}/.test(boardSrc) &&
-        boardSrc.includes("asks.filter((a) => askHostOf(a) === host)") &&
+      "asks: one badge, on the plan card, holding the Tasks section's Asks (askHostOf 'tasks'); no Ideas Ask and no Ask card of their own on the board",
+      /<div className="o2 ask-host">\s*<PlanCard[\s\S]*?<AskBadge asks=\{taskAsks\}[^>]*\/>\s*<\/PlanCard>/.test(boardSrc) &&
+        boardSrc.includes('const taskAsks = asks.filter((a) => askHostOf(a) === "tasks");') &&
+        (boardSrc.match(/<AskBadge\b/g) ?? []).length === 1 &&
+        !/"ideas"/.test(boardSrc) &&
         !boardSrc.includes("<AskCard")
     );
     check(
-      "asks: askHostOf puts yesterday and the weekly review on the streak, the rest on Next up",
-      askHostOf({ id: "yesterday" }) === "streak" && askHostOf({ id: WEEK_REVIEW_NOTICE }) === "streak" && askHostOf({ id: "quota" }) === "next" && askHostOf({ id: "overdue" }) === "next"
+      "asks: askHostOf puts yesterday and the weekly review in Tasks, the rest (past grace, the quota, a penalty) in Ideas",
+      askHostOf({ id: "yesterday" }) === "tasks" &&
+        askHostOf({ id: WEEK_REVIEW_NOTICE }) === "tasks" &&
+        askHostOf({ id: "quota" }) === "ideas" &&
+        askHostOf({ id: "overdue" }) === "ideas" &&
+        askHostOf({ id: "debuff-SHAKEN" }) === "ideas"
     );
     check(
       "asks: the badge says what waits in words, opens a dialog pop-over, closes on Escape (focus back) and on a tap outside",
@@ -2759,10 +2791,12 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   check("CloseDaySheet: no rested-bonus promise (decision 33 defers it)", !/rested bonus/i.test(read("src/components/today/CloseDaySheet.tsx")));
 }
 
-// ═══ Roadmap on Today (roadmap.md F16 seams 4, 16, 17, 18; F17; lane T) ═══
-// The week quests card is quiet: inside .o9 after the goals, one line while
-// Close the day is prominent, never an Ask, a count or a link into Review.
-// A ROADMAP goal names the evidence of the part that sets its g.
+// ═══ The three sections: Today is the Tasks section ══════════════════════════
+// Today shows the tasks due today (the Must, Planned and Habits lanes, the
+// Inbox and Anytime, the plan card's capacity, the task goals) and one slim
+// "due elsewhere" strip of links out. No review quest (Next up), no roadmap
+// card or aim line, no encounter, no streak or Full day on the board: those
+// live on the Ideas landing (/review) and on Character (/you).
 {
   const code = (src: string) =>
     src
@@ -2770,31 +2804,194 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "");
   const boardSrc = code(read("src/components/today/TodayBoard.tsx"));
-
-  // F16 seam 16: the slot inside .o9, directly after GoalsStrip, carrying data-compact while Close the day is prominent.
-  const o9 = /<div className="o9">([\s\S]*?)<\/div>\s*<section className="card today-side-rows o10"/.exec(boardSrc)?.[1] ?? "";
-  const slotTag = /<div className="rm-quests-slot"[^>]*>/.exec(o9)?.[0] ?? "";
+  const page = code(read("src/app/today/page.tsx"));
+  const props = /interface Props \{([\s\S]*?)\n\}/.exec(boardSrc)?.[1] ?? "";
   check(
-    "week quests: the slot sits inside .o9, after GoalsStrip, holding the page's card",
-    o9.indexOf("<GoalsStrip") >= 0 && o9.indexOf("<GoalsStrip") < o9.indexOf('className="rm-quests-slot"') && /\{questsSlot\}\s*<\/div>/.test(o9),
+    "sections: Today renders no review, roadmap or encounter card, no streak and no Full day (no NextUp, StreakCard, DayLedger, WeekQuests, AimLine; no focus or bosses prop)",
+    !/<NextUp\b|<StreakCard\b|<DayLedger\b|<WeekQuests\b|<AimLine\b|<AimCard\b|<BossPanel\b|nextUpOf\(|questsSlot/.test(boardSrc) &&
+      !/^\s*(focus|bosses)\??:/m.test(props) &&
+      !/<NextUp\b|<StreakCard\b|<DayLedger\b|<WeekQuests\b|<AimLine\b|<AimCard\b|questsSlot|bosses=\{|focus=\{/.test(page) &&
+      !/from "@\/components\/(today\/(NextUp|DayLedger)|roadmap\/(WeekQuests|AimLine|AimCard))"/.test(page) &&
+      props.length > 0
+  );
+  check(
+    "sections: the strip and the plan card head the side column (both .o2, the strip first), before the lanes on a phone; the plan card hosts Record yesterday",
+    boardSrc.indexOf('{elsewhere != null && elsewhere !== false && <div className="o2">{elsewhere}</div>}') >= 0 &&
+      boardSrc.indexOf('{elsewhere != null && elsewhere !== false && <div className="o2">{elsewhere}</div>}') < boardSrc.indexOf('<div className="o2 ask-host">') &&
+      boardSrc.indexOf('<div className="o2 ask-host">') < boardSrc.indexOf('<div className="c2"') &&
+      /<PlanCard[\s\S]*?yesterdayOpen=\{yesterdayOpenCount\}\s*onYesterday=\{\(\) => setYesterdayOpen\(true\)\}/.test(boardSrc) &&
+      /onCapacity=\{\(\) => setCapacityOpen\(true\)\}/.test(boardSrc)
+  );
+  check(
+    "sections: the page computes the strip from what it already loads (the board's due count, this week's open quests, the ready encounters, the Body section's weigh-in) and hands it to the board as a slot, none when empty",
+    /reviewsDue: board\.dueNow \?\? null,/.test(page) &&
+      /questsOpen: quests && weekQuestsShownOnToday\(quests\.view\) \? questsOpenOf\(quests\.view\) : 0,/.test(page) &&
+      /bossesReady: bosses\.filter\(\(b\) => b\.availability\.status === "ready"\)\.length,/.test(page) &&
+      /weighInDue: weighInDueOf\(weight\),/.test(page) &&
+      /loadWeightView\(userId, now\)\.catch\(\(\) => null\)/.test(page) &&
+      page.includes("elsewhere={elsewhere.length > 0 ? <DueElsewhere rows={elsewhere} /> : null}")
+  );
+  // The strip's rows, run.
+  const all = dueElsewhereOf({ reviewsDue: 12, questsOpen: 1, bossesReady: 1, weighInDue: true });
+  check(
+    "due elsewhere: '12 reviews · 1 quest · boss → Ideas' (/review) and 'weigh-in → Body' (/train), each with its spoken long form",
+    all.length === 2 &&
+      all[0].href === IDEAS_HREF &&
+      IDEAS_HREF === "/review" &&
+      all[0].label === "Ideas" &&
+      all[0].items.map((i) => `${i.n ?? ""} ${i.word}`.trim()).join(" · ") === "12 reviews · 1 quest · boss" &&
+      all[0].said === "Ideas: 12 reviews due, 1 roadmap quest open this week, 1 boss ready" &&
+      all[1].href === BODY_HREF &&
+      BODY_HREF === "/train" &&
+      all[1].label === "Body" &&
+      all[1].items.map((i) => i.word).join() === "weigh-in" &&
+      all[1].said === "Body: no weigh-in yet today",
+    JSON.stringify(all.map((r) => [r.href, r.said]))
+  );
+  check(
+    "due elsewhere: hidden when nothing is due elsewhere; a section with nothing due has no row; plurals and a lone boss read right",
+    dueElsewhereOf({ reviewsDue: 0, questsOpen: 0, bossesReady: 0, weighInDue: false }).length === 0 &&
+      dueElsewhereOf({ reviewsDue: null, questsOpen: -2, bossesReady: 0, weighInDue: false }).length === 0 &&
+      dueElsewhereOf({ reviewsDue: 0, questsOpen: 0, bossesReady: 0, weighInDue: true }).map((r) => r.section).join() === "body" &&
+      dueElsewhereOf({ reviewsDue: 1, questsOpen: 2, bossesReady: 3, weighInDue: false })[0].items.map((i) => `${i.n ?? ""} ${i.word}`.trim()).join(" · ") === "1 review · 2 quests · 3 bosses"
+  );
+  check(
+    "due elsewhere: a weigh-in is due only for someone who weighs in (a reading or a target) and has not logged today; never for someone who never weighs",
+    !weighInDueOf({ loggedToday: false, latest: null, goal: { targetKg: null } }) &&
+      weighInDueOf({ loggedToday: false, latest: { day: TODAY }, goal: { targetKg: null } }) &&
+      weighInDueOf({ loggedToday: false, latest: null, goal: { targetKg: 70 } }) &&
+      !weighInDueOf({ loggedToday: true, latest: { day: TODAY }, goal: { targetKg: 70 } }) &&
+      !weighInDueOf(null)
+  );
+  check("due elsewhere: open quests are the week's rows not done (never negative)", questsOpenOf({ total: 5, done: 2 }) === 3 && questsOpenOf({ total: 2, done: 3 }) === 0 && questsOpenOf(null) === 0);
+  // The strip, rendered: one link per row, the glyphs and words aria-hidden, the long form its accessible name.
+  const stripHtml = renderToStaticMarkup(createElement(DueElsewhere, { rows: all }));
+  check(
+    "due elsewhere: rendered, it links to Ideas (/review) and Body (/train); the visible glyph-led line is aria-hidden and the row's long form is its name; never red",
+    (stripHtml.match(/<a [^>]*class="away-row"/g) ?? []).length === 2 &&
+      stripHtml.includes('href="/review"') &&
+      stripHtml.includes('href="/train"') &&
+      stripHtml.includes('<span class="sr-only">Ideas: 12 reviews due, 1 roadmap quest open this week, 1 boss ready</span>') &&
+      (stripHtml.match(/class="away-items" aria-hidden="true"/g) ?? []).length === 2 &&
+      ["#i-study", "#i-flag", "#i-sword", "#i-train"].every((g) => stripHtml.includes(g)) &&
+      !/owed|danger|warn|gold/.test(stripHtml + read("src/components/today/DueElsewhere.tsx")) &&
+      renderToStaticMarkup(createElement(DueElsewhere, { rows: [] })) === "",
+    stripHtml.slice(0, 160)
+  );
+  {
+    const css = read("src/components/today/today.css").replace(/\/\*[\s\S]*?\*\//g, "");
+    const atLeast = (name: string, v: number | null, min: number) => check(`touch target: ${name} ≥ ${min}px`, v != null && v >= min, String(v));
+    atLeast("a 'due elsewhere' row", cssValue(css, ".today-away .away-row", "min-height"), 44);
+    atLeast("the plan card's capacity cell", cssValue(css, ".today-plan .plan-cap", "min-height"), 44);
+    atLeast("the plan card's Record yesterday", cssValue(css, ".today-plan .plan-y", "min-height"), 44);
+    const away = [...css.matchAll(/\.today-away[^{]*\{([^}]*)\}/g)].map((m) => m[1]).join(";");
+    check("due elsewhere: due is ink, never a hue (no owed, warn or gold in its rules)", away.length > 0 && !/--owed|--warn|--gold|--danger/.test(away));
+  }
+  // The day's Tier 1 moments still follow the tick that made them: the kept Must lane in place, the others (their
+  // tiles are Character's) as the toast with its ring.
+  check(
+    "moments: the kept lane sweeps and bursts on the Must lane; the day kept, a ring and the Full day show as a toast with its ring",
+    /sweepEl: lane \? mustBodyRef\.current : null,\s*burstEl: lane \? mustBodyRef\.current : null,\s*ringEl: null,/.test(boardSrc) &&
+      boardSrc.includes("if (!lane) pushToast({ title: text, ring: true, holdMs: 5000, key: `chime:${id}` });")
+  );
+  // Character's day cards: the streak and the Full day, by Today's own rules over Today's own data.
+  {
+    const must = tpl({ id: "meds", title: "Morning meds", compulsory: true, dueKind: "DEADLINE", dueDay: TODAY });
+    const streak = { current: 3, last7Days: [true, true, true, true, true, true, false], held7Days: [false, false, false, false, false, false, false], bankedFreezes: 0 };
+    const v = dayCardsOf(board(TODAY, [must]), streak);
+    check(
+      "Character: the streak card reads Today's board and the streak (3, not kept yet, its caption), and the Full day its rings (the Must open, 0 of 3 met before any deed)",
+      v.streak.count === 3 &&
+        !v.streak.kept &&
+        !v.streak.broken &&
+        v.caption.lead === null &&
+        v.caption.rest === "Not kept yet. Any tick or review keeps it." &&
+        v.fullDay.rings.length === 3 &&
+        v.fullDay.rings[0].kind === "musts" &&
+        !v.fullDay.rings[0].met &&
+        !v.fullDay.full &&
+        !v.settles &&
+        v.freezes === null &&
+        v.yesterdayOpen === 0,
+      JSON.stringify({ streak: v.streak, caption: v.caption, met: v.fullDay.met })
+    );
+    const you = code(read("src/app/you/page.tsx"));
+    check(
+      "Character: /you draws the day cards (DayCards over dayCardsOf, Today's cached board and the streak in its one wave), and the cards link Record yesterday to Today's sheet",
+      /\{day && <DayCards view=\{day\} \/>\}/.test(you) &&
+        /await Promise\.all\(\[loadSheet\(userId, now\), loadTodayBoard\(userId, today, now\)\.catch\(\(\) => null\), getDailyStreak\(userId\)\.catch\(\(\) => null\)\]\);/.test(you) &&
+        /const day = dayCardsOrNull\(board, streak\);/.test(you) &&
+        /return dayCardsOf\(board, streak\);/.test(you) &&
+        /href=\{RECORD_YESTERDAY_HREF\}/.test(read("src/components/home/DayCards.tsx")) &&
+        RECORD_YESTERDAY_HREF === "/today?sheet=yesterday"
+    );
+  }
+}
+// The strip's word budget (ui-motion.md §3.1, counted by scripts/word-count.mjs at 344): glyph-led, ≤ 12 app words
+// with every row at its fullest (all four items), its long forms sr-only.
+asyncChecks.push(
+  (async () => {
+    const wc = (await import("./word-count.mjs")) as typeof import("./word-count.mjs");
+    const fullest = renderToStaticMarkup(createElement(DueElsewhere, { rows: dueElsewhereOf({ reviewsDue: 112, questsOpen: 5, bossesReady: 3, weighInDue: true }) }));
+    const counted = wc.countAppWords(fullest, { width: 344 });
+    check(
+      "due elsewhere (§3.1): the strip at its fullest is ≤ 12 app words at 344 (glyph + figure + a short word; the long forms are sr-only)",
+      counted.count > 0 && counted.count <= 12 && !counted.words.includes("roadmap"),
+      `${counted.count}: ${counted.words.join(" ")}`
+    );
+  })()
+);
+
+// ═══ Roadmap off Today (roadmap.md F16 seams 4, 16, 17, 18; F17; lane T; the three sections) ═══
+// The app is three sections (Ideas, Tasks, Body) and Today is Tasks: the week
+// quests card and the aim line moved to the Ideas landing (/review: IdeasLead,
+// first in the hub's first column), still quiet: never an Ask, a count or a
+// link into Review. Today keeps only a count in its "due elsewhere" strip.
+// A ROADMAP goal (a task goal) still names the evidence of the part that sets its g.
+{
+  const code = (src: string) =>
+    src
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+  const boardSrc = code(read("src/components/today/TodayBoard.tsx"));
+  const leadSrc = code(read("src/app/review/IdeasLead.tsx"));
+  const hubSrc = code(read("src/components/workspace/WorkspaceView.tsx"));
+
+  // F16 seam 16, moved: the card is the Ideas lead's, first in the hub's first column, and Today draws no slot.
+  const o9 = /<div className="o9">([\s\S]*?)<\/div>\s*<section className="card today-side-rows o10"/.exec(boardSrc)?.[1] ?? "";
+  check(
+    "week quests: the card sits in the Ideas landing's lead (WeekQuests variant today, its seek rows answered by SeekToToday), drawn first in the hub's first column; Today's .o9 holds the goals only",
+    /<SeekToToday \/>\s*<WeekQuests variant="today" view=\{quests\} \/>/.test(leadSrc) &&
+      /<div className="rv-col">\s*\{lead\}\s*\{focus && <RoadmapFocus/.test(hubSrc) &&
+      o9.includes("<GoalsStrip") &&
+      !/rm-quests-slot|questsSlot|<WeekQuests|<AimLine/.test(boardSrc),
     o9.slice(0, 80)
   );
   check(
-    "week quests: the slot carries data-compact while Close the day is prominent (the same rule as the end-cap)",
-    slotTag.includes('data-compact={prominent ? "1" : undefined}') && /const prominent = closeDayProminent\(clock\);/.test(boardSrc) && boardSrc.includes('data-prominent={prominent ? "1" : undefined}'),
-    slotTag
+    "week quests: compact on the Ideas landing, always (its one summary line, opened in place: the wrapper's data-compact, roadmap.css's own rule), never hidden (no close-due); Today's evening rule still keys Close the day",
+    /<div className="rv-lead-quests" data-compact="1">\s*<SeekToToday \/>\s*<WeekQuests variant="today" view=\{quests\} \/>\s*<\/div>/.test(leadSrc) &&
+      (leadSrc.match(/data-compact/g) ?? []).length === 1 &&
+      !/data-close-due|rm-quests-slot|rm-aim-slot/.test(leadSrc) &&
+      /\[data-compact\] \.rm-quests-today:not\(\[data-open\]\) \.rm-quests-full \{ display: none; \}/.test(read("src/components/roadmap/roadmap.css")) &&
+      /const prominent = closeDayProminent\(clock\);/.test(boardSrc) &&
+      boardSrc.includes('data-prominent={prominent ? "1" : undefined}')
   );
   check(
     "week quests: the evening rule — compact from 18:00 until the 04:00 edge, not at 17:59 or 04:00",
     closeDayProminent(at(TODAY, 18)) && closeDayProminent(at("2026-10-02", 3, 59)) && !closeDayProminent(at(TODAY, 17, 59)) && !closeDayProminent(at("2026-10-02", 4))
   );
-  check("week quests: the slot carries no data-template-id (the board's own lookups can never find it)", slotTag.length > 0 && !slotTag.includes("data-template-id"));
-  // The slot only renders: it never reaches buildBoard, the counts, the Asks or Next up.
-  const slotLines = boardSrc.split("\n").filter((l) => l.includes("questsSlot"));
-  const allowed = [/^\s*questsSlot\?: ReactNode;\s*$/, /questsSlot = null \}: Props\) \{/, /\{questsSlot != null && questsSlot !== false && \($/, /^\s*\{questsSlot\}\s*$/];
   check(
-    "week quests: questsSlot is only typed, received and drawn (no count, no Ask, no buildBoard input)",
-    slotLines.length === 4 && slotLines.every((l) => allowed.some((r) => r.test(l))),
+    "week quests: the Ideas lead carries no data-template-id (Today's own lookups can never find it); a seek row opens its task on Today (/today#t-<id>, todayTaskHref)",
+    !leadSrc.includes("data-template-id") &&
+      /onSeekTemplate\(\(\{ templateId \}\) => router\.push\(todayTaskHref\(templateId\)\)\)/.test(code(read("src/app/review/SeekToToday.tsx")))
+  );
+  // Today's one slot now is the strip: it only renders, and never reaches buildBoard, the counts or the Asks.
+  const slotLines = boardSrc.split(/\r?\n/).filter((l) => l.includes("elsewhere"));
+  const allowed = [/^\s*elsewhere\?: ReactNode;\s*$/, /elsewhere = null \}: Props\) \{\s*$/, /^\s*\{elsewhere != null && elsewhere !== false && <div className="o2">\{elsewhere\}<\/div>\}\s*$/];
+  check(
+    "due elsewhere: the board's strip slot is only typed, received and drawn (no count, no Ask, no buildBoard input)",
+    slotLines.length === 3 && slotLines.every((l) => allowed.some((r) => r.test(l))),
     slotLines.map((l) => l.trim()).join(" | ")
   );
   check(
@@ -2848,23 +3045,34 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
     check("seek: a row's seekTemplate reaches the board's listener once, a bad id never, and nothing after unsubscribing", got.join() === "rgp" && SEEK_TEMPLATE_EVENT === "xtnl:seek-template", got.join());
   }
 
-  // F16 seam 17: the page loads the week in the board's one wave, with no Suspense, and freezes a missing week after the response.
+  // F16 seam 17: Today loads the week in the board's one wave (for the strip's count), with no Suspense, and freezes a
+  // missing week after the response; the Ideas landing loads it in its own one wave for the card, and freezes it too.
   const page = code(read("src/app/today/page.tsx"));
+  const reviewPage = code(read("src/app/review/page.tsx"));
   const wave = /await Promise\.all\(\[([\s\S]*?)\]\);/.exec(page)?.[1] ?? "";
+  const reviewWave = /await Promise\.all\(\[([\s\S]*?)\]\);/.exec(reviewPage)?.[1] ?? "";
   check(
-    "page: loadWeekQuests joins loadTodayBoard in one Promise.all (a failure reads as no card), with no Suspense or fallback",
-    /loadTodayBoard\(userId, day, now\)/.test(wave) && /loadWeekQuests\(userId, now\)\.catch\(\(\) => null\)/.test(wave) && !/Suspense/.test(page)
+    "page: loadWeekQuests joins loadTodayBoard in one Promise.all (a failure reads as no count), with no Suspense or fallback; the Ideas landing reads it in its one wave (a failure reads as no card)",
+    /loadTodayBoard\(userId, day, now\)/.test(wave) &&
+      /loadWeekQuests\(userId, now\)\.catch\(\(\) => null\)/.test(wave) &&
+      !/Suspense/.test(page) &&
+      /loadWeekQuests\(userId, now\)\.catch\(\(\) => null\)/.test(reviewWave) &&
+      (reviewPage.match(/Promise\.all\(/g) ?? []).length === 1 &&
+      !/Suspense/.test(reviewPage)
   );
-  // Revision 4 (F-R4-3): the same slot holds the aim line when no week quests show, so the two never appear together.
+  // Revision 4 (F-R4-3), moved: the lead holds the aim line when no week quests show, so the two never appear together.
   check(
-    "page: questsSlot is <WeekQuests variant=\"today\"> for an OPEN week with a quest, else the aim line in its .rm-aim-slot (data-close-due), else nothing",
-    /const questsSlot =\s*quests && weekQuestsShownOnToday\(quests\.view\) \? \(\s*<WeekQuests variant="today" view=\{quests\.view\} \/>\s*\) : aimLine \? \(\s*<div className="rm-aim-slot" data-close-due=\{closeDue \? "1" : undefined\}>\s*<AimLine view=\{aimLine\} \/>\s*<\/div>\s*\) : null;/.test(
-      page
-    ) && page.includes("questsSlot={questsSlot}")
+    "page: the Ideas lead is <WeekQuests variant=\"today\"> for an OPEN week with a quest, else the aim line, else (no goal open) one link to the roadmap, else nothing; Today draws neither",
+    /const weekQuests = quests && weekQuestsShownOnToday\(quests\.view\) \? quests\.view : null;/.test(reviewPage) &&
+      /<IdeasLead\s+quests=\{weekQuests\}\s+aimLine=\{weekQuests \? null : aimLine\}\s+noAim=\{noAim\}/.test(reviewPage) &&
+      /const noAim = aimStep != null && aimStep\.open == null && !\(\(aimStep\.openCount \?\? 0\) > 0\);/.test(reviewPage) &&
+      /lead=\{lead\}/.test(reviewPage) &&
+      /const roadmap = quests \? \([\s\S]*?<WeekQuests variant="today" view=\{quests\} \/>[\s\S]*?\) : aimLine \? \(\s*<AimLine view=\{aimLine\} \/>\s*\) : noAim \? \([\s\S]*?href=\{ROADMAP_HREF\}[\s\S]*?\) : null;/.test(leadSrc) &&
+      !/<WeekQuests\b|<AimLine\b|aimLine|questsSlot|components\/roadmap\/(WeekQuests|AimLine)/.test(page)
   );
   check(
-    "page: a week not yet frozen is frozen after the response (RENDER), never on a writes-off server",
-    /if \(quests && !quests\.frozen && !quests\.view\.writesOff\) \{\s*after\(\(\) => freezeWeekQuests\(userId, now, "RENDER"\)\);\s*\}/.test(page)
+    "page: a week not yet frozen is frozen after the response (RENDER), never on a writes-off server (Today and the Ideas landing)",
+    [page, reviewPage].every((p) => /if \(quests && !quests\.frozen && !quests\.view\.writesOff\) \{\s*after\(\(\) => freezeWeekQuests\(userId, now, "RENDER"\)\);\s*\}/.test(p))
   );
   // F16 seam 3: the board's own read carries the stored series (one query, only for an open ROADMAP goal), so
   // Today and the weekly review's goals check-in read the same g; the page queries nothing of its own.
@@ -3026,47 +3234,51 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   );
 }
 
-// ═══ Revision 4: the aim line on Today (roadmap-rev4.md F-R4-3; lane T) ═══
-// One quiet line in the week quests' slot, only when no week quests show:
+// ═══ Revision 4: the aim line, moved to the Ideas landing (roadmap-rev4.md F-R4-3; lane T; the three sections) ═══
+// One quiet line in the Ideas lead (/review), only when no week quests show:
 // SET on fresh-start days with its back-off, DRAFT, START. Loaded in the
-// page's one wave; hidden only while Close the day is due (the evening AND
-// something left to close); never a count, an Ask, the bell, red or a write.
+// Ideas page's one wave; never a count, an Ask, the bell, red or a write.
+// Today (the Tasks section) draws it no more, and so has no evening hide for
+// it; its Close the day keeps the evening rule.
 {
   const code = (src: string) =>
     src
       .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "");
-  const page = code(read("src/app/today/page.tsx"));
+  const todayPage = code(read("src/app/today/page.tsx"));
+  const page = code(read("src/app/review/page.tsx"));
+  const leadSrc = code(read("src/app/review/IdeasLead.tsx"));
   const boardSrc = code(read("src/components/today/TodayBoard.tsx"));
 
-  // The loads: loadAimStep (R4) and cookies() join the board's one wave; nothing else is read for the line.
+  // The loads: loadAimStep (R4) and cookies() join the Ideas page's one wave; nothing else is read for the line.
   const wave = /await Promise\.all\(\[([\s\S]*?)\]\);/.exec(page)?.[1] ?? "";
   check(
-    "aim line: loadAimStep (a failure reads as no line) and cookies() sit in the page's one Promise.all",
+    "aim line: loadAimStep (a failure reads as no line) and cookies() sit in the Ideas page's one Promise.all; Today reads neither",
     (page.match(/Promise\.all\(/g) ?? []).length === 1 &&
-      /const \[board, streak, bosses, feed, quests, aimStep, jar\] = await Promise\.all\(\[/.test(page) &&
+      /const \[allFields, bosses, day, progression, streak, lastSeen, focusRows, quests, aimStep, jar\] = await Promise\.all\(\[/.test(page) &&
       /loadAimStep\(userId, now\)\.catch\(\(\) => null\),/.test(wave) &&
       /\bcookies\(\),?\s*$/.test(wave.trim()) &&
-      !/await cookies\(\)/.test(page),
+      !/await cookies\(\)/.test(page) &&
+      !/loadAimStep|cookies\(\)|AIM_PROMPT_COOKIE|todayAimLineOf/.test(todayPage),
     wave.replace(/\s+/g, " ").trim()
   );
-  check("aim line: the page never calls loadAimCard (loadAimStep is Today's own ≤ 4-read loader)", !/loadAimCard/.test(page) && page.includes('import { loadAimStep } from "@/lib/roadmap-server";'));
+  check("aim line: the page never calls loadAimCard (loadAimStep is the line's own ≤ 4-read loader)", !/loadAimCard/.test(page) && page.includes('import { loadAimStep } from "@/lib/roadmap-server";'));
   // The rule: roadmap-invite todayAimLineOf over the step, the prompt from aimPromptOf (the stored switch and the
   // 'later:', 'hide:' or 'off' cookie), the anchor cookie, the step snooze cookie, the life day, and ROADMAP_GOALS_LIVE.
   check(
-    "aim line: todayAimLineOf reads the step, aimPromptOf(cookie, aimSuggestions, day), both cookies, the life day and ROADMAP_GOALS_LIVE",
-    /const aimCookie = jar\.get\(AIM_PROMPT_COOKIE\)\?\.value;\s*const aimLine = todayAimLineOf\(\{\s*step: aimStep,\s*prompt: aimPromptOf\(aimCookie, aimStep\?\.aimSuggestions \?\? null, day\),\s*cookie: aimCookie,\s*stepCookie: jar\.get\(AIM_STEP_COOKIE\)\?\.value,\s*today: day,\s*goalsLive: ROADMAP_GOALS_LIVE,\s*\}\);/.test(
+    "aim line: todayAimLineOf reads the step, aimPromptOf(cookie, aimSuggestions, today), both cookies, the life day and ROADMAP_GOALS_LIVE",
+    /const aimCookie = jar\.get\(AIM_PROMPT_COOKIE\)\?\.value;\s*const aimLine = todayAimLineOf\(\{\s*step: aimStep,\s*prompt: aimPromptOf\(aimCookie, aimStep\?\.aimSuggestions \?\? null, today\),\s*cookie: aimCookie,\s*stepCookie: jar\.get\(AIM_STEP_COOKIE\)\?\.value,\s*today,\s*goalsLive: ROADMAP_GOALS_LIVE,\s*\}\);/.test(
       page
     ) &&
-      /const day = todayKey\(now\);/.test(page) &&
+      /const today = todayKey\(now\);/.test(page) &&
       AIM_STEP_COOKIE === "xtnl-aim-step"
   );
   // Fix round (lane 0's HIDDEN prompt): the page never branches on the prompt itself, so every AimPrompt value
-  // (ASK, LATER, HIDDEN, OFF, and any later one) reaches Today only through todayAimLineOf.
+  // (ASK, LATER, HIDDEN, OFF, and any later one) reaches the line only through todayAimLineOf.
   check(
-    "aim line: the page never branches on the prompt (no AimPrompt literal, no prompt comparison): a new prompt state needs no Today code",
-    !/"(?:ASK|LATER|HIDDEN|OFF)"/.test(page) && !/prompt\s*[!=]==/.test(page) && (page.match(/aimPromptOf\(/g) ?? []).length === 1
+    "aim line: the page and the lead never branch on the prompt (no AimPrompt literal, no prompt comparison): a new prompt state needs no Ideas code",
+    !/"(?:ASK|LATER|HIDDEN|OFF)"/.test(page + leadSrc) && !/prompt\s*[!=]==/.test(page + leadSrc) && (page.match(/aimPromptOf\(/g) ?? []).length === 1
   );
   // The fixtures read the line exactly as the page does (so every fixture state is the page's own answer).
   const fxSrc = code(read("src/app/dev/style/today/fixtures.ts"));
@@ -3075,16 +3287,20 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
     /return todayAimLineOf\(\{\s*step: f\.step,\s*prompt: aimPromptOf\(f\.cookie, f\.step\.aimSuggestions \?\? null, f\.today\),\s*cookie: f\.cookie,\s*stepCookie: f\.stepCookie,\s*today: f\.today,\s*goalsLive: f\.goalsLive,\s*\}\);/.test(fxSrc)
   );
 
-  // The compact hide keys on Close the day being DUE, not the clock alone (F-R4-3: TodayBoard's data-compact is
-  // closeDayProminent(clock), so the page adds data-close-due from the board's own close list).
+  // The evening hide was Today's (F-R4-3: the line hid while Close the day was due). Off Today there is no Close the
+  // day beside it, so the Ideas lead draws the line in no close-due wrapper (its one data-compact is the week quests
+  // card's own, which never holds the line); Today keeps its evening rule for Close the day itself, over its own
+  // board's close list, and builds no second board.
   check(
-    "aim line: the board's data-compact is the evening clock alone (closeDayProminent), so the page keys the hide on close-due too",
-    /<div className="rm-quests-slot" data-compact=\{prominent \? "1" : undefined\}/.test(boardSrc) && /const prominent = closeDayProminent\(clock\);/.test(boardSrc)
+    "aim line: off Today the line has no evening hide (no rm-quests-slot, rm-aim-slot or data-close-due on the Ideas lead; the line sits outside the quests' compact wrapper); Today's data-prominent is still the evening clock (closeDayProminent)",
+    !/rm-quests-slot|rm-aim-slot|data-close-due/.test(leadSrc) &&
+      /\) : aimLine \? \(\s*<AimLine view=\{aimLine\} \/>\s*\) :/.test(leadSrc) &&
+      /const prominent = closeDayProminent\(clock\);/.test(boardSrc) &&
+      !/rm-quests-slot|data-compact/.test(boardSrc)
   );
   check(
-    "aim line: data-close-due is the board's own Close the day list (closeItemsOf over buildBoard, the same inputs as TodayBoard), built only when the line shows",
-    /const closeBoard = aimLine && !weekQuestsShownOnToday\(quests\?\.view\) \? buildBoard\(board\) : null;/.test(page) &&
-      /const closeDue = closeBoard \? closeItemsOf\(\{ must: closeBoard\.must, todayRows: closeBoard\.todayRows, today: closeBoard\.today, live: closeBoard\.dutyLive \}\)\.length > 0 : false;/.test(page) &&
+    "aim line: Today builds no second board for it (no buildBoard or closeItemsOf in the page); the board's Close the day list is closeItemsOf over its own board",
+    !/buildBoard\(|closeItemsOf\(|closeDue/.test(todayPage) &&
       /const closeItems = closeItemsOf\(\{ must: board\.must, todayRows: board\.todayRows, today: current\.today, live \}\);/.test(boardSrc) &&
       /const live = board\.dutyLive;/.test(boardSrc)
   );
@@ -3114,24 +3330,34 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
     aimSelectors.join(" | ")
   );
 
-  // Quiet by construction: the page adds no class of its own beyond the plain wrapper, and nothing reaches the counts.
-  const slotExpr = /const questsSlot =([\s\S]*?) : null;/.exec(page)?.[1] ?? "";
+  // Quiet by construction: the lead adds no class of its own beyond plain rows, and nothing reaches the counts.
+  const roadmapExpr = /const roadmap = ([\s\S]*?) : null;/.exec(leadSrc)?.[1] ?? "";
   check(
-    "aim line: the wrapper is plain (no owed, warn, danger or gold class; no data-template-id; no /review link)",
-    slotExpr.includes('className="rm-aim-slot"') && !/owed|warn|danger|gold|data-template-id|\/review/.test(slotExpr),
-    slotExpr.replace(/\s+/g, " ").trim()
+    "aim line: the lead's roadmap slot is plain (no owed, warn, danger or gold class; no data-template-id; no /review link)",
+    roadmapExpr.includes("<AimLine view={aimLine} />") && !/owed|warn|danger|gold|data-template-id|\/review/.test(roadmapExpr),
+    roadmapExpr.replace(/\s+/g, " ").trim().slice(0, 200)
   );
   check(
-    "aim line: the page writes nothing for it (no action import, no snooze, no handoff, no after() for the aim)",
-    !/@\/app\/actions/.test(page) && !/snoozeAim|setAimSuggestions|writeAimHandoff|dismissAimPrompt/.test(page) && !/after\([^)]*aim/i.test(page)
+    "aim line: the Ideas page and its lead write nothing for it (no action import, no snooze, no handoff, no after() for the aim); Today neither",
+    [page, leadSrc, todayPage].every((p) => !/@\/app\/actions/.test(p) && !/snoozeAim|setAimSuggestions|writeAimHandoff|dismissAimPrompt/.test(p) && !/after\([^)]*aim/i.test(p))
   );
   const shellFiles = readdirSync(join(ROOT, "src/components/shell"))
     .filter((n) => /\.(tsx?|css)$/.test(n))
     .map((n) => `src/components/shell/${n}`);
-  const quiet = ["src/components/today/board-ui.ts", "src/lib/today-board.ts", "src/lib/tasks.ts", "src/lib/notifications.ts", "src/components/today/TodayBoard.tsx", ...shellFiles];
+  const quiet = [
+    "src/components/today/board-ui.ts",
+    "src/lib/today-board.ts",
+    "src/lib/tasks.ts",
+    "src/lib/notifications.ts",
+    "src/components/today/TodayBoard.tsx",
+    "src/app/today/page.tsx",
+    "src/components/today/due-elsewhere.ts",
+    "src/components/today/DueElsewhere.tsx",
+    ...shellFiles,
+  ];
   const loud = quiet.filter((f) => /aimLine|AimLine|aimStep|AimStep|rm-aim/.test(code(read(f))));
   check(
-    "aim line: board-ui.ts, todayCountsOf (tasks.ts), notifications.ts, the board and the shell (nav count, bell, Asks) never name it",
+    "aim line: board-ui.ts, todayCountsOf (tasks.ts), notifications.ts, the board, the Today page and its strip, and the shell (nav count, bell, Asks) never name it",
     shellFiles.length > 0 && loud.length === 0,
     loud.join(", ")
   );
@@ -3358,7 +3584,7 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   // TodayBoard renders them), outside the fixture grid, so the line has c3's real width at 932 and 1440 (a fixture
   // cell is wider there); the second is the longest line, so ui-audit measures "no clamped text" on the tightest copy.
   check(
-    "aim fixtures: two states in place, in a copy of the board's columns (c3 > o9: the goals, then the slot), outside the fixture grid: SET WEEK and the longest line (start-part)",
+    "aim fixtures: two states in place, in a copy of the board's columns (c3 > o9: the goals, then the slot), outside the fixture grid: SET WEEK and the longest line (start-part); a width lab only, since the live line is the Ideas lead's and the board draws no slot",
     /\{aimInPlace\.map\(\(p\) => \(\s*<div key=\{p\.key\} className="dev-aim-board" data-state=\{`aim-\$\{p\.key\}`\}>[\s\S]*?<div className="board">\s*<div className="c1" \/>\s*<div className="c2" \/>\s*<div className="c3">\s*<div className="o9">\s*<GoalsStrip[^\n]*?\/>\s*<div className="rm-quests-slot" style=\{AIM_SLOT_STYLE\}>\s*<div className="rm-aim-slot">\s*<AimLine view=\{p\.view\} \/>/.test(
       fxPage
     ) &&
@@ -3369,7 +3595,7 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
       /key: "in-place", fixture: "set-week"/.test(fxPage) &&
       /key: "in-place-longest", fixture: "start-part"/.test(fxPage) &&
       /const AIM_SLOT_STYLE = \{ marginTop: 16 \} as const;/.test(fxPage) &&
-      /const QUESTS_SLOT_STYLE = \{ marginTop: 16 \} as const;/.test(boardSrc)
+      !/QUESTS_SLOT_STYLE|rm-quests-slot|questsSlot/.test(boardSrc)
   );
   {
     const fxCss = code(read("src/app/dev/style/today/today-fixtures.css"));
@@ -3387,7 +3613,9 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
 // nothing here runs a browser. This is an estimate from the font's own advance widths and the CSS's own numbers,
 // so a copy that would reach a 4th line (which the clamp cuts, taking the rank words with it) fails here before
 // any browser run: the Names ruling on "(level 12)" in the START line, a longer stage or rank name, a new SET
-// variant. It also finds where the board's column is narrower than at 344 (a PENDING line for R5's clamp).
+// variant. It also finds where the line's column is narrower than at 344 (a PENDING line for R5's clamp). The three
+// sections moved the line from Today's side column (c3) to the Ideas landing's lead, first in the review hub's first
+// column (.rv-hub > .rv-col), so the column it is measured in is that one (review.css), not the board's (today.css).
 {
   const code = (src: string) =>
     src
@@ -3457,11 +3685,12 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   };
 
   // The CSS's own numbers: the line (roadmap.css, R5), the card's border and the page (components.css), the nav
-  // (tokens.css, components.css) and the board's columns (today.css). Read, not typed, so a change re-runs the model.
+  // (tokens.css, components.css) and the review hub's columns (review.css). Read, not typed, so a change re-runs the model.
   const rmCss = code(read("src/components/roadmap/roadmap.css"));
   const compCss = code(read("src/app/styles/components.css"));
   const tokensCss = code(read("src/app/styles/tokens.css"));
-  const todayCss = code(read("src/components/today/today.css"));
+  const reviewCss = code(read("src/components/workspace/review.css"));
+  const hubSrc = code(read("src/components/workspace/WorkspaceView.tsx"));
   const ruleOf = (src: string, selector: string): string => {
     const re = new RegExp(`(?:^|[\\n{}])\\s*${selector.replace(/[.*+?^${}()|[\]\\>]/g, "\\$&")} \\{([^}]*)\\}`);
     return re.exec(src)?.[1] ?? "";
@@ -3493,21 +3722,15 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
     sideAt: num(/@media \(min-width: (\d+)px\) \{\s*\.app \{ grid-template-columns: var\(--sidebar-w\)/, compCss),
   };
   const pageSteps = [...compCss.matchAll(/@container main \(min-width: (\d+)px\) \{ \.page \{ padding: \d+px (\d+)px \d+px; \} \}/g)].map((m) => [Number(m[1]), Number(m[2])] as const).sort((a, b) => a[0] - b[0]);
-  // The board's grid steps: each `@container main (min-width: W)` block of today.css that sets `.today-board .board`'s
-  // columns, with its gap (kept from the step before when it sets none) and c3's column.
-  type GridStep = { at: number; fr: number[]; gap: number; c3: number };
+  // The review hub's grid steps: each `@container main (min-width: W) { .rv-hub { grid-template-columns: … } }` of
+  // review.css, with the base rule's gap, and the lead's column: the first (WorkspaceView draws {lead} first in the
+  // first .rv-col, pinned below).
+  type GridStep = { at: number; fr: number[]; gap: number; col: number };
   const gridSteps: GridStep[] = [];
-  for (const m of todayCss.matchAll(/@container main \(min-width: (\d+)px\) \{([\s\S]*?)\n\}/g)) {
-    const board = ruleOf(m[2], ".today-board .board");
-    const cols = /grid-template-columns: ([^;]+);/.exec(board)?.[1];
-    if (!cols) continue;
-    const prev = gridSteps[gridSteps.length - 1];
-    gridSteps.push({
-      at: Number(m[1]),
-      fr: [...cols.matchAll(/minmax\(0, ([\d.]+)fr\)/g)].map((f) => Number(f[1])),
-      gap: num(/gap: (\d+)px/, board) || prev?.gap || NaN,
-      c3: num(/\.today-board \.board > \.c3 \{ grid-column: (\d+);/, m[2]),
-    });
+  const hubGap = num(/gap: (\d+)px/, ruleOf(reviewCss, ".rv-hub"));
+  const leadCol = /<div className="rv-hub">\s*<div className="rv-col">\s*\{lead\}/.test(hubSrc) ? 1 : NaN;
+  for (const m of reviewCss.matchAll(/@container main \(min-width: (\d+)px\) \{ \.rv-hub \{ grid-template-columns: ([^;]+);/g)) {
+    gridSteps.push({ at: Number(m[1]), fr: [...m[2].matchAll(/minmax\(0, ([\d.]+)fr\)/g)].map((f) => Number(f[1])), gap: hubGap, col: leadCol });
   }
   gridSteps.sort((a, b) => a.at - b.at);
   // The clamp in force at a container width: the base rule, then any `@container main (min-width: W)` block in
@@ -3529,20 +3752,20 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
     clampSteps.sort((a, b) => a[0] - b[0]);
   }
   const clampAt = (main: number) => clampSteps.filter(([w]) => main >= w).reduce((c, [, v]) => v, L.clamp);
-  /** The text column of the aim line in the board's slot (c3 > o9) at viewport width vw: no scrollbar (a phone's overlays; a desktop's classic one narrows it further). */
+  /** The text column of the aim line in the Ideas lead (.rv-hub > the first .rv-col) at viewport width vw: no scrollbar (a phone's overlays; a desktop's classic one narrows it further). */
   const columnAt = (vw: number) => {
     const nav = vw >= L.sideAt ? L.sideW : vw >= L.railAt ? L.railW : 0;
     const main = vw - nav;
     const padX = pageSteps.filter(([w]) => main >= w).reduce((p, [, x]) => x, L.pagePad);
     const content = Math.min(main, L.pageMax) - 2 * padX;
     const g = gridSteps.filter((s) => main >= s.at).pop();
-    const c3 = g ? ((content - g.gap * (g.fr.length - 1)) * g.fr[g.c3 - 1]) / g.fr.reduce((s, f) => s + f, 0) : content;
-    const text = c3 - 2 * L.border - L.padLeft - L.padRight - L.gap - L.x - L.glyph - L.linkGap;
-    return { main, c3, text, clamp: clampAt(main) };
+    const col = g ? ((content - g.gap * (g.fr.length - 1)) * g.fr[g.col - 1]) / g.fr.reduce((s, f) => s + f, 0) : content;
+    const text = col - 2 * L.border - L.padLeft - L.padRight - L.gap - L.x - L.glyph - L.linkGap;
+    return { main, col, text, clamp: clampAt(main) };
   };
-  const modelRead = Object.values(L).every((v) => Number.isFinite(v)) && pageSteps.length >= 1 && gridSteps.length >= 1 && gridSteps.every((s) => s.fr.length >= 2 && Number.isFinite(s.gap) && s.c3 >= 1 && s.c3 <= s.fr.length);
+  const modelRead = Object.values(L).every((v) => Number.isFinite(v)) && pageSteps.length >= 1 && gridSteps.length >= 1 && gridSteps.every((s) => s.fr.length >= 2 && Number.isFinite(s.gap) && s.col >= 1 && s.col <= s.fr.length);
   check(
-    "text fit: the layout model reads its numbers from the CSS (the line, the card border, the page padding and max width, the rail and sidebar, the board's column steps)",
+    "text fit: the layout model reads its numbers from the CSS (the line, the card border, the page padding and max width, the rail and sidebar, the review hub's column steps, the lead in its first column)",
     modelRead,
     `${JSON.stringify(L)} · page ${JSON.stringify(pageSteps)} · grid ${JSON.stringify(gridSteps)} · clamp steps ${JSON.stringify(clampSteps)}`
   );
@@ -3554,11 +3777,11 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   const at344 = columnAt(344);
   check(
     "text fit: at 344 the text column is 216 px (344 − 2 × 16 page = 312 card − 2 border − 14 − 6 padding − 4 gap − 40 × − 20 glyph − 10 gap)",
-    Math.abs(at344.text - 216) < 1e-9 && at344.c3 === 312,
+    Math.abs(at344.text - 216) < 1e-9 && at344.col === 312,
     `${at344.text} px`
   );
 
-  // Every copy Today can draw: the fixtures' lines, every SET variant and DRAFT, and every START a plan can reach
+  // Every copy the aim line can draw: the fixtures' lines, every SET variant and DRAFT, and every START a plan can reach
   // (each stage label stageLabelOf gives, a track plan's none, at every place 1..MAX_MILESTONES, with every rank a
   // milestone can give or none). The cross product is wider than real plans (a "Toward …" stage keeps your rank).
   type Copy = { key: string; lead: string; rest: string };
@@ -3588,8 +3811,8 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
     stageLabels.length === 15 && stageLabels.every((s) => s === null || s.length > 0) && ranks.length === 6 && ranks[ranks.length - 1] === "Virtuoso" && all.length === 15 * 6 * 6 + 5 && fixtureCopies.length === 13 && unknownChars.size === 0,
     `${all.length} copies; labels ${stageLabels.map((s) => s ?? "(track)").join(" | ")}${unknownChars.size ? ` · unknown characters ${[...unknownChars].join("")}` : ""}`
   );
-  // The binding part: Acceptance's widths. At 344 and 375 the board is one column (c3 is the page's width) and the
-  // clamp must be the base 3 lines (the 72 px gate); at 932 and 1440 the line sits in c3 (the in-place fixture
+  // The binding part: Acceptance's widths. At 344 and 375 the hub is one column (the lead is the page's width) and the
+  // clamp must be the base 3 lines (the 72 px gate); at 932 and 1440 the line sits in the hub's first column (the in-place fixture
   // states draw it there for ui-audit), where a clamp R5 lifts cuts nothing.
   for (const vw of [344, 375, 932, 1440]) {
     const col = columnAt(vw);
@@ -3598,7 +3821,7 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
     const over = all.filter((c) => needOf(c) > col.text);
     const least = all.map((c) => [c.key, needOf(c)] as const).sort((x, y) => y[1] - x[1])[0];
     check(
-      `text fit (estimate): at ${vw} every copy Today can draw (${all.length}) fits ${Number.isFinite(col.clamp) ? `the ${col.clamp}-line clamp` : "(no clamp at this width)"} in the board's column (text ${col.text.toFixed(1)} px; c3 ${col.c3.toFixed(1)})`,
+      `text fit (estimate): at ${vw} every copy the aim line can draw (${all.length}) fits ${Number.isFinite(col.clamp) ? `the ${col.clamp}-line clamp` : "(no clamp at this width)"} in the Ideas lead's column (text ${col.text.toFixed(1)} px; column ${col.col.toFixed(1)})`,
       (vw > 375 || col.clamp === L.clamp) && over.length === 0,
       over.length
         ? over.slice(0, 6).map((c) => `${c.key} needs ${needOf(c).toFixed(1)}`).join(" | ")
@@ -3610,7 +3833,7 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   {
     const fxNeed = fixtureCopies.map((c) => [c.key, narrowestFor(c.lead, c.rest, L.clamp, L.fontPx)] as const).sort((a, b) => b[1] - a[1]);
     check(
-      "text fit (estimate): the fixtures' longest line is start-part (a new learner's count gate), the in-place state ui-audit measures in c3; it fits 3 lines at 344 with its spare printed",
+      "text fit (estimate): the fixtures' longest line is start-part (a new learner's count gate), the in-place state ui-audit measures; it fits 3 lines at 344 with its spare printed",
       fxNeed[0]?.[0] === "start-part" && fxNeed[0][1] <= at344.text,
       fxNeed.slice(0, 4).map(([k, w]) => `${k} ${w.toFixed(1)} px`).join(" · ") + ` · spare at 344: ${(at344.text - (fxNeed[0]?.[1] ?? 0)).toFixed(1)} px`
     );
@@ -3624,8 +3847,8 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
     ] as const;
     console.log(`NOTE text fit, for the "(level 12)" ruling: at 344 (${at344.text} px) ${lv.map(([l, r]) => `"${l}" → ${linesOf(l, r, at344.text, L.fontPx)} lines`).join(" · ")} (a 4th line is cut by the clamp)`);
   }
-  // Between ui-audit's widths the board's c3 is narrower than at 344 (two columns from a 640 px container, three
-  // from 1100), so the 3-line clamp cuts real lines there, the rank words first. R5's roadmap.css owns the clamp:
+  // Between ui-audit's widths the line's column may be narrower than at 344 (the hub's two columns from a 760 px
+  // container), and there the 3-line clamp would cut real lines, the rank words first. R5's roadmap.css owns the clamp:
   // lifting it in a `@container main (min-width: …)` block (the copy is code-owned and bounded; only 344 has the
   // 72 px gate) turns this green. Swept over every viewport from 344 (the narrowest the app is laid out for) to
   // 1920, with the fixtures' lines.
@@ -3661,7 +3884,7 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
     };
     pending(
       "R5",
-      "text fit (estimate): no viewport from 344 to 1920 clamps a fixture line in the board's column (its c3 is narrower than at 344 at some widths, and the 3-line clamp then cuts the rank words)",
+      "text fit (estimate): no viewport from 344 to 1920 clamps a fixture line in the Ideas lead's column (were it narrower than at 344 at some widths, the 3-line clamp would cut the rank words)",
       ranges.length === 0,
       ranges.length
         ? `clamped at ${ranges.map(([a, b]) => (a === b ? `${a}` : `${a}–${b}`)).join(", ")} px wide; worst ${worst?.key} at ${worst?.vw} (needs ${worst?.need.toFixed(1)} of ${worst?.text.toFixed(1)} px) · ${[768, 1366].map(at).join(" · ")}`

@@ -81,11 +81,15 @@ export function levelCaption(c: Pick<ShellCharacter, "level" | "progress" | "nex
   return `${pct}% to level ${next}`;
 }
 
-/** The accessible name of the crest button. */
+/**
+ * The accessible name of a profile button (the top bar's crest, the rail's
+ * You, the sidebar's card). Each opens the profile menu, which its
+ * aria-haspopup says; the name holds the visible words ('You', the title).
+ */
 export function crestLabel(c: ShellCharacter | null | undefined): string {
-  if (!c || c.level == null) return "You: open your character sheet";
+  if (!c || c.level == null) return "You";
   const who = [c.title, c.epithet].filter(Boolean).join(" ");
-  return `Character level ${c.level}${who ? `, ${who}` : ""}. Open your sheet`;
+  return `You: character level ${c.level}${who ? `, ${who}` : ""}`;
 }
 
 /**

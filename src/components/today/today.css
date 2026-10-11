@@ -11,10 +11,12 @@
    Layout: ONE DOM, three orders, by the width of <main> (the board root
    carries `cq-main`, so .main is the `main` container; every fixed layer
    the board opens is portalled to <body>: ui/Sheet and the ToastDock).
-     compact  one column: the streak, the lanes (Must, Planned, Habits, Owed),
-              Next up, the day's ledger, Goals, Inbox, Close
-     ≥ 640    the lanes | Streak, Ledger, Next up, Goals, Inbox, Close
-     ≥ 1100   Streak, Ledger, Next up | lanes | Goals, Inbox, Close
+   Today is the Tasks section: the streak and the Full day are Character's,
+   Next up's review quest is Ideas'; what is due there is the strip.
+     compact  one column: Due elsewhere, the plan card, the lanes (Must,
+              Planned, Habits, Owed), Goals, Inbox, Close
+     ≥ 640    the lanes | Due elsewhere, Plan, Goals, Inbox, Close
+     ≥ 1100   Due elsewhere, Plan | lanes | Goals, Inbox, Close
    The lanes carry the most weight (raised, shaded, the largest headings);
    the goals the least (flat, quieter). The Asks are badges with a radial
    pulse on the block they concern (AskBadge), never cards of their own.
@@ -140,6 +142,46 @@ html[data-motion="calm"] :is(.seal .ring-lit, .seal .halo, .seal .flame) { trans
 .today-day .cell .k { display: block; font-size: 12px; line-height: 16px; color: var(--ink-2); margin-top: 5px; }
 .today-day .cap-cell { display: block; width: 100%; min-height: 44px; margin: -6px 0; padding: 6px 0; text-align: left; background: none; border: 0; color: inherit; border-radius: 8px; }
 .today-day .cap-cell:hover .k { color: var(--ink-0); }
+/* Character draws the streak card with a link, not a button: the same quiet line. */
+a.today-streak-y { text-decoration: none; }
+
+/* ── Due elsewhere: one slim strip, a row per other section, each a link out (due-elsewhere.ts) ──
+   Glyph + figure + a short word, aria-hidden (the row's long form is its spoken twin); due is ink, never a hue. */
+.today-away { display: grid; overflow: hidden; }
+.today-away .away-row {
+  display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 6px 8px 6px 14px;
+  color: var(--ink-1); font: 500 13px/18px var(--font-ui); text-decoration: none;
+}
+.today-away .away-row + .away-row { border-top: 1px solid var(--line-1); }
+.today-away .away-row:hover { background: var(--raised); }
+.today-away .away-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: var(--r-card); }
+.today-away .away-items { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; flex: 1; min-width: 0; }
+.today-away .away-it { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.today-away .away-it svg { flex: none; color: var(--ink-2); }
+.today-away .away-it b { color: var(--ink-0); font-weight: 600; }
+.today-away .away-to { display: inline-flex; align-items: center; gap: 2px; flex: none; color: var(--ink-0); font-weight: 600; }
+.today-away .away-to svg { color: var(--ink-2); }
+
+/* ── The plan card: capacity, the life XP the ticks paid, Record yesterday (PlanCard.tsx) ── */
+.today-plan { padding: 12px 14px 4px; position: relative; }
+.today-plan .plan-cells { display: grid; grid-template-columns: 1.2fr 1fr; }
+.today-plan .plan-cell { min-width: 0; }
+.today-plan .plan-cell + .plan-cell { border-left: 1px solid var(--line-1); padding-left: 12px; }
+.today-plan .plan-cell .v { font: 600 20px/1 var(--font-display); display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums lining-nums; }
+.today-plan .plan-cell .v .gl { display: inline-flex; }
+.today-plan .plan-cell .v svg.g { width: 15px; height: 15px; }
+.today-plan .plan-cell .v small { font: 500 13px var(--font-ui); color: var(--ink-2); }
+.today-plan .plan-cell .k { display: block; font-size: 12px; line-height: 16px; color: var(--ink-2); margin-top: 5px; }
+.today-plan .plan-cap { display: block; width: 100%; min-height: 44px; margin: -6px 0; padding: 6px 0; text-align: left; background: none; border: 0; color: inherit; border-radius: 8px; }
+.today-plan .plan-cap:hover .k { color: var(--ink-0); }
+.today-plan .plan-cap:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.today-plan .plan-y {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-height: 44px; margin-top: 10px; padding: 0 2px;
+  border: 0; border-top: 1px solid var(--line-1); background: none; color: var(--ink-1); font: 600 13px/18px var(--font-ui); text-align: left; cursor: pointer;
+}
+.today-plan .plan-y > span { flex: 1; min-width: 0; }
+.today-plan .plan-y:hover { color: var(--ink-0); }
+.today-plan .plan-y:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: 6px; }
 
 /* ── Next up ───────────────────────────────────────────────────────────── */
 .today-hero { padding: 16px; display: flex; flex-direction: column; }

@@ -1238,56 +1238,51 @@ function literalText(body: string): string {
   );
 }
 
-// 9b. The Aim card on /you (seam 9, F19): one wave, under the hero, no Suspense, never an error page.
+// 9b. The three sections (Ideas, Tasks, Body): the Aim card moved to Ideas › Roadmap, and Character draws the streak
+// and the Full day moved off Today (day-cards.ts): one wave, under the attributes, no Suspense, never an error page.
 {
   const you = read("src/app/you/page.tsx");
   const youCode = codeOf(you);
-  check("aim card: loadSheet and the Aim card load in one Promise.all with the cookies", /Promise\.all\(\[\s*loadSheet\(userId, now\),\s*aimCardOrNull\(userId, now\),\s*cookies\(\)\s*\]\)/.test(youCode));
-  check("aim card: loadAimCard is called only inside aimCardOrNull's try", (youCode.match(/\bloadAimCard\(/g) ?? []).length === 1 && /async function aimCardOrNull[\s\S]*?try \{\s*return await loadAimCard\(userId, now\);\s*\} catch/.test(youCode));
+  check(
+    "aim card (moved): /you draws no AimCard and reads no aim (no loadAimCard, cookies, aimPromptOf or longGoalSeedOf); one quiet link to the roadmap carries the tour's you-aim target",
+    !/<AimCard\b|loadAimCard|aimCardOrNull|cookies\(\)|aimPromptOf|longGoalSeedOf|AIM_PROMPT_COOKIE/.test(youCode) &&
+      /<div className="card you-aim-link" data-tour="you-aim">\s*<Link className="collapsed" href=\{ROADMAP_HREF\}>/.test(youCode) &&
+      (youCode.match(/data-tour="you-aim"/g) ?? []).length === 1
+  );
+  check(
+    "day cards: loadSheet and the day cards' reads (Today's cached board, the streak; each caught to none) load in one Promise.all",
+    /Promise\.all\(\[\s*loadSheet\(userId, now\),\s*loadTodayBoard\(userId, today, now\)\.catch\(\(\) => null\),\s*getDailyStreak\(userId\)\.catch\(\(\) => null\)\s*\]\)/.test(youCode) &&
+      (youCode.match(/Promise\.all\(/g) ?? []).length === 1
+  );
+  check("day cards: dayCardsOf is called only inside dayCardsOrNull's try", (youCode.match(/\bdayCardsOf\(/g) ?? []).length === 1 && /function dayCardsOrNull[\s\S]*?try \{\s*return dayCardsOf\(board, streak\);\s*\} catch/.test(youCode));
   const hero = youCode.indexOf("<CharacterHero");
   const radar = youCode.indexOf("<AttributeRadar");
-  const card = youCode.indexOf('{aim && <AimCard view={aim} prompt={prompt} seed={seed} lastAim={aim.lastAim ?? null} promptDismissed={prompt === "OFF"} today={aimToday} />}');
+  const cards = youCode.indexOf("{day && <DayCards view={day} />}");
   const ready = youCode.indexOf("{s.ready && <ReadyCallout");
   check(
-    "aim card: the order of weight, the level (the hero, across the grid) > the attributes > the aim: rendered only when loaded, directly under AttributeRadar and before the ready callout",
+    "day cards: the order of weight, the level (the hero, across the grid) > the attributes > the day: drawn only when read, directly under AttributeRadar and before the ready callout",
     /<div className="you-hero">\s*<CharacterHero/.test(youCode) &&
       hero >= 0 &&
       radar > hero &&
-      card > radar &&
-      ready > card &&
-      !/<\/div>|<div/.test(youCode.slice(youCode.indexOf("/>", radar), card)) &&
+      cards > radar &&
+      ready > cards &&
+      !/<\/div>|<div/.test(youCode.slice(youCode.indexOf("/>", radar), cards)) &&
       /\.you-hero \{ grid-column: 1 \/ -1;/.test(read("src/components/home/you.css"))
   );
-  check("aim card: no Suspense on /you (the card arrives with the sheet; nothing shifts)", !/Suspense/.test(youCode));
+  check("day cards: no Suspense on /you (the cards arrive with the sheet; nothing shifts)", !/Suspense/.test(youCode));
   check(
-    "aim card: the card gets the life day from the page's own `now` (todayKey(now)), so it never reads the client's clock and hydration agrees at the 04:00 turn",
-    /const aimToday = todayKey\(now\);/.test(youCode) &&
+    "day cards: the cards and the month read the life day from the page's own `now` (todayKey(now)), so nothing reads the client's clock and hydration agrees at the 04:00 turn",
+    /const today = todayKey\(now\);/.test(youCode) &&
       /import \{ todayKey \} from "@\/lib\/life-day";/.test(youCode) &&
-      (youCode.match(/<AimCard\b/g) ?? []).length === 1 &&
-      /<AimCard\b[^>]*\btoday=\{aimToday\}/.test(youCode)
+      /loadTodayBoard\(userId, today, now\)/.test(youCode) &&
+      /<MonthDoneCard today=\{today\}/.test(youCode)
   );
-  check("aim card: you/loading.tsx is left as it was (no Aim skeleton to match)", !/aim/i.test(read("src/app/you/loading.tsx")));
-  // Revision 4 (roadmap-rev4.md F-R4-1): the empty card's prompt, seed and last aim, from what the page already loads.
-  check(
-    "aim card (rev 4): the prompt is aimPromptOf over the cookie, the card's stored aimSuggestions and the page's life day, read on the server",
-    /import \{ cookies \} from "next\/headers"/.test(youCode) &&
-      /import \{ aimPromptOf, longGoalSeedOf \} from "@\/lib\/roadmap-invite";/.test(youCode) &&
-      /const prompt = aimPromptOf\(jar\.get\(AIM_PROMPT_COOKIE\)\?\.value, aim\?\.aimSuggestions \?\? null, aimToday\);/.test(youCode) &&
-      AIM_PROMPT_COOKIE === "xtnl-aim-prompt"
-  );
-  check("aim card (rev 4): the 'off' cookie is no longer tested on its own (aimPromptOf reads it, with the stored switch)", !/=== "off"/.test(youCode) && !/const promptDismissed\b/.test(youCode));
-  check("aim card (rev 4): the long-goal seed comes from the sheet's own goals (s.goals), no new read", /const seed = longGoalSeedOf\(s\.goals, aimToday\);/.test(youCode) && (youCode.match(/longGoalSeedOf\(/g) ?? []).length === 1);
-  check(
-    "aim card (rev 4): the card gets prompt, seed and the view's lastAim, and promptDismissed only as the transition alias for OFF",
-    /<AimCard\b[^>]*\bprompt=\{prompt\}[^>]*\bseed=\{seed\}[^>]*\blastAim=\{aim\.lastAim \?\? null\}[^>]*\bpromptDismissed=\{prompt === "OFF"\}/.test(youCode)
-  );
-  check("aim card (rev 4): the page builds no '?aim=' URL and reads no searchParams (the aim never travels in a URL)", !/\?aim=|searchParams/.test(youCode));
-  check("aim card (rev 4): still exactly one Promise.all on /you (the prompt, seed and last aim add no read)", (youCode.match(/Promise\.all\(/g) ?? []).length === 1);
+  check("day cards: you/loading.tsx is left as it was (no skeleton of its own to match)", !/aim/i.test(read("src/app/you/loading.tsx")));
   {
     const sheet = read("src/app/you/_lib/sheet.ts");
     check("aim card (rev 4): _lib/sheet.ts is untouched by the aim (no invite, seed or switch read in it)", !/roadmap-invite|aimSuggestions|longGoalSeed|AIM_PROMPT/.test(sheet));
   }
-  // The prompt rule /you and Settings read, run (lane 0's aimPromptOf): the stored no, the legacy cookie, the snooze.
+  // The prompt rule the Ideas lead's aim line and Settings read (lane 0's aimPromptOf): the stored no, the legacy cookie, the snooze.
   {
     const today: DayKey = "2026-12-22";
     check(
@@ -1296,10 +1291,11 @@ function literalText(body: string): string {
         aimPromptOf(undefined, false, today) === "OFF" &&
         aimPromptOf("off", true, today) === "OFF" &&
         aimPromptOf(laterCookieValue(addDays(today, -27)), null, today) === "LATER" &&
-        aimPromptOf(laterCookieValue(addDays(today, -AIM_LATER_DAYS)), null, today) === "ASK"
+        aimPromptOf(laterCookieValue(addDays(today, -AIM_LATER_DAYS)), null, today) === "ASK" &&
+        AIM_PROMPT_COOKIE === "xtnl-aim-prompt"
     );
-    // The fix round's HIDDEN (lane 0): the LATER line's × writes 'hide:<day>', which quiets /you for
-    // AIM_LATER_DAYS from that tap; the stored no still wins, and the page passes it on unchanged.
+    // The fix round's HIDDEN (lane 0): the LATER line's × writes 'hide:<day>', which quiets the aim suggestions for
+    // AIM_LATER_DAYS from that tap; the stored no still wins.
     check(
       "aim card (fix round): a 'hide:' cookie gives HIDDEN for AIM_LATER_DAYS from the tap, then ASK; the stored no still gives OFF",
       aimPromptOf(hideCookieValue(today), null, today) === "HIDDEN" &&
@@ -1307,47 +1303,37 @@ function literalText(body: string): string {
         aimPromptOf(hideCookieValue(addDays(today, -AIM_LATER_DAYS)), null, today) === "ASK" &&
         aimPromptOf(hideCookieValue(today), false, today) === "OFF"
     );
-    check(
-      "aim card (fix round): /you hands the card HIDDEN as it is (promptDismissed stays the alias for OFF only, so R5's card can keep a last aim's line)",
-      /promptDismissed=\{prompt === "OFF"\}/.test(youCode) && !/prompt === "HIDDEN"/.test(youCode)
-    );
   }
+  // The fallback week quest freeze (F14, RENDER) left /you with the Aim card: Today, the Ideas landing and the roadmap
+  // page each freeze an unfrozen week after the response; /you's one after() is the snapshot, then the life chain.
   check(
-    "aim card: the fallback freeze (RENDER) runs in the page's one after(), after the chain, only when this week is unfrozen",
-    /questWeekUnfrozen = aim\?\.questWeekUnfrozen === true;/.test(youCode) &&
-      /await maybeMaintainLife\(userId\);\s*if \(questWeekUnfrozen\) \{\s*try \{\s*const frozen = await freezeWeekQuests\(userId, now, "RENDER"\);/.test(youCode) &&
-      (youCode.match(/\bafter\(/g) ?? []).length === 1
-  );
-  check(
-    "aim card: the freeze never throws, so its returned `error` is what gets logged (roadmap-types QuestFreezeRun.error)",
-    /const frozen = await freezeWeekQuests\(userId, now, "RENDER"\);\s*if \(frozen\.error\) console\.error\("\[you\] week quest freeze failed", frozen\.error\);/.test(youCode)
+    "freeze: /you schedules no roadmap write (its one after() is the snapshot, then the life chain); Today, the Ideas landing and the roadmap page freeze an unfrozen week (RENDER)",
+    !/freezeWeekQuests/.test(youCode) &&
+      (youCode.match(/\bafter\(/g) ?? []).length === 1 &&
+      ["src/app/today/page.tsx", "src/app/review/page.tsx", "src/app/you/roadmap/page.tsx"].every((f) => /freezeWeekQuests\(userId, now, "RENDER"\)/.test(codeOf(read(f))))
   );
   check("aim card: the page calls no other roadmap writer", !/recordRoadmapReadings|finalizeQuestWeeks|recordCardsForReview|recordPracticeForTemplate|questWeekInsertOp/.test(youCode));
 }
 
-/** Runs the page's own guard (aimCardOrNull, transpiled from its source) against a failing and a working loader. */
-async function aimCardGuardChecks() {
+/** Runs the page's own guard (dayCardsOrNull, transpiled from its source) against missing reads, a failing and a working builder. */
+async function dayCardsGuardChecks() {
   const src = read("src/app/you/page.tsx");
-  const fn = /async function aimCardOrNull[\s\S]*?\n\}\n/.exec(src)?.[0] ?? "";
+  const fn = /function dayCardsOrNull[\s\S]*?\r?\n\}\r?\n/.exec(src)?.[0] ?? "";
   if (!fn) {
-    check("aim card: the page's guard can be read", false, "aimCardOrNull not found");
+    check("day cards: the page's guard can be read", false, "dayCardsOrNull not found");
     return;
   }
   const js = ts.transpileModule(fn, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-  type Guard = (userId: string, now: Date) => Promise<unknown>;
+  type Guard = (board: unknown, streak: unknown) => unknown;
   const quiet = { error: () => undefined };
-  const make = (loader: (userId: string, now: Date) => unknown) => new Function("loadAimCard", "console", `${js}\nreturn aimCardOrNull;`)(loader, quiet) as Guard;
-  const view = { state: "EMPTY" };
-  const rejected = await make(async () => {
-    throw new Error("relation \"Roadmap\" does not exist");
-  })("u", new Date());
-  const thrown = await make(() => {
-    throw new Error("sync");
-  })("u", new Date());
-  const loaded = await make(async () => view)("u", new Date());
-  const missing = await make(async () => null)("u", new Date());
-  check("aim card: a loadAimCard failure renders the sheet without the card (the guard gives null, never throws)", rejected === null && thrown === null);
-  check("aim card: a loaded view passes through, and no view stays none", loaded === view && missing === null);
+  const make = (builder: (board: unknown, streak: unknown) => unknown) => new Function("dayCardsOf", "console", `${js}\nreturn dayCardsOrNull;`)(builder, quiet) as Guard;
+  const view = { streak: { count: 3 } };
+  const ok = make(() => view);
+  const thrown = make(() => {
+    throw new Error("bad board");
+  })({}, {});
+  check("day cards: a missing board or streak read renders the sheet without the cards (the guard gives null)", ok(null, {}) === null && ok({}, null) === null);
+  check("day cards: a failure building them renders the sheet without them (null, never a throw); a built view passes through", thrown === null && ok({}, {}) === view);
 }
 
 // 9c. The Aim card states on /dev/style/art/you (seam 18): pure fixtures through the roadmap's builders.
@@ -2465,7 +2451,7 @@ async function r2AimCardChecks() {
 
 (async () => {
   await redirects();
-  await aimCardGuardChecks();
+  await dayCardsGuardChecks();
   await aimPageRenderChecks();
   await r2AimCardChecks(); // R2 (ui-motion.md §11.4 /you)
   await settingsRenderChecks();

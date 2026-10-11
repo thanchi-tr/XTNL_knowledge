@@ -1,0 +1,53 @@
+@layer theme, base, components, art, effects, utilities;
+/* =====================================================================
+   THE THREE SECTIONS (Chrome.tsx, TopBar.tsx, ProfileMenu.tsx): the tab
+   bar's four cells (Ideas · Tasks · + · Body), the profile buttons (the top
+   bar's crest < 600, the rail's crest 600–1279, the sidebar's character
+   card ≥ 1280) and the profile menu's rows. components.css keeps the
+   chrome's base rules; every selector here outranks the one it adjusts, so
+   the order the two sheets load in never decides. Tokens only, so Night
+   and Vellum both hold; nothing moves but the kit's colour transitions.
+   Namespaced: r-you, sb-me, pm-* (none is a Tailwind utility).
+   ===================================================================== */
+@layer components {
+  /* Three tabs and the + (components.css lays out five). */
+  nav.tabbar { grid-template-columns: repeat(4, 1fr); }
+
+  /* The profile buttons open the menu; on a profile page each is the current item. */
+  button.crest-btn { background: transparent; border: 0; padding: 0; cursor: pointer; }
+  button.crest-btn[aria-current="true"] { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-2); }
+  .rail button.r-you { cursor: pointer; }
+  .rail button.r-you[aria-current="true"] { color: var(--ink-0); background: var(--raised); }
+
+  /* The sidebar card: its button's ::after covers the whole card (a 44 px+ target), so the meter stays outside the button. */
+  .sidebar .sb-char { position: relative; transition: background-color var(--t-quick); }
+  .sidebar .sb-char:hover { background: var(--raised); }
+  .sb-me { display: block; width: 100%; margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .sb-me::after { content: ""; position: absolute; inset: 0; z-index: 1; border-radius: 14px; }
+  .sb-me:focus-visible { outline: none; }
+  .sb-me:focus-visible::after { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .sb-me[aria-current="true"]::after { box-shadow: inset 0 0 0 1px var(--line-ctl); }
+
+  /* The compact sub-page strip (SubTabs.tsx: the sections' under the top bar, YouTabs on a profile page): 44 px tabs.
+     The section strip lines up with the page's 16 px gutter and leaves from 600, where the top bar carries the tabs. */
+  nav.sub-tabs .tab-s { min-height: 44px; }
+  nav.sec-tabs { padding: 2px 16px; margin: 2px 0 6px; }
+  @media (min-width: 600px) { nav.sec-tabs { display: none; } }
+
+  /* From 1280 the sidebar lists only the sections' sub-pages: on a profile page the top bar keeps the profile's tabs. */
+  @media (min-width: 1280px) {
+    .topbar[data-group="you"] .tb-tabs { display: flex; }
+    .topbar[data-group="you"] .tb-title { flex: 0 1 auto; margin-right: 12px; }
+  }
+
+  /* The profile menu (a kit Sheet): one 48 px row per page with its icon; the current one raised. */
+  .pm-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .pm-row {
+    display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 12px; border-radius: 12px;
+    font: 600 15px var(--font-ui); color: var(--ink-1); text-decoration: none;
+    transition: background-color var(--t-quick), color var(--t-quick);
+  }
+  .pm-row svg.i { width: 22px; height: 22px; flex: none; }
+  .pm-row:hover { background: var(--raised); color: var(--ink-0); }
+  .pm-row[aria-current="page"] { background: var(--raised); color: var(--ink-0); box-shadow: inset 0 0 0 1px var(--line-2); }
+}

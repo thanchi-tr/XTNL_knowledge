@@ -45,15 +45,15 @@ import type { DayKey } from "../../lib/life-day";
 import type { CaptureResult, CapturedItem, CapturedWeight, WeightSource } from "../../app/actions/capture";
 import type { ToastCopy } from "./capture-ui";
 
-/** Where a weigh-in goes: the Train page's weight card. */
+/** Where a weigh-in goes: Body's weight card (Body › This week, /train). */
 export const WEIGHT_HREF = "/train";
-export const WEIGHT_PLACE = "Train";
+export const WEIGHT_PLACE = "Body";
 /** The primary button over a weigh-in line. */
 export const WEIGHT_PRIMARY = "Log weight";
 export const WEIGH_IN_NOT_AN_EDIT = "A weigh-in can't replace a line. Cancel the edit, then log it as a new line.";
-export const WEIGHT_UNDO_UNAVAILABLE = "This weigh-in can't be undone here. Change it on Train.";
+export const WEIGHT_UNDO_UNAVAILABLE = "This weigh-in can't be undone here. Change it on Body.";
 export const WEIGHT_UNDO_GONE = "That weigh-in is gone already.";
-export const WEIGHT_UNDO_CHANGED = "That day's weight has changed since. Change it on Train.";
+export const WEIGHT_UNDO_CHANGED = "That day's weight has changed since. Change it on Body.";
 export const WEIGHT_UNDO_BAD = "That weigh-in can't be undone.";
 const SAME_KG = 0.005;
 
@@ -389,7 +389,7 @@ export function weightUndoneCopy(weight: Pick<CapturedWeight, "unit">, title: st
 // ── What the toast says ───────────────────────────────────────────────────
 
 /**
- * 'Weight logged · 72.4 kg → Train · was 73.0 kg · View': the dock's head,
+ * 'Weight logged · 72.4 kg → Body · was 73.0 kg · View': the dock's head,
  * then the reading, where it went, what it replaced, and a View link to the
  * Train page. A value already logged says 'Already logged'. No figure: a
  * weigh-in pays nothing.

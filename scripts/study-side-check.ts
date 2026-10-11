@@ -52,7 +52,7 @@ import { QUESTION_TYPES, encodeIdeaContent, parseCloze } from "../src/lib/idea-p
 import { MASTERY_LEVEL, MAX_LEVEL } from "../src/lib/xp";
 import { parseReviewDetail } from "../src/lib/roadmap-types";
 import { reviewMarkOf } from "../src/lib/review-facts";
-import { SECTIONS, activeSub, titleFor } from "../src/components/shell/nav";
+import { PROFILE, activeSub, isProfilePath, sectionOf, titleFor } from "../src/components/shell/nav";
 
 const ROOT = join(__dirname, "..");
 const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
@@ -275,8 +275,9 @@ eq("reset scope: inherited keys and non-strings are not scopes", ["toString", "_
 
 // ── Nav: the shell's model agrees with the lane's routes ────────────────────
 eq("nav: /structure and /taxonomy light Fields & Domains", [activeSub("/structure"), activeSub("/taxonomy")], ["/structure", "/structure"]);
-eq("nav: /library/<id> lights Library; its title is Study · Idea", [activeSub("/library/abc"), titleFor("/library/abc")], ["/library", { eyebrow: "Study", title: "Idea" }]);
-check("nav: /settings is a You sub-page", SECTIONS.find((s) => s.id === "you")!.subs.some((s) => s.href === "/settings"));
+eq("nav: /library/<id> lights Library; its title is Ideas · Idea", [activeSub("/library/abc"), titleFor("/library/abc")], ["/library", { eyebrow: "Ideas", title: "Idea" }]);
+eq("nav: the lane's pages (/library, /add, /structure) are Ideas", ["/library", "/add", "/structure"].map(sectionOf), ["ideas", "ideas", "ideas"]);
+check("nav: /settings is a profile page (the profile menu's last row)", isProfilePath("/settings") && PROFILE.subs[PROFILE.subs.length - 1].href === "/settings");
 
 // ── Source guards ───────────────────────────────────────────────────────────
 const ROUTES = ["library", "library/[id]", "add", "structure", "settings"];

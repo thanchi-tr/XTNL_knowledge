@@ -67,7 +67,7 @@ import {
 } from "../src/lib/goals-server";
 import type { ReadingOps } from "../src/lib/roadmap-readings";
 import { NOT_RECORDED_HERE, ROADMAP_WRITES_OFF, type RoadmapWriteOpts } from "../src/lib/roadmap-types";
-import { DEV_STYLE_PAGES, activeSub, sectionById, titleFor } from "../src/components/shell/nav";
+import { DEV_STYLE_PAGES, PROFILE, activeSub, sectionById, sectionOf, titleFor } from "../src/components/shell/nav";
 
 const ROOT = join(__dirname, "..");
 let passed = 0;
@@ -922,9 +922,10 @@ async function ladder(): Promise<void> {
 
 function navAndReview(): void {
   console.log("§12 nav (seam 10) and review.ts (seam 7)");
-  check("You subs: Sheet, Roadmap, Skills, Loadout, Moments, Stats, Settings", j(sectionById("you").subs.map((s) => s.label)) === j(["Sheet", "Roadmap", "Skills", "Loadout", "Moments", "Stats", "Settings"]));
-  check("/you/roadmap titles {You, Roadmap}, under its own tab", j(titleFor("/you/roadmap")) === j({ eyebrow: "You", title: "Roadmap" }) && activeSub("/you/roadmap") === "/you/roadmap");
-  check("/you/roadmap/new titles {You, Set an aim}, under the Roadmap tab", j(titleFor("/you/roadmap/new")) === j({ eyebrow: "You", title: "Set an aim" }) && activeSub("/you/roadmap/new") === "/you/roadmap");
+  check("Ideas subs: Review, Library, New idea, Roadmap, Fields & Domains (Roadmap at /you/roadmap)", j(sectionById("ideas").subs.map((s) => [s.label, s.href])) === j([["Review", "/review"], ["Library", "/library"], ["New idea", "/add"], ["Roadmap", "/you/roadmap"], ["Fields & Domains", "/structure"]]));
+  check("the profile menu: Character, Skills, Loadout, Moments, Stats, Settings (no Roadmap)", j(PROFILE.subs.map((s) => s.label)) === j(["Character", "Skills", "Loadout", "Moments", "Stats", "Settings"]));
+  check("/you/roadmap titles {Ideas, Roadmap}, under its own tab, in Ideas", j(titleFor("/you/roadmap")) === j({ eyebrow: "Ideas", title: "Roadmap" }) && activeSub("/you/roadmap") === "/you/roadmap" && sectionOf("/you/roadmap") === "ideas");
+  check("/you/roadmap/new titles {Ideas, Set an aim}, under the Roadmap tab", j(titleFor("/you/roadmap/new")) === j({ eyebrow: "Ideas", title: "Set an aim" }) && activeSub("/you/roadmap/new") === "/you/roadmap" && sectionOf("/you/roadmap/new") === "ideas");
   check("dev strip: Roadmap fixtures", DEV_STYLE_PAGES.some((p) => p.href === "/dev/style/roadmap" && p.label === "Roadmap fixtures"));
 
   const review = readFileSync(join(ROOT, "src/app/actions/review.ts"), "utf8");

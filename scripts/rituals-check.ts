@@ -436,10 +436,10 @@ console.log("\n── §5 Copy and wiring");
   check("rest cap: vacation days are not REST", restRefusalOf("2026-10-26", new Map([["2026-10-27", "VACATION"], ["2026-10-28", "VACATION"]])) === null);
 
   // The tour's Today step once Duty is live (F15): within the 160-character budget, the stake and the way back.
-  const liveToday = copyText(tourSteps({ keyboard: true, dutyLive: true }).find((s) => s.id === "today")!.body);
-  check("tour: live Today step ≤ 160 characters and says what a miss costs and how it comes back", liveToday.length <= 160 && liveToday === TODAY_DUTY_COPY && /A must you miss is owed; make it up within two days and its streak comes back\./.test(liveToday), `${liveToday.length}: ${liveToday}`);
+  const liveToday = copyText(tourSteps({ keyboard: true, dutyLive: true }).find((s) => s.id === "tasks")!.body);
+  check("tour: live Tasks step ≤ 160 characters and says what a miss costs and how it comes back", liveToday.length <= 160 && liveToday === TODAY_DUTY_COPY && /A must you miss is owed; make it up within two days and its streak comes back\./.test(liveToday), `${liveToday.length}: ${liveToday}`);
   check("tour: 'two days' is MAKEUP_RESTORE_DAYS", MAKEUP_RESTORE_DAYS === 2);
-  check("tour: before Duty the Today step is unchanged", copyText(tourSteps({ keyboard: true }).find((s) => s.id === "today")!.body) === TODAY_COPY && TODAY_COPY.startsWith("Must, Planned and Habits. Ticking a task pays life XP"));
+  check("tour: before Duty the Tasks step (the board's) is unchanged", copyText(tourSteps({ keyboard: true }).find((s) => s.id === "tasks")!.body) === TODAY_COPY && TODAY_COPY.startsWith("Must, Planned and Habits. Ticking a task pays life XP"));
   check("tour: still seven steps either way", tourSteps({ keyboard: true, dutyLive: true }).length === 7 && tourSteps({ keyboard: false, dutyLive: true }).length === 7);
 
   const rules = code(read("src/app/today/rules/page.tsx"));

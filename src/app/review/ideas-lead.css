@@ -1,0 +1,13 @@
+@layer theme, base, components, art, effects, utilities;
+/* The Ideas landing's lead (IdeasLead.tsx): the roadmap's week quests or aim line, then the ready encounters' line,
+   above the review workspace. Static: no keyframes, no transition of its own. */
+@layer components {
+  .rv-lead { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .rv-lead-quests { min-width: 0; }
+  .rv-lead-row { overflow: hidden; }
+  .rv-lead-row .collapsed { min-height: 48px; }
+  .rv-lead-row .collapsed svg { flex: none; }
+  .rv-lead-row .collapsed > span { min-width: 0; overflow-wrap: anywhere; text-align: right; }
+  /* The ready line's anchor: the Encounters heading lands below the sticky top bar. */
+  .rv-hub #rv-enc-h { scroll-margin-top: calc(var(--topbar-h, 56px) + 16px); }
+}

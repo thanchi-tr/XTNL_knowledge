@@ -34,7 +34,8 @@ import { Icon } from "@/components/ui/Icon";
 import { dismissToast, getToasts, pushToast, subscribeToasts } from "@/components/ui/toast-store";
 import { CaptureChips } from "./CaptureChips";
 import { StatusLine, TOAST_MS, TOAST_SHORT_MS, dockToastOf, toastSentence, type Toast } from "./CaptureToast";
-import { CAPTURE_EVENT, CAPTURED_EVENT, type CaptureRequest } from "./events";
+import { captureModeOf } from "@/components/shell/nav";
+import { CAPTURE_EVENT, CAPTURED_EVENT, CAPTURE_MODE_START, isBareModeStart, type CaptureRequest } from "./events";
 import { InsertRow, SuggestRow, type Suggestion } from "./InsertRow";
 import { JustAdded } from "./JustAdded";
 import { PastePreview } from "./PastePreview";
@@ -1004,8 +1005,10 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
         }
       }
       // A caller's text starts an empty line; it never replaces one in progress.
-      const start = request?.text ?? (request?.mode === "idea" ? "idea: " : null);
-      if (start && !next.text.trim()) next = { text: start.normalize("NFC").slice(0, MAX_CAPTURE_CHARS), reverted: [] };
+      const start = request?.text ?? (request?.mode ? CAPTURE_MODE_START[request.mode] : null);
+      // A line that is only the last mode's start ('idea: ' left by the '+' on Ideas) is no draft: the mode asked for now replaces it.
+      if (request?.mode && request.text === undefined && isBareModeStart(next.text)) next = { text: start ?? "", reverted: [] };
+      else if (start && !next.text.trim()) next = { text: start.normalize("NFC").slice(0, MAX_CAPTURE_CHARS), reverted: [] };
       else if (start && request?.source === "link") setNote(FRAGMENT_BUSY_NOTE);
       if (next !== lineRef.current) {
         setLine(next.text, next.reverted);
@@ -1128,7 +1131,9 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
   // or Alt+N (Mac Option+N, though not inside a field, where it types ˜; from
   // any field, over a dialog and mid-review; never inside the sheet).
   // capture-parse isCaptureHotkey holds the rule; src/lib/shortcuts.ts lists
-  // both, and the global <Shortcuts/> handler leaves them to this one.
+  // both, and the global <Shortcuts/> handler leaves them to this one. Like
+  // the shell's '+', it starts the line in the section's mode (nav.ts
+  // captureModeOf: an idea on Ideas, a weigh-in on Body, else a task).
   useEffect(() => {
     if (open) return;
     function onKey(e: KeyboardEvent) {
@@ -1137,11 +1142,11 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
       const modalOpen = document.querySelector(MODAL_OPEN_SELECTOR) !== null;
       if (!isCaptureHotkey(e, target, reviewing, modalOpen)) return;
       e.preventDefault();
-      openSheet();
+      openSheet({ mode: captureModeOf(pathname) });
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, openSheet]);
+  }, [open, openSheet, pathname]);
 
   // Everything else asks by event: the tab bar's +, the rail and sidebar Capture, any page.
   useEffect(() => {

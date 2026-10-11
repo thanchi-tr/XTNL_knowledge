@@ -1,12 +1,18 @@
 "use client";
 
 /**
- * The three chromes, chosen by viewport media query (components.css):
- *   <TabBar/>   < 600       Today · Study · [+ 52 px ink tile] · Train · You (the crest). 64 + safe area.
- *   <Rail/>     600–1279    + Capture at the top, Today, Study, Train, then the crest You at the bottom; items 72×62.
- *   <Sidebar/>  ≥ 1280      character card, Capture (kbd C; every Capture answers c and Alt+N), sections with their sub-pages open,
- *                           an ink count per section and an owed pill for debt.
- * Counts are ink badges that render nothing at 0; only debt is owed-coloured.
+ * The three chromes, chosen by viewport media query (components.css; chrome.css adds the
+ * three-section tab bar and the profile buttons):
+ *   <TabBar/>   < 600       Ideas · Tasks · [+ 52 px ink tile] · Body. 64 + safe area. The
+ *                           profile button is the top bar's crest (TopBar.tsx).
+ *   <Rail/>     600–1279    + Capture at the top, Ideas, Tasks, Body, then the crest (You,
+ *                           the profile button) at the bottom; items 72×62.
+ *   <Sidebar/>  ≥ 1280      the character card (the profile button), Capture (kbd C; every
+ *                           Capture answers c and Alt+N), the three sections with the open
+ *                           one's sub-pages, an ink count per section and an owed pill for debt.
+ * Counts are ink badges that render nothing at 0; only debt is owed-coloured. Every Capture
+ * opens the sheet in the section's mode (nav.ts captureModeOf): an idea on Ideas, a weigh-in
+ * on Body, a task elsewhere. On a profile page no tab is current; the profile button is.
  */
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -16,53 +22,57 @@ import { Icon } from "@/components/ui/Icon";
 import { Meter } from "@/components/ui/Meter";
 import { CAPTURE_ARIA_KEYS } from "@/lib/shortcuts";
 import { openCaptureSheet } from "./capture-bridge";
-import { SECTIONS, activeSub, sectionOf, type SectionId } from "./nav";
+import { CAPTURE_LABEL, SECTIONS, activeSub, captureModeOf, sectionOf, type Section, type SectionId } from "./nav";
+import { useProfileButton } from "./ProfileMenu";
 import { useShell } from "./shell-store";
 import { crestLabel, levelCaption, type ShellData } from "./shell-types";
+import "./chrome.css";
 
 function countFor(id: SectionId, data: ShellData | null): number {
   if (!data) return 0;
-  if (id === "today") return data.badges.today;
-  if (id === "study") return data.badges.study;
-  if (id === "train") return data.badges.train;
-  return 0;
+  if (id === "ideas") return data.badges.study;
+  if (id === "tasks") return data.badges.today;
+  return data.badges.train;
 }
 
 function badgeLabel(id: SectionId, n: number): string {
-  if (id === "today") return `${n} left on today's board`;
-  if (id === "study") return `${n} due for review`;
+  if (id === "tasks") return `${n} left on today's board`;
+  if (id === "ideas") return `${n} due for review`;
   return `${n} waiting`;
+}
+
+/** The current section's Capture: its mode and its accessible name. */
+function useCapture() {
+  const mode = captureModeOf(usePathname());
+  return { label: CAPTURE_LABEL[mode], open: () => openCaptureSheet(mode) };
 }
 
 export function TabBar() {
   const pathname = usePathname();
   const data = useShell((s) => s.data);
+  const capture = useCapture();
   const current = sectionOf(pathname);
-  const [today, study, train, you] = SECTIONS;
-  const tab = (id: SectionId, href: string, label: string, icon: "today" | "study" | "train") => {
-    const n = countFor(id, data);
+  const [ideas, tasks, body] = SECTIONS;
+  const tab = (s: Section) => {
+    const n = countFor(s.id, data);
     return (
-      <Link className="tab" href={href} aria-current={current === id ? "page" : undefined}>
-        <Icon name={icon} />
-        {label}
-        <Badge count={n} label={n ? badgeLabel(id, n) : undefined} />
+      <Link className="tab" href={s.href} aria-current={current === s.id ? "page" : undefined}>
+        <Icon name={s.icon} />
+        {s.label}
+        <Badge count={n} label={n ? badgeLabel(s.id, n) : undefined} />
       </Link>
     );
   };
   return (
     <nav className="tabbar" aria-label="Sections" data-chrome="">
-      {tab("today", today.href, today.label, "today")}
-      {tab("study", study.href, study.label, "study")}
-      <button type="button" className="tab tab-plus" aria-label="Capture" aria-keyshortcuts={CAPTURE_ARIA_KEYS} aria-describedby="capture-unsent" onClick={openCaptureSheet}>
+      {tab(ideas)}
+      {tab(tasks)}
+      <button type="button" className="tab tab-plus" aria-label={capture.label} aria-keyshortcuts={CAPTURE_ARIA_KEYS} aria-describedby="capture-unsent" onClick={capture.open}>
         <span>
           <Icon name="plus" />
         </span>
       </button>
-      {tab("train", train.href, train.label, "train")}
-      <Link className="tab" href={you.href} aria-current={current === "you" ? "page" : undefined} aria-label={crestLabel(data?.character)}>
-        <Crest level={data?.character.level ?? null} material={data?.character.material} size={24} />
-        You
-      </Link>
+      {tab(body)}
     </nav>
   );
 }
@@ -70,34 +80,32 @@ export function TabBar() {
 export function Rail() {
   const pathname = usePathname();
   const data = useShell((s) => s.data);
+  const capture = useCapture();
+  const profile = useProfileButton();
   const current = sectionOf(pathname);
-  const [today, study, train, you] = SECTIONS;
-  const item = (id: SectionId, href: string, label: string, icon: "today" | "study" | "train") => {
-    const n = countFor(id, data);
-    return (
-      <Link href={href} aria-current={current === id ? "page" : undefined}>
-        <Icon name={icon} />
-        {label}
-        <Badge count={n} label={n ? badgeLabel(id, n) : undefined} />
-      </Link>
-    );
-  };
   return (
     <nav className="rail" aria-label="Sections" data-chrome="">
-      <button type="button" className="r-plus" aria-keyshortcuts={CAPTURE_ARIA_KEYS} aria-describedby="capture-unsent" onClick={openCaptureSheet}>
+      <button type="button" className="r-plus" aria-label={capture.label} aria-keyshortcuts={CAPTURE_ARIA_KEYS} aria-describedby="capture-unsent" onClick={capture.open}>
         <span>
           <Icon name="plus" />
         </span>
         Capture
       </button>
-      {item("today", today.href, today.label, "today")}
-      {item("study", study.href, study.label, "study")}
-      {item("train", train.href, train.label, "train")}
+      {SECTIONS.map((s) => {
+        const n = countFor(s.id, data);
+        return (
+          <Link key={s.id} href={s.href} aria-current={current === s.id ? "page" : undefined}>
+            <Icon name={s.icon} />
+            {s.label}
+            <Badge count={n} label={n ? badgeLabel(s.id, n) : undefined} />
+          </Link>
+        );
+      })}
       <span className="rail-grow" aria-hidden="true" />
-      <Link href={you.href} aria-current={current === "you" ? "page" : undefined} aria-label={crestLabel(data?.character)}>
+      <button type="button" className="r-you" aria-label={crestLabel(data?.character)} {...profile}>
         <Crest level={data?.character.level ?? null} material={data?.character.material} size={34} />
         You
-      </Link>
+      </button>
     </nav>
   );
 }
@@ -105,16 +113,21 @@ export function Rail() {
 export function Sidebar() {
   const pathname = usePathname();
   const data = useShell((s) => s.data);
+  const capture = useCapture();
+  const profile = useProfileButton();
   const current = sectionOf(pathname);
   const sub = activeSub(pathname);
   const c = data?.character ?? null;
   const caption = c ? levelCaption(c) : null;
   return (
     <nav className="sidebar" aria-label="Sections" data-chrome="">
-      <Link className="sb-char" href="/you" aria-label={crestLabel(c)}>
+      {/* The card is the profile button: the button's ::after covers it, and the meter stays a meter outside the button. */}
+      <div className="sb-char">
         <Crest level={c?.level ?? null} material={c?.material} tracks={c?.tracks} size={48} />
         <div className="who">
-          <b>{c?.title ?? "You"}</b>
+          <button type="button" className="sb-me" aria-label={crestLabel(c)} {...profile}>
+            <b>{c?.title ?? "You"}</b>
+          </button>
           {c?.epithet && <span>{c.epithet}</span>}
           {c?.progress != null && (
             <div style={{ marginTop: 6 }}>
@@ -123,8 +136,8 @@ export function Sidebar() {
           )}
           {caption && <span>{caption}</span>}
         </div>
-      </Link>
-      <button type="button" className="btn btn-primary btn-block sb-capture" aria-keyshortcuts={CAPTURE_ARIA_KEYS} aria-describedby="capture-unsent" onClick={openCaptureSheet}>
+      </div>
+      <button type="button" className="btn btn-primary btn-block sb-capture" aria-label={capture.label} aria-keyshortcuts={CAPTURE_ARIA_KEYS} aria-describedby="capture-unsent" onClick={capture.open}>
         <Icon name="plus" />
         Capture
         <span className="kbd" aria-hidden="true">
@@ -133,7 +146,7 @@ export function Sidebar() {
       </button>
       {SECTIONS.map((s) => {
         const n = countFor(s.id, data);
-        const owed = s.id === "today" ? data?.owed.count ?? 0 : 0;
+        const owed = s.id === "tasks" ? data?.owed.count ?? 0 : 0;
         const open = s.id === current;
         return (
           <div className="sb-sec" key={s.id}>

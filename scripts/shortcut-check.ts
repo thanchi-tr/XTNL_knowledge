@@ -22,12 +22,16 @@
  *       (`npx tsx scripts/shortcut-check.ts --write` regenerates it).
  *   (g) M2: 'y' opens Record yesterday (the sheet on /today, the deep link
  *       elsewhere), clear of every browser key and of every key and
- *       sequence the app already has; 'g y' stays You.
+ *       sequence the app already has; 'g y' stays the Character (/you).
+ *   (h) The three sections: the keys are unchanged; the 'Go to' labels and
+ *       the groups say the shell's own words (Ideas, Tasks, Body, the
+ *       profile's Character), and 'c' says it captures by section.
  */
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { isAltDeadKeyInField, isCaptureHotkey, isTypingTarget, type TargetLike } from "../src/lib/capture-parse";
 import { isUndoCaptureKey } from "../src/components/capture/capture-ui";
+import { PROFILE, sectionById } from "../src/components/shell/nav";
 import {
   BROWSER_NOTE,
   BROWSER_RESERVED,
@@ -154,7 +158,7 @@ console.log("\n── (b) Unique ids and keys");
   const prefixClash = [...SEQUENCE_PREFIXES].filter((p) => singles.has(canon(p)));
   check("a sequence prefix ('g') is no shortcut of its own", prefixClash.length === 0 && SEQUENCE_PREFIXES.size === 1 && SEQUENCE_PREFIXES.has("g"), prefixClash.join(", "));
   check("every shortcut has a label, a group and keys", SHORTCUTS.every((s) => s.label.trim() && s.keys.length > 0 && (SHORTCUT_GROUPS as readonly string[]).includes(s.group)));
-  check("groups: Capture, Today, Go to, Study, Help, each with at least one shortcut", SHORTCUT_GROUPS.join(",") === "Capture,Today,Go to,Study,Help" && SHORTCUT_GROUPS.every((g) => SHORTCUTS.some((s) => s.group === g)));
+  check("groups: Capture, Tasks, Go to, Ideas, Help, each with at least one shortcut", SHORTCUT_GROUPS.join(",") === "Capture,Tasks,Go to,Ideas,Help" && SHORTCUT_GROUPS.every((g) => SHORTCUTS.some((s) => s.group === g)));
   check("every 'Go to' shortcut has an href", SHORTCUTS.filter((s) => s.group === "Go to").every((s) => !!s.href?.startsWith("/")));
   check("SEQUENCE_MS is 1.5 s, as the header says", SEQUENCE_MS === 1500);
 }
@@ -182,13 +186,13 @@ console.log("\n── (c) Every shortcut handled; no old binding left");
   const ev = (k: string, mods: Partial<KeyEventLike> = {}): KeyEventLike => ({ key: k, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...mods });
   check("capture-parse isCaptureHotkey answers 'c' and Alt+N (the capture sheet's two)", isCaptureHotkey(ev("c"), body, false) && isCaptureHotkey(ev("n", { altKey: true, code: "KeyN" }), body, false));
   const quick = code(read("src/components/capture/QuickCapture.tsx"));
-  check("QuickCapture: its window keydown opens on isCaptureHotkey, told whether a dialog is open (MODAL_OPEN_SELECTOR)", /const modalOpen = document\.querySelector\(MODAL_OPEN_SELECTOR\) !== null;\s*if \(!isCaptureHotkey\(e, target, reviewing, modalOpen\)\) return;\s*e\.preventDefault\(\);\s*openSheet\(\);/.test(quick) && /import \{ MODAL_OPEN_SELECTOR \} from "@\/lib\/shortcuts";/.test(quick));
-  // The two app meanings STANDARD_KEYS owns up to: Enter on Study's hub, Ctrl/Cmd+Z on the Added toast.
+  check("QuickCapture: its window keydown opens on isCaptureHotkey, told whether a dialog is open (MODAL_OPEN_SELECTOR), in the section's mode", /const modalOpen = document\.querySelector\(MODAL_OPEN_SELECTOR\) !== null;\s*if \(!isCaptureHotkey\(e, target, reviewing, modalOpen\)\) return;\s*e\.preventDefault\(\);\s*openSheet\(\{ mode: captureModeOf\(pathname\) \}\);/.test(quick) && /import \{ MODAL_OPEN_SELECTOR \} from "@\/lib\/shortcuts";/.test(quick));
+  // The two app meanings STANDARD_KEYS owns up to: Enter on Review's hub (Ideas), Ctrl/Cmd+Z on the Added toast.
   const workspace = read("src/components/workspace/WorkspaceView.tsx");
   const enter = STANDARD_KEYS.find((k) => k.keys === "Enter");
   check(
-    "STANDARD_KEYS: Enter says it starts a review on Study when nothing is focused (WorkspaceView's hub listener)",
-    !!enter && /on Study, with nothing focused and cards due, it starts a review/.test(enter.label) && /if \(mode !== "hub" \|\| totalDue === 0\) return;/.test(workspace) && /if \(e\.key !== "Enter"/.test(workspace) && /a !== document\.body && a\.id !== "main"/.test(workspace),
+    "STANDARD_KEYS: Enter says it starts a review on Review when nothing is focused (WorkspaceView's hub listener)",
+    !!enter && /on Review, with nothing focused and cards due, it starts a review/.test(enter.label) && /if \(mode !== "hub" \|\| totalDue === 0\) return;/.test(workspace) && /if \(e\.key !== "Enter"/.test(workspace) && /a !== document\.body && a\.id !== "main"/.test(workspace),
     enter?.label ?? "no Enter"
   );
   const undo = STANDARD_KEYS.find((k) => k.keys === "Ctrl+Z");
@@ -510,12 +514,13 @@ function readmeBlock(): string {
   const a = readme.indexOf(START);
   const b = readme.indexOf(END);
   if (process.argv.includes("--write")) {
-    const block = readmeBlock();
+    const block = readme.includes("\r\n") ? readmeBlock().replace(/\n/g, "\r\n") : readmeBlock();
     const next = a >= 0 && b > a ? readme.slice(0, a) + block + readme.slice(b + END.length) : readme;
     writeFileSync(join(ROOT, "README.md"), next);
     console.log(a >= 0 ? "README.md: the shortcuts table is rewritten" : "README.md: no shortcuts markers; add the section first");
   }
-  const now = read("README.md");
+  // Line endings aside (git may check README.md out with CRLF on Windows): the table is what is compared.
+  const now = read("README.md").replace(/\r\n/g, "\n");
   const s = now.indexOf(START);
   const e = now.indexOf(END);
   check("README: a 'Keyboard shortcuts' section", /^## Keyboard shortcuts$/m.test(now));
@@ -534,7 +539,7 @@ function readmeBlock(): string {
 console.log("\n── (g) Record yesterday ('y')");
 {
   const y = shortcutOf("record-yesterday");
-  check("y: one unmodified letter, page-wide (not while typing or with a dialog open), in the Today group", y.keys.length === 1 && y.keys[0] === "y" && y.scope === "global" && y.group === "Today" && y.label === "Record yesterday");
+  check("y: one unmodified letter, page-wide (not while typing or with a dialog open), in the Tasks group", y.keys.length === 1 && y.keys[0] === "y" && y.scope === "global" && y.group === "Tasks" && y.label === "Record yesterday");
   check("y: neither 'y' nor 'Shift+Y' is a Chrome or Edge shortcut", !RESERVED.has(canon("y")) && !RESERVED.has(canon("Shift+Y")));
   check("y: the browsers' Y chords (Cmd+Y history, Ctrl+Shift+Y) stay reserved and are never ours", RESERVED.has("Cmd+Y") && RESERVED.has("Ctrl+Shift+Y") && !SHORTCUTS.some((s) => s.keys.some((k) => /\+Y$/i.test(canon(k)))));
   const globalSingles = SHORTCUTS.filter((s) => s.scope === "global" || s.scope === "anywhere").flatMap((s) => s.keys.filter((k) => !k.includes(" ")).map(canon));
@@ -547,7 +552,7 @@ console.log("\n── (g) Record yesterday ('y')");
   check("y: 'y' on the page runs Record yesterday", decideShortcut(ev("y", { code: "KeyY" }), SEQUENCE_IDLE, env()).run?.id === "record-yesterday");
   const g = decideShortcut(ev("g", { code: "KeyG" }), SEQUENCE_IDLE, env({ now: 1000 }));
   const gy = decideShortcut(ev("y", { code: "KeyY" }), g.seq, env({ now: 1200 }));
-  check("y: 'g y' still goes to You (the sequence owns the key after 'g')", gy.run?.id === "go-you" && gy.consume);
+  check("y: 'g y' still goes to the Character, /you (the sequence owns the key after 'g')", gy.run?.id === "go-you" && gy.run.href === "/you" && gy.consume);
   const late = decideShortcut(ev("y", { code: "KeyY" }), g.seq, env({ now: 1000 + SEQUENCE_MS + 1 }));
   check("y: 'y' after the sequence window runs Record yesterday (the window is over)", late.run?.id === "record-yesterday");
   check("y: typed in a field does nothing", decideShortcut(ev("y", { code: "KeyY" }), SEQUENCE_IDLE, env({ target: { tagName: "INPUT", closest: () => null } })).run === null);
@@ -561,6 +566,27 @@ console.log("\n── (g) Record yesterday ('y')");
   );
   check("Shortcuts.tsx: the help sheet lists the groups in SHORTCUT_GROUPS order (Today among them)", /const GROUPS: readonly Shortcut\["group"\]\[\] = SHORTCUT_GROUPS;/.test(shell));
   check("y: the event name is the board's own", RECORD_YESTERDAY_EVENT === "xtnl:today:record-yesterday");
+}
+
+// ── (h) The three sections: same keys, the shell's own words ───────────────
+console.log("\n── (h) The three sections");
+{
+  const go = (id: Parameters<typeof shortcutOf>[0]) => shortcutOf(id);
+  check(
+    "keys: unchanged by the three sections (c, Alt+N, i, y, g t, g s, g l, g w, g y, g k, ',', '/', r, ?)",
+    ["capture", "capture-anywhere", "new-idea", "record-yesterday", "go-today", "go-study", "go-library", "go-train", "go-you", "go-week", "settings", "search", "start-review", "help"].map((id) => go(id as Parameters<typeof shortcutOf>[0]).keys.join(" ")).join(" | ") ===
+      "c | Alt+N | i | y | g t | g s | g l | g w | g y | g k | , | / | r | Shift+?"
+  );
+  check("g t is Tasks: the label and the href are the nav's", go("go-today").label === sectionById("tasks").label && go("go-today").href === sectionById("tasks").href);
+  check("g s is Ideas (review): the label leads with the nav's and goes to Review", go("go-study").label === `${sectionById("ideas").label} (review)` && go("go-study").href === sectionById("ideas").href);
+  check("g w is Body: the label and the href are the nav's", go("go-train").label === sectionById("body").label && go("go-train").href === sectionById("body").href);
+  check("g y is the Character, the profile menu's first row", go("go-you").label === PROFILE.subs[0].label && go("go-you").href === PROFILE.subs[0].href);
+  check("g k is the Weekly review, as Tasks names it", go("go-week").label === sectionById("tasks").subs.find((x) => x.href === go("go-week").href)?.label);
+  check("g l is the Library, as Ideas names it", go("go-library").label === sectionById("ideas").subs.find((x) => x.href === go("go-library").href)?.label);
+  check("',' is Settings, the profile menu's last row", go("settings").label === PROFILE.subs[PROFILE.subs.length - 1].label && go("settings").href === PROFILE.subs[PROFILE.subs.length - 1].href);
+  check("c says it captures by section (an idea, a task or a weigh-in)", /\bidea\b/.test(go("capture").label) && /\btask\b/.test(go("capture").label) && /weigh-in/.test(go("capture").label) && /section/.test(go("capture").label));
+  const stale = SHORTCUTS.filter((s) => /\b(Study|Train)\b|^You$|^Today$|^This week$/.test(s.label)).map((s) => `${s.id}: ${s.label}`);
+  check("no label still names an old section (Study, Train, a bare Today or You, Body's 'This week')", stale.length === 0, stale.join("; "));
 }
 
 console.log(`\nshortcut-check: ${passed} passed, ${failed} failed`);

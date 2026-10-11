@@ -484,7 +484,7 @@ export async function undoWeightCapture(
     res = await undoWeighInCore(undoWeighInDeps(getCurrentUserId()), weight);
   } catch (err) {
     console.error("undoWeightCapture failed:", err);
-    return { ok: false, error: "Couldn't undo the weigh-in. Try again, or change it on Train." };
+    return { ok: false, error: "Couldn't undo the weigh-in. Try again, or change it on Body." };
   }
   if (res.ok && opts?.refresh === true) refresh();
   return res;

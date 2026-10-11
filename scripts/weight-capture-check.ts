@@ -284,7 +284,7 @@ check("range: the block-once line says how to go on", weightRangeBlocked({ value
   check("chip: a bare number shows in the user's unit", weightChipLabel(bareLb, "lb", TODAY) === "Weight · 160.0 lb · today", weightChipLabel(bareLb, "lb", TODAY));
   check("button: the Add button reads 'Log weight'", WEIGHT_PRIMARY === "Log weight");
   const p = weighInPreview(y, "kg", TODAY);
-  check("paste: a pasted weigh-in previews as the reading and its place", p.title === "Weight 160.0 lb" && p.where === "Train · yesterday", p);
+  check("paste: a pasted weigh-in previews as the reading and its place", p.title === "Weight 160.0 lb" && p.where === "Body · yesterday", p);
 
   // The sheet's chip row for a weigh-in: one chip, no price, no feeds, no grammar.
   const html = renderToStaticMarkup(
@@ -384,7 +384,7 @@ async function writeChecks(): Promise<void> {
   const item = first && first.ok ? first.value : null;
   check("write: a fresh weigh-in logs one reading, source 'capture', for today", s.writes.length === 1 && s.writes[0].kg === 72.4 && s.writes[0].source === "capture" && s.writes[0].day === TODAY, s.writes);
   check(
-    "write: the result is a weigh-in item: id 'weight:<day>', no XP, View to Train, Undo deletes",
+    "write: the result is a weigh-in item: id 'weight:<day>', no XP, View to Body, Undo deletes",
     !!item && item.id === `weight:${TODAY}` && item.projectedXp === 0 && item.href === WEIGHT_HREF && !item.duplicate && !!item.weight && item.weight.previousKg === null && item.weight.undoable && item.weight.when === "today",
     item
   );
@@ -414,7 +414,7 @@ async function writeChecks(): Promise<void> {
     check("replace: a weigh-in over a reading replaces it (one per day)", r.rows.get(TODAY)?.kg === 72.4 && r.writes.length === 1, [...r.rows]);
     check("replace: the item keeps what Undo needs (73 kg, 'manual')", it?.weight?.previousKg === 73 && it.weight.previousSource === "manual" && it.weight.undoable && !it.duplicate, it?.weight);
     const t = weightToastCopy({ ...it!, weight: it!.weight! });
-    check("replace: the toast says what it replaced", t.body === "72.4 kg → Train · was 73.0 kg" && t.head === "Weight logged", t);
+    check("replace: the toast says what it replaced", t.body === "72.4 kg → Body · was 73.0 kg" && t.head === "Weight logged", t);
     const u = await undoWeighInCore(d, it!.weight);
     check("replace: Undo restores 73 kg with its own source, never deletes the day", u.ok && u.value.restoredKg === 73 && r.rows.get(TODAY)?.kg === 73 && r.rows.get(TODAY)?.source === "manual" && !r.writes.some((w) => w.op === "remove"), [...r.rows]);
     const c = weightUndoneCopy(it!.weight!, it!.title, 73);
@@ -440,7 +440,7 @@ async function writeChecks(): Promise<void> {
     const it = res && res.ok ? res.value : null;
     check("lb: a bare number is the user's unit, logged in kg for yesterday", r.rows.get(YDAY)?.kg === lbKg(160) && it?.weight?.unit === "lb" && it.weight.when === "yesterday" && it.id === `weight:${YDAY}`, it);
     const t = weightToastCopy({ ...it!, weight: it!.weight! });
-    check("lb: the toast reads in lb and names the day", t.body === "160.0 lb → Train · yesterday" && t.title === "160.0 lb", t);
+    check("lb: the toast reads in lb and names the day", t.body === "160.0 lb → Body · yesterday" && t.title === "160.0 lb", t);
   }
 
   // A read that fails: the write still goes; Undo only if the save proves it was fresh.
@@ -533,7 +533,7 @@ async function writeChecks(): Promise<void> {
     const weight: CapturedWeight = { day: TODAY, kg: 72.4, unit: "kg", when: "today", previousKg: null, previousSource: null, undoable: true };
     const it = weightItemOf(weight, false);
     const t = toastCopy(it);
-    check("toast: 'Weight logged · 72.4 kg → Train', View to /train, no figure", t.head === "Weight logged" && t.body === "72.4 kg → Train" && t.figure === null && t.link?.href === "/train" && t.link.label === "View", t);
+    check("toast: 'Weight logged · 72.4 kg → Body', View to /train (Body › This week), no figure", t.head === "Weight logged" && t.body === "72.4 kg → Body" && t.figure === null && t.link?.href === "/train" && t.link.label === "View", t);
     check("toast: capture-ui's toastCopy hands a weigh-in to its own copy", JSON.stringify(t) === JSON.stringify(weightToastCopy({ ...it, weight })));
     const words = [t.head, t.body, weightRangeNote({ value: 724, unit: "kg" }), weightUnitRangeError({ value: 30, unit: "lb" }), weightRangeBlocked({ value: 2, unit: "kg" }), WEIGHT_UNDO_UNAVAILABLE, WEIGHT_UNDO_GONE, WEIGHT_UNDO_CHANGED, toastCopy(weightItemOf({ ...weight, previousKg: 73 }, false)).body, toastCopy(weightItemOf(weight, true)).head];
     check("toast: neutral words — no praise, no shame, no points, no exclamation", words.every((w) => !SHAMING.test(w)), words.filter((w) => SHAMING.test(w)));
@@ -603,7 +603,7 @@ function bodyOf(src: string, name: string): string {
   check("server: createFromCapture and createManyFromCapture hand the sheet's unit to the weigh-in route", /weighInFromCapture\(text, reverted, today, undefined, opts\?\.weightUnit\)/.test(create) && /weighInFromCapture\(line\.text, line\.reverted, today, loadUnit, opts\?\.weightUnit\)/.test(many));
   check("server: readWeightDay reads the note (Undo puts it back)", /select: \{ kg: true, source: true, note: true \}/.test(actions));
   check("sheet: a single line and a pasted list send the unit they were read in", /createFromCapture\(line\.text, line\.reverted, \{[^}]*weightUnit \}\)/.test(qc) && /\{ refresh: refreshPage, weightUnit \}/.test(qc));
-  check("sheet: it listens for the unit switched on Train and reads bare numbers in it", new RegExp(`addEventListener\\(WEIGHT_UNIT_EVENT`).test(qc) && /weightUnit: unit/.test(qc) && WEIGHT_UNIT_EVENT === "xtnl:weight-unit");
+  check("sheet: it listens for the unit switched on Body and reads bare numbers in it", new RegExp(`addEventListener\\(WEIGHT_UNIT_EVENT`).test(qc) && /weightUnit: unit/.test(qc) && WEIGHT_UNIT_EVENT === "xtnl:weight-unit");
   const form = read("src/components/train/WeightForm.tsx");
   const okAt = form.indexOf("if (!res.ok)", form.indexOf("setWeightGoal({ unit: next }"));
   check("train: a saved unit switch rewrites the sheet's cached unit (after the server said ok)", okAt > 0 && form.indexOf("saveWeightUnit(next)") > okAt);

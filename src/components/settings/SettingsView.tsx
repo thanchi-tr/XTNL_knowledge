@@ -223,7 +223,7 @@ function ShortcutsSection() {
         <div className="set-row">
           <div className="n">
             <b>The tour</b>
-            <span>A short walk through Today, capture, Study and these keys.</span>
+            <span>A short walk through Ideas, Tasks, Body, the + and these keys.</span>
           </div>
           <Button variant="secondary" icon="replay" onClick={() => startTour()}>
             Replay the tour
@@ -502,7 +502,7 @@ function StudyDataSection({ data }: { data: SettingsData }) {
 
   return (
     <section aria-labelledby="set-study">
-      <SectionHeader id="set-study" title="Study and data" />
+      <SectionHeader id="set-study" title="Ideas and data" />
       <div className="card set">
         <div className="set-row">
           <div className="n">
@@ -529,7 +529,7 @@ function StudyDataSection({ data }: { data: SettingsData }) {
             Choose
           </Button>
         </div>
-        <LaterRow name="Health sync" when="Arrives with Train" note="Samsung Health via Health Connect: steps, workouts and heart rate." />
+        <LaterRow name="Health sync" when="Later, on Body" note="Samsung Health via Health Connect: steps, workouts and heart rate." />
         <div className="set-row" id="data">
           <div className="n">
             <b>Re-attribute and resets</b>

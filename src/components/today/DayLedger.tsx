@@ -1,5 +1,8 @@
 "use client";
 
+// The streak, the Full-day strip and the ledger cells are styled in today.css; Character (/you) draws the first two,
+// so the module brings its own styles, as the M2 cards do.
+import "./today.css";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { CurrencyKind } from "@/lib/celebration-types";
 import type { FullDay, FullDayRingKind } from "@/lib/full-day";
@@ -127,6 +130,65 @@ function StreakTop({ streak, caption, freezes, heldNote, sealRef }: Pick<DayLedg
   );
 }
 
+type FullDayStripProps = Pick<DayLedgerProps, "fullDay" | "settles" | "fullNote" | "aside" | "glint" | "stampLanding" | "refs">;
+
+/** The Full-day strip: three promise rings (Musts, Quest, Life), "n of 3", the stamp when all close, and its note. */
+function FullDayStrip({ fullDay, settles, fullNote, aside: asideIn, glint, stampLanding, refs }: FullDayStripProps) {
+  // M2 (decision 6): the week judge pays a Full day, inside the weekly cap, so "up to" and "when the week is judged".
+  const aside = asideIn ?? (settles ? `up to +${FULL_DAY_MP} MP, paid when the week is judged (Wed)` : "Musts · quest · one life deed");
+  const note =
+    fullNote ??
+    (fullDay.full
+      ? settles
+        ? `Full day. Up to +${FULL_DAY_MP} MP, paid when the week is judged (Wed).`
+        : "Full day: musts, the quest and a life deed, all kept."
+      : settles
+        ? "A Full day also repairs a broken day before it, once a week."
+        : `Full days are counted now; the +${FULL_DAY_MP} MP payout starts with daily settlement.`);
+  return (
+    <div className="d-full">
+      <span ref={refs?.fullStamp} className={cx("stamp full-stamp", stampLanding && "landing")} aria-hidden={!fullDay.full}>
+        Full day
+      </span>
+      <div className="d-full-h">
+        <span className="t-eyebrow">Full day</span>
+        <span className="t-meta num">{fullDay.met} of 3</span>
+        <span className="aside">{aside}</span>
+      </div>
+      <div className="rings">
+        {fullDay.rings.map((r) => (
+          <div key={r.kind} className="rg">
+            <div ref={refs?.rings?.[r.kind]}>
+              <PromiseRing value={r.value} target={r.target} size={40} label={r.label} closed={r.met} glint={glint?.has(r.kind)} />
+            </div>
+            <div className="lbl">
+              <b>{r.label}</b>
+              <span className="num">{r.caption}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="full-note">
+        <Icon name="clock" size={14} />
+        <span>{note}</span>
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The Full day on its own card (Character, /you): the strip without the ledger cells. A life measure that spans the
+ * sections (the Musts, the review quest, one life deed), so it lives with the character, not on Today. Static: the
+ * ring glints and the stamp's landing play on Today's tick, as toasts.
+ */
+export function FullDayCard(props: Pick<DayLedgerProps, "fullDay" | "settles" | "fullNote" | "aside">) {
+  return (
+    <section className={cx("card today-day apart", props.fullDay.full && "full")} aria-label="Full day">
+      <FullDayStrip {...props} />
+    </section>
+  );
+}
+
 export function DayLedger(props: DayLedgerProps) {
   const { streak, fullDay, planned, refs } = props;
   const cellsRef = useRef<HTMLDivElement | null>(null);
@@ -135,49 +197,19 @@ export function DayLedger(props: DayLedgerProps) {
   useMiniLedger(publish ? { xp: props.xp, pts: props.pts } : null, publish ? cellsRef : noWatch);
   const over = planned.chosen && planned.over > 0;
 
-  // M2 (decision 6): the week judge pays a Full day, inside the weekly cap, so "up to" and "when the week is judged".
-  const aside = props.aside ?? (props.settles ? `up to +${FULL_DAY_MP} MP, paid when the week is judged (Wed)` : "Musts · quest · one life deed");
-  const note =
-    props.fullNote ??
-    (fullDay.full
-      ? props.settles
-        ? `Full day. Up to +${FULL_DAY_MP} MP, paid when the week is judged (Wed).`
-        : "Full day: musts, the quest and a life deed, all kept."
-      : props.settles
-        ? "A Full day also repairs a broken day before it, once a week."
-        : `Full days are counted now; the +${FULL_DAY_MP} MP payout starts with daily settlement.`);
-
   return (
     <section ref={refs?.tile} className={cx("card today-day", fullDay.full && "full", props.streakApart && "apart")} aria-label="Day ledger">
       {!props.streakApart && <StreakTop streak={streak} caption={props.caption} freezes={props.freezes} heldNote={props.heldNote} sealRef={refs?.seal} />}
 
-      <div className="d-full">
-        <span ref={refs?.fullStamp} className={cx("stamp full-stamp", props.stampLanding && "landing")} aria-hidden={!fullDay.full}>
-          Full day
-        </span>
-        <div className="d-full-h">
-          <span className="t-eyebrow">Full day</span>
-          <span className="t-meta num">{fullDay.met} of 3</span>
-          <span className="aside">{aside}</span>
-        </div>
-        <div className="rings">
-          {fullDay.rings.map((r) => (
-            <div key={r.kind} className="rg">
-              <div ref={refs?.rings?.[r.kind]}>
-                <PromiseRing value={r.value} target={r.target} size={40} label={r.label} closed={r.met} glint={props.glint?.has(r.kind)} />
-              </div>
-              <div className="lbl">
-                <b>{r.label}</b>
-                <span className="num">{r.caption}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-        <p className="full-note">
-          <Icon name="clock" size={14} />
-          <span>{note}</span>
-        </p>
-      </div>
+      <FullDayStrip
+        fullDay={fullDay}
+        settles={props.settles}
+        fullNote={props.fullNote}
+        aside={props.aside}
+        glint={props.glint}
+        stampLanding={props.stampLanding}
+        refs={refs}
+      />
 
       <div className="cells" ref={cellsRef}>
         <div className="cell">
@@ -206,12 +238,14 @@ export function DayLedger(props: DayLedgerProps) {
   );
 }
 
-function capacityLabel(p: DayLedgerProps["planned"]): string {
+/** The capacity cell's accessible name: "2h planned of 4h (the default). Capacity" (Today's plan card reads it too). */
+export function capacityLabel(p: DayLedgerProps["planned"]): string {
   const base = `${fmtMinutes(p.minutes)} planned of ${fmtMinutes(p.capacity)}${p.chosen ? "" : " (the default)"}`;
   return p.chosen && p.over > 0 ? `${base}, over by ${fmtMinutes(p.over)}. Capacity` : `${base}. Capacity`;
 }
 
-function CapacityFigure({ planned }: { planned: DayLedgerProps["planned"] }) {
+/** "2h 10m / 4h": planned against capacity, two figures (Today's plan card reads it too). */
+export function CapacityFigure({ planned }: { planned: DayLedgerProps["planned"] }) {
   return (
     <span className="v">
       <span className="num">{fmtMinutes(planned.minutes)}</span>

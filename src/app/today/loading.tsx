@@ -2,7 +2,7 @@ import "@/components/today/today.css";
 import { Skeleton } from "@/components/ui/Tabs";
 
 /**
- * The Today board's skeleton: static cards at the board's final geometry,
+ * The Today board's skeleton (the Tasks section): static cards at the board's final geometry,
  * in the same one-DOM, three-order layout (so nothing jumps when the board
  * streams in), and nothing shimmers or fades.
  */
@@ -14,47 +14,25 @@ export default function TodayLoading() {
       </p>
       <div className="board" aria-hidden="true">
         <div className="c1">
-          <div className="card today-day o2">
-            <div className="d-top">
-              <Skeleton w={52} h={52} r={26} />
-              <div style={{ flex: 1, display: "grid", gap: 8 }}>
-                <Skeleton w={150} h={28} />
-                <Skeleton w="80%" h={14} />
-              </div>
+          {/* Due elsewhere: one slim row (the board draws none when nothing is due in Ideas or Body). */}
+          <div className="card today-away o2">
+            <div className="away-row">
+              <Skeleton w="60%" h={14} />
             </div>
-            <div className="d-full">
-              <Skeleton w={120} h={14} />
-              <div className="rings" style={{ marginTop: 12 }}>
-                {[0, 1, 2].map((i) => (
-                  <div key={i} className="rg">
-                    <Skeleton w={40} h={40} r={20} />
-                    <div style={{ display: "grid", gap: 6, flex: 1 }}>
-                      <Skeleton w="70%" h={12} />
-                      <Skeleton w="50%" h={12} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div style={{ marginTop: 10 }}>
-                <Skeleton w="90%" h={12} />
-              </div>
-            </div>
-            <div className="cells">
-              {[0, 1, 2].map((i) => (
-                <div key={i} className="cell" style={{ display: "grid", gap: 6 }}>
+          </div>
+          {/* The plan card: capacity, life XP today, Record yesterday. */}
+          <div className="card today-plan o2">
+            <div className="plan-cells">
+              {[0, 1].map((i) => (
+                <div key={i} className="plan-cell" style={{ display: "grid", gap: 6 }}>
                   <Skeleton w="60%" h={20} />
                   <Skeleton w="50%" h={12} />
                 </div>
               ))}
             </div>
-          </div>
-
-          <div className="card today-hero o3" style={{ gap: 10 }}>
-            <Skeleton w={120} h={12} />
-            <Skeleton w="70%" h={24} />
-            <Skeleton w="85%" h={14} />
-            <Skeleton w="100%" h={6} />
-            <Skeleton w="100%" h={48} r={12} />
+            <div style={{ minHeight: 44, display: "grid", alignItems: "center", marginTop: 10 }}>
+              <Skeleton w={150} h={14} />
+            </div>
           </div>
         </div>
 

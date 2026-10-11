@@ -3,7 +3,7 @@
 /**
  * FROZEN CONTRACT — page → shell hooks (L0-foundation).
  *
- *   <ShellTitle eyebrow="Study" title="Linear Algebra"/>
+ *   <ShellTitle eyebrow="Ideas" title="Linear Algebra"/>
  *     Overrides the top bar's title while mounted (the default comes from
  *     nav.titleFor, so most pages need nothing). The eyebrow + title live in
  *     the top bar; in-page headers carry actions only (<PageActions>).

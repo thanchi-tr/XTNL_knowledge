@@ -22,7 +22,7 @@ import {
 } from "@/lib/today-board";
 // The server's DailyStreak (streak-curve's plus M2's endedOn, endedAfter, freezeWillCover); type-only, erased from the client bundle.
 import type { DailyStreak } from "@/lib/streak";
-import { fullDayInputOf, fullDayOf, type FullDayRingKind } from "@/lib/full-day";
+import { fullDayInputOf, fullDayOf } from "@/lib/full-day";
 import { announce, chime, mark } from "@/lib/celebrate";
 import type { T1Kind } from "@/lib/celebration-types";
 import type { PlaceLane } from "@/lib/life-types";
@@ -57,7 +57,6 @@ import { dismissToast, pushToast } from "@/components/ui/toast-store";
 import { cx } from "@/components/ui/cx";
 import { TaskRow } from "./TaskRow";
 import { TaskDrawer, type DrawerRule, type DrawerWork } from "./TaskDrawer";
-import { NextUp } from "./NextUp";
 import { GOALS_HEADING_ID, GOAL_CLOSE_CHIP, GoalsStrip } from "./GoalsStrip";
 import { GoalCloseSheet, GoalRescheduleSheet, type GoalClosePreview, type GoalCloseRoadmap } from "./GoalSheets";
 import { onSeekTemplate } from "@/components/roadmap/roadmap-events";
@@ -65,7 +64,7 @@ import { InboxSheet } from "./InboxSheet";
 import { CapacityPanel } from "./CapacityTile";
 import { ReceiptSheet } from "./ReceiptSheet";
 import { UndoToast, focusUndoOnce } from "./UndoToast";
-import { DayLedger, StreakCard } from "./DayLedger";
+import { PlanCard } from "./PlanCard";
 import { Lane } from "./Lane";
 import { AskBadge } from "./AskBadge";
 import { CloseDaySheet } from "./CloseDaySheet";
@@ -83,14 +82,11 @@ import {
   capacityChosen,
   closeDayProminent,
   closeItemsOf,
-  dayLedgerDutyOf,
   dayMomentsOf,
   deferredNoticeOf,
   goalAfterClose,
   goalClosedNotice,
   goalRescheduledNotice,
-  hhmmOf,
-  keptAtOf,
   laneTally,
   madeUpLineOf,
   makeUpViewOf,
@@ -101,7 +97,6 @@ import {
   momentText,
   mustLaneOf,
   nextBoardTick,
-  nextUpOf,
   o1CardOf,
   owedSummaryOf,
   owedTotalOf,
@@ -159,12 +154,8 @@ interface Props {
   streak: DailyStreak;
   /** When the server rendered this board (ISO): the clock for the undo window until the next tap. */
   nowIso: string;
-  /** The notification feed's notices (Asks read the same feed as the bell). */
+  /** The notification feed's notices (Asks read the same feed as the bell; Today shows the Tasks section's only). */
   notices: AskNotice[];
-  /** Today's focus field line ("Statistics pays +32% today"), or null. */
-  focus: string | null;
-  /** Encounters ready, by name. */
-  bosses: string[];
   /** The clock line under the board (LiveClock, the zone, the rules link). */
   /** The live clock line under the board: plain strings, so no server-made JSX crosses into this client tree. */
   footClock?: { time: string; zone: string; tz: string };
@@ -174,17 +165,16 @@ interface Props {
    */
   launched?: boolean;
   /**
-   * Roadmap (F16 seam 16, F17): the week quests card, rendered by the page
-   * (`<WeekQuests variant="today" …/>`) and drawn inside .o9 directly after
-   * the goals, in a wrapper that carries data-compact while Close the day is
-   * prominent. Quiet by design: it adds no Ask, no count and no row to the
-   * board; buildBoard and todayCountsOf never see it. Absent: no card.
+   * The three sections: Today is the Tasks section. What is due in the other two (Ideas: reviews, this week's
+   * roadmap quests, ready encounters; Body: a weigh-in) is the page's one slim strip (<DueElsewhere/> over
+   * due-elsewhere.ts), drawn first in the side column. Only drawn: it adds no Ask, no count and no row to the
+   * board; buildBoard and todayCountsOf never see it. Absent or null: no strip.
    */
-  questsSlot?: ReactNode;
+  elsewhere?: ReactNode;
   /**
    * The live fix (contracts §22.11, ruling 67): a plan-born template's Gemini-named Domain names, by template id
    * (roadmap-quests-server loadTodayNamedTitles), and the mark the page renders (<NamedMark/>, passed as a node like
-   * questsSlot). Its title shows each such name with pv.named (NamedTitle over namedPartsOf of the title as it
+   * the strip). Its title shows each such name with pv.named (NamedTitle over namedPartsOf of the title as it
    * stands). Absent: every title plain, as before.
    */
   namedTitles?: TodayNamedTitles | null;
@@ -260,8 +250,6 @@ const JUST_ADDED_MS = 1600;
 const ANYTIME_PLACES: ReadonlySet<PlaceLane> = new Set<PlaceLane>(["anytime", "later", "upcoming"]);
 /** The flash link a capture toast's 'View' writes: /today#t-<templateId>. */
 const FLASH_HASH = /^#t-([A-Za-z0-9_-]{1,64})$/;
-/** The week quests card sits 16 px under the goals inside .o9 (the board's own gap between sections). */
-const QUESTS_SLOT_STYLE = { marginTop: 16 } as const;
 
 /**
  * A row a week quest asked for (SEEK_TEMPLATE_EVENT, roadmap F17): outlined
@@ -356,6 +344,14 @@ function declaredOf(duty: DutyBoard | null, today: DayKey): DeclaredDay[] {
  * The Today board: what the day asks for, in the order it is worth doing
  * (redesign "Sigil & Slate": one DOM, three orders by container width).
  *
+ * The three sections (Ideas, Tasks, Body): Today is the Tasks section and
+ * shows only the tasks due today, the Must, Planned and Habits lanes, the
+ * Inbox and Anytime, the day's capacity (the plan card) and the task goals.
+ * The review quest, the roadmap's week quests and aim line, the encounters
+ * and the Ideas Asks live on the Ideas landing (/review); the streak and the
+ * Full day on Character (/you); weight and walks on Body (/train). What is
+ * due there is the page's one slim strip (`elsewhere`), drawn first.
+ *
  * The board holds its own optimistic copy of the day: a tick lands on the
  * tap, every other row re-prices against the new knee base straight away
  * (the same `planCompletion` the server pays with), and the view reconciles
@@ -369,10 +365,11 @@ function declaredOf(duty: DutyBoard | null, today: DayKey): DeclaredDay[] {
  * changes by itself (an Undo expiring, midnight, the 04:00 day edge).
  *
  * Rewards are the redesign's ladder and nothing louder: a tick is Tier 0
- * (the check draws, the "+N" token flies to the life-XP cell, the figure
- * counts up); the first deed of the day, a closed ring, a kept Must lane
- * and a Full day are Tier 1, once, after a tap, never on arrival. Every
- * number is the real one.
+ * (the check draws, the "+N" token flies to the plan card's life-XP cell,
+ * the figure counts up); the first deed of the day, a closed ring, a kept
+ * Must lane and a Full day are Tier 1, once, after a tap, never on arrival
+ * (the kept lane in place; the others, whose tiles are Character's, as a
+ * toast with its ring). Every number is the real one.
  *
  * M2 (Duty, from BoardData.duty): open debts render only inside the Must
  * lane (one MakeUpCard, or one collapsed OwedSummary) and in the Owed row
@@ -385,7 +382,7 @@ function declaredOf(duty: DutyBoard | null, today: DayKey): DeclaredDay[] {
  * launch the board is the pre-M2 board (debts, which only settlement
  * writes, render whenever they exist).
  */
-export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footClock, launched = false, namedTitles, questsSlot = null }: Props) {
+export function TodayBoard({ data, streak, nowIso, notices, footClock, launched = false, namedTitles, elsewhere = null }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
@@ -437,8 +434,8 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
   const [mood, setMood] = useState<number | null>(null);
   /** Device-local flags, read after mount (null until then, so the server and first client render agree). */
   const [flags, setFlags] = useState<Record<string, string> | null>(null);
-  /** Visual beats of a Tier 1 moment, cleared once they have played. */
-  const [beat, setBeat] = useState<{ glint: Set<FullDayRingKind>; full: boolean; lane: boolean } | null>(null);
+  /** The visual beat of a Tier 1 moment on the board (the Must lane's KEPT stamp), cleared once it has played. */
+  const [beat, setBeat] = useState<{ lane: boolean } | null>(null);
   // The undo window's clock, on the server's time: its render time, then the
   // time of the last tap or timer (serverNow). Never read during render, so
   // hydration matches.
@@ -470,14 +467,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
   /** When the player last ticked: a day moment only follows a tap. */
   const actedAt = useRef(0);
 
-  // Elements the Tier 1 moments light.
-  const dayTileRef = useRef<HTMLElement | null>(null);
-  const streakCardRef = useRef<HTMLElement | null>(null);
-  const sealRef = useRef<HTMLDivElement | null>(null);
-  const fullStampRef = useRef<HTMLSpanElement | null>(null);
-  const mustRingRef = useRef<HTMLDivElement | null>(null);
-  const questRingRef = useRef<HTMLDivElement | null>(null);
-  const lifeRingRef = useRef<HTMLDivElement | null>(null);
+  // The element a Tier 1 moment lights on the board (the streak and the Full day live on Character now).
   const mustBodyRef = useRef<HTMLDivElement | null>(null);
 
   const ops = useMemo(() => pending.map((p) => p.op), [pending]);
@@ -1150,10 +1140,12 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
     });
   }
 
-  // ── The day: streak, Full-day rings, and its Tier 1 moments ─────────────
-
-  // The seal and the streak move with the first tick of the day, before the
-  // round trip: a day with any live completion is an active day.
+  // ── The day's Tier 1 moments ───────────────────────────────────────────
+  //
+  // The streak and the Full day are drawn on Character (/you) now; Today
+  // still knows them, because a tick here is what keeps the day, closes a
+  // ring or makes a Full day, and the moment follows the tap that made it.
+  // A day with any live completion is an active day, before the round trip.
   const todayActive = streak.last7Days[streak.last7Days.length - 1] ?? false;
   const keptToday = todayActive || board.activeToday;
   const streakNow = streak.current + (!todayActive && board.activeToday ? 1 : 0);
@@ -1167,9 +1159,9 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
     mustLane: mustLaneKept,
   };
   const dayKey = `${keptToday}|${streakNow}|${mustLaneKept}|${fullDay.rings.map((r) => `${r.value}/${r.target}/${r.met}`).join(",")}`;
-  // Held back while a tick's token is in the air: the seal, the numeral and
-  // the rings move when it lands, not before (ledger-gate.ts).
-  const shown = useAfterFlight({ snapshot, fullDay, streakNow, mustLaneKept }, dayKey);
+  // Held back while a tick's token is in the air: the moments play when it
+  // lands, not before (ledger-gate.ts).
+  const shown = useAfterFlight({ snapshot, streakNow, mustLaneKept }, dayKey);
 
   const prevSnapshot = useRef<DaySnapshot>(shown.snapshot);
   const shownKey = `${shown.snapshot.kept}|${shown.snapshot.rings.musts}|${shown.snapshot.rings.quest}|${shown.snapshot.rings.life}|${shown.snapshot.full}|${shown.snapshot.mustLane}`;
@@ -1191,11 +1183,8 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
     if (firedMoments.has(id)) return;
     firedMoments.add(id);
 
-    const glint = new Set<FullDayRingKind>();
-    if (moments.includes("ring-musts")) glint.add("musts");
-    if (moments.includes("ring-quest")) glint.add("quest");
-    if (moments.includes("ring-life")) glint.add("life");
-    setBeat({ glint, full: moments.includes("full-day"), lane: moments.includes("lane-kept") });
+    const lane = primary === "lane-kept";
+    setBeat({ lane: moments.includes("lane-kept") });
     window.setTimeout(() => setBeat(null), 1000);
 
     const say = moments
@@ -1203,7 +1192,6 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
       .map((m) => momentText(m, ctx))
       .join(" ");
     const kind: T1Kind = primary === "full-day" ? "full-day" : primary === "lane-kept" ? "lane-kept" : primary === "day-kept" ? "day-kept" : "ring-closed";
-    const ringRef = primary === "ring-quest" ? questRingRef : primary === "ring-life" ? lifeRingRef : mustRingRef;
     const text =
       primary === "full-day"
         ? "Full day"
@@ -1213,16 +1201,21 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
             ? `Day ${ctx.streak} kept`
             : primary === "ring-quest"
               ? "Quest ring closed"
-              : "Life ring closed";
+              : primary === "ring-musts"
+                ? "Musts ring closed"
+                : "Life ring closed";
+    // The Must lane is on the board: its kept line sweeps and bursts there. The streak, the rings and the Full
+    // day are Character's tiles, so their moment shows as the toast with its closing ring.
     chime({
       kind,
       id,
       text,
       say,
-      sweepEl: primary === "lane-kept" ? mustBodyRef.current : primary === "day-kept" ? streakCardRef.current : dayTileRef.current,
-      burstEl: primary === "full-day" ? fullStampRef.current : primary === "day-kept" ? sealRef.current : ringRef.current,
-      ringEl: primary === "day-kept" ? null : primary === "full-day" ? dayTileRef.current : ringRef.current,
+      sweepEl: lane ? mustBodyRef.current : null,
+      burstEl: lane ? mustBodyRef.current : null,
+      ringEl: null,
     });
+    if (!lane) pushToast({ title: text, ring: true, holdMs: 5000, key: `chime:${id}` });
   }
 
   useEffect(() => {
@@ -1237,20 +1230,6 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
     // `shown` travels with its key.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shownKey]);
-
-  // ── Next up (its 'R' key hint is the global 'r' of src/lib/shortcuts.ts,
-  // answered by <Shortcuts/> on every page, not only while the quest is next) ──
-
-  const next = nextUpOf({
-    quest: {
-      reviews: quest.progress,
-      target: quest.target,
-      dueNow: quest.dueNow,
-      met: fullDay.rings[1].met,
-      cap: fullDay.rings[1].target,
-    },
-    must: board.must,
-  });
 
   // ── Rows ────────────────────────────────────────────────────────────────
 
@@ -1356,19 +1335,6 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
         : receiptRow.projection
     : null;
 
-  // "Kept today, 08:05.": the first deed's time, when the board holds it (a
-  // review or a new idea may have kept the day first; then no time is said).
-  const keptAt = keptToday ? keptAtOf(current) : null;
-  const streakCaption: ReactNode = keptToday ? (
-    <>
-      <b>{keptAt ? `Kept today, ${hhmmOf(Date.parse(keptAt))}.` : "Kept today."}</b> Safe until 04:00.
-    </>
-  ) : streakNow > 0 ? (
-    "Not kept yet. Any tick or review keeps it."
-  ) : (
-    "Any tick or review starts a streak."
-  );
-
   // ── M2: Duty on the board (F3, F8, F10, F12, F13) ───────────────────────
   //
   // Debt shows only inside the Must lane (one card, or one collapsed
@@ -1382,7 +1348,6 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
   const launchDay = duty?.launchDay ?? null;
   const declared = declaredOf(duty, current.today);
   const yesterdayActive = yesterdayActiveOf(streak, current);
-  const ledgerDuty = dayLedgerDutyOf({ duty, streak, kept: shown.snapshot.kept, full: shown.fullDay.full, today: current.today, yesterdayActive });
   /** Rule changes classified on the board's clock (render); the server decides again when it writes. */
   const viewCtx = { today: current.today, nowMs: clock, live };
 
@@ -1685,8 +1650,9 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
       }
     : undefined;
 
-  // The Asks: a badge on the block each concerns (the streak, Next up), never a card of their own; every one is a tap away.
-  const asksOn = (host: "streak" | "next") => asks.filter((a) => askHostOf(a) === host);
+  // The Asks: the Tasks section's only (record yesterday, the weekly review), a badge on the plan card, never a card
+  // of their own; every one is a tap away. Ideas' Asks (cards past grace, the quota, a penalty) stay in the bell.
+  const taskAsks = asks.filter((a) => askHostOf(a) === "tasks");
   const askAction = (a: (typeof asks)[number]) => (a.id === "yesterday" ? () => setYesterdayOpen(true) : undefined);
 
   // The 'y' shortcut on this page opens Record yesterday.
@@ -1808,63 +1774,22 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
             </div>
           )}
 
-          {/* The streak is its own block, first on a phone; what waits on the days (record yesterday, the weekly review)
-              is a badge in its corner. */}
-          <div className="o2 ask-host">
-            <StreakCard
-              streak={{ count: shown.streakNow, capped: streak.capped, kept: shown.snapshot.kept, broken: ledgerDuty.broken }}
-              caption={ledgerDuty.caption ?? streakCaption}
-              freezes={ledgerDuty.freezes}
-              heldNote={ledgerDuty.heldNote}
-              sealRef={sealRef}
-              cardRef={streakCardRef}
-            >
-              {/* Always one tap away: what was due yesterday, and anything else forgotten (a tick counts on yesterday). */}
-              <button type="button" className="today-streak-y" aria-haspopup="dialog" onClick={() => setYesterdayOpen(true)}>
-                Record yesterday{yesterdayOpenCount > 0 ? ` · ${yesterdayOpenCount} open` : ""}
-                <Icon name="chev" size={14} />
-              </button>
-            </StreakCard>
-            <AskBadge asks={asksOn("streak")} label="your streak" onAction={askAction} />
-          </div>
+          {/* The three sections: what is due in Ideas and Body, one slim strip of links out (the page's slot). */}
+          {elsewhere != null && elsewhere !== false && <div className="o2">{elsewhere}</div>}
 
-          {/* The day's ledger (Full day, life XP, review pts, capacity): after the lanes and Next up on a phone. */}
-          <div className="o12">
-            <DayLedger
-              streakApart
-              streak={{ count: shown.streakNow, capped: streak.capped, kept: shown.snapshot.kept, broken: ledgerDuty.broken }}
-              caption={ledgerDuty.caption ?? streakCaption}
-              freezes={ledgerDuty.freezes}
-              heldNote={ledgerDuty.heldNote}
-              fullNote={ledgerDuty.fullNote ?? undefined}
-              aside={ledgerDuty.aside ?? undefined}
-              fullDay={shown.fullDay}
-              settles={ledgerDuty.settles}
-              glint={beat?.glint}
-              stampLanding={beat?.full}
-              xp={board.lifeXpToday}
-              pts={board.reviewXpToday}
+          {/* The day's plan (capacity, the life XP the ticks paid, Record yesterday), before the lanes on a phone; what
+              waits on the Tasks section (record yesterday, the weekly review) is a badge in its corner. */}
+          <div className="o2 ask-host">
+            <PlanCard
               planned={{ minutes: board.planned, capacity: board.capacity, chosen: chosenCapacity, over: board.over }}
               onCapacity={() => setCapacityOpen(true)}
-              refs={{
-                tile: dayTileRef,
-                fullStamp: fullStampRef,
-                rings: { musts: mustRingRef, quest: questRingRef, life: lifeRingRef },
-              }}
-            />
-          </div>
-
-          <div className="o3 ask-host">
-            <NextUp
-              next={next}
-              focus={focus}
-              bosses={bosses}
-              quota={null}
-              mustPrice={next.kind === "must" ? next.row.projection.xp : undefined}
-              busy={next.kind === "must" ? busyTemplates.has(next.row.template.id) : false}
-              onKeepMust={next.kind === "must" ? () => complete(next.row, {}, null) : undefined}
-            />
-            <AskBadge asks={asksOn("next")} label="your reviews" onAction={askAction} />
+              xp={board.lifeXpToday}
+              pts={board.reviewXpToday}
+              yesterdayOpen={yesterdayOpenCount}
+              onYesterday={() => setYesterdayOpen(true)}
+            >
+              <AskBadge asks={taskAsks} label="today's tasks" onAction={askAction} />
+            </PlanCard>
           </div>
         </div>
 
@@ -1936,12 +1861,6 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
               justAdded={justAdded}
               namedTitles={namedTitles}
             />
-            {/* Roadmap F17: the week quests card under the goals. Quiet: no Ask, no count, never red; one line while Close the day is prominent. */}
-            {questsSlot != null && questsSlot !== false && (
-              <div className="rm-quests-slot" data-compact={prominent ? "1" : undefined} style={QUESTS_SLOT_STYLE}>
-                {questsSlot}
-              </div>
-            )}
           </div>
 
           <section className="card today-side-rows o10" aria-label="Inbox and Anytime">
@@ -2042,7 +1961,6 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
           </section>
 
           <div className="foot-note o11">
-            <p>Life XP and review points are two ledgers. They are never added together.</p>
             {footClock && <TodayFooter time={footClock.time} zone={footClock.zone} tz={footClock.tz} />}
           </div>
         </div>

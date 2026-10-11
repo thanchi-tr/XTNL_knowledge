@@ -345,7 +345,18 @@ const CSS = CSS_RAW.replace(/\/\*[\s\S]*?\*\//g, "");
   check("page: imports train.css", /import "@\/components\/train\/train\.css"/.test(page));
   check("page: reads loadWeightView for the current user", /loadWeightView\(userId, now\)/.test(page) && /getCurrentUserId\(\)/.test(page));
   check("page: passes the three server actions", /actions=\{\{ logWeight, deleteWeight, setWeightGoal \}\}/.test(page) && /from "@\/app\/actions\/weight"/.test(page));
-  check("page: the Body weight card leads, the movement placeholder stays", page.indexOf("<WeightCard") >= 0 && page.indexOf("<WeightCard") < page.indexOf("health sync"));
+  // The three sections: Body › This week is the health log, weight then this week's walks (the Exercise card's own
+  // totals, from loadExerciseView), with "Log a walk" to Body › Exercise; the words-only placeholder is gone.
+  check(
+    "page: the Body weight card leads, then this week's walks (exerciseWeekOf's totals via loadExerciseView) with 'Log a walk' to /train/exercise; no placeholder",
+    page.indexOf("<WeightCard") >= 0 &&
+      page.indexOf("<WeightCard") < page.indexOf('className="wt-ex-week"') &&
+      /const \[view, walks\] = await Promise\.all\(\[loadWeightView\(userId, now\), loadExerciseView\(userId, now\)\]\);/.test(page) &&
+      /const w = walks\.week;/.test(page) &&
+      ["{w.sessions}", "{km(w.distanceKm)}", "{durationLabel(w.durationMin)}", "{w.climbM} m"].every((s) => page.includes(s)) &&
+      /<Button variant="primary" href="\/train\/exercise" icon="train">\s*Log a walk\s*<\/Button>/.test(page) &&
+      !/health sync|What will be here|coming with/.test(page)
+  );
   check("page: never statically cached (the life day turns at 04:00)", /export const dynamic = "force-dynamic"/.test(page));
   const audit = read("scripts/ui-audit.mjs");
   check("audit: /train and /dev/style/train are audited", /"\/train"/.test(audit) && /"\/dev\/style\/train"/.test(audit));

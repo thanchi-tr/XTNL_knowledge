@@ -161,13 +161,13 @@ console.log("— the cards —");
 
 console.log("— wiring —");
 {
-  const train = SECTIONS.find((s) => s.id === "train");
-  check("nav: Train holds the Exercise tab (/train/exercise), titled Train · Exercise", !!train?.subs.some((s) => s.href === "/train/exercise" && s.label === "Exercise") && json(titleFor("/train/exercise")) === json({ eyebrow: "Train", title: "Exercise" }));
+  const body = SECTIONS.find((s) => s.id === "body");
+  check("nav: Body holds the Exercise tab (/train/exercise), titled Body · Exercise", !!body?.subs.some((s) => s.href === "/train/exercise" && s.label === "Exercise") && json(titleFor("/train/exercise")) === json({ eyebrow: "Body", title: "Exercise" }));
   const board = read("src/components/today/TodayBoard.tsx");
   const drawer = read("src/components/today/TaskDrawer.tsx");
   check("Today: each row and its drawer get the task's style; the drawer shows the month and the picker", (board.match(/taskStyle=\{current\.styles\?\.\[row\.template\.id\] \?\? null\}/g) ?? []).length === 2 && /<TaskMonth /.test(drawer) && /<TaskStylePicker /.test(drawer));
   check("the board reads the styles in its own wave, fail soft", /loadTaskStyles\(userId\)/.test(read("src/lib/tasks.ts")));
-  check("You: the month's done tasks under the life tracks", /<MonthDoneCard today=\{aimToday\}/.test(read("src/app/you/page.tsx")));
+  check("You: the month's done tasks on Character, read against the page's own life day", /<MonthDoneCard today=\{today\}/.test(read("src/app/you/page.tsx")) && /const today = todayKey\(now\);/.test(read("src/app/you/page.tsx")));
   const sql = read("prisma/migrations/20261201000000_life_exercise_style/migration.sql").replace(/--.*$/gm, "");
   check("the migration only creates the two tables and their indexes (no ALTER, DROP or foreign key)", /CREATE TABLE "public"\."ExerciseSession"/.test(sql) && /CREATE TABLE "public"\."TaskStyle"/.test(sql) && !/\b(ALTER|DROP|REFERENCES)\b/i.test(sql));
 }

@@ -100,7 +100,7 @@ export function ShortcutKeys({ k }: { k: string }) {
   );
 }
 
-/** Every shortcut, grouped (Capture, Go to, Study, Help), with the standard keys and the browsers' promise underneath. */
+/** Every shortcut, grouped (SHORTCUT_GROUPS: Capture, Tasks, Go to, Ideas, Help), with the standard keys and the browsers' promise underneath. */
 export function ShortcutList({ idPrefix = "sc" }: { idPrefix?: string }) {
   return (
     <div className="sc-groups">

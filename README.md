@@ -654,28 +654,28 @@ The list lives in `src/lib/shortcuts.ts`; this table is generated from it.
 <!-- shortcuts:start (generated from src/lib/shortcuts.ts: npx tsx scripts/shortcut-check.ts --write) -->
 | Group | Keys | What it does | Where |
 |---|---|---|---|
-| Capture | `c` | Capture a task | Any page, not while typing |
+| Capture | `c` | Capture an idea, a task or a weigh-in (by section) | Any page, not while typing |
 | Capture | `Alt+N` | Capture from anywhere, even while typing | Any page, even while typing |
 | Capture | `i` | New idea (full form) | Any page, not while typing |
 | Capture | `Enter` | Add the line (on a phone: add and stay for the next one) | In the capture sheet |
 | Capture | `Shift+Enter` | Add the line and type the next one | In the capture sheet |
 | Capture | `Alt+Enter` | Create the idea | On New idea |
 | Capture | `Alt+B` | Blank the selected words (cloze) | On New idea |
-| Today | `y` | Record yesterday | Any page, not while typing |
-| Go to | `g` then `t` | Today | Any page, not while typing |
-| Go to | `g` then `s` | Study (review) | Any page, not while typing |
+| Tasks | `y` | Record yesterday | Any page, not while typing |
+| Go to | `g` then `t` | Tasks | Any page, not while typing |
+| Go to | `g` then `s` | Ideas (review) | Any page, not while typing |
 | Go to | `g` then `l` | Library | Any page, not while typing |
-| Go to | `g` then `w` | Train | Any page, not while typing |
-| Go to | `g` then `y` | You | Any page, not while typing |
-| Go to | `g` then `k` | This week | Any page, not while typing |
+| Go to | `g` then `w` | Body | Any page, not while typing |
+| Go to | `g` then `y` | Character | Any page, not while typing |
+| Go to | `g` then `k` | Weekly review | Any page, not while typing |
 | Go to | `,` | Settings | Any page, not while typing |
 | Go to | `/` | Search the library | Any page, not while typing |
-| Study | `r` | Start a review | Any page, not while typing |
-| Study | `1`–`9` | Pick an answer (multiple choice) | During a review |
-| Study | `Enter` or `→` | Next card | During a review |
+| Ideas | `r` | Start a review | Any page, not while typing |
+| Ideas | `1`–`9` | Pick an answer (multiple choice) | During a review |
+| Ideas | `Enter` or `→` | Next card | During a review |
 | Help | `Shift+?` | Show these shortcuts | Any page, not while typing |
 
-Standard keys keep their usual meaning: `Esc` closes a sheet or dialog; `Tab` moves between controls; `Enter` presses the focused button (on Study, with nothing focused and cards due, it starts a review); `Ctrl+Z` undoes typing (in the capture line it also brings a chip back) and, outside a text field with the Added toast showing, takes that capture back. On a Mac, Alt is the Option key. Option+N opens capture outside text fields; inside a field, Tab or click out of it first (Option+N there types ˜). None of these are Chrome or Edge shortcuts.
+Standard keys keep their usual meaning: `Esc` closes a sheet or dialog; `Tab` moves between controls; `Enter` presses the focused button (on Review, with nothing focused and cards due, it starts a review); `Ctrl+Z` undoes typing (in the capture line it also brings a chip back) and, outside a text field with the Added toast showing, takes that capture back. On a Mac, Alt is the Option key. Option+N opens capture outside text fields; inside a field, Tab or click out of it first (Option+N there types ˜). None of these are Chrome or Edge shortcuts.
 <!-- shortcuts:end -->
 
 ## Environment variables

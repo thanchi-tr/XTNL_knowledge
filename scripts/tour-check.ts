@@ -14,19 +14,32 @@
  * The Aim card is lane R5's and has landed (fix round 2 of revision 4): its
  * data-tour="you-aim" is checked like every other target, a FAIL if missing.
  *
+ * The three sections (shell nav.ts): the stops are welcome (the three
+ * sections named), Capture (the + that fits the section), Ideas, Tasks and
+ * Body (each spotlighting its tab, titled with its label), You (the profile
+ * menu behind the crest, and the aim) and Shortcuts, whose last words are
+ * the way back from Settings (the old closing step folded into it, so the
+ * tour stays at seven).
+ *
  * Run: npx tsx scripts/tour-check.ts
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { compile } from "tailwindcss";
-import { SECTIONS } from "../src/components/shell/nav";
+import { PROFILE, SECTIONS, sectionById } from "../src/components/shell/nav";
 import { SHORTCUTS, STANDARD_KEYS, shortcutOf, type ShortcutId } from "../src/lib/shortcuts";
 import { TOUR_SEEN_KEY, TOUR_START_EVENT, startTour } from "../src/lib/tour-contract";
 import manifest from "../src/app/manifest";
 import {
+  BODY_COPY,
+  CAPTURE_COPY,
   CAPTURE_TARGETS,
+  IDEAS_COPY,
   PHONE_SHORTCUTS_COPY,
+  PROFILE_TARGETS,
+  REPLAY_COPY,
   SETTLE_MS,
+  WELCOME_COPY,
   YOU_COPY,
   copyText,
   hasNoTour,
@@ -62,7 +75,7 @@ const TOUR_CSS = read("src/components/tour/tour.css");
 {
   for (const [name, steps] of [["keyboard", KEYBOARD], ["phone", PHONE]] as const) {
     check(`steps (${name}): 7 or fewer`, steps.length >= 1 && steps.length <= 7, String(steps.length));
-    eq(`steps (${name}): the order`, steps.map((s) => s.id), ["welcome", "capture", "today", "study", "you", "shortcuts", "done"]);
+    eq(`steps (${name}): the order`, steps.map((s) => s.id), ["welcome", "capture", "ideas", "tasks", "body", "you", "shortcuts"]);
     for (const s of steps) {
       const text = copyText(s.body);
       check(`copy (${name}): ${s.id} is at most 160 characters`, text.length > 0 && text.length <= 160, `${text.length}: ${text}`);
@@ -72,7 +85,27 @@ const TOUR_CSS = read("src/components/tour/tour.css");
   }
   const capture = copyText(KEYBOARD.find((s) => s.id === "capture")!.body);
   check("copy: capture says nothing is guessed by AI", /no AI/i.test(capture));
-  check("copy: the done step points at Settings", /Settings/.test(copyText(KEYBOARD[KEYBOARD.length - 1].body)));
+  for (const [name, steps] of [["keyboard", KEYBOARD], ["phone", PHONE]] as const) {
+    const last = copyText(steps[steps.length - 1].body);
+    check(`copy (${name}): the last step ends with the way back from Settings (REPLAY_COPY)`, last.endsWith(` ${REPLAY_COPY}`) && /Settings/.test(REPLAY_COPY), last);
+  }
+  // The three sections (shell nav.ts): the welcome names them, each section step is titled with its tab's label, the + fits the section.
+  eq("copy: the welcome is WELCOME_COPY and names the three sections", [copyText(KEYBOARD[0].body) === WELCOME_COPY, SECTIONS.every((s) => WELCOME_COPY.includes(s.label))], [true, true]);
+  eq(
+    "copy: the Ideas, Tasks and Body steps are titled with their tab's label",
+    (["ideas", "tasks", "body"] as const).map((id) => KEYBOARD.find((s) => s.id === id)!.title),
+    (["ideas", "tasks", "body"] as const).map((id) => sectionById(id).label)
+  );
+  check(
+    "copy: the capture step says the + fits the section (an idea, a task or a weigh-in)",
+    copyText(KEYBOARD.find((s) => s.id === "capture")!.body) === CAPTURE_COPY && /\+ fits the section/.test(CAPTURE_COPY) && /\bidea\b/.test(CAPTURE_COPY) && /\btask\b/.test(CAPTURE_COPY) && /weigh-in/.test(CAPTURE_COPY)
+  );
+  check("copy: the Ideas step is IDEAS_COPY and names Roadmap, now an Ideas page", copyText(KEYBOARD.find((s) => s.id === "ideas")!.body) === IDEAS_COPY && /Roadmap/.test(IDEAS_COPY) && sectionById("ideas").subs.some((x) => x.label === "Roadmap"));
+  check(
+    "copy: the Body step is BODY_COPY: the weigh-in line and Exercise, a record",
+    copyText(KEYBOARD.find((s) => s.id === "body")!.body) === BODY_COPY && /weight 72\.4/.test(BODY_COPY) && /Exercise/.test(BODY_COPY) && sectionById("body").subs.some((x) => x.label === "Exercise")
+  );
+  check("copy: the You step is titled as the profile menu is, and says the crest opens it, Settings included", KEYBOARD.find((s) => s.id === "you")!.title === PROFILE.label && /crest/.test(YOU_COPY) && /Settings/.test(YOU_COPY));
   check("copy: no promise words (soon, coming, will be)", ![...KEYBOARD, ...PHONE].some((s) => /\b(soon|coming|will be)\b/i.test(copyText(s.body))));
   // Roadmap revision 4 (F-R4-6): the You step names the aim, in the spec's words, as an invitation.
   for (const [name, steps] of [["keyboard", KEYBOARD], ["phone", PHONE]] as const) {
@@ -84,7 +117,8 @@ const TOUR_CSS = read("src/components/tour/tour.css");
       you
     );
   }
-  eq("copy: YOU_COPY is the spec's sentence (145 characters)", [YOU_COPY, YOU_COPY.length], ["Your character grows from what you do. Give it an aim and the app plans milestones toward it, then measures them from your own reviews and ticks.", 145]);
+  // F-R4-6's aim ("Give it an aim and the app plans milestones toward it, then measures them …"), with the crest's menu in front of it (the three sections).
+  eq("copy: YOU_COPY is the profile menu and the spec's aim, within budget (157 characters)", [YOU_COPY, YOU_COPY.length], ["Your crest opens your character, skills and Settings. Give the character an aim and the app plans milestones toward it, measured from your reviews and ticks.", 157]);
   check("steps: still seven, so the aim adds no step", KEYBOARD.length === 7 && PHONE.length === 7);
 }
 
@@ -121,8 +155,8 @@ const TOUR_CSS = read("src/components/tour/tour.css");
   // The phone's long-press step says what the icon offers, never a menu entry's name
   // (the PWA manifest and the Android shell label them differently).
   const phone = copyText(shortcutsStep(PHONE).body);
-  eq("phone: the step says what the icon offers, with no menu names", phone, "On a phone with the app installed, long-press its icon for a quick task, a review or a new idea.");
-  check("phone: the copy is PHONE_SHORTCUTS_COPY", phone === PHONE_SHORTCUTS_COPY);
+  eq("phone: the step says what the icon offers, with no menu names, then the way back", phone, "On a phone with the app installed, long-press its icon for a quick task, a review or a new idea. Replay this tour from Settings.");
+  check("phone: the copy is PHONE_SHORTCUTS_COPY, then REPLAY_COPY", phone === `${PHONE_SHORTCUTS_COPY} ${REPLAY_COPY}`);
   const iconNames = (manifest().shortcuts ?? []).flatMap((s) => [s.name, s.short_name ?? ""]).filter((n) => n && n !== "Today");
   check("phone: no manifest shortcut name is quoted in the step", iconNames.every((n) => !phone.includes(n)), iconNames.filter((n) => phone.includes(n)).join(", "));
   const urls = (manifest().shortcuts ?? []).map((s) => s.url);
@@ -153,19 +187,36 @@ const TOUR_CSS = read("src/components/tour/tour.css");
     for (const m of sel.matchAll(/a\[href="([^"]+)"\]/g)) check(`target: ${m[1]} is a section's href`, SECTIONS.some((s) => s.href === m[1]));
   }
   // The shell steps reach every chrome: tab bar (< 600), rail, sidebar (≥ 1280).
-  for (const id of ["capture", "today", "study", "you"] as const) {
+  for (const id of ["capture", "ideas", "tasks", "body"] as const) {
     const t = KEYBOARD.find((s) => s.id === id)!.targets;
     check(`target: ${id} has a target in the tab bar, the rail and the sidebar`, [".tabbar", ".rail", ".sidebar"].every((c) => t.some((s) => s.startsWith(c))), t.join(", "));
   }
+  for (const id of ["ideas", "tasks", "body"] as const) {
+    const href = sectionById(id).href;
+    const t = KEYBOARD.find((s) => s.id === id)!.targets.filter((x) => !x.startsWith("[data-tour"));
+    check(`target: ${id} spotlights its own tab (${href}) in every chrome`, t.length === 3 && t.every((x) => x.includes(`a[href="${href}"]`)), t.join(", "));
+  }
+  // The profile buttons: no tab holds the profile; the top bar's crest (< 600), the rail's crest and the sidebar's card do.
+  const youT = KEYBOARD.find((s) => s.id === "you")!.targets;
+  check(
+    "target: you reaches the profile button in the rail, the sidebar and the top bar (the crest), never a tab",
+    youT.some((s) => s.startsWith(".rail")) && youT.some((s) => s.startsWith(".sidebar")) && youT.includes('[data-tour="you-crest"]') && !youT.some((s) => s.startsWith(".tabbar")),
+    youT.join(", ")
+  );
+  eq("target: the profile targets are the rail's crest, the sidebar's card and the top bar's crest", [...PROFILE_TARGETS], [".rail .r-you", ".sidebar .sb-char", '[data-tour="you-crest"]']);
+  check(
+    "target: the top bar's crest carries data-tour='you-crest' and is the profile button",
+    /<button type="button" className="crest-btn" aria-label=\{crestLabel\(character\)\} data-tour="you-crest" \{\.\.\.profile\}>/.test(read("src/components/shell/TopBar.tsx"))
+  );
   check("target: capture reaches the three capture buttons", CAPTURE_TARGETS.length === 3);
-  check("target: the page-specific targets come first", KEYBOARD.find((s) => s.id === "today")!.targets[0] === '[data-tour="today-lanes"]' && KEYBOARD.find((s) => s.id === "you")!.targets[0] === '[data-tour="you-aim"]');
+  check("target: the page-specific targets come first", KEYBOARD.find((s) => s.id === "tasks")!.targets[0] === '[data-tour="today-lanes"]' && KEYBOARD.find((s) => s.id === "you")!.targets[0] === '[data-tour="you-aim"]');
   const youTargets = KEYBOARD.find((s) => s.id === "you")!.targets;
   check(
-    "target: the you step spotlights the Aim card first, then the hero, then the You links, and the crest last (F-R4-6)",
+    "target: the you step spotlights the Aim card first, then the hero, then the profile buttons, and the crest last (F-R4-6)",
     youTargets[0] === '[data-tour="you-aim"]' && youTargets[1] === '[data-tour="you-hero"]' && youTargets[youTargets.length - 1] === '[data-tour="you-crest"]' && youTargets.slice(2, -1).every((t) => !t.startsWith("[data-tour")),
     youTargets.join(", ")
   );
-  check("target: welcome, shortcuts and done are centred (no target)", ["welcome", "shortcuts", "done"].every((id) => KEYBOARD.find((s) => s.id === id)!.targets.length === 0));
+  check("target: welcome and shortcuts are centred (no target)", ["welcome", "shortcuts"].every((id) => KEYBOARD.find((s) => s.id === id)!.targets.length === 0));
 }
 
 // ── first run: the guard's truth table ─────────────────────────────────────
