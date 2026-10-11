@@ -352,6 +352,19 @@ export function splitTodayLane<R extends { template: { recurrence: string | null
 }
 
 /**
+ * A row's colour code (tokens.css "Lane"; today.css paints the rail and the
+ * open tick ring): a must wears --must (the Must lane, or compulsory wherever
+ * it shows, like the diamond tick), a habit --habit (anything with a rule,
+ * as splitTodayLane sorts it), the rest ink. One answer for the colour and
+ * the tick's shape, so the two never disagree.
+ */
+export type RowAccent = "must" | "habit";
+export function rowAccentOf(row: { lane: string; template: { compulsory: boolean; recurrence: string | null } }): RowAccent | null {
+  if (row.lane === "must" || row.template.compulsory) return "must";
+  return ruleOf(row.template) ? "habit" : null;
+}
+
+/**
  * "n of m kept" for a lane: done (the minimum included) against every row
  * that still asks (today-board.ts asksToday): a skipped row no longer asks,
  * nor does a row a rest day holds while it is undone (M2).

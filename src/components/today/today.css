@@ -4,9 +4,13 @@
    .pring, .meter, .segs, .chip, .btn, .sheet, .collapsed, .ask-dot,
    .stamp, .sweep. Only the board's own furniture lives here.
 
-   Colour reports state only: ink for structure, kept / owed / held for
-   state in time, the currency hues on glyphs. "Due" is ink plus a clock;
-   the Must lane is told apart by the diamond. Nothing here is amber.
+   Colour reports state, and one thing more: ink for structure, kept / owed /
+   held for state in time, the currency hues on glyphs, and the colour code
+   of a card's kind (tokens.css "Lane"): a must wears --must, a habit
+   --habit, on its leading rail, its open tick ring and its lane's diamond
+   and name; Planned, Anytime and Inbox stay ink. The code is never alone:
+   the must keeps its diamond tick, every lane its name. "Due" is ink plus a
+   clock. Nothing here is amber.
 
    Layout: ONE DOM, three orders, by the width of <main> (the board root
    carries `cq-main`, so .main is the `main` container; every fixed layer
@@ -258,7 +262,11 @@ html[data-motion="calm"] .ask-badge-dot::before, html[data-motion="calm"] .ask-b
 .today-lane .lane-count { margin-left: auto; font-size: 13px; color: var(--ink-2); white-space: nowrap; }
 .today-lane .lane-stamp { margin-left: auto; }
 .today-lane .lane-stamp + .lane-count { margin-left: 10px; }
-.today-lane.lane-must .lane-mark { border-color: var(--ink-0); }
+/* The lane's colour code (tokens.css "Lane"): the Must lane's diamond and name wear --must, the Habits lane's --habit. */
+.today-lane.lane-must .lane-mark { border-color: var(--must); }
+.today-lane.lane-must .lane-h h2 { color: var(--must); }
+.today-lane.lane-habit .lane-mark { border-color: var(--habit); }
+.today-lane.lane-habit .lane-h h2 { color: var(--habit); }
 .today-lane.kept .lane-mark { background: var(--kept); border-color: var(--kept); }
 .today-lane .lane-body { overflow: hidden; position: relative; }
 /* The kept line sweeps once across the card when the lane is kept. */
@@ -295,6 +303,15 @@ html[data-motion="calm"] .today-lane.fresh .lane-body::before { animation: none;
 /* The kit Tick's circle is .tick-ring (never the bare .ring: that is Tailwind's ring utility). */
 .t-row .tick[data-skipped="1"] .tick-ring { border-style: dashed; }
 .t-row[data-state="locked"] .tick .tick-ring { border-style: dotted; }
+/* A card's colour code (TaskRow data-accent, board-ui rowAccentOf): a 3 px leading rail inside the
+   card's edge and the open tick ring, --must or --habit. Done stays kept, disabled stays mute;
+   nothing moves and the grid keeps its columns (the rail sits in the row's own left padding). */
+.t-row[data-accent] { position: relative; }
+.t-row[data-accent]::before { content: ""; position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px; border-radius: 0 3px 3px 0; pointer-events: none; }
+.t-row[data-accent="must"]::before { background: var(--must); }
+.t-row[data-accent="habit"]::before { background: var(--habit); }
+.t-row[data-accent="must"] .tick[data-state="open"]:not(:disabled) .tick-ring { border-color: var(--must); }
+.t-row[data-accent="habit"] .tick[data-state="open"]:not(:disabled) .tick-ring { border-color: var(--habit); }
 
 /* ── The drawer: everything a row does besides the tick ───────────────── */
 /* A row's steps: under the title, one 40 px checkbox row each; a tick re-prices the task (src/lib/subtasks.ts). */

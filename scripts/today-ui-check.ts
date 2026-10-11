@@ -302,6 +302,9 @@ import {
 } from "../src/app/dev/style/today/fixtures";
 import { NextUp } from "../src/components/today/NextUp";
 import { TaskDrawer } from "../src/components/today/TaskDrawer";
+import { TaskRow } from "../src/components/today/TaskRow";
+import { Lane } from "../src/components/today/Lane";
+import { rowAccentOf } from "../src/components/today/board-ui";
 import { SEEK_TEMPLATE_EVENT, onSeekTemplate, seekTemplate } from "../src/components/roadmap/roadmap-events";
 import { AIM_INVITE_SINCE, AIM_LATER_DAYS, AIM_STEP_COOKIE, aimPromptOf, hideCookieValue, laterCookieValue, stepCookieValue } from "../src/lib/roadmap-invite";
 import {
@@ -4101,6 +4104,159 @@ asyncChecks.push(
   })()
 );
 // ===== /R1 =====
+
+// ═══ The Today card's colour code: a must and a habit ═════════════════════
+// tokens.css "Lane": --must (duty, warm) and --habit (recurring, cool), in every theme; contrast-check measures them
+// (text on every surface, the rail and ring as marks, ΔE from each other and every signal and currency hue). Here:
+// which rows wear which (board-ui rowAccentOf, the same answer as the tick's shape), TaskRow and Lane rendered for
+// real, the board's lanes, and today.css painting the code through the two tokens only, with no layout change.
+// Colour is never alone: the must keeps its diamond tick, every lane its name; Planned, Anytime and Inbox stay ink.
+{
+  const strip = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const tokensCss = strip(read("src/app/styles/tokens.css"));
+  const themes: [string, string][] = [["Night (also .theme-night)", /(?:^|\})\s*:root, \.theme-night\s*\{([^}]*)\}/m.exec(tokensCss)?.[1] ?? ""]];
+  for (const m of tokensCss.matchAll(/:root\[data-theme="([a-z-]+)"\]\s*\{([^}]*)\}/g)) themes.push([m[1], m[2]]);
+  const hexOf = (body: string, name: string) => new RegExp(`(?:^|[;\\s])${name}:\\s*(#[0-9a-f]{6})\\s*(?:;|$)`, "i").exec(body)?.[1]?.toLowerCase() ?? null;
+  const values = new Set<string>();
+  for (const [name, body] of themes) {
+    const must = hexOf(body, "--must");
+    const habit = hexOf(body, "--habit");
+    if (must) values.add(must);
+    if (habit) values.add(habit);
+    check(`colour code: the ${name} theme declares --must and --habit itself, two different colours`, must != null && habit != null && must !== habit, `${must} / ${habit}`);
+  }
+  check("colour code: every theme in tokens.css is checked (Night and Vellum at least)", themes.length >= 2 && themes.some(([n]) => n === "vellum"), themes.map(([n]) => n).join(", "));
+
+  // Which rows wear which: a must (the Must lane, or compulsory anywhere), a habit (a rule), the rest none.
+  const meds = tpl({ id: "cc-meds", title: "Morning meds", compulsory: true, recurrence: "DAILY" });
+  const rent = tpl({ id: "cc-rent", title: "Pay rent", compulsory: true, dueKind: "DEADLINE", dueDay: TODAY });
+  const floss = tpl({ id: "cc-floss", title: "Floss", recurrence: "DAILY" });
+  const call = tpl({ id: "cc-call", title: "Call mum", dueKind: "PLANNED", dueDay: TODAY });
+  const anytimeOne = tpl({ id: "cc-read", title: "Read a chapter" });
+  const cb = buildBoard(board(TODAY, [meds, rent, floss, call, anytimeOne]));
+  const { planned: ccPlanned, habits: ccHabits } = splitTodayLane(cb.todayRows);
+  const rowOf = (id: string) => [...cb.must, ...cb.todayRows, ...cb.anytime].find((r) => r.template.id === id) ?? null;
+  const expect: [string, string | null, string][] = [
+    ["cc-meds", "must", "a recurring must (Must lane)"],
+    ["cc-rent", "must", "a one-off must (Must lane)"],
+    ["cc-floss", "habit", "a habit (Habits lane)"],
+    ["cc-call", null, "a planned one-off (Planned lane)"],
+    ["cc-read", null, "an anytime one-off (Anytime)"],
+  ];
+  const where = {
+    must: cb.must.map((r) => r.template.id),
+    habits: ccHabits.map((r) => r.template.id),
+    planned: ccPlanned.map((r) => r.template.id),
+    anytime: cb.anytime.map((r) => r.template.id),
+  };
+  check(
+    "colour code fixtures: the musts sit in the Must lane, the habit in Habits, the one-offs in Planned and Anytime",
+    where.must.includes("cc-meds") && where.must.includes("cc-rent") && where.habits.join() === "cc-floss" && where.planned.join() === "cc-call" && where.anytime.join() === "cc-read",
+    JSON.stringify(where)
+  );
+  for (const [id, want, what] of expect) {
+    const r = rowOf(id);
+    check(`colour code: ${what} → ${want ?? "no code (ink)"}`, r != null && rowAccentOf(r) === want, String(r && rowAccentOf(r)));
+  }
+  check(
+    "colour code: a compulsory row outside the Must lane (yesterday's, Anytime) still wears --must; a must's rule never makes it a habit",
+    rowAccentOf({ lane: "yesterday", template: { compulsory: true, recurrence: null } }) === "must" &&
+      rowAccentOf({ lane: "anytime", template: { compulsory: true, recurrence: null } }) === "must" &&
+      rowAccentOf({ lane: "must", template: { compulsory: true, recurrence: "DAILY" } }) === "must" &&
+      rowAccentOf({ lane: "today", template: { compulsory: false, recurrence: "TARGET:3/W" } }) === "habit" &&
+      rowAccentOf({ lane: "today", template: { compulsory: false, recurrence: null } }) === null
+  );
+
+  // TaskRow rendered: the code on the row, and the tick's shape from the same answer (colour never alone).
+  const rowHtml = (r: BoardRow) =>
+    renderToStaticMarkup(
+      createElement(TaskRow, {
+        row: r,
+        projection: r.projection,
+        drawerOpen: false,
+        undoable: false,
+        busy: false,
+        receiptOpen: false,
+        receiptId: "rcpt",
+        onTick: () => {},
+        onUndo: () => {},
+        onToggleDrawer: () => {},
+        onToggleReceipt: () => {},
+      })
+    );
+  const head = (html: string) => /^<div class="t-row"[^>]*>/.exec(html)?.[0] ?? "";
+  const shapeOf = (html: string) => /class="tick[^"]*"[^>]*data-shape="(\w+)"/.exec(html)?.[1] ?? /data-shape="(\w+)"/.exec(html)?.[1] ?? null;
+  for (const [id, want, what] of expect) {
+    const r = rowOf(id);
+    const html = r ? rowHtml(r) : "";
+    const accent = /data-accent="(\w+)"/.exec(head(html))?.[1] ?? null;
+    const shape = shapeOf(html);
+    check(
+      `colour code: TaskRow draws ${what} with ${want ? `data-accent="${want}"` : "no data-accent"} and a ${want === "must" ? "diamond" : "circle"} tick`,
+      html !== "" && accent === want && shape === (want === "must" ? "diamond" : "circle"),
+      `${accent} · ${shape}`
+    );
+  }
+
+  // Lane rendered: the Must lane and the Habits lane carry their class, the name stays the label; others carry none.
+  const laneHtml = (p: { must?: boolean; habit?: boolean }, title: string) => renderToStaticMarkup(createElement(Lane, { id: title.toLowerCase(), title, ...p }));
+  const mustLane = laneHtml({ must: true }, "Must");
+  const habitLane = laneHtml({ habit: true }, "Habits");
+  const plainLane = laneHtml({}, "Planned");
+  check(
+    "colour code: Lane wears lane-must / lane-habit (and keeps its name and diamond); a plain lane neither",
+    /class="today-lane lane-must"/.test(mustLane) && />Must<\/h2>/.test(mustLane) && mustLane.includes('class="lane-mark"') &&
+      /class="today-lane lane-habit"/.test(habitLane) && />Habits<\/h2>/.test(habitLane) && habitLane.includes('class="lane-mark"') &&
+      !/lane-must|lane-habit/.test(plainLane),
+    `${head(mustLane) || mustLane.slice(0, 60)} | ${habitLane.slice(0, 60)} | ${plainLane.slice(0, 60)}`
+  );
+  const boardJsx = read("src/components/today/TodayBoard.tsx");
+  const laneTag = (id: string) => new RegExp(`<Lane\\s+id="${id}"[\\s\\S]*?>`).exec(boardJsx)?.[0] ?? "";
+  check(
+    "colour code: the board's Must lane is `must`, its Habits lane `habit`, its Planned lane neither",
+    /\smust\s/.test(laneTag("must")) && /\shabit\s/.test(laneTag("habits")) && !/\s(must|habit)\s/.test(laneTag("planned")),
+    `${laneTag("habits").slice(0, 80)}`
+  );
+
+  // today.css paints the code through the tokens only.
+  const css = strip(read("src/components/today/today.css"));
+  const rule = (sel: string) => new RegExp(`(?:^|[}\\s])${sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`, "m").exec(css)?.[1]?.trim() ?? null;
+  for (const k of ["must", "habit"] as const) {
+    const t = `var(--${k})`;
+    const lane = k === "must" ? ".today-lane.lane-must" : ".today-lane.lane-habit";
+    check(`colour code css: the ${k} lane's diamond and name wear ${t}`, rule(`${lane} .lane-mark`) === `border-color: ${t};` && rule(`${lane} .lane-h h2`) === `color: ${t};`, `${rule(`${lane} .lane-mark`)} | ${rule(`${lane} .lane-h h2`)}`);
+    check(`colour code css: a ${k} row's leading rail is ${t}`, rule(`.t-row[data-accent="${k}"]::before`) === `background: ${t};`, String(rule(`.t-row[data-accent="${k}"]::before`)));
+    check(
+      `colour code css: a ${k} row's open, enabled tick ring is ${t} (done stays kept, disabled stays mute)`,
+      rule(`.t-row[data-accent="${k}"] .tick[data-state="open"]:not(:disabled) .tick-ring`) === `border-color: ${t};`,
+      String(rule(`.t-row[data-accent="${k}"] .tick[data-state="open"]:not(:disabled) .tick-ring`))
+    );
+  }
+  check(
+    "colour code css: a kept Must lane's diamond still fills kept (its rule follows the code's)",
+    css.indexOf(".today-lane.kept .lane-mark") > css.indexOf(".today-lane.lane-must .lane-mark") && css.indexOf(".today-lane.lane-must .lane-mark") >= 0
+  );
+  const accents = new Set([...css.matchAll(/data-accent="(\w+)"/g)].map((m) => m[1]));
+  check("colour code css: only a must and a habit wear a code (Planned, Anytime and Inbox stay ink)", [...accents].sort().join() === "habit,must" && !/lane-planned|lane-anytime|lane-inbox/.test(css), [...accents].join());
+  const railRule = rule(".t-row[data-accent]::before") ?? "";
+  const railW = Number(/(?:^|;)\s*width:\s*(\d+)px/.exec(railRule)?.[1] ?? NaN);
+  const rowPadLeft = Number(/padding:\s*\d+px \d+px \d+px (\d+)px/.exec(rule(".t-row .row") ?? "")?.[1] ?? NaN);
+  check(
+    "colour code css: the rail is out of flow and fits in the row's left padding (no layout change; the 44 px tick keeps its column)",
+    /position:\s*absolute/.test(railRule) && /left:\s*0/.test(railRule) && /pointer-events:\s*none/.test(railRule) && railW <= rowPadLeft && /grid-template-columns:\s*44px /.test(rule(".t-row .row") ?? ""),
+    `${railW} ≤ ${rowPadLeft}`
+  );
+  // Never raw hex: the token values live in tokens.css alone (no component, sheet or other style copies them).
+  const walkSrc = (dir: string): string[] =>
+    readdirSync(join(ROOT, dir)).flatMap((n) => {
+      const p = `${dir}/${n}`;
+      return statSync(join(ROOT, p)).isDirectory() ? walkSrc(p) : /\.(tsx?|css|mjs)$/.test(n) ? [p] : [];
+    });
+  const copies = values.size === 0 ? ["(no values read)"] : walkSrc("src").filter((f) => f !== "src/app/styles/tokens.css" && [...values].some((v) => read(f).toLowerCase().includes(v)));
+  check("colour code: no file but tokens.css spells a --must or --habit value (components use the tokens)", copies.length === 0, copies.join(", "));
+  const codeRules = [...css.matchAll(/([^{}]*(?:data-accent|lane-must|lane-habit)[^{}]*)\{([^}]*)\}/g)].map((m) => m[2]);
+  check("colour code css: the code's rules hold no literal colour (#…, rgb(), hsl())", codeRules.length >= 8 && codeRules.every((b) => !/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i.test(b)), String(codeRules.length));
+}
 
 // The async checks (withMoments) settle before the tally.
 void Promise.all(asyncChecks).then(() => {

@@ -11,7 +11,7 @@ import { PricePill } from "@/components/ui/PricePill";
 import { Tick, type TickState } from "@/components/ui/Tick";
 import { cx } from "@/components/ui/cx";
 import { TRACK_LABEL, TRACK_SIGIL, fmtMinutes, fmtXp } from "./format";
-import { hhmmOf, pendingMetaOf, tickNameOf } from "./board-ui";
+import { hhmmOf, pendingMetaOf, rowAccentOf, tickNameOf } from "./board-ui";
 import { NamedTitle } from "./NamedTitle";
 import type { RestKind } from "@/lib/duty-economy";
 import { stepsLine } from "@/lib/subtasks";
@@ -59,7 +59,9 @@ interface Props {
  * drawer, which the title opens.
  *
  * The Tick is a checkbox: a circle for todos and habits, a diamond for
- * musts, half-filled for "Minimum kept". The pill on the right is the
+ * musts, half-filled for "Minimum kept". A must and a habit also wear their
+ * colour code (data-accent: a leading rail and the open ring, --must or
+ * --habit); a done tick is kept whatever the row. The pill on the right is the
  * price, not a guess: "≈ 3.6" is the same `planCompletion` the server pays
  * with, against the same day's ledger, and once ticked it reads "+3.6" on
  * the life-XP wash and says "paid 3.6 exactly". Tapping it opens the
@@ -75,13 +77,22 @@ export function TaskRow(props: Props) {
   const shownXp = paid ? paid.xp : projection.xp;
   const study = !!row.auto;
   const title = props.pendingTitle ?? t.title;
-  const must = row.lane === "must" || t.compulsory;
+  // The colour code (a must's warm rail and ring, a habit's cool one) and the tick's shape are one answer.
+  const accent = rowAccentOf(row);
+  const must = accent === "must";
   const tickState: TickState = done ? (row.minimum ? "minimum" : "done") : "open";
   const minimum = props.onMinimum && row.state === "open" && t.mvv ? props.onMinimum : null;
   const drawerId = `drawer-${row.key.replace(/[^A-Za-z0-9_-]/g, "-")}`;
 
   return (
-    <div className="t-row" data-state={row.state} data-lane={row.lane} data-template-id={t.id} data-just-added={props.justAdded ? "1" : undefined}>
+    <div
+      className="t-row"
+      data-state={row.state}
+      data-lane={row.lane}
+      data-accent={accent ?? undefined}
+      data-template-id={t.id}
+      data-just-added={props.justAdded ? "1" : undefined}
+    >
       <div className={cx("row", done && "done")}>
         <Tick
           shape={must ? "diamond" : "circle"}

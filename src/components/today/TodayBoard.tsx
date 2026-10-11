@@ -1837,7 +1837,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
             </Lane>
           )}
           {habits.length > 0 && (
-            <Lane id="habits" title="Habits" count={`${habitTally.kept} of ${habitTally.total}`} className="o7" note={habits.length > 0 && planned.length === 0 ? plannedNote : null}>
+            <Lane id="habits" title="Habits" habit count={`${habitTally.kept} of ${habitTally.total}`} className="o7" note={habits.length > 0 && planned.length === 0 ? plannedNote : null}>
               {habits.map(renderRow)}
             </Lane>
           )}

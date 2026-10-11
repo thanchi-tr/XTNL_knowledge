@@ -94,11 +94,15 @@ export function deltaE(a: Rgb, b: Rgb, vision: Vision = "normal"): number {
 
 /** Token groups the gates are written against (redesign.md › Acceptance 1). */
 export const SURFACES = ["--page", "--card", "--raised", "--overlay", "--sunken"] as const;
-export const TEXT_TOKENS = ["--ink-0", "--ink-1", "--ink-2", "--kept", "--owed", "--held", "--xp", "--pts", "--mp"] as const;
+/** The Today card's colour code (tokens.css "Lane"): a must and a habit. Text-grade (the lane's name wears it). */
+export const LANE_TOKENS = ["--must", "--habit"] as const;
+export const TEXT_TOKENS = ["--ink-0", "--ink-1", "--ink-2", "--kept", "--owed", "--held", ...LANE_TOKENS, "--xp", "--pts", "--mp"] as const;
 export const MARK_TOKENS = ["--ink-mute", "--line-ctl"] as const;
 export const TEXT_MIN = 4.5;
 export const MARK_MIN = 3;
 export const LEDGER_DE_MIN = 8;
+/** The hues a lane colour must stay ΔE ≥ LEDGER_DE_MIN from (normal, protan, deutan): every signal (kept is success, owed is danger) and currency. */
+export const LANE_DISTINCT_FROM = ["--kept", "--owed", "--held", "--xp", "--pts", "--mp", "--light"] as const;
 
 /**
  * Pairs the kit actually paints, beyond a bare token on a surface

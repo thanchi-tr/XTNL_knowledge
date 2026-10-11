@@ -4,7 +4,10 @@
  * browser. Run: npx tsx scripts/contrast-check.ts [--strict-vellum]
  *
  *   Night (ships now; failures exit 1):
- *     every text token (ink-0/1/2, kept, owed, held, xp, pts, mp) ≥ 4.5 on page, card, raised, overlay, sunken
+ *     every text token (ink-0/1/2, kept, owed, held, must, habit, xp, pts, mp) ≥ 4.5 on page, card, raised, overlay, sunken
+ *     the Today card's colour code (color-lab LANE_TOKENS: --must, --habit): declared in every theme's own
+ *       block; its rail and open tick ring ≥ 3 where they sit; ΔE ≥ 8 from each other and from every
+ *       signal and currency hue (kept = success, owed = danger) under normal vision, protan and deutan
  *     --ink-mute and --line-ctl ≥ 3 on the same surfaces (non-text)
  *     each on-solid label ≥ 4.5 on its fill (on-kept on kept, …)
  *     --xp vs --pts ≥ 8 ΔE under protan and deutan
@@ -29,6 +32,8 @@ import { join } from "node:path";
 import {
   BAR_TEXT_TOKENS,
   CHIP_WASH,
+  LANE_DISTINCT_FROM,
+  LANE_TOKENS,
   LEDGER_DE_MIN,
   LIGHT_MARK,
   PAID_WASH,
@@ -169,6 +174,31 @@ function runTheme(label: string, theme: Record<string, string>, warnOnly: boolea
 
 runTheme("Night", night, false);
 runTheme("Vellum", vellum, !strictVellum);
+
+// The Today card's colour code (tokens.css "Lane"; today.css paints it): a must and a habit. The lane's name is
+// text (runTheme above measures it on every surface); the rail and the open tick ring are marks on the lane card.
+{
+  const own = { Night: block(":root, .theme-night"), Vellum: block(':root[data-theme="vellum"]') };
+  for (const [label, decls] of Object.entries(own)) {
+    for (const t of LANE_TOKENS) check(`lane: ${t} is declared in ${label}'s own block (never inherited)`, decls[t] != null && parseColor(decls[t]) != null, decls[t] ?? "missing");
+  }
+  for (const [label, theme, warnOnly] of [
+    ["Night", night, false],
+    ["Vellum", vellum, !strictVellum],
+  ] as const) {
+    LANE_TOKENS.forEach((t, i) => {
+      for (const s of ["--card", "--raised"] as const) {
+        const bg = solid(theme, s);
+        const r = contrast(solid(theme, t, bg), bg);
+        check(`${label}: ${t} rail and open tick ring (non-text) on ${s} ≥ ${MARK_MIN}`, r >= MARK_MIN, r.toFixed(2), warnOnly);
+      }
+      for (const other of [...LANE_DISTINCT_FROM, ...LANE_TOKENS.slice(i + 1)]) {
+        const d = (["normal", "protan", "deutan"] as const).map((v) => deltaE(solid(theme, t), solid(theme, other), v));
+        check(`${label}: ${t} vs ${other} ΔE ≥ ${LEDGER_DE_MIN} (normal / protan / deutan)`, Math.min(...d) >= LEDGER_DE_MIN, d.map((x) => x.toFixed(1)).join(" / "), warnOnly);
+      }
+    });
+  }
+}
 
 // The gold button label on its darkest stop (components.css .btn-gold).
 {

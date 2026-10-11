@@ -5,9 +5,11 @@
    (WCAG 2.x; OKLab ΔE×100, Machado CVD) and asserted by
    scripts/contrast-check.ts.
 
-   Six colour families, one meaning each:
+   Seven colour families, one meaning each:
      Ink       structure, text, numbers, actions
      Signal    state of a thing in time: kept · owed · held
+     Lane      what kind of task a Today card is: a must (--must) · a habit (--habit);
+               never state (a done tick is still kept), always beside its shape and lane name
      Currency  life XP (--xp) · review points (--pts) · mastery points (--mp)
      Material  rarity, depth and the character band: iron → astral
      Light     earned, and only for now
@@ -36,7 +38,11 @@
   --owed:#e07a95; --on-owed:#26060e;
   --held:#72d2ec; --on-held:#06161c;   /* always paired with a hatch or glyph plus a word */
   --hatch:repeating-linear-gradient(135deg,color-mix(in srgb,var(--held) 55%,transparent) 0 2px,transparent 2px 5px);
-  /* "due" is retired as a hue: due = ink-0 text + clock glyph; the Must lane is told apart by diamond shape */
+  /* "due" is retired as a hue: due = ink-0 text + clock glyph; the Must lane is told apart by diamond shape, then --must */
+  /* lane: the Today card's colour code (today.css: its leading rail, its open tick ring, the lane's diamond and name).
+     Text-grade on page / card / raised / overlay / sunken; ΔE ≥ 8 from every signal and currency hue, protan and deutan too */
+  --must:#f06410;    /* duty, warm:      6.05 / 5.69 / 5.31 / 4.89 / 6.20 */
+  --habit:#8c7aff;   /* recurring, cool: 5.87 / 5.52 / 5.15 / 4.75 / 6.02 */
   /* currency: glyph marks. The figure beside a glyph is always ink */
   --xp:#fdaf3a;  --on-xp:#221400;   /* life XP · spark */
   --pts:#8ea6ff; --on-pts:#07103a;  /* review points · faceted lozenge */
@@ -61,6 +67,7 @@
   --line-1:rgba(40,32,16,.08); --line-2:rgba(40,32,16,.14); --line-ctl:#7f7868 /* 4.31 card, 3.43 sunken */; --hi:rgba(255,255,255,.7);
   /* signal text ≥ 4.5 on its own chip wash (12% / 12% / 11%) over every surface, sunken included: kept 5.07, owed 4.53, held 5.13 */
   --kept:#155f36; --on-kept:#fff; --owed:#9c2f6b /* 6.81 */; --on-owed:#fff; --held:#0c5a73; --on-held:#fff;
+  --must:#6b1804 /* 11.75 card, 9.34 sunken */; --habit:#691594 /* 9.67 card, 7.69 sunken */;
   --xp:#a33d00 /* 6.41 */; --on-xp:#fff; --pts:#3450c2 /* 6.72 */; --on-pts:#fff; --mp:#b47308 /* 3.83, glyph only */; --on-mp:#1f1500;
   --light:#a87419 /* a mark: ≥ 3 on every surface, 3.17 sunken */; --light-glow:rgba(168,116,25,.22); --shadow-pop:0 16px 40px -14px rgba(40,30,10,.35);
 }
