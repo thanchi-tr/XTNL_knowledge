@@ -6,6 +6,8 @@ import { getCurrentUserId } from "@/lib/user";
 import { todayKey } from "@/lib/life-day";
 import { loadTodayBoard } from "@/lib/tasks";
 import { loadWorkBoard } from "@/lib/work-boards-server";
+import { loadCallBacks, withCrm } from "@/lib/callbacks-server";
+import { CALLBACK_PARAM, type CallBacksData } from "@/lib/callbacks";
 import type { DailyStreak } from "@/lib/streak";
 import { ShellTitle } from "@/components/shell/ShellTitle";
 import { TodayBoard } from "@/components/today/TodayBoard";
@@ -39,14 +41,33 @@ const NO_STREAK: DailyStreak = {
  * goals, no Close the day (TodayBoard's `work`). The '+' (and 'c') captures
  * into this tab (QuickCapture stamps the line with it). An archived tab says
  * so and points to Settings; an unknown one is a 404.
+ *
+ * Its call backs (callbacks.ts) mount in the board's call-backs slot: the
+ * newest first, this tab's tags, its customers when its CRM is on, and
+ * `?callback=<id>` (a reminder's tap, via /today?board=) scrolls to that card
+ * and highlights it. Read with the wave; a failed read is no section, never
+ * a broken board.
  */
-export default async function WorkBoardPage({ params }: { params: Promise<{ boardId: string }> }) {
+export default async function WorkBoardPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ boardId: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const { boardId } = await params;
+  const query = await searchParams;
   const now = new Date();
   const userId = getCurrentUserId();
   const day = todayKey(now);
+  // Started with the wave, awaited after it (it fails soft to no section).
+  const callBacksLoad: Promise<CallBacksData | null> = loadCallBacks(userId, boardId, { focus: query[CALLBACK_PARAM], now }).catch((err) => {
+    console.error("[callbacks] load failed", err);
+    return null;
+  });
   // One wave: the tab and its board (an archived or unknown tab's board read is empty and unused).
   const [board, data] = await Promise.all([loadWorkBoard(userId, boardId), loadTodayBoard(userId, day, now, boardId)]);
+  const callBacksRead = await callBacksLoad;
   if (!board) notFound();
 
   if (board.archived) {
@@ -73,10 +94,13 @@ export default async function WorkBoardPage({ params }: { params: Promise<{ boar
     );
   }
 
+  // The tab's customers reach the sheet only where its CRM is on.
+  const callBacks = callBacksRead ? withCrm(callBacksRead, board.crmOn) : null;
+
   return (
     <>
       <ShellTitle eyebrow="Work" title={board.name} />
-      <TodayBoard data={data} streak={NO_STREAK} nowIso={now.toISOString()} notices={[]} work={{ id: board.id, name: board.name }} />
+      <TodayBoard data={data} streak={NO_STREAK} nowIso={now.toISOString()} notices={[]} work={{ id: board.id, name: board.name, crmOn: board.crmOn }} callBacks={callBacks} />
     </>
   );
 }

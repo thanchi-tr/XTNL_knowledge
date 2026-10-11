@@ -78,9 +78,11 @@ interface InsertRowProps {
   onMenu: (menu: InsertMenu | null) => void;
   /** A chip's words: the sheet adds them and brings the top row back. */
   onInsert: (insert: Insert) => void;
+  /** The sheet is open on a work tab (work-boards.ts): no Idea chip (insertRowChips `work`). */
+  work?: boolean;
 }
 
-export function InsertRow({ parsed, text, today, goals, aim, menu, onMenu, onInsert }: InsertRowProps) {
+export function InsertRow({ parsed, text, today, goals, aim, menu, onMenu, onInsert, work = false }: InsertRowProps) {
   const rowRef = useRef<HTMLDivElement | null>(null);
   /** A keyboard press swapped the row: focus stays on (or returns to) the opener (a mouse or touch keeps it on the line). */
   const keyboardSwap = useRef<{ opener: InsertMenu } | null>(null);
@@ -89,7 +91,7 @@ export function InsertRow({ parsed, text, today, goals, aim, menu, onMenu, onIns
 
   // A mode the parser read, or a leading 'aim:' (capture-ui lineHasPrefix): no second prefix from the Goal ▾ menu.
   const hasMode = lineHasPrefix(parsed, text);
-  const chips: InsertChip[] = menu ? insertMenuOptions(menu, { today, goals, hasMode, aim }) : insertRowChips(parsed, text, { narrow });
+  const chips: InsertChip[] = menu ? insertMenuOptions(menu, { today, goals, hasMode, aim }) : insertRowChips(parsed, text, { narrow, work });
   const signature = `${menu ?? ""}|${chips.map((c) => c.id).join(",")}`;
   useEdgeFade(rowRef, signature);
 

@@ -170,6 +170,16 @@ eq(
 eq("nav: longDate is the life day's own calendar date", longDate("2026-10-01"), "Thursday, 1 October");
 eq("nav: /today title is the date, under the board's own 'Today' (its ShellTitle, so nothing swaps)", titleFor("/today", "2026-10-01"), { eyebrow: "Today", title: "Thursday, 1 October" });
 eq("nav: /today/rules title", titleFor("/today/rules"), { eyebrow: "Tasks", title: "How a day is judged" });
+// Customers (customers.ts, 2026-10-12): a work tab's customer pages keep the tab current (from the path) and paint 'Work' until the page names the tab.
+eq(
+  "nav: under /today/work/<id>/customers the work tab stays the current tab, on Tasks",
+  ["/today/work/w1/customers", "/today/work/w1/customers/c1"].map((p) => [sectionOf(p), activeSub(p)]),
+  [["tasks", "/today/work/w1"], ["tasks", "/today/work/w1"]]
+);
+eq("nav: the customer pages' first-paint titles", [titleFor("/today/work/w1/customers"), titleFor("/today/work/w1/customers/c1")], [
+  { eyebrow: "Work", title: "Customers" },
+  { eyebrow: "Work", title: "Customer" },
+]);
 eq("nav: /today/week title", titleFor("/today/week"), { eyebrow: "Tasks", title: "Weekly review" });
 eq("nav: /add title", titleFor("/add"), { eyebrow: "Ideas", title: "New idea" });
 eq("nav: /library/[id] title", titleFor("/library/xyz"), { eyebrow: "Ideas", title: "Idea" });

@@ -1,7 +1,9 @@
 # Call back reminders: web push
 
-Real notifications on the phone and the desktop when a call back is due (2026-10-12). The user chose web push:
-no app store, no SMS, no email. This page covers the plumbing and its setup. The call back UI is a separate step.
+Real notifications on the phone and the desktop when a call back, or a customer task of a work tab's CRM, is due
+(2026-10-12). The user chose web push: no app store, no SMS, no email. This page covers the plumbing and its
+setup; the call back UI (the work tab's "Call backs" section, `src/lib/callbacks.ts`) and Settings ›
+Notifications are at the end.
 
 ## How it fits together
 
@@ -12,7 +14,11 @@ the work board UI ──enablePush()──▶ /sw.js registered, PushManager.sub
 scheduler, every minute ──▶ GET|POST /api/reminders/dispatch  (secret header)
                               1. claim: UPDATE CallBack SET remindSentAt = now
                                         WHERE remindAt <= now AND remindSentAt IS NULL AND archivedAt IS NULL
+                                          AND its WorkBoard is not archived
                                         (oldest first, at most 50, RETURNING the rows this run set)
+                                 then, with what is left of the 50: UPDATE CustomerTask SET remindSentAt = now
+                                        WHERE remind AND dueAt <= now AND remindSentAt, doneAt, archivedAt IS NULL
+                                          AND its Customer and that customer's WorkBoard are not archived
                               2. send each claimed reminder to every subscription its user has (web-push, VAPID)
                                  404/410 → delete that subscription; any other failure → its failedAt
                               3. answer the counts
@@ -24,9 +30,10 @@ phone / desktop ──▶ sw.js 'push' shows "Call back · Phone" / "Acme, prici
 | --- | --- |
 | `public/sw.js` | The service worker: `push`, `notificationclick`, `pushsubscriptionchange`. No fetch handler, no cache. |
 | `src/lib/push-client.ts` | `pushSupported()`, `pushStatus()`, `currentSubscription()`, `enablePush()`, `disablePush()`; every answer has a `line` for the UI. |
-| `src/lib/push-server.ts` | `sendToUser(userId, payload)` (never throws), the subscription store, `/api/push/subscribe`'s handlers. |
+| `src/lib/push-server.ts` | `sendToUser(userId, payload)` (never throws), the subscription store, `/api/push/subscribe`'s and `/api/push/test`'s handlers. |
 | `src/lib/reminders-server.ts` | The dispatcher: who may call it, the claim, the notification text, `callBackUrl`. |
 | `src/app/api/push/subscribe/route.ts` | POST (upsert by endpoint) and DELETE `{ endpoint }`. |
+| `src/app/api/push/test/route.ts` | POST: Settings › Notifications' "Send a test", once a minute per user. |
 | `src/app/api/reminders/dispatch/route.ts` | GET and POST, both behind the secret. |
 | `scripts/push-check.ts` | The check (`npm run push:check`, also in `ui:check`). |
 
@@ -134,30 +141,45 @@ GitHub Actions' `schedule` is not a fit: five minutes at best, and often late.
   "pushes": { "sent": 1, "removed": 1, "failed": 0 }, "more": false }
 ```
 
-`more: true` means the run took its cap of 50; the next minute takes the rest, oldest first.
+`claimed` counts both kinds; `callBacks` and `customerTasks` split it, and `customerTaskError: true` says the second
+claim failed (the call backs the run had claimed were still sent). `more: true` means the run took its cap of 50
+(one cap for both: call backs first, customer tasks take what is left); the next minute takes the rest, oldest first.
 
 ## Rules the dispatcher keeps
 
 - **At most once.** A run claims (sets `remindSentAt`) before it sends, in one guarded statement that returns only
   the rows it set, so overlapping runs never send one reminder twice. A reminder is never un-claimed: a push service
   that refuses, a user with no device, or a crash after the claim loses that one notification instead.
-- **Due** means `remindAt <= now`, `remindSentAt` null, `archivedAt` null. A future, sent or archived call back is
-  never touched.
+- **Due** means `remindAt <= now`, `remindSentAt` null, `archivedAt` null, on a work tab that is not archived. A
+  future, sent or archived call back is never touched; an archived tab's reminders wait, unclaimed, for its restore.
+- **Customer tasks** (a work tab's CRM): due means `remind` true, `dueAt <= now`, `remindSentAt`, `doneAt` and
+  `archivedAt` null, and neither the customer nor its tab archived. Claimed the same guarded way, at most once.
 - **Subscriptions clean themselves.** A 404 or 410 from the push service means the browser forgot the subscription:
   the row is deleted. Any other failure stamps `failedAt`; the next delivery stamps `lastUsedAt` and clears it.
 - **The text**: title `Call back · Phone` (or `In person`, from `remindAction`, else `action`); body the tags, the
   call-back task's title, and the reminder time in the user's zone (`15:30` today, `12 Oct 15:30` otherwise). One
   notification tag per call back (`callback-<id>`), so a newer one replaces an older one on the device.
+- **A customer task's text**: title `Customer task`; body `<task title> · <customer name> (#<number>) · <time>`; tag
+  `customer-task-<id>`; a tap opens `/today/work/<boardId>/customers/<customerId>?task=<taskId>`.
 - **Secrets stay on the server.** The browser gets `NEXT_PUBLIC_VAPID_PUBLIC_KEY` and nothing else; `push-check`
   scans the client modules and `sw.js` for the other names.
 
-## For the call back UI (the next step)
+## The call back UI and Settings › Notifications
 
-- Turn reminders on with `enablePush()` **from a tap** (Safari only prompts inside a user gesture), and show the
-  returned `line`. `pushStatus()` says where this device stands; `disablePush()` turns it off.
-- On iPhone and iPad web push works only from the Home Screen app (iOS 16.4+); in a Safari tab `pushStatus()` and
-  `enablePush()` answer `ios-install` with the instructions.
-- A tap on a reminder opens `callBackUrl(boardId, callBackId)` = `/today?board=<boardId>&callback=<callBackId>`
-  (`src/lib/reminders-server.ts`). The board should read both and highlight the call back; change the shape there.
-- Setting or moving `remindAt` must also set `remindSentAt` back to null, or a re-scheduled reminder never fires.
-  Archiving a call back (`archivedAt`) silences its reminder.
+- A work tab's **Call backs** section (`src/components/work/callbacks`, rules in `src/lib/callbacks.ts`, the server
+  in `src/lib/callbacks-server.ts`): each card says when, how (Phone call or In person), the brief as tags (per work
+  tab, lowercase, up to 8 of 24 characters, autocomplete from that tab's own recent tags), the customer (a CRM tab),
+  the call-back task (a TaskTemplate on that work board: in its lanes, never in the game; planned on the reminder's
+  day) and the reminder (when, how, set / due / sent). Add, Edit, Archive (with Undo) and Done on an open reminder
+  (with Undo) are all there.
+- **Setting or moving `remindAt` clears `remindSentAt`** (`callbacks.ts remindPatchOf`), so a moved reminder is sent
+  again at its new time; changing only how to call back does not re-send. Archiving a call back silences it.
+- A tap on a reminder opens `callBackUrl(boardId, callBackId)` = `/today?board=<boardId>&callback=<callBackId>`,
+  which redirects to `/today/work/<boardId>?callback=<id>`: the card is shown, scrolled to, focused and highlighted,
+  then the parameter leaves the address.
+- **The bell** (`src/lib/notifications.ts`) lists open call back reminders (time come, not archived, the task not
+  done) and due customer tasks, push or no push, as warnings linking to the card or the customer.
+- **Settings › Notifications** turns push on or off on this device with `enablePush()` **from a tap** (Safari only
+  prompts inside a user gesture) and `disablePush()`, shows `pushStatus()`'s line (on iPhone and iPad, web push
+  works only from the Home Screen app, iOS 16.4+: `ios-install` says how), and sends a test through `/api/push/test`
+  (once a minute).

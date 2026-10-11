@@ -166,8 +166,20 @@ export const TOUCH_HINT = "Enter adds the next line · Add closes";
 export const KEY_HINT = "Enter saves · Shift+Enter saves and stays · Esc closes";
 /** The grammar, as one line of hint from 600 px while the line is empty (the insert row teaches it below 600). */
 export const LEGEND = "! must · ~30m · daily · every mon,thu · 3x/week · by fri · tmr · x done · idea: Q :: A · goal: · #body · ^goal · ? inbox · weight 72.4";
+/** The legend on a work tab: its tasks and habits' grammar only (no ideas, goals, tracks or weigh-ins there). */
+export const WORK_LEGEND = "! must · ~30m · daily · every mon,thu · 3x/week · by fri · tmr · x done · ? inbox";
 /** 'Tap here to type': a phone opened from the home-screen shortcut whose keyboard did not rise on its own. */
 export const POCKET_PLACEHOLDER = "Tap here to type";
+
+/** The line the sheet's placeholder and the board's first-run hint show: a life habit on the personal Board. */
+export const CAPTURE_EXAMPLE = "gym legs 60m every mon,thu !";
+/** The same on a work tab (work-boards.ts): a work line, a Must by Friday (no gym on a work board). */
+export const WORK_CAPTURE_EXAMPLE = "send quote to Acme fri !";
+
+/** The example line for the board the sheet captures into: a work tab's, or the personal Board's. */
+export function captureExampleOf(work: boolean): string {
+  return work ? WORK_CAPTURE_EXAMPLE : CAPTURE_EXAMPLE;
+}
 export const POCKET_WAIT_MS = 600;
 
 // ── The 'Added here' list ─────────────────────────────────────────────────
@@ -502,8 +514,12 @@ export function hasDayToJudge(parsed: ParsedCapture): boolean {
  * `narrow` (under 400 px, the Fold's cover screen): on a line without a
  * goal, Inbox and Idea come before Goal ▾, so the one-tap chips sit nearer
  * the first screenful than the menu that is used least.
+ *
+ * `work` (the sheet is open on a work tab, work-boards.ts): no Idea chip. A
+ * work tab holds tasks and habits; an 'idea: ' line there is refused
+ * (WORK_KIND_REFUSAL), so the sheet never offers one.
  */
-export function insertRowChips(parsed: ParsedCapture, text: string, opts: { narrow?: boolean } = {}): InsertChip[] {
+export function insertRowChips(parsed: ParsedCapture, text: string, opts: { narrow?: boolean; work?: boolean } = {}): InsertChip[] {
   if (parsed.mode === "IDEA") return [];
   const when: InsertChip = { id: "when", label: "When", menu: "when" };
   if (parsed.mode === "GOAL") return [when];
@@ -519,7 +535,7 @@ export function insertRowChips(parsed: ParsedCapture, text: string, opts: { narr
   const goal: InsertChip = { id: "goal", label: "Goal", menu: "goal" };
   const tail: InsertChip[] = [];
   if (!parsed.inbox && !text.trimEnd().endsWith("?")) tail.push({ id: "inbox", label: "Inbox", insert: { text: "?", field: "inbox" } });
-  if (!hasToken(parsed, "mode")) tail.push({ id: "idea", label: "Idea", insert: { text: "idea: ", field: "mode" } });
+  if (!hasToken(parsed, "mode") && !opts.work) tail.push({ id: "idea", label: "Idea", insert: { text: "idea: ", field: "mode" } });
   if (opts.narrow && !hasToken(parsed, "parent")) chips.push(...tail, goal);
   else chips.push(goal, ...tail);
   return chips;

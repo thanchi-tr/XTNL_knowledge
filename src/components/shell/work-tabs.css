@@ -50,6 +50,20 @@
   .work-menu-sec p { margin: 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); }
   .work-menu-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
+  /* Customers (customers.ts): the card's link to the tab's customer list, and the menu's switch for it. */
+  .work-crm-link {
+    display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 8px 0 12px; border-radius: 12px;
+    border: 1px solid var(--line-ctl); color: var(--ink-0); text-decoration: none; font: 600 14px var(--font-ui);
+    transition: background-color var(--t-quick);
+  }
+  .work-crm-link:hover { background: var(--raised); }
+  .work-crm-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .work-crm-link .work-crm-l { flex: 1 1 auto; min-width: 0; }
+  .work-crm-link .chip { flex: none; }
+  .work-crm-link svg.i { flex: none; width: 18px; height: 18px; color: var(--ink-2); }
+  .work-menu-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .work-menu-switch p { flex: 1 1 auto; min-width: 0; }
+
   /* The call backs' mount point (a later step): reserved, drawn as nothing until it lands. */
   .work-callbacks:empty { display: none; }
 }

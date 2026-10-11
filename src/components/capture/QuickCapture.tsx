@@ -51,7 +51,9 @@ import {
   FRAGMENT_BUSY_NOTE,
   KEY_HINT,
   LEGEND,
+  WORK_LEGEND,
   POCKET_PLACEHOLDER,
+  captureExampleOf,
   POCKET_WAIT_MS,
   TOUCH_HINT,
   addedAnnouncement,
@@ -1952,7 +1954,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
         }
         if (!slot) {
           // The Goal ▾ menu's 'New aim' (F-R4-7) reads the open roadmap; never during an edit, whose line stays a task.
-          slot = <InsertRow parsed={parsed} text={text} today={day} goals={goals} aim={editing ? undefined : vocab?.aim} menu={menu} onMenu={onMenu} onInsert={insertIntoLine} />;
+          slot = <InsertRow parsed={parsed} text={text} today={day} goals={goals} aim={editing ? undefined : vocab?.aim} menu={menu} onMenu={onMenu} onInsert={insertIntoLine} work={workBoard !== null} />;
         }
       }
     }
@@ -1998,7 +2000,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
               submit("submit", true);
             }
           }}
-          placeholder={pocket && empty ? POCKET_PLACEHOLDER : "gym legs 60m every mon,thu !"}
+          placeholder={pocket && empty ? POCKET_PLACEHOLDER : captureExampleOf(workBoard !== null)}
           className="capture-input"
           aria-label={editing ? `Edit the line “${editing.title}”` : "Capture a line"}
           aria-describedby="capture-help"
@@ -2193,8 +2195,9 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
       </ul>
     );
 
+    // A work tab holds tasks and habits (work-boards.ts): no way into the Idea form from its sheet.
     const ideaLink =
-      pathname !== "/add" ? (
+      pathname !== "/add" && workBoard === null ? (
         <Link href="/add" className="link capture-idea-link" onClick={onIdeaLink}>
           Idea (full form)
         </Link>
@@ -2266,7 +2269,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
               {list}
               {unsentList}
               <div className="capture-foot" id="capture-help">
-                {empty && !paste && <p className="capture-legend">{LEGEND}</p>}
+                {empty && !paste && <p className="capture-legend">{workBoard !== null ? WORK_LEGEND : LEGEND}</p>}
                 <div className="capture-foot-row">
                   <span className="capture-keys">{hint}</span>
                   {ideaLink}

@@ -44,6 +44,8 @@ export interface WorkBoardRow {
   name: string;
   slot: number;
   archivedAt: Date | null;
+  /** The tab keeps a customer list (customers, migration 20261218000000). Absent in the checks' table: false. */
+  crmOn?: boolean;
 }
 
 /** The writes and reads the cores make: Prisma in the app, an in-memory table in the checks. */
@@ -61,7 +63,7 @@ export interface WorkBoardDb {
   restore(userId: string, id: string, slot: number): Promise<number>;
 }
 
-const SELECT = { id: true, name: true, slot: true, archivedAt: true } as const;
+const SELECT = { id: true, name: true, slot: true, archivedAt: true, crmOn: true } as const;
 
 /** The app's WorkBoardDb. */
 export const prismaWorkBoardDb: WorkBoardDb = {
@@ -105,10 +107,10 @@ export async function listArchivedWorkBoards(userId: string): Promise<ArchivedWo
 }
 
 /** One tab, open or archived, or null (a malformed or foreign id reads as none). */
-export async function loadWorkBoard(userId: string, id: string, db: WorkBoardDb = prismaWorkBoardDb): Promise<(WorkBoardRef & { archived: boolean }) | null> {
+export async function loadWorkBoard(userId: string, id: string, db: WorkBoardDb = prismaWorkBoardDb): Promise<(WorkBoardRef & { archived: boolean; crmOn: boolean }) | null> {
   if (!isBoardId(id)) return null;
   const row = await db.find(userId, id);
-  return row ? { ...refOf(row), archived: row.archivedAt != null } : null;
+  return row ? { ...refOf(row), archived: row.archivedAt != null, crmOn: row.crmOn ?? false } : null;
 }
 
 /**

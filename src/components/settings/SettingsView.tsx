@@ -15,6 +15,10 @@
  *              (roadmap rev 4, F-R4-5: LifeSettings.aimSuggestions through
  *              actions/roadmap setAimSuggestions), the lasting no that holds
  *              on every device.
+ *   Notifications
+ *              this device's web push for call back and customer task reminders
+ *              (NotificationsSection.tsx over push-client: on and off from a tap,
+ *              its state line, Send a test). A compatible addition.
  *   Work tabs  the archived work tabs, each with Restore while a place is free
  *              (WorkTabsSection.tsx; work-boards.ts). A compatible addition.
  *   Keyboard shortcuts
@@ -52,6 +56,7 @@ import { SectionHeader, Segmented, Skeleton, Switch } from "@/components/ui/Tabs
 import { formatNumber } from "@/components/ui/format";
 import { AcceptLossRow } from "./DaysControls";
 import { WorkTabsSection, type WorkTabsData } from "./WorkTabsSection";
+import { NotificationsSection } from "./NotificationsSection";
 import { CAPACITY_PRESETS, clampCapacity, formatCapacity } from "./settings-model";
 import "@/components/library/study.css";
 import "./settings.css";
@@ -104,6 +109,7 @@ export function SettingsView({ data }: { data: SettingsData }) {
     <div className="set-grid">
       <div className="set-stack">
         <FeedbackSection />
+        <NotificationsSection />
         <ShortcutsSection />
       </div>
       <div className="set-stack">

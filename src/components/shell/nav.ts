@@ -24,6 +24,7 @@
 import type { IconName } from "@/components/ui/Icon";
 import type { CaptureMode } from "@/components/capture/events";
 import { WORK_BOARD_PATH, workBoardHref, workBoardIdOf } from "../../lib/work-boards";
+import { customersPathOf } from "../../lib/customers";
 
 export type SectionId = "ideas" | "tasks" | "body";
 /** A section, or the profile menu ("you"). */
@@ -139,7 +140,7 @@ export function sectionById(id: NavGroupId): NavGroup {
 /** The current sub-page's href: the longest href (or alias) the path sits under, in its section or the profile. */
 export function activeSub(pathname: string | null | undefined): string | null {
   if (!pathname) return null;
-  // A work tab (/today/work/<id>) is its own sub-page, never Board's: known from the path, before any data.
+  // A work tab (/today/work/<id>, and its customer pages under it) is its own sub-page, never Board's: known from the path, before any data.
   const work = workBoardIdOf(pathname);
   if (work) return workBoardHref(work);
   const id = groupOf(pathname);
@@ -246,6 +247,10 @@ export function titleFor(pathname: string | null | undefined, dayKey?: string): 
   // The intake form sits under the Roadmap tab, which would title it "Roadmap".
   if (under(path, "/you/roadmap/new")) return { eyebrow: "Ideas", title: "Set an aim" };
   if (under(path, "/today/rules")) return { eyebrow: "Tasks", title: "How a day is judged" };
+  // A work tab's customer list and a customer (customers.ts): the tab's name (the eyebrow) and the customer's are data
+  // (the page's <ShellTitle/>); until then, 'Work'.
+  const crm = customersPathOf(path);
+  if (crm) return { eyebrow: "Work", title: crm.customerId ? "Customer" : "Customers" };
   // A work tab: its name is data (the page's <ShellTitle/>); until then, 'Work'.
   if (under(path, WORK_BOARD_PATH)) return { eyebrow: "Tasks", title: "Work" };
   const id = groupOf(path);

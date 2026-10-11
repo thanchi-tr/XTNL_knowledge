@@ -12,6 +12,7 @@
  *   pushEndpointAllowed(url) · parseSubscriptionInput(body)   untrusted input from the browser
  *   handleSubscribe(request, deps?) · handleUnsubscribe(request, deps?)   /api/push/subscribe POST and DELETE
  *                                      (a route file may export only its methods; these take injected fakes)
+ *   handleTestPush(request, deps?)     /api/push/test POST: Settings › Notifications' "Send a test", once a minute
  *
  * Secrets: VAPID_PRIVATE_KEY and VAPID_SUBJECT are read here and nowhere the browser loads. The one value the
  * browser needs is the public key, which it reads as NEXT_PUBLIC_VAPID_PUBLIC_KEY. scripts/push-check.ts holds it.
@@ -336,6 +337,56 @@ export async function handleSubscribe(request: Request, deps: SubscribeDeps = {}
   } catch (err) {
     console.error("[push] subscribe failed", errorText(err));
     return json({ error: "Could not save" }, 500);
+  }
+}
+
+// ── /api/push/test ────────────────────────────────────────────────────────
+
+/** One test notification a minute per user (Settings › Notifications' "Send a test"). */
+export const TEST_PUSH_GAP_MS = 60_000;
+
+/** The test notification: what a reminder looks like, and a tap back to Settings. */
+export const TEST_PUSH_PAYLOAD: PushPayload = {
+  title: "Test notification",
+  body: "Call back and customer task reminders will arrive like this.",
+  tag: "test-push",
+  url: "/settings#notifications",
+};
+
+/** When each user last sent a test (per server process: enough for a one-person app; a cold start resets it). */
+const lastTestAt = new Map<string, number>();
+
+export interface TestPushDeps extends SubscribeDeps {
+  sender?: PushSender;
+  env?: PushEnv;
+  now?: () => Date;
+  /** The rate limit's memory (the check passes its own). */
+  limiter?: Map<string, number>;
+}
+
+/**
+ * POST (JSON from this site only): sends TEST_PUSH_PAYLOAD to every subscription the current user has
+ * (sendToUser), at most once a minute (429 with `retryAfter` seconds otherwise). Answers the send's counts and
+ * why nothing went (`skipped`: no-vapid, no-subscriptions, store-error).
+ */
+export async function handleTestPush(request: Request, deps: TestPushDeps = {}): Promise<Response> {
+  const read = await readJson(request);
+  if (!read.ok) return read.res;
+  try {
+    const userId = (deps.userId ?? getCurrentUserId)();
+    const now = (deps.now ?? (() => new Date()))().getTime();
+    const limiter = deps.limiter ?? lastTestAt;
+    const last = limiter.get(userId);
+    if (last != null && now - last < TEST_PUSH_GAP_MS) {
+      const retryAfter = Math.max(1, Math.ceil((TEST_PUSH_GAP_MS - (now - last)) / 1000));
+      return Response.json({ error: "One test a minute", retryAfter }, { status: 429, headers: { ...NO_STORE, "Retry-After": String(retryAfter) } });
+    }
+    limiter.set(userId, now);
+    const r = await sendToUser(userId, TEST_PUSH_PAYLOAD, { topic: "test-push", ttlSeconds: 300, store: deps.store, sender: deps.sender, env: deps.env, now: deps.now });
+    return json({ subscriptions: r.subscriptions, sent: r.sent, removed: r.removed, failed: r.failed, skipped: r.skipped });
+  } catch (err) {
+    console.error("[push] test failed", errorText(err));
+    return json({ error: "Could not send" }, 500);
   }
 }
 

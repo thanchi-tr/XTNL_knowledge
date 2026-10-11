@@ -127,7 +127,7 @@ export function Sheet({ open, onClose, title, description, variant = "auto", id,
           {children}
         </div>
         {footer && (
-          <div className="sheet-f" style={{ position: "sticky", bottom: 0, display: "flex", gap: 8, paddingTop: 12, background: "var(--overlay)" }}>
+          <div className="sheet-f" style={{ display: "flex", gap: 8, paddingTop: 12, background: "var(--overlay)" }}>
             {footer}
           </div>
         )}

@@ -1,18 +1,23 @@
 /**
- * Call back reminders (2026-10-12): the dispatcher behind /api/reminders/dispatch. A scheduler calls it every
- * minute (docs/life-plan/reminders.md: Supabase pg_cron + pg_net, Vercel Cron on Pro, or any external cron); it
- * sends each due CallBack reminder as a web push once.
+ * Call back and customer task reminders (2026-10-12): the dispatcher behind /api/reminders/dispatch. A scheduler
+ * calls it every minute (docs/life-plan/reminders.md: Supabase pg_cron + pg_net, Vercel Cron on Pro, or any
+ * external cron); it sends each due CallBack reminder, and each due CustomerTask (a work tab's CRM), as a web
+ * push once.
  *
  *   REMINDER_BATCH · REMINDER_SECRET_HEADER · ReminderEnv
  *   dispatchAuthorized(headers, env)   'x-reminder-secret: <REMINDER_DISPATCH_SECRET>', or 'Authorization: Bearer'
  *                                      with REMINDER_DISPATCH_SECRET or CRON_SECRET (Vercel Cron's convention).
  *                                      No secret set means every request is refused
- *   DueReminder · ReminderStore · prismaReminderStore    claimDue(now, limit): the claim (below)
+ *   DueReminder · DueCustomerTask · ReminderStore · prismaReminderStore
+ *                                      claimDue(now, limit) and claimDueCustomerTasks(now, limit): the claims (below)
  *   callBackUrl(boardId, id) · reminderPayload(r, now, tz?) · reminderLine(payload)   what the notification says
+ *   customerTaskUrl(boardId, customerId, id) · customerTaskPayload(t, now, tz?)      the same for a customer task
  *   DispatchDeps · runReminderDispatch(request, deps?)   the handler (a route file may export only its methods)
  *
- * Due: remindAt <= now, remindSentAt null, archivedAt null; oldest remindAt first, at most REMINDER_BATCH a run
- * (the rest go on the next minute; the response says `more`).
+ * Due call back: remindAt <= now, remindSentAt null, archivedAt null, its work tab not archived (an archived
+ * tab's reminders wait, unclaimed, for its restore). Due customer task: remind true, dueAt <= now, remindSentAt,
+ * doneAt and archivedAt null, its customer and its tab not archived. Oldest first; ONE cap a run for both
+ * (REMINDER_BATCH: call backs first, customer tasks take what is left), the rest on the next minute (`more`).
  *
  * At most once. A run CLAIMS before it sends: one guarded UPDATE sets remindSentAt where it is still null and
  * returns exactly the rows it set (FOR UPDATE SKIP LOCKED, and the null test again on the row it locked), so two
@@ -89,12 +94,31 @@ export interface DueReminder {
   taskTitle: string | null;
 }
 
+/** A due customer task (a work tab's CRM: CustomerTask with remind on). */
+export interface DueCustomerTask {
+  id: string;
+  userId: string;
+  /** The customer's work tab. */
+  boardId: string;
+  customerId: string;
+  title: string;
+  customerName: string;
+  /** The customer's own ID as the user typed it. */
+  customerNumber: string;
+  dueAt: Date;
+}
+
 export interface ReminderStore {
   /**
    * Atomically marks up to `limit` due reminders sent (remindSentAt = now, only where it is still null) and
    * returns exactly the rows this call marked, oldest remindAt first. A row another run marked is never returned.
    */
   claimDue(now: Date, limit: number): Promise<DueReminder[]>;
+  /**
+   * The same guarded claim over due customer tasks, oldest dueAt first. Optional: a store without it (an older
+   * fake) claims none.
+   */
+  claimDueCustomerTasks?(now: Date, limit: number): Promise<DueCustomerTask[]>;
 }
 
 export const prismaReminderStore: ReminderStore = {
@@ -109,6 +133,7 @@ export const prismaReminderStore: ReminderStore = {
         WHERE "id" IN (
           SELECT "id" FROM "CallBack"
           WHERE "remindAt" <= ${now} AND "remindSentAt" IS NULL AND "archivedAt" IS NULL
+            AND EXISTS (SELECT 1 FROM "WorkBoard" wb WHERE wb."id" = "CallBack"."boardId" AND wb."archivedAt" IS NULL)
           ORDER BY "remindAt" ASC, "id" ASC
           LIMIT ${limit}::int
           FOR UPDATE SKIP LOCKED
@@ -121,6 +146,35 @@ export const prismaReminderStore: ReminderStore = {
       ORDER BY c."remindAt" ASC, c."id" ASC
     `);
     return rows.map((r) => ({ ...r, tags: r.tags ?? [], remindAt: new Date(r.remindAt) }));
+  },
+  async claimDueCustomerTasks(now, limit) {
+    // The same shape: one statement, the inner SELECT locks the due tasks of open customers on open tabs whose
+    // customer list is on (skipping any a concurrent run holds), and the outer UPDATE tests the claim's conditions
+    // again on each locked row. A tab with its list off holds its reminders, as an archived tab does.
+    const rows = await prisma.$queryRaw<
+      { id: string; userId: string; customerId: string; title: string; dueAt: Date; customerName: string; customerNumber: string; boardId: string }[]
+    >(Prisma.sql`
+      WITH claimed AS (
+        UPDATE "CustomerTask" SET "remindSentAt" = ${now}, "updatedAt" = ${now}
+        WHERE "id" IN (
+          SELECT "id" FROM "CustomerTask"
+          WHERE "remind" = true AND "dueAt" <= ${now} AND "remindSentAt" IS NULL AND "doneAt" IS NULL AND "archivedAt" IS NULL
+            AND EXISTS (
+              SELECT 1 FROM "Customer" cu JOIN "WorkBoard" wb ON wb."id" = cu."boardId"
+              WHERE cu."id" = "CustomerTask"."customerId" AND cu."archivedAt" IS NULL AND wb."archivedAt" IS NULL AND wb."crmOn" = true
+            )
+          ORDER BY "dueAt" ASC, "id" ASC
+          LIMIT ${limit}::int
+          FOR UPDATE SKIP LOCKED
+        )
+        AND "remind" = true AND "remindSentAt" IS NULL AND "doneAt" IS NULL AND "archivedAt" IS NULL
+        RETURNING "id", "userId", "customerId", "title", "dueAt"
+      )
+      SELECT c."id", c."userId", c."customerId", c."title", c."dueAt", cu."name" AS "customerName", cu."number" AS "customerNumber", cu."boardId"
+      FROM claimed c JOIN "Customer" cu ON cu."id" = c."customerId"
+      ORDER BY c."dueAt" ASC, c."id" ASC
+    `);
+    return rows.map((r) => ({ ...r, dueAt: new Date(r.dueAt) }));
   },
 };
 
@@ -169,6 +223,24 @@ export function reminderPayload(r: DueReminder, now: Date, tz: string = LIFE_TZ)
   };
 }
 
+/**
+ * Where a tap on a customer task's reminder lands: the customer's page on its work tab, that task asked for (the
+ * CRM's page reads `task`; callbacks.ts customerTaskHref is the bell's same link).
+ */
+export function customerTaskUrl(boardId: string, customerId: string, taskId: string): string {
+  return `/today/work/${encodeURIComponent(boardId)}/customers/${encodeURIComponent(customerId)}?task=${encodeURIComponent(taskId)}`;
+}
+
+/** Title 'Customer task'; body '<task title> · <customer name> (#<number>) · <time>'; one tag per task. */
+export function customerTaskPayload(t: DueCustomerTask, now: Date, tz: string = LIFE_TZ): PushPayload {
+  return {
+    title: "Customer task",
+    body: [t.title.trim(), `${t.customerName.trim()} (#${t.customerNumber.trim()})`, reminderTime(t.dueAt, now, tz)].filter(Boolean).join(" · "),
+    tag: `customer-task-${t.id}`,
+    url: customerTaskUrl(t.boardId, t.customerId, t.id),
+  };
+}
+
 /** The notification as one line: 'Call back · Phone · Acme, pricing · 15:30'. */
 export function reminderLine(p: PushPayload): string {
   return `${p.title} · ${p.body}`;
@@ -187,8 +259,12 @@ export interface DispatchDeps {
 }
 
 export interface DispatchReport {
-  /** Reminders this run claimed (and so marked sent). */
+  /** Reminders this run claimed (and so marked sent): call backs and customer tasks together. */
   claimed: number;
+  /** Of `claimed`: call backs. */
+  callBacks: number;
+  /** Of `claimed`: customer tasks. */
+  customerTasks: number;
   /** Claimed reminders at least one device accepted. */
   delivered: number;
   /** Claimed reminders whose user had no subscription. */
@@ -199,6 +275,8 @@ export interface DispatchReport {
   pushes: { sent: number; removed: number; failed: number };
   /** The run hit its cap: more may be due, and the next run takes them. */
   more: boolean;
+  /** The customer task claim failed (the call backs it had claimed were still sent). */
+  customerTaskError?: boolean;
 }
 
 const NO_STORE = { "Cache-Control": "no-store" };
@@ -211,27 +289,57 @@ export async function runReminderDispatch(request: Request, deps: DispatchDeps =
   const now = deps.now ? deps.now() : new Date();
   const limit = Math.max(1, Math.min(deps.limit ?? REMINDER_BATCH, REMINDER_BATCH));
   const push = deps.push ?? prismaPushStore;
+  const store = deps.store ?? prismaReminderStore;
+  const tz = deps.timeZone ?? LIFE_TZ;
   let claimed: DueReminder[];
   try {
-    claimed = await (deps.store ?? prismaReminderStore).claimDue(now, limit);
+    claimed = await store.claimDue(now, limit);
   } catch (err) {
     console.error("[reminders] claim failed", err);
     return Response.json({ error: "Claim failed; nothing was sent" }, { status: 500, headers: NO_STORE });
   }
+  // One cap for the run: customer tasks take what the call backs left. Their claim failing never stops the call
+  // backs already claimed from being sent (a claimed reminder is sent or lost, never left half-way).
+  let tasks: DueCustomerTask[] = [];
+  let customerTaskError = false;
+  const room = limit - claimed.length;
+  if (room > 0 && store.claimDueCustomerTasks) {
+    try {
+      tasks = await store.claimDueCustomerTasks(now, room);
+    } catch (err) {
+      console.error("[reminders] customer task claim failed", err);
+      customerTaskError = true;
+    }
+  }
 
-  const report: DispatchReport = { claimed: claimed.length, delivered: 0, noDevice: 0, undelivered: 0, pushes: { sent: 0, removed: 0, failed: 0 }, more: claimed.length >= limit };
+  const jobs: { userId: string; topic: string; payload: PushPayload }[] = [
+    ...claimed.map((r) => ({ userId: r.userId, topic: r.id, payload: reminderPayload(r, now, tz) })),
+    ...tasks.map((t) => ({ userId: t.userId, topic: t.id, payload: customerTaskPayload(t, now, tz) })),
+  ];
+  const total = jobs.length;
+  const report: DispatchReport = {
+    claimed: total,
+    callBacks: claimed.length,
+    customerTasks: tasks.length,
+    delivered: 0,
+    noDevice: 0,
+    undelivered: 0,
+    pushes: { sent: 0, removed: 0, failed: 0 },
+    more: total >= limit,
+    ...(customerTaskError ? { customerTaskError } : {}),
+  };
   // Each user's subscriptions are read once a run; a row a send deleted is dropped before the next send.
   const subsOf = new Map<string, PushSubscriptionRow[] | null>();
-  for (const r of claimed) {
-    if (!subsOf.has(r.userId)) {
+  for (const job of jobs) {
+    if (!subsOf.has(job.userId)) {
       try {
-        subsOf.set(r.userId, await push.listFor(r.userId));
+        subsOf.set(job.userId, await push.listFor(job.userId));
       } catch (err) {
         console.error("[reminders] listing subscriptions failed", err);
-        subsOf.set(r.userId, null);
+        subsOf.set(job.userId, null);
       }
     }
-    const subs = subsOf.get(r.userId);
+    const subs = subsOf.get(job.userId);
     if (subs == null) {
       report.undelivered++;
       continue;
@@ -240,13 +348,13 @@ export async function runReminderDispatch(request: Request, deps: DispatchDeps =
       report.noDevice++;
       continue;
     }
-    const sent = await sendToSubscriptions(subs, reminderPayload(r, now, deps.timeZone ?? LIFE_TZ), { topic: r.id, store: push, sender: deps.sender, env, now: () => now });
+    const sent = await sendToSubscriptions(subs, job.payload, { topic: job.topic, store: push, sender: deps.sender, env, now: () => now });
     report.pushes.sent += sent.sent;
     report.pushes.removed += sent.removed;
     report.pushes.failed += sent.failed;
     if (sent.sent > 0) report.delivered++;
     else report.undelivered++;
-    if (sent.removedIds.length) subsOf.set(r.userId, subs.filter((s) => !sent.removedIds.includes(s.id)));
+    if (sent.removedIds.length) subsOf.set(job.userId, subs.filter((s) => !sent.removedIds.includes(s.id)));
   }
   return Response.json(report, { headers: NO_STORE });
 }

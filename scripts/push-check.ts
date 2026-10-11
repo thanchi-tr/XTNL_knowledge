@@ -14,6 +14,8 @@
  *     sendToUser never throws; a run reuses each user's list and drops a deleted row before the next send;
  *   - the words: 'Call back · Phone · Acme, pricing · Send the quote · 15:30', the tag and the board URL;
  *   - /api/push/subscribe: JSON from this site only, real push-service endpoints only, well-formed keys only;
+ *   - /api/push/test (Settings › Notifications' "Send a test"): JSON from this site only, the current user's
+ *     devices only, once a minute (429 with retryAfter);
  *   - public/sw.js: shows a notification for every push (bad or missing data too), focuses, moves or opens a
  *     window on a click (same-origin URLs only), saves a rotated subscription, and has no fetch handler or cache;
  *   - secrets: the browser's modules read only NEXT_PUBLIC_VAPID_PUBLIC_KEY; web-push and the server modules are
@@ -28,7 +30,10 @@ import { join, relative } from "node:path";
 import { runInNewContext } from "node:vm";
 import { prisma } from "../src/lib/prisma";
 import {
+  TEST_PUSH_GAP_MS,
+  TEST_PUSH_PAYLOAD,
   handleSubscribe,
+  handleTestPush,
   handleUnsubscribe,
   parseSubscriptionInput,
   payloadJson,
@@ -338,7 +343,11 @@ async function dispatch() {
     const inner = sql.slice(sql.indexOf('WHERE "id" IN ('), sql.indexOf("FOR UPDATE SKIP LOCKED )") + 24);
     const outer = sql.slice(sql.indexOf("FOR UPDATE SKIP LOCKED )") + 24, sql.indexOf("RETURNING"));
     check("claim SQL: one UPDATE that sets remindSentAt and returns the rows it set", update >= 0 && /RETURNING "id", "userId", "boardId", "action", "remindAction", "tags", "remindAt", "taskId"/.test(sql), sql.slice(0, 200));
-    check("claim SQL: picks due rows only (remindAt <= now, remindSentAt and archivedAt null), oldest first, LIMIT, FOR UPDATE SKIP LOCKED", /"remindAt" <= \? AND "remindSentAt" IS NULL AND "archivedAt" IS NULL ORDER BY "remindAt" ASC, "id" ASC LIMIT \?::int FOR UPDATE SKIP LOCKED/.test(inner), inner);
+    check(
+      "claim SQL: picks due rows only (remindAt <= now, remindSentAt and archivedAt null, its work tab not archived), oldest first, LIMIT, FOR UPDATE SKIP LOCKED",
+      /"remindAt" <= \? AND "remindSentAt" IS NULL AND "archivedAt" IS NULL AND EXISTS \(SELECT 1 FROM "WorkBoard" wb WHERE wb\."id" = "CallBack"\."boardId" AND wb\."archivedAt" IS NULL\) ORDER BY "remindAt" ASC, "id" ASC LIMIT \?::int FOR UPDATE SKIP LOCKED/.test(inner),
+      inner
+    );
     check("claim SQL: re-tests remindSentAt IS NULL on the locked row (an overlapping run's row is never set twice)", /"remindSentAt" IS NULL/.test(outer) && /"archivedAt" IS NULL/.test(outer), outer);
     check("claim SQL: now and the cap are parameters (now, now, now, 50)", q != null && q.values.length === 4 && q.values.slice(0, 3).every((v) => v instanceof Date && v.getTime() === NOW.getTime()) && q.values[3] === 50, JSON.stringify(q?.values));
     check("claim SQL: the task title joins in the same statement; null tags read as []", /LEFT JOIN "TaskTemplate" t ON t."id" = c."taskId"/.test(sql) && out.length === 1 && Array.isArray(out[0].tags) && out[0].tags.length === 0 && out[0].taskTitle === "Send the quote");
@@ -458,6 +467,36 @@ async function subscribeApi() {
   check("unsubscribe: removes this user's row for that endpoint, never another user's", (await del.json()).removed === 1 && (await delOther.json()).removed === 0 && store.subs.length === 1 && delBad.status === 400);
   const delCross = await handleUnsubscribe(req({ endpoint }, { "sec-fetch-site": "cross-site" }, "DELETE"), deps);
   check("unsubscribe: same site only", delCross.status === 403);
+
+  // /api/push/test: Settings › Notifications' "Send a test".
+  {
+    const log: string[] = [];
+    const push = fakePushStore([sub("t1"), sub("t2"), sub("other", "u2")]);
+    const { sender, sent } = fakeSender(log);
+    const limiter = new Map<string, number>();
+    let clock = NOW.getTime();
+    const tdeps = { store: push, sender, env: VAPID, userId: () => "u1", limiter, now: () => new Date(clock) };
+    const testReq = (headers: Record<string, string> = {}, body: unknown = {}) =>
+      new Request(`${ORIGIN}/api/push/test`, { method: "POST", headers: { "content-type": "application/json", "sec-fetch-site": "same-origin", ...headers }, body: typeof body === "string" ? body : JSON.stringify(body) });
+    const first = await handleTestPush(testReq(), tdeps);
+    const firstBody = (await first.json()) as { sent?: number; subscriptions?: number };
+    check("test push: sends the test payload to every device of the current user only", first.status === 200 && firstBody.sent === 2 && sent.length === 2 && sent.every((x) => !x.endpoint.endsWith("/other")) && JSON.parse(sent[0].payload).title === TEST_PUSH_PAYLOAD.title && JSON.parse(sent[0].payload).url === "/settings#notifications", JSON.stringify(firstBody));
+    clock += 30_000;
+    const again = await handleTestPush(testReq(), tdeps);
+    const againBody = (await again.json()) as { retryAfter?: number };
+    check("test push: a second within a minute is 429 with retryAfter (and Retry-After), nothing sent", again.status === 429 && againBody.retryAfter === 30 && again.headers.get("retry-after") === "30" && sent.length === 2, JSON.stringify(againBody));
+    clock += TEST_PUSH_GAP_MS;
+    const later = await handleTestPush(testReq(), tdeps);
+    check("test push: a minute later it sends again", later.status === 200 && sent.length === 4);
+    const otherUser = await handleTestPush(testReq(), { ...tdeps, userId: () => "u2" });
+    check("test push: the limit is per user", otherUser.status === 200 && sent.length === 5);
+    const cross = await handleTestPush(testReq({ "sec-fetch-site": "cross-site" }), { ...tdeps, limiter: new Map() });
+    const form = await handleTestPush(new Request(`${ORIGIN}/api/push/test`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "x=1" }), { ...tdeps, limiter: new Map() });
+    check("test push: JSON from this site only (a cross-site call 403, a form post 415), nothing sent", cross.status === 403 && form.status === 415 && sent.length === 5);
+    const noKeys = (await (await handleTestPush(testReq(), { ...tdeps, env: {}, limiter: new Map() })).json()) as { skipped?: string };
+    const none = (await (await handleTestPush(testReq(), { ...tdeps, userId: () => "nobody", limiter: new Map() })).json()) as { skipped?: string };
+    check("test push: says why nothing went (no VAPID keys, no device)", noKeys.skipped === "no-vapid" && none.skipped === "no-subscriptions");
+  }
 }
 
 // ── 6. public/sw.js, run ──────────────────────────────────────────────────
@@ -615,7 +654,11 @@ function secrets() {
   const webPushUsers = files.filter((p) => /from\s+["']web-push["']|require\(["']web-push["']\)/.test(readFileSync(p, "utf8"))).map(rel);
   check("server: web-push is imported by src/lib/push-server.ts alone", webPushUsers.join() === "src/lib/push-server.ts", webPushUsers.join(", "));
   const pushServerUsers = files.filter((p) => /from\s+["'](?:@\/lib\/|\.\/)push-server["']/.test(readFileSync(p, "utf8"))).map(rel).sort();
-  check("server: push-server is reached only from the subscribe route and the dispatcher", pushServerUsers.join() === "src/app/api/push/subscribe/route.ts,src/lib/reminders-server.ts", pushServerUsers.join(", "));
+  check(
+    "server: push-server is reached only from the subscribe and test routes and the dispatcher",
+    pushServerUsers.join() === "src/app/api/push/subscribe/route.ts,src/app/api/push/test/route.ts,src/lib/reminders-server.ts",
+    pushServerUsers.join(", ")
+  );
   const publicSecrets = files.flatMap((p) => [...readFileSync(p, "utf8").matchAll(/NEXT_PUBLIC_\w*(PRIVATE|SECRET)\w*/g)].map((m) => `${rel(p)}: ${m[0]}`));
   // .env.example is gitignored (.gitignore's '.env*'), so a fresh clone has none: checked where it exists.
   const example = existsSync(join(ROOT, ".env.example")) ? read(".env.example") : null;
@@ -633,6 +676,8 @@ function wiring() {
   const exportsOf = (f: string) => [...code(read(f)).matchAll(/export\s+(?:async\s+)?(?:function|const)\s+(\w+)/g)].map((m) => m[1]).sort().join(",");
   const sub = read("src/app/api/push/subscribe/route.ts");
   check("route /api/push/subscribe: exports POST, DELETE and dynamic only, delegating to push-server", exportsOf("src/app/api/push/subscribe/route.ts") === "DELETE,POST,dynamic" && /return handleSubscribe\(request\)/.test(sub) && /return handleUnsubscribe\(request\)/.test(sub));
+  const testRoute = read("src/app/api/push/test/route.ts");
+  check("route /api/push/test: exports POST and dynamic only, delegating to push-server", exportsOf("src/app/api/push/test/route.ts") === "POST,dynamic" && /return handleTestPush\(request\)/.test(testRoute) && /export const dynamic = "force-dynamic"/.test(testRoute));
   const disp = read("src/app/api/reminders/dispatch/route.ts");
   check("route /api/reminders/dispatch: exports GET, POST and dynamic only, both running the dispatcher", exportsOf("src/app/api/reminders/dispatch/route.ts") === "GET,POST,dynamic" && (disp.match(/return runReminderDispatch\(request\)/g) ?? []).length === 2 && /export const dynamic = "force-dynamic"/.test(disp));
   const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string>; dependencies: Record<string, string>; devDependencies: Record<string, string> };

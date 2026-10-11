@@ -8,14 +8,25 @@
  * what archiving does (the tab leaves the strip and frees its place; every
  * task is kept; Settings › Work tabs restores it). After an archive the board
  * goes back to the personal Board.
+ *
+ * Customers (customers.ts, 2026-10-12): the menu's "Customer list" switch
+ * gives the tab its own customer list (off by default; off hides it and
+ * deletes nothing). While it is on, the card links to the list with the
+ * count of scheduled customer tasks due today (overdue included), read after
+ * the card mounts.
  */
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { archiveWorkBoard, renameWorkBoard } from "@/app/actions/work-boards";
+import { customerDueCount, setCrm } from "@/app/actions/customers";
 import { WORK_BOARD_NAME_MAX, cleanWorkBoardName } from "@/lib/work-boards";
+import { customersHref, dueChipText, type DueCount } from "@/lib/customers";
 import { Button } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
 import { Sheet } from "@/components/ui/Sheet";
+import { Switch } from "@/components/ui/Switch";
+import { cx } from "@/components/ui/cx";
 import "@/components/shell/work-tabs.css";
 
 /** The card's menu button's accessible name. */
@@ -24,14 +35,49 @@ export const WORK_MENU_LABEL = "Work tab menu";
 export const WORK_CARD_NOTE = "Work only: ticks here pay no XP and never touch your streak, your week or your goals.";
 
 const UNREACHABLE = "Couldn't reach the server. Check the connection and try again.";
+/** The menu's switch: what a customer list is, and that off deletes nothing. */
+export const CRM_SWITCH_NOTE = "A customer list for this tab: customer IDs, their interactions and scheduled reminders. Off hides it; nothing is deleted.";
 
-export function WorkBoardCard({ board }: { board: { id: string; name: string } }) {
+export function WorkBoardCard({ board }: { board: { id: string; name: string; crmOn?: boolean } }) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [name, setName] = useState(board.name);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const crmOn = board.crmOn === true;
+  /** The switch's state while its write is in flight (then the refreshed prop). */
+  const [crmWant, setCrmWant] = useState<boolean | null>(null);
+  const [due, setDue] = useState<DueCount | null>(null);
+
+  // The list's due count, read once the card is up (a failed read shows no count).
+  useEffect(() => {
+    if (!crmOn) return;
+    let live = true;
+    customerDueCount(board.id)
+      .then((res) => {
+        if (live && res.ok) setDue(res.value);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [board.id, crmOn]);
+
+  function toggleCrm(on: boolean) {
+    setError(null);
+    setCrmWant(on);
+    start(async () => {
+      let res: Awaited<ReturnType<typeof setCrm>>;
+      try {
+        res = await setCrm(board.id, on, { refresh: true });
+      } catch {
+        res = { ok: false, error: UNREACHABLE };
+      }
+      setCrmWant(null);
+      if (!res.ok) setError(res.error);
+    });
+  }
 
   function openMenu() {
     setName(board.name);
@@ -94,6 +140,13 @@ export function WorkBoardCard({ board }: { board: { id: string; name: string } }
         </button>
       </div>
       <p className="work-card-note">{WORK_CARD_NOTE}</p>
+      {crmOn && (
+        <Link className="work-crm-link" href={customersHref(board.id)}>
+          <span className="work-crm-l">Customers</span>
+          {due && dueChipText(due) && <span className={cx("chip", due.overdue > 0 && "owed")}>{dueChipText(due)}</span>}
+          <Icon name="chev" />
+        </Link>
+      )}
 
       <Sheet open={menuOpen} onClose={() => !pending && setMenuOpen(false)} title={board.name} description="This work tab">
         <div className="work-menu-sec">
@@ -121,6 +174,14 @@ export function WorkBoardCard({ board }: { board: { id: string; name: string } }
             </Button>
           </form>
           <p>Up to {WORK_BOARD_NAME_MAX} characters.</p>
+        </div>
+
+        <div className="work-menu-sec">
+          <h3>Customer list</h3>
+          <div className="work-menu-switch">
+            <p>{CRM_SWITCH_NOTE}</p>
+            <Switch checked={crmWant ?? crmOn} onChange={toggleCrm} label="Customer list" disabled={pending} />
+          </div>
         </div>
 
         <div className="work-menu-sec">

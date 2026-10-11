@@ -149,6 +149,9 @@ import { namedOfTitle, type TodayNamedTitles } from "./NamedTitle";
 import { Chip } from "@/components/ui/Chip";
 import { HeldGlyph } from "@/components/ui/Icon";
 import { WorkBoardCard } from "./WorkBoardCard";
+import { CallBacksSection } from "@/components/work/callbacks/CallBacksSection";
+import { captureExampleOf } from "@/components/capture/capture-ui";
+import type { CallBacksData } from "@/lib/callbacks";
 
 interface Props {
   data: BoardData;
@@ -186,12 +189,19 @@ interface Props {
    * price on any row. Absent: the personal Board, exactly as before.
    */
   work?: WorkBoardView | null;
+  /**
+   * A work tab's call backs (callbacks.ts; the page's loadCallBacks): the "Call backs" section in the call-backs
+   * slot, with ?callback=<id>'s highlight. Absent or null (the personal Board, or a failed read): no section.
+   */
+  callBacks?: CallBacksData | null;
 }
 
 /** The work tab a board is (TodayBoard's `work`). */
 export interface WorkBoardView {
   id: string;
   name: string;
+  /** The tab keeps a customer list (WorkBoard.crmOn); its header card links to it. */
+  crmOn?: boolean;
 }
 
 /** The goal the Close sheet is open on: its preview, and the close's own refusal if it had one. */
@@ -396,7 +406,7 @@ function declaredOf(duty: DutyBoard | null, today: DayKey): DeclaredDay[] {
  * launch the board is the pre-M2 board (debts, which only settlement
  * writes, render whenever they exist).
  */
-export function TodayBoard({ data, streak, nowIso, notices, footClock, launched = false, namedTitles, work: workTab = null, elsewhere = null }: Props) {
+export function TodayBoard({ data, streak, nowIso, notices, footClock, launched = false, namedTitles, work: workTab = null, callBacks = null, elsewhere = null }: Props) {
   /** A work tab: nothing of the game (no XP, no moments, no goals, no plan card). */
   const isWork = workTab !== null;
   const router = useRouter();
@@ -1737,7 +1747,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   const firstRunHint = (
     <p className="lane-note">
       Nothing planned yet. <span className="hint-compact">Tap + in the tab bar</span>
-      <span className="hint-wide">Press c or Capture</span> and type one line, e.g. <span className="t-mono">gym legs 60m every mon,thu !</span>{" "}
+      <span className="hint-wide">Press c or Capture</span> and type one line, e.g. <span className="t-mono">{captureExampleOf(isWork)}</span>{" "}
       <button type="button" className="lane-note-link" onClick={() => openCapture()}>
         Capture one now
       </button>
@@ -1884,9 +1894,9 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
         </div>
 
         <div className="c3">
-          {/* A work tab (work-boards.ts) draws no goals (GoalsStrip off). CALL BACKS SLOT (work tabs, a later step): a work
-              tab's "Call backs" section mounts in .o9, where the goals stand on the personal Board; drawn as nothing
-              (.work-callbacks:empty) until it lands, and never on the personal Board. */}
+          {/* A work tab (work-boards.ts) draws no goals (GoalsStrip off). CALL BACKS SLOT: a work tab's "Call backs"
+              section (components/work/callbacks, callbacks.ts) mounts in .o9, where the goals stand on the personal
+              Board; drawn as nothing (.work-callbacks:empty) when its read failed, and never on the personal Board. */}
           <div className="o9">
             <GoalsStrip
               off={isWork}
@@ -1899,7 +1909,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
               justAdded={justAdded}
               namedTitles={namedTitles}
             />
-            {isWork && <div className="work-callbacks" data-slot="call-backs" data-board={workTab?.id} />}
+            {isWork && <div className="work-callbacks" data-slot="call-backs" data-board={workTab?.id}>{callBacks && <CallBacksSection data={callBacks} />}</div>}
           </div>
 
           <section className="card today-side-rows o10" aria-label="Inbox and Anytime">

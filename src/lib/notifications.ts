@@ -15,6 +15,8 @@ import { PERSONAL_BOARD } from "./work-boards";
 import { DAY_START_HOUR, LIFE_TZ, todayKey } from "./life-day";
 import { isDutyLaunched, weekReviewKey } from "./duty-economy";
 import { dutyNoticesOf, owedFromLine, reviewedWeek, type OwedTotals } from "./rituals";
+import { workReminderNotices } from "./callbacks";
+import { loadWorkReminderRows } from "./callbacks-server";
 
 /**
  * From this local hour an open compulsory item turns from a note into a
@@ -124,13 +126,25 @@ async function loadReviewDue(userId: string, weekKey: string | null): Promise<bo
   }
 }
 
+/**
+ * Work tabs' reminders that are due (callbacks.ts workReminderNotices): open call back reminders and due customer
+ * tasks, shown here even on a device without push. A failed read is a missing line, never a missing bell.
+ */
+async function loadWorkReminders(userId: string, now: Date): Promise<Notice[]> {
+  try {
+    return workReminderNotices(await loadWorkReminderRows(userId, now), now);
+  } catch {
+    return [];
+  }
+}
+
 async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
   // Duty (M2) is live from its launch day only; before it, its rows are left out (owed aside: an
   // open debt is shown whenever one exists, so a rolled-back launch never hides it).
   const lifeDay = todayKey(now);
   const dutyLive = isDutyLaunched(lifeDay);
   const review = dutyLive ? reviewedWeek(lifeDay) : null;
-  const [dueCount, overdueCount, quotas, bosses, boons, debuffs, today, owed, reviewDue] = await Promise.all([
+  const [dueCount, overdueCount, quotas, bosses, boons, debuffs, today, owed, reviewDue, workReminders] = await Promise.all([
     // `dueCutoff`, not `now`: the bubble and the review queue have to agree
     // about what is due, or the badge sends you to an empty page.
     prisma.idea.count({ where: { isArchived: false, dueDate: { lte: dueCutoff(now) } } }),
@@ -144,6 +158,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
     loadTodayCounts(userId, now).catch((): TodayCounts | null => null),
     loadOwed(userId),
     loadReviewDue(userId, review?.weekKey ?? null),
+    loadWorkReminders(userId, now),
   ]);
 
   const progression = await loadProgression(userId);
@@ -214,6 +229,9 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
       reviewDue: review && reviewDue ? review : null,
     })
   );
+
+  // ── Work tabs: call backs and customer tasks that are due ──
+  notices.push(...workReminders);
 
   if (today && today.inbox > 0) {
     notices.push({
