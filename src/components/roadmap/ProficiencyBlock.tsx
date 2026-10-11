@@ -40,7 +40,7 @@
  * inside the basis label ("Proficiency toward Mastered (level 12)"), sr-only
  * and in the meter's name.
  */
-import { useMemo, type ReactNode } from "react";
+import { useId, useMemo, useState, type ReactNode } from "react";
 import { Glyph, Mark, type MarkRef } from "@/components/glyph/Glyph";
 import { Fig } from "@/components/glyph/GlyphStat";
 import { HonestyChip } from "@/components/glyph/HonestyChip";
@@ -49,6 +49,7 @@ import { RankSeal, rankSr } from "@/components/glyph/RankSeal";
 import { useSeenValue } from "@/components/glyph/useSeen";
 import type { RankName } from "@/components/glyph/paths/rank";
 import type { EvidenceName } from "@/components/glyph/paths/evidence";
+import { Icon } from "@/components/ui/Icon";
 import { Meter } from "@/components/ui/Meter";
 import { cx } from "@/components/ui/cx";
 import { goalPercent } from "@/lib/goals";
@@ -70,9 +71,13 @@ import {
   rankPendingLine,
   shortProficiencyToward,
   weekdayName,
+  NOW_FOLD_WORDS,
 } from "./roadmap-copy";
 import { proficiencyBasisLabelOf, rankSealOf, seenBaseOf, seenKeyOf, SEEN_WHAT, type ProficiencyBasisField, type SeenBases } from "./roadmap-ui-model";
 import { PlanRanks } from "./PlanRanks";
+
+/** The page's ▸ beside the (i): what it opens (its accessible name; no visible words). */
+const RANKS_FOLD_LABEL = NOW_FOLD_WORDS.ranks;
 
 /** The ACCEPTED card's caption (the contract §9.3): the reading of the acceptance day says so; any later one says when it was measured. */
 export interface AcceptanceCaption {
@@ -104,6 +109,11 @@ export interface ProficiencyBlockProps {
   acceptance?: AcceptanceCaption | null;
   /** The surface's own lines for the block's (i) (the Aim card's held depth, the target lowered; the header's plan line). */
   info?: ReactNode;
+  /**
+   * The roadmap page (ui-motion.md §16): the parts' mini-meters, the next-rank line and "Aim ranks on this plan" fold
+   * behind one 40 px ▸ beside the (i), in the markup and hidden until opened; the rank, the % and the meter stay.
+   */
+  fold?: boolean;
 }
 
 /** The evidence glyphs a Proficiency caption names: ev.tested for "tested by your reviews", ev.tick for "your ticks" (D27). */
@@ -202,8 +212,12 @@ export function ProficiencyBlock({
   seen,
   acceptance = null,
   info,
+  fold = false,
 }: ProficiencyBlockProps) {
   const p = proficiency;
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreId = useId();
+  const folded = variant === "page" && fold;
   const bases = useMemo(() => proficiencyBasesOf(seen, seenKey, p), [seen, seenKey, p]);
   // meter-fill (SEEN, D8): only under the reading's own basis signature, never for a live (unrecorded) figure.
   const meterKey = p && !p.live ? seenKeyOf(bases, SEEN_WHAT.proficiency) : null;
@@ -320,6 +334,11 @@ export function ProficiencyBlock({
           {change && <span className="rm-rp-tp">{change}</span>}
           {info}
         </InfoTip>
+        {folded && (
+          <button type="button" className="icon-btn rm-rp-fold" aria-expanded={moreOpen} aria-controls={moreId} aria-label={RANKS_FOLD_LABEL} onClick={() => setMoreOpen((o) => !o)}>
+            <Icon name="chev" />
+          </button>
+        )}
       </div>
 
       {fall && (
@@ -334,9 +353,19 @@ export function ProficiencyBlock({
         </p>
       )}
 
-      {variant === "page" && p && <PartMeters p={p} />}
-      {variant === "page" && <NextRankLine rank={rank} />}
-      {variant === "page" && <PlanRanks rank={rank} scheduled={scheduled} milestones={ladder?.milestones} depth={ladder?.depth ?? null} paragonMissing={ladder?.paragonMissing} />}
+      {folded ? (
+        <div id={moreId} className="rm-rp-more" hidden={!moreOpen || undefined}>
+          {p && <PartMeters p={p} />}
+          <NextRankLine rank={rank} />
+          <PlanRanks rank={rank} scheduled={scheduled} milestones={ladder?.milestones} depth={ladder?.depth ?? null} paragonMissing={ladder?.paragonMissing} />
+        </div>
+      ) : (
+        <>
+          {variant === "page" && p && <PartMeters p={p} />}
+          {variant === "page" && <NextRankLine rank={rank} />}
+          {variant === "page" && <PlanRanks rank={rank} scheduled={scheduled} milestones={ladder?.milestones} depth={ladder?.depth ?? null} paragonMissing={ladder?.paragonMissing} />}
+        </>
+      )}
     </div>
   );
 }

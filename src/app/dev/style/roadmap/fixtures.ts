@@ -1345,6 +1345,8 @@ export const WORD_BLOCK = {
   topicLayer: "topic-layer",
   topicMapFoot: "topic-map-foot",
   depthLine: "depth-line",
+  // The plan page's next action (ui-motion.md §16): the hero above the plan (it and the Aim header are the fold at 344)
+  nextAction: "next-action",
 } as const;
 export type WordBlock = (typeof WORD_BLOCK)[keyof typeof WORD_BLOCK];
 
@@ -1382,14 +1384,16 @@ export const WORD_BUDGET_ROWS: readonly WordBudgetRow[] = [
   { id: "s3-next-card-v4", row: 3, fixture: "draft-v4", surface: "page", blocks: [B.nextCard], budget: 120 },
   { id: "s3-next-card-mixed", row: 3, fixture: "draft-mixed", surface: "page", blocks: [B.nextCard], budget: 160 },
   { id: "s3-outline-node-v4", row: 3, fixture: "draft-v4", surface: "page", blocks: [B.outlineNode], each: true, budget: 12 },
-  { id: "s4-aim-header-active", row: 4, fixture: "active", surface: "page", blocks: [B.aimHeader], budget: 25 },
-  { id: "s4-aim-header-behind", row: 4, fixture: "behind", surface: "page", blocks: [B.aimHeader, B.aimNotes], budget: 45 },
-  { id: "s4-aim-header-depth", row: 4, fixture: "depth-realistic", surface: "page", blocks: [B.aimHeader], budget: 35 },
-  { id: "s5-now-active", row: 5, fixture: "active", surface: "page", blocks: [B.now], budget: 120 },
-  { id: "s5-now-behind", row: 5, fixture: "behind", surface: "page", blocks: [B.now], budget: 135 },
-  { id: "s5-now-depth", row: 5, fixture: "depth-realistic", surface: "page", blocks: [B.now], budget: 115 },
-  { id: "s6-milestones-active", row: 6, fixture: "active", surface: "page", blocks: [B.milestones, B.toward, B.footer], budget: 60 },
-  { id: "s6-milestones-depth", row: 6, fixture: "depth-realistic", surface: "page", blocks: [B.milestones, B.toward, B.footer], budget: 75 },
+  // Rows 4–6 lowered to what the next-action layout reads (ui-motion.md §16): the rank's parts and ladder, the week
+  // quests' rows, the measures and the milestone's items fold behind one tap each (was 25 / 45 / 35, 120 / 135 / 115, 60 / 75).
+  { id: "s4-aim-header-active", row: 4, fixture: "active", surface: "page", blocks: [B.aimHeader], budget: 7 },
+  { id: "s4-aim-header-behind", row: 4, fixture: "behind", surface: "page", blocks: [B.aimHeader, B.aimNotes], budget: 28 },
+  { id: "s4-aim-header-depth", row: 4, fixture: "depth-realistic", surface: "page", blocks: [B.aimHeader], budget: 7 },
+  { id: "s5-now-active", row: 5, fixture: "active", surface: "page", blocks: [B.now], budget: 18 },
+  { id: "s5-now-behind", row: 5, fixture: "behind", surface: "page", blocks: [B.now], budget: 17 },
+  { id: "s5-now-depth", row: 5, fixture: "depth-realistic", surface: "page", blocks: [B.now], budget: 18 },
+  { id: "s6-milestones-active", row: 6, fixture: "active", surface: "page", blocks: [B.milestones, B.toward, B.footer], budget: 23 },
+  { id: "s6-milestones-depth", row: 6, fixture: "depth-realistic", surface: "page", blocks: [B.milestones, B.toward, B.footer], budget: 26 },
   { id: "s7-start-refit", row: 7, fixture: "start-refit", surface: "page", blocks: [B.startSheet], budget: 70 },
   { id: "s7-start-exam-waypoint", row: 7, fixture: "exam-waypoint", surface: "page", blocks: [B.startSheet], budget: 50 },
   { id: "s7-start-body-active-confirm", row: 7, fixture: "active-confirm", surface: "page", blocks: [B.startSheet], budget: 70 },
@@ -1416,6 +1420,16 @@ export const WORD_BUDGET_ROWS: readonly WordBudgetRow[] = [
   { id: "s13-topic-map-write-foot", row: 13, fixture: "topic-map-write", surface: "page", blocks: [B.topicMapFoot], budget: 2 },
   { id: "s13-topic-map-plan", row: 13, fixture: "topic-map-plan", surface: "page", blocks: [B.topicLayer], each: true, budget: 6 },
   { id: "s15-topic-chain-depth", row: 15, fixture: "topic-chain", surface: "page", blocks: [B.depthLine], each: true, budget: 6 },
+  // The next action (ui-motion.md §16, row 16): the hero's place, title, one primary and ≤ 2 chips, per branch it draws;
+  // the active fold (the hero and the Aim header, the top screen at 344) ≤ 20 (static 13; ≤ 40 was the aim).
+  { id: "s16-next-active", row: 16, fixture: "active", surface: "page", blocks: [B.nextAction], budget: 6, fold: 20 },
+  { id: "s16-next-behind", row: 16, fixture: "behind", surface: "page", blocks: [B.nextAction], budget: 6 },
+  { id: "s16-next-depth", row: 16, fixture: "depth-realistic", surface: "page", blocks: [B.nextAction], budget: 6 },
+  { id: "s16-next-start-later", row: 16, fixture: "accepted", surface: "page", blocks: [B.nextAction], budget: 9 },
+  { id: "s16-next-start", row: 16, fixture: "start-refit", surface: "page", blocks: [B.nextAction], budget: 4 },
+  { id: "s16-next-past-due", row: 16, fixture: "past-due", surface: "page", blocks: [B.nextAction], budget: 8 },
+  { id: "s16-next-replan", row: 16, fixture: "active-replan", surface: "page", blocks: [B.nextAction], budget: 7 },
+  { id: "s16-next-asking", row: 16, fixture: "active-confirm", surface: "page", blocks: [B.nextAction], budget: 5 },
 ];
 // Row 11 (Today's aim line, every state ≤ 8) is /dev/style/today's: AimLine over AIM_LINE_FIXTURES (R1's block), and its
 // words are roadmap-copy aimLineShort's, which roadmap-ui-check holds to 8 for every fixture state.

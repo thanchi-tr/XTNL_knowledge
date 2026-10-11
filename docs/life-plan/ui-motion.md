@@ -175,14 +175,14 @@ Each lane adds the `data-wc` attributes for the surfaces it builds. A `data-wc` 
 | 3 | Next milestone card: draft-v4 | 418 | ≤ 120 | – |
 | | … draft-mixed | 738 | ≤ 160 | – |
 | | Each collapsed outline node | 817 for 5 | ≤ 12 each | – |
-| 4 | Living Aim header: active | 85 | ≤ 25 | – |
-| | … behind (header to the Now card) | 204 | ≤ 45 | – |
-| | … depth plan | 226 | ≤ 35 | – |
-| 5 | Now section: active | 621 | ≤ 120 | – |
-| | … behind | ≈ 590 | ≤ 135 | – |
-| | … depth plan | 552 | ≤ 115 | – |
-| 6 | Milestones + Toward the aim + footer: active | 235 | ≤ 60 | – |
-| | … depth plan | ≈ 307 | ≤ 75 | – |
+| 4 | Living Aim header: active | 85 | ≤ 7 (§16; was ≤ 25) | ≤ 20 with the hero (§16) |
+| | … behind (header to the Now card) | 204 | ≤ 28 (§16; was ≤ 45) | – |
+| | … depth plan | 226 | ≤ 7 (§16; was ≤ 35) | – |
+| 5 | Now section: active | 621 | ≤ 18 (§16; was ≤ 120) | – |
+| | … behind | ≈ 590 | ≤ 17 (§16; was ≤ 135) | – |
+| | … depth plan | 552 | ≤ 18 (§16; was ≤ 115) | – |
+| 6 | Milestones + Toward the aim + footer: active | 235 | ≤ 23 (§16; was ≤ 60) | – |
+| | … depth plan | ≈ 307 | ≤ 26 (§16; was ≤ 75) | – |
 | 7 | Start sheet: start-refit | 405 | ≤ 70 | – |
 | | … exam-waypoint | 205 | ≤ 50 | – |
 | | … body active-confirm | 369 | ≤ 70 | – |
@@ -2516,3 +2516,44 @@ Fixture names are neutral (the spec's A1…D2 shape). Fixtures never use the use
 3. **The 44 px layer header.** Closed: the who-word chip takes a second header row (84 px in all), as §15.5 says (ruling 68). The alternative (the chip in the first row, the keep button at the layer's foot) stays open for the user.
 4. **A chip per topic row.** Closed as D37: the layer chip plus the row's sheet (ruling 68).
 5. **`pv.named` without a visible "Gemini"** (D33). Closed as D33 (ruling 68); the alternative, a «Gemini» micro-chip after every kept name, stays open for the user.
+
+---
+
+## 16. The next action (the plan page at a glance)
+
+The user's ask: the accepted plan read as text-heavy and crowded; at a glance (≤ 3 s) the page must say the one thing to do next (add, review, practise, start …). Rows 4–6 of §3.2 are lowered to what this layout reads and row 16 is new. Nothing is deleted: every sentence, provenance mark and "not checked" stays in the markup, one tap away (a fold, a row's ▸, a chip or the card's (i)).
+
+### 16.1 Layout at 344 (top to bottom)
+
+1. **The hero** (`data-wc-block="next-action"`, one card, above everything else on the plan; from 760 px it spans both columns): the current milestone's measured % as a static ink ring (no motion; the number badge before Start or before a reading), "Milestone 2 of 6", the title (a name; a Gemini title keeps «Gemini · kept · not checked» as a chip button opening its full words), then **one** primary button (48 px) and **≤ 2** chips (44 px): glyph, verb, figure ("Review 2", "Add 6"); the chip's compact words are aria-hidden, the full action sr-only (D26). Where nothing can be done yet the primary is a line, never a disabled button.
+2. **The Aim header**, unchanged but for the rank: the parts' mini-meters, "Next · [rank] Journeyman · milestone 2" and "Aim ranks on this plan" fold behind one 40 px ▸ beside the (i) (`aria-label` "Rank and parts").
+3. The triggers, the activity card while it asks, the re-plan draft (unchanged).
+4. **Now**: its header, the health chip, the past-due lines, the headline (%, meter with the pay-bar tick, "pays … × progress «from 70%»", the pace) and the not-started pay line stay. Folded, each behind one 44 px row with a glyph summary: **Week quests** (the heading, «pays nothing» and "until Sun" stay; a "[ring] 1/5 ▸" toggle opens the rows and the past weeks), **Measures** ("2 ▸"), **In this milestone** ("[s-know]2 [quest.add]3 [quest.practice]2 [quest.step]3 [quest.checkpoint]1", spoken "2 Domains, 3 topics, …": Domains, Learn, What to practise, notes, Steps, the checkpoint with «context only» and Log a score). The practice-only line (§19) stays visible above the folds. Start and Finish starting moved to the hero; "Return it to planned" stays.
+5. Toward the aim, Milestones (the RouteRail, its ▸ and the plan-edit controls), "How this is worked out", aftercare and the footer: unchanged.
+
+A link that lands on what a fold holds opens it: `#now` and `#week-quests` (Today's RAISE row, the hero's Review), `#checkpoint` and `#in-milestone`, `#measures` (the location hash as an external store; nothing opens by itself otherwise).
+
+### 16.2 nextActionOf (src/components/roadmap/next-action.ts; pure, goldens in roadmap-ui-check)
+
+The first that applies is the primary. NONE: Set an aim (a legacy plan: its own Start again / Draft it again). RUNNING: a line. DRAFT: a line (the review holds Accept). DONE / ARCHIVED: Set a new aim. ACTIVE: (1) the activity card asks → Answer about activities (#rm-activities); (2) a re-plan draft → Check the re-plan (#replan); (3) Start didn't finish → Finish starting; (4) the aim reached → Mark the aim done; (5) past due → Reschedule milestone n (chip: Close it on Tasks), or Close it on Tasks when never started; (6) planned → Start milestone n (the Start sheet), or the "arrives with the next update" line while Start is off; (7) this week's open week quests in the order ADD ("Add 3 cards to <Domain>": the part with the most left, else the Domain the row's add link preselects → /add?field=&domain=), REVIEW ("Review 2 cards", naming a Domain only for a part or a one-Domain row; it reveals the week quests' due days — never a link to /review, which has no Domain filter, roadmap.md Names), PRACTICE ("Practise <name> · 2 sessions" → its task on Tasks), STEP (the step's words → its task), CHECKPOINT (Log a score); (8) a started checkpoint with no score and no row → Log a score; (9) nothing open → Open Tasks. ADD leads REVIEW because it has somewhere to go, and reviews happen as cards come due. Chips: the next open week-quest kinds (and Close it on Tasks), one per kind, never the primary's.
+
+### 16.3 Budgets (hard gates; §3.2 row 16)
+
+| # | Screen and state (fixture) | Before | Budget |
+|---|---|---|---|
+| 16 | The hero: active (fold: the hero and the Aim header, the top screen at 344) | – | ≤ 6 (fold ≤ 20; static 13) |
+| | … behind | – | ≤ 6 |
+| | … depth plan (depth-realistic) | – | ≤ 6 |
+| | … Start not live (accepted: the line) | – | ≤ 9 |
+| | … Start (start-refit) | – | ≤ 4 |
+| | … past due | – | ≤ 8 |
+| | … a re-plan draft (active-replan) | – | ≤ 7 |
+| | … the activity card asks (active-confirm) | – | ≤ 5 |
+
+The active page reads 63 app words at 344, down from 135 (the whole page, §3.1); the top screen (hero + Aim header) 13.
+
+### 16.4 Honesty kept
+
+«Aim not checked», the pay line, «pays nothing», «context only» (Toward the aim), «writes off», «Over», «Target lowered», "counts from", "Past due", the health chip and the practice-only line stay visible where §11.3 pins them. Inside the folds every Gemini mark keeps its who-word and every sr-only honesty string stays in a panel on its card (RZ taps). The hero's ring carries no evidence words of its own (the Now headline and its Key hold them).
+
+**Checks:** roadmap-ui-check "the next action (§16)": a golden per branch, no /review href, ≤ 2 chips one per kind, the hero above the Aim header with one primary (or its line) reading nextActionOf's label, the folds' panels holding what moved (each controlled by its button), the 44 px rules, row 16 and the lowered rows 4–6 gated.

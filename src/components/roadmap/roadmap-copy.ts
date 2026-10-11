@@ -2885,3 +2885,87 @@ export function showNextLayerLine(k: number, after: number): string {
   return after > 0 ? `Show layer ${k} · ${after} more after it` : `Show layer ${k}`;
 }
 export const HIDE_LATER_LAYERS = "Hide later layers";
+
+// ── The plan page's next action (the hero above the plan): the verb first, the figure as a figure, the name a name ──
+/** The hero's eyebrow, beside the current milestone's place ("Next · Milestone 2 of 6"). */
+export const NEXT_WORD = "Next";
+/** Each primary action's fixed words (the figures and names are filled in by nextActionLabelOf). */
+export const NEXT_ACTION_WORDS = {
+  start: "Start milestone",
+  finishStart: "Finish starting",
+  markDone: "Mark the aim done",
+  reschedule: "Reschedule milestone",
+  closeOnTasks: "Close it on Tasks",
+  activities: "Answer about activities",
+  replanDraft: "Check the re-plan",
+  replan: "Re-plan",
+  add: "Add",
+  review: "Review",
+  practise: "Practise",
+  tick: "Tick",
+  logScore: "Log a score",
+  openTasks: "Open Tasks",
+  checkDraft: "Check the draft",
+  drafting: "Drafting",
+  startLater: "Starting milestones arrives with the next update.",
+} as const;
+/** A count with its unit ("3 cards", "1 session"). */
+export function nextCountLine(n: number, unit: "card" | "session" | "step"): string {
+  return `${n} ${unit}${n === 1 ? "" : "s"}`;
+}
+/** "Add 3 cards to Risk Management", "Review 2 cards in Probability", "Practise Backtest · 2 sessions", the step's own words, "Start milestone 2". */
+export function nextActionLabelOf(a: { kind: string; n: number | null; unit: "card" | "session" | "step" | null; name: string | null; ord?: number | null }): string {
+  const W = NEXT_ACTION_WORDS;
+  const count = a.n != null && a.unit ? nextCountLine(a.n, a.unit) : null;
+  switch (a.kind) {
+    case "ADD":
+      return `${W.add} ${count ?? ""}${a.name ? ` to ${a.name}` : ""}`.replace(/ +/g, " ").trim();
+    case "REVIEW":
+      return `${W.review} ${count ?? ""}${a.name ? ` in ${a.name}` : ""}`.replace(/ +/g, " ").trim();
+    case "PRACTICE":
+      return `${W.practise}${a.name ? ` ${a.name}` : ""}${count ? ` · ${count}` : ""}`;
+    case "STEP":
+      return a.name ?? `${W.tick} ${count ?? "a step"}`;
+    case "CHECKPOINT":
+      return W.logScore;
+    case "START":
+      return `${W.start} ${a.ord ?? ""}`.trim();
+    case "FINISH_START":
+      return W.finishStart;
+    case "MARK_DONE":
+      return W.markDone;
+    case "PAST_DUE":
+      return `${W.reschedule} ${a.ord ?? ""}`.trim();
+    case "CLOSE_ON_TASKS":
+      return W.closeOnTasks;
+    case "ACTIVITIES":
+      return W.activities;
+    case "REPLAN_DRAFT":
+      return W.replanDraft;
+    case "REPLAN":
+      return W.replan;
+    case "TASKS":
+      return W.openTasks;
+    case "SET_AIM":
+      return AIM_CALL_HEADING;
+    case "NEW_AIM":
+      return AIM_NEW_AIM;
+    case "CHECK_DRAFT":
+      return W.checkDraft;
+    case "DRAFTING":
+      return W.drafting;
+    default:
+      return W.startLater;
+  }
+}
+/** A secondary chip's words: the verb and the figure ("Review 12", "Add 6", "Tick 1", "Log a score", "Close it on Tasks"). */
+export function nextChipLabelOf(a: { kind: string; n: number | null }): string {
+  const W = NEXT_ACTION_WORDS;
+  const verb = a.kind === "ADD" ? W.add : a.kind === "REVIEW" ? W.review : a.kind === "PRACTICE" ? W.practise : a.kind === "STEP" ? W.tick : null;
+  if (verb) return a.n != null ? `${verb} ${a.n}` : verb;
+  return a.kind === "CHECKPOINT" ? W.logScore : a.kind === "CLOSE_ON_TASKS" ? W.closeOnTasks : a.kind === "TASKS" ? W.openTasks : nextActionLabelOf({ kind: a.kind, n: a.n, unit: null, name: null });
+}
+/** The hero's line when nothing is open this week. */
+export const NEXT_ALL_DONE_LINE = "Nothing open this week";
+/** The folds of the Now card: their titles (the rows stay one tap away). */
+export const NOW_FOLD_WORDS = { measures: "Measures", items: "In this milestone", ranks: "Rank and parts" } as const;

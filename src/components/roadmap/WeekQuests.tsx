@@ -130,6 +130,11 @@ export interface WeekQuestsProps {
   track?: TrackSigil;
   /** The roadmap variant: false when the Now card already shows its one health chip (D12: one per card). Default: from the rows. */
   health?: boolean;
+  /**
+   * The roadmap variant (ui-motion.md §16): the rows fold behind the heading's 44 px toggle ("[ring] 1/5 ▸"), in the
+   * markup and hidden until opened; the plan page's hero names what to do first. Absent: the rows show (as before).
+   */
+  fold?: { open: boolean; onToggle: () => void } | null;
 }
 
 /**
@@ -660,7 +665,8 @@ function NowRow({ row, view, bases, track, today, onLogCheckpoint, names }: { ro
   );
 }
 
-function RoadmapVariant({ view, onLogCheckpoint, onShowBasis, today, shownElsewhere = [], bases, track, health }: WeekQuestsProps & { bases: SeenBases | null }) {
+function RoadmapVariant({ view, onLogCheckpoint, onShowBasis, today, shownElsewhere = [], bases, track, health, fold = null }: WeekQuestsProps & { bases: SeenBases | null }) {
+  const rowsId = useId();
   const kinds = weekQuestKindsOf(view);
   const notes = notesShownOf(view.notes, shownElsewhere);
   const span = windowLabel(view.weekStart, view.weekEnd, today);
@@ -703,6 +709,16 @@ function RoadmapVariant({ view, onLogCheckpoint, onShowBasis, today, shownElsewh
           {showHealth && <HealthChip />}
         </Chips>
         {onShowBasis && view.basis.length > 0 && <GlyphButton glyph="m.info" label="How these were set" onClick={onShowBasis} size={40} className="rm-wq-basis" />}
+        {fold && view.rows.length > 0 && (
+          <button type="button" className="rm-wq-fold" aria-expanded={fold.open} aria-controls={rowsId} onClick={fold.onToggle}>
+            <span className="rm-wq-ring" aria-hidden="true">
+              <PromiseRing value={view.done} target={view.total} size={20} label={SHORT_WEEK_QUESTS} />
+            </span>
+            <span className="num" aria-hidden="true">{`${Math.min(view.done, view.total)}/${view.total}`}</span>
+            <span className="sr-only">{`${SHORT_WEEK_QUESTS}: ${view.done} of ${view.total} done`}</span>
+            <Icon name="chev" />
+          </button>
+        )}
       </div>
       {view.state === "PAST_DUE" && <p className="rm-lag t-meta">{pastDueLine(view.milestoneOrd, null)}. No week quests this week.</p>}
       {view.state === "HELD" && <p className="rm-lag t-meta">A held week: no week quests, and nothing is asked of it.</p>}
@@ -717,7 +733,7 @@ function RoadmapVariant({ view, onLogCheckpoint, onShowBasis, today, shownElsewh
         );
       })}
       {view.rows.length > 0 && (
-        <div className="rm-quest">
+        <div className="rm-quest" id={rowsId} hidden={fold ? !fold.open || undefined : undefined}>
           {view.rows.map((row) => (
             <NowRow key={row.ord} row={row} view={view} bases={bases} track={track} today={today} onLogCheckpoint={onLogCheckpoint} names={names} />
           ))}

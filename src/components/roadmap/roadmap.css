@@ -1199,4 +1199,57 @@
   .rm-rc-note { margin: 0; }
   .rm-rc-acts { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
   /* ===== /Ruling N18 ===== */
+
+  /* ===== The next action (ui-motion.md §16): the hero above the plan, the Now card's folds, the rank's ▸ =====
+     Ink only (the primary is the kit's ink button), 44 px targets, no motion but the kit chevron's turn. */
+  .rm-living { gap: 16px; }
+  .rm-next { display: flex; flex-direction: column; gap: 12px; padding: 14px; }
+  .rm-next-top { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 0 12px; align-items: center; }
+  .rm-next-ring { position: relative; display: grid; place-items: center; width: 48px; height: 48px; }
+  .rm-next-ring svg { position: absolute; inset: 0; width: 48px; height: 48px; }
+  .rm-next-rt { fill: none; stroke: var(--line-1); stroke-width: 4.5; }
+  .rm-next-rv { fill: none; stroke: var(--ink-0); stroke-width: 4.5; stroke-linecap: round; }
+  .rm-next-rp { position: relative; font: 600 13px/16px var(--font-display); color: var(--ink-0); }
+  .rm-next-n { width: 48px; height: 48px; border-radius: 14px; font-size: 18px; }
+  .rm-next-tt { min-width: 0; }
+  .rm-next-k { margin: 0; font: 600 12px/16px var(--font-ui); letter-spacing: .04em; color: var(--ink-2); }
+  .rm-next-t { margin: 2px 0 0; font: 600 17px/22px var(--font-display); color: var(--ink-0); overflow-wrap: anywhere; }
+  .rm-next-pv { margin-top: 6px; }
+  .rm-next-go { min-height: 48px; gap: 8px; white-space: normal; text-align: center; line-height: 1.3; padding-top: 8px; padding-bottom: 8px; }
+  .rm-next-go svg { width: 20px; height: 20px; flex: none; }
+  .rm-next-l { min-width: 0; overflow-wrap: anywhere; }
+  .rm-next-line { margin: 0; font-size: 14px; line-height: 20px; color: var(--ink-1); }
+  .rm-next-more { display: flex; flex-wrap: wrap; gap: 8px; }
+  .rm-next-chip { min-height: 44px; gap: 6px; text-decoration: none; }
+  .rm-next-chip svg { width: 16px; height: 16px; flex: none; }
+  .rm-next-safe { min-width: 0; }
+  /* From 600 px of main the hero spans the page: the milestone on the left, its action and chips on the right. */
+  @container main (min-width: 600px) {
+    .rm-next { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 380px); align-items: center; gap: 10px 20px; }
+    .rm-next-top { grid-column: 1; grid-row: 1 / span 2; }
+    .rm-next > :not(.rm-next-top) { grid-column: 2; }
+  }
+  /* The Now card's folds: one 44 px row (title, glyph summary, chevron); the rows stay in the markup behind it. */
+  .rm-fold { padding-top: 4px; padding-bottom: 4px; }
+  .rm-fold-b { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 0; text-align: left; color: var(--ink-0); font: inherit; background: none; border: 0; cursor: pointer; }
+  .rm-fold-b .t-eyebrow { color: var(--ink-1); }
+  .rm-fold-s { flex: 1 1 auto; min-width: 0; display: flex; justify-content: flex-end; color: var(--ink-2); font-size: 13px; line-height: 18px; }
+  .rm-fold-b > svg { width: 16px; height: 16px; flex: none; color: var(--ink-2); transition: transform var(--t-quick) var(--ease-out); }
+  .rm-fold-b[aria-expanded="true"] > svg { transform: rotate(90deg); }
+  .rm-fold-g { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 10px; }
+  .rm-fold-c { display: inline-flex; align-items: center; gap: 3px; }
+  .rm-fold-c svg { width: 14px; height: 14px; }
+  .rm-fold-p { padding-bottom: 8px; }
+  .rm-fold-p > .rm-ms-sec { padding-left: 0; padding-right: 0; }
+  .rm-fold-p > .rm-ms-sec:first-child { border-top: 0; padding-top: 4px; }
+  /* The week quests' toggle in their heading: the ring, "1/5" and the chevron, a 44 px target at the row's end. */
+  .rm-wq-fold { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; min-width: 44px; margin: -8px -4px -8px auto; padding: 0 4px; color: var(--ink-1); font: 600 13px/18px var(--font-ui); background: none; border: 0; cursor: pointer; }
+  .rm-wq-fold > svg { width: 16px; height: 16px; color: var(--ink-2); transition: transform var(--t-quick) var(--ease-out); }
+  .rm-wq-fold[aria-expanded="true"] > svg { transform: rotate(90deg); }
+  /* The rank's ▸ beside the (i): the parts, the next rank and the ladder, folded. */
+  .rm-rp-fold { flex: none; width: 40px; height: 40px; color: var(--ink-2); }
+  .rm-rp-fold svg { width: 16px; height: 16px; transition: transform var(--t-quick) var(--ease-out); }
+  .rm-rp-fold[aria-expanded="true"] svg { transform: rotate(90deg); }
+  .rm-rp-more { grid-column: 1 / -1; min-width: 0; }
+  /* ===== /Next action ===== */
 }

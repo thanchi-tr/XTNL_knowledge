@@ -4843,7 +4843,22 @@ async function main() {
         mr3.measureSeenKeyOf({ roadmapId: "rm1", basis: "plan/2026-10-04:1" }, { measureKey: "M", target: 38 })?.what !== "measure:M@42" &&
         mr3.measureSeenKeyOf(null, { measureKey: "M", target: 42 }) === null
     );
-    check("R3 measures: the compact row ('Position Sizing, Risk Management · L6+', '+5/21 since start') opens its full lines in the ▸", vis("active").includes("Position Sizing, Risk Management · L6+") && vis("active").includes("+5/21 since start") && !vis("active").includes("holding 26 of 42") && page("active").includes("holding"));
+    // Re-pinned with the next-action layout (ui-motion.md §16): the measures sit in the Now card's "Measures" fold, closed
+    // until tapped; opened, the compact row reads as before and its full lines are still behind the row's own ▸.
+    const measFold = elOf(page("active"), 'id="measures"');
+    const measPanel = elOf(measFold, 'id="measures-p"');
+    const measOpened = wc3.visibleText(measPanel.replace(/^(<div[^>]*?) hidden=""/, "$1"), { width: 344 });
+    check(
+      "R3 measures (§16): one closed 'Measures' fold on the Now card; opened, the compact row ('Position Sizing, Risk Management · L6+', '+5/21 since start') shows and opens its full lines in the ▸",
+      /<button type="button" class="rm-fold-b" aria-expanded="false" aria-controls="measures-p">/.test(measFold) &&
+        /class="rm-fold-p" hidden=""/.test(measPanel) &&
+        !vis("active").includes("+5/21 since start") &&
+        measOpened.includes("Position Sizing, Risk Management · L6+") &&
+        measOpened.includes("+5/21 since start") &&
+        !measOpened.includes("holding 26 of 42") &&
+        page("active").includes("holding"),
+      measOpened.slice(0, 160)
+    );
     check("R3 past weeks: one ▸ over a static five-week strip (aria-hidden), every week's line inside", /<details class="rm-past-d"><summary class="rm-past-s"><span class="t-eyebrow">Past week quests<\/span><span class="rm-pw" aria-hidden="true">/.test(page("active")) && !vis("active").includes("Week of 18 Jan"));
     check("R3 Toward (C2-m5): '39 sessions «context only»' with no ≈ on the tick count; the judge chip opens the full line", /39 sessions/.test(n3(vis("active"))) && !wc3.visibleText(blockOf("active", "toward"), { width: 344 }).includes("≈") && vis("active").includes(copy.SHORT_JUDGE) && !vis("active").includes("is yours to judge."));
   }
@@ -6604,8 +6619,9 @@ async function main() {
       const onPage = occ9(pageA, HF);
       const onSheet = occ9(sheetA, HF);
       check(
-        "pv.named (the live fix): the Now card's title, a step's and the checkpoint's labels, and the Start sheet's checkpoint-bar refusal mark a Gemini-named Domain; unmarked in the library, none",
-        onPage.length === 3 && onPage.every((x) => x.marked) && marks9(pageA) === marks9(plainA) + 3 && occ9(plainA, HF).every((x) => !x.marked) && onSheet.length === 1 && onSheet[0].marked,
+        "pv.named (the live fix): the Now card's title (and the hero's, §16), a step's and the checkpoint's labels, and the Start sheet's checkpoint-bar refusal mark a Gemini-named Domain; unmarked in the library, none",
+        // §16: the next-action hero draws the Now card's title too (a 4th occurrence, marked the same way).
+        onPage.length === 4 && onPage.every((x) => x.marked) && marks9(pageA) === marks9(plainA) + 4 && occ9(plainA, HF).every((x) => !x.marked) && onSheet.length === 1 && onSheet[0].marked,
         JSON.stringify({ onPage, onSheet, marks: [marks9(pageA), marks9(plainA)] })
       );
     }
@@ -6874,6 +6890,215 @@ async function main() {
         !topicNameMatchesOf("Bayesian-Methods", "Bayesian Methods")
     );
   }
+
+  // ===== The next action (ui-motion.md §16): nextActionOf's priority, the hero, the folds =====
+  // The plan page leads with one primary action and ≤ 2 chips, picked by a pure priority over the view; what the page
+  // folded (the rank's parts, the week quests' rows, the measures, the milestone's items) stays in the markup, one tap away.
+  {
+    console.log("— the next action (§16) —");
+    const na = await import("../src/components/roadmap/next-action");
+    const wcN = (await import("./word-count.mjs")) as typeof import("./word-count.mjs");
+    const nN = (t: string) => t.replace(/\s+/g, " ").trim();
+    const vN = (s: FixtureState) => roadmapFixture(s).view!;
+    const pageN = (s: FixtureState) => renders.get(s)?.page ?? "";
+    /** The outer markup of the first element whose opening tag carries `attr` (balanced by its tag name). */
+    const elN = (html: string, attr: string): string => {
+      const at = html.indexOf(attr);
+      if (at < 0) return "";
+      const start = html.lastIndexOf("<", at);
+      const tag = /^<([a-zA-Z][\w-]*)/.exec(html.slice(start))?.[1] ?? "div";
+      const re = new RegExp(`<(/?)${tag}\\b[^>]*?(/?)>`, "g");
+      re.lastIndex = start;
+      let depth = 0;
+      for (let t = re.exec(html); t; t = re.exec(html)) {
+        if (t[1]) depth--;
+        else if (!t[2]) depth++;
+        if (depth === 0) return html.slice(start, re.lastIndex);
+      }
+      return html.slice(start);
+    };
+    const visN = (html: string) => nN(wcN.visibleText(html, { width: 344 }).replace(/\n/g, " "));
+    /** A hidden panel's words as they read once its button opens it (its own `hidden` dropped; nested folds stay closed). */
+    const openedN = (panel: string) => visN(panel.replace(/^(<[a-z]+[^>]*?) hidden=""/, "$1"));
+
+    // 1. nextActionOf: a golden per branch of the priority (ACTIVE: activities → re-plan draft → finish starting → mark done →
+    //    past due → Start → this week's ADD, REVIEW, PRACTICE, STEP, CHECKPOINT → a checkpoint with no score → Tasks).
+    const act = vN("active");
+    const cur = act.current!;
+    const asDone = (r: WeekQuestRow): WeekQuestRow => ({ ...r, done: true, figure: fig(r.count, r.figure.caption, r.kind === "RAISE" ? "MEASURED" : r.kind === "ADD" ? "RECORDED" : "SELF") });
+    const withRows = (base: RoadmapView, rows: WeekQuestRow[]): RoadmapView => ({ ...base, weekQuests: { ...base.weekQuests!, rows, done: rows.filter((r) => r.done).length, total: rows.length } });
+    const doneKinds = (base: RoadmapView, kinds: WeekQuestRow["kind"][]) => withRows(base, base.weekQuests!.rows.map((r) => (kinds.includes(r.kind) ? asDone(r) : r)));
+    const allDone = doneKinds(act, ["RAISE", "ADD", "PRACTICE", "STEP", "CHECKPOINT"]);
+    const raiseParts = withRows(
+      doneKinds(act, ["ADD"]),
+      doneKinds(act, ["ADD"]).weekQuests!.rows.map((r) =>
+        r.kind === "RAISE"
+          ? {
+              ...r,
+              parts: [
+                { domainId: "d-rm", name: "Risk Management" as never, count: 1, progress: 0, done: false },
+                { domainId: "d-ps", name: "Position Sizing" as never, count: 2, progress: 0, done: false },
+              ],
+            }
+          : r
+      )
+    );
+    const ckRowN: WeekQuestRow = { ord: 9, kind: "CHECKPOINT", label: "Checkpoint: Size historical trades by hand · log your score", count: 1, unit: "log", evidence: "SELF_REPORTED", figure: fig(0, "you log it · doesn't move your progress", "SELF"), done: false, dueLine: null, quotaLine: null, slipLine: null, seekTemplateId: null, place: null, href: null };
+    const shapeN = (x: ReturnType<typeof na.nextActionOf>) => JSON.stringify({ kind: x.primary.kind, label: x.primary.label, do: x.primary.do, chips: x.secondary.map((c) => `${c.kind}:${c.short}`) });
+    const want = (kind: string, label: string, d: unknown, chips: string[] = []) => JSON.stringify({ kind, label, do: d, chips });
+    const NEW = { kind: "href", href: "/you/roadmap/new" };
+    const GOLDEN: [string, RoadmapView, string][] = [
+      ["SET_AIM (no roadmap)", vN("empty"), want("SET_AIM", "Set an aim", NEW)],
+      ["SET_AIM (a plan made before revision 4: its own way on)", vN("legacy"), want("SET_AIM", "Start again at a depth", NEW)],
+      ["DRAFTING (a line, no button)", vN("running"), want("DRAFTING", "Drafting", { kind: "none" })],
+      ["CHECK_DRAFT (the review holds Accept)", vN("draft-v4"), want("CHECK_DRAFT", "Check the draft", { kind: "none" })],
+      ["NEW_AIM (done)", vN("done"), want("NEW_AIM", "Set a new aim", NEW)],
+      ["NEW_AIM (archived)", vN("archived"), want("NEW_AIM", "Set a new aim", NEW)],
+      ["ACTIVITIES (the plan waits on the answer)", vN("active-confirm"), want("ACTIVITIES", "Answer about activities", { kind: "reveal", target: "rm-activities" })],
+      ["ACTIVITIES before a re-plan draft", { ...vN("active-replan"), activityConfirm: vN("active-confirm").activityConfirm }, want("ACTIVITIES", "Answer about activities", { kind: "reveal", target: "rm-activities" }, ["ADD:Add 3", "REVIEW:Review 2"])],
+      ["REPLAN_DRAFT (accept or discard it)", vN("active-replan"), want("REPLAN_DRAFT", "Check the re-plan", { kind: "reveal", target: "replan" }, ["ADD:Add 3", "REVIEW:Review 2"])],
+      ["FINISH_START (Start didn't finish; nothing else before it runs)", { ...act, current: { ...cur, starting: true, goalId: null } }, want("FINISH_START", "Finish starting", { kind: "run", run: "finishStart" })],
+      ["MARK_DONE (the aim reached on its readings), the week's chips kept", { ...act, header: { ...act.header!, reachedDay: "2027-01-26" } }, want("MARK_DONE", "Mark the aim done", { kind: "sheet", sheet: "markDone" }, ["ADD:Add 3", "REVIEW:Review 2"])],
+      ["PAST_DUE (Reschedule; close it on Tasks beside it)", vN("past-due"), want("PAST_DUE", "Reschedule milestone 2", { kind: "sheet", sheet: "reschedule" }, ["CLOSE_ON_TASKS:Close it on Tasks"])],
+      ["CLOSE_ON_TASKS (past due, never started)", { ...vN("past-due"), current: { ...vN("past-due").current!, goalId: null } }, want("CLOSE_ON_TASKS", "Close it on Tasks", { kind: "href", href: "/today" })],
+      ["START (Start is live)", vN("start-refit"), want("START", "Start milestone 2", { kind: "sheet", sheet: "start" })],
+      ["START_LATER (Start not live: a line, never a disabled Start)", vN("accepted"), want("START_LATER", "Starting milestones arrives with the next update.", { kind: "none" })],
+      ["ADD (v1: the Domain the add flow preselects), Review and Practise as chips", act, want("ADD", "Add 3 cards to Risk Management", { kind: "href", href: "/add?field=f-tr&domain=d-rm" }, ["REVIEW:Review 2", "PRACTICE:Practise 2"])],
+      ["ADD (parts: the part with the most left)", vN("depth-realistic"), want("ADD", "Add 1 card to Inference", { kind: "href", href: "/add?field=f-st&domain=d-in" }, ["REVIEW:Review 4", "PRACTICE:Practise 1"])],
+      ["REVIEW (v1 over two Domains: no Domain named; the week quests' due days, never /review)", doneKinds(act, ["ADD"]), want("REVIEW", "Review 2 cards", { kind: "reveal", target: "week-quests" }, ["PRACTICE:Practise 2", "STEP:Tick 1"])],
+      ["REVIEW (parts: the part with the most left names its Domain)", raiseParts, want("REVIEW", "Review 2 cards in Position Sizing", { kind: "reveal", target: "week-quests" }, ["PRACTICE:Practise 2", "STEP:Tick 1"])],
+      ["PRACTICE (its task on Tasks), a step and the unlogged checkpoint as chips", doneKinds(act, ["ADD", "RAISE"]), want("PRACTICE", "Practise Backtest · 2 sessions", { kind: "href", href: "/today#t-t-bt" }, ["STEP:Tick 1", "CHECKPOINT:Log a score"])],
+      ["STEP (the step's own words, its task on Tasks)", doneKinds(act, ["ADD", "RAISE", "PRACTICE"]), want("STEP", "Set a maximum daily loss", { kind: "href", href: "/today#t-t-s2" }, ["CHECKPOINT:Log a score"])],
+      ["CHECKPOINT (the week's row: the sheet, said once)", withRows(act, [ckRowN]), want("CHECKPOINT", "Log a score", { kind: "sheet", sheet: "checkpoint" })],
+      ["CHECKPOINT (no score yet, nothing else open)", allDone, want("CHECKPOINT", "Log a score", { kind: "sheet", sheet: "checkpoint" })],
+      ["TASKS (nothing open this week)", { ...allDone, current: { ...cur, checkpointLog: { score: 8, outOf: 10, bar: 8, day: "2027-01-25" } } }, want("TASKS", "Open Tasks", { kind: "href", href: "/today" })],
+      ["REPLAN (an ACTIVE plan with no current milestone)", { ...act, current: null }, want("REPLAN", "Re-plan", { kind: "sheet", sheet: "replan" })],
+    ];
+    for (const [name, view, golden] of GOLDEN) check(`next action: ${name}`, shapeN(na.nextActionOf(view)) === golden, shapeN(na.nextActionOf(view)));
+    const allViews = [...FIXTURE_STATES.map((s) => roadmapFixture(s).view).filter((x): x is RoadmapView => x != null), ...GOLDEN.map((g) => g[1])];
+    const allActs = allViews.map((x) => na.nextActionOf(x));
+    const hrefs = allActs.flatMap((a) => [a.primary, ...a.secondary]).flatMap((a) => (a.do.kind === "href" ? [a.do.href] : []));
+    check("next action: no action links to /review (Review has no Domain filter: roadmap.md Names); a Review reveals the week quests' due days", hrefs.length > 20 && hrefs.every((h) => !h.startsWith("/review")) && allActs.flatMap((a) => [a.primary, ...a.secondary]).filter((a) => a.kind === "REVIEW").every((a) => a.do.kind === "reveal"));
+    check(
+      "next action: ≤ 2 chips, one per kind, never the primary's kind, only week-quest kinds (and Close it on Tasks)",
+      allActs.every((a) => a.secondary.length <= na.NEXT_SECONDARY_MAX && new Set(a.secondary.map((c) => c.kind)).size === a.secondary.length && a.secondary.every((c) => c.kind !== a.primary.kind && na.NEXT_CHIP_KINDS.has(c.kind))) && na.NEXT_SECONDARY_MAX === 2
+    );
+    check(
+      "next action: verbs first, figures as figures — 'Add 3', 'Review 2', 'Practise 2', 'Tick 1'; every add goes to /add with its Domain preselected",
+      allActs.flatMap((a) => [a.primary, ...a.secondary]).every((a) => (a.kind === "ADD" ? /^Add \d+$/.test(a.short) && /^Add \d+ cards? /.test(a.label) && a.do.kind === "href" && /^\/add\?(field=[\w-]+&)?domain=[\w-]+$/.test(a.do.href) : true) && (a.kind === "REVIEW" ? /^Review \d+$/.test(a.short) : true) && (a.kind === "PRACTICE" ? /^Practise \d+$/.test(a.short) && /^\/today/.test(a.do.kind === "href" ? a.do.href : "") : true))
+    );
+
+    // 2. The hero: the first block of every living plan, one primary (a line where nothing can be done yet) and ≤ 2 chips.
+    const living = FIXTURE_STATES.filter((s) => {
+      const x = roadmapFixture(s).view;
+      return x?.state === "ACTIVE" && x.header?.status === "ACTIVE" && !x.header.legacy && !x.legacy;
+    });
+    const heroBad: string[] = [];
+    for (const s of living) {
+      const html = pageN(s);
+      const hero = elN(html, 'data-wc-block="next-action"');
+      const a = na.nextActionOf(vN(s));
+      const go = (hero.match(/class="[^"]*rm-next-go[^"]*"/g) ?? []).length;
+      const line = (hero.match(/class="rm-next-line"/g) ?? []).length;
+      const chips = [...hero.matchAll(/<(?:a|button)[^>]*class="chip btn-chip rm-next-chip"[^>]*>([\s\S]*?)<\/(?:a|button)>/g)].map((m) => m[1]);
+      const goEl = elN(hero, "rm-next-go");
+      const problems = [
+        (html.match(/data-wc-block="next-action"/g) ?? []).length !== 1 && "not one hero",
+        !(html.indexOf('data-wc-block="next-action"') < html.indexOf('data-wc-block="aim-header"')) && "not above the Aim header",
+        a.primary.do.kind === "none" ? (go !== 0 || line !== 1) && "a line expected" : (go !== 1 || line !== 0) && `${go} primaries`,
+        a.primary.do.kind !== "none" && visN(goEl) !== a.primary.label && `primary reads "${visN(goEl)}"`,
+        / disabled=""/.test(goEl) && "a disabled primary",
+        chips.length !== a.secondary.length && `${chips.length} chips`,
+        chips.length > 2 && "over 2 chips",
+        chips.some((c, i) => visN(c) !== a.secondary[i]?.short || !c.includes(`<span class="sr-only">${a.secondary[i]?.label.replace(/'/g, "&#x27;")}</span>`)) && "a chip's words",
+      ].filter(Boolean);
+      if (problems.length) heroBad.push(`${s}: ${problems.join(", ")}`);
+    }
+    check("hero: every living plan opens with one hero above the Aim header — one primary that reads nextActionOf's label (a line, never a disabled button, when nothing can be done yet) and its ≤ 2 chips (compact words visible, the full action sr-only)", living.length > 20 && heroBad.length === 0, heroBad.slice(0, 4).join(" | "));
+    check("hero: no hero on a draft, a drafting, a done, an archived, a legacy or an empty roadmap (their own screens hold their one action)", (["draft-v4", "running", "done", "archived", "legacy", "legacy-draft", "empty"] as const).every((s) => !pageN(s).includes('data-wc-block="next-action"')));
+    const heroAct = elN(pageN("active"), 'data-wc-block="next-action"');
+    check(
+      "hero (active): 'Milestone 2 of 6', the title as a name, a static 23% ring (no motion class), [Add 3 cards to Risk Management] to /add with the Domain preselected, chips Review 2 and Practise 2",
+      visN(heroAct).startsWith("23% Milestone 2 of 6 Risk and position sizing Add 3 cards to Risk Management ") &&
+        [...heroAct.matchAll(/class="chip btn-chip rm-next-chip"[^>]*>([\s\S]*?)<\/(?:a|button)>/g)].map((m) => visN(m[1])).join(" · ") === "Review 2 · Practise 2" &&
+        /<p class="rm-next-t" data-wc="name">/.test(heroAct) &&
+        /class="rm-next-rv"[^>]*stroke-dasharray="23 100"/.test(heroAct) &&
+        !/data-play|data-seen|animation/.test(heroAct) &&
+        /href="\/add\?field=f-tr&amp;domain=d-rm"/.test(heroAct) &&
+        /href="#week-quests"[^>]*data-next="REVIEW"/.test(heroAct),
+      visN(heroAct)
+    );
+    const bodyHero = elN(pageN("body-practice"), 'data-wc-block="next-action"');
+    check(
+      "hero (D11, D12): a body practice named in the hero carries one static «Not medical advice · ask a professional» opening HEALTH_LINE; a Field plan's hero none",
+      (bodyHero.match(/data-hc="health"/g) ?? []).length === 1 && /<div class="rm-next-safe" data-safety="">/.test(bodyHero) && bodyHero.includes(copy.HEALTH_LINE) && !heroAct.includes('data-hc="health"'),
+      visN(bodyHero)
+    );
+    check("hero (accepted, Start not live): the line, no Start button anywhere on the page", visN(elN(pageN("accepted"), 'data-wc-block="next-action"')).includes(copy.NEXT_ACTION_WORDS.startLater) && !/>Start milestone 1</.test(pageN("accepted")));
+    const refitHero = elN(pageN("start-refit"), 'data-wc-block="next-action"');
+    check("hero (D25): a kept Gemini title keeps «Gemini · kept · not checked» beside it, a chip button opening the full words (one tap)", /data-hc="gemini-kept"/.test(refitHero) && refitHero.includes(copy.PROVENANCE_WORDS.KEPT_SUGGESTION.replace(/'/g, "&#x27;")) && visN(refitHero).includes(copy.SHORT_GEMINI_KEPT) && /aria-expanded="false"/.test(refitHero));
+    check("hero: Start opens the page's Start sheet, Re-plan its Re-plan sheet; Log a score, Mark done and Reschedule open their sheets from the hero; Finish starting runs finishStarting", (() => {
+      const src = code(read("src/components/roadmap/RoadmapView.tsx"));
+      return /if \(d\.sheet === "start"\) onStart\(\);/.test(src) && /else if \(d\.sheet === "replan"\) onReplan\(\);/.test(src) && /<CheckpointSheet open=\{sheet === "checkpoint"\}/.test(src) && /<MarkDoneSheet open=\{sheet === "markDone"\}/.test(src) && /<RescheduleSheet open=\{sheet === "reschedule"\}/.test(src) && /run\(\(x\) => x\.finishStarting\(m\.id!\)\)/.test(src) && /onStart=\{\(\) => setStart\(true\)\}/.test(src);
+    })());
+    const cssN = read("src/components/roadmap/roadmap.css");
+    check(
+      "hero and folds: 44 px targets (the primary 48, each chip 44, each fold row 44, the week quests' toggle 44 × 44), ink only, no keyframes",
+      /\.rm-next-go \{ min-height: 48px;/.test(cssN) && /\.rm-next-chip \{ min-height: 44px;/.test(cssN) && /\.rm-fold-b \{[^}]*min-height: 44px;/.test(cssN) && /\.rm-wq-fold \{[^}]*min-height: 44px; min-width: 44px;/.test(cssN) && /\.rm-rp-fold \{[^}]*width: 40px; height: 40px;/.test(cssN) && /\.rm-next-rv \{[^}]*stroke: var\(--ink-0\)/.test(cssN)
+    );
+
+    // 3. Folded, never deleted (one tap each): the rank's parts, the week quests' rows, the measures, the milestone's items.
+    const actHtml = pageN("active");
+    const ctl = (html: string, btnRe: RegExp) => {
+      const m = btnRe.exec(html);
+      const id = m ? /aria-controls="([^"]+)"/.exec(m[0])?.[1] : null;
+      return { btn: m?.[0] ?? "", panel: id ? elN(html, `id="${id}"`) : "" };
+    };
+    const rank = ctl(actHtml, /<button[^>]*class="icon-btn rm-rp-fold"[^>]*>/);
+    check(
+      "folds (rank): one ▸ beside the (i) — closed, named — holds the parts' mini-meters, 'Next · Journeyman · milestone 2' and 'Aim ranks on this plan'; the rank, the % and the meter stay",
+      /aria-expanded="false"/.test(rank.btn) && /aria-label="Rank and parts"/.test(rank.btn) && /class="rm-rp-more" hidden=""/.test(rank.panel) && rank.panel.includes('class="rm-rp-parts"') && openedN(rank.panel).includes("Next · Journeyman · milestone 2") && rank.panel.includes("Aim ranks on this plan") && !visN(actHtml).includes("Aim ranks on this plan") && visN(elN(actHtml, 'data-wc-block="aim-header"')).includes("41%"),
+      openedN(rank.panel).slice(0, 120)
+    );
+    const wqSec = elN(actHtml, 'id="week-quests"');
+    const wq = ctl(wqSec, /<button[^>]*class="rm-wq-fold"[^>]*>/);
+    check(
+      "folds (week quests): the heading keeps 'Week quests · until Sun «pays nothing»' and a 44 px toggle '1/5'; all 5 rows in the markup behind it, each with its own ▸; #now and #week-quests land open; the hero's Review opens it",
+      /aria-expanded="false"/.test(wq.btn) &&
+        /hidden=""/.test(wq.panel.slice(0, wq.panel.indexOf(">"))) &&
+        (wq.panel.match(/class="rm-quest-row rm-wq-r/g) ?? []).length === 5 &&
+        openedN(wq.panel).includes("Backtest · 3 sessions × 45 min") &&
+        visN(wqSec).includes("pays nothing") &&
+        visN(wqSec).includes("1/5") &&
+        /hash === "#now" \|\| hash === "#week-quests"/.test(code(read("src/components/roadmap/RoadmapView.tsx"))) &&
+        /onReveal=\{\(t\) => t === "week-quests" && setWeekToggle\(true\)\}/.test(code(read("src/components/roadmap/RoadmapView.tsx"))),
+      visN(wqSec)
+    );
+    const items = ctl(actHtml, /<button type="button" class="rm-fold-b" aria-expanded="false" aria-controls="in-milestone-p">/);
+    const itemsOpen = openedN(items.panel);
+    check(
+      "folds (items): 'In this milestone' with a glyph count per kind (spoken in words) holds Domains, Learn, What to practise, Steps and the checkpoint («context only», Log a score), Gemini's marks with their who-word; #checkpoint lands open",
+      items.btn.length > 0 &&
+        /class="rm-fold-p" hidden=""/.test(items.panel) &&
+        ["Domains", "Learn", "What to practise", "Steps", "Checkpoint", copy.SHORT_CONTEXT_ONLY, "Log a score", copy.SHORT_GEMINI_KEPT].every((w) => itemsOpen.includes(w)) &&
+        items.panel.includes('id="checkpoint"') &&
+        /<span class="sr-only">2 Domains, 3 topics, 2 practices, 3 steps, 1 checkpoint<\/span>/.test(elN(actHtml, 'id="in-milestone"')) &&
+        !visN(actHtml).includes("Correlated positions") &&
+        /hash === "#checkpoint" \|\| hash === "#in-milestone"/.test(code(read("src/components/roadmap/RoadmapView.tsx"))),
+      itemsOpen.slice(0, 200)
+    );
+    check(
+      "folds (honesty): the page keeps its honesty visible where pinned («context only» on Toward, «pays nothing», the pay line, «Aim not checked»), and every sr-only honesty string inside a fold is still in a panel on its card (RZ taps)",
+      ["context only", "pays nothing", "pays 6 × progress from 70%", copy.SHORT_AIM_UNCHECKED].every((w) => visN(actHtml).includes(w))
+    );
+
+    // 4. Word budgets (§16 row 16; rows 4–6 lowered to what this layout reads): the hero per branch, the top screen at 344.
+    r0Gate("words", WORD_BUDGET_ROWS.filter((r) => r.row === 16 || r.row === 4 || r.row === 5 || r.row === 6).map((r) => r.id), "§16");
+    const foldWords = (s: FixtureState) => [elN(pageN(s), 'data-wc-block="next-action"'), elN(pageN(s), 'data-wc-block="aim-header"')].reduce((n, b) => n + wcN.countAppWords(b, { width: 344 }).count, 0);
+    check("§16 top screen at 344: the hero and the Aim header read ≤ 20 app words on every living plan (the aim was ≤ 40)", living.every((s) => foldWords(s) <= 20), living.filter((s) => foldWords(s) > 20).map((s) => `${s}: ${foldWords(s)}`).join(", "));
+    console.log(`  · §16 note: the active page reads ${wcN.countAppWords(pageN("active"), { width: 344 }).count} app words at 344 (135 before), the top screen ${foldWords("active")}`);
+  }
+  // ===== /The next action =====
 
   console.log(`\nroadmap-ui-check: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exitCode = 1;

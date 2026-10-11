@@ -350,7 +350,7 @@ function roadmapWordBudgets() {
     ...real(1, ["/you/roadmap/new"]),
     ...real(8, ["/you/roadmap/new"], (r) => r.state === "intake-confirm"),
     ...real(8, ["/you/roadmap"], (r) => r.state !== "intake-confirm"),
-    ...[2, 3, 4, 5, 6, 7, 12].flatMap((n) => real(n, ["/you/roadmap"])),
+    ...[2, 3, 4, 5, 6, 7, 12, 16].flatMap((n) => real(n, ["/you/roadmap"])),
   ];
 }
 

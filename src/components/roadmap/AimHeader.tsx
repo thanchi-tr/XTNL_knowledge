@@ -267,6 +267,7 @@ export function AimHeader({
   names,
   horizon,
   writesOffChip = false,
+  foldRanks = false,
 }: {
   header: RoadmapHeader;
   rank: AimRankView | null;
@@ -287,6 +288,8 @@ export function AimHeader({
   horizon?: HorizonModel | null;
   /** The page's writes-off banner moves into the header as the «writes off» chip (the living page). */
   writesOffChip?: boolean;
+  /** The living page (ui-motion.md §16): the rank's parts, next rank and ladder fold behind one ▸ (ProficiencyBlock `fold`). */
+  foldRanks?: boolean;
 }) {
   const closed = header.status === "DONE" || header.status === "ARCHIVED";
   const estimate = Boolean(header.dateOrigin && header.dateOrigin.calibrating.length > 0);
@@ -331,7 +334,7 @@ export function AimHeader({
     ...(since?.rest ?? []),
   ];
   return (
-    <section ref={sectionRef} className={`card rm-aim ${className ?? ""}`} aria-label="Aim" data-wc-block={closed ? "roadmap-done-header" : "aim-header"}>
+    <section ref={sectionRef} className={`card rm-aim ${className ?? ""}`} aria-label="Aim" data-wc-block={closed ? "roadmap-done-header" : "aim-header"} data-wc-fold={foldRanks && !closed ? "" : undefined}>
       {horizon && (
         <div className="rm-band">
           <HorizonField
@@ -393,6 +396,7 @@ export function AimHeader({
           seenKey={header.id}
           seen={roadmapSeen}
           ladder={milestones ? { milestones, depth: header.depth ?? null, paragonMissing: paragonMissing ?? [] } : undefined}
+          fold={foldRanks}
         />
       )}
       {since && (

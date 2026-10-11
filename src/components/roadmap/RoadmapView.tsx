@@ -7,14 +7,18 @@
  *   RUNNING   DraftRunning (F8)        DRAFT   DraftReview (F9)
  *   ACTIVE    the living roadmap; DONE and ARCHIVED read-only history
  *
- * ACTIVE, at 344 px (one column, by CSS order): the Aim header (Aim rank and
- * Proficiency), then Now with this week's quests first, then Toward the aim,
+ * ACTIVE, at 344 px (one column, by CSS order): the next action first (ui-
+ * motion.md §16: the current milestone's place, title and measured ring, ONE
+ * primary action from nextActionOf and ≤ 2 chips), then the Aim header (Aim
+ * rank and Proficiency; the parts, next rank and ladder behind one ▸), then
+ * Now (its headline, pay and pace; this week's quests, the measures and the
+ * milestone's items each folded behind one 44 px row), then Toward the aim,
  * then Milestones, then one "How this is worked out" disclosure (Your
  * capacity, Is this realistic?, How this was drafted, How this is measured),
- * then practice aftercare and the footer actions. From 760 px of main: two
- * columns, the reference sections open on the right. No chart and no graph
- * canvas: the pace is text. Behind-pace signals live here and on the Aim
- * card only, never on Today. Nothing is red.
+ * then practice aftercare and the footer actions. From 760 px of main: the
+ * hero spans the page, then two columns, the reference sections open on the
+ * right. No chart and no graph canvas: the pace is text. Behind-pace signals
+ * live here and on the Aim card only, never on Today. Nothing is red.
  *
  * Counts read the plan's positions (RoadmapView.positions, else positionsOf
  * over the rows: a dropped milestone keeps its place), so "milestone 2 of 6"
@@ -48,8 +52,8 @@
  *   - Blocks are marked data-wc-block (WORD_BLOCK) for the word budgets.
  */
 import Link from "next/link";
-import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
-import { Glyph, KindGlyph } from "@/components/glyph/Glyph";
+import { useMemo, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
+import { Glyph, KindGlyph, Mark, type GlyphName } from "@/components/glyph/Glyph";
 import { Chips, HonestyChip } from "@/components/glyph/HonestyChip";
 import { CardKey, InfoTip } from "@/components/glyph/InfoTip";
 import { RankSeal } from "@/components/glyph/RankSeal";
@@ -59,7 +63,7 @@ import { HorizonMarks } from "@/components/fx/fallbacks";
 import { BAND } from "@/lib/shader/params";
 import { Button } from "@/components/ui/Button";
 import { Chip, ChipButton } from "@/components/ui/Chip";
-import { Icon } from "@/components/ui/Icon";
+import { Icon, type TrackSigil } from "@/components/ui/Icon";
 import { Meter } from "@/components/ui/Meter";
 import { Sheet } from "@/components/ui/Sheet";
 import { SectionHeader, Switch } from "@/components/ui/Tabs";
@@ -99,12 +103,15 @@ import {
   LEGACY_GEMINI_HIDDEN,
   LEGACY_MEASURE_LINE,
   MILESTONE_NOTE_LINE,
+  NOW_FOLD_WORDS,
   NONE_GEMINI_LINE,
   PARAGON_PARTS,
   PROVENANCE_WORDS,
   REDATE_NOTE,
   REDATE_WORD,
   SHORT_CONTEXT_ONLY,
+  SHORT_GEMINI,
+  SHORT_GEMINI_KEPT,
   SHORT_GIVES_RANK,
   SHORT_HEALTH,
   SHORT_KEEPS_RANK,
@@ -130,12 +137,13 @@ import {
   shortBar,
   shortBehindNewCards,
   shortDayOf,
+  shortMilestoneOf,
   shortNowOf,
   spanLabel,
   statedLine,
   topRankDepthLine,
 } from "./roadmap-copy";
-import { ROADMAP_NEW_HREF, TODAY_HREF, todayTaskHref } from "./roadmap-links";
+import { ROADMAP_NEW_HREF, todayTaskHref } from "./roadmap-links";
 import { GoalSwitcher } from "./GoalSwitcher";
 import {
   activityAsksOf,
@@ -200,6 +208,7 @@ import { RoadmapGlyph, GlyphButton as RoadmapGlyphButton } from "./RoadmapGlyph"
 import { PlanEditSheet, type PlanEditTarget } from "./PlanEditSheet";
 import type { PlanEditView } from "@/lib/roadmap-types";
 import { TitleClassChip } from "./ProvenanceChip";
+import { checkpointItemOf, nextActionOf, type NextAction, type NextActionKind, type NextActions } from "./next-action";
 import { DateBlock } from "./DateBlock";
 import { GapPanel, type LiveGates } from "./GapPanel";
 // ── Revision 5, lane 9: a TOPICS plan's map card and chain nodes, [Break into topics] (only while TOPIC_PLANS_LIVE) ──
@@ -394,15 +403,33 @@ function bodyPlanOf(view: RoadmapView): boolean {
   return a?.kind === "TRACK" && a.track === "BODY";
 }
 
-function NowSection({ view, current, onStartOpen, seen }:{ view: RoadmapView; current: CurrentMilestoneView; onStartOpen: () => void; seen?: SeenBases | null }) {
+function NowSection({
+  view,
+  current,
+  seen,
+  weekOpen,
+  onWeekToggle,
+}: {
+  view: RoadmapView;
+  current: CurrentMilestoneView;
+  seen?: SeenBases | null;
+  /** The week quests' fold (the hero's Review opens it; a link to #now or #week-quests lands open). */
+  weekOpen: boolean;
+  onWeekToggle: () => void;
+}) {
   const m = current.milestone;
+  // The card's other folds (§16): closed until tapped, or open when a link lands on what they hold (#checkpoint, #measures).
+  const hash = useHash();
+  const [measuresOpen, setMeasuresOpen] = useState<boolean | null>(null);
+  const [itemsOpen, setItemsOpen] = useState<boolean | null>(null);
+  const measuresShown = measuresOpen ?? hash === "#measures";
+  const itemsShown = itemsOpen ?? (hash === "#checkpoint" || hash === "#in-milestone");
   const today = view.today;
   const index = useMemo(() => domainIndexOf(view), [view]);
   // The live fix (§22.11): a kept Gemini-named Domain's name in a step's words keeps pv.named (the title and the ItemRows read the editor's library).
   const namedMarks = useMemo(() => libraryMarksOf(view.library), [view.library]);
   const [basis, setBasis] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
-  const [resched, setResched] = useState(false);
   const { run, pending, error } = useRoadmapAction();
   const rows = view.milestones;
   // Positions, as the Aim card, Today's chip and Toward the aim count them (a dropped milestone keeps its place).
@@ -448,6 +475,19 @@ function NowSection({ view, current, onStartOpen, seen }:{ view: RoadmapView; cu
   const statedFull = statedLine(current.stated, current.zeroReason, current.paidOn, today);
 
   const items = (kind: ItemDraft["kind"]) => m.items.filter((it) => it.kind === kind && it.decision !== "REMOVED").sort((a, b) => a.ord - b.ord);
+  // The "In this milestone" fold's summary: a glyph and a figure per kind it holds, spoken in words (D26).
+  const itemCounts = (
+    [
+      ["DOMAIN", "quest.add", "Domain"],
+      ["TOPIC", "quest.add", "topic"],
+      ["PRACTICE", "quest.practice", "practice"],
+      ["STEP", "quest.step", "step"],
+      ["CHECKPOINT", "quest.checkpoint", "checkpoint"],
+    ] as const
+  ).flatMap(([k, glyph, w]) => {
+    const n = items(k).length;
+    return n > 0 ? [{ k, n, glyph, words: `${n} ${w}${n === 1 ? "" : "s"}` }] : [];
+  });
   // The plan's own track sigil (a Practice row's quest glyph, as the card's PracticeRows draw it; §4.4).
   const nowTrack = trackSigilOf(nowScope);
   // D12: one «Not medical advice · ask a professional» on the Now card of a body plan (or one with health rows), unless a HEALTH flag
@@ -538,12 +578,7 @@ function NowSection({ view, current, onStartOpen, seen }:{ view: RoadmapView; cu
               No week quests this week. The goal on Today is Carried, never owed.
             </p>
             {view.header?.depth != null && <p className="t-meta">{CLOSE_SHORT_PARAGON_LINE}</p>}
-            <div className="rm-acts">
-              {current.goalId && <ChipButton onClick={() => setResched(true)}>Reschedule Milestone {m.ord}</ChipButton>}
-              <Link className="chip btn-chip" href={TODAY_HREF}>
-                Close it on Today
-              </Link>
-            </div>
+            {/* Reschedule and "Close it on Tasks" are the hero's primary and chip (§16): said once, at the top. */}
             <PastWeekQuests weeks={view.pastWeeks} today={today} />
           </div>
         )}
@@ -595,6 +630,15 @@ function NowSection({ view, current, onStartOpen, seen }:{ view: RoadmapView; cu
           </div>
         )}
 
+        {/* Start is the hero's primary action (or its "arrives with the next update" line); the card keeps the pay line. */}
+        {!started && !current.starting && !current.pastDue && current.stated != null && (
+          <div className="rm-ms-sec">
+            <p className="rm-head-pay" style={{ marginTop: 0 }}>
+              {pays ? <PaysLine text={statedFull} /> : <HonestyChip kind="pays-nothing-ms" label={SHORT_PAYS_NOTHING} full={statedFull} />}
+            </p>
+          </div>
+        )}
+
         {!current.pastDue && view.weekQuests && started && (
           <>
             <WeekQuests
@@ -607,18 +651,37 @@ function NowSection({ view, current, onStartOpen, seen }:{ view: RoadmapView; cu
               bases={seen}
               track={nowTrack}
               health={healthSaid ? false : undefined}
+              fold={{ open: weekOpen, onToggle: onWeekToggle }}
             />
-            <div className="rm-ms-sec" style={{ borderTop: 0, paddingTop: 0 }}>
+            <div className="rm-ms-sec" style={{ borderTop: 0, paddingTop: 0 }} hidden={!weekOpen || undefined}>
               <PastWeekQuests weeks={view.pastWeeks} today={today} />
             </div>
             <QuestBasisSheet open={basis} onClose={() => setBasis(false)} view={view.weekQuests} today={today} />
           </>
         )}
 
-        {current.measures.length > 0 &&
-          sec(
-            "Measures",
-            (() => {
+        {practiceOnly && (
+          <div className="rm-ms-sec">
+            <p className="rm-avd-p rm-avd-ms">{practiceOnly}</p>
+          </div>
+        )}
+
+        {current.measures.length > 0 && (
+          <NowFold
+            id="measures"
+            title={NOW_FOLD_WORDS.measures}
+            summary={
+              <>
+                <span className="num" aria-hidden="true">
+                  {current.measures.filter((x) => x.kind !== "CHECKPOINT").length}
+                </span>
+                <span className="sr-only">{`${current.measures.filter((x) => x.kind !== "CHECKPOINT").length} measures`}</span>
+              </>
+            }
+            open={measuresShown}
+            onToggle={() => setMeasuresOpen(!measuresShown)}
+          >
+            {(() => {
               const items = current.measures
                 .filter((x) => x.kind !== "CHECKPOINT")
                 .map((x) => {
@@ -649,9 +712,30 @@ function NowSection({ view, current, onStartOpen, seen }:{ view: RoadmapView; cu
               // Many measures: a mosaic and one line (the slowest marked as where to look), every row one tap away.
               if (items.length >= MOSAIC_FROM) return <MeasureMosaic items={items} label="This milestone's measures" focusKey={slowest} />;
               return items.map((it) => it.full);
-            })()
-          )}
+            })()}
+          </NowFold>
+        )}
 
+        {itemCounts.length > 0 && (
+          <NowFold
+            id="in-milestone"
+            title={NOW_FOLD_WORDS.items}
+            summary={
+              <>
+                <span className="rm-fold-g" aria-hidden="true">
+                  {itemCounts.map((c) => (
+                    <span key={c.k} className="rm-fold-c">
+                      {c.k === "DOMAIN" ? <Mark glyph="s-know" size={14} /> : <Glyph name={c.glyph} size={14} inherit track={c.k === "PRACTICE" ? nowTrack : undefined} />}
+                      <span className="num">{c.n}</span>
+                    </span>
+                  ))}
+                </span>
+                <span className="sr-only">{itemCounts.map((c) => c.words).join(", ")}</span>
+              </>
+            }
+            open={itemsShown}
+            onToggle={() => setItemsOpen(!itemsShown)}
+          >
         {items("DOMAIN").length > 0 &&
           sec(
             "Domains",
@@ -673,11 +757,10 @@ function NowSection({ view, current, onStartOpen, seen }:{ view: RoadmapView; cu
             })
           )}
 
-        {(items("PRACTICE").length > 0 || practiceOnly) &&
+        {items("PRACTICE").length > 0 &&
           sec(
             "What to practise",
             <>
-              {practiceOnly && <p className="rm-avd-p rm-avd-ms">{practiceOnly}</p>}
               {items("PRACTICE").map((it) => (
                 <PracticeRow
                   key={it.id ?? it.lineageId}
@@ -768,38 +851,20 @@ function NowSection({ view, current, onStartOpen, seen }:{ view: RoadmapView; cu
                 </div>
               )}
             </ItemRow>
-            <CheckpointSheet open={logOpen} onClose={() => setLogOpen(false)} item={checkpoint} />
           </div>
         )}
-
-        {!started && !current.starting && !current.pastDue && (
-          <div className="rm-ms-sec">
-            {current.stated != null && (
-              <p className="rm-head-pay" style={{ marginTop: 0 }}>
-                {pays ? <PaysLine text={statedFull} /> : <HonestyChip kind="pays-nothing-ms" label={SHORT_PAYS_NOTHING} full={statedFull} />}
-              </p>
-            )}
-            {view.goalsLive ? (
-              <Button variant="primary" block style={{ marginTop: 12 }} onClick={onStartOpen}>
-                Start milestone {m.ord}
-              </Button>
-            ) : (
-              <p className="t-meta rm-ink1" style={{ marginTop: 8 }}>
-                Starting milestones arrives with the next update.
-              </p>
-            )}
-          </div>
+          </NowFold>
         )}
+        {/* Outside the fold, so the hero's Log a score and the week quest's open it whatever the fold shows. */}
+        {checkpoint && <CheckpointSheet open={logOpen} onClose={() => setLogOpen(false)} item={checkpoint} />}
 
         {current.starting && (
           <div className="rm-ms-sec">
             <p className="t-body" style={{ margin: 0 }}>
               Starting milestone {m.ord} didn&apos;t finish.
             </p>
+            {/* "Finish starting" is the hero's primary action; the way back stays here. */}
             <div className="rm-acts">
-              <Button variant="primary" disabled={pending} onClick={() => m.id && run((a) => a.finishStarting(m.id!))}>
-                Finish starting
-              </Button>
               <Button variant="quiet" disabled={pending} onClick={() => m.id && run((a) => a.returnStarting(m.id!))}>
                 Return it to planned
               </Button>
@@ -808,8 +873,222 @@ function NowSection({ view, current, onStartOpen, seen }:{ view: RoadmapView; cu
           </div>
         )}
       </section>
-      {current.goalId && <RescheduleSheet open={resched} onClose={() => setResched(false)} goalId={current.goalId} ord={m.ord} today={today} />}
     </div>
+  );
+}
+
+// ── The next action (the hero above the plan; ui-motion.md §16) ─────────────
+
+/** Each action kind's glyph (the glyph system: the quest shapes for week quests, the route for the plan's own steps). */
+const NEXT_GLYPH: Readonly<Record<NextActionKind, GlyphName | null>> = {
+  SET_AIM: "route",
+  DRAFTING: null,
+  CHECK_DRAFT: null,
+  NEW_AIM: "route",
+  ACTIVITIES: "safe.ask",
+  REPLAN_DRAFT: "route",
+  FINISH_START: "route",
+  MARK_DONE: "m.seal",
+  PAST_DUE: "t.cal",
+  CLOSE_ON_TASKS: null,
+  START: "route",
+  START_LATER: null,
+  ADD: "quest.add",
+  REVIEW: "quest.bring",
+  PRACTICE: "quest.practice",
+  STEP: "quest.step",
+  CHECKPOINT: "quest.checkpoint",
+  TASKS: null,
+  REPLAN: "route",
+};
+
+/** The action's glyph (aria-hidden; its words say it): a catalogue glyph, or the kit's Tasks icon. */
+function NextGlyph({ a, size = 20, track }: { a: NextAction; size?: number; track?: TrackSigil }) {
+  const g = NEXT_GLYPH[a.kind];
+  if (g) return <Glyph name={g} size={size} inherit track={a.kind === "PRACTICE" ? track : undefined} />;
+  return a.kind === "CLOSE_ON_TASKS" || a.kind === "TASKS" ? <Icon name="today" size={size} aria-hidden="true" /> : null;
+}
+
+/** An action's words with its Domain or practice name marked as a name (§3.1); a step's words stay the plan's. */
+function NextLabel({ a }: { a: NextAction }) {
+  const named = a.name && (a.kind === "ADD" || a.kind === "REVIEW" || a.kind === "PRACTICE") ? a.label.indexOf(a.name) : -1;
+  if (named < 0 || !a.name) return <span className="rm-next-l">{a.label}</span>;
+  return (
+    <span className="rm-next-l">
+      {a.label.slice(0, named)}
+      <span data-wc="name">{a.name}</span>
+      {a.label.slice(named + a.name.length)}
+    </span>
+  );
+}
+
+/** The current milestone's measured % as a static ring (the rail's here-ring geometry; no motion, ink only). */
+function NextRing({ pct }: { pct: number }) {
+  const p = Math.max(0, Math.min(100, pct));
+  return (
+    <span className="rm-next-ring" aria-hidden="true">
+      <svg viewBox="0 0 48 48" width="48" height="48" focusable="false">
+        <circle className="rm-next-rt" cx="24" cy="24" r="20" pathLength={100} />
+        {p > 0 && <circle className="rm-next-rv" cx="24" cy="24" r="20" pathLength={100} strokeDasharray={`${p} 100`} transform="rotate(-90 24 24)" />}
+      </svg>
+      <span className="rm-next-rp num">{p}%</span>
+    </span>
+  );
+}
+
+/**
+ * The hero (ui-motion.md §16): the current milestone's place, title and measured ring, then ONE primary action and up
+ * to two chips, all from nextActionOf(view). Verbs first, figures as figures; a chip's compact words are aria-hidden
+ * with the full action sr-only (D26). A line, never a disabled button, where nothing can be done yet. The sheets the
+ * actions open are the page's own (Start, Re-plan) or drawn here (Log a score, Mark done, Reschedule).
+ */
+function NextHero({
+  view,
+  actions,
+  onStart,
+  onReplan,
+  onReveal,
+}: {
+  view: RoadmapView;
+  actions: NextActions;
+  onStart: () => void;
+  onReplan: () => void;
+  onReveal: (target: "week-quests" | "replan" | "rm-activities") => void;
+}) {
+  const header = view.header!;
+  const current = view.current as CurrentMilestoneView | null;
+  const m = current?.milestone ?? null;
+  const [sheet, setSheet] = useState<null | "checkpoint" | "markDone" | "reschedule">(null);
+  const { run, pending, error } = useRoadmapAction();
+  const checkpoint = current ? checkpointItemOf(current) : null;
+  const started = Boolean(current?.goalId);
+  const pct = started && current?.headline ? goalPercent(Number(current.headline.value)) : null;
+  const titleCls = m ? provenanceOf(m.titleOrigin, m.titleDecision) : null;
+  const track = trackSigilOf(editorScopeOf(view, m ? [m] : []));
+  const tap = (a: NextAction) => {
+    const d = a.do;
+    if (d.kind === "sheet") {
+      if (d.sheet === "start") onStart();
+      else if (d.sheet === "replan") onReplan();
+      else setSheet(d.sheet);
+    } else if (d.kind === "run" && m?.id) run((x) => x.finishStarting(m.id!));
+  };
+  const { primary, secondary } = actions;
+  const P = primary.do;
+  // D12: a body practice named here carries the card's one «Not medical advice · ask a professional» (a safety mark, static).
+  const health = [primary, ...secondary].some((a) => a.kind === "PRACTICE") && (bodyPlanOf(view) || Boolean(view.weekQuests?.rows.some(rowHealthOf)));
+  const inner = (
+    <>
+      <NextGlyph a={primary} track={track} />
+      <NextLabel a={primary} />
+    </>
+  );
+  return (
+    <section className="card rm-next" id="next" aria-label="Next action" data-wc-block="next-action" data-wc-fold="">
+      {m && (
+        <div className="rm-next-top">
+          {pct != null ? <NextRing pct={pct} /> : <span className={`rm-ms-n${started ? " rm-ms-n-cur" : ""} rm-next-n`}>{m.ord}</span>}
+          <div className="rm-next-tt">
+            <p className="rm-next-k">{shortMilestoneOf(m.ord, positionsOf(view) || m.ord)}</p>
+            <p className="rm-next-t" data-wc="name">
+              <MilestoneTitleText milestone={m} />
+            </p>
+            {/* Gemini's words keep their who-word on the title (D25), the full words one tap away on the chip (D13). */}
+            {(titleCls === "DRAFT" || titleCls === "KEPT_SUGGESTION") && (
+              <HonestyChip kind={titleCls === "DRAFT" ? "gemini" : "gemini-kept"} label={titleCls === "DRAFT" ? SHORT_GEMINI : SHORT_GEMINI_KEPT} full={PROVENANCE_WORDS[titleCls]} className="rm-next-pv" />
+            )}
+            {/* The ring's figure in words; its evidence (tested, ticks) is the Now card's headline and Key. */}
+            {pct != null && <span className="sr-only">{`Milestone ${m.ord}: ${pct}%`}</span>}
+          </div>
+        </div>
+      )}
+      {P.kind === "none" ? (
+        <p className="rm-next-line">{primary.label}</p>
+      ) : P.kind === "href" ? (
+        <Button variant="primary" size="lg" block href={P.href} className="rm-next-go" data-next={primary.kind}>
+          {inner}
+        </Button>
+      ) : P.kind === "reveal" ? (
+        <a className="btn btn-primary lg btn-block rm-next-go" href={`#${P.target}`} data-next={primary.kind} onClick={() => onReveal(P.target)}>
+          {inner}
+        </a>
+      ) : (
+        <Button variant="primary" size="lg" block disabled={pending} className="rm-next-go" data-next={primary.kind} onClick={() => tap(primary)}>
+          {inner}
+        </Button>
+      )}
+      {secondary.length > 0 && (
+        <div className="rm-next-more">
+          {secondary.map((a) => {
+            const body = (
+              <>
+                <NextGlyph a={a} size={16} track={track} />
+                <span aria-hidden="true">{a.short}</span>
+                <span className="sr-only">{a.label}</span>
+              </>
+            );
+            const d = a.do;
+            if (d.kind === "href")
+              return (
+                <Link key={a.kind} className="chip btn-chip rm-next-chip" href={d.href} data-next={a.kind}>
+                  {body}
+                </Link>
+              );
+            if (d.kind === "reveal")
+              return (
+                <a key={a.kind} className="chip btn-chip rm-next-chip" href={`#${d.target}`} data-next={a.kind} onClick={() => onReveal(d.target)}>
+                  {body}
+                </a>
+              );
+            return (
+              <button key={a.kind} type="button" className="chip btn-chip rm-next-chip" data-next={a.kind} onClick={() => tap(a)}>
+                {body}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {health && (
+        <div className="rm-next-safe" data-safety="">
+          <HonestyChip kind="health" label={SHORT_HEALTH} full={HEALTH_LINE} wrap />
+        </div>
+      )}
+      {error && <ActionError>{error}</ActionError>}
+      {checkpoint && <CheckpointSheet open={sheet === "checkpoint"} onClose={() => setSheet(null)} item={checkpoint} />}
+      {header.status === "ACTIVE" && <MarkDoneSheet open={sheet === "markDone"} onClose={() => setSheet(null)} roadmapId={header.id} reached={Boolean(header.reachedDay)} />}
+      {current?.goalId && m && <RescheduleSheet open={sheet === "reschedule"} onClose={() => setSheet(null)} goalId={current.goalId} ord={m.ord} today={view.today} />}
+    </section>
+  );
+}
+
+/**
+ * A fold of the Now card (ui-motion.md §16): its title and a glyph summary on one 44 px row, the rows behind it in the
+ * markup (hidden until opened), so nothing is deleted and everything is one tap away.
+ */
+function NowFold({ id, title, summary, open, onToggle, children }: { id: string; title: string; summary?: ReactNode; open: boolean; onToggle: () => void; children: ReactNode }) {
+  return (
+    <div className="rm-ms-sec rm-fold" id={id} data-open={open ? "1" : undefined}>
+      <button type="button" className="rm-fold-b" aria-expanded={open} aria-controls={`${id}-p`} onClick={onToggle}>
+        <span className="t-eyebrow">{title}</span>
+        {summary != null && <span className="rm-fold-s">{summary}</span>}
+        <Icon name="chev" />
+      </button>
+      <div id={`${id}-p`} className="rm-fold-p" hidden={!open || undefined}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** The location's hash as an external store (a fold opens when a link lands on what it holds); "" on the server. */
+function useHash(): string {
+  return useSyncExternalStore(
+    (cb) => {
+      window.addEventListener("hashchange", cb);
+      return () => window.removeEventListener("hashchange", cb);
+    },
+    () => window.location.hash,
+    () => ""
   );
 }
 
@@ -1451,7 +1730,12 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
   const goalId = current?.goalId ?? null;
   const [startSeen, setStartSeen] = useState<{ goalId: string | null; tick: number }>({ goalId, tick: 0 });
   if (startSeen.goalId !== goalId) setStartSeen({ goalId, tick: !startSeen.goalId && goalId ? startSeen.tick + 1 : startSeen.tick });
-  const body = (
+  // The next action (§16): one primary and ≤ 2 chips, from the view alone; the week quests' fold opens from its Review.
+  const actions = useMemo(() => nextActionOf(view), [view]);
+  const hash = useHash();
+  const [weekToggle, setWeekToggle] = useState<boolean | null>(null);
+  const weekOpen = weekToggle ?? (hash === "#now" || hash === "#week-quests");
+  const cols = (
     <div className="rm-cols" data-wc-block={closed ? "roadmap-done" : undefined}>
       <div className="rm-col">
         <AimHeader
@@ -1470,6 +1754,7 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
           names={names}
           horizon={horizon}
           writesOffChip
+          foldRanks
         />
         {!closed && <Triggers view={view} current={current} onReplan={() => setReplan(true)} />}
         {!closed && asks && (
@@ -1482,7 +1767,7 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
             <DraftReview view={view} mode="replan" gates={gates} />
           </div>
         )}
-        {!closed && current && <NowSection view={view} current={current} onStartOpen={() => setStart(true)} seen={seen} />}
+        {!closed && current && <NowSection view={view} current={current} seen={seen} weekOpen={weekOpen} onWeekToggle={() => setWeekToggle(!weekOpen)} />}
         {view.topicMap && topicPlansOn(gates) && (
           <div className="rm-o4">
             <TopicMap map={view.topicMap} mode="plan" gates={gates} seenBasis={seen?.plan ?? null} today={view.today} />
@@ -1534,6 +1819,15 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
         {!closed && <Reference view={view} current={current} gates={gates} />}
         {view.aftercare.length > 0 && <Aftercare view={view} />}
       </div>
+    </div>
+  );
+  // ACTIVE: the hero sits above everything else on the plan (both columns from 760 px); a closed plan keeps its header first.
+  const body = closed ? (
+    cols
+  ) : (
+    <div className="rm-stack rm-living">
+      <NextHero view={view} actions={actions} onStart={() => setStart(true)} onReplan={() => setReplan(true)} onReveal={(t) => t === "week-quests" && setWeekToggle(true)} />
+      {cols}
     </div>
   );
   return (
