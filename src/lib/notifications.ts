@@ -17,6 +17,8 @@ import { isDutyLaunched, weekReviewKey } from "./duty-economy";
 import { dutyNoticesOf, owedFromLine, reviewedWeek, type OwedTotals } from "./rituals";
 import { workReminderNotices } from "./callbacks";
 import { loadWorkReminderRows } from "./callbacks-server";
+import { MOMENTUM_NUDGE, chestRowKey, momentumLive } from "./momentum";
+import { emptyDayFacts, loadNudgeFacts, prismaMomentumStore, questDone, questRowsOf, type MomentumStore } from "./momentum-server";
 
 /**
  * From this local hour an open compulsory item turns from a note into a
@@ -138,13 +140,89 @@ async function loadWorkReminders(userId: string, now: Date): Promise<Notice[]> {
   }
 }
 
+/** The bell's at-risk notice: the momentum run's id (Today's card is '#momentum'). */
+export const MOMENTUM_NOTICE_ID = "momentum";
+/** The bell's chest-ready notice. */
+export const MOMENTUM_CHEST_NOTICE_ID = "momentum-chest";
+
+const freezeWords = (n: number) => `${n} ${n === 1 ? "freeze" : "freezes"}`;
+
+/**
+ * The run's facts for the bell (momentum-server loadNudgeFacts) with the push's own gates taken
+ * out: the bell ignores the evening push's toggle (UserPrefs.nudge) and its claim ('nudge:<day>'),
+ * so the notice stays from 18:00 until the day turns, push or no push. It never writes (no quest
+ * set is frozen from the bell: an unfrozen day is previewed).
+ */
+const bellStore: MomentumStore = {
+  ...prismaMomentumStore,
+  events: (userId, q) => (q.sources.includes("NUDGE") ? Promise.resolve([]) : prismaMomentumStore.events(userId, q)),
+  prefs: async () => null,
+};
+
+/**
+ * Momentum's bell (momentum.md §E.7, §F): from 18:00 until the life day turns, 'Momentum at risk'
+ * while the run is 2+ and nothing that keeps it is done today, naming the run, the freezes banked
+ * and the first undone quest; and, any time, 'Chest ready' while today's three are done and the
+ * chest is shut. Nothing before MOMENTUM_LAUNCH_DAY (no read at all). A failed read is a missing
+ * line, never a missing bell.
+ */
+async function loadMomentumNotices(userId: string, now: Date): Promise<Notice[]> {
+  const day = todayKey(now);
+  if (!momentumLive(day)) return [];
+  const out: Notice[] = [];
+  const hour = localHour(now);
+  if (hour >= MOMENTUM_NUDGE.BELL_FROM_HOUR || hour < DAY_START_HOUR) {
+    try {
+      const f = await loadNudgeFacts(userId, now, { store: bellStore, write: false });
+      if (f.live && f.run >= MOMENTUM_NUDGE.MIN_RUN && !f.actionDone) {
+        const keeps = f.quest ? `${f.quest.title} keeps it (or any task, a 10-minute walk or a checkpoint)` : "any task, a 10-minute walk or a checkpoint keeps it";
+        out.push({
+          id: MOMENTUM_NOTICE_ID,
+          group: "Due",
+          tone: "warn",
+          title: "Momentum at risk",
+          detail: `${f.run}-day run · ${freezeWords(f.bank)} banked · ${keeps} until ${DAY_EDGE}.`,
+          href: "/today#momentum",
+          action: "Keep it",
+        });
+      }
+    } catch {
+      // No line.
+    }
+  }
+  try {
+    const [setRows, chestRows] = await Promise.all([
+      prismaMomentumStore.events(userId, { sources: ["QUEST_SET"], from: day, to: day }),
+      prismaMomentumStore.events(userId, { sources: ["CHEST"], from: day, to: day }),
+    ]);
+    const { inForce } = questRowsOf(setRows, day);
+    if (inForce.length > 0 && !chestRows.some((r) => r.dedupeKey === chestRowKey(day))) {
+      const facts = (await prismaMomentumStore.dayFacts(userId, [day])).get(day) ?? emptyDayFacts(day);
+      if (inForce.every((q) => questDone(q, facts))) {
+        out.push({
+          id: MOMENTUM_CHEST_NOTICE_ID,
+          group: "Due",
+          tone: "good",
+          title: "Chest ready",
+          detail: "Today's three are done: open it on Today.",
+          href: "/today#momentum",
+          action: "Open",
+        });
+      }
+    }
+  } catch {
+    // No line.
+  }
+  return out;
+}
+
 async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
   // Duty (M2) is live from its launch day only; before it, its rows are left out (owed aside: an
   // open debt is shown whenever one exists, so a rolled-back launch never hides it).
   const lifeDay = todayKey(now);
   const dutyLive = isDutyLaunched(lifeDay);
   const review = dutyLive ? reviewedWeek(lifeDay) : null;
-  const [dueCount, overdueCount, quotas, bosses, boons, debuffs, today, owed, reviewDue, workReminders] = await Promise.all([
+  const [dueCount, overdueCount, quotas, bosses, boons, debuffs, today, owed, reviewDue, momentum, workReminders] = await Promise.all([
     // `dueCutoff`, not `now`: the bubble and the review queue have to agree
     // about what is due, or the badge sends you to an empty page.
     prisma.idea.count({ where: { isArchived: false, dueDate: { lte: dueCutoff(now) } } }),
@@ -158,6 +236,8 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
     loadTodayCounts(userId, now).catch((): TodayCounts | null => null),
     loadOwed(userId),
     loadReviewDue(userId, review?.weekKey ?? null),
+    // Momentum (§E.7): the run at risk from 18:00, a chest ready; [] before MOMENTUM_LAUNCH_DAY.
+    loadMomentumNotices(userId, now),
     loadWorkReminders(userId, now),
   ]);
 
@@ -214,6 +294,10 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
       action: "Open Today",
     });
   }
+
+  // ── Momentum (momentum.md §E.7) ──────────────────────
+  // 'Momentum at risk' is a warning (counted); 'Chest ready' is good news that asks a tap (listed).
+  notices.push(...momentum);
 
   // ── Duty (M2, decision 27) ───────────────────────────
   // 'Owed: 2 · −12.5 XP' is the one counted Duty row (warn, the owed diamond).

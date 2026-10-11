@@ -245,8 +245,10 @@ export async function logWalkCore(userId: string, raw: Parameters<typeof cleanWa
 }
 
 /** What a walk's moments read: the streak, the habits (a linked one's rung), goals, levels, tracks and the PR rows. */
-const WALK_PARTS: readonly SnapshotPart[] = ["streak", "goals", "levels", "tracks", "ledger"];
-const WALK_PARTS_LINKED: readonly SnapshotPart[] = ["streak", "habits", "goals", "levels", "tracks", "ledger"];
+// "momentum" (lane D): a walk that is the day's first momentum action chimes momentum-kept / quest-done, and a
+// run milestone reached by a walk is detected here (the next diff's "before" would already hold the new run).
+const WALK_PARTS: readonly SnapshotPart[] = ["streak", "goals", "levels", "tracks", "ledger", "momentum"];
+const WALK_PARTS_LINKED: readonly SnapshotPart[] = ["streak", "habits", "goals", "levels", "tracks", "ledger", "momentum"];
 
 /**
  * logWalkCore with L3's moments around it on a live day (today-board withMoments): a snapshot before, the walk and

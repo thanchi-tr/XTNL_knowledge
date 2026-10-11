@@ -22,12 +22,18 @@
  *     never reachable from a client file; the env names are in .env.example with no values (where it exists:
  *     it is gitignored) and in the docs;
  *   - wiring: the two routes, package.json (dependency, push:check, ui:check), the docs.
+ *   - the evening momentum nudge (momentum.md §F; lane D): inert before MOMENTUM_LAUNCH_DAY (nobody is even listed);
+ *     only inside [20:00, 22:00) Sydney; only a run of 2+ with nothing kept today; UserPrefs.nudge 'off' respected (its
+ *     facts are never read); the claim ('nudge:<day>', a NUDGE row) before the send; at most one nudge a day under
+ *     concurrent runs (and the same interleaving against an unguarded claim double-sends, so the test can fail); the
+ *     words; the call backs' claim, cap and counts unchanged beside it.
  */
 import "./_no-model";
 import { createECDH, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { runInNewContext } from "node:vm";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../src/lib/prisma";
 import {
   TEST_PUSH_GAP_MS,
@@ -48,19 +54,28 @@ import {
   type SubscriptionInput,
 } from "../src/lib/push-server";
 import {
+  NUDGE_TOPIC,
   REMINDER_BATCH,
   REMINDER_SECRET_HEADER,
   callBackUrl,
   dispatchAuthorized,
+  nudgeClaimData,
+  nudgeDue,
+  nudgePayload,
+  prismaNudgeStore,
   prismaReminderStore,
   reminderLine,
   reminderPayload,
+  runMomentumNudges,
   runReminderDispatch,
   type DispatchReport,
   type DueReminder,
+  type NudgeStore,
   type ReminderEnv,
   type ReminderStore,
 } from "../src/lib/reminders-server";
+import type { NudgeFacts } from "../src/lib/momentum-server";
+import { MOMENTUM_LAUNCH_DAY } from "../src/lib/momentum";
 
 let passed = 0;
 let failed = 0;
@@ -689,6 +704,245 @@ function wiring() {
   check("docs/life-plan/reminders.md: the keys, the env names, and the three schedulers", docMissing.length === 0, docMissing.join(", "));
 }
 
+// ── 9. The evening momentum nudge (momentum.md §F) ────────────────────────
+async function nudges() {
+  const LAUNCH = "2026-10-01";
+  const DAY = "2026-10-12";
+  // Sydney is on AEDT (UTC+11) in October.
+  const at = (hhmm: string) => new Date(`${DAY}T${hhmm}:00+11:00`);
+  const EVENING = at("20:30");
+  const facts = (o: Partial<NudgeFacts> = {}): NudgeFacts => ({
+    live: true,
+    day: DAY,
+    localHour: 20,
+    inWindow: true,
+    nudgeOn: true,
+    run: 12,
+    bank: 1,
+    actionDone: false,
+    claimed: false,
+    atRisk: true,
+    quest: { slot: "BODY", kind: "MOVE", minutes: 20, title: "Move 20 min" },
+    hoursLeft: 8,
+    ...o,
+  });
+  interface User {
+    id: string;
+    pref?: string | null;
+    facts?: Partial<NudgeFacts>;
+    factsThrow?: boolean;
+    claimThrow?: boolean;
+  }
+  /** The claim's contract: one 'nudge:<day>' a user a day. `guarded: false` checks before it waits (the race a unique key prevents). */
+  const fakeNudgeStore = (users: User[], log: string[], opts: { guarded?: boolean } = {}) => {
+    const guarded = opts.guarded ?? true;
+    const claims = new Set<string>();
+    const s: NudgeStore & { lists: number; factsRead: string[]; claims: Set<string> } = {
+      lists: 0,
+      factsRead: [],
+      claims,
+      async listSubscribedUsers() {
+        s.lists++;
+        return users.map((u) => u.id);
+      },
+      async prefsOf(userId) {
+        return users.find((u) => u.id === userId)?.pref ?? null;
+      },
+      async factsOf(userId) {
+        s.factsRead.push(userId);
+        const u = users.find((x) => x.id === userId);
+        if (u?.factsThrow) throw new Error("db down");
+        return facts({ ...u?.facts, claimed: (u?.facts?.claimed ?? false) || claims.has(`${userId}|${DAY}`) });
+      },
+      async claim(userId, day) {
+        const u = users.find((x) => x.id === userId);
+        if (u?.claimThrow) throw new Error("db down");
+        const key = `${userId}|${day}`;
+        if (!guarded) {
+          const seen = claims.has(key);
+          await tick();
+          if (seen) return false;
+          claims.add(key);
+          log.push(`nclaim:${userId}`);
+          return true;
+        }
+        await tick(); // another run may be claiming here
+        if (claims.has(key)) return false;
+        claims.add(key);
+        log.push(`nclaim:${userId}`);
+        return true;
+      },
+    };
+    return s;
+  };
+  const prevEnv = process.env.XTNL_MOMENTUM_LAUNCH_DAY;
+  delete process.env.XTNL_MOMENTUM_LAUNCH_DAY;
+  try {
+    // Inert before launch: MOMENTUM_LAUNCH_DAY is null, so nobody is listed, claimed or sent, even at 20:30.
+    {
+      const log: string[] = [];
+      const store = fakeNudgeStore([{ id: "u1" }], log);
+      const push = fakePushStore([sub("s1")]);
+      const { sender, sent } = fakeSender(log);
+      const r = await reportOf(await runReminderDispatch(authed(), { env: ENV, store: fakeReminderStore([], log), push, sender, now: () => EVENING, timeZone: TZ, nudgeStore: store }));
+      check(
+        "nudge: inert before launch (MOMENTUM_LAUNCH_DAY null): no user listed, nothing claimed or sent at 20:30",
+        MOMENTUM_LAUNCH_DAY === null && store.lists === 0 && store.claims.size === 0 && sent.length === 0 && r.nudges.considered === 0 && r.nudges.claimed === 0,
+        JSON.stringify(r.nudges)
+      );
+      const direct = await runMomentumNudges(EVENING, { store, push, sender, env: ENV, timeZone: TZ, launchDay: null });
+      check("nudge: an explicit null launch day is inert too", direct.considered === 0 && store.lists === 0);
+    }
+
+    // The window: [20:00, 22:00) in Sydney, nothing before or after (even a late scheduler).
+    {
+      const runAt = async (when: Date) => {
+        const log: string[] = [];
+        const store = fakeNudgeStore([{ id: "u1" }], log);
+        const { sender, sent } = fakeSender(log);
+        const r = await runMomentumNudges(when, { store, push: fakePushStore([sub("s1")]), sender, env: ENV, timeZone: TZ, launchDay: LAUNCH });
+        return { r, sent: sent.length, lists: store.lists };
+      };
+      const [w1959, w2000, w2159, w2200, w1500, w2330] = await Promise.all([at("19:59"), at("20:00"), at("21:59"), at("22:00"), at("15:00"), at("23:30")].map(runAt));
+      check("nudge window: 20:00 and 21:59 Sydney send", w2000.sent === 1 && w2159.sent === 1 && w2000.r.delivered === 1, `${w2000.sent} ${w2159.sent}`);
+      check("nudge window: 19:59, 22:00, 23:30 and 15:00 send nothing and list nobody", [w1959, w2200, w1500, w2330].every((x) => x.sent === 0 && x.lists === 0 && x.r.considered === 0));
+    }
+
+    // Who is nudged: run 2+, nothing kept today, not yet claimed, the toggle not off; claim before send.
+    {
+      const log: string[] = [];
+      const users: User[] = [
+        { id: "u-risk" },
+        { id: "u-two", facts: { run: 2, bank: 0, quest: null } },
+        { id: "u-one", facts: { run: 1 } },
+        { id: "u-kept", facts: { actionDone: true } },
+        { id: "u-off", pref: "off" },
+        { id: "u-claimed", facts: { claimed: true } },
+        { id: "u-nodevice" },
+        { id: "u-on", pref: "on", facts: { run: 30, bank: 2 } },
+      ];
+      const store = fakeNudgeStore(users, log);
+      const push = fakePushStore(["u-risk", "u-two", "u-one", "u-kept", "u-off", "u-claimed", "u-on"].map((u) => sub(`s-${u}`, u)));
+      const { sender, sent } = fakeSender(log);
+      const r = await reportOf(await runReminderDispatch(authed(), { env: ENV, store: fakeReminderStore([], log), push, sender, now: () => EVENING, timeZone: TZ, nudgeStore: store, momentumLaunchDay: LAUNCH }));
+      const sentTo = sent.map((x) => x.endpoint.split("/").pop());
+      check("nudge: only a run of 2+ with nothing kept today and no claim yet (u-risk, u-two, u-on)", sentTo.sort().join(",") === "s-u-on,s-u-risk,s-u-two", sentTo.join(","));
+      check("nudge: a run of 1, a kept day and an existing claim send nothing", !sentTo.some((x) => /u-one|u-kept|u-claimed/.test(x ?? "")));
+      check("nudge: UserPrefs.nudge 'off' is respected (its facts are never read, nothing is claimed or sent)", !store.factsRead.includes("u-off") && !sentTo.includes("s-u-off") && ![...store.claims].some((k) => k.startsWith("u-off|")));
+      check("nudge: a user with no device is still claimed (at most once) and counts as not delivered", store.claims.has(`u-nodevice|${DAY}`) && r.nudges.claimed === 4 && r.nudges.delivered === 3, JSON.stringify(r.nudges));
+      check("nudge: the report counts considered, at risk, claimed and delivered", r.nudges.considered === 8 && r.nudges.atRisk === 4, JSON.stringify(r.nudges));
+      const claimAt = log.indexOf("nclaim:u-risk");
+      const sendAt = log.findIndex((l) => l === `send:momentum-${DAY}:s-u-risk`);
+      check("nudge: it claims before it sends", claimAt >= 0 && sendAt > claimAt, log.join(" | "));
+      check("nudge: the reminders' counts are untouched (claimed 0, more false)", r.claimed === 0 && r.delivered === 0 && r.more === false);
+      const payload = JSON.parse(sent.find((x) => x.endpoint.endsWith("/s-u-risk"))!.payload);
+      check("nudge words: 'Keep your 12-day run' / 'Move 20 min · 1 freeze banked · until 04:00', one tag a day, Today's Momentum card on a tap", payload.title === "Keep your 12-day run" && payload.body === "Move 20 min · 1 freeze banked · until 04:00" && payload.tag === `momentum-${DAY}` && payload.url === "/today#momentum", JSON.stringify(payload));
+      const two = JSON.parse(sent.find((x) => x.endpoint.endsWith("/s-u-two"))!.payload);
+      check("nudge words: with no quest left to name, any task keeps it ('· 0 freezes banked')", two.title === "Keep your 2-day run" && two.body === "Any task, a 10-minute walk or a checkpoint · 0 freezes banked · until 04:00", JSON.stringify(two));
+      check("nudge: the push's topic is 'momentum'", sent.every((x) => x.options.topic === NUDGE_TOPIC) && NUDGE_TOPIC === "momentum");
+      const again = await runMomentumNudges(at("21:10"), { store, push, sender, env: ENV, timeZone: TZ, launchDay: LAUNCH });
+      check("nudge: a later run the same evening sends nothing (the claim stands)", again.claimed === 0 && sent.length === 3, JSON.stringify(again));
+    }
+
+    // At most one a day under concurrent runs (and one started from inside another's send).
+    const concurrent = async (guarded: boolean) => {
+      const log: string[] = [];
+      const store = fakeNudgeStore([{ id: "u1" }], log, { guarded });
+      const push = fakePushStore([sub("s1")]);
+      let nested: Promise<unknown> | null = null;
+      const deps = { env: ENV, store: fakeReminderStore([], log), push, now: () => EVENING, timeZone: TZ, nudgeStore: store, momentumLaunchDay: LAUNCH };
+      const { sender, sent } = fakeSender(log, {}, async () => {
+        await tick();
+        if (!nested) nested = runReminderDispatch(authed(), { ...deps, sender });
+      });
+      await Promise.all([runReminderDispatch(authed(), { ...deps, sender }), runReminderDispatch(authed(), { ...deps, sender }), runReminderDispatch(authed(), { ...deps, sender })]);
+      if (nested) await nested;
+      return sent.length;
+    };
+    {
+      const n = await concurrent(true);
+      check("nudge: three concurrent runs and one started mid-send send exactly one nudge", n === 1, String(n));
+      const naive = await concurrent(false);
+      check("nudge: the test can fail: the same interleaving against an unguarded claim sends more than one", naive > 1, String(naive));
+    }
+
+    // Failures: a claim that errors sends nothing; facts that fail skip that user only.
+    {
+      const log: string[] = [];
+      const store = fakeNudgeStore([{ id: "u-claimfail", claimThrow: true }, { id: "u-factsfail", factsThrow: true }, { id: "u-ok" }], log);
+      const { sender, sent } = fakeSender(log);
+      const r = await runMomentumNudges(EVENING, { store, push: fakePushStore([sub("a", "u-claimfail"), sub("b", "u-factsfail"), sub("c", "u-ok")]), sender, env: ENV, timeZone: TZ, launchDay: LAUNCH });
+      check("nudge: a claim that fails sends nothing; failed facts skip only that user", sent.length === 1 && sent[0].endpoint.endsWith("/c") && r.claimed === 1 && r.delivered === 1, JSON.stringify(r));
+      let threw = false;
+      try {
+        await runMomentumNudges(EVENING, { store: { ...store, listSubscribedUsers: async () => { throw new Error("db down"); } }, push: fakePushStore([]), env: ENV, timeZone: TZ, launchDay: LAUNCH });
+      } catch {
+        threw = true;
+      }
+      check("nudge: never throws (a listing that fails is no nudge)", !threw);
+    }
+
+    // Beside the call backs: one run sends both, the cap and the counts are the call backs' own, each user listed once.
+    {
+      const log: string[] = [];
+      const rows = [row("c1", -1)];
+      rows[0].remindAt = new Date(EVENING.getTime() - 60_000);
+      rows[0].remindAtOrNull = rows[0].remindAt;
+      const push = fakePushStore([sub("s1")]);
+      const { sender, sent } = fakeSender(log);
+      const r = await reportOf(await runReminderDispatch(authed(), { env: ENV, store: fakeReminderStore(rows, log), push, sender, now: () => EVENING, timeZone: TZ, nudgeStore: fakeNudgeStore([{ id: "u1" }], log), momentumLaunchDay: LAUNCH }));
+      check("nudge + call back: both sent; claimed/delivered/more are the call backs' (1/1/false); the nudge is counted apart", sent.length === 2 && r.claimed === 1 && r.delivered === 1 && r.more === false && r.nudges.delivered === 1, JSON.stringify(r));
+      check("nudge + call back: the user's subscriptions are read once in the run", push.lists === 1, String(push.lists));
+      check("nudge + call back: the call back is claimed and sent first", log.indexOf("claim:c1") < log.findIndex((l) => l.startsWith("send:callback-c1")) && log.findIndex((l) => l.startsWith("send:callback-c1")) < log.indexOf("nclaim:u1"), log.join(" | "));
+    }
+
+    // The rule and the claim row, pure.
+    {
+      check("nudgeDue: run 2+, nothing kept, not claimed, toggle not off, live", nudgeDue(facts(), null) && nudgeDue(facts({ run: 2 }), "on") && !nudgeDue(facts({ run: 1 }), null) && !nudgeDue(facts({ actionDone: true }), null) && !nudgeDue(facts({ claimed: true }), null) && !nudgeDue(facts(), "off") && !nudgeDue(facts({ live: false }), null));
+      const words = nudgePayload(facts({ run: 7, bank: 2, quest: { slot: "TASK", kind: "TEMPLATE", templateId: "t", track: "DUTY", raw: 20, score: 30, title: "Tax return" } }));
+      check("nudgePayload: names the run, the first undone quest and the freezes", words.title === "Keep your 7-day run" && words.body === "Tax return · 2 freezes banked · until 04:00", JSON.stringify(words));
+      const data = nudgeClaimData("u1", DAY, EVENING);
+      check(
+        "claim row: a NUDGE row, sink NONE, 0 XP, never a streak unit, keyed 'nudge:<day>' on that life day",
+        data.source === "NUDGE" && data.sink === "NONE" && data.xp === 0 && data.countsForStreak === false && data.dedupeKey === `nudge:${DAY}` && (data.day as Date).toISOString().slice(0, 10) === DAY && data.userId === "u1",
+        JSON.stringify(data)
+      );
+      // The real claim, against a captured create: a P2002 is "already claimed" (false), anything else throws.
+      const delegate = (prisma as unknown as { activityEvent: { create: (a: unknown) => Promise<unknown> } }).activityEvent;
+      const original = delegate.create;
+      let captured: unknown = null;
+      let answer: "ok" | "dup" | "boom" = "ok";
+      delegate.create = async (a: unknown) => {
+        captured = a;
+        if (answer === "dup") throw new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "6" });
+        if (answer === "boom") throw new Error("db down");
+        return {};
+      };
+      let won = false;
+      let dup = true;
+      let boom = false;
+      try {
+        won = await prismaNudgeStore.claim("u1", DAY, EVENING);
+        answer = "dup";
+        dup = await prismaNudgeStore.claim("u1", DAY, EVENING);
+        answer = "boom";
+        await prismaNudgeStore.claim("u1", DAY, EVENING).catch(() => {
+          boom = true;
+        });
+      } finally {
+        delegate.create = original;
+      }
+      check("claim: the real claim writes the NUDGE row; P2002 reads as already claimed; any other error throws", won && !dup && boom && (captured as { data?: { dedupeKey?: string } })?.data?.dedupeKey === `nudge:${DAY}`, JSON.stringify(captured));
+    }
+  } finally {
+    if (prevEnv === undefined) delete process.env.XTNL_MOMENTUM_LAUNCH_DAY;
+    else process.env.XTNL_MOMENTUM_LAUNCH_DAY = prevEnv;
+  }
+  // The dispatcher keeps the momentum server out of its static graph (loaded on first use, by the real store only).
+  const src = code(read("src/lib/reminders-server.ts"));
+  check("nudge: reminders-server loads momentum-server lazily (no static import), and claims through activityData", !/^import [^;]*from "\.\/momentum-server";/m.test(src.replace(/^import type [^;]*;/gm, "")) && /await import\("\.\/momentum-server"\)/.test(src) && /activityData\(userId, \{ source: "NUDGE"/.test(src));
+}
+
 (async () => {
   // The modules log every refusal they swallow; the check provokes dozens. Keep them, print them only on a failure.
   const logged: string[] = [];
@@ -704,6 +958,7 @@ function wiring() {
   await serviceWorker();
   secrets();
   wiring();
+  await nudges();
   console.error = realError;
   check("logs: a swallowed failure is logged, and no log line carries a secret or a key", logged.length > 0 && !logged.some((l) => [OWN_SECRET, CRON, VAPID.VAPID_PRIVATE_KEY].some((v) => l.includes(v))));
   if (failed) console.log(`  (${logged.length} swallowed errors were logged)`);

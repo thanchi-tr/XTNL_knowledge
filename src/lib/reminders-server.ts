@@ -29,11 +29,26 @@
  * Shared database: dev and production read one Supabase database (settlement.ts, decision 2), and a subscription
  * only accepts pushes signed with the VAPID key it was made with. Schedule exactly one deployment's dispatcher
  * (production's), and give every deployment the same VAPID keys.
+ *
+ * The evening momentum nudge (docs/life-plan/momentum.md §F, §E.7), on the same run, after the reminders:
+ *   NudgeStore · prismaNudgeStore · nudgeDue(facts, pref) · nudgePayload(facts) · nudgeClaimData(userId, day, now)
+ *   runMomentumNudges(now, deps)   from 20:00 to 22:00 Australia/Sydney (LIFE_TZ; nothing after 22:00, even late),
+ *                                  for each user with a push subscription whose UserPrefs.nudge is not 'off' and whose
+ *                                  run is 2+ with nothing that keeps it done today, it CLAIMS 'nudge:<day>' (a NUDGE row,
+ *                                  sink NONE; P2002 = another run claimed it) and only then sends "Keep your 12-day run"
+ *                                  / "<first undone quest> · <n> freezes banked · until 04:00", tap /today. At most one a
+ *                                  life day under any number of concurrent runs; never un-claimed (a refusal or crash
+ *                                  after the claim loses that nudge rather than risk two). Nothing at all before
+ *                                  MOMENTUM_LAUNCH_DAY: it returns before listing anyone. Its count is its own
+ *                                  (report.nudges): the reminders' claim, cap and `more` are unchanged.
  */
 import { createHash, timingSafeEqual } from "node:crypto";
 import { Prisma } from "@prisma/client";
-import { LIFE_TZ } from "./life-day";
+import { DAY_START_HOUR, LIFE_TZ, todayKey, type DayKey } from "./life-day";
 import { prisma } from "./prisma";
+import { activityData, isDuplicateActivity } from "./activity";
+import { MOMENTUM_NUDGE, inNudgeWindow, momentumLaunchDay, momentumLive, nudgeOn, nudgeRowKey } from "./momentum";
+import type { NudgeFacts } from "./momentum-server";
 import {
   prismaPushStore,
   sendToSubscriptions,
@@ -246,6 +261,157 @@ export function reminderLine(p: PushPayload): string {
   return `${p.title} · ${p.body}`;
 }
 
+// ── The evening momentum nudge (momentum.md §F) ───────────────────────────
+
+/** Where the life day ends, as the push prints it ('04:00'). */
+const DAY_EDGE = `${String(DAY_START_HOUR).padStart(2, "0")}:00`;
+
+export interface NudgeStore {
+  /** Every user with at least one push subscription (SELECT DISTINCT "userId" FROM "PushSubscription"). */
+  listSubscribedUsers(): Promise<string[]>;
+  /** UserPrefs.nudge, fail soft: null (never chosen, or the column missing) reads as on. */
+  prefsOf(userId: string): Promise<string | null>;
+  /** momentum-server loadNudgeFacts: the run, today's action, the claim and the first undone quest. */
+  factsOf(userId: string, now: Date): Promise<NudgeFacts>;
+  /** Claims 'nudge:<day>': true when this call wrote it, false when it already existed (P2002). Throws otherwise. */
+  claim(userId: string, day: DayKey, now: Date): Promise<boolean>;
+}
+
+/** The NUDGE claim row (§D.2): sink NONE, 0 XP, never a streak unit, keyed 'nudge:<day>'. */
+export function nudgeClaimData(userId: string, day: DayKey, now: Date): Prisma.ActivityEventUncheckedCreateInput {
+  return activityData(userId, { source: "NUDGE", sink: "NONE", day, occurredAt: now, xp: 0, countsForStreak: false, detail: "evening momentum nudge", dedupeKey: nudgeRowKey(day) });
+}
+
+export const prismaNudgeStore: NudgeStore = {
+  async listSubscribedUsers() {
+    const rows = await prisma.pushSubscription.findMany({ distinct: ["userId"], select: { userId: true }, orderBy: { userId: "asc" } });
+    return rows.map((r) => r.userId);
+  },
+  async prefsOf(userId) {
+    try {
+      return (await prisma.userPrefs.findUnique({ where: { userId }, select: { nudge: true } }))?.nudge ?? null;
+    } catch (err) {
+      // Before the momentum migration the column is missing: never chosen, so on.
+      console.error("[reminders] UserPrefs.nudge unreadable; reading it as on", err);
+      return null;
+    }
+  },
+  async factsOf(userId, now) {
+    // Loaded on first use: the dispatcher's route (and push-check) never load the momentum server otherwise.
+    const { loadNudgeFacts } = await import("./momentum-server");
+    return loadNudgeFacts(userId, now);
+  },
+  async claim(userId, day, now) {
+    try {
+      await prisma.activityEvent.create({ data: nudgeClaimData(userId, day, now) });
+      return true;
+    } catch (err) {
+      if (isDuplicateActivity(err)) return false;
+      throw err;
+    }
+  },
+};
+
+/**
+ * Is this user nudged now (§F)? Momentum live, UserPrefs.nudge not 'off', the run 2+, nothing that keeps it done
+ * today, and no 'nudge:<day>' claim yet. The window and the subscription are checked by the run.
+ */
+export function nudgeDue(f: Pick<NudgeFacts, "live" | "run" | "actionDone" | "claimed">, pref: string | null): boolean {
+  return f.live && nudgeOn(pref) && f.run >= MOMENTUM_NUDGE.MIN_RUN && !f.actionDone && !f.claimed;
+}
+
+/** "Keep your 12-day run" / "Move 20 min · 1 freeze banked · until 04:00"; one tag a life day; Today on a tap. */
+export function nudgePayload(f: Pick<NudgeFacts, "day" | "run" | "bank" | "quest">): PushPayload {
+  const keeps = f.quest?.title?.trim() || "Any task, a 10-minute walk or a checkpoint";
+  return {
+    title: `Keep your ${f.run}-day run`,
+    body: [keeps, `${f.bank} ${f.bank === 1 ? "freeze" : "freezes"} banked`, `until ${DAY_EDGE}`].join(" · "),
+    tag: `momentum-${f.day}`,
+    // The Momentum card (TodayBoard, id="momentum"), as the bell links it.
+    url: "/today#momentum",
+  };
+}
+
+/** The push service's topic for the nudge (one undelivered nudge replaces another). */
+export const NUDGE_TOPIC = "momentum";
+
+export interface NudgeReport {
+  /** Subscribed users looked at (inside the window, once momentum is live). */
+  considered: number;
+  /** Of those: nudge on, run 2+, nothing kept today, not yet claimed. */
+  atRisk: number;
+  /** Claims this run won ('nudge:<day>'). */
+  claimed: number;
+  /** Claimed nudges at least one device accepted. */
+  delivered: number;
+}
+
+export interface NudgeDeps {
+  store?: NudgeStore;
+  push: PushStore;
+  sender?: PushSender;
+  env: ReminderEnv;
+  /** The life zone (LIFE_TZ, Australia/Sydney) the window is read in. */
+  timeZone?: string;
+  /** The launch day (default momentum.ts momentumLaunchDay(): null keeps it inert). */
+  launchDay?: DayKey | null;
+  /** The run's per-user subscription lists, shared with the reminders (each user is listed once a run). */
+  subsOf?: Map<string, PushSubscriptionRow[] | null>;
+}
+
+/** The hour (0–23) of an instant in a zone. */
+function hourIn(now: Date, tz: string): number {
+  const h = Number(new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", hourCycle: "h23" }).format(now));
+  return Number.isFinite(h) ? h % 24 : -1;
+}
+
+/**
+ * One pass of the evening nudge (§F). Returns at once before momentum's launch day and outside [20:00, 22:00); then,
+ * per subscribed user: the toggle, the facts, the claim, and only then the send. Never throws.
+ */
+export async function runMomentumNudges(now: Date, deps: NudgeDeps): Promise<NudgeReport> {
+  const report: NudgeReport = { considered: 0, atRisk: 0, claimed: 0, delivered: 0 };
+  try {
+    const tz = deps.timeZone ?? LIFE_TZ;
+    const launch = deps.launchDay !== undefined ? deps.launchDay : momentumLaunchDay();
+    if (!momentumLive(todayKey(now, tz), launch)) return report;
+    if (!inNudgeWindow(hourIn(now, tz))) return report;
+    const store = deps.store ?? prismaNudgeStore;
+    const subsOf = deps.subsOf ?? new Map<string, PushSubscriptionRow[] | null>();
+    let users: string[];
+    try {
+      users = await store.listSubscribedUsers();
+    } catch (err) {
+      console.error("[reminders] listing the nudge's users failed", err);
+      return report;
+    }
+    for (const userId of [...new Set(users)]) {
+      report.considered++;
+      try {
+        const pref = await store.prefsOf(userId).catch(() => null);
+        if (!nudgeOn(pref)) continue;
+        const facts = await store.factsOf(userId, now);
+        if (!nudgeDue(facts, pref)) continue;
+        report.atRisk++;
+        // Claim before send: a second run (or a crash after this line) can never send a second nudge today.
+        if (!(await store.claim(userId, facts.day, now))) continue;
+        report.claimed++;
+        if (!subsOf.has(userId)) subsOf.set(userId, await deps.push.listFor(userId).catch(() => null));
+        const subs = subsOf.get(userId);
+        if (!subs || subs.length === 0) continue;
+        const sent = await sendToSubscriptions(subs, nudgePayload(facts), { topic: NUDGE_TOPIC, store: deps.push, sender: deps.sender, env: deps.env, now: () => now });
+        if (sent.sent > 0) report.delivered++;
+        if (sent.removedIds.length) subsOf.set(userId, subs.filter((s) => !sent.removedIds.includes(s.id)));
+      } catch (err) {
+        console.error("[reminders] a momentum nudge failed; that user is skipped", err);
+      }
+    }
+  } catch (err) {
+    console.error("[reminders] the momentum nudges failed", err);
+  }
+  return report;
+}
+
 // ── The run ───────────────────────────────────────────────────────────────
 
 export interface DispatchDeps {
@@ -256,6 +422,10 @@ export interface DispatchDeps {
   sender?: PushSender;
   limit?: number;
   timeZone?: string;
+  /** The evening momentum nudge's reads and claim (prismaNudgeStore by default; push-check passes a fake). */
+  nudgeStore?: NudgeStore;
+  /** The momentum launch day the nudge reads (default momentumLaunchDay()). */
+  momentumLaunchDay?: DayKey | null;
 }
 
 export interface DispatchReport {
@@ -277,6 +447,8 @@ export interface DispatchReport {
   more: boolean;
   /** The customer task claim failed (the call backs it had claimed were still sent). */
   customerTaskError?: boolean;
+  /** The evening momentum nudge (§F): its own counts, outside `claimed`, `delivered` and the cap. */
+  nudges: NudgeReport;
 }
 
 const NO_STORE = { "Cache-Control": "no-store" };
@@ -327,6 +499,7 @@ export async function runReminderDispatch(request: Request, deps: DispatchDeps =
     pushes: { sent: 0, removed: 0, failed: 0 },
     more: total >= limit,
     ...(customerTaskError ? { customerTaskError } : {}),
+    nudges: { considered: 0, atRisk: 0, claimed: 0, delivered: 0 },
   };
   // Each user's subscriptions are read once a run; a row a send deleted is dropped before the next send.
   const subsOf = new Map<string, PushSubscriptionRow[] | null>();
@@ -356,5 +529,15 @@ export async function runReminderDispatch(request: Request, deps: DispatchDeps =
     else report.undelivered++;
     if (sent.removedIds.length) subsOf.set(job.userId, subs.filter((s) => !sent.removedIds.includes(s.id)));
   }
+  // The evening momentum nudge (§F): after the reminders, on the same subscription lists; inert before launch.
+  report.nudges = await runMomentumNudges(now, {
+    store: deps.nudgeStore,
+    push,
+    sender: deps.sender,
+    env,
+    timeZone: tz,
+    ...(deps.momentumLaunchDay !== undefined ? { launchDay: deps.momentumLaunchDay } : {}),
+    subsOf,
+  });
   return Response.json(report, { headers: NO_STORE });
 }

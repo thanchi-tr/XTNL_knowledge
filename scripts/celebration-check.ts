@@ -36,6 +36,12 @@
  *     judge paid ('+1.0 MP from 2 full days.'); a held week is never a moment;
  *     a split week (the DUTY gate) plays a second Seal 'week:<W>+DUTY' that states
  *     DUTY and its full days, once.
+ *   - Momentum (momentum.md §G.1, lane D): every momentum kind (T1, T2, T3) has
+ *     a detector and a fixture, at its tier, honest; the milestone ceremony's
+ *     words and exact amounts (§A.8); the momentum-kept chime replaces day-kept;
+ *     a WALK personal best's Seal (§E.4) and its reversal ignored; the week Seal
+ *     states momentum's amounts once launched; the parts are in the tick and
+ *     settle scopes and read nothing before MOMENTUM_LAUNCH_DAY.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -55,18 +61,34 @@ import {
   SNAPSHOT_SCOPES,
   type CelebrationDraft,
   type CelebrationStore,
+  type ChestRow,
   type GoalRow,
   type LedgerRow,
   type LevelsPart,
+  type MilestoneRow,
+  type MomentumPart,
+  type MomentumRowsPart,
   type NewCelebrationRow,
   type ProgressData,
   type SnapshotPart,
   type StoredCelebration,
 } from "../src/lib/celebration-detect";
+import { MOMENTUM_LAUNCH_DAY, lspThreshold, type ChestReceipt } from "../src/lib/momentum";
 import { characterLevelOf, trackLevelsOf } from "../src/components/shell/shell-types";
 import { CHARACTER_EXPONENT } from "../src/lib/character";
 import { emptyLifeLedger, lifeTracksView, type LifeLedger } from "../src/lib/life-tracks";
-import { DEFAULT_PREFS, KIND_TIER, T2_KINDS, T3_KINDS, honestyProblem, makeEvent, type CelebrationEvent } from "../src/lib/celebration-types";
+import {
+  DEFAULT_PREFS,
+  KIND_TIER,
+  MOMENTUM_T1_KINDS,
+  MOMENTUM_T2_KINDS,
+  MOMENTUM_T3_KINDS,
+  T2_KINDS,
+  T3_KINDS,
+  honestyProblem,
+  makeEvent,
+  type CelebrationEvent,
+} from "../src/lib/celebration-types";
 import { closeRun, enqueue, nextIndex, openRun, registerPresenter } from "../src/lib/celebrate";
 import { fixtures, fixtureMoments } from "../src/app/dev/style/celebrate/fixtures";
 import { ACCOUNT_PREF_KEYS, accountPatch, planPrefsSync, readPostBody } from "../src/components/celebrate/protocol";
@@ -98,12 +120,27 @@ for (const f of fixtures()) {
   }
 }
 const moments = fixtureMoments();
-const kindsShown = new Set(moments.flatMap((m) => m.events.map((e) => e.kind)));
-for (const k of [...T2_KINDS, ...T3_KINDS]) {
+// Momentum's fixtures (lane D) run through the same real detectors; their kinds join the coverage walk.
+for (const f of momentumFixtures()) {
+  const drafts = diffProgress(f.before, f.after);
+  check(`momentum fixture ${f.name}: produces ${f.expect.length ? f.expect.join(", ") : "nothing"}`, same(keys(drafts), f.expect), keys(drafts).join(", "));
+  for (const d of drafts) {
+    check(`momentum fixture ${f.name}: ${d.kind} sits at its ladder tier (T${KIND_TIER[d.kind]})`, d.tier === KIND_TIER[d.kind]);
+    if (d.tier >= 2) {
+      const problem = honestyProblem(draftToEvent(d, "x"));
+      check(`momentum fixture ${f.name}: ${d.kind} is honest (number + why)`, problem === null, problem ?? "");
+      check(`momentum fixture ${f.name}: ${d.kind} never claims its own key`, !d.claims.includes(d.dedupeKey));
+    }
+  }
+}
+const momentumKinds = new Set(momentumFixtures().flatMap((f) => diffProgress(f.before, f.after).map((d) => d.kind)));
+const kindsShown = new Set([...moments.flatMap((m) => m.events.map((e) => e.kind)), ...momentumKinds]);
+for (const k of [...T2_KINDS, ...T3_KINDS, ...MOMENTUM_T2_KINDS, ...MOMENTUM_T3_KINDS]) {
   if (k === "pr" || k === "week-kept" || k === "track-level") {
     check(`coverage: ${k} has a detector and a fixture (data arrives in M4/M5)`, kindsShown.has(k));
   } else check(`coverage: ${k} has a detector and a fixture`, kindsShown.has(k));
 }
+for (const k of MOMENTUM_T1_KINDS) check(`coverage: momentum's T1 ${k} has a detector and a fixture`, momentumKinds.has(k));
 
 // ── 2. Merges: one moment per cause ─────────────────────────────────────────
 {
@@ -893,12 +930,242 @@ async function duty() {
   check("snapshot: WEEK rows are read through weekMarkOf (qty and receipt), and full-day mints are collected", /weekMarkOf\(\{ qty: r\.qty, receipt: r\.receipt \}\) !== "kept"/.test(snap) && /fullDayMintKey\(day\)/.test(snap) && /return \{ weeks, prs, fullDays \}/.test(snap));
 }
 
+// ── 14. Momentum (momentum.md §G.1; lane D) ─────────────────────────────────
+
+interface MomentumFixture {
+  name: string;
+  before: ProgressData;
+  after: ProgressData;
+  expect: string[];
+}
+
+/** Momentum's labelled diffs (self-contained: section 1 calls this before the module's later consts exist). */
+function momentumFixtures(): MomentumFixture[] {
+  const D = "2026-10-20";
+  const Y = "2026-10-19";
+  const three = (done: [boolean, boolean, boolean]) => [
+    { slot: "PLAN" as const, identity: "PLAN:REVIEWS", title: "Review 10 cards", done: done[0] },
+    { slot: "BODY" as const, identity: "BODY:MOVE:20", title: "Move 20 min", done: done[1] },
+    { slot: "TASK" as const, identity: "TASK:TEMPLATE:tpl-tax", title: "Tax return", done: done[2] },
+  ];
+  const run = (o: Partial<MomentumPart> = {}): ProgressData => ({
+    parts: ["momentum"],
+    momentum: { today: D, run: 12, bank: 1, nextFreezeIn: 4, todayKept: false, heldInRun: 0, held: [], quests: three([false, false, false]), chestOpen: false, ...o },
+  });
+  const rows = (o: Partial<MomentumRowsPart> = {}): ProgressData => ({ parts: ["momentumRows"], momentumRows: { chests: [], milestones: [], checkpoints: [], planWeeks: [], perks: [], ...o } });
+  const receipt = (o: Partial<ChestReceipt>): ChestReceipt => ({ v: "chest-1", u1: 0.1, u2: 0.2, tier: "COMMON", item: null, xp: 20, mp: 0, freeze: false, cosmetic: null, pity: false, sinceRare: 2, ...o });
+  const chest = (o: Partial<ChestReceipt>, day = D, key = `chest:${day}`): ChestRow => ({ key, day, track: "CRAFT", receipt: receipt(o) });
+  const branches = { PATHFINDER: { earned: 4, spent: 2, countedXp: 412, nextAt: 600 }, DISCIPLINE: { earned: 6, spent: 4, countedXp: 1900, nextAt: 2520 } };
+  const milestone: MilestoneRow = {
+    key: "ms:lin-a2",
+    ref: "lin-a2",
+    day: "2026-10-12",
+    track: "CRAFT",
+    xp: 120,
+    detail: "Read A2 texts",
+    roadmapId: "rm1",
+    mp: 50,
+    mpWhy: null,
+    aim: "Read Spanish novels without a dictionary by June",
+    stage: 2,
+    stages: 5,
+    days: 34,
+  };
+  return [
+    { name: "momentum-kept", before: run(), after: run({ run: 13, todayKept: true, quests: three([false, false, true]) }), expect: [`momentum-day:${D}`, `quest:${D}:TASK`] },
+    { name: "quest-done", before: run({ todayKept: true, run: 13 }), after: run({ todayKept: true, run: 13, quests: three([false, true, false]) }), expect: [`quest:${D}:BODY`] },
+    { name: "freeze-held (the day turned)", before: run({ today: Y, run: 12 }), after: run({ run: 12, bank: 0, held: [Y], heldInRun: 1 }), expect: [`held:${Y}`] },
+    { name: "freeze-held (on the day's first action)", before: run({ held: [Y], bank: 0 }), after: run({ held: [Y], bank: 0, run: 13, todayKept: true }), expect: [`momentum-day:${D}`, `held:${Y}`] },
+    { name: "momentum-run 7", before: run({ run: 6 }), after: run({ run: 7, todayKept: true }), expect: [`momentum-day:${D}`, "momentum:7"] },
+    { name: "chest (common)", before: rows(), after: rows({ chests: [chest({})] }), expect: [`chest:${D}`] },
+    { name: "chest-rare (hoard)", before: rows(), after: rows({ chests: [chest({ tier: "RARE", item: "HOARD", xp: 40, mp: 12 })] }), expect: [`chest:${D}`] },
+    { name: "chest-rare (freeze)", before: rows(), after: rows({ chests: [chest({ tier: "RARE", item: "FREEZE", xp: 0, mp: 0, freeze: true })] }), expect: [`chest:${D}`] },
+    { name: "chest-rare (cosmetic)", before: rows(), after: rows({ chests: [chest({ tier: "RARE", item: "COSMETIC", xp: 0, mp: 0, cosmetic: "flame-cobalt" })] }), expect: [`chest:${D}`] },
+    {
+      name: "checkpoint",
+      before: rows(),
+      after: rows({ checkpoints: [{ key: "cp:item-1", ref: "item-1", day: D, track: "CRAFT", xp: 40, detail: "Week 6 reading check", roadmapId: "rm1", mp: 12, mpWhy: null }] }),
+      expect: ["checkpoint:item-1"],
+    },
+    {
+      name: "plan-week",
+      before: rows(),
+      after: rows({ planWeeks: [{ key: "pw:qw-1", ref: "qw-1", day: "2026-10-18", track: "CRAFT", xp: 30, detail: "Plan week kept · Spanish · 5 of 5 quests", roadmapId: null, mp: 10, mpWhy: "plan week 2026-W42" }] }),
+      expect: ["planweek:qw-1"],
+    },
+    { name: "perk", before: rows(), after: rows({ perks: [{ key: "perk:D_STEADY:0", code: "D_STEADY", day: D, cost: 1 }], branches }), expect: ["perk:D_STEADY:0"] },
+    {
+      name: "milestone (with a Summit chest)",
+      before: rows({ branches }),
+      after: rows({ milestones: [milestone], chests: [chest({ tier: "RARE", item: "HOARD", xp: 40, mp: 12, summit: true }, "2026-10-12", "chest:ms:lin-a2")], branches }),
+      expect: ["milestone:lin-a2"],
+    },
+    { name: "capstone", before: rows(), after: rows({ perks: [{ key: "perk:D_MASS:0", code: "D_MASS", day: D, cost: 5 }], branches }), expect: ["capstone:D_MASS"] },
+  ];
+}
+
+function momentum() {
+  const fx = new Map(momentumFixtures().map((f) => [f.name, diffProgress(f.before, f.after)]));
+  const one = (name: string) => fx.get(name)?.[0];
+
+  // §A.8 the ceremony, word for word, with exact amounts.
+  const ms = one("milestone (with a Summit chest)")!;
+  check("ceremony: kicker 'Milestone reached', the milestone's title, the aim verbatim as the epithet", ms.kind === "milestone" && ms.tier === 3 && ms.facts.kicker === "Milestone reached" && ms.facts.title === "Read A2 texts" && ms.facts.epithet === "Read Spanish novels without a dictionary by June", JSON.stringify(ms.facts));
+  check("ceremony: lines 'Stage 2 of 5 · 34 days' and 'Confirmed on your readings, 12 Oct'", (ms.facts.lines ?? []).join(" | ") === "Stage 2 of 5 · 34 days | Confirmed on your readings, 12 Oct", (ms.facts.lines ?? []).join(" | "));
+  check(
+    "ceremony: grants '+120 XP → Craft', '+50 MP', 'Pathfinder · 412 of 600 to point 5', then the Summit chest",
+    (ms.facts.grants ?? []).join(" | ") === "+120 XP → Craft | +50 MP | Pathfinder · 412 of 600 to point 5 | Summit chest · +40 XP → Craft · +12 MP",
+    (ms.facts.grants ?? []).join(" | ")
+  );
+  check("ceremony: the exact amounts are the row's 120 XP and the mint's 50 MP", JSON.stringify(ms.facts.amounts?.map((a) => [a.kind, a.value])) === JSON.stringify([["xp", 120], ["mp", 50]]), JSON.stringify(ms.facts.amounts));
+  check("ceremony: honest (honestyProblem null), and 'See the roadmap' has the goal's link", honestyProblem(draftToEvent(ms, "x")) === null && ms.facts.href === "/you/roadmap?goal=rm1");
+  check("ceremony: the Summit chest is folded in and claimed (it never plays alone)", ms.claims.includes("chest:ms:lin-a2") && (fx.get("milestone (with a Summit chest)") ?? []).length === 1);
+  check("ceremony: Pathfinder's next point is lspThreshold (600 for point 5)", lspThreshold("PATHFINDER", 5) === 600);
+  const zero = diffProgress(
+    { parts: ["momentumRows"], momentumRows: { chests: [], milestones: [], checkpoints: [], planWeeks: [], perks: [] } },
+    { parts: ["momentumRows"], momentumRows: { chests: [], milestones: [{ key: "ms:x", ref: "x", day: "2026-10-12", track: "BODY", xp: 150, detail: "Run 5 km", roadmapId: null, mp: 0, mpWhy: "2 milestones paid in the last 30 days" }], checkpoints: [], planWeeks: [], perks: [] } }
+  )[0];
+  check(
+    "ceremony: a milestone past the 30-day limit states '+0 MP · <why>' and pays only its XP (150 with Summit fire)",
+    (zero?.facts.grants ?? []).join(" | ") === "+150 XP → Body | +0 MP · 2 milestones paid in the last 30 days" && zero?.facts.amounts?.length === 1 && zero.facts.amounts[0].value === 150 && honestyProblem(draftToEvent(zero, "x")) === null && (zero.facts.lines ?? []).join() === "Confirmed on your readings, 12 Oct",
+    JSON.stringify(zero?.facts)
+  );
+
+  // T1s: the chime words, and the replacement of day-kept.
+  const kept = fx.get("momentum-kept")!;
+  check("momentum-kept: T1 '13-day run', 12 → 13, the freezes line", kept[0].tier === 1 && kept[0].facts.title === "13-day run" && kept[0].facts.numeral?.from === 12 && kept[0].facts.numeral?.to === 13 && (kept[0].facts.lines ?? [])[0] === "1 freeze banked · the next in 4 momentum days.", JSON.stringify(kept[0].facts));
+  check("quest-done: T1 names the quest and the count ('1 of 3 of today's three.')", kept[1].facts.title === "Tax return" && (kept[1].facts.lines ?? [])[0] === "1 of 3 of today's three.", JSON.stringify(kept[1].facts));
+  const both = (todayActive: boolean, todayKept: boolean): ProgressData => ({
+    parts: ["streak", "momentum"],
+    streak: { today: "2026-10-20", current: todayActive ? 31 : 30, todayActive, held: 0 },
+    momentum: { today: "2026-10-20", run: todayKept ? 13 : 12, bank: 1, nextFreezeIn: 4, todayKept, heldInRun: 0, held: [], quests: [], chestOpen: false },
+  });
+  const tick = diffProgress(both(false, false), both(true, true));
+  check("momentum-kept replaces the day-kept chime when both fire on one tick", keys(tick).join() === "momentum-day:2026-10-20" && !tick.some((d) => d.kind === "day-kept"), keys(tick).join());
+  const review = diffProgress(both(false, false), both(true, false));
+  check("a review (day kept, no momentum action) keeps its day-kept chime", keys(review).join() === "day:2026-10-20", keys(review).join());
+  const swap = diffProgress(
+    { parts: ["momentum"], momentum: { ...(both(false, true).momentum as MomentumPart), quests: [{ slot: "TASK", identity: "TASK:TEMPLATE:a", title: "A", done: false }] } },
+    { parts: ["momentum"], momentum: { ...(both(false, true).momentum as MomentumPart), quests: [{ slot: "TASK", identity: "TASK:TEMPLATE:b", title: "B", done: true }] } }
+  );
+  check("quest-done: a quest swapped in already done is no moment (same slot, other quest)", swap.length === 0, keys(swap).join());
+  const ready = diffProgress(
+    { parts: ["momentum"], momentum: { ...(both(false, true).momentum as MomentumPart), quests: [{ slot: "PLAN", identity: "p", title: "P", done: true }, { slot: "BODY", identity: "b", title: "B", done: false }] } },
+    { parts: ["momentum"], momentum: { ...(both(false, true).momentum as MomentumPart), quests: [{ slot: "PLAN", identity: "p", title: "P", done: true }, { slot: "BODY", identity: "b", title: "B", done: true }] } }
+  );
+  check("quest-done: the last of the three says the chest is ready", (ready[0]?.facts.lines ?? [])[0] === "2 of 2 · the chest is ready.", JSON.stringify(ready[0]?.facts.lines));
+  const run30 = diffProgress({ parts: ["momentum"], momentum: { ...(both(false, false).momentum as MomentumPart), run: 6 } }, { parts: ["momentum"], momentum: { ...(both(false, false).momentum as MomentumPart), run: 31, todayKept: true } });
+  check("momentum-run: a stale before crossing 7 and 30 plays 30, claiming 7", keys(run30).includes("momentum:30") && !keys(run30).includes("momentum:7") && run30.find((d) => d.kind === "momentum-run")!.claims.includes("momentum:7"), keys(run30).join());
+  check("momentum-run: nothing on a run that does not cross (12 → 13)", !keys(kept).some((k) => k.startsWith("momentum:")));
+
+  // Chests: the sheet's words, exact contents.
+  check("chest: T1 common '+20 XP → Craft'", one("chest (common)")?.tier === 1 && one("chest (common)")?.facts.title === "+20 XP → Craft", JSON.stringify(one("chest (common)")?.facts));
+  check("chest-rare: T2 hoard '+40 XP → Craft · +12 MP', amounts 40 XP and 12 MP", one("chest-rare (hoard)")?.tier === 2 && one("chest-rare (hoard)")?.facts.title === "+40 XP → Craft · +12 MP" && JSON.stringify(one("chest-rare (hoard)")?.facts.amounts?.map((a) => a.value)) === "[40,12]");
+  check("chest-rare: a freeze is '+1 freeze' with the numeral 1", one("chest-rare (freeze)")?.facts.title === "+1 freeze" && one("chest-rare (freeze)")?.facts.numeral?.to === 1);
+  check("chest-rare: a cosmetic names it ('Cobalt flame')", one("chest-rare (cosmetic)")?.facts.title === "Cobalt flame", one("chest-rare (cosmetic)")?.facts.title ?? "");
+  const full = diffProgress(
+    { parts: ["momentumRows"], momentumRows: { chests: [], milestones: [], checkpoints: [], planWeeks: [], perks: [] } },
+    { parts: ["momentumRows"], momentumRows: { chests: [{ key: "chest:2026-10-19", day: "2026-10-19", track: "DUTY", receipt: { v: "chest-1", u1: 0.95, u2: 0.1, tier: "RARE", item: "FREEZE", xp: 0, mp: 8, freeze: false, cosmetic: null, pity: true, sinceRare: 9, auto: true } }], milestones: [], checkpoints: [], planWeeks: [], perks: [] } }
+  )[0];
+  check(
+    "chest-rare: a full bank says the freeze became 8 MP; pity and the auto-open are said",
+    full?.facts.title === "+8 MP" && (full.facts.lines ?? []).includes("Freeze bank full: the freeze became 8 MP.") && (full.facts.lines ?? []).some((l) => /sure to be/.test(l)) && (full.facts.lines ?? []).includes("Opened for you: Mon's three were done.") && honestyProblem(draftToEvent(full, "x")) === null,
+    JSON.stringify(full?.facts)
+  );
+  const overflow = diffProgress(
+    { parts: ["momentumRows"], momentumRows: { chests: [], milestones: [], checkpoints: [], planWeeks: [], perks: [] } },
+    { parts: ["momentumRows"], momentumRows: { chests: [{ key: "chest:2026-10-20", day: "2026-10-20", track: "CRAFT", receipt: { v: "chest-1", u1: 0.7, u2: 0.1, tier: "UNCOMMON", item: null, xp: 32, mp: 0, freeze: false, cosmetic: null, pity: false, sinceRare: 3, overflowMp: 8 } }], milestones: [], checkpoints: [], planWeeks: [], perks: [] } }
+  )[0];
+  check("chest: a full chest pool says so ('8 MP paid as 32 XP')", overflow?.facts.title === "+32 XP → Craft" && (overflow.facts.lines ?? []).includes("Chest pool full · 8 MP paid as 32 XP."), JSON.stringify(overflow?.facts));
+
+  // Checkpoint, plan week, perk, capstone.
+  const cp = one("checkpoint")!;
+  check("checkpoint: the label, '+40 XP' and '+12 MP', to the roadmap's checkpoint", cp.facts.title === "Week 6 reading check" && JSON.stringify(cp.facts.amounts?.map((a) => a.value)) === "[40,12]" && cp.facts.href === "/you/roadmap?goal=rm1#checkpoint");
+  const pw = one("plan-week")!;
+  check("plan-week: the roadmap and '5 of 5 quests done the week of 12 October.', 30 XP and 10 MP", pw.facts.title === "Spanish" && (pw.facts.lines ?? [])[0] === "5 of 5 quests done the week of 12 October." && JSON.stringify(pw.facts.amounts?.map((a) => a.value)) === "[30,10]", JSON.stringify(pw.facts));
+  const perk = one("perk")!;
+  check("perk: T2 'Steady hand', its effect, 'Spent 1 Discipline point · 2 left.'", perk.tier === 2 && perk.facts.title === "Steady hand" && (perk.facts.lines ?? []).join(" | ") === "Full task completions pay ×1.04. | Spent 1 Discipline point · 2 left.", (perk.facts.lines ?? []).join(" | "));
+  const cap = one("capstone")!;
+  check("capstone: T3 'Critical mass', claiming its perk key", cap.tier === 3 && cap.facts.title === "Critical mass" && cap.claims.includes("perk:D_MASS:0") && (cap.facts.grants ?? [])[0] === "Crits pay ×2.5 instead of ×2.");
+  const relearn = diffProgress(
+    { parts: ["momentumRows"], momentumRows: { chests: [], milestones: [], checkpoints: [], planWeeks: [], perks: [{ key: "perk:D_MASS:0", code: "D_MASS", day: "2026-10-01", cost: 5 }] } },
+    { parts: ["momentumRows"], momentumRows: { chests: [], milestones: [], checkpoints: [], planWeeks: [], perks: [{ key: "perk:D_MASS:0", code: "D_MASS", day: "2026-10-01", cost: 5 }, { key: "perk:D_MASS:1", code: "D_MASS", day: "2026-11-02", cost: 5 }] } }
+  );
+  check("capstone: learned again after a respec it is a perk Seal (the Ascension is once ever)", keys(relearn).join() === "perk:D_MASS:1" && relearn[0].tier === 2, keys(relearn).join());
+
+  // §E.4: a walk's personal best; its reversal is never a moment.
+  const pr = (key: string, extra: Partial<LedgerRow> = {}): LedgerRow => ({ key, id: "pr-row-1", track: "BODY", day: "2026-10-20", xp: 15, qty: 8.4, detail: "distance 8.4 km (was 7.9)", walk: { distanceKm: 8.4, durationMin: 82.3 }, ...extra });
+  const led = (prs: LedgerRow[]): ProgressData => ({ parts: ["ledger"], ledger: { weeks: [], prs } });
+  const pb = diffProgress(led([]), led([pr("pr:WALK:DISTANCE:2026-W43")]))[0];
+  check(
+    "PB Seal: 'Personal best', 'Longest walk', 7.9 → 8.4, +15 XP, What moved Distance · Was · Pace",
+    pb?.kind === "pr" &&
+      pb.facts.eyebrow === "Personal best" &&
+      pb.facts.title === "Longest walk" &&
+      pb.facts.numeral?.from === 7.9 &&
+      pb.facts.numeral?.to === 8.4 &&
+      (pb.facts.lines ?? [])[0] === "7.9 km → 8.4 km" &&
+      pb.facts.amounts?.[0]?.kind === "xp" &&
+      pb.facts.amounts[0].value === 15 &&
+      pb.what.map((w) => `${w.label} ${w.value}`).join(" · ") === "Distance 8.4 km · Was 7.9 km · Pace 9:48 /km" &&
+      honestyProblem(draftToEvent(pb, "x")) === null,
+    JSON.stringify({ f: pb?.facts, w: pb?.what })
+  );
+  const pace = diffProgress(led([]), led([pr("pr:WALK:PACE:2026-W43", { qty: 9.5, detail: "pace 9:30 /km (was 9:48 /km)", xp: 22 })]))[0];
+  check("PB Seal: pace reads '9:48 /km → 9:30 /km', Pacer's 22 XP, no second pace row", pace?.facts.title === "Fastest pace" && (pace.facts.lines ?? [])[0] === "9:48 /km → 9:30 /km" && pace.facts.amounts?.[0]?.value === 22 && pace.what.filter((w) => w.label === "Pace").length === 1, JSON.stringify({ f: pace?.facts, w: pace?.what }));
+  const dur = diffProgress(led([]), led([pr("pr:WALK:DURATION:2026-W43", { qty: 85, detail: "duration 1 h 25 min (was 1 h 05 min)" })]))[0];
+  check("PB Seal: duration reads '1 h 05 min → 1 h 25 min' (65 → 85)", (dur?.facts.lines ?? [])[0] === "1 h 05 min → 1 h 25 min" && dur?.facts.numeral?.from === 65 && dur.facts.numeral.to === 85, JSON.stringify(dur?.facts));
+  const undoRow = pr("undo:pr-row-1", { id: "undo-row", xp: -15, qty: null, detail: "undo" });
+  check("PB Seal: a reversal row (undo:<id>, qty null) is never a moment", diffProgress(led([pr("pr:WALK:DISTANCE:2026-W43")]), led([pr("pr:WALK:DISTANCE:2026-W43"), undoRow])).length === 0);
+  check("PB Seal: a PR and its reversal in one diff play nothing", diffProgress(led([]), led([pr("pr:WALK:DISTANCE:2026-W43"), undoRow])).length === 0);
+  check("PB Seal: the M4 sensor PR keeps its own words", diffProgress(led([]), led([{ key: "pr:run_10k:wk001", track: "BODY", day: "2026-09-30", xp: 10, qty: null, detail: "10 km in 54:12" }]))[0]?.facts.eyebrow === "Personal record");
+
+  // The week Seal states momentum's amounts once launched (lifeMpModelOfWeek), today's before.
+  const W = "2026-W42";
+  const week = (track: string, mp: number): LedgerRow => ({ key: `week:${track}:${W}`, week: W, track, day: "2026-10-18", xp: 0, qty: 1, detail: "Kept · 4 days · 52.0 raw XP", mp });
+  const weekSeal = (rowsIn: LedgerRow[]) => diffProgress({ parts: ["ledger"], ledger: { weeks: [], prs: [] } }, { parts: ["ledger"], ledger: { weeks: rowsIn, prs: [] } })[0];
+  const pre = weekSeal([week("BODY", 1.5), week("CRAFT", 1.5)]);
+  const prev = process.env.XTNL_MOMENTUM_LAUNCH_DAY;
+  process.env.XTNL_MOMENTUM_LAUNCH_DAY = "2026-10-05";
+  let even, iron, trimmed;
+  try {
+    even = weekSeal([week("BODY", 18), week("CRAFT", 18)]);
+    iron = weekSeal([week("BODY", 21), week("CRAFT", 18)]);
+    trimmed = weekSeal([week("BODY", 18), week("CRAFT", 18), week("CARE", 5)]);
+  } finally {
+    if (prev === undefined) delete process.env.XTNL_MOMENTUM_LAUNCH_DAY;
+    else process.env.XTNL_MOMENTUM_LAUNCH_DAY = prev;
+  }
+  check("week Seal: before launch it still says '+1.5 MP for each kept track.'", (pre?.facts.lines ?? []).includes("+1.5 MP for each kept track."), JSON.stringify(pre?.facts.lines));
+  check("week Seal: once launched, '+18 MP for each kept track.' (amount 36)", (even?.facts.lines ?? []).includes("+18 MP for each kept track.") && even?.facts.amounts?.[0]?.value === 36, JSON.stringify(even?.facts.lines));
+  check("week Seal: Iron lungs' 21 is stated as the total ('+39 MP for 2 kept tracks.')", (iron?.facts.lines ?? []).includes("+39 MP for 2 kept tracks."), JSON.stringify(iron?.facts.lines));
+  check("week Seal: a trimmed week names momentum's cap of 91", (trimmed?.facts.lines ?? []).includes("+41 MP, trimmed by the life week's cap of 91."), JSON.stringify(trimmed?.facts.lines));
+
+  // Scopes, and nothing before launch.
+  check("scopes: tick reads the momentum run; settle reads the run and the rows", partsOf("tick").includes("momentum") && partsOf("settle").includes("momentum") && partsOf("settle").includes("momentumRows") && !partsOf("tick").includes("momentumRows"));
+  check("scopes: review, idea, boss and unlock read no momentum part", (["review", "idea", "boss", "unlock"] as const).every((s) => !partsOf(s).some((p) => p === "momentum" || p === "momentumRows")));
+  const snapSrc = read(join(ROOT, "src/lib/snapshot.ts")).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  check(
+    "inert: both momentum parts read nothing before MOMENTUM_LAUNCH_DAY (liveLaunch: momentumLaunchDay + momentumLive)",
+    MOMENTUM_LAUNCH_DAY === null &&
+      (snapSrc.match(/const launch = liveLaunch\(today\);\s*if \(launch == null\) return null;/g) ?? []).length === 2 &&
+      /const launch = momentumLaunchDay\(\);\s*if \(launch == null \|\| !momentumLive\(today, launch\)\) return null;/.test(snapSrc) &&
+      /momentum: \(\) => readMomentum\(userId, now\)/.test(snapSrc) &&
+      /momentumRows: \(\) => readMomentumRows\(userId, now\)/.test(snapSrc)
+  );
+  const settleWithout = diffProgress({ parts: partsOf("settle") }, { parts: partsOf("settle") });
+  check("inert: a settle pair without the momentum parts (before launch) plays nothing", settleWithout.length === 0);
+  const all = [...fx.values()].flat();
+  check("momentum: no Math.random in the detectors (they only report stored outcomes)", !/Math\.random/.test(read(join(ROOT, "src/lib/celebration-detect.ts")).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "")) && all.length > 0);
+}
+
 (async () => {
   await persistence();
   queue();
   input();
   life();
   await duty();
+  momentum();
   await classNames();
   await channel();
   shellChunk();

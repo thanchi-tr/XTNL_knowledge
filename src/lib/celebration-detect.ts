@@ -38,6 +38,19 @@
  *     'week:<W>+DUTY' ('4 of 4 tracks kept', rolled from 3, with DUTY's MP and
  *     the full days), since the first run's Seal claimed 'week:<W>'.
  *   - Every T2/T3 passes honestyProblem(): an exact number plus What moved or a cause.
+ *   - Momentum (momentum.md §A, §G.1; lane D): two parts, read only once
+ *     momentum is live (snapshot.ts returns neither before MOMENTUM_LAUNCH_DAY,
+ *     so nothing momentum-shaped can ever fire while it is null).
+ *       momentum      the run and Today's three: T1 momentum-kept (replaces the
+ *                     day-kept chime of the same diff), quest-done, freeze-held;
+ *                     T2 momentum-run at 7 / 30 / 100 / 365 (once ever each).
+ *       momentumRows  CHEST, MILESTONE, CHECKPOINT, PLAN_WEEK and PERK rows with
+ *                     what their mints paid: T1 chest, T2 chest-rare, checkpoint,
+ *                     plan-week and perk, T3 milestone (§A.8's ceremony, a Summit
+ *                     chest folded in) and capstone. Every amount is the row's
+ *                     own (the XP it paid, the MP its mint paid, 0 with the why).
+ *     A WALK personal best (§A.7, §E.4) is the pr Seal with the walk's words;
+ *     a PR reversal row ('undo:<id>', qty null) is never a moment.
  */
 import {
   DEFAULT_PREFS,
@@ -56,7 +69,21 @@ import { ATTRIBUTE_META, emptyComposition, type AttributeScores } from "./attrib
 import { fieldTier } from "./field-tier";
 import { HABIT_RUNGS, keptToNextRung, rungOf, type HabitRung } from "./habit";
 import { addDays, weekKeyOf, weekStartKeyOf, type DayKey } from "./life-day";
-import { GOAL_RULES, LIFE_MP, LIFE_MP_WEEK_CAP, isBackfillDetail, parseWeekRowKey, type GoalRule } from "./life-economy";
+import { GOAL_RULES, isBackfillDetail, parseWeekRowKey, type GoalRule } from "./life-economy";
+import {
+  MOMENT_KEYS,
+  RUN_MILESTONES,
+  TIER_GATE,
+  cosmeticById,
+  lifeMpModelOfWeek,
+  ownedCosmeticIndexes,
+  perkOf,
+  summitChestRowKey,
+  type ChestReceipt,
+  type PrMetric,
+  type QuestSlot,
+} from "./momentum";
+import { PB_TITLE, durationLabel, paceLabel, weekdayWord } from "./exercise";
 import { TRACKS, type Horizon } from "./life-types";
 import { MATERIALS, crestBandStarts, crestMaterial, medallionMaterial, rankMaterial, type Material } from "./materials";
 import { depthOf } from "./skill-form";
@@ -81,8 +108,10 @@ export const SNAPSHOT_VERSION = 1 as const;
  * habits    per-template habit strength (only the templates asked for)
  * tracks    the four life track levels
  * ready     emblems that meet every gate now (opt-in: it is the costly read)
+ * momentum      the momentum run and Today's three (only once momentum is live)
+ * momentumRows  CHEST, MILESTONE, CHECKPOINT, PLAN_WEEK and PERK rows (only once momentum is live)
  */
-export type SnapshotPart = "levels" | "mastered" | "streak" | "skills" | "goals" | "bosses" | "ledger" | "habits" | "tracks" | "ready";
+export type SnapshotPart = "levels" | "mastered" | "streak" | "skills" | "goals" | "bosses" | "ledger" | "habits" | "tracks" | "ready" | "momentum" | "momentumRows";
 
 export const SNAPSHOT_PARTS: readonly SnapshotPart[] = [
   "levels",
@@ -95,6 +124,8 @@ export const SNAPSHOT_PARTS: readonly SnapshotPart[] = [
   "habits",
   "tracks",
   "ready",
+  "momentum",
+  "momentumRows",
 ];
 
 /** What each kind of action reads. Take the same scope before and after. */
@@ -108,15 +139,22 @@ export const SNAPSHOT_SCOPES = {
   /**
    * A tick, a make-up or a record-yesterday. Pass templateIds for the rung.
    * A tick pays track XP, so it reads the tracks and the levels (the
-   * character counts tracks once life is launched).
+   * character counts tracks once life is launched). Momentum: the run and
+   * Today's three, so the day's first momentum action and a quest done chime
+   * on the tick itself (nothing is read before MOMENTUM_LAUNCH_DAY).
    */
-  tick: ["streak", "habits", "goals", "levels", "tracks"],
+  tick: ["streak", "habits", "goals", "levels", "tracks", "momentum"],
   /** An emblem unlock (the title can change with a first Ultimate). */
   unlock: ["skills", "levels"],
-  /** The week judge (M5) and M2's settlement: kept weeks, PRs, rungs, goals, tracks and the character they lift. */
-  settle: ["streak", "ledger", "habits", "goals", "tracks", "levels"],
+  /**
+   * The week judge (M5), M2's settlement and momentum's writes (settleMomentum's milestones,
+   * checkpoints and auto-opened chests; a chest opened; a perk learned: momentum-server
+   * MOMENT_SCOPE): kept weeks, PRs, rungs, goals, tracks and the character they lift, plus the
+   * run and the CHEST, MILESTONE, CHECKPOINT, PLAN_WEEK and PERK rows.
+   */
+  settle: ["streak", "ledger", "habits", "goals", "tracks", "levels", "momentum", "momentumRows"],
   /** Everything except `ready`. */
-  all: ["levels", "mastered", "streak", "skills", "goals", "bosses", "ledger", "habits", "tracks"],
+  all: ["levels", "mastered", "streak", "skills", "goals", "bosses", "ledger", "habits", "tracks", "momentum", "momentumRows"],
 } as const satisfies Record<string, readonly SnapshotPart[]>;
 
 export type SnapshotScope = keyof typeof SNAPSHOT_SCOPES;
@@ -193,6 +231,10 @@ export interface BossesPart {
 export interface LedgerRow {
   /** The row's dedupeKey, else its id. */
   key: string;
+  /** PR rows: the row id (a reversal is keyed 'undo:<id>'). Optional: older snapshots parse. */
+  id?: string;
+  /** WALK PR rows (momentum §E.4): the session's distance and time, for its pace. Absent: not read. */
+  walk?: { distanceKm: number; durationMin: number };
   /** WEEK rows: the ISO week from 'week:<track>:<weekKey>'; else the week of `day`. */
   week?: string;
   track: string | null;
@@ -233,6 +275,99 @@ export interface ReadyPart {
   codes: string[];
 }
 
+/** One of Today's three, from the day's frozen set (momentum §A.1); done is derived from that day's rows. */
+export interface MomentumQuestRow {
+  slot: QuestSlot;
+  /** momentum.ts questIdentity: a swap changes it, so a swapped-in quest never reads as "done" by the swap. */
+  identity: string;
+  title: string;
+  done: boolean;
+}
+
+/** The momentum run (§A.3) and Today's three, as of the snapshot's instant. Present only once momentum is live. */
+export interface MomentumPart {
+  today: DayKey;
+  /** The run (foldMomentum through today): yesterday's while today is still empty. */
+  run: number;
+  /** Freezes banked now, and momentum days to the next earned one. */
+  bank: number;
+  nextFreezeIn: number;
+  /** Today already has a momentum action (a counting task, a walk of 10 min, a checkpoint). */
+  todayKept: boolean;
+  /** Held days inside the current run. */
+  heldInRun: number;
+  /** Held days (a freeze bridged them) of the last 7, oldest first. */
+  held: DayKey[];
+  /** Today's three ([] while no set is frozen), and whether today's chest is open. */
+  quests: MomentumQuestRow[];
+  chestOpen: boolean;
+}
+
+/** A CHEST row (§A.2): 'chest:<day>' or a Summit chest 'chest:ms:<lineageId>'. */
+export interface ChestRow {
+  key: string;
+  day: DayKey;
+  track: string | null;
+  receipt: ChestReceipt;
+}
+
+/** A MILESTONE, CHECKPOINT or PLAN_WEEK row (§A.8) with what its mint paid. */
+export interface PaidRow {
+  /** The ledger key: 'ms:<lineageId>', 'cp:<itemLineageId>', 'pw:<questWeekId>'. */
+  key: string;
+  /** The lineage, the item lineage or the quest week id. */
+  ref: string;
+  day: DayKey;
+  track: string | null;
+  xp: number;
+  /** The milestone title, the checkpoint label, or 'Plan week kept · <roadmap> · 5 of 5 quests'. */
+  detail: string | null;
+  roadmapId: string | null;
+  /** What its 'mp:<REASON>:<ref>' mint paid (0 allowed) and why it paid nothing. Absent: no mint read. */
+  mp?: number;
+  mpWhy?: string | null;
+}
+
+/** A MILESTONE row with the ceremony's facts (§A.8), read from the roadmap where it can be. */
+export interface MilestoneRow extends PaidRow {
+  /** The goal's aim, verbatim. */
+  aim?: string | null;
+  /** Its place among the live version's milestones ("Stage 2 of 5"). */
+  stage?: number | null;
+  stages?: number | null;
+  /** Started → reached, in days. */
+  days?: number | null;
+}
+
+/** A PERK row (§B.4): 'perk:<code>:<epoch>', qty = the cost. */
+export interface PerkRow {
+  key: string;
+  code: string;
+  day: DayKey;
+  cost: number;
+}
+
+/** One branch's Life Skill Points now (§B.2). */
+export interface BranchNow {
+  earned: number;
+  spent: number;
+  countedXp: number;
+  /** The counted XP the next point needs. */
+  nextAt: number;
+}
+
+/** Momentum's paying rows since the launch day. Present only once momentum is live. */
+export interface MomentumRowsPart {
+  chests: ChestRow[];
+  milestones: MilestoneRow[];
+  checkpoints: PaidRow[];
+  planWeeks: PaidRow[];
+  /** Every PERK row (a re-learn after a respec is a new row). */
+  perks: PerkRow[];
+  /** DISCIPLINE | PATHFINDER | VITALITY → points now. Absent: not read. */
+  branches?: Partial<Record<string, BranchNow>>;
+}
+
 export interface ProgressData {
   parts: SnapshotPart[];
   levels?: LevelsPart;
@@ -245,6 +380,8 @@ export interface ProgressData {
   habits?: HabitsPart;
   tracks?: TracksPart;
   ready?: ReadyPart;
+  momentum?: MomentumPart;
+  momentumRows?: MomentumRowsPart;
 }
 
 /** A snapshot that holds nothing: diffing against it can never fire. */
@@ -307,6 +444,12 @@ const MONTHS = ["January", "February", "March", "April", "May", "June", "July", 
 export function longDay(key: DayKey): string {
   const [, m, d] = key.split("-").map(Number);
   return `${d} ${MONTHS[(m ?? 1) - 1] ?? ""}`.trim();
+}
+
+/** "2026-10-12" → "12 Oct". */
+export function shortDay(key: DayKey): string {
+  const [, m, d] = key.split("-").map(Number);
+  return `${d} ${(MONTHS[(m ?? 1) - 1] ?? "").slice(0, 3)}`.trim();
 }
 
 const RANK_LABEL: Record<SkillRank, string> = { PURE: "Pure", SYNERGY: "Synergy", CAPSTONE: "Capstone", APEX: "Apex", ULTIMATE: "Ultimate" };
@@ -803,14 +946,21 @@ function detectLedger(b: LedgerPart, a: LedgerPart): CelebrationDraft[] {
     const sealKey = earlier.length > 0 ? `week:${wk}+${(codes.length ? codes : tracks).join("+")}` : `week:${wk}`;
     const keptInWeek = earlier.length + tracks.length;
     // What the week's kept-track mints paid (a track trimmed to nothing by the cap has no mint).
+    // The amounts are the week's own model (momentum.ts lifeMpModelOfWeek: today's 1.5 and cap 8
+    // before MOMENTUM_LAUNCH_DAY, momentum's 18 and 91 from it), so the line never names the wrong one.
+    const model = lifeMpModelOfWeek(rows[0].day);
     const mp = round2(rows.reduce((s, r) => s + (typeof r.mp === "number" && r.mp > 0 ? r.mp : 0), 0));
-    const full = round2(rows.length * LIFE_MP.WEEK_KEPT);
+    const full = round2(rows.length * model.mp.WEEK_KEPT);
+    const each = rows.map((r) => (typeof r.mp === "number" ? round2(r.mp) : null));
+    const evenly = each.every((v) => v != null && v === each[0]);
     const mpLine =
       mp <= 0
         ? null
         : mp + 1e-9 >= full
-          ? `+${fmtMp(LIFE_MP.WEEK_KEPT)} MP for each kept track.`
-          : `+${fmtMp(mp)} MP, trimmed by the life week's cap of ${fmtMp(LIFE_MP_WEEK_CAP)}.`;
+          ? evenly
+            ? `+${fmtMp(each[0] ?? model.mp.WEEK_KEPT)} MP for each kept track.`
+            : `+${fmtMp(mp)} MP for ${plural(rows.length, "kept track")}.`
+          : `+${fmtMp(mp)} MP, trimmed by the life week's cap of ${fmtMp(model.weekCap)}.`;
     // The week's full days, paid by the same judge after the kept tracks: '+1.0 MP from 2 full days.'
     const fullDays = fullByWeek.get(wk) ?? [];
     const fullMp = round2(fullDays.reduce((s, f) => s + (f.mp ?? 0), 0));
@@ -842,8 +992,16 @@ function detectLedger(b: LedgerPart, a: LedgerPart): CelebrationDraft[] {
     );
   }
   const hadPrs = new Set(b.prs.map((p) => p.key));
+  // A reversal ('undo:<id>', the same-day delete of a walk: xp negated, qty null) is never a moment,
+  // and the PR row it takes back is not one either.
+  const reversed = new Set(a.prs.filter((p) => isUndoKey(p.key)).map((p) => p.key.slice(UNDO_PREFIX.length)));
   for (const p of a.prs) {
-    if (hadPrs.has(p.key)) continue;
+    if (hadPrs.has(p.key) || isUndoKey(p.key) || (p.id != null && reversed.has(p.id))) continue;
+    const walk = walkPrDraft(p);
+    if (walk) {
+      out.push(walk);
+      continue;
+    }
     const hasXp = p.xp > 0;
     if (!hasXp && p.qty == null) continue; // no exact number to state: M4 always writes one
     out.push(
@@ -922,6 +1080,451 @@ function detectTracks(b: TracksPart, a: TracksPart): CelebrationDraft[] {
   return out;
 }
 
+// ─── Personal bests on a walk (momentum §A.7, §E.4) ─────────────────────────
+
+const UNDO_PREFIX = "undo:";
+const isUndoKey = (key: string): boolean => key.startsWith(UNDO_PREFIX);
+const WALK_PR_KEY = /^pr:WALK:(DISTANCE|DURATION|CLIMB|PACE|WEEK_KM):/;
+const PR_LABEL: Record<PrMetric, string> = { DISTANCE: "Distance", DURATION: "Time", CLIMB: "Climb", PACE: "Pace", WEEK_KM: "This week" };
+/** exercise.ts kmText: '8.4', '12.35' → '12.3', '7.90' → '7.9'. */
+const kmWords = (v: number) => `${v.toFixed(v < 10 ? 2 : 1).replace(/\.?0+$/, "")} km`;
+
+/** A WALK metric's value in words ("8.4 km", "1 h 05 min", "120 m", "9:30 /km"). */
+function prValueText(metric: PrMetric, v: number): string {
+  switch (metric) {
+    case "DISTANCE":
+    case "WEEK_KM":
+      return kmWords(v);
+    case "DURATION":
+      return durationLabel(v);
+    case "CLIMB":
+      return `${Math.round(v)} m`;
+    case "PACE":
+      return paceLabel(v);
+  }
+}
+
+/** The previous best, read back from the PR row's detail ('distance 8.4 km (was 7.9)', exercise.ts pbDetail). */
+export function prWasOf(metric: PrMetric, detail: string | null): number | null {
+  const d = detail ?? "";
+  let m: RegExpExecArray | null;
+  switch (metric) {
+    case "DISTANCE":
+    case "WEEK_KM":
+      m = /\(was ([\d.]+)\)/.exec(d);
+      return m ? Number(m[1]) : null;
+    case "CLIMB":
+      m = /\(was (\d+) m\)/.exec(d);
+      return m ? Number(m[1]) : null;
+    case "DURATION":
+      m = /\(was (?:(\d+) h )?(\d+) min\)/.exec(d);
+      return m ? Number(m[1] ?? 0) * 60 + Number(m[2]) : null;
+    case "PACE":
+      m = /\(was (\d+):(\d{2}) \/km\)/.exec(d);
+      return m ? Number(m[1]) + Number(m[2]) / 60 : null;
+  }
+}
+
+/**
+ * A walk's personal best (§E.4): eyebrow 'Personal best', the metric's PB_TITLE ('Longest walk'),
+ * was → now as the numeral, the XP the PR row paid (+15, 22 with Pacer), and What moved: the
+ * value, what it was, and the walk's pace. Null for any other PR row (the M4 sensor kind).
+ */
+function walkPrDraft(p: LedgerRow): CelebrationDraft | null {
+  const match = WALK_PR_KEY.exec(p.key);
+  if (!match || p.qty == null || !Number.isFinite(p.qty)) return null;
+  const metric = match[1] as PrMetric;
+  const now = p.qty;
+  const was = prWasOf(metric, p.detail);
+  const xp = p.xp > 0 ? round2(p.xp) : 0;
+  const pace = p.walk && p.walk.distanceKm > 0 && p.walk.durationMin > 0 ? p.walk.durationMin / p.walk.distanceKm : null;
+  return draft(
+    "pr",
+    p.key,
+    {
+      eyebrow: "Personal best",
+      title: PB_TITLE[metric],
+      numeral: { from: was != null ? round2(was) : null, to: round2(now) },
+      lines: [was != null ? `${prValueText(metric, was)} → ${prValueText(metric, now)}` : prValueText(metric, now)],
+      amounts: xp > 0 ? [{ kind: "xp", value: xp, label: "XP" }] : undefined,
+      material: "bronze",
+      href: "/train/exercise",
+    },
+    [
+      { label: PR_LABEL[metric], value: prValueText(metric, now) },
+      ...(was != null ? [{ label: "Was", value: prValueText(metric, was) }] : []),
+      ...(pace != null && metric !== "PACE" ? [{ label: "Pace", value: paceLabel(pace) }] : []),
+    ]
+  );
+}
+
+// ─── Momentum (momentum.md §A, §G.1) ────────────────────────────────────────
+
+const BRANCH_LABEL: Record<string, string> = { DISCIPLINE: "Discipline", PATHFINDER: "Pathfinder", VITALITY: "Vitality" };
+const TIER_LABEL: Record<number, string> = { 1: "I", 2: "II", 3: "III", 4: "Capstone" };
+const RUN_MATERIAL: Record<number, Material> = { 7: "iron", 30: "bronze", 100: "silver", 365: "gold" };
+const freezeWords = (n: number) => plural(n, "freeze");
+const MOMENTUM_HREF = "/today#momentum";
+const ROADMAP_HREF = "/you/roadmap";
+const roadmapHref = (roadmapId: string | null, anchor = "") => (roadmapId ? `${ROADMAP_HREF}?goal=${encodeURIComponent(roadmapId)}${anchor}` : `${ROADMAP_HREF}${anchor}`);
+/** The paid MP of a row, or null when no mint was read. */
+const paidMp = (r: PaidRow): number | null => (typeof r.mp === "number" && Number.isFinite(r.mp) ? round2(Math.max(0, r.mp)) : null);
+/** 'plan week 2026-W41 · trimmed by the weekly cap' → 'trimmed by the weekly cap'; a why is plain words. */
+const mpWhyWords = (why: string | null | undefined) => (why ? why.replace(/^plan week \S+( · )?/, "").replace(/\.$/, "") : "");
+
+/**
+ * The run and Today's three: the day's first momentum action (T1 momentum-kept), a freeze that
+ * held (T1 freeze-held: a held day new in this diff, or yesterday's on the day's first action),
+ * each quest done (T1 quest-done, only for the same quest on both sides of one day), and a run
+ * crossing 7 / 30 / 100 / 365 (T2 momentum-run, once ever per threshold).
+ */
+function detectMomentum(b: MomentumPart, a: MomentumPart): CelebrationDraft[] {
+  const out: CelebrationDraft[] = [];
+  const sameDay = b.today === a.today;
+  const kept = sameDay && !b.todayKept && a.todayKept;
+  if (kept) {
+    out.push(
+      draft(
+        "momentum-kept",
+        MOMENT_KEYS.momentumKept(a.today),
+        {
+          eyebrow: "Momentum kept",
+          title: a.run <= 1 ? "Momentum started" : `${a.run}-day run`,
+          numeral: { from: b.run, to: a.run },
+          lines: [`${freezeWords(a.bank)} banked · the next in ${plural(a.nextFreezeIn, "momentum day")}.`],
+          href: MOMENTUM_HREF,
+        },
+        [{ label: "Run", value: `${b.run} → ${a.run}` }]
+      )
+    );
+  }
+
+  // A held day new in this diff (the day turned), or yesterday's on the day's first action. Two days back at most.
+  const heldBefore = new Set(sameDay ? b.held : []);
+  const yesterday = addDays(a.today, -1);
+  const fresh = a.held.filter((d) => d >= addDays(a.today, -2) && d < a.today && (!heldBefore.has(d) || (kept && d === yesterday)));
+  for (const d of [...new Set(fresh)].sort()) {
+    out.push(
+      draft(
+        "freeze-held",
+        MOMENT_KEYS.freezeHeld(d),
+        {
+          eyebrow: "Freeze held",
+          title: "A freeze kept your run",
+          numeral: { from: null, to: a.run },
+          lines: [`${weekdayWord(d)} was covered · ${freezeWords(a.bank)} left.`],
+          href: MOMENTUM_HREF,
+        },
+        [{ label: "Run", value: `${a.run} days` }]
+      )
+    );
+  }
+
+  if (sameDay && a.quests.length > 0) {
+    const prev = new Map(b.quests.map((q) => [q.slot, q]));
+    const newlyDone = a.quests.filter((q) => {
+      const p = prev.get(q.slot);
+      return q.done && p != null && p.identity === q.identity && !p.done;
+    });
+    const total = a.quests.length;
+    const doneNow = a.quests.filter((q) => q.done).length;
+    for (const q of newlyDone) {
+      out.push(
+        draft(
+          "quest-done",
+          MOMENT_KEYS.questDone(a.today, q.slot),
+          {
+            eyebrow: "Quest done",
+            title: q.title,
+            numeral: { from: doneNow - newlyDone.length, to: doneNow },
+            lines: [doneNow >= total && !a.chestOpen ? `${doneNow} of ${total} · the chest is ready.` : `${doneNow} of ${total} of today's three.`],
+            href: MOMENTUM_HREF,
+          },
+          [{ label: "Today's three", value: `${doneNow} of ${total}` }]
+        )
+      );
+    }
+  }
+
+  const crossed = RUN_MILESTONES.filter((m) => b.run < m && a.run >= m);
+  if (crossed.length) {
+    const m = crossed[crossed.length - 1];
+    const next = RUN_MILESTONES.find((x) => x > m);
+    const start = addDays(a.today, -(a.run - (a.todayKept ? 1 : 0)));
+    out.push(
+      draft(
+        "momentum-run",
+        MOMENT_KEYS.momentumRun(m),
+        {
+          eyebrow: "Momentum run",
+          title: `${m}-day run`,
+          numeral: { from: m - 1, to: m },
+          material: RUN_MATERIAL[m] ?? "gold",
+          lines: [
+            a.heldInRun > 0
+              ? a.heldInRun === 1
+                ? "A freeze covered a missed day along the way."
+                : `${a.heldInRun} freezes covered missed days along the way.`
+              : `Every day since ${longDay(start)} had a task, a walk or a checkpoint.`,
+          ],
+          href: MOMENTUM_HREF,
+        },
+        [next ? { label: "Next milestone", value: `${next} days` } : { label: "Run", value: `${a.run} days` }, { label: "Freezes banked", value: String(a.bank) }],
+        crossed.slice(0, -1).map((c) => MOMENT_KEYS.momentumRun(c))
+      )
+    );
+  }
+  return out;
+}
+
+/** What a chest paid, in the words of the chest sheet (§E.2). */
+function chestFacts(c: ChestRow, all: readonly ChestRow[]): { title: string; lines: string[]; amounts: AmountFactLike[]; numeral?: { from: number | null; to: number }; what: WhatMoved[] } {
+  const r = c.receipt;
+  const track = trackLabel(c.track);
+  const amounts: AmountFactLike[] = [
+    ...(r.xp > 0 ? [{ kind: "xp" as const, value: round2(r.xp), label: `XP → ${track}` }] : []),
+    ...(r.mp > 0 ? [{ kind: "mp" as const, value: round2(r.mp), label: "MP" }] : []),
+  ];
+  const pay = [r.xp > 0 ? `+${fmtAuto(round2(r.xp))} XP → ${track}` : null, r.mp > 0 ? `+${fmtMp(r.mp)} MP` : null].filter((x): x is string => Boolean(x));
+  const lines: string[] = [];
+  let title = pay.join(" · ");
+  let numeral: { from: number | null; to: number } | undefined;
+  const what: WhatMoved[] = [];
+  if (r.tier === "RARE") {
+    if (r.item === "FREEZE") {
+      if (r.freeze) {
+        title = "+1 freeze";
+        numeral = { from: null, to: 1 };
+      } else {
+        title = pay.join(" · ") || "+1 freeze";
+        lines.push(`Freeze bank full: the freeze became ${fmtMp(r.mp + (r.overflowMp ?? 0))} MP.`);
+      }
+      what.push({ label: "Rare", value: "Freeze" });
+    } else if (r.item === "COSMETIC") {
+      const cos = cosmeticById(r.cosmetic);
+      const owned = ownedCosmeticIndexes(all.filter((x) => x.day < c.day || (x.day === c.day && x.key <= c.key)).map((x) => x.receipt.cosmetic)).size;
+      if (cos) {
+        title = `${cos.name} ${cos.kind === "FLAME" ? "flame" : "chest trim"}`;
+        numeral = { from: Math.max(0, owned - 1), to: owned };
+        what.push({ label: "Cosmetics", value: `${owned} of 12` });
+      } else {
+        lines.push(`Every cosmetic is yours: this one became ${fmtMp(r.mp + (r.overflowMp ?? 0))} MP.`);
+        what.push({ label: "Rare", value: "Cosmetic" });
+      }
+    } else what.push({ label: "Rare", value: "Hoard" });
+    if (r.pity) lines.push("Ten chests without a rare: this one was sure to be.");
+  } else what.push({ label: "Chest", value: r.tier === "COMMON" ? "Common" : "Uncommon" });
+  if ((r.overflowMp ?? 0) > 0) lines.push(`Chest pool full · ${fmtMp(r.overflowMp ?? 0)} MP paid as ${fmtAuto(round2((r.overflowMp ?? 0) * 4))} XP.`);
+  if (r.auto) lines.push(`Opened for you: ${weekdayWord(c.day)}'s three were done.`);
+  return { title: title || "Chest opened", lines, amounts, numeral, what };
+}
+
+type AmountFactLike = { kind: "xp" | "mp"; value: number; label: string };
+
+/** A daily chest: T1 chest (common, uncommon), T2 chest-rare; a Summit chest on its own is chest-rare too. */
+function chestDraft(c: ChestRow, all: readonly ChestRow[], today: DayKey | null): CelebrationDraft {
+  const f = chestFacts(c, all);
+  const summit = c.receipt.summit === true;
+  const when = c.receipt.auto ? (today != null && c.day === addDays(today, -1) ? "Yesterday's chest" : `${weekdayWord(c.day)}'s chest`) : null;
+  const rare = c.receipt.tier === "RARE" || summit;
+  const key = summit ? c.key : rare ? MOMENT_KEYS.chestRare(c.day) : MOMENT_KEYS.chest(c.day);
+  return draft(
+    rare ? "chest-rare" : "chest",
+    key,
+    {
+      eyebrow: summit ? "Summit chest" : rare ? (when ? `${when} · rare` : "Rare chest") : (when ?? "Chest"),
+      title: f.title,
+      lines: f.lines.length ? f.lines : undefined,
+      amounts: f.amounts.length ? f.amounts : undefined,
+      numeral: f.amounts.length ? undefined : f.numeral,
+      material: rare ? "gold" : "bronze",
+      href: MOMENTUM_HREF,
+    },
+    f.what
+  );
+}
+
+/** §A.8's ceremony: kicker, the milestone, its aim, stage and days, the readings' date, and what it paid. */
+function milestoneDraft(m: MilestoneRow, pathfinder: BranchNow | undefined, summit: ChestRow | null, all: readonly ChestRow[]): CelebrationDraft {
+  const track = trackLabel(m.track);
+  const xp = round2(Math.max(0, m.xp));
+  const mp = paidMp(m);
+  const stageLine = [m.stage != null && m.stages != null && m.stages > 0 ? `Stage ${m.stage} of ${m.stages}` : null, m.days != null && m.days >= 0 ? plural(m.days, "day") : null]
+    .filter((x): x is string => Boolean(x))
+    .join(" · ");
+  const grants = [
+    `+${fmtAuto(xp)} XP → ${track}`,
+    mp == null ? null : mp > 0 ? `+${fmtMp(mp)} MP` : `+0 MP · ${mpWhyWords(m.mpWhy) || "the 30-day limit is reached"}`,
+    pathfinder ? `Pathfinder · ${fmtInt(Math.floor(pathfinder.countedXp))} of ${fmtInt(pathfinder.nextAt)} to point ${pathfinder.earned + 1}` : null,
+    ...(summit ? [`Summit chest · ${chestFacts(summit, all).title}`] : []),
+  ].filter((g): g is string => Boolean(g));
+  const amounts: CelebrationFacts["amounts"] = [
+    { kind: "xp", value: xp, label: `XP → ${track}` },
+    ...(mp != null && mp > 0 ? [{ kind: "mp" as const, value: mp, label: "MP" }] : []),
+  ];
+  return draft(
+    "milestone",
+    MOMENT_KEYS.milestone(m.ref),
+    {
+      eyebrow: "Milestone reached",
+      kicker: "Milestone reached",
+      title: m.detail?.trim() || "A milestone",
+      ...(m.aim ? { epithet: m.aim } : {}),
+      lines: [stageLine || null, `Confirmed on your readings, ${shortDay(m.day)}`].filter((l): l is string => Boolean(l)),
+      grants,
+      amounts,
+      numeral: m.stage != null ? { from: null, to: m.stage } : undefined,
+      material: "gold",
+      art: { type: "medallion", material: "gold", numeral: m.stage ?? 1 },
+      href: roadmapHref(m.roadmapId),
+    },
+    [
+      { label: `${track} track`, value: `+${fmtAuto(xp)} XP` },
+      ...(mp != null ? [{ label: "MP minted", value: `+${fmtMp(mp)}` }] : []),
+    ],
+    summit ? [summit.key] : []
+  );
+}
+
+function checkpointDraft(c: PaidRow): CelebrationDraft {
+  const track = trackLabel(c.track);
+  const xp = round2(Math.max(0, c.xp));
+  const mp = paidMp(c);
+  return draft(
+    "checkpoint",
+    MOMENT_KEYS.checkpoint(c.ref),
+    {
+      eyebrow: "Checkpoint taken",
+      title: c.detail?.trim() || "A checkpoint",
+      lines: [
+        `Logged ${longDay(c.day)}. It pays for taking it, whatever the score.`,
+        ...(mp === 0 ? [`No MP this time: ${mpWhyWords(c.mpWhy) || "2 checkpoints paid in the last 30 days"}.`] : []),
+      ],
+      amounts: [{ kind: "xp", value: xp, label: `XP → ${track}` }, ...(mp != null && mp > 0 ? [{ kind: "mp" as const, value: mp, label: "MP" }] : [])],
+      material: "bronze",
+      href: roadmapHref(c.roadmapId, "#checkpoint"),
+    },
+    [{ label: `${track} track`, value: `+${fmtAuto(xp)} XP` }, ...(mp != null ? [{ label: "MP minted", value: `+${fmtMp(mp)}` }] : [])]
+  );
+}
+
+function planWeekDraft(p: PaidRow): CelebrationDraft {
+  const track = trackLabel(p.track);
+  const xp = round2(Math.max(0, p.xp));
+  const mp = paidMp(p);
+  // 'Plan week kept · <roadmap> · 5 of 5 quests' (life-weeks planWeeks).
+  const [, roadmap, quests] = (p.detail ?? "").split(" · ");
+  return draft(
+    "plan-week",
+    MOMENT_KEYS.planWeek(p.ref),
+    {
+      eyebrow: "Plan week kept",
+      title: roadmap?.trim() || "Every plan quest done",
+      lines: [
+        `${quests?.trim() ? `${quests.trim().charAt(0).toUpperCase()}${quests.trim().slice(1)}` : "Every quest"} done the week of ${longDay(weekStartKeyOf(p.day))}.`,
+        ...(mp === 0 ? [`No MP this time: ${mpWhyWords(p.mpWhy) || "the life week's pool is full"}.`] : []),
+      ],
+      amounts: [{ kind: "xp", value: xp, label: `XP → ${track}` }, ...(mp != null && mp > 0 ? [{ kind: "mp" as const, value: mp, label: "MP" }] : [])],
+      material: "bronze",
+      href: ROADMAP_HREF,
+    },
+    [{ label: `${track} track`, value: `+${fmtAuto(xp)} XP` }, ...(mp != null ? [{ label: "MP minted", value: `+${fmtMp(mp)}` }] : [])]
+  );
+}
+
+/**
+ * A perk learned (§B.4): a T2 perk Seal ('perk:<code>:<epoch>'); a capstone's first learn is the
+ * T3 capstone Ascension ('capstone:<code>', claiming its perk key). A capstone learned again after
+ * a respec (an earlier PERK row of the same code) is a perk Seal.
+ */
+function perkDraft(p: PerkRow, all: readonly PerkRow[], branches: MomentumRowsPart["branches"]): CelebrationDraft | null {
+  const perk = perkOf(p.code);
+  if (!perk) return null;
+  const branch = BRANCH_LABEL[perk.branch] ?? perk.branch;
+  const cost = Math.max(0, Math.round(p.cost || perk.cost));
+  const now = branches?.[perk.branch];
+  const left = now ? Math.max(0, now.earned - now.spent) : null;
+  const spentLine = `Spent ${plural(cost, `${branch} point`)}${left != null ? ` · ${left} left` : ""}.`;
+  const what: WhatMoved[] = [
+    { label: `${branch} tier`, value: TIER_LABEL[perk.tier] ?? String(perk.tier) },
+    ...(now ? [{ label: `${branch} points`, value: `${now.spent} spent · ${left} left` }] : []),
+  ];
+  const learnedBefore = all.some((x) => x.code === p.code && x.key !== p.key && epochOfPerkKey(x.key) < epochOfPerkKey(p.key));
+  if (perk.tier === 4 && !learnedBefore) {
+    return draft(
+      "capstone",
+      MOMENT_KEYS.capstone(perk.code),
+      {
+        eyebrow: "Capstone learned",
+        kicker: `${branch} capstone`,
+        title: perk.name,
+        grants: [`${perk.effect}.`],
+        cost: spentLine.replace(/\.$/, ""),
+        cause: `Learned after ${TIER_GATE[4]} points spent in ${branch}.`,
+        numeral: { from: null, to: cost },
+        material: "gold",
+        art: { type: "medallion", material: "gold", numeral: cost },
+        href: "/skills/life",
+      },
+      what,
+      [p.key]
+    );
+  }
+  return draft(
+    "perk",
+    MOMENT_KEYS.perk(perk.code, epochOfPerkKey(p.key)),
+    {
+      eyebrow: "Perk learned",
+      title: perk.name,
+      lines: [`${perk.effect}.`, spentLine],
+      numeral: { from: null, to: cost },
+      material: perk.tier >= 3 ? "silver" : perk.tier === 2 ? "bronze" : "iron",
+      href: "/skills/life",
+    },
+    what
+  );
+}
+
+/** 'perk:D_MASS:2' → 2 (0 when unreadable). */
+const epochOfPerkKey = (key: string): number => {
+  const n = Number(key.split(":")[2]);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+};
+
+/**
+ * Momentum's paying rows new in this diff: milestones (T3, a Summit chest of the same diff folded
+ * in and claimed), capstones (T3) and perks, checkpoints, plan weeks, then chests.
+ */
+function detectMomentumRows(b: MomentumRowsPart, a: MomentumRowsPart, today: DayKey | null): CelebrationDraft[] {
+  const out: CelebrationDraft[] = [];
+  const keysOf = (rows: readonly { key: string }[]) => new Set(rows.map((r) => r.key));
+  const hadChests = keysOf(b.chests);
+  const freshChests = a.chests.filter((c) => !hadChests.has(c.key) && isChestReceiptLike(c.receipt));
+  const folded = new Set<string>();
+
+  const hadMs = keysOf(b.milestones);
+  for (const m of a.milestones) {
+    if (hadMs.has(m.key)) continue;
+    const summit = freshChests.find((c) => c.key === summitChestRowKey(m.ref)) ?? null;
+    if (summit) folded.add(summit.key);
+    out.push(milestoneDraft(m, a.branches?.PATHFINDER, summit, a.chests));
+  }
+  const hadPerks = keysOf(b.perks);
+  const perkDrafts = a.perks.filter((p) => !hadPerks.has(p.key)).map((p) => perkDraft(p, a.perks, a.branches)).filter((d): d is CelebrationDraft => d !== null);
+  out.push(...perkDrafts.filter((d) => d.tier === 3), ...perkDrafts.filter((d) => d.tier < 3));
+  const hadCps = keysOf(b.checkpoints);
+  for (const c of a.checkpoints) if (!hadCps.has(c.key)) out.push(checkpointDraft(c));
+  const hadPws = keysOf(b.planWeeks);
+  for (const p of a.planWeeks) if (!hadPws.has(p.key)) out.push(planWeekDraft(p));
+  for (const c of freshChests) if (!folded.has(c.key)) out.push(chestDraft(c, a.chests, today));
+  return out;
+}
+
+const isChestReceiptLike = (r: unknown): r is ChestReceipt => {
+  const x = r as Partial<ChestReceipt> | null;
+  return !!x && typeof x === "object" && (x.tier === "COMMON" || x.tier === "UNCOMMON" || x.tier === "RARE") && typeof x.xp === "number" && typeof x.mp === "number";
+};
+
 // ─── The diff ───────────────────────────────────────────────────────────────
 
 export interface DiffOptions {
@@ -977,6 +1580,16 @@ export function diffProgress(before: ProgressData, after: ProgressData, opts: Di
   }
   if (both("habits")) out.push(...detectHabits(before.habits!, after.habits!));
   out.push(...looseTracks);
+  // Momentum (§G.1): the run and Today's three, then the paying rows. The day's first momentum
+  // action replaces the day-kept chime of the same diff: one chime for one tick.
+  if (both("momentum")) {
+    const momentum = detectMomentum(before.momentum!, after.momentum!);
+    if (momentum.some((d) => d.kind === "momentum-kept")) {
+      for (let i = out.length - 1; i >= 0; i--) if (out[i].kind === "day-kept") out.splice(i, 1);
+    }
+    out.push(...momentum);
+  }
+  if (both("momentumRows")) out.push(...detectMomentumRows(before.momentumRows!, after.momentumRows!, after.momentum?.today ?? null));
 
   // Newly unlockable: no kind of its own (the orbit on You › Skills shows it);
   // it rides as a What-moved row on the loudest moment of the same diff.

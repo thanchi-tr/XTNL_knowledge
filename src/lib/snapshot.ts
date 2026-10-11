@@ -17,6 +17,15 @@
  * cursor and held days as the board does, and the ledger part reads a WEEK
  * row's mark through life-tracks weekMarkOf and carries the full-day mints
  * for the week Seal.
+ *
+ * Momentum (momentum.md §G.1, lane D): two parts, `momentum` (the run and
+ * Today's three) and `momentumRows` (CHEST, MILESTONE, CHECKPOINT, PLAN_WEEK
+ * and PERK rows with their mints, the milestone ceremony's roadmap facts and
+ * the Life Skill Points), read through momentum-server's own store and fold
+ * (loaded on first use: momentum-server reaches celebrations.ts, which reaches
+ * this file). Both read nothing and are left out before MOMENTUM_LAUNCH_DAY,
+ * so nothing momentum-shaped can fire while it is null. A WALK PR row carries
+ * its session's distance and time, for the Seal's pace (§E.4).
  */
 import { cache } from "react";
 import { prisma } from "./prisma";
@@ -25,12 +34,19 @@ import { bossFor, bossMasteryReward } from "./bosses";
 import {
   partsOf,
   type BossesPart,
+  type BranchNow,
+  type ChestRow,
   type GoalsPart,
   type HabitsPart,
   type LedgerPart,
   type LedgerRow,
   type LevelsPart,
   type MasteredPart,
+  type MilestoneRow,
+  type MomentumPart,
+  type MomentumRowsPart,
+  type PaidRow,
+  type PerkRow,
   type ProgressData,
   type ReadyPart,
   type SkillsPart,
@@ -40,7 +56,7 @@ import {
   type TracksPart,
 } from "./celebration-detect";
 import { HABIT_WINDOW_DAYS, habitStrength, perDutyStreak, type StreakOptions } from "./habit";
-import { addDays, dateColumn, keyOfDateColumn, todayKey, weekKeyOf, type DayKey } from "./life-day";
+import { addDays, dateColumn, daysBetween, keyOfDateColumn, todayKey, weekKeyOf, type DayKey } from "./life-day";
 import {
   GOAL_DEPTH_CAP,
   GOAL_MINT_PREFIX,
@@ -52,6 +68,19 @@ import {
   parseWeekRowKey,
   weekKeptMintKey,
 } from "./life-economy";
+import {
+  MOMENTUM,
+  checkpointMintKey,
+  chestRowKey,
+  isChestReceipt,
+  milestoneMintKey,
+  momentumLaunchDay,
+  momentumLive,
+  planWeekMintKey,
+  questIdentity,
+} from "./momentum";
+import { isMissingRoadmapTable } from "./roadmap-types";
+import type { LedgerRow as MomentumRow, MomentumLedger } from "./momentum-server";
 import { dutyLaunchDay, fullDayMintKey, isDutyLaunched } from "./duty-economy";
 import { heldDaysOf } from "./duty-rule";
 import { loadLifeLedger } from "./life-tracks-server";
@@ -96,6 +125,9 @@ const PART_TAGS: Record<SnapshotPart, CacheTag[]> = {
   habits: ["life", "activity"],
   tracks: ["life", "activity"],
   ready: ["fields", "ideas", "progress", "life"],
+  // Momentum: ledger rows, the day's instances, walks and checkpoint logs; perk and chest rows and mints.
+  momentum: ["activity", "life", "roadmap", "exercise"],
+  momentumRows: ["activity", "life", "progress", "roadmap"],
 };
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -249,13 +281,25 @@ async function readLedger(userId: string, now: Date): Promise<LedgerPart> {
   const since = dateColumn(addDays(todayKey(now), -LEDGER_READ_DAYS));
   const rows = await prisma.activityEvent.findMany({
     where: { userId, source: { in: ["WEEK", "PR", "MP_MINT"] }, day: { gte: since } },
-    select: { id: true, source: true, track: true, day: true, xp: true, qty: true, detail: true, dedupeKey: true, receipt: true },
+    select: { id: true, source: true, track: true, day: true, xp: true, qty: true, detail: true, dedupeKey: true, receipt: true, sourceId: true },
   });
   const minted = new Map<string, number>();
   for (const r of rows) if (r.source === "MP_MINT" && r.dedupeKey) minted.set(r.dedupeKey, r.qty ?? 0);
   const weeks: LedgerRow[] = [];
   const prs: LedgerRow[] = [];
   const fullDays: LedgerRow[] = [];
+  // Momentum §E.4: a WALK PR row's session, for the Seal's pace (read only when there is one; fail soft).
+  const walkOf = new Map<string, string>();
+  for (const r of rows) if (r.source === "PR" && r.sourceId && r.dedupeKey?.startsWith("pr:WALK:")) walkOf.set(r.id, r.sourceId);
+  const sessions = walkOf.size
+    ? await prisma.exerciseSession
+        .findMany({ where: { userId, id: { in: [...new Set(walkOf.values())] } }, select: { id: true, distanceKm: true, durationMin: true } })
+        .catch((err: unknown) => {
+          console.error("[celebrations] walk sessions unreadable; the PB Seal goes without its pace", err);
+          return [] as { id: string; distanceKm: number; durationMin: number }[];
+        })
+    : [];
+  const sessionById = new Map(sessions.map((s) => [s.id, { distanceKm: s.distanceKm, durationMin: s.durationMin }]));
   for (const r of rows) {
     const day = keyOfDateColumn(r.day);
     const row: LedgerRow = { key: r.dedupeKey ?? r.id, track: r.track, day, xp: r.xp, qty: r.qty, detail: r.detail };
@@ -272,9 +316,172 @@ async function readLedger(userId: string, now: Date): Promise<LedgerPart> {
       const week = key?.weekKey ?? weekKeyOf(day);
       const mp = track ? minted.get(weekKeptMintKey(track, week)) : undefined;
       weeks.push({ ...row, track, week, ...(mp != null ? { mp: round2(mp) } : {}) });
-    } else prs.push(row);
+    } else {
+      // A PR row keeps its id (its reversal is 'undo:<id>') and, for a walk, the session it beat with.
+      const walk = sessionById.get(walkOf.get(r.id) ?? "");
+      prs.push({ ...row, id: r.id, ...(walk ? { walk } : {}) });
+    }
   }
   return { weeks, prs, fullDays };
+}
+
+// ─── Momentum (momentum.md §G.1; lane D) ────────────────────────────────────
+
+/** The launch day when momentum is live on `today`, else null (then no momentum part is read at all). */
+function liveLaunch(today: DayKey): DayKey | null {
+  const launch = momentumLaunchDay();
+  if (launch == null || !momentumLive(today, launch)) return null;
+  return launch;
+}
+
+/**
+ * The run (§A.3: momentum-server runOf over the same rows its loaders fold) and Today's three
+ * from the frozen set, done derived from today's rows (momentum-server questDone). With no set
+ * frozen yet the quests are [] (a preview would cost the board's read on every tick).
+ */
+async function readMomentum(userId: string, now: Date): Promise<MomentumPart | null> {
+  const today = todayKey(now);
+  const launch = liveLaunch(today);
+  if (launch == null) return null;
+  const m = await import("./momentum-server");
+  const store = m.prismaMomentumStore;
+  const [units, rows, weeks, questRows] = await Promise.all([
+    store.units(userId, launch, today),
+    store.events(userId, { sources: ["CHEST", "PERK", "RESPEC"], from: launch }),
+    store.events(userId, { sources: ["WEEK"], from: launch, to: today, keyPrefixes: ["week:BODY:"] }),
+    store.events(userId, { sources: ["QUEST_SET"], from: today, to: today }),
+  ]);
+  const L: MomentumLedger = {
+    launch,
+    units,
+    chests: rows.filter((r) => r.source === "CHEST"),
+    perkRows: rows.filter((r) => r.source === "PERK" || r.source === "RESPEC"),
+    paid: [],
+    bodyKept: new Set(weeks.filter((w) => (w.qty ?? 0) > 0).map((w) => w.day)),
+    mints: [],
+  };
+  const fold = m.runOf(L, today);
+  const { inForce } = m.questRowsOf(questRows, today);
+  const facts = inForce.length > 0 ? ((await store.dayFacts(userId, [today])).get(today) ?? m.emptyDayFacts(today)) : null;
+  const weekAgo = addDays(today, -7);
+  return {
+    today,
+    run: fold.current,
+    bank: fold.bank,
+    nextFreezeIn: Math.max(1, MOMENTUM.FREEZE_EVERY - fold.since),
+    todayKept: (units.get(today) ?? 0) > 0,
+    heldInRun: fold.heldInRun,
+    held: fold.heldDays.filter((d) => d >= weekAgo),
+    quests: inForce.map((q) => ({ slot: q.slot, identity: questIdentity(q), title: q.title, done: facts ? m.questDone(q, facts) : false })),
+    chestOpen: L.chests.some((r) => r.dedupeKey === chestRowKey(today)),
+  };
+}
+
+/** Milestones of a live version that are not part of the plan any more (or not yet). */
+const MILESTONE_GONE: ReadonlySet<string> = new Set(["DRAFT", "SUPERSEDED", "DISCARDED"]);
+
+/**
+ * The ceremony's facts per milestone lineage (§A.8): the goal's aim, its stage among the live
+ * version's milestones, and started → reached in days. Read only; fail soft (none on any error).
+ */
+async function milestoneFacts(userId: string, lineages: readonly string[]): Promise<Map<string, Pick<MilestoneRow, "aim" | "stage" | "stages" | "days">>> {
+  const out = new Map<string, Pick<MilestoneRow, "aim" | "stage" | "stages" | "days">>();
+  if (lineages.length === 0) return out;
+  try {
+    const rows = await prisma.roadmapMilestone.findMany({
+      where: { lineageId: { in: [...lineages] }, roadmap: { userId } },
+      select: { lineageId: true, roadmapId: true, version: true, startedDay: true, reachedDay: true, roadmap: { select: { aim: true, version: true } } },
+    });
+    const roadmapIds = [...new Set(rows.map((r) => r.roadmapId))];
+    const siblings = roadmapIds.length
+      ? await prisma.roadmapMilestone.findMany({ where: { roadmapId: { in: roadmapIds } }, select: { roadmapId: true, version: true, lineageId: true, ord: true, status: true } })
+      : [];
+    for (const lineage of lineages) {
+      const own = rows.filter((r) => r.lineageId === lineage).sort((a, b) => b.version - a.version);
+      const live = own.find((r) => r.version === r.roadmap.version) ?? own[0];
+      if (!live) continue;
+      const plan = siblings
+        .filter((s) => s.roadmapId === live.roadmapId && s.version === live.roadmap.version && !MILESTONE_GONE.has(s.status))
+        .sort((a, b) => a.ord - b.ord);
+      const at = plan.findIndex((s) => s.lineageId === lineage);
+      const started = own.find((r) => r.startedDay != null)?.startedDay ?? null;
+      const reached = own.find((r) => r.reachedDay != null)?.reachedDay ?? null;
+      out.set(lineage, {
+        aim: live.roadmap.aim,
+        stage: at >= 0 ? at + 1 : null,
+        stages: at >= 0 ? plan.length : null,
+        days: started && reached ? Math.max(0, daysBetween(keyOfDateColumn(started), keyOfDateColumn(reached))) : null,
+      });
+    }
+  } catch (err) {
+    if (!isMissingRoadmapTable(err)) console.error("[celebrations] milestone facts unreadable; the ceremony goes without them", err);
+  }
+  return out;
+}
+
+const MOMENTUM_MINT_PREFIXES = [milestoneMintKey(""), checkpointMintKey(""), planWeekMintKey("")];
+
+/**
+ * Momentum's paying rows since the launch day (§D.2): CHEST, MILESTONE, CHECKPOINT, PLAN_WEEK and
+ * PERK rows, each MILESTONE/CHECKPOINT/PLAN_WEEK with what its mint paid (and why it paid 0), the
+ * milestones' ceremony facts and each branch's Life Skill Points now.
+ */
+async function readMomentumRows(userId: string, now: Date): Promise<MomentumRowsPart | null> {
+  const today = todayKey(now);
+  const launch = liveLaunch(today);
+  if (launch == null) return null;
+  const m = await import("./momentum-server");
+  const store = m.prismaMomentumStore;
+  const [rows, mints, branchRows] = await Promise.all([
+    store.events(userId, { sources: ["CHEST", "MILESTONE", "CHECKPOINT", "PLAN_WEEK", "PERK", "RESPEC"], from: launch }),
+    store.events(userId, { sources: ["MP_MINT"], from: launch, keyPrefixes: MOMENTUM_MINT_PREFIXES }),
+    store.branchXp(userId, launch).catch((err: unknown) => {
+      console.error("[celebrations] branch XP unreadable; the moments go without the points", err);
+      return null;
+    }),
+  ]);
+  const minted = new Map(mints.map((r) => [r.dedupeKey ?? "", r]));
+  const keyOf = (r: MomentumRow) => r.dedupeKey ?? r.id;
+  const refOf = (r: MomentumRow, prefix: string) => (keyOf(r).startsWith(prefix) ? keyOf(r).slice(prefix.length) : keyOf(r));
+  const paid = (r: MomentumRow, ref: string, mintKey: string, roadmapId: string | null): PaidRow => {
+    const mint = minted.get(mintKey);
+    return {
+      key: keyOf(r),
+      ref,
+      day: r.day,
+      track: r.track,
+      xp: r.xp,
+      detail: r.detail,
+      roadmapId,
+      ...(mint ? { mp: round2(mint.qty ?? 0), mpWhy: parseMintDetail(mint.detail).why } : {}),
+    };
+  };
+  const chests: ChestRow[] = rows.flatMap((r) => (r.source === "CHEST" && isChestReceipt(r.receipt) ? [{ key: keyOf(r), day: r.day, track: r.track, receipt: r.receipt }] : []));
+  const msRows = rows.filter((r) => r.source === "MILESTONE");
+  const facts = await milestoneFacts(
+    userId,
+    msRows.map((r) => refOf(r, "ms:"))
+  );
+  const milestones: MilestoneRow[] = msRows.map((r) => {
+    const ref = refOf(r, "ms:");
+    return { ...paid(r, ref, milestoneMintKey(ref), r.sourceId), ...(facts.get(ref) ?? {}) };
+  });
+  const checkpoints = rows.filter((r) => r.source === "CHECKPOINT").map((r) => {
+    const ref = refOf(r, "cp:");
+    return paid(r, ref, checkpointMintKey(ref), r.sourceId);
+  });
+  const planWeeks = rows.filter((r) => r.source === "PLAN_WEEK").map((r) => {
+    const ref = refOf(r, "pw:");
+    return paid(r, ref, planWeekMintKey(ref), null);
+  });
+  const perkRows = rows.filter((r) => r.source === "PERK" || r.source === "RESPEC");
+  const perks: PerkRow[] = rows.flatMap((r) => (r.source === "PERK" && r.detail ? [{ key: keyOf(r), code: r.detail, day: r.day, cost: r.qty ?? 0 }] : []));
+  let branches: Partial<Record<string, BranchNow>> | undefined;
+  if (branchRows) {
+    const points = m.branchPointsOf(branchRows, today, m.perksAt(perkRows, now));
+    branches = Object.fromEntries(Object.entries(points).map(([b, p]) => [b, { earned: p.earned, spent: p.spent, countedXp: p.countedXp, nextAt: p.nextAt }]));
+  }
+  return { chests, milestones, checkpoints, planWeeks, perks, ...(branches ? { branches } : {}) };
 }
 
 /**
@@ -375,6 +582,8 @@ export async function readProgress(userId: string, opts: ReadProgressOptions = {
     habits: () => readHabits(userId, now, opts.templateIds),
     tracks: () => readTracks(userId, now),
     ready: () => readReady(userId),
+    momentum: () => readMomentum(userId, now),
+    momentumRows: () => readMomentumRows(userId, now),
   };
   const results = await Promise.all(
     wanted.map(async (part): Promise<[ReadablePart, unknown]> => {
