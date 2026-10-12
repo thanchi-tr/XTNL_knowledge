@@ -21,6 +21,13 @@
  *   - the dictionary: every group has two or more members, none is one
  *     letter or listed twice in its group, lookup is one hop; the stemmer;
  *   - FORMULA answers typed as LaTeX grade like mathjs;
+ *   - formula equivalence (formula-equivalence.ts): the same formula written
+ *     any other way passes — reordered (b*a*c), letters together (bac, F = ma),
+ *     × and ·, other capitals, an equation either way round or scaled, the
+ *     formula without its name; an opaque Std(sample) is the same function on
+ *     both sides, SQRT is sqrt; a different formula, y = y, a swapped division
+ *     or subtraction fail; SHORT answers that read as formulas get the same
+ *     test, prose and hyphenated words don't;
  *   - the in-house meaning check (meaning-match.ts): rewordings and
  *     synonyms pass; swapped roles, half answers, other facts, a flipped
  *     "not", a different number and kitchen-sink lists fail, with reasons;
@@ -42,6 +49,7 @@ import {
 import { verifyAnswer } from "../src/lib/verification";
 import { dictionaryGroups, stem, synonymsOf, words } from "../src/lib/synonyms";
 import { gradeReview, judgeEligible } from "../src/lib/answer-judge";
+import { formulasEquivalent, looksLikeFormula, segmentProduct } from "../src/lib/formula-equivalence";
 import { judgeByMeaning } from "../src/lib/meaning-match";
 
 let failed = 0;
@@ -162,6 +170,43 @@ check("formula: LaTeX in the review box grades like mathjs", verifyAnswer("FORMU
 check("formula: mathjs still grades", verifyAnswer("FORMULA", "grossProfit/grossLoss", "grossProfit / grossLoss"));
 check("formula: a wrong LaTeX answer fails", !verifyAnswer("FORMULA", "\\frac{grossLoss}{grossProfit}", "grossProfit / grossLoss"));
 check("formula: \\sqrt and powers", verifyAnswer("FORMULA", "\\sqrt{x^2 + y^2}", "sqrt(x^2 + y^2)"));
+
+// ── formula equivalence: the same formula, written another way ──
+// A seeded random source, so every point is the same on every run.
+function seeded(seed: number): () => number {
+  let x = seed >>> 0;
+  return () => {
+    x = (x + 0x6d2b79f5) >>> 0;
+    let t = x;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const eqv = (given: string, expected: string, caseSensitive = false) => formulasEquivalent(given, expected, { rng: seeded(42), caseSensitive });
+const SQN = "SQN=Expectancy/Std(sample)*(SQRT(N))";
+check("equivalent: order of a product (b*a*c is a*b*c)", eqv("b*a*c", "a*b*c") && eqv("c*(a*b)", "a*b*c") && eqv("c*(b+a)", "a*c + b*c"));
+check("equivalent: letters written together read as a product, on either side (bac, F = ma)", eqv("bac", "a*b*c") && eqv("a*b*c", "abc") && eqv("F = m*a", "F = ma") && eqv("2ab", "a*b*2"));
+check("segment: the fewest names, only into the other side's variables", JSON.stringify(segmentProduct("bac", ["a", "b", "c"], false)) === '["b","a","c"]' && segmentProduct("SQN", ["S", "Q", "N", "SQN"], false) === null && segmentProduct("ab", ["a"], false) === null);
+check("equivalent: × · ⋅ ** − √ are read as maths", eqv("b×a×c", "a*b*c") && eqv("b·a·c", "a*b*c") && eqv("a⋅b", "b*a") && eqv("x**2", "x^2") && eqv("a − b", "a-b") && eqv("√x", "sqrt(x)"));
+check("equivalent: an equation either way round, or scaled by a constant", eqv("y = b*a", "y = a*b") && eqv("b*a = y", "y = a*b") && eqv("2y = 2ab", "y = a*b"));
+check("equivalent: the formula alone, when the answer names what it computes (and the reverse)", eqv("b*a", "y = a*b") && eqv("y = b*a", "a*b"));
+check("equivalent: other capitals, unless the card is case sensitive", eqv("expectancy/std(sample)*sqrt(n)", SQN) && !eqv("expectancy/std(sample)*sqrt(n)", SQN, true));
+check("equivalent: an unknown function (Std) is one function on both sides; SQRT is sqrt", eqv("SQN = sqrt(N)*Expectancy/std(sample)", SQN) && eqv("Expectancy*sqrt(N)/Std(sample)", SQN));
+check(
+  "not equivalent: a different formula fails (N for sqrt(N), Std multiplied, a*b + c, a/b, a − b, another relation, y = y, another argument)",
+  !eqv("Expectancy/Std(sample)*N", SQN) && !eqv("Expectancy*Std(sample)*sqrt(N)", SQN) && !eqv("a*b + c", "a*(b + c)") && !eqv("a/b", "b/a") && !eqv("a - b", "b - a") &&
+    !eqv("a = b*c", "b = a*c") && !eqv("y = y", "y = a*b") && !eqv("Expectancy/Std(trades)*sqrt(N)", SQN)
+);
+check("not equivalent: unreadable or empty input fails closed", !eqv("a*(b", "a*b") && !eqv("", "a*b") && !eqv("a*b", "a*(b"));
+check("FORMULA through the dispatch: b*a*c, bac and the SQN card's own formula", verifyAnswer("FORMULA", "b*a*c", "a*b*c") && verifyAnswer("FORMULA", "bac", "a*b*c") && verifyAnswer("FORMULA", "Expectancy*SQRT(N)/Std(sample)", SQN));
+check("SHORT: an answer that reads as a formula is graded as one too", verifyAnswer("SHORT", "b*a*c", "a*b*c") && verifyAnswer("SHORT", "F = a*m", "F = m*a") && verifyAnswer("SHORT", "a*m", "F = m*a") && !verifyAnswer("SHORT", "a+b+c", "a*b*c"));
+check(
+  "SHORT: what reads as a formula — an operator or a call, a variable, no prose; hyphenated words and numbers stay text",
+  looksLikeFormula("a*b*c") && looksLikeFormula("F = ma") && looksLikeFormula("sqrt(x)") && looksLikeFormula("a+b") &&
+    !looksLikeFormula("x-ray") && !looksLikeFormula("Paris") && !looksLikeFormula("1/2") && !looksLikeFormula("mean/variance ratio") && !looksLikeFormula("Ctrl and C")
+);
+check("SHORT: a list or key-word answer keeps its own rule (no formula test)", !verifyAnswer("SHORT", "b*a", "[a*b, c*d]"));
 
 // ── source guards ──
 const review = readFileSync("src/app/actions/review.ts", "utf8");

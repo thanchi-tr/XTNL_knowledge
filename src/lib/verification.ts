@@ -1,17 +1,17 @@
-import { create, all } from "mathjs";
 import type { QuestionType } from "@prisma/client";
 import { decodeStringArray, decodeNumericAnswer } from "./idea-payload";
-import { gradeShortAnswer, matchesText, type ShortGradeOptions } from "./short-answer";
-import { latexToMathjs } from "./latex";
-
-const math = create(all);
+import { gradeShortAnswer, matchesText, parseShortAnswer, type ShortGradeOptions } from "./short-answer";
+import { formulasEquivalent, looksLikeFormula } from "./formula-equivalence";
 
 // ============================================================================
 // SHORT — normalised text, typos pass on similarity (> 0.85), and the
-// `[a, b]` / `2 of [a, b, c]` list syntax (short-answer.ts)
+// `[a, b]` / `2 of [a, b, c]` list syntax (short-answer.ts). A plain answer
+// that reads as a formula (looksLikeFormula: `a*b*c`, `F = m*a`) also passes
+// when what was typed is the same formula written another way.
 // ============================================================================
 export function verifyShort(userInput: string, correctAnswer: string, opts: ShortGradeOptions = {}): boolean {
-  return gradeShortAnswer(userInput, correctAnswer, opts);
+  if (gradeShortAnswer(userInput, correctAnswer, opts)) return true;
+  return parseShortAnswer(correctAnswer).kind === "text" && looksLikeFormula(correctAnswer) && formulasEquivalent(userInput, correctAnswer, { caseSensitive: opts.caseSensitive });
 }
 
 // ============================================================================
@@ -22,81 +22,21 @@ export function verifyMulti(userInput: string, correctAnswer: string): boolean {
 }
 
 // ============================================================================
-// FORMULA — mathjs algebraic equivalence via random-variable trials
+// FORMULA — equivalence by evaluation at random points (formula-equivalence.ts):
+// any arrangement of the same formula passes (b*a*c for a*b*c, b*a = y for
+// y = a*b, bac, ×/·, other capitals, an opaque Std(sample) on both sides)
 // ============================================================================
 const FORMULA_TRIALS = 6;
-const FORMULA_MAX_ATTEMPTS = FORMULA_TRIALS * 5; // allow retries past domain errors (log of negative, etc.)
-const FORMULA_TOLERANCE_REL = 1e-6;
 
 /**
- * Free variables in a mathjs expression = SymbolNodes whose name isn't a
- * function/constant already defined on the mathjs instance (sqrt, pi, e,
- * log, ...). Using `name in math` to tell "x" apart from "sqrt" avoids
- * hand-maintaining a list of every mathjs builtin.
+ * Proves (probabilistically) that `userInput` and `correctAnswer` are the same
+ * formula by evaluating both at several random points, rather than comparing
+ * them as text — spec: "evaluating them using a set of random test variables
+ * to prove mathematical equivalence." Both may be mathjs, LaTeX or the
+ * everyday spellings. Fails closed.
  */
-function extractVariables(expr: string): string[] {
-  const node = math.parse(expr);
-  const names = new Set<string>();
-  node.filter((n) => n.type === "SymbolNode").forEach((n) => {
-    const name = (n as unknown as { name: string }).name;
-    if (!(name in math)) names.add(name);
-  });
-  return [...names];
-}
-
-function randomScope(variables: string[]): Record<string, number> {
-  const scope: Record<string, number> = {};
-  for (const v of variables) {
-    scope[v] = 0.5 + Math.random() * 4.5; // 0.5..5 — avoids 0 for most operations without excluding negatives-adjacent behavior
-  }
-  return scope;
-}
-
-/**
- * Proves (probabilistically) that `userExpr` and `correctExpr` are the same
- * function by evaluating both at several random points and comparing
- * outputs, rather than comparing the expressions as strings/ASTs — spec:
- * "evaluating them using a set of random test variables to prove
- * mathematical equivalence." Domain errors (e.g. log of a negative number
- * with that trial's random values) are retried with fresh random values
- * rather than counted as a mismatch. A single valid trial where the two
- * expressions disagree is conclusive — genuinely different functions almost
- * never agree at a random point — so that returns false immediately.
- * Failing to gather enough valid trials at all fails closed (returns false).
- */
-export function verifyFormula(userInput: string, correctAnswer: string, trials = FORMULA_TRIALS): boolean {
-  let variables: string[];
-  try {
-    variables = [...new Set([...extractVariables(userInput), ...extractVariables(correctAnswer)])];
-  } catch {
-    return false; // user input isn't parseable as a mathjs expression
-  }
-
-  let validTrials = 0;
-  for (let attempt = 0; attempt < FORMULA_MAX_ATTEMPTS && validTrials < trials; attempt++) {
-    const scope = randomScope(variables);
-
-    let a: unknown;
-    let b: unknown;
-    try {
-      a = math.evaluate(userInput, scope);
-      b = math.evaluate(correctAnswer, scope);
-    } catch {
-      continue; // domain error at this random point — try a different point
-    }
-
-    if (typeof a !== "number" || typeof b !== "number" || !Number.isFinite(a) || !Number.isFinite(b)) {
-      continue;
-    }
-
-    const tolerance = FORMULA_TOLERANCE_REL * Math.max(1, Math.abs(a), Math.abs(b));
-    if (Math.abs(a - b) > tolerance) {
-      return false;
-    }
-    validTrials++;
-  }
-
-  return validTrials >= trials;
+export function verifyFormula(userInput: string, correctAnswer: string, trials = FORMULA_TRIALS, opts: Pick<ShortGradeOptions, "caseSensitive"> = {}): boolean {
+  return formulasEquivalent(userInput, correctAnswer, { trials, caseSensitive: opts.caseSensitive });
 }
 
 // ============================================================================
@@ -217,8 +157,8 @@ export function verifyAnswer(
       return verifyMulti(String(userAnswer), correctAnswer);
     case "FORMULA":
       // The review field accepts LaTeX as well as mathjs (frac-style LaTeX or a/b);
-      // the stored answer is already mathjs (AnswerExpressionField).
-      return verifyFormula(latexToMathjs(String(userAnswer)), correctAnswer);
+      // the stored answer is already mathjs (AnswerExpressionField). Both are normalised in formula-equivalence.
+      return verifyFormula(String(userAnswer), correctAnswer, FORMULA_TRIALS, opts);
     case "DIAGRAM":
       // DIAGRAM answers are a label map, not a string or a list.
       if (typeof userAnswer === "string" || Array.isArray(userAnswer)) return false;

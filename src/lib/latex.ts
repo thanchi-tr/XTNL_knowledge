@@ -340,6 +340,48 @@ export function latexToMathjs(input: string): string {
 }
 
 // ============================================================================
+// Everyday spellings and equations (formula-equivalence.ts grades with these)
+// ============================================================================
+
+/**
+ * A typed formula folded down to mathjs: LaTeX first (latexToMathjs), then the
+ * spellings people use on a phone or from a calculator: × · ⋅ ∙ for times, ÷,
+ * the minus sign −, ** for a power, ² and ³, √x and √(…). A plain mathjs
+ * answer comes back unchanged.
+ */
+export function normalizeFormulaText(input: string): string {
+  return latexToMathjs(input)
+    .replace(/[×⋅∙·✕]/g, "*")
+    .replace(/÷/g, "/")
+    .replace(/[−–—]/g, "-")
+    .replace(/\*\*/g, "^")
+    .replace(/²/g, "^2")
+    .replace(/³/g, "^3")
+    .replace(/√\s*\(/g, "sqrt(")
+    .replace(/√\s*([A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?)/g, "sqrt($1)")
+    .trim();
+}
+
+/**
+ * The two sides of an equation: exactly one top-level `=` (not `==`, `<=`,
+ * `>=` or `!=`), both sides non-empty. Anything else is not an equation (null).
+ */
+export function splitEquation(text: string): { lhs: string; rhs: string } | null {
+  const at: number[] = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== "=") continue;
+    const prev = text[i - 1];
+    const next = text[i + 1];
+    if (next === "=" || prev === "=" || prev === "<" || prev === ">" || prev === "!") continue;
+    at.push(i);
+  }
+  if (at.length !== 1) return null;
+  const lhs = text.slice(0, at[0]).trim();
+  const rhs = text.slice(at[0] + 1).trim();
+  return lhs && rhs ? { lhs, rhs } : null;
+}
+
+// ============================================================================
 // Preview
 // ============================================================================
 
@@ -355,16 +397,21 @@ export type ExpressionPreview =
  * with the grader.
  */
 export function previewExpression(input: string): ExpressionPreview {
-  const source = latexToMathjs(input);
+  const source = normalizeFormulaText(input);
   if (!source.trim()) return { ok: false, error: "Empty expression." };
   try {
-    const node = math.parse(source);
+    // An equation in any arrangement (b*a = y) draws as one, as the grader reads it.
+    const eq = splitEquation(source);
+    const nodes = eq ? [math.parse(eq.lhs), math.parse(eq.rhs)] : [math.parse(source)];
     const variables = new Set<string>();
-    node.filter((n) => n.type === "SymbolNode").forEach((n) => {
-      const name = (n as unknown as { name: string }).name;
-      if (!(name in math)) variables.add(name);
-    });
-    return { ok: true, tex: node.toTex({ parenthesis: "auto", implicit: "hide" }), mathjs: source, variables: [...variables] };
+    for (const node of nodes) {
+      node.filter((n) => n.type === "SymbolNode").forEach((n) => {
+        const name = (n as unknown as { name: string }).name;
+        if (!(name in math)) variables.add(name);
+      });
+    }
+    const tex = nodes.map((node) => node.toTex({ parenthesis: "auto", implicit: "hide" })).join(" = ");
+    return { ok: true, tex, mathjs: source, variables: [...variables] };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Not a valid expression." };
   }
