@@ -54,6 +54,7 @@ import { XP_BASE } from "@/lib/xp";
 import { chime, mark, signedFigure } from "@/lib/celebrate";
 import { useAutocorrect } from "@/components/useAutocorrect";
 import { useWordComplete, WordHintBar } from "@/components/WordComplete";
+import type { WordModelWire } from "@/lib/word-model";
 import { EquationField } from "@/components/math/EquationField";
 import { AnswerExpressionField } from "@/components/math/AnswerExpressionField";
 import { VerdictCompare, VerdictDetail, relationTone } from "@/components/NoveltyVerdictView";
@@ -104,8 +105,8 @@ export interface AddFormField {
 
 interface Props {
   fields: AddFormField[];
-  /** The player's own words, most frequent first (src/lib/vocabulary.ts). */
-  vocabulary: string[];
+  /** The player's word model (src/lib/vocabulary.ts loadWordModel): their own words, ranked as they write and choose them. */
+  vocabulary: WordModelWire | null;
   /** A draft carried over from quick capture (/add?draft=<id>), into the default Short fields. */
   initialQuestion?: string;
   initialAnswer?: string;
@@ -418,7 +419,7 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
   const feedsField = selectedField ?? suggestedField;
 
   // ── Word completion and auto-correct (one of each, shared by the prose fields) ──
-  const { registerField: completeRef, suggestions: wordHints, accept: acceptWord, bind: completeBind, visible: hintsVisible } =
+  const { registerField: completeRef, suggestions: wordHints, accept: acceptWord, bind: completeBind, visible: hintsVisible, flush: flushWords } =
     useWordComplete(vocabulary);
   const [lastEdited, setLastEdited] = useState<(v: string) => void>(() => () => {});
   const autocorrect = useAutocorrect((next) => lastEdited(next), autocorrectOn);
@@ -550,6 +551,8 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
         if (res.status === "merged") afterFiled(false);
       }
     });
+    // The word choices go after the submit's own action (Next runs a client's actions one at a time).
+    flushWords();
   }
 
   /** Alt+Enter (Mac Option+Enter) anywhere in the form: Create, when the content is ready. */

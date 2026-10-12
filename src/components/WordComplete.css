@@ -3,8 +3,12 @@
    WORD COMPLETION STRIP (components/WordComplete.tsx, L5). Two positions,
    one component: in flow above the field on desktop; fixed and pushed up
    by the virtual keyboard's height on a phone (the component measures it
-   with visualViewport). Chips are 40 px tall: a mis-tap against the
-   keyboard costs a wrong word. Ink only; no sky tint.
+   with visualViewport). Chips are 44 px tall: a mis-tap against the
+   keyboard costs a wrong word. In the capture sheet's task slot the strip
+   stands in for the 40 px insert row (data-fit="row") at exactly its
+   height, so the line never moves as the two trade places. A fuzzy
+   candidate (a slip corrected) dims nothing: none of it is what was typed.
+   Ink only; no sky tint.
    ===================================================================== */
 @layer components {
   .wc-bar { margin-bottom: 6px; }
@@ -15,11 +19,13 @@
   .wc-list { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0; padding: 0 0 2px; list-style: none; }
   .wc-list::-webkit-scrollbar { display: none; }
   .wc-hint {
-    display: inline-flex; align-items: center; gap: 1px; white-space: nowrap; min-height: 40px; padding: 0 12px;
+    display: inline-flex; align-items: center; gap: 1px; white-space: nowrap; min-height: 44px; padding: 0 12px;
     border-radius: var(--r-chip); border: 1px solid var(--line-ctl); background: var(--sunken);
     font: 400 14px var(--font-ui); color: var(--ink-1); cursor: pointer;
   }
   .wc-hint:hover { border-color: var(--ink-2); }
+  .wc-bar[data-fit="row"] .wc-list { padding-bottom: 0; }
+  .wc-bar[data-fit="row"] .wc-hint { min-height: 40px; }
   .wc-hint[data-primary="1"] { border-color: var(--ink-0); background: var(--raised); }
   /* The typed half is dimmed, so the chip reads as a completion: what Tab adds, not what it replaces. */
   .wc-typed { color: var(--ink-2); }

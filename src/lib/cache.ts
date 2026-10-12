@@ -43,8 +43,15 @@ export type CacheTag =
   /** The roadmap: Aim, milestones, readings, Proficiency and week quests (src/lib/roadmap-*.ts). */
   | "roadmap"
   /** Exercise sessions (src/lib/exercise-server.ts). */
-  | "exercise";
+  | "exercise"
+  /** Word completion's record of the user's picks and passes (WordChoice; src/lib/vocabulary.ts). */
+  | "words";
 
+/**
+ * Every tag the shell's read depends on (shell-data.ts). Not 'words': word
+ * completion's choices are cleared on every flush and nothing in the shell
+ * reads them, so the shell does not rebuild for them.
+ */
 export const ALL_TAGS: CacheTag[] = ["fields", "ideas", "progress", "life", "activity", "weight", "roadmap", "exercise"];
 
 /**

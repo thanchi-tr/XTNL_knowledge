@@ -1480,7 +1480,8 @@ async function aimCaptureChecks(): Promise<void> {
   );
 
   const actions = strip(readFileSync(join(ROOT, "src/app/actions/capture.ts"), "utf8"));
-  const loader = actions.slice(actions.indexOf("const loadCaptureAim = "), actions.indexOf("type VocabWords"));
+  // Up to the next declaration (the word model's fallback since the word model replaced the word lists, 2026-10-13).
+  const loader = actions.slice(actions.indexOf("const loadCaptureAim = "), actions.indexOf("const NO_WORDS = "));
   check(
     "action: the vocabulary's aim is one read cached on 'roadmap', of the seat-holding rows' status only (no revision-4 column), at most CAPTURE_AIM_READ_MAX rows, through readCaptureAim",
     /readCaptureAim\(\(\) =>\s*cached\(`captureAim:\$\{userId\}`, \["roadmap"\], async \(\) => \{/.test(loader) &&
@@ -1491,7 +1492,7 @@ async function aimCaptureChecks(): Promise<void> {
   const vocabFn = actions.slice(actions.indexOf("export async function loadCaptureVocabulary("));
   check(
     "action: loadCaptureVocabulary reads the aim and the prompt in its one Promise.all and returns each only when known",
-    /const \[vocab, structure, goals, rawBefore, recent, active, weightUnit, aim, aimPrompt\] = await Promise\.all\(\[/.test(vocabFn) &&
+    /const \[words, goals, rawBefore, recent, active, weightUnit, aim, aimPrompt\] = await Promise\.all\(\[/.test(vocabFn) &&
       /loadCaptureAim\(userId\),\s*loadCaptureAimPrompt\(userId, day\),\s*\]\);/.test(vocabFn) &&
       /return \{ words, goals, rawBefore, day, recent, active, weightUnit, \.\.\.\(aim \? \{ aim \} : \{\}\), \.\.\.\(aimPrompt \? \{ aimPrompt \} : \{\}\) \};/.test(vocabFn)
   );

@@ -28,6 +28,7 @@ import { writeAimHandoff } from "@/lib/roadmap-handoff";
 import type { AimPrompt } from "@/lib/roadmap-invite";
 import { AIM_MAX } from "@/lib/roadmap-types";
 import { useWordComplete, WordHintBar } from "@/components/WordComplete";
+import type { WordModelWire } from "@/lib/word-model";
 import { useAutocorrect } from "@/components/useAutocorrect";
 import { IconButton } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
@@ -207,7 +208,6 @@ import {
  * No key is added for any of them.
  */
 
-const NO_WORDS: string[] = [];
 /** The dock key every capture toast shares: a new one replaces the last. */
 const DOCK_KEY = "capture";
 /** Auto-retried lines saved within this long are counted in one 'N unsent lines saved'. */
@@ -249,8 +249,8 @@ interface Unsent extends PendingLine {
 interface SheetVocab extends VocabCache {
   /** The ≈ price may be shown: the server's answer for today's life day, or a fresh cache of one. */
   priced: boolean;
-  /** WordComplete's words, loaded only for idea lines; null until then. */
-  words: string[] | null;
+  /** WordComplete's model: asked for at once by an idea line, and by the background refresh otherwise; null until a load brings it (the empty model when it could not be read). */
+  words: WordModelWire | null;
   /**
    * Whether a roadmap is open (CaptureVocabulary.aim), from the last server
    * answer of this page load; never stored with the cached vocabulary, so
@@ -538,13 +538,24 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
   };
 
   const autocorrect = useAutocorrect(onLineChange, true, "task");
+  /**
+   * Word completion on idea and task lines alike. Not over a paste, a
+   * weigh-in or an aim line (no slot), and on a task line not while the
+   * caret word is a '^goal' or '#tag' (their own suggestions), the line is
+   * empty (Recent) or a ▾ menu is open: the strip takes the insert row's
+   * slot only while it has a word to offer.
+   */
+  const wordsOn = open && !paste && !weighIn && !aimCap && (ideaMode || (menu === null && caretContext(text, caret) === null));
+  /** The word choices are sent only between lines: no save in flight, and the line empty or the sheet closed (a save goes first). */
+  const wordsMayFlush = useCallback(() => inFlight.current.size === 0 && (!openRef.current || !lineRef.current.text.trim()), []);
   const {
     registerField,
     suggestions: wordHints,
     accept: acceptWord,
     bind: completeBind,
     visible: hintsVisible,
-  } = useWordComplete(ideaMode ? (vocab?.words ?? NO_WORDS) : NO_WORDS);
+    flush: flushWords,
+  } = useWordComplete(vocab?.words ?? null, { enabled: wordsOn, mayFlush: wordsMayFlush });
 
   const setInput = useCallback(
     (el: HTMLTextAreaElement | null) => {
@@ -633,8 +644,9 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
    * vocabRefreshDecision) — never while a save is in flight, because Next
    * runs a client's actions one at a time and the save would queue behind
    * it, and on an open phone sheet only once the line has been empty for a
-   * pause (or on close). An idea line also wants the player's words
-   * (WordComplete), loaded only for idea lines.
+   * pause (or on close). The player's words (WordComplete) come at once for
+   * an idea line; for task lines they ride the refresh (no words yet counts
+   * as stale), so they never go ahead of a save.
    */
   const considerVocab = useCallback(() => {
     if (inFlight.current.size > 0) return;
@@ -664,14 +676,14 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
       // A long goal wants to know whether a roadmap is open and whether suggestions may show
       // ('Make it an aim'): until a load has said so, the vocabulary counts as stale, under the
       // same rules that keep saves first.
-      stale: vocabStale(v, todayKey(), now) || (aimWantedRef.current && v?.aim === undefined) || (aimPromptWantedRef.current && v?.aimPrompt === undefined),
+      stale: vocabStale(v, todayKey(), now) || (aimWantedRef.current && v?.aim === undefined) || (aimPromptWantedRef.current && v?.aimPrompt === undefined) || !v?.words,
       coarseOpen: openRef.current && coarseRef.current,
       lineEmpty: !lineRef.current.text.trim(),
       emptyForMs: since === null ? 0 : now - since,
     });
     if (decision === "start") {
       o.refreshed = true;
-      loadVocab(false);
+      loadVocab(!v?.words);
     } else if (decision === "wait" && openRef.current && coarseRef.current && since !== null) {
       // An empty line on a phone: ask again once the pause is long enough.
       if (idleTimer.current !== null) window.clearTimeout(idleTimer.current);
@@ -1371,6 +1383,8 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
     if (stay) focusInput();
     else closeSheet("save");
     sendLine(pending, "user");
+    // The line's last word is finished; its word choices go once the save is through (WordComplete's gate).
+    flushWords();
   };
 
   /** The primary button reads Done (an empty line after a burst, on a phone): the action key closes too. Never over a paste preview (its key adds the lines). */
@@ -1917,7 +1931,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
     // 'Make it an aim': a long goal, with no roadmap open and suggestions on and not snoozed (both known, not guessed).
     const aimOffer = longGoal && offersAim(parsed, vocab?.aim, vocab?.aimPrompt);
 
-    // The slot above the line: word hints for an idea, suggestions after '^' or '#', Recent on an empty line, else the insert row.
+    // The slot above the line: word hints for an idea, suggestions after '^' or '#', Recent on an empty line, word hints while a task word has some, else the insert row.
     let slot: React.ReactNode = null;
     // A weigh-in has no grammar to add: no insert row, no suggestions. Nor has an aim line (it goes to the aim form as it is).
     if (!paste && !weighIn && !aimCap) {
@@ -1951,6 +1965,9 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
         } else if (ctx === "empty" && sentThisOpening === 0 && !editing && (vocab?.recent.length ?? 0) > 0) {
           const items: Suggestion[] = recentChips(vocab?.recent ?? []).map((r, i) => ({ id: `recent-${i}`, label: r, name: `Fill the line with “${r}”`, value: r }));
           slot = <SuggestRow label="Recent" items={items} onPick={pickRecent} />;
+        } else if (hintsVisible) {
+          // A task word with completions: the strip stands in for the insert row at its 40 px, so the line never moves.
+          slot = <WordHintBar suggestions={wordHints} onPick={acceptWord} visible={hintsVisible} fit="row" />;
         }
         if (!slot) {
           // The Goal ▾ menu's 'New aim' (F-R4-7) reads the open roadmap; never during an edit, whose line stays a task.

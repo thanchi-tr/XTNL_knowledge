@@ -754,7 +754,11 @@ function wiring() {
   const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
   const ui = pkg.scripts["ui:check"].split("&&").map((s) => s.trim());
   const at = ui.indexOf("tsx scripts/callbacks-check.ts");
-  check("package.json: ui:check runs this check just before push-check, still ending with roadmap-ui-check", at >= 0 && ui[at + 1] === "tsx scripts/push-check.ts" && pkg.scripts["ui:check"].endsWith(" && tsx scripts/roadmap-ui-check.ts"));
+  // word-model-check (2026-10-13) runs between this check and push-check.
+  check(
+    "package.json: ui:check runs this check before push-check (word-model-check between), still ending with roadmap-ui-check",
+    at >= 0 && ui[at + 1] === "tsx scripts/word-model-check.ts" && ui[at + 2] === "tsx scripts/push-check.ts" && pkg.scripts["ui:check"].endsWith(" && tsx scripts/roadmap-ui-check.ts")
+  );
   check("package.json: callbacks:check runs it alone", pkg.scripts["callbacks:check"] === "tsx scripts/callbacks-check.ts");
 
   check("datetime-local: read and written on the user's clock (15:00 Sydney ⇄ 04:00Z)", wallOfInstant(NOW, TZ) === "2026-10-12T15:00" && instantOfWall("2026-10-12T15:00", TZ)?.getTime() === NOW.getTime() && instantOfWall("2026-13-01T10:00", TZ) === null && instantOfWall("tomorrow", TZ) === null);

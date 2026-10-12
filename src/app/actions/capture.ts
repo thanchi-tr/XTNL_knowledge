@@ -32,7 +32,8 @@ import {
 } from "@/lib/tasks";
 import { applySizing } from "@/lib/life-sizing";
 import { fileIdeaDraftCore } from "@/lib/idea-filing";
-import { loadStructureWords, loadVocabulary } from "@/lib/vocabulary";
+import { EMPTY_WORD_MODEL, loadWordModel } from "@/lib/vocabulary";
+import type { WordModelWire } from "@/lib/word-model";
 import { CAPTURE_AIM_READ_MAX, OPEN_ROADMAP_STATUSES, readCaptureAim, readCaptureAimPrompt, type CaptureAim as CaptureAimView } from "@/components/capture/aim-capture";
 import { AIM_PROMPT_COOKIE, type AimPrompt } from "@/lib/roadmap-invite";
 import type { BoardPlace, CaptureMode, ParsedCapture, TaskKind } from "@/lib/life-types";
@@ -542,10 +543,12 @@ export interface CaptureActiveTitle {
 
 export interface CaptureVocabulary {
   /**
-   * The player's own words for WordComplete, structure names first — the /add
-   * list. Loaded only when `opts.words` is true (idea mode); [] otherwise.
+   * WordComplete's model of the player's words (lib/vocabulary.ts
+   * loadWordModel, the one /add reads). Loaded only when `opts.words` is
+   * true, null otherwise; a failed read is the empty model (no hints, and
+   * the sheet does not ask again for it).
    */
-  words: string[];
+  words: WordModelWire | null;
   /** Open goals, for previewing what a '^name' will attach to. */
   goals: { id: string; title: string }[];
   /** R_before: today's SUM(rawXp), the knee base the grade chip prices against. */
@@ -621,8 +624,7 @@ const loadCaptureAim = (userId: string) =>
     })
   );
 
-type VocabWords = Awaited<ReturnType<typeof loadVocabulary>>;
-type StructureWords = Awaited<ReturnType<typeof loadStructureWords>>;
+const NO_WORDS = (): WordModelWire => EMPTY_WORD_MODEL;
 
 /**
  * Whether set-an-aim suggestions may show (CaptureVocabulary.aimPrompt):
@@ -653,9 +655,10 @@ const loadCaptureAimPrompt = async (userId: string, day: DayKey): Promise<AimPro
 
 /**
  * What the sheet previews a line against. Fetched lazily, never shipped in
- * the layout. The ~1,200-word list is read only for idea mode
- * (`opts.words === true`): a task line never shows it, and a lighter call
- * keeps the sheet's first save from queueing behind it. `recent` and
+ * the layout. The word model (up to 2,500 words) is read only when
+ * `opts.words === true`: at once for an idea line, with the background
+ * refresh for a task line, so a lighter call keeps the sheet's first save
+ * from queueing behind it. `recent` and
  * `active` are tasks.ts reads, cached under 'life' (the active titles from
  * the Today board's own cached read); `aim`, the open goals and the free
  * seats, is one read cached under 'roadmap' (loadCaptureAim); `aimPrompt`,
@@ -671,13 +674,13 @@ export async function loadCaptureVocabulary(opts?: { words?: boolean }): Promise
   try {
     userId = getCurrentUserId();
   } catch {
-    return { words: [], goals: [], rawBefore: 0, day, recent: [], active: [], weightUnit: "kg" };
+    // Asked for words, the empty model (not null): the sheet would ask again for a null one.
+    return { words: opts?.words === true ? NO_WORDS() : null, goals: [], rawBefore: 0, day, recent: [], active: [], weightUnit: "kg" };
   }
 
   const withWords = typeof opts === "object" && opts !== null && opts.words === true;
-  const [vocab, structure, goals, rawBefore, recent, active, weightUnit, aim, aimPrompt] = await Promise.all([
-    withWords ? loadVocabulary().catch((): VocabWords => []) : Promise.resolve<VocabWords>([]),
-    withWords ? loadStructureWords().catch((): StructureWords => []) : Promise.resolve<StructureWords>([]),
+  const [words, goals, rawBefore, recent, active, weightUnit, aim, aimPrompt] = await Promise.all([
+    withWords ? loadWordModel(userId).catch(NO_WORDS) : Promise.resolve(null),
     loadOpenGoals(userId).catch(() => []),
     loadRawBefore(userId, day).catch(() => 0),
     loadRecentCaptures(userId, now).catch((): string[] => []),
@@ -688,16 +691,6 @@ export async function loadCaptureVocabulary(opts?: { words?: boolean }): Promise
     loadCaptureAim(userId),
     loadCaptureAimPrompt(userId, day),
   ]);
-
-  // The same merge as /add: structure names first, de-duplicated without case.
-  const seen = new Set<string>();
-  const words: string[] = [];
-  for (const word of [...structure, ...vocab.map((v) => v.word)]) {
-    const key = word.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    words.push(word);
-  }
 
   return { words, goals, rawBefore, day, recent, active, weightUnit, ...(aim ? { aim } : {}), ...(aimPrompt ? { aimPrompt } : {}) };
 }

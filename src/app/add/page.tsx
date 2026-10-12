@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { loadFieldsForCapture } from "@/lib/queries";
-import { loadVocabulary, loadStructureWords } from "@/lib/vocabulary";
+import { EMPTY_WORD_MODEL, loadWordModel } from "@/lib/vocabulary";
+import type { WordModelWire } from "@/lib/word-model";
 import { loadDailyFocus } from "@/lib/daily-focus";
 import { loadProgression } from "@/lib/skill-effects";
 import { prisma } from "@/lib/prisma";
@@ -46,6 +47,15 @@ async function loadIdeaDraft(param: string | undefined): Promise<IdeaDraft | nul
   }
 }
 
+/** Word completion's model (lib/vocabulary.ts). Soft: a failed read is the empty model, so the form still works, unhinted. */
+async function loadWords(): Promise<WordModelWire> {
+  try {
+    return await loadWordModel(getCurrentUserId());
+  } catch {
+    return EMPTY_WORD_MODEL;
+  }
+}
+
 /** Today's focus Field, for the form's hint. Soft: no focus is a fine answer. */
 async function loadFocus() {
   try {
@@ -77,24 +87,13 @@ export default async function AddIdeaPage({
   const { draft: draftParam, field: fieldParam, domain: domainParam } = await searchParams;
   // Domains are offered as explicit placement targets: without them an empty
   // hand-created Domain is unreachable (discovery routes by nearest Idea).
-  const [rows, vocab, structure, draft, focus] = await Promise.all([
+  // The word model carries the Field and Domain names itself (always eligible, from the very first Idea).
+  const [rows, vocabulary, draft, focus] = await Promise.all([
     loadFieldsForCapture(),
-    loadVocabulary(),
-    loadStructureWords(),
+    loadWords(),
     loadIdeaDraft(typeof draftParam === "string" ? draftParam : undefined),
     loadFocus(),
   ]);
-
-  // Structure names first: words the player committed to, useful from the
-  // very first Idea. De-duped case-insensitively.
-  const seen = new Set<string>();
-  const vocabulary: string[] = [];
-  for (const word of [...structure, ...vocab.map((v) => v.word)]) {
-    const key = word.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    vocabulary.push(word);
-  }
 
   const fields: AddFormField[] = rows.map((f) => ({
     id: f.id,

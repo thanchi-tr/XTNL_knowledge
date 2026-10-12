@@ -2154,7 +2154,15 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   check("unsent: the three capture buttons are described by #capture-unsent (the only shell edit)", (chrome.match(/aria-describedby="capture-unsent"/g) ?? []).length === 3);
   const dot = /html\[data-capture-unsent\] :is\(\.tab-plus, \.r-plus, \.sb-capture\)::after\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
   check("unsent: an 8 px ink dot with a 2 px --bar ring, static", /width:\s*8px/.test(dot) && /height:\s*8px/.test(dot) && /background:\s*var\(--ink-0\)/.test(dot) && /0 0 0 2px var\(--bar\)/.test(dot) && !/animation|transition/.test(dot));
-  check("vocab: the idea words load only for idea lines", quick.includes("loadCaptureVocabulary(withWords ? { words: true } : undefined)") && quick.includes("useWordComplete(ideaMode ?"));
+  // Word completion (2026-10-13, word-model-check has the rest): the model loads at once for an idea line and with the
+  // background refresh for a task line (never ahead of a save); completion is on for both, off where the slot is not its.
+  check(
+    "vocab: the words load at once for an idea line and with the background refresh otherwise; completion on idea and task lines",
+    quick.includes("loadCaptureVocabulary(withWords ? { words: true } : undefined)") &&
+      /if \(openRef\.current && ideaModeRef\.current && !v\?\.words\) \{\s*o\.refreshed = true;\s*loadVocab\(true\);/.test(quick) &&
+      /o\.refreshed = true;\s*loadVocab\(!v\?\.words\);/.test(quick) &&
+      quick.includes("useWordComplete(vocab?.words ?? null, { enabled: wordsOn, mayFlush: wordsMayFlush })")
+  );
   check("ideas: the Idea link writes the handoff, never the URL", /const onIdeaLink[\s\S]*?writeIdeaHandoff\(\{ question: s\.question, answer: s\.answer \?\? "", sheetText: t \}\)/.test(quick) && /href="\/add"/.test(quick));
   check("ideas: /add's clear event empties the line only while it still matches", /SHEET_DRAFT_CLEARED_EVENT[\s\S]*?lineRef\.current\.text !== detail\.text/.test(quick) || /lineRef\.current\.text !== detail\.text[\s\S]*?SHEET_DRAFT_CLEARED_EVENT/.test(quick));
   check("back: pushState is hash-only and guarded by the decision", quick.includes('window.history.pushState(null, "", CAPTURE_OPEN_HASH)') && /historyOnOpen\(/.test(quick) && /historyOnClose\(/.test(quick));

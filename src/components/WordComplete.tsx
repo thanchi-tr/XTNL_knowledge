@@ -1,16 +1,40 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { recordWordChoices } from "@/app/actions/words";
+import {
+  CHOICE_BATCH_MAX,
+  MIN_PREFIX,
+  caretWordOf,
+  decodeWordModel,
+  keyOf,
+  learningOf,
+  passesOf,
+  suggest,
+  wordAt,
+  type Suggestion,
+  type WordEvent,
+  type WordLearning,
+  type WordModel,
+  type WordModelWire,
+} from "@/lib/word-model";
 import "./WordComplete.css";
 
 /**
- * Word completion for the capture form.
+ * Word completion for the capture forms.
  *
  * ── What this does, and what it deliberately does not ────
  * Tab completes the word being typed to the best match from the player's own
- * corpus, and a strip of clickable candidates sits above the field — above
- * the *virtual keyboard* on a phone, which is the only place a hint bar is
- * any use when the keyboard covers two thirds of the screen.
+ * writing, ranked by a personal language model (lib/word-model.ts: how often
+ * and how recently they write each word, the word before it, and which
+ * suggestions they pick or type past), and a strip of clickable candidates
+ * sits above the field — above the *virtual keyboard* on a phone, which is
+ * the only place a hint bar is any use when the keyboard covers two thirds
+ * of the screen.
+ *
+ * It learns as it is used: a pick, and a first suggestion typed past, are
+ * queued here, folded into this page's ranking at once, and sent to the
+ * server in small batches (actions/words.ts) — never ahead of a save.
  *
  * It does not render inline ghost text inside the field. A `<textarea>`
  * cannot paint a suffix its value does not contain, so ghosting means
@@ -22,62 +46,203 @@ import "./WordComplete.css";
  * too, which is what makes Tab predictable rather than a guess.
  */
 
-export interface Suggestion {
-  word: string;
-  /** The part the player has already typed, for dimming. */
-  prefixLength: number;
+export type { Suggestion };
+
+// ── The choices on their way to the server (one queue per page) ──────────
+
+/** Queued choices that start a send once typing pauses. */
+const FLUSH_AT = 10;
+/** The pause, after the FLUSH_AT-th choice. */
+const IDLE_FLUSH_MS = 1_500;
+/** After a blur: long enough that the click which blurred the field (Save, Check) sends its own action first. */
+const BLUR_FLUSH_MS = 1_000;
+/** A form that is saving says not yet (its gate): asked again this often, this many times. */
+const GATE_RETRY_MS = 2_000;
+const GATE_RETRIES = 30;
+/** This page's choices kept for its own ranking (the server's model has them after its next build). */
+const SESSION_MAX = 500;
+
+const queue: WordEvent[] = [];
+const session: (WordEvent & { at: number })[] = [];
+const gates = new Set<() => boolean>();
+const flushState: { timer: number | null; sending: boolean; retries: number } = { timer: null, sending: false, retries: 0 };
+
+function queueWordEvent(event: WordEvent): void {
+  queue.push(event);
+  if (queue.length > CHOICE_BATCH_MAX) queue.splice(0, queue.length - CHOICE_BATCH_MAX);
+  session.push({ ...event, at: Date.now() });
+  if (session.length > SESSION_MAX) session.splice(0, session.length - SESSION_MAX);
+  if (queue.length >= FLUSH_AT) scheduleFlush(IDLE_FLUSH_MS);
 }
 
-const MAX_SUGGESTIONS = 6;
-/** Below this, the candidate list is everything and helps nobody. */
-const MIN_PREFIX = 2;
-
-/** The word being typed: from the last word boundary back to the caret. */
-function currentPrefix(value: string, caret: number): string {
-  const before = value.slice(0, caret);
-  const match = before.match(/[\p{L}\p{N}'-]+$/u);
-  return match ? match[0] : "";
+/** A send `ms` from now. A new reason to send (`retry` false) gives the gates their full count of asks again. */
+function scheduleFlush(ms: number, retry = false): void {
+  if (typeof window === "undefined") return;
+  if (!retry) flushState.retries = 0;
+  if (flushState.timer !== null) window.clearTimeout(flushState.timer);
+  flushState.timer = window.setTimeout(() => {
+    flushState.timer = null;
+    void flushNow();
+  }, ms);
 }
 
-export function useWordComplete(vocabulary: string[]) {
+function cancelFlush(): void {
+  if (flushState.timer === null) return;
+  window.clearTimeout(flushState.timer);
+  flushState.timer = null;
+}
+
+/**
+ * One batch (at most CHOICE_BATCH_MAX) to the server, when every form's gate
+ * allows it. Next runs a client's actions one at a time, so a send while a
+ * save is in flight would queue behind it, and a send just before one would
+ * hold it: a saving form says no, and the send is asked again later.
+ */
+async function flushNow(): Promise<void> {
+  if (flushState.sending || queue.length === 0) return;
+  for (const gate of gates) {
+    if (gate()) continue;
+    if (flushState.retries < GATE_RETRIES) {
+      flushState.retries += 1;
+      scheduleFlush(GATE_RETRY_MS, true);
+    }
+    return;
+  }
+  flushState.retries = 0;
+  const batch = queue.splice(0, CHOICE_BATCH_MAX);
+  flushState.sending = true;
+  let sent = false;
+  try {
+    await recordWordChoices(batch);
+    sent = true;
+  } catch {
+    // The network: back to the front of the queue, for the next reason to send (never a retry loop offline).
+    queue.unshift(...batch);
+    if (queue.length > CHOICE_BATCH_MAX) queue.splice(0, queue.length - CHOICE_BATCH_MAX);
+  } finally {
+    flushState.sending = false;
+  }
+  // Choices that came in while this batch was on its way.
+  if (sent && queue.length >= FLUSH_AT) scheduleFlush(IDLE_FLUSH_MS);
+}
+
+/** Sends the queued choices after the current event — so a save that event started is already on its way, and goes first. */
+export function flushWordChoices(): void {
+  scheduleFlush(0);
+}
+
+function addFlushGate(gate: () => boolean): void {
+  gates.add(gate);
+}
+
+function removeFlushGate(gate: () => boolean): void {
+  gates.delete(gate);
+}
+
+/** The choices this page made after the model was built, folded for the ranking. */
+function learningSince(builtAt: number): WordLearning {
+  return learningOf(session.filter((e) => e.at > builtAt));
+}
+
+// ── The hook ──────────────────────────────────────────────────────────────
+
+/** The word being typed in a field, while it is: the suggestions that were first for its prefixes (key → prefix). */
+interface Track {
+  el: HTMLTextAreaElement | HTMLInputElement;
+  start: number;
+  context: string;
+  firsts: Map<string, string>;
+}
+
+const NOWHERE = { prefix: "", context: "" };
+
+export interface WordCompleteOptions {
+  /** Off: no suggestions, and Tab is never taken (default on). */
+  enabled?: boolean;
+  /** Whether the queued choices may be sent now (the capture sheet: no save in flight, and not mid-line). */
+  mayFlush?: () => boolean;
+}
+
+export function useWordComplete(model: WordModelWire | null, opts: WordCompleteOptions = {}) {
+  const enabled = opts.enabled ?? true;
   const ref = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
-  const [prefix, setPrefix] = useState("");
+  const track = useRef<Track | null>(null);
+  const mayFlushRef = useRef(opts.mayFlush);
+  const [at, setAt] = useState(NOWHERE);
   const [focused, setFocused] = useState(false);
 
-  // Lowercased once, not per keystroke: this list is up to ~1200 entries and
-  // the scan below runs on every character typed.
-  const folded = useMemo(() => vocabulary.map((w) => ({ word: w, lower: w.toLowerCase() })), [vocabulary]);
+  // Decoded once per model, not per keystroke: the ranking binary-searches its sorted words.
+  const decoded = useMemo<WordModel | null>(() => decodeWordModel(model), [model]);
+  const baseLearning = useMemo(() => learningSince(decoded?.builtAt ?? 0), [decoded]);
+  const [learnt, setLearnt] = useState<{ model: WordModel | null; learning: WordLearning } | null>(null);
+  const learning = learnt && learnt.model === decoded ? learnt.learning : baseLearning;
 
-  const suggestions = useMemo<Suggestion[]>(() => {
-    if (prefix.length < MIN_PREFIX) return [];
-    const lower = prefix.toLowerCase();
-    const out: Suggestion[] = [];
-    for (const entry of folded) {
-      if (out.length >= MAX_SUGGESTIONS) break;
-      // Never suggest the word already complete in the field — accepting it
-      // would be a no-op keystroke, and it crowds out a real candidate.
-      if (entry.lower === lower) continue;
-      if (entry.lower.startsWith(lower)) out.push({ word: entry.word, prefixLength: prefix.length });
-    }
-    return out;
-  }, [prefix, folded]);
+  const suggestions = useMemo<Suggestion[]>(
+    () => (enabled && decoded ? suggest(decoded, at.prefix, at.context, learning) : []),
+    [enabled, decoded, at, learning]
+  );
+
+  useEffect(() => {
+    mayFlushRef.current = opts.mayFlush;
+  });
+
+  useEffect(() => {
+    const gate = () => mayFlushRef.current?.() ?? true;
+    addFlushGate(gate);
+    return () => removeFlushGate(gate);
+  }, []);
+
+  // The first suggestion shown for each prefix of the word being typed: typed past, it is a pass.
+  useEffect(() => {
+    const t = track.current;
+    const first = suggestions[0];
+    if (!t || !first || !focused || at.prefix.length < MIN_PREFIX) return;
+    const key = keyOf(first.word);
+    if (!t.firsts.has(key)) t.firsts.set(key, keyOf(at.prefix));
+  }, [suggestions, focused, at]);
+
+  const relearn = useCallback(() => setLearnt({ model: decoded, learning: learningSince(decoded?.builtAt ?? 0) }), [decoded]);
+
+  /** A word is finished (a boundary typed, the caret gone elsewhere, a blur, a submit): the firsts it went past are passes. */
+  const finish = useCallback(
+    (t: Track) => {
+      const events = passesOf(t.firsts, wordAt(t.el.value, t.start), t.context);
+      if (events.length === 0) return;
+      for (const e of events) queueWordEvent(e);
+      relearn();
+    },
+    [relearn]
+  );
 
   const sync = useCallback(() => {
     const el = ref.current;
     if (!el) return;
-    setPrefix(currentPrefix(el.value, el.selectionStart ?? el.value.length));
-  }, []);
+    const w = caretWordOf(el.value, el.selectionStart ?? el.value.length);
+    const t = track.current;
+    if (t && (t.el !== el || t.start !== w.start || !w.prefix)) {
+      track.current = null;
+      finish(t);
+    }
+    if (w.prefix.length >= MIN_PREFIX && !track.current) track.current = { el, start: w.start, context: w.context, firsts: new Map() };
+    setAt((prev) => (prev.prefix === w.prefix && prev.context === w.context ? prev : { prefix: w.prefix, context: w.context }));
+  }, [finish]);
 
-  /** Replaces the word under the caret and puts the caret after it, plus a space. */
+  /** Replaces the word under the caret and puts the caret after it, plus a space. A pick (and the firsts it went past). */
   const accept = useCallback(
     (word: string) => {
       const el = ref.current;
       if (!el) return;
       const caret = el.selectionStart ?? el.value.length;
-      const typed = currentPrefix(el.value, caret);
-      const start = caret - typed.length;
-      const next = `${el.value.slice(0, start)}${word} ${el.value.slice(caret)}`;
+      const w = caretWordOf(el.value, caret);
+      const start = w.prefix ? w.start : caret;
+      const key = keyOf(word);
+      const t = track.current;
+      track.current = null;
+      queueWordEvent({ word: key, context: w.context, kind: "pick" });
+      if (t) for (const e of passesOf(t.firsts, key, t.context)) queueWordEvent(e);
+      relearn();
 
+      const next = `${el.value.slice(0, start)}${word} ${el.value.slice(caret)}`;
       // React tracks the last value it set on the DOM node and skips its own
       // change event when it looks unchanged. Writing through the native
       // setter is what makes a controlled textarea notice a programmatic
@@ -88,12 +253,14 @@ export function useWordComplete(vocabulary: string[]) {
       setter?.call(el, next);
       el.dispatchEvent(new Event("input", { bubbles: true }));
 
+      // The input event above ran sync at a caret the setter moved: the word just completed is done, not being typed.
+      track.current = null;
       const caretAfter = start + word.length + 1;
       el.setSelectionRange(caretAfter, caretAfter);
       el.focus();
-      setPrefix("");
+      setAt(NOWHERE);
     },
-    []
+    [relearn]
   );
 
   const onKeyDown = useCallback(
@@ -107,6 +274,14 @@ export function useWordComplete(vocabulary: string[]) {
     },
     [suggestions, accept]
   );
+
+  /** On submit: the word at the caret is finished, and the queue goes once the submit's own action is on its way. */
+  const flush = useCallback(() => {
+    const t = track.current;
+    track.current = null;
+    if (t) finish(t);
+    flushWordChoices();
+  }, [finish]);
 
   /**
    * A callback ref, not the ref object itself.
@@ -125,6 +300,7 @@ export function useWordComplete(vocabulary: string[]) {
     registerField,
     suggestions,
     accept,
+    flush,
     /** Spread onto the field. */
     bind: {
       onKeyDown,
@@ -133,11 +309,19 @@ export function useWordComplete(vocabulary: string[]) {
       onKeyUp: sync,
       onFocus: () => {
         setFocused(true);
+        // Back in a field: the blur's send waits for the next pause instead.
+        cancelFlush();
         sync();
       },
       // Delayed: a click on a hint chip blurs the field first, and hiding
       // the bar on blur would unmount the chip before its click lands.
-      onBlur: () => window.setTimeout(() => setFocused(false), 150),
+      onBlur: () => {
+        const t = track.current;
+        track.current = null;
+        if (t) finish(t);
+        scheduleFlush(BLUR_FLUSH_MS);
+        window.setTimeout(() => setFocused(false), 150);
+      },
     },
     visible: focused && suggestions.length > 0,
   };
@@ -147,6 +331,12 @@ interface BarProps {
   suggestions: Suggestion[];
   onPick: (word: string) => void;
   visible: boolean;
+  /**
+   * 'row': standing in for the capture sheet's 40 px insert row (a task
+   * line), at exactly its height, so the line never moves as the strip and
+   * the row trade places word by word.
+   */
+  fit?: "row";
 }
 
 /**
@@ -158,7 +348,7 @@ interface BarProps {
  * at all, so a bar positioned with `bottom: 0` sits *underneath* it, which is
  * exactly where a keyboard hint bar is useless.
  */
-export function WordHintBar({ suggestions, onPick, visible }: BarProps) {
+export function WordHintBar({ suggestions, onPick, visible, fit }: BarProps) {
   const [keyboardInset, setKeyboardInset] = useState(0);
 
   useEffect(() => {
@@ -183,6 +373,7 @@ export function WordHintBar({ suggestions, onPick, visible }: BarProps) {
     <div
       className="wc-bar"
       data-floating={keyboardInset > 120 ? "1" : undefined}
+      data-fit={fit}
       style={keyboardInset > 120 ? { bottom: keyboardInset } : undefined}
       role="listbox"
       aria-label="Word suggestions"
@@ -194,6 +385,7 @@ export function WordHintBar({ suggestions, onPick, visible }: BarProps) {
               type="button"
               className="wc-hint"
               data-primary={i === 0 ? "1" : undefined}
+              data-fuzzy={s.fuzzy ? "1" : undefined}
               // `onMouseDown` rather than `onClick`: mousedown fires before
               // the field's blur, so the caret position the completion needs
               // is still valid when this runs.
