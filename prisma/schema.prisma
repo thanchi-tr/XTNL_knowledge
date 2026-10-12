@@ -1635,6 +1635,26 @@ model CustomerTask {
   @@schema("public")
 }
 
+/// Word completion's memory of the user's choices (2026-10-13, migration 20261221000000_word_choices): per word
+/// (lower case) and the word before it (lower case, "" for none), how often the user picked it from the suggestions
+/// and how often they typed past it when it was the first suggestion. word-model.ts reads it with the corpus.
+model WordChoice {
+  id         String    @id @default(cuid())
+  userId     String
+  word       String
+  context    String    @default("")
+  picks      Int       @default(0)
+  passes     Int       @default(0)
+  lastPickAt DateTime?
+  lastPassAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([userId, word, context])
+  @@index([userId])
+  @@schema("public")
+}
+
 /// A browser's web-push subscription (2026-10-12; call back reminders). One row per endpoint.
 model PushSubscription {
   id         String    @id @default(cuid())
