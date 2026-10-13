@@ -123,6 +123,9 @@ model Field {
   id          String             @id @default(cuid())
   name        String             @unique
   level       Float              @default(0)
+  /// The last drop of `level` (2026-10-13, migration 20261223000000_idea_leveling): from which level and when.
+  droppedFrom Float?
+  droppedAt   DateTime?
   domains     Domain[]
   snapshots   FieldSnapshot[]
   attributes  FieldAttribute[]
@@ -143,6 +146,10 @@ model Domain {
   field                 Field             @relation(fields: [fieldId], references: [id], onDelete: Cascade)
   totalPoints           Float             @default(0)
   level                 Int               @default(0)
+  /// The last drop of `level` (2026-10-13, migration 20261223000000_idea_leveling): from which level and when, so
+  /// the Library and the bell can say "fell to L3".
+  droppedFrom           Int?
+  droppedAt             DateTime?
   ideas                 Idea[]
   attributes            DomainAttribute[]
   /**
@@ -193,7 +200,10 @@ model Idea {
   domainId            String
   domain              Domain          @relation(fields: [domainId], references: [id], onDelete: Cascade)
   collectionLabel     CollectionLabel
-  level               Int             @default(1) // Max 12
+  level               Int             @default(1) // 1..20 (MASTERY_LEVEL 12; 13..20 the post-mastery ladder)
+  /// Clean recalls in a row (2026-10-13, migration 20261223000000_idea_leveling): a recall with no miss in its due
+  /// cycle. From L8 up a level needs two in a row; a miss resets it.
+  cleanStreak         Int             @default(0)
   basePoints          Float           @default(0)
   yieldPoints         Float           @default(0)
   fragments           Int             @default(1)
