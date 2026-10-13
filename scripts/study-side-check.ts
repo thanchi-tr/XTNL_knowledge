@@ -50,6 +50,7 @@ import { RESET_SCOPES, RESET_SCOPE_ORDER } from "../src/lib/reset-scopes";
 import { FIELD_TIERS } from "../src/lib/field-tier";
 import { QUESTION_TYPES, encodeIdeaContent, parseCloze } from "../src/lib/idea-payload";
 import { MASTERY_LEVEL, MAX_LEVEL } from "../src/lib/xp";
+import { ideaOutlook } from "../src/lib/forgetting";
 import { parseReviewDetail } from "../src/lib/roadmap-types";
 import { reviewMarkOf } from "../src/lib/review-facts";
 import { PROFILE, activeSub, isProfilePath, sectionOf, titleFor } from "../src/components/shell/nav";
@@ -73,8 +74,9 @@ const eq = (name: string, got: unknown, want: unknown) =>
 // ── Fixtures ────────────────────────────────────────────────────────────────
 const NOW = Date.UTC(2026, 9, 1, 2, 0, 0); // 1 Oct 2026 12:00 in Sydney
 const DAY = 86_400_000;
+/** A row as the page builds it: its outlook (forgetting.ts ideaOutlook) read at NOW from its own level and due date. */
 function idea(over: Partial<LibraryIdea>): LibraryIdea {
-  return {
+  const row: Omit<LibraryIdea, "outlook"> & { outlook?: LibraryIdea["outlook"] } = {
     id: "i",
     question: "What is the median?",
     answer: "The middle value",
@@ -96,6 +98,12 @@ function idea(over: Partial<LibraryIdea>): LibraryIdea {
     failedAttempts: 0,
     createdAt: NOW - 90 * DAY,
     ...over,
+  };
+  return {
+    ...row,
+    outlook:
+      row.outlook ??
+      ideaOutlook({ level: row.level, dueDate: new Date(row.dueAt), graceEndsAt: null, cleanStreak: 0, failedAttempts: row.failedAttempts }, new Date(NOW)),
   };
 }
 const A = idea({ id: "a", title: "Mode vs median under skew", tags: ["skew"], dueAt: NOW - 1000 });
@@ -169,7 +177,7 @@ eq("match: level range", run({ minLevel: 4 }), ["c"]);
 eq("match: search reads the title, case-insensitively", run({ q: "SKEW" }), ["a"]);
 eq("match: search reads domain names", run({ q: "macro" }), ["b"]);
 check("match: searchText is lower-cased", searchText(A) === searchText(A).toLowerCase());
-eq("counts: quick-chip counts over the whole library", statusCounts(ALL, NOW), { all: 4, due: 1, mastered: 1, struggling: 1, archived: 1 });
+eq("counts: quick-chip counts over the whole library", statusCounts(ALL, NOW), { all: 4, due: 1, fading: 0, mastered: 1, struggling: 1, archived: 1 });
 
 // ── Reading a row ───────────────────────────────────────────────────────────
 eq("due: past or now", dueLabel(NOW - 1, NOW), "due now");
@@ -276,11 +284,16 @@ eq("reset scope: inherited keys and non-strings are not scopes", ["toString", "_
 // ── Nav: the shell's model agrees with the lane's routes ────────────────────
 eq("nav: /structure and /taxonomy light Fields & Domains", [activeSub("/structure"), activeSub("/taxonomy")], ["/structure", "/structure"]);
 eq("nav: /library/<id> lights Library; its title is Ideas · Idea", [activeSub("/library/abc"), titleFor("/library/abc")], ["/library", { eyebrow: "Ideas", title: "Idea" }]);
+eq(
+  "nav: /library/field/<id> lights Library; its title is Ideas · Field until the page names it",
+  [activeSub("/library/field/f1"), titleFor("/library/field/f1"), sectionOf("/library/field/f1")],
+  ["/library", { eyebrow: "Ideas", title: "Field" }, "ideas"]
+);
 eq("nav: the lane's pages (/library, /add, /structure) are Ideas", ["/library", "/add", "/structure"].map(sectionOf), ["ideas", "ideas", "ideas"]);
 check("nav: /settings is a profile page (the profile menu's last row)", isProfilePath("/settings") && PROFILE.subs[PROFILE.subs.length - 1].href === "/settings");
 
 // ── Source guards ───────────────────────────────────────────────────────────
-const ROUTES = ["library", "library/[id]", "add", "structure", "settings"];
+const ROUTES = ["library", "library/[id]", "library/field/[fieldId]", "add", "structure", "settings"];
 for (const r of ROUTES) {
   check(`route /${r}: has a loading.tsx skeleton`, existsSync(join(ROOT, `src/app/${r}/loading.tsx`)));
   const page = code(read(`src/app/${r}/page.tsx`));
@@ -316,6 +329,12 @@ for (const r of ROUTES) {
   // override would swap it after the first paint and repeat the headline.
   const page = code(read("src/app/library/[id]/page.tsx"));
   check("/library/[id]: no ShellTitle override (no title swap; the headline is said once)", !/ShellTitle/.test(page) && (page.match(/\{headline\}/g) ?? []).length === 1);
+  // A Field's page: its name is data, so the top bar's 'Ideas · Field' (titleFor) becomes the name once known; unknown → 404.
+  const field = code(read("src/app/library/field/[fieldId]/page.tsx"));
+  check(
+    "/library/field/[fieldId]: names the Field in the top bar (ShellTitle eyebrow Ideas), 404s an unknown one, one shared read per request",
+    /<ShellTitle eyebrow="Ideas" title=\{page\.summary\.name\} \/>/.test(field) && /if \(!page\) notFound\(\);/.test(field) && /const loadPage = cache\(/.test(field) && /title: page \? page\.summary\.name : "Field"/.test(field)
+  );
 }
 {
   const view = code(read("src/components/settings/SettingsView.tsx"));

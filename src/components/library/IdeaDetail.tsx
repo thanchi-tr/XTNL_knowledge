@@ -2,9 +2,10 @@
 
 /**
  * One idea, as the Library's sheet and the /library/[id] page show it:
- * question (its other wordings behind "+n wordings") and answer, the level ring (mastery is a fixed target: 12),
- * next due, the history strip from the life ledger, Edit (any written format, the format too)
- * and a quiet two-step Delete.
+ * question (its other wordings behind "+n wordings") and answer, the level ring (mastery is a fixed target: 12)
+ * with the level line the Library's rows speak ("L9 · mastery at 12"), the outlook (forgetting.ts ideaOutlook:
+ * what the next level needs, when it is due, when it starts fading, when it would lose a level), its status
+ * chip, the history strip from the life ledger, Edit (any written format, the format too) and a quiet two-step Delete.
  *
  * History arrives as `history` (null while it loads; the sheet fetches it on
  * open). Nothing here is estimated: every figure is read from the row or the
@@ -32,11 +33,15 @@ import { Skeleton } from "@/components/ui/Tabs";
 import {
   COLLECTION_NAME,
   EDITABLE_TYPES,
+  ROW_STATUS_META,
   TYPE_NAME,
   dueSentence,
   historySummary,
   isMastered,
+  levelLine,
+  outlookLines,
   plural,
+  rowStatusOf,
   shortDate,
   type IdeaHistory,
   type LibraryIdea,
@@ -70,6 +75,9 @@ export function IdeaDetail({ idea, now, history, variants, onDeleted }: IdeaDeta
   const answer = displayAnswer(idea.questionType, idea.answer);
   const band = idea.difficulty > 0 ? DIFFICULTY_META[bandFor(idea.difficulty)] : null;
   const editable = EDITABLE_TYPES.includes(idea.questionType);
+  const status = rowStatusOf(idea);
+  const statusMeta = status ? ROW_STATUS_META[status] : null;
+  const outlook = outlookLines(idea, now);
 
   function remove() {
     setError(null);
@@ -131,23 +139,31 @@ export function IdeaDetail({ idea, now, history, variants, onDeleted }: IdeaDeta
           <b className="num">{idea.level}</b>
         </PromiseRing>
         <div style={{ minWidth: 0 }}>
-          <b>{mastered ? `Mastered · level ${idea.level}` : `Level ${idea.level} of ${MASTERY_LEVEL}`}</b>
+          <b>{levelLine(idea.level)}</b>
           <div className="t-meta">
-            {idea.isArchived ? "Archived · not scheduled" : dueSentence(idea.dueAt, now)}
-            {history && history.total > 0 && ` · ${historySummary(history)}`} · added {shortDate(idea.createdAt, now)}
+            {idea.isArchived ? "Archived · not scheduled · " : ""}
+            {history && history.total > 0 && `${historySummary(history)} · `}added {shortDate(idea.createdAt, now)}
           </div>
         </div>
       </div>
 
+      {outlook.length > 0 && (
+        <ul className="idea-outlook" aria-label="Outlook">
+          {outlook.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      )}
+
       <div className="idea-tags">
+        {statusMeta && (
+          <Chip tone={statusMeta.tone} icon={statusMeta.icon}>
+            {statusMeta.label}
+          </Chip>
+        )}
         <Chip>{TYPE_NAME[idea.questionType]}</Chip>
         <Chip>{COLLECTION_NAME[idea.collectionLabel]}</Chip>
         {band && <Chip title={`Difficulty ${idea.difficulty} of 100: ${band.blurb}`}>{band.label}</Chip>}
-        {mastered && (
-          <Chip tone="kept" icon="check">
-            Mastered
-          </Chip>
-        )}
         {idea.failedAttempts > 0 && <Chip>{plural(idea.failedAttempts, "strike")} since the last recall</Chip>}
         {idea.linkedCount > 0 && <Chip>{plural(idea.linkedCount, "link")}</Chip>}
         {idea.isArchived && <Chip>Archived</Chip>}

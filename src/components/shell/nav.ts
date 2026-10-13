@@ -243,6 +243,8 @@ export function titleFor(pathname: string | null | undefined, dayKey?: string): 
     return { eyebrow: "Dev · Style", title: best?.label ?? "Style" };
   }
   if (path === "/today" && dayKey) return { eyebrow: "Today", title: longDate(dayKey) };
+  // A Field's page (/library/field/<id>): its name is data (the page's <ShellTitle/>); until then, 'Field'.
+  if (under(path, "/library/field")) return { eyebrow: "Ideas", title: "Field" };
   if (under(path, "/library") && path !== "/library") return { eyebrow: "Ideas", title: "Idea" };
   // The intake form sits under the Roadmap tab, which would title it "Roadmap".
   if (under(path, "/you/roadmap/new")) return { eyebrow: "Ideas", title: "Set an aim" };

@@ -4,9 +4,13 @@
  * Study › Library, the Browse template (redesign L5).
  *
  *   search (48 px) + Filters (a sheet: every facet family)
- *   quick chips: All · Due n · Mastered n · Struggling n
- *   field tiles: the tier ornament as a material stripe; a tap narrows to that field
- *   sections by field: idea rows (64 px): title, domain + due line, level or Mastered
+ *   quick chips: All · Due n · Fading n · Mastered n · Struggling n
+ *   field tiles: the tier ornament as a material stripe, level, tier, how much is fading, a mark
+ *     for a drop in the last 7 days; a tap opens the Field's pop-up (FieldSheet: level, memory,
+ *     attributes, record), whose "Filter the list" narrows to that field and "Open the Field"
+ *     goes to /library/field/[fieldId]
+ *   sections by field, grouped by Domain (collapsible, with the Domain's level): idea rows
+ *     (IdeaRow, 64 px), most urgent first: title, due line, the status chip and the level
  *
  * Every filter lives in the URL (library-model: parseFilters / filtersToParams),
  * written with history.replaceState so Back is not flooded; opening an idea
@@ -26,14 +30,15 @@ import { ideaHistory, ideaVariants } from "@/app/actions/ideas";
 import { DIFFICULTY_META, type DifficultyBand } from "@/lib/difficulty";
 import { fieldTier } from "@/lib/field-tier";
 import { QUESTION_TYPES } from "@/lib/idea-payload";
-import { MAX_LEVEL } from "@/lib/xp";
-import { MathText } from "@/components/math/MathText";
 import { Button } from "@/components/ui/Button";
 import { Chip, ChipButton } from "@/components/ui/Chip";
 import { Icon } from "@/components/ui/Icon";
 import { Sheet } from "@/components/ui/Sheet";
 import { PageActions, SectionHeader } from "@/components/ui/Tabs";
 import { IdeaDetail } from "./IdeaDetail";
+import { IdeaRow } from "./IdeaRow";
+import { FieldSheet } from "./FieldSheet";
+import { byDomainLevel, isRecentDrop, tileHealthText, type FieldSummary } from "./field-model";
 // Revision 5, lane 9 (contracts ruling 67): pv.named after a Domain Gemini named
 import { DomainName } from "@/components/glyph/NamedMark";
 import {
@@ -42,15 +47,15 @@ import {
   DIFFICULTY_BANDS,
   EMPTY_FILTERS,
   LEVEL_FILTER_MAX,
+  STATUSES,
   STATUS_NAME,
   TYPE_NAME,
   URL_KEYS,
-  dueLabel,
+  byUrgency,
   facetCount,
   filtersToParams,
   historyOf,
   ideaHeadline,
-  isMastered,
   isUnfiltered,
   levelText,
   matchesFilters,
@@ -72,16 +77,19 @@ export type { LibraryIdea } from "./library-model";
 interface Props {
   ideas: LibraryIdea[];
   fields: LibraryField[];
+  /** Every Field's summary (field-insight.ts loadFieldInsights): the tiles and the Field pop-up. */
+  summaries: FieldSummary[];
   allTags: string[];
   /** Request time (ms), so server and browser agree on "due". */
   now: number;
 }
 
-/** Rows shown per field before "Show all". */
+/** Rows shown per field before "Show all" (across its Domain groups, in order). */
 const SECTION_CAP = 40;
-const QUICK: LibraryStatus[] = ["all", "due", "mastered", "struggling"];
+/** The quick chips: every status but Archived (that one lives in the filter sheet). */
+const QUICK: LibraryStatus[] = STATUSES.filter((s) => s !== "archived");
 
-export function LibrarySearch({ ideas, fields, allTags, now }: Props) {
+export function LibrarySearch({ ideas, fields, summaries, allTags, now }: Props) {
   const params = useSearchParams();
   const filters = useMemo(() => parseFilters(new URLSearchParams(params.toString())), [params]);
   const openId = params.get(URL_KEYS.idea);
@@ -98,6 +106,11 @@ export function LibrarySearch({ ideas, fields, allTags, now }: Props) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [removed, setRemoved] = useState<Set<string>>(() => new Set());
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  /** Domain groups folded shut (by Domain id). */
+  const [folded, setFolded] = useState<Set<string>>(() => new Set());
+  // The Field pop-up: which Field it shows (kept while it slides away) and whether it is open.
+  const [sheetField, setSheetField] = useState<string | null>(null);
+  const [fieldOpen, setFieldOpen] = useState(false);
   const pushedIdea = useRef(false);
 
   // '/' (src/lib/shortcuts.ts 'search') focuses the search box: by event while
@@ -157,6 +170,8 @@ export function LibrarySearch({ ideas, fields, allTags, now }: Props) {
     for (const i of live) if (!i.isArchived) m.set(i.fieldId, (m.get(i.fieldId) ?? 0) + 1);
     return m;
   }, [live]);
+  const summaryById = useMemo(() => new Map(summaries.map((s) => [s.id, s])), [summaries]);
+  // Sections by field, each grouped by Domain (highest level first), rows most urgent first.
   const sections = useMemo(() => {
     const byField = new Map<string, LibraryIdea[]>();
     for (const i of results) {
@@ -166,8 +181,32 @@ export function LibrarySearch({ ideas, fields, allTags, now }: Props) {
     }
     return orderedFields
       .filter((f) => byField.has(f.id))
-      .map((f) => ({ field: f, ideas: byField.get(f.id)!.sort((a, b) => a.dueAt - b.dueAt || a.id.localeCompare(b.id)) }));
+      .map((f) => {
+        const rows = byField.get(f.id)!;
+        const byDomain = new Map<string, LibraryIdea[]>();
+        for (const i of rows) {
+          const list = byDomain.get(i.domainId) ?? [];
+          list.push(i);
+          byDomain.set(i.domainId, list);
+        }
+        const known = new Map(f.domains.map((d) => [d.id, d]));
+        const groups = [...byDomain.entries()]
+          .map(([id, list]) => {
+            const d = known.get(id);
+            return {
+              id,
+              name: d?.name ?? list[0].domainName,
+              level: d?.level ?? 0,
+              geminiNamed: d?.geminiNamed ?? list[0].domainGeminiNamed ?? false,
+              ideas: list.sort(byUrgency),
+            };
+          })
+          .sort(byDomainLevel);
+        return { field: f, total: rows.length, groups };
+      });
   }, [results, orderedFields]);
+
+  const openSummary = sheetField ? (summaryById.get(sheetField) ?? null) : null;
 
   // ── The open idea (?idea=<id>) ────────────────────────────────────────────
   const openIdea = openId ? (live.find((i) => i.id === openId) ?? null) : null;
@@ -300,21 +339,33 @@ export function LibrarySearch({ ideas, fields, allTags, now }: Props) {
             const tier = fieldTier(f.level);
             const on = filters.fields.includes(f.id);
             const n = ideaCountByField.get(f.id) ?? 0;
+            const s = summaryById.get(f.id);
+            const drop = s?.drop && isRecentDrop(s.drop, now) ? s.drop : null;
             return (
               <li key={f.id}>
                 <button
                   type="button"
                   className="card lib-ftile"
-                  aria-pressed={on}
-                  onClick={() => set({ fields: toggle(filters.fields, f.id) })}
+                  data-on={on ? "1" : undefined}
+                  aria-haspopup="dialog"
+                  onClick={() => {
+                    setSheetField(f.id);
+                    setFieldOpen(true);
+                  }}
                   title={`${tier.label}: ${tier.blurb}`}
                 >
                   <span className="lib-orn" data-m={tierMaterial(f.level) ?? "none"} aria-hidden="true" />
                   <b>{f.name}</b>
-                  <span className="t-meta">
-                    {tier.tier === "DORMANT" ? "No points yet" : `${tier.label} · ${levelText(f.level)}`}
+                  <span className="t-meta lib-ftile-lv">
+                    <span>{tier.tier === "DORMANT" ? "No points yet" : `${tier.label} · ${levelText(f.level)}`}</span>
+                    {drop && (
+                      <Chip tone="owed" title={`Fell from ${levelText(drop.from)} in the last 7 days`}>
+                        <span aria-hidden="true">↓</span> from {levelText(drop.from)}
+                      </Chip>
+                    )}
                   </span>
-                  <span className="t-meta">{plural(n, "idea")}</span>
+                  <span className="t-meta">{s ? tileHealthText(s.health) : plural(n, "idea")}</span>
+                  {on && <span className="t-meta lib-ftile-on">Filtering the list</span>}
                 </button>
               </li>
             );
@@ -347,23 +398,57 @@ export function LibrarySearch({ ideas, fields, allTags, now }: Props) {
           )}
         </div>
       ) : (
-        sections.map(({ field, ideas: rows }) => {
-          const all = expanded.has(field.id);
-          const shown = all ? rows : rows.slice(0, SECTION_CAP);
+        sections.map(({ field, total, groups }) => {
+          // SECTION_CAP rows across the field's open Domain groups, in order; "Show all" lifts it.
+          let budget = expanded.has(field.id) ? Number.POSITIVE_INFINITY : SECTION_CAP;
+          let hidden = 0;
+          const shownGroups = groups.flatMap((g) => {
+            if (folded.has(g.id)) return [{ ...g, shown: [] as LibraryIdea[], open: false }];
+            const shown = g.ideas.slice(0, Math.max(0, budget));
+            budget -= shown.length;
+            hidden += g.ideas.length - shown.length;
+            return shown.length > 0 ? [{ ...g, shown, open: true }] : [];
+          });
           return (
             <section key={field.id} className="lib-sec" aria-labelledby={`lib-h-${field.id}`}>
-              <SectionHeader id={`lib-h-${field.id}`} title={field.name} aside={plural(rows.length, "idea")} />
+              <SectionHeader id={`lib-h-${field.id}`} title={field.name} aside={plural(total, "idea")} />
               <div className="card cv-auto">
-                <ul className="lib-list">
-                  {shown.map((i) => (
-                    <li key={i.id}>
-                      <IdeaRow idea={i} now={now} onOpen={openDetail} />
-                    </li>
-                  ))}
-                </ul>
-                {rows.length > shown.length && (
+                {shownGroups.map((g) => (
+                  <div key={g.id} className="lib-dom">
+                    <button
+                      type="button"
+                      className="lib-dom-h"
+                      aria-expanded={g.open}
+                      aria-controls={g.open ? `lib-d-${g.id}` : undefined}
+                      onClick={() =>
+                        setFolded((s) => {
+                          const next = new Set(s);
+                          if (next.has(g.id)) next.delete(g.id);
+                          else next.add(g.id);
+                          return next;
+                        })
+                      }
+                    >
+                      <Icon name="chev" />
+                      <b>{g.geminiNamed ? <DomainName name={g.name} geminiNamed /> : g.name}</b>
+                      <span className="t-meta">
+                        L{g.level} · {plural(g.ideas.length, "idea")}
+                      </span>
+                    </button>
+                    {g.open && (
+                      <ul className="lib-list" id={`lib-d-${g.id}`}>
+                        {g.shown.map((i) => (
+                          <li key={i.id}>
+                            <IdeaRow idea={i} now={now} onOpen={openDetail} />
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+                {hidden > 0 && (
                   <Button variant="quiet" className="lib-more" onClick={() => setExpanded((s) => new Set(s).add(field.id))}>
-                    Show all {rows.length.toLocaleString("en-GB")}
+                    Show all {total.toLocaleString("en-GB")}
                   </Button>
                 )}
               </div>
@@ -382,6 +467,18 @@ export function LibrarySearch({ ideas, fields, allTags, now }: Props) {
         archivedCount={counts.archived}
         onChange={(patch) => set(patch)}
         onClear={() => write({ ...EMPTY_FILTERS })}
+      />
+
+      <FieldSheet
+        summary={openSummary}
+        open={fieldOpen}
+        onClose={() => setFieldOpen(false)}
+        filtering={sheetField !== null && filters.fields.includes(sheetField)}
+        onFilter={() => {
+          if (sheetField) set({ fields: toggle(filters.fields, sheetField) });
+          setFieldOpen(false);
+        }}
+        now={now}
       />
 
       <Sheet
@@ -413,42 +510,6 @@ export function LibrarySearch({ ideas, fields, allTags, now }: Props) {
       </Sheet>
       {openId && !openIdea && !removed.has(openId) && <MissingIdea onDone={closeDetail} />}
     </>
-  );
-}
-
-function IdeaRow({ idea, now, onOpen }: { idea: LibraryIdea; now: number; onOpen: (id: string) => void }) {
-  const mastered = isMastered(idea);
-  const headline = ideaHeadline(idea);
-  return (
-    <Link
-      href={`/library/${idea.id}`}
-      prefetch={false}
-      className="lib-idea"
-      onClick={(e) => {
-        // A plain click opens the sheet; a modifier-click keeps the link's own behaviour.
-        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-        e.preventDefault();
-        onOpen(idea.id);
-      }}
-    >
-      <div style={{ minWidth: 0 }}>
-        <b>{idea.questionType === "FORMULA" && !idea.title ? <MathText text={headline} /> : headline}</b>
-        <span className="t-meta">
-          {idea.domainGeminiNamed ? <DomainName name={idea.domainName} geminiNamed /> : <span>{idea.domainName}</span>}
-          <span>{idea.isArchived ? "archived" : mastered ? `mastered · ${dueLabel(idea.dueAt, now)}` : dueLabel(idea.dueAt, now)}</span>
-          {idea.failedAttempts > 0 && !idea.isArchived && <span>{plural(idea.failedAttempts, "strike")}</span>}
-        </span>
-      </div>
-      <span className="lib-lvl">
-        {mastered ? (
-          <Chip tone="kept" icon="check">
-            Mastered
-          </Chip>
-        ) : (
-          <span aria-label={`Level ${idea.level} of ${MAX_LEVEL}`}>L{idea.level}</span>
-        )}
-      </span>
-    </Link>
   );
 }
 
@@ -542,14 +603,14 @@ function FilterSheet({
           Show
         </span>
         <div className="lib-opts" role="group" aria-labelledby="lf-status">
-          {(["all", "due", "mastered", "struggling", "archived"] as LibraryStatus[]).map((s) => (
+          {STATUSES.map((s) => (
             <ChipButton key={s} pressed={f.status === s} onClick={() => onChange({ status: s })}>
               {STATUS_NAME[s]}
               {s === "archived" && archivedCount > 0 ? ` ${archivedCount}` : ""}
             </ChipButton>
           ))}
         </div>
-        <p className="st-hint">Struggling: at least one strike since the last recall.</p>
+        <p className="st-hint">Fading: past its grace, losing recall (and, left long enough, a level). Struggling: at least one strike since the last recall.</p>
       </div>
 
       {fields.length > 0 && (

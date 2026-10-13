@@ -289,6 +289,106 @@ export function baseIntervalDays(level: number): number {
   return BASE_INTERVAL_DAYS[Math.min(MAX_LEVEL, Math.max(1, level))];
 }
 
+// ── Rising: a level is earned by clean recalls ─────────────────────────────
+//
+// A recall is CLEAN when it is right with no miss since the card fell due
+// (Idea.failedAttempts is 0: a strike sets it, a pass, a degrade or a ward
+// clears it). Only a clean recall raises a level. One that needed several
+// tries is still paid as a review and keeps the level, rescheduled at that
+// level's interval.
+//
+// From CLEAN_PAIR_FROM up (and the whole post-mastery ladder) a level needs
+// CLEAN_RECALLS_TO_RISE clean recalls in a row (Idea.cleanStreak counts them):
+// the first holds the level and comes back after CONFIRM_INTERVAL_SHARE of the
+// level's interval, the second raises it. Below it one clean recall is enough.
+
+/** From this level a rise needs two clean recalls in a row. */
+export const CLEAN_PAIR_FROM = 8;
+/** Clean recalls in a row a level from CLEAN_PAIR_FROM up needs. */
+export const CLEAN_RECALLS_TO_RISE = 2;
+/** The confirming review comes back after this share of the held level's interval. */
+export const CONFIRM_INTERVAL_SHARE = 0.5;
+
+/** Clean recalls in a row that raise a card at `level`: 1 below CLEAN_PAIR_FROM, 2 from it up. */
+export function cleanRecallsNeeded(level: number): 1 | 2 {
+  return Math.floor(level) >= CLEAN_PAIR_FROM ? 2 : 1;
+}
+
+/** The confirming review's interval: CONFIRM_INTERVAL_SHARE of the level's base interval (× INTERVAL_DILATION), at least a day. */
+export function confirmIntervalDays(level: number, multiplier = 1): number {
+  return Math.max(1, Math.round(CONFIRM_INTERVAL_SHARE * baseIntervalDays(level) * multiplier));
+}
+
+/**
+ * What a right answer does to a card's level: "up" (+1, the streak back to 0), "confirm" (the first of two clean
+ * recalls: level held, streak 1, back at the confirm interval), "held" (not clean: level held, streak 0, back at the
+ * level's interval) or "top" (MAX_LEVEL: nothing above, back at its interval).
+ */
+export type RiseKind = "up" | "confirm" | "held" | "top";
+
+export interface RiseStep {
+  kind: RiseKind;
+  /** Whether this recall was clean (no miss since the card fell due). */
+  clean: boolean;
+  levelBefore: number;
+  levelAfter: number;
+  /** Idea.cleanStreak after this recall. */
+  cleanStreak: number;
+  /** Clean recalls in a row the level held before this recall needed to rise. */
+  cleanNeeded: 1 | 2;
+}
+
+/** A right answer's rise, from the card as it was answered (pure: applyReviewResult writes what this returns). */
+export function riseStep(level: number, cleanStreak: number, failedAttempts: number): RiseStep {
+  const L = Math.min(MAX_LEVEL, Math.max(1, Math.floor(level)));
+  const clean = failedAttempts <= 0;
+  const cleanNeeded = cleanRecallsNeeded(L);
+  const base = { clean, levelBefore: L, cleanNeeded };
+  if (L >= MAX_LEVEL) return { ...base, kind: "top", levelAfter: L, cleanStreak: 0 };
+  if (!clean) return { ...base, kind: "held", levelAfter: L, cleanStreak: 0 };
+  const streak = Math.max(0, Math.floor(cleanStreak)) + 1;
+  if (streak >= cleanNeeded) return { ...base, kind: "up", levelAfter: L + 1, cleanStreak: 0 };
+  return { ...base, kind: "confirm", levelAfter: L, cleanStreak: streak };
+}
+
+/** The interval a rise schedules: the new level's on "up", the confirm interval on "confirm", the held level's otherwise. */
+export function riseIntervalDays(step: RiseStep, multiplier = 1): number {
+  return step.kind === "confirm" ? confirmIntervalDays(step.levelBefore, multiplier) : nextIntervalDays(step.levelAfter, multiplier);
+}
+
+/** riseIntervalDays without the 5–8 jitter: the base interval (the pacing models and display). */
+export function riseBaseIntervalDays(step: RiseStep, multiplier = 1): number {
+  return step.kind === "confirm" ? confirmIntervalDays(step.levelBefore, multiplier) : Math.round(baseIntervalDays(step.levelAfter) * multiplier);
+}
+
+/** The result panel's line for a rise: why the level moved or held. */
+export function riseLine(step: RiseStep): string {
+  switch (step.kind) {
+    case "up":
+      return `Level up: L${step.levelAfter}`;
+    case "confirm":
+      return `${step.cleanStreak} of ${step.cleanNeeded} clean recalls for L${step.levelBefore + 1}`;
+    case "held":
+      return step.cleanNeeded === 1
+        ? "Level held: a miss this round — a clean recall next time raises it"
+        : `Level held: a miss this round — ${step.cleanNeeded} clean recalls in a row raise it`;
+    case "top":
+      return `Level held: L${step.levelBefore} is the top`;
+  }
+}
+
+/**
+ * Clean recalls still needed to take a card from `level` (with `cleanStreak` clean recalls already in a row at it)
+ * to `target`: 1 a level below CLEAN_PAIR_FROM, 2 from it up, less the streak in hand. 0 at or above the target.
+ */
+export function cleanRecallsTo(level: number, cleanStreak: number, target: number): number {
+  const L = Math.max(1, Math.floor(level));
+  let n = 0;
+  for (let l = L; l < Math.min(MAX_LEVEL, target); l++) n += cleanRecallsNeeded(l);
+  if (n > 0 && cleanRecallsNeeded(L) === 2) n -= Math.min(1, Math.max(0, Math.floor(cleanStreak)));
+  return n;
+}
+
 // Grace period T_grace = max(0, Idea.level - 1) days (spec section 5).
 export function graceDays(level: number): number {
   return Math.max(0, level - 1);
@@ -342,11 +442,26 @@ export function domainPointsLevel(totalPoints: number): number {
  * rather than half, so shallow breadth contributes almost nothing and the
  * measure only moves when Ideas actually mature.
  */
-export function masteryDepth(ideaLevels: number[]): number {
-  return ideaLevels.reduce((sum, lvl) => {
+export function masteryDepth(ideaLevels: readonly (number | DepthEntry)[]): number {
+  return ideaLevels.reduce<number>((sum, entry) => {
+    const lvl = typeof entry === "number" ? entry : entry.level;
+    const retention = typeof entry === "number" ? 1 : Math.max(0, Math.min(1, Number.isFinite(entry.retention) ? entry.retention : 1));
     const share = Math.max(0, Math.min(1, lvl / MASTERY_LEVEL));
-    return sum + share * share;
+    return sum + share * share * retention;
   }, 0);
+}
+
+/**
+ * One Idea as its Domain's depth counts it: its level, and how well it is still remembered (forgetting.ts
+ * retentionFactor, 1 while it is reviewed on time). A bare number is a level at retention 1.
+ *
+ * Retention-weighted depth (2026-10-13): Σ (min(1, L/12))² × retention. An Idea left past its grace counts for less
+ * every day, so a neglected Domain, then its Field, comes down gradually, before any Idea has lost a level; a Domain
+ * reviewed on time is exactly what it was.
+ */
+export interface DepthEntry {
+  level: number;
+  retention: number;
 }
 
 /**
@@ -367,11 +482,44 @@ export const DEPTH_GRACE = 1;
  * known well. A high level now means the Domain holds the equivalent of that
  * many mastered Ideas *and* the accumulated work to match — which is what
  * makes it worth printing on a tile.
+ *
+ * Both halves read retention when given DepthEntries (forgetting.ts
+ * depthEntryOf; leveling.ts passes them), so an Idea left past its grace pulls
+ * the level down before it loses a level of its own: the depth counts each
+ * Idea by its retention (masteryDepth), and the points are read at the
+ * Domain's retained share (retainedPoints). The stored totalPoints is the
+ * earned total and is never changed by this; only the level reads the
+ * weighted value. A bare level reads at retention 1, so a Domain reviewed on
+ * time, and every caller that passes levels, is exactly what it was.
  */
-export function domainLevel(totalPoints: number, ideaLevels: number[]): number {
-  const byPoints = domainPointsLevel(totalPoints);
+export function domainLevel(totalPoints: number, ideaLevels: readonly (number | DepthEntry)[]): number {
+  const byPoints = domainPointsLevel(retainedPoints(totalPoints, ideaLevels));
   const byDepth = DEPTH_GRACE + Math.floor(masteryDepth(ideaLevels));
   return Math.min(byPoints, byDepth);
+}
+
+/**
+ * How much of a Domain is still remembered, 0..1: its Ideas' retention averaged
+ * with the depth weights, Σ w·r ÷ Σ w with w = min(1, L/12)² (a mastered Idea
+ * counts most, a new one barely). 1 with no Ideas, with Σ w = 0, or when every
+ * entry is a bare level.
+ */
+export function retainedShare(ideaLevels: readonly (number | DepthEntry)[]): number {
+  let sw = 0;
+  let swr = 0;
+  for (const entry of ideaLevels) {
+    const lvl = typeof entry === "number" ? entry : entry.level;
+    const r = typeof entry === "number" ? 1 : Math.max(0, Math.min(1, Number.isFinite(entry.retention) ? entry.retention : 1));
+    const share = Math.max(0, Math.min(1, lvl / MASTERY_LEVEL));
+    sw += share * share;
+    swr += share * share * r;
+  }
+  return sw > 0 ? swr / sw : 1;
+}
+
+/** The points a Domain's level reads: its earned totalPoints × retainedShare (the stored total is never changed). */
+export function retainedPoints(totalPoints: number, ideaLevels: readonly (number | DepthEntry)[]): number {
+  return Math.max(0, totalPoints) * retainedShare(ideaLevels);
 }
 
 // ── Field level: depth first ────────────────────────────────────────────────

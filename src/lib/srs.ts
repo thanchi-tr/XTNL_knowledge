@@ -6,11 +6,14 @@ import {
   graceEndsAt,
   reviewPayout,
   domainLevelProgress,
-  nextIntervalDays,
+  riseIntervalDays,
+  riseLine,
+  riseStep,
   MAX_LEVEL,
   MASTERY_BONUS,
   MASTERY_LEVEL,
   type ReviewPayout,
+  type RiseKind,
 } from "./xp";
 import { recalculateLeveling } from "./leveling";
 import { loadProgressionFresh, tryConsumeWardCharge, type ProgressionState } from "./skill-effects";
@@ -95,12 +98,35 @@ export interface DomainMove {
   totalPoints: LevelMove;
   /** Points progress toward the next points level, before and after (the result panel's meter). */
   progress: { before: PointsProgress; after: PointsProgress };
+  /**
+   * How much of the Domain is still remembered after this review (xp.ts retainedShare, 1 when nothing fades): its
+   * level reads its points at this share, so below 1 fading ideas hold the level, not only depth.
+   */
+  retention?: number;
 }
 
 export interface FieldMove {
   id: string;
   name: string;
   level: LevelMove;
+}
+
+/**
+ * Why a right answer moved the level or held it (xp.ts riseStep): only a clean recall (no miss since the card fell
+ * due) raises a level, and from CLEAN_PAIR_FROM up two in a row do. `line` is the result panel's sentence.
+ */
+export interface ReviewRise {
+  kind: RiseKind;
+  /** This recall was clean. */
+  clean: boolean;
+  /** Idea.cleanStreak after it. */
+  cleanStreak: number;
+  /** Clean recalls in a row the level it was answered at needs to rise. */
+  cleanNeeded: 1 | 2;
+  /** The level the next rise reaches; null at MAX_LEVEL. */
+  nextLevel: number | null;
+  /** "Level up: L9" · "1 of 2 clean recalls for L9" · "Level held: a miss this round — …". */
+  line: string;
 }
 
 export type ReviewOutcome =
@@ -116,6 +142,8 @@ export type ReviewOutcome =
       payout: ReviewPayout;
       /** True only on the review that first reaches MASTERY_LEVEL. */
       mastered: boolean;
+      /** Why the level rose or held (newLevel === previousLevel on a held or confirming recall). */
+      rise: ReviewRise;
       /** Mastery points this review minted (the per-review fraction, plus the mastery lump when mastered). */
       masteryMinted: number;
       domain: DomainMove;
@@ -179,6 +207,8 @@ async function degradeIdea(idea: Idea, now: Date, graceExtraDays: number): Promi
       data: {
         level: newLevel,
         failedAttempts: 0,
+        // A lost level starts its clean recalls again.
+        cleanStreak: 0,
         dueDate,
         graceEndsAt: graceEndsAt(dueDate, newLevel, graceExtraDays),
       },
@@ -214,9 +244,10 @@ async function attemptDegradation(
 
   if (anchor) {
     const dueDate = addDays(now, 1);
+    // The ward keeps the level; the miss still breaks the clean recalls in a row.
     await prisma.idea.update({
       where: { id: idea.id },
-      data: { failedAttempts: 0, dueDate },
+      data: { failedAttempts: 0, cleanStreak: 0, dueDate },
     });
     // Reschedules the Idea without touching points, so it never reaches
     // `recalculateLeveling` — the one write path that invalidates for us.
@@ -237,10 +268,14 @@ export interface ReviewPreload {
 
 /**
  * Applies the result of an attempted review (spec section 5, Reward &
- * Punishment). Correct -> advance level, credit the review's price
- * (xp.ts reviewPayout: level base × combo × yield, plus a one-time mastery
- * bonus at level 12 — see xp.ts for why this is no longer the spec's flat
- * +2), next dueDate from the interval schedule. Incorrect ->
+ * Punishment). Correct -> credit the review's price (xp.ts reviewPayout:
+ * level base × combo × yield, plus a one-time mastery bonus at level 12 —
+ * see xp.ts for why this is no longer the spec's flat +2) and apply the rise
+ * rule (xp.ts riseStep): a clean recall (no miss since the card fell due)
+ * raises the level, from CLEAN_PAIR_FROM up only the second clean recall in
+ * a row does (the first holds it and comes back at the confirm interval); a
+ * recall after a miss is paid and holds the level, rescheduled at that
+ * level's interval. Incorrect ->
  * failedAttempts++, then either a plain Strike (24h reschedule, no other
  * change) or — if failedAttempts hit the limit or the grace period has
  * already lapsed — a Degradation.
@@ -299,9 +334,12 @@ export async function applyReviewResult(
   // The miss row's detail: its outcome, then (roadmap rev 4) the level it was taken at, " · L11", appended so every prefix reader still matches.
   let lateOutcome: `${ReviewOutcome["outcome"]} · L${number}` | null = null;
   let landed = false;
+  // The miss row's qty: the clean recalls in a row this miss broke (Idea.cleanStreak), or null when a miss earlier in
+  // this due cycle had already broken them. undoMissCore restores the clean state from it ("I was right").
+  const brokenStreak = idea.failedAttempts > 0 ? null : idea.cleanStreak;
   after(async () => {
     if (lateOutcome) {
-      await recordActivity(userId, reviewEvent(ideaId, now, 0, lateOutcome));
+      await recordActivity(userId, { ...reviewEvent(ideaId, now, 0, lateOutcome), qty: brokenStreak });
     }
     // Study tasks ('review 20 daily') complete themselves from these rows,
     // so they are checked only once this review's row is in.
@@ -312,8 +350,10 @@ export async function applyReviewResult(
   });
 
   if (correct) {
-    const newLevel = Math.min(MAX_LEVEL, idea.level + 1);
-    const intervalDays = nextIntervalDays(newLevel, modifiers.intervalMultiplier);
+    // Clean (no miss since it fell due) raises it; from CLEAN_PAIR_FROM up the second clean recall in a row does.
+    const step = riseStep(idea.level, idea.cleanStreak, idea.failedAttempts);
+    const newLevel = step.levelAfter;
+    const intervalDays = riseIntervalDays(step, modifiers.intervalMultiplier);
     const dueDate = addDays(now, intervalDays);
 
     // Mastery fires only on the transition, so re-reviewing a capped Idea
@@ -340,6 +380,7 @@ export async function applyReviewResult(
         data: {
           level: newLevel,
           failedAttempts: 0,
+          cleanStreak: step.cleanStreak,
           dueDate,
           graceEndsAt: graceEndsAt(dueDate, newLevel, modifiers.graceExtraDays),
         },
@@ -368,7 +409,7 @@ export async function applyReviewResult(
     // the knowledge tags), so the progression cache stays warm.
     invalidateActivity(review);
     landed = true;
-    const { domainLevel: newDomainLevel, fieldLevel: newFieldLevel } = await recalculateLeveling(idea.domainId);
+    const { domainLevel: newDomainLevel, fieldLevel: newFieldLevel, domainRetention } = await recalculateLeveling(idea.domainId, { now, graceExtraDays: modifiers.graceExtraDays });
 
     // The Domain's new total is the one read before plus this credit: the
     // increment is atomic in the transaction above, so re-reading the row
@@ -384,6 +425,14 @@ export async function applyReviewResult(
       pointsAwarded,
       payout,
       mastered,
+      rise: {
+        kind: step.kind,
+        clean: step.clean,
+        cleanStreak: step.cleanStreak,
+        cleanNeeded: step.cleanNeeded,
+        nextLevel: newLevel < MAX_LEVEL ? newLevel + 1 : null,
+        line: riseLine(step),
+      },
       masteryMinted,
       domain: {
         id: domainBefore.id,
@@ -391,6 +440,7 @@ export async function applyReviewResult(
         level: { before: domainBefore.level, after: newDomainLevel },
         totalPoints: { before: domainBefore.totalPoints, after: pointsAfter },
         progress: { before: domainLevelProgress(domainBefore.totalPoints), after: domainLevelProgress(pointsAfter) },
+        retention: domainRetention,
       },
       field: {
         id: domainBefore.field.id,
@@ -440,14 +490,15 @@ export const OVERRIDE_TYPES: readonly string[] = ["SHORT", "LIST"];
  * REVIEW row must be that miss (xp 0, 'strike', 'degraded' or 'shielded' with the level it was taken at), inside
  * OVERRIDE_WINDOW_MS, and never overridden before (an ADJUST row keyed 'review-override:<row>' marks it, so a second
  * tap does nothing). A degradation is undone: the level comes back and so do the points it took (levelLossPoints).
- * A strike needs nothing undone: the pass that follows (applyReviewResult, correct) resets the strikes and the due
- * date. A ward charge a shielded miss spent stays spent. Returns the level the answer was given at.
+ * The clean state before the miss comes back too (cleanStateBefore: failedAttempts, and the clean recalls in a row
+ * the miss row's qty kept), so the pass that follows (applyReviewResult, correct) is judged clean exactly when that
+ * answer would have been. A ward charge a shielded miss spent stays spent. Returns the level the answer was given at.
  */
 export async function undoMissCore(userId: string, ideaId: string, now: Date = new Date()): Promise<{ ok: true; levelBefore: number } | { ok: false; error: string }> {
   const read = () =>
     Promise.all([
-      prisma.idea.findUnique({ where: { id: ideaId }, select: { id: true, level: true, questionType: true, domainId: true } }),
-      prisma.activityEvent.findFirst({ where: { userId, source: "REVIEW", sourceId: ideaId }, orderBy: { occurredAt: "desc" }, select: { id: true, xp: true, detail: true, occurredAt: true } }),
+      prisma.idea.findUnique({ where: { id: ideaId }, select: { id: true, level: true, questionType: true, domainId: true, failedAttempts: true } }),
+      prisma.activityEvent.findFirst({ where: { userId, source: "REVIEW", sourceId: ideaId }, orderBy: { occurredAt: "desc" }, select: { id: true, xp: true, detail: true, occurredAt: true, qty: true } }),
     ]);
   let [idea, row] = await read();
   if (!idea) return { ok: false, error: "That idea no longer exists." };
@@ -474,6 +525,7 @@ export async function undoMissCore(userId: string, ideaId: string, now: Date = n
     const refund = levelLossPoints(levelBefore);
     if (refund > 0) ops.push(prisma.domain.update({ where: { id: idea.domainId }, data: { totalPoints: { increment: refund } } }));
   }
+  ops.push(prisma.idea.update({ where: { id: ideaId }, data: cleanStateBefore(outcome, idea.failedAttempts, row.qty) }));
   try {
     await prisma.$transaction(ops);
   } catch (err) {
@@ -482,6 +534,19 @@ export async function undoMissCore(userId: string, ideaId: string, now: Date = n
   }
   if (restore) await recalculateLeveling(idea.domainId);
   return { ok: true, levelBefore };
+}
+
+/**
+ * The clean state a miss took, from its REVIEW row (undoMissCore). A strike only raised failedAttempts (it never
+ * writes cleanStreak: the strike alone makes the next right answer unclean), so it gives back one strike. A
+ * degradation or a ward cleared failedAttempts and the clean streak: the row's qty is the streak it broke (null when a
+ * miss earlier in the due cycle had already broken it, or on a row written before 2026-10-13), so a qty brings back
+ * a clean answer (no strikes, that streak) and null an unclean one (one strike, no streak).
+ */
+export function cleanStateBefore(outcome: string, failedAttemptsNow: number, brokenStreak: number | null): { failedAttempts: number; cleanStreak?: number } {
+  const streak = brokenStreak == null || !Number.isFinite(brokenStreak) ? null : Math.max(0, Math.round(brokenStreak));
+  if (outcome === "strike") return { failedAttempts: streak != null ? 0 : Math.max(0, failedAttemptsNow - 1) };
+  return streak != null ? { failedAttempts: 0, cleanStreak: streak } : { failedAttempts: 1, cleanStreak: 0 };
 }
 
 /**
@@ -530,7 +595,8 @@ export async function degradeOverdueIdeas(now: Date = new Date()): Promise<{ ide
     }
 
     const newLevel = anchor - want;
-    const ops: Prisma.PrismaPromise<unknown>[] = [prisma.idea.update({ where: { id: idea.id }, data: { level: newLevel } })];
+    // A forgotten level starts its clean recalls again.
+    const ops: Prisma.PrismaPromise<unknown>[] = [prisma.idea.update({ where: { id: idea.id }, data: { level: newLevel, cleanStreak: 0 } })];
     let taken = 0;
     for (let n = done + 1; n <= want; n++) {
       const from = anchor - n + 1;

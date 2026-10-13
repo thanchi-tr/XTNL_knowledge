@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { degradeOverdueIdeas } from "@/lib/srs";
+import { recomputeAllLevels } from "@/lib/leveling";
 import { decayStaleMastery } from "@/lib/mastery";
 import { purgeExpiredDebuffs } from "@/lib/debuffs";
 import { purgeExpiredBoons } from "@/lib/boons";
@@ -18,8 +19,14 @@ export const dynamic = "force-dynamic";
  * (local dev), so long as you understand that means anyone with the URL can
  * trigger it once it's deployed.
  *
- * Five jobs, in order of consequence:
+ * Six jobs, in order of consequence:
  *   1. Degrade Ideas whose grace period lapsed unattended.
+ *   1b. Recompute every Domain and Field level (leveling.ts recomputeAllLevels): a
+ *      Domain's depth counts each Idea by its retention, which falls every day
+ *      an Idea sits past its grace, so a neglected Domain, then its Field, comes
+ *      down before any Idea loses a level, and the drop is recorded
+ *      (droppedFrom, droppedAt) for the Library and the bell. Batched; a second
+ *      run the same day writes nothing.
  *   2. Erode idle mastery points (`decayStaleMastery` — no-ops entirely
  *      while the balance is being saved toward something still locked).
  *   3. Judge last week's Field contribution quotas, once per week — the
@@ -48,11 +55,13 @@ export async function GET(request: Request) {
 
   const userId = getCurrentUserId();
   const results = await degradeOverdueIdeas();
+  // After the degrade, so the levels read the levels it took; before the roadmap readings, which read the levels.
+  const levels = await recomputeAllLevels({ now: new Date() });
   const decay = await decayStaleMastery(userId);
   const quota = await enforceWeeklyQuotas(userId);
   // After the degrade and the quota judge: the readings see today's lowered levels.
   const roadmap = await recordRoadmapAfterDegrade(userId, new Date());
   const [debuffsPurged, boonsPurged] = await Promise.all([purgeExpiredBoons(), purgeExpiredDebuffs()]);
 
-  return NextResponse.json({ degraded: results.length, results, decay, quota, roadmap, debuffsPurged, boonsPurged });
+  return NextResponse.json({ degraded: results.length, results, levels, decay, quota, roadmap, debuffsPurged, boonsPurged });
 }

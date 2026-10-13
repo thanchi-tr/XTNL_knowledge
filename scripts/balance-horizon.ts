@@ -63,7 +63,7 @@ import { join } from "node:path";
 import { SKILL_POOL, requiredAttributeScore } from "../src/lib/skill-pool";
 import { IDEA_MASTERY_POINTS, REVIEW_MASTERY_PER_LEVEL } from "../src/lib/mastery";
 import type { QuestionType } from "@prisma/client";
-import { MASTERY_BONUS, MASTERY_LEVEL, MAX_LEVEL, XP_BASE, baseIntervalDays, domainLevel, fieldBreadth, fieldLevel, fieldLevelRaw, reviewReward } from "../src/lib/xp";
+import { MASTERY_BONUS, MASTERY_LEVEL, MAX_LEVEL, XP_BASE, domainLevel, fieldBreadth, fieldLevel, fieldLevelRaw, reviewReward, riseBaseIntervalDays, riseStep } from "../src/lib/xp";
 import { characterLevel } from "../src/lib/character";
 import { TITLE_BANDS } from "../src/lib/titles";
 import { MATERIALS, crestBandStarts } from "../src/lib/materials";
@@ -99,13 +99,29 @@ import { captureGoalFields, linkedGoalFields } from "../src/lib/tasks";
 /** A committed player: reviews daily, never misses, adds steadily. */
 const REVIEWS_PER_DAY = 25;
 const NEW_IDEAS_PER_WEEK = 10;
-/** Reviews needed to walk one Idea from level 1 to MASTERY_LEVEL. */
-const REVIEWS_TO_MASTER = MASTERY_LEVEL - 1;
-/** Days to walk one Idea from new to mastered, summing the interval ladder. */
-const DAYS_TO_MASTER = Array.from({ length: MASTERY_LEVEL - 1 }, (_, i) => baseIntervalDays(i + 1))
-  .reduce((a, b) => a + b, 0);
-const DAYS_TO_MAX = Array.from({ length: MAX_LEVEL - 1 }, (_, i) => baseIntervalDays(i + 1))
-  .reduce((a, b) => a + b, 0);
+/**
+ * One Idea walked from level 1 to `target` on clean recalls only (xp.ts riseStep: one a level below CLEAN_PAIR_FROM,
+ * two in a row from it up, the first back at the confirm interval): the reviews it takes and the days of intervals.
+ */
+function cleanWalk(target: number): { reviews: number; days: number } {
+  let level = 1;
+  let streak = 0;
+  let reviews = 0;
+  let days = 0;
+  while (level < target) {
+    const step = riseStep(level, streak, 0);
+    days += riseBaseIntervalDays(step);
+    level = step.levelAfter;
+    streak = step.cleanStreak;
+    reviews += 1;
+  }
+  return { reviews, days };
+}
+/** Reviews needed to walk one Idea from level 1 to MASTERY_LEVEL (15: 7 below L8, then two a level). */
+const REVIEWS_TO_MASTER = cleanWalk(MASTERY_LEVEL).reviews;
+/** Days to walk one Idea from new to mastered, summing the intervals the clean walk schedules. */
+const DAYS_TO_MASTER = cleanWalk(MASTERY_LEVEL).days;
+const DAYS_TO_MAX = cleanWalk(MAX_LEVEL).days;
 
 function fmtYears(days: number): string {
   return `${(days / 365).toFixed(1)}y`;
@@ -869,7 +885,7 @@ const PACE_SPREAD_FIELDS = 3;
  * each Field's Domain levels at that day's end (xp.ts domainLevel).
  */
 function knowledgeModel(fields: number): () => number[][] {
-  const domains = Array.from({ length: fields * PACE_DOMAINS_PER_FIELD }, () => ({ points: 0, ideas: [] as { level: number; due: number }[] }));
+  const domains = Array.from({ length: fields * PACE_DOMAINS_PER_FIELD }, () => ({ points: 0, ideas: [] as { level: number; due: number; clean: number }[] }));
   let day = 0;
   let dealt = 0;
   return () => {
@@ -879,16 +895,20 @@ function knowledgeModel(fields: number): () => number[][] {
         const d = domains[dealt % domains.length];
         dealt += 1;
         d.points += XP_BASE[PACE_FORMAT];
-        d.ideas.push({ level: 1, due: day + 1 });
+        d.ideas.push({ level: 1, due: day + 1, clean: 0 });
       }
     }
     for (const d of domains) {
       for (const idea of d.ideas) {
         if (idea.due > day) continue;
-        const next = Math.min(MAX_LEVEL, idea.level + 1);
+        // Every recall is clean (on its day, no miss): xp.ts riseStep raises it, or from CLEAN_PAIR_FROM up holds it
+        // for a confirming review first; the model reads the deterministic base intervals (riseBaseIntervalDays).
+        const step = riseStep(idea.level, idea.clean, 0);
+        const next = step.levelAfter;
         d.points += reviewReward(idea.level) + (next === MASTERY_LEVEL && idea.level < MASTERY_LEVEL ? MASTERY_BONUS : 0);
         idea.level = next;
-        idea.due = day + baseIntervalDays(next);
+        idea.clean = step.cleanStreak;
+        idea.due = day + riseBaseIntervalDays(step);
       }
     }
     const levels = domains.map((d) => domainLevel(d.points, d.ideas.map((i) => i.level)));

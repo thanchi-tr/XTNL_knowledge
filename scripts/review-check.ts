@@ -223,7 +223,7 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   check("facts: the longest gap yet is called out only when it beats every earlier gap", longest.longestGap && longest.detail.startsWith("Longest gap yet for this idea"), longest.detail);
 
   const cleared = trueFactOf({ ...base, levelBefore: 9, levelAfter: 10, history: h([["2026-08-01", "pass"], ["2026-09-19", "miss"]]) });
-  check("facts: a pass after a miss is 'First clean recall after a miss' and names the miss's day", cleared.kind === "clean-after-miss" && cleared.detail.startsWith("The miss on 19 Sep is cleared") && cleared.clearedMissDay === "2026-09-19", cleared.detail);
+  check("facts: a pass after a miss is 'First recall after a miss' and names the miss's day", cleared.kind === "clean-after-miss" && cleared.detail.startsWith("The miss on 19 Sep is cleared") && cleared.clearedMissDay === "2026-09-19", cleared.detail);
 
   const rescued = trueFactOf({ ...base, overdueDays: 3, history: h([["2026-08-01", "pass"]]) });
   check("facts: an overdue card recalled is 'Rescued, 3 days overdue'", rescued.kind === "rescued" && rescued.headline === "Rescued, 3 days overdue" && rescued.detail.startsWith("Recalled after 61 days"), rescued.detail);
@@ -231,8 +231,11 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   const mastered = trueFactOf({ ...base, levelBefore: 11, levelAfter: 12, mastered: true, intervalDays: 160, history: h([["2026-06-01", "pass"]]) });
   check("facts: mastery wins over everything else", mastered.kind === "mastered" && mastered.headline === `Mastered · level ${MASTERY_LEVEL} of ${MASTERY_LEVEL}`, mastered.headline);
 
-  const near = trueFactOf({ ...base, levelBefore: 10, levelAfter: 11, history: h([["2026-09-01", "pass"]]) });
-  check("facts: level 11 says 'one clean recall from mastery'", near.detail.toLowerCase().includes("one clean recall from mastery"), near.detail);
+  // 2026-10-13 (idea leveling): from L8 up a level needs two clean recalls in a row, so "one" only when one is in hand.
+  const near = trueFactOf({ ...base, levelBefore: 11, levelAfter: 11, cleanToMastery: 1, history: h([["2026-09-01", "pass"]]) });
+  check("facts: level 11 with a clean recall in hand says 'one clean recall from mastery'", near.detail.toLowerCase().includes("one clean recall from mastery"), near.detail);
+  const notNear = trueFactOf({ ...base, levelBefore: 10, levelAfter: 11, history: h([["2026-09-01", "pass"]]) });
+  check("facts: level 11 reached just now (two clean recalls to go) does not say 'one'", !notNear.detail.toLowerCase().includes("one clean recall") && notNear.cleanToMastery === 2, notNear.detail);
 
   const first = trueFactOf({ ...base, levelBefore: 1, levelAfter: 2, addedDay: "2026-09-28", intervalDays: 2 });
   check("facts: a first recall with no ledger history says when it was added", first.kind === "first" && first.headline === "First recall" && first.detail === "Added 3 days ago · next review in 2 days", first.detail);
@@ -283,7 +286,7 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   });
   const lines = sessionFactsOf([
     card("Coin tosses", { ...base, history: h([["2026-08-28", "pass"]]) }, "2026-10-27"),
-    card("Bayes' rule", { ...base, levelBefore: 10, levelAfter: 11, history: h([["2026-09-19", "miss"]]) }, "2026-10-09"),
+    card("Bayes' rule", { ...base, levelBefore: 11, levelAfter: 11, cleanToMastery: 1, history: h([["2026-09-19", "miss"]]) }, "2026-10-09"),
     card("Mode vs median", { ...base, correct: false, miss: { kind: "strike", strike: 1, limit: 2 } }, "2026-10-02"),
   ]);
   check(
@@ -426,7 +429,8 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   const apply = srs.slice(srs.indexOf("export async function applyReviewResult"), srs.indexOf("export async function degradeOverdueIdeas"));
   check("srs: the review path never calls the roll", !/rollRewardVariance\s*\(/.test(srs));
   check("srs: a pass writes its REVIEW row (sink DOMAIN, xp = the credit) inside the points transaction", /ops\.push\(activityOp\(userId, review\)\)/.test(apply) && /reviewEvent\(ideaId, now, pointsAwarded/.test(apply) && /await prisma\.\$transaction\(ops\)/.test(apply) && /source: "REVIEW", sink: "DOMAIN"/.test(srs));
-  check("srs: a miss writes its xp-0 REVIEW row in after(), off the answer's path", /after\(async \(\) => \{\s*if \(lateOutcome\) \{\s*await recordActivity\(userId, reviewEvent\(ideaId, now, 0, lateOutcome\)\);/.test(apply));
+  // 2026-10-13 (idea leveling): the miss row's qty keeps the clean streak it broke, for "I was right" (undoMissCore).
+  check("srs: a miss writes its xp-0 REVIEW row in after(), off the answer's path", /after\(async \(\) => \{\s*if \(lateOutcome\) \{\s*await recordActivity\(userId, \{ \.\.\.reviewEvent\(ideaId, now, 0, lateOutcome\), qty: brokenStreak \}\);/.test(apply));
   check("srs: field activity and study tasks still follow every landed review", /recordFieldActivity\(userId, domainBefore\.fieldId, now\)/.test(apply) && /autoCompleteStudyTasks\(userId, now\)/.test(apply));
   check("srs: mastery is minted in the same transaction (fraction always, lump on mastery)", /ops\.push\(mintReviewFractionOp\(/.test(apply) && /ops\.push\(mintIdeaMasteryOp\(/.test(apply));
   // after() callbacks run once the answer is sent; their awaits are not on the answer's path.

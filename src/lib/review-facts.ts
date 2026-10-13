@@ -14,7 +14,7 @@
  * for the recap. scripts/review-check.ts covers every branch.
  */
 import { daysBetween, type DayKey } from "./life-day";
-import { MASTERY_LEVEL } from "./xp";
+import { MASTERY_LEVEL, cleanRecallsTo } from "./xp";
 import { levelLossPoints } from "./forgetting";
 
 /** "2.4" or "31": points to one decimal, whole when whole. */
@@ -141,6 +141,8 @@ export interface TrueFact {
   overdueDays: number;
   /** The day of the miss this recall cleared, when it cleared one. */
   clearedMissDay: DayKey | null;
+  /** Clean recalls still between the card and mastery after this answer (xp.ts cleanRecallsTo); 0 when mastered. */
+  cleanToMastery?: number;
 }
 
 export type MissOutcome =
@@ -165,6 +167,11 @@ export interface FactInput {
   /** The interval actually scheduled (days), for a pass. */
   intervalDays: number | null;
   miss?: MissOutcome;
+  /**
+   * Clean recalls still between the card and mastery after this answer (xp.ts cleanRecallsTo with the card's clean
+   * streak). Absent: read from levelAfter with no clean recall in hand.
+   */
+  cleanToMastery?: number;
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -206,7 +213,8 @@ export function trueFactOf(input: FactInput): TrueFact {
   const longestGap = gapDays != null && gapDays > 0 && priorGaps.length > 0 && priorGaps.every((g) => gapDays > g);
   const overdueDays = Math.max(0, Math.round(input.overdueDays));
   const next = nextReviewText(input.intervalDays);
-  const base = { gapDays, longestGap, overdueDays, clearedMissDay: null as DayKey | null };
+  const cleanToMastery = input.cleanToMastery ?? cleanRecallsTo(input.levelAfter, 0, MASTERY_LEVEL);
+  const base = { gapDays, longestGap, overdueDays, clearedMissDay: null as DayKey | null, cleanToMastery };
 
   if (!input.correct) {
     const m = input.miss ?? { kind: "strike" as const, strike: input.failedAttemptsBefore + 1, limit: input.failedAttemptsBefore + 2 };
@@ -229,7 +237,8 @@ export function trueFactOf(input: FactInput): TrueFact {
   }
 
   const gapText = gapDays != null && last ? (gapDays === 0 ? "recalled again today" : `recalled after ${daysText(gapDays)}`) : null;
-  const nearMastery = input.levelAfter === MASTERY_LEVEL - 1 ? "one clean recall from mastery" : null;
+  // Only a clean recall raises a level, and from L8 up two in a row do (xp.ts riseStep): "one" only when it is one.
+  const nearMastery = input.levelAfter < MASTERY_LEVEL && cleanToMastery === 1 ? "one clean recall from mastery" : null;
 
   if (input.mastered) {
     return { ...base, kind: "mastered", headline: `Mastered · level ${MASTERY_LEVEL} of ${MASTERY_LEVEL}`, detail: capitalise(join([gapText, next])) };
@@ -239,7 +248,7 @@ export function trueFactOf(input: FactInput): TrueFact {
       ...base,
       clearedMissDay: last.day,
       kind: "clean-after-miss",
-      headline: "First clean recall after a miss",
+      headline: "First recall after a miss",
       detail: join([`The miss on ${shortDay(last.day)} is cleared`, nearMastery, next]),
     };
   }
@@ -264,7 +273,8 @@ export function trueFactOf(input: FactInput): TrueFact {
         : null;
     return { ...base, kind: "first", headline: "First recall", detail: capitalise(join([added, next])) };
   }
-  return { ...base, kind: "level", headline: `Level ${input.levelBefore} → ${input.levelAfter}`, detail: capitalise(join([nearMastery, next])) };
+  const headline = input.levelAfter === input.levelBefore ? `Level ${input.levelBefore} held` : `Level ${input.levelBefore} → ${input.levelAfter}`;
+  return { ...base, kind: "level", headline, detail: capitalise(join([nearMastery, next])) };
 }
 
 // ── A whole session (the recap's "True facts") ────────────────────────────
@@ -308,7 +318,7 @@ export function sessionFactsOf(cards: readonly SessionCardFact[]): FactLine[] {
     if (closest == null || c.levelAfter > closest.levelAfter) closest = c;
   }
   if (closest) {
-    const toGo = MASTERY_LEVEL - closest.levelAfter;
+    const toGo = closest.fact.cleanToMastery ?? cleanRecallsTo(closest.levelAfter, 0, MASTERY_LEVEL);
     const when = closest.nextDueDay ? ` on ${shortDay(closest.nextDueDay)}` : "";
     out.push({
       before: "Closest to mastery: ",
@@ -324,7 +334,7 @@ export function sessionFactsOf(cards: readonly SessionCardFact[]): FactLine[] {
   if (rescued > 0) out.push({ before: "Rescued ", strong: `${rescued} overdue`, after: rescued === 1 ? " card; it is back on schedule." : " cards; they are back on schedule." });
 
   const cleared = passed.filter((c) => c.fact.clearedMissDay != null).length;
-  if (cleared > 0) out.push({ before: "Cleared ", strong: `${cleared} earlier miss${cleared === 1 ? "" : "es"}`, after: " with a clean recall." });
+  if (cleared > 0) out.push({ before: "Cleared ", strong: `${cleared} earlier miss${cleared === 1 ? "" : "es"}`, after: " with a right answer." });
 
   return out.slice(0, 4);
 }

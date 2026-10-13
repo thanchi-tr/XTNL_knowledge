@@ -19,6 +19,7 @@ import { workReminderNotices } from "./callbacks";
 import { loadWorkReminderRows } from "./callbacks-server";
 import { MOMENTUM_NUDGE, chestRowKey, momentumLive } from "./momentum";
 import { emptyDayFacts, loadNudgeFacts, prismaMomentumStore, questDone, questRowsOf, type MomentumStore } from "./momentum-server";
+import { ideaOutlook } from "./forgetting";
 
 /**
  * From this local hour an open compulsory item turns from a note into a
@@ -216,6 +217,132 @@ async function loadMomentumNotices(userId: string, now: Date): Promise<Notice[]>
   return out;
 }
 
+/** How long a Domain's or a Field's level drop stays in the bell. */
+export const DROP_NOTICE_DAYS = 7;
+/** Domain drops the bell names one by one; the rest are one line. */
+const DROP_NOTICES_MAX = 3;
+
+const ideaWord = (n: number) => `${n} idea${n === 1 ? "" : "s"}`;
+/** A stored level as the bell prints it (Field levels are stored as floats; every level is whole). */
+const levelText = (l: number) => `L${Number.isInteger(l) ? l : Number(l.toFixed(1))}`;
+
+/** One Domain or Field drop (level < droppedFrom, dropped within DROP_NOTICE_DAYS), with the ideas fading in it. */
+export interface LevelDrop {
+  id: string;
+  kind: "domain" | "field";
+  name: string;
+  level: number;
+  droppedFrom: number;
+  droppedAt: Date;
+  fading: number;
+  /** The Library page it opens (the Field's). */
+  href: string;
+}
+
+/** The ideas past grace, by forgetting.ts ideaOutlook: fading (retention falling) and forgetting (losing levels). */
+export interface FadingCount {
+  fading: number;
+  forgetting: number;
+}
+
+/**
+ * The leveling notices (pure): each recent drop as "<name> fell to L3 (from L4)" with the ideas fading in it, the
+ * three latest Domains by name and the rest in one line, the Fields after; and the ideas past grace as one line,
+ * "12 ideas fading" (id 'overdue', which Today's board shows with a clock), opening the Library's fading filter.
+ */
+export function levelNoticesOf(drops: readonly LevelDrop[], fading: FadingCount): Notice[] {
+  const out: Notice[] = [];
+  const recent = [...drops].sort((a, b) => b.droppedAt.getTime() - a.droppedAt.getTime());
+  const domains = recent.filter((d) => d.kind === "domain");
+  const fields = recent.filter((d) => d.kind === "field");
+  const dropNotice = (d: LevelDrop): Notice => ({
+    id: `drop-${d.kind}:${d.id}`,
+    group: "Due",
+    tone: "warn",
+    title: `${d.name}${d.kind === "field" ? " field" : ""} fell to ${levelText(d.level)} (from ${levelText(d.droppedFrom)})`,
+    detail:
+      d.fading > 0
+        ? `${ideaWord(d.fading)} fading. Reviewing ${d.fading === 1 ? "it" : "them"} brings the level back.`
+        : "Its ideas count for less until they are reviewed.",
+    href: d.href,
+    action: "See",
+  });
+  out.push(...domains.slice(0, DROP_NOTICES_MAX).map(dropNotice));
+  const more = domains.slice(DROP_NOTICES_MAX);
+  if (more.length > 0) {
+    out.push({
+      id: "drop-domain:more",
+      group: "Due",
+      tone: "warn",
+      title: `${more.length} more Domain${more.length === 1 ? "" : "s"} fell this week`,
+      detail: more.map((d) => `${d.name} ${levelText(d.level)}`).join(", ") + ".",
+      href: "/library?show=fading",
+      action: "See",
+    });
+  }
+  out.push(...fields.map(dropNotice));
+  const n = fading.fading + fading.forgetting;
+  if (n > 0) {
+    out.push({
+      id: "overdue",
+      group: "Due",
+      tone: fading.forgetting > 0 ? "bad" : "warn",
+      title: `${ideaWord(n)} fading`,
+      detail:
+        fading.forgetting > 0
+          ? `${fading.forgetting} already losing levels. Past grace, an idea counts for less in its Domain every day until it is reviewed.`
+          : "Past grace, an idea counts for less in its Domain every day until it is reviewed.",
+      href: "/library?show=fading",
+      action: "See",
+    });
+  }
+  return out;
+}
+
+/**
+ * The reads behind levelNoticesOf: the ideas already due (their outlook, at the GRACE_EXTENSION in force), and the
+ * Domains and Fields whose last drop is within DROP_NOTICE_DAYS and not yet won back. Null when a read fails (the
+ * feed then keeps its plain past-grace line).
+ */
+async function loadLevelNotices(now: Date, graceExtraDays: number): Promise<Notice[] | null> {
+  try {
+    const since = new Date(now.getTime() - DROP_NOTICE_DAYS * 86_400_000);
+    const [due, domains, fields] = await Promise.all([
+      prisma.idea.findMany({
+        where: { isArchived: false, dueDate: { lt: now } },
+        select: { domainId: true, level: true, dueDate: true, graceEndsAt: true, cleanStreak: true, failedAttempts: true, domain: { select: { fieldId: true } } },
+      }),
+      prisma.domain.findMany({ where: { droppedAt: { gte: since } }, select: { id: true, name: true, level: true, droppedFrom: true, droppedAt: true, fieldId: true } }),
+      prisma.field.findMany({ where: { droppedAt: { gte: since } }, select: { id: true, name: true, level: true, droppedFrom: true, droppedAt: true } }),
+    ]);
+    const byDomain = new Map<string, number>();
+    const byField = new Map<string, number>();
+    const count: FadingCount = { fading: 0, forgetting: 0 };
+    for (const i of due) {
+      const { status } = ideaOutlook(i, now, graceExtraDays);
+      if (status !== "fading" && status !== "forgetting") continue;
+      count[status] += 1;
+      byDomain.set(i.domainId, (byDomain.get(i.domainId) ?? 0) + 1);
+      byField.set(i.domain.fieldId, (byField.get(i.domain.fieldId) ?? 0) + 1);
+    }
+    const drops: LevelDrop[] = [
+      ...domains.flatMap((d) =>
+        d.droppedFrom != null && d.droppedAt != null && d.level < d.droppedFrom
+          ? [{ id: d.id, kind: "domain" as const, name: d.name, level: d.level, droppedFrom: d.droppedFrom, droppedAt: d.droppedAt, fading: byDomain.get(d.id) ?? 0, href: `/library/field/${d.fieldId}` }]
+          : []
+      ),
+      ...fields.flatMap((f) =>
+        f.droppedFrom != null && f.droppedAt != null && f.level < f.droppedFrom
+          ? [{ id: f.id, kind: "field" as const, name: f.name, level: f.level, droppedFrom: f.droppedFrom, droppedAt: f.droppedAt, fading: byField.get(f.id) ?? 0, href: `/library/field/${f.id}` }]
+          : []
+      ),
+    ];
+    return levelNoticesOf(drops, count);
+  } catch {
+    return null;
+  }
+}
+
 async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
   // Duty (M2) is live from its launch day only; before it, its rows are left out (owed aside: an
   // open debt is shown whenever one exists, so a rolled-back launch never hides it).
@@ -242,7 +369,11 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
   ]);
 
   const progression = await loadProgression(userId);
-  const focus = await loadDailyFocus(userId, progression.activeSkills, now);
+  const [focus, levelNotices] = await Promise.all([
+    loadDailyFocus(userId, progression.activeSkills, now),
+    // Leveling (2026-10-13): Domains and Fields that fell this week, and the ideas fading past grace.
+    loadLevelNotices(now, Math.max(0, progression.modifiers.graceExtraDays || 0)),
+  ]);
 
   const notices: Notice[] = [];
 
@@ -260,9 +391,14 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
   }
 
   // Past grace is its own line, not a footnote on the one above: these are
-  // the cards that will actually lose a level if left, which is a different
-  // question from "what can I review".
-  if (overdueCount > 0) {
+  // the cards fading (their Domains count them for less every day) and then
+  // losing levels, which is a different question from "what can I review".
+  // Read through forgetting.ts ideaOutlook ('12 ideas fading', the Library's
+  // fading filter), after the Domains and Fields that fell this week; the
+  // plain count stays only when that read failed.
+  if (levelNotices) {
+    notices.push(...levelNotices);
+  } else if (overdueCount > 0) {
     notices.push({
       id: "overdue",
       group: "Due",

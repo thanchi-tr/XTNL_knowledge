@@ -4,6 +4,9 @@ import { cache } from "react";
 import { prisma } from "@/lib/prisma";
 import { ideaHistory } from "@/app/actions/ideas";
 import { loadVariants } from "@/lib/idea-variants-server";
+import { ideaOutlook } from "@/lib/forgetting";
+import { loadModifiers } from "@/lib/skill-effects";
+import { getCurrentUserId } from "@/lib/user";
 import { Button } from "@/components/ui/Button";
 import { PageActions } from "@/components/ui/Tabs";
 import { IdeaDetailPage } from "@/components/library/IdeaDetail";
@@ -35,6 +38,8 @@ const loadIdea = cache(async (id: string) => {
       linkedIdeaIds: true,
       difficulty: true,
       dueDate: true,
+      graceEndsAt: true,
+      cleanStreak: true,
       failedAttempts: true,
       createdAt: true,
       // nameOrigin and originName: the Gemini mark (revision 5, lane 9; contracts ruling 67; migration B's Domain columns)
@@ -43,10 +48,13 @@ const loadIdea = cache(async (id: string) => {
   });
 });
 
-/** The idea's ledger history plus the request time (read once, outside render, so server and browser agree on "due"). */
+/**
+ * The idea's ledger history, the skills' grace extension (the outlook's), and the request time (read once, outside
+ * render, so server and browser agree on "due" and "fading").
+ */
 async function loadHistory(id: string) {
-  const rows = await ideaHistory(id);
-  return { rows, now: Date.now() };
+  const [rows, modifiers] = await Promise.all([ideaHistory(id), loadModifiers(getCurrentUserId())]);
+  return { rows, now: new Date(), graceExtraDays: Math.max(0, modifiers.graceExtraDays || 0) };
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
@@ -70,7 +78,8 @@ export default async function IdeaPage({ params }: { params: Promise<{ id: strin
   const { id } = await params;
   const row = await loadIdea(id);
   if (!row) notFound();
-  const [{ rows, now }, variants] = await Promise.all([loadHistory(row.id), loadVariants([row.id])]);
+  const [{ rows, now: nowDate, graceExtraDays }, variants] = await Promise.all([loadHistory(row.id), loadVariants([row.id])]);
+  const now = nowDate.getTime();
 
   const idea: LibraryIdea = {
     id: row.id,
@@ -94,6 +103,11 @@ export default async function IdeaPage({ params }: { params: Promise<{ id: strin
     dueAt: row.dueDate.getTime(),
     failedAttempts: row.failedAttempts,
     createdAt: row.createdAt.getTime(),
+    outlook: ideaOutlook(
+      { level: row.level, dueDate: row.dueDate, graceEndsAt: row.graceEndsAt, cleanStreak: row.cleanStreak, failedAttempts: row.failedAttempts },
+      nowDate,
+      graceExtraDays
+    ),
   };
   const headline = ideaHeadline(idea);
 

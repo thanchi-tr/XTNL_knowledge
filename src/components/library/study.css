@@ -53,8 +53,11 @@
   }
   .lib-ftile:hover { border-color: var(--line-2); }
   .lib-ftile:active { transform: scale(.98); }
-  .lib-ftile[aria-pressed="true"] { border-color: var(--ink-0); box-shadow: inset 0 0 0 1px var(--ink-0); }
+  /* The tile opens its Field's pop-up; a Field that narrows the list (?field=) keeps the old pressed look. */
+  .lib-ftile[data-on] { border-color: var(--ink-0); box-shadow: inset 0 0 0 1px var(--ink-0); }
   .lib-ftile b { font: 600 16px/20px var(--font-display); overflow-wrap: anywhere; }
+  .lib-ftile-lv { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+  .lib-ftile-on { color: var(--ink-0); font-weight: 600; }
   .lib-orn { display: block; height: 6px; border-radius: 3px; }
   .lib-orn[data-m="iron"] { background: linear-gradient(90deg, var(--iron-a), var(--iron-m), var(--iron-b)); }
   .lib-orn[data-m="bronze"] { background: linear-gradient(90deg, var(--bronze-a), var(--bronze-m), var(--bronze-b)); }
@@ -76,7 +79,52 @@
   .lib-idea b { font-weight: 500; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .lib-idea .t-meta { display: flex; gap: 2px 10px; flex-wrap: wrap; }
   .lib-lvl { display: inline-flex; align-items: center; gap: 6px; font: 600 13px var(--font-ui); color: var(--ink-1); font-variant-numeric: tabular-nums; }
+  .lib-lv { min-width: 28px; text-align: right; }
   .lib-more { width: 100%; border-top: 1px solid var(--line-1); border-radius: 0; }
+  /* A field section's Domain groups: a 44 px header that folds its rows, with the Domain's level. */
+  .lib-dom + .lib-dom { border-top: 1px solid var(--line-1); }
+  .lib-dom-h {
+    width: 100%; min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+    background: transparent; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer;
+  }
+  .lib-dom-h:hover { background: var(--raised); }
+  .lib-dom-h:focus-visible { outline-offset: -2px; }
+  .lib-dom-h svg.i { flex: none; color: var(--ink-2); transition: transform var(--t-quick) var(--ease-out); }
+  .lib-dom-h[aria-expanded="true"] svg.i { transform: rotate(90deg); }
+  .lib-dom-h b { flex: 1; min-width: 0; font: 600 14px/18px var(--font-ui); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lib-dom-h .t-meta { flex: none; font-variant-numeric: tabular-nums; }
+  .lib-dom > .lib-list { border-top: 1px solid var(--line-1); }
+
+  /* ---------- A Field at a glance: the pop-up and the Field page's head ---------- */
+  .fld-sum { display: flex; flex-direction: column; gap: 18px; }
+  .fld-blk { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .fld-blk > .t-eyebrow { margin: 0; }
+  .fld-lv { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
+  .fld-big { font: 600 28px/1 var(--font-display); font-variant-numeric: tabular-nums; color: var(--ink-0); }
+  .fld-line { margin: 0; }
+  .fld-drop { margin: 0; font: 600 13px/18px var(--font-ui); color: var(--owed); }
+  .fld-row { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
+  .fld-row b { font: 600 15px/20px var(--font-ui); }
+  .fld-attrs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .fld-attrs li { display: grid; grid-template-columns: minmax(84px, 9rem) minmax(0, 1fr) 3.25em; align-items: center; gap: 10px; font-size: 14px; }
+  .fld-attr-n { color: var(--ink-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fld-attr-v { text-align: right; font: 500 13px var(--font-mono); color: var(--ink-1); }
+  .fld-rec { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
+  .fld-rec > div { min-width: 0; padding: 10px 12px; border-radius: 12px; background: var(--sunken); border: 1px solid var(--line-2); }
+  .fld-rec dt { font: 600 12px/16px var(--font-ui); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); }
+  .fld-rec dd { margin: 4px 0 0; display: flex; flex-direction: column; gap: 2px; font: 600 14px/19px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+  .fld-rec dd .t-meta { font-weight: 400; }
+
+  /* ---------- The Field page ---------- */
+  .fld-page { display: flex; flex-direction: column; gap: 4px; padding-top: 8px; }
+  .fld-head { padding: 16px; margin-bottom: 4px; }
+  .fld-dom-meta { padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+  .fld-dom-meta + .lib-list, .fld-dom-meta + .fld-none { border-top: 1px solid var(--line-1); }
+  .fld-none { margin: 0; padding: 12px 14px; }
+
+  /* ---------- Idea detail: the outlook (what the next level needs, due, fading, loss) ---------- */
+  .idea-outlook { list-style: none; margin: 12px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--sunken); border: 1px solid var(--line-2); display: flex; flex-direction: column; gap: 4px; font-size: 14px; line-height: 20px; color: var(--ink-1); }
+  .idea-outlook li:first-child { color: var(--ink-0); font-weight: 600; }
   .lib-empty { padding: 28px 16px; text-align: center; display: flex; flex-direction: column; gap: 12px; align-items: center; }
 
   /* ---------- Library: the filter sheet ---------- */

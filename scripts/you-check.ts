@@ -2117,7 +2117,8 @@ async function carryOverChecks() {
       (lib.match(/max=\{LEVEL_FILTER_MAX\}/g) ?? []).length === 2 &&
       /Math\.min\(LEVEL_FILTER_MAX, Number\(e\.target\.value\) \|\| LEVEL_FILTER_MAX\)/.test(lib) &&
       /of \{LEVEL_FILTER_MAX\}/.test(lib) &&
-      /aria-label=\{`Level \$\{idea\.level\} of \$\{MAX_LEVEL\}`\}/.test(lib)
+      // The row's level now speaks the detail's own line ("L9 · mastery at 12", library-model levelLine), in IdeaRow.
+      /<span className="sr-only">\{levelLine\(idea\.level\)\}<\/span>/.test(codeOf(read("src/components/library/IdeaRow.tsx")))
   );
   try {
     const { LEVEL_FILTER_MAX } = await import("../src/components/library/library-model");

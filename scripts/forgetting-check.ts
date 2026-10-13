@@ -127,7 +127,8 @@ const near = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) <= eps;
   check("job: reads the curve (levelsForgotten) from the card's due date and the levels it already lost", /const want = levelsForgotten\(anchor, daysOverdueOf\(idea\.dueDate, now\), graceExtra\);/.test(job) && /const anchor = idea\.level \+ done;/.test(job));
   check("job: one FORGET row per level, sink DOMAIN, xp negative, keyed per card, due date and level", /source: "FORGET",\s*sink: "DOMAIN",[\s\S]*?xp: -points,[\s\S]*?dedupeKey: forgetDedupeKey\(idea\.id, idea\.dueDate, n\)/.test(job));
   check("job: the level, the rows and the Domain's points move in one transaction; a duplicate run takes nothing", /await prisma\.\$transaction\(ops\);[\s\S]*?if \(isDuplicateActivity\(err\)\) continue;/.test(job));
-  check("job: the due date is left as the anchor (only the level is written)", /prisma\.idea\.update\(\{ where: \{ id: idea\.id \}, data: \{ level: newLevel \} \}\)/.test(job));
+  // 2026-10-13 (idea leveling): a forgotten level also starts its clean recalls again (Idea.cleanStreak 0).
+  check("job: the due date is left as the anchor (only the level is written, and the clean streak reset)", /prisma\.idea\.update\(\{ where: \{ id: idea\.id \}, data: \{ level: newLevel, cleanStreak: 0 \} \}\)/.test(job));
   check("job: levels then follow (recalculateLeveling once per Domain touched)", /for \(const domainId of touched\) await recalculateLeveling\(domainId\);/.test(job));
   check("points: a Domain never goes below 0", /GREATEST\(0, "totalPoints" - \$\{points\}\)/.test(srs));
   const degrade = srs.slice(srs.indexOf("async function degradeIdea"), srs.indexOf("function domainDebitOp"));

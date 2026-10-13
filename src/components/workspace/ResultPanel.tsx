@@ -135,6 +135,12 @@ export function ResultPanel({ open, card: cardNow, result: resultNow, answer: an
                 </p>
               )}
               {advanced && (
+                // Why the level rose or held (srs.ts ReviewRise): "Level up: L9", "1 of 2 clean recalls for L9", "Level held: …".
+                <p className={cx("t-meta rv-judged", advanced.rise.kind === "up" ? "ink-0" : "ink-1")} data-rise={advanced.rise.kind}>
+                  {advanced.rise.line}
+                </p>
+              )}
+              {advanced && (
                 <>
                   <div className="rv-pay">
                     <span className="big" ref={payRef}>
@@ -255,7 +261,9 @@ function DomainMeter({ outcome }: { outcome: Advanced }) {
       />
       {capped && (
         <p className="t-meta" style={{ marginTop: 6 }}>
-          Points reach level {after.level}; depth holds it at {outcome.domain.level.after} until more of its ideas mature.
+          {(outcome.domain.retention ?? 1) < 0.995
+            ? `Points reach level ${after.level}; fading ideas hold it at ${outcome.domain.level.after} until they are reviewed.`
+            : `Points reach level ${after.level}; depth holds it at ${outcome.domain.level.after} until more of its ideas mature.`}
         </p>
       )}
     </div>

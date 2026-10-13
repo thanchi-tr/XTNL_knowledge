@@ -9,14 +9,21 @@
  *   parseFilters(params)          URL → filters (unknown values dropped, never thrown)
  *   filtersToParams(filters)      filters → URLSearchParams (defaults omitted, stable order)
  *   matchesFilters(idea, f, now)  one row against every facet: OR inside a facet, AND across
- *   statusCounts(ideas, now)      the quick chips' counts (Due, Mastered, Struggling)
+ *   statusCounts(ideas, now)      the quick chips' counts (Due, Fading, Mastered, Struggling)
  *   dueLabel(dueAt, now)          "due now" · "next in 5 h" · "next in 71 days"
  *   tierMaterial(level)           the field tile's stripe: the tier ornament mapped to a material
  *   historyOf(rows)               the idea's history strip from its REVIEW ledger rows
+ *   levelLine(level)              "L9 · mastery at 12" · "L12 · mastered" · "L14 · past mastery" (row and detail alike)
+ *   rowStatusOf(idea)             the row's chip: Fresh · Due · Fading · Forgetting · Mastered (forgetting.ts ideaOutlook)
+ *   byUrgency(a, b)               forgetting → fading → due → fresh, then the oldest due first
+ *   outlookLines(idea, now)       the detail's "Next: L9 after 2 clean recalls · 1 of 2 done", due, fading and loss lines
  */
 import type { CollectionLabel, QuestionType } from "@prisma/client";
 import type { Segment } from "@/components/ui/Meter";
+import type { ChipTone } from "@/components/ui/Chip";
+import type { IconName } from "@/components/ui/Icon";
 import type { Material } from "@/lib/materials";
+import type { IdeaOutlook } from "@/lib/forgetting";
 import { bandFor, type DifficultyBand } from "@/lib/difficulty";
 import { fieldTier, type FieldTier } from "@/lib/field-tier";
 import { displayAnswer, displayQuestion } from "@/lib/idea-display";
@@ -57,14 +64,23 @@ export interface LibraryIdea {
   failedAttempts: number;
   /** Epoch ms. */
   createdAt: number;
+  /**
+   * forgetting.ts ideaOutlook, read once on the server at the request time the
+   * page passes down as `now` (and the skills' grace extension): the status
+   * chip, the Fading filter, the urgency order and the detail's outlook lines.
+   */
+  outlook: IdeaOutlook;
 }
 
 export interface LibraryField {
   id: string;
   name: string;
   level: number;
-  /** geminiNamed (revision 5, lane 9; contracts ruling 67): the Domain carries the Gemini mark until you rename it. */
-  domains: { id: string; name: string; geminiNamed?: boolean }[];
+  /**
+   * geminiNamed (revision 5, lane 9; contracts ruling 67): the Domain carries the Gemini mark until you rename it.
+   * level: the Domain's stored level (the Library's Domain groups print it).
+   */
+  domains: { id: string; name: string; level?: number; geminiNamed?: boolean }[];
 }
 
 export const COLLECTION_LABELS: readonly CollectionLabel[] = ["BOOK", "ACTIONABLE", "PROPOSAL"];
@@ -112,12 +128,18 @@ export function searchText(idea: LibraryIdea): string {
 
 // ─── Filters (all of them live in the URL) ──────────────────────────────────
 
-export const STATUSES = ["all", "due", "mastered", "struggling", "archived"] as const;
+/**
+ * The status families (URL `show=`). "fading" (2026-10-13) is every idea past
+ * its grace: forgetting.ts ideaOutlook status fading or forgetting. It is
+ * also where the bell's "fading" notice links (/library?show=fading).
+ */
+export const STATUSES = ["all", "due", "fading", "mastered", "struggling", "archived"] as const;
 export type LibraryStatus = (typeof STATUSES)[number];
 
 export const STATUS_NAME: Record<LibraryStatus, string> = {
   all: "All",
   due: "Due",
+  fading: "Fading",
   mastered: "Mastered",
   struggling: "Struggling",
   archived: "Archived",
@@ -271,11 +293,18 @@ export function matchesStatus(idea: LibraryIdea, status: LibraryStatus, now: num
       return true;
     case "due":
       return idea.dueAt <= now;
+    case "fading":
+      return isFading(idea);
     case "mastered":
       return isMastered(idea);
     case "struggling":
       return idea.failedAttempts > 0;
   }
+}
+
+/** Past its grace: forgetting.ts ideaOutlook says fading or forgetting. Never an archived idea (not scheduled). */
+export function isFading(idea: Pick<LibraryIdea, "isArchived" | "outlook">): boolean {
+  return !idea.isArchived && (idea.outlook.status === "fading" || idea.outlook.status === "forgetting");
 }
 
 /**
@@ -301,6 +330,7 @@ export function matchesFilters(idea: LibraryIdea, f: LibraryFilters, now: number
 export interface StatusCounts {
   all: number;
   due: number;
+  fading: number;
   mastered: number;
   struggling: number;
   archived: number;
@@ -308,7 +338,7 @@ export interface StatusCounts {
 
 /** The quick chips' counts, over the whole library (not the current filters). */
 export function statusCounts(ideas: readonly LibraryIdea[], now: number): StatusCounts {
-  const c: StatusCounts = { all: 0, due: 0, mastered: 0, struggling: 0, archived: 0 };
+  const c: StatusCounts = { all: 0, due: 0, fading: 0, mastered: 0, struggling: 0, archived: 0 };
   for (const i of ideas) {
     if (i.isArchived) {
       c.archived++;
@@ -316,10 +346,101 @@ export function statusCounts(ideas: readonly LibraryIdea[], now: number): Status
     }
     c.all++;
     if (i.dueAt <= now) c.due++;
+    if (isFading(i)) c.fading++;
     if (isMastered(i)) c.mastered++;
     if (i.failedAttempts > 0) c.struggling++;
   }
   return c;
+}
+
+// ─── Status, urgency and the outlook (forgetting.ts ideaOutlook) ────────────
+
+/** A row's status chip: the outlook's four, and Mastered for a mastered idea that is fresh. */
+export type RowStatus = IdeaOutlook["status"] | "mastered";
+
+export const ROW_STATUS_META: Readonly<Record<RowStatus, { label: string; tone: ChipTone; icon?: IconName }>> = {
+  fresh: { label: "Fresh", tone: "quiet" },
+  due: { label: "Due", tone: "quiet", icon: "clock" },
+  fading: { label: "Fading", tone: "owed" },
+  forgetting: { label: "Forgetting", tone: "owed" },
+  mastered: { label: "Mastered", tone: "kept", icon: "check" },
+};
+
+/**
+ * The chip a row wears: Forgetting, Fading and Due say what the idea needs and
+ * win over Mastered; a mastered idea not yet due reads Mastered; anything else
+ * Fresh. Archived ideas are not scheduled: no chip (null).
+ */
+export function rowStatusOf(idea: Pick<LibraryIdea, "isArchived" | "level" | "outlook">): RowStatus | null {
+  if (idea.isArchived) return null;
+  const s = idea.outlook.status;
+  if (s !== "fresh") return s;
+  return isMastered(idea) ? "mastered" : "fresh";
+}
+
+/** Most urgent first: forgetting, fading, due, fresh (a mastered idea is fresh here). */
+export const URGENCY: Readonly<Record<IdeaOutlook["status"], number>> = { forgetting: 0, fading: 1, due: 2, fresh: 3 };
+
+/** Sort by urgency, then the oldest due date, then id (a stable order for the same data). */
+export function byUrgency(a: Pick<LibraryIdea, "outlook" | "dueAt" | "id">, b: Pick<LibraryIdea, "outlook" | "dueAt" | "id">): number {
+  return URGENCY[a.outlook.status] - URGENCY[b.outlook.status] || a.dueAt - b.dueAt || a.id.localeCompare(b.id);
+}
+
+/**
+ * One level line for the row's accessible name and the detail's heading, so
+ * the two never disagree (the row said "of 20", the detail "of 12"):
+ * "L9 · mastery at 12", "L12 · mastered", "L14 · past mastery".
+ */
+export function levelLine(level: number): string {
+  const L = Math.max(1, Math.floor(level));
+  if (L < MASTERY_LEVEL) return `L${L} · mastery at ${MASTERY_LEVEL}`;
+  return L === MASTERY_LEVEL ? `L${L} · mastered` : `L${L} · past mastery`;
+}
+
+/**
+ * What the next level needs, short (a Field page row): "1 of 2 clean recalls",
+ * "clean recall raises it", "held by a miss", or "top level" at MAX_LEVEL.
+ */
+export function nextNeedShort(o: Pick<IdeaOutlook, "nextLevel" | "cleanNeeded" | "cleanDone" | "heldByMiss">): string {
+  if (o.nextLevel === null) return "top level";
+  if (o.heldByMiss) return "held by a miss";
+  return o.cleanNeeded === 2 ? `${Math.min(o.cleanDone, 2)} of 2 clean recalls` : "clean recall raises it";
+}
+
+/** "Next: L9 after 2 clean recalls · 1 of 2 done", "Next: L5 · a clean recall raises it", or the top of the ladder. */
+export function nextLevelSentence(o: Pick<IdeaOutlook, "nextLevel" | "cleanNeeded" | "cleanDone" | "heldByMiss">): string {
+  if (o.nextLevel === null) return `Top of the ladder: L${MAX_LEVEL}`;
+  const held = o.heldByMiss ? " · a miss this cycle holds it" : "";
+  if (o.cleanNeeded === 2) return `Next: L${o.nextLevel} after 2 clean recalls · ${Math.min(o.cleanDone, 2)} of 2 done${held}`;
+  return `Next: L${o.nextLevel} · a clean recall raises it${held}`;
+}
+
+/** "Due in 12 days" · "Due in 5 h" · "Due now" · "Due since 3 Oct" (the row's precision, as a sentence). */
+export function dueLine(dueAt: number, now: number): string {
+  const ms = dueAt - now;
+  if (ms <= 0) return ms > -DAY ? "Due now" : `Due since ${shortDate(dueAt, now)}`;
+  if (ms < HOUR) return "Due within the hour";
+  if (ms < DAY) return `Due in ${Math.floor(ms / HOUR)} h`;
+  const d = Math.floor(ms / DAY);
+  return d === 1 ? "Due in 1 day" : `Due in ${d} days`;
+}
+
+/**
+ * The detail's outlook, one line each (an archived idea has none: it is not scheduled):
+ *   "Next: L9 after 2 clean recalls · 1 of 2 done" (or "Next: L5 · a clean recall raises it")
+ *   "Due in 12 days"
+ *   "Starts fading 30 Oct" (or "Fading since 30 Oct")
+ *   "Loses L8 around 20 Nov if not reviewed" (none at level 1: nothing to lose)
+ */
+export function outlookLines(idea: Pick<LibraryIdea, "isArchived" | "level" | "dueAt" | "outlook">, now: number): string[] {
+  if (idea.isArchived) return [];
+  const o = idea.outlook;
+  const out = [nextLevelSentence(o), dueLine(idea.dueAt, now)];
+  const fadeAt = Date.parse(o.fadingFrom);
+  if (Number.isFinite(fadeAt)) out.push(fadeAt > now ? `Starts fading ${shortDate(fadeAt, now)}` : `Fading since ${shortDate(fadeAt, now)}`);
+  const lossAt = o.nextLossAt ? Date.parse(o.nextLossAt) : Number.NaN;
+  if (Number.isFinite(lossAt) && idea.level > 1) out.push(`Loses L${Math.floor(idea.level)} around ${shortDate(Math.max(lossAt, now), now)} if not reviewed`);
+  return out;
 }
 
 // ─── Reading a row ──────────────────────────────────────────────────────────

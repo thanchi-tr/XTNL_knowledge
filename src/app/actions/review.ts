@@ -9,7 +9,7 @@ import { loadProgressionFresh } from "@/lib/skill-effects";
 import { displayAnswer } from "@/lib/idea-display";
 import { daysUntilDue } from "@/lib/due";
 import { dayKeyOf, todayKey, type DayKey } from "@/lib/life-day";
-import { comboIsCapped, comboMultiplier } from "@/lib/xp";
+import { MASTERY_LEVEL, cleanRecallsTo, comboIsCapped, comboMultiplier } from "@/lib/xp";
 import { historyOf, questTargetOf, trueFactOf, type TrueFact } from "@/lib/review-facts";
 import { captureSnapshot, detectCelebrations } from "@/lib/celebrations";
 import type { CelebrationEvent } from "@/lib/celebration-types";
@@ -140,6 +140,8 @@ export async function submitReview(input: SubmitReviewInput): Promise<SubmitRevi
     mastered: advanced?.mastered ?? false,
     overdueDays: Math.max(0, -daysUntilDue(idea.dueDate, now)),
     intervalDays: advanced ? advanced.intervalDays : 1,
+    // Clean recalls still to mastery: a pass keeps its streak (outcome.rise), a miss breaks it.
+    cleanToMastery: cleanRecallsTo(levelAfter, advanced ? advanced.rise.cleanStreak : 0, MASTERY_LEVEL),
     miss:
       outcome.outcome === "strike"
         ? { kind: "strike", strike: outcome.failedAttempts, limit: outcome.strikeLimit }
@@ -240,6 +242,7 @@ export async function overrideReview(input: OverrideReviewInput): Promise<{ ok: 
           mastered: advanced?.mastered ?? false,
           overdueDays: 0,
           intervalDays: advanced ? advanced.intervalDays : 1,
+          cleanToMastery: cleanRecallsTo(levelAfter, advanced ? advanced.rise.cleanStreak : 0, MASTERY_LEVEL),
         }),
         // The miss already counted as today's review; the override is the same answer, not another.
         quest: { done: day.reviews, target: day.dayOpenQty == null ? null : questTargetOf(day.dayOpenQty, 0, 0) },

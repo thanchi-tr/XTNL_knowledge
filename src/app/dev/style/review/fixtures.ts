@@ -17,7 +17,7 @@ import { addDays, type DayKey } from "@/lib/life-day";
 import { medallionMaterial } from "@/lib/materials";
 import { IDEA_MASTERY_POINTS, comboMasteryBonus, reviewMasteryFraction } from "@/lib/mastery";
 import { historyOf, trueFactOf, type HistoryRow } from "@/lib/review-facts";
-import { COMBO_CAP, MASTERY_BONUS, MASTERY_LEVEL, comboMultiplier, domainLevelProgress, reviewPayout } from "@/lib/xp";
+import { COMBO_CAP, MASTERY_BONUS, MASTERY_LEVEL, comboMultiplier, domainLevelProgress, reviewPayout, riseLine, riseStep } from "@/lib/xp";
 import { formatAmount, formatNumber } from "@/components/ui/format";
 import type { CardResult, RunCard } from "@/components/workspace/review-model";
 import type { RecentIdea, ReviewEffects } from "@/components/workspace/ReviewHub";
@@ -119,6 +119,11 @@ function pass(card: RunCard, combo: number, hist: HistoryRow[], opts: { domainLe
       pointsAwarded: payout.total,
       payout,
       mastered,
+      // The style fixture's passes are clean rises (a clean recall already in hand from L8 up): xp.ts riseStep.
+      rise: (() => {
+        const step = riseStep(card.level, 1, 0);
+        return { kind: step.kind, clean: step.clean, cleanStreak: step.cleanStreak, cleanNeeded: step.cleanNeeded, nextLevel: newLevel + 1, line: riseLine(step) };
+      })(),
       masteryMinted: reviewMasteryFraction(card.level) * comboMasteryBonus(combo) + (mastered ? IDEA_MASTERY_POINTS : 0),
       domain: {
         id: d.id,
