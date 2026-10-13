@@ -1606,8 +1606,26 @@ model Customer {
   tasks        CustomerTask[]
   callBacks    CallBack[]
   orders       WorkOrder[]
+  infos        CustomerInfo[]
 
   @@index([userId, boardId])
+  @@schema("public")
+}
+
+/// A customer's info (2026-10-14, migration 20261225000000_customer_info): a note (detail) and when it was recorded
+/// (recordedAt, default now, editable). Newest first on the customer page; archivedAt hides one. Work, never pay.
+model CustomerInfo {
+  id         String    @id @default(cuid())
+  userId     String
+  customerId String
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  detail     String
+  recordedAt DateTime  @default(now())
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([customerId, recordedAt])
   @@schema("public")
 }
 
