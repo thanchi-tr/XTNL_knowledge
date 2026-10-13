@@ -777,6 +777,9 @@ model TaskTemplate {
   boardId            String?
   board              WorkBoard?     @relation(fields: [boardId], references: [id], onDelete: Restrict)
   callBacks          CallBack[]
+  /// Deferred (2026-10-13, migration 20261222000000_task_defer_abort): off the board until this instant, then back.
+  deferUntil         DateTime?
+  decisions          TaskDecision[]
 
   @@unique([userId, captureKey])
   @@index([userId, archivedAt])
@@ -1632,6 +1635,31 @@ model CustomerTask {
 
   @@index([customerId, dueAt])
   @@index([dueAt])
+  @@schema("public")
+}
+
+/// A task's defer or abort and its reason (2026-10-13, migration 20261222000000_task_defer_abort). kind DEFER | ABORT;
+/// scope ONCE (this occurrence) | SERIES (the whole task) for an abort, null for a defer; reasonTag a quick pick
+/// (BLOCKED | NO_TIME | LOW_ENERGY | NOT_NEEDED | PLAN_CHANGED | WAITING) or null; day the life day it was decided;
+/// untilAt the defer's target; compulsory whether the task was a Must then (a Must's defer or abort still counts as
+/// not kept). undoneAt set by Undo. Append-only otherwise; work, never pay.
+model TaskDecision {
+  id         String       @id @default(cuid())
+  userId     String
+  templateId String
+  template   TaskTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  kind       String
+  scope      String?
+  reason     String
+  reasonTag  String?
+  day        DateTime     @db.Date
+  untilAt    DateTime?
+  compulsory Boolean      @default(false)
+  undoneAt   DateTime?
+  createdAt  DateTime     @default(now())
+
+  @@index([userId, day])
+  @@index([templateId])
   @@schema("public")
 }
 
