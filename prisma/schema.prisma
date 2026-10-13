@@ -1545,12 +1545,15 @@ model WorkBoard {
   name       String
   slot       Int
   crmOn      Boolean        @default(false)
+  /// The tab keeps an order list (WorkOrder; migration 20261224000000_work_orders); off by default.
+  ordersOn   Boolean        @default(false)
   archivedAt DateTime?
   createdAt  DateTime       @default(now())
   updatedAt  DateTime       @updatedAt
   tasks      TaskTemplate[]
   callBacks  CallBack[]
   customers  Customer[]
+  orders     WorkOrder[]
 
   @@index([userId, archivedAt])
   @@schema("public")
@@ -1602,6 +1605,7 @@ model Customer {
   interactions CustomerInteraction[]
   tasks        CustomerTask[]
   callBacks    CallBack[]
+  orders       WorkOrder[]
 
   @@index([userId, boardId])
   @@schema("public")
@@ -1690,6 +1694,30 @@ model WordChoice {
 
   @@unique([userId, word, context])
   @@index([userId])
+  @@schema("public")
+}
+
+/// One line of a work tab's order list (2026-10-14, migration 20261224000000_work_orders): who (name, contact), what
+/// (item), whether it has been ordered (orderedAt when ticked) and its date. customerId links a CRM customer of the
+/// same tab when there is one. Archived, never deleted. Work, never part of the game.
+model WorkOrder {
+  id         String    @id @default(cuid())
+  userId     String
+  boardId    String
+  board      WorkBoard @relation(fields: [boardId], references: [id], onDelete: Restrict)
+  name       String
+  contact    String?
+  item       String
+  ordered    Boolean   @default(false)
+  orderedAt  DateTime?
+  date       DateTime? @db.Date
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([userId, boardId])
   @@schema("public")
 }
 
