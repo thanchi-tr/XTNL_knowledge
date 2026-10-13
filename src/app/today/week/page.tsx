@@ -1,10 +1,11 @@
 import "../rules/rules.css";
+import "@/components/home/week-decisions.css";
 import type { Metadata } from "next";
 import { after } from "next/server";
 import { Prisma } from "@prisma/client";
 import { getCurrentUserId } from "@/lib/user";
 import { prisma } from "@/lib/prisma";
-import { addDays, dateColumn, dayKeyOf, keyOfDateColumn, todayKey, type DayKey } from "@/lib/life-day";
+import { addDays, dateColumn, dayKeyOf, keyOfDateColumn, todayKey, weekStartKeyOf, type DayKey } from "@/lib/life-day";
 import { isBackfillDetail, isLaunched, lifeWritesEnabled, weekKeptMintKey, withoutBackfill } from "@/lib/life-economy";
 import { lifeMpModelOfWeek } from "@/lib/momentum";
 import {
@@ -45,6 +46,9 @@ import { firstWeekJudgement, longDayLabel, mpFigure, pendingWeek, weekReviewProm
 import { WeekReview, type RestDayOption, type WeekCardData } from "@/components/home/WeekReview";
 import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
+import { readWeekDecisions } from "@/lib/task-decisions-server";
+import { weekDecisionsViewOf } from "@/lib/task-decisions";
+import { WeekDecisions } from "@/components/home/WeekDecisions";
 import { CurrencyGlyph, Sigil } from "@/components/ui/Icon";
 import { SectionHeader } from "@/components/ui/Tabs";
 
@@ -539,7 +543,10 @@ export default async function WeekPage({ searchParams }: { searchParams: Promise
     );
   }
 
-  const marked = review ? await readMarked(userId, review) : false;
+  // Defer and abort (task-decisions.ts): this week's decisions, Monday to today, with their reasons.
+  const decisionsFrom = weekStartKeyOf(today);
+  const [marked, decisionRows] = await Promise.all([review ? readMarked(userId, review) : Promise.resolve(false), readWeekDecisions(userId, decisionsFrom, today)]);
+  const decisions = weekDecisionsViewOf(decisionRows, now);
 
   return (
     <div className="page narrow today-week">
@@ -571,6 +578,7 @@ export default async function WeekPage({ searchParams }: { searchParams: Promise
             </div>
           </section>
         )}
+        <WeekDecisions view={decisions} weekLabel={`Week of ${dayMonthLabel(decisionsFrom)}`} />
         <StepsList live={dutyLive} />
       </div>
     </div>

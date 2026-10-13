@@ -85,6 +85,7 @@ import { isMissingSubtaskTable, loadSubtasks } from "./subtasks-server";
 import { STEPS_NOT_READY, nextTicks, paidByStepsOf, stepPayOf, stepsAllowed } from "./subtasks";
 import { isMissingRoadmapTable, isRoadmapCaptureKey, isSupersededRow, type PositionRow } from "./roadmap-types";
 import { PERSONAL_BOARD, WORK_CLARIFY_REFUSAL, WORK_NO_SIZE, workClarifyAllowed, workKindRefusalOf, type BoardScope } from "./work-boards";
+import { templateDecisionsOf, untilLabelOf, type TemplateDecisions } from "./task-decisions";
 import {
   EpochSet,
   HISTORY_DAYS,
@@ -232,6 +233,8 @@ const TEMPLATE_SELECT = {
   captureKey: true,
   // Work tabs (2026-10-12): null on the personal Board; a work task's ticks take the game-free path (completeWorkCore).
   boardId: true,
+  // Defer (2026-10-13, task-decisions.ts): off the board until this instant; a past value reads as none.
+  deferUntil: true,
 } satisfies Prisma.TaskTemplateSelect;
 
 /** What every template read selects. Exported for duty.ts (the make-up's pricing read). */
@@ -338,6 +341,8 @@ export function toBoardTemplate(r: TemplateRow, now: Date): BoardTemplate {
     pendingChange: parsePendingChange(r.pendingChange),
     // Roadmap (F16 seam 3): the capture key, so the board can tell a roadmap row ('rm:…') from the rest.
     captureKey: r.captureKey,
+    // Defer (task-decisions.ts): only while it is still ahead of the read; once passed it is just a task again.
+    deferUntil: r.deferUntil && r.deferUntil.getTime() > now.getTime() ? r.deferUntil.toISOString() : null,
   };
 }
 
@@ -619,7 +624,7 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
   const restoreFrom = dayStartOf(addDays(today, -(MAKEUP_RESTORE_EVERY_DAYS - 1)));
   // Momentum (lane A): the perks and today's frog, read only once momentum is live today (BoardData.momentum).
   const momentumOn = momentumLive(today);
-  const [settings, templateRows, instanceRows, totals, events, goalQtyRows, debtRows, restRows, dutyRows, momentumFacts] = await Promise.all([
+  const [settings, templateRows, instanceRows, totals, events, goalQtyRows, debtRows, restRows, dutyRows, momentumFacts, decisions] = await Promise.all([
     prisma.lifeSettings.findUnique({
       where: { userId },
       select: { dailyCapacityMin: true, capacitySetAt: true, settledThroughDay: true, epochDay: true, debtWriteOff: true },
@@ -699,6 +704,8 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
         })
       : Promise.resolve([]),
     momentumOn ? readMomentumFacts(userId, today, now) : Promise.resolve(null),
+    // Defer and abort (task-decisions.ts): each open task's defers and its latest decision (fails soft: none).
+    readBoardDecisions(userId, null),
   ]);
 
   const templates = templateRows.map((r) => toBoardTemplate(r, now));
@@ -815,8 +822,29 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
     goalQty,
     goalDays,
     ...(momentum ? { momentum } : {}),
+    decisions,
   };
   return { core, duty, yesterdayMusts };
+}
+
+/**
+ * BoardData.decisions for one board (task-decisions.ts): per open template, its defers not undone
+ * ("Deferred n×") and its latest decision not undone (the Must lane's "Deferred to … · reason",
+ * the Undo). The personal Board (boardId null) or one work tab. One query; a failure reads as
+ * none rather than failing the board (the hidden tasks still hide: that is deferUntil's).
+ */
+async function readBoardDecisions(userId: string, boardId: string | null): Promise<Record<string, TemplateDecisions>> {
+  try {
+    const rows = await prisma.taskDecision.findMany({
+      where: { userId, undoneAt: null, template: { archivedAt: null, boardId } },
+      select: { id: true, templateId: true, kind: true, scope: true, reason: true, reasonTag: true, day: true, untilAt: true, compulsory: true, createdAt: true },
+      orderBy: { createdAt: "asc" },
+    });
+    return templateDecisionsOf(rows.map((r) => ({ ...r, day: keyOfDateColumn(r.day) })));
+  } catch (err) {
+    console.error("Today board: the task decisions failed to load; reading none.", err);
+    return {};
+  }
 }
 
 /**
@@ -1502,6 +1530,11 @@ interface CompletionRead {
   frozen?: boolean;
   /** Momentum (lane A): the perks and today's frog, read only when momentum is live on the completion's day. Absent: no momentum. */
   momentum?: MomentumFacts | null;
+  /**
+   * Defer and abort (task-decisions.ts): a record of yesterday for a must deferred or aborted on
+   * that day (a TaskDecision not undone): the day counts as not kept, so it takes no record.
+   */
+  decidedNotKept?: boolean;
 }
 
 /**
@@ -1518,7 +1551,7 @@ async function readForCompletion(
   day: DayKey,
   now: Date
 ): Promise<(CompletionRead & { row: TemplateRow }) | null> {
-  const [row, instances, totals, events, settings, debts, frozen, momentum] = await Promise.all([
+  const [row, instances, totals, events, settings, debts, frozen, momentum, decided] = await Promise.all([
     prisma.taskTemplate.findFirst({ where: { id: templateId, userId }, select: TEMPLATE_SELECT }),
     prisma.taskInstance.findMany({
       where: { templateId, userId, day: { gte: dateColumn(addDays(today, -HISTORY_DAYS)) } },
@@ -1532,6 +1565,10 @@ async function readForCompletion(
       ? prisma.activityEvent.findUnique({ where: { userId_dedupeKey: { userId, dedupeKey: freezeUseKey(day) } }, select: { id: true } })
       : Promise.resolve(null),
     momentumLive(day) ? readMomentumFacts(userId, today, now) : Promise.resolve(null),
+    // A record of yesterday only: was the must deferred or aborted on that day (task-decisions.ts)?
+    day < today
+      ? prisma.taskDecision.findFirst({ where: { userId, templateId, day: dateColumn(day), undoneAt: null, compulsory: true }, select: { id: true } })
+      : Promise.resolve(null),
   ]);
   if (!row) return null;
   return {
@@ -1546,7 +1583,16 @@ async function readForCompletion(
     debited: debts > 0,
     frozen: !!frozen,
     ...(momentum ? { momentum } : {}),
+    decidedNotKept: !!decided,
   };
+}
+
+/** A must deferred or aborted on a day counts as not kept that day: no record of it (task-decisions.ts). */
+export const DECIDED_NOT_KEPT = "You deferred or aborted this must that day, so the day counts as not kept.";
+
+/** A tick on a task that is deferred now: refused until it is back (task-decisions.ts; a past deferUntil reads as none). */
+function deferredRefusalOf(t: BoardTemplate, now: Date): string | null {
+  return t.deferUntil ? `Deferred until ${untilLabelOf(t.deferUntil, now)}: it comes back then.` : null;
 }
 
 /** Duty's refusal of a tick from a completion read (duty-plan tickRefusalOf): settled, frozen, or a debited one-off. */
@@ -1904,11 +1950,12 @@ export async function completeInstanceCore(userId: string, templateId: string, o
   const read = await load();
   if (!read) return fail("That task no longer exists.");
   const { t, row } = read;
-  const reason = completableReason(t, row);
+  const reason = completableReason(t, row) ?? deferredRefusalOf(t, now);
   if (reason) return fail(reason);
 
   // A work tab's task (work-boards.ts): recorded, never paid. No ledger row, no Duty, no price (completeWorkCore).
   if (row.boardId) return completeWorkCore(userId, read, { day, today, slot: null, minutes: opts.minutes, mvv: opts.mvv, now });
+  if (read.decidedNotKept) return fail(DECIDED_NOT_KEPT);
 
   // Done on that day already (a double tap, a retry): the first tick's receipt.
   const repeat = doneOnDay(read, day);
@@ -1965,7 +2012,7 @@ export async function againCore(userId: string, templateId: string, opts: Comple
   const load = () => readForCompletion(userId, templateId, today, today, now);
   const read = await load();
   if (!read) return fail("That task no longer exists.");
-  const reason = completableReason(read.t, read.row);
+  const reason = completableReason(read.t, read.row) ?? deferredRefusalOf(read.t, now);
   if (reason) return fail(reason);
   if (!ruleOf(read.t)) return fail("Again is for repeating tasks.");
   if (read.t.autoMetric) return fail("A study task completes once a day.");
@@ -3584,7 +3631,7 @@ const WORK_INSTANCE_SELECT = { ...INSTANCE_SELECT, completedAt: true, minutes: t
 export function loadWorkBoardData(userId: string, boardId: string, day: DayKey, now: Date = new Date()): Promise<BoardData> {
   return cached(`work:${userId}:${boardId}:${day}`, ["life", "activity"], async () => {
     const yesterday = addDays(day, -1);
-    const [templateRows, instanceRows, styles, subtasks] = await Promise.all([
+    const [templateRows, instanceRows, styles, subtasks, decisions] = await Promise.all([
       prisma.taskTemplate.findMany({
         where: { userId, boardId, archivedAt: null, OR: [{ completedAt: null }, { completedAt: { gte: dayStartOf(yesterday) } }] },
         select: TEMPLATE_SELECT,
@@ -3596,6 +3643,8 @@ export function loadWorkBoardData(userId: string, boardId: string, day: DayKey, 
       }),
       loadTaskStyles(userId),
       loadSubtasks(userId, day),
+      // Defer and abort work there too, with nothing of the game (task-decisions.ts).
+      readBoardDecisions(userId, boardId),
     ]);
     const templates = templateRows.map((r) => toBoardTemplate(r, now));
     const instances = instanceRows.map(toBoardInstance);
@@ -3629,6 +3678,7 @@ export function loadWorkBoardData(userId: string, boardId: string, day: DayKey, 
       styles,
       subtasks,
       roadmapGoals: {},
+      decisions,
     };
   });
 }

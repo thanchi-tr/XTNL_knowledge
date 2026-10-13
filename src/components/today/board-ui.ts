@@ -41,6 +41,7 @@ import {
   type SettledNotice,
 } from "../../lib/duty-view";
 import { FULL_DAY_MP } from "../../lib/full-day";
+import { mustCountOf, type DeferredItem } from "../../lib/task-decisions";
 import { RECORD_YESTERDAY_EVENT, RECORD_YESTERDAY_HREF, RECORD_YESTERDAY_PARAM } from "../../lib/shortcuts";
 import { OWED_NOTICE_ID, WEEK_REVIEW_NOTICE_ID, YESTERDAY_MUSTS_NOTICE_ID } from "../shell/shell-types";
 import {
@@ -804,7 +805,18 @@ export function mustLaneOf(p: {
   live: boolean;
   launchDay: DayKey | null;
   today: DayKey;
+  /**
+   * Defer and abort (task-decisions.ts): today's musts hidden by a decision (Board.deferred, `must`).
+   * Each is counted and not kept: "1 of 2 kept · 1 deferred". Absent: none.
+   */
+  deferred?: readonly Pick<DeferredItem, "must" | "held" | "kind">[];
 }): MustLaneView {
+  const hidden = (p.deferred ?? []).filter((i) => i.must);
+  if (hidden.length > 0) {
+    const lane = mustLaneOf({ ...p, deferred: undefined });
+    const counted = mustCountOf(laneTally(p.must), hidden);
+    return { ...lane, show: true, count: counted.total > 0 ? counted.text : lane.count };
+  }
   const tally = laneTally(p.must);
   const chips: LaneChip[] = [];
   if (p.live && p.restToday) {

@@ -1,0 +1,63 @@
+@layer theme, base, components, art, effects, utilities;
+/* ═══ DEFER AND ABORT (task-decisions.ts) ════════════════════════════════
+   The sheet (DecisionSheet: reason chips, the field, the return picks, the
+   abort's two choices), the drawer's two actions, and a hidden task where
+   the board still names it (the Must lane's quiet item, Anytime's Deferred
+   list). The weekly review's section is components/home/week-decisions.css.
+   Tokens only; every target 44 px or more; nothing moves. A deferred must
+   is quiet ink with a hollow diamond, never owed-toned: it is a decision,
+   not a debt. */
+@layer components {
+
+/* The sheet */
+.dec-form { display: grid; gap: 16px; }
+.dec-sec { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.dec-sec > legend { padding: 0; margin-bottom: 8px; }
+.dec-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.dec-chip {
+  min-height: 44px; max-width: 100%; padding: 0 14px; border-radius: 22px;
+  border: 1px solid var(--line-ctl); background: transparent; color: var(--ink-1);
+  font: 600 14px/1.2 var(--font-ui); text-align: center; overflow-wrap: anywhere;
+}
+.dec-chip:hover:not(:disabled) { background: var(--raised); color: var(--ink-0); }
+.dec-chip[aria-pressed="true"], .dec-chip[aria-checked="true"] { background: var(--ink-0); color: var(--page); border-color: var(--ink-0); }
+.dec-chip:disabled { opacity: .45; cursor: not-allowed; }
+.dec-chip:focus-visible, .dec-opt:focus-visible, .dec-undo:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.dec-input { flex: none; width: 100%; }
+.dec-note { margin: 0; font-size: 13px; line-height: 18px; color: var(--ink-2); }
+.dec-nudge { margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--sunken); border: 1px solid var(--line-2); font-size: 14px; line-height: 20px; color: var(--ink-0); }
+.dec-scope { display: grid; gap: 8px; }
+.dec-opt {
+  display: grid; gap: 2px; min-height: 56px; padding: 10px 14px; border-radius: 12px;
+  border: 1px solid var(--line-ctl); background: transparent; color: var(--ink-1); text-align: left;
+}
+.dec-opt b { font: 600 15px/20px var(--font-ui); color: var(--ink-0); }
+.dec-opt span { font-size: 13px; line-height: 18px; color: var(--ink-2); }
+.dec-opt[aria-checked="true"] { border-color: var(--ink-0); background: var(--raised); box-shadow: inset 0 0 0 1px var(--ink-0); }
+
+/* The drawer: Defer… and Abort… at full touch height */
+.today-pill.td-act { min-height: 44px; }
+.td-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; }
+.td-line .today-drawer-note { margin-top: 0; flex: 1 1 180px; min-width: 0; overflow-wrap: anywhere; }
+
+/* A hidden must in the Must lane: quiet, counted as not kept */
+.t-deferred { display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 8px 8px 8px 18px; color: var(--ink-2); }
+.t-row + .t-deferred, .t-deferred + .t-deferred, .t-deferred + .t-row, .lane-note + .t-deferred { border-top: 1px solid var(--line-1); }
+.t-deferred-mark { flex: none; width: 12px; height: 12px; border: 1.5px solid var(--line-ctl); transform: rotate(45deg); border-radius: 2px; }
+.t-deferred-txt { display: grid; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.t-deferred-title { font: 500 15px/20px var(--font-ui); color: var(--ink-1); overflow-wrap: anywhere; }
+.t-deferred-meta { font-size: 13px; line-height: 18px; color: var(--ink-2); overflow-wrap: anywhere; }
+.dec-undo {
+  flex: none; min-height: 44px; min-width: 44px; padding: 0 12px; border-radius: 10px;
+  border: 1px solid var(--line-ctl); background: transparent; color: var(--ink-1); font: 600 13px var(--font-ui);
+}
+.dec-undo:hover:not(:disabled) { background: var(--raised); color: var(--ink-0); }
+.dec-undo:disabled { opacity: .45; cursor: not-allowed; }
+
+/* Anytime's Deferred list */
+.dec-deferred li { align-items: center; min-height: 44px; }
+.dec-deferred .dec-when { display: grid; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.dec-deferred .dec-when .today-upcoming-day { overflow-wrap: anywhere; }
+
+
+}

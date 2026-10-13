@@ -169,8 +169,19 @@ async function loadWalkMomentum(userId: string, today: DayKey, sessions: readonl
           : Promise.resolve([]),
         ids.length ? prisma.exerciseSession.findMany({ where: { userId, id: { in: ids } }, select: { id: true, createdAt: true } }) : Promise.resolve([]),
         prisma.taskTemplate.findMany({
-          // The personal Board only (work-boards.ts): a work tab's task is never a walk's habit.
-          where: { userId, boardId: null, category: "EXERCISE", kind: { in: ["TASK", "HABIT"] }, archivedAt: null, intrinsic: false, inbox: false, autoMetric: null },
+          // The personal Board only (work-boards.ts): a work tab's task is never a walk's habit. Nor is a deferred one,
+          // while it is off the board (task-decisions.ts).
+          where: {
+            userId,
+            boardId: null,
+            category: "EXERCISE",
+            kind: { in: ["TASK", "HABIT"] },
+            archivedAt: null,
+            intrinsic: false,
+            inbox: false,
+            autoMetric: null,
+            OR: [{ deferUntil: null }, { deferUntil: { lte: new Date() } }],
+          },
           select: { id: true, title: true, recurrence: true, startDay: true, dueDay: true, planDay: true, completedAt: true, compulsory: true, sortOrder: true },
         }),
       ]);

@@ -40,6 +40,7 @@ import {
 } from "@/lib/tasks";
 import { undoMakeUpCore } from "@/lib/duty";
 import { MAKE_UP_UNDO_ELSEWHERE } from "@/lib/duty-plan";
+import { abortCore, deferCore, undoDecisionCore, type DecisionOutcome, type UndoneDecision } from "@/lib/task-decisions-server";
 
 /**
  * The task actions: the Today board's writes, plus a text capture.
@@ -305,6 +306,42 @@ export async function rescheduleTask(templateId: string, to: "tomorrow" | DayKey
 export async function archiveTask(templateId: string, opts?: TaskActionOptions): Promise<TaskActionResult<RuleChangeOutcome>> {
   if (!isId(templateId)) return noId();
   return run("archiveTask", opts, (userId) => archiveCore(userId, templateId));
+}
+
+/** What Defer… and Abort… send: the reason (or a chip: it fills the reason when nothing is typed). */
+export interface DecisionInput {
+  reason?: string;
+  reasonTag?: string | null;
+}
+
+/**
+ * Defers a task until `until` (an ISO instant: a quick pick or the date-and-time field), with a
+ * reason (task-decisions.ts): off the board until then; a repeating non-must skips its days until
+ * then (its streak holds); a must skips nothing and its day counts as not kept. Pays and takes no
+ * XP. Its Undo is undoDecision, within ten minutes.
+ */
+export async function deferTask(templateId: string, input: DecisionInput & { until?: string }, opts?: TaskActionOptions): Promise<TaskActionResult<DecisionOutcome>> {
+  if (!isId(templateId)) return noId();
+  if (!input || typeof input !== "object") return { ok: false, error: "Say why, and pick when it comes back." };
+  return run("deferTask", opts, (userId) => deferCore(userId, templateId, { reason: input.reason, reasonTag: input.reasonTag, until: input.until }));
+}
+
+/**
+ * Aborts a task with a reason: just this time (`ONCE`, a repeating task: today skipped, or a
+ * must off the board for the rest of today and not kept), or for good (`SERIES`, and any one-off:
+ * archived through Archive's own path, so a must waits out its seven days and the answer says
+ * when). Pays and takes no XP. Its Undo is undoDecision, within ten minutes.
+ */
+export async function abortTask(templateId: string, input: DecisionInput & { scope?: "ONCE" | "SERIES" }, opts?: TaskActionOptions): Promise<TaskActionResult<DecisionOutcome>> {
+  if (!isId(templateId)) return noId();
+  if (!input || typeof input !== "object") return { ok: false, error: "Say why." };
+  return run("abortTask", opts, (userId) => abortCore(userId, templateId, { reason: input.reason, reasonTag: input.reasonTag, scope: input.scope }));
+}
+
+/** Undoes a defer or an abort within ten minutes, on the same day: exactly what it changed comes back. */
+export async function undoDecision(decisionId: string, opts?: TaskActionOptions): Promise<TaskActionResult<UndoneDecision>> {
+  if (!isId(decisionId)) return { ok: false, error: "No decision given." };
+  return run("undoDecision", opts, (userId) => undoDecisionCore(userId, decisionId));
 }
 
 /** Brings back an archived (or dropped) task, history and streak intact: the Undo for Archive and Drop. */

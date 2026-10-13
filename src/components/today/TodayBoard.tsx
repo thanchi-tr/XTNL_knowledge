@@ -3,6 +3,7 @@
 import { TodayFooter } from "./TodayFooter";
 import "./today.css";
 import "./momentum.css";
+import "./decisions.css";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -32,11 +33,13 @@ import { motionLevel } from "@/lib/motion";
 import { GOAL_ALREADY_CLOSED } from "@/lib/goals";
 import type { CapturedItem } from "@/app/actions/capture";
 import {
+  abortTask,
   againTask,
   archiveTask,
   clarifyInbox,
   closeGoal,
   completeTask,
+  deferTask,
   goalProgress,
   previewGoalClose,
   rescheduleGoal,
@@ -49,6 +52,7 @@ import {
   tickStep,
   unarchiveTask,
   undoCompletion,
+  undoDecision,
 } from "@/app/actions/tasks";
 import { CAPTURED_EVENT, openCapture } from "@/components/capture/events";
 import { presentAll } from "@/components/celebrate/stage";
@@ -58,7 +62,20 @@ import { Sheet } from "@/components/ui/Sheet";
 import { dismissToast, pushToast } from "@/components/ui/toast-store";
 import { cx } from "@/components/ui/cx";
 import { TaskRow } from "./TaskRow";
-import { TaskDrawer, type DrawerRule, type DrawerWork } from "./TaskDrawer";
+import { TaskDrawer, type DrawerDecision, type DrawerRule, type DrawerWork } from "./TaskDrawer";
+import { DecisionSheet, type DecisionSubmit, type DecisionTarget } from "./DecisionSheet";
+import {
+  canUndoDecision,
+  decisionOpOf,
+  decisionToastOf,
+  deferNudgeOf,
+  deferShapeOf,
+  deferredLineOf,
+  mustCountOf,
+  nextDecisionTick,
+  type DecisionOutcome,
+  type DeferredItem,
+} from "@/lib/task-decisions";
 import { GOALS_HEADING_ID, GOAL_CLOSE_CHIP, GoalsStrip } from "./GoalsStrip";
 import { GoalCloseSheet, GoalRescheduleSheet, type GoalClosePreview, type GoalCloseRoadmap } from "./GoalSheets";
 import { onSeekTemplate } from "@/components/roadmap/roadmap-events";
@@ -468,6 +485,10 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   const [working, setWorking] = useState<Record<string, DrawerWork>>({});
   const [removal, setRemoval] = useState<Removal | null>(null);
   const [capacityBusy, setCapacityBusy] = useState(false);
+  /** Defer… and Abort… (task-decisions.ts): the sheet, the task it is open on, and its write in flight. */
+  const [decide, setDecide] = useState<{ mode: "defer" | "abort"; templateId: string; target: DecisionTarget; nowMs: number; open: boolean; nonce: number } | null>(null);
+  const [decideBusy, setDecideBusy] = useState(false);
+  const [decideError, setDecideError] = useState<string | null>(null);
   // ── M2 (Duty) ──
   /** The collapsed OwedSummary is open (the Owed row opens it). */
   const [owedOpen, setOwedOpen] = useState(false);
@@ -523,7 +544,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
 
   const ops = useMemo(() => pending.map((p) => p.op), [pending]);
   const current = useMemo(() => applyOps(data, ops), [data, ops]);
-  const board = useMemo(() => buildBoard(current), [current]);
+  // On the board's clock: a deferred task comes back the moment its time passes (task-decisions.ts).
+  const board = useMemo(() => buildBoard(current, [], clock), [current, clock]);
   const quest = useMemo(
     () =>
       questOf({
@@ -814,7 +836,16 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
 
   const lanes = useMemo(() => [...board.must, ...board.todayRows, ...board.yesterdayRows, ...board.anytime], [board]);
   const questPrices = useMemo(() => openPricesOf(lanes), [lanes]);
-  const nextTick = useMemo(() => nextBoardTick({ rows: lanes, today: data.today, clockMs: clock }), [lanes, data.today, clock]);
+  // A hidden task's return and a decision's Undo closing move the board's clock too (task-decisions.ts).
+  const decisionTimes = useMemo(
+    () => [...board.deferred, ...Object.values(current.decisions ?? {}).flatMap((f) => (f.last ? [{ until: "", decidedAt: f.last.at }] : []))],
+    [board.deferred, current.decisions]
+  );
+  const nextTick = useMemo(() => {
+    const rows = nextBoardTick({ rows: lanes, today: data.today, clockMs: clock });
+    const decided = nextDecisionTick(decisionTimes, clock);
+    return rows == null ? decided : decided == null ? rows : Math.min(rows, decided);
+  }, [lanes, data.today, clock, decisionTimes]);
   // One timer to the next moment the screen changes by itself: an Undo
   // expiring, midnight, the day edge. Re-armed whenever the clock moves
   // (the timer itself, or a tap); never a polling loop.
@@ -1060,6 +1091,99 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     remove({ id: templateId, title: row.template.title }, "Archived", () => archiveTask(templateId, REFRESH));
   }
 
+  // ── Defer and abort (task-decisions.ts) ────────────────────────────────
+
+  /** Opens Defer… or Abort… on a row: what the sheet says depends on its kind (a must, a habit, a deadline, a one-off). */
+  function openDecision(row: BoardRow, mode: "defer" | "abort") {
+    const t = row.template;
+    const facts = current.decisions?.[t.id];
+    // A must's archive waits seven days once Duty is live: the sheet says when, before the tap (the server decides again).
+    const ends = t.compulsory ? ruleChangeOf(t, { archived: true }, ruleCtx()).effectiveDay : null;
+    setDecideError(null);
+    setDecide((c) => ({
+      mode,
+      templateId: t.id,
+      nowMs: serverNow(),
+      open: true,
+      nonce: (c?.nonce ?? 0) + 1,
+      target: {
+        title: t.title,
+        shape: deferShapeOf(t),
+        recurring: !!ruleOf(t),
+        must: t.compulsory && !isWork,
+        work: isWork,
+        dueLabel: t.dueKind === "DEADLINE" ? row.dueLabel : null,
+        defers: facts?.defers ?? 0,
+        endsOn: ends ? dayLabel(ends) : null,
+      },
+    }));
+  }
+
+  /** Sends the sheet's decision; on its answer the sheet closes, the board holds the change and the Undo goes to the dock. */
+  function submitDecision(v: DecisionSubmit) {
+    const target = decide;
+    if (!target || !target.open || decideBusy) return;
+    if (staleDay()) return;
+    setDecideBusy(true);
+    setDecideError(null);
+    startTransition(async () => {
+      let res: Result<DecisionOutcome>;
+      try {
+        res =
+          target.mode === "defer"
+            ? await deferTask(target.templateId, { reason: v.reason, reasonTag: v.reasonTag, until: v.until }, REFRESH)
+            : await abortTask(target.templateId, { reason: v.reason, reasonTag: v.reasonTag, scope: v.scope }, REFRESH);
+      } catch {
+        res = { ok: false, error: "Couldn't reach the server. Check the connection and try again." };
+      } finally {
+        setDecideBusy(false);
+      }
+      if (!res.ok) {
+        const error = res.error;
+        setDecideError(error);
+        return;
+      }
+      const out = res.value;
+      actedAt.current = tapTime();
+      setDecide((c) => (c ? { ...c, open: false } : c));
+      setOpenKey(null);
+      setDrawerMinutes(null);
+      // Held until the refreshed props show it (a settled op goes with the next props).
+      const hold = decisionOpOf(out, current.today);
+      if (hold) setPending((prev) => [...prev, { op: { id: nextOpId(), ...hold } as BoardOp, settled: true, base: dataRef.current }]);
+      // A must's series waits out its seven days: the row stays, and says when it leaves.
+      if (out.archive?.effect === "deferred" && out.archive.effectiveDay) setNotice(deferredNoticeOf(out.title, "archive", out.archive.effectiveDay));
+      const toast = decisionToastOf(out, serverNow());
+      pushToast({ key: `decision:${out.decisionId}`, title: toast.title, body: toast.body, action: { label: "Undo", onAction: () => undoDecisionNow(out.decisionId, out.templateId, out.title) }, holdMs: REMOVE_UNDO_MS });
+      announce(`${toast.title}. ${toast.body}`);
+    });
+  }
+
+  /** Takes a defer or an abort back (ten minutes, the same day): exactly what it changed comes back. */
+  function undoDecisionNow(decisionId: string, templateId: string, title: string) {
+    dispatch(null, () => undoDecision(decisionId, REFRESH), () => {
+      setPending((prev) => prev.filter((p) => !(p.op.kind === "defer" || p.op.kind === "hide" || p.op.kind === "skip") || p.op.templateId !== templateId));
+      setNotice(`${title} is back.`);
+    });
+  }
+
+  /** The drawer's decision lines: the third defer's nudge, and an abort just this time still undoable. */
+  function drawerDecisionOf(row: BoardRow): DrawerDecision | null {
+    const facts = current.decisions?.[row.template.id];
+    if (!facts) return null;
+    const last = facts.last;
+    const recent =
+      last && last.kind === "ABORT" && last.scope === "ONCE" && last.day === current.today && row.state === "skipped" && canUndoDecision(last.at, clock)
+        ? { line: `Aborted just this time · ${last.reason}`, onUndo: () => undoDecisionNow(last.id, row.template.id, row.template.title) }
+        : null;
+    const nudge = deferNudgeOf(facts.defers);
+    return nudge || recent ? { nudge, recent } : null;
+  }
+
+  /** A hidden task where the board still names it: the Must lane's quiet item, or a line of Anytime's Deferred list. */
+  const decisionUndoOf = (item: DeferredItem) =>
+    item.decisionId && item.decidedAt && canUndoDecision(item.decidedAt, clock) ? () => undoDecisionNow(item.decisionId!, item.templateId, item.title) : null;
+
   function clarify(templateId: string, choice: InboxChoice, parentId?: string) {
     if (choice === "drop") {
       const title = current.templates.find((t) => t.id === templateId)?.title ?? "Inbox item";
@@ -1258,7 +1382,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   const todayActive = streak.last7Days[streak.last7Days.length - 1] ?? false;
   const keptToday = todayActive || board.activeToday;
   const streakNow = streak.current + (!todayActive && board.activeToday ? 1 : 0);
-  const mustTally = laneTally(board.must);
+  // Today's musts hidden by a defer or an abort count, and are not kept (task-decisions.ts mustCountOf).
+  const mustTally = mustCountOf(laneTally(board.must), board.deferred);
   const mustLaneKept = mustTally.total > 0 && mustTally.kept === mustTally.total;
 
   const snapshot: DaySnapshot = {
@@ -1408,6 +1533,9 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
           onAgain={() => again(row, minutes)}
           onRename={(title) => work(row.template.id, { kind: "rename", title }, () => renameTask(row.template.id, title, REFRESH))}
           onArchive={() => archive(row)}
+          onDefer={() => openDecision(row, "defer")}
+          onAbort={() => openDecision(row, "abort")}
+          decision={drawerOpen ? drawerDecisionOf(row) : null}
           onOverride={(n) => work(row.template.id, { kind: "rate", override: n }, () => setBandOverride(row.template.id, n, REFRESH))}
           onResize={() => resize(row)}
           rule={drawerOpen ? drawerRuleOf(row) : null}
@@ -1424,8 +1552,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     [board.goals]
   );
   const upcoming = useMemo(
-    () => upcomingOf(current, new Set([...board.must, ...board.todayRows].map((r) => r.template.id))),
-    [current, board.must, board.todayRows]
+    () => upcomingOf(current, new Set([...board.must.map((r) => r.template.id), ...board.todayRows.map((r) => r.template.id), ...board.deferred.map((i) => i.templateId)])),
+    [current, board.must, board.todayRows, board.deferred]
   );
   const chosenCapacity = capacityChosen(current);
   const laneNote = todayLaneNote({ templates: current.templates.length, clear: board.clear, todayRows: board.todayRows.length });
@@ -1511,7 +1639,9 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   const laneCards = [...board.owed, ...Object.values(madeUp).map((e) => e.card).filter((c) => !board.owed.some((o) => o.instanceId === c.instanceId))].sort(
     (a, b) => a.day.localeCompare(b.day) || a.title.localeCompare(b.title) || a.instanceId.localeCompare(b.instanceId)
   );
-  const mustView = mustLaneOf({ must: board.must, owed: laneCards, restToday: board.restToday, live, launchDay, today: current.today });
+  const mustView = mustLaneOf({ must: board.must, owed: laneCards, restToday: board.restToday, live, launchDay, today: current.today, deferred: board.deferred });
+  const hiddenMusts = board.deferred.filter((i) => i.must);
+  const hiddenOther = board.deferred.filter((i) => !i.must);
   const owedTotal = owedTotalOf(openOwed);
   const prompt = missPromptOf(openOwed, (k) => flags === null || !!flags[k], live);
 
@@ -1825,6 +1955,28 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   };
   const prominent = closeDayProminent(clock);
 
+  /** A must hidden by a decision, in the Must lane: quiet, counted as not kept ("Deferred to Tue 09:00 · No time · not kept"). */
+  const renderHiddenMust = (item: DeferredItem) => {
+    const undoIt = decisionUndoOf(item);
+    return (
+      <div key={item.templateId} className="t-deferred" data-template-id={item.templateId} data-just-added={justAdded === item.templateId ? "1" : undefined}>
+        <span className="t-deferred-mark" aria-hidden="true" />
+        <span className="t-deferred-txt">
+          <span className="t-deferred-title">{item.title}</span>
+          <span className="t-deferred-meta">
+            {deferredLineOf(item, clock)}
+            {isWork ? "" : item.held ? " · held by today's rest" : " · not kept"}
+          </span>
+        </span>
+        {undoIt && (
+          <button type="button" className="dec-undo" onClick={undoIt} disabled={busyTemplates.has(item.templateId)} aria-label={`Undo: ${item.kind === "DEFER" ? "defer" : "abort"} ${item.title}`}>
+            Undo
+          </button>
+        )}
+      </div>
+    );
+  };
+
   const firstRunHint = (
     <p className="lane-note">
       Nothing planned yet. <span className="hint-compact">Tap + in the tab bar</span>
@@ -1946,6 +2098,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
               className="o5"
             >
               {board.must.map(renderRow)}
+              {hiddenMusts.map(renderHiddenMust)}
               {/* M2: the debts after today's musts: one card, or one collapsed summary once two are open. */}
               {openOwed.length >= 2 ? (
                 <OwedSummary
@@ -2015,7 +2168,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
               <span>{board.inbox.length > 0 ? `${board.inbox.length} to sort` : "empty"}</span>
               <Icon name="chev" size={16} className="ink-2" />
             </button>
-            {(board.anytime.length > 0 || board.later > 0 || upcoming.length > 0) && (
+            {(board.anytime.length > 0 || board.later > 0 || upcoming.length > 0 || hiddenOther.length > 0) && (
               <>
                 <button type="button" className="collapsed" aria-expanded={anytimeOpen} aria-controls="anytime-rows" onClick={() => setAnytimeOpen((o) => !o)}>
                   <Sigil track="craft" className="ink-1" />
@@ -2023,6 +2176,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
                   <span>
                     {openCount(board.anytime)}
                     {board.later > 0 ? ` · ${board.later} planned later` : ""}
+                    {hiddenOther.length > 0 ? ` · ${hiddenOther.length} deferred` : ""}
                     {upcoming.length > 0 ? ` · ${upcoming.length} repeating later` : ""}
                   </span>
                   <Icon name="chev" size={16} className={cx("ink-2 chev", anytimeOpen && "open")} />
@@ -2030,6 +2184,33 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
                 {anytimeOpen && (
                   <div id="anytime-rows" className="anytime-rows">
                     {board.anytime.map(renderRow)}
+                    {/* Defer and abort (task-decisions.ts): what is off the board for now, when it comes back and why. */}
+                    {hiddenOther.length > 0 && (
+                      <div className="today-upcoming dec-deferred">
+                        <p className="t-eyebrow">Deferred</p>
+                        <ul>
+                          {hiddenOther.map((i) => {
+                            const undoIt = decisionUndoOf(i);
+                            return (
+                              <li key={i.templateId} data-template-id={i.templateId} data-just-added={justAdded === i.templateId ? "1" : undefined}>
+                                <span className="dec-when">
+                                  <span className="today-upcoming-title">{i.title}</span>
+                                  <span className="today-upcoming-day">
+                                    {deferredLineOf(i, clock)}
+                                    {i.defers >= 2 ? ` · ${i.defers}×` : ""}
+                                  </span>
+                                </span>
+                                {undoIt && (
+                                  <button type="button" className="dec-undo" onClick={undoIt} disabled={busyTemplates.has(i.templateId)} aria-label={`Undo: defer ${i.title}`}>
+                                    Undo
+                                  </button>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    )}
                     {board.laterRows.length > 0 && (
                       <div className="today-upcoming">
                         <p className="t-eyebrow">Planned later</p>
@@ -2245,6 +2426,20 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
         onSave={saveGoalResched}
         onClose={() => {
           if (!reschedBusy) setGoalResched((c) => (c ? { ...c, open: false } : c));
+        }}
+      />
+
+      <DecisionSheet
+        open={!!decide?.open}
+        mode={decide?.mode ?? "defer"}
+        formKey={decide?.nonce ?? 0}
+        target={decide?.target ?? null}
+        nowMs={decide?.nowMs ?? clock}
+        busy={decideBusy}
+        error={decideError}
+        onSubmit={submitDecision}
+        onClose={() => {
+          if (!decideBusy) setDecide((c) => (c ? { ...c, open: false } : c));
         }}
       />
 

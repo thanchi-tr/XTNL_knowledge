@@ -101,6 +101,7 @@ import {
 import { expectedOn, ruleOn, type DutyTemplate, type PendingChange, type PendingNext } from "./duty-rule";
 import { settledFor, type RestKind } from "./duty-economy";
 import type { DutyBoard, OwedCard } from "./duty-view";
+import { deferNoteOf, isDeferredNow, type DeferredItem, type TemplateDecisions } from "./task-decisions";
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -231,6 +232,12 @@ export interface BoardTemplate extends PricedTemplate {
    * practices and steps 'rm:<milestoneId>:p<i>' / ':s<i>'. Absent reads as null.
    */
   captureKey?: string | null;
+  /**
+   * Defer (task-decisions.ts): TaskTemplate.deferUntil (ISO) while it is still ahead of the
+   * server's read: the board hides the task until then (buildBoard, against its clock). The
+   * server sends null once it has passed: then it is just a task again. Absent reads as null.
+   */
+  deferUntil?: string | null;
 }
 
 export interface BoardInstance {
@@ -368,6 +375,11 @@ export interface BoardData {
    * (momentumLive); absent, every projection is exactly today's.
    */
   momentum?: BoardMomentum;
+  /**
+   * Defer and abort (task-decisions.ts): per open template, its defers not undone ("Deferred n×")
+   * and its latest decision not undone (a hidden task's reason and Undo). Absent: none.
+   */
+  decisions?: Record<string, TemplateDecisions>;
 }
 
 /** BoardData.momentum: the perks owned now, today's frog, and the instant a projection prices a tick at. */
@@ -1282,6 +1294,8 @@ export interface BoardRow {
    * drawer's and the Yesterday sheet's "Did it yesterday", with what it pays against yesterday's ledger.
    */
   recordYesterday?: { xp: number } | null;
+  /** On the day a deferred task is back: "Deferred until Tue 09:00 · 2×" (task-decisions.ts deferNoteOf). */
+  deferNote?: string | null;
 }
 
 /** A row's steps: the list, the ones ticked today, and how the ticks pay (src/lib/subtasks.ts). */
@@ -1410,6 +1424,12 @@ export interface Board {
   restToday: RestKind | null;
   /** M2 (lane D): the Duty UI is on (BoardData.duty.live). */
   dutyLive: boolean;
+  /**
+   * Defer and abort (task-decisions.ts): the tasks hidden now, soonest back first. A must due
+   * today (`must`) is drawn in the Must lane as a quiet item and counted there as not kept; the
+   * rest are Anytime's Deferred list. None is a row: no tick, no count, no quest.
+   */
+  deferred: DeferredItem[];
 }
 
 /** Deadline and planned-date labels: 'by Fri', 'late 2d', 'from Tue'. */
@@ -1565,6 +1585,14 @@ export function placementOf(t: BoardTemplate, ctx: PlaceContext): Placement {
     }
     // Put off to a later day: off the board until then, deadline untouched.
     if (t.planDay && t.planDay > today) return only(laterPlace(t.planDay), { laterDay: t.planDay });
+    // Deferred (task-decisions.ts): an undated or planned one-off is planned for the day it came back
+    // (planDay, its dueDay untouched), and carries from it like any planned one-off ('from Tue').
+    if (t.dueKind !== "DEADLINE" && t.planDay) {
+      const back = dueLabelOf({ dueDay: t.planDay, dueKind: "PLANNED" }, today);
+      return only(t.compulsory ? PLACE_MUST : PLACE_PLANNED, {
+        rows: [{ lane: t.compulsory ? "must" : "today", day: today, extra: { dueLabel: back.label, carriedFrom: back.carriedFrom } }],
+      });
+    }
     if (!t.dueDay) return only(PLACE_ANYTIME, { rows: [{ lane: "anytime", day: today, extra: {} }] });
     if (t.dueKind === "DEADLINE") {
       const gap = daysBetween(today, t.dueDay);
@@ -1805,9 +1833,17 @@ export function streakNoteOf(instances: readonly BoardInstance[], today: DayKey,
  *   inbox      unclarified captures and idea drafts
  *   goals      Short / Mid / Long
  */
-export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board {
+export function buildBoard(data: BoardData, ops: readonly BoardOp[] = [], nowMs?: number | null): Board {
   const d = ops.length > 0 ? applyOps(data, ops) : data;
   const { today, yesterday } = d;
+  // Defer and abort (task-decisions.ts): a task whose deferUntil is still ahead of `nowMs` (the
+  // board's clock; absent, any value the server sent, which sends only those still ahead) is hidden.
+  const decisions = d.decisions ?? {};
+  /** A must deferred or aborted on `day` (a decision not undone): that day counts as not kept, so it takes no record. */
+  const mustDecidedOn = (templateId: string, day: DayKey): boolean => {
+    const last = decisions[templateId]?.last;
+    return !!last && last.compulsory && last.day === day;
+  };
 
   const instancesByTpl = new Map<string, BoardInstance[]>();
   for (const i of d.instances) {
@@ -1875,6 +1911,7 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
       day === today &&
       lane !== "yesterday" &&
       !(!rule && t.completedAt) &&
+      !mustDecidedOn(t.id, yesterday) &&
       !onYesterday.some((i) => isDoneStatus(i.status) || SETTLED_STATUSES.has(i.status)) &&
       yesterdayBookable(t, rule, yesterday, lastDoneOf((instancesByTpl.get(t.id) ?? []).filter((i) => i.day < today)))
         ? {
@@ -1930,12 +1967,14 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
       pendingNext: pendingNextOf(t, today),
       steps,
       recordYesterday,
+      deferNote: day === today ? deferNoteOf(decisions[t.id], today, nowMs) : null,
       ...extra,
     };
   };
 
   const laneRows: Record<Lane, BoardRow[]> = { must, today: todayRows, yesterday: yesterdayRows, anytime };
   const laterRows: LaterRow[] = [];
+  const deferred: DeferredItem[] = [];
 
   // Every template is filed by placementOf, the one rule the capture toast
   // also names its place by.
@@ -1943,6 +1982,27 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
     // The rule as it stands today (a pending archive leaves on its day; an un-flag lands on its day).
     const t = ruledTemplateOn(raw, today);
     if (!t || debited.has(t.id)) continue;
+    // Deferred (or a must aborted just this time): off every lane until it is back.
+    if (isDeferredNow(t, nowMs)) {
+      if (t.kind === "GOAL" || t.inbox || t.kind === "IDEA_DRAFT") continue;
+      const facts = decisions[t.id];
+      const last = facts?.last ?? null;
+      // A must due today (or decided today as a must) stays in the Must lane, counted as not kept.
+      const mustToday = t.compulsory && (expectedOn(dutyTemplateOf(t), today) || (!!last && last.compulsory && last.day === today));
+      deferred.push({
+        templateId: t.id,
+        title: t.title,
+        until: t.deferUntil!,
+        kind: last?.kind ?? "DEFER",
+        reason: last?.reason ?? null,
+        must: mustToday,
+        held: mustToday && restToday != null && !t.compulsoryOnRest,
+        decisionId: last?.id ?? null,
+        decidedAt: last?.at ?? null,
+        defers: facts?.defers ?? 0,
+      });
+      continue;
+    }
     const p = placementOf(t, {
       today,
       yesterday,
@@ -1966,10 +2026,11 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
       if (p.habit.done) habitsDone += 1;
     }
     for (const r of p.rows) {
-      if (r.lane === "yesterday" && yesterdayLocked) continue;
+      if (r.lane === "yesterday" && (yesterdayLocked || mustDecidedOn(t.id, yesterday))) continue;
       laneRows[r.lane].push(row(t, r.lane, r.day, r.extra));
     }
   }
+  deferred.sort((a, b) => Number(b.must) - Number(a.must) || a.until.localeCompare(b.until) || a.title.localeCompare(b.title) || a.templateId.localeCompare(b.templateId));
 
   sortRows(must);
   sortRows(todayRows);
@@ -2014,6 +2075,7 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
     owed: owedNow(duty?.owed ?? [], d.ledger.today, today),
     restToday,
     dutyLive,
+    deferred,
   };
 }
 
@@ -2304,6 +2366,7 @@ export function weekQuestsShownOnToday(view: { state: string; rows: readonly unk
 export function seekPlaceOf(data: Pick<BoardData, "templates" | "instances" | "stats" | "today">, templateId: string): { found: boolean; open: "anytime" | "inbox" | null } {
   const t = data.templates.find((x) => x.id === templateId);
   if (!t) return { found: false, open: null };
+  if (t.deferUntil) return { found: true, open: t.compulsory ? null : "anytime" };
   const lane = placeOf(t, data.today, data.instances.filter((i) => i.templateId === t.id), data.stats[t.id]?.lastDone ?? null).lane;
   if (lane === "inbox") return { found: true, open: "inbox" };
   return { found: true, open: lane === "anytime" || lane === "later" || lane === "upcoming" ? "anytime" : null };
@@ -2338,7 +2401,9 @@ export type BoardOp =
   | { id: string; kind: "undo"; instanceId: string }
   | { id: string; kind: "skip"; templateId: string; day: DayKey }
   /** Moved to tomorrow, archived, or clarified out of the inbox: gone from where it was. */
-  | { id: string; kind: "hide"; templateId: string };
+  | { id: string; kind: "hide"; templateId: string }
+  /** Deferred (or a must aborted just this time): hidden until `until` (ISO), as TaskTemplate.deferUntil will say. */
+  | { id: string; kind: "defer"; templateId: string; until: string };
 
 /** Whether fresh props already show an op, so it can be dropped without a flash. */
 export function reflected(data: BoardData, op: BoardOp): boolean {
@@ -2351,6 +2416,10 @@ export function reflected(data: BoardData, op: BoardOp): boolean {
       return data.instances.some((i) => i.templateId === op.templateId && i.day === op.day && i.status === "SKIPPED");
     case "hide":
       return false;
+    case "defer": {
+      const t = data.templates.find((x) => x.id === op.templateId);
+      return !t || t.deferUntil === op.until;
+    }
   }
 }
 
@@ -2370,6 +2439,10 @@ export function applyOps(data: BoardData, ops: readonly BoardOp[]): BoardData {
     if (reflected(d, op)) continue;
     if (op.kind === "hide") {
       d.templates = d.templates.filter((t) => t.id !== op.templateId);
+      continue;
+    }
+    if (op.kind === "defer") {
+      d.templates = d.templates.map((t) => (t.id === op.templateId ? { ...t, deferUntil: op.until } : t));
       continue;
     }
     if (op.kind === "skip") {

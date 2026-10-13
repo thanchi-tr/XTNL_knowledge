@@ -2147,7 +2147,8 @@ export const prismaMomentumStore: MomentumStore = {
     const tplIds = [...new Set(effortRows.flatMap((r) => (r.source === "TASK" && r.templateId ? [r.templateId] : [])))];
     const cats = tplIds.length ? await prisma.taskTemplate.findMany({ where: { id: { in: tplIds } }, select: { id: true, category: true } }) : [];
     const catOf = new Map(cats.map((c) => [c.id, c.category]));
-    const board = buildBoard(data);
+    // On the read's own clock: a task deferred until later is off the board, so never a quest (task-decisions.ts).
+    const board = buildBoard(data, [], now.getTime());
     return {
       day,
       candidates: questCandidatesOf([...board.must, ...board.todayRows, ...board.anytime], data.ledger.today, day),

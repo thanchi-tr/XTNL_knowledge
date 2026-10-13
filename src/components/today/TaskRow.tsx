@@ -188,6 +188,8 @@ function OpenMeta({ row, restToday, work }: { row: BoardRow; restToday: RestKind
   else if (restToday && t.compulsory && t.compulsoryOnRest && row.lane === "must") bits.push("must · even on rest days");
   if (t.intrinsic && !work) bits.push("#play");
   if (t.sizing && !work) bits.push("sizing…");
+  // Back from a defer today (task-decisions.ts): "Deferred until Tue 09:00 · 2×".
+  if (row.deferNote) bits.push(row.deferNote);
   if (row.state === "skipped") bits.push("skipped today");
   return (
     <>

@@ -61,6 +61,20 @@ interface Props {
    * none; the server refuses a self-rating or a resize too). Absent: the personal Board's drawer, exactly as before.
    */
   work?: boolean;
+  /** Defer and abort (task-decisions.ts): opens the Defer… sheet. Absent: no Defer… (fixtures). */
+  onDefer?: () => void;
+  /** Opens the Abort… sheet. Absent: no Abort…. */
+  onAbort?: () => void;
+  /** The task's decisions: the nudge from its third defer, and an abort just this time still undoable. */
+  decision?: DrawerDecision | null;
+}
+
+/** What the drawer says of a task's decisions (task-decisions.ts). */
+export interface DrawerDecision {
+  /** "Deferred 3 times — break it into steps or abort it?"; null below three. */
+  nudge: string | null;
+  /** An abort just this time made minutes ago: its line ("Aborted just this time · No time") and its Undo. */
+  recent: { line: string; onUndo: () => void } | null;
 }
 
 /** M2 (F3): what the drawer offers a must. A weakening is deferred seven days once Duty is live; a strengthening is immediate. */
@@ -210,6 +224,30 @@ export function TaskDrawer(props: Props) {
       </div>
       {open && !recurring && row.lane !== "yesterday" && !tomorrow.show && tomorrow.reason && (
         <p className="today-drawer-note">{tomorrow.reason}</p>
+      )}
+      {/* Defer and abort (task-decisions.ts): each opens its sheet (a reason, and when, or how far). */}
+      {open && row.lane !== "yesterday" && (props.onDefer || props.onAbort) && (
+        <div className="today-drawer-row" role="group" aria-label="Put it off, or drop it">
+          {props.onDefer && !t.autoMetric && (
+            <button type="button" className="today-pill td-act" disabled={busy} onClick={props.onDefer} aria-haspopup="dialog" title="Off the board until a time you pick, with a reason">
+              Defer…
+            </button>
+          )}
+          {props.onAbort && (
+            <button type="button" className="today-pill td-act" disabled={busy} onClick={props.onAbort} aria-haspopup="dialog" title={recurring ? "Just this time, or for good, with a reason" : "Drop it, with a reason"}>
+              Abort…
+            </button>
+          )}
+        </div>
+      )}
+      {props.decision?.nudge && <p className="today-drawer-note">{props.decision.nudge}</p>}
+      {props.decision?.recent && (
+        <div className="td-line">
+          <span className="today-drawer-note">{props.decision.recent.line}</span>
+          <button type="button" className="dec-undo" disabled={busy} onClick={props.decision.recent.onUndo}>
+            Undo
+          </button>
+        </div>
       )}
 
       {props.rule && (t.compulsory || props.rule.pending) && (
