@@ -1,12 +1,15 @@
 import type { Metadata } from "next";
 import "@/components/customers/customers.css";
+import "@/components/orders/orders.css";
 import { notFound } from "next/navigation";
 import { getCurrentUserId } from "@/lib/user";
 import { loadCustomerPage } from "@/lib/customers-server";
+import { loadCustomerOrders } from "@/lib/work-orders-server";
 import { TASK_PARAM, taskParamOf } from "@/lib/customers";
 import { ShellTitle } from "@/components/shell/ShellTitle";
 import { CrmGate } from "@/components/customers/CrmGate";
 import { CustomerView } from "@/components/customers/CustomerView";
+import { CustomerOrders } from "@/components/orders/CustomerOrders";
 
 // Overdue turns on the clock: never statically cache it.
 export const dynamic = "force-dynamic";
@@ -15,11 +18,13 @@ export const metadata: Metadata = { title: "Customer" };
 
 /**
  * One customer on a work tab (customers.ts; /today/work/<id>/customers/<customerId>):
- * their details, their scheduled tasks and interaction log, and the call
- * backs linked to them. `?task=<id>` is a task reminder's tap URL
+ * their details, their scheduled tasks, their infos and interaction log, and
+ * the call backs linked to them. `?task=<id>` is a task reminder's tap URL
  * (customerHref with a task): that task is highlighted and scrolled into
  * view. A customer on another tab, or an unknown one, is a 404; an archived
- * tab, or one whose list is off, says so.
+ * tab, or one whose list is off, says so. While the tab's order list is on
+ * (work-orders.ts), their orders are read in the same wave and drawn after
+ * the log; a failed read is no section, never a broken page.
  */
 export default async function CustomerPage({
   params,
@@ -30,7 +35,13 @@ export default async function CustomerPage({
 }) {
   const [{ boardId, customerId }, query] = await Promise.all([params, searchParams]);
   const now = new Date();
-  const page = await loadCustomerPage(getCurrentUserId(), boardId, customerId, now);
+  const [page, orders] = await Promise.all([
+    loadCustomerPage(getCurrentUserId(), boardId, customerId, now),
+    loadCustomerOrders(getCurrentUserId(), boardId, customerId, now).catch((err) => {
+      console.error("[orders] customer read failed", err);
+      return null;
+    }),
+  ]);
   if (page.kind === "gone") notFound();
   if (page.kind !== "ok") {
     return (
@@ -48,10 +59,21 @@ export default async function CustomerPage({
         board={page.board}
         customer={page.customer}
         tasks={page.tasks}
+        infos={page.infos}
         interactions={page.interactions}
         callBacks={page.callBacks}
         highlightTask={taskParamOf(query[TASK_PARAM])}
         nowIso={now.toISOString()}
+        orders={
+          orders && (
+            <CustomerOrders
+              board={page.board}
+              customer={{ id: page.customer.id, number: page.customer.number, name: page.customer.name, phone: page.customer.phone }}
+              orders={orders.orders}
+              today={orders.today}
+            />
+          )
+        }
       />
     </>
   );

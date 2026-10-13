@@ -244,6 +244,8 @@ export interface WorkBoardView {
   name: string;
   /** The tab keeps a customer list (WorkBoard.crmOn); its header card links to it. */
   crmOn?: boolean;
+  /** The tab keeps an order list (WorkBoard.ordersOn); its header card links to it. */
+  ordersOn?: boolean;
 }
 
 /** The goal the Close sheet is open on: its preview, and the close's own refusal if it had one. */

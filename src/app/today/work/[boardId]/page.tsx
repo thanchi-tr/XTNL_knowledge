@@ -46,7 +46,8 @@ const NO_STREAK: DailyStreak = {
  * newest first, this tab's tags, its customers when its CRM is on, and
  * `?callback=<id>` (a reminder's tap, via /today?board=) scrolls to that card
  * and highlights it. Read with the wave; a failed read is no section, never
- * a broken board.
+ * a broken board. The tab's card links to its customer list and its order
+ * list (work-orders.ts) while each is switched on.
  */
 export default async function WorkBoardPage({
   params,
@@ -100,7 +101,7 @@ export default async function WorkBoardPage({
   return (
     <>
       <ShellTitle eyebrow="Work" title={board.name} />
-      <TodayBoard data={data} streak={NO_STREAK} nowIso={now.toISOString()} notices={[]} work={{ id: board.id, name: board.name, crmOn: board.crmOn }} callBacks={callBacks} />
+      <TodayBoard data={data} streak={NO_STREAK} nowIso={now.toISOString()} notices={[]} work={{ id: board.id, name: board.name, crmOn: board.crmOn, ordersOn: board.ordersOn }} callBacks={callBacks} />
     </>
   );
 }

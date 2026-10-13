@@ -14,14 +14,21 @@
  * deletes nothing). While it is on, the card links to the list with the
  * count of scheduled customer tasks due today (overdue included), read after
  * the card mounts.
+ *
+ * Orders (work-orders.ts, 2026-10-14): the menu's "Order list" switch gives
+ * the tab its own order list (off by default; off hides it and deletes
+ * nothing). While it is on, the card links to it under Customers, with the
+ * count of lines still to order, read after the card mounts.
  */
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { archiveWorkBoard, renameWorkBoard } from "@/app/actions/work-boards";
 import { customerDueCount, setCrm } from "@/app/actions/customers";
+import { setOrdersOn, workOrderCount } from "@/app/actions/work-orders";
 import { WORK_BOARD_NAME_MAX, cleanWorkBoardName } from "@/lib/work-boards";
 import { customersHref, dueChipText, type DueCount } from "@/lib/customers";
+import { ordersChipText, ordersHref } from "@/lib/work-orders";
 import { Button } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
 import { Sheet } from "@/components/ui/Sheet";
@@ -37,8 +44,10 @@ export const WORK_CARD_NOTE = "Work only: ticks here pay no XP and never touch y
 const UNREACHABLE = "Couldn't reach the server. Check the connection and try again.";
 /** The menu's switch: what a customer list is, and that off deletes nothing. */
 export const CRM_SWITCH_NOTE = "A customer list for this tab: customer IDs, their interactions and scheduled reminders. Off hides it; nothing is deleted.";
+/** The menu's order list switch: what an order list is, and that off deletes nothing. */
+export const ORDERS_SWITCH_NOTE = "An order list for this tab: who it is for, what to order, whether it is ordered, and the date. Off hides it; nothing is deleted.";
 
-export function WorkBoardCard({ board }: { board: { id: string; name: string; crmOn?: boolean } }) {
+export function WorkBoardCard({ board }: { board: { id: string; name: string; crmOn?: boolean; ordersOn?: boolean } }) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [name, setName] = useState(board.name);
@@ -49,6 +58,10 @@ export function WorkBoardCard({ board }: { board: { id: string; name: string; cr
   /** The switch's state while its write is in flight (then the refreshed prop). */
   const [crmWant, setCrmWant] = useState<boolean | null>(null);
   const [due, setDue] = useState<DueCount | null>(null);
+  const ordersOn = board.ordersOn === true;
+  /** The order list switch's state while its write is in flight (then the refreshed prop). */
+  const [ordersWant, setOrdersWant] = useState<boolean | null>(null);
+  const [toOrder, setToOrder] = useState<number | null>(null);
 
   // The list's due count, read once the card is up (a failed read shows no count).
   useEffect(() => {
@@ -63,6 +76,35 @@ export function WorkBoardCard({ board }: { board: { id: string; name: string; cr
       live = false;
     };
   }, [board.id, crmOn]);
+
+  // The order list's count of lines still to order, read once the card is up (a failed read shows no count).
+  useEffect(() => {
+    if (!ordersOn) return;
+    let live = true;
+    workOrderCount(board.id)
+      .then((res) => {
+        if (live && res.ok) setToOrder(res.value.todo);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [board.id, ordersOn]);
+
+  function toggleOrders(on: boolean) {
+    setError(null);
+    setOrdersWant(on);
+    start(async () => {
+      let res: Awaited<ReturnType<typeof setOrdersOn>>;
+      try {
+        res = await setOrdersOn(board.id, on, { refresh: true });
+      } catch {
+        res = { ok: false, error: UNREACHABLE };
+      }
+      setOrdersWant(null);
+      if (!res.ok) setError(res.error);
+    });
+  }
 
   function toggleCrm(on: boolean) {
     setError(null);
@@ -147,6 +189,13 @@ export function WorkBoardCard({ board }: { board: { id: string; name: string; cr
           <Icon name="chev" />
         </Link>
       )}
+      {ordersOn && (
+        <Link className="work-crm-link" href={ordersHref(board.id)}>
+          <span className="work-crm-l">Orders</span>
+          {toOrder !== null && ordersChipText(toOrder) && <span className="chip">{ordersChipText(toOrder)}</span>}
+          <Icon name="chev" />
+        </Link>
+      )}
 
       <Sheet open={menuOpen} onClose={() => !pending && setMenuOpen(false)} title={board.name} description="This work tab">
         <div className="work-menu-sec">
@@ -181,6 +230,14 @@ export function WorkBoardCard({ board }: { board: { id: string; name: string; cr
           <div className="work-menu-switch">
             <p>{CRM_SWITCH_NOTE}</p>
             <Switch checked={crmWant ?? crmOn} onChange={toggleCrm} label="Customer list" disabled={pending} />
+          </div>
+        </div>
+
+        <div className="work-menu-sec">
+          <h3>Order list</h3>
+          <div className="work-menu-switch">
+            <p>{ORDERS_SWITCH_NOTE}</p>
+            <Switch checked={ordersWant ?? ordersOn} onChange={toggleOrders} label="Order list" disabled={pending} />
           </div>
         </div>
 

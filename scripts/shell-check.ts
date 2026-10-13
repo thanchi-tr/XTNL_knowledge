@@ -180,6 +180,12 @@ eq("nav: the customer pages' first-paint titles", [titleFor("/today/work/w1/cust
   { eyebrow: "Work", title: "Customers" },
   { eyebrow: "Work", title: "Customer" },
 ]);
+// Orders (work-orders.ts, 2026-10-14): a work tab's order list keeps the tab current too, and paints 'Orders' under 'Work'.
+eq("nav: under /today/work/<id>/orders the work tab stays the current tab, on Tasks, titled 'Orders'", [sectionOf("/today/work/w1/orders"), activeSub("/today/work/w1/orders"), titleFor("/today/work/w1/orders")], [
+  "tasks",
+  "/today/work/w1",
+  { eyebrow: "Work", title: "Orders" },
+]);
 eq("nav: /today/week title", titleFor("/today/week"), { eyebrow: "Tasks", title: "Weekly review" });
 eq("nav: /add title", titleFor("/add"), { eyebrow: "Ideas", title: "New idea" });
 eq("nav: /library/[id] title", titleFor("/library/xyz"), { eyebrow: "Ideas", title: "Idea" });

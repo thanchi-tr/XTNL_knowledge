@@ -10,6 +10,9 @@
  *                   case among open customers; the database holds it too, a partial unique index on
  *                   (boardId, lower(number)) WHERE archivedAt IS NULL), a name (1..60), a nickname (<= 40)
  *                   and a phone (digits, spaces, + - ( ), <= 24; called through a tel: link)
+ *   An info         a note on what is known about them (a detail, 1..1000, line breaks kept) and when it was
+ *                   recorded (recordedAt: now by default, editable, never more than a minute ahead);
+ *                   their page lists it newest first, above the log (2026-10-14, migration 20261225000000)
  *   An interaction  a dated entry in their log: Purchase · Inquiry · Complaint · Credit check, and a brief (<= 280)
  *   A task          a scheduled to-do (a date-time, a title 1..80, a detail <= 500) with ONE push reminder at its
  *                   time (CustomerTask.remind; the call backs' dispatcher sends it and stamps remindSentAt)
@@ -21,6 +24,7 @@
  *                                   on (remindSentAt cleared); a time already gone by is never pushed late
  *   customerTaskRemindDue(t, now)   what a reminder dispatcher may send: due, on, not done, not sent, kept
  *   customersHref / customerHref    /today/work/<board>/customers[/<customer>[?task=<task>]] (the reminder's tap URL)
+ *   cleanInfoDetail / cleanRecordedAt / sortInfos / infoRecordedLabel / infoFirstLine   an info's rules
  *
  * Work, never the game: nothing here (or in the cores) pays XP, writes the
  * ledger or touches the streak.
@@ -35,6 +39,9 @@ export const CUSTOMER_PHONE_MAX = 24;
 export const INTERACTION_BRIEF_MAX = 280;
 export const CUSTOMER_TASK_TITLE_MAX = 80;
 export const CUSTOMER_TASK_DETAIL_MAX = 500;
+export const CUSTOMER_INFO_MAX = 1000;
+/** How far ahead of now an info's "Recorded at" may be (a clock a little ahead, a minute typed early). */
+export const RECORDED_AHEAD_MS = 60_000;
 
 /** What happened, in a customer's log. Stored as these strings (CustomerInteraction.action). */
 export const CUSTOMER_ACTIONS = ["PURCHASE", "INQUIRY", "COMPLAINT", "CREDIT_CHECK"] as const;
@@ -78,6 +85,10 @@ export const CUSTOMER_GONE = "That customer no longer exists.";
 export const CUSTOMER_ARCHIVED = "That customer is archived. Restore them to change anything.";
 export const INTERACTION_GONE = "That entry no longer exists.";
 export const CUSTOMER_TASK_GONE = "That task no longer exists.";
+export const CUSTOMER_INFO_EMPTY = "Write the info.";
+export const CUSTOMER_INFO_LONG = `Keep the info to ${CUSTOMER_INFO_MAX} characters.`;
+export const RECORDED_FUTURE = "Recorded at can't be in the future.";
+export const CUSTOMER_INFO_GONE = "That info no longer exists.";
 
 export type Clean<T> = { ok: true; value: T } | { ok: false; error: string };
 const yes = <T>(value: T): Clean<T> => ({ ok: true, value });
@@ -168,6 +179,14 @@ export function cleanTaskDetail(raw: unknown): Clean<string | null> {
   return yes(d);
 }
 
+/** An info's detail: trimmed, line breaks kept, 1..1000 characters. */
+export function cleanInfoDetail(raw: unknown): Clean<string> {
+  const d = typeof raw === "string" ? raw.replace(/\r\n?/g, "\n").trim() : "";
+  if (!d) return no(CUSTOMER_INFO_EMPTY);
+  if (chars(d) > CUSTOMER_INFO_MAX) return no(CUSTOMER_INFO_LONG);
+  return yes(d);
+}
+
 const MIN_WHEN = Date.UTC(2000, 0, 1);
 const MAX_WHEN = Date.UTC(2100, 0, 1);
 
@@ -181,6 +200,14 @@ export function cleanWhen(raw: unknown): Clean<Date> {
 /** A row id (a cuid): what the pages, the actions and the tap URL accept. */
 export function isRowId(id: unknown): id is string {
   return isBoardId(id);
+}
+
+/** When an info was recorded: an instant (cleanWhen) no more than a minute ahead of now. */
+export function cleanRecordedAt(raw: unknown, now: Date): Clean<Date> {
+  const at = cleanWhen(raw);
+  if (!at.ok) return at;
+  if (at.value.getTime() > now.getTime() + RECORDED_AHEAD_MS) return no(RECORDED_FUTURE);
+  return at;
 }
 
 // ── IDs: order, the numeric keyboard, the next one ─────────────────────────
@@ -362,6 +389,37 @@ export function whenLabel(at: Date, now: Date, tz: string = LIFE_TZ): string {
   return `${weekday} ${a.d} ${MONTH[a.m - 1]}${a.y !== n.y ? ` ${a.y}` : ""}, ${time}`;
 }
 
+// ── Info ───────────────────────────────────────────────────────────────────
+
+/** "Recorded Wed 14 Oct · 15:20" (and the year when it is not this one), in the user's zone. */
+export function infoRecordedLabel(at: Date, now: Date, tz: string = LIFE_TZ): string {
+  const a = wallClockOf(at, tz);
+  const n = wallClockOf(now, tz);
+  const weekday = WEEKDAY[new Date(Date.UTC(a.y, a.m - 1, a.d)).getUTCDay()];
+  return `Recorded ${weekday} ${a.d} ${MONTH[a.m - 1]}${a.y !== n.y ? ` ${a.y}` : ""} · ${pad(a.h)}:${pad(a.mi)}`;
+}
+
+/** Infos newest recorded first (the newest added first within the same minute). */
+export function sortInfos<T extends { id: string; recordedAt: Date | string; createdAt?: Date | string }>(infos: readonly T[]): T[] {
+  const ms = (v: Date | string | undefined) => (v === undefined ? 0 : typeof v === "string" ? Date.parse(v) || 0 : v.getTime());
+  return [...infos].sort((a, b) => ms(b.recordedAt) - ms(a.recordedAt) || ms(b.createdAt) - ms(a.createdAt) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+}
+
+/** An info's first written line (the customer list's quiet subtitle), spaces collapsed. */
+export function infoFirstLine(detail: string): string {
+  return (
+    detail
+      .split(/\r?\n/)
+      .map((l) => l.trim().replace(/\s+/g, " "))
+      .find((l) => l !== "") ?? ""
+  );
+}
+
+/** Long enough that three lines may not hold it on a phone: the row offers "More" before it is measured. */
+export function infoLooksLong(detail: string): boolean {
+  return [...detail].length > 110 || detail.split("\n").length > 3;
+}
+
 // ── Tasks and their one reminder ───────────────────────────────────────────
 
 export type CustomerTaskState = "done" | "overdue" | "today" | "upcoming";
@@ -494,6 +552,8 @@ export interface CustomerListItem {
   /** Open tasks due by the end of today (overdue included), and the overdue ones. */
   due: number;
   overdue: number;
+  /** The first line of their newest info (a quiet subtitle), or null. */
+  info: string | null;
 }
 
 export interface ArchivedCustomerItem {
@@ -520,6 +580,12 @@ export interface CustomerTaskView {
   remind: boolean;
   doneAt: string | null;
   state: CustomerTaskState;
+}
+
+export interface CustomerInfoView {
+  id: string;
+  detail: string;
+  recordedAt: string;
 }
 
 export interface InteractionView {

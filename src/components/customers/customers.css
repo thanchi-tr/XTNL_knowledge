@@ -2,7 +2,7 @@
 /* =====================================================================
    CUSTOMERS (2026-10-12; components/customers/*, the pages under
    /today/work/<id>/customers): a work tab's customer list — the ID search,
-   a customer's header, their scheduled tasks, their interaction log, the
+   a customer's header, their scheduled tasks, their infos, their interaction log, the
    call backs linked to them, and the sheets that edit them. Phone first
    (344); every control is a 44 px target. Tokens only, so Night and Vellum
    both hold. Namespaced: crm-* (none is a Tailwind utility).
@@ -94,6 +94,7 @@
   .crm-row-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; }
   .crm-row-sub .t-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .crm-row[data-exact] .crm-row-main b { font-size: 16px; }
+  .crm-row-info { min-width: 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .crm-num { flex: none; max-width: 42%; font: 600 13px/18px var(--font-mono); color: var(--ink-1); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   .crm-more { margin: 0; padding: 8px 14px 4px; font: 400 13px/18px var(--font-ui); color: var(--ink-2); }
   .crm-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px; }
@@ -163,6 +164,30 @@
   .crm-done > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
   .crm-done > summary svg.i { width: 16px; height: 16px; transition: transform var(--t-quick) var(--ease-out); }
   .crm-done[open] > summary svg.i { transform: rotate(90deg); }
+
+  /* infos, newest recorded first: the detail (three lines, then More) and when it was recorded; tap to edit */
+  .crm-infos { list-style: none; margin: 0; padding: 0 6px; display: flex; flex-direction: column; gap: 2px; }
+  .crm-info { display: flex; flex-direction: column; align-items: flex-start; }
+  .crm-info-btn {
+    width: 100%; min-height: 52px; display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 8px;
+    border: 0; border-radius: 12px; background: transparent; color: var(--ink-0); text-align: left; font: inherit; cursor: pointer;
+    transition: background-color var(--t-quick);
+  }
+  .crm-info-btn:hover { background: var(--raised); }
+  .crm-info-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .crm-info-d {
+    font: 400 14px/20px var(--font-ui); color: var(--ink-0); white-space: pre-line; overflow-wrap: anywhere;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .crm-info-d[data-open] { display: block; -webkit-line-clamp: none; overflow: visible; }
+  .crm-info-t { font: 400 13px/18px var(--font-ui); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .crm-info-more {
+    min-height: 44px; margin: 0 0 2px; padding: 0 8px; border: 0; border-radius: 12px; background: transparent;
+    color: var(--ink-1); font: 600 13px var(--font-ui); text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
+    transition: background-color var(--t-quick), color var(--t-quick);
+  }
+  .crm-info-more:hover { background: var(--raised); color: var(--ink-0); }
+  .crm-info-more:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 
   /* the interaction log, newest first */
   .crm-log { list-style: none; margin: 0; padding: 0 6px; display: flex; flex-direction: column; gap: 2px; }

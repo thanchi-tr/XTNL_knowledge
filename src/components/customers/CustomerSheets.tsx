@@ -3,8 +3,8 @@
 /**
  * The customer list's sheets (customers.ts holds the rules): a customer's
  * details (add and edit), a scheduled task (add and edit: when, the task, a
- * detail, the one reminder) and an interaction (add and edit: when, what
- * happened, a brief). Each checks its fields with the same clean* the server
+ * detail, the one reminder), an info (add and edit: the detail, when it was
+ * recorded) and an interaction (add and edit: when, what happened, a brief). Each checks its fields with the same clean* the server
  * uses, says what is wrong under the field, and hands a clean input to its
  * caller's save, which answers an error line or null. A parent remounts a
  * sheet (its `key`) each time it opens, so the fields start from `initial`.
@@ -14,6 +14,7 @@ import {
   CUSTOMER_ACTIONS,
   CUSTOMER_ACTION_GLYPH,
   CUSTOMER_ACTION_LABEL,
+  CUSTOMER_INFO_MAX,
   CUSTOMER_NAME_MAX,
   CUSTOMER_NICKNAME_MAX,
   CUSTOMER_NUMBER_MAX,
@@ -22,11 +23,14 @@ import {
   CUSTOMER_TASK_DETAIL_MAX,
   CUSTOMER_TASK_TITLE_MAX,
   INTERACTION_BRIEF_MAX,
+  RECORDED_AHEAD_MS,
+  RECORDED_FUTURE,
   WHEN_BAD,
   cleanAction,
   cleanBrief,
   cleanCustomerName,
   cleanCustomerNumber,
+  cleanInfoDetail,
   cleanNickname,
   cleanPhone,
   cleanTaskDetail,
@@ -341,6 +345,135 @@ export function TaskSheet({
           <div className="crm-form-actions">
             <Button variant="secondary" onClick={archive} disabled={pending}>
               Archive task
+            </Button>
+          </div>
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+// ── An info ────────────────────────────────────────────────────────────────
+
+export interface InfoFormValue {
+  detail: string;
+  /** A datetime-local value in the user's zone. */
+  when: string;
+}
+
+export function InfoSheet({
+  open,
+  onClose,
+  editing,
+  initial,
+  onSave,
+  onArchive,
+}: {
+  open: boolean;
+  onClose: () => void;
+  editing: boolean;
+  initial: InfoFormValue;
+  /** recordedAt is left out while the time is as the sheet opened it: now on an add (the server's), kept on an edit. */
+  onSave: (value: { detail: string; recordedAt?: string }) => Promise<string | null>;
+  /** Edit only: archive the info (the page offers Undo). */
+  onArchive?: () => Promise<string | null>;
+}) {
+  const id = useId();
+  const [v, setV] = useState(initial);
+  const [errors, setErrors] = useState<Partial<Record<"detail" | "when" | "form", string>>>({});
+  const [pending, start] = useTransition();
+
+  function save() {
+    const detail = cleanInfoDetail(v.detail);
+    const untouched = v.when === initial.when;
+    const at = instantOfLocalInput(v.when);
+    const ahead = !untouched && at !== null && at.getTime() > Date.now() + RECORDED_AHEAD_MS;
+    if (!detail.ok || !at || ahead) {
+      setErrors({ detail: detail.ok ? undefined : detail.error, when: !at ? WHEN_BAD : ahead ? RECORDED_FUTURE : undefined });
+      return;
+    }
+    start(async () => {
+      let error: string | null;
+      try {
+        error = await onSave(untouched ? { detail: detail.value } : { detail: detail.value, recordedAt: at.toISOString() });
+      } catch {
+        error = UNREACHABLE;
+      }
+      if (error) setErrors(error === RECORDED_FUTURE ? { when: error } : { form: error });
+    });
+  }
+
+  function archive() {
+    if (!onArchive) return;
+    start(async () => {
+      let error: string | null;
+      try {
+        error = await onArchive();
+      } catch {
+        error = UNREACHABLE;
+      }
+      if (error) setErrors({ form: error });
+    });
+  }
+
+  return (
+    <Sheet open={open} onClose={() => !pending && onClose()} title={editing ? "Edit info" : "Add info"} description="What you know about them, and when it was recorded.">
+      <form
+        className="crm-form"
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault();
+          save();
+        }}
+      >
+        <Field id={`${id}-detail`} label="Info" aside={`${count(v.detail.trim())}/${CUSTOMER_INFO_MAX}`} error={errors.detail}>
+          <textarea
+            id={`${id}-detail`}
+            className="crm-input"
+            value={v.detail}
+            rows={5}
+            onChange={(e) => {
+              setV((x) => ({ ...x, detail: e.target.value }));
+              if (errors.detail || errors.form) setErrors((er) => ({ ...er, detail: undefined, form: undefined }));
+            }}
+            maxLength={CUSTOMER_INFO_MAX + 20}
+            data-autofocus
+            {...invalid(errors.detail, `${id}-detail`)}
+          />
+        </Field>
+        <Field id={`${id}-when`} label="Recorded at" error={errors.when}>
+          <input
+            id={`${id}-when`}
+            className="crm-input"
+            type="datetime-local"
+            value={v.when}
+            onChange={(e) => {
+              setV((x) => ({ ...x, when: e.target.value }));
+              if (errors.when || errors.form) setErrors((er) => ({ ...er, when: undefined, form: undefined }));
+            }}
+            {...invalid(errors.when, `${id}-when`)}
+          />
+        </Field>
+        <div className="crm-form-actions">
+          <Button type="submit" variant="primary" disabled={pending}>
+            {pending ? "Saving…" : editing ? "Save" : "Add info"}
+          </Button>
+          <Button type="button" variant="quiet" onClick={onClose} disabled={pending}>
+            Cancel
+          </Button>
+        </div>
+        {errors.form && (
+          <p className="crm-error" role="alert">
+            {errors.form}
+          </p>
+        )}
+      </form>
+      {editing && onArchive && (
+        <div className="crm-danger" style={{ marginTop: 14 }}>
+          <p>Archive takes the info off their page. You can undo right after.</p>
+          <div className="crm-form-actions">
+            <Button variant="secondary" onClick={archive} disabled={pending}>
+              Archive info
             </Button>
           </div>
         </div>

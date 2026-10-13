@@ -3,23 +3,28 @@
 import { refresh } from "next/cache";
 import { getCurrentUserId } from "@/lib/user";
 import {
+  addInfoCore,
   addInteractionCore,
   addTaskCore,
   archiveCustomerCore,
+  archiveInfoCore,
   archiveInteractionCore,
   archiveTaskCore,
   createCustomerCore,
   customerDueCountCore,
   editCustomerCore,
+  editInfoCore,
   editInteractionCore,
   editTaskCore,
   restoreCustomerCore,
+  restoreInfoCore,
   restoreInteractionCore,
   restoreTaskCore,
   setCrmCore,
   setTaskDoneCore,
   type CustomerInput,
   type CustomerResult,
+  type InfoInput,
   type InteractionInput,
   type TaskInput,
 } from "@/lib/customers-server";
@@ -27,8 +32,8 @@ import type { DueCount } from "@/lib/customers";
 
 /**
  * A work tab's customer list (src/lib/customers.ts holds the rules,
- * customers-server.ts the cores): the tab's switch, customers, their
- * interaction log and their scheduled tasks. Every write checks that the tab
+ * customers-server.ts the cores): the tab's switch, customers, their infos,
+ * their interaction log and their scheduled tasks. Every write checks that the tab
  * is the user's, open and keeps a customer list. Each action takes ids and a
  * plain input, never throws, and answers `{ ok, value } | { ok, error }`.
  * `refresh: true` re-renders the current route in the same response.
@@ -75,6 +80,22 @@ export async function archiveCustomer(customerId: string, opts?: CustomerActionO
 
 export async function restoreCustomer(customerId: string, opts?: CustomerActionOptions): Promise<CustomerResult<{ id: string }>> {
   return run("restoreCustomer", opts, (userId) => restoreCustomerCore(userId, customerId));
+}
+
+export async function addCustomerInfo(customerId: string, input: InfoInput, opts?: CustomerActionOptions): Promise<CustomerResult<{ id: string }>> {
+  return run("addCustomerInfo", opts, (userId) => addInfoCore(userId, customerId, input));
+}
+
+export async function editCustomerInfo(infoId: string, input: InfoInput, opts?: CustomerActionOptions): Promise<CustomerResult<{ id: string }>> {
+  return run("editCustomerInfo", opts, (userId) => editInfoCore(userId, infoId, input));
+}
+
+export async function archiveCustomerInfo(infoId: string, opts?: CustomerActionOptions): Promise<CustomerResult<{ id: string }>> {
+  return run("archiveCustomerInfo", opts, (userId) => archiveInfoCore(userId, infoId));
+}
+
+export async function restoreCustomerInfo(infoId: string, opts?: CustomerActionOptions): Promise<CustomerResult<{ id: string }>> {
+  return run("restoreCustomerInfo", opts, (userId) => restoreInfoCore(userId, infoId));
 }
 
 export async function addInteraction(customerId: string, input: InteractionInput, opts?: CustomerActionOptions): Promise<CustomerResult<{ id: string }>> {

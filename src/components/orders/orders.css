@@ -1,0 +1,93 @@
+@layer theme, base, components, art, effects, utilities;
+/* =====================================================================
+   ORDERS (2026-10-14; components/orders/*, the page under
+   /today/work/<id>/orders, a customer's "Orders" section): a work tab's
+   order list — its header and counts, the To order · Ordered · All filter,
+   the lines (the ordered tick, the item, who and how to reach them, the
+   date) and the sheet's extra words. The sheet's fields, the back link and
+   the notes are customers.css's (crm-*), which every order page loads too.
+   Phone first (344); every control is a 44 px target. Tokens only, so
+   Night and Vellum both hold. Namespaced: ord-* (none is a Tailwind
+   utility).
+   ===================================================================== */
+@layer components {
+  /* ---------- the header: counts, Add order, the filter ---------- */
+  .ord-head { display: flex; flex-direction: column; gap: 12px; padding: 14px; }
+  .ord-head-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  .ord-sum {
+    flex: 1 1 140px; min-width: 0; margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
+    font: 400 14px/20px var(--font-ui); color: var(--ink-1); font-variant-numeric: tabular-nums;
+  }
+  .ord-sum b { font: 600 18px/24px var(--font-ui); color: var(--ink-0); }
+  .ord-filters {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; min-width: 0;
+    margin: 0; padding: 2px; border: 1px solid var(--line-ctl); border-radius: 14px;
+  }
+  .ord-filter {
+    position: relative; min-width: 0; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 5px;
+    padding: 0 6px; border-radius: 12px; color: var(--ink-1); font: 600 13px/16px var(--font-ui); cursor: pointer; white-space: nowrap;
+    transition: background-color var(--t-quick), color var(--t-quick);
+  }
+  .ord-filter:hover { background: var(--raised); color: var(--ink-0); }
+  .ord-filter input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+  .ord-filter:has(input:checked) { background: var(--ink-0); color: var(--page); }
+  .ord-filter:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .ord-n { font-weight: 400; font-variant-numeric: tabular-nums; }
+
+  /* ---------- the lines ---------- */
+  .ord-card { padding: 4px 0; overflow: clip; }
+  .ord-list { list-style: none; margin: 0; padding: 0 6px; }
+  .ord-list > li + li { border-top: 1px solid var(--line-1); }
+  .ord-row { display: flex; align-items: flex-start; gap: 2px; padding: 4px 0; }
+  .ord-row > .tick { margin-top: 2px; }
+  /* The row's text sits over one stretched button (tap the line to edit it); only the contact link takes its own taps. */
+  .ord-main {
+    position: relative; flex: 1 1 auto; min-width: 0; min-height: 48px; display: flex; flex-direction: column; justify-content: center; gap: 2px;
+    padding: 6px 8px 6px 6px; border-radius: 12px;
+  }
+  .ord-edit {
+    position: absolute; inset: 0; width: 100%; min-height: 44px; padding: 0; border: 0; border-radius: 12px;
+    background: transparent; color: inherit; cursor: pointer; transition: background-color var(--t-quick);
+  }
+  .ord-edit:hover { background: var(--raised); }
+  .ord-edit:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .ord-main > :not(.ord-edit) { position: relative; pointer-events: none; }
+  .ord-item { font: 600 15px/20px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+  .ord-who { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; min-width: 0; font: 400 14px/20px var(--font-ui); color: var(--ink-1); }
+  .ord-who > span { min-width: 0; overflow-wrap: anywhere; }
+  .ord-num { font: 600 12px/18px var(--font-mono); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .ord-contact {
+    pointer-events: auto; display: inline-flex; align-items: center; min-height: 44px; min-width: 0; padding: 0 6px; margin: 0 -6px;
+    border-radius: 10px; color: var(--ink-0); font-weight: 600; text-decoration: underline; text-underline-offset: 3px;
+    overflow-wrap: anywhere; font-variant-numeric: tabular-nums; transition: background-color var(--t-quick);
+  }
+  .ord-contact:hover { background: var(--sunken); }
+  .ord-contact:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+  .ord-date { font: 400 13px/18px var(--font-ui); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .ord-row[data-overdue] .ord-date { color: var(--owed); font-weight: 600; }
+  .ord-row[data-ordered] .ord-item { color: var(--ink-1); }
+  .ord-more { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 14px 6px; }
+  .ord-more p { flex: 1 1 140px; margin: 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); }
+
+  /* ---------- the sheet's words ---------- */
+  .ord-hint { margin: 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); overflow-wrap: anywhere; }
+  .ord-hint[data-match] { color: var(--ink-0); font-weight: 600; }
+  .ord-fixed { display: flex; flex-direction: column; gap: 2px; font: 600 15px/20px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+  .ord-fixed .ord-num { font-size: 13px; }
+
+  /* ---------- a customer's "Orders" section (read-only lines) ---------- */
+  .ord-mini { list-style: none; margin: 0; padding: 0; }
+  .ord-mini > li + li { border-top: 1px solid var(--line-1); }
+  .ord-mini-row { display: flex; align-items: flex-start; gap: 10px; min-height: 52px; padding: 8px 14px; }
+  .ord-mini-row .chip { flex: none; margin-top: 1px; }
+  .ord-mini-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .ord-mini-row[data-overdue] .ord-date { color: var(--owed); font-weight: 600; }
+  .ord-mini-row[data-ordered] .ord-item { color: var(--ink-1); }
+  .ord-all {
+    display: flex; align-items: center; gap: 6px; min-height: 44px; margin: 2px 6px 0; padding: 0 8px; border-radius: 12px;
+    color: var(--ink-1); font: 600 13px var(--font-ui); text-decoration: none; transition: background-color var(--t-quick);
+  }
+  .ord-all:hover { background: var(--raised); color: var(--ink-0); }
+  .ord-all:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .ord-all svg.i { width: 16px; height: 16px; }
+}

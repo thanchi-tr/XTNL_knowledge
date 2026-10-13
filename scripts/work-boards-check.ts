@@ -447,7 +447,7 @@ function ui(board: ReturnType<typeof scoping>) {
     "page /today/work/[boardId]: the tab and its board in one wave, the tab's name as the title, the same TodayBoard in work mode, no due-elsewhere strip",
     /Promise\.all\(\[loadWorkBoard\(userId, boardId\), loadTodayBoard\(userId, day, now, boardId\)\]\)/.test(page) &&
       /<ShellTitle eyebrow="Work" title=\{board\.name\} \/>/.test(page) &&
-      /<TodayBoard [^>]*work=\{\{ id: board\.id, name: board\.name, crmOn: board\.crmOn \}\}/.test(page) &&
+      /<TodayBoard [^>]*work=\{\{ id: board\.id, name: board\.name, crmOn: board\.crmOn, ordersOn: board\.ordersOn \}\}/.test(page) &&
       !/elsewhere=|DueElsewhere/.test(page) &&
       /if \(!board\) notFound\(\);/.test(page) &&
       /board\.archived/.test(page)

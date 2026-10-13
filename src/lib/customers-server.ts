@@ -11,6 +11,9 @@
  *                                                   the partial unique index's P2002 → CUSTOMER_NUMBER_TAKEN
  *   archiveCustomerCore / restoreCustomerCore       archived customers leave the search; restoring
  *                                                   needs their ID free again
+ *   addInfoCore / editInfoCore / archiveInfoCore / restoreInfoCore
+ *                                                   an info: a detail and when it was recorded (now by
+ *                                                   default; never more than a minute ahead)
  *   addInteractionCore / editInteractionCore / archiveInteractionCore / restoreInteractionCore
  *   addTaskCore / editTaskCore / setTaskDoneCore / archiveTaskCore / restoreTaskCore
  *                                                   a moved time or a reminder switched back on clears
@@ -29,6 +32,7 @@ import {
   CRM_OFF,
   CUSTOMER_ARCHIVED,
   CUSTOMER_GONE,
+  CUSTOMER_INFO_GONE,
   CUSTOMER_NUMBER_TAKEN,
   CUSTOMER_RESTORE_TAKEN,
   CUSTOMER_TASK_GONE,
@@ -37,8 +41,10 @@ import {
   cleanBrief,
   cleanCustomerName,
   cleanCustomerNumber,
+  cleanInfoDetail,
   cleanNickname,
   cleanPhone,
+  cleanRecordedAt,
   cleanTaskDetail,
   cleanTaskTitle,
   cleanWhen,
@@ -46,16 +52,19 @@ import {
   dueCountOf,
   endOfLocalDay,
   idsNumeric,
+  infoFirstLine,
   isCustomerAction,
   isRowId,
   nextCustomerNumber,
   armedRemindSentAt,
   remindSentAtAfterEdit,
   remindSentAtAfterUndo,
+  sortInfos,
   taskStateOf,
   type ArchivedCustomerItem,
   type CrmBoardView,
   type CustomerDetail,
+  type CustomerInfoView,
   type CustomerListItem,
   type CustomerTaskView,
   type DueCount,
@@ -86,6 +95,16 @@ export interface CustomerRow {
   nickname: string | null;
   phone: string | null;
   archivedAt: Date | null;
+}
+
+export interface CustomerInfoRow {
+  id: string;
+  userId: string;
+  customerId: string;
+  detail: string;
+  recordedAt: Date;
+  archivedAt: Date | null;
+  createdAt: Date;
 }
 
 export interface InteractionRow {
@@ -128,6 +147,11 @@ export interface CustomerFields {
   phone: string | null;
 }
 
+export interface InfoFields {
+  detail: string;
+  recordedAt: Date;
+}
+
 export interface InteractionFields {
   at: Date;
   action: string;
@@ -156,6 +180,15 @@ export interface CustomerDb {
   updateCustomer(userId: string, id: string, f: CustomerFields): Promise<number>;
   /** Archives (at) an open customer or restores (null) an archived one; rows changed. A restore can throw a P2002. */
   setCustomerArchived(userId: string, id: string, at: Date | null): Promise<number>;
+  /** A customer's kept infos (any order). */
+  infos(userId: string, customerId: string): Promise<CustomerInfoRow[]>;
+  info(userId: string, id: string): Promise<(CustomerInfoRow & { customer: CustomerWithBoard }) | null>;
+  createInfo(userId: string, customerId: string, f: InfoFields): Promise<CustomerInfoRow>;
+  /** A kept info only; rows changed. */
+  updateInfo(userId: string, id: string, f: InfoFields): Promise<number>;
+  setInfoArchived(userId: string, id: string, at: Date | null): Promise<number>;
+  /** The newest kept info of each of the tab's kept customers: its first 160 characters (the list's subtitle). */
+  latestInfos(userId: string, boardId: string): Promise<{ customerId: string; detail: string }[]>;
   /** A customer's kept log entries (any order). */
   interactions(userId: string, customerId: string): Promise<InteractionRow[]>;
   interaction(userId: string, id: string): Promise<(InteractionRow & { customer: CustomerWithBoard }) | null>;
@@ -179,10 +212,12 @@ export interface CustomerDb {
 const BOARD_SELECT = { id: true, userId: true, name: true, archivedAt: true, crmOn: true } as const;
 const CUSTOMER_SELECT = { id: true, userId: true, boardId: true, number: true, name: true, nickname: true, phone: true, archivedAt: true } as const;
 const CUSTOMER_WITH_BOARD = { ...CUSTOMER_SELECT, board: { select: BOARD_SELECT } } as const;
+const INFO_SELECT = { id: true, userId: true, customerId: true, detail: true, recordedAt: true, archivedAt: true, createdAt: true } as const;
 const INTERACTION_SELECT = { id: true, userId: true, customerId: true, at: true, action: true, brief: true, archivedAt: true } as const;
 const TASK_SELECT = { id: true, userId: true, customerId: true, dueAt: true, title: true, detail: true, remind: true, doneAt: true, remindSentAt: true, archivedAt: true } as const;
 const OPEN_CUSTOMERS_MAX = 5000;
 const ARCHIVED_CUSTOMERS_MAX = 50;
+const INFOS_MAX = 200;
 const INTERACTIONS_MAX = 200;
 const TASKS_MAX = 300;
 const CALL_BACKS_MAX = 50;
@@ -203,6 +238,19 @@ export const prismaCustomerDb: CustomerDb = {
   updateCustomer: async (userId, id, f) => (await prisma.customer.updateMany({ where: { id, userId, archivedAt: null }, data: f })).count,
   setCustomerArchived: async (userId, id, at) =>
     (await prisma.customer.updateMany({ where: { id, userId, archivedAt: at ? null : { not: null } }, data: { archivedAt: at } })).count,
+  infos: (userId, customerId) =>
+    prisma.customerInfo.findMany({ where: { userId, customerId, archivedAt: null }, select: INFO_SELECT, orderBy: [{ recordedAt: "desc" }, { createdAt: "desc" }], take: INFOS_MAX }),
+  info: (userId, id) => prisma.customerInfo.findFirst({ where: { id, userId }, select: { ...INFO_SELECT, customer: { select: CUSTOMER_WITH_BOARD } } }),
+  createInfo: (userId, customerId, f) => prisma.customerInfo.create({ data: { userId, customerId, ...f }, select: INFO_SELECT }),
+  updateInfo: async (userId, id, f) => (await prisma.customerInfo.updateMany({ where: { id, userId, archivedAt: null }, data: f })).count,
+  setInfoArchived: async (userId, id, at) =>
+    (await prisma.customerInfo.updateMany({ where: { id, userId, archivedAt: at ? null : { not: null } }, data: { archivedAt: at } })).count,
+  // One row per customer (Postgres DISTINCT ON, over the (customerId, recordedAt) index), 160 characters at most.
+  latestInfos: (userId, boardId) => prisma.$queryRaw<{ customerId: string; detail: string }[]>`
+    SELECT DISTINCT ON (i."customerId") i."customerId" AS "customerId", left(i."detail", 160) AS "detail"
+    FROM "CustomerInfo" i JOIN "Customer" c ON c."id" = i."customerId"
+    WHERE i."userId" = ${userId} AND i."archivedAt" IS NULL AND c."boardId" = ${boardId} AND c."archivedAt" IS NULL
+    ORDER BY i."customerId", i."recordedAt" DESC, i."createdAt" DESC`,
   interactions: (userId, customerId) =>
     prisma.customerInteraction.findMany({ where: { userId, customerId, archivedAt: null }, select: INTERACTION_SELECT, orderBy: [{ at: "desc" }, { createdAt: "desc" }], take: INTERACTIONS_MAX }),
   interaction: (userId, id) => prisma.customerInteraction.findFirst({ where: { id, userId }, select: { ...INTERACTION_SELECT, customer: { select: CUSTOMER_WITH_BOARD } } }),
@@ -263,6 +311,14 @@ async function openCustomer(db: CustomerDb, userId: string, customerId: string, 
   return customerGate(await db.customer(userId, customerId), userId, archivedToo);
 }
 
+async function openInfo(db: CustomerDb, userId: string, id: string): Promise<CustomerResult<CustomerInfoRow & { customer: CustomerWithBoard }>> {
+  if (!isRowId(id)) return fail(CUSTOMER_INFO_GONE);
+  const row = await db.info(userId, id);
+  if (!row || row.userId !== userId) return fail(CUSTOMER_INFO_GONE);
+  const c = customerGate(row.customer, userId);
+  return c.ok ? ok(row) : fail(c.error);
+}
+
 async function openInteraction(db: CustomerDb, userId: string, id: string): Promise<CustomerResult<InteractionRow & { customer: CustomerWithBoard }>> {
   if (!isRowId(id)) return fail(INTERACTION_GONE);
   const row = await db.interaction(userId, id);
@@ -286,6 +342,12 @@ export interface CustomerInput {
   name: string;
   nickname?: string | null;
   phone?: string | null;
+}
+
+export interface InfoInput {
+  detail: string;
+  /** An ISO instant. Left out: now on an add, kept on an edit. */
+  recordedAt?: string | null;
 }
 
 export interface InteractionInput {
@@ -315,6 +377,17 @@ function customerFieldsOf(input: unknown): CustomerResult<CustomerFields> {
   const phone = cleanPhone(i.phone);
   if (!phone.ok) return fail(phone.error);
   return ok({ number: number.value, name: name.value, nickname: nickname.value, phone: phone.value });
+}
+
+/** An info's fields: the detail, and when it was recorded (left out: `fallback`, now on an add, the info's own on an edit). */
+function infoFieldsOf(input: unknown, now: Date, fallback: Date): CustomerResult<InfoFields> {
+  const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const detail = cleanInfoDetail(i.detail);
+  if (!detail.ok) return fail(detail.error);
+  if (i.recordedAt === undefined || i.recordedAt === null || i.recordedAt === "") return ok({ detail: detail.value, recordedAt: fallback });
+  const at = cleanRecordedAt(i.recordedAt, now);
+  if (!at.ok) return fail(at.error);
+  return ok({ detail: detail.value, recordedAt: at.value });
 }
 
 function interactionFieldsOf(input: unknown): CustomerResult<InteractionFields> {
@@ -405,6 +478,43 @@ export async function restoreCustomerCore(userId: string, customerId: string, db
     if (isNumberTaken(err)) return fail(CUSTOMER_RESTORE_TAKEN);
     throw err;
   }
+}
+
+// ── Info ───────────────────────────────────────────────────────────────────
+
+/** Records an info about a kept customer: a detail, recorded now unless a time (not ahead of now) is given. */
+export async function addInfoCore(userId: string, customerId: string, input: unknown, now: Date = new Date(), db: CustomerDb = prismaCustomerDb): Promise<CustomerResult<{ id: string }>> {
+  const c = await openCustomer(db, userId, customerId);
+  if (!c.ok) return fail(c.error);
+  const f = infoFieldsOf(input, now, now);
+  if (!f.ok) return fail(f.error);
+  const row = await db.createInfo(userId, customerId, f.value);
+  return ok({ id: row.id });
+}
+
+/** Edits an info: its detail and when it was recorded (left out: kept). */
+export async function editInfoCore(userId: string, infoId: string, input: unknown, now: Date = new Date(), db: CustomerDb = prismaCustomerDb): Promise<CustomerResult<{ id: string }>> {
+  const row = await openInfo(db, userId, infoId);
+  if (!row.ok) return fail(row.error);
+  const f = infoFieldsOf(input, now, row.value.recordedAt);
+  if (!f.ok) return fail(f.error);
+  if ((await db.updateInfo(userId, infoId, f.value)) === 0) return fail(CUSTOMER_INFO_GONE);
+  return ok({ id: infoId });
+}
+
+/** Archives an info (the page offers Undo: restoreInfoCore). Again: ok. */
+export async function archiveInfoCore(userId: string, infoId: string, now: Date = new Date(), db: CustomerDb = prismaCustomerDb): Promise<CustomerResult<{ id: string }>> {
+  const row = await openInfo(db, userId, infoId);
+  if (!row.ok) return fail(row.error);
+  if (!row.value.archivedAt) await db.setInfoArchived(userId, infoId, now);
+  return ok({ id: infoId });
+}
+
+export async function restoreInfoCore(userId: string, infoId: string, db: CustomerDb = prismaCustomerDb): Promise<CustomerResult<{ id: string }>> {
+  const row = await openInfo(db, userId, infoId);
+  if (!row.ok) return fail(row.error);
+  if (row.value.archivedAt) await db.setInfoArchived(userId, infoId, null);
+  return ok({ id: infoId });
 }
 
 // ── Interactions ───────────────────────────────────────────────────────────
@@ -509,24 +619,27 @@ export type CustomersPageData =
 
 /**
  * The customer list page, in one wave: the tab, its kept customers, its
- * archived ones and the tasks due by tonight. Customers by ID (natural order).
+ * archived ones, the tasks due by tonight and each customer's newest info
+ * (its first line, the row's quiet subtitle). Customers by ID (natural order).
  */
 export async function loadCustomersPage(userId: string, boardId: string, now: Date = new Date(), db: CustomerDb = prismaCustomerDb): Promise<CustomersPageData> {
   if (!isBoardId(boardId)) return { kind: "gone" };
-  const [board, open, archived, due] = await Promise.all([
+  const [board, open, archived, due, infos] = await Promise.all([
     db.board(userId, boardId),
     db.customers(userId, boardId, false),
     db.customers(userId, boardId, true),
     db.dueTasks(userId, boardId, endOfLocalDay(now)),
+    db.latestInfos(userId, boardId),
   ]);
   if (!board || board.userId !== userId) return { kind: "gone" };
   if (board.archivedAt) return { kind: "archived", board: boardView(board) };
   if (!board.crmOn) return { kind: "off", board: boardView(board) };
   const byCustomer = new Map<string, Date[]>();
   for (const t of due) byCustomer.set(t.customerId, [...(byCustomer.get(t.customerId) ?? []), t.dueAt]);
+  const infoOf = new Map(infos.map((i) => [i.customerId, infoFirstLine(i.detail) || null]));
   const customers = open
     .filter((c) => !c.archivedAt)
-    .map((c): CustomerListItem => ({ id: c.id, number: c.number, name: c.name, nickname: c.nickname, phone: c.phone, ...dueCountOf(byCustomer.get(c.id) ?? [], now) }))
+    .map((c): CustomerListItem => ({ id: c.id, number: c.number, name: c.name, nickname: c.nickname, phone: c.phone, ...dueCountOf(byCustomer.get(c.id) ?? [], now), info: infoOf.get(c.id) ?? null }))
     .sort((a, b) => compareNumbers(a.number, b.number));
   const numbers = customers.map((c) => c.number);
   return {
@@ -542,16 +655,23 @@ export async function loadCustomersPage(userId: string, boardId: string, now: Da
 export type CustomerPageData =
   | { kind: "gone" }
   | { kind: "archived" | "off"; board: CrmBoardView }
-  | { kind: "ok"; board: CrmBoardView; customer: CustomerDetail; tasks: CustomerTaskView[]; interactions: InteractionView[]; callBacks: LinkedCallBackView[] };
+  | { kind: "ok"; board: CrmBoardView; customer: CustomerDetail; tasks: CustomerTaskView[]; infos: CustomerInfoView[]; interactions: InteractionView[]; callBacks: LinkedCallBackView[] };
 
 /**
  * One customer's page, in one wave: the customer with their tab, their tasks
- * (open soonest first, then done), their log (newest first) and the call
- * backs linked to them. A customer on another tab (or another user's) is gone.
+ * (open soonest first, then done), their infos (newest recorded first), their
+ * log (newest first) and the call backs linked to them. A customer on another
+ * tab (or another user's) is gone.
  */
 export async function loadCustomerPage(userId: string, boardId: string, customerId: string, now: Date = new Date(), db: CustomerDb = prismaCustomerDb): Promise<CustomerPageData> {
   if (!isBoardId(boardId) || !isRowId(customerId)) return { kind: "gone" };
-  const [c, tasks, interactions, callBacks] = await Promise.all([db.customer(userId, customerId), db.tasks(userId, customerId), db.interactions(userId, customerId), db.callBacks(userId, customerId)]);
+  const [c, tasks, infos, interactions, callBacks] = await Promise.all([
+    db.customer(userId, customerId),
+    db.tasks(userId, customerId),
+    db.infos(userId, customerId),
+    db.interactions(userId, customerId),
+    db.callBacks(userId, customerId),
+  ]);
   if (!c || c.userId !== userId || c.boardId !== boardId || c.board.userId !== userId) return { kind: "gone" };
   if (c.board.archivedAt) return { kind: "archived", board: boardView(c.board) };
   if (!c.board.crmOn) return { kind: "off", board: boardView(c.board) };
@@ -571,6 +691,7 @@ export async function loadCustomerPage(userId: string, boardId: string, customer
       doneAt: t.doneAt ? t.doneAt.toISOString() : null,
       state: taskStateOf(t, now),
     })),
+    infos: sortInfos(infos.filter((i) => !i.archivedAt)).map((i) => ({ id: i.id, detail: i.detail, recordedAt: i.recordedAt.toISOString() })),
     interactions: interactions
       .filter((i) => !i.archivedAt)
       .sort((a, b) => b.at.getTime() - a.at.getTime())

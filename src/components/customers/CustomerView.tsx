@@ -5,24 +5,32 @@
  * name, nickname, ID and phone (a 44 px tap-to-call), Edit (and Archive,
  * inside it); "Scheduled": their tasks, open ones soonest first with the
  * overdue flagged, each with a tick, a tap to edit and its one reminder;
- * "Interactions": the log, newest first, each entry editable and archivable
+ * "Info": what is known about them, newest recorded first (the detail, three
+ * lines then "More", and when it was recorded), each editable and archivable
+ * (with Undo); "Interactions": the log, newest first, each entry editable and archivable
  * (with Undo); and the call backs linked to them, read-only (each opens its
  * card on the tab). `?task=<id>`
- * (a reminder's tap) highlights that task and scrolls it into view.
+ * (a reminder's tap) highlights that task and scrolls it into view. While the
+ * tab's order list is on, the page hands in their "Orders" section
+ * (components/orders/CustomerOrders.tsx), drawn after the log.
  */
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  addCustomerInfo,
   addCustomerTask,
   addInteraction,
   archiveCustomer,
+  archiveCustomerInfo,
   archiveCustomerTask,
   archiveInteraction,
   editCustomer,
+  editCustomerInfo,
   editCustomerTask,
   editInteraction,
   restoreCustomer,
+  restoreCustomerInfo,
   restoreCustomerTask,
   restoreInteraction,
   setCustomerTaskDone,
@@ -32,11 +40,14 @@ import {
   CUSTOMER_ACTION_LABEL,
   customersHref,
   defaultTaskDue,
+  infoLooksLong,
+  infoRecordedLabel,
   localInputOf,
   phoneHref,
   whenLabel,
   type CrmBoardView,
   type CustomerDetail,
+  type CustomerInfoView,
   type CustomerTaskView,
   type InteractionView,
   type LinkedCallBackView,
@@ -46,12 +57,13 @@ import { Button } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
 import { Tick } from "@/components/ui/Tick";
 import { pushToast } from "@/components/ui/toast-store";
-import { CustomerFormSheet, InteractionSheet, TaskSheet, UNREACHABLE, type InteractionFormValue, type TaskFormValue } from "./CustomerSheets";
+import { CustomerFormSheet, InfoSheet, InteractionSheet, TaskSheet, UNREACHABLE, type InfoFormValue, type InteractionFormValue, type TaskFormValue } from "./CustomerSheets";
 
 type Sheet =
   | { kind: "edit" }
   | { kind: "task"; task: CustomerTaskView | null; initial: TaskFormValue }
   | { kind: "entry"; entry: InteractionView | null; initial: InteractionFormValue }
+  | { kind: "info"; info: CustomerInfoView | null; initial: InfoFormValue }
   | null;
 
 async function call<T>(fn: () => Promise<{ ok: true; value: T } | { ok: false; error: string }>): Promise<{ ok: true; value: T } | { ok: false; error: string }> {
@@ -92,23 +104,67 @@ function TaskRow({ t, now, highlighted, busy, onTick, onOpen }: { t: CustomerTas
   );
 }
 
+/**
+ * One info: the detail (three lines, then "More" while it runs longer; the
+ * row is measured, a long one is assumed until it is) and when it was
+ * recorded. Tapping it opens its sheet.
+ */
+function InfoRow({ info, now, onOpen }: { info: CustomerInfoView; now: Date; onOpen: () => void }) {
+  const ref = useRef<HTMLSpanElement | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [long, setLong] = useState(() => infoLooksLong(info.detail));
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || expanded || typeof ResizeObserver === "undefined") return;
+    // The observer reports once at once, then on every width change: three lines either hold the detail or not.
+    const ro = new ResizeObserver(() => setLong(el.scrollHeight > el.clientHeight + 1));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [info.detail, expanded]);
+  const recorded = infoRecordedLabel(new Date(info.recordedAt), now);
+  return (
+    <li className="crm-info">
+      <button type="button" className="crm-info-btn" onClick={onOpen} aria-haspopup="dialog">
+        <span className="sr-only">Edit info: </span>
+        <span ref={ref} className="crm-info-d" data-open={expanded ? "" : undefined}>
+          {info.detail}
+        </span>
+        <time className="crm-info-t" dateTime={info.recordedAt}>
+          {recorded}
+        </time>
+      </button>
+      {(long || expanded) && (
+        <button type="button" className="crm-info-more" aria-expanded={expanded} onClick={() => setExpanded((x) => !x)}>
+          {expanded ? "Less" : "More"}
+        </button>
+      )}
+    </li>
+  );
+}
+
 export function CustomerView({
   board,
   customer,
   tasks,
+  infos,
   interactions,
   callBacks,
   highlightTask,
   nowIso,
+  orders = null,
 }: {
   board: CrmBoardView;
   customer: CustomerDetail;
   tasks: CustomerTaskView[];
+  /** What is known about them, newest recorded first. */
+  infos: CustomerInfoView[];
   interactions: InteractionView[];
   callBacks: LinkedCallBackView[];
   /** `?task=<id>`: the task a reminder was tapped for. */
   highlightTask: string | null;
   nowIso: string;
+  /** Their lines on the tab's order list (the page draws it only while that list is on). */
+  orders?: ReactNode;
 }) {
   const router = useRouter();
   const now = new Date(nowIso);
@@ -159,6 +215,14 @@ export function CustomerView({
 
   function editTask(t: CustomerTaskView) {
     show({ kind: "task", task: t, initial: { when: localInputOf(new Date(t.dueAt)), title: t.title, detail: t.detail ?? "", remind: t.remind } });
+  }
+
+  function newInfo() {
+    show({ kind: "info", info: null, initial: { detail: "", when: localInputOf(new Date()) } });
+  }
+
+  function editInfo(i: CustomerInfoView) {
+    show({ kind: "info", info: i, initial: { detail: i.detail, when: localInputOf(new Date(i.recordedAt)) } });
   }
 
   function newEntry() {
@@ -293,6 +357,25 @@ export function CustomerView({
         )}
       </section>
 
+      <section className="card crm-sec" aria-labelledby="crm-info-h">
+        <div className="crm-sec-h">
+          <h2 id="crm-info-h">Info</h2>
+          {infos.length > 0 && <span className="t-meta">{infos.length}</span>}
+          <Button variant="secondary" icon="plus" onClick={newInfo} aria-haspopup="dialog">
+            Add info
+          </Button>
+        </div>
+        {infos.length === 0 ? (
+          <p className="crm-sec-note">Nothing recorded yet. Note what you learn about them: what they like, sizes, who to ask for.</p>
+        ) : (
+          <ol className="crm-infos">
+            {infos.map((i) => (
+              <InfoRow key={i.id} info={i} now={now} onOpen={() => editInfo(i)} />
+            ))}
+          </ol>
+        )}
+      </section>
+
       <section className="card crm-sec" aria-labelledby="crm-log-h">
         <div className="crm-sec-h">
           <h2 id="crm-log-h">Interactions</h2>
@@ -324,6 +407,8 @@ export function CustomerView({
           </ol>
         )}
       </section>
+
+      {orders}
 
       {callBacks.length > 0 && (
         <section className="card crm-sec" aria-labelledby="crm-cb-h">
@@ -423,6 +508,40 @@ export function CustomerView({
                   if (!res.ok) return res.error;
                   close();
                   pushToast({ key: `crm-task-${t.id}`, title: "Task archived", body: t.title, action: { label: "Undo", onAction: () => undo(() => restoreCustomerTask(t.id, { refresh: true })) } });
+                  return null;
+                }
+              : undefined
+          }
+        />
+      )}
+
+      {sheet?.kind === "info" && (
+        <InfoSheet
+          key={`info-${sheetKey}`}
+          open={sheetOpen}
+          onClose={close}
+          editing={sheet.info !== null}
+          initial={sheet.initial}
+          onSave={async (value) => {
+            const i = sheet.info;
+            const res = i ? await editCustomerInfo(i.id, value, { refresh: true }) : await addCustomerInfo(customer.id, value, { refresh: true });
+            if (!res.ok) return res.error;
+            close();
+            return null;
+          }}
+          onArchive={
+            sheet.info
+              ? async () => {
+                  const i = sheet.info as CustomerInfoView;
+                  const res = await archiveCustomerInfo(i.id, { refresh: true });
+                  if (!res.ok) return res.error;
+                  close();
+                  pushToast({
+                    key: `crm-info-${i.id}`,
+                    title: "Info archived",
+                    body: infoRecordedLabel(new Date(i.recordedAt), new Date()),
+                    action: { label: "Undo", onAction: () => undo(() => restoreCustomerInfo(i.id, { refresh: true })) },
+                  });
                   return null;
                 }
               : undefined

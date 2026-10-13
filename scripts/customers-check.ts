@@ -4,7 +4,8 @@
  * check pins:
  *
  *   1. the rules (src/lib/customers.ts): the limits (ID 1..24, name 1..60,
- *      nickname <= 40, phone, brief <= 280, task 1..80 / detail <= 500), the
+ *      nickname <= 40, phone, brief <= 280, task 1..80 / detail <= 500, an
+ *      info's detail 1..1000 and its "Recorded at" never a minute ahead), the
  *      four actions, IDs compared ignoring case, the next-ID suggestion, the
  *      search by ID (exact first, then prefix, then names), the user's clock,
  *      the task states and the due count, the reminder's re-arm rules, and the
@@ -15,6 +16,7 @@
  *      after an archive; the crmOn gate (and the tab's owner, and archived
  *      tabs) on every write; remindSentAt cleared when a task's time moves or
  *      its reminder is switched back on; a done task never due a reminder;
+ *      an info recorded now by default, newest first, archived and restored;
  *      the pages' reads;
  *   3. the wiring: the actions, the routes and their params, the shell (the
  *      work tab stays current under /customers), the tab card's link and
@@ -34,6 +36,9 @@ import {
   CUSTOMER_ACTION_LABEL,
   CUSTOMER_ARCHIVED,
   CUSTOMER_GONE,
+  CUSTOMER_INFO_EMPTY,
+  CUSTOMER_INFO_GONE,
+  CUSTOMER_INFO_LONG,
   CUSTOMER_NAME_EMPTY,
   CUSTOMER_NAME_LONG,
   CUSTOMER_NICKNAME_LONG,
@@ -51,6 +56,7 @@ import {
   INTERACTION_ACTION_BAD,
   INTERACTION_BRIEF_LONG,
   INTERACTION_GONE,
+  RECORDED_FUTURE,
   REMIND_LATE_MS,
   TASK_PARAM,
   WHEN_BAD,
@@ -59,8 +65,10 @@ import {
   cleanBrief,
   cleanCustomerName,
   cleanCustomerNumber,
+  cleanInfoDetail,
   cleanNickname,
   cleanPhone,
+  cleanRecordedAt,
   cleanTaskDetail,
   cleanTaskTitle,
   cleanWhen,
@@ -73,6 +81,9 @@ import {
   dueCountOf,
   endOfLocalDay,
   idsNumeric,
+  infoFirstLine,
+  infoLooksLong,
+  infoRecordedLabel,
   instantOfLocalInput,
   localInputOf,
   nextCustomerNumber,
@@ -83,26 +94,31 @@ import {
   remindSentAtAfterUndo,
   searchCustomers,
   searchPick,
+  sortInfos,
   sortTasks,
   taskParamOf,
   taskStateOf,
   whenLabel,
 } from "../src/lib/customers";
 import {
+  addInfoCore,
   addInteractionCore,
   addTaskCore,
   archiveCustomerCore,
+  archiveInfoCore,
   archiveInteractionCore,
   archiveTaskCore,
   createCustomerCore,
   customerDueCountCore,
   editCustomerCore,
+  editInfoCore,
   editInteractionCore,
   editTaskCore,
   isNumberTaken,
   loadCustomerPage,
   loadCustomersPage,
   restoreCustomerCore,
+  restoreInfoCore,
   restoreInteractionCore,
   restoreTaskCore,
   setCrmCore,
@@ -110,6 +126,8 @@ import {
   type CrmBoardRow,
   type CustomerDb,
   type CustomerFields,
+  type CustomerInfoRow,
+  type InfoFields,
   type CustomerRow,
   type CustomerTaskRow,
   type InteractionFields,
@@ -198,6 +216,34 @@ console.log("— the rules (customers.ts) —");
     err(CUSTOMER_TASK_DETAIL_LONG),
   ]);
   eq("when: an ISO instant; nonsense or out of range refused", [cleanWhen("2026-10-12T03:30:00.000Z").ok, cleanWhen("soon"), cleanWhen("1990-01-01T00:00:00Z"), cleanWhen(undefined)], [true, err(WHEN_BAD), err(WHEN_BAD), err(WHEN_BAD)]);
+
+  // Info: a detail and when it was recorded.
+  eq("info: the detail is required, trimmed, line breaks kept; 1000 pass, 1001 refused", [cleanInfoDetail("  "), cleanInfoDetail(undefined), cleanInfoDetail(" Likes A5\r\nPays cash "), cleanInfoDetail("d".repeat(1000)).ok, cleanInfoDetail("d".repeat(1001))], [
+    err(CUSTOMER_INFO_EMPTY),
+    err(CUSTOMER_INFO_EMPTY),
+    { ok: true, value: "Likes A5\nPays cash" },
+    true,
+    err(CUSTOMER_INFO_LONG),
+  ]);
+  {
+    const n = new Date("2026-10-14T04:20:00.000Z");
+    eq(
+      "info: recorded at an instant, never more than a minute ahead of now (a minute ahead passes; past times pass)",
+      [cleanRecordedAt("2026-10-14T04:21:00.000Z", n).ok, cleanRecordedAt("2026-10-14T04:21:01.000Z", n), cleanRecordedAt("2026-09-01T00:00:00.000Z", n).ok, cleanRecordedAt("yesterday", n)],
+      [true, err(RECORDED_FUTURE), true, err(WHEN_BAD)]
+    );
+    eq("info: 'Recorded Wed 14 Oct · 15:20' in the user's zone (the year when not this one)", [infoRecordedLabel(n, n, TZ), infoRecordedLabel(new Date("2025-12-31T01:05:00.000Z"), n, TZ)], ["Recorded Wed 14 Oct · 15:20", "Recorded Wed 31 Dec 2025 · 12:05"]);
+    eq(
+      "info: newest recorded first; the same minute, the newest added first",
+      sortInfos([
+        { id: "i1", recordedAt: "2026-10-10T00:00:00.000Z", createdAt: "2026-10-10T00:00:00.000Z" },
+        { id: "i2", recordedAt: "2026-10-14T00:00:00.000Z", createdAt: "2026-10-14T00:00:00.000Z" },
+        { id: "i3", recordedAt: "2026-10-14T00:00:00.000Z", createdAt: "2026-10-14T00:05:00.000Z" },
+      ]).map((i) => i.id),
+      ["i3", "i2", "i1"]
+    );
+    eq("info: the list's subtitle is the first written line; 'More' is offered for a long one", [infoFirstLine("\n  Likes   A5 paper \nPays cash"), infoFirstLine("   "), infoLooksLong("short"), infoLooksLong("x".repeat(111)), infoLooksLong("a\nb\nc\nd")], ["Likes A5 paper", "", false, true, true]);
+  }
 
   // The next ID, while every ID is a number.
   eq("next ID: one past the highest, natural not alphabetical ('9','10' → '11')", nextCustomerNumber(["9", "10", "2"]), "11");
@@ -321,6 +367,7 @@ class FakeCrm implements CustomerDb {
   boards: CrmBoardRow[] = [];
   people: Row<CustomerRow>[] = [];
   log: Row<InteractionRow>[] = [];
+  notes: CustomerInfoRow[] = [];
   todo: Row<CustomerTaskRow>[] = [];
   calls: (LinkedCallBackRow & { userId: string; customerId: string; archivedAt: Date | null })[] = [];
   writes = 0;
@@ -380,6 +427,45 @@ class FakeCrm implements CustomerDb {
     c.archivedAt = at;
     this.writes++;
     return 1;
+  }
+  async infos(userId: string, customerId: string) {
+    return this.notes.filter((i) => i.userId === userId && i.customerId === customerId && i.archivedAt === null).map((i) => ({ ...i }));
+  }
+  async info(userId: string, id: string) {
+    const i = this.notes.find((x) => x.id === id && x.userId === userId);
+    if (!i) return null;
+    const c = this.people.find((x) => x.id === i.customerId)!;
+    return { ...i, customer: this.withBoard(this.plain(c)) };
+  }
+  async createInfo(userId: string, customerId: string, f: InfoFields) {
+    const row: CustomerInfoRow = { id: `if${++this.seq}`, userId, customerId, ...f, archivedAt: null, createdAt: new Date(Date.UTC(2026, 9, 1) + this.seq * 1000) };
+    this.notes.push(row);
+    this.writes++;
+    return { ...row };
+  }
+  async updateInfo(userId: string, id: string, f: InfoFields) {
+    const i = this.notes.find((x) => x.id === id && x.userId === userId && x.archivedAt === null);
+    if (!i) return 0;
+    Object.assign(i, f);
+    this.writes++;
+    return 1;
+  }
+  async setInfoArchived(userId: string, id: string, at: Date | null) {
+    const i = this.notes.find((x) => x.id === id && x.userId === userId && (at ? x.archivedAt === null : x.archivedAt !== null));
+    if (!i) return 0;
+    i.archivedAt = at;
+    this.writes++;
+    return 1;
+  }
+  async latestInfos(userId: string, boardId: string) {
+    const best = new Map<string, CustomerInfoRow>();
+    for (const i of this.notes) {
+      const c = this.people.find((x) => x.id === i.customerId);
+      if (i.userId !== userId || i.archivedAt || !c || c.boardId !== boardId || c.archivedAt) continue;
+      const b = best.get(i.customerId);
+      if (!b || i.recordedAt.getTime() > b.recordedAt.getTime() || (i.recordedAt.getTime() === b.recordedAt.getTime() && i.createdAt.getTime() > b.createdAt.getTime())) best.set(i.customerId, i);
+    }
+    return [...best.values()].map((i) => ({ customerId: i.customerId, detail: i.detail.slice(0, 160) }));
   }
   async interactions(userId: string, customerId: string) {
     return this.log.filter((i) => i.userId === userId && i.customerId === customerId && i.archivedAt === null).map((i) => this.plain(i));
@@ -501,6 +587,7 @@ async function cores() {
   db.boards.find((b) => b.id === "bOff")!.crmOn = false;
   const offCustomer = db.people.find((c) => c.boardId === "bOff")!;
   db.log.push({ id: "inOff", userId: U, customerId: offCustomer.id, at: now, action: "PURCHASE", brief: "", archivedAt: null, createdAt: 0 });
+  db.notes.push({ id: "ifOff", userId: U, customerId: offCustomer.id, detail: "Kept note", recordedAt: now, archivedAt: null, createdAt: now });
   db.todo.push({ id: "tkOff", userId: U, customerId: offCustomer.id, dueAt: now, title: "Ring", detail: null, remind: true, doneAt: null, remindSentAt: null, archivedAt: null, createdAt: 0 });
   const before = db.writes;
   const offResults = [
@@ -512,6 +599,10 @@ async function cores() {
     await editInteractionCore(U, "inOff", { at: now.toISOString(), action: "INQUIRY" }, db),
     await archiveInteractionCore(U, "inOff", now, db),
     await restoreInteractionCore(U, "inOff", db),
+    await addInfoCore(U, offCustomer.id, { detail: "x" }, now, db),
+    await editInfoCore(U, "ifOff", { detail: "x" }, now, db),
+    await archiveInfoCore(U, "ifOff", now, db),
+    await restoreInfoCore(U, "ifOff", db),
     await addTaskCore(U, offCustomer.id, { dueAt: now.toISOString(), title: "x" }, now, db),
     await editTaskCore(U, "tkOff", { dueAt: now.toISOString(), title: "x" }, now, db),
     await setTaskDoneCore(U, "tkOff", true, now, db),
@@ -519,8 +610,8 @@ async function cores() {
     await restoreTaskCore(U, "tkOff", now, db),
     await customerDueCountCore(U, "bOff", now, db),
   ];
-  check("switch: off hides and deletes nothing (the tab's customer, their log and tasks are all kept)", db.people.some((c) => c.id === offCustomer.id) && db.log.some((i) => i.id === "inOff" && !i.archivedAt) && db.todo.some((t) => t.id === "tkOff" && !t.archivedAt));
-  check("crmOn gate: every action on a tab whose list is off is refused (14 of 14), and nothing is written", offResults.every((r) => !r.ok && r.error === CRM_OFF) && db.writes === before, JSON.stringify(offResults.filter((r) => r.ok || r.error !== CRM_OFF)));
+  check("switch: off hides and deletes nothing (the tab's customer, their log, infos and tasks are all kept)", db.people.some((c) => c.id === offCustomer.id) && db.log.some((i) => i.id === "inOff" && !i.archivedAt) && db.notes.some((i) => i.id === "ifOff" && i.detail === "Kept note" && !i.archivedAt) && db.todo.some((t) => t.id === "tkOff" && !t.archivedAt));
+  check("crmOn gate: every action on a tab whose list is off is refused (18 of 18), and nothing is written", offResults.every((r) => !r.ok && r.error === CRM_OFF) && db.writes === before, JSON.stringify(offResults.filter((r) => r.ok || r.error !== CRM_OFF)));
   db.boards.find((b) => b.id === "bOff")!.crmOn = true;
   db.boards.find((b) => b.id === "bOff")!.archivedAt = now;
   check("gate: a tab archived since is refused for its customers' rows too", (await addInteractionCore(U, offCustomer.id, { at: now.toISOString(), action: "PURCHASE" }, db)).ok === false && (await setTaskDoneCore(U, "tkOff", true, now, db)).ok === false && db.writes === before);
@@ -534,12 +625,49 @@ async function cores() {
     await editCustomerCore(U, "<c>", person("5"), db),
   ], [err(WORK_BOARD_GONE), err(CUSTOMER_GONE), err(CUSTOMER_TASK_GONE), err(INTERACTION_GONE), err(CUSTOMER_GONE)]);
   await archiveCustomerCore(U, bId, now, db);
-  eq("gate: an archived customer's log and tasks are closed until they are restored", [await addInteractionCore(U, bId, { at: now.toISOString(), action: "PURCHASE" }, db), await addTaskCore(U, bId, { dueAt: now.toISOString(), title: "x" }, now, db), await editCustomerCore(U, bId, person("13"), db)], [
+  eq("gate: an archived customer's log, infos and tasks are closed until they are restored", [await addInteractionCore(U, bId, { at: now.toISOString(), action: "PURCHASE" }, db), await addTaskCore(U, bId, { dueAt: now.toISOString(), title: "x" }, now, db), await editCustomerCore(U, bId, person("13"), db), await addInfoCore(U, bId, { detail: "x" }, now, db)], [
+    err(CUSTOMER_ARCHIVED),
     err(CUSTOMER_ARCHIVED),
     err(CUSTOMER_ARCHIVED),
     err(CUSTOMER_ARCHIVED),
   ]);
   await restoreCustomerCore(U, bId, db);
+
+  // Info.
+  const f1 = await addInfoCore(U, aId, { detail: "  Likes A5 paper\r\nPays cash  " }, now, db);
+  const f1Id = f1.ok ? f1.value.id : "";
+  const note = (id: string) => db.notes.find((i) => i.id === id)!;
+  check("info: recorded now when no time is given; the detail cleaned, line breaks kept", f1.ok && note(f1Id).recordedAt.getTime() === now.getTime() && note(f1Id).detail === "Likes A5 paper\nPays cash", JSON.stringify(note(f1Id)));
+  const f2 = await addInfoCore(U, aId, { detail: "Prefers email", recordedAt: "2026-10-01T00:00:00.000Z" }, now, db);
+  const f2Id = f2.ok ? f2.value.id : "";
+  check("info: a time given (in the past) is kept", note(f2Id).recordedAt.toISOString() === "2026-10-01T00:00:00.000Z");
+  const wInfo = db.writes;
+  eq("info: an empty or long detail, a time more than a minute ahead, or nonsense is refused, and nothing is written", [
+    await addInfoCore(U, aId, { detail: " " }, now, db),
+    await addInfoCore(U, aId, { detail: "d".repeat(1001) }, now, db),
+    await addInfoCore(U, aId, { detail: "x", recordedAt: new Date(now.getTime() + 61_000).toISOString() }, now, db),
+    await addInfoCore(U, aId, { detail: "x", recordedAt: "soon" }, now, db),
+    await editInfoCore(U, f1Id, { detail: "" }, now, db),
+  ], [err(CUSTOMER_INFO_EMPTY), err(CUSTOMER_INFO_LONG), err(RECORDED_FUTURE), err(WHEN_BAD), err(CUSTOMER_INFO_EMPTY)]);
+  check("info: the refused ones wrote nothing", db.writes === wInfo);
+  check("info: a time a minute ahead (a clock slightly fast) passes", (await addInfoCore(U, aId, { detail: "Just now", recordedAt: new Date(now.getTime() + 60_000).toISOString() }, now, db)).ok);
+  const justNow = db.notes.at(-1)!;
+  await editInfoCore(U, f2Id, { detail: "Prefers email, not calls" }, now, db);
+  check("info: an edit with no time keeps when it was recorded", note(f2Id).detail === "Prefers email, not calls" && note(f2Id).recordedAt.toISOString() === "2026-10-01T00:00:00.000Z");
+  await editInfoCore(U, f2Id, { detail: "Prefers email, not calls", recordedAt: "2026-10-02T00:00:00.000Z" }, now, db);
+  check("info: an edit moves when it was recorded", note(f2Id).recordedAt.toISOString() === "2026-10-02T00:00:00.000Z");
+  const withInfos = await loadCustomerPage(U, "bOn", aId, now, db);
+  eq("info: their page lists them newest recorded first", withInfos.kind === "ok" ? withInfos.infos.map((i) => i.id) : null, [justNow.id, f1Id, f2Id]);
+  eq("info: archive (again ok) takes it off the page; Undo (restore) brings it back as it was", [
+    (await archiveInfoCore(U, justNow.id, now, db)).ok,
+    (await archiveInfoCore(U, justNow.id, now, db)).ok,
+    await loadCustomerPage(U, "bOn", aId, now, db).then((pg) => (pg.kind === "ok" ? pg.infos.map((i) => i.id) : null)),
+    await editInfoCore(U, justNow.id, { detail: "x" }, now, db),
+    (await restoreInfoCore(U, justNow.id, db)).ok,
+    await loadCustomerPage(U, "bOn", aId, now, db).then((pg) => (pg.kind === "ok" ? pg.infos.map((i) => [i.id, i.detail]) : null)),
+  ], [true, true, [f1Id, f2Id], err(CUSTOMER_INFO_GONE), true, [[justNow.id, "Just now"], [f1Id, "Likes A5 paper\nPays cash"], [f2Id, "Prefers email, not calls"]]]);
+  await archiveInfoCore(U, justNow.id, now, db);
+  eq("info: another user's info, an unknown one or a malformed id is gone", [await editInfoCore("u2", f1Id, { detail: "x" }, now, db), await archiveInfoCore(U, "ifNope", now, db), await restoreInfoCore(U, "../if", db)], [err(CUSTOMER_INFO_GONE), err(CUSTOMER_INFO_GONE), err(CUSTOMER_INFO_GONE)]);
 
   // Interactions.
   const i1 = await addInteractionCore(U, aId, { at: "2026-10-10T01:00:00.000Z", action: "PURCHASE", brief: " 2 boxes " }, db);
@@ -598,6 +726,11 @@ async function cores() {
     list.kind === "ok" && list.customers.map((c) => c.number).join() === "13,a-12,A-12b" && list.customers.find((c) => c.id === aId)?.due === 1 && list.customers.find((c) => c.id === aId)?.overdue === 1 && list.numeric === false && list.suggestion === null,
     JSON.stringify(list)
   );
+  eq(
+    "list page: a row's quiet subtitle is the first line of their newest kept info (none without one)",
+    list.kind === "ok" ? [list.customers.find((c) => c.id === aId)?.info, list.customers.find((c) => c.id === bId)?.info] : null,
+    ["Likes A5 paper", null]
+  );
   eq("list page: an archived tab, a list switched off, another user's tab", [(await loadCustomersPage(U, "bArch", now, db)).kind, (await setCrmCore(U, "bOn", false, db)).ok && (await loadCustomersPage(U, "bOn", now, db)).kind, (await loadCustomersPage(U, "bTheirs", now, db)).kind], ["archived", "off", "gone"]);
   await setCrmCore(U, "bOn", true, db);
   const numericDb = new FakeCrm();
@@ -625,16 +758,36 @@ function wiring() {
   check("actions: a 'use server' module", read("src/app/actions/customers.ts").trimStart().startsWith('"use server";'));
   const exported = [...actions.matchAll(/export async function (\w+)\(([^)]*)\)[^{]*\{([\s\S]*?)\n\}/g)].map((m) => ({ name: m[1], body: m[3] }));
   eq(
-    "actions: the tab's switch, the card's count, customers, interactions and tasks",
+    "actions: the tab's switch, the card's count, customers, infos, interactions and tasks",
     exported.map((e) => e.name),
-    ["setCrm", "customerDueCount", "createCustomer", "editCustomer", "archiveCustomer", "restoreCustomer", "addInteraction", "editInteraction", "archiveInteraction", "restoreInteraction", "addCustomerTask", "editCustomerTask", "setCustomerTaskDone", "archiveCustomerTask", "restoreCustomerTask"]
+    [
+      "setCrm",
+      "customerDueCount",
+      "createCustomer",
+      "editCustomer",
+      "archiveCustomer",
+      "restoreCustomer",
+      "addCustomerInfo",
+      "editCustomerInfo",
+      "archiveCustomerInfo",
+      "restoreCustomerInfo",
+      "addInteraction",
+      "editInteraction",
+      "archiveInteraction",
+      "restoreInteraction",
+      "addCustomerTask",
+      "editCustomerTask",
+      "setCustomerTaskDone",
+      "archiveCustomerTask",
+      "restoreCustomerTask",
+    ]
   );
   check("actions: each goes through a core (the gate) with the current user, and never throws", exported.every((e) => /return run\("\w+", (opts|undefined), \(userId\) => \w+Core\(userId, /.test(e.body)) && /catch \(err\) \{[\s\S]*?return \{ ok: false, error:/.test(actions));
 
   const server = code("src/lib/customers-server.ts");
-  const writeCores = ["createCustomerCore", "editCustomerCore", "archiveCustomerCore", "restoreCustomerCore", "addInteractionCore", "editInteractionCore", "archiveInteractionCore", "restoreInteractionCore", "addTaskCore", "editTaskCore", "setTaskDoneCore", "archiveTaskCore", "restoreTaskCore", "customerDueCountCore"];
+  const writeCores = ["createCustomerCore", "editCustomerCore", "archiveCustomerCore", "restoreCustomerCore", "addInfoCore", "editInfoCore", "archiveInfoCore", "restoreInfoCore", "addInteractionCore", "editInteractionCore", "archiveInteractionCore", "restoreInteractionCore", "addTaskCore", "editTaskCore", "setTaskDoneCore", "archiveTaskCore", "restoreTaskCore", "customerDueCountCore"];
   const body = (name: string) => new RegExp(`export async function ${name}\\b[\\s\\S]*?\\n\\}`).exec(server)?.[0] ?? "";
-  const ungated = writeCores.filter((n) => !/await (openBoard|openCustomer|openInteraction|openTask)\(db, userId, /.test(body(n)));
+  const ungated = writeCores.filter((n) => !/await (openBoard|openCustomer|openInfo|openInteraction|openTask)\(db, userId, /.test(body(n)));
   check("cores: every write opens through a gate (the tab is the user's, open, and keeps a list) before it writes", ungated.length === 0, ungated.join(", "));
   check("cores: the gate refuses a foreign, archived or list-off tab, in that order", /if \(!board \|\| board\.userId !== userId\) return fail\(WORK_BOARD_GONE\);\s*if \(board\.archivedAt\) return fail\(WORK_BOARD_ARCHIVED\);\s*if \(!board\.crmOn\) return fail\(CRM_OFF\);/.test(server));
   check("cores: a taken ID (the partial unique index's P2002) reads 'That ID is already used on this tab'", CUSTOMER_NUMBER_TAKEN === "That ID is already used on this tab" && (server.match(/if \(isNumberTaken\(err\)\) return fail\(CUSTOMER_NUMBER_TAKEN\);/g) ?? []).length === 2);
@@ -645,7 +798,13 @@ function wiring() {
   const gameWords = crmCode.filter((f) => /activityEvent|ActivityEvent|ledger|\bxp\b|streak|invalidate\(|life-economy|lifeXp|awardXp|debt/i.test(code(f).replace(/[^\n]*"[^"\n]*"[^\n]*/g, (l) => l.replace(/"[^"\n]*"/g, '""'))));
   check("no game: nothing in the customer code names the ledger, XP, the streak, debt, or a game cache", gameWords.length === 0, gameWords.join(", "));
   const models = [...new Set([...server.matchAll(/prisma\.(\w+)\./g)].map((m) => m[1]))].sort();
-  eq("no game: the cores touch only WorkBoard (crmOn), Customer, CustomerInteraction, CustomerTask, and read CallBack", models, ["callBack", "customer", "customerInteraction", "customerTask", "workBoard"]);
+  eq("no game: the cores touch only WorkBoard (crmOn), Customer, CustomerInfo, CustomerInteraction, CustomerTask, and read CallBack", models, ["callBack", "customer", "customerInfo", "customerInteraction", "customerTask", "workBoard"]);
+  check(
+    "info: the list's subtitle read is one row per customer (DISTINCT ON, newest recorded), kept infos of kept customers on this tab, 160 characters",
+    /SELECT DISTINCT ON \(i\."customerId"\) i\."customerId" AS "customerId", left\(i\."detail", 160\) AS "detail"/.test(server) &&
+      /WHERE i\."userId" = \$\{userId\} AND i\."archivedAt" IS NULL AND c\."boardId" = \$\{boardId\} AND c\."archivedAt" IS NULL/.test(server) &&
+      /ORDER BY i\."customerId", i\."recordedAt" DESC, i\."createdAt" DESC/.test(server)
+  );
   check("no game: CallBack is only read; WorkBoard only has crmOn written", !/prisma\.callBack\.(create|update|upsert|delete)/.test(server) && /prisma\.workBoard\.updateMany\(\{ where: \{ id: boardId, userId, archivedAt: null \}, data: \{ crmOn: on \} \}\)/.test(server) && !/prisma\.workBoard\.(create|delete|upsert)/.test(server));
 
   // Routes and their params (Next 16: Promises).
@@ -673,7 +832,21 @@ function wiring() {
   check("list page: Add customer suggests the next ID; a new customer opens on their page", /openAdd\(suggestion \?\? ""\)/.test(list) && /createCustomer\(board\.id, value\)/.test(list) && /router\.push\(customerHref\(board\.id, res\.value\.id\)\)/.test(list));
   const sheets = code("src/components/customers/CustomerSheets.tsx");
   check("sheets: the action chips are a radio group of the four, each a 44 px label", /CUSTOMER_ACTIONS\.map\(\(a\) => \(\s*<label key=\{a\} className="crm-chip">\s*<input\s+type="radio"/.test(sheets));
-  check("sheets: date-time fields, read in the user's zone (instantOfLocalInput)", (sheets.match(/type="datetime-local"/g) ?? []).length === 2 && (sheets.match(/instantOfLocalInput\(v\.when\)/g) ?? []).length === 2);
+  check("sheets: date-time fields (a task, an info, an entry), read in the user's zone (instantOfLocalInput)", (sheets.match(/type="datetime-local"/g) ?? []).length === 3 && (sheets.match(/instantOfLocalInput\(v\.when\)/g) ?? []).length === 3);
+  check(
+    "sheets: an info's detail (1000 at most) and 'Recorded at' (not ahead of now by more than a minute; left out while untouched)",
+    /label="Recorded at"/.test(sheets) && /cleanInfoDetail\(v\.detail\)/.test(sheets) && /at\.getTime\(\) > Date\.now\(\) \+ RECORDED_AHEAD_MS/.test(sheets) && /onSave\(untouched \? \{ detail: detail\.value \} : \{ detail: detail\.value, recordedAt: at\.toISOString\(\) \}\)/.test(sheets)
+  );
+  check(
+    "customer page: Info sits above Interactions; a row is the detail (three lines, then More) and 'Recorded …', tapping opens its sheet; archiving offers Undo",
+    view.indexOf('aria-labelledby="crm-info-h"') > 0 &&
+      view.indexOf('aria-labelledby="crm-info-h"') < view.indexOf('aria-labelledby="crm-log-h"') &&
+      /className="crm-info-more" aria-expanded=\{expanded\}/.test(view) &&
+      /infoRecordedLabel\(new Date\(info\.recordedAt\), now\)/.test(view) &&
+      /title: "Info archived"[\s\S]*?label: "Undo", onAction: \(\) => undo\(\(\) => restoreCustomerInfo\(i\.id/.test(view)
+  );
+  check("customers.css: an info is clamped to three lines until More opens it", /\.crm-info-d \{[^}]*-webkit-line-clamp: 3;/.test(read("src/components/customers/customers.css")) && /\.crm-info-d\[data-open\] \{/.test(read("src/components/customers/customers.css")));
+  check("list page: the newest info's first line is a quiet one-line subtitle", /\{c\.info && <span className="crm-row-info">\{c\.info\}<\/span>\}/.test(list) && /\.crm-row-info \{[^}]*text-overflow: ellipsis; white-space: nowrap;/.test(read("src/components/customers/customers.css")));
   check("sheets: a task's reminder is a switch, on by default for a new task", /<Switch checked=\{v\.remind\}/.test(sheets) && /remind: true \} \}\);/.test(view));
 
   // The tab card.
@@ -687,7 +860,7 @@ function wiring() {
   check("customers.css: tokens only (no hex, rgb() or hsl()), in @layer components after the layer order", !/#[0-9a-f]{3,8}\b|\b(rgba?|hsla?)\(/i.test(bare) && css.startsWith("@layer theme, base, components, art, effects, utilities;") && /@layer components \{/.test(bare));
   const rule = (sel: string) => new RegExp(`(?:^|\\})\\s*${sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`, "m").exec(bare)?.[1] ?? "";
   const minH = (sel: string) => Number(/min-height:\s*(\d+)px/.exec(rule(sel))?.[1] ?? 0);
-  const targets = [".crm-back", ".crm-kb", ".crm-input", ".crm-chip", ".crm-row", ".crm-arch > summary", ".crm-task-body", ".crm-done > summary", ".crm-entry-btn", ".crm-arch-row"];
+  const targets = [".crm-back", ".crm-kb", ".crm-input", ".crm-chip", ".crm-row", ".crm-arch > summary", ".crm-task-body", ".crm-done > summary", ".crm-entry-btn", ".crm-arch-row", ".crm-info-btn", ".crm-info-more"];
   const small = targets.filter((s) => minH(s) < 44);
   check("customers.css: every control is a 44 px target (rows 52 to 56)", small.length === 0, small.map((s) => `${s} ${minH(s)}`).join(", "));
   const work = read("src/components/shell/work-tabs.css").replace(/\/\*[\s\S]*?\*\//g, "");

@@ -7,7 +7,8 @@
  * nickname matches under their own heading. While every ID on the tab is a
  * number the field opens the numeric keyboard (a small ABC / 123 key swaps
  * it, for a name). With nothing typed: the customers with tasks due today
- * (overdue first), then everyone by ID. "Add customer" opens the details
+ * (overdue first), then everyone by ID; a row's quiet last line is the first
+ * line of their newest info. "Add customer" opens the details
  * sheet with the next ID suggested. Archived customers are out of the search,
  * folded at the bottom, each with Restore.
  */
@@ -38,6 +39,7 @@ function CustomerRow({ boardId, c, exact }: { boardId: string; c: CustomerListIt
             {chip && <span className={cx("chip", c.overdue > 0 && "owed")}>{chip}</span>}
           </span>
         )}
+        {c.info && <span className="crm-row-info">{c.info}</span>}
       </span>
       <Icon name="chev" />
     </Link>
