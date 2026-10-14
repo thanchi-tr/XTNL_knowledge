@@ -10,8 +10,9 @@ export const metadata: Metadata = { title: "Review fixtures" };
 
 /**
  * /dev/style/review (L2): the review hub, runner, result panel, Seal, miss,
- * boss run and recap, driven by labelled fixtures (?state=hub|empty|question|
- * correct|seal|miss|boss|recap|boss-won) so the browser audit can reach each
+ * the missed card asked again, its relearn, boss run and recap, driven by
+ * labelled fixtures (?state=hub|empty|question|correct|seal|miss|retry|
+ * relearned|boss|recap|boss-won) so the browser audit can reach each
  * state without a database. Gated like /dev/style. Every figure is computed
  * by the real formulas from made-up rows (fixtures.ts); no real page shows them.
  */

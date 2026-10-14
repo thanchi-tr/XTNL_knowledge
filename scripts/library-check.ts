@@ -29,6 +29,7 @@ import {
   nextLevelSentence,
   nextNeedShort,
   outlookLines,
+  spacingLine,
   parseFilters,
   rowStatusOf,
   shortDate,
@@ -94,6 +95,7 @@ function outlookOf(over: Partial<IdeaOutlook>): IdeaOutlook {
     cleanNeeded: 1,
     cleanDone: 0,
     heldByMiss: false,
+    ease: 1,
     dueInDays: 5,
     status: "fresh",
     fadingFrom: new Date(NOW + 7 * DAY).toISOString(),
@@ -314,20 +316,45 @@ function idea(over: Partial<LibraryIdea> & { status?: IdeaOutlook["status"]; ret
       "Due in 12 days",
       `Starts fading ${shortDate(due9 + graceDays(9) * DAY, NOW)}`,
       `Loses L9 around ${shortDate(due9 + loss * DAY, NOW)} if not reviewed`,
+      "Spacing 1.0× — the standard ladder",
     ]
   );
+  // 2026-10-14: the idea's own ease, last (forgetting.ts IdeaOutlook.ease; xp.ts clampEase), worded by its figure.
+  eq(
+    "outlook: the spacing line reads the idea's ease (1.3× recalled well, 0.7× tricky, 1.0× the ladder; clamped to 0.6–1.8)",
+    [spacingLine(1.3), spacingLine(0.7), spacingLine(1), spacingLine(1.04), spacingLine(3), spacingLine(0.2)],
+    [
+      "Spacing 1.3× — you recall this one well",
+      "Spacing 0.7× — this one is tricky",
+      "Spacing 1.0× — the standard ladder",
+      "Spacing 1.0× — the standard ladder",
+      "Spacing 1.8× — you recall this one well",
+      "Spacing 0.6× — this one is tricky",
+    ]
+  );
+  {
+    const eased = idea({ level: 9, dueAt: due9, outlook: ideaOutlook({ level: 9, dueDate: new Date(due9), graceEndsAt: null, cleanStreak: 1, failedAttempts: 0, ease: 1.32, cycleMissed: false }, new Date(NOW)) });
+    const lines = outlookLines(eased, NOW);
+    check(
+      "outlook: an eased idea prints its spacing, and its loss date moves with the ease (later at 1.32×)",
+      lines[lines.length - 1] === "Spacing 1.3× — you recall this one well" && eased.outlook.ease === 1.32 && Date.parse(eased.outlook.nextLossAt!) > Date.parse(nine.outlook.nextLossAt!),
+      JSON.stringify(lines)
+    );
+    const missed = ideaOutlook({ level: 9, dueDate: new Date(NOW - DAY), graceEndsAt: null, cleanStreak: 1, failedAttempts: 2, ease: 0.85, cycleMissed: false }, new Date(NOW));
+    check("outlook: 'held by a miss' reads the missed cycle (cycleMissed), not the lapsed-cycle count", !missed.heldByMiss && missed.cleanDone === 1 && ideaOutlook({ level: 9, dueDate: new Date(NOW - DAY), graceEndsAt: null, cleanStreak: 0, failedAttempts: 0, cycleMissed: true }, new Date(NOW)).heldByMiss);
+  }
   eq("outlook: below L8 one clean recall raises it", [nextLevelSentence(at(4, NOW + DAY).outlook), nextNeedShort(at(4, NOW + DAY).outlook)], ["Next: L5 · a clean recall raises it", "clean recall raises it"]);
   const held = at(9, NOW - DAY, 1, 1);
   eq("outlook: a miss since it fell due holds the level", [nextLevelSentence(held.outlook), nextNeedShort(held.outlook)], ["Next: L10 after 2 clean recalls · 0 of 2 done · a miss this cycle holds it", "held by a miss"]);
   eq("outlook: the top of the ladder", [nextLevelSentence(at(MAX_LEVEL, NOW + DAY).outlook), nextNeedShort(at(MAX_LEVEL, NOW + DAY).outlook)], [`Top of the ladder: L${MAX_LEVEL}`, "top level"]);
   eq("outlook: the Field page row's need with one in hand", nextNeedShort(nine.outlook), "1 of 2 clean recalls");
-  const fading = at(5, NOW - 10 * DAY);
+  const fading = at(5, NOW - 8 * DAY);
   const lines = outlookLines(fading, NOW);
   check(
-    "outlook: an L5 10 days past due is fading: due since, fading since, a loss ahead",
+    "outlook: an L5 8 days past due is fading (its first loss is at about 9.9 days on the Ebbinghaus curve): due since, fading since, a loss ahead",
     fading.outlook.status === "fading" &&
-      lines[1] === `Due since ${shortDate(NOW - 10 * DAY, NOW)}` &&
-      lines[2] === `Fading since ${shortDate(NOW - 10 * DAY + graceDays(5) * DAY, NOW)}` &&
+      lines[1] === `Due since ${shortDate(NOW - 8 * DAY, NOW)}` &&
+      lines[2] === `Fading since ${shortDate(NOW - 8 * DAY + graceDays(5) * DAY, NOW)}` &&
       /^Loses L5 around .+ if not reviewed$/.test(lines[3] ?? ""),
     JSON.stringify(lines)
   );
@@ -346,7 +373,7 @@ function idea(over: Partial<LibraryIdea> & { status?: IdeaOutlook["status"]; ret
   check(
     "loader: summaries read the Boss roster, the quotas, maintenance, the 7-day ghost, compositions, streaks and the grace extension",
     ["loadBossStates(userId)", "loadWeeklyQuotas(userId, now)", "loadMaintenanceIds(userId)", "getGhostLevelsFromDaysAgo(7)", "effectiveFieldComposition(own, domains)", "prisma.fieldStreak.findMany", "loadModifiers(userId)"].every((s) => insight.includes(s)) &&
-      /ideaOutlook\(\s*\{ level: idea\.level, dueDate: idea\.dueDate, graceEndsAt: idea\.graceEndsAt, cleanStreak: idea\.cleanStreak, failedAttempts: idea\.failedAttempts \},\s*now,\s*graceExtraDays\s*\)/.test(insight) &&
+      /ideaOutlook\(\s*\{ level: idea\.level, dueDate: idea\.dueDate, graceEndsAt: idea\.graceEndsAt, cleanStreak: idea\.cleanStreak, failedAttempts: idea\.failedAttempts, ease: idea\.ease, cycleMissed: idea\.cycleMissed \},\s*now,\s*graceExtraDays\s*\)/.test(insight) &&
       /return summarizeField\(/.test(insight)
   );
   check("loader: an unknown or overlong id is null (the page 404s)", /if \(!fieldId \|\| fieldId\.length > 64\) return null;/.test(insight) && /if \(!f\) return null;/.test(insight));
@@ -390,7 +417,7 @@ async function rendered() {
   const at = (id: string, level: number, dueAt: number, domainId = "d-prob", domainName = "Probability", cleanStreak = 0) =>
     idea({ id, level, dueAt, domainId, domainName, title: `Idea ${id}`, outlook: ideaOutlook({ level, dueDate: new Date(dueAt), graceEndsAt: null, cleanStreak, failedAttempts: 0 }, new Date(NOW)) });
   const nine = at("nine", 9, NOW + 12 * DAY + 3_600_000, "d-prob", "Probability", 1);
-  const old5 = at("old5", 5, NOW - 10 * DAY);
+  const old5 = at("old5", 5, NOW - 8 * DAY);
   const m14 = at("m14", 14, NOW + 40 * DAY, "d-desc", "Descriptive");
   const summary = summarizeField(
     {

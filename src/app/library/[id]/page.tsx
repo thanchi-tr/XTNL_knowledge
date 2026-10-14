@@ -41,6 +41,8 @@ const loadIdea = cache(async (id: string) => {
       graceEndsAt: true,
       cleanStreak: true,
       failedAttempts: true,
+      ease: true,
+      cycleMissed: true,
       createdAt: true,
       // nameOrigin and originName: the Gemini mark (revision 5, lane 9; contracts ruling 67; migration B's Domain columns)
       domain: { select: { id: true, name: true, nameOrigin: true, originName: true, field: { select: { id: true, name: true } } } },
@@ -104,7 +106,7 @@ export default async function IdeaPage({ params }: { params: Promise<{ id: strin
     failedAttempts: row.failedAttempts,
     createdAt: row.createdAt.getTime(),
     outlook: ideaOutlook(
-      { level: row.level, dueDate: row.dueDate, graceEndsAt: row.graceEndsAt, cleanStreak: row.cleanStreak, failedAttempts: row.failedAttempts },
+      { level: row.level, dueDate: row.dueDate, graceEndsAt: row.graceEndsAt, cleanStreak: row.cleanStreak, failedAttempts: row.failedAttempts, ease: row.ease, cycleMissed: row.cycleMissed },
       nowDate,
       graceExtraDays
     ),

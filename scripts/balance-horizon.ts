@@ -63,7 +63,7 @@ import { join } from "node:path";
 import { SKILL_POOL, requiredAttributeScore } from "../src/lib/skill-pool";
 import { IDEA_MASTERY_POINTS, REVIEW_MASTERY_PER_LEVEL } from "../src/lib/mastery";
 import type { QuestionType } from "@prisma/client";
-import { MASTERY_BONUS, MASTERY_LEVEL, MAX_LEVEL, XP_BASE, domainLevel, fieldBreadth, fieldLevel, fieldLevelRaw, reviewReward, riseBaseIntervalDays, riseStep } from "../src/lib/xp";
+import { EASE_DEFAULT, MASTERY_BONUS, MASTERY_LEVEL, MAX_LEVEL, XP_BASE, cleanRecallOnTime, domainLevel, fieldBreadth, fieldLevel, fieldLevelRaw, reviewReward, riseBaseIntervalDays } from "../src/lib/xp";
 import { characterLevel } from "../src/lib/character";
 import { TITLE_BANDS } from "../src/lib/titles";
 import { MATERIALS, crestBandStarts } from "../src/lib/materials";
@@ -101,18 +101,22 @@ const REVIEWS_PER_DAY = 25;
 const NEW_IDEAS_PER_WEEK = 10;
 /**
  * One Idea walked from level 1 to `target` on clean recalls only (xp.ts riseStep: one a level below CLEAN_PAIR_FROM,
- * two in a row from it up, the first back at the confirm interval): the reviews it takes and the days of intervals.
+ * two in a row from it up, the first back at the confirm interval), each on its due day, so its ease widens by
+ * EASE_CLEAN_GAIN a recall up to EASE_MAX (xp.ts cleanRecallOnTime, 2026-10-14): the reviews it takes and the days of
+ * (eased) intervals. `eased: false` reads the baseline ladder (ease 1 throughout), the walk as it was before ease.
  */
-function cleanWalk(target: number): { reviews: number; days: number } {
+function cleanWalk(target: number, eased = true): { reviews: number; days: number } {
   let level = 1;
   let streak = 0;
+  let ease = EASE_DEFAULT;
   let reviews = 0;
   let days = 0;
   while (level < target) {
-    const step = riseStep(level, streak, 0);
-    days += riseBaseIntervalDays(step);
-    level = step.levelAfter;
-    streak = step.cleanStreak;
+    const r = cleanRecallOnTime(level, streak, ease);
+    days += eased ? r.intervalDays : riseBaseIntervalDays(r.step);
+    level = r.step.levelAfter;
+    streak = r.step.cleanStreak;
+    ease = eased ? r.ease : EASE_DEFAULT;
     reviews += 1;
   }
   return { reviews, days };
@@ -122,6 +126,9 @@ const REVIEWS_TO_MASTER = cleanWalk(MASTERY_LEVEL).reviews;
 /** Days to walk one Idea from new to mastered, summing the intervals the clean walk schedules. */
 const DAYS_TO_MASTER = cleanWalk(MASTERY_LEVEL).days;
 const DAYS_TO_MAX = cleanWalk(MAX_LEVEL).days;
+/** The same walks on the baseline ladder (ease 1 throughout), printed beside them. */
+const DAYS_TO_MASTER_BASELINE = cleanWalk(MASTERY_LEVEL, false).days;
+const DAYS_TO_MAX_BASELINE = cleanWalk(MAX_LEVEL, false).days;
 
 function fmtYears(days: number): string {
   return `${(days / 365).toFixed(1)}y`;
@@ -880,12 +887,14 @@ const PACE_SPREAD_FIELDS = 3;
  * each week's first day, dealt round-robin over `fields` × PACE_DOMAINS_PER_FIELD
  * Domains, each first reviewed the next day; every due review is passed on its
  * day at combo 0 and no loadout (xp.ts reviewReward, plus MASTERY_BONUS on the
- * pass into MASTERY_LEVEL), and comes due again baseIntervalDays of its new level
- * later. Returns a stepper: call it once per model day (1, 2, 3 …); it returns
- * each Field's Domain levels at that day's end (xp.ts domainLevel).
+ * pass into MASTERY_LEVEL), and comes due again its eased interval later (xp.ts
+ * cleanRecallOnTime: each clean recall widens the idea's ease, so a well-kept
+ * idea spaces out up to EASE_MAX × the ladder). Returns a stepper: call it once
+ * per model day (1, 2, 3 …); it returns each Field's Domain levels at that
+ * day's end (xp.ts domainLevel).
  */
 function knowledgeModel(fields: number): () => number[][] {
-  const domains = Array.from({ length: fields * PACE_DOMAINS_PER_FIELD }, () => ({ points: 0, ideas: [] as { level: number; due: number; clean: number }[] }));
+  const domains = Array.from({ length: fields * PACE_DOMAINS_PER_FIELD }, () => ({ points: 0, ideas: [] as { level: number; due: number; clean: number; ease: number }[] }));
   let day = 0;
   let dealt = 0;
   return () => {
@@ -895,20 +904,22 @@ function knowledgeModel(fields: number): () => number[][] {
         const d = domains[dealt % domains.length];
         dealt += 1;
         d.points += XP_BASE[PACE_FORMAT];
-        d.ideas.push({ level: 1, due: day + 1, clean: 0 });
+        d.ideas.push({ level: 1, due: day + 1, clean: 0, ease: EASE_DEFAULT });
       }
     }
     for (const d of domains) {
       for (const idea of d.ideas) {
         if (idea.due > day) continue;
         // Every recall is clean (on its day, no miss): xp.ts riseStep raises it, or from CLEAN_PAIR_FROM up holds it
-        // for a confirming review first; the model reads the deterministic base intervals (riseBaseIntervalDays).
-        const step = riseStep(idea.level, idea.clean, 0);
-        const next = step.levelAfter;
+        // for a confirming review first, and its ease widens; the model reads the deterministic eased intervals
+        // (cleanRecallOnTime: riseBaseIntervalDays at the new ease, no jitter, no late credit).
+        const r = cleanRecallOnTime(idea.level, idea.clean, idea.ease);
+        const next = r.step.levelAfter;
         d.points += reviewReward(idea.level) + (next === MASTERY_LEVEL && idea.level < MASTERY_LEVEL ? MASTERY_BONUS : 0);
         idea.level = next;
-        idea.clean = step.cleanStreak;
-        idea.due = day + riseBaseIntervalDays(step);
+        idea.clean = r.step.cleanStreak;
+        idea.ease = r.ease;
+        idea.due = day + r.intervalDays;
       }
     }
     const levels = domains.map((d) => domainLevel(d.points, d.ideas.map((i) => i.level)));
@@ -1068,8 +1079,8 @@ function main() {
   console.log(`\n  ideas to master for the pool on lumps alone: ${Math.round(ideasNeeded).toLocaleString()}`);
   console.log(`  reviews for the pool: ${Math.round(total / perReview).toLocaleString()} (${fmtYears(total / perReview / REVIEWS_PER_DAY)} at ${REVIEWS_PER_DAY}/day)`);
   console.log(`  reviews to master one idea: ${REVIEWS_TO_MASTER}`);
-  console.log(`  days to master one idea:    ${DAYS_TO_MASTER} (${fmtYears(DAYS_TO_MASTER)})`);
-  console.log(`  days to max one idea:       ${DAYS_TO_MAX} (${fmtYears(DAYS_TO_MAX)})`);
+  console.log(`  days to master one idea:    ${DAYS_TO_MASTER} (${fmtYears(DAYS_TO_MASTER)}; ${DAYS_TO_MASTER_BASELINE} on the baseline ladder)`);
+  console.log(`  days to max one idea:       ${DAYS_TO_MAX} (${fmtYears(DAYS_TO_MAX)}; ${DAYS_TO_MAX_BASELINE} on the baseline ladder)`);
 
   const failures = lifeBlock(total, perDay) + momentumBlock(total, perDay) + levelsBlock();
   if (failures > 0) process.exitCode = 1;

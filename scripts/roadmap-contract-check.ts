@@ -2069,11 +2069,16 @@ console.log("— rev 4 fix round 2 —");
   // §16.1 The clean-entry window holds srs.ts's latest retry entry (lens 2 minor: R1, R4 and R6 read their REVIEW rows over it).
   check("JITTER_LOW and JITTER_HIGH are xp.ts's jitter bounds (× (0.75 + rand × 0.5), so under × 1.25)", /\(0\.75 \+ Math\.random\(\) \* 0\.5\)/.test(read("src/lib/xp.ts")) && RT.JITTER_LOW === 0.75 && RT.JITTER_HIGH === 1.25);
   const srsSrc = read("src/lib/srs.ts");
+  // 2026-10-14 (one lapse a day): srs.ts's writes moved into pure helpers (strikeDataOf, passPlanOf, degradeDataOf;
+  // the day's lapse adds ease, cycleMissed and lapseDay, never graceEndsAt), so the window reads the same days.
   check(
-    "srs.ts as the window reads it: a strike moves only the due day (graceEndsAt kept), a pass and a degrade set graceEndsAt from the new due day, the cron degrades past graceEndsAt",
-    /const dueDate = addDays\(now, 1\);\s*await prisma\.idea\.update\(\{\s*where: \{ id: ideaId \},\s*data: \{ failedAttempts, dueDate \}/.test(srsSrc) &&
-      /graceEndsAt: graceEndsAt\(dueDate, newLevel, modifiers\.graceExtraDays\)/.test(srsSrc) &&
-      /graceEndsAt: graceEndsAt\(dueDate, newLevel, graceExtraDays\)/.test(srsSrc) &&
+    "srs.ts as the window reads it: a strike moves the due day and keeps graceEndsAt, a pass and a degrade set graceEndsAt from the new due day, the cron degrades past graceEndsAt",
+    /export function strikeDataOf\([^)]*\) \{\s*return \{ \.\.\.lapseData\(idea, now\), failedAttempts: idea\.failedAttempts \+ 1, dueDate: addDays\(now, 1\) \};/.test(srsSrc) &&
+      /const data = strikeDataOf\(idea, now\);\s*await prisma\.idea\.update\(\{ where: \{ id: ideaId \}, data \}\);/.test(srsSrc) &&
+      !/graceEndsAt/.test(srsSrc.slice(srsSrc.indexOf("export function lapseData("), srsSrc.indexOf("export function passPlanOf("))) &&
+      /graceEndsAt: graceEndsAt\(dueDate, newLevel, graceExtraDays\)/.test(srsSrc.slice(srsSrc.indexOf("export function passPlanOf("), srsSrc.indexOf("export function strikeDataOf("))) &&
+      /const plan = passPlanOf\(idea, now, modifiers\.intervalMultiplier, modifiers\.graceExtraDays\);/.test(srsSrc) &&
+      /graceEndsAt: graceEndsAt\(dueDate, level, graceExtraDays\)/.test(srsSrc.slice(srsSrc.indexOf("export function degradeDataOf("), srsSrc.indexOf("export function wardDataOf("))) &&
       /graceEndsAt: \{ lt: now \}/.test(srsSrc)
   );
   const D0: DayKey = "2027-01-04";

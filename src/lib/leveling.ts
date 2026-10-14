@@ -20,8 +20,8 @@ import { getCurrentUserId } from "./user";
  * bell say "fell to L3"), and a rise back to that level clears it.
  */
 
-/** The Ideas a level reads: not archived (they have stopped being recalled), with what their retention needs. */
-const IDEA_DEPTH = { where: { isArchived: false }, select: { level: true, dueDate: true } } as const;
+/** The Ideas a level reads: not archived (they have stopped being recalled), with what their retention needs (the ease scales its curve). */
+const IDEA_DEPTH = { where: { isArchived: false }, select: { level: true, dueDate: true, ease: true } } as const;
 const LEVELING_FIELD = {
   id: true,
   level: true,

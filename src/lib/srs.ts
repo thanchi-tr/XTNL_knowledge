@@ -3,12 +3,17 @@ import type { Idea, Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { invalidate } from "./cache";
 import {
+  clampEase,
+  easeAfterLapse,
   graceEndsAt,
+  lateRatioOf,
   reviewPayout,
   domainLevelProgress,
+  riseEase,
   riseIntervalDays,
   riseLine,
   riseStep,
+  scheduledIntervalDays,
   MAX_LEVEL,
   MASTERY_BONUS,
   MASTERY_LEVEL,
@@ -27,7 +32,8 @@ import {
 } from "./mastery";
 import { activityOp, invalidateActivity, isDuplicateActivity, recordActivity } from "./activity";
 import { daysOverdueOf, forgetDedupeKey, forgetKeyPrefix, levelLossPoints, levelsForgotten } from "./forgetting";
-import type { ActivityInput } from "./life-types";
+import { dateColumn, dayKeyOf, daysBetween, keyOfDateColumn, todayKey, type DayKey } from "./life-day";
+import type { ActivityInput, Receipt } from "./life-types";
 import { getCurrentUserId } from "./user";
 
 // MAX_LEVEL and the interval schedule now live in xp.ts (pure arithmetic,
@@ -35,12 +41,147 @@ import { getCurrentUserId } from "./user";
 // unaffected.
 export { MAX_LEVEL, nextIntervalDays } from "./xp";
 
-const STRIKE_LIMIT = 2; // spec: "If failedAttempts == 2 ... subtract 1 from Idea.level"
+/**
+ * Lapsed cycles in a row (Idea.failedAttempts) that cost a level (spec: "If failedAttempts == 2 ... subtract 1 from
+ * Idea.level"). Since 2026-10-14 a lapse is the first miss of a life day; a re-attempt the same day adds nothing.
+ */
+const STRIKE_LIMIT = 2;
 
 function addDays(date: Date, days: number): Date {
   const d = new Date(date);
   d.setUTCDate(d.getUTCDate() + days);
   return d;
+}
+
+// ── One lapse a day (2026-10-14) ────────────────────────────────────────────
+
+/** The card state a miss changes, as its REVIEW row's receipt keeps it, so "I was right" can put it back exactly. */
+export interface MissState {
+  ease: number;
+  cycleMissed: boolean;
+  /** Idea.lapseDay as a life-day key, or null. */
+  lapseDay: DayKey | null;
+  failedAttempts: number;
+  cleanStreak: number;
+  /** ISO instants. */
+  dueDate: string;
+  graceEndsAt: string | null;
+}
+
+/** The miss row's receipt: the state before the miss (v names the shape; a review row has no price). */
+export interface MissReceipt {
+  v: "review-miss/1";
+  before: MissState;
+}
+
+/** The state a miss is about to change, from the card as it was answered. */
+export function missStateOf(idea: Pick<Idea, "ease" | "cycleMissed" | "lapseDay" | "failedAttempts" | "cleanStreak" | "dueDate" | "graceEndsAt">): MissState {
+  return {
+    ease: idea.ease,
+    cycleMissed: idea.cycleMissed,
+    lapseDay: idea.lapseDay ? keyOfDateColumn(idea.lapseDay) : null,
+    failedAttempts: idea.failedAttempts,
+    cleanStreak: idea.cleanStreak,
+    dueDate: idea.dueDate.toISOString(),
+    graceEndsAt: idea.graceEndsAt ? idea.graceEndsAt.toISOString() : null,
+  };
+}
+
+/** A miss receipt read back from a row (null when the row has none, or not this shape: a row from before 2026-10-14). */
+export function missReceiptOf(receipt: unknown): MissReceipt | null {
+  if (!receipt || typeof receipt !== "object") return null;
+  const r = receipt as { v?: unknown; before?: Partial<MissState> | null };
+  const b = r.before;
+  if (r.v !== "review-miss/1" || !b || typeof b !== "object") return null;
+  if (typeof b.ease !== "number" || typeof b.cycleMissed !== "boolean" || typeof b.failedAttempts !== "number" || typeof b.cleanStreak !== "number" || typeof b.dueDate !== "string") return null;
+  return { v: "review-miss/1", before: { ease: b.ease, cycleMissed: b.cycleMissed, lapseDay: typeof b.lapseDay === "string" ? b.lapseDay : null, failedAttempts: b.failedAttempts, cleanStreak: b.cleanStreak, dueDate: b.dueDate, graceEndsAt: typeof b.graceEndsAt === "string" ? b.graceEndsAt : null } };
+}
+
+/** The Idea columns that put a MissState back (undoMissCore). */
+export function missStateData(s: MissState): { ease: number; cycleMissed: boolean; lapseDay: Date | null; failedAttempts: number; cleanStreak: number; dueDate: Date; graceEndsAt: Date | null } {
+  return {
+    ease: s.ease,
+    cycleMissed: s.cycleMissed,
+    lapseDay: s.lapseDay ? dateColumn(s.lapseDay) : null,
+    failedAttempts: s.failedAttempts,
+    cleanStreak: s.cleanStreak,
+    dueDate: new Date(s.dueDate),
+    graceEndsAt: s.graceEndsAt ? new Date(s.graceEndsAt) : null,
+  };
+}
+
+/**
+ * What a miss is (pure): "retry" when the card already lapsed this life day (a re-attempt: nothing changes), else
+ * "lapse" — the day's one miss: the ease tightens (xp.ts easeAfterLapse), the cycle is marked missed, the day is
+ * recorded, and failedAttempts (lapsed cycles in a row) goes up by one; "degrade" when that reaches the limit or the
+ * card is past its grace.
+ */
+export function missKindOf(idea: Pick<Idea, "lapseDay" | "failedAttempts" | "graceEndsAt">, now: Date, strikeLimit: number): "retry" | "lapse" | "degrade" {
+  if (idea.lapseDay && keyOfDateColumn(idea.lapseDay) === todayKey(now)) return "retry";
+  const pastGrace = idea.graceEndsAt !== null && now > idea.graceEndsAt;
+  return idea.failedAttempts + 1 >= strikeLimit || pastGrace ? "degrade" : "lapse";
+}
+
+/** The columns the day's lapse writes, whatever else happens to the card (a strike, a degrade, a ward). */
+export function lapseData(idea: Pick<Idea, "ease">, now: Date): { ease: number; cycleMissed: true; lapseDay: Date; cleanStreak: 0 } {
+  return { ease: easeAfterLapse(idea.ease), cycleMissed: true, lapseDay: dateColumn(todayKey(now)), cleanStreak: 0 };
+}
+
+// ── The writes, pure (applyReviewResult, degradeIdea and attemptDegradation write exactly these) ──
+
+type PlanIdea = Pick<Idea, "level" | "cleanStreak" | "cycleMissed" | "ease" | "failedAttempts" | "dueDate">;
+
+/**
+ * A right answer's write (pure): the rise (xp.ts riseStep: clean = !cycleMissed), the ease after it (a clean recall
+ * widens it, by more when it came late: life days past the due day against the interval it was scheduled at, xp.ts
+ * scheduledIntervalDays and lateRatioOf; a relearn leaves it), the interval at that ease (xp.ts riseIntervalDays,
+ * jittered at levels 5–8) and the Idea columns. A clean recall clears the lapsed cycles; a relearn keeps them (two
+ * lapsed cycles in a row cost a level). Either starts a new due cycle.
+ */
+export function passPlanOf(idea: PlanIdea, now: Date, intervalMultiplier: number, graceExtraDays: number) {
+  const step = riseStep(idea.level, idea.cleanStreak, idea.cycleMissed);
+  const overdueDays = Math.max(0, daysBetween(dayKeyOf(idea.dueDate), todayKey(now)));
+  const lateRatio = lateRatioOf(scheduledIntervalDays(idea.level, idea.cleanStreak, idea.ease, intervalMultiplier), overdueDays);
+  const ease = riseEase(step, idea.ease, lateRatio);
+  const intervalDays = riseIntervalDays(step, intervalMultiplier, ease);
+  const dueDate = addDays(now, intervalDays);
+  const newLevel = step.levelAfter;
+  return {
+    step,
+    lateRatio,
+    ease,
+    intervalDays,
+    dueDate,
+    data: {
+      level: newLevel,
+      failedAttempts: step.clean ? 0 : idea.failedAttempts,
+      cleanStreak: step.cleanStreak,
+      ease,
+      cycleMissed: false,
+      dueDate,
+      graceEndsAt: graceEndsAt(dueDate, newLevel, graceExtraDays),
+    },
+  };
+}
+
+/** The day's lapse short of a degrade (a strike): the lapse, one more lapsed cycle, due tomorrow (so a session left before a right retry is safe). */
+export function strikeDataOf(idea: Pick<Idea, "ease" | "failedAttempts">, now: Date) {
+  return { ...lapseData(idea, now), failedAttempts: idea.failedAttempts + 1, dueDate: addDays(now, 1) };
+}
+
+/**
+ * The day's lapse as a degrade: the lapse (the cycle stays missed, so a right retry relearns it at the new level), a
+ * level down (never below 1), the lapsed cycles cleared, due tomorrow with the new level's grace.
+ */
+export function degradeDataOf(idea: Pick<Idea, "ease" | "level">, now: Date, graceExtraDays: number) {
+  const level = Math.max(1, idea.level - 1);
+  const dueDate = addDays(now, 1);
+  return { ...lapseData(idea, now), level, failedAttempts: 0, cleanStreak: 0, dueDate, graceEndsAt: graceEndsAt(dueDate, level, graceExtraDays) };
+}
+
+/** The day's lapse a ward held: the level kept; the spacing still tightens and the clean recalls in a row break. */
+export function wardDataOf(idea: Pick<Idea, "ease">, now: Date) {
+  return { ...lapseData(idea, now), failedAttempts: 0, cleanStreak: 0, dueDate: addDays(now, 1) };
 }
 
 /**
@@ -112,8 +253,9 @@ export interface FieldMove {
 }
 
 /**
- * Why a right answer moved the level or held it (xp.ts riseStep): only a clean recall (no miss since the card fell
- * due) raises a level, and from CLEAN_PAIR_FROM up two in a row do. `line` is the result panel's sentence.
+ * Why a right answer moved the level or held it (xp.ts riseStep): only a clean recall (no miss in the card's due
+ * cycle) raises a level, and from CLEAN_PAIR_FROM up two in a row do; a right answer after a miss relearns it (level
+ * held, back soon). `line` is the result panel's sentence.
  */
 export interface ReviewRise {
   kind: RiseKind;
@@ -125,8 +267,16 @@ export interface ReviewRise {
   cleanNeeded: 1 | 2;
   /** The level the next rise reaches; null at MAX_LEVEL. */
   nextLevel: number | null;
-  /** "Level up: L9" · "1 of 2 clean recalls for L9" · "Level held: a miss this round — …". */
+  /** "Level up: L9" · "1 of 2 clean recalls for L9" · "Level held: relearned this round — …". */
   line: string;
+  /** Idea.ease before and after this answer (a clean recall widens it; a relearn leaves it). */
+  ease: { before: number; after: number };
+}
+
+/** How a miss moved the card's spacing (the day's lapse tightens it; a re-attempt leaves it). */
+export interface EaseMove {
+  before: number;
+  after: number;
 }
 
 export type ReviewOutcome =
@@ -156,20 +306,32 @@ export type ReviewOutcome =
       nextCombo: number;
     }
   | {
+      /** The day's lapse (its first miss), short of a degradation. */
       outcome: "strike";
       failedAttempts: number;
       /** STRIKE_TOLERANCE-adjusted; the actual limit that triggers a Degradation. */
       strikeLimit: number;
       nextCombo: number;
       nextDue: string;
+      /** The spacing the lapse tightened (absent on the nightly job's rows and old fixtures). */
+      ease?: EaseMove;
     }
-  | { outcome: "degraded"; previousLevel: number; newLevel: number; nextCombo: number; nextDue: string }
+  | { outcome: "degraded"; previousLevel: number; newLevel: number; nextCombo: number; nextDue: string; ease?: EaseMove }
   | {
       outcome: "shielded";
       level: number;
       /** Which owned skill absorbed the Degradation — never a hardcoded name. */
       skillName: string;
       nextCombo: number;
+      nextDue: string;
+      ease?: EaseMove;
+    }
+  | {
+      /** A re-attempt after the day's lapse (the session's retry): counted once a day, so nothing changes. */
+      outcome: "retry";
+      level: number;
+      nextCombo: number;
+      /** The due date the day's lapse set (tomorrow), unchanged. */
       nextDue: string;
     };
 
@@ -196,28 +358,17 @@ function reviewEvent(ideaId: string, now: Date, xp: number, detail: string): Act
  * period the *newly degraded* level gets.
  */
 async function degradeIdea(idea: Idea, now: Date, graceExtraDays: number): Promise<{ newLevel: number; dueDate: Date }> {
-  const newLevel = Math.max(1, idea.level - 1);
+  // The day's lapse as a degrade (degradeDataOf): the ease tightens, the cycle stays missed (a right retry relearns
+  // it at the new level), the day is recorded; a lost level starts its clean recalls again (cleanStreak 0).
+  const data = degradeDataOf(idea, now, graceExtraDays);
+  const newLevel = data.level;
   // A lost level takes back what earning it paid (forgetting.ts levelLossPoints); level 1 has nothing to lose.
   const taken = newLevel < idea.level ? levelLossPoints(idea.level) : 0;
-  const dueDate = addDays(now, 1);
 
-  await prisma.$transaction([
-    prisma.idea.update({
-      where: { id: idea.id },
-      data: {
-        level: newLevel,
-        failedAttempts: 0,
-        // A lost level starts its clean recalls again.
-        cleanStreak: 0,
-        dueDate,
-        graceEndsAt: graceEndsAt(dueDate, newLevel, graceExtraDays),
-      },
-    }),
-    ...(taken > 0 ? [domainDebitOp(idea.domainId, taken)] : []),
-  ]);
+  await prisma.$transaction([prisma.idea.update({ where: { id: idea.id }, data }), ...(taken > 0 ? [domainDebitOp(idea.domainId, taken)] : [])]);
   await recalculateLeveling(idea.domainId);
 
-  return { newLevel, dueDate };
+  return { newLevel, dueDate: data.dueDate };
 }
 
 /** Takes `points` off a Domain's totalPoints, never below 0. */
@@ -241,23 +392,22 @@ async function attemptDegradation(
   nextCombo: number
 ): Promise<ReviewOutcome> {
   const anchor = await tryConsumeWardCharge(userId, progression.activeSkills, now);
+  const ease = { before: clampEase(idea.ease), after: easeAfterLapse(idea.ease) };
 
   if (anchor) {
-    const dueDate = addDays(now, 1);
-    // The ward keeps the level; the miss still breaks the clean recalls in a row.
-    await prisma.idea.update({
-      where: { id: idea.id },
-      data: { failedAttempts: 0, cleanStreak: 0, dueDate },
-    });
+    // The ward keeps the level; the lapse still tightens the spacing and breaks the clean recalls in a row.
+    const data = wardDataOf(idea, now);
+    const dueDate = data.dueDate;
+    await prisma.idea.update({ where: { id: idea.id }, data });
     // Reschedules the Idea without touching points, so it never reaches
     // `recalculateLeveling` — the one write path that invalidates for us.
     // The due queue still changed, so it has to be dropped here.
     invalidate("ideas");
-    return { outcome: "shielded", level: idea.level, skillName: anchor.name, nextCombo, nextDue: dueDate.toISOString() };
+    return { outcome: "shielded", level: idea.level, skillName: anchor.name, nextCombo, nextDue: dueDate.toISOString(), ease };
   }
 
   const { newLevel, dueDate } = await degradeIdea(idea, now, progression.modifiers.graceExtraDays);
-  return { outcome: "degraded", previousLevel: idea.level, newLevel, nextCombo, nextDue: dueDate.toISOString() };
+  return { outcome: "degraded", previousLevel: idea.level, newLevel, nextCombo, nextDue: dueDate.toISOString(), ease };
 }
 
 /** What a caller that already read the Idea (the review action, grading it) hands over, so nothing is read twice. */
@@ -271,14 +421,26 @@ export interface ReviewPreload {
  * Punishment). Correct -> credit the review's price (xp.ts reviewPayout:
  * level base × combo × yield, plus a one-time mastery bonus at level 12 —
  * see xp.ts for why this is no longer the spec's flat +2) and apply the rise
- * rule (xp.ts riseStep): a clean recall (no miss since the card fell due)
- * raises the level, from CLEAN_PAIR_FROM up only the second clean recall in
- * a row does (the first holds it and comes back at the confirm interval); a
- * recall after a miss is paid and holds the level, rescheduled at that
- * level's interval. Incorrect ->
- * failedAttempts++, then either a plain Strike (24h reschedule, no other
- * change) or — if failedAttempts hit the limit or the grace period has
- * already lapsed — a Degradation.
+ * rule (xp.ts riseStep): a clean recall (no miss in the card's due cycle,
+ * Idea.cycleMissed false) raises the level, from CLEAN_PAIR_FROM up only the
+ * second clean recall in a row does (the first holds it and comes back at the
+ * confirm interval), widens its ease (xp.ts riseEase, with the late credit)
+ * and clears failedAttempts; a right answer after a miss in the cycle RELEARNS
+ * it: paid, level held, back at the relearn interval (xp.ts
+ * relearnIntervalDays: tomorrow at low levels, sooner than usual at high
+ * ones), ease and failedAttempts as they were. Either starts a new cycle
+ * (cycleMissed false).
+ *
+ * Incorrect (2026-10-14: one lapse a day) -> the first miss of a life day is
+ * the day's LAPSE: the ease tightens (xp.ts easeAfterLapse), the cycle is
+ * marked missed, lapseDay is today, the clean streak breaks, failedAttempts
+ * (lapsed cycles in a row) goes up by one and the card is due tomorrow, so a
+ * session left before a right retry is safe; then either a plain Strike or —
+ * if failedAttempts hit the limit or the grace period has already lapsed — a
+ * Degradation (a ward can hold it). A miss on a card that already lapsed today
+ * is a RETRY (the session asks it again at its end): nothing changes, and its
+ * xp-0 row reads 'retry · L5'. Every miss row keeps the state before it in its
+ * receipt (MissReceipt), so "I was right" puts the card back exactly.
  *
  * There is no reward roll: a review pays its stated price every time (the
  * old ±12% variance had an expected value of exactly 1.0, so removing it
@@ -335,11 +497,13 @@ export async function applyReviewResult(
   let lateOutcome: `${ReviewOutcome["outcome"]} · L${number}` | null = null;
   let landed = false;
   // The miss row's qty: the clean recalls in a row this miss broke (Idea.cleanStreak), or null when a miss earlier in
-  // this due cycle had already broken them. undoMissCore restores the clean state from it ("I was right").
-  const brokenStreak = idea.failedAttempts > 0 ? null : idea.cleanStreak;
+  // this due cycle had already broken them; its receipt: the whole state before the miss (MissReceipt, null on a
+  // retry, which changes nothing). undoMissCore restores from them ("I was right").
+  const brokenStreak = idea.cycleMissed ? null : idea.cleanStreak;
+  let missReceipt: MissReceipt | null = null;
   after(async () => {
     if (lateOutcome) {
-      await recordActivity(userId, { ...reviewEvent(ideaId, now, 0, lateOutcome), qty: brokenStreak });
+      await recordActivity(userId, { ...reviewEvent(ideaId, now, 0, lateOutcome), qty: brokenStreak, receipt: missReceipt as unknown as Receipt | null });
     }
     // Study tasks ('review 20 daily') complete themselves from these rows,
     // so they are checked only once this review's row is in.
@@ -350,11 +514,12 @@ export async function applyReviewResult(
   });
 
   if (correct) {
-    // Clean (no miss since it fell due) raises it; from CLEAN_PAIR_FROM up the second clean recall in a row does.
-    const step = riseStep(idea.level, idea.cleanStreak, idea.failedAttempts);
+    // Clean (no miss in its due cycle) raises it; from CLEAN_PAIR_FROM up the second clean recall in a row does, and
+    // the ease widens (more when late). A right answer after a miss in the cycle relearns it: level held, ease kept,
+    // back at the relearn interval. passPlanOf is the whole write, pure (scripts/spacing-check.ts runs it).
+    const plan = passPlanOf(idea, now, modifiers.intervalMultiplier, modifiers.graceExtraDays);
+    const { step, ease, intervalDays, dueDate } = plan;
     const newLevel = step.levelAfter;
-    const intervalDays = riseIntervalDays(step, modifiers.intervalMultiplier);
-    const dueDate = addDays(now, intervalDays);
 
     // Mastery fires only on the transition, so re-reviewing a capped Idea
     // (level 12 -> Math.min keeps it at 12) never re-pays the bonus.
@@ -375,16 +540,7 @@ export async function applyReviewResult(
       reviewMasteryFraction(idea.level) * fractionMultiplier + (mastered ? IDEA_MASTERY_POINTS * modifiers.masteryMultiplier : 0);
 
     const ops: Prisma.PrismaPromise<unknown>[] = [
-      prisma.idea.update({
-        where: { id: ideaId },
-        data: {
-          level: newLevel,
-          failedAttempts: 0,
-          cleanStreak: step.cleanStreak,
-          dueDate,
-          graceEndsAt: graceEndsAt(dueDate, newLevel, modifiers.graceExtraDays),
-        },
-      }),
+      prisma.idea.update({ where: { id: ideaId }, data: plan.data }),
       prisma.domain.update({
         where: { id: idea.domainId },
         data: { totalPoints: { increment: pointsAwarded } },
@@ -432,6 +588,7 @@ export async function applyReviewResult(
         cleanNeeded: step.cleanNeeded,
         nextLevel: newLevel < MAX_LEVEL ? newLevel + 1 : null,
         line: riseLine(step),
+        ease: { before: clampEase(idea.ease), after: ease },
       },
       masteryMinted,
       domain: {
@@ -454,24 +611,30 @@ export async function applyReviewResult(
   }
 
   const failedAttempts = idea.failedAttempts + 1;
-  const pastGrace = idea.graceEndsAt !== null && now > idea.graceEndsAt;
   const strikeLimit = STRIKE_LIMIT + modifiers.extraStrikes;
-  const shouldDegrade = failedAttempts >= strikeLimit || pastGrace;
+  const kind = missKindOf(idea, now, strikeLimit);
   // COMBO_ANCHOR: a wrong answer no longer necessarily zeroes the run.
   const nextCombo = Math.floor(combo * modifiers.comboRetained);
 
-  if (!shouldDegrade) {
-    const dueDate = addDays(now, 1);
-    await prisma.idea.update({
-      where: { id: ideaId },
-      data: { failedAttempts, dueDate },
-    });
+  if (kind === "retry") {
+    // The day's lapse is already counted: a re-attempt changes nothing (no strike, no ease, no due date). Its row
+    // still lands (every answer is a review on the ledger), with no receipt: there is nothing to put back.
+    lateOutcome = `retry · L${idea.level}`;
+    landed = true;
+    return { outcome: "retry", level: idea.level, nextCombo, nextDue: idea.dueDate.toISOString() };
+  }
+
+  missReceipt = { v: "review-miss/1", before: missStateOf(idea) };
+  if (kind === "lapse") {
+    // Due tomorrow at once (strikeDataOf), so a session left before a right retry is safe; a right retry overwrites it.
+    const data = strikeDataOf(idea, now);
+    await prisma.idea.update({ where: { id: ideaId }, data });
     // Same as the shielded path: the Idea moved out of the due window
     // without any points changing, so nothing else will invalidate for us.
     invalidate("ideas");
     lateOutcome = `strike · L${idea.level}`;
     landed = true;
-    return { outcome: "strike", failedAttempts, strikeLimit, nextCombo, nextDue: dueDate.toISOString() };
+    return { outcome: "strike", failedAttempts: data.failedAttempts, strikeLimit, nextCombo, nextDue: data.dueDate.toISOString(), ease: { before: clampEase(idea.ease), after: data.ease } };
   }
 
   const outcome = await attemptDegradation({ ...idea, failedAttempts }, now, userId, progression, nextCombo);
@@ -490,20 +653,23 @@ export const OVERRIDE_TYPES: readonly string[] = ["SHORT", "LIST"];
  * REVIEW row must be that miss (xp 0, 'strike', 'degraded' or 'shielded' with the level it was taken at), inside
  * OVERRIDE_WINDOW_MS, and never overridden before (an ADJUST row keyed 'review-override:<row>' marks it, so a second
  * tap does nothing). A degradation is undone: the level comes back and so do the points it took (levelLossPoints).
- * The clean state before the miss comes back too (cleanStateBefore: failedAttempts, and the clean recalls in a row
- * the miss row's qty kept), so the pass that follows (applyReviewResult, correct) is judged clean exactly when that
- * answer would have been. A ward charge a shielded miss spent stays spent. Returns the level the answer was given at.
+ * The state before the miss comes back too, exactly (undoStateOf: the miss row's receipt keeps the ease, the cycle,
+ * the lapse day, failedAttempts, the clean streak, the due date and the grace end; a row from before 2026-10-14 falls
+ * back to cleanStateBefore and its qty), so the pass that follows (applyReviewResult, correct) is judged clean exactly
+ * when that answer would have been. A 'retry' row (a re-attempt after the day's lapse) changed nothing, so nothing is
+ * put back: the pass that follows relearns the card, as a right retry does. A ward charge a shielded miss spent stays
+ * spent. Returns the level the answer was given at.
  */
 export async function undoMissCore(userId: string, ideaId: string, now: Date = new Date()): Promise<{ ok: true; levelBefore: number } | { ok: false; error: string }> {
   const read = () =>
     Promise.all([
       prisma.idea.findUnique({ where: { id: ideaId }, select: { id: true, level: true, questionType: true, domainId: true, failedAttempts: true } }),
-      prisma.activityEvent.findFirst({ where: { userId, source: "REVIEW", sourceId: ideaId }, orderBy: { occurredAt: "desc" }, select: { id: true, xp: true, detail: true, occurredAt: true, qty: true } }),
+      prisma.activityEvent.findFirst({ where: { userId, source: "REVIEW", sourceId: ideaId }, orderBy: { occurredAt: "desc" }, select: { id: true, xp: true, detail: true, occurredAt: true, qty: true, receipt: true } }),
     ]);
   let [idea, row] = await read();
   if (!idea) return { ok: false, error: "That idea no longer exists." };
   if (!OVERRIDE_TYPES.includes(idea.questionType)) return { ok: false, error: "Only a short answer or a list can be counted as right by hand." };
-  const missOf = (r: typeof row) => (r && r.xp === 0 ? /^(strike|degraded|shielded) · L(\d+)/.exec(r.detail ?? "") : null);
+  const missOf = (r: typeof row) => (r && r.xp === 0 ? /^(strike|degraded|shielded|retry) · L(\d+)/.exec(r.detail ?? "") : null);
   // The miss's row is written just after its answer is sent: give it a moment once.
   if (!missOf(row)) {
     await new Promise((res) => setTimeout(res, 700));
@@ -525,7 +691,9 @@ export async function undoMissCore(userId: string, ideaId: string, now: Date = n
     const refund = levelLossPoints(levelBefore);
     if (refund > 0) ops.push(prisma.domain.update({ where: { id: idea.domainId }, data: { totalPoints: { increment: refund } } }));
   }
-  ops.push(prisma.idea.update({ where: { id: ideaId }, data: cleanStateBefore(outcome, idea.failedAttempts, row.qty) }));
+  // A retry changed nothing; any other miss is put back as it was.
+  const back = undoStateOf(outcome, idea.failedAttempts, row.qty, row.receipt);
+  if (back) ops.push(prisma.idea.update({ where: { id: ideaId }, data: back }));
   try {
     await prisma.$transaction(ops);
   } catch (err) {
@@ -537,11 +705,30 @@ export async function undoMissCore(userId: string, ideaId: string, now: Date = n
 }
 
 /**
- * The clean state a miss took, from its REVIEW row (undoMissCore). A strike only raised failedAttempts (it never
- * writes cleanStreak: the strike alone makes the next right answer unclean), so it gives back one strike. A
- * degradation or a ward cleared failedAttempts and the clean streak: the row's qty is the streak it broke (null when a
- * miss earlier in the due cycle had already broken it, or on a row written before 2026-10-13), so a qty brings back
- * a clean answer (no strikes, that streak) and null an unclean one (one strike, no streak).
+ * What undoing a miss writes back to the card (pure): nothing for a 'retry' (it changed nothing); the exact state the
+ * miss row's receipt kept (missStateData); or, for a row with no receipt (written before 2026-10-14), the clean state
+ * cleanStateBefore derives from its qty, with the cycle missed exactly when that state holds a strike.
+ */
+export function undoStateOf(
+  outcome: string,
+  failedAttemptsNow: number,
+  brokenStreak: number | null,
+  receipt: unknown
+): ReturnType<typeof missStateData> | { failedAttempts: number; cleanStreak?: number; cycleMissed: boolean } | null {
+  if (outcome === "retry") return null;
+  const kept = missReceiptOf(receipt);
+  if (kept) return missStateData(kept.before);
+  const clean = cleanStateBefore(outcome, failedAttemptsNow, brokenStreak);
+  return { ...clean, cycleMissed: clean.failedAttempts > 0 };
+}
+
+/**
+ * The clean state a miss took, from its REVIEW row (undoMissCore), for a row written before the miss receipt
+ * (2026-10-14). A strike only raised failedAttempts (it never wrote cleanStreak then: the strike alone made the next
+ * right answer unclean), so it gives back one strike. A degradation or a ward cleared failedAttempts and the clean
+ * streak: the row's qty is the streak it broke (null when a miss earlier in the due cycle had already broken it, or
+ * on a row written before 2026-10-13), so a qty brings back a clean answer (no strikes, that streak) and null an
+ * unclean one (one strike, no streak).
  */
 export function cleanStateBefore(outcome: string, failedAttemptsNow: number, brokenStreak: number | null): { failedAttempts: number; cleanStreak?: number } {
   const streak = brokenStreak == null || !Number.isFinite(brokenStreak) ? null : Math.max(0, Math.round(brokenStreak));
@@ -551,8 +738,9 @@ export function cleanStateBefore(outcome: string, failedAttemptsNow: number, bro
 
 /**
  * Daily Cron target: forgetting (forgetting.ts). Every card past its grace with a level to lose is read against the
- * forgetting curve: from the level it fell due at and the days it has been overdue since, how many levels it has
- * forgotten by now. Each level not yet taken is taken now: the card's level, the points earning it paid off its
+ * forgetting curve (Ebbinghaus, at the card's own ease): from the level it fell due at and the days it has been
+ * overdue since, how many levels it has forgotten by now. Each level not yet taken is taken now: the card's level
+ * (its clean streak and its missed cycle reset: a forgotten level starts afresh), the points earning it paid off its
  * Domain (never below 0), and one FORGET row per level on the ledger (sink DOMAIN, xp negative, keyed per card, due
  * date and level, so a second run the same day, or the next, takes nothing twice). The due date is left as it is:
  * it is the anchor the curve is read from, and a review moves it. Routed through the same DEGRADATION_WARD gate as a
@@ -585,7 +773,7 @@ export async function degradeOverdueIdeas(now: Date = new Date()): Promise<{ ide
     const prefix = forgetKeyPrefix(idea.id, idea.dueDate);
     const done = keys.filter((k) => k.startsWith(prefix)).length;
     const anchor = idea.level + done;
-    const want = levelsForgotten(anchor, daysOverdueOf(idea.dueDate, now), graceExtra);
+    const want = levelsForgotten(anchor, daysOverdueOf(idea.dueDate, now), graceExtra, idea.ease);
     if (want <= done) continue;
 
     const anchorWard = await tryConsumeWardCharge(userId, progression.activeSkills, now);
@@ -595,8 +783,8 @@ export async function degradeOverdueIdeas(now: Date = new Date()): Promise<{ ide
     }
 
     const newLevel = anchor - want;
-    // A forgotten level starts its clean recalls again.
-    const ops: Prisma.PrismaPromise<unknown>[] = [prisma.idea.update({ where: { id: idea.id }, data: { level: newLevel, cleanStreak: 0 } })];
+    // A forgotten level starts afresh: its clean recalls again, and no miss held over from the cycle it fell due in.
+    const ops: Prisma.PrismaPromise<unknown>[] = [prisma.idea.update({ where: { id: idea.id }, data: { level: newLevel, cleanStreak: 0, cycleMissed: false } })];
     let taken = 0;
     for (let n = done + 1; n <= want; n++) {
       const from = anchor - n + 1;

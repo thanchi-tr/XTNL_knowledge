@@ -1,16 +1,20 @@
 /**
  * Forgetting (src/lib/forgetting.ts and srs.ts degradeOverdueIdeas): an idea left unreviewed loses levels along the
- * power forgetting curve, and each lost level takes back what earning it paid. Pure arithmetic, a day-by-day
- * simulation of the nightly job (idempotent, never twice), and pins on the job and the failed-review degrade.
+ * Ebbinghaus forgetting curve R(t) = e^(−t/S), S = I ÷ ln(1/0.9), I = baseline(level) × ease (2026-10-14; it was the
+ * power curve), and each lost level takes back what earning it paid. Pure arithmetic, a day-by-day simulation of the
+ * nightly job (idempotent, never twice), and pins on the job and the missed-review degrade.
  *
  *   npx tsx scripts/forgetting-check.ts
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  DESIGN_DECAY,
   DESIGN_RETENTION,
   FORGET_BAND,
   daysOverdueOf,
+  intervalOf,
+  stabilityOf,
   daysToForget,
   forgetDedupeKey,
   forgetKeyPrefix,
@@ -37,14 +41,40 @@ const near = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) <= eps;
 
 // ── The curve ───────────────────────────────────────────────────────────────
 {
-  check("curve: recall is 90% on the due day, for every level", Array.from({ length: MAX_LEVEL }, (_, i) => baseIntervalDays(i + 1)).every((S) => near(retrievability(S, S), DESIGN_RETENTION)));
-  check("curve: recall only falls with time, and ever more slowly (a power curve)", (() => {
+  check(
+    "curve: recall is 90% on the due day, for every level and ease (S = I ÷ ln(1/0.9), I = baseline × ease)",
+    Array.from({ length: MAX_LEVEL }, (_, i) => i + 1).every((L) =>
+      [0.6, 0.85, 1, 1.3, 1.8].every((e) => near(intervalOf(L, e), baseIntervalDays(L) * e) && near(stabilityOf(L, e), intervalOf(L, e) / Math.log(1 / 0.9)) && near(retrievability(intervalOf(L, e), stabilityOf(L, e)), DESIGN_RETENTION))
+    ) && near(DESIGN_DECAY, Math.log(1 / 0.9))
+  );
+  check(
+    "curve: Ebbinghaus, R(t) = e^(−t/S): R(0) = 1, R(2I) = 0.81, R(3I) = 0.729, and the same share lost every day (R(t + u) = R(t)·R(u))",
+    (() => {
+      const S = stabilityOf(9);
+      const I = intervalOf(9);
+      return near(retrievability(0, S), 1) && near(retrievability(2 * I, S), 0.81) && near(retrievability(3 * I, S), 0.729) && near(retrievability(17 + 40, S), retrievability(17, S) * retrievability(40, S)) && near(retrievability(10, 20), Math.exp(-0.5));
+    })()
+  );
+  check("curve: recall only falls with time, and ever more slowly in absolute terms", (() => {
     const S = 18;
     const r = [0, 10, 20, 40, 80, 160].map((t) => retrievability(t, S));
     const drops = r.slice(1).map((x, i) => r[i] - x);
     return r.every((x, i) => i === 0 || x < r[i - 1]) && (retrievability(400, S) - retrievability(800, S)) / 400 < (retrievability(20, S) - retrievability(40, S)) / 20 && drops.every((d) => d > 0);
   })());
   check("curve: one level per 7.5 points of recall below 90%", FORGET_BAND === 0.075 && DESIGN_RETENTION === 0.9);
+  // The n-th level goes at o = I·(ln(0.9 − 0.075n) ÷ ln 0.9 − 1) past due: 0.83·I, 1.73·I, 2.73·I, 3.85·I …
+  check(
+    "curve: the n-th level goes at I·(ln(0.9 − 0.075n)/ln 0.9 − 1) past due (0.83·I, 1.73·I, 2.73·I, 3.85·I), at every ease",
+    [10, 12, 16].every((L) =>
+      [0.6, 1, 1.8].every((e) =>
+        [1, 2, 3, 4].every((n) => near(daysToForget(L, n, 0, e)!, Math.max(graceDays(L), intervalOf(L, e) * (Math.log(0.9 - 0.075 * n) / Math.log(0.9) - 1)), 1e-6))
+      )
+    ) && [0.826, 1.731, 2.731, 3.848].every((k, i) => Math.abs(Math.log(0.9 - 0.075 * (i + 1)) / Math.log(0.9) - 1 - k) < 0.001)
+  );
+  check(
+    "curve: a wider ease holds longer, a tighter one forgets sooner (L12: 0.6× about 79 d, 1× about 132 d, 1.8× about 238 d past due)",
+    Math.round(daysToForget(12, 1, 0, 0.6)!) === 79 && Math.round(daysToForget(12, 1)!) === 132 && Math.round(daysToForget(12, 1, 0, 1.8)!) === 238 && levelsForgotten(12, 150, 0, 1.8) === 0 && levelsForgotten(12, 150, 0, 0.6) >= 1
+  );
 }
 
 // ── Levels forgotten ────────────────────────────────────────────────────────
@@ -124,11 +154,12 @@ const near = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) <= eps;
 {
   const srs = read("src/lib/srs.ts");
   const job = srs.slice(srs.indexOf("export async function degradeOverdueIdeas"));
-  check("job: reads the curve (levelsForgotten) from the card's due date and the levels it already lost", /const want = levelsForgotten\(anchor, daysOverdueOf\(idea\.dueDate, now\), graceExtra\);/.test(job) && /const anchor = idea\.level \+ done;/.test(job));
+  check("job: reads the curve (levelsForgotten, at the card's ease) from the card's due date and the levels it already lost", /const want = levelsForgotten\(anchor, daysOverdueOf\(idea\.dueDate, now\), graceExtra, idea\.ease\);/.test(job) && /const anchor = idea\.level \+ done;/.test(job));
   check("job: one FORGET row per level, sink DOMAIN, xp negative, keyed per card, due date and level", /source: "FORGET",\s*sink: "DOMAIN",[\s\S]*?xp: -points,[\s\S]*?dedupeKey: forgetDedupeKey\(idea\.id, idea\.dueDate, n\)/.test(job));
   check("job: the level, the rows and the Domain's points move in one transaction; a duplicate run takes nothing", /await prisma\.\$transaction\(ops\);[\s\S]*?if \(isDuplicateActivity\(err\)\) continue;/.test(job));
   // 2026-10-13 (idea leveling): a forgotten level also starts its clean recalls again (Idea.cleanStreak 0).
-  check("job: the due date is left as the anchor (only the level is written, and the clean streak reset)", /prisma\.idea\.update\(\{ where: \{ id: idea\.id \}, data: \{ level: newLevel, cleanStreak: 0 \} \}\)/.test(job));
+  // 2026-10-14 (one lapse a day): and drops a miss held over from its cycle (Idea.cycleMissed false).
+  check("job: the due date is left as the anchor (only the level is written, the clean streak and the missed cycle reset)", /prisma\.idea\.update\(\{ where: \{ id: idea\.id \}, data: \{ level: newLevel, cleanStreak: 0, cycleMissed: false \} \}\)/.test(job));
   check("job: levels then follow (recalculateLeveling once per Domain touched)", /for \(const domainId of touched\) await recalculateLeveling\(domainId\);/.test(job));
   check("points: a Domain never goes below 0", /GREATEST\(0, "totalPoints" - \$\{points\}\)/.test(srs));
   const degrade = srs.slice(srs.indexOf("async function degradeIdea"), srs.indexOf("function domainDebitOp"));

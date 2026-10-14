@@ -16,7 +16,7 @@
  *   levelLine(level)              "L9 · mastery at 12" · "L12 · mastered" · "L14 · past mastery" (row and detail alike)
  *   rowStatusOf(idea)             the row's chip: Fresh · Due · Fading · Forgetting · Mastered (forgetting.ts ideaOutlook)
  *   byUrgency(a, b)               forgetting → fading → due → fresh, then the oldest due first
- *   outlookLines(idea, now)       the detail's "Next: L9 after 2 clean recalls · 1 of 2 done", due, fading and loss lines
+ *   outlookLines(idea, now)       the detail's "Next: L9 after 2 clean recalls · 1 of 2 done", due, fading and loss lines, and its spacing
  */
 import type { CollectionLabel, QuestionType } from "@prisma/client";
 import type { Segment } from "@/components/ui/Meter";
@@ -31,7 +31,7 @@ import { LIFE_TZ } from "@/lib/life-day";
 import { QUESTION_TYPES, decodeStringArray } from "@/lib/idea-payload";
 import { EDIT_FORMATS } from "@/lib/idea-edit";
 import { parseReviewDetail } from "@/lib/roadmap-types";
-import { MASTERY_LEVEL, MAX_LEVEL } from "@/lib/xp";
+import { MASTERY_LEVEL, MAX_LEVEL, easeText } from "@/lib/xp";
 
 // ─── Rows ───────────────────────────────────────────────────────────────────
 
@@ -426,11 +426,25 @@ export function dueLine(dueAt: number, now: number): string {
 }
 
 /**
+ * The idea's own spacing against the ladder (forgetting.ts IdeaOutlook.ease, xp.ts ease), as it prints:
+ * "Spacing 1.3× — you recall this one well" (above 1.0×), "Spacing 0.7× — this one is tricky" (below it), or
+ * "Spacing 1.0× — the standard ladder". Read at one decimal, so the words always match the figure shown.
+ */
+export function spacingLine(ease: number): string {
+  const shown = easeText(ease);
+  const r = Number.parseFloat(shown);
+  if (r > 1) return `Spacing ${shown} — you recall this one well`;
+  if (r < 1) return `Spacing ${shown} — this one is tricky`;
+  return `Spacing ${shown} — the standard ladder`;
+}
+
+/**
  * The detail's outlook, one line each (an archived idea has none: it is not scheduled):
  *   "Next: L9 after 2 clean recalls · 1 of 2 done" (or "Next: L5 · a clean recall raises it")
  *   "Due in 12 days"
  *   "Starts fading 30 Oct" (or "Fading since 30 Oct")
  *   "Loses L8 around 20 Nov if not reviewed" (none at level 1: nothing to lose)
+ *   "Spacing 1.3× — you recall this one well" (spacingLine: its ease)
  */
 export function outlookLines(idea: Pick<LibraryIdea, "isArchived" | "level" | "dueAt" | "outlook">, now: number): string[] {
   if (idea.isArchived) return [];
@@ -440,6 +454,7 @@ export function outlookLines(idea: Pick<LibraryIdea, "isArchived" | "level" | "d
   if (Number.isFinite(fadeAt)) out.push(fadeAt > now ? `Starts fading ${shortDate(fadeAt, now)}` : `Fading since ${shortDate(fadeAt, now)}`);
   const lossAt = o.nextLossAt ? Date.parse(o.nextLossAt) : Number.NaN;
   if (Number.isFinite(lossAt) && idea.level > 1) out.push(`Loses L${Math.floor(idea.level)} around ${shortDate(Math.max(lossAt, now), now)} if not reviewed`);
+  out.push(spacingLine(o.ease));
   return out;
 }
 

@@ -40,7 +40,7 @@ import { EffectsCard, RecentIdeas, type RecentIdea, type ReviewEffects } from ".
 import { ReviewRunner, type BossRun, type RunPhase } from "./ReviewRunner";
 import { SessionComplete } from "./SessionComplete";
 import { ALL_FIELDS, SessionSummary } from "./SessionSummary";
-import { celebrationRoute, dayKeptOf, questNow, seededOrder, tallyOf, type CardResult, type RunCard } from "./review-model";
+import { celebrationRoute, dayKeptOf, queueAfterAnswer, queueAfterOverride, questNow, returnsWaitingOf, seededOrder, tallyOf, type CardResult, type RunCard } from "./review-model";
 import { RoadmapFocus } from "./RoadmapFocus";
 import type { StudyFocus, StudyTopic } from "@/lib/roadmap-study";
 import "./review.css";
@@ -248,11 +248,13 @@ export function WorkspaceView(props: Props) {
       try {
         const result = await submitReview({ ideaId: card.id, userAnswer, combo: streak });
         recordResult(result.combo.next);
-        setRun((cur) =>
-          cur && cur.id === r.id
-            ? { ...cur, results: [...cur.results, { card, result, answer: display }], phase: { kind: "answered", result, answer: display, picked } }
-            : cur
-        );
+        setRun((cur) => {
+          if (!cur || cur.id !== r.id) return cur;
+          const results = [...cur.results, { card, result, answer: display }];
+          // A miss comes back at the end of the session (up to SESSION_RETURNS_MAX times; never in an encounter).
+          const queue = queueAfterAnswer(cur.queue, results, card, result, cur.boss != null);
+          return { ...cur, queue, results, phase: { kind: "answered", result, answer: display, picked } };
+        });
         // T2 merges into this run; T3 waits for it to close. T1s are the runner's own (one "Today kept", not two).
         for (const ev of result.celebrations) if (celebrationRoute(ev) === "enqueue") enqueue(ev);
       } catch {
@@ -285,7 +287,8 @@ export function WorkspaceView(props: Props) {
         if (!cur || cur.id !== r.id || cur.phase.kind !== "answered") return cur;
         const last = cur.results.length - 1;
         const results = cur.results.map((x, i) => (i === last && x.card.id === card.id ? { ...x, result: res.value } : x));
-        return { ...cur, results, phase: { ...cur.phase, result: res.value } };
+        // Counted as right: the copy the miss queued at the end is taken back out.
+        return { ...cur, queue: queueAfterOverride(cur.queue, cur.index, card.id), results, phase: { ...cur.phase, result: res.value } };
       });
       setOverride(null);
     });
@@ -379,6 +382,8 @@ export function WorkspaceView(props: Props) {
   // ── Runner ──
   if (mode === "run" && run) {
     const answered = run.results.length;
+    // Missed cards waiting to be asked again: leaving now leaves them due tomorrow (their first miss set that).
+    const waiting = returnsWaitingOf(run.queue, answered);
     return (
       <>
         <ReviewRunner
@@ -408,7 +413,9 @@ export function WorkspaceView(props: Props) {
           description={
             run.boss
               ? `The encounter is forfeit: no victory, no defeat, no debuff. The ${answered} answered ${answered === 1 ? "is" : "are"} saved and paid.`
-              : `${answered} answered ${answered === 1 ? "is" : "are"} saved and paid. The rest stay due; nothing is lost.`
+              : `${answered} answered ${answered === 1 ? "is" : "are"} saved and paid. The rest stay due; nothing is lost.${
+                  waiting > 0 ? ` ${waiting === 1 ? "The card" : `The ${waiting} cards`} waiting for another try ${waiting === 1 ? "comes" : "come"} back tomorrow.` : ""
+                }`
           }
           footer={
             <>

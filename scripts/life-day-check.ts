@@ -260,13 +260,15 @@ for (const tz of [SYD, BNE]) {
   // Orders (2026-10-14): work-orders-check runs right after customers-check (a work tab's order list).
   // Idea leveling (2026-10-13): leveling-check runs right after goals-close-check (rise rules, retention, drops), so
   // goals-close still follows character-check directly (roadmap-contract-check pins that pair).
+  // Spacing (2026-10-14): spacing-check runs right after leveling-check (ease, the Ebbinghaus curve, one lapse a day,
+  // relearning, the session's retries).
   // Momentum (2026-10-12, momentum.md §G.1 L0): momentum-check, balance-horizon and momentum-sim run between
   // goals-close and settle (the last two are plain scripts, not *-check.ts); momentum-server-check (lane C) follows
   // momentum-check.
   const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> }).scripts;
   const ROADMAP_LIFE_CHECKS = ["roadmap-contract", "roadmap-measures", "throughput", "roadmap-realism", "roadmap-model", "roadmap-server", "roadmap-quests", "roadmap-invite", "roadmap-hostile"];
   const STRICT_LIFE_CHECKS = new Set(["today-ui", "roadmap-contract"]);
-  const names = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "exercise-style", "subtasks", "task-decisions", "work-boards", "customers", "work-orders", "character", "goals-close", "leveling", "momentum", "momentum-server", "balance-horizon", "momentum-sim", "settle", "duty", "duty-actions", "rituals", "roadmap-goals", "roadmap-topics", "roadmap-grounding", ...ROADMAP_LIFE_CHECKS];
+  const names = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "exercise-style", "subtasks", "task-decisions", "work-boards", "customers", "work-orders", "character", "goals-close", "leveling", "spacing", "momentum", "momentum-server", "balance-horizon", "momentum-sim", "settle", "duty", "duty-actions", "rituals", "roadmap-goals", "roadmap-topics", "roadmap-grounding", ...ROADMAP_LIFE_CHECKS];
   const PLAIN_LIFE_SCRIPTS = new Set(["balance-horizon", "momentum-sim"]);
   const fileOf = (n: string) => `scripts/${n}${PLAIN_LIFE_SCRIPTS.has(n) ? "" : "-check"}.ts`;
   const all = names.map(fileOf);

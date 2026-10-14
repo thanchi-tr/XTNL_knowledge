@@ -9,8 +9,8 @@ import { loadProgressionFresh } from "@/lib/skill-effects";
 import { displayAnswer } from "@/lib/idea-display";
 import { daysUntilDue } from "@/lib/due";
 import { dayKeyOf, todayKey, type DayKey } from "@/lib/life-day";
-import { MASTERY_LEVEL, cleanRecallsTo, comboIsCapped, comboMultiplier } from "@/lib/xp";
-import { historyOf, questTargetOf, trueFactOf, type TrueFact } from "@/lib/review-facts";
+import { MASTERY_LEVEL, cleanRecallsTo, comboIsCapped, comboMultiplier, ideaIntervalDays } from "@/lib/xp";
+import { historyOf, questTargetOf, trueFactOf, type MissOutcome, type TrueFact } from "@/lib/review-facts";
 import { captureSnapshot, detectCelebrations } from "@/lib/celebrations";
 import type { CelebrationEvent } from "@/lib/celebration-types";
 import { getCurrentUserId } from "@/lib/user";
@@ -73,6 +73,28 @@ export interface SubmitReviewResult {
   nextDueDay: DayKey;
   /** L3's detectors' events for this answer (T1 in place, T2 into the run's recap, T3 after the run). */
   celebrations: CelebrationEvent[];
+}
+
+/** The true fact's miss, from the server's outcome: the day's lapse (with how it moved the spacing) or a retry. */
+function missOf(outcome: ReviewOutcome): MissOutcome | undefined {
+  switch (outcome.outcome) {
+    case "strike":
+      return { kind: "strike", strike: outcome.failedAttempts, limit: outcome.strikeLimit, ease: outcome.ease };
+    case "degraded":
+      return { kind: "degraded", levelBefore: outcome.previousLevel, levelAfter: outcome.newLevel, ease: outcome.ease };
+    case "shielded":
+      return { kind: "shielded", skillName: outcome.skillName, level: outcome.level, ease: outcome.ease };
+    case "retry":
+      return { kind: "retry" };
+    default:
+      return undefined;
+  }
+}
+
+/** A relearn's facts: relearned, and the interval its level would usually schedule at its ease (to say "sooner"). */
+function relearnOf(outcome: ReviewOutcome, intervalMultiplier: number): { relearned: boolean; usualIntervalDays: number | null } {
+  if (outcome.outcome !== "advanced" || outcome.rise.kind !== "relearned") return { relearned: false, usualIntervalDays: null };
+  return { relearned: true, usualIntervalDays: ideaIntervalDays(outcome.newLevel, outcome.rise.ease.after, { multiplier: intervalMultiplier, jitter: false }) };
 }
 
 /**
@@ -140,16 +162,10 @@ export async function submitReview(input: SubmitReviewInput): Promise<SubmitRevi
     mastered: advanced?.mastered ?? false,
     overdueDays: Math.max(0, -daysUntilDue(idea.dueDate, now)),
     intervalDays: advanced ? advanced.intervalDays : 1,
+    ...relearnOf(outcome, progression.modifiers.intervalMultiplier),
     // Clean recalls still to mastery: a pass keeps its streak (outcome.rise), a miss breaks it.
     cleanToMastery: cleanRecallsTo(levelAfter, advanced ? advanced.rise.cleanStreak : 0, MASTERY_LEVEL),
-    miss:
-      outcome.outcome === "strike"
-        ? { kind: "strike", strike: outcome.failedAttempts, limit: outcome.strikeLimit }
-        : outcome.outcome === "degraded"
-          ? { kind: "degraded", levelBefore: outcome.previousLevel, levelAfter: outcome.newLevel }
-          : outcome.outcome === "shielded"
-            ? { kind: "shielded", skillName: outcome.skillName, level: outcome.level }
-            : undefined,
+    miss: missOf(outcome),
   });
 
   return {
@@ -242,6 +258,7 @@ export async function overrideReview(input: OverrideReviewInput): Promise<{ ok: 
           mastered: advanced?.mastered ?? false,
           overdueDays: 0,
           intervalDays: advanced ? advanced.intervalDays : 1,
+          ...relearnOf(outcome, progression.modifiers.intervalMultiplier),
           cleanToMastery: cleanRecallsTo(levelAfter, advanced ? advanced.rise.cleanStreak : 0, MASTERY_LEVEL),
         }),
         // The miss already counted as today's review; the override is the same answer, not another.

@@ -243,10 +243,14 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   const lvl = trueFactOf({ ...base, levelBefore: 5, levelAfter: 6, addedDay: null });
   check("facts: with no history and no add day it says only what is known", lvl.kind === "level" && lvl.headline === "Level 5 → 6" && lvl.gapDays === null);
 
+  // 2026-10-14 (one lapse a day): a miss is "Not yet"; when it comes back is the runner's line (review-model
+  // missLineOf, scripts/spacing-check.ts), so the fact says only what the day's lapse changed.
   const strike = trueFactOf({ ...base, correct: false, intervalDays: 1, miss: { kind: "strike", strike: 1, limit: 3 } });
-  check("facts: a strike waits and says what is (not) taken", strike.headline === "Not this time" && strike.detail === "Back tomorrow · strike 1 of 3 · nothing else is taken", strike.detail);
+  check("facts: a strike waits and says what is (not) taken", strike.headline === "Not yet" && strike.detail === "Strike 1 of 3 · nothing else is taken", strike.detail);
+  const eased = trueFactOf({ ...base, correct: false, intervalDays: 1, miss: { kind: "strike", strike: 1, limit: 2, ease: { before: 1, after: 0.85 } } });
+  check("facts: the day's lapse says how it tightened the spacing", eased.detail === "Strike 1 of 2 · spacing 1.00× → 0.85× · nothing else is taken", eased.detail);
   const degraded = trueFactOf({ ...base, correct: false, miss: { kind: "degraded", levelBefore: 6, levelAfter: 5 } });
-  check("facts: a degradation says exactly what it costs", degraded.kind === "degraded" && degraded.detail.includes("level 6 → 5") && degraded.detail.includes("gives back the 3.4 points that level earned"), degraded.detail);
+  check("facts: a degradation says exactly what it costs", degraded.kind === "degraded" && degraded.headline === "Not yet" && degraded.detail.includes("Level 6 → 5") && degraded.detail.includes("gives back the 3.4 points that level earned"), degraded.detail);
   const shielded = trueFactOf({ ...base, correct: false, miss: { kind: "shielded", skillName: "Ward of Patience", level: 6 } });
   check("facts: a ward save is a held beat, naming the ward", shielded.kind === "shielded" && shielded.detail.includes("Ward of Patience held level 6"));
   check("facts: deterministic (same history, same sentence)", eq(trueFactOf({ ...base, history: h([["2026-08-28", "pass"]]) }), trueFactOf({ ...base, history: h([["2026-08-28", "pass"]]) })));
@@ -258,6 +262,7 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
       reviewMarkOf("strike") === "miss" &&
       reviewMarkOf("degraded") === "miss" &&
       reviewMarkOf("shielded") === "miss" &&
+      reviewMarkOf("retry · L5") === "miss" &&
       reviewMarkOf("backfill: passed review") === "pass" &&
       reviewMarkOf(null) === "pass"
   );
@@ -395,9 +400,11 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   }
   check("result: every printed formula ends in the exact amount paid", formulas);
   check("result: the formula names only the factors that were paid", formulaOf(reviewPayout(3, 2, 10, 1)) === "2.72 base × 1.10 combo = 2.99");
-  check("tally: best combo and correct count", tallyOf(results).correct === 5 && tallyOf(results).bestCombo === 5 && tallyOf(results).answered === 6);
-  check("segments: answered on/miss, current outlined", eq(segmentsOf(results.slice(0, 2), 5, 2), ["on", "on", "cur", "off", "off"]) && segmentsOf(results, 6, 6)[5] === "miss");
-  check("quest in the runner: the server's figure wins once there is one", questNow({ done: 9, target: 15 }, []).done === 9 && questNow({ done: 9, target: 15 }, results).done === 15 && questNow({ done: 9, target: 15 }, results).cleared);
+  // The fixture run (2026-10-14): six cards, card 6 missed and asked again at the end, then right (relearned).
+  const t = tallyOf(results);
+  check("tally: best combo and correct count (a retry is an answer; a relearned card is not a first-try recall)", t.correct === 6 && t.bestCombo === 5 && t.answered === 7 && t.cards === 6 && t.firstTry === 5 && t.relearned === 1 && t.notYet === 0, JSON.stringify(t));
+  check("segments: answered on/miss, current outlined", eq(segmentsOf(results.slice(0, 2), 5, 2), ["on", "on", "cur", "off", "off"]) && segmentsOf(results, 7, 7)[5] === "miss" && segmentsOf(results, 7, 7)[6] === "on");
+  check("quest in the runner: the server's figure wins once there is one", questNow({ done: 9, target: 15 }, []).done === 9 && questNow({ done: 9, target: 15 }, results).done === 16 && questNow({ done: 9, target: 15 }, results).cleared);
   check("recap: a Seal L3 returned covers its level row; without one the plain fact shows", levelRowsOf(results, [fx.seal]).every((r) => !r.key.startsWith("domain:fx-prob")) && levelRowsOf(results, []).some((r) => r.key === "domain:fx-prob"));
   check("recap: a multiple choice is named by its question", cardTitle(fx.cards[3]).startsWith("A fair coin") && cardTitle(fx.cards[0]) === fx.cards[0].preview);
   check("recap: session facts read the run's own results", sessionCardFacts(results).length === results.length);
@@ -430,7 +437,8 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   check("srs: the review path never calls the roll", !/rollRewardVariance\s*\(/.test(srs));
   check("srs: a pass writes its REVIEW row (sink DOMAIN, xp = the credit) inside the points transaction", /ops\.push\(activityOp\(userId, review\)\)/.test(apply) && /reviewEvent\(ideaId, now, pointsAwarded/.test(apply) && /await prisma\.\$transaction\(ops\)/.test(apply) && /source: "REVIEW", sink: "DOMAIN"/.test(srs));
   // 2026-10-13 (idea leveling): the miss row's qty keeps the clean streak it broke, for "I was right" (undoMissCore).
-  check("srs: a miss writes its xp-0 REVIEW row in after(), off the answer's path", /after\(async \(\) => \{\s*if \(lateOutcome\) \{\s*await recordActivity\(userId, \{ \.\.\.reviewEvent\(ideaId, now, 0, lateOutcome\), qty: brokenStreak \}\);/.test(apply));
+  // 2026-10-14: and its receipt keeps the state before the miss, for an exact "I was right".
+  check("srs: a miss writes its xp-0 REVIEW row in after(), off the answer's path", /after\(async \(\) => \{\s*if \(lateOutcome\) \{\s*await recordActivity\(userId, \{ \.\.\.reviewEvent\(ideaId, now, 0, lateOutcome\), qty: brokenStreak, receipt: missReceipt as unknown as Receipt \| null \}\);/.test(apply));
   check("srs: field activity and study tasks still follow every landed review", /recordFieldActivity\(userId, domainBefore\.fieldId, now\)/.test(apply) && /autoCompleteStudyTasks\(userId, now\)/.test(apply));
   check("srs: mastery is minted in the same transaction (fraction always, lump on mastery)", /ops\.push\(mintReviewFractionOp\(/.test(apply) && /ops\.push\(mintIdeaMasteryOp\(/.test(apply));
   // after() callbacks run once the answer is sent; their awaits are not on the answer's path.
@@ -449,7 +457,7 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   check("override: only SHORT and LIST, within 10 minutes of the miss", /OVERRIDE_TYPES: readonly string\[\] = \["SHORT", "LIST"\]/.test(srs) && /OVERRIDE_WINDOW_MS = 10 \* 60_000/.test(srs));
   check(
     "override: the miss is read from the idea's own latest REVIEW row (xp 0, its outcome and level), never from the client",
-    /source: "REVIEW", sourceId: ideaId \}, orderBy: \{ occurredAt: "desc" \}/.test(undo) && /r\.xp === 0 \? \/\^\(strike\|degraded\|shielded\) · L\(\\d\+\)\//.test(undo)
+    /source: "REVIEW", sourceId: ideaId \}, orderBy: \{ occurredAt: "desc" \}/.test(undo) && /r\.xp === 0 \? \/\^\(strike\|degraded\|shielded\|retry\) · L\(\\d\+\)\//.test(undo)
   );
   check("override: once per miss (an ADJUST row keyed review-override:<row>)", /dedupeKey: `review-override:\$\{row\.id\}`/.test(undo) && /isDuplicateActivity\(err\)\) return \{ ok: false, error: "Already counted as right\." \}/.test(undo));
   check("override: a degradation is undone: its level and the points it took come back", /ops\.push\(prisma\.idea\.update\(\{ where: \{ id: ideaId \}, data: \{ level: levelBefore \} \}\)\)/.test(undo) && /const refund = levelLossPoints\(levelBefore\);/.test(undo));

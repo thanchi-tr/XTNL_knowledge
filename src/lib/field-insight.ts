@@ -39,12 +39,12 @@ type TreeIdea = TreeDomain["ideas"][number];
 
 /** forgetting.ts ideaOutlook over an Idea row, at `now`, with the skills' grace extension. */
 export function ideaOutlookOf(
-  idea: { level: number; dueDate: Date; graceEndsAt: Date | null; cleanStreak: number; failedAttempts: number },
+  idea: { level: number; dueDate: Date; graceEndsAt: Date | null; cleanStreak: number; failedAttempts: number; ease: number; cycleMissed: boolean },
   now: Date,
   graceExtraDays: number
 ): IdeaOutlook {
   return ideaOutlook(
-    { level: idea.level, dueDate: idea.dueDate, graceEndsAt: idea.graceEndsAt, cleanStreak: idea.cleanStreak, failedAttempts: idea.failedAttempts },
+    { level: idea.level, dueDate: idea.dueDate, graceEndsAt: idea.graceEndsAt, cleanStreak: idea.cleanStreak, failedAttempts: idea.failedAttempts, ease: idea.ease, cycleMissed: idea.cycleMissed },
     now,
     graceExtraDays
   );

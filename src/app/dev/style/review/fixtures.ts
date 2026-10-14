@@ -17,7 +17,7 @@ import { addDays, type DayKey } from "@/lib/life-day";
 import { medallionMaterial } from "@/lib/materials";
 import { IDEA_MASTERY_POINTS, comboMasteryBonus, reviewMasteryFraction } from "@/lib/mastery";
 import { historyOf, trueFactOf, type HistoryRow } from "@/lib/review-facts";
-import { COMBO_CAP, MASTERY_BONUS, MASTERY_LEVEL, comboMultiplier, domainLevelProgress, reviewPayout, riseLine, riseStep } from "@/lib/xp";
+import { COMBO_CAP, EASE_DEFAULT, MASTERY_BONUS, MASTERY_LEVEL, comboMultiplier, domainLevelProgress, easeAfterClean, easeAfterLapse, ideaIntervalDays, relearnIntervalDays, reviewPayout, riseLine, riseStep } from "@/lib/xp";
 import { formatAmount, formatNumber } from "@/components/ui/format";
 import type { CardResult, RunCard } from "@/components/workspace/review-model";
 import type { RecentIdea, ReviewEffects } from "@/components/workspace/ReviewHub";
@@ -96,10 +96,14 @@ function history(rows: [DayKey, string, string | null][]): HistoryRow[] {
   return rows.map(([day, source, detail]) => ({ day, source, detail }));
 }
 
-/** A passed review, priced and described by the real functions. */
-function pass(card: RunCard, combo: number, hist: HistoryRow[], opts: { domainLevelAfter?: number; interval: number } = { interval: 1 }): SubmitReviewResult {
+/**
+ * A passed review, priced and described by the real functions. `relearn`: a right retry after the day's lapse (the
+ * card at its lapsed ease, level held, back at the relearn interval).
+ */
+function pass(card: RunCard, combo: number, hist: HistoryRow[], opts: { domainLevelAfter?: number; interval: number; relearn?: { ease: number } } = { interval: 1 }): SubmitReviewResult {
   const d = DOMAINS[card.domainName];
-  const newLevel = card.level + 1;
+  const relearn = opts.relearn ?? null;
+  const newLevel = relearn ? card.level : card.level + 1;
   const mastered = newLevel === MASTERY_LEVEL;
   const payout = reviewPayout(card.level, combo, COMBO_CAP, YIELD, mastered ? MASTERY_BONUS : 0);
   const after = d.points + payout.total;
@@ -119,10 +123,19 @@ function pass(card: RunCard, combo: number, hist: HistoryRow[], opts: { domainLe
       pointsAwarded: payout.total,
       payout,
       mastered,
-      // The style fixture's passes are clean rises (a clean recall already in hand from L8 up): xp.ts riseStep.
+      // The style fixture's passes are clean rises (a clean recall already in hand from L8 up), or a relearn: xp.ts riseStep.
       rise: (() => {
-        const step = riseStep(card.level, 1, 0);
-        return { kind: step.kind, clean: step.clean, cleanStreak: step.cleanStreak, cleanNeeded: step.cleanNeeded, nextLevel: newLevel + 1, line: riseLine(step) };
+        const step = riseStep(card.level, 1, relearn != null);
+        const before = relearn ? relearn.ease : EASE_DEFAULT;
+        return {
+          kind: step.kind,
+          clean: step.clean,
+          cleanStreak: step.cleanStreak,
+          cleanNeeded: step.cleanNeeded,
+          nextLevel: newLevel + 1,
+          line: riseLine(step),
+          ease: { before, after: relearn ? before : easeAfterClean(before) },
+        };
       })(),
       masteryMinted: reviewMasteryFraction(card.level) * comboMasteryBonus(combo) + (mastered ? IDEA_MASTERY_POINTS : 0),
       domain: {
@@ -148,10 +161,12 @@ function pass(card: RunCard, combo: number, hist: HistoryRow[], opts: { domainLe
       addedDay: "2026-03-14",
       levelBefore: card.level,
       levelAfter: newLevel,
-      failedAttemptsBefore: 0,
+      failedAttemptsBefore: relearn ? 1 : 0,
       mastered,
       overdueDays: 0,
       intervalDays: opts.interval,
+      relearned: relearn != null,
+      usualIntervalDays: relearn ? ideaIntervalDays(card.level, relearn.ease, { jitter: false }) : null,
     }),
     quest: { done: 0, target: 15 },
     streakSecured: false,
@@ -160,10 +175,12 @@ function pass(card: RunCard, combo: number, hist: HistoryRow[], opts: { domainLe
   };
 }
 
+/** The day's lapse (a first miss): strike 1 of 2, the spacing tightened (xp.ts easeAfterLapse). */
 function miss(card: RunCard, combo: number, hist: HistoryRow[]): SubmitReviewResult {
+  const ease = { before: EASE_DEFAULT, after: easeAfterLapse(EASE_DEFAULT) };
   return {
     correct: false,
-    outcome: { outcome: "strike", failedAttempts: 1, strikeLimit: 2, nextCombo: 0, nextDue: new Date(NOW.getTime() + 86_400_000).toISOString() },
+    outcome: { outcome: "strike", failedAttempts: 1, strikeLimit: 2, nextCombo: 0, nextDue: new Date(NOW.getTime() + 86_400_000).toISOString(), ease },
     expected: FX_ANSWERS[card.id],
     explanation:
       "The median depends only on rank order, so the long tail moves it by at most a position. The mode is not defined for continuous data without binning.",
@@ -180,7 +197,7 @@ function miss(card: RunCard, combo: number, hist: HistoryRow[]): SubmitReviewRes
       mastered: false,
       overdueDays: 0,
       intervalDays: 1,
-      miss: { kind: "strike", strike: 1, limit: 2 },
+      miss: { kind: "strike", strike: 1, limit: 2, ease },
     }),
     quest: { done: 0, target: 15 },
     streakSecured: false,
@@ -191,6 +208,9 @@ function miss(card: RunCard, combo: number, hist: HistoryRow[]): SubmitReviewRes
 
 export interface ReviewFixtureData {
   cards: RunCard[];
+  /** The run's queue: the six cards, then card 6 again (missed, it comes back at the end: review-model queueAfterAnswer). */
+  queue: RunCard[];
+  /** Six first answers (card 6 missed), then card 6's right retry (relearned). */
   results: CardResult[];
   /** The Seal L3's detectors would return for card 5 (Probability → level 7). */
   seal: CelebrationEvent;
@@ -232,6 +252,12 @@ export function reviewFixtures(): ReviewFixtureData {
     { domainLevelAfter: 7, interval: 50 }
   );
   const r6 = miss(c6, 5, history([["2026-09-25", "REVIEW", "advanced"]]));
+  // Card 6 comes back at the end and is right: relearned at its lapsed ease, level held, back at the relearn interval.
+  const lapsedEase = easeAfterLapse(EASE_DEFAULT);
+  const r7 = pass(c6, 0, history([["2026-09-25", "REVIEW", "advanced"], [FX_TODAY, "REVIEW", "strike · L3"]]), {
+    interval: relearnIntervalDays(c6.level, 1, lapsedEase),
+    relearn: { ease: lapsedEase },
+  });
 
   const adv5 = r5.outcome.outcome === "advanced" ? r5.outcome : null;
   const seal: CelebrationEvent = {
@@ -257,10 +283,11 @@ export function reviewFixtures(): ReviewFixtureData {
   r5.celebrations = [seal];
 
   let done = 9;
-  const results: CardResult[] = [r1, r2, r3, r4, r5, r6].map((result, i) => {
+  const queue: RunCard[] = [...FX_CARDS, c6];
+  const results: CardResult[] = [r1, r2, r3, r4, r5, r6, r7].map((result, i) => {
     done += 1;
     result.quest = { done, target: 15 };
-    return { card: FX_CARDS[i], result, answer: i === 5 ? "Mean" : FX_ANSWERS[FX_CARDS[i].id] };
+    return { card: queue[i], result, answer: i === 5 ? "Mean" : FX_ANSWERS[queue[i].id] };
   });
   results[0].result.streakSecured = true;
 
@@ -334,6 +361,7 @@ export function reviewFixtures(): ReviewFixtureData {
 
   return {
     cards: FX_CARDS,
+    queue,
     results,
     seal,
     questStart: { done: 9, target: 15 },

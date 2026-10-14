@@ -274,14 +274,9 @@ const BASE_INTERVAL_DAYS: Record<number, number> = {
   20: 2850,
 };
 
-/** `multiplier` is the INTERVAL_DILATION skill hook — stretches the schedule uniformly across all three tiers. */
+/** `multiplier` is the INTERVAL_DILATION skill hook — stretches the schedule uniformly across all three tiers. The baseline ladder (ease 1): ideaIntervalDays(level, 1, { multiplier }). */
 export function nextIntervalDays(level: number, multiplier = 1): number {
-  const clamped = Math.min(MAX_LEVEL, Math.max(1, level));
-  const base = BASE_INTERVAL_DAYS[clamped];
-  if (clamped >= 5 && clamped <= 8) {
-    return Math.round(base * (0.75 + Math.random() * 0.5) * multiplier); // Stochastic tier
-  }
-  return Math.round(base * multiplier); // Linear and Staggered tiers: deterministic
+  return ideaIntervalDays(level, EASE_DEFAULT, { multiplier });
 }
 
 /** Deterministic base interval, for display without consuming the jitter. */
@@ -289,18 +284,111 @@ export function baseIntervalDays(level: number): number {
   return BASE_INTERVAL_DAYS[Math.min(MAX_LEVEL, Math.max(1, level))];
 }
 
+// ── Ease: each idea's own spacing (2026-10-14, migration 20261226000000_idea_ease) ──
+//
+// The ladder above is the BASELINE: the interval an average idea is scheduled at, level by level. Each idea carries
+// its own EASE (Idea.ease, 1 = the baseline) that scales it:
+//
+//   I = baseline(level) × ease            (× INTERVAL_DILATION, and × [0.75, 1.25] at levels 5–8 as before)
+//
+// and the memory model is the Ebbinghaus forgetting curve R(t) = e^(−t/S) with the stability S chosen so recall is
+// DESIGN_RETENTION (90%) on the day the idea falls due: S = I ÷ ln(1/0.9) (forgetting.ts). Ease is learnt from the
+// idea's own recalls:
+//
+//   clean recall      ease × EASE_CLEAN_GAIN (1.02), up to EASE_MAX (1.8)
+//   … and late        × min(EASE_LATE_CREDIT_MAX (1.2), √(e ÷ I)) more when it was recalled e days after the last
+//                     review against a scheduled I (e > I): surviving past the schedule is evidence of a longer memory
+//   the day's lapse   ease × EASE_LAPSE_FACTOR (0.85), down to EASE_MIN (0.6): the first miss of a life day only
+//   a relearn         nothing more (the lapse already counted)
+//
+// So an idea you keep recalling spaces itself out (up to 1.8× the ladder) and one you keep missing comes back sooner
+// (down to 0.6×); a new idea starts on the ladder. The library prints it ("Spacing 1.3× — you recall this one well").
+
+/** A new idea's ease: the baseline ladder. */
+export const EASE_DEFAULT = 1;
+/** The tightest an idea's spacing gets: 0.6 × the ladder. */
+export const EASE_MIN = 0.6;
+/** The widest an idea's spacing gets: 1.8 × the ladder. */
+export const EASE_MAX = 1.8;
+/**
+ * A clean recall widens the spacing by this factor. Calibrated to the retention target, not picked: an idea recalled
+ * at exactly the design retention (9 clean recalls to every lapse) should keep its ease, so the gain balances the
+ * lapse: 0.9·ln g + 0.1·ln 0.85 = 0, g = 0.85^(−1/9) = 1.018, rounded to 1.02 (1.02⁹ × 0.85 = 1.016). The ease then
+ * settles where the idea is recalled about 89% of the time on its due day. A gain of 1.05 would settle it at about
+ * 77% (every idea drifting to EASE_MAX and missed more), and take a perfectly kept idea to mastery in 2.9 years
+ * instead of 2.2 (636 days on the baseline ladder): scripts/balance-horizon.ts prints the walks.
+ */
+export const EASE_CLEAN_GAIN = 1.02;
+/** The most a late clean recall adds on top of the gain (√(e/I), capped). */
+export const EASE_LATE_CREDIT_MAX = 1.2;
+/** The day's lapse (its first miss) tightens the spacing by this factor. */
+export const EASE_LAPSE_FACTOR = 0.85;
+/** A relearned idea (right on a retry after a miss) comes back after this share of its eased interval, at least a day. */
+export const RELEARN_INTERVAL_SHARE = 0.3;
+
+/** An ease held to [EASE_MIN, EASE_MAX]; anything not finite reads as the baseline. */
+export function clampEase(ease: number | null | undefined): number {
+  const e = typeof ease === "number" && Number.isFinite(ease) ? ease : EASE_DEFAULT;
+  return Math.min(EASE_MAX, Math.max(EASE_MIN, e));
+}
+
+/** The late credit for a clean recall `ratio` = elapsed ÷ scheduled: √ratio capped at EASE_LATE_CREDIT_MAX, 1 when on time or early. */
+export function lateCredit(ratio: number): number {
+  return Number.isFinite(ratio) && ratio > 1 ? Math.min(EASE_LATE_CREDIT_MAX, Math.sqrt(ratio)) : 1;
+}
+
+/** elapsed ÷ scheduled for a recall `overdueDays` life days past a `scheduledDays` interval (1 when on time). */
+export function lateRatioOf(scheduledDays: number, overdueDays: number): number {
+  if (!(scheduledDays > 0)) return 1;
+  return (scheduledDays + Math.max(0, Number.isFinite(overdueDays) ? overdueDays : 0)) / scheduledDays;
+}
+
+/** The ease after a clean recall: × EASE_CLEAN_GAIN × lateCredit(lateRatio), held to [EASE_MIN, EASE_MAX]. */
+export function easeAfterClean(ease: number, lateRatio = 1): number {
+  return clampEase(clampEase(ease) * EASE_CLEAN_GAIN * lateCredit(lateRatio));
+}
+
+/** The ease after the day's lapse (its first miss): × EASE_LAPSE_FACTOR, held to [EASE_MIN, EASE_MAX]. */
+export function easeAfterLapse(ease: number): number {
+  return clampEase(clampEase(ease) * EASE_LAPSE_FACTOR);
+}
+
+/** The eased interval before rounding: baseline(level) × ease. The forgetting curve reads it (forgetting.ts). */
+export function easedBaseDays(level: number, ease = EASE_DEFAULT): number {
+  return baseIntervalDays(level) * clampEase(ease);
+}
+
+/**
+ * The interval an idea is scheduled at: round(baseline(level) × ease × multiplier), with the Stochastic tier's
+ * × [0.75, 1.25) draw at levels 5–8 unless `jitter` is false. `multiplier` is INTERVAL_DILATION. At ease 1 this is
+ * exactly the ladder nextIntervalDays always scheduled (the same floats in the same order).
+ */
+export function ideaIntervalDays(level: number, ease = EASE_DEFAULT, opts: { multiplier?: number; jitter?: boolean } = {}): number {
+  const clamped = Math.min(MAX_LEVEL, Math.max(1, level));
+  const base = BASE_INTERVAL_DAYS[clamped] * clampEase(ease);
+  const multiplier = opts.multiplier ?? 1;
+  if (clamped >= 5 && clamped <= 8 && opts.jitter !== false) {
+    return Math.round(base * (0.75 + Math.random() * 0.5) * multiplier); // Stochastic tier
+  }
+  return Math.round(base * multiplier); // Linear and Staggered tiers: deterministic
+}
+
+/** A relearned idea's interval: max(1, round(RELEARN_INTERVAL_SHARE × baseline(level) × ease × multiplier)) — tomorrow at low levels, sooner than usual at high ones. */
+export function relearnIntervalDays(level: number, multiplier = 1, ease = EASE_DEFAULT): number {
+  return Math.max(1, Math.round(RELEARN_INTERVAL_SHARE * baseIntervalDays(level) * clampEase(ease) * multiplier));
+}
+
 // ── Rising: a level is earned by clean recalls ─────────────────────────────
 //
-// A recall is CLEAN when it is right with no miss since the card fell due
-// (Idea.failedAttempts is 0: a strike sets it, a pass, a degrade or a ward
-// clears it). Only a clean recall raises a level. One that needed several
-// tries is still paid as a review and keeps the level, rescheduled at that
-// level's interval.
+// A recall is CLEAN when it is right with no miss in the card's due cycle (Idea.cycleMissed is false: the day's lapse
+// sets it, a right answer — clean or relearned — clears it and starts a new cycle). Only a clean recall raises a
+// level. A right answer after a miss in the cycle RELEARNS the idea: it is paid as a review, keeps the level and comes
+// back soon (relearnIntervalDays). Idea.failedAttempts counts lapsed cycles in a row (a clean recall clears it).
 //
 // From CLEAN_PAIR_FROM up (and the whole post-mastery ladder) a level needs
 // CLEAN_RECALLS_TO_RISE clean recalls in a row (Idea.cleanStreak counts them):
 // the first holds the level and comes back after CONFIRM_INTERVAL_SHARE of the
-// level's interval, the second raises it. Below it one clean recall is enough.
+// level's eased interval, the second raises it. Below it one clean recall is enough.
 
 /** From this level a rise needs two clean recalls in a row. */
 export const CLEAN_PAIR_FROM = 8;
@@ -314,21 +402,21 @@ export function cleanRecallsNeeded(level: number): 1 | 2 {
   return Math.floor(level) >= CLEAN_PAIR_FROM ? 2 : 1;
 }
 
-/** The confirming review's interval: CONFIRM_INTERVAL_SHARE of the level's base interval (× INTERVAL_DILATION), at least a day. */
-export function confirmIntervalDays(level: number, multiplier = 1): number {
-  return Math.max(1, Math.round(CONFIRM_INTERVAL_SHARE * baseIntervalDays(level) * multiplier));
+/** The confirming review's interval: CONFIRM_INTERVAL_SHARE of the level's eased interval (× INTERVAL_DILATION), at least a day. */
+export function confirmIntervalDays(level: number, multiplier = 1, ease = EASE_DEFAULT): number {
+  return Math.max(1, Math.round(CONFIRM_INTERVAL_SHARE * baseIntervalDays(level) * clampEase(ease) * multiplier));
 }
 
 /**
  * What a right answer does to a card's level: "up" (+1, the streak back to 0), "confirm" (the first of two clean
- * recalls: level held, streak 1, back at the confirm interval), "held" (not clean: level held, streak 0, back at the
- * level's interval) or "top" (MAX_LEVEL: nothing above, back at its interval).
+ * recalls: level held, streak 1, back at the confirm interval), "relearned" (right after a miss in this due cycle:
+ * level held, streak 0, back at the relearn interval) or "top" (MAX_LEVEL: nothing above, back at its interval).
  */
-export type RiseKind = "up" | "confirm" | "held" | "top";
+export type RiseKind = "up" | "confirm" | "relearned" | "top";
 
 export interface RiseStep {
   kind: RiseKind;
-  /** Whether this recall was clean (no miss since the card fell due). */
+  /** Whether this recall was clean (no miss in its due cycle: Idea.cycleMissed false). */
   clean: boolean;
   levelBefore: number;
   levelAfter: number;
@@ -338,27 +426,62 @@ export interface RiseStep {
   cleanNeeded: 1 | 2;
 }
 
-/** A right answer's rise, from the card as it was answered (pure: applyReviewResult writes what this returns). */
-export function riseStep(level: number, cleanStreak: number, failedAttempts: number): RiseStep {
+/**
+ * A right answer's rise, from the card as it was answered (pure: applyReviewResult writes what this returns).
+ * `cycleMissed` is Idea.cycleMissed: a miss in this due cycle makes the answer a relearn (clean = !cycleMissed).
+ */
+export function riseStep(level: number, cleanStreak: number, cycleMissed: boolean): RiseStep {
   const L = Math.min(MAX_LEVEL, Math.max(1, Math.floor(level)));
-  const clean = failedAttempts <= 0;
+  const clean = !cycleMissed;
   const cleanNeeded = cleanRecallsNeeded(L);
   const base = { clean, levelBefore: L, cleanNeeded };
+  if (!clean) return { ...base, kind: "relearned", levelAfter: L, cleanStreak: 0 };
   if (L >= MAX_LEVEL) return { ...base, kind: "top", levelAfter: L, cleanStreak: 0 };
-  if (!clean) return { ...base, kind: "held", levelAfter: L, cleanStreak: 0 };
   const streak = Math.max(0, Math.floor(cleanStreak)) + 1;
   if (streak >= cleanNeeded) return { ...base, kind: "up", levelAfter: L + 1, cleanStreak: 0 };
   return { ...base, kind: "confirm", levelAfter: L, cleanStreak: streak };
 }
 
-/** The interval a rise schedules: the new level's on "up", the confirm interval on "confirm", the held level's otherwise. */
-export function riseIntervalDays(step: RiseStep, multiplier = 1): number {
-  return step.kind === "confirm" ? confirmIntervalDays(step.levelBefore, multiplier) : nextIntervalDays(step.levelAfter, multiplier);
+/** The ease a right answer leaves: a clean recall gains (easeAfterClean, with the late credit), a relearn changes nothing. */
+export function riseEase(step: RiseStep, ease: number, lateRatio = 1): number {
+  return step.clean ? easeAfterClean(ease, lateRatio) : clampEase(ease);
 }
 
-/** riseIntervalDays without the 5–8 jitter: the base interval (the pacing models and display). */
-export function riseBaseIntervalDays(step: RiseStep, multiplier = 1): number {
-  return step.kind === "confirm" ? confirmIntervalDays(step.levelBefore, multiplier) : Math.round(baseIntervalDays(step.levelAfter) * multiplier);
+/**
+ * The interval a rise schedules, at `ease` (the ease after it: riseEase): the new level's eased interval on "up" and
+ * "top" (jittered at levels 5–8), the confirm interval on "confirm", the relearn interval on "relearned".
+ */
+export function riseIntervalDays(step: RiseStep, multiplier = 1, ease = EASE_DEFAULT): number {
+  if (step.kind === "confirm") return confirmIntervalDays(step.levelBefore, multiplier, ease);
+  if (step.kind === "relearned") return relearnIntervalDays(step.levelBefore, multiplier, ease);
+  return ideaIntervalDays(step.levelAfter, ease, { multiplier });
+}
+
+/** riseIntervalDays without the 5–8 jitter: the eased base interval (the pacing models and display). */
+export function riseBaseIntervalDays(step: RiseStep, multiplier = 1, ease = EASE_DEFAULT): number {
+  if (step.kind === "confirm") return confirmIntervalDays(step.levelBefore, multiplier, ease);
+  if (step.kind === "relearned") return relearnIntervalDays(step.levelBefore, multiplier, ease);
+  return ideaIntervalDays(step.levelAfter, ease, { multiplier, jitter: false });
+}
+
+/**
+ * The interval a card was last scheduled at, as the late credit reads it: the confirm interval while a clean recall
+ * is in hand from CLEAN_PAIR_FROM up, otherwise its level's eased interval (no jitter). A relearned card's shorter
+ * interval reads as its level's, so its late credit is never more than it earned.
+ */
+export function scheduledIntervalDays(level: number, cleanStreak: number, ease = EASE_DEFAULT, multiplier = 1): number {
+  if (cleanStreak > 0 && cleanRecallsNeeded(level) === 2) return confirmIntervalDays(level, multiplier, ease);
+  return Math.max(1, ideaIntervalDays(level, ease, { multiplier, jitter: false }));
+}
+
+/**
+ * A clean recall on its due day, as the pacing models read it (balance-horizon, momentum-sim, leveling-check): the
+ * step, the ease after it and the eased base interval it schedules (no jitter, no late credit).
+ */
+export function cleanRecallOnTime(level: number, cleanStreak: number, ease = EASE_DEFAULT, multiplier = 1): { step: RiseStep; ease: number; intervalDays: number } {
+  const step = riseStep(level, cleanStreak, false);
+  const next = riseEase(step, ease);
+  return { step, ease: next, intervalDays: riseBaseIntervalDays(step, multiplier, next) };
 }
 
 /** The result panel's line for a rise: why the level moved or held. */
@@ -368,13 +491,18 @@ export function riseLine(step: RiseStep): string {
       return `Level up: L${step.levelAfter}`;
     case "confirm":
       return `${step.cleanStreak} of ${step.cleanNeeded} clean recalls for L${step.levelBefore + 1}`;
-    case "held":
+    case "relearned":
       return step.cleanNeeded === 1
-        ? "Level held: a miss this round — a clean recall next time raises it"
-        : `Level held: a miss this round — ${step.cleanNeeded} clean recalls in a row raise it`;
+        ? "Level held: relearned this round — a clean recall next time raises it"
+        : `Level held: relearned this round — ${step.cleanNeeded} clean recalls in a row raise it`;
     case "top":
       return `Level held: L${step.levelBefore} is the top`;
   }
+}
+
+/** "1.3×": an ease as the library prints it (one decimal). */
+export function easeText(ease: number): string {
+  return `${(Math.round(clampEase(ease) * 10) / 10).toFixed(1)}×`;
 }
 
 /**

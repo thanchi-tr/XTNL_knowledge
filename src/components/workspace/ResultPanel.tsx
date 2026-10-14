@@ -15,8 +15,12 @@
  * hairline when auto-advance is on (never in Still; the pointer entering
  * the panel cancels it). A hold is a ceiling, never a toll.
  *
- * Miss: "Not this time", the strike count and what (if anything) was
- * taken, You chose / The answer / why, the combo line — and it waits.
+ * Miss: "Not yet", when it comes back ("The answer is below — it comes back
+ * at the end of this session", review-model missLineOf), You chose / The
+ * answer / why, what the day's lapse changed (the strike count, a lost level,
+ * the spacing) or that a retry changed nothing, the combo line — and it
+ * waits. Never "wrong" or "fail". A right retry reads "Relearned — back
+ * tomorrow" (review-facts trueFactOf).
  *
  * Portalled to <body>: a fixed layer never renders inside <main>.
  */
@@ -49,6 +53,8 @@ interface Props {
   /** Prefs and motion allow a correct answer to move on by itself (celebration-types autoAdvances). */
   autoAdvance: boolean;
   isLast: boolean;
+  /** On a miss: when the card comes back (review-model missLineOf). */
+  missLine?: string | null;
   onNext: () => void;
   /** Where the "+N" token takes off from (the runner flies it to the session tally). */
   payRef?: RefObject<HTMLSpanElement | null>;
@@ -63,16 +69,17 @@ interface Props {
 
 const noSubscribe = () => () => undefined;
 
-export function ResultPanel({ open, card: cardNow, result: resultNow, answer: answerNow, autoAdvance, isLast, onNext, payRef, onOverride, overriding = false, overrideError = null }: Props) {
+export function ResultPanel({ open, card: cardNow, result: resultNow, answer: answerNow, autoAdvance, isLast, missLine: missLineNow = null, onNext, payRef, onOverride, overriding = false, overrideError = null }: Props) {
   // The portal exists only in the browser; false on the server and during hydration, so the two agree.
   const isClient = useSyncExternalStore(noSubscribe, () => true, () => false);
   // While the panel slides away, it keeps showing the result it slid in with.
-  const [kept, setKept] = useState<{ card: RunCard; result: SubmitReviewResult; answer: string } | null>(null);
-  if (resultNow && cardNow && kept?.result !== resultNow) setKept({ card: cardNow, result: resultNow, answer: answerNow });
-  const shown = resultNow && cardNow ? { card: cardNow, result: resultNow, answer: answerNow } : kept;
+  const [kept, setKept] = useState<{ card: RunCard; result: SubmitReviewResult; answer: string; missLine: string | null } | null>(null);
+  if (resultNow && cardNow && (kept?.result !== resultNow || kept?.missLine !== missLineNow)) setKept({ card: cardNow, result: resultNow, answer: answerNow, missLine: missLineNow });
+  const shown = resultNow && cardNow ? { card: cardNow, result: resultNow, answer: answerNow, missLine: missLineNow } : kept;
   const card = shown?.card ?? null;
   const result = shown?.result ?? null;
   const answer = shown?.answer ?? "";
+  const missLine = shown?.missLine ?? null;
   const { motion } = useMotionPref();
   const nextRef = useRef<HTMLButtonElement | null>(null);
   const hairRef = useRef<HTMLElement | null>(null);
@@ -169,7 +176,8 @@ export function ResultPanel({ open, card: cardNow, result: resultNow, answer: an
                 </span>
                 <div className="t">
                   <h3>{result.trueFact.headline}</h3>
-                  <p>{result.trueFact.detail}</p>
+                  {/* When it comes back: the end of this session, or tomorrow (review-model missLineOf). */}
+                  <p data-miss-line="">{missLine ?? "The answer is below — back tomorrow."}</p>
                 </div>
               </div>
               <div className="rv-why">
@@ -192,7 +200,13 @@ export function ResultPanel({ open, card: cardNow, result: resultNow, answer: an
                   </p>
                 )}
               </div>
-              <p className="t-meta" style={{ marginTop: 10 }}>
+              {/* The server's side: what the day's lapse changed, or that a retry changed nothing (review-facts.ts). */}
+              {result.trueFact.detail && (
+                <p className="t-meta ink-1" style={{ marginTop: 10 }} data-miss-fact="">
+                  {result.trueFact.detail}.
+                </p>
+              )}
+              <p className="t-meta" style={{ marginTop: 6 }}>
                 {result.combo.next === 0
                   ? "The combo resets to 0. Points already paid stay paid."
                   : `The combo drops to ${result.combo.next}. Points already paid stay paid.`}

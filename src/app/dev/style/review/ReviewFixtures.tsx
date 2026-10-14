@@ -17,7 +17,7 @@ import { SessionComplete } from "@/components/workspace/SessionComplete";
 import { ALL_FIELDS, SessionSummary } from "@/components/workspace/SessionSummary";
 import { RoadmapFocus } from "@/components/workspace/RoadmapFocus";
 import type { StudyFocus } from "@/lib/roadmap-study";
-import { questNow, tallyOf, type CardResult } from "@/components/workspace/review-model";
+import { queueAfterAnswer, questNow, tallyOf, type CardResult, type RunCard } from "@/components/workspace/review-model";
 import type { ReviewFixtureData } from "./fixtures";
 import { FIXTURE_LABEL, FIXTURE_STATES, type FixtureState } from "./states";
 import "@/components/workspace/review.css";
@@ -71,6 +71,11 @@ function start(state: FixtureState): { index: number; answered: number; phase: "
       return { index: 4, answered: 5, phase: "answered" };
     case "miss":
       return { index: 5, answered: 6, phase: "answered" };
+    case "retry":
+      // Card 6, missed, asked again at the end of the run.
+      return { index: 6, answered: 6, phase: "ask" };
+    case "relearned":
+      return { index: 6, answered: 7, phase: "answered" };
     case "boss":
       return { index: 3, answered: 3, phase: "ask" };
     default:
@@ -154,12 +159,15 @@ export function ReviewFixtures({ state, data, loadoutStrip }: { state: FixtureSt
   }
 
   const boss = state === "boss" ? data.boss : null;
+  // The queue as the live run builds it (review-model queueAfterAnswer): a miss is asked again at the end, never in an
+  // encounter. So 'question' reads "Card 4 of 6", 'miss' queues card 6 again, 'retry' asks it ("Retry 1 of 1").
+  const queue = results.reduce<RunCard[]>((q, r, i) => queueAfterAnswer(q, results.slice(0, i + 1), r.card, r.result, boss != null), [...data.cards]);
   const combo = results.reduce((c, r) => (r.result.correct ? c + 1 : 0), 0);
   return (
     <>
       <Nav state={state} />
       <ReviewRunner
-        queue={data.cards}
+        queue={queue}
         index={index}
         results={results}
         phase={phase}
@@ -172,17 +180,19 @@ export function ReviewFixtures({ state, data, loadoutStrip }: { state: FixtureSt
         autoAdvance={false}
         dayStreakIfKept={24}
         onAnswer={(_, display) => {
-          const r = all[index];
+          // Scripted past the script (a borrowed miss queued another return): the last scripted result stands in.
+          const r = all[index] ?? all[all.length - 1];
+          const card = queue[index] ?? r.card;
           // Scripted: a pass card picked wrongly borrows the scripted miss, with this card's own answer.
           const result =
             display === r.result.expected || !r.result.correct
               ? r.result
               : { ...all[5].result, expected: r.result.expected, explanation: null, combo: { ...all[5].result.combo, before: combo } };
-          setResults((prev) => [...prev, { card: r.card, result, answer: display }]);
-          setPhase({ kind: "answered", result, answer: display, picked: r.card.questionType === "MULTI" ? display : null });
+          setResults((prev) => [...prev, { card, result, answer: display }]);
+          setPhase({ kind: "answered", result, answer: display, picked: card.questionType === "MULTI" ? display : null });
         }}
         onNext={() => {
-          if (index + 1 >= data.cards.length) setEnded(true);
+          if (index + 1 >= queue.length) setEnded(true);
           else {
             setIndex(index + 1);
             setPhase({ kind: "ask" });

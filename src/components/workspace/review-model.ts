@@ -107,8 +107,18 @@ export interface CardResult {
 }
 
 export interface Tally {
+  /** Answers given (a card asked again counts again). */
   answered: number;
+  /** Right answers (a relearn counts). */
   correct: number;
+  /** Distinct cards answered. */
+  cards: number;
+  /** Cards right the first time they were asked this session. */
+  firstTry: number;
+  /** Cards missed, then right on a retry this session (relearned: level held, back soon). */
+  relearned: number;
+  /** Cards still not right at the end of the session (back tomorrow). */
+  notYet: number;
   /** Review points credited this session (the exact sum). Never summed with life XP. */
   pts: number;
   /** Mastery points minted this session. */
@@ -122,6 +132,9 @@ export function tallyOf(results: readonly CardResult[]): Tally {
   let mp = 0;
   let correct = 0;
   let bestCombo = 0;
+  // Per card: its first answer, and its last (a retry's answer is the one that stands).
+  const first = new Map<string, boolean>();
+  const last = new Map<string, boolean>();
   for (const r of results) {
     const o = r.result.outcome;
     if (o.outcome === "advanced") {
@@ -130,8 +143,118 @@ export function tallyOf(results: readonly CardResult[]): Tally {
     }
     if (r.result.correct) correct += 1;
     bestCombo = Math.max(bestCombo, r.result.combo.next);
+    if (!first.has(r.card.id)) first.set(r.card.id, r.result.correct);
+    last.set(r.card.id, r.result.correct);
   }
-  return { answered: results.length, correct, pts, mp, bestCombo };
+  let firstTry = 0;
+  let relearned = 0;
+  let notYet = 0;
+  for (const [id, ok] of first) {
+    if (ok) firstTry += 1;
+    else if (last.get(id)) relearned += 1;
+    else notYet += 1;
+  }
+  return { answered: results.length, correct, cards: first.size, firstTry, relearned, notYet, pts, mp, bestCombo };
+}
+
+// ── Asking again (2026-10-14: a miss returns at the end of the session) ───────
+
+/**
+ * How many times a missed card comes back at the end of a session: after each of its first SESSION_RETURNS_MAX
+ * misses it is asked again; the miss after the last return is "back tomorrow". So a card is asked at most four times.
+ * Only the first miss of a life day counts (srs.ts: a lapse); a retry changes nothing, a right retry relearns it.
+ * Encounters (boss runs) ask each card once and never re-queue: their verdict counts each card one answer.
+ */
+export const SESSION_RETURNS_MAX = 3;
+
+/** This session's misses on one card so far. */
+export function missesOf(results: readonly CardResult[], cardId: string): number {
+  return results.reduce((n, r) => n + (r.card.id === cardId && !r.result.correct ? 1 : 0), 0);
+}
+
+/** Whether a card just missed (its miss already in `results`) comes back at the end of this session. */
+export function returnsAfterMiss(results: readonly CardResult[], cardId: string, boss: boolean): boolean {
+  return !boss && missesOf(results, cardId) <= SESSION_RETURNS_MAX;
+}
+
+/**
+ * The queue after an answer (results already include it): a miss that returns appends the card to the end, at the
+ * level the server left it (a degrade lowers it); anything else leaves the queue as it was.
+ */
+export function queueAfterAnswer(queue: readonly RunCard[], results: readonly CardResult[], card: RunCard, result: SubmitReviewResult, boss: boolean): RunCard[] {
+  if (result.correct || !returnsAfterMiss(results, card.id, boss)) return [...queue];
+  const level = result.outcome.outcome === "degraded" ? result.outcome.newLevel : card.level;
+  return [...queue, { ...card, level }];
+}
+
+/**
+ * The queue after "I was right" turns the miss at `index` into a pass: the copy that miss appended (the last card,
+ * after `index`, the same id) is taken back out.
+ */
+export function queueAfterOverride(queue: readonly RunCard[], index: number, cardId: string): RunCard[] {
+  const lastAt = queue.length - 1;
+  return lastAt > index && queue[lastAt]?.id === cardId ? queue.slice(0, lastAt) : [...queue];
+}
+
+/** Returns not yet asked: return positions at or after `from` (the number of answers given, i.e. the next ask). */
+export function returnsWaitingOf(queue: readonly Pick<RunCard, "id">[], from: number): number {
+  const seen = new Set<string>();
+  let n = 0;
+  queue.forEach((c, k) => {
+    if (seen.has(c.id) && k >= from) n += 1;
+    seen.add(c.id);
+  });
+  return n;
+}
+
+/** Whether the card at `index` is a return (the same card was asked earlier in the run). */
+export function isReturnAt(queue: readonly Pick<RunCard, "id">[], index: number): boolean {
+  const id = queue[index]?.id;
+  return id != null && queue.slice(0, index).some((c) => c.id === id);
+}
+
+export interface RunProgress {
+  /** "Card 7 of 12 · 2 to retry" on the first pass; "Retry 1 of 2" while asking again. */
+  label: string;
+  /** Distinct cards in the run. */
+  cards: number;
+  /** Returns still ahead of the current card. */
+  toRetry: number;
+  /** The current card is a return. */
+  retrying: boolean;
+}
+
+/**
+ * The runner's counter, honest about returns. A return is always appended after every first ask, so the first pass
+ * runs through every card before any retry: "Card k of N" counts distinct cards, "· r to retry" the returns waiting
+ * at the end; on a return it reads "Retry j of R" (R counts every return queued so far).
+ */
+export function progressOf(queue: readonly Pick<RunCard, "id">[], index: number): RunProgress {
+  const i = Math.max(0, Math.min(index, queue.length - 1));
+  const seen = new Set<string>();
+  const returns: number[] = [];
+  queue.forEach((c, k) => {
+    if (seen.has(c.id)) returns.push(k);
+    seen.add(c.id);
+  });
+  const cards = seen.size;
+  const toRetry = returns.filter((k) => k > i).length;
+  if (returns.includes(i)) {
+    const j = returns.filter((k) => k <= i).length;
+    return { label: `Retry ${j} of ${returns.length}`, cards, toRetry, retrying: true };
+  }
+  const k = new Set(queue.slice(0, i + 1).map((c) => c.id)).size;
+  return { label: `Card ${k} of ${cards}${toRetry > 0 ? ` · ${toRetry} to retry` : ""}`, cards, toRetry, retrying: false };
+}
+
+/**
+ * The result panel's line on a miss (never "wrong" or "fail"): it returns at the end of the session, or — after its
+ * last return, or in an encounter, which asks each card once — tomorrow.
+ */
+export function missLineOf(p: { returns: boolean; boss: boolean }): string {
+  if (p.returns) return "The answer is below — it comes back at the end of this session.";
+  if (p.boss) return "The answer is below. An encounter asks each card once, so it comes back tomorrow.";
+  return "The answer is below — back tomorrow.";
 }
 
 export type SegmentMark = "on" | "miss" | "cur" | "off";
@@ -234,14 +357,20 @@ export function sessionCardFacts(results: readonly CardResult[]): SessionCardFac
   });
 }
 
-/** Cards missed this session: they come back tomorrow. */
+/** Each card's answers this session, in order (first ask, then its returns). */
+function byCard(results: readonly CardResult[]): Map<string, CardResult[]> {
+  const out = new Map<string, CardResult[]>();
+  for (const r of results) (out.get(r.card.id) ?? out.set(r.card.id, []).get(r.card.id)!).push(r);
+  return out;
+}
+
+/** Cards still not right at the end of the session: they come back tomorrow (with what the day's lapse did). */
 export function backTomorrowOf(results: readonly CardResult[]): { id: string; title: string; line: string }[] {
-  const seen = new Set<string>();
   const out: { id: string; title: string; line: string }[] = [];
-  for (const r of results) {
-    if (r.result.correct || seen.has(r.card.id)) continue;
-    seen.add(r.card.id);
-    const o = r.result.outcome;
+  for (const [id, rs] of byCard(results)) {
+    if (rs[rs.length - 1].result.correct || !rs.some((r) => !r.result.correct)) continue;
+    // The day's lapse is the answer that changed something; a retry changed nothing.
+    const o = (rs.find((r) => !r.result.correct && r.result.outcome.outcome !== "retry") ?? rs[0]).result.outcome;
     const line =
       o.outcome === "strike"
         ? `strike ${o.failedAttempts} of ${o.strikeLimit} · back tomorrow`
@@ -250,7 +379,29 @@ export function backTomorrowOf(results: readonly CardResult[]): { id: string; ti
           : o.outcome === "shielded"
             ? `${o.skillName} held level ${o.level} · back tomorrow`
             : "back tomorrow";
-    out.push({ id: r.card.id, title: cardTitle(r.card), line });
+    out.push({ id, title: cardTitle(rs[0].card), line });
+  }
+  return out;
+}
+
+/**
+ * The recap's line under its headline: "2 relearned · 1 back tomorrow" (cards missed, then right on a retry; cards
+ * still not right at the end), or null when every card was right the first time. Never a count of "failures".
+ */
+export function recapLineOf(t: Pick<Tally, "relearned" | "notYet">): string | null {
+  const parts = [t.relearned > 0 ? `${t.relearned} relearned` : null, t.notYet > 0 ? `${t.notYet} back tomorrow` : null].filter(Boolean);
+  return parts.length > 0 ? `${parts.join(" · ")}.` : null;
+}
+
+/** Cards missed, then right on a retry this session: relearned (level held), with when each comes back. */
+export function relearnedOf(results: readonly CardResult[]): { id: string; title: string; line: string }[] {
+  const out: { id: string; title: string; line: string }[] = [];
+  for (const [id, rs] of byCard(results)) {
+    const end = rs[rs.length - 1];
+    if (rs[0].result.correct || !end.result.correct) continue;
+    const o = end.result.outcome;
+    const days = o.outcome === "advanced" ? o.intervalDays : 1;
+    out.push({ id, title: cardTitle(rs[0].card), line: `relearned · level ${o.outcome === "advanced" ? o.newLevel : end.card.level} held · back ${days === 1 ? "tomorrow" : `in ${days} days`}` });
   }
   return out;
 }

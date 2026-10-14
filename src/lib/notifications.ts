@@ -310,7 +310,7 @@ async function loadLevelNotices(now: Date, graceExtraDays: number): Promise<Noti
     const [due, domains, fields] = await Promise.all([
       prisma.idea.findMany({
         where: { isArchived: false, dueDate: { lt: now } },
-        select: { domainId: true, level: true, dueDate: true, graceEndsAt: true, cleanStreak: true, failedAttempts: true, domain: { select: { fieldId: true } } },
+        select: { domainId: true, level: true, dueDate: true, graceEndsAt: true, cleanStreak: true, failedAttempts: true, ease: true, cycleMissed: true, domain: { select: { fieldId: true } } },
       }),
       prisma.domain.findMany({ where: { droppedAt: { gte: since } }, select: { id: true, name: true, level: true, droppedFrom: true, droppedAt: true, fieldId: true } }),
       prisma.field.findMany({ where: { droppedAt: { gte: since } }, select: { id: true, name: true, level: true, droppedFrom: true, droppedAt: true } }),

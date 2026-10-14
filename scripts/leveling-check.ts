@@ -1,10 +1,11 @@
 /**
  * Idea leveling (2026-10-13): levels are earned properly and their drops are told.
  *
- *   1. Rise rules (xp.ts riseStep): below L8 one clean recall (no miss since the card fell due) raises a level; a
- *      right answer after a miss is paid and holds it. From L8 up two clean recalls in a row: the first holds the
- *      level and comes back at half its interval, the second raises it. A miss resets the run.
- *   2. "I was right" (srs.ts undoMissCore) restores the clean state a miss took (cleanStateBefore).
+ *   1. Rise rules (xp.ts riseStep): below L8 one clean recall (no miss in the card's due cycle: Idea.cycleMissed)
+ *      raises a level; a right answer after a miss relearns it (paid, level held, back at the relearn interval). From
+ *      L8 up two clean recalls in a row: the first holds the level and comes back at half its interval, the second
+ *      raises it. A miss resets the run. (2026-10-14: ease and the one-lapse-a-day rule: scripts/spacing-check.ts.)
+ *   2. "I was right" (srs.ts undoMissCore) restores the state a miss took (its receipt; cleanStateBefore for old rows).
  *   3. Retention (forgetting.ts retentionFactor): 1 until grace ends, then falls with the forgetting curve.
  *   4. The outlook (forgetting.ts ideaOutlook): fresh, due, fading, forgetting at each boundary.
  *   5. Retention-weighted levels: the depth counts each Idea by its retention and the points are read at the
@@ -41,6 +42,9 @@ import {
   riseIntervalDays,
   riseLine,
   riseStep,
+  relearnIntervalDays,
+  cleanRecallOnTime,
+  EASE_DEFAULT,
   type RiseStep,
 } from "../src/lib/xp";
 import {
@@ -84,15 +88,15 @@ const at = (base: Date, days: number) => new Date(base.getTime() + days * DAY);
   check(
     "rise L<8: a clean recall raises the level, the streak stays 0, the next interval is the new level's",
     below.every((L) => {
-      const s = riseStep(L, 0, 0);
+      const s = riseStep(L, 0, false);
       return s.kind === "up" && s.clean && s.levelAfter === L + 1 && s.cleanStreak === 0 && riseBaseIntervalDays(s) === baseIntervalDays(L + 1);
     })
   );
   check(
-    "rise L<8: right after a miss (failedAttempts > 0) holds the level, the streak 0, back at the held level's interval",
+    "rise L<8: right after a miss in the cycle (cycleMissed) relearns it: level held, streak 0, back at the relearn interval",
     below.every((L) => {
-      const s = riseStep(L, 0, 1);
-      return s.kind === "held" && !s.clean && s.levelAfter === L && s.cleanStreak === 0 && riseBaseIntervalDays(s) === baseIntervalDays(L);
+      const s = riseStep(L, 0, true);
+      return s.kind === "relearned" && !s.clean && s.levelAfter === L && s.cleanStreak === 0 && riseBaseIntervalDays(s) === relearnIntervalDays(L) && relearnIntervalDays(L) <= baseIntervalDays(L);
     })
   );
 
@@ -100,39 +104,39 @@ const at = (base: Date, days: number) => new Date(base.getTime() + days * DAY);
   check(
     "rise L≥8: the first clean recall holds the level (streak 1) and comes back at 0.5 × the level's interval",
     above.every((L) => {
-      const s = riseStep(L, 0, 0);
+      const s = riseStep(L, 0, false);
       return s.kind === "confirm" && s.levelAfter === L && s.cleanStreak === 1 && riseBaseIntervalDays(s) === Math.round(0.5 * baseIntervalDays(L)) && confirmIntervalDays(L) === Math.round(0.5 * baseIntervalDays(L));
     })
   );
   check(
     "rise L≥8: the second clean recall in a row raises it (streak back to 0, the new level's interval)",
     above.every((L) => {
-      const s = riseStep(L, 1, 0);
+      const s = riseStep(L, 1, false);
       return s.kind === "up" && s.levelAfter === L + 1 && s.cleanStreak === 0 && riseBaseIntervalDays(s) === baseIntervalDays(L + 1);
     })
   );
   check(
-    "rise L≥8: a recall after a miss is not clean: held, and it resets a streak in hand",
+    "rise L≥8: a recall after a miss is not clean: relearned, and it resets a streak in hand",
     above.every((L) => {
-      const s = riseStep(L, 1, 1);
-      return s.kind === "held" && s.levelAfter === L && s.cleanStreak === 0 && riseBaseIntervalDays(s) === baseIntervalDays(L);
+      const s = riseStep(L, 1, true);
+      return s.kind === "relearned" && s.levelAfter === L && s.cleanStreak === 0 && riseBaseIntervalDays(s) === relearnIntervalDays(L);
     })
   );
-  const top = riseStep(MAX_LEVEL, 1, 0);
+  const top = riseStep(MAX_LEVEL, 1, false);
   check("rise: the top level holds (nothing above it), back at its interval", top.kind === "top" && top.levelAfter === MAX_LEVEL && top.cleanStreak === 0 && riseBaseIntervalDays(top) === baseIntervalDays(MAX_LEVEL));
   check(
     "rise: the confirm interval follows INTERVAL_DILATION; the jittered 5–8 ladder stays inside ±25%",
     confirmIntervalDays(10, 1.5) === Math.round(0.5 * 75 * 1.5) &&
-      Array.from({ length: 200 }, () => riseIntervalDays(riseStep(6, 0, 0))).every((d) => d >= Math.round(baseIntervalDays(7) * 0.75) && d <= Math.round(baseIntervalDays(7) * 1.25))
+      Array.from({ length: 200 }, () => riseIntervalDays(riseStep(6, 0, false))).every((d) => d >= Math.round(baseIntervalDays(7) * 0.75) && d <= Math.round(baseIntervalDays(7) * 1.25))
   );
 
-  // A walk to mastery: only clean recalls, from L1. 7 recalls to L8, then 2 a level: 15 in all.
+  // A walk to mastery: only clean recalls, from L1. 7 recalls to L8, then 2 a level: 15 in all (on the baseline ladder).
   let level = 1;
   let streak = 0;
   let recalls = 0;
   let days = 0;
   while (level < MASTERY_LEVEL) {
-    const s: RiseStep = riseStep(level, streak, 0);
+    const s: RiseStep = riseStep(level, streak, false);
     days += riseBaseIntervalDays(s);
     level = s.levelAfter;
     streak = s.cleanStreak;
@@ -144,23 +148,28 @@ const at = (base: Date, days: number) => new Date(base.getTime() + days * DAY);
 
   check(
     "rise: the result panel's lines say why",
-    riseLine(riseStep(8, 1, 0)) === "Level up: L9" &&
-      riseLine(riseStep(8, 0, 0)) === "1 of 2 clean recalls for L9" &&
-      riseLine(riseStep(5, 0, 2)) === "Level held: a miss this round — a clean recall next time raises it" &&
-      riseLine(riseStep(9, 1, 1)) === "Level held: a miss this round — 2 clean recalls in a row raise it" &&
-      riseLine(riseStep(4, 0, 0)) === "Level up: L5",
-    riseLine(riseStep(8, 0, 0))
+    riseLine(riseStep(8, 1, false)) === "Level up: L9" &&
+      riseLine(riseStep(8, 0, false)) === "1 of 2 clean recalls for L9" &&
+      riseLine(riseStep(5, 0, true)) === "Level held: relearned this round — a clean recall next time raises it" &&
+      riseLine(riseStep(9, 1, true)) === "Level held: relearned this round — 2 clean recalls in a row raise it" &&
+      riseLine(riseStep(4, 0, false)) === "Level up: L5",
+    riseLine(riseStep(8, 0, false))
   );
 
   // Wiring: srs.ts applies exactly this rule, pays every right answer, and every miss path resets the run.
   const srs = read("src/lib/srs.ts");
   const apply = srs.slice(srs.indexOf("export async function applyReviewResult"), srs.indexOf("export const OVERRIDE_WINDOW_MS"));
+  const plan = srs.slice(srs.indexOf("export function passPlanOf"), srs.indexOf("export function strikeDataOf"));
   check(
-    "wiring: a right answer reads riseStep(level, cleanStreak, failedAttempts), writes its streak, schedules riseIntervalDays",
-    /const step = riseStep\(idea\.level, idea\.cleanStreak, idea\.failedAttempts\);/.test(apply) &&
+    "wiring: a right answer writes passPlanOf: riseStep(level, cleanStreak, cycleMissed), its streak and ease, riseIntervalDays at the new ease, a new cycle",
+    /const step = riseStep\(idea\.level, idea\.cleanStreak, idea\.cycleMissed\);/.test(plan) &&
+      /const ease = riseEase\(step, idea\.ease, lateRatio\);/.test(plan) &&
+      /const intervalDays = riseIntervalDays\(step, intervalMultiplier, ease\);/.test(plan) &&
+      /cleanStreak: step\.cleanStreak,/.test(plan) &&
+      /cycleMissed: false,/.test(plan) &&
+      /const plan = passPlanOf\(idea, now, modifiers\.intervalMultiplier, modifiers\.graceExtraDays\);/.test(apply) &&
       /const newLevel = step\.levelAfter;/.test(apply) &&
-      /const intervalDays = riseIntervalDays\(step, modifiers\.intervalMultiplier\);/.test(apply) &&
-      /cleanStreak: step\.cleanStreak,/.test(apply)
+      /prisma\.idea\.update\(\{ where: \{ id: ideaId \}, data: plan\.data \}\)/.test(apply)
   );
   check(
     "wiring: every right answer is paid at the level it was given (a held level still earns its review); mastery pays on reaching 12",
@@ -169,9 +178,17 @@ const at = (base: Date, days: number) => new Date(base.getTime() + days * DAY);
   const degrade = srs.slice(srs.indexOf("async function degradeIdea"), srs.indexOf("function domainDebitOp"));
   const ward = srs.slice(srs.indexOf("async function attemptDegradation"), srs.indexOf("export interface ReviewPreload"));
   const job = srs.slice(srs.indexOf("export async function degradeOverdueIdeas"));
+  const writes = srs.slice(srs.indexOf("export function strikeDataOf"), srs.indexOf("export type ReviewIdea"));
   check(
-    "wiring: a miss resets the run: a degrade, a ward and the nightly forgetting write cleanStreak 0; a strike's failedAttempts makes the next answer unclean",
-    /cleanStreak: 0,/.test(degrade) && /data: \{ failedAttempts: 0, cleanStreak: 0, dueDate \}/.test(ward) && /data: \{ level: newLevel, cleanStreak: 0 \}/.test(job) && riseStep(9, 1, 1).cleanStreak === 0
+    "wiring: a miss resets the run: a strike, a degrade, a ward (the day's lapse: lapseData) and the nightly forgetting write cleanStreak 0; the lapse marks the cycle missed, so the next right answer relearns",
+    /return \{ ease: easeAfterLapse\(idea\.ease\), cycleMissed: true, lapseDay: dateColumn\(todayKey\(now\)\), cleanStreak: 0 \};/.test(srs) &&
+      /return \{ \.\.\.lapseData\(idea, now\), failedAttempts: idea\.failedAttempts \+ 1, dueDate: addDays\(now, 1\) \};/.test(writes) &&
+      /return \{ \.\.\.lapseData\(idea, now\), level, failedAttempts: 0, cleanStreak: 0, dueDate, graceEndsAt: graceEndsAt\(dueDate, level, graceExtraDays\) \};/.test(writes) &&
+      /return \{ \.\.\.lapseData\(idea, now\), failedAttempts: 0, cleanStreak: 0, dueDate: addDays\(now, 1\) \};/.test(writes) &&
+      /const data = degradeDataOf\(idea, now, graceExtraDays\);/.test(degrade) &&
+      /const data = wardDataOf\(idea, now\);/.test(ward) &&
+      /data: \{ level: newLevel, cleanStreak: 0, cycleMissed: false \}/.test(job) &&
+      riseStep(9, 1, true).cleanStreak === 0
   );
 }
 
@@ -181,27 +198,30 @@ const at = (base: Date, days: number) => new Date(base.getTime() + days * DAY);
   check("undo: a degrade or a ward with the streak it broke brings back a clean state and that streak", JSON.stringify(cleanStateBefore("degraded", 0, 1)) === JSON.stringify({ failedAttempts: 0, cleanStreak: 1 }) && JSON.stringify(cleanStateBefore("shielded", 0, 0)) === JSON.stringify({ failedAttempts: 0, cleanStreak: 0 }));
   check("undo: after an earlier miss (qty null) the pass that follows stays unclean", JSON.stringify(cleanStateBefore("degraded", 0, null)) === JSON.stringify({ failedAttempts: 1, cleanStreak: 0 }));
 
-  // Simulated: L9 with one clean recall in hand misses past grace (a degrade) and is counted as right.
-  type Card = { level: number; cleanStreak: number; failedAttempts: number };
-  const before: Card = { level: 9, cleanStreak: 1, failedAttempts: 0 };
-  const qty = before.failedAttempts > 0 ? null : before.cleanStreak; // the miss row (srs.ts brokenStreak)
-  const degraded: Card = { level: 8, cleanStreak: 0, failedAttempts: 0 };
-  const undone: Card = { ...degraded, level: before.level, ...cleanStateBefore("degraded", degraded.failedAttempts, qty) };
-  const pass = riseStep(undone.level, undone.cleanStreak, undone.failedAttempts);
+  // Simulated (a row from before the miss receipt, 2026-10-14; the receipt's exact undo is spacing-check's): L9 with
+  // one clean recall in hand misses past grace (a degrade) and is counted as right.
+  type Card = { level: number; cleanStreak: number; failedAttempts: number; cycleMissed: boolean };
+  const before: Card = { level: 9, cleanStreak: 1, failedAttempts: 0, cycleMissed: false };
+  const qty = before.cycleMissed ? null : before.cleanStreak; // the miss row (srs.ts brokenStreak)
+  const degraded: Card = { level: 8, cleanStreak: 0, failedAttempts: 0, cycleMissed: true };
+  const undoneState = cleanStateBefore("degraded", degraded.failedAttempts, qty);
+  const undone: Card = { ...degraded, level: before.level, ...undoneState, cycleMissed: undoneState.failedAttempts > 0 };
+  const pass = riseStep(undone.level, undone.cleanStreak, undone.cycleMissed);
   check("undo: L9 (1 of 2) degraded then counted as right is L10, as the right answer would have made it", undone.cleanStreak === 1 && undone.failedAttempts === 0 && pass.kind === "up" && pass.levelAfter === 10, JSON.stringify({ undone, pass }));
-  // A strike: L9 (1 of 2) strikes, the streak stays written, the strike is given back, the pass raises it.
-  const struck: Card = { ...before, failedAttempts: 1 };
-  const unstruck: Card = { ...struck, ...cleanStateBefore("strike", struck.failedAttempts, qty) };
-  check("undo: L9 (1 of 2) struck then counted as right is L10", riseStep(unstruck.level, unstruck.cleanStreak, unstruck.failedAttempts).levelAfter === 10 && riseStep(struck.level, struck.cleanStreak, struck.failedAttempts).kind === "held");
+  // A strike: L9 (1 of 2) strikes (the cycle missed), the strike is given back, the pass raises it.
+  const struck: Card = { ...before, failedAttempts: 1, cycleMissed: true };
+  const unstruckState = cleanStateBefore("strike", struck.failedAttempts, qty);
+  const unstruck: Card = { ...struck, ...unstruckState, cycleMissed: unstruckState.failedAttempts > 0 };
+  check("undo: L9 (1 of 2) struck then counted as right is L10", riseStep(unstruck.level, unstruck.cleanStreak, unstruck.cycleMissed).levelAfter === 10 && riseStep(struck.level, struck.cleanStreak, struck.cycleMissed).kind === "relearned");
 
   const srs = read("src/lib/srs.ts");
   const undo = srs.slice(srs.indexOf("export async function undoMissCore"), srs.indexOf("export function cleanStateBefore"));
   check(
-    "wiring: the miss row keeps the streak it broke (qty), and the undo restores from it in the same transaction",
-    /const brokenStreak = idea\.failedAttempts > 0 \? null : idea\.cleanStreak;/.test(srs) &&
-      /qty: brokenStreak \}/.test(srs) &&
-      /select: \{ id: true, xp: true, detail: true, occurredAt: true, qty: true \}/.test(undo) &&
-      /ops\.push\(prisma\.idea\.update\(\{ where: \{ id: ideaId \}, data: cleanStateBefore\(outcome, idea\.failedAttempts, row\.qty\) \}\)\);\s*try \{\s*await prisma\.\$transaction\(ops\);/.test(undo)
+    "wiring: the miss row keeps the streak it broke (qty) and the state before it (receipt), and the undo restores from them in the same transaction",
+    /const brokenStreak = idea\.cycleMissed \? null : idea\.cleanStreak;/.test(srs) &&
+      /qty: brokenStreak, receipt: missReceipt as unknown as Receipt \| null \}/.test(srs) &&
+      /select: \{ id: true, xp: true, detail: true, occurredAt: true, qty: true, receipt: true \}/.test(undo) &&
+      /const back = undoStateOf\(outcome, idea\.failedAttempts, row\.qty, row\.receipt\);\s*if \(back\) ops\.push\(prisma\.idea\.update\(\{ where: \{ id: ideaId \}, data: back \}\)\);\s*try \{\s*await prisma\.\$transaction\(ops\);/.test(undo)
   );
 }
 
@@ -299,7 +319,7 @@ const at = (base: Date, days: number) => new Date(base.getTime() + days * DAY);
   const ideas = (dueOffsetDays: number) => Array.from({ length: 6 }, () => ({ level: 10, dueDate: at(now, dueOffsetDays) }));
   const plain = domainLevel(points, Array(6).fill(10));
   check("depth: a Domain reviewed on time is exactly what it was (retention 1)", domainLevelNow(points, ideas(5), now) === plain && domainLevelNow(points, ideas(-graceDays(10)), now) === plain, String(plain));
-  const neglectDays = 50; // past grace (9 d), before the first level-loss point (about 68 d)
+  const neglectDays = 50; // past grace (9 d), before the first level-loss point (about 62 d on the Ebbinghaus curve)
   const neglected = domainLevelNow(points, ideas(-neglectDays), now);
   check(
     "depth: a neglected Domain falls before any of its ideas loses a level",
@@ -311,10 +331,11 @@ const at = (base: Date, days: number) => new Date(base.getTime() + days * DAY);
 
 // ── 5b. The balance model's library: diligent unchanged, neglect felt in weeks ──
 {
-  // balance-horizon's knowledge model: 10 NUMERIC ideas a week over 12 Domains, every review clean on its due day.
+  // balance-horizon's knowledge model: 10 NUMERIC ideas a week over 12 Domains, every review clean on its due day,
+  // each widening the idea's ease (xp.ts cleanRecallOnTime); retention and forgetting read that ease.
   const base = Date.UTC(2026, 0, 1);
   const dayAt = (d: number) => new Date(base + d * DAY);
-  const domains = Array.from({ length: 12 }, () => ({ points: 0, ideas: [] as { level: number; due: number; clean: number }[] }));
+  const domains = Array.from({ length: 12 }, () => ({ points: 0, ideas: [] as { level: number; due: number; clean: number; ease: number }[] }));
   let dealt = 0;
   let diligentSame = true;
   for (let day = 1; day <= 365; day++) {
@@ -322,24 +343,25 @@ const at = (base: Date, days: number) => new Date(base.getTime() + days * DAY);
       for (let i = 0; i < 10; i++) {
         const d = domains[dealt++ % domains.length];
         d.points += XP_BASE.NUMERIC;
-        d.ideas.push({ level: 1, due: day + 1, clean: 0 });
+        d.ideas.push({ level: 1, due: day + 1, clean: 0, ease: EASE_DEFAULT });
       }
     }
     // Read before the day's reviews: every idea due today is inside its grace (retention 1).
     if (day % 7 === 3) {
       for (const d of domains) {
-        const entries = d.ideas.map((i) => ({ level: i.level, retention: retentionFactor(i.level, dayAt(i.due), dayAt(day)) }));
+        const entries = d.ideas.map((i) => ({ level: i.level, retention: retentionFactor(i.level, dayAt(i.due), dayAt(day), 0, i.ease) }));
         if (domainLevel(d.points, entries) !== domainLevel(d.points, d.ideas.map((i) => i.level))) diligentSame = false;
       }
     }
     for (const d of domains) {
       for (const idea of d.ideas) {
         if (idea.due > day) continue;
-        const step = riseStep(idea.level, idea.clean, 0);
-        d.points += reviewReward(idea.level) + (step.levelAfter === MASTERY_LEVEL && idea.level < MASTERY_LEVEL ? MASTERY_BONUS : 0);
-        idea.level = step.levelAfter;
-        idea.clean = step.cleanStreak;
-        idea.due = day + riseBaseIntervalDays(step);
+        const r = cleanRecallOnTime(idea.level, idea.clean, idea.ease);
+        d.points += reviewReward(idea.level) + (r.step.levelAfter === MASTERY_LEVEL && idea.level < MASTERY_LEVEL ? MASTERY_BONUS : 0);
+        idea.level = r.step.levelAfter;
+        idea.clean = r.step.cleanStreak;
+        idea.ease = r.ease;
+        idea.due = day + r.intervalDays;
       }
     }
   }
@@ -356,17 +378,19 @@ const at = (base: Date, days: number) => new Date(base.getTime() + days * DAY);
     let points = d0.points;
     const entries = d0.ideas.map((i) => {
       const due = dayAt(i.due);
-      const lost = levelsForgotten(i.level, Math.max(0, (now.getTime() - due.getTime()) / DAY));
+      const lost = levelsForgotten(i.level, Math.max(0, (now.getTime() - due.getTime()) / DAY), 0, i.ease);
       points -= levelsLossPoints(i.level, i.level - lost);
-      return { level: i.level - lost, retention: retentionFactor(i.level, due, now) };
+      return { level: i.level - lost, retention: retentionFactor(i.level, due, now, 0, i.ease) };
     });
     points = Math.max(0, points);
     if (weighted == null && domainLevel(points, entries) < level0) weighted = t;
     if (depthOnly == null && Math.min(domainPointsLevel(points), DEPTH_GRACE + Math.floor(masteryDepth(entries))) < level0) depthOnly = t;
   }
   check(
-    "model: a mature, points-bound Domain left alone from day 365 falls a level within about two months (depth alone took about six)",
-    pointsBound && weighted != null && weighted >= 45 && weighted <= 90 && depthOnly != null && depthOnly > 120,
+    // 2026-10-14: on the Ebbinghaus curve (faster over months than the power curve) depth alone takes about four
+    // months (it took six on the power curve); retention weighting still halves that.
+    "model: a mature, points-bound Domain left alone from day 365 falls a level within about two months (depth alone takes about four, twice as long)",
+    pointsBound && weighted != null && weighted >= 45 && weighted <= 90 && depthOnly != null && depthOnly > 100 && depthOnly >= 1.8 * weighted,
     `level ${level0}, points-bound ${pointsBound}: falls after ${weighted} days (depth only: ${depthOnly})`
   );
   console.log(`  (a points-bound Domain at level ${level0}, left alone from day 365: falls after ${weighted} days; with depth alone it took ${depthOnly})`);

@@ -5,7 +5,8 @@
  * exit top-left, progress on top, answers in the thumb zone, the result
  * panel from the bottom.
  *
- *   top      exit · a segment strip (hatched misses) · "Card n of N · Quest n of 15" · the pts tally
+ *   top      exit · a segment strip (hatched misses) · "Card n of N · r to retry" (or "Retry j of R" while a missed
+ *            card is asked again at the end) · "Quest n of 15" · the pts tally
  *   combo    "Combo 3" · the chain · "×1.15 on this card" (the multiplier this card is PAID, xp.ts
  *            comboMultiplier with the modified cap), then "×1.20 next card" after an answer; "capped"
  *            at the ceiling. A boss run shows "need 7 of 9 · 3 so far" instead: its bar drops only
@@ -18,7 +19,8 @@
  * celebration queue (src/lib/celebrate.ts):
  *   correct   T0 mark: "+6.4" flies from the payout to the tally, which counts up and bumps;
  *             the new chain diamond stamps in (420 ms, stamp ease).
- *   miss      the chain drains right to left, 55 ms a link. No shake, no red flash. It waits.
+ *   miss      the chain drains right to left, 55 ms a link. No shake, no red flash. It waits. "Not yet": the
+ *             answer is shown and the card comes back at the end of the session (review-model missLineOf).
  *   first deed of the day   T1 chime "Today kept" (the Day ledger's own beat lives on Today).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -38,7 +40,7 @@ import { formatAmount, formatNumber } from "@/components/ui/format";
 import type { SubmitReviewResult } from "@/app/actions/review";
 import { ResultPanel } from "./ResultPanel";
 import { SessionCard, multiOptionsOf, type CardPhase } from "./SessionCard";
-import { bossView, comboView, keptStreakOf, segmentsOf, type CardResult, type QuestView, type RunCard } from "./review-model";
+import { bossView, comboView, keptStreakOf, missLineOf, progressOf, segmentsOf, type CardResult, type QuestView, type RunCard } from "./review-model";
 
 export type RunPhase =
   | { kind: "ask" }
@@ -123,6 +125,9 @@ export function ReviewRunner({
   const { motion } = useMotionPref();
 
   const result = phase.kind === "answered" ? phase.result : null;
+  // A miss: the parent has already queued the card again at the end when it returns (review-model queueAfterAnswer).
+  const returns = result != null && !result.correct && card != null && queue.slice(index + 1).some((c) => c.id === card.id);
+  const missLine = result && !result.correct ? missLineOf({ returns, boss: boss != null }) : null;
   const cap = result?.combo.cap ?? comboCap;
   const view = result ? comboView(result.combo.next, cap, "answered") : comboView(combo, cap, "ask");
   // Enter moves on only once armed (220 ms after the result), so the key that answered cannot also skip it.
@@ -171,7 +176,7 @@ export function ReviewRunner({
         easing: EASE.stamp,
       });
     } else {
-      announce(`Not this time. The answer is ${result.expected}. ${result.trueFact.detail}.`);
+      announce(`Not yet. The answer is ${result.expected}. ${returns ? "It comes back at the end of this session" : "It comes back tomorrow"}. ${result.trueFact.detail}.`);
       // The combo drains right to left, one link every 55 ms (at once in Calm and Still).
       const from = comboView(result.combo.before, cap, "ask").lit;
       const to = comboView(result.combo.next, cap, "answered").lit;
@@ -239,7 +244,8 @@ export function ReviewRunner({
   const picked = phase.kind === "answered" || phase.kind === "pending" ? phase.picked : null;
   const hits = results.filter((r) => r.result.correct).length;
   const bv = boss ? bossView(hits, boss.need, boss.total) : null;
-  const cardNo = Math.min(index + 1, queue.length);
+  // "Card 7 of 12 · 2 to retry", or "Retry 1 of 2" while a missed card is asked again.
+  const progress = progressOf(queue, index);
 
   return (
     <>
@@ -251,14 +257,12 @@ export function ReviewRunner({
           <IconButton icon="x" label={boss ? "Retreat from the encounter" : "Leave the session"} onClick={onRequestExit} />
           <div className="rv-prog">
             {queue.length <= SEGMENT_MAX ? (
-              <SegmentStrip segs={segmentsOf(results, queue.length, index)} tall label={`Card ${cardNo} of ${queue.length}`} />
+              <SegmentStrip segs={segmentsOf(results, queue.length, index)} tall label={progress.label} />
             ) : (
-              <Meter thin value={results.length / queue.length} label={`Card ${cardNo} of ${queue.length}`} />
+              <Meter thin value={results.length / queue.length} label={progress.label} />
             )}
             <div className="lbl">
-              <span>
-                Card {cardNo} of {queue.length}
-              </span>
+              <span data-retrying={progress.retrying ? "" : undefined}>{progress.label}</span>
               {quest.target > 0 && (
                 <span>
                   Quest {Math.min(quest.done, quest.target)} of {quest.target}
@@ -338,6 +342,7 @@ export function ReviewRunner({
         answer={phase.kind === "answered" ? phase.answer : ""}
         autoAdvance={autoAdvance}
         isLast={index + 1 >= queue.length}
+        missLine={missLine}
         onNext={onNext}
         payRef={payRef}
         onOverride={onOverride}

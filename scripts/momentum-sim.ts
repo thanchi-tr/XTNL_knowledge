@@ -24,7 +24,7 @@ import { createHmac } from "node:crypto";
 import { kneeG, kneePay, priceTask, roundTo } from "../src/lib/life-grade";
 import { BODY_EFFORT_MINUTES, GOAL_RULES, KEPT_MIN_DAYS, KEPT_MIN_RAW, LIFE_MP, trackLevel } from "../src/lib/life-economy";
 import { characterLevel } from "../src/lib/character";
-import { MASTERY_BONUS, MASTERY_LEVEL, MAX_LEVEL, XP_BASE, domainLevel, fieldLevel, reviewReward, riseBaseIntervalDays, riseStep } from "../src/lib/xp";
+import { EASE_DEFAULT, MASTERY_BONUS, MASTERY_LEVEL, MAX_LEVEL, XP_BASE, cleanRecallOnTime, domainLevel, fieldLevel, reviewReward } from "../src/lib/xp";
 import { IDEA_MASTERY_POINTS, REVIEW_MASTERY_PER_LEVEL } from "../src/lib/mastery";
 import { SKILL_POOL } from "../src/lib/skill-pool";
 import { TRACKS, type Band, type Track } from "../src/lib/life-types";
@@ -894,7 +894,7 @@ function simulateUser(seed: number): UserResult {
 const NEW_IDEAS_PER_WEEK = 10;
 const DOMAINS_PER_FIELD = 4;
 function knowledgeModel(fields: number) {
-  const domains = Array.from({ length: fields * DOMAINS_PER_FIELD }, () => ({ points: 0, ideas: [] as { level: number; due: number; clean: number }[] }));
+  const domains = Array.from({ length: fields * DOMAINS_PER_FIELD }, () => ({ points: 0, ideas: [] as { level: number; due: number; clean: number; ease: number }[] }));
   let day = 0;
   let dealt = 0;
   return () => {
@@ -908,14 +908,16 @@ function knowledgeModel(fields: number) {
         dealt += 1;
         d.points += XP_BASE.NUMERIC;
         points += XP_BASE.NUMERIC;
-        d.ideas.push({ level: 1, due: day + 1, clean: 0 });
+        d.ideas.push({ level: 1, due: day + 1, clean: 0, ease: EASE_DEFAULT });
       }
     }
     for (const d of domains) {
       for (const idea of d.ideas) {
         if (idea.due > day) continue;
-        // Every recall is clean: xp.ts riseStep (two clean recalls a level from CLEAN_PAIR_FROM up), base intervals.
-        const step = riseStep(idea.level, idea.clean, 0);
+        // Every recall is clean: xp.ts riseStep (two clean recalls a level from CLEAN_PAIR_FROM up), each widening the
+        // idea's ease (cleanRecallOnTime, 2026-10-14), at the eased base intervals.
+        const r = cleanRecallOnTime(idea.level, idea.clean, idea.ease);
+        const step = r.step;
         const next = step.levelAfter;
         const gain = reviewReward(idea.level) + (next === MASTERY_LEVEL && idea.level < MASTERY_LEVEL ? MASTERY_BONUS : 0);
         d.points += gain;
@@ -924,7 +926,8 @@ function knowledgeModel(fields: number) {
         reviews += 1;
         idea.level = next;
         idea.clean = step.cleanStreak;
-        idea.due = day + riseBaseIntervalDays(step);
+        idea.ease = r.ease;
+        idea.due = day + r.intervalDays;
       }
     }
     const levels = domains.map((d) => domainLevel(d.points, d.ideas.map((i) => i.level)));

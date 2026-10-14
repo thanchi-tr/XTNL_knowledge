@@ -2,17 +2,21 @@
  * Forgetting: what an idea left unreviewed loses, and what that costs. Pure (no Prisma), so the cron, the review
  * path, the rules page and the checks read the same numbers.
  *
- * The model is the power forgetting curve spaced repetition uses (FSRS):
+ * The model is the Ebbinghaus forgetting curve (2026-10-14, replacing the power curve):
  *
- *   R(t) = (1 + t ÷ (9·S))⁻¹
+ *   R(t) = e^(−t ÷ S),   S = I ÷ ln(1 ÷ 0.9),   I = baseline(level) × ease
  *
- * the chance of recalling a card t days after its last review, where S, its stability, is the interval its level is
- * scheduled at (xp.ts BASE_INTERVAL_DAYS): R is 90% on the day it falls due. Left alone, R keeps falling: quickly
- * at first, then ever more slowly, the way memory does. A card loses one level for every FORGET_BAND of recall it
- * has lost below that 90%, never inside its grace period (graceDays + the GRACE_EXTENSION days), never below level 1.
+ * the chance of recalling a card t days after its last review. I is the interval the card is scheduled at (xp.ts:
+ * the ladder's BASE_INTERVAL_DAYS, the baseline, scaled by the idea's own ease, Idea.ease), and its stability S is
+ * chosen so R is DESIGN_RETENTION (90%) on the day it falls due: R(I) = 0.9, R(2I) = 0.81, and in general
+ * R(I + o) = 0.9^((I + o) ÷ I). Left alone, R keeps falling, by the same share every day. A card loses one level
+ * for every FORGET_BAND of recall it has lost below that 90%, never inside its grace period (graceDays + the
+ * GRACE_EXTENSION days), never below level 1. The n-th level goes at o = I·(ln(0.9 − 0.075n) ÷ ln 0.9 − 1) past due:
+ * about 0.83·I for the first, 1.73·I the second, 2.73·I the third, 3.85·I the fourth (n ≤ 11: below that R is ≤ 0).
  *
- * So a young card forgets in days and a mature one in months. Level 3 (S 4 d) loses its first level about 4 days
- * past due; level 12 (S 160 d), about 5 months past due; a level-20 card holds for years.
+ * So a young card forgets in days and a mature one in months, and an idea with a wide ease holds longer. At ease 1:
+ * level 4 (I 7 d) loses its first level about 6 days past due; level 6 (18 d) about 15; level 12 (160 d) about 4½
+ * months (132 d), its second at about 9 months; a level-20 card (2850 d) holds for over six years.
  *
  * What a lost level costs: the points the review that earned it paid at its base (xp.ts reviewLevelBase of the
  * level below), and the mastery lump (MASTERY_BONUS) when the card falls from mastery. The Domain's totalPoints goes
@@ -24,10 +28,12 @@
  * (planFieldLevels, dropMarkOf). ideaOutlook says where a card stands: what its next level
  * needs (clean recalls, xp.ts riseStep) and when it starts fading and forgetting.
  */
-import { MASTERY_BONUS, MASTERY_LEVEL, MAX_LEVEL, baseIntervalDays, cleanRecallsNeeded, domainLevel, fieldLevel, graceDays, retainedShare, reviewLevelBase } from "./xp";
+import { EASE_DEFAULT, MASTERY_BONUS, MASTERY_LEVEL, MAX_LEVEL, clampEase, cleanRecallsNeeded, domainLevel, easedBaseDays, fieldLevel, graceDays, retainedShare, reviewLevelBase } from "./xp";
 
 /** The recall a card is scheduled at: R on the day it falls due. */
 export const DESIGN_RETENTION = 0.9;
+/** ln(1 ÷ DESIGN_RETENTION): S = I ÷ this puts R(I) at exactly DESIGN_RETENTION. */
+export const DESIGN_DECAY = Math.log(1 / DESIGN_RETENTION);
 /** Recall lost below DESIGN_RETENTION per level forgotten. */
 export const FORGET_BAND = 0.075;
 /**
@@ -38,35 +44,49 @@ export const FADE_BANDS = 5;
 
 const DAY_MS = 86_400_000;
 
-/** R(t): the chance of recall t days after the last review, at stability S days. */
+/** R(t) = e^(−t/S): the chance of recall t days after the last review, at stability S days (Ebbinghaus). */
 export function retrievability(elapsedDays: number, stabilityDays: number): number {
   const t = Math.max(0, elapsedDays);
   const s = Math.max(0.1, stabilityDays);
-  return 1 / (1 + t / (9 * s));
+  return Math.exp(-t / s);
+}
+
+/** The interval I a card at `level` and `ease` is scheduled at, unrounded: baseline(level) × ease (xp.ts easedBaseDays). */
+export function intervalOf(level: number, ease = EASE_DEFAULT): number {
+  return easedBaseDays(Math.max(1, Math.floor(level)), clampEase(ease));
+}
+
+/** S = I ÷ ln(1/0.9): the stability at which recall is DESIGN_RETENTION on the due day. */
+export function stabilityOf(level: number, ease = EASE_DEFAULT): number {
+  return intervalOf(level, ease) / DESIGN_DECAY;
+}
+
+/** Recall `daysOverdue` days past the due day: R(I + o) at S = I ÷ ln(1/0.9), i.e. 0.9^((I + o) ÷ I). */
+function recallAt(level: number, daysOverdue: number, ease: number): number {
+  return retrievability(intervalOf(level, ease) + Math.max(0, daysOverdue), stabilityOf(level, ease));
 }
 
 /**
- * How many levels a card at `level`, `daysOverdue` days past its due day, has forgotten: one per FORGET_BAND of
- * recall below DESIGN_RETENTION, none inside its grace (graceDays(level) + `graceExtra`), at most level − 1.
+ * How many levels a card at `level` and `ease`, `daysOverdue` days past its due day, has forgotten: one per
+ * FORGET_BAND of recall below DESIGN_RETENTION, none inside its grace (graceDays(level) + `graceExtra`), at most
+ * level − 1.
  */
-export function levelsForgotten(level: number, daysOverdue: number, graceExtra = 0): number {
+export function levelsForgotten(level: number, daysOverdue: number, graceExtra = 0, ease = EASE_DEFAULT): number {
   const L = Math.max(1, Math.floor(level));
   if (L <= 1 || !(daysOverdue > graceDays(L) + Math.max(0, graceExtra))) return 0;
-  const S = baseIntervalDays(L);
-  const R = retrievability(S + daysOverdue, S);
+  const R = recallAt(L, daysOverdue, ease);
   const lost = Math.floor((DESIGN_RETENTION - R) / FORGET_BAND + 1e-9);
   return Math.max(0, Math.min(L - 1, lost));
 }
 
-/** Days past due at which a card at `level` forgets its n-th level (n ≥ 1), grace included; null when it can't. */
-export function daysToForget(level: number, n = 1, graceExtra = 0): number | null {
+/** Days past due at which a card at `level` and `ease` forgets its n-th level (n ≥ 1), grace included; null when it can't. */
+export function daysToForget(level: number, n = 1, graceExtra = 0, ease = EASE_DEFAULT): number | null {
   const L = Math.max(1, Math.floor(level));
   if (n < 1 || n > L - 1) return null;
   const R = DESIGN_RETENTION - n * FORGET_BAND;
   if (R <= 0) return null;
-  const S = baseIntervalDays(L);
-  // 1 + t/(9S) = 1/R  →  t = 9S(1/R − 1); overdue = t − S.
-  const overdue = 9 * S * (1 / R - 1) - S;
+  // e^(−t/S) = R  →  t = S·ln(1/R); overdue = t − I.
+  const overdue = stabilityOf(L, ease) * Math.log(1 / R) - intervalOf(L, ease);
   return Math.max(overdue, graceDays(L) + Math.max(0, graceExtra));
 }
 
@@ -109,23 +129,23 @@ export function forgetKeyPrefix(ideaId: string, dueDate: Date): string {
  * until its grace ends (dueDate + graceDays(level) + `graceExtraDays`), then it falls with the forgetting curve,
  * normalised so it is 1 at the grace end and loses 1/FADE_BANDS for every FORGET_BAND of recall lost after it:
  *
- *   retention = clamp(1 − (R(S + g) − R(S + o)) ÷ (FADE_BANDS · FORGET_BAND), 0, 1)
+ *   retention = clamp(1 − (R(I + g) − R(I + o)) ÷ (FADE_BANDS · FORGET_BAND), 0, 1)
  *
- * with S the level's interval, g its grace and o the days past due. Monotone: it never rises until a review moves
- * the due date. A card reviewed on time is always 1. Level 12 is at 0.82 when it forgets its first level (about 5
- * months past due) and at 0 about 3 years past due; level 5 is at 0.88 at its first loss (11 days) and 0 at about
- * 3 months; level 2 at 0.91 at its first loss (2 days) and 0 at 18 days.
+ * with I the card's eased interval (baseline × ease), g its grace and o the days past due, R the Ebbinghaus curve at
+ * S = I ÷ ln(1/0.9). Monotone: it never rises until a review moves the due date. A card reviewed on time is always 1.
+ * At ease 1, level 12 is at 0.82 when it forgets its first level (about 4½ months past due) and at 0 about 2.3 years
+ * past due; level 5 is at 0.88 at its first loss (10 days) and 0 at about 68 days; level 2 at 0.92 at its first
+ * loss (2 days) and 0 at 12 days.
  *
  * `level` is the level the card fell due at (its forgetting anchor: forgettingAnchor recovers it once the daily pass
  * has taken levels). For an idea row read ideaOutlook(...).retention, which does that.
  */
-export function retentionFactor(level: number, dueDate: Date, now: Date, graceExtraDays = 0): number {
+export function retentionFactor(level: number, dueDate: Date, now: Date, graceExtraDays = 0, ease = EASE_DEFAULT): number {
   const L = Math.max(1, Math.floor(level));
   const g = graceDays(L) + Math.max(0, graceExtraDays);
   const o = daysOverdueOf(dueDate, now);
   if (!(o > g)) return 1;
-  const S = baseIntervalDays(L);
-  const lost = retrievability(S + g, S) - retrievability(S + o, S);
+  const lost = recallAt(L, g, ease) - recallAt(L, o, ease);
   return Math.min(1, Math.max(0, 1 - lost / (FADE_BANDS * FORGET_BAND)));
 }
 
@@ -141,10 +161,10 @@ function lastPassAt(now: Date): Date {
  * A card nothing was taken from is its own anchor. (A pass that missed a day, or a ward that held a level, reads one
  * level high: the retention is then a little kinder, never harsher.)
  */
-export function forgettingAnchor(level: number, dueDate: Date, now: Date, graceExtraDays = 0): number {
+export function forgettingAnchor(level: number, dueDate: Date, now: Date, graceExtraDays = 0, ease = EASE_DEFAULT): number {
   const L = Math.max(1, Math.floor(level));
   const o = daysOverdueOf(dueDate, lastPassAt(now));
-  for (let A = L; A <= MAX_LEVEL; A++) if (A - levelsForgotten(A, o, graceExtraDays) >= L) return A;
+  for (let A = L; A <= MAX_LEVEL; A++) if (A - levelsForgotten(A, o, graceExtraDays, ease) >= L) return A;
   return L;
 }
 
@@ -162,8 +182,10 @@ export interface IdeaOutlook {
   cleanNeeded: 1 | 2;
   /** Of those, how many are already in hand (0 while a miss holds the level). */
   cleanDone: number;
-  /** A miss since it fell due: the next right answer is paid but holds the level. */
+  /** A miss in this due cycle (Idea.cycleMissed): the next right answer relearns it (paid, level held). */
   heldByMiss: boolean;
+  /** The idea's own ease (Idea.ease, xp.ts clampEase): its spacing against the ladder, 1 = the baseline. */
+  ease: number;
   /** Whole days until it is due (ceil); 0 or negative once due. */
   dueInDays: number;
   status: IdeaStatus;
@@ -187,21 +209,32 @@ export interface IdeaOutlook {
  *   forgetting  at or past the first level-loss point (daysToForget), or a level already taken in this spell
  */
 export function ideaOutlook(
-  idea: { level: number; dueDate: Date; graceEndsAt: Date | null; cleanStreak: number; failedAttempts: number },
+  idea: {
+    level: number;
+    dueDate: Date;
+    graceEndsAt: Date | null;
+    cleanStreak: number;
+    failedAttempts: number;
+    /** Idea.ease; absent reads as the baseline (1). */
+    ease?: number | null;
+    /** Idea.cycleMissed; absent reads from failedAttempts (a row from before the column, or a fixture). */
+    cycleMissed?: boolean | null;
+  },
   now: Date,
   graceExtraDays = 0
 ): IdeaOutlook {
   const level = Math.max(1, Math.floor(idea.level));
   const extra = Math.max(0, graceExtraDays);
-  const anchor = forgettingAnchor(level, idea.dueDate, now, extra);
+  const ease = clampEase(idea.ease);
+  const anchor = forgettingAnchor(level, idea.dueDate, now, extra, ease);
   const graceEnd = new Date(idea.dueDate.getTime() + (graceDays(anchor) + extra) * DAY_MS);
   const o = daysOverdueOf(idea.dueDate, now);
-  const lost = levelsForgotten(anchor, o, extra);
+  const lost = levelsForgotten(anchor, o, extra, ease);
   const status: IdeaStatus =
     now.getTime() < idea.dueDate.getTime() ? "fresh" : lost >= 1 || anchor > level ? "forgetting" : now.getTime() <= graceEnd.getTime() ? "due" : "fading";
   const nextN = Math.max(lost, anchor - level) + 1;
-  const toNext = daysToForget(anchor, nextN, extra);
-  const heldByMiss = idea.failedAttempts > 0;
+  const toNext = daysToForget(anchor, nextN, extra, ease);
+  const heldByMiss = idea.cycleMissed ?? idea.failedAttempts > 0;
   const cleanNeeded = cleanRecallsNeeded(level);
   return {
     level,
@@ -210,26 +243,29 @@ export function ideaOutlook(
     cleanNeeded,
     cleanDone: cleanNeeded === 2 && !heldByMiss ? Math.min(1, Math.max(0, Math.floor(idea.cleanStreak))) : 0,
     heldByMiss,
+    ease,
     dueInDays: Math.ceil((idea.dueDate.getTime() - now.getTime()) / DAY_MS) + 0,
     status,
     fadingFrom: graceEnd.toISOString(),
     nextLossAt: toNext == null ? null : new Date(idea.dueDate.getTime() + toNext * DAY_MS).toISOString(),
-    retention: retentionFactor(anchor, idea.dueDate, now, extra),
+    retention: retentionFactor(anchor, idea.dueDate, now, extra, ease),
   };
 }
 
 /** What a card counts for in its Domain's depth now: {its level, its retention} (xp.ts masteryDepth's DepthEntry). */
-export function depthEntryOf(idea: { level: number; dueDate: Date }, now: Date, graceExtraDays = 0): { level: number; retention: number } {
+export function depthEntryOf(idea: { level: number; dueDate: Date; ease?: number | null }, now: Date, graceExtraDays = 0): { level: number; retention: number } {
   const level = Math.max(1, Math.floor(idea.level));
-  return { level, retention: retentionFactor(forgettingAnchor(level, idea.dueDate, now, graceExtraDays), idea.dueDate, now, graceExtraDays) };
+  const ease = clampEase(idea.ease);
+  return { level, retention: retentionFactor(forgettingAnchor(level, idea.dueDate, now, graceExtraDays, ease), idea.dueDate, now, graceExtraDays, ease) };
 }
 
 // ── Domain and Field levels, retention-weighted, and their drops ────────────
 
-/** An Idea as its Domain's level reads it. */
+/** An Idea as its Domain's level reads it (its ease scales its curve; absent: the baseline). */
 export interface LevelIdea {
   level: number;
   dueDate: Date;
+  ease?: number | null;
 }
 
 /** A Domain's level now: its retained points capped by its retention-weighted depth (xp.ts domainLevel over depthEntryOf). */

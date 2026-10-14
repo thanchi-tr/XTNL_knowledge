@@ -8,8 +8,11 @@
  * What moved (the run's merged Seals, levels, MP minted, the day kept). The
  * merged Seals are marked seen when the recap mounts (ackShown), so none of
  * them replays as a docked Seal on the next load or on the other device;
- * True facts from this session's results; Back tomorrow (each miss, linking
- * to its idea); the per-card receipt; the next batch; Back to Today.
+ * True facts from this session's results; Relearned (each card missed, then
+ * right when it came back: level held, back soon) and Back tomorrow (each card
+ * still not right at the end), linking to its idea; the per-answer receipt;
+ * the next batch; Back to Today. The headline counts cards recalled the first
+ * time, and says how many were relearned — never how many "failed".
  *
  * Its sections reveal with a 70 ms stagger — the only stagger in the app,
  * and it is a result, not an arrival. Everything rests on its final state,
@@ -38,6 +41,8 @@ import {
   backTomorrowOf,
   levelRowsOf,
   receiptOf,
+  recapLineOf,
+  relearnedOf,
   sessionCardFacts,
   tallyOf,
   type CardResult,
@@ -91,6 +96,8 @@ export function SessionComplete({
   const receipt = receiptOf(results);
   const facts = sessionFactsOf(sessionCardFacts(results));
   const back = backTomorrowOf(results);
+  const relearned = relearnedOf(results);
+  const recapLine = recapLineOf(tally);
   const levels = levelRowsOf(results, merged);
   const clearedNow = questAfter.cleared && !questBefore.cleared;
   const minutes = Math.max(1, Math.round((endedAt - startedAt) / 60_000));
@@ -124,7 +131,7 @@ export function SessionComplete({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const headline = clearedNow ? "Quest cleared" : `${tally.correct} of ${tally.answered} recalled`;
+  const headline = clearedNow ? "Quest cleared" : `${tally.firstTry} of ${tally.cards} recalled`;
   const questLine =
     questAfter.target > 0 ? `${Math.min(questAfter.done, questAfter.target)} of ${questAfter.target} today.` : "";
   const dueLine =
@@ -157,6 +164,11 @@ export function SessionComplete({
           {questLine}
           {dueLine}
         </p>
+        {recapLine && (
+          <p className="t-meta ink-1" style={{ marginTop: 4 }} data-recap-relearned="">
+            {recapLine}
+          </p>
+        )}
         <div className="rv-stats3">
           <div>
             <div className="v">
@@ -167,8 +179,8 @@ export function SessionComplete({
           </div>
           <div>
             <div className="v">
-              {tally.correct}
-              <small className="t-meta"> / {tally.answered}</small>
+              {tally.firstTry}
+              <small className="t-meta"> / {tally.cards}</small>
             </div>
             <div className="k">recalled</div>
           </div>
@@ -298,6 +310,23 @@ export function SessionComplete({
                 </li>
               ))}
             </ul>
+          </section>
+        </>
+      )}
+
+      {relearned.length > 0 && (
+        <>
+          <SectionHeader title="Relearned" />
+          <section className="card" data-reveal="">
+            {relearned.map((b) => (
+              <Link key={b.id} className="rv-idea" href={`/library/${b.id}`}>
+                <div style={{ minWidth: 0 }}>
+                  <b title={b.title}>{b.title}</b>
+                  <span className="t-meta">{b.line}</span>
+                </div>
+                <Icon name="chev" className="ink-2" size={16} />
+              </Link>
+            ))}
           </section>
         </>
       )}

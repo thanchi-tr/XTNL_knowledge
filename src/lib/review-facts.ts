@@ -69,12 +69,12 @@ export interface HistoryEntry {
 /**
  * A ledger REVIEW row's outcome, from the detail srs.ts writes: "advanced"
  * (or "advanced · mastered") for a pass; "strike", "degraded" or "shielded"
- * for a miss. Backfilled history ("backfill: passed review") only ever
- * recorded passes.
+ * for the day's lapse, "retry" for a re-attempt after it. Backfilled history
+ * ("backfill: passed review") only ever recorded passes.
  */
 export function reviewMarkOf(detail: string | null | undefined): "pass" | "miss" {
   const d = (detail ?? "").toLowerCase();
-  if (d.startsWith("strike") || d.startsWith("degraded") || d.startsWith("shielded")) return "miss";
+  if (d.startsWith("strike") || d.startsWith("degraded") || d.startsWith("shielded") || d.startsWith("retry")) return "miss";
   return "pass";
 }
 
@@ -118,6 +118,7 @@ export function gapsOf(history: readonly HistoryEntry[]): number[] {
 
 export type TrueFactKind =
   | "mastered"
+  | "relearned"
   | "clean-after-miss"
   | "rescued"
   | "gap"
@@ -125,7 +126,8 @@ export type TrueFactKind =
   | "level"
   | "strike"
   | "degraded"
-  | "shielded";
+  | "shielded"
+  | "retry";
 
 export interface TrueFact {
   kind: TrueFactKind;
@@ -145,10 +147,18 @@ export interface TrueFact {
   cleanToMastery?: number;
 }
 
+/** How a lapse moved the spacing (srs.ts EaseMove): before and after. */
+export interface EaseChange {
+  before: number;
+  after: number;
+}
+
+/** The server's side of a miss: the day's lapse (a strike, a degradation, a ward's save) or a re-attempt after it. */
 export type MissOutcome =
-  | { kind: "strike"; strike: number; limit: number }
-  | { kind: "degraded"; levelBefore: number; levelAfter: number }
-  | { kind: "shielded"; skillName: string; level: number };
+  | { kind: "strike"; strike: number; limit: number; ease?: EaseChange }
+  | { kind: "degraded"; levelBefore: number; levelAfter: number; ease?: EaseChange }
+  | { kind: "shielded"; skillName: string; level: number; ease?: EaseChange }
+  | { kind: "retry" };
 
 export interface FactInput {
   correct: boolean;
@@ -166,6 +176,10 @@ export interface FactInput {
   overdueDays: number;
   /** The interval actually scheduled (days), for a pass. */
   intervalDays: number | null;
+  /** A right answer after a miss in the card's due cycle (srs.ts ReviewRise kind 'relearned'): level held, back soon. */
+  relearned?: boolean;
+  /** For a relearn: the interval its level would usually schedule at its ease, to say how much sooner it comes back. */
+  usualIntervalDays?: number | null;
   miss?: MissOutcome;
   /**
    * Clean recalls still between the card and mastery after this answer (xp.ts cleanRecallsTo with the card's clean
@@ -194,6 +208,18 @@ export function nextReviewText(intervalDays: number | null): string | null {
   return `next review in ${daysText(intervalDays)}`;
 }
 
+/** "Relearned — back tomorrow" / "Relearned — back in 4 days": a right retry's headline. */
+export function relearnedHeadline(intervalDays: number | null): string {
+  const n = Math.max(1, Math.round(intervalDays ?? 1));
+  return n === 1 ? "Relearned — back tomorrow" : `Relearned — back in ${daysText(n)}`;
+}
+
+/** "spacing 1.00× → 0.85×": how the day's lapse tightened the card's spacing (xp.ts ease). */
+export function spacingChangeText(ease: EaseChange | undefined): string | null {
+  if (!ease || !Number.isFinite(ease.before) || !Number.isFinite(ease.after) || Math.abs(ease.before - ease.after) < 0.005) return null;
+  return `spacing ${ease.before.toFixed(2)}× → ${ease.after.toFixed(2)}×`;
+}
+
 const join = (parts: (string | null | false | undefined)[]) => parts.filter(Boolean).join(" · ");
 
 function capitalise(s: string): string {
@@ -216,29 +242,50 @@ export function trueFactOf(input: FactInput): TrueFact {
   const cleanToMastery = input.cleanToMastery ?? cleanRecallsTo(input.levelAfter, 0, MASTERY_LEVEL);
   const base = { gapDays, longestGap, overdueDays, clearedMissDay: null as DayKey | null, cleanToMastery };
 
+  // A miss is "Not yet": the session shows the answer and asks the card again at its end (review-model.ts
+  // missLineOf says when). The detail is the server's side only: what the day's lapse changed, or that a re-attempt
+  // changed nothing. Never "wrong" or "fail".
   if (!input.correct) {
     const m = input.miss ?? { kind: "strike" as const, strike: input.failedAttemptsBefore + 1, limit: input.failedAttemptsBefore + 2 };
+    if (m.kind === "retry") {
+      return { ...base, kind: "retry", headline: "Not yet", detail: "Counted once a day: this try changes nothing" };
+    }
     if (m.kind === "degraded") {
       return {
         ...base,
         kind: "degraded",
-        headline: "Not this time",
-        detail: join([
-          "Back tomorrow",
-          `level ${m.levelBefore} → ${m.levelAfter}`,
-          m.levelAfter < m.levelBefore ? `the Domain gives back the ${fmtPoints(levelLossPoints(m.levelBefore))} points that level earned` : "nothing else is taken",
-        ]),
+        headline: "Not yet",
+        detail: capitalise(
+          join([
+            `level ${m.levelBefore} → ${m.levelAfter}`,
+            m.levelAfter < m.levelBefore ? `the Domain gives back the ${fmtPoints(levelLossPoints(m.levelBefore))} points that level earned` : null,
+            spacingChangeText(m.ease),
+            m.levelAfter < m.levelBefore ? null : "nothing else is taken",
+          ])
+        ),
       };
     }
     if (m.kind === "shielded") {
-      return { ...base, kind: "shielded", headline: "Not this time", detail: join(["Back tomorrow", `${m.skillName} held level ${m.level}`, "nothing else is taken"]) };
+      return { ...base, kind: "shielded", headline: "Not yet", detail: join([`${m.skillName} held level ${m.level}`, spacingChangeText(m.ease), "nothing else is taken"]) };
     }
-    return { ...base, kind: "strike", headline: "Not this time", detail: join(["Back tomorrow", `strike ${m.strike} of ${m.limit}`, "nothing else is taken"]) };
+    return { ...base, kind: "strike", headline: "Not yet", detail: capitalise(join([`strike ${m.strike} of ${m.limit}`, spacingChangeText(m.ease), "nothing else is taken"])) };
   }
 
   const gapText = gapDays != null && last ? (gapDays === 0 ? "recalled again today" : `recalled after ${daysText(gapDays)}`) : null;
   // Only a clean recall raises a level, and from L8 up two in a row do (xp.ts riseStep): "one" only when it is one.
   const nearMastery = input.levelAfter < MASTERY_LEVEL && cleanToMastery === 1 ? "one clean recall from mastery" : null;
+
+  // Right after a miss in the cycle (today's retry, or a card missed on an earlier day): relearned, level held.
+  if (input.relearned) {
+    const usual = input.usualIntervalDays ?? null;
+    const interval = input.intervalDays ?? 1;
+    return {
+      ...base,
+      kind: "relearned",
+      headline: relearnedHeadline(interval),
+      detail: join([`Level ${input.levelBefore} held`, usual != null && usual > interval ? `sooner than its usual ${daysText(usual)}` : null]),
+    };
+  }
 
   if (input.mastered) {
     return { ...base, kind: "mastered", headline: `Mastered · level ${MASTERY_LEVEL} of ${MASTERY_LEVEL}`, detail: capitalise(join([gapText, next])) };

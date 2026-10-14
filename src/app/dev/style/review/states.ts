@@ -1,5 +1,5 @@
 /** The /dev/style/review fixture states (?state=…), shared by the page and its client view. */
-export const FIXTURE_STATES = ["hub", "empty", "question", "correct", "seal", "miss", "boss", "recap", "boss-won"] as const;
+export const FIXTURE_STATES = ["hub", "empty", "question", "correct", "seal", "miss", "retry", "relearned", "boss", "recap", "boss-won"] as const;
 export type FixtureState = (typeof FIXTURE_STATES)[number];
 
 export const FIXTURE_LABEL: Record<FixtureState, string> = {
@@ -9,6 +9,8 @@ export const FIXTURE_LABEL: Record<FixtureState, string> = {
   correct: "Correct",
   seal: "Seal",
   miss: "Miss",
+  retry: "Retry",
+  relearned: "Relearned",
   boss: "Boss run",
   recap: "Recap",
   "boss-won": "Boss won",
