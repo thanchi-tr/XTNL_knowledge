@@ -204,6 +204,13 @@ model Idea {
   /// Clean recalls in a row (2026-10-13, migration 20261223000000_idea_leveling): a recall with no miss in its due
   /// cycle. From L8 up a level needs two in a row; a miss resets it.
   cleanStreak         Int             @default(0)
+  /// Per-idea ease (2026-10-14, migration 20261226000000_idea_ease): scales the ladder's baseline interval for this
+  /// idea (Ebbinghaus stability S = baseline(level) x ease / ln(1/0.9)); learnt from its recalls, 1 = the baseline.
+  ease                Float           @default(1)
+  /// A miss happened in the current due cycle (a recall in it is not clean); cleared when a new cycle is scheduled.
+  cycleMissed         Boolean         @default(false)
+  /// The life day of the latest miss: a miss counts once a day (re-attempts in a session add nothing).
+  lapseDay            DateTime?       @db.Date
   basePoints          Float           @default(0)
   yieldPoints         Float           @default(0)
   fragments           Int             @default(1)
