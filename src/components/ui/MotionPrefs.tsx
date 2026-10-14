@@ -12,14 +12,17 @@
  *                           script reads, and (theme, motion, autoAdvance) L3's savePrefs
  *   readPrefs(), currentMotion()   non-React readers
  *
- * Sound and haptics are per device: they stay in localStorage only.
+ * Sound and haptics are per device: they stay in localStorage only, and are read from this device's own choice
+ * (DEVICE_PREFS_STORAGE_KEY, written only when one is picked in Settings), so the defaults (on) reach a device that
+ * never chose, and a chosen "off" stands.
  */
 import { useEffect, useSyncExternalStore, type ReactNode } from "react";
 import { savePrefs } from "@/app/actions/celebrations";
 import {
   DEFAULT_PREFS,
+  DEVICE_PREFS_STORAGE_KEY,
   PREFS_STORAGE_KEY,
-  parsePrefs,
+  readStoredPrefs,
   resolveMotion,
   type FeedbackPrefs,
   type MotionLevel,
@@ -36,7 +39,7 @@ export function readPrefs(): FeedbackPrefs {
   if (typeof window === "undefined") return DEFAULT_PREFS;
   if (cache) return cache;
   try {
-    cache = parsePrefs(window.localStorage.getItem(PREFS_STORAGE_KEY));
+    cache = readStoredPrefs(window.localStorage.getItem(PREFS_STORAGE_KEY), window.localStorage.getItem(DEVICE_PREFS_STORAGE_KEY));
   } catch {
     cache = { ...DEFAULT_PREFS };
   }
@@ -62,6 +65,17 @@ export function setPref<K extends keyof FeedbackPrefs>(key: K, value: FeedbackPr
   cache = next;
   try {
     window.localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(next));
+    // A per-device choice is recorded as a choice, apart from the mirror every other write rewrites.
+    if (key === "sound" || key === "haptics") {
+      let own: Record<string, unknown> = {};
+      try {
+        const raw: unknown = JSON.parse(window.localStorage.getItem(DEVICE_PREFS_STORAGE_KEY) ?? "{}");
+        if (raw && typeof raw === "object" && !Array.isArray(raw)) own = raw as Record<string, unknown>;
+      } catch {
+        own = {};
+      }
+      window.localStorage.setItem(DEVICE_PREFS_STORAGE_KEY, JSON.stringify({ ...own, [key]: value }));
+    }
   } catch {
     /* private mode: the attribute still applies for this page */
   }
@@ -97,7 +111,7 @@ export function MotionPrefsProvider({ children }: { children?: ReactNode }) {
       }
     };
     const onStorage = (e: StorageEvent) => {
-      if (e.key !== PREFS_STORAGE_KEY) return;
+      if (e.key !== PREFS_STORAGE_KEY && e.key !== DEVICE_PREFS_STORAGE_KEY) return;
       cache = null;
       apply(readPrefs());
       emit();

@@ -2,7 +2,7 @@
 
 import type { TaskStyle } from "@/lib/task-style";
 import { TaskIcon } from "@/components/task-style/TaskIcon";
-import { useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type PointerEvent, type ReactNode } from "react";
 import type { BoardRow } from "@/lib/today-board";
 import type { Receipt } from "@/lib/life-types";
 import { habitLine } from "@/lib/habit";
@@ -11,7 +11,7 @@ import { PricePill } from "@/components/ui/PricePill";
 import { Tick, type TickState } from "@/components/ui/Tick";
 import { cx } from "@/components/ui/cx";
 import { TRACK_LABEL, TRACK_SIGIL, fmtMinutes, fmtXp } from "./format";
-import { hhmmOf, pendingMetaOf, rowAccentOf, tickNameOf } from "./board-ui";
+import { hhmmOf, pendingMetaOf, rowAccentOf, tickNameOf, type RowMotion } from "./board-ui";
 import { NamedTitle } from "./NamedTitle";
 import type { RestKind } from "@/lib/duty-economy";
 import { stepsLine } from "@/lib/subtasks";
@@ -56,6 +56,22 @@ interface Props {
    * done row reads 'Done 08:05'. Absent: the personal Board's row, exactly as before.
    */
   work?: boolean;
+  /**
+   * The row on its way (board-ui TICK_MOTION, today.css): "hold" just ticked in its lane (the ring fills in its code,
+   * one ripple, the strike sweeps), "out" folding out of the lane, "arrive" landing in Done today, "enter" back in its
+   * lane after an Undo. Absent: at rest.
+   */
+  motion?: RowMotion | null;
+  /** "pile": a compact row in Done today (its steps stay folded; the drawer still opens from the title). */
+  variant?: "pile";
+}
+
+/** The tick's tactile press: on pointerdown (not only :active, which a touch browser may skip), cleared on release. */
+function pressOn(e: PointerEvent<HTMLButtonElement>) {
+  if (!e.currentTarget.disabled) e.currentTarget.dataset.press = "1";
+}
+function pressOff(e: PointerEvent<HTMLButtonElement>) {
+  delete e.currentTarget.dataset.press;
 }
 
 /**
@@ -66,16 +82,24 @@ interface Props {
  * The Tick is a checkbox: a circle for todos and habits, a diamond for
  * musts, half-filled for "Minimum kept". A must and a habit also wear their
  * colour code (data-accent: a leading rail and the open ring, --must or
- * --habit); a done tick is kept whatever the row. The pill on the right is the
+ * --habit); a done tick rests kept whatever the row. The pill on the right is the
  * price, not a guess: "≈ 3.6" is the same `planCompletion` the server pays
  * with, against the same day's ledger, and once ticked it reads "+3.6" on
  * the life-XP wash and says "paid 3.6 exactly". Tapping it opens the
  * receipt. Unchecking a done row inside its ten-minute window is the undo,
  * which nets to zero.
+ *
+ * The tick's flourish (board-ui TICK_MOTION; ui-motion D10 as revised): the
+ * ring presses on pointerdown, and a row just ticked in its lane
+ * (motion "hold") fills its ring in its code, rings one ripple and sweeps a
+ * strike across its title before it folds out ("out") into Done today, where
+ * it rests struck through. CSS only (transform and opacity, plus the fold's
+ * one row track); Still shows the finished row in Done today at once.
  */
 export function TaskRow(props: Props) {
   const { row, projection, drawerOpen, undoable, busy } = props;
   const pillRef = useRef<HTMLButtonElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const t = row.template;
   const done = row.state === "done";
   const paid = done && row.paid && !row.paid.undone ? row.paid : null;
@@ -88,77 +112,103 @@ export function TaskRow(props: Props) {
   const tickState: TickState = done ? (row.minimum ? "minimum" : "done") : "open";
   const minimum = props.onMinimum && row.state === "open" && t.mvv ? props.onMinimum : null;
   const drawerId = `drawer-${row.key.replace(/[^A-Za-z0-9_-]/g, "-")}`;
+  const pile = props.variant === "pile";
+
+  // Back in its lane after an Undo: the row unfolds from nothing (its one row track 0fr → 1fr, today.css), the
+  // reverse of its way out. Set before the first paint, so it never shows at full height first.
+  useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (!el || props.motion !== "enter") return;
+    // The from-state is set with no transition (whatever was computed before), then released into the unfold.
+    el.style.transition = "none";
+    el.style.gridTemplateRows = "0fr";
+    el.style.opacity = "0";
+    void el.offsetHeight;
+    el.style.transition = "";
+    el.style.gridTemplateRows = "";
+    el.style.opacity = "";
+  }, [props.motion]);
 
   return (
     <div
+      ref={rootRef}
       className="t-row"
       data-state={row.state}
       data-lane={row.lane}
       data-accent={accent ?? undefined}
       data-template-id={t.id}
+      data-row-key={row.key}
+      data-motion={props.motion ?? undefined}
+      data-variant={props.variant}
       data-just-added={props.justAdded ? "1" : undefined}
     >
-      <div className={cx("row", done && "done")}>
-        <Tick
-          shape={must ? "diamond" : "circle"}
-          state={tickState}
-          label={tickNameOf(row)}
-          disabled={busy || row.state === "locked" || (done && !undoable)}
-          onClick={done ? props.onUndo : () => props.onTick(pillRef.current)}
-          data-skipped={row.state === "skipped" ? "1" : undefined}
-        />
+      <div className="t-row-in">
+        <div className={cx("row", done && "done")}>
+          <Tick
+            shape={must ? "diamond" : "circle"}
+            state={tickState}
+            label={tickNameOf(row)}
+            disabled={busy || row.state === "locked" || (done && !undoable)}
+            onClick={done ? props.onUndo : () => props.onTick(pillRef.current)}
+            onPointerDown={pressOn}
+            onPointerUp={pressOff}
+            onPointerCancel={pressOff}
+            onPointerLeave={pressOff}
+            data-skipped={row.state === "skipped" ? "1" : undefined}
+          />
 
-        <div className="r-main">
-          <button type="button" className="r-open" aria-expanded={drawerOpen} aria-controls={drawerOpen ? drawerId : undefined} onClick={props.onToggleDrawer}>
-            <span className="r-title today-row-title" data-pending={props.pendingTitle ? "1" : undefined}>
-              {props.taskStyle && (props.taskStyle.icon || props.taskStyle.color) && <TaskIcon style={props.taskStyle} size={16} className="tsk-row-ico" />}
-              {props.pendingTitle ? title : <NamedTitle title={title} named={props.named} mark={props.namedMark} />}
-              {props.pendingTitle && <span className="r-saving"> · saving…</span>}
-              {props.justAdded && <span className="sr-only">, just added</span>}
-            </span>
-            <span className="r-meta">
-              {done ? <DoneMeta row={row} paidXp={props.work ? null : (paid?.xp ?? null)} study={study} work={props.work} /> : <OpenMeta row={row} restToday={props.restToday ?? null} work={props.work} />}
-            </span>
-          </button>
-          {(minimum || (done && undoable)) && (
-            <div className="r-acts">
-              {minimum && (
-                <button type="button" className="r-act" onClick={() => minimum(pillRef.current)} disabled={busy}>
-                  Minimum: {t.mvv}
-                </button>
-              )}
-              {done && undoable && (
-                <button type="button" className="r-act" onClick={props.onUndo} disabled={busy} aria-label={`Undo ${t.title}`}>
-                  <Icon name="undo" size={16} />
-                  Undo
-                </button>
-              )}
-            </div>
+          <div className="r-main">
+            <button type="button" className="r-open" aria-expanded={drawerOpen} aria-controls={drawerOpen ? drawerId : undefined} onClick={props.onToggleDrawer}>
+              <span className="r-title today-row-title" data-pending={props.pendingTitle ? "1" : undefined}>
+                {props.taskStyle && (props.taskStyle.icon || props.taskStyle.color) && <TaskIcon style={props.taskStyle} size={16} className="tsk-row-ico" />}
+                <span className="r-name">{props.pendingTitle ? title : <NamedTitle title={title} named={props.named} mark={props.namedMark} />}</span>
+                {props.pendingTitle && <span className="r-saving"> · saving…</span>}
+                {props.justAdded && <span className="sr-only">, just added</span>}
+              </span>
+              <span className="r-meta">
+                {done ? <DoneMeta row={row} paidXp={props.work ? null : (paid?.xp ?? null)} study={study} work={props.work} /> : <OpenMeta row={row} restToday={props.restToday ?? null} work={props.work} />}
+              </span>
+            </button>
+            {(minimum || (done && undoable)) && (
+              <div className="r-acts">
+                {minimum && (
+                  <button type="button" className="r-act" onClick={() => minimum(pillRef.current)} disabled={busy}>
+                    Minimum: {t.mvv}
+                  </button>
+                )}
+                {done && undoable && (
+                  <button type="button" className="r-act" onClick={props.onUndo} disabled={busy} aria-label={`Undo ${t.title}`}>
+                    <Icon name="undo" size={16} />
+                    Undo
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {!props.work && (
+            <PricePill
+              ref={pillRef}
+              value={shownXp}
+              paid={!!paid}
+              kind="xp"
+              subject={t.title}
+              expanded={props.receiptOpen}
+              controls={props.receiptId}
+              onClick={props.onToggleReceipt}
+              aria-haspopup="dialog"
+            />
           )}
         </div>
-
-        {!props.work && (
-          <PricePill
-            ref={pillRef}
-            value={shownXp}
-            paid={!!paid}
-            kind="xp"
-            subject={t.title}
-            expanded={props.receiptOpen}
-            controls={props.receiptId}
-            onClick={props.onToggleReceipt}
-            aria-haspopup="dialog"
-          />
+        {!pile && row.steps && props.onStep && row.state !== "locked" && (
+          <StepsList steps={row.steps} compulsory={t.compulsory} paidXp={!props.work && row.paid && !row.paid.undone ? row.paid.xp : null} busy={busy} onStep={props.onStep} />
+        )}
+        {drawerOpen && (
+          <div id={drawerId} className="r-drawer">
+            {props.children}
+          </div>
         )}
       </div>
-      {row.steps && props.onStep && row.state !== "locked" && (
-        <StepsList steps={row.steps} compulsory={t.compulsory} paidXp={!props.work && row.paid && !row.paid.undone ? row.paid.xp : null} busy={busy} onStep={props.onStep} />
-      )}
-      {drawerOpen && (
-        <div id={drawerId} className="r-drawer">
-          {props.children}
-        </div>
-      )}
     </div>
   );
 }

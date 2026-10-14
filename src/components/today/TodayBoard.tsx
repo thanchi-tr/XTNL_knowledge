@@ -29,7 +29,7 @@ import { announce, chime, mark, type MomentumT1Kind } from "@/lib/celebrate";
 import type { CelebrationEvent, T1Kind } from "@/lib/celebration-types";
 import type { PlaceLane, Receipt } from "@/lib/life-types";
 import type { MomentumView } from "@/lib/momentum-server";
-import { motionLevel } from "@/lib/motion";
+import { burst, center, motionLevel } from "@/lib/motion";
 import { GOAL_ALREADY_CLOSED } from "@/lib/goals";
 import type { CapturedItem } from "@/app/actions/capture";
 import {
@@ -85,17 +85,23 @@ import { ReceiptSheet } from "./ReceiptSheet";
 import { UndoToast, focusUndoOnce } from "./UndoToast";
 import { PlanCard } from "./PlanCard";
 import { Lane } from "./Lane";
+import { DonePile } from "./DonePile";
+import { BoardClearCard } from "./BoardClearCard";
 import { AskBadge } from "./AskBadge";
 import { CloseDaySheet } from "./CloseDaySheet";
 import { fmtXp } from "./format";
 import { holdLedger, useAfterFlight } from "./ledger-gate";
 import {
   HELD_GLYPH,
+  LANE_OF_MOMENT,
   RECORD_YESTERDAY_EVENT,
   REMOVE_UNDO_MS,
   SHEET_PARAM,
   YESTERDAY_SHEET,
   askHostOf,
+  boardClearKey,
+  boardClearOf,
+  boardClearViewOf,
   boardDayEnded,
   cancellableOf,
   capacityChosen,
@@ -103,9 +109,13 @@ import {
   closeItemsOf,
   dayMomentsOf,
   deferredNoticeOf,
+  donePileOf,
+  donePileShown,
+  firstTomorrowOf,
   goalAfterClose,
   goalClosedNotice,
   goalRescheduledNotice,
+  laneRowsOf,
   laneTally,
   madeUpLineOf,
   makeUpViewOf,
@@ -119,6 +129,7 @@ import {
   o1CardOf,
   owedSummaryOf,
   owedTotalOf,
+  primaryMomentOf,
   receiptIdOf,
   recordByLabel,
   restOptionsOf,
@@ -128,6 +139,7 @@ import {
   ruleChangeOf,
   settledKey,
   splitTodayLane,
+  tickMotionOf,
   todayAsksOf,
   todayLaneNote,
   upcomingOf,
@@ -138,6 +150,7 @@ import {
   type AskNotice,
   type DayMoment,
   type DaySnapshot,
+  type RowMotion,
 } from "./board-ui";
 import { addDays, type DayKey } from "@/lib/life-day";
 import { dayLabel, declaredAheadOf, fullWeekday, restBannerOf, settledNoticeOf, type DeclaredDay, type DutyBoard, type OwedCard } from "@/lib/duty-view";
@@ -309,6 +322,28 @@ const serverNow = (): number => Date.now() + (clockSkew ?? 0);
 const firedMoments = new Set<string>();
 /** A day moment only follows a tap made this recently (never a refresh, never arrival). */
 const MOMENT_WINDOW_MS = 4000;
+/**
+ * The moments only a tick makes (a lane kept, the board clear): a defer, a skip or a move that empties a lane is not
+ * a deed, so these need a tick in the window, not just a tap. A work tab plays these and nothing else of the day.
+ */
+const TICK_MOMENTS: ReadonlySet<DayMoment> = new Set<DayMoment>(["lane-kept", "planned-kept", "habits-kept", "board-clear"]);
+/** How long a row that just landed in Done today (or came back to its lane) keeps its arrival mark: longer than either. */
+const ARRIVAL_MS = 400;
+
+/** The OS asks for less motion: an explicit Full pref still plays Calm's tick (board-ui tickMotionOf). */
+const reducedMotion = (): boolean =>
+  typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/**
+ * Where focus goes once a row has left its place (a tick sent it to Done today, an Undo brought it back): the row a
+ * key names (its tick, or its title while the tick waits), else the lane's heading, else Anytime's toggle. Only when
+ * focus was on the row that moved: nothing else is ever pulled.
+ */
+interface Refocus {
+  rowKey: string | null;
+  lane: string | null;
+  anytime: boolean;
+}
 
 /** How long the board looks for a capture's row (the refreshed props may land after the toast). */
 const SEEK_MS = 5000;
@@ -508,8 +543,18 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   const [mood, setMood] = useState<number | null>(null);
   /** Device-local flags, read after mount (null until then, so the server and first client render agree). */
   const [flags, setFlags] = useState<Record<string, string> | null>(null);
-  /** The visual beat of a Tier 1 moment on the board (the Must lane's KEPT stamp), cleared once it has played. */
-  const [beat, setBeat] = useState<{ lane: boolean } | null>(null);
+  /** The visual beat of a Tier 1 moment on the board (a lane's KEPT stamp landing), cleared once it has played. */
+  const [beat, setBeat] = useState<{ lanes: readonly string[] } | null>(null);
+  /** Rows just ticked, on their way out of their lane into Done today (board-ui TICK_MOTION): held, then folding. */
+  const [exits, setExits] = useState<Record<string, "hold" | "out">>({});
+  /** A row that just landed in Done today, or that an Undo just put back in its lane: its arrival plays once. */
+  const [arrivals, setArrivals] = useState<Record<string, "arrive" | "enter">>({});
+  /** Where focus goes once the row it was on has moved (after the commit that moved it). */
+  const [refocus, setRefocus] = useState<Refocus | null>(null);
+  /** Done today shows all its rows (folded: the latest DONE_PILE_FOLDED). */
+  const [doneOpen, setDoneOpen] = useState(false);
+  /** The Board clear card was just played by a tap: it eases in this once (never on arrival). */
+  const [clearFresh, setClearFresh] = useState(false);
   // The undo window's clock, on the server's time: its render time, then the
   // time of the last tap or timer (serverNow). Never read during render, so
   // hydration matches.
@@ -540,6 +585,24 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   const removalRef = useRef<Removal | null>(null);
   /** When the player last ticked: a day moment only follows a tap. */
   const actedAt = useRef(0);
+  /** When a tick last landed (markTick): a lane kept and the board clear follow a tick, never a defer or a skip. */
+  const tickedAt = useRef(0);
+  /** The timers of rows on their way (TICK_MOTION); none outlives the board. */
+  const motionTimers = useRef(new Set<number>());
+  useEffect(() => {
+    const timers = motionTimers.current;
+    return () => {
+      for (const t of timers) window.clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
+  const later = (fn: () => void, ms: number) => {
+    const t = window.setTimeout(() => {
+      motionTimers.current.delete(t);
+      fn();
+    }, ms);
+    motionTimers.current.add(t);
+  };
 
   // The element a Tier 1 moment lights on the board (the streak and the Full day live on Character now).
   const mustBodyRef = useRef<HTMLDivElement | null>(null);
@@ -887,6 +950,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   /** Marks a completion in place and flies its "+N" to the life-XP cell (or the MiniLedger). */
   function markTick(row: BoardRow, xp: number, from: Element | null | undefined) {
     actedAt.current = tapTime();
+    tickedAt.current = actedAt.current;
     // A work tick pays nothing: no token flies, and its words say only that it is done.
     const paid = isWork ? 0 : xp;
     const flight = mark({
@@ -898,6 +962,65 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     });
     if (paid > 0) holdLedger("xp", flight);
   }
+
+  /** The row element a key names on the board (a lane's or Anytime's; Done today's when `pile`). */
+  function rowElOf(rowKey: string, pile = false): HTMLElement | undefined {
+    const rows = boardRef.current ? Array.from(boardRef.current.querySelectorAll<HTMLElement>(".t-row")) : [];
+    return rows.find((r) => r.dataset.rowKey === rowKey && !!r.closest(".today-done") === pile);
+  }
+
+  /** Where focus goes once this row has left its place, if focus is on it now (Refocus): the next row still there, else its lane's heading. */
+  function refocusAfter(rowKey: string): Refocus | null {
+    const el = rowElOf(rowKey);
+    const active = document.activeElement;
+    if (!el || !(active instanceof Node) || !el.contains(active)) return null;
+    let next = el.nextElementSibling;
+    while (next && !(next instanceof HTMLElement && next.classList.contains("t-row") && next.dataset.state !== "done" && !next.dataset.motion)) next = next.nextElementSibling;
+    return {
+      rowKey: next instanceof HTMLElement ? (next.dataset.rowKey ?? null) : null,
+      lane: el.closest<HTMLElement>(".today-lane")?.dataset.lane ?? null,
+      anytime: !!el.closest("#anytime-rows"),
+    };
+  }
+
+  /**
+   * A ticked row's way into Done today (board-ui TICK_MOTION, ui-motion D10 as revised): it holds in its lane while
+   * its ring fills, the check draws, one ripple rings and the strike sweeps; then it folds out and lands in Done today.
+   * Still: there at once. Focus, if it was on the row, moves to the next row's tick, else the lane's heading.
+   */
+  function leaveLane(row: BoardRow) {
+    const key = row.key;
+    const focus = refocusAfter(key);
+    const m = tickMotionOf(motionLevel(), reducedMotion());
+    if (m.hold + m.out <= 0) {
+      if (focus) setRefocus(focus);
+      return;
+    }
+    setExits((e) => ({ ...e, [key]: "hold" }));
+    later(() => setExits((e) => (e[key] === "hold" ? { ...e, [key]: "out" } : e)), m.hold);
+    later(() => {
+      setExits((e) => (key in e ? without(e, key) : e));
+      setArrivals((a) => ({ ...a, [key]: "arrive" }));
+      later(() => setArrivals((a) => (a[key] === "arrive" ? without(a, key) : a)), ARRIVAL_MS);
+      if (focus) setRefocus(focus);
+    }, m.hold + m.out);
+  }
+
+  // Focus follows a row that moved, once the commit that moved it has painted.
+  useEffect(() => {
+    if (!refocus) return;
+    const raf = window.requestAnimationFrame(() => {
+      const row = refocus.rowKey ? rowElOf(refocus.rowKey) : undefined;
+      const tick = row?.querySelector<HTMLButtonElement>("button.tick");
+      const target =
+        (tick && !tick.disabled ? tick : row?.querySelector<HTMLElement>(".r-open")) ??
+        (refocus.lane ? document.getElementById(`lane-${refocus.lane}`) : null) ??
+        (refocus.anytime ? boardRef.current?.querySelector<HTMLElement>('[aria-controls="anytime-rows"]') : null);
+      target?.focus();
+      setRefocus(null);
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [refocus]);
 
   /**
    * Momentum's Tier 0 once the server has paid (momentum.md §A.4, §E.3): a crit's gold "Crit ×2 · +24" (receiptCritOf
@@ -1005,6 +1128,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     setOpenKey(null);
     setDrawerMinutes(null);
     markTick(row, shown.xp, from);
+    // Off to Done today (yesterday's rows stay in Record yesterday).
+    if (row.lane !== "yesterday") leaveLane(row);
     dispatch(
       op,
       // The row's own day: the server books only today or yesterday by its
@@ -1056,6 +1181,16 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     const instanceId = row.instanceId;
     if (!instanceId || instanceId.startsWith("opt:")) return;
     const xp = row.paid?.xp ?? 0;
+    // Back from Done today to its lane, the reverse of its way out (it unfolds there); focus follows it if it was on it.
+    if (row.lane !== "yesterday") {
+      const key = row.key;
+      const focused = rowElOf(key, true)?.contains(document.activeElement) ?? false;
+      if (tickMotionOf(motionLevel(), reducedMotion()).out > 0) {
+        setArrivals((a) => ({ ...a, [key]: "enter" }));
+        later(() => setArrivals((a) => (a[key] === "enter" ? without(a, key) : a)), ARRIVAL_MS);
+      }
+      if (focused) setRefocus({ rowKey: key, lane: null, anytime: false });
+    }
     dispatch({ id: nextOpId(), kind: "undo", instanceId }, () => undoCompletion(instanceId, REFRESH));
     announce(isWork ? `Undone. ${row.template.title} is open again.` : `Undone. ${fmtXp(xp)} life XP taken back; nothing else changed.`);
   }
@@ -1387,14 +1522,28 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   // Today's musts hidden by a defer or an abort count, and are not kept (task-decisions.ts mustCountOf).
   const mustTally = mustCountOf(laneTally(board.must), board.deferred);
   const mustLaneKept = mustTally.total > 0 && mustTally.kept === mustTally.total;
+  // The Planned and Habits lanes (Today's rows split by board-ui), each kept once every row asking is done, and the
+  // Board clear once nothing in the three lanes is open and something there is done.
+  const { planned, habits } = splitTodayLane(board.todayRows);
+  const plannedTally = laneTally(planned);
+  const habitTally = laneTally(habits);
+  const plannedKept = plannedTally.total > 0 && plannedTally.kept === plannedTally.total;
+  const habitsKept = habitTally.total > 0 && habitTally.kept === habitTally.total;
+  const boardClear = boardClearOf({ clear: board.clear, done: [...board.must, ...board.todayRows].filter((r) => r.state === "done").length });
+  // Done today: every done row of the lanes and Anytime (presentation only; every count above reads the lanes).
+  const dayRows = [...board.must, ...board.todayRows, ...board.anytime];
+  const doneToday = donePileOf(dayRows, { work: isWork });
 
   const snapshot: DaySnapshot = {
     kept: keptToday,
     rings: { musts: fullDay.rings[0].met, quest: fullDay.rings[1].met, life: fullDay.rings[2].met },
     full: fullDay.full,
     mustLane: mustLaneKept,
+    planned: plannedKept,
+    habits: habitsKept,
+    clear: boardClear,
   };
-  const dayKey = `${keptToday}|${streakNow}|${mustLaneKept}|${fullDay.rings.map((r) => `${r.value}/${r.target}/${r.met}`).join(",")}`;
+  const dayKey = `${keptToday}|${streakNow}|${mustLaneKept}|${plannedKept}|${habitsKept}|${boardClear}|${fullDay.rings.map((r) => `${r.value}/${r.target}/${r.met}`).join(",")}`;
   // Held back while a tick's token is in the air: the moments play when it
   // lands, not before (ledger-gate.ts).
   const shown = useAfterFlight({ snapshot, streakNow, mustLaneKept }, dayKey);
@@ -1402,78 +1551,128 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   const prevSnapshot = useRef<DaySnapshot>(shown.snapshot);
   /** Today's momentum run has no action yet: the first tick's momentum-kept (the server's T1) is this tap's chime. */
   const momentumOpen = !isWork && !!momentum?.live && !momentum.run.todayKept;
-  const shownKey = `${shown.snapshot.kept}|${shown.snapshot.rings.musts}|${shown.snapshot.rings.quest}|${shown.snapshot.rings.life}|${shown.snapshot.full}|${shown.snapshot.mustLane}`;
-  const momentCtx = useRef({ streak: shown.streakNow, musts: mustTally.total, today: data.today });
+  const shownKey = `${shown.snapshot.kept}|${shown.snapshot.rings.musts}|${shown.snapshot.rings.quest}|${shown.snapshot.rings.life}|${shown.snapshot.full}|${shown.snapshot.mustLane}|${!!shown.snapshot.planned}|${!!shown.snapshot.habits}|${!!shown.snapshot.clear}`;
+  const workId = workTab?.id ?? null;
+  const momentCtx = useRef({ streak: shown.streakNow, musts: mustTally.total, planned: plannedTally.total, habits: habitTally.total, done: doneToday.count, today: data.today, workId });
   useEffect(() => {
-    momentCtx.current = { streak: shown.streakNow, musts: mustTally.total, today: data.today };
+    momentCtx.current = { streak: shown.streakNow, musts: mustTally.total, planned: plannedTally.total, habits: habitTally.total, done: doneToday.count, today: data.today, workId };
   });
-  function playMoments(moments: DayMoment[]) {
+  /** A lane on the board, by its id: its header (where its stamp lands and its burst starts) and its card. */
+  const laneEl = (lane: string, part: ".lane-h" | ".lane-body") => boardRef.current?.querySelector<HTMLElement>(`.today-lane[data-lane="${lane}"] ${part}`) ?? null;
+  /** Where a lane's burst starts: its KEPT stamp as it lands, else its diamond, else its header. */
+  const laneBurstEl = (lane: string) => {
+    const h = laneEl(lane, ".lane-h");
+    return h?.querySelector<HTMLElement>(".lane-stamp") ?? h?.querySelector<HTMLElement>(".lane-mark") ?? h;
+  };
+  function playMoments(all: DayMoment[]) {
     const ctx = momentCtx.current;
-    // One chime per tap, the loudest meaning first; the others ride along in its sentence and glints.
-    const primary: DayMoment = moments.includes("full-day")
-      ? "full-day"
-      : moments.includes("lane-kept")
-        ? "lane-kept"
-        : moments.includes("day-kept")
-          ? "day-kept"
-          : moments[0];
-    const id = `${primary}:${ctx.today}`;
-    if (firedMoments.has(id)) return;
-    firedMoments.add(id);
+    // Each moment once per life day (and per work tab): an undo and a re-tick never play it twice.
+    const idOf = (m: DayMoment) => `${ctx.workId ? `work:${ctx.workId}:` : ""}${m}:${ctx.today}`;
+    const moments = all.filter((m) => !firedMoments.has(idOf(m)));
+    for (const m of all) firedMoments.add(idOf(m));
+    // One chime per tap, the loudest meaning first; the others ride along in its sentence, and each lane lands its stamp.
+    const primary = primaryMomentOf(moments);
+    if (!primary) return;
+    const id = idOf(primary);
 
-    const lane = primary === "lane-kept";
-    setBeat({ lane: moments.includes("lane-kept") });
-    window.setTimeout(() => setBeat(null), 1000);
+    const lanes = moments.flatMap((m) => LANE_OF_MOMENT[m] ?? []);
+    const primaryLane = LANE_OF_MOMENT[primary] ?? null;
+    if (lanes.length > 0) {
+      setBeat({ lanes });
+      window.setTimeout(() => setBeat(null), 1000);
+    }
+    // Every lane kept on this tap gets its small seeded burst at its header (the chime's own burst for the loudest one).
+    for (const m of moments) {
+      const lane = LANE_OF_MOMENT[m];
+      const at = lane && lane !== primaryLane ? laneBurstEl(lane) : null;
+      if (at) {
+        const [x, y] = center(at);
+        burst(x, y, 8, idOf(m), { color: "var(--light)", spread: 46 });
+      }
+    }
+    // The Board clear card holds the day (until OK); the chime is this tap's.
+    if (moments.includes("board-clear")) {
+      const key = boardClearKey(ctx.today, ctx.workId);
+      writeFlag(key, "shown");
+      setFlags((f) => ({ ...(f ?? {}), [key]: "shown" }));
+      setClearFresh(true);
+      window.setTimeout(() => setClearFresh(false), 1000);
+    }
 
     const say = moments
       .filter((m) => !(m === "ring-musts" && moments.includes("lane-kept")))
       .map((m) => momentText(m, ctx))
       .join(" ");
-    const kind: T1Kind = primary === "full-day" ? "full-day" : primary === "lane-kept" ? "lane-kept" : primary === "day-kept" ? "day-kept" : "ring-closed";
+    const kind: T1Kind =
+      primary === "full-day" ? "full-day" : primary === "board-clear" ? "board-clear" : primaryLane ? "lane-kept" : primary === "day-kept" ? "day-kept" : "ring-closed";
     const text =
       primary === "full-day"
         ? "Full day"
-        : primary === "lane-kept"
-          ? `Musts kept, ${ctx.musts} of ${ctx.musts}`
-          : primary === "day-kept"
-            ? `Day ${ctx.streak} kept`
-            : primary === "ring-quest"
-              ? "Quest ring closed"
-              : primary === "ring-musts"
-                ? "Musts ring closed"
-                : "Life ring closed";
-    // The Must lane is on the board: its kept line sweeps and bursts there. The streak, the rings and the Full
-    // day are Character's tiles, so their moment shows as the toast with its closing ring.
+        : primary === "board-clear"
+          ? "Board clear"
+          : primary === "lane-kept"
+            ? `Musts kept, ${ctx.musts} of ${ctx.musts}`
+            : primary === "planned-kept"
+              ? `Planned kept, ${ctx.planned} of ${ctx.planned}`
+              : primary === "habits-kept"
+                ? `Habits kept, ${ctx.habits} of ${ctx.habits}`
+                : primary === "day-kept"
+                  ? `Day ${ctx.streak} kept`
+                  : primary === "ring-quest"
+                    ? "Quest ring closed"
+                    : primary === "ring-musts"
+                      ? "Musts ring closed"
+                      : "Life ring closed";
+    // A lane is on the board: its kept line sweeps across its card and the burst starts at its header, where the
+    // stamp lands. The Board clear card is on the board too. The streak, the rings and the Full day are Character's
+    // tiles, so their moment shows as the toast with its closing ring.
+    const lane = primaryLane != null;
     chime({
       kind,
       id,
       text,
       say,
-      sweepEl: lane ? mustBodyRef.current : null,
-      burstEl: lane ? mustBodyRef.current : null,
+      sweepEl: lane ? laneEl(primaryLane, ".lane-body") : null,
+      burstEl: lane ? laneBurstEl(primaryLane) : null,
       ringEl: null,
     });
-    if (!lane) pushToast({ title: text, ring: true, holdMs: 5000, key: `chime:${id}` });
+    if (!lane && primary !== "board-clear") pushToast({ title: text, ring: true, holdMs: 5000, key: `chime:${id}` });
   }
 
   useEffect(() => {
     const prev = prevSnapshot.current;
     const next = shown.snapshot;
     prevSnapshot.current = next;
+    // A lane kept and the board clear follow a tick (a defer or a skip that empties a lane is no deed).
+    const ticked = Date.now() - tickedAt.current <= MOMENT_WINDOW_MS;
+    // A work tab is not the game: after a tick, its lanes' stamps and its clear board, and nothing of the day.
+    if (isWork && ticked) {
+      const work = dayMomentsOf(prev, next).filter((m) => TICK_MOMENTS.has(m));
+      if (work.length > 0) playMoments(work);
+    }
     // Only after a tap: never on arrival, never on a refresh or another tab's work. Never on a work tab (not the game).
     if (isWork || Date.now() - actedAt.current > MOMENT_WINDOW_MS) return;
     // Momentum (§G.1): while today's run is still open, the tap's server answer brings momentum-kept, which replaces
     // the day-kept chime (one chime for one tick); the board holds its own back.
     const moments = dayMomentsOf(prev, next).filter((m) => !(m === "day-kept" && momentumOpen));
-    if (moments.length === 0) return;
-    playMoments(moments);
+    const played = moments.filter((m) => ticked || !TICK_MOMENTS.has(m));
+    if (played.length === 0) return;
+    playMoments(played);
     // `shown` travels with its key.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shownKey]);
 
   // ── Rows ────────────────────────────────────────────────────────────────
 
-  const renderRow = (row: BoardRow) => {
+  /** A row's way (board-ui RowMotion): held or folding while it leaves its lane, landing in Done today, or back after an Undo. */
+  const motionOf = (row: BoardRow, pile: boolean): RowMotion | null => {
+    const key = row.key;
+    if (row.state === "done") return !pile && exits[key] ? exits[key] : pile && arrivals[key] === "arrive" ? "arrive" : null;
+    return !pile && arrivals[key] === "enter" ? "enter" : null;
+  };
+
+  /** A row in a lane (or Anytime, or Record yesterday); `pile` draws it compact in Done today. */
+  const rowView = (row: BoardRow, pile: boolean) => {
     const key = row.key;
     const drawerOpen = openKey === key;
     const minutes = rowMinutes(key, openKey, drawerMinutes);
@@ -1515,6 +1714,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
         namedMark={namedTitles?.mark}
         taskStyle={current.styles?.[row.template.id] ?? null}
         onStep={(stepId, done, from) => tickSteps(row, stepId, done, from)}
+        motion={motionOf(row, pile)}
+        variant={pile ? "pile" : undefined}
         work={isWork}
       >
         <TaskDrawer
@@ -1547,6 +1748,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
       </TaskRow>
     );
   };
+  const renderRow = (row: BoardRow) => rowView(row, false);
+  const renderPileRow = (row: BoardRow) => rowView(row, true);
 
   const openCount = (rows: BoardRow[]) => rows.filter((r) => r.state === "open" || r.state === "locked").length;
   const goalsForInbox = useMemo(
@@ -1559,9 +1762,15 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   );
   const chosenCapacity = capacityChosen(current);
   const laneNote = todayLaneNote({ templates: current.templates.length, clear: board.clear, todayRows: board.todayRows.length });
-  const { planned, habits } = splitTodayLane(board.todayRows);
-  const plannedTally = laneTally(planned);
-  const habitTally = laneTally(habits);
+  // Done rows rest in Done today: each lane draws what is still open (and a row still on its way out), or "All kept".
+  const leaving = (key: string) => key in exits;
+  const mustRows = laneRowsOf(board.must, leaving);
+  const plannedRows = laneRowsOf(planned, leaving);
+  const habitRows = laneRowsOf(habits, leaving);
+  const anytimeRows = laneRowsOf(board.anytime, leaving);
+  const allKeptLine = <p className="lane-note lane-all">{isWork ? "All done" : "All kept"}</p>;
+  const pile = donePileOf(dayRows, { work: isWork, leaving });
+  const pileShown = donePileShown(pile.rows, doneOpen);
   const yesterdayOpenCount = openCount(board.yesterdayRows);
   // Today's rows that can still be ticked for yesterday (the Record yesterday sheet's second list), once each.
   const forgotten = [...board.must, ...board.todayRows, ...board.anytime].filter(
@@ -1597,7 +1806,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   const viewCtx = { today: current.today, nowMs: clock, live };
 
   // Device-local flags for what is on screen, read once mounted.
-  const flagSig = [duty?.cursor ? settledKey(duty.cursor) : "", ...(duty?.owed ?? []).map((c) => missPromptKey(c.templateId, c.lastMissDay))]
+  const clearKey = boardClearKey(current.today, workTab?.id ?? null);
+  const flagSig = [duty?.cursor ? settledKey(duty.cursor) : "", ...(duty?.owed ?? []).map((c) => missPromptKey(c.templateId, c.lastMissDay)), clearKey]
     .filter(Boolean)
     .join("|");
   useEffect(() => {
@@ -1608,6 +1818,24 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   const setFlag = (key: string, value: string) => {
     writeFlag(key, value);
     setFlags((f) => ({ ...(f ?? {}), [key]: value }));
+  };
+
+  // Board clear: once the tap that cleared the board has played it, the card holds the life day while the board stays
+  // clear, until OK (this device). Its figures are the board's own; a work tab says only the tasks done.
+  const clearView =
+    shown.snapshot.clear && flags?.[clearKey] === "shown"
+      ? boardClearViewOf({
+          done: doneToday.count,
+          work: isWork,
+          lifeXp: board.lifeXpToday,
+          momentum: !isWork && momentum?.live ? { run: momentum.run.current, quests: momentum.quests.length, questsDone: momentum.done } : null,
+          tomorrow: firstTomorrowOf({ tomorrow: addDays(current.today, 1), later: board.laterRows, upcoming }),
+        })
+      : null;
+  const dismissClear = () => {
+    setFlag(clearKey, "dismissed");
+    // Focus, if it was on the card, goes to the board's first lane.
+    if (document.activeElement?.closest(".today-clear")) setRefocus({ rowKey: null, lane: boardRef.current?.querySelector<HTMLElement>(".today-lane")?.dataset.lane ?? null, anytime: false });
   };
 
   // .o1: one card at most: the settled notice (until dismissed on this device), else the rest banner.
@@ -2025,6 +2253,12 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
               </Button>
             </div>
           )}
+          {/* Board clear (once per life day, after the tick that cleared it): the one-card summary, at the top. */}
+          {clearView && (
+            <div className="o1">
+              <BoardClearCard view={clearView} fresh={clearFresh} onDismiss={dismissClear} />
+            </div>
+          )}
           {/* Momentum (momentum.md §E.1): above the Duty card and the strip, only once it is live; never on a work tab. */}
           {!isWork && momentum?.live && (
             <div className="o1">
@@ -2085,7 +2319,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
               title="Must"
               must
               kept={shown.mustLaneKept}
-              landing={beat?.lane}
+              landing={!!beat?.lanes.includes("must")}
               bodyRef={mustBodyRef}
               count={mustView.count ?? undefined}
               badge={
@@ -2099,7 +2333,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
               }
               className="o5"
             >
-              {board.must.map(renderRow)}
+              {mustRows.allDone && hiddenMusts.length === 0 && allKeptLine}
+              {mustRows.rows.map(renderRow)}
               {hiddenMusts.map(renderHiddenMust)}
               {/* M2: the debts after today's musts: one card, or one collapsed summary once two are open. */}
               {openOwed.length >= 2 ? (
@@ -2118,13 +2353,32 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
             </Lane>
           )}
           {(planned.length > 0 || habits.length === 0) && (
-            <Lane id="planned" title="Planned" count={planned.length > 0 ? `${plannedTally.kept} of ${plannedTally.total}` : undefined} className="o6" note={plannedNote}>
-              {planned.map(renderRow)}
+            <Lane
+              id="planned"
+              title="Planned"
+              count={planned.length > 0 ? `${plannedTally.kept} of ${plannedTally.total}` : undefined}
+              kept={!!shown.snapshot.planned}
+              landing={!!beat?.lanes.includes("planned")}
+              className="o6"
+              note={plannedNote}
+            >
+              {plannedRows.allDone && allKeptLine}
+              {plannedRows.rows.map(renderRow)}
             </Lane>
           )}
           {habits.length > 0 && (
-            <Lane id="habits" title="Habits" habit count={`${habitTally.kept} of ${habitTally.total}`} className="o7" note={habits.length > 0 && planned.length === 0 ? plannedNote : null}>
-              {habits.map(renderRow)}
+            <Lane
+              id="habits"
+              title="Habits"
+              habit
+              count={`${habitTally.kept} of ${habitTally.total}`}
+              kept={!!shown.snapshot.habits}
+              landing={!!beat?.lanes.includes("habits")}
+              className="o7"
+              note={habits.length > 0 && planned.length === 0 ? plannedNote : null}
+            >
+              {habitRows.allDone && allKeptLine}
+              {habitRows.rows.map(renderRow)}
             </Lane>
           )}
           {/* M2: 'Owed: 2 · −12.5' at the foot of the lanes; nothing at 0. A tap goes to the Must lane, summary open. */}
@@ -2153,6 +2407,11 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
             />
             {isWork && <div className="work-callbacks" data-slot="call-backs" data-board={workTab?.id}>{callBacks && <CallBacksSection data={callBacks} />}</div>}
           </div>
+
+          {/* Done today: where a ticked row rests (latest first; folded to three), above Inbox and Anytime. */}
+          <DonePile pile={pile} open={doneOpen} hidden={pileShown.hidden} onToggle={() => setDoneOpen((o) => !o)} className="o13">
+            {pileShown.shown.map(renderPileRow)}
+          </DonePile>
 
           <section className="card today-side-rows o10" aria-label="Inbox and Anytime">
             <button
@@ -2185,7 +2444,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
                 </button>
                 {anytimeOpen && (
                   <div id="anytime-rows" className="anytime-rows">
-                    {board.anytime.map(renderRow)}
+                    {anytimeRows.rows.map(renderRow)}
                     {/* Defer and abort (task-decisions.ts): what is off the board for now, when it comes back and why. */}
                     {hiddenOther.length > 0 && (
                       <div className="today-upcoming dec-deferred">

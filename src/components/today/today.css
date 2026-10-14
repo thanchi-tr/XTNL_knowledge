@@ -18,16 +18,16 @@
    Today is the Tasks section: the streak and the Full day are Character's,
    Next up's review quest is Ideas'; what is due there is the strip.
      compact  one column: Due elsewhere, the plan card, the lanes (Must,
-              Planned, Habits, Owed), Goals, Inbox, Close
-     ≥ 640    the lanes | Due elsewhere, Plan, Goals, Inbox, Close
-     ≥ 1100   Due elsewhere, Plan | lanes | Goals, Inbox, Close
+              Planned, Habits, Owed), Goals, Done today, Inbox, Close
+     ≥ 640    the lanes | Due elsewhere, Plan, Goals, Done today, Inbox, Close
+     ≥ 1100   Due elsewhere, Plan | lanes | Goals, Done today, Inbox, Close
    The lanes carry the most weight (raised, shaded, the largest headings);
    the goals the least (flat, quieter). The Asks are badges with a radial
    pulse on the block they concern (AskBadge), never cards of their own.
 
-   Motion: transform, opacity and stroke-dashoffset only; every rule rests
-   on its final state (Still shows it with nothing moving). Nothing moves
-   on arrival. Touch targets: ticks and primary actions 44, the rest ≥ 40.
+   Motion: transform, opacity and stroke-dashoffset only (and the one fold
+   of a ticked row's track, below); every rule rests on its final state
+   (Still shows it with nothing moving). Nothing moves on arrival. Touch targets: ticks and primary actions 44, the rest ≥ 40.
    ═══════════════════════════════════════════════════════════════════════ */
 @layer components {
 
@@ -40,7 +40,8 @@
 /* The day's tasks and habits come straight after the streak; Next up and the ledger follow them. */
 .today-board .o5 { order: 3; } .today-board .o6 { order: 4; } .today-board .o7 { order: 5; } .today-board .o8 { order: 6; }
 .today-board .o3 { order: 7; } .today-board .o12 { order: 8; } .today-board .o4 { order: 9; }
-.today-board .o9 { order: 10; } .today-board .o10 { order: 11; } .today-board .o11 { order: 12; }
+/* Done today (.o13) sits after the goals, above Inbox and Anytime. */
+.today-board .o9 { order: 10; } .today-board .o13 { order: 11; } .today-board .o10 { order: 12; } .today-board .o11 { order: 13; }
 .today-board .o1, .today-board .o2, .today-board .o3, .today-board .o9, .today-board .o12 { min-width: 0; }
 
 @container main (min-width: 640px) {
@@ -313,6 +314,68 @@ html[data-motion="calm"] .today-lane.fresh .lane-body::before { animation: none;
 .t-row[data-accent="must"] .tick[data-state="open"]:not(:disabled) .tick-ring { border-color: var(--must); }
 .t-row[data-accent="habit"] .tick[data-state="open"]:not(:disabled) .tick-ring { border-color: var(--habit); }
 
+/* ── The tick's flourish and the way into Done today (board-ui TICK_MOTION; ui-motion D10 as revised) ──
+   Quick but rich, and under 600 ms at Full: the ring presses on pointerdown (.94, --t-press 90), a row
+   just ticked in its lane (data-motion "hold", 450) fills its ring in its code (--tick-c: --must, --habit,
+   else --kept; the kit's 160 fill, its check 220 after 40), rings one ripple (420) and sweeps a strike
+   across its title (240 after 60); then it folds out ("out", 150: its one row track 1fr → 0fr and its
+   opacity, the only layout transition here) and lands in Done today ("arrive", 220), struck through and
+   kept. An Undo unfolds it back in its lane ("enter", 160). Calm: no press, ripple, sweep or fold; the row
+   fades (120) and goes, opacity only. Still (tokens.css) and the OS's reduced motion: nothing moves; the
+   board puts the row in Done today at once (Still), or plays Calm's (reduced motion). Every rule rests on
+   the finished state. */
+.t-row { display: grid; grid-template-rows: 1fr; --tick-c: var(--kept); }
+.t-row > .t-row-in { min-width: 0; min-height: 0; }
+.t-row[data-accent="must"] { --tick-c: var(--must); }
+.t-row[data-accent="habit"] { --tick-c: var(--habit); }
+.t-row .tick[data-press] .tick-ring { transform: scale(.94); }
+.t-row .tick[data-shape="diamond"][data-press] .tick-ring { transform: rotate(45deg) scale(.94); }
+.t-row:is([data-motion="hold"], [data-motion="out"]) .tick[data-state="done"] .tick-ring { background: var(--tick-c); border-color: var(--tick-c); }
+.t-row .tick { position: relative; }
+.t-row .tick::after {
+  content: ""; position: absolute; left: 10px; top: 10px; width: 24px; height: 24px; border-radius: 50%;
+  border: 2px solid var(--tick-c); opacity: 0; pointer-events: none;
+}
+.t-row[data-motion="hold"] .tick[data-state="done"]::after { animation: today-ripple 420ms var(--ease-out) 1; }
+@keyframes today-ripple { 0% { opacity: .6; transform: scale(1); } 100% { opacity: 0; transform: scale(1.9); } }
+.t-row .r-name { position: relative; }
+.t-row:is([data-motion="hold"], [data-motion="out"]) .row.done .r-name::after {
+  content: ""; position: absolute; left: 0; right: 0; top: .66em; height: 2px; margin-top: -1px; border-radius: 1px;
+  background: var(--ink-2); transform-origin: 0 50%; pointer-events: none;
+  animation: today-strike 240ms var(--ease-out) 60ms both;
+}
+@keyframes today-strike { 0% { transform: scaleX(0); } 100% { transform: scaleX(1); } }
+.t-row:is([data-motion="out"], [data-motion="enter"]) > .t-row-in { overflow: hidden; }
+.t-row[data-motion="out"] { grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 150ms var(--ease-inout), opacity 150ms var(--ease-out); }
+.t-row[data-motion="enter"] { transition: grid-template-rows 160ms var(--ease-out), opacity 160ms var(--ease-out); }
+.t-row[data-motion="arrive"] { animation: today-arrive 220ms var(--ease-out) 1 both; }
+@keyframes today-arrive { 0% { opacity: 0; transform: translateY(-6px); } 100% { opacity: 1; transform: none; } }
+@keyframes today-fade { 0% { opacity: 0; } 100% { opacity: 1; } }
+html[data-motion="calm"] .t-row .tick[data-press] .tick-ring,
+html[data-motion="still"] .t-row .tick[data-press] .tick-ring { transform: none; }
+html[data-motion="calm"] .t-row .tick[data-shape="diamond"][data-press] .tick-ring,
+html[data-motion="still"] .t-row .tick[data-shape="diamond"][data-press] .tick-ring { transform: rotate(45deg); }
+html[data-motion="calm"] .t-row[data-motion="hold"] .tick[data-state="done"]::after { animation: none; }
+html[data-motion="calm"] .t-row:is([data-motion="hold"], [data-motion="out"]) .row.done .r-name::after { animation: none; }
+html[data-motion="calm"] .t-row[data-motion="out"] { grid-template-rows: 1fr; transition: opacity 120ms var(--ease-out); }
+html[data-motion="calm"] .t-row[data-motion="enter"] { transition: opacity 160ms var(--ease-out); }
+html[data-motion="calm"] .t-row[data-motion="arrive"] { animation: today-fade 200ms var(--ease-out) 1 both; }
+@media (prefers-reduced-motion: reduce) {
+  .t-row .tick[data-press] .tick-ring { transform: none; }
+  .t-row .tick[data-shape="diamond"][data-press] .tick-ring { transform: rotate(45deg); }
+  .t-row[data-motion="hold"] .tick[data-state="done"]::after { animation: none; }
+  .t-row:is([data-motion="hold"], [data-motion="out"]) .row.done .r-name::after { animation: none; }
+  .t-row[data-motion="out"] { grid-template-rows: 1fr; transition: opacity 120ms var(--ease-out); }
+  .t-row[data-motion="enter"] { transition: opacity 160ms var(--ease-out); }
+  .t-row[data-motion="arrive"] { animation: today-fade 200ms var(--ease-out) 1 both; }
+}
+
+/* A lane whose rows are all done: its stamp in the header, "All kept" in place of rows (its count reads every row).
+   The heading takes focus when the last row a keyboard was on leaves. */
+.lane-note.lane-all { color: var(--ink-1); }
+.today-lane .lane-h h2:focus { outline: none; }
+.today-lane .lane-h h2:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 4px; }
+
 /* ── The drawer: everything a row does besides the tick ───────────────── */
 /* A row's steps: under the title, one 40 px checkbox row each; a tick re-prices the task (src/lib/subtasks.ts). */
 .t-steps { margin: -4px 8px 10px 50px; }
@@ -404,6 +467,41 @@ html[data-motion="calm"] .today-lane.fresh .lane-body::before { animation: none;
 .today-upcoming li { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 13px; }
 .today-upcoming-title { min-width: 0; color: var(--ink-1); overflow-wrap: anywhere; }
 .today-upcoming-day { flex: none; color: var(--ink-2); }
+
+/* ── Done today (DonePile.tsx) and Board clear (BoardClearCard.tsx) ────────
+   Done today sits above Inbox and Anytime: "Done today · 5 · +23.4 XP" (a work tab: no XP), the latest
+   three as compact rows (52 px; the tick, the title and the pill keep their 44 px), "Show n more" opens the
+   rest. A row there rests kept and struck through. Board clear is the one card at the top once the board's
+   last open row is done; it eases in only on the tap that cleared it (data-fresh), never on arrival. */
+.today-done { overflow: hidden; }
+.today-done .done-h { display: flex; align-items: center; gap: 10px; min-height: 52px; margin: 0; padding: 0 14px; font: 400 15px/20px var(--font-ui); }
+.today-done .done-h .done-glyph { flex: none; color: var(--kept); }
+.today-done .done-h b { font-weight: 600; }
+.today-done .done-figs { font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.today-done .done-rows { border-top: 1px solid var(--line-1); }
+.today-done .done-more {
+  display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; min-height: 44px; padding: 0 14px;
+  border: 0; border-top: 1px solid var(--line-1); background: none; color: var(--ink-1); font: 600 13px var(--font-ui); cursor: pointer;
+}
+.today-done .done-more:hover { background: var(--raised); color: var(--ink-0); }
+.today-done .done-more:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.today-done .done-more svg.chev { transition: transform var(--t-quick) var(--ease-out); transform: rotate(90deg); }
+.today-done .done-more svg.chev.open { transform: rotate(-90deg); }
+.t-row[data-variant="pile"] .row { min-height: 52px; padding-top: 4px; padding-bottom: 4px; }
+.t-row[data-variant="pile"] .r-title { font-size: 14px; line-height: 18px; }
+.t-row[data-variant="pile"] .row.done .r-name { text-decoration: line-through; text-decoration-color: var(--ink-mute); text-decoration-thickness: 1.5px; }
+
+.today-clear { display: flex; align-items: flex-start; gap: 12px; padding: 12px 4px 12px 14px; }
+.today-clear[data-fresh="1"] { animation: today-clear-in 320ms var(--ease-out) 1 both; }
+@keyframes today-clear-in { 0% { opacity: 0; transform: translateY(-6px) scale(.98); } 100% { opacity: 1; transform: none; } }
+html[data-motion="calm"] .today-clear[data-fresh="1"] { animation: today-fade 200ms var(--ease-out) 1 both; }
+@media (prefers-reduced-motion: reduce) { .today-clear[data-fresh="1"] { animation: today-fade 200ms var(--ease-out) 1 both; } }
+.today-clear .clear-ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; flex: none; background: var(--kept); color: var(--on-kept); }
+.today-clear .clear-txt { flex: 1; min-width: 0; padding-top: 1px; }
+.today-clear h2 { margin: 0; font: 600 17px/22px var(--font-display); color: var(--ink-0); }
+.today-clear ul { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 2px; }
+.today-clear li { font-size: 13px; line-height: 18px; color: var(--ink-1); overflow-wrap: anywhere; }
+.today-clear li:first-child { color: var(--ink-0); font-weight: 600; }
 
 /* ── A capture, found (capture.md 'Say where it went') ─────────────────── */
 /* A 2 px focus outline over the row it landed on, fading after a beat

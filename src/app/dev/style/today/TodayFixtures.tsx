@@ -34,6 +34,7 @@ import {
   fixtureRoadmapBoard,
   type QuestFixture,
 } from "./fixtures";
+import { DoneFixtures } from "./DoneFixtures";
 
 /**
  * A week quests fixture as the card renders it: roadmap-quests'
@@ -155,6 +156,9 @@ export function TodayFixtures() {
   return (
     <div className="page today-board cq-main dev-today">
       <p className="t-meta dev-banner">Fixtures only. Every number on this page is made up; no real page shows these values.</p>
+
+      {/* The tick's flourish and Done today (ui-motion D10 as revised): first, so a 344 px screenshot starts on it. */}
+      <DoneFixtures />
 
       <SectionHeader title="Day ledger" aside="morning · kept · full · broken (M2: freezes, settles)" />
       <div className="dev-grid">

@@ -15,7 +15,8 @@
  *   ProgressSnapshot    opaque before/after state that L3's detectors diff
  *   DetectCelebrations  the L3 server signature (stubbed in src/lib/celebrations.ts)
  *   FeedbackPrefs       Settings › Feedback (theme, motion, sound, haptics, autoAdvance)
- *   parsePrefs, resolveMotion, PREFS_STORAGE_KEY, DEFAULT_PREFS
+ *   parsePrefs, resolveMotion, PREFS_STORAGE_KEY, DEFAULT_PREFS (sound and haptics on)
+ *   readStoredPrefs, DEVICE_PREFS_STORAGE_KEY   sound and haptics as this device chose them
  *
  * House rules this contract encodes:
  *   - Deterministic outcomes only. There is no field for a random roll, and a
@@ -57,6 +58,7 @@ export const T1_KINDS = [
   "field-cleared", // a field's due cards cleared
   "quota-met", // the weekly new-idea quota met
   "domain-created", // a new domain from /add
+  "board-clear", // the last open row on a Board done, with something done on it (Today, a work tab): "Board clear"
 ] as const;
 
 /** Tier 2 · Seal: weekly to monthly. Queued, one at a time; persisted (shownAt). */
@@ -285,16 +287,53 @@ export interface FeedbackPrefs {
   autoAdvance: AutoAdvancePref;
 }
 
+/**
+ * Sound and haptics are on by default (the user's decision, 2026-10-15): a soft pluck and a light buzz on a tick,
+ * each switched off in Settings › Feedback, and both silent in Still whatever the pref says.
+ */
 export const DEFAULT_PREFS: Readonly<FeedbackPrefs> = {
   theme: "night",
   motion: "system",
-  sound: "off",
-  haptics: "off",
+  sound: "soft",
+  haptics: "on",
   autoAdvance: "next",
 };
 
 /** The localStorage mirror the pre-paint script reads (layout.tsx). */
 export const PREFS_STORAGE_KEY = "xtnl:prefs";
+
+/** The per-device keys: the only ones DEVICE_PREFS_STORAGE_KEY holds. */
+export const DEVICE_PREF_KEYS = ["sound", "haptics"] as const;
+export type DevicePrefKey = (typeof DEVICE_PREF_KEYS)[number];
+
+/**
+ * Sound and haptics as this device chose them in Settings, written only by that choice. Until 2026-10-15 they were read
+ * from PREFS_STORAGE_KEY, where every write (a theme, a motion pick, the account's prefs applied) carried the old
+ * default "off" along, so a stored "off" there was never a choice: it is not read any more, and a device that never
+ * chose plays the new defaults. A choice made here, "off" included, stands.
+ */
+export const DEVICE_PREFS_STORAGE_KEY = "xtnl:prefs:device";
+
+/**
+ * The prefs this device stands on: theme, motion and autoAdvance from the mirror (`main`), sound and haptics from
+ * this device's own choice (`device`), each falling back to DEFAULT_PREFS. Anything malformed reads as unset.
+ */
+export function readStoredPrefs(main: unknown, device: unknown): FeedbackPrefs {
+  const base = parsePrefs(main);
+  let chosen: Record<string, unknown> = {};
+  if (typeof device === "string") {
+    try {
+      const parsed: unknown = JSON.parse(device);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) chosen = parsed as Record<string, unknown>;
+    } catch {
+      chosen = {};
+    }
+  } else if (device && typeof device === "object" && !Array.isArray(device)) {
+    chosen = device as Record<string, unknown>;
+  }
+  const own = parsePrefs({ sound: chosen.sound, haptics: chosen.haptics });
+  return { ...base, sound: own.sound, haptics: own.haptics };
+}
 
 const oneOf = <T extends string>(v: unknown, allowed: readonly T[], fallback: T): T =>
   typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;

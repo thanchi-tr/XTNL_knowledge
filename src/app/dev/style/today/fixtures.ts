@@ -8,7 +8,8 @@
  */
 import { addDays, type DayKey } from "@/lib/life-day";
 import { normTitleOf } from "@/lib/life-lexicon";
-import { buildBoard, type BoardData, type BoardTemplate, type DayLedger } from "@/lib/today-board";
+import { buildBoard, statsFor, type Board, type BoardData, type BoardOp, type BoardTemplate, type DayLedger } from "@/lib/today-board";
+import { parseRule } from "@/lib/recurrence";
 import { fullDayOf, type FullDay } from "@/lib/full-day";
 // Type-only (erased): the fixture page builds the views with roadmap-quests' own pure view builder.
 import type { WeekQuestsViewInput } from "@/lib/roadmap-quests";
@@ -855,3 +856,58 @@ export const DAY_MORNING: FullDay = fullDayOf({ musts: { kept: 0, total: 3 }, qu
 export const DAY_KEPT: FullDay = fullDayOf({ musts: { kept: 2, total: 3 }, quest: { reviews: 6, target: 17, dueNow: 11 }, lifeDeeds: 2 });
 export const DAY_FULL: FullDay = fullDayOf({ musts: { kept: 3, total: 3 }, quest: { reviews: 15, target: 17, dueNow: 2 }, lifeDeeds: 3 });
 export const DAY_AWAY: FullDay = fullDayOf({ musts: { kept: 0, total: 3 }, quest: { reviews: 0, target: 142, dueNow: 142 }, lifeDeeds: 0 });
+
+// ── Done today (the tick's flourish, 2026-10-15; ui-motion D10 as revised) ───
+// A made-up day: two musts kept, a planned one-off and two habits kept at made-up times, one planned row and one
+// habit still open, so Done today folds (3 of 5) and the Must lane is all kept. Nothing here is the user's.
+
+/** The tick times (life zone, made up): the latest is "just now" so its Undo is still on offer. */
+const DONE_AT: Record<string, string> = {
+  "d-meds": "2026-09-30T21:05:00.000Z",
+  "d-rent": "2026-09-30T23:40:00.000Z",
+  "d-floss": "2026-09-30T22:15:00.000Z",
+  "d-walk": "2026-10-01T01:30:00.000Z",
+  "d-call": "2026-10-01T02:10:00.000Z",
+};
+
+export function fixtureDoneBoardData(): BoardData {
+  const t = FIXTURE_TODAY;
+  const templates = [
+    fixtureTemplate({ id: "d-meds", title: "Morning meds", compulsory: true, dueKind: "DEADLINE", dueDay: t, estMinutes: 5, machineMinutes: 5, band: "INTRO" }),
+    fixtureTemplate({ id: "d-rent", title: "Pay rent", compulsory: true, dueKind: "DEADLINE", dueDay: t, estMinutes: 10, machineMinutes: 10 }),
+    fixtureTemplate({ id: "d-thesis", title: "Thesis: outline §3", track: "CRAFT", band: "DEMANDING", estMinutes: 45, machineMinutes: 45, dueKind: "PLANNED", dueDay: t }),
+    fixtureTemplate({ id: "d-call", title: "Call the landlord", estMinutes: 15, machineMinutes: 15, dueKind: "PLANNED", dueDay: t }),
+    fixtureTemplate({ id: "d-floss", title: "Floss", recurrence: "DAILY", track: "CARE", estMinutes: 5, machineMinutes: 5 }),
+    fixtureTemplate({ id: "d-walk", title: "Walk 20 min", recurrence: "DAILY", track: "BODY", estMinutes: 20, machineMinutes: 20 }),
+    fixtureTemplate({ id: "d-read", title: "Read 10 pages", recurrence: "DAILY", track: "CRAFT", estMinutes: 15, machineMinutes: 15 }),
+    fixtureTemplate({ id: "d-tomorrow", title: "Book the dentist", dueKind: "PLANNED", dueDay: addDays(t, 1), estMinutes: 10, machineMinutes: 10 }),
+  ];
+  const stats: BoardData["stats"] = {};
+  for (const tp of templates) {
+    const rule = tp.recurrence ? parseRule(tp.recurrence) : null;
+    if (rule) stats[tp.id] = statsFor(tp, rule, [], t);
+  }
+  return {
+    today: t,
+    yesterday: addDays(t, -1),
+    capacityMin: 240,
+    templates,
+    instances: [],
+    stats,
+    ledger: { today: ledger(t), yesterday: ledger(addDays(t, -1)) },
+    paid: {},
+    goalQty: {},
+    dueNow: 0,
+  };
+}
+
+/** The ticks the day above made, as the board's own optimistic ops (priced by the same planCompletion). */
+export function fixtureDoneOps(except: readonly string[] = []): BoardOp[] {
+  return Object.entries(DONE_AT)
+    .filter(([id]) => !except.includes(id))
+    .sort((a, b) => a[1].localeCompare(b[1]))
+    .map(([templateId, at], i) => ({ id: `fixture-done-${i}`, kind: "complete" as const, templateId, day: FIXTURE_TODAY, slot: 0, at }));
+}
+
+/** The day with its ticks: `except` leaves those rows open (the "just ticked" state ticks one of them itself). */
+export const fixtureDoneBoard = (except: readonly string[] = []): Board => buildBoard(fixtureDoneBoardData(), fixtureDoneOps(except));

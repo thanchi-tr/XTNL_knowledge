@@ -192,6 +192,9 @@ runTheme("Vellum", vellum, !strictVellum);
         const r = contrast(solid(theme, t, bg), bg);
         check(`${label}: ${t} rail and open tick ring (non-text) on ${s} ≥ ${MARK_MIN}`, r >= MARK_MIN, r.toFixed(2), warnOnly);
       }
+      // ui-motion D10a: a just-ticked row's ring fills in its code while it leaves its lane; the check on it is --on-kept.
+      const onFill = contrast(solid(theme, "--on-kept"), solid(theme, t));
+      check(`${label}: the tick's check (--on-kept) on a ring filled ${t} (non-text) ≥ ${MARK_MIN}`, onFill >= MARK_MIN, onFill.toFixed(2), warnOnly);
       for (const other of [...LANE_DISTINCT_FROM, ...LANE_TOKENS.slice(i + 1)]) {
         const d = (["normal", "protan", "deutan"] as const).map((v) => deltaE(solid(theme, t), solid(theme, other), v));
         check(`${label}: ${t} vs ${other} ΔE ≥ ${LEDGER_DE_MIN} (normal / protan / deutan)`, Math.min(...d) >= LEDGER_DE_MIN, d.map((x) => x.toFixed(1)).join(" / "), warnOnly);

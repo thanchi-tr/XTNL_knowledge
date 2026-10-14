@@ -562,15 +562,25 @@ export interface DaySnapshot {
   full: boolean;
   /** Every Must row kept (and there is at least one). */
   mustLane: boolean;
+  /** Every Planned row kept (and there is at least one asking). Absent: false. */
+  planned?: boolean;
+  /** Every Habits row kept (and there is at least one asking). Absent: false. */
+  habits?: boolean;
+  /** The Board is clear (nothing open in Must, Planned or Habits) with at least one row done today (boardClearOf). Absent: false. */
+  clear?: boolean;
 }
 
-export type DayMoment = "day-kept" | "ring-musts" | "ring-quest" | "ring-life" | "lane-kept" | "full-day";
+export type DayMoment = "day-kept" | "ring-musts" | "ring-quest" | "ring-life" | "lane-kept" | "planned-kept" | "habits-kept" | "board-clear" | "full-day";
+
+/** The lane a lane moment stamps (the Lane's id on the board). */
+export const LANE_OF_MOMENT: Partial<Record<DayMoment, "must" | "planned" | "habits">> = { "lane-kept": "must", "planned-kept": "planned", "habits-kept": "habits" };
 
 /**
  * What closed between two snapshots, in the order it is shown: the first
- * deed keeps the day, then the rings, the Must lane's KEPT stamp and the
- * Full day. Only false → true transitions: an undo re-opens silently, and
- * nothing is celebrated on arrival (the board only asks after a tap).
+ * deed keeps the day, then the rings, a lane's KEPT stamp (Must, then
+ * Planned and Habits), the clear board and the Full day. Only false → true
+ * transitions: an undo re-opens silently, and nothing is celebrated on
+ * arrival (the board only asks after a tap).
  */
 export function dayMomentsOf(prev: DaySnapshot, next: DaySnapshot): DayMoment[] {
   const out: DayMoment[] = [];
@@ -579,12 +589,25 @@ export function dayMomentsOf(prev: DaySnapshot, next: DaySnapshot): DayMoment[] 
   if (!prev.rings.quest && next.rings.quest) out.push("ring-quest");
   if (!prev.rings.life && next.rings.life) out.push("ring-life");
   if (!prev.mustLane && next.mustLane) out.push("lane-kept");
+  if (!prev.planned && next.planned) out.push("planned-kept");
+  if (!prev.habits && next.habits) out.push("habits-kept");
+  if (!prev.clear && next.clear) out.push("board-clear");
   if (!prev.full && next.full) out.push("full-day");
   return out;
 }
 
-/** The live-region sentence of each moment. `streak` is the day streak once the day is kept. */
-export function momentText(m: DayMoment, ctx: { streak: number; musts: number }): string {
+/**
+ * The one chime a tap plays: the loudest meaning first (a Full day, then the clear board, then a lane, Must first,
+ * then the day kept, then a ring); the others ride along in its sentence, and each lane still lands its own stamp
+ * and burst.
+ */
+export const MOMENT_PRIORITY: readonly DayMoment[] = ["full-day", "board-clear", "lane-kept", "planned-kept", "habits-kept", "day-kept", "ring-musts", "ring-quest", "ring-life"];
+export function primaryMomentOf(moments: readonly DayMoment[]): DayMoment | null {
+  return MOMENT_PRIORITY.find((m) => moments.includes(m)) ?? moments[0] ?? null;
+}
+
+/** The live-region sentence of each moment. `streak` is the day streak once the day is kept; `done` is Done today's count. */
+export function momentText(m: DayMoment, ctx: { streak: number; musts: number; done?: number }): string {
   switch (m) {
     case "day-kept":
       return `Day ${ctx.streak} kept. Your streak is safe until 4 a.m.`;
@@ -596,9 +619,161 @@ export function momentText(m: DayMoment, ctx: { streak: number; musts: number })
       return "Life deed done. The Life ring closed.";
     case "lane-kept":
       return "Must lane kept.";
+    case "planned-kept":
+      return "Planned lane kept.";
+    case "habits-kept":
+      return "Habits lane kept.";
+    case "board-clear":
+      return ctx.done != null && ctx.done > 0 ? `Board clear: ${ctx.done} done today.` : "Board clear.";
     case "full-day":
       return "Full day. Musts, quest and a life deed, all kept.";
   }
+}
+
+// ── The tick's flourish and Done today (ui-motion D10, revised 2026-10-15) ──
+
+/**
+ * A tick, quick but rich: the ring presses (scale .94), fills with the row's code (--must, --habit, else --kept), the
+ * check draws, one ripple rings out and the title's strike sweeps across; then the row folds out of its lane into
+ * Done today. `hold` is how long the ticked row stays in place, `out` how long it folds; the rest are the CSS
+ * durations today.css writes (delay included). Full is 600 ms in all; Calm is a short, opacity-only version (no
+ * press, ripple, sweep or fold: the row fades, then goes); Still is none (the row is in Done today at once, the
+ * finished picture). Reduced motion (the OS asking, under an explicit Full) plays Calm's.
+ */
+export interface TickMotion {
+  press: number;
+  fill: number;
+  check: number;
+  ripple: number;
+  strike: number;
+  hold: number;
+  out: number;
+}
+export const TICK_MOTION: Readonly<Record<"full" | "calm" | "still", Readonly<TickMotion>>> = {
+  full: { press: 90, fill: 160, check: 260, ripple: 420, strike: 300, hold: 450, out: 150 },
+  calm: { press: 0, fill: 200, check: 200, ripple: 0, strike: 0, hold: 240, out: 120 },
+  still: { press: 0, fill: 0, check: 0, ripple: 0, strike: 0, hold: 0, out: 0 },
+};
+export function tickMotionOf(level: "full" | "calm" | "still", reducedMotion: boolean): Readonly<TickMotion> {
+  if (level === "still") return TICK_MOTION.still;
+  return level === "calm" || reducedMotion ? TICK_MOTION.calm : TICK_MOTION.full;
+}
+
+/** A row on its way: held in place, folding out, arriving in Done today, or back in its lane after an Undo. */
+export type RowMotion = "hold" | "out" | "arrive" | "enter";
+
+/** Done today shows this many of its latest rows while folded. */
+export const DONE_PILE_FOLDED = 3;
+
+export interface DonePile {
+  /** Today's done rows, latest first (by the time each was kept; one with no time last). */
+  rows: BoardRow[];
+  count: number;
+  /** Σ the life XP each row's pill says it paid (an undone payment pays nothing). Work: 0. */
+  xp: number;
+  /** "Done today · 5 · +23.4 XP"; a work tab "Done today · 3" (work pays no XP). */
+  label: string;
+  /** The header's figures after its name ("5 · +23.4 XP"; work "3"). */
+  figures: string;
+  /** Its spoken form ("Done today: 5 tasks, 23.4 life XP"). */
+  speech: string;
+}
+
+const xpFigure = (xp: number): string => {
+  const v = Math.round(xp * 10) / 10;
+  return (Object.is(v, -0) ? 0 : v).toFixed(1);
+};
+
+/**
+ * Done today: every row of the day's lanes and Anytime that is done (presentation only: a lane still counts its kept
+ * rows, and every count the day keeps is the same). `leaving` names rows still folding out of their lane: they join
+ * once they are out. Yesterday's rows stay in Record yesterday.
+ */
+export function donePileOf(rows: readonly BoardRow[], p: { work?: boolean; leaving?: (key: string) => boolean } = {}): DonePile {
+  const seen = new Set<string>();
+  const done = rows.filter((r) => {
+    if (r.state !== "done" || r.lane === "yesterday" || seen.has(r.key) || p.leaving?.(r.key)) return false;
+    seen.add(r.key);
+    return true;
+  });
+  const at = (r: BoardRow) => {
+    const t = r.paid ? Date.parse(r.paid.occurredAt) : Number.NaN;
+    return Number.isFinite(t) ? t : -Infinity;
+  };
+  done.sort((a, b) => at(b) - at(a) || a.key.localeCompare(b.key));
+  const xp = p.work ? 0 : done.reduce((s, r) => s + (r.paid && !r.paid.undone ? r.paid.xp : 0), 0);
+  const n = done.length;
+  const figures = p.work ? `${n}` : `${n} · +${xpFigure(xp)} XP`;
+  const tasks = `${n} task${n === 1 ? "" : "s"}`;
+  return {
+    rows: done,
+    count: n,
+    xp: p.work ? 0 : Math.round(xp * 10) / 10,
+    label: `Done today · ${figures}`,
+    figures,
+    speech: p.work ? `Done today: ${tasks}` : `Done today: ${tasks}, ${xpFigure(xp)} life XP`,
+  };
+}
+
+/** The rows Done today draws: the latest DONE_PILE_FOLDED while folded, all of them open. */
+export function donePileShown<R>(rows: readonly R[], open: boolean): { shown: R[]; hidden: number } {
+  const shown = open ? [...rows] : rows.slice(0, DONE_PILE_FOLDED);
+  return { shown, hidden: rows.length - shown.length };
+}
+
+/**
+ * A lane's rows on the board once done rows live in Done today: the ones still asking or on show (open, locked,
+ * skipped) and any still folding out (`leaving`), in the board's order; `allDone` when every row it had is done and
+ * none is left to draw: the lane says "All kept" (a work tab "All done") in place of rows. Its count ("1 of 2 kept")
+ * still reads every row (laneTally).
+ */
+export function laneRowsOf<R extends Pick<BoardRow, "key" | "state">>(rows: readonly R[], leaving: (key: string) => boolean): { rows: R[]; allDone: boolean } {
+  const shown = rows.filter((r) => r.state !== "done" || leaving(r.key));
+  return { rows: shown, allDone: rows.length > 0 && shown.length === 0 };
+}
+
+/** The Board is clear and not empty: nothing open in Must, Planned or Habits (board.clear) and at least one row done today. */
+export function boardClearOf(p: { clear: boolean; done: number }): boolean {
+  return p.clear && p.done > 0;
+}
+
+/** The device flag that holds the Board clear card for the life day ("shown", then "dismissed"); a work tab's carries its id. */
+export const boardClearKey = (day: DayKey, workId?: string | null): string => `board-clear:${workId ? `work:${workId}:` : ""}${day}`;
+
+/** The first thing tomorrow: what is planned for tomorrow (a one-off), else a habit coming back tomorrow; the rest as "n more". */
+export function firstTomorrowOf(p: {
+  tomorrow: DayKey;
+  later: readonly { title: string; day: DayKey }[];
+  upcoming: readonly { title: string; next: DayKey }[];
+}): { title: string; more: number } | null {
+  const all = [...p.later.filter((l) => l.day === p.tomorrow).map((l) => l.title), ...p.upcoming.filter((u) => u.next === p.tomorrow).map((u) => u.title)];
+  return all.length > 0 ? { title: all[0], more: all.length - 1 } : null;
+}
+
+export interface BoardClearView {
+  title: "Board clear";
+  /** One line each: "5 tasks done", "+23.4 life XP today", "Run 12 days · 2 of 3 quests", "Tomorrow: Groceries · 1 more". */
+  lines: string[];
+}
+
+/** The Board clear card (once per life day, dismissible): the tasks done, then (the personal Board only) the day's life XP, momentum when live, and tomorrow's first thing. */
+export function boardClearViewOf(p: {
+  done: number;
+  work?: boolean;
+  lifeXp?: number;
+  momentum?: { run: number; quests: number; questsDone: number } | null;
+  tomorrow?: { title: string; more: number } | null;
+}): BoardClearView {
+  const lines = [`${p.done} task${p.done === 1 ? "" : "s"} done`];
+  if (!p.work) {
+    if (p.lifeXp != null) lines.push(`+${xpFigure(p.lifeXp)} life XP today`);
+    if (p.momentum) {
+      const run = p.momentum.run === 1 ? "1 day" : `${p.momentum.run} days`;
+      lines.push(p.momentum.quests > 0 ? `Run ${run} · ${p.momentum.questsDone} of ${p.momentum.quests} quests` : `Run ${run}`);
+    }
+    if (p.tomorrow) lines.push(`Tomorrow: ${p.tomorrow.title}${p.tomorrow.more > 0 ? ` · ${p.tomorrow.more} more` : ""}`);
+  }
+  return { title: "Board clear", lines };
 }
 
 // ── Goals (M5, phase B) ───────────────────────────────────────────────────

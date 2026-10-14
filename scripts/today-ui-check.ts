@@ -2898,12 +2898,14 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
     const away = [...css.matchAll(/\.today-away[^{]*\{([^}]*)\}/g)].map((m) => m[1]).join(";");
     check("due elsewhere: due is ink, never a hue (no owed, warn or gold in its rules)", away.length > 0 && !/--owed|--warn|--gold|--danger/.test(away));
   }
-  // The day's Tier 1 moments still follow the tick that made them: the kept Must lane in place, the others (their
-  // tiles are Character's) as the toast with its ring.
+  // The day's Tier 1 moments still follow the tick that made them: a kept lane in place, the others (their tiles are
+  // Character's) as the toast with its ring. Re-pinned 2026-10-15 (ui-motion D10a): any lane (Must, Planned, Habits)
+  // sweeps its own card and bursts at its header, where its stamp lands; the Board clear card is its own, no toast.
   check(
-    "moments: the kept lane sweeps and bursts on the Must lane; the day kept, a ring and the Full day show as a toast with its ring",
-    /sweepEl: lane \? mustBodyRef\.current : null,\s*burstEl: lane \? mustBodyRef\.current : null,\s*ringEl: null,/.test(boardSrc) &&
-      boardSrc.includes("if (!lane) pushToast({ title: text, ring: true, holdMs: 5000, key: `chime:${id}` });")
+    "moments: a kept lane (Must, Planned or Habits) sweeps its card and bursts at its header; the day kept, a ring and the Full day show as a toast with its ring; Board clear shows its card",
+    /sweepEl: lane \? laneEl\(primaryLane, "\.lane-body"\) : null,\s*burstEl: lane \? laneBurstEl\(primaryLane\) : null,\s*ringEl: null,/.test(boardSrc) &&
+      boardSrc.includes('if (!lane && primary !== "board-clear") pushToast({ title: text, ring: true, holdMs: 5000, key: `chime:${id}` });') &&
+      /const laneBurstEl = \(lane: string\) => \{\s*const h = laneEl\(lane, "\.lane-h"\);\s*return h\?\.querySelector<HTMLElement>\("\.lane-stamp"\)/.test(boardSrc)
   );
   // Character's day cards: the streak and the Full day, by Today's own rules over Today's own data.
   {
@@ -2970,7 +2972,8 @@ asyncChecks.push(
   const hubSrc = code(read("src/components/workspace/WorkspaceView.tsx"));
 
   // F16 seam 16, moved: the card is the Ideas lead's, first in the hub's first column, and Today draws no slot.
-  const o9 = /<div className="o9">([\s\S]*?)<\/div>\s*<section className="card today-side-rows o10"/.exec(boardSrc)?.[1] ?? "";
+  // Re-pinned 2026-10-15 (ui-motion D10a): Done today (DonePile, .o13) sits between the goals and Inbox and Anytime.
+  const o9 = /<div className="o9">([\s\S]*?)<\/div>\s*(?:<DonePile [\s\S]*?<\/DonePile>\s*)?<section className="card today-side-rows o10"/.exec(boardSrc)?.[1] ?? "";
   check(
     "week quests: the card sits in the Ideas landing's lead (WeekQuests variant today, its seek rows answered by SeekToToday), drawn first in the hub's first column; Today's .o9 holds the goals only",
     /<SeekToToday \/>\s*<WeekQuests variant="today" view=\{quests\} \/>/.test(leadSrc) &&
@@ -4280,7 +4283,7 @@ asyncChecks.push(
     const { ChestBody } = await import("../src/components/today/ChestSheet");
     const { QuestRows, QUEST_FOOTER, questWhyOf } = await import("../src/components/today/QuestSheet");
     const M = await import("../src/lib/momentum");
-    const { TONES } = await import("../src/lib/celebrate");
+    const { TONES, TICK_LADDER } = await import("../src/lib/celebrate");
     const { kneePay } = await import("../src/lib/life-grade");
     const { FLAME_PATH } = await import("../src/components/glyph/paths/flame");
     type View = import("../src/lib/momentum-server").MomentumView;
@@ -4522,8 +4525,8 @@ asyncChecks.push(
     );
     const celebrateSrc = code(read("src/lib/celebrate.ts"));
     check(
-      "crit: the T0 'crit' variant is a gold numeral in place with the mark's tone up a fifth (1976 Hz), and never flies",
-      TONES.crit[0][0] === 1976 && Math.round(TONES.mark[0][0] * 1.5) === 1977 &&
+      "crit: the T0 'crit' variant is a gold numeral in place, its tone (1976 Hz, unchanged) a fifth above the tick pluck's top rung, and never flies",
+      TONES.crit[0][0] === 1976 && Math.abs(TONES.mark[0][0] * 2 ** (TICK_LADDER[TICK_LADDER.length - 1] / 12) * 2 ** (7 / 12) - TONES.crit[0][0]) < 1 &&
         /if \(o\.kind === "crit" \|\| o\.kind === "chain"\) \{\s*momentumLabel\([^)]*\);\s*return Promise\.resolve\(\);\s*\}/.test(celebrateSrc) &&
         /"--tok", "var\(--gold-m\)"/.test(celebrateSrc)
     );
@@ -4606,6 +4609,339 @@ asyncChecks.push(
       (/<div class="cur-acts">[\s\S]*?<\/div>/.exec(title) ?? [""])[0]
     );
   })()
+);
+
+// ═══ The tick's flourish and Done today (ui-motion D10a, the user's decision 2026-10-15) ═══════════════════
+// Rich but quick: the press, the ring filling in its code, the check, one ripple and the strike sweep, then the row
+// folds out of its lane into "Done today". Critical pins only: the timings per motion level (Full ≤ 600 ms, Calm
+// shorter and opacity-only, Still none, reduced motion Calm's) and today.css writing the same numbers; the pile's
+// count, order and XP sum (a work tab none); every lane's honest count and its "All kept"; a lane kept and the board
+// clear once per life day, after a tick; Board clear's card; and where focus goes when a row leaves.
+asyncChecks.push(
+  (async () => {
+    const { default: NodeModule } = await import("node:module");
+    const ext = (NodeModule as unknown as { _extensions: Record<string, (m: { exports: unknown }) => void> })._extensions;
+    if (!ext[".css"]) ext[".css"] = (m) => void (m.exports = {});
+    const ui = await import("../src/components/today/board-ui");
+    const { DonePile } = await import("../src/components/today/DonePile");
+    const { BoardClearCard } = await import("../src/components/today/BoardClearCard");
+    const { T1_KINDS, KIND_TIER } = await import("../src/lib/celebration-types");
+    const lf = (src: string) => src.replace(/\r\n/g, "\n");
+    const strip = (css: string) => lf(css).replace(/\/\*[\s\S]*?\*\//g, "");
+    const code = (src: string) => lf(src).replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    const css = strip(read("src/components/today/today.css"));
+    const boardSrc = code(read("src/components/today/TodayBoard.tsx"));
+    const rowSrc = code(read("src/components/today/TaskRow.tsx"));
+    /** The body of the first rule whose selector is exactly `sel` (outside or inside a media block). */
+    const body = (sel: string, from = 0): string => {
+      const esc = sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`(?:^|\\})\\s*${esc}\\s*\\{([^}]*)\\}`, "m").exec(css.slice(from))?.[1]?.trim() ?? "";
+    };
+
+    // ── The timings, per level ──
+    const { full, calm, still } = ui.TICK_MOTION;
+    check(
+      "tick motion (Full): the press, the fill, the check, one ripple and the strike all finish inside the 450 ms hold, and the fold ends by 600 ms",
+      full.hold + full.out <= 600 && [full.press, full.fill, full.check, full.ripple, full.strike].every((v) => v > 0 && v <= full.hold),
+      JSON.stringify(full)
+    );
+    check(
+      "tick motion (Calm): shorter and opacity-only (no press, ripple or sweep; a fade under 260 ms, no fold)",
+      calm.hold + calm.out < full.hold + full.out && calm.press === 0 && calm.ripple === 0 && calm.strike === 0 && calm.out > 0 && calm.out <= 260 && calm.fill <= 260 && calm.check <= 260,
+      JSON.stringify(calm)
+    );
+    check("tick motion (Still): nothing (the row is in Done today at once)", Object.values(still).every((v) => v === 0));
+    check(
+      "tick motion: the OS's reduced motion plays Calm's even under an explicit Full; Still wins over everything",
+      ui.tickMotionOf("full", false) === full && ui.tickMotionOf("full", true) === calm && ui.tickMotionOf("calm", false) === calm && ui.tickMotionOf("still", false) === still && ui.tickMotionOf("still", true) === still
+    );
+
+    // ── today.css writes the same numbers, rests on the finished state, and Calm / reduced motion strip it ──
+    const tokens = strip(read("src/app/styles/tokens.css"));
+    const reduced = css.indexOf("@media (prefers-reduced-motion: reduce) {\n  .t-row");
+    check(
+      "tick css (Full): press .94 on pointerdown (--t-press = 90), the ripple 420 ms, the strike 240 ms after 60, the fold 150 ms (grid-template-rows 0fr and opacity)",
+      body('.t-row .tick[data-press] .tick-ring') === "transform: scale(.94);" &&
+        body('.t-row .tick[data-shape="diamond"][data-press] .tick-ring') === "transform: rotate(45deg) scale(.94);" &&
+        /--t-press:90ms/.test(tokens) &&
+        full.press === 90 &&
+        body('.t-row[data-motion="hold"] .tick[data-state="done"]::after') === `animation: today-ripple ${full.ripple}ms var(--ease-out) 1;` &&
+        /animation: today-strike 240ms var\(--ease-out\) 60ms both;/.test(css) &&
+        240 + 60 === full.strike &&
+        body('.t-row[data-motion="out"]') === `grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows ${full.out}ms var(--ease-inout), opacity ${full.out}ms var(--ease-out);`,
+      body('.t-row[data-motion="out"]')
+    );
+    check(
+      "tick css: the rest state is the finished one (the row's track 1fr; the ripple at opacity 0; the strike only while it leaves)",
+      /^display: grid; grid-template-rows: 1fr;/.test(body(".t-row")) && /opacity: 0;/.test(body(".t-row .tick::after")) && !/animation/.test(body(".t-row .tick::after"))
+    );
+    check(
+      "tick css (Calm): no press, ripple or sweep; the fold is an opacity fade of calm.out ms with the track kept",
+      /html\[data-motion="calm"\] \.t-row \.tick\[data-press\] \.tick-ring,\s*html\[data-motion="still"\] \.t-row \.tick\[data-press\] \.tick-ring \{ transform: none; \}/.test(css) &&
+        body('html[data-motion="calm"] .t-row[data-motion="hold"] .tick[data-state="done"]::after') === "animation: none;" &&
+        body('html[data-motion="calm"] .t-row:is([data-motion="hold"], [data-motion="out"]) .row.done .r-name::after') === "animation: none;" &&
+        body('html[data-motion="calm"] .t-row[data-motion="out"]') === `grid-template-rows: 1fr; transition: opacity ${calm.out}ms var(--ease-out);`
+    );
+    check(
+      "tick css (reduced motion): the same strip inside @media (prefers-reduced-motion: reduce); Still kills every animation and transition (tokens.css)",
+      reduced > 0 &&
+        body(".t-row .tick[data-press] .tick-ring", reduced) === "transform: none;" &&
+        body('.t-row[data-motion="hold"] .tick[data-state="done"]::after', reduced) === "animation: none;" &&
+        body('.t-row[data-motion="out"]', reduced) === `grid-template-rows: 1fr; transition: opacity ${calm.out}ms var(--ease-out);` &&
+        /html\[data-motion="still"\] \*, html\[data-motion="still"\] \*::before, html\[data-motion="still"\] \*::after \{ animation:none !important; transition:none !important; \}/.test(tokens)
+    );
+    const layoutTransitions = [...css.matchAll(/([^{}]*)\{([^}]*transition:[^}]*)\}/g)].filter((m) => /grid-template-rows \d/.test(m[2])).map((m) => m[1].trim());
+    check(
+      "tick css: the fold is the only layout transition on Today (grid-template-rows on a leaving or returning row, ≤ 160 ms)",
+      layoutTransitions.join(" | ") === '.t-row[data-motion="out"] | .t-row[data-motion="enter"]' &&
+        [...css.matchAll(/grid-template-rows (\d+)ms/g)].every((m) => Number(m[1]) <= 160),
+      layoutTransitions.join(" | ")
+    );
+    check(
+      "tick css: the ring fills in the row's code while it leaves (--tick-c: --must, --habit, else --kept; tokens only), and rests kept in Done today",
+      body('.t-row:is([data-motion="hold"], [data-motion="out"]) .tick[data-state="done"] .tick-ring') === "background: var(--tick-c); border-color: var(--tick-c);" &&
+        body('.t-row[data-accent="must"]') === "--tick-c: var(--must);" &&
+        body('.t-row[data-accent="habit"]') === "--tick-c: var(--habit);" &&
+        /--tick-c: var\(--kept\);/.test(body(".t-row")) &&
+        /text-decoration: line-through;/.test(body('.t-row[data-variant="pile"] .row.done .r-name'))
+    );
+    const atLeast = (name: string, v: number | null, min: number) => check(`touch target: ${name} ≥ ${min}px`, v != null && v >= min, String(v));
+    atLeast("a Done today row", cssValue(css, '.t-row[data-variant="pile"] .row', "min-height"), 52);
+    atLeast("Done today's Show more", cssValue(css, ".today-done .done-more", "min-height"), 44);
+    check(
+      "Done today sits after the goals and above Inbox and Anytime (.o13 between .o9 and .o10) in the side column",
+      /\.today-board \.o9 \{ order: 10; \} \.today-board \.o13 \{ order: 11; \} \.today-board \.o10 \{ order: 12; \} \.today-board \.o11 \{ order: 13; \}/.test(css) &&
+        /<\/div>\s*<DonePile pile=\{pile\} open=\{doneOpen\} hidden=\{pileShown\.hidden\} onToggle=\{\(\) => setDoneOpen\(\(o\) => !o\)\} className="o13">\s*\{pileShown\.shown\.map\(renderPileRow\)\}\s*<\/DonePile>\s*<section className="card today-side-rows o10"/.test(boardSrc)
+    );
+
+    // ── Done today: its count, its order and its XP sum ──
+    const iso = (h: number, mi = 0) => new Date(at(TODAY, h, mi)).toISOString();
+    const tick = (id: string, when: string) => ({ id: `op-${id}`, kind: "complete" as const, templateId: id, day: TODAY, slot: 0, at: when });
+    const dMeds = tpl({ id: "dp-meds", title: "Morning meds", compulsory: true, dueKind: "DEADLINE", dueDay: TODAY });
+    const dRent = tpl({ id: "dp-rent", title: "Pay rent", compulsory: true, dueKind: "DEADLINE", dueDay: TODAY });
+    const dCall = tpl({ id: "dp-call", title: "Call the landlord", dueKind: "PLANNED", dueDay: TODAY });
+    const dThesis = tpl({ id: "dp-thesis", title: "Thesis outline", dueKind: "PLANNED", dueDay: TODAY });
+    const dFloss = tpl({ id: "dp-floss", title: "Floss", recurrence: "DAILY" });
+    const dRead = tpl({ id: "dp-read", title: "Read a chapter" });
+    const data = board(TODAY, [dMeds, dRent, dCall, dThesis, dFloss, dRead]);
+    const ticks = [tick("dp-meds", iso(8)), tick("dp-call", iso(9)), tick("dp-floss", iso(10)), tick("dp-read", iso(11))];
+    const day = buildBoard(data, ticks);
+    const all = [...day.must, ...day.todayRows, ...day.anytime];
+    const pile = ui.donePileOf(all);
+    const paidSum = Math.round(all.filter((r) => r.state === "done").reduce((s, r) => s + (r.paid && !r.paid.undone ? r.paid.xp : 0), 0) * 10) / 10;
+    check(
+      "Done today: every done row of the lanes and Anytime, latest first, its XP the sum of what each row's pill paid",
+      pile.count === 4 &&
+        pile.rows.map((r) => r.template.id).join() === "dp-read,dp-floss,dp-call,dp-meds" &&
+        pile.xp === paidSum &&
+        pile.xp > 0 &&
+        pile.label === `Done today · 4 · +${paidSum.toFixed(1)} XP` &&
+        pile.speech === `Done today: 4 tasks, ${paidSum.toFixed(1)} life XP`,
+      `${pile.label} · ${pile.rows.map((r) => r.template.id).join()}`
+    );
+    const undone = { ...pile.rows[0], key: "x:undone", paid: pile.rows[0].paid ? { ...pile.rows[0].paid, undone: true } : null };
+    const yesterdays = { ...pile.rows[1], key: "x:yesterday", lane: "yesterday" as const };
+    check(
+      "Done today: a row still folding out of its lane joins once it is out; yesterday's rows stay in Record yesterday; an undone payment adds nothing",
+      ui.donePileOf(all, { leaving: (k) => k === pile.rows[0].key }).count === 3 &&
+        ui.donePileOf([...all, yesterdays]).count === 4 &&
+        ui.donePileOf([undone]).xp === 0 &&
+        ui.donePileOf([undone]).count === 1
+    );
+    const workPile = ui.donePileOf(all, { work: true });
+    check(
+      "Done today (work tab): 'Done today · 4' — no XP in its label, its sum or its spoken form",
+      workPile.label === "Done today · 4" && workPile.xp === 0 && workPile.speech === "Done today: 4 tasks" && !/XP/.test(workPile.label + workPile.speech)
+    );
+    const folded = ui.donePileShown(pile.rows, false);
+    const opened = ui.donePileShown(pile.rows, true);
+    check(
+      "Done today: folded it shows the latest three (DONE_PILE_FOLDED), open every row",
+      ui.DONE_PILE_FOLDED === 3 && folded.shown.length === 3 && folded.hidden === 1 && folded.shown[0] === pile.rows[0] && opened.shown.length === 4 && opened.hidden === 0
+    );
+    const pileHtml = renderToStaticMarkup(createElement(DonePile, { pile, open: false, hidden: 1, onToggle: () => {} }));
+    const workHtml = renderToStaticMarkup(createElement(DonePile, { pile: workPile, open: false, hidden: 1, onToggle: () => {} }));
+    check(
+      "Done today rendered: its heading says 'Done today · n · +X XP' (spoken in full), Show n more says how many and what it controls; a work tab's says no XP; nothing at 0",
+      pileHtml.includes(`<b>Done today</b><span class="done-figs num"> · ${pile.figures}</span>`) &&
+        pileHtml.includes(`<span class="sr-only">${pile.speech}</span>`) &&
+        /<button type="button" class="done-more" aria-expanded="false" aria-controls="done-today-rows">Show 1 more/.test(pileHtml) &&
+        !/XP/.test(workHtml) &&
+        renderToStaticMarkup(createElement(DonePile, { pile: ui.donePileOf([]), open: false, hidden: 0, onToggle: () => {} })) === ""
+    );
+
+    // ── Lanes keep their honest counts; a lane whose rows are all done says "All kept" ──
+    const mustNow = ui.laneRowsOf(day.must, () => false);
+    const bothMusts = buildBoard(data, [...ticks, tick("dp-rent", iso(12))]);
+    const mustDone = ui.laneRowsOf(bothMusts.must, () => false);
+    const mustLeaving = ui.laneRowsOf(bothMusts.must, (k) => k === bothMusts.must.find((r) => r.template.id === "dp-rent")?.key);
+    check(
+      "lanes: a done row leaves its lane but still counts ('1 of 2 kept', then '2 of 2'); with every row done the lane draws none and says All kept",
+      mustNow.rows.map((r) => r.template.id).join() === "dp-rent" &&
+        !mustNow.allDone &&
+        laneTally(day.must).kept === 1 &&
+        laneTally(day.must).total === 2 &&
+        mustDone.allDone &&
+        mustDone.rows.length === 0 &&
+        laneTally(bothMusts.must).kept === 2 &&
+        laneTally(bothMusts.must).total === 2 &&
+        mustLeaving.rows.length === 1 &&
+        !mustLeaving.allDone
+    );
+    check(
+      "lanes (board): Must, Planned and Habits draw their open rows, 'All kept' (a work tab 'All done') once all are done, and keep laneTally's count; Planned and Habits wear their stamp too",
+      boardSrc.includes('const allKeptLine = <p className="lane-note lane-all">{isWork ? "All done" : "All kept"}</p>;') &&
+        boardSrc.includes("{mustRows.allDone && hiddenMusts.length === 0 && allKeptLine}") &&
+        boardSrc.includes("{plannedRows.allDone && allKeptLine}") &&
+        boardSrc.includes("{habitRows.allDone && allKeptLine}") &&
+        /count=\{planned\.length > 0 \? `\$\{plannedTally\.kept\} of \$\{plannedTally\.total\}` : undefined\}\s*kept=\{!!shown\.snapshot\.planned\}/.test(boardSrc) &&
+        /count=\{`\$\{habitTally\.kept\} of \$\{habitTally\.total\}`\}\s*kept=\{!!shown\.snapshot\.habits\}/.test(boardSrc) &&
+        boardSrc.includes("const plannedTally = laneTally(planned);") &&
+        boardSrc.includes("{anytimeRows.rows.map(renderRow)}")
+    );
+
+    // ── A lane kept and the board clear: once per life day, after a tick ──
+    const snap = (p: Partial<DaySnapshot> = {}): DaySnapshot => ({ kept: true, full: false, mustLane: false, rings: { musts: false, quest: false, life: false }, ...p });
+    check(
+      "moments: Planned and Habits kept, then the board clear, each on its false → true only (an undo re-opens silently)",
+      ui.dayMomentsOf(snap(), snap({ planned: true })).join() === "planned-kept" &&
+        ui.dayMomentsOf(snap({ planned: true }), snap({ planned: true, habits: true, clear: true })).join() === "habits-kept,board-clear" &&
+        ui.dayMomentsOf(snap({ clear: true, planned: true }), snap()).length === 0 &&
+        ui.dayMomentsOf(snap({ clear: true }), snap({ clear: true })).length === 0
+    );
+    check(
+      "moments: one chime per tap, the loudest first (Full day, Board clear, a lane: Must first, the day kept, a ring)",
+      ui.primaryMomentOf(["day-kept", "planned-kept", "board-clear"]) === "board-clear" &&
+        ui.primaryMomentOf(["board-clear", "full-day"]) === "full-day" &&
+        ui.primaryMomentOf(["habits-kept", "lane-kept"]) === "lane-kept" &&
+        ui.primaryMomentOf(["ring-life", "day-kept"]) === "day-kept" &&
+        ui.primaryMomentOf([]) === null
+    );
+    check(
+      "board clear: needs a clear board with something done on it; its flag is per life day (a work tab's carries its id); its sentence says the count",
+      !ui.boardClearOf({ clear: true, done: 0 }) &&
+        !ui.boardClearOf({ clear: false, done: 3 }) &&
+        ui.boardClearOf({ clear: true, done: 1 }) &&
+        ui.boardClearKey(TODAY) === `board-clear:${TODAY}` &&
+        ui.boardClearKey(TODAY, "wb1") === `board-clear:work:wb1:${TODAY}` &&
+        ui.momentText("board-clear", { streak: 3, musts: 2, done: 5 }) === "Board clear: 5 done today." &&
+        ui.momentText("planned-kept", { streak: 3, musts: 2 }) === "Planned lane kept."
+    );
+    check(
+      "board clear: a T1 kind on the ladder ('board-clear'), its chime id 'board-clear:<day>' (a work tab's 'work:<id>:…'); every moment of a tap is marked fired, so each plays once per life day",
+      (T1_KINDS as readonly string[]).includes("board-clear") &&
+        KIND_TIER["board-clear"] === 1 &&
+        boardSrc.includes("const idOf = (m: DayMoment) => `${ctx.workId ? `work:${ctx.workId}:` : \"\"}${m}:${ctx.today}`;") &&
+        /const moments = all\.filter\(\(m\) => !firedMoments\.has\(idOf\(m\)\)\);\s*for \(const m of all\) firedMoments\.add\(idOf\(m\)\);/.test(boardSrc) &&
+        /primary === "board-clear" \? "board-clear"/.test(boardSrc)
+    );
+    check(
+      "board clear: the card shows once its tap played it (flag 'shown'), while the board stays clear, until OK ('dismissed'); it eases in only on that tap, never on arrival",
+      /if \(moments\.includes\("board-clear"\)\) \{\s*const key = boardClearKey\(ctx\.today, ctx\.workId\);\s*writeFlag\(key, "shown"\);/.test(boardSrc) &&
+        /const clearView =\s*shown\.snapshot\.clear && flags\?\.\[clearKey\] === "shown"/.test(boardSrc) &&
+        boardSrc.includes('setFlag(clearKey, "dismissed");') &&
+        boardSrc.includes("<BoardClearCard view={clearView} fresh={clearFresh} onDismiss={dismissClear} />") &&
+        /\.today-clear\[data-fresh="1"\] \{ animation: today-clear-in/.test(css) &&
+        !/animation/.test(body(".today-clear"))
+    );
+    check(
+      "moments: a lane kept and the board clear follow a tick (not a defer, a skip or a move); a work tab plays only those, never the day's",
+      boardSrc.includes('const TICK_MOMENTS: ReadonlySet<DayMoment> = new Set<DayMoment>(["lane-kept", "planned-kept", "habits-kept", "board-clear"]);') &&
+        boardSrc.includes("const played = moments.filter((m) => ticked || !TICK_MOMENTS.has(m));") &&
+        /if \(isWork && ticked\) \{\s*const work = dayMomentsOf\(prev, next\)\.filter\(\(m\) => TICK_MOMENTS\.has\(m\)\);/.test(boardSrc) &&
+        /tickedAt\.current = actedAt\.current;/.test(boardSrc)
+    );
+    const view = ui.boardClearViewOf({ done: 5, lifeXp: 34.44, momentum: { run: 12, quests: 3, questsDone: 2 }, tomorrow: { title: "Book the dentist", more: 1 } });
+    const workView = ui.boardClearViewOf({ done: 1, work: true, lifeXp: 9, momentum: { run: 3, quests: 3, questsDone: 1 }, tomorrow: { title: "x", more: 0 } });
+    const clearHtml = renderToStaticMarkup(createElement(BoardClearCard, { view, onDismiss: () => {} }));
+    check(
+      "Board clear card: 'Board clear', the tasks done, the day's life XP, the run and the quests when live, and tomorrow's first thing; a work tab the tasks done only",
+      view.lines.join(" | ") === "5 tasks done | +34.4 life XP today | Run 12 days · 2 of 3 quests | Tomorrow: Book the dentist · 1 more" &&
+        workView.lines.join(" | ") === "1 task done" &&
+        clearHtml.includes('<h2 id="board-clear-h">Board clear</h2>') &&
+        clearHtml.includes("<li>+34.4 life XP today</li>") &&
+        /aria-label="OK, put Board clear away for today"/.test(clearHtml) &&
+        !/data-fresh/.test(clearHtml),
+      view.lines.join(" | ")
+    );
+    check(
+      "Board clear: tomorrow's first thing is a one-off planned for tomorrow, else a habit back tomorrow; nothing for later days",
+      ui.firstTomorrowOf({ tomorrow: "2026-10-02", later: [{ title: "Dentist", day: "2026-10-02" }, { title: "Later", day: "2026-10-05" }], upcoming: [{ title: "Gym", next: "2026-10-02" }] })?.title === "Dentist" &&
+        ui.firstTomorrowOf({ tomorrow: "2026-10-02", later: [{ title: "Dentist", day: "2026-10-02" }], upcoming: [{ title: "Gym", next: "2026-10-02" }] })?.more === 1 &&
+        ui.firstTomorrowOf({ tomorrow: "2026-10-02", later: [], upcoming: [{ title: "Gym", next: "2026-10-02" }] })?.title === "Gym" &&
+        ui.firstTomorrowOf({ tomorrow: "2026-10-02", later: [{ title: "Later", day: "2026-10-05" }], upcoming: [] }) === null
+    );
+
+    // ── The row: its motion, its compact form, its press; the live region; focus after it leaves ──
+    const floss = day.todayRows.find((r) => r.template.id === "dp-floss")!;
+    const rowHtml = (motion: import("../src/components/today/board-ui").RowMotion | null, variant?: "pile", work?: boolean) =>
+      renderToStaticMarkup(
+        createElement(TaskRow, {
+          row: floss,
+          projection: floss.projection,
+          drawerOpen: false,
+          undoable: true,
+          busy: false,
+          receiptOpen: false,
+          receiptId: "r",
+          onTick: () => {},
+          onUndo: () => {},
+          onToggleDrawer: () => {},
+          onToggleReceipt: () => {},
+          motion,
+          variant,
+          work,
+        })
+      );
+    const held = rowHtml("hold");
+    const piled = rowHtml(null, "pile");
+    check(
+      "TaskRow: a leaving row carries data-motion and its key; a Done today row is compact (data-variant pile) and a work tab's has no price; the title text sits in .r-name (the strike's width)",
+      /^<div class="t-row"[^>]*data-row-key="dp-floss:2026-10-01"[^>]*data-motion="hold"/.test(held) &&
+        /^<div class="t-row"[^>]*data-variant="pile"/.test(piled) &&
+        !/data-motion/.test(piled) &&
+        /<span class="r-name">Floss<\/span>/.test(piled) &&
+        /class="price/.test(piled) &&
+        !/class="price/.test(rowHtml(null, "pile", true)) &&
+        /<div class="t-row-in">/.test(piled)
+    );
+    check(
+      "TaskRow: the press is set on pointerdown and cleared on release, cancel or leave (never on a disabled tick); Done today folds a row's steps",
+      /onPointerDown=\{pressOn\}\s*onPointerUp=\{pressOff\}\s*onPointerCancel=\{pressOff\}\s*onPointerLeave=\{pressOff\}/.test(rowSrc) &&
+        /if \(!e\.currentTarget\.disabled\) e\.currentTarget\.dataset\.press = "1";/.test(rowSrc) &&
+        /\{!pile && row\.steps && props\.onStep && row\.state !== "locked" && \(/.test(rowSrc)
+    );
+    check(
+      "a tick: the live region still says 'Kept <title> · paid N exactly' (a work tab 'Done: <title>'); the row then leaves its lane (yesterday's rows stay)",
+      boardSrc.includes("text: isWork ? `Done: ${row.template.title}` : `Kept ${row.template.title} · paid ${fmtXp(xp)} exactly`,") &&
+        /markTick\(row, shown\.xp, from\);\s*if \(row\.lane !== "yesterday"\) leaveLane\(row\);\s*dispatch\(/.test(boardSrc)
+    );
+    check(
+      "a tick's way out: held (TICK_MOTION.hold), then folding (out), then in Done today; at Still at once; its timers die with the board",
+      /function leaveLane\(row: BoardRow\) \{\s*const key = row\.key;\s*const focus = refocusAfter\(key\);\s*const m = tickMotionOf\(motionLevel\(\), reducedMotion\(\)\);\s*if \(m\.hold \+ m\.out <= 0\) \{\s*if \(focus\) setRefocus\(focus\);\s*return;\s*\}/.test(boardSrc) &&
+        /later\(\(\) => setExits\(\(e\) => \(e\[key\] === "hold" \? \{ \.\.\.e, \[key\]: "out" \} : e\)\), m\.hold\);/.test(boardSrc) &&
+        /later\(\(\) => \{\s*setExits\(\(e\) => \(key in e \? without\(e, key\) : e\)\);[\s\S]*?if \(focus\) setRefocus\(focus\);\s*\}, m\.hold \+ m\.out\);/.test(boardSrc) &&
+        /for \(const t of timers\) window\.clearTimeout\(t\);/.test(boardSrc)
+    );
+    check(
+      "focus: only when it was on the row that left, it goes to the next row still in the lane (its tick, or its title while the tick waits), else the lane's heading (tabIndex -1), else Anytime's toggle",
+      /if \(!el \|\| !\(active instanceof Node\) \|\| !el\.contains\(active\)\) return null;/.test(boardSrc) &&
+        /next\.dataset\.state !== "done" && !next\.dataset\.motion/.test(boardSrc) &&
+        /\(tick && !tick\.disabled \? tick : row\?\.querySelector<HTMLElement>\("\.r-open"\)\) \?\?\s*\(refocus\.lane \? document\.getElementById\(`lane-\$\{refocus\.lane\}`\) : null\) \?\?\s*\(refocus\.anytime \?/.test(boardSrc) &&
+        /<h2 id="lane-planned" tabindex="-1">Planned<\/h2>/.test(renderToStaticMarkup(createElement(Lane, { id: "planned", title: "Planned" })))
+    );
+    check(
+      "an Undo from Done today: the row unfolds back in its lane (enter, unless Still) and focus follows it to its title",
+      /setArrivals\(\(a\) => \(\{ \.\.\.a, \[key\]: "enter" \}\)\);/.test(boardSrc) &&
+        /if \(focused\) setRefocus\(\{ rowKey: key, lane: null, anytime: false \}\);/.test(boardSrc) &&
+        /el\.style\.transition = "none";\s*el\.style\.gridTemplateRows = "0fr";\s*el\.style\.opacity = "0";\s*void el\.offsetHeight;\s*el\.style\.transition = "";\s*el\.style\.gridTemplateRows = "";/.test(rowSrc) &&
+        /^transition: grid-template-rows 160ms var\(--ease-out\), opacity 160ms var\(--ease-out\);$/.test(body('.t-row[data-motion="enter"]'))
+    );
+    check(
+      "ui-motion D10 records the user's decision (D10a: the tick's flourish and Done today; D10b: sound and haptics on by default)",
+      /\| D10 \| Today stays calm at rest[^\n]*\*\*D10a \(the user's decision, 2026-10-15\)[^\n]*Done today[^\n]*\*\*D10b:\*\* Settings › Feedback defaults to Sound Soft and Haptics On/.test(lf(read("docs/life-plan/ui-motion.md")))
+    );
+  })().catch((err) => check("the tick's flourish and Done today: the checks ran", false, String(err)))
 );
 
 // The async checks (withMoments) settle before the tally.

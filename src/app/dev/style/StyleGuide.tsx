@@ -570,11 +570,11 @@ export function StyleGuide() {
                 <td>tick, correct answer, capture saved, equip, make-up paid, idea created, RPE rated</td>
                 <td>check draws; ≈ becomes exact; the +N token flies to its own ledger (Full only); count-up</td>
                 <td>≤ 700 ms, in place, 0 particles</td>
-                <td>1318 Hz · 8 ms</td>
+                <td>soft pluck E5, a pentatonic step up per tick in a 90 s run (to E6) · 10 ms</td>
               </tr>
               <tr>
                 <td>1 · Chime</td>
-                <td>first deed (day kept), a promise ring closes, Full day, lane kept, quest cleared, nothing owed, repair, yesterday settled</td>
+                <td>first deed (day kept), a promise ring closes, Full day, lane kept, board clear, quest cleared, nothing owed, repair, yesterday settled</td>
                 <td>seal lights or a KEPT stamp lands; one glint; light sweep; seeded burst of 8</td>
                 <td>&lt; 1 s, in place</td>
                 <td>2 notes · 12-40-18</td>

@@ -179,7 +179,7 @@ function FeedbackSection() {
         <div className="set-row">
           <div className="n">
             <b>Sound</b>
-            <span>Soft tones, one pattern per tier; silent in Still. This device only.</span>
+            <span>On by default: a soft pluck on each tick, one step higher for each tick in a quick run, and a chime for a bigger moment. Silent in Still. This device only.</span>
           </div>
           <Segmented<SoundPref>
             label="Sound"
@@ -195,7 +195,7 @@ function FeedbackSection() {
         <div className="set-row">
           <div className="n">
             <b>Haptics</b>
-            <span>Android only; one pattern per tier; off in Still. This device only.</span>
+            <span>On by default: a light tap on each tick, a double when a lane or the board is done. Android only (iPhone browsers cannot vibrate). Off in Still. This device only.</span>
           </div>
           <Segmented<HapticsPref>
             label="Haptics"

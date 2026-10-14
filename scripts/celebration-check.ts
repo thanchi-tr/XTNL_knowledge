@@ -79,6 +79,7 @@ import { CHARACTER_EXPONENT } from "../src/lib/character";
 import { emptyLifeLedger, lifeTracksView, type LifeLedger } from "../src/lib/life-tracks";
 import {
   DEFAULT_PREFS,
+  DEVICE_PREFS_STORAGE_KEY,
   KIND_TIER,
   MOMENTUM_T1_KINDS,
   MOMENTUM_T2_KINDS,
@@ -87,9 +88,25 @@ import {
   T3_KINDS,
   honestyProblem,
   makeEvent,
+  readStoredPrefs,
   type CelebrationEvent,
 } from "../src/lib/celebration-types";
-import { closeRun, enqueue, nextIndex, openRun, registerPresenter } from "../src/lib/celebrate";
+import {
+  HAPTICS,
+  PLUCK_ATTACK,
+  SOUND_GAIN,
+  SOUND_GAIN_MAX,
+  TICK_LADDER,
+  TICK_RUN_MS,
+  TONES,
+  closeRun,
+  enqueue,
+  nextIndex,
+  openRun,
+  registerPresenter,
+  tickStepOf,
+  tonesOf,
+} from "../src/lib/celebrate";
 import { fixtures, fixtureMoments } from "../src/app/dev/style/celebrate/fixtures";
 import { ACCOUNT_PREF_KEYS, accountPatch, planPrefsSync, readPostBody } from "../src/components/celebrate/protocol";
 import { firstAnnouncement, sealSentence } from "../src/components/celebrate/SealCard";
@@ -1228,6 +1245,107 @@ function momentum() {
   check("momentum: no Math.random in the detectors (they only report stored outcomes)", !/Math\.random/.test(read(join(ROOT, "src/lib/celebration-detect.ts")).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "")) && all.length > 0);
 }
 
+// ── Sound and haptics on by default (ui-motion D10b, the user's decision 2026-10-15) ──
+// A device that never chose plays a soft pluck and a light buzz; its own choice, Off included, stands; Still is
+// silent. The tick's pluck climbs a pentatonic ladder through a quick run and resets after a pause; it stays soft;
+// the crit keeps its gold tone; TONES and HAPTICS are the one source.
+function feedback() {
+  const lf = (s: string) => s.replace(/\r\n/g, "\n");
+  const code = (s: string) => lf(s).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  check("feedback defaults: sound Soft and haptics On for a device that never chose", DEFAULT_PREFS.sound === "soft" && DEFAULT_PREFS.haptics === "on");
+  const none = readStoredPrefs(null, null);
+  const carried = readStoredPrefs(JSON.stringify({ theme: "vellum", motion: "calm", sound: "off", haptics: "off", autoAdvance: "wait" }), null);
+  check(
+    "feedback defaults: nothing stored → Soft and On; the mirror's old carried 'off' (every write wrote it along) is not a choice, its theme and motion still are",
+    none.sound === "soft" && none.haptics === "on" && carried.sound === "soft" && carried.haptics === "on" && carried.theme === "vellum" && carried.motion === "calm" && carried.autoAdvance === "wait"
+  );
+  const offSound = readStoredPrefs(null, JSON.stringify({ sound: "off" }));
+  const offBoth = readStoredPrefs(JSON.stringify({ sound: "soft", haptics: "on" }), JSON.stringify({ sound: "off", haptics: "off" }));
+  const junk = readStoredPrefs(null, "{not json");
+  const loud = readStoredPrefs(null, JSON.stringify({ sound: "loud", haptics: 1 }));
+  check(
+    "feedback defaults: an explicit Off on this device stands (each key alone); a malformed or invalid choice reads as unset",
+    offSound.sound === "off" && offSound.haptics === "on" && offBoth.sound === "off" && offBoth.haptics === "off" && junk.sound === "soft" && junk.haptics === "on" && loud.sound === "soft" && loud.haptics === "on"
+  );
+  const prefsSrc = code(read(join(ROOT, "src/components/ui/MotionPrefs.tsx")));
+  check(
+    "feedback defaults: Settings writes the device's choice apart (DEVICE_PREFS_STORAGE_KEY, sound and haptics only), and every reader reads both keys",
+    DEVICE_PREFS_STORAGE_KEY === "xtnl:prefs:device" &&
+      /if \(key === "sound" \|\| key === "haptics"\) \{[\s\S]*?window\.localStorage\.setItem\(DEVICE_PREFS_STORAGE_KEY, JSON\.stringify\(\{ \.\.\.own, \[key\]: value \}\)\);/.test(prefsSrc) &&
+      /cache = readStoredPrefs\(window\.localStorage\.getItem\(PREFS_STORAGE_KEY\), window\.localStorage\.getItem\(DEVICE_PREFS_STORAGE_KEY\)\);/.test(prefsSrc) &&
+      /if \(e\.key !== PREFS_STORAGE_KEY && e\.key !== DEVICE_PREFS_STORAGE_KEY\) return;/.test(prefsSrc)
+  );
+  const celebrateSrc = code(read(join(ROOT, "src/lib/celebrate.ts")));
+  check(
+    "feedback: Still is silent and still (sound and haptic return first), whatever the pref; both read this device's choice",
+    /export function sound\(kind: FeedbackKind, step = 0\): void \{\s*if \(!isBrowser\(\) \|\| motionLevel\(\) === "still" \|\| devicePrefs\(\)\.sound !== "soft"\) return;/.test(celebrateSrc) &&
+      /export function haptic\(kind: FeedbackKind\): void \{\s*if \(!isBrowser\(\) \|\| motionLevel\(\) === "still" \|\| devicePrefs\(\)\.haptics !== "on"\) return;/.test(celebrateSrc) &&
+      /return readStoredPrefs\(window\.localStorage\.getItem\(PREFS_STORAGE_KEY\), window\.localStorage\.getItem\(DEVICE_PREFS_STORAGE_KEY\)\);/.test(celebrateSrc)
+  );
+  const settings = lf(read(join(ROOT, "src/components/settings/SettingsView.tsx")));
+  check(
+    "Settings › Feedback: both rows say they are on by default and off in Still, and keep their Off / Soft and Off / On choices",
+    /<b>Sound<\/b>\s*<span>On by default: a soft pluck on each tick[^<]*Silent in Still\. This device only\.<\/span>/.test(settings) &&
+      /<b>Haptics<\/b>\s*<span>On by default: a light tap on each tick[^<]*Android only[^<]*Off in Still\. This device only\.<\/span>/.test(settings) &&
+      /\{ value: "off", label: "Off" \},\s*\{ value: "soft", label: "Soft" \},/.test(settings) &&
+      /\{ value: "off", label: "Off" \},\s*\{ value: "on", label: "On" \},/.test(settings)
+  );
+
+  // The pluck's ladder.
+  check("pluck ladder: a major pentatonic from the root to its octave, six steps (0 2 4 7 9 12 semitones)", TICK_LADDER.join() === "0,2,4,7,9,12" && TICK_RUN_MS === 90_000);
+  let run = tickStepOf(null, 1_000_000);
+  const steps = [run.step];
+  for (let i = 1; i <= 8; i++) {
+    run = tickStepOf(run, 1_000_000 + i * 30_000);
+    steps.push(run.step);
+  }
+  check("pluck ladder: each tick within the run climbs one step, then holds at the top (max 6 steps)", steps.join() === "0,1,2,3,4,5,5,5,5", steps.join());
+  const t0 = { at: 5_000_000, step: 4 };
+  check(
+    "pluck ladder: within 90 s of the last tick it climbs (90 s exactly included); a longer gap, or a clock that went back, starts again at the root",
+    tickStepOf(t0, t0.at + 90_000).step === 5 && tickStepOf(t0, t0.at + 90_001).step === 0 && tickStepOf(t0, t0.at - 1).step === 0 && tickStepOf(null, 0).step === 0
+  );
+  const base = TONES.mark.map(([f]) => f);
+  const rungs = TICK_LADDER.map((_, i) => tonesOf("mark", i)[0][0]);
+  check(
+    "pluck ladder: every partial of the pluck moves up together by the step's semitones; the top rung is the octave; a step outside the ladder clamps",
+    TICK_LADDER.every((st, i) => tonesOf("mark", i).every(([f], j) => Math.abs(f - base[j] * 2 ** (st / 12)) < 1e-9)) &&
+      Math.abs(rungs[5] - 2 * rungs[0]) < 1e-9 &&
+      rungs.every((f, i) => i === 0 || f > rungs[i - 1]) &&
+      tonesOf("mark", 99)[0][0] === rungs[5] &&
+      tonesOf("mark", -3)[0][0] === rungs[0] &&
+      tonesOf("mark", Number.NaN)[0][0] === rungs[0],
+    rungs.map((f) => f.toFixed(1)).join(" ")
+  );
+  check(
+    "pluck: a soft sine pluck (E5 and a quieter, shorter octave partial; a 5 ms attack), and a tick climbs while every other mark plucks the root",
+    Math.round(TONES.mark[0][0]) === 659 &&
+      Math.abs(TONES.mark[1][0] - 2 * TONES.mark[0][0]) < 0.1 &&
+      (TONES.mark[1][3] ?? 1) < (TONES.mark[0][3] ?? 0) &&
+      TONES.mark[1][2] < TONES.mark[0][2] &&
+      TONES.mark[0][2] <= 0.25 &&
+      PLUCK_ATTACK === 0.005 &&
+      /let step = 0;\s*if \(o\.kind === "tick"\) \{\s*tickRun = tickStepOf\(tickRun, Date\.now\(\)\);\s*step = tickRun\.step;\s*\}\s*sound\(crit \? "crit" : "mark", step\);/.test(celebrateSrc) &&
+      /o\.type = "sine";/.test(celebrateSrc)
+  );
+  const partials = (Object.keys(TONES) as (keyof typeof TONES)[]).flatMap((k) => TONES[k]);
+  const pluckSum = TONES.mark.reduce((s, p) => s + (p[3] ?? SOUND_GAIN), 0);
+  check(
+    "sound stays soft: no partial peaks above SOUND_GAIN_MAX (0.05), the pluck's partials together stay under it, and sound() clamps every peak",
+    SOUND_GAIN_MAX <= 0.05 && SOUND_GAIN <= SOUND_GAIN_MAX && partials.every((p) => (p[3] ?? SOUND_GAIN) <= SOUND_GAIN_MAX) && pluckSum <= SOUND_GAIN_MAX &&
+      /g\.gain\.linearRampToValueAtTime\(Math\.min\(gain \?\? SOUND_GAIN, SOUND_GAIN_MAX\), t \+ d \+ attack\);/.test(celebrateSrc),
+    pluckSum.toFixed(3)
+  );
+  check(
+    "crit: its gold tone is unchanged (1976 Hz, 90 ms, one partial) and never moves with the ladder",
+    TONES.crit.length === 1 && TONES.crit[0][0] === 1976 && TONES.crit[0][1] === 0 && TONES.crit[0][2] === 0.09 && tonesOf("crit", 5) === TONES.crit
+  );
+  check(
+    "haptics: a crisp 10 ms tick; a lane finished or the board cleared is the chime's [12, 40, 18]; the crit's [8, 40, 8] unchanged",
+    HAPTICS.mark === 10 && JSON.stringify(HAPTICS.chime) === "[12,40,18]" && JSON.stringify(HAPTICS.crit) === "[8,40,8]" && KIND_TIER["lane-kept"] === 1 && KIND_TIER["board-clear"] === 1
+  );
+}
+
 (async () => {
   await persistence();
   queue();
@@ -1239,6 +1357,7 @@ function momentum() {
   await channel();
   shellChunk();
   staging();
+  feedback();
   console.log(`\ncelebration-check: ${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 })().catch((err) => {

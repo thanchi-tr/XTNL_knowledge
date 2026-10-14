@@ -2,11 +2,13 @@
  * FROZEN CONTRACT — the one celebration queue (L0-foundation, redesign "Sigil & Slate").
  * Client-side. Every tier writes its words to ONE polite live region and to the dev log.
  *
- *   mark(opts)  → Promise<void>     Tier 0. In place, immediately. Sound 1318 Hz · haptic 8 ms.
+ *   mark(opts)  → Promise<void>     Tier 0. In place, immediately. A soft pluck (E5, sine + an octave
+ *        partial) · haptic 10 ms. A `tick` climbs the pluck one step of a pentatonic ladder for
+ *        each tick within TICK_RUN_MS of the last (E5 → E6 at most, then it stays; tickStepOf).
  *        Flies "+N" from opts.from to its OWN ledger (ledgerTarget(kind) by default) and
  *        resolves when it lands, so the ledger owner can countTo() + bump().
  *        Momentum's T0 kinds (momentum.md §E.3): `crit` is the gold numeral in place
- *        ("Crit ×2 · +24"), its tone the mark's up a fifth (1976 Hz); `chain` ("Chain 3")
+ *        ("Crit ×2 · +24"), its tone a fifth above the ladder's top (1976 Hz); `chain` ("Chain 3")
  *        is the same static label in the life-XP hue. Neither flies: the tick already did.
  *   chime(opts)                     Tier 1. In place, < 1 s: sweep + seeded burst of 8.
  *        If opts.ringEl is off-screen, the ToastDock carries a closing mini ring.
@@ -22,15 +24,16 @@
  *        and T3 events wait until the run closes.
  *   ledgerTarget("xp" | "pts" | "mp")  the visible [data-ledger-target] cell, else the top-bar MiniLedger
  *   announce(text)                  the one role=status live region
- *   sound(kind) / haptic(kind)      opt-in per device; silent in Still
+ *   sound(kind, step?) / haptic(kind)   on by default per device (Settings › Feedback); silent in Still
  *   getLog(), subscribeLog(fn), clearLog()   the dev celebration log (/dev/style)
  *
  * Nothing here is random: bursts are seeded by the event id.
  */
 import {
+  DEVICE_PREFS_STORAGE_KEY,
   KIND_TIER,
   PREFS_STORAGE_KEY,
-  parsePrefs,
+  readStoredPrefs,
   type AmountFact,
   type CelebrationEvent,
   type CelebrationTier,
@@ -133,14 +136,29 @@ export function clearLog(): void {
   for (const l of logListeners) l();
 }
 
-// ─── Sound and haptics (per device, off by default, silent in Still) ────────
+// ─── Sound and haptics (per device, on by default, silent in Still) ─────────
 
 export type FeedbackKind = "mark" | "chime" | "seal" | "ascend" | "crit";
 
-/** [frequency Hz, delay s, length s]. Fixed pitches per tier. */
-export const TONES: Readonly<Record<FeedbackKind, readonly (readonly [number, number, number])[]>> = {
-  mark: [[1318, 0, 0.07]],
-  /** A crit (momentum.md §E.3): the mark's tone up a fifth. */
+/** One partial: [frequency Hz, delay s, length s, peak gain (SOUND_GAIN when absent)]. */
+export type Tone = readonly [freq: number, delay: number, len: number, gain?: number];
+
+/** A partial's peak when it names none. */
+export const SOUND_GAIN = 0.04;
+/** Soft: no partial peaks above this, and the pluck's partials together stay under it. */
+export const SOUND_GAIN_MAX = 0.05;
+/** The pluck's attack (s): short, so it reads as a pluck; every other tier eases in over ATTACK. */
+export const PLUCK_ATTACK = 0.005;
+const ATTACK = 0.012;
+
+/** Fixed pitches per tier (TONES and HAPTICS are the one source; the mark moves up TICK_LADDER by sound(kind, step)). */
+export const TONES: Readonly<Record<FeedbackKind, readonly Tone[]>> = {
+  /** A soft pluck: E5, with a quieter octave partial that dies first. */
+  mark: [
+    [659.26, 0, 0.2, 0.034],
+    [1318.51, 0, 0.08, 0.014],
+  ],
+  /** A crit (momentum.md §E.3): gold, a fifth above the ladder's top rung (E6 → B6). Unchanged. */
   crit: [[1976, 0, 0.09]],
   chime: [
     [784, 0, 0.32],
@@ -159,8 +177,9 @@ export const TONES: Readonly<Record<FeedbackKind, readonly (readonly [number, nu
   ],
 };
 
+/** A tick: one crisp 10 ms buzz. A lane finished or a board cleared is a chime: [12, 40, 18]. */
 export const HAPTICS: Readonly<Record<FeedbackKind, number | readonly number[]>> = {
-  mark: 8,
+  mark: 10,
   crit: [8, 40, 8],
   chime: [12, 40, 18],
   seal: [14, 50, 22, 50, 40],
@@ -169,33 +188,65 @@ export const HAPTICS: Readonly<Record<FeedbackKind, number | readonly number[]>>
 
 const TIER_FEEDBACK: Record<CelebrationTier, FeedbackKind> = { 0: "mark", 1: "chime", 2: "seal", 3: "ascend" };
 
+/** The tick's ladder: a major pentatonic from the root to its octave, in semitones (E F♯ G♯ B C♯ E). Six steps. */
+export const TICK_LADDER = [0, 2, 4, 7, 9, 12] as const;
+/** A run: a tick within this long of the last climbs one step; a longer gap starts again at the root. */
+export const TICK_RUN_MS = 90_000;
+
+export interface TickRun {
+  /** When the run's last tick landed (ms). */
+  at: number;
+  /** Its place on TICK_LADDER. */
+  step: number;
+}
+
+/** Where the next tick sits on the ladder: one step up within TICK_RUN_MS of the last (held at the top), else the root. */
+export function tickStepOf(prev: TickRun | null, now: number): TickRun {
+  if (!prev || !(now >= prev.at) || now - prev.at > TICK_RUN_MS) return { at: now, step: 0 };
+  return { at: now, step: Math.min(prev.step + 1, TICK_LADDER.length - 1) };
+}
+
+/** A kind's partials, the mark moved up TICK_LADDER[step] semitones (every partial alike); every other kind as it is. */
+export function tonesOf(kind: FeedbackKind, step = 0): readonly Tone[] {
+  if (kind !== "mark") return TONES[kind];
+  const i = Math.max(0, Math.min(TICK_LADDER.length - 1, Math.round(step) || 0));
+  const k = 2 ** (TICK_LADDER[i] / 12);
+  return TONES.mark.map(([f, d, len, g]): Tone => [f * k, d, len, g]);
+}
+
+/** This tab's tick run (the ladder's state). */
+let tickRun: TickRun | null = null;
+
 function devicePrefs() {
-  if (!isBrowser()) return parsePrefs(null);
+  if (!isBrowser()) return readStoredPrefs(null, null);
   try {
-    return parsePrefs(window.localStorage.getItem(PREFS_STORAGE_KEY));
+    return readStoredPrefs(window.localStorage.getItem(PREFS_STORAGE_KEY), window.localStorage.getItem(DEVICE_PREFS_STORAGE_KEY));
   } catch {
-    return parsePrefs(null);
+    return readStoredPrefs(null, null);
   }
 }
 
 type AudioCtor = typeof AudioContext;
 let audio: AudioContext | null = null;
 
-export function sound(kind: FeedbackKind): void {
+export function sound(kind: FeedbackKind, step = 0): void {
   if (!isBrowser() || motionLevel() === "still" || devicePrefs().sound !== "soft") return;
   try {
     const Ctor: AudioCtor | undefined =
       window.AudioContext ?? (window as unknown as { webkitAudioContext?: AudioCtor }).webkitAudioContext;
     if (!Ctor) return;
     audio = audio ?? new Ctor();
+    // A context made before a gesture (or put to sleep by the OS) starts suspended; a tap may wake it.
+    if (audio.state === "suspended") void audio.resume().catch(() => undefined);
     const t = audio.currentTime;
-    for (const [f, d, len] of TONES[kind]) {
+    const attack = kind === "mark" ? PLUCK_ATTACK : ATTACK;
+    for (const [f, d, len, gain] of tonesOf(kind, step)) {
       const o = audio.createOscillator();
       const g = audio.createGain();
       o.type = "sine";
       o.frequency.value = f;
       g.gain.setValueAtTime(0, t + d);
-      g.gain.linearRampToValueAtTime(0.04, t + d + 0.012);
+      g.gain.linearRampToValueAtTime(Math.min(gain ?? SOUND_GAIN, SOUND_GAIN_MAX), t + d + attack);
       g.gain.exponentialRampToValueAtTime(0.0001, t + d + len);
       o.connect(g).connect(audio.destination);
       o.start(t + d);
@@ -283,7 +334,13 @@ function momentumLabel(near: Element | null | undefined, text: string, crit: boo
 
 export function mark(o: MarkOptions): Promise<void> {
   const crit = o.kind === "crit";
-  sound(crit ? "crit" : "mark");
+  // A tick climbs the ladder (a quick run of ticks plays a rising combo); every other mark plucks the root.
+  let step = 0;
+  if (o.kind === "tick") {
+    tickRun = tickStepOf(tickRun, Date.now());
+    step = tickRun.step;
+  }
+  sound(crit ? "crit" : "mark", step);
   haptic(crit ? "crit" : "mark");
   writeLog(0, o.kind, o.text);
   if (o.say !== false) announce(o.text);
