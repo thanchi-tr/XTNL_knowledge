@@ -15,7 +15,7 @@
  *      ledger row (so life XP, the streak, tracks, the knee, the week, the
  *      Full day and the throughput never see it), and every reader of
  *      TaskTemplate or TaskInstance in the game reads the personal Board only;
- *   5. the UI: the Tasks strip (Board · <work tabs> · [+] · Weekly review ·
+ *   5. the UI: the Tasks strip (Board · <work tabs> · [+] · Weekly review · Habits ·
  *      Rules), the '+' only while a slot is free, the work board's page and
  *      its game-free board, Settings › Work tabs, and capture into a tab.
  *
@@ -400,10 +400,11 @@ function exclusion() {
 function ui(board: ReturnType<typeof scoping>) {
   console.log("— the strip, the '+', the work board —");
   const tasksSubs = sectionById("tasks").subs.map((s) => s.href);
-  eq("strip: nav.ts's Tasks stay Board, Weekly review, Rules (no work tab is static)", tasksSubs, ["/today", "/today/week", "/today/rules"]);
-  eq("strip: with no work tab the Tasks strip is exactly nav.ts's", subsOf("tasks", []).map((s) => s.label), ["Board", "Weekly review", "Rules"]);
+  // Habits (2026-10-15, habit-history.ts) joined between Weekly review and Rules: still no work tab is static.
+  eq("strip: nav.ts's Tasks stay Board, Weekly review, Habits, Rules (no work tab is static)", tasksSubs, ["/today", "/today/week", "/today/habits", "/today/rules"]);
+  eq("strip: with no work tab the Tasks strip is exactly nav.ts's", subsOf("tasks", []).map((s) => s.label), ["Board", "Weekly review", "Habits", "Rules"]);
   eq(
-    "strip: work tabs come right after Board, by slot (Board · Acme · Studio · Weekly review · Rules), each to /today/work/<id>",
+    "strip: work tabs come right after Board, by slot (Board · Acme · Studio · Weekly review · Habits · Rules), each to /today/work/<id>",
     subsOf("tasks", [
       { id: "a", name: "Acme" },
       { id: "s", name: "Studio" },
@@ -413,6 +414,7 @@ function ui(board: ReturnType<typeof scoping>) {
       ["Acme", "/today/work/a"],
       ["Studio", "/today/work/s"],
       ["Weekly review", "/today/week"],
+      ["Habits", "/today/habits"],
       ["Rules", "/today/rules"],
     ]
   );

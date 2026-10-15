@@ -1,0 +1,130 @@
+@layer theme, base, components, art, effects, utilities;
+/* =====================================================================
+   HABITS — Tasks › Habits (/today/habits): one card per habit, its year as a grid of small squares in its own hue
+   (tokens.css --hab-1..8, by creation order; never the Must orange). Namespaced hh-. Tokens only.
+   Floors: 12 px text; the year links, the popover's links and buttons and the Ended fold are 44 px targets (a
+   square is 5–12 px: the popover's ‹ › step a day at a time, and the arrow keys move the grid's one tab stop).
+   Colour is never alone: every square is named for its date and state, every card says its year in words.
+   344 px: 53 columns of 5 px squares and 1 px gaps (317 px) are wider than a card (282 px inside), so the year
+   scrolls inside .hh-scroll (a size container, so it can never widen the page), opened at the current month.
+   ===================================================================== */
+@layer components {
+  .hh-page { max-width: 880px; }
+
+  /* ---------- the year switcher, the summary and the legend ---------- */
+  .hh-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 16px; padding-top: 8px; }
+  .hh-years { display: flex; align-items: center; gap: 2px; margin: 0; }
+  .hh-year-link {
+    min-height: 44px; min-width: 44px; padding: 0 10px; display: inline-flex; align-items: center; justify-content: center;
+    border-radius: var(--r-ctl); color: var(--ink-1); font: 600 14px/1 var(--font-ui); text-decoration: none;
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  .hh-year-link:hover { background: var(--raised); color: var(--ink-0); }
+  .hh-year-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .hh-year-off { min-height: 44px; min-width: 44px; display: inline-grid; place-items: center; color: var(--ink-mute); font: 600 14px/1 var(--font-ui); }
+  .hh-year-now { margin: 0; padding: 0 6px; font: 600 21px/26px var(--font-display); color: var(--ink-0); font-variant-numeric: tabular-nums lining-nums; }
+  .hh-sum { margin: 0; }
+  .hh-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 0; padding: 0; list-style: none; }
+  .hh-legend li { display: inline-flex; align-items: center; gap: 6px; font: 400 12px/16px var(--font-ui); color: var(--ink-2); }
+  .hh-legend .hh-sq { --hh-c: var(--ink-1); }
+
+  /* ---------- the cards ---------- */
+  .hh-list { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+  .hh-card { --hh-c: var(--hab-1); padding: 12px; scroll-margin-top: calc(var(--topbar-h) + 12px); }
+  .hh-card[data-hue="2"] { --hh-c: var(--hab-2); }
+  .hh-card[data-hue="3"] { --hh-c: var(--hab-3); }
+  .hh-card[data-hue="4"] { --hh-c: var(--hab-4); }
+  .hh-card[data-hue="5"] { --hh-c: var(--hab-5); }
+  .hh-card[data-hue="6"] { --hh-c: var(--hab-6); }
+  .hh-card[data-hue="7"] { --hh-c: var(--hab-7); }
+  .hh-card[data-hue="8"] { --hh-c: var(--hab-8); }
+  /* Track record › (the drawer's deep link): the card it names wears a ring in its own hue. */
+  .hh-card[data-target] { box-shadow: inset 0 1px 0 var(--hi), 0 0 0 2px var(--hh-c); }
+  .hh-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+  .hh-glyph {
+    width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; flex: none;
+    background: color-mix(in srgb, var(--hh-c) 16%, transparent); color: var(--hh-c);
+  }
+  .hh-glyph svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .hh-name { min-width: 0; }
+  .hh-title { margin: 0; font: 600 15px/20px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+  .hh-title:focus { outline: none; }
+  .hh-title:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+  .hh-rule { margin: 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); overflow-wrap: anywhere; }
+  .hh-pct { margin: 0; font: 600 20px/24px var(--font-display); color: var(--ink-0); font-variant-numeric: tabular-nums lining-nums; white-space: nowrap; }
+  .hh-foot { margin: 8px 0 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); font-variant-numeric: tabular-nums lining-nums; }
+
+  /* ---------- the year grid ---------- */
+  .hh-gridwrap { position: relative; margin-top: 10px; }
+  .hh-scroll {
+    position: relative; container-type: inline-size; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
+    padding: 2px 2px 4px; scrollbar-width: thin;
+  }
+  .hh-year {
+    --hh-gap: 1px;
+    --hh-sq: clamp(5px, calc((100cqi - (var(--hh-cols) - 1) * var(--hh-gap)) / var(--hh-cols)), 12px);
+    width: max-content;
+  }
+  @container (min-width: 480px) { .hh-year { --hh-gap: 2px; } }
+  .hh-months { position: relative; height: 16px; margin-bottom: 3px; }
+  .hh-months span {
+    position: absolute; top: 0; left: calc(var(--col) * (var(--hh-sq) + var(--hh-gap)));
+    font: 600 12px/16px var(--font-ui); color: var(--ink-2); white-space: nowrap;
+  }
+  .hh-grid { display: flex; flex-direction: column; gap: var(--hh-gap); }
+  .hh-row { display: flex; gap: var(--hh-gap); }
+  .hh-d, .hh-sq { flex: none; width: var(--hh-sq, 10px); height: var(--hh-sq, 10px); border-radius: 2px; background: var(--line-1); }
+  .hh-d { cursor: pointer; }
+  .hh-d[data-pad] { visibility: hidden; cursor: default; }
+  :is(.hh-d, .hh-sq)[data-s="d"] { background: var(--hh-c); }
+  :is(.hh-d, .hh-sq)[data-s="m"] { background: color-mix(in srgb, var(--hh-c) 55%, var(--card)); }
+  :is(.hh-d, .hh-sq)[data-s="h"] { background: transparent; box-shadow: inset 0 0 0 1px var(--hh-c); }
+  :is(.hh-d, .hh-sq)[data-s="x"] { background: color-mix(in srgb, var(--ink-2) 38%, transparent); }
+  :is(.hh-d, .hh-sq)[data-s="o"] { background: color-mix(in srgb, var(--hh-c) 20%, transparent); }
+  :is(.hh-d, .hh-sq)[data-s="n"] { background: var(--line-2); }
+  .hh-d[data-today] { box-shadow: 0 0 0 1.5px var(--ink-0); }
+  .hh-d[data-today][data-s="h"] { box-shadow: inset 0 0 0 1px var(--hh-c), 0 0 0 1.5px var(--ink-0); }
+  .hh-d[aria-expanded="true"] { outline: 2px solid var(--ink-0); outline-offset: 1px; }
+  .hh-d:focus { outline: none; }
+  .hh-d:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+  /* ---------- a day's popover (under the grid, pointing at its square) ---------- */
+  .hh-pop {
+    position: absolute; z-index: 5; width: min(272px, 100%); padding: 10px 6px 4px 12px;
+    border-radius: 12px; border: 1px solid var(--line-2); background: var(--overlay); box-shadow: var(--shadow-pop);
+  }
+  .hh-pop::before {
+    content: ""; position: absolute; top: -6px; left: calc(var(--hh-caret, 50%) - 6px); width: 10px; height: 10px;
+    background: var(--overlay); border-left: 1px solid var(--line-2); border-top: 1px solid var(--line-2); transform: rotate(45deg);
+  }
+  .hh-pop-d { margin: 0; font: 600 13px/18px var(--font-ui); color: var(--ink-0); }
+  .hh-pop-s { margin: 2px 6px 0 0; display: flex; align-items: center; gap: 8px; font: 400 13px/18px var(--font-ui); color: var(--ink-1); }
+  .hh-pop-s .hh-sq { --hh-sq: 10px; }
+  .hh-pop-a { display: flex; align-items: center; gap: 2px; margin-top: 2px; }
+  .hh-pop-link {
+    min-height: 44px; display: inline-flex; align-items: center; margin-right: auto; padding-right: 6px;
+    font: 600 13px/18px var(--font-ui); color: var(--ink-0); text-decoration: underline; text-underline-offset: 3px;
+  }
+  .hh-pop-gap { margin-right: auto; }
+  .hh-pop-btn {
+    width: 44px; height: 44px; display: inline-grid; place-items: center; border-radius: 10px; border: 0; padding: 0;
+    background: none; color: var(--ink-1); font: 600 18px/1 var(--font-ui); cursor: pointer;
+  }
+  .hh-pop-btn:hover { background: var(--raised); color: var(--ink-0); }
+  .hh-pop-btn:disabled { color: var(--ink-mute); background: none; cursor: default; }
+  .hh-pop-btn:focus-visible, .hh-pop-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+  /* ---------- ended habits, and the empty page ---------- */
+  .hh-ended { margin-top: 18px; }
+  .hh-ended > summary {
+    min-height: 44px; display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none;
+    font: 600 12px/16px var(--font-ui); letter-spacing: .11em; text-transform: uppercase; color: var(--ink-2);
+  }
+  .hh-ended > summary::-webkit-details-marker { display: none; }
+  .hh-ended > summary::before { content: "›"; display: inline-block; font-size: 16px; transition: transform var(--t-quick) var(--ease-out); }
+  .hh-ended[open] > summary::before { transform: rotate(90deg); }
+  .hh-ended > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 6px; }
+  .hh-ended .hh-list { margin-top: 4px; }
+  .hh-empty { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+  .hh-empty p { margin: 0; }
+}

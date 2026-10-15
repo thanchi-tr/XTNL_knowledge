@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { BANDS, type Band, type Receipt } from "@/lib/life-types";
 import { MINUTE_CHIPS, ruleOf, type BoardRow } from "@/lib/today-board";
 import { SIZING_MAX_ATTEMPTS, effBand } from "@/lib/life-grade";
@@ -327,6 +328,14 @@ export function TaskDrawer(props: Props) {
             <TaskStylePicker key={t.id} templateId={t.id} style={props.taskStyle} />
           </div>
         </section>
+      )}
+      {/* A personal habit's year (Tasks › Habits), its card scrolled to and ringed. Never on a work tab (not tracked there). */}
+      {!props.work && t.kind === "HABIT" && recurring && (
+        <div className="today-drawer-row">
+          <Link className="td-record" href={`/today/habits#${encodeURIComponent(t.id)}`}>
+            Track record ›
+          </Link>
+        </div>
       )}
 
       {!props.work && (

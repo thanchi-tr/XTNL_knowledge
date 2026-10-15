@@ -27,6 +27,7 @@ export function Lane({
   className,
   note,
   badge,
+  action,
   children,
 }: {
   id: string;
@@ -46,6 +47,8 @@ export function Lane({
   note?: ReactNode;
   /** Chips under the header (M2: 'Rest · nothing owed', 'Musts carry stakes from Mon 12 Oct'). Never owed-toned. */
   badge?: ReactNode;
+  /** A quiet link at the end of the header (the Habits lane's "Year", to /today/habits). */
+  action?: ReactNode;
   children?: ReactNode;
 }) {
   const hid = `lane-${id}`;
@@ -62,6 +65,7 @@ export function Lane({
           </span>
         )}
         {count != null && <span className="lane-count num">{count}</span>}
+        {action}
       </div>
       {badge && <div className="lane-chips">{badge}</div>}
       <div ref={bodyRef} className="card lane-body">

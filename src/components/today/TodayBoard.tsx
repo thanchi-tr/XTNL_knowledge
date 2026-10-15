@@ -5,6 +5,7 @@ import "./today.css";
 import "./momentum.css";
 import "./decisions.css";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   applyOps,
@@ -2376,6 +2377,14 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
               landing={!!beat?.lanes.includes("habits")}
               className="o7"
               note={habits.length > 0 && planned.length === 0 ? plannedNote : null}
+              action={
+                // Each habit's year (Tasks › Habits); the personal Board's habits only (a work tab's are not tracked there).
+                isWork ? undefined : (
+                  <Link className="lane-link" href="/today/habits" aria-label="Year: each habit's track record">
+                    Year
+                  </Link>
+                )
+              }
             >
               {habitRows.allDone && allKeptLine}
               {habitRows.rows.map(renderRow)}

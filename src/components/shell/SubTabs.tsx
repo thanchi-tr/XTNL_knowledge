@@ -5,7 +5,7 @@
  *
  *   <SectionTabs/>   (this file) under the top bar, the current section's sub-pages:
  *                    Ideas (Review · Library · New idea · Roadmap · Fields & Domains),
- *                    Tasks (Board · <work tabs> · [+] · Weekly review · Rules), Body (This week · Exercise).
+ *                    Tasks (Board · <work tabs> · [+] · Weekly review · Habits · Rules), Body (This week · Exercise).
  *                    The work tabs (2026-10-12) come from the shell's data (ShellData.work, nav.ts
  *                    subsOf); the '+' (AddWorkTab, "Add a work tab") follows the last of them while
  *                    a slot is free.

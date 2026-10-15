@@ -76,6 +76,8 @@ export const SECTIONS: readonly Section[] = [
     subs: [
       { href: "/today", label: "Board" },
       { href: "/today/week", label: "Weekly review" },
+      // Each habit's year (2026-10-15; habit-history.ts): a compatible addition, titled Tasks · Habits from here.
+      { href: "/today/habits", label: "Habits" },
       { href: "/today/rules", label: "Rules" },
     ],
   },
@@ -164,7 +166,7 @@ export interface WorkTabLink {
 /**
  * A group's sub-pages as the strips draw them (SectionTabs, the top bar's
  * tabs, the sidebar): nav.ts's own, and on Tasks the open work tabs right
- * after Board (Board · <work tabs> · Weekly review · Rules), each linking to
+ * after Board (Board · <work tabs> · Weekly review · Habits · Rules), each linking to
  * /today/work/<id>. With no work tab it is exactly the group's `subs`.
  */
 export function subsOf(id: NavGroupId, work?: readonly WorkTabLink[] | null): SubPage[] {

@@ -120,9 +120,11 @@ eq("nav: Ideas' sub-pages: Review, Library, New idea, Roadmap, Fields & Domains"
   ["Roadmap", "/you/roadmap", []],
   ["Fields & Domains", "/structure", ["/taxonomy"]],
 ]);
-eq("nav: Tasks' sub-pages: Board, Weekly review, Rules", sectionById("tasks").subs.map((s) => [s.label, s.href]), [
+// Habits (2026-10-15, habit-history.ts): each habit's year, between Weekly review and Rules.
+eq("nav: Tasks' sub-pages: Board, Weekly review, Habits, Rules", sectionById("tasks").subs.map((s) => [s.label, s.href]), [
   ["Board", "/today"],
   ["Weekly review", "/today/week"],
+  ["Habits", "/today/habits"],
   ["Rules", "/today/rules"],
 ]);
 eq("nav: Body's sub-pages: This week, Exercise", sectionById("body").subs.map((s) => [s.label, s.href]), [
@@ -142,7 +144,7 @@ eq("nav: the profile menu: Character, Skills, Loadout, Moments, Stats, Settings 
   ],
 ]);
 check("nav: sectionById('you') is the profile menu (YouTabs reads it on compact)", sectionById("you") === PROFILE);
-eq("nav: /today, /today/week, /today/rules are Tasks", ["/today", "/today/week", "/today/rules"].map(sectionOf), ["tasks", "tasks", "tasks"]);
+eq("nav: /today, /today/week, /today/habits, /today/rules are Tasks", ["/today", "/today/week", "/today/habits", "/today/rules"].map(sectionOf), ["tasks", "tasks", "tasks", "tasks"]);
 eq(
   "nav: /review, /workspace, /library/x, /add, /structure, /taxonomy, /you/roadmap, /you/roadmap/new are Ideas",
   ["/review", "/workspace", "/library/abc", "/add", "/structure", "/taxonomy", "/you/roadmap", "/you/roadmap/new"].map(sectionOf),
@@ -164,8 +166,8 @@ eq("nav: /dev/style, /todayx, /youx and / are in no group (prefix, not substring
 eq("nav: no path is nothing", [sectionOf(null), isProfilePath(undefined), groupOf(null), activeSub(null)], [null, false, null, null]);
 eq(
   "nav: the longest sub wins",
-  ["/today", "/today/week", "/today/rules", "/you/loadout", "/skills/mind", "/taxonomy", "/workspace", "/you/roadmap/new", "/overview", "/dashboard", "/train/exercise"].map(activeSub),
-  ["/today", "/today/week", "/today/rules", "/you/loadout", "/skills", "/structure", "/review", "/you/roadmap", "/you", "/you/stats", "/train/exercise"]
+  ["/today", "/today/week", "/today/habits", "/today/rules", "/you/loadout", "/skills/mind", "/taxonomy", "/workspace", "/you/roadmap/new", "/overview", "/dashboard", "/train/exercise"].map(activeSub),
+  ["/today", "/today/week", "/today/habits", "/today/rules", "/you/loadout", "/skills", "/structure", "/review", "/you/roadmap", "/you", "/you/stats", "/train/exercise"]
 );
 eq("nav: longDate is the life day's own calendar date", longDate("2026-10-01"), "Thursday, 1 October");
 eq("nav: /today title is the date, under the board's own 'Today' (its ShellTitle, so nothing swaps)", titleFor("/today", "2026-10-01"), { eyebrow: "Today", title: "Thursday, 1 October" });
@@ -187,6 +189,7 @@ eq("nav: under /today/work/<id>/orders the work tab stays the current tab, on Ta
   { eyebrow: "Work", title: "Orders" },
 ]);
 eq("nav: /today/week title", titleFor("/today/week"), { eyebrow: "Tasks", title: "Weekly review" });
+eq("nav: /today/habits title (from the path: no ShellTitle swap)", titleFor("/today/habits"), { eyebrow: "Tasks", title: "Habits" });
 eq("nav: /add title", titleFor("/add"), { eyebrow: "Ideas", title: "New idea" });
 eq("nav: /library/[id] title", titleFor("/library/xyz"), { eyebrow: "Ideas", title: "Idea" });
 eq("nav: /structure title", titleFor("/structure"), { eyebrow: "Ideas", title: "Fields & Domains" });
@@ -340,7 +343,7 @@ check(
     "strips: subsOf with no work tab is each group's own sub-pages (every section and the profile), and only Tasks ever takes a work tab",
     [...SECTIONS.map((x) => x.id), "you" as const].every((id) => JSON.stringify(subsOf(id, null)) === JSON.stringify(sectionById(id).subs) && JSON.stringify(subsOf(id, [])) === JSON.stringify(sectionById(id).subs)) &&
       SECTIONS.filter((x) => x.id !== "tasks").every((x) => subsOf(x.id, [{ id: "w1", name: "Acme" }]).length === x.subs.length) &&
-      subsOf("tasks", [{ id: "w1", name: "Acme" }]).map((x) => x.href).join() === "/today,/today/work/w1,/today/week,/today/rules"
+      subsOf("tasks", [{ id: "w1", name: "Acme" }]).map((x) => x.href).join() === "/today,/today/work/w1,/today/week,/today/habits,/today/rules"
   );
   check("phone strip: each tab is a link, aria-current on the current one, data-chrome when it is the shell's", /className="tab-s" aria-current=\{s\.href === current \? "page" : undefined\}/.test(tabs) && /data-chrome=\{chrome \? "" : undefined\}/.test(tabs) && /className=\{cx\("tabs sub-tabs", className\)\}/.test(tabs));
   {
@@ -351,9 +354,9 @@ check(
     check("phone strip: the profile strip leaves from 600 too (you.css)", youCss.some((r) => r.at.some((a) => /min-width:\s*600px/.test(a)) && /\.you-tabs/.test(r.selector) && /display:\s*none/.test(r.body)));
   }
   eq(
-    "phone strip: each section's tabs, from nav.ts (Ideas 5, Tasks 3, Body 2; all over one page, so all shown)",
+    "phone strip: each section's tabs, from nav.ts (Ideas 5, Tasks 4, Body 2; all over one page, so all shown)",
     SECTIONS.map((x) => [x.id, x.subs.length]),
-    [["ideas", 5], ["tasks", 3], ["body", 2]]
+    [["ideas", 5], ["tasks", 4], ["body", 2]]
   );
   check(`tabs at 344: the Ideas strip (${widthAt(sectionById("ideas").subs.map((x) => x.label))} px at least) scrolls, so its cue matters`, widthAt(sectionById("ideas").subs.map((x) => x.label)) > 312);
 }

@@ -263,6 +263,14 @@ html[data-motion="calm"] .ask-badge-dot::before, html[data-motion="calm"] .ask-b
 .today-lane .lane-count { margin-left: auto; font-size: 13px; color: var(--ink-2); white-space: nowrap; }
 .today-lane .lane-stamp { margin-left: auto; }
 .today-lane .lane-stamp + .lane-count { margin-left: 10px; }
+/* The Habits lane's "Year" (Tasks › Habits, each habit's year): a quiet link after the count, a 44 px target whose
+   negative margins leave the 28 px header as it was. */
+.today-lane .lane-link {
+  margin: -8px -4px -8px 2px; min-height: 44px; padding: 0 8px; display: inline-flex; align-items: center; border-radius: 10px;
+  font: 600 13px/16px var(--font-ui); color: var(--ink-1); text-decoration: underline; text-decoration-color: var(--line-ctl); text-underline-offset: 3px;
+}
+.today-lane .lane-link:hover { color: var(--ink-0); }
+.today-lane .lane-link:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 /* The lane's colour code (tokens.css "Lane"): the Must lane's diamond and name wear --must, the Habits lane's --habit. */
 .today-lane.lane-must .lane-mark { border-color: var(--must); }
 .today-lane.lane-must .lane-h h2 { color: var(--must); }
@@ -414,6 +422,12 @@ html[data-motion="calm"] .t-row[data-motion="arrive"] { animation: today-fade 20
 .today-pill[data-tone="primary"] { background: var(--ink-0); color: var(--page); border-color: var(--ink-0); }
 .today-pill[data-tone="danger"] { border-color: var(--owed); color: var(--owed); }
 .today-drawer-note { margin-top: 6px; font-size: 13px; line-height: 18px; color: var(--ink-2); }
+/* "Track record ›": a personal habit's year on Tasks › Habits (its card ringed), a 44 px link. */
+.today-drawer .td-record {
+  min-height: 44px; display: inline-flex; align-items: center; padding: 0 2px; border-radius: 8px;
+  font: 600 14px/18px var(--font-ui); color: var(--ink-0); text-decoration: underline; text-decoration-color: var(--line-ctl); text-underline-offset: 3px;
+}
+.today-drawer .td-record:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .today-input { flex: 1 1 200px; min-width: 0; min-height: 44px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line-ctl); background: var(--sunken); color: var(--ink-0); font: 400 15px/1.3 var(--font-ui); }
 .today-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 /* 16 px on phones so the browser never zooms in (base.css's rule loses to this layer). */

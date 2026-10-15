@@ -4,7 +4,7 @@
  * The top bar (56; 60 from 600; 52 when max-height is 760). Opaque, never blurred.
  *   compact: crest button (the profile menu) · eyebrow + display-s title · Asks bell
  *   medium:  title · the section's sub-page tabs (the profile's on a profile page) · Asks bell
- *            (Tasks: Board · <work tabs> · [+] · Weekly review · Rules; nav.ts subsOf over ShellData.work)
+ *            (Tasks: Board · <work tabs> · [+] · Weekly review · Habits · Rules; nav.ts subsOf over ShellData.work)
  *   wide:    title · Asks bell (the sidebar carries the sections' sub-pages); on a profile
  *            page the profile's tabs stay (data-group="you", chrome.css), since the
  *            sidebar lists only the sections

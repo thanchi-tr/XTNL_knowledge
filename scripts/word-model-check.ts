@@ -547,7 +547,13 @@ function wiringChecks() {
 
   const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
   const ui = pkg.scripts["ui:check"].split("&&").map((s) => s.trim());
-  check("package.json: ui:check runs this check just before push-check; word-model:check runs it alone", ui[ui.indexOf("tsx scripts/word-model-check.ts") + 1] === "tsx scripts/push-check.ts" && pkg.scripts["word-model:check"] === "tsx scripts/word-model-check.ts");
+  // habit-history-check (2026-10-15) runs between this check and push-check.
+  check(
+    "package.json: ui:check runs this check just before habit-history-check, then push-check; word-model:check runs it alone",
+    ui[ui.indexOf("tsx scripts/word-model-check.ts") + 1] === "tsx scripts/habit-history-check.ts" &&
+      ui[ui.indexOf("tsx scripts/word-model-check.ts") + 2] === "tsx scripts/push-check.ts" &&
+      pkg.scripts["word-model:check"] === "tsx scripts/word-model-check.ts"
+  );
   const sql = read("prisma/migrations/20261221000000_word_choices/migration.sql").replace(/--.*$/gm, "");
   check("migration: one new table with its unique (userId, word, context); nothing altered or dropped", (sql.match(/CREATE TABLE/g) ?? []).length === 1 && sql.includes('"WordChoice_userId_word_context_key" ON "public"."WordChoice"("userId", "word", "context")') && !/\b(ALTER|DROP)\b/.test(sql));
 }

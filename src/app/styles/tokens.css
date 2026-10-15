@@ -10,6 +10,7 @@
      Signal    state of a thing in time: kept · owed · held
      Lane      what kind of task a Today card is: a must (--must) · a habit (--habit);
                never state (a done tick is still kept), always beside its shape and lane name
+               (habit hues --hab-1..8: which habit a year card is, on Tasks › Habits only, beside its name)
      Currency  life XP (--xp) · review points (--pts) · mastery points (--mp)
      Material  rarity, depth and the character band: iron → astral
      Light     earned, and only for now
@@ -43,6 +44,10 @@
      Text-grade on page / card / raised / overlay / sunken; ΔE ≥ 8 from every signal and currency hue, protan and deutan too */
   --must:#f06410;    /* duty, warm:      6.05 / 5.69 / 5.31 / 4.89 / 6.20 */
   --habit:#8c7aff;   /* recurring, cool: 5.87 / 5.52 / 5.15 / 4.75 / 6.02 */
+  /* habit hues: one habit's identity on its year card (Tasks › Habits: its done squares and its glyph), always beside
+     its name, never text, never the Must orange. Done ≥ 3 on card (scripts/habit-history-check.ts):
+     6.49 / 9.83 / 6.62 / 8.36 / 6.79 / 8.67 / 10.07 / 10.29 */
+  --hab-1:#4f9cf9; --hab-2:#f2b33d; --hab-3:#ef6fb4; --hab-4:#47c587; --hab-5:#a58cff; --hab-6:#2fc4d3; --hab-7:#a3cf45; --hab-8:#8cc8ff;
   /* currency: glyph marks. The figure beside a glyph is always ink */
   --xp:#fdaf3a;  --on-xp:#221400;   /* life XP · spark */
   --pts:#8ea6ff; --on-pts:#07103a;  /* review points · faceted lozenge */
@@ -68,6 +73,8 @@
   /* signal text ≥ 4.5 on its own chip wash (12% / 12% / 11%) over every surface, sunken included: kept 5.07, owed 4.53, held 5.13 */
   --kept:#155f36; --on-kept:#fff; --owed:#9c2f6b /* 6.81 */; --on-owed:#fff; --held:#0c5a73; --on-held:#fff;
   --must:#6b1804 /* 11.75 card, 9.34 sunken */; --habit:#691594 /* 9.67 card, 7.69 sunken */;
+  /* habit hues on card: 5.93 / 5.58 / 6.38 / 5.69 / 6.52 / 5.77 / 5.70 / 6.74 */
+  --hab-1:#1d5fc4; --hab-2:#8f5c00; --hab-3:#a82a72; --hab-4:#17744a; --hab-5:#5e45c9; --hab-6:#0a6f7d; --hab-7:#4c7000; --hab-8:#145f8f;
   --xp:#a33d00 /* 6.41 */; --on-xp:#fff; --pts:#3450c2 /* 6.72 */; --on-pts:#fff; --mp:#b47308 /* 3.83, glyph only */; --on-mp:#1f1500;
   --light:#a87419 /* a mark: ≥ 3 on every surface, 3.17 sunken */; --light-glow:rgba(168,116,25,.22); --shadow-pop:0 16px 40px -14px rgba(40,30,10,.35);
 }

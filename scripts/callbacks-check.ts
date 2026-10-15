@@ -754,10 +754,14 @@ function wiring() {
   const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
   const ui = pkg.scripts["ui:check"].split("&&").map((s) => s.trim());
   const at = ui.indexOf("tsx scripts/callbacks-check.ts");
-  // word-model-check (2026-10-13) runs between this check and push-check.
+  // word-model-check (2026-10-13) and habit-history-check (2026-10-15) run between this check and push-check.
   check(
-    "package.json: ui:check runs this check before push-check (word-model-check between), still ending with roadmap-ui-check",
-    at >= 0 && ui[at + 1] === "tsx scripts/word-model-check.ts" && ui[at + 2] === "tsx scripts/push-check.ts" && pkg.scripts["ui:check"].endsWith(" && tsx scripts/roadmap-ui-check.ts")
+    "package.json: ui:check runs this check before push-check (word-model-check and habit-history-check between), still ending with roadmap-ui-check",
+    at >= 0 &&
+      ui[at + 1] === "tsx scripts/word-model-check.ts" &&
+      ui[at + 2] === "tsx scripts/habit-history-check.ts" &&
+      ui[at + 3] === "tsx scripts/push-check.ts" &&
+      pkg.scripts["ui:check"].endsWith(" && tsx scripts/roadmap-ui-check.ts")
   );
   check("package.json: callbacks:check runs it alone", pkg.scripts["callbacks:check"] === "tsx scripts/callbacks-check.ts");
 
