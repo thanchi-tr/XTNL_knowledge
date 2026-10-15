@@ -9,7 +9,7 @@
  * Escape or a press outside closes it. Read-only: nothing here writes.
  */
 import Link from "next/link";
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { addDays, daysBetween, type DayKey } from "@/lib/life-day";
 import { RECORD_YESTERDAY_HREF } from "@/lib/shortcuts";
 import { TASK_ICONS } from "@/lib/task-style";
@@ -262,7 +262,15 @@ export function HabitCard({ card, year, today }: { card: HabitYearCard; year: nu
         )}
       </div>
 
-      <p className="hh-foot">{card.foot}</p>
+      {/* Each part of the line keeps together (never "this week 2 of" / "3" at 344 px). */}
+      <p className="hh-foot">
+        {card.foot.split(" · ").map((part, k) => (
+          <Fragment key={k}>
+            {k > 0 && " · "}
+            <span className="hh-keep">{part}</span>
+          </Fragment>
+        ))}
+      </p>
     </article>
   );
 }

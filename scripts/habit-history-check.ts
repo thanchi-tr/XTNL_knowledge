@@ -446,7 +446,7 @@ async function grid() {
   check("render: each square opens a dialog (aria-haspopup), the focused one says whether it is open", /aria-haspopup="dialog"/.test(html) && /tabindex="0" aria-label="Thu 15 Oct: due today" aria-haspopup="dialog" aria-expanded="false"/.test(html));
   check("render: the grid is named and described by the card's summary in words", /role="grid" class="hh-grid" aria-label="Drink water, 2026: a square a day" aria-describedby="([^"]+)"/.test(html) && /<p id="[^"]+" class="sr-only">Drink water, every day, 2026: \d+% kept\./.test(html));
   check("render: month labels above (hidden from screen readers; each square carries its date)", /<div class="hh-months" aria-hidden="true"><span style="--col:0">Jan<\/span>/.test(html));
-  check("render: the footer line", /<p class="hh-foot">Current 1 · best 1 · this week 1 of 7<\/p>/.test(html), /<p class="hh-foot">[^<]*<\/p>/.exec(html)?.[0]);
+  check("render: the footer line, each part kept together", /<p class="hh-foot"><span class="hh-keep">Current 1<\/span> · <span class="hh-keep">best 1<\/span> · <span class="hh-keep">this week 1 of 7<\/span><\/p>/.test(html), /<p class="hh-foot">.*?<\/p>/.exec(html)?.[0]);
   check("render: no popover until a day is opened; no <main>", !/hh-pop/.test(html) && !/<main\b/.test(html));
 
   const { Lane } = await import("../src/components/today/Lane");

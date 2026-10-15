@@ -53,6 +53,7 @@
   .hh-rule { margin: 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); overflow-wrap: anywhere; }
   .hh-pct { margin: 0; font: 600 20px/24px var(--font-display); color: var(--ink-0); font-variant-numeric: tabular-nums lining-nums; white-space: nowrap; }
   .hh-foot { margin: 8px 0 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); font-variant-numeric: tabular-nums lining-nums; }
+  .hh-keep { white-space: nowrap; }
 
   /* ---------- the year grid ---------- */
   .hh-gridwrap { position: relative; margin-top: 10px; }
@@ -71,6 +72,8 @@
     position: absolute; top: 0; left: calc(var(--col) * (var(--hh-sq) + var(--hh-gap)));
     font: 600 12px/16px var(--font-ui); color: var(--ink-2); white-space: nowrap;
   }
+  /* A narrow year (a month is ~26 px at 344 px) labels every other month, so no two names run together. */
+  @container (max-width: 399px) { .hh-months span:nth-child(even) { display: none; } }
   .hh-grid { display: flex; flex-direction: column; gap: var(--hh-gap); }
   .hh-row { display: flex; gap: var(--hh-gap); }
   .hh-d, .hh-sq { flex: none; width: var(--hh-sq, 10px); height: var(--hh-sq, 10px); border-radius: 2px; background: var(--line-1); }
@@ -90,7 +93,7 @@
 
   /* ---------- a day's popover (under the grid, pointing at its square) ---------- */
   .hh-pop {
-    position: absolute; z-index: 5; width: min(272px, 100%); padding: 10px 6px 4px 12px;
+    position: absolute; z-index: 5; width: min(296px, 100%); padding: 10px 6px 4px 12px;
     border-radius: 12px; border: 1px solid var(--line-2); background: var(--overlay); box-shadow: var(--shadow-pop);
   }
   .hh-pop::before {
@@ -102,7 +105,7 @@
   .hh-pop-s .hh-sq { --hh-sq: 10px; }
   .hh-pop-a { display: flex; align-items: center; gap: 2px; margin-top: 2px; }
   .hh-pop-link {
-    min-height: 44px; display: inline-flex; align-items: center; margin-right: auto; padding-right: 6px;
+    min-height: 44px; display: inline-flex; align-items: center; margin-right: auto; padding-right: 6px; white-space: nowrap;
     font: 600 13px/18px var(--font-ui); color: var(--ink-0); text-decoration: underline; text-underline-offset: 3px;
   }
   .hh-pop-gap { margin-right: auto; }
