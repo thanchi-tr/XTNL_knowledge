@@ -194,10 +194,23 @@
     background: transparent; color: var(--ink-1); display: flex; flex-direction: column; gap: 2px; font: inherit;
   }
   .add-type:hover { border-color: var(--line-ctl); }
-  .add-type[aria-checked="true"] { border-color: var(--ink-0); box-shadow: inset 0 0 0 1px var(--ink-0); }
+  .add-type[aria-pressed="true"] { border-color: var(--ink-0); box-shadow: inset 0 0 0 1px var(--ink-0); }
   .add-type b { font: 600 14px/18px var(--font-ui); color: var(--ink-0); display: flex; justify-content: space-between; gap: 6px; }
   .add-type b .cur { font-weight: 600; color: var(--ink-1); }
   .add-type span.t-meta { font-size: 13px; }
+  /* Each card's key (Alt+1–7, shortcuts.ts 'idea-format'): on a mouse and a
+     keyboard only, never on touch or a phone's width. Out of flow, set into
+     the bottom border like a legend, so no card's layout or height changes
+     at any width. */
+  .add-type { position: relative; }
+  .add-type .add-type-key { display: none; }
+  @media (hover: hover) and (pointer: fine) and (min-width: 600px) {
+    .add-type .add-type-key {
+      display: block; position: absolute; right: 14px; bottom: -6px; padding: 0 4px;
+      background: var(--card); color: var(--ink-2); font: 600 12px/12px var(--font-mono);
+      white-space: nowrap; pointer-events: none;
+    }
+  }
   .add-items { display: flex; flex-direction: column; gap: 8px; }
   .add-item { display: flex; gap: 8px; align-items: center; }
   .add-item .n { width: 22px; flex: none; text-align: right; font: 500 13px var(--font-mono); color: var(--ink-2); }

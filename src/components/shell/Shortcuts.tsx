@@ -15,7 +15,9 @@
  *
  * The rule of what runs is pure (shortcuts.ts decideShortcut): never while
  * typing, with a dialog or sheet open, on a held key, mid-composition, or on
- * a key something else handled; during a review session only '?'.
+ * a key something else handled; during a review session only '?'. Ctrl+C
+ * (New idea) also waits while anything is selected (textSelected), so the
+ * browser copies it, and is never prevented then.
  *
  * 'y' (Record yesterday): on /today it asks the board to open its sheet
  * (RECORD_YESTERDAY_EVENT); anywhere else it goes to /today?sheet=yesterday.
@@ -41,6 +43,7 @@ import {
   STANDARD_KEYS,
   decideShortcut,
   keyParts,
+  keyRange,
   sequenceTargets,
   type SequenceState,
   type Shortcut,
@@ -52,6 +55,25 @@ import "./shortcuts.css";
 
 /** A running review session: its runner owns the keys. */
 export const REVIEW_SESSION_SELECTOR = "[data-review-session]";
+
+/**
+ * Whether anything is selected, for Ctrl+C (shortcuts.ts ShortcutEnv
+ * hasSelection): a non-collapsed window selection (text, an image), or a
+ * selection inside the focused input or textarea, which the window's
+ * selection does not always report.
+ */
+function textSelected(): boolean {
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0 && !sel.isCollapsed) return true;
+  const a = document.activeElement;
+  if (!(a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement)) return false;
+  try {
+    return a.selectionStart !== null && a.selectionEnd !== null && a.selectionStart !== a.selectionEnd;
+  } catch {
+    // An input type without a text selection (older browsers throw here).
+    return false;
+  }
+}
 
 const GROUPS: readonly Shortcut["group"][] = SHORTCUT_GROUPS;
 
@@ -74,15 +96,21 @@ function Cap({ k }: { k: string }) {
   );
 }
 
-/** One key in the app's notation as keycaps: 'Alt+N' → Alt + N, 'g t' → g then t, '1-9' → 1 to 9. */
+/** One key in the app's notation as keycaps: 'Alt+N' → Alt + N, 'g t' → g then t, '1-9' → 1 to 9, 'Alt+1-7' → Alt + 1 to 7. */
 export function ShortcutKeys({ k }: { k: string }) {
-  const range = /^(\d)-(\d)$/.exec(k);
+  const range = keyRange(k);
   if (range) {
     return (
       <span className="sc-combo">
-        <Cap k={range[1]} />
+        {range.mods.map((m) => (
+          <Fragment key={m}>
+            <Cap k={m} />
+            <span className="sc-sep">+</span>
+          </Fragment>
+        ))}
+        <Cap k={String(range.from)} />
         <span className="sc-sep">to</span>
-        <Cap k={range[2]} />
+        <Cap k={String(range.to)} />
       </span>
     );
   }
@@ -232,6 +260,8 @@ export function Shortcuts() {
         target: e.target instanceof Element ? e.target : null,
         modalOpen: document.querySelector(MODAL_OPEN_SELECTOR) !== null,
         reviewSession: document.querySelector(REVIEW_SESSION_SELECTOR) !== null,
+        hasSelection: textSelected(),
+        path: pathRef.current,
         now: Date.now(),
       });
       if (d.consume) e.preventDefault();

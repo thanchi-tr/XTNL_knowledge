@@ -5,7 +5,11 @@
  *   (a) No shortcut, read on Windows/Linux or on a Mac (Ctrl as Cmd, Alt as
  *       Option), is one of Chrome's or Edge's own (BROWSER_RESERVED).
  *       Page-wide keys carry no modifier; chords use only Alt (+Shift), never
- *       Ctrl or Cmd, never Ctrl+Alt (AltGr).
+ *       Ctrl or Cmd, never Ctrl+Alt (AltGr). The one exception is the
+ *       user's (shortcuts.ts USER_CHOSEN_CHORDS, 2026-10-19), held to exactly
+ *       Ctrl+C on New idea; every other Ctrl or Cmd chord (Ctrl+1–9 and
+ *       Cmd+1–9 among them) and every BROWSER_RESERVED key is still refused
+ *       (probes).
  *   (b) Ids are unique; keys are unique per scope (global and anywhere count
  *       as one: both are live on every page); a sequence prefix is no key of
  *       its own.
@@ -26,17 +30,28 @@
  *   (h) The three sections: the keys are unchanged; the 'Go to' labels and
  *       the groups say the shell's own words (Ideas, Tasks, Body, the
  *       profile's Character), and 'c' says it captures by section.
+ *   (i) The user's keys (2026-10-19): Ctrl+C opens New idea only with Ctrl
+ *       alone held, nothing selected, not in a field, no dialog, not on /add,
+ *       never as Cmd+C; Alt+1–7 pick the format cards in order on /add only,
+ *       by the physical top-row digit, even while typing, never a numpad
+ *       digit, Alt+8/9 or with another modifier; Ctrl+1–9 and Cmd+1–9 are
+ *       never bound. Truth tables for both, and their wiring (the global
+ *       handler reads the selection; the form's key calls the card's own
+ *       click path).
  */
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { isAltDeadKeyInField, isCaptureHotkey, isTypingTarget, type TargetLike } from "../src/lib/capture-parse";
 import { isUndoCaptureKey } from "../src/components/capture/capture-ui";
 import { PROFILE, sectionById } from "../src/components/shell/nav";
+import { ADD_FORMATS } from "../src/lib/idea-handoff";
 import {
   BROWSER_NOTE,
   BROWSER_RESERVED,
   CAPTURE_ARIA_KEYS,
   CAPTURE_OWNED,
+  COPY_KEY,
+  FORMAT_KEYS,
   GLOBAL_HANDLED,
   MAC_NOTE,
   MODAL_OPEN_SELECTOR,
@@ -50,10 +65,15 @@ import {
   SHORTCUTS,
   SHORTCUT_GROUPS,
   STANDARD_KEYS,
+  USER_CHOSEN_CHORDS,
+  ariaKeyOf,
   ariaKeysOf,
   decideShortcut,
+  expandKey,
+  formatKeyIndex,
   isKey,
   keyParts,
+  keyRange,
   normalizeKey,
   sequenceTargets,
   sequenceWaiting,
@@ -78,16 +98,8 @@ function check(name: string, ok: boolean, detail = "") {
 
 // ── Notation helpers ────────────────────────────────────────────────────────
 
-/** Every single key a shortcut's notation stands for ('1-9' → 1…9; a sequence → its own string). */
-function expand(k: string): string[] {
-  const range = /^(\d)-(\d)$/.exec(k);
-  if (range) {
-    const out: string[] = [];
-    for (let d = Number(range[1]); d <= Number(range[2]); d++) out.push(String(d));
-    return out;
-  }
-  return [k];
-}
+/** Every single key a shortcut's notation stands for ('1-9' → 1…9, 'Alt+1-7' → Alt+1…Alt+7; a sequence → its own string): shortcuts.ts expandKey, pinned in (a). */
+const expand = expandKey;
 
 /** A key in BROWSER_RESERVED's notation: modifiers Ctrl, Cmd, Alt, Shift in that order, letters upper case, '→' as ArrowRight. */
 function canon(k: string): string {
@@ -111,30 +123,65 @@ const RESERVED = new Set(BROWSER_RESERVED.map(canon));
 console.log("── (a) No Chrome or Edge shortcut");
 {
   check("BROWSER_RESERVED: holds Chrome's and Edge's well-known chords (Ctrl+K, Ctrl+Enter, Ctrl+Shift+C, Space, Alt+Shift+N)", ["Ctrl+K", "Cmd+K", "Ctrl+Enter", "Ctrl+Shift+C", "Space", "Alt+Shift+N", "Alt+F", "Alt+D", "F6"].every((k) => RESERVED.has(canon(k))));
-  const clashes: string[] = [];
-  for (const s of SHORTCUTS) {
-    for (const k of s.keys) {
-      const singles = k.includes(" ") ? k.split(" ") : expand(k);
-      for (const one of [...singles, k]) for (const r of readings(one)) if (RESERVED.has(r)) clashes.push(`${s.id} '${k}' reads as ${r}`);
-    }
-  }
+  check("BROWSER_RESERVED: Ctrl+1–9 and Cmd+1–9 are the browsers' tab keys; no Alt+digit is reserved", [1, 2, 3, 4, 5, 6, 7, 8, 9].every((d) => RESERVED.has(`Ctrl+${d}`) && RESERVED.has(`Cmd+${d}`) && !RESERVED.has(`Alt+${d}`)));
+  check("expandKey: '1-9' is 1…9, 'Alt+1-7' is Alt+1…Alt+7, a plain key or a sequence is itself", expandKey("1-9").join(" ") === "1 2 3 4 5 6 7 8 9" && expandKey("Alt+1-7").join(" ") === "Alt+1 Alt+2 Alt+3 Alt+4 Alt+5 Alt+6 Alt+7" && expandKey("Ctrl+C").join() === "Ctrl+C" && expandKey("g t").join() === "g t");
+
+  // The user's exception (USER_CHOSEN_CHORDS): exactly Ctrl+C on New idea, and nothing else.
+  type Entry = { id: string; keys: readonly string[] };
+  const exception = new Map(USER_CHOSEN_CHORDS.flatMap((c) => expand(c.key).map((k) => [canon(k), c.id] as const)));
+  const excepted = (id: string, k: string) => exception.get(canon(k)) === id;
+  check(
+    "USER_CHOSEN_CHORDS: exactly Ctrl+C on new-idea (global, to /add), which New idea lists as a second key",
+    JSON.stringify(USER_CHOSEN_CHORDS.map((c) => [c.key, c.id])) === JSON.stringify([["Ctrl+C", "new-idea"]]) && COPY_KEY === "Ctrl+C" && shortcutOf("new-idea").scope === "global" && shortcutOf("new-idea").href === "/add" && shortcutOf("new-idea").keys.join(" ") === "i Ctrl+C",
+    JSON.stringify(USER_CHOSEN_CHORDS)
+  );
+  /** A shortcut key that is a browser's (itself, any key of a sequence, or its Mac reading), unless it is the user's exception. */
+  const clashesOf = (list: readonly Entry[]) =>
+    list.flatMap((s) =>
+      s.keys.flatMap((k) => {
+        const singles = k.includes(" ") ? k.split(" ") : expand(k);
+        return [...singles, k].filter((one) => !excepted(s.id, one)).flatMap((one) => readings(one).filter((r) => RESERVED.has(r)).map((r) => `${s.id} '${k}' reads as ${r}`));
+      })
+    );
+  /** A Ctrl or Cmd chord (any modifier but Alt and Shift), unless it is the user's exception. */
+  const ctrlCmdOf = (list: readonly Entry[]) =>
+    list.flatMap((s) => s.keys.filter((k) => !k.includes(" ")).flatMap(expand).filter((k) => keyParts(k).slice(0, -1).some((m) => m !== "Alt" && m !== "Shift") && !excepted(s.id, k)).map((k) => `${s.id} '${k}'`));
+  const clashes = clashesOf(SHORTCUTS);
   check("no shortcut (nor any key of a sequence, nor its Mac reading) is a browser shortcut", clashes.length === 0, clashes.join("; "));
+  check("the exception is no browser key either: Ctrl+C and its Mac reading Cmd+C are in no BROWSER_RESERVED list (copy is the system's)", !RESERVED.has("Ctrl+C") && !RESERVED.has("Cmd+C"));
+  // Probes: the rule still refuses everything but the exception.
+  const probes: Entry[] = [
+    { id: "new-idea", keys: ["Ctrl+K"] },
+    { id: "new-idea", keys: ["Cmd+C"] },
+    { id: "new-idea", keys: ["Ctrl+Shift+C"] },
+    { id: "search", keys: ["Ctrl+C"] },
+    { id: "idea-format", keys: ["Ctrl+1-7"] },
+    { id: "idea-format", keys: ["Ctrl+8"] },
+    { id: "idea-format", keys: ["Cmd+1"] },
+    { id: "capture", keys: ["Ctrl+N"] },
+  ];
+  const unrefused = probes.filter((p) => ctrlCmdOf([p]).length === 0).map((p) => `${p.id} '${p.keys[0]}'`);
+  check("probes: every other Ctrl/Cmd chord is still refused (Ctrl+K, Cmd+C, Ctrl+Shift+C, Ctrl+C on any other shortcut, Ctrl+1–7, Ctrl+8, Cmd+1, Ctrl+N)", unrefused.length === 0, unrefused.join("; "));
+  const unclashed = probes.filter((p) => p.keys[0] !== "Ctrl+C" && p.keys[0] !== "Cmd+C" && clashesOf([p]).length === 0).map((p) => `${p.id} '${p.keys[0]}'`);
+  check("probes: and each reserved one still clashes with the browsers (Ctrl+1–7 and Ctrl+8 as tab keys among them)", unclashed.length === 0, unclashed.join("; "));
+  check("probes: an Alt key in BROWSER_RESERVED (Alt+F, Alt+D, Alt+Shift+N) still clashes", ["Alt+F", "Alt+D", "Alt+Shift+N"].every((k) => clashesOf([{ id: "idea-format", keys: [k] }]).length > 0));
 
   const pageWide = SHORTCUTS.filter((s) => s.scope === "global");
-  const modded = pageWide.flatMap((s) => s.keys.filter((k) => !k.includes(" ") && k !== "Shift+?" && keyParts(k).length > 1).map((k) => `${s.id} '${k}'`));
-  check("page-wide (global) keys carry no modifier ('Shift+?' is the layout's own Shift)", modded.length === 0, modded.join("; "));
+  const modded = pageWide.flatMap((s) => s.keys.filter((k) => !k.includes(" ") && k !== "Shift+?" && keyParts(k).length > 1 && !excepted(s.id, k)).map((k) => `${s.id} '${k}'`));
+  check("page-wide (global) keys carry no modifier ('Shift+?' is the layout's own Shift), but the user's Ctrl+C", modded.length === 0, modded.join("; "));
   const seqBad = pageWide.flatMap((s) => s.keys.filter((k) => k.includes(" ")).filter((k) => !/^g [a-z]$/.test(k)).map((k) => `${s.id} '${k}'`));
   check("sequences are 'g' then one letter", seqBad.length === 0, seqBad.join("; "));
 
   const chords = SHORTCUTS.flatMap((s) => s.keys.filter((k) => !k.includes(" ") && keyParts(k).length > 1).map((k) => ({ id: s.id, k, mods: keyParts(k).slice(0, -1) })));
-  const badMods = chords.filter((c) => c.mods.some((m) => m !== "Alt" && m !== "Shift")).map((c) => `${c.id} '${c.k}'`);
-  check("chords use only Alt (+Shift): never Ctrl or Cmd", badMods.length === 0, badMods.join("; "));
+  const badMods = ctrlCmdOf(SHORTCUTS);
+  check("chords use only Alt (+Shift): never Ctrl or Cmd, but the user's Ctrl+C (USER_CHOSEN_CHORDS)", badMods.length === 0, badMods.join("; "));
+  check("no Ctrl or Cmd digit anywhere: Ctrl+1–9 and Cmd+1–9 are never bound", !SHORTCUTS.some((s) => s.keys.flatMap(expand).some((k) => /^(Ctrl|Cmd)\+(\S+\+)*\d$/.test(k))));
   const altGr = chords.filter((c) => c.mods.includes("Ctrl") && c.mods.includes("Alt")).map((c) => `${c.id} '${c.k}'`);
   check("no chord is Ctrl+Alt (AltGr types characters on Windows and Linux keyboards)", altGr.length === 0, altGr.join("; "));
   const anywhere = SHORTCUTS.filter((s) => s.scope === "anywhere");
   check("the one chord that works while typing is Alt+N", anywhere.length === 1 && anywhere[0].keys.length === 1 && anywhere[0].keys[0] === "Alt+N");
   const altChords = chords.filter((c) => c.mods.includes("Alt")).map((c) => c.k);
-  check("Alt chords: Alt+N, Alt+Enter, Alt+B and nothing else", JSON.stringify([...altChords].sort()) === JSON.stringify(["Alt+B", "Alt+Enter", "Alt+N"]), altChords.join(", "));
+  check("Alt chords: Alt+N, Alt+Enter, Alt+B, Alt+1-7 and nothing else", JSON.stringify([...altChords].sort()) === JSON.stringify(["Alt+1-7", "Alt+B", "Alt+Enter", "Alt+N"]), altChords.join(", "));
   check("Alt+Shift+N (Chrome's and Edge's) is reserved, and not ours", RESERVED.has("Alt+Shift+N") && !SHORTCUTS.some((s) => s.keys.some((k) => canon(k) === "Alt+Shift+N")));
   const std = STANDARD_KEYS.map((s) => s.keys);
   check("STANDARD_KEYS (Esc, Tab, Enter, Ctrl+Z) are never bound as page-wide shortcuts", !SHORTCUTS.some((s) => (s.scope === "global" || s.scope === "anywhere") && s.keys.some((k) => std.includes(k))));
@@ -360,15 +407,15 @@ console.log("\n── (d) The pure rules");
     const named: Record<string, string> = { "→": "ArrowRight", Space: " " };
     const key = named[base] ?? (base.length === 1 ? base.toLowerCase() : base);
     const codeOf = /^[a-z]$/i.test(base) ? `Key${base.toUpperCase()}` : /^\d$/.test(base) ? `Digit${base}` : base === "Enter" ? "Enter" : undefined;
-    return ev(key === "?" ? "?" : key, { altKey: mods.includes("Alt"), shiftKey: mods.includes("Shift"), code: codeOf });
+    return ev(key === "?" ? "?" : key, { ctrlKey: mods.includes("Ctrl"), metaKey: mods.includes("Cmd"), altKey: mods.includes("Alt"), shiftKey: mods.includes("Shift"), code: codeOf });
   };
   const roundTrip = SHORTCUTS.flatMap((s) => s.keys.flatMap((k) => (k.includes(" ") ? k.split(" ") : expand(k))).filter((k) => normalizeKey(toEvent(k)) !== k).map((k) => `${s.id}: ${k} → ${normalizeKey(toEvent(k))}`));
   check("normalize: every key in SHORTCUTS reads back from its own keydown", roundTrip.length === 0, roundTrip.join("; "));
   check("isKey: Alt+Enter and Alt+B, but not held or already handled", isKey(ev("Enter", { altKey: true, code: "Enter" }), "Alt+Enter") && isKey(ev("b", { altKey: true, code: "KeyB" }), "Alt+B") && !isKey(ev("b", { altKey: true, code: "KeyB", repeat: true }), "Alt+B") && !isKey(ev("Enter", { altKey: true, defaultPrevented: true }), "Alt+Enter") && !isKey(ev("Enter", { ctrlKey: true }), "Alt+Enter"));
 
   // decideShortcut
-  const env = (over: Partial<ShortcutEnv> = {}): ShortcutEnv => ({ target: body, modalOpen: false, reviewSession: false, now: 10_000, ...over });
-  const runs = (e: KeyEventLike, over: Partial<ShortcutEnv> = {}, seq: SequenceState = SEQUENCE_IDLE) => decideShortcut(e, seq, env(over)).run?.id ?? null;
+  const env = (over: Partial<ShortcutEnv> = {}): ShortcutEnv => ({ target: body, modalOpen: false, reviewSession: false, hasSelection: false, path: "/", now: 10_000, ...over });
+  const runs =(e: KeyEventLike, over: Partial<ShortcutEnv> = {}, seq: SequenceState = SEQUENCE_IDLE) => decideShortcut(e, seq, env(over)).run?.id ?? null;
   const d = (name: string, got: string | null, want: string | null) => check(`decide: ${name} → ${want ?? "nothing"}`, got === want, String(got));
   for (const s of GLOBAL_HANDLED) {
     if (s.keys.some((k) => k.includes(" "))) continue;
@@ -476,8 +523,14 @@ console.log("\n── (e) aria-keyshortcuts");
 {
   const want = `${ariaKeysOf("capture")} ${ariaKeysOf("capture-anywhere")}`;
   check("MAC_NOTE: Option+N opens capture outside text fields; inside one it types ˜ (step out first)", /^On a Mac, Alt is the Option key\. Option\+N opens capture outside text fields; inside a field, .+ first \(Option\+N there types ˜\)\.$/.test(MAC_NOTE), MAC_NOTE);
-  check("MAC_NOTE: no second chord is offered (no Ctrl or Cmd chord anywhere)", !/Ctrl\+|Cmd\+|Control\+/.test(MAC_NOTE) && !SHORTCUTS.some((s) => s.keys.some((k) => /^(Ctrl|Cmd)\+/.test(k))));
+  check(
+    "MAC_NOTE: no second chord is offered for capture (no Cmd chord anywhere; the one Ctrl chord is the user's Ctrl+C, USER_CHOSEN_CHORDS)",
+    !/Ctrl\+|Cmd\+|Control\+/.test(MAC_NOTE) && !SHORTCUTS.some((s) => s.keys.some((k) => /^Cmd\+/.test(k) || (/^Ctrl\+/.test(k) && !USER_CHOSEN_CHORDS.some((c) => c.id === s.id && c.key === k))))
+  );
   check("ariaKeysOf: capture 'c', capture-anywhere 'Alt+N', help 'Shift+?'", ariaKeysOf("capture") === "c" && ariaKeysOf("capture-anywhere") === "Alt+N" && ariaKeysOf("help") === "Shift+?");
+  check("ariaKeysOf: new-idea 'i Control+C' (aria says Control, not Ctrl); idea-format is each of its seven chords, Alt+1 … Alt+7", ariaKeysOf("new-idea") === "i Control+C" && ariaKeysOf("idea-format") === "Alt+1 Alt+2 Alt+3 Alt+4 Alt+5 Alt+6 Alt+7", `${ariaKeysOf("new-idea")} | ${ariaKeysOf("idea-format")}`);
+  check("ariaKeyOf: Ctrl → Control, Cmd → Meta, Alt and Shift as they are", ariaKeyOf("Ctrl+C") === "Control+C" && ariaKeyOf("Cmd+K") === "Meta+K" && ariaKeyOf("Ctrl+Cmd+F") === "Control+Meta+F" && ariaKeyOf("Alt+1") === "Alt+1" && ariaKeyOf("Shift+?") === "Shift+?");
+  check("ariaKeysOf: the review's bare 1-9 and sequences stay out (each answer button carries its own digit)", ariaKeysOf("review-answer") === "" && ariaKeysOf("go-today") === "");
   check("CAPTURE_ARIA_KEYS is ariaKeysOf('capture') + ' ' + ariaKeysOf('capture-anywhere')", CAPTURE_ARIA_KEYS === want && want === "c Alt+N", CAPTURE_ARIA_KEYS);
   const chrome = code(read("src/components/shell/Chrome.tsx"));
   const values = [...chrome.matchAll(/aria-keyshortcuts=(\{[^}]*\}|"[^"]*")/g)].map((m) => m[1]);
@@ -491,8 +544,10 @@ console.log("\n── (f) README, css and scripts");
 const START = "<!-- shortcuts:start (generated from src/lib/shortcuts.ts: npx tsx scripts/shortcut-check.ts --write) -->";
 const END = "<!-- shortcuts:end -->";
 function mdKeys(k: string): string {
-  const range = /^(\d)-(\d)$/.exec(k);
-  if (range) return `\`${range[1]}\`–\`${range[2]}\``;
+  if (keyRange(k)) {
+    const all = expand(k);
+    return `\`${all[0]}\`–\`${all[all.length - 1]}\``;
+  }
   if (k.includes(" ")) return k.split(" ").map((p) => `\`${p}\``).join(" then ");
   return `\`${k}\``;
 }
@@ -548,7 +603,7 @@ console.log("\n── (g) Record yesterday ('y')");
   check("y: the global handler answers it (the capture sheet owns only 'c' and Alt+N)", CAPTURE_OWNED.join(",") === "capture,capture-anywhere" && GLOBAL_HANDLED.some((s) => s.id === "record-yesterday"));
   check("y: its href is the Today deep link /today?sheet=yesterday", y.href === RECORD_YESTERDAY_HREF && RECORD_YESTERDAY_HREF === "/today?sheet=yesterday" && RECORD_YESTERDAY_PARAM === "sheet");
   const ev = (k: string, mods: Partial<KeyEventLike> = {}): KeyEventLike => ({ key: k, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...mods });
-  const env = (over: Partial<ShortcutEnv> = {}): ShortcutEnv => ({ target: { tagName: "BODY", closest: () => null }, modalOpen: false, reviewSession: false, now: 5_000, ...over });
+  const env = (over: Partial<ShortcutEnv> = {}): ShortcutEnv => ({ target: { tagName: "BODY", closest: () => null }, modalOpen: false, reviewSession: false, hasSelection: false, path: "/", now: 5_000, ...over });
   check("y: 'y' on the page runs Record yesterday", decideShortcut(ev("y", { code: "KeyY" }), SEQUENCE_IDLE, env()).run?.id === "record-yesterday");
   const g = decideShortcut(ev("g", { code: "KeyG" }), SEQUENCE_IDLE, env({ now: 1000 }));
   const gy = decideShortcut(ev("y", { code: "KeyY" }), g.seq, env({ now: 1200 }));
@@ -573,9 +628,9 @@ console.log("\n── (h) The three sections");
 {
   const go = (id: Parameters<typeof shortcutOf>[0]) => shortcutOf(id);
   check(
-    "keys: unchanged by the three sections (c, Alt+N, i, y, g t, g s, g l, g w, g y, g k, ',', '/', r, ?)",
+    "keys: unchanged by the three sections (c, Alt+N, i, y, g t, g s, g l, g w, g y, g k, ',', '/', r, ?); New idea also has the user's Ctrl+C (2026-10-19)",
     ["capture", "capture-anywhere", "new-idea", "record-yesterday", "go-today", "go-study", "go-library", "go-train", "go-you", "go-week", "settings", "search", "start-review", "help"].map((id) => go(id as Parameters<typeof shortcutOf>[0]).keys.join(" ")).join(" | ") ===
-      "c | Alt+N | i | y | g t | g s | g l | g w | g y | g k | , | / | r | Shift+?"
+      "c | Alt+N | i Ctrl+C | y | g t | g s | g l | g w | g y | g k | , | / | r | Shift+?"
   );
   check("g t is Tasks: the label and the href are the nav's", go("go-today").label === sectionById("tasks").label && go("go-today").href === sectionById("tasks").href);
   check("g s is Ideas (review): the label leads with the nav's and goes to Review", go("go-study").label === `${sectionById("ideas").label} (review)` && go("go-study").href === sectionById("ideas").href);
@@ -587,6 +642,201 @@ console.log("\n── (h) The three sections");
   check("c says it captures by section (an idea, a task or a weigh-in)", /\bidea\b/.test(go("capture").label) && /\btask\b/.test(go("capture").label) && /weigh-in/.test(go("capture").label) && /section/.test(go("capture").label));
   const stale = SHORTCUTS.filter((s) => /\b(Study|Train)\b|^You$|^Today$|^This week$/.test(s.label)).map((s) => `${s.id}: ${s.label}`);
   check("no label still names an old section (Study, Train, a bare Today or You, Body's 'This week')", stale.length === 0, stale.join("; "));
+}
+
+// ── (i) The user's keys: Ctrl+C (New idea) and Alt+1–7 (the format) ───────
+console.log("\n── (i) Ctrl+C opens New idea; Alt+1–7 pick the format (2026-10-19)");
+{
+  const ev = (k: string, mods: Partial<KeyEventLike> = {}): KeyEventLike => ({ key: k, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...mods });
+  const body: TargetLike = { tagName: "BODY", closest: () => null };
+  const button: TargetLike = { tagName: "BUTTON", closest: () => null };
+  const input: TargetLike = { tagName: "INPUT", closest: () => null };
+  const area: TargetLike = { tagName: "TEXTAREA", closest: () => null };
+  const select: TargetLike = { tagName: "SELECT", closest: () => null };
+  const editable: TargetLike = { tagName: "DIV", isContentEditable: true, closest: () => null };
+  const inSheet: TargetLike = { tagName: "BUTTON", closest: (s: string) => (s === "[data-capture-sheet]" ? {} : null) };
+  const env = (over: Partial<ShortcutEnv> = {}): ShortcutEnv => ({ target: body, modalOpen: false, reviewSession: false, hasSelection: false, path: "/today", now: 10_000, ...over });
+  const dec = (e: KeyEventLike, over: Partial<ShortcutEnv> = {}, seq: SequenceState = SEQUENCE_IDLE) => decideShortcut(e, seq, env(over));
+  const ctrlC = (mods: Partial<KeyEventLike> = {}) => ev("c", { code: "KeyC", ctrlKey: true, ...mods });
+  /** Runs `want` and prevents the key, or runs nothing and leaves the key alone (the browser copies). */
+  const t = (name: string, d: ReturnType<typeof decideShortcut>, want: string | null) =>
+    check(`Ctrl+C: ${name} → ${want ?? "nothing, never prevented (the browser's copy)"}`, (d.run?.id ?? null) === want && d.consume === (want !== null), `${d.run?.id ?? null}, consume ${d.consume}`);
+
+  // Selection × where the focus is.
+  t("nothing selected, on the page", dec(ctrlC()), "new-idea");
+  t("nothing selected, a button focused", dec(ctrlC(), { target: button }), "new-idea");
+  t("text selected on the page", dec(ctrlC(), { hasSelection: true }), null);
+  t("text selected, a button focused", dec(ctrlC(), { target: button, hasSelection: true }), null);
+  for (const [name, target] of [["an input", input], ["a textarea", area], ["a select", select], ["contenteditable", editable], ["the capture sheet", inSheet]] as const) {
+    t(`in ${name}, nothing selected`, dec(ctrlC(), { target }), null);
+    t(`in ${name}, text selected`, dec(ctrlC(), { target, hasSelection: true }), null);
+  }
+  // Dialogs, modifiers, held keys, composition.
+  t("a dialog or sheet open", dec(ctrlC(), { modalOpen: true }), null);
+  t("a dialog open and text selected", dec(ctrlC(), { modalOpen: true, hasSelection: true }), null);
+  t("with Shift (Ctrl+Shift+C, DevTools' inspect)", dec(ctrlC({ key: "C", shiftKey: true })), null);
+  t("with Alt (Ctrl+Alt is AltGr)", dec(ctrlC({ altKey: true })), null);
+  t("with Cmd too", dec(ctrlC({ metaKey: true })), null);
+  t("held down (repeat)", dec(ctrlC({ repeat: true })), null);
+  t("mid-composition", dec(ctrlC({ isComposing: true })), null);
+  t("keyCode 229 (an IME)", dec(ctrlC({ keyCode: 229 })), null);
+  t("already handled", dec(ctrlC({ defaultPrevented: true })), null);
+  t("during a review session", dec(ctrlC(), { reviewSession: true }), null);
+  // Already on New idea: nothing (the form is never reloaded or lost); 'i' likewise.
+  t("already on /add", dec(ctrlC(), { path: "/add" }), null);
+  t("already on /add, a format card focused", dec(ctrlC(), { path: "/add", target: button }), null);
+  check("'i': already on /add does nothing; anywhere else it still opens New idea", dec(ev("i", { code: "KeyI" }), { path: "/add" }).run === null && !dec(ev("i", { code: "KeyI" }), { path: "/add" }).consume && dec(ev("i", { code: "KeyI" })).run?.id === "new-idea");
+  // The Mac's Cmd+C is always copy.
+  t("Cmd+C, nothing selected (always the Mac's copy)", dec(ev("c", { code: "KeyC", metaKey: true })), null);
+  t("Cmd+C, text selected", dec(ev("c", { code: "KeyC", metaKey: true }), { hasSelection: true }), null);
+  t("Cmd+C in a textarea", dec(ev("c", { code: "KeyC", metaKey: true }), { target: area }), null);
+  // The letter, read as the Alt chords read theirs.
+  t("Cyrillic 'с' on the C key (the physical key)", dec(ev("с", { code: "KeyC", ctrlKey: true })), "new-idea");
+  t("Dvorak's C (key 'c' on the physical I)", dec(ev("c", { code: "KeyI", ctrlKey: true })), "new-idea");
+  t("Dvorak's J on the physical C is Ctrl+J (the browser's downloads), not ours", dec(ev("j", { code: "KeyC", ctrlKey: true })), null);
+  const g = dec(ev("g", { code: "KeyG" }), { now: 1000 });
+  t("right after 'g' (the sequence takes the key and ends)", dec(ctrlC(), { now: 1100 }, g.seq), null);
+  // 'c' is unchanged: still the capture sheet's, with its label; Ctrl+C never opens it.
+  check(
+    "'c' (standard capture) unchanged: the capture sheet's, same key and label; Ctrl+C never opens the sheet",
+    shortcutOf("capture").keys.join(" ") === "c" &&
+      shortcutOf("capture").label === "Capture an idea, a task or a weigh-in (by section)" &&
+      isCaptureHotkey(ev("c", { code: "KeyC" }), body, false) &&
+      !isCaptureHotkey(ctrlC(), body, false) &&
+      !isCaptureHotkey(ctrlC(), area, false) &&
+      dec(ev("c", { code: "KeyC" })).run === null
+  );
+  check("new-idea: the label says Ctrl+C works when nothing is selected, so copying still works; 'i' stays its first key (the tour reads keys[0])", /Ctrl\+C works when nothing is selected, so copying still works/.test(shortcutOf("new-idea").label) && shortcutOf("new-idea").keys[0] === "i");
+  check("BROWSER_NOTE: still none of Chrome's or Edge's, and says Ctrl+C gives way to copy", /^None of these are Chrome or Edge shortcuts\b/.test(BROWSER_NOTE) && /Ctrl\+C still copies whenever something is selected/.test(BROWSER_NOTE), BROWSER_NOTE);
+
+  // Ctrl+1–9 and Cmd+1–9: never bound, anywhere.
+  const digit = (d: number, mods: Partial<KeyEventLike> = {}) => ev(String(d), { code: `Digit${d}`, ...mods });
+  const fk = (e: KeyEventLike, over: { modalOpen?: boolean; target?: TargetLike | null } = {}) => formatKeyIndex(e, { modalOpen: false, target: area, ...over });
+  const D = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+  const ctrlCmdTaken = D.flatMap((d) =>
+    (["/", "/add", "/library"] as const).flatMap((path) =>
+      [{ ctrlKey: true }, { metaKey: true }, { ctrlKey: true, shiftKey: true }].flatMap((m) => {
+        const dd = dec(digit(d, m), { path });
+        return dd.run !== null || dd.consume || fk(digit(d, m)) !== null || fk(digit(d, m), { target: body }) !== null ? [`${path} ${JSON.stringify(m)} ${d}`] : [];
+      })
+    )
+  );
+  check("Ctrl+1–9 and Cmd+1–9: never bound (the global handler and the format key both leave them to the browser, on every page)", ctrlCmdTaken.length === 0, ctrlCmdTaken.join("; "));
+
+  // Alt+1–7: the format cards, in order.
+  check(
+    "format: the cards' order is ADD_FORMATS (Short, Cloze, Numeric, Multiple choice, List, Order, Formula), one key each (FORMAT_KEYS Alt+1 … Alt+7)",
+    ADD_FORMATS.join() === "SHORT,CLOZE,NUMERIC,MULTI,LIST,ORDER,FORMULA" && FORMAT_KEYS.join(" ") === "Alt+1 Alt+2 Alt+3 Alt+4 Alt+5 Alt+6 Alt+7" && FORMAT_KEYS.length === ADD_FORMATS.length,
+    `${ADD_FORMATS.join()} | ${FORMAT_KEYS.join(" ")}`
+  );
+  const f = shortcutOf("idea-format");
+  check("format: 'idea-format' is Alt+1-7 on the idea form, in Capture, labelled with the first and last card", f.keys.join(" ") === "Alt+1-7" && f.scope === "idea-form" && f.group === "Capture" && f.label === "Switch the idea's format (1 Short … 7 Formula)" && !f.href);
+  const formSrc = read("src/components/AddIdeaForm.tsx");
+  check("format: the label's names are the cards' own (AddIdeaForm TYPE_META: SHORT is Short, FORMULA is Formula), and the cards are ADD_FORMATS", /SHORT: \{ label: "Short",/.test(formSrc) && /FORMULA: \{ label: "Formula",/.test(formSrc) && /const TYPES: readonly CreatableQuestionType\[\] = ADD_FORMATS;/.test(formSrc));
+  const order = D.slice(0, 7).filter((d) => fk(digit(d, { altKey: true })) !== d - 1);
+  check("format: Alt+1 … Alt+7 pick cards 1 … 7 (Short … Formula)", order.length === 0, order.join(", "));
+  check("format: Alt+8, Alt+9 and Alt+0 are no card", [8, 9, 0].every((d) => fk(digit(d, { altKey: true })) === null));
+  check("format: a bare digit is no format key", D.every((d) => fk(digit(d)) === null));
+  check(
+    "format: never with Ctrl (AltGr), Cmd or Shift also held",
+    D.every((d) => [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }].every((m) => fk(digit(d, { altKey: true, ...m })) === null))
+  );
+  check(
+    "format: never held, mid-composition or already handled",
+    fk(digit(2, { altKey: true, repeat: true })) === null && fk(digit(2, { altKey: true, isComposing: true })) === null && fk(digit(2, { altKey: true, defaultPrevented: true })) === null
+  );
+  check("format: never with a dialog or sheet over the form", fk(digit(2, { altKey: true }), { modalOpen: true }) === null && fk(digit(2, { altKey: true }), { modalOpen: true, target: body }) === null);
+  check(
+    "format: works while typing (a textarea, an input, contenteditable), and on the page or a focused card",
+    [area, input, editable, body, button, null].every((target) => fk(digit(3, { altKey: true }), { target }) === 2)
+  );
+  check(
+    "format: read by the physical top-row key: AZERTY's Alt+& is Alt+1, Mac Option+2 (which types '™') is Alt+2, and key '4' with no code is Alt+4",
+    fk(ev("&", { code: "Digit1", altKey: true })) === 0 && fk(ev("™", { code: "Digit2", altKey: true })) === 1 && fk(ev("¡", { code: "Digit1", altKey: true }), { target: input }) === 0 && fk(ev("4", { altKey: true })) === 3
+  );
+  check("format: never a numpad digit (Alt+numpad types an Alt code on Windows)", [1, 2, 3, 7].every((d) => fk(ev(String(d), { code: `Numpad${d}`, altKey: true })) === null && fk(ev("End", { code: "Numpad1", altKey: true })) === null));
+  check(
+    "format: a Mac Option dead key on a digit is the field's in a field (it starts an accent), the card's elsewhere",
+    fk(ev("Dead", { code: "Digit5", altKey: true, keyCode: 229 }), { target: area }) === null && fk(ev("Dead", { code: "Digit5", altKey: true, keyCode: 229 }), { target: body }) === 4
+  );
+  check(
+    "format: Alt+1–7 is no global key (the global handler leaves it, on every page) and never opens capture",
+    D.slice(0, 7).every((d) => {
+      const dd = dec(digit(d, { altKey: true }), { path: "/add" });
+      return dd.run === null && !dd.consume && !isCaptureHotkey(digit(d, { altKey: true }), area, false);
+    })
+  );
+
+  // Where it is answered: only on /add.
+  const users: string[] = [];
+  const readers: string[] = [];
+  const walk = (d: string) => {
+    for (const name of readdirSync(d)) {
+      const p = join(d, name);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (/\.(ts|tsx)$/.test(name)) {
+        const rel = relative(ROOT, p).replace(/\\/g, "/");
+        const src = code(readFileSync(p, "utf8"));
+        if (/<AddIdeaForm\b/.test(src)) users.push(rel);
+        if (/formatKeyIndex\(/.test(src)) readers.push(rel);
+      }
+    }
+  };
+  walk(join(ROOT, "src"));
+  check("format: only AddIdeaForm answers it, and AddIdeaForm renders on /add alone", JSON.stringify(readers.sort()) === JSON.stringify(["src/components/AddIdeaForm.tsx", "src/lib/shortcuts.ts"]) && JSON.stringify(users) === JSON.stringify(["src/app/add/page.tsx"]), `${readers.join(", ")} | ${users.join(", ")}`);
+
+  // Wiring: the global handler reads the selection; the form's key is the card's click.
+  const shell = code(read("src/components/shell/Shortcuts.tsx"));
+  check(
+    "wiring: the global handler reads the selection (the window's, and the focused input's or textarea's) and the path into decideShortcut, and prevents only what it runs",
+    /hasSelection: textSelected\(\),/.test(shell) &&
+      /path: pathRef\.current,/.test(shell) &&
+      /const sel = window\.getSelection\(\);\s*if \(sel && sel\.rangeCount > 0 && !sel\.isCollapsed\) return true;/.test(shell) &&
+      /a instanceof HTMLInputElement \|\| a instanceof HTMLTextAreaElement/.test(shell) &&
+      /a\.selectionStart !== a\.selectionEnd/.test(shell) &&
+      /if \(d\.consume\) e\.preventDefault\(\);/.test(shell)
+  );
+  check("wiring: the help sheet draws a range with its modifier (keyRange: Alt + 1 to 7)", /const range = keyRange\(k\);/.test(shell) && /range\.mods\.map/.test(shell) && JSON.stringify(keyRange("Alt+1-7")) === JSON.stringify({ mods: ["Alt"], from: 1, to: 7 }) && JSON.stringify(keyRange("1-9")) === JSON.stringify({ mods: [], from: 1, to: 9 }) && keyRange("Ctrl+C") === null);
+  const form = code(formSrc);
+  check(
+    "wiring: a card's click and Alt+1–7 call the same chooseFormat; nothing else sets the format but loading saved content",
+    /onClick=\{\(\) => chooseFormat\(type\)\}/.test(form) &&
+      /const type = at === null \? undefined : TYPES\[at\];\s*if \(!type\) return;\s*e\.preventDefault\(\);\s*chooseFormat\(type\);/.test(form) &&
+      (form.match(/setQuestionType\(/g) ?? []).length === 2 &&
+      /setQuestionType\(c\.type\);/.test(form) &&
+      /const chooseFormat = useCallback\(\(type: CreatableQuestionType\) => \{\s*const had = document\.activeElement;\s*setQuestionType\(type\);\s*setPreview\(null\);/.test(form)
+  );
+  check(
+    "wiring: the key is read by formatKeyIndex, told whether a dialog is open (MODAL_OPEN_SELECTOR), on a window keydown the form removes on unmount, and only while the form is on screen",
+    /formatKeyIndex\(e, \{ modalOpen: document\.querySelector\(MODAL_OPEN_SELECTOR\) !== null, target: e\.target instanceof Element \? e\.target : null \}\)/.test(form) &&
+      /window\.addEventListener\("keydown", onFormatKey\)/.test(form) &&
+      /return \(\) => window\.removeEventListener\("keydown", onFormatKey\)/.test(form) &&
+      /function onFormatKey\(e: KeyboardEvent\) \{\s*if \(!formRef\.current\) return;/.test(form)
+  );
+  check("wiring: the change is said in the polite live region ('Format: Cloze')", /announce\(`Format: \$\{TYPE_META\[type\]\.label\}`\);/.test(form) && /import \{ announce, /.test(form));
+  check(
+    "wiring: a focused field that unmounts with the old format hands focus to the new format's first field, never <body>",
+    /had\.isConnected\) return;/.test(form) && /querySelector<HTMLElement>\(FIRST_FIELD\)/.test(form) && /const FIRST_FIELD = '\[data-first-field\], textarea, input\[type="text"\]';/.test(formSrc)
+  );
+  check(
+    "cards: each says its key to assistive tech (aria-keyshortcuts Alt+1 …) and shows 'Alt 1' … as an aria-hidden hint",
+    /aria-keyshortcuts=\{FORMAT_KEYS\[i\] \? ariaKeyOf\(FORMAT_KEYS\[i\]\) : undefined\}/.test(form) &&
+      /<span className="add-type-key" aria-hidden="true">\s*\{keyParts\(FORMAT_KEYS\[i\]\)\.join\(" "\)\}/.test(form) &&
+      FORMAT_KEYS.map(ariaKeyOf).join(" ") === ariaKeysOf("idea-format") &&
+      keyParts(FORMAT_KEYS[0]).join(" ") === "Alt 1" &&
+      keyParts(FORMAT_KEYS[6]).join(" ") === "Alt 7"
+  );
+  const css = read("src/components/library/study.css").replace(/\r\n/g, "\n");
+  check(
+    "cards: the hint shows with a mouse and keyboard only (hover, a fine pointer, 600 px and up: never on touch or at 344 px), hidden otherwise",
+    /\.add-type \.add-type-key \{ display: none; \}/.test(css) && /@media \(hover: hover\) and \(pointer: fine\) and \(min-width: 600px\) \{\s*\.add-type \.add-type-key \{[^}]*display: block;/.test(css)
+  );
+  const hint = /@media \(hover: hover\) and \(pointer: fine\) and \(min-width: 600px\) \{\s*\.add-type \.add-type-key \{([^}]*)\}/.exec(css)?.[1] ?? "";
+  check(
+    "cards: the hint is out of flow (absolute in a relative card), in tokens, 12 px, so no card's layout or height changes at any width",
+    /\.add-type \{ position: relative; \}/.test(css) && /position: absolute;/.test(hint) && /background: var\(--card\);/.test(hint) && /color: var\(--ink-2\);/.test(hint) && /font: 600 12px\/12px var\(--font-mono\);/.test(hint) && !/(margin|min-height|[^-]height:|width:)/.test(hint),
+    hint
+  );
 }
 
 console.log(`\nshortcut-check: ${passed} passed, ${failed} failed`);

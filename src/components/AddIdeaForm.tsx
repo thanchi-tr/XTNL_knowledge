@@ -29,13 +29,17 @@
  *   focus on load; Enter in a list row adds the next row and Backspace in an
  *   empty one removes it; Alt+B (or the Blank it pill) wraps the cloze
  *   selection in {{ }}. On a Mac, Alt is Option (read by the physical key).
+ *   Alt+1–7 ('idea-format', Option+1–7 on a Mac, read by the physical top-row
+ *   key) pick the format cards in order, from anywhere on the page and
+ *   mid-typing, through the card's own click path (chooseFormat); Ctrl+1–9
+ *   and Cmd+1–9 stay the browser's tab keys.
  * The sticky Create bar rides on the on-screen keyboard (--kb).
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react";
 import { VARIANTS_MAX, VARIANT_MAX_CHARS, variantsAllowed } from "@/lib/idea-variants";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ariaKeysOf, isKey, shortcutOf } from "@/lib/shortcuts";
+import { FORMAT_KEYS, MODAL_OPEN_SELECTOR, ariaKeyOf, ariaKeysOf, formatKeyIndex, isKey, keyParts, shortcutOf } from "@/lib/shortcuts";
 import type { Attribute, CollectionLabel } from "@prisma/client";
 import {
   submitIdea,
@@ -51,7 +55,7 @@ import { countClozeBlanks, parseCloze, type IdeaContent } from "@/lib/idea-paylo
 import { contentOfAddState } from "@/lib/idea-edit";
 import { ATTRIBUTE_META } from "@/lib/attributes";
 import { XP_BASE } from "@/lib/xp";
-import { chime, mark, signedFigure } from "@/lib/celebrate";
+import { announce, chime, mark, signedFigure } from "@/lib/celebrate";
 import { useAutocorrect } from "@/components/useAutocorrect";
 import { useWordComplete, WordHintBar } from "@/components/WordComplete";
 import type { WordModelWire } from "@/lib/word-model";
@@ -132,6 +136,9 @@ const TYPE_META: Record<CreatableQuestionType, { label: string; hint: string }> 
   FORMULA: { label: "Formula", hint: "Proved by algebraic equivalence" },
 };
 const TYPES: readonly CreatableQuestionType[] = ADD_FORMATS;
+
+/** The first field of the format on screen: its data-first-field, else its first text field (FORMULA's prompt). */
+const FIRST_FIELD = '[data-first-field], textarea, input[type="text"]';
 
 const COLLECTIONS: { value: CollectionLabel; label: string }[] = [
   { value: "BOOK", label: "Book" },
@@ -319,6 +326,50 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
       })
     );
   }, []);
+
+  /**
+   * The one way the format changes: a format card's click and Alt+1–7
+   * (shortcuts.ts 'idea-format') both call this. Every format keeps its own
+   * content, so switching loses nothing; the check is stale, so it goes. A
+   * focused field that unmounts with the old format hands focus to the new
+   * format's first field (two frames: it has rendered by then), never to
+   * <body>; a focused card or a field that stays keeps its focus.
+   */
+  const chooseFormat = useCallback((type: CreatableQuestionType) => {
+    const had = document.activeElement;
+    setQuestionType(type);
+    setPreview(null);
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (!(had instanceof HTMLElement) || had === document.body || had.isConnected) return;
+        if (document.activeElement && document.activeElement !== document.body) return;
+        const el = formRef.current?.querySelector<HTMLElement>(FIRST_FIELD);
+        if (!el) return;
+        el.focus();
+        if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) el.setSelectionRange(el.value.length, el.value.length);
+      })
+    );
+  }, []);
+
+  // Alt+1–7: the format cards in order, from anywhere on New idea and while
+  // typing. The key is prevented only when it picks a card (so Mac
+  // Option+digit types no '¡' or '™'); Alt+8, Alt+9 and every other key pass
+  // through. Nothing happens over a dialog or sheet, or on the merged and
+  // saturated screens (no form, so no cards). The change is said in the
+  // polite live region.
+  useEffect(() => {
+    function onFormatKey(e: KeyboardEvent) {
+      if (!formRef.current) return;
+      const at = formatKeyIndex(e, { modalOpen: document.querySelector(MODAL_OPEN_SELECTOR) !== null, target: e.target instanceof Element ? e.target : null });
+      const type = at === null ? undefined : TYPES[at];
+      if (!type) return;
+      e.preventDefault();
+      chooseFormat(type);
+      announce(`Format: ${TYPE_META[type].label}`);
+    }
+    window.addEventListener("keydown", onFormatKey);
+    return () => window.removeEventListener("keydown", onFormatKey);
+  }, [chooseFormat]);
 
   // On load: ?draft > the sheet's handoff > the autosave. Storage only exists
   // after mount, so this cannot run during render (the server has no storage
@@ -1332,16 +1383,14 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
             <div role="group" aria-label="Format">
               <span className="st-label">Format</span>
               <div className="add-types">
-                {TYPES.map((type) => (
+                {TYPES.map((type, i) => (
                   <button
                     key={type}
                     type="button"
                     className="add-type"
                     aria-pressed={questionType === type}
-                    onClick={() => {
-                      setQuestionType(type);
-                      setPreview(null);
-                    }}
+                    aria-keyshortcuts={FORMAT_KEYS[i] ? ariaKeyOf(FORMAT_KEYS[i]) : undefined}
+                    onClick={() => chooseFormat(type)}
                   >
                     <b>
                       {TYPE_META[type].label}
@@ -1351,6 +1400,12 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
                       </span>
                     </b>
                     <span className="t-meta">{TYPE_META[type].hint}</span>
+                    {/* Its key (Alt 1 … Alt 7), on a mouse and keyboard only: study.css .add-type-key. */}
+                    {FORMAT_KEYS[i] && (
+                      <span className="add-type-key" aria-hidden="true">
+                        {keyParts(FORMAT_KEYS[i]).join(" ")}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>

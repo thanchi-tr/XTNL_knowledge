@@ -6,14 +6,20 @@
  *
  * The rule that keeps it clear of the browsers: page-wide shortcuts are
  * single keys with no modifier (Chrome and Edge bind none), or a 'g' then a
- * letter; the one chord that must work while typing is Alt+N, which neither
- * browser binds. Esc, Enter, Tab and Ctrl+Z keep their ordinary meaning
- * (close a dialog, submit, move focus, undo typing): they are not the app's
- * shortcuts, so they are listed under STANDARD_KEYS, not as shortcuts.
+ * letter; the one page-wide chord that works while typing is Alt+N, which
+ * neither browser binds. Chords are Alt (+Shift), never Ctrl or Cmd and
+ * never a key in BROWSER_RESERVED (so Alt+1–7 pick the format on New idea,
+ * while Ctrl+1–9 and Cmd+1–9 stay the browsers' tab keys), with exactly one
+ * exception the user chose (USER_CHOSEN_CHORDS): Ctrl+C opens New idea, but
+ * only with nothing selected and not in a field, so copying always works.
+ * Cmd is never the app's. Esc, Enter, Tab and Ctrl+Z keep their ordinary
+ * meaning (close a dialog, submit, move focus, undo typing): they are not
+ * the app's shortcuts, so they are listed under STANDARD_KEYS, not as
+ * shortcuts.
  *
  * Pure and client-importable. Keys are written in the app's own notation:
- * 'c', 'Shift+?', 'Alt+N', 'g t' (a sequence: g, then t within 1.5 s),
- * '1-9' (a range).
+ * 'c', 'Shift+?', 'Alt+N', 'Ctrl+C', 'g t' (a sequence: g, then t within
+ * 1.5 s), '1-9' (a range), 'Alt+1-7' (a range of chords: Alt+1 … Alt+7).
  */
 
 import { chordLetter, isAltDeadKeyInField, isTypingTarget, type TargetLike } from "./capture-parse";
@@ -49,6 +55,7 @@ export type ShortcutId =
   | "capture-add-next"
   | "idea-create"
   | "idea-blank"
+  | "idea-format"
   | "review-answer"
   | "review-next";
 
@@ -75,11 +82,12 @@ export const SEQUENCE_MS = 1500;
 export const SHORTCUTS: readonly Shortcut[] = [
   { id: "capture", keys: ["c"], label: "Capture an idea, a task or a weigh-in (by section)", scope: "global", group: "Capture" },
   { id: "capture-anywhere", keys: ["Alt+N"], label: "Capture from anywhere, even while typing", scope: "anywhere", group: "Capture" },
-  { id: "new-idea", keys: ["i"], label: "New idea (full form)", scope: "global", href: "/add", group: "Capture" },
+  { id: "new-idea", keys: ["i", "Ctrl+C"], label: "New idea (full form). Ctrl+C works when nothing is selected, so copying still works", scope: "global", href: "/add", group: "Capture" },
   { id: "capture-add", keys: ["Enter"], label: "Add the line (on a phone: add and stay for the next one)", scope: "capture", group: "Capture" },
   { id: "capture-add-next", keys: ["Shift+Enter"], label: "Add the line and type the next one", scope: "capture", group: "Capture" },
   { id: "idea-create", keys: ["Alt+Enter"], label: "Create the idea", scope: "idea-form", group: "Capture" },
   { id: "idea-blank", keys: ["Alt+B"], label: "Blank the selected words (cloze)", scope: "idea-form", group: "Capture" },
+  { id: "idea-format", keys: ["Alt+1-7"], label: "Switch the idea's format (1 Short … 7 Formula)", scope: "idea-form", group: "Capture" },
 
   { id: "record-yesterday", keys: ["y"], label: "Record yesterday", scope: "global", href: "/today?sheet=yesterday", group: "Tasks" },
 
@@ -147,18 +155,56 @@ export const BROWSER_RESERVED: readonly string[] = [
   "Cmd+1", "Cmd+2", "Cmd+3", "Cmd+4", "Cmd+5", "Cmd+6", "Cmd+7", "Cmd+8", "Cmd+9", "Cmd+Ctrl+F", "Ctrl+Tab",
 ];
 
+/**
+ * The user's choice on 2026-10-19: the one Ctrl chord the app answers,
+ * guarded so the browser keeps what it needs. Nothing else is an exception
+ * to the rule in the header: scripts/shortcut-check.ts holds this list to
+ * exactly this one and still refuses every other Ctrl or Cmd chord (Ctrl+1–9
+ * and Cmd+1–9 among them: the browsers' tab keys) and every BROWSER_RESERVED
+ * key.
+ */
+export const USER_CHOSEN_CHORDS: readonly { key: string; id: ShortcutId; why: string }[] = [
+  { key: "Ctrl+C", id: "new-idea", why: "Global and guarded: only with nothing selected and not in a field, so copying always works; Cmd+C is always copy." },
+];
+
+/** The browser's copy key, which New idea shares (USER_CHOSEN_CHORDS): never the app's while anything is selected. */
+export const COPY_KEY = "Ctrl+C";
+
 /** A shortcut's key as the help sheet prints one key ('Alt+N' → ['Alt', 'N'], 'g t' → ['g', 't']). */
 export function keyParts(key: string): string[] {
   return key.includes(" ") ? key.split(" ") : key.split(/\+(?!$)/);
 }
 
-/** The aria-keyshortcuts value for a shortcut (sequences are not expressible there and are left out). */
+/** A range in the app's notation as its modifiers and digits ('1-9' → [], 1, 9; 'Alt+1-7' → ['Alt'], 1, 7), or null. */
+export function keyRange(key: string): { mods: string[]; from: number; to: number } | null {
+  const m = /^((?:[A-Za-z]+\+)*)(\d)-(\d)$/.exec(key);
+  if (!m) return null;
+  return { mods: m[1] ? m[1].slice(0, -1).split("+") : [], from: Number(m[2]), to: Number(m[3]) };
+}
+
+/** Every single key a key stands for: a range's ('Alt+1-7' → Alt+1 … Alt+7), else the key itself. */
+export function expandKey(key: string): string[] {
+  const r = keyRange(key);
+  if (!r) return [key];
+  const prefix = r.mods.map((m) => `${m}+`).join("");
+  const out: string[] = [];
+  for (let d = r.from; d <= r.to; d++) out.push(`${prefix}${d}`);
+  return out;
+}
+
+/** One key in aria-keyshortcuts' notation: Ctrl is 'Control', Cmd is 'Meta' ('Ctrl+C' → 'Control+C'). */
+export function ariaKeyOf(key: string): string {
+  return key.replace(/^Ctrl\+/, "Control+").replace(/^((?:Control\+)?)Cmd\+/, "$1Meta+");
+}
+
+/** The aria-keyshortcuts value for a shortcut (sequences and the review's bare 1-9 are left out; 'Alt+1-7' is each of its seven chords). */
 export function ariaKeysOf(id: ShortcutId): string {
   const s = SHORTCUTS.find((x) => x.id === id);
   if (!s) return "";
   return s.keys
     .filter((k) => !k.includes(" ") && k !== "1-9" && k !== "→")
-    .map((k) => k.replace(/^Shift\+\?$/, "Shift+?"))
+    .flatMap(expandKey)
+    .map(ariaKeyOf)
     .join(" ");
 }
 
@@ -167,6 +213,9 @@ export function shortcutOf(id: ShortcutId): Shortcut {
   if (!s) throw new Error(`unknown shortcut ${id}`);
   return s;
 }
+
+/** The format keys, one per format card in the cards' order (Alt+1 is the first card): 'idea-format' expanded. */
+export const FORMAT_KEYS: readonly string[] = expandKey(shortcutOf("idea-format").keys[0]);
 
 // ── Keys from events (pure: the global handler, the capture hotkey, /add and
 // the review runner all read a keydown through normalizeKey) ───────────────
@@ -317,6 +366,13 @@ export interface ShortcutEnv {
   modalOpen: boolean;
   /** A review session is running ([data-review-session]): its runner owns the keys. */
   reviewSession: boolean;
+  /**
+   * Something is selected: a non-collapsed window selection, or a selection
+   * inside the focused input or textarea. Ctrl+C is then the browser's copy.
+   */
+  hasSelection: boolean;
+  /** The page's path (usePathname): New idea's keys do nothing on /add itself. */
+  path: string;
   now: number;
 }
 
@@ -342,6 +398,13 @@ export interface ShortcutDecision {
  * sequence and does nothing, and a second 'g' starts it again. A bare
  * modifier (the Shift of 'Shift+?') leaves a waiting sequence alone. 'c' and
  * Alt+N are the capture sheet's (CAPTURE_OWNED), never run here.
+ *
+ * Ctrl+C (New idea, USER_CHOSEN_CHORDS) runs only with Ctrl alone held
+ * (normalizeKey reads Ctrl+Shift+C, Ctrl+Cmd+C and AltGr as other keys, and
+ * the letter by its physical key on a non-Latin layout) and nothing selected
+ * (env.hasSelection); otherwise it is left alone, never prevented, so the
+ * browser copies. Cmd+C is never read as it. New idea's keys ('i', Ctrl+C)
+ * do nothing on /add itself, so the form is never reloaded or lost.
  */
 export function decideShortcut(e: KeyEventLike, seq: SequenceState, env: ShortcutEnv): ShortcutDecision {
   const none = (next: SequenceState = SEQUENCE_IDLE): ShortcutDecision => ({ run: null, seq: next, consume: false });
@@ -350,7 +413,8 @@ export function decideShortcut(e: KeyEventLike, seq: SequenceState, env: Shortcu
   if (isTypingTarget(env.target) || env.modalOpen) return none();
   const key = normalizeKey(e, env.target);
   if (key === null) return none();
-  const allowed = (s: Shortcut) => !env.reviewSession || s.id === "help";
+  if (key === COPY_KEY && env.hasSelection) return none();
+  const allowed = (s: Shortcut) => (!env.reviewSession || s.id === "help") && !(s.id === "new-idea" && env.path === s.href);
 
   if (sequenceWaiting(seq, env.now)) {
     const hit = GLOBAL_HANDLED.find((s) => s.keys.includes(`${seq.prefix} ${key}`));
@@ -362,6 +426,32 @@ export function decideShortcut(e: KeyEventLike, seq: SequenceState, env: Shortcu
   const hit = GLOBAL_HANDLED.find((s) => s.keys.includes(key));
   if (hit && allowed(hit)) return { run: hit, seq: SEQUENCE_IDLE, consume: true };
   return none();
+}
+
+// ── The format keys on /add (AddIdeaForm, 'idea-format') ───────────────────
+
+/**
+ * Which format card Alt+1–7 picks on New idea (0 is the first card, in the
+ * cards' order: FORMAT_KEYS), or null.
+ *
+ * Alt alone with a top-row digit, read by the physical key (`code` Digit1…
+ * Digit7, as the Alt chords read their letters), so AZERTY's Alt+& is Alt+1
+ * and Mac Option+1, which types '¡', is Alt+1 too; `key` '1'…'7' counts only
+ * when the event has no `code`. Never a numpad digit (Alt+numpad types an
+ * Alt code on Windows). It works while typing in the form: the caller
+ * prevents the default when this is a card, so Option+digit types nothing,
+ * except an Option dead key in a field (isAltDeadKeyInField), which is the
+ * field's. Never with Ctrl (Ctrl+Alt is AltGr), Cmd or Shift held too, on a
+ * held key, mid-composition, on a key something else handled, or with a
+ * dialog or sheet open over the form (MODAL_OPEN_SELECTOR).
+ */
+export function formatKeyIndex(e: KeyEventLike, env: { modalOpen: boolean; target?: TargetLike | null }): number | null {
+  if (e.repeat || e.defaultPrevented || env.modalOpen || isComposingKey(e)) return null;
+  if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return null;
+  if (isAltDeadKeyInField(e, env.target)) return null;
+  const digit = e.code ? /^Digit([0-9])$/.exec(e.code)?.[1] : /^[0-9]$/.exec(e.key)?.[0];
+  const at = digit === undefined ? -1 : FORMAT_KEYS.indexOf(`Alt+${digit}`);
+  return at < 0 ? null : at;
 }
 
 // ── Events other components answer ─────────────────────────────────────────
@@ -390,8 +480,8 @@ export function openShortcutHelp(): void {
 
 /** The help sheet's and Settings' note for Mac keyboards. */
 export const MAC_NOTE = "On a Mac, Alt is the Option key. Option+N opens capture outside text fields; inside a field, Tab or click out of it first (Option+N there types ˜).";
-/** The help sheet's and Settings' promise, checked by scripts/shortcut-check.ts. */
-export const BROWSER_NOTE = "None of these are Chrome or Edge shortcuts.";
+/** The help sheet's and Settings' promise, checked by scripts/shortcut-check.ts (Ctrl+C, USER_CHOSEN_CHORDS, gives way to copy). */
+export const BROWSER_NOTE = "None of these are Chrome or Edge shortcuts, and Ctrl+C still copies whenever something is selected.";
 
 /** aria-keyshortcuts for every Capture button (the tab bar's +, the rail's and the sidebar's Capture): 'c Alt+N'. */
 export const CAPTURE_ARIA_KEYS = `${ariaKeysOf("capture")} ${ariaKeysOf("capture-anywhere")}`;
