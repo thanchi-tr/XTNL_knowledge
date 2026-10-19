@@ -84,7 +84,7 @@ import {
 } from "../src/lib/work-orders-server";
 import { dateColumn, keyOfDateColumn, todayKey } from "../src/lib/life-day";
 import { WORK_BOARD_ARCHIVED, WORK_BOARD_GONE, workBoardIdOf } from "../src/lib/work-boards";
-import { activeSub, captureModeOf, sectionOf, titleFor } from "../src/components/shell/nav";
+import { activeSub, captureModeOf, sectionOf, titleFor, workSubsOf } from "../src/components/shell/nav";
 
 let passed = 0;
 let failed = 0;
@@ -231,10 +231,11 @@ function rules() {
     [workBoardIdOf("/today/work/b1/orders"), activeSub("/today/work/b1/orders"), sectionOf("/today/work/b1/orders"), captureModeOf("/today/work/b1/orders")],
     ["b1", "/today/work/b1", "tasks", "task"]
   );
+  // The Office workspace (2026-10-20): the tab's index is its Agenda.
   eq("shell: the first-paint title (the page's ShellTitle then names the tab)", [titleFor("/today/work/b1/orders"), titleFor("/today/work/b1/customers"), titleFor("/today/work/b1")], [
     { eyebrow: "Work", title: "Orders" },
     { eyebrow: "Work", title: "Customers" },
-    { eyebrow: "Tasks", title: "Work" },
+    { eyebrow: "Work", title: "Agenda" },
   ]);
 }
 
@@ -485,12 +486,13 @@ async function cores() {
 
 // ── 3. The wiring ──────────────────────────────────────────────────────────
 function wiring() {
-  console.log("— actions, routes, shell, the tab card, a customer's page —");
+  console.log("— actions, routes, shell, the work frame, a customer's page —");
   const actionsFile = "src/app/actions/work-orders.ts";
   const actions = code(actionsFile);
   check("actions: a 'use server' module", read(actionsFile).trimStart().startsWith('"use server";'));
   const exported = [...actions.matchAll(/export async function (\w+)\(([^)]*)\)[^{]*\{([\s\S]*?)\n\}/g)].map((m) => ({ name: m[1], body: m[3] }));
-  eq("actions: the tab's switch, the card's count, add, edit, the tick, archive, restore", exported.map((e) => e.name), ["setOrdersOn", "workOrderCount", "addWorkOrder", "editWorkOrder", "setWorkOrderOrdered", "archiveWorkOrder", "restoreWorkOrder"]);
+  // The count is read by the work frame's header on the server (orderCountCore), no longer by a client action.
+  eq("actions: the tab's switch, add, edit, the tick, archive, restore", exported.map((e) => e.name), ["setOrdersOn", "addWorkOrder", "editWorkOrder", "setWorkOrderOrdered", "archiveWorkOrder", "restoreWorkOrder"]);
   check("actions: each goes through a core (the gate) with the current user, and never throws", exported.every((e) => /return run\("\w+", (opts|undefined), \(userId\) => \w+Core\(userId, /.test(e.body)) && /catch \(err\) \{[\s\S]*?return \{ ok: false, error:/.test(actions));
   check("actions: refresh only on a successful write that asked for it", /if \(res\.ok && opts\?\.refresh === true\) refresh\(\);/.test(actions));
 
@@ -560,13 +562,22 @@ function wiring() {
   check("sheet: a date field and the Ordered switch; every field checked with the server's clean*", /type="date"/.test(sheet) && /<Switch checked=\{v\.ordered\}/.test(sheet) && ["cleanOrderItem(", "cleanOrderName(", "cleanOrderContact(", "cleanOrderDate(", "cleanOrderCustomer("].every((c) => sheet.includes(c)));
   check("sheet: a typed customer ID that matches fills a blank name and contact; an unknown one is said", /matchOrderCustomer\(customers, value\)/.test(sheet) && /if \(!name\.trim\(\) \|\| \(was && name === was\.name\)\) name = now\.name;/.test(sheet) && /orderCustomerUnknown\(customer\.value\)/.test(sheet));
 
-  // The tab card, the work page, the shell.
-  const card = code("src/components/today/WorkBoardCard.tsx");
-  check("tab card: 'Orders' links to the list while it is on, with 'n to order'", /\{ordersOn && \(\s*<Link className="work-crm-link" href=\{ordersHref\(board\.id\)\}>\s*<span className="work-crm-l">Orders<\/span>/.test(card) && /workOrderCount\(board\.id\)/.test(card) && /ordersChipText\(toOrder\)/.test(card));
-  check("tab card: the menu's 'Order list' switch (setOrdersOn, refreshed); off hides, nothing deleted", /<h3>Order list<\/h3>/.test(card) && /setOrdersOn\(board\.id, on, \{ refresh: true \}\)/.test(card) && /<Switch checked=\{ordersWant \?\? ordersOn\} onChange=\{toggleOrders\} label="Order list"/.test(card) && /ORDERS_SWITCH_NOTE = "[^"]*nothing is deleted\."/.test(read("src/components/today/WorkBoardCard.tsx")));
-  check("tab card: Orders sits right after Customers", card.indexOf("href={customersHref(board.id)}") > 0 && card.indexOf("href={customersHref(board.id)}") < card.indexOf("href={ordersHref(board.id)}"));
-  const workPage = code("src/app/today/work/[boardId]/page.tsx");
-  check("work page: the tab's switches reach its card (ordersOn beside crmOn)", /work=\{\{ id: board\.id, name: board\.name, crmOn: board\.crmOn, ordersOn: board\.ordersOn \}\}/.test(workPage));
+  // The work frame (2026-10-20; it replaced the tab card): Orders in its sub-navigation, the switch in its menu.
+  const slot = code("src/components/work/WorkHeaderSlot.tsx");
+  const header = code("src/components/work/WorkHeader.tsx");
+  check(
+    "work frame: Orders is a page of the tab while its list is on, with 'n to order' (orderCountCore in the header's one wave)",
+    workSubsOf({ id: "b1", ordersOn: true }).some((s) => s.label === "Orders" && s.href === "/today/work/b1/orders") &&
+      !workSubsOf({ id: "b1" }).some((s) => s.label === "Orders") &&
+      /orderCountCore\(userId, boardId\)\.catch\(\(\) => null\)/.test(slot) &&
+      /orders: toOrder\?\.ok \? ordersChipText\(toOrder\.value\.todo\) : null/.test(slot) &&
+      /\{s\.id === "orders" && counts\.orders && <span className="wk-sub-n">\{counts\.orders\}<\/span>\}/.test(header)
+  );
+  const menu = code("src/components/work/WorkTabMenu.tsx");
+  check("work tab menu: the 'Order list' switch (setOrdersOn, refreshed); off hides, nothing deleted", /<h3>Order list<\/h3>/.test(menu) && /setOrdersOn\(board\.id, on, \{ refresh: true \}\)/.test(menu) && /<Switch checked=\{ordersWant \?\? board\.ordersOn\} onChange=\{\(on\) => toggle\("orders", on\)\} label="Order list"/.test(menu) && /ORDERS_SWITCH_NOTE = "[^"]*nothing is deleted\."/.test(read("src/components/work/WorkTabMenu.tsx")));
+  eq("work frame: Orders sits right after Customers", workSubsOf({ id: "b1", crmOn: true, ordersOn: true }).map((s) => s.label), ["Agenda", "Customers", "Orders", "Tasks"]);
+  const workPage = code("src/app/today/work/[boardId]/tasks/page.tsx");
+  check("work page (Tasks): the tab's switches reach the board (ordersOn beside crmOn)", /work=\{\{ id: board\.id, name: board\.name, crmOn: board\.crmOn, ordersOn: board\.ordersOn \}\}/.test(workPage));
   const wbs = code("src/lib/work-boards-server.ts");
   check("work tab read: ordersOn is selected and returned (false when absent)", /const SELECT = \{[^}]*ordersOn: true \} as const;/.test(wbs) && /ordersOn: row\.ordersOn \?\? false/.test(wbs));
   check("board: the work tab's view carries ordersOn", /ordersOn\?: boolean;/.test(code("src/components/today/TodayBoard.tsx")));
@@ -575,8 +586,8 @@ function wiring() {
 
   // A customer's page.
   const cp = code("src/app/today/work/[boardId]/customers/[customerId]/page.tsx");
-  check("customer page: their orders read in the same wave (a failed read is no section), drawn only while the list is on", /Promise\.all\(\[\s*loadCustomerPage\(getCurrentUserId\(\), boardId, customerId, now\),\s*loadCustomerOrders\(getCurrentUserId\(\), boardId, customerId, now\)\.catch\(/.test(cp) && /orders && \(\s*<CustomerOrders/.test(cp));
-  check("customer page: the section sits after the log, before the call backs", /\{orders\}\s*\{callBacks\.length > 0 && \(/.test(code("src/components/customers/CustomerView.tsx")));
+  check("customer page: their orders read in the same wave (a failed read is no section), drawn only while the list is on", /Promise\.all\(\[\s*loadCustomerPage\(getCurrentUserId\(\), boardId, customerId\),\s*loadCustomerOrders\(getCurrentUserId\(\), boardId, customerId, now\)\.catch\(/.test(cp) && /orders && \(\s*<CustomerOrders/.test(cp));
+  check("customer page: the section sits after the log, the page's last (the call backs' list is gone: their tasks are scheduled tasks)", /\{orders\}\s*\{sheet\?\.kind === "edit" && \(/.test(code("src/components/customers/CustomerView.tsx")));
   const co = code("src/components/orders/CustomerOrders.tsx");
   check("customer section: read-only lines, Add order with the customer fixed (name and phone filled), a link to the list", !/setWorkOrderOrdered|editWorkOrder|archiveWorkOrder/.test(co) && /fixedCustomer=\{customer\}/.test(co) && /name: customer\.name, contact: customer\.phone \?\? ""/.test(co) && /href=\{ordersHref\(board\.id\)\}/.test(co));
 

@@ -1,8 +1,9 @@
 @layer theme, base, components, art, effects, utilities;
 /* =====================================================================
-   WORK TABS (2026-10-12; AddWorkTab.tsx, components/today/WorkBoardCard.tsx):
-   the Tasks strip's '+' (Add a work tab), its tiny name prompt, and the
-   work board's own header card. Tokens only, so Night and Vellum both hold.
+   WORK TABS (2026-10-12; AddWorkTab.tsx, components/work/WorkTabMenu.tsx):
+   the Tasks strip's '+' (Add a work tab), its tiny name prompt, the work
+   tab's menu (the work frame header's ⋯, 2026-10-20) and the archived tab's
+   card. Tokens only, so Night and Vellum both hold.
    Namespaced: work-* (none is a Tailwind utility).
    ===================================================================== */
 @layer components {
@@ -33,38 +34,18 @@
   .work-name-hint { margin: 10px 0 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); }
   .work-name-error { margin: 8px 0 0; font: 600 13px/18px var(--font-ui); color: var(--ink-0); }
 
-  /* The work board's header card (WorkBoardCard): its name, a line on what work is, the menu. */
+  /* An archived work tab's card (its Agenda and Tasks pages), and the work tab's menu (WorkTabMenu). */
   .work-card { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; }
   .work-card-h { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .work-card-h b { flex: 1 1 auto; min-width: 0; font: 600 16px/22px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
   .work-card-note { margin: 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); }
-  .work-menu-btn {
-    flex: none; min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center;
-    border: 0; border-radius: 12px; background: transparent; color: var(--ink-1); cursor: pointer;
-  }
-  .work-menu-btn:hover { background: var(--raised); color: var(--ink-0); }
-  .work-menu-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .work-menu-sec { display: flex; flex-direction: column; gap: 10px; padding: 4px 0 14px; }
   .work-menu-sec + .work-menu-sec { border-top: 1px solid var(--line-2); padding-top: 14px; }
   .work-menu-sec h3 { margin: 0; font: 600 14px var(--font-ui); color: var(--ink-0); }
   .work-menu-sec p { margin: 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); }
   .work-menu-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
-  /* Customers (customers.ts): the card's link to the tab's customer list, and the menu's switch for it.
-     Orders (work-orders.ts) use the same link and switch, under Customers. */
-  .work-crm-link {
-    display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 8px 0 12px; border-radius: 12px;
-    border: 1px solid var(--line-ctl); color: var(--ink-0); text-decoration: none; font: 600 14px var(--font-ui);
-    transition: background-color var(--t-quick);
-  }
-  .work-crm-link:hover { background: var(--raised); }
-  .work-crm-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-  .work-crm-link .work-crm-l { flex: 1 1 auto; min-width: 0; }
-  .work-crm-link .chip { flex: none; }
-  .work-crm-link svg.i { flex: none; width: 18px; height: 18px; color: var(--ink-2); }
+  /* The menu's switches: the tab's customer list (customers.ts) and its order list (work-orders.ts). */
   .work-menu-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .work-menu-switch p { flex: 1 1 auto; min-width: 0; }
-
-  /* The call backs' mount point (a later step): reserved, drawn as nothing until it lands. */
-  .work-callbacks:empty { display: none; }
 }

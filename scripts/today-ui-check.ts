@@ -2730,7 +2730,8 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
 {
   const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   const boardSrc = code(read("src/components/today/TodayBoard.tsx"));
-  const jsx = boardSrc.slice(boardSrc.indexOf('<div className="page today-board cq-main">'));
+  // The board's root (a work tab adds data-skin="work", 2026-10-20).
+  const jsx = boardSrc.slice(boardSrc.indexOf('<div className="page today-board cq-main"'));
   const mustAt = jsx.indexOf('id="must"');
   check("never on red: debt cards render only inside the Must lane", mustAt > 0 && jsx.indexOf("renderOwedCard") > mustAt && jsx.indexOf("<OwedSummary") > mustAt);
   check("never on red: the Owed row sits in .o8, after the lanes", /className="o8">\s*<OwedRow/.test(jsx) && jsx.indexOf("<OwedRow") > jsx.indexOf('id="habits"'));
@@ -4223,9 +4224,10 @@ asyncChecks.push(
   );
   const boardJsx = read("src/components/today/TodayBoard.tsx");
   const laneTag = (id: string) => new RegExp(`<Lane\\s+id="${id}"[\\s\\S]*?>`).exec(boardJsx)?.[0] ?? "";
+  // The work skin (the Office workspace's Tasks page, 2026-10-20) draws no colour code: `must` and `habit` only off a work tab.
   check(
-    "colour code: the board's Must lane is `must`, its Habits lane `habit`, its Planned lane neither",
-    /\smust\s/.test(laneTag("must")) && /\shabit\s/.test(laneTag("habits")) && !/\s(must|habit)\s/.test(laneTag("planned")),
+    "colour code: the board's Must lane is `must`, its Habits lane `habit` (the personal Board; a work tab's neither), its Planned lane neither",
+    /\smust=\{!isWork\}\s/.test(laneTag("must")) && /\shabit=\{!isWork\}\s/.test(laneTag("habits")) && !/\s(must|habit)[\s=]/.test(laneTag("planned")),
     `${laneTag("habits").slice(0, 80)}`
   );
 
@@ -4789,13 +4791,13 @@ asyncChecks.push(
         !mustLeaving.allDone
     );
     check(
-      "lanes (board): Must, Planned and Habits draw their open rows, 'All kept' (a work tab 'All done') once all are done, and keep laneTally's count; Planned and Habits wear their stamp too",
+      "lanes (board): Must, Planned and Habits draw their open rows, 'All kept' (a work tab 'All done') once all are done, and keep laneTally's count; Planned and Habits wear their stamp too (never on a work tab: no stamp)",
       boardSrc.includes('const allKeptLine = <p className="lane-note lane-all">{isWork ? "All done" : "All kept"}</p>;') &&
         boardSrc.includes("{mustRows.allDone && hiddenMusts.length === 0 && allKeptLine}") &&
         boardSrc.includes("{plannedRows.allDone && allKeptLine}") &&
         boardSrc.includes("{habitRows.allDone && allKeptLine}") &&
-        /count=\{planned\.length > 0 \? `\$\{plannedTally\.kept\} of \$\{plannedTally\.total\}` : undefined\}\s*kept=\{!!shown\.snapshot\.planned\}/.test(boardSrc) &&
-        /count=\{`\$\{habitTally\.kept\} of \$\{habitTally\.total\}`\}\s*kept=\{!!shown\.snapshot\.habits\}/.test(boardSrc) &&
+        /count=\{planned\.length > 0 \? `\$\{plannedTally\.kept\} of \$\{plannedTally\.total\}` : undefined\}\s*kept=\{!isWork && !!shown\.snapshot\.planned\}/.test(boardSrc) &&
+        /count=\{`\$\{habitTally\.kept\} of \$\{habitTally\.total\}`\}\s*kept=\{!isWork && !!shown\.snapshot\.habits\}/.test(boardSrc) &&
         boardSrc.includes("const plannedTally = laneTally(planned);") &&
         boardSrc.includes("{anytimeRows.rows.map(renderRow)}")
     );
@@ -4836,19 +4838,20 @@ asyncChecks.push(
         /primary === "board-clear" \? "board-clear"/.test(boardSrc)
     );
     check(
-      "board clear: the card shows once its tap played it (flag 'shown'), while the board stays clear, until OK ('dismissed'); it eases in only on that tap, never on arrival",
+      "board clear: the card shows once its tap played it (flag 'shown'), while the board stays clear, until OK ('dismissed'); it eases in only on that tap, never on arrival; never on a work tab",
       /if \(moments\.includes\("board-clear"\)\) \{\s*const key = boardClearKey\(ctx\.today, ctx\.workId\);\s*writeFlag\(key, "shown"\);/.test(boardSrc) &&
-        /const clearView =\s*shown\.snapshot\.clear && flags\?\.\[clearKey\] === "shown"/.test(boardSrc) &&
+        /const clearView =\s*!isWork && shown\.snapshot\.clear && flags\?\.\[clearKey\] === "shown"/.test(boardSrc) &&
         boardSrc.includes('setFlag(clearKey, "dismissed");') &&
         boardSrc.includes("<BoardClearCard view={clearView} fresh={clearFresh} onDismiss={dismissClear} />") &&
         /\.today-clear\[data-fresh="1"\] \{ animation: today-clear-in/.test(css) &&
         !/animation/.test(body(".today-clear"))
     );
     check(
-      "moments: a lane kept and the board clear follow a tick (not a defer, a skip or a move); a work tab plays only those, never the day's",
+      "moments: a lane kept and the board clear follow a tick (not a defer, a skip or a move); a work tab plays none (the work skin, 2026-10-20)",
       boardSrc.includes('const TICK_MOMENTS: ReadonlySet<DayMoment> = new Set<DayMoment>(["lane-kept", "planned-kept", "habits-kept", "board-clear"]);') &&
         boardSrc.includes("const played = moments.filter((m) => ticked || !TICK_MOMENTS.has(m));") &&
-        /if \(isWork && ticked\) \{\s*const work = dayMomentsOf\(prev, next\)\.filter\(\(m\) => TICK_MOMENTS\.has\(m\)\);/.test(boardSrc) &&
+        !/if \(isWork && ticked\)/.test(boardSrc) &&
+        /if \(isWork \|\| Date\.now\(\) - actedAt\.current > MOMENT_WINDOW_MS\) return;/.test(boardSrc) &&
         /tickedAt\.current = actedAt\.current;/.test(boardSrc)
     );
     const view = ui.boardClearViewOf({ done: 5, lifeXp: 34.44, momentum: { run: 12, quests: 3, questsDone: 2 }, tomorrow: { title: "Book the dentist", more: 1 } });
@@ -4912,8 +4915,9 @@ asyncChecks.push(
         /\{!pile && row\.steps && props\.onStep && row\.state !== "locked" && \(/.test(rowSrc)
     );
     check(
-      "a tick: the live region still says 'Kept <title> · paid N exactly' (a work tab 'Done: <title>'); the row then leaves its lane (yesterday's rows stay)",
-      boardSrc.includes("text: isWork ? `Done: ${row.template.title}` : `Kept ${row.template.title} · paid ${fmtXp(xp)} exactly`,") &&
+      "a tick: the live region still says 'Kept <title> · paid N exactly' (a work tab 'Done: <title>', and no mark: a calm check); the row then leaves its lane (yesterday's rows stay)",
+      boardSrc.includes("text: `Kept ${row.template.title} · paid ${fmtXp(xp)} exactly`,") &&
+        /if \(isWork\) \{\s*announce\(`Done: \$\{row\.template\.title\}`\);\s*return;\s*\}/.test(boardSrc) &&
         /markTick\(row, shown\.xp, from\);\s*if \(row\.lane !== "yesterday"\) leaveLane\(row\);\s*dispatch\(/.test(boardSrc)
     );
     check(

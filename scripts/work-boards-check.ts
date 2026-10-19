@@ -421,7 +421,8 @@ function ui(board: ReturnType<typeof scoping>) {
   check("strip: no other section ever shows a work tab", SECTIONS.filter((s) => s.id !== "tasks").every((s) => subsOf(s.id, [{ id: "a", name: "Acme" }]).length === s.subs.length));
   eq("the '+': after the last work tab, else after Board", [addWorkTabAfter([]), addWorkTabAfter([{ id: "a", name: "A" }, { id: "b", name: "B" }])], ["/today", "/today/work/b"]);
   eq("current: a work tab is its own current tab (never Board), from the path alone", [activeSub("/today/work/a"), activeSub("/today"), activeSub("/today/week")], ["/today/work/a", "/today", "/today/week"]);
-  eq("title: Tasks · Work until the page names it", titleFor("/today/work/a"), { eyebrow: "Tasks", title: "Work" });
+  // The Office workspace (2026-10-20): a tab's index is its Agenda, its board is /tasks; the page's eyebrow is the tab's name.
+  eq("title: Work · Agenda (and Work · Tasks) until the page names the tab", [titleFor("/today/work/a"), titleFor("/today/work/a/tasks")], [{ eyebrow: "Work", title: "Agenda" }, { eyebrow: "Work", title: "Tasks" }]);
 
   const subTabs = code("src/components/shell/SubTabs.tsx");
   const topbar = code("src/components/shell/TopBar.tsx");
@@ -444,11 +445,12 @@ function ui(board: ReturnType<typeof scoping>) {
   check("the prompt: the name is checked (cleanWorkBoardName), then createWorkBoard refreshes and goes to the new tab", /cleanWorkBoardName\(name\)/.test(add) && /createWorkBoard\(clean\.name, \{ refresh: true \}\)/.test(add) && /router\.push\(workBoardHref\(res\.value\.id\)\)/.test(add));
   check("work-tabs.css: tokens only (no hex, rgb() or hsl()), in @layer components", !/#[0-9a-f]{3,8}\b|\b(rgba?|hsla?)\(/i.test(css.replace(/\/\*[\s\S]*?\*\//g, "")) && css.trimStart().startsWith("@layer theme, base, components, art, effects, utilities;"));
 
-  const page = code("src/app/today/work/[boardId]/page.tsx");
+  // The tab's board moved to /today/work/<id>/tasks (the Office workspace's Tasks page, 2026-10-20); its index is the Agenda.
+  const page = code("src/app/today/work/[boardId]/tasks/page.tsx");
   check(
-    "page /today/work/[boardId]: the tab and its board in one wave, the tab's name as the title, the same TodayBoard in work mode, no due-elsewhere strip",
+    "page /today/work/[boardId]/tasks: the tab and its board in one wave, '<tab> · Tasks' as the title, the same TodayBoard in work mode, no due-elsewhere strip",
     /Promise\.all\(\[loadWorkBoard\(userId, boardId\), loadTodayBoard\(userId, day, now, boardId\)\]\)/.test(page) &&
-      /<ShellTitle eyebrow="Work" title=\{board\.name\} \/>/.test(page) &&
+      /<ShellTitle eyebrow=\{board\.name\} title="Tasks" \/>/.test(page) &&
       /<TodayBoard [^>]*work=\{\{ id: board\.id, name: board\.name, crmOn: board\.crmOn, ordersOn: board\.ordersOn \}\}/.test(page) &&
       !/elsewhere=|DueElsewhere/.test(page) &&
       /if \(!board\) notFound\(\);/.test(page) &&
@@ -460,13 +462,13 @@ function ui(board: ReturnType<typeof scoping>) {
 
   const tb = code("src/components/today/TodayBoard.tsx");
   check("work board: no plan card (life XP, capacity), no goals, no Close the day", /\{!isWork && \(\s*<div className="o2 ask-host">/.test(tb) && /<div className="o9">\s*<GoalsStrip\s*off=\{isWork\}/.test(tb) && /if \(off\) return null;/.test(code("src/components/today/GoalsStrip.tsx")) && /\{!isWork && \(\s*<section className="card today-close o11"/.test(tb));
-  check("work board: its card (name, menu) stands where the plan card stands", /\{workTab && \(\s*<div className="o2">\s*<WorkBoardCard board=\{workTab\} \/>/.test(tb));
-  check("work board: no day moments, no XP token, no price notice", /if \(isWork \|\| Date\.now\(\) - actedAt\.current > MOMENT_WINDOW_MS\) return;/.test(tb) && /const paid = isWork \? 0 : xp;/.test(tb) && /else if \(!isWork && Math\.abs\(v\.receipt\.xp - shown\.xp\) > 0\.05\)/.test(tb));
-  check("work board: a clearly marked slot where the Call backs section will mount", /CALL BACKS SLOT/.test(read("src/components/today/TodayBoard.tsx")) && /\{isWork && <div className="work-callbacks" data-slot="call-backs"/.test(tb));
+  check("work board: no card on the board (its name and menu are the work frame's header)", !/WorkBoardCard/.test(tb) && /<WorkTabMenu key=\{menuKey\} board=\{board\}/.test(code("src/components/work/WorkHeader.tsx")));
+  check("work board: no day moments, no XP token (a calm check: words only), no price notice", /if \(isWork \|\| Date\.now\(\) - actedAt\.current > MOMENT_WINDOW_MS\) return;/.test(tb) && /if \(isWork\) \{\s*announce\(`Done: \$\{row\.template\.title\}`\);\s*return;\s*\}/.test(tb) && /else if \(!isWork && Math\.abs\(v\.receipt\.xp - shown\.xp\) > 0\.05\)/.test(tb));
+  check("work board: no call backs slot (the tab's scheduled tasks are its Agenda)", !/CALL BACKS SLOT|work-callbacks|CallBacksSection/.test(read("src/components/today/TodayBoard.tsx")));
   check("work board: rows and drawers in work mode; the inbox offers no idea, no goal", /work=\{isWork\}\n\s*>/.test(tb) && (tb.match(/work=\{isWork\}/g) ?? []).length === 3);
-  const card = code("src/components/today/WorkBoardCard.tsx");
+  const card = code("src/components/work/WorkTabMenu.tsx");
   check(
-    "work board menu: Rename (renameWorkBoard) and Archive behind a confirm (archiveWorkBoard), then back to Board",
+    "work tab menu (the work header's ⋯): Rename (renameWorkBoard) and Archive behind a confirm (archiveWorkBoard), then back to Board",
     /WORK_MENU_LABEL = "Work tab menu"/.test(card) && /renameWorkBoard\(board\.id, clean\.name, \{ refresh: true \}\)/.test(card) && /confirming \? \(/.test(card) && /archiveWorkBoard\(board\.id, \{ refresh: true \}\)/.test(card) && /router\.replace\("\/today"\)/.test(card)
   );
 
@@ -502,11 +504,11 @@ function ui(board: ReturnType<typeof scoping>) {
   check("capture: a line stamped on a work tab carries it; a malformed board is dropped; the personal Board stamps none", line.board === "wb1" && stampLine({ text: "x", reverted: [] }, 2, 0, "ab", null, "../x").board === undefined && stampLine({ text: "x", reverted: [] }, 3, 0, "ab").board === undefined);
   check("capture: the stored line keeps its board through a reload (parsePendingList)", parsePendingList([line])[0]?.board === "wb1" && parsePendingList([{ ...line, board: "<script>" }])[0]?.board === undefined);
   const view = toastCopy({ id: "t1", title: "Send invoice", projectedXp: 0, kind: "TASK", doneNow: false, doneNowError: null, duplicate: false, href: null, where: { lane: "planned", label: "Planned" }, board: "wb1" }, { offToday: true });
-  check("capture: a work line's View goes to its tab (/today/work/<id>#t-<id>)", view.link?.href === "/today/work/wb1#t-t1", JSON.stringify(view.link));
+  check("capture: a work line's View goes to its tab's board (/today/work/<id>/tasks#t-<id>)", view.link?.href === "/today/work/wb1/tasks#t-t1", JSON.stringify(view.link));
   const quick = code("src/components/capture/QuickCapture.tsx");
   check(
     "capture: on a work tab the sheet stamps every line with it, refreshes that page, and sends the board with each line",
-    /const workBoard = workBoardIdOf\(pathname\);\s*const onToday = pathname === "\/today" \|\| workBoard !== null;/.test(quick) &&
+    /const workBoard = workBoardIdOf\(pathname\);\s*const onToday = pathname === "\/today" \|\| \(workBoard !== null && workSectionOf\(pathname\) === "tasks"\);/.test(quick) &&
       /randomSalt\(\), editing\?\.oldId \?\? null, workBoardRef\.current\)/.test(quick) &&
       /randomSalt\(\), null, workBoardRef\.current\)/.test(quick) &&
       /createFromCapture\(line\.text, line\.reverted, \{ refresh: refreshPage, captureKey: line\.nonce, board: line\.board \?\? null, weightUnit \}\)/.test(quick) &&

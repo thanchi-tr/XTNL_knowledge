@@ -31,9 +31,11 @@ import {
  * writing counts for more: ideas (decoded to their real text, so JSON keys
  * like "prompt" or "items" never enter) and their other wordings; task
  * titles and notes on the personal board and every work tab; task steps;
- * call back tags; customers' names and nicknames, their interaction briefs
- * and tags, their tasks; goals' aims; and the Field, Domain and work tab
- * names, which are always eligible.
+ * the work tabs' scheduled tasks (their titles and details: since 2026-10-20
+ * the call backs' and the customer tasks' one list, whose tags and titles the
+ * backfill carried over); customers' names and nicknames, their interaction
+ * briefs and tags; goals' aims; and the Field, Domain and work tab names,
+ * which are always eligible.
  *
  *   loadWordModel(userId)                 → WordModelWire, cached on every tag a writer clears, and 'words'
  *   recordWordChoicesCore(userId, events) → one upsert of the picks and passes; never throws
@@ -42,7 +44,7 @@ import {
 /** The newest rows read per table: years of writing, at a bounded cost per build. */
 export const SOURCE_ROWS_MAX = 4000;
 
-/** The model is rebuilt after any of these is cleared: ideas and their wordings, Fields and Domains, tasks, steps, call backs and work tabs ('life'), goals, and the user's own choices. */
+/** The model is rebuilt after any of these is cleared: ideas and their wordings, Fields and Domains, tasks, steps, scheduled tasks and work tabs ('life'), goals, and the user's own choices. */
 export const WORD_MODEL_TAGS: CacheTag[] = ["ideas", "fields", "life", "roadmap", "words"];
 
 /**
@@ -104,16 +106,16 @@ export interface CorpusRows {
   /** Personal and work tasks, habits, goals and idea drafts alike. */
   tasks: { title: string; note: string | null; createdAt: Date }[];
   subtasks: { title: string; createdAt: Date }[];
-  callBacks: { tags: string[]; createdAt: Date }[];
   customers: { name: string; nickname: string | null; createdAt: Date }[];
   interactions: { brief: string; tags: string[]; createdAt: Date }[];
-  customerTasks: { title: string; detail: string | null; createdAt: Date }[];
+  /** The work tabs' scheduled tasks (ScheduledTask; the call backs and customer tasks before them, backfilled). */
+  scheduledTasks: { title: string; detail: string | null; createdAt: Date }[];
   roadmaps: { aim: string; constraints: string | null; createdAt: Date }[];
   /** Field, Domain and open work tab names: the structure as it stands now. */
   structure: string[];
 }
 
-export const EMPTY_CORPUS: CorpusRows = { ideas: [], variants: [], tasks: [], subtasks: [], callBacks: [], customers: [], interactions: [], customerTasks: [], roadmaps: [], structure: [] };
+export const EMPTY_CORPUS: CorpusRows = { ideas: [], variants: [], tasks: [], subtasks: [], customers: [], interactions: [], scheduledTasks: [], roadmaps: [], structure: [] };
 
 /** The rows as the model's sources: one per field the user typed, dated when it was written. Pure. */
 export function corpusOf(rows: CorpusRows, now: number): WordSource[] {
@@ -128,7 +130,6 @@ export function corpusOf(rows: CorpusRows, now: number): WordSource[] {
     add(r.note, r.createdAt);
   }
   for (const r of rows.subtasks) add(r.title, r.createdAt);
-  for (const r of rows.callBacks) for (const tag of r.tags) add(tag, r.createdAt, "name");
   for (const r of rows.customers) {
     add(r.name, r.createdAt, "name");
     add(r.nickname, r.createdAt, "name");
@@ -137,7 +138,7 @@ export function corpusOf(rows: CorpusRows, now: number): WordSource[] {
     add(r.brief, r.createdAt);
     for (const tag of r.tags) add(tag, r.createdAt, "name");
   }
-  for (const r of rows.customerTasks) {
+  for (const r of rows.scheduledTasks) {
     add(r.title, r.createdAt);
     add(r.detail, r.createdAt);
   }
@@ -158,15 +159,14 @@ export function choicesOf(rows: { word: string; context: string; picks: number; 
 async function readCorpus(userId: string): Promise<{ rows: CorpusRows; choices: WordChoiceRecord[] }> {
   const newest = { orderBy: { createdAt: "desc" as const }, take: SOURCE_ROWS_MAX };
   const soft = <T>(p: Promise<T[]>): Promise<T[]> => p.catch((): T[] => []);
-  const [ideas, variants, tasks, subtasks, callBacks, customers, interactions, customerTasks, roadmaps, fields, domains, boards, choices] = await Promise.all([
+  const [ideas, variants, tasks, subtasks, customers, interactions, scheduledTasks, roadmaps, fields, domains, boards, choices] = await Promise.all([
     soft(prisma.idea.findMany({ where: { isArchived: false }, select: { questionType: true, question: true, answer: true, createdAt: true }, ...newest })),
     soft(prisma.ideaVariant.findMany({ select: { prompt: true, createdAt: true }, ...newest })),
     soft(prisma.taskTemplate.findMany({ where: { userId }, select: { title: true, note: true, createdAt: true }, ...newest })),
     soft(prisma.taskSubtask.findMany({ where: { userId }, select: { title: true, createdAt: true }, ...newest })),
-    soft(prisma.callBack.findMany({ where: { userId }, select: { tags: true, createdAt: true }, ...newest })),
     soft(prisma.customer.findMany({ where: { userId }, select: { name: true, nickname: true, createdAt: true }, ...newest })),
     soft(prisma.customerInteraction.findMany({ where: { userId }, select: { brief: true, tags: true, createdAt: true }, ...newest })),
-    soft(prisma.customerTask.findMany({ where: { userId }, select: { title: true, detail: true, createdAt: true }, ...newest })),
+    soft(prisma.scheduledTask.findMany({ where: { userId }, select: { title: true, detail: true, createdAt: true }, ...newest })),
     soft(prisma.roadmap.findMany({ where: { userId }, select: { aim: true, constraints: true, createdAt: true }, ...newest })),
     soft(prisma.field.findMany({ select: { name: true } })),
     soft(prisma.domain.findMany({ select: { name: true } })),
@@ -179,10 +179,9 @@ async function readCorpus(userId: string): Promise<{ rows: CorpusRows; choices: 
       variants,
       tasks,
       subtasks,
-      callBacks,
       customers,
       interactions,
-      customerTasks,
+      scheduledTasks,
       roadmaps,
       structure: [...fields, ...domains, ...boards].map((r) => r.name),
     },

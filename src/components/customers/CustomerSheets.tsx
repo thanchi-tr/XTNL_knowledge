@@ -2,9 +2,10 @@
 
 /**
  * The customer list's sheets (customers.ts holds the rules): a customer's
- * details (add and edit), a scheduled task (add and edit: when, the task, a
- * detail, the one reminder), an info (add and edit: the detail, when it was
- * recorded) and an interaction (add and edit: when, what happened, a brief). Each checks its fields with the same clean* the server
+ * details (add and edit), an info (add and edit: the detail, when it was
+ * recorded) and an interaction (add and edit: when, what happened, a brief).
+ * A customer's scheduled tasks use the work frame's one scheduled task sheet
+ * (components/work/ScheduledTaskSheet.tsx). Each checks its fields with the same clean* the server
  * uses, says what is wrong under the field, and hands a clean input to its
  * caller's save, which answers an error line or null. A parent remounts a
  * sheet (its `key`) each time it opens, so the fields start from `initial`.
@@ -12,7 +13,6 @@
 import { useId, useState, useTransition, type ReactNode } from "react";
 import {
   CUSTOMER_ACTIONS,
-  CUSTOMER_ACTION_GLYPH,
   CUSTOMER_ACTION_LABEL,
   CUSTOMER_INFO_MAX,
   CUSTOMER_NAME_MAX,
@@ -20,8 +20,6 @@ import {
   CUSTOMER_NUMBER_MAX,
   CUSTOMER_NUMBER_TAKEN,
   CUSTOMER_PHONE_MAX,
-  CUSTOMER_TASK_DETAIL_MAX,
-  CUSTOMER_TASK_TITLE_MAX,
   INTERACTION_BRIEF_MAX,
   RECORDED_AHEAD_MS,
   RECORDED_FUTURE,
@@ -33,15 +31,13 @@ import {
   cleanInfoDetail,
   cleanNickname,
   cleanPhone,
-  cleanTaskDetail,
-  cleanTaskTitle,
   instantOfLocalInput,
   numberUsed,
   type CustomerAction,
 } from "@/lib/customers";
 import { Button } from "@/components/ui/Button";
 import { Sheet } from "@/components/ui/Sheet";
-import { Switch } from "@/components/ui/Switch";
+import { ActionMark } from "@/components/work/ChannelGlyph";
 
 export const UNREACHABLE = "Couldn't reach the server. Check the connection and try again.";
 
@@ -198,157 +194,6 @@ export function CustomerFormSheet({
         )}
       </form>
       {children}
-    </Sheet>
-  );
-}
-
-// ── A scheduled task ───────────────────────────────────────────────────────
-
-export interface TaskFormValue {
-  /** A datetime-local value in the user's zone. */
-  when: string;
-  title: string;
-  detail: string;
-  remind: boolean;
-}
-
-export function TaskSheet({
-  open,
-  onClose,
-  editing,
-  initial,
-  onSave,
-  onArchive,
-}: {
-  open: boolean;
-  onClose: () => void;
-  editing: boolean;
-  initial: TaskFormValue;
-  onSave: (value: { dueAt: string; title: string; detail: string | null; remind: boolean }) => Promise<string | null>;
-  /** Edit only: archive the task (the page offers Undo). */
-  onArchive?: () => Promise<string | null>;
-}) {
-  const id = useId();
-  const [v, setV] = useState(initial);
-  const [errors, setErrors] = useState<Partial<Record<"when" | "title" | "detail" | "form", string>>>({});
-  const [pending, start] = useTransition();
-  const clear = (k: keyof typeof errors) => (errors[k] || errors.form) && setErrors((e) => ({ ...e, [k]: undefined, form: undefined }));
-
-  function save() {
-    const due = instantOfLocalInput(v.when);
-    const title = cleanTaskTitle(v.title);
-    const detail = cleanTaskDetail(v.detail);
-    if (!due || !title.ok || !detail.ok) {
-      setErrors({ when: due ? undefined : WHEN_BAD, title: title.ok ? undefined : title.error, detail: detail.ok ? undefined : detail.error });
-      return;
-    }
-    start(async () => {
-      let error: string | null;
-      try {
-        error = await onSave({ dueAt: due.toISOString(), title: title.value, detail: detail.value, remind: v.remind });
-      } catch {
-        error = UNREACHABLE;
-      }
-      if (error) setErrors({ form: error });
-    });
-  }
-
-  function archive() {
-    if (!onArchive) return;
-    start(async () => {
-      let error: string | null;
-      try {
-        error = await onArchive();
-      } catch {
-        error = UNREACHABLE;
-      }
-      if (error) setErrors({ form: error });
-    });
-  }
-
-  return (
-    <Sheet open={open} onClose={() => !pending && onClose()} title={editing ? "Edit task" : "Schedule a task"} description="One reminder is sent at its time.">
-      <form
-        className="crm-form"
-        noValidate
-        onSubmit={(e) => {
-          e.preventDefault();
-          save();
-        }}
-      >
-        <Field id={`${id}-when`} label="When" error={errors.when}>
-          <input
-            id={`${id}-when`}
-            className="crm-input"
-            type="datetime-local"
-            value={v.when}
-            onChange={(e) => {
-              setV((x) => ({ ...x, when: e.target.value }));
-              clear("when");
-            }}
-            {...invalid(errors.when, `${id}-when`)}
-          />
-        </Field>
-        <Field id={`${id}-title`} label="Task" aside={`${count(v.title.trim())}/${CUSTOMER_TASK_TITLE_MAX}`} error={errors.title}>
-          <input
-            id={`${id}-title`}
-            className="crm-input"
-            value={v.title}
-            onChange={(e) => {
-              setV((x) => ({ ...x, title: e.target.value }));
-              clear("title");
-            }}
-            autoComplete="off"
-            maxLength={CUSTOMER_TASK_TITLE_MAX + 8}
-            data-autofocus
-            {...invalid(errors.title, `${id}-title`)}
-          />
-        </Field>
-        <Field id={`${id}-detail`} label="Detail" aside={`${count(v.detail.trim())}/${CUSTOMER_TASK_DETAIL_MAX}`} error={errors.detail}>
-          <textarea
-            id={`${id}-detail`}
-            className="crm-input"
-            value={v.detail}
-            rows={3}
-            onChange={(e) => {
-              setV((x) => ({ ...x, detail: e.target.value }));
-              clear("detail");
-            }}
-            maxLength={CUSTOMER_TASK_DETAIL_MAX + 20}
-            {...invalid(errors.detail, `${id}-detail`)}
-          />
-        </Field>
-        <div className="crm-switch-row">
-          <span>
-            Reminder
-            <span className="t-meta">{v.remind ? "A push at this time, once." : "Off: no push for this task."}</span>
-          </span>
-          <Switch checked={v.remind} onChange={(remind) => setV((x) => ({ ...x, remind }))} label="Reminder" />
-        </div>
-        <div className="crm-form-actions">
-          <Button type="submit" variant="primary" disabled={pending}>
-            {pending ? "Saving…" : editing ? "Save" : "Schedule"}
-          </Button>
-          <Button type="button" variant="quiet" onClick={onClose} disabled={pending}>
-            Cancel
-          </Button>
-        </div>
-        {errors.form && (
-          <p className="crm-error" role="alert">
-            {errors.form}
-          </p>
-        )}
-      </form>
-      {editing && onArchive && (
-        <div className="crm-danger" style={{ marginTop: 14 }}>
-          <p>Archive takes it off the list and cancels its reminder. You can undo right after.</p>
-          <div className="crm-form-actions">
-            <Button variant="secondary" onClick={archive} disabled={pending}>
-              Archive task
-            </Button>
-          </div>
-        </div>
-      )}
     </Sheet>
   );
 }
@@ -581,9 +426,7 @@ export function InteractionSheet({
                   if (errors.action) setErrors((er) => ({ ...er, action: undefined }));
                 }}
               />
-              <span className="crm-glyph" aria-hidden="true">
-                {CUSTOMER_ACTION_GLYPH[a]}
-              </span>
+              <ActionMark action={a} />
               {CUSTOMER_ACTION_LABEL[a]}
             </label>
           ))}

@@ -1,0 +1,255 @@
+@layer theme, base, components, art, effects, utilities;
+/* =====================================================================
+   THE OFFICE WORKSPACE (2026-10-20; the work layout, components/work/*):
+   a work tab's frame, its Agenda, its scheduled task rows and sheet, and
+   the work skin over the Tasks board. Calm, dense and professional: one
+   accent of its own (--work, tokens.css: a header band at 8% over the
+   page, a 2 px rule, the current page's mark, a highlight), a tighter type
+   rhythm (14/20 rows, 13/18 meta, 12 px caps headings), and none of the
+   game's furniture (no lane colour, no diamonds, no figures, no flourish).
+   344 px first (work-layout.ts holds the numbers; scheduled-tasks-check
+   does the sums and reads them back here); every control a 44 px target;
+   tokens only, so Night and Vellum both hold. Namespaced wk-* and st-*.
+   Motion: colour and shadow only; nothing moves layout.
+   ===================================================================== */
+@layer components {
+  .wk-frame { display: flex; flex-direction: column; min-width: 0; }
+
+  /* ---------- the header: the band, then the workspace's pages ---------- */
+  .wk-head { width: 100%; max-width: 1240px; margin: 0 auto; padding: 6px 16px 0; display: flex; flex-direction: column; gap: 6px; }
+  @container main (min-width: 600px) { .wk-head { padding: 8px 24px 0; } }
+  @container main (min-width: 1000px) { .wk-head { padding: 12px 32px 0; } }
+  .wk-band {
+    position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px;
+    border-radius: var(--r-card); background: color-mix(in srgb, var(--work) 8%, var(--page)); box-shadow: inset 0 2px 0 var(--work);
+  }
+  .wk-name { display: none; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; max-width: 30%; padding: 0 6px; color: var(--ink-0); }
+  .wk-name svg.i { flex: none; width: 18px; height: 18px; color: var(--work); }
+  .wk-name b { min-width: 0; font: 600 15px/20px var(--font-ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  @container main (min-width: 600px) { .wk-name { display: inline-flex; } }
+
+  /* The search: the field fills the band; its list drops under the whole band. */
+  .wk-search { flex: 1 1 auto; min-width: 140px; display: flex; align-items: center; }
+  .wk-search-i { position: absolute; margin-left: 12px; width: 18px; height: 18px; color: var(--ink-2); pointer-events: none; }
+  .wk-search-in {
+    width: 100%; min-width: 0; min-height: 44px; padding: 0 12px 0 38px; border-radius: var(--r-ctl);
+    border: 1px solid var(--line-ctl); background: var(--sunken); color: var(--ink-0); font: 400 16px/1.3 var(--font-ui);
+  }
+  .wk-search-in::placeholder { color: var(--ink-2); }
+  .wk-search-in:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .wk-search-in::-webkit-search-cancel-button { cursor: pointer; }
+  .wk-skel { min-height: 44px; border-radius: var(--r-ctl); background: var(--sunken); }
+  .wk-results {
+    position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: var(--z-bar); max-height: min(70dvh, 520px); overflow-y: auto;
+    padding: 6px; border-radius: var(--r-card); border: 1px solid var(--line-2); background: var(--overlay); box-shadow: var(--shadow-pop);
+  }
+  .wk-results[hidden] { display: none; }
+  .wk-res-group + .wk-res-group { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line-1); }
+  .wk-res-h { margin: 0; padding: 6px 10px 4px; font: 700 12px/16px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); }
+  .wk-res {
+    display: flex; flex-direction: column; justify-content: center; gap: 2px; min-height: 44px; padding: 6px 10px;
+    border-radius: var(--r-ctl); color: var(--ink-0); cursor: pointer; transition: background-color var(--t-quick);
+  }
+  .wk-res:hover, .wk-res[aria-selected="true"] { background: var(--raised); box-shadow: inset 2px 0 0 var(--work); }
+  .wk-res.more { color: var(--ink-1); }
+  .wk-res-main { min-width: 0; font: 400 14px/20px var(--font-ui); overflow-wrap: anywhere; }
+  .wk-res-main b { font-weight: 600; }
+  .wk-res-id { font: 600 13px/18px var(--font-mono); color: var(--ink-1); font-variant-numeric: tabular-nums; }
+  .wk-res-sub { min-width: 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); overflow-wrap: anywhere; }
+  .wk-res-none { margin: 0; padding: 10px; font: 400 14px/20px var(--font-ui); color: var(--ink-2); }
+  /* A match, marked: the text keeps its ink, the work accent underlines it on a faint wash. */
+  .wk-head mark, .wk-agenda mark, .crm-page mark, .st-form mark {
+    color: inherit; background: color-mix(in srgb, var(--work) 18%, transparent); border-radius: 3px;
+    box-shadow: inset 0 -2px 0 var(--work);
+  }
+
+  /* New and the tab's menu: 44 px, the band's quiet controls. */
+  .wk-new {
+    flex: none; min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 0 12px; border-radius: var(--r-ctl); border: 0; background: var(--work); color: var(--on-work);
+    font: 600 14px var(--font-ui); cursor: pointer; transition: box-shadow var(--t-quick);
+  }
+  .wk-new svg.i { width: 18px; height: 18px; }
+  .wk-new:hover { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--on-work) 30%, transparent); }
+  .wk-tabmenu {
+    flex: none; min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center;
+    border: 0; border-radius: var(--r-ctl); background: transparent; color: var(--ink-1); cursor: pointer; transition: background-color var(--t-quick), color var(--t-quick);
+  }
+  .wk-tabmenu:hover { background: var(--raised); color: var(--ink-0); }
+  .wk-new:focus-visible, .wk-tabmenu:focus-visible, .wk-sub:focus-visible, .wk-menu-item:focus-visible, .st-act:focus-visible, .st-open:focus-visible,
+  .st-chip:focus-visible, .wk-sec-toggle:focus-visible, .wk-watch-row:focus-visible, .st-pick:focus-visible, .st-x:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  /* A small menu under its button (New, Snooze), aligned to the button's end. */
+  .wk-menu { position: relative; flex: none; }
+  .wk-menu-list {
+    position: absolute; right: 0; top: calc(100% + 4px); z-index: var(--z-bar); min-width: 200px; max-width: calc(100vw - 32px);
+    display: flex; flex-direction: column; padding: 6px; border-radius: var(--r-card); border: 1px solid var(--line-2);
+    background: var(--overlay); box-shadow: var(--shadow-pop);
+  }
+  .wk-menu-list.start { right: auto; left: 0; }
+  .wk-menu-item {
+    display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 12px; border: 0; border-radius: var(--r-ctl);
+    background: transparent; color: var(--ink-0); font: 600 14px var(--font-ui); text-align: left; cursor: pointer;
+    transition: background-color var(--t-quick);
+  }
+  .wk-menu-item:hover, .wk-menu-item:focus { background: var(--raised); }
+  .wk-menu-item:disabled { opacity: .6; cursor: default; }
+  .wk-menu-item svg.i { flex: none; width: 18px; height: 18px; color: var(--ink-1); }
+  .wk-menu-l { flex: 1 1 auto; }
+  .wk-menu-h { font: 400 13px var(--font-ui); color: var(--ink-2); }
+
+  /* The workspace's pages: a quiet strip, the current one marked in the work accent. Its own scroll, never the page's. */
+  .wk-subnav { display: flex; gap: 2px; min-width: 0; min-height: 44px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line-1); }
+  .wk-subnav::-webkit-scrollbar { display: none; }
+  .wk-sub {
+    flex: none; display: inline-flex; align-items: center; min-height: 44px; padding: 0 10px; color: var(--ink-1);
+    font: 600 14px var(--font-ui); text-decoration: none; box-shadow: inset 0 -2px 0 transparent; transition: color var(--t-quick), box-shadow var(--t-quick);
+  }
+  .wk-sub:hover { color: var(--ink-0); }
+  .wk-sub[aria-current="page"] { color: var(--ink-0); box-shadow: inset 0 -2px 0 var(--work); }
+  /* Its counts from 600 only: at 344 the four pages fit the strip without them (work-layout.ts subnavWidth). */
+  .wk-sub-n { display: none; margin-left: 6px; font: 400 12px/16px var(--font-ui); color: var(--ink-2); white-space: nowrap; }
+  @container main (min-width: 600px) { .wk-sub-n { display: inline; } }
+
+  /* ---------- the Agenda ---------- */
+  .wk-agenda-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+  .wk-agenda-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .wk-side { display: none; }
+  @container main (min-width: 900px) {
+    .wk-agenda-grid { grid-template-columns: minmax(0, 1fr) 300px; }
+    .wk-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; position: sticky; top: 12px; }
+  }
+  .wk-sec { padding: 2px 0 4px; overflow: clip; }
+  .wk-sec-h { display: flex; align-items: center; gap: 8px; margin: 0; padding: 8px 14px 4px; font: 700 12px/16px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-1); }
+  .wk-sec-t { min-width: 0; }
+  .wk-count { font: 600 12px/16px var(--font-ui); letter-spacing: 0; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .wk-sec[data-sec="overdue"] .wk-sec-t, .wk-sec[data-sec="overdue"] .wk-count { color: var(--owed); }
+  .wk-sec-toggle {
+    display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; margin: -8px -6px -4px; padding: 0 6px; border: 0; border-radius: var(--r-ctl);
+    background: transparent; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; text-align: left; cursor: pointer;
+  }
+  .wk-sec-toggle svg.i { flex: none; width: 16px; height: 16px; transition: transform var(--t-quick) var(--ease-out); }
+  .wk-sec-toggle[aria-expanded="true"] svg.i { transform: rotate(90deg); }
+  .wk-sec-aside { margin-left: auto; font: 400 12px/16px var(--font-ui); letter-spacing: 0; text-transform: none; color: var(--ink-2); }
+  .wk-sec-note { margin: 0; padding: 4px 14px 10px; font: 400 14px/20px var(--font-ui); color: var(--ink-2); }
+  .wk-note { margin: 0; padding: 10px 14px; border-radius: var(--r-card); background: var(--card); font: 400 14px/20px var(--font-ui); color: var(--ink-1); }
+  .wk-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 16px; }
+  .wk-empty p { margin: 0; font: 400 14px/20px var(--font-ui); color: var(--ink-1); }
+  .wk-side-card { padding: 2px 0 8px; }
+  .wk-watch { list-style: none; margin: 0; padding: 0 6px; display: flex; flex-direction: column; gap: 2px; }
+  .wk-watch-row {
+    display: flex; flex-direction: column; justify-content: center; min-height: 44px; padding: 4px 8px; border-radius: var(--r-ctl);
+    color: var(--ink-0); text-decoration: none; transition: background-color var(--t-quick);
+  }
+  .wk-watch-row:hover { background: var(--raised); }
+  .wk-watch-n { font: 600 14px/20px var(--font-ui); overflow-wrap: anywhere; }
+  .wk-watch-s { font: 400 13px/18px var(--font-ui); color: var(--owed); }
+  .wk-quick { display: flex; flex-direction: column; gap: 6px; padding: 0 12px; }
+
+  /* ---------- a scheduled task's row: [time 44] [body] [done 44], dense ---------- */
+  .st-list { list-style: none; margin: 0; padding: 0; }
+  .st-list > li + li { border-top: 1px solid var(--line-1); }
+  .st-row {
+    display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; column-gap: 8px; align-items: start;
+    padding: 4px 8px; outline: none; scroll-margin: 120px 0; transition: background-color var(--t-base), box-shadow var(--t-base);
+  }
+  .st-row:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
+  /* ?task=: the row a link asked for. */
+  .st-row[data-hl] { background: var(--raised); box-shadow: inset 3px 0 0 var(--work); }
+  .st-time { display: flex; flex-direction: column; padding-top: 12px; min-width: 0; font-variant-numeric: tabular-nums; }
+  .st-time b { font: 600 13px/18px var(--font-ui); color: var(--ink-0); white-space: nowrap; }
+  .st-time span { font: 400 12px/16px var(--font-ui); color: var(--ink-2); overflow-wrap: anywhere; }
+  .st-row[data-section="overdue"] .st-time b { color: var(--owed); }
+  .st-row[data-done] .st-title { color: var(--ink-2); text-decoration: line-through; text-decoration-color: var(--ink-2); }
+  .st-body { display: flex; flex-direction: column; min-width: 0; }
+  .st-open {
+    display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 4px; margin: 0 -4px; border: 0; border-radius: var(--r-ctl);
+    background: transparent; color: var(--ink-0); text-align: left; font: inherit; cursor: pointer; transition: background-color var(--t-quick);
+  }
+  .st-open:hover { background: var(--raised); }
+  .st-glyph { flex: none; width: 18px; height: 18px; color: var(--work); }
+  .st-title {
+    flex: 1 1 auto; min-width: 0; font: 600 14px/20px var(--font-ui); overflow-wrap: anywhere;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .st-bell { flex: none; display: inline-flex; color: var(--ink-2); }
+  .st-bell svg.i { width: 14px; height: 14px; }
+  .st-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin: 0; min-width: 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); }
+  /* The customer chip: a 32 px pill whose hit area reaches 44 (its ::after). */
+  .st-chip {
+    position: relative; display: inline-flex; align-items: center; min-height: 32px; max-width: 100%; padding: 0 10px;
+    border-radius: var(--r-pill); border: 1px solid var(--line-2); color: var(--ink-0); font: 600 13px/18px var(--font-ui);
+    text-decoration: none; overflow-wrap: anywhere; transition: background-color var(--t-quick);
+  }
+  .st-chip::after { content: ""; position: absolute; inset: -6px -2px; }
+  .st-chip:hover { background: var(--raised); }
+  .st-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 120px; }
+  .st-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 2px; }
+  .st-act {
+    flex: none; min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+    padding: 0; border-radius: var(--r-ctl); border: 1px solid var(--line-2); background: transparent; color: var(--ink-1);
+    font: 600 13px var(--font-ui); text-decoration: none; cursor: pointer; transition: background-color var(--t-quick), color var(--t-quick);
+  }
+  .st-act svg.i { width: 16px; height: 16px; }
+  .st-act:hover { background: var(--raised); color: var(--ink-0); }
+  .st-act:disabled { opacity: .6; cursor: default; }
+  .st-snooze { padding: 0 10px; }
+  .st-done { margin-top: 0; }
+  .st-done-skel { display: grid; place-items: center; width: 44px; height: 44px; }
+
+  /* ---------- the sheet ---------- */
+  .st-form { display: flex; flex-direction: column; gap: 16px; }
+  .st-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; margin: 0; padding: 0; border: 0; }
+  .st-label { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 0; font: 600 13px/18px var(--font-ui); color: var(--ink-0); }
+  .st-label .t-meta { font-weight: 400; font-variant-numeric: tabular-nums; }
+  .st-input {
+    width: 100%; min-width: 0; min-height: 44px; padding: 0 12px; border-radius: var(--r-ctl);
+    border: 1px solid var(--line-ctl); background: var(--sunken); color: var(--ink-0); font: 400 16px/1.3 var(--font-ui);
+  }
+  textarea.st-input { min-height: 72px; padding: 10px 12px; line-height: 1.4; resize: vertical; }
+  .st-input::placeholder { color: var(--ink-2); }
+  .st-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .st-when { display: flex; flex-wrap: wrap; gap: 8px; }
+  .st-when .st-input { flex: 1 1 130px; }
+  .st-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .st-switch-row > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; font: 600 14px/20px var(--font-ui); color: var(--ink-0); }
+  .st-switch-row > span .t-meta { font-weight: 400; }
+  .st-switch-row a { color: var(--ink-0); }
+  .st-channels { display: flex; flex-wrap: wrap; gap: 8px; }
+  .st-chan {
+    position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px;
+    border-radius: var(--r-ctl); border: 1px solid var(--line-ctl); color: var(--ink-0); font: 600 14px var(--font-ui); cursor: pointer;
+    transition: background-color var(--t-quick), color var(--t-quick), border-color var(--t-quick);
+  }
+  .st-chan svg.i { width: 18px; height: 18px; }
+  .st-chan input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+  .st-chan:has(input:checked) { background: var(--work); border-color: var(--work); color: var(--on-work); }
+  .st-chan:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .st-picked { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 4px 0 12px; border-radius: var(--r-ctl); border: 1px solid var(--line-2); background: var(--raised); }
+  .st-picked-l { flex: 1 1 auto; min-width: 0; font: 600 14px/20px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+  .st-x { flex: none; min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: var(--r-ctl); background: transparent; color: var(--ink-1); cursor: pointer; }
+  .st-x svg.i { width: 16px; height: 16px; }
+  .st-picks { list-style: none; margin: 0; padding: 4px; display: flex; flex-direction: column; gap: 2px; border-radius: var(--r-ctl); border: 1px solid var(--line-2); }
+  .st-pick {
+    width: 100%; display: flex; flex-direction: column; justify-content: center; gap: 2px; min-height: 44px; padding: 4px 10px;
+    border: 0; border-radius: var(--r-ctl); background: transparent; color: var(--ink-0); text-align: left; font: inherit; cursor: pointer;
+  }
+  .st-pick:hover { background: var(--raised); }
+  .st-hint { margin: 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); }
+  .st-err { margin: 0; font: 600 13px/18px var(--font-ui); color: var(--ink-0); }
+  .st-foot { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .st-foot .btn-primary { flex: 1 1 140px; }
+  .st-log { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 12px; border: 1px solid var(--line-2); border-radius: var(--r-card); background: var(--sunken); }
+
+  /* A customer row found by the search (the Customers page): name · ID marked, the match's own line beneath. */
+  .crm-row-found { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+  /* ---------- the work skin over the Tasks board (TodayBoard data-skin="work") ----------
+     No lane colour codes and no diamond marks (TaskRow drops data-accent and the diamond; the lanes lose theirs here),
+     no KEPT stamp, no flourish: no ripple, no strike sweep, no press. The kit's calm check stays. */
+  .today-board[data-skin="work"] .lane-mark { display: none; }
+  .today-board[data-skin="work"] .today-lane .lane-h h2 { color: var(--ink-1); }
+  .today-board[data-skin="work"] .t-row .tick[data-press] .tick-ring { transform: none; }
+  .today-board[data-skin="work"] .t-row[data-motion="hold"] .tick[data-state="done"]::after { animation: none; opacity: 0; }
+  .today-board[data-skin="work"] .t-row:is([data-motion="hold"], [data-motion="out"]) .row.done .r-name::after { content: none; animation: none; }
+}

@@ -4,23 +4,28 @@
  * check pins:
  *
  *   1. the rules (src/lib/customers.ts): the limits (ID 1..24, name 1..60,
- *      nickname <= 40, phone, brief <= 280, task 1..80 / detail <= 500, an
- *      info's detail 1..1000 and its "Recorded at" never a minute ahead), the
- *      four actions, IDs compared ignoring case, the next-ID suggestion, the
- *      search by ID (exact first, then prefix, then names), the user's clock,
- *      the task states and the due count, the reminder's re-arm rules, and the
- *      paths (the reminder's tap URL among them);
+ *      nickname <= 40, phone, brief <= 280, an info's detail 1..1000 and its
+ *      "Recorded at" never a minute ahead), the eight actions (Call, Visit,
+ *      Email and Message added 2026-10-20), IDs compared ignoring case, the
+ *      next-ID suggestion, the Customers page's search (customer-search.ts, the
+ *      work frame's one engine: by ID first, then names), the user's clock, the
+ *      due count, and the paths (an old customer task reminder's tap URL among
+ *      them);
  *   2. the cores (src/lib/customers-server.ts) against an in-memory store that
  *      keeps the partial unique index on (boardId, lower(number)) WHERE
  *      archivedAt IS NULL: the ID unique on a tab ignoring case and free again
  *      after an archive; the crmOn gate (and the tab's owner, and archived
- *      tabs) on every write; remindSentAt cleared when a task's time moves or
- *      its reminder is switched back on; a done task never due a reminder;
- *      an info recorded now by default, newest first, archived and restored;
- *      the pages' reads;
+ *      tabs) on every write; an info recorded now by default, newest first,
+ *      archived and restored; the pages' reads (their scheduled tasks, the due
+ *      counts, the latest activity);
  *   3. the wiring: the actions, the routes and their params, the shell (the
- *      work tab stays current under /customers), the tab card's link and
- *      switch, 44 px targets and tokens only, and no game write anywhere.
+ *      work tab stays current under /customers), the work frame's Customers
+ *      page and the menu's switch, 44 px targets and tokens only, and no game
+ *      write anywhere.
+ *
+ * A customer's tasks are scheduled tasks since 2026-10-20 (their rules, cores,
+ * reminder and highlight: scripts/scheduled-tasks-check.ts, which took over the
+ * customer task tests this check held).
  *
  * Pure: no database, no clock, no model.
  *
@@ -49,18 +54,13 @@ import {
   CUSTOMER_PHONE_BAD,
   CUSTOMER_PHONE_LONG,
   CUSTOMER_RESTORE_TAKEN,
-  CUSTOMER_TASK_DETAIL_LONG,
-  CUSTOMER_TASK_GONE,
-  CUSTOMER_TASK_TITLE_EMPTY,
-  CUSTOMER_TASK_TITLE_LONG,
+  CUSTOMER_ACTION_ICON,
   INTERACTION_ACTION_BAD,
   INTERACTION_BRIEF_LONG,
   INTERACTION_GONE,
   RECORDED_FUTURE,
-  REMIND_LATE_MS,
   TASK_PARAM,
   WHEN_BAD,
-  armedRemindSentAt,
   cleanAction,
   cleanBrief,
   cleanCustomerName,
@@ -69,14 +69,10 @@ import {
   cleanNickname,
   cleanPhone,
   cleanRecordedAt,
-  cleanTaskDetail,
-  cleanTaskTitle,
   cleanWhen,
   customerHref,
-  customerTaskRemindDue,
   customersHref,
   customersPathOf,
-  defaultTaskDue,
   dueChipText,
   dueCountOf,
   endOfLocalDay,
@@ -90,53 +86,42 @@ import {
   numberKey,
   numberUsed,
   phoneHref,
-  remindSentAtAfterEdit,
-  remindSentAtAfterUndo,
-  searchCustomers,
-  searchPick,
   sortInfos,
-  sortTasks,
   taskParamOf,
-  taskStateOf,
   whenLabel,
 } from "../src/lib/customers";
+import { matchCustomers, prepareIndex, topMatch } from "../src/lib/customer-search";
+import { TASK_ICONS } from "../src/lib/task-style";
+import type { ScheduledView } from "../src/lib/scheduled-tasks";
 import {
   addInfoCore,
   addInteractionCore,
-  addTaskCore,
   archiveCustomerCore,
   archiveInfoCore,
   archiveInteractionCore,
-  archiveTaskCore,
   createCustomerCore,
   customerDueCountCore,
   editCustomerCore,
   editInfoCore,
   editInteractionCore,
-  editTaskCore,
   isNumberTaken,
   loadCustomerPage,
   loadCustomersPage,
   restoreCustomerCore,
   restoreInfoCore,
   restoreInteractionCore,
-  restoreTaskCore,
   setCrmCore,
-  setTaskDoneCore,
   type CrmBoardRow,
   type CustomerDb,
   type CustomerFields,
   type CustomerInfoRow,
   type InfoFields,
   type CustomerRow,
-  type CustomerTaskRow,
   type InteractionFields,
   type InteractionRow,
-  type LinkedCallBackRow,
-  type TaskFields,
 } from "../src/lib/customers-server";
 import { WORK_BOARD_ARCHIVED, WORK_BOARD_GONE, workBoardIdOf } from "../src/lib/work-boards";
-import { activeSub, captureModeOf, sectionOf, titleFor } from "../src/components/shell/nav";
+import { activeSub, captureModeOf, sectionOf, titleFor, workSubsOf } from "../src/components/shell/nav";
 
 let passed = 0;
 let failed = 0;
@@ -194,26 +179,24 @@ console.log("— the rules (customers.ts) —");
     err(CUSTOMER_PHONE_LONG),
   ]);
   eq("phone: the tap-to-call link keeps the digits and a leading +", [phoneHref("+61 (2) 9000-1234"), phoneHref("0412 345 678")], ["tel:+61290001234", "tel:0412345678"]);
-  eq("actions: Purchase, Inquiry, Complaint, Credit check, each with a glyph", CUSTOMER_ACTIONS.map((a) => [a, CUSTOMER_ACTION_LABEL[a], CUSTOMER_ACTION_GLYPH[a].length > 0]), [
+  // 2026-10-20: Call, Visit, Email and Message join the four (stored as the same text column; old entries read as before).
+  eq("actions: Call, Visit, Email, Message, Purchase, Inquiry, Complaint, Credit check, each with a glyph", CUSTOMER_ACTIONS.map((a) => [a, CUSTOMER_ACTION_LABEL[a], CUSTOMER_ACTION_GLYPH[a].length > 0]), [
+    ["CALL", "Call", true],
+    ["VISIT", "Visit", true],
+    ["EMAIL", "Email", true],
+    ["MESSAGE", "Message", true],
     ["PURCHASE", "Purchase", true],
     ["INQUIRY", "Inquiry", true],
     ["COMPLAINT", "Complaint", true],
     ["CREDIT_CHECK", "Credit check", true],
   ]);
-  eq("actions: anything else is refused", [cleanAction("REFUND"), cleanAction("purchase"), cleanAction(null)], [err(INTERACTION_ACTION_BAD), err(INTERACTION_ACTION_BAD), err(INTERACTION_ACTION_BAD)]);
+  check("actions: the four contact actions draw the app's own task icons", ["CALL", "VISIT", "EMAIL", "MESSAGE"].every((a) => { const i = CUSTOMER_ACTION_ICON[a as keyof typeof CUSTOMER_ACTION_ICON]; return !!i && i in TASK_ICONS; }) && Object.keys(CUSTOMER_ACTION_ICON).length === 4);
+  eq("actions: anything else is refused (the old four still pass)", [cleanAction("REFUND"), cleanAction("purchase"), cleanAction(null), cleanAction("CALL").ok, cleanAction("CREDIT_CHECK").ok], [err(INTERACTION_ACTION_BAD), err(INTERACTION_ACTION_BAD), err(INTERACTION_ACTION_BAD), true, true]);
   eq("brief: optional, 280 pass, 281 refused, line breaks kept", [cleanBrief(undefined), cleanBrief("b".repeat(280)).ok, cleanBrief("b".repeat(281)), cleanBrief(" a\r\nb ")], [
     { ok: true, value: "" },
     true,
     err(INTERACTION_BRIEF_LONG),
     { ok: true, value: "a\nb" },
-  ]);
-  eq("task: title 1..80 (80 pass, 81 refused); detail optional, 500 pass, 501 refused", [cleanTaskTitle(" "), cleanTaskTitle("t".repeat(80)).ok, cleanTaskTitle("t".repeat(81)), cleanTaskDetail(""), cleanTaskDetail("d".repeat(500)).ok, cleanTaskDetail("d".repeat(501))], [
-    err(CUSTOMER_TASK_TITLE_EMPTY),
-    true,
-    err(CUSTOMER_TASK_TITLE_LONG),
-    { ok: true, value: null },
-    true,
-    err(CUSTOMER_TASK_DETAIL_LONG),
   ]);
   eq("when: an ISO instant; nonsense or out of range refused", [cleanWhen("2026-10-12T03:30:00.000Z").ok, cleanWhen("soon"), cleanWhen("1990-01-01T00:00:00Z"), cleanWhen(undefined)], [true, err(WHEN_BAD), err(WHEN_BAD), err(WHEN_BAD)]);
 
@@ -251,91 +234,43 @@ console.log("— the rules (customers.ts) —");
   eq("next ID: none with no ID yet, or any ID that is not a number, or past 24 digits", [nextCustomerNumber([]), nextCustomerNumber(["12", "A-3"]), nextCustomerNumber(["9".repeat(24)])], [null, null, null]);
   eq("numeric keyboard: only while every ID is a number", [idsNumeric(["1", "22"]), idsNumeric(["1", "x"]), idsNumeric([])], [true, false, false]);
 
-  // The search, by ID first.
+  // The Customers page's search (customer-search.ts, the work frame's one engine), by ID first, over the tab's kept customers.
   const people = [
-    { id: "c12", number: "12", name: "Alice Ng", nickname: null },
-    { id: "c120", number: "120", name: "Bob Tran", nickname: "Bobby" },
-    { id: "c1200", number: "1200", name: "Carol Ruiz", nickname: null },
-    { id: "c7", number: "7", name: "Dan 12th Street", nickname: null },
-    { id: "cA", number: "A-12", name: "Erin Ali", nickname: "Ally" },
-    { id: "cX", number: "13", name: "Old Alice", nickname: null, archivedAt: "2026-10-01T00:00:00.000Z" },
+    { id: "c12", number: "12", name: "Alice Ng", nickname: null, phone: null, activity: 0 },
+    { id: "c120", number: "120", name: "Bob Tran", nickname: "Bobby", phone: null, activity: 0 },
+    { id: "c1200", number: "1200", name: "Carol Ruiz", nickname: null, phone: null, activity: 0 },
+    { id: "c7", number: "7", name: "Dan 12th Street", nickname: null, phone: null, activity: 0 },
+    { id: "cA", number: "A-12", name: "Erin Ali", nickname: "Ally", phone: null, activity: 0 },
   ];
-  const s12 = searchCustomers(people, " 12 ");
-  eq("search: the exact ID first, then IDs that start with it (natural order), then names, each once", [s12?.exact?.id, s12?.byId.map((c) => c.id), s12?.byName.map((c) => c.id)], ["c12", ["c120", "c1200"], ["c7"]]);
-  eq("search: an ID matches ignoring case ('a-12' opens A-12)", searchCustomers(people, "a-12")?.exact?.id, "cA");
-  eq("search: a prefix with no exact ID lists the prefix matches only", [searchCustomers(people, "120")?.exact?.id, searchCustomers(people, "1")?.byId.map((c) => c.id)], ["c120", ["c12", "c120", "c1200"]]);
-  eq(
-    "search: names and nicknames after the IDs: a start first (then by name), a word start, then anywhere; never an archived customer",
-    [searchCustomers(people, "al")?.byName.map((c) => c.id), searchCustomers(people, "ali")?.byName.map((c) => c.id), searchCustomers(people, "uiz")?.byName.map((c) => c.id)],
-    [["c12", "cA"], ["c12", "cA"], ["c1200"]]
-  );
-  eq("search: a word start outranks a match inside a word ('ng': Alice Ng before Wang Li)", searchCustomers([...people, { id: "cZ", number: "99", name: "Wang Li", nickname: null }], "ng")?.byName.map((c) => c.id), ["c12", "cZ"]);
-  eq("search: an archived customer's ID finds nobody; empty is no search", [searchCustomers(people, "13")?.exact ?? null, searchCustomers(people, "13")?.byId.length, searchCustomers(people, "   ")], [null, 0, null]);
-  eq("search: Enter opens the exact ID, else the only one found, else nothing", [searchPick(s12)?.id, searchPick(searchCustomers(people, "bobby"))?.id, searchPick(searchCustomers(people, "1")) ?? null], ["c12", "c120", null]);
+  const ix = prepareIndex(people);
+  const ids = (q: string) => matchCustomers(ix, q, { limit: Infinity })?.results.map((m) => m.entry.id) ?? null;
+  eq("search: the exact ID first, then IDs that start with it (by activity, then name), then a name's word, then IDs and names holding it", ids(" 12 "), ["c12", "c120", "c1200", "c7", "cA"]);
+  eq("search: an ID matches ignoring case ('a-12' opens A-12)", topMatch(matchCustomers(ix, "a-12"))?.entry.id, "cA");
+  eq("search: a prefix with no exact ID lists the prefix matches first", [ids("120"), ids("1")?.slice(0, 3)], [["c120", "c1200"], ["c12", "c120", "c1200"]]);
+  eq("search: names and nicknames: a word's start before anywhere ('al': Alice, then Erin Ali's word, then Ally)", ids("al"), ["c12", "cA"]);
+  eq("search: a word start outranks a match inside a word ('ng': Alice Ng before Wang Li)", matchCustomers(prepareIndex([...people, { id: "cZ", number: "99", name: "Wang Li", nickname: null, phone: null, activity: 0 }]), "ng")?.results.map((m) => m.entry.id), ["c12", "cZ"]);
+  eq("search: empty is no search; the page lists the kept customers only (an archived one is never in its index)", [matchCustomers(ix, "   "), ids("13")], [null, []]);
+  eq("search: Enter opens the top result (the exact ID when there is one)", [topMatch(matchCustomers(ix, "12"))?.entry.id, topMatch(matchCustomers(ix, "bobby"))?.entry.id], ["c12", "c120"]);
 
   // The user's clock (LIFE_TZ in the app; Sydney here).
   const now = new Date("2026-10-12T03:30:00.000Z"); // 14:30 in Sydney (AEDT, +11)
   eq("clock: a datetime-local value names the zone's wall time, and back", [localInputOf(now, TZ), instantOfLocalInput("2026-10-12T14:30", TZ)?.toISOString(), instantOfLocalInput("nope", TZ)], ["2026-10-12T14:30", now.toISOString(), null]);
-  eq("clock: today ends at the next local midnight; a new task defaults to tomorrow 09:00", [endOfLocalDay(now, TZ).toISOString(), localInputOf(defaultTaskDue(now, TZ), TZ)], ["2026-10-12T13:00:00.000Z", "2026-10-13T09:00"]);
+  eq("clock: today ends at the next local midnight", endOfLocalDay(now, TZ).toISOString(), "2026-10-12T13:00:00.000Z");
   eq(
     "clock: labels say Today, Tomorrow, Yesterday, else the day (and the year when not this one)",
     ["2026-10-12T14:30", "2026-10-13T09:00", "2026-10-11T16:10", "2026-10-14T09:05", "2027-01-05T09:00"].map((v) => whenLabel(instantOfLocalInput(v, TZ) as Date, now, TZ)),
     ["Today 14:30", "Tomorrow 09:00", "Yesterday 16:10", "Wed 14 Oct, 09:05", "Tue 5 Jan 2027, 09:00"]
   );
 
-  // Task states and the due count.
+  // The due count (the work frame's Customers count and the list's chips; scheduled tasks since 2026-10-20).
   const at = (v: string) => instantOfLocalInput(v, TZ) as Date;
-  eq(
-    "tasks: done, overdue (its time has passed), today (later today), upcoming",
-    [taskStateOf({ dueAt: at("2026-10-12T09:00"), doneAt: now }, now, TZ), taskStateOf({ dueAt: at("2026-10-12T09:00"), doneAt: null }, now, TZ), taskStateOf({ dueAt: at("2026-10-12T18:00"), doneAt: null }, now, TZ), taskStateOf({ dueAt: at("2026-10-13T09:00"), doneAt: null }, now, TZ)],
-    ["done", "overdue", "today", "upcoming"]
-  );
-  const sorted = sortTasks([
-    { id: "late", dueAt: at("2026-10-15T09:00"), doneAt: null },
-    { id: "over", dueAt: at("2026-10-11T09:00"), doneAt: null },
-    { id: "d1", dueAt: at("2026-10-10T09:00"), doneAt: at("2026-10-10T10:00") },
-    { id: "d2", dueAt: at("2026-10-09T09:00"), doneAt: at("2026-10-12T10:00") },
-  ]);
-  eq("tasks: open soonest first (the overdue lead), then done, most recent first", [sorted.open.map((t) => t.id), sorted.done.map((t) => t.id)], [["over", "late"], ["d2", "d1"]]);
   const count = dueCountOf([at("2026-10-11T09:00"), at("2026-10-12T18:00"), at("2026-10-13T00:30")], now, TZ);
   eq("due: by tonight, overdue included (tomorrow 00:30 is not due today)", count, { due: 2, overdue: 1 });
   eq("due: the card's words", [dueChipText({ due: 0, overdue: 0 }), dueChipText({ due: 2, overdue: 0 }), dueChipText({ due: 1, overdue: 1 }), dueChipText(count)], [null, "2 due today", "1 overdue", "1 overdue · 1 today"]);
 
-  // The one reminder.
-  const later = at("2026-10-13T09:00");
-  const past = at("2026-10-12T09:00");
-  const sent = at("2026-10-12T09:00");
-  eq("reminder: armed for a time to come (null: the dispatcher sends it); a time gone by is spent, never pushed late", [armedRemindSentAt(later, now), armedRemindSentAt(past, now)?.toISOString(), armedRemindSentAt(new Date(now.getTime() - REMIND_LATE_MS + 1000), now)], [null, now.toISOString(), null]);
-  eq(
-    "reminder: a moved time clears remindSentAt; the reminder switched back on clears it; any other edit keeps it",
-    [
-      remindSentAtAfterEdit({ dueAt: past, remind: true, remindSentAt: sent }, { dueAt: later, remind: true }, now),
-      remindSentAtAfterEdit({ dueAt: later, remind: false, remindSentAt: sent }, { dueAt: later, remind: true }, now),
-      remindSentAtAfterEdit({ dueAt: later, remind: true, remindSentAt: sent }, { dueAt: later, remind: true }, now)?.toISOString(),
-    ],
-    [null, null, sent.toISOString()]
-  );
-  eq("reminder: a done task opened again keeps a sent reminder, and a time gone by is not pushed late", [remindSentAtAfterUndo({ dueAt: later, remindSentAt: null }, now), remindSentAtAfterUndo({ dueAt: past, remindSentAt: null }, now)?.toISOString(), remindSentAtAfterUndo({ dueAt: past, remindSentAt: sent }, now)?.toISOString()], [null, now.toISOString(), sent.toISOString()]);
-  const dueTask = { dueAt: past, remind: true, doneAt: null, remindSentAt: null, archivedAt: null };
-  eq(
-    "reminder: due when its time came, on, not done, not sent, kept, on a kept customer of an open tab with its list on",
-    [
-      customerTaskRemindDue(dueTask, now),
-      customerTaskRemindDue({ ...dueTask, doneAt: now }, now),
-      customerTaskRemindDue({ ...dueTask, remind: false }, now),
-      customerTaskRemindDue({ ...dueTask, remindSentAt: now }, now),
-      customerTaskRemindDue({ ...dueTask, archivedAt: now }, now),
-      customerTaskRemindDue({ ...dueTask, dueAt: later }, now),
-      customerTaskRemindDue(dueTask, now, { customerArchived: true }),
-      customerTaskRemindDue(dueTask, now, { crmOn: false }),
-      customerTaskRemindDue(dueTask, now, { boardArchived: true }),
-    ],
-    [true, false, false, false, false, false, false, false, false]
-  );
-
   // The paths: the list, a customer, and the reminder's tap URL.
   eq("paths: the list and a customer", [customersHref("b1"), customerHref("b1", "c1")], ["/today/work/b1/customers", "/today/work/b1/customers/c1"]);
-  eq("tap URL: /today/work/<board>/customers/<customer>?task=<task>", [TASK_PARAM, customerHref("b1", "c1", "t1")], ["task", "/today/work/b1/customers/c1?task=t1"]);
+  eq("an old customer task reminder's tap URL: /today/work/<board>/customers/<customer>?task=<task>", [TASK_PARAM, customerHref("b1", "c1", "t1")], ["task", "/today/work/b1/customers/c1?task=t1"]);
   eq("tap URL: read back from the path and the query", [customersPathOf("/today/work/b1/customers/c1"), customersPathOf("/today/work/b1/customers"), customersPathOf("/today/work/b1"), customersPathOf("/today/work/b1/customers/../x"), taskParamOf("t1"), taskParamOf(["t1", "t2"]), taskParamOf("<x>"), taskParamOf(undefined)], [
     { boardId: "b1", customerId: "c1" },
     { boardId: "b1", customerId: null },
@@ -351,10 +286,10 @@ console.log("— the rules (customers.ts) —");
     [workBoardIdOf("/today/work/b1/customers/c1"), activeSub("/today/work/b1/customers"), activeSub("/today/work/b1/customers/c1"), sectionOf("/today/work/b1/customers/c1"), captureModeOf("/today/work/b1/customers")],
     ["b1", "/today/work/b1", "/today/work/b1", "tasks", "task"]
   );
-  eq("shell: the first-paint titles (the page's ShellTitle then names the tab and the customer)", [titleFor("/today/work/b1/customers"), titleFor("/today/work/b1/customers/c1"), titleFor("/today/work/b1")], [
+  eq("shell: the first-paint titles (the page's ShellTitle then names the tab and the customer; the tab's index is its Agenda)", [titleFor("/today/work/b1/customers"), titleFor("/today/work/b1/customers/c1"), titleFor("/today/work/b1")], [
     { eyebrow: "Work", title: "Customers" },
     { eyebrow: "Work", title: "Customer" },
-    { eyebrow: "Tasks", title: "Work" },
+    { eyebrow: "Work", title: "Agenda" },
   ]);
 }
 
@@ -368,8 +303,8 @@ class FakeCrm implements CustomerDb {
   people: Row<CustomerRow>[] = [];
   log: Row<InteractionRow>[] = [];
   notes: CustomerInfoRow[] = [];
-  todo: Row<CustomerTaskRow>[] = [];
-  calls: (LinkedCallBackRow & { userId: string; customerId: string; archivedAt: Date | null })[] = [];
+  /** Scheduled tasks for the tab's customers (ScheduledTask; the counts and a customer's page read them). */
+  scheduledRows: (ScheduledView & { userId: string; archivedAt: Date | null })[] = [];
   writes = 0;
   seq = 0;
   private dup(): Error {
@@ -496,45 +431,21 @@ class FakeCrm implements CustomerDb {
     this.writes++;
     return 1;
   }
-  async tasks(userId: string, customerId: string) {
-    return this.todo.filter((t) => t.userId === userId && t.customerId === customerId && t.archivedAt === null).map((t) => this.plain(t));
-  }
-  async task(userId: string, id: string) {
-    const t = this.todo.find((x) => x.id === id && x.userId === userId);
-    if (!t) return null;
-    const c = this.people.find((x) => x.id === t.customerId)!;
-    return { ...this.plain(t), customer: this.withBoard(this.plain(c)) };
-  }
-  async createTask(userId: string, customerId: string, f: TaskFields & { remindSentAt: Date | null }) {
-    const row = { id: `tk${++this.seq}`, userId, customerId, ...f, doneAt: null, archivedAt: null, createdAt: this.seq };
-    this.todo.push(row);
-    this.writes++;
-    return this.plain(row);
-  }
-  async updateTask(userId: string, id: string, f: Partial<TaskFields & { doneAt: Date | null; remindSentAt: Date | null }>) {
-    const t = this.todo.find((x) => x.id === id && x.userId === userId && x.archivedAt === null);
-    if (!t) return 0;
-    Object.assign(t, f);
-    this.writes++;
-    return 1;
-  }
-  async setTaskArchived(userId: string, id: string, at: Date | null) {
-    const t = this.todo.find((x) => x.id === id && x.userId === userId && (at ? x.archivedAt === null : x.archivedAt !== null));
-    if (!t) return 0;
-    t.archivedAt = at;
-    this.writes++;
-    return 1;
-  }
   async dueTasks(userId: string, boardId: string, before: Date) {
-    return this.todo
+    return this.scheduledRows
       .filter((t) => {
-        const c = this.people.find((x) => x.id === t.customerId);
-        return t.userId === userId && !t.doneAt && !t.archivedAt && t.dueAt.getTime() < before.getTime() && c?.boardId === boardId && c.archivedAt === null;
+        const c = t.customer ? this.people.find((x) => x.id === t.customer!.id) : undefined;
+        return t.userId === userId && t.boardId === boardId && !t.doneAt && !t.archivedAt && Date.parse(t.dueAt) < before.getTime() && c?.boardId === boardId && c.archivedAt === null;
       })
-      .map((t) => ({ customerId: t.customerId, dueAt: t.dueAt }));
+      .map((t) => ({ customerId: t.customer!.id, dueAt: new Date(t.dueAt) }));
   }
-  async callBacks(userId: string, customerId: string) {
-    return this.calls.filter((c) => c.userId === userId && c.customerId === customerId && c.archivedAt === null).map(({ id, at, action, tags, remindAt }) => ({ id, at, action, tags, remindAt }));
+  async activity(userId: string, boardId: string) {
+    return this.people
+      .filter((c) => c.userId === userId && c.boardId === boardId && c.archivedAt === null)
+      .map((c) => ({ customerId: c.id, at: Math.max(c.createdAt, ...this.log.filter((i) => i.customerId === c.id && !i.archivedAt).map((i) => i.at.getTime())) }));
+  }
+  async scheduled(userId: string, customerId: string) {
+    return this.scheduledRows.filter((t) => t.userId === userId && t.customer?.id === customerId && !t.archivedAt).map(({ userId: _u, archivedAt: _a, ...v }) => (void _u, void _a, v));
   }
 }
 
@@ -588,7 +499,6 @@ async function cores() {
   const offCustomer = db.people.find((c) => c.boardId === "bOff")!;
   db.log.push({ id: "inOff", userId: U, customerId: offCustomer.id, at: now, action: "PURCHASE", brief: "", archivedAt: null, createdAt: 0 });
   db.notes.push({ id: "ifOff", userId: U, customerId: offCustomer.id, detail: "Kept note", recordedAt: now, archivedAt: null, createdAt: now });
-  db.todo.push({ id: "tkOff", userId: U, customerId: offCustomer.id, dueAt: now, title: "Ring", detail: null, remind: true, doneAt: null, remindSentAt: null, archivedAt: null, createdAt: 0 });
   const before = db.writes;
   const offResults = [
     await createCustomerCore(U, "bOff", person("99"), db),
@@ -603,30 +513,24 @@ async function cores() {
     await editInfoCore(U, "ifOff", { detail: "x" }, now, db),
     await archiveInfoCore(U, "ifOff", now, db),
     await restoreInfoCore(U, "ifOff", db),
-    await addTaskCore(U, offCustomer.id, { dueAt: now.toISOString(), title: "x" }, now, db),
-    await editTaskCore(U, "tkOff", { dueAt: now.toISOString(), title: "x" }, now, db),
-    await setTaskDoneCore(U, "tkOff", true, now, db),
-    await archiveTaskCore(U, "tkOff", now, db),
-    await restoreTaskCore(U, "tkOff", now, db),
     await customerDueCountCore(U, "bOff", now, db),
   ];
-  check("switch: off hides and deletes nothing (the tab's customer, their log, infos and tasks are all kept)", db.people.some((c) => c.id === offCustomer.id) && db.log.some((i) => i.id === "inOff" && !i.archivedAt) && db.notes.some((i) => i.id === "ifOff" && i.detail === "Kept note" && !i.archivedAt) && db.todo.some((t) => t.id === "tkOff" && !t.archivedAt));
-  check("crmOn gate: every action on a tab whose list is off is refused (18 of 18), and nothing is written", offResults.every((r) => !r.ok && r.error === CRM_OFF) && db.writes === before, JSON.stringify(offResults.filter((r) => r.ok || r.error !== CRM_OFF)));
+  check("switch: off hides and deletes nothing (the tab's customer, their log and infos are all kept)", db.people.some((c) => c.id === offCustomer.id) && db.log.some((i) => i.id === "inOff" && !i.archivedAt) && db.notes.some((i) => i.id === "ifOff" && i.detail === "Kept note" && !i.archivedAt));
+  check("crmOn gate: every action on a tab whose list is off is refused (13 of 13), and nothing is written", offResults.length === 13 && offResults.every((r) => !r.ok && r.error === CRM_OFF) && db.writes === before, JSON.stringify(offResults.filter((r) => r.ok || r.error !== CRM_OFF)));
   db.boards.find((b) => b.id === "bOff")!.crmOn = true;
   db.boards.find((b) => b.id === "bOff")!.archivedAt = now;
-  check("gate: a tab archived since is refused for its customers' rows too", (await addInteractionCore(U, offCustomer.id, { at: now.toISOString(), action: "PURCHASE" }, db)).ok === false && (await setTaskDoneCore(U, "tkOff", true, now, db)).ok === false && db.writes === before);
+  check("gate: a tab archived since is refused for its customers' rows too", (await addInteractionCore(U, offCustomer.id, { at: now.toISOString(), action: "PURCHASE" }, db)).ok === false && (await addInfoCore(U, offCustomer.id, { detail: "x" }, now, db)).ok === false && db.writes === before);
   const theirs = { id: "cuT", userId: "u2", boardId: "bTheirs", number: "1", name: "Theirs", nickname: null, phone: null, archivedAt: null, createdAt: 0 };
   db.people.push(theirs);
-  eq("gate: another user's tab, customer, entry or task is gone; a malformed id too", [
+  eq("gate: another user's tab, customer, entry or info is gone; a malformed id too", [
     await createCustomerCore(U, "bTheirs", person("5"), db),
     await addInteractionCore(U, "cuT", { at: now.toISOString(), action: "PURCHASE" }, db),
-    await editTaskCore(U, "tkNope", { dueAt: now.toISOString(), title: "x" }, now, db),
+    await editInfoCore(U, "ifNope", { detail: "x" }, now, db),
     await archiveInteractionCore(U, "../in", now, db),
     await editCustomerCore(U, "<c>", person("5"), db),
-  ], [err(WORK_BOARD_GONE), err(CUSTOMER_GONE), err(CUSTOMER_TASK_GONE), err(INTERACTION_GONE), err(CUSTOMER_GONE)]);
+  ], [err(WORK_BOARD_GONE), err(CUSTOMER_GONE), err(CUSTOMER_INFO_GONE), err(INTERACTION_GONE), err(CUSTOMER_GONE)]);
   await archiveCustomerCore(U, bId, now, db);
-  eq("gate: an archived customer's log, infos and tasks are closed until they are restored", [await addInteractionCore(U, bId, { at: now.toISOString(), action: "PURCHASE" }, db), await addTaskCore(U, bId, { dueAt: now.toISOString(), title: "x" }, now, db), await editCustomerCore(U, bId, person("13"), db), await addInfoCore(U, bId, { detail: "x" }, now, db)], [
-    err(CUSTOMER_ARCHIVED),
+  eq("gate: an archived customer's log and infos are closed until they are restored (their scheduled tasks are held with them: scheduled-tasks-check)", [await addInteractionCore(U, bId, { at: now.toISOString(), action: "PURCHASE" }, db), await editCustomerCore(U, bId, person("13"), db), await addInfoCore(U, bId, { detail: "x" }, now, db)], [
     err(CUSTOMER_ARCHIVED),
     err(CUSTOMER_ARCHIVED),
     err(CUSTOMER_ARCHIVED),
@@ -656,15 +560,15 @@ async function cores() {
   check("info: an edit with no time keeps when it was recorded", note(f2Id).detail === "Prefers email, not calls" && note(f2Id).recordedAt.toISOString() === "2026-10-01T00:00:00.000Z");
   await editInfoCore(U, f2Id, { detail: "Prefers email, not calls", recordedAt: "2026-10-02T00:00:00.000Z" }, now, db);
   check("info: an edit moves when it was recorded", note(f2Id).recordedAt.toISOString() === "2026-10-02T00:00:00.000Z");
-  const withInfos = await loadCustomerPage(U, "bOn", aId, now, db);
+  const withInfos = await loadCustomerPage(U, "bOn", aId, db);
   eq("info: their page lists them newest recorded first", withInfos.kind === "ok" ? withInfos.infos.map((i) => i.id) : null, [justNow.id, f1Id, f2Id]);
   eq("info: archive (again ok) takes it off the page; Undo (restore) brings it back as it was", [
     (await archiveInfoCore(U, justNow.id, now, db)).ok,
     (await archiveInfoCore(U, justNow.id, now, db)).ok,
-    await loadCustomerPage(U, "bOn", aId, now, db).then((pg) => (pg.kind === "ok" ? pg.infos.map((i) => i.id) : null)),
+    await loadCustomerPage(U, "bOn", aId, db).then((pg) => (pg.kind === "ok" ? pg.infos.map((i) => i.id) : null)),
     await editInfoCore(U, justNow.id, { detail: "x" }, now, db),
     (await restoreInfoCore(U, justNow.id, db)).ok,
-    await loadCustomerPage(U, "bOn", aId, now, db).then((pg) => (pg.kind === "ok" ? pg.infos.map((i) => [i.id, i.detail]) : null)),
+    await loadCustomerPage(U, "bOn", aId, db).then((pg) => (pg.kind === "ok" ? pg.infos.map((i) => [i.id, i.detail]) : null)),
   ], [true, true, [f1Id, f2Id], err(CUSTOMER_INFO_GONE), true, [[justNow.id, "Just now"], [f1Id, "Likes A5 paper\nPays cash"], [f2Id, "Prefers email, not calls"]]]);
   await archiveInfoCore(U, justNow.id, now, db);
   eq("info: another user's info, an unknown one or a malformed id is gone", [await editInfoCore("u2", f1Id, { detail: "x" }, now, db), await archiveInfoCore(U, "ifNope", now, db), await restoreInfoCore(U, "../if", db)], [err(CUSTOMER_INFO_GONE), err(CUSTOMER_INFO_GONE), err(CUSTOMER_INFO_GONE)]);
@@ -681,43 +585,26 @@ async function cores() {
   ]);
   check("log: an edit changes the entry", (await editInteractionCore(U, i1Id, { at: "2026-10-10T01:00:00.000Z", action: "CREDIT_CHECK", brief: "ok" }, db)).ok && db.log.find((i) => i.id === i1Id)?.action === "CREDIT_CHECK");
   await archiveInteractionCore(U, i2Id, now, db);
-  const afterArchive = await loadCustomerPage(U, "bOn", aId, now, db);
+  const afterArchive = await loadCustomerPage(U, "bOn", aId, db);
   check("log: an archived entry leaves the page; Undo (restore) brings it back, newest first", afterArchive.kind === "ok" && afterArchive.interactions.map((i) => i.id).join() === i1Id);
   await restoreInteractionCore(U, i2Id, db);
-  const restored = await loadCustomerPage(U, "bOn", aId, now, db);
+  const restored = await loadCustomerPage(U, "bOn", aId, db);
   eq("log: newest first", restored.kind === "ok" ? restored.interactions.map((i) => [i.id, i.action]) : null, [[i2Id, "COMPLAINT"], [i1Id, "CREDIT_CHECK"]]);
+  const i3 = await addInteractionCore(U, aId, { at: "2026-10-12T02:00:00.000Z", action: "CALL", brief: "rang back" }, db);
+  db.log.push({ id: "inOld", userId: U, customerId: aId, at: new Date("2026-10-01T00:00:00.000Z"), action: "LEGACY_THING", brief: "", archivedAt: null, createdAt: 0 });
+  const withCall = await loadCustomerPage(U, "bOn", aId, db);
+  eq("log: a Call is an entry like any other; an action outside the list is left out, never shown blank", withCall.kind === "ok" ? withCall.interactions.map((i) => i.action) : null, ["CALL", "COMPLAINT", "CREDIT_CHECK"]);
+  check("log: the new entry was written", i3.ok);
 
-  // Tasks and their one reminder.
-  const t1 = await addTaskCore(U, aId, { dueAt: "2026-10-13T00:00:00.000Z", title: " Call back ", detail: " about the invoice " }, now, db);
-  const t1Id = t1.ok ? t1.value.id : "";
-  const row = () => db.todo.find((t) => t.id === t1Id)!;
-  check("task: scheduled with its reminder on and armed (remindSentAt null)", t1.ok && row().remind && row().remindSentAt === null && row().title === "Call back" && row().detail === "about the invoice");
-  const pastTask = await addTaskCore(U, aId, { dueAt: "2026-10-11T22:00:00.000Z", title: "Missed", remind: true }, now, db);
-  check("task: one scheduled for a time already gone by shows overdue and is not pushed late (remindSentAt spent)", pastTask.ok && db.todo.find((t) => t.id === pastTask.value.id)?.remindSentAt?.getTime() === now.getTime());
-  row().remindSentAt = new Date("2026-10-13T00:00:30.000Z"); // the dispatcher sent it
-  await editTaskCore(U, t1Id, { dueAt: "2026-10-13T00:00:00.000Z", title: "Call back re invoice", detail: "about the invoice" }, now, db);
-  check("task: an edit that keeps the time keeps remindSentAt (never sent twice)", row().remindSentAt !== null && row().title === "Call back re invoice");
-  await editTaskCore(U, t1Id, { dueAt: "2026-10-14T00:00:00.000Z", title: "Call back re invoice" }, now, db);
-  check("task: a moved time clears remindSentAt (re-armed)", row().remindSentAt === null && row().dueAt.toISOString() === "2026-10-14T00:00:00.000Z");
-  row().remindSentAt = new Date("2026-10-14T00:00:30.000Z");
-  await editTaskCore(U, t1Id, { dueAt: "2026-10-14T00:00:00.000Z", title: "Call back re invoice", remind: false }, now, db);
-  check("task: switching the reminder off keeps remindSentAt", row().remind === false && row().remindSentAt !== null);
-  await editTaskCore(U, t1Id, { dueAt: "2026-10-14T00:00:00.000Z", title: "Call back re invoice", remind: true }, now, db);
-  check("task: switching the reminder back on clears remindSentAt", row().remind === true && row().remindSentAt === null);
-  eq("task: the limits hold in the core", [await addTaskCore(U, aId, { dueAt: now.toISOString(), title: "" }, now, db), await addTaskCore(U, aId, { dueAt: now.toISOString(), title: "t".repeat(81) }, now, db), await editTaskCore(U, t1Id, { dueAt: "x", title: "y" }, now, db)], [
-    err(CUSTOMER_TASK_TITLE_EMPTY),
-    err(CUSTOMER_TASK_TITLE_LONG),
-    err(WHEN_BAD),
-  ]);
-  await setTaskDoneCore(U, t1Id, true, now, db);
-  const doneRow = row();
-  check("task: a done task is never due a reminder (even with its time come and remindSentAt null)", doneRow.doneAt !== null && !customerTaskRemindDue(doneRow, new Date("2026-10-20T00:00:00.000Z")));
-  await setTaskDoneCore(U, t1Id, false, now, db);
-  check("task: opened again, its reminder for a time to come stays armed", row().doneAt === null && row().remindSentAt === null && customerTaskRemindDue(row(), new Date("2026-10-14T00:01:00.000Z")));
-  await archiveTaskCore(U, t1Id, now, db);
-  check("task: an archived task leaves the page and is never reminded", row().archivedAt !== null && !customerTaskRemindDue(row(), new Date("2026-10-14T00:01:00.000Z")));
-  await restoreTaskCore(U, t1Id, now, db);
-  check("task: Undo brings it back as it was", row().archivedAt === null && row().remindSentAt === null);
+  // Their scheduled tasks (ScheduledTask; scheduled-tasks-server writes them): the counts and their page read them.
+  const st = (id: string, customerId: string, dueAt: string, over: Partial<ScheduledView & { archivedAt: Date | null }> = {}) => {
+    const c = db.people.find((x) => x.id === customerId)!;
+    db.scheduledRows.push({ id, userId: U, boardId: c.boardId, dueAt, allDay: false, title: id, detail: null, channel: "CALL", remind: true, remindSentAt: null, doneAt: null, customer: { id: c.id, number: c.number, name: c.name, phone: c.phone }, archivedAt: null, ...over });
+  };
+  st("stOver", aId, "2026-10-11T22:00:00.000Z");
+  st("stLater", aId, "2026-10-14T00:00:00.000Z");
+  st("stDone", aId, "2026-10-10T00:00:00.000Z", { doneAt: "2026-10-10T01:00:00.000Z" });
+  st("stArch", aId, "2026-10-11T00:00:00.000Z", { archivedAt: now });
 
   // The reads.
   const list = await loadCustomersPage(U, "bOn", now, db);
@@ -738,31 +625,29 @@ async function cores() {
   for (const n of ["0007", "0041", "12"]) await createCustomerCore(U, "bN", person(n), numericDb);
   const numericList = await loadCustomersPage(U, "bN", now, numericDb);
   eq("list page: numeric IDs get the numeric keyboard and the next ID", numericList.kind === "ok" ? [numericList.numeric, numericList.suggestion] : null, [true, "0042"]);
-  const page = await loadCustomerPage(U, "bOn", aId, now, db);
-  check(
-    "customer page: tasks open soonest first with their states, then done; the call backs linked to them",
-    page.kind === "ok" && page.tasks[0]?.state === "overdue" && page.tasks.some((t) => t.id === t1Id && t.state === "upcoming") && page.customer.nickname === "Al",
-    JSON.stringify(page)
+  const page = await loadCustomerPage(U, "bOn", aId, db);
+  eq(
+    "customer page: their scheduled tasks, open soonest first, then the done ones (an archived one is not theirs to show)",
+    page.kind === "ok" ? [page.tasks.map((t) => t.id), page.customer.nickname] : null,
+    [["stOver", "stLater", "stDone"], "Al"]
   );
-  db.calls.push({ id: "cb1", userId: U, customerId: aId, at: now, action: "Ring about refund", tags: ["urgent"], remindAt: null, archivedAt: null });
-  const withCalls = await loadCustomerPage(U, "bOn", aId, now, db);
-  eq("customer page: the linked call backs, read-only", withCalls.kind === "ok" ? withCalls.callBacks.map((c) => [c.id, c.action, c.tags]) : null, [["cb1", "Ring about refund", ["urgent"]]]);
-  eq("customer page: a customer opened under another tab's path, or unknown, is gone", [(await loadCustomerPage(U, "bN", aId, now, db)).kind, (await loadCustomerPage(U, "bOn", "nope", now, db)).kind, (await loadCustomerPage("u2", "bOn", aId, now, db)).kind], ["gone", "gone", "gone"]);
-  eq("the tab card's count: due by tonight, overdue included", await customerDueCountCore(U, "bOn", now, db), { ok: true, value: { due: 1, overdue: 1 } });
+  check("customer page: no call backs list (their call backs are scheduled tasks and log entries now)", page.kind === "ok" && !("callBacks" in page));
+  eq("customer page: a customer opened under another tab's path, or unknown, is gone", [(await loadCustomerPage(U, "bN", aId, db)).kind, (await loadCustomerPage(U, "bOn", "nope", db)).kind, (await loadCustomerPage("u2", "bOn", aId, db)).kind], ["gone", "gone", "gone"]);
+  eq("the work frame's Customers count: their scheduled tasks due by tonight, overdue included", await customerDueCountCore(U, "bOn", now, db), { ok: true, value: { due: 1, overdue: 1 } });
+  check("list page: each customer's latest activity (their last change or newest log entry: the search's tie-break)", list.kind === "ok" && (list.customers.find((c) => c.id === aId)?.activity ?? 0) >= new Date("2026-10-12T01:00:00.000Z").getTime());
 }
 
 // ── 3. The wiring ──────────────────────────────────────────────────────────
 function wiring() {
-  console.log("— actions, routes, shell, the tab card, the sheets —");
+  console.log("— actions, routes, shell, the work frame, the sheets —");
   const actions = code("src/app/actions/customers.ts");
   check("actions: a 'use server' module", read("src/app/actions/customers.ts").trimStart().startsWith('"use server";'));
   const exported = [...actions.matchAll(/export async function (\w+)\(([^)]*)\)[^{]*\{([\s\S]*?)\n\}/g)].map((m) => ({ name: m[1], body: m[3] }));
   eq(
-    "actions: the tab's switch, the card's count, customers, infos, interactions and tasks",
+    "actions: the tab's switch, customers, infos and interactions (their scheduled tasks are actions/scheduled-tasks.ts; the count is the work frame's, read on the server)",
     exported.map((e) => e.name),
     [
       "setCrm",
-      "customerDueCount",
       "createCustomer",
       "editCustomer",
       "archiveCustomer",
@@ -775,37 +660,35 @@ function wiring() {
       "editInteraction",
       "archiveInteraction",
       "restoreInteraction",
-      "addCustomerTask",
-      "editCustomerTask",
-      "setCustomerTaskDone",
-      "archiveCustomerTask",
-      "restoreCustomerTask",
     ]
   );
   check("actions: each goes through a core (the gate) with the current user, and never throws", exported.every((e) => /return run\("\w+", (opts|undefined), \(userId\) => \w+Core\(userId, /.test(e.body)) && /catch \(err\) \{[\s\S]*?return \{ ok: false, error:/.test(actions));
 
   const server = code("src/lib/customers-server.ts");
-  const writeCores = ["createCustomerCore", "editCustomerCore", "archiveCustomerCore", "restoreCustomerCore", "addInfoCore", "editInfoCore", "archiveInfoCore", "restoreInfoCore", "addInteractionCore", "editInteractionCore", "archiveInteractionCore", "restoreInteractionCore", "addTaskCore", "editTaskCore", "setTaskDoneCore", "archiveTaskCore", "restoreTaskCore", "customerDueCountCore"];
+  const writeCores = ["createCustomerCore", "editCustomerCore", "archiveCustomerCore", "restoreCustomerCore", "addInfoCore", "editInfoCore", "archiveInfoCore", "restoreInfoCore", "addInteractionCore", "editInteractionCore", "archiveInteractionCore", "restoreInteractionCore", "customerDueCountCore"];
   const body = (name: string) => new RegExp(`export async function ${name}\\b[\\s\\S]*?\\n\\}`).exec(server)?.[0] ?? "";
-  const ungated = writeCores.filter((n) => !/await (openBoard|openCustomer|openInfo|openInteraction|openTask)\(db, userId, /.test(body(n)));
+  const ungated = writeCores.filter((n) => !/await (openBoard|openCustomer|openInfo|openInteraction)\(db, userId, /.test(body(n)));
   check("cores: every write opens through a gate (the tab is the user's, open, and keeps a list) before it writes", ungated.length === 0, ungated.join(", "));
   check("cores: the gate refuses a foreign, archived or list-off tab, in that order", /if \(!board \|\| board\.userId !== userId\) return fail\(WORK_BOARD_GONE\);\s*if \(board\.archivedAt\) return fail\(WORK_BOARD_ARCHIVED\);\s*if \(!board\.crmOn\) return fail\(CRM_OFF\);/.test(server));
   check("cores: a taken ID (the partial unique index's P2002) reads 'That ID is already used on this tab'", CUSTOMER_NUMBER_TAKEN === "That ID is already used on this tab" && (server.match(/if \(isNumberTaken\(err\)\) return fail\(CUSTOMER_NUMBER_TAKEN\);/g) ?? []).length === 2);
-  check("cores: a task's edit re-arms through remindSentAtAfterEdit; its undo through remindSentAtAfterUndo", /const remindSentAt = remindSentAtAfterEdit\(row\.value, f\.value, now\);/.test(server) && /remindSentAt: remindSentAtAfterUndo\(row\.value, now\)/.test(server));
+  check("cores: no customer task core is left (CustomerTask is the backfill's only)", !/addTaskCore|editTaskCore|setTaskDoneCore|archiveTaskCore|restoreTaskCore|prisma\.customerTask/.test(server));
+  check("cores: customer and log writes clear the work frame's search index ('work'); archiving or restoring a customer the bell too ('life')", (server.match(/invalidate\("work"\);/g) ?? []).length === 3 && (server.match(/invalidate\("work", "life"\);/g) ?? []).length === 2);
 
-  // No game writes: the customer code reads and writes the customer tables, the tab's crmOn, and reads call backs.
+  // No game writes: the customer code reads and writes the customer tables and the tab's crmOn, and reads scheduled tasks.
   const crmCode = ["src/lib/customers.ts", "src/lib/customers-server.ts", "src/app/actions/customers.ts", "src/components/customers/CustomersView.tsx", "src/components/customers/CustomerView.tsx", "src/components/customers/CustomerSheets.tsx", "src/components/customers/CrmGate.tsx"];
-  const gameWords = crmCode.filter((f) => /activityEvent|ActivityEvent|ledger|\bxp\b|streak|invalidate\(|life-economy|lifeXp|awardXp|debt/i.test(code(f).replace(/[^\n]*"[^"\n]*"[^\n]*/g, (l) => l.replace(/"[^"\n]*"/g, '""'))));
+  // The work frame's own caches ('work': its search index; 'life': the bell) are not the game's.
+  const workCaches = (src: string) => src.replace(/invalidate\("work"(, "life")?\);/g, "");
+  const gameWords = crmCode.filter((f) => /activityEvent|ActivityEvent|ledger|\bxp\b|streak|invalidate\(|life-economy|lifeXp|awardXp|debt/i.test(workCaches(code(f)).replace(/[^\n]*"[^"\n]*"[^\n]*/g, (l) => l.replace(/"[^"\n]*"/g, '""'))));
   check("no game: nothing in the customer code names the ledger, XP, the streak, debt, or a game cache", gameWords.length === 0, gameWords.join(", "));
   const models = [...new Set([...server.matchAll(/prisma\.(\w+)\./g)].map((m) => m[1]))].sort();
-  eq("no game: the cores touch only WorkBoard (crmOn), Customer, CustomerInfo, CustomerInteraction, CustomerTask, and read CallBack", models, ["callBack", "customer", "customerInfo", "customerInteraction", "customerTask", "workBoard"]);
+  eq("no game: the cores touch only WorkBoard (crmOn), Customer, CustomerInfo, CustomerInteraction, and read ScheduledTask", models, ["customer", "customerInfo", "customerInteraction", "scheduledTask", "workBoard"]);
   check(
     "info: the list's subtitle read is one row per customer (DISTINCT ON, newest recorded), kept infos of kept customers on this tab, 160 characters",
     /SELECT DISTINCT ON \(i\."customerId"\) i\."customerId" AS "customerId", left\(i\."detail", 160\) AS "detail"/.test(server) &&
       /WHERE i\."userId" = \$\{userId\} AND i\."archivedAt" IS NULL AND c\."boardId" = \$\{boardId\} AND c\."archivedAt" IS NULL/.test(server) &&
       /ORDER BY i\."customerId", i\."recordedAt" DESC, i\."createdAt" DESC/.test(server)
   );
-  check("no game: CallBack is only read; WorkBoard only has crmOn written", !/prisma\.callBack\.(create|update|upsert|delete)/.test(server) && /prisma\.workBoard\.updateMany\(\{ where: \{ id: boardId, userId, archivedAt: null \}, data: \{ crmOn: on \} \}\)/.test(server) && !/prisma\.workBoard\.(create|delete|upsert)/.test(server));
+  check("no game: ScheduledTask is only read here; CallBack is never touched; WorkBoard only has crmOn written", !/prisma\.scheduledTask\.(create|update|upsert|delete)/.test(server) && !/prisma\.callBack/.test(server) && /prisma\.workBoard\.updateMany\(\{ where: \{ id: boardId, userId, archivedAt: null \}, data: \{ crmOn: on \} \}\)/.test(server) && !/prisma\.workBoard\.(create|delete|upsert)/.test(server));
 
   // Routes and their params (Next 16: Promises).
   const listPage = "src/app/today/work/[boardId]/customers/page.tsx";
@@ -815,24 +698,26 @@ function wiring() {
   const op = code(onePage);
   check("route /customers: params awaited, one read, an unknown tab 404s, the tab's name as the eyebrow", /params: Promise<\{ boardId: string \}>/.test(lp) && /await params/.test(lp) && /loadCustomersPage\(getCurrentUserId\(\), boardId, new Date\(\)\)/.test(lp) && /if \(page\.kind === "gone"\) notFound\(\);/.test(lp) && /<ShellTitle eyebrow=\{page\.board\.name\} title="Customers" \/>/.test(lp));
   check(
-    "route /customers/[customerId]: the tap URL's params and ?task=, the task highlighted, the customer's name as the title",
+    "route /customers/[customerId]: the tap URL's params and ?task= (a scheduled task's id, or an old customer task's: resolveTaskParam), the task highlighted, the customer's name as the title",
     /params: Promise<\{ boardId: string; customerId: string \}>/.test(op) &&
       /searchParams: Promise<\{ \[key: string\]: string \| string\[\] \| undefined \}>/.test(op) &&
-      /loadCustomerPage\(getCurrentUserId\(\), boardId, customerId, now\)/.test(op) &&
-      /highlightTask=\{taskParamOf\(query\[TASK_PARAM\]\)\}/.test(op) &&
+      /loadCustomerPage\(getCurrentUserId\(\), boardId, customerId\)/.test(op) &&
+      /const asked = taskParamOf\(query\[TASK_PARAM\]\);/.test(op) &&
+      /asked \? resolveTaskParam\(getCurrentUserId\(\), asked\)\.catch\(\(\) => null\) : Promise\.resolve\(null\)/.test(op) &&
+      /highlightTask=\{asked \? \(focus\?\.id \?\? asked\) : null\}/.test(op) &&
       /<ShellTitle eyebrow=\{page\.board\.name\} title=\{page\.customer\.name\} \/>/.test(op)
   );
   const view = code("src/components/customers/CustomerView.tsx");
-  check("customer page: the highlighted task is marked and scrolled into view (a done one opens its fold)", /data-hl=\{highlighted \? "" : undefined\}/.test(view) && /document\.getElementById\(`crm-task-\$\{highlightTask\}`\)/.test(view) && /scrollIntoView\(\{ block: "center" \}\)/.test(view) && /open=\{hlTask\?\.doneAt \? true : undefined\}/.test(view));
+  check("customer page: their tasks are the Agenda's rows; the highlighted one is marked and scrolled into view (a done one opens its fold)", /highlighted=\{t\.id === highlightTask\}/.test(view) && /data-hl=\{highlighted \? "" : undefined\}/.test(code("src/components/work/ScheduledRow.tsx")) && /document\.getElementById\(taskAnchorId\(highlightTask\)\)/.test(view) && /scrollIntoView\(\{ block: "center" \}\)/.test(view) && /open=\{hlTask\?\.doneAt \? true : undefined\}/.test(view) && /openScheduledSheet\(\{ customerId: customer\.id \}\)/.test(view));
   check("customer page: the phone is a tap-to-call link (tel:), a 44 px button", /<a className="btn btn-secondary btn-block crm-call" href=\{phoneHref\(customer\.phone\)\}>/.test(view));
-  check("customer page: archiving an entry or a task offers Undo", /title: "Entry archived"[\s\S]*?label: "Undo", onAction: \(\) => undo\(\(\) => restoreInteraction\(e\.id/.test(view) && /title: "Task archived"[\s\S]*?label: "Undo", onAction: \(\) => undo\(\(\) => restoreCustomerTask\(t\.id/.test(view));
+  check("customer page: archiving an entry, or a scheduled task (in its sheet), offers Undo", /title: "Entry archived"[\s\S]*?label: "Undo", onAction: \(\) => undo\(\(\) => restoreInteraction\(e\.id/.test(view) && /title: "Scheduled task archived"[\s\S]*?label: "Undo", onAction: \(\) => void call\(\(\) => restoreScheduledTask\(edit\.id/.test(code("src/components/work/ScheduledTaskSheet.tsx")));
   const list = code("src/components/customers/CustomersView.tsx");
-  check("list page: the search is by ID (the numeric keyboard while IDs are numbers), Enter opens the pick", /inputMode=\{numericKeys \? "numeric" : "text"\}/.test(list) && /searchPick\(searchCustomers\(customers, query\)\)/.test(list) && /router\.push\(customerHref\(board\.id, pick\.id\)\)/.test(list));
-  check("list page: name matches under their own heading; archived customers folded with Restore", /title="Name matches"/.test(list) && /<details className="card crm-arch">/.test(list) && /restoreCustomer\(c\.id, \{ refresh: true \}\)/.test(list));
-  check("list page: Add customer suggests the next ID; a new customer opens on their page", /openAdd\(suggestion \?\? ""\)/.test(list) && /createCustomer\(board\.id, value\)/.test(list) && /router\.push\(customerHref\(board\.id, res\.value\.id\)\)/.test(list));
+  check("list page: the search is live by ID or name (the numeric keyboard while IDs are numbers), Enter opens the top result", /inputMode=\{numericKeys \? "numeric" : "text"\}/.test(list) && /const pick = topMatch\(search\);/.test(list) && /router\.push\(customerHref\(board\.id, pick\.entry\.id\)\)/.test(list) && /matchCustomers\(index, query, \{ limit: SEARCH_LIST_MAX \}\)/.test(list));
+  check("list page: the matches in one ranked list (name · ID marked); archived customers folded with Restore", /aria-label="Matching customers"/.test(list) && /<CustomerResult m=\{match\} \/>/.test(list) && /<details className="card crm-arch">/.test(list) && /restoreCustomer\(c\.id, \{ refresh: true \}\)/.test(list));
+  check("list page: Add customer suggests the next ID (and opens on ?new=1, the work frame's New › Customer); a new customer opens on their page", /openAdd\(suggestion \?\? ""\)/.test(list) && /createCustomer\(board\.id, value, \{ refresh: true \}\)/.test(list) && /router\.push\(customerHref\(board\.id, res\.value\.id\)\)/.test(list) && /searchParams\.get\("new"\) === "1"/.test(list));
   const sheets = code("src/components/customers/CustomerSheets.tsx");
   check("sheets: the action chips are a radio group of the four, each a 44 px label", /CUSTOMER_ACTIONS\.map\(\(a\) => \(\s*<label key=\{a\} className="crm-chip">\s*<input\s+type="radio"/.test(sheets));
-  check("sheets: date-time fields (a task, an info, an entry), read in the user's zone (instantOfLocalInput)", (sheets.match(/type="datetime-local"/g) ?? []).length === 3 && (sheets.match(/instantOfLocalInput\(v\.when\)/g) ?? []).length === 3);
+  check("sheets: date-time fields (an info, an entry), read in the user's zone (instantOfLocalInput); no customer task sheet", (sheets.match(/type="datetime-local"/g) ?? []).length === 2 && (sheets.match(/instantOfLocalInput\(v\.when\)/g) ?? []).length === 2 && !/TaskSheet/.test(sheets));
   check(
     "sheets: an info's detail (1000 at most) and 'Recorded at' (not ahead of now by more than a minute; left out while untouched)",
     /label="Recorded at"/.test(sheets) && /cleanInfoDetail\(v\.detail\)/.test(sheets) && /at\.getTime\(\) > Date\.now\(\) \+ RECORDED_AHEAD_MS/.test(sheets) && /onSave\(untouched \? \{ detail: detail\.value \} : \{ detail: detail\.value, recordedAt: at\.toISOString\(\) \}\)/.test(sheets)
@@ -847,12 +732,20 @@ function wiring() {
   );
   check("customers.css: an info is clamped to three lines until More opens it", /\.crm-info-d \{[^}]*-webkit-line-clamp: 3;/.test(read("src/components/customers/customers.css")) && /\.crm-info-d\[data-open\] \{/.test(read("src/components/customers/customers.css")));
   check("list page: the newest info's first line is a quiet one-line subtitle", /\{c\.info && <span className="crm-row-info">\{c\.info\}<\/span>\}/.test(list) && /\.crm-row-info \{[^}]*text-overflow: ellipsis; white-space: nowrap;/.test(read("src/components/customers/customers.css")));
-  check("sheets: a task's reminder is a switch, on by default for a new task", /<Switch checked=\{v\.remind\}/.test(sheets) && /remind: true \} \}\);/.test(view));
+  const sts = code("src/components/work/ScheduledTaskSheet.tsx");
+  check("the scheduled task sheet: the reminder is a switch, on by default for a new task", /<Switch checked=\{remind\} onChange=\{setRemind\} label="Reminder" \/>/.test(sts) && /useState\(edit\?\.remind \?\? true\)/.test(sts));
 
-  // The tab card.
-  const card = code("src/components/today/WorkBoardCard.tsx");
-  check("tab card: 'Customers' links to the list while it is on, with the due count", /\{crmOn && \(\s*<Link className="work-crm-link" href=\{customersHref\(board\.id\)\}>/.test(card) && /customerDueCount\(board\.id\)/.test(card) && /dueChipText\(due\)/.test(card));
-  check("tab card: the menu's 'Customer list' switch (setCrm, refreshed); off hides, nothing deleted", /<h3>Customer list<\/h3>/.test(card) && /setCrm\(board\.id, on, \{ refresh: true \}\)/.test(card) && /<Switch checked=\{crmWant \?\? crmOn\} onChange=\{toggleCrm\} label="Customer list"/.test(card) && /nothing is deleted/.test(read("src/components/today/WorkBoardCard.tsx")));
+  // The work frame (2026-10-20; it replaced the tab card): Customers in its sub-navigation, the switch in its menu.
+  const slot = code("src/components/work/WorkHeaderSlot.tsx");
+  check(
+    "work frame: Customers is a page of the tab while its list is on, with the due count (customerDueCountCore in the header's one wave)",
+    workSubsOf({ id: "b1", crmOn: true }).some((s) => s.label === "Customers" && s.href === customersHref("b1")) &&
+      !workSubsOf({ id: "b1" }).some((s) => s.label === "Customers") &&
+      /customerDueCountCore\(userId, boardId\)\.catch\(\(\) => null\)/.test(slot) &&
+      /customers: due\?\.ok \? dueChipText\(due\.value\) : null/.test(slot)
+  );
+  const menu = code("src/components/work/WorkTabMenu.tsx");
+  check("work tab menu: the 'Customer list' switch (setCrm, refreshed); off hides, nothing deleted", /<h3>Customer list<\/h3>/.test(menu) && /setCrm\(board\.id, on, \{ refresh: true \}\)/.test(menu) && /<Switch checked=\{crmWant \?\? board\.crmOn\} onChange=\{\(on\) => toggle\("crm", on\)\} label="Customer list"/.test(menu) && /nothing is deleted/.test(read("src/components/work/WorkTabMenu.tsx")));
 
   // 44 px, tokens only, the layer order.
   const css = read("src/components/customers/customers.css");
@@ -860,11 +753,11 @@ function wiring() {
   check("customers.css: tokens only (no hex, rgb() or hsl()), in @layer components after the layer order", !/#[0-9a-f]{3,8}\b|\b(rgba?|hsla?)\(/i.test(bare) && css.startsWith("@layer theme, base, components, art, effects, utilities;") && /@layer components \{/.test(bare));
   const rule = (sel: string) => new RegExp(`(?:^|\\})\\s*${sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`, "m").exec(bare)?.[1] ?? "";
   const minH = (sel: string) => Number(/min-height:\s*(\d+)px/.exec(rule(sel))?.[1] ?? 0);
-  const targets = [".crm-back", ".crm-kb", ".crm-input", ".crm-chip", ".crm-row", ".crm-arch > summary", ".crm-task-body", ".crm-done > summary", ".crm-entry-btn", ".crm-arch-row", ".crm-info-btn", ".crm-info-more"];
+  const targets = [".crm-back", ".crm-kb", ".crm-input", ".crm-chip", ".crm-row", ".crm-arch > summary", ".crm-done > summary", ".crm-entry-btn", ".crm-arch-row", ".crm-info-btn", ".crm-info-more"];
   const small = targets.filter((s) => minH(s) < 44);
   check("customers.css: every control is a 44 px target (rows 52 to 56)", small.length === 0, small.map((s) => `${s} ${minH(s)}`).join(", "));
-  const work = read("src/components/shell/work-tabs.css").replace(/\/\*[\s\S]*?\*\//g, "");
-  check("work-tabs.css: the card's Customers link is a 44 px target", /\.work-crm-link \{[^}]*min-height: 44px;/.test(work));
+  const work = read("src/components/work/work.css").replace(/\/\*[\s\S]*?\*\//g, "");
+  check("work.css: the sub-navigation's Customers link is a 44 px target", /\.wk-sub \{[^}]*min-height: 44px;/.test(work));
 
   // package.json and the shell.
   const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
@@ -872,28 +765,21 @@ function wiring() {
   check("nav: the work tab's path match covers its customer pages (workBoardIdOf, no section of its own)", /const work = workBoardIdOf\(pathname\);\s*if \(work\) return workBoardHref\(work\);/.test(code("src/components/shell/nav.ts")) && /const crm = customersPathOf\(path\);/.test(code("src/components/shell/nav.ts")));
 }
 
-/** The reminder's tap URL as the dispatcher and the bell build it (callbacks' own modules) lands on the customer's page. */
+/**
+ * An old customer task reminder's tap URL (/today/work/<b>/customers/<c>?task=<customer task id>, already on devices and
+ * in the bell before 2026-10-20) still lands: the page reads the path and ?task=, and resolves the id to the scheduled
+ * task backfilled from it (scheduled-tasks-server resolveTaskParam: its own id, else legacyCustomerTaskId).
+ */
 async function tapUrls() {
-  console.log("— the reminder's tap URL (the dispatcher's and the bell's) —");
-  const lands = (u: string) => {
-    const url = new URL(u, "https://x.test");
-    return JSON.stringify([customersPathOf(url.pathname), taskParamOf(url.searchParams.get(TASK_PARAM))]) === JSON.stringify([{ boardId: "b1", customerId: "c1" }, "t1"]);
-  };
-  const builders: [string, unknown][] = [];
-  try {
-    builders.push(["reminders-server customerTaskUrl", (await import("../src/lib/reminders-server")).customerTaskUrl]);
-  } catch (e) {
-    builders.push(["reminders-server customerTaskUrl", String(e)]);
-  }
-  try {
-    builders.push(["callbacks customerTaskHref", (await import("../src/lib/callbacks")).customerTaskHref]);
-  } catch (e) {
-    builders.push(["callbacks customerTaskHref", String(e)]);
-  }
-  for (const [name, fn] of builders) {
-    const url = typeof fn === "function" ? (fn as (b: string, c: string, t: string) => string)("b1", "c1", "t1") : null;
-    check(`tap URL: ${name}("b1","c1","t1") opens customer c1 on tab b1 with task t1 highlighted`, url !== null && lands(url) && url === customerHref("b1", "c1", "t1"), String(url ?? fn));
-  }
+  console.log("— an old reminder's tap URL —");
+  const url = new URL(customerHref("b1", "c1", "t1"), "https://x.test");
+  eq("tap URL: read back from the path and the query", [customersPathOf(url.pathname), taskParamOf(url.searchParams.get(TASK_PARAM))], [{ boardId: "b1", customerId: "c1" }, "t1"]);
+  const srv = code("src/lib/scheduled-tasks-server.ts");
+  check(
+    "tap URL: ?task= resolves a scheduled task's id, else an old customer task's (legacyCustomerTaskId)",
+    /const own = await db\.task\(userId, raw\);\s*if \(own\) return \{ id: own\.id, boardId: own\.boardId, customerId: own\.customerId \};\s*return db\.byLegacy\(userId, "customerTask", raw\);/.test(srv)
+  );
+  check("new reminders open the task on its tab's Agenda (/today/work/<b>?task=<id>), not the customer page", /url: scheduledTaskHref\(t\.boardId, t\.id\)/.test(code("src/lib/scheduled-tasks.ts")));
 }
 
 async function main() {

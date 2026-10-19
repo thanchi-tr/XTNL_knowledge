@@ -15,10 +15,12 @@
  *                                                   an info: a detail and when it was recorded (now by
  *                                                   default; never more than a minute ahead)
  *   addInteractionCore / editInteractionCore / archiveInteractionCore / restoreInteractionCore
- *   addTaskCore / editTaskCore / setTaskDoneCore / archiveTaskCore / restoreTaskCore
- *                                                   a moved time or a reminder switched back on clears
- *                                                   remindSentAt (customers.ts remindSentAtAfterEdit)
- *   loadCustomersPage / loadCustomerPage / customerDueCountCore   the pages' and the tab card's reads
+ *   loadCustomersPage / loadCustomerPage / customerDueCountCore   the pages' reads
+ *
+ * A customer's tasks are scheduled tasks (2026-10-20; scheduled-tasks-server.ts owns their writes): the list's
+ * "due today" chips count them, and the customer page lists them (customer tasks, CustomerTask, are read only by the
+ * backfill now). Customer and log writes clear the 'work' cache (the Office workspace's search index: names, IDs,
+ * the latest activity) and archiving or restoring a customer the 'life' one too (the bell holds their tasks with them).
  *
  * Work, never the game: nothing here writes the ledger (ActivityEvent), pays
  * XP, touches the streak or clears a game cache. Every core takes a
@@ -27,7 +29,10 @@
  */
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
+import { invalidate } from "./cache";
 import { WORK_BOARD_ARCHIVED, WORK_BOARD_GONE, isBoardId } from "./work-boards";
+import { loadCustomerScheduled } from "./scheduled-tasks-server";
+import type { ScheduledView } from "./scheduled-tasks";
 import {
   CRM_OFF,
   CUSTOMER_ARCHIVED,
@@ -35,7 +40,6 @@ import {
   CUSTOMER_INFO_GONE,
   CUSTOMER_NUMBER_TAKEN,
   CUSTOMER_RESTORE_TAKEN,
-  CUSTOMER_TASK_GONE,
   INTERACTION_GONE,
   cleanAction,
   cleanBrief,
@@ -45,8 +49,6 @@ import {
   cleanNickname,
   cleanPhone,
   cleanRecordedAt,
-  cleanTaskDetail,
-  cleanTaskTitle,
   cleanWhen,
   compareNumbers,
   dueCountOf,
@@ -56,20 +58,14 @@ import {
   isCustomerAction,
   isRowId,
   nextCustomerNumber,
-  armedRemindSentAt,
-  remindSentAtAfterEdit,
-  remindSentAtAfterUndo,
   sortInfos,
-  taskStateOf,
   type ArchivedCustomerItem,
   type CrmBoardView,
   type CustomerDetail,
   type CustomerInfoView,
   type CustomerListItem,
-  type CustomerTaskView,
   type DueCount,
   type InteractionView,
-  type LinkedCallBackView,
 } from "./customers";
 
 export type CustomerResult<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -117,27 +113,6 @@ export interface InteractionRow {
   archivedAt: Date | null;
 }
 
-export interface CustomerTaskRow {
-  id: string;
-  userId: string;
-  customerId: string;
-  dueAt: Date;
-  title: string;
-  detail: string | null;
-  remind: boolean;
-  doneAt: Date | null;
-  remindSentAt: Date | null;
-  archivedAt: Date | null;
-}
-
-export interface LinkedCallBackRow {
-  id: string;
-  at: Date;
-  action: string;
-  tags: string[];
-  remindAt: Date | null;
-}
-
 export type CustomerWithBoard = CustomerRow & { board: CrmBoardRow };
 
 export interface CustomerFields {
@@ -156,13 +131,6 @@ export interface InteractionFields {
   at: Date;
   action: string;
   brief: string;
-}
-
-export interface TaskFields {
-  dueAt: Date;
-  title: string;
-  detail: string | null;
-  remind: boolean;
 }
 
 /** The reads and writes the cores make: Prisma in the app, an in-memory store in the checks. */
@@ -196,17 +164,12 @@ export interface CustomerDb {
   /** A kept entry only; rows changed. */
   updateInteraction(userId: string, id: string, f: InteractionFields): Promise<number>;
   setInteractionArchived(userId: string, id: string, at: Date | null): Promise<number>;
-  /** A customer's kept tasks, done or not (any order). */
-  tasks(userId: string, customerId: string): Promise<CustomerTaskRow[]>;
-  task(userId: string, id: string): Promise<(CustomerTaskRow & { customer: CustomerWithBoard }) | null>;
-  createTask(userId: string, customerId: string, f: TaskFields & { remindSentAt: Date | null }): Promise<CustomerTaskRow>;
-  /** A kept task only; rows changed. */
-  updateTask(userId: string, id: string, f: Partial<TaskFields & { doneAt: Date | null; remindSentAt: Date | null }>): Promise<number>;
-  setTaskArchived(userId: string, id: string, at: Date | null): Promise<number>;
-  /** The open (not done, kept) tasks of the tab's kept customers due before `before`. */
+  /** The open (not done, not archived) scheduled tasks of the tab's kept customers due before `before`. */
   dueTasks(userId: string, boardId: string, before: Date): Promise<{ customerId: string; dueAt: Date }[]>;
-  /** The call back cards linked to this customer (read-only). */
-  callBacks(userId: string, customerId: string): Promise<LinkedCallBackRow[]>;
+  /** Each kept customer's latest activity on the tab (their last change, their newest log entry), ms. */
+  activity(userId: string, boardId: string): Promise<{ customerId: string; at: number }[]>;
+  /** A customer's scheduled tasks (scheduled-tasks-server loadCustomerScheduled in the app). */
+  scheduled(userId: string, customerId: string): Promise<ScheduledView[]>;
 }
 
 const BOARD_SELECT = { id: true, userId: true, name: true, archivedAt: true, crmOn: true } as const;
@@ -214,13 +177,10 @@ const CUSTOMER_SELECT = { id: true, userId: true, boardId: true, number: true, n
 const CUSTOMER_WITH_BOARD = { ...CUSTOMER_SELECT, board: { select: BOARD_SELECT } } as const;
 const INFO_SELECT = { id: true, userId: true, customerId: true, detail: true, recordedAt: true, archivedAt: true, createdAt: true } as const;
 const INTERACTION_SELECT = { id: true, userId: true, customerId: true, at: true, action: true, brief: true, archivedAt: true } as const;
-const TASK_SELECT = { id: true, userId: true, customerId: true, dueAt: true, title: true, detail: true, remind: true, doneAt: true, remindSentAt: true, archivedAt: true } as const;
 const OPEN_CUSTOMERS_MAX = 5000;
 const ARCHIVED_CUSTOMERS_MAX = 50;
 const INFOS_MAX = 200;
 const INTERACTIONS_MAX = 200;
-const TASKS_MAX = 300;
-const CALL_BACKS_MAX = 50;
 
 /** The app's CustomerDb. */
 export const prismaCustomerDb: CustomerDb = {
@@ -258,19 +218,20 @@ export const prismaCustomerDb: CustomerDb = {
   updateInteraction: async (userId, id, f) => (await prisma.customerInteraction.updateMany({ where: { id, userId, archivedAt: null }, data: f })).count,
   setInteractionArchived: async (userId, id, at) =>
     (await prisma.customerInteraction.updateMany({ where: { id, userId, archivedAt: at ? null : { not: null } }, data: { archivedAt: at } })).count,
-  tasks: (userId, customerId) => prisma.customerTask.findMany({ where: { userId, customerId, archivedAt: null }, select: TASK_SELECT, orderBy: { dueAt: "asc" }, take: TASKS_MAX }),
-  task: (userId, id) => prisma.customerTask.findFirst({ where: { id, userId }, select: { ...TASK_SELECT, customer: { select: CUSTOMER_WITH_BOARD } } }),
-  createTask: (userId, customerId, f) => prisma.customerTask.create({ data: { userId, customerId, ...f }, select: TASK_SELECT }),
-  updateTask: async (userId, id, f) => (await prisma.customerTask.updateMany({ where: { id, userId, archivedAt: null }, data: f })).count,
-  setTaskArchived: async (userId, id, at) =>
-    (await prisma.customerTask.updateMany({ where: { id, userId, archivedAt: at ? null : { not: null } }, data: { archivedAt: at } })).count,
   dueTasks: (userId, boardId, before) =>
-    prisma.customerTask.findMany({
-      where: { userId, doneAt: null, archivedAt: null, dueAt: { lt: before }, customer: { boardId, archivedAt: null } },
+    prisma.scheduledTask.findMany({
+      where: { userId, boardId, doneAt: null, archivedAt: null, dueAt: { lt: before }, customer: { is: { archivedAt: null } } },
       select: { customerId: true, dueAt: true },
-    }),
-  callBacks: (userId, customerId) =>
-    prisma.callBack.findMany({ where: { userId, customerId, archivedAt: null }, select: { id: true, at: true, action: true, tags: true, remindAt: true }, orderBy: { at: "desc" }, take: CALL_BACKS_MAX }),
+    }) as Promise<{ customerId: string; dueAt: Date }[]>,
+  activity: async (userId, boardId) => {
+    const [customers, latest] = await Promise.all([
+      prisma.customer.findMany({ where: { userId, boardId, archivedAt: null }, select: { id: true, updatedAt: true }, take: OPEN_CUSTOMERS_MAX }),
+      prisma.customerInteraction.groupBy({ by: ["customerId"], where: { userId, archivedAt: null, customer: { is: { boardId, archivedAt: null } } }, _max: { at: true } }),
+    ]);
+    const last = new Map(latest.map((l) => [l.customerId, l._max.at ? l._max.at.getTime() : 0]));
+    return customers.map((c) => ({ customerId: c.id, at: Math.max(c.updatedAt.getTime(), last.get(c.id) ?? 0) }));
+  },
+  scheduled: (userId, customerId) => loadCustomerScheduled(userId, customerId),
 };
 
 /** A unique violation: here, the partial index on a tab's open IDs (Customer_boardId_number_open_key). */
@@ -327,14 +288,6 @@ async function openInteraction(db: CustomerDb, userId: string, id: string): Prom
   return c.ok ? ok(row) : fail(c.error);
 }
 
-async function openTask(db: CustomerDb, userId: string, id: string): Promise<CustomerResult<CustomerTaskRow & { customer: CustomerWithBoard }>> {
-  if (!isRowId(id)) return fail(CUSTOMER_TASK_GONE);
-  const row = await db.task(userId, id);
-  if (!row || row.userId !== userId) return fail(CUSTOMER_TASK_GONE);
-  const c = customerGate(row.customer, userId);
-  return c.ok ? ok(row) : fail(c.error);
-}
-
 // ── Inputs ─────────────────────────────────────────────────────────────────
 
 export interface CustomerInput {
@@ -355,15 +308,6 @@ export interface InteractionInput {
   at: string;
   action: string;
   brief?: string | null;
-}
-
-export interface TaskInput {
-  /** An ISO instant. */
-  dueAt: string;
-  title: string;
-  detail?: string | null;
-  /** One push at dueAt (default on). */
-  remind?: boolean;
 }
 
 function customerFieldsOf(input: unknown): CustomerResult<CustomerFields> {
@@ -401,17 +345,6 @@ function interactionFieldsOf(input: unknown): CustomerResult<InteractionFields> 
   return ok({ at: at.value, action: action.value, brief: brief.value });
 }
 
-function taskFieldsOf(input: unknown): CustomerResult<TaskFields> {
-  const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
-  const dueAt = cleanWhen(i.dueAt);
-  if (!dueAt.ok) return fail(dueAt.error);
-  const title = cleanTaskTitle(i.title);
-  if (!title.ok) return fail(title.error);
-  const detail = cleanTaskDetail(i.detail);
-  if (!detail.ok) return fail(detail.error);
-  return ok({ dueAt: dueAt.value, title: title.value, detail: detail.value, remind: i.remind !== false });
-}
-
 // ── The tab's switch ───────────────────────────────────────────────────────
 
 /** Switches the tab's customer list on or off. Off hides it (the tab card, the pages); every row is kept. */
@@ -435,6 +368,7 @@ export async function createCustomerCore(userId: string, boardId: string, input:
   if (!f.ok) return fail(f.error);
   try {
     const row = await db.createCustomer(userId, boardId, f.value);
+    invalidate("work");
     return ok({ id: row.id, number: row.number });
   } catch (err) {
     if (isNumberTaken(err)) return fail(CUSTOMER_NUMBER_TAKEN);
@@ -451,6 +385,7 @@ export async function editCustomerCore(userId: string, customerId: string, input
   try {
     const changed = await db.updateCustomer(userId, customerId, f.value);
     if (changed === 0) return fail(CUSTOMER_ARCHIVED);
+    invalidate("work");
     return ok({ id: customerId });
   } catch (err) {
     if (isNumberTaken(err)) return fail(CUSTOMER_NUMBER_TAKEN);
@@ -463,6 +398,8 @@ export async function archiveCustomerCore(userId: string, customerId: string, no
   const c = await openCustomer(db, userId, customerId, true);
   if (!c.ok) return fail(c.error);
   if (!c.value.archivedAt) await db.setCustomerArchived(userId, customerId, now);
+  // Their scheduled tasks are held with them: off the search, the agenda and the bell.
+  invalidate("work", "life");
   return ok({ id: customerId });
 }
 
@@ -473,6 +410,7 @@ export async function restoreCustomerCore(userId: string, customerId: string, db
   if (!c.value.archivedAt) return ok({ id: customerId });
   try {
     await db.setCustomerArchived(userId, customerId, null);
+    invalidate("work", "life");
     return ok({ id: customerId });
   } catch (err) {
     if (isNumberTaken(err)) return fail(CUSTOMER_RESTORE_TAKEN);
@@ -526,6 +464,8 @@ export async function addInteractionCore(userId: string, customerId: string, inp
   const f = interactionFieldsOf(input);
   if (!f.ok) return fail(f.error);
   const row = await db.createInteraction(userId, customerId, f.value);
+  // Their latest activity: the search's tie-break.
+  invalidate("work");
   return ok({ id: row.id });
 }
 
@@ -553,61 +493,6 @@ export async function restoreInteractionCore(userId: string, interactionId: stri
   return ok({ id: interactionId });
 }
 
-// ── Scheduled tasks ────────────────────────────────────────────────────────
-
-/** Schedules a task. Its one reminder is armed for its time (a time already gone by is not pushed). */
-export async function addTaskCore(userId: string, customerId: string, input: unknown, now: Date = new Date(), db: CustomerDb = prismaCustomerDb): Promise<CustomerResult<{ id: string }>> {
-  const c = await openCustomer(db, userId, customerId);
-  if (!c.ok) return fail(c.error);
-  const f = taskFieldsOf(input);
-  if (!f.ok) return fail(f.error);
-  const row = await db.createTask(userId, customerId, { ...f.value, remindSentAt: armedRemindSentAt(f.value.dueAt, now) });
-  return ok({ id: row.id });
-}
-
-/** Edits a task. A moved time, or the reminder switched back on, re-arms it (remindSentAt cleared). */
-export async function editTaskCore(userId: string, taskId: string, input: unknown, now: Date = new Date(), db: CustomerDb = prismaCustomerDb): Promise<CustomerResult<{ id: string }>> {
-  const row = await openTask(db, userId, taskId);
-  if (!row.ok) return fail(row.error);
-  const f = taskFieldsOf(input);
-  if (!f.ok) return fail(f.error);
-  const remindSentAt = remindSentAtAfterEdit(row.value, f.value, now);
-  if ((await db.updateTask(userId, taskId, { ...f.value, remindSentAt })) === 0) return fail(CUSTOMER_TASK_GONE);
-  return ok({ id: taskId });
-}
-
-/** Marks a task done (a done task is never reminded) or open again (its reminder kept, never pushed late). */
-export async function setTaskDoneCore(userId: string, taskId: string, done: boolean, now: Date = new Date(), db: CustomerDb = prismaCustomerDb): Promise<CustomerResult<{ id: string; done: boolean }>> {
-  const row = await openTask(db, userId, taskId);
-  if (!row.ok) return fail(row.error);
-  const want = done === true;
-  if (want && !row.value.doneAt) await db.updateTask(userId, taskId, { doneAt: now });
-  else if (!want && row.value.doneAt) await db.updateTask(userId, taskId, { doneAt: null, remindSentAt: remindSentAtAfterUndo(row.value, now) });
-  return ok({ id: taskId, done: want });
-}
-
-/** Archives a task (the page offers Undo). An archived task is never reminded. Again: ok. */
-export async function archiveTaskCore(userId: string, taskId: string, now: Date = new Date(), db: CustomerDb = prismaCustomerDb): Promise<CustomerResult<{ id: string }>> {
-  const row = await openTask(db, userId, taskId);
-  if (!row.ok) return fail(row.error);
-  if (!row.value.archivedAt) await db.setTaskArchived(userId, taskId, now);
-  return ok({ id: taskId });
-}
-
-/** Undoes an archive. A reminder whose time went by meanwhile is not pushed late. */
-export async function restoreTaskCore(userId: string, taskId: string, now: Date = new Date(), db: CustomerDb = prismaCustomerDb): Promise<CustomerResult<{ id: string }>> {
-  const row = await openTask(db, userId, taskId);
-  if (!row.ok) return fail(row.error);
-  if (row.value.archivedAt) {
-    await db.setTaskArchived(userId, taskId, null);
-    if (!row.value.doneAt && !row.value.remindSentAt) {
-      const spent = armedRemindSentAt(row.value.dueAt, now);
-      if (spent) await db.updateTask(userId, taskId, { remindSentAt: spent });
-    }
-  }
-  return ok({ id: taskId });
-}
-
 // ── Reads ──────────────────────────────────────────────────────────────────
 
 const boardView = (b: CrmBoardRow): CrmBoardView => ({ id: b.id, name: b.name });
@@ -619,17 +504,19 @@ export type CustomersPageData =
 
 /**
  * The customer list page, in one wave: the tab, its kept customers, its
- * archived ones, the tasks due by tonight and each customer's newest info
- * (its first line, the row's quiet subtitle). Customers by ID (natural order).
+ * archived ones, the scheduled tasks due by tonight, each customer's newest
+ * info (its first line, the row's quiet subtitle) and their latest activity
+ * (the search's tie-break). Customers by ID (natural order).
  */
 export async function loadCustomersPage(userId: string, boardId: string, now: Date = new Date(), db: CustomerDb = prismaCustomerDb): Promise<CustomersPageData> {
   if (!isBoardId(boardId)) return { kind: "gone" };
-  const [board, open, archived, due, infos] = await Promise.all([
+  const [board, open, archived, due, infos, activity] = await Promise.all([
     db.board(userId, boardId),
     db.customers(userId, boardId, false),
     db.customers(userId, boardId, true),
     db.dueTasks(userId, boardId, endOfLocalDay(now)),
     db.latestInfos(userId, boardId),
+    db.activity(userId, boardId),
   ]);
   if (!board || board.userId !== userId) return { kind: "gone" };
   if (board.archivedAt) return { kind: "archived", board: boardView(board) };
@@ -637,9 +524,21 @@ export async function loadCustomersPage(userId: string, boardId: string, now: Da
   const byCustomer = new Map<string, Date[]>();
   for (const t of due) byCustomer.set(t.customerId, [...(byCustomer.get(t.customerId) ?? []), t.dueAt]);
   const infoOf = new Map(infos.map((i) => [i.customerId, infoFirstLine(i.detail) || null]));
+  const activityOf = new Map(activity.map((a) => [a.customerId, a.at]));
   const customers = open
     .filter((c) => !c.archivedAt)
-    .map((c): CustomerListItem => ({ id: c.id, number: c.number, name: c.name, nickname: c.nickname, phone: c.phone, ...dueCountOf(byCustomer.get(c.id) ?? [], now), info: infoOf.get(c.id) ?? null }))
+    .map(
+      (c): CustomerListItem => ({
+        id: c.id,
+        number: c.number,
+        name: c.name,
+        nickname: c.nickname,
+        phone: c.phone,
+        ...dueCountOf(byCustomer.get(c.id) ?? [], now),
+        info: infoOf.get(c.id) ?? null,
+        activity: activityOf.get(c.id) ?? 0,
+      })
+    )
     .sort((a, b) => compareNumbers(a.number, b.number));
   const numbers = customers.map((c) => c.number);
   return {
@@ -655,52 +554,43 @@ export async function loadCustomersPage(userId: string, boardId: string, now: Da
 export type CustomerPageData =
   | { kind: "gone" }
   | { kind: "archived" | "off"; board: CrmBoardView }
-  | { kind: "ok"; board: CrmBoardView; customer: CustomerDetail; tasks: CustomerTaskView[]; infos: CustomerInfoView[]; interactions: InteractionView[]; callBacks: LinkedCallBackView[] };
+  | { kind: "ok"; board: CrmBoardView; customer: CustomerDetail; tasks: ScheduledView[]; infos: CustomerInfoView[]; interactions: InteractionView[] };
 
 /**
- * One customer's page, in one wave: the customer with their tab, their tasks
- * (open soonest first, then done), their infos (newest recorded first), their
- * log (newest first) and the call backs linked to them. A customer on another
- * tab (or another user's) is gone.
+ * One customer's page, in one wave: the customer with their tab, their
+ * scheduled tasks (open soonest first, then the done ones, newest first),
+ * their infos (newest recorded first) and their log (newest first; an action
+ * outside CUSTOMER_ACTIONS is left out). A customer on another tab (or
+ * another user's) is gone.
  */
-export async function loadCustomerPage(userId: string, boardId: string, customerId: string, now: Date = new Date(), db: CustomerDb = prismaCustomerDb): Promise<CustomerPageData> {
+export async function loadCustomerPage(userId: string, boardId: string, customerId: string, db: CustomerDb = prismaCustomerDb): Promise<CustomerPageData> {
   if (!isBoardId(boardId) || !isRowId(customerId)) return { kind: "gone" };
-  const [c, tasks, infos, interactions, callBacks] = await Promise.all([
+  const [c, tasks, infos, interactions] = await Promise.all([
     db.customer(userId, customerId),
-    db.tasks(userId, customerId),
+    db.scheduled(userId, customerId),
     db.infos(userId, customerId),
     db.interactions(userId, customerId),
-    db.callBacks(userId, customerId),
   ]);
   if (!c || c.userId !== userId || c.boardId !== boardId || c.board.userId !== userId) return { kind: "gone" };
   if (c.board.archivedAt) return { kind: "archived", board: boardView(c.board) };
   if (!c.board.crmOn) return { kind: "off", board: boardView(c.board) };
-  const kept = tasks.filter((t) => !t.archivedAt);
-  const open = kept.filter((t) => !t.doneAt).sort((a, b) => a.dueAt.getTime() - b.dueAt.getTime() || (a.id < b.id ? -1 : 1));
-  const done = kept.filter((t) => t.doneAt).sort((a, b) => (b.doneAt as Date).getTime() - (a.doneAt as Date).getTime());
+  const ms = (iso: string | null) => (iso ? Date.parse(iso) : 0);
+  const open = tasks.filter((t) => !t.doneAt).sort((a, b) => ms(a.dueAt) - ms(b.dueAt) || (a.id < b.id ? -1 : 1));
+  const done = tasks.filter((t) => t.doneAt).sort((a, b) => ms(b.doneAt) - ms(a.doneAt));
   return {
     kind: "ok",
     board: boardView(c.board),
     customer: { id: c.id, number: c.number, name: c.name, nickname: c.nickname, phone: c.phone, archived: c.archivedAt != null },
-    tasks: [...open, ...done].map((t) => ({
-      id: t.id,
-      dueAt: t.dueAt.toISOString(),
-      title: t.title,
-      detail: t.detail,
-      remind: t.remind,
-      doneAt: t.doneAt ? t.doneAt.toISOString() : null,
-      state: taskStateOf(t, now),
-    })),
+    tasks: [...open, ...done],
     infos: sortInfos(infos.filter((i) => !i.archivedAt)).map((i) => ({ id: i.id, detail: i.detail, recordedAt: i.recordedAt.toISOString() })),
     interactions: interactions
       .filter((i) => !i.archivedAt)
       .sort((a, b) => b.at.getTime() - a.at.getTime())
       .flatMap((i): InteractionView[] => (isCustomerAction(i.action) ? [{ id: i.id, at: i.at.toISOString(), action: i.action, brief: i.brief }] : [])),
-    callBacks: callBacks.map((cb) => ({ id: cb.id, at: cb.at.toISOString(), action: cb.action, tags: cb.tags, remindAt: cb.remindAt ? cb.remindAt.toISOString() : null })),
   };
 }
 
-/** The work tab card's count: open tasks due by tonight on the tab's kept customers, and the overdue ones. Off: none. */
+/** The work frame's Customers count: open scheduled tasks due by tonight for the tab's kept customers, and the overdue ones. */
 export async function customerDueCountCore(userId: string, boardId: string, now: Date = new Date(), db: CustomerDb = prismaCustomerDb): Promise<CustomerResult<DueCount>> {
   const board = await openBoard(db, userId, boardId);
   if (!board.ok) return fail(board.error);

@@ -367,7 +367,8 @@ function wiring() {
 
   const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
   const ui = pkg.scripts["ui:check"].split("&&").map((s) => s.trim());
-  check("package.json: ui:check runs this check right before push-check (after word-model-check); habit-history:check runs it alone", ui[ui.indexOf("tsx scripts/habit-history-check.ts") + 1] === "tsx scripts/push-check.ts" && ui[ui.indexOf("tsx scripts/habit-history-check.ts") - 1] === "tsx scripts/word-model-check.ts" && pkg.scripts["habit-history:check"] === "tsx scripts/habit-history-check.ts");
+  // scheduled-tasks-check (2026-10-20) runs between this check and push-check.
+  check("package.json: ui:check runs this check after word-model-check, then scheduled-tasks-check, then push-check; habit-history:check runs it alone", ui[ui.indexOf("tsx scripts/habit-history-check.ts") + 1] === "tsx scripts/scheduled-tasks-check.ts" && ui[ui.indexOf("tsx scripts/habit-history-check.ts") + 2] === "tsx scripts/push-check.ts" && ui[ui.indexOf("tsx scripts/habit-history-check.ts") - 1] === "tsx scripts/word-model-check.ts" && pkg.scripts["habit-history:check"] === "tsx scripts/habit-history-check.ts");
 }
 
 // ── 5. 344 px ──────────────────────────────────────────────────────────────

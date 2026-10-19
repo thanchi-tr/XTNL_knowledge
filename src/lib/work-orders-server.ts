@@ -15,7 +15,7 @@
  *   setOrderedCore(userId, id, ordered)          orderedAt now when ticked (today as the date when it had
  *                                                none), cleared when unticked (work-orders.ts orderedPatch)
  *   archiveOrderCore / restoreOrderCore          archived lines leave the list (the page offers Undo)
- *   orderCountCore                               the tab card's "n to order"
+ *   orderCountCore                               the work frame's Orders count ("n to order")
  *   loadOrdersPage / loadCustomerOrders          the order page's read, and a customer page's section
  *
  * Work, never the game: nothing here writes the ledger (ActivityEvent), pays
@@ -232,7 +232,7 @@ async function fieldsOf(db: WorkOrderDb, userId: string, board: OrdersBoardRow, 
 
 // ── The tab's switch ───────────────────────────────────────────────────────
 
-/** Switches the tab's order list on or off. Off hides it (the tab card, the page, a customer's section); every line is kept. */
+/** Switches the tab's order list on or off. Off hides it (the work frame's Orders page, a customer's section); every line is kept. */
 export async function setOrdersOnCore(userId: string, boardId: string, on: boolean, db: WorkOrderDb = prismaWorkOrderDb): Promise<OrderResult<{ ordersOn: boolean }>> {
   if (!isBoardId(boardId)) return fail(WORK_BOARD_GONE);
   const board = await db.board(userId, boardId);
@@ -296,7 +296,7 @@ export async function restoreOrderCore(userId: string, orderId: string, db: Work
   return ok({ id: orderId });
 }
 
-/** The work tab card's count: the kept lines not ordered yet. Off: refused (the card shows no link). */
+/** The work frame's Orders count: the kept lines not ordered yet. Off: refused (no Orders page, no count). */
 export async function orderCountCore(userId: string, boardId: string, db: WorkOrderDb = prismaWorkOrderDb): Promise<OrderResult<{ todo: number }>> {
   const board = await openBoard(db, userId, boardId);
   if (!board.ok) return fail(board.error);

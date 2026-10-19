@@ -106,8 +106,9 @@ export function TaskRow(props: Props) {
   const shownXp = paid ? paid.xp : projection.xp;
   const study = !!row.auto;
   const title = props.pendingTitle ?? t.title;
-  // The colour code (a must's warm rail and ring, a habit's cool one) and the tick's shape are one answer.
-  const accent = rowAccentOf(row);
+  // The colour code (a must's warm rail and ring, a habit's cool one) and the tick's shape are one answer. The work
+  // skin has neither: a plain row and a round tick for every task (no lane colour, no diamond).
+  const accent = props.work ? null : rowAccentOf(row);
   const must = accent === "must";
   const tickState: TickState = done ? (row.minimum ? "minimum" : "done") : "open";
   const minimum = props.onMinimum && row.state === "open" && t.mvv ? props.onMinimum : null;
@@ -223,7 +224,8 @@ function OpenMeta({ row, restToday, work }: { row: BoardRow; restToday: RestKind
   else if (!row.auto) bits.push(fmtMinutes(row.estMinutes));
   // A run that reaches the edge of the history read is a floor, and says so.
   // M2: '12 days · repaired' after a restoring make-up, '12 days · held' after the minimum or an excused day.
-  if (row.streak && row.streak.days > 0) {
+  // The work skin shows no streak (no game figures on a work tab).
+  if (!work && row.streak && row.streak.days > 0) {
     const n = Math.round(row.streak.days);
     bits.push(`${n} day${n === 1 ? "" : "s"}${row.streak.capped ? "+" : ""}${row.streakNote ? ` · ${row.streakNote}` : ""}`);
   }

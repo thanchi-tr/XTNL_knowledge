@@ -183,10 +183,7 @@ import { MissPrompt } from "./MissPrompt";
 import { namedOfTitle, type TodayNamedTitles } from "./NamedTitle";
 import { Chip } from "@/components/ui/Chip";
 import { HeldGlyph } from "@/components/ui/Icon";
-import { WorkBoardCard } from "./WorkBoardCard";
-import { CallBacksSection } from "@/components/work/callbacks/CallBacksSection";
 import { captureExampleOf } from "@/components/capture/capture-ui";
-import type { CallBacksData } from "@/lib/callbacks";
 
 interface Props {
   data: BoardData;
@@ -218,17 +215,14 @@ interface Props {
    */
   namedTitles?: TodayNamedTitles | null;
   /**
-   * A work tab (work-boards.ts; /today/work/<id>): the same board over that tab's own tasks, kept out of the game.
-   * Its header card (WorkBoardCard: the name, rename and archive in its menu) stands where the plan card stands;
-   * there is no life XP, no capacity, no Record yesterday card, no goals, no Close the day, no day moments and no
-   * price on any row. Absent: the personal Board, exactly as before.
+   * A work tab (work-boards.ts; /today/work/<id>/tasks, the Office workspace's Tasks page, 2026-10-20): the same board
+   * over that tab's own tasks, kept out of the game, in the workspace's skin (data-skin="work"): no colour code and no
+   * diamond marks, no XP or band figures, no streaks, no moments, no Board clear card, no flourish and no pluck (the
+   * kit's calm check, and its words to the live region). Its name and menu are the work frame's header. There is no
+   * life XP, no capacity, no Record yesterday card, no goals, no Close the day and no price on any row. Absent: the
+   * personal Board, exactly as before.
    */
   work?: WorkBoardView | null;
-  /**
-   * A work tab's call backs (callbacks.ts; the page's loadCallBacks): the "Call backs" section in the call-backs
-   * slot, with ?callback=<id>'s highlight. Absent or null (the personal Board, or a failed read): no section.
-   */
-  callBacks?: CallBacksData | null;
   /**
    * Momentum (momentum.md §E.1; the page's loadMomentum after settleMomentum): the Momentum card at the top of the
    * side column. `{live: false}` (before MOMENTUM_LAUNCH_DAY), absent or null: no card, and the board is exactly as
@@ -256,9 +250,9 @@ function openPricesOf(rows: readonly BoardRow[]): Record<string, number> {
 export interface WorkBoardView {
   id: string;
   name: string;
-  /** The tab keeps a customer list (WorkBoard.crmOn); its header card links to it. */
+  /** The tab keeps a customer list (WorkBoard.crmOn); the work frame's sub-navigation links it. */
   crmOn?: boolean;
-  /** The tab keeps an order list (WorkBoard.ordersOn); its header card links to it. */
+  /** The tab keeps an order list (WorkBoard.ordersOn); the work frame's sub-navigation links it. */
   ordersOn?: boolean;
 }
 
@@ -325,7 +319,7 @@ const firedMoments = new Set<string>();
 const MOMENT_WINDOW_MS = 4000;
 /**
  * The moments only a tick makes (a lane kept, the board clear): a defer, a skip or a move that empties a lane is not
- * a deed, so these need a tick in the window, not just a tap. A work tab plays these and nothing else of the day.
+ * a deed, so these need a tick in the window, not just a tap. A work tab plays none of them (the work skin).
  */
 const TICK_MOMENTS: ReadonlySet<DayMoment> = new Set<DayMoment>(["lane-kept", "planned-kept", "habits-kept", "board-clear"]);
 /** How long a row that just landed in Done today (or came back to its lane) keeps its arrival mark: longer than either. */
@@ -486,7 +480,7 @@ function declaredOf(duty: DutyBoard | null, today: DayKey): DeclaredDay[] {
  * launch the board is the pre-M2 board (debts, which only settlement
  * writes, render whenever they exist).
  */
-export function TodayBoard({ data, streak, nowIso, notices, footClock, launched = false, namedTitles, work: workTab = null, callBacks = null, momentum = null, momentumSettled = false, elsewhere = null }: Props) {
+export function TodayBoard({ data, streak, nowIso, notices, footClock, launched = false, namedTitles, work: workTab = null, momentum = null, momentumSettled = false, elsewhere = null }: Props) {
   /** A work tab: nothing of the game (no XP, no moments, no goals, no plan card). */
   const isWork = workTab !== null;
   const router = useRouter();
@@ -952,12 +946,16 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   function markTick(row: BoardRow, xp: number, from: Element | null | undefined) {
     actedAt.current = tapTime();
     tickedAt.current = actedAt.current;
-    // A work tick pays nothing: no token flies, and its words say only that it is done.
-    const paid = isWork ? 0 : xp;
+    // The work skin: a calm check. No mark (no pluck, no haptic, no flight): its words go to the live region only.
+    if (isWork) {
+      announce(`Done: ${row.template.title}`);
+      return;
+    }
+    const paid = xp;
     const flight = mark({
       kind: "tick",
       id: `tick:${row.key}:${row.slot}`,
-      text: isWork ? `Done: ${row.template.title}` : `Kept ${row.template.title} · paid ${fmtXp(xp)} exactly`,
+      text: `Kept ${row.template.title} · paid ${fmtXp(xp)} exactly`,
       amount: paid > 0 ? { kind: "xp", value: paid } : undefined,
       from: from ?? null,
     });
@@ -1646,12 +1644,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     prevSnapshot.current = next;
     // A lane kept and the board clear follow a tick (a defer or a skip that empties a lane is no deed).
     const ticked = Date.now() - tickedAt.current <= MOMENT_WINDOW_MS;
-    // A work tab is not the game: after a tick, its lanes' stamps and its clear board, and nothing of the day.
-    if (isWork && ticked) {
-      const work = dayMomentsOf(prev, next).filter((m) => TICK_MOMENTS.has(m));
-      if (work.length > 0) playMoments(work);
-    }
-    // Only after a tap: never on arrival, never on a refresh or another tab's work. Never on a work tab (not the game).
+    // Only after a tap: never on arrival, never on a refresh or another tab's work. Never on a work tab (the work skin:
+    // no lane stamps, no bursts, no Board clear, no chime).
     if (isWork || Date.now() - actedAt.current > MOMENT_WINDOW_MS) return;
     // Momentum (§G.1): while today's run is still open, the tap's server answer brings momentum-kept, which replaces
     // the day-kept chime (one chime for one tick); the board holds its own back.
@@ -1824,7 +1818,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   // Board clear: once the tap that cleared the board has played it, the card holds the life day while the board stays
   // clear, until OK (this device). Its figures are the board's own; a work tab says only the tasks done.
   const clearView =
-    shown.snapshot.clear && flags?.[clearKey] === "shown"
+    !isWork && shown.snapshot.clear && flags?.[clearKey] === "shown"
       ? boardClearViewOf({
           done: doneToday.count,
           work: isWork,
@@ -2227,7 +2221,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     ) : null;
 
   return (
-    <div className="page today-board cq-main">
+    <div className="page today-board cq-main" data-skin={isWork ? "work" : undefined}>
       <div className="board" ref={boardRef}>
         <div className="c1">
           {dayEnded && !notice && (
@@ -2287,13 +2281,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
           {/* The three sections: what is due in Ideas and Body, one slim strip of links out (the page's slot). */}
           {elsewhere != null && elsewhere !== false && <div className="o2">{elsewhere}</div>}
 
-          {/* A work tab (work-boards.ts): its own card (the name, a line on what work is, rename and archive in its menu)
-              where the plan card stands. Nothing of the game: no capacity, no life XP, no Asks. */}
-          {workTab && (
-            <div className="o2">
-              <WorkBoardCard board={workTab} />
-            </div>
-          )}
+          {/* A work tab (work-boards.ts) draws no card here: its name and menu are the work frame's header (the Office
+              workspace, 2026-10-20). Nothing of the game: no capacity, no life XP, no Asks. */}
 
           {/* The day's plan (capacity, the life XP the ticks paid, Record yesterday), before the lanes on a phone; what
               waits on the Tasks section (record yesterday, the weekly review) is a badge in its corner. */}
@@ -2318,8 +2307,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
             <Lane
               id="must"
               title="Must"
-              must
-              kept={shown.mustLaneKept}
+              must={!isWork}
+              kept={!isWork && shown.mustLaneKept}
               landing={!!beat?.lanes.includes("must")}
               bodyRef={mustBodyRef}
               count={mustView.count ?? undefined}
@@ -2358,7 +2347,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
               id="planned"
               title="Planned"
               count={planned.length > 0 ? `${plannedTally.kept} of ${plannedTally.total}` : undefined}
-              kept={!!shown.snapshot.planned}
+              kept={!isWork && !!shown.snapshot.planned}
               landing={!!beat?.lanes.includes("planned")}
               className="o6"
               note={plannedNote}
@@ -2371,9 +2360,9 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
             <Lane
               id="habits"
               title="Habits"
-              habit
+              habit={!isWork}
               count={`${habitTally.kept} of ${habitTally.total}`}
-              kept={!!shown.snapshot.habits}
+              kept={!isWork && !!shown.snapshot.habits}
               landing={!!beat?.lanes.includes("habits")}
               className="o7"
               note={habits.length > 0 && planned.length === 0 ? plannedNote : null}
@@ -2399,9 +2388,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
         </div>
 
         <div className="c3">
-          {/* A work tab (work-boards.ts) draws no goals (GoalsStrip off). CALL BACKS SLOT: a work tab's "Call backs"
-              section (components/work/callbacks, callbacks.ts) mounts in .o9, where the goals stand on the personal
-              Board; drawn as nothing (.work-callbacks:empty) when its read failed, and never on the personal Board. */}
+          {/* A work tab (work-boards.ts) draws no goals (GoalsStrip off). Its scheduled tasks (the call backs' and the
+              customer tasks' one list, 2026-10-20) are the work frame's Agenda, never on this board. */}
           <div className="o9">
             <GoalsStrip
               off={isWork}
@@ -2414,7 +2402,6 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
               justAdded={justAdded}
               namedTitles={namedTitles}
             />
-            {isWork && <div className="work-callbacks" data-slot="call-backs" data-board={workTab?.id}>{callBacks && <CallBacksSection data={callBacks} />}</div>}
           </div>
 
           {/* Done today: where a ticked row rests (latest first; folded to three), above Inbox and Anytime. */}

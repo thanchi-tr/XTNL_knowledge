@@ -1,7 +1,7 @@
 import { handleSubscribe, handleUnsubscribe } from "@/lib/push-server";
 
 /**
- * This browser's web-push subscription (call back reminders; src/lib/push-client.ts calls it).
+ * This browser's web-push subscription (scheduled task reminders; src/lib/push-client.ts calls it).
  *
  *   POST   PushSubscription.toJSON()  → { saved: true }    upsert by endpoint for the current user
  *   DELETE { endpoint }               → { removed: 0 | 1 }

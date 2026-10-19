@@ -1,5 +1,5 @@
 /**
- * Web push, the browser half (call back reminders, 2026-10-12): turn reminders on or off on this device. The
+ * Web push, the browser half (call back reminders, 2026-10-12; scheduled task reminders from 2026-10-20): turn reminders on or off on this device. The
  * server half is src/lib/push-server.ts (and /api/push/subscribe); the worker that shows the notification is
  * public/sw.js; setup is docs/life-plan/reminders.md.
  *
@@ -32,7 +32,7 @@ export interface PushResult {
 }
 
 export const PUSH_LINES: Record<PushState, string> = {
-  on: "Call back reminders will arrive on this device.",
+  on: "Scheduled task reminders will arrive on this device.",
   off: "Reminders are off on this device.",
   denied: "Notifications are blocked for this site. Allow them in the browser's site settings, then turn reminders on again.",
   "ios-install": "On iPhone and iPad, reminders only work from the Home Screen app: tap Share, then Add to Home Screen, and turn them on from there.",

@@ -1,5 +1,5 @@
 /**
- * Web push, the server half (call back reminders, 2026-10-12). The browser half is src/lib/push-client.ts and
+ * Web push, the server half (call back reminders, 2026-10-12; scheduled task reminders from 2026-10-20). The browser half is src/lib/push-client.ts and
  * public/sw.js; the dispatcher that decides what to send is src/lib/reminders-server.ts; the setup (VAPID keys,
  * env, the every-minute scheduler) is docs/life-plan/reminders.md.
  *
@@ -30,7 +30,7 @@ import { getCurrentUserId } from "./user";
 export interface PushPayload {
   title: string;
   body: string;
-  /** One per thing announced ('callback-<id>'): a newer notification with the same tag replaces the older one. */
+  /** One per thing announced ('scheduled-<id>'): a newer notification with the same tag replaces the older one. */
   tag?: string;
   /** A same-origin path the notification opens on a tap. */
   url?: string;
@@ -74,7 +74,7 @@ export interface PushEnv {
 }
 
 export interface SendOptions {
-  /** Coalesces undelivered messages on the push service (up to 32 URL-safe characters): one per call back. */
+  /** Coalesces undelivered messages on the push service (up to 32 URL-safe characters): one per scheduled task. */
   topic?: string;
   /** How long the push service holds an undelivered message, in seconds (default 12 hours). */
   ttlSeconds?: number;
@@ -348,7 +348,7 @@ export const TEST_PUSH_GAP_MS = 60_000;
 /** The test notification: what a reminder looks like, and a tap back to Settings. */
 export const TEST_PUSH_PAYLOAD: PushPayload = {
   title: "Test notification",
-  body: "Call back and customer task reminders will arrive like this.",
+  body: "Scheduled task reminders will arrive like this.",
   tag: "test-push",
   url: "/settings#notifications",
 };

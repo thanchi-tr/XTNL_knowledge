@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Settings › Notifications (2026-10-12; web push for call back and customer task reminders, push-client.ts):
+ * Settings › Notifications (2026-10-12; web push for scheduled task reminders, push-client.ts):
  *
  *   This device   the switch turns notifications on or off HERE. On calls enablePush() straight from the tap:
  *                 its first step is the permission prompt, which Safari shows only inside a user gesture, so
@@ -164,7 +164,7 @@ export function NotificationsSection({ nudge }: { nudge?: boolean } = {}) {
         <div className="set-row">
           <div className="n">
             <b>On this device</b>
-            <span>Call back and customer task reminders, on time, even with the app closed. The bell lists them either way.</span>
+            <span>Scheduled task reminders, on time, even with the app closed. The bell, and a banner while the app is open, show them either way.</span>
             <span role="status" aria-live="polite">
               {status ? status.line : CHECKING_LINE}
             </span>

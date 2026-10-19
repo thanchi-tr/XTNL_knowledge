@@ -1547,20 +1547,22 @@ model RoadmapTopicEdge {
 /// (userId, slot) WHERE archivedAt IS NULL (migration 20261217000000_work_boards).
 /// crmOn (2026-10-12, migration 20261218000000_customers): this tab keeps a customer list (Customer); off by default.
 model WorkBoard {
-  id         String         @id @default(cuid())
-  userId     String
-  name       String
-  slot       Int
-  crmOn      Boolean        @default(false)
+  id             String          @id @default(cuid())
+  userId         String
+  name           String
+  slot           Int
+  crmOn          Boolean         @default(false)
   /// The tab keeps an order list (WorkOrder; migration 20261224000000_work_orders); off by default.
-  ordersOn   Boolean        @default(false)
-  archivedAt DateTime?
-  createdAt  DateTime       @default(now())
-  updatedAt  DateTime       @updatedAt
-  tasks      TaskTemplate[]
-  callBacks  CallBack[]
-  customers  Customer[]
-  orders     WorkOrder[]
+  ordersOn       Boolean         @default(false)
+  archivedAt     DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  tasks          TaskTemplate[]
+  callBacks      CallBack[]
+  customers      Customer[]
+  orders         WorkOrder[]
+  /// The tab's scheduled tasks (ScheduledTask; migration 20261227000000_scheduled_tasks): its agenda.
+  scheduledTasks ScheduledTask[]
 
   @@index([userId, archivedAt])
   @@schema("public")
@@ -1568,6 +1570,8 @@ model WorkBoard {
 
 /// A call back on a work board: when it happened, how (PHONE | IN_PERSON), a brief as tags (per board), and an optional
 /// call-back task with a reminder (remindAt + remindAction) that the push dispatcher sends once (remindSentAt).
+/// LEGACY (2026-10-20, migration 20261227000000_scheduled_tasks): read once by the backfill into ScheduledTask (and a
+/// CustomerInteraction for the call when it names a customer), then never written again. Kept, never dropped.
 model CallBack {
   id           String        @id @default(cuid())
   userId       String
@@ -1598,22 +1602,24 @@ model CallBack {
 /// Not expressible in Prisma 6: partial UNIQUE "Customer_boardId_number_open_key" (boardId, lower(number)) WHERE
 /// archivedAt IS NULL, so an ID is unique per tab ignoring case, and archiving frees it.
 model Customer {
-  id           String                @id @default(cuid())
-  userId       String
-  boardId      String
-  board        WorkBoard             @relation(fields: [boardId], references: [id], onDelete: Restrict)
-  number       String
-  name         String
-  nickname     String?
-  phone        String?
-  archivedAt   DateTime?
-  createdAt    DateTime              @default(now())
-  updatedAt    DateTime              @updatedAt
-  interactions CustomerInteraction[]
-  tasks        CustomerTask[]
-  callBacks    CallBack[]
-  orders       WorkOrder[]
-  infos        CustomerInfo[]
+  id             String                @id @default(cuid())
+  userId         String
+  boardId        String
+  board          WorkBoard             @relation(fields: [boardId], references: [id], onDelete: Restrict)
+  number         String
+  name           String
+  nickname       String?
+  phone          String?
+  archivedAt     DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  interactions   CustomerInteraction[]
+  tasks          CustomerTask[]
+  callBacks      CallBack[]
+  orders         WorkOrder[]
+  infos          CustomerInfo[]
+  /// Their scheduled tasks on the tab's agenda (ScheduledTask.customerId; migration 20261227000000_scheduled_tasks).
+  scheduledTasks ScheduledTask[]
 
   @@index([userId, boardId])
   @@schema("public")
@@ -1636,20 +1642,23 @@ model CustomerInfo {
   @@schema("public")
 }
 
-/// One line of a customer's interaction log: when, what (PURCHASE | INQUIRY | COMPLAINT | CREDIT_CHECK), a brief.
-/// archivedAt hides a mistaken entry.
+/// One line of a customer's interaction log: when, what (PURCHASE | INQUIRY | COMPLAINT | CREDIT_CHECK, and from
+/// 2026-10-20 CALL | VISIT | EMAIL | MESSAGE; customers.ts CUSTOMER_ACTIONS), a brief. archivedAt hides a mistaken entry.
+/// legacyCallBackId (migration 20261227000000_scheduled_tasks): the CallBack this entry was backfilled from (the call it
+/// logged), so the backfill inserts each call once however often it runs; null on every entry made in the app.
 model CustomerInteraction {
-  id         String    @id @default(cuid())
-  userId     String
-  customerId String
-  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  at         DateTime
-  action     String
-  brief      String    @default("")
-  tags       String[]  @default([])
-  archivedAt DateTime?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  id               String    @id @default(cuid())
+  userId           String
+  customerId       String
+  customer         Customer  @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  at               DateTime
+  action           String
+  brief            String    @default("")
+  tags             String[]  @default([])
+  archivedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  legacyCallBackId String?   @unique
 
   @@index([customerId, at])
   @@schema("public")
@@ -1657,6 +1666,8 @@ model CustomerInteraction {
 
 /// A scheduled task for a customer (date, task, detail) and its reminder: the push dispatcher sends it once at dueAt
 /// (remindSentAt). Moving dueAt clears remindSentAt. Work, never part of the game.
+/// LEGACY (2026-10-20, migration 20261227000000_scheduled_tasks): read once by the backfill into ScheduledTask, then never
+/// written again. Kept, never dropped.
 model CustomerTask {
   id           String    @id @default(cuid())
   userId       String
@@ -1674,6 +1685,51 @@ model CustomerTask {
 
   @@index([customerId, dueAt])
   @@index([dueAt])
+  @@schema("public")
+}
+
+/// A scheduled task on a work tab (2026-10-20, migration 20261227000000_scheduled_tasks): the one list that replaced call
+/// backs (CallBack) and customer tasks (CustomerTask). When (dueAt; allDay: the day only, its reminder at 09:00 that day
+/// in LIFE_TZ), what (title, detail), how (channel: CALL | VISIT | EMAIL | MESSAGE | OTHER), optionally for a customer of
+/// the same tab, and one reminder (remind) that the push dispatcher sends once (remindSentAt; src/lib/reminders-server.ts)
+/// and the app shows in place (the bell, the in-app banner). Moving dueAt ALWAYS clears remindSentAt
+/// (src/lib/scheduled-tasks.ts). Done (doneAt) and archived (archivedAt), never deleted. Work, never part of the game.
+/// legacyCallBackId / legacyCustomerTaskId: the row it was backfilled from (prisma/backfill/scheduled_tasks.sql), unique,
+/// so the backfill can run again after a deploy and insert only what it has not; ?callback=<id> deep links resolve by it.
+/// Every timestamp is timestamptz (the rest of the schema is timestamp(3) holding UTC; the backfill converts with
+/// AT TIME ZONE 'UTC').
+/// Not expressible in Prisma 6: CHECK "ScheduledTask_channel_check" (channel IN the five); partial INDEX
+/// "ScheduledTask_remind_due_idx" ("dueAt") WHERE "remind" AND "remindSentAt" IS NULL AND "doneAt" IS NULL AND
+/// "archivedAt" IS NULL (the dispatcher's claim). A future `migrate diff` proposal to drop either must be deleted.
+model ScheduledTask {
+  id                   String    @id @default(cuid())
+  userId               String
+  boardId              String
+  board                WorkBoard @relation(fields: [boardId], references: [id], onDelete: Restrict)
+  /// Optional: a customer of the same tab (customers are archived, never deleted; SetNull is only a backstop).
+  customerId           String?
+  customer             Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  dueAt                DateTime  @db.Timestamptz(3)
+  allDay               Boolean   @default(false)
+  title                String
+  detail               String?
+  /// CALL | VISIT | EMAIL | MESSAGE | OTHER.
+  channel              String    @default("OTHER")
+  remind               Boolean   @default(true)
+  remindSentAt         DateTime? @db.Timestamptz(3)
+  doneAt               DateTime? @db.Timestamptz(3)
+  archivedAt           DateTime? @db.Timestamptz(3)
+  createdAt            DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime  @updatedAt @db.Timestamptz(3)
+  legacyCallBackId     String?   @unique
+  legacyCustomerTaskId String?   @unique
+
+  /// The agenda: a tab's open tasks by time, and its done ones.
+  @@index([boardId, doneAt, dueAt])
+  /// The bell and the in-app reminders: a user's open tasks by time.
+  @@index([userId, doneAt, dueAt])
+  /// A customer's page.
+  @@index([customerId, dueAt])
   @@schema("public")
 }
 

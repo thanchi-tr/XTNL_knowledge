@@ -1,41 +1,55 @@
 "use client";
 
 /**
- * A work tab's customer list (/today/work/<id>/customers; customers.ts). The
- * search is by ID: the customer whose ID is exactly what was typed comes
- * first (Enter opens them), then the IDs that start with it, then name and
- * nickname matches under their own heading. While every ID on the tab is a
- * number the field opens the numeric keyboard (a small ABC / 123 key swaps
- * it, for a name). With nothing typed: the customers with tasks due today
- * (overdue first), then everyone by ID; a row's quiet last line is the first
- * line of their newest info. "Add customer" opens the details
- * sheet with the next ID suggested. Archived customers are out of the search,
- * folded at the bottom, each with Restore.
+ * A work tab's customer list (/today/work/<id>/customers; customers.ts), in the Office workspace's frame. The search
+ * is live (2026-10-20): the list narrows on every keystroke from the first character, with no submit, through the ONE
+ * matcher the work header and the scheduled task sheet use (customer-search.ts: the exact ID, an ID's start, a name's
+ * or nickname's word, anywhere in the ID or the name, a phone's digits; accents and case ignored), each row
+ * "Jane Nguyen · C-1042" with the matched part marked and the nickname or phone beneath when that is what matched.
+ * Enter opens the top result; Escape clears. The query stays in the address (?q=, replaceState) so the list can be
+ * shared, and the header's "+n more" lands here with it. While every ID on the tab is a number the field opens the
+ * numeric keyboard (a small ABC / 123 key swaps it, for a name).
+ *
+ * With nothing typed: the customers with scheduled tasks due today (overdue first), then everyone by ID; a row's quiet
+ * last line is the first line of their newest info. "Add customer" opens the details sheet with the next ID suggested
+ * (?new=1, the header's New › Customer, opens it on arrival). Archived customers are out of the search, folded at the
+ * bottom, each with Restore.
  */
-import { useDeferredValue, useId, useRef, useState, useTransition } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createCustomer, restoreCustomer } from "@/app/actions/customers";
-import { customerHref, dueChipText, searchCustomers, searchPick, type ArchivedCustomerItem, type CrmBoardView, type CustomerListItem } from "@/lib/customers";
-import { workBoardHref } from "@/lib/work-boards";
+import { customerHref, dueChipText, type ArchivedCustomerItem, type CrmBoardView, type CustomerListItem } from "@/lib/customers";
+import { matchCustomers, prepareIndex, topMatch, type CustomerMatch } from "@/lib/customer-search";
 import { Button } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
 import { cx } from "@/components/ui/cx";
+import { CustomerResult } from "@/components/work/WorkSearch";
 import { CustomerFormSheet, UNREACHABLE } from "./CustomerSheets";
 
 /** With nothing typed, at most this many customers are listed (the search finds the rest). */
 export const LIST_MAX = 50;
+/** A search shows at most this many rows (the count says how many matched). */
+export const SEARCH_LIST_MAX = 200;
+/** The address's query parameter: the search, shareable. */
+export const QUERY_PARAM = "q";
 
-function CustomerRow({ boardId, c, exact }: { boardId: string; c: CustomerListItem; exact?: boolean }) {
+function CustomerRow({ boardId, c, match }: { boardId: string; c: CustomerListItem; match?: CustomerMatch<CustomerListItem> }) {
   const chip = dueChipText(c);
   return (
-    <Link className="crm-row" href={customerHref(boardId, c.id)} data-exact={exact ? "" : undefined}>
-      <span className="crm-num">#{c.number}</span>
+    <Link className="crm-row" href={customerHref(boardId, c.id)} data-exact={match?.rank === 0 ? "" : undefined}>
+      {match ? null : <span className="crm-num">#{c.number}</span>}
       <span className="crm-row-main">
-        <b>{c.name}</b>
-        {(c.nickname || chip) && (
+        {match ? (
+          <span className="crm-row-found">
+            <CustomerResult m={match} />
+          </span>
+        ) : (
+          <b>{c.name}</b>
+        )}
+        {((c.nickname && !match) || chip) && (
           <span className="crm-row-sub">
-            {c.nickname && <span className="t-meta">“{c.nickname}”</span>}
+            {c.nickname && !match && <span className="t-meta">“{c.nickname}”</span>}
             {chip && <span className={cx("chip", c.overdue > 0 && "owed")}>{chip}</span>}
           </span>
         )}
@@ -46,7 +60,7 @@ function CustomerRow({ boardId, c, exact }: { boardId: string; c: CustomerListIt
   );
 }
 
-function Group({ title, aside, boardId, list, exact }: { title: string; aside?: string; boardId: string; list: CustomerListItem[]; exact?: boolean }) {
+function Group({ title, aside, boardId, list }: { title: string; aside?: string; boardId: string; list: CustomerListItem[] }) {
   if (list.length === 0) return null;
   return (
     <section className="card crm-group" aria-label={title}>
@@ -57,7 +71,7 @@ function Group({ title, aside, boardId, list, exact }: { title: string; aside?: 
       <ul className="crm-list">
         {list.map((c) => (
           <li key={c.id}>
-            <CustomerRow boardId={boardId} c={c} exact={exact} />
+            <CustomerRow boardId={boardId} c={c} />
           </li>
         ))}
       </ul>
@@ -82,7 +96,8 @@ export function CustomersView({
 }) {
   const id = useId();
   const router = useRouter();
-  const [query, setQuery] = useState("");
+  const searchParams = useSearchParams();
+  const [query, setQuery] = useState(() => searchParams.get(QUERY_PARAM) ?? "");
   const [letters, setLetters] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -91,8 +106,9 @@ export function CustomersView({
   const [restoring, setRestoring] = useState<string | null>(null);
   const [archError, setArchError] = useState<string | null>(null);
   const [, start] = useTransition();
-  const deferred = useDeferredValue(query);
-  const search = searchCustomers(customers, deferred);
+  const index = useMemo(() => prepareIndex(customers), [customers]);
+  // Every keystroke, in the browser: no round trip, no submit.
+  const search = matchCustomers(index, query, { limit: SEARCH_LIST_MAX });
   const numericKeys = numeric && !letters;
 
   function openAdd(number: string, name = "") {
@@ -101,9 +117,35 @@ export function CustomersView({
     setAddOpen(true);
   }
 
+  // The header's New › Customer (?new=1) opens the sheet on arrival; the parameter then leaves the address.
+  const wantsNew = searchParams.get("new") === "1";
+  useEffect(() => {
+    if (!wantsNew) return;
+    const raf = window.requestAnimationFrame(() => {
+      setAddInitial({ number: suggestion ?? "", name: "" });
+      setAddKey((k) => k + 1);
+      setAddOpen(true);
+      const params = new URLSearchParams(window.location.search);
+      params.delete("new");
+      const q = params.toString();
+      window.history.replaceState(null, "", `${window.location.pathname}${q ? `?${q}` : ""}${window.location.hash}`);
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [wantsNew, suggestion]);
+
+  /** The query, live, and in the address (replaceState: shareable, no history entry per key). */
+  function type(next: string) {
+    setQuery(next);
+    const params = new URLSearchParams(window.location.search);
+    if (next.trim()) params.set(QUERY_PARAM, next);
+    else params.delete(QUERY_PARAM);
+    const q = params.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${q ? `?${q}` : ""}${window.location.hash}`);
+  }
+
   function openBest() {
-    const pick = searchPick(searchCustomers(customers, query));
-    if (pick) router.push(customerHref(board.id, pick.id));
+    const pick = topMatch(search);
+    if (pick) router.push(customerHref(board.id, pick.entry.id));
   }
 
   function restore(c: ArchivedCustomerItem) {
@@ -123,18 +165,13 @@ export function CustomersView({
 
   const due = customers.filter((c) => c.due > 0).sort((a, b) => Number(b.overdue > 0) - Number(a.overdue > 0));
   const typed = query.trim();
-  const found = search ? (search.exact ? 1 : 0) + search.byId.length + search.byName.length : 0;
+  const found = search?.total ?? 0;
   // Nothing found: a typed ID starts the new customer's ID; typed words (a name) start their name.
   const typedIsId = typed !== "" && !/\s/.test(typed) && (!numeric || /^\d+$/.test(typed));
   const addFromTyped = typed !== "" && found === 0;
 
   return (
     <div className="page narrow cq-main crm-page">
-      <Link className="crm-back" href={workBoardHref(board.id)}>
-        <Icon name="back" />
-        {board.name}
-      </Link>
-
       <section className="card crm-find" aria-label="Find a customer">
         <form
           role="search"
@@ -144,7 +181,7 @@ export function CustomersView({
           }}
         >
           <label className="crm-find-l" htmlFor={`${id}-q`}>
-            Find by customer ID
+            Find a customer
           </label>
           <div className="crm-find-row" style={{ marginTop: 6 }}>
             <div className="crm-search">
@@ -160,9 +197,15 @@ export function CustomersView({
                 autoCorrect="off"
                 autoCapitalize="off"
                 spellCheck={false}
-                placeholder={numericKeys ? "ID number" : "ID, or a name"}
+                placeholder={numericKeys ? "ID or phone" : "ID, name, nickname or phone"}
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => type(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape" && query) {
+                    e.preventDefault();
+                    type("");
+                  }
+                }}
                 aria-describedby={`${id}-sum`}
               />
             </div>
@@ -186,10 +229,10 @@ export function CustomersView({
           <p className="t-meta" id={`${id}-sum`} aria-live="polite" style={{ margin: 0 }}>
             {typed
               ? found === 0
-                ? `No customer with ID “${typed}”.`
-                : search?.exact
-                  ? "Exact ID first. Enter opens it."
-                  : `${found} found.`
+                ? `No customer matches “${typed}”.`
+                : search?.results[0]?.rank === 0
+                  ? `${found} found. The exact ID is first; Enter opens it.`
+                  : `${found} found. Enter opens the first.`
               : customers.length === 0
                 ? "No customers yet."
                 : `${customers.length} customer${customers.length === 1 ? "" : "s"}.`}
@@ -201,15 +244,25 @@ export function CustomersView({
       </section>
 
       {search ? (
-        <>
-          {search.exact && <Group title="ID match" boardId={board.id} list={[search.exact]} exact />}
-          <Group title={search.exact ? "IDs that start the same" : `IDs starting “${search.query}”`} boardId={board.id} list={search.byId} />
-          <Group title="Name matches" boardId={board.id} list={search.byName} />
-        </>
+        found > 0 && (
+          <section className="card crm-group" aria-label="Matching customers">
+            <h2 className="crm-group-h">
+              Matches
+              <span className="aside">{found > search.results.length ? `the first ${search.results.length} of ${found}` : `${found}`}</span>
+            </h2>
+            <ul className="crm-list">
+              {search.results.map((m) => (
+                <li key={m.entry.id}>
+                  <CustomerRow boardId={board.id} c={m.entry} match={m} />
+                </li>
+              ))}
+            </ul>
+          </section>
+        )
       ) : customers.length === 0 ? (
         <section className="card crm-empty" aria-label="No customers yet">
           <h2>Your customer list is empty</h2>
-          <p>Add a customer with their own ID number. You find them again by that ID, log what happens with them, and schedule tasks that remind you.</p>
+          <p>Add a customer with their own ID number. You find them again by that ID or their name, log what happens with them, and schedule tasks that remind you.</p>
           <Button variant="primary" icon="plus" onClick={() => openAdd(suggestion ?? "")}>
             Add the first customer
           </Button>
@@ -231,7 +284,7 @@ export function CustomersView({
             </ul>
             {customers.length > LIST_MAX && (
               <p className="crm-more">
-                Showing {LIST_MAX} of {customers.length}. Search by ID for the rest.
+                Showing {LIST_MAX} of {customers.length}. Search by ID or name for the rest.
               </p>
             )}
           </section>
@@ -276,7 +329,7 @@ export function CustomersView({
         others={customers}
         submitLabel="Add customer"
         onSave={async (value) => {
-          const res = await createCustomer(board.id, value);
+          const res = await createCustomer(board.id, value, { refresh: true });
           if (!res.ok) return res.error;
           setAddOpen(false);
           router.push(customerHref(board.id, res.value.id));

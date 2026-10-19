@@ -45,12 +45,18 @@ export type CacheTag =
   /** Exercise sessions (src/lib/exercise-server.ts). */
   | "exercise"
   /** Word completion's record of the user's picks and passes (WordChoice; src/lib/vocabulary.ts). */
-  | "words";
+  | "words"
+  /**
+   * A work tab's own lists (2026-10-20): its customers and scheduled tasks, as the Office workspace's search index
+   * reads them (scheduled-tasks-server loadWorkIndex). Customer and scheduled task writes clear it. Not the shell's.
+   */
+  | "work";
 
 /**
  * Every tag the shell's read depends on (shell-data.ts). Not 'words': word
  * completion's choices are cleared on every flush and nothing in the shell
- * reads them, so the shell does not rebuild for them.
+ * reads them, so the shell does not rebuild for them. Not 'work' either: the
+ * work tabs' search index is read by the work frame, never by the shell.
  */
 export const ALL_TAGS: CacheTag[] = ["fields", "ideas", "progress", "life", "activity", "weight", "roadmap", "exercise"];
 

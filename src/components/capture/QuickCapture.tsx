@@ -35,7 +35,7 @@ import { Icon } from "@/components/ui/Icon";
 import { dismissToast, getToasts, pushToast, subscribeToasts } from "@/components/ui/toast-store";
 import { CaptureChips } from "./CaptureChips";
 import { StatusLine, TOAST_MS, TOAST_SHORT_MS, dockToastOf, toastSentence, type Toast } from "./CaptureToast";
-import { captureModeOf } from "@/components/shell/nav";
+import { captureModeOf, workSectionOf } from "@/components/shell/nav";
 import { workBoardIdOf } from "@/lib/work-boards";
 import { CAPTURE_EVENT, CAPTURED_EVENT, CAPTURE_MODE_START, isBareModeStart, type CaptureRequest } from "./events";
 import { InsertRow, SuggestRow, type Suggestion } from "./InsertRow";
@@ -351,9 +351,11 @@ function settleUnsent(
 export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null } = {}) {
   const pathname = usePathname();
   const router = useRouter();
-  // A board page: the personal Board, or a work tab (/today/work/<id>, work-boards.ts), whose lines land on that tab.
+  // A work tab's page (/today/work/<id> and under it, work-boards.ts): its lines land on that tab's board. A board page
+  // is the personal Board, or a work tab's Tasks (/today/work/<id>/tasks, the Office workspace's board, 2026-10-20);
+  // on its Agenda, customers or orders the toast offers View instead.
   const workBoard = workBoardIdOf(pathname);
-  const onToday = pathname === "/today" || workBoard !== null;
+  const onToday = pathname === "/today" || (workBoard !== null && workSectionOf(pathname) === "tasks");
   /** The Train page shows the weight card: a weigh-in saved there refreshes it. */
   const onTrain = pathname === "/train";
   const isClient = useSyncExternalStore(noopSubscribe, () => true, () => false);

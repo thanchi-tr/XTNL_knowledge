@@ -1,5 +1,6 @@
 /**
- * Call back reminders over web push (2026-10-12; docs/life-plan/reminders.md), with no database, no network and
+ * Scheduled task reminders over web push (2026-10-12 for call backs; 2026-10-20 scheduled tasks, the one list;
+ * docs/life-plan/reminders.md), with no database, no network and
  * no browser: fake stores, a fake sender, and public/sw.js run in a sandbox.
  *
  *   npx tsx scripts/push-check.ts        (npm run push:check; ui:check runs it too)
@@ -7,12 +8,12 @@
  * Covers:
  *   - the dispatcher: refuses without the secret (and with a wrong or short one), accepts the reminder header and
  *     either Bearer form, refuses before claiming when the VAPID keys are missing; claims before it sends; skips
- *     archived, sent and future call backs; caps a run (oldest first, `more`); two overlapping runs never send one
+ *     archived, done, sent, reminder-off and future scheduled tasks; caps a run (oldest first, `more`); two overlapping runs never send one
  *     reminder twice (and the same interleaving against an unguarded claim does, so the test can fail); the real
  *     claim is one guarded UPDATE … RETURNING;
  *   - sending: 404/410 deletes the subscription, any other failure stamps failedAt, a delivery stamps lastUsedAt;
  *     sendToUser never throws; a run reuses each user's list and drops a deleted row before the next send;
- *   - the words: 'Call back · Phone · Acme, pricing · Send the quote · 15:30', the tag and the board URL;
+ *   - the words: 'Send the quote · Call · Acme Pty · A-12 · 15:30', the tag and the task's agenda URL;
  *   - /api/push/subscribe: JSON from this site only, real push-service endpoints only, well-formed keys only;
  *   - /api/push/test (Settings › Notifications' "Send a test"): JSON from this site only, the current user's
  *     devices only, once a minute (429 with retryAfter);
@@ -27,7 +28,7 @@
  *     only inside [20:00, 22:00) Sydney; only a run of 2+ with nothing kept today; UserPrefs.nudge 'off' respected (its
  *     facts are never read); the claim ('nudge:<day>', a NUDGE row) before the send; at most one nudge a day under
  *     concurrent runs (and the same interleaving against an unguarded claim double-sends, so the test can fail); the
- *     words; the call backs' claim, cap and counts unchanged beside it.
+ *     words; the reminders' claim, cap and counts unchanged beside it.
  */
 import "./_no-model";
 import { createECDH, randomBytes } from "node:crypto";
@@ -58,7 +59,6 @@ import {
   NUDGE_TOPIC,
   REMINDER_BATCH,
   REMINDER_SECRET_HEADER,
-  callBackUrl,
   dispatchAuthorized,
   nudgeClaimData,
   nudgeDue,
@@ -102,25 +102,29 @@ const NOW = new Date("2026-10-12T04:00:00Z"); // 15:00 in Sydney (AEDT)
 const TZ = "Australia/Sydney";
 const ORIGIN = "https://xtnl.example";
 
+/** A scheduled task as the dispatcher sees it (ScheduledTask, 2026-10-20), with the columns the claim tests. */
 interface Row extends DueReminder {
+  remind: boolean;
   remindSentAt: Date | null;
+  doneAt: Date | null;
   archivedAt: Date | null;
-  remindAtOrNull: Date | null;
 }
 
+/** A task due `minutesFromNow` from now; null: its reminder is off. */
 function row(id: string, minutesFromNow: number | null, extra: Partial<Row> = {}): Row {
-  const at = minutesFromNow == null ? null : new Date(NOW.getTime() + minutesFromNow * 60_000);
   return {
     id,
     userId: "u1",
     boardId: "b1",
-    action: "PHONE",
-    remindAction: null,
-    tags: ["Acme"],
-    remindAt: at ?? new Date(0),
-    remindAtOrNull: at,
-    taskTitle: null,
+    title: "Send the quote",
+    channel: "CALL",
+    dueAt: new Date(NOW.getTime() + (minutesFromNow ?? -1) * 60_000),
+    allDay: false,
+    customerName: "Acme Pty",
+    customerNumber: "A-12",
+    remind: minutesFromNow != null,
     remindSentAt: null,
+    doneAt: null,
     archivedAt: null,
     ...extra,
   };
@@ -134,8 +138,8 @@ function fakeReminderStore(rows: Row[], log: string[], opts: { guarded?: boolean
     async claimDue(now: Date, limit: number): Promise<DueReminder[]> {
       store.calls++;
       const due = rows
-        .filter((r) => r.remindAtOrNull != null && r.remindAtOrNull <= now && r.remindSentAt == null && r.archivedAt == null)
-        .sort((a, b) => a.remindAt.getTime() - b.remindAt.getTime() || a.id.localeCompare(b.id))
+        .filter((r) => r.remind && r.dueAt <= now && r.remindSentAt == null && r.doneAt == null && r.archivedAt == null)
+        .sort((a, b) => a.dueAt.getTime() - b.dueAt.getTime() || a.id.localeCompare(b.id))
         .slice(0, limit);
       await tick(); // another run may select the same rows here
       const won: Row[] = [];
@@ -145,7 +149,7 @@ function fakeReminderStore(rows: Row[], log: string[], opts: { guarded?: boolean
         won.push(r);
       }
       log.push(`claim:${won.map((r) => r.id).join(",")}`);
-      return won.map(({ id, userId, boardId, action, remindAction, tags, remindAt, taskTitle }) => ({ id, userId, boardId, action, remindAction, tags, remindAt, taskTitle }));
+      return won.map(({ id, userId, boardId, title, channel, dueAt, allDay, customerName, customerNumber }) => ({ id, userId, boardId, title, channel, dueAt, allDay, customerName, customerNumber }));
     },
   };
   return store;
@@ -264,10 +268,11 @@ async function dispatch() {
   {
     const log: string[] = [];
     const rows = [
-      row("due1", -5, { tags: ["Acme", "pricing"] }),
+      row("due1", -5),
       row("due2", 0),
       row("future", 1),
       row("archived", -10, { archivedAt: new Date(NOW.getTime() - 60_000) }),
+      row("done", -10, { doneAt: new Date(NOW.getTime() - 60_000) }),
       row("sent", -20, { remindSentAt: new Date(NOW.getTime() - 19 * 60_000) }),
       row("noremind", null),
     ];
@@ -280,13 +285,13 @@ async function dispatch() {
     const claimAt = log.findIndex((l) => l.startsWith("claim:"));
     const firstSend = log.findIndex((l) => l.startsWith("send:"));
     check("dispatch: it claims before it sends (one claim, then the sends)", claimAt === 0 && firstSend > claimAt && log.filter((l) => l.startsWith("claim:")).length === 1, log.join(" | "));
-    check("dispatch: sends only what it claimed", sent.every((s) => /callback-due[12]/.test(JSON.parse(s.payload).tag)), sent.map((s) => JSON.parse(s.payload).tag).join(","));
-    check("dispatch: due (remindAt <= now, the boundary included) are claimed and sent to every subscription", r.claimed === 2 && r.delivered === 2 && sent.length === 4 && rows.find((x) => x.id === "due2")!.remindSentAt?.getTime() === NOW.getTime(), JSON.stringify(r));
-    check("dispatch: future, archived, already sent and reminder-less call backs are untouched", JSON.stringify(rows.filter((x) => !x.id.startsWith("due"))) === before);
-    check("dispatch: oldest remindAt first", log[0] === "claim:due1,due2");
+    check("dispatch: sends only what it claimed", sent.every((s) => /scheduled-due[12]/.test(JSON.parse(s.payload).tag)), sent.map((s) => JSON.parse(s.payload).tag).join(","));
+    check("dispatch: due (dueAt <= now, the boundary included, reminder on) are claimed and sent to every subscription", r.claimed === 2 && r.delivered === 2 && sent.length === 4 && rows.find((x) => x.id === "due2")!.remindSentAt?.getTime() === NOW.getTime(), JSON.stringify(r));
+    check("dispatch: future, archived, done, already sent and reminder-off scheduled tasks are untouched", JSON.stringify(rows.filter((x) => !x.id.startsWith("due"))) === before);
+    check("dispatch: oldest dueAt first", log[0] === "claim:due1,due2");
     check("dispatch: a delivery stamps lastUsedAt", push.used.length === 4 && push.subs.every((s) => s.lastUsedAt?.getTime() === NOW.getTime()));
     check("dispatch: each user's subscriptions are read once a run", push.lists === 1, String(push.lists));
-    check("dispatch: the push carries the VAPID keys, a 12 h TTL, high urgency and the call back as its topic", sent.every((s) => s.options.vapidDetails?.privateKey === VAPID.VAPID_PRIVATE_KEY && s.options.vapidDetails?.subject === VAPID.VAPID_SUBJECT && s.options.TTL === 43200 && s.options.urgency === "high" && /^due[12]$/.test(s.options.topic ?? "")));
+    check("dispatch: the push carries the VAPID keys, a 12 h TTL, high urgency and the task as its topic", sent.every((s) => s.options.vapidDetails?.privateKey === VAPID.VAPID_PRIVATE_KEY && s.options.vapidDetails?.subject === VAPID.VAPID_SUBJECT && s.options.TTL === 43200 && s.options.urgency === "high" && /^due[12]$/.test(s.options.topic ?? "")));
     const again = await reportOf(await runReminderDispatch(authed(), { env: ENV, store, push, sender, now: () => NOW, timeZone: TZ }));
     check("dispatch: idempotent: a second run at the same minute claims and sends nothing", again.claimed === 0 && sent.length === 4 && again.more === false);
   }
@@ -345,7 +350,7 @@ async function dispatch() {
     let captured: { sql: string; values: unknown[] } | null = null;
     client.$queryRaw = async (q: { sql: string; values: unknown[] }) => {
       captured = q;
-      return [{ id: "c1", userId: "u1", boardId: "b1", action: "PHONE", remindAction: null, tags: null, remindAt: NOW, taskTitle: "Send the quote" }];
+      return [{ id: "c1", userId: "u1", boardId: "b1", title: "Send the quote", channel: "CALL", dueAt: NOW, allDay: false, customerName: null, customerNumber: null }];
     };
     let out: DueReminder[] = [];
     try {
@@ -355,24 +360,24 @@ async function dispatch() {
     }
     const q = captured as { sql: string; values: unknown[] } | null;
     const sql = (q?.sql ?? "").replace(/\s+/g, " ");
-    const update = sql.indexOf('UPDATE "CallBack" SET "remindSentAt" = ?');
+    const update = sql.indexOf('UPDATE "ScheduledTask" SET "remindSentAt" = ?::timestamptz, "updatedAt" = ?::timestamptz');
     const inner = sql.slice(sql.indexOf('WHERE "id" IN ('), sql.indexOf("FOR UPDATE SKIP LOCKED )") + 24);
     const outer = sql.slice(sql.indexOf("FOR UPDATE SKIP LOCKED )") + 24, sql.indexOf("RETURNING"));
-    check("claim SQL: one UPDATE that sets remindSentAt and returns the rows it set", update >= 0 && /RETURNING "id", "userId", "boardId", "action", "remindAction", "tags", "remindAt", "taskId"/.test(sql), sql.slice(0, 200));
+    check("claim SQL: one UPDATE of ScheduledTask that sets remindSentAt and returns the rows it set", update >= 0 && /RETURNING "id", "userId", "boardId", "customerId", "title", "channel", "dueAt", "allDay"/.test(sql), sql.slice(0, 200));
     check(
-      "claim SQL: picks due rows only (remindAt <= now, remindSentAt and archivedAt null, its work tab not archived), oldest first, LIMIT, FOR UPDATE SKIP LOCKED",
-      /"remindAt" <= \? AND "remindSentAt" IS NULL AND "archivedAt" IS NULL AND EXISTS \(SELECT 1 FROM "WorkBoard" wb WHERE wb\."id" = "CallBack"\."boardId" AND wb\."archivedAt" IS NULL\) ORDER BY "remindAt" ASC, "id" ASC LIMIT \?::int FOR UPDATE SKIP LOCKED/.test(inner),
+      "claim SQL: picks due rows only (remind on, dueAt <= now, remindSentAt, doneAt and archivedAt null, its work tab open, its customer if any kept), oldest first, LIMIT, FOR UPDATE SKIP LOCKED",
+      /"remind" = true AND "dueAt" <= \?::timestamptz AND "remindSentAt" IS NULL AND "doneAt" IS NULL AND "archivedAt" IS NULL AND EXISTS \(SELECT 1 FROM "WorkBoard" wb WHERE wb\."id" = "ScheduledTask"\."boardId" AND wb\."archivedAt" IS NULL\) AND NOT EXISTS \(SELECT 1 FROM "Customer" cu WHERE cu\."id" = "ScheduledTask"\."customerId" AND cu\."archivedAt" IS NOT NULL\) ORDER BY "dueAt" ASC, "id" ASC LIMIT \?::int FOR UPDATE SKIP LOCKED/.test(inner),
       inner
     );
-    check("claim SQL: re-tests remindSentAt IS NULL on the locked row (an overlapping run's row is never set twice)", /"remindSentAt" IS NULL/.test(outer) && /"archivedAt" IS NULL/.test(outer), outer);
-    check("claim SQL: now and the cap are parameters (now, now, now, 50)", q != null && q.values.length === 4 && q.values.slice(0, 3).every((v) => v instanceof Date && v.getTime() === NOW.getTime()) && q.values[3] === 50, JSON.stringify(q?.values));
-    check("claim SQL: the task title joins in the same statement; null tags read as []", /LEFT JOIN "TaskTemplate" t ON t."id" = c."taskId"/.test(sql) && out.length === 1 && Array.isArray(out[0].tags) && out[0].tags.length === 0 && out[0].taskTitle === "Send the quote");
+    check("claim SQL: re-tests the claim's conditions on the locked row (an overlapping run's row is never set twice)", /"remind" = true AND "remindSentAt" IS NULL AND "doneAt" IS NULL AND "archivedAt" IS NULL/.test(outer), outer);
+    check("claim SQL: now (an ISO instant cast to timestamptz: no session zone assumed) and the cap are parameters (now, now, now, 50)", q != null && q.values.length === 4 && q.values.slice(0, 3).every((v) => v === NOW.toISOString()) && q.values[3] === 50, JSON.stringify(q?.values));
+    check("claim SQL: the customer (name and ID) joins in the same statement; dueAt reads as a Date", /LEFT JOIN "Customer" cu ON cu\."id" = c\."customerId"/.test(sql) && out.length === 1 && out[0].dueAt instanceof Date && out[0].title === "Send the quote" && out[0].customerName === null);
   }
 }
 
 // ── 3. Sending and subscriptions ──────────────────────────────────────────
 async function sending() {
-  const payload = { title: "Call back · Phone", body: "Acme · 15:30", tag: "callback-c1", url: "/today?board=b1&callback=c1" };
+  const payload = { title: "Send the quote", body: "Call · Acme Pty · A-12 · 15:30", tag: "scheduled-c1", url: "/today/work/b1?task=c1" };
   {
     const log: string[] = [];
     const push = fakePushStore([sub("gone410"), sub("gone404"), sub("err500"), sub("err403"), sub("ok"), sub("other", "u2")]);
@@ -433,17 +438,16 @@ async function sending() {
 
 // ── 4. The words ──────────────────────────────────────────────────────────
 function words() {
-  const base = row("c1", 30, { tags: ["Acme", " pricing ", ""], taskTitle: "Send the quote" });
+  const base = row("c1", 30);
   const p = reminderPayload(base, NOW, TZ);
-  check("words: title 'Call back · Phone'", p.title === "Call back · Phone", p.title);
-  check("words: body '<tags> · <task title> · <time in the user's zone>'", p.body === "Acme, pricing · Send the quote · 15:30", p.body);
-  check("words: the one line reads 'Call back · Phone · Acme, pricing · Send the quote · 15:30'", reminderLine(p) === "Call back · Phone · Acme, pricing · Send the quote · 15:30", reminderLine(p));
-  check("words: one tag per call back, and the board URL with the call back highlighted", p.tag === "callback-c1" && p.url === "/today?board=b1&callback=c1" && callBackUrl("b 1", "c&1") === "/today?board=b%201&callback=c%261");
-  check("words: remindAction wins over action ('In person')", reminderPayload({ ...base, remindAction: "IN_PERSON" }, NOW, TZ).title === "Call back · In person");
-  check("words: an unknown action reads as words", reminderPayload({ ...base, action: "VIDEO_CALL" }, NOW, TZ).title === "Call back · Video call");
-  check("words: another day carries its date ('11 Oct 15:30')", reminderPayload(row("c2", -24 * 60 + 30, { tags: [] }), NOW, TZ).body === "11 Oct 15:30", reminderPayload(row("c2", -24 * 60 + 30, { tags: [] }), NOW, TZ).body);
-  check("words: no tags and no task leaves just the time", reminderPayload(row("c3", 0, { tags: [] }), NOW, TZ).body === "15:00");
-  check("words: a task without tags", reminderPayload(row("c4", 0, { tags: [], taskTitle: "Ring Sam" }), NOW, TZ).body === "Ring Sam · 15:00");
+  check("words: the title is the task's", p.title === "Send the quote", p.title);
+  check("words: body '<channel> · <customer name> · <their ID> · <time in the user's zone>'", p.body === "Call · Acme Pty · A-12 · 15:30", p.body);
+  check("words: the one line reads 'Send the quote · Call · Acme Pty · A-12 · 15:30'", reminderLine(p) === "Send the quote · Call · Acme Pty · A-12 · 15:30", reminderLine(p));
+  check("words: one tag per task, and its agenda URL with the task highlighted", p.tag === "scheduled-c1" && p.url === "/today/work/b1?task=c1" && reminderPayload({ ...base, boardId: "b 1", id: "c&1" }, NOW, TZ).url === "/today/work/b%201?task=c%261");
+  check("words: the channel's word (Visit); an unknown one reads as Other", reminderPayload({ ...base, channel: "VISIT" }, NOW, TZ).body.startsWith("Visit · ") && reminderPayload({ ...base, channel: "VIDEO_CALL" }, NOW, TZ).body.startsWith("Other · "));
+  check("words: another day carries its date ('11 Oct 15:30')", reminderPayload(row("c2", -24 * 60 + 30), NOW, TZ).body.endsWith("· 11 Oct 15:30"), reminderPayload(row("c2", -24 * 60 + 30), NOW, TZ).body);
+  check("words: no customer leaves the channel and the time", reminderPayload(row("c3", 0, { customerName: null, customerNumber: null }), NOW, TZ).body === "Call · 15:00");
+  check("words: an all-day task says today", reminderPayload(row("c4", 0, { allDay: true, customerName: null, customerNumber: null }), NOW, TZ).body === "Call · today");
 }
 
 // ── 5. /api/push/subscribe ────────────────────────────────────────────────
@@ -580,11 +584,11 @@ async function serviceWorker() {
     check("sw: listens for install, activate, push, notificationclick, pushsubscriptionchange, and nothing else", Object.keys(sw.handlers).sort().join(",") === "activate,install,notificationclick,push,pushsubscriptionchange", Object.keys(sw.handlers).join(","));
     const body = code(src);
     check("sw: no fetch handler, no Cache Storage, no importScripts (it cannot serve a stale page)", !/addEventListener\(\s*["']fetch["']/.test(body) && !/\bcaches\b/.test(body) && !/importScripts/.test(body));
-    await sw.fire("push", { data: data({ title: "Call back · Phone", body: "Acme · 15:30", tag: "callback-c1", url: "/today?board=b1&callback=c1" }) });
+    await sw.fire("push", { data: data({ title: "Send the quote", body: "Call · Acme · 15:30", tag: "scheduled-c1", url: "/today/work/b1?task=c1" }) });
     const n = sw.shown[0];
-    check("sw push: shows the title and body", n?.title === "Call back · Phone" && n.options.body === "Acme · 15:30");
-    check("sw push: one tag per call back, re-alerting on a replacement", n?.options.tag === "callback-c1" && n.options.renotify === true);
-    check("sw push: data.url is the absolute same-origin URL to open", (n?.options.data as { url?: string })?.url === `${ORIGIN}/today?board=b1&callback=c1`);
+    check("sw push: shows the title and body", n?.title === "Send the quote" && n.options.body === "Call · Acme · 15:30");
+    check("sw push: one tag per task, re-alerting on a replacement", n?.options.tag === "scheduled-c1" && n.options.renotify === true);
+    check("sw push: data.url is the absolute same-origin URL to open", (n?.options.data as { url?: string })?.url === `${ORIGIN}/today/work/b1?task=c1`);
     await sw.fire("push", { data: { json: () => { throw new SyntaxError("bad"); }, text: () => "plain words" } });
     await sw.fire("push", { data: null });
     const foreign = ["https://evil.example/phish", "//evil.example/x", "/\\evil.example/x", "/\t/evil.example/x", "javascript:alert(1)", 42];
@@ -899,18 +903,17 @@ async function nudges() {
       check("nudge: never throws (a listing that fails is no nudge)", !threw);
     }
 
-    // Beside the call backs: one run sends both, the cap and the counts are the call backs' own, each user listed once.
+    // Beside the scheduled task reminders: one run sends both, the cap and the counts are the reminders' own, each user listed once.
     {
       const log: string[] = [];
       const rows = [row("c1", -1)];
-      rows[0].remindAt = new Date(EVENING.getTime() - 60_000);
-      rows[0].remindAtOrNull = rows[0].remindAt;
+      rows[0].dueAt = new Date(EVENING.getTime() - 60_000);
       const push = fakePushStore([sub("s1")]);
       const { sender, sent } = fakeSender(log);
       const r = await reportOf(await runReminderDispatch(authed(), { env: ENV, store: fakeReminderStore(rows, log), push, sender, now: () => EVENING, timeZone: TZ, nudgeStore: fakeNudgeStore([{ id: "u1" }], log), momentumLaunchDay: LAUNCH }));
-      check("nudge + call back: both sent; claimed/delivered/more are the call backs' (1/1/false); the nudge is counted apart", sent.length === 2 && r.claimed === 1 && r.delivered === 1 && r.more === false && r.nudges.delivered === 1, JSON.stringify(r));
-      check("nudge + call back: the user's subscriptions are read once in the run", push.lists === 1, String(push.lists));
-      check("nudge + call back: the call back is claimed and sent first", log.indexOf("claim:c1") < log.findIndex((l) => l.startsWith("send:callback-c1")) && log.findIndex((l) => l.startsWith("send:callback-c1")) < log.indexOf("nclaim:u1"), log.join(" | "));
+      check("nudge + reminder: both sent; claimed/delivered/more are the reminders' (1/1/false); the nudge is counted apart", sent.length === 2 && r.claimed === 1 && r.delivered === 1 && r.more === false && r.nudges.delivered === 1, JSON.stringify(r));
+      check("nudge + reminder: the user's subscriptions are read once in the run", push.lists === 1, String(push.lists));
+      check("nudge + reminder: the scheduled task is claimed and sent first", log.indexOf("claim:c1") < log.findIndex((l) => l.startsWith("send:scheduled-c1")) && log.findIndex((l) => l.startsWith("send:scheduled-c1")) < log.indexOf("nclaim:u1"), log.join(" | "));
     }
 
     // The rule and the claim row, pure.

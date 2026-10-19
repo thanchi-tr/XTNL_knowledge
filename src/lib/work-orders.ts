@@ -219,7 +219,7 @@ export function isOrderOverdue(o: { ordered: boolean; date: DayKey | null }, tod
   return !o.ordered && o.date !== null && o.date < today;
 }
 
-/** The work tab card's chip: "3 to order"; null with nothing to order. */
+/** The work frame's Orders count: "3 to order"; null with nothing to order. */
 export function ordersChipText(todo: number): string | null {
   return todo > 0 ? `${todo} to order` : null;
 }

@@ -13,17 +13,17 @@
  *   An info         a note on what is known about them (a detail, 1..1000, line breaks kept) and when it was
  *                   recorded (recordedAt: now by default, editable, never more than a minute ahead);
  *                   their page lists it newest first, above the log (2026-10-14, migration 20261225000000)
- *   An interaction  a dated entry in their log: Purchase · Inquiry · Complaint · Credit check, and a brief (<= 280)
- *   A task          a scheduled to-do (a date-time, a title 1..80, a detail <= 500) with ONE push reminder at its
- *                   time (CustomerTask.remind; the call backs' dispatcher sends it and stamps remindSentAt)
+ *   An interaction  a dated entry in their log: Call · Visit · Email · Message (2026-10-20) · Purchase · Inquiry ·
+ *                   Complaint · Credit check, and a brief (<= 280). An action outside the list (none today) is left out
+ *                   of the log, never shown blank.
+ *   Their tasks     scheduled tasks (src/lib/scheduled-tasks.ts, 2026-10-20) replaced the customer tasks
+ *                   (CustomerTask, kept for the backfill): the customer page lists the tab's scheduled tasks for them
  *
- *   searchCustomers(list, q)        by ID first: the exact ID, then IDs that start with q; names and
- *                                   nicknames after, as their own group
+ *   The search      src/lib/customer-search.ts, the one engine (the work header, this list, the sheet's picker)
  *   nextCustomerNumber(numbers)     the next ID to suggest while every ID on the tab is a number
- *   remindSentAtAfterEdit / …Undo   a task's reminder is re-armed when its time moves or it is switched back
- *                                   on (remindSentAt cleared); a time already gone by is never pushed late
- *   customerTaskRemindDue(t, now)   what a reminder dispatcher may send: due, on, not done, not sent, kept
- *   customersHref / customerHref    /today/work/<board>/customers[/<customer>[?task=<task>]] (the reminder's tap URL)
+ *   dueCountOf / dueChipText        the scheduled tasks due by tonight per customer (the list's chips)
+ *   customersHref / customerHref    /today/work/<board>/customers[/<customer>[?task=<task>]] (an old customer task
+ *                                   reminder's tap URL: ?task= resolves to its scheduled task)
  *   cleanInfoDetail / cleanRecordedAt / sortInfos / infoRecordedLabel / infoFirstLine   an info's rules
  *
  * Work, never the game: nothing here (or in the cores) pays XP, writes the
@@ -31,23 +31,29 @@
  */
 import { LIFE_TZ, zonedToInstant } from "./life-day";
 import { WORK_BOARD_PATH, isBoardId } from "./work-boards";
+import type { TaskIcon } from "./task-style";
 
 export const CUSTOMER_NUMBER_MAX = 24;
 export const CUSTOMER_NAME_MAX = 60;
 export const CUSTOMER_NICKNAME_MAX = 40;
 export const CUSTOMER_PHONE_MAX = 24;
 export const INTERACTION_BRIEF_MAX = 280;
-export const CUSTOMER_TASK_TITLE_MAX = 80;
-export const CUSTOMER_TASK_DETAIL_MAX = 500;
 export const CUSTOMER_INFO_MAX = 1000;
 /** How far ahead of now an info's "Recorded at" may be (a clock a little ahead, a minute typed early). */
 export const RECORDED_AHEAD_MS = 60_000;
 
-/** What happened, in a customer's log. Stored as these strings (CustomerInteraction.action). */
-export const CUSTOMER_ACTIONS = ["PURCHASE", "INQUIRY", "COMPLAINT", "CREDIT_CHECK"] as const;
+/**
+ * What happened, in a customer's log. Stored as these strings (CustomerInteraction.action, plain text: the four
+ * contact actions were added 2026-10-20 with no change to the column, and every older entry reads as before).
+ */
+export const CUSTOMER_ACTIONS = ["CALL", "VISIT", "EMAIL", "MESSAGE", "PURCHASE", "INQUIRY", "COMPLAINT", "CREDIT_CHECK"] as const;
 export type CustomerAction = (typeof CUSTOMER_ACTIONS)[number];
 
 export const CUSTOMER_ACTION_LABEL: Readonly<Record<CustomerAction, string>> = {
+  CALL: "Call",
+  VISIT: "Visit",
+  EMAIL: "Email",
+  MESSAGE: "Message",
   PURCHASE: "Purchase",
   INQUIRY: "Inquiry",
   COMPLAINT: "Complaint",
@@ -56,11 +62,18 @@ export const CUSTOMER_ACTION_LABEL: Readonly<Record<CustomerAction, string>> = {
 
 /** A one-character mark for each action, always drawn beside its word (never alone). */
 export const CUSTOMER_ACTION_GLYPH: Readonly<Record<CustomerAction, string>> = {
+  CALL: "C",
+  VISIT: "V",
+  EMAIL: "@",
+  MESSAGE: "M",
   PURCHASE: "$",
   INQUIRY: "?",
   COMPLAINT: "!",
   CREDIT_CHECK: "✓",
 };
+
+/** The contact actions draw the app's own task icon (task-style.ts TASK_ICONS) in place of their character. */
+export const CUSTOMER_ACTION_ICON: Readonly<Partial<Record<CustomerAction, TaskIcon>>> = { CALL: "phone", VISIT: "people", EMAIL: "mail", MESSAGE: "chat" };
 
 export const CUSTOMER_NUMBER_EMPTY = "Give the customer an ID.";
 export const CUSTOMER_NUMBER_LONG = `Keep the ID to ${CUSTOMER_NUMBER_MAX} characters.`;
@@ -73,18 +86,14 @@ export const CUSTOMER_NAME_LONG = `Keep the name to ${CUSTOMER_NAME_MAX} charact
 export const CUSTOMER_NICKNAME_LONG = `Keep the nickname to ${CUSTOMER_NICKNAME_MAX} characters.`;
 export const CUSTOMER_PHONE_BAD = "A phone number holds digits, spaces, +, - and brackets.";
 export const CUSTOMER_PHONE_LONG = `Keep the phone number to ${CUSTOMER_PHONE_MAX} characters.`;
-export const INTERACTION_ACTION_BAD = "Pick what happened: Purchase, Inquiry, Complaint or Credit check.";
+export const INTERACTION_ACTION_BAD = "Pick what happened: a call, a visit, an email, a message, a purchase, an inquiry, a complaint or a credit check.";
 export const INTERACTION_BRIEF_LONG = `Keep the brief to ${INTERACTION_BRIEF_MAX} characters.`;
 export const WHEN_BAD = "Pick a date and a time.";
-export const CUSTOMER_TASK_TITLE_EMPTY = "Say what the task is.";
-export const CUSTOMER_TASK_TITLE_LONG = `Keep the task to ${CUSTOMER_TASK_TITLE_MAX} characters.`;
-export const CUSTOMER_TASK_DETAIL_LONG = `Keep the detail to ${CUSTOMER_TASK_DETAIL_MAX} characters.`;
 /** Every customer write on a tab whose list is switched off. */
 export const CRM_OFF = "The customer list is off on this tab. Turn it on in the tab's menu.";
 export const CUSTOMER_GONE = "That customer no longer exists.";
 export const CUSTOMER_ARCHIVED = "That customer is archived. Restore them to change anything.";
 export const INTERACTION_GONE = "That entry no longer exists.";
-export const CUSTOMER_TASK_GONE = "That task no longer exists.";
 export const CUSTOMER_INFO_EMPTY = "Write the info.";
 export const CUSTOMER_INFO_LONG = `Keep the info to ${CUSTOMER_INFO_MAX} characters.`;
 export const RECORDED_FUTURE = "Recorded at can't be in the future.";
@@ -163,22 +172,6 @@ export function cleanBrief(raw: unknown): Clean<string> {
   return yes(b);
 }
 
-/** A task's title: trimmed, spaces collapsed, 1..80 characters. */
-export function cleanTaskTitle(raw: unknown): Clean<string> {
-  const t = oneLine(raw);
-  if (!t) return no(CUSTOMER_TASK_TITLE_EMPTY);
-  if (chars(t) > CUSTOMER_TASK_TITLE_MAX) return no(CUSTOMER_TASK_TITLE_LONG);
-  return yes(t);
-}
-
-/** A task's detail: optional (empty is none), at most 500 characters; line breaks kept. */
-export function cleanTaskDetail(raw: unknown): Clean<string | null> {
-  const d = typeof raw === "string" ? raw.replace(/\r\n?/g, "\n").trim() : "";
-  if (!d) return yes(null);
-  if (chars(d) > CUSTOMER_TASK_DETAIL_MAX) return no(CUSTOMER_TASK_DETAIL_LONG);
-  return yes(d);
-}
-
 /** An info's detail: trimmed, line breaks kept, 1..1000 characters. */
 export function cleanInfoDetail(raw: unknown): Clean<string> {
   const d = typeof raw === "string" ? raw.replace(/\r\n?/g, "\n").trim() : "";
@@ -252,76 +245,6 @@ export function numberUsed(customers: readonly { id: string; number: string }[],
   return customers.some((c) => c.id !== except && numberKey(c.number) === key);
 }
 
-// ── Search ─────────────────────────────────────────────────────────────────
-
-export interface SearchableCustomer {
-  id: string;
-  number: string;
-  name: string;
-  nickname: string | null;
-  archivedAt?: Date | string | null;
-}
-
-export interface CustomerSearch<C> {
-  query: string;
-  /** The customer whose ID is exactly the query (ignoring case): Enter opens them. */
-  exact: C | null;
-  /** IDs that start with the query, in natural order (the exact one not repeated). */
-  byId: C[];
-  /** Name or nickname matches not already listed by ID: word starts first, then anywhere, then by name. */
-  byName: C[];
-}
-
-export const SEARCH_ID_MAX = 30;
-export const SEARCH_NAME_MAX = 20;
-
-const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-
-/**
- * The customer search, by ID first. An archived customer is never found
- * (they are listed apart, to restore). An empty query is no search (null).
- */
-export function searchCustomers<C extends SearchableCustomer>(list: readonly C[], raw: string): CustomerSearch<C> | null {
-  const query = (raw ?? "").trim();
-  if (!query) return null;
-  const key = numberKey(query);
-  const open = list.filter((c) => !c.archivedAt);
-  const exact = open.find((c) => numberKey(c.number) === key) ?? null;
-  const byId = open
-    .filter((c) => c !== exact && numberKey(c.number).startsWith(key))
-    .sort((a, b) => compareNumbers(a.number, b.number))
-    .slice(0, SEARCH_ID_MAX);
-  const listed = new Set<C>([...(exact ? [exact] : []), ...byId]);
-  const q = fold(query);
-  const rank = (c: C): number => {
-    let best = 3;
-    for (const field of [c.name, c.nickname ?? ""]) {
-      const f = fold(field);
-      if (!f) continue;
-      if (f.startsWith(q)) best = Math.min(best, 0);
-      else if (f.split(/[\s'’-]+/).some((w) => w.startsWith(q))) best = Math.min(best, 1);
-      else if (f.includes(q)) best = Math.min(best, 2);
-    }
-    return best;
-  };
-  const byName = open
-    .filter((c) => !listed.has(c))
-    .map((c) => ({ c, r: rank(c) }))
-    .filter((x) => x.r < 3)
-    .sort((a, b) => a.r - b.r || a.c.name.localeCompare(b.c.name, "en", { sensitivity: "base" }) || compareNumbers(a.c.number, b.c.number))
-    .slice(0, SEARCH_NAME_MAX)
-    .map((x) => x.c);
-  return { query, exact, byId, byName };
-}
-
-/** What Enter in the search opens: the exact ID, else the only customer found, else nothing. */
-export function searchPick<C>(s: CustomerSearch<C> | null): C | null {
-  if (!s) return null;
-  if (s.exact) return s.exact;
-  const all = [...s.byId, ...s.byName];
-  return all.length === 1 ? all[0] : null;
-}
-
 // ── Time: the user's own zone (LIFE_TZ), the same on the server and in the browser ─
 
 const MS_DAY = 86_400_000;
@@ -365,12 +288,6 @@ export function instantOfLocalInput(value: string, tz: string = LIFE_TZ): Date |
 export function endOfLocalDay(now: Date, tz: string = LIFE_TZ): Date {
   const w = wallClockOf(now, tz);
   return zonedToInstant(w.y, w.m, w.d + 1, 0, tz);
-}
-
-/** A new task's time when the sheet opens: tomorrow at 09:00. */
-export function defaultTaskDue(now: Date, tz: string = LIFE_TZ): Date {
-  const w = wallClockOf(now, tz);
-  return zonedToInstant(w.y, w.m, w.d + 1, 9, tz);
 }
 
 const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -420,25 +337,9 @@ export function infoLooksLong(detail: string): boolean {
   return [...detail].length > 110 || detail.split("\n").length > 3;
 }
 
-// ── Tasks and their one reminder ───────────────────────────────────────────
+// ── Their scheduled tasks due today (the list's chips) ─────────────────────
 
-export type CustomerTaskState = "done" | "overdue" | "today" | "upcoming";
-
-/** Done; overdue (its time has passed); due later today; or upcoming. */
-export function taskStateOf(t: { dueAt: Date; doneAt: Date | null }, now: Date, tz: string = LIFE_TZ): CustomerTaskState {
-  if (t.doneAt) return "done";
-  if (t.dueAt.getTime() < now.getTime()) return "overdue";
-  return t.dueAt.getTime() < endOfLocalDay(now, tz).getTime() ? "today" : "upcoming";
-}
-
-/** The open tasks soonest first (the overdue ones lead, flagged), then the done ones, most recent first. */
-export function sortTasks<T extends { id: string; dueAt: Date; doneAt: Date | null }>(tasks: readonly T[]): { open: T[]; done: T[] } {
-  const open = tasks.filter((t) => !t.doneAt).sort((a, b) => a.dueAt.getTime() - b.dueAt.getTime() || (a.id < b.id ? -1 : 1));
-  const done = tasks.filter((t) => t.doneAt).sort((a, b) => (b.doneAt as Date).getTime() - (a.doneAt as Date).getTime());
-  return { open, done };
-}
-
-/** Open tasks due by the end of today (overdue included), and how many of them are overdue. */
+/** Open scheduled tasks due by the end of today (overdue included), and how many of them are overdue. */
 export interface DueCount {
   due: number;
   overdue: number;
@@ -456,59 +357,12 @@ export function dueCountOf(dueAts: readonly Date[], now: Date, tz: string = LIFE
   return { due, overdue };
 }
 
-/** The work tab card's chip: "2 due today", "1 overdue", "1 overdue · 2 today"; null with nothing due. */
+/** A customer row's chip: "2 due today", "1 overdue", "1 overdue · 2 today"; null with nothing due. */
 export function dueChipText(c: DueCount): string | null {
   if (c.due <= 0) return null;
   if (c.overdue <= 0) return `${c.due} due today`;
   if (c.overdue >= c.due) return `${c.overdue} overdue`;
   return `${c.overdue} overdue · ${c.due - c.overdue} today`;
-}
-
-/** A reminder whose time is further back than this when it is armed is not sent late (it is marked spent). */
-export const REMIND_LATE_MS = 2 * 60_000;
-
-/**
- * remindSentAt for a reminder armed for `dueAt`: null (the dispatcher sends
- * it at its time), or `now` when that time is already gone by (more than
- * REMIND_LATE_MS ago): a task typed in for this morning shows as overdue and
- * pushes nothing.
- */
-export function armedRemindSentAt(dueAt: Date, now: Date): Date | null {
-  return dueAt.getTime() > now.getTime() - REMIND_LATE_MS ? null : now;
-}
-
-/**
- * remindSentAt after an edit: re-armed (armedRemindSentAt) when the time
- * moved or the reminder was switched back on; otherwise kept, so a reminder
- * already sent is never sent twice for the same time.
- */
-export function remindSentAtAfterEdit(
-  prev: { dueAt: Date; remind: boolean; remindSentAt: Date | null },
-  next: { dueAt: Date; remind: boolean },
-  now: Date
-): Date | null {
-  const moved = prev.dueAt.getTime() !== next.dueAt.getTime();
-  const backOn = next.remind && !prev.remind;
-  return moved || backOn ? armedRemindSentAt(next.dueAt, now) : prev.remindSentAt;
-}
-
-/** remindSentAt when a done task is opened again: kept when sent; a time gone by is not pushed late. */
-export function remindSentAtAfterUndo(t: { dueAt: Date; remindSentAt: Date | null }, now: Date): Date | null {
-  return t.remindSentAt ?? armedRemindSentAt(t.dueAt, now);
-}
-
-/**
- * Whether a reminder dispatcher may send this task's push now: its time has
- * come, the reminder is on, it is not done, not sent, not archived; and its
- * customer is kept on an open tab whose list is on.
- */
-export function customerTaskRemindDue(
-  t: { dueAt: Date; remind: boolean; doneAt: Date | null; remindSentAt: Date | null; archivedAt: Date | null },
-  now: Date,
-  scope: { customerArchived?: boolean; boardArchived?: boolean; crmOn?: boolean } = {}
-): boolean {
-  if (scope.customerArchived || scope.boardArchived || scope.crmOn === false) return false;
-  return t.remind && !t.doneAt && !t.remindSentAt && !t.archivedAt && t.dueAt.getTime() <= now.getTime();
 }
 
 // ── Paths ──────────────────────────────────────────────────────────────────
@@ -518,10 +372,10 @@ export function customersHref(boardId: string): string {
   return `${WORK_BOARD_PATH}/${boardId}/customers`;
 }
 
-/** The tap URL's query parameter: the task a reminder was for. */
+/** The query parameter a customer page highlights a task by (an old customer task reminder's tap URL carries it). */
 export const TASK_PARAM = "task";
 
-/** A customer's page; with a task, the reminder's tap URL (/today/work/<b>/customers/<c>?task=<t>: that task is highlighted). */
+/** A customer's page; with a task, that task highlighted (/today/work/<b>/customers/<c>?task=<t>). */
 export function customerHref(boardId: string, customerId: string, taskId?: string | null): string {
   const base = `${customersHref(boardId)}/${customerId}`;
   return taskId ? `${base}?${TASK_PARAM}=${encodeURIComponent(taskId)}` : base;
@@ -549,11 +403,13 @@ export interface CustomerListItem {
   name: string;
   nickname: string | null;
   phone: string | null;
-  /** Open tasks due by the end of today (overdue included), and the overdue ones. */
+  /** Open scheduled tasks due by the end of today (overdue included), and the overdue ones. */
   due: number;
   overdue: number;
   /** The first line of their newest info (a quiet subtitle), or null. */
   info: string | null;
+  /** Their latest activity (ms; the search's tie-break, customer-search.ts). */
+  activity: number;
 }
 
 export interface ArchivedCustomerItem {
@@ -572,16 +428,6 @@ export interface CustomerDetail {
   archived: boolean;
 }
 
-export interface CustomerTaskView {
-  id: string;
-  dueAt: string;
-  title: string;
-  detail: string | null;
-  remind: boolean;
-  doneAt: string | null;
-  state: CustomerTaskState;
-}
-
 export interface CustomerInfoView {
   id: string;
   detail: string;
@@ -593,15 +439,6 @@ export interface InteractionView {
   at: string;
   action: CustomerAction;
   brief: string;
-}
-
-/** A call back card linked to this customer (read-only here; the call backs own it). */
-export interface LinkedCallBackView {
-  id: string;
-  at: string;
-  action: string;
-  tags: string[];
-  remindAt: string | null;
 }
 
 /** The work tab, as the customer pages name it. */

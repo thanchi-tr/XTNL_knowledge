@@ -9,6 +9,7 @@ import { IconSprite } from "@/components/ui/Icon";
 import { QuickCapture } from "@/components/capture/QuickCapture";
 import { Shortcuts } from "@/components/shell/Shortcuts";
 import { Tour } from "@/components/tour/Tour";
+import { WorkReminders } from "@/components/work/WorkReminders";
 import { StreakProvider } from "@/components/StreakProvider";
 import { PowerSaver } from "@/components/PowerSaver";
 import "./globals.css";
@@ -97,6 +98,8 @@ export default function RootLayout({
         <Tour />
         {/* L3's host for T2 Seals and T3 Ascensions (a stub until L3 lands). */}
         <CelebrationHost />
+        {/* The in-app reminder (scheduled tasks due while the app is open): a fixed layer outside <main>, every page. */}
+        <WorkReminders />
       </body>
     </html>
   );

@@ -266,10 +266,14 @@ check("decay: an occurrence weighs 1 now, ½ at 60 days, ¼ at 120, never more t
       { title: "Call Kowalski back", note: null, createdAt: at },
     ],
     subtasks: times(2, { title: "Measure the balcony", createdAt: at }),
-    callBacks: [{ tags: ["pricing", "warranty"], createdAt: at }],
     customers: [{ name: "Nguyen Trading", nickname: "Ngoc", createdAt: at }],
-    interactions: [{ brief: "Asked about brochures", tags: ["complaint"], createdAt: at }],
-    customerTasks: [{ title: "Deliver brochures", detail: "glossy leaflets", createdAt: at }],
+    interactions: [{ brief: "Asked about brochures", tags: ["complaint", "pricing"], createdAt: at }],
+    // Scheduled tasks (2026-10-20; the call backs' tags were backfilled into their detail as prose).
+    scheduledTasks: [
+      { title: "Deliver brochures", detail: "glossy leaflets", createdAt: at },
+      { title: "Call back", detail: "warranty · renewal", createdAt: at },
+      { title: "Chase the warranty claim", detail: null, createdAt: at },
+    ],
     variants: times(2, { prompt: "Which organelle respires?", createdAt: at }),
     roadmaps: times(2, { aim: "Pass the Japanese proficiency exam", constraints: null, createdAt: at }),
     structure: ["Thermodynamics", "Work: Acme"],
@@ -277,8 +281,9 @@ check("decay: an occurrence weighs 1 now, ½ at 60 days, ¼ at 120, never more t
   const w = buildWordModel({ sources: corpusOf(rows, NOW), now: NOW });
   const has = (x: string) => w.lower.includes(x);
   check("work-board tasks and notes are counted ('scaffolding', 'kowalski')", has("scaffolding") && has("kowalski"));
-  check("call back tags count from one use (a deliberate label): 'pricing', 'warranty'", has("pricing") && has("warranty"));
-  check("customers' names and nicknames, interaction briefs and tags, customer tasks", has("nguyen") && has("trading") && has("brochures") && has("complaint"));
+  check("an interaction's tags count from one use (a deliberate label): 'pricing'", has("pricing"));
+  check("scheduled tasks' titles and details count as prose (twice): 'warranty' (a backfilled call back's tags, then a title)", has("warranty") && !has("renewal"));
+  check("customers' names and nicknames, interaction briefs and tags, scheduled tasks", has("nguyen") && has("trading") && has("brochures") && has("complaint"));
   check("steps, other wordings and goals' aims count", has("balcony") && has("organelle") && has("japanese") && has("proficiency"));
   check("prose seen once is not a word yet ('glossy', 'leaflets', 'invoice' once each)", !has("glossy") && !has("leaflets") && !has("invoice"));
   check("Field, Domain and work tab names are eligible from their first use", has("thermodynamics"));
@@ -497,11 +502,13 @@ function wiringChecks() {
   );
   const vocab = read("src/lib/vocabulary.ts");
   check("model: cached per user on 'ideas', 'fields', 'life', 'roadmap' and 'words', for 10 minutes", JSON.stringify(WORD_MODEL_TAGS) === JSON.stringify(["ideas", "fields", "life", "roadmap", "words"]) && WORD_MODEL_TTL_MS === 600_000 && /cached\(\s*`wordModel:\$\{userId\}`,\s*WORD_MODEL_TAGS,/.test(vocab));
-  check("model: 'words' is a cache tag, not one of the shell's (a flush never rebuilds the shell)", /\| "words";/.test(read("src/lib/cache.ts")) && !(ALL_TAGS as string[]).includes("words"));
+  check("model: 'words' is a cache tag, not one of the shell's (a flush never rebuilds the shell)", /\| "words"\s/.test(read("src/lib/cache.ts")) && !(ALL_TAGS as string[]).includes("words"));
   check(
-    "corpus: tasks on every board (no boardId filter), each table read on its own and failing soft, the newest SOURCE_ROWS_MAX",
+    "corpus: tasks on every board (no boardId filter), each table read on its own and failing soft, the newest SOURCE_ROWS_MAX; scheduled tasks, never the call backs' or customer tasks' old tables",
     /prisma\.taskTemplate\.findMany\(\{ where: \{ userId \}, select: \{ title: true, note: true, createdAt: true \}, \.\.\.newest \}\)/.test(vocab) &&
-      (vocab.match(/soft\(prisma\./g) ?? []).length === 13 &&
+      (vocab.match(/soft\(prisma\./g) ?? []).length === 12 &&
+      /soft\(prisma\.scheduledTask\.findMany\(\{ where: \{ userId \}, select: \{ title: true, detail: true, createdAt: true \}, \.\.\.newest \}\)\)/.test(vocab) &&
+      !/prisma\.(callBack|customerTask)\./.test(vocab) &&
       SOURCE_ROWS_MAX === 4000 &&
       /prisma\.idea\.findMany\(\{ where: \{ isArchived: false \}/.test(vocab)
   );
@@ -547,11 +554,12 @@ function wiringChecks() {
 
   const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
   const ui = pkg.scripts["ui:check"].split("&&").map((s) => s.trim());
-  // habit-history-check (2026-10-15) runs between this check and push-check.
+  // habit-history-check (2026-10-15) and scheduled-tasks-check (2026-10-20) run between this check and push-check.
   check(
-    "package.json: ui:check runs this check just before habit-history-check, then push-check; word-model:check runs it alone",
+    "package.json: ui:check runs this check just before habit-history-check, then scheduled-tasks-check, then push-check; word-model:check runs it alone",
     ui[ui.indexOf("tsx scripts/word-model-check.ts") + 1] === "tsx scripts/habit-history-check.ts" &&
-      ui[ui.indexOf("tsx scripts/word-model-check.ts") + 2] === "tsx scripts/push-check.ts" &&
+      ui[ui.indexOf("tsx scripts/word-model-check.ts") + 2] === "tsx scripts/scheduled-tasks-check.ts" &&
+      ui[ui.indexOf("tsx scripts/word-model-check.ts") + 3] === "tsx scripts/push-check.ts" &&
       pkg.scripts["word-model:check"] === "tsx scripts/word-model-check.ts"
   );
   const sql = read("prisma/migrations/20261221000000_word_choices/migration.sql").replace(/--.*$/gm, "");

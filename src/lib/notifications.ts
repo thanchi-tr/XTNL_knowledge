@@ -15,8 +15,8 @@ import { PERSONAL_BOARD } from "./work-boards";
 import { DAY_START_HOUR, LIFE_TZ, todayKey } from "./life-day";
 import { isDutyLaunched, weekReviewKey } from "./duty-economy";
 import { dutyNoticesOf, owedFromLine, reviewedWeek, type OwedTotals } from "./rituals";
-import { workReminderNotices } from "./callbacks";
-import { loadWorkReminderRows } from "./callbacks-server";
+import { scheduledNotices } from "./scheduled-tasks";
+import { loadScheduledBellRows } from "./scheduled-tasks-server";
 import { MOMENTUM_NUDGE, chestRowKey, momentumLive } from "./momentum";
 import { emptyDayFacts, loadNudgeFacts, prismaMomentumStore, questDone, questRowsOf, type MomentumStore } from "./momentum-server";
 import { ideaOutlook } from "./forgetting";
@@ -130,12 +130,12 @@ async function loadReviewDue(userId: string, weekKey: string | null): Promise<bo
 }
 
 /**
- * Work tabs' reminders that are due (callbacks.ts workReminderNotices): open call back reminders and due customer
- * tasks, shown here even on a device without push. A failed read is a missing line, never a missing bell.
+ * Work tabs' scheduled tasks that are due (scheduled-tasks.ts scheduledNotices): reminder on, open, their time come,
+ * shown here even on a device without push. A failed read is a missing line, never a missing bell.
  */
 async function loadWorkReminders(userId: string, now: Date): Promise<Notice[]> {
   try {
-    return workReminderNotices(await loadWorkReminderRows(userId, now), now);
+    return scheduledNotices(await loadScheduledBellRows(userId, now), now);
   } catch {
     return [];
   }
@@ -450,7 +450,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
     })
   );
 
-  // ── Work tabs: call backs and customer tasks that are due ──
+  // ── Work tabs: scheduled tasks that are due ──
   notices.push(...workReminders);
 
   if (today && today.inbox > 0) {

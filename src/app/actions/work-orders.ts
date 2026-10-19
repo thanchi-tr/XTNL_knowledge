@@ -2,7 +2,7 @@
 
 import { refresh } from "next/cache";
 import { getCurrentUserId } from "@/lib/user";
-import { addOrderCore, archiveOrderCore, editOrderCore, orderCountCore, restoreOrderCore, setOrderedCore, setOrdersOnCore, type OrderResult } from "@/lib/work-orders-server";
+import { addOrderCore, archiveOrderCore, editOrderCore, restoreOrderCore, setOrderedCore, setOrdersOnCore, type OrderResult } from "@/lib/work-orders-server";
 import type { WorkOrderInput } from "@/lib/work-orders";
 
 /**
@@ -34,11 +34,6 @@ async function run<T>(label: string, opts: WorkOrderActionOptions | undefined, f
 /** The tab's order list on or off (the tab's menu). Off hides it; nothing is deleted. */
 export async function setOrdersOn(boardId: string, on: boolean, opts?: WorkOrderActionOptions): Promise<OrderResult<{ ordersOn: boolean }>> {
   return run("setOrdersOn", opts, (userId) => setOrdersOnCore(userId, boardId, on));
-}
-
-/** The work tab card's count: the lines not ordered yet. A read: it never refreshes. */
-export async function workOrderCount(boardId: string): Promise<OrderResult<{ todo: number }>> {
-  return run("workOrderCount", undefined, (userId) => orderCountCore(userId, boardId));
 }
 
 export async function addWorkOrder(boardId: string, input: WorkOrderInput, opts?: WorkOrderActionOptions): Promise<OrderResult<{ id: string }>> {

@@ -1,5 +1,5 @@
 /*
- * XTNL service worker: web push only (call back reminders; docs/life-plan/reminders.md).
+ * XTNL service worker: web push only (scheduled task reminders; docs/life-plan/reminders.md).
  *
  * Deliberately tiny. No fetch handler and no caches: every request goes to the network exactly as it would
  * without this worker, so it cannot serve a stale page or break the app. It is registered only when the user
@@ -61,7 +61,7 @@ self.addEventListener("push", (event) => {
   };
   if (tag) {
     options.tag = tag;
-    // A newer reminder for the same call back replaces the old one and still alerts.
+    // A newer reminder for the same scheduled task replaces the old one and still alerts.
     options.renotify = true;
   }
   event.waitUntil(self.registration.showNotification(title, options));

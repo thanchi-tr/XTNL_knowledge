@@ -16,7 +16,7 @@
  *              actions/roadmap setAimSuggestions), the lasting no that holds
  *              on every device.
  *   Notifications
- *              this device's web push for call back and customer task reminders
+ *              this device's web push for scheduled task reminders
  *              (NotificationsSection.tsx over push-client: on and off from a tap,
  *              its state line, Send a test). A compatible addition.
  *   Work tabs  the archived work tabs, each with Restore while a place is free

@@ -1,6 +1,6 @@
 /**
  * Work tabs (2026-10-12): up to three boards beside the personal Board, each
- * with its own tasks, habits and musts (and, later, its call backs). Pure:
+ * with its own tasks, habits and musts, and its scheduled tasks (the Office workspace's Agenda). Pure:
  * the server (work-boards-server.ts, tasks.ts), the shell (nav.ts, the '+'),
  * the capture sheet and scripts/work-boards-check.ts all import it.
  *
@@ -11,7 +11,8 @@
  *   canAddWorkBoard(open)    a slot is free: the strip shows its '+'
  *   cleanWorkBoardName(raw)  trimmed, spaces collapsed, 1..24 characters, or the reason
  *   restoreSlotOf(...)       the slot an archived board comes back to (its own when free), or null
- *   workBoardHref / workBoardIdOf   /today/work/<id> and back
+ *   workBoardHref / workBoardIdOf   /today/work/<id> (the tab's Agenda, its Office workspace's home) and back
+ *   workTasksHref            /today/work/<id>/tasks: the tab's own board (its tasks, habits and musts)
  *   workKindRefusalOf(kind)  a work tab holds tasks and habits: goals and idea drafts stay personal
  *
  * Work is kept SEPARATE from the game (the user's choice): a work task pays no
@@ -116,9 +117,14 @@ export function isBoardId(id: unknown): id is string {
   return typeof id === "string" && ID_RE.test(id);
 }
 
-/** A work board's page. */
+/** A work tab's home: its Agenda (the Office workspace, 2026-10-20). Every strip and old link lands here. */
 export function workBoardHref(id: string): string {
   return `${WORK_BOARD_PATH}/${id}`;
+}
+
+/** A work tab's own board (its tasks, habits and musts): the workspace's Tasks page. */
+export function workTasksHref(id: string): string {
+  return `${WORK_BOARD_PATH}/${id}/tasks`;
 }
 
 /** The work board a path is on (/today/work/<id>, or deeper), or null. */

@@ -5,35 +5,28 @@ import { getCurrentUserId } from "@/lib/user";
 import {
   addInfoCore,
   addInteractionCore,
-  addTaskCore,
   archiveCustomerCore,
   archiveInfoCore,
   archiveInteractionCore,
-  archiveTaskCore,
   createCustomerCore,
-  customerDueCountCore,
   editCustomerCore,
   editInfoCore,
   editInteractionCore,
-  editTaskCore,
   restoreCustomerCore,
   restoreInfoCore,
   restoreInteractionCore,
-  restoreTaskCore,
   setCrmCore,
-  setTaskDoneCore,
   type CustomerInput,
   type CustomerResult,
   type InfoInput,
   type InteractionInput,
-  type TaskInput,
 } from "@/lib/customers-server";
-import type { DueCount } from "@/lib/customers";
 
 /**
  * A work tab's customer list (src/lib/customers.ts holds the rules,
- * customers-server.ts the cores): the tab's switch, customers, their infos,
- * their interaction log and their scheduled tasks. Every write checks that the tab
+ * customers-server.ts the cores): the tab's switch, customers, their infos
+ * and their interaction log (their scheduled tasks are actions/scheduled-tasks.ts,
+ * 2026-10-20). Every write checks that the tab
  * is the user's, open and keeps a customer list. Each action takes ids and a
  * plain input, never throws, and answers `{ ok, value } | { ok, error }`.
  * `refresh: true` re-renders the current route in the same response.
@@ -59,11 +52,6 @@ async function run<T>(label: string, opts: CustomerActionOptions | undefined, fn
 /** The tab's customer list on or off (the tab's menu). Off hides it; nothing is deleted. */
 export async function setCrm(boardId: string, on: boolean, opts?: CustomerActionOptions): Promise<CustomerResult<{ crmOn: boolean }>> {
   return run("setCrm", opts, (userId) => setCrmCore(userId, boardId, on));
-}
-
-/** The work tab card's count: tasks due by tonight (overdue included). A read: it never refreshes. */
-export async function customerDueCount(boardId: string): Promise<CustomerResult<DueCount>> {
-  return run("customerDueCount", undefined, (userId) => customerDueCountCore(userId, boardId));
 }
 
 export async function createCustomer(boardId: string, input: CustomerInput, opts?: CustomerActionOptions): Promise<CustomerResult<{ id: string; number: string }>> {
@@ -112,24 +100,4 @@ export async function archiveInteraction(interactionId: string, opts?: CustomerA
 
 export async function restoreInteraction(interactionId: string, opts?: CustomerActionOptions): Promise<CustomerResult<{ id: string }>> {
   return run("restoreInteraction", opts, (userId) => restoreInteractionCore(userId, interactionId));
-}
-
-export async function addCustomerTask(customerId: string, input: TaskInput, opts?: CustomerActionOptions): Promise<CustomerResult<{ id: string }>> {
-  return run("addCustomerTask", opts, (userId) => addTaskCore(userId, customerId, input));
-}
-
-export async function editCustomerTask(taskId: string, input: TaskInput, opts?: CustomerActionOptions): Promise<CustomerResult<{ id: string }>> {
-  return run("editCustomerTask", opts, (userId) => editTaskCore(userId, taskId, input));
-}
-
-export async function setCustomerTaskDone(taskId: string, done: boolean, opts?: CustomerActionOptions): Promise<CustomerResult<{ id: string; done: boolean }>> {
-  return run("setCustomerTaskDone", opts, (userId) => setTaskDoneCore(userId, taskId, done));
-}
-
-export async function archiveCustomerTask(taskId: string, opts?: CustomerActionOptions): Promise<CustomerResult<{ id: string }>> {
-  return run("archiveCustomerTask", opts, (userId) => archiveTaskCore(userId, taskId));
-}
-
-export async function restoreCustomerTask(taskId: string, opts?: CustomerActionOptions): Promise<CustomerResult<{ id: string }>> {
-  return run("restoreCustomerTask", opts, (userId) => restoreTaskCore(userId, taskId));
 }

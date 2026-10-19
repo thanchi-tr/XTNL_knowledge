@@ -46,7 +46,7 @@ import { dayName, placeOf, shortDate, startDayFor, weekdayName, type BoardTempla
 import type { CaptureActiveTitle, CaptureAim, CapturedItem } from "../../app/actions/capture";
 import type { WeightUnit } from "../../lib/weight";
 import { weightToastCopy } from "./weight-capture";
-import { isBoardId, workBoardHref } from "../../lib/work-boards";
+import { isBoardId, workTasksHref } from "../../lib/work-boards";
 
 /**
  * Where a repeating capture lands when it is not due today: 'Next: Thu'.
@@ -1049,8 +1049,8 @@ export function toastCopy(
   // A weigh-in is a record, not a task: its own copy, no figure, View goes to Train (weight-capture.ts).
   if (item.weight) return weightToastCopy({ where: item.where, duplicate: item.duplicate, weight: item.weight });
   const where = item.where?.label ?? null;
-  // A work tab's line (work-boards.ts) is viewed on its own board.
-  const view = ctx.offToday ? { label: "View", href: `${item.board ? workBoardHref(item.board) : "/today"}#t-${item.id}` } : null;
+  // A work tab's line (work-boards.ts) is viewed on its own board (the tab's Tasks page, /today/work/<id>/tasks).
+  const view = ctx.offToday ? { label: "View", href: `${item.board ? workTasksHref(item.board) : "/today"}#t-${item.id}` } : null;
   const priced = Number.isFinite(item.projectedXp) && item.projectedXp > 0;
   let head: string;
   let title = item.title;

@@ -38,7 +38,7 @@ export const metadata: Metadata = { title: "Today" };
  * Full day are Character's (/you).
  */
 export default async function TodayPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  // A work tab asked for by the query (/today?board=<id>, the call back reminder's tap URL; work-boards.ts) is its own
+  // A work tab asked for by the query (/today?board=<id>, an old call back reminder's tap URL; work-boards.ts) is its own
   // page: /today/work/<id>, with any other parameter (callback) kept. Nothing below is read for it.
   const query = await searchParams;
   const boardParam = typeof query.board === "string" ? query.board : null;

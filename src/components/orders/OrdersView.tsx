@@ -9,10 +9,12 @@
  * to call, an email a tap to email), and the date in words ("Overdue · 12
  * Oct" for a line not ordered whose date has gone by). Tapping a line opens
  * its sheet (edit, and Archive with an Undo). The lines still to order come
- * soonest first; the ordered ones after, newest first.
+ * soonest first; the ordered ones after, newest first. It sits in the Office
+ * workspace's frame (its header and sub-navigation lead back to the tab);
+ * ?new=1 (the header's New › Order) opens "Add order" on arrival.
  */
-import { useId, useOptimistic, useState, useTransition } from "react";
-import Link from "next/link";
+import { useEffect, useId, useOptimistic, useState, useTransition } from "react";
+import { useSearchParams } from "next/navigation";
 import { addWorkOrder, archiveWorkOrder, editWorkOrder, restoreWorkOrder, setWorkOrderOrdered } from "@/app/actions/work-orders";
 import {
   ORDER_FILTERS,
@@ -30,9 +32,7 @@ import {
   type OrdersBoardView,
 } from "@/lib/work-orders";
 import type { DayKey } from "@/lib/life-day";
-import { workBoardHref } from "@/lib/work-boards";
 import { Button } from "@/components/ui/Button";
-import { Icon } from "@/components/ui/Icon";
 import { Tick } from "@/components/ui/Tick";
 import { pushToast } from "@/components/ui/toast-store";
 import { ORDER_UNREACHABLE, OrderSheet, type OrderFormValue } from "./OrderSheet";
@@ -134,6 +134,22 @@ export function OrdersView({ board, orders, customers, today }: { board: OrdersB
     show({ order: null, initial: { item: "", name: "", contact: "", date: today, ordered: false, customer: "" } });
   }
 
+  // The header's New › Order (?new=1) opens the sheet on arrival; the parameter then leaves the address.
+  const wantsNew = useSearchParams().get("new") === "1";
+  useEffect(() => {
+    if (!wantsNew) return;
+    const raf = window.requestAnimationFrame(() => {
+      setSheetKey((k) => k + 1);
+      setSheet({ order: null, initial: { item: "", name: "", contact: "", date: today, ordered: false, customer: "" } });
+      setSheetOpen(true);
+      const params = new URLSearchParams(window.location.search);
+      params.delete("new");
+      const q = params.toString();
+      window.history.replaceState(null, "", `${window.location.pathname}${q ? `?${q}` : ""}${window.location.hash}`);
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [wantsNew, today]);
+
   function openEdit(o: OrderView) {
     show({ order: o, initial: { item: o.item, name: o.name, contact: o.contact ?? "", date: o.date ?? "", ordered: o.ordered, customer: o.customer?.number ?? "" } });
   }
@@ -161,11 +177,6 @@ export function OrdersView({ board, orders, customers, today }: { board: OrdersB
 
   return (
     <div className="page narrow cq-main crm-page">
-      <Link className="crm-back" href={workBoardHref(board.id)}>
-        <Icon name="back" />
-        {board.name}
-      </Link>
-
       <section className="card ord-head" aria-labelledby={`${id}-sum`}>
         <div className="ord-head-top">
           <p className="ord-sum" id={`${id}-sum`}>
