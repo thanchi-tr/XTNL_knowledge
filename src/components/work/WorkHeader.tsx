@@ -4,19 +4,21 @@
  * The Office workspace's frame header (2026-10-20; the work layout draws it above every work tab page, so it stays put
  * while the pages under it change): a calm band in the work accent (--work, 8% over the page, a 3 px rule in it), so
  * you can tell at a glance you are at work. In it: the tab's name (from 600; the top bar names it below), the search
- * (WorkSearch: customers and scheduled tasks, live), the New menu (Scheduled task · Customer while the customer list
- * is on · Order while the order list is on) and the tab's menu (⋯: rename, the two lists, archive). Under it the
- * workspace's own pages (nav.ts workSubsOf: Agenda · Customers · Orders · Tasks), the current one marked, Customers and
- * Orders with a quiet count ("2 due today", "3 to order") while there is one.
+ * (WorkSearch: customers and scheduled tasks, live), the New menu (Scheduled task · Customer and Deal while the
+ * customer list is on · Order while the order list is on) and the tab's menu (⋯: rename, the two lists, the follow-up
+ * alert, archive). Under it the workspace's own pages (nav.ts workSubsOf: Agenda · Customers · Deals · Orders · Tasks),
+ * the current one marked (and scrolled into the strip's view: a narrow phone scrolls the strip, never the page),
+ * Customers and Orders with a quiet count ("2 due today · 3 to follow up", "3 to order") while there is one.
  *
  * It hosts the one scheduled task sheet (ScheduledSheetHost) and publishes the tab and its search index to the pages
  * (work-store). No game furniture: no XP, no streak, no momentum, no celebration.
  */
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { customersHref } from "@/lib/customers";
 import { ordersHref } from "@/lib/work-orders";
+import { dealsHref } from "@/lib/deals";
 import type { WorkIndex } from "@/lib/customer-search";
 import { workSectionOf, workSubsOf } from "@/components/shell/nav";
 import { Icon } from "@/components/ui/Icon";
@@ -42,8 +44,19 @@ export function WorkHeader({ board, index, counts = { customers: null, orders: n
   const subs = workSubsOf(board);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuKey, setMenuKey] = useState(0);
+  const navRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => setWorkContext({ board, index }), [board, index]);
+
+  // The current page stays in the strip's view (the strip scrolls on its own; block "nearest" never moves the page).
+  useEffect(() => {
+    const el = navRef.current?.querySelector<HTMLElement>('[aria-current="page"]');
+    const strip = navRef.current;
+    if (!el || !strip || strip.scrollWidth <= strip.clientWidth) return;
+    const r = el.getBoundingClientRect();
+    const s = strip.getBoundingClientRect();
+    if (r.left < s.left || r.right > s.right) strip.scrollLeft += r.left - s.left - 16;
+  }, [section]);
 
   // A customer's page: a new task starts with them.
   const customerId = (() => {
@@ -54,6 +67,7 @@ export function WorkHeader({ board, index, counts = { customers: null, orders: n
   const items = [
     { id: "task", label: "Scheduled task", icon: <WorkGlyph icon="calendar" />, onSelect: () => openScheduledSheet({ customerId }) },
     ...(board.crmOn ? [{ id: "customer", label: "Customer", icon: <WorkGlyph icon="people" />, onSelect: () => router.push(`${customersHref(board.id)}?new=1`) }] : []),
+    ...(board.crmOn ? [{ id: "deal", label: "Deal", icon: <WorkGlyph icon="money" />, onSelect: () => router.push(`${dealsHref(board.id)}?new=1`) }] : []),
     ...(board.ordersOn ? [{ id: "order", label: "Order", icon: <WorkGlyph icon="cart" />, onSelect: () => router.push(`${ordersHref(board.id)}?new=1`) }] : []),
   ];
 
@@ -89,7 +103,7 @@ export function WorkHeader({ board, index, counts = { customers: null, orders: n
           <Icon name="dot3" />
         </button>
       </div>
-      <nav className="wk-subnav" aria-label={`${board.name} pages`}>
+      <nav ref={navRef} className="wk-subnav" aria-label={`${board.name} pages`}>
         {subs.map((s) => (
           <Link key={s.id} href={s.href} className="wk-sub" aria-current={s.id === section ? "page" : undefined}>
             {s.label}

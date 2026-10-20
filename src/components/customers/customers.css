@@ -6,6 +6,10 @@
    work.css), their infos, their interaction log, and the sheets that edit them. Phone first
    (344); every control is a 44 px target. Tokens only, so Night and Vellum
    both hold. Namespaced: crm-* (none is a Tailwind utility).
+   Phase 2 (2026-10-20; crm.ts): the status chip and tags, the list's
+   filters, a customer's tab strip (a segmented tablist that scrolls inside
+   itself at 344, never the page: work-layout.ts customerTabsWidth), the
+   Overview, the Check log and the task collections.
    ===================================================================== */
 @layer components {
   .crm-page { display: flex; flex-direction: column; gap: 12px; }
@@ -95,6 +99,8 @@
   .crm-row-sub .t-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .crm-row[data-exact] .crm-row-main b { font-size: 16px; }
   .crm-row-info { min-width: 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* One-line texts add no width of their own (a long info note would otherwise widen the list at 344 px). */
+  .crm-row-main b, .crm-row-info { contain: inline-size; }
   .crm-num { flex: none; max-width: 42%; font: 600 13px/18px var(--font-mono); color: var(--ink-1); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   .crm-more { margin: 0; padding: 8px 14px 4px; font: 400 13px/18px var(--font-ui); color: var(--ink-2); }
   .crm-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px; }
@@ -189,4 +195,153 @@
   .crm-entry-h b { font: 600 14px/20px var(--font-ui); }
   .crm-entry-h time { font: 400 13px/18px var(--font-ui); color: var(--ink-2); font-variant-numeric: tabular-nums; }
   .crm-entry-b { font: 400 14px/20px var(--font-ui); color: var(--ink-1); white-space: pre-line; overflow-wrap: anywhere; }
+
+  /* ---------- Phase 2: status, tags, filters ---------- */
+  .crm-chip-plain { padding: 0 14px; }
+  .crm-input-short { min-height: 64px; }
+  textarea.crm-input.crm-input-short { min-height: 64px; }
+  .crm-select { padding-right: 32px; cursor: pointer; }
+  /* A status, its word always shown: the open stages in the work accent, a customer in plain ink, inactive quiet. */
+  .crm-status {
+    display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border-radius: var(--r-pill);
+    border: 1px solid var(--line-2); color: var(--ink-1); font: 600 12px/16px var(--font-ui); white-space: nowrap;
+  }
+  .crm-status[data-status="LEAD"] { border-color: var(--work); color: var(--ink-0); }
+  .crm-status[data-status="PROSPECT"] { border-color: var(--work); background: color-mix(in srgb, var(--work) 14%, transparent); color: var(--ink-0); }
+  .crm-status[data-status="CUSTOMER"] { color: var(--ink-0); }
+  .crm-status[data-status="INACTIVE"] { border-style: dashed; color: var(--ink-2); }
+  .crm-status-btn {
+    min-height: 44px; display: inline-flex; align-items: center; gap: 4px; padding: 0 8px 0 4px; margin-left: -4px;
+    border: 0; border-radius: var(--r-ctl); background: transparent; color: var(--ink-1); cursor: pointer; transition: background-color var(--t-quick);
+  }
+  .crm-status-btn:hover { background: var(--raised); }
+  .crm-status-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .crm-status-btn > svg.i { width: 16px; height: 16px; transform: rotate(90deg); }
+  .crm-head-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: -4px; }
+  .crm-tags { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+  .crm-tag, .crm-row-tag { font: 600 12px/16px var(--font-ui); color: var(--ink-2); overflow-wrap: anywhere; }
+  .crm-tag::before { content: "#"; }
+  .crm-row-sub { margin-top: 2px; }
+  /* The tag field: the chosen ones (a tap removes one), the tab's recent ones offered beneath. */
+  .crm-tags-on { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+  .crm-tag-x, .crm-tag-sug {
+    min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; border-radius: var(--r-pill);
+    border: 1px solid var(--line-ctl); background: transparent; color: var(--ink-0); font: 600 13px var(--font-ui); cursor: pointer;
+    transition: background-color var(--t-quick), color var(--t-quick);
+  }
+  .crm-tag-x { background: var(--raised); }
+  .crm-tag-x svg.i { width: 14px; height: 14px; color: var(--ink-2); }
+  .crm-tag-sug { color: var(--ink-1); border-style: dashed; }
+  .crm-tag-x:hover, .crm-tag-sug:hover { background: var(--raised); color: var(--ink-0); }
+  .crm-tag-x:focus-visible, .crm-tag-sug:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .crm-tag-sugs { display: flex; flex-wrap: wrap; gap: 6px; }
+  /* The list's filters: a segmented status strip (its own scroll on a phone), then the tag select. */
+  .crm-filters { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+  .crm-seg {
+    flex: 1 1 260px; display: flex; gap: 2px; min-width: 0; max-width: 100%; margin: 0; padding: 2px; overflow-x: auto; scrollbar-width: none;
+    border: 1px solid var(--line-ctl); border-radius: 14px;
+  }
+  .crm-seg::-webkit-scrollbar { display: none; }
+  /* A scrolling strip adds no width to its page: the centred .page (auto margins) sizes to its widest child, so without
+     inline-size containment the strip would widen the whole page at 344 px instead of scrolling. Same for .crm-tabs. */
+  .crm-seg, .crm-tabs { contain: inline-size; }
+  .crm-seg-o {
+    position: relative; flex: none; min-height: 44px; display: flex; align-items: center; gap: 5px; padding: 0 10px; border-radius: 12px;
+    color: var(--ink-1); font: 600 13px/16px var(--font-ui); cursor: pointer; white-space: nowrap; transition: background-color var(--t-quick), color var(--t-quick);
+  }
+  .crm-seg-o:hover { background: var(--raised); color: var(--ink-0); }
+  .crm-seg-o input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+  .crm-seg-o:has(input:checked) { background: var(--ink-0); color: var(--page); }
+  .crm-seg-o:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .crm-tagfilter { flex: 1 1 140px; min-width: 0; }
+
+  /* ---------- a customer's tabs: a segmented tablist, its own scroll (never the page's) ---------- */
+  .crm-tabs {
+    display: flex; gap: 2px; min-width: 0; max-width: 100%; padding: 2px; overflow-x: auto; scrollbar-width: none; scroll-padding: 0 12px;
+    border: 1px solid var(--line-ctl); border-radius: 14px; background: var(--card);
+  }
+  .crm-tabs::-webkit-scrollbar { display: none; }
+  .crm-tab {
+    flex: none; min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; border: 0; border-radius: 12px;
+    background: transparent; color: var(--ink-1); font: 600 14px var(--font-ui); white-space: nowrap; cursor: pointer;
+    transition: background-color var(--t-quick), color var(--t-quick);
+  }
+  .crm-tab:hover { background: var(--raised); color: var(--ink-0); }
+  .crm-tab[aria-selected="true"] { background: var(--ink-0); color: var(--page); }
+  .crm-tab:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .crm-tab-n { font: 400 12px/16px var(--font-ui); font-variant-numeric: tabular-nums; opacity: .8; }
+  .crm-panel { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+  /* ---------- the Overview ---------- */
+  .crm-ov { display: flex; flex-direction: column; padding: 0 14px 6px; }
+  .crm-ov-row { display: grid; grid-template-columns: 96px minmax(0, 1fr); column-gap: 8px; align-items: start; padding: 6px 0; }
+  .crm-ov-row + .crm-ov-row { border-top: 1px solid var(--line-1); }
+  .crm-ov-k { padding-top: 12px; font: 600 13px/18px var(--font-ui); color: var(--ink-2); }
+  .crm-ov-v { min-width: 0; min-height: 44px; display: flex; flex-direction: column; justify-content: center; font: 400 14px/20px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+  .crm-ov-tel { font-variant-numeric: tabular-nums; }
+  .crm-ov-addr { white-space: pre-line; }
+  .crm-ov-link { color: var(--ink-0); text-decoration: underline; text-underline-offset: 3px; }
+  .crm-ov-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 6px; }
+  .crm-ov-acts { grid-column: 2; display: flex; flex-wrap: wrap; gap: 6px; }
+  .crm-ov-acts .crm-call { gap: 6px; padding: 0 14px; }
+  .crm-ov-acts .crm-call svg.i { width: 16px; height: 16px; }
+  .crm-ov-none { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 0 8px; color: var(--ink-2); }
+  .crm-ov-btn {
+    width: 100%; min-height: 44px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 0; padding: 4px 8px; margin: 0 -8px;
+    border: 0; border-radius: var(--r-ctl); background: transparent; color: var(--ink-0); text-align: left; font: inherit; cursor: pointer;
+    transition: background-color var(--t-quick);
+  }
+  .crm-ov-btn:hover { background: var(--raised); }
+  .crm-ov-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .crm-ov-main { font: 600 14px/20px var(--font-ui); overflow-wrap: anywhere; }
+  .crm-ov-sub { display: inline-flex; align-items: center; gap: 4px; font: 400 13px/18px var(--font-ui); color: var(--ink-2); }
+  .crm-ov-sub svg.i { width: 14px; height: 14px; }
+  .crm-ov-list { list-style: none; margin: 0; padding: 0 0 0 8px; }
+  .crm-money { font-variant-numeric: tabular-nums; }
+  .crm-follow-why { margin: 0; padding: 0 14px 6px; font: 600 14px/20px var(--font-ui); color: var(--owed); }
+  .crm-follow .crm-ov-acts { padding: 0 14px 6px; }
+
+  /* ---------- the Check log, newest first ---------- */
+  .crm-checks { list-style: none; margin: 0; padding: 0 6px; display: flex; flex-direction: column; gap: 2px; }
+  .crm-check-btn {
+    width: 100%; min-height: 52px; display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 8px;
+    border: 0; border-radius: 12px; background: transparent; color: var(--ink-0); text-align: left; font: inherit; cursor: pointer;
+    transition: background-color var(--t-quick);
+  }
+  .crm-check-btn:hover { background: var(--raised); }
+  .crm-check-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .crm-check-day { font: 600 13px/18px var(--font-ui); color: var(--ink-1); font-variant-numeric: tabular-nums; }
+  .crm-check-dl { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+  .crm-check-dl > div { display: grid; grid-template-columns: 52px minmax(0, 1fr); column-gap: 8px; }
+  .crm-check-dl dt { font: 600 13px/20px var(--font-ui); color: var(--ink-2); }
+  .crm-check-dl dd { margin: 0; font: 400 14px/20px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+
+  /* ---------- task collections: a group per collection, its progress, its order ---------- */
+  .crm-coll { margin: 6px 6px 0; padding: 2px 0 4px; border-radius: 12px; border: 1px solid var(--line-1); }
+  .crm-coll[data-none] { border-style: dashed; }
+  .crm-coll-h { display: flex; align-items: center; gap: 4px; padding: 0 4px 0 2px; }
+  .crm-coll-name {
+    flex: 1 1 auto; min-width: 0; min-height: 44px; display: flex; flex-direction: column; justify-content: center; padding: 2px 8px;
+    border: 0; border-radius: var(--r-ctl); background: transparent; color: var(--ink-0); text-align: left; font: inherit;
+  }
+  button.crm-coll-name { cursor: pointer; transition: background-color var(--t-quick); }
+  button.crm-coll-name:hover { background: var(--raised); }
+  .crm-coll-name b { font: 600 14px/20px var(--font-ui); overflow-wrap: anywhere; }
+  .crm-coll-prog { font: 400 13px/18px var(--font-ui); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .crm-coll-act {
+    flex: none; min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--line-2); border-radius: var(--r-ctl); background: transparent; color: var(--ink-1); cursor: pointer;
+    transition: background-color var(--t-quick), color var(--t-quick);
+  }
+  .crm-coll-act:hover { background: var(--raised); color: var(--ink-0); }
+  .crm-coll-act svg.i { width: 16px; height: 16px; }
+  button.crm-coll-name:focus-visible, .crm-coll-act:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .crm-coll-close { flex: none; }
+  .crm-coll-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 0 10px 4px; }
+  .crm-coll-bar { flex: 1 1 80px; max-width: 160px; height: 4px; border-radius: 2px; background: var(--line-2); overflow: hidden; }
+  .crm-coll-bar > span { display: block; height: 100%; background: var(--work); }
+  .crm-coll-note { margin: 0; padding: 0 10px 4px; font: 400 13px/18px var(--font-ui); color: var(--ink-2); white-space: pre-line; overflow-wrap: anywhere; }
+  .crm-coll[data-closed] .crm-coll-name b { color: var(--ink-1); }
+  .crm-coll-new { padding: 4px 8px 0; }
+  .crm-coll-closed .crm-coll { margin-top: 4px; }
 }

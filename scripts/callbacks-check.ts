@@ -63,6 +63,8 @@ function memDb() {
   const db: ScheduledDb = {
     board: async (u, b) => (u === U && b === board.id ? board : null),
     customer: async (u, id) => (u === U && id === customer.id ? customer : null),
+    // No task collections here (Phase 2's are crm-check's).
+    collection: async () => null,
     task: async (u, id) => {
       const r = rows.find((x) => x.id === id && x.userId === u);
       return r ? { ...view(r), board } : null;

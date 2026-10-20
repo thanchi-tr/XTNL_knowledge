@@ -672,7 +672,9 @@ function wiring() {
   check("cores: the gate refuses a foreign, archived or list-off tab, in that order", /if \(!board \|\| board\.userId !== userId\) return fail\(WORK_BOARD_GONE\);\s*if \(board\.archivedAt\) return fail\(WORK_BOARD_ARCHIVED\);\s*if \(!board\.crmOn\) return fail\(CRM_OFF\);/.test(server));
   check("cores: a taken ID (the partial unique index's P2002) reads 'That ID is already used on this tab'", CUSTOMER_NUMBER_TAKEN === "That ID is already used on this tab" && (server.match(/if \(isNumberTaken\(err\)\) return fail\(CUSTOMER_NUMBER_TAKEN\);/g) ?? []).length === 2);
   check("cores: no customer task core is left (CustomerTask is the backfill's only)", !/addTaskCore|editTaskCore|setTaskDoneCore|archiveTaskCore|restoreTaskCore|prisma\.customerTask/.test(server));
-  check("cores: customer and log writes clear the work frame's search index ('work'); archiving or restoring a customer the bell too ('life')", (server.match(/invalidate\("work"\);/g) ?? []).length === 3 && (server.match(/invalidate\("work", "life"\);/g) ?? []).length === 2);
+  // Phase 2 (2026-10-20): every log write (an edit, an archive, its Undo too) clears 'work', which now also holds the
+  // follow-ups' facts (crm-server loadFollowUpFacts: a log entry moves a customer's last contact): 3 → 6.
+  check("cores: customer and log writes clear the work frame's search index and the follow-ups' facts ('work'); archiving or restoring a customer the bell too ('life')", (server.match(/invalidate\("work"\);/g) ?? []).length === 6 && (server.match(/invalidate\("work", "life"\);/g) ?? []).length === 2);
 
   // No game writes: the customer code reads and writes the customer tables and the tab's crmOn, and reads scheduled tasks.
   const crmCode = ["src/lib/customers.ts", "src/lib/customers-server.ts", "src/app/actions/customers.ts", "src/components/customers/CustomersView.tsx", "src/components/customers/CustomerView.tsx", "src/components/customers/CustomerSheets.tsx", "src/components/customers/CrmGate.tsx"];
@@ -696,7 +698,15 @@ function wiring() {
   check("routes: the list and a customer", existsSync(join(ROOT, listPage)) && existsSync(join(ROOT, onePage)));
   const lp = code(listPage);
   const op = code(onePage);
-  check("route /customers: params awaited, one read, an unknown tab 404s, the tab's name as the eyebrow", /params: Promise<\{ boardId: string \}>/.test(lp) && /await params/.test(lp) && /loadCustomersPage\(getCurrentUserId\(\), boardId, new Date\(\)\)/.test(lp) && /if \(page\.kind === "gone"\) notFound\(\);/.test(lp) && /<ShellTitle eyebrow=\{page\.board\.name\} title="Customers" \/>/.test(lp));
+  // Phase 2: the list's follow-ups are read in the same wave (crm-server loadFollowUps; a failed read is no group).
+  check(
+    "route /customers: params awaited, one wave (the list and its follow-ups), an unknown tab 404s, the tab's name as the eyebrow",
+    /params: Promise<\{ boardId: string \}>/.test(lp) &&
+      /await params/.test(lp) &&
+      /Promise\.all\(\[\s*loadCustomersPage\(getCurrentUserId\(\), boardId, now\),\s*loadFollowUps\(getCurrentUserId\(\), boardId, now\)\.catch\(/.test(lp) &&
+      /if \(page\.kind === "gone"\) notFound\(\);/.test(lp) &&
+      /<ShellTitle eyebrow=\{page\.board\.name\} title="Customers" \/>/.test(lp)
+  );
   check(
     "route /customers/[customerId]: the tap URL's params and ?task= (a scheduled task's id, or an old customer task's: resolveTaskParam), the task highlighted, the customer's name as the title",
     /params: Promise<\{ boardId: string; customerId: string \}>/.test(op) &&
@@ -708,8 +718,21 @@ function wiring() {
       /<ShellTitle eyebrow=\{page\.board\.name\} title=\{page\.customer\.name\} \/>/.test(op)
   );
   const view = code("src/components/customers/CustomerView.tsx");
-  check("customer page: their tasks are the Agenda's rows; the highlighted one is marked and scrolled into view (a done one opens its fold)", /highlighted=\{t\.id === highlightTask\}/.test(view) && /data-hl=\{highlighted \? "" : undefined\}/.test(code("src/components/work/ScheduledRow.tsx")) && /document\.getElementById\(taskAnchorId\(highlightTask\)\)/.test(view) && /scrollIntoView\(\{ block: "center" \}\)/.test(view) && /open=\{hlTask\?\.doneAt \? true : undefined\}/.test(view) && /openScheduledSheet\(\{ customerId: customer\.id \}\)/.test(view));
-  check("customer page: the phone is a tap-to-call link (tel:), a 44 px button", /<a className="btn btn-secondary btn-block crm-call" href=\{phoneHref\(customer\.phone\)\}>/.test(view));
+  // Phase 2 (2026-10-20): the page is tabs; its tasks moved to the Tasks tab (CustomerTasks.tsx, grouped by collection;
+  // a done one's fold opens in its own group) and the phone to the Overview (CustomerOverview.tsx, Call beside Text).
+  const tasksTab = code("src/components/customers/CustomerTasks.tsx");
+  check(
+    "customer page (Tasks tab): their tasks are the Agenda's rows; the highlighted one is marked and scrolled into view (a done one opens its group's fold)",
+    /highlighted=\{t\.id === highlightTask\}/.test(tasksTab) &&
+      /data-hl=\{highlighted \? "" : undefined\}/.test(code("src/components/work/ScheduledRow.tsx")) &&
+      /document\.getElementById\(taskAnchorId\(highlightTask\)\)/.test(tasksTab) &&
+      /scrollIntoView\(\{ block: "center" \}\)/.test(tasksTab) &&
+      /open=\{hlTask\?\.doneAt && g\.done\.some\(\(t\) => t\.id === hlTask\.id\) \? true : undefined\}/.test(tasksTab) &&
+      /openScheduledSheet\(\{ customerId: customer\.id \}\)/.test(tasksTab) &&
+      /\{tab === "tasks" && <CustomerTasks /.test(view)
+  );
+  const overview = code("src/components/customers/CustomerOverview.tsx");
+  check("customer page (Overview): the phone is a tap-to-call link (tel:), a 44 px button, beside a tap to text (sms:)", /<a className="btn btn-secondary crm-call" href=\{phoneHref\(customer\.phone\)\}/.test(overview) && /<a className="btn btn-secondary crm-call" href=\{smsHref\(customer\.phone\)\}/.test(overview));
   check("customer page: archiving an entry, or a scheduled task (in its sheet), offers Undo", /title: "Entry archived"[\s\S]*?label: "Undo", onAction: \(\) => undo\(\(\) => restoreInteraction\(e\.id/.test(view) && /title: "Scheduled task archived"[\s\S]*?label: "Undo", onAction: \(\) => void call\(\(\) => restoreScheduledTask\(edit\.id/.test(code("src/components/work/ScheduledTaskSheet.tsx")));
   const list = code("src/components/customers/CustomersView.tsx");
   check("list page: the search is live by ID or name (the numeric keyboard while IDs are numbers), Enter opens the top result", /inputMode=\{numericKeys \? "numeric" : "text"\}/.test(list) && /const pick = topMatch\(search\);/.test(list) && /router\.push\(customerHref\(board\.id, pick\.entry\.id\)\)/.test(list) && /matchCustomers\(index, query, \{ limit: SEARCH_LIST_MAX \}\)/.test(list));
@@ -742,7 +765,8 @@ function wiring() {
     workSubsOf({ id: "b1", crmOn: true }).some((s) => s.label === "Customers" && s.href === customersHref("b1")) &&
       !workSubsOf({ id: "b1" }).some((s) => s.label === "Customers") &&
       /customerDueCountCore\(userId, boardId\)\.catch\(\(\) => null\)/.test(slot) &&
-      /customers: due\?\.ok \? dueChipText\(due\.value\) : null/.test(slot)
+      // Phase 2: the follow-ups' count joins it ("2 due today · 3 to follow up").
+      /customers: customersCountText\(due\?\.ok \? dueChipText\(due\.value\) : null, follow\?\.ok \? followUpCountText\(follow\.value\.count\) : null\)/.test(slot)
   );
   const menu = code("src/components/work/WorkTabMenu.tsx");
   check("work tab menu: the 'Customer list' switch (setCrm, refreshed); off hides, nothing deleted", /<h3>Customer list<\/h3>/.test(menu) && /setCrm\(board\.id, on, \{ refresh: true \}\)/.test(menu) && /<Switch checked=\{crmWant \?\? board\.crmOn\} onChange=\{\(on\) => toggle\("crm", on\)\} label="Customer list"/.test(menu) && /nothing is deleted/.test(read("src/components/work/WorkTabMenu.tsx")));

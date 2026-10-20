@@ -3,15 +3,19 @@
 /**
  * A work tab's menu (the work header's ⋯ button, "Work tab menu"; it was the board card's until the Office workspace,
  * 2026-10-20): Rename (1..24 characters), the Customer list switch (customers.ts; off by default, off hides it and
- * deletes nothing), the Order list switch (work-orders.ts; the same) and Archive, behind a confirm that says what
+ * deletes nothing), the Order list switch (work-orders.ts; the same), Follow-ups while the customer list is on (crm.ts,
+ * Phase 2: Off · 7 · 14 · 30 · 60 · 90 days, a radio group; the Agenda's Follow up and the Customers count follow it)
+ * and Archive, behind a confirm that says what
  * archiving does (the tab leaves the strip and frees its place; every task, customer and scheduled task is kept;
  * Settings › Work tabs restores it). After an archive the app goes back to the personal Board.
  */
-import { useState, useTransition } from "react";
+import { useId, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { archiveWorkBoard, renameWorkBoard } from "@/app/actions/work-boards";
 import { setCrm } from "@/app/actions/customers";
 import { setOrdersOn } from "@/app/actions/work-orders";
+import { setFollowUpDays } from "@/app/actions/crm";
+import { FOLLOW_UP_CHOICES, followUpLabel } from "@/lib/crm";
 import { WORK_BOARD_NAME_MAX, cleanWorkBoardName } from "@/lib/work-boards";
 import { Button } from "@/components/ui/Button";
 import { Sheet } from "@/components/ui/Sheet";
@@ -27,11 +31,16 @@ export const WORK_CARD_NOTE = "Work only: kept apart from your personal Board, i
 export const CRM_SWITCH_NOTE = "A customer list for this tab: customer IDs, their interactions and scheduled tasks. Off hides it; nothing is deleted.";
 /** The menu's order list switch: what an order list is, and that off deletes nothing. */
 export const ORDERS_SWITCH_NOTE = "An order list for this tab: who it is for, what to order, whether it is ordered, and the date. Off hides it; nothing is deleted.";
+/** The menu's follow-up alert (Phase 2): who it flags, and where. */
+export const FOLLOW_UP_NOTE = "Customers with no contact for this long and nothing scheduled, or with an overdue task, show under Follow up on the Agenda. Inactive customers never do.";
 
 const UNREACHABLE = "Couldn't reach the server. Check the connection and try again.";
 
 export function WorkTabMenu({ board, open, onClose }: { board: WorkFrameBoard; open: boolean; onClose: () => void }) {
   const router = useRouter();
+  const ids = useId();
+  /** The follow-up alert's days while its write is in flight (then the refreshed prop). */
+  const [followWant, setFollowWant] = useState<{ days: number | null } | null>(null);
   const [name, setName] = useState(board.name);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +60,21 @@ export function WorkTabMenu({ board, open, onClose }: { board: WorkFrameBoard; o
         res = { ok: false, error: UNREACHABLE };
       }
       (which === "crm" ? setCrmWant : setOrdersWant)(null);
+      if (!res.ok) setError(res.error);
+    });
+  }
+
+  function setFollow(days: number | null) {
+    setError(null);
+    setFollowWant({ days });
+    start(async () => {
+      let res: Awaited<ReturnType<typeof setFollowUpDays>>;
+      try {
+        res = await setFollowUpDays(board.id, days, { refresh: true });
+      } catch {
+        res = { ok: false, error: UNREACHABLE };
+      }
+      setFollowWant(null);
       if (!res.ok) setError(res.error);
     });
   }
@@ -143,6 +167,24 @@ export function WorkTabMenu({ board, open, onClose }: { board: WorkFrameBoard; o
           <Switch checked={ordersWant ?? board.ordersOn} onChange={(on) => toggle("orders", on)} label="Order list" disabled={pending} />
         </div>
       </div>
+
+      {board.crmOn && (
+        <div className="work-menu-sec">
+          <h3 id={`${ids}-follow`}>Follow-ups</h3>
+          <p>{FOLLOW_UP_NOTE}</p>
+          <div className="st-channels" role="radiogroup" aria-labelledby={`${ids}-follow`}>
+            {FOLLOW_UP_CHOICES.map((d) => {
+              const current = followWant ? followWant.days : board.followUpDays;
+              return (
+                <label key={d ?? "off"} className="st-chan">
+                  <input type="radio" name={`${ids}-follow-days`} value={d ?? "off"} checked={current === d} onChange={() => setFollow(d)} disabled={pending} />
+                  {followUpLabel(d)}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="work-menu-sec">
         <h3>Archive</h3>

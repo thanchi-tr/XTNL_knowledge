@@ -90,4 +90,12 @@
   .ord-all:hover { background: var(--raised); color: var(--ink-0); }
   .ord-all:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
   .ord-all svg.i { width: 16px; height: 16px; }
+  /* A line's task collection (Phase 2, crm.ts): "Start a collection", or the one it has (a link to Tasks). */
+  .ord-mini-act {
+    align-self: flex-start; min-height: 44px; display: inline-flex; align-items: center; padding: 0 8px; margin: 0 -8px;
+    border: 0; border-radius: 10px; background: transparent; color: var(--ink-1); font: 600 13px var(--font-ui);
+    text-decoration: underline; text-underline-offset: 3px; cursor: pointer; transition: background-color var(--t-quick), color var(--t-quick);
+  }
+  .ord-mini-act:hover { background: var(--raised); color: var(--ink-0); }
+  .ord-mini-act:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 }

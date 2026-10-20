@@ -1,21 +1,26 @@
 "use client";
 
 /**
- * One customer (/today/work/<id>/customers/<customerId>; customers.ts): their
- * name, nickname, ID and phone (a 44 px tap-to-call), Edit (and Archive,
- * inside it); "Scheduled": their scheduled tasks (scheduled-tasks.ts, the
- * Agenda's own rows: open ones soonest first with the overdue in owed ink,
- * each with Done, Snooze, a tap to edit, and its one reminder; then the done
- * ones, folded), and "Schedule a task" (the work frame's sheet, this customer
- * set); "Info": what is known about them, newest recorded first (the detail,
- * three lines then "More", and when it was recorded), each editable and
- * archivable (with Undo); "Interactions": the log, newest first (Call, Visit,
- * Email and Message too), each entry editable and archivable (with Undo).
- * `?task=<id>` highlights that task and scrolls it into view. While the tab's
- * order list is on, the page hands in their "Orders" section
- * (components/orders/CustomerOrders.tsx), drawn after the log.
+ * One customer (/today/work/<id>/customers/<customerId>; customers.ts, crm.ts), as tabs since Phase 2 (2026-10-20, the
+ * user's CRM-style page). Above the tabs, on every one: their ID, name and nickname, their status (a menu: Lead ·
+ * Prospect · Customer · Inactive), their tags, and Edit (and Archive, inside it). The tabs:
+ *
+ *   Overview   contact (a 44 px tap to call, to text, to email), company, address; a follow-up's why and "Schedule
+ *              follow-up"; the next scheduled task, the last contact, open collections, open deals' value
+ *   Tasks      their scheduled tasks grouped by task collection (CustomerTasks)
+ *   Check      Rate, Home, Work and Record at, newest first (CustomerChecks)
+ *   Info       what is known about them, newest recorded first (the detail, three lines then "More", and when it
+ *              was recorded), each editable and archivable (with Undo)
+ *   History    the interaction log, newest first (Call, Visit, Email and Message too), each editable and archivable
+ *   Orders     their lines on the tab's order list (components/orders/CustomerOrders.tsx, handed in by the page),
+ *              only while the tab keeps one
+ *   Deals      their deals (components/deals/CustomerDeals.tsx)
+ *
+ * The strip is a tablist (role="tablist", roving focus: ←/→, Home, End move and select; one Tab stop), a segmented
+ * strip that scrolls inside itself on a 344 px phone, never the page. The tab lives in the address (?tab=, kept with
+ * replaceState); `?task=<id>` lands on Tasks with that task highlighted and scrolled into view.
  */
-import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -31,28 +36,49 @@ import {
   restoreCustomerInfo,
   restoreInteraction,
 } from "@/app/actions/customers";
+import { setCustomerStatus } from "@/app/actions/crm";
 import {
   CUSTOMER_ACTION_LABEL,
   customersHref,
   infoLooksLong,
   infoRecordedLabel,
   localInputOf,
-  phoneHref,
   whenLabel,
   type CrmBoardView,
   type CustomerDetail,
   type CustomerInfoView,
   type InteractionView,
 } from "@/lib/customers";
-import { sectionOfTask, taskAnchorId, type ScheduledView } from "@/lib/scheduled-tasks";
+import {
+  CUSTOMER_STATUSES,
+  CUSTOMER_TAB_LABEL,
+  STATUS_LABEL,
+  TAB_PARAM,
+  customerTabsOf,
+  groupByCollection,
+  nextTabIndex,
+  recentTagsOf,
+  type CollectionOrderRef,
+  type CollectionView,
+  type CustomerCheckView,
+  type CustomerTab,
+  type FollowUpView,
+} from "@/lib/crm";
+import { openDealsOf, type DealView } from "@/lib/deals";
+import { TASK_PARAM, type ScheduledView } from "@/lib/scheduled-tasks";
+import type { DayKey } from "@/lib/life-day";
 import { Button } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
 import { pushToast } from "@/components/ui/toast-store";
 import { ActionMark } from "@/components/work/ChannelGlyph";
-import { ScheduledRow } from "@/components/work/ScheduledRow";
-import { useScheduledActions } from "@/components/work/useScheduledActions";
-import { openScheduledSheet } from "@/components/work/work-store";
+import { WorkMenu } from "@/components/work/WorkMenu";
+import { useWorkContext } from "@/components/work/work-store";
+import { CustomerDeals } from "@/components/deals/CustomerDeals";
+import { CustomerChecks } from "./CustomerChecks";
+import { CustomerOverview } from "./CustomerOverview";
+import { CustomerTasks } from "./CustomerTasks";
 import { CustomerFormSheet, InfoSheet, InteractionSheet, UNREACHABLE, type InfoFormValue, type InteractionFormValue } from "./CustomerSheets";
+import { StatusChip } from "./StatusChip";
 
 type Sheet =
   | { kind: "edit" }
@@ -113,14 +139,76 @@ function InfoRow({ info, now, onOpen }: { info: CustomerInfoView; now: Date; onO
   );
 }
 
+/**
+ * The tabs: a tablist with roving focus (only the selected tab is a Tab stop; ←/→ wrap, Home and End jump, each move
+ * selects), a segmented strip that scrolls inside itself (the selected one kept in view), each tab with its quiet
+ * count when it has one.
+ */
+function TabStrip({ ids, tabs, tab, counts, label, onTab }: { ids: string; tabs: CustomerTab[]; tab: CustomerTab; counts: Partial<Record<CustomerTab, number>>; label: string; onTab: (t: CustomerTab) => void }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const strip = ref.current;
+    const el = strip?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!strip || !el || strip.scrollWidth <= strip.clientWidth) return;
+    const r = el.getBoundingClientRect();
+    const s = strip.getBoundingClientRect();
+    if (r.left < s.left) strip.scrollLeft += r.left - s.left - 12;
+    else if (r.right > s.right) strip.scrollLeft += r.right - s.right + 12;
+  }, [tab]);
+  return (
+    <div
+      ref={ref}
+      className="crm-tabs"
+      role="tablist"
+      aria-label={label}
+      onKeyDown={(e) => {
+        const at = tabs.indexOf(tab);
+        const next = nextTabIndex(e.key, at, tabs.length);
+        if (next === null) return;
+        e.preventDefault();
+        onTab(tabs[next]);
+        // Focus follows the selection (the button is drawn by then: the strip is never unmounted).
+        window.requestAnimationFrame(() => document.getElementById(`${ids}-tab-${tabs[next]}`)?.focus());
+      }}
+    >
+      {tabs.map((t) => (
+        <button
+          key={t}
+          id={`${ids}-tab-${t}`}
+          type="button"
+          role="tab"
+          className="crm-tab"
+          aria-selected={t === tab}
+          aria-controls={`${ids}-panel`}
+          tabIndex={t === tab ? 0 : -1}
+          onClick={() => onTab(t)}
+        >
+          {CUSTOMER_TAB_LABEL[t]}
+          {(counts[t] ?? 0) > 0 && <span className="crm-tab-n">{counts[t]}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function CustomerView({
   board,
   customer,
   tasks,
   infos,
   interactions,
+  checks,
+  collections,
+  deals,
+  followUp,
+  followUpDays,
+  orderRefs,
+  ordersOn,
+  ordersTodo = 0,
+  tab: askedTab,
   highlightTask,
   nowIso,
+  today,
   orders = null,
 }: {
   board: CrmBoardView;
@@ -130,34 +218,70 @@ export function CustomerView({
   /** What is known about them, newest recorded first. */
   infos: CustomerInfoView[];
   interactions: InteractionView[];
+  /** Phase 2 (crm-server loadCustomerCrm): their checks, collections and follow-up. */
+  checks: CustomerCheckView[];
+  collections: CollectionView[];
+  /** Their deals (deals-server loadCustomerDeals); null where they could not be read. */
+  deals: DealView[] | null;
+  followUp: FollowUpView | null;
+  followUpDays: number | null;
+  /** Their orders, as a collection may link them; null where the order list is off. */
+  orderRefs: CollectionOrderRef[] | null;
+  /** The tab keeps an order list: the Orders tab is shown. */
+  ordersOn: boolean;
+  ordersTodo?: number;
+  /** The tab the address asked for (crm.ts customerTabOf). */
+  tab: CustomerTab;
   /** `?task=<id>`: the task a link asked for (resolved by the page). */
   highlightTask: string | null;
   nowIso: string;
+  today: DayKey;
   /** Their lines on the tab's order list (the page draws it only while that list is on). */
   orders?: ReactNode;
 }) {
+  const ids = useId();
   const router = useRouter();
-  const now = new Date(nowIso);
+  const now = useMemo(() => new Date(nowIso), [nowIso]);
+  const { index } = useWorkContext();
   // The sheet's data stays after it closes, so it slides away (and gives focus back) before the next one replaces it.
   const [sheet, setSheet] = useState<Sheet>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetKey, setSheetKey] = useState(0);
-  const actions = useScheduledActions();
   const [error, setError] = useState<string | null>(null);
   const [archiving, setArchiving] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [, start] = useTransition();
 
-  const open = tasks.filter((t) => !t.doneAt);
-  const done = tasks.filter((t) => t.doneAt);
-  const overdue = open.filter((t) => sectionOfTask(t, now) === "overdue").length;
-  const hlTask = highlightTask ? tasks.find((t) => t.id === highlightTask) ?? null : null;
+  // The tab: the address's on arrival (and on a link to another ?tab=), then the strip's (replaceState keeps it).
+  const tabs = customerTabsOf({ ordersOn });
+  const [tab, setTabState] = useState<CustomerTab>(askedTab);
+  const [asked, setAsked] = useState<CustomerTab>(askedTab);
+  if (asked !== askedTab) {
+    setAsked(askedTab);
+    setTabState(askedTab);
+  }
+  function setTab(t: CustomerTab) {
+    setTabState(t);
+    const params = new URLSearchParams(window.location.search);
+    if (t === "overview") params.delete(TAB_PARAM);
+    else params.set(TAB_PARAM, t);
+    // A highlighted task belongs to the Tasks tab: leaving it drops ?task= (a reload lands where the user is).
+    if (t !== "tasks") params.delete(TASK_PARAM);
+    const q = params.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${q ? `?${q}` : ""}${window.location.hash}`);
+  }
 
-  useEffect(() => {
-    if (!highlightTask) return;
-    const el = document.getElementById(taskAnchorId(highlightTask));
-    el?.scrollIntoView({ block: "center" });
-  }, [highlightTask]);
+  const grouped = useMemo(() => groupByCollection(tasks, collections), [tasks, collections]);
+  const recentTags = useMemo(() => recentTagsOf(index?.customers ?? []), [index]);
+  const openTasks = tasks.filter((t) => !t.doneAt).length;
+  const counts: Partial<Record<CustomerTab, number>> = {
+    tasks: openTasks,
+    check: checks.length,
+    info: infos.length,
+    history: interactions.length,
+    orders: ordersTodo,
+    deals: deals ? openDealsOf(deals).count : 0,
+  };
 
   function show(next: Exclude<Sheet, null>) {
     setSheetKey((k) => k + 1);
@@ -168,22 +292,6 @@ export function CustomerView({
   }
 
   const close = () => setSheetOpen(false);
-
-  const taskRow = (t: ScheduledView) => (
-    <ScheduledRow
-      key={t.id}
-      task={t}
-      now={now}
-      section={sectionOfTask(t, now) ?? "done"}
-      highlighted={t.id === highlightTask}
-      busy={actions.busy === t.id}
-      showCustomer={false}
-      onDone={() => actions.done(t)}
-      onReopen={() => actions.reopen(t)}
-      onSnooze={(p) => actions.snooze(t, p)}
-      onEdit={() => openScheduledSheet({ task: t })}
-    />
-  );
 
   function newInfo() {
     show({ kind: "info", info: null, initial: { detail: "", when: localInputOf(new Date()) } });
@@ -199,6 +307,25 @@ export function CustomerView({
 
   function editEntry(e: InteractionView) {
     show({ kind: "entry", entry: e, initial: { when: localInputOf(new Date(e.at)), action: e.action, brief: e.brief } });
+  }
+
+  function changeStatus(status: (typeof CUSTOMER_STATUSES)[number]) {
+    if (status === customer.status) return;
+    const was = customer.status;
+    setError(null);
+    start(async () => {
+      const res = await call(() => setCustomerStatus(customer.id, status, { refresh: true }));
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      pushToast({
+        key: `crm-status-${customer.id}`,
+        title: `${customer.name}: ${STATUS_LABEL[status]}`,
+        body: `Was ${STATUS_LABEL[was]}.`,
+        action: { label: "Undo", onAction: () => undo(() => setCustomerStatus(customer.id, was, { refresh: true })) },
+      });
+    });
   }
 
   function archiveThisCustomer() {
@@ -257,6 +384,8 @@ export function CustomerView({
     );
   }
 
+  const ordersBoard = { id: board.id, name: board.name, ordersOn };
+  const who = { id: customer.id, number: customer.number, name: customer.name };
   return (
     <div className="page narrow cq-main crm-page">
       <Link className="crm-back" href={customersHref(board.id)}>
@@ -270,103 +399,113 @@ export function CustomerView({
             <span className="crm-num">#{customer.number}</span>
             <h2>{customer.name}</h2>
             {customer.nickname && <span className="t-meta">Nickname: {customer.nickname}</span>}
+            {customer.company && <span className="t-meta">{customer.company}</span>}
           </div>
           <Button variant="quiet" onClick={() => show({ kind: "edit" })} aria-haspopup="dialog">
             Edit
           </Button>
         </div>
-        {customer.phone ? (
-          <a className="btn btn-secondary btn-block crm-call" href={phoneHref(customer.phone)}>
-            Call {customer.phone}
-          </a>
-        ) : (
-          <p className="t-meta" style={{ margin: 0 }}>
-            No phone number. Edit adds one.
-          </p>
-        )}
+        <div className="crm-head-tags">
+          <WorkMenu
+            label={`Status: ${STATUS_LABEL[customer.status]}. Change it`}
+            buttonClass="crm-status-btn"
+            align="start"
+            button={
+              <>
+                <StatusChip status={customer.status} />
+                <Icon name="chev" />
+              </>
+            }
+            items={CUSTOMER_STATUSES.map((s) => ({ id: s, label: STATUS_LABEL[s], hint: s === customer.status ? "now" : undefined, onSelect: () => changeStatus(s) }))}
+          />
+          {customer.tags.length > 0 ? (
+            <ul className="crm-tags" aria-label="Tags">
+              {customer.tags.map((t) => (
+                <li key={t} className="crm-tag">
+                  {t}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <span className="t-meta">No tags</span>
+          )}
+        </div>
       </section>
 
-      {(error || actions.error) && !sheetOpen && (
+      {error && !sheetOpen && (
         <p className="crm-error" role="alert">
-          {error ?? actions.error}
+          {error}
         </p>
       )}
 
-      <section className="card crm-sec" aria-labelledby="crm-sched-h">
-        <div className="crm-sec-h">
-          <h2 id="crm-sched-h">Scheduled</h2>
-          {overdue > 0 && <span className="chip owed">{overdue} overdue</span>}
-          <Button variant="secondary" icon="plus" onClick={() => openScheduledSheet({ customerId: customer.id })} aria-haspopup="dialog">
-            Schedule a task
-          </Button>
-        </div>
-        {highlightTask && !hlTask && <p className="crm-sec-note">That task is no longer here.</p>}
-        {open.length === 0 ? (
-          <p className="crm-sec-note">Nothing scheduled. A task here shows on the tab&apos;s agenda and reminds you at its time.</p>
-        ) : (
-          <ol className="st-list">{open.map(taskRow)}</ol>
-        )}
-        {done.length > 0 && (
-          <details className="crm-done" open={hlTask?.doneAt ? true : undefined}>
-            <summary>
-              <Icon name="chev" />
-              Done · {done.length}
-            </summary>
-            <ol className="st-list">{done.slice(0, 20).map(taskRow)}</ol>
-          </details>
-        )}
-      </section>
+      <TabStrip ids={ids} tabs={tabs} tab={tab} counts={counts} label={`${customer.name}: tabs`} onTab={setTab} />
 
-      <section className="card crm-sec" aria-labelledby="crm-info-h">
-        <div className="crm-sec-h">
-          <h2 id="crm-info-h">Info</h2>
-          {infos.length > 0 && <span className="t-meta">{infos.length}</span>}
-          <Button variant="secondary" icon="plus" onClick={newInfo} aria-haspopup="dialog">
-            Add info
-          </Button>
-        </div>
-        {infos.length === 0 ? (
-          <p className="crm-sec-note">Nothing recorded yet. Note what you learn about them: what they like, sizes, who to ask for.</p>
-        ) : (
-          <ol className="crm-infos">
-            {infos.map((i) => (
-              <InfoRow key={i.id} info={i} now={now} onOpen={() => editInfo(i)} />
-            ))}
-          </ol>
+      <div id={`${ids}-panel`} role="tabpanel" aria-labelledby={`${ids}-tab-${tab}`} className="crm-panel">
+        {tab === "overview" && (
+          <CustomerOverview customer={customer} tasks={tasks} interactions={interactions} groups={grouped.open} deals={deals} followUp={followUpDays !== null ? followUp : null} now={now} onTab={setTab} />
         )}
-      </section>
 
-      <section className="card crm-sec" aria-labelledby="crm-log-h">
-        <div className="crm-sec-h">
-          <h2 id="crm-log-h">Interactions</h2>
-          {interactions.length > 0 && <span className="t-meta">{interactions.length}</span>}
-          <Button variant="secondary" icon="plus" onClick={newEntry} aria-haspopup="dialog">
-            Add entry
-          </Button>
-        </div>
-        {interactions.length === 0 ? (
-          <p className="crm-sec-note">No interactions yet. Log a call, a visit, an email, a message, a purchase, an inquiry, a complaint or a credit check.</p>
-        ) : (
-          <ol className="crm-log">
-            {interactions.map((e) => (
-              <li key={e.id}>
-                <button type="button" className="crm-entry-btn" onClick={() => editEntry(e)} aria-label={`Edit entry: ${CUSTOMER_ACTION_LABEL[e.action]}, ${whenLabel(new Date(e.at), now)}`}>
-                  <ActionMark action={e.action} />
-                  <span className="crm-entry-main">
-                    <span className="crm-entry-h">
-                      <b>{CUSTOMER_ACTION_LABEL[e.action]}</b>
-                      <time dateTime={e.at}>{whenLabel(new Date(e.at), now)}</time>
-                    </span>
-                    {e.brief && <span className="crm-entry-b">{e.brief}</span>}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ol>
+        {tab === "tasks" && <CustomerTasks boardId={board.id} customer={who} tasks={tasks} collections={collections} highlightTask={highlightTask} now={now} ordersOn={ordersOn} orderRefs={orderRefs} />}
+
+        {tab === "check" && <CustomerChecks customer={who} checks={checks} today={today} />}
+
+        {tab === "info" && (
+          <section className="card crm-sec" aria-labelledby="crm-info-h">
+            <div className="crm-sec-h">
+              <h2 id="crm-info-h">Info</h2>
+              {infos.length > 0 && <span className="t-meta">{infos.length}</span>}
+              <Button variant="secondary" icon="plus" onClick={newInfo} aria-haspopup="dialog">
+                Add info
+              </Button>
+            </div>
+            {infos.length === 0 ? (
+              <p className="crm-sec-note">Nothing recorded yet. Note what you learn about them: what they like, sizes, who to ask for.</p>
+            ) : (
+              <ol className="crm-infos">
+                {infos.map((i) => (
+                  <InfoRow key={i.id} info={i} now={now} onOpen={() => editInfo(i)} />
+                ))}
+              </ol>
+            )}
+          </section>
         )}
-      </section>
 
-      {orders}
+        {tab === "history" && (
+          <section className="card crm-sec" aria-labelledby="crm-log-h">
+            <div className="crm-sec-h">
+              <h2 id="crm-log-h">History</h2>
+              {interactions.length > 0 && <span className="t-meta">{interactions.length}</span>}
+              <Button variant="secondary" icon="plus" onClick={newEntry} aria-haspopup="dialog">
+                Add entry
+              </Button>
+            </div>
+            {interactions.length === 0 ? (
+              <p className="crm-sec-note">No interactions yet. Log a call, a visit, an email, a message, a purchase, an inquiry, a complaint or a credit check.</p>
+            ) : (
+              <ol className="crm-log">
+                {interactions.map((e) => (
+                  <li key={e.id}>
+                    <button type="button" className="crm-entry-btn" onClick={() => editEntry(e)} aria-label={`Edit entry: ${CUSTOMER_ACTION_LABEL[e.action]}, ${whenLabel(new Date(e.at), now)}`}>
+                      <ActionMark action={e.action} />
+                      <span className="crm-entry-main">
+                        <span className="crm-entry-h">
+                          <b>{CUSTOMER_ACTION_LABEL[e.action]}</b>
+                          <time dateTime={e.at}>{whenLabel(new Date(e.at), now)}</time>
+                        </span>
+                        {e.brief && <span className="crm-entry-b">{e.brief}</span>}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+        )}
+
+        {tab === "orders" && orders}
+
+        {tab === "deals" && <CustomerDeals board={ordersBoard} customer={who} deals={deals} today={today} />}
+      </div>
 
       {sheet?.kind === "edit" && (
         <CustomerFormSheet
@@ -375,9 +514,20 @@ export function CustomerView({
           onClose={close}
           title="Edit customer"
           description={`#${customer.number} on ${board.name}`}
-          initial={{ number: customer.number, name: customer.name, nickname: customer.nickname ?? "", phone: customer.phone ?? "" }}
+          initial={{
+            number: customer.number,
+            name: customer.name,
+            nickname: customer.nickname ?? "",
+            phone: customer.phone ?? "",
+            status: customer.status,
+            email: customer.email ?? "",
+            company: customer.company ?? "",
+            address: customer.address ?? "",
+            tags: customer.tags,
+          }}
           numericId={/^\d+$/.test(customer.number)}
           selfId={customer.id}
+          recentTags={recentTags}
           submitLabel="Save"
           onSave={async (value) => {
             const res = await editCustomer(customer.id, value, { refresh: true });

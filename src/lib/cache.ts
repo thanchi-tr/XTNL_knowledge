@@ -48,7 +48,9 @@ export type CacheTag =
   | "words"
   /**
    * A work tab's own lists (2026-10-20): its customers and scheduled tasks, as the Office workspace's search index
-   * reads them (scheduled-tasks-server loadWorkIndex). Customer and scheduled task writes clear it. Not the shell's.
+   * reads them (scheduled-tasks-server loadWorkIndex; since Phase 2 with their open task collections), and the
+   * follow-ups' facts (crm-server loadFollowUpFacts). Customer, log, scheduled task and collection writes clear it.
+   * Not the shell's.
    */
   | "work";
 

@@ -16,8 +16,9 @@
  *   highlightParts(text, ranges)   the text cut into plain and marked parts (<mark> in the views)
  *
  * The rank, best first: the exact ID, an ID that starts with the query, a name or nickname with a word that starts
- * with it, an ID that holds it, a name or nickname that holds it, a phone whose digits hold it. Ties: the most recent
- * activity, then the name, then the ID in natural order.
+ * with it, an ID that holds it, a name or nickname that holds it, a phone whose digits hold it; then (Phase 2,
+ * 2026-10-20) the secondary matches: a company (a word's start or anywhere), then an email (anywhere). Ties: the most
+ * recent activity, then the name, then the ID in natural order.
  */
 
 export interface CustomerIndexEntry {
@@ -31,6 +32,11 @@ export interface CustomerIndexEntry {
   phone: string | null;
   /** The latest activity (ms since the epoch): the first tie-break, most recent first. */
   activity: number;
+  /** Phase 2 (crm.ts): the secondary matches, and what the sheets read from the index (status, tags). */
+  company?: string | null;
+  email?: string | null;
+  status?: string;
+  tags?: readonly string[];
 }
 
 /** A scheduled task as the header search finds it. */
@@ -43,15 +49,24 @@ export interface TaskIndexEntry {
   done: boolean;
 }
 
+/** An open task collection as the scheduled task sheet's picker reads it (crm.ts; Phase 2). */
+export interface CollectionIndexEntry {
+  id: string;
+  customerId: string;
+  name: string;
+}
+
 /** The Office workspace's search index (scheduled-tasks-server loadWorkIndex), loaded once with the work frame. */
 export interface WorkIndex {
   /** The tab's kept customers (only while its customer list is on). */
   customers: CustomerIndexEntry[];
   /** The tab's open scheduled tasks and the ones done this past week. */
   tasks: TaskIndexEntry[];
+  /** The kept customers' open task collections (the sheet's Collection picker; only while the list is on). */
+  collections?: CollectionIndexEntry[];
 }
 
-export type MatchField = "id" | "name" | "nickname" | "phone";
+export type MatchField = "id" | "name" | "nickname" | "phone" | "company" | "email";
 /** [start, end) in the field as written. */
 export type Range = readonly [number, number];
 
@@ -60,6 +75,8 @@ export interface MatchRanges {
   name: Range[];
   nickname: Range[];
   phone: Range[];
+  company: Range[];
+  email: Range[];
 }
 
 export interface CustomerMatch<E extends CustomerIndexEntry = CustomerIndexEntry> {
@@ -79,8 +96,8 @@ export interface CustomerSearchResult<E extends CustomerIndexEntry = CustomerInd
   total: number;
 }
 
-/** The tiers, best first. */
-export const RANK = { EXACT_ID: 0, ID_PREFIX: 1, NAME_WORD: 2, ID_SUBSTRING: 3, NAME_SUBSTRING: 4, PHONE: 5 } as const;
+/** The tiers, best first: the name and the ID first, the phone, then the secondary matches (company, email). */
+export const RANK = { EXACT_ID: 0, ID_PREFIX: 1, NAME_WORD: 2, ID_SUBSTRING: 3, NAME_SUBSTRING: 4, PHONE: 5, COMPANY: 6, EMAIL: 7 } as const;
 
 /** The header shows at most this many customers, then a "+n more" line to the full list on the Customers page. */
 export const SEARCH_CAP = 8;
@@ -164,6 +181,8 @@ interface Prepared<E> {
   name: Folded;
   nickname: Folded;
   phone: string;
+  company: Folded;
+  email: Folded;
 }
 
 export interface PreparedIndex<E extends CustomerIndexEntry = CustomerIndexEntry> {
@@ -180,6 +199,8 @@ export function prepareIndex<E extends CustomerIndexEntry>(entries: readonly E[]
     name: folded(entry.name),
     nickname: folded(entry.nickname ?? ""),
     phone: digitsOf(entry.phone),
+    company: folded(entry.company ?? ""),
+    email: folded(entry.email ?? ""),
   }));
   return { size: rows.length, rows };
 }
@@ -215,7 +236,7 @@ export function matchCustomers<E extends CustomerIndexEntry>(index: PreparedInde
   const limit = opts.limit ?? SEARCH_CAP;
   const out: CustomerMatch<E>[] = [];
   for (const r of index.rows) {
-    const ranges: MatchRanges = { number: [], name: [], nickname: [], phone: [] };
+    const ranges: MatchRanges = { number: [], name: [], nickname: [], phone: [], company: [], email: [] };
     let rank = Infinity;
     let field: MatchField = "id";
     const better = (tier: number, f: MatchField) => {
@@ -245,6 +266,22 @@ export function matchCustomers<E extends CustomerIndexEntry>(index: PreparedInde
       if (at >= 0) {
         ranges.phone.push([at, at + phoneQ.length]);
         better(RANK.PHONE, "phone");
+      }
+    }
+    // The secondary matches: the company (a word's start, else anywhere), then the email (anywhere in it).
+    if (r.company.text) {
+      const word = find(r.company, q, true);
+      const at = word >= 0 ? word : find(r.company, q, false);
+      if (at >= 0) {
+        ranges.company.push(rangeOf(r.company, at, q.length));
+        better(RANK.COMPANY, "company");
+      }
+    }
+    if (r.email.text) {
+      const at = r.email.text.indexOf(q);
+      if (at >= 0) {
+        ranges.email.push(rangeOf(r.email, at, q.length));
+        better(RANK.EMAIL, "email");
       }
     }
     if (rank !== Infinity) out.push({ entry: r.entry, rank, field, ranges });

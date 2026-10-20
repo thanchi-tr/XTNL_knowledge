@@ -11,8 +11,11 @@
  * focused and highlighted for HIGHLIGHT_MS, then the parameter leaves the address so a reload does not do it again.
  * One that is not on the agenda is said in one line.
  *
- * From 900 px a side column holds "Customers to watch" (for now: the customers with an overdue task; Phase 2's
- * follow-up alerts take this place) and a quick customer search (the same matcher as the header).
+ * Follow up (Phase 2, crm.ts followUpsOf; while the tab's customer list is on and its follow-up alert is not Off): the
+ * customers quiet for longer than the tab's days with nothing ahead, or with an overdue task, each with "Schedule
+ * follow-up" (FollowUps.tsx), after Today. From 900 px a side column holds them as "Customers to watch" (with the alert
+ * Off, or its read failed: the customers with an overdue task, as before Phase 2) and a quick customer search (the
+ * same matcher as the header).
  */
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -34,7 +37,9 @@ import { Button } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
 import { ScheduledRow } from "./ScheduledRow";
 import { CustomerResult } from "./WorkSearch";
+import { FollowUpList, FollowUpSection, followUpEmptyLine } from "./FollowUps";
 import { useScheduledActions } from "./useScheduledActions";
+import type { FollowUpView } from "@/lib/crm";
 import { openScheduledSheet, useWorkContext } from "./work-store";
 
 /** How long a row a link asked for stays highlighted. */
@@ -42,7 +47,22 @@ export const HIGHLIGHT_MS = 6000;
 export const AGENDA_MISSING_LINE = "That task is not on this agenda: it was archived, done more than a week ago, or it belongs to another tab.";
 export const AGENDA_EMPTY_LINE = "Nothing scheduled. Plan your next call, visit or email, and it is reminded at its time.";
 
-export function AgendaView({ board, rows, focus, focusMissing, nowIso }: { board: { id: string; name: string; crmOn: boolean }; rows: ScheduledView[]; focus: string | null; focusMissing: boolean; nowIso: string }) {
+export function AgendaView({
+  board,
+  rows,
+  focus,
+  focusMissing,
+  nowIso,
+  followUps = null,
+}: {
+  board: { id: string; name: string; crmOn: boolean };
+  rows: ScheduledView[];
+  focus: string | null;
+  focusMissing: boolean;
+  nowIso: string;
+  /** The tab's follow-ups and its alert's days (crm-server loadFollowUps); null: off, or the read failed. */
+  followUps?: { days: number | null; rows: FollowUpView[] } | null;
+}) {
   const now = useMemo(() => new Date(nowIso), [nowIso]);
   const agenda = useMemo(() => agendaOf(rows, now), [rows, now]);
   const actions = useScheduledActions();
@@ -52,6 +72,10 @@ export function AgendaView({ board, rows, focus, focusMissing, nowIso }: { board
   const [missing, setMissing] = useState(focusMissing);
   const watch = useMemo(() => customersToWatchOf(agenda.overdue), [agenda.overdue]);
   const total = rows.length;
+  // Follow-ups are on while the list is on and the alert is not Off (and its read came back).
+  const followDays = board.crmOn && followUps && followUps.days !== null ? followUps.days : null;
+  const follow = followDays !== null && followUps ? followUps.rows : null;
+  const followSection = follow !== null && followDays !== null ? <FollowUpSection key="follow" boardId={board.id} rows={follow} days={followDays} /> : null;
 
   // The link's focus: open its section, highlight it, then drop the parameter (deferred, like the board's ?sheet=).
   useEffect(() => {
@@ -118,12 +142,15 @@ export function AgendaView({ board, rows, focus, focusMissing, nowIso }: { board
             </p>
           )}
           {total === 0 || (agenda.overdue.length + agenda.today.length + agenda.upcoming.length + agenda.later.length + agenda.done.length === 0) ? (
-            <section className="card wk-empty" aria-label="Nothing scheduled">
-              <p>{AGENDA_EMPTY_LINE}</p>
-              <Button variant="primary" icon="plus" onClick={() => openScheduledSheet()} aria-haspopup="dialog">
-                Schedule a task
-              </Button>
-            </section>
+            <>
+              <section className="card wk-empty" aria-label="Nothing scheduled">
+                <p>{AGENDA_EMPTY_LINE}</p>
+                <Button variant="primary" icon="plus" onClick={() => openScheduledSheet()} aria-haspopup="dialog">
+                  Schedule a task
+                </Button>
+              </section>
+              {followSection}
+            </>
           ) : (
             AGENDA_SECTIONS.map(({ id, title }) => {
               const items = agenda[id];
@@ -158,7 +185,7 @@ export function AgendaView({ board, rows, focus, focusMissing, nowIso }: { board
                   </section>
                 );
               }
-              return (
+              const card = (
                 <section key={id} className="card wk-sec" data-sec={id} aria-labelledby={hid}>
                   <h2 id={hid} className="wk-sec-h">
                     <span className="wk-sec-t">{title}</span>
@@ -167,6 +194,8 @@ export function AgendaView({ board, rows, focus, focusMissing, nowIso }: { board
                   {items.length === 0 ? <p className="wk-sec-note">Nothing left today.</p> : list(id, items)}
                 </section>
               );
+              // Follow up comes right after Today (the day's own work first).
+              return id === "today" && followSection ? [card, followSection] : card;
             })
           )}
         </div>
@@ -176,9 +205,15 @@ export function AgendaView({ board, rows, focus, focusMissing, nowIso }: { board
               <section className="card wk-side-card" aria-labelledby="wk-watch-h">
                 <h2 id="wk-watch-h" className="wk-sec-h">
                   <span className="wk-sec-t">Customers to watch</span>
-                  <span className="wk-count">{watch.length}</span>
+                  <span className="wk-count">{follow !== null ? follow.length : watch.length}</span>
                 </h2>
-                {watch.length === 0 ? (
+                {follow !== null && followDays !== null ? (
+                  follow.length === 0 ? (
+                    <p className="wk-sec-note">{followUpEmptyLine(followDays)}</p>
+                  ) : (
+                    <FollowUpList boardId={board.id} rows={follow} compact />
+                  )
+                ) : watch.length === 0 ? (
                   <p className="wk-sec-note">No customer has an overdue task.</p>
                 ) : (
                   <ul className="wk-watch">

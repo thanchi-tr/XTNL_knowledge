@@ -425,6 +425,10 @@ class MemDb implements ScheduledDb {
     const c = this.customersById.get(id);
     return c && c.userId === userId ? c : null;
   }
+  /** Task collections (Phase 2) are crm-check's: none here. */
+  async collection() {
+    return null;
+  }
   async task(userId: string, id: string) {
     const r = this.rows.find((x) => x.id === id && x.userId === userId);
     return r ? { ...this.withCustomer(r), board: this.boards.get(r.boardId)! } : null;
@@ -640,10 +644,12 @@ function sql() {
   check("the old tables stay: CallBack and CustomerTask are read, never written or dropped", !/(INSERT INTO|UPDATE|DELETE FROM)\s+"public"\."(CallBack|CustomerTask)"/.test(b) && /model CallBack \{/.test(read("prisma/schema.prisma")) && /model CustomerTask \{/.test(read("prisma/schema.prisma")));
 
   const schema = read("prisma/schema.prisma");
-  const model = /model ScheduledTask \{([\s\S]*?)\n\}/.exec(schema.replace(/\r\n/g, "\n"))?.[1] ?? "";
+  // Spaces collapsed: Phase 2's collection relation (migration 20261228000000_crm) widened the model's columns when
+  // `prisma format` realigned them; the fields themselves are as they were.
+  const model = (/model ScheduledTask \{([\s\S]*?)\n\}/.exec(schema.replace(/\r\n/g, "\n"))?.[1] ?? "").replace(/[ \t]+/g, " ");
   check(
     "schema: ScheduledTask's fields, timestamptz, the legacy ids unique, the three indexes",
-    ["dueAt                DateTime  @db.Timestamptz(3)", "remindSentAt         DateTime? @db.Timestamptz(3)", "doneAt               DateTime? @db.Timestamptz(3)", "archivedAt           DateTime? @db.Timestamptz(3)", "legacyCallBackId     String?   @unique", "legacyCustomerTaskId String?   @unique", "@@index([boardId, doneAt, dueAt])", "@@index([userId, doneAt, dueAt])", "@@index([customerId, dueAt])", "onDelete: SetNull", 'channel              String    @default("OTHER")'].every((c) => model.includes(c)),
+    ["dueAt DateTime @db.Timestamptz(3)", "remindSentAt DateTime? @db.Timestamptz(3)", "doneAt DateTime? @db.Timestamptz(3)", "archivedAt DateTime? @db.Timestamptz(3)", "legacyCallBackId String? @unique", "legacyCustomerTaskId String? @unique", "@@index([boardId, doneAt, dueAt])", "@@index([userId, doneAt, dueAt])", "@@index([customerId, dueAt])", "onDelete: SetNull", 'channel String @default("OTHER")'].every((c) => model.includes(c)),
     model.slice(0, 200)
   );
   check("schema: the CHECK and the partial index named where Prisma 6 cannot declare them", /Not expressible in Prisma 6: CHECK "ScheduledTask_channel_check"/.test(schema) && /partial INDEX\s*\n?\/\/\/ "ScheduledTask_remind_due_idx"|"ScheduledTask_remind_due_idx" \("dueAt"\) WHERE/.test(schema.replace(/\r\n/g, "\n")));
@@ -663,7 +669,8 @@ async function wiring() {
   check("Tasks: the tab's board moved to /tasks (TodayBoard work), no call backs", existsSync(join(ROOT, `${dir}/tasks/loading.tsx`)) && /<TodayBoard [^>]*work=\{\{ id: board\.id/.test(tasks) && !/callBacks|CALLBACK/.test(tasks) && /title="Tasks"/.test(tasks));
   check("the old call back code is gone", ["src/lib/callbacks.ts", "src/lib/callbacks-server.ts", "src/app/actions/callbacks.ts", "src/components/work/callbacks", "src/components/today/WorkBoardCard.tsx"].every((f) => !existsSync(join(ROOT, f))));
 
-  eq("nav: a tab's pages (Agenda · Customers · Orders · Tasks, the two lists only while on)", [workSubsOf({ id: "w1", crmOn: true, ordersOn: true }).map((s) => `${s.label} ${s.href}`), workSubsOf({ id: "w1" }).map((s) => s.label)], [["Agenda /today/work/w1", "Customers /today/work/w1/customers", "Orders /today/work/w1/orders", "Tasks /today/work/w1/tasks"], ["Agenda", "Tasks"]]);
+  // Phase 2 (2026-10-20): Deals joins right after Customers, while the customer list is on (deals live with it).
+  eq("nav: a tab's pages (Agenda · Customers · Deals · Orders · Tasks, the lists only while on)", [workSubsOf({ id: "w1", crmOn: true, ordersOn: true }).map((s) => `${s.label} ${s.href}`), workSubsOf({ id: "w1" }).map((s) => s.label)], [["Agenda /today/work/w1", "Customers /today/work/w1/customers", "Deals /today/work/w1/deals", "Orders /today/work/w1/orders", "Tasks /today/work/w1/tasks"], ["Agenda", "Tasks"]]);
   eq("nav: which page a path is on", ["/today/work/w1", "/today/work/w1/", "/today/work/w1/customers", "/today/work/w1/customers/c1", "/today/work/w1/orders", "/today/work/w1/tasks", "/today", "/today/work/w1/zz"].map(workSectionOf), ["agenda", "agenda", "customers", "customers", "orders", "tasks", null, null]);
   eq("nav: titles 'Work · Agenda', 'Work · Tasks' (the page's eyebrow is the tab's name)", [titleFor("/today/work/w1"), titleFor("/today/work/w1/tasks"), titleFor("/today/work/w1/customers"), titleFor("/today/work/w1/orders")], [{ eyebrow: "Work", title: "Agenda" }, { eyebrow: "Work", title: "Tasks" }, { eyebrow: "Work", title: "Customers" }, { eyebrow: "Work", title: "Orders" }]);
   check("nav: the Tasks strip links each work tab's Agenda, and keeps it current on every work page", subsOf("tasks", [{ id: "w1", name: "Acme" }]).some((s) => s.href === workBoardHref("w1") && s.label === "Acme") && ["/today/work/w1", "/today/work/w1/tasks", "/today/work/w1/customers/c1"].every((p) => activeSub(p) === workBoardHref("w1")) && workTasksHref("w1") === "/today/work/w1/tasks");
@@ -796,11 +803,23 @@ function fit() {
   const body = rowBodyWidth(L.PHONE);
   check(`row at 344: the body is ${body} px; Call · Text · Snooze need ${actsWidth(true)} (no wrap, no sideways scroll)`, body >= actsWidth(true) && body > 0, `${body} vs ${actsWidth(true)}`);
   check(`band at 344: the search keeps ${bandSearchWidth(L.PHONE)} px (≥ ${L.SEARCH_MIN}) beside New and the menu`, bandSearchWidth(L.PHONE) >= L.SEARCH_MIN);
-  const four = workSubsOf({ id: "w", crmOn: true, ordersOn: true }).map((s) => s.label);
+  // Phase 2 (2026-10-20): Deals is the fifth page Phase 1 planned for: the five overrun 312, so the strip scrolls inside
+  // itself (the page never does) and the header keeps the current page in the strip's view.
+  const four = ["Agenda", "Customers", "Orders", "Tasks"];
+  const five = workSubsOf({ id: "w", crmOn: true, ordersOn: true }).map((s) => s.label);
   check(
-    `344: the content is 312 px; the four pages need ${subnavWidth(four)} px (14 px, 10 px each side, 2 apart; counts from 600 only), so they fit; a fifth scrolls inside the strip, never the page`,
-    contentWidth(344) === 312 && subnavWidth(four) <= contentWidth(344) && /\.wk-subnav \{[^}]*overflow-x: auto;/.test(css) && /\.wk-sub \{[^}]*padding: 0 10px;[^}]*font: 600 14px/.test(css) && /\.wk-subnav \{ display: flex; gap: 2px;/.test(css) && /\.wk-sub-n \{ display: none;/.test(css) && /@container main \(min-width: 600px\) \{ \.wk-sub-n \{ display: inline; \} \}/.test(css),
-    String(subnavWidth(four))
+    `344: the content is 312 px; the four Phase 1 pages need ${subnavWidth(four)} px (14 px, 10 px each side, 2 apart; counts from 600 only), so they fit; with Deals the five need ${subnavWidth(five)}, so the strip scrolls inside itself, never the page`,
+    contentWidth(344) === 312 &&
+      subnavWidth(four) <= contentWidth(344) &&
+      five.length === 5 &&
+      subnavWidth(five) > contentWidth(344) &&
+      /\.wk-subnav \{[^}]*min-width: 0;[^}]*overflow-x: auto;/.test(css) &&
+      /\.wk-sub \{[^}]*padding: 0 10px;[^}]*font: 600 14px/.test(css) &&
+      /\.wk-subnav \{ display: flex; gap: 2px;/.test(css) &&
+      /\.wk-sub-n \{ display: none;/.test(css) &&
+      /@container main \(min-width: 600px\) \{ \.wk-sub-n \{ display: inline; \} \}/.test(css) &&
+      /querySelector<HTMLElement>\('\[aria-current="page"\]'\)/.test(code(read("src/components/work/WorkHeader.tsx"))),
+    `${subnavWidth(four)} / ${subnavWidth(five)}`
   );
   check("344: the banner is 320 px wide (12 px each side) and its three actions wrap if they must", /\.wrm-acts \{ display: flex; flex-wrap: wrap;/.test(read("src/components/work/reminders.css")));
   check("344: the result list and the menus never run off the screen (the band's full width; a menu aligned to its button's end, at most 100vw − 32)", /\.wk-results \{[^}]*left: 0; right: 0;/.test(css) && /\.wk-menu-list \{[^}]*right: 0;[^}]*max-width: calc\(100vw - 32px\);/.test(css));

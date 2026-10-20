@@ -25,6 +25,8 @@
  *   customersHref / customerHref    /today/work/<board>/customers[/<customer>[?task=<task>]] (an old customer task
  *                                   reminder's tap URL: ?task= resolves to its scheduled task)
  *   cleanInfoDetail / cleanRecordedAt / sortInfos / infoRecordedLabel / infoFirstLine   an info's rules
+ *   Phase 2 (2026-10-20)            a status, tags, an email, a company, an address; a Check log, task collections,
+ *                                   deals and follow-ups: src/lib/crm.ts and src/lib/deals.ts
  *
  * Work, never the game: nothing here (or in the cores) pays XP, writes the
  * ledger or touches the streak.
@@ -32,6 +34,7 @@
 import { LIFE_TZ, zonedToInstant } from "./life-day";
 import { WORK_BOARD_PATH, isBoardId } from "./work-boards";
 import type { TaskIcon } from "./task-style";
+import type { CustomerStatus } from "./crm";
 
 export const CUSTOMER_NUMBER_MAX = 24;
 export const CUSTOMER_NAME_MAX = 60;
@@ -410,6 +413,11 @@ export interface CustomerListItem {
   info: string | null;
   /** Their latest activity (ms; the search's tie-break, customer-search.ts). */
   activity: number;
+  /** Phase 2 (crm.ts): where they stand, their tags, and the search's secondary fields. */
+  status: CustomerStatus;
+  tags: string[];
+  email: string | null;
+  company: string | null;
 }
 
 export interface ArchivedCustomerItem {
@@ -426,6 +434,12 @@ export interface CustomerDetail {
   nickname: string | null;
   phone: string | null;
   archived: boolean;
+  /** Phase 2 (crm.ts). */
+  status: CustomerStatus;
+  tags: string[];
+  email: string | null;
+  company: string | null;
+  address: string | null;
 }
 
 export interface CustomerInfoView {

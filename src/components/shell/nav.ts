@@ -15,8 +15,9 @@
  *   subsOf(group, work?)     a group's sub-pages, with the work tabs after Board on Tasks
  *                            (work tabs, 2026-10-12: a compatible addition; SECTIONS stay as they were); each work
  *                            tab links its Agenda (/today/work/<id>, the Office workspace's home, 2026-10-20)
- *   workSubsOf(board) · workSectionOf(pathname)   the Office workspace's own pages (Agenda · Customers · Orders ·
- *                            Tasks; a compatible addition): the work frame's sub-navigation
+ *   workSubsOf(board) · workSectionOf(pathname)   the Office workspace's own pages (Agenda · Customers · Deals ·
+ *                            Orders · Tasks; a compatible addition; Deals since Phase 2, 2026-10-20): the work
+ *                            frame's sub-navigation
  *
  * Every URL stays where it was: the sections only regroup them. Roadmap
  * (/you/roadmap and its intake, /you/roadmap/new) is an Ideas sub-page,
@@ -29,6 +30,7 @@ import type { CaptureMode } from "@/components/capture/events";
 import { WORK_BOARD_PATH, workBoardHref, workBoardIdOf, workTasksHref } from "../../lib/work-boards";
 import { customersPathOf } from "../../lib/customers";
 import { ordersPathOf } from "../../lib/work-orders";
+import { dealsPathOf } from "../../lib/deals";
 
 export type SectionId = "ideas" | "tasks" | "body";
 /** A section, or the profile menu ("you"). */
@@ -180,23 +182,24 @@ export function subsOf(id: NavGroupId, work?: readonly WorkTabLink[] | null): Su
   return [...subs.slice(0, at), ...tabs, ...subs.slice(at)];
 }
 
-/** The Office workspace's pages (a work tab, 2026-10-20). Phase 2's pages (follow-ups, deals) join this list. */
-export type WorkSectionId = "agenda" | "customers" | "orders" | "tasks";
+/** The Office workspace's pages (a work tab, 2026-10-20; Deals joined in Phase 2). */
+export type WorkSectionId = "agenda" | "customers" | "deals" | "orders" | "tasks";
 
 export interface WorkSubPage extends SubPage {
   id: WorkSectionId;
 }
 
 /**
- * A work tab's own pages as its frame's sub-navigation draws them: Agenda (the tab's index), Customers (while its
- * customer list is on), Orders (while its order list is on), Tasks (its board). Every one stays under
- * /today/work/<id>, so the Tasks strip keeps the tab current on all of them (activeSub).
+ * A work tab's own pages as its frame's sub-navigation draws them: Agenda (the tab's index), Customers and Deals (while
+ * its customer list is on: deals live with it), Orders (while its order list is on), Tasks (its board). Every one stays
+ * under /today/work/<id>, so the Tasks strip keeps the tab current on all of them (activeSub).
  */
 export function workSubsOf(board: { id: string; crmOn?: boolean; ordersOn?: boolean }): WorkSubPage[] {
   const base = workBoardHref(board.id);
   return [
     { id: "agenda", href: base, label: "Agenda" },
     ...(board.crmOn ? [{ id: "customers" as const, href: `${base}/customers`, label: "Customers" }] : []),
+    ...(board.crmOn ? [{ id: "deals" as const, href: `${base}/deals`, label: "Deals" }] : []),
     ...(board.ordersOn ? [{ id: "orders" as const, href: `${base}/orders`, label: "Orders" }] : []),
     { id: "tasks", href: workTasksHref(board.id), label: "Tasks" },
   ];
@@ -209,7 +212,7 @@ export function workSectionOf(pathname: string | null | undefined): WorkSectionI
   const rest = pathname.slice(`${WORK_BOARD_PATH}/${id}`.length).replace(/[?#].*$/, "");
   if (rest === "" || rest === "/") return "agenda";
   const seg = rest.split("/")[1];
-  return seg === "customers" || seg === "orders" || seg === "tasks" ? seg : null;
+  return seg === "customers" || seg === "deals" || seg === "orders" || seg === "tasks" ? seg : null;
 }
 
 /** The href the strip's '+' (Add a work tab) sits after: the last work tab, else Board. */
@@ -293,6 +296,8 @@ export function titleFor(pathname: string | null | undefined, dayKey?: string): 
   if (crm) return { eyebrow: "Work", title: crm.customerId ? "Customer" : "Customers" };
   // A work tab's order list (work-orders.ts): the tab's name (the eyebrow) is data (the page's <ShellTitle/>); until then, 'Work'.
   if (ordersPathOf(path)) return { eyebrow: "Work", title: "Orders" };
+  // A work tab's deals pipeline (deals.ts, Phase 2): 'Work · Deals' until the page names the tab.
+  if (dealsPathOf(path)) return { eyebrow: "Work", title: "Deals" };
   // The Office workspace (2026-10-20): 'Work · Agenda' (the tab's home) and 'Work · Tasks' (its board); the page's
   // <ShellTitle/> puts the tab's name in the eyebrow ('Acme · Agenda').
   const work = workSectionOf(path);

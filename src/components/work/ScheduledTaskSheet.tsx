@@ -10,6 +10,8 @@
  *   How         Call · Visit · Email · Message · Other (the app's own glyphs, each with its word)
  *   Customer    only on a tab whose customer list is on (or a task that already has one): the same live matcher as
  *               the header (customer-search.ts) over the frame's index, "Jane Nguyen · C-1042"
+ *   Collection  once a customer is chosen (Phase 2, crm.ts): their open task collections (the frame's index), or
+ *               "New collection…" made right here (a name, optionally one of their orders); another customer clears it
  *   Detail      optional (≤ 500)
  *   Reminder    on by default: the bell, the in-app banner and a push to each device turned on in Settings ›
  *               Notifications. Moving the time arms it again (remindSentAt cleared on the server)
@@ -21,6 +23,8 @@
 import Link from "next/link";
 import { useId, useMemo, useState, useTransition } from "react";
 import { archiveScheduledTask, createScheduledTask, doneScheduledTask, editScheduledTask, reopenScheduledTask, restoreScheduledTask } from "@/app/actions/scheduled-tasks";
+import { createTaskCollection, customerOrderOptions } from "@/app/actions/crm";
+import { COLLECTION_NAME_MAX, cleanCollectionInput, type CollectionOrderRef } from "@/lib/crm";
 import {
   CHANNELS,
   CHANNEL_WORDS,
@@ -63,9 +67,13 @@ export function ScheduledSheetHost({ board, index }: { board: WorkFrameBoard; in
   return <ScheduledTaskSheet key={req.key} req={req} board={board} index={index} />;
 }
 
+/** The Collection picker's "New collection…" choice. */
+const NEW_COLLECTION = "__new";
+
 /** The customer a task starts with, as the picker shows it. */
 function customerOf(req: SheetRequest, index: WorkIndex | null): { id: string; number: string; name: string } | null {
   if (req.task?.customer) return req.task.customer;
+  if (req.customer) return req.customer;
   if (!req.customerId) return null;
   const c = index?.customers.find((x) => x.id === req.customerId);
   return c ? { id: c.id, number: c.number, name: c.name } : null;
@@ -74,12 +82,22 @@ function customerOf(req: SheetRequest, index: WorkIndex | null): { id: string; n
 function ScheduledTaskSheet({ req, board, index }: { req: SheetRequest; board: WorkFrameBoard; index: WorkIndex | null }) {
   const ids = useId();
   const edit = req.task;
-  const [title, setTitle] = useState(edit?.title ?? "");
+  const [title, setTitle] = useState(edit?.title ?? req.title ?? "");
   const [day, setDay] = useState(req.when.slice(0, 10));
   const [time, setTime] = useState(edit?.allDay ? "09:00" : req.when.slice(11, 16));
   const [allDay, setAllDay] = useState(edit?.allDay ?? false);
-  const [channel, setChannel] = useState<Channel>(edit?.channel ?? "CALL");
-  const [customer, setCustomer] = useState(() => customerOf(req, index));
+  const [channel, setChannel] = useState<Channel>(edit?.channel ?? req.channel ?? "CALL");
+  const [customer, setCustomerState] = useState(() => customerOf(req, index));
+  // The task's collection (one of its customer's), and the ones made in this sheet (not in the index until it reloads).
+  const startCollection = edit?.collection ?? req.collection ?? null;
+  const startCustomerId = customerOf(req, index)?.id ?? null;
+  const [collectionId, setCollectionId] = useState<string | null>(startCollection?.id ?? null);
+  const [made, setMade] = useState<{ id: string; customerId: string; name: string }[]>([]);
+  const [newOpen, setNewOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newOrder, setNewOrder] = useState("");
+  const [orders, setOrders] = useState<CollectionOrderRef[] | null>(null);
+  const [newError, setNewError] = useState<string | null>(null);
   const [picking, setPicking] = useState("");
   const [detail, setDetail] = useState(edit?.detail ?? "");
   const [remind, setRemind] = useState(edit?.remind ?? true);
@@ -95,8 +113,66 @@ function ScheduledTaskSheet({ req, board, index }: { req: SheetRequest; board: W
   const picks = prepared && picking.trim() ? matchCustomers(prepared, picking, { limit: PICKER_CAP }) : null;
   const done = Boolean(edit?.doneAt);
 
+  /** Another customer (or none) takes the task out of its collection. */
+  function setCustomer(next: { id: string; number: string; name: string } | null) {
+    if (next?.id !== customer?.id) {
+      setCollectionId(null);
+      setNewOpen(false);
+      setOrders(null);
+    }
+    setCustomerState(next);
+  }
+
+  // The chosen customer's open collections: the frame's index, the ones made here, and the task's own (closed, say).
+  const indexed = customer ? (index?.collections ?? []).filter((c) => c.customerId === customer.id) : [];
+  const collections = customer
+    ? [
+        ...indexed,
+        ...made.filter((c) => c.customerId === customer.id && !indexed.some((x) => x.id === c.id)),
+        ...(startCollection && customer.id === startCustomerId && !indexed.some((x) => x.id === startCollection.id) ? [{ id: startCollection.id, customerId: customer.id, name: startCollection.name }] : []),
+      ]
+    : [];
+
+  function pickCollection(value: string) {
+    setNewError(null);
+    if (value !== NEW_COLLECTION) {
+      setNewOpen(false);
+      setCollectionId(value || null);
+      return;
+    }
+    setNewOpen(true);
+    setNewName("");
+    setNewOrder("");
+    if (board.ordersOn && customer && orders === null) {
+      const forId = customer.id;
+      void call(() => customerOrderOptions(forId)).then((res) => setOrders(res.ok ? res.value : []));
+    }
+  }
+
+  function addCollection() {
+    if (!customer) return;
+    const value = { name: newName, orderId: newOrder || null };
+    const local = cleanCollectionInput(value);
+    if (!local.ok) {
+      setNewError(local.error);
+      return;
+    }
+    const forCustomer = customer.id;
+    setNewError(null);
+    start(async () => {
+      const res = await call(() => createTaskCollection(forCustomer, value));
+      if (!res.ok) {
+        setNewError(res.error);
+        return;
+      }
+      setMade((m) => [...m, { id: res.value.id, customerId: forCustomer, name: res.value.name }]);
+      setCollectionId(res.value.id);
+      setNewOpen(false);
+    });
+  }
+
   function input(): ScheduledTaskInput {
-    return { title, detail, when: allDay ? day : `${day}T${time}`, allDay, channel, remind, customerId: customer?.id ?? null };
+    return { title, detail, when: allDay ? day : `${day}T${time}`, allDay, channel, remind, customerId: customer?.id ?? null, collectionId: customer ? collectionId : null };
   }
 
   function save(e: React.FormEvent) {
@@ -108,8 +184,29 @@ function ScheduledTaskSheet({ req, board, index }: { req: SheetRequest; board: W
       setError(local.error);
       return;
     }
+    // A collection named but not yet added is made first, and the task goes into it (Schedule never drops the name).
+    const pendingCollection = newOpen && customer && newName.trim() ? { name: newName, orderId: newOrder || null } : null;
+    if (pendingCollection) {
+      const checked = cleanCollectionInput(pendingCollection);
+      if (!checked.ok) {
+        setNewError(checked.error);
+        return;
+      }
+    }
     setError(null);
     start(async () => {
+      if (pendingCollection && customer) {
+        const forCustomer = customer.id;
+        const made = await call(() => createTaskCollection(forCustomer, pendingCollection));
+        if (!made.ok) {
+          setNewError(made.error);
+          return;
+        }
+        setMade((m) => [...m, { id: made.value.id, customerId: forCustomer, name: made.value.name }]);
+        setCollectionId(made.value.id);
+        setNewOpen(false);
+        value.collectionId = made.value.id;
+      }
       const res = await call(() => (edit ? editScheduledTask(edit.id, value, { refresh: true }) : createScheduledTask(board.id, value, { refresh: true })));
       if (!res.ok) {
         setError(res.error);
@@ -351,6 +448,87 @@ function ScheduledTaskSheet({ req, board, index }: { req: SheetRequest; board: W
               </>
             ) : (
               <p className="st-hint">The customer list couldn&apos;t load. Save without one, or try again.</p>
+            )}
+          </div>
+        )}
+
+        {showCustomer && customer && (
+          <div className="st-field">
+            <label className="st-label" htmlFor={`${ids}-coll`}>
+              Collection <span className="t-meta">optional</span>
+            </label>
+            <select id={`${ids}-coll`} className="st-input st-select" value={newOpen ? NEW_COLLECTION : (collectionId ?? "")} onChange={(e) => pickCollection(e.target.value)} disabled={pending}>
+              <option value="">No collection</option>
+              {collections.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+              <option value={NEW_COLLECTION}>New collection…</option>
+            </select>
+            {!newOpen && <p className="st-hint">Groups {customer.name}&apos;s tasks for one job: a new service, an order.</p>}
+            {newOpen && (
+              <fieldset className="st-newcoll">
+                <legend className="st-label">New collection for {customer.name}</legend>
+                <label className="st-label" htmlFor={`${ids}-coll-name`}>
+                  Name <span className="t-meta">{count(newName.trim())}/{COLLECTION_NAME_MAX}</span>
+                </label>
+                <input
+                  id={`${ids}-coll-name`}
+                  className="st-input"
+                  value={newName}
+                  onChange={(e) => {
+                    setNewName(e.target.value);
+                    setNewError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    // Enter adds the collection, never submits the sheet.
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addCollection();
+                    }
+                  }}
+                  maxLength={COLLECTION_NAME_MAX + 8}
+                  autoComplete="off"
+                  placeholder="New NBN service"
+                />
+                {board.ordersOn && (
+                  <>
+                    <label className="st-label" htmlFor={`${ids}-coll-order`}>
+                      For an order <span className="t-meta">optional</span>
+                    </label>
+                    <select id={`${ids}-coll-order`} className="st-input st-select" value={newOrder} onChange={(e) => setNewOrder(e.target.value)} disabled={orders === null}>
+                      <option value="">{orders === null ? "Loading their orders…" : orders.length === 0 ? "No orders for them" : "No order"}</option>
+                      {(orders ?? []).map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.item}
+                          {o.ordered ? " (ordered)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+                {newError && (
+                  <p className="st-err" role="alert">
+                    {newError}
+                  </p>
+                )}
+                <div className="st-foot">
+                  <Button variant="secondary" onClick={addCollection} disabled={pending}>
+                    Add collection
+                  </Button>
+                  <Button
+                    variant="quiet"
+                    onClick={() => {
+                      setNewOpen(false);
+                      setNewError(null);
+                    }}
+                    disabled={pending}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </fieldset>
             )}
           </div>
         )}

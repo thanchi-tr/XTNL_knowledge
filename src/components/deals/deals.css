@@ -1,0 +1,87 @@
+@layer theme, base, components, art, effects, utilities;
+/* =====================================================================
+   DEALS (2026-10-20, Phase 2; components/deals/*, the page under
+   /today/work/<id>/deals, a customer's Deals tab): a work tab's pipeline.
+   The head (the open value, Add deal, the stage switch); four columns,
+   New · Quoted · Won · Lost, side by side from 900 px and one at a time
+   below it (the switch: four segments, the count under the word, so 344
+   holds them: work-layout.ts dealSwitchFits); a deal's card (the title and
+   value, the customer chip, its day, "Move to…", "Create order"). The
+   fields, the notes and the chips are customers.css's and work.css's.
+   Phone first; every control a 44 px target; tokens only, so Night and
+   Vellum both hold; motion is colour only. Namespaced dl-*.
+   ===================================================================== */
+@layer components {
+  .dl-page { display: flex; flex-direction: column; gap: 12px; }
+
+  /* ---------- the head ---------- */
+  .dl-head { display: flex; flex-direction: column; gap: 12px; padding: 14px; }
+  .dl-head-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  .dl-sum {
+    flex: 1 1 160px; min-width: 0; margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px;
+    font: 400 14px/20px var(--font-ui); color: var(--ink-1); font-variant-numeric: tabular-nums;
+  }
+  .dl-sum b { font: 600 18px/24px var(--font-ui); color: var(--ink-0); }
+  .dl-sum-won { color: var(--ink-1); }
+  /* The phone's stage switch: four equal segments, the count under the word. Gone from 900 (the columns stand side by side). */
+  .dl-switch {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; min-width: 0;
+    margin: 0; padding: 2px; border: 1px solid var(--line-ctl); border-radius: 14px;
+  }
+  .dl-seg {
+    position: relative; min-width: 0; min-height: 44px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 2px 4px; border-radius: 12px; color: var(--ink-1); font: 600 13px/16px var(--font-ui); cursor: pointer; white-space: nowrap;
+    transition: background-color var(--t-quick), color var(--t-quick);
+  }
+  .dl-seg:hover { background: var(--raised); color: var(--ink-0); }
+  .dl-seg input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+  .dl-seg:has(input:checked) { background: var(--ink-0); color: var(--page); }
+  .dl-seg:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .dl-seg .ord-n { font: 400 12px/14px var(--font-ui); }
+
+  /* ---------- the columns ---------- */
+  .dl-board { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+  .dl-col { display: none; padding: 2px 0 6px; overflow: clip; min-width: 0; }
+  .dl-col[data-active] { display: block; }
+  @container main (min-width: 900px) {
+    .dl-switch { display: none; }
+    .dl-board { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .dl-col { display: block; }
+  }
+  .dl-col-h {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin: 0; padding: 10px 14px 6px;
+    font: 700 12px/16px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-1);
+  }
+  .dl-col[data-stage="WON"] .dl-col-h .wk-sec-t { color: var(--ink-0); }
+  .dl-col[data-stage="LOST"] .dl-col-h { color: var(--ink-2); }
+  .dl-col-total { margin-left: auto; font: 400 12px/16px var(--font-ui); letter-spacing: 0; text-transform: none; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+  /* ---------- a deal ---------- */
+  .dl-list { list-style: none; margin: 0; padding: 0 6px; display: flex; flex-direction: column; gap: 6px; }
+  .dl-list-flat { padding-bottom: 4px; }
+  .dl-card { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 4px 6px 6px; border-radius: 12px; border: 1px solid var(--line-1); background: var(--card); }
+  .dl-card[data-stage="LOST"] .dl-title { color: var(--ink-1); }
+  .dl-open {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-height: 44px; padding: 8px 6px; margin: 0 -2px;
+    border: 0; border-radius: var(--r-ctl); background: transparent; color: var(--ink-0); text-align: left; font: inherit; cursor: pointer;
+    transition: background-color var(--t-quick);
+  }
+  .dl-open:hover { background: var(--raised); }
+  .dl-open:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .dl-title { flex: 1 1 auto; min-width: 0; font: 600 14px/20px var(--font-ui); overflow-wrap: anywhere; }
+  .dl-value { flex: none; font: 600 14px/20px var(--font-ui); font-variant-numeric: tabular-nums; }
+  .dl-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0; padding: 0 4px; min-width: 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); }
+  .dl-stage { font-weight: 600; color: var(--ink-1); }
+  .dl-when { font-variant-numeric: tabular-nums; }
+  .dl-when[data-overdue] { color: var(--owed); font-weight: 600; }
+  .dl-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 2px; }
+  .dl-move, .dl-make { padding: 0 10px; }
+  .dl-move > svg.i { transform: rotate(90deg); }
+  .dl-order { max-width: 100%; }
+
+  /* ---------- the sheet's words ---------- */
+  .dl-won { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px; border: 1px solid var(--line-2); border-radius: var(--r-card); background: var(--sunken); }
+  .dl-money-in { position: relative; display: flex; align-items: center; }
+  .dl-money-in > span { position: absolute; left: 12px; font: 600 16px/1 var(--font-ui); color: var(--ink-2); pointer-events: none; }
+  .dl-money-in .st-input { padding-left: 28px; font-variant-numeric: tabular-nums; }
+}

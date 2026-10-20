@@ -3,7 +3,9 @@
  * the work tab is the user's (else WORK_BOARD_GONE) and open (WORK_BOARD_ARCHIVED); the task is the user's and on that
  * tab (SCHEDULED_GONE) and not archived (SCHEDULED_ARCHIVED); a customer is the user's, on the SAME tab
  * (SCHEDULED_CUSTOMER_GONE), kept (SCHEDULED_CUSTOMER_ARCHIVED), and newly linked only where the tab keeps its customer
- * list (SCHEDULED_CRM_OFF); then the fields. One read gates, then one write (Done with "Log to history" writes the task
+ * list (SCHEDULED_CRM_OFF); a collection (Phase 2, crm.ts) is the user's, on the SAME tab (SCHEDULED_COLLECTION_GONE),
+ * the task's own customer's (SCHEDULED_COLLECTION_NO_CUSTOMER, SCHEDULED_COLLECTION_OTHER) and, newly linked, neither
+ * archived nor closed (SCHEDULED_COLLECTION_ARCHIVED, SCHEDULED_COLLECTION_CLOSED); then the fields. One read gates, then one write (Done with "Log to history" writes the task
  * and the log entry in ONE transaction). Every write clears the 'life' cache (the bell) and the 'work' cache (the
  * workspace's search index).
  *
@@ -19,7 +21,9 @@
  *   resolveTaskParam(userId, raw)                ?task=<id> by its id, else an old customer task's (legacy) id
  *   loadScheduledBellRows(userId, now)           the bell's due tasks (notifications.ts)
  *   loadBannerTasks(userId, now)                 the in-app reminder's tasks (/api/scheduled/due)
- *   loadWorkIndex(userId, boardId)               the workspace's search index (customers, tasks), cached ('work')
+ *   loadWorkIndex(userId, boardId)               the workspace's search index (customers, tasks; since Phase 2 the
+ *                                                customers' company, email, status and tags, and their open task
+ *                                                collections), cached ('work')
  *   searchWorkCore(userId, boardId, q)           the same match on the server: only when the browser has no index
  *   handleDueRequest(deps?)                      /api/scheduled/due's GET (the route file may export only its methods)
  *
@@ -38,6 +42,11 @@ import {
   BANNER_BEHIND_MS,
   DONE_DAYS,
   SCHEDULED_ARCHIVED,
+  SCHEDULED_COLLECTION_ARCHIVED,
+  SCHEDULED_COLLECTION_CLOSED,
+  SCHEDULED_COLLECTION_GONE,
+  SCHEDULED_COLLECTION_NO_CUSTOMER,
+  SCHEDULED_COLLECTION_OTHER,
   SCHEDULED_CRM_OFF,
   SCHEDULED_CUSTOMER_ARCHIVED,
   SCHEDULED_CUSTOMER_GONE,
@@ -96,9 +105,26 @@ export interface ScheduledRow {
   remindSentAt: Date | null;
   doneAt: Date | null;
   archivedAt: Date | null;
+  /** Its task collection (Phase 2; crm.ts), or null. Absent in the checks' stores: none. */
+  collectionId?: string | null;
 }
 
-export type ScheduledWithCustomer = ScheduledRow & { customer: ScheduledCustomerRow | null };
+/** A task collection as the gate reads it (crm.ts; TaskCollection). */
+export interface ScheduledCollectionRow {
+  id: string;
+  userId: string;
+  boardId: string;
+  customerId: string;
+  name: string;
+  closedAt: Date | null;
+  archivedAt: Date | null;
+}
+
+export type ScheduledWithCustomer = ScheduledRow & {
+  customer: ScheduledCustomerRow | null;
+  /** The collection's name for the row's chip (an archived one draws none). Absent in the checks' store: none. */
+  collection?: { id: string; name: string; archivedAt?: Date | null } | null;
+};
 export type ScheduledWrite = Partial<Omit<ScheduledRow, "id" | "userId" | "boardId">>;
 
 /** Where a patch applies: open (not archived), archived, done, not done. */
@@ -121,6 +147,8 @@ export interface DoneLog {
 export interface ScheduledDb {
   board(userId: string, boardId: string): Promise<ScheduledBoardRow | null>;
   customer(userId: string, id: string): Promise<ScheduledCustomerRow | null>;
+  /** One task collection of the user's (open, closed or archived). */
+  collection(userId: string, id: string): Promise<ScheduledCollectionRow | null>;
   /** One task of the user's (open, done or archived), with its customer and its tab. */
   task(userId: string, id: string): Promise<(ScheduledWithCustomer & { board: ScheduledBoardRow }) | null>;
   /** A task by the CallBack or CustomerTask it was backfilled from (an old link), the user's. */
@@ -154,8 +182,11 @@ const TASK_SELECT = {
   remindSentAt: true,
   doneAt: true,
   archivedAt: true,
+  collectionId: true,
   customer: { select: CUSTOMER_SELECT },
+  collection: { select: { id: true, name: true, archivedAt: true } },
 } as const;
+const COLLECTION_SELECT = { id: true, userId: true, boardId: true, customerId: true, name: true, closedAt: true, archivedAt: true } as const;
 /** A tab's open tasks read at most (the agenda's Later counts the rest past it). */
 const AGENDA_MAX = 600;
 const CUSTOMER_TASKS_MAX = 200;
@@ -165,7 +196,9 @@ const KEPT_CUSTOMER: Prisma.ScheduledTaskWhereInput = { OR: [{ customerId: null 
 export const prismaScheduledDb: ScheduledDb = {
   board: (userId, boardId) => prisma.workBoard.findFirst({ where: { id: boardId, userId }, select: BOARD_SELECT }),
   customer: (userId, id) => prisma.customer.findFirst({ where: { id, userId }, select: CUSTOMER_SELECT }),
-  task: (userId, id) => prisma.scheduledTask.findFirst({ where: { id, userId }, select: { ...TASK_SELECT, board: { select: BOARD_SELECT } } }),
+  collection: (userId, id) => prisma.taskCollection.findFirst({ where: { id, userId }, select: COLLECTION_SELECT }),
+  // A task's customer, collection and tab in one round trip (relationJoins: a LATERAL JOIN, not a query per relation).
+  task: (userId, id) => prisma.scheduledTask.findFirst({ relationLoadStrategy: "join", where: { id, userId }, select: { ...TASK_SELECT, board: { select: BOARD_SELECT } } }),
   byLegacy: (userId, kind, legacyId) =>
     prisma.scheduledTask.findFirst({
       where: { userId, ...(kind === "callback" ? { legacyCallBackId: legacyId } : { legacyCustomerTaskId: legacyId }) },
@@ -199,6 +232,7 @@ export const prismaScheduledDb: ScheduledDb = {
     (await prisma.customerInteraction.updateMany({ where: { id: interactionId, userId, archivedAt: null }, data: { archivedAt: at } })).count,
   agenda: (userId, boardId, doneSince) =>
     prisma.scheduledTask.findMany({
+      relationLoadStrategy: "join",
       where: { userId, boardId, archivedAt: null, AND: [KEPT_CUSTOMER, { OR: [{ doneAt: null }, { doneAt: { gte: doneSince } }] }] },
       select: TASK_SELECT,
       orderBy: [{ doneAt: { sort: "desc", nulls: "first" } }, { dueAt: "asc" }, { id: "asc" }],
@@ -206,6 +240,7 @@ export const prismaScheduledDb: ScheduledDb = {
     }),
   forCustomer: (userId, customerId) =>
     prisma.scheduledTask.findMany({
+      relationLoadStrategy: "join",
       where: { userId, customerId, archivedAt: null },
       select: TASK_SELECT,
       orderBy: [{ doneAt: { sort: "desc", nulls: "first" } }, { dueAt: "asc" }],
@@ -228,6 +263,7 @@ export function scheduledViewOf(r: ScheduledWithCustomer): ScheduledView {
     remindSentAt: r.remindSentAt ? r.remindSentAt.toISOString() : null,
     doneAt: r.doneAt ? r.doneAt.toISOString() : null,
     customer: r.customer ? { id: r.customer.id, number: r.customer.number, name: r.customer.name, phone: r.customer.phone } : null,
+    collection: r.collection && !r.collection.archivedAt ? { id: r.collection.id, name: r.collection.name } : null,
   };
 }
 
@@ -269,6 +305,22 @@ async function customerGate(db: ScheduledDb, userId: string, board: ScheduledBoa
   return ok(c.id);
 }
 
+/**
+ * The collection a write links (Phase 2): none; the one already linked (kept, even closed or archived since); or a new
+ * one, which must be the user's, on THIS tab, the task's own customer's, and neither archived nor closed.
+ */
+async function collectionGate(db: ScheduledDb, userId: string, board: ScheduledBoardRow, collectionId: string | null, customerId: string | null, prevId: string | null): Promise<ScheduledResult<string | null>> {
+  if (!collectionId) return ok(null);
+  if (!customerId) return fail(SCHEDULED_COLLECTION_NO_CUSTOMER);
+  const c = await db.collection(userId, collectionId);
+  if (!c || c.userId !== userId || c.boardId !== board.id) return fail(SCHEDULED_COLLECTION_GONE);
+  if (c.customerId !== customerId) return fail(SCHEDULED_COLLECTION_OTHER);
+  if (c.id === prevId) return ok(c.id);
+  if (c.archivedAt) return fail(SCHEDULED_COLLECTION_ARCHIVED);
+  if (c.closedAt) return fail(SCHEDULED_COLLECTION_CLOSED);
+  return ok(c.id);
+}
+
 function changed() {
   // The bell (notifications, cached under 'life') and the workspace's search index ('work').
   invalidate("life", "work");
@@ -290,12 +342,17 @@ export async function createScheduledCore(userId: string, boardId: string, raw: 
   const v = input.value;
   const customer = await customerGate(db, userId, board.value, v.customerId, null);
   if (!customer.ok) return fail(customer.error);
-  const row = await db.insert({ userId, boardId, customerId: customer.value, dueAt: v.dueAt, allDay: v.allDay, title: v.title, detail: v.detail, channel: v.channel, remind: v.remind });
+  const collection = await collectionGate(db, userId, board.value, v.collectionId ?? null, customer.value, null);
+  if (!collection.ok) return fail(collection.error);
+  const row = await db.insert({ userId, boardId, customerId: customer.value, dueAt: v.dueAt, allDay: v.allDay, title: v.title, detail: v.detail, channel: v.channel, remind: v.remind, collectionId: collection.value });
   changed();
   return viewById(db, userId, row.id);
 }
 
-/** Edits a task: every field. A moved dueAt clears remindSentAt (it is armed again for the new time). */
+/**
+ * Edits a task: every field. A moved dueAt clears remindSentAt (it is armed again for the new time). A collection left
+ * out stays while the customer does (another customer, or none, takes the task out of it).
+ */
 export async function editScheduledCore(userId: string, id: string, raw: unknown, db: ScheduledDb = prismaScheduledDb): Promise<ScheduledResult<ScheduledView>> {
   const prev = await openTask(db, userId, id);
   if (!prev.ok) return fail(prev.error);
@@ -304,9 +361,14 @@ export async function editScheduledCore(userId: string, id: string, raw: unknown
   const v = input.value;
   const customer = await customerGate(db, userId, prev.value.board, v.customerId, prev.value.customerId);
   if (!customer.ok) return fail(customer.error);
+  const had = prev.value.collectionId ?? null;
+  const wanted = v.collectionId !== undefined ? v.collectionId : customer.value === prev.value.customerId ? had : null;
+  const collection = await collectionGate(db, userId, prev.value.board, wanted, customer.value, had);
+  if (!collection.ok) return fail(collection.error);
   const dueAt = keptDueAt(prev.value.dueAt, v.dueAt);
   const n = await db.patch(userId, id, { open: true }, {
     customerId: customer.value,
+    collectionId: collection.value,
     dueAt,
     allDay: v.allDay,
     title: v.title,
@@ -531,16 +593,19 @@ export async function loadBannerTasks(userId: string, now: Date): Promise<Banner
 
 const INDEX_CUSTOMERS_MAX = 5000;
 const INDEX_TASKS_MAX = 500;
+const INDEX_COLLECTIONS_MAX = 2000;
+
+type IndexCustomerRead = { id: string; number: string; name: string; nickname: string | null; phone: string | null; updatedAt: Date; company: string | null; email: string | null; status: string; tags: string[] };
 
 async function readWorkIndex(userId: string, boardId: string): Promise<WorkIndex | null> {
   const board = await prisma.workBoard.findFirst({ where: { id: boardId, userId }, select: { id: true, crmOn: true, archivedAt: true } });
   if (!board || board.archivedAt) return null;
   const doneSince = dayStartOf(addDays(todayKey(), -DONE_DAYS));
-  const [customers, latest, tasks] = await Promise.all([
+  const [customers, latest, tasks, collections] = await Promise.all([
     board.crmOn
       ? prisma.customer.findMany({
           where: { userId, boardId, archivedAt: null },
-          select: { id: true, number: true, name: true, nickname: true, phone: true, updatedAt: true },
+          select: { id: true, number: true, name: true, nickname: true, phone: true, updatedAt: true, company: true, email: true, status: true, tags: true },
           take: INDEX_CUSTOMERS_MAX,
         })
       : Promise.resolve([]),
@@ -553,18 +618,32 @@ async function readWorkIndex(userId: string, boardId: string): Promise<WorkIndex
       orderBy: [{ dueAt: "asc" }],
       take: INDEX_TASKS_MAX,
     }),
+    // The kept customers' open collections (the sheet's Collection picker), newest first.
+    board.crmOn
+      ? prisma.taskCollection.findMany({
+          where: { userId, boardId, archivedAt: null, closedAt: null, customer: { is: { archivedAt: null } } },
+          select: { id: true, customerId: true, name: true },
+          orderBy: { createdAt: "desc" },
+          take: INDEX_COLLECTIONS_MAX,
+        })
+      : Promise.resolve([]),
   ]);
   const lastAt = new Map<string, number>(latest.map((l: { customerId: string; _max: { at: Date | null } }) => [l.customerId, l._max.at ? l._max.at.getTime() : 0]));
   return {
-    customers: customers.map((c: { id: string; number: string; name: string; nickname: string | null; phone: string | null; updatedAt: Date }) => ({
+    customers: (customers as IndexCustomerRead[]).map((c) => ({
       id: c.id,
       number: c.number,
       name: c.name,
       nickname: c.nickname,
       phone: c.phone ? c.phone.replace(/\D/g, "") : null,
       activity: Math.max(c.updatedAt.getTime(), lastAt.get(c.id) ?? 0),
+      company: c.company,
+      email: c.email,
+      status: c.status,
+      tags: c.tags,
     })),
     tasks: tasks.map((t: { id: string; title: string; dueAt: Date; allDay: boolean; doneAt: Date | null }) => ({ id: t.id, title: t.title, dueAt: t.dueAt.toISOString(), allDay: t.allDay, done: t.doneAt != null })),
+    collections: (collections as { id: string; customerId: string; name: string }[]).map((c) => ({ id: c.id, customerId: c.customerId, name: c.name })),
   };
 }
 

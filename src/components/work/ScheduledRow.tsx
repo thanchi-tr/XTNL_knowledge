@@ -3,7 +3,9 @@
 /**
  * One scheduled task as the Agenda and a customer's page draw it (dense, calm, 344 px first; work-layout.ts measures
  * it): its time ("14:30", or "All day", with its day when it is not today), then the channel's glyph, the title, the
- * reminder's bell, the customer as a chip ("Jane Nguyen · C-1042", a link to them), the detail's first line; its
+ * reminder's bell, the customer as a chip ("Jane Nguyen · C-1042", a link to them), its task collection's name as a
+ * small chip (Phase 2, crm.ts; not on the customer's own grouped list, which names it in its heading), the detail's
+ * first line; its
  * actions: Done (the kit's calm tick, nothing more), Call and Text when the customer has a phone (tel:, sms:) and
  * Snooze (+1 hour, this evening, tomorrow 09:00, next Monday 09:00, or Pick… in the sheet). A tap on the title opens
  * the sheet. No game furniture: no colour code, no figures, no flourish, no sound.
@@ -27,6 +29,7 @@ export function ScheduledRow({
   onSnooze,
   onEdit,
   showCustomer = true,
+  showCollection = true,
 }: {
   task: ScheduledView;
   now: Date;
@@ -39,12 +42,15 @@ export function ScheduledRow({
   onEdit: () => void;
   /** Off on the customer's own page (the chip would name them again). */
   showCustomer?: boolean;
+  /** Off where the list is grouped by collection (its heading names it). */
+  showCollection?: boolean;
 }) {
   const done = task.doneAt != null;
   const when = rowWhenOf(task, now);
   const preview = detailPreviewOf(task.detail);
   const phone = task.customer?.phone ?? null;
   const showDay = section !== "today";
+  const collection = showCollection ? (task.collection ?? null) : null;
   return (
     <li id={taskAnchorId(task.id)} className="st-row" data-section={section} data-done={done ? "" : undefined} data-hl={highlighted ? "" : undefined} tabIndex={-1}>
       <div className="st-time">
@@ -62,12 +68,18 @@ export function ScheduledRow({
             </span>
           )}
         </button>
-        {((showCustomer && task.customer) || preview) && (
+        {((showCustomer && task.customer) || collection || preview) && (
           <p className="st-meta">
             {showCustomer && task.customer && (
               <Link className="st-chip" href={customerHref(task.boardId, task.customer.id)}>
                 {customerChipOf(task.customer)}
               </Link>
+            )}
+            {collection && (
+              <span className="st-coll" title={`Collection: ${collection.name}`}>
+                <span className="sr-only">Collection: </span>
+                {collection.name}
+              </span>
             )}
             {preview && <span className="st-detail">{preview}</span>}
           </p>

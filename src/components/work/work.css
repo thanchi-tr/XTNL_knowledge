@@ -14,6 +14,9 @@
    ===================================================================== */
 @layer components {
   .wk-frame { display: flex; flex-direction: column; min-width: 0; }
+  /* A page centres itself with auto margins, which in this column would size it to its content (narrower than the
+     screen on a short tab, wider than it with a long strip). It takes the frame's width; its max-width still centres it. */
+  .wk-frame > .page { width: 100%; min-width: 0; }
 
   /* ---------- the header: the band, then the workspace's pages ---------- */
   .wk-head { width: 100%; max-width: 1240px; margin: 0 auto; padding: 6px 16px 0; display: flex; flex-direction: column; gap: 6px; }
@@ -77,7 +80,8 @@
   }
   .wk-tabmenu:hover { background: var(--raised); color: var(--ink-0); }
   .wk-new:focus-visible, .wk-tabmenu:focus-visible, .wk-sub:focus-visible, .wk-menu-item:focus-visible, .st-act:focus-visible, .st-open:focus-visible,
-  .st-chip:focus-visible, .wk-sec-toggle:focus-visible, .wk-watch-row:focus-visible, .st-pick:focus-visible, .st-x:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .st-chip:focus-visible, .wk-sec-toggle:focus-visible, .wk-watch-row:focus-visible, .st-pick:focus-visible, .st-x:focus-visible,
+  .wk-follow-who:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
   /* A small menu under its button (New, Snooze), aligned to the button's end. */
   .wk-menu { position: relative; flex: none; }
@@ -146,6 +150,27 @@
   .wk-watch-s { font: 400 13px/18px var(--font-ui); color: var(--owed); }
   .wk-quick { display: flex; flex-direction: column; gap: 6px; padding: 0 12px; }
 
+  /* ---------- Follow up (Phase 2, crm.ts): who, why, and one tap to schedule ----------
+     A row wraps on a phone (the button under the words); in the side column the button is its icon (its name says the
+     rest). The Agenda's own Follow up card gives way to the side column from 900 px. */
+  .wk-follow { list-style: none; margin: 0; padding: 0 6px; display: flex; flex-direction: column; gap: 2px; }
+  .wk-follow-row { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; padding: 2px 0; }
+  .wk-follow-row + .wk-follow-row { border-top: 1px solid var(--line-1); }
+  .wk-follow-who {
+    flex: 1 1 180px; min-width: 0; display: flex; flex-direction: column; justify-content: center; min-height: 44px; padding: 4px 8px;
+    border-radius: var(--r-ctl); color: var(--ink-0); text-decoration: none; transition: background-color var(--t-quick);
+  }
+  .wk-follow-who:hover { background: var(--raised); }
+  .wk-follow-why { font: 400 13px/18px var(--font-ui); color: var(--ink-2); overflow-wrap: anywhere; }
+  .wk-follow-owed { color: var(--owed); font-weight: 600; }
+  .wk-follow-go { padding: 0 12px; margin: 0 4px 0 auto; }
+  .wk-follow.compact .wk-follow-who { flex-basis: 0; }
+  .wk-follow.compact .wk-follow-go { padding: 0; }
+  .wk-follow.compact .wk-follow-go span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .wk-follow-all { flex-direction: row; align-items: center; gap: 4px; margin: 2px 6px 0; font: 600 13px/18px var(--font-ui); color: var(--ink-1); }
+  .wk-follow-all svg.i { width: 16px; height: 16px; }
+  @container main (min-width: 900px) { .wk-agenda-main .wk-follow-sec { display: none; } }
+
   /* ---------- a scheduled task's row: [time 44] [body] [done 44], dense ---------- */
   .st-list { list-style: none; margin: 0; padding: 0; }
   .st-list > li + li { border-top: 1px solid var(--line-1); }
@@ -184,6 +209,11 @@
   .st-chip::after { content: ""; position: absolute; inset: -6px -2px; }
   .st-chip:hover { background: var(--raised); }
   .st-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 120px; }
+  /* The task's collection (Phase 2): a small quiet pill, words only (not a target). */
+  .st-coll {
+    display: inline-flex; align-items: center; min-height: 24px; max-width: 100%; padding: 0 8px; border-radius: var(--r-pill);
+    background: color-mix(in srgb, var(--work) 10%, transparent); color: var(--ink-1); font: 600 12px/16px var(--font-ui); overflow-wrap: anywhere;
+  }
   .st-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 2px; }
   .st-act {
     flex: none; min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
@@ -236,6 +266,11 @@
   }
   .st-pick:hover { background: var(--raised); }
   .st-hint { margin: 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); }
+  .st-hint a { color: var(--ink-0); }
+  /* The sheet's pickers (a collection, an order): the native select at the field's size. */
+  .st-select { padding-right: 32px; cursor: pointer; }
+  .st-newcoll { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 12px; border: 1px solid var(--line-2); border-radius: var(--r-card); background: var(--sunken); }
+  .st-newcoll .st-input { background: var(--card); }
   .st-err { margin: 0; font: 600 13px/18px var(--font-ui); color: var(--ink-0); }
   .st-foot { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .st-foot .btn-primary { flex: 1 1 140px; }

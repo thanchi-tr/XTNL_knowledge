@@ -4,7 +4,7 @@
  *   listOpenWorkBoards(userId)          the open tabs by slot (cached under 'life'; the shell's strip reads it)
  *   listArchivedWorkBoards(userId)      the archived ones, newest first (Settings › Work tabs)
  *   loadWorkBoard(userId, id)           one tab, open or archived, or null (the work board page; with its
- *                                       customer list and order list switches)
+ *                                       customer list and order list switches, and its follow-up alert's days)
  *   createWorkBoardCore(userId, name)   the lowest free slot; a 4th is refused (WORK_BOARD_FULL)
  *   renameWorkBoardCore(userId, id, n)  an open tab only; 1..24 characters
  *   archiveWorkBoardCore(userId, id)    frees the slot, keeps every task (idempotent)
@@ -20,6 +20,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { cached, invalidate } from "./cache";
+import { FOLLOW_UP_DEFAULT } from "./crm";
 import {
   WORK_BOARD_ARCHIVED,
   WORK_BOARD_BUSY,
@@ -49,6 +50,8 @@ export interface WorkBoardRow {
   crmOn?: boolean;
   /** The tab keeps an order list (work orders, migration 20261224000000). Absent in the checks' table: false. */
   ordersOn?: boolean;
+  /** Follow-up alerts after this many quiet days, null off (crm.ts; migration 20261228000000). Absent: the default. */
+  followUpDays?: number | null;
 }
 
 /** The writes and reads the cores make: Prisma in the app, an in-memory table in the checks. */
@@ -66,7 +69,7 @@ export interface WorkBoardDb {
   restore(userId: string, id: string, slot: number): Promise<number>;
 }
 
-const SELECT = { id: true, name: true, slot: true, archivedAt: true, crmOn: true, ordersOn: true } as const;
+const SELECT = { id: true, name: true, slot: true, archivedAt: true, crmOn: true, ordersOn: true, followUpDays: true } as const;
 
 /** The app's WorkBoardDb. */
 export const prismaWorkBoardDb: WorkBoardDb = {
@@ -110,10 +113,12 @@ export async function listArchivedWorkBoards(userId: string): Promise<ArchivedWo
 }
 
 /** One tab, open or archived, or null (a malformed or foreign id reads as none). */
-export async function loadWorkBoard(userId: string, id: string, db: WorkBoardDb = prismaWorkBoardDb): Promise<(WorkBoardRef & { archived: boolean; crmOn: boolean; ordersOn: boolean }) | null> {
+export async function loadWorkBoard(userId: string, id: string, db: WorkBoardDb = prismaWorkBoardDb): Promise<(WorkBoardRef & { archived: boolean; crmOn: boolean; ordersOn: boolean; followUpDays: number | null }) | null> {
   if (!isBoardId(id)) return null;
   const row = await db.find(userId, id);
-  return row ? { ...refOf(row), archived: row.archivedAt != null, crmOn: row.crmOn ?? false, ordersOn: row.ordersOn ?? false } : null;
+  return row
+    ? { ...refOf(row), archived: row.archivedAt != null, crmOn: row.crmOn ?? false, ordersOn: row.ordersOn ?? false, followUpDays: row.followUpDays === undefined ? FOLLOW_UP_DEFAULT : row.followUpDays }
+    : null;
 }
 
 /**

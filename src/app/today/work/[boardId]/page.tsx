@@ -3,6 +3,7 @@ import "@/components/shell/work-tabs.css";
 import { notFound } from "next/navigation";
 import { getCurrentUserId } from "@/lib/user";
 import { loadAgenda } from "@/lib/scheduled-tasks-server";
+import { loadFollowUps } from "@/lib/crm-server";
 import { ShellTitle } from "@/components/shell/ShellTitle";
 import { AgendaView } from "@/components/work/AgendaView";
 import { Button } from "@/components/ui/Button";
@@ -18,6 +19,8 @@ export const metadata: Metadata = { title: "Agenda" };
  * Snooze and a tap to edit. `?task=<id>` (a reminder's tap, the bell, the search; an old customer task's id resolves to
  * its task) and `?callback=<id>` (an old call back's link: /today?board=…&callback=… redirects here) highlight that
  * row. The title reads "<tab> · Agenda". An archived tab says so and points to Settings; an unknown one is a 404.
+ * Its follow-ups (Phase 2, crm-server loadFollowUps: the tab's cached facts, judged against this render's clock) are
+ * read in the same wave; a failed read is no Follow up section (the side column then lists the overdue customers).
  */
 export default async function AgendaPage({
   params,
@@ -28,7 +31,13 @@ export default async function AgendaPage({
 }) {
   const [{ boardId }, query] = await Promise.all([params, searchParams]);
   const now = new Date();
-  const agenda = await loadAgenda(getCurrentUserId(), boardId, { now, query });
+  const [agenda, followUps] = await Promise.all([
+    loadAgenda(getCurrentUserId(), boardId, { now, query }),
+    loadFollowUps(getCurrentUserId(), boardId, now).catch((err) => {
+      console.error("[crm] follow-ups read failed", err);
+      return null;
+    }),
+  ]);
   if (agenda.kind === "gone") notFound();
 
   if (agenda.kind === "archived") {
@@ -58,7 +67,7 @@ export default async function AgendaPage({
   return (
     <>
       <ShellTitle eyebrow={agenda.board.name} title="Agenda" />
-      <AgendaView board={agenda.board} rows={agenda.rows} focus={agenda.focus} focusMissing={agenda.focusMissing} nowIso={agenda.nowIso} />
+      <AgendaView board={agenda.board} rows={agenda.rows} focus={agenda.focus} focusMissing={agenda.focusMissing} nowIso={agenda.nowIso} followUps={followUps} />
     </>
   );
 }

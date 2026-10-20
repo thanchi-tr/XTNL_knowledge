@@ -10,7 +10,8 @@
  *   CHANNELS · CHANNEL_WORDS · CHANNEL_ICON · channelOf(raw)      CALL | VISIT | EMAIL | MESSAGE | OTHER
  *   logActionOf(channel)                 the customer-log action Done's "Log to history" starts from
  *   cleanScheduledInput(raw, tz?)        the sheet's fields, checked (title 1..200, detail ≤ 500, a datetime-local
- *                                        read in LIFE_TZ, all day, remind, channel, customer), or the line saying why
+ *                                        read in LIFE_TZ, all day, remind, channel, customer, and since Phase 2 a
+ *                                        collection of that customer's: crm.ts), or the line saying why
  *   remindSentAtAfter(prev, nextDueAt)   moving dueAt ALWAYS clears remindSentAt (as remindPatchOf did); else kept
  *   reminderStateOf(t, now)              none | set | due | sent
  *   agendaOf(rows, now, tz?)             Overdue · Today · Upcoming (14 days) · Later · Done (today and 7 days back),
@@ -75,6 +76,13 @@ export const SCHEDULED_CUSTOMER_ARCHIVED = "That customer is archived. Restore t
 export const SCHEDULED_CRM_OFF = "This tab keeps no customer list. Turn it on in the tab's menu.";
 export const SCHEDULED_LOG_NO_CUSTOMER = "Only a task for a customer can be logged to their history.";
 export const SCHEDULED_SNOOZE_BAD = "Pick when to be reminded again.";
+/** A task's collection (Phase 2, 2026-10-20; crm.ts): one of its own customer's, on the same tab, open to new tasks. */
+export const SCHEDULED_COLLECTION_BAD = "That collection can't be linked here.";
+export const SCHEDULED_COLLECTION_NO_CUSTOMER = "A collection holds one customer's tasks: pick the customer first.";
+export const SCHEDULED_COLLECTION_GONE = "That collection is not on this tab.";
+export const SCHEDULED_COLLECTION_OTHER = "That collection belongs to another customer.";
+export const SCHEDULED_COLLECTION_CLOSED = "That collection is closed. Reopen it to add tasks.";
+export const SCHEDULED_COLLECTION_ARCHIVED = "That collection is archived.";
 
 export type Clean<T> = { ok: true; value: T } | { ok: false; error: string };
 const yes = <T>(value: T): Clean<T> => ({ ok: true, value });
@@ -95,6 +103,8 @@ export interface ScheduledTaskInput {
   remind?: boolean;
   /** A customer of this tab (its row id); null or "" for none. */
   customerId?: string | null;
+  /** One of that customer's task collections (crm.ts); null or "" for none. Left out: none on an add, kept on an edit. */
+  collectionId?: string | null;
 }
 
 export interface CleanScheduledTask {
@@ -105,6 +115,8 @@ export interface CleanScheduledTask {
   channel: Channel;
   remind: boolean;
   customerId: string | null;
+  /** undefined: left out. */
+  collectionId: string | null | undefined;
 }
 
 const MIN_WHEN = Date.UTC(2000, 0, 1);
@@ -141,7 +153,12 @@ export function cleanScheduledInput(raw: unknown, tz: string = LIFE_TZ): Clean<C
   if (!channel) return no(SCHEDULED_CHANNEL_BAD);
   const customerRaw = typeof r.customerId === "string" ? r.customerId.trim() : "";
   if (customerRaw && !isRowId(customerRaw)) return no(SCHEDULED_CUSTOMER_BAD);
-  return yes({ title, detail: detailRaw || null, dueAt, allDay, channel, remind: r.remind !== false, customerId: customerRaw || null });
+  let collectionId: string | null | undefined;
+  if (r.collectionId === undefined) collectionId = undefined;
+  else if (r.collectionId === null || r.collectionId === "") collectionId = null;
+  else if (isRowId(r.collectionId)) collectionId = r.collectionId;
+  else return no(SCHEDULED_COLLECTION_BAD);
+  return yes({ title, detail: detailRaw || null, dueAt, allDay, channel, remind: r.remind !== false, customerId: customerRaw || null, collectionId });
 }
 
 /** The sheet's starting `when` for a new task: the next whole hour today, or 09:00 tomorrow after 17:00. */
@@ -220,11 +237,16 @@ export interface ScheduledView {
   remindSentAt: string | null;
   doneAt: string | null;
   customer: ScheduledCustomerRef | null;
+  /** The task collection it belongs to (Phase 2, crm.ts): its name is the row's small chip. */
+  collection?: { id: string; name: string } | null;
 }
 
 export type AgendaSectionId = "overdue" | "today" | "upcoming" | "later" | "done";
 
-/** The sections, in order, and their headings. Phase 2 (follow-ups, deals) adds its own sections to this list. */
+/**
+ * The task sections, in order, and their headings. Phase 2's Follow up (crm.ts followUpsOf: customers, not tasks) is
+ * drawn after Today, its own list.
+ */
 export const AGENDA_SECTIONS: readonly { id: AgendaSectionId; title: string }[] = [
   { id: "overdue", title: "Overdue" },
   { id: "today", title: "Today" },
@@ -324,7 +346,10 @@ export function smsHref(phone: string): string {
   return phoneHref(phone).replace(/^tel:/, "sms:");
 }
 
-/** Customers to watch (the agenda's side column until Phase 2's follow-ups): those with an overdue task, most overdue first. */
+/**
+ * Customers to watch, as before Phase 2: those with an overdue task, most overdue first. The side column lists the
+ * follow-ups (crm.ts followUpsOf) instead; this is its list while follow-ups are off or could not be read.
+ */
 export function customersToWatchOf(overdue: readonly ScheduledView[]): { customer: ScheduledCustomerRef; overdue: number; oldest: string }[] {
   const by = new Map<string, { customer: ScheduledCustomerRef; overdue: number; oldest: string }>();
   for (const t of overdue) {

@@ -3,7 +3,7 @@
 /**
  * What the customer pages show instead of the list: the tab is archived
  * (Settings restores it), or its customer list is switched off (one tap turns
- * it back on; nothing was deleted while it was off).
+ * it back on; nothing was deleted while it was off). The Deals page (Phase 2) uses it too: deals live with the list.
  */
 import { useState, useTransition } from "react";
 import { setCrm } from "@/app/actions/customers";
@@ -11,7 +11,7 @@ import { workBoardHref } from "@/lib/work-boards";
 import { Button } from "@/components/ui/Button";
 import { UNREACHABLE } from "./CustomerSheets";
 
-export function CrmGate({ board, kind }: { board: { id: string; name: string }; kind: "archived" | "off" }) {
+export function CrmGate({ board, kind, offNote }: { board: { id: string; name: string }; kind: "archived" | "off"; offNote?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
@@ -46,7 +46,7 @@ export function CrmGate({ board, kind }: { board: { id: string; name: string }; 
       ) : (
         <section className="card crm-note" aria-label="The customer list is off">
           <b>The customer list is off on {board.name}</b>
-          <p>Turning it on brings back every customer, their log and their scheduled tasks. Nothing was deleted.</p>
+          <p>{offNote ?? "Turning it on brings back every customer, their log and their scheduled tasks. Nothing was deleted."}</p>
           <div className="crm-note-row">
             <Button variant="primary" onClick={turnOn} disabled={pending}>
               {pending ? "Turning on…" : "Turn the list on"}

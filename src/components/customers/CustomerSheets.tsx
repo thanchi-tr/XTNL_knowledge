@@ -1,9 +1,11 @@
 "use client";
 
 /**
- * The customer list's sheets (customers.ts holds the rules): a customer's
- * details (add and edit), an info (add and edit: the detail, when it was
- * recorded) and an interaction (add and edit: when, what happened, a brief).
+ * The customer list's sheets (customers.ts and crm.ts hold the rules): a customer's
+ * details (add and edit; since Phase 2 also their status, email, company,
+ * address and tags), an info (add and edit: the detail, when it was
+ * recorded), an interaction (add and edit: when, what happened, a brief) and
+ * a check (Phase 2: Rate, Home, Work and Record at).
  * A customer's scheduled tasks use the work frame's one scheduled task sheet
  * (components/work/ScheduledTaskSheet.tsx). Each checks its fields with the same clean* the server
  * uses, says what is wrong under the field, and hands a clean input to its
@@ -11,6 +13,23 @@
  * sheet (its `key`) each time it opens, so the fields start from `initial`.
  */
 import { useId, useState, useTransition, type ReactNode } from "react";
+import {
+  CHECK_FIELDS,
+  CHECK_FIELD_MAX,
+  CHECK_LABELS,
+  CUSTOMER_ADDRESS_MAX,
+  CUSTOMER_COMPANY_MAX,
+  CUSTOMER_EMAIL_MAX,
+  CUSTOMER_STATUSES,
+  STATUS_LABEL,
+  cleanAddress,
+  cleanCheckInput,
+  cleanCompany,
+  cleanEmail,
+  cleanTags,
+  type CheckField,
+  type CustomerStatus,
+} from "@/lib/crm";
 import {
   CUSTOMER_ACTIONS,
   CUSTOMER_ACTION_LABEL,
@@ -38,6 +57,7 @@ import {
 import { Button } from "@/components/ui/Button";
 import { Sheet } from "@/components/ui/Sheet";
 import { ActionMark } from "@/components/work/ChannelGlyph";
+import { TagField } from "./TagField";
 
 export const UNREACHABLE = "Couldn't reach the server. Check the connection and try again.";
 
@@ -69,7 +89,28 @@ export interface CustomerFormValue {
   name: string;
   nickname: string;
   phone: string;
+  /** Phase 2 (crm.ts). */
+  status: CustomerStatus;
+  email: string;
+  company: string;
+  address: string;
+  tags: string[];
 }
+
+/** What the form hands its caller's save: every field cleaned. */
+export interface CustomerFormOutput {
+  number: string;
+  name: string;
+  nickname: string | null;
+  phone: string | null;
+  status: CustomerStatus;
+  email: string | null;
+  company: string | null;
+  address: string | null;
+  tags: string[];
+}
+
+type CustomerField = "number" | "name" | "nickname" | "phone" | "email" | "company" | "address" | "tags";
 
 export function CustomerFormSheet({
   open,
@@ -83,6 +124,7 @@ export function CustomerFormSheet({
   submitLabel,
   onSave,
   children,
+  recentTags = [],
 }: {
   open: boolean;
   onClose: () => void;
@@ -96,15 +138,18 @@ export function CustomerFormSheet({
   /** The customer being edited (their own ID is not "taken"). */
   selfId?: string;
   submitLabel: string;
-  onSave: (value: { number: string; name: string; nickname: string | null; phone: string | null }) => Promise<string | null>;
+  onSave: (value: CustomerFormOutput) => Promise<string | null>;
   /** More below the form (the edit sheet's Archive). */
   children?: ReactNode;
+  /** The tab's recent tags (crm.ts recentTagsOf), offered as tags are typed. */
+  recentTags?: readonly string[];
 }) {
   const id = useId();
   const [v, setV] = useState(initial);
-  const [errors, setErrors] = useState<Partial<Record<keyof CustomerFormValue | "form", string>>>({});
+  const [tagTyped, setTagTyped] = useState("");
+  const [errors, setErrors] = useState<Partial<Record<CustomerField | "form", string>>>({});
   const [pending, start] = useTransition();
-  const set = (k: keyof CustomerFormValue) => (value: string) => {
+  const set = (k: Exclude<CustomerField, "tags">) => (value: string) => {
     setV((x) => ({ ...x, [k]: value }));
     if (errors[k] || errors.form) setErrors((e) => ({ ...e, [k]: undefined, form: undefined }));
   };
@@ -114,24 +159,47 @@ export function CustomerFormSheet({
     const name = cleanCustomerName(v.name);
     const nickname = cleanNickname(v.nickname);
     const phone = cleanPhone(v.phone);
+    const email = cleanEmail(v.email);
+    const company = cleanCompany(v.company);
+    const address = cleanAddress(v.address);
+    // Whatever is still typed in the tag field is a tag too.
+    const tags = cleanTags(tagTyped.trim() ? [...v.tags, tagTyped] : v.tags);
     const next: typeof errors = {};
     if (!number.ok) next.number = number.error;
     else if (others && numberUsed(others, number.value, selfId)) next.number = CUSTOMER_NUMBER_TAKEN;
     if (!name.ok) next.name = name.error;
     if (!nickname.ok) next.nickname = nickname.error;
     if (!phone.ok) next.phone = phone.error;
-    if (!number.ok || !name.ok || !nickname.ok || !phone.ok || Object.keys(next).length > 0) {
+    if (!email.ok) next.email = email.error;
+    if (!company.ok) next.company = company.error;
+    if (!address.ok) next.address = address.error;
+    if (!tags.ok) next.tags = tags.error;
+    if (!number.ok || !name.ok || !nickname.ok || !phone.ok || !email.ok || !company.ok || !address.ok || !tags.ok || Object.keys(next).length > 0) {
       setErrors(next);
       return;
     }
     start(async () => {
       let error: string | null;
       try {
-        error = await onSave({ number: number.value, name: name.value, nickname: nickname.value, phone: phone.value });
+        error = await onSave({
+          number: number.value,
+          name: name.value,
+          nickname: nickname.value,
+          phone: phone.value,
+          status: v.status,
+          email: email.value,
+          company: company.value,
+          address: address.value,
+          tags: tags.value,
+        });
       } catch {
         error = UNREACHABLE;
       }
       if (error) setErrors(error === CUSTOMER_NUMBER_TAKEN ? { number: error } : { form: error });
+      else {
+        setV((x) => ({ ...x, tags: tags.value }));
+        setTagTyped("");
+      }
     });
   }
 
@@ -163,6 +231,15 @@ export function CustomerFormSheet({
         <Field id={`${id}-name`} label="Name" error={errors.name}>
           <input id={`${id}-name`} className="crm-input" value={v.name} onChange={(e) => set("name")(e.target.value)} autoComplete="off" maxLength={CUSTOMER_NAME_MAX + 8} {...invalid(errors.name, `${id}-name`)} />
         </Field>
+        <fieldset className="crm-chips">
+          <legend>Status</legend>
+          {CUSTOMER_STATUSES.map((s) => (
+            <label key={s} className="crm-chip crm-chip-plain">
+              <input type="radio" name={`${id}-status`} value={s} checked={v.status === s} onChange={() => setV((x) => ({ ...x, status: s }))} />
+              {STATUS_LABEL[s]}
+            </label>
+          ))}
+        </fieldset>
         <Field id={`${id}-nick`} label="Nickname" aside="optional" error={errors.nickname}>
           <input id={`${id}-nick`} className="crm-input" value={v.nickname} onChange={(e) => set("nickname")(e.target.value)} autoComplete="off" maxLength={CUSTOMER_NICKNAME_MAX + 8} {...invalid(errors.nickname, `${id}-nick`)} />
         </Field>
@@ -179,6 +256,49 @@ export function CustomerFormSheet({
             {...invalid(errors.phone, `${id}-phone`)}
           />
         </Field>
+        <Field id={`${id}-email`} label="Email" aside="optional" error={errors.email}>
+          <input
+            id={`${id}-email`}
+            className="crm-input"
+            type="email"
+            inputMode="email"
+            value={v.email}
+            onChange={(e) => set("email")(e.target.value)}
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            maxLength={CUSTOMER_EMAIL_MAX + 8}
+            {...invalid(errors.email, `${id}-email`)}
+          />
+        </Field>
+        <Field id={`${id}-company`} label="Company" aside="optional" error={errors.company}>
+          <input id={`${id}-company`} className="crm-input" value={v.company} onChange={(e) => set("company")(e.target.value)} autoComplete="off" maxLength={CUSTOMER_COMPANY_MAX + 8} {...invalid(errors.company, `${id}-company`)} />
+        </Field>
+        <Field id={`${id}-address`} label="Address" aside="optional" error={errors.address}>
+          <textarea
+            id={`${id}-address`}
+            className="crm-input crm-input-short"
+            value={v.address}
+            rows={2}
+            onChange={(e) => set("address")(e.target.value)}
+            autoComplete="off"
+            maxLength={CUSTOMER_ADDRESS_MAX + 20}
+            {...invalid(errors.address, `${id}-address`)}
+          />
+        </Field>
+        <TagField
+          id={`${id}-tags`}
+          tags={v.tags}
+          typed={tagTyped}
+          recent={recentTags}
+          error={errors.tags}
+          onTags={(tags) => {
+            setV((x) => ({ ...x, tags }));
+            if (errors.tags || errors.form) setErrors((e) => ({ ...e, tags: undefined, form: undefined }));
+          }}
+          onTyped={setTagTyped}
+          onError={(error) => setErrors((e) => ({ ...e, tags: error ?? undefined }))}
+        />
         <div className="crm-form-actions">
           <Button type="submit" variant="primary" disabled={pending}>
             {pending ? "Saving…" : submitLabel}
@@ -470,6 +590,132 @@ export function InteractionSheet({
           <div className="crm-form-actions">
             <Button variant="secondary" onClick={archive} disabled={pending}>
               Archive entry
+            </Button>
+          </div>
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+// ── A check ────────────────────────────────────────────────────────────────
+
+export interface CheckFormValue {
+  rate: string;
+  home: string;
+  work: string;
+  /** 'YYYY-MM-DD'. */
+  recordedAt: string;
+}
+
+/**
+ * A check (Phase 2, crm.ts): Rate, Home and Work (each one line, optional, at least one) and Record at (a day: today
+ * unless picked, never after it). Edit adds Archive (the caller offers Undo).
+ */
+export function CheckSheet({
+  open,
+  onClose,
+  editing,
+  initial,
+  today,
+  onSave,
+  onArchive,
+}: {
+  open: boolean;
+  onClose: () => void;
+  editing: boolean;
+  initial: CheckFormValue;
+  /** Today's life day: Record at's default and its latest. */
+  today: string;
+  onSave: (value: { rate: string | null; home: string | null; work: string | null; recordedAt: string }) => Promise<string | null>;
+  onArchive?: () => Promise<string | null>;
+}) {
+  const id = useId();
+  const [v, setV] = useState(initial);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  const set = (k: keyof CheckFormValue) => (value: string) => {
+    setV((x) => ({ ...x, [k]: value }));
+    if (error) setError(null);
+  };
+
+  function save() {
+    const clean = cleanCheckInput(v, today);
+    if (!clean.ok) {
+      setError(clean.error);
+      return;
+    }
+    start(async () => {
+      let e: string | null;
+      try {
+        e = await onSave(clean.value);
+      } catch {
+        e = UNREACHABLE;
+      }
+      if (e) setError(e);
+    });
+  }
+
+  function archive() {
+    if (!onArchive) return;
+    start(async () => {
+      let e: string | null;
+      try {
+        e = await onArchive();
+      } catch {
+        e = UNREACHABLE;
+      }
+      if (e) setError(e);
+    });
+  }
+
+  const label = (f: CheckField) => CHECK_LABELS[f];
+  return (
+    <Sheet open={open} onClose={() => !pending && onClose()} title={editing ? "Edit check" : "Add check"} description="Rate, Home and Work: fill in at least one.">
+      <form
+        className="crm-form"
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault();
+          save();
+        }}
+      >
+        {CHECK_FIELDS.map((f, i) => (
+          <Field key={f} id={`${id}-${f}`} label={label(f)} aside={`${count(v[f].trim())}/${CHECK_FIELD_MAX}`}>
+            <input
+              id={`${id}-${f}`}
+              className="crm-input"
+              value={v[f]}
+              onChange={(e) => set(f)(e.target.value)}
+              autoComplete="off"
+              maxLength={CHECK_FIELD_MAX + 8}
+              data-autofocus={i === 0 ? "" : undefined}
+            />
+          </Field>
+        ))}
+        <Field id={`${id}-at`} label={CHECK_LABELS.recordedAt}>
+          <input id={`${id}-at`} className="crm-input" type="date" value={v.recordedAt} min="2000-01-01" max={today} onChange={(e) => set("recordedAt")(e.target.value)} />
+        </Field>
+        <div className="crm-form-actions">
+          <Button type="submit" variant="primary" disabled={pending}>
+            {pending ? "Saving…" : editing ? "Save" : "Add check"}
+          </Button>
+          <Button type="button" variant="quiet" onClick={onClose} disabled={pending}>
+            Cancel
+          </Button>
+        </div>
+        {error && (
+          <p className="crm-error" role="alert">
+            {error}
+          </p>
+        )}
+      </form>
+      {editing && onArchive && (
+        <div className="crm-danger" style={{ marginTop: 14 }}>
+          <p>Archive takes the check off their page. You can undo right after.</p>
+          <div className="crm-form-actions">
+            <Button variant="secondary" onClick={archive} disabled={pending}>
+              Archive check
             </Button>
           </div>
         </div>

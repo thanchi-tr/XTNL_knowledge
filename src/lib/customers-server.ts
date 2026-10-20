@@ -16,11 +16,15 @@
  *                                                   default; never more than a minute ahead)
  *   addInteractionCore / editInteractionCore / archiveInteractionCore / restoreInteractionCore
  *   loadCustomersPage / loadCustomerPage / customerDueCountCore   the pages' reads
+ *   customerFieldsOf(input, prev?)                  a customer's fields (Phase 2, 2026-10-20: a status, tags, an
+ *                                                   email, a company, an address, crm.ts; each left out of an edit
+ *                                                   keeps its own, and starts at its default on an add)
  *
  * A customer's tasks are scheduled tasks (2026-10-20; scheduled-tasks-server.ts owns their writes): the list's
  * "due today" chips count them, and the customer page lists them (customer tasks, CustomerTask, are read only by the
  * backfill now). Customer and log writes clear the 'work' cache (the Office workspace's search index: names, IDs,
- * the latest activity) and archiving or restoring a customer the 'life' one too (the bell holds their tasks with them).
+ * the latest activity; and, since Phase 2, the follow-ups' facts: every log write moves a last contact) and archiving
+ * or restoring a customer the 'life' one too (the bell holds their tasks with them).
  *
  * Work, never the game: nothing here writes the ledger (ActivityEvent), pays
  * XP, touches the streak or clears a game cache. Every core takes a
@@ -33,6 +37,7 @@ import { invalidate } from "./cache";
 import { WORK_BOARD_ARCHIVED, WORK_BOARD_GONE, isBoardId } from "./work-boards";
 import { loadCustomerScheduled } from "./scheduled-tasks-server";
 import type { ScheduledView } from "./scheduled-tasks";
+import { cleanAddress, cleanCompany, cleanEmail, cleanStatus, cleanTags, readStatus, type CustomerStatus } from "./crm";
 import {
   CRM_OFF,
   CUSTOMER_ARCHIVED,
@@ -91,6 +96,12 @@ export interface CustomerRow {
   nickname: string | null;
   phone: string | null;
   archivedAt: Date | null;
+  /** Phase 2 (migration 20261228000000_crm). Absent in the checks' tables: CUSTOMER, no tags, none. */
+  status?: string;
+  tags?: string[];
+  email?: string | null;
+  company?: string | null;
+  address?: string | null;
 }
 
 export interface CustomerInfoRow {
@@ -120,6 +131,11 @@ export interface CustomerFields {
   name: string;
   nickname: string | null;
   phone: string | null;
+  status: CustomerStatus;
+  tags: string[];
+  email: string | null;
+  company: string | null;
+  address: string | null;
 }
 
 export interface InfoFields {
@@ -173,7 +189,7 @@ export interface CustomerDb {
 }
 
 const BOARD_SELECT = { id: true, userId: true, name: true, archivedAt: true, crmOn: true } as const;
-const CUSTOMER_SELECT = { id: true, userId: true, boardId: true, number: true, name: true, nickname: true, phone: true, archivedAt: true } as const;
+const CUSTOMER_SELECT = { id: true, userId: true, boardId: true, number: true, name: true, nickname: true, phone: true, archivedAt: true, status: true, tags: true, email: true, company: true, address: true } as const;
 const CUSTOMER_WITH_BOARD = { ...CUSTOMER_SELECT, board: { select: BOARD_SELECT } } as const;
 const INFO_SELECT = { id: true, userId: true, customerId: true, detail: true, recordedAt: true, archivedAt: true, createdAt: true } as const;
 const INTERACTION_SELECT = { id: true, userId: true, customerId: true, at: true, action: true, brief: true, archivedAt: true } as const;
@@ -295,6 +311,12 @@ export interface CustomerInput {
   name: string;
   nickname?: string | null;
   phone?: string | null;
+  /** Phase 2 (crm.ts). Left out: the customer's own on an edit; CUSTOMER, no tags, none on an add. */
+  status?: string;
+  tags?: string[];
+  email?: string | null;
+  company?: string | null;
+  address?: string | null;
 }
 
 export interface InfoInput {
@@ -310,7 +332,15 @@ export interface InteractionInput {
   brief?: string | null;
 }
 
-function customerFieldsOf(input: unknown): CustomerResult<CustomerFields> {
+const has = (i: Record<string, unknown>, k: string) => Object.prototype.hasOwnProperty.call(i, k) && i[k] !== undefined;
+const kept = <T>(value: T): CustomerResult<T> => ({ ok: true, value });
+
+/**
+ * A customer's fields from a sheet: the ID, name, nickname and phone as before; then (Phase 2, crm.ts) the status, the
+ * tags, the email, the company and the address, each one left out keeping the customer's own on an edit (`prev`) and
+ * starting at its default on an add (CUSTOMER, no tags, none).
+ */
+export function customerFieldsOf(input: unknown, prev?: Pick<CustomerRow, "status" | "tags" | "email" | "company" | "address"> | null): CustomerResult<CustomerFields> {
   const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
   const number = cleanCustomerNumber(i.number);
   if (!number.ok) return fail(number.error);
@@ -320,7 +350,17 @@ function customerFieldsOf(input: unknown): CustomerResult<CustomerFields> {
   if (!nickname.ok) return fail(nickname.error);
   const phone = cleanPhone(i.phone);
   if (!phone.ok) return fail(phone.error);
-  return ok({ number: number.value, name: name.value, nickname: nickname.value, phone: phone.value });
+  const status = has(i, "status") ? cleanStatus(i.status) : kept(readStatus(prev?.status));
+  if (!status.ok) return fail(status.error);
+  const tags = has(i, "tags") ? cleanTags(i.tags) : kept<string[]>([...(prev?.tags ?? [])]);
+  if (!tags.ok) return fail(tags.error);
+  const email = has(i, "email") ? cleanEmail(i.email) : kept(prev?.email ?? null);
+  if (!email.ok) return fail(email.error);
+  const company = has(i, "company") ? cleanCompany(i.company) : kept(prev?.company ?? null);
+  if (!company.ok) return fail(company.error);
+  const address = has(i, "address") ? cleanAddress(i.address) : kept(prev?.address ?? null);
+  if (!address.ok) return fail(address.error);
+  return ok({ number: number.value, name: name.value, nickname: nickname.value, phone: phone.value, status: status.value, tags: tags.value, email: email.value, company: company.value, address: address.value });
 }
 
 /** An info's fields: the detail, and when it was recorded (left out: `fallback`, now on an add, the info's own on an edit). */
@@ -376,11 +416,14 @@ export async function createCustomerCore(userId: string, boardId: string, input:
   }
 }
 
-/** Edits a kept customer: ID, name, nickname, phone. Their own ID in another case is fine; another customer's is refused. */
+/**
+ * Edits a kept customer: ID, name, nickname, phone, and (Phase 2) status, tags, email, company, address (each left out
+ * keeps its own). Their own ID in another case is fine; another customer's is refused.
+ */
 export async function editCustomerCore(userId: string, customerId: string, input: unknown, db: CustomerDb = prismaCustomerDb): Promise<CustomerResult<{ id: string }>> {
   const c = await openCustomer(db, userId, customerId);
   if (!c.ok) return fail(c.error);
-  const f = customerFieldsOf(input);
+  const f = customerFieldsOf(input, c.value);
   if (!f.ok) return fail(f.error);
   try {
     const changed = await db.updateCustomer(userId, customerId, f.value);
@@ -475,6 +518,8 @@ export async function editInteractionCore(userId: string, interactionId: string,
   const f = interactionFieldsOf(input);
   if (!f.ok) return fail(f.error);
   if ((await db.updateInteraction(userId, interactionId, f.value)) === 0) return fail(INTERACTION_GONE);
+  // A moved entry moves their last contact (the follow-ups' facts, cached under 'work').
+  invalidate("work");
   return ok({ id: interactionId });
 }
 
@@ -483,6 +528,7 @@ export async function archiveInteractionCore(userId: string, interactionId: stri
   const row = await openInteraction(db, userId, interactionId);
   if (!row.ok) return fail(row.error);
   if (!row.value.archivedAt) await db.setInteractionArchived(userId, interactionId, now);
+  invalidate("work");
   return ok({ id: interactionId });
 }
 
@@ -490,6 +536,7 @@ export async function restoreInteractionCore(userId: string, interactionId: stri
   const row = await openInteraction(db, userId, interactionId);
   if (!row.ok) return fail(row.error);
   if (row.value.archivedAt) await db.setInteractionArchived(userId, interactionId, null);
+  invalidate("work");
   return ok({ id: interactionId });
 }
 
@@ -537,6 +584,10 @@ export async function loadCustomersPage(userId: string, boardId: string, now: Da
         ...dueCountOf(byCustomer.get(c.id) ?? [], now),
         info: infoOf.get(c.id) ?? null,
         activity: activityOf.get(c.id) ?? 0,
+        status: readStatus(c.status),
+        tags: c.tags ?? [],
+        email: c.email ?? null,
+        company: c.company ?? null,
       })
     )
     .sort((a, b) => compareNumbers(a.number, b.number));
@@ -580,7 +631,19 @@ export async function loadCustomerPage(userId: string, boardId: string, customer
   return {
     kind: "ok",
     board: boardView(c.board),
-    customer: { id: c.id, number: c.number, name: c.name, nickname: c.nickname, phone: c.phone, archived: c.archivedAt != null },
+    customer: {
+      id: c.id,
+      number: c.number,
+      name: c.name,
+      nickname: c.nickname,
+      phone: c.phone,
+      archived: c.archivedAt != null,
+      status: readStatus(c.status),
+      tags: c.tags ?? [],
+      email: c.email ?? null,
+      company: c.company ?? null,
+      address: c.address ?? null,
+    },
     tasks: [...open, ...done],
     infos: sortInfos(infos.filter((i) => !i.archivedAt)).map((i) => ({ id: i.id, detail: i.detail, recordedAt: i.recordedAt.toISOString() })),
     interactions: interactions

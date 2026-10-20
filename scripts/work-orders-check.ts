@@ -575,11 +575,13 @@ function wiring() {
   );
   const menu = code("src/components/work/WorkTabMenu.tsx");
   check("work tab menu: the 'Order list' switch (setOrdersOn, refreshed); off hides, nothing deleted", /<h3>Order list<\/h3>/.test(menu) && /setOrdersOn\(board\.id, on, \{ refresh: true \}\)/.test(menu) && /<Switch checked=\{ordersWant \?\? board\.ordersOn\} onChange=\{\(on\) => toggle\("orders", on\)\} label="Order list"/.test(menu) && /ORDERS_SWITCH_NOTE = "[^"]*nothing is deleted\."/.test(read("src/components/work/WorkTabMenu.tsx")));
-  eq("work frame: Orders sits right after Customers", workSubsOf({ id: "b1", crmOn: true, ordersOn: true }).map((s) => s.label), ["Agenda", "Customers", "Orders", "Tasks"]);
+  // Phase 2 (2026-10-20): Deals (deals.ts) sits between them, so a customer's pipeline comes before what to order.
+  eq("work frame: Orders sits right after Customers and their Deals", workSubsOf({ id: "b1", crmOn: true, ordersOn: true }).map((s) => s.label), ["Agenda", "Customers", "Deals", "Orders", "Tasks"]);
   const workPage = code("src/app/today/work/[boardId]/tasks/page.tsx");
   check("work page (Tasks): the tab's switches reach the board (ordersOn beside crmOn)", /work=\{\{ id: board\.id, name: board\.name, crmOn: board\.crmOn, ordersOn: board\.ordersOn \}\}/.test(workPage));
   const wbs = code("src/lib/work-boards-server.ts");
-  check("work tab read: ordersOn is selected and returned (false when absent)", /const SELECT = \{[^}]*ordersOn: true \} as const;/.test(wbs) && /ordersOn: row\.ordersOn \?\? false/.test(wbs));
+  // Phase 2: the follow-up alert's days (followUpDays) are read after it.
+  check("work tab read: ordersOn is selected and returned (false when absent)", /const SELECT = \{[^}]*ordersOn: true(, followUpDays: true)? \} as const;/.test(wbs) && /ordersOn: row\.ordersOn \?\? false/.test(wbs));
   check("board: the work tab's view carries ordersOn", /ordersOn\?: boolean;/.test(code("src/components/today/TodayBoard.tsx")));
   const nav = code("src/components/shell/nav.ts");
   check("nav: the order list paints 'Orders' under 'Work' from the path (ordersPathOf); the work tab's match covers it", /if \(ordersPathOf\(path\)\) return \{ eyebrow: "Work", title: "Orders" \};/.test(nav) && /const work = workBoardIdOf\(pathname\);\s*if \(work\) return workBoardHref\(work\);/.test(nav));
@@ -587,7 +589,17 @@ function wiring() {
   // A customer's page.
   const cp = code("src/app/today/work/[boardId]/customers/[customerId]/page.tsx");
   check("customer page: their orders read in the same wave (a failed read is no section), drawn only while the list is on", /Promise\.all\(\[\s*loadCustomerPage\(getCurrentUserId\(\), boardId, customerId\),\s*loadCustomerOrders\(getCurrentUserId\(\), boardId, customerId, now\)\.catch\(/.test(cp) && /orders && \(\s*<CustomerOrders/.test(cp));
-  check("customer page: the section sits after the log, the page's last (the call backs' list is gone: their tasks are scheduled tasks)", /\{orders\}\s*\{sheet\?\.kind === "edit" && \(/.test(code("src/components/customers/CustomerView.tsx")));
+  // Phase 2 (2026-10-20): the customer page is tabs; the section is the Orders tab, after History, shown only while the
+  // tab keeps an order list (the page's read is null otherwise).
+  const cv = code("src/components/customers/CustomerView.tsx");
+  check(
+    "customer page: the section is its own tab (Orders, after History; only while the list is on: a null read is no tab)",
+    /\{tab === "orders" && orders\}/.test(cv) &&
+      cv.indexOf('{tab === "history" && (') > 0 &&
+      cv.indexOf('{tab === "history" && (') < cv.indexOf('{tab === "orders" && orders}') &&
+      /const tabs = customerTabsOf\(\{ ordersOn \}\);/.test(cv) &&
+      /const ordersOn = orders !== null;/.test(cp)
+  );
   const co = code("src/components/orders/CustomerOrders.tsx");
   check("customer section: read-only lines, Add order with the customer fixed (name and phone filled), a link to the list", !/setWorkOrderOrdered|editWorkOrder|archiveWorkOrder/.test(co) && /fixedCustomer=\{customer\}/.test(co) && /name: customer\.name, contact: customer\.phone \?\? ""/.test(co) && /href=\{ordersHref\(board\.id\)\}/.test(co));
 

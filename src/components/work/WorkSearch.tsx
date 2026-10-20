@@ -3,9 +3,10 @@
 /**
  * The work header's search (2026-10-20): live as you type, from the first character, no submit. One combobox over a
  * listbox: the tab's customers (customer-search.ts matchCustomers: the exact ID, an ID's start, a name's or nickname's
- * word, anywhere in the ID or the name, a phone's digits), each "Jane Nguyen · C-1042" with the matched part marked
- * and the nickname or phone beneath when that is what matched, at most SEARCH_CAP with a "+n more" line to the full
- * list on the Customers page (?q=); then the tab's scheduled tasks by title, in their own group.
+ * word, anywhere in the ID or the name, a phone's digits; then, since Phase 2, a company or an email), each
+ * "Jane Nguyen · C-1042" with the matched part marked and the nickname, phone, company or email beneath when that is
+ * what matched, at most SEARCH_CAP with a "+n more" line to the full list on the Customers page (?q=); then the tab's
+ * scheduled tasks by title, in their own group.
  *
  * Fast: it matches in the browser over the index the work frame loaded once (scheduled-tasks-server loadWorkIndex):
  * a keystroke costs no server action and no fetch (scheduled-tasks-check pins it). Only when that index is missing
@@ -40,7 +41,7 @@ export function Marked({ text, ranges }: { text: string; ranges: readonly Range[
   return highlightParts(text, ranges).map((p, i) => (p.mark ? <mark key={i}>{p.text}</mark> : <span key={i}>{p.text}</span>));
 }
 
-/** A customer result's two lines: name · ID (both marked where they matched), and the nickname or phone (its digits) that matched. */
+/** A customer result's two lines: name · ID (both marked where they matched), and the nickname, phone (its digits), company or email that matched. */
 export function CustomerResult({ m }: { m: CustomerMatch }) {
   const e = m.entry;
   return (
@@ -62,6 +63,16 @@ export function CustomerResult({ m }: { m: CustomerMatch }) {
       {m.field === "phone" && e.phone && (
         <span className="wk-res-sub">
           Phone <Marked text={digitsOf(e.phone)} ranges={m.ranges.phone} />
+        </span>
+      )}
+      {m.field === "company" && e.company && (
+        <span className="wk-res-sub">
+          <Marked text={e.company} ranges={m.ranges.company} />
+        </span>
+      )}
+      {m.field === "email" && e.email && (
+        <span className="wk-res-sub">
+          <Marked text={e.email} ranges={m.ranges.email} />
         </span>
       )}
     </>
