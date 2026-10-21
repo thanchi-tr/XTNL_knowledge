@@ -1,5 +1,38 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher shortcut. New idea: a light bulb with a lit spark inside.
+     48 dp: the icon's navy chip (r 22) with mint 2 dp round-capped strokes. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFE8ECF3" android:pathData="M12,3a6,6 0,0 0,-3.5 10.9V16h7v-2.1A6,6 0,0 0,12 3zM9,18h6v2H9z" />
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:name="chip"
+        android:pathData="M2,24a22,22 0 1,0 44,0a22,22 0 1,0 -44,0z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="6.4" android:startY="2" android:endX="41.6" android:endY="46">
+                <item android:offset="0" android:color="#FF0F1E2E" />
+                <item android:offset="1" android:color="#FF04080F" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:name="bulb"
+        android:pathData="M21,29.2V27.4A6.6,6.6 0 1,1 27,27.4V29.2z"
+        android:strokeColor="#FF3DFFB0"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:name="base"
+        android:pathData="M22.2,32.4H25.8"
+        android:strokeColor="#FF00CC7A"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:name="spark"
+        android:pathData="M24,17.9Q24.45,20.85 26.6,21.3Q24.45,21.75 24,24.7Q23.55,21.75 21.4,21.3Q23.55,20.85 24,17.9z"
+        android:fillColor="#FFEAFFF5" />
 </vector>

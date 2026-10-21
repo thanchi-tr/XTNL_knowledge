@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100">
+<!-- XTNL launcher icon, master art: 100 x 100, the chip is r 50 at 50,50.
+     The node-X (two round-capped strokes with nodes) sits in a pointy-top hexagonal seal (r 36,
+     a small node at each vertex, lit from the spark side); the top-right node is lit as a spark.
+     The Android vectors in app/src/main/res/drawable draw exactly these shapes: the adaptive layers
+     scaled 0.72 about 50,50 -> 54,54 (108 viewport), the splash scaled 1.9 -> 144,144 (288 viewport). -->
+  <defs>
+    <linearGradient id="g0" gradientUnits="userSpaceOnUse" x1="10" y1="0" x2="90" y2="100"><stop offset="0" stop-color="#0f1e2e"/><stop offset="1" stop-color="#04080f"/></linearGradient>
+    <linearGradient id="g1" gradientUnits="userSpaceOnUse" x1="69.776" y1="19.918" x2="30.224" y2="80.082"><stop offset="0" stop-color="#3dffb0" stop-opacity="0.62"/><stop offset="0.5" stop-color="#00cc7a" stop-opacity="0.28"/><stop offset="1" stop-color="#00cc7a" stop-opacity="0.1"/></linearGradient>
+    <linearGradient id="g2" gradientUnits="userSpaceOnUse" x1="69.776" y1="19.918" x2="30.224" y2="80.082"><stop offset="0" stop-color="#3dffb0" stop-opacity="0.62"/><stop offset="0.5" stop-color="#00cc7a" stop-opacity="0.28"/><stop offset="1" stop-color="#00cc7a" stop-opacity="0.1"/></linearGradient>
+    <radialGradient id="g3" gradientUnits="userSpaceOnUse" cx="58.254" cy="37.445" r="13"><stop offset="0" stop-color="#3dffb0" stop-opacity="0.58"/><stop offset="0.35" stop-color="#3dffb0" stop-opacity="0.2"/><stop offset="1" stop-color="#3dffb0" stop-opacity="0"/></radialGradient>
+    <linearGradient id="g4" gradientUnits="userSpaceOnUse" x1="31.904" y1="67.67" x2="58.254" y2="37.445"><stop offset="0" stop-color="#009e60"/><stop offset="0.55" stop-color="#00cc7a"/><stop offset="1" stop-color="#3dffb0"/></linearGradient>
+    <linearGradient id="g5" gradientUnits="userSpaceOnUse" x1="37.329" y1="32.02" x2="63.679" y2="84.72"><stop offset="0" stop-color="#3dffb0"/><stop offset="0.5" stop-color="#00cc7a"/><stop offset="1" stop-color="#009e60"/></linearGradient>
+  </defs>
+  <path d="M0,50a50,50 0 1,0 100,0a50,50 0 1,0 -100,0z" fill="url(#g0)"/>
+  <path d="M50,14L81.177,32L81.177,68L50,86L18.823,68L18.823,32z" fill="none" stroke="url(#g1)" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="M48.7,14a1.3,1.3 0 1,0 2.6,0a1.3,1.3 0 1,0 -2.6,0zM79.877,32a1.3,1.3 0 1,0 2.6,0a1.3,1.3 0 1,0 -2.6,0zM79.877,68a1.3,1.3 0 1,0 2.6,0a1.3,1.3 0 1,0 -2.6,0zM48.7,86a1.3,1.3 0 1,0 2.6,0a1.3,1.3 0 1,0 -2.6,0zM17.523,68a1.3,1.3 0 1,0 2.6,0a1.3,1.3 0 1,0 -2.6,0zM17.523,32a1.3,1.3 0 1,0 2.6,0a1.3,1.3 0 1,0 -2.6,0z" fill="url(#g2)"/>
+  <path d="M45.254,37.445a13,13 0 1,0 26,0a13,13 0 1,0 -26,0z" fill="url(#g3)"/>
+  <path d="M58.254,37.445L31.904,67.67" fill="none" stroke="url(#g4)" stroke-width="2.48" stroke-linecap="round" stroke-opacity="0.85"/>
+  <path d="M39.654,33.57L67.554,67.67" fill="none" stroke="url(#g5)" stroke-width="3.1" stroke-linecap="round"/>
+  <path d="M30.121,67.67a1.783,1.783 0 1,0 3.565,0a1.783,1.783 0 1,0 -3.565,0z" fill="#00cc7a" fill-opacity="0.55"/>
+  <path d="M65.229,67.67a2.325,2.325 0 1,0 4.65,0a2.325,2.325 0 1,0 -4.65,0z" fill="#2fd0ff"/>
+  <path d="M36.089,33.57a3.565,3.565 0 1,0 7.13,0a3.565,3.565 0 1,0 -7.13,0z" fill="#00f090"/>
+  <path d="M54.654,37.445a3.6,3.6 0 1,0 7.2,0a3.6,3.6 0 1,0 -7.2,0z" fill="#3dffb0" fill-opacity="0.85"/>
+  <path d="M58.254,28.245L59.034,37.445L58.254,46.645L57.474,37.445zM51.654,37.445L58.254,36.665L64.854,37.445L58.254,38.225z" fill="#eafff5"/>
+  <path d="M55.754,37.445a2.5,2.5 0 1,0 5,0a2.5,2.5 0 1,0 -5,0z" fill="#eafff5"/>
+</svg>

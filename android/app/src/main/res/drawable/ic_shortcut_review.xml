@@ -1,5 +1,42 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher shortcut. Review: a stack of cards.
+     48 dp: the icon's navy chip (r 22) with mint 2 dp round-capped strokes. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFE8ECF3" android:pathData="M4,5h7a3,3 0,0 1,1 0.17V19a3,3 0,0 0,-1 -0.17H4zM20,5h-7a3,3 0,0 0,-1 0.17V19a3,3 0,0 1,1 -0.17h7z" />
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:name="chip"
+        android:pathData="M2,24a22,22 0 1,0 44,0a22,22 0 1,0 -44,0z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="6.4" android:startY="2" android:endX="41.6" android:endY="46">
+                <item android:offset="0" android:color="#FF0F1E2E" />
+                <item android:offset="1" android:color="#FF04080F" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:name="back"
+        android:pathData="M19,18.5V17.5A2,2 0 0,1 21,15.5H31A2,2 0 0,1 33,17.5V27.5A2,2 0 0,1 31,29.5H30"
+        android:strokeColor="#FF00CC7A"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeAlpha="0.9" />
+    <path
+        android:name="front"
+        android:pathData="M17,19.5H25A2,2 0 0,1 27,21.5V31A2,2 0 0,1 25,33H17A2,2 0 0,1 15,31V21.5A2,2 0 0,1 17,19.5z"
+        android:strokeColor="#FF3DFFB0"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:name="text"
+        android:pathData="M18.4,24.4H23.6M18.4,28.2H21.4"
+        android:strokeColor="#FF00CC7A"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
 </vector>

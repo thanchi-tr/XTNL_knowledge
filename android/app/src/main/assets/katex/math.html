@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- KaTeX 0.18.4 (MIT, LICENSE.txt), bundled with the app: nothing is fetched from a CDN. -->
+<link rel="stylesheet" href="katex.min.css">
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body { font: 17px/1.45 sans-serif; color: #f1f3f8; overflow-wrap: anywhere; -webkit-user-select: none; user-select: none; }
+  #m { padding: 1px 0; white-space: pre-wrap; }
+  .katex { font-size: 1.08em; }
+  .katex-display { margin: .35em 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+  .raw { font-family: monospace; }
+</style>
+<script src="katex.min.js"></script>
+<script src="contrib/auto-render.min.js"></script>
+</head>
+<body>
+<div id="m"></div>
+<script>
+  // The app calls render(text, colour, px, display, dollars); the text goes in
+  // as textContent (never HTML), then KaTeX typesets its math spans. A server
+  // prompt marks math with \( ... \) and \[ ... \] only; $ ... $ spans are read
+  // only for the New idea form's own preview (dollars = true), as on the web.
+  var BS = String.fromCharCode(92);
+  function report() {
+    var h = Math.ceil(document.getElementById('m').getBoundingClientRect().height);
+    if (window.XtnlMath) window.XtnlMath.height(h);
+  }
+  function render(text, color, px, display, dollars) {
+    var el = document.getElementById('m');
+    document.body.style.color = color;
+    document.body.style.fontSize = px + 'px';
+    var src = text;
+    if (display && src.indexOf(BS + '(') < 0 && src.indexOf(BS + '[') < 0) src = BS + '[' + src + BS + ']';
+    el.textContent = src;
+    var delimiters = [
+      { left: BS + '[', right: BS + ']', display: true },
+      { left: BS + '(', right: BS + ')', display: false }
+    ];
+    if (dollars) {
+      delimiters = [{ left: '$$', right: '$$', display: true }].concat(delimiters, [{ left: '$', right: '$', display: false }]);
+    }
+    try {
+      renderMathInElement(el, { delimiters: delimiters, throwOnError: false });
+    } catch (e) {
+      el.className = 'raw';
+    }
+    report();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(report);
+    setTimeout(report, 120);
+  }
+  window.addEventListener('resize', report);
+  if (window.XtnlMath) window.XtnlMath.ready();
+</script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed icon (Android 13+): the foreground's geometry in one colour, without the glow; alpha
+     steps only for the seal (0.5), the rising stroke (0.8) and the dim bottom-left node (0.55). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:name="seal"
+        android:pathData="M54,28.08L76.447,41.04L76.447,66.96L54,79.92L31.553,66.96L31.553,41.04z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.08"
+        android:strokeLineJoin="round"
+        android:strokeAlpha="0.5" />
+    <path
+        android:name="beads"
+        android:pathData="M53.064,28.08a0.936,0.936 0 1,0 1.872,0a0.936,0.936 0 1,0 -1.872,0zM75.511,41.04a0.936,0.936 0 1,0 1.872,0a0.936,0.936 0 1,0 -1.872,0zM75.511,66.96a0.936,0.936 0 1,0 1.872,0a0.936,0.936 0 1,0 -1.872,0zM53.064,79.92a0.936,0.936 0 1,0 1.872,0a0.936,0.936 0 1,0 -1.872,0zM30.617,66.96a0.936,0.936 0 1,0 1.872,0a0.936,0.936 0 1,0 -1.872,0zM30.617,41.04a0.936,0.936 0 1,0 1.872,0a0.936,0.936 0 1,0 -1.872,0z"
+        android:fillColor="#FFFFFFFF"
+        android:fillAlpha="0.5" />
+    <path
+        android:name="rise"
+        android:pathData="M59.943,44.96L40.971,66.722"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.786"
+        android:strokeLineCap="round"
+        android:strokeAlpha="0.8" />
+    <path
+        android:name="main"
+        android:pathData="M46.551,42.17L66.639,66.722"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.232"
+        android:strokeLineCap="round" />
+    <path
+        android:name="nodeD"
+        android:pathData="M39.687,66.722a1.283,1.283 0 1,0 2.567,0a1.283,1.283 0 1,0 -2.567,0z"
+        android:fillColor="#FFFFFFFF"
+        android:fillAlpha="0.55" />
+    <path
+        android:name="nodeB"
+        android:pathData="M64.965,66.722a1.674,1.674 0 1,0 3.348,0a1.674,1.674 0 1,0 -3.348,0z"
+        android:fillColor="#FFFFFFFF" />
+    <path
+        android:name="nodeA"
+        android:pathData="M43.984,42.17a2.567,2.567 0 1,0 5.134,0a2.567,2.567 0 1,0 -5.134,0z"
+        android:fillColor="#FFFFFFFF" />
+    <path
+        android:name="sparkRim"
+        android:pathData="M57.351,44.96a2.592,2.592 0 1,0 5.184,0a2.592,2.592 0 1,0 -5.184,0z"
+        android:fillColor="#FFFFFFFF" />
+    <path
+        android:name="glint"
+        android:pathData="M59.943,38.336L60.504,44.96L59.943,51.584L59.381,44.96zM55.191,44.96L59.943,44.399L64.695,44.96L59.943,45.522z"
+        android:fillColor="#FFFFFFFF" />
+</vector>

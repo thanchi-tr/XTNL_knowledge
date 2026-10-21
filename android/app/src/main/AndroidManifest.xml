@@ -3,34 +3,62 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Soft haptic compositions (a tick, a filed idea, a level up). -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Tap-to-call and text open the dialer / messages app (no call permission needed). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.DIAL" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="smsto" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
 
     <application
-        android:allowBackup="true"
+        android:name=".XtnlApp"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:networkSecurityConfig="@xml/network_security_config"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Xtnl">
+        android:enableOnBackInvokedCallback="true"
+        android:theme="@style/Theme.Xtnl.Starting">
 
-        <!-- One activity holds the web app. It handles every size change itself
-             (Fold open/close, rotation, a hardware keyboard), so the page and
-             what the user typed are never reloaded. -->
+        <!-- One activity holds the whole app. It handles every size change itself
+             (Fold open/close, rotation, a hardware keyboard), so the screens, what
+             the user typed and a review run are never reloaded. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|density|uiMode"
+            android:resizeableActivity="true"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- The launcher shortcuts (res/xml/shortcuts.xml) open xtnl://app/<path>. -->
+            <!-- Launcher shortcuts (res/xml/shortcuts.xml) and links open xtnl://app/<path>. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="xtnl" android:host="app" />
+            </intent-filter>
+            <!-- The v1 shell's pinned "Address" shortcut: now opens Settings. -->
+            <intent-filter>
+                <action android:name="com.xtnl.app.CHANGE_ADDRESS" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
             <meta-data
                 android:name="android.app.shortcuts"

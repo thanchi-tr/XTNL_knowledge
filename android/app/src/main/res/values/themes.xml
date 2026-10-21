@@ -1,16 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- The web app's own night colours (manifest background_color / theme_color),
-         so there is no white flash before the first paint. -->
+    <!-- Night (the web app's default theme), so there is no white flash before the first frame. -->
     <color name="xtnl_bg">#0A0D13</color>
-    <color name="xtnl_bar">#0C0F15</color>
-    <color name="xtnl_text">#E8ECF3</color>
-    <color name="xtnl_muted">#9AA3B2</color>
 
+    <!-- The window under Compose. Edge to edge is set in MainActivity (enableEdgeToEdge). -->
     <style name="Theme.Xtnl" parent="@android:style/Theme.DeviceDefault.NoActionBar">
         <item name="android:windowBackground">@color/xtnl_bg</item>
-        <item name="android:statusBarColor">@color/xtnl_bar</item>
-        <item name="android:navigationBarColor">@color/xtnl_bar</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <!-- Android 12+ SplashScreen (androidx core-splashscreen backports it to 26):
+         the new icon on the Night background. -->
+    <style name="Theme.Xtnl.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/xtnl_bg</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
+        <item name="windowSplashScreenAnimationDuration">300</item>
+        <item name="postSplashScreenTheme">@style/Theme.Xtnl</item>
     </style>
 </resources>

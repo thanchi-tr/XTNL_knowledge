@@ -1,0 +1,1393 @@
+package com.xtnl.app.ui.check
+
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.graphics.addOutline
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
+import android.os.SystemClock
+import android.text.format.DateFormat
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.material3.ripple
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.xtnl.app.core.Fmt
+import com.xtnl.app.core.TickLadder
+import com.xtnl.app.core.TimeLabels
+import com.xtnl.app.data.CheckData
+import com.xtnl.app.data.LevelInfo
+import com.xtnl.app.data.ReviewSummary
+import com.xtnl.app.data.TaskItem
+import com.xtnl.app.data.WorkItem
+import com.xtnl.app.ui.LocalSnacks
+import com.xtnl.app.ui.LocalWindowLayout
+import com.xtnl.app.ui.SnackTone
+import com.xtnl.app.ui.TwoPane
+import com.xtnl.app.ui.components.ButtonKind
+import com.xtnl.app.ui.components.CardShape
+import com.xtnl.app.ui.components.CheckCircle
+import com.xtnl.app.ui.components.EmptyNote
+import com.xtnl.app.ui.components.Eyebrow
+import com.xtnl.app.ui.components.Glyphs
+import com.xtnl.app.ui.components.LevelSeal
+import com.xtnl.app.ui.components.ProgressRing
+import com.xtnl.app.ui.components.SealState
+import com.xtnl.app.ui.components.StampSpec
+import com.xtnl.app.ui.components.XButton
+import com.xtnl.app.ui.components.XCard
+import com.xtnl.app.ui.motion.BoardMoment
+import com.xtnl.app.ui.motion.Dur
+import com.xtnl.app.ui.motion.EaseIn
+import com.xtnl.app.ui.motion.EaseInOut
+import com.xtnl.app.ui.motion.EaseOut
+import com.xtnl.app.ui.motion.FxState
+import com.xtnl.app.ui.motion.LocalFeel
+import com.xtnl.app.ui.motion.LocalFx
+import com.xtnl.app.ui.motion.LocalMotion
+import com.xtnl.app.ui.motion.MotionLevel
+import com.xtnl.app.ui.motion.RollingNumber
+import com.xtnl.app.ui.motion.Spr
+import com.xtnl.app.ui.motion.TickMoment
+import com.xtnl.app.ui.motion.drawCheck
+import com.xtnl.app.ui.motion.drawHexTrace
+import com.xtnl.app.ui.motion.fade
+import com.xtnl.app.ui.motion.flood
+import com.xtnl.app.ui.motion.hexPath
+import com.xtnl.app.ui.motion.holdFrames
+import com.xtnl.app.ui.motion.rememberBump
+import com.xtnl.app.ui.motion.spr
+import com.xtnl.app.ui.motion.stamp
+import com.xtnl.app.ui.motion.visibleCenter
+import com.xtnl.app.ui.theme.X
+import com.xtnl.app.ui.theme.XtnlColors
+import com.xtnl.app.ui.theme.figures
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import java.time.Instant
+import java.time.ZoneId
+import java.util.UUID
+
+/** A tick in flight: its moment id, ladder step and motes, and what it has put on the seal, for the arrivals and an undo. */
+internal class TickRun(
+    val id: String, val templateId: String, val step: Int, val motes: Int, val tickAt: Long, val toSeal: Boolean,
+) {
+    /** The ring's exact gain for this tick, once the server's answer brings the level (null until then). */
+    var delta: Float? = null
+    /** Its motes fly to the seal's ring (not the Check tab). */
+    var onSeal = false
+    /** How much of the ring its landed motes have added so far (an undo takes it back). */
+    var banked = 0f
+    var arrived = 0
+    var lastArrivalAt: Long? = null
+    /** This run holds the seal's ring (its motes are on their way). */
+    var holding = false
+    var levelUp = false
+    /** The level up it crossed no longer waits (played, given up, or dropped by a refresh): its last mote lets the ring go. */
+    var levelUpGone = false
+    /** It lit its rung's bead (its last mote, or at once without motes): an undo dims it. */
+    var beadLit = false
+}
+
+/** The board-clear roll call: which kept circles bump, each after its delay. */
+data class Roll(val seq: Int, val delays: Map<String, Int>)
+
+/**
+ * Check's moments' shared parts, app-wide (AppRoot keeps it, so motes in flight still land after a tab switch):
+ * where each tick and its ✦ figure sit (root coordinates), the header seal's moving parts, the ticks in flight,
+ * and the board-clear banner's hold and roll call. [shown] while Check is on screen.
+ */
+class CheckSpots {
+    internal val at = HashMap<String, Offset>()
+    internal val xp = HashMap<String, Offset>()
+    internal var bannerSeal: LayoutCoordinates? = null
+    internal var flame: Offset? = null
+    internal var shown = false
+    internal var scope: CoroutineScope? = null
+    internal var list: LazyListState? = null
+    internal val runs = HashMap<String, TickRun>()
+    /** The header seal: its ring, beads and forge (created with the first level shown). */
+    internal var seal: SealState? = null
+    /** Where the seal's ring is going while ticks land on it: every landed share adds to it, so it only steps up. */
+    internal var ringGoal = 0f
+    /** The board-clear banner may show from this clear on (at B, with the roll call: the rows make room, then it fades in). */
+    var released by mutableIntStateOf(0)
+    internal var bannerPlayed = 0
+    var roll by mutableStateOf(Roll(0, emptyMap()))
+    /** A refused tick or Done: its row nods (by key: "t:…" or "w:…"). */
+    var nods by mutableStateOf(mapOf<String, Int>())
+    internal var levelUpPlayed = 0
+    /** Ticks as each tick's last mote lands (a level up waits for it). */
+    internal var landings by mutableIntStateOf(0)
+
+    internal fun nod(key: String) { nods = nods + (key to (nods[key] ?: 0) + 1) }
+}
+
+/** The moment's id for a tick: each row's tick is its own moment, running independently. */
+private fun tickId(templateId: String, clientId: String) = "tick:$templateId:$clientId"
+
+/**
+ * Check's events, answered wherever the user is now (AppRoot calls this once): a tick that fails after a
+ * switch to Log still says so, with its Retry. The moments' long parts (the seal's ring, a level up, board
+ * clear) run here, in a scope that outlives the screen.
+ */
+@Composable
+fun CheckEvents(vm: CheckViewModel, spots: CheckSpots) {
+    // It collects for the whole run: the theme and the motion setting are read as they are now, not as they were.
+    val c by rememberUpdatedState(X.c)
+    val motion by rememberUpdatedState(LocalMotion.current)
+    val feel = LocalFeel.current
+    val fx = LocalFx.current
+    val snacks = LocalSnacks.current
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+    SideEffect { spots.scope = scope }
+    LaunchedEffect(vm) {
+        vm.events.collect { e ->
+            when (e) {
+                is CheckViewModel.Event.TaskKept -> {
+                    val run = spots.runs[e.templateId]
+                    if (run != null && e.level != null && e.before != null) {
+                        val up = e.level.level > e.before.level
+                        run.levelUp = up
+                        if (!up) {
+                            val d = (e.level.progress - e.before.progress).toFloat()
+                            run.delta = d
+                            // The motes landed on the ring before the answer: it tweens to the exact value now.
+                            if (run.onSeal && run.arrived >= run.motes) spots.seal?.let { s ->
+                                spots.ringGoal = (spots.ringGoal + d - run.banked).coerceIn(0f, 1f)
+                                run.banked = d
+                                val goal = spots.ringGoal
+                                scope.launch { s.settleTo(goal, motion) }
+                            }
+                        }
+                    }
+                    // Unhinted XP: no figure stood for it, so the motes leave the circle now that the answer says how much.
+                    if (!e.hinted && e.xp > 0 && spots.shown && motion == MotionLevel.FULL && run != null && run.arrived == 0 && !run.holding) {
+                        spots.at[e.templateId]?.let { from -> launchMotes(spots, fx, feel, c, run, from, mvv = false, delayMs = 0, motion = motion) }
+                    }
+                    snacks.show(e.line ?: "Kept · ${Fmt.signed(e.xp)} XP", "Undo", SnackTone.KEPT) {
+                        undoTick(spots, fx, feel, vm, e.templateId, motion)
+                    }
+                }
+                is CheckViewModel.Event.TaskFailed -> {
+                    spots.runs.remove(e.templateId)?.let { r ->
+                        release(spots, r); fx.cancel(r.id); feel?.ladderBack()
+                        if (r.beadLit) spots.seal?.let { s -> scope.launch { s.dimBead(r.step, motion) } }
+                    }
+                    feel?.failed("fail:${e.templateId}")
+                    spots.nod("t:${e.templateId}")
+                    snacks.error(e.message, e.retry)
+                }
+                is CheckViewModel.Event.TaskUndone -> snacks.show("Put back · ${Fmt.signed(e.xp)} XP")
+                is CheckViewModel.Event.UndoFailed -> { feel?.error(); snacks.error(e.message) }
+                // Work never climbed the ladder, so its undo takes no rung back.
+                is CheckViewModel.Event.WorkDone -> snacks.show("Done · ${e.item.title}", "Undo", SnackTone.KEPT) { feel?.untick(ladder = false); vm.workReopen(e.item) }
+                is CheckViewModel.Event.WorkFailed -> {
+                    if (e.id != null) { feel?.failed("work:${e.id}"); spots.nod("w:${e.id}") } else feel?.error()
+                    snacks.error(e.message, e.retry)
+                }
+                is CheckViewModel.Event.Note -> snacks.show(e.message)
+                // The board-clear moment, once per clear (an event, so coming back to Check doesn't play it again).
+                is CheckViewModel.Event.BoardClear -> scope.launch { boardClear(spots, vm, fx, feel, c, motion, e.templateId, density.density) }
+            }
+        }
+    }
+    // No level up waits any more (played, given up, or dropped by a refresh or a new source): the ticks that crossed
+    // one let the seal go, so it follows its level again.
+    LaunchedEffect(vm) {
+        vm.ui.map { it.levelUp?.key }.distinctUntilChanged().collect { k -> if (k == null) releaseLevelUps(spots) }
+    }
+    // The ladder's run lapses 90 s after the last tick: the beads go out in reverse.
+    LaunchedEffect(feel) {
+        val f = feel ?: return@LaunchedEffect
+        f.ladder.collectLatest { run ->
+            val s = spots.seal ?: return@collectLatest
+            if (run == null) { s.fadeBeads(motion); return@collectLatest }
+            val left = run.atMs + TickLadder.RUN_MS - SystemClock.elapsedRealtime()
+            if (left > 0) delay(left)
+            f.ladderLapsed()
+        }
+    }
+}
+
+/**
+ * The tick's motes: from [from] (the row's ✦ figure, or its circle) to the seal ring's tip, or to the Check tab when
+ * the seal is off screen. The bank's beats and sound are cued for their arrivals.
+ */
+private fun launchMotes(spots: CheckSpots, fx: FxState, feel: com.xtnl.app.feel.Feel?, c: XtnlColors, run: TickRun, from: Offset, mvv: Boolean, delayMs: Int, motion: MotionLevel) {
+    val seal = spots.seal
+    val toSeal = seal?.tip() != null
+    val n = TickMoment.motes(run.step, mvv)
+    if (toSeal) {
+        // The first run to take the ring starts its goal from where the ring rests.
+        if (seal!!.holds == 0) spots.ringGoal = seal.ring.targetValue
+        seal.holds++
+        run.holding = true
+        run.onSeal = true
+    }
+    // To the ring's tip from outside the ring (never across the hex, its numeral or the title under it).
+    val last = fx.motes(
+        from, if (toSeal) "seal" else "check", n, FxState.Shape.SPARK, c.xp, 6f, 3.5f,
+        seed = run.templateId.hashCode() * 31 + run.step, delayMs = delayMs, staggerMs = TickMoment.MOTE_STAGGER,
+        sideDp = 56f, spreadDeg = 30f, ring = if (toSeal) seal!!.center() else null, core = if (c.dark) c.light else null, id = run.id,
+    ) { i -> arrive(spots, fx, run, i, n, toSeal, motion) }
+    if (last < 0) {
+        if (toSeal) { seal!!.holds--; run.holding = false; run.onSeal = false }
+        return
+    }
+    feel?.bankAt(run.id, run.step, n, delayMs + Dur.MOTE, last)
+    run.lastArrivalAt = SystemClock.uptimeMillis() + last
+}
+
+/**
+ * Mote [i] of [n] lands: the ring steps up by its share (a level's run fills it to the top; the value not known yet,
+ * it glints); the last lights the rung's bead. Shares add to the ring's running goal, so two ticks landing together
+ * only ever step it up.
+ */
+private fun arrive(spots: CheckSpots, fx: FxState, run: TickRun, i: Int, n: Int, toSeal: Boolean, motion: MotionLevel) {
+    run.arrived = i + 1
+    if (!toSeal) { fx.land("check"); return }
+    val seal = spots.seal ?: return
+    val scope = spots.scope ?: return
+    val d = run.delta
+    val step = when {
+        run.levelUp -> (1f - spots.ringGoal) / (n - i)
+        d != null -> d * (i + 1) / n - run.banked
+        else -> null
+    }
+    if (step != null) {
+        run.banked += step
+        spots.ringGoal = (spots.ringGoal + step).coerceIn(0f, 1f)
+        val goal = spots.ringGoal
+        scope.launch { seal.arrive(goal, motion) }
+    } else scope.launch { seal.glintOnce() }
+    if (i < n - 1) return
+    spots.landings++
+    run.beadLit = true
+    scope.launch { seal.lightBead(run.step, motion) }
+    if (run.step >= 5) scope.launch { delay(30); seal.flashOutline() }
+    // A level up waits for the last mote (cause, then effect); it takes this run's hold over.
+    if (!run.levelUp || run.levelUpGone) release(spots, run)
+}
+
+private fun release(spots: CheckSpots, run: TickRun) {
+    if (!run.holding) return
+    run.holding = false
+    spots.seal?.let { it.holds = (it.holds - 1).coerceAtLeast(0) }
+}
+
+/** No level up waits: every run that crossed one lets the seal go (now, or as its last mote lands). */
+private fun releaseLevelUps(spots: CheckSpots) {
+    for (r in spots.runs.values) {
+        if (!r.levelUp) continue
+        r.levelUpGone = true
+        if (r.arrived >= r.motes) release(spots, r)
+    }
+}
+
+/** An undo (a row tap, or the snack's Undo): the moment's motes fade, its beats and sounds go, the ring drains, the bead dims. */
+private fun undoTick(spots: CheckSpots, fx: FxState, feel: com.xtnl.app.feel.Feel?, vm: CheckViewModel, templateId: String, motion: MotionLevel) {
+    val run = spots.runs.remove(templateId)
+    if (run != null) {
+        fx.cancel(run.id)
+        release(spots, run)
+        val seal = spots.seal
+        val scope = spots.scope
+        if (seal != null && scope != null) {
+            // What its motes added comes off the ring's goal (other ticks' shares stay).
+            run.banked.takeIf { !run.levelUp && it > 0f }?.let { b ->
+                spots.ringGoal = (spots.ringGoal - b).coerceAtLeast(0f)
+                val goal = spots.ringGoal
+                scope.launch { if (!motion.moves) seal.ring.snapTo(goal) else seal.ring.animateTo(goal, tween(240, easing = EaseIn)) }
+            }
+            // Its bead, however it was lit (Calm and Still light it at once, with no motes).
+            if (run.beadLit) scope.launch { seal.dimBead(run.step, motion) }
+        }
+    }
+    feel?.untick(run?.id)
+    vm.undo(templateId)
+}
+
+/** Board clear, from the event: B waits for the triggering tick's motes (cause, then effect). */
+private suspend fun boardClear(spots: CheckSpots, vm: CheckViewModel, fx: FxState, feel: com.xtnl.app.feel.Feel?, c: XtnlColors, motion: MotionLevel, templateId: String, density: Float) = coroutineScope {
+    val key = vm.ui.value.boardClearKey
+    val id = "clear:$key"
+    val run = spots.runs[templateId]
+    val now = SystemClock.uptimeMillis()
+    if (motion != MotionLevel.FULL) {
+        feel?.clear(id, 0)
+        spots.released = key
+        return@coroutineScope
+    }
+    val b = BoardMoment.start(now, run?.tickAt, run?.lastArrivalAt)
+    val wait = (b - now).toInt().coerceAtLeast(0)
+    feel?.clear(id, wait)
+    delay(wait.toLong())
+    // B: the roll call, from the last-ticked row out, and the header seal's beads flash (if it is on screen).
+    spots.list?.layoutInfo?.visibleItemsInfo?.let { items ->
+        val origin = items.firstOrNull { it.key == "t:$templateId" }?.index
+        val kept = vm.ui.value.tasks.filter { it.kept }.map { it.templateId }.toSet()
+        if (origin != null) {
+            val byIndex = HashMap<Int, String>()
+            for (info in items) {
+                val k = info.key as? String ?: continue
+                if (k.startsWith("t:") && k.removePrefix("t:") in kept) byIndex[info.index] = k.removePrefix("t:")
+            }
+            val wave = BoardMoment.wave(origin, byIndex.keys.toList())
+            spots.roll = Roll(spots.roll.seq + 1, wave.associate { (index, d) -> byIndex.getValue(index) to d })
+        }
+    }
+    spots.seal?.takeIf { it.center() != null }?.let { s -> launch { s.flashBeads() } }
+    delay(BoardMoment.BANNER_AT.toLong())
+    spots.released = key
+    delay((BoardMoment.CONTACT - BoardMoment.BANNER_AT).toLong())
+    // B + 220, contact: the hex shock and the vertex burst from the banner's seal, or from the last circle with a chip.
+    // The shards stay near it (within about 60 dp: a slow throw, light gravity, under half a second), fading before
+    // the streak above or the rows below.
+    val seal = spots.bannerSeal?.visibleCenter()
+    val r = 20f * density * 0.92f
+    if (seal != null) {
+        fx.shock(seal, r, r * 2.4f, 3f * density, 300, if (c.dark) c.light else c.kept, hex = true, id = id, light = c.dark)
+        fx.vertexBurst(seal, r, 12, listOf(c.kept, c.xp, c.light), seed = key * 31, speed = 110f..180f, drag = 4f, gravity = 250f, life = 0.4f..0.5f, upBias = 30f, rayColor = c.light, id = id)
+    } else {
+        spots.at[templateId]?.let { p ->
+            fx.vertexBurst(p, 15f * density, 12, listOf(c.kept, c.xp, c.light), seed = key * 31, speed = 110f..180f, drag = 4f, gravity = 250f, life = 0.4f..0.5f, upBias = 30f, rayColor = c.light, id = id)
+            fx.chip(p, "Board clear", c.ink0, c.overlay, FxState.Glyph.TICK, c.kept, distDp = 24f, durMs = 1200, id = id)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState, onStartReview: () -> Unit, onOpenSettings: () -> Unit, onUseDemo: () -> Unit) {
+    val ui by vm.ui.collectAsStateWithLifecycle()
+    val c = X.c
+    val feel = LocalFeel.current
+    val fx = LocalFx.current
+    val snacks = LocalSnacks.current
+    val motion = LocalMotion.current
+    val density = LocalDensity.current
+    val wl = LocalWindowLayout.current
+
+    DisposableEffect(spots, listState) {
+        spots.shown = true
+        spots.list = listState
+        onDispose {
+            spots.shown = false
+            spots.at.clear()
+            spots.xp.clear()
+            spots.bannerSeal = null
+            spots.flame = null
+        }
+    }
+
+    /** A tick, at its release frame (T): the haptic and the pluck fire now, the row flips now, the motes follow. */
+    fun tick(t: TaskItem, mvv: Boolean) {
+        val clientId = UUID.randomUUID().toString()
+        val id = tickId(t.templateId, clientId)
+        val motes = motion == MotionLevel.FULL && (spots.seal?.tip() != null || fx.resolve("check") != null)
+        val step = feel?.tick(id, motes) ?: 0
+        val run = TickRun(id, t.templateId, step, TickMoment.motes(step, mvv), SystemClock.uptimeMillis(), motes)
+        spots.runs[t.templateId] = run
+        vm.complete(t, mvv = mvv, clientId = clientId)
+        val seal = spots.seal
+        when {
+            motion == MotionLevel.FULL && t.xpHint != null -> {
+                val from = spots.xp[t.templateId] ?: spots.at[t.templateId]
+                if (motes && from != null) launchMotes(spots, fx, feel, c, run, from, mvv, TickMoment.MOTES_AT, motion)
+                // Nowhere to land: a chip rises from the figure instead.
+                else from?.let { fx.chip(it, "+${Fmt.figure(t.xpHint)}", c.ink0, c.overlay, FxState.Glyph.SPARK, c.xp, id = id) }
+            }
+            seal != null && motion != MotionLevel.FULL -> spots.scope?.launch {
+                if (motion == MotionLevel.CALM) delay(200)
+                // Undone (or refused) meanwhile: no bead to light.
+                if (spots.runs[t.templateId] !== run) return@launch
+                run.beadLit = true
+                seal.lightBead(step, motion)
+            }
+        }
+    }
+
+    val onTick: (TaskItem) -> Unit = tick@{ t ->
+        when {
+            t.open -> tick(t, mvv = false)
+            t.kept && ui.kept.containsKey(t.templateId) -> undoTick(spots, fx, feel, vm, t.templateId, motion)
+            t.kept -> { feel?.select(); snacks.show("Kept earlier today. Undo it on the web app.") }
+            t.locked -> { feel?.select(); snacks.show("A study task: it completes itself from today's reviews.") }
+            else -> { feel?.select(); snacks.show(if (t.status == "HELD") "Held today: it asks nothing, and the streak is safe." else "Skipped today.") }
+        }
+    }
+    val onMvv: (TaskItem) -> Unit = { t -> tick(t, mvv = true) }
+    val onImpact: (TaskItem, Offset) -> Unit = { t, p ->
+        val run = spots.runs[t.templateId]
+        val step = run?.step ?: 0
+        val id = run?.id
+        val px = density.density
+        // T + 56, the impact: the shock ring and the streaks, from just outside the stamped disc (15 dp at its 1.10
+        // peak, + 1.5 dp). The light flash (Night) is the circle's own, under its mark.
+        val edge = (15f * StampSpec.Task.peak + 1.5f) * px
+        fx.shock(p, edge, TickMoment.shockRadiusDp(step) * px, 2f * px, 240, c.kept, w1 = 0.5f * px, alpha0 = 0.5f, light = false, id = id)
+        val k = TickMoment.speedScale(step)
+        fx.burst(
+            p, edge, TickMoment.streaks(step), listOf(c.kept, c.light), seed = t.templateId.hashCode() + step,
+            speed = 240f * k..340f * k, drag = 10f, startAngle = TickMoment.startAngle(step), jitter = 10f,
+            sparkShare = TickMoment.sparkShare(step), sparkColor = c.xp, id = id,
+        )
+    }
+
+    val pull = rememberPullToRefreshState()
+    val top = WindowInsets.safeDrawing.only(WindowInsetsSides.Top).asPaddingValues().calculateTopPadding()
+    PullToRefreshBox(
+        isRefreshing = ui.refreshing,
+        onRefresh = { vm.refresh() },
+        state = pull,
+        modifier = Modifier.fillMaxSize(),
+        indicator = {
+            PullToRefreshDefaults.Indicator(
+                state = pull, isRefreshing = ui.refreshing,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = top),
+                containerColor = c.overlay, color = c.ink0,
+            )
+        },
+    ) {
+        val data = ui.data
+        val rows = Rows(spots, onTick, onMvv, onImpact)
+        when {
+            data == null && ui.loading -> LoadingBoard(top)
+            data == null -> CantReach(ui.error ?: "Can't reach the server.", top, onRetry = { vm.refresh() }, onSettings = onOpenSettings, onDemo = onUseDemo)
+            !wl.mode.twoPane -> LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = top + 8.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                header(data, ui, vm, spots, onOpenSettings)
+                tasks(ui, rows, motion)
+                review(data.review, data.now, onStartReview)
+                work(ui, data.now, vm, spots, motion)
+            }
+            else -> TwoPane(
+                first = {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 20.dp, end = 4.dp, top = top + 12.dp, bottom = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        header(data, ui, vm, spots, onOpenSettings)
+                        tasks(ui, rows, motion)
+                    }
+                },
+                second = {
+                    val second = rememberLazyListState()
+                    LazyColumn(
+                        state = second,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 4.dp, end = 20.dp, top = top + 12.dp, bottom = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        review(data.review, data.now, onStartReview)
+                        work(ui, data.now, vm, spots, motion)
+                    }
+                },
+            )
+        }
+    }
+}
+
+/** What a task row needs from the screen. */
+private class Rows(val spots: CheckSpots, val onTick: (TaskItem) -> Unit, val onMvv: (TaskItem) -> Unit, val onImpact: (TaskItem, Offset) -> Unit)
+
+// ── The list's parts ────────────────────────────────────────────────────────
+
+private fun LazyListScope.header(data: CheckData, ui: CheckViewModel.Ui, vm: CheckViewModel, spots: CheckSpots, onOpenSettings: () -> Unit) {
+    item(key = "header", contentType = "header") { Header(data, ui, vm, spots, onOpenSettings) }
+}
+
+private fun LazyListScope.tasks(ui: CheckViewModel.Ui, rows: Rows, motion: MotionLevel) {
+    // Board clear is its own item, inserted (not expanded) with the roll call: rows below move by placement, and it
+    // fades in only once they have mostly made room (B + 120), so it never draws over them.
+    if (ui.boardClear && (ui.boardClearKey == 0 || rows.spots.released >= ui.boardClearKey)) {
+        item(key = "board-clear", contentType = "banner") {
+            BoardClearBanner(
+                playKey = ui.boardClearKey, spots = rows.spots,
+                modifier = Modifier.animateItem(
+                    fadeInSpec = motion.fade(tween(160, delayMillis = BoardMoment.BANNER_FADE, easing = EaseOut)),
+                    placementSpec = motion.spr(Spr.glide), fadeOutSpec = motion.fade(tween(120)),
+                ),
+            )
+        }
+    }
+    item(key = "tasks-label", contentType = "label") {
+        Row(Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = motion.spr(Spr.glide)).fillMaxWidth().padding(top = 8.dp, bottom = 2.dp, start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Eyebrow("Today")
+            Spacer(Modifier.width(8.dp))
+            if (ui.tasks.isEmpty()) {
+                Text("nothing planned", color = X.c.ink2, style = MaterialTheme.typography.labelMedium)
+            } else {
+                // The header's digits roll as rows are ticked and put back.
+                val style = MaterialTheme.typography.labelMedium
+                RollingNumber(ui.shownOpen, style = style, color = X.c.ink2)
+                Text(" open · ", color = X.c.ink2, style = style)
+                RollingNumber(ui.shownKept, style = style, color = X.c.ink2)
+                Text(" kept", color = X.c.ink2, style = style)
+            }
+        }
+    }
+    if (ui.tasks.isEmpty()) {
+        item(key = "tasks-empty") { EmptyNote("Board clear", "Nothing on today's board.") }
+    }
+    items(ui.tasks, key = { "t:" + it.templateId }, contentType = { "task" }) { t ->
+        val spots = rows.spots
+        val roll = spots.roll
+        TaskRow(
+            t,
+            onTick = { rows.onTick(t) }, onMvv = { rows.onMvv(t) },
+            modifier = Modifier.animateItem(fadeInSpec = motion.fade(), placementSpec = motion.spr(Spr.glide), fadeOutSpec = motion.fade()),
+            spots = spots,
+            rollKey = if (t.templateId in roll.delays) roll.seq else 0,
+            rollDelay = roll.delays[t.templateId] ?: 0,
+            nodKey = spots.nods["t:" + t.templateId] ?: 0,
+            onImpact = { p -> rows.onImpact(t, p) },
+        )
+    }
+}
+
+private fun LazyListScope.review(r: ReviewSummary?, now: String?, onStart: () -> Unit) {
+    item(key = "review", contentType = "review") {
+        ReviewTile(r, now, onStart, Modifier.padding(top = 12.dp))
+    }
+}
+
+private fun LazyListScope.work(ui: CheckViewModel.Ui, now: String?, vm: CheckViewModel, spots: CheckSpots, motion: MotionLevel) {
+    val work = ui.work
+    if (work.isEmpty()) return
+    item(key = "work-label", contentType = "label") {
+        Row(Modifier.animateItem(fadeInSpec = motion.fade(), placementSpec = motion.spr(Spr.glide), fadeOutSpec = motion.fade()).fillMaxWidth().padding(top = 16.dp, bottom = 2.dp, start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(X.c.work))
+            Spacer(Modifier.width(8.dp))
+            Eyebrow("Work")
+            Spacer(Modifier.width(8.dp))
+            val style = MaterialTheme.typography.labelMedium
+            // Closing rows still count until they leave.
+            RollingNumber(work.size, style = style, color = X.c.ink2)
+            Text(" due", color = X.c.ink2, style = style)
+        }
+    }
+    items(work, key = { "w:" + it.id }, contentType = { "work" }) { w ->
+        WorkRow(
+            w, now, closing = w.id in ui.workClosing,
+            onDone = { vm.workDone(w, holdMs = if (motion == MotionLevel.STILL) 0L else CheckViewModel.WORK_HOLD_MS) },
+            nodKey = spots.nods["w:" + w.id] ?: 0,
+            // The row fades itself out before it leaves (no disappearing-item layer).
+            modifier = Modifier.animateItem(fadeInSpec = motion.fade(tween(200)), placementSpec = motion.spr(Spr.glide), fadeOutSpec = null),
+        )
+    }
+}
+
+// ── Header ──────────────────────────────────────────────────────────────────
+
+@Composable
+private fun Header(data: CheckData, ui: CheckViewModel.Ui, vm: CheckViewModel, spots: CheckSpots, onOpenSettings: () -> Unit) {
+    val c = X.c
+    val ctx = LocalContext.current
+    val motion = LocalMotion.current
+    val feel = LocalFeel.current
+    val fx = LocalFx.current
+    val snacks = LocalSnacks.current
+    Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Eyebrow("Quick check")
+            Spacer(Modifier.height(2.dp))
+            Text(data.dayLabel ?: "Today", style = MaterialTheme.typography.headlineMedium, color = c.ink0, maxLines = 1)
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                data.streak?.let { s -> Streak(s.days, s.keptToday || ui.kept.isNotEmpty(), spots) }
+            }
+            if (ui.offline && ui.fetchedAtMs != null) {
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Glyphs.Offline, null, tint = c.ink2, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "Offline · " + TimeLabels.updated(Instant.ofEpochMilli(ui.fetchedAtMs), ZoneId.systemDefault(), DateFormat.is24HourFormat(ctx)),
+                        color = c.ink2, style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+            // The server answered, and said no: its line (the token one leads to Settings), over what was last read.
+            ui.refused?.let { line ->
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    line + (ui.fetchedAtMs?.let { " · " + TimeLabels.updated(Instant.ofEpochMilli(it), ZoneId.systemDefault(), DateFormat.is24HourFormat(ctx)) } ?: ""),
+                    color = c.owed, style = MaterialTheme.typography.labelMedium,
+                )
+                if (ui.refusedAuth) {
+                    Spacer(Modifier.height(6.dp))
+                    XButton("Settings", onOpenSettings, kind = ButtonKind.QUIET, icon = Glyphs.Settings, height = 44.dp)
+                }
+            }
+        }
+        ui.level?.let { l ->
+            val seal = spots.seal ?: SealState(l.level, l.progress.toFloat()).also { spots.seal = it }
+            // A level up still to play holds the seal at the level it came from.
+            val pending = ui.levelUp?.takeIf { it.key > spots.levelUpPlayed }
+            val shown = pending?.from ?: l
+            LaunchedEffect(seal) {
+                if (seal.shownTitle == null) seal.shownTitle = shown.title
+                // Composed mid-run: the beads show the ladder's rungs at once.
+                feel?.ladder?.value?.let { r -> if (seal.beadLit.all { it.value == 0f }) seal.showBeads(r.step + 1) }
+            }
+            LaunchedEffect(shown.title, seal.holds) { if (seal.holds == 0) seal.shownTitle = shown.title }
+            LaunchedEffect(pending?.key) {
+                val lu = pending ?: return@LaunchedEffect
+                // Wait for the tick's motes to land (cause, then effect), and for the seal to be on screen.
+                snapshotFlow { seal.holds + spots.landings }.first { spots.runs.values.none { it.holding && it.arrived < it.motes } }
+                delay(16)
+                val scope = spots.scope ?: return@LaunchedEffect
+                spots.levelUpPlayed = lu.key
+                val line = "Level ${lu.to.level}" + (lu.to.title?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: "")
+                if (seal.center() == null || System.currentTimeMillis() - lu.atMs > CheckViewModel.LEVEL_UP_QUEUE_MS) {
+                    vm.levelUpShown(lu.key)
+                    snacks.show(line, tone = SnackTone.KEPT)
+                    spots.runs.values.filter { it.levelUp }.forEach { release(spots, it) }
+                    return@LaunchedEffect
+                }
+                seal.holds++
+                // A tick landing during it steps from the new level's progress.
+                spots.ringGoal = lu.to.progress.toFloat()
+                vm.levelUpShown(lu.key)
+                scope.launch {
+                    characterLevelUp(seal, lu, motion, feel, fx, c, onClose = { snacks.show(line, tone = SnackTone.KEPT) })
+                    spots.runs.values.filter { it.levelUp }.forEach { release(spots, it) }
+                }
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                LevelSeal(shown.level, shown.progress.toFloat(), size = 56.dp, state = seal, anchorKey = "seal")
+                (seal.shownTitle ?: shown.title)?.let { Text(it, color = c.ink2, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
+            }
+        }
+    }
+}
+
+/**
+ * The character's level (moment 6b), T = now: the ring sweeps full, flashes and pours into the hexagon, the forge
+ * retraces it, and at T + 500 the seal closes on the new numeral with a double shock, rays and shards; then the
+ * ring redraws from nothing to the new progress.
+ */
+private suspend fun characterLevelUp(seal: SealState, lu: CheckViewModel.LevelUp, motion: MotionLevel, feel: com.xtnl.app.feel.Feel?, fx: FxState, c: XtnlColors, onClose: () -> Unit) = coroutineScope {
+    val id = "level:${lu.key}"
+    // The caller took the seal's hold; it is given back at the end.
+    feel?.forgeCharacter(id, 0)
+    val to = lu.to.progress.toFloat()
+    when (motion) {
+        MotionLevel.STILL -> {
+            seal.shownLevel = lu.to.level; seal.shownTitle = lu.to.title
+            seal.ring.snapTo(to)
+            onClose()
+        }
+        MotionLevel.CALM -> {
+            seal.ring.animateTo(1f, tween(300, easing = EaseOut))
+            seal.forge(lu.to.level, lu.to.title, 1f, 1f, 0, 0, motion, onClose)
+            seal.ring.snapTo(0f)
+            seal.ring.animateTo(to, tween(300, easing = EaseOut))
+        }
+        MotionLevel.FULL -> {
+            launch { seal.ring.animateTo(1f, tween(160, easing = EaseIn)) }
+            launch { delay(160); seal.ringFlash.animateTo(1f, tween(80)); holdFrames(5) }
+            launch { delay(200); seal.ringAlpha.animateTo(0f, tween(120)) }
+            launch {
+                delay(200)
+                seal.forge(lu.to.level, lu.to.title, squat = 0.90f, pop = 1.28f, hold = 5, forgeMs = 300, motion = motion) {
+                    onClose()
+                    seal.center()?.let { p ->
+                        val r = seal.radius() * 0.68f
+                        fx.shock(p, r, r * 2.6f, 3f * fx.density, 360, c.light, hex = true, id = id, light = c.dark)
+                        fx.cue(90, id) { fx.shock(p, r, r * 2.6f, 3f * fx.density, 360, c.mint, hex = true, id = id, light = c.dark) }
+                        // The shards stay near the seal (half a second, light gravity): they fade before the rows' figures.
+                        fx.vertexBurst(
+                            p, r, 18, listOf(c.gold, c.light, c.xp, c.mint), seed = lu.key * 13, fan = 14f, speed = 200f..320f, drag = 3f, gravity = 350f,
+                            life = 0.45f..0.55f, size = 4.5f..7f, upBias = 0f, rayColor = c.light, id = id,
+                        )
+                    }
+                }
+            }
+            delay(620)
+            seal.ringFlash.snapTo(0f)
+            seal.ring.snapTo(0f)
+            seal.ringAlpha.snapTo(1f)
+            seal.head.snapTo(1f)
+            seal.ring.animateTo(to, tween(420, easing = EaseOut))
+            seal.head.animateTo(0f, tween(120))
+        }
+    }
+    seal.holds = (seal.holds - 1).coerceAtLeast(0)
+}
+
+/** The streak: its flame lights on the day's first tick (bumps, and three embers rise under it). */
+@Composable
+private fun Streak(days: Int, keptToday: Boolean, spots: CheckSpots) {
+    val c = X.c
+    val motion = LocalMotion.current
+    val fx = LocalFx.current
+    var firstOfDay by remember { mutableIntStateOf(0) }
+    var was by remember { mutableStateOf(keptToday) }
+    LaunchedEffect(keptToday) {
+        if (keptToday && !was && motion == MotionLevel.FULL) {
+            firstOfDay++
+            spots.flame?.let { fx.embers(it, 3, c.xp, seed = days) }
+        }
+        was = keptToday
+    }
+    val tint by animateColorAsState(if (keptToday) c.xp else c.inkMute, if (motion.moves) tween(120) else tween(0), label = "flame")
+    val bump = rememberBump(firstOfDay, 10f)
+    Icon(
+        Glyphs.Flame, null, tint = tint,
+        modifier = Modifier
+            .size(18.dp)
+            .onGloballyPositioned { spots.flame = it.boundsInRoot().center }
+            .graphicsLayer { val s = bump(); scaleX = s; scaleY = s },
+    )
+    Spacer(Modifier.width(4.dp))
+    Text(if (days == 1) "1 day" else "$days days", color = c.ink1, style = MaterialTheme.typography.labelLarge)
+    Text(if (keptToday) " · kept today" else " · not yet today", color = c.ink2, style = MaterialTheme.typography.labelMedium)
+}
+
+// ── A task ──────────────────────────────────────────────────────────────────
+
+/**
+ * A task row. Its tick (moment 1): the circle stamps; the row floods from the circle in the kept wash as its
+ * border tints; the title strikes through line by line and dims; the ✦ turns a quarter (its own symmetry, so it
+ * rests upright) and a "+" fades in before the figure, which stays where it is. Every value is read in a draw or
+ * layer lambda: a tick recomposes nothing per frame.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun TaskRow(
+    t: TaskItem, onTick: () -> Unit, onMvv: () -> Unit, modifier: Modifier = Modifier, spots: CheckSpots,
+    rollKey: Int, rollDelay: Int, nodKey: Int, onImpact: (Offset) -> Unit,
+) {
+    val c = X.c
+    val motion = LocalMotion.current
+    val kept = t.kept
+    val held = t.status == "HELD" || t.status == "SKIPPED"
+    val source = remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val flood = remember { Animatable(if (kept) 1f else 0f) }
+    val strike = remember { Animatable(if (kept) 1f else 0f) }
+    val dim = remember { Animatable(if (kept) 0.62f else 1f) }
+    val star = remember { Animatable(if (kept) 90f else 0f) }
+    val plus = remember { Animatable(if (kept) 1f else 0f) }
+    var figure by remember { mutableIntStateOf(0) }
+    val figBump = rememberBump(figure, 6f)
+    LaunchedEffect(kept) {
+        val target = if (kept) 1f else 0f
+        if (strike.targetValue == target && strike.value == target) return@LaunchedEffect
+        when {
+            motion == MotionLevel.STILL -> {
+                flood.snapTo(target); strike.snapTo(target); dim.snapTo(if (kept) 0.62f else 1f); star.snapTo(90f * target); plus.snapTo(target)
+            }
+            kept && motion == MotionLevel.FULL -> coroutineScope {
+                launch { delay(40); flood.animateTo(1f, tween(240, easing = EaseOut)) }
+                launch { delay(60); figure++; launch { star.animateTo(90f, tween(200, easing = EaseOut)) }; plus.animateTo(1f, tween(120)) }
+                launch { delay(90); strike.animateTo(1f, tween(220, easing = EaseInOut)) }
+                launch { delay(160); dim.animateTo(0.62f, tween(240, easing = EaseOut)) }
+            }
+            kept -> coroutineScope {
+                launch { flood.animateTo(1f, tween(180)) }
+                launch { strike.animateTo(1f, tween(160)) }
+                launch { dim.animateTo(0.62f, tween(160)) }
+                launch { star.snapTo(90f); plus.animateTo(1f, tween(120)) }
+            }
+            else -> coroutineScope {
+                val calm = motion == MotionLevel.CALM
+                launch { flood.animateTo(0f, tween(if (calm) 140 else 200, easing = EaseIn)) }
+                launch { strike.animateTo(0f, tween(if (calm) 120 else 140, easing = EaseIn)) }
+                launch { dim.animateTo(1f, tween(if (calm) 120 else 160)) }
+                launch { plus.animateTo(0f, tween(if (calm) 120 else 160)) }
+                launch { star.animateTo(0f, tween(160)) }
+            }
+        }
+    }
+    var menu by remember { mutableStateOf(false) }
+    var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    var rowAt by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var circleAt by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val laneColor = when (t.lane) { "MUST" -> c.must; "HABIT" -> c.habit; else -> c.lineCtl }
+    val strikeColor = c.ink2
+    val washKept = c.wash(c.kept)
+    val rimKept = c.kept.copy(alpha = 0.22f)
+    val line1 = c.line1
+    val borderKept = c.wash(c.kept, 0.3f)
+    val radial = motion == MotionLevel.FULL
+    Box(modifier) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 64.dp)
+                .onGloballyPositioned { rowAt = it }
+                .clip(CardShape)
+                .background(c.card)
+                .flood(
+                    progress = { flood.value },
+                    origin = {
+                        val r = rowAt
+                        val ci = circleAt
+                        if (r != null && ci != null && r.isAttached && ci.isAttached) r.localPositionOf(ci, Offset(ci.size.width / 2f, ci.size.height / 2f)) else Offset.Zero
+                    },
+                    color = washKept, shape = CardShape, rim = rimKept, radial = { radial },
+                )
+                .drawWithCache {
+                    // The border tints with the flood (line1 → the kept wash): one outline, built per size.
+                    val outline = CardShape.createOutline(size, layoutDirection, this)
+                    val path = Path().apply { addOutline(outline) }
+                    val stroke = Stroke(1.dp.toPx())
+                    onDrawWithContent {
+                        drawContent()
+                        drawPath(path, lerp(line1, borderKept, flood.value.coerceIn(0f, 1f)), style = stroke)
+                    }
+                }
+                .combinedClickable(
+                    interactionSource = source,
+                    indication = ripple(color = c.kept),
+                    role = Role.Checkbox,
+                    onClickLabel = if (t.open) "Check" else "Undo",
+                    onLongClick = if (t.open && t.mvv != null) ({ menu = true }) else null,
+                    onClick = onTick,
+                )
+                .semantics {
+                    contentDescription = t.title
+                    stateDescription = when { kept -> "Kept"; held -> "Held"; t.locked -> "Completes from reviews"; else -> "Open" }
+                }
+                .padding(start = 8.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier.size(52.dp).onGloballyPositioned { circleAt = it; spots.at[t.templateId] = it.boundsInRoot().center },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (t.locked && !kept) {
+                    // A study task completes itself from the day's reviews: no tick to make.
+                    Icon(Glyphs.Review, null, tint = c.ink2, modifier = Modifier.size(24.dp))
+                } else {
+                    CheckCircle(
+                        kept, ring = laneColor, size = 30.dp, held = held, pressed = { pressed }, stamp = StampSpec.Task,
+                        onImpact = onImpact.takeIf { motion == MotionLevel.FULL }, rollKey = rollKey, rollDelay = rollDelay, nodKey = nodKey,
+                        flash = c.light.takeIf { c.dark && motion == MotionLevel.FULL },
+                    )
+                }
+            }
+            Spacer(Modifier.width(6.dp))
+            Column(Modifier.weight(1f).graphicsLayer { alpha = dim.value }) {
+                Text(
+                    t.title,
+                    style = MaterialTheme.typography.titleMedium, color = c.ink0, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    onTextLayout = { layout = it },
+                    modifier = Modifier.drawWithContent {
+                        drawContent()
+                        val l = layout ?: return@drawWithContent
+                        val p = strike.value
+                        if (p <= 0f) return@drawWithContent
+                        // Left to right, line by line.
+                        for (i in 0 until l.lineCount) {
+                            val y = (l.getLineTop(i) + l.getLineBottom(i)) / 2
+                            val x0 = l.getLineLeft(i)
+                            val x1 = l.getLineRight(i)
+                            val lp = ((p * l.lineCount) - i).coerceIn(0f, 1f)
+                            if (lp > 0f) drawLine(strikeColor, Offset(x0, y), Offset(x0 + (x1 - x0) * lp, y), strokeWidth = 1.5.dp.toPx())
+                        }
+                    },
+                )
+                val meta = buildList {
+                    when (t.lane) { "MUST" -> add("Must"); "HABIT" -> add("Habit") }
+                    t.minutes?.let { add("$it min") }
+                    if (held) add(if (t.status == "HELD") "Held" else "Skipped")
+                    if (t.locked) add("from reviews")
+                    else if (!kept) t.mvv?.let { add("min: $it") }
+                    if (t.status == "DONE_MVV") add("the minimum")
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (t.lane == "MUST") {
+                        Icon(Glyphs.Diamond, null, tint = c.must, modifier = Modifier.size(10.dp))
+                        Spacer(Modifier.width(5.dp))
+                    } else if (t.lane == "HABIT") {
+                        Box(Modifier.size(7.dp).clip(CircleShape).background(c.habit))
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text(meta.joinToString(" · "), color = c.ink2, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    t.dueLabel?.takeIf { !kept }?.let { due ->
+                        Text(
+                            (if (meta.isEmpty()) "" else " · ") + due,
+                            color = if (due.startsWith("late") || due.startsWith("Overdue")) c.owed else c.ink1,
+                            style = MaterialTheme.typography.labelMedium, maxLines = 1,
+                        )
+                    }
+                }
+            }
+            t.xpHint?.let { xp ->
+                Spacer(Modifier.width(8.dp))
+                // The row's own XP figure: where the motes rise from. "3.2" becomes "+3.2" as the ✦ turns: the "+" has
+                // its room kept, so the digits never move (they only brighten, ink1 → ink0, in place).
+                val style = MaterialTheme.typography.labelLarge.figures()
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.graphicsLayer { val s = figBump(); scaleX = s; scaleY = s },
+                ) {
+                    Icon(
+                        Glyphs.Spark, null, tint = c.xp,
+                        modifier = Modifier
+                            .size(13.dp)
+                            .onGloballyPositioned { spots.xp[t.templateId] = it.boundsInRoot().center }
+                            .graphicsLayer { rotationZ = star.value },
+                    )
+                    Spacer(Modifier.width(3.dp))
+                    Text("+", color = c.ink0, style = style, modifier = Modifier.graphicsLayer { alpha = plus.value })
+                    Box {
+                        Text(Fmt.figure(xp), color = c.ink1, style = style, modifier = Modifier.graphicsLayer { alpha = 1f - plus.value })
+                        Text(Fmt.figure(xp), color = c.ink0, style = style, modifier = Modifier.graphicsLayer { alpha = plus.value })
+                    }
+                }
+            }
+        }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = c.overlay) {
+            DropdownMenuItem(
+                text = { Text("Kept the minimum: ${t.mvv}", color = c.ink0) },
+                onClick = { menu = false; onMvv() },
+                leadingIcon = { Icon(Glyphs.Tick, null, tint = c.kept) },
+            )
+            DropdownMenuItem(text = { Text("Kept it all", color = c.ink0) }, onClick = { menu = false; onTick() })
+        }
+    }
+}
+
+/**
+ * "Board clear" (moment 2): inserted at B, it fades in from B + 120 as the rows below come to rest; from there its
+ * 40 dp hex seal falls into place (1.5 → 0.94), holds at the contact (B + 220), settles; the outline traces in light
+ * and the tick draws inside; a light sweep crosses the card once. Shown at rest when the board was already clear.
+ */
+@Composable
+private fun BoardClearBanner(playKey: Int, spots: CheckSpots, modifier: Modifier = Modifier) {
+    val c = X.c
+    val motion = LocalMotion.current
+    val play = playKey > spots.bannerPlayed && motion.moves
+    val full = play && motion == MotionLevel.FULL
+    val seal = remember { Animatable(if (full) 1.5f else 1f) }
+    val sealAlpha = remember { Animatable(if (play) 0f else 1f) }
+    val trace = remember { Animatable(if (full) 0f else 1f) }
+    val tick = remember { Animatable(if (full) 0f else 1f) }
+    val sweep = remember { Animatable(-1f) }
+    LaunchedEffect(playKey) {
+        if (!play) return@LaunchedEffect
+        spots.bannerPlayed = playKey
+        delay(BoardMoment.BANNER_FADE.toLong())
+        if (!full) {
+            sealAlpha.animateTo(1f, tween(160))
+            return@LaunchedEffect
+        }
+        coroutineScope {
+            launch { sealAlpha.animateTo(1f, tween(60)) }
+            // B + 120 → 220: the seal falls; contact, hold, settle.
+            launch { seal.stamp(0.94f, upMs = 100, hold = Dur.HOLD_MACRO, ease = EaseIn) }
+            launch { delay(100); trace.animateTo(1f, tween(200, easing = EaseInOut)) }
+            launch { delay(120); tick.animateTo(1f, tween(160, easing = com.xtnl.app.ui.motion.EaseDraw)) }
+            launch { delay(180); sweep.snapTo(0f); sweep.animateTo(1f, tween(520, easing = EaseInOut)); sweep.snapTo(-1f) }
+        }
+    }
+    val hex = remember { Path() }
+    val rimStroke = with(LocalDensity.current) { remember { Stroke(1.5.dp.toPx()) } }
+    val sweepAlpha = if (c.dark) 0.26f else 0.14f
+    val light = c.light
+    Box(
+        modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp)
+            .graphicsLayer()
+            .clip(CardShape)
+            .background(c.wash(c.kept))
+            .drawWithCache {
+                // One gradient band (40% of the width), translated across: nothing built per frame.
+                val band = size.width * 0.4f
+                val brush = Brush.horizontalGradient(listOf(Color.Transparent, light.copy(alpha = sweepAlpha), Color.Transparent), 0f, band)
+                val outline = CardShape.createOutline(size, layoutDirection, this)
+                val path = Path().apply { addOutline(outline) }
+                val stroke = Stroke(1.dp.toPx())
+                val rim = c.wash(c.kept, 0.35f)
+                onDrawWithContent {
+                    drawContent()
+                    drawPath(path, rim, style = stroke)
+                    val k = sweep.value
+                    if (k >= 0f) translate(left = -band + (size.width + band) * k) { drawRect(brush, size = size.copy(width = band)) }
+                }
+            }
+            .semantics { liveRegion = LiveRegionMode.Polite; contentDescription = "Board clear. Every task on today's board is kept." }
+            .padding(horizontal = 18.dp, vertical = 16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.foundation.Canvas(
+                Modifier
+                    .size(40.dp)
+                    .onGloballyPositioned { spots.bannerSeal = it }
+                    .graphicsLayer { scaleX = seal.value; scaleY = seal.value; alpha = sealAlpha.value }
+            ) {
+                val r = size.minDimension / 2 * 0.98f
+                hexPath(center, r, hex)
+                drawPath(hex, c.kept)
+                drawPath(hex, light, alpha = 0.5f, style = rimStroke)
+                drawHexTrace(center, r, trace.value, light, 2.dp.toPx(), alpha = 1f - 0.5f * trace.value)
+                val m = tick.value
+                drawCheck(center, r * 0.95f, com.xtnl.app.ui.motion.checkLeg1(m), com.xtnl.app.ui.motion.checkLeg2(m), c.onKept, r * 0.18f)
+            }
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text("Board clear", style = MaterialTheme.typography.headlineSmall, color = c.ink0)
+                Text("Every task on today's board is kept.", style = MaterialTheme.typography.bodyMedium, color = c.ink1)
+            }
+        }
+    }
+}
+
+// ── Review tile ─────────────────────────────────────────────────────────────
+
+@Composable
+private fun ReviewTile(r: ReviewSummary?, now: String?, onStart: () -> Unit, modifier: Modifier = Modifier) {
+    val c = X.c
+    val ctx = LocalContext.current
+    val due = r?.due ?: 0
+    XCard(modifier.fillMaxWidth()) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) {
+                    val target = r?.target
+                    ProgressRing(if (target != null && target > 0) r.doneToday.toFloat() / target else if (due == 0) 1f else 0f, Modifier.size(56.dp), color = c.pts)
+                    Text("${r?.doneToday ?: 0}", style = MaterialTheme.typography.titleMedium.figures(), color = c.ink0)
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Eyebrow("Review")
+                    Text(if (due > 0) "$due due" else "All caught up", style = MaterialTheme.typography.titleLarge, color = c.ink0)
+                    val target = r?.target
+                    val sub = when {
+                        target != null -> "${r.doneToday} of $target today"
+                        r != null -> "${r.doneToday} today"
+                        else -> ""
+                    }
+                    val next = if (due == 0) r?.nextDueAt?.let { TimeLabels.parseInstant(it) }?.let { at ->
+                        TimeLabels.parseInstant(now)?.let { n -> TimeLabels.nextCard(at, n, h24 = DateFormat.is24HourFormat(ctx)) }
+                    } else null
+                    Text(listOfNotNull(sub.ifEmpty { null }, next).joinToString(" · "), style = MaterialTheme.typography.labelMedium, color = c.ink2)
+                }
+            }
+            if (due > 0) {
+                Spacer(Modifier.height(12.dp))
+                XButton("Start review", onStart, Modifier.fillMaxWidth(), icon = Glyphs.Review)
+            }
+        }
+    }
+}
+
+// ── A work item ─────────────────────────────────────────────────────────────
+
+/**
+ * A work item. Its Done (moment 11): the 52 dp button floods with the work hue and stamps (crisper than a task),
+ * its mark draws; the row floods from the button, an overdue clock clears, the title strikes through; at 260 ms
+ * the row slides 16 dp toward its end and fades, and at 420 ms it leaves (the list closes the gap on the glide
+ * spring). No particles.
+ */
+@Composable
+private fun WorkRow(w: WorkItem, now: String?, closing: Boolean, onDone: () -> Unit, nodKey: Int, modifier: Modifier = Modifier) {
+    val c = X.c
+    val ctx = LocalContext.current
+    val motion = LocalMotion.current
+    val feel = LocalFeel.current
+    val density = LocalDensity.current
+    val phone = w.customer?.phone?.takeIf { it.isNotBlank() }
+    val dueAt = TimeLabels.parseInstant(w.dueAt)
+    val nowAt = TimeLabels.parseInstant(now) ?: Instant.now()
+    val due = dueAt?.let { TimeLabels.due(it, nowAt, w.allDay, h24 = DateFormat.is24HourFormat(ctx)) }
+    val channelIcon = when (w.channel) { "CALL" -> Glyphs.Phone; "EMAIL" -> Glyphs.Mail; "VISIT" -> Glyphs.Pin; "MESSAGE" -> Glyphs.Message; else -> Glyphs.Clock }
+    fun open(uri: String, action: String) {
+        try {
+            ctx.startActivity(Intent(action, Uri.parse(uri)))
+        } catch (_: ActivityNotFoundException) {
+        }
+    }
+    val dial = phone?.filter { it.isDigit() || it == '+' }
+    // Toward the trailing edge.
+    val toEnd = if (androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl) -1f else 1f
+    val flood = remember { Animatable(0f) }
+    val strike = remember { Animatable(0f) }
+    val debt = remember { Animatable(0f) }
+    val slide = remember { Animatable(0f) }
+    val fade = remember { Animatable(1f) }
+    LaunchedEffect(closing) {
+        if (!closing) {
+            flood.snapTo(0f); strike.snapTo(0f); debt.snapTo(0f); slide.snapTo(0f); fade.snapTo(1f)
+            return@LaunchedEffect
+        }
+        when (motion) {
+            MotionLevel.STILL -> { flood.snapTo(1f); strike.snapTo(1f); debt.snapTo(1f) }
+            MotionLevel.CALM -> coroutineScope {
+                launch { flood.animateTo(1f, tween(160)) }
+                launch { debt.animateTo(1f, tween(160)) }
+                launch { strike.animateTo(1f, tween(160)) }
+                launch { delay(200); fade.animateTo(0f, tween(120)) }
+            }
+            MotionLevel.FULL -> coroutineScope {
+                launch { delay(40); flood.animateTo(1f, tween(200, easing = EaseOut)) }
+                launch { delay(60); debt.animateTo(1f, tween(160)) }
+                launch { delay(90); strike.animateTo(1f, tween(180, easing = EaseInOut)) }
+                // T + 260: it slides toward its end and fades; the list closes the gap at T + 420.
+                launch { delay(260); launch { fade.animateTo(0f, tween(160, easing = EaseIn)) }; slide.animateTo(1f, tween(160, easing = EaseIn)) }
+            }
+        }
+    }
+    var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    var rowAt by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var buttonAt by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val workWash = c.wash(c.work, 0.12f)
+    val strikeColor = c.ink2
+    Column(
+        modifier
+            .graphicsLayer {
+                translationX = slide.value * 16.dp.toPx() * toEnd
+                alpha = fade.value
+            }
+            .fillMaxWidth()
+            .heightIn(min = 72.dp)
+            .onGloballyPositioned { rowAt = it }
+            .clip(CardShape)
+            .background(c.card)
+            .flood(
+                progress = { flood.value },
+                origin = {
+                    val r = rowAt
+                    val b = buttonAt
+                    if (r != null && b != null && r.isAttached && b.isAttached) r.localPositionOf(b, Offset(b.size.width / 2f, b.size.height / 2f)) else Offset.Zero
+                },
+                color = workWash, shape = CardShape, radial = { motion == MotionLevel.FULL },
+            )
+            .drawWithCache {
+                val outline = CardShape.createOutline(size, layoutDirection, this)
+                val path = Path().apply { addOutline(outline) }
+                val stroke = Stroke(1.dp.toPx())
+                val line = c.line1
+                onDrawWithContent { drawContent(); drawPath(path, line, style = stroke) }
+            }
+            .padding(start = 12.dp, end = 6.dp, top = 10.dp, bottom = 10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(36.dp).clip(CircleShape).background(c.wash(c.work, 0.18f)), contentAlignment = Alignment.Center) {
+                Icon(channelIcon, null, tint = c.work, modifier = Modifier.size(18.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    w.title, style = MaterialTheme.typography.titleMedium, color = c.ink0, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    onTextLayout = { layout = it },
+                    modifier = Modifier.drawWithContent {
+                        drawContent()
+                        val l = layout ?: return@drawWithContent
+                        val p = strike.value
+                        if (p <= 0f) return@drawWithContent
+                        for (i in 0 until l.lineCount) {
+                            val y = (l.getLineTop(i) + l.getLineBottom(i)) / 2
+                            val lp = ((p * l.lineCount) - i).coerceIn(0f, 1f)
+                            if (lp > 0f) drawLine(strikeColor, Offset(l.getLineLeft(i), y), Offset(l.getLineLeft(i) + (l.getLineRight(i) - l.getLineLeft(i)) * lp, y), strokeWidth = 1.5.dp.toPx())
+                        }
+                    },
+                )
+                w.customer?.let { cu ->
+                    Text(
+                        cu.name + (cu.number?.let { " · #$it" } ?: ""),
+                        style = MaterialTheme.typography.bodyMedium, color = c.ink1, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (due != null) {
+                        // The debt clears: an overdue clock and its words crossfade from owed to ink (two layers, no recomposition).
+                        Box {
+                            Icon(Glyphs.Clock, null, tint = c.ink2, modifier = Modifier.size(13.dp).graphicsLayer { alpha = if (w.overdue) debt.value else 1f })
+                            if (w.overdue) Icon(Glyphs.Clock, null, tint = c.owed, modifier = Modifier.size(13.dp).graphicsLayer { alpha = 1f - debt.value })
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        Box {
+                            Text(due, color = c.ink1, style = MaterialTheme.typography.labelMedium, maxLines = 1, modifier = Modifier.graphicsLayer { alpha = if (w.overdue) debt.value else 1f })
+                            if (w.overdue) Text(due, color = c.owed, style = MaterialTheme.typography.labelMedium, maxLines = 1, modifier = Modifier.graphicsLayer { alpha = 1f - debt.value })
+                        }
+                    }
+                    val rest = listOfNotNull(w.collection, w.boardName).joinToString(" · ")
+                    if (rest.isNotEmpty()) Text((if (due != null) " · " else "") + rest, color = c.ink2, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            Spacer(Modifier.width(6.dp))
+            val source = remember { MutableInteractionSource() }
+            val pressed by source.collectIsPressedAsState()
+            Box(
+                Modifier
+                    .size(52.dp)
+                    .onGloballyPositioned { buttonAt = it }
+                    .clip(CircleShape)
+                    .background(c.wash(c.work, 0.18f))
+                    .doneClickable(source, enabled = !closing, label = "Done: ${w.title}") {
+                        feel?.work("work:${w.id}")
+                        onDone()
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                // The same check as a task's, in the work hue, a little lighter.
+                CheckCircle(
+                    closing, size = 52.dp, ring = Color.Transparent, fill = c.work, mark = c.onWork, pressed = { pressed },
+                    stamp = StampSpec.Work, nodKey = nodKey,
+                )
+                if (!closing) Icon(Glyphs.Tick, null, tint = c.work, modifier = Modifier.size(22.dp))
+            }
+        }
+        // Call and Text sit under the words, in thumb reach, so the title keeps the width.
+        if (dial != null) {
+            Row(Modifier.padding(start = 48.dp, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                XButton("Call", { open("tel:$dial", Intent.ACTION_DIAL) }, kind = ButtonKind.QUIET, icon = Glyphs.Phone, height = 44.dp)
+                XButton("Text", { open("smsto:$dial", Intent.ACTION_SENDTO) }, kind = ButtonKind.QUIET, icon = Glyphs.Message, height = 44.dp)
+            }
+        }
+    }
+}
+
+/** A round button's click: a bounded ripple, a button role, an accessible label. */
+private fun Modifier.doneClickable(source: MutableInteractionSource, enabled: Boolean, label: String, onClick: () -> Unit): Modifier =
+    this.then(
+        Modifier.clickable(
+            interactionSource = source, indication = ripple(bounded = true), enabled = enabled, role = Role.Button,
+            onClickLabel = label, onClick = onClick,
+        ).semantics { contentDescription = label }
+    )
+
+// ── Loading and can't-reach ─────────────────────────────────────────────────
+
+@Composable
+private fun LoadingBoard(top: androidx.compose.ui.unit.Dp) {
+    val c = X.c
+    val motion = LocalMotion.current
+    val shimmer = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        if (!motion.moves) return@LaunchedEffect
+        while (true) { shimmer.snapTo(0f); shimmer.animateTo(1f, tween(1100)) }
+    }
+    Column(Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, top = top + 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        repeat(5) { i ->
+            Box(
+                Modifier.fillMaxWidth().height(if (i == 0) 72.dp else 64.dp).clip(CardShape).background(c.card)
+                    .drawWithContent {
+                        drawContent()
+                        val x = size.width * (shimmer.value * 1.6f - 0.3f)
+                        drawRect(Brush.horizontalGradient(listOf(Color.Transparent, c.line2, Color.Transparent), x - 120f, x + 120f))
+                    }
+            )
+        }
+    }
+}
+
+@Composable
+private fun CantReach(message: String, top: androidx.compose.ui.unit.Dp, onRetry: () -> Unit, onSettings: () -> Unit, onDemo: () -> Unit) {
+    val c = X.c
+    Column(
+        Modifier.fillMaxSize().padding(start = 24.dp, end = 24.dp, top = top + 24.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(Glyphs.Offline, null, tint = c.ink2, modifier = Modifier.size(40.dp))
+        Spacer(Modifier.height(16.dp))
+        Text("Can't reach XTNL", style = MaterialTheme.typography.headlineSmall, color = c.ink0)
+        Spacer(Modifier.height(8.dp))
+        Text(message, style = MaterialTheme.typography.bodyMedium, color = c.ink1, modifier = Modifier.widthIn(max = 420.dp))
+        Spacer(Modifier.height(24.dp))
+        XButton("Retry", onRetry, Modifier.widthIn(min = 220.dp), icon = Glyphs.Refresh)
+        Spacer(Modifier.height(8.dp))
+        XButton("Server settings", onSettings, Modifier.widthIn(min = 220.dp), kind = ButtonKind.QUIET, icon = Glyphs.Settings)
+        Spacer(Modifier.height(8.dp))
+        XButton("Try demo data", onDemo, Modifier.widthIn(min = 220.dp), kind = ButtonKind.QUIET)
+    }
+}

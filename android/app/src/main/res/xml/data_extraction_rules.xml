@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- allowBackup="false" stops cloud backup, but from Android 12 not a phone-to-phone transfer.
+     The sealed API tokens can't move (their Keystore key stays on the old phone), and the full
+     app's sign-in cookies shouldn't: both stay behind. Everything else may move. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="xtnl.tokens.xml" />
+        <exclude domain="root" path="app_webview/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="xtnl.tokens.xml" />
+        <exclude domain="root" path="app_webview/" />
+    </device-transfer>
+</data-extraction-rules>

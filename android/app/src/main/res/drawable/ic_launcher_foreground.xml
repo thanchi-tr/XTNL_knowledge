@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive icon foreground: the hexagonal seal, the node-X and the lit spark of
+     android/art/xtnl-icon.svg (master 100 x 100 coords scaled 0.72 about 50,50 -> 54,54), so a circle
+     mask shows exactly the round chip. All art lies within r 27 of the centre (safe zone r 33). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:name="seal"
+        android:pathData="M54,28.08L76.447,41.04L76.447,66.96L54,79.92L31.553,66.96L31.553,41.04z"
+        android:strokeWidth="1.08"
+        android:strokeLineJoin="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient android:type="linear" android:startX="68.239" android:startY="32.341" android:endX="39.761" android:endY="75.659">
+                <item android:offset="0" android:color="#9E3DFFB0" />
+                <item android:offset="0.5" android:color="#4700CC7A" />
+                <item android:offset="1" android:color="#1A00CC7A" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:name="beads"
+        android:pathData="M53.064,28.08a0.936,0.936 0 1,0 1.872,0a0.936,0.936 0 1,0 -1.872,0zM75.511,41.04a0.936,0.936 0 1,0 1.872,0a0.936,0.936 0 1,0 -1.872,0zM75.511,66.96a0.936,0.936 0 1,0 1.872,0a0.936,0.936 0 1,0 -1.872,0zM53.064,79.92a0.936,0.936 0 1,0 1.872,0a0.936,0.936 0 1,0 -1.872,0zM30.617,66.96a0.936,0.936 0 1,0 1.872,0a0.936,0.936 0 1,0 -1.872,0zM30.617,41.04a0.936,0.936 0 1,0 1.872,0a0.936,0.936 0 1,0 -1.872,0z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="68.239" android:startY="32.341" android:endX="39.761" android:endY="75.659">
+                <item android:offset="0" android:color="#9E3DFFB0" />
+                <item android:offset="0.5" android:color="#4700CC7A" />
+                <item android:offset="1" android:color="#1A00CC7A" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:name="glow"
+        android:pathData="M50.583,44.96a9.36,9.36 0 1,0 18.72,0a9.36,9.36 0 1,0 -18.72,0z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="59.943" android:centerY="44.96" android:gradientRadius="9.36">
+                <item android:offset="0" android:color="#943DFFB0" />
+                <item android:offset="0.35" android:color="#333DFFB0" />
+                <item android:offset="1" android:color="#003DFFB0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:name="rise"
+        android:pathData="M59.943,44.96L40.971,66.722"
+        android:strokeWidth="1.786"
+        android:strokeLineCap="round"
+        android:strokeAlpha="0.85">
+        <aapt:attr name="android:strokeColor">
+            <gradient android:type="linear" android:startX="40.971" android:startY="66.722" android:endX="59.943" android:endY="44.96">
+                <item android:offset="0" android:color="#FF009E60" />
+                <item android:offset="0.55" android:color="#FF00CC7A" />
+                <item android:offset="1" android:color="#FF3DFFB0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:name="main"
+        android:pathData="M46.551,42.17L66.639,66.722"
+        android:strokeWidth="2.232"
+        android:strokeLineCap="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient android:type="linear" android:startX="44.877" android:startY="41.054" android:endX="63.849" android:endY="78.998">
+                <item android:offset="0" android:color="#FF3DFFB0" />
+                <item android:offset="0.5" android:color="#FF00CC7A" />
+                <item android:offset="1" android:color="#FF009E60" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:name="nodeD"
+        android:pathData="M39.687,66.722a1.283,1.283 0 1,0 2.567,0a1.283,1.283 0 1,0 -2.567,0z"
+        android:fillColor="#FF00CC7A"
+        android:fillAlpha="0.55" />
+    <path
+        android:name="nodeB"
+        android:pathData="M64.965,66.722a1.674,1.674 0 1,0 3.348,0a1.674,1.674 0 1,0 -3.348,0z"
+        android:fillColor="#FF2FD0FF" />
+    <path
+        android:name="nodeA"
+        android:pathData="M43.984,42.17a2.567,2.567 0 1,0 5.134,0a2.567,2.567 0 1,0 -5.134,0z"
+        android:fillColor="#FF00F090" />
+    <path
+        android:name="sparkRim"
+        android:pathData="M57.351,44.96a2.592,2.592 0 1,0 5.184,0a2.592,2.592 0 1,0 -5.184,0z"
+        android:fillColor="#FF3DFFB0"
+        android:fillAlpha="0.85" />
+    <path
+        android:name="glint"
+        android:pathData="M59.943,38.336L60.504,44.96L59.943,51.584L59.381,44.96zM55.191,44.96L59.943,44.399L64.695,44.96L59.943,45.522z"
+        android:fillColor="#FFEAFFF5" />
+    <path
+        android:name="sparkCore"
+        android:pathData="M58.143,44.96a1.8,1.8 0 1,0 3.6,0a1.8,1.8 0 1,0 -3.6,0z"
+        android:fillColor="#FFEAFFF5" />
+</vector>
