@@ -219,7 +219,7 @@ const at = (base: Date, days: number) => new Date(base.getTime() + days * DAY);
   check(
     "wiring: the miss row keeps the streak it broke (qty) and the state before it (receipt), and the undo restores from them in the same transaction",
     /const brokenStreak = idea\.cycleMissed \? null : idea\.cleanStreak;/.test(srs) &&
-      /qty: brokenStreak, receipt: missReceipt as unknown as Receipt \| null \}/.test(srs) &&
+      /qty: brokenStreak, receipt: missReceipt as unknown as Receipt \| null, \.\.\.keyed \}/.test(srs) &&
       /select: \{ id: true, xp: true, detail: true, occurredAt: true, qty: true, receipt: true \}/.test(undo) &&
       /const back = undoStateOf\(outcome, idea\.failedAttempts, row\.qty, row\.receipt\);\s*if \(back\) ops\.push\(prisma\.idea\.update\(\{ where: \{ id: ideaId \}, data: back \}\)\);\s*try \{\s*await prisma\.\$transaction\(ops\);/.test(undo)
   );

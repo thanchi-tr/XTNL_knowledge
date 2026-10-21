@@ -31,6 +31,11 @@ export interface SubmitReviewInput {
    * anyway. Grading itself remains entirely server-side.
    */
   combo?: number;
+  /**
+   * This one answer's key: the Android app's clientId (mobile-api-server.ts handleReviewAnswer), so a retried send
+   * lands once on any server instance (srs.ts reviewDedupeKey). The web runner sends none.
+   */
+  answerKey?: string;
 }
 
 /** The combo as the runner prints it: the multiplier paid on this card, and the next one. */
@@ -127,7 +132,7 @@ export async function submitReview(input: SubmitReviewInput): Promise<SubmitRevi
 
   // The rules, then for a plain SHORT miss the in-house meaning check (answer-judge.ts).
   const { correct, judged } = gradeReview({ questionType: idea.questionType, answer: idea.answer, answerCaseSensitive: idea.answerCaseSensitive, given: input.userAnswer });
-  const outcome = await applyReviewResult(idea.id, correct, now, combo, { idea, progression });
+  const outcome = await applyReviewResult(idea.id, correct, now, combo, { idea, progression }, input.answerKey);
 
   // After the write (and its leveling), so the diff sees it. Never fails the answer: the points are already in.
   const celebrations: CelebrationEvent[] = before

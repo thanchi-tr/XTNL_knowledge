@@ -438,7 +438,8 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   check("srs: a pass writes its REVIEW row (sink DOMAIN, xp = the credit) inside the points transaction", /ops\.push\(activityOp\(userId, review\)\)/.test(apply) && /reviewEvent\(ideaId, now, pointsAwarded/.test(apply) && /await prisma\.\$transaction\(ops\)/.test(apply) && /source: "REVIEW", sink: "DOMAIN"/.test(srs));
   // 2026-10-13 (idea leveling): the miss row's qty keeps the clean streak it broke, for "I was right" (undoMissCore).
   // 2026-10-14: and its receipt keeps the state before the miss, for an exact "I was right".
-  check("srs: a miss writes its xp-0 REVIEW row in after(), off the answer's path", /after\(async \(\) => \{\s*if \(lateOutcome\) \{\s*await recordActivity\(userId, \{ \.\.\.reviewEvent\(ideaId, now, 0, lateOutcome\), qty: brokenStreak, receipt: missReceipt as unknown as Receipt \| null \}\);/.test(apply));
+  // 2026-10-21 (mobile API): an answer keyed by the app's clientId carries its key on the row (...keyed: srs.ts reviewDedupeKey).
+  check("srs: a miss writes its xp-0 REVIEW row in after(), off the answer's path", /after\(async \(\) => \{\s*if \(lateOutcome\) \{\s*await recordActivity\(userId, \{ \.\.\.reviewEvent\(ideaId, now, 0, lateOutcome\), qty: brokenStreak, receipt: missReceipt as unknown as Receipt \| null, \.\.\.keyed \}\);/.test(apply));
   check("srs: field activity and study tasks still follow every landed review", /recordFieldActivity\(userId, domainBefore\.fieldId, now\)/.test(apply) && /autoCompleteStudyTasks\(userId, now\)/.test(apply));
   check("srs: mastery is minted in the same transaction (fraction always, lump on mastery)", /ops\.push\(mintReviewFractionOp\(/.test(apply) && /ops\.push\(mintIdeaMasteryOp\(/.test(apply));
   // after() callbacks run once the answer is sent; their awaits are not on the answer's path.

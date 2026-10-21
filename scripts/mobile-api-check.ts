@@ -1,0 +1,1285 @@
+/**
+ * The Android app's API (docs/mobile-api.md; src/lib/mobile-api.ts, mobile-api-server.ts, mobile-api-cores.ts and
+ * src/app/api/mobile/v1/**). No database, no network, no model: every handler runs against fake cores, and the
+ * bindings to the real cores are read as source.
+ *
+ *   npx tsx scripts/mobile-api-check.ts      (npm run mobile-api:check; ui:check runs it too)
+ *
+ * Covers:
+ *   1. the pure helpers: the token (constant-time, Bearer in any case, open with none set), the input checks (ids,
+ *      clientIds, days, answers, limits), the reply shape and no-store, the core refusals' codes, the replay cache
+ *      (first result kept for a clientId, joined while running, a different body refused, failures not kept, TTL
+ *      and size), the prompt's math, the cloze blanks, the weigh-in's opaque undo;
+ *   2. every route against fakes: the documented keys, the call into the core with the web's arguments, the replies
+ *      for refusals and throws (never a stack), and replays — /check's tasks (the board's lanes and order, its
+ *      counts), its review counts (the Review hub's own formula), its work list (the Agenda's sections); /review's
+ *      queue (the runner's seeded order and wording, per type) and its retry (review-model's queueAfterAnswer);
+ *      /log's sections (the sheet's mode starts) and Undo; /ideas through the form's contentOfAddState;
+ *   3. the wiring: each route file hands its request to its handler with the real deps and exports only its method
+ *      and dynamic; mobile-api-cores binds each dep to the web's own core (no refresh); the pure modules import no
+ *      core; the web pages' formulas the app mirrors (pinned in their source); the failure lines the codes key on;
+ *   4. the doc: its Endpoints table, the route files and MOBILE_ENDPOINTS list the same routes; every key a reply
+ *      carries is in the doc; package.json runs this check.
+ */
+import "./_no-model";
+import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
+import type { QuestionType } from "@prisma/client";
+import { addDays, type DayKey } from "../src/lib/life-day";
+import { normTitleOf } from "../src/lib/life-lexicon";
+import { parseRule } from "../src/lib/recurrence";
+import { buildBoard, statsFor, type BoardData, type BoardInstance, type BoardTemplate, type DayLedger, type PaidRecord } from "../src/lib/today-board";
+import { splitTodayLane, boardClearOf } from "../src/components/today/board-ui";
+import { seededOrder, queueAfterAnswer, SESSION_RETURNS_MAX, type CardResult, type RunCard } from "../src/components/workspace/review-model";
+import { contentOfAddState } from "../src/lib/idea-edit";
+import { ADD_FORMATS, EMPTY_ADD_CONTENT, type AddContentState } from "../src/lib/idea-handoff";
+import { XP_BASE } from "../src/lib/xp";
+import { questTargetOf } from "../src/lib/review-facts";
+import { isDue } from "../src/lib/due";
+import { displayQuestion } from "../src/lib/idea-display";
+import { encodeIdeaContent } from "../src/lib/idea-payload";
+import { cleanCaptureKey } from "../src/lib/capture-parse";
+import { toastCopy } from "../src/components/capture/capture-ui";
+import { weightItemOf } from "../src/components/capture/weight-capture";
+import { SCHEDULED_GONE } from "../src/lib/scheduled-tasks";
+import type { Receipt } from "../src/lib/life-types";
+import type { CelebrationEvent } from "../src/lib/celebration-types";
+import type { Completion } from "../src/lib/tasks";
+import type { SubmitReviewResult } from "../src/app/actions/review";
+import type { CapturedItem, CapturedWeight } from "../src/app/actions/capture";
+import type { SubmitIdeaResult } from "../src/app/actions/ideas";
+import {
+  AUTH_LINE,
+  CODE_STATUS,
+  GONE_LINES,
+  IDEA_COLLECTIONS,
+  IDEA_DUPLICATE_LINE,
+  IDEA_FORMAT_META,
+  IDEA_MERGED_LINE,
+  LOG_AIM,
+  LOG_NOT_A_WEIGHT,
+  MOBILE_API_BASE,
+  MOBILE_ENDPOINTS,
+  NO_STORE,
+  REPLAY_MISMATCH,
+  REPLAY_MISMATCH_LINE,
+  REPLAY_TTL_MS,
+  REVIEW_RECORDED_LINE,
+  RUN_ALL_FIELDS,
+  ReplayCache,
+  SERVER_LINE,
+  SERVER_LINES,
+  WORK_MAX,
+  answerOf,
+  clientIdOf,
+  clozeBlanksOf,
+  failReply,
+  fingerprintOf,
+  idOf,
+  isDayKey,
+  mathPromptOf,
+  mobileAuthorized,
+  okReply,
+  refusalReply,
+  responseOf,
+  retryOf,
+  sameToken,
+  stableJson,
+  tickDayOf,
+  weightOfUndoToken,
+  weightUndoTokenOf,
+  type DueWorkTask,
+  type Reply,
+  type ReviewTreeField,
+} from "../src/lib/mobile-api";
+import {
+  handleCheck,
+  handleIdeaCreate,
+  handleIdeasMeta,
+  handleLog,
+  handleLogUndo,
+  handleReviewAnswer,
+  handleReviewQueue,
+  handleTaskComplete,
+  handleTaskUndo,
+  handleWorkDone,
+  handleWorkReopen,
+  type MobileDeps,
+} from "../src/lib/mobile-api-server";
+
+let passed = 0;
+let failed = 0;
+function check(name: string, ok: boolean, detail = "") {
+  if (ok) passed++;
+  else {
+    failed++;
+    console.log(`  ✗ ${name}${detail ? `  — ${detail}` : ""}`);
+  }
+}
+const same = (a: unknown, b: unknown) => stableJson(a) === stableJson(b);
+function eq(name: string, got: unknown, want: unknown) {
+  check(name, same(got, want), `got ${stableJson(got)?.slice(0, 400)}, want ${stableJson(want)?.slice(0, 400)}`);
+}
+function section(name: string) {
+  console.log(`— ${name} —`);
+}
+const ROOT = join(__dirname, "..");
+const read = (f: string) => readFileSync(join(ROOT, f), "utf8").replace(/\r\n/g, "\n");
+const code = (f: string) =>
+  read(f)
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+const keysOf = (o: unknown) => Object.keys((o ?? {}) as object).sort();
+
+// ── Fixtures ──────────────────────────────────────────────────────────────
+
+// Wednesday 21 October 2026, 11:12 in Sydney (AEDT): the life day is the 21st.
+const NOW = new Date("2026-10-21T00:12:00.000Z");
+const TODAY: DayKey = "2026-10-21";
+const YESTERDAY = addDays(TODAY, -1);
+const ago = (n: number) => addDays(TODAY, -n);
+const TOKEN = "s3cret-mobile-token-0123456789";
+const UUID = "3f2a6c1e-8b4d-4e0a-9c7b-1d2e3f4a5b6c";
+const UUID2 = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+
+function tpl(p: Partial<BoardTemplate> & { id: string; title: string }): BoardTemplate {
+  return {
+    normTitle: normTitleOf(p.title),
+    recurrence: null,
+    dueDay: null,
+    dueKind: null,
+    intrinsic: false,
+    autoMetric: null,
+    mvv: null,
+    track: "BODY",
+    band: "STANDARD",
+    bandOverride: 0,
+    estMinutes: 30,
+    machineMinutes: 30,
+    kind: "TASK",
+    inbox: false,
+    startDay: ago(120),
+    horizon: null,
+    parentId: null,
+    krMetric: null,
+    krTarget: null,
+    krUnit: null,
+    compulsory: false,
+    autoTarget: null,
+    category: "OTHER",
+    lexicalBand: p.band ?? "STANDARD",
+    aiBand: null,
+    gradeSource: "LEXICAL",
+    gradeConfidence: 0.4,
+    gradeBasis: null,
+    gradeModel: null,
+    gradePromptVersion: null,
+    gradeAttempts: 1,
+    gradeFrozen: true,
+    sizing: false,
+    bandOverrideAt: null,
+    gradeFrozenAt: null,
+    topAttribute: null,
+    note: null,
+    completedAt: null,
+    createdAt: "2026-06-01T00:00:00.000Z",
+    sortOrder: 0,
+    ...p,
+  };
+}
+
+function ledger(day: DayKey, p: Partial<DayLedger> = {}): DayLedger {
+  return { day, rawBefore: 0, lifeXp: 0, completions: [], reviews: 0, reviewXp: 0, ideas: 0, dayOpenQty: null, ...p };
+}
+
+const RECEIPT: Receipt = { v: "life-1", factors: [], minutes: 30, raw: 5, kneeBefore: 0, xp: 4.26, track: "BODY" };
+const paidOf = (instanceId: string, xp: number): PaidRecord => ({ eventId: `e-${instanceId}`, instanceId, receipt: { ...RECEIPT, xp }, occurredAt: NOW.toISOString(), xp, undone: false });
+
+function boardData(templates: BoardTemplate[], history: BoardInstance[], paid: Record<string, PaidRecord> = {}, styles: BoardData["styles"] = {}): BoardData {
+  const stats: BoardData["stats"] = {};
+  for (const t of templates) {
+    const rule = t.recurrence ? parseRule(t.recurrence) : null;
+    if (rule) stats[t.id] = statsFor(t, rule, history.filter((i) => i.templateId === t.id), TODAY);
+  }
+  return {
+    today: TODAY,
+    yesterday: YESTERDAY,
+    capacityMin: 240,
+    templates,
+    instances: history,
+    stats,
+    ledger: { today: ledger(TODAY), yesterday: ledger(YESTERDAY) },
+    paid,
+    goalQty: {},
+    dueNow: 0,
+    styles,
+  };
+}
+
+const inst = (id: string, templateId: string, status: BoardInstance["status"], day: DayKey = TODAY): BoardInstance => ({ id, templateId, day, slot: 0, status, source: "manual", xpPaid: 0 });
+
+/** Today's personal board: a must, two planned one-offs (one done at the minimum), two habits (one done), an anytime task. */
+const TEMPLATES = [
+  tpl({ id: "must1", title: "Pay the rent", compulsory: true, dueDay: TODAY, dueKind: "PLANNED", track: "DUTY" }),
+  tpl({ id: "plan1", title: "Call the bank", dueDay: TODAY, dueKind: "PLANNED", track: "DUTY" }),
+  tpl({ id: "plan2", title: "Stretch", dueDay: TODAY, dueKind: "PLANNED", mvv: "5 minutes" }),
+  tpl({ id: "hab1", title: "Gym legs", recurrence: "DAILY", estMinutes: 60, machineMinutes: 60, mvv: "10 squats" }),
+  tpl({ id: "hab2", title: "Read", recurrence: "DAILY", track: "CRAFT" }),
+  tpl({ id: "any1", title: "Sort the shed" }),
+];
+const HISTORY = [inst("i-plan2", "plan2", "DONE_MVV"), inst("i-hab2", "hab2", "DONE")];
+const DATA = boardData(TEMPLATES, HISTORY, { "i-plan2": paidOf("i-plan2", 2.04), "i-hab2": paidOf("i-hab2", 3.33) }, { hab1: { icon: "dumbbell", color: null } });
+
+/** The Field tree: two Fields, due and not-due cards of every format, a DIAGRAM among them. */
+const due = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
+const later = (d: number) => new Date(NOW.getTime() + d * 86_400_000);
+let ideaSeq = 0;
+const idea = (questionType: QuestionType, question: string, dueDate: Date, extra: { atomicPrompt?: string | null; level?: number } = {}) => ({
+  id: `idea${++ideaSeq}`,
+  level: extra.level ?? 2,
+  questionType,
+  question,
+  atomicPrompt: extra.atomicPrompt ?? null,
+  dueDate,
+});
+const TREE: ReviewTreeField[] = [
+  {
+    id: "f1",
+    name: "Chemistry",
+    domains: [
+      {
+        id: "d1",
+        name: "Acids",
+        ideas: [
+          idea("SHORT", "What is a pH below 7?", due(30)),
+          idea("MULTI", JSON.stringify(["Litmus", "Starch", "Iodine"]), due(5), { atomicPrompt: "Which paper turns red in acid?" }),
+          idea("MULTI", JSON.stringify(["A", "B"]), due(4)),
+          idea("CLOZE", "Water is [1] and [2].", due(3)),
+          idea("SHORT", "Not due yet", later(3)),
+        ],
+      },
+      {
+        id: "d2",
+        name: "Bonds",
+        ideas: [
+          idea("FORMULA", "The energy is $E = mc^2$ and $$\\int_0^1 x\\,dx$$ too", due(2), { level: 4 }),
+          idea("FORMULA", "Write the norm of a vector", due(2)),
+          idea("LIST", JSON.stringify({ prompt: "Name the noble gases", count: 3 }), due(1)),
+          idea("DIAGRAM", JSON.stringify({ image: "/d.svg", hotspots: [{ id: "a", x: 0.5, y: 0.5 }] }), due(1)),
+          idea("SHORT", "Soonest not due", later(1)),
+        ],
+      },
+    ],
+  },
+  {
+    id: "f2",
+    name: "Physics",
+    domains: [
+      {
+        id: "d3",
+        name: "Motion",
+        ideas: [
+          idea("ORDER", JSON.stringify({ prompt: "Order the steps", items: ["c", "a", "b"] }), due(6)),
+          idea("NUMERIC", JSON.stringify({ prompt: "g at sea level", unit: "m/s²" }), due(7)),
+          idea("SHORT", "What is inertia?", due(8)),
+        ],
+      },
+    ],
+  },
+];
+const ideaById = (id: string) => TREE.flatMap((f) => f.domains.flatMap((d) => d.ideas)).find((i) => i.id === id)!;
+
+/** Due work across the tabs: overdue timed, today all-day, later today timed, and (outside the read) tomorrow. */
+const work = (id: string, dueAt: Date, allDay: boolean, extra: Partial<DueWorkTask> = {}): DueWorkTask => ({
+  id,
+  boardId: "b1",
+  boardName: "Acme Sales",
+  dueAt: dueAt.toISOString(),
+  allDay,
+  title: `Task ${id}`,
+  detail: null,
+  channel: "CALL",
+  remind: true,
+  remindSentAt: null,
+  doneAt: null,
+  customer: null,
+  collection: null,
+  ...extra,
+});
+const WORK: DueWorkTask[] = [
+  work("w-later", new Date(NOW.getTime() + 3 * 3_600_000), false),
+  work("w-over", new Date(NOW.getTime() - 3_600_000), false, { customer: { id: "c1", number: "1042", name: "Jordan Lee", phone: "0412 345 678" }, collection: { id: "col1", name: "New NBN service" } }),
+  work("w-allday", new Date("2026-10-20T22:00:00.000Z"), true, { channel: "EMAIL" }),
+  work("w-tomorrow", new Date(NOW.getTime() + 30 * 3_600_000), false),
+];
+
+const EVENT: CelebrationEvent = { id: "ev1", tier: 2, kind: "streak-milestone", facts: { eyebrow: "Streak", title: "7 days kept" }, what: [] };
+
+const completion = (over: Partial<Completion> = {}): Completion & { celebrations: CelebrationEvent[] } => ({
+  instanceId: "i-new",
+  templateId: "hab1",
+  eventId: "e-new",
+  day: TODAY,
+  slot: 0,
+  receipt: RECEIPT,
+  status: "DONE",
+  source: "manual",
+  occurredAt: NOW.toISOString(),
+  duplicate: false,
+  celebrations: [EVENT],
+  ...over,
+});
+
+const reviewResult = (over: Record<string, unknown> = {}): SubmitReviewResult =>
+  ({
+    correct: true,
+    outcome: { outcome: "advanced", previousLevel: 3, newLevel: 4, pointsAwarded: 4.2, nextCombo: 4, nextDue: "2026-10-29T00:00:00.000Z" },
+    expected: "Acidic",
+    explanation: "Below 7 is acidic.",
+    judged: null,
+    combo: { before: 3, multiplier: 1.2, cap: 10, capped: false, next: 4, nextMultiplier: 1.25 },
+    trueFact: { kind: "level", headline: "Recalled after 3 days", detail: "next review in 8 days", gapDays: 3, longestGap: false, overdueDays: 0, clearedMissDay: null },
+    quest: { done: 5, target: 20 },
+    streakSecured: false,
+    nextDueDay: "2026-10-29",
+    celebrations: [EVENT],
+    ...over,
+  }) as unknown as SubmitReviewResult;
+
+const capturedItem = (over: Partial<CapturedItem> = {}): CapturedItem => ({
+  id: "t-new",
+  title: "Gym legs",
+  projectedXp: 8.3,
+  describe: "Mon · Thu",
+  kind: "HABIT",
+  mode: "TASK",
+  doneNow: false,
+  doneNowError: null,
+  duplicate: false,
+  href: null,
+  where: { lane: "habits", label: "Habits · next Thu" },
+  ...over,
+});
+const WEIGHT: CapturedWeight = { day: TODAY, kg: 72.4, unit: "kg", when: "today", previousKg: 73, previousSource: "manual", previousNote: null, undoable: true };
+
+const decision = (match: Record<string, unknown> | null = null) =>
+  ({ action: "CREATE", target_node_id: null, confidence_score: 0.2, node_data: { title: "Acid paper", core_premise: "", atomic_prompt: "", enrichment_payload: null, tags: [] }, deduplication_reasoning: "", relation: "distinct", label: "Distinct", verdict: { match } }) as never;
+
+// ── The fake cores ────────────────────────────────────────────────────────
+
+type Calls = Record<string, unknown[][]>;
+
+function fakes(over: Partial<MobileDeps> = {}): { deps: MobileDeps; calls: Calls; afters: (() => Promise<unknown>)[] } {
+  const calls: Calls = {};
+  const afters: (() => Promise<unknown>)[] = [];
+  const spy =
+    <A extends unknown[], R>(name: string, fn: (...a: A) => R) =>
+    (...a: A): R => {
+      (calls[name] ??= []).push(a);
+      return fn(...a);
+    };
+  const base: MobileDeps = {
+    token: () => undefined,
+    userId: () => "u1",
+    now: () => NOW,
+    after: (task) => {
+      afters.push(task);
+    },
+    random: () => 0.99,
+    loadBoard: async () => DATA,
+    loadFieldTree: async () => TREE,
+    loadReviewDay: async () => ({ reviews: 4, dayOpenQty: null }),
+    loadStreak: async () => ({ current: 12, last7Days: [true, true, true, true, true, true, true], bankedFreezes: 2 }),
+    loadShell: async () => ({ character: { level: 7, progress: 0.75, title: "Novice" } }),
+    loadWork: async () => WORK,
+    recordDayOpen: async () => {},
+    autoCompleteStudyTasks: async () => 0,
+    maybeMaintainLife: async () => {},
+    settleMomentum: async () => ({}),
+    completeTask: async () => ({ ok: true, value: completion() }),
+    undoCompletion: async (instanceId) => ({ ok: true, value: { instanceId, xp: -4.26 } }),
+    doneScheduled: async (id) => ({ ok: true, value: { id, doneAt: NOW.toISOString(), interactionId: null } }),
+    reopenScheduled: async (id) => ({ ok: true, value: { id } }),
+    loadVariants: async () => new Map(),
+    submitReview: async () => reviewResult(),
+    ideaLevel: async () => 3,
+    reviewRecorded: async () => false,
+    createFromCapture: async (text) => ({ ok: true, value: capturedItem({ title: text }) }),
+    undoCapture: async () => ({ ok: true, value: null }),
+    undoWeightCapture: async () => ({ ok: true, value: { restoredKg: 73 } }),
+    submitIdea: async () => ({ status: "created", ideaId: "new-idea", domainId: "d1", classification: "EXPANSION", decision: decision(), points: 9.5, focus: null, fieldName: "Chemistry", domainName: "Acids" }) as SubmitIdeaResult,
+  };
+  const merged = { ...base, ...over } as MobileDeps;
+  const deps = Object.fromEntries(Object.entries(merged).map(([k, fn]) => [k, spy(k, fn as (...a: unknown[]) => unknown)])) as unknown as MobileDeps;
+  return { deps, calls, afters };
+}
+
+const URL_BASE = `https://xtnl.example${MOBILE_API_BASE}`;
+const get = (path: string, headers: Record<string, string> = {}) => new Request(`${URL_BASE}${path}`, { method: "GET", headers });
+const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+  new Request(`${URL_BASE}${path}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: typeof body === "string" ? body : JSON.stringify(body) });
+
+interface Got {
+  status: number;
+  noStore: boolean;
+  json: { ok: boolean; data?: Record<string, unknown>; error?: string; code?: string };
+  raw: string;
+}
+async function got(res: Response | Promise<Response>): Promise<Got> {
+  const r = await res;
+  const raw = await r.text();
+  return { status: r.status, noStore: r.headers.get("cache-control") === "no-store", json: JSON.parse(raw), raw };
+}
+const data = (g: Got) => g.json.data as Record<string, unknown>;
+const isFail = (g: Got, code: keyof typeof CODE_STATUS) => g.status === CODE_STATUS[code] && g.json.ok === false && g.json.code === code && typeof g.json.error === "string" && g.json.error.length > 0;
+
+/** Every key a reply carries, collected for the doc check. */
+const replyKeys = new Set<string>();
+function collectKeys(v: unknown) {
+  if (Array.isArray(v)) v.forEach(collectKeys);
+  else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) {
+    replyKeys.add(k);
+    collectKeys(x);
+  }
+}
+
+// ═══ 1. The pure helpers ═════════════════════════════════════════════════
+
+function pure() {
+  section("the token");
+  check("sameToken: equal strings match, others don't (any length)", sameToken(TOKEN, TOKEN) && !sameToken(TOKEN, `${TOKEN}x`) && !sameToken("", TOKEN) && !sameToken("a", "b"));
+  const h = (v?: string) => new Headers(v === undefined ? {} : { authorization: v });
+  check("open with no token set, or a blank one", mobileAuthorized(h(), undefined) && mobileAuthorized(h(), "") && mobileAuthorized(h(), "   ") && mobileAuthorized(h("Bearer anything"), null));
+  check("set: a missing header, a wrong token, another scheme or a bare token are refused", !mobileAuthorized(h(), TOKEN) && !mobileAuthorized(h("Bearer nope"), TOKEN) && !mobileAuthorized(h(`Basic ${TOKEN}`), TOKEN) && !mobileAuthorized(h(TOKEN), TOKEN) && !mobileAuthorized(h("Bearer "), TOKEN));
+  check("set: Bearer <token> passes, the scheme in any case, spaces around ignored", mobileAuthorized(h(`Bearer ${TOKEN}`), TOKEN) && mobileAuthorized(h(`bearer   ${TOKEN}  `), TOKEN) && mobileAuthorized(h(`BEARER ${TOKEN}`), ` ${TOKEN} `));
+  const src = code("src/lib/mobile-api.ts");
+  check("the compare is constant-time: both sides hashed (sha256), then timingSafeEqual", /timingSafeEqual\(digest\(given\), digest\(expected\)\)/.test(src) && /createHash\("sha256"\)/.test(src) && !/===\s*expected|expected\s*===/.test(src));
+
+  section("the reply");
+  const okR = responseOf(okReply({ a: 1 }));
+  check("success: 200 {ok:true, data}, application/json, no-store", okR.status === 200 && okR.headers.get("cache-control") === "no-store" && (okR.headers.get("content-type") ?? "").includes("application/json"));
+  eq("failure: each code's status (auth 401, bad 400, gone 404, conflict 409, recorded 409, server 500)", CODE_STATUS, { auth: 401, bad: 400, gone: 404, conflict: 409, recorded: 409, server: 500 });
+  eq("failure body: {ok:false, error, code}", failReply("gone", "x").body, { ok: false, error: "x", code: "gone" });
+  check("NO_STORE is Cache-Control: no-store", NO_STORE["Cache-Control"] === "no-store" && Object.keys(NO_STORE).length === 1);
+  eq(
+    "refusals: gone lines and the 'gone' code → 404; the cores' couldn't-save lines → 500; any other refusal → 409",
+    [refusalReply("That task no longer exists.").status, refusalReply(SCHEDULED_GONE).status, refusalReply("anything", "gone").status, refusalReply("Couldn't save that. Try again.").status, refusalReply("Too late to undo: …").status],
+    [404, 404, 404, 500, 409]
+  );
+
+  section("the input");
+  check("ids: a row id (1–64 of A–Z a–z 0–9 _ -); anything else is bad", idOf("ckx_12-AB", "id") === "ckx_12-AB" && [undefined, null, "", "a/b", "x".repeat(65), 12, "a b"].every((v) => throws(() => idOf(v, "id"))));
+  check("clientId: a UUID (lowercased), absent or null is none, anything else is bad", clientIdOf(UUID.toUpperCase()) === UUID && clientIdOf(undefined) === null && clientIdOf(null) === null && ["abc", 12, "", `${UUID}0`].every((v) => throws(() => clientIdOf(v))));
+  check("days: a real YYYY-MM-DD (2026-02-30 is not), 'today' and 'yesterday'", isDayKey("2026-10-21") && !isDayKey("2026-02-30") && !isDayKey("2026-1-1") && tickDayOf("today") === "today" && tickDayOf("yesterday") === "yesterday" && tickDayOf(null) === undefined && throws(() => tickDayOf("tomorrow")) && throws(() => tickDayOf("2026-13-01")));
+  check("answers: a string or a list of strings, nothing empty, within the caps", answerOf("x") === "x" && same(answerOf(["a", " b"]), ["a", " b"]) && ["", "  ", [], ["a", ""], { 0: "x" }, 5, null, Array(51).fill("a"), "x".repeat(4001)].every((v) => throws(() => answerOf(v))));
+
+  section("the replay cache");
+  let clock = 0;
+  const cache = new ReplayCache(REPLAY_TTL_MS, 3, () => clock);
+  return (async () => {
+    let runs = 0;
+    const ok1 = async (): Promise<Reply> => {
+      runs++;
+      return okReply({ n: runs });
+    };
+    const a = await cache.run("k1", "fp", ok1);
+    const b = await cache.run("k1", "fp", ok1);
+    check("a second run with the same key and body gets the first result, without running again", runs === 1 && same(a, b));
+    check("the same key with another body is a mismatch, never a replay", (await cache.run("k1", "other", ok1)) === REPLAY_MISMATCH && runs === 1);
+    let release: () => void = () => {};
+    const slow = () =>
+      new Promise<Reply>((r) => {
+        release = () => r(okReply({ slow: true }));
+      });
+    const p1 = cache.run("k2", "fp", () => {
+      runs++;
+      return slow();
+    });
+    const p2 = cache.run("k2", "fp", () => {
+      runs++;
+      return slow();
+    });
+    release();
+    const [r1, r2] = await Promise.all([p1, p2]);
+    check("a retry while the first is still running joins it (one run)", runs === 2 && same(r1, r2));
+    let failRuns = 0;
+    const failing = async (): Promise<Reply> => {
+      failRuns++;
+      return failReply("conflict", "no");
+    };
+    await cache.run("k3", "fp", failing);
+    await cache.run("k3", "fp", failing);
+    check("a failure is not kept: the retry runs again", failRuns === 2);
+    let thrown = 0;
+    await cache.run("k4", "fp", async () => {
+      thrown++;
+      throw new Error("boom");
+    }).catch(() => {});
+    await cache.run("k4", "fp", async () => {
+      thrown++;
+      return okReply({});
+    });
+    check("a throw is not kept either", thrown === 2);
+    clock = REPLAY_TTL_MS + 1;
+    await cache.run("k1", "fp", ok1);
+    check("after ten minutes the key runs again", runs === 3 && REPLAY_TTL_MS === 600_000);
+    for (const k of ["a", "b", "c", "d"]) await cache.run(k, "fp", ok1);
+    check("at most `max` results are kept, oldest out first", cache.size === 3);
+    check("fingerprints: the body's key order doesn't matter; the clientId is not part of it; the route is", fingerprintOf("r", { a: 1, b: [1, { c: 2, d: 3 }], clientId: UUID }) === fingerprintOf("r", { b: [1, { d: 3, c: 2 }], a: 1 }) && fingerprintOf("r", { a: 1 }) !== fingerprintOf("s", { a: 1 }) && fingerprintOf("r", { a: 1 }) !== fingerprintOf("r", { a: 2 }));
+    check("the mismatch line names the clientId", /clientId/.test(REPLAY_MISMATCH_LINE));
+
+    section("prompts and undo tokens");
+    eq("math: $…$ → \\(…\\), $$…$$ → \\[…\\], the rest verbatim", mathPromptOf("E is $mc^2$ and $$\\int x$$."), { prompt: "E is \\(mc^2\\) and \\[\\int x\\].", hasMath: true });
+    eq("math: no span, no math (a lone $ stays)", [mathPromptOf("Costs $5"), mathPromptOf("plain")], [{ prompt: "Costs $5", hasMath: false }, { prompt: "plain", hasMath: false }]);
+    check("cloze: the [n] markers counted", clozeBlanksOf("A [1] b [2] c [3]") === 3 && clozeBlanksOf("none") === 0);
+    const token = weightUndoTokenOf(WEIGHT);
+    eq("a weigh-in's undo id carries its CapturedWeight and reads back checked (cleanWeightUndo)", weightOfUndoToken(token), WEIGHT);
+    const forged = `w1.${Buffer.from(JSON.stringify({ ...WEIGHT, kg: 5000 })).toString("base64url")}`;
+    check("a forged, foreign or oversized token reads as none", weightOfUndoToken(forged) === null && weightOfUndoToken("x1.abc") === null && weightOfUndoToken(`w1.${"A".repeat(2000)}`) === null && weightOfUndoToken("w1.!!!") === null && weightOfUndoToken(42) === null);
+    check("SERVER_LINES and GONE_LINES are disjoint", [...SERVER_LINES].every((l) => !GONE_LINES.has(l)));
+  })();
+}
+
+function throws(fn: () => unknown): boolean {
+  try {
+    fn();
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+// ═══ 2. The routes against fakes ═════════════════════════════════════════
+
+async function routes() {
+  section("auth and the frame");
+  {
+    const { deps } = fakes({ token: () => TOKEN });
+    const none = await got(handleCheck(get("/check"), deps));
+    const wrong = await got(handleCheck(get("/check", { authorization: "Bearer wrong" }), deps));
+    const right = await got(handleCheck(get("/check", { authorization: `Bearer ${TOKEN}` }), deps));
+    check("a token set: none or a wrong one → 401 {code:'auth'} with the auth line, no-store", isFail(none, "auth") && isFail(wrong, "auth") && none.json.error === AUTH_LINE && none.noStore);
+    check("the right one passes", right.status === 200 && right.json.ok === true);
+    const w = await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1" }), deps));
+    check("writes are behind the token too", isFail(w, "auth"));
+    const { deps: open } = fakes();
+    check("no token set: open", (await got(handleIdeasMeta(get("/ideas/meta"), open))).status === 200);
+    const boom = fakes({ loadBoard: async () => Promise.reject(new Error("db exploded at /secret/path")) });
+    const b = await got(handleCheck(get("/check"), boom.deps));
+    check("a thrown core → 500 {code:'server'} with the generic line: no message, no stack", isFail(b, "server") && b.json.error === SERVER_LINE && !/exploded|secret|at |Error/.test(b.raw) && b.noStore);
+    const q = await got(handleCheck(get("/check?x=1"), open));
+    check("an unknown query parameter is bad", isFail(q, "bad"));
+    const nj = await got(handleTaskComplete(post("/tasks/complete", "{not json"), open));
+    const arr = await got(handleTaskComplete(post("/tasks/complete", "[1]"), open));
+    check("a body that isn't a JSON object is bad", isFail(nj, "bad") && isFail(arr, "bad"));
+    const big = await got(handleLog(post("/log", { text: "x".repeat(300_000), section: "task" }), open));
+    check("a body over 256 KB is bad", isFail(big, "bad"));
+  }
+
+  section("GET /check");
+  {
+    const { deps, calls, afters } = fakes();
+    const g = await got(handleCheck(get("/check"), deps));
+    const d = data(g);
+    collectKeys(d);
+    check("200, ok, no-store", g.status === 200 && g.json.ok === true && g.noStore);
+    eq("the documented keys", keysOf(d), ["day", "dayLabel", "level", "now", "review", "streak", "tasks", "tasksSummary", "work"]);
+    check("now is the server's clock; day the life day; dayLabel 'Wed 21 Oct'", d.now === NOW.toISOString() && d.day === TODAY && d.dayLabel === "Wed 21 Oct");
+    check("one wave: the board (personal: three arguments), the tree, the day's counts, streak, shell and work, read once each", calls.loadBoard?.length === 1 && same(calls.loadBoard[0].slice(0, 2), ["u1", TODAY]) && calls.loadBoard[0].length === 3 && calls.loadFieldTree?.length === 1 && calls.loadReviewDay?.length === 1 && calls.loadStreak?.length === 1 && calls.loadShell?.length === 1 && calls.loadWork?.length === 1);
+
+    // The board, as the web board builds and draws it.
+    const board = buildBoard(DATA, [], NOW.getTime());
+    const { planned, habits } = splitTodayLane(board.todayRows);
+    const rowsInOrder = [...board.must.map((r) => [r, "MUST"] as const), ...planned.map((r) => [r, "TASK"] as const), ...habits.map((r) => [r, "HABIT"] as const)];
+    const doneRow = (r: (typeof rowsInOrder)[number][0]) => r.state === "done";
+    const want = [...rowsInOrder.filter(([r]) => !doneRow(r)), ...rowsInOrder.filter(([r]) => doneRow(r))].map(([r, lane]) => `${r.template.id}:${lane}`);
+    const tasks = d.tasks as Record<string, unknown>[];
+    eq("tasks: Must, Planned (TASK), Habits in the board's order, done rows last", tasks.map((t) => `${t.templateId}:${t.lane}`), want);
+    check("the fixture has rows in every lane and both states (the test can fail)", board.must.length > 0 && planned.length > 0 && habits.length > 0 && want.indexOf("plan2:TASK") > want.indexOf("hab1:HABIT"));
+    check("no anytime row, no work tab", !tasks.some((t) => t.templateId === "any1"));
+    eq("a task's documented keys", keysOf(tasks[0]), ["dueLabel", "icon", "lane", "minutes", "mvv", "status", "templateId", "title", "xpHint"]);
+    const t = (id: string) => tasks.find((x) => x.templateId === id)!;
+    eq("statuses: done at the minimum DONE_MVV, done DONE, else OPEN", [t("plan2").status, t("hab2").status, t("hab1").status, t("must1").status], ["DONE_MVV", "DONE", "OPEN", "OPEN"]);
+    const hab1Row = board.todayRows.find((r) => r.template.id === "hab1")!;
+    check("an open row's xpHint is the board's projection (one decimal); a done row's what it paid", t("hab1").xpHint === Math.round(hab1Row.projection.xp * 10) / 10 && t("hab2").xpHint === 3.3 && t("plan2").xpHint === 2);
+    check("minutes, mvv, icon (the chosen one; null for the default), title", t("hab1").minutes === hab1Row.estMinutes && t("hab1").mvv === "10 squats" && t("hab1").icon === "dumbbell" && t("hab2").icon === null && t("must1").title === "Pay the rent");
+    const doneCount = [...board.must, ...board.todayRows].filter((r) => r.state === "done").length;
+    eq("tasksSummary: the board's open counts, the done rows, Board clear", d.tasksSummary, { open: board.counts.musts + board.counts.due, done: doneCount, allDone: boardClearOf({ clear: board.clear, done: doneCount }) });
+
+    // The Review hub's figures, from its own formula (src/app/review/page.tsx).
+    const all = TREE.flatMap((f) => f.domains.flatMap((dm) => dm.ideas));
+    const totalDue = all.filter((i) => isDue(i.dueDate, NOW)).length;
+    const notYet = all.filter((i) => !isDue(i.dueDate, NOW)).sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
+    eq("review: the hub's due (DIAGRAM included), today's reviews, the quest target, the soonest not due", d.review, { due: totalDue, doneToday: 4, target: questTargetOf(null, 4, totalDue), nextDueAt: notYet[0].dueDate.toISOString() });
+
+    const w = d.work as Record<string, unknown>[];
+    eq("work: the Agenda's Overdue then Today (all-day before timed), tomorrow left out", w.map((x) => `${x.id}:${x.overdue}`), ["w-over:true", "w-allday:false", "w-later:false"]);
+    eq("a work item's documented keys", keysOf(w[0]), ["allDay", "boardId", "boardName", "channel", "collection", "customer", "dueAt", "id", "overdue", "title"]);
+    check("its collection's name and its customer (id, name, number, phone)", w[0].collection === "New NBN service" && same(w[0].customer, { id: "c1", name: "Jordan Lee", number: "1042", phone: "0412 345 678" }) && w[1].customer === null && w[1].channel === "EMAIL");
+    eq("level and streak", [d.level, d.streak], [{ level: 7, title: "Novice", progress: 0.75 }, { days: 12, keptToday: true, freezes: 2 }]);
+
+    check("momentum's lazy writes ran before the reply, once, with the life day and the clock (settleMomentum(userId, day, { now }))", same(calls.settleMomentum, [["u1", TODAY, NOW]]));
+    check("after the reply: the day's first open (with the hub's due count) and maintenance are owed; no study task to record; momentum isn't owed again", afters.length === 2);
+    for (const a of afters) await a();
+    check("they run the cores the Today and Review pages owe", same(calls.recordDayOpen?.[0], ["u1", totalDue, NOW]) && calls.maybeMaintainLife?.length === 1 && calls.settleMomentum.length === 1 && !calls.autoCompleteStudyTasks);
+
+    // Review fix: Today awaits settleMomentum before loadTodayBoard (the day's quest set, its frog), so /check does too.
+    const order: string[] = [];
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const settling = fakes({
+      settleMomentum: async () => {
+        order.push("settle");
+        await gate;
+        order.push("settled");
+        return {};
+      },
+      loadBoard: async () => {
+        order.push("board");
+        return DATA;
+      },
+    });
+    const pending = got(handleCheck(get("/check"), settling.deps));
+    await new Promise((r) => setTimeout(r, 5));
+    check("the board isn't read while momentum settles (the day's frog is priced into the read)", same(order, ["settle"]));
+    release();
+    const settledReply = await pending;
+    check("…then the board is read and the check answers", settledReply.status === 200 && same(order, ["settle", "settled", "board"]));
+    const settleFails = fakes({ settleMomentum: async () => Promise.reject(new Error("momentum down")) });
+    const sf = await got(handleCheck(get("/check"), settleFails.deps));
+    check("a settle that fails (it never should) is logged and the check still answers", sf.status === 200 && settleFails.calls.loadBoard?.length === 1);
+
+    const opened = fakes({ loadReviewDay: async () => ({ reviews: 4, dayOpenQty: 9 }) });
+    await got(handleCheck(get("/check"), opened.deps));
+    check("a day already opened owes no day open", opened.afters.length === 1);
+    const throwing = fakes({ maybeMaintainLife: async () => Promise.reject(new Error("x")) });
+    await got(handleCheck(get("/check"), throwing.deps));
+    let afterThrew = false;
+    for (const a of throwing.afters) await a().catch(() => (afterThrew = true));
+    check("an owed write that fails never throws out of after()", !afterThrew);
+
+    const softs = fakes({ loadStreak: async () => Promise.reject(new Error("s")), loadShell: async () => null, loadWork: async () => Promise.reject(new Error("w")) });
+    const s = data(await got(handleCheck(get("/check"), softs.deps)));
+    check("a failed streak or work read, or no level, reads as none: the check still answers", s.streak === null && s.level === null && same(s.work, []));
+    const many = fakes({ loadWork: async () => Array.from({ length: 45 }, (_, i) => work(`w${String(i).padStart(2, "0")}`, new Date(NOW.getTime() - (i + 1) * 60_000), false)) });
+    check(`work: at most ${WORK_MAX}`, (data(await got(handleCheck(get("/check"), many.deps))).work as unknown[]).length === WORK_MAX && WORK_MAX === 30);
+  }
+
+  section("POST /tasks/complete and /tasks/undo");
+  {
+    const { deps, calls } = fakes();
+    const g = await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1" }), deps));
+    const d = data(g);
+    collectKeys(d);
+    eq("the documented keys", keysOf(d), ["allDone", "celebrations", "instanceId", "level", "line", "xp"]);
+    check("the character's level after the tick, as /check's", same(d.level, { level: 7, title: "Novice", progress: 0.75 }) && calls.loadShell?.length === 1 && same(calls.loadShell[0], ["u1"]));
+    check("it calls completeTask(templateId, {}) — the board's tick", same(calls.completeTask, [["hab1", {}]]));
+    check("xp to one decimal; the line '+4.3 XP · Body'; the moments as {tier, kind, title}", d.xp === 4.3 && d.line === "+4.3 XP · Body" && same(d.celebrations, [{ tier: 2, kind: "streak-milestone", title: "7 days kept" }]) && d.instanceId === "i-new");
+    check("allDone from the board read again after the tick", d.allDone === false && calls.loadBoard?.length === 1);
+    await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1", day: "yesterday", mvv: true }), deps));
+    await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1", day: TODAY, mvv: null }), deps));
+    check("day and mvv pass through; null is absent", same(calls.completeTask[1], ["hab1", { day: "yesterday", mvv: true }]) && same(calls.completeTask[2], ["hab1", { day: TODAY }]));
+    const bads = await Promise.all(
+      [{ templateId: "../x" }, {}, { templateId: "hab1", day: "2026-02-30" }, { templateId: "hab1", mvv: "yes" }, { templateId: "hab1", minutes: 30 }, { templateId: "hab1", clientId: "nope" }].map(async (b) => got(handleTaskComplete(post("/tasks/complete", b), deps)))
+    );
+    check("bad input (an id, a day, mvv, an unknown field, a clientId) → 400, and the core is never called", bads.every((b) => isFail(b, "bad")) && calls.completeTask.length === 3);
+    const lines = await Promise.all(
+      [
+        completion({ status: "DONE_MVV" }),
+        completion({ day: YESTERDAY }),
+        completion({ duplicate: true }),
+      ].map(async (c) => data(await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1" }), fakes({ completeTask: async () => ({ ok: true, value: c }) }).deps))).line)
+    );
+    eq("lines: the minimum, yesterday, a repeat", lines, ["+4.3 XP · Body · minimum", "+4.3 XP · Body · yesterday", "Already recorded. Nothing is paid twice."]);
+    const allDone = fakes({ loadBoard: async () => boardData([tpl({ id: "x", title: "Only", dueDay: TODAY, dueKind: "PLANNED" })], [inst("ix", "x", "DONE")], { ix: paidOf("ix", 1) }) });
+    check("allDone: the board after the tick is clear", data(await got(handleTaskComplete(post("/tasks/complete", { templateId: "x" }), allDone.deps))).allDone === true);
+    const noBoard = fakes({ loadBoard: async () => Promise.reject(new Error("b")) });
+    const nb = await got(handleTaskComplete(post("/tasks/complete", { templateId: "x" }), noBoard.deps));
+    check("a failed board read after the tick reads as not all done, never a failed tick", nb.status === 200 && data(nb).allDone === false);
+    const noShell = fakes({ loadShell: async () => Promise.reject(new Error("s")) });
+    const ns = await got(handleTaskComplete(post("/tasks/complete", { templateId: "x" }), noShell.deps));
+    check("a failed level read after the tick reads as none, never a failed tick", ns.status === 200 && data(ns).level === null);
+    const refuse = (error: string) => fakes({ completeTask: async () => ({ ok: false, error }) }).deps;
+    const [gone, rule, srv] = await Promise.all(["That task no longer exists.", "The board is out of date: that day can no longer be recorded. Refresh and try again.", "Couldn't save that. Try again."].map(async (e) => got(handleTaskComplete(post("/tasks/complete", { templateId: "x" }), refuse(e)))));
+    check("refusals: gone → 404, a rule → 409, the action's couldn't-save → 500, each with the core's line", isFail(gone, "gone") && isFail(rule, "conflict") && rule.json.error?.startsWith("The board is out of date") === true && isFail(srv, "server"));
+
+    // Replays
+    const r = fakes();
+    const first = await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1", clientId: UUID }), r.deps));
+    const again = await got(handleTaskComplete(post("/tasks/complete", { clientId: UUID, templateId: "hab1" }), r.deps));
+    const other = await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab2", clientId: UUID }), r.deps));
+    check("a retry with the same clientId returns the first result, the tick runs once", r.calls.completeTask.length === 1 && first.raw === again.raw);
+    check("the same clientId with another body → 409", isFail(other, "conflict") && other.json.error === REPLAY_MISMATCH_LINE);
+    const rf = fakes({ completeTask: async () => ({ ok: false, error: "Too late." }) });
+    await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1", clientId: UUID2 }), rf.deps));
+    await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1", clientId: UUID2 }), rf.deps));
+    check("a refused write is not kept: its retry runs again", rf.calls.completeTask.length === 2);
+
+    const u = fakes();
+    const ug = await got(handleTaskUndo(post("/tasks/undo", { instanceId: "i-new" }), u.deps));
+    collectKeys(data(ug));
+    check("undo: undoCompletion(instanceId) → {xp, level} (taken back, negative, one decimal; the level after it)", same(u.calls.undoCompletion, [["i-new"]]) && same(data(ug), { xp: -4.3, level: { level: 7, title: "Novice", progress: 0.75 } }));
+    const uns = fakes({ loadShell: async () => null });
+    check("undo: no level reads as none", same(data(await got(handleTaskUndo(post("/tasks/undo", { instanceId: "i-new" }), uns.deps))), { xp: -4.3, level: null }));
+    check("undo: a bad id → 400", isFail(await got(handleTaskUndo(post("/tasks/undo", { instanceId: "" }), u.deps)), "bad"));
+    const ugone = fakes({ undoCompletion: async () => ({ ok: false, error: "That tick no longer exists." }) });
+    check("undo: a tick that is gone → 404", isFail(await got(handleTaskUndo(post("/tasks/undo", { instanceId: "i9" }), ugone.deps)), "gone"));
+  }
+
+  section("POST /work/done and /work/reopen");
+  {
+    const { deps, calls } = fakes();
+    const dn = await got(handleWorkDone(post("/work/done", { id: "st1" }), deps));
+    const ro = await got(handleWorkReopen(post("/work/reopen", { id: "st1" }), deps));
+    collectKeys(data(dn));
+    check("done: doneScheduled(id) (no log) → {id, doneAt}", same(calls.doneScheduled, [["st1"]]) && same(data(dn), { id: "st1", doneAt: NOW.toISOString() }));
+    check("reopen: reopenScheduled(id) → {id, doneAt: null}", same(calls.reopenScheduled, [["st1"]]) && same(data(ro), { id: "st1", doneAt: null }));
+    const gone = fakes({ doneScheduled: async () => ({ ok: false, error: SCHEDULED_GONE }) });
+    check("a task that is gone → 404; a bad id → 400", isFail(await got(handleWorkDone(post("/work/done", { id: "st1" }), gone.deps)), "gone") && isFail(await got(handleWorkDone(post("/work/done", { id: 5 }), deps)), "bad"));
+  }
+
+  section("GET /review/queue");
+  {
+    // The web's run, from its own code: the page's due cards (its mapping), then newRun's seededOrder.
+    const webCards: RunCard[] = TREE.flatMap((field) =>
+      field.domains.flatMap((domain) =>
+        domain.ideas
+          .filter((i) => isDue(i.dueDate, NOW))
+          .map((i) => ({
+            id: i.id,
+            level: i.level,
+            questionType: i.questionType,
+            question: i.question,
+            preview: displayQuestion(i.questionType, i.question),
+            prompt: i.questionType === "MULTI" ? i.atomicPrompt?.trim() || null : null,
+            domainName: domain.name,
+            fieldName: field.name,
+            lastSeenDay: null,
+            overdue: false,
+          }))
+      )
+    );
+    const webOrder = seededOrder(webCards, `${TODAY}:${RUN_ALL_FIELDS}`).map((c) => c.id);
+    const shownIds = webOrder.filter((id) => ideaById(id).questionType !== "DIAGRAM");
+    const variants = new Map([[TREE[0].domains[0].ideas[0].id, ["Below 7 on the pH scale is?"]]]);
+    const { deps, calls } = fakes({ loadVariants: async () => variants });
+    const g = await got(handleReviewQueue(get("/review/queue"), deps));
+    const d = data(g);
+    collectKeys(d);
+    const cards = d.cards as Record<string, unknown>[];
+    eq("the documented keys", keysOf(d), ["cards", "dueTotal", "now"]);
+    eq("the web runner's order (seededOrder by the life day and All fields), DIAGRAM left out", cards.map((c) => c.ideaId), shownIds.slice(0, 20));
+    check("dueTotal counts every due card, the DIAGRAM included", d.dueTotal === webCards.length && webCards.length === shownIds.length + 1);
+    check("the variants are read for the cards shown only", same(calls.loadVariants, [[shownIds.slice(0, 20)]]));
+    eq("a card's documented keys", keysOf(cards[0]), ["blanks", "domain", "field", "ideaId", "level", "listCount", "options", "orderItems", "prompt", "promptHasMath", "type", "unit"]);
+    const c = (n: number) => cards.find((x) => x.ideaId === `idea${n}`)!;
+    check("SHORT: its wording, or a variant picked as the hub picks (pickCardWording)", c(1).type === "SHORT" && c(1).prompt === "Below 7 on the pH scale is?" && c(13).prompt === "What is inertia?");
+    check("MCQ: its retrieval question and its options in the stored order; without one, 'Choose the correct answer'", c(2).type === "MCQ" && c(2).prompt === "Which paper turns red in acid?" && same(c(2).options, ["Litmus", "Starch", "Iodine"]) && c(3).prompt === "Choose the correct answer");
+    check("CLOZE: the sentence with its [n] markers, and the blanks", c(4).type === "CLOZE" && c(4).prompt === "Water is [1] and [2]." && c(4).blanks === 2);
+    check("FORMULA: math spans as \\( \\) and \\[ \\], promptHasMath; none without a span", c(6).prompt === "The energy is \\(E = mc^2\\) and \\[\\int_0^1 x\\,dx\\] too" && c(6).promptHasMath === true && c(7).promptHasMath === false && c(6).level === 4);
+    check("LIST: its prompt and count; ORDER: its prompt and the stored scramble; NUMERIC: its prompt and unit", c(8).prompt === "Name the noble gases" && c(8).listCount === 3 && c(11).prompt === "Order the steps" && same(c(11).orderItems, ["c", "a", "b"]) && c(12).prompt === "g at sea level" && c(12).unit === "m/s²");
+    check("only the math-bearing format says promptHasMath; field and domain names", cards.filter((x) => x.promptHasMath).length === 1 && c(11).field === "Physics" && c(11).domain === "Motion");
+    const lim = await got(handleReviewQueue(get("/review/queue?limit=3"), fakes().deps));
+    eq("?limit takes the first n of the same order", (data(lim).cards as Record<string, unknown>[]).map((x) => x.ideaId), shownIds.slice(0, 3));
+    const badLimits = await Promise.all(["0", "51", "abc", "2.5", "-1"].map(async (v) => got(handleReviewQueue(get(`/review/queue?limit=${v}`), fakes().deps))));
+    check("?limit outside 1–50 (or not a whole number) is bad; so is another parameter", badLimits.every((b) => isFail(b, "bad")) && isFail(await got(handleReviewQueue(get("/review/queue?field=x"), fakes().deps)), "bad"));
+  }
+
+  section("POST /review/answer");
+  {
+    const { deps, calls } = fakes();
+    const g = await got(handleReviewAnswer(post("/review/answer", { ideaId: "idea1", answer: "Acidic", combo: 3 }), deps));
+    const d = data(g);
+    collectKeys(d);
+    eq("the documented keys", keysOf(d), ["celebrations", "comboNext", "correct", "expected", "explanation", "judged", "levelFrom", "levelTo", "multiplier", "nextDueDay", "quest", "retry", "streakSecured", "trueFact", "xp"]);
+    check("it calls submitReview({ideaId, userAnswer, combo}) — the runner's own call — and reads the level beside it", same(calls.submitReview, [[{ ideaId: "idea1", userAnswer: "Acidic", combo: 3 }]]) && same(calls.ideaLevel, [["idea1"]]));
+    check("a pass: review points, the next combo and its multiplier, the levels, the true fact's line, the quest", d.xp === 4.2 && d.comboNext === 4 && d.multiplier === 1.2 && d.levelFrom === 3 && d.levelTo === 4 && d.trueFact === "Recalled after 3 days" && same(d.quest, { done: 5, target: 20 }) && d.retry === false && d.nextDueDay === "2026-10-29");
+    await got(handleReviewAnswer(post("/review/answer", { ideaId: "idea4", answer: ["acid", "base"] }), deps));
+    check("a list answer passes as an array; combo defaults to 0", same(calls.submitReview[1], [{ ideaId: "idea4", userAnswer: ["acid", "base"], combo: 0 }]));
+    const miss = (outcome: Record<string, unknown>, extra: Record<string, unknown> = {}) => fakes({ submitReview: async () => reviewResult({ correct: false, outcome, judged: { correct: false, reason: "Different meaning." }, quest: { done: 6, target: null }, ...extra }) }).deps;
+    const strike = data(await got(handleReviewAnswer(post("/review/answer", { ideaId: "idea1", answer: "x" }), miss({ outcome: "strike", failedAttempts: 1, strikeLimit: 2, nextCombo: 0, nextDue: "2026-10-22T00:00:00.000Z" }))));
+    check("a strike: no points, the level read beside it, judged {correct, reason}, a null quest target, retry", strike.xp === 0 && strike.levelFrom === 3 && strike.levelTo === 3 && same(strike.judged, { correct: false, reason: "Different meaning." }) && same(strike.quest, { done: 6, target: null }) && strike.retry === true);
+    const degraded = data(await got(handleReviewAnswer(post("/review/answer", { ideaId: "idea1", answer: "x", sessionMisses: 1 }), miss({ outcome: "degraded", previousLevel: 3, newLevel: 2, nextCombo: 0, nextDue: "…" }))));
+    check("a degrade: its levels", degraded.levelFrom === 3 && degraded.levelTo === 2);
+    // The retry rule against the web runner's queueAfterAnswer.
+    const card: RunCard = { id: "c1", level: 2, questionType: "SHORT", question: "q", preview: "q", prompt: null, domainName: "D", fieldName: "F", lastSeenDay: null, overdue: false };
+    const missResult = { correct: false, outcome: { outcome: "strike" } } as unknown as SubmitReviewResult;
+    const passResult = { correct: true, outcome: { outcome: "advanced" } } as unknown as SubmitReviewResult;
+    const web = (prior: number, result: SubmitReviewResult) => {
+      const results: CardResult[] = [...Array.from({ length: prior }, () => ({ card, result: missResult, answer: "x" })), { card, result, answer: "x" }];
+      return queueAfterAnswer([card], results, card, result, false).length > 1;
+    };
+    const table = [0, 1, 2, 3, 4, 7].map((m) => [retryOf("c1", false, m), web(m, missResult)]);
+    check(`retry follows queueAfterAnswer: a miss returns after each of the first ${SESSION_RETURNS_MAX} misses of a session, then not`, table.every(([a, b]) => a === b) && same(table.map(([a]) => a), [true, true, true, false, false, false]));
+    check("a pass never returns", retryOf("c1", true, 0) === false && web(0, passResult) === false);
+    const late = data(await got(handleReviewAnswer(post("/review/answer", { ideaId: "idea1", answer: "x", sessionMisses: 3 }), miss({ outcome: "retry", level: 3, nextCombo: 0, nextDue: "…" }))));
+    check("the fourth miss of a session: no retry", late.retry === false && late.levelFrom === 3);
+    const bads = await Promise.all(
+      [{ ideaId: "idea1", answer: "" }, { ideaId: "idea1", answer: [] }, { ideaId: "idea1", answer: { 0: "x" } }, { ideaId: "idea1", answer: "x", combo: -1 }, { ideaId: "idea1", answer: "x", sessionMisses: 1.5 }, { answer: "x" }, { ideaId: "idea1", answer: "x", type: "SHORT" }].map(async (b) => got(handleReviewAnswer(post("/review/answer", b), deps)))
+    );
+    check("bad answers, combos, misses, ids and unknown fields → 400, never graded", bads.every((b) => isFail(b, "bad")) && calls.submitReview.length === 2);
+    const notFound = fakes({ submitReview: async () => Promise.reject(Object.assign(new Error("No Idea found"), { code: "P2025" })) });
+    const nf = await got(handleReviewAnswer(post("/review/answer", { ideaId: "nope", answer: "x" }), notFound.deps));
+    check("an idea that doesn't exist (Prisma P2025) → 404 gone", isFail(nf, "gone") && nf.json.error === "That idea no longer exists.");
+    const boom = fakes({ submitReview: async () => Promise.reject(new Error("grader down")) });
+    check("any other throw → 500", isFail(await got(handleReviewAnswer(post("/review/answer", { ideaId: "idea1", answer: "x" }), boom.deps)), "server"));
+    const lvl = fakes({ ideaLevel: async () => Promise.reject(new Error("x")), submitReview: async () => reviewResult({ correct: false, outcome: { outcome: "strike", failedAttempts: 1, strikeLimit: 2, nextCombo: 0, nextDue: "…" } }) });
+    const nl = data(await got(handleReviewAnswer(post("/review/answer", { ideaId: "idea1", answer: "x" }), lvl.deps)));
+    check("a failed level read after a strike: null levels, the answer still recorded", nl.levelFrom === null && nl.levelTo === null);
+
+    // Review fix: an answer lands once per clientId on any instance, not only through this instance's replay cache: the
+    // clientId keys its REVIEW row (submitReview answerKey → srs.ts reviewDedupeKey, the ledger's unique dedupeKey).
+    // Each case takes a fresh clientId, so the replay cache never answers for it.
+    const answer = (body: Record<string, unknown>, f: ReturnType<typeof fakes>) => got(handleReviewAnswer(post("/review/answer", { ideaId: "idea1", ...body }), f.deps));
+    const duplicateKey = () => Object.assign(new Error("Unique constraint failed on the fields: (`userId`,`dedupeKey`)"), { code: "P2002" });
+    const k1 = randomUUID();
+    const keyed = fakes();
+    const kr = await answer({ answer: "Acidic", combo: 3, clientId: k1 }, keyed);
+    check("a clientId goes to submitReview as the answer's key (none without one: the runner's own call, above)", kr.status === 200 && same(keyed.calls.submitReview, [[{ ideaId: "idea1", userAnswer: "Acidic", combo: 3, answerKey: k1 }]]));
+    check("a plain answer reads nothing more (the key is read only on a repeat's sign)", !keyed.calls.reviewRecorded);
+
+    const k2 = randomUUID();
+    let wrote = false;
+    const after500 = fakes({
+      submitReview: async () => {
+        if (wrote) throw duplicateKey();
+        wrote = true;
+        throw new Error("recalculateLeveling: connection reset");
+      },
+      reviewRecorded: async () => wrote,
+    });
+    const firstTry = await answer({ answer: "Acidic", combo: 3, clientId: k2 }, after500);
+    const resend = await answer({ answer: "Acidic", combo: 3, clientId: k2 }, after500);
+    check("a pass that failed after its write (500, which no cache keeps): the resend runs the core again…", isFail(firstTry, "server") && after500.calls.submitReview.length === 2);
+    check("…where its keyed row's insert fails (P2002) and the key reads as recorded: 409 'recorded', nothing paid twice", isFail(resend, "recorded") && resend.json.error === REVIEW_RECORDED_LINE && same(after500.calls.reviewRecorded, [["u1", k2]]));
+    const elsewhere = fakes({ submitReview: async () => Promise.reject(duplicateKey()), reviewRecorded: async () => true });
+    check("a pass whose reply was lost, resent to another instance (its cache empty) → 409 'recorded'", isFail(await answer({ answer: "Acidic", clientId: randomUUID() }, elsewhere), "recorded"));
+    const otherUnique = fakes({ submitReview: async () => Promise.reject(duplicateKey()) });
+    check("a unique violation while the answer's key isn't on the ledger stays a 500", isFail(await answer({ answer: "x", clientId: randomUUID() }, otherUnique), "server"));
+
+    const retryOutcome = { outcome: "retry", level: 3, nextCombo: 0, nextDue: "2026-10-22T00:00:00.000Z" };
+    const k3 = randomUUID();
+    const missAgain = fakes({ submitReview: async () => reviewResult({ correct: false, outcome: retryOutcome }), reviewRecorded: async () => true });
+    const ma = await answer({ answer: "x", clientId: k3 }, missAgain);
+    check("a miss resent (the core reads it as the day's retry, which changes nothing) with its key on the ledger → 409 'recorded'", isFail(ma, "recorded") && same(missAgain.calls.reviewRecorded, [["u1", k3]]));
+    const freshRetry = fakes({ submitReview: async () => reviewResult({ correct: false, outcome: retryOutcome }) });
+    const fr = await answer({ answer: "x", sessionMisses: 1, clientId: randomUUID() }, freshRetry);
+    check("a new answer that is the day's retry (its own key not on the ledger yet) is answered as usual", fr.status === 200 && data(fr).correct === false && freshRetry.calls.reviewRecorded?.length === 1);
+    const unkeyed = fakes({ submitReview: async () => reviewResult({ correct: false, outcome: retryOutcome }), reviewRecorded: async () => true });
+    check("with no clientId nothing is read and nothing is refused", (await answer({ answer: "x" }, unkeyed)).status === 200 && !unkeyed.calls.reviewRecorded);
+    const readFails = fakes({ submitReview: async () => reviewResult({ correct: false, outcome: retryOutcome }), reviewRecorded: async () => Promise.reject(new Error("x")) });
+    check("a failed key read reads as not recorded (a retry changes nothing either way)", (await answer({ answer: "x", clientId: randomUUID() }, readFails)).status === 200);
+  }
+
+  section("POST /log and /log/undo");
+  {
+    const { deps, calls } = fakes();
+    const g = await got(handleLog(post("/log", { text: "gym legs 60m every mon,thu !", section: "task" }), deps));
+    const d = data(g);
+    collectKeys(d);
+    eq("the documented keys", keysOf(d), ["id", "kind", "line", "title", "undo"]);
+    check("task: the line as typed through createFromCapture, no capture key without a clientId", same(calls.createFromCapture, [["gym legs 60m every mon,thu !", undefined]]));
+    const item = capturedItem({ title: "gym legs 60m every mon,thu !" });
+    const copy = toastCopy(item, { notMust: false });
+    check("the line is the sheet's toast (head. body); kind task; undo {kind:'task', id}", d.line === `${copy.head}. ${copy.body}` && d.kind === "task" && same(d.undo, { kind: "task", id: "t-new" }) && d.id === "t-new");
+    const lines = async (text: string, sec: string) => {
+      const f = fakes();
+      const r = await got(handleLog(post("/log", { text, section: sec }), f.deps));
+      return r.status === 200 ? f.calls.createFromCapture[0][0] : `${r.status}:${r.json.code}:${r.json.error}`;
+    };
+    eq(
+      "sections start the line as the sheet's do (idea: / weight ), unless it already reads that way",
+      await Promise.all([lines("What is pH :: acidity", "idea"), lines("idea: What is pH :: acidity", "idea"), lines("72.4", "weight"), lines("weight 72.4", "weight"), lines("160 lb", "weight"), lines("72.1 yesterday", "weight")]),
+      ["idea: What is pH :: acidity", "idea: What is pH :: acidity", "weight 72.4", "weight 72.4", "160 lb", "weight 72.1 yesterday"]
+    );
+    eq(
+      "a weight section takes a weigh-in only; an aim line is refused; empty, too long or an unknown section is bad",
+      await Promise.all([lines("buy milk", "weight"), lines("1000", "weight"), lines("aim: run a marathon", "task"), lines("", "task"), lines("x".repeat(501), "task"), lines("x".repeat(496), "idea"), lines("hi", "body")]),
+      [`400:bad:${LOG_NOT_A_WEIGHT}`, `400:bad:${LOG_NOT_A_WEIGHT}`, `400:bad:${LOG_AIM}`, "400:bad:text is missing.", "400:bad:text is too long (at most 500 characters).", "400:bad:Keep the line to 500 characters.", "400:bad:section must be 'task', 'weight' or 'idea'."]
+    );
+    const k = fakes();
+    await got(handleLog(post("/log", { text: "milk", section: "task", clientId: UUID }), k.deps));
+    const key = k.calls.createFromCapture[0][1] as string;
+    check("a clientId is the line's capture key ('mobile:<uuid>', one the sheet's key rule accepts)", key === `mobile:${UUID}` && cleanCaptureKey(key) === key);
+    await got(handleLog(post("/log", { text: "milk", section: "task", clientId: UUID }), k.deps));
+    check("a retried line on this instance replays (the capture key guards every other instance)", k.calls.createFromCapture.length === 1);
+    const kinds = async (it: CapturedItem) => data(await got(handleLog(post("/log", { text: "x y", section: "task" }), fakes({ createFromCapture: async () => ({ ok: true, value: it }) }).deps)));
+    const draft = await kinds(capturedItem({ id: "dr1", kind: "IDEA_DRAFT", mode: "IDEA", href: "/add?draft=dr1", where: { lane: "inbox", label: "Inbox" } }));
+    const goal = await kinds(capturedItem({ id: "g1", kind: "GOAL", mode: "GOAL", where: { lane: "goals", label: "Goals" } }));
+    const weigh = await kinds(weightItemOf(WEIGHT, false));
+    check("an idea draft: kind idea-draft, undo draft, 'Idea in Inbox'", draft.kind === "idea-draft" && same(draft.undo, { kind: "draft", id: "dr1" }) && String(draft.line).startsWith("Idea in Inbox"));
+    check("a goal: kind goal, undo task", goal.kind === "goal" && same(goal.undo, { kind: "task", id: "g1" }));
+    check("a weigh-in: kind weight, its toast, an opaque undo id that reads back as its CapturedWeight", weigh.kind === "weight" && weigh.id === `weight:${TODAY}` && String(weigh.line).startsWith("Weight logged. 72.4 kg → Body · was 73") && same(weightOfUndoToken((weigh.undo as { id: string }).id), WEIGHT) && (weigh.undo as { kind: string }).kind === "weight");
+    // Review fix: the sheet offers no Undo for a weigh-in that isn't undoable (CaptureToast, JustAdded, QuickCapture), so /log answers none.
+    const sameAgain = await kinds(weightItemOf({ ...WEIGHT, previousKg: null, previousSource: null, undoable: false }, true));
+    const unseen = await kinds(weightItemOf({ ...WEIGHT, previousKg: null, previousSource: null, undoable: false }, false));
+    check("the same value again (it wrote nothing): 'Already logged', undo null", sameAgain.kind === "weight" && String(sameAgain.line).startsWith("Already logged. 72.4 kg") && sameAgain.undo === null);
+    check("a weigh-in that replaced a reading the server didn't see: undo null too", unseen.kind === "weight" && unseen.undo === null);
+    const sheet = ["src/components/capture/CaptureToast.tsx", "src/components/capture/JustAdded.tsx", "src/components/capture/QuickCapture.tsx"].map((f) => code(f));
+    check("…the sheet's own rule: every Undo it offers checks weight.undoable", sheet.every((s) => /!\w+(?:\.\w+)*\.weight \|\| \w+(?:\.\w+)*\.weight\.undoable/.test(s)));
+    const notMust = await got(handleLog(post("/log", { text: "pay rent !", section: "task" }), fakes({ createFromCapture: async () => ({ ok: true, value: capturedItem({ kind: "TASK" }) }) }).deps));
+    check("a must with no day says 'Added (not a Must)'", String(data(notMust).line).startsWith("Added (not a Must)"));
+    const refused = await got(handleLog(post("/log", { text: "x y", section: "task" }), fakes({ createFromCapture: async () => ({ ok: false, error: "Couldn't save it. Your line is kept — try again." }) }).deps));
+    check("the sheet's couldn't-save → 500 with its line", isFail(refused, "server") && refused.json.error === "Couldn't save it. Your line is kept — try again.");
+
+    const u = fakes();
+    const ut = await got(handleLogUndo(post("/log/undo", { kind: "task", id: "t-new" }), u.deps));
+    await got(handleLogUndo(post("/log/undo", { kind: "draft", id: "dr1" }), u.deps));
+    const uw = await got(handleLogUndo(post("/log/undo", { kind: "weight", id: weightUndoTokenOf(WEIGHT) }), u.deps));
+    check("undo: a task or a draft → undoCapture(id); a weigh-in → undoWeightCapture(its CapturedWeight); each {}", same(u.calls.undoCapture, [["t-new"], ["dr1"]]) && same(u.calls.undoWeightCapture, [[WEIGHT]]) && same(data(ut), {}) && same(data(uw), {}));
+    const ubad = await Promise.all([{ kind: "weight", id: "w1.forged" }, { kind: "idea", id: "x" }, { kind: "task", id: "a/b" }, { kind: "task" }].map(async (b) => got(handleLogUndo(post("/log/undo", b), u.deps))));
+    check("undo: a forged weight id, an unknown kind or a bad id → 400", ubad.every((b) => isFail(b, "bad")) && u.calls.undoCapture.length === 2);
+    const ugone = fakes({ undoCapture: async () => ({ ok: false, error: "That capture is no longer on your board.", code: "gone" as const }) });
+    const late = fakes({ undoCapture: async () => ({ ok: false, error: "Too late to undo." }) });
+    check("undo: gone → 404, too late → 409", isFail(await got(handleLogUndo(post("/log/undo", { kind: "task", id: "t1" }), ugone.deps)), "gone") && isFail(await got(handleLogUndo(post("/log/undo", { kind: "task", id: "t1" }), late.deps)), "conflict"));
+  }
+
+  section("GET /ideas/meta and POST /ideas");
+  {
+    const meta = data(await got(handleIdeasMeta(get("/ideas/meta"), fakes().deps)));
+    collectKeys(meta);
+    const formats = meta.formats as Record<string, unknown>[];
+    eq("formats: the form's seven in its order (MULTI as MCQ), with XP_BASE's points", formats.map((f) => `${f.type}:${f.points}`), ADD_FORMATS.map((t) => `${t === "MULTI" ? "MCQ" : t}:${XP_BASE[t]}`));
+    eq("a format's documented keys", keysOf(formats[0]), ["help", "label", "points", "type"]);
+    const form = read("src/components/AddIdeaForm.tsx");
+    const pinned = ADD_FORMATS.filter((t) => !form.includes(`${t}: { label: "${IDEA_FORMAT_META[t].label}", hint: "${IDEA_FORMAT_META[t].hint}" }`));
+    check("labels and help lines are AddIdeaForm's TYPE_META, word for word", pinned.length === 0 && formats.every((f, i) => f.label === IDEA_FORMAT_META[ADD_FORMATS[i]].label && f.help === IDEA_FORMAT_META[ADD_FORMATS[i]].hint), pinned.join(", "));
+    const colPinned = IDEA_COLLECTIONS.every((c) => form.includes(`{ value: "${c.value}", label: "${c.label}" }`));
+    check("collections are the form's COLLECTIONS, BOOK first (its default)", colPinned && same(meta.collections, IDEA_COLLECTIONS) && /useState<CollectionLabel>\("BOOK"\)/.test(form) && IDEA_COLLECTIONS[0].value === "BOOK" && (form.match(/\{ value: "[A-Z]+", label: "[^"]+" \}/g) ?? []).length === IDEA_COLLECTIONS.length);
+
+    // Each format's body becomes the form's own fields, and submitIdea gets what the form would send.
+    const S = (p: Partial<AddContentState>): AddContentState => ({ ...EMPTY_ADD_CONTENT, listItems: ["", ""], orderItems: ["", ""], options: ["", ""], variants: [], ...p });
+    const cases: [string, Record<string, unknown>, AddContentState][] = [
+      ["SHORT", { type: "SHORT", question: " What is pH? ", answer: "acidity", caseSensitive: true }, S({ type: "SHORT", shortQuestion: " What is pH? ", shortAnswer: "acidity", shortCaseSensitive: true })],
+      ["CLOZE", { type: "CLOZE", question: "Water is {{wet}} and {{clear}}" }, S({ type: "CLOZE", clozeText: "Water is {{wet}} and {{clear}}" })],
+      ["NUMERIC", { type: "NUMERIC", question: "g at sea level", answer: 9.81, tolerance: "0.05", unit: "m/s²" }, S({ type: "NUMERIC", numericPrompt: "g at sea level", numericValue: "9.81", numericTolerance: "0.05", numericUnit: "m/s²" })],
+      ["NUMERIC default tolerance", { type: "NUMERIC", question: "Avogadro", answer: "6.02e23" }, S({ type: "NUMERIC", numericPrompt: "Avogadro", numericValue: "6.02e23", numericTolerance: "0" })],
+      ["MCQ", { type: "MCQ", options: ["Litmus", " Starch ", "Iodine"], answer: "Starch" }, S({ type: "MULTI", options: ["Litmus", " Starch ", "Iodine"], correctIndex: 1 })],
+      ["LIST", { type: "LIST", question: "Noble gases", listItems: ["He", "Ne", "", "Ar"] }, S({ type: "LIST", listPrompt: "Noble gases", listItems: ["He", "Ne", "", "Ar"] })],
+      ["ORDER", { type: "ORDER", question: "Steps", orderItems: ["a", "b", "c"] }, S({ type: "ORDER", orderPrompt: "Steps", orderItems: ["a", "b", "c"] })],
+      ["FORMULA", { type: "FORMULA", question: "Energy", answer: "\\frac{1}{2}mv^2" }, S({ type: "FORMULA", formulaQuestion: "Energy", formulaAnswer: "\\frac{1}{2}mv^2" })],
+      // The contract's general pair where the format has no place for it: ignored (the app sends both always).
+      ["CLOZE with an answer (ignored)", { type: "CLOZE", question: "Water is {{wet}}", answer: "wet" }, S({ type: "CLOZE", clozeText: "Water is {{wet}}" })],
+      ["LIST with an answer (ignored)", { type: "LIST", question: "Gases", listItems: ["He", "Ne"], answer: "He; Ne" }, S({ type: "LIST", listPrompt: "Gases", listItems: ["He", "Ne"] })],
+      ["ORDER with an answer (ignored)", { type: "ORDER", question: "Steps", orderItems: ["a", "b"], answer: "a → b" }, S({ type: "ORDER", orderPrompt: "Steps", orderItems: ["a", "b"] })],
+      ["MCQ with an empty question (ignored)", { type: "MCQ", question: "", options: ["x", "y"], answer: "y" }, S({ type: "MULTI", options: ["x", "y"], correctIndex: 1 })],
+    ];
+    for (const [name, body, state] of cases) {
+      const f = fakes();
+      const r = await got(handleIdeaCreate(post("/ideas", body), f.deps));
+      const sent = f.calls.submitIdea?.[0]?.[0] as Record<string, unknown> | undefined;
+      const want = contentOfAddState(state);
+      check(`${name}: submitIdea gets the form's own content (contentOfAddState) and the default collection`, r.status === 200 && want !== null && same(sent, { collectionLabel: "BOOK", content: want }), stableJson(sent));
+    }
+    const full = fakes();
+    await got(handleIdeaCreate(post("/ideas", { type: "SHORT", question: "Q", answer: "A", variants: ["Other Q"], collection: "PROPOSAL", draftId: "dr1" }), full.deps));
+    check("variants, collection and draftId pass as the form passes them", same(full.calls.submitIdea[0][0], { collectionLabel: "PROPOSAL", content: { type: "SHORT", question: "Q", answer: "A", caseSensitive: false }, draftId: "dr1", variants: ["Other Q"] }));
+    const why = async (body: Record<string, unknown>) => {
+      const f = fakes();
+      const r = await got(handleIdeaCreate(post("/ideas", body), f.deps));
+      return `${r.status}:${f.calls.submitIdea ? "called" : "not called"}:${r.json.error}`;
+    };
+    eq(
+      "refused before filing: the form's reasons, unused and unknown fields, a wrong right option",
+      await Promise.all([
+        why({ type: "LIST", question: "Q", listItems: ["one"] }),
+        why({ type: "CLOZE", question: "No blanks here" }),
+        why({ type: "SHORT", question: "Q", answer: "A", options: ["x"] }),
+        why({ type: "SHORT", question: "Q", answer: "A", premise: "x" }),
+        why({ type: "MCQ", options: ["a", "b"], answer: "c" }),
+        why({ type: "MCQ", options: ["a", "b"] }),
+        why({ type: "MULTI", options: ["a", "b"], answer: "a" }),
+        why({ type: "CLOZE", question: "A {{b}}", variants: ["x"] }),
+        why({ type: "SHORT", question: "Q", answer: "A", collection: "NOTES" }),
+        why({ type: "SHORT", question: "x".repeat(4001), answer: "A" }),
+      ]),
+      [
+        "400:not called:A list needs at least two items.",
+        "400:not called:Wrap at least one part in {{double braces}} to blank it.",
+        "400:not called:options isn't used by a SHORT idea.",
+        "400:not called:Unknown field: premise.",
+        "400:not called:answer must be one of the options.",
+        "400:not called:Mark which option is right: send its text as answer.",
+        "400:not called:type must be one of SHORT, CLOZE, NUMERIC, MCQ, LIST, ORDER or FORMULA.",
+        "400:not called:variants aren't used by a CLOZE idea.",
+        "400:not called:collection must be BOOK, ACTIONABLE or PROPOSAL.",
+        "400:not called:That's too long to save.",
+      ]
+    );
+    const created = data(await got(handleIdeaCreate(post("/ideas", { type: "SHORT", question: "Q", answer: "A" }), fakes().deps)));
+    collectKeys(created);
+    eq("created: the documented keys", keysOf(created), ["domain", "field", "ideaId", "line", "points", "status", "title"]);
+    eq("created: its id, the synthesised title, where it went (the form's banner) and the points", created, { status: "created", ideaId: "new-idea", title: "Acid paper", field: "Chemistry", domain: "Acids", points: 9.5, line: "Filed beside its neighbours in Acids (Chemistry)." });
+    const match = { id: "old1", title: "Acid paper", prompt: "What turns red?", fieldName: "Chemistry", domainName: "Acids" };
+    const merged = data(await got(handleIdeaCreate(post("/ideas", { type: "SHORT", question: "Q", answer: "A" }), fakes({ submitIdea: async () => ({ status: "merged", targetIdeaId: "old1", similarity: 0.97, decision: decision(match) }) }).deps)));
+    const dup = data(await got(handleIdeaCreate(post("/ideas", { type: "SHORT", question: "Q", answer: "A" }), fakes({ submitIdea: async () => ({ status: "saturated", matchedIdeaId: "old1", domainId: "d1", similarity: 0.9, decision: decision(match) }) }).deps)));
+    eq("merged: the idea it was folded into, nothing paid", merged, { status: "merged", ideaId: "old1", title: "Acid paper", field: "Chemistry", domain: "Acids", points: 0, line: IDEA_MERGED_LINE });
+    eq("saturated is 'duplicate': the close idea, nothing written", dup, { status: "duplicate", ideaId: "old1", title: "Acid paper", field: "Chemistry", domain: "Acids", points: 0, line: IDEA_DUPLICATE_LINE });
+    const noTitle = fakes({ submitIdea: async () => ({ status: "created", ideaId: "n2", domainId: "d1", classification: "NOVELTY", decision: { ...(decision() as object), node_data: null } as never, points: 10, focus: null, fieldName: "Physics", domainName: "Waves" }) });
+    const nt = data(await got(handleIdeaCreate(post("/ideas", { type: "LIST", question: "Noble gases", listItems: ["He", "Ne"] }), noTitle.deps)));
+    const stored = encodeIdeaContent({ type: "LIST", prompt: "Noble gases", items: ["He", "Ne"] });
+    check("created with no synthesised title: the question's own preview; a new domain says so", nt.title === displayQuestion(stored.questionType, stored.question) && nt.line === "Opened a new domain, Waves, in Physics.");
+    const err = await got(handleIdeaCreate(post("/ideas", { type: "SHORT", question: "Q", answer: "A" }), fakes({ submitIdea: async () => ({ status: "error", message: "The embedding service didn't answer. Nothing was saved." }) }).deps));
+    check("a model hiccup: 500 with submitIdea's own line (nothing written)", isFail(err, "server") && err.json.error === "The embedding service didn't answer. Nothing was saved.");
+    const noField = await got(handleIdeaCreate(post("/ideas", { type: "SHORT", question: "Q", answer: "A" }), fakes({ submitIdea: async () => Promise.reject(new Error("Create a Field before adding ideas — there is nowhere to file this yet.")) }).deps));
+    check("no Field yet: 409 with its line", isFail(noField, "conflict") && /^Create a Field/.test(noField.json.error ?? ""));
+  }
+}
+
+// ═══ 3. The wiring ════════════════════════════════════════════════════════
+
+function routeFiles(): { path: string; file: string; methods: string[] }[] {
+  const base = join(ROOT, "src/app/api/mobile/v1");
+  const out: { path: string; file: string; methods: string[] }[] = [];
+  const walk = (dir: string) => {
+    for (const f of readdirSync(dir)) {
+      const p = join(dir, f);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (f === "route.ts") {
+        const rel = relative(ROOT, p).replace(/\\/g, "/");
+        const src = code(rel);
+        const path = `/${relative(base, dir).replace(/\\/g, "/")}`;
+        out.push({ path, file: rel, methods: [...src.matchAll(/export async function (GET|POST|PUT|PATCH|DELETE)\b/g)].map((m) => m[1]) });
+      }
+    }
+  };
+  if (existsSync(base)) walk(base);
+  return out.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+const HANDLER_OF: Record<string, string> = {
+  "GET /check": "handleCheck",
+  "POST /tasks/complete": "handleTaskComplete",
+  "POST /tasks/undo": "handleTaskUndo",
+  "POST /work/done": "handleWorkDone",
+  "POST /work/reopen": "handleWorkReopen",
+  "GET /review/queue": "handleReviewQueue",
+  "POST /review/answer": "handleReviewAnswer",
+  "POST /log": "handleLog",
+  "POST /log/undo": "handleLogUndo",
+  "GET /ideas/meta": "handleIdeasMeta",
+  "POST /ideas": "handleIdeaCreate",
+};
+
+function wiring() {
+  section("the route files");
+  const files = routeFiles();
+  const listed = (es: readonly { method: string; path: string }[]) => es.map((e) => `${e.method} ${e.path}`).sort();
+  eq("the route files are MOBILE_ENDPOINTS, one method each", listed(files.flatMap((f) => f.methods.map((m) => ({ method: m, path: f.path })))), listed(MOBILE_ENDPOINTS));
+  for (const f of files) {
+    const key = `${f.methods[0]} ${f.path}`;
+    const handler = HANDLER_OF[key];
+    const src = code(f.file);
+    const exportsOf = [...src.matchAll(/export (?:async function|const) (\w+)/g)].map((m) => m[1]).sort();
+    check(
+      `${key}: exports ${f.methods[0]} and dynamic only, hands the request to ${handler} with the real deps`,
+      !!handler &&
+        same(exportsOf, [f.methods[0], "dynamic"].sort()) &&
+        /export const dynamic = "force-dynamic";/.test(src) &&
+        new RegExp(`export async function ${f.methods[0]}\\(request: Request\\): Promise<Response> \\{\\s*return ${handler}\\(request, realMobileDeps\\);\\s*\\}`).test(src) &&
+        new RegExp(`import \\{ ${handler} \\} from "@/lib/mobile-api-server";`).test(src) &&
+        /import \{ realMobileDeps \} from "@\/lib\/mobile-api-cores";/.test(src),
+      f.file
+    );
+  }
+
+  section("the cores");
+  const cores = code("src/lib/mobile-api-cores.ts");
+  const bind = (name: string, re: RegExp) => check(`mobile-api-cores: ${name}`, re.test(cores));
+  bind("the token is process.env.MOBILE_API_TOKEN, read per request", /token: \(\) => process\.env\[MOBILE_TOKEN_ENV\],/);
+  bind("the user is getCurrentUserId (the web actions' own)", /userId: \(\) => getCurrentUserId\(\),/);
+  bind("after is next/server's", /import \{ after \} from "next\/server";[\s\S]*after: \(task\) => after\(task\),/);
+  bind("the board is loadTodayBoard(userId, day, now): the personal board (no work-tab scope)", /loadBoard: \(userId, day, now\) => loadTodayBoard\(userId, day, now\),/);
+  bind("the hub's reads: loadFieldTree, review-data loadReviewDay", /loadFieldTree: \(\) => loadFieldTree\(\),[\s\S]*loadReviewDay: \(userId, day\) => loadReviewDay\(userId, day\),/);
+  bind("streak, level and work: getDailyStreak, loadShellData, loadDueWorkTasks", /loadStreak: \(userId\) => getDailyStreak\(userId\),\s*loadShell: \(userId\) => loadShellData\(userId\),\s*loadWork: \(userId, now\) => loadDueWorkTasks\(userId, now\),/);
+  bind("the owed writes: recordDayOpen, autoCompleteStudyTasks, maybeMaintainLife, settleMomentum", /recordDayOpen: \(userId, dueCount, now\) => recordDayOpen\(userId, dueCount, now\),\s*autoCompleteStudyTasks: \(userId, now\) => autoCompleteStudyTasks\(userId, now\),\s*maybeMaintainLife: \(userId\) => maybeMaintainLife\(userId\),\s*settleMomentum: \(userId, day, now\) => settleMomentum\(userId, day, \{ now \}\),/);
+  bind("the tick and its Undo: actions/tasks completeTask, undoCompletion (no options: never refresh)", /completeTask: \(templateId, input\) => completeTask\(templateId, input\),\s*undoCompletion: \(instanceId\) => undoCompletion\(instanceId\),/);
+  bind("work: doneScheduledTask(id, null) (no log), reopenScheduledTask(id, null)", /doneScheduled: \(id\) => doneScheduledTask\(id, null\),\s*reopenScheduled: \(id\) => reopenScheduledTask\(id, null\),/);
+  bind("review: loadVariants, submitReview, and a level read of the one idea", /loadVariants: \(ideaIds\) => loadVariants\(ideaIds\),\s*submitReview: \(input\) => submitReview\(input\),\s*ideaLevel: async \(ideaId\) => \(await prisma\.idea\.findUnique\(\{ where: \{ id: ideaId \}, select: \{ level: true \} \}\)\)\?\.level \?\? null,/);
+  bind("review: an answer's key is read on the ledger's unique (userId, dedupeKey), as srs.ts reviewDedupeKey writes it", /reviewRecorded: async \(userId, answerKey\) =>\s*\(await prisma\.activityEvent\.findUnique\(\{ where: \{ userId_dedupeKey: \{ userId, dedupeKey: reviewDedupeKey\(answerKey\) \} \}, select: \{ id: true \} \}\)\) !== null,/);
+  bind("log: createFromCapture(text, [], { captureKey }) — no refresh; undoCapture; undoWeightCapture", /createFromCapture: \(text, captureKey\) => createFromCapture\(text, \[\], captureKey \? \{ captureKey \} : undefined\),\s*undoCapture: \(templateId\) => undoCapture\(templateId\),\s*undoWeightCapture: \(weight\) => undoWeightCapture\(weight\),/);
+  bind("ideas: submitIdea", /submitIdea: \(input\) => submitIdea\(input\),/);
+  const imports: [string, string][] = [
+    ["completeTask, undoCapture, undoCompletion", "../app/actions/tasks"],
+    ["doneScheduledTask, reopenScheduledTask", "../app/actions/scheduled-tasks"],
+    ["submitReview", "../app/actions/review"],
+    ["createFromCapture, undoWeightCapture", "../app/actions/capture"],
+    ["submitIdea", "../app/actions/ideas"],
+    ["autoCompleteStudyTasks, loadTodayBoard, recordDayOpen", "./tasks"],
+    ["loadReviewDay", "../app/review/review-data"],
+    ["loadDueWorkTasks", "./scheduled-tasks-server"],
+    ["reviewDedupeKey", "./srs"],
+  ];
+  const missing = imports.filter(([names, from]) => !cores.includes(`import { ${names} } from "${from}";`));
+  check("mobile-api-cores imports each core from the web's own module", missing.length === 0, missing.map((m) => m[1]).join(", "));
+  check("nothing in the app's path asks for refresh (refresh() runs only inside a Server Action)", !/refresh/.test(cores) && !/refresh/.test(code("src/lib/mobile-api-server.ts")) && !/refresh/.test(code("src/lib/mobile-api.ts")));
+  const depsSrc = code("src/lib/mobile-api-server.ts");
+  const depsAt = depsSrc.indexOf("export interface MobileDeps");
+  const depNames = [...depsSrc.slice(depsAt, depsSrc.indexOf("\n}", depsAt)).matchAll(/^\s{2}(\w+): /gm)].map((m) => m[1]).sort();
+  const bound = [...cores.matchAll(/^\s{2}(\w+): /gm)].map((m) => m[1]).sort();
+  eq("every dep the handlers use is bound in mobile-api-cores, and nothing else", bound, depNames);
+
+  section("the pure modules stay pure");
+  for (const f of ["src/lib/mobile-api.ts", "src/lib/mobile-api-server.ts"]) {
+    const src = read(f);
+    const valueImports = [...src.matchAll(/^import (?!type )[^;]*? from "([^"]+)";/gm)].map((m) => m[1]);
+    const bad = valueImports.filter((m) => /prisma|\/actions\/|mobile-api-cores|^next\/|gemini|scheduled-tasks-server|\.\/tasks$|review-data|^@\//.test(m));
+    check(`${f}: no value import of Prisma, an action, the cores or next/* (types only)`, bad.length === 0, bad.join(", "));
+  }
+  const clients = (() => {
+    const out: string[] = [];
+    const walk = (d: string) => {
+      for (const f of readdirSync(d)) {
+        const p = join(d, f);
+        if (statSync(p).isDirectory()) walk(p);
+        else if (/\.(ts|tsx)$/.test(f) && /^\s*["']use client["']/.test(readFileSync(p, "utf8"))) out.push(relative(ROOT, p).replace(/\\/g, "/"));
+      }
+    };
+    walk(join(ROOT, "src"));
+    return out;
+  })();
+  const leaks = clients.filter((p) => /MOBILE_API_TOKEN|mobile-api/.test(readFileSync(join(ROOT, p), "utf8")));
+  check("no client module reads the token or imports the mobile API", leaks.length === 0 && clients.length > 10, leaks.join(", "));
+  const tokenReaders = ["src/lib/mobile-api.ts", "src/lib/mobile-api-server.ts", "src/lib/mobile-api-cores.ts"].filter((f) => /process\.env/.test(code(f)));
+  eq("only mobile-api-cores reads process.env", tokenReaders, ["src/lib/mobile-api-cores.ts"]);
+
+  section("the web formulas the app mirrors");
+  const page = code("src/app/review/page.tsx");
+  check("the Review hub: due is isDue(idea.dueDate, now) over the tree; the quest is questTargetOf(dayOpenQty, reviews, totalDue); the soonest not due", /\.filter\(\(idea\) => isDue\(idea\.dueDate, now\)\)/.test(page) && /const quest = \{ done: day\.reviews, target: questTargetOf\(day\.dayOpenQty, day\.reviews, totalDue\) \};/.test(page) && /const nextDate = notYetDue\[0\]\?\.idea\.dueDate \?\? null;/.test(page) && /after\(\(\) => recordDayOpen\(userId, totalDue, now\)\);/.test(page));
+  check("the Review hub's card: a MULTI's prompt is its atomicPrompt, the preview displayQuestion; variants by pickCardWording", /prompt: idea\.questionType === "MULTI" \? idea\.atomicPrompt\?\.trim\(\) \|\| null : null,/.test(page) && /preview: displayQuestion\(idea\.questionType, idea\.question\),/.test(page) && /pickCardWording\(c, variants\.get\(c\.id\), displayQuestion\)/.test(page));
+  const ws = code("src/components/workspace/WorkspaceView.tsx");
+  check("the runner's order: newRun seededOrder(cardsIn(fields, scope), `${today}:${scope}`), started with ALL_FIELDS", /queue: seededOrder\(cardsIn\(fields, scope\), `\$\{today\}:\$\{scope\}`\),/.test(ws) && /newRun\(fields, ALL_FIELDS, today, quest, totalDue\)/.test(ws) && /export const ALL_FIELDS = "ALL";/.test(read("src/components/workspace/SessionSummary.tsx")) && RUN_ALL_FIELDS === "ALL");
+  check("the runner's answer: submitReview({ ideaId, userAnswer, combo: streak }), then queueAfterAnswer", /submitReview\(\{ ideaId: card\.id, userAnswer, combo: streak \}\)/.test(ws) && /queueAfterAnswer\(cur\.queue, results, card, result, cur\.boss != null\)/.test(ws));
+  const sc = code("src/components/workspace/SessionCard.tsx");
+  check("the card's question: a MULTI's prompt or 'Choose the correct answer'; a FORMULA's preview in MathText; options parsed, strings only, not shuffled", /return card\.prompt \?\? "Choose the correct answer";/.test(sc) && /return <MathText text=\{card\.preview\} \/>;/.test(sc) && /parsed\.filter\(\(o\): o is string => typeof o === "string"\)/.test(sc) && !/shuffle|seededOrder|Math\.random/.test(sc));
+  const fa = code("src/components/workspace/FormatAnswer.tsx");
+  check("the cloze's blanks are its [n] markers (splitOnBlanks)", /text\.split\(\/\(\\\[\\d\+\\\]\)\/g\)/.test(fa));
+  check("math spans are latex.ts's $…$ and $$…$$ (MATH_SPAN)", /const MATH_SPAN = \/\\\$\\\$\(\[\\s\\S\]\+\?\)\\\$\\\$\|\\\$\(\[\^\$\\n\]\+\?\)\\\$\/g;/.test(read("src/lib/latex.ts")));
+  const today = code("src/app/today/page.tsx");
+  check("the Today page's board read is loadTodayBoard(userId, day, now), and it owes maybeMaintainLife and settleMomentum", /loadTodayBoard\(userId, day, now\),/.test(today) && /after\(\(\) => maybeMaintainLife\(userId\)\);/.test(today) && /settleMomentum\(userId, day, \{ now \}\)/.test(today) && /if \(studyToRecord\) await autoCompleteStudyTasks\(userId, now\);/.test(today));
+  // Review fix: Today awaits momentum's settle before its board read (the day's quest set prices the frog), and so does /check.
+  const checkSrc = (() => {
+    const s = code("src/lib/mobile-api-server.ts");
+    return s.slice(s.indexOf("export async function handleCheck"), s.indexOf("export async function handleTaskComplete"));
+  })();
+  check(
+    "Today awaits settleMomentum before loadTodayBoard; /check awaits it before its board read and no longer owes it after the reply",
+    /const settled = await settleMomentum\(userId, day, \{ now \}\);/.test(today) &&
+      today.indexOf("await settleMomentum(") < today.indexOf("loadTodayBoard(userId, day, now)") &&
+      /await deps\.settleMomentum\(userId, day, now\)/.test(checkSrc) &&
+      checkSrc.indexOf("await deps.settleMomentum(") < checkSrc.indexOf("deps.loadBoard(userId, day, now)") &&
+      !/owe\(deps, [^\n]*settleMomentum/.test(checkSrc)
+  );
+  const tb = code("src/components/today/TodayBoard.tsx");
+  check("the board's lanes: Must, then Planned and Habits from splitTodayLane(board.todayRows)", /const \{ planned, habits \} = splitTodayLane\(board\.todayRows\);/.test(tb) && tb.indexOf('title="Must"') < tb.indexOf('title="Planned"') && tb.indexOf('title="Planned"') < tb.indexOf('title="Habits"'));
+  check("the board's tick: completeTask(row.template.id, { day, minutes, mvv }, REFRESH)", /completeTask\(row\.template\.id, \{ day: row\.day, minutes: opts\.minutes \?\? null, mvv: opts\.mvv \}, REFRESH\)/.test(tb));
+  const events = code("src/components/capture/events.ts");
+  check("the sheet's section starts: 'idea: ' and 'weight '", /CAPTURE_MODE_START: Readonly<Record<CaptureMode, string \| null>> = \{ task: null, idea: "idea: ", body: "weight " \};/.test(events));
+  const qc = code("src/components/capture/QuickCapture.tsx");
+  check("the sheet's Undo: undoCapture for a line, undoWeightCapture for a weigh-in", /await undoCapture\(item\.id, \{ refresh: onTodayRef\.current \}\)/.test(qc) && /await undoWeightCapture\(weight, \{ refresh: onTodayRef\.current \|\| onTrainRef\.current \}\)/.test(qc));
+  const formSrc = code("src/components/AddIdeaForm.tsx");
+  check("the form's Create: submitIdea({ fieldId, collectionLabel, content, domainId, draftId, variants }) with content from contentOfAddState", /res = await submitIdea\(\{\s*fieldId: fieldId \|\| undefined,\s*collectionLabel,\s*content,\s*domainId: fieldId && domainId !== AUTO_DOMAIN \? domainId : undefined,\s*draftId,\s*variants: variantsAllowed\(questionType\) \? variants : undefined,\s*\}\);/.test(formSrc) && /return contentOfAddState\(content\);/.test(formSrc));
+
+  // Review fix: a review answer lands once per clientId, on the ledger itself (ActivityEvent @@unique([userId, dedupeKey])).
+  section("a review answer lands once");
+  const srs = code("src/lib/srs.ts");
+  const apply = srs.slice(srs.indexOf("export async function applyReviewResult"), srs.indexOf("export const OVERRIDE_WINDOW_MS"));
+  check("srs: reviewDedupeKey(answerKey) is 'review:<answerKey>'", /export function reviewDedupeKey\(answerKey: string\): string \{\s*return `review:\$\{answerKey\}`;\s*\}/.test(srs));
+  check("srs: applyReviewResult takes the answer's key last, optional (the web's calls pass none)", /preload\?: ReviewPreload,\s*answerKey\?: string\s*\): Promise<ReviewOutcome>/.test(apply));
+  check(
+    "srs: a keyed answer's row carries the key — a pass's inside its points transaction, a miss's in after(); an unkeyed row none",
+    /const keyed = answerKey \? \{ dedupeKey: reviewDedupeKey\(answerKey\) \} : \{\};/.test(apply) &&
+      /const review: ActivityInput = \{ \.\.\.reviewEvent\(ideaId, now, pointsAwarded, [^\n]*\), \.\.\.keyed \};\s*ops\.push\(activityOp\(userId, review\)\);\s*await prisma\.\$transaction\(ops\);/.test(apply) &&
+      /await recordActivity\(userId, \{ \.\.\.reviewEvent\(ideaId, now, 0, lateOutcome\), [^\n]*, \.\.\.keyed \}\);/.test(apply)
+  );
+  const reviewAction = code("src/app/actions/review.ts");
+  check(
+    "the review action hands input.answerKey to applyReviewResult; the web runner sends none; the override keys nothing",
+    /await applyReviewResult\(idea\.id, correct, now, combo, \{ idea, progression \}, input\.answerKey\);/.test(reviewAction) &&
+      /applyReviewResult\(idea\.id, true, now, combo, \{ idea, progression \}\);/.test(reviewAction) &&
+      /submitReview\(\{ ideaId: card\.id, userAnswer, combo: streak \}\)/.test(code("src/components/workspace/WorkspaceView.tsx"))
+  );
+  const schema = read("prisma/schema.prisma");
+  const activityModel = schema.slice(schema.indexOf("model ActivityEvent {"), schema.indexOf("\n}", schema.indexOf("model ActivityEvent {")));
+  check("the ledger's dedupeKey is unique per user (no migration: the column and the index exist)", /dedupeKey\s+String\?/.test(activityModel) && /@@unique\(\[userId, dedupeKey\]\)/.test(activityModel));
+  const reviewKeyed = (() => {
+    const out: string[] = [];
+    const walk = (d: string) => {
+      for (const f of readdirSync(d)) {
+        const p = join(d, f);
+        if (statSync(p).isDirectory()) walk(p);
+        else if (/\.(ts|tsx)$/.test(f) && /dedupeKey: [`"']review:/.test(code(relative(ROOT, p)))) out.push(relative(ROOT, p).replace(/\\/g, "/"));
+      }
+    };
+    walk(join(ROOT, "src"));
+    return out;
+  })();
+  check("no other ledger writer keys a row 'review:…'", reviewKeyed.length === 0, reviewKeyed.join(", "));
+
+  section("the lines the codes key on");
+  check("the actions' couldn't-save lines are theirs", /return \{ ok: false, error: "Couldn't save that\. Try again\." \};/.test(code("src/app/actions/tasks.ts")) && /const UNSAVED = "Couldn't save that\. Try again\.";/.test(code("src/app/actions/scheduled-tasks.ts")) && /const SAVE_FAILED = "Couldn't save it\. Your line is kept — try again\.";/.test(code("src/app/actions/capture.ts")) && /"Couldn't undo the weigh-in\. Try again, or change it on Body\."/.test(code("src/app/actions/capture.ts")));
+  const tasksLib = code("src/lib/tasks.ts");
+  check("the gone lines are the cores'", /fail\("That task no longer exists\."\)/.test(tasksLib) && /fail\("That tick no longer exists\."\)/.test(tasksLib) && /"That capture is gone\."/.test(code("src/app/actions/capture.ts")));
+  check("submitIdea's no-Field throw starts 'Create a Field before adding ideas'", /throw new Error\("Create a Field before adding ideas/.test(code("src/app/actions/ideas.ts")));
+  check("the action's not-found for an idea is findUniqueOrThrow (P2025)", /prisma\.idea\.findUniqueOrThrow\(/.test(code("src/lib/srs.ts")));
+
+  section("the work read");
+  const sched = code("src/lib/scheduled-tasks-server.ts");
+  const dueRead = sched.slice(sched.indexOf("export function loadDueWorkTasks"));
+  check(
+    "loadDueWorkTasks: open tabs, not done or archived, customer kept, due before today's end; cached under work and life",
+    /where: \{ userId, doneAt: null, archivedAt: null, dueAt: \{ lt: dayEndOf\(day\) \}, \.\.\.OPEN_BOARD, \.\.\.KEPT_CUSTOMER \},/.test(dueRead) && /cached\(`workDue:\$\{userId\}:\$\{day\}`, \["work", "life"\],/.test(dueRead) && /select: \{ \.\.\.TASK_SELECT, board: \{ select: \{ name: true \} \} \},/.test(dueRead) && !/update|\$queryRaw|remindSentAt:/.test(dueRead)
+  );
+  check("the scheduled writes clear 'life' and 'work' (what that read is cached under)", /function changed\(\) \{\s*invalidate\("life", "work"\);/.test(sched));
+}
+
+// ═══ 4. The doc and the package ══════════════════════════════════════════
+
+function docs() {
+  section("the doc");
+  const doc = read("docs/mobile-api.md");
+  const table = [...doc.matchAll(/^\| (GET|POST) \| (\/[\w/]*) \|/gm)].map((m) => `${m[1]} ${m[2]}`).sort();
+  eq("its Endpoints table lists MOBILE_ENDPOINTS", table, MOBILE_ENDPOINTS.map((e) => `${e.method} ${e.path}`).sort());
+  const headings = MOBILE_ENDPOINTS.filter((e) => !new RegExp(`^#{2,3} .*\\b${e.method} ${e.path.replace(/\//g, "\\/")}(?![\\w/])`, "m").test(doc)).map((e) => `${e.method} ${e.path}`);
+  check("every endpoint has its own section", headings.length === 0, headings.join(", "));
+  check("the base path and the token's env name", doc.includes(`<server>${MOBILE_API_BASE}`) && doc.includes("MOBILE_API_TOKEN") && doc.includes("Cache-Control: no-store"));
+  const undocumented = [...replyKeys].filter((k) => !doc.includes(`"${k}"`) && !doc.includes(`\`${k}\``)).sort();
+  check("every key a reply carries is in the doc", undocumented.length === 0 && replyKeys.size > 40, undocumented.join(", "));
+  check("the request fields are in the doc", ["templateId", "instanceId", "ideaId", "answer", "combo", "sessionMisses", "text", "section", "clientId", "options", "listItems", "orderItems", "tolerance", "caseSensitive", "variants", "collection", "draftId"].every((k) => doc.includes(`"${k}"`) || doc.includes(`\`${k}\``)));
+  check("the retry rule says at most 3 misses (SESSION_RETURNS_MAX)", SESSION_RETURNS_MAX === 3 && /are at most 3/.test(doc));
+  // The review fixes, as the doc states them.
+  check("a review answer lands once per clientId: the 'recorded' code (409) and its line; no 'no such guard' left", /"recorded"/.test(doc) && /`recorded` \(409/.test(doc) && /a review answer lands once per clientId/.test(doc) && doc.includes(REVIEW_RECORDED_LINE) && !/no such guard/.test(doc));
+  check("/check runs momentum's lazy writes before it reads", /Before it reads, the server runs momentum's lazy writes/.test(doc));
+  check("/log's undo may be null (a weigh-in with nothing to take back)", /"undo": \{ "kind": "task" \| "weight" \| "draft", "id": "…" \} \| null/.test(doc) && /`undo` is null for a weigh-in/.test(doc));
+
+  section("the package");
+  const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
+  const ui = pkg.scripts["ui:check"].split("&&").map((s) => s.trim());
+  check("mobile-api:check runs this check alone; ui:check runs it right after crm-check, still ending with roadmap-ui-check", pkg.scripts["mobile-api:check"] === "tsx scripts/mobile-api-check.ts" && ui[ui.indexOf("tsx scripts/crm-check.ts") + 1] === "tsx scripts/mobile-api-check.ts" && pkg.scripts["ui:check"].endsWith(" && tsx scripts/roadmap-ui-check.ts"));
+  check("no migration for it: the replay cache is in memory", !readdirSync(join(ROOT, "prisma/migrations")).some((d) => /mobile/i.test(d)));
+}
+
+(async () => {
+  await pure();
+  // The routes log what failed on the server (never into the reply): kept here, not printed.
+  const realError = console.error;
+  const logged: string[] = [];
+  console.error = (...a: unknown[]) => {
+    logged.push(a.map((x) => (x instanceof Error ? `${x.message}\n${x.stack ?? ""}` : String(x))).join(" "));
+  };
+  try {
+    await routes();
+  } finally {
+    console.error = realError;
+  }
+  check("a thrown core is logged on the server with its stack (the reply carries neither)", logged.some((l) => /\[mobile\] check failed:/.test(l) && /db exploded at \/secret\/path/.test(l) && /at /.test(l)));
+  check("a soft read's failure is logged too", logged.some((l) => /\[mobile\] check: the streak failed; it reads as none\./.test(l)));
+  wiring();
+  docs();
+  console.log(`\nmobile-api-check: ${passed} passed, ${failed} failed`);
+  if (failed > 0) process.exit(1);
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

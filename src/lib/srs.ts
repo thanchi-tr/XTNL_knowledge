@@ -346,6 +346,14 @@ function reviewEvent(ideaId: string, now: Date, xp: number, detail: string): Act
 }
 
 /**
+ * The REVIEW row's dedupeKey for an answer its caller keyed (the Android app's clientId, mobile-api-server.ts
+ * handleReviewAnswer), so that answer lands once on any server instance. The web runner keys none: its rows carry no key.
+ */
+export function reviewDedupeKey(answerKey: string): string {
+  return `review:${answerKey}`;
+}
+
+/**
  * Degradation (spec section 5): level -1 (floored at 1), yieldPoints *= 0.9
  * (permanently reducing the Domain's totalPoints by the difference),
  * failedAttempts reset, rescheduled +24h, then the Domain/Field levels
@@ -453,7 +461,12 @@ export interface ReviewPreload {
  * Also records this Field's daily activity streak (field-streaks.ts) on
  * every real review, correct or not; showing up is what's measured. And every
  * review lands once in the life ledger as a REVIEW row, which is what the
- * daily streak and the Today board read.
+ * daily streak and the Today board read. An answer its caller keyed
+ * (`answerKey`, the Android app's clientId) lands there at most once: its row
+ * carries reviewDedupeKey(answerKey), unique per user, so a repeated pass
+ * fails its insert (P2002) and takes its whole points transaction back with
+ * it, and a repeated miss (by then the day's retry, which changes nothing)
+ * adds no second row.
  *
  * One read wave before the write: the Idea with its Domain and Field (one
  * joined query) and the progression, together — or neither, when the action
@@ -465,7 +478,9 @@ export async function applyReviewResult(
   now: Date = new Date(),
   /** Consecutive correct answers *before* this one; clamped inside `reviewPayout`. */
   combo = 0,
-  preload?: ReviewPreload
+  preload?: ReviewPreload,
+  /** The answer's own key (the app's clientId), or none (the web runner's answers). */
+  answerKey?: string
 ): Promise<ReviewOutcome> {
   const userId = getCurrentUserId();
   const [idea, progression] = preload
@@ -501,9 +516,11 @@ export async function applyReviewResult(
   // retry, which changes nothing). undoMissCore restores from them ("I was right").
   const brokenStreak = idea.cycleMissed ? null : idea.cleanStreak;
   let missReceipt: MissReceipt | null = null;
+  // A keyed answer's row, pass or miss, carries its key (nothing at all for an unkeyed one).
+  const keyed = answerKey ? { dedupeKey: reviewDedupeKey(answerKey) } : {};
   after(async () => {
     if (lateOutcome) {
-      await recordActivity(userId, { ...reviewEvent(ideaId, now, 0, lateOutcome), qty: brokenStreak, receipt: missReceipt as unknown as Receipt | null });
+      await recordActivity(userId, { ...reviewEvent(ideaId, now, 0, lateOutcome), qty: brokenStreak, receipt: missReceipt as unknown as Receipt | null, ...keyed });
     }
     // Study tasks ('review 20 daily') complete themselves from these rows,
     // so they are checked only once this review's row is in.
@@ -558,7 +575,8 @@ export async function applyReviewResult(
       ops.push(mintIdeaMasteryOp(userId, ideaId, modifiers.masteryMultiplier));
     }
     // Roadmap rev 4: the level is appended at the end (" · L11→12"), so every prefix reader still matches.
-    const review = reviewEvent(ideaId, now, pointsAwarded, `${mastered ? "advanced · mastered" : "advanced"} · L${idea.level}→${newLevel}`);
+    // A repeat of a keyed pass fails this row's insert, so nothing in the transaction lands twice.
+    const review: ActivityInput = { ...reviewEvent(ideaId, now, pointsAwarded, `${mastered ? "advanced · mastered" : "advanced"} · L${idea.level}→${newLevel}`), ...keyed };
     ops.push(activityOp(userId, review));
     await prisma.$transaction(ops);
     // Reviews invalidate 'activity' only (recalculateLeveling below clears

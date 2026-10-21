@@ -26,6 +26,8 @@
  *                                                collections), cached ('work')
  *   searchWorkCore(userId, boardId, q)           the same match on the server: only when the browser has no index
  *   handleDueRequest(deps?)                      /api/scheduled/due's GET (the route file may export only its methods)
+ *   loadDueWorkTasks(userId, now)                every open tab's open tasks due by the end of today (the app's
+ *                                                quick check, docs/mobile-api.md), the agenda's filter, cached ('work')
  *
  * A task whose customer is archived is held with them: off the agenda, the bell, the banner and the dispatcher until
  * the customer is restored (as their customer tasks were). Every core takes a ScheduledDb, so
@@ -64,7 +66,7 @@ import {
   type DueScheduled,
   type ScheduledView,
 } from "./scheduled-tasks";
-import { addDays, dayStartOf, todayKey } from "./life-day";
+import { addDays, dayEndOf, dayStartOf, todayKey } from "./life-day";
 import { matchCustomers, matchTitles, prepareIndex, type CustomerMatch, type TaskMatch, type WorkIndex } from "./customer-search";
 
 export type ScheduledResult<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -686,4 +688,29 @@ export async function handleDueRequest(deps: DueRouteDeps = {}): Promise<Respons
     console.error("[scheduled] due read failed", err);
     return Response.json({ error: "Could not read", tasks: [] }, { status: 500, headers });
   }
+}
+
+// ── The app's quick check (docs/mobile-api.md GET /check) ─────────────────────
+
+/** Rows read at most; the app's list keeps the first 30 in the Agenda's order (mobile-api.ts workItemsOf). */
+const WORK_DUE_READ = 100;
+
+/**
+ * Every open work tab's open tasks due by the end of today's life day (the Agenda's Overdue and Today sections,
+ * which scheduled-tasks agendaOf sorts): the agenda's own filter (not archived, customer kept) on open tabs, not done,
+ * with the tab's name. Cached under 'work' and 'life', which every scheduled task write clears (changed()); the
+ * overdue flag is read against the clock afterwards, never cached.
+ */
+export function loadDueWorkTasks(userId: string, now: Date): Promise<(ScheduledView & { boardName: string })[]> {
+  const day = todayKey(now);
+  return cached(`workDue:${userId}:${day}`, ["work", "life"], async () => {
+    const rows = await prisma.scheduledTask.findMany({
+      relationLoadStrategy: "join",
+      where: { userId, doneAt: null, archivedAt: null, dueAt: { lt: dayEndOf(day) }, ...OPEN_BOARD, ...KEPT_CUSTOMER },
+      select: { ...TASK_SELECT, board: { select: { name: true } } },
+      orderBy: [{ dueAt: "asc" }, { id: "asc" }],
+      take: WORK_DUE_READ,
+    });
+    return rows.map((r) => ({ ...scheduledViewOf(r), boardName: r.board.name }));
+  });
 }
