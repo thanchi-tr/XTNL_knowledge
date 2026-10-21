@@ -388,7 +388,7 @@ export async function handleReviewAnswer(request: Request, deps: MobileDeps): Pr
       const sessionMisses = intOf(body.sessionMisses, "sessionMisses", 0, SESSION_MISSES_MAX, 0);
       const answerKey = clientIdOf(body.clientId);
       // Read only on a repeat's two signs, never on a plain answer; a failed read reads as not recorded.
-      const recorded = async () => answerKey !== null && (await deps.reviewRecorded(deps.userId(), answerKey).catch(soft("the answer's key", false)));
+      const keyOnLedger = async () => answerKey !== null && (await deps.reviewRecorded(deps.userId(), answerKey).catch(soft("the answer's key", false)));
       let result: SubmitReviewResult;
       let levelNow: number | null;
       try {
@@ -397,10 +397,10 @@ export async function handleReviewAnswer(request: Request, deps: MobileDeps): Pr
           deps.ideaLevel(ideaId).catch(soft("the card's level", null)),
         ]);
       } catch (err) {
-        if (isUniqueViolation(err) && (await recorded())) return failReply("recorded", REVIEW_RECORDED_LINE);
+        if (isUniqueViolation(err) && (await keyOnLedger())) return failReply("recorded", REVIEW_RECORDED_LINE);
         throw err;
       }
-      if (result.outcome.outcome === "retry" && (await recorded())) return failReply("recorded", REVIEW_RECORDED_LINE);
+      if (result.outcome.outcome === "retry" && (await keyOnLedger())) return failReply("recorded", REVIEW_RECORDED_LINE);
       return okReply(reviewAnswerOf(result, { ideaId, sessionMisses, levelNow }));
     },
     "That idea no longer exists."
