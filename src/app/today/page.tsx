@@ -13,12 +13,16 @@ import { isLaunched } from "@/lib/life-economy";
 import { maybeMaintainLife } from "@/lib/settlement";
 import { loadWeightView } from "@/lib/weight-server";
 import { freezeWeekQuests, loadTodayNamedTitles, loadWeekQuests } from "@/lib/roadmap-quests-server";
+import { loadMainQuestCard, loadMainQuestWeek } from "@/lib/main-quest-server";
+import { mainQuestOf } from "@/lib/main-quest";
 import { ShellTitle } from "@/components/shell/ShellTitle";
 import { longDate } from "@/components/shell/nav";
 import { TodayBoard } from "@/components/today/TodayBoard";
 import { DueElsewhere } from "@/components/today/DueElsewhere";
 import { dueElsewhereOf, questsOpenOf, weighInDueOf } from "@/components/today/due-elsewhere";
 import { NamedMark } from "@/components/glyph/NamedMark";
+import { MainQuestCard } from "@/components/today/MainQuestCard";
+import { mainQuestCardOf } from "@/components/today/main-quest-card";
 import { isBoardId, workBoardHref } from "@/lib/work-boards";
 import { loadMomentum, settleMomentum } from "@/lib/momentum-server";
 
@@ -32,10 +36,17 @@ export const metadata: Metadata = { title: "Today" };
  * Tasks › Today (the three sections: Ideas, Tasks, Body). The board shows the
  * tasks due today and nothing else; what is due in the other two sections is
  * one slim strip of links out (due-elsewhere.ts): reviews due, this week's
- * roadmap quests still open and the encounters ready (Ideas, /review, where
+ * sprint rows still open and the encounters ready (Ideas, /review, where
  * the review quest, the week quests, the aim line and the encounters live
  * now), and a weigh-in not yet logged (Body, /train). The streak and the
  * Full day are Character's (/you).
+ *
+ * Blueprint P15 (D11): the Main quest card sits in the side column above the
+ * goals (its key results): the main quest (main-quest-server
+ * loadMainQuestCard: the lowest seat whose milestone is under way, else the
+ * lowest open seat; cached), its milestone, its own sprint this week
+ * (loadMainQuestWeek) and one action. Start stays on the roadmap page,
+ * offered only while ROADMAP_GOALS_LIVE is on.
  */
 export default async function TodayPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   // A work tab asked for by the query (/today?board=<id>, an old call back reminder's tap URL; work-boards.ts) is its own
@@ -69,7 +80,7 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   // The live fix (contracts §22.11, ruling 67): each plan-born title's Gemini-named Domain names, so Today marks them.
   // Started with the wave (cached per life day; a failure reads as none) and awaited after it.
   const namedTitlesLoad = loadTodayNamedTitles(userId, now).catch(() => ({}) as Record<string, string[]>);
-  const [board, streak, bosses, feed, quests, weight, momentum] = await Promise.all([
+  const [board, streak, bosses, feed, quests, weight, momentum, questCard] = await Promise.all([
     loadTodayBoard(userId, day, now),
     getDailyStreak(userId),
     loadBossStates(userId).catch(() => []),
@@ -78,6 +89,8 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
     loadWeightView(userId, now).catch(() => null),
     // {live: false} before launch (no read at all); a failure reads as no card.
     loadMomentum(userId, day, { now }).catch(() => null),
+    // The Main quest (P15): its Aim card (loadAimCards, cached per life day; it writes nothing); a failure reads as no card.
+    loadMainQuestCard(userId, now).catch(() => null),
   ]);
   const namedTitles = await namedTitlesLoad;
 
@@ -125,6 +138,12 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
     weighInDue: weighInDueOf(weight),
   });
 
+  // The Main quest (P15): its own goal's sprint this week (the strip's lowest-seat set when it is that one, else that
+  // goal's cached read; mainQuestOf still matches the milestone). A failed read is no sprint, never another goal's.
+  const questWeek = await loadMainQuestWeek(userId, now, questCard, quests?.view ?? null).catch(() => null);
+  const mainQuest = mainQuestOf(questCard, questWeek, day);
+  const mainQuestView = questCard ? mainQuestCardOf(mainQuest, questWeek?.rows ?? null) : null;
+
   return (
     <>
       <ShellTitle eyebrow={clock.lateNight ? "Today · until 04:00" : "Today"} title={longDate(board.today)} />
@@ -136,6 +155,7 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
         footClock={{ time: clock.time, zone: clock.zone, tz: clock.tz }}
         launched={isLaunched(day)}
         elsewhere={elsewhere.length > 0 ? <DueElsewhere rows={elsewhere} /> : null}
+        mainQuest={mainQuestView ? <MainQuestCard view={mainQuestView} /> : null}
         namedTitles={Object.keys(namedTitles).length > 0 ? { names: namedTitles, mark: <NamedMark /> } : null}
         momentum={momentum?.live ? momentum : null}
         momentumSettled={settled.wrote}

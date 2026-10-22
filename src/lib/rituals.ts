@@ -9,7 +9,7 @@
  *   Weekly review  ReviewedWeek · reviewedWeek(today) · weekReviewOffered(today, live, marked)
  *                  reviewEndOf(week, judged) · reviewPendingText(week) · REVIEW_BEFORE_LIFE_TEXT
  *                  weekReviewProgressKey(weekKey) · parseReviewStep(raw) · REVIEW_LAST_STEP
- *                  ReviewStep · REVIEW_STEPS · ReviewPlan · reviewPlanOf(dutyLive) · reviewStepIn(plan, step)
+ *                  ReviewStep · REVIEW_STEPS · ReviewPlan · reviewPlanOf(dutyLive, sprint) · reviewStepIn(plan, step)
  *                  nextWeekDays(week, today, launchDay) · restRefusalOf(day, declared)
  *   Week facts     WeekFactsInput · WeekFacts · MustTally · weekFactsOf(input) · mustTallyLine(t)
  *                  dutyXpLine(facts) · DutyStandingInput · dutyStandingOf(stats)
@@ -27,7 +27,13 @@
  * Fri'); it never states a verdict for a week the judge has not written.
  * It runs without Duty (blueprint decision D13, reviewPlanOf): before
  * DUTY_LAUNCH_DAY its Duty parts (Owed, the settled facts, rest days) are
- * hidden and the rest runs.
+ * hidden and the rest runs. Blueprint P15 (D11, D12) adds the Sprint step,
+ * the main quest's: it runs only when its sprint has something to show
+ * (lib/main-quest sprintStepOf: the reviewed week's share, a held week, or
+ * this week's sprint under way; so never while no milestone has started),
+ * after Next week (the capacity a sprint is sized from), and states the
+ * sprint's share only as far as it is written ("provisional · final Wed
+ * 04:00" before then).
  */
 import { DAY_START_HOUR, addDays, weekKeyOf, weekStartKeyOf, weekdayOf, type DayKey } from "./life-day";
 import {
@@ -174,8 +180,8 @@ export function reviewEndOf(week: ReviewedWeek, judged: boolean): { kind: "card"
 /** The run's end before life counts: no week is judged yet, so it promises no card. */
 export const REVIEW_BEFORE_LIFE_TEXT = "Weeks are judged once life counts";
 
-/** Steps 1–5, then 6: the end. */
-export const REVIEW_LAST_STEP = 6;
+/** Steps 1–6, then 7: the end. */
+export const REVIEW_LAST_STEP = 7;
 
 /** One step of the run. Its number is fixed: the runner's step, and what weekReviewProgressKey stores. */
 export interface ReviewStep {
@@ -183,15 +189,18 @@ export interface ReviewStep {
   name: string;
   /** Duty's alone: hidden until DUTY_LAUNCH_DAY. */
   duty: boolean;
+  /** The main quest's sprint's alone (blueprint P15): hidden while it has nothing to show. */
+  quest?: boolean;
 }
 
-/** Steps 1–5 in order; the end (REVIEW_LAST_STEP) always runs. */
+/** Steps 1–6 in order; the end (REVIEW_LAST_STEP) always runs. Sprint came last (P15), so 1–5 kept their numbers. */
 export const REVIEW_STEPS: readonly ReviewStep[] = [
   { n: 1, name: "The week", duty: false },
   { n: 2, name: "Inbox", duty: false },
   { n: 3, name: "Goals", duty: false },
   { n: 4, name: "Owed", duty: true },
   { n: 5, name: "Next week", duty: false },
+  { n: 6, name: "Sprint", duty: false, quest: true },
 ];
 
 /** What the run holds. */
@@ -202,17 +211,21 @@ export interface ReviewPlan {
   settledFacts: boolean;
   /** Step 5 offers rest for next week's days (declareRest is Duty's). */
   restDays: boolean;
+  /** Step 6, the main quest's sprint (P15): only when it has something to show. */
+  sprint: boolean;
 }
 
 /**
  * The run with or without Duty (decision D13). Before the launch day the
  * week, the inbox to zero, the goals check-in and next week's capacity run;
  * Owed, step 1's settled facts (nothing is settled before Duty) and next
- * week's rest days stay hidden. The numbers never shift, so a stored step
- * means the same step either way.
+ * week's rest days stay hidden. The Sprint step (P15) runs only when the
+ * main quest's sprint has something to show (`sprint`: lib/main-quest
+ * sprintStepOf found it; false by default). The numbers never shift, so a
+ * stored step means the same step either way.
  */
-export function reviewPlanOf(dutyLive: boolean): ReviewPlan {
-  return { steps: REVIEW_STEPS.filter((s) => dutyLive || !s.duty), settledFacts: dutyLive, restDays: dutyLive };
+export function reviewPlanOf(dutyLive: boolean, sprint = false): ReviewPlan {
+  return { steps: REVIEW_STEPS.filter((s) => (dutyLive || !s.duty) && (sprint || !s.quest)), settledFacts: dutyLive, restDays: dutyLive, sprint };
 }
 
 /** The step to show for a stored or chosen one: clamped to 1..REVIEW_LAST_STEP, and a step the plan hides moves on to the next that runs. */

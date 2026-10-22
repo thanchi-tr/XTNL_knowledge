@@ -762,7 +762,8 @@ const BODY_SEED = comp({ PHYSICAL: 46, STUBBORNNESS: 24, SELF_RESPECT: 20, FAITH
   // Blueprint P10 (decision D13): the review runs without Duty, so the 'arrives with daily settlement' placeholder
   // and its promise (sheet-math weekReviewPromise) are gone; rituals-check §6 pins the run itself.
   check("week (U9, P10): no placeholder promising a review to come, and no Monday verdicts", !/arrives with daily settlement/.test(weekSrc) && !/weekReviewPromise/.test(weekSrc) && !/Monday opens a short review/.test(weekSrc));
-  check("week (U9, P10): the review card is offered with or without Duty", /<ReviewCard week=\{review\} marked=\{marked\} dutyLive=\{dutyLive\} \/>/.test(weekSrc) && !/\{dutyLive \? \(\s*<ReviewCard/.test(weekSrc));
+  // Re-pinned for the P15 review: the card also names the Sprint step, on the step list's own `sprint` (rituals-check §7).
+  check("week (U9, P10): the review card is offered with or without Duty", /<ReviewCard week=\{review\} marked=\{marked\} dutyLive=\{dutyLive\} sprint=\{sprint != null\} \/>/.test(weekSrc) && !/\{dutyLive \? \(\s*<ReviewCard/.test(weekSrc));
 }
 
 // ── 4m. The celebrate lab's goal and week fixtures state what was paid ─────
@@ -1827,7 +1828,8 @@ async function dayCardsGuardChecks() {
       "Is the plan realistic?",
       "Practice that builds the depth",
       "What a milestone pays",
-      "Week quests (not the daily review quest)",
+      // Blueprint P15 (D11, one vocabulary): the week quests are the main quest's sprint.
+      "This week's sprint (not the daily review quest)",
       "Proficiency",
       "Aim rank",
       "Suggestions to set an aim",
@@ -1981,12 +1983,12 @@ async function dayCardsGuardChecks() {
   check("rules roadmap: no heading starts with 'Quest'", titles.every((t) => !/^quest/i.test(t)));
   const quests = text.replace(/week quests?/gi, "").replace(/review quest/gi, "");
   check("rules roadmap: 'quest' only ever as 'week quest(s)' or the daily review quest", !/\bquests?\b/i.test(quests), (quests.match(/.{0,30}\bquests?\b.{0,30}/i) ?? [""])[0]);
-  const wq = cards.get("Week quests (not the daily review quest)") ?? "";
+  const wq = cards.get("This week's sprint (not the daily review quest)") ?? "";
   // §G.3 re-pin (momentum.md): what week quests pay is WeekQuestPayLine's: before launch the old line verbatim, from it
   // "a single quest pays nothing; a fully kept plan week pays 30 XP and 10 MP; one plan quest a day is on Today" (§10).
   check(
     "rules roadmap (§G.3): the week quests card says what they pay through WeekQuestPayLine (the pre-launch line verbatim; momentumChecks)",
-    /<WeekQuestPayLine live=\{momentumOn\} \/>/.test(parts.find((p) => p.startsWith('Week quests (not the daily review quest)"')) ?? "") && /none pays/.test(wq)
+    /<WeekQuestPayLine live=\{momentumOn\} \/>/.test(parts.find((p) => p.startsWith("This week's sprint (not the daily review quest)\"")) ?? "") && /none pays/.test(wq)
   );
   check("rules roadmap: week quests publish the catch-up and capacity caps and the Field quota overlap", /catch-up cap/.test(wq) && /capacity\s+cap/.test(wq) && /weekly quota too/.test(wq));
   const prof = `${cards.get("Proficiency") ?? ""}`;

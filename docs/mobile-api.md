@@ -53,6 +53,7 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 | POST | /log/undo | `undoCapture` (actions/tasks.ts), `undoWeightCapture` (actions/capture.ts) |
 | GET | /ideas/meta | the New idea form's formats and collections |
 | POST | /ideas | `submitIdea` (actions/ideas.ts) |
+| GET | /quests | the main quest, this week's sprint and Today's three (Today's own reads: `loadMainQuestCard`, `loadMainQuestWeek`, `loadMomentum`); read only |
 
 ## GET /check: the quick check (the app's home)
 
@@ -349,3 +350,56 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 - `duplicate`: something close is already here (`ideaId`), so nothing was written; the web form offers Link or
   Enrich. `points` 0.
 - When the embedding service doesn't answer, nothing is written and the reply is `500` with the form's own line.
+
+## GET /quests: the main quest, its sprint and Today's three
+
+Read only (blueprint 2.1 and 2.2; decisions D11 and D12). One vocabulary: the roadmap goal is the **main quest**, its
+stages are **milestones**, and its week quests are **this week's sprint**; the Short, Mid and Long goals stay the main
+quest's key results, the daily quests stay the musts, and Today's three stay momentum's.
+
+```json
+{ "ok": true, "data": {
+  "now": "2026-10-25T09:00:00.000Z", "day": "2026-10-25",
+  "mainQuest": { "state": "NONE" | "DRAFT" | "PLANNED" | "ACTIVE" | "PAST_DUE" | "PAUSED" | "DONE" | "LEGACY",
+    "title": "Trade for a living" | null, "line": "Milestone 1 is planned.",
+    "milestone": { "ord": 2, "of": 6, "title": "Familiar with the basics",
+      "titleNote": "Gemini suggestion · not checked" | null, "titleStruck": [[0, 2]],
+      "status": "PLANNED" | "STARTED" | "REACHED" | "PENDING_REACH" | "PAST_DUE",
+      "percent": 42 | null, "dueDay": "2026-11-08" | null } | null,
+    "startOnWeb": false, "suggest": true } | null,
+  "sprint": { "label": "This week's sprint", "milestoneOrd": 2, "weekStart": "2026-10-19", "weekEnd": "2026-10-25",
+    "state": "OPEN" | "HELD" | "PAST_DUE", "done": 2, "total": 5,
+    "status": "live" | "provisional" | "settling", "line": "provisional · final Wed 04:00" | null,
+    "rows": [ { "kind": "PRACTICE", "label": "Backtest · 3 sessions × 30 min", "countLine": "1 of 3 sessions",
+      "count": 3, "progress": 1, "unit": "session", "done": false, "templateId": "…" | null } ] } | null,
+  "three": { "done": 1, "total": 3, "frozen": true, "chest": "locked" | "ready" | "opened",
+    "quests": [ { "slot": "PLAN" | "BODY" | "TASK", "title": "Review 12 cards", "done": false, "templateId": "…" | null } ] } | null } }
+```
+
+- `mainQuest`: the open roadmap goal Today's Main quest card shows (the same model): the lowest seat whose milestone
+  is under way, else the lowest open seat, so a draft or a planned goal on a lower seat never hides the sprint
+  another goal is running. `title` is its own name, else its aim, in the user's words. `line` is the card's one line,
+  in neutral words. `milestone` is the current one (`percent` is its headline share once started, null before). Its
+  title keeps its provenance, as on the web: `titleNote` is Gemini's words for a title Gemini wrote ("Gemini
+  suggestion · not checked", or "Gemini's words · kept by you · not checked"; null for the user's own or the app's),
+  shown beside it, and `titleStruck` the `[start, end)` spans of its numbers to strike through (never rewritten; `[]`
+  when none). `state` `NONE` is no main quest (its `line` is "No main quest yet."; `suggest` is false once the aim
+  suggestions are turned off). Null when it couldn't be read.
+- `startOnWeb`: a planned milestone can be started on the web. **Start and every plan edit stay on the web**: the app
+  never starts a milestone. Start is offered only while `ROADMAP_GOALS_LIVE` is on, so `startOnWeb` is false while the
+  switch is off (a planned milestone then reads "Milestone 1 is planned.").
+- `sprint`: this life week's sprint of the main quest's started milestone (frozen just after Monday 04:00), null with
+  none (a planned milestone has none). `done` of `total` counts its rows done. `status` says when the numbers are from:
+  `live` while the week runs; `provisional` on its Sunday, with `line` "provisional · final Wed 04:00"; `settling`
+  past that before the server has written the week. It is never a verdict: a week's results are written once, from
+  the Wednesday 04:00 after its Sunday, and nothing here writes one. A row's `done` is the server's: the week's count
+  for it is met (a session ticked today is not a row done). `rows` come in Today's order, not the roadmap page's: open
+  rows first, then by kind (Bring, Add, Step, Practice, Checkpoint), each kind in its own order. Each `countLine`
+  carries its unit ("1 of 3 sessions", "not logged yet"); a practice or step row's `templateId` is its task on Today,
+  ticked with `POST /tasks/complete` like any task. `state` `HELD` (a held week) and `PAST_DUE` (the milestone is past
+  its day: Today's card shows no sprint line then) have no rows.
+- `three`: Today's three (momentum's daily set), read only: each quest's `slot`, `title`, whether it is `done` (from
+  the day's own rows, so an undone tick reopens it) and, for a task quest, its `templateId` (ticked with
+  `POST /tasks/complete`). `frozen` is false while the day's set is still a preview; `chest` is today's chest. Null
+  before momentum's launch, or when it couldn't be read.
+- It writes nothing and owes nothing after the reply; each read is the web's own cached one.

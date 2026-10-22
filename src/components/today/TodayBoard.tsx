@@ -210,6 +210,12 @@ interface Props {
    */
   elsewhere?: ReactNode;
   /**
+   * The Main quest card (blueprint P15, D11; the page's <MainQuestCard/> over main-quest-card.ts), drawn in the side
+   * column above the goals (its key results). Only drawn, like the strip: it adds no Ask, no count and no row to the
+   * board; buildBoard and todayCountsOf never see it. A work tab never shows it. Absent or null: no card.
+   */
+  mainQuest?: ReactNode;
+  /**
    * The live fix (contracts §22.11, ruling 67): a plan-born template's Gemini-named Domain names, by template id
    * (roadmap-quests-server loadTodayNamedTitles), and the mark the page renders (<NamedMark/>, passed as a node like
    * the strip). Its title shows each such name with pv.named (NamedTitle over namedPartsOf of the title as it
@@ -482,7 +488,7 @@ function declaredOf(duty: DutyBoard | null, today: DayKey): DeclaredDay[] {
  * launch the board is the pre-M2 board (debts, which only settlement
  * writes, render whenever they exist).
  */
-export function TodayBoard({ data, streak, nowIso, notices, footClock, launched = false, namedTitles, work: workTab = null, momentum = null, momentumSettled = false, elsewhere = null }: Props) {
+export function TodayBoard({ data, streak, nowIso, notices, footClock, launched = false, namedTitles, work: workTab = null, momentum = null, momentumSettled = false, elsewhere = null, mainQuest = null }: Props) {
   /** A work tab: nothing of the game (no XP, no moments, no goals, no plan card). */
   const isWork = workTab !== null;
   const router = useRouter();
@@ -2399,6 +2405,8 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
         </div>
 
         <div className="c3">
+          {/* The Main quest (blueprint P15): the roadmap goal above its key results, only drawn; never on a work tab. */}
+          {!isWork && mainQuest != null && mainQuest !== false && <div className="o9">{mainQuest}</div>}
           {/* A work tab (work-boards.ts) draws no goals (GoalsStrip off). Its scheduled tasks (the call backs' and the
               customer tasks' one list, 2026-10-20) are the work frame's Agenda, never on this board. */}
           <div className="o9">

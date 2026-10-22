@@ -80,6 +80,7 @@ import {
   placeSuffix,
   shortMore,
   shortUntil,
+  sprintWordsOf,
   weekQuestsAside,
   weekQuestsFooter,
   weekQuestsHeading,
@@ -116,7 +117,10 @@ export interface WeekQuestsProps {
   onLogCheckpoint?: () => void;
   /** The roadmap variant: "How these were set" opens the basis sheet. */
   onShowBasis?: () => void;
-  /** The roadmap variant: today's life day (dates without a year; the PipStrip's today and past days). */
+  /**
+   * Today's life day: the roadmap variant's dates (without a year; the PipStrip's today and past days), and, in both
+   * the roadmap and the today variant, the sprint's Sunday words ("provisional · final Wed 04:00", sprintWordsOf).
+   */
   today?: string;
   /** The roadmap variant: sentences the page already shows (the QUESTS_BEHIND banner), so a note says them once. */
   shownElsewhere?: readonly string[];
@@ -467,7 +471,7 @@ function weekQuestKeyRowNodesOf(view: Pick<WeekQuestsView, "rows">): ReactNode[]
   );
 }
 
-function TodayCard({ view, bases, track }: { view: WeekQuestsView; bases: SeenBases | null; track?: TrackSigil }) {
+function TodayCard({ view, bases, track, today }: { view: WeekQuestsView; bases: SeenBases | null; track?: TrackSigil; today?: string }) {
   const [expanded, setExpanded] = useState(false);
   const [open, setOpen] = useState(false);
   const listId = useId();
@@ -475,7 +479,9 @@ function TodayCard({ view, bases, track }: { view: WeekQuestsView; bases: SeenBa
   const allDone = view.total > 0 && view.done >= view.total;
   const { shown, hidden } = weekQuestRowsShown(view.rows, expanded);
   const heading = weekQuestsHeading(view.milestoneOrd);
-  const summary = weekQuestsSummary(view.milestoneOrd, view.done, view.total);
+  // D12: on the sprint's Sunday the count carries "provisional · final Wed 04:00", as Today's card and the review say it.
+  const words = sprintWordsOf(view.weekStart, today);
+  const summary = weekQuestsSummary(view.milestoneOrd, view.done, view.total, words);
   const footer = weekQuestsFooter(kinds, view.milestoneOrd, view.level);
   const health = healthChipShown({ healthRows: view.rows.some(rowHealthOf) });
   const names = weekQuestDomainNamesOf(view);
@@ -487,6 +493,8 @@ function TodayCard({ view, bases, track }: { view: WeekQuestsView; bases: SeenBa
       </span>
       <b>{heading}</b>
       <span className="rm-q-n">{allDone ? `all ${view.total} done` : `${view.done} of ${view.total} done`}</span>
+      {/* the Sunday words: the grid's second row (roadmap.css .rm-q-w), so the chevron stays the row's last child */}
+      {words && <span className="rm-q-w">{words}</span>}
       <Icon name="chev" />
     </button>
   );
@@ -674,11 +682,13 @@ function RoadmapVariant({ view, onLogCheckpoint, onShowBasis, today, shownElsewh
   const fixed = view.frozen ? "fixed for the week" : view.writesOff ? NOT_RECORDED_HERE : "fixed when the week's first run records it";
   const showHealth = health ?? healthChipShown({ healthRows: view.rows.some(rowHealthOf) });
   const names = weekQuestDomainNamesOf(view);
+  // D12: on the sprint's Sunday its heading says "provisional · final Wed 04:00", as Today's card and the review do.
+  const words = view.state === "OPEN" ? sprintWordsOf(view.weekStart, today) : null;
   return (
     <div className="rm-ms-sec" id="week-quests">
       <div className="rm-ms-sh rm-wq-sh">
         <span className="t-eyebrow">{SHORT_WEEK_QUESTS}</span>
-        <span className="rm-cap">{shortUntil(view.weekEnd)}</span>
+        <span className="rm-cap">{words ? `${shortUntil(view.weekEnd)} · ${words}` : shortUntil(view.weekEnd)}</span>
         <Chips className="rm-wq-chips">
           {/* the Now card's own Key is the page's (R3): this chip opens the set's footer, legend and window itself */}
           <HonestyChip
@@ -715,13 +725,13 @@ function RoadmapVariant({ view, onLogCheckpoint, onShowBasis, today, shownElsewh
               <PromiseRing value={view.done} target={view.total} size={20} label={SHORT_WEEK_QUESTS} />
             </span>
             <span className="num" aria-hidden="true">{`${Math.min(view.done, view.total)}/${view.total}`}</span>
-            <span className="sr-only">{`${SHORT_WEEK_QUESTS}: ${view.done} of ${view.total} done`}</span>
+            <span className="sr-only">{`${SHORT_WEEK_QUESTS}: ${view.done} of ${view.total} done${words ? ` · ${words}` : ""}`}</span>
             <Icon name="chev" />
           </button>
         )}
       </div>
-      {view.state === "PAST_DUE" && <p className="rm-lag t-meta">{pastDueLine(view.milestoneOrd, null)}. No week quests this week.</p>}
-      {view.state === "HELD" && <p className="rm-lag t-meta">A held week: no week quests, and nothing is asked of it.</p>}
+      {view.state === "PAST_DUE" && <p className="rm-lag t-meta">{pastDueLine(view.milestoneOrd, null)}. No sprint this week.</p>}
+      {view.state === "HELD" && <p className="rm-lag t-meta">A held week: no sprint, and nothing is asked of it.</p>}
       {notes.map((n) => {
         // The live fix (§22.11): a note holding a Gemini-named Domain renders its parts with pv.named.
         const at = view.notes.indexOf(n);
@@ -739,7 +749,7 @@ function RoadmapVariant({ view, onLogCheckpoint, onShowBasis, today, shownElsewh
           ))}
         </div>
       )}
-      {view.state === "OPEN" && view.rows.length === 0 && <p className="rm-lag t-meta">No week quests this week: the basis says why.</p>}
+      {view.state === "OPEN" && view.rows.length === 0 && <p className="rm-lag t-meta">No sprint this week: the basis says why.</p>}
     </div>
   );
 }
@@ -753,5 +763,5 @@ export function WeekQuests(props: WeekQuestsProps) {
   const bases = props.bases !== undefined ? props.bases : seenBasesOfWeekQuests(view);
   if (variant === "roadmap") return <RoadmapVariant {...props} bases={bases} />;
   if (!weekQuestsShowOnToday(view)) return null;
-  return <TodayCard view={view} bases={bases} track={props.track} />;
+  return <TodayCard view={view} bases={bases} track={props.track} today={props.today} />;
 }

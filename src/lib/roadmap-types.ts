@@ -15,7 +15,9 @@
  * roadmap's "How this is worked out" sheet and /today/rules).
  *
  * Exports, by section:
- *   Gate and strings  ROADMAP_GOALS_LIVE · ROADMAP_WRITES_OFF · NOT_RECORDED_HERE · ROADMAP_NOT_YET
+ *   Gate and strings  ROADMAP_GOALS_LIVE · ROADMAP_GOALS_LIVE_ENV · RoadmapGoalsEnv · roadmapGoalsLive (the
+ *                     rehearsal override outside production, blueprint P14)
+ *                     ROADMAP_WRITES_OFF · NOT_RECORDED_HERE · ROADMAP_NOT_YET
  *                     RoadmapActionResult · notYet · ROADMAP_CHECK_ENV · AIM_PROMPT_COOKIE(_MAX_AGE_S)
  *                     RoadmapWriteOpts · RoadmapSkip · ReadingsRun · QuestFreezeRun · QuestFinalizeRun
  *                     RoadmapStepReport · roadmapStepErrorsOf
@@ -169,9 +171,44 @@ export type { RoadmapGoalEntry, RoadmapSeriesPoint };
 /**
  * Start is hidden (not disabled) while false: "Starting milestones arrives
  * with the next update". The lead flips it after the goal seams land and the
- * reviewers pass (F16 seam 15). Nothing else reads it as a launch gate.
+ * reviewers pass (F16 seam 15), on the user's go only (blueprint P14, D10).
+ * Nothing else reads it as a launch gate; the server reads it through
+ * roadmapGoalsLive() below, which adds the rehearsal override.
  */
 export const ROADMAP_GOALS_LIVE = false;
+
+/**
+ * Outside production, '1' here turns Start on for that process and '0' off
+ * (the local rehearsal: scripts/roadmap-rehearse.ts, or the rehearsal server
+ * started with it). Production reads ROADMAP_GOALS_LIVE only.
+ */
+export const ROADMAP_GOALS_LIVE_ENV = "XTNL_ROADMAP_GOALS_LIVE";
+
+/** The variables the Start gate reads. Defaults to process.env; the checks pass their own (a LifeEnv is one). */
+export interface RoadmapGoalsEnv {
+  NODE_ENV?: string;
+  XTNL_ROADMAP_GOALS_LIVE?: string;
+}
+
+/**
+ * The Start gate in force (blueprint P14): outside production,
+ * XTNL_ROADMAP_GOALS_LIVE '1' (on) or '0' (off); otherwise ROADMAP_GOALS_LIVE.
+ * Production reads the constant only, and so does a Vercel Preview (NODE_ENV
+ * production too). Each variable is read by name, so a bundler can inline
+ * NODE_ENV; on a client XTNL_ROADMAP_GOALS_LIVE is undefined (it is not
+ * NEXT_PUBLIC_): the gate is a server decision, and the views carry
+ * `goalsLive` down.
+ */
+export function roadmapGoalsLive(env?: RoadmapGoalsEnv): boolean {
+  const e: RoadmapGoalsEnv =
+    env ?? (typeof process === "undefined" || !process.env ? {} : { NODE_ENV: process.env.NODE_ENV, XTNL_ROADMAP_GOALS_LIVE: process.env.XTNL_ROADMAP_GOALS_LIVE });
+  if (e.NODE_ENV !== "production") {
+    const override = e.XTNL_ROADMAP_GOALS_LIVE?.trim();
+    if (override === "1") return true;
+    if (override === "0") return false;
+  }
+  return ROADMAP_GOALS_LIVE;
+}
 
 /**
  * Gemini drafting is hidden (no "Draft with Gemini", no Gemini sentence)

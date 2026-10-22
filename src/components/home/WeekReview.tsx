@@ -2,7 +2,7 @@
 
 /**
  * The weekly review, wired (m2-refit.md F14, decision 26): /today/week?view=run.
- * Five skippable steps in the runner (WeekRunner: focus mode, ≤ 560 wide,
+ * Six skippable steps in the runner (WeekRunner: focus mode, ≤ 560 wide,
  * thumb-zone nav), then the end:
  *
  *   1 The week     server-rendered (the last judged week and the reviewed
@@ -15,12 +15,20 @@
  *                  never as 'repaid': nothing was repaid)
  *   5 Next week    rest for specific days (declareRest / cancelRest) and the
  *                  daily capacity (CapacityPanel)
+ *   6 Sprint       the main quest's (blueprint P15, D11, D12; SprintStepBody),
+ *                  only when it has something to show (lib/main-quest
+ *                  sprintStepOf: a written or provisional share, a held week,
+ *                  or this week's sprint under way): the quest, its milestone,
+ *                  the reviewed week's sprint line ("provisional · final Wed
+ *                  04:00" until it is written, never a verdict) and this
+ *                  week's sprint rows; read only, with one link to its roadmap
+ *                  (Start and plan edits live there)
  *   end            the week card (its Tier 2 Seal) only when the judge has
  *                  written the reviewed week; otherwise when that happens
  *
- * Before Duty's launch day it runs four (blueprint decision D13, rituals.ts
- * reviewPlanOf): Owed is skipped, step 1 has no settled facts and step 5
- * no rest days. Each step keeps its number, so the stored step means the
+ * Before Duty's launch day it runs four, five with a sprint to show (blueprint
+ * decision D13, rituals.ts reviewPlanOf): Owed is skipped, step 1 has no
+ * settled facts and step 5 no rest days. Each step keeps its number, so the stored step means the
  * same step either way; a stored step the plan hides moves on to the next.
  *
  * Finishing (or skipping the last step) writes the done marker once
@@ -39,6 +47,7 @@ import type { RestKind } from "@/lib/duty-economy";
 import { makeUpCopy, type OwedCard } from "@/lib/duty-view";
 import { addDays, type DayKey } from "@/lib/life-day";
 import { DAY_EDGE, REVIEW_LAST_STEP, formatDebt, parseReviewStep, reviewPlanOf, reviewStepIn, weekReviewProgressKey, weekdayShort } from "@/lib/rituals";
+import type { SprintStep } from "@/lib/main-quest";
 import { buildBoard, type BoardData, type InboxChoice } from "@/lib/today-board";
 import { mustNoticeOf, restoredNoticeOf } from "@/lib/daily-quests";
 import { announce } from "@/lib/celebrate";
@@ -58,6 +67,7 @@ import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import type { TrackSigil } from "@/components/ui/Icon";
 import { ActionError } from "./ActionError";
+import { SprintStepBody } from "./SprintStepBody";
 
 const REFRESH = { refresh: true } as const;
 const OFFLINE = "Couldn't reach the server. Check the connection and try again.";
@@ -102,6 +112,8 @@ export interface WeekReviewProps {
   end: { kind: "card"; card: WeekCardData } | { kind: "pending"; text: string };
   /** The week already has its done marker. */
   marked: boolean;
+  /** The main quest and the reviewed week's sprint (blueprint P15, lib/main-quest sprintStepOf); null with nothing to show (the Sprint step doesn't run). */
+  sprint?: SprintStep | null;
 }
 
 // ── Per-viewer progress (localStorage, never trusted to exist) ──────────────
@@ -164,7 +176,8 @@ interface Resolved {
 export function WeekReview(props: WeekReviewProps) {
   const { weekKey, today, data, dutyLive } = props;
   const router = useRouter();
-  const plan = useMemo(() => reviewPlanOf(dutyLive), [dutyLive]);
+  const sprint = props.sprint ?? null;
+  const plan = useMemo(() => reviewPlanOf(dutyLive, sprint != null), [dutyLive, sprint]);
   const progressKey = weekReviewProgressKey(weekKey);
   const stored = useSyncExternalStore(
     subscribeStorage,
@@ -544,6 +557,15 @@ export function WeekReview(props: WeekReviewProps) {
             onSetCapacity={setCapacity}
           />
         </section>
+        {feedback}
+      </>
+    );
+  } else if (step === 6 && sprint) {
+    // The main quest's sprint (P15; SprintStepBody): read only; the reviewed week's line is the written week's, else
+    // provisional, held, or no sprint for this quest (never a verdict).
+    body = (
+      <>
+        <SprintStepBody sprint={sprint} eyebrow={WEEK_STEPS[5]} />
         {feedback}
       </>
     );

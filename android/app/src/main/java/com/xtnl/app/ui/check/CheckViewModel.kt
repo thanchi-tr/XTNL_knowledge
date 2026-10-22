@@ -4,11 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xtnl.app.AppGraph
 import com.xtnl.app.core.DailyStrip
+import com.xtnl.app.core.QuestLine
 import com.xtnl.app.core.TickLadder
 import com.xtnl.app.data.CheckData
 import com.xtnl.app.data.DailyQuests
 import com.xtnl.app.data.LevelInfo
 import com.xtnl.app.data.Outcome
+import com.xtnl.app.data.QuestsData
 import com.xtnl.app.data.TaskItem
 import com.xtnl.app.data.WorkItem
 import kotlinx.coroutines.FlowPreview
@@ -32,7 +34,8 @@ import java.util.UUID
  * The quick check: GET /check, the tick and its undo, a work item's Done and
  * its reopen. Optimistic: a tick shows at once and is put back (with the
  * server's line) if the server says no. The last /check is cached and shown
- * offline.
+ * offline. Beside it, GET /quests (blueprint P15): the main quest, this week's
+ * sprint and Today's three, read only; its rows tick through the tasks here.
  */
 class CheckViewModel(private val graph: AppGraph) : ViewModel() {
 
@@ -69,6 +72,8 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
         val levelUp: LevelUp? = null,
         /** Work items whose Done is showing (the row's check and slide), before they leave the list. */
         val workClosing: Set<String> = emptySet(),
+        /** GET /quests (P15): the main quest, its sprint and Today's three; null until read (a failed read keeps the last). */
+        val quests: QuestsData? = null,
     ) {
         /** The level to show: a tick's answer, else /check's. */
         val level: LevelInfo? get() = tickLevel ?: data?.level
@@ -143,6 +148,7 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     private var refreshJob: Job? = null
+    private var questsJob: Job? = null
     /** The last tick or undo here (wall clock): the list holds its order for [ORDER_HOLD_MS] after it. */
     private var touchedAt = 0L
     /** Level ups so far: each one's key, so a played one never plays again. */
@@ -158,6 +164,7 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
                 // The audit was the old source's (Settings cleared it with the switch): the alarm goes until the new one says so.
                 graph.auditReminder.sync()
                 refreshJob?.cancel()
+                questsJob?.cancel()
                 _ui.value = Ui()
                 start()
             }
@@ -180,8 +187,28 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
         }
     }
 
+    /**
+     * GET /quests (P15), beside every refresh: read only, never a spinner or an error of its own. A failed read keeps
+     * what is shown; a read that left before Settings switched the source is dropped. [fresh]: after a tick or an undo
+     * here that can move the card's figures (QuestLine.touches), a read already out (which may have left before the
+     * tick landed) is dropped for a new one, so the counts follow the tick.
+     */
+    private fun refreshQuests(fresh: Boolean = false) {
+        if (questsJob?.isActive == true) {
+            if (!fresh) return
+            questsJob?.cancel()
+        }
+        questsJob = viewModelScope.launch {
+            val source = graph.source
+            val r = graph.api.quests()
+            if (source != graph.source) return@launch
+            if (r is Outcome.Ok) _ui.update { it.copy(quests = r.value) }
+        }
+    }
+
     /** Pull to refresh (quiet = no spinner: on resume, after a deed elsewhere). */
     fun refresh(quiet: Boolean = false) {
+        refreshQuests()
         if (refreshJob?.isActive == true) return
         refreshJob = viewModelScope.launch {
             if (!quiet) _ui.update { it.copy(refreshing = true) }
@@ -281,6 +308,8 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
                     if (cleared) _events.tryEmit(Event.BoardClear(task.templateId))
                     // No level in the answer (an older server): /check brings it, and with it any level up.
                     if (r.value.level == null) graph.changes.tryEmit("task")
+                    // The Quest card's counts follow a tick that moves them (a sprint row's task, a Today's three quest).
+                    if (QuestLine.touches(_ui.value.quests, task.templateId)) refreshQuests(fresh = true)
                     if (undoWhenKept.remove(task.templateId)) undo(task.templateId)
                 }
                 is Outcome.Err -> {
@@ -312,6 +341,7 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
                     r.value.level?.let { l -> _ui.update { it.copy(tickLevel = l) } }
                     _events.tryEmit(Event.TaskUndone(templateId, r.value.xp))
                     graph.changes.tryEmit("task-undo")
+                    if (QuestLine.touches(_ui.value.quests, templateId)) refreshQuests(fresh = true)
                 }
                 is Outcome.Err -> {
                     _ui.update { it.copy(kept = it.kept + (templateId to k), allDone = it.allDone || u.allDone) }

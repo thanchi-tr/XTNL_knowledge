@@ -447,6 +447,30 @@ html[data-motion="calm"] .t-row[data-motion="arrive"] { animation: today-fade 20
 .today-band[data-current="1"] .band-name { color: var(--ink-0); }
 .today-band .band-blurb { font-size: 13px; color: var(--ink-2); }
 
+/* ── The Main quest (blueprint P15; main-quest-card.ts): the roadmap goal above its key results (the goals), one link
+   out (or, for a practice's or a step's row, one seek button: the same look). Read only: no tick, no Start, never
+   red; every line wraps at 344 px; the action is 44 px. ── */
+.today-quest > .card { overflow: hidden; }
+.today-quest .mq { display: grid; gap: 4px; padding: 12px 14px 10px; min-width: 0; }
+.today-quest .mq-title { margin: 0; font: 600 15px/20px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+.today-quest .mq-ms { margin: 0; font: 500 13px/18px var(--font-ui); color: var(--ink-1); overflow-wrap: anywhere; }
+.today-quest .mq-line { margin: 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); overflow-wrap: anywhere; }
+.today-quest .mq-sprint { display: flex; align-items: flex-start; gap: 6px; margin: 4px 0 0; font: 500 13px/18px var(--font-ui); color: var(--ink-1); overflow-wrap: anywhere; }
+.today-quest .mq-sprint svg { flex: none; margin-top: 1px; color: var(--ink-2); }
+.today-quest .mq-act {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; padding: 6px 8px 6px 14px;
+  border-top: 1px solid var(--line-1); color: var(--ink-0); font: 600 13px/18px var(--font-ui); text-decoration: none;
+}
+.today-quest .mq-act:hover { background: var(--raised); }
+.today-quest .mq-act:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: var(--r-card); }
+.today-quest .mq-act svg { flex: none; color: var(--ink-2); }
+.today-quest button.mq-act { width: 100%; margin: 0; border: 0; border-top: 1px solid var(--line-1); border-radius: 0; background: none; text-align: left; }
+/* A Gemini milestone title's chip (MilestoneTitle's TitleClassChip; roadmap.css .rm-pv's look, which Today and the
+   review do not load): its words, a quiet rim, never a hue. */
+.mq-pv { display: inline-flex; align-items: center; min-height: 24px; max-width: 100%; padding: 2px 8px; border-radius: var(--r-chip); border: 1px solid var(--line-2); font: 600 12px/16px var(--font-ui); color: var(--ink-1); vertical-align: 1px; overflow-wrap: anywhere; }
+.mq-pv.rm-pv-draft { border-color: var(--line-ctl); color: var(--ink-0); }
+.mq-pv.rm-pv-kept { border-color: var(--ink-mute); color: var(--ink-2); }
+
 /* ── Side: Goals, Inbox and Anytime, Close the day ────────────────────── */
 /* The goals weigh less than the lanes: flat, a quieter title. */
 .today-goals > .card { background: color-mix(in srgb, var(--card) 55%, transparent); border-color: var(--line-1); }

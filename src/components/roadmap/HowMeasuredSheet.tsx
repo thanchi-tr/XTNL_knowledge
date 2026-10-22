@@ -56,7 +56,7 @@ import {
   floorBase,
   floorStrict,
 } from "@/lib/roadmap-types";
-import { PROVENANCE_WORDS, depthGapDays, depthName } from "./roadmap-copy";
+import { PROVENANCE_WORDS, SHORT_WEEK_QUESTS, depthGapDays, depthName } from "./roadmap-copy";
 import { RoadmapGlyph } from "./RoadmapGlyph";
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -118,7 +118,7 @@ export function HowMeasuredSheet({ open, onClose, gemini = false }: { open: bool
           <b>Held.</b> Confirmed after {REACH_CONFIRM_DAYS} days.
         </li>
       </ol>
-      <span className="t-eyebrow rm-sheet-eyebrow">Week quests</span>
+      <span className="t-eyebrow rm-sheet-eyebrow">{SHORT_WEEK_QUESTS}</span>
       <table className="rm-floor">
         <thead>
           <tr>
@@ -254,7 +254,7 @@ export function WorkedOutSheet({ open, onClose, m }: { open: boolean; onClose: (
         capped at +{pct(RAMP_ALLOWANCE)} of tracked time (at least {RAMP_FLOOR_MIN / 60} h). Fits up to {pct(TIME_FITS_MAX)} of the worst week, Tight to {pct(TIME_TIGHT_MAX)}, Over
         beyond. Practices get {pct(PRACTICE_BUDGET_SHARE)} of the time left after reviews and new cards; a practice target keeps {pct(KEEP_SHARE)} of planned sessions.
       </p>
-      <span className="t-eyebrow rm-sheet-eyebrow">Week quests</span>
+      <span className="t-eyebrow rm-sheet-eyebrow">{SHORT_WEEK_QUESTS}</span>
       <p className="rm-sheet-p">
         Bring: the gap ÷ the weeks left, at most what can reach the level this week at the pass rate stored at Start. Add: the new cards still needed, spread over the writing
         weeks left, at most {WEEK_QUEST_CATCHUP_FACTOR} × what the plan needed a week at Start (at least {WEEK_QUEST_ADD_MIN_CAP}) and what the week&apos;s time holds. Sessions:

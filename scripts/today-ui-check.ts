@@ -112,6 +112,9 @@ import {
 // The three sections: Today's "due elsewhere" strip and Character's day cards (moved off Today).
 import { BODY_HREF, IDEAS_HREF, dueElsewhereOf, questsOpenOf, weighInDueOf } from "../src/components/today/due-elsewhere";
 import { DueElsewhere } from "../src/components/today/DueElsewhere";
+import { CHECK_DRAFT_WORD, OPEN_ROADMAP_WORD, SET_MAIN_QUEST_WORD, mainQuestCardOf } from "../src/components/today/main-quest-card";
+import { MAIN_QUEST, SPRINT, SPRINT_PROVISIONAL_LINE, SPRINT_SHORT, mainQuestOf, mainQuestPickOf, milestoneUnderWay } from "../src/lib/main-quest";
+import type { AimCardView, WeekQuestsView as MqWeekView, WeekQuestRow as MqRow } from "../src/lib/roadmap-types";
 import { dayCardsOf } from "../src/components/home/day-cards";
 import { isUndoCaptureKey, nextOccurrenceNote, toInboxLine } from "../src/components/capture/capture-ui";
 import {
@@ -318,6 +321,7 @@ import {
   WEEK_QUEST_PARTS_TODAY,
   parseMeasureKey,
   rankIndexForStage,
+  roadmapGoalsLive,
   stageLabelOf,
   type AimLineView,
 } from "../src/lib/roadmap-types";
@@ -2850,7 +2854,7 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   const page = code(read("src/app/today/page.tsx"));
   const props = /interface Props \{([\s\S]*?)\n\}/.exec(boardSrc)?.[1] ?? "";
   check(
-    "sections: Today renders no review, roadmap or encounter card, no streak and no Full day (no NextUp, StreakCard, DayLedger, WeekQuests, AimLine; no focus or bosses prop)",
+    "sections: Today renders no review, roadmap or encounter card, no streak and no Full day (no NextUp, StreakCard, DayLedger, WeekQuests, AimLine, AimCard; no focus or bosses prop); the Main quest card (P15) is Today's own MainQuestCard, a slot",
     !/<NextUp\b|<StreakCard\b|<DayLedger\b|<WeekQuests\b|<AimLine\b|<AimCard\b|<BossPanel\b|nextUpOf\(|questsSlot/.test(boardSrc) &&
       !/^\s*(focus|bosses)\??:/m.test(props) &&
       !/<NextUp\b|<StreakCard\b|<DayLedger\b|<WeekQuests\b|<AimLine\b|<AimCard\b|questsSlot|bosses=\{|focus=\{/.test(page) &&
@@ -2876,14 +2880,17 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   );
   // The strip's rows, run.
   const all = dueElsewhereOf({ reviewsDue: 12, questsOpen: 1, bossesReady: 1, weighInDue: true });
+  // Re-pinned for blueprint P15 (D11, one vocabulary): the roadmap's open rows are the main quest's sprint, so the strip
+  // says "sprint 1 left" ("1 left in this week's sprint"), the Main quest card's words, never "quest".
+  const itemWords = (i: { lead?: string; n: number | null; word: string }) => [i.lead, i.n ?? "", i.word].filter((x) => x !== undefined && x !== "").join(" ");
   check(
-    "due elsewhere: '12 reviews · 1 quest · boss → Ideas' (/review) and 'weigh-in → Body' (/train), each with its spoken long form",
+    "due elsewhere: '12 reviews · sprint 1 left · boss → Ideas' (/review) and 'weigh-in → Body' (/train), each with its spoken long form",
     all.length === 2 &&
       all[0].href === IDEAS_HREF &&
       IDEAS_HREF === "/review" &&
       all[0].label === "Ideas" &&
-      all[0].items.map((i) => `${i.n ?? ""} ${i.word}`.trim()).join(" · ") === "12 reviews · 1 quest · boss" &&
-      all[0].said === "Ideas: 12 reviews due, 1 roadmap quest open this week, 1 boss ready" &&
+      all[0].items.map(itemWords).join(" · ") === "12 reviews · sprint 1 left · boss" &&
+      all[0].said === "Ideas: 12 reviews due, 1 left in this week's sprint, 1 boss ready" &&
       all[1].href === BODY_HREF &&
       BODY_HREF === "/train" &&
       all[1].label === "Body" &&
@@ -2896,7 +2903,12 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
     dueElsewhereOf({ reviewsDue: 0, questsOpen: 0, bossesReady: 0, weighInDue: false }).length === 0 &&
       dueElsewhereOf({ reviewsDue: null, questsOpen: -2, bossesReady: 0, weighInDue: false }).length === 0 &&
       dueElsewhereOf({ reviewsDue: 0, questsOpen: 0, bossesReady: 0, weighInDue: true }).map((r) => r.section).join() === "body" &&
-      dueElsewhereOf({ reviewsDue: 1, questsOpen: 2, bossesReady: 3, weighInDue: false })[0].items.map((i) => `${i.n ?? ""} ${i.word}`.trim()).join(" · ") === "1 review · 2 quests · 3 bosses"
+      dueElsewhereOf({ reviewsDue: 1, questsOpen: 2, bossesReady: 3, weighInDue: false })[0].items.map(itemWords).join(" · ") === "1 review · sprint 2 left · 3 bosses"
+  );
+  check(
+    "due elsewhere (P15, D11): the sprint's item is main-quest's word, never 'quest' (the Main quest card beside it says 'This week's sprint')",
+    SPRINT_SHORT.toLowerCase() === "sprint" &&
+      dueElsewhereOf({ reviewsDue: 0, questsOpen: 3, bossesReady: 0, weighInDue: false })[0].items.every((i) => i.lead === "sprint" && i.word === "left" && i.said === `3 left in ${SPRINT.charAt(0).toLowerCase()}${SPRINT.slice(1)}` && !/quest/i.test(`${i.lead} ${i.word} ${i.said}`))
   );
   check(
     "due elsewhere: a weigh-in is due only for someone who weighs in (a reading or a target) and has not logged today; never for someone who never weighs",
@@ -2914,7 +2926,9 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
     (stripHtml.match(/<a [^>]*class="away-row"/g) ?? []).length === 2 &&
       stripHtml.includes('href="/review"') &&
       stripHtml.includes('href="/train"') &&
-      stripHtml.includes('<span class="sr-only">Ideas: 12 reviews due, 1 roadmap quest open this week, 1 boss ready</span>') &&
+      stripHtml.includes('<span class="sr-only">Ideas: 12 reviews due, 1 left in this week&#x27;s sprint, 1 boss ready</span>') &&
+      stripHtml.includes('<span class="away-it" data-kind="quests"><svg') &&
+      /data-kind="quests">[\s\S]*?<\/svg><span>sprint<\/span><b class="num">1<\/b><span>left<\/span><\/span>/.test(stripHtml) &&
       (stripHtml.match(/class="away-items" aria-hidden="true"/g) ?? []).length === 2 &&
       ["#i-study", "#i-flag", "#i-sword", "#i-train"].every((g) => stripHtml.includes(g)) &&
       !/owed|danger|warn|gold/.test(stripHtml + read("src/components/today/DueElsewhere.tsx")) &&
@@ -3007,8 +3021,9 @@ asyncChecks.push(
   // Re-pinned 2026-10-15 (ui-motion D10a): Done today (DonePile, .o13) sits between the goals and Inbox and Anytime.
   const o9 = /<div className="o9">([\s\S]*?)<\/div>\s*(?:<DonePile [\s\S]*?<\/DonePile>\s*)?<section className="card today-side-rows o10"/.exec(boardSrc)?.[1] ?? "";
   check(
-    "week quests: the card sits in the Ideas landing's lead (WeekQuests variant today, its seek rows answered by SeekToToday), drawn first in the hub's first column; Today's .o9 holds the goals only",
-    /<SeekToToday \/>\s*<WeekQuests variant="today" view=\{quests\} \/>/.test(leadSrc) &&
+    "week quests: the card sits in the Ideas landing's lead (WeekQuests variant today, its seek rows answered by SeekToToday), drawn first in the hub's first column; Today's .o9 holds the goals (and, from P15, the Main quest slot before them; never the week quests card)",
+    // Re-pinned for P15 (D12): the lead hands the card today's life day, for the sprint's Sunday words.
+    /<SeekToToday \/>\s*<WeekQuests variant="today" view=\{quests\} today=\{today\} \/>/.test(leadSrc) &&
       /<div className="rv-col">\s*\{lead\}\s*\{focus && <RoadmapFocus/.test(hubSrc) &&
       o9.includes("<GoalsStrip") &&
       !/rm-quests-slot|questsSlot|<WeekQuests|<AimLine/.test(boardSrc),
@@ -3016,7 +3031,7 @@ asyncChecks.push(
   );
   check(
     "week quests: compact on the Ideas landing, always (its one summary line, opened in place: the wrapper's data-compact, roadmap.css's own rule), never hidden (no close-due); Today's evening rule still keys Close the day",
-    /<div className="rv-lead-quests" data-compact="1">\s*<SeekToToday \/>\s*<WeekQuests variant="today" view=\{quests\} \/>\s*<\/div>/.test(leadSrc) &&
+    /<div className="rv-lead-quests" data-compact="1">\s*<SeekToToday \/>\s*<WeekQuests variant="today" view=\{quests\} today=\{today\} \/>\s*<\/div>/.test(leadSrc) &&
       (leadSrc.match(/data-compact/g) ?? []).length === 1 &&
       !/data-close-due|rm-quests-slot|rm-aim-slot/.test(leadSrc) &&
       /\[data-compact\] \.rm-quests-today:not\(\[data-open\]\) \.rm-quests-full \{ display: none; \}/.test(read("src/components/roadmap/roadmap.css")) &&
@@ -3034,7 +3049,7 @@ asyncChecks.push(
   );
   // Today's one slot now is the strip: it only renders, and never reaches buildBoard, the counts or the Asks.
   const slotLines = boardSrc.split(/\r?\n/).filter((l) => l.includes("elsewhere"));
-  const allowed = [/^\s*elsewhere\?: ReactNode;\s*$/, /elsewhere = null \}: Props\) \{\s*$/, /^\s*\{elsewhere != null && elsewhere !== false && <div className="o2">\{elsewhere\}<\/div>\}\s*$/];
+  const allowed = [/^\s*elsewhere\?: ReactNode;\s*$/, /elsewhere = null, mainQuest = null \}: Props\) \{\s*$/, /^\s*\{elsewhere != null && elsewhere !== false && <div className="o2">\{elsewhere\}<\/div>\}\s*$/];
   check(
     "due elsewhere: the board's strip slot is only typed, received and drawn (no count, no Ask, no buildBoard input)",
     slotLines.length === 3 && slotLines.every((l) => allowed.some((r) => r.test(l))),
@@ -3113,7 +3128,9 @@ asyncChecks.push(
       /<IdeasLead\s+quests=\{weekQuests\}\s+aimLine=\{weekQuests \? null : aimLine\}\s+noAim=\{noAim\}/.test(reviewPage) &&
       /const noAim = aimStep != null && aimStep\.open == null && !\(\(aimStep\.openCount \?\? 0\) > 0\);/.test(reviewPage) &&
       /lead=\{lead\}/.test(reviewPage) &&
-      /const roadmap = quests \? \([\s\S]*?<WeekQuests variant="today" view=\{quests\} \/>[\s\S]*?\) : aimLine \? \(\s*<AimLine view=\{aimLine\} \/>\s*\) : noAim \? \([\s\S]*?href=\{ROADMAP_HREF\}[\s\S]*?\) : null;/.test(leadSrc) &&
+      /const roadmap = quests \? \([\s\S]*?<WeekQuests variant="today" view=\{quests\} today=\{today\} \/>[\s\S]*?\) : aimLine \? \(\s*<AimLine view=\{aimLine\} \/>\s*\) : noAim \? \([\s\S]*?href=\{ROADMAP_HREF\}[\s\S]*?\) : null;/.test(leadSrc) &&
+      // P15 (D12): the page hands the lead its life day, for the sprint's Sunday words.
+      /bossesReady=\{bosses\.filter\(\(b\) => b\.availability\.status === "ready"\)\.map\(\(b\) => b\.archetype\.name\)\}\s+today=\{today\}\s+\/>/.test(reviewPage) &&
       !/<WeekQuests\b|<AimLine\b|aimLine|questsSlot|components\/roadmap\/(WeekQuests|AimLine)/.test(page)
   );
   check(
@@ -3311,12 +3328,17 @@ asyncChecks.push(
   );
   check("aim line: the page never calls loadAimCard (loadAimStep is the line's own ≤ 4-read loader)", !/loadAimCard/.test(page) && page.includes('import { loadAimStep } from "@/lib/roadmap-server";'));
   // The rule: roadmap-invite todayAimLineOf over the step, the prompt from aimPromptOf (the stored switch and the
-  // 'later:', 'hide:' or 'off' cookie), the anchor cookie, the step snooze cookie, the life day, and ROADMAP_GOALS_LIVE.
+  // 'later:', 'hide:' or 'off' cookie), the anchor cookie, the step snooze cookie, the life day, and the Start gate in force
+  // (blueprint P14: roadmapGoalsLive(), which is ROADMAP_GOALS_LIVE in production and false while the code value is).
   check(
-    "aim line: todayAimLineOf reads the step, aimPromptOf(cookie, aimSuggestions, today), both cookies, the life day and ROADMAP_GOALS_LIVE",
-    /const aimCookie = jar\.get\(AIM_PROMPT_COOKIE\)\?\.value;\s*const aimLine = todayAimLineOf\(\{\s*step: aimStep,\s*prompt: aimPromptOf\(aimCookie, aimStep\?\.aimSuggestions \?\? null, today\),\s*cookie: aimCookie,\s*stepCookie: jar\.get\(AIM_STEP_COOKIE\)\?\.value,\s*today,\s*goalsLive: ROADMAP_GOALS_LIVE,\s*\}\);/.test(
+    "aim line: todayAimLineOf reads the step, aimPromptOf(cookie, aimSuggestions, today), both cookies, the life day and roadmapGoalsLive() (ROADMAP_GOALS_LIVE, false in code)",
+    /const aimCookie = jar\.get\(AIM_PROMPT_COOKIE\)\?\.value;\s*const aimLine = todayAimLineOf\(\{\s*step: aimStep,\s*prompt: aimPromptOf\(aimCookie, aimStep\?\.aimSuggestions \?\? null, today\),\s*cookie: aimCookie,\s*stepCookie: jar\.get\(AIM_STEP_COOKIE\)\?\.value,\s*today,\s*(?:\/\/[^\n]*\n\s*)?goalsLive: roadmapGoalsLive\(\),\s*\}\);/.test(
       page
     ) &&
+      !/\bROADMAP_GOALS_LIVE\b/.test(page) &&
+      ROADMAP_GOALS_LIVE === false &&
+      roadmapGoalsLive({ NODE_ENV: "production" }) === false &&
+      roadmapGoalsLive({ NODE_ENV: "production", XTNL_ROADMAP_GOALS_LIVE: "1" }) === false &&
       /const today = todayKey\(now\);/.test(page) &&
       AIM_STEP_COOKIE === "xtnl-aim-step"
   );
@@ -3635,7 +3657,7 @@ asyncChecks.push(
       fxPage
     ) &&
       // The side column may open with the Asks (what needs you) before the goals; the slot is still c3 > o9.
-      /<div className="c3">(?:\s*\{\/\*[\s\S]*?\*\/\})?(?:\s*\{asksOnScreen\.map[\s\S]*?\{asksMore\} more\s*<\/button>\s*\)\})?\s*<div className="o9">\s*<GoalsStrip/.test(boardSrc) &&
+      /<div className="c3">(?:\s*\{\/\*[\s\S]*?\*\/\})?(?:\s*\{!isWork && mainQuest != null && mainQuest !== false && <div className="o9">\{mainQuest\}<\/div>\})?(?:\s*\{\/\*[\s\S]*?\*\/\})?(?:\s*\{asksOnScreen\.map[\s\S]*?\{asksMore\} more\s*<\/button>\s*\)\})?\s*<div className="o9">\s*<GoalsStrip/.test(boardSrc) &&
       fxPage.indexOf("aimInPlace.map(") >= 0 &&
       fxPage.indexOf("aimInPlace.map(") < fxPage.search(/<div className="dev-grid">\s*\{aimStates\.map\(/) &&
       /key: "in-place", fixture: "set-week"/.test(fxPage) &&
@@ -4978,6 +5000,306 @@ asyncChecks.push(
     );
   })().catch((err) => check("the tick's flourish and Done today: the checks ran", false, String(err)))
 );
+
+// ═══ Blueprint P15: the Main quest card in Today's side column (D11, D12) ═══
+// The roadmap goal is the main quest; its milestone, this week's sprint and one link out sit above the goals (its key
+// results). Read only: no Ask, no count, no tick, no Start while ROADMAP_GOALS_LIVE is off; the Sunday share is
+// "provisional · final Wed 04:00", never a verdict.
+{
+  console.log("— P15: the Main quest card —");
+  const eq = (name: string, got: unknown, want: unknown) => check(name, JSON.stringify(got) === JSON.stringify(want), `got ${JSON.stringify(got)?.slice(0, 400)}, want ${JSON.stringify(want)?.slice(0, 400)}`);
+  const code = (src: string) =>
+    src
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+  const card = (over: Partial<AimCardView>): AimCardView => ({
+    state: "ACTIVE",
+    roadmapId: "rm1",
+    hasKey: false,
+    writesOff: false,
+    goalsLive: false,
+    aim: "Trade for a living",
+    area: null,
+    targetDay: "2027-06-30",
+    aimChecked: true,
+    over: false,
+    draftItems: null,
+    targetLowered: null,
+    measuredAt: null,
+    rank: null,
+    proficiency: null,
+    milestone: null,
+    weekQuests: null,
+    questWeekUnfrozen: false,
+    reachedDay: null,
+    doneDay: null,
+    aimSuggestions: null,
+    ...over,
+  });
+  type Ms = NonNullable<AimCardView["milestone"]>;
+  const ms = (over: Partial<Ms>): Ms => ({ id: "ms2", ord: 2, of: 6, title: "Familiar with the basics", status: "STARTED", headline: null, percent: 42, pace: null, dueDay: "2026-11-08", reachedDay: null, countsFrom: null, start: null, ...over });
+  const row = (over: Partial<MqRow> & Pick<MqRow, "ord" | "kind" | "label" | "count" | "unit">, progress: number): MqRow => ({
+    evidence: "SELF_REPORTED",
+    figure: { value: progress as never, caption: "" },
+    done: false,
+    dueLine: null,
+    quotaLine: null,
+    slipLine: null,
+    seekTemplateId: null,
+    place: null,
+    href: null,
+    ...over,
+  });
+  const week = (rows: MqRow[], over: Partial<MqWeekView> = {}): MqWeekView => ({
+    milestoneId: "ms2",
+    milestoneOrd: 2,
+    milestoneOf: 6,
+    milestoneTitle: "Familiar with the basics",
+    weekStart: "2026-10-19",
+    weekEnd: "2026-10-25",
+    state: "OPEN",
+    rows,
+    done: rows.filter((r) => r.done).length,
+    total: rows.length,
+    level: 6,
+    frozen: true,
+    writesOff: false,
+    basis: [],
+    cappedBy: null,
+    notes: [],
+    ...over,
+  });
+  const WED = "2026-10-21" as DayKey;
+  const SUN = "2026-10-25" as DayKey;
+  const practice = row({ ord: 2, kind: "PRACTICE", label: "Backtest · 3 sessions × 30 min", count: 3, unit: "session", seekTemplateId: "hab1", place: "in Habits" }, 1);
+  const raise = row({ ord: 1, kind: "RAISE", label: "Bring 3 cards to level 6+", count: 3, unit: "card", evidence: "TESTED" }, 1);
+  const add = row({ ord: 3, kind: "ADD", label: "Add 5 cards to Risk Management", count: 5, unit: "card", evidence: "RECORDED", href: "/add?field=f1&domain=d1", parts: [{ domainId: "d1", name: "Risk Management" as never, count: 5, progress: 2, done: false }] }, 2);
+
+  // The model: every state in neutral words; Start only while the switch is on (and on a server that writes).
+  const planned = (goalsLive: boolean, writesOff = false) => mainQuestOf(card({ state: "ACCEPTED", goalsLive, writesOff, milestone: ms({ id: "ms1", ord: 1, status: "PLANNED", percent: null, dueDay: null }) }), week([practice]), WED);
+  eq(
+    "P15 mainQuestOf: a planned milestone reads 'Milestone 1 is planned.' with nothing to start while ROADMAP_GOALS_LIVE is off; 'ready to start' and startable only with it on and a server that writes; never a sprint before Start",
+    [planned(false), planned(true), planned(true, true)].map((q) => [q.state, q.line, q.startable, q.sprint]),
+    [["PLANNED", "Milestone 1 is planned.", false, null], ["PLANNED", "Milestone 1 is ready to start.", true, null], ["PLANNED", "Milestone 1 is planned.", false, null]]
+  );
+  eq(
+    "P15 mainQuestOf: the other states' one line (draft, under way, past due, a pending reach, paused, done, an older plan, none)",
+    [
+      mainQuestOf(card({ state: "DRAFT", draftItems: 6 }), null, WED).line,
+      mainQuestOf(card({ milestone: ms({}) }), null, WED).line,
+      mainQuestOf(card({ state: "PAST_DUE", milestone: ms({ status: "PAST_DUE", dueDay: "2026-10-18" }) }), null, WED).line,
+      mainQuestOf(card({ milestone: ms({ status: "PENDING_REACH", countsFrom: "2026-10-22" }) }), null, WED).line,
+      mainQuestOf(card({ paused: { since: "2026-10-06" } }), null, WED).line,
+      mainQuestOf(card({ state: "DONE", reachedDay: "2026-10-03" }), null, WED).line,
+      mainQuestOf(card({ legacy: true }), null, WED).state,
+      mainQuestOf(card({ state: "EMPTY", roadmapId: null }), null, WED).line,
+      mainQuestOf(null, null, WED).state,
+    ],
+    [
+      "A draft is waiting for your check · 6 items.",
+      "42% of the way · due Sun 8 Nov",
+      "Milestone 2 was due Sun 18 Oct: close or reschedule it.",
+      "Reached · counts from Thu.",
+      "Paused since 6 Oct.",
+      "Reached 3 Oct.",
+      "LEGACY",
+      "No main quest yet.",
+      "NONE",
+    ]
+  );
+  const active = mainQuestOf(card({ label: "Trading", milestone: ms({}) }), week([raise, practice, add]), WED);
+  check("P15 mainQuestOf: the goal's own name leads (else its aim); the sprint is its milestone's own, and another milestone's set is not", active.title === "Trading" && active.sprint?.milestoneId === "ms2" && mainQuestOf(card({ milestone: ms({ id: "other" }) }), week([practice]), WED).sprint === null);
+
+  // The card: one link out, picked by the roadmap page's own priority over the sprint's open rows.
+  const v = mainQuestCardOf(active, [raise, practice, add])!;
+  // Re-pinned for the P15 review: the milestone travels as its head and its title with the title's provenance (the card
+  // draws the chip and the strike), no longer one flat string.
+  eq(
+    "P15 card: 'Main quest', the quest, 'Milestone 2 of 6' and its title (with its class and struck spans), its line, 'This week's sprint · 0 of 3 done' mid-week, and the first open row by the roadmap's order (ADD first: it has somewhere to go)",
+    v,
+    {
+      heading: MAIN_QUEST,
+      aside: null,
+      title: "Trading",
+      milestone: { head: "Milestone 2 of 6", title: "Familiar with the basics", titleClass: null, titleStruck: [] },
+      line: "42% of the way · due Sun 8 Nov",
+      sprint: `${SPRINT} · 0 of 3 done`,
+      action: { label: "Add 3 cards to Risk Management", href: "/add?field=f1&domain=d1" },
+    }
+  );
+  // Re-pinned for the P15 review: on Today a same-page '#t-' link does nothing once the board has mounted (roadmap-events),
+  // so a practice's or a step's row is a seek (the board's own find), never '/today#t-…'.
+  const stepRow = row({ ord: 4, kind: "STEP", label: "Step: Write the trading plan", count: 1, unit: "step", seekTemplateId: "stp1" }, 0);
+  const lostRow = row({ ord: 2, kind: "PRACTICE", label: "Backtest · 3 sessions × 30 min", count: 3, unit: "session" }, 1);
+  eq(
+    "P15 card: a practice or step row seeks its task on Today (never a '/today#t-' link); a Bring row (before it in the roadmap's order) the roadmap's week section, never /review; a practice with no task to seek goes to the roadmap's week, never a same-page /today link",
+    [mainQuestCardOf(active, [practice])!.action, mainQuestCardOf(active, [stepRow])!.action, mainQuestCardOf(active, [raise, practice])!.action, mainQuestCardOf(active, [lostRow])!.action],
+    [{ label: "Practise Backtest · 2 sessions", seek: "hab1" }, { label: "Write the trading plan", seek: "stp1" }, { label: "Review 2 cards", href: "/you/roadmap#week-quests" }, { label: "Practise Backtest · 2 sessions", href: "/you/roadmap#week-quests" }]
+  );
+  const anyAction = [raise, practice, add, stepRow, lostRow].flatMap((r) => [mainQuestCardOf(active, [r])?.action]).filter((a) => a != null);
+  check("P15 card: no action is a link that stays on Today (/today, /today#…)", anyAction.every((a) => !("href" in a) || !/^\/today(?:$|[#?])/.test(a.href)), JSON.stringify(anyAction));
+  const sundayQuest = mainQuestOf(card({ milestone: ms({}) }), week([raise, practice]), SUN);
+  check("P15 card (D12): on the sprint's Sunday its share reads 'provisional · final Wed 04:00', never a verdict", mainQuestCardOf(sundayQuest, null)!.sprint === `${SPRINT} · 0 of 2 done · ${SPRINT_PROVISIONAL_LINE}` && !/\b(kept|missed|failed|verdict)\b/i.test(mainQuestCardOf(sundayQuest, null)!.sprint ?? ""));
+  const off = mainQuestCardOf(planned(false), null)!;
+  const on = mainQuestCardOf(planned(true), null)!;
+  check(
+    "P15 card: with ROADMAP_GOALS_LIVE off no Start anywhere ('Open roadmap'); on, 'Start milestone 1' links to the roadmap page's Now (Start itself stays there)",
+    JSON.stringify(off.action) === JSON.stringify({ label: OPEN_ROADMAP_WORD, href: "/you/roadmap" }) && !/start/i.test(JSON.stringify(off)) && JSON.stringify(on.action) === JSON.stringify({ label: "Start milestone 1", href: "/you/roadmap#now" })
+  );
+  eq(
+    "P15 card: no main quest — a quiet 'none yet' with 'Set a main quest', or nothing once the aim suggestions are off; a draft says 'Check the draft'",
+    [mainQuestCardOf(mainQuestOf(card({ state: "EMPTY", roadmapId: null }), null, WED), null), mainQuestCardOf(mainQuestOf(card({ state: "EMPTY", roadmapId: null, aimSuggestions: false }), null, WED), null), mainQuestCardOf(mainQuestOf(card({ state: "DRAFT", draftItems: 0 }), null, WED), null)?.action?.label],
+    [{ heading: MAIN_QUEST, aside: "none yet", title: null, milestone: null, line: "No main quest yet.", sprint: null, action: { label: SET_MAIN_QUEST_WORD, href: "/you/roadmap/new" } }, null, CHECK_DRAFT_WORD]
+  );
+
+  // The render: a labelled section, the kit's header, one 44 px link, no control that writes, never red. Imported here,
+  // after the CSS stub: the title's chip (ProvenanceChip) brings the glyph kit, which imports its CSS (Node can't load it).
+  // React marks the seams between adjacent text nodes with <!-- -->; the words are read without them.
+  const text = (h: string) => h.replace(/<!-- -->/g, "");
+  const gemini = mainQuestOf(card({ milestone: ms({ title: "Backtest 20 setups", titleClass: "DRAFT", titleStruck: [[9, 11]] }) }), null, WED);
+  asyncChecks.push(
+    (async () => {
+  const { default: NodeModule } = await import("node:module");
+  const ext = (NodeModule as unknown as { _extensions: Record<string, (m: { exports: unknown }) => void> })._extensions;
+  if (!ext[".css"]) ext[".css"] = (m) => void (m.exports = {});
+  const { MainQuestCard } = await import("../src/components/today/MainQuestCard");
+  const { MilestoneTitle } = await import("../src/components/today/MilestoneTitle");
+  const html = text(renderToStaticMarkup(createElement(MainQuestCard, { view: v })));
+  const offHtml = text(renderToStaticMarkup(createElement(MainQuestCard, { view: off })));
+  check(
+    "P15 render: a section labelled 'Main quest' (the kit's SectionHeader h2), data-wc-block, the quest's lines, the sprint with its flag, one link and nothing else to press",
+    /^<section class="today-quest" aria-labelledby="main-quest-h" data-wc-block="main-quest"><div class="sec-h">[\s\S]*?<h2 id="main-quest-h">Main quest<\/h2>/.test(html) &&
+      html.includes('<p class="mq-title">Trading</p>') &&
+      html.includes('<p class="mq-ms">Milestone 2 of 6 · Familiar with the basics</p>') &&
+      html.includes('<p class="mq-sprint">') &&
+      (html.match(/<a\b/g) ?? []).length === 1 &&
+      !/<button\b|<input\b|onClick/.test(html) &&
+      renderToStaticMarkup(createElement(MainQuestCard, { view: null })) === "",
+    html.slice(0, 300)
+  );
+  check("P15 render: never red, never a Start while the switch is off", !/owed|danger/.test(html + offHtml) && !/Start/.test(offHtml) && offHtml.includes(">Open roadmap<"));
+  // The P15 review: a practice's row on Today is a seek button (the board's own find), with the link's look and size.
+  const seekHtml = text(renderToStaticMarkup(createElement(MainQuestCard, { view: mainQuestCardOf(active, [practice]) })));
+  const seekSrc = code(read("src/components/today/MainQuestSeek.tsx"));
+  check(
+    "P15 render: a practice's row is one 44 px seek button (type=button, .mq-act, its label and chevron), no link, no '#t-' anywhere; it calls roadmap-events seekTemplate and nothing else",
+    /<button type="button" class="mq-act"><span>Practise Backtest · 2 sessions<\/span><svg/.test(seekHtml) &&
+      !/<a\b|#t-/.test(seekHtml) &&
+      (seekHtml.match(/<button\b/g) ?? []).length === 1 &&
+      /^"use client";/.test(read("src/components/today/MainQuestSeek.tsx")) &&
+      /onClick=\{\(\) => seekTemplate\(templateId\)\}/.test(seekSrc) &&
+      /import \{ seekTemplate \} from "@\/components\/roadmap\/roadmap-events";/.test(seekSrc) &&
+      !/completeTask|router|href/.test(seekSrc) &&
+      /\{action &&\s*\("seek" in action \? \(\s*<MainQuestSeek label=\{action\.label\} templateId=\{action\.seek\} \/>/.test(code(read("src/components/today/MainQuestCard.tsx"))) &&
+      /useEffect\(\(\) => onSeekTemplate\(/.test(code(read("src/components/today/TodayBoard.tsx"))),
+    seekHtml.slice(-300)
+  );
+  // The P15 review (§22.11): a Gemini milestone title keeps its chip and its struck numbers wherever it is echoed.
+  const geminiView = mainQuestCardOf(gemini, null)!;
+  const geminiHtml = text(renderToStaticMarkup(createElement(MainQuestCard, { view: geminiView })));
+  const keptHtml = text(renderToStaticMarkup(createElement(MilestoneTitle, { m: { head: "Milestone 2 of 6", title: "Read 3 books", titleClass: "KEPT_SUGGESTION", titleStruck: [[5, 6]] } })));
+  const yoursHtml = text(renderToStaticMarkup(createElement(MilestoneTitle, { m: { head: "Milestone 2 of 6", title: "Read 3 books", titleClass: "YOURS", titleStruck: [] } })));
+  check(
+    "P15 render (§22.11): a Gemini milestone title on Today carries its chip ('Gemini suggestion · not checked') and its numbers struck, never rewritten; kept reads 'kept by you · not checked'; the user's own title carries none",
+    gemini.milestone?.titleClass === "DRAFT" &&
+      JSON.stringify(gemini.milestone?.titleStruck) === "[[9,11]]" &&
+      geminiHtml.includes('<p class="mq-ms">Milestone 2 of 6 · Backtest <s>20</s> setups <span class="rm-pv rm-pv-draft mq-pv">Gemini suggestion · not checked</span></p>') &&
+      keptHtml === 'Milestone 2 of 6 · Read <s>3</s> books <span class="rm-pv rm-pv-kept mq-pv">Gemini&#x27;s words · kept by you · not checked</span>' &&
+      yoursHtml === "Milestone 2 of 6 · Read 3 books" &&
+      mainQuestOf(card({ milestone: ms({ titleStruck: [[0, 3], [1, "x"] as never] }) }), null, WED).milestone?.titleStruck.length === 1,
+    geminiHtml.slice(-260)
+  );
+    })()
+  );
+  const css = read("src/components/today/today.css").replace(/\/\*[\s\S]*?\*\//g, "");
+  const qcss = [...css.matchAll(/\.today-quest[^{]*\{([^}]*)\}/g)].map((m) => m[1]).join("\n");
+  const qsizes = [...qcss.matchAll(/font:[^;]*?(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1]));
+  check(
+    "P15 css: the link is a 44 px target; tokens only (no hex, rgb or named colour); no text under 12 px; every text line free to wrap at 344",
+    (cssValue(css, ".today-quest .mq-act", "min-height") ?? 0) >= 44 &&
+      qcss.length > 200 &&
+      !/#[0-9a-f]{3,8}\b|rgba?\(|\b(?:white|black|red|green|blue)\b/i.test(qcss) &&
+      qsizes.length >= 4 &&
+      qsizes.every((n) => n >= 12) &&
+      [".mq-title", ".mq-ms", ".mq-line", ".mq-sprint"].every((c) => new RegExp(`\\.today-quest \\${c} \\{[^}]*overflow-wrap: anywhere`).test(css))
+  );
+  const pvcss = [...css.matchAll(/\.mq-pv[^{]*\{([^}]*)\}/g)].map((m) => m[1]).join("\n");
+  check(
+    "P15 css (the review): the seek button wears the link's look (full width, no button chrome); the Gemini chip (.mq-pv) is tokens only, 12 px, a rim never a hue, free to wrap",
+    /\.today-quest button\.mq-act \{[^}]*width: 100%;[^}]*border: 0;[^}]*border-top: 1px solid var\(--line-1\);[^}]*background: none;/.test(css) &&
+      pvcss.length > 100 &&
+      !/#[0-9a-f]{3,8}\b|rgba?\(|\b(?:white|black|red|green|blue|gold|owed)\b/i.test(pvcss) &&
+      /\.mq-pv \{[^}]*font: 600 12px\/16px var\(--font-ui\);[^}]*overflow-wrap: anywhere;/.test(css) &&
+      /\.mq-pv\.rm-pv-draft \{ border-color: var\(--line-ctl\); color: var\(--ink-0\); \}/.test(css) &&
+      /\.mq-pv\.rm-pv-kept \{ border-color: var\(--ink-mute\); color: var\(--ink-2\); \}/.test(css)
+  );
+
+  // The page and the board: a slot like the strip, read in the one wave, never on a work tab, never a count or an Ask.
+  const page = code(read("src/app/today/page.tsx"));
+  const board = code(read("src/components/today/TodayBoard.tsx"));
+  const wave = /await Promise\.all\(\[([\s\S]*?)\]\);/.exec(page)?.[1] ?? "";
+  // Re-pinned for the P15 review: the main quest is main-quest-server's pick (the lowest seat whose milestone is under
+  // way, else the lowest open seat) and its sprint that goal's own week, so a draft on seat 1 never hides seat 2's.
+  check(
+    "P15 page: loadMainQuestCard joins the one wave (a failure reads as no card), then the quest's own week (loadMainQuestWeek, reusing the strip's set when it is that one), mainQuestOf over them, the card handed to the board as a slot",
+    /loadMainQuestCard\(userId, now\)\.catch\(\(\) => null\)/.test(wave) &&
+      !/loadAimCard\b/.test(page) &&
+      /import \{ loadMainQuestCard, loadMainQuestWeek \} from "@\/lib\/main-quest-server";/.test(page) &&
+      /const questWeek = await loadMainQuestWeek\(userId, now, questCard, quests\?\.view \?\? null\)\.catch\(\(\) => null\);/.test(page) &&
+      /const mainQuest = mainQuestOf\(questCard, questWeek, day\);/.test(page) &&
+      /const mainQuestView = questCard \? mainQuestCardOf\(mainQuest, questWeek\?\.rows \?\? null\) : null;/.test(page) &&
+      /mainQuest=\{mainQuestView \? <MainQuestCard view=\{mainQuestView\} \/> : null\}/.test(page) &&
+      !/<AimCard\b|<AimLine\b|<WeekQuests\b/.test(page)
+  );
+  // The pick (lib/main-quest mainQuestPickOf over loadAimCards' cards, in seat order).
+  const seat = (id: string, over: Partial<AimCardView>) => card({ roadmapId: id, ...over });
+  const draft1 = seat("rm1", { state: "DRAFT", draftItems: 3 });
+  const planned1 = seat("rm1", { state: "ACCEPTED", milestone: ms({ id: "ms1", ord: 1, status: "PLANNED", percent: null }) });
+  const running2 = seat("rm2", { milestone: ms({ id: "ms9" }) });
+  const pastDue2 = seat("rm2", { state: "PAST_DUE", milestone: ms({ id: "ms9", status: "PAST_DUE" }) });
+  eq(
+    "P15 pick: the lowest seat whose milestone is under way (a draft or a planned goal on seat 1 never hides seat 2's running sprint), else the lowest seat; none with no card",
+    [
+      mainQuestPickOf([draft1, running2])?.roadmapId,
+      mainQuestPickOf([planned1, running2])?.roadmapId,
+      mainQuestPickOf([planned1, pastDue2])?.roadmapId,
+      mainQuestPickOf([running2, seat("rm3", { milestone: ms({ id: "ms7" }) })])?.roadmapId,
+      mainQuestPickOf([draft1, planned1])?.roadmapId,
+      mainQuestPickOf([seat("rm4", { paused: { since: "2026-10-06" }, milestone: ms({}) })])?.roadmapId,
+      mainQuestPickOf([]),
+      mainQuestPickOf(null),
+    ],
+    ["rm2", "rm2", "rm2", "rm2", "rm1", "rm4", null, null]
+  );
+  check(
+    "P15 pick: under way is started, past due or reached (never planned, paused, a draft or an older plan)",
+    milestoneUnderWay(running2) && milestoneUnderWay(pastDue2) && milestoneUnderWay(seat("r", { milestone: ms({ status: "PENDING_REACH" }) })) && !milestoneUnderWay(planned1) && !milestoneUnderWay(draft1) && !milestoneUnderWay(seat("r", { legacy: true, milestone: ms({}) })) && !milestoneUnderWay(seat("r", { paused: { since: "2026-10-06" }, milestone: ms({}) })) && !milestoneUnderWay(null)
+  );
+  const mqs = code(read("src/lib/main-quest-server.ts"));
+  check(
+    "P15 main-quest-server: the card is mainQuestPickOf(loadAimCards) (the cached cards /you shares); the week is the caller's lowest-seat set only when it is the card's milestone's, else loadWeekQuests with the goal's roadmapId; nothing when not under way; it writes nothing",
+    /return mainQuestPickOf\(await loadAimCards\(userId, now\)\);/.test(mqs) &&
+      /if \(!card \|\| !milestoneUnderWay\(card\) \|\| !card\.roadmapId \|\| !card\.milestone\) return null;/.test(mqs) &&
+      /if \(lowest && lowest\.milestoneId === msId\) return lowest;/.test(mqs) &&
+      /loadWeekQuests\(userId, now, \{ roadmapId: card\.roadmapId \}\)/.test(mqs) &&
+      !/prisma|freeze|settle|create|update|upsert|delete/i.test(mqs.replace(/loadWeekQuests|loadAimCards|loadMainQuest\w*/g, ""))
+  );
+  const slot = board.split(/\r?\n/).filter((l) => /mainQuest/.test(l));
+  check(
+    "P15 board: the Main quest slot is only typed, received and drawn in c3's .o9 before the goals, never on a work tab",
+    slot.length === 3 &&
+      /^\s*mainQuest\?: ReactNode;\s*$/.test(slot[0]) &&
+      /mainQuest = null \}: Props\) \{\s*$/.test(slot[1]) &&
+      /^\s*\{!isWork && mainQuest != null && mainQuest !== false && <div className="o9">\{mainQuest\}<\/div>\}\s*$/.test(slot[2]) &&
+      board.indexOf("<div className=\"o9\">{mainQuest}</div>") > board.indexOf('<div className="c3">') &&
+      board.indexOf("<div className=\"o9\">{mainQuest}</div>") < board.indexOf("<GoalsStrip"),
+    slot.map((l) => l.trim()).join(" | ")
+  );
+  const quietFiles = ["src/components/today/board-ui.ts", "src/lib/today-board.ts", "src/lib/tasks.ts", "src/lib/notifications.ts"];
+  const loud = quietFiles.filter((f) => /mainQuest|MainQuest|main-quest/.test(code(read(f))));
+  check("P15: the counts, the Asks and the bell never read the main quest (board-ui, today-board, tasks, notifications)", loud.length === 0, loud.join(", "));
+}
 
 // The async checks (withMoments) settle before the tally.
 void Promise.all(asyncChecks).then(() => {

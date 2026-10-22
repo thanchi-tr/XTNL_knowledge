@@ -16,8 +16,9 @@ import { formatAmount } from "@/components/ui/format";
 
 /**
  * The weekly review as a runner (focus mode: no shell, max 560, exit
- * top-left, progress on top, actions in the thumb zone) with five skippable
- * steps — The week, Inbox to zero, Goals check-in, Owed, Next week — ending
+ * top-left, progress on top, actions in the thumb zone) with six skippable
+ * steps — The week, Inbox to zero, Goals check-in, Owed, Next week, and the
+ * main quest's Sprint (blueprint P15; only with a main quest) — ending
  * on the WEEK CARD when the reviewed week is judged (m2-refit.md F14).
  * Presentational: the caller owns the step and every number. The live
  * wiring is components/home/WeekReview.tsx (/today/week?view=run); the
@@ -41,9 +42,9 @@ export function WeekRunner({
   focus = true,
   children,
 }: {
-  /** A step's fixed number (1..5); past the last that runs is the week card. */
+  /** A step's fixed number (1..6); past the last that runs is the week card. */
   step: number;
-  /** The steps that run, in order (rituals.ts reviewPlanOf); all five by default. */
+  /** The steps that run, in order (rituals.ts reviewPlanOf); all six by default. */
   steps?: readonly { n: number; name: string }[];
   onNext: () => void;
   onSkip: () => void;

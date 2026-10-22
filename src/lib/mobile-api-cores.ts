@@ -16,7 +16,8 @@ import { loadModifiers } from "./skill-effects";
 import { loadDueWorkTasks } from "./scheduled-tasks-server";
 import { maybeMaintainLife } from "./settlement";
 import { loadWeekAudit } from "./week-audit-server";
-import { settleMomentum } from "./momentum-server";
+import { loadMomentum, settleMomentum } from "./momentum-server";
+import { loadMainQuestCard, loadMainQuestWeek } from "./main-quest-server";
 import { loadVariants } from "./idea-variants-server";
 import { reviewDedupeKey } from "./srs";
 import { loadReviewDay } from "../app/review/review-data";
@@ -74,4 +75,9 @@ export const realMobileDeps: MobileDeps = {
 
   // The New idea form's Create (actions/ideas.ts).
   submitIdea: (input) => submitIdea(input),
+
+  // GET /quests (blueprint P15): Today's own reads for its Main quest card and MomentumCard (cached; none writes).
+  loadMainQuest: (userId, now) => loadMainQuestCard(userId, now),
+  loadSprintWeek: (userId, now, card) => loadMainQuestWeek(userId, now, card),
+  loadMomentum: (userId, day, now) => loadMomentum(userId, day, { now }),
 };

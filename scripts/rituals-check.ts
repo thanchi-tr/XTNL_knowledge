@@ -28,9 +28,19 @@
  *      progress key, the runner's 'n of 4' (rendered), the inert switch,
  *      and source guards on the page, the runner and the marker's action.
  *      §1's Saturday to Wednesday windows are unchanged.
+ *   §7 blueprint P15 (decisions D11, D12): the main quest's Sprint step, last
+ *      (steps 1–5 keep their numbers, the end is 7), only when the sprint has
+ *      something to show (sprintStepOf: never on an always-empty page while
+ *      no milestone has started); the reviewed week's share (this week's live
+ *      count on Saturday and Sunday, "provisional · final Wed 04:00" until the
+ *      chain writes it, then the written figures; a held week says so), no
+ *      verdict before Wednesday 04:00, the step rendered (SprintStepBody: a
+ *      Gemini milestone title keeps its chip and struck numbers), and source
+ *      guards on the read-only step, the page's reads and its one predicate.
  *
  *   npx tsx scripts/rituals-check.ts
  */
+import "./_no-model";
 import Module from "node:module";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -94,6 +104,20 @@ import {
   type WeekFactsTemplate,
 } from "../src/lib/rituals";
 import { INBOX_MUST_NOTE, inboxMustNote, mustStakeLabel } from "../src/components/capture/capture-ui";
+import {
+  NO_SPRINT_LINE,
+  SPRINT_FINAL_AT,
+  SPRINT_HELD_LINE,
+  SPRINT_STEP_NOTE,
+  readsPastSprints,
+  sprintReviewLine,
+  sprintReviewOf,
+  sprintShareOf,
+  sprintStepOf,
+  type MainQuest,
+  type Sprint,
+} from "../src/lib/main-quest";
+import { isQuestWeekFinal } from "../src/lib/roadmap-types";
 import { TODAY_COPY, TODAY_DUTY_COPY, copyText, tourSteps } from "../src/components/tour/tour-steps";
 
 const ROOT = join(__dirname, "..");
@@ -493,7 +517,8 @@ console.log("\n── §5 Copy and wiring");
   check("week: after() runs the one maintenance chain (settle, then judge)", /after\(async \(\) => \{\s*await maybeMaintainLife\(userId\);/.test(week) && !/maybeJudgeWeeks/.test(week));
   // P10 re-pins (decision D13): the run and its card no longer wait for Duty; the placeholder is gone.
   check("week: the runner whenever a week is under review, at ?view=run, with or without Duty", /const review = reviewedWeek\(today\);/.test(week) && /if \(review && \(await searchParams\)\.view === "run"\)/.test(week) && !/dutyLive \? reviewedWeek/.test(week));
-  check("week: the review card with or without Duty; no 'arrives with daily settlement' placeholder", /<ReviewCard week=\{review\} marked=\{marked\} dutyLive=\{dutyLive\} \/>/.test(week) && !/arrives with daily settlement/.test(week) && !/weekReviewPromise/.test(week));
+  // Re-pinned for the P15 review: the card also names the Sprint step, on the same `sprint` as the step list.
+  check("week: the review card with or without Duty; no 'arrives with daily settlement' placeholder", /<ReviewCard week=\{review\} marked=\{marked\} dutyLive=\{dutyLive\} sprint=\{sprint != null\} \/>/.test(week) && !/arrives with daily settlement/.test(week) && !/weekReviewPromise/.test(week));
   check("week: RestDay is read with a fallback (the table ships with Duty's migration)", /Promise\.resolve\(\)\s*\.then\(\(\) =>\s*prisma\.restDay\.findMany\([\s\S]*?\.catch\(\(\) => \[\]\)/.test(week));
   const you = code(read("src/app/you/page.tsx"));
   check("you: after() runs the snapshot, then the maintenance chain", /recordTodaySnapshot\(\);[\s\S]{0,40}finally \{\s*await maybeMaintainLife\(userId\)/.test(you));
@@ -516,8 +541,9 @@ console.log("\n── §5 Copy and wiring");
 async function withoutDuty() {
   console.log("\n── §6 The review without Duty");
   const names = (steps: readonly { n: number; name: string }[]) => steps.map((s) => `${s.n} ${s.name}`);
-  eq("steps: five, numbered 1 to 5, the end after them", [names(REVIEW_STEPS), REVIEW_LAST_STEP], [["1 The week", "2 Inbox", "3 Goals", "4 Owed", "5 Next week"], 6]);
-  eq("steps: only Owed is Duty's", REVIEW_STEPS.filter((s) => s.duty).map((s) => s.name), ["Owed"]);
+  // Re-pinned for blueprint P15: the main quest's Sprint step came last, so steps 1–5 kept their numbers; the end is 7.
+  eq("steps: six, numbered 1 to 6, the end after them (P15's Sprint last, so 1–5 keep their numbers)", [names(REVIEW_STEPS), REVIEW_LAST_STEP], [["1 The week", "2 Inbox", "3 Goals", "4 Owed", "5 Next week", "6 Sprint"], 7]);
+  eq("steps: only Owed is Duty's; only Sprint is the main quest's", [REVIEW_STEPS.filter((s) => s.duty).map((s) => s.name), REVIEW_STEPS.filter((s) => s.quest).map((s) => s.name)], [["Owed"], ["Sprint"]]);
   const live = reviewPlanOf(true);
   const before = reviewPlanOf(false);
   eq("plan, Duty live: all five, settled facts, rest days", [live.steps.map((s) => s.n), live.settledFacts, live.restDays], [[1, 2, 3, 4, 5], true, true]);
@@ -530,9 +556,9 @@ async function withoutDuty() {
     while (out[out.length - 1] < REVIEW_LAST_STEP && out.length < 10) out.push(reviewStepIn(plan, out[out.length - 1] + 1));
     return out;
   };
-  eq("Next and Skip, before Duty: 1 → 2 → 3 → 5 → the end (Owed never shows)", walk(false), [1, 2, 3, 5, 6]);
-  eq("Next and Skip, Duty live: 1 → 2 → 3 → 4 → 5 → the end", walk(true), [1, 2, 3, 4, 5, 6]);
-  eq("clamped either way: 0, 9, 2.5, NaN", [0, 9, 2.5, Number.NaN].map((n) => [reviewStepIn(before, n), reviewStepIn(live, n)]), [[1, 1], [6, 6], [1, 1], [1, 1]]);
+  eq("Next and Skip, before Duty (no main quest): 1 → 2 → 3 → 5 → the end (Owed and Sprint never show)", walk(false), [1, 2, 3, 5, 7]);
+  eq("Next and Skip, Duty live (no main quest): 1 → 2 → 3 → 4 → 5 → the end", walk(true), [1, 2, 3, 4, 5, 7]);
+  eq("clamped either way: 0, 9, 2.5, NaN", [0, 9, 2.5, Number.NaN].map((n) => [reviewStepIn(before, n), reviewStepIn(live, n)]), [[1, 1], [7, 7], [1, 1], [1, 1]]);
   eq(
     "the progress key is unchanged; a stored Owed step reads as Next week before Duty and as Owed once live",
     [weekReviewProgressKey("2026-W42"), reviewStepIn(before, parseReviewStep("4")), reviewStepIn(live, parseReviewStep("4")), reviewStepIn(before, parseReviewStep("5"))],
@@ -561,7 +587,7 @@ async function withoutDuty() {
   const end = runner(6, before.steps);
   check("runner, before Duty: the end reads Done, with no Skip", end.includes(">Done<") && end.includes('aria-label="Weekly review done"') && !/>Skip</.test(end));
   const owed = runner(4);
-  check("runner, default (Duty live, /dev/style): Owed is '4 of 5', five segments", owed.includes(">4 of 5<") && owed.includes('aria-label="Step 4 of 5: Owed"') && segsOf(owed) === 5);
+  check("runner, default (every step, /dev/style): Owed is '4 of 6', six segments", owed.includes(">4 of 6<") && owed.includes('aria-label="Step 4 of 6: Owed"') && segsOf(owed) === 6);
   check("runner, Duty live: Finish only on Next week", />Next</.test(runner(4, live.steps)) && />Finish</.test(runner(5, live.steps)));
 
   // Source guards: the page, the runner's wiring and the action.
@@ -589,7 +615,11 @@ async function withoutDuty() {
       /"The last judged week, kept or not per track with the reason; each daily quest's streak\."/.test(page) &&
       !/each duty's streak/.test(page)
   );
-  check("steps list: built from the plan, so before Duty there is no Owed row", /const steps = reviewPlanOf\(live\)\.steps;/.test(page) && /\$\{STEP_COUNT\[steps\.length\]\} steps, each skippable/.test(page));
+  // Re-pinned for the P15 review: the Sprint row only when the main quest's sprint has something to show (sprintStepOf).
+  check(
+    "steps list: built from the plan, so before Duty there is no Owed row, and with no sprint to show no Sprint row (P15)",
+    /const steps = reviewPlanOf\(live, sprint\)\.steps;/.test(page) && /\$\{STEP_COUNT\[steps\.length\]\} steps, each skippable/.test(page) && /<StepsList live=\{dutyLive\} sprint=\{sprint != null\} \/>/.test(page)
+  );
   const review = code(read("src/components/home/WeekReview.tsx"));
   check("runner wiring: the step shown and every move go through reviewStepIn (Owed skipped before Duty)", /const step = reviewStepIn\(plan, chosen \?\? stored \?\? 1\);/.test(review) && /const s = reviewStepIn\(plan, next\);/.test(review) && /steps=\{plan\.steps\}/.test(review));
   check("runner wiring: step 5's rest days only with the plan's rest days; the capacity always", /\{!plan\.restDays \? null : props\.rest\.length > 0 \? \(/.test(review) && /<CapacityPanel/.test(review));
@@ -602,7 +632,220 @@ async function withoutDuty() {
   );
 }
 
-void withoutDuty().then(
+// ── §7 Blueprint P15: the main quest's Sprint step (D11, D12) ─────────────
+function sprintStep() {
+  console.log("\n── §7 The Sprint step (P15)");
+  const names = (steps: readonly { n: number; name: string }[]) => steps.map((s) => `${s.n} ${s.name}`);
+  const beforeQ = reviewPlanOf(false, true);
+  const liveQ = reviewPlanOf(true, true);
+  eq(
+    "plan with a sprint to show: Sprint runs after Next week, before Duty and once it is live; plan.sprint says so; none without one",
+    [names(beforeQ.steps), names(liveQ.steps), beforeQ.sprint, reviewPlanOf(false).sprint, reviewPlanOf(true).steps.some((s) => s.quest)],
+    [["1 The week", "2 Inbox", "3 Goals", "5 Next week", "6 Sprint"], ["1 The week", "2 Inbox", "3 Goals", "4 Owed", "5 Next week", "6 Sprint"], true, false, false]
+  );
+  const walk = (plan: ReturnType<typeof reviewPlanOf>) => {
+    const out = [reviewStepIn(plan, 1)];
+    while (out[out.length - 1] < REVIEW_LAST_STEP && out.length < 10) out.push(reviewStepIn(plan, out[out.length - 1] + 1));
+    return out;
+  };
+  eq(
+    "Next and Skip with a sprint to show: 1 → 2 → 3 → 5 → 6 → the end (before Duty); a stored Sprint step reads as the end without one",
+    [walk(beforeQ), reviewStepIn(reviewPlanOf(false), parseReviewStep("6")), reviewStepIn(beforeQ, parseReviewStep("6"))],
+    [[1, 2, 3, 5, 6, 7], 7, 6]
+  );
+
+  // The reviewed week's share (lib/main-quest sprintReviewOf): this week's live count on Saturday and Sunday, the stored line otherwise.
+  const MON = "2026-10-19" as DayKey;
+  const current = { weekStart: MON, state: "OPEN" as const, share: sprintShareOf(MON, 3, 5, "2026-10-25") };
+  eq(
+    "Sunday: the week under way, its live count 'provisional · final Wed 04:00' (never a verdict)",
+    sprintReviewOf(MON, "2026-10-25", current as never, []),
+    { weekStart: MON, label: "Week of 19 Oct", share: { status: "provisional", done: 3, total: 5, line: "provisional · final Wed 04:00" }, held: false }
+  );
+  eq("Saturday: the same week, still live (no words after the count)", sprintShareOf(MON, 2, 5, "2026-10-24"), { status: "live", done: 2, total: 5, line: null });
+  const pastUnsettled = { weekStart: MON, settled: false, done: 0, total: 0 };
+  const pastSettled = { weekStart: MON, settled: true, done: 4, total: 5 };
+  eq(
+    "Monday and Tuesday: the week just ended reads 'provisional · final Wed 04:00' with no figure (its results are not written); Wednesday on, the written figures, 'final'",
+    [sprintReviewOf(MON, "2026-10-26", null, [pastUnsettled]).share, sprintReviewOf(MON, "2026-10-27", null, [pastUnsettled]).share, sprintReviewOf(MON, "2026-10-28", null, [pastSettled]).share],
+    [
+      { status: "provisional", done: null, total: null, line: "provisional · final Wed 04:00" },
+      { status: "provisional", done: null, total: null, line: "provisional · final Wed 04:00" },
+      { status: "final", done: 4, total: 5, line: "final" },
+    ]
+  );
+  eq(
+    "Wednesday before the chain has written it: 'still settling', no figure; no sprint that week: no share",
+    [sprintReviewOf(MON, "2026-10-28", null, [pastUnsettled]).share?.line, sprintReviewOf(MON, "2026-10-28", null, []).share],
+    ["still settling", null]
+  );
+  check(
+    "no verdict before Wednesday 04:00: the finaliser writes a week only once isQuestWeekFinal(its end, today), Wednesday for a Sunday; a live count is never 'final'",
+    !isQuestWeekFinal("2026-10-25", "2026-10-25") &&
+      !isQuestWeekFinal("2026-10-25", "2026-10-27") &&
+      isQuestWeekFinal("2026-10-25", "2026-10-28") &&
+      SPRINT_FINAL_AT === "Wed 04:00" &&
+      ["2026-10-19", "2026-10-25", "2026-10-27", "2026-10-28", "2026-11-02"].every((d) => sprintShareOf(MON, 5, 5, d as DayKey).status !== "final") &&
+      /return isQuestWeekFinal\(to, today\) \? \[\{ row, set, win, closedDay, to \}\] : \[\];/.test(code(read("src/lib/roadmap-quests-server.ts")))
+  );
+  const mq = code(read("src/lib/main-quest.ts"));
+  check("lib/main-quest writes nothing and reads nothing (no Prisma, no server import, no clock)", !/prisma|-server"|new Date\(|Date\.now|Math\.random/.test(mq));
+
+  // The P15 review: the step runs only when it has something to show (sprintStepOf), one predicate for the run, the step
+  // list and the card. While ROADMAP_GOALS_LIVE is off no milestone starts, so a planned quest never grows an empty step.
+  const quest = (over: Partial<MainQuest>): MainQuest => ({
+    state: "ACTIVE",
+    roadmapId: "rm1",
+    title: "Trade for a living",
+    href: "/you/roadmap",
+    milestone: { id: "ms2", ord: 2, of: 6, title: "Familiar with the basics", titleClass: null, titleStruck: [], status: "STARTED", percent: 42, dueDay: "2026-11-08" },
+    line: "42% of the way · due Sun 8 Nov",
+    startable: false,
+    suggest: true,
+    sprint: null,
+    ...over,
+  });
+  const sprintOfState = (state: "OPEN" | "HELD" | "PAST_DUE", weekStart: DayKey = MON): Sprint => ({
+    milestoneId: "ms2",
+    milestoneOrd: 2,
+    weekStart,
+    weekEnd: addDays(weekStart, 6),
+    state,
+    done: 1,
+    total: state === "OPEN" ? 3 : 0,
+    rows: [],
+    share: sprintShareOf(weekStart, 1, state === "OPEN" ? 3 : 0, "2026-10-24"),
+  });
+  const planned = quest({ state: "PLANNED", line: "Milestone 1 is planned.", milestone: { ...quest({}).milestone!, id: "ms1", ord: 1, status: "PLANNED", percent: null } });
+  eq(
+    "step runs only with something to show: none for no quest, a planned quest with no sprint yet (the switch off: every review today), a draft, or a past-due week with no stored line",
+    [
+      sprintStepOf(quest({ state: "NONE", roadmapId: null, milestone: null }), MON, "2026-10-24", []),
+      sprintStepOf(planned, MON, "2026-10-24", []),
+      sprintStepOf(planned, MON, "2026-10-26", []),
+      sprintStepOf(quest({ state: "DRAFT", milestone: null }), MON, "2026-10-24", []),
+      sprintStepOf(quest({ state: "PAST_DUE", sprint: sprintOfState("PAST_DUE") }), MON, "2026-10-24", []),
+    ],
+    [null, null, null, null, null]
+  );
+  const open = sprintStepOf(quest({ sprint: sprintOfState("OPEN") }), MON, "2026-10-24", []);
+  const held = sprintStepOf(quest({ sprint: sprintOfState("HELD") }), MON, "2026-10-24", []);
+  const lastWeek = sprintStepOf(planned, MON, "2026-10-26", [pastUnsettled]);
+  const thisOnly = sprintStepOf(quest({ sprint: sprintOfState("OPEN", "2026-10-26") }), MON, "2026-10-27", []);
+  eq(
+    "…and it runs for this week's sprint under way, a held week ('held this week', never 'no sprint'), a reviewed week with a stored line (a planned next milestone after a reached one), or this week's sprint when the reviewed week had none ('No sprint for this quest that week.')",
+    [open && sprintReviewLine(open.reviewed), held && sprintReviewLine(held.reviewed), held?.reviewed.held, lastWeek && sprintReviewLine(lastWeek.reviewed), thisOnly && sprintReviewLine(thisOnly.reviewed)],
+    ["1 of 3 done", SPRINT_HELD_LINE, true, "provisional · final Wed 04:00", NO_SPRINT_LINE]
+  );
+  eq(
+    "the line's words: the written figures and 'final'; a held week; no sprint names the quest (another goal's sprint is not this one's)",
+    [sprintReviewLine({ weekStart: MON, label: "Week of 19 Oct", share: { status: "final", done: 4, total: 5, line: "final" }, held: false }), SPRINT_HELD_LINE, NO_SPRINT_LINE],
+    ["4 of 5 done · final", "held this week", "No sprint for this quest that week."]
+  );
+  eq(
+    "past sprints are read only for a goal that may have run one (not none, a draft or an older plan)",
+    [quest({}), planned, quest({ state: "PAUSED" }), quest({ state: "DONE" }), quest({ state: "NONE", roadmapId: null }), quest({ state: "DRAFT" }), quest({ state: "LEGACY" })].map(readsPastSprints),
+    [true, true, true, true, false, false, false]
+  );
+
+  // The runner and the page.
+  const review = code(read("src/components/home/WeekReview.tsx"));
+  const page = code(read("src/app/today/week/page.tsx"));
+  const body = code(read("src/components/home/SprintStepBody.tsx"));
+  check(
+    "runner: the plan is reviewPlanOf(dutyLive, sprint != null): the Sprint step runs only when sprintStepOf found something to show",
+    /const plan = useMemo\(\(\) => reviewPlanOf\(dutyLive, sprint != null\), \[dutyLive, sprint\]\);/.test(review)
+  );
+  const at = review.indexOf("} else if (step === 6 && sprint) {");
+  const six = at < 0 ? "" : review.slice(at, review.indexOf("} else {", at));
+  check(
+    "runner: step 6 is SprintStepBody, read only (no write, no tick, no Start): the quest, its milestone (MilestoneTitle: the title's chip and struck numbers), the reviewed week's line, this week's rows with their count lines, the note, one link to its roadmap",
+    /<SprintStepBody sprint=\{sprint\} eyebrow=\{WEEK_STEPS\[5\]\} \/>/.test(six) &&
+      !/act\(|completeTask|startMilestone|Start milestone|onClick/.test(six + body) &&
+      !/useState|useEffect|"use client"/.test(body) &&
+      /<h1>\{quest\.title \?\? MAIN_QUEST\}<\/h1>/.test(body) &&
+      /<MilestoneTitle m=\{\{ head: milestoneHeadOf\(m\), title: m\.title\.trim\(\) \? m\.title : "", titleClass: m\.titleClass, titleStruck: m\.titleStruck \}\} \/>/.test(body) &&
+      /<span>\{sprintReviewLine\(reviewed\)\}<\/span>/.test(body) &&
+      /\{r\.countLine\}/.test(body) &&
+      /\{r\.done && <Chip tone="kept">Done<\/Chip>\}/.test(body) &&
+      /\{SPRINT_STEP_NOTE\}/.test(body) &&
+      /<Button variant="secondary" href=\{quest\.href\}>\s*Open roadmap\s*<\/Button>/.test(body)
+  );
+  check(
+    "page: one read for the step (the main quest's card, its own week, its past sprints only when it may have run one), sprintStepOf over it, and the run, the step list and the card all key on it",
+    /const card = await loadMainQuestCard\(userId, now\)\.catch\(\(\) => null\);/.test(page) &&
+      /const quest = mainQuestOf\(card, await loadMainQuestWeek\(userId, now, card\)\.catch\(\(\) => null\), today\);/.test(page) &&
+      /const past = readsPastSprints\(quest\) \? await loadPastWeeks\(userId, quest\.roadmapId, today\)\.catch\(\(\) => \[\]\) : \[\];/.test(page) &&
+      /return sprintStepOf\(quest, review\?\.monday \?\? weekStartKeyOf\(today\), today, past\);/.test(page) &&
+      /const \[read, markedBefore, data, audit, sprint\] = await Promise\.all\(\[/.test(page) &&
+      /const \[marked, decisionRows, audit, sprint\] = await Promise\.all\(\[/.test(page) &&
+      /sprint=\{sprint\}/.test(page) &&
+      /<StepsList live=\{dutyLive\} sprint=\{sprint != null\} \/>/.test(page) &&
+      /<ReviewCard week=\{review\} marked=\{marked\} dutyLive=\{dutyLive\} sprint=\{sprint != null\} \/>/.test(page) &&
+      !/loadAimCard\b|quest\.state !== "NONE"/.test(page)
+  );
+  check(
+    "page: the card's words name only the steps that run, counted from the plan (the Sprint only with the step)",
+    /if \(sprint\) parts\.push\("your main quest's sprint"\);/.test(page) && /const count = STEP_COUNT\[reviewPlanOf\(dutyLive, sprint\)\.steps\.length\];/.test(page) && /`\$\{count\} short steps, each skippable: /.test(page)
+  );
+  check("page: the Duty plan the reads use is unchanged (reviewPlanOf(dutyLive) for the settled facts and rest days)", /const plan = reviewPlanOf\(dutyLive\);/.test(page));
+}
+
+/** The Sprint step rendered (SprintStepBody, after the runner's CSS stub): the reviewed week's line, the rows, a Gemini title's chip. */
+async function sprintStepRendered() {
+  const { SprintStepBody } = await import("../src/components/home/SprintStepBody");
+  const MON = "2026-10-19" as DayKey;
+  const share = sprintShareOf(MON, 1, 2, "2026-10-25");
+  const step = {
+    quest: {
+      state: "ACTIVE" as const,
+      roadmapId: "rm1",
+      title: "Trade for a living",
+      href: "/you/roadmap",
+      milestone: { id: "ms2", ord: 2, of: 6, title: "Backtest 20 setups", titleClass: "DRAFT" as const, titleStruck: [[9, 11]] as [number, number][], status: "STARTED" as const, percent: 42, dueDay: "2026-11-08" },
+      line: "42% of the way · due Sun 8 Nov",
+      startable: false,
+      suggest: true,
+      sprint: {
+        milestoneId: "ms2",
+        milestoneOrd: 2,
+        weekStart: MON,
+        weekEnd: addDays(MON, 6),
+        state: "OPEN" as const,
+        done: 1,
+        total: 2,
+        rows: [
+          { kind: "RAISE" as const, label: "Bring 3 cards to level 6+", count: 3, progress: 3, unit: "card" as const, done: true, countLine: "3 of 3 cards · done", templateId: null },
+          { kind: "PRACTICE" as const, label: "Backtest · 3 sessions × 30 min", count: 3, progress: 1, unit: "session" as const, done: false, countLine: "1 of 3 sessions", templateId: "hab1" },
+        ],
+        share,
+      },
+    },
+    reviewed: sprintReviewOf(MON, "2026-10-25", null, []),
+  };
+  step.reviewed = { ...step.reviewed, share, held: false };
+  const html = renderToStaticMarkup(createElement(SprintStepBody, { sprint: step, eyebrow: "Sprint" })).replace(/<!-- -->/g, "");
+  check(
+    "the Sprint step, rendered: the quest, 'Milestone 2 of 6 · Backtest <s>20</s> setups' with Gemini's chip, the reviewed week 'provisional · final Wed 04:00', the rows with their count lines (Done only where the server says), the note, one link and nothing to press",
+    html.includes("<h1>Trade for a living</h1>") &&
+      html.includes('<p class="t-meta">Milestone 2 of 6 · Backtest <s>20</s> setups <span class="rm-pv rm-pv-draft mq-pv">Gemini suggestion · not checked</span></p>') &&
+      html.includes("<b>Week of 19 Oct</b><span>1 of 2 done · provisional · final Wed 04:00</span>") &&
+      html.includes("<b>Backtest · 3 sessions × 30 min</b><span>1 of 3 sessions</span>") &&
+      (html.match(/>Done</g) ?? []).length === 1 &&
+      html.includes(SPRINT_STEP_NOTE.replace(/'/g, "&#x27;")) &&
+      (html.match(/<a\b/g) ?? []).length === 1 &&
+      !/<button\b|<input\b/.test(html) &&
+      !/\b(missed|failed|verdict)\b|owed|danger/i.test(html.replace(SPRINT_STEP_NOTE.replace(/'/g, "&#x27;"), "")),
+    html.slice(0, 400)
+  );
+}
+
+void withoutDuty()
+  .then(async () => {
+    sprintStep();
+    await sprintStepRendered();
+  })
+  .then(
   () => {
     console.log(`\nrituals-check: ${passed} passed, ${failed} failed`);
     process.exit(failed ? 1 : 0);

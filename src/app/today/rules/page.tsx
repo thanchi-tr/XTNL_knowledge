@@ -1395,7 +1395,7 @@ function RoadmapRules({ edge, judgeDay, momentumOn = false }: { edge: string; ju
         </ul>
       </Card>
 
-      <Card title="Week quests (not the daily review quest)" sub="This week's actions for the milestone you started" wide>
+      <Card title="This week's sprint (not the daily review quest)" sub="The week quests of the milestone you started: this week's actions" wide>
         <p>
           The daily review quest above is unchanged. Week quests slice the milestone you started into this life week, Monday{" "}
           {edge} to Monday {edge}. Each is checked from the app&apos;s own records: none has a checkbox, and none pays.

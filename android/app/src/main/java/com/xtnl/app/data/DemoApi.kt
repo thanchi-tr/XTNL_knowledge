@@ -246,6 +246,57 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
         }
     }
 
+    /**
+     * The main quest as a server with it under way sends it (milestone 2 started, its sprint and Today's three), each
+     * row's done read from the demo board, so a tick on Check shows here too (a session ticked today moves the count,
+     * never the row's done: 2 of 3 sessions is not the week met). The rows in Today's order, as the server sends them
+     * (open first, then Bring, Add, Step, Practice). Start stays on the web (startOnWeb false, as with
+     * ROADMAP_GOALS_LIVE off). The milestone's title is Gemini's, kept and not checked: its note and its struck number,
+     * as the server sends them. On a Sunday the sprint reads provisional, as on the server.
+     */
+    override suspend fun quests(): Outcome<QuestsData> {
+        pause(300)
+        return lock.withLock {
+            val now = clock()
+            val day = TimeLabels.lifeDay(now)
+            val monday = day.with(DayOfWeek.MONDAY)
+            val kept = { id: String -> tasks.firstOrNull { it.item.templateId == id }?.item?.kept == true }
+            val order = mapOf("RAISE" to 0, "ADD" to 1, "STEP" to 2, "PRACTICE" to 3, "CHECKPOINT" to 4)
+            val rows = listOf(
+                SprintRow("ADD", "Add 4 cards to Risk Management", if (reviewDone >= 6) "4 of 4 cards · done" else "2 of 4 cards", 4, if (reviewDone >= 6) 4.0 else 2.0, "card", reviewDone >= 6),
+                SprintRow("RAISE", "Bring 3 cards to level 6+", "1 of 3 cards", 3, 1.0, "card", false),
+                SprintRow("PRACTICE", "Read 20 pages · 3 sessions × 25 min", if (kept("t-read")) "2 of 3 sessions" else "1 of 3 sessions", 3, if (kept("t-read")) 2.0 else 1.0, "session", false, "t-read"),
+            ).sortedWith(compareBy({ it.done }, { order[it.kind] ?: 9 }))
+            val sunday = day.dayOfWeek == DayOfWeek.SUNDAY
+            val three = listOf(
+                ThreeQuest("PLAN", "Review 12 cards", reviewDone >= 12),
+                ThreeQuest("BODY", "Gym legs", kept("t-gym"), "t-gym"),
+                ThreeQuest("TASK", "Call the dentist", kept("t-dentist"), "t-dentist"),
+            )
+            Outcome.Ok(
+                QuestsData(
+                    now = now.toString(),
+                    day = day.toString(),
+                    mainQuest = MainQuest(
+                        state = "ACTIVE", title = "Trade for a living", line = "42% of the way · due Sun ${day.plusWeeks(2).with(DayOfWeek.SUNDAY).format(DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH))}",
+                        milestone = QuestMilestone(
+                            2, 6, "Backtest 20 setups", "STARTED", 42, day.plusWeeks(2).with(DayOfWeek.SUNDAY).toString(),
+                            titleNote = "Gemini's words · kept by you · not checked", titleStruck = listOf(listOf(9, 11)),
+                        ),
+                        startOnWeb = false,
+                    ),
+                    sprint = Sprint(
+                        milestoneOrd = 2, weekStart = monday.toString(), weekEnd = monday.plusDays(6).toString(),
+                        done = rows.count { it.done }, total = rows.size,
+                        status = if (sunday) "provisional" else "live", line = if (sunday) "provisional · final Wed 04:00" else null,
+                        rows = rows,
+                    ),
+                    three = TodaysThree(done = three.count { it.done }, total = 3, frozen = true, chest = if (three.all { it.done }) "ready" else "locked", quests = three),
+                )
+            )
+        }
+    }
+
     override suspend fun completeTask(templateId: String, mvv: Boolean, clientId: String): Outcome<CompleteResult> {
         pause()
         val body = buildJsonObject { put("templateId", templateId); put("mvv", mvv) }

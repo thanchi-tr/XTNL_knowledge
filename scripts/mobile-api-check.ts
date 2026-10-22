@@ -17,7 +17,9 @@
  *      P12's "Decaying this week", its count and first three lines), its
  *      work list (the Agenda's sections); /review's
  *      queue (the runner's seeded order and wording, per type) and its retry (review-model's queueAfterAnswer);
- *      /log's sections (the sheet's mode starts) and Undo; /ideas through the form's contentOfAddState;
+ *      /log's sections (the sheet's mode starts) and Undo; /ideas through the form's contentOfAddState; /quests (P15:
+ *      the main quest through lib/main-quest's model, no Start while ROADMAP_GOALS_LIVE is off, the sprint's
+ *      provisional Sunday words, Today's three, read only);
  *   3. the wiring: each route file hands its request to its handler with the real deps and exports only its method
  *      and dynamic; mobile-api-cores binds each dep to the web's own core (no refresh); the pure modules import no
  *      core; the web pages' formulas the app mirrors (pinned in their source); the failure lines the codes key on;
@@ -56,6 +58,10 @@ import type { Completion } from "../src/lib/tasks";
 import type { SubmitReviewResult } from "../src/app/actions/review";
 import type { CapturedItem, CapturedWeight } from "../src/app/actions/capture";
 import type { SubmitIdeaResult } from "../src/app/actions/ideas";
+import type { AimCardView, WeekQuestsView, WeekQuestRow } from "../src/lib/roadmap-types";
+import type { MomentumView } from "../src/lib/momentum-server";
+import { SPRINT, SPRINT_PROVISIONAL_LINE, mainQuestOf } from "../src/lib/main-quest";
+import { geminiWordsOf } from "../src/components/roadmap/roadmap-copy";
 import {
   AUTH_LINE,
   CODE_STATUS,
@@ -110,6 +116,7 @@ import {
   handleIdeasMeta,
   handleLog,
   handleLogUndo,
+  handleQuests,
   handleReviewAnswer,
   handleReviewQueue,
   handleTaskComplete,
@@ -377,6 +384,84 @@ const WEIGHT: CapturedWeight = { day: TODAY, kg: 72.4, unit: "kg", when: "today"
 const decision = (match: Record<string, unknown> | null = null) =>
   ({ action: "CREATE", target_node_id: null, confidence_score: 0.2, node_data: { title: "Acid paper", core_premise: "", atomic_prompt: "", enrichment_payload: null, tags: [] }, deduplication_reasoning: "", relation: "distinct", label: "Distinct", verdict: { match } }) as never;
 
+// ── GET /quests fixtures (blueprint P15) ──────────────────────────────────
+
+/** An Aim card as loadAimCard returns it (the fields the main quest reads; the rest at their EMPTY values). */
+function aimCard(over: Partial<AimCardView>): AimCardView {
+  return {
+    state: "ACTIVE",
+    roadmapId: "rm1",
+    hasKey: false,
+    writesOff: false,
+    goalsLive: false,
+    aim: "Trade for a living",
+    area: null,
+    targetDay: "2027-06-30",
+    aimChecked: true,
+    over: false,
+    draftItems: null,
+    targetLowered: null,
+    measuredAt: null,
+    rank: null,
+    proficiency: null,
+    milestone: null,
+    weekQuests: null,
+    questWeekUnfrozen: false,
+    reachedDay: null,
+    doneDay: null,
+    aimSuggestions: null,
+    ...over,
+  };
+}
+type AimMs = NonNullable<AimCardView["milestone"]>;
+const msOf = (over: Partial<AimMs>): AimMs => ({ id: "ms2", ord: 2, of: 6, title: "Familiar with the basics", status: "STARTED", headline: null, percent: 42, pace: null, dueDay: "2026-11-08", reachedDay: null, countsFrom: null, start: null, ...over });
+const qRow = (over: Partial<WeekQuestRow> & Pick<WeekQuestRow, "ord" | "kind" | "label" | "count" | "unit">, progress: number): WeekQuestRow => ({
+  evidence: "SELF_REPORTED",
+  figure: { value: progress as never, caption: "" },
+  done: false,
+  dueLine: null,
+  quotaLine: null,
+  slipLine: null,
+  seekTemplateId: null,
+  place: null,
+  href: null,
+  ...over,
+});
+const SPRINT_WEEK: WeekQuestsView = {
+  milestoneId: "ms2",
+  milestoneOrd: 2,
+  milestoneOf: 6,
+  milestoneTitle: "Familiar with the basics",
+  weekStart: "2026-10-19",
+  weekEnd: "2026-10-25",
+  state: "OPEN",
+  rows: [
+    qRow({ ord: 1, kind: "RAISE", label: "Bring 3 cards to level 6+", count: 3, unit: "card", evidence: "TESTED" }, 1),
+    qRow({ ord: 2, kind: "PRACTICE", label: "Backtest · 3 sessions × 30 min", count: 3, unit: "session", seekTemplateId: "hab1", place: "in Habits" }, 3.4),
+  ],
+  done: 1,
+  total: 2,
+  level: 6,
+  frozen: true,
+  writesOff: false,
+  basis: [],
+  cappedBy: null,
+  notes: [],
+};
+const THREE: MomentumView = {
+  live: true,
+  day: TODAY,
+  quests: [
+    { slot: "PLAN", quest: { slot: "PLAN", kind: "REVIEWS", count: 12, title: "Review 12 cards" }, identity: "plan", done: true, swapsLeft: 0 },
+    { slot: "BODY", quest: { slot: "BODY", kind: "TEMPLATE", templateId: "hab1", title: "Gym" }, identity: "body", done: false, swapsLeft: 1 },
+    { slot: "TASK", quest: { slot: "TASK", kind: "ANY", count: 2, title: "Finish any 2 tasks" }, identity: "task", done: false, swapsLeft: 1 },
+  ],
+  frozen: true,
+  writesOff: false,
+  done: 1,
+  chest: { state: "locked" },
+} as unknown as MomentumView;
+
 // ── The fake cores ────────────────────────────────────────────────────────
 
 type Calls = Record<string, unknown[][]>;
@@ -422,6 +507,9 @@ function fakes(over: Partial<MobileDeps> = {}): { deps: MobileDeps; calls: Calls
     undoCapture: async () => ({ ok: true, value: null }),
     undoWeightCapture: async () => ({ ok: true, value: { restoredKg: 73 } }),
     submitIdea: async () => ({ status: "created", ideaId: "new-idea", domainId: "d1", classification: "EXPANSION", decision: decision(), points: 9.5, focus: null, fieldName: "Chemistry", domainName: "Acids" }) as SubmitIdeaResult,
+    loadMainQuest: async () => null,
+    loadSprintWeek: async () => null,
+    loadMomentum: async (_userId, day) => ({ live: false, day }),
   };
   const merged = { ...base, ...over } as MobileDeps;
   const deps = Object.fromEntries(Object.entries(merged).map(([k, fn]) => [k, spy(k, fn as (...a: unknown[]) => unknown)])) as unknown as MobileDeps;
@@ -1194,6 +1282,121 @@ async function routes() {
     const noField = await got(handleIdeaCreate(post("/ideas", { type: "SHORT", question: "Q", answer: "A" }), fakes({ submitIdea: async () => Promise.reject(new Error("Create a Field before adding ideas — there is nowhere to file this yet.")) }).deps));
     check("no Field yet: 409 with its line", isFail(noField, "conflict") && /^Create a Field/.test(noField.json.error ?? ""));
   }
+
+  section("GET /quests (blueprint P15)");
+  {
+    const active = fakes({ loadMainQuest: async () => aimCard({ milestone: msOf({}) }), loadSprintWeek: async () => SPRINT_WEEK, loadMomentum: async () => THREE });
+    const g = await got(handleQuests(get("/quests"), active.deps));
+    const d = data(g);
+    collectKeys(d);
+    check("200, ok, no-store", g.status === 200 && g.json.ok === true && g.noStore);
+    eq("the documented keys", keysOf(d), ["day", "mainQuest", "now", "sprint", "three"]);
+    eq(
+      "the main quest: its words, its milestone and the card's one line; no Start (the switch is off: startOnWeb false)",
+      d.mainQuest,
+      {
+        state: "ACTIVE",
+        title: "Trade for a living",
+        line: "42% of the way · due Sun 8 Nov",
+        milestone: { ord: 2, of: 6, title: "Familiar with the basics", titleNote: null, titleStruck: [], status: "STARTED", percent: 42, dueDay: "2026-11-08" },
+        startOnWeb: false,
+        suggest: true,
+      }
+    );
+    // The P15 review (§22.11): a Gemini milestone title keeps its provenance on the phone too (the web's words, its struck numbers).
+    const titled = async (titleClass: AimMs["titleClass"], titleStruck: [number, number][]) =>
+      data(await got(handleQuests(get("/quests"), fakes({ loadMainQuest: async () => aimCard({ milestone: msOf({ title: "Backtest 20 setups", titleClass, titleStruck }) }) }).deps)));
+    const draftTitle = ((await titled("DRAFT", [[9, 11]])).mainQuest as { milestone: Record<string, unknown> }).milestone;
+    const keptTitle = ((await titled("KEPT_SUGGESTION", [])).mainQuest as { milestone: Record<string, unknown> }).milestone;
+    const yoursTitle = ((await titled("YOURS", [])).mainQuest as { milestone: Record<string, unknown> }).milestone;
+    eq(
+      "a Gemini milestone title: titleNote is the web's words ('Gemini suggestion · not checked', '… kept by you · not checked'), titleStruck its number spans; the user's own title has none",
+      [draftTitle.titleNote, draftTitle.titleStruck, keptTitle.titleNote, yoursTitle.titleNote, yoursTitle.titleStruck],
+      ["Gemini suggestion · not checked", [[9, 11]], "Gemini's words · kept by you · not checked", null, []]
+    );
+    check(
+      "…the words are roadmap-copy's own (geminiWordsOf), never re-typed for the phone",
+      draftTitle.titleNote === geminiWordsOf("DRAFT") && keptTitle.titleNote === geminiWordsOf("KEPT_SUGGESTION") && /titleNote: geminiWordsOf\(m\.titleClass\), titleStruck: m\.titleStruck,/.test(code("src/lib/mobile-api.ts"))
+    );
+    eq(
+      "the sprint mid-week: 'This week's sprint', its count, live (no words after it), each row with its count line; a practice row carries its Today task, a Bring row none",
+      d.sprint,
+      {
+        label: SPRINT,
+        milestoneOrd: 2,
+        weekStart: "2026-10-19",
+        weekEnd: "2026-10-25",
+        state: "OPEN",
+        done: 1,
+        total: 2,
+        status: "live",
+        line: null,
+        rows: [
+          { kind: "RAISE", label: "Bring 3 cards to level 6+", countLine: "1 of 3 cards", count: 3, progress: 1, unit: "card", done: false, templateId: null },
+          { kind: "PRACTICE", label: "Backtest · 3 sessions × 30 min", countLine: "3 of 3 sessions", count: 3, progress: 3.4, unit: "session", done: false, templateId: "hab1" },
+        ],
+      }
+    );
+    eq(
+      "Today's three: each quest's slot, words and done; a task quest's template (ticked with /tasks/complete), none for the others",
+      d.three,
+      { done: 1, total: 3, frozen: true, chest: "locked", quests: [{ slot: "PLAN", title: "Review 12 cards", done: true, templateId: null }, { slot: "BODY", title: "Gym", done: false, templateId: "hab1" }, { slot: "TASK", title: "Finish any 2 tasks", done: false, templateId: null }] }
+    );
+    const okReads = ["loadMainQuest", "loadSprintWeek", "loadMomentum"].every((k) => (active.calls[k] ?? []).length === 1 && active.calls[k][0][0] === "u1");
+    const wrote = ["completeTask", "undoCompletion", "settleMomentum", "recordDayOpen", "autoCompleteStudyTasks", "maybeMaintainLife", "createFromCapture", "submitReview", "submitIdea", "doneScheduled"].filter((k) => (active.calls[k] ?? []).length > 0);
+    check("read only: the three reads once each, for the user; no write, no settle, nothing owed after the reply", okReads && wrote.length === 0 && active.afters.length === 0, wrote.join(", "));
+    check("the momentum read is for the life day at the server's clock", same(active.calls.loadMomentum[0].slice(1), [TODAY, NOW]));
+    // The P15 review: the sprint is the main quest's own goal's week (read for the card picked), never the lowest seat's by default.
+    check(
+      "the sprint read is for the main quest's own goal: the card the quest read picked is handed to it (main-quest-server loadMainQuestWeek)",
+      (active.calls.loadSprintWeek[0][2] as AimCardView | undefined)?.roadmapId === "rm1" && (active.calls.loadSprintWeek[0][2] as AimCardView).milestone?.id === "ms2"
+    );
+    // The P15 review: the rows keep the view's own order, which is Today's (open first, then Bring, Add, Step, Practice, Checkpoint).
+    const shuffled = { ...SPRINT_WEEK, rows: [SPRINT_WEEK.rows[1], SPRINT_WEEK.rows[0]] };
+    const order = data(await got(handleQuests(get("/quests"), fakes({ loadMainQuest: async () => aimCard({ milestone: msOf({}) }), loadSprintWeek: async () => shuffled }).deps)));
+    const qsrc = code("src/lib/roadmap-quests.ts");
+    check(
+      "the rows keep the view's own order (no re-sort here); that view is Today's: loadWeekQuests' variant 'today', open rows first, then by kind (RAISE, ADD, STEP, PRACTICE, CHECKPOINT), then the set's order",
+      JSON.stringify(((order.sprint as { rows: { kind: string }[] }).rows).map((r) => r.kind)) === JSON.stringify(["PRACTICE", "RAISE"]) &&
+        /const TODAY_ORDER: Record<WeekQuestKind, number> = \{ RAISE: 0, ADD: 1, STEP: 2, PRACTICE: 3, CHECKPOINT: 4 \};/.test(qsrc) &&
+        /\.sort\(\(a, b\) => Number\(a\.r\.done\) - Number\(b\.r\.done\) \|\| TODAY_ORDER\[a\.r\.kind\] - TODAY_ORDER\[b\.r\.kind\] \|\| a\.i - b\.i\)/.test(qsrc) &&
+        /view: weekQuestsViewOf\(\{ \.\.\.viewInput, variant: "today" \}\)/.test(code("src/lib/roadmap-quests-server.ts"))
+    );
+    const unread = fakes({ loadMainQuest: async () => Promise.reject(new Error("aim card exploded")) });
+    await got(handleQuests(get("/quests"), unread.deps));
+    check("an unread main quest reads no sprint at all (the sprint is its goal's, so it waits on the quest)", (unread.calls.loadSprintWeek ?? []).length === 0);
+
+    // D12: on the week's Sunday the share is provisional, never a verdict.
+    const sunday = fakes({ now: () => new Date("2026-10-25T00:12:00.000Z"), loadMainQuest: async () => aimCard({ milestone: msOf({}) }), loadSprintWeek: async () => SPRINT_WEEK });
+    const sun = data(await got(handleQuests(get("/quests"), sunday.deps)));
+    eq("Sunday: the sprint's share reads 'provisional · final Wed 04:00' (status provisional)", [(sun.sprint as Record<string, unknown>).status, (sun.sprint as Record<string, unknown>).line, sun.day], ["provisional", SPRINT_PROVISIONAL_LINE, "2026-10-25"]);
+
+    // The switch: a planned milestone reads "planned" and offers nothing while ROADMAP_GOALS_LIVE is off.
+    const planned = (goalsLive: boolean) =>
+      fakes({ loadMainQuest: async () => aimCard({ state: "ACCEPTED", goalsLive, milestone: msOf({ id: "ms1", ord: 1, status: "PLANNED", percent: null, dueDay: null }) }), loadSprintWeek: async () => SPRINT_WEEK });
+    const off = data(await got(handleQuests(get("/quests"), planned(false).deps)));
+    const on = data(await got(handleQuests(get("/quests"), planned(true).deps)));
+    eq(
+      "ROADMAP_GOALS_LIVE off: 'Milestone 1 is planned.', startOnWeb false, no sprint; on: 'Milestone 1 is ready to start.', startOnWeb true (Start itself stays on the web)",
+      [(off.mainQuest as Record<string, unknown>).line, (off.mainQuest as Record<string, unknown>).startOnWeb, off.sprint, (on.mainQuest as Record<string, unknown>).line, (on.mainQuest as Record<string, unknown>).startOnWeb],
+      ["Milestone 1 is planned.", false, null, "Milestone 1 is ready to start.", true]
+    );
+    const writesOff = data(await got(handleQuests(get("/quests"), fakes({ loadMainQuest: async () => aimCard({ state: "ACCEPTED", goalsLive: true, writesOff: true, milestone: msOf({ id: "ms1", ord: 1, status: "PLANNED", percent: null }) }) }).deps)));
+    check("a server that writes nothing never offers Start, even with the switch on", (writesOff.mainQuest as Record<string, unknown>).startOnWeb === false);
+    const other = data(await got(handleQuests(get("/quests"), fakes({ loadMainQuest: async () => aimCard({ milestone: msOf({ id: "ms-other" }) }), loadSprintWeek: async () => SPRINT_WEEK }).deps)));
+    check("a sprint that isn't the main quest's milestone's (another goal runs it) is not its sprint", other.sprint === null && (other.mainQuest as Record<string, unknown>).state === "ACTIVE");
+
+    // No main quest, and failures.
+    const none = data(await got(handleQuests(get("/quests"), fakes({}).deps)));
+    eq("no main quest: state NONE, 'No main quest yet.'; no sprint; momentum before launch: no three", [none.mainQuest, none.sprint, none.three], [{ state: "NONE", title: null, line: "No main quest yet.", milestone: null, startOnWeb: false, suggest: true }, null, null]);
+    check("…and with the aim suggestions turned off, suggest is false", (data(await got(handleQuests(get("/quests"), fakes({ loadMainQuest: async () => aimCard({ state: "EMPTY", roadmapId: null, aimSuggestions: false }) }).deps))).mainQuest as Record<string, unknown>).suggest === false);
+    const failing = fakes({ loadMainQuest: async () => Promise.reject(new Error("aim card exploded")), loadMomentum: async () => Promise.reject(new Error("momentum exploded")) });
+    const f = await got(handleQuests(get("/quests"), failing.deps));
+    check("a failed read is that part alone: mainQuest null (never 'none'), sprint null, three null; 200; no message in the reply", f.status === 200 && data(f).mainQuest === null && data(f).sprint === null && data(f).three === null && !/exploded/.test(f.raw));
+    check("an unknown query parameter is bad", isFail(await got(handleQuests(get("/quests?all=1"), fakes().deps)), "bad"));
+    check("behind the token like every route", isFail(await got(handleQuests(get("/quests"), fakes({ token: () => TOKEN }).deps)), "auth"));
+    check("mainQuestOf is the model the route answers with (the same words as Today's card)", (mainQuestOf(aimCard({ milestone: msOf({}) }), SPRINT_WEEK, TODAY).line) === (d.mainQuest as Record<string, unknown>).line);
+  }
 }
 
 // ═══ 3. The wiring ════════════════════════════════════════════════════════
@@ -1229,6 +1432,7 @@ const HANDLER_OF: Record<string, string> = {
   "POST /log/undo": "handleLogUndo",
   "GET /ideas/meta": "handleIdeasMeta",
   "POST /ideas": "handleIdeaCreate",
+  "GET /quests": "handleQuests",
 };
 
 function wiring() {
@@ -1271,6 +1475,15 @@ function wiring() {
   bind("review: an answer's key is read on the ledger's unique (userId, dedupeKey), as srs.ts reviewDedupeKey writes it", /reviewRecorded: async \(userId, answerKey\) =>\s*\(await prisma\.activityEvent\.findUnique\(\{ where: \{ userId_dedupeKey: \{ userId, dedupeKey: reviewDedupeKey\(answerKey\) \} \}, select: \{ id: true \} \}\)\) !== null,/);
   bind("log: createFromCapture(text, [], { captureKey }) — no refresh; undoCapture; undoWeightCapture", /createFromCapture: \(text, captureKey\) => createFromCapture\(text, \[\], captureKey \? \{ captureKey \} : undefined\),\s*undoCapture: \(templateId\) => undoCapture\(templateId\),\s*undoWeightCapture: \(weight\) => undoWeightCapture\(weight\),/);
   bind("ideas: submitIdea", /submitIdea: \(input\) => submitIdea\(input\),/);
+  bind(
+    // Re-pinned for the P15 review: Today's own reads are main-quest-server's (the pick and the quest's own week).
+    "quests (P15): Today's own reads: main-quest-server loadMainQuestCard (the pick over loadAimCards), loadMainQuestWeek for that card (its goal's week), momentum-server loadMomentum(userId, day, { now })",
+    /loadMainQuest: \(userId, now\) => loadMainQuestCard\(userId, now\),\s*loadSprintWeek: \(userId, now, card\) => loadMainQuestWeek\(userId, now, card\),\s*loadMomentum: \(userId, day, now\) => loadMomentum\(userId, day, \{ now \}\),/
+  );
+  check(
+    "quests (P15): Today's page reads the main quest through the same two (one pick, one week rule for the card and the phone)",
+    /loadMainQuestCard\(userId, now\)\.catch\(\(\) => null\),/.test(code("src/app/today/page.tsx")) && /await loadMainQuestWeek\(userId, now, questCard, quests\?\.view \?\? null\)/.test(code("src/app/today/page.tsx"))
+  );
   const imports: [string, string][] = [
     ["completeTask, undoCapture, undoCompletion", "../app/actions/tasks"],
     ["doneScheduledTask, reopenScheduledTask", "../app/actions/scheduled-tasks"],
@@ -1282,6 +1495,8 @@ function wiring() {
     ["loadDueWorkTasks", "./scheduled-tasks-server"],
     ["reviewDedupeKey", "./srs"],
     ["loadModifiers", "./skill-effects"],
+    ["loadMainQuestCard, loadMainQuestWeek", "./main-quest-server"],
+    ["loadMomentum, settleMomentum", "./momentum-server"],
   ];
   const missing = imports.filter(([names, from]) => !cores.includes(`import { ${names} } from "${from}";`));
   check("mobile-api-cores imports each core from the web's own module", missing.length === 0, missing.map((m) => m[1]).join(", "));
@@ -1479,6 +1694,29 @@ function docs() {
       /armed while the server's last `\/check` said `auditOn`/.test(doc.replace(/\s+/g, " ")) &&
       /otherwise Android sends it within the hour after 19:00/.test(doc.replace(/\s+/g, " ")) &&
       !/armed only while the server sends a `week`/.test(doc.replace(/\s+/g, " "))
+  );
+  check(
+    "/quests (P15; D11, D12) is in the doc: read only, one vocabulary, Start and plan edits on the web only, startOnWeb false while ROADMAP_GOALS_LIVE is off, the provisional Sunday words, never a verdict, ticks through /tasks/complete",
+    /## GET \/quests: the main quest, its sprint and Today's three/.test(doc) &&
+      /its week quests are \*\*this week's sprint\*\*/.test(doc.replace(/\s+/g, " ")) &&
+      /\*\*Start and every plan edit stay on the web\*\*: the app never starts a milestone/.test(doc.replace(/\s+/g, " ")) &&
+      /`startOnWeb` is false while the switch is off/.test(doc.replace(/\s+/g, " ")) &&
+      doc.includes(SPRINT_PROVISIONAL_LINE) &&
+      /It is never a verdict/.test(doc.replace(/\s+/g, " ")) &&
+      /ticked with `POST \/tasks\/complete`/.test(doc.replace(/\s+/g, " ")) &&
+      /It writes nothing and owes nothing after the reply/.test(doc.replace(/\s+/g, " "))
+  );
+  // The P15 review: which goal is the main quest, the rows' real order, a row's done, and the title's provenance.
+  check(
+    "/quests in the doc (the P15 review): the main quest is the lowest seat whose milestone is under way, else the lowest open seat; rows in Today's order (not the roadmap's); a row's done is the server's (a session ticked today is not); titleNote and titleStruck; no sprint line past due",
+    /the lowest seat whose milestone is under way, else the lowest open seat/.test(doc.replace(/\s+/g, " ")) &&
+      /`rows` come in Today's order, not the roadmap page's: open rows first, then by kind \(Bring, Add, Step, Practice, Checkpoint\)/.test(doc.replace(/\s+/g, " ")) &&
+      !/`rows` keep the roadmap's order/.test(doc.replace(/\s+/g, " ")) &&
+      /A row's `done` is the server's: the week's count for it is met \(a session ticked today is not a row done\)/.test(doc.replace(/\s+/g, " ")) &&
+      /"titleNote": "Gemini suggestion · not checked" \| null, "titleStruck": \[\[0, 2\]\]/.test(doc) &&
+      /`titleNote` is Gemini's words for a title Gemini wrote/.test(doc.replace(/\s+/g, " ")) &&
+      /`PAST_DUE` \(the milestone is past its day: Today's card shows no sprint line then\) have no rows/.test(doc.replace(/\s+/g, " ")) &&
+      /`loadMainQuestCard`, `loadMainQuestWeek`, `loadMomentum`/.test(doc)
   );
   check("/log's undo may be null (a weigh-in with nothing to take back)", /"undo": \{ "kind": "task" \| "weight" \| "draft", "id": "…" \} \| null/.test(doc) && /`undo` is null for a weigh-in/.test(doc));
 

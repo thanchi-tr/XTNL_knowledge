@@ -102,7 +102,7 @@ import "./_no-model";
  * Cases that exercise another lane's real code (R1's readings, lane L's
  * prepareRoadmapGoalClose) go green at integration in those lanes' checks.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { addDays, daysBetween, todayKey, weekStartKeyOf, type DayKey } from "../src/lib/life-day";
 import { statedForMilestone } from "../src/lib/roadmap-economy";
@@ -2165,6 +2165,81 @@ async function main() {
     check("'Finish starting' on a started milestone answers with its goal and writes nothing new", fin.ok && w.templates.filter((t) => t.kind === "GOAL").length === 1 && w.t.questWeeks.length === 1);
     const two = await S.startMilestoneCore(USER, m2.id, START_ALL, NOW, depsFor(w));
     check("another milestone can't start while one is open", !two.ok, json(two));
+  }
+  {
+    // Blueprint P14 (D10): the Start gate as a server reads it when no check sets goalsLive: roadmapGoalsLive(env), the
+    // code value (ROADMAP_GOALS_LIVE, false) unless XTNL_ROADMAP_GOALS_LIVE overrides it outside production (the local
+    // rehearsal). An existing ACTIVE plan stays START_LATER while it is off, and reading the plan with it on starts nothing.
+    const w = world();
+    const id = await accepted(w);
+    const [m1] = rowsOf(w, id, 1);
+    const gateFrom = (env: Record<string, string>) => depsFor(w, { goalsLive: undefined, env });
+    const shipped = gateFrom({ XTNL_LIFE_JUDGE: "1" });
+    const refusedAsShipped = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, shipped);
+    eq("P14: with no override Start refuses (ROADMAP_GOALS_LIVE is false in code)", refusedAsShipped.ok ? "ok" : refusedAsShipped.error, S.GATE_OFF);
+    const viewShipped = await S.loadRoadmapView(USER, NOW, shipped);
+    const sheetShipped = await S.startPreview(USER, m1.id, NOW, shipped);
+    check(
+      "P14: …the plan's view and the Start sheet say Start is not live (the hero's START_LATER line, never a Start button)",
+      viewShipped.goalsLive === false && sheetShipped?.goalsLive === false && sheetShipped.canStart === false,
+      json([viewShipped.goalsLive, sheetShipped?.refusal])
+    );
+    const prod = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, gateFrom({ NODE_ENV: "production", XTNL_ROADMAP_GOALS_LIVE: "1" }));
+    eq("P14: production ignores XTNL_ROADMAP_GOALS_LIVE (the code value stands)", prod.ok ? "ok" : prod.error, S.GATE_OFF);
+    const rehearsal = gateFrom({ XTNL_LIFE_JUDGE: "1", XTNL_ROADMAP_GOALS_LIVE: "1" });
+    const appliesBefore = w.applies;
+    const tablesBefore = json(w.t);
+    const goalsBefore = w.templates.length;
+    const viewOn = await S.loadRoadmapView(USER, NOW, rehearsal);
+    const sheetOn = await S.startPreview(USER, m1.id, NOW, rehearsal);
+    check("P14: with the rehearsal override the view and the sheet say Start is live, and the milestone can start", viewOn.goalsLive === true && sheetOn?.goalsLive === true && sheetOn.canStart === true, json(sheetOn?.blockers));
+    check(
+      "P14: …reading them writes nothing and starts nothing (no row STARTING or STARTED, no task created): nothing auto-starts on the flip",
+      w.applies === appliesBefore &&
+        json(w.t) === tablesBefore &&
+        w.templates.length === goalsBefore &&
+        rowsOf(w, id, 1).every((m) => m.status !== "STARTING" && m.status !== "STARTED" && m.goalId == null)
+    );
+    const started = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, rehearsal);
+    check("P14: …and Start goes through it (the user's tap)", started.ok && rowsOf(w, id, 1)[0].status === "STARTED", json(started));
+  }
+  {
+    // Blueprint P14: nothing auto-starts on the flip, and the gate has one reader. Start's cores are called only by the
+    // Start sheet's Server Actions (and startMilestoneCore's own finish): no page, loader, cron, settlement or mobile
+    // route calls them. ROADMAP_GOALS_LIVE is read only by roadmap-types' roadmapGoalsLive (comments and strings aside).
+    const srcFilesOf = (dir: string): string[] =>
+      readdirSync(join(process.cwd(), dir), { withFileTypes: true }).flatMap((ent) =>
+        ent.isDirectory() ? srcFilesOf(`${dir}/${ent.name}`) : /\.(ts|tsx)$/.test(ent.name) ? [`${dir}/${ent.name}`] : []
+      );
+    const codeOnly = (src: string) =>
+      src
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/(^|\s)\/\/[^\n]*/g, "$1")
+        .replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g, '""');
+    const files = srcFilesOf("src").map((f) => ({ f, code: codeOnly(readFileSync(join(process.cwd(), f), "utf8")) }));
+    const startCallers = files.filter((x) => /\b(?:startMilestoneCore|finishStartCore)\s*\(/.test(x.code)).map((x) => x.f).sort();
+    eq("P14: only the Start sheet's actions (and roadmap-server itself) call startMilestoneCore or finishStartCore", startCallers, ["src/app/actions/roadmap.ts", "src/lib/roadmap-server.ts"]);
+    const gateReaders = files.filter((x) => /\bROADMAP_GOALS_LIVE\b/.test(x.code)).map((x) => x.f);
+    eq("P14: ROADMAP_GOALS_LIVE is read only through roadmapGoalsLive (roadmap-types)", gateReaders, ["src/lib/roadmap-types.ts"]);
+    check(
+      "P14: roadmap-server's default gate is roadmapGoalsLive(deps.env), and the Ideas page reads roadmapGoalsLive()",
+      /goalsLive: deps\.goalsLive \?\? roadmapGoalsLive\(deps\.env\),/.test(readFileSync(join(process.cwd(), "src/lib/roadmap-server.ts"), "utf8")) &&
+        /goalsLive: roadmapGoalsLive\(\),/.test(readFileSync(join(process.cwd(), "src/app/review/page.tsx"), "utf8"))
+    );
+    // The lead's rehearsal (scripts/roadmap-rehearse.ts) writes, so it runs on the local Docker database only and in no
+    // check chain: its guard runs before Prisma or any core loads (every static import from src is `import type`).
+    const rehearse = readFileSync(join(process.cwd(), "scripts/roadmap-rehearse.ts"), "utf8");
+    check(
+      "P14: the rehearsal refuses a non-local host, any supabase URL and production, sets XTNL_LIFE_JUDGE=1, guards before Prisma loads, and is in no check chain",
+      /const LOCAL_HOSTS = new Set\(\["localhost", "127\.0\.0\.1", "\[::1\]", "::1"\]\);/.test(rehearse) &&
+        /if \(\/supabase\/i\.test\(raw\)\) return /.test(rehearse) &&
+        /if \(!LOCAL_HOSTS\.has\(u\.hostname\.toLowerCase\(\)\)\) return /.test(rehearse) &&
+        /if \(process\.env\.NODE_ENV === "production"\) problems\.push\(/.test(rehearse) &&
+        /process\.env\.XTNL_LIFE_JUDGE = "1";/.test(rehearse) &&
+        !/^import (?!type\b)[^\n]*from "\.\.\/src\//m.test(rehearse) &&
+        /\bguard\(\);\s*M = await loadModules\(\);/.test(rehearse) &&
+        !/roadmap-rehearse/.test(readFileSync(join(process.cwd(), "package.json"), "utf8"))
+    );
   }
   {
     // Decision 50 (fix round, contracts §15.6): no model sizes or explains a plan-born task. Start defers nothing, so

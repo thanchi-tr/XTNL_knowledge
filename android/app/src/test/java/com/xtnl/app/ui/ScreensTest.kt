@@ -75,6 +75,14 @@ class ScreensTest {
     @Test @Config(qualifiers = "w932dp-h704dp-420dpi")
     fun mainSideways() = walk("sideways", reviewToo = false)
 
+    /** P15: the Quest card (the main quest, this week's sprint, Today's three) on the front display's one column. */
+    @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
+    fun questCardFront() = questCard("front")
+
+    /** P15: the Quest card in the main display's second pane. */
+    @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
+    fun questCardMain() = questCard("main")
+
     /** Half open and sideways: the hinge across the middle (1848 px tall window, hinge at 924 px). */
     @Test @Config(qualifiers = "w932dp-h704dp-420dpi")
     fun tabletop() = walk("tabletop", hinge = Hinge(vertical = false, startPx = 924, endPx = 924, halfOpen = true))
@@ -294,6 +302,25 @@ class ScreensTest {
         }
         Thread.sleep(30)
         shadowOf(Looper.getMainLooper()).idle()
+    }
+
+    /** Check with demo data, scrolled until the Quest card is in view (whichever list holds it), then one PNG. */
+    private fun questCard(name: String) {
+        val graph = ApplicationProvider.getApplicationContext<XtnlApp>().graph
+        graph.settings.setDemo(true)
+        graph.settings.setMotion(MotionChoice.STILL)
+        rule.runOnUiThread { rule.activity.actionBar?.hide() }
+        rule.setContent {
+            AppRoot(graph, MutableStateFlow(WindowFacts()), MutableStateFlow<Uri?>(null), {}, WebHolder(), {})
+        }
+        settle()
+        val title = hasText("Trade for a living", substring = true)
+        val lists = rule.onAllNodes(hasScrollAction())
+        for (i in 0 until lists.fetchSemanticsNodes().size) {
+            if (runCatching { scrolling { lists[i].performScrollToNode(title) } }.isSuccess) break
+        }
+        settle()
+        snap("$name-quest-card")
     }
 
     private fun walk(name: String, hinge: Hinge? = null, reviewToo: Boolean = true) {

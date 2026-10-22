@@ -100,6 +100,7 @@ import type { CatalogKey } from "../src/lib/roadmap-catalog";
 import { addDays } from "../src/lib/life-day";
 import { goalPercent } from "../src/lib/goals";
 import * as copy from "../src/components/roadmap/roadmap-copy";
+import { PAST_SPRINTS, SPRINT, SPRINT_PROVISIONAL_LINE, SPRINT_SHORT, pastSprintShareOf, sprintRowCountLine } from "../src/lib/main-quest";
 import * as model from "../src/components/roadmap/roadmap-ui-model";
 import { addCardHref, addPreselectOf, todayTaskHref } from "../src/components/roadmap/roadmap-links";
 import { FIXTURE_STATES, MOTION_NEW_STATES, MOTION_STATES, REV4_STATES, WORD_BUDGET_ROWS, fig, liveShaped, liveShapedAim, roadmapFixture, weekQuestsFixture, type FixtureState } from "../src/app/dev/style/roadmap/fixtures";
@@ -275,8 +276,31 @@ async function main() {
   check("names: no roadmap component source links to /review", roadmapSrc.every((f) => !/["'`]\/review/.test(code(read(f)))));
   check("names: 'Mastered' / 'mastery' never in roadmap copy; ⬡ only via statedPayoutCopy", !/mastery/i.test(code(read("src/components/roadmap/roadmap-copy.ts"))) && !/⬡/.test(code(read("src/components/roadmap/roadmap-copy.ts"))));
   check("names: no 'Ladder', 'Rung', 'Tier', 'Waypoint' or 'Title' word in rendered roadmap copy", visible.every((l) => !/\b(Ladder|Rung|Tier|Waypoint)\b/.test(l)));
-  check("names: the Today card is headed 'Week quests · Milestone 2'", renders.get("active")!.today.includes(">Week quests · Milestone 2<"));
-  check("names: the roadmap page's history is 'Past week quests'", renders.get("active")!.page.includes(">Past week quests<"));
+  // Blueprint P15 (D11, one vocabulary): the week quests are the main quest's sprint ("This week's sprint", short "Sprint").
+  check("names (P15): the Today card is headed 'This week's sprint · Milestone 2'", renders.get("active")!.today.includes(">This week&#x27;s sprint · Milestone 2<"));
+  check("names (P15): the roadmap page's history is 'Past sprints'", renders.get("active")!.page.includes(">Past sprints<"));
+  // P15 (D11): one vocabulary. The headings come from lib/main-quest's words; no rendered roadmap screen still says
+  // "Week quests" or "Past week quests" (a sentence may still call a sprint's rows week quests); the phone's and Today's
+  // count lines are the roadmap rows' own words.
+  check(
+    "names (P15): roadmap-copy's sprint words are lib/main-quest's (SPRINT, SPRINT_SHORT, PAST_SPRINTS), and the Now heading, the Aim card's line and the history use them",
+    copy.weekQuestsHeading(2) === `${SPRINT} · Milestone 2` && copy.SHORT_WEEK_QUESTS === SPRINT_SHORT && copy.SHORT_PAST_SPRINTS === PAST_SPRINTS && SPRINT === "This week's sprint" && SPRINT_SHORT === "Sprint"
+  );
+  const oldHeads = [...renders.values()].flatMap((r) => [r.page, r.today, r.aim]).filter((h) => /(?:>|eyebrow">)\s*(?:Past )?[Ww]eek quests\s*</.test(h ?? ""));
+  check("names (P15): no rendered heading or eyebrow still reads 'Week quests' or 'Past week quests'", oldHeads.length === 0);
+  const countCases: [Parameters<typeof sprintRowCountLine>[0], number, number, Parameters<typeof sprintRowCountLine>[3], boolean][] = [
+    ["ADD", 3, 8, "card", false],
+    ["RAISE", 2.6, 1, "card", false],
+    ["PRACTICE", 1, 3, "session", true],
+    ["STEP", 0, 1, "step", false],
+    ["CHECKPOINT", 0, 1, "log", false],
+    ["CHECKPOINT", 1, 1, "log", true],
+    ["PRACTICE", -1, 2, "day", false],
+  ];
+  check(
+    "names (P15): the sprint's count lines (lib/main-quest sprintRowCountLine, for Today's card and the phone) are the roadmap rows' own (roadmap-copy weekQuestCountLine)",
+    countCases.every(([k, p, t, u, d]) => sprintRowCountLine(k, p, t, u, d) === copy.weekQuestCountLine(k, p, t, u, d))
+  );
 
   // "Aim rank" precedes a rank name; Proficiency always with its parts.
   for (const s of ["active", "behind", "body-practice", "done"] as const) {
@@ -292,7 +316,7 @@ async function main() {
   const activeFx = roadmapFixture("active");
   const headPct = goalPercent(Number(activeFx.aim!.milestone!.headline!.value));
   check("aim card: the milestone headline equals goalPercent(min(parts)) of the stored figure", renders.get("active")!.aim.includes(`${headPct}% · tested by your reviews · on pace for 7 Mar`), String(headPct));
-  check("aim card: the quests line 'Week quests · 1 of 5 done · Today' links to /today", /href="\/today"[^>]*>[\s\S]*?Week quests[\s\S]*?1 of 5 done · Today/.test(renders.get("active")!.aim));
+  check("aim card (P15): the sprint line 'Sprint · 1 of 5 done · Today' links to /today", /href="\/today"[^>]*>[\s\S]*?Sprint[\s\S]*?1 of 5 done · Today/.test(renders.get("active")!.aim));
   check("aim card (past-due): the close-or-reschedule line in ink", renders.get("past-due")!.aim.includes("Milestone 2 was due Sun 7 Mar — close or reschedule it"));
   check("aim card (done): 'Aim reached Sun 18 Apr' and the final rank", renders.get("done")!.aim.includes("Aim reached Sun 18 Apr") && renders.get("done")!.aim.includes(">Specialist<"));
   check("aim card (running): static 'Drafting your roadmap…' with Open", renders.get("running")!.aim.includes("Drafting your roadmap…") && renders.get("running")!.aim.includes(">Open<"));
@@ -481,23 +505,64 @@ async function main() {
   const todayHtml = renders.get("active")!.today;
   check("today: the toggle is a 40 px button with aria-expanded, reading '2 more'", /<button[^>]*class="rm-quest-more"[^>]*aria-expanded="false"[^>]*>[\s\S]*?2 more<\/button>/.test(todayHtml));
   check("today: the evidence legend", todayHtml.includes("Bring: tested by your reviews · Add: counted by the app · sessions and steps: your ticks"));
-  check("today: the per-kind footer", todayHtml.includes("Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; new cards count once they reach level 6+."));
+  check("today: the per-kind footer", todayHtml.includes("The sprint pays nothing. Bring, session and step rows count toward Milestone 2 as you do them; new cards count once they reach level 6+."));
   check("today: 'until Sun' links to the roadmap's Now", /href="\/you\/roadmap#now"[^>]*>until Sun</.test(todayHtml));
   check("today: RAISE links to /you/roadmap#now, ADD to /add?field=&domain=", /<a class="rm-quest-row" aria-label="Bring 3 cards[^"]*" href="\/you\/roadmap#now"/.test(todayHtml) && /<a class="rm-quest-row" aria-label="Add 5 cards[^"]*" href="\/add\?field=f-tr&amp;domain=d-rm"/.test(todayHtml));
   check("today: a STEP row is a seek button, never a '#t-' link, never data-template-id", /<button type="button" class="rm-quest-line"[^>]*aria-label="Step: Set a maximum daily loss/.test(todayHtml) && !/href="#t-/.test(todayHtml) && !/data-template-id/.test(todayHtml));
   check("today: accessible names name the count, its unit and the evidence", todayHtml.includes('aria-label="Add 5 cards to Risk Management or Position Sizing, 2 of 5 cards added, counted by the app; it doesn&#x27;t judge them"'));
   check("today: a thin Meter, never a SegmentStrip", todayHtml.includes('class="meter thin"') && !todayHtml.includes('class="segs'));
   check("today: never red (no owed, no danger)", !/owed|danger|btn-danger/.test(todayHtml));
-  check("today: the compact line is present for the evening wrapper", todayHtml.includes("rm-quests-compact") && /Week quests · Milestone 2<\/b><span class="rm-q-n">1 of 5 done/.test(todayHtml));
+  check("today: the compact line is present for the evening wrapper", todayHtml.includes("rm-quests-compact") && /This week&#x27;s sprint · Milestone 2<\/b><span class="rm-q-n">1 of 5 done/.test(todayHtml));
   const allDone = weekQuestsFixture({}, wq.rows.map((r) => ({ ...r, done: true, figure: fig(r.count, r.figure.caption, r.kind === "RAISE" ? "MEASURED" : r.kind === "ADD" ? "RECORDED" : "SELF") })));
   const allDoneHtml = R(createElement(WeekQuests, { variant: "today", view: allDone }));
-  check("today: all done collapses to one line 'Week quests · Milestone 2 · all 5 done'", /Week quests · Milestone 2<\/b><span class="rm-q-n">all 5 done/.test(allDoneHtml) && !allDoneHtml.includes("rm-quest-legend"));
+  check("today: all done collapses to one line 'This week's sprint · Milestone 2 · all 5 done'", /This week&#x27;s sprint · Milestone 2<\/b><span class="rm-q-n">all 5 done/.test(allDoneHtml) && !allDoneHtml.includes("rm-quest-legend"));
   const offHtml = R(createElement(WeekQuests, { variant: "today", view: { ...wq, writesOff: true, frozen: false } }));
   check("today: writes off adds 'not recorded on this server' to the aside of a set computed here", offHtml.includes("until Sun · not recorded on this server"));
   const frozenOffHtml = R(createElement(WeekQuests, { variant: "today", view: { ...wq, writesOff: true, frozen: true } }));
   check("today: a set the live app froze reads as its stored record, even with writes off", frozenOffHtml.includes(">until Sun<") && !frozenOffHtml.includes("not recorded on this server"));
+  // The P15 review (D12, one provisional/final model): every surface says the same thing about the same week on the same
+  // day. On the sprint's Sunday the review hub's card, its summary and the roadmap's sprint heading say "provisional ·
+  // final Wed 04:00", as Today's Main quest card and the review do; past it, a week not yet written reads "provisional"
+  // until its Wednesday 04:00 and "still settling" after it, as the review's Sprint step reads it.
+  const wqSun = addDays(wq.weekStart, 6);
+  const sunToday = R(createElement(WeekQuests, { variant: "today", view: wq, today: wqSun }));
+  const satToday = R(createElement(WeekQuests, { variant: "today", view: wq, today: addDays(wq.weekStart, 5) }));
+  const sunNow = R(createElement(WeekQuests, { variant: "roadmap", view: wq, today: wqSun }));
+  const satNow = R(createElement(WeekQuests, { variant: "roadmap", view: wq, today: addDays(wq.weekStart, 5) }));
+  check(
+    "today and Now (P15 review, D12): on the sprint's Sunday the hub's summary line and the roadmap's sprint heading carry 'provisional · final Wed 04:00' (its own wrapping row; the chevron stays the line's last child); Saturday, and without a day, nothing",
+    sunToday.includes(`<span class="rm-q-n">1 of 5 done</span><span class="rm-q-w">${SPRINT_PROVISIONAL_LINE}</span><svg`) &&
+      !satToday.includes("provisional") &&
+      !R(createElement(WeekQuests, { variant: "today", view: wq })).includes("provisional") &&
+      sunNow.includes(`<span class="rm-cap">until Sun · ${SPRINT_PROVISIONAL_LINE}</span>`) &&
+      R(createElement(WeekQuests, { variant: "roadmap", view: wq, today: wqSun, fold: { open: false, onToggle: () => {} } })).includes(`<span class="sr-only">${SPRINT_SHORT}: 1 of 5 done · ${SPRINT_PROVISIONAL_LINE}</span>`) &&
+      satNow.includes('<span class="rm-cap">until Sun</span>') &&
+      !satNow.includes("provisional") &&
+      /\.rm-quest-one \.rm-q-w \{ grid-row: 2; grid-column: 2 \/ 4;[^}]*overflow-wrap: anywhere; \}/.test(read("src/components/roadmap/roadmap.css"))
+  );
+  check(
+    "copy (P15 review, D12): weekQuestsSummary carries the week's words; sprintWordsOf is main-quest's sprintShareOf (Sunday provisional, mid-week nothing)",
+    copy.weekQuestsSummary(2, 1, 5, SPRINT_PROVISIONAL_LINE) === `${SPRINT} · Milestone 2 · 1 of 5 done · ${SPRINT_PROVISIONAL_LINE}` &&
+      copy.weekQuestsSummary(2, 1, 5) === `${SPRINT} · Milestone 2 · 1 of 5 done` &&
+      copy.sprintWordsOf(wq.weekStart, wqSun) === SPRINT_PROVISIONAL_LINE &&
+      copy.sprintWordsOf(wq.weekStart, addDays(wq.weekStart, 2)) === null &&
+      copy.sprintWordsOf(wq.weekStart, null) === null
+  );
+  const unwritten = { weekStart: wq.weekStart, settled: false, done: 0, total: 0, capped: false, heldDays: 0 };
+  const unwrittenLines = [copy.pastWeekLine(unwritten, addDays(wqSun, 1))[1], copy.pastWeekLine(unwritten, addDays(wqSun, 2))[1], copy.pastWeekLine(unwritten, addDays(wqSun, 3))[1], copy.pastWeekLine(unwritten)[1]];
+  check(
+    "past sprints (P15 review, D12): a week not yet written reads the review's words: 'provisional · final Wed 04:00' Monday and Tuesday after it, 'still settling' from its Wednesday 04:00, and as before without a day",
+    JSON.stringify(unwrittenLines) === JSON.stringify([SPRINT_PROVISIONAL_LINE, SPRINT_PROVISIONAL_LINE, "still settling", "still settling"]),
+    JSON.stringify(unwrittenLines)
+  );
+  check(
+    "past sprints (P15 review): the roadmap page and the review read one model (roadmap-copy pastWeekLine over lib/main-quest pastSprintShareOf)",
+    [addDays(wqSun, 1), addDays(wqSun, 3)].every((d) => copy.pastWeekLine(unwritten, d)[1] === pastSprintShareOf(unwritten, d).line) &&
+      /pastSprintShareOf\(w, today\)\.line/.test(code(read("src/components/roadmap/roadmap-copy.ts"))) &&
+      /<WeekQuests variant="today" view=\{quests\} today=\{today\} \/>/.test(code(read("src/app/review/IdeasLead.tsx")))
+  );
   const bodyToday = renders.get("body-practice")!.today;
-  check("today: a practice-only plan names only its kinds ('Sessions: your ticks')", bodyToday.includes("Sessions: your ticks") && bodyToday.includes("Week quests pay nothing. Session rows count toward Milestone 2 as you do them."));
+  check("today: a practice-only plan names only its kinds ('Sessions: your ticks')", bodyToday.includes("Sessions: your ticks") && bodyToday.includes("The sprint pays nothing. Session rows count toward Milestone 2 as you do them."));
   check("today: a PRACTICE row reads 'Backtest · 1 of 3 sessions · in Habits'", textOf(renders.get("active")!.today.replace(/<button type="button" class="rm-quest-more[\s\S]*?<\/button>/, "")).length > 0 && /Backtest<span class="rm-q-dim"> · 1 of 3 sessions · in Habits/.test(R(createElement(WeekQuests, { variant: "today", view: { ...wq, rows: wq.rows.filter((r) => r.kind === "PRACTICE") } }))));
   for (const state of ["HELD", "PAST_DUE"] as const) {
     check(`today: absent for a ${state} week`, !weekQuestsShowOnToday({ ...wq, state }) && R(createElement(WeekQuests, { variant: "today", view: { ...wq, state } })) === "");
@@ -4358,11 +4423,11 @@ async function main() {
     // ── The Aim card's line: PromiseRing "2/5 Week quests →" ──
     const aimLineHtml = R(createElement(wqm.WeekQuestsLine, { done: 1, total: 5 }));
     check(
-      "R1 week quests (§3.3 s9): the Aim card's line is a PromiseRing, '1/5' and 'Week quests' (2 app words), read as '1 of 5 done · Today', to /today",
+      "R1 week quests (§3.3 s9; P15): the Aim card's line is a PromiseRing, '1/5' and 'Sprint' (1 app word), read as '1 of 5 done · Today', to /today",
       /^<a class="rm-quest-one rm-wq-line" href="\/today">/.test(aimLineHtml) &&
         /<span class="rm-wq-ring" aria-hidden="true"><div class="pring/.test(aimLineHtml) &&
-        JSON.stringify(wc1.countAppWords(aimLineHtml, { width: 344 }).tokens.map((t: { text: string }) => t.text)) === JSON.stringify(["1/5", "Week", "quests"]) &&
-        words1(aimLineHtml) === 2 &&
+        JSON.stringify(wc1.countAppWords(aimLineHtml, { width: 344 }).tokens.map((t: { text: string }) => t.text)) === JSON.stringify(["1/5", "Sprint"]) &&
+        words1(aimLineHtml) === 1 &&
         aimLineHtml.includes('<span class="sr-only">1 of 5 done · Today</span>') &&
         R(createElement(wqm.WeekQuestsLine, { done: 5, total: 5 })).includes("all 5 done · Today"),
       visible1(aimLineHtml)
@@ -4412,8 +4477,8 @@ async function main() {
       visible1(nowAct).includes(copy.SHORT_PAYS_NOTHING) && nowPays != null && nowPaysPanel != null && text1(nowPaysPanel).includes(copy.weekQuestsFooter(model.weekQuestKindsOf(act1.view!.weekQuests!), 2, 6)) && text1(nowPaysPanel).includes("fixed for the week")
     );
     check(
-      "R1 Now: 'Week quests · until Sun' on the sub-head (the window and 'fixed for the week' in the chip's panel); the basis sheet behind a 40 px button named 'How these were set'",
-      /<span class="t-eyebrow">Week quests<\/span><span class="rm-cap">until Sun<\/span>/.test(nowAct) && !visible1(nowAct).includes("fixed for the week") && /<button[^>]*class="icon-btn mg-gb mg-gb-40 rm-wq-basis"[^>]*aria-label="How these were set"/.test(nowAct)
+      "R1 Now (P15): 'Sprint · until Sun' on the sub-head (the window and 'fixed for the week' in the chip's panel); the basis sheet behind a 40 px button named 'How these were set'",
+      /<span class="t-eyebrow">Sprint<\/span><span class="rm-cap">until Sun<\/span>/.test(nowAct) && !visible1(nowAct).includes("fixed for the week") && /<button[^>]*class="icon-btn mg-gb mg-gb-40 rm-wq-basis"[^>]*aria-label="How these were set"/.test(nowAct)
     );
     const liveNow = R(createElement(WeekQuests, { variant: "roadmap", view: { ...act1.view!.weekQuests!, writesOff: true, frozen: false } }));
     check("R1 Now (§4.6): a set computed here and recorded nowhere shows «not recorded here», opening 'not recorded on this server'", visible1(liveNow).includes(copy.SHORT_NOT_RECORDED) && /data-hc-panel="not-recorded"[^>]*>[\s\S]*?not recorded on this server/.test(liveNow) && !visible1(nowAct).includes(copy.SHORT_NOT_RECORDED));
@@ -4859,7 +4924,7 @@ async function main() {
         page("active").includes("holding"),
       measOpened.slice(0, 160)
     );
-    check("R3 past weeks: one ▸ over a static five-week strip (aria-hidden), every week's line inside", /<details class="rm-past-d"><summary class="rm-past-s"><span class="t-eyebrow">Past week quests<\/span><span class="rm-pw" aria-hidden="true">/.test(page("active")) && !vis("active").includes("Week of 18 Jan"));
+    check("R3 past weeks: one ▸ over a static five-week strip (aria-hidden), every week's line inside", /<details class="rm-past-d"><summary class="rm-past-s"><span class="t-eyebrow">Past sprints<\/span><span class="rm-pw" aria-hidden="true">/.test(page("active")) && !vis("active").includes("Week of 18 Jan"));
     check("R3 Toward (C2-m5): '39 sessions «context only»' with no ≈ on the tick count; the judge chip opens the full line", /39 sessions/.test(n3(vis("active"))) && !wc3.visibleText(blockOf("active", "toward"), { width: 344 }).includes("≈") && vis("active").includes(copy.SHORT_JUDGE) && !vis("active").includes("is yours to judge."));
   }
   // ===== /R3 =====

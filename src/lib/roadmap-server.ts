@@ -320,7 +320,6 @@ import {
   RAW_LABEL_MAX,
   REACH_CONFIRM_DAYS,
   ROADMAP_DRAFTS_PER_DAY,
-  ROADMAP_GOALS_LIVE,
   ROADMAP_GEMINI_LIVE,
   GEMINI_DRAFTING_OFF,
   ROADMAP_MODEL,
@@ -385,6 +384,7 @@ import {
   practiceMinutesPerWeekOf,
   proficiencyKey,
   provenanceOf,
+  roadmapGoalsLive,
   rowsWriterOf,
   runWriterOf,
   startStatedInputOf,
@@ -1219,7 +1219,10 @@ export interface RoadmapDeps extends RoadmapWriteOpts {
   clock?: () => Date;
   /** Mints row ids (crypto.randomUUID by default). */
   makeId?: () => string;
-  /** The Start gate; ROADMAP_GOALS_LIVE unless a check sets it. */
+  /**
+   * The Start gate, as a check sets it; absent, roadmapGoalsLive(env): ROADMAP_GOALS_LIVE, or outside production
+   * XTNL_ROADMAP_GOALS_LIVE (the local rehearsal, blueprint P14). Production never passes it.
+   */
   goalsLive?: boolean;
   /** The Gemini drafting gate; ROADMAP_GEMINI_LIVE unless a check sets it. */
   geminiLive?: boolean;
@@ -2046,7 +2049,7 @@ function envOf(deps: RoadmapDeps): Env {
     lanes: { ...LANES, ...(deps.lanes ?? {}) },
     makeId: deps.makeId ?? (() => globalThis.crypto.randomUUID()),
     defer: deps.defer ?? deferNow,
-    goalsLive: deps.goalsLive ?? ROADMAP_GOALS_LIVE,
+    goalsLive: deps.goalsLive ?? roadmapGoalsLive(deps.env),
     env: deps.env,
     goals,
   };
@@ -8059,7 +8062,7 @@ async function proficiencyFor(
  * The refusals, then the claim (PLANNED → STARTING, the sheet's decisions,
  * final targets and high-water baselines, switched-off practices removed),
  * then the rows by captureKey through tasks.ts createTemplateCore with
- * `link`, then finishStartCore. Refuses while ROADMAP_GOALS_LIVE is false.
+ * `link`, then finishStartCore. Refuses while the Start gate is off (roadmapGoalsLive: ROADMAP_GOALS_LIVE, false in code).
  */
 export async function startMilestoneCore(userId: string, milestoneId: string, choices: StartChoices, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ goalId: string }>> {
   return pointedRefusal(deps, userId, { ref: milestoneId }, await startMilestoneUnpointed(userId, milestoneId, choices, now, deps));

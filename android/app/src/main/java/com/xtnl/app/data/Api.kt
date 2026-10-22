@@ -38,4 +38,6 @@ interface XtnlApi {
     suspend fun logUndo(undo: JsonObject, clientId: String): Outcome<Unit>
     suspend fun ideasMeta(): Outcome<IdeasMeta>
     suspend fun createIdea(body: JsonObject): Outcome<IdeaResult>
+    /** The main quest, this week's sprint and Today's three (read only; blueprint P15). */
+    suspend fun quests(): Outcome<QuestsData>
 }

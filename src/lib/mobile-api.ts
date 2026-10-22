@@ -46,6 +46,9 @@ import type { CapturedItem, CapturedWeight } from "../app/actions/capture";
 import type { SubmitReviewResult } from "../app/actions/review";
 import type { SubmitIdeaResult } from "../app/actions/ideas";
 import type { ReviewDay } from "../app/review/review-data";
+import type { MomentumView } from "./momentum-server";
+import { SPRINT, type MainQuest } from "./main-quest";
+import { geminiWordsOf } from "../components/roadmap/roadmap-copy";
 
 // ── The endpoints ───────────────────────────────────────────────────────────
 
@@ -66,6 +69,7 @@ export const MOBILE_ENDPOINTS: readonly { method: MobileMethod; path: string }[]
   { method: "POST", path: "/log/undo" },
   { method: "GET", path: "/ideas/meta" },
   { method: "POST", path: "/ideas" },
+  { method: "GET", path: "/quests" },
 ];
 
 // ── The token ───────────────────────────────────────────────────────────────
@@ -591,6 +595,68 @@ export function levelOf(shell: { character: { level: number | null; progress: nu
 export function streakOf(s: { current: number; last7Days: readonly boolean[]; bankedFreezes: number } | null): { days: number; keptToday: boolean; freezes: number } | null {
   if (!s) return null;
   return { days: s.current, keptToday: s.last7Days[s.last7Days.length - 1] === true, freezes: s.bankedFreezes };
+}
+
+// ── GET /quests ─────────────────────────────────────────────────────────────
+
+/**
+ * The main quest as the phone shows it (blueprint 2.1 and 2.2; decisions D11 and D12), from lib/main-quest's model, the
+ * one Today's Main quest card reads: its words, its milestone and one line, and `startOnWeb` (Start lives on the web
+ * and is offered only while ROADMAP_GOALS_LIVE is on, so it is false while the switch is off). Read only: the app has
+ * no Start and no plan edit. The milestone's title keeps its provenance (contracts §22.11): `titleNote` is Gemini's
+ * words for a Gemini title ("Gemini suggestion · not checked"; null for the user's or the app's) and `titleStruck` its
+ * NUMBER spans, struck through as the web strikes them, never rewritten.
+ */
+export function questsMainOf(q: MainQuest) {
+  const m = q.milestone;
+  return {
+    state: q.state,
+    title: q.title,
+    line: q.line,
+    milestone: m
+      ? { ord: m.ord, of: m.of, title: m.title, titleNote: geminiWordsOf(m.titleClass), titleStruck: m.titleStruck, status: m.status, percent: m.percent, dueDay: m.dueDay }
+      : null,
+    startOnWeb: q.startable,
+    suggest: q.suggest,
+  };
+}
+
+/**
+ * This week's sprint, when the main quest's started milestone has one: its count, when the numbers are from (`live`
+ * while the week runs, `provisional` on its Sunday: "provisional · final Wed 04:00"; never a verdict, D12) and its rows,
+ * each with its count line and, for a practice or a step, the Today task a tick goes to (POST /tasks/complete).
+ */
+export function questsSprintOf(q: MainQuest) {
+  const s = q.sprint;
+  if (!s) return null;
+  return {
+    label: SPRINT,
+    milestoneOrd: s.milestoneOrd,
+    weekStart: s.weekStart,
+    weekEnd: s.weekEnd,
+    state: s.state,
+    done: s.done,
+    total: s.total,
+    status: s.share.status,
+    line: s.share.line,
+    rows: s.rows.map((r) => ({ kind: r.kind, label: r.label, countLine: r.countLine, count: r.count, progress: r.progress, unit: r.unit, done: r.done, templateId: r.templateId })),
+  };
+}
+
+/**
+ * Today's three (momentum's daily set, the web's MomentumCard pips), read only: each quest's slot, its words, whether
+ * it is done (derived from the day's own rows, so an undone tick reopens it) and, for a task quest, the template a tick
+ * goes to (POST /tasks/complete). Null before momentum's launch or when it couldn't be read.
+ */
+export function questsThreeOf(m: MomentumView | null) {
+  if (!m || !m.live) return null;
+  return {
+    done: m.done,
+    total: m.quests.length,
+    frozen: m.frozen,
+    chest: m.chest.state,
+    quests: m.quests.map((v) => ({ slot: v.slot, title: v.quest.title, done: v.done, templateId: v.quest.kind === "TEMPLATE" ? v.quest.templateId : null })),
+  };
 }
 
 // ── POST /tasks/complete ────────────────────────────────────────────────────

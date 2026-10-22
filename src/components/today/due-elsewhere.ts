@@ -7,8 +7,11 @@
  * (docs/life-plan/ui-motion.md: glyph + figure + a short unit word, the long
  * form a spoken twin, at most ~12 app words at 344 px):
  *
- *   Ideas   [study] 12 reviews · [flag] 1 quest · [sword] boss   → /review
- *   Body    [train] weigh-in                                      → /train
+ *   Ideas   [study] 12 reviews · [flag] sprint 1 left · [sword] boss   → /review
+ *   Body    [train] weigh-in                                             → /train
+ *
+ * The roadmap's open rows are the main quest's sprint (blueprint P15, D11: one vocabulary), so the strip says
+ * "sprint 2 left" ("2 left in this week's sprint"), the words the Main quest card beside it uses, never "quests".
  *
  * Read only from what the page already loads (the board's due count, this
  * week's roadmap quests, the ready encounters, the Body section's day). A
@@ -18,13 +21,17 @@
  * Pure: no React, no clock, no database (scripts/today-ui-check.ts runs it).
  */
 
+import { SPRINT, SPRINT_SHORT } from "@/lib/main-quest";
+
 export const IDEAS_HREF = "/review";
 export const BODY_HREF = "/train";
+/** The sprint's word in the strip ("sprint 2 left"): main-quest's SPRINT_SHORT, lower case in a line. */
+export const SPRINT_WORD = SPRINT_SHORT.toLowerCase();
 
 export interface ElsewhereInput {
   /** Cards due now (BoardData.dueNow; null when the queue was not read). */
   reviewsDue: number | null;
-  /** This life week's roadmap quests still open (an OPEN week, rows not done); 0 without one. */
+  /** This life week's sprint rows still open (an OPEN week, rows not done); 0 without one. */
   questsOpen: number;
   /** Encounters ready to start (on the Ideas landing, where they are started). */
   bossesReady: number;
@@ -36,6 +43,8 @@ export type ElsewhereKind = "reviews" | "quests" | "bosses" | "weigh-in";
 
 export interface ElsewhereItem {
   kind: ElsewhereKind;
+  /** A short word drawn before the figure ("sprint" in "sprint 2 left"); absent for the rest. */
+  lead?: string;
   /** The figure drawn beside the glyph; null when the word alone says it ("boss", "weigh-in"). */
   n: number | null;
   /** The short visible word after the figure. */
@@ -50,7 +59,7 @@ export interface ElsewhereRow {
   /** The section's name, the row's one destination word. */
   label: "Ideas" | "Body";
   items: ElsewhereItem[];
-  /** The link's accessible name: "Ideas: 12 reviews due, 1 roadmap quest open this week, 1 boss ready". */
+  /** The link's accessible name: "Ideas: 12 reviews due, 1 left in this week's sprint, 1 boss ready". */
   said: string;
 }
 
@@ -64,7 +73,7 @@ export function dueElsewhereOf(input: ElsewhereInput): ElsewhereRow[] {
   const reviews = count(input.reviewsDue);
   if (reviews > 0) ideas.push({ kind: "reviews", n: reviews, word: plural(reviews, "review", "reviews"), said: `${reviews} ${plural(reviews, "review", "reviews")} due` });
   const quests = count(input.questsOpen);
-  if (quests > 0) ideas.push({ kind: "quests", n: quests, word: plural(quests, "quest", "quests"), said: `${quests} roadmap ${plural(quests, "quest", "quests")} open this week` });
+  if (quests > 0) ideas.push({ kind: "quests", lead: SPRINT_WORD, n: quests, word: "left", said: `${quests} left in ${SPRINT.charAt(0).toLowerCase()}${SPRINT.slice(1)}` });
   const bosses = count(input.bossesReady);
   if (bosses > 0)
     ideas.push({ kind: "bosses", n: bosses > 1 ? bosses : null, word: plural(bosses, "boss", "bosses"), said: `${bosses} ${plural(bosses, "boss", "bosses")} ready` });
@@ -85,7 +94,7 @@ export function weighInDueOf(view: { loggedToday: boolean; latest: unknown; goal
   return !view.loggedToday && (view.latest != null || view.goal.targetKg != null);
 }
 
-/** This week's roadmap quests still open: an OPEN week's rows not done (the page passes weekQuestsShownOnToday's view only). */
+/** This week's sprint rows still open: an OPEN week's rows not done (the page passes weekQuestsShownOnToday's view only). */
 export function questsOpenOf(view: { total: number; done: number } | null | undefined): number {
   if (!view) return 0;
   return Math.max(0, count(view.total) - count(view.done));

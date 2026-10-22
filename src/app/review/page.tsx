@@ -18,7 +18,7 @@ import { DEBUFF_META } from "@/lib/debuff-meta";
 import { MASTERY_LEVEL } from "@/lib/xp";
 import { questTargetOf } from "@/lib/review-facts";
 // Revision 5, lane 9 (contracts ruling 67): the Gemini mark on a Domain Gemini named
-import { AIM_PROMPT_COOKIE, ROADMAP_GOALS_LIVE, geminiNamedOf } from "@/lib/roadmap-types";
+import { AIM_PROMPT_COOKIE, geminiNamedOf, roadmapGoalsLive } from "@/lib/roadmap-types";
 import { weekQuestsShownOnToday } from "@/lib/today-board";
 import { freezeWeekQuests, loadWeekQuests } from "@/lib/roadmap-quests-server";
 import { loadAimStep } from "@/lib/roadmap-server";
@@ -139,7 +139,8 @@ export default async function ReviewPage() {
     cookie: aimCookie,
     stepCookie: jar.get(AIM_STEP_COOKIE)?.value,
     today,
-    goalsLive: ROADMAP_GOALS_LIVE,
+    // The Start gate in force (ROADMAP_GOALS_LIVE; outside production the rehearsal's XTNL_ROADMAP_GOALS_LIVE).
+    goalsLive: roadmapGoalsLive(),
   });
   const weekQuests = quests && weekQuestsShownOnToday(quests.view) ? quests.view : null;
   const noAim = aimStep != null && aimStep.open == null && !((aimStep.openCount ?? 0) > 0);
@@ -149,6 +150,7 @@ export default async function ReviewPage() {
       aimLine={weekQuests ? null : aimLine}
       noAim={noAim}
       bossesReady={bosses.filter((b) => b.availability.status === "ready").map((b) => b.archetype.name)}
+      today={today}
     />
   );
 

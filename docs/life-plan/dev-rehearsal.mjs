@@ -8,6 +8,9 @@
 // nothing until the launch has been applied to this database once:
 //   DATABASE_URL=<LOCAL> DIRECT_URL=<LOCAL> XTNL_LIFE_LAUNCH_DAY=2026-09-21 //     npx tsx scripts/life-launch.ts            (dry run), then  --apply
 // Set XTNL_LIFE_LAUNCH_DAY= (empty) in the shell to rehearse the not-launched state.
+// Blueprint P14: set XTNL_ROADMAP_GOALS_LIVE=1 in the shell to see the roadmap's Start button on this server
+// (roadmap-types roadmapGoalsLive; ROADMAP_GOALS_LIVE stays false in code). scripts/roadmap-rehearse.ts runs the
+// Start path end to end against this same database.
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";

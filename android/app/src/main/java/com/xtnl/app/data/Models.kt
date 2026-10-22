@@ -174,6 +174,92 @@ data class LevelInfo(val level: Int = 1, val title: String? = null, val progress
 @Serializable
 data class StreakInfo(val days: Int = 0, val keptToday: Boolean = false, val freezes: Int = 0)
 
+// ── GET /quests (blueprint P15) ─────────────────────────────────────────────
+
+/**
+ * The main quest, this week's sprint and Today's three (docs/mobile-api.md `GET /quests`; decisions D11, D12), read
+ * only. One vocabulary: the roadmap goal is the main quest, its stages milestones, its week quests this week's
+ * sprint. Start and plan edits stay on the web; a practice row or a task quest is ticked like any task.
+ */
+@Serializable
+data class QuestsData(
+    val now: String? = null,
+    val day: String? = null,
+    /** Null when the server couldn't read it. */
+    val mainQuest: MainQuest? = null,
+    /** This week's sprint of the main quest's started milestone; null with none. */
+    val sprint: Sprint? = null,
+    /** Today's three (momentum); null before its launch or when unread. */
+    val three: TodaysThree? = null,
+)
+
+/** [state]: NONE | DRAFT | PLANNED | ACTIVE | PAST_DUE | PAUSED | DONE | LEGACY. [startOnWeb] is false while ROADMAP_GOALS_LIVE is off. */
+@Serializable
+data class MainQuest(
+    val state: String = "NONE",
+    val title: String? = null,
+    val line: String = "",
+    val milestone: QuestMilestone? = null,
+    val startOnWeb: Boolean = false,
+    /** The aim suggestions are on: an empty quest may say so quietly. */
+    val suggest: Boolean = true,
+)
+
+/**
+ * The main quest's current milestone. Its title keeps its provenance, as on the web (contracts §22.11): [titleNote] is
+ * Gemini's words for a title Gemini wrote ("Gemini suggestion · not checked"; null for the user's own or the app's), and
+ * [titleStruck] the `[start, end)` spans of [title]'s numbers, struck through, never rewritten.
+ */
+@Serializable
+data class QuestMilestone(
+    val ord: Int = 0,
+    val of: Int = 0,
+    val title: String = "",
+    val status: String = "",
+    val percent: Int? = null,
+    val dueDay: String? = null,
+    val titleNote: String? = null,
+    val titleStruck: List<List<Int>> = emptyList(),
+)
+
+/** [status]: live | provisional ("provisional · final Wed 04:00", never a verdict) | settling. [state] PAST_DUE: no sprint line (the web's card). */
+@Serializable
+data class Sprint(
+    val label: String = "This week's sprint",
+    val milestoneOrd: Int = 0,
+    val weekStart: String? = null,
+    val weekEnd: String? = null,
+    val state: String = "OPEN",
+    val done: Int = 0,
+    val total: Int = 0,
+    val status: String = "live",
+    val line: String? = null,
+    val rows: List<SprintRow> = emptyList(),
+)
+
+/**
+ * One sprint row: its words and count line; a practice or step's [templateId] is its task on Today. [done] is the
+ * server's: the week's count for the row is met (a session ticked today is not the row done).
+ */
+@Serializable
+data class SprintRow(
+    val kind: String = "",
+    val label: String = "",
+    val countLine: String = "",
+    val count: Int = 0,
+    val progress: Double = 0.0,
+    val unit: String = "",
+    val done: Boolean = false,
+    val templateId: String? = null,
+)
+
+@Serializable
+data class TodaysThree(val done: Int = 0, val total: Int = 0, val frozen: Boolean = true, val chest: String = "locked", val quests: List<ThreeQuest> = emptyList())
+
+/** [slot]: PLAN | BODY | TASK; a task quest's [templateId] is ticked like any task. */
+@Serializable
+data class ThreeQuest(val slot: String = "", val title: String = "", val done: Boolean = false, val templateId: String? = null)
+
 // ── Tasks and work ──────────────────────────────────────────────────────────
 
 @Serializable

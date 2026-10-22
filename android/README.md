@@ -11,7 +11,10 @@ the main one:
   line (the ideas past their grace, which opens Review), the Week card (the
   weekly audit, once it is switched on: "86% · 26 of 30 kept", provisional,
   frozen or final, the 85% target, and "Decaying this week" with its first
-  three lines), and the work items that are due, with call and text buttons.
+  three lines), the Quest card (the main quest, its milestone, this week's
+  sprint and Today's three, read only: a row whose task is open ticks it, and
+  Start and plan edits stay on the web), and the work items that are due, with
+  call and text buttons.
 - **Log**: a quick line (Task · Weigh-in · Idea) with a live reading of the
   line, and the full **New idea** form in all seven formats.
 - **Review**: a session runner for every card type, with feedback after each
@@ -21,7 +24,7 @@ the main one:
 WebView, for everything else.
 
 The app talks to the server's mobile API, `<server>/api/mobile/v1` (see
-`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.5 (versionCode 7), so
+`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.5 (versionCode 8), so
 it installs over the v1 WebView shell in place.
 
 ## Build
@@ -64,6 +67,12 @@ is set in `gradle.properties` and is `https://xtnl-knowledge-xpis.vercel.app`.
 - the quick line's reading;
 - the daily quests strip, the Fading line's and the Week card's words
   (its decay lines too);
+- the Quest card's words (no Start while the server's switch is off, the
+  sprint's Sunday "provisional · final Wed 04:00", no sprint line while the
+  milestone is past its day, a Gemini title's note and struck numbers), a
+  sprint row reading done only when the server says its week's count is met
+  (a session ticked today reads "ticked today"), the card read again after a
+  tick that moves it, and the demo's quest rows being the board's own tasks;
 - the Sunday reminder's clock: 19:00 Sydney time whatever zone the phone is
   in, either side of DST, and its Settings line with and without exact
   alarms;

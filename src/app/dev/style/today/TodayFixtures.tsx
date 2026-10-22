@@ -15,7 +15,9 @@ import { nextUpOf } from "@/components/today/board-ui";
 import { MakeUpCard, OwedRow, OwedSummary, type MakeUp, type MakeUpState } from "@/components/today/m2/MakeUpCard";
 import { RepairAsk, WelcomeBack, YesterdaySettled } from "@/components/today/m2/Notices";
 import { RecordYesterdaySheet, RestControls, type DidAnswer } from "@/components/today/m2/Sheets";
-import { WeekCard, WeekRunner, WeekTrack } from "@/components/today/m2/WeekRunner";
+import { WEEK_STEPS, WeekCard, WeekRunner, WeekTrack } from "@/components/today/m2/WeekRunner";
+import { SprintStepBody } from "@/components/home/SprintStepBody";
+import { SPRINT_PROVISIONAL_LINE, type SprintStep } from "@/lib/main-quest";
 import { WeekQuests } from "@/components/roadmap/WeekQuests";
 import { AimLine } from "@/components/roadmap/AimLine";
 import { FixtureRoadmapProvider } from "@/components/roadmap/roadmap-runtime";
@@ -121,6 +123,40 @@ const OWED_STACK: MakeUp[] = [
   { ...STRETCH, id: "stretch", owed: 3.8, when: "Stretch · Tuesday" },
   { ...STRETCH, id: "timesheet", owed: 8.1, when: "Timesheet · Tuesday", text: "Tuesday's timesheet is owed.", makeUpPrice: 6.9, minimum: null },
 ];
+
+/**
+ * The runner's step 6 (blueprint P15; SprintStepBody): a main quest mid-sprint on its Sunday, the reviewed week
+ * provisional, and a Gemini milestone title not yet checked, with its number struck.
+ */
+const SPRINT_SHARE = { status: "provisional", done: 1, total: 3, line: SPRINT_PROVISIONAL_LINE } as const;
+const SPRINT_FIXTURE: SprintStep = {
+  quest: {
+    state: "ACTIVE",
+    roadmapId: "rm-fixture",
+    title: "Trade for a living",
+    href: "/you/roadmap",
+    milestone: { id: "ms2", ord: 2, of: 6, title: "Backtest 20 setups", titleClass: "DRAFT", titleStruck: [[9, 11]], status: "STARTED", percent: 42, dueDay: "2026-11-08" },
+    line: "42% of the way · due Sun 8 Nov",
+    startable: false,
+    suggest: true,
+    sprint: {
+      milestoneId: "ms2",
+      milestoneOrd: 2,
+      weekStart: "2026-10-19",
+      weekEnd: "2026-10-25",
+      state: "OPEN",
+      done: 1,
+      total: 3,
+      rows: [
+        { kind: "RAISE", label: "Bring 3 cards to level 6+", count: 3, progress: 3, unit: "card", done: true, countLine: "3 of 3 cards · done", templateId: null },
+        { kind: "PRACTICE", label: "Backtest · 3 sessions × 30 min", count: 3, progress: 1, unit: "session", done: false, countLine: "1 of 3 sessions", templateId: "hab1" },
+        { kind: "CHECKPOINT", label: "Checkpoint: a 20-trade review", count: 1, progress: 0, unit: "log", done: false, countLine: "not logged yet", templateId: null },
+      ],
+      share: SPRINT_SHARE,
+    },
+  },
+  reviewed: { weekStart: "2026-10-19", label: "Week of 19 Oct", share: SPRINT_SHARE, held: false },
+};
 
 export function TodayFixtures() {
   const board = useMemo(() => fixtureBoard(), []);
@@ -392,9 +428,9 @@ export function TodayFixtures() {
         </Button>
       </div>
 
-      <SectionHeader title="Weekly review (M2)" aside="the five-step runner and its week card" />
+      <SectionHeader title="Weekly review (M2)" aside="the six-step runner (Sprint, P15: when the main quest's sprint has something to show) and its week card" />
       <div className="card dev-runner">
-        <WeekRunner step={step} focus={false} exitHref="" onNext={() => setStep((s) => (s > 5 ? 1 : s + 1))} onSkip={() => setStep((s) => s + 1)}>
+        <WeekRunner step={step} focus={false} exitHref="" onNext={() => setStep((s) => (s > 6 ? 1 : s + 1))} onSkip={() => setStep((s) => s + 1)}>
           {step === 1 && (
             <>
               <p className="t-eyebrow">Last week · 28 Sep – 4 Oct</p>
@@ -414,7 +450,8 @@ export function TodayFixtures() {
               <p className="t-meta">Fixture step. M2 wires the inbox, goals, owed and next-week data here.</p>
             </>
           )}
-          {step > 5 && (
+          {step === 6 && <SprintStepBody sprint={SPRINT_FIXTURE} eyebrow={WEEK_STEPS[5]} />}
+          {step > 6 && (
             <WeekCard
               eyebrow="Week 40 · settled Sunday"
               kept={3}

@@ -370,6 +370,22 @@ console.log("— constants —");
     RT.ENGLISH_FUNCTION_WORDS.length === 60 && new Set(RT.ENGLISH_FUNCTION_WORDS).size === 60 && RT.ENGLISH_FUNCTION_WORDS.every((w) => /^[a-z]+$/.test(w))
   );
   check("ROADMAP_GOALS_LIVE is false until the lead flips it", RT.ROADMAP_GOALS_LIVE === false);
+  // Blueprint P14: the rehearsal override, honoured only outside production; the code value stays the gate in production.
+  check(
+    "roadmapGoalsLive: the code value (false) with nothing set, in production whatever XTNL_ROADMAP_GOALS_LIVE says, and outside production with no override",
+    RT.ROADMAP_GOALS_LIVE_ENV === "XTNL_ROADMAP_GOALS_LIVE" &&
+      RT.roadmapGoalsLive({}) === false &&
+      RT.roadmapGoalsLive({ NODE_ENV: "production" }) === false &&
+      RT.roadmapGoalsLive({ NODE_ENV: "production", XTNL_ROADMAP_GOALS_LIVE: "1" }) === false &&
+      RT.roadmapGoalsLive({ NODE_ENV: "development" }) === false &&
+      RT.roadmapGoalsLive({ NODE_ENV: "development", XTNL_ROADMAP_GOALS_LIVE: "yes" }) === false
+  );
+  check(
+    "roadmapGoalsLive: outside production XTNL_ROADMAP_GOALS_LIVE '1' turns Start on and '0' off (the local rehearsal only)",
+    RT.roadmapGoalsLive({ NODE_ENV: "development", XTNL_ROADMAP_GOALS_LIVE: "1" }) === true &&
+      RT.roadmapGoalsLive({ XTNL_ROADMAP_GOALS_LIVE: " 1 " }) === true &&
+      RT.roadmapGoalsLive({ NODE_ENV: "test", XTNL_ROADMAP_GOALS_LIVE: "0" }) === false
+  );
   check("REACH_CONFIRM_DAYS = SETTLE_LAG_DAYS (2)", RT.REACH_CONFIRM_DAYS === SETTLE_LAG_DAYS && SETTLE_LAG_DAYS === 2);
   check("WEEK_QUEST_FINAL_LAG_DAYS = WEEK_JUDGE_LAG_DAYS (3)", RT.WEEK_QUEST_FINAL_LAG_DAYS === WEEK_JUDGE_LAG_DAYS && WEEK_JUDGE_LAG_DAYS === 3);
   eq(

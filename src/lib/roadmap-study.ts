@@ -6,6 +6,11 @@
  * still under OPEN_LEVEL (the level the layer milestone pays at; a topic you marked "I know this" or held when you
  * began is done). The rest of the layer stays folded behind the current one (soft hidden, never removed). The Review
  * hub reads it to offer the topic's due cards and an idea in one tap each.
+ *
+ * Blueprint P15 (the layer-1 focus): a layer milestone is only ever reached once it was started, and nothing starts
+ * while ROADMAP_GOALS_LIVE is off, so "the lowest layer not reached" stayed on layer 1 for good, its topics all done
+ * and `current` null. The study moves on with the topics: the open layer is the lowest one not reached that still has
+ * a topic to do; only when no layer has one does the focus stay on the lowest not reached, waiting for its reach.
  */
 import { OPEN_LEVEL, type LayerMilestone } from "./roadmap-types";
 
@@ -68,7 +73,7 @@ export interface StudyFocus {
   title: string;
   /** Gemini wrote the title (the card marks it). */
   geminiTitle: boolean;
-  /** The topic to study now; null when every topic of the layer is done (the layer waits for its reach). */
+  /** The topic to study now; null when no layer not reached has a topic left (the lowest one waits for its reach). */
   current: StudyTopic | null;
   /** The layer's other topics, not done first, then done: folded behind `current`. */
   rest: StudyTopic[];
@@ -85,15 +90,19 @@ const live = (t: StudyTopicIn): boolean => t.chosen && t.decision !== "REMOVED" 
 export function studyFocusOf(input: StudyFocusInput): StudyFocus | null {
   try {
     const layers = Math.max(0, ...input.milestones.map((m) => m.layer));
-    const open = input.milestones.filter((m) => !m.reached && OPEN_STATUSES.has(m.status)).sort((a, b) => a.layer - b.layer)[0];
-    if (!open) return null;
+    const notReached = input.milestones.filter((m) => !m.reached && OPEN_STATUSES.has(m.status)).sort((a, b) => a.layer - b.layer);
+    if (notReached.length === 0) return null;
     const byDomain = new Map(input.domains.map((d) => [d.id, d]));
-    const topics: StudyTopic[] = input.topics
-      .filter((t) => live(t) && t.layer === open.layer && t.domainId && byDomain.has(t.domainId))
-      .map((t) => {
-        const d = byDomain.get(t.domainId as string) as StudyDomainIn;
-        return { key: t.key, name: d.name || t.name, domainId: d.id, level: d.level, target: OPEN_LEVEL, due: d.due, cards: d.cards, done: t.skipped || t.held || d.level >= OPEN_LEVEL };
-      });
+    const topicsOf = (layer: number): StudyTopic[] =>
+      input.topics
+        .filter((t) => live(t) && t.layer === layer && t.domainId && byDomain.has(t.domainId))
+        .map((t) => {
+          const d = byDomain.get(t.domainId as string) as StudyDomainIn;
+          return { key: t.key, name: d.name || t.name, domainId: d.id, level: d.level, target: OPEN_LEVEL, due: d.due, cards: d.cards, done: t.skipped || t.held || d.level >= OPEN_LEVEL };
+        });
+    // The lowest layer not reached with a topic still to do (P15); else the lowest not reached, waiting for its reach.
+    const open = notReached.find((m) => topicsOf(m.layer).some((t) => !t.done)) ?? notReached[0];
+    const topics = topicsOf(open.layer);
     const todo = topics.filter((t) => !t.done);
     const finished = topics.filter((t) => t.done);
     const gm = input.geminiMilestones.find((m) => m.layer === open.layer) ?? null;

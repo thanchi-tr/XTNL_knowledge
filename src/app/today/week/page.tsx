@@ -55,6 +55,9 @@ import { WeekDecisions } from "@/components/home/WeekDecisions";
 import { WeekAuditCard } from "@/components/home/WeekAudit";
 import { LAST_WEEK_ANCHOR } from "@/lib/audit-decay";
 import { loadWeekAudit } from "@/lib/week-audit-server";
+import { loadMainQuestCard, loadMainQuestWeek } from "@/lib/main-quest-server";
+import { loadPastWeeks } from "@/lib/roadmap-quests-server";
+import { mainQuestOf, readsPastSprints, sprintStepOf, type SprintStep } from "@/lib/main-quest";
 import type { WeekAudit } from "@/lib/week-audit";
 import { CurrencyGlyph, Sigil } from "@/components/ui/Icon";
 import { SectionHeader } from "@/components/ui/Tabs";
@@ -90,6 +93,15 @@ export const dynamic = "force-dynamic";
  * rate, provisional from Sunday 18:00, as of Monday 04:00 once frozen, final
  * from Wednesday, with the 85% target (only here, never on Today). In the
  * run, step 1 shows it when it is the reviewed week's.
+ *
+ * Blueprint P15 (D11, D12): the main quest (main-quest-server: the lowest
+ * seat whose milestone is under way, else the lowest open seat) adds a Sprint
+ * step at the end of the run, only when its sprint has something to show
+ * (lib/main-quest sprintStepOf: the reviewed week's share as far as it is
+ * written, this week's live count on Saturday and Sunday, "provisional ·
+ * final Wed 04:00" until the chain writes it; a held week; or this week's
+ * sprint under way). The step list and the card's words key on the same
+ * value. It reads only; nothing here writes a verdict.
  */
 
 /** One track's row of the last judged week. */
@@ -240,13 +252,14 @@ const STEP_LINES: Record<number, readonly [live: string, before: string]> = {
   3: ["Check in on each open goal.", "Check in on each open goal."],
   4: ["Make up, or leave it: it never grows.", ""],
   5: ["Rest days and daily capacity.", "Daily capacity: the minutes a day you plan for."],
+  6: ["Your main quest's sprint: the week's share as far as it is written, and this week's rows.", "Your main quest's sprint: the week's share as far as it is written, and this week's rows."],
 };
 
-const STEP_COUNT = ["None", "One", "Two", "Three", "Four", "Five"] as const;
+const STEP_COUNT = ["None", "One", "Two", "Three", "Four", "Five", "Six"] as const;
 
-/** The steps that run (rituals.ts reviewPlanOf), as the page lists them before the review starts. */
-function StepsList({ live }: { live: boolean }) {
-  const steps = reviewPlanOf(live).steps;
+/** The steps that run (rituals.ts reviewPlanOf; the Sprint step only when sprintStepOf found one), as the page lists them before the review starts. */
+function StepsList({ live, sprint }: { live: boolean; sprint: boolean }) {
+  const steps = reviewPlanOf(live, sprint).steps;
   return (
     <section aria-labelledby="week-steps">
       <SectionHeader id="week-steps" title={`${STEP_COUNT[steps.length]} steps, each skippable`} />
@@ -514,16 +527,22 @@ function weekCardOf(ledger: LifeLedger, week: ReviewedWeek): WeekCardData | null
   };
 }
 
-/** The review's card on the page: offered, done, or when it opens next. Before Duty it names only the steps that run. */
-function ReviewCard({ week, marked, dutyLive }: { week: ReviewedWeek | null; marked: boolean; dutyLive: boolean }) {
+/**
+ * The review's card on the page: offered, done, or when it opens next. It names only the steps that run: before Duty
+ * no Owed, and the Sprint only when the main quest's sprint has something to show (the same `sprint` as StepsList).
+ */
+function ReviewCard({ week, marked, dutyLive, sprint }: { week: ReviewedWeek | null; marked: boolean; dutyLive: boolean; sprint: boolean }) {
   const title = !week ? "The next review opens Saturday" : marked ? `The week of ${dayMonthLabel(week.monday)} is reviewed` : `Review the week of ${dayMonthLabel(week.monday)}`;
+  const parts = dutyLive
+    ? ["the week as far as it is settled", "the inbox to zero", "a goals check-in", "anything owed", "the shape of next week"]
+    : ["the last judged week", "the inbox to zero", "a goals check-in", "your daily capacity"];
+  if (sprint) parts.push("your main quest's sprint");
+  const count = STEP_COUNT[reviewPlanOf(dutyLive, sprint).steps.length];
   const line = !week
     ? "On Saturday and Sunday it covers the week as it ends; from Monday to Wednesday it catches up on the week just ended."
     : marked
       ? "Open it again any time until Thursday; nothing in it is written twice."
-      : dutyLive
-        ? "Five short steps, each skippable: the week as far as it is settled, the inbox to zero, a goals check-in, anything owed, and the shape of next week."
-        : "Four short steps, each skippable: the last judged week, the inbox to zero, a goals check-in, and your daily capacity.";
+      : `${count} short steps, each skippable: ${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}.`;
   return (
     <section className="card pad-l" aria-labelledby="week-h">
       <p className="t-eyebrow">Weekly review · Saturday to Wednesday</p>
@@ -573,14 +592,24 @@ export default async function WeekPage({ searchParams }: { searchParams: Promise
     console.error("Weekly review: the week audit failed to load.", err);
     return null;
   });
+  // The main quest (P15): its Aim card and its own sprint this week (cached reads), then, for a goal that may have run
+  // one, its past sprints; the Sprint step only when it has something to show (sprintStepOf), for the run and for the
+  // page's step list and card alike. Thursday and Friday the next review covers this week. A failure reads as none.
+  const sprintRead: Promise<SprintStep | null> = (async () => {
+    const card = await loadMainQuestCard(userId, now).catch(() => null);
+    const quest = mainQuestOf(card, await loadMainQuestWeek(userId, now, card).catch(() => null), today);
+    const past = readsPastSprints(quest) ? await loadPastWeeks(userId, quest.roadmapId, today).catch(() => []) : [];
+    return sprintStepOf(quest, review?.monday ?? weekStartKeyOf(today), today, past);
+  })();
 
   if (review && (await searchParams).view === "run") {
     // Before Duty nothing is settled: the run reads only its done marker (the rest of readReview is Duty's facts).
-    const [read, markedBefore, data, audit] = await Promise.all([
+    const [read, markedBefore, data, audit, sprint] = await Promise.all([
       plan.settledFacts ? readReview(userId, review) : null,
       plan.settledFacts ? false : readMarked(userId, review),
       loadTodayBoard(userId, today, now),
       auditRead,
+      sprintRead,
     ]);
     const facts = read
       ? weekFactsOf({
@@ -623,6 +652,7 @@ export default async function WeekPage({ searchParams }: { searchParams: Promise
           restNote={restNote}
           end={card ? { kind: "card", card } : { kind: "pending", text: isLaunched(today) ? reviewPendingText(review) : REVIEW_BEFORE_LIFE_TEXT }}
           marked={read ? read.marked : markedBefore}
+          sprint={sprint}
         />
       </div>
     );
@@ -630,7 +660,7 @@ export default async function WeekPage({ searchParams }: { searchParams: Promise
 
   // Defer and abort (task-decisions.ts): this week's decisions, Monday to today, with their reasons.
   const decisionsFrom = weekStartKeyOf(today);
-  const [marked, decisionRows, audit] = await Promise.all([review ? readMarked(userId, review) : Promise.resolve(false), readWeekDecisions(userId, decisionsFrom, today), auditRead]);
+  const [marked, decisionRows, audit, sprint] = await Promise.all([review ? readMarked(userId, review) : Promise.resolve(false), readWeekDecisions(userId, decisionsFrom, today), auditRead, sprintRead]);
   const decisions = weekDecisionsViewOf(decisionRows, now);
 
   return (
@@ -638,9 +668,9 @@ export default async function WeekPage({ searchParams }: { searchParams: Promise
       <div style={{ paddingTop: 12, display: "flex", flexDirection: "column", gap: 16 }}>
         {life.launched && ledger && (week ? <LastWeekCard week={week} today={life.today} /> : <FirstWeekCard epochDay={ledger.epochDay} today={life.today} />)}
         {audit && <WeekAuditCard audit={audit} today={today} />}
-        <ReviewCard week={review} marked={marked} dutyLive={dutyLive} />
+        <ReviewCard week={review} marked={marked} dutyLive={dutyLive} sprint={sprint != null} />
         <WeekDecisions view={decisions} weekLabel={`Week of ${dayMonthLabel(decisionsFrom)}`} />
-        <StepsList live={dutyLive} />
+        <StepsList live={dutyLive} sprint={sprint != null} />
       </div>
     </div>
   );

@@ -91,6 +91,31 @@ class DemoBoardTest {
         assertTrue(before.auditOn && after.auditOn)
     }
 
+    /** GET /quests (P15): read only; the demo's quest rows tick tasks on the board, and a tick there shows here. */
+    @Test fun theQuestCardsRowsAreTheBoardsTasks() = runTest {
+        val api = DemoApi()
+        val tasks = (api.check() as Outcome.Ok).value.tasks.map { it.templateId }.toSet()
+        val before = (api.quests() as Outcome.Ok).value
+        val ids = before.sprint!!.rows.mapNotNull { it.templateId } + before.three!!.quests.mapNotNull { it.templateId }
+        assertTrue(ids.isNotEmpty() && ids.all { it in tasks })
+        assertFalse(before.mainQuest!!.startOnWeb)
+        assertFalse(before.three!!.quests.single { it.templateId == "t-gym" }.done)
+        assertTrue(api.completeTask("t-gym", mvv = false, clientId = "c-gym") is Outcome.Ok)
+        val after = (api.quests() as Outcome.Ok).value
+        assertTrue(after.three!!.quests.single { it.templateId == "t-gym" }.done)
+        assertEquals(before.three!!.done + 1, after.three!!.done)
+        // A session ticked today moves the sprint's count, never the row's done (D12: 2 of 3 is not the week met).
+        assertTrue(api.completeTask("t-read", mvv = false, clientId = "c-read") is Outcome.Ok)
+        val read = (api.quests() as Outcome.Ok).value.sprint!!.rows.single { it.templateId == "t-read" }
+        assertEquals("2 of 3 sessions", read.countLine)
+        assertFalse(read.done)
+        // The rows in Today's order, as the server sends them: open first, then Bring, Add, Step, Practice.
+        assertEquals(listOf("RAISE", "ADD", "PRACTICE"), before.sprint!!.rows.map { it.kind })
+        // The milestone's Gemini title keeps its note and its struck number, as the server sends them.
+        assertEquals("Gemini's words · kept by you · not checked", before.mainQuest!!.milestone?.titleNote)
+        assertEquals(listOf(listOf(9, 11)), before.mainQuest!!.milestone?.titleStruck)
+    }
+
     @Test fun theLastHabitClearsTheBoard() = runTest {
         val api = DemoApi()
         // The study task completes itself from the day's reviews (7 done; the demo starts at 4).

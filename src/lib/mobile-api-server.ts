@@ -16,6 +16,7 @@
  *   POST /log/undo         handleLogUndo        actions/tasks undoCapture, actions/capture undoWeightCapture
  *   GET  /ideas/meta       handleIdeasMeta      the New idea form's formats and collections
  *   POST /ideas            handleIdeaCreate     actions/ideas submitIdea
+ *   GET  /quests           handleQuests         the main quest, this week's sprint and Today's three (read only; P15)
  *
  * Every reply is JSON with Cache-Control: no-store; a thrown error is logged and answers the generic server line,
  * never its message or stack. Writes replay their first successful result for a clientId (mobile-api.ts ReplayCache);
@@ -67,6 +68,9 @@ import {
   mobileCardOf,
   okReply,
   onlyKeys,
+  questsMainOf,
+  questsSprintOf,
+  questsThreeOf,
   onlyParams,
   refusalReply,
   responseOf,
@@ -96,6 +100,9 @@ import type { SubmitReviewInput, SubmitReviewResult } from "../app/actions/revie
 import type { CaptureResult, CapturedItem, CapturedWeight } from "../app/actions/capture";
 import type { SubmitIdeaInput, SubmitIdeaResult } from "../app/actions/ideas";
 import { isAuditLaunched, type WeekAudit } from "./week-audit";
+import { mainQuestOf } from "./main-quest";
+import type { AimCardView, WeekQuestsView } from "./roadmap-types";
+import type { MomentumView } from "./momentum-server";
 
 // ── The cores ───────────────────────────────────────────────────────────────
 
@@ -153,6 +160,14 @@ export interface MobileDeps {
 
   // Ideas
   submitIdea: (input: SubmitIdeaInput) => Promise<SubmitIdeaResult>;
+
+  // GET /quests (blueprint P15): the reads Today's Main quest card and MomentumCard use; none of them writes.
+  /** The main quest's Aim card (main-quest-server loadMainQuestCard: the lowest seat whose milestone is under way, else the lowest open seat; null on a missing table). */
+  loadMainQuest: (userId: string, now: Date) => Promise<AimCardView | null>;
+  /** That goal's own set this life week (main-quest-server loadMainQuestWeek; null with none). */
+  loadSprintWeek: (userId: string, now: Date, card: AimCardView | null) => Promise<WeekQuestsView | null>;
+  /** Momentum's view (momentum-server loadMomentum): Today's three; {live: false} before its launch. */
+  loadMomentum: (userId: string, day: DayKey, now: Date) => Promise<MomentumView>;
 }
 
 // ── The frame every route runs in ───────────────────────────────────────────
@@ -221,9 +236,9 @@ async function read(label: string, request: Request, deps: MobileDeps, params: r
 
 /** A secondary read that must never take the reply down: logged, and its fallback used. */
 const soft =
-  <T>(what: string, fallback: T) =>
+  <T>(what: string, fallback: T, route = "check") =>
   (err: unknown): T => {
-    console.error(`[mobile] check: ${what} failed; it reads as none.`, err instanceof Error ? err.message : err);
+    console.error(`[mobile] ${route}: ${what} failed; it reads as none.`, err instanceof Error ? err.message : err);
     return fallback;
   };
 
@@ -290,6 +305,42 @@ export async function handleCheck(request: Request, deps: MobileDeps): Promise<R
       work: workItemsOf(work, now),
       level: levelOf(shell),
       streak: streakOf(streak),
+    });
+  });
+}
+
+// ── GET /quests ─────────────────────────────────────────────────────────────
+
+/** Marks a read that failed (as opposed to one that found nothing). */
+const UNREAD: unique symbol = Symbol("unread");
+
+/**
+ * The main quest, this week's sprint and Today's three (blueprint P15; decisions D11, D12): the web's own cached reads
+ * (main-quest-server's pick of the main quest and its goal's own week, Today's; loadMomentum), through lib/main-quest's
+ * model, the one Today's Main quest card reads. The quest and Today's three in one wave, then the quest's own week (it
+ * needs the quest's goal). Read only: it writes nothing, owes nothing after the reply, and offers no Start (Start and
+ * plan edits stay on the web; `startOnWeb` is false while ROADMAP_GOALS_LIVE is off). A practice row and a task quest
+ * carry their template, so the app's tick is the board's own POST /tasks/complete. Each read fails on its own:
+ * `mainQuest` null when the quest couldn't be read, `sprint` null with no sprint (or an unread one), `three` null
+ * before momentum's launch (or unread).
+ */
+export async function handleQuests(request: Request, deps: MobileDeps): Promise<Response> {
+  return read("quests", request, deps, [], async () => {
+    const now = deps.now();
+    const userId = deps.userId();
+    const day = todayKey(now);
+    const [card, momentum] = await Promise.all([
+      deps.loadMainQuest(userId, now).catch(soft<AimCardView | null | typeof UNREAD>("the main quest", UNREAD, "quests")),
+      deps.loadMomentum(userId, day, now).catch(soft("today's three", null, "quests")),
+    ]);
+    const week = card === UNREAD ? null : await deps.loadSprintWeek(userId, now, card).catch(soft<WeekQuestsView | null>("the sprint", null, "quests"));
+    const quest = card === UNREAD ? null : mainQuestOf(card, week, day);
+    return okReply({
+      now: now.toISOString(),
+      day,
+      mainQuest: quest ? questsMainOf(quest) : null,
+      sprint: quest ? questsSprintOf(quest) : null,
+      three: questsThreeOf(momentum),
     });
   });
 }

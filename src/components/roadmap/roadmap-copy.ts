@@ -31,6 +31,7 @@
  */
 import { LIFE_TZ, addDays, dayKeyOf, daysBetween, type DayKey } from "@/lib/life-day";
 import { goalPercent, statedPayoutCopy } from "@/lib/goals";
+import { PAST_SPRINTS, SPRINT, SPRINT_SETTLING_LINE, SPRINT_SHORT, pastSprintShareOf, sprintShareOf } from "@/lib/main-quest";
 import type { Track } from "@/lib/life-types";
 import {
   AIM_RANKS,
@@ -816,14 +817,26 @@ export function weekQuestCountLine(kind: WeekQuestKind, progress: number, total:
   return done ? `${line} · done` : line;
 }
 
-/** "Week quests · Milestone 2". */
+/** "This week's sprint · Milestone 2" (blueprint P15, D11: the week quests are the main quest's sprint). */
 export function weekQuestsHeading(ord: number): string {
-  return `Week quests · Milestone ${ord}`;
+  return `${SPRINT} · Milestone ${ord}`;
 }
 
-/** "Week quests · Milestone 2 · 2 of 5 done" / "… · all 5 done". */
-export function weekQuestsSummary(ord: number, done: number, total: number): string {
-  return done >= total && total > 0 ? `${weekQuestsHeading(ord)} · all ${total} done` : `${weekQuestsHeading(ord)} · ${done} of ${total} done`;
+/**
+ * "This week's sprint · Milestone 2 · 2 of 5 done" / "… · all 5 done", with the week's own words after it on its
+ * Sunday (`line`: sprintWordsOf, "provisional · final Wed 04:00"), as Today's Main quest card and the review say them.
+ */
+export function weekQuestsSummary(ord: number, done: number, total: number, line: string | null = null): string {
+  const count = done >= total && total > 0 ? `${weekQuestsHeading(ord)} · all ${total} done` : `${weekQuestsHeading(ord)} · ${done} of ${total} done`;
+  return line ? `${count} · ${line}` : count;
+}
+
+/**
+ * The words a week's sprint carries after its count (D12, one provisional/final model; lib/main-quest sprintShareOf):
+ * "provisional · final Wed 04:00" on its Sunday, nothing while it runs. null without a day to read it against.
+ */
+export function sprintWordsOf(weekStart: DayKey, today: DayKey | null | undefined): string | null {
+  return today ? sprintShareOf(weekStart, 0, 0, today).line : null;
 }
 
 /** "until Sun" (+ "not recorded on this server"). */
@@ -856,7 +869,7 @@ export function weekQuestsFooter(kinds: ReadonlySet<WeekQuestKind>, ord: number,
     parts.push(parts.length ? tail : `New cards count toward Milestone ${ord} once they reach ${level ? `level ${level}+` : "its level"}`);
   }
   if (kinds.has("CHECKPOINT")) parts.push(parts.length ? "a checkpoint score is for your judgement" : "A checkpoint score is for your judgement");
-  return `Week quests pay nothing.${parts.length ? ` ${parts.join("; ")}.` : ""}`;
+  return `The sprint pays nothing.${parts.length ? ` ${parts.join("; ")}.` : ""}`;
 }
 
 /** The legend under Today's header, naming each kind's evidence once. */
@@ -873,10 +886,14 @@ export function weekQuestsLegend(kinds: ReadonlySet<WeekQuestKind>): string {
   return line.charAt(0).toUpperCase() + line.slice(1);
 }
 
-/** "Week of 28 Sep · 4 of 5 done · capped · 2 days held", or "still settling". Never red. */
+/**
+ * "Week of 28 Sep · 4 of 5 done · capped · 2 days held" once written; before that the review's words for the same week
+ * (lib/main-quest pastSprintShareOf, D12): "provisional · final Wed 04:00" until its Wednesday 04:00, "still settling"
+ * after it (and without a day to read it against). Never red.
+ */
 export function pastWeekLine(w: { weekStart: DayKey; settled: boolean; done: number; total: number; capped: boolean; heldDays: number }, today?: DayKey): [string, string] {
   const head = `Week of ${dayLabel(w.weekStart, today)}`;
-  if (!w.settled) return [head, "still settling"];
+  if (!w.settled) return [head, (today ? pastSprintShareOf(w, today).line : null) ?? SPRINT_SETTLING_LINE];
   const tail = [`${w.done} of ${w.total} done`];
   if (w.capped) tail.push("capped");
   if (w.heldDays > 0) tail.push(`${plural(w.heldDays, "day")} held`);
@@ -2409,7 +2426,10 @@ export const SHORT_WAITING_ACTIVITIES = "Waiting on your answer about activities
 export function shortMilestoneOf(ord: number, of: number): string {
   return `Milestone ${ord} of ${of}`;
 }
-export const SHORT_WEEK_QUESTS = "Week quests";
+/** The sprint's short label (P15, D11): the eyebrows, the rings and the Aim card's line ("Week quests" before). */
+export const SHORT_WEEK_QUESTS = SPRINT_SHORT;
+/** The roadmap page's finished weeks (P15, D11). */
+export const SHORT_PAST_SPRINTS = PAST_SPRINTS;
 export const SHORT_OPEN_ROADMAP = "Open roadmap";
 export function shortStartMilestone(ord: number): string {
   return `Start milestone ${ord}`;

@@ -20,6 +20,8 @@ export interface IdeasLeadProps {
   noAim: boolean;
   /** The encounters ready to start, by name. */
   bossesReady: string[];
+  /** Today's life day: on the sprint's Sunday its line says "provisional · final Wed 04:00" (P15, D12). */
+  today?: string;
 }
 
 /**
@@ -33,13 +35,14 @@ export interface IdeasLeadProps {
  * encounter is ready, one line that leads to the hub's Encounters, where its
  * deal is read and it is started, as before. Nothing at all when none apply.
  */
-export function IdeasLead({ quests, aimLine, noAim, bossesReady }: IdeasLeadProps) {
+export function IdeasLead({ quests, aimLine, noAim, bossesReady, today }: IdeasLeadProps) {
   const roadmap = quests ? (
-    // Compact above the workspace: the card starts as its one summary line (the ring, "Week quests · Milestone 2",
-    // "1 of 3 done") and opens in place on a tap (WeekQuests' own data-compact rule in roadmap.css).
+    // Compact above the workspace: the card starts as its one summary line (the ring, "This week's sprint · Milestone
+    // 2", "1 of 3 done", and on its Sunday "provisional · final Wed 04:00") and opens in place on a tap (WeekQuests' own
+    // data-compact rule in roadmap.css).
     <div className="rv-lead-quests" data-compact="1">
       <SeekToToday />
-      <WeekQuests variant="today" view={quests} />
+      <WeekQuests variant="today" view={quests} today={today} />
     </div>
   ) : aimLine ? (
     <AimLine view={aimLine} />

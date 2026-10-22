@@ -1037,6 +1037,21 @@ console.log("— the study focus (N14): the open layer, one topic now, the rest 
     ],
     [null, null, "Layer 2"]
   );
+  // Blueprint P15 (the layer-1 focus): a layer milestone is reached only once started, and nothing starts while
+  // ROADMAP_GOALS_LIVE is off, so the focus used to stay on layer 1 with every topic done. It moves on with the topics.
+  const unstarted: StudyFocusInput = { ...base, milestones: base.milestones.map((m) => ({ ...m, status: "PLANNED", reached: false })) };
+  const moved = studyFocusOf(unstarted);
+  const allDone = studyFocusOf({ ...unstarted, domains: unstarted.domains.map((d) => ({ ...d, level: 6 })) });
+  eq(
+    "P15 studyFocusOf: no layer reached (Start off), layer 1's one topic done (Asset Classes at 7) → layer 2 is open with its topic now; every topic done → the lowest layer not reached, current null (it waits for its reach)",
+    [moved && { layer: moved.layer, now: moved.current?.name, done: moved.done, total: moved.total }, allDone && { layer: allDone.layer, now: allDone.current?.name ?? null }],
+    [{ layer: 2, now: "Correlation Coefficient", done: 2, total: 3 }, { layer: 1, now: null }]
+  );
+  eq(
+    "P15: a layer-1 topic still under level 6 keeps layer 1 open (the lowest layer with a topic to do); a reached layer is never reopened",
+    [studyFocusOf({ ...unstarted, domains: unstarted.domains.map((d) => (d.id === "a" ? { ...d, level: 2 } : d)) })?.layer, studyFocusOf({ ...base, domains: base.domains.map((d) => (d.id === "a" ? { ...d, level: 2 } : d)) })?.layer],
+    [1, 2]
+  );
 }
 
 // ═══ Ruling N16: break a milestone down again ═══════════════════════════════

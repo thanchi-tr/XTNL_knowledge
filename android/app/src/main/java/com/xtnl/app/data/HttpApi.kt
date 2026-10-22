@@ -205,4 +205,6 @@ class HttpApi(
     override suspend fun ideasMeta() = call("/ideas/meta", null, IdeasMeta.serializer())
 
     override suspend fun createIdea(body: JsonObject) = call("/ideas", body, IdeaResult.serializer(), slow = true)
+
+    override suspend fun quests() = call("/quests", null, QuestsData.serializer())
 }

@@ -576,7 +576,7 @@ function NowSection({
               {pastDueLine(m.ord, m.dueDay, today)}
             </p>
             <p className="t-meta" style={{ marginTop: 4 }}>
-              No week quests this week. The goal on Today is Carried, never owed.
+              No sprint this week. The goal on Today is Carried, never owed.
             </p>
             {view.header?.depth != null && <p className="t-meta">{CLOSE_SHORT_PARAGON_LINE}</p>}
             {/* Reschedule and "Close it on Tasks" are the hero's primary and chip (§16): said once, at the top. */}

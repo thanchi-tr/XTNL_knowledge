@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * "How these week quests were set" (F13, F18 §3): the frozen set's own basis
+ * "How this sprint was set" (F13, F18 §3; blueprint P15, D11): the frozen set's own basis
  * lines (gap, floor, weeks left, reach expected and best, pace, the caps and
  * which one bound, the Field quota overlap, capacity with its class), stored
  * with the set, so this shows what was asked and why, not today's
@@ -27,7 +27,7 @@ export function QuestBasisSheet({ open, onClose, view, today }: { open: boolean;
     <Sheet
       open={open}
       onClose={onClose}
-      title="How these week quests were set"
+      title="How this sprint was set"
       description={`Milestone ${view.milestoneOrd} · ${windowLabel(view.weekStart, view.weekEnd, today)} · ${view.frozen ? "fixed for the week" : "not fixed yet"}`}
     >
       <ul className="rm-basis">

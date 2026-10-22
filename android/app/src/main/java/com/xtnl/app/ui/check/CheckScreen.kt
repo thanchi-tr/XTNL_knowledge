@@ -90,13 +90,17 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.xtnl.app.core.DailyStrip
 import com.xtnl.app.core.FadingLine
 import com.xtnl.app.core.Fmt
+import com.xtnl.app.core.QuestLine
 import com.xtnl.app.core.TickLadder
 import com.xtnl.app.core.TimeLabels
 import com.xtnl.app.core.WeekLine
@@ -104,6 +108,7 @@ import com.xtnl.app.data.CheckData
 import com.xtnl.app.data.DailyQuests
 import com.xtnl.app.data.Fading
 import com.xtnl.app.data.LevelInfo
+import com.xtnl.app.data.QuestsData
 import com.xtnl.app.data.ReviewSummary
 import com.xtnl.app.data.TaskItem
 import com.xtnl.app.data.WeekAudit
@@ -124,6 +129,7 @@ import com.xtnl.app.ui.components.SealState
 import com.xtnl.app.ui.components.StampSpec
 import com.xtnl.app.ui.components.XButton
 import com.xtnl.app.ui.components.XCard
+import com.xtnl.app.ui.components.XIconButton
 import com.xtnl.app.ui.motion.BoardMoment
 import com.xtnl.app.ui.motion.Dur
 import com.xtnl.app.ui.motion.EaseIn
@@ -557,6 +563,7 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
                 tasks(ui, rows, motion)
                 review(data.review, data.fading, data.now, onStartReview)
                 week(data.week)
+                quests(ui, rows)
                 work(ui, data.now, vm, spots, motion)
             }
             else -> TwoPane(
@@ -581,6 +588,7 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
                     ) {
                         review(data.review, data.fading, data.now, onStartReview)
                         week(data.week)
+                        quests(ui, rows)
                         work(ui, data.now, vm, spots, motion)
                     }
                 },
@@ -700,6 +708,18 @@ private fun LazyListScope.week(w: WeekAudit?) {
     if (!WeekLine.shows(w) || w == null) return
     item(key = "week", contentType = "week") {
         WeekTile(w, Modifier.padding(top = 4.dp))
+    }
+}
+
+/**
+ * The Quest card (P15), on both displays: on the cover screen in the one column after the Week card, on the main
+ * screen in the second pane. Only while the server sent something to show (QuestLine.shows).
+ */
+private fun LazyListScope.quests(ui: CheckViewModel.Ui, rows: Rows) {
+    val q = ui.quests
+    if (q == null || !QuestLine.shows(q)) return
+    item(key = "quests", contentType = "quests") {
+        QuestTile(q, ui.tasks, onTick = { t -> rows.onTick(t) }, modifier = Modifier.padding(top = 4.dp))
     }
 }
 
@@ -1302,6 +1322,84 @@ private fun WeekTile(w: WeekAudit, modifier: Modifier = Modifier) {
                 }
                 WeekLine.decayNote(w)?.let { Text(it, style = meta, color = c.ink2, modifier = Modifier.padding(top = 4.dp)) }
             }
+        }
+    }
+}
+
+// ── Quest card ──────────────────────────────────────────────────────────────
+
+/**
+ * The Quest card (docs/mobile-api.md `GET /quests`; blueprint 2.1 and 2.2, D11, D12): the web's Main quest card in its
+ * words. The main quest (its words, "Milestone 2 of 6 · …" with a Gemini title's numbers struck and Gemini's words
+ * beside it, its one line), this week's sprint (its count, the server's Sunday words "provisional · final Wed 04:00",
+ * its rows with their count lines; none while the milestone is past its day, as on the web) and Today's three. Read
+ * only: a row whose task is open on Check above has a 48 dp tick that runs that task's own tick (POST /tasks/complete,
+ * its motion and its undo); nothing here starts a milestone or edits the plan (the web's), and nothing is red. A sprint
+ * row reads done only when the server says its week's count is met (QuestLine.sprintRow): a session ticked today is
+ * said, never a verdict. One node per row for TalkBack; every line may wrap.
+ */
+@Composable
+private fun QuestTile(q: QuestsData, tasks: List<TaskItem>, onTick: (TaskItem) -> Unit, modifier: Modifier = Modifier) {
+    val c = X.c
+    val meta = MaterialTheme.typography.labelMedium
+    XCard(modifier.fillMaxWidth()) {
+        Column {
+            q.mainQuest?.takeIf { QuestLine.showsQuest(it) }?.let { m ->
+                Column(Modifier.semantics(mergeDescendants = true) {}) {
+                    Eyebrow(QuestLine.TITLE)
+                    Spacer(Modifier.height(2.dp))
+                    Text(QuestLine.headline(m), style = MaterialTheme.typography.titleMedium, color = c.ink0)
+                    QuestLine.milestone(m)?.let { words ->
+                        val struck = QuestLine.struck(m)
+                        val text = buildAnnotatedString {
+                            append(words)
+                            for (r in struck) addStyle(SpanStyle(textDecoration = TextDecoration.LineThrough), r.first, r.last + 1)
+                        }
+                        Text(text, style = MaterialTheme.typography.bodyMedium, color = c.ink1)
+                    }
+                    QuestLine.titleNote(m)?.let { Text(it, style = meta, color = c.ink1) }
+                    QuestLine.line(m)?.let { Text(it, style = meta, color = c.ink2) }
+                    QuestLine.startLine(m)?.let { Text(it, style = meta, color = c.ink2) }
+                }
+            }
+            q.sprint?.takeIf { QuestLine.showsSprint(it) }?.let { s ->
+                Spacer(Modifier.height(12.dp))
+                Text(QuestLine.sprintLine(s), style = meta, color = c.ink1)
+                for (r in QuestLine.rows(s)) {
+                    val task = tasks.firstOrNull { it.templateId == r.templateId }
+                    QuestRow(QuestLine.sprintRow(r, task), task, onTick)
+                }
+            }
+            q.three?.takeIf { it.quests.isNotEmpty() }?.let { t ->
+                Spacer(Modifier.height(12.dp))
+                Text(QuestLine.threeLine(t), style = meta, color = c.ink1)
+                for (tq in t.quests) {
+                    val task = tasks.firstOrNull { it.templateId == tq.templateId }
+                    QuestRow(QuestLine.threeRow(tq, task), task, onTick)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One row of the Quest card: done or not (QuestLine's row: a mark, never red), its words, and the tick of its task
+ * while the task is open on Check and the row is not done.
+ */
+@Composable
+private fun QuestRow(row: QuestLine.Row, task: TaskItem?, onTick: (TaskItem) -> Unit) {
+    val c = X.c
+    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.weight(1f).semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(if (row.done) c.kept else c.lineCtl))
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Text(row.label, style = MaterialTheme.typography.bodyMedium, color = if (row.done) c.ink2 else c.ink0)
+                if (row.detail.isNotBlank()) Text(row.detail, style = MaterialTheme.typography.labelMedium, color = c.ink2)
+            }
+        }
+        if (task != null && task.open && !row.done) {
+            XIconButton(Glyphs.Tick, "Tick ${task.title}", onClick = { onTick(task) }, tint = c.ink0)
         }
     }
 }

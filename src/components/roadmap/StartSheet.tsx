@@ -261,7 +261,7 @@ export function weekQuestLines(set: WeekQuestSet): string[] {
 
 /** The preview's footer, verbatim. */
 export function weekQuestFooter(set: WeekQuestSet, today: string): string {
-  if (set.quests.length === 0) return `No week quests this week: ${set.basis[0] ?? "nothing is asked of it"}.`;
+  if (set.quests.length === 0) return `No sprint this week: ${set.basis[0] ?? "nothing is asked of it"}.`;
   return `${windowLabel(set.quests[0].from, set.quests[0].to, today)} · fixed for the week once you start. Worked out from your cards and the plan; they pay nothing.`;
 }
 
