@@ -11,7 +11,8 @@ import type { WeekDecisionsView } from "@/lib/task-decisions";
  * The weekly review's "Deferred n · Aborted m" (task-decisions.ts weekDecisionsViewOf): this week's
  * defers and aborts, newest first, each with its reason. A task still open links to it on Today;
  * one aborted for good is archived, so it offers Restore instead (Archive's own unarchive, history
- * and streak intact). Rows are 56 px, the Restore 44.
+ * and streak intact). Rows are 56 px, the Restore 44. A must restored near or past the cap stays a
+ * must and says how many that day now holds (daily quests, D14).
  */
 export function WeekDecisions({ view, weekLabel }: { view: WeekDecisionsView; weekLabel: string }) {
   const router = useRouter();
@@ -28,7 +29,7 @@ export function WeekDecisions({ view, weekLabel }: { view: WeekDecisionsView; we
       } catch {
         res = { ok: false, error: "Couldn't reach the server. Try again." };
       }
-      setRestore((r) => ({ ...r, [id]: res.ok ? { state: "done" } : { state: "error", text: res.error } }));
+      setRestore((r) => ({ ...r, [id]: res.ok ? { state: "done", text: res.value.mustNote?.line } : { state: "error", text: res.error } }));
       if (res.ok) router.refresh();
     });
   }
@@ -71,7 +72,7 @@ export function WeekDecisions({ view, weekLabel }: { view: WeekDecisionsView; we
                       {r?.state === "busy" ? "Restoring…" : "Restore"}
                     </button>
                   )}
-                  {r?.state === "done" && <span className="wk-dec-what">Restored</span>}
+                  {r?.state === "done" && <span className="wk-dec-what">{r.text ? `Restored · ${r.text}` : "Restored"}</span>}
                 </li>
               );
             })}

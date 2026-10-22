@@ -2357,6 +2357,37 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   const ahead = mustLaneOf({ must: [], owed: [], restToday: null, live: false, launchDay: "2026-10-12", today: TODAY });
   check("must lane: before launch with a launch day set, 'Musts carry stakes from Mon 12 Oct' (held, quiet)", ahead.chips[0]?.text === "Musts carry stakes from Mon 12 Oct" && ahead.chips[0].tone === "held");
   check("must lane: no launch day, no chip (the pre-M2 lane)", mustLaneOf({ must: [], owed: [], restToday: null, live: false, launchDay: null, today: TODAY }).chips.length === 0);
+  // Blueprint P9 (D14, D15): the Must lane is the Daily Quests; quiet chips for the minimum and a day over the cap.
+  const dq = mustLaneOf({ must: [], owed: [stretch], restToday: null, live: true, launchDay: LAUNCH, today: TODAY, daily: { minimum: 1, over: 2 } });
+  check(
+    "must lane (daily quests): '1 at minimum' and '2 over the cap' are quiet chips; none with no minimum and nothing over",
+    dq.chips.map((c) => `${c.tone}:${c.text}`).join("|") === "quiet:1 at minimum|quiet:2 over the cap" &&
+      mustLaneOf({ must: [], owed: [stretch], restToday: null, live: true, launchDay: LAUNCH, today: TODAY, daily: { minimum: 0, over: 0 } }).chips.length === 0
+  );
+  {
+    const tb = read("src/components/today/TodayBoard.tsx").replace(/\r\n/g, "\n");
+    check(
+      "must lane (daily quests): the personal Board titles it 'Daily quests' with its 1/0 strip under the header; a work tab keeps 'Must', no strip",
+      /const daily = isWork \? null : dailyQuestsOf\(board\);/.test(tb) &&
+        /title=\{daily \? DAILY_QUESTS_TITLE : "Must"\}/.test(tb) &&
+        /strip=\{daily \? <DailyStrip daily=\{daily\} \/> : undefined\}/.test(tb) &&
+        /deferred: board\.deferred, \.\.\.\(daily \? \{ daily \} : \{\}\) \}\);/.test(tb)
+    );
+    const laneHtml = renderToStaticMarkup(createElement(Lane, { id: "must", title: "Daily quests", must: true, count: "1 of 2 kept", strip: createElement("ol", { className: "dq-strip" }), badge: createElement("span", null, "chip") }));
+    check(
+      "must lane (daily quests): Lane draws the strip after the header and before the chips",
+      laneHtml.indexOf('<ol class="dq-strip">') > laneHtml.indexOf(">Daily quests</h2>") && laneHtml.indexOf('<ol class="dq-strip">') < laneHtml.indexOf('<div class="lane-chips">'),
+      laneHtml.slice(0, 160)
+    );
+    const tcss = read("src/components/today/today.css").replace(/\r\n/g, "\n");
+    check(
+      "must lane (daily quests): the strip's cells are tokens only (--line-2, --kept, the minimum a lighter --kept), never a 44 px target",
+      tcss.includes('.today-lane .dq-cell[data-bit="1"] { background: var(--kept); }') &&
+        tcss.includes(".today-lane .dq-cell[data-min] { background: color-mix(in srgb, var(--kept) 55%, var(--card)); }") &&
+        /\.today-lane \.dq-cell \{ flex: 0 1 28px; min-width: 8px; height: 6px; border-radius: 3px; background: var\(--line-2\); \}/.test(tcss) &&
+        !/<button|onClick/.test(read("src/components/today/DailyStrip.tsx"))
+    );
+  }
 
   // The make-up card's words: never blaming, the true minus, the window true when read.
   const priced = { ...stretch, template: { ...tpl({ id: "s", title: "Stretch", recurrence: "DAILY", estMinutes: 10, machineMinutes: 10 }) } };

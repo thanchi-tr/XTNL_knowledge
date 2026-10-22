@@ -42,7 +42,7 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 
 | Method | Path | Wraps |
 | --- | --- | --- |
-| GET | /check | the Today board's read, the Review hub's counts, the shell's level, the work tabs' due tasks |
+| GET | /check | the Today board's read, the Review hub's counts, the shell's level, the work tabs' due tasks, the week audit |
 | POST | /tasks/complete | `completeTask` (actions/tasks.ts) |
 | POST | /tasks/undo | `undoCompletion` (actions/tasks.ts) |
 | POST | /work/done | `doneScheduledTask` with no log (actions/scheduled-tasks.ts) |
@@ -66,7 +66,16 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
       "dueLabel": "by Fri" | "late 2d" | "from Tue" | null, "xpHint": 8.3 | null }
   ],
   "tasksSummary": { "open": 3, "done": 2, "allDone": false },
+  "daily": { "kept": 3, "total": 4, "full": false, "cap": 5, "minimum": 1, "over": 0,
+    "quests": [ { "templateId": "…", "title": "Gym legs", "kept": true, "minimum": true } ] },
   "review": { "due": 12, "doneToday": 4, "target": 20, "nextDueAt": "…" | null },
+  "fading": { "ideas": 5, "forgetting": 1, "domains": [ { "id": "…", "name": "Probability", "ideas": 3 } ] },
+  "auditOn": true,
+  "week": { "weekKey": "2026-W43", "label": "Week of 19 Oct", "rate": 86, "kept": 26, "due": 30, "minimum": 3,
+    "skipped": 2, "held": 0, "open": 0, "short": 0, "target": 85,
+    "status": "provisional" | "frozen" | "final", "calibrating": false, "asOfDay": "2026-10-26" | null,
+    "decaying": { "count": 4, "unread": 0, "top": [ { "kind": "domain", "title": "Probability fell to L3 (from L4)",
+      "detail": "2 ideas fading in it. Reviewing them brings the level back." } ] } | null } | null,
   "work": [
     { "id": "…", "boardId": "…", "boardName": "Acme Sales", "title": "Call Jordan back",
       "dueAt": "…", "allDay": false, "channel": "CALL" | "VISIT" | "EMAIL" | "MESSAGE" | "OTHER",
@@ -89,9 +98,59 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
     (null when unknown). Life XP, to one decimal.
 - `tasksSummary`: the board's own counts: `open` the Must and Today rows still open or locked (a held row is not
   open), `done` the rows above done today, `allDone` the web's "Board clear" (nothing open, at least one done).
+- `daily`: the daily quests (the user's musts, at most 5 due on a day; decisions D14 and D15), as the web's Must
+  lane counts and draws them ("Daily quests · 3 of 4 kept" and its strip). Binary is a status only: XP stays graded.
+  - `quests`: one cell per quest, in the lane's order: the musts that ask today (a held or skipped one asks nothing),
+    then today's musts a defer or an abort hid (each not kept). `kept` is true once it is done, the minimum version
+    included; `minimum` is true when it was kept at the minimum.
+  - `kept` of `total` is the lane's count. `minimum` counts the quests kept at the minimum ("1 at minimum": each
+    still counts as kept). `full`: every quest kept (false with none). `cap` is the cap (5). `over`: musts past the cap
+    today, counted as the cap counts them (a must due today, a planned one-off on its day, a weekly or monthly target
+    must; one carried from an earlier day is a quest here, never over the cap); a day already over it keeps its musts
+    ("1 over the cap").
 - `review`: the Review hub's figures: `due` every card due now (including any DIAGRAM card, which the app can't
   show), `doneToday` today's reviews, `target` today's review quest target (fixed by the day's first open, at most
   20), `nextDueAt` when the soonest card not yet due falls due.
+- `fading`: the ideas past their grace (blueprint 3.1a; decision D23), as the web's bell line "5 ideas fading" counts
+  them. Each card keeps its own forgetting curve: past its grace its recall falls a little every day, and it loses a
+  level for every 7.5 points of recall lost. The grace is never under 3 days past due (the 72 h floor), so nothing
+  fades within 72 hours of falling due. `ideas` counts the cards past grace, `forgetting` those of them already losing
+  levels, `domains` the Domains they sit in, most first, each with its count. Reviewing a card brings it back (each is
+  among `review.due`). With none past grace: 0, 0 and []. Read at the loadout's grace extension (none when it couldn't
+  be read).
+- `auditOn`: the weekly audit is switched on (`AUDIT_LAUNCH_DAY` in force: false until the user's go). It is the
+  switch alone, never a read, so it is true from the launch day on, before the first audited week has a `week`, and
+  stays true when the audit couldn't be read. The phone's Sunday reminder follows it.
+- `week`: the weekly audit (blueprint 5.2a and 5.2b; decisions D12, D15, D16, D17 and D38), as the web's Week audit
+  card on `/today/week` states it. Null while the audit is switched off (`AUDIT_LAUNCH_DAY`, null until the user's go)
+  or before its first week (until that week's Sunday 18:00), and when it couldn't be read.
+  - The week shown: this week from Sunday 18:00 (Sydney), before that the week just ended. `weekKey` is its ISO week,
+    `label` its Monday ("Week of 19 Oct").
+  - `kept` of `due` counts the daily quests (the musts) exactly as the web's week strip on Tasks › Habits does: the
+    minimum version counts as kept (`minimum` of them), a skip and a held day (rest, sick, vacation, a freeze) are left
+    out of `due` and shown (`skipped`, `held`), and `open` counts the ones still recordable (in `due`, not kept).
+    `rate` is `kept` of `due` as a whole percent, rounded down (null with none due).
+  - `target` is 85 (whole percent), and it is shown only on the audit, never on Today. `short` is how many more kept
+    would reach it (0 once met). `calibrating` is true for the first two audited weeks: the target is shown, not
+    applied.
+  - `status`: `provisional` is read live (from Sunday 18:00, or any week with no frozen copy); `frozen` is the copy
+    the server keeps as of Monday 04:00 (`asOfDay` is the day it was frozen: that Monday, or the Tuesday when
+    Monday's run missed it; it counts what was recorded by that day's 04:00, though the run reads a little later),
+    which a later tick or make-up never changes; `final` is the same copy from the week's Wednesday. The audit pays
+    nothing and judges nothing.
+  - `decaying`: "Decaying this week" (blueprint 5.2c; P12), as the web card lists it: what fell over the week, read
+    from what the server already keeps and never applied. `count` is everything found, `top` its first three lines
+    (`kind` is `streak` a life track's kept-week run ended, `field` or `domain` a level lost this week, `habit` a
+    habit's strength fell or dropped a rung, `ideas` the ideas past grace now, `trait` a trait below its score a
+    week ago, `mp` mastery points lost to idle decay), in that order; on the web each line links to its fix.
+    `unread` counts the sources that couldn't be read (left out, never guessed). A frozen copy keeps the decay it was
+    frozen with. Null when it wasn't read.
+  - The Sunday reminder (decision D37) is the app's own: a local notification on Sunday at 19:00 Sydney time,
+    whatever zone the phone is set to, that opens `xtnl://app/week` (the web's `/today/week`). It is armed while the
+    server's last `/check` said `auditOn` and Settings › Notifications has it on, so it is armed in the launch week,
+    before the first `week` is sent, and a failed audit read never turns it off. It is exact when Android lets the
+    app set exact alarms (Alarms & reminders); otherwise Android sends it within the hour after 19:00. No push, no
+    endpoint.
 - `work`: the open scheduled tasks across the open work tabs that are overdue or due today, in the Agenda's order
   (Overdue first, then Today; soonest first, an all-day task before the timed ones of its day), at most 30.
 - `level` (the character level, as the top bar shows it) and `streak` (the daily streak; `freezes` banked) are null
@@ -226,6 +285,9 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 
 - `line`: the capture sheet's toast as one line ("Added (not a Must)" for a must with no day; "Already saved" for a
   retried line; "Idea in Inbox" for an idea draft; "Weight logged. 72.4 kg → Body · was 73.0 kg" for a weigh-in).
+  - Daily quests: a must that would be the sixth due on one of its days is saved as an ordinary task, never refused:
+    "Added (not a Must). Pay the rent → Planned · ≈ 3 · Five daily quests is the cap. Soften one first." The 4th or
+    5th adds the warning: "… · 4 of 5 daily quests" ("… on Mon 26 Oct" when that day is not today).
 - `id`: the task, goal or draft's id (`weight:<day>` for a weigh-in). `undo.id` is opaque: send it back as is (for a
   weigh-in it carries the reading it replaced).
 - `undo` is null for a weigh-in there is nothing to take back from: the same value again ("Already logged": nothing

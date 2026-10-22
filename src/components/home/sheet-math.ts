@@ -27,7 +27,6 @@
  *   lifeMpCell(mpLastWeek, today)        the hero's life MP cell: the last judged week, named
  *                                        honestly ('last week', 'week of 21 Sep', none judged yet)
  *   pendingWeek(lastSunday, today)       the week that just ended, while it is not judged yet
- *   weekReviewPromise(launched)          /today/week's line about the review still to come
  */
 import type { Attribute } from "@prisma/client";
 import { ATTRIBUTES, COMPOSITION_TOTAL, type AttributeScores, type Composition, type FieldContribution } from "@/lib/attributes";
@@ -503,16 +502,4 @@ export function pendingWeek(lastJudgedSunday: DayKey, today: DayKey): { monday: 
   const endedSunday = addDays(weekStartKeyOf(today), -1);
   if (lastJudgedSunday >= endedSunday) return null;
   return { monday: addDays(endedSunday, -6), judgeDay: judgeDayOf(endedSunday), due: endedSunday <= lastJudgeableSunday(today) };
-}
-
-/**
- * /today/week's line about the weekly review still to come. Once life
- * counts, the Last week card already states each track's verdict and the MP
- * it paid (judged from the Wednesday after), so the line promises only the
- * parts still to come.
- */
-export function weekReviewPromise(launched: boolean): string {
-  return launched
-    ? "Once each day is settled at 04:00, a short weekly review opens: the inbox to zero, a goals check-in, anything owed, and the shape of next week."
-    : "Once each day is settled at 04:00, Monday opens a short review of the week that ended: what each track kept and why, the inbox to zero, a goals check-in, anything owed, and the shape of next week. It ends on the week card, which states the exact mastery points paid for each kept track.";
 }

@@ -130,6 +130,8 @@ export type ActivitySource =
   | "STEPS"
   /** A level an unreviewed idea forgot (srs.ts degradeOverdueIdeas): sink DOMAIN, xp negative, what earning it paid. */
   | "FORGET"
+  /** The weekly audit's frozen copy (week-audit.ts; blueprint P11): sink NONE, xp 0, 'audit:<YYYY-Www>', dated the Sunday. */
+  | "AUDIT"
   /** Momentum's rows (momentum.md §D.2): written only by momentum's own writers, each gated on momentumLive(day). */
   | MomentumActivitySource;
 

@@ -3,8 +3,10 @@ package com.xtnl.app.ui.check
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xtnl.app.AppGraph
+import com.xtnl.app.core.DailyStrip
 import com.xtnl.app.core.TickLadder
 import com.xtnl.app.data.CheckData
+import com.xtnl.app.data.DailyQuests
 import com.xtnl.app.data.LevelInfo
 import com.xtnl.app.data.Outcome
 import com.xtnl.app.data.TaskItem
@@ -81,6 +83,8 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
         /** The header's counts: every row the list shows (habits included), so "3 open" matches three open circles. */
         val shownOpen: Int get() = tasks.count { (it.open || it.locked) && it.status != "HELD" && it.status != "SKIPPED" }
         val shownKept: Int get() = tasks.count { it.kept }
+        /** The daily quests (the Must lane's count and strip), each listed quest's cell live from its row (DailyStrip). */
+        val daily: DailyQuests? get() = DailyStrip.live(data?.daily, tasks)
         /** The web's "Board clear", the server's call (see [allDone]). */
         val boardClear: Boolean get() = allDone
         val work: List<WorkItem> get() = data?.work.orEmpty().filter { it.id !in workHidden }
@@ -151,6 +155,8 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
         // A new server or demo mode: start over from that source's cache. A read still out to the old one is dropped.
         viewModelScope.launch {
             graph.settings.state.map { if (it.demo) "demo" else it.server }.distinctUntilChanged().drop(1).collect {
+                // The audit was the old source's (Settings cleared it with the switch): the alarm goes until the new one says so.
+                graph.auditReminder.sync()
                 refreshJob?.cancel()
                 _ui.value = Ui()
                 start()
@@ -184,6 +190,9 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
             if (r is Outcome.Ok) graph.cache.write(source, r.value, System.currentTimeMillis())
             // Settings switched the source while this was out: that source's own read is coming.
             if (source != graph.source) return@launch
+            // The Sunday reminder follows the server's switch (`auditOn`, never a read: a week not yet shown or a failed
+            // audit read leaves it on); demo data never arms it.
+            if (r is Outcome.Ok && source != "demo") graph.auditReminder.sawAudit(r.value.auditOn)
             when (r) {
                 is Outcome.Ok -> {
                     val now = System.currentTimeMillis()

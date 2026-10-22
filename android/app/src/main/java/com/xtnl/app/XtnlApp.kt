@@ -7,6 +7,7 @@ import com.xtnl.app.data.DemoApi
 import com.xtnl.app.data.HttpApi
 import com.xtnl.app.data.XtnlApi
 import com.xtnl.app.feel.Feel
+import com.xtnl.app.notify.AuditReminder
 import kotlinx.coroutines.flow.MutableSharedFlow
 
 /**
@@ -20,6 +21,8 @@ class XtnlApp : Application() {
     override fun onCreate() {
         super.onCreate()
         graph = AppGraph(this)
+        // The Sunday reminder: armed again on every start (one alarm, replaced), or cancelled when it is off.
+        graph.auditReminder.sync()
     }
 }
 
@@ -27,6 +30,8 @@ class AppGraph(app: Application) {
     val settings = AppSettings(app)
     val cache = CheckCache(app)
     val feel = Feel(app) { settings.state.value }
+    /** The week audit's Sunday 19:00 (Sydney) reminder (D37): a local alarm and notification, no server push. */
+    val auditReminder = AuditReminder(app, settings)
 
     private val http = HttpApi(server = { settings.state.value.server }, token = { settings.token() })
     private val demo by lazy { DemoApi() }

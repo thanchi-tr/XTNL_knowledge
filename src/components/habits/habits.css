@@ -51,9 +51,34 @@
   .hh-title:focus { outline: none; }
   .hh-title:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
   .hh-rule { margin: 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); overflow-wrap: anywhere; }
+  .hh-score { text-align: right; }
   .hh-pct { margin: 0; font: 600 20px/24px var(--font-display); color: var(--ink-0); font-variant-numeric: tabular-nums lining-nums; white-space: nowrap; }
+  /* "3 at minimum" under the % (D15: those days count as kept in it). */
+  .hh-min { margin: 0; font: 400 12px/16px var(--font-ui); color: var(--ink-2); font-variant-numeric: tabular-nums lining-nums; white-space: nowrap; }
   .hh-foot { margin: 8px 0 0; font: 400 13px/18px var(--font-ui); color: var(--ink-2); font-variant-numeric: tabular-nums lining-nums; }
   .hh-keep { white-space: nowrap; }
+
+  /* ---------- this week's daily quests (QuestWeek.tsx; D14, D15): kept wears --kept, as on Today's strip ---------- */
+  .hh-quests { --hh-c: var(--kept); padding: 12px; margin-top: 14px; }
+  .hh-q-head { min-width: 0; }
+  .hh-q-table { width: 100%; margin-top: 8px; border-collapse: separate; border-spacing: 0 4px; table-layout: fixed; }
+  .hh-q-table th, .hh-q-table td { padding: 0; }
+  .hh-q-table th.hh-q-day, .hh-q-table td { width: 22px; text-align: center; }
+  .hh-q-day { font: 600 12px/16px var(--font-ui); color: var(--ink-2); }
+  .hh-q-day[data-today] { color: var(--ink-0); }
+  .hh-q-name {
+    padding-right: 8px; text-align: left; font: 400 13px/18px var(--font-ui); color: var(--ink-1);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .hh-q { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: middle; background: var(--line-1); }
+  .hh-q[data-q="1"] { background: var(--hh-c); }
+  .hh-q[data-q="m"] { background: color-mix(in srgb, var(--hh-c) 55%, var(--card)); }
+  .hh-q:is([data-q="s"], [data-q="h"]) { background: transparent; box-shadow: inset 0 0 0 1px var(--hh-c); }
+  .hh-q[data-q="0"] { background: color-mix(in srgb, var(--ink-2) 38%, transparent); }
+  /* Open: a faint fill and no outline, as the year grid draws it (an outline is the legend's "Held · rest or skip"). */
+  .hh-q[data-q="o"] { background: color-mix(in srgb, var(--hh-c) 20%, transparent); }
+  .hh-q[data-q="-"] { width: 8px; height: 2px; border-radius: 1px; background: var(--line-2); }
+  .hh-q[data-q="f"] { background: transparent; box-shadow: inset 0 0 0 1px var(--line-2); }
 
   /* ---------- the year grid ---------- */
   .hh-gridwrap { position: relative; margin-top: 10px; }

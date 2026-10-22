@@ -22,16 +22,26 @@
  *   §5 copy: the pre-launch notice, the lag line, step 5's days and the rest
  *      cap, the tour's Today step once Duty is live, and source guards on
  *      the pages and actions this lane wires.
+ *   §6 blueprint P10 (decision D13): the review runs without Duty. The plan
+ *      (four steps before DUTY_LAUNCH_DAY, Owed and rest days hidden, step
+ *      1 without settled facts), fixed step numbers under the unchanged
+ *      progress key, the runner's 'n of 4' (rendered), the inert switch,
+ *      and source guards on the page, the runner and the marker's action.
+ *      §1's Saturday to Wednesday windows are unchanged.
  *
  *   npx tsx scripts/rituals-check.ts
  */
+import Module from "node:module";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { addDays, todayKey, zonedToInstant, type DayKey } from "../src/lib/life-day";
 import {
   MAKEUP_RESTORE_DAYS,
   REST_PER_WEEK,
   WEEK_REVIEW_DETAIL,
+  isDutyLaunched,
   reflectionKey,
   settledFor,
   weekReviewKey,
@@ -47,7 +57,9 @@ import {
   MOOD_MAX,
   MOOD_MIN,
   REFLECTION_NOTE_MAX,
+  REVIEW_BEFORE_LIFE_TEXT,
   REVIEW_LAST_STEP,
+  REVIEW_STEPS,
   dayMonthLabel,
   dutyPhaseOf,
   dutySettledLine,
@@ -67,6 +79,8 @@ import {
   restRefusalOf,
   reviewEndOf,
   reviewPendingText,
+  reviewPlanOf,
+  reviewStepIn,
   reviewedWeek,
   stakesFromLine,
   weekFactsOf,
@@ -330,7 +344,12 @@ console.log("\n── §2 The week as far as it is settled");
   const page = code(read("src/app/today/week/page.tsx"));
   const stepOne = page.slice(page.indexOf("function StepOne("), page.indexOf("function weekCardOf("));
   check("no verdict: step 1 renders no Kept/Not kept chip of its own (only the judged week's card)", stepOne.length > 200 && !/<Chip\b/.test(stepOne) && !/"(Kept|Not kept)"/.test(stepOne) && /<LastWeekCard week=\{lastWeek\}/.test(stepOne));
-  check("no verdict: the run ends on the week card only when the judge has written every track of that week", /ledger && life\.judgedWeeks\.includes\(review\.weekKey\) \? weekCardOf\(ledger, review\) : null/.test(page) && /end=\{card \? \{ kind: "card", card \} : \{ kind: "pending", text: reviewPendingText\(review\) \}\}/.test(page));
+  // P10 re-pin: before life counts (a rehearsal override only) the end promises no card: REVIEW_BEFORE_LIFE_TEXT.
+  check(
+    "no verdict: the run ends on the week card only when the judge has written every track of that week",
+    /ledger && life\.judgedWeeks\.includes\(review\.weekKey\) \? weekCardOf\(ledger, review\) : null/.test(page) &&
+      /end=\{card \? \{ kind: "card", card \} : \{ kind: "pending", text: isLaunched\(today\) \? reviewPendingText\(review\) : REVIEW_BEFORE_LIFE_TEXT \}\}/.test(page)
+  );
   check("settled-through labelling: step 1's eyebrow is the facts' label", /The week of \{dayMonthLabel\(w\.monday\)\} · \{facts\.label\}/.test(stepOne));
   check("week card: a held track is passed through as held (weekMarkOf), never dropped", /kept: r\.kept, held: r\.held \}/.test(page));
   const runner = code(read("src/components/today/m2/WeekRunner.tsx"));
@@ -367,7 +386,11 @@ console.log("\n── §3 Reflection");
   const body = code(actions);
   check("actions: 'use server' first, and only async functions are exported", /^"use server";/.test(actions) && !/export (const|let|function(?!\s*\*)|class)\b(?! async)/.test(body.replace(/export async function/g, "")));
   check("actions: saveReflection writes reflectionEventInput through the idempotent recordActivity, for today or yesterday only", /recordActivity\(userId, input\)/.test(body) && /reflectionEventInput\(\{/.test(body) && /reflectionDayAllowed\(day, todayKey\(now\)\)/.test(body));
-  check("actions: markWeekReviewed keys reviewedWeek(today) on the server, refused before launch", /isDutyLaunched\(today\)/.test(body) && /reviewedWeek\(today\)/.test(body) && /weekReviewEventInput\(\{ weekKey: week\.weekKey, day: today, now \}\)/.test(body));
+  // P10 re-pin (decision D13): the marker is written with or without Duty; Thursday and Friday still refuse.
+  check(
+    "actions: markWeekReviewed keys reviewedWeek(today) on the server, with or without Duty, none on Thursday or Friday",
+    !/isDutyLaunched/.test(body) && /const week = reviewedWeek\(today\);\s*if \(!week\) return \{ ok: false/.test(body) && /weekReviewEventInput\(\{ weekKey: week\.weekKey, day: today, now \}\)/.test(body)
+  );
   check(
     "actions: setDebtWriteOff only delegates to lane C's one action (actions/duty.ts; its core spreads newLifeSettingsData) and writes nothing itself",
     /import \{ setDebtWriteOff as setDebtWriteOffAction[^}]*\} from "\.\/duty";/.test(body) &&
@@ -468,8 +491,9 @@ console.log("\n── §5 Copy and wiring");
 
   const week = code(read("src/app/today/week/page.tsx"));
   check("week: after() runs the one maintenance chain (settle, then judge)", /after\(async \(\) => \{\s*await maybeMaintainLife\(userId\);/.test(week) && !/maybeJudgeWeeks/.test(week));
-  check("week: the runner only while Duty is live and a week is under review, at ?view=run", /if \(dutyLive && review && \(await searchParams\)\.view === "run"\)/.test(week));
-  check("week: before Duty is live the review placeholder is unchanged", /\{weekReviewPromise\(life\.launched\)\}/.test(week) && /Weekly review · arrives with daily settlement/.test(week));
+  // P10 re-pins (decision D13): the run and its card no longer wait for Duty; the placeholder is gone.
+  check("week: the runner whenever a week is under review, at ?view=run, with or without Duty", /const review = reviewedWeek\(today\);/.test(week) && /if \(review && \(await searchParams\)\.view === "run"\)/.test(week) && !/dutyLive \? reviewedWeek/.test(week));
+  check("week: the review card with or without Duty; no 'arrives with daily settlement' placeholder", /<ReviewCard week=\{review\} marked=\{marked\} dutyLive=\{dutyLive\} \/>/.test(week) && !/arrives with daily settlement/.test(week) && !/weekReviewPromise/.test(week));
   check("week: RestDay is read with a fallback (the table ships with Duty's migration)", /Promise\.resolve\(\)\s*\.then\(\(\) =>\s*prisma\.restDay\.findMany\([\s\S]*?\.catch\(\(\) => \[\]\)/.test(week));
   const you = code(read("src/app/you/page.tsx"));
   check("you: after() runs the snapshot, then the maintenance chain", /recordTodaySnapshot\(\);[\s\S]{0,40}finally \{\s*await maybeMaintainLife\(userId\)/.test(you));
@@ -488,5 +512,103 @@ console.log("\n── §5 Copy and wiring");
   );
 }
 
-console.log(`\nrituals-check: ${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+// ── §6 Blueprint P10: the review runs without Duty (decision D13) ─────────
+async function withoutDuty() {
+  console.log("\n── §6 The review without Duty");
+  const names = (steps: readonly { n: number; name: string }[]) => steps.map((s) => `${s.n} ${s.name}`);
+  eq("steps: five, numbered 1 to 5, the end after them", [names(REVIEW_STEPS), REVIEW_LAST_STEP], [["1 The week", "2 Inbox", "3 Goals", "4 Owed", "5 Next week"], 6]);
+  eq("steps: only Owed is Duty's", REVIEW_STEPS.filter((s) => s.duty).map((s) => s.name), ["Owed"]);
+  const live = reviewPlanOf(true);
+  const before = reviewPlanOf(false);
+  eq("plan, Duty live: all five, settled facts, rest days", [live.steps.map((s) => s.n), live.settledFacts, live.restDays], [[1, 2, 3, 4, 5], true, true]);
+  eq("plan, before Duty: the week, inbox, goals and next week; no settled facts, no rest days", [before.steps.map((s) => s.n), before.settledFacts, before.restDays], [[1, 2, 3, 5], false, false]);
+  check("plan: a step keeps its own number and name either way", before.steps.every((s) => REVIEW_STEPS[s.n - 1] === s));
+
+  const walk = (dutyLive: boolean) => {
+    const plan = reviewPlanOf(dutyLive);
+    const out = [reviewStepIn(plan, 1)];
+    while (out[out.length - 1] < REVIEW_LAST_STEP && out.length < 10) out.push(reviewStepIn(plan, out[out.length - 1] + 1));
+    return out;
+  };
+  eq("Next and Skip, before Duty: 1 → 2 → 3 → 5 → the end (Owed never shows)", walk(false), [1, 2, 3, 5, 6]);
+  eq("Next and Skip, Duty live: 1 → 2 → 3 → 4 → 5 → the end", walk(true), [1, 2, 3, 4, 5, 6]);
+  eq("clamped either way: 0, 9, 2.5, NaN", [0, 9, 2.5, Number.NaN].map((n) => [reviewStepIn(before, n), reviewStepIn(live, n)]), [[1, 1], [6, 6], [1, 1], [1, 1]]);
+  eq(
+    "the progress key is unchanged; a stored Owed step reads as Next week before Duty and as Owed once live",
+    [weekReviewProgressKey("2026-W42"), reviewStepIn(before, parseReviewStep("4")), reviewStepIn(live, parseReviewStep("4")), reviewStepIn(before, parseReviewStep("5"))],
+    ["week-review:2026-W42:step", 5, 4, 5]
+  );
+
+  // The launch day injected (null as today's code has it, so a later flip needs no re-pin here; duty-check pins the constant).
+  const today = "2026-10-24";
+  eq("switch null: Duty is not live, and the run is the four-step plan with Owed absent", [isDutyLaunched(today, null), reviewPlanOf(isDutyLaunched(today, null)).steps.map((s) => s.n)], [false, [1, 2, 3, 5]]);
+  eq("a launch day: all five from it, four before it", [reviewPlanOf(isDutyLaunched(today, "2026-10-19")).steps.length, reviewPlanOf(isDutyLaunched(today, "2026-10-26")).steps.length], [5, 4]);
+  eq("window: the run opens Saturday to Wednesday without Duty, as before (§1)", [reviewedWeek(today)?.weekKey ?? null, reviewedWeek("2026-10-22")], ["2026-W43", null]);
+  eq("end before life counts: no card promised", REVIEW_BEFORE_LIFE_TEXT, "Weeks are judged once life counts");
+
+  // The runner, rendered: the progress counts only the steps that run (WeekRunner imports today.css; Node can't load CSS).
+  (Module as unknown as { _extensions: Record<string, (m: { exports: unknown }) => void> })._extensions[".css"] = (m) => {
+    m.exports = {};
+  };
+  const { WeekRunner } = await import("../src/components/today/m2/WeekRunner");
+  const runner = (step: number, steps?: readonly { n: number; name: string }[]) =>
+    renderToStaticMarkup(createElement(WeekRunner, { step, steps, focus: false, exitHref: "/today", onNext: () => {}, onSkip: () => {} } as Parameters<typeof WeekRunner>[0], "x"));
+  const segsOf = (html: string) => (/<div class="segs tall"[^>]*>([\s\S]*?)<\/div>/.exec(html)?.[1].match(/<i\b/g) ?? []).length;
+  const two = runner(2, before.steps);
+  check("runner, before Duty: step 2 reads '2 of 4', its label names it, four segments", two.includes(">2 of 4<") && two.includes('aria-label="Step 2 of 4: Inbox"') && segsOf(two) === 4, two.slice(0, 400));
+  const fifth = runner(5, before.steps);
+  check("runner, before Duty: Next week is '4 of 4' and its button is Finish", fifth.includes(">4 of 4<") && fifth.includes('aria-label="Step 4 of 4: Next week"') && />Finish</.test(fifth));
+  const end = runner(6, before.steps);
+  check("runner, before Duty: the end reads Done, with no Skip", end.includes(">Done<") && end.includes('aria-label="Weekly review done"') && !/>Skip</.test(end));
+  const owed = runner(4);
+  check("runner, default (Duty live, /dev/style): Owed is '4 of 5', five segments", owed.includes(">4 of 5<") && owed.includes('aria-label="Step 4 of 5: Owed"') && segsOf(owed) === 5);
+  check("runner, Duty live: Finish only on Next week", />Next</.test(runner(4, live.steps)) && />Finish</.test(runner(5, live.steps)));
+
+  // Source guards: the page, the runner's wiring and the action.
+  const page = code(read("src/app/today/week/page.tsx"));
+  check("page: the plan is reviewPlanOf(dutyLive)", /const plan = reviewPlanOf\(dutyLive\);/.test(page));
+  check(
+    "page: before Duty the run reads only its done marker (readReview, Duty's facts, only with settled facts)",
+    /plan\.settledFacts \? readReview\(userId, review\) : null/.test(page) && /plan\.settledFacts \? false : readMarked\(userId, review\)/.test(page) && /marked=\{read \? read\.marked : markedBefore\}/.test(page)
+  );
+  check("page: rest days are offered only with the plan's rest days", /if \(read && plan\.restDays\) \{/.test(page) && /restNote=\{restNote\}/.test(page));
+  check("page: the runner is told whether Duty is live", /dutyLive=\{dutyLive\}\s*stepOne=/.test(page));
+  const stepOne = page.slice(page.indexOf("function StepOne("), page.indexOf("function DutyStandings("));
+  const noFacts = stepOne.slice(stepOne.indexOf("if (!facts) {"), stepOne.indexOf("const head ="));
+  check(
+    "step 1 before Duty: no settled figure (no musts tally, days or Duty XP), no chip; each must's streak and the last judged week",
+    noFacts.length > 100 && !/mustTallyLine|dutyXpLine|shownUp|freezesUsed|<Chip\b/.test(noFacts) && /<DutyStandings duties=\{duties\} live=\{live\} \/>/.test(noFacts) && /\{lastWeek && <LastWeekCard week=\{lastWeek\} today=\{today\} \/>\}/.test(noFacts)
+  );
+  // While Duty is off the musts are the daily quests (D14; Today's lane says so): the review names them so, not "duties".
+  const standings = page.slice(page.indexOf("function DutyStandings("), page.indexOf("function DutyStandings(") + 900);
+  check(
+    "step 1 names the musts as Today does: 'Each daily quest, as of today' before Duty, 'Each duty' only once it is live; the steps list says 'each daily quest's streak'",
+    /aria-label=\{live \? "Each duty's streak" : "Each daily quest's streak"\}/.test(standings) &&
+      /\{live \? "Each duty, as of today" : "Each daily quest, as of today"\}/.test(standings) &&
+      /audit=\{audit\} today=\{today\} live=\{dutyLive\} \/>\}/.test(page) &&
+      /"The last judged week, kept or not per track with the reason; each daily quest's streak\."/.test(page) &&
+      !/each duty's streak/.test(page)
+  );
+  check("steps list: built from the plan, so before Duty there is no Owed row", /const steps = reviewPlanOf\(live\)\.steps;/.test(page) && /\$\{STEP_COUNT\[steps\.length\]\} steps, each skippable/.test(page));
+  const review = code(read("src/components/home/WeekReview.tsx"));
+  check("runner wiring: the step shown and every move go through reviewStepIn (Owed skipped before Duty)", /const step = reviewStepIn\(plan, chosen \?\? stored \?\? 1\);/.test(review) && /const s = reviewStepIn\(plan, next\);/.test(review) && /steps=\{plan\.steps\}/.test(review));
+  check("runner wiring: step 5's rest days only with the plan's rest days; the capacity always", /\{!plan\.restDays \? null : props\.rest\.length > 0 \? \(/.test(review) && /<CapacityPanel/.test(review));
+  // The inbox step runs for everyone now (D13), so it says what the daily quests' cap did, as Today does (D14).
+  check(
+    "inbox step: a must clarified past the cap says it is an ordinary task now, near it the warning (mustNoticeOf, Today's words); Drop's Undo says how many a must brought back makes",
+    /\(v\) => \{\s*if \(choice === "drop"\)[^\n]*\n\s*if \(v\.mustNote\) setNotice\(mustNoticeOf\(title, v\.mustNote\)\);/.test(review) &&
+      /if \(v\.mustNote\) setNotice\(restoredNoticeOf\(d\.title, v\.mustNote\)\);/.test(review) &&
+      /\{notice && \(/.test(review)
+  );
+}
+
+void withoutDuty().then(
+  () => {
+    console.log(`\nrituals-check: ${passed} passed, ${failed} failed`);
+    process.exit(failed ? 1 : 0);
+  },
+  (err) => {
+    console.error(err);
+    process.exit(1);
+  }
+);

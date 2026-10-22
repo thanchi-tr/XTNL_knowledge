@@ -5,7 +5,10 @@ import { getCurrentUserId } from "@/lib/user";
 import { todayKey } from "@/lib/life-day";
 import { yearOfParam, type HabitYearCard, type HabitYearView } from "@/lib/habit-history";
 import { loadHabitYear } from "@/lib/habit-history-server";
+import { loadQuestWeek } from "@/lib/daily-quests-server";
+import type { QuestWeek as QuestWeekView } from "@/lib/daily-quests";
 import { HabitCard } from "@/components/habits/HabitCard";
+import { QuestWeek } from "@/components/habits/QuestWeek";
 import { HabitHash } from "@/components/habits/HabitHash";
 import { Button } from "@/components/ui/Button";
 
@@ -26,18 +29,29 @@ const LEGEND: readonly { code: string; label: string }[] = [
 /**
  * Tasks › Habits (/today/habits): each personal habit's year as a grid of days in its own hue, its % kept, its
  * streaks and this week (habit-history.ts), with a year switcher (?year=, this year by default) and the ended habits
- * in a fold. Read-only: one cached read (habit-history-server.ts), nothing settled, judged or written. The top bar's
- * title is nav.ts's (Tasks · Habits); the shell owns <main>.
+ * in a fold; above them, this year only, this week of every daily quest as a 1/0 strip per must (QuestWeek; decisions
+ * D14 and D15). Read-only: two cached reads (habit-history-server.ts, daily-quests-server.ts), nothing settled,
+ * judged or written. The top bar's title is nav.ts's (Tasks · Habits); the shell owns <main>.
  */
 export default async function HabitsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const query = await searchParams;
   const now = new Date();
   const today = todayKey(now);
   const year = yearOfParam(query.year, today);
-  const view: HabitYearView | null = await loadHabitYear(getCurrentUserId(), year, now).catch((err: unknown) => {
-    console.error("Habits: the year failed to load.", err);
-    return null;
-  });
+  const thisYear = year === Number(today.slice(0, 4));
+  // This week's daily quests (D14, D15) show with this year only; a failed read leaves them out, never the page.
+  const [view, quests] = await Promise.all([
+    loadHabitYear(getCurrentUserId(), year, now).catch((err: unknown): HabitYearView | null => {
+      console.error("Habits: the year failed to load.", err);
+      return null;
+    }),
+    thisYear
+      ? loadQuestWeek(getCurrentUserId(), now).catch((err: unknown): QuestWeekView | null => {
+          console.error("Habits: this week's daily quests failed to load.", err);
+          return null;
+        })
+      : Promise.resolve(null),
+  ]);
 
   return (
     <div className="page hh-page cq-main">
@@ -67,6 +81,8 @@ export default async function HabitsPage({ searchParams }: { searchParams: Promi
         </nav>
         {view && <p className="t-meta hh-sum">{view.summary}</p>}
       </div>
+
+      {quests && <QuestWeek week={quests} today={today} />}
 
       {!view ? (
         <div className="card pad-l hh-empty" role="alert">

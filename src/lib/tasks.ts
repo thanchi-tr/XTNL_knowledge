@@ -54,6 +54,7 @@ import { momentumRoll } from "./momentum-roll";
 import { cleanCaptureKey, matchParentGoal, parseCapture } from "./capture-parse";
 import type { GoalProgressRow } from "./goals";
 import { captureShapeOf } from "./capture-shape";
+import { mustCapOf, mustNoteOf, restoredMustNoteOf, type MustNote } from "./daily-quests";
 import { occursOn } from "./recurrence";
 import { statedGoalMp } from "./life-economy";
 import { MAKEUP_RESTORE_EVERY_DAYS, dutyLaunchDay, freezeUseKey, isDutyLaunched, newLifeSettingsData } from "./duty-economy";
@@ -993,6 +994,12 @@ export interface CreatedTask {
    * same rule buildBoard files it by.
    */
   where: BoardPlace;
+  /**
+   * Daily quests (daily-quests.ts, decision D14): a must past the cap of five on one of its days was saved as an
+   * ordinary task (`capped`, MUST_CAP_LINE), or it is the 4th or 5th due that day (the warning). Absent otherwise,
+   * and on a retried send (the first send's save stands).
+   */
+  mustNote?: MustNote;
 }
 
 const TITLE_MAX = 200;
@@ -1200,16 +1207,62 @@ interface InsertedCapture {
   now: Date;
 }
 
+/** The columns a standing must is counted by (daily-quests.ts mustCapOf, through its questSlotsOn). */
+const MUST_RULE_SELECT = {
+  id: true,
+  kind: true,
+  recurrence: true,
+  startDay: true,
+  dueDay: true,
+  dueKind: true,
+  compulsory: true,
+  compulsoryOnRest: true,
+  inbox: true,
+  pendingChange: true,
+} satisfies Prisma.TaskTemplateSelect;
+
+/**
+ * The musts that can still fall due (mustCapOf's `existing`): the personal Board's live TASK and HABIT templates
+ * flagged compulsory (a pending 'Not a must' still counts until its day: ruleOn reads it), never an inbox item, and
+ * never `except` (the row an edit replaces). One indexed read, run only for a line that would be a must.
+ */
+async function loadStandingMusts(userId: string, except?: string | null): Promise<(DutyTemplate & { id: string })[]> {
+  const rows = await prisma.taskTemplate.findMany({
+    where: { userId, ...PERSONAL_BOARD, compulsory: true, inbox: false, archivedAt: null, kind: { in: ["TASK", "HABIT"] }, ...(except ? { id: { not: except } } : {}) },
+    select: MUST_RULE_SELECT,
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    kind: r.kind,
+    recurrence: r.recurrence,
+    startDay: keyOfDateColumn(r.startDay),
+    dueDay: keyOrNull(r.dueDay),
+    dueKind: r.dueKind,
+    compulsory: r.compulsory,
+    compulsoryOnRest: r.compulsoryOnRest,
+    inbox: r.inbox,
+    archivedDay: null,
+    pendingChange: r.pendingChange,
+  }));
+}
+
 /**
  * createTemplateCore's write without the done-now tick: one INSERT (or the
  * row a retried key already wrote), priced against today's real ledger and
  * placed on the board. recaptureCore ticks only after the line it replaces
  * has been taken back.
+ *
+ * Daily quests (decision D14): a line that would be a must is counted
+ * against the cap first (mustCapOf over loadStandingMusts, the replaced row
+ * of an edit, `replacing`, left out). Past the cap on any of its days it is
+ * saved as an ordinary task, with MUST_CAP_LINE; from the 4th it carries the
+ * warning. Nothing already a must changes. A work tab's must has no Duty and
+ * is not counted, nor is an inbox must (it is counted when it is clarified).
  */
 async function insertCapture(
   userId: string,
   parsed: ParsedCapture,
-  opts: { rawText: string; captureSource: CaptureSource; captureKey?: string | null; now?: Date; link?: CaptureLink; boardId?: BoardScope }
+  opts: { rawText: string; captureSource: CaptureSource; captureKey?: string | null; now?: Date; link?: CaptureLink; boardId?: BoardScope; replacing?: string | null }
 ): Promise<InsertedCapture> {
   const now = opts.now ?? new Date();
   const today = todayKey(now);
@@ -1225,9 +1278,20 @@ async function insertCapture(
   const machineMinutes = Math.max(1, Math.round(sizing.machineMinutes));
   const estMinutes = typed != null ? Math.max(1, Math.min(EST_MINUTES_MAX, Math.round(typed))) : machineMinutes;
 
-  const { kind, recurrence, startDay, dueDay, dueKind, compulsory, inbox, note } = captureShapeOf(parsed, today);
+  const { kind, recurrence, startDay, dueDay, dueKind, compulsory: asMust, inbox, note } = captureShapeOf(parsed, today);
   const workRefusal = boardId ? workKindRefusalOf(kind) : null;
   if (workRefusal) throw new Error(workRefusal);
+
+  // Daily quests (D14): a sixth must on any of its days is saved as an ordinary task, and says so.
+  const cap =
+    asMust && !inbox && !boardId
+      ? mustCapOf(
+          await loadStandingMusts(userId, opts.replacing),
+          { kind, recurrence, startDay, dueDay, dueKind, compulsory: true, compulsoryOnRest: false, inbox, archivedDay: null },
+          today
+        )
+      : null;
+  const compulsory = asMust && !cap?.capped;
 
   // A roadmap Start (F16 seam 5) names its parent goal and the goal's measure outright; checked before the write.
   const goal = linkedGoalFields(kind, captureGoalFields(kind, title, parsed.horizon, dueDay, today), opts.link);
@@ -1316,7 +1380,8 @@ async function insertCapture(
   // A new row has no instances yet. A retried send's row may have been
   // ticked since (here, or on the board), so its place reads them.
   const instances = duplicate ? await readCapturedInstances(userId, row.id, today) : [];
-  return capturedOf(row, { duplicate, instances, totals, events, minutes: typed, today, now });
+  // A retried send's row is the first send's: its count then is what stands, so this one says nothing of the cap.
+  return capturedOf(row, { duplicate, instances, totals, events, minutes: typed, today, now, mustNote: duplicate ? null : mustNoteOf(cap) });
 }
 
 /** A goal capture's own columns; all null for any other kind. */
@@ -1354,6 +1419,8 @@ function capturedOf(
     minutes: number | null;
     today: DayKey;
     now: Date;
+    /** The daily quests' note for this save (insertCapture), if any. */
+    mustNote?: MustNote | null;
   }
 ): InsertedCapture {
   const t = toBoardTemplate(row, a.now);
@@ -1368,6 +1435,7 @@ function capturedOf(
     duplicate: a.duplicate,
     ...(row.boardId ? { boardId: row.boardId } : {}),
     where: placeOf(t, a.today, a.instances),
+    ...(a.mustNote ? { mustNote: a.mustNote } : {}),
   };
   return { created, t, instances: a.instances, minutes: a.minutes, today: a.today, now: a.now };
 }
@@ -2716,12 +2784,58 @@ export async function pauseForSafetyCore(userId: string, templateId: string, now
  * pays), or while another milestone of the roadmap is under way (Start is
  * one milestone at a time). Only an archived ROADMAP goal pays the extra
  * read; a missing roadmap table reads as no roadmap.
+ *
+ * Daily quests (decision D14): a must brought back stays a must, never
+ * demoted, and its answer carries the count (restoredMustNote).
  */
-export async function unarchiveCore(userId: string, templateId: string, now: Date = new Date()): Promise<LifeResult<null>> {
-  const res = await applyRuleEdit(userId, templateId, { kind: "unarchive" }, now, async (row) =>
-    row.archivedAt && row.krMetric === "ROADMAP" ? roadmapUnarchiveRefusalOf(await loadRoadmapUnarchiveFacts(userId, templateId)) : null
-  );
-  return res.ok ? ok(null) : res;
+export async function unarchiveCore(userId: string, templateId: string, now: Date = new Date()): Promise<LifeResult<UnarchiveOutcome>> {
+  // The row as the edit read it, before its write: whether it was a must actually archived (not a pending archive cancelled).
+  const seen: { row: RuleReadRow | null } = { row: null };
+  const res = await applyRuleEdit(userId, templateId, { kind: "unarchive" }, now, async (row) => {
+    seen.row = row;
+    return row.archivedAt && row.krMetric === "ROADMAP" ? roadmapUnarchiveRefusalOf(await loadRoadmapUnarchiveFacts(userId, templateId)) : null;
+  });
+  if (!res.ok) return res;
+  const mustNote = await restoredMustNote(userId, seen.row, now);
+  return ok(mustNote ? { mustNote } : {});
+}
+
+/** What an unarchive answers: a must brought back near or past the cap says so (daily-quests restoredMustNoteOf). */
+export interface UnarchiveOutcome {
+  mustNote?: MustNote;
+}
+
+/**
+ * Daily quests (D14): a must brought back (Archive's or Drop's Undo, a Restore, a pause's Undo, an abort's Undo) is
+ * never demoted, but it is counted (mustCapOf over the musts standing now, itself left out) and says so: the 4th and
+ * 5th warn, past the cap "6 of 5 daily quests, over the cap". Only a must that was archived (a cancelled pending archive
+ * never left), on the personal Board, out of the inbox; one indexed read, run only then. A failed count says nothing:
+ * the unarchive already stands.
+ */
+async function restoredMustNote(userId: string, row: RuleReadRow | null, now: Date): Promise<MustNote | null> {
+  if (!row || !row.archivedAt || !row.compulsory || row.boardId || row.inbox || (row.kind !== "TASK" && row.kind !== "HABIT")) return null;
+  const today = todayKey(now);
+  try {
+    const cap = mustCapOf(
+      await loadStandingMusts(userId, row.id),
+      {
+        kind: row.kind,
+        recurrence: row.recurrence,
+        startDay: keyOfDateColumn(row.startDay),
+        dueDay: keyOrNull(row.dueDay),
+        dueKind: row.dueKind,
+        compulsory: true,
+        compulsoryOnRest: row.compulsoryOnRest,
+        inbox: false,
+        archivedDay: null,
+      },
+      today
+    );
+    return restoredMustNoteOf(cap, today);
+  } catch (err) {
+    console.error("Unarchive: the daily quests' count failed to read; the must is back without its note.", err);
+    return null;
+  }
 }
 
 // ── Unarchive of a roadmap milestone's goal (roadmap.md F15, F22) ─────────
@@ -3104,7 +3218,8 @@ export async function recaptureCore(
   const boardId = old?.boardId ?? null;
   const workRefusal = boardId ? workKindRefusalOf(captureShapeOf(parsed, today).kind) : null;
   if (workRefusal) return { ok: false, error: workRefusal };
-  const w = await insertCapture(userId, parsed, { rawText: opts.rawText, captureSource: opts.captureSource ?? "quick", captureKey, now, boardId });
+  // The line it replaces is left out of the daily quests' count: an edit of a must is not a new one.
+  const w = await insertCapture(userId, parsed, { rawText: opts.rawText, captureSource: opts.captureSource ?? "quick", captureKey, now, replacing: oldId, boardId });
   // Sent under the old line's own key (a race past the plan's check), the 'new' row IS the old one: taking it back would lose the line.
   if (w.created.id === oldId) return { ok: false, error: RECAPTURE_SAME_KEY };
 
@@ -3228,6 +3343,28 @@ export async function clarifyInboxCore(
     duty.value.pendingChange === undefined
       ? {}
       : { pendingChange: duty.value.pendingChange == null ? Prisma.DbNull : (duty.value.pendingChange as unknown as Prisma.InputJsonValue) };
+  // Daily quests (D14): an inbox must becomes owed as it leaves the inbox, so it is counted now. Past the cap on any
+  // of its days it leaves as an ordinary task (written with the clarify), and the outcome says so; from the 4th it warns.
+  const mustCap =
+    row.compulsory && !row.boardId && choice !== "idea"
+      ? mustCapOf(
+          await loadStandingMusts(userId, templateId),
+          {
+            kind: asTask ?? row.kind,
+            recurrence: row.recurrence,
+            startDay: keyOfDateColumn(row.startDay),
+            dueDay: deadline ? keyOrNull(row.dueDay) : null,
+            dueKind: deadline ? "DEADLINE" : null,
+            compulsory: true,
+            compulsoryOnRest: row.compulsoryOnRest,
+            inbox: false,
+            archivedDay: null,
+          },
+          today
+        )
+      : null;
+  const mustNote = mustNoteOf(mustCap);
+  const capWrite = mustCap?.capped ? { compulsory: false } : {};
 
   switch (choice) {
     case "today":
@@ -3241,10 +3378,10 @@ export async function clarifyInboxCore(
       await prisma.taskTemplate.update({
         where: { id: templateId },
         data: row.recurrence
-          ? { inbox: false, kind: asTask, ...pendingChange }
+          ? { inbox: false, kind: asTask, ...pendingChange, ...capWrite }
           : deadline
-            ? { inbox: false, kind: asTask, planDay: day > today ? dateColumn(day) : null, ...pendingChange }
-            : { inbox: false, kind: asTask, dueDay: dateColumn(day), dueKind: "PLANNED", planDay: null, ...pendingChange },
+            ? { inbox: false, kind: asTask, planDay: day > today ? dateColumn(day) : null, ...pendingChange, ...capWrite }
+            : { inbox: false, kind: asTask, dueDay: dateColumn(day), dueKind: "PLANNED", planDay: null, ...pendingChange, ...capWrite },
       });
       break;
     }
@@ -3252,15 +3389,15 @@ export async function clarifyInboxCore(
       await prisma.taskTemplate.update({
         where: { id: templateId },
         data: deadline
-          ? { inbox: false, kind: asTask, planDay: null, ...pendingChange }
-          : { inbox: false, kind: asTask, dueDay: null, dueKind: null, planDay: null, ...pendingChange },
+          ? { inbox: false, kind: asTask, planDay: null, ...pendingChange, ...capWrite }
+          : { inbox: false, kind: asTask, dueDay: null, dueKind: null, planDay: null, ...pendingChange, ...capWrite },
       });
       break;
     case "goal": {
       if (!parentId) return fail("Pick a goal.");
       const goal = await prisma.taskTemplate.findFirst({ where: { id: parentId, userId, kind: "GOAL", archivedAt: null, closedScore: null }, select: { id: true } });
       if (!goal) return fail("That goal is closed or no longer exists.");
-      await prisma.taskTemplate.update({ where: { id: templateId }, data: { inbox: false, kind: asTask, parentId: goal.id, ...pendingChange } });
+      await prisma.taskTemplate.update({ where: { id: templateId }, data: { inbox: false, kind: asTask, parentId: goal.id, ...pendingChange, ...capWrite } });
       break;
     }
     case "idea":
@@ -3271,7 +3408,7 @@ export async function clarifyInboxCore(
       return fail("Unknown choice.");
   }
   invalidate("life", "activity");
-  return ok({ href: null, effect: "immediate", effectiveDay: null });
+  return ok({ href: null, effect: "immediate", effectiveDay: null, ...(mustNote ? { mustNote } : {}) });
 }
 
 /** What a clarify did: where to go next (an idea draft's Add page), and whether a drop was deferred (M2: a must's archive waits 7 days). */
@@ -3279,6 +3416,8 @@ export interface ClarifyOutcome {
   href: string | null;
   effect: "immediate" | "deferred";
   effectiveDay: DayKey | null;
+  /** Daily quests (D14): an inbox must that left the inbox past the cap (now an ordinary task), or near it. */
+  mustNote?: MustNote;
 }
 
 /**

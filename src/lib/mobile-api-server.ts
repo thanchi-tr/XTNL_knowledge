@@ -5,7 +5,7 @@
  * file never reaches Prisma or a model by itself. A route file only hands its request here with the real deps (a
  * route file may export only its methods and segment config).
  *
- *   GET  /check            handleCheck          the Today board, the Review hub's counts, the due work, level, streak
+ *   GET  /check            handleCheck          the Today board and its daily quests, the Review hub's counts and the ideas fading, the due work, level, streak, the week audit
  *   POST /tasks/complete   handleTaskComplete   actions/tasks completeTask (the board's tick)
  *   POST /tasks/undo       handleTaskUndo       actions/tasks undoCompletion
  *   POST /work/done        handleWorkDone       actions/scheduled-tasks doneScheduledTask (no history log)
@@ -44,7 +44,10 @@ import {
   boolOf,
   captureKeyOf,
   celebrationsOf,
+  checkDailyOf,
+  checkFadingOf,
   checkTasksOf,
+  checkWeekOf,
   clientIdOf,
   dayLabelOf,
   dueCardsOf,
@@ -92,6 +95,7 @@ import type { ScheduledResult } from "./scheduled-tasks-server";
 import type { SubmitReviewInput, SubmitReviewResult } from "../app/actions/review";
 import type { CaptureResult, CapturedItem, CapturedWeight } from "../app/actions/capture";
 import type { SubmitIdeaInput, SubmitIdeaResult } from "../app/actions/ideas";
+import { isAuditLaunched, type WeekAudit } from "./week-audit";
 
 // ── The cores ───────────────────────────────────────────────────────────────
 
@@ -113,6 +117,10 @@ export interface MobileDeps {
   loadStreak: (userId: string) => Promise<{ current: number; last7Days: readonly boolean[]; bankedFreezes: number }>;
   loadShell: (userId: string) => Promise<{ character: { level: number | null; progress: number | null; title: string | null } } | null>;
   loadWork: (userId: string, now: Date) => Promise<readonly DueWorkTask[]>;
+  /** The GRACE_EXTENSION days in force (the loadout's modifiers), as the bell's fading line reads them. */
+  loadGraceExtra: (userId: string) => Promise<number>;
+  /** The weekly audit as /today/week's card reads it (week-audit-server loadWeekAudit); null while it is inert. */
+  loadWeekAudit: (userId: string, now: Date) => Promise<WeekAudit | null>;
   /**
    * What opening Today and the Review hub owe: momentum's lazy writes before the board's read (awaited, as the Today
    * page does), the rest after the response (tasks recordDayOpen, autoCompleteStudyTasks; settlement).
@@ -235,7 +243,11 @@ function owe(deps: MobileDeps, what: string, task: () => Promise<unknown>): void
 /**
  * The quick check: momentum's lazy writes first, as the Today page awaits them, then one parallel wave of the web's
  * own cached reads — the Today board (the personal board only), the Review hub's Field tree and today's ledger counts,
- * the daily streak, the shell's character level, and the due work across the work tabs. After the reply it runs what
+ * the daily streak, the shell's character level, the due work across the work tabs, the loadout's grace extension
+ * (the ideas fading are read off the same tree, as the bell reads them) and the weekly audit (null until
+ * AUDIT_LAUNCH_DAY; a failed read reads as none). `auditOn` is the switch alone (isAuditLaunched: the launch day, no
+ * read), so the phone arms its Sunday reminder from it, never from a `week` that is null before the first audited
+ * Sunday's 18:00 or after a failed read. After the reply it runs what
  * opening Today and the Review hub owe (the day's first open fixes the quest target; study tasks met by the day's
  * reviews are recorded; life maintenance).
  */
@@ -248,13 +260,15 @@ export async function handleCheck(request: Request, deps: MobileDeps): Promise<R
     // a tick made from this check price today's frog. Single flight, at once when nothing is owed; it never throws
     // (were it to, the check would log it and read on).
     await deps.settleMomentum(userId, day, now).catch(soft("momentum's lazy writes", null));
-    const [data, fields, reviewDay, streak, shell, work] = await Promise.all([
+    const [data, fields, reviewDay, streak, shell, work, graceExtra, audit] = await Promise.all([
       deps.loadBoard(userId, day, now),
       deps.loadFieldTree(),
       deps.loadReviewDay(userId, day),
       deps.loadStreak(userId).catch(soft("the streak", null)),
       deps.loadShell(userId).catch(soft("the level", null)),
       deps.loadWork(userId, now).catch(soft("the work list", [] as readonly DueWorkTask[])),
+      deps.loadGraceExtra(userId).catch(soft("the grace extension", 0)),
+      deps.loadWeekAudit(userId, now).catch(soft("the week audit", null)),
     ]);
     const board = buildBoard(data, [], now.getTime());
     const review = reviewHubOf(fields, now, reviewDay);
@@ -268,7 +282,11 @@ export async function handleCheck(request: Request, deps: MobileDeps): Promise<R
       day,
       dayLabel: dayLabelOf(day),
       ...checkTasksOf(board, data),
+      daily: checkDailyOf(board),
       review,
+      fading: checkFadingOf(fields, now, Math.max(0, graceExtra || 0)),
+      auditOn: isAuditLaunched(day),
+      week: checkWeekOf(audit),
       work: workItemsOf(work, now),
       level: levelOf(shell),
       streak: streakOf(streak),

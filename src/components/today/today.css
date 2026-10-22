@@ -631,6 +631,12 @@ html[data-motion="calm"] .today-clear[data-fresh="1"] { animation: today-fade 20
 /* ── M2 on Today (lane D): Duty wired to the board ─────────────────────── */
 /* The Must lane's chips under its header: held ('Rest · nothing owed') or quiet; never owed. */
 .today-lane .lane-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 8px; margin-top: -2px; }
+/* Daily quests (D14, D15; DailyStrip.tsx): one cell per quest asking today, kept fills --kept, the minimum a lighter
+   --kept (it still counts 1), not yet the line. Cells share the row and shrink, so five fit at 344 px; never a target. */
+.today-lane .dq-strip { display: flex; gap: 4px; margin: -2px 0 0; padding: 0 4px 8px; list-style: none; }
+.today-lane .dq-cell { flex: 0 1 28px; min-width: 8px; height: 6px; border-radius: 3px; background: var(--line-2); }
+.today-lane .dq-cell[data-bit="1"] { background: var(--kept); }
+.today-lane .dq-cell[data-min] { background: color-mix(in srgb, var(--kept) 55%, var(--card)); }
 /* The miss prompt under its template's card: the Ask's layout inside the lane card. */
 .miss-prompt { border-top: 1px solid var(--line-1); align-items: flex-start; }
 .miss-prompt .mp-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }

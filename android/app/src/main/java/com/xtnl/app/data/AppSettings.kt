@@ -31,6 +31,15 @@ data class Prefs(
     val sound: Boolean = true,
     val haptics: Boolean = true,
     val demo: Boolean = false,
+    /** Settings › Notifications › Week audit: the Sunday 19:00 (Sydney) reminder (D37; core/AuditAlarm). */
+    val auditReminder: Boolean = true,
+    /**
+     * The last /check from the server said `auditOn`: its audit is switched on (never set from demo data). Cleared
+     * when the source changes (another address, or demo data on or off): the next server /check sets it again.
+     */
+    val auditLive: Boolean = false,
+    /** The notification permission (Android 13+) was asked for once; the app never asks again by itself. */
+    val notifyAsked: Boolean = false,
 )
 
 /**
@@ -75,21 +84,38 @@ class AppSettings(context: Context) {
             sound = prefs.getBoolean(K_SOUND, true),
             haptics = prefs.getBoolean(K_HAPTICS, true),
             demo = prefs.getBoolean(K_DEMO, false),
+            auditReminder = prefs.getBoolean(K_AUDIT_REMINDER, true),
+            auditLive = prefs.getBoolean(K_AUDIT_LIVE, false),
+            notifyAsked = prefs.getBoolean(K_NOTIFY_ASKED, false),
         )
     }
 
     fun defaultServer(): String = ServerAddress.normalize(BuildConfig.DEFAULT_SERVER) ?: ServerAddress.PRODUCTION
 
     fun setServer(origin: String) {
-        prefs.edit().putString(K_SERVER, origin).apply()
-        _state.update { it.copy(server = origin, hasToken = tokens.contains(tokenKey(origin))) }
+        // The audit's switch was the old address's: it waits for this one's first /check (the Sunday reminder with it).
+        val moved = origin != _state.value.server
+        val edit = prefs.edit().putString(K_SERVER, origin)
+        if (moved) edit.putBoolean(K_AUDIT_LIVE, false)
+        edit.apply()
+        _state.update { it.copy(server = origin, hasToken = tokens.contains(tokenKey(origin)), auditLive = if (moved) false else it.auditLive) }
     }
 
     fun setTheme(t: ThemeChoice) { prefs.edit().putString(K_THEME, t.name).apply(); _state.update { it.copy(theme = t) } }
     fun setMotion(m: MotionChoice) { prefs.edit().putString(K_MOTION, m.name).apply(); _state.update { it.copy(motion = m) } }
     fun setSound(on: Boolean) { prefs.edit().putBoolean(K_SOUND, on).apply(); _state.update { it.copy(sound = on) } }
     fun setHaptics(on: Boolean) { prefs.edit().putBoolean(K_HAPTICS, on).apply(); _state.update { it.copy(haptics = on) } }
-    fun setDemo(on: Boolean) { prefs.edit().putBoolean(K_DEMO, on).apply(); _state.update { it.copy(demo = on) } }
+    /** Demo data on or off changes the source: the audit's switch waits for the server's next /check (demo never sets it). */
+    fun setDemo(on: Boolean) {
+        val moved = on != _state.value.demo
+        val edit = prefs.edit().putBoolean(K_DEMO, on)
+        if (moved) edit.putBoolean(K_AUDIT_LIVE, false)
+        edit.apply()
+        _state.update { it.copy(demo = on, auditLive = if (moved) false else it.auditLive) }
+    }
+    fun setAuditReminder(on: Boolean) { prefs.edit().putBoolean(K_AUDIT_REMINDER, on).apply(); _state.update { it.copy(auditReminder = on) } }
+    fun setAuditLive(on: Boolean) { prefs.edit().putBoolean(K_AUDIT_LIVE, on).apply(); _state.update { it.copy(auditLive = on) } }
+    fun setNotifyAsked() { prefs.edit().putBoolean(K_NOTIFY_ASKED, true).apply(); _state.update { it.copy(notifyAsked = true) } }
 
     /** The token for the address in use, or null. It may wait on the Keystore: call it off the main thread. */
     fun token(): String? {
@@ -145,6 +171,9 @@ class AppSettings(context: Context) {
         const val K_SOUND = "sound"
         const val K_HAPTICS = "haptics"
         const val K_DEMO = "demo"
+        const val K_AUDIT_REMINDER = "audit.reminder"
+        const val K_AUDIT_LIVE = "audit.live"
+        const val K_NOTIFY_ASKED = "notify.asked"
     }
 }
 

@@ -112,7 +112,9 @@ export const STREAK_SOURCES: ReadonlySet<AnyActivitySource> = new Set<AnyActivit
  * Momentum's decision rows join them (momentum.md §D.2): a frozen quest set, a
  * chest, a milestone (dated its reach day, written lazily), a plan week (dated
  * its Sunday), a perk, a respec and the nudge's claim are bookkeeping or after
- * the fact. PR stays out of both lists: its writer always writes false.
+ * the fact. PR stays out of both lists: its writer always writes false. The
+ * weekly audit's frozen copy (AUDIT, dated its Sunday, written on the Monday)
+ * is after the fact too.
  */
 export const NEVER_STREAK_SOURCES: ReadonlySet<AnyActivitySource> = new Set<AnyActivitySource>([
   "STEPS",
@@ -138,6 +140,8 @@ export const NEVER_STREAK_SOURCES: ReadonlySet<AnyActivitySource> = new Set<AnyA
   "PERK",
   "RESPEC",
   "NUDGE",
+  // The weekly audit's frozen copy (week-audit.ts; blueprint P11): written after the week, never an action.
+  "AUDIT",
 ]);
 
 /**

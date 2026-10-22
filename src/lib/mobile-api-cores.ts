@@ -12,8 +12,10 @@ import { autoCompleteStudyTasks, loadTodayBoard, recordDayOpen } from "./tasks";
 import { loadFieldTree } from "./queries";
 import { getDailyStreak } from "./streak";
 import { loadShellData } from "./shell-data";
+import { loadModifiers } from "./skill-effects";
 import { loadDueWorkTasks } from "./scheduled-tasks-server";
 import { maybeMaintainLife } from "./settlement";
+import { loadWeekAudit } from "./week-audit-server";
 import { settleMomentum } from "./momentum-server";
 import { loadVariants } from "./idea-variants-server";
 import { reviewDedupeKey } from "./srs";
@@ -40,6 +42,10 @@ export const realMobileDeps: MobileDeps = {
   loadStreak: (userId) => getDailyStreak(userId),
   loadShell: (userId) => loadShellData(userId),
   loadWork: (userId, now) => loadDueWorkTasks(userId, now),
+  // The bell's fading line reads the ideas at the loadout's grace extension (notifications.ts loadLevelNotices).
+  loadGraceExtra: async (userId) => (await loadModifiers(userId)).graceExtraDays,
+  // /today/week's Week audit card (blueprint P11): null while AUDIT_LAUNCH_DAY is not in force.
+  loadWeekAudit: (userId, now) => loadWeekAudit(userId, now),
   // What the Today and Review pages owe: momentum's settle the Today page awaits before its board read, the rest in after().
   recordDayOpen: (userId, dueCount, now) => recordDayOpen(userId, dueCount, now),
   autoCompleteStudyTasks: (userId, now) => autoCompleteStudyTasks(userId, now),

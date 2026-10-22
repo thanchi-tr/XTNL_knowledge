@@ -1,6 +1,7 @@
 package com.xtnl.app.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -53,6 +54,31 @@ class EnvelopeTest {
         assertEquals(20, d.review!!.target)
         assertNull(d.level)
         assertEquals("0412 345 678", d.work.single().customer!!.phone)
+    }
+
+    /** The week audit's decay (P12): count, top and unread; a week from an older server has none. */
+    @Test fun theWeeksDecayDecodes() {
+        val week = """"week":{"weekKey":"2026-W43","label":"Week of 19 Oct","rate":86,"kept":26,"due":30,"minimum":3,"skipped":2,"held":0,"open":0,
+          "short":0,"target":85,"status":"provisional","calibrating":false,"asOfDay":null"""
+        val withDecay = """{"ok":true,"data":{"tasks":[],$week,"decaying":{"count":4,"unread":0,"top":[
+          {"kind":"domain","title":"Probability fell to L3 (from L4)","detail":"2 ideas fading in it. Reviewing them brings the level back."}]}}}}"""
+        val d = (HttpApi.parse(200, withDecay, CheckData.serializer()) as Outcome.Ok).value.week!!.decaying!!
+        assertEquals(4, d.count)
+        assertEquals("domain", d.top.single().kind)
+        assertEquals("Probability fell to L3 (from L4)", d.top.single().title)
+        val older = (HttpApi.parse(200, """{"ok":true,"data":{"tasks":[],$week}}}""", CheckData.serializer()) as Outcome.Ok).value.week!!
+        assertNull(older.decaying)
+        val notRead = (HttpApi.parse(200, """{"ok":true,"data":{"tasks":[],$week,"decaying":null}}}""", CheckData.serializer()) as Outcome.Ok).value.week!!
+        assertNull(notRead.decaying)
+    }
+
+    /** The audit's switch (D37: what the Sunday reminder follows): sent beside a null week in the launch week; false from an older server. */
+    @Test fun theAuditSwitchDecodes() {
+        val on = (HttpApi.parse(200, """{"ok":true,"data":{"tasks":[],"auditOn":true,"week":null}}""", CheckData.serializer()) as Outcome.Ok).value
+        assertTrue(on.auditOn)
+        assertNull(on.week)
+        val older = (HttpApi.parse(200, """{"ok":true,"data":{"tasks":[]}}""", CheckData.serializer()) as Outcome.Ok).value
+        assertFalse(older.auditOn)
     }
 
     @Test fun theAnswerShapeDecodes() {

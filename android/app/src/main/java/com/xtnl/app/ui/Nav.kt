@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.xtnl.app.core.AuditAlarm
 import com.xtnl.app.core.LogSection
 import com.xtnl.app.ui.components.Glyphs
 
@@ -72,6 +73,7 @@ class Nav(tab: Tab = Tab.CHECK, more: MoreRoute = MoreRoute.ROOT, logMode: LogMo
      *   /idea, /add              New idea
      *   /review                  Review, started
      *   /settings                More › Settings
+     *   /week                    the full app at the week audit (/today/week; the Sunday reminder opens it)
      *   anything else            the full app at that path
      */
     fun open(uri: Uri) {
@@ -97,6 +99,11 @@ class Nav(tab: Tab = Tab.CHECK, more: MoreRoute = MoreRoute.ROOT, logMode: LogMo
             path == "/settings" -> {
                 tab = Tab.MORE
                 more = MoreRoute.SETTINGS
+            }
+            path == "/week" -> {
+                tab = Tab.MORE
+                more = MoreRoute.WEB
+                webPath = AuditAlarm.WEB_PATH
             }
             else -> {
                 tab = Tab.MORE

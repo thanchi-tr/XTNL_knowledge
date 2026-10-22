@@ -267,10 +267,16 @@ for (const tz of [SYD, BNE]) {
   // momentum-check.
   // Blueprint P0 (2026-10-22, blueprint-plan-2026-10-22.md): status-check and credits-check, the ledger guards for the
   // status panel, avatars and competencies and for credits and the Mall, run right after momentum-sim, before settle.
+  // Blueprint P9 (2026-10-22): daily-quests-check (the musts as Daily Quests: the cap of five, the 1/0 strip) runs
+  // right after duty-actions-check, before the rituals.
+  // Blueprint P11 (2026-10-22): week-audit-check (the weekly audit's rate, its frozen copy and its switch) runs right
+  // after daily-quests-check, before the rituals.
+  // Blueprint P12 (2026-10-23): audit-decay-check (the audit's "Decaying this week", its notice and the phone's
+  // Sunday reminder) runs right after week-audit-check, before the rituals.
   const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> }).scripts;
   const ROADMAP_LIFE_CHECKS = ["roadmap-contract", "roadmap-measures", "throughput", "roadmap-realism", "roadmap-model", "roadmap-server", "roadmap-quests", "roadmap-invite", "roadmap-hostile"];
   const STRICT_LIFE_CHECKS = new Set(["today-ui", "roadmap-contract"]);
-  const names = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "exercise-style", "subtasks", "task-decisions", "work-boards", "customers", "work-orders", "character", "goals-close", "leveling", "spacing", "momentum", "momentum-server", "balance-horizon", "momentum-sim", "status", "credits", "settle", "duty", "duty-actions", "rituals", "roadmap-goals", "roadmap-topics", "roadmap-grounding", ...ROADMAP_LIFE_CHECKS];
+  const names = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "exercise-style", "subtasks", "task-decisions", "work-boards", "customers", "work-orders", "character", "goals-close", "leveling", "spacing", "momentum", "momentum-server", "balance-horizon", "momentum-sim", "status", "credits", "settle", "duty", "duty-actions", "daily-quests", "week-audit", "audit-decay", "rituals", "roadmap-goals", "roadmap-topics", "roadmap-grounding", ...ROADMAP_LIFE_CHECKS];
   const PLAIN_LIFE_SCRIPTS = new Set(["balance-horizon", "momentum-sim"]);
   const fileOf = (n: string) => `scripts/${n}${PLAIN_LIFE_SCRIPTS.has(n) ? "" : "-check"}.ts`;
   const all = names.map(fileOf);
@@ -292,7 +298,7 @@ for (const tz of [SYD, BNE]) {
     "package.json db:backfill-activity runs the backfill script",
     scripts["db:backfill-activity"] === "tsx scripts/backfill-activity.ts" && existsSync(resolve(ROOT, "scripts/backfill-activity.ts"))
   );
-  for (const [name, file] of [["goals-close:check", "goals-close"], ["settle:check", "settle"], ["duty:check", "duty"], ["duty-actions:check", "duty-actions"], ["rituals:check", "rituals"], ["momentum:check", "momentum"], ["momentum-server:check", "momentum-server"], ["status:check", "status"], ["credits:check", "credits"], ...ROADMAP_LIFE_CHECKS.map((n) => [`${n}:check`, n] as const)] as const) {
+  for (const [name, file] of [["goals-close:check", "goals-close"], ["settle:check", "settle"], ["duty:check", "duty"], ["duty-actions:check", "duty-actions"], ["daily-quests:check", "daily-quests"], ["week-audit:check", "week-audit"], ["audit-decay:check", "audit-decay"], ["rituals:check", "rituals"], ["momentum:check", "momentum"], ["momentum-server:check", "momentum-server"], ["status:check", "status"], ["credits:check", "credits"], ...ROADMAP_LIFE_CHECKS.map((n) => [`${n}:check`, n] as const)] as const) {
     check(`package.json ${name} runs scripts/${file}-check.ts on its own too`, scripts[name] === `tsx scripts/${file}-check.ts`, scripts[name] ?? "missing");
   }
 

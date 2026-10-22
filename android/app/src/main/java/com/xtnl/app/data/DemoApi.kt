@@ -16,9 +16,11 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import java.time.DayOfWeek
 import java.time.Duration
 import java.time.Instant
 import java.time.format.DateTimeFormatter
+import java.time.temporal.IsoFields
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.abs
@@ -31,15 +33,17 @@ import kotlin.math.round
  * answers once, unknown or unused fields are refused like the server refuses
  * them, an answer's `retry` follows the web runner's rule (a miss comes back
  * while the card's misses this session are at most 3), points are review
- * points. It grades loosely. Never the default.
+ * points. It grades loosely. Never the default. [clock] is the check's clock (the tests set it).
  */
-class DemoApi : XtnlApi {
+class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
     private val lock = Mutex()
 
     private data class DemoTask(val item: TaskItem, val instanceId: String? = null)
 
     private val tasks = mutableListOf(
         DemoTask(TaskItem("t-gym", "Gym legs", "MUST", "OPEN", minutes = 60, mvv = "10 squats", icon = "dumbbell", xpHint = 8.3)),
+        // A daily quest kept at the minimum, so the strip shows "1 at minimum" (it still counts as kept).
+        DemoTask(TaskItem("t-floss", "Floss", "MUST", "DONE_MVV", minutes = 5, mvv = "one tooth", xpHint = 1.1), "i-floss"),
         DemoTask(TaskItem("t-dentist", "Call the dentist", "TASK", "OPEN", minutes = 10, dueLabel = "late 2d", xpHint = 3.0)),
         DemoTask(TaskItem("t-tax", "Lodge the tax return", "TASK", "OPEN", minutes = 45, dueLabel = "by Fri", xpHint = 6.1)),
         DemoTask(TaskItem("t-study", "Review 5 cards", "TASK", "LOCKED", minutes = 10, xpHint = 2.0)),
@@ -106,6 +110,16 @@ class DemoApi : XtnlApi {
     private val cardLevels = mutableMapOf<String, Int>()
     private val answeredToday = mutableSetOf<String>()
 
+    private data class PastGrace(val ideaId: String, val domain: String, val forgetting: Boolean = false)
+
+    // Three of the due cards past their grace (docs/mobile-api.md `fading`): two fading, one already losing a level. A
+    // card answered for the day is reviewed (a new due date), so it leaves the line, as on the server.
+    private val pastGrace = listOf(
+        PastGrace("d-atp", "Cell biology"),
+        PastGrace("d-dna", "Cell biology"),
+        PastGrace("d-int", "Integration", forgetting = true),
+    )
+
     private val seenClientIds = mutableMapOf<String, Pair<JsonObject?, Any>>()
     private val logged = mutableMapOf<String, String>() // undo id → task templateId ("" for a weigh-in or a draft)
     private val ideaTitles = mutableSetOf<String>()
@@ -143,6 +157,54 @@ class DemoApi : XtnlApi {
 
     private fun bad(line: String) = Outcome.Err(line, code = "bad", status = 400)
 
+    /** The daily quests as the server counts them (docs/mobile-api.md `daily`): the Must rows that ask today, kept or not. */
+    private fun daily(): DailyQuests {
+        val quests = tasks.map { it.item }.filter { it.lane == "MUST" && it.status != "HELD" && it.status != "SKIPPED" }
+            .map { DailyQuest(it.templateId, it.title, kept = it.kept, minimum = it.status == "DONE_MVV") }
+        val kept = quests.count { it.kept }
+        return DailyQuests(
+            kept = kept, total = quests.size, full = quests.isNotEmpty() && kept == quests.size, cap = MUSTS_PER_DAY_MAX,
+            minimum = quests.count { it.minimum }, over = maxOf(0, quests.size - MUSTS_PER_DAY_MAX), quests = quests,
+        )
+    }
+
+    /** The ideas past their grace as the server counts them (docs/mobile-api.md `fading`): their Domains most first. */
+    private fun fading(): Fading {
+        val left = pastGrace.filter { it.ideaId !in answeredToday }
+        val domains = left.groupBy { it.domain }
+            .map { (name, cards) -> FadingDomain("dm-" + name.lowercase().replace(' ', '-'), name, cards.size) }
+            .sortedWith(compareByDescending<FadingDomain> { it.ideas }.thenBy { it.name })
+        return Fading(ideas = left.size, forgetting = left.count { it.forgetting }, domains = domains)
+    }
+
+    /**
+     * The weekly audit as the server states it (docs/mobile-api.md `week`; week-audit auditWeekAt): from Sunday 18:00
+     * (Sydney) this week as it stands, today's daily quests included (provisional); before that, and on any other day,
+     * last week's frozen copy (as of this Monday 04:00, final from Wednesday), which a tick today never moves.
+     */
+    private fun week(now: Instant, daily: DailyQuests): WeekAudit {
+        val day = TimeLabels.lifeDay(now)
+        val sunday = day.dayOfWeek == DayOfWeek.SUNDAY && now.atZone(TimeLabels.SYDNEY).hour >= AUDIT_OPENS_HOUR
+        val monday = day.with(DayOfWeek.MONDAY).let { if (sunday) it else it.minusWeeks(1) }
+        val kept = if (sunday) 18 + daily.kept else 24
+        val due = if (sunday) 21 + daily.total else 28
+        val need = (WEEK_TARGET * due + 99) / 100
+        return WeekAudit(
+            weekKey = "%d-W%02d".format(monday.get(IsoFields.WEEK_BASED_YEAR), monday.get(IsoFields.WEEK_OF_WEEK_BASED_YEAR)),
+            label = "Week of " + monday.format(DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH)),
+            rate = if (due > 0) 100 * kept / due else null,
+            kept = kept, due = due,
+            minimum = if (sunday) 2 + daily.minimum else 3,
+            skipped = 1, held = 0,
+            open = if (sunday) daily.total - daily.kept else 0,
+            short = maxOf(0, need - kept), target = WEEK_TARGET,
+            status = when { sunday -> "provisional"; day.dayOfWeek.value >= 3 -> "final"; else -> "frozen" },
+            calibrating = false,
+            asOfDay = if (sunday) null else day.with(DayOfWeek.MONDAY).toString(),
+            decaying = DEMO_DECAYING,
+        )
+    }
+
     private fun board(): TasksSummary {
         val rows = tasks.map { it.item }.filter { it.countsForBoard }
         val open = rows.count { it.open || it.locked }
@@ -153,10 +215,11 @@ class DemoApi : XtnlApi {
     override suspend fun check(): Outcome<CheckData> {
         pause(420)
         return lock.withLock {
-            val now = Instant.now()
+            val now = clock()
             val day = TimeLabels.lifeDay(now)
             val lanes = listOf("MUST", "TASK", "HABIT")
             val ordered = tasks.map { it.item }.sortedWith(compareBy({ if (it.kept) 1 else 0 }, { lanes.indexOf(it.lane) }))
+            val daily = daily()
             Outcome.Ok(
                 CheckData(
                     now = now.toString(),
@@ -164,12 +227,17 @@ class DemoApi : XtnlApi {
                     dayLabel = day.format(DateTimeFormatter.ofPattern("EEE d MMM", Locale.ENGLISH)),
                     tasks = ordered,
                     tasksSummary = board(),
+                    daily = daily,
                     review = ReviewSummary(
                         due = cards.count { it.card.ideaId !in answeredToday },
                         doneToday = reviewDone,
                         target = reviewTarget,
                         nextDueAt = now.plus(Duration.ofMinutes(140)).toString(),
                     ),
+                    fading = fading(),
+                    // As a server with the audit switched on sends it (the reminder never arms from demo data).
+                    auditOn = true,
+                    week = week(now, daily),
                     work = work.filter { !it.done }.map { it.item },
                     level = level,
                     streak = streak,
@@ -319,11 +387,21 @@ class DemoApi : XtnlApi {
                     LogSection.TASK -> {
                         val id = "t-" + UUID.randomUUID().toString().take(6)
                         val mins = reading.tokens.firstOrNull { it.kind == LogPreview.Kind.DURATION }?.text?.substringBefore(' ')?.toIntOrNull()
-                        val must = reading.tokens.any { it.kind == LogPreview.Kind.MUST }
+                        val asked = reading.tokens.any { it.kind == LogPreview.Kind.MUST }
                         val xp = round((2.0 + (mins ?: 10) / 20.0) * 10) / 10
+                        // Daily quests (D14): a sixth must is saved as an ordinary task, never refused; the 4th and 5th warn.
+                        val peak = tasks.count { it.item.lane == "MUST" } + 1
+                        val capped = asked && peak > MUSTS_PER_DAY_MAX
+                        val must = asked && !capped
                         tasks.add(0, DemoTask(TaskItem(id, reading.title, if (must) "MUST" else "TASK", "OPEN", minutes = mins, xpHint = xp)))
                         logged[undoId] = id
-                        Outcome.Ok(LogResult("task", id, reading.title, "Added. ${reading.title} → Today · ≈ $xp", buildJsonObject { put("kind", "task"); put("id", undoId) }))
+                        val head = if (capped) "Added (not a Must)" else "Added"
+                        val note = when {
+                            capped -> " · Five daily quests is the cap. Soften one first."
+                            must && peak >= 4 -> " · $peak of $MUSTS_PER_DAY_MAX daily quests" + if (peak >= MUSTS_PER_DAY_MAX) ", the cap" else ""
+                            else -> ""
+                        }
+                        Outcome.Ok(LogResult("task", id, reading.title, "$head. ${reading.title} → Today · ≈ $xp$note", buildJsonObject { put("kind", "task"); put("id", undoId) }))
                     }
                     LogSection.WEIGHT -> {
                         logged[undoId] = ""
@@ -413,6 +491,22 @@ class DemoApi : XtnlApi {
 
     private companion object {
         val LEVEL_TITLES = mapOf(7 to "Adept", 8 to "Expert", 9 to "Master", 10 to "Sage")
+        /** The server's cap on daily quests (duty-economy MUSTS_PER_DAY_MAX). */
+        const val MUSTS_PER_DAY_MAX = 5
+        /** The week's "Decaying this week" (audit-decay.ts): four things fell, the first three listed, as the server sends it. */
+        val DEMO_DECAYING = WeekDecaying(
+            count = 4,
+            top = listOf(
+                DecayItem("domain", "Probability fell to L3 (from L4)", "2 ideas fading in it. Reviewing them brings the level back."),
+                DecayItem("habit", "Stretch: Established → Forming", "Strength 61% → 57% this week. Each kept day raises it again."),
+                DecayItem("ideas", "5 ideas fading", "1 already losing levels. Past grace, an idea counts for less every day until it is reviewed."),
+            ),
+        )
+
+        /** The weekly audit's target, a whole percent (week-audit AUDIT_TARGET). */
+        const val WEEK_TARGET = 85
+        /** This week's audit opens at this Sydney hour of its Sunday (week-audit AUDIT_OPENS_HOUR). */
+        const val AUDIT_OPENS_HOUR = 18
 
         fun strings(a: JsonElement): List<String> = (a as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull } ?: emptyList()
         fun formula(a: JsonElement): String = (a as? JsonPrimitive)?.contentOrNull.orEmpty().lowercase().replace(" ", "").replace("**", "^")

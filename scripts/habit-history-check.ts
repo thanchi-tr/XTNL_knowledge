@@ -5,7 +5,8 @@
  *      (a met, a short, a held, an open and an unjudged period), AFTER, rest / freeze / skip / excused days held
  *      (and a must kept 'Even on rest days' held by freezes only, through the board's own boardStreakOptionsOf), the
  *      minimum version, the settlement cursor, before the habit began, after it ended, and the future;
- *   2. the maths: the % (done + ½ minimum over due, held in neither; a TARGET's units), the best run, the current
+ *   2. the maths: the % (done + minimum over due, held in neither; a TARGET's units; decision D15: the minimum counts
+ *      1, said "n at minimum" beside the %), the best run, the current
  *      streak equal to habit.ts perDutyStreak (the board's number), this week n of target, the page's summary;
  *   3. the colour: a stable hue by creation order, the 8 hues in tokens.css for Night and Vellum, each done square
  *      ≥ 3:1 on the card, never the Must orange, and the shades habits.css derives from it;
@@ -136,12 +137,12 @@ function states() {
     { at: "07:12", times: 2 },
   ]);
   eq("every day: counts (6 kept, 1 minimum, 2 held, 4 missed)", w.counts, { done: 6, minimum: 1, held: 2, missed: 4 });
-  eq("%: (6 + ½ × 1) / (6 + 1 + 4) due, held in neither → 59%", [w.credit, w.due, w.percent], [6.5, 11, 59]);
+  eq("%: (6 + 1 minimum, which counts 1: D15) / (6 + 1 + 4) due, held in neither → 64%; '1 at minimum' beside it", [w.credit, w.due, w.percent, w.atMinimum], [7, 11, 64, "1 at minimum"]);
   const wHistory = waterI.map((i) => ({ day: i.day, status: i.status, repaired: i.repaired }));
   eq("streak: current is habit.ts perDutyStreak (the board's number): 3; best run of the year 3", [w.current, perDutyStreak(parseRule("DAILY"), water.startDay, TODAY, wHistory).kept, w.best], [3, 3, 3]);
   eq("this week (Mon 12 → Sun 18): 2 of 7 so far", w.period, { label: "this week", kept: 2, target: 7 });
   eq("footer and rule words", [w.foot, w.rule], ["Current 3 · best 3 · this week 2 of 7", "every day"]);
-  check("summary: the card in words for screen readers", /^water, every day, 2026: 59% kept\. 6 days kept, 1 at the minimum, 4 missed, 2 held\. Current streak 3, best 3\. This week: 2 of 7\.$/.test(w.summary), w.summary);
+  check("summary: the card in words for screen readers", /^water, every day, 2026: 64% kept\. 6 days kept, 1 at the minimum, 4 missed, 2 held\. Current streak 3, best 3\. This week: 2 of 7\.$/.test(w.summary), w.summary);
 
   // A weekday set (Mon · Wed · Fri), 28 Sep (Mon) on, with an extra day.
   const gym = tpl("gym", "DOW:1,3,5", "2026-09-28");
@@ -149,7 +150,7 @@ function states() {
   gymI.push(inst("gym", "2026-10-02", "DONE_MVV"));
   const g = card(gym, gymI);
   eq("weekday set: Tue, Thu, Sat, Sun are not due; a Tuesday tick is an extra day; Wed 30 Sep missed", codesOf(g, "2026-09-28", "2026-10-15"), "ddxnmnndndndnndndn");
-  eq("weekday set: the extra day is shown, never counted", [g.notes["2026-09-29"]?.extra, g.due, g.credit, g.percent], [true, 8, 6.5, 81]);
+  eq("weekday set: the extra day is shown, never counted", [g.notes["2026-09-29"]?.extra, g.due, g.credit, g.percent], [true, 8, 7, 88]);
   eq("weekday set: the minimum holds the run; current 5 = perDutyStreak; best 5", [g.current, perDutyStreak(parseRule("DOW:1,3,5"), gym.startDay, TODAY, gymI).kept, g.best], [5, 5, 5]);
   eq("weekday set: this week Mon 12 · Wed 14 · Fri 16 → 2 of 3; words 'Mon · Wed · Fri'", [g.period, g.rule], [{ label: "this week", kept: 2, target: 3 }, "Mon · Wed · Fri"]);
 
@@ -167,7 +168,7 @@ function states() {
   eq("TARGET 3/W: a short week (1 kept + 1 minimum of 3) shows its 1 shortfall on its last empty day", [codesOf(r, "2026-09-28", "2026-10-04"), r.notes["2026-10-04"]], ["dnmnnnx", { short: { kept: 1, target: 3, per: "week" } }]);
   eq("TARGET 3/W: a rest day holds the third unit: no miss", [codesOf(r, "2026-10-05", "2026-10-11"), r.notes["2026-10-08"]], ["ddnhnnn", { held: "rest" }]);
   eq("TARGET 3/W: the running week: yesterday and today open, the rest to come", codesOf(r, "2026-10-12", "2026-10-18"), "ddoofff");
-  eq("TARGET 3/W: % in units: met 3/3 + short 1.5/3 + held 2/2 + open 2/2 → 8.5/10 → 85%", [r.credit, r.due, r.percent], [8.5, 10, 85]);
+  eq("TARGET 3/W: % in units: met 3/3 + short 2/3 (the minimum counts 1) + held 2/2 + open 2/2 → 9/10 → 90%", [r.credit, r.due, r.percent], [9, 10, 90]);
   eq("TARGET 3/W: streaks in weeks (met · missed · held · open): current 0 = perDutyStreak, best 1", [r.current, perDutyStreak(parseRule("TARGET:3/W"), read3.startDay, TODAY, readI, { heldDays: new Set(["2026-10-08"]) }).kept, r.best, r.unit], [0, 0, 1, "week"]);
   eq("TARGET 3/W: this week 2 of 3 (the board's periodProgress); footer and words", [r.period, r.foot, r.rule], [{ label: "this week", kept: 2, target: 3 }, "Current 0 weeks · best 1 week · this week 2 of 3", "3× a week"]);
 
@@ -225,7 +226,7 @@ function states() {
     tz: "UTC",
   });
   eq("page: active cards in board order (sortOrder), ended ones apart; no card for no rule, next year's or an earlier year's", [view.habits.map((c) => c.id), view.ended.map((c) => c.id)], [["gym", "water"], ["ended"]]);
-  eq("page: '2 habits · 1 ended · 73% kept this year' ((6.5 + 6.5 + 3) / (8 + 11 + 3))", view.summary, "2 habits · 1 ended · 73% kept this year");
+  eq("page: '2 habits · 1 ended · 77% kept this year' ((7 + 7 + 3) / (8 + 11 + 3))", view.summary, "2 habits · 1 ended · 77% kept this year");
   eq("page: the year switcher goes back to the earliest habit's year, never past this one", [view.prev, view.next, habitYearOf({ year: 2024, today: TODAY, since: readFromOf(2024, TODAY), templates: [tpl("old", "DAILY", "2024-03-01")], instances: [], options: {} }).prev], [2025, null, null]);
   eq("year param: four digits from 2000 to this year; anything else is this year", [yearOfParam("2025", TODAY), yearOfParam("2027", TODAY), yearOfParam("1999", TODAY), yearOfParam("abc", TODAY), yearOfParam(["2024"], TODAY), yearOfParam(undefined, TODAY)], [2025, 2026, 2026, 2026, 2024, 2026]);
   eq("read window: the week before New Year, and the board's 400 days for this year", [readFromOf(2025, TODAY), readFromOf(2026, TODAY)], ["2024-12-25", addDays(TODAY, -399)]);
@@ -331,7 +332,13 @@ function wiring() {
   const loading = code(`${dir}/loading.tsx`);
   check("route: the skeleton says it is loading (aria-busy, a status line) and draws the cards' shape", /aria-busy="true"/.test(loading) && /role="status"/.test(loading) && /className="card hh-card"/.test(loading) && /className="hh-gridwrap"/.test(loading));
   const page = code(`${dir}/page.tsx`);
-  check("route: ?year= read (searchParams awaited), one cached read, a failure says so instead of throwing", /searchParams: Promise</.test(page) && /await searchParams/.test(page) && /yearOfParam\(query\.year, today\)/.test(page) && /loadHabitYear\(getCurrentUserId\(\), year, now\)\.catch\(/.test(page) && /Couldn&apos;t load your habits/.test(page));
+  check("route: ?year= read (searchParams awaited), one cached read of the year, a failure says so instead of throwing", /searchParams: Promise</.test(page) && /await searchParams/.test(page) && /yearOfParam\(query\.year, today\)/.test(page) && /loadHabitYear\(getCurrentUserId\(\), year, now\)\.catch\(/.test(page) && /Couldn&apos;t load your habits/.test(page));
+  check(
+    "route: this week's daily quests (P9, D14 and D15) beside it, this year only, read in the same wave, a failure leaving them out",
+    /thisYear\s*\?\s*loadQuestWeek\(getCurrentUserId\(\), now\)\.catch\(\(err: unknown\): QuestWeekView \| null => \{/.test(page) &&
+      /await Promise\.all\(\[\s*loadHabitYear\(/.test(page) &&
+      /\{quests && <QuestWeek week=\{quests\} today=\{today\} \/>\}/.test(page)
+  );
   check("route: the year switcher ‹ prev · year · next ›, the summary, the legend, the Ended fold, the hash ring", /aria-label="Year"/.test(page) && /‹ \{view\.prev\}/.test(page) && /\{view\.next\} ›/.test(page) && /\{view\.summary\}/.test(page) && /className="hh-legend"/.test(page) && /<details className="hh-ended">\s*<summary>Ended · \{view\.ended\.length\}<\/summary>/.test(page) && /<HabitHash \/>/.test(page));
   check("route: the top bar's title is nav.ts's (no ShellTitle)", !/ShellTitle/.test(page));
 
@@ -433,7 +440,11 @@ async function grid() {
   )!;
   const html = renderToStaticMarkup(createElement(HabitCard, { card: water, year: YEAR, today: TODAY }));
   check("render: the card is the template's anchor (#<templateId>), in its hue, named by its heading", /<article class="card hh-card" id="c-water" data-hue="3" aria-labelledby="[^"]+">/.test(html) && /<h2 id="[^"]+" class="hh-title" tabindex="-1">Drink water<\/h2>/.test(html));
-  check("render: the header says the rule and the minimum, and the % on the right", /<p class="hh-rule">every day · minimum: one glass<\/p>/.test(html) && /<p class="hh-pct" aria-hidden="true">\d+%<\/p>/.test(html));
+  check(
+    "render: the header says the rule and the minimum, and the % on the right with 'n at minimum' under it (D15)",
+    /<p class="hh-rule">every day · minimum: one glass<\/p>/.test(html) &&
+      /<div class="hh-score" aria-hidden="true"><p class="hh-pct">\d+%<\/p><p class="hh-min">1 at minimum<\/p><\/div>/.test(html)
+  );
   check("render: the glyph is the habit's own icon, drawn in its hue", html.includes(`<path d="M12 3.5c3.5 4.5`));
   const cells = html.match(/role="gridcell"/g) ?? [];
   const pads = html.match(/data-pad="" aria-hidden="true"/g) ?? [];

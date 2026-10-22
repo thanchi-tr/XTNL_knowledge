@@ -74,9 +74,11 @@ export interface ShellWorkTabs {
 export const OWED_NOTICE_ID = "owed";
 export const YESTERDAY_MUSTS_NOTICE_ID = "yesterday-musts";
 export const WEEK_REVIEW_NOTICE_ID = "week-review";
+/** "Week audit ready" (lib/week-audit.ts auditReadyNotice; blueprint P12): Sunday 18:00 through Wednesday. */
+export const WEEK_AUDIT_NOTICE_ID = "week-audit";
 
-/** Info notices the bell lists but never counts (decision 27; the weekly review, F14). */
-export const LISTED_ONLY_NOTICE_IDS: readonly string[] = [YESTERDAY_MUSTS_NOTICE_ID, WEEK_REVIEW_NOTICE_ID];
+/** Info notices the bell lists but never counts (decision 27; the weekly review, F14; the week audit, P12). */
+export const LISTED_ONLY_NOTICE_IDS: readonly string[] = [YESTERDAY_MUSTS_NOTICE_ID, WEEK_REVIEW_NOTICE_ID, WEEK_AUDIT_NOTICE_ID];
 
 /** ShellData.owed from the feed's counts: the open debts (0 when the read failed or nothing is owed). */
 export function owedOf(feed: Pick<NotificationFeed, "counts"> | null | undefined): ShellData["owed"] {

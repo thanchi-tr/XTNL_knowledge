@@ -2,10 +2,15 @@
  * Forgetting (src/lib/forgetting.ts and srs.ts degradeOverdueIdeas): an idea left unreviewed loses levels along the
  * Ebbinghaus forgetting curve R(t) = e^(−t/S), S = I ÷ ln(1/0.9), I = baseline(level) × ease (2026-10-14; it was the
  * power curve), and each lost level takes back what earning it paid. Pure arithmetic, a day-by-day simulation of the
- * nightly job (idempotent, never twice), and pins on the job and the missed-review degrade.
+ * nightly job (idempotent, never twice), and pins on the job and the missed-review degrade. Blueprint P13 (decision
+ * D23): the per-card curve stays, with a 72 h floor on every card's grace (xp.ts GRACE_FLOOR_DAYS), pinned against the
+ * rule before it, and held on a wrong answer too (srs.ts missKindOf through missGraceEndOf), even on a row whose
+ * stored grace end was written before the floor.
  *
  *   npx tsx scripts/forgetting-check.ts
  */
+// srs.ts (the miss path's floor) reaches a roadmap module: no model call may run from here.
+import "./_no-model";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -18,12 +23,16 @@ import {
   daysToForget,
   forgetDedupeKey,
   forgetKeyPrefix,
+  ideaOutlook,
+  ideaStatusOf,
   levelLossPoints,
   levelsForgotten,
   levelsLossPoints,
+  retentionFactor,
   retrievability,
 } from "../src/lib/forgetting";
-import { MASTERY_BONUS, MASTERY_LEVEL, MAX_LEVEL, baseIntervalDays, graceDays, reviewPayout } from "../src/lib/xp";
+import { GRACE_FLOOR_DAYS, MASTERY_BONUS, MASTERY_LEVEL, MAX_LEVEL, baseIntervalDays, graceDays, graceEndsAt, reviewPayout } from "../src/lib/xp";
+import { missGraceEndOf, missKindOf } from "../src/lib/srs";
 
 let passed = 0;
 let failed = 0;
@@ -106,6 +115,106 @@ const near = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) <= eps;
     return d == null || (levelsForgotten(L, d + 0.01) >= n && levelsForgotten(L, Math.max(0, d - 0.5)) < n);
   })));
   check("days overdue: from the due date, never negative", daysOverdueOf(new Date("2026-10-01T00:00:00Z"), new Date("2026-10-03T12:00:00Z")) === 2.5 && daysOverdueOf(new Date("2026-10-05T00:00:00Z"), new Date("2026-10-03T00:00:00Z")) === 0);
+}
+
+// ── The 72 h floor (blueprint 3.1a, decision D23; P13) ──────────────────────
+// Every card's grace is at least GRACE_FLOOR_DAYS (3) days past its due day, so nothing fades or forgets a level within
+// 72 hours of falling due (and so of its last review). The per-card curve is the same; no flat decay. Pinned against
+// the rule before it: the same curve with the grace ℓ − 1.
+{
+  const preFloorGrace = (L: number) => Math.max(0, L - 1);
+  /** levelsForgotten as it read before the floor: the same curve, grace ℓ − 1. */
+  const preFloor = (L: number, o: number, extra = 0, e = 1) => {
+    if (L <= 1 || !(o > preFloorGrace(L) + extra)) return 0;
+    const R = retrievability(intervalOf(L, e) + o, stabilityOf(L, e));
+    return Math.max(0, Math.min(L - 1, Math.floor((DESIGN_RETENTION - R) / FORGET_BAND + 1e-9)));
+  };
+  const levels = Array.from({ length: MAX_LEVEL }, (_, i) => i + 1);
+  const eases = [0.6, 0.85, 1, 1.3, 1.8];
+  const due = new Date("2026-01-01T00:00:00Z");
+  const at = (o: number) => new Date(due.getTime() + o * 86_400_000);
+  check(
+    "floor: GRACE_FLOOR_DAYS is 3 (72 h); graceDays = max(3, L − 1): L1–L4 3, L5 4, L12 11; the stored grace end follows it",
+    GRACE_FLOOR_DAYS === 3 && [1, 2, 3, 4, 5, 12].map(graceDays).join() === "3,3,3,3,4,11" && graceEndsAt(due, 2).getTime() === at(3).getTime() && graceEndsAt(due, 2, 2).getTime() === at(5).getTime()
+  );
+  check(
+    "floor (L2 pin): an L2 card (I 2 d) loses its first level 3 days past due; the curve alone would take it at about 1.65",
+    near(daysToForget(2, 1)!, 3) && levelsForgotten(2, 2.99) === 0 && levelsForgotten(2, 3.01) === 1 && Math.abs(intervalOf(2) * (Math.log(0.825) / Math.log(0.9) - 1) - 1.652) < 1e-3 && preFloor(2, 2) === 1,
+    `daysToForget(2) ${daysToForget(2, 1)}`
+  );
+  check(
+    "floor: no card at any level or ease fades or forgets within 3 days of falling due (so none within 72 h of its last review)",
+    levels.every((L) =>
+      eases.every((e) => [0, 1, 2, 2.5, 3].every((o) => levelsForgotten(L, o, 0, e) === 0 && retentionFactor(L, due, at(o), 0, e) === 1) && (L < 2 || daysToForget(L, 1, 0, e)! >= GRACE_FLOOR_DAYS))
+    )
+  );
+  check(
+    "floor: just past it the curve applies as before (an L2 at 3.5 days past due is fading, its retention below 1; a level gone)",
+    retentionFactor(2, due, at(3.5)) < 1 && levelsForgotten(2, 3.5) === 1 && ideaOutlook({ level: 2, dueDate: due, graceEndsAt: null, cleanStreak: 0, failedAttempts: 0 }, at(2.5)).status === "due"
+  );
+  // Acceptance: for the same cards, the floor never forgets more, and leaves L4 and up exactly as they were.
+  const grid: { L: number; e: number; o: number; extra: number }[] = [];
+  for (const L of levels.slice(1)) for (const e of eases) for (const extra of [0, 2]) for (let o = 0; o <= 400; o += 0.25) grid.push({ L, e, o, extra });
+  const fewer = grid.filter((c) => levelsForgotten(c.L, c.o, c.extra, c.e) > preFloor(c.L, c.o, c.extra, c.e));
+  const moved = grid.filter((c) => levelsForgotten(c.L, c.o, c.extra, c.e) !== preFloor(c.L, c.o, c.extra, c.e));
+  check("acceptance: on every card (L2–L20, ease 0.6–1.8, 0–400 days past due, with and without a grace extension) the floor forgets no more levels than before", fewer.length === 0 && grid.length > 100_000, `${fewer.length} more`);
+  // With no grace extension what moves is L2, and an L3 below about 0.91× ease; an extension adds the same days to both
+  // graces, so then an L3's longer grace can hold its first loss at any ease.
+  const plain = moved.filter((c) => c.extra === 0);
+  check(
+    "acceptance: no card at L4 or above changes (its grace, its levels forgotten); what moves is L2 and some L3 (with no grace extension, an L3 only below 0.91× ease), each later",
+    levels.filter((L) => L >= 4).every((L) => graceDays(L) === preFloorGrace(L)) &&
+      moved.every((c) => c.L <= 3) &&
+      plain.length > 0 &&
+      plain.every((c) => c.L === 2 || (c.L === 3 && c.e < 0.91)) &&
+      plain.some((c) => c.L === 3),
+    [...new Set(moved.map((c) => `L${c.L}@${c.e}+${c.extra}`))].join(" ")
+  );
+  // The first nightly pass after the deploy, on the same fixture: every card as the pass before the floor left it last night.
+  let rowsBefore = 0;
+  let rowsAfter = 0;
+  let perCardMore = 0;
+  for (const L of levels.slice(1))
+    for (const e of eases)
+      for (let o = 1; o <= 200; o += 1) {
+        const done = preFloor(L, o - 1, 0, e);
+        const before = Math.max(0, preFloor(L, o, 0, e) - done);
+        const after = Math.max(0, levelsForgotten(L, o, 0, e) - done);
+        rowsBefore += before;
+        rowsAfter += after;
+        if (after > before || (L >= 4 && after !== before)) perCardMore++;
+      }
+  check(
+    "acceptance: the first nightly pass after the deploy writes no more FORGET rows than the pass before the floor would, card by card (L4 and up the same)",
+    perCardMore === 0 && rowsAfter <= rowsBefore && rowsAfter < rowsBefore,
+    `${rowsAfter} rows against ${rowsBefore}`
+  );
+  // A wrong answer (srs.ts missKindOf): every row written before the floor stored grace end due + (L − 1) days, so an
+  // L2's ended a day past due. The miss path reads it at the floor (missGraceEndOf) until the row's next write.
+  const oldL2 = { lapseDay: null, failedAttempts: 0, dueDate: due, cycleMissed: false, graceEndsAt: at(1) };
+  check(
+    "floor (L2 pin, a wrong answer): an L2 row with its pre-floor grace end (due + 1 day), answered wrong 2 days past due, is a lapse, never a level lost; at 3.5 days it degrades",
+    missKindOf(oldL2, at(2), 3) === "lapse" && missKindOf(oldL2, at(2.99), 3) === "lapse" && missKindOf(oldL2, at(3.5), 3) === "degrade" && missGraceEndOf(oldL2)!.getTime() === at(3).getTime()
+  );
+  check(
+    "floor (a wrong answer): an L3's pre-floor end (due + 2) reads as due + 3; a row written since (graceEndsAt) and every L4+ end are read as stored",
+    missGraceEndOf({ ...oldL2, graceEndsAt: at(2) })!.getTime() === at(3).getTime() &&
+      [1, 2, 3, 4, 5, 12].every((L) => missGraceEndOf({ ...oldL2, graceEndsAt: graceEndsAt(due, L) })!.getTime() === graceEndsAt(due, L).getTime()) &&
+      missGraceEndOf({ ...oldL2, graceEndsAt: graceEndsAt(due, 2, 2) })!.getTime() === at(5).getTime() &&
+      missGraceEndOf({ ...oldL2, graceEndsAt: null }) === null
+  );
+  check(
+    "floor (a wrong answer): a lapsed cycle (a strike or a ward moved its due date to tomorrow, its grace end kept) reads the column as it stands",
+    missGraceEndOf({ ...oldL2, cycleMissed: true, dueDate: at(2) })!.getTime() === at(1).getTime() && missKindOf({ ...oldL2, cycleMissed: true, dueDate: at(2) }, at(2), 3) === "degrade"
+  );
+  check(
+    "status: ideaStatusOf is ideaOutlook's status (fresh before due, without reading the curve)",
+    levels.every((L) =>
+      [0.6, 1, 1.8].every((e) =>
+        [-2, 0, 1, 2.5, 3, 3.5, 10, 40, 400].every((o) => ideaStatusOf({ level: L, dueDate: due, ease: e }, at(o), 1) === ideaOutlook({ level: L, dueDate: due, graceEndsAt: null, cleanStreak: 0, failedAttempts: 0, ease: e }, at(o), 1).status)
+      )
+    ) && ideaStatusOf({ level: 5, dueDate: at(1) }, at(0)) === "fresh"
+  );
 }
 
 // ── What a lost level costs ─────────────────────────────────────────────────

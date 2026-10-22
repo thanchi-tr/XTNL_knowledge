@@ -1720,7 +1720,7 @@ export function ruledTemplateOn(t: BoardTemplate, day: DayKey): BoardTemplate | 
 }
 
 /** A board template as duty-rule.ts reads it (the board holds live templates only: archivedDay null; a pending archive is in pendingChange). */
-function dutyTemplateOf(t: BoardTemplate): DutyTemplate {
+export function dutyTemplateOf(t: BoardTemplate): DutyTemplate {
   return {
     kind: t.kind,
     recurrence: t.recurrence,

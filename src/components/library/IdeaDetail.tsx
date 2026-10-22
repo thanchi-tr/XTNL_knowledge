@@ -4,8 +4,9 @@
  * One idea, as the Library's sheet and the /library/[id] page show it:
  * question (its other wordings behind "+n wordings") and answer, the level ring (mastery is a fixed target: 12)
  * with the level line the Library's rows speak ("L9 · mastery at 12"), the outlook (forgetting.ts ideaOutlook:
- * what the next level needs, when it is due, when it starts fading, when it would lose a level), its status
- * chip, the history strip from the life ledger, Edit (any written format, the format too) and a quiet two-step Delete.
+ * what the next level needs, when it is due, when it starts fading, when it would lose a level, its daily decay), its
+ * status chip, the history strip from the life ledger, Edit (any written format, the format too) and a quiet two-step
+ * Delete.
  *
  * History arrives as `history` (null while it loads; the sheet fetches it on
  * open). Nothing here is estimated: every figure is read from the row or the

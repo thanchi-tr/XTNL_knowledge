@@ -73,6 +73,7 @@ import { ActionError } from "@/components/home/ActionError";
 import { goalPercent } from "@/lib/goals";
 import { payBar } from "@/lib/life-economy";
 import { addDays, daysBetween } from "@/lib/life-day";
+import { mustNoteIn, restoredNoticeOf } from "@/lib/daily-quests";
 import {
   AIM_RANKS,
   NOT_RECORDED_HERE,
@@ -1634,7 +1635,16 @@ function Aftercare({ view }: { view: RoadmapView }) {
                         pushToast({
                           title: "Archived",
                           body: `${r.title} left Today.`,
-                          action: { label: "Undo", onAction: () => void runtime.actions.unarchiveTask(r.templateId).then(() => runtime.refresh()) },
+                          action: {
+                            label: "Undo",
+                            onAction: () =>
+                              void runtime.actions.unarchiveTask(r.templateId).then((res) => {
+                                // Daily quests (D14): a must brought back near or past the cap stays a must, and says so.
+                                const note = res.ok ? mustNoteIn(res.value) : null;
+                                if (note) pushToast({ title: "Back on Today", body: restoredNoticeOf(r.title, note) });
+                                return runtime.refresh();
+                              }),
+                          },
                         })
                     )
                   }

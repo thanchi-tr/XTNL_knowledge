@@ -145,6 +145,7 @@ import {
   unarchiveCore,
   type RoadmapUnarchiveFacts,
   type UnarchiveMilestoneRow,
+  type UnarchiveOutcome,
 } from "../src/lib/tasks";
 import { prisma } from "../src/lib/prisma";
 
@@ -939,7 +940,8 @@ async function unarchiveChecks(): Promise<void> {
     );
   };
   const withRoadmap = (row: UnarchiveMilestoneRow, rows: UnarchiveMilestoneRow[], status = "ACTIVE") => ({ ...row, roadmap: { status, milestones: rows } });
-  const runIt = async (): Promise<LifeResult<null> | { threw: string }> => {
+  // Daily quests (D14): an unarchive answers its must note (none for a goal), so its value is UnarchiveOutcome.
+  const runIt = async (): Promise<LifeResult<UnarchiveOutcome> | { threw: string }> => {
     try {
       return await unarchiveCore("u-unarchive", "g2", NOW);
     } catch (err) {

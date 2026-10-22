@@ -214,12 +214,13 @@ const T0 = new Date("2026-10-14T01:00:00Z"); // 12:00 in Sydney, life day 2026-1
 const at = (base: Date, days: number, minutes = 0) => new Date(base.getTime() + days * DAY + minutes * 60_000);
 {
   const today = todayKey(T0);
-  const fresh = { lapseDay: null, failedAttempts: 0, graceEndsAt: at(T0, 3) };
+  // Due yesterday, its grace three days on (an L5's, written with its due date: the 72 h floor of D23 changes nothing here).
+  const fresh = { lapseDay: null, failedAttempts: 0, dueDate: at(T0, -1), cycleMissed: false, graceEndsAt: at(T0, 3) };
   check("lapse: the first miss of a life day is the lapse", missKindOf(fresh, T0, 2) === "lapse");
   check("lapse: a miss on a card that already lapsed today is a retry (nothing changes)", missKindOf({ ...fresh, lapseDay: dateColumn(today), failedAttempts: 1 }, at(T0, 0, 20), 2) === "retry");
   check("lapse: a lapse yesterday does not make today's miss a retry", missKindOf({ ...fresh, lapseDay: dateColumn(todayKey(at(T0, -1))) }, T0, 2) === "lapse");
   check("lapse: the second lapsed cycle in a row degrades (STRIKE_LIMIT 2); STRIKE_TOLERANCE raises it", missKindOf({ ...fresh, failedAttempts: 1 }, T0, 2) === "degrade" && missKindOf({ ...fresh, failedAttempts: 1 }, T0, 3) === "lapse");
-  check("lapse: a lapse past the grace degrades at once, as before", missKindOf({ ...fresh, graceEndsAt: at(T0, -1) }, T0, 2) === "degrade");
+  check("lapse: a lapse past the grace degrades at once, as before", missKindOf({ ...fresh, dueDate: at(T0, -5), graceEndsAt: at(T0, -1) }, T0, 2) === "degrade");
   // The life day starts at 04:00: a 03:30 retry belongs to the evening before, a 04:30 miss to the new day.
   const late = dayStartOf("2026-10-15");
   const lapsedEvening = { ...fresh, lapseDay: dateColumn("2026-10-14"), failedAttempts: 1 };
@@ -292,7 +293,8 @@ const daysFrom = (now: Date, d: Date) => Math.round((d.getTime() - now.getTime()
   // STRIKE_TOLERANCE, the grace, a ward.
   const d1 = answer(answer(answer(card(5), false, T0, { strikeLimit: 3 }).card, true, at(T0, 0, 5)).card, false, at(T0, 3), { strikeLimit: 3 });
   check("life: with an extra strike the second lapsed cycle is strike 2, not a degrade", d1.kind === "strike" && d1.card.failedAttempts === 2 && d1.card.level === 5);
-  const pastGrace = answer(card(6, { graceEndsAt: at(T0, -1) }), false, T0);
+  // Due six days ago, an L6's 5-day grace over yesterday (a grace end before its own due day would read at the 72 h floor).
+  const pastGrace = answer(card(6, { dueDate: at(T0, -6), graceEndsAt: at(T0, -1) }), false, T0);
   check("life: a lapse past the grace degrades at once", pastGrace.kind === "degraded" && pastGrace.card.level === 5);
   const warded = answer(answer(answer(card(9), false, T0).card, true, at(T0, 0, 5)).card, false, at(T0, 5), { ward: true });
   check("life: a ward holds the level; the lapse still tightens the spacing and misses the cycle", warded.kind === "shielded" && warded.card.level === 9 && warded.card.failedAttempts === 0 && warded.card.cycleMissed && near(warded.card.ease, 0.7225));

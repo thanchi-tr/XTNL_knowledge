@@ -17,6 +17,10 @@
  *   §5d the open doors (blueprint-plan-2026-10-22.md P0): the degrade cron's gate fails closed in production (503
  *      with no CRON_SECRET, 401 for a wrong header) and runs locally with none; /api/debug/queries is a 404 in
  *      production unless PRISMA_COUNT_QUERIES=1; the routes ask their gate first (§5c, static).
+ *   §5e the audit step (blueprint-plan-2026-10-22.md P11, decision D12): the cron's JSON gains `audit`; after the
+ *      roadmap step, on the Monday after an audited week, the week is frozen once (runAuditStep); inert while
+ *      AUDIT_LAUNCH_DAY is not in force (production reads the constant only), WRITES_OFF unless settlement may
+ *      write, and a failure is reported without moving the cron's status.
  *   §4b, §5b, §5c the roadmap step (docs/life-plan/roadmap.md F16 seam 8, lane G): settle → judge →
  *      roadmap in the chain and the cron, also while Duty is inert, only with writes on; freeze
  *      (CRON from the cron, RENDER from the chain) before readings, then finalisation; a roadmap
@@ -88,6 +92,7 @@ import {
   maybeMaintainLife,
   readSettlementState,
   recordRoadmapAfterDegrade,
+  runAuditStep,
   runLifeCron,
   runRoadmapStep,
   settleGuardSql,
@@ -1798,6 +1803,74 @@ async function executor(): Promise<void> {
     check("a settlement failure still answers 500, and the roadmap step still runs (it never waits on Duty)", bad.status === 500 && badOrder.join() === "freeze:CRON,readings:LIFE_CRON,finalize");
   }
 
+  console.log("— §5e the audit step in the life cron —");
+  {
+    const auth = () => new Request("https://x.test/api/cron/life", { headers: { authorization: "Bearer k" } });
+    // Monday 19 October (L + 7), 04:15: the week of 12 October (W42) has just ended.
+    const turn = new Date(dayStartOf(d(7)).getTime() + 15 * 60_000);
+    const quietSettle = async (): Promise<SettleResult> => ({ launched: false, wrote: false, cursorBefore: null, cursorAfter: null, plans: [], refused: null });
+    const quietJudge = async () => ({ launched: true, committed: [] });
+    type AuditRun = Awaited<ReturnType<typeof runAuditStep>>;
+    const recorder = (order: string[], result: AuditRun | Error = { weekKey: "2026-W42", froze: true, skipped: null }) => {
+      const seen: { userId: string; now: number; env: unknown }[] = [];
+      const freeze = async (userId: string, now: Date, o: { env?: unknown }) => {
+        order.push("audit");
+        seen.push({ userId, now: now.getTime(), env: o.env });
+        if (result instanceof Error) throw result;
+        return { ...result, skipped: result.skipped === "WRITES_OFF" ? null : result.skipped };
+      };
+      return { freeze, seen };
+    };
+    const cron = (env: SettleEnv, freeze: NonNullable<Parameters<typeof runLifeCron>[1]>["audit"], order: string[]) =>
+      runLifeCron(auth(), { env, now: () => turn, userId: () => USER, settle: quietSettle, judge: quietJudge, launchFinished: async () => true, roadmap: roadmapRecorder(order).deps, audit: freeze });
+
+    // The switch as it ships: AUDIT_LAUNCH_DAY null, no override. Nothing is read or written (the Prisma spies would throw).
+    const offOrder: string[] = [];
+    const off = recorder(offOrder);
+    const offRes = await cron({ CRON_SECRET: "k", XTNL_LIFE_JUDGE: "1" }, off.freeze, offOrder);
+    const offBody = (await offRes.json()) as Record<string, unknown>;
+    check(
+      "the cron's JSON gains `audit` after settle, judge and roadmap; inert as shipped (AUDIT_LAUNCH_DAY null): NOT_LAUNCHED, no freeze, 200",
+      offRes.status === 200 && JSON.stringify(Object.keys(offBody)) === JSON.stringify(["settle", "judge", "roadmap", "audit"]) && off.seen.length === 0 && !offOrder.includes("audit"),
+      JSON.stringify(offBody.audit)
+    );
+    eq("…its report", offBody.audit, { weekKey: null, froze: false, skipped: "NOT_LAUNCHED" });
+
+    // The rehearsal server: the launch override and XTNL_LIFE_JUDGE=1. The freeze runs last, with the cron's clock and env.
+    const env: SettleEnv = { CRON_SECRET: "k", XTNL_LIFE_JUDGE: "1", XTNL_AUDIT_LAUNCH_DAY: L };
+    const onOrder: string[] = [];
+    const on = recorder(onOrder);
+    const onRes = await cron(env, on.freeze, onOrder);
+    const onBody = (await onRes.json()) as { audit: AuditRun };
+    check(
+      "launched (the override, outside production) with writes on: settle → judge → roadmap → the audit's freeze, once, with the user, the cron's instant and env",
+      onRes.status === 200 && onOrder.join() === "freeze:CRON,readings:LIFE_CRON,finalize,audit" && on.seen.length === 1 && on.seen[0].userId === USER && on.seen[0].now === turn.getTime() && on.seen[0].env === env,
+      JSON.stringify(onOrder)
+    );
+    eq("…and the JSON carries what it froze", onBody.audit, { weekKey: "2026-W42", froze: true, skipped: null });
+
+    const devOrder: string[] = [];
+    const dev = recorder(devOrder);
+    const devRes = await cron({ CRON_SECRET: "k", NODE_ENV: "development", VERCEL_ENV: "preview", XTNL_AUDIT_LAUNCH_DAY: L }, dev.freeze, devOrder);
+    eq("with writes off (a dev server or a Preview) the audit step freezes nothing: WRITES_OFF", [((await devRes.json()) as { audit: AuditRun }).audit, dev.seen.length], [{ weekKey: null, froze: false, skipped: "WRITES_OFF" }, 0]);
+
+    const prodOrder: string[] = [];
+    const prod = recorder(prodOrder);
+    const prodRes = await cron({ CRON_SECRET: "k", NODE_ENV: "production", XTNL_AUDIT_LAUNCH_DAY: L }, prod.freeze, prodOrder);
+    eq("production reads the constant only: the override is ignored, NOT_LAUNCHED", [((await prodRes.json()) as { audit: AuditRun }).audit.skipped, prod.seen.length], ["NOT_LAUNCHED", 0]);
+
+    const badOrder: string[] = [];
+    const bad = recorder(badOrder, new Error("audit boom"));
+    const badRes = await quietly(() => cron(env, bad.freeze, badOrder));
+    const badBody = (await badRes.json()) as { audit: AuditRun };
+    check(
+      "a failed freeze is reported as `error` and never moves the cron's status (the audit pays and judges nothing)",
+      badRes.status === 200 && badBody.audit.error === "audit boom" && badBody.audit.froze === false,
+      JSON.stringify(badBody.audit)
+    );
+    eq("runAuditStep alone: the same gates (as shipped: NOT_LAUNCHED)", (await runAuditStep(USER, turn, { env: { XTNL_LIFE_JUDGE: "1" }, freeze: off.freeze })).skipped, "NOT_LAUNCHED");
+  }
+
   console.log("— §5c the degrade cron's roadmap readings —");
   {
     const now = at(d(3));
@@ -1903,13 +1976,15 @@ function staticChecks(): void {
   const chain = settlementSrc.slice(settlementSrc.indexOf("export function maybeMaintainLife("), settlementSrc.indexOf("export function cronAuthorized("));
   const cron = settlementSrc.slice(settlementSrc.indexOf("export async function runLifeCron("), settlementSrc.indexOf("export const XTNL_IDEA_PROJECT_REF"));
   check(
-    "the chain and the cron run the roadmap step after the judge, and the cron's status is still settle's and the judge's alone",
+    "the chain and the cron run the roadmap step after the judge, then (the cron only, P11) the audit step; the cron's status is still settle's and the judge's alone",
     chain.indexOf("runRoadmapStep(") > chain.indexOf("maybeJudgeWeeks)(userId, now)") &&
       /source: "RENDER", caller: "CHAIN"/.test(chain) &&
+      !/runAuditStep\(/.test(chain) &&
       cron.indexOf("runRoadmapStep(") > cron.indexOf("judgeClosedWeeks)(userId, now)") &&
+      cron.indexOf("runAuditStep(") > cron.indexOf("runRoadmapStep(") &&
       /source: "CRON", caller: "LIFE_CRON"/.test(cron) &&
       (cron.match(/failed = true/g) ?? []).length === 2 &&
-      /Response\.json\(\{ settle, judge, roadmap \}, \{ status: failed \? 500 : 200 \}\)/.test(cron)
+      /Response\.json\(\{ settle, judge, roadmap, audit \}, \{ status: failed \? 500 : 200 \}\)/.test(cron)
   );
 
   console.log("— §6 duty-launch.ts and the shared lock (static) —");

@@ -1,9 +1,12 @@
 package com.xtnl.app.ui
 
 import androidx.compose.animation.core.VisibilityThreshold
+import android.Manifest
 import android.net.Uri
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
@@ -78,6 +81,7 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
@@ -96,6 +100,7 @@ import com.xtnl.app.core.HingeOrientation
 import com.xtnl.app.core.Layouts
 import com.xtnl.app.core.NavStyle
 import com.xtnl.app.data.ReviewSummary
+import com.xtnl.app.notify.AuditReminder
 import com.xtnl.app.ui.check.CheckEvents
 import com.xtnl.app.ui.check.CheckScreen
 import com.xtnl.app.ui.check.CheckSpots
@@ -181,6 +186,18 @@ fun AppRoot(
     val link by deepLinks.collectAsStateWithLifecycle()
     LaunchedEffect(link) {
         link?.let { nav.open(it); onDeepLinkHandled() }
+    }
+
+    // The Sunday reminder (D37): on Android 13+, ask for notifications once, when the server's audit first goes live
+    // with the reminder on. Settings › Notifications can ask again; the app never asks twice by itself.
+    val context = LocalContext.current
+    val notifyAsk = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { graph.auditReminder.sync() }
+    val wantsAsk = prefs.auditReminder && prefs.auditLive && !prefs.notifyAsked && !prefs.demo
+    LaunchedEffect(wantsAsk) {
+        if (wantsAsk && AuditReminder.needsPermission(context)) {
+            graph.settings.setNotifyAsked()
+            notifyAsk.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
 
     // Back from the app's resume: the board may have moved on (the web, another device).

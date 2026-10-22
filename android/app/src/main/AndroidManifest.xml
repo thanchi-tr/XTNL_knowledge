@@ -5,6 +5,12 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Soft haptic compositions (a tick, a filed idea, a level up). -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- The week audit's Sunday 19:00 (Sydney) reminder (D37): a local notification (asked for on Android 13+),
+         and its alarm armed again after a reboot. Exact at 19:00 while Alarms & reminders is allowed (the user's own
+         grant; never USE_EXACT_ALARM, which is for alarm clocks and calendars), else within the hour. No server push. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <!-- Tap-to-call and text open the dialer / messages app (no call permission needed). -->
     <queries>
@@ -64,5 +70,26 @@
                 android:name="android.app.shortcuts"
                 android:resource="@xml/shortcuts" />
         </activity>
+
+        <!-- The Sunday reminder (notify/AuditReminder): its alarm, and re-arming it after a reboot or an update. -->
+        <receiver
+            android:name=".notify.AuditAlarmReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".notify.AuditBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <!-- Alarms & reminders granted: the alarm is armed again, exact. -->
+        <receiver
+            android:name=".notify.AuditExactReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

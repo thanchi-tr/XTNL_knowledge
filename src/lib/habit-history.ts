@@ -7,7 +7,8 @@
  * A day's state, from its TaskInstance rows and the habit's rule (recurrence.ts), with habit.ts's own reading:
  *
  *   d  done      a DONE or DONE_LATE slot (any kept slot keeps the day)
- *   m  minimum   the minimum version (DONE_MVV): half a day in the %, it holds the streak
+ *   m  minimum   the minimum version (DONE_MVV): a whole day in the % (decision D15: the minimum counts as done,
+ *                shown "n at minimum"), it holds the streak
  *   h  held      skipped, excused, a declared rest / sick / vacation day or a freeze (Duty's held days, as the board
  *                reads them: boardStreakOptionsOf): outlined, never counted against
  *   x  missed    a due day with nothing kept, once it can no longer be recorded (or a MISSED / WRITTEN_OFF /
@@ -17,7 +18,7 @@
  *   n  not due   the rule did not ask for it that day: a faint base
  *   b / f / z    before the habit began, still to come, after it ended (archived): empty
  *
- * Completion % = (done + ½ × minimum) / due days so far this year, held days in neither (a TARGET counts units:
+ * Completion % = (done + minimum) / due days so far this year, held days in neither (a TARGET counts units:
  * n a period, its held units out of both, an open or unjudged period only what was done). Streaks are in due
  * occurrences (periods for a TARGET): the current one is habit.ts perDutyStreak, exactly what the board's row
  * says; the best is the longest run of the year (kept adds, the minimum and held days hold, a miss breaks).
@@ -260,11 +261,13 @@ export interface HabitYearCard {
   notes: Record<DayKey, HabitDayNote>;
   /** Rounded; null while nothing has been due. */
   percent: number | null;
-  /** Units: (done + ½ minimum) and due, as the % reads them. */
+  /** Units: (done + minimum) and due, as the % reads them (D15: the minimum counts 1). */
   credit: number;
   due: number;
   /** Squares of each state this year. */
   counts: { done: number; minimum: number; held: number; missed: number };
+  /** "3 at minimum" beside the % (D15: those days count as kept in it), or null with none this year. */
+  atMinimum: string | null;
   /** perDutyStreak().kept today (null for another year, or once it ended). */
   current: number | null;
   best: number;
@@ -447,7 +450,7 @@ export function habitCardOf(t: HabitTemplateFacts, instances: readonly HabitInst
       }
       // A period counts in the year its last day falls in, so a week across New Year counts once.
       if (p.end > ye) continue;
-      credit += keptU + minU / 2;
+      credit += keptU + minU;
       due += outcome === "open" || outcome === "unjudged" ? keptU + minU : keptU + minU + shortU;
       if (outcome === "met") seq.push("kept");
       else if (outcome === "held") seq.push("held");
@@ -473,7 +476,7 @@ export function habitCardOf(t: HabitTemplateFacts, instances: readonly HabitInst
         if (inYear(d)) {
           codes.set(d, f.kept > 0 ? "d" : "m");
           notes[d] = keptNote(f, false);
-          credit += f.kept > 0 ? 1 : 0.5;
+          credit += 1;
           due += 1;
           seq.push(f.kept > 0 ? "kept" : "held");
         }
@@ -508,7 +511,7 @@ export function habitCardOf(t: HabitTemplateFacts, instances: readonly HabitInst
         codes.set(d, "m");
         notes[d] = keptNote(f, !isDue);
         if (isDue) {
-          credit += 0.5;
+          credit += 1;
           due += 1;
           seq.push("held");
         }
@@ -596,6 +599,7 @@ export function habitCardOf(t: HabitTemplateFacts, instances: readonly HabitInst
     credit,
     due,
     counts,
+    atMinimum: counts.minimum > 0 ? `${counts.minimum} at minimum` : null,
     current,
     best,
     unit,

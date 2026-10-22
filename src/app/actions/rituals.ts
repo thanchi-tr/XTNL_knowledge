@@ -15,9 +15,10 @@
  *   saveReflection(day, note, mood, opts?)  today, or yesterday (a sheet opened before 04:00 and
  *                                           saved after it); a later save supersedes. opts.opId
  *                                           (optional) makes a retried save land once
- *   markWeekReviewed(opts?)                 reviewedWeek(today)'s 'week-review:<YYYY-Www>';
- *                                           refused before Duty's launch day and on Thursday and
- *                                           Friday (no week is under review); idempotent
+ *   markWeekReviewed(opts?)                 reviewedWeek(today)'s 'week-review:<YYYY-Www>', with or
+ *                                           without Duty (blueprint decision D13: the review runs
+ *                                           before its launch day); refused on Thursday and Friday
+ *                                           (no week is under review); idempotent
  *   setDebtWriteOff(on, opts?)              kept for old imports only: the same action as
  *                                           actions/duty.ts setDebtWriteOff (one writer,
  *                                           lib/duty.ts setDebtWriteOffCore), answering
@@ -30,7 +31,6 @@ import { refresh } from "next/cache";
 import { getCurrentUserId } from "@/lib/user";
 import { recordActivity } from "@/lib/activity";
 import { todayKey, type DayKey } from "@/lib/life-day";
-import { isDutyLaunched } from "@/lib/duty-economy";
 import { setDebtWriteOff as setDebtWriteOffAction, type DutyActionOptions, type DutyActionResult } from "./duty";
 import {
   isMood,
@@ -85,12 +85,15 @@ export async function saveReflection(
   });
 }
 
-/** Marks rituals.ts reviewedWeek(today) as reviewed: weekReviewKey(weekKey), detail 'week review'. */
+/**
+ * Marks rituals.ts reviewedWeek(today) as reviewed: weekReviewKey(weekKey),
+ * detail 'week review'. Not gated on Duty: the review runs before its launch
+ * day (decision D13), and the marker is xp 0, sink NONE, like a reflection.
+ */
 export async function markWeekReviewed(opts?: RitualActionOptions): Promise<RitualActionResult<{ weekKey: string }>> {
   return run("markWeekReviewed", opts, async (userId) => {
     const now = new Date();
     const today = todayKey(now);
-    if (!isDutyLaunched(today)) return { ok: false, error: "The weekly review starts with Duty." };
     const week = reviewedWeek(today);
     if (!week) return { ok: false, error: "No week is under review today: the review opens on Saturday." };
     await recordActivity(userId, weekReviewEventInput({ weekKey: week.weekKey, day: today, now }));

@@ -28,6 +28,7 @@ import {
   EFFECTS_GROUP,
   LISTED_ONLY_NOTICE_IDS,
   OWED_NOTICE_ID,
+  WEEK_AUDIT_NOTICE_ID,
   WEEK_REVIEW_NOTICE_ID,
   YESTERDAY_MUSTS_NOTICE_ID,
   askCount,
@@ -43,6 +44,7 @@ import {
   trackLevelsOf,
 } from "../src/components/shell/shell-types";
 import { dutyNoticesOf, owedNotice, reviewedWeek, weekReviewNotice, yesterdayMustsNotice } from "../src/lib/rituals";
+import { AUDIT_LAUNCH_DAY, AUDIT_READY_TITLE, auditReadyNotices } from "../src/lib/week-audit";
 import { RECORD_YESTERDAY_HREF } from "../src/lib/shortcuts";
 import { ATTRIBUTES, computeAttributeScores, emptyComposition, sourcesFor, type Composition, type FieldContribution } from "../src/lib/attributes";
 import { characterLevel, characterRaw } from "../src/lib/character";
@@ -651,7 +653,12 @@ eq("receipt: base × factors to one decimal", receiptTotal(20, [1, 1.1, 1, 1]), 
 
 // ── M2: Duty in the shell (m2-refit decision 27, F15) ───────────────────────
 {
-  eq("owed: the notice ids", [OWED_NOTICE_ID, YESTERDAY_MUSTS_NOTICE_ID, WEEK_REVIEW_NOTICE_ID, [...LISTED_ONLY_NOTICE_IDS]], ["owed", "yesterday-musts", "week-review", ["yesterday-musts", "week-review"]]);
+  // P12 (blueprint 5.2e): "Week audit ready" joins the listed-only rows.
+  eq(
+    "owed: the notice ids (and the week audit's, listed only)",
+    [OWED_NOTICE_ID, YESTERDAY_MUSTS_NOTICE_ID, WEEK_REVIEW_NOTICE_ID, WEEK_AUDIT_NOTICE_ID, [...LISTED_ONLY_NOTICE_IDS]],
+    ["owed", "yesterday-musts", "week-review", "week-audit", ["yesterday-musts", "week-review", "week-audit"]]
+  );
   const owed = owedNotice({ count: 2, debt: 12.5 });
   check("owed: 'Owed: 2 · −12.5 XP', tone warn (counted), to Today", owed?.title === "Owed: 2 · −12.5 XP" && owed.tone === "warn" && owed.group === "Due" && owed.href === "/today", JSON.stringify(owed));
   eq("owed: toneOf('owed') is the owed diamond, whatever its tone", [toneOf({ id: "owed", group: "Due", tone: "warn" }), toneOf({ id: "owed", group: "Due", tone: "info" })], ["owed", "owed"]);
@@ -697,6 +704,37 @@ eq("receipt: base × factors to one decimal", receiptTotal(20, [1, 1.1, 1, 1]), 
   check("feed: Duty's rows come from rituals dutyNoticesOf, gated by isDutyLaunched(today)", /dutyNoticesOf\(/.test(feedSrc) && /isDutyLaunched\(lifeDay\)/.test(feedSrc));
   check("feed: the evening musts line says when an open must is owed, only once Duty is live", /dutyLive\s*\?\s*`Still open this evening\. The minimum version counts if time is short; left open, it is owed from \$\{owedFromLine\(lifeDay\)\}\.`/.test(feedSrc));
   check("feed: counts.owed is returned beside today", /counts: \{ due: dueCount, overdue: overdueCount, today, owed \}/.test(feedSrc));
+}
+
+// ── P12: "Week audit ready" in the bell (blueprint 5.2e; week-audit.ts) ─────
+{
+  // Sunday 25 October 2026 (AEDT), the week of 19 October audited from a rehearsal launch on the 19th.
+  const syd = (day: string, hh: number) => new Date(`${day}T${String(hh).padStart(2, "0")}:00:00+11:00`);
+  const at = (day: string, hh: number, launch: string | null = "2026-10-19") => auditReadyNotices(syd(day, hh), day, launch).map((n) => n.id);
+  eq(
+    "audit notice: from Sunday 18:00 through Wednesday (the week's judge day), not Sunday 17:00, not Thursday",
+    [at("2026-10-25", 17), at("2026-10-25", 18), at("2026-10-26", 10), at("2026-10-28", 22), at("2026-10-29", 10), at("2026-11-01", 17)],
+    [[], ["week-audit"], ["week-audit"], ["week-audit"], [], []]
+  );
+  check("audit notice: inert while AUDIT_LAUNCH_DAY is null (as shipped), whatever the clock", AUDIT_LAUNCH_DAY === null && at("2026-10-25", 20, null).length === 0 && auditReadyNotices(syd("2026-10-25", 20), "2026-10-25").length === 0);
+  const [audit] = auditReadyNotices(syd("2026-10-25", 19), "2026-10-25", "2026-10-19");
+  check(
+    "audit notice: 'Week audit ready', tone info, to /today/week, naming the week only (never the rate or the 85% target)",
+    audit?.title === AUDIT_READY_TITLE && AUDIT_READY_TITLE === "Week audit ready" && audit.tone === "info" && audit.group === "Due" && audit.href === "/today/week" && audit.action === "Open" && /week of 19 Oct/.test(audit.detail) && !/\d+ ?%/.test(audit.detail),
+    JSON.stringify(audit)
+  );
+  const duty = dutyNoticesOf({ today: "2026-10-25", live: true, owed: { count: 2, debt: 12.5 }, yesterdayMusts: 0, reviewDue: null });
+  const without = asksFromNotices(duty);
+  const withAudit = asksFromNotices([...duty, audit!]);
+  eq("audit notice: listed in the bell with counted: false, quiet", withAudit.filter((r) => r.id === "week-audit").map((r) => [r.counted, r.tone]), [[false, "quiet"]]);
+  check("acceptance: the bell's badge count is unchanged by it (askCount with and without)", askCount(withAudit) === askCount(without) && askCount(without) === 1 && listedOnly(audit!) && !asksOfYou(audit!));
+  eq("audit notice: the sheet lists it with the other listed rows, never in the counted card", askSectionsOf(withAudit).listed.map((r) => r.id), ["week-audit"]);
+  const feedSrc = read("src/lib/notifications.ts").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  check(
+    "feed: the audit's row comes from week-audit auditReadyNotices(now, lifeDay), with no Duty gate and no read",
+    /notices\.push\(\.\.\.auditReadyNotices\(now, lifeDay\)\);/.test(feedSrc) && /import \{ auditReadyNotices \} from "\.\/week-audit";/.test(feedSrc)
+  );
+  check("feed: the badge still counts warn, bad and the bosses only (an info row never counts)", /const actionable = notices\.filter\(\(n\) => n\.tone === "warn" \|\| n\.tone === "bad" \|\| n\.id === "bosses"\)\.length;/.test(feedSrc));
 }
 
 // ── the attribute seam (m5-refit F7; character-check §3b lives here, lane B) ─

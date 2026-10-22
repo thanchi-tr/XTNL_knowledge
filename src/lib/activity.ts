@@ -58,6 +58,8 @@ export const DEFAULT_SINK: Record<ActivitySource, Sink> = {
   STEPS: "NONE",
   // A level an idea forgot takes its points back off its Domain (srs.ts degradeOverdueIdeas).
   FORGET: "DOMAIN",
+  // The weekly audit's frozen copy (week-audit.ts): a record, never pay.
+  AUDIT: "NONE",
   // Momentum's rows (momentum.md §D.2); each writer still sets its own sink when it pays.
   ...MOMENTUM_DEFAULT_SINK,
 };

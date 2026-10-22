@@ -1,5 +1,6 @@
 import "../rules/rules.css";
 import "@/components/home/week-decisions.css";
+import "@/components/home/week-audit.css";
 import type { Metadata } from "next";
 import { after } from "next/server";
 import { Prisma } from "@prisma/client";
@@ -25,6 +26,7 @@ import { dutyLaunchDay, firstDutyDay, fullDayMintKey, isDutyLaunched, weekReview
 import { validRestDays, type RestRow } from "@/lib/duty-rule";
 import { ruleOf } from "@/lib/today-board";
 import {
+  REVIEW_BEFORE_LIFE_TEXT,
   dayMonthLabel,
   dutyStandingOf,
   dutyXpLine,
@@ -32,6 +34,7 @@ import {
   nextWeekDays,
   restRefusalOf,
   reviewPendingText,
+  reviewPlanOf,
   reviewedWeek,
   weekFactsOf,
   weekdayDateLabel,
@@ -42,13 +45,17 @@ import {
   type WeekFactsRow,
   type WeekFactsTemplate,
 } from "@/lib/rituals";
-import { firstWeekJudgement, longDayLabel, mpFigure, pendingWeek, weekReviewPromise, weekdayDayLabel } from "@/components/home/sheet-math";
+import { firstWeekJudgement, longDayLabel, mpFigure, pendingWeek, weekdayDayLabel } from "@/components/home/sheet-math";
 import { WeekReview, type RestDayOption, type WeekCardData } from "@/components/home/WeekReview";
 import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { readWeekDecisions } from "@/lib/task-decisions-server";
 import { weekDecisionsViewOf } from "@/lib/task-decisions";
 import { WeekDecisions } from "@/components/home/WeekDecisions";
+import { WeekAuditCard } from "@/components/home/WeekAudit";
+import { LAST_WEEK_ANCHOR } from "@/lib/audit-decay";
+import { loadWeekAudit } from "@/lib/week-audit-server";
+import type { WeekAudit } from "@/lib/week-audit";
 import { CurrencyGlyph, Sigil } from "@/components/ui/Icon";
 import { SectionHeader } from "@/components/ui/Tabs";
 
@@ -68,13 +75,21 @@ export const dynamic = "force-dynamic";
  * Tuesday, Wednesday before the judge runs) the card is headed 'Last judged
  * week' and says when that week is.
  *
- * Until Duty's launch day the review is a placeholder: nothing is settled,
- * and a review with made-up figures would be a dishonest number. From it,
- * the review of rituals.ts reviewedWeek(today) (Saturday to Wednesday) runs
- * at ?view=run (components/home/WeekReview.tsx): its first step states the
- * week only as far as settlement has judged it, and it ends on the week
- * card only once the judge has written that week. Finishing writes the
- * week's done marker ('week-review:<YYYY-Www>').
+ * The review of rituals.ts reviewedWeek(today) (Saturday to Wednesday) runs
+ * at ?view=run (components/home/WeekReview.tsx), with or without Duty
+ * (blueprint decision D13, rituals.ts reviewPlanOf). Before Duty's launch
+ * day nothing is settled, so its Duty parts stay hidden (step 1's settled
+ * facts, Owed, next week's rest days): step 1 is the last judged week and
+ * each daily quest's streak, then the inbox, goals and daily capacity. Once Duty is
+ * live, step 1 states the week only as far as settlement has judged it. It
+ * ends on the week card only once the judge has written that week.
+ * Finishing writes the week's done marker ('week-review:<YYYY-Www>').
+ *
+ * The Week audit card (blueprint P11, lib/week-audit.ts; inert until
+ * AUDIT_LAUNCH_DAY) sits under the last week: the daily quests' completion
+ * rate, provisional from Sunday 18:00, as of Monday 04:00 once frozen, final
+ * from Wednesday, with the 85% target (only here, never on Today). In the
+ * run, step 1 shows it when it is the reviewed week's.
  */
 
 /** One track's row of the last judged week. */
@@ -136,7 +151,7 @@ function LastWeekCard({ week, today }: { week: LastWeek; today: DayKey }) {
   // The week that just ended, while it is not judged yet: this card is then the week before.
   const pending = pendingWeek(week.sunday, today);
   return (
-    <section aria-labelledby="lw-h">
+    <section id={LAST_WEEK_ANCHOR} aria-labelledby="lw-h">
       <SectionHeader title={pending ? "Last judged week" : "Last week"} />
       <div className="card">
         <h2 id="lw-h" className="lw-head">
@@ -218,33 +233,30 @@ function FirstWeekCard({ epochDay, today }: { epochDay: DayKey | null; today: Da
   );
 }
 
-/** The five steps, as the page lists them before the review starts (before Duty is live, as they were promised). */
+/** What each step covers, by its number: once Duty is live, and before it (when Owed does not run). */
+const STEP_LINES: Record<number, readonly [live: string, before: string]> = {
+  1: ["Days shown up, musts kept, freezes used and Duty XP, as far as each day is settled; the last judged week.", "The last judged week, kept or not per track with the reason; each daily quest's streak."],
+  2: ["Sort what is left to zero, one tap each.", "Sort what is left to zero, one tap each."],
+  3: ["Check in on each open goal.", "Check in on each open goal."],
+  4: ["Make up, or leave it: it never grows.", ""],
+  5: ["Rest days and daily capacity.", "Daily capacity: the minutes a day you plan for."],
+};
+
+const STEP_COUNT = ["None", "One", "Two", "Three", "Four", "Five"] as const;
+
+/** The steps that run (rituals.ts reviewPlanOf), as the page lists them before the review starts. */
 function StepsList({ live }: { live: boolean }) {
-  const steps = live
-    ? [
-        ["The week", "Days shown up, musts kept, freezes used and Duty XP, as far as each day is settled; the last judged week."],
-        ["Inbox", "Sort what is left to zero, one tap each."],
-        ["Goals", "Check in on each open goal."],
-        ["Owed", "Make up, or leave it: it never grows."],
-        ["Next week", "Rest days and daily capacity."],
-      ]
-    : [
-        ["Last week", "Kept or not per track, with the reason; days shown up; freezes used."],
-        ["Inbox", "Sort what is left to zero, one tap each."],
-        ["Goals", "Check in on anything that has stalled."],
-        ["Owed", "Make up, or leave it: it never grows."],
-        ["Next week", "Rest days and daily capacity."],
-      ];
+  const steps = reviewPlanOf(live).steps;
   return (
     <section aria-labelledby="week-steps">
-      <SectionHeader id="week-steps" title="Five steps, each skippable" />
+      <SectionHeader id="week-steps" title={`${STEP_COUNT[steps.length]} steps, each skippable`} />
       <ol className="card" style={{ listStyle: "none", margin: 0, padding: 0 }}>
-        {steps.map(([k, v]) => (
-          <li key={k} className="collapsed" style={{ alignItems: "flex-start", padding: "12px 14px" }}>
+        {steps.map((s) => (
+          <li key={s.n} className="collapsed" style={{ alignItems: "flex-start", padding: "12px 14px" }}>
             <b className="ink-0" style={{ flex: "0 0 96px" }}>
-              {k}
+              {s.name}
             </b>
-            <span>{v}</span>
+            <span>{STEP_LINES[s.n][live ? 0 : 1]}</span>
           </li>
         ))}
       </ol>
@@ -352,9 +364,49 @@ async function readMarked(userId: string, week: ReviewedWeek): Promise<boolean> 
   }
 }
 
-/** Step 1: the reviewed week as far as it is settled, never a verdict; then the last judged week. */
-function StepOne({ facts, duties, lastWeek, today }: { facts: WeekFacts; duties: { id: string; title: string; line: string }[]; lastWeek: LastWeek | null; today: DayKey }) {
-  const w = facts.week;
+/**
+ * Step 1: the reviewed week as far as it is settled, never a verdict; then
+ * the last judged week. Before Duty (facts null) nothing is settled, so it
+ * states no figure of its own: each daily quest's streak (named as Today
+ * names the musts while Duty is off) and the last judged week.
+ * With or without Duty, the reviewed week's audit (blueprint P11) when it is
+ * open: a count of the daily quests, never a verdict.
+ */
+function StepOne({
+  week: w,
+  facts,
+  duties,
+  lastWeek,
+  noneJudged,
+  audit,
+  today,
+  live,
+}: {
+  week: ReviewedWeek;
+  facts: WeekFacts | null;
+  duties: { id: string; title: string; line: string }[];
+  lastWeek: LastWeek | null;
+  /** The ledger was read and holds no judged week (not merely unread). */
+  noneJudged: boolean;
+  /** The reviewed week's audit, or null (not launched, not open yet, another week's). */
+  audit: WeekAudit | null;
+  today: DayKey;
+  /** Duty is live: the musts are its duties; before it they are the daily quests (D14). */
+  live: boolean;
+}) {
+  const auditCard = audit && audit.weekKey === w.weekKey ? <WeekAuditCard audit={audit} today={today} headingId="wa-run-h" /> : null;
+  if (!facts) {
+    return (
+      <>
+        <p className="t-eyebrow">The week of {dayMonthLabel(w.monday)}</p>
+        <h1>Look back at the week.</h1>
+        {noneJudged && <p className="t-meta">No week has been judged yet.</p>}
+        {auditCard}
+        <DutyStandings duties={duties} live={live} />
+        {lastWeek && <LastWeekCard week={lastWeek} today={today} />}
+      </>
+    );
+  }
   const head =
     facts.through == null
       ? facts.label === "before Duty started"
@@ -405,26 +457,36 @@ function StepOne({ facts, duties, lastWeek, today }: { facts: WeekFacts; duties:
       {facts.through != null && !facts.complete && (
         <p className="t-meta">The rest of the week settles day by day; nothing about it is stated until then. The week is judged {weekdayLong(w.judgeDay)}.</p>
       )}
-      {duties.length > 0 && (
-        <section aria-label="Each duty's streak">
-          <p className="t-eyebrow">Each duty, as of today</p>
-          <div className="card">
-            <ul className="lw-rows">
-              {duties.map((d) => (
-                <li key={d.id} className="lw-row">
-                  <Sigil track="duty" />
-                  <div className="lw-body">
-                    <b>{d.title}</b>
-                    <span className="t-meta lw-line">{d.line}</span>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </section>
-      )}
+      {auditCard}
+      <DutyStandings duties={duties} live={live} />
       {lastWeek && <LastWeekCard week={lastWeek} today={today} />}
     </>
+  );
+}
+
+/**
+ * Each must's streak and rung as of today (the board's own stats), with or without Duty: Duty's duties once it is
+ * live, the daily quests before it (D14: Today's own name for the musts while Duty is off).
+ */
+function DutyStandings({ duties, live }: { duties: { id: string; title: string; line: string }[]; live: boolean }) {
+  if (duties.length === 0) return null;
+  return (
+    <section aria-label={live ? "Each duty's streak" : "Each daily quest's streak"}>
+      <p className="t-eyebrow">{live ? "Each duty, as of today" : "Each daily quest, as of today"}</p>
+      <div className="card">
+        <ul className="lw-rows">
+          {duties.map((d) => (
+            <li key={d.id} className="lw-row">
+              <Sigil track="duty" />
+              <div className="lw-body">
+                <b>{d.title}</b>
+                <span className="t-meta lw-line">{d.line}</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
   );
 }
 
@@ -452,14 +514,16 @@ function weekCardOf(ledger: LifeLedger, week: ReviewedWeek): WeekCardData | null
   };
 }
 
-/** The review's card on the page: offered, done, or when it opens next. */
-function ReviewCard({ week, marked }: { week: ReviewedWeek | null; marked: boolean }) {
+/** The review's card on the page: offered, done, or when it opens next. Before Duty it names only the steps that run. */
+function ReviewCard({ week, marked, dutyLive }: { week: ReviewedWeek | null; marked: boolean; dutyLive: boolean }) {
   const title = !week ? "The next review opens Saturday" : marked ? `The week of ${dayMonthLabel(week.monday)} is reviewed` : `Review the week of ${dayMonthLabel(week.monday)}`;
   const line = !week
     ? "On Saturday and Sunday it covers the week as it ends; from Monday to Wednesday it catches up on the week just ended."
     : marked
       ? "Open it again any time until Thursday; nothing in it is written twice."
-      : "Five short steps, each skippable: the week as far as it is settled, the inbox to zero, a goals check-in, anything owed, and the shape of next week.";
+      : dutyLive
+        ? "Five short steps, each skippable: the week as far as it is settled, the inbox to zero, a goals check-in, anything owed, and the shape of next week."
+        : "Four short steps, each skippable: the last judged week, the inbox to zero, a goals check-in, and your daily capacity.";
   return (
     <section className="card pad-l" aria-labelledby="week-h">
       <p className="t-eyebrow">Weekly review · Saturday to Wednesday</p>
@@ -501,28 +565,48 @@ export default async function WeekPage({ searchParams }: { searchParams: Promise
   const today = life.today;
   const launchDay = dutyLaunchDay();
   const dutyLive = isDutyLaunched(today, launchDay);
-  const review = dutyLive ? reviewedWeek(today) : null;
+  // The review runs with or without Duty (decision D13); Duty's own parts only once it is live.
+  const review = reviewedWeek(today);
+  const plan = reviewPlanOf(dutyLive);
+  // The week audit (blueprint P11): null until AUDIT_LAUNCH_DAY; a failed read leaves the card out, never the page.
+  const auditRead = loadWeekAudit(userId, now).catch((err: unknown): WeekAudit | null => {
+    console.error("Weekly review: the week audit failed to load.", err);
+    return null;
+  });
 
-  if (dutyLive && review && (await searchParams).view === "run") {
-    const [read, data] = await Promise.all([readReview(userId, review), loadTodayBoard(userId, today, now)]);
-    const facts = weekFactsOf({
-      week: review,
-      cursor: read.cursor,
-      firstDutyDay: read.epochDay ? firstDutyDay(read.epochDay, launchDay) : null,
-      templates: read.templates,
-      instances: read.instances,
-      rows: read.rows,
-      restRows: read.restRows,
-    });
+  if (review && (await searchParams).view === "run") {
+    // Before Duty nothing is settled: the run reads only its done marker (the rest of readReview is Duty's facts).
+    const [read, markedBefore, data, audit] = await Promise.all([
+      plan.settledFacts ? readReview(userId, review) : null,
+      plan.settledFacts ? false : readMarked(userId, review),
+      loadTodayBoard(userId, today, now),
+      auditRead,
+    ]);
+    const facts = read
+      ? weekFactsOf({
+          week: review,
+          cursor: read.cursor,
+          firstDutyDay: read.epochDay ? firstDutyDay(read.epochDay, launchDay) : null,
+          templates: read.templates,
+          instances: read.instances,
+          rows: read.rows,
+          restRows: read.restRows,
+        })
+      : null;
     const duties = data.templates
       .filter((t) => t.compulsory && ruleOf(t) && data.stats[t.id])
       .map((t) => ({ id: t.id, title: t.title, line: dutyStandingOf({ streak: data.stats[t.id].streak.before, strength: data.stats[t.id].strength.before }) }));
-    const declared = validRestDays(read.restRows, review.monday, addDays(review.sunday, 7));
-    const restDays = nextWeekDays(review, today, launchDay);
-    const rest: RestDayOption[] = restDays.map((day) => {
-      const kind = declared.get(day) ?? null;
-      return { day, label: weekdayDateLabel(day), declared: kind, refusal: kind ? null : restRefusalOf(day, declared) };
-    });
+    let rest: RestDayOption[] = [];
+    let restNote: string | null = null;
+    if (read && plan.restDays) {
+      const declared = validRestDays(read.restRows, review.monday, addDays(review.sunday, 7));
+      const restDays = nextWeekDays(review, today, launchDay);
+      rest = restDays.map((day) => {
+        const kind = declared.get(day) ?? null;
+        return { day, label: weekdayDateLabel(day), declared: kind, refusal: kind ? null : restRefusalOf(day, declared) };
+      });
+      restNote = restDays.length === 0 ? "No day of the coming week can be declared from here; rest is declared before its day starts." : null;
+    }
     // The week card only once the judge has written every track of the reviewed week; never a provisional verdict.
     const card = ledger && life.judgedWeeks.includes(review.weekKey) ? weekCardOf(ledger, review) : null;
     return (
@@ -533,11 +617,12 @@ export default async function WeekPage({ searchParams }: { searchParams: Promise
           today={today}
           data={data}
           launched={isLaunched(today)}
-          stepOne={<StepOne facts={facts} duties={duties} lastWeek={week} today={today} />}
+          dutyLive={dutyLive}
+          stepOne={<StepOne week={review} facts={facts} duties={duties} lastWeek={week} noneJudged={ledger != null && week == null} audit={audit} today={today} live={dutyLive} />}
           rest={rest}
-          restNote={restDays.length === 0 ? "No day of the coming week can be declared from here; rest is declared before its day starts." : null}
-          end={card ? { kind: "card", card } : { kind: "pending", text: reviewPendingText(review) }}
-          marked={read.marked}
+          restNote={restNote}
+          end={card ? { kind: "card", card } : { kind: "pending", text: isLaunched(today) ? reviewPendingText(review) : REVIEW_BEFORE_LIFE_TEXT }}
+          marked={read ? read.marked : markedBefore}
         />
       </div>
     );
@@ -545,39 +630,15 @@ export default async function WeekPage({ searchParams }: { searchParams: Promise
 
   // Defer and abort (task-decisions.ts): this week's decisions, Monday to today, with their reasons.
   const decisionsFrom = weekStartKeyOf(today);
-  const [marked, decisionRows] = await Promise.all([review ? readMarked(userId, review) : Promise.resolve(false), readWeekDecisions(userId, decisionsFrom, today)]);
+  const [marked, decisionRows, audit] = await Promise.all([review ? readMarked(userId, review) : Promise.resolve(false), readWeekDecisions(userId, decisionsFrom, today), auditRead]);
   const decisions = weekDecisionsViewOf(decisionRows, now);
 
   return (
     <div className="page narrow today-week">
       <div style={{ paddingTop: 12, display: "flex", flexDirection: "column", gap: 16 }}>
         {life.launched && ledger && (week ? <LastWeekCard week={week} today={life.today} /> : <FirstWeekCard epochDay={ledger.epochDay} today={life.today} />)}
-        {dutyLive ? (
-          <ReviewCard week={review} marked={marked} />
-        ) : (
-          <section className="card pad-l" aria-labelledby="week-h">
-            <p className="t-eyebrow">Weekly review · arrives with daily settlement</p>
-            <h2 id="week-h" className="t-display-m" style={{ marginTop: 6 }}>
-              A short review of the week that ended
-            </h2>
-            <p className="t-meta" style={{ marginTop: 8 }}>
-              {weekReviewPromise(life.launched)}
-            </p>
-            <p className="t-meta" style={{ marginTop: 8 }}>
-              Until then, every tick on Today is already counted, and nothing is lost.
-            </p>
-            <div className="lw-actions">
-              <Button variant="secondary" href="/today" icon="today">
-                Back to Today
-              </Button>
-              {life.launched && (
-                <Button variant="quiet" href="/today/rules">
-                  How weeks are judged
-                </Button>
-              )}
-            </div>
-          </section>
-        )}
+        {audit && <WeekAuditCard audit={audit} today={today} />}
+        <ReviewCard week={review} marked={marked} dutyLive={dutyLive} />
         <WeekDecisions view={decisions} weekLabel={`Week of ${dayMonthLabel(decisionsFrom)}`} />
         <StepsList live={dutyLive} />
       </div>

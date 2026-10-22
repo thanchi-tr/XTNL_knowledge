@@ -11,12 +11,14 @@
  * chosen so R is DESIGN_RETENTION (90%) on the day it falls due: R(I) = 0.9, R(2I) = 0.81, and in general
  * R(I + o) = 0.9^((I + o) ÷ I). Left alone, R keeps falling, by the same share every day. A card loses one level
  * for every FORGET_BAND of recall it has lost below that 90%, never inside its grace period (graceDays + the
- * GRACE_EXTENSION days), never below level 1. The n-th level goes at o = I·(ln(0.9 − 0.075n) ÷ ln 0.9 − 1) past due:
- * about 0.83·I for the first, 1.73·I the second, 2.73·I the third, 3.85·I the fourth (n ≤ 11: below that R is ≤ 0).
+ * GRACE_EXTENSION days; never under 3 days past due, the 72 h floor of decision D23), never below level 1. The n-th
+ * level goes at o = I·(ln(0.9 − 0.075n) ÷ ln 0.9 − 1) past due, or at the grace end when that is later: about
+ * 0.83·I for the first, 1.73·I the second, 2.73·I the third, 3.85·I the fourth (n ≤ 11: below that R is ≤ 0).
  *
  * So a young card forgets in days and a mature one in months, and an idea with a wide ease holds longer. At ease 1:
- * level 4 (I 7 d) loses its first level about 6 days past due; level 6 (18 d) about 15; level 12 (160 d) about 4½
- * months (132 d), its second at about 9 months; a level-20 card (2850 d) holds for over six years.
+ * level 2 (I 2 d) loses its first level 3 days past due (the floor: the curve alone would take it at 1.65); level 4
+ * (7 d) about 6 days past due; level 6 (18 d) about 15; level 12 (160 d) about 4½ months (132 d), its second at about
+ * 9 months; a level-20 card (2850 d) holds for over six years.
  *
  * What a lost level costs: the points the review that earned it paid at its base (xp.ts reviewLevelBase of the
  * level below), and the mastery lump (MASTERY_BONUS) when the card falls from mastery. The Domain's totalPoints goes
@@ -134,8 +136,8 @@ export function forgetKeyPrefix(ideaId: string, dueDate: Date): string {
  * with I the card's eased interval (baseline × ease), g its grace and o the days past due, R the Ebbinghaus curve at
  * S = I ÷ ln(1/0.9). Monotone: it never rises until a review moves the due date. A card reviewed on time is always 1.
  * At ease 1, level 12 is at 0.82 when it forgets its first level (about 4½ months past due) and at 0 about 2.3 years
- * past due; level 5 is at 0.88 at its first loss (10 days) and 0 at about 68 days; level 2 at 0.92 at its first
- * loss (2 days) and 0 at 12 days.
+ * past due; level 5 is at 0.88 at its first loss (10 days) and 0 at about 68 days; level 2 at 1 at its first loss
+ * (3 days, its grace end under the 72 h floor) and 0 at about 16 days.
  *
  * `level` is the level the card fell due at (its forgetting anchor: forgettingAnchor recovers it once the daily pass
  * has taken levels). For an idea row read ideaOutlook(...).retention, which does that.
@@ -250,6 +252,16 @@ export function ideaOutlook(
     nextLossAt: toNext == null ? null : new Date(idea.dueDate.getTime() + toNext * DAY_MS).toISOString(),
     retention: retentionFactor(anchor, idea.dueDate, now, extra, ease),
   };
+}
+
+/**
+ * A card's status alone, exactly ideaOutlook's, for a reader that needs nothing else (the phone's fading line,
+ * mobile-api.ts checkFadingOf): a card not yet due is fresh without reading the curve. The status reads none of the
+ * clean streak, the misses or the stored grace end, so they are passed empty.
+ */
+export function ideaStatusOf(idea: { level: number; dueDate: Date; ease?: number | null }, now: Date, graceExtraDays = 0): IdeaStatus {
+  if (now.getTime() < idea.dueDate.getTime()) return "fresh";
+  return ideaOutlook({ level: idea.level, dueDate: idea.dueDate, ease: idea.ease, graceEndsAt: null, cleanStreak: 0, failedAttempts: 0 }, now, graceExtraDays).status;
 }
 
 /** What a card counts for in its Domain's depth now: {its level, its retention} (xp.ts masteryDepth's DepthEntry). */

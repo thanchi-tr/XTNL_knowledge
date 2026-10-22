@@ -37,6 +37,7 @@ import {
   type LifeResult,
   type RuleChangeOutcome,
   type StepTick,
+  type UnarchiveOutcome,
 } from "@/lib/tasks";
 import { undoMakeUpCore } from "@/lib/duty";
 import { MAKE_UP_UNDO_ELSEWHERE } from "@/lib/duty-plan";
@@ -345,7 +346,7 @@ export async function undoDecision(decisionId: string, opts?: TaskActionOptions)
 }
 
 /** Brings back an archived (or dropped) task, history and streak intact: the Undo for Archive and Drop. */
-export async function unarchiveTask(templateId: string, opts?: TaskActionOptions): Promise<TaskActionResult<null>> {
+export async function unarchiveTask(templateId: string, opts?: TaskActionOptions): Promise<TaskActionResult<UnarchiveOutcome>> {
   if (!isId(templateId)) return noId();
   return run("unarchiveTask", opts, (userId) => unarchiveCore(userId, templateId));
 }

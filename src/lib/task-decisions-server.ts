@@ -21,7 +21,7 @@ import { prisma } from "./prisma";
 import { invalidate } from "./cache";
 import { addDays, dateColumn, dayKeyOf, keyOfDateColumn, LIFE_TZ, type DayKey } from "./life-day";
 import { parsePendingChange, ruleOn } from "./duty-rule";
-import { archiveCore, isStaleRead, unarchiveCore, type LifeResult, type RuleChangeOutcome } from "./tasks";
+import { archiveCore, isStaleRead, unarchiveCore, type LifeResult, type RuleChangeOutcome, type UnarchiveOutcome } from "./tasks";
 import {
   DECISION_GONE,
   DECISION_STALE,
@@ -86,7 +86,8 @@ export interface DecisionDb {
   /** One transaction; "stale" when its guard found the template (or an Undo's decision) moved since the read. */
   apply(userId: string, w: DecisionWrite): Promise<"ok" | "stale">;
   archive(userId: string, templateId: string, now: Date): Promise<LifeResult<RuleChangeOutcome>>;
-  unarchive(userId: string, templateId: string, now: Date): Promise<LifeResult<null>>;
+  /** A must brought back near or past the cap carries its note (tasks.ts UnarchiveOutcome); null says nothing more. */
+  unarchive(userId: string, templateId: string, now: Date): Promise<LifeResult<UnarchiveOutcome | null>>;
 }
 
 const TEMPLATE_READ = {
@@ -413,7 +414,9 @@ export async function undoDecisionCore(userId: string, decisionId: string, now: 
       if (!back.ok) return fail(back.error);
       // "stale" here is another tap that marked it first: the unarchive above changed nothing that one had not.
       await db.apply(userId, { templateId: d.templateId, at: now, expect: null, template: null, createSkipped: [], skipUndone: [], removeSkipped: [], reopen: [], insert: null, undo: { id: d.id } });
-      return ok(out);
+      // Daily quests (D14): a must brought back near or past the cap says so, as Archive's Undo does.
+      const mustNote = back.value?.mustNote;
+      return ok(mustNote ? { ...out, mustNote } : out);
     }
     if ((await db.apply(userId, plan.value.write)) === "stale") {
       const again = await db.decision(userId, decisionId);

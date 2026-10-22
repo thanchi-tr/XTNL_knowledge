@@ -86,6 +86,8 @@ import { ReceiptSheet } from "./ReceiptSheet";
 import { UndoToast, focusUndoOnce } from "./UndoToast";
 import { PlanCard } from "./PlanCard";
 import { Lane } from "./Lane";
+import { DailyStrip } from "./DailyStrip";
+import { DAILY_QUESTS_TITLE, dailyQuestsOf, mustNoticeOf, restoredNoticeOf } from "@/lib/daily-quests";
 import { DonePile } from "./DonePile";
 import { BoardClearCard } from "./BoardClearCard";
 import { AskBadge } from "./AskBadge";
@@ -857,9 +859,10 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     // The row stays hidden until the restore lands, then comes back with the
     // refreshed props. Server actions run in order, so the archive is always
     // undone after it, never before.
-    dispatch(null, () => unarchiveTask(r.templateId, REFRESH), () => {
+    dispatch(null, () => unarchiveTask(r.templateId, REFRESH), (v) => {
       setPending((prev) => prev.filter((p) => p.op.id !== r.opId));
-      setNotice(`${r.title} is back.`);
+      // Daily quests (D14): a must brought back near or past the cap stays a must, and says how many that day holds.
+      setNotice(restoredNoticeOf(r.title, v.mustNote));
     });
   }
 
@@ -1297,9 +1300,9 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
 
   /** Takes a defer or an abort back (ten minutes, the same day): exactly what it changed comes back. */
   function undoDecisionNow(decisionId: string, templateId: string, title: string) {
-    dispatch(null, () => undoDecision(decisionId, REFRESH), () => {
+    dispatch(null, () => undoDecision(decisionId, REFRESH), (v) => {
       setPending((prev) => prev.filter((p) => !(p.op.kind === "defer" || p.op.kind === "hide" || p.op.kind === "skip") || p.op.templateId !== templateId));
-      setNotice(`${title} is back.`);
+      setNotice(restoredNoticeOf(title, v.mustNote));
     });
   }
 
@@ -1338,6 +1341,11 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
           setPending((prev) => prev.filter((p) => p.op.id !== op.id));
           setNotice(deferredNoticeOf(title, "archive", deferred));
           return;
+        }
+        // Daily quests (D14): a must that left the inbox past the cap is an ordinary task now, and says so.
+        if (v.mustNote) {
+          const title = current.templates.find((t) => t.id === templateId)?.title ?? "That must";
+          setNotice(mustNoticeOf(title, v.mustNote));
         }
         if (v.href) router.push(v.href);
       }
@@ -1864,7 +1872,9 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   const laneCards = [...board.owed, ...Object.values(madeUp).map((e) => e.card).filter((c) => !board.owed.some((o) => o.instanceId === c.instanceId))].sort(
     (a, b) => a.day.localeCompare(b.day) || a.title.localeCompare(b.title) || a.instanceId.localeCompare(b.instanceId)
   );
-  const mustView = mustLaneOf({ must: board.must, owed: laneCards, restToday: board.restToday, live, launchDay, today: current.today, deferred: board.deferred });
+  // Daily quests (D14, D15): the personal Board's Must lane is the Daily Quests, with its 1/0 strip; a work tab's stays "Must".
+  const daily = isWork ? null : dailyQuestsOf(board);
+  const mustView = mustLaneOf({ must: board.must, owed: laneCards, restToday: board.restToday, live, launchDay, today: current.today, deferred: board.deferred, ...(daily ? { daily } : {}) });
   const hiddenMusts = board.deferred.filter((i) => i.must);
   const hiddenOther = board.deferred.filter((i) => !i.must);
   const owedTotal = owedTotalOf(openOwed);
@@ -2120,7 +2130,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
       }
     : undefined;
 
-  // The Asks: the Tasks section's only (record yesterday, the weekly review), a badge on the plan card, never a card
+  // The Asks: the Tasks section's only (record yesterday, the weekly review, the week audit), a badge on the plan card, never a card
   // of their own; every one is a tap away. Ideas' Asks (cards past grace, the quota, a penalty) stay in the bell.
   const taskAsks = asks.filter((a) => askHostOf(a) === "tasks");
   const askAction = (a: (typeof asks)[number]) => (a.id === "yesterday" ? () => setYesterdayOpen(true) : undefined);
@@ -2306,12 +2316,13 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
           {mustView.show && (
             <Lane
               id="must"
-              title="Must"
+              title={daily ? DAILY_QUESTS_TITLE : "Must"}
               must={!isWork}
               kept={!isWork && shown.mustLaneKept}
               landing={!!beat?.lanes.includes("must")}
               bodyRef={mustBodyRef}
               count={mustView.count ?? undefined}
+              strip={daily ? <DailyStrip daily={daily} /> : undefined}
               badge={
                 mustView.chips.length > 0
                   ? mustView.chips.map((c) => (

@@ -9,8 +9,8 @@
  *   fading       show=fading: the filter, its count, the URL round trip beside every other key, the Field page's chips
  *   ordering     byUrgency: forgetting → fading → due → fresh, then the oldest due; rowStatusOf's chip
  *   level text   one line for the row and the detail ("L9 · mastery at 12", "L14 · past mastery")
- *   outlook      the detail's lines read off forgetting.ts ideaOutlook
- *   wiring       the route, its title, the loader's sources, the tile → pop-up → page path (source guards)
+ *   outlook      the detail's lines read off forgetting.ts ideaOutlook, its daily decay (the λ mapping, blueprint P13)
+ *   wiring      the route, its title, the loader's sources, the tile → pop-up → page path (source guards)
  *
  * Run: npx tsx scripts/library-check.ts
  */
@@ -22,6 +22,7 @@ import {
   EMPTY_FILTERS,
   STATUSES,
   byUrgency,
+  decayLine,
   dueLine,
   filtersToParams,
   levelLine,
@@ -61,9 +62,9 @@ import {
   type FieldInput,
   type HealthIdea,
 } from "../src/components/library/field-model";
-import { daysToForget, ideaOutlook, type IdeaOutlook } from "../src/lib/forgetting";
+import { DESIGN_DECAY, daysToForget, ideaOutlook, intervalOf, stabilityOf, type IdeaOutlook } from "../src/lib/forgetting";
 import { addDays, todayKey } from "../src/lib/life-day";
-import { MASTERY_LEVEL, MAX_LEVEL, graceDays } from "../src/lib/xp";
+import { GRACE_FLOOR_DAYS, MASTERY_LEVEL, MAX_LEVEL, graceDays } from "../src/lib/xp";
 import { activeSub, titleFor } from "../src/components/shell/nav";
 
 const ROOT = join(__dirname, "..");
@@ -316,9 +317,42 @@ function idea(over: Partial<LibraryIdea> & { status?: IdeaOutlook["status"]; ret
       "Due in 12 days",
       `Starts fading ${shortDate(due9 + graceDays(9) * DAY, NOW)}`,
       `Loses L9 around ${shortDate(due9 + loss * DAY, NOW)} if not reviewed`,
+      // Blueprint P13: its daily decay, the λ mapping (0.105 / its 50-day interval), before the spacing line.
+      "Daily decay 0.002 = 0.105 / 50 days",
       "Spacing 1.0× — the standard ladder",
     ]
   );
+  // Blueprint P13 (3.1a, D23): the λ mapping the rules page publishes, read per card: DESIGN_DECAY ÷ its own interval
+  // (forgetting's 1 ÷ S), so L4–L6 read inside 0.005–0.02 at the baseline ease, and the ease moves it.
+  eq(
+    "outlook (P13): the daily decay line is DESIGN_DECAY over the card's interval (L1, L4, L6, L12 at 1.0×; L9 at 1.32×; L20)",
+    [decayLine(1, 1), decayLine(4, 1), decayLine(6, 1), decayLine(12, 1), decayLine(9, 1.32), decayLine(20, 1)],
+    [
+      "Daily decay 0.105 = 0.105 / 1 day",
+      "Daily decay 0.015 = 0.105 / 7 days",
+      "Daily decay 0.006 = 0.105 / 18 days",
+      "Daily decay 0.00066 = 0.105 / 160 days",
+      "Daily decay 0.002 = 0.105 / 66 days",
+      `Daily decay ${(DESIGN_DECAY / intervalOf(20)).toPrecision(2)} = 0.105 / ${intervalOf(20)} days`,
+    ]
+  );
+  check(
+    "outlook (P13): the decay is the curve's own rate (1 ÷ S at the card's level and ease), and L4–L6 sit in the blueprint's 0.005–0.02 band",
+    [1, 4, 9, 12].every((L) => [0.6, 1, 1.8].every((e) => Math.abs(DESIGN_DECAY / intervalOf(L, e) - 1 / stabilityOf(L, e)) < 1e-12)) &&
+      [4, 5, 6].every((L) => DESIGN_DECAY / intervalOf(L) >= 0.005 && DESIGN_DECAY / intervalOf(L) <= 0.02) &&
+      DESIGN_DECAY / intervalOf(3) > 0.02 &&
+      DESIGN_DECAY / intervalOf(7) < 0.005
+  );
+  {
+    // The 72 h floor (D23): an L2 due a day ago is still "due", not fading; its grace end is GRACE_FLOOR_DAYS past due.
+    const two = at(2, NOW - DAY);
+    const lines = outlookLines(two, NOW);
+    check(
+      "outlook (P13): an L2 a day past due is not fading yet (the 72 h floor): it starts fading 3 days after it fell due",
+      two.outlook.status === "due" && graceDays(2) === GRACE_FLOOR_DAYS && lines[2] === `Starts fading ${shortDate(NOW - DAY + GRACE_FLOOR_DAYS * DAY, NOW)}` && lines[lines.length - 2] === decayLine(2, 1),
+      JSON.stringify(lines)
+    );
+  }
   // 2026-10-14: the idea's own ease, last (forgetting.ts IdeaOutlook.ease; xp.ts clampEase), worded by its figure.
   eq(
     "outlook: the spacing line reads the idea's ease (1.3× recalled well, 0.7× tricky, 1.0× the ladder; clamped to 0.6–1.8)",

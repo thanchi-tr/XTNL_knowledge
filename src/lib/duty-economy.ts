@@ -37,6 +37,8 @@
  *     VACATION_MIN_DAYS 3 · VACATION_MAX_DAYS 30 · VACATION_DAYS_PER_365 30 · VACATION_BUDGET_SPAN_DAYS 365
  *   Akrasia horizon
  *     AKRASIA_DAYS 7 · TYPO_GRACE_MIN 60 · akrasiaEffectiveDay(today)
+ *   Daily quests (blueprint 2.3, decision D14; the rules are daily-quests.ts)
+ *     MUSTS_PER_DAY_MAX 5 · MUSTS_WARN_FROM 4 · MUST_CAP_DAYS 7
  *   Dedupe keys (ActivityEvent.dedupeKey)
  *     debtKey · repaidKey · unrepaidKey · writeOffKey · freezeEarnKey · freezeUseKey · repairKey
  *     fullDayKey · fullDayMintKey · reflectionKey · weekReviewKey · WEEK_REVIEW_DETAIL 'week review'
@@ -276,6 +278,19 @@ export const TYPO_GRACE_MIN = 60;
 export function akrasiaEffectiveDay(today: DayKey): DayKey {
   return addDays(today, AKRASIA_DAYS);
 }
+
+// ── Daily quests (blueprint 2.3, decision D14) ────────────────────────────
+
+/**
+ * The Daily Quests are the user's musts: at most this many due on any one life day (daily-quests.ts mustCapOf). A
+ * sixth is saved as an ordinary task; a day already over the cap keeps its musts. Musts only: Today's three, the
+ * chest and every price are untouched.
+ */
+export const MUSTS_PER_DAY_MAX = 5;
+/** From this many daily quests due on a day, a new must says how near the cap it is. */
+export const MUSTS_WARN_FROM = 4;
+/** The life days a new must is counted on: today and the six after it (plus its own first day when none of them). */
+export const MUST_CAP_DAYS = 7;
 
 // ── Dedupe keys ───────────────────────────────────────────────────────────
 

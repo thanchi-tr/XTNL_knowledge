@@ -16,14 +16,14 @@
  *   levelLine(level)              "L9 · mastery at 12" · "L12 · mastered" · "L14 · past mastery" (row and detail alike)
  *   rowStatusOf(idea)             the row's chip: Fresh · Due · Fading · Forgetting · Mastered (forgetting.ts ideaOutlook)
  *   byUrgency(a, b)               forgetting → fading → due → fresh, then the oldest due first
- *   outlookLines(idea, now)       the detail's "Next: L9 after 2 clean recalls · 1 of 2 done", due, fading and loss lines, and its spacing
+ *   outlookLines(idea, now)       the detail's "Next: L9 after 2 clean recalls · 1 of 2 done", due, fading, loss and daily decay lines, and its spacing
  */
 import type { CollectionLabel, QuestionType } from "@prisma/client";
 import type { Segment } from "@/components/ui/Meter";
 import type { ChipTone } from "@/components/ui/Chip";
 import type { IconName } from "@/components/ui/Icon";
 import type { Material } from "@/lib/materials";
-import type { IdeaOutlook } from "@/lib/forgetting";
+import { DESIGN_DECAY, intervalOf, type IdeaOutlook } from "@/lib/forgetting";
 import { bandFor, type DifficultyBand } from "@/lib/difficulty";
 import { fieldTier, type FieldTier } from "@/lib/field-tier";
 import { displayAnswer, displayQuestion } from "@/lib/idea-display";
@@ -439,11 +439,26 @@ export function spacingLine(ease: number): string {
 }
 
 /**
+ * The card's daily decay, the λ mapping the rules page publishes ("Daily decay = 0.105 / interval", blueprint 3.1a):
+ * forgetting.ts DESIGN_DECAY over the card's own interval (intervalOf: its level's baseline times its ease), the share
+ * of recall it loses a day once past its grace. As it prints: "Daily decay 0.015 = 0.105 / 7 days" (L4 at 1.0×),
+ * "Daily decay 0.00066 = 0.105 / 160 days" (L12); three decimals, or two significant figures below 0.001.
+ */
+export function decayLine(level: number, ease: number): string {
+  const days = intervalOf(level, ease);
+  const lambda = DESIGN_DECAY / days;
+  const shown = lambda >= 0.001 ? lambda.toFixed(3) : lambda.toPrecision(2);
+  const d = Math.round(days * 10) / 10;
+  return `Daily decay ${shown} = ${DESIGN_DECAY.toFixed(3)} / ${d} ${d === 1 ? "day" : "days"}`;
+}
+
+/**
  * The detail's outlook, one line each (an archived idea has none: it is not scheduled):
  *   "Next: L9 after 2 clean recalls · 1 of 2 done" (or "Next: L5 · a clean recall raises it")
  *   "Due in 12 days"
- *   "Starts fading 30 Oct" (or "Fading since 30 Oct")
+ *   "Starts fading 30 Oct" (or "Fading since 30 Oct"; never within 3 days of falling due, the 72 h floor)
  *   "Loses L8 around 20 Nov if not reviewed" (none at level 1: nothing to lose)
+ *   "Daily decay 0.002 = 0.105 / 50 days" (decayLine: its level and ease; blueprint P13)
  *   "Spacing 1.3× — you recall this one well" (spacingLine: its ease)
  */
 export function outlookLines(idea: Pick<LibraryIdea, "isArchived" | "level" | "dueAt" | "outlook">, now: number): string[] {
@@ -454,6 +469,7 @@ export function outlookLines(idea: Pick<LibraryIdea, "isArchived" | "level" | "d
   if (Number.isFinite(fadeAt)) out.push(fadeAt > now ? `Starts fading ${shortDate(fadeAt, now)}` : `Fading since ${shortDate(fadeAt, now)}`);
   const lossAt = o.nextLossAt ? Date.parse(o.nextLossAt) : Number.NaN;
   if (Number.isFinite(lossAt) && idea.level > 1) out.push(`Loses L${Math.floor(idea.level)} around ${shortDate(Math.max(lossAt, now), now)} if not reviewed`);
+  out.push(decayLine(o.level, o.ease));
   out.push(spacingLine(o.ease));
   return out;
 }

@@ -1582,8 +1582,12 @@ export const PACE_SHARE: Readonly<Record<Intensity, number>> = INTENSITY;
 //
 // Expected reach follows srs.ts and the degrade cron. A miss below the strike
 // limit costs a day; two misses in a row (STRIKE_LIMIT + the loadout's extra
-// strikes) cost a level; a card overdue past its grace (graceDays(ℓ) + the
-// GRACE_EXTENSION days) loses a level. A due review is done on its day when
+// strikes) cost a level; a card overdue past its grace (ℓ − 1 + the
+// GRACE_EXTENSION days) loses a level. That grace is the one from before the
+// 72 h floor (blueprint P13, decision D23: xp.ts graceDays is now at least
+// GRACE_FLOOR_DAYS): the floor only delays a degrade, so the table reads a
+// little low at L1–L3 and stays a lower bound on reach (pinned in
+// roadmap-contract-check). A due review is done on its day when
 // the day is "on": days are on or off as a two-state chain with stationary
 // on-share c (the measured clearance) and off-persistence ρ, so missed days
 // bunch together as they really do. Reviews at level ≥ LONG_GAP_LEVEL (gaps of
@@ -1726,8 +1730,9 @@ const REACH_MEMO = new Map<string, Map<string, ReachLayer>>();
  *     miss with s + 1 < strikeLimit → retry tomorrow with s + 1 (srs.ts keeps
  *       graceEndsAt, so o + 1; past grace the cron degrades it);
  *     any other miss → max(1, ℓ − 1), due tomorrow, s = 0, o = 0;
- *   off day, the review waits a day: o + 1 > graceDays(ℓ) + graceExtra
- *     degrades it (max(1, ℓ − 1), due tomorrow, s = 0, o = 0), else o + 1;
+ *   off day, the review waits a day: o + 1 > (ℓ − 1) + graceExtra (the
+ *     grace before the 72 h floor, above) degrades it (max(1, ℓ − 1), due
+ *     tomorrow, s = 0, o = 0), else o + 1;
  *   t < 0 gives 0, ℓ ≥ L gives 1. Levels 5–8 use their base interval (the
  *   jitter's mean). Days: P(off tomorrow | on) = (1 − c)(1 − ρ) ÷ c,
  *   P(off tomorrow | off) = ρ; a wait of k days uses the k-step chain.

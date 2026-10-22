@@ -1323,7 +1323,9 @@ const PR = (p: number, extra: Partial<RT.ReachParams> = {}): RT.ReachParams => (
 // The new parameters: ρ, pLong, clean entry and the priors (computed here, printed, pinned).
 {
   // An independent model of independent days (ρ = 1 − c), written apart from the table: the realism reviewer's hand-run in code.
-  const indep = (p: number, pLong: number, c: number, L: number, slack: number, cleanAt: number | null): number => {
+  // Its grace is the table's, ℓ − 1 (blueprint P13: the reach model keeps the grace from before the 72 h floor, xp.ts
+  // GRACE_FLOOR_DAYS); `grace` = graceDays reads the floored rule instead.
+  const indep = (p: number, pLong: number, c: number, L: number, slack: number, cleanAt: number | null, grace: (l: number) => number = (l) => Math.max(0, l - 1)): number => {
     const memo = new Map<string, number>();
     const V = (target: number, t: number, l: number, s: number, o: number): number => {
       if (l >= target) return 1;
@@ -1331,7 +1333,7 @@ const PR = (p: number, extra: Partial<RT.ReachParams> = {}): RT.ReachParams => (
       const key = `${target}|${t}|${l}|${s}|${o}`;
       const hit = memo.get(key);
       if (hit !== undefined) return hit;
-      const G = graceDays(l);
+      const G = grace(l);
       const q = l >= RT.LONG_GAP_LEVEL ? pLong : p;
       const down = Math.max(1, l - 1);
       const tomorrow = (nl: number, ns: number, no: number) => (t - 1 < 0 ? 0 : V(target, t - 1, nl, ns, no));
@@ -1354,6 +1356,15 @@ const PR = (p: number, extra: Partial<RT.ReachParams> = {}): RT.ReachParams => (
   const ac = RT.reachProb(PR(0.85, { c: 0.9, rho: 0.1, pLong: 0.8 }), 1, 12, 60, { cleanAt: 12 });
   const bc = indep(0.85, 0.8, 0.9, 12, 60, 12);
   check("ρ = 1 − c gives exactly the independent-day values (an independent model, L12 slack 60, c 0.9, pLong 0.8, with and without clean entry)", Math.abs(a - b) < 1e-12 && Math.abs(ac - bc) < 1e-12, `${a} vs ${b}; ${ac} vs ${bc}`);
+  // Blueprint P13 (D23): the 72 h floor lengthens L1–L3's grace, which only delays a degrade, so the table (on ℓ − 1)
+  // stays a lower bound on reach: the same independent model on the floored graceDays reads at least as much.
+  const bf = indep(0.85, 0.8, 0.9, 12, 60, null, graceDays);
+  const bcf = indep(0.85, 0.8, 0.9, 12, 60, 12, graceDays);
+  check(
+    "the 72 h floor (graceDays ≥ 3) is not in the table: on the floored grace the independent model reads at least the table's value, with and without clean entry (the table is a lower bound)",
+    graceDays(2) === 3 && graceDays(4) === 3 && graceDays(5) === 4 && bf >= a - 1e-12 && bcf >= ac - 1e-12 && bf > a,
+    `${bf} vs ${a}; ${bcf} vs ${ac}`
+  );
   const rhos = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9].map((rho) => RT.reachProb(PR(0.85, { c: 0.9, rho }), 1, 12, 60));
   console.log(`  ρ 0.1..0.9 at c 0.9, L12 slack 60: ${rhos.map((x) => x.toFixed(4)).join(" ")}`);
   check("reachProb is strictly decreasing in ρ at fixed c (L12, c 0.9): missed days that bunch cost more", rhos.every((x, i) => i === 0 || x < rhos[i - 1]));

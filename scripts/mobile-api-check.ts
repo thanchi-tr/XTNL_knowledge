@@ -12,7 +12,10 @@
  *      and size), the prompt's math, the cloze blanks, the weigh-in's opaque undo;
  *   2. every route against fakes: the documented keys, the call into the core with the web's arguments, the replies
  *      for refusals and throws (never a stack), and replays — /check's tasks (the board's lanes and order, its
- *      counts), its review counts (the Review hub's own formula), its work list (the Agenda's sections); /review's
+ *      counts), its review counts (the Review hub's own formula), its ideas fading (forgetting.ts's status, the bell's
+ *      count, the 72 h floor), its week audit (week-audit.ts, as /today/week's card states it; null while inert; and
+ *      P12's "Decaying this week", its count and first three lines), its
+ *      work list (the Agenda's sections); /review's
  *      queue (the runner's seeded order and wording, per type) and its retry (review-model's queueAfterAnswer);
  *      /log's sections (the sheet's mode starts) and Undo; /ideas through the form's contentOfAddState;
  *   3. the wiring: each route file hands its request to its handler with the real deps and exports only its method
@@ -34,7 +37,8 @@ import { splitTodayLane, boardClearOf } from "../src/components/today/board-ui";
 import { seededOrder, queueAfterAnswer, SESSION_RETURNS_MAX, type CardResult, type RunCard } from "../src/components/workspace/review-model";
 import { contentOfAddState } from "../src/lib/idea-edit";
 import { ADD_FORMATS, EMPTY_ADD_CONTENT, type AddContentState } from "../src/lib/idea-handoff";
-import { XP_BASE } from "../src/lib/xp";
+import { GRACE_FLOOR_DAYS, XP_BASE } from "../src/lib/xp";
+import { ideaOutlook } from "../src/lib/forgetting";
 import { questTargetOf } from "../src/lib/review-facts";
 import { isDue } from "../src/lib/due";
 import { displayQuestion } from "../src/lib/idea-display";
@@ -43,6 +47,9 @@ import { cleanCaptureKey } from "../src/lib/capture-parse";
 import { toastCopy } from "../src/components/capture/capture-ui";
 import { weightItemOf } from "../src/components/capture/weight-capture";
 import { SCHEDULED_GONE } from "../src/lib/scheduled-tasks";
+import { MUST_CAP_LINE, dailyQuestsOf } from "../src/lib/daily-quests";
+import { AUDIT_LAUNCH_DAY, AUDIT_LAUNCH_DAY_ENV, AUDIT_TARGET, isAuditLaunched, weekAuditOf, type AuditTemplate, type WeekAudit } from "../src/lib/week-audit";
+import { DECAY_TOP, decayingOf } from "../src/lib/audit-decay";
 import type { Receipt } from "../src/lib/life-types";
 import type { CelebrationEvent } from "../src/lib/celebration-types";
 import type { Completion } from "../src/lib/tasks";
@@ -72,6 +79,10 @@ import {
   SERVER_LINES,
   WORK_MAX,
   answerOf,
+  checkDailyOf,
+  checkDecayingOf,
+  checkFadingOf,
+  checkWeekOf,
   clientIdOf,
   clozeBlanksOf,
   failReply,
@@ -393,6 +404,8 @@ function fakes(over: Partial<MobileDeps> = {}): { deps: MobileDeps; calls: Calls
     loadStreak: async () => ({ current: 12, last7Days: [true, true, true, true, true, true, true], bankedFreezes: 2 }),
     loadShell: async () => ({ character: { level: 7, progress: 0.75, title: "Novice" } }),
     loadWork: async () => WORK,
+    loadGraceExtra: async () => 0,
+    loadWeekAudit: async () => null,
     recordDayOpen: async () => {},
     autoCompleteStudyTasks: async () => 0,
     maybeMaintainLife: async () => {},
@@ -584,9 +597,21 @@ async function routes() {
     const d = data(g);
     collectKeys(d);
     check("200, ok, no-store", g.status === 200 && g.json.ok === true && g.noStore);
-    eq("the documented keys", keysOf(d), ["day", "dayLabel", "level", "now", "review", "streak", "tasks", "tasksSummary", "work"]);
+    eq("the documented keys", keysOf(d), ["auditOn", "daily", "day", "dayLabel", "fading", "level", "now", "review", "streak", "tasks", "tasksSummary", "week", "work"]);
     check("now is the server's clock; day the life day; dayLabel 'Wed 21 Oct'", d.now === NOW.toISOString() && d.day === TODAY && d.dayLabel === "Wed 21 Oct");
-    check("one wave: the board (personal: three arguments), the tree, the day's counts, streak, shell and work, read once each", calls.loadBoard?.length === 1 && same(calls.loadBoard[0].slice(0, 2), ["u1", TODAY]) && calls.loadBoard[0].length === 3 && calls.loadFieldTree?.length === 1 && calls.loadReviewDay?.length === 1 && calls.loadStreak?.length === 1 && calls.loadShell?.length === 1 && calls.loadWork?.length === 1);
+    check(
+      "one wave: the board (personal: three arguments), the tree, the day's counts, streak, shell, work, the grace extension and the week audit, read once each",
+      calls.loadBoard?.length === 1 &&
+        same(calls.loadBoard[0].slice(0, 2), ["u1", TODAY]) &&
+        calls.loadBoard[0].length === 3 &&
+        calls.loadFieldTree?.length === 1 &&
+        calls.loadReviewDay?.length === 1 &&
+        calls.loadStreak?.length === 1 &&
+        calls.loadShell?.length === 1 &&
+        calls.loadWork?.length === 1 &&
+        same(calls.loadGraceExtra, [["u1"]]) &&
+        same(calls.loadWeekAudit, [["u1", NOW]])
+    );
 
     // The board, as the web board builds and draws it.
     const board = buildBoard(DATA, [], NOW.getTime());
@@ -606,12 +631,151 @@ async function routes() {
     check("minutes, mvv, icon (the chosen one; null for the default), title", t("hab1").minutes === hab1Row.estMinutes && t("hab1").mvv === "10 squats" && t("hab1").icon === "dumbbell" && t("hab2").icon === null && t("must1").title === "Pay the rent");
     const doneCount = [...board.must, ...board.todayRows].filter((r) => r.state === "done").length;
     eq("tasksSummary: the board's open counts, the done rows, Board clear", d.tasksSummary, { open: board.counts.musts + board.counts.due, done: doneCount, allDone: boardClearOf({ clear: board.clear, done: doneCount }) });
+    // Daily quests (blueprint P9; D14, D15): the Must lane's own count and strip, as Today draws them.
+    const daily = d.daily as Record<string, unknown>;
+    const dq = dailyQuestsOf(board);
+    eq("daily: the documented keys", keysOf(daily), ["cap", "full", "kept", "minimum", "over", "quests", "total"]);
+    eq("daily: dailyQuestsOf over the board (the Must lane's count; the minimum counts 1)", daily, { kept: dq.kept, total: dq.total, full: dq.full, cap: 5, minimum: dq.minimum, over: dq.over, quests: dq.quests });
+    eq("daily: one 1/0 cell per must asking today, the Must rows of `tasks` in the lane's order", (daily.quests as { templateId: string }[]).map((q) => q.templateId), board.must.filter((r) => r.state !== "skipped" && !r.heldToday).map((r) => r.template.id));
+    check("daily: the fixture has an open must (the strip can read 0)", (daily.quests as { kept: boolean }[]).some((q) => !q.kept) && daily.total === (daily.quests as unknown[]).length);
+    const dqBoard = buildBoard(
+      boardData([tpl({ id: "q1", title: "Gym", compulsory: true, recurrence: "DAILY" }), tpl({ id: "q2", title: "Meds", compulsory: true, recurrence: "DAILY" })], [inst("iq1", "q1", "DONE_MVV")], { iq1: paidOf("iq1", 1) }),
+      [],
+      NOW.getTime()
+    );
+    eq("daily: the minimum version keeps its quest and is counted 'at minimum'", checkDailyOf(dqBoard), {
+      kept: 1,
+      total: 2,
+      full: false,
+      cap: 5,
+      minimum: 1,
+      over: 0,
+      // board.must's own order (the open row before the done one).
+      quests: [
+        { templateId: "q2", title: "Meds", kept: false, minimum: false },
+        { templateId: "q1", title: "Gym", kept: true, minimum: true },
+      ],
+    });
 
     // The Review hub's figures, from its own formula (src/app/review/page.tsx).
     const all = TREE.flatMap((f) => f.domains.flatMap((dm) => dm.ideas));
     const totalDue = all.filter((i) => isDue(i.dueDate, NOW)).length;
     const notYet = all.filter((i) => !isDue(i.dueDate, NOW)).sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
     eq("review: the hub's due (DIAGRAM included), today's reviews, the quest target, the soonest not due", d.review, { due: totalDue, doneToday: 4, target: questTargetOf(null, 4, totalDue), nextDueAt: notYet[0].dueDate.toISOString() });
+
+    // Blueprint P13 (3.1a, D23): the ideas past grace, as the bell's "12 ideas fading" counts them (forgetting.ts's status
+    // at the loadout's grace extension), read off the same Field tree. Nothing fades within 3 days of falling due.
+    eq("fading: the fixture's cards fell due at most 30 h ago, inside the 72 h floor, so none is past grace", d.fading, { ideas: 0, forgetting: 0, domains: [] });
+    const ago = (n: number) => new Date(NOW.getTime() - n * 86_400_000);
+    const card = (id: string, level: number, daysPast: number, ease?: number) => ({ id, level, questionType: "SHORT" as QuestionType, question: id, atomicPrompt: null, dueDate: ago(daysPast), ...(ease != null ? { ease } : {}) });
+    const FADING: ReviewTreeField[] = [
+      { id: "f9", name: "Maths", domains: [
+        // L5 8 days past due (grace 4, first loss about 9.9) and L6 9.5 (grace 5, about 14.9): fading. L4 7 days (first
+        // loss about 5.8): forgetting. L2 2.5 days: inside the 72 h floor, so still only due (before it, past its 1-day grace).
+        { id: "d9", name: "Probability", ideas: [card("p5", 5, 8), card("p6", 6, 9.5), card("p4", 4, 7), card("p2", 2, 2.5)] },
+        // The ease is read: an L4 6.5 days past due forgets at 1×, but at 1.8× (first loss about 10.4) it is only fading.
+        { id: "d8", name: "Algebra", ideas: [card("a4", 4, 6.5, 1.8), card("a5", 5, 8, 1.8)] },
+        { id: "d7", name: "Calculus", ideas: [card("c3", 3, 1), card("c8", 8, -4)] },
+      ] },
+    ];
+    const fadingFakes = fakes({ loadFieldTree: async () => FADING });
+    const fd = data(await got(handleCheck(get("/check"), fadingFakes.deps))).fading as { ideas: number; forgetting: number; domains: { id: string; name: string; ideas: number }[] };
+    collectKeys(fd);
+    eq("fading: ideas past grace in all, those losing levels, their Domains most first with each count (the Domain with none left out)", fd, {
+      ideas: 5,
+      forgetting: 1,
+      domains: [
+        { id: "d9", name: "Probability", ideas: 3 },
+        { id: "d8", name: "Algebra", ideas: 2 },
+      ],
+    });
+    const statuses = (extra: number) =>
+      FADING.flatMap((f) => f.domains.flatMap((dm) => dm.ideas.map((i) => ideaOutlook({ level: i.level, dueDate: i.dueDate, graceEndsAt: null, cleanStreak: 0, failedAttempts: 0, ease: i.ease }, NOW, extra).status)));
+    const pastGrace = (extra: number) => statuses(extra).filter((s) => s === "fading" || s === "forgetting").length;
+    check(
+      "fading: each card's status is forgetting.ts ideaOutlook's at its own ease, the bell's count (fading and forgetting)",
+      pastGrace(0) === fd.ideas && statuses(0).filter((s) => s === "forgetting").length === fd.forgetting && same(statuses(0), ["fading", "fading", "forgetting", "due", "fading", "fading", "due", "fresh"])
+    );
+    check(
+      "fading: the 72 h floor holds an L2 2.5 days past due (its grace is GRACE_FLOOR_DAYS, not 1 day)",
+      GRACE_FLOOR_DAYS === 3 && ideaOutlook({ level: 2, dueDate: ago(2.5), graceEndsAt: null, cleanStreak: 0, failedAttempts: 0 }, NOW).status === "due" && ideaOutlook({ level: 2, dueDate: ago(3.5), graceEndsAt: null, cleanStreak: 0, failedAttempts: 0 }, NOW).status === "forgetting"
+    );
+    eq("fading: checkFadingOf is the reply (the tree, now, the grace extension)", checkFadingOf(FADING, NOW, 0), fd);
+    const extended = data(await got(handleCheck(get("/check"), fakes({ loadFieldTree: async () => FADING, loadGraceExtra: async () => 5 }).deps))).fading as { ideas: number };
+    check("fading: read at the loadout's grace extension (5 more days hold every card here)", extended.ideas === pastGrace(5) && pastGrace(5) < pastGrace(0) && extended.ideas === 0, JSON.stringify(extended));
+    const noGrace = fakes({ loadFieldTree: async () => FADING, loadGraceExtra: async () => Promise.reject(new Error("g")) });
+    const ng = await got(handleCheck(get("/check"), noGrace.deps));
+    check("fading: a failed grace-extension read reads as none (the check still answers)", ng.status === 200 && same(data(ng).fading, fd));
+
+    // Blueprint P11 (5.2a, 5.2b; D12, D15, D16, D17, D38): the weekly audit, as /today/week's Week audit card states it.
+    check("week: null while the audit is switched off (AUDIT_LAUNCH_DAY is null; the fakes' read answers null, as loadWeekAudit then does)", d.week === null && AUDIT_LAUNCH_DAY === null);
+    // The phone's Sunday reminder (D37) follows `auditOn`, the switch alone: never a read, so neither a week not yet
+    // shown (before the first audited Sunday's 18:00) nor a failed read turns it off.
+    check("auditOn: false as shipped (AUDIT_LAUNCH_DAY null, no override): the reminder stays off until the user's go", d.auditOn === false && process.env[AUDIT_LAUNCH_DAY_ENV] === undefined);
+    {
+      process.env[AUDIT_LAUNCH_DAY_ENV] = "2026-10-19";
+      try {
+        const launched = data(await got(handleCheck(get("/check"), fakes().deps)));
+        const failedRead = data(await got(handleCheck(get("/check"), fakes({ loadWeekAudit: async () => Promise.reject(new Error("a")) }).deps)));
+        check(
+          "auditOn: true from the launch day (the rehearsal override), in the launch week while `week` is still null, and when the audit read fails",
+          launched.auditOn === true && launched.week === null && failedRead.auditOn === true && failedRead.week === null && isAuditLaunched(TODAY, "2026-10-19")
+        );
+        process.env[AUDIT_LAUNCH_DAY_ENV] = "2026-10-26";
+        check("auditOn: false before the launch day", data(await got(handleCheck(get("/check"), fakes().deps))).auditOn === false);
+      } finally {
+        delete process.env[AUDIT_LAUNCH_DAY_ENV];
+      }
+    }
+    // Sunday 18 October 2026, 20:00 in Sydney: the week of 12 October, provisional. Gym every day (Mon to Thu kept, Wed at
+    // the minimum, Fri skipped, Sat missed, Sun open), a Friday deadline kept, and a plain habit (not in the rate).
+    const AUDIT_SUN = "2026-10-18";
+    const auditTpl = (id: string, over: Partial<AuditTemplate>): AuditTemplate => ({
+      id, title: id, kind: "HABIT", recurrence: "DAILY", startDay: "2026-10-01", dueDay: null, dueKind: null, compulsory: true, compulsoryOnRest: false, inbox: false, archivedDay: null, ...over,
+    });
+    const auditTemplates = [auditTpl("gym", {}), auditTpl("rent", { kind: "TASK", recurrence: null, dueKind: "DEADLINE", dueDay: "2026-10-16" }), auditTpl("walk", { compulsory: false, recurrence: "DOW:1,3,5" })];
+    const auditInst = (templateId: string, day: string, status: string) => ({ templateId, day, status });
+    const auditInstances = [
+      auditInst("gym", "2026-10-12", "DONE"), auditInst("gym", "2026-10-13", "DONE"), auditInst("gym", "2026-10-14", "DONE_MVV"), auditInst("gym", "2026-10-15", "DONE_LATE"),
+      auditInst("gym", "2026-10-16", "SKIPPED"), auditInst("gym", "2026-10-17", "MISSED"), auditInst("rent", "2026-10-16", "DONE"), auditInst("walk", "2026-10-12", "DONE"), auditInst("walk", "2026-10-14", "SKIPPED"),
+    ];
+    const AUDIT: WeekAudit = weekAuditOf({
+      week: { weekKey: "2026-W42", monday: "2026-10-12", sunday: AUDIT_SUN }, launchDay: "2026-09-28", templates: auditTemplates, instances: auditInstances,
+      today: AUDIT_SUN, now: new Date("2026-10-18T09:00:00.000Z"),
+    });
+    const withWeek = fakes({ loadWeekAudit: async () => AUDIT });
+    const wk = data(await got(handleCheck(get("/check"), withWeek.deps))).week as Record<string, unknown>;
+    collectKeys(wk);
+    // P12: `decaying` joins the week (null here: this audit was read without its decay).
+    eq("week: the documented keys", keysOf(wk), ["asOfDay", "calibrating", "decaying", "due", "held", "kept", "label", "minimum", "open", "rate", "short", "skipped", "status", "target", "weekKey"]);
+    eq("week: checkWeekOf is the reply (the audit the web's card reads)", wk, checkWeekOf(AUDIT));
+    eq(
+      "week: the daily quests kept of due (the minimum counts 1, the skip left out, Sunday open in due), the rate rounded down, the 85% target, provisional",
+      [wk.kept, wk.due, wk.minimum, wk.skipped, wk.held, wk.open, wk.rate, wk.short, wk.target, wk.status, wk.calibrating, wk.asOfDay, wk.label],
+      [5, 7, 1, 1, 0, 1, 71, 1, AUDIT_TARGET, "provisional", false, null, "Week of 12 Oct"]
+    );
+    const noAudit = await got(handleCheck(get("/check"), fakes({ loadWeekAudit: async () => Promise.reject(new Error("a")) }).deps));
+    check("week: a failed audit read reads as none (the check still answers)", noAudit.status === 200 && data(noAudit).week === null);
+
+    // Blueprint P12 (5.2c): "Decaying this week" rides on the week: its count, its first three lines, what couldn't be read.
+    check("week.decaying: null when the audit was read without it (a copy frozen before P12, or a failed decay read)", wk.decaying === null);
+    const DECAYING = decayingOf({
+      streaks: { before: [{ track: "BODY", keptStreak: 4 }], after: [{ track: "BODY", keptStreak: 0 }], sunday: "2026-10-11" },
+      drops: [{ kind: "domain", id: "dm1", name: "Probability", fieldId: "f1", level: 3, droppedFrom: 4, fading: 2 }],
+      habits: [{ id: "h1", title: "Stretch", before: 0.62, after: 0.58 }],
+      ideas: { fading: 4, forgetting: 1 },
+      unread: 1,
+    });
+    const decayed = data(await got(handleCheck(get("/check"), fakes({ loadWeekAudit: async () => ({ ...AUDIT, decaying: DECAYING }) }).deps))).week as Record<string, unknown>;
+    const dc = decayed.decaying as { count: number; top: Record<string, unknown>[]; unread: number };
+    collectKeys(dc);
+    eq("week.decaying: the documented keys, and each line's", [keysOf(dc), keysOf(dc.top[0])], [["count", "top", "unread"], ["detail", "kind", "title"]]);
+    eq("week.decaying: checkDecayingOf is the reply", dc, checkDecayingOf(DECAYING));
+    eq(
+      "week.decaying: everything counted (4), the first three lines in the block's order (a run ended, a level lost, a habit's rung), one part unread",
+      [dc.count, dc.top.map((t) => t.kind), dc.top[0].title, dc.unread, DECAY_TOP],
+      [4, ["streak", "domain", "habit"], "Body: 4 kept weeks in a row ended", 1, 3]
+    );
 
     const w = d.work as Record<string, unknown>[];
     eq("work: the Agenda's Overdue then Today (all-day before timed), tomorrow left out", w.map((x) => `${x.id}:${x.overdue}`), ["w-over:true", "w-allday:false", "w-later:false"]);
@@ -920,6 +1084,11 @@ async function routes() {
     check("…the sheet's own rule: every Undo it offers checks weight.undoable", sheet.every((s) => /!\w+(?:\.\w+)*\.weight \|\| \w+(?:\.\w+)*\.weight\.undoable/.test(s)));
     const notMust = await got(handleLog(post("/log", { text: "pay rent !", section: "task" }), fakes({ createFromCapture: async () => ({ ok: true, value: capturedItem({ kind: "TASK" }) }) }).deps));
     check("a must with no day says 'Added (not a Must)'", String(data(notMust).line).startsWith("Added (not a Must)"));
+    // Daily quests (P9, D14): a sixth must is saved as an ordinary task, never refused; the 4th and 5th say how near the cap.
+    const sixth = await got(handleLog(post("/log", { text: "gym daily !", section: "task" }), fakes({ createFromCapture: async () => ({ ok: true, value: capturedItem({ kind: "HABIT", mustNote: { capped: true, line: MUST_CAP_LINE } }) }) }).deps));
+    check("a sixth must: 200, 'Added (not a Must)' with the cap's line", sixth.status === 200 && String(data(sixth).line).startsWith("Added (not a Must). ") && String(data(sixth).line).endsWith(` · ${MUST_CAP_LINE}`), String(data(sixth).line));
+    const fourth = await got(handleLog(post("/log", { text: "gym daily !", section: "task" }), fakes({ createFromCapture: async () => ({ ok: true, value: capturedItem({ kind: "HABIT", mustNote: { capped: false, line: "4 of 5 daily quests" } }) }) }).deps));
+    check("the 4th must: 'Added' with the warning", String(data(fourth).line).startsWith("Added. ") && String(data(fourth).line).endsWith(" · 4 of 5 daily quests"), String(data(fourth).line));
     const refused = await got(handleLog(post("/log", { text: "x y", section: "task" }), fakes({ createFromCapture: async () => ({ ok: false, error: "Couldn't save it. Your line is kept — try again." }) }).deps));
     check("the sheet's couldn't-save → 500 with its line", isFail(refused, "server") && refused.json.error === "Couldn't save it. Your line is kept — try again.");
 
@@ -1093,6 +1262,8 @@ function wiring() {
   bind("the board is loadTodayBoard(userId, day, now): the personal board (no work-tab scope)", /loadBoard: \(userId, day, now\) => loadTodayBoard\(userId, day, now\),/);
   bind("the hub's reads: loadFieldTree, review-data loadReviewDay", /loadFieldTree: \(\) => loadFieldTree\(\),[\s\S]*loadReviewDay: \(userId, day\) => loadReviewDay\(userId, day\),/);
   bind("streak, level and work: getDailyStreak, loadShellData, loadDueWorkTasks", /loadStreak: \(userId\) => getDailyStreak\(userId\),\s*loadShell: \(userId\) => loadShellData\(userId\),\s*loadWork: \(userId, now\) => loadDueWorkTasks\(userId, now\),/);
+  bind("the grace extension (P13): skill-effects loadModifiers' graceExtraDays, the loadout's, as the bell reads it", /loadGraceExtra: async \(userId\) => \(await loadModifiers\(userId\)\)\.graceExtraDays,/);
+  bind("the week audit (P11): week-audit-server loadWeekAudit(userId, now), /today/week's own read", /import \{ loadWeekAudit \} from "\.\/week-audit-server";[\s\S]*loadWeekAudit: \(userId, now\) => loadWeekAudit\(userId, now\),/);
   bind("the owed writes: recordDayOpen, autoCompleteStudyTasks, maybeMaintainLife, settleMomentum", /recordDayOpen: \(userId, dueCount, now\) => recordDayOpen\(userId, dueCount, now\),\s*autoCompleteStudyTasks: \(userId, now\) => autoCompleteStudyTasks\(userId, now\),\s*maybeMaintainLife: \(userId\) => maybeMaintainLife\(userId\),\s*settleMomentum: \(userId, day, now\) => settleMomentum\(userId, day, \{ now \}\),/);
   bind("the tick and its Undo: actions/tasks completeTask, undoCompletion (no options: never refresh)", /completeTask: \(templateId, input\) => completeTask\(templateId, input\),\s*undoCompletion: \(instanceId\) => undoCompletion\(instanceId\),/);
   bind("work: doneScheduledTask(id, null) (no log), reopenScheduledTask(id, null)", /doneScheduled: \(id\) => doneScheduledTask\(id, null\),\s*reopenScheduled: \(id\) => reopenScheduledTask\(id, null\),/);
@@ -1110,6 +1281,7 @@ function wiring() {
     ["loadReviewDay", "../app/review/review-data"],
     ["loadDueWorkTasks", "./scheduled-tasks-server"],
     ["reviewDedupeKey", "./srs"],
+    ["loadModifiers", "./skill-effects"],
   ];
   const missing = imports.filter(([names, from]) => !cores.includes(`import { ${names} } from "${from}";`));
   check("mobile-api-cores imports each core from the web's own module", missing.length === 0, missing.map((m) => m[1]).join(", "));
@@ -1172,7 +1344,28 @@ function wiring() {
       !/owe\(deps, [^\n]*settleMomentum/.test(checkSrc)
   );
   const tb = code("src/components/today/TodayBoard.tsx");
-  check("the board's lanes: Must, then Planned and Habits from splitTodayLane(board.todayRows)", /const \{ planned, habits \} = splitTodayLane\(board\.todayRows\);/.test(tb) && tb.indexOf('title="Must"') < tb.indexOf('title="Planned"') && tb.indexOf('title="Planned"') < tb.indexOf('title="Habits"'));
+  // Blueprint P9 (D14): the personal Board's Must lane is titled Daily quests (a work tab's stays Must); the order holds.
+  check(
+    "the board's lanes: Must (Daily quests), then Planned and Habits from splitTodayLane(board.todayRows)",
+    /const \{ planned, habits \} = splitTodayLane\(board\.todayRows\);/.test(tb) &&
+      tb.indexOf('title={daily ? DAILY_QUESTS_TITLE : "Must"}') > 0 &&
+      tb.indexOf('title={daily ? DAILY_QUESTS_TITLE : "Must"}') < tb.indexOf('title="Planned"') &&
+      tb.indexOf('title="Planned"') < tb.indexOf('title="Habits"')
+  );
+  check("the board's daily quests are /check's: dailyQuestsOf(board) on the personal Board", /const daily = isWork \? null : dailyQuestsOf\(board\);/.test(tb) && /daily: checkDailyOf\(board\),/.test(code("src/lib/mobile-api-server.ts")));
+  // Blueprint P13: the phone's fading line counts what the bell's "12 ideas fading" counts, the same status at the same grace.
+  const bell = code("src/lib/notifications.ts");
+  const fadingSrc = (() => {
+    const s = code("src/lib/mobile-api.ts");
+    return s.slice(s.indexOf("export function checkFadingOf"), s.indexOf("\n}\n", s.indexOf("export function checkFadingOf")));
+  })();
+  check(
+    "the bell's fading line is /check's fading: forgetting.ts's status (fading or forgetting) at the loadout's graceExtraDays",
+    /const \{ status \} = ideaOutlook\(i, now, graceExtraDays\);\s*if \(status !== "fading" && status !== "forgetting"\) continue;/.test(bell) &&
+      /loadLevelNotices\(now, Math\.max\(0, progression\.modifiers\.graceExtraDays \|\| 0\)\)/.test(bell) &&
+      /const status = ideaStatusOf\(i, now, graceExtraDays\);\s*if \(status !== "fading" && status !== "forgetting"\) continue;/.test(fadingSrc) &&
+      /fading: checkFadingOf\(fields, now, Math\.max\(0, graceExtra \|\| 0\)\),/.test(code("src/lib/mobile-api-server.ts"))
+  );
   check("the board's tick: completeTask(row.template.id, { day, minutes, mvv }, REFRESH)", /completeTask\(row\.template\.id, \{ day: row\.day, minutes: opts\.minutes \?\? null, mvv: opts\.mvv \}, REFRESH\)/.test(tb));
   const events = code("src/components/capture/events.ts");
   check("the sheet's section starts: 'idea: ' and 'weight '", /CAPTURE_MODE_START: Readonly<Record<CaptureMode, string \| null>> = \{ task: null, idea: "idea: ", body: "weight " \};/.test(events));
@@ -1251,6 +1444,42 @@ function docs() {
   // The review fixes, as the doc states them.
   check("a review answer lands once per clientId: the 'recorded' code (409) and its line; no 'no such guard' left", /"recorded"/.test(doc) && /`recorded` \(409/.test(doc) && /a review answer lands once per clientId/.test(doc) && doc.includes(REVIEW_RECORDED_LINE) && !/no such guard/.test(doc));
   check("/check runs momentum's lazy writes before it reads", /Before it reads, the server runs momentum's lazy writes/.test(doc));
+  check(
+    "/check's daily quests (P9) and /log's sixth must are in the doc: the cap of 5, the minimum counting as kept, saved as an ordinary task",
+    /`daily`: the daily quests \(the user's musts, at most 5 due on a day; decisions D14 and D15\)/.test(doc) && doc.includes(MUST_CAP_LINE) && /the minimum version\s+included/.test(doc) && /saved as an ordinary task, never refused/.test(doc)
+  );
+  check(
+    "/check's fading (P13; D23) is in the doc: the bell's count, the per-card curve, the 72 h floor, a Domain's count",
+    /`fading`: the ideas past their grace \(blueprint 3\.1a; decision D23\)/.test(doc) &&
+      /The grace is never under 3 days past due \(the 72 h floor\)/.test(doc.replace(/\s+/g, " ")) &&
+      /"domains": \[ \{ "id": "…", "name": "Probability", "ideas": 3 \} \]/.test(doc) &&
+      GRACE_FLOOR_DAYS === 3
+  );
+  check(
+    "/check's week (P11; D12, D15-D17, D38) is in the doc: null while switched off, the strip's count, the 85% target only on the audit, provisional, frozen and final",
+    /`week`: the weekly audit \(blueprint 5\.2a and 5\.2b; decisions D12, D15, D16, D17 and D38\)/.test(doc) &&
+      /`AUDIT_LAUNCH_DAY`, null until the user's go/.test(doc.replace(/\s+/g, " ")) &&
+      /exactly as the web's week strip on Tasks › Habits does/.test(doc.replace(/\s+/g, " ")) &&
+      /it is shown only on the audit, never on Today/.test(doc.replace(/\s+/g, " ")) &&
+      /"status": "provisional" \| "frozen" \| "final"/.test(doc) &&
+      /a later tick or make-up never changes/.test(doc.replace(/\s+/g, " "))
+  );
+  check(
+    "/check's week.decaying (P12; blueprint 5.2c) and the Sunday reminder (D37) are in the doc: count, top three, unread, never applied; a local notification at 19:00 Sydney, no push",
+    /`decaying`: "Decaying this week" \(blueprint 5\.2c; P12\)/.test(doc) &&
+      /"decaying": \{ "count": 4, "unread": 0, "top": \[/.test(doc) &&
+      /read from what the server already keeps and never applied/.test(doc.replace(/\s+/g, " ")) &&
+      /a local notification on Sunday at 19:00 Sydney time, whatever zone the phone is set to, that opens `xtnl:\/\/app\/week`/.test(doc.replace(/\s+/g, " ")) &&
+      /No push, no\s+endpoint\./.test(doc)
+  );
+  check(
+    "/check's auditOn (D37) is in the doc: the switch alone, never a read, what the phone's reminder follows; within the hour after 19:00 without exact alarms",
+    /"auditOn": true,/.test(doc) &&
+      /`auditOn`: the weekly audit is switched on \(`AUDIT_LAUNCH_DAY` in force: false until the user's go\)\. It is the switch alone, never a read/.test(doc.replace(/\s+/g, " ")) &&
+      /armed while the server's last `\/check` said `auditOn`/.test(doc.replace(/\s+/g, " ")) &&
+      /otherwise Android sends it within the hour after 19:00/.test(doc.replace(/\s+/g, " ")) &&
+      !/armed only while the server sends a `week`/.test(doc.replace(/\s+/g, " "))
+  );
   check("/log's undo may be null (a weigh-in with nothing to take back)", /"undo": \{ "kind": "task" \| "weight" \| "draft", "id": "…" \} \| null/.test(doc) && /`undo` is null for a weigh-in/.test(doc));
 
   section("the package");

@@ -59,7 +59,7 @@ import {
   type LifeMpModel,
 } from "@/lib/life-economy";
 import { keptWeekBonusPercent } from "@/lib/life-tracks";
-import { BREADTH_EXPONENT, DEPTH_FIRST_SHARE, EASE_DEFAULT, MAX_LEVEL, fieldLevel } from "@/lib/xp";
+import { BREADTH_EXPONENT, DEPTH_FIRST_SHARE, EASE_DEFAULT, GRACE_FLOOR_DAYS, MAX_LEVEL, fieldLevel } from "@/lib/xp";
 import { DESIGN_DECAY, DESIGN_RETENTION, FORGET_BAND, stabilityOf } from "@/lib/forgetting";
 import { CHARACTER_EXPONENT, characterLevel } from "@/lib/character";
 import { longDayLabel, mpFigure } from "@/components/home/sheet-math";
@@ -367,8 +367,10 @@ function GroundRules({ momentumOn }: { momentumOn: boolean }) {
           Daily decay = {DESIGN_DECAY.toFixed(3)} / interval; {DECAY_BAND.lo}–{DECAY_BAND.hi} is{" "}
           {band ? `L${band.from}–L${band.to}` : "no level"}. A card&apos;s recall falls as e^(−decay × (interval + days
           past due)), so it is {pct(DESIGN_RETENTION)} on the day it falls due; past its grace it loses a level for every{" "}
-          {f1(FORGET_BAND * 100)}{" "}percentage points of recall below that. The interval is the card&apos;s own (its
-          level&apos;s, times its ease); the levels above are read at ease {EASE_DEFAULT}.
+          {f1(FORGET_BAND * 100)}{" "}percentage points of recall below that. The grace is never under{" "}
+          {GRACE_FLOOR_DAYS} days, so nothing fades or forgets within {GRACE_FLOOR_DAYS * 24} hours of falling due. The
+          interval is the card&apos;s own (its level&apos;s, times its ease); the levels above are read at ease{" "}
+          {EASE_DEFAULT}.
         </li>
         <li>
           Chance is limited to the chest and crits.{" "}

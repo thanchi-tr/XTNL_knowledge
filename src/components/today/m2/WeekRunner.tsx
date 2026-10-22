@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import type { Material } from "@/lib/materials";
 import type { WhatMoved } from "@/lib/celebration-types";
+import { REVIEW_STEPS } from "@/lib/rituals";
 import { FocusMode } from "@/components/shell/FocusMode";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
@@ -25,20 +26,25 @@ import { formatAmount } from "@/components/ui/format";
  * The review covers rituals.ts reviewedWeek(today): Saturday and Sunday the
  * week being finished, Monday to Wednesday the week just ended. Its first
  * step states only what settlement has judged, never a verdict the M5 judge
- * has not written.
+ * has not written. Before Duty's launch day Owed does not run (rituals.ts
+ * reviewPlanOf): the caller passes the steps that do, and the progress
+ * counts only those ("2 of 4"), each keeping its own number.
  */
-export const WEEK_STEPS = ["The week", "Inbox", "Goals", "Owed", "Next week"] as const;
+export const WEEK_STEPS = REVIEW_STEPS.map((s) => s.name);
 
 export function WeekRunner({
   step,
+  steps = REVIEW_STEPS,
   onNext,
   onSkip,
   exitHref = "/today",
   focus = true,
   children,
 }: {
-  /** 1..5 are the steps, 6 is the week card. */
+  /** A step's fixed number (1..5); past the last that runs is the week card. */
   step: number;
+  /** The steps that run, in order (rituals.ts reviewPlanOf); all five by default. */
+  steps?: readonly { n: number; name: string }[];
   onNext: () => void;
   onSkip: () => void;
   exitHref?: string;
@@ -46,8 +52,10 @@ export function WeekRunner({
   focus?: boolean;
   children: ReactNode;
 }) {
-  const segs: Segment[] = WEEK_STEPS.map((_, i) => (i + 1 < step ? "on" : i + 1 === step ? "cur" : "off"));
-  const done = step > WEEK_STEPS.length;
+  const segs: Segment[] = steps.map((s) => (s.n < step ? "on" : s.n === step ? "cur" : "off"));
+  const last = steps.length > 0 ? steps[steps.length - 1].n : 0;
+  const done = step > last;
+  const at = steps.findIndex((s) => s.n === step);
   return (
     <div className="wr">
       {focus && <FocusMode />}
@@ -59,8 +67,8 @@ export function WeekRunner({
         ) : (
           <IconButton icon="x" label="Leave the weekly review; progress is kept" />
         )}
-        <SegmentStrip segs={segs} tall label={done ? "Weekly review done" : `Step ${step} of ${WEEK_STEPS.length}: ${WEEK_STEPS[step - 1]}`} />
-        <span className="t-meta num">{done ? "Done" : `${step} of ${WEEK_STEPS.length}`}</span>
+        <SegmentStrip segs={segs} tall label={done ? "Weekly review done" : `Step ${at + 1} of ${steps.length}: ${steps[at]?.name ?? ""}`} />
+        <span className="t-meta num">{done ? "Done" : `${at + 1} of ${steps.length}`}</span>
       </div>
       <section className="wr-step">{children}</section>
       <div className="wr-spacer" />
@@ -76,7 +84,7 @@ export function WeekRunner({
           </Button>
         ) : (
           <Button variant="primary" size="lg" className="wr-grow" onClick={onNext}>
-            {done ? "Back to Today" : step === WEEK_STEPS.length ? "Finish" : "Next"}
+            {done ? "Back to Today" : step === last ? "Finish" : "Next"}
           </Button>
         )}
       </div>

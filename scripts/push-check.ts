@@ -23,6 +23,8 @@
  *     never reachable from a client file; the env names are in .env.example with no values (where it exists:
  *     it is gitignored) and in the docs;
  *   - wiring: the two routes, package.json (dependency, push:check, ui:check), the docs.
+ *   - the week audit's Sunday reminder (blueprint P12; decision D37) is the Android app's own local notification: no push
+ *     path (the dispatcher, push-server, the service worker, the routes) names the audit, and the app has no FCM;
  *   - the evening momentum nudge (momentum.md §F; lane D): inert before MOMENTUM_LAUNCH_DAY or with none (an explicit
  *     null launch day: nobody is even listed); launched 2026-10-12, so with nothing injected the launch day's 20:30 sends;
  *     only inside [20:00, 22:00) Sydney; only a run of 2+ with nothing kept today; UserPrefs.nudge 'off' respected (its
@@ -707,6 +709,24 @@ function wiring() {
   const docNeeds = ["npx web-push generate-vapid-keys", "NEXT_PUBLIC_VAPID_PUBLIC_KEY", "VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT", "REMINDER_DISPATCH_SECRET", "CRON_SECRET", "cron.schedule", "net.http_post", "Hobby", REMINDER_SECRET_HEADER, "/api/reminders/dispatch"];
   const docMissing = docNeeds.filter((n) => !doc.includes(n));
   check("docs/life-plan/reminders.md: the keys, the env names, and the three schedulers", docMissing.length === 0, docMissing.join(", "));
+
+  // P12 (D37): the week audit's Sunday 19:00 reminder is a local notification on the phone, never a web push or FCM.
+  const pushPaths = ["src/lib/push-server.ts", "src/lib/reminders-server.ts", "public/sw.js", "src/app/api/reminders/dispatch/route.ts", "src/app/api/push/subscribe/route.ts", "src/app/api/push/test/route.ts"];
+  const naming = pushPaths.filter((f) => /audit/i.test(code(read(f))));
+  check("D37: no push path names the week audit (the dispatcher, push-server, the service worker, the routes)", naming.length === 0, naming.join(", "));
+  const gradle = read("android/app/build.gradle");
+  const manifest = read("android/app/src/main/AndroidManifest.xml");
+  const alarm = code(read("android/app/src/main/java/com/xtnl/app/core/AuditAlarm.kt"));
+  check(
+    "D37: the phone keeps its own clock: POST_NOTIFICATIONS and a boot receiver, Sunday 19:00 Australia/Sydney, and no FCM",
+    /android\.permission\.POST_NOTIFICATIONS/.test(manifest) &&
+      /\.notify\.AuditAlarmReceiver"\s+android:exported="false"/.test(manifest) &&
+      /android\.intent\.action\.BOOT_COMPLETED/.test(manifest) &&
+      /ZoneId\.of\("Australia\/Sydney"\)/.test(alarm) &&
+      /DayOfWeek\.SUNDAY/.test(alarm) &&
+      /const val HOUR = 19\b/.test(alarm) &&
+      !/firebase|play-services|\bfcm\b|google-services/i.test(gradle + manifest)
+  );
 }
 
 // ── 9. The evening momentum nudge (momentum.md §F) ────────────────────────

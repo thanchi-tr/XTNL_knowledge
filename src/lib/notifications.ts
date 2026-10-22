@@ -20,6 +20,7 @@ import { loadScheduledBellRows } from "./scheduled-tasks-server";
 import { MOMENTUM_NUDGE, chestRowKey, momentumLive } from "./momentum";
 import { emptyDayFacts, loadNudgeFacts, prismaMomentumStore, questDone, questRowsOf, type MomentumStore } from "./momentum-server";
 import { ideaOutlook } from "./forgetting";
+import { auditReadyNotices } from "./week-audit";
 
 /**
  * From this local hour an open compulsory item turns from a note into a
@@ -449,6 +450,11 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
       reviewDue: review && reviewDue ? review : null,
     })
   );
+
+  // ── The week audit (blueprint P12; week-audit.ts) ────
+  // 'Week audit ready' from Sunday 18:00 through Wednesday: info, listed in the bell and never counted, Today's Ask on
+  // its plan card. No Duty gate and no read; nothing while AUDIT_LAUNCH_DAY is not in force.
+  notices.push(...auditReadyNotices(now, lifeDay));
 
   // ── Work tabs: scheduled tasks that are due ──
   notices.push(...workReminders);

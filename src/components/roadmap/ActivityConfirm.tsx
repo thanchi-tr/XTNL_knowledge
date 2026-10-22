@@ -67,6 +67,7 @@ import { CardKey, InfoTip, type KeyEntry } from "@/components/glyph/InfoTip";
 import { GLYPH_MEANS } from "@/components/glyph/paths/means";
 import { SESSION_KEY, type SessionName } from "@/components/glyph/paths/session";
 import type { DayKey } from "@/lib/life-day";
+import { mustNoteIn, restoredNoticeOf } from "@/lib/daily-quests";
 import type { ActivityCardAnswer, ActivityConfirmView, ActivityRow } from "@/lib/roadmap-types";
 import { ACTIVITY_ANSWER_STALE, ACTIVITY_CARD_NAME, ACTIVITY_NOTHING_TO_AVOID, type CatalogKey } from "@/lib/roadmap-catalog";
 import {
@@ -451,6 +452,13 @@ export function announceActivitySaved(reply: unknown, roadmapId: string, runtime
             notePauseSeen(roadmapId, paused.filter((_, i) => all[i]?.ok).map((p) => ({ templateId: p.templateId, seen: "UNDONE" as const })));
             const failed = all.find((r) => !r.ok);
             if (failed && !failed.ok) pushToast({ title: "Not back on Today", body: failed.error });
+            // Daily quests (D14): a must brought back near or past the cap stays a must, and says how many that day holds.
+            const notes = paused.flatMap((p, i) => {
+              const r = all[i];
+              const note = r?.ok ? mustNoteIn(r.value) : null;
+              return note ? [restoredNoticeOf(p.title, note)] : [];
+            });
+            if (notes.length > 0) pushToast({ title: "Back on Today", body: notes.join(" ") });
           })
           .finally(() => runtime.refresh()),
     },

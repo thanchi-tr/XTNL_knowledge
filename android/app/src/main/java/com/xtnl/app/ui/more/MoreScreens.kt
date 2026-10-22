@@ -1,5 +1,12 @@
 package com.xtnl.app.ui.more
 
+import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -47,17 +54,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.xtnl.app.AppGraph
 import com.xtnl.app.BuildConfig
+import com.xtnl.app.core.AuditAlarm
 import com.xtnl.app.core.ServerAddress
 import com.xtnl.app.data.MotionChoice
 import com.xtnl.app.data.Outcome
 import com.xtnl.app.data.ThemeChoice
+import com.xtnl.app.notify.AuditReminder
 import com.xtnl.app.ui.components.ButtonKind
 import com.xtnl.app.ui.components.CardShape
 import com.xtnl.app.ui.components.Eyebrow
@@ -71,6 +82,7 @@ import com.xtnl.app.ui.theme.X
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Instant
 
 @Composable
 fun MoreScreen(graph: AppGraph, onSettings: () -> Unit, onFullApp: () -> Unit) {
@@ -83,7 +95,7 @@ fun MoreScreen(graph: AppGraph, onSettings: () -> Unit, onFullApp: () -> Unit) {
     ) {
         Text("More", style = MaterialTheme.typography.headlineMedium, color = c.ink0, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
         MoreRow(Glyphs.Globe, "Open full app", "Everything else: Today, Library, Train, You", onFullApp)
-        MoreRow(Glyphs.Settings, "Settings", "Server, token, theme, motion, sound and haptics", onSettings)
+        MoreRow(Glyphs.Settings, "Settings", "Server, token, theme, motion, sound, haptics and notifications", onSettings)
         Spacer(Modifier.height(8.dp))
         XCard(Modifier.fillMaxWidth()) {
             Column {
@@ -253,6 +265,10 @@ fun SettingsScreen(graph: AppGraph, systemStill: Boolean, onBack: () -> Unit) {
             Toggle("Haptics", "A light tap on a tick, a rise on a new idea", prefs.haptics) { graph.settings.setHaptics(it) }
         }
 
+        Section("Notifications") {
+            WeekAuditReminder(graph, prefs.auditReminder, prefs.auditLive)
+        }
+
         Section("Data") {
             Choices(listOf(false to "Server", true to "Demo data"), prefs.demo) { graph.settings.setDemo(it) }
             Spacer(Modifier.height(6.dp))
@@ -262,6 +278,64 @@ fun SettingsScreen(graph: AppGraph, systemStill: Boolean, onBack: () -> Unit) {
                 color = c.ink2, style = MaterialTheme.typography.labelMedium,
             )
         }
+    }
+}
+
+/**
+ * The week audit's Sunday reminder (D37; core/AuditAlarm, notify/AuditReminder): the toggle, and under it whether it
+ * is on, waiting on the audit or on the permission, or when the next one is. Turning it on asks for notifications on
+ * Android 13+; once refused, the button opens Android's own notification settings for the app. Without exact alarms
+ * (Android 14+ until the user allows them) the line says it may come up to an hour after 19:00, and a button opens
+ * Android's Alarms & reminders page for the app; once allowed, the alarm is armed again, exact.
+ */
+@Composable
+private fun WeekAuditReminder(graph: AppGraph, enabled: Boolean, auditLive: Boolean) {
+    val c = X.c
+    val context = LocalContext.current
+    var permitted by remember { mutableStateOf(AuditReminder.permitted(context)) }
+    var exact by remember { mutableStateOf(AuditReminder.exact(context)) }
+    // Back from the prompt or from Android's settings: read both again, and arm the alarm as they now allow.
+    LifecycleResumeEffect(Unit) {
+        permitted = AuditReminder.permitted(context)
+        val nowExact = AuditReminder.exact(context)
+        if (nowExact != exact) graph.auditReminder.sync()
+        exact = nowExact
+        onPauseOrDispose { }
+    }
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        permitted = AuditReminder.permitted(context)
+        graph.auditReminder.sync()
+    }
+    Toggle("Week audit", "Sunday 19:00 Sydney time: the week's audit is ready", enabled) { on ->
+        graph.auditReminder.setEnabled(on)
+        if (on && AuditReminder.needsPermission(context)) ask.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+    Spacer(Modifier.height(6.dp))
+    Text(AuditAlarm.settingsLine(enabled, auditLive, permitted, Instant.now(), exact), color = c.ink2, style = MaterialTheme.typography.labelMedium)
+    if (Build.VERSION.SDK_INT >= 31 && AuditAlarm.offersExact(enabled, auditLive, permitted, exact)) {
+        Spacer(Modifier.height(8.dp))
+        XButton("Alarms & reminders", {
+            try {
+                context.startActivity(
+                    Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:" + context.packageName))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            } catch (_: ActivityNotFoundException) {
+            }
+        }, kind = ButtonKind.QUIET, height = 48.dp)
+    }
+    if (enabled && auditLive && !permitted) {
+        Spacer(Modifier.height(8.dp))
+        XButton("Notification settings", {
+            try {
+                context.startActivity(
+                    Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            } catch (_: ActivityNotFoundException) {
+            }
+        }, kind = ButtonKind.QUIET, height = 48.dp)
     }
 }
 

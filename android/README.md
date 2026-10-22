@@ -6,8 +6,12 @@ Galaxy Z Fold 8: the front display (about 475 × 751 dp) and the main display
 It does three things fast, one-handed on the front display and in two panes on
 the main one:
 
-- **Check** (home): today's board with big ticks, the review card, and the
-  work items that are due, with call and text buttons.
+- **Check** (home): today's board with big ticks, the daily quests (the musts,
+  "Daily quests 3 of 4" with a 1/0 strip), the review card with its "Fading"
+  line (the ideas past their grace, which opens Review), the Week card (the
+  weekly audit, once it is switched on: "86% · 26 of 30 kept", provisional,
+  frozen or final, the 85% target, and "Decaying this week" with its first
+  three lines), and the work items that are due, with call and text buttons.
 - **Log**: a quick line (Task · Weigh-in · Idea) with a live reading of the
   line, and the full **New idea** form in all seven formats.
 - **Review**: a session runner for every card type, with feedback after each
@@ -17,7 +21,7 @@ the main one:
 WebView, for everything else.
 
 The app talks to the server's mobile API, `<server>/api/mobile/v1` (see
-`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.0 (versionCode 2), so
+`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.5 (versionCode 7), so
 it installs over the v1 WebView shell in place.
 
 ## Build
@@ -58,6 +62,11 @@ is set in `gradle.properties` and is `https://xtnl-knowledge-xpis.vercel.app`.
 - the server address rules;
 - the body sent with a new idea;
 - the quick line's reading;
+- the daily quests strip, the Fading line's and the Week card's words
+  (its decay lines too);
+- the Sunday reminder's clock: 19:00 Sydney time whatever zone the phone is
+  in, either side of DST, and its Settings line with and without exact
+  alarms;
 - the shapes of the API's responses.
 
 The screen renders are a separate step, because they are slow. This command
@@ -132,6 +141,28 @@ Settings › API token**.
   Check too, over the last board it read, with a Settings button).
 
 The token is never part of the build and never part of the source.
+
+## The Sunday reminder
+
+Once the server's weekly audit is switched on (its `/check` says `auditOn`,
+from the launch day, before the first week is shown), the app reminds you on
+**Sunday at 19:00 Sydney time** that the week's audit is ready. Tapping it
+opens the audit (`xtnl://app/week`, the web's `/today/week`).
+
+- It is the phone's own notification: an alarm set by the app, with no server
+  push. The time is always Sydney's, even when the phone is set to another
+  zone, and daylight saving never moves it.
+- **More › Settings › Notifications › Week audit** turns it on or off (on by
+  default). On Android 13 and later the app asks once for permission to show
+  notifications, when the audit first goes live; Settings can ask again, or
+  opens Android's notification settings for the app once it was refused.
+- It is armed again after a reboot or an update. Demo data never arms it, and
+  switching to another server or to demo data disarms it until that source's
+  first check. A failed audit read on the server never turns it off.
+- It comes at 19:00 exactly when Android lets the app set exact alarms
+  (**Alarms & reminders**; on Android 14 and later you allow it yourself:
+  Settings › Notifications offers the page). Otherwise Android delivers it
+  within the hour after 19:00, and Settings says so.
 
 ## Demo data
 

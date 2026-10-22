@@ -170,9 +170,10 @@ export function HabitCard({ card, year, today }: { card: HabitYearCard; year: nu
             {card.mvv ? ` · minimum: ${card.mvv}` : ""}
           </p>
         </div>
-        <p className="hh-pct" aria-hidden="true">
-          {card.percent == null ? "–" : `${card.percent}%`}
-        </p>
+        <div className="hh-score" aria-hidden="true">
+          <p className="hh-pct">{card.percent == null ? "–" : `${card.percent}%`}</p>
+          {card.atMinimum && <p className="hh-min">{card.atMinimum}</p>}
+        </div>
       </header>
       <p id={sumId} className="sr-only">
         {card.summary}

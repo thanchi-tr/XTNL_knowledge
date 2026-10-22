@@ -343,6 +343,10 @@ class ScreensTest {
         links.value = Uri.parse("xtnl://app/settings")
         settle()
         snap("$name-7-settings")
+        // P12 (D37): Settings › Notifications, the week audit's Sunday reminder.
+        rule.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("Demo data: a made-up day", substring = true))
+        settle(800)
+        snap("$name-7b-settings-notifications")
     }
 
     /** Lets the demo's delays, the cache's IO thread and recomposition all run. */

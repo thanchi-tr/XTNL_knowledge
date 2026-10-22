@@ -36,6 +36,7 @@
 import { addDays, dayEndOf, dayKeyOf, weekdayOf, zonedToInstant, LIFE_TZ, type DayKey } from "./life-day";
 import { isFixedSchedule, occurrencesBetween, parseRule } from "./recurrence";
 import { UNDO_WINDOW_MINUTES } from "./life-grade";
+import type { MustNote } from "./daily-quests";
 
 // ── Kinds, scopes, reasons ────────────────────────────────────────────────
 
@@ -769,6 +770,8 @@ export interface UndoneDecision {
   templateId: string;
   title: string;
   kind: DecisionKind;
+  /** Daily quests (D14): an abort for good undone brings a must back near or past the cap (tasks.ts unarchiveCore). */
+  mustNote?: MustNote;
 }
 
 /** The toast after a decision (its Undo is the action): "Deferred · Call the bank · back Tue 09:00". */

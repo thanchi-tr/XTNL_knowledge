@@ -42,8 +42,9 @@ import {
 } from "../../lib/duty-view";
 import { FULL_DAY_MP } from "../../lib/full-day";
 import { mustCountOf, type DeferredItem } from "../../lib/task-decisions";
+import type { DailyQuests } from "../../lib/daily-quests";
 import { RECORD_YESTERDAY_EVENT, RECORD_YESTERDAY_HREF, RECORD_YESTERDAY_PARAM } from "../../lib/shortcuts";
-import { OWED_NOTICE_ID, WEEK_REVIEW_NOTICE_ID, YESTERDAY_MUSTS_NOTICE_ID } from "../shell/shell-types";
+import { OWED_NOTICE_ID, WEEK_AUDIT_NOTICE_ID, WEEK_REVIEW_NOTICE_ID, YESTERDAY_MUSTS_NOTICE_ID } from "../shell/shell-types";
 import {
   UNDO_WINDOW_MS,
   asksToday,
@@ -486,18 +487,24 @@ export const DUTY_FEED_IDS: ReadonlySet<string> = new Set([OWED_NOTICE_ID, YESTE
 /** The weekly review's feed notice (F14), shown on Today as an Ask while its window is open. */
 export const WEEK_REVIEW_NOTICE = WEEK_REVIEW_NOTICE_ID;
 export const WEEK_REVIEW_HREF = "/today/week?view=run";
+/**
+ * "Week audit ready" (blueprint P12), shown on Today as an Ask from Sunday 18:00 through Wednesday: the week's audit
+ * card on /today/week. It names the week only (the target stays on the audit: D17).
+ */
+export const WEEK_AUDIT_NOTICE = WEEK_AUDIT_NOTICE_ID;
+export const WEEK_AUDIT_HREF = "/today/week";
 /** Asks shown before 'n more' (F12: two at most). */
 export const ASKS_VISIBLE = 2;
 
 /**
- * Which section an Ask belongs to (the three sections: Ideas, Tasks, Body). Recording yesterday and the weekly
- * review are the Tasks section's own, so Today shows them as a badge on its plan card (never a card of their own);
+ * Which section an Ask belongs to (the three sections: Ideas, Tasks, Body). Recording yesterday, the weekly review
+ * and the week audit are the Tasks section's own, so Today shows them as a badge on its plan card (never a card of their own);
  * cards past grace, the ideas owed and a penalty are about reviewing, so they belong to Ideas: Today never shows
  * them (the bell still carries every one, and Today's 'due elsewhere' strip counts the due cards).
  */
 export type AskHost = "tasks" | "ideas";
 export function askHostOf(ask: Pick<TodayAsk, "id">): AskHost {
-  return ask.id === "yesterday" || ask.id === WEEK_REVIEW_NOTICE ? "tasks" : "ideas";
+  return ask.id === "yesterday" || ask.id === WEEK_REVIEW_NOTICE || ask.id === WEEK_AUDIT_NOTICE ? "tasks" : "ideas";
 }
 
 /** The Asks on screen: two at most, then 'n more' until expanded. */
@@ -536,6 +543,11 @@ export function todayAsksOf(input: { yesterdayOpen: number; recordBy: string; no
     // The weekly review (M2, F14): its own Ask while its window is open.
     if (n.id === WEEK_REVIEW_NOTICE) {
       out.push({ id: n.id, title: n.title, detail: n.detail, action: n.action ?? "Start", href: n.href ?? WEEK_REVIEW_HREF, tone: "ask" });
+      continue;
+    }
+    // The week audit (P12): its own Ask from Sunday 18:00 through Wednesday, with or without Duty.
+    if (n.id === WEEK_AUDIT_NOTICE) {
+      out.push({ id: n.id, title: n.title, detail: n.detail, action: n.action ?? "Open", href: n.href ?? WEEK_AUDIT_HREF, tone: "ask" });
       continue;
     }
     const penalty = n.group === "Active effects" && n.tone === "bad";
@@ -985,6 +997,12 @@ export function mustLaneOf(p: {
    * Each is counted and not kept: "1 of 2 kept · 1 deferred". Absent: none.
    */
   deferred?: readonly Pick<DeferredItem, "must" | "held" | "kind">[];
+  /**
+   * Daily quests (lib/daily-quests.ts dailyQuestsOf, decision D15): quiet chips for the quests kept at the minimum
+   * ("1 at minimum": each still counts as kept) and for a day already over the cap ("1 over the cap": it keeps its
+   * musts; 'Not a must' is in the drawer). Absent: no chip (a work tab).
+   */
+  daily?: Pick<DailyQuests, "minimum" | "over">;
 }): MustLaneView {
   const hidden = (p.deferred ?? []).filter((i) => i.must);
   if (hidden.length > 0) {
@@ -1003,6 +1021,8 @@ export function mustLaneOf(p: {
     });
   }
   if (!p.live && p.launchDay && p.launchDay > p.today) chips.push({ tone: "held", icon: "clock", text: `Musts carry stakes from ${dayLabel(p.launchDay)}` });
+  if (p.daily && p.daily.minimum > 0) chips.push({ tone: "quiet", text: `${p.daily.minimum} at minimum` });
+  if (p.daily && p.daily.over > 0) chips.push({ tone: "quiet", text: `${p.daily.over} over the cap` });
   // Held musts are not asked today: with only those left, no '0 of 0' under the held chip.
   const allHeld = tally.total === 0 && p.must.some((r) => r.heldToday);
   return {

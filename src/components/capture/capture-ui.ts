@@ -1040,10 +1040,13 @@ export const FILING_WHERE = "filing now. If it looks like one you have, it waits
  * server's: where.label from placeOf, the price the server projected or
  * the tick paid. `notMust`: a Must with no day saved as an ordinary task.
  * `update`: the line replaced one saved moments ago. `offToday`: a 'View'
- * link to the row on Today.
+ * link to the row on Today. The server's `mustNote` (daily quests, D14): a
+ * sixth must saved as an ordinary task reads 'Added (not a Must)' with the
+ * cap's line; the 4th or 5th adds the warning ('4 of 5 daily quests').
  */
 export function toastCopy(
-  item: Pick<CapturedItem, "id" | "title" | "projectedXp" | "kind" | "doneNow" | "doneNowError" | "duplicate" | "href" | "where" | "filing" | "oldKept" | "weight"> & Partial<Pick<CapturedItem, "board">>,
+  item: Pick<CapturedItem, "id" | "title" | "projectedXp" | "kind" | "doneNow" | "doneNowError" | "duplicate" | "href" | "where" | "filing" | "oldKept" | "weight"> &
+    Partial<Pick<CapturedItem, "board" | "mustNote">>,
   ctx: { notMust?: boolean; update?: boolean; offToday?: boolean } = {}
 ): ToastCopy {
   // A weigh-in is a record, not a task: its own copy, no figure, View goes to Train (weight-capture.ts).
@@ -1058,6 +1061,7 @@ export function toastCopy(
   let figure: ToastCopy["figure"] = null;
   let tail: string | null = null;
   let link: ToastCopy["link"] = view;
+  const cap = item.mustNote ?? null;
 
   if (ctx.update && item.oldKept) {
     head = "Saved the new line";
@@ -1070,6 +1074,7 @@ export function toastCopy(
     // An edited done-now line: what its tick paid, or why it was not ticked.
     if (item.doneNow && priced) figure = { text: `+${formatXp(item.projectedXp)}`, exact: true };
     else if (item.doneNowError) tail = item.doneNowError;
+    if (!tail && cap) tail = cap.line;
   } else if (item.duplicate) {
     head = "Already saved";
     // A resend of another day's done-now line is not ticked today: the server says why ('Saved on Wed 30 Sep; tick it on Today.').
@@ -1089,13 +1094,15 @@ export function toastCopy(
     head = "Done";
     to = null;
     if (priced) figure = { text: `+${formatXp(item.projectedXp)}`, exact: true };
+    if (cap) tail = cap.line;
   } else if (item.doneNowError) {
     head = "Saved, not ticked";
     tail = item.doneNowError;
   } else {
-    head = ctx.notMust ? "Added (not a Must)" : "Added";
+    head = ctx.notMust || cap?.capped ? "Added (not a Must)" : "Added";
     if (priced) figure = { text: `≈ ${formatXp(item.projectedXp)}`, exact: false };
     if (ctx.notMust) tail = NOT_MUST_TAIL;
+    else if (cap) tail = cap.line;
   }
 
   const parts: string[] = [];

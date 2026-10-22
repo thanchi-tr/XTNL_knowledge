@@ -7,9 +7,10 @@
  *   Duty phase     DutyPhase · dutyPhaseOf(today, launchDay) · stakesFromLine(launchDay)
  *                  preLaunchNotice(today, launchDay) · dutySettledLine(cursor, today) · owedFromLine(day)
  *   Weekly review  ReviewedWeek · reviewedWeek(today) · weekReviewOffered(today, live, marked)
- *                  reviewEndOf(week, judged) · reviewPendingText(week) · weekReviewProgressKey(weekKey)
- *                  parseReviewStep(raw) · REVIEW_LAST_STEP · nextWeekDays(week, today, launchDay)
- *                  restRefusalOf(day, declared)
+ *                  reviewEndOf(week, judged) · reviewPendingText(week) · REVIEW_BEFORE_LIFE_TEXT
+ *                  weekReviewProgressKey(weekKey) · parseReviewStep(raw) · REVIEW_LAST_STEP
+ *                  ReviewStep · REVIEW_STEPS · ReviewPlan · reviewPlanOf(dutyLive) · reviewStepIn(plan, step)
+ *                  nextWeekDays(week, today, launchDay) · restRefusalOf(day, declared)
  *   Week facts     WeekFactsInput · WeekFacts · MustTally · weekFactsOf(input) · mustTallyLine(t)
  *                  dutyXpLine(facts) · DutyStandingInput · dutyStandingOf(stats)
  *   Reflection     REFLECTION_NOTE_MAX · MOOD_MIN · MOOD_MAX · isMood(x) · normaliseReflectionNote(note)
@@ -24,6 +25,9 @@
  * rules on it Wednesday 04:00), and on Thursday and Friday there is none.
  * Its facts are only ever what settlement has judged ('settled through
  * Fri'); it never states a verdict for a week the judge has not written.
+ * It runs without Duty (blueprint decision D13, reviewPlanOf): before
+ * DUTY_LAUNCH_DAY its Duty parts (Owed, the settled facts, rest days) are
+ * hidden and the rest runs.
  */
 import { DAY_START_HOUR, addDays, weekKeyOf, weekStartKeyOf, weekdayOf, type DayKey } from "./life-day";
 import {
@@ -144,7 +148,11 @@ export function reviewedWeek(today: DayKey): ReviewedWeek | null {
   return { weekKey: weekKeyOf(monday), monday, sunday, judgeDay: judgeDayOf(sunday) };
 }
 
-/** The runner and its Ask are offered while Duty is live, the window is open and the week has no marker. */
+/**
+ * The bell's row and Today's Ask (dutyNoticesOf) offer the review while Duty
+ * is live, the window is open and the week has no marker. The run itself
+ * opens from /today/week in the window with or without Duty (decision D13).
+ */
 export function weekReviewOffered(today: DayKey, live: boolean, marked: boolean): boolean {
   return live && !marked && reviewedWeek(today) !== null;
 }
@@ -163,8 +171,56 @@ export function reviewEndOf(week: ReviewedWeek, judged: boolean): { kind: "card"
   return judged ? { kind: "card" } : { kind: "pending", text: reviewPendingText(week) };
 }
 
+/** The run's end before life counts: no week is judged yet, so it promises no card. */
+export const REVIEW_BEFORE_LIFE_TEXT = "Weeks are judged once life counts";
+
 /** Steps 1–5, then 6: the end. */
 export const REVIEW_LAST_STEP = 6;
+
+/** One step of the run. Its number is fixed: the runner's step, and what weekReviewProgressKey stores. */
+export interface ReviewStep {
+  n: number;
+  name: string;
+  /** Duty's alone: hidden until DUTY_LAUNCH_DAY. */
+  duty: boolean;
+}
+
+/** Steps 1–5 in order; the end (REVIEW_LAST_STEP) always runs. */
+export const REVIEW_STEPS: readonly ReviewStep[] = [
+  { n: 1, name: "The week", duty: false },
+  { n: 2, name: "Inbox", duty: false },
+  { n: 3, name: "Goals", duty: false },
+  { n: 4, name: "Owed", duty: true },
+  { n: 5, name: "Next week", duty: false },
+];
+
+/** What the run holds. */
+export interface ReviewPlan {
+  /** The steps that run, in order, each with its fixed number. */
+  steps: readonly ReviewStep[];
+  /** Step 1 states the week as far as settlement has judged it (musts, days, Duty XP). */
+  settledFacts: boolean;
+  /** Step 5 offers rest for next week's days (declareRest is Duty's). */
+  restDays: boolean;
+}
+
+/**
+ * The run with or without Duty (decision D13). Before the launch day the
+ * week, the inbox to zero, the goals check-in and next week's capacity run;
+ * Owed, step 1's settled facts (nothing is settled before Duty) and next
+ * week's rest days stay hidden. The numbers never shift, so a stored step
+ * means the same step either way.
+ */
+export function reviewPlanOf(dutyLive: boolean): ReviewPlan {
+  return { steps: REVIEW_STEPS.filter((s) => dutyLive || !s.duty), settledFacts: dutyLive, restDays: dutyLive };
+}
+
+/** The step to show for a stored or chosen one: clamped to 1..REVIEW_LAST_STEP, and a step the plan hides moves on to the next that runs. */
+export function reviewStepIn(plan: ReviewPlan, step: number): number {
+  let s = Math.min(REVIEW_LAST_STEP, Math.max(1, Number.isInteger(step) ? step : 1));
+  while (s < REVIEW_LAST_STEP && !plan.steps.some((x) => x.n === s)) s += 1;
+  return s;
+}
 
 /** Per-viewer progress (localStorage; every access in try/catch by the caller). */
 export function weekReviewProgressKey(weekKey: string): string {

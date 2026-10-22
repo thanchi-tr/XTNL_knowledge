@@ -14,6 +14,7 @@ import {
   riseLine,
   riseStep,
   scheduledIntervalDays,
+  GRACE_FLOOR_DAYS,
   MAX_LEVEL,
   MASTERY_BONUS,
   MASTERY_LEVEL,
@@ -114,12 +115,32 @@ export function missStateData(s: MissState): { ease: number; cycleMissed: boolea
  * What a miss is (pure): "retry" when the card already lapsed this life day (a re-attempt: nothing changes), else
  * "lapse" — the day's one miss: the ease tightens (xp.ts easeAfterLapse), the cycle is marked missed, the day is
  * recorded, and failedAttempts (lapsed cycles in a row) goes up by one; "degrade" when that reaches the limit or the
- * card is past its grace.
+ * card is past its grace (missGraceEndOf: the 72 h floor of D23 holds here too).
  */
-export function missKindOf(idea: Pick<Idea, "lapseDay" | "failedAttempts" | "graceEndsAt">, now: Date, strikeLimit: number): "retry" | "lapse" | "degrade" {
+export function missKindOf(
+  idea: Pick<Idea, "lapseDay" | "failedAttempts" | "graceEndsAt" | "dueDate" | "cycleMissed">,
+  now: Date,
+  strikeLimit: number
+): "retry" | "lapse" | "degrade" {
   if (idea.lapseDay && keyOfDateColumn(idea.lapseDay) === todayKey(now)) return "retry";
-  const pastGrace = idea.graceEndsAt !== null && now > idea.graceEndsAt;
+  const graceEnd = missGraceEndOf(idea);
+  const pastGrace = graceEnd !== null && now > graceEnd;
   return idea.failedAttempts + 1 >= strikeLimit || pastGrace ? "degrade" : "lapse";
+}
+
+/**
+ * The grace end a miss is judged against (D23, the 72 h floor; xp.ts GRACE_FLOOR_DAYS): the stored column, but never
+ * before GRACE_FLOOR_DAYS past the due date while the cycle has not lapsed (cycleMissed false: its due date and grace
+ * end were written together, by passPlanOf). Every row written before the floor shipped keeps its shorter L1–L3 grace
+ * end (due + level − 1 days) until its next pass or degrade rewrites it; this reads it at the floor meanwhile, as the
+ * nightly pass and ideaOutlook already do, so a wrong answer within 72 h of falling due never takes a level. A row
+ * written since is at or past the floor already (unchanged), as is every L4+ row. A lapsed cycle (a strike or a ward
+ * moved its due date to tomorrow and kept the cycle's grace end) reads the column as it stands.
+ */
+export function missGraceEndOf(idea: Pick<Idea, "graceEndsAt" | "dueDate" | "cycleMissed">): Date | null {
+  if (idea.graceEndsAt === null || idea.cycleMissed) return idea.graceEndsAt;
+  const floor = addDays(idea.dueDate, GRACE_FLOOR_DAYS);
+  return floor.getTime() > idea.graceEndsAt.getTime() ? floor : idea.graceEndsAt;
 }
 
 /** The columns the day's lapse writes, whatever else happens to the card (a strike, a degrade, a ward). */

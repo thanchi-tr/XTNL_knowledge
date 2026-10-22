@@ -18,6 +18,11 @@
  *   end            the week card (its Tier 2 Seal) only when the judge has
  *                  written the reviewed week; otherwise when that happens
  *
+ * Before Duty's launch day it runs four (blueprint decision D13, rituals.ts
+ * reviewPlanOf): Owed is skipped, step 1 has no settled facts and step 5
+ * no rest days. Each step keeps its number, so the stored step means the
+ * same step either way; a stored step the plan hides moves on to the next.
+ *
  * Finishing (or skipping the last step) writes the done marker once
  * (markWeekReviewed). Progress survives an exit: the step is kept per
  * viewer in localStorage under weekReviewProgressKey, every access in
@@ -33,8 +38,9 @@ import { useRouter } from "next/navigation";
 import type { RestKind } from "@/lib/duty-economy";
 import { makeUpCopy, type OwedCard } from "@/lib/duty-view";
 import { addDays, type DayKey } from "@/lib/life-day";
-import { DAY_EDGE, REVIEW_LAST_STEP, formatDebt, parseReviewStep, weekReviewProgressKey, weekdayShort } from "@/lib/rituals";
+import { DAY_EDGE, REVIEW_LAST_STEP, formatDebt, parseReviewStep, reviewPlanOf, reviewStepIn, weekReviewProgressKey, weekdayShort } from "@/lib/rituals";
 import { buildBoard, type BoardData, type InboxChoice } from "@/lib/today-board";
+import { mustNoticeOf, restoredNoticeOf } from "@/lib/daily-quests";
 import { announce } from "@/lib/celebrate";
 import { acceptLoss, cancelRest, declareRest, doMinimum, makeUp, undoMakeUp, type MakeUpResult } from "@/app/actions/duty";
 import { markWeekReviewed } from "@/app/actions/rituals";
@@ -86,6 +92,8 @@ export interface WeekReviewProps {
   data: BoardData;
   /** Life counts (isLaunched): goals can be closed. */
   launched: boolean;
+  /** Duty is live (isDutyLaunched): its parts run (Owed, rest days). */
+  dutyLive: boolean;
   /** Step 1, rendered on the server. */
   stepOne: ReactNode;
   rest: RestDayOption[];
@@ -154,8 +162,9 @@ interface Resolved {
 }
 
 export function WeekReview(props: WeekReviewProps) {
-  const { weekKey, today, data } = props;
+  const { weekKey, today, data, dutyLive } = props;
   const router = useRouter();
+  const plan = useMemo(() => reviewPlanOf(dutyLive), [dutyLive]);
   const progressKey = weekReviewProgressKey(weekKey);
   const stored = useSyncExternalStore(
     subscribeStorage,
@@ -163,7 +172,7 @@ export function WeekReview(props: WeekReviewProps) {
     () => null
   );
   const [chosen, setChosen] = useState<number | null>(null);
-  const step = chosen ?? stored ?? 1;
+  const step = reviewStepIn(plan, chosen ?? stored ?? 1);
   const [marked, setMarked] = useState(props.marked);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -174,7 +183,8 @@ export function WeekReview(props: WeekReviewProps) {
 
   const go = useCallback(
     (next: number) => {
-      const s = Math.min(REVIEW_LAST_STEP, Math.max(1, next));
+      // Clamped, and past a step the plan hides (Owed before Duty).
+      const s = reviewStepIn(plan, next);
       setChosen(s);
       setError(null);
       setNotice(null);
@@ -194,7 +204,7 @@ export function WeekReview(props: WeekReviewProps) {
         );
       }
     },
-    [progressKey, marked]
+    [plan, progressKey, marked]
   );
 
   /** Runs one write; a refusal or a lost connection is said once, in the step. */
@@ -229,6 +239,8 @@ export function WeekReview(props: WeekReviewProps) {
       () => clarifyInbox(templateId, choice, parentId ?? null, REFRESH),
       (v) => {
         if (choice === "drop") setDropped({ id: templateId, title, opId: `${templateId}:${Date.now()}` });
+        // Daily quests (D14): a must that left the inbox past the cap is an ordinary task now, near it a warning; as on Today.
+        if (v.mustNote) setNotice(mustNoticeOf(title, v.mustNote));
         if (v.href) router.push(v.href);
       }
     );
@@ -238,7 +250,13 @@ export function WeekReview(props: WeekReviewProps) {
     const d = dropped;
     if (!d) return;
     setDropped(null);
-    act(() => unarchiveTask(d.id, REFRESH));
+    // A must brought back near or past the cap stays a must, and says so (D14).
+    act(
+      () => unarchiveTask(d.id, REFRESH),
+      (v) => {
+        if (v.mustNote) setNotice(restoredNoticeOf(d.title, v.mustNote));
+      }
+    );
   }
 
   // ── Step 3: goals ─────────────────────────────────────────────────────────
@@ -479,8 +497,12 @@ export function WeekReview(props: WeekReviewProps) {
       <>
         <p className="t-eyebrow">{WEEK_STEPS[4]}</p>
         <h1>Plan the shape of the week.</h1>
-        <p className="t-meta">A rest day is declared before it starts. It owes nothing and holds every streak.</p>
-        {props.rest.length > 0 ? (
+        <p className="t-meta">
+          {plan.restDays
+            ? "A rest day is declared before it starts. It owes nothing and holds every streak."
+            : "Set the minutes a day you plan for. Once set, Today says when a day's plan runs over."}
+        </p>
+        {!plan.restDays ? null : props.rest.length > 0 ? (
           <div className="card y-list" style={{ padding: "0 14px" }}>
             {props.rest.map((o) => (
               <div key={o.day} className="y-row">
@@ -549,7 +571,7 @@ export function WeekReview(props: WeekReviewProps) {
 
   return (
     <>
-      <WeekRunner step={step} onNext={() => go(step + 1)} onSkip={() => go(step + 1)} exitHref="/today">
+      <WeekRunner step={step} steps={plan.steps} onNext={() => go(step + 1)} onSkip={() => go(step + 1)} exitHref="/today">
         {body}
       </WeekRunner>
 

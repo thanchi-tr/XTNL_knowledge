@@ -45,6 +45,15 @@
  *   VERCEL_ENV rule): never by DUTY_LAUNCH_DAY or the settlement cursor, so it runs while Duty
  *   is inert. It never fails its caller, and the cron's status stays what settle and the judge set.
  *
+ * Added by blueprint P11 (the weekly audit; docs/life-plan/blueprint-plan-2026-10-22.md; compatible):
+ *   AuditStepReport · runAuditStep(userId, now, ctx)   the life cron's fourth step: just after the
+ *                               Monday 04:00 turn, the week just ended is frozen once (week-audit-server
+ *                               freezeWeekAudit: 'audit:<YYYY-Www>', sink NONE, xp 0). Inert while
+ *                               AUDIT_LAUNCH_DAY is not in force; gated by settlementWritesEnabled, never
+ *                               by Duty. Its report is the cron JSON's `audit`; it never fails the cron.
+ *   LifeCronDeps.audit          the checks' injected freeze
+ *   SettleEnv gains XTNL_AUDIT_LAUNCH_DAY (week-audit.ts AuditEnv)
+ *
  * Shared-database safety (decision 2): dev and prod share one Supabase
  * database, so nothing here writes unless settlementWritesEnabled()
  * (production, or XTNL_LIFE_JUDGE=1 on the rehearsal server; never a Vercel
@@ -108,6 +117,8 @@ import {
 } from "./settlement-plan";
 import type { ActivityInput, ActivitySource, AutoMetric, InstanceSource, InstanceStatus, Receipt, Sink, TaskKind, Track } from "./life-types";
 import { recordRoadmapReadings, type ReadingsCaller } from "./roadmap-readings";
+import { auditLaunchDay, isAuditLaunched, type AuditEnv } from "./week-audit";
+import { freezeWeekAudit, type AuditFreezeRun } from "./week-audit-server";
 import { finalizeQuestWeeks, freezeWeekQuests } from "./roadmap-quests-server";
 import { roadmapStepErrorsOf, type QuestFinalizeRun, type QuestFreezeRun, type ReadingsRun, type RoadmapStepReport, type RoadmapWriteOpts, type WeekQuestSource } from "./roadmap-types";
 
@@ -116,7 +127,7 @@ import { roadmapStepErrorsOf, type QuestFinalizeRun, type QuestFreezeRun, type R
  * VERCEL_ENV: a Vercel Preview or development deployment ('preview', 'development') never settles,
  * even with NODE_ENV production, because it shares the live database (settlementWritesEnabled).
  */
-export type SettleEnv = LifeEnv & DutyEnv & { CRON_SECRET?: string; VERCEL_ENV?: string };
+export type SettleEnv = LifeEnv & DutyEnv & AuditEnv & { CRON_SECRET?: string; VERCEL_ENV?: string };
 
 /** The Prisma surface settlement uses: the real client, or the checks' recording stub. */
 export type SettlementClient = Pick<
@@ -169,6 +180,7 @@ function processEnv(): SettleEnv {
     XTNL_LIFE_LAUNCH_DAY: process.env.XTNL_LIFE_LAUNCH_DAY,
     XTNL_LIFE_JUDGE: process.env.XTNL_LIFE_JUDGE,
     XTNL_DUTY_LAUNCH_DAY: process.env.XTNL_DUTY_LAUNCH_DAY,
+    XTNL_AUDIT_LAUNCH_DAY: process.env.XTNL_AUDIT_LAUNCH_DAY,
     CRON_SECRET: process.env.CRON_SECRET,
     VERCEL_ENV: process.env.VERCEL_ENV,
   };
@@ -1068,6 +1080,31 @@ export async function recordRoadmapAfterDegrade(
   }
 }
 
+/** The cron's audit step: the week it froze (or found frozen), why it froze none, or the error it caught. */
+export type AuditStepReport = Omit<AuditFreezeRun, "skipped"> & { skipped: AuditFreezeRun["skipped"] | "WRITES_OFF"; error?: string };
+
+/**
+ * The life cron's audit step (blueprint P11, decision D12): just after the Monday 04:00 turn the week just
+ * ended is frozen once (week-audit-server freezeWeekAudit). Inert while AUDIT_LAUNCH_DAY is not in force
+ * (NOT_LAUNCHED, nothing read); WRITES_OFF unless settlementWritesEnabled (never on dev or a Preview), and
+ * never waits on Duty. Never throws: a failure is logged and reported as `error`, and the cron's status
+ * stays what settle and the judge set (the audit pays and judges nothing).
+ */
+export async function runAuditStep(
+  userId: string,
+  now: Date,
+  ctx: { env: SettleEnv; freeze?: (userId: string, now: Date, opts: { env?: AuditEnv }) => Promise<AuditFreezeRun> }
+): Promise<AuditStepReport> {
+  if (!isAuditLaunched(todayKey(now), auditLaunchDay(ctx.env))) return { weekKey: null, froze: false, skipped: "NOT_LAUNCHED" };
+  if (!settlementWritesEnabled(ctx.env)) return { weekKey: null, froze: false, skipped: "WRITES_OFF" };
+  try {
+    return await (ctx.freeze ?? freezeWeekAudit)(userId, now, { env: ctx.env });
+  } catch (err) {
+    console.error("[audit] the week's freeze failed", err);
+    return { weekKey: null, froze: false, skipped: null, error: errorText(err) };
+  }
+}
+
 /** In-flight maintenance runs, one per user: two renders at once share one chain. */
 const maintaining = new Map<string, Promise<void>>();
 
@@ -1174,6 +1211,8 @@ export interface LifeCronDeps {
   launchFinished?: (userId: string, lifeLaunchDay: DayKey) => Promise<boolean>;
   /** Roadmap lane G: the roadmap step's writers (runRoadmapStep); each defaults to the real one. */
   roadmap?: RoadmapStepDeps;
+  /** Blueprint P11: the audit step's freeze (runAuditStep); defaults to week-audit-server freezeWeekAudit. */
+  audit?: (userId: string, now: Date, opts: { env?: AuditEnv }) => Promise<AuditFreezeRun>;
 }
 
 /**
@@ -1210,6 +1249,10 @@ export async function lifeLaunchFinished(
  * readings are recorded, then settled weeks are finalised. Its report is the
  * JSON's roadmap; a roadmap failure is logged and reported there, and the
  * status stays what settle and the judge set (200 when they passed).
+ *
+ * Last, the audit step (blueprint P11, runAuditStep): on the Monday after an
+ * audited week (or the Tuesday, if Monday's run missed it) the week is frozen
+ * once. Its report is the JSON's audit; it never changes the status.
  */
 export async function runLifeCron(request: Request, deps: LifeCronDeps = {}): Promise<Response> {
   const env = deps.env ?? processEnv();
@@ -1250,7 +1293,9 @@ export async function runLifeCron(request: Request, deps: LifeCronDeps = {}): Pr
     console.error("[cron/life] roadmap step failed", err);
     roadmap = { error: errorText(err) };
   }
-  return Response.json({ settle, judge, roadmap }, { status: failed ? 500 : 200 });
+  // runAuditStep never throws either; the audit pays and judges nothing, so it never moves the status.
+  const audit = await runAuditStep(userId, now, { env, freeze: deps.audit });
+  return Response.json({ settle, judge, roadmap, audit }, { status: failed ? 500 : 200 });
 }
 
 // ── The launch and rehearsal scripts' database guard (pure) ──────────────

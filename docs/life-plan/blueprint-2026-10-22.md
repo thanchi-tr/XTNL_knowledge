@@ -40,4 +40,14 @@ $$\text{XP}_{\text{required}}(L) = \text{Base} \times L^{1.5}$$
 
 ## Decisions
 
-(To be filled in as the user decides each conflict with the existing app.)
+Recorded as the user decides each conflict with the existing app. Decision ids (D…) refer to docs/life-plan/blueprint-plan-2026-10-22.md section 3.
+
+**2026-10-22: stage order.** The user moved Stage 2 (low-friction logging) below Stage 5. The order is now 0 → 1 → 3 → 4 → 5 → 2 → 6 → 7 → 8 → 9. Stages 3 and 4 were cleared to proceed first (they depend only on Stage 0).
+
+**2026-10-22: decisions for Stages 3 and 4.**
+- **D14 Daily Quests.** The user's Musts, hard cap 5, with a warning from 4. Today's three and the chest are unchanged.
+- **D15 Binary.** Done or not done is a status only; XP stays graded. The minimum version counts as done everywhere (strip, audit, habit year view), shown as "n at minimum".
+- **D12 / D16 / D17 / D38 / D37 Weekly audit.** Provisional on Sunday, frozen "as of" Monday 04:00, final on Wednesday. Skips are left out of the rate and shown. The 85% target appears only on the audit, never on Today, in neutral wording. It ships before Duty behind AUDIT_LAUNCH_DAY, which is flipped only on the user's go. A local Android notification fires Sunday 19:00 Sydney.
+- **D11 / D10 Main quests.** The roadmap is the main-quest engine (milestones and a weekly sprint step), and Short/Mid/Long goals stay as key results. ROADMAP_GOALS_LIVE is rehearsed locally first and flipped only on the user's final go.
+- **D13 (default taken, recommended).** The weekly review runs without Duty; Duty-only steps stay hidden.
+- **D23 (default taken, recommended).** The per-card Ebbinghaus model stays, plus the 72 h floor. No flat decay.

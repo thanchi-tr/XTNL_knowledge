@@ -517,9 +517,18 @@ export function cleanRecallsTo(level: number, cleanStreak: number, target: numbe
   return n;
 }
 
-// Grace period T_grace = max(0, Idea.level - 1) days (spec section 5).
+/**
+ * The 72 h floor (blueprint 3.1a, decision D23, 2026-10-22): no card's grace is shorter than this many days past its
+ * due day, so nothing fades or forgets a level within 72 hours of falling due (and so of its last review). Only L1–L3
+ * are held by it (their fading starts later); of their first losses, at ease 1 only L2's moves (from about 1.65 days
+ * past due to 3), and, with no grace extension, an L3's only below about 0.91× ease. From L4 the grace was already
+ * this long or longer, so no card at L4 or above changes (scripts/forgetting-check.ts).
+ */
+export const GRACE_FLOOR_DAYS = 3;
+
+// Grace period T_grace = max(GRACE_FLOOR_DAYS, Idea.level - 1) days (spec section 5, with the 72 h floor of D23).
 export function graceDays(level: number): number {
-  return Math.max(0, level - 1);
+  return Math.max(GRACE_FLOOR_DAYS, level - 1);
 }
 
 /** `extraDays` is the GRACE_EXTENSION skill hook. */

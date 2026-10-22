@@ -43,6 +43,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -93,13 +94,19 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.xtnl.app.core.DailyStrip
+import com.xtnl.app.core.FadingLine
 import com.xtnl.app.core.Fmt
 import com.xtnl.app.core.TickLadder
 import com.xtnl.app.core.TimeLabels
+import com.xtnl.app.core.WeekLine
 import com.xtnl.app.data.CheckData
+import com.xtnl.app.data.DailyQuests
+import com.xtnl.app.data.Fading
 import com.xtnl.app.data.LevelInfo
 import com.xtnl.app.data.ReviewSummary
 import com.xtnl.app.data.TaskItem
+import com.xtnl.app.data.WeekAudit
 import com.xtnl.app.data.WorkItem
 import com.xtnl.app.ui.LocalSnacks
 import com.xtnl.app.ui.LocalWindowLayout
@@ -548,7 +555,8 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
             ) {
                 header(data, ui, vm, spots, onOpenSettings)
                 tasks(ui, rows, motion)
-                review(data.review, data.now, onStartReview)
+                review(data.review, data.fading, data.now, onStartReview)
+                week(data.week)
                 work(ui, data.now, vm, spots, motion)
             }
             else -> TwoPane(
@@ -571,7 +579,8 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
                         contentPadding = PaddingValues(start = 4.dp, end = 20.dp, top = top + 12.dp, bottom = 24.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        review(data.review, data.now, onStartReview)
+                        review(data.review, data.fading, data.now, onStartReview)
+                        week(data.week)
                         work(ui, data.now, vm, spots, motion)
                     }
                 },
@@ -619,6 +628,13 @@ private fun LazyListScope.tasks(ui: CheckViewModel.Ui, rows: Rows, motion: Motio
             }
         }
     }
+    // The daily quests (D14, D15): the musts' header and their 1/0 strip, on both displays (single pane and the Fold's
+    // two panes both list the tasks here).
+    ui.daily?.takeIf { it.total > 0 }?.let { d ->
+        item(key = "daily", contentType = "daily") {
+            DailyQuestsStrip(d, Modifier.animateItem(fadeInSpec = motion.fade(), placementSpec = motion.spr(Spr.glide), fadeOutSpec = motion.fade()))
+        }
+    }
     if (ui.tasks.isEmpty()) {
         item(key = "tasks-empty") { EmptyNote("Board clear", "Nothing on today's board.") }
     }
@@ -638,9 +654,52 @@ private fun LazyListScope.tasks(ui: CheckViewModel.Ui, rows: Rows, motion: Motio
     }
 }
 
-private fun LazyListScope.review(r: ReviewSummary?, now: String?, onStart: () -> Unit) {
+/**
+ * The daily quests (docs/mobile-api.md `daily`; D14, D15): "Daily quests 3 of 4" in the Must colour code, the notes
+ * ("1 at minimum", "1 over the cap"), and a cell per quest: kept fills kept, the minimum a lighter kept (it counts 1),
+ * not yet the control line. Read-only (the rows below are what a tap ticks); named in words as one node for TalkBack.
+ */
+@Composable
+private fun DailyQuestsStrip(d: DailyQuests, modifier: Modifier = Modifier) {
+    val c = X.c
+    val style = MaterialTheme.typography.labelMedium
+    Column(
+        modifier
+            .fillMaxWidth()
+            .padding(start = 4.dp, end = 4.dp, bottom = 4.dp)
+            .semantics(mergeDescendants = true) { contentDescription = DailyStrip.description(d) },
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(c.must))
+            Spacer(Modifier.width(8.dp))
+            Text(DailyStrip.header(d), color = c.ink1, style = style, maxLines = 1)
+            for (note in DailyStrip.notes(d)) Text(" · $note", color = c.ink2, style = style, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            for (q in d.quests) {
+                val fill = when {
+                    q.minimum -> lerp(c.lineCtl, c.kept, 0.55f)
+                    q.kept -> c.kept
+                    else -> c.lineCtl
+                }
+                Box(Modifier.weight(1f, fill = false).widthIn(min = 8.dp, max = 28.dp).fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(fill))
+            }
+        }
+    }
+}
+
+private fun LazyListScope.review(r: ReviewSummary?, fading: Fading?, now: String?, onStart: () -> Unit) {
     item(key = "review", contentType = "review") {
-        ReviewTile(r, now, onStart, Modifier.padding(top = 12.dp))
+        ReviewTile(r, fading, now, onStart, Modifier.padding(top = 12.dp))
+    }
+}
+
+/** The Week card, only while the server sends a week (the audit is switched on by the user's go; D38). */
+private fun LazyListScope.week(w: WeekAudit?) {
+    if (!WeekLine.shows(w) || w == null) return
+    item(key = "week", contentType = "week") {
+        WeekTile(w, Modifier.padding(top = 4.dp))
     }
 }
 
@@ -1134,7 +1193,7 @@ private fun BoardClearBanner(playKey: Int, spots: CheckSpots, modifier: Modifier
 // ── Review tile ─────────────────────────────────────────────────────────────
 
 @Composable
-private fun ReviewTile(r: ReviewSummary?, now: String?, onStart: () -> Unit, modifier: Modifier = Modifier) {
+private fun ReviewTile(r: ReviewSummary?, fading: Fading?, now: String?, onStart: () -> Unit, modifier: Modifier = Modifier) {
     val c = X.c
     val ctx = LocalContext.current
     val due = r?.due ?: 0
@@ -1162,9 +1221,86 @@ private fun ReviewTile(r: ReviewSummary?, now: String?, onStart: () -> Unit, mod
                     Text(listOfNotNull(sub.ifEmpty { null }, next).joinToString(" · "), style = MaterialTheme.typography.labelMedium, color = c.ink2)
                 }
             }
+            if (fading != null && FadingLine.shows(fading)) {
+                Spacer(Modifier.height(12.dp))
+                FadingRow(fading, onStart)
+            }
             if (due > 0) {
                 Spacer(Modifier.height(12.dp))
                 XButton("Start review", onStart, Modifier.fillMaxWidth(), icon = Glyphs.Review)
+            }
+        }
+    }
+}
+
+/**
+ * The "Fading" line (docs/mobile-api.md `fading`; blueprint 3.1a, D23): the ideas past their grace, the web bell's own
+ * count, and how many are losing levels (never cut: it may wrap), then the Domains they sit in, marked in the owed hue
+ * the Library's Fading chip uses. Every fading card is due, so the whole row opens Review; at least 48 dp tall, one
+ * node for TalkBack.
+ */
+@Composable
+private fun FadingRow(f: Fading, onOpen: () -> Unit) {
+    val c = X.c
+    val style = MaterialTheme.typography.labelMedium
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(c.wash(c.owed))
+            .clickable(role = Role.Button, onClickLabel = "Open Review", onClick = onOpen)
+            .semantics(mergeDescendants = true) { contentDescription = FadingLine.description(f) }
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(c.owed))
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(FadingLine.headline(f), color = c.ink0, style = style, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            val places = FadingLine.places(f)
+            if (places.isNotEmpty()) Text(places, color = c.ink2, style = style, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.width(8.dp))
+        Icon(Glyphs.Chevron, null, tint = c.ink2, modifier = Modifier.size(18.dp))
+    }
+}
+
+// ── Week card ───────────────────────────────────────────────────────────────
+
+/**
+ * The Week card (docs/mobile-api.md `week`; D12, D15, D16, D17): the web's Week audit card in its own words: the
+ * week's daily quests kept of due as a whole percent, when the numbers are from (provisional, as of Monday 04:00,
+ * final), the 85% target in plain words (only on this card, never on the board above it), and what was left out. A
+ * count, never a verdict. P12: "Decaying this week" and its first three lines (the web's audit links each to its fix).
+ * Read-only (nothing to tap); one node for TalkBack; every line may wrap.
+ */
+@Composable
+private fun WeekTile(w: WeekAudit, modifier: Modifier = Modifier) {
+    val c = X.c
+    val meta = MaterialTheme.typography.labelMedium
+    XCard(modifier.fillMaxWidth().semantics(mergeDescendants = true) { contentDescription = WeekLine.description(w) }) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Eyebrow(WeekLine.TITLE)
+                Spacer(Modifier.width(8.dp))
+                Text(w.label, color = c.ink2, style = meta, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.height(2.dp))
+            Text(WeekLine.headline(w), style = MaterialTheme.typography.titleLarge.figures(), color = c.ink0)
+            Text(WeekLine.status(w), style = meta, color = c.ink2)
+            Text(WeekLine.target(w), style = meta, color = c.ink1)
+            val notes = WeekLine.notes(w)
+            if (notes.isNotEmpty()) Text(notes.joinToString(" · "), style = meta, color = c.ink2)
+            WeekLine.decayHeading(w)?.let { heading ->
+                Spacer(Modifier.height(10.dp))
+                Eyebrow(heading)
+                for (l in WeekLine.decayLines(w)) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(l.title, style = MaterialTheme.typography.bodyMedium, color = c.ink0)
+                    if (l.detail.isNotEmpty()) Text(l.detail, style = meta, color = c.ink2)
+                }
+                WeekLine.decayNote(w)?.let { Text(it, style = meta, color = c.ink2, modifier = Modifier.padding(top = 4.dp)) }
             }
         }
     }

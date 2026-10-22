@@ -158,7 +158,6 @@ import {
   sourceLabel,
   titleDistance,
   topAttributes,
-  weekReviewPromise,
   weekdayDayLabel,
   type FieldComposition,
 } from "../src/components/home/sheet-math";
@@ -760,10 +759,10 @@ const BODY_SEED = comp({ PHYSICAL: 46, STUBBORNNESS: 24, SELF_RESPECT: 20, FAITH
   check("week (U8): Thursday 1 Oct with W39 judged → nothing pending", pendingWeek("2026-09-27", "2026-10-01") === null);
   const weekSrc = read("src/app/today/week/page.tsx");
   check("week (U8): the card is headed 'Last judged week' while the week that ended waits", /pendingWeek\(week\.sunday, today\)/.test(weekSrc) && /title=\{pending \? "Last judged week" : "Last week"\}/.test(weekSrc));
-  const on = weekReviewPromise(true);
-  check("week (U9): once life counts, the review line promises no Monday verdicts", !/Monday/.test(on) && !/what each track kept/.test(on) && !/week card/.test(on) && /inbox to zero/.test(on));
-  check("week (U9): before launch the placeholder is unchanged", /Monday opens a short review/.test(weekReviewPromise(false)));
-  check("week (U9): the page reads the line through weekReviewPromise(life.launched)", /\{weekReviewPromise\(life\.launched\)\}/.test(weekSrc) && !/Monday opens a short review/.test(weekSrc));
+  // Blueprint P10 (decision D13): the review runs without Duty, so the 'arrives with daily settlement' placeholder
+  // and its promise (sheet-math weekReviewPromise) are gone; rituals-check §6 pins the run itself.
+  check("week (U9, P10): no placeholder promising a review to come, and no Monday verdicts", !/arrives with daily settlement/.test(weekSrc) && !/weekReviewPromise/.test(weekSrc) && !/Monday opens a short review/.test(weekSrc));
+  check("week (U9, P10): the review card is offered with or without Duty", /<ReviewCard week=\{review\} marked=\{marked\} dutyLive=\{dutyLive\} \/>/.test(weekSrc) && !/\{dutyLive \? \(\s*<ReviewCard/.test(weekSrc));
 }
 
 // ── 4m. The celebrate lab's goal and week fixtures state what was paid ─────
@@ -2733,6 +2732,14 @@ async function groundRulesChecks() {
     `rules ground (P0): the band ${bandSrc?.[1]}–${bandSrc?.[2]} is L${inBand[0]}–L${inBand[inBand.length - 1]} at ease ${X.EASE_DEFAULT}, as the blueprint says (L4–L6), with no gap`,
     bandSrc != null && inBand.length === 3 && inBand[0] === 4 && inBand[2] === 6,
     levels.slice(2, 7).map((L) => `L${L} ${lambdaOf(L).toFixed(4)}`).join(" · ")
+  );
+  // Blueprint P13 (D23): the 72 h floor on every card's grace, read from xp.ts GRACE_FLOOR_DAYS (graceDays's own floor).
+  check(
+    `rules ground (P13): the decay line names the 72 h floor from GRACE_FLOOR_DAYS (${X.GRACE_FLOOR_DAYS} days, ${X.GRACE_FLOOR_DAYS * 24} hours), graceDays's own floor`,
+    flat.includes('The grace is never under{" "} {GRACE_FLOOR_DAYS} days, so nothing fades or forgets within {GRACE_FLOOR_DAYS * 24} hours of falling due.') &&
+      X.GRACE_FLOOR_DAYS * 24 === 72 &&
+      [1, 2, 3, 4].every((L) => X.graceDays(L) === X.GRACE_FLOOR_DAYS) &&
+      X.graceDays(12) === 11
   );
 
   // Chance: the sealed rolls are momentum's own keys, each read where it is rolled; every unkeyed draw sets no price.

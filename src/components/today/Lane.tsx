@@ -26,6 +26,7 @@ export function Lane({
   bodyRef,
   className,
   note,
+  strip,
   badge,
   action,
   children,
@@ -45,6 +46,8 @@ export function Lane({
   className?: string;
   /** A line above the rows ("Board clear."). */
   note?: ReactNode;
+  /** Under the header, before the chips: the Must lane's daily quest strip (DailyStrip, one cell per quest). */
+  strip?: ReactNode;
   /** Chips under the header (M2: 'Rest · nothing owed', 'Musts carry stakes from Mon 12 Oct'). Never owed-toned. */
   badge?: ReactNode;
   /** A quiet link at the end of the header (the Habits lane's "Year", to /today/habits). */
@@ -67,6 +70,7 @@ export function Lane({
         {count != null && <span className="lane-count num">{count}</span>}
         {action}
       </div>
+      {strip}
       {badge && <div className="lane-chips">{badge}</div>}
       <div ref={bodyRef} className="card lane-body">
         {note}

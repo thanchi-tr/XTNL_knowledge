@@ -15,10 +15,14 @@ import type { QuestionType } from "@prisma/client";
 import { addDays, type DayKey } from "./life-day";
 import { buildBoard, shortDate, weekdayName, type Board, type BoardData, type BoardRow } from "./today-board";
 import { boardClearOf, splitTodayLane } from "../components/today/board-ui";
+import { dailyQuestsOf } from "./daily-quests";
+import { auditWeekLabel, type WeekAudit } from "./week-audit";
+import { DECAY_TOP, type AuditDecaying } from "./audit-decay";
 import { fmtXp } from "../components/today/format";
 import { TRACK_LABEL } from "./life-grade";
 import { questTargetOf } from "./review-facts";
 import { isDue } from "./due";
+import { ideaStatusOf } from "./forgetting";
 import { displayQuestion } from "./idea-display";
 import { decodeListQuestion, decodeNumericQuestion, decodeOrderQuestion, encodeIdeaContent, type IdeaContent } from "./idea-payload";
 import { VARIANTS_MAX, VARIANT_MAX_CHARS, promptOfQuestion, variantsAllowed } from "./idea-variants";
@@ -418,6 +422,65 @@ export function checkTasksOf(board: Pick<Board, "must" | "todayRows" | "clear" |
   };
 }
 
+/**
+ * The daily quests (lib/daily-quests.ts dailyQuestsOf, decisions D14 and D15): the Must lane's own count and strip, as
+ * Today draws them. `kept` of `total` (the minimum counts 1), `full` every quest kept, `cap` MUSTS_PER_DAY_MAX,
+ * `minimum` kept at the minimum version, `over` musts past the cap today; `quests` one 1/0 cell per quest, in order.
+ */
+export function checkDailyOf(board: Pick<Board, "must" | "deferred">) {
+  const d = dailyQuestsOf(board);
+  return {
+    kept: d.kept,
+    total: d.total,
+    full: d.full,
+    cap: d.cap,
+    minimum: d.minimum,
+    over: d.over,
+    quests: d.quests.map((q) => ({ templateId: q.templateId, title: q.title, kept: q.kept, minimum: q.minimum })),
+  };
+}
+
+/**
+ * The weekly audit (lib/week-audit.ts; blueprint 5.2a and 5.2b, decisions D12, D15, D16, D17 and D38), as /today/week's
+ * Week audit card states it; null while AUDIT_LAUNCH_DAY is not in force or no audited week is open. `rate` is the
+ * daily quests' `kept` of `due` as a whole percent (rounded down, so it reads `target` or more exactly when the target
+ * is met; null with none due); `minimum` kept at the minimum (each counts 1), `skipped` and `held` left out of the rate,
+ * `open` due and still recordable (in `due`), `short` more kept that would reach `target` (85, shown only on the
+ * audit: D17). `status` provisional (read live), frozen (the copy as of `asOfDay` 04:00) or final (from the week's
+ * judge day); `calibrating` the first two audited weeks (the target shown, not applied). `decaying` (P12; blueprint
+ * 5.2c) is "Decaying this week": its count and its first DECAY_TOP lines (checkDecayingOf); null when not read.
+ */
+export function checkWeekOf(a: WeekAudit | null) {
+  if (!a) return null;
+  return {
+    weekKey: a.weekKey,
+    label: auditWeekLabel(a.monday),
+    rate: a.rate,
+    kept: a.daily.kept,
+    due: a.daily.due,
+    minimum: a.daily.minimum,
+    skipped: a.daily.skipped,
+    held: a.daily.held,
+    open: a.daily.open,
+    short: a.short,
+    target: a.target,
+    status: a.status,
+    calibrating: a.calibrating,
+    asOfDay: a.asOfDay,
+    decaying: checkDecayingOf(a.decaying),
+  };
+}
+
+/**
+ * The audit's "Decaying this week" for the phone (audit-decay.ts): `count` everything found decaying, `top` the
+ * block's first DECAY_TOP lines in its order ({kind, title, detail}; the web's line links to its fix), `unread` the
+ * sources that could not be read. Null when the block was not read.
+ */
+export function checkDecayingOf(d: AuditDecaying | null) {
+  if (!d) return null;
+  return { count: d.count, top: d.lines.slice(0, DECAY_TOP).map((l) => ({ kind: l.kind, title: l.title, detail: l.detail })), unread: d.unread };
+}
+
 /** Whether the personal board is clear after a write, read the way /check reads it. */
 export function boardAllDoneOf(data: BoardData, nowMs: number): boolean {
   const board = buildBoard(data, [], nowMs);
@@ -432,6 +495,8 @@ export interface ReviewTreeIdea {
   question: string;
   atomicPrompt: string | null;
   dueDate: Date;
+  /** Idea.ease, its own spacing (the fading read's curve); absent reads as the baseline. */
+  ease?: number | null;
 }
 export interface ReviewTreeDomain {
   id: string;
@@ -459,6 +524,33 @@ export function reviewHubOf(fields: readonly ReviewTreeField[], now: Date, day: 
         else if (!next || i.dueDate.getTime() < next.getTime()) next = i.dueDate;
       }
   return { due, doneToday: day.reviews, target: questTargetOf(day.dayOpenQty, day.reviews, due), nextDueAt: next ? next.toISOString() : null };
+}
+
+/**
+ * The ideas past their grace (blueprint 3.1a, decision D23), as the bell's "12 ideas fading" line counts them: each
+ * idea's forgetting.ts status (ideaStatusOf, at the GRACE_EXTENSION days in force) fading or forgetting. Nothing
+ * fades within 3 days of falling due (xp.ts GRACE_FLOOR_DAYS, the 72 h floor). `ideas` counts both, `forgetting`
+ * those already losing levels, `domains` the Domains they sit in, most first (then by name), each with its count.
+ * None past grace: 0, 0 and [].
+ */
+export function checkFadingOf(fields: readonly ReviewTreeField[], now: Date, graceExtraDays: number) {
+  let ideas = 0;
+  let forgetting = 0;
+  const domains: { id: string; name: string; ideas: number }[] = [];
+  for (const f of fields)
+    for (const d of f.domains) {
+      let n = 0;
+      for (const i of d.ideas) {
+        const status = ideaStatusOf(i, now, graceExtraDays);
+        if (status !== "fading" && status !== "forgetting") continue;
+        n += 1;
+        if (status === "forgetting") forgetting += 1;
+      }
+      if (n > 0) domains.push({ id: d.id, name: d.name, ideas: n });
+      ideas += n;
+    }
+  domains.sort((a, b) => b.ideas - a.ideas || a.name.localeCompare(b.name));
+  return { ideas, forgetting, domains };
 }
 
 /** A scheduled task across the work tabs, with its tab's name (scheduled-tasks-server loadDueWorkTasks). */

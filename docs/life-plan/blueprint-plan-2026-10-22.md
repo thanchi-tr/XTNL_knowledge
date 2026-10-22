@@ -4,6 +4,8 @@ Source: `C:\Users\Thanc\OneDrive\Desktop\XTNL-idea\docs\life-plan\blueprint-2026
 
 ---
 
+> **Order changed by the user (2026-10-22):** Stage 2 (low-friction logging, P6–P8) now comes after Stage 5. Build order: Stage 0 ✅ → 1 → 3 → 4 → 5 → 2 → 6 → 7 → 8 → 9. Stages 3 and 4 go first. Decisions taken so far are in the blueprint's Decisions section.
+
 ## 0. How to read this
 
 - There are **33 phases (P0 to P32)** in **10 stages**, listed in dependency order. Each phase builds, tests and ships on its own, with **at most one additive migration**. Six phases carry a migration, and three of those are optional.

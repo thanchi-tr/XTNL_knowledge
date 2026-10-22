@@ -38,6 +38,7 @@ import { CAPTURE_AIM_READ_MAX, OPEN_ROADMAP_STATUSES, readCaptureAim, readCaptur
 import { AIM_PROMPT_COOKIE, type AimPrompt } from "@/lib/roadmap-invite";
 import type { BoardPlace, CaptureMode, ParsedCapture, TaskKind } from "@/lib/life-types";
 import { captureShapeOf } from "@/lib/capture-shape";
+import type { MustNote } from "@/lib/daily-quests";
 import { WORK_BOARD_ARCHIVED, WORK_BOARD_GONE, isBoardId, workKindRefusalOf } from "@/lib/work-boards";
 import { listOpenWorkBoards, loadWorkBoard } from "@/lib/work-boards-server";
 
@@ -115,6 +116,12 @@ export interface CapturedItem {
    * the personal Board. Its 'View' goes to that board, and it has no price (work pays no XP).
    */
   board?: string;
+  /**
+   * Daily quests (lib/daily-quests.ts, decision D14): a must past the cap of five on one of its days was saved as an
+   * ordinary task (`capped`: the toast says "Added (not a Must)" with MUST_CAP_LINE), or it is the 4th or 5th that
+   * day (the toast adds the warning). Absent otherwise.
+   */
+  mustNote?: MustNote;
   /**
    * Set when the line was a weigh-in (components/capture/weight-capture.ts):
    * the reading was logged for its life day and no task was written. `id` is
@@ -276,6 +283,7 @@ function itemOf(parsed: ParsedCapture, created: CreatedTask, filing: boolean): C
     where: filing ? { lane: "inbox", label: "Inbox · filing" } : created.where,
     ...(filing ? { filing: true } : {}),
     ...(created.boardId ? { board: created.boardId } : {}),
+    ...(created.mustNote ? { mustNote: created.mustNote } : {}),
   };
 }
 

@@ -40,6 +40,9 @@ import {
   writeOffKey,
   akrasiaEffectiveDay,
   canWriteOff,
+  MUSTS_PER_DAY_MAX,
+  MUSTS_WARN_FROM,
+  MUST_CAP_DAYS,
 } from "../src/lib/duty-economy";
 import {
   appendPrior,
@@ -252,6 +255,8 @@ console.log("— §1 expectedOn / mustsDueOn —");
   check("expectedOn: DOW:1,4 on Monday, not Tuesday", expectedOn({ ...base, recurrence: "DOW:1,4" }, "2026-10-12") && !expectedOn({ ...base, recurrence: "DOW:1,4" }, "2026-10-13"));
   const all = [base, { ...base, compulsory: false }, { ...base, recurrence: "TARGET:3/W" }, deadline, { ...base, inbox: true }];
   check("mustsDueOn: compulsory and expected only (TARGET, non-musts, inbox out)", mustsDueOn(all, "2026-10-16").length === 2 && mustsDueOn(all, "2026-10-15").length === 1);
+  // Blueprint P9 (D14): the musts are the Daily Quests, capped per day by mustsDueOn's count (daily-quests-check pins the rule).
+  check("daily quests: at most MUSTS_PER_DAY_MAX 5 due a day, a warning from MUSTS_WARN_FROM 4, counted over MUST_CAP_DAYS 7", MUSTS_PER_DAY_MAX === 5 && MUSTS_WARN_FROM === 4 && MUST_CAP_DAYS === 7);
 }
 
 // ═══ §1 Held days ═════════════════════════════════════════════════════════
