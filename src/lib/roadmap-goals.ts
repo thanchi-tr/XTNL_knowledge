@@ -12,9 +12,12 @@
  * life-types, for a type) at run time. No Prisma, model, clock, cookie or
  * cache module.
  *
- * GOALS_MAX is 1 until lane 4's last commit, so every answer here for
- * today's one-goal user is today's: one seat, a share of exactly 1, Today's
- * first 3 week-quest rows, and SET only with no goal open (ruling 53).
+ * GOALS_MAX is 3 (ruling N15, commit 2e2390a raised it from 1; lane 4's
+ * goals UI is still an open handoff): up to three seats, the shares across
+ * the open goals, Today's round robin over them, and SET while a seat is
+ * free. At an explicit cap of 1 every answer is the one-goal one: one seat,
+ * a share of exactly 1, Today's first 3 week-quest rows, and SET only with
+ * no goal open (ruling 53).
  */
 import {
   GOALS_MAX,

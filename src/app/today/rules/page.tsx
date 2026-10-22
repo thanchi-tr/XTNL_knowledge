@@ -59,7 +59,8 @@ import {
   type LifeMpModel,
 } from "@/lib/life-economy";
 import { keptWeekBonusPercent } from "@/lib/life-tracks";
-import { BREADTH_EXPONENT, DEPTH_FIRST_SHARE, fieldLevel } from "@/lib/xp";
+import { BREADTH_EXPONENT, DEPTH_FIRST_SHARE, EASE_DEFAULT, MAX_LEVEL, fieldLevel } from "@/lib/xp";
+import { DESIGN_DECAY, DESIGN_RETENTION, FORGET_BAND, stabilityOf } from "@/lib/forgetting";
 import { CHARACTER_EXPONENT, characterLevel } from "@/lib/character";
 import { longDayLabel, mpFigure } from "@/components/home/sheet-math";
 import { CurrencyGlyph } from "@/components/ui/Icon";
@@ -312,6 +313,71 @@ function Samples({ head, rows }: { head: [string, string]; rows: [string, string
         </tbody>
       </table>
     </div>
+  );
+}
+
+/**
+ * Where the knee pays half rate. Past the full rate g′(R) = KNEE_SCALE ÷ (KNEE_SCALE + R − KNEE_FULL_RATE), which is
+ * ½ at R = KNEE_FULL_RATE + KNEE_SCALE (scripts/you-check.ts reads kneeG's own slope there).
+ */
+const KNEE_HALF_RATE_AT = KNEE_FULL_RATE + KNEE_SCALE;
+
+/**
+ * The blueprint's band of daily decay (its 3.1a): λ from 0.005 to 0.02 a day. A published reference, not a rule
+ * the app applies; which levels it covers is read from the forgetting curve (decayBandLevels).
+ */
+const DECAY_BAND = { lo: 0.005, hi: 0.02 } as const;
+
+/**
+ * The ladder's levels whose daily decay falls inside DECAY_BAND at the baseline ease: λ = 1 ÷ S, the curve's own
+ * stability (forgetting.ts stabilityOf), which is DESIGN_DECAY ÷ the interval. Null when none does.
+ */
+function decayBandLevels(): { from: number; to: number } | null {
+  const levels: number[] = [];
+  for (let level = 1; level <= MAX_LEVEL; level++) {
+    const lambda = 1 / stabilityOf(level, EASE_DEFAULT);
+    if (lambda >= DECAY_BAND.lo && lambda <= DECAY_BAND.hi) levels.push(level);
+  }
+  return levels.length > 0 ? { from: levels[0], to: levels[levels.length - 1] } : null;
+}
+
+/**
+ * The ground rules (docs/life-plan/blueprint-plan-2026-10-22.md P0; blueprint 4.1, 3.3a, 3.1a and 4.5), one
+ * line each: XP is never spent, the knee is the fatigue breaker, forgetting's daily decay, and where chance
+ * lives. Every number is read from the code that applies it (scripts/you-check.ts holds that none is typed by
+ * hand), and scripts/credits-check.ts holds the first line in the code.
+ */
+function GroundRules({ momentumOn }: { momentumOn: boolean }) {
+  const band = decayBandLevels();
+  return (
+    <Card id="ground-rules" title="Ground rules" sub="Spending, fatigue, forgetting and chance" wide>
+      <ul className="rules-bullets">
+        <li>
+          XP is never spent; the Mall spends credits only. Nothing costs XP: emblems cost MP, and the Mall and its
+          credits are not built yet.
+        </li>
+        <li>
+          Fatigue breaker: full rate to {KNEE_FULL_RATE} raw a day, half rate at {KNEE_HALF_RATE_AT} raw, and the day
+          stops at {KNEE_CAP} XP.{" "}
+          {momentumOn
+            ? "It is the daily knee (below) on what tasks and walks pay; the chest, personal bests and the roadmap's pay sit outside it, limited by their counts."
+            : "It is the daily knee (below), shared by all life XP."}
+        </li>
+        <li>
+          Daily decay = {DESIGN_DECAY.toFixed(3)} / interval; {DECAY_BAND.lo}–{DECAY_BAND.hi} is{" "}
+          {band ? `L${band.from}–L${band.to}` : "no level"}. A card&apos;s recall falls as e^(−decay × (interval + days
+          past due)), so it is {pct(DESIGN_RETENTION)} on the day it falls due; past its grace it loses a level for every{" "}
+          {f1(FORGET_BAND * 100)}{" "}percentage points of recall below that. The interval is the card&apos;s own (its
+          level&apos;s, times its ease); the levels above are read at ease {EASE_DEFAULT}.
+        </li>
+        <li>
+          Chance is limited to the chest and crits.{" "}
+          {momentumOn
+            ? "They are the only rolls that decide a payout, each sealed to the row it paid (Momentum, below). Other draws never set a price: they pick a card's wording, a boss's cards, a tie between task quests of equal score, the spread of a mid-level card's next review, and the points a typed formula is tested at."
+            : "Neither is in force yet, so nothing that pays is random. Other draws never set a price: they pick a card's wording, a boss's cards, the spread of a mid-level card's next review, and the points a typed formula is tested at."}
+        </li>
+      </ul>
+    </Card>
   );
 }
 
@@ -1781,6 +1847,8 @@ export default async function RulesPage() {
           </ol>
         </Card>
 
+        <GroundRules momentumOn={momentumOn} />
+
         <Card title="The price" sub="One formula, the same in the browser and on the server" wide>
           <Formula>raw = B × E × T × C × D × V × K</Formula>
           <Formula>paid = g(R_before + raw) − g(R_before)</Formula>
@@ -1901,7 +1969,11 @@ export default async function RulesPage() {
           </div>
         </Card>
 
-        <Card title="The daily knee" sub="Shared by all life XP; shown on receipts, never as a bar" wide>
+        <Card
+          title="The daily knee"
+          sub={momentumOn ? "What tasks and walks pay; shown on receipts, never as a bar" : "Shared by all life XP; shown on receipts, never as a bar"}
+          wide
+        >
           <Formula>
             g(R) = R up to {KNEE_FULL_RATE}; then {KNEE_FULL_RATE} + {KNEE_SCALE} · ln(1 + (R − {KNEE_FULL_RATE}) / {KNEE_SCALE}); at most{" "}
             {KNEE_CAP}

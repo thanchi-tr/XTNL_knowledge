@@ -33,7 +33,8 @@
  *   reusableRunOf are one definition; runFactsOf marks every stored sample ok: true or false)
  *   NOTHING_TO_ASK (the fix round, r3: a run whose schema has no property is never sent)
  *
- * Revision 5, lane 10 (contracts §22.4, §22.15; ruling 47): the model phases in code, every TOPIC_* switch false.
+ * Revision 5, lane 10 (contracts §22.4, §22.15; ruling 47): the model phases in code, written with every TOPIC_* switch
+ * false. All six are true now (roadmap-types; rev 5's switch-on commit).
  *   - ModelRequest gains a tools variant: `responseSchema` null is plain text (GROUND), `googleSearch` sends
  *     tools [{googleSearch: {}}] with no responseMimeType and no schema, and `candidateCount` (> 1 only after probe P6).
  *   - topicSamples: one JSON phase (RATE, MAP, LINK, DEEPER) over a roadmap-evidence TopicPack, TOPIC_SAMPLES requests
@@ -43,8 +44,9 @@
  *   - Request counting: RoadmapRun.requests (every request: aborted ones, 429s and quota errors included), read by
  *     requestsToday against ROADMAP_REQUESTS_PER_DAY and GROUNDED_REQUESTS_PER_DAY; draftsCountedToday counts chain
  *     heads only (roadmap-types countsTowardDraftCap reads `phase`, ruling 17).
- *   No model call is reachable from the app while TOPIC_* are false: every roadmap-server core that reaches these
- *   refuses first (topicSwitchesOf), and the default call still refuses under ROADMAP_CHECK.
+ *   With the switches on, the topic chain reaches these from the app on its own gate (ruling N11: topicSwitchesOf and
+ *   a key, never ROADMAP_GEMINI_LIVE): every roadmap-server core that reaches them still asks topicSwitchesOf first, so
+ *   a switch turned off refuses before any call, and the default call still refuses under ROADMAP_CHECK.
  *
  *   topicSamples · groundSamples · GroundSampleResult · groundResponseOf · candidatesOf · requestsToday ·
  *   phaseRequestsOf · requestsSentOf · REQUEST_CAP_LINE · GROUNDED_CAP_LINE

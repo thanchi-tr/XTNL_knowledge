@@ -50,8 +50,10 @@
  * (a client nonce) creates one in the lowest free seat, so a double tap
  * returns the same id; none keeps today's rule (the open draft, else a new
  * one). pauseRoadmap, resumeRoadmap and setGoalLabel are the goal sheets'
- * actions (lane 4 renders them). GOALS_MAX is 1, so a second open goal is
- * refused as before (ANOTHER_ACTIVE) and no answer changes.
+ * actions (lane 4 renders them). GOALS_MAX is 3 (ruling N15, raised from 1
+ * by commit 2e2390a; lane 4's goals UI is still an open handoff): a second
+ * and a third open goal take the lowest free seats, and a fourth is refused
+ * with GOALS_FULL (ANOTHER_ACTIVE was the answer only while it was 1).
  *
  * Contract: docs/life-plan/roadmap-contracts.md §R4, §23.
  */

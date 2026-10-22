@@ -14,6 +14,9 @@
  *   §4 maybeMaintainLife: no read and no write where writes are off, settle before judge,
  *      single flight, never throws.
  *   §5 the life cron: 401 without CRON_SECRET or with a wrong header; settle, then judge.
+ *   §5d the open doors (blueprint-plan-2026-10-22.md P0): the degrade cron's gate fails closed in production (503
+ *      with no CRON_SECRET, 401 for a wrong header) and runs locally with none; /api/debug/queries is a 404 in
+ *      production unless PRISMA_COUNT_QUERIES=1; the routes ask their gate first (§5c, static).
  *   §4b, §5b, §5c the roadmap step (docs/life-plan/roadmap.md F16 seam 8, lane G): settle → judge →
  *      roadmap in the chain and the cron, also while Duty is inert, only with writes on; freeze
  *      (CRON from the cron, RENDER from the chain) before readings, then finalisation; a roadmap
@@ -29,7 +32,7 @@
  *   npx tsx scripts/settle-check.ts
  */
 import "./_no-model";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { Prisma } from "@prisma/client";
 import { addDays, dateColumn, dayEndOf, dayStartOf, keyOfDateColumn, todayKey, weekKeyOf, type DayKey } from "../src/lib/life-day";
@@ -64,9 +67,10 @@ import {
   type TemplateHousekeepingOp,
 } from "../src/lib/settlement-plan";
 import { fullDayInputFor, fullDayLine, fullDayOf, isLifeDeed, mustsOfDay, questRingOf, type FullDayInstance } from "../src/lib/full-day";
-import { prisma } from "../src/lib/prisma";
+import { debugQueriesEnabled, prisma } from "../src/lib/prisma";
 import { cached } from "../src/lib/cache";
 import {
+  DEGRADE_CRON_NO_SECRET,
   REHEARSAL_DB_PORT,
   WRITES_OFF_REFUSAL,
   XTNL_IDEA_PROJECT_REF,
@@ -74,6 +78,7 @@ import {
   chunkGuardOf,
   chunkStatementLabels,
   cronAuthorized,
+  degradeCronRefusal,
   groupChunk,
   guardOfSql,
   launchApplyTooEarly,
@@ -1515,6 +1520,52 @@ async function executor(): Promise<void> {
     check("a settlement failure still judges (BODY, CRAFT, CARE never wait on it) and answers 500", bad.status === 500 && seen2.join() === "judge");
   }
 
+  // Blueprint P0 (blueprint-plan-2026-10-22.md, "close the open doors"): the degrade cron fails closed in production like
+  // the life cron, and /api/debug/queries is a 404 there unless a profiling session set PRISMA_COUNT_QUERIES=1.
+  console.log("— §5d the open doors: the degrade cron's gate and the debug route —");
+  {
+    const prod = (secret?: string) => ({ NODE_ENV: "production", CRON_SECRET: secret });
+    const dev = (secret?: string) => ({ NODE_ENV: "development", CRON_SECRET: secret });
+    const unset = degradeCronRefusal("Bearer anything", prod(undefined));
+    eq("degrade, production with CRON_SECRET unset: 503, and no job runs", unset?.status, 503);
+    eq("…its body says why", await unset?.json(), { error: DEGRADE_CRON_NO_SECRET });
+    eq("degrade, production with CRON_SECRET empty: 503 too", degradeCronRefusal("Bearer ", prod(""))?.status, 503);
+    eq("degrade, production with no header, or a wrong one: 401", [degradeCronRefusal(null, prod("k"))?.status, degradeCronRefusal("Bearer nope", prod("k"))?.status], [401, 401]);
+    eq("…its body: Unauthorized", await degradeCronRefusal("Bearer nope", prod("k"))?.json(), { error: "Unauthorized" });
+    check("degrade, production with the right header: runs", degradeCronRefusal("Bearer k", prod("k")) === null);
+    check("degrade, local dev (or no NODE_ENV) with no CRON_SECRET: runs (on the shared database, as the nightly run does)", degradeCronRefusal(null, dev(undefined)) === null && degradeCronRefusal(null, {}) === null);
+    eq("degrade, local dev with a CRON_SECRET: the header is still required", [degradeCronRefusal(null, dev("k"))?.status, degradeCronRefusal("Bearer k", dev("k"))], [401, null]);
+
+    eq(
+      "debug queries: production is closed, unless PRISMA_COUNT_QUERIES is exactly '1'; outside production it is open",
+      [
+        debugQueriesEnabled({ NODE_ENV: "production" }),
+        debugQueriesEnabled({ NODE_ENV: "production", PRISMA_COUNT_QUERIES: "0" }),
+        debugQueriesEnabled({ NODE_ENV: "production", PRISMA_COUNT_QUERIES: "true" }),
+        debugQueriesEnabled({ NODE_ENV: "production", PRISMA_COUNT_QUERIES: "1" }),
+        debugQueriesEnabled({ NODE_ENV: "development" }),
+        debugQueriesEnabled({}),
+      ],
+      [false, false, false, true, true, true]
+    );
+    // The route itself reads only this process's counter (no database), so it runs here under each env.
+    const debugRoute = await import("../src/app/api/debug/queries/route");
+    const env = process.env as Record<string, string | undefined>;
+    const saved = { NODE_ENV: env.NODE_ENV, PRISMA_COUNT_QUERIES: env.PRISMA_COUNT_QUERIES };
+    const restore = (k: keyof typeof saved) => (saved[k] === undefined ? delete env[k] : (env[k] = saved[k]));
+    try {
+      env.NODE_ENV = "production";
+      delete env.PRISMA_COUNT_QUERIES;
+      const closed = await debugRoute.GET(new Request("https://x.test/api/debug/queries?reset=1"));
+      eq("debug queries GET in production: 404, and nothing is read or reset", [closed.status, await closed.json()], [404, { error: "Not found" }]);
+      env.PRISMA_COUNT_QUERIES = "1";
+      eq("…with PRISMA_COUNT_QUERIES=1 set for profiling: 200", (await debugRoute.GET(new Request("https://x.test/api/debug/queries"))).status, 200);
+    } finally {
+      restore("NODE_ENV");
+      restore("PRISMA_COUNT_QUERIES");
+    }
+  }
+
   console.log("— §4b the roadmap step in the chain (roadmap.md F16 seam 8) —");
   {
     const order: string[] = [];
@@ -1823,6 +1874,27 @@ function staticChecks(): void {
     ["GET", "dynamic"]
   );
   const settlementSrc = strip(readFileSync(join(root, "src/lib/settlement.ts"), "utf8"));
+  // Blueprint P0 (§5d holds the gate's answers): the route asks it first and reads no secret of its own.
+  check(
+    "the degrade route answers degradeCronRefusal's refusal before any job, and reads no CRON_SECRET of its own",
+    /export async function GET\(request: Request\) \{\s*const refusal = degradeCronRefusal\(request\.headers\.get\("authorization"\)\);\s*if \(refusal\) return refusal;/.test(degrade) &&
+      degrade.indexOf("if (refusal) return refusal;") < degrade.indexOf("degradeOverdueIdeas()") &&
+      !/process\.env/.test(degrade) &&
+      /export function degradeCronRefusal\([^)]*= processEnv\(\)\): Response \| null \{/.test(settlementSrc)
+  );
+  const debugRouteSrc = strip(readFileSync(join(root, "src/app/api/debug/queries/route.ts"), "utf8"));
+  check(
+    "the debug route's first statement is the 404 outside a profiling session (prisma.ts debugQueriesEnabled)",
+    /export async function GET\(request: Request\) \{\s*if \(!debugQueriesEnabled\(\)\) return NextResponse\.json\(\{ error: "Not found" \}, \{ status: 404 \}\);/.test(debugRouteSrc)
+  );
+  // .env.example is gitignored ('.env*'), so a fresh clone has none: checked where it exists, as push-check does.
+  const example = existsSync(join(root, ".env.example")) ? readFileSync(join(root, ".env.example"), "utf8") : null;
+  if (example == null) console.log("  (no .env.example here: it is gitignored)");
+  else
+    check(
+      ".env.example names MOMENTUM_SEED_SECRET and MOBILE_API_TOKEN with no value, and says CRON_SECRET is required in production",
+      ["MOMENTUM_SEED_SECRET", "MOBILE_API_TOKEN"].every((n) => new RegExp(`^${n}=\\s*$`, "m").test(example)) && /^# Required in production\./m.test(example)
+    );
   const stepFn = settlementSrc.slice(settlementSrc.indexOf("export async function runRoadmapStep("), settlementSrc.indexOf("export interface DegradeRoadmapReport"));
   check(
     "the roadmap step is gated by settlementWritesEnabled only: never by DUTY_LAUNCH_DAY, the launch or the settlement cursor",

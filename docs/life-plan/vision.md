@@ -20,7 +20,7 @@ Grading is 'AI sizes once, formula scores':
 
 Compulsory tasks carry bounded XP debt. The debt stays on the board as make-up cards until the task is done, and each task keeps its own streak. Several things keep one bad day from becoming a what-the-hell spiral: a whole next day to record yesterday, earned freezes, rest, sick and vacation days, minimum versions, and a one-day repair.
 
-Over months, four fixed life tracks (Body, Duty, Craft, Care) feed the same 13 attributes, emblem gates, title epithet and single character level as the knowledge Fields. Each track is capped by kept weeks, finished goals and PRs, never by volume. Mastery points come only from capped outcomes, under 3% of knowledge income, so the emblem economy keeps its 10–15-year horizon.
+Over months, four fixed life tracks (Body, Duty, Craft, Care) feed the same 13 attributes, emblem gates, title epithet and single character level as the knowledge Fields. Each track is capped by kept weeks, finished goals and PRs, never by volume. Mastery points come only from capped outcomes, at most 36% of knowledge income even in the worst case (balance-horizon 1-m; momentum.md §G.3 raised the ceiling from 3%), so the emblem economy keeps its 10–15-year horizon.
 
 The user comes back because:
 - the next step is always small and visible;

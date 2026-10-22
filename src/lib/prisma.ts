@@ -81,6 +81,15 @@ export function getQueryLog(): string[] {
   return globalForPrisma.queryLog ?? [];
 }
 
+/**
+ * Whether `/api/debug/queries` answers. Always outside production (local profiling); in production only while
+ * `PRISMA_COUNT_QUERIES=1` is set for a profiling session, and otherwise it is a 404 there, since its log names
+ * the tables each request touched.
+ */
+export function debugQueriesEnabled(env: { NODE_ENV?: string; PRISMA_COUNT_QUERIES?: string } = process.env): boolean {
+  return env.NODE_ENV !== "production" || env.PRISMA_COUNT_QUERIES === "1";
+}
+
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
 }

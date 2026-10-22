@@ -12,9 +12,10 @@ export const dynamic = "force-dynamic";
  * 05:15 AEDT: after the 04:00 day turn either way); Vercel calls it with
  * `Authorization: Bearer $CRON_SECRET`.
  *
- * Unlike /api/cron/degrade, this route writes the shared ledger, so it never
- * skips the secret check: with CRON_SECRET unset, or a wrong header, it
- * answers 401 and does nothing. Everything else lives in
+ * This route writes the shared ledger, so it never skips the secret check,
+ * not even outside production (where /api/cron/degrade runs with no
+ * CRON_SECRET set, for local testing): with CRON_SECRET unset, or a wrong
+ * header, it answers 401 and does nothing. Everything else lives in
  * src/lib/settlement.ts runLifeCron (a route file may export only its
  * methods and segment config), which the checks call with an injected env.
  *

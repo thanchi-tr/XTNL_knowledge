@@ -1134,8 +1134,9 @@ export function maybeMaintainLife(userId: string, now: Date = new Date(), opts: 
 
 /**
  * Whether the request carries the cron secret. Refuses when the secret is
- * unset or empty: unlike the degrade cron, this one writes, so it never
- * skips the check. Compares in constant time.
+ * unset or empty, so the life cron, which writes, never skips the check
+ * (the degrade cron's gate, degradeCronRefusal, reads it too). Compares in
+ * constant time.
  */
 export function cronAuthorized(header: string | null | undefined, secret: string | null | undefined): boolean {
   if (!secret) return false;
@@ -1144,6 +1145,23 @@ export function cronAuthorized(header: string | null | undefined, secret: string
   let diff = got.length ^ expected.length;
   for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ (got.charCodeAt(i) || 0);
   return diff === 0;
+}
+
+/** The degrade cron's answer when production has no CRON_SECRET: it runs nothing. */
+export const DEGRADE_CRON_NO_SECRET = "CRON_SECRET is not set, so the degrade cron does not run in production.";
+
+/**
+ * The degrade cron's gate (/api/cron/degrade): null to run, else the refusal to send before any job. In
+ * production it fails closed as runLifeCron does: 503 with DEGRADE_CRON_NO_SECRET when CRON_SECRET is unset or
+ * empty, 401 for a missing or wrong header (cronAuthorized). Outside production a set CRON_SECRET is required
+ * the same way, and with none set the job runs; dev and prod share one database, so a local run writes the live
+ * account just as the nightly run does.
+ */
+export function degradeCronRefusal(header: string | null | undefined, env: Pick<SettleEnv, "NODE_ENV" | "CRON_SECRET"> = processEnv()): Response | null {
+  if (!env.CRON_SECRET) {
+    return env.NODE_ENV === "production" ? Response.json({ error: DEGRADE_CRON_NO_SECRET }, { status: 503 }) : null;
+  }
+  return cronAuthorized(header, env.CRON_SECRET) ? null : Response.json({ error: "Unauthorized" }, { status: 401 });
 }
 
 export interface LifeCronDeps {

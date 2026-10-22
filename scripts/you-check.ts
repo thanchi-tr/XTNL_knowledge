@@ -2669,6 +2669,129 @@ async function momentumChecks() {
   );
 }
 
+// ── 11. The rules page's ground rules (docs/life-plan/blueprint-plan-2026-10-22.md P0) ──────────
+// Four published lines: XP is never spent (scripts/credits-check.ts holds it in the code), the knee named as the
+// fatigue breaker, forgetting's daily decay mapped onto the ladder, and chance limited to the chest and crits. Each
+// figure is read from the code that applies it, and checked against that code here. The page's line endings are
+// normalised first: on a CRLF checkout a "\n}\n" slice would run to the end of the file.
+async function groundRulesChecks() {
+  const G = await import("../src/lib/life-grade");
+  const F = await import("../src/lib/forgetting");
+  const X = await import("../src/lib/xp");
+  const rules = read("src/app/today/rules/page.tsx").replace(/\r\n/g, "\n");
+  const rulesCode = codeOf(rules);
+  const start = rules.indexOf("function GroundRules(");
+  const fn = start < 0 ? "" : rules.slice(start, rules.indexOf("\n}\n", start));
+  const body = fn.slice(fn.indexOf("return ("));
+  const flat = body.replace(/\s+/g, " ");
+
+  check(
+    "rules ground (P0): the Ground rules card sits right after 'How a day is judged', before the price, with the page's momentum gate",
+    /<Card id="ground-rules" title="Ground rules"/.test(body) &&
+      /<GroundRules momentumOn=\{momentumOn\} \/>/.test(rulesCode) &&
+      rulesCode.indexOf('<Card title="How a day is judged"') < rulesCode.indexOf("<GroundRules ") &&
+      rulesCode.indexOf("<GroundRules ") < rulesCode.indexOf('<Card title="The price"')
+  );
+  const published = [
+    "XP is never spent; the Mall spends credits only.",
+    "Fatigue breaker: full rate to {KNEE_FULL_RATE} raw a day, half rate at {KNEE_HALF_RATE_AT} raw, and the day stops at {KNEE_CAP} XP.",
+    'Daily decay = {DESIGN_DECAY.toFixed(3)} / interval; {DECAY_BAND.lo}–{DECAY_BAND.hi} is{" "} {band ? `L${band.from}–L${band.to}` : "no level"}.',
+    "Chance is limited to the chest and crits.",
+  ];
+  const absent = published.filter((l) => !flat.includes(l));
+  check("rules ground (P0): the four published lines, each figure an expression", fn.length > 0 && absent.length === 0, absent.join(" | "));
+  const typed = [...literalText(body).matchAll(/\d+/g)].map((m) => m[0]);
+  check("rules ground (P0): the card types no number by hand", body.length > 1000 && typed.length === 0, typed.join(", "));
+
+  // The fatigue breaker is kneeG's own shape: slope 1 below the full rate, ½ at KNEE_HALF_RATE_AT, flat at the cap.
+  const slope = (r: number) => (G.kneeG(r + 1e-3) - G.kneeG(r - 1e-3)) / 2e-3;
+  const half = G.KNEE_FULL_RATE + G.KNEE_SCALE;
+  check(
+    `rules ground (P0): the fatigue breaker is the knee: full rate to ${G.KNEE_FULL_RATE} raw, half rate at ${half} raw, the day stops at ${G.KNEE_CAP} XP (kneeG's slope and cap)`,
+    /const KNEE_HALF_RATE_AT = KNEE_FULL_RATE \+ KNEE_SCALE;/.test(rulesCode) &&
+      Math.abs(slope(G.KNEE_FULL_RATE - 1) - 1) < 1e-6 &&
+      Math.abs(slope(half) - 0.5) < 1e-6 &&
+      Math.abs(G.kneeG(G.KNEE_CAP_AT_RAW) - G.KNEE_CAP) < 1e-9 &&
+      G.kneeG(G.KNEE_CAP_AT_RAW + 1000) === G.KNEE_CAP,
+    `slope ${slope(G.KNEE_FULL_RATE - 1).toFixed(3)} below ${G.KNEE_FULL_RATE}, ${slope(half).toFixed(3)} at ${half}; g(${Math.round(G.KNEE_CAP_AT_RAW)}) = ${G.kneeG(G.KNEE_CAP_AT_RAW).toFixed(6)}`
+  );
+
+  // Forgetting: R(t) = e^(−t ÷ S), S = I ÷ ln(1 ÷ 0.9), so the decay a day is 1 ÷ S = DESIGN_DECAY ÷ the interval.
+  const levels = Array.from({ length: X.MAX_LEVEL }, (_, i) => i + 1);
+  const lambdaOf = (level: number) => F.DESIGN_DECAY / F.intervalOf(level, X.EASE_DEFAULT);
+  const curveRate = levels.every((L) => {
+    const S = F.stabilityOf(L, X.EASE_DEFAULT);
+    return Math.abs(1 / S - lambdaOf(L)) < 1e-12 && [1, 7, 30].every((t) => Math.abs(F.retrievability(t, S) - Math.exp(-lambdaOf(L) * t)) < 1e-12);
+  });
+  check(
+    `rules ground (P0): 'daily decay = ${F.DESIGN_DECAY.toFixed(3)} / interval' is the forgetting curve's own rate at every level (1 ÷ S; R(t) = e^(−λt)), DESIGN_DECAY = ln(1 ÷ DESIGN_RETENTION)`,
+    Math.abs(F.DESIGN_DECAY - Math.log(1 / F.DESIGN_RETENTION)) < 1e-15 && curveRate && /const lambda = 1 \/ stabilityOf\(level, EASE_DEFAULT\);/.test(rulesCode)
+  );
+  const bandSrc = /const DECAY_BAND = \{ lo: ([\d.]+), hi: ([\d.]+) \} as const;/.exec(rulesCode);
+  const inBand = levels.filter((L) => lambdaOf(L) >= Number(bandSrc?.[1]) && lambdaOf(L) <= Number(bandSrc?.[2]));
+  check(
+    `rules ground (P0): the band ${bandSrc?.[1]}–${bandSrc?.[2]} is L${inBand[0]}–L${inBand[inBand.length - 1]} at ease ${X.EASE_DEFAULT}, as the blueprint says (L4–L6), with no gap`,
+    bandSrc != null && inBand.length === 3 && inBand[0] === 4 && inBand[2] === 6,
+    levels.slice(2, 7).map((L) => `L${L} ${lambdaOf(L).toFixed(4)}`).join(" · ")
+  );
+
+  // Chance: the sealed rolls are momentum's own keys, each read where it is rolled; every unkeyed draw sets no price.
+  const rollKinds = [...new Set([...codeOf(read("src/lib/momentum.ts")).matchAll(/`(\w+):v1\|/g)].map((m) => m[1]))].sort();
+  check("rules ground (P0): the sealed rolls are crits (a task's, a walk's), the chest and the task quest's tie-break: momentum.ts's roll keys", JSON.stringify(rollKinds) === JSON.stringify(["chest", "crit", "excrit", "quest"]), rollKinds.join(", "));
+  const srcFiles: string[] = [];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(join(ROOT, dir))) {
+      const rel = `${dir}/${name}`;
+      if (statSync(join(ROOT, rel)).isDirectory()) walk(rel);
+      else if (/\.(ts|tsx)$/.test(name)) srcFiles.push(rel);
+    }
+  };
+  walk("src");
+  /** Each call's argument text, to its balanced closing parenthesis. */
+  const argsOf = (src: string, call: RegExp) =>
+    [...src.matchAll(call)].map((m) => {
+      let depth = 1;
+      let i = (m.index ?? 0) + m[0].length;
+      const from = i;
+      for (; i < src.length && depth > 0; i++) depth += src[i] === "(" ? 1 : src[i] === ")" ? -1 : 0;
+      return src.slice(from, i - 1).trim();
+    });
+  const rollers = srcFiles.filter((f) => /\bmomentumRoll\(/.test(codeOf(read(f))) && f !== "src/lib/momentum-roll.ts");
+  const rolled = rollers.flatMap((f) => argsOf(codeOf(read(f)), /\bmomentumRoll\(/g).map((a) => `${f}: ${a}`));
+  const serverRolls = argsOf(codeOf(read("src/lib/momentum-server.ts")), /\.roll\(/g);
+  check(
+    "rules ground (P0): every roll is keyed by one of them: momentumRoll(critKey …) in tasks.ts, (excritKey …) in exercise-server.ts, and momentum-server's rolls take chestKey, summitChestRollKey or questTieKey",
+    JSON.stringify(rollers.sort()) === JSON.stringify(["src/lib/exercise-server.ts", "src/lib/momentum-server.ts", "src/lib/tasks.ts"]) &&
+      rolled.every((r) => /: (critKey|excritKey)\(|^src\/lib\/momentum-server\.ts: key$/.test(r)) &&
+      serverRolls.length >= 3 &&
+      serverRolls.every((a) => /^(chestKey|summitChestRollKey|questTieKey)\(/.test(a)),
+    [...rolled, ...serverRolls].join(" | ")
+  );
+  const UNKEYED_DRAWS: Record<string, string> = {
+    "src/lib/bosses.ts": "a boss's cards",
+    "src/lib/xp.ts": "the spread of a level 5–8 card's next interval",
+    "src/lib/idea-variants.ts": "a card's wording",
+    "src/lib/mobile-api-cores.ts": "a card's wording, on the phone",
+    "src/lib/formula-equivalence.ts": "the points a typed formula is tested at (the checks seed it)",
+    "src/components/capture/QuickCapture.tsx": "an id",
+    "src/components/roadmap/CheckpointSheet.tsx": "an id, randomUUID's fallback",
+    "src/components/roadmap/TopicMap.tsx": "an id, randomUUID's fallback",
+    "src/components/today/TodayBoard.tsx": "an id",
+  };
+  const drawing = srcFiles.filter((f) => /\bMath\.random\b/.test(codeOf(read(f)))).sort();
+  check(
+    "rules ground (P0): Math.random is only where the page says a draw sets no price (a card's wording, a boss's cards, a mid-level interval's spread, a formula's test points) or makes an id",
+    JSON.stringify(drawing) === JSON.stringify(Object.keys(UNKEYED_DRAWS).sort()),
+    `found ${drawing.join(", ")}`
+  );
+  check(
+    "rules ground (P0): the chance line names those draws, and the tie-break only once momentum is live",
+    ["a card's wording", "a boss's cards", "the spread of a mid-level card's next review", "the points a typed formula is tested at"].every((w) => (flat.match(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? []).length === 2) &&
+      (flat.match(/a tie between task quests of equal score/g) ?? []).length === 1 &&
+      /\{momentumOn \? "They are the only rolls that decide a payout/.test(flat)
+  );
+}
+
 (async () => {
   await redirects();
   await dayCardsGuardChecks();
@@ -2676,6 +2799,7 @@ async function momentumChecks() {
   await r2AimCardChecks(); // R2 (ui-motion.md §11.4 /you)
   await settingsRenderChecks();
   await momentumChecks();
+  await groundRulesChecks();
   await carryOverChecks();
   const tw = await tailwindUtilities();
   cssChecks(tw.test, tw.via);

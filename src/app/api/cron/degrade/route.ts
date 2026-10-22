@@ -5,7 +5,7 @@ import { decayStaleMastery } from "@/lib/mastery";
 import { purgeExpiredDebuffs } from "@/lib/debuffs";
 import { purgeExpiredBoons } from "@/lib/boons";
 import { enforceWeeklyQuotas } from "@/lib/field-quota";
-import { recordRoadmapAfterDegrade } from "@/lib/settlement";
+import { degradeCronRefusal, recordRoadmapAfterDegrade } from "@/lib/settlement";
 import { getCurrentUserId } from "@/lib/user";
 
 // Never statically cache/prerender a Cron endpoint.
@@ -14,10 +14,15 @@ export const dynamic = "force-dynamic";
 /**
  * Daily 00:00 UTC maintenance job (spec section 3.4). Scheduled via
  * vercel.json's `crons` entry; Vercel calls this with
- * `Authorization: Bearer $CRON_SECRET` when CRON_SECRET is set, which is
- * what's checked below. Runs fine as a manual GET without CRON_SECRET set
- * (local dev), so long as you understand that means anyone with the URL can
- * trigger it once it's deployed.
+ * `Authorization: Bearer $CRON_SECRET`. Before any job, settlement.ts
+ * degradeCronRefusal checks it and fails closed like /api/cron/life: in
+ * production an unset CRON_SECRET answers 503 and a missing or wrong header
+ * 401, and nothing runs. Outside production (local dev) a manual GET with no
+ * CRON_SECRET set runs it, and that is no rehearsal: dev and prod share one
+ * database, so it applies tonight's jobs to the live account early, writing
+ * just as the nightly run does (only step 4 also waits for life writes,
+ * XTNL_LIFE_JUDGE=1 locally). With a CRON_SECRET set, the header is required
+ * there too.
  *
  * Six jobs, in order of consequence:
  *   1. Degrade Ideas whose grace period lapsed unattended.
@@ -45,13 +50,8 @@ export const dynamic = "force-dynamic";
  * that created it.
  */
 export async function GET(request: Request) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = request.headers.get("authorization");
-    if (authHeader !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
+  const refusal = degradeCronRefusal(request.headers.get("authorization"));
+  if (refusal) return refusal;
 
   const userId = getCurrentUserId();
   const results = await degradeOverdueIdeas();

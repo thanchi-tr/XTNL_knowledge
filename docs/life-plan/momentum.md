@@ -1,6 +1,6 @@
 # Momentum: chance, stakes and a life skill tree
 
-Status: DESIGN (2026-10-12). Nothing here is built. The balance model is `scripts/momentum-sim.ts` (`npx tsx scripts/momentum-sim.ts`). It holds the reference implementation of every pure formula below, and its printout is quoted in §C.
+Status: LIVE since 2026-10-12 (`MOMENTUM_LAUNCH_DAY` in `src/lib/momentum.ts`). Lanes L0 and A–E built it inert, and the launch commit set the day. Designed 2026-10-12. The balance model is `scripts/momentum-sim.ts` (`npx tsx scripts/momentum-sim.ts`). It holds the reference implementation of every pure formula below, and its printout is quoted in §C.
 
 The user asked: "Rework the skill system, add more gamify mechanism to ensure complete task, follow up with milestone, do exercise etc is addicted."
 

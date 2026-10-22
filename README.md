@@ -185,10 +185,14 @@ lost takes back what earning it paid (`levelLossPoints`) off the Domain's
 `totalPoints`, never below 0, and writes a FORGET row on the ledger (sink
 DOMAIN, xp negative), keyed per card, due date and level so a re-run takes
 nothing twice. The due date stays as the anchor the curve is read from; a
-review moves it. Domain, Field and character levels follow. Protect it in
-production by setting `CRON_SECRET`; Vercel sends that value back as
-`Authorization: Bearer <CRON_SECRET>` automatically when the env var is set
-and a `crons` entry exists in `vercel.json`.
+review moves it. Domain, Field and character levels follow. In production
+the job needs `CRON_SECRET`: without it the route answers 503 and runs
+nothing, so no idea forgets and no level is recomputed until it is set (then
+redeploy). With it, a request needs `Authorization: Bearer <CRON_SECRET>`,
+which Vercel sends automatically when the env var is set and a `crons` entry
+exists in `vercel.json`; anything else gets 401. Locally, with no secret set,
+a GET runs the job, and dev and production share one database, so that is
+tonight's pass applied to the live account early.
 
 A level-1 card has nothing to forget, so a fresh idea is never drained before
 anyone has had a chance to review it (the old one-level-a-day job took 10% of
@@ -692,7 +696,10 @@ See `.env.example`:
 | `DIRECT_URL` | Migrations/seeding — Supabase direct connection (port `5432`) |
 | `GEMINI_API_KEY` | `gemini-embedding-2` / `gemini-3.5-flash-lite` calls (Phase 2+) |
 | `DEFAULT_USER_ID` | This is a single-tenant personal instance — `UnlockedSkill` is still keyed by `userId` for forward-compatibility, but nothing else in the schema is user-scoped yet |
-| `CRON_SECRET` | Gates both crons — required in production. `/api/cron/degrade` skips the check when it is unset (local dev only); `/api/cron/life` (Duty settlement, then the week judge) never does: unset or wrong, it answers 401 and writes nothing |
+| `CRON_SECRET` | Gates both crons — required in production, made with `openssl rand -hex 32`. Unset there, `/api/cron/degrade` answers 503 and runs nothing (no idea forgets, no Domain or Field level is recomputed, no mastery decays); set, a missing or wrong `Authorization: Bearer` header gets 401. Only outside production does an unset secret let the degrade route run without the check, and it still writes the shared live database. `/api/cron/life` (Duty settlement, then the week judge) never skips it: unset or wrong, it answers 401 and writes nothing |
+| `MOMENTUM_SEED_SECRET` | The HMAC secret behind momentum's rolls (crits and the daily chest, `src/lib/momentum-roll.ts`): at least 16 characters, the same value on every deployment. Unset, it is derived from `CRON_SECRET` (when that has 16+ characters), else a public salt: rolls stay reproducible but guessable, and production logs a warning |
+| `MOBILE_API_TOKEN` | Bearer token for `/api/mobile/v1` (`docs/mobile-api.md`), the same value as in the Android app's settings. Unset or blank, every mobile route is open, the paying ones included; set it in production and in the app together, then check that `GET /api/mobile/v1/check` with no header gets 401 |
+| `PRISMA_COUNT_QUERIES` | `1` turns on the Prisma round-trip counter behind `/api/debug/queries`. In production that route is a 404 unless this is `1`; while it is, the route is open with no login and its log names every table each request touched, so set it only for a profiling session |
 
 ## Commands
 
