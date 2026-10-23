@@ -24,6 +24,7 @@ import java.time.temporal.IsoFields
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.abs
+import kotlin.math.floor
 import kotlin.math.round
 
 /**
@@ -71,6 +72,8 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
     private var streak = StreakInfo(12, keptToday = false, freezes = 2)
     private var reviewDone = 4
     private val reviewTarget = 20
+    /** P5: the skills' tier Seals already played (once ever a tier, as the server keys them 'competency:<id>:t<n>'). */
+    private val skillSeals = mutableSetOf<String>()
 
     private class DemoCard(val card: ReviewCard, val expected: String, val explanation: String?, val accept: (JsonElement) -> Boolean)
 
@@ -297,6 +300,130 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
         }
     }
 
+    /**
+     * The five attributes as a server with life launched sends them (docs/mobile-api.md `GET /status`), in the panel's
+     * order: Vitality (the Body track, read from the demo board, so the gym tick on Check moves its meter here too),
+     * Intellect (Knowledge), Craft, Duty (capped at its kept-week cap) and Care (untouched); then Capital, a reading only:
+     * one deal won this month, one last month, none the month before. Nothing here is a level of its own. Then the avatar
+     * targets (P4), as the web words them: Train's weight goal, a Field's level, Craft's hours, a Care measure of your own
+     * (self-reported) and revenue a month; a record, never a level. Then the skills (P5), as You › Skills lists them: each
+     * attribute counts its own.
+     */
+    override suspend fun status(): Outcome<StatusPanel> {
+        pause(300)
+        return lock.withLock {
+            val now = clock()
+            val day = TimeLabels.lifeDay(now)
+            val kept = { id: String -> tasks.firstOrNull { it.item.templateId == id }?.item?.kept == true }
+            val pips = { s: String -> s.map { if (it == 'k') "kept" else if (it == 'h') "held" else "missed" } }
+            // Body at level 6 (1,764 XP) toward 7 (2,401 XP); the gym tick adds what it pays.
+            val bodyXp = 1960.0 + if (kept("t-gym")) 8.3 else 0.0
+            val body = (bodyXp - 1764.0) / (2401.0 - 1764.0)
+            val skills = demoSkills()
+            val month = { m: java.time.YearMonth -> m.month.getDisplayName(java.time.format.TextStyle.FULL, Locale.ENGLISH) }
+            val ym = java.time.YearMonth.from(day)
+            val months = listOf(
+                CapitalMonth(ym.toString(), "${month(ym)} ${ym.year}", 1_240_000, "\$12,400", 1),
+                CapitalMonth(ym.minusMonths(1).toString(), "${month(ym.minusMonths(1))} ${ym.minusMonths(1).year}", 820_000, "\$8,200", 1),
+                CapitalMonth(ym.minusMonths(2).toString(), "${month(ym.minusMonths(2))} ${ym.minusMonths(2).year}", 0, "\$0", 0),
+            )
+            Outcome.Ok(
+                StatusPanel(
+                    now = now.toString(),
+                    day = day.toString(),
+                    launched = true,
+                    attributes = listOf(
+                        StatusAttribute(
+                            "VITALITY", "Vitality", "Body", 6, round(body * 1000) / 1000, 0.25, cap = 9, keptStreak = 4, weeks = pips("kkkokkkk"),
+                            line = "%,d / 2,401 XP · depth cap 9 · 7 more kept weeks raise it".format(Locale.ENGLISH, bodyXp.toInt()), unit = "xp",
+                            skills = skills.count { it.attribute == "VITALITY" },
+                        ),
+                        StatusAttribute(
+                            "INTELLECT", "Intellect", "Knowledge", 17, 0.52, 0.44, line = "6 Fields, the best counts fully · Statistics grew most this week", unit = "pts",
+                            skills = skills.count { it.attribute == "INTELLECT" },
+                        ),
+                        StatusAttribute(
+                            "CRAFT", "Craft", "Craft", 6, 0.45, 0.4, cap = 7, keptStreak = 1, weeks = pips("kkkokkok"), line = "2,050 / 2,401 XP · depth cap 7 · 1 more kept week raises it",
+                            skills = skills.count { it.attribute == "CRAFT" },
+                        ),
+                        StatusAttribute("DUTY", "Duty", "Duty", 7, 1.0, 1.0, cap = 7, atCap = true, keptStreak = 1, weeks = pips("kkkkkkok"), line = "Capped at 7 · 7 more kept weeks raise it · 4,900 XP banked"),
+                        StatusAttribute("CARE", "Care", "Care", 0, 0.0, 0.0, cap = 2, keptStreak = 0, weeks = pips("oooooooo"), line = "No Care tasks yet · 49 XP reaches level 1"),
+                    ),
+                    capital = CapitalReading(
+                        months[0].month, months[0].label, months[0].wonCents, months[0].won, months[0].deals,
+                        line = "1 deal won in ${month(ym)}",
+                        history = months.drop(1).joinToString(" · ") { "${it.label.substringBefore(' ')} ${it.won}" },
+                        months = months,
+                    ),
+                    targets = demoTargets(day),
+                    skills = skills,
+                )
+            )
+        }
+    }
+
+    /**
+     * The demo's skills (P5), as the server derives them (competency.ts): Writing (Craft, Tier 2), Reading (Intellect, a
+     * read tick short of Tier 2), Strength (Vitality, fed by the gym) and Walking (Vitality, walks count), most hours
+     * first, each in the web's own words. Hours come from the ticks linked to each, so a tick on Check moves them here.
+     */
+    private fun demoSkills(): List<StatusSkill> {
+        val kept = { id: String -> tasks.firstOrNull { it.item.templateId == id }?.item?.kept == true }
+        val read = kept("t-read")
+        val gym = kept("t-gym")
+        return listOf(
+            demoSkill("sk-write", "Writing", "CRAFT", "PRACTICE", 142.5, ticks = 171, templates = 2),
+            demoSkill("sk-read", "Reading", "INTELLECT", "PRACTICE", 99.75 + (if (read) 25.0 / 60 else 0.0), ticks = 239 + (if (read) 1 else 0), templates = 1),
+            demoSkill("sk-strength", "Strength", "VITALITY", "PRACTICE", 41.5 + (if (gym) 1.0 else 0.0), ticks = 41 + (if (gym) 1 else 0), templates = 1),
+            demoSkill("sk-walk", "Walking", "VITALITY", "EXERCISE", 12.5, ticks = 0, walks = 9, templates = 0),
+        ).sortedByDescending { it.hours }
+    }
+
+    /** The template a demo skill is fed by (the gym and the read habit; the others have no row on today's board). */
+    private val skillOfTemplate = mapOf("t-read" to "sk-read", "t-gym" to "sk-strength")
+
+    /** Hours as the web's lines say them: floored, to 0.1 below 100 h, whole from 100. */
+    private fun hoursText(h: Double): String =
+        if (h < 100) "%,.1f".format(Locale.ENGLISH, floor(h * 10 + 1e-9) / 10).removeSuffix(".0") else "%,d".format(Locale.ENGLISH, floor(h + 1e-9).toLong())
+
+    /** One skill with the server's tier rules and words (0–100, 100–500, 500–2,000, 2,000–10,000 h). */
+    private fun demoSkill(id: String, name: String, attribute: String, kind: String, hours: Double, ticks: Int, walks: Int = 0, templates: Int): StatusSkill {
+        val bands = listOf(0 to 100, 100 to 500, 500 to 2000, 2000 to 10000)
+        val i = bands.indexOfLast { hours + 1e-9 >= it.first }.coerceAtLeast(0)
+        val (from, to) = bands[i]
+        val toNext = if (i == bands.lastIndex) null else round((to - hours) * 100) / 100
+        val line = if (ticks == 0 && walks > 0) "${hoursText(hours)} h of walks" else "≈ ${hoursText(hours)} h (task estimates, not timed${if (walks > 0) ", walks as logged" else ""})"
+        val range = "Tier ${i + 1} · %,d–%,d h".format(Locale.ENGLISH, from, to)
+        return StatusSkill(
+            id = id, name = name, attribute = attribute, kind = kind, fieldName = null,
+            hours = round(hours * 100) / 100, tier = i + 1, tierFrom = from, tierTo = to,
+            progress = round(((hours - from) / (to - from)).coerceIn(0.0, 1.0) * 1000) / 1000, toNext = toNext,
+            line = line, tierLine = if (toNext == null) range else "$range · ${hoursText(toNext)} h to Tier ${i + 2}",
+            ticks = ticks, walks = walks, templates = templates,
+        )
+    }
+
+    /** A tick's skill (P5), read after the tick as the server does; a tier crossed for the first time is a tier-up (and its Seal). */
+    private fun tickSkillOf(templateId: String): Pair<TickSkill, JsonElement?>? {
+        val id = skillOfTemplate[templateId] ?: return null
+        val s = demoSkills().firstOrNull { it.id == id } ?: return null
+        val up = s.tier >= 2 && skillSeals.add("competency:${s.id}:t${s.tier}")
+        val seal = if (up) buildJsonObject { put("tier", 2); put("kind", "competency-tier"); put("title", "${s.name} reached Tier ${s.tier}") } else null
+        return TickSkill(s.id, s.name, s.hours, s.tier, up, s.line) to seal
+    }
+
+    /** The demo's avatar targets (P4), the web's own lines: dated from the first of this month. */
+    private fun demoTargets(day: java.time.LocalDate): List<StatusTarget> {
+        val from = day.withDayOfMonth(1).toString()
+        return listOf(
+            StatusTarget("weight", "VITALITY", "Weight", "WEIGHT", "kg", "DOWN", 87.0, from, 75.0, day.plusMonths(4).toString(), 82.4, day.toString(), "WEIGHT", 0.383, "ON_PACE", "Weight 82.4 → 75 kg · 38% of the way · on pace"),
+            StatusTarget("t-stats", "INTELLECT", "Statistics level", "FIELD_LEVEL", "level", "UP", 8.0, from, 12.0, day.plusMonths(2).toString(), 9.4, day.toString(), "COMPUTED", 0.35, "ON_PACE", "Statistics level 9.4 → 12 · 35% of the way · on pace"),
+            StatusTarget("t-deep", "CRAFT", "Deep work", "TRACK_HOURS", "h", "UP", 4.0, from, 10.0, null, 6.5, null, "COMPUTED", 0.417, null, "Deep work ≈ 6.5 → 10 h a week · 41% of the way"),
+            StatusTarget("t-calls", "CARE", "Calls home", "MANUAL", "", "UP", 1.0, from, 3.0, null, 2.0, day.minusDays(1).toString(), "SELF", 0.5, null, "Calls home 2 → 3 · 50% of the way · self-reported"),
+            StatusTarget("t-rev", "CAPITAL", "Revenue", "REVENUE_MONTH", "AUD", "UP", 8200.0, from, 20000.0, day.plusMonths(8).toString(), 12400.0, day.toString(), "COMPUTED", 0.356, "ON_PACE", "Revenue \$12,400 → \$20,000 a month · 35% of the way · on pace"),
+        )
+    }
+
     override suspend fun completeTask(templateId: String, mvv: Boolean, clientId: String): Outcome<CompleteResult> {
         pause()
         val body = buildJsonObject { put("templateId", templateId); put("mvv", mvv) }
@@ -314,13 +441,19 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                 level = gain(level, xp / 120.0)
                 val track = when (t.item.lane) { "MUST" -> "Body"; "HABIT" -> "Care"; else -> "Duty" }
                 val clear = board().allDone
+                // P5: the skill the task feeds, after the tick (Reading crosses 100 h on the first read tick: Tier 2).
+                val skill = tickSkillOf(templateId)
                 Outcome.Ok(
                     CompleteResult(
                         instanceId = instance, xp = xp,
                         line = "+$xp XP · $track" + if (mvv) " · minimum" else "",
                         allDone = clear,
-                        celebrations = if (clear) listOf(buildJsonObject { put("tier", 1); put("kind", "board-clear"); put("title", "Board clear") }) else emptyList(),
+                        celebrations = listOfNotNull(
+                            skill?.second,
+                            if (clear) buildJsonObject { put("tier", 1); put("kind", "board-clear"); put("title", "Board clear") } else null,
+                        ),
                         level = level,
+                        competency = skill?.first,
                     )
                 )
             }

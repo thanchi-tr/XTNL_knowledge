@@ -70,7 +70,7 @@ export function estimateEta({ blockers, masteryPerDay, scorePerDay }: EtaInput):
     return {
       status: "needs_prerequisite",
       days: null,
-      label: missingPrereqs.length === 1 ? "Locked behind 1 skill" : `Locked behind ${missingPrereqs.length} skills`,
+      label: missingPrereqs.length === 1 ? "Locked behind 1 emblem" : `Locked behind ${missingPrereqs.length} emblems`,
       bottleneck: "Unlock its prerequisites first",
     };
   }

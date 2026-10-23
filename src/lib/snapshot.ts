@@ -26,6 +26,11 @@
  * this file). Both read nothing and are left out before MOMENTUM_LAUNCH_DAY,
  * so nothing momentum-shaped can fire while it is null. A WALK PR row carries
  * its session's distance and time, for the Seal's pace (§E.4).
+ *
+ * Skills (blueprint P5): the `competencies` part is competency-server's own
+ * read (readSkillsPart: each live skill's hours and tier), under 'life' (which
+ * every skill and link write clears), 'activity' (a tick), 'exercise' (a walk)
+ * and 'roadmap'. Before the migration it reads as no skills, quietly.
  */
 import { cache } from "react";
 import { prisma } from "./prisma";
@@ -91,6 +96,7 @@ import { getSkill, SKILL_POOL } from "./skill-pool";
 import { PERSONAL_BOARD } from "./work-boards";
 import { snapshotUnderLevelRule } from "./xp";
 import { dailyStreakOf, readStreakFacts } from "./streak";
+import { readSkillsPart } from "./competency-server";
 
 // ─── The progress snapshot (celebrations) ───────────────────────────────────
 
@@ -128,6 +134,8 @@ const PART_TAGS: Record<SnapshotPart, CacheTag[]> = {
   // Momentum: ledger rows, the day's instances, walks and checkpoint logs; perk and chest rows and mints.
   momentum: ["activity", "life", "roadmap", "exercise"],
   momentumRows: ["activity", "life", "progress", "roadmap"],
+  // Skills (blueprint P5): a tick's or a walk's minutes; a skill or link write clears 'life'.
+  competencies: ["life", "activity", "exercise", "roadmap"],
 };
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -162,15 +170,16 @@ async function readLevels(userId: string, now: Date): Promise<LevelsPart> {
     fields: fields.map((f) => ({ id: f.id, name: f.name, level: f.level })),
     domains: fields.flatMap((f) => f.domains.map((d) => ({ id: d.id, name: d.name, fieldId: f.id, level: d.level }))),
     ultimates: owned.filter((o) => getSkill(o.skillCode)?.rank === "ULTIMATE").length,
-    // Only once launched: the character counts tracks only when both snapshots carry them.
-    ...(life.launched ? { tracks: { ...life.levels } } : {}),
+    // Only once launched: the character counts tracks only when both snapshots carry them. With the curve
+    // they were read on (blueprint P3), so a diff across TRACK_CURVE_LAUNCH_DAY lines them up (alignTrackCurve).
+    ...(life.launched ? { tracks: { ...life.levels }, trackCurve: life.curve } : {}),
   };
 }
 
-/** The four track levels (all 0 before launch, so nothing diffs). */
+/** The four track levels (all 0 before launch, so nothing diffs), with the curve they were read on (blueprint P3). */
 async function readTracks(userId: string, now: Date): Promise<TracksPart> {
   const life = await readLife(userId, now);
-  return { levels: { ...life.levels } };
+  return { levels: { ...life.levels }, curve: life.curve };
 }
 
 async function readMastered(userId: string): Promise<MasteredPart> {
@@ -584,6 +593,7 @@ export async function readProgress(userId: string, opts: ReadProgressOptions = {
     ready: () => readReady(userId),
     momentum: () => readMomentum(userId, now),
     momentumRows: () => readMomentumRows(userId, now),
+    competencies: () => readSkillsPart(userId),
   };
   const results = await Promise.all(
     wanted.map(async (part): Promise<[ReadablePart, unknown]> => {

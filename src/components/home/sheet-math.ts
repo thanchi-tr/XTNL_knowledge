@@ -9,8 +9,6 @@
  *                                        way through the current title band (never drops on success)
  *   knowledgeRow(now, weekAgo)           the Knowledge track: level, banked, this week's gain, who grew most
  *   knowledgeLine(row)                   its honest line
- *   lifeTrackRows(knowledge, life)       the Life tracks card's rows: Duty, Craft, Body, Care once
- *                                        life counts, then Knowledge (Knowledge alone before)
  *   lifeCompositions(contributions)      life rows as radar sources ('Life · Body', source LIFE)
  *   ghostScores(scores, fields, ghosts)  attribute scores 7 days ago, from the Field and life levels then
  *                                        (a Field's in its breadth units: xp.ts breadthAsOf)
@@ -34,7 +32,6 @@ import { characterRaw as characterRawOf } from "@/lib/character";
 import { breadthAsOf, wholeLevel } from "@/lib/xp";
 import { round2 } from "@/lib/life-economy";
 import { addDays, daysBetween, weekKeyOf, weekStartKeyOf, type DayKey } from "@/lib/life-day";
-import type { LifeTrackRow, WeekMark } from "@/lib/life-tracks";
 import { judgeDayOf, lastJudgeableSunday } from "@/lib/life-weeks";
 import { TITLE_BANDS } from "@/lib/titles";
 
@@ -134,64 +131,6 @@ export function knowledgeLine(k: KnowledgeRow): string {
   if (k.gained === null) return `${fields} · this week's gain shows once a week of snapshots exists`;
   if (k.gained <= 0.0005) return `${fields} · no Field moved this week`;
   return `${fields} · ${k.grewMost ? `${k.grewMost} grew most this week` : "grew this week"}`;
-}
-
-// ─── The Life tracks card ───────────────────────────────────────────────────
-
-/** One row of the Life tracks card, as <TrackRow/> draws it. */
-export interface TrackRowData {
-  sigil: "body" | "duty" | "craft" | "care" | "know";
-  name: string;
-  level: number;
-  /** 0..1 at the end of last week (ink). */
-  banked: number;
-  /** 0..1 now (banked + this week's gain, in the currency that fed it). */
-  now: number;
-  gainKind: "xp" | "pts";
-  /** The last ≤ 8 judged weeks, oldest first (life tracks only; never padded). */
-  weeks?: WeekMark[];
-  /** The depth-cap tick, passed only when the track is capped (at 1). */
-  cap?: number;
-  /** XP is waiting on kept weeks: the meter is full and the level cannot rise on XP. */
-  capped?: boolean;
-  line: string;
-  seenKey: string;
-}
-
-/**
- * The Life tracks card's rows. Once life counts: the four tracks in the
- * order trackRowsView gives them (Duty, Craft, Body, Care), then Knowledge.
- * Before launch (or with no rows): Knowledge alone, so no life level is
- * ever shown before it is earned.
- */
-export function lifeTrackRows(knowledge: KnowledgeRow, life: { launched: boolean; rows: readonly LifeTrackRow[] }): TrackRowData[] {
-  const tracks: TrackRowData[] = life.launched
-    ? life.rows.map((r) => ({
-        sigil: r.sigil,
-        name: r.name,
-        level: r.level,
-        banked: r.banked,
-        now: r.now,
-        gainKind: "xp" as const,
-        weeks: r.weeks,
-        ...(r.atCap ? { cap: 1, capped: true } : {}),
-        line: r.line,
-        seenKey: `you:track:${r.track.toLowerCase()}`,
-      }))
-    : [];
-  return [
-    ...tracks,
-    {
-      sigil: "know",
-      name: "Knowledge",
-      level: knowledge.level,
-      banked: knowledge.banked,
-      now: knowledge.now,
-      gainKind: "pts",
-      line: knowledgeLine(knowledge),
-      seenKey: "you:track:knowledge",
-    },
-  ];
 }
 
 // ─── Attributes: the 7-day ghost ────────────────────────────────────────────

@@ -10,7 +10,7 @@ import {
 } from "./attributes";
 import { ATTRIBUTES } from "./attributes";
 import { keyOfDateColumn, todayKey } from "./life-day";
-import { isLaunched } from "./life-economy";
+import { isLaunched, trackCurveOn } from "./life-economy";
 import { lifeContributionsAt, type LifeLedger } from "./life-tracks";
 import { loadLifeLedger } from "./life-tracks-server";
 import { breadthAsOf, fieldBreadth, levelRuleSnapshotFloor } from "./xp";
@@ -168,8 +168,10 @@ async function measureScoreRate(userId: string, now: Date): Promise<{ scorePerDa
   // Life rows at both ends, only once launched (the same gate as loadLifeTracks).
   const today = todayKey(now);
   const life = ledger && ledger.epochDay != null && isLaunched(today) ? ledger : null;
-  const lifeThen: FieldContribution[] = life ? lifeContributionsAt(life, keyOfDateColumn(oldest)) : [];
-  const lifeNow: FieldContribution[] = life ? lifeContributionsAt(life, today) : [];
+  // Both ends on today's track curve (blueprint P3): a curve flip inside the window never reads as a rate.
+  const curve = trackCurveOn(today);
+  const lifeThen: FieldContribution[] = life ? lifeContributionsAt(life, keyOfDateColumn(oldest), curve) : [];
+  const lifeNow: FieldContribution[] = life ? lifeContributionsAt(life, today, curve) : [];
 
   const breadth = new Map(fields.map((f) => [f.id, fieldBreadth(f.domains.map((d) => d.level))]));
   const thenScores = computeAttributeScores([

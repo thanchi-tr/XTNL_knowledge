@@ -91,6 +91,7 @@ import {
   lifeLaunchFinished,
   maybeMaintainLife,
   readSettlementState,
+  recordAvatarAfterDegrade,
   recordRoadmapAfterDegrade,
   runAuditStep,
   runLifeCron,
@@ -1918,6 +1919,39 @@ async function executor(): Promise<void> {
     const skippedOnly = await recordRoadmapAfterDegrade(USER, now, { env: WRITE_ENV, readings: async () => ({ written: 0, reaches: 0, skipped: "MISSING_TABLE" }) });
     check("…while a missing table is a skip with no error", skippedOnly.errors.length === 0 && skippedOnly.readings?.skipped === "MISSING_TABLE");
   }
+
+  console.log("— §5c the degrade cron's avatar readings (blueprint P4) —");
+  {
+    const now = at(d(3));
+    const calls: { env: unknown; now: number }[] = [];
+    const record = async (_u: string, n: Date, o: { env: unknown }) => {
+      calls.push({ env: o.env, now: n.getTime() });
+      return { written: 2, skipped: null };
+    };
+    const on = await recordAvatarAfterDegrade(USER, now, { env: WRITE_ENV, record });
+    check(
+      "with writes on, the degrade cron records the avatar targets' COMPUTED readings (its env and instant) and reports them",
+      calls.length === 1 && calls[0].env === WRITE_ENV && calls[0].now === now.getTime() && on.written === 2 && on.skipped === null && on.error === undefined
+    );
+    const offDev = await recordAvatarAfterDegrade(USER, now, { env: DEV_ENV, record });
+    const offPreview = await recordAvatarAfterDegrade(USER, now, { env: { NODE_ENV: "production", VERCEL_ENV: "preview" }, record });
+    check("with writes off (a dev server, a Preview) it records nothing and reports WRITES_OFF", calls.length === 1 && offDev.skipped === "WRITES_OFF" && offPreview.skipped === "WRITES_OFF");
+    let threw = false;
+    let failed: Awaited<ReturnType<typeof recordAvatarAfterDegrade>> | null = null;
+    try {
+      failed = await quietly(() =>
+        recordAvatarAfterDegrade(USER, now, {
+          env: WRITE_ENV,
+          record: async () => {
+            throw new Error("avatar boom");
+          },
+        })
+      );
+    } catch {
+      threw = true;
+    }
+    check("an avatar failure never fails the degrade cron: no throw, its error in the JSON, nothing written", !threw && failed?.error === "avatar boom" && failed.written === 0);
+  }
 }
 
 // ── Static: the cron is scheduled, the route stays a thin GET, nothing settles in render ──
@@ -1940,6 +1974,11 @@ function staticChecks(): void {
   check(
     "the degrade route records roadmap readings after it degrades and judges quotas, and reports them in its JSON",
     step > 0 && degrade.indexOf("degradeOverdueIdeas()") < step && degrade.indexOf("enforceWeeklyQuotas(userId)") < step && /NextResponse\.json\(\{[^}]*\broadmap\b[^}]*\}\)/.test(degrade)
+  );
+  const avatarStep = degrade.indexOf("recordAvatarAfterDegrade(userId, new Date())");
+  check(
+    "blueprint P4: the degrade route records the avatar targets' readings right after its roadmap readings (the levels already recomputed), and reports them in its JSON",
+    avatarStep > step && degrade.indexOf("recomputeAllLevels(") < avatarStep && /NextResponse\.json\(\{[^}]*\bavatar\b[^}]*\}\)/.test(degrade)
   );
   eq(
     "the degrade route still exports only GET and its segment config",

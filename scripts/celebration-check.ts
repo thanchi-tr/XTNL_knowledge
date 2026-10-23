@@ -42,10 +42,14 @@
  *     a WALK personal best's Seal (§E.4) and its reversal ignored; the week Seal
  *     states momentum's amounts once launched; the parts are in the tick and
  *     settle scopes and read nothing before MOMENTUM_LAUNCH_DAY.
+ *   - The track curve (blueprint P3, D5): a diff whose two sides were read on
+ *     different curves (TRACK_CURVE_LAUNCH_DAY between them) plays nothing the
+ *     flip moved; once on POWER a real level-up still plays.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import {
+  alignTrackCurve,
   cleanPrefsPatch,
   dataOf,
   diffProgress,
@@ -77,6 +81,7 @@ import { MOMENTUM_LAUNCH_DAY, momentumLaunchDay, momentumLive, lspThreshold, typ
 import { characterLevelOf, trackLevelsOf } from "../src/components/shell/shell-types";
 import { CHARACTER_EXPONENT } from "../src/lib/character";
 import { emptyLifeLedger, lifeTracksView, type LifeLedger } from "../src/lib/life-tracks";
+import type { TrackCurve } from "../src/lib/life-economy";
 import {
   DEFAULT_PREFS,
   DEVICE_PREFS_STORAGE_KEY,
@@ -836,6 +841,74 @@ function life() {
     "C1: a judge diff whose before and after read the same `now` still reports the track level-up (Body L1 → L2)",
     viewBefore.levels.BODY === 1 && viewAfter.levels.BODY === 2 && judgedDiff.some((d) => d.dedupeKey === "track:BODY:2"),
     `${viewBefore.levels.BODY} → ${viewAfter.levels.BODY} | ${keys(judgedDiff).join()}`
+  );
+  // Blueprint P3 (D5): the track curve's flip is never a moment. Live-style tracks (Body 150 XP over one kept week,
+  // Craft 320 over four) read Body 1 and Craft 2 on SQUARE and Body 2 and Craft 3 on POWER, the same ledger and `now`.
+  const flipWeeks = (track: "BODY" | "CRAFT", n: number) =>
+    Array.from({ length: n }, (_, i) => ({ track, weekKey: `2026-W${41 + i}`, sunday: `2026-10-${String(11 + 7 * i).padStart(2, "0")}`, kept: true, detail: "Kept · 3 days · 40.0 raw XP" }));
+  const flipLedger: LifeLedger = {
+    ...emptyLifeLedger(EPOCH),
+    xpByDay: [
+      { track: "BODY", day: EPOCH, xp: 150 },
+      { track: "CRAFT", day: EPOCH, xp: 320 },
+    ],
+    weeks: [...flipWeeks("BODY", 1), ...flipWeeks("CRAFT", 4)],
+  };
+  const flipNow = "2026-11-05";
+  const onSquare = lifeTracksView(flipLedger, flipNow, EPOCH, "SQUARE");
+  const onPower = lifeTracksView(flipLedger, flipNow, EPOCH, "POWER");
+  const curveSnap = (v: typeof onSquare, curve: TrackCurve | undefined, fields = [3]): ProgressData => ({
+    parts: ["tracks", "levels"],
+    tracks: { levels: { ...v.levels }, ...(curve ? { curve } : {}) },
+    levels: { ...levels(fields, { ...v.levels }), ...(curve ? { trackCurve: curve } : {}) },
+  });
+  check(
+    "P3 fixture: the same ledger reads Body 1 → 2 and Craft 2 → 3 on the flip, the views carry their curve",
+    onSquare.levels.BODY === 1 && onPower.levels.BODY === 2 && onSquare.levels.CRAFT === 2 && onPower.levels.CRAFT === 3 && onSquare.curve === "SQUARE" && onPower.curve === "POWER",
+    `${JSON.stringify(onSquare.levels)} → ${JSON.stringify(onPower.levels)}`
+  );
+  check(
+    "P3 fixture sanity: marked on one curve, the same move would play (so the guard below is what keeps the flip silent)",
+    keys(diffProgress(curveSnap(onSquare, "POWER"), curveSnap(onPower, "POWER"))).some((k) => k.startsWith("track:"))
+  );
+  const flipped = diffProgress(curveSnap(onSquare, "SQUARE"), curveSnap(onPower, "POWER"));
+  check("P3: a diff across the flip (before on SQUARE, after on POWER) plays nothing", flipped.length === 0, keys(flipped).join());
+  const unmarked = diffProgress(curveSnap(onSquare, undefined), curveSnap(onPower, "POWER"));
+  check("P3: a before part stored with no curve reads SQUARE, so it is lined up too", unmarked.length === 0, keys(unmarked).join());
+  const withField = diffProgress(curveSnap(onSquare, "SQUARE", [3]), curveSnap(onPower, "POWER", [9]));
+  const afterTracks = trackLevelsOf({ ...onPower.levels });
+  // The character moment (here folded into the title it reached) reads its raw level from the after side's tracks on both sides.
+  const charMoment = withField.find((d) => d.claims.some((c) => c.startsWith("level:")) || d.dedupeKey.startsWith("level:"));
+  const c3 = characterLevelOf([3], afterTracks);
+  const c9 = characterLevelOf([9], afterTracks);
+  const rawRow = charMoment?.what.find((w) => w.label === "Raw level")?.value;
+  check(
+    "P3: an action across the flip that lifts a Field plays only that: no track moment, and the character reads the after side's tracks on both sides",
+    withField.every((d) => !d.dedupeKey.startsWith("track:") && !d.claims.some((c) => c.startsWith("track:"))) &&
+      charMoment != null &&
+      rawRow === `${(c3.level + c3.progress).toFixed(2)} → ${(c9.level + c9.progress).toFixed(2)}`,
+    `${keys(withField).join()} | ${rawRow}`
+  );
+  const sameBefore = curveSnap(onSquare, "SQUARE");
+  check(
+    "P3: on one curve alignTrackCurve hands `before` back untouched (absent and SQUARE agree)",
+    alignTrackCurve(sameBefore, curveSnap(onSquare, "SQUARE")) === sameBefore && alignTrackCurve(curveSnap(onSquare, undefined), curveSnap(onSquare, "SQUARE")).tracks?.curve === undefined
+  );
+  const flipJudged: LifeLedger = { ...flipLedger, weeks: [...flipLedger.weeks, ...flipWeeks("BODY", 4).slice(1)], xpByDay: [...flipLedger.xpByDay, { track: "BODY", day: "2026-10-20", xp: 200 }] };
+  const powerAfter = lifeTracksView(flipJudged, flipNow, EPOCH, "POWER");
+  const realUp = diffProgress(curveSnap(onPower, "POWER"), curveSnap(powerAfter, "POWER"));
+  check(
+    "P3: once on POWER, a real level-up still plays (Body 2 → 3 from kept weeks and XP)",
+    powerAfter.levels.BODY === 3 && realUp.some((d) => d.dedupeKey === "track:BODY:3" || d.claims.includes("track:BODY:3")),
+    `${powerAfter.levels.BODY} | ${keys(realUp).join()}`
+  );
+  check(
+    "P3: snapshot.ts stamps the curve on both life parts (tracks.curve, levels.trackCurve), from the view it read",
+    /return \{ levels: \{ \.\.\.life\.levels \}, curve: life\.curve \};/.test(snap) && /tracks: \{ \.\.\.life\.levels \}, trackCurve: life\.curve/.test(snap)
+  );
+  check(
+    "P3: diffProgress lines the curves up before any detector runs",
+    /const before = alignTrackCurve\(beforeRead, after\);/.test(strip(read(join(ROOT, "src/lib/celebration-detect.ts"))))
   );
   const judgeSrv = strip(read(join(ROOT, "src/lib/life-weeks-server.ts")));
   check("C1 backstop: the week judge gives each settle snapshot its own Date", /captureSnapshot\(userId, \{ scope: "settle", now: new Date\(now\.getTime\(\)\) \}\)/.test(judgeSrv));

@@ -80,6 +80,50 @@
   .wk i.h { background: var(--hatch); border-color: var(--held); }
   .trk-row .meter { margin: 8px 0 6px; }
   .trk-row .t-meta b { color: var(--ink-1); font-weight: 600; }
+  /* The Status card (blueprint P1): the blueprint's word beside a track's name, and Capital's reading (no meter). */
+  .trk-sub { font-size: 13px; line-height: 18px; color: var(--ink-2); }
+  .status-cap-v { margin-left: auto; font: 600 16px var(--font-display); font-variant-numeric: tabular-nums; }
+  .status-cap .t-meta + .t-meta { margin-top: 2px; }
+  /* Avatar targets (blueprint P4): one line each under the attribute's line (a record: no meter, no level), the row
+     that holds a track's targets before life counts, and the Edit avatar button closing the card. */
+  .av-targets { list-style: none; margin: 6px 0 0; padding: 6px 0 0; border-top: 1px dashed var(--line-1); display: grid; gap: 2px; }
+  .av-targets li { position: relative; padding-left: 14px; overflow-wrap: anywhere; }
+  .av-targets li::before { content: ""; position: absolute; left: 2px; top: 6px; width: 6px; height: 6px; border: 1.5px solid var(--ink-2); border-radius: 1px; transform: rotate(45deg); }
+  .status-cap .av-targets, .status-unplaced .av-targets { margin-top: 4px; }
+  .status-unplaced .av-targets { border-top: 0; padding-top: 0; }
+  .av-open { display: flex; padding: 10px 14px 12px; border-top: 1px solid var(--line-1); }
+  /* The Edit avatar sheet (study.css carries the fields). */
+  .av-sheet, .av-list, .av-form, .av-group { display: flex; flex-direction: column; gap: 10px; }
+  .av-form .st-label { margin-bottom: 0; }
+  .av-group { gap: 4px; }
+  .av-item { padding: 8px 0 2px; border-top: 1px solid var(--line-1); }
+  .av-line { margin: 0; font-size: 14px; line-height: 20px; color: var(--ink-1); overflow-wrap: anywhere; }
+  .av-field { display: flex; gap: 8px; align-items: center; }
+  .av-unit { flex: none; font: 600 15px/1 var(--font-ui); color: var(--ink-1); }
+  .av-dir { border: 0; padding: 0; margin: 0; min-width: 0; }
+  .av-off { margin: 0; }
+  /* Skills (blueprint P5): a Status row's skills counted, a 44 px link to You › Skills (no meter, no level). */
+  .status-skills { display: inline-flex; align-items: center; min-height: 44px; margin-bottom: -12px; color: var(--ink-1); text-decoration: none; }
+  .status-skills:hover { color: var(--ink-0); text-decoration: underline; }
+  .status-skills:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+  /* You › Skills: the skills by hours (a row each: the tier badge, the meter through the tier, its lines), a new skill,
+     the suggestions, the roadmaps, and the Fields by level. Tokens only; 44 px targets. */
+  .sk-board { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .sk-list { padding: 0; }
+  .sk-pad { padding: 12px 14px; margin: 0; }
+  .sk-rule { margin: 8px 2px 0; }
+  .sk-row .sk-tier { margin-left: auto; font: 600 13px/1 var(--font-mono); padding: 3px 7px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--ink-1); }
+  .sk-row .meter { margin: 8px 0 6px; }
+  .sk-row .t-meta + .t-meta { margin-top: 2px; }
+  .sk-acts { margin-top: 6px; }
+  .sk-form { margin-top: 8px; padding-top: 10px; border-top: 1px dashed var(--line-1); }
+  .sk-sug, .sk-field { display: flex; align-items: center; gap: 10px 12px; flex-wrap: wrap; padding: 12px 14px; }
+  .sk-sug + .sk-sug, .sk-field + .sk-field { border-top: 1px solid var(--line-1); }
+  .sk-sug-t { flex: 1 1 180px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .sk-sug-t b, .sk-field b { font-weight: 600; overflow-wrap: anywhere; }
+  .sk-field { justify-content: space-between; min-height: 44px; }
+  .sk-field b { flex: 1 1 140px; min-width: 0; }
+  .sk-road { display: flex; flex-direction: column; }
 
   /* ---------- the life note (14 days after life starts counting) ---------- */
   .life-note { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 12px 14px; }

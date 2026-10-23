@@ -293,7 +293,7 @@ export function mpLinesOf(rows: readonly { delta: number }[]): DecayLine[] {
       kind: "mp",
       key: "mp",
       title: `${mpText(taken)} MP to idle decay`,
-      detail: `${plural(days, "day")} of it this week: unspent points erode while a skill they could already buy waits.`,
+      detail: `${plural(days, "day")} of it this week: unspent points erode while an emblem they could already buy waits.`,
       href: "/skills",
       action: "Unlock",
     },

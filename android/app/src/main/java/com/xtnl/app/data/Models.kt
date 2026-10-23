@@ -260,6 +260,126 @@ data class TodaysThree(val done: Int = 0, val total: Int = 0, val frozen: Boolea
 @Serializable
 data class ThreeQuest(val slot: String = "", val title: String = "", val done: Boolean = false, val templateId: String? = null)
 
+// ── GET /status (blueprint P1) ──────────────────────────────────────────────
+
+/**
+ * The five attributes and Capital's reading (docs/mobile-api.md `GET /status`; blueprint 1.1, decisions D1 and D2): the
+ * web's /you Status card, read only. Each attribute is its source's own figures (Vitality is the Body track, Intellect
+ * is Knowledge, Craft, Duty and Care their tracks), never a second formula; Capital is a reading only, with no level
+ * and no XP. With them the avatar targets (P4) and the skills (P5), each paying nothing.
+ */
+@Serializable
+data class StatusPanel(
+    val now: String? = null,
+    val day: String? = null,
+    /** Life counts: the four track rows are in. Before, [attributes] holds Intellect alone. */
+    val launched: Boolean = false,
+    val attributes: List<StatusAttribute> = emptyList(),
+    /** Null when no deal was won in the last three months, or when the deals couldn't be read. */
+    val capital: CapitalReading? = null,
+    /** The avatar targets (P4), in the web card's order; null when they couldn't be read (show none), empty with none. */
+    val targets: List<StatusTarget>? = null,
+    /** The skills (P5), most hours first; null when they couldn't be read (show none), empty with none. */
+    val skills: List<StatusSkill>? = null,
+)
+
+/**
+ * One attribute: [key] VITALITY | INTELLECT | CRAFT | DUTY | CARE, the blueprint's word ([attribute]) over its
+ * source's own name ([name]: Body, Knowledge, Craft, Duty, Care). [progress] is the meter now and [banked] last week's
+ * (0..1); [cap] and [keptStreak] are null for Intellect. [weeks]: kept | held | missed, oldest first, at most 8.
+ * [unit]: xp (life XP) for a track, pts (review points) for Intellect. [skills] (P5): how many live skills it has (0 from
+ * an older server, or when the skills couldn't be read).
+ */
+@Serializable
+data class StatusAttribute(
+    val key: String = "",
+    val attribute: String = "",
+    val name: String = "",
+    val level: Int = 0,
+    val progress: Double = 0.0,
+    val banked: Double = 0.0,
+    val cap: Int? = null,
+    val atCap: Boolean = false,
+    val keptStreak: Int? = null,
+    val weeks: List<String> = emptyList(),
+    val line: String = "",
+    val unit: String = "xp",
+    val skills: Int = 0,
+)
+
+/** One month of Capital: AUD [wonCents] won (whole cents) and the web's own [won] figure, and how many [deals]. */
+@Serializable
+data class CapitalMonth(val month: String = "", val label: String = "", val wonCents: Long = 0, val won: String = "", val deals: Int = 0)
+
+/** Capital this month ([line] "1 deal won in October"), the months before ([history]), and the window newest first. */
+@Serializable
+data class CapitalReading(
+    val month: String = "",
+    val label: String = "",
+    val wonCents: Long = 0,
+    val won: String = "",
+    val deals: Int = 0,
+    val line: String = "",
+    val history: String = "",
+    val months: List<CapitalMonth> = emptyList(),
+)
+
+/**
+ * One avatar target (docs/mobile-api.md `GET /status` `targets`; blueprint 1.2, decisions D3 and D4): the desired self in
+ * numbers, read only here and set on the web (/you › Edit avatar). [attribute] is one of the five keys or CAPITAL;
+ * [metric] is WEIGHT (Train's own goal), EFFORT_MINUTES, FIELD_LEVEL, TRACK_HOURS, REVENUE_MONTH or MANUAL; [source] is
+ * COMPUTED (measured by the app), SELF (logged by the user: its [line] says "self-reported") or WEIGHT (Train's trend).
+ * [share] is 0..1 of the way from [baseline] (null without one, or with no [current] yet); [pace] is REACHED, ON_PACE,
+ * BEHIND, PAST, or null without a target day. A target pays nothing and moves no level.
+ */
+@Serializable
+data class StatusTarget(
+    val id: String = "",
+    val attribute: String = "",
+    val label: String = "",
+    val metric: String = "",
+    val unit: String = "",
+    val direction: String = "UP",
+    val baseline: Double? = null,
+    val baselineDay: String? = null,
+    val target: Double = 0.0,
+    val targetDay: String? = null,
+    val current: Double? = null,
+    val currentDay: String? = null,
+    val source: String = "COMPUTED",
+    val share: Double? = null,
+    val pace: String? = null,
+    val line: String = "",
+)
+
+/**
+ * One skill (docs/mobile-api.md `GET /status` `skills`; blueprint 1.5, decisions D7, D8 and D9): a named competency,
+ * read only here and named and linked on the web (You › Skills). [attribute] is one of the five keys; [kind] PRACTICE,
+ * or EXERCISE (walks count too). [hours] (2 decimals) are derived on the server from the linked tasks' ticks; [tier] is
+ * 1 (0–100 h), 2 (100–500), 3 (500–2,000) or 4 (2,000–10,000), [progress] the share through it (0..1) and [toNext] the
+ * hours to the next (null in Tier 4). [line] and [tierLine] are the web's own words. A skill pays nothing.
+ */
+@Serializable
+data class StatusSkill(
+    val id: String = "",
+    val name: String = "",
+    val attribute: String = "",
+    val kind: String = "PRACTICE",
+    val fieldName: String? = null,
+    val hours: Double = 0.0,
+    val tier: Int = 1,
+    val tierFrom: Int = 0,
+    val tierTo: Int = 100,
+    val progress: Double = 0.0,
+    val toNext: Double? = null,
+    val line: String = "",
+    val tierLine: String = "",
+    val ticks: Int = 0,
+    val estimated: Int = 0,
+    val walks: Int = 0,
+    val templates: Int = 0,
+)
+
 // ── Tasks and work ──────────────────────────────────────────────────────────
 
 @Serializable
@@ -271,6 +391,19 @@ data class CompleteResult(
     val celebrations: List<JsonElement> = emptyList(),
     /** The character's level after this tick (null from an older server, or when it couldn't be read): the seal's exact step. */
     val level: LevelInfo? = null,
+    /** The skill this task feeds (P5), as it stands after the tick; null when it feeds none (or from an older server). */
+    val competency: TickSkill? = null,
+)
+
+/** A tick's skill (P5): its [name], [hoursAfter] and [tier] after the tick, its hours [line]; [tierUp] when this tick played the tier's Seal. */
+@Serializable
+data class TickSkill(
+    val id: String = "",
+    val name: String = "",
+    val hoursAfter: Double = 0.0,
+    val tier: Int = 1,
+    val tierUp: Boolean = false,
+    val line: String = "",
 )
 
 @Serializable

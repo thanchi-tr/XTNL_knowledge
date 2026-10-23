@@ -22,7 +22,7 @@ import type { GoalLadder } from "@/lib/goals";
 import { loadGoalLadder } from "@/lib/goals-server";
 import { rungOf } from "@/lib/habit";
 import { addDays, todayKey, type DayKey } from "@/lib/life-day";
-import { isLaunched, lifeLaunchDay } from "@/lib/life-economy";
+import { isLaunched, lifeLaunchDay, type TrackCurve } from "@/lib/life-economy";
 import { emptyLifeLedger, lifeContributionsAt, notLaunchedView, type LifeTracksView } from "@/lib/life-tracks";
 import { loadLifeLedger, loadLifeTracks } from "@/lib/life-tracks-server";
 import { TRACKS } from "@/lib/life-types";
@@ -135,11 +135,14 @@ function countRungs(strengths: readonly number[]): RungCounts {
   return out;
 }
 
-/** Life rows as they stood on `day` (for the radar's ghost); none when life did not count then. */
-async function lifeRowsOn(userId: string, day: DayKey): Promise<FieldLevelRow[]> {
+/**
+ * Life rows as they stood on `day` (for the radar's ghost); none when life did not count then. On the curve the
+ * sheet reads today (blueprint P3), so a curve flip inside the week is never drawn as growth.
+ */
+async function lifeRowsOn(userId: string, day: DayKey, curve: TrackCurve): Promise<FieldLevelRow[]> {
   if (!isLaunched(day)) return [];
   const ledger = await loadLifeLedger(userId).catch(() => emptyLifeLedger());
-  return lifeContributionsAt(ledger, day).map((c) => ({ name: c.fieldName, level: c.level }));
+  return lifeContributionsAt(ledger, day, curve).map((c) => ({ name: c.fieldName, level: c.level }));
 }
 
 export async function loadSheet(userId: string, now: Date = new Date()): Promise<SheetData> {
@@ -179,7 +182,7 @@ export async function loadSheet(userId: string, now: Date = new Date()): Promise
   const sources = [...compositions, ...lifeCompositions(life.contributions)];
   // The ghost needs the Fields' week-old snapshot: without it there is no honest "then". The
   // life rows then come from the same ledger (none for a day before launch: life fed nothing).
-  const lifeWeekAgo = life.launched && weekAgo.length > 0 ? await lifeRowsOn(userId, addDays(today, -7)) : [];
+  const lifeWeekAgo = life.launched && weekAgo.length > 0 ? await lifeRowsOn(userId, addDays(today, -7), life.curve) : [];
   const ghost = compositions.length > 0 ? ghostScores(progression.scores, sources, [...weekAgo, ...lifeWeekAgo]) : null;
   const axes = ATTRIBUTES.map((a) => ({
     attribute: a,

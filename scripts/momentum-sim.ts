@@ -15,6 +15,10 @@
  * knee, life-economy trackLevel and the kept-week floors, character.ts, xp.ts, mastery.ts), never restated. Only the
  * NEW constants live here, under MOMENTUM, and they are exactly the spec's tables.
  *
+ * The track curve (blueprint P3, D5): the levels read life-economy trackLevel on TRACK_CURVE, POWER once a launch
+ * day is set (the constant, or outside production XTNL_TRACK_CURVE_LAUNCH_DAY) and SQUARE while there is none, so
+ * with the switch off the output is exactly as before and with the override every pin runs on Base·L^1.5.
+ *
  * Behaviour randomness (which tasks a simulated person does on a given day) is a seeded mulberry32 stream per
  * simulated user. Game randomness (crits, chests) is the spec's HMAC roll with a fixed test secret, exactly as the
  * server will compute it, so the chest and crit rates printed here are the real distribution, not an assumption.
@@ -23,12 +27,16 @@ import "./_no-model";
 import { createHmac } from "node:crypto";
 import { kneeG, kneePay, priceTask, roundTo } from "../src/lib/life-grade";
 import { BODY_EFFORT_MINUTES, GOAL_RULES, KEPT_MIN_DAYS, KEPT_MIN_RAW, LIFE_MP, trackLevel } from "../src/lib/life-economy";
+import { TRACK_CURVE_BASE, TRACK_CURVE_EXPONENT, trackCurveLaunchDay, type TrackCurve } from "../src/lib/life-economy";
 import { characterLevel } from "../src/lib/character";
 import { EASE_DEFAULT, MASTERY_BONUS, MASTERY_LEVEL, MAX_LEVEL, XP_BASE, cleanRecallOnTime, domainLevel, fieldLevel, reviewReward } from "../src/lib/xp";
 import { IDEA_MASTERY_POINTS, REVIEW_MASTERY_PER_LEVEL } from "../src/lib/mastery";
 import { SKILL_POOL } from "../src/lib/skill-pool";
 import { TRACKS, type Band, type Track } from "../src/lib/life-types";
 import { addDays, weekKeyOf, type DayKey } from "../src/lib/life-day";
+
+/** The track curve the levels read (blueprint P3): POWER once a launch day is set, since every simulated day is after it. */
+const TRACK_CURVE: TrackCurve = trackCurveLaunchDay() == null ? "SQUARE" : "POWER";
 
 // ════════════════════════════════════════════════════════════════════════════
 // Momentum maths (the reference implementation; momentum.md §A, §B)
@@ -1069,6 +1077,7 @@ function main() {
   console.log(`  momentum streak at day 365: ${f(mean(users.map((u) => u.streak.current)))} days (longest ${f(mean(users.map((u) => u.streak.longest)))}) · freezes earned ${f(mean(users.map((u) => u.streak.earned)), 1)}, used ${f(mean(users.map((u) => u.streak.used)), 1)} a year · runs broken ${f(mean(users.map((u) => u.streak.breaks)), 2)} times a year (p90 ${pct(users.map((u) => u.streak.breaks), 90)})`);
 
   // Levels.
+  if (TRACK_CURVE === "POWER") console.log(`\n  track curve: POWER (${TRACK_CURVE_BASE}·L^${TRACK_CURVE_EXPONENT} a level; XTNL_TRACK_CURVE_LAUNCH_DAY is set)`);
   console.log("\n  character level (realistic life + balance-horizon's knowledge)    spread  focused  life only   tracks B/D/Cr/Ca");
   const levelRows: Record<number, { spread: number; focused: number; life: number; min: number; max: number; lifeMin: number; lifeMax: number }> = {};
   for (const day of [90, 365]) {
@@ -1076,7 +1085,7 @@ function main() {
       const xp = u.xpByTrackAt.get(day)!;
       const kept = u.keptAt.get(day)!;
       const depthCraft = u.goalDepthCraftAt.get(day)!;
-      const tracks = TRACKS.map((t) => trackLevel(xp[t], kept[t], t === "CRAFT" ? depthCraft : 0));
+      const tracks = TRACKS.map((t) => trackLevel(xp[t], kept[t], t === "CRAFT" ? depthCraft : 0, TRACK_CURVE));
       const sp = kSpread[day - 1].fields.map((d) => fieldLevel(d));
       const fo = kFocused[day - 1].fields.map((d) => fieldLevel(d));
       return { tracks, spread: characterLevel(sp, tracks).level, focused: characterLevel(fo, tracks).level, life: characterLevel([], tracks).level };

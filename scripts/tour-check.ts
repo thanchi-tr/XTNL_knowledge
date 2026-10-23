@@ -118,7 +118,9 @@ const TOUR_CSS = read("src/components/tour/tour.css");
     );
   }
   // F-R4-6's aim ("Give it an aim and the app plans milestones toward it, then measures them …"), with the crest's menu in front of it (the three sections).
-  eq("copy: YOU_COPY is the profile menu and the spec's aim, within budget (157 characters)", [YOU_COPY, YOU_COPY.length], ["Your crest opens your character, skills and Settings. Give the character an aim and the app plans milestones toward it, measured from your reviews and ticks.", 157]);
+  // Re-pinned for blueprint P2 (D6): the crest opens Emblems now (the /skills row's label), so the copy says emblems.
+  eq("copy: YOU_COPY is the profile menu and the spec's aim, within budget (158 characters)", [YOU_COPY, YOU_COPY.length], ["Your crest opens your character, emblems and Settings. Give the character an aim and the app plans milestones toward it, measured from your reviews and ticks.", 158]);
+  check("copy (P2): the You step names the profile menu's Emblems row in its words, and no Skills page", YOU_COPY.includes(PROFILE.subs.find((s) => s.href === "/skills")!.label.toLowerCase()) && !/\bskills?\b/i.test(YOU_COPY));
   check("steps: still seven, so the aim adds no step", KEYBOARD.length === 7 && PHONE.length === 7);
 }
 
@@ -216,6 +218,17 @@ const TOUR_CSS = read("src/components/tour/tour.css");
     youTargets[0] === '[data-tour="you-aim"]' && youTargets[1] === '[data-tour="you-hero"]' && youTargets[youTargets.length - 1] === '[data-tour="you-crest"]' && youTargets.slice(2, -1).every((t) => !t.startsWith("[data-tour")),
     youTargets.join(", ")
   );
+  // Blueprint P1: the Status card (the five attributes) replaced the Life tracks card under the hero and carries its own
+  // anchor, once, for P2's tour copy; the You step's own targets stay the aim, the hero and the profile buttons.
+  {
+    const status = read("src/components/home/StatusPanel.tsx");
+    const anchored = srcFiles.filter((f) => readFileSync(f, "utf8").includes('data-tour="you-status"')).map((f) => relative(ROOT, f).replace(/\\/g, "/"));
+    check(
+      "target: the Status card carries data-tour='you-status' on its root, in StatusPanel.tsx alone; /you draws it and no Life tracks card",
+      /<div data-tour="you-status">/.test(status) && anchored.length === 1 && anchored[0] === "src/components/home/StatusPanel.tsx" && /<StatusPanel panel=\{status\}/.test(read("src/app/you/page.tsx")) && !/<LifeTracks\b/.test(read("src/app/you/page.tsx")),
+      anchored.join(", ")
+    );
+  }
   check("target: welcome and shortcuts are centred (no target)", ["welcome", "shortcuts"].every((id) => KEYBOARD.find((s) => s.id === id)!.targets.length === 0));
 }
 

@@ -44,6 +44,7 @@ const KIND_LABEL: Partial<Record<CelebrationKind, string>> = {
   pr: "Personal record",
   "boss-won": "Boss victory",
   "goal-finished": "Goal finished",
+  "competency-tier": "Skill tier",
   title: "Title",
   band: "Re-forge",
   "emblem-unlock": "Emblem unlocked",

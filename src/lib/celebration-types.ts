@@ -74,6 +74,7 @@ export const T2_KINDS = [
   "pr", // sensor sessions only (M4)
   "boss-won", // BossSigil face + a boon you choose
   "goal-finished", // Short or Mid goal (frozen MP payout stated)
+  "competency-tier", // a skill's hour tier (blueprint P5, D9: 100 / 500 / 2,000 h; a Seal only, it pays no MP)
 ] as const;
 
 /** Tier 3 · Ascension: rare. Full-screen opaque curtain; persisted (shownAt). */

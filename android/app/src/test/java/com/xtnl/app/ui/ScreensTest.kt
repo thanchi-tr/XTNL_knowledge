@@ -21,6 +21,7 @@ import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import com.xtnl.app.XtnlApp
+import com.xtnl.app.core.StatusLine
 import com.xtnl.app.data.MotionChoice
 import com.xtnl.app.ui.more.WebHolder
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -82,6 +83,18 @@ class ScreensTest {
     /** P15: the Quest card in the main display's second pane. */
     @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
     fun questCardMain() = questCard("main")
+
+    /** P1: More › Status (the five attributes, then Capital and the note) on the front display's one column. */
+    @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
+    fun statusFront() = status("front")
+
+    /** P1: More › Status in the main display's two panes (the attributes, then Capital and the note). */
+    @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
+    fun statusMain() = status("main")
+
+    /** P1: More › Status on the main display sideways. */
+    @Test @Config(qualifiers = "w932dp-h704dp-420dpi")
+    fun statusSideways() = status("sideways")
 
     /** Half open and sideways: the hinge across the middle (1848 px tall window, hinge at 924 px). */
     @Test @Config(qualifiers = "w932dp-h704dp-420dpi")
@@ -321,6 +334,49 @@ class ScreensTest {
         }
         settle()
         snap("$name-quest-card")
+    }
+
+    /** More › Attributes (P1's Status screen; titled so since P2) with demo data, opened by its deep link: one PNG at the top, one scrolled to its end (one column), then More's list after Back. */
+    private fun status(name: String) {
+        val graph = ApplicationProvider.getApplicationContext<XtnlApp>().graph
+        graph.settings.setDemo(true)
+        graph.settings.setMotion(MotionChoice.STILL)
+        val links = MutableStateFlow<Uri?>(Uri.parse("xtnl://app/status"))
+        rule.runOnUiThread { rule.activity.actionBar?.hide() }
+        rule.setContent {
+            AppRoot(graph, MutableStateFlow(WindowFacts()), links, { links.value = null }, WebHolder(), {})
+        }
+        settle()
+        snap("$name-status")
+        // P2 (D6): the screen is titled Attributes. Asked before the scroll: with P4's targets the list is long enough
+        // that its header leaves the composition at the end.
+        rule.onAllNodes(hasText(StatusLine.TITLE)).onFirst().assertExists()
+        // P4: the avatar targets sit under their rows (the demo's weight goal under Vitality).
+        rule.onAllNodes(hasText("Weight 82.4 → 75 kg", substring = true)).onFirst().assertExists()
+        // P5: each row counts its skills (the demo's Strength and Walking under Vitality).
+        rule.onAllNodes(hasText("2 skills")).onFirst().assertExists()
+        val end = hasText("How these read", substring = true, ignoreCase = true)
+        val lists = rule.onAllNodes(hasScrollAction())
+        for (i in 0 until lists.fetchSemanticsNodes().size) {
+            if (runCatching { scrolling { lists[i].performScrollToNode(end) } }.isSuccess) break
+        }
+        settle()
+        // P5: the Skills card sits before the note, by hours (Writing first), in the web's words.
+        rule.onAllNodes(hasText(StatusLine.SKILLS_ASIDE)).onFirst().assertExists()
+        rule.onAllNodes(hasText("≈ 142 h (task estimates, not timed)")).onFirst().assertExists()
+        snap("$name-status-end")
+        // Back lands on More's list, whose row says the same word (P2). The header and its Back are at the top, which
+        // P4's longer list scrolls out of the composition on one column: scroll back up first, as a thumb would.
+        for (i in 0 until lists.fetchSemanticsNodes().size) {
+            if (runCatching { scrolling { lists[i].performScrollToIndex(0) } }.isSuccess) break
+        }
+        // The scroll above left the frame clock held (scrolling's finally); let it run so the Back lands.
+        rule.mainClock.autoAdvance = true
+        tap(hasContentDescription("Back"))
+        settle()
+        rule.onAllNodes(hasText("Open full app")).onFirst().assertExists()
+        rule.onAllNodes(hasText(StatusLine.TITLE)).onFirst().assertExists()
+        snap("$name-more")
     }
 
     private fun walk(name: String, hinge: Hinge? = null, reviewToo: Boolean = true) {

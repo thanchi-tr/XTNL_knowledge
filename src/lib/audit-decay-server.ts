@@ -27,7 +27,7 @@ import { HABIT_WINDOW_DAYS, habitStrength, type StreakOptions } from "./habit";
 import { parseRule } from "./recurrence";
 import { dutyLaunchDay, isDutyLaunched } from "./duty-economy";
 import { heldDaysOf } from "./duty-rule";
-import { isLaunched } from "./life-economy";
+import { isLaunched, trackCurveOn } from "./life-economy";
 import { lifeContributionsAt, trackStateAt } from "./life-tracks";
 import { loadLifeLedger } from "./life-tracks-server";
 import {
@@ -97,7 +97,9 @@ async function readTraits(userId: string, now: Date, today: DayKey): Promise<Dec
   const rows = read.map((r) => r.row);
   // The life rows at both ends only once life is launched (the attribute scores' own gate).
   const life = ledger.epochDay != null && isLaunched(today) ? ledger : null;
-  return traitScoresOf(rows, { then: life ? lifeContributionsAt(life, thenDay) : [], now: life ? lifeContributionsAt(life, today) : [] });
+  // Both ends on today's track curve (blueprint P3): a curve flip is never a trait that rose or fell.
+  const curve = trackCurveOn(today);
+  return traitScoresOf(rows, { then: life ? lifeContributionsAt(life, thenDay, curve) : [], now: life ? lifeContributionsAt(life, today, curve) : [] });
 }
 
 /** The Domains and Fields that fell this week (not yet won back), and the ideas past grace now, by Domain and Field. */

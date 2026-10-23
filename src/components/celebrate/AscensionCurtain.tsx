@@ -19,7 +19,7 @@
  *   lines, lore, grant cards, the cost line and the cause line; a gold primary
  *   plus quiet Done. Momentum's ceremonies (momentum.md §A.8, §E.5: a milestone,
  *   a capstone) are the other way round: Done is the gold primary and the place
- *   is the quiet secondary ("See the roadmap", the Life tree), from facts.href.
+ *   is the quiet secondary ("See the roadmap", "See Life perks"), from facts.href.
  *   Still: the final tableau at once, identical words. Calm: fades only.
  *   Full: art flies from the tapped node 640 ms, rims draw 760, notches or
  *   crest edges pop at 32 ms each, then at 1.0 s the flash, one shockwave
@@ -68,13 +68,13 @@ export function defaultPrimary(ev: Pick<CelebrationEvent, "kind">): CurtainActio
   }
 }
 
-/** The quiet secondary of momentum's ceremonies (§A.8): the roadmap of a milestone, the Life tree of a capstone. */
+/** The quiet secondary of momentum's ceremonies (§A.8): the roadmap of a milestone, Life perks (the Life tree, D6) of a capstone. */
 export function defaultSecondary(ev: Pick<CelebrationEvent, "kind" | "facts">): CurtainAction | null {
   switch (ev.kind) {
     case "milestone":
       return { label: "See the roadmap", href: ev.facts.href ?? "/you/roadmap" };
     case "capstone":
-      return { label: "See the Life tree", href: ev.facts.href ?? "/skills/life" };
+      return { label: "See Life perks", href: ev.facts.href ?? "/skills/life" };
     default:
       return null;
   }

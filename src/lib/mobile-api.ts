@@ -49,6 +49,9 @@ import type { ReviewDay } from "../app/review/review-data";
 import type { MomentumView } from "./momentum-server";
 import { SPRINT, type MainQuest } from "./main-quest";
 import { geminiWordsOf } from "../components/roadmap/roadmap-copy";
+import type { CapitalPanel, CapitalReading, StatusPanel } from "./status-panel";
+import type { AvatarTargetView } from "./avatar";
+import { skillTickOf, type SkillView } from "./competency";
 
 // ── The endpoints ───────────────────────────────────────────────────────────
 
@@ -70,6 +73,7 @@ export const MOBILE_ENDPOINTS: readonly { method: MobileMethod; path: string }[]
   { method: "GET", path: "/ideas/meta" },
   { method: "POST", path: "/ideas" },
   { method: "GET", path: "/quests" },
+  { method: "GET", path: "/status" },
 ];
 
 // ── The token ───────────────────────────────────────────────────────────────
@@ -659,7 +663,123 @@ export function questsThreeOf(m: MomentumView | null) {
   };
 }
 
+// ── GET /status ─────────────────────────────────────────────────────────────
+
+/** A meter's share to 3 decimals: the phone draws it, never sums it. */
+const share3 = (v: number) => Math.round(Math.max(0, Math.min(1, v)) * 1000) / 1000;
+
+/**
+ * The five attributes as the phone shows them (blueprint 1.1; P1, decisions D1 and D2), from status-panel.ts
+ * statusPanelOf, the model the /you Status card draws, so the phone and the browser say the same levels: each row's
+ * key, the blueprint's word (`attribute`) and the track's own name (`name`: Body, Knowledge, Craft, Duty, Care), its
+ * level, its meter now and banked last week (0..1, 3 decimals), its depth cap and kept streak (null for Intellect),
+ * whether XP waits at the cap, its last ≤ 8 judged weeks (oldest first; none for Intellect), its line, and what fills
+ * its meter (`xp` life XP, `pts` review points). Intellect stands alone until life counts. P5: `skills`, how many live
+ * skills the attribute has (the card's "2 skills"; 0 with none, or when the skills couldn't be read).
+ */
+export function statusAttributesOf(panel: StatusPanel) {
+  return panel.rows.map((r) => ({
+    key: r.key,
+    attribute: r.attribute,
+    name: r.name,
+    level: r.level,
+    progress: share3(r.progress),
+    banked: share3(r.banked),
+    cap: r.cap,
+    atCap: r.atCap,
+    keptStreak: r.keptStreak,
+    weeks: r.weeks,
+    line: r.line,
+    unit: r.unit,
+    skills: r.skills,
+  }));
+}
+
+/**
+ * Capital, a reading only (D1): AUD won this month (whole cents, and the web's own "$12,400"), the deals won, its line
+ * and the months before, then the whole window newest first. No level and no XP. Null when no deal was won in the
+ * window (the web shows no Capital row then) or when the deals couldn't be read.
+ */
+export function statusCapitalOf(c: CapitalPanel | null) {
+  if (!c) return null;
+  const month = (m: CapitalReading) => ({ month: m.month, label: m.label, wonCents: m.wonCents, won: m.won, deals: m.deals });
+  return { ...month(c), line: c.line, history: c.history, months: c.months.map(month) };
+}
+
+/**
+ * The avatar targets as the phone shows them (blueprint 1.2; P4, decisions D3 and D4), avatar.ts's own views, in the
+ * card's order: each its `attribute` (the five, or CAPITAL), label, metric, unit and direction, the baseline and its
+ * day, the target and its day, the value now and its day, where the value comes from (`COMPUTED` measured by the app,
+ * `SELF` logged by the user, `WEIGHT` Train's trend), the share of the way (0..1, 3 decimals), the pace and the web's
+ * own line. Null when the targets couldn't be read (the app shows none, never a stale "0%"). A target pays nothing.
+ */
+export function statusTargetsOf(targets: readonly AvatarTargetView[] | null) {
+  if (!targets) return null;
+  return targets.map((t) => ({
+    id: t.id,
+    attribute: t.attribute,
+    label: t.label,
+    metric: t.metric,
+    unit: t.unit,
+    direction: t.direction,
+    baseline: t.baseline,
+    baselineDay: t.baselineDay,
+    target: t.target,
+    targetDay: t.targetDay,
+    current: t.current,
+    currentDay: t.currentDay,
+    source: t.source,
+    share: t.share == null ? null : share3(t.share),
+    pace: t.pace,
+    line: t.line,
+  }));
+}
+
+/**
+ * The skills as the phone shows them (blueprint 1.5; P5, decisions D7, D8 and D9), competency.ts's own views, by hours
+ * (most first): each its id, name, attribute (one of the five) and kind (`PRACTICE`, or `EXERCISE`: walks count too),
+ * an Intellect skill's Field, its hours (2 decimals) and tier (1–4) with the tier's bounds in hours, the share through
+ * the tier (0..1, 3 decimals) and the hours to the next (null in Tier 4), the web's own hours line ("≈ 42 h (task
+ * estimates, not timed)") and tier line, and what feeds it (ticks, the ones counted at the task's estimate, walks,
+ * templates). Null when the skills couldn't be read (the app shows none); an empty list with none. A skill pays nothing.
+ */
+export function statusSkillsOf(skills: readonly SkillView[] | null) {
+  if (!skills) return null;
+  return skills.map((s) => ({
+    id: s.id,
+    name: s.name,
+    attribute: s.attribute,
+    kind: s.kind,
+    fieldName: s.fieldName,
+    hours: s.hours,
+    tier: s.tier,
+    tierFrom: s.tierFrom,
+    tierTo: s.tierTo,
+    progress: share3(s.progress),
+    toNext: s.toNext,
+    line: s.line,
+    tierLine: s.tierLine,
+    ticks: s.ticks,
+    estimated: s.estimated,
+    walks: s.walks,
+    templates: s.templates,
+  }));
+}
+
 // ── POST /tasks/complete ────────────────────────────────────────────────────
+
+/**
+ * The tick's skill (P5): the skill the template feeds, as it stands after the tick (its name, hours and tier, and its
+ * hours line), and `tierUp` when this tick played its tier's Seal (a competency-tier moment among the tick's own
+ * celebrations: a tier re-reached never plays twice). Null when the template feeds no skill or it couldn't be read.
+ */
+export function tickCompetencyOf(skill: SkillView | null, celebrations: readonly Pick<CelebrationEvent, "kind" | "dedupeKey">[] | null | undefined) {
+  const v = skillTickOf(
+    skill,
+    (celebrations ?? []).filter((e) => e.kind === "competency-tier").map((e) => e.dedupeKey)
+  );
+  return v ? { id: v.id, name: v.name, hoursAfter: v.hoursAfter, tier: v.tier, tierUp: v.tierUp, line: v.line } : null;
+}
 
 /**
  * The tick's line: what it paid and to which track ('+8.3 XP · Body'), with '· minimum' for the minimum version and

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.xtnl.app.AppGraph
 import com.xtnl.app.core.DailyStrip
 import com.xtnl.app.core.QuestLine
+import com.xtnl.app.core.StatusLine
 import com.xtnl.app.core.TickLadder
 import com.xtnl.app.data.CheckData
 import com.xtnl.app.data.DailyQuests
@@ -304,7 +305,8 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
                             levelUp = levelUpOf(it, before, r.value.level),
                         )
                     }
-                    _events.tryEmit(Event.TaskKept(task.templateId, r.value.xp, r.value.line, hinted = task.xpHint != null, level = r.value.level, before = before))
+                    // P5: the skill the task fed joins the line (its hours now, or the tier this tick reached).
+                    _events.tryEmit(Event.TaskKept(task.templateId, r.value.xp, StatusLine.tickLine(r.value.line, r.value.competency), hinted = task.xpHint != null, level = r.value.level, before = before))
                     if (cleared) _events.tryEmit(Event.BoardClear(task.templateId))
                     // No level in the answer (an older server): /check brings it, and with it any level up.
                     if (r.value.level == null) graph.changes.tryEmit("task")

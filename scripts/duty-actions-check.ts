@@ -1128,8 +1128,9 @@ console.log("— F18 reset —");
       /prisma\.restDay\.deleteMany\(\{ where: \{ userId \} \}\)/.test(reset)
   );
   check(
-    "roadmap (F16 seam 11): 'life' deletes the user's readings (PROFICIENCY included) and Roadmap rows, whose delete cascades to the rest",
-    /case "roadmapReadings":\s*return prisma\.roadmapReading\.deleteMany\(\{ where: \{ userId \} \}\);/.test(reset) &&
+    "roadmap (F16 seam 11): 'life' deletes the user's readings (PROFICIENCY included; blueprint P4: never an avatar's AVATAR| reading) and Roadmap rows, whose delete cascades to the rest",
+    /case "roadmapReadings":\s*return prisma\.roadmapReading\.deleteMany\(\{ where: \{ userId, NOT: \{ measureKey: \{ startsWith: AVATAR_KEY_PREFIX \} \} \} \}\);/.test(reset) &&
+      /import \{ AVATAR_KEY_PREFIX \} from "@\/lib\/avatar";/.test(reset) &&
       /case "roadmaps":\s*return prisma\.roadmap\.deleteMany\(\{ where: \{ userId \} \}\);/.test(reset) &&
       json(ROADMAP_RESET_TABLES) === json(["roadmapReadings", "roadmaps"]) &&
       /ON DELETE CASCADE/.test(read("prisma/migrations/20261101000000_life_roadmap/migration.sql"))

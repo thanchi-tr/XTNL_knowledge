@@ -2,14 +2,15 @@
  * The character sheet's sections (final-you.html ?tab=sheet), presentational:
  *
  *   <ReadyCallout/>      gold border, the orbiting coin, "An emblem is ready", View
- *   <TrackRow/>          one track: sigil, level, kept-week pips, meter (ink banked + this
+ *   <TrackRow/>          one track: sigil, name (and the blueprint's word beside it on the
+ *                        Status card), level, kept-week pips, meter (ink banked + this
  *                        week's gain in the currency that fed it, the cap tick when capped),
- *                        the honest line
- *   <LifeTracks/>        Duty, Craft, Body and Care once life counts, then Knowledge;
- *                        Knowledge alone before
- *   <AttributeRadar/>    13-gon with the dashed 7-days-ago ghost, polygon markers in their
- *                        hues, 12 px HTML labels over the scaled plot, and the top three
- *                        with a true note each
+ *                        the honest line. The Status card (StatusPanel.tsx, blueprint P1)
+ *                        draws its five attributes with it; it replaced the Life tracks card
+ *   <AttributeRadar/>    the 13 Traits (named so since blueprint P2, D6; the five Status axes
+ *                        are the Attributes): a 13-gon with the dashed 7-days-ago ghost,
+ *                        polygon markers in their hues, 12 px HTML labels over the scaled
+ *                        plot, and the top three with a true note each
  *   <MasteryCard/>       Goals and mastery: the goal ladder, ideas mastered, Field tiers and
  *                        habits by rung (GoalLadder.tsx)
  *
@@ -18,7 +19,7 @@
 import { ATTRIBUTE_META } from "@/lib/attributes";
 import { attributeSlug } from "@/lib/attribute-themes";
 import type { GoalLadder as GoalLadderData } from "@/lib/goals";
-import type { LifeTrackRow, WeekMark } from "@/lib/life-tracks";
+import type { WeekMark } from "@/lib/life-tracks";
 import { getSkill } from "@/lib/skill-pool";
 import { depthOf, sidesFor } from "@/lib/skill-form";
 import { RANK_META } from "@/lib/skill-visuals";
@@ -28,13 +29,17 @@ import { Sigil, type TrackSigil } from "@/components/ui/Icon";
 import { SectionHeader } from "@/components/ui/Tabs";
 import { SkillLogo } from "@/components/skills/SkillLogo";
 import { cx } from "@/components/ui/cx";
-import { RADAR_VIEWBOX_ATTR, lifeTrackRows, polygonPoints, type KnowledgeRow, type RadarLayout, type TopAttribute } from "./sheet-math";
+import type { ReactNode } from "react";
+import { RADAR_VIEWBOX_ATTR, polygonPoints, type RadarLayout, type TopAttribute } from "./sheet-math";
 import { GoalLadder, type RungCounts } from "./GoalLadder";
 import { LastSeenMeter } from "./LastSeenMeter";
 
 export { knowledgeLine } from "./sheet-math";
 
 const whole = (v: number) => Math.round(v).toLocaleString("en-GB");
+
+/** The radar's heading (D6): the 13 are Traits; "Attributes" is the Status card's, the five axes. */
+export const TRAITS_TITLE = "Traits";
 
 // ─── Ready callout ──────────────────────────────────────────────────────────
 
@@ -68,6 +73,8 @@ export type WeekPip = WeekMark;
 export interface TrackRowProps {
   sigil: TrackSigil;
   name: string;
+  /** The blueprint's word beside the name (the Status card: 'Vitality' beside Body); none where it is the same. */
+  sub?: string;
   level: number;
   /** 0..1 banked at the end of last week (ink). */
   banked: number;
@@ -83,19 +90,23 @@ export interface TrackRowProps {
   /** The honest line under the meter. */
   line: string;
   seenKey: string;
+  /** Under the line: the Status card's avatar targets for this attribute (blueprint P4); nothing elsewhere. */
+  extra?: ReactNode;
 }
 
 const PIP_WORD: Record<WeekPip, string> = { kept: "kept", held: "held", missed: "not kept" };
 
-export function TrackRow({ sigil, name, level, banked, now, gainKind, weeks, cap, capped, line, seenKey }: TrackRowProps) {
+export function TrackRow({ sigil, name, sub, level, banked, now, gainKind, weeks, cap, capped, line, seenKey, extra }: TrackRowProps) {
   const pct = Math.floor(Math.max(0, Math.min(0.999, now)) * 100);
   const valueText = capped ? `capped at level ${level}` : `${pct}% to level ${level + 1}`;
+  const named = sub ? `${name} (${sub})` : name;
   return (
     <div className="trk-row">
       <Sigil track={sigil} />
       <div>
         <div className="trk-h">
           <b>{name}</b>
+          {sub && <span className="trk-sub">· {sub}</span>}
           <span className="lv">{level}</span>
           {weeks && weeks.length > 0 && (
             <span
@@ -114,35 +125,17 @@ export function TrackRow({ sigil, name, level, banked, now, gainKind, weeks, cap
           value={banked}
           gain={now > banked ? { value: now, kind: gainKind } : undefined}
           cap={cap}
-          label={`${name}, level ${level}, ${valueText}`}
+          label={`${named}, level ${level}, ${valueText}`}
           valueText={valueText}
         />
         <div className="t-meta">{line}</div>
+        {extra}
       </div>
     </div>
   );
 }
 
-/**
- * The life tracks (Duty, Craft, Body, Care, each capped by kept weeks), then
- * Knowledge. Before life counts the card holds Knowledge alone and promises
- * nothing.
- */
-export function LifeTracks({ knowledge, life }: { knowledge: KnowledgeRow; life: { launched: boolean; rows: readonly LifeTrackRow[] } }) {
-  const rows = lifeTrackRows(knowledge, life);
-  return (
-    <div>
-      <SectionHeader title="Life tracks" aside={rows.length > 1 ? "levels capped by kept weeks and paid goals" : "from your Fields"} />
-      <section className="card">
-        {rows.map((r) => (
-          <TrackRow key={r.seenKey} {...r} />
-        ))}
-      </section>
-    </div>
-  );
-}
-
-// ─── Attributes ─────────────────────────────────────────────────────────────
+// ─── Traits (the 13; the Prisma enum Attribute keeps its name) ──────────────
 
 export function AttributeRadar({
   radar,
@@ -153,16 +146,16 @@ export function AttributeRadar({
   radar: RadarLayout;
   hasGhost: boolean;
   top: TopAttribute[];
-  /** launched: life counts toward attributes; contributes: a track has a level and feeds them now. */
+  /** launched: life counts toward the traits; contributes: a track has a level and feeds them now. */
   life?: { launched: boolean; contributes: boolean };
 }) {
   const described = top.map((t) => `${ATTRIBUTE_META[t.attribute].label} ${t.value.toFixed(0)}`).join(", ");
   return (
     <div>
-      <SectionHeader title="Attributes" aside={life.contributes ? "13, from your Fields and life tracks" : "13, from your Fields"} />
+      <SectionHeader title={TRAITS_TITLE} aside={life.contributes ? "13, from your Fields and life tracks" : "13, from your Fields"} />
       <section className="card radar-c">
         <div className="radar-plot">
-          <svg viewBox={RADAR_VIEWBOX_ATTR} role="img" aria-label={`Attribute radar${hasGhost ? " with 7 days ago dashed" : ""}. Top three: ${described || "none yet"}.`}>
+          <svg viewBox={RADAR_VIEWBOX_ATTR} role="img" aria-label={`Trait radar${hasGhost ? " with 7 days ago dashed" : ""}. Top three: ${described || "none yet"}.`}>
             {radar.rings.map((pts, i) => (
               <polygon key={i} points={pts} fill="none" stroke="var(--line-1)" />
             ))}
@@ -202,7 +195,7 @@ export function AttributeRadar({
           </ul>
         ) : (
           <p className="t-meta" style={{ textAlign: "center" }}>
-            {life.launched ? "Attributes grow from every Domain you work and from life tracks." : "Attributes grow from every Domain you work. Review an idea and the first one appears."}
+            {life.launched ? "Traits grow from every Domain you work and from life tracks." : "Traits grow from every Domain you work. Review an idea and the first one appears."}
           </p>
         )}
       </section>

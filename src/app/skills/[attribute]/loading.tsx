@@ -1,10 +1,10 @@
 import { Skeleton, SkeletonCard } from "@/components/ui/Tabs";
 
-/** Static blocks at the Skills geometry (chips, the path header, the ladder); no shimmer. */
+/** Static blocks at the Emblems geometry (chips, the path header, the ladder); no shimmer. */
 export default function Loading() {
   return (
     <div aria-busy="true">
-      <span className="sr-only">Loading skills</span>
+      <span className="sr-only">Loading emblems</span>
       <div style={{ display: "flex", gap: 6, overflow: "hidden", padding: "2px 2px 4px" }}>
         {[88, 96, 132, 104, 92].map((w, i) => (
           <Skeleton key={i} w={w} h={40} r={10} />

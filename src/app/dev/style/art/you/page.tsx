@@ -3,13 +3,17 @@ import { SectionHeader } from "@/components/ui/Tabs";
 import { CharacterHero } from "@/components/home/CharacterHero";
 import { GoalLadder } from "@/components/home/GoalLadder";
 import { LifeNote } from "@/components/home/LifeNote";
-import { TrackRow, type WeekPip } from "@/components/home/SheetSections";
+import { type WeekPip } from "@/components/home/SheetSections";
+import { StatusPanel } from "@/components/home/StatusPanel";
 import { KeptWeeks, TrackLines } from "@/components/home/TrackCharts";
 import { lifeMpCell, titleDistance } from "@/components/home/sheet-math";
 import { LoadoutStrip } from "@/components/skills/LoadoutStrip";
 import { statedPayoutCopy, type GoalLadder as GoalLadderData, type GoalLadderItem, type GoalPayout } from "@/lib/goals";
 import { todayKey, type DayKey } from "@/lib/life-day";
-import { GOAL_RULES } from "@/lib/life-economy";
+import { GOAL_RULES, PRE_CURVE_TRACK_CURVE, xpForLevel } from "@/lib/life-economy";
+import type { LifeTrackRow } from "@/lib/life-tracks";
+import type { KnowledgeRow } from "@/components/home/sheet-math";
+import { capitalPanelOf, statusPanelOf, type CapitalDeal } from "@/lib/status-panel";
 import type { Horizon, Track } from "@/lib/life-types";
 import { SKILL_POOL } from "@/lib/skill-pool";
 import { AimCard, type AimCardProps } from "@/components/roadmap/AimCard";
@@ -22,8 +26,10 @@ export const metadata: Metadata = { title: "You fixtures" };
 /**
  * The life parts of the You sheet and Stats, drawn from FIXTURES (the
  * numbers are made up; no real page ever shows them): the hero's purse with
- * life MP last week and the crest's track edges, the life note, the four
- * life tracks with their kept-week pips (one capped, one untouched), the
+ * life MP last week and the crest's track edges, the life note, the Status
+ * card (blueprint P1: the five attributes, the four tracks with their
+ * kept-week pips, one capped, one untouched, and Knowledge as Intellect,
+ * then Capital's reading; its meters keep fixture last-seen keys), the
  * goal ladder with open, carried and closed goals, track levels over 12
  * judged weeks, the kept-weeks heatmap, and the loadout strip L2 puts on the
  * Study hub and the runner footer. The copy is the real copy.
@@ -93,15 +99,33 @@ const pips = (s: string): WeekPip[] => s.split("").map((c) => (c === "k" ? "kept
 
 // Consistent with the real rule (life-tracks.ts trackLine): Duty 4,900 XP over 25 kept weeks is
 // capped at 7; Craft 2,050 XP over 31; Body 1,960 XP over 25 with a paid Long goal (depth 2);
-// Care has no XP. The crest edges below are level ÷ cap.
-const TRACKS = [
-  { sigil: "duty" as const, name: "Duty", level: 7, banked: 1, now: 1, weeks: pips("kkkkkkok"), cap: 1, capped: true, line: "Capped at 7 · 7 more kept weeks raise it · 4,900 XP banked" },
-  { sigil: "craft" as const, name: "Craft", level: 6, banked: 0.4, now: 0.45, weeks: pips("kkkokkok"), line: "2,050 / 2,401 XP · depth cap 7 · 1 more kept week raises it" },
-  { sigil: "body" as const, name: "Body", level: 6, banked: 0.25, now: 0.31, weeks: pips("kkkokkkk"), line: "1,960 / 2,401 XP · depth cap 9 · 7 more kept weeks raise it" },
-  { sigil: "care" as const, name: "Care", level: 0, banked: 0, now: 0, weeks: pips("oooooooo"), line: "No Care tasks yet · 49 XP reaches level 1" },
+// Care has no XP. The crest edges below are level ÷ cap. The lines are the SQUARE curve's figures (blueprint P3:
+// the curve every page reads until TRACK_CURVE_LAUNCH_DAY), so nextXp names it.
+const track = (t: Pick<LifeTrackRow, "track" | "name" | "sigil" | "level" | "xp" | "cap" | "keptWeeks" | "keptStreak" | "goalDepth" | "banked" | "now" | "weeks" | "line"> & { atCap?: boolean }): LifeTrackRow => ({
+  ...t,
+  atCap: t.atCap ?? false,
+  nextXp: xpForLevel(t.level + 1, PRE_CURVE_TRACK_CURVE),
+  edge: t.level > 0 ? t.level / t.cap : 0,
+});
+const TRACKS: LifeTrackRow[] = [
+  track({ track: "DUTY", sigil: "duty", name: "Duty", level: 7, xp: 4900, cap: 7, atCap: true, keptWeeks: 25, keptStreak: 6, goalDepth: 0, banked: 1, now: 1, weeks: pips("kkkkkkok"), line: "Capped at 7 · 7 more kept weeks raise it · 4,900 XP banked" }),
+  track({ track: "CRAFT", sigil: "craft", name: "Craft", level: 6, xp: 2050, cap: 7, keptWeeks: 31, keptStreak: 1, goalDepth: 0, banked: 0.4, now: 0.45, weeks: pips("kkkokkok"), line: "2,050 / 2,401 XP · depth cap 7 · 1 more kept week raises it" }),
+  track({ track: "BODY", sigil: "body", name: "Body", level: 6, xp: 1960, cap: 9, keptWeeks: 25, keptStreak: 4, goalDepth: 2, banked: 0.25, now: 0.31, weeks: pips("kkkokkkk"), line: "1,960 / 2,401 XP · depth cap 9 · 7 more kept weeks raise it" }),
+  track({ track: "CARE", sigil: "care", name: "Care", level: 0, xp: 0, cap: 2, keptWeeks: 0, keptStreak: 0, goalDepth: 0, banked: 0, now: 0, weeks: pips("oooooooo"), line: "No Care tasks yet · 49 XP reaches level 1" }),
+];
+// Knowledge as Intellect: "6 Fields, the best counts fully · Statistics grew most this week".
+const KNOWLEDGE: KnowledgeRow = { level: 17, banked: 0.44, now: 0.52, gained: 0.08, grewMost: "Statistics", fields: 6 };
+const STATUS_FIXTURE = statusPanelOf({ launched: true, rows: TRACKS }, KNOWLEDGE);
+// Capital's reading (D1): one deal won this month (the fixture's 1 October), two in September, none in August.
+const FIXTURE_DEALS: CapitalDeal[] = [
+  { stage: "WON", valueCents: 1_240_000, closedAt: "2026-10-01T03:00:00.000Z" },
+  { stage: "WON", valueCents: 500_000, closedAt: "2026-09-10T03:00:00.000Z" },
+  { stage: "WON", valueCents: 320_000, closedAt: "2026-09-24T03:00:00.000Z" },
+  { stage: "LOST", valueCents: 900_000, closedAt: "2026-09-25T03:00:00.000Z" },
 ];
 
 const TODAY = "2026-10-01";
+const CAPITAL_FIXTURE = capitalPanelOf(FIXTURE_DEALS, TODAY);
 
 function payout(h: Horizon, track: Track, g: number, pays: number, why: string | null, depth = 0): GoalPayout {
   const r = GOAL_RULES[h];
@@ -165,15 +189,7 @@ export default function YouFixturesPage() {
           />
           {activeAim && <AimFixtureCard fixture={activeAim} today={aimToday} slot="under-hero" />}
           <LifeNote storageKey="xtnl:dev:life-note:v1" />
-          <div>
-            <SectionHeader title="Life tracks" aside="levels capped by kept weeks and paid goals · fixture" />
-            <section className="card">
-              {TRACKS.map((t) => (
-                <TrackRow key={t.name} {...t} gainKind="xp" seenKey={`fixture:track:${t.name}`} />
-              ))}
-              <TrackRow sigil="know" name="Knowledge" level={17} banked={0.44} now={0.52} gainKind="pts" line="6 Fields, the best counts fully · Statistics grew most this week" seenKey="fixture:track:knowledge" />
-            </section>
-          </div>
+          <StatusPanel panel={STATUS_FIXTURE} capital={CAPITAL_FIXTURE} seenPrefix="fixture" />
           <div>
             <SectionHeader title="Loadout strip" aside="fixture" />
             <LoadoutStrip slots={strip} />

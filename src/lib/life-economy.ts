@@ -70,6 +70,18 @@
  *     LifeMpModel · PRE_MOMENTUM_MP_MODEL · MOMENTUM_MP_MODEL · lifeMpModelOf(momentumLive)
  *     isCappedReasonIn(model, r) · isMintReasonIn(model, r) · isChestReasonIn(model, r)
  *     momentumMintKey(reason, scope) 'mp:<REASON>:<scope>'
+ *
+ * Added by blueprint P3 (docs/life-plan/blueprint-plan-2026-10-22.md, D5; compatible, INERT):
+ *   The track curve. pointsLevel, xpForLevel and trackLevel take a trailing curve that defaults
+ *   to SQUARE, today's (7L)² scale, so every caller that passes none is unchanged. POWER is the
+ *   blueprint's Base·L^1.5 per level, read from an integer table; a reader picks the curve with
+ *   trackCurveOn(today), which is SQUARE before TRACK_CURVE_LAUNCH_DAY and always while it is
+ *   null. The depth cap (kept weeks, goal depth) is the same on both. Domains are never re-curved.
+ *     TrackCurve 'SQUARE' | 'POWER' · PRE_CURVE_TRACK_CURVE 'SQUARE'
+ *     TRACK_CURVE_BASE 34.344 · TRACK_CURVE_EXPONENT 1.5 · TRACK_CURVE_TOP 100 · TRACK_CURVE_TABLE
+ *     pointsLevel(xp, curve?) · xpForLevel(L, curve?) · trackLevel(xp, keptWeeks, goalDepth?, curve?)
+ *     TRACK_CURVE_LAUNCH_DAY (null) · TRACK_CURVE_LAUNCH_DAY_ENV · TrackCurveEnv
+ *     trackCurveLaunchDay(env?) · trackCurveOn(today, launchDay?)
  */
 import type { Band, Category, Horizon, KrMetric, Track } from "./life-types";
 import type { DayKey } from "./life-day";
@@ -90,13 +102,85 @@ export const GOAL_DEPTH: Readonly<Record<Horizon, number>> = { SHORT: 0, MID: 1,
 /** Goal depth per track never exceeds this, so goals cannot flood a cap. */
 export const GOAL_DEPTH_CAP = 2;
 
-/** Levels the XP alone would reach, before the depth cap. */
-export function pointsLevel(xp: number): number {
+// ── Track curve (blueprint 1.3, D5; INERT until TRACK_CURVE_LAUNCH_DAY) ───
+
+/**
+ * How a track's XP turns into a level. SQUARE is today's scale (level L
+ * starts at (7L)², a Domain's): every reader that passes no curve keeps it.
+ * POWER is the blueprint's (D5): level L costs Base·L^1.5 XP more than the
+ * one before, so the total grows like L^2.5. A reader picks one with
+ * trackCurveOn(today); before TRACK_CURVE_LAUNCH_DAY, and always while it is
+ * null, that is SQUARE. Tracks only: a Domain is never re-curved.
+ */
+export type TrackCurve = "SQUARE" | "POWER";
+
+/** The curve every reader keeps until TRACK_CURVE_LAUNCH_DAY: today's (7L)² scale. */
+export const PRE_CURVE_TRACK_CURVE: TrackCurve = "SQUARE";
+
+/** POWER's base: the XP from level L − 1 to L is Base·L^1.5. 34.344 keeps level 10 at 4,900 XP, as on SQUARE. */
+export const TRACK_CURVE_BASE = 34.344;
+/** POWER's exponent per level (blueprint 1.3). */
+export const TRACK_CURVE_EXPONENT = 1.5;
+/** The levels POWER's table holds. Past it the same sum continues (depth 100 needs about 6,000 kept weeks). */
+export const TRACK_CURVE_TOP = 100;
+
+/** Σ k^1.5 for k = 1..L, L = 0..top, summed in order so every reader gets the same floats. */
+function powerSums(top: number): number[] {
+  const sums = [0];
+  for (let k = 1; k <= top; k++) sums.push(sums[k - 1] + k ** TRACK_CURVE_EXPONENT);
+  return sums;
+}
+const POWER_SUMS: readonly number[] = powerSums(TRACK_CURVE_TOP);
+
+/**
+ * POWER's integer threshold table: TRACK_CURVE_TABLE[L] is the XP at which
+ * level L starts, round(Base · Σ k^1.5), strictly rising. 0, 34, 131, 310,
+ * 585, 969, 1,473, 2,109, 2,887, 3,814, 4,900 (L10), … 26,129 (L20).
+ */
+export const TRACK_CURVE_TABLE: readonly number[] = Object.freeze(POWER_SUMS.map((s) => Math.round(TRACK_CURVE_BASE * s)));
+
+/** POWER: the XP at which level L starts (0 at L ≤ 0; past the table the same sum continues). */
+function powerXpForLevel(level: number): number {
+  const L = Math.max(0, Math.floor(level));
+  if (L <= TRACK_CURVE_TOP) return TRACK_CURVE_TABLE[L];
+  let sum = POWER_SUMS[TRACK_CURVE_TOP];
+  for (let k = TRACK_CURVE_TOP + 1; k <= L; k++) sum += k ** TRACK_CURVE_EXPONENT;
+  return Math.round(TRACK_CURVE_BASE * sum);
+}
+
+/** POWER: the highest L whose threshold the XP meets (LEVEL_EPSILON of float slack, as SQUARE's floor has). */
+function powerPointsLevel(xp: number): number {
+  const x = Math.max(0, xp) + LEVEL_EPSILON;
+  if (!Number.isFinite(x)) return x > 0 ? Number.POSITIVE_INFINITY : 0;
+  if (x < TRACK_CURVE_TABLE[TRACK_CURVE_TOP]) {
+    let lo = 0;
+    let hi = TRACK_CURVE_TOP - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (TRACK_CURVE_TABLE[mid] <= x) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  }
+  let L = TRACK_CURVE_TOP;
+  let sum = POWER_SUMS[TRACK_CURVE_TOP];
+  for (;;) {
+    const next = sum + (L + 1) ** TRACK_CURVE_EXPONENT;
+    if (Math.round(TRACK_CURVE_BASE * next) > x) return L;
+    sum = next;
+    L += 1;
+  }
+}
+
+/** Levels the XP alone would reach, before the depth cap. SQUARE (the default): floor(√xp / 7). */
+export function pointsLevel(xp: number, curve: TrackCurve = PRE_CURVE_TRACK_CURVE): number {
+  if (curve === "POWER") return powerPointsLevel(xp);
   return Math.floor(Math.sqrt(Math.max(0, xp)) / TRACK_LEVEL_STEP + LEVEL_EPSILON);
 }
 
-/** The XP at which level L starts: (7L)². */
-export function xpForLevel(level: number): number {
+/** The XP at which level L starts. SQUARE (the default): (7L)². POWER: TRACK_CURVE_TABLE[L]. */
+export function xpForLevel(level: number, curve: TrackCurve = PRE_CURVE_TRACK_CURVE): number {
+  if (curve === "POWER") return powerXpForLevel(level);
   return (TRACK_LEVEL_STEP * level) ** 2;
 }
 
@@ -117,10 +201,11 @@ export function depthCap(depth: number): number {
  * Goldens (scripts/character-check.ts §1): (1225, 16) = 5; (7800, 45) = 9;
  * (49, 0) = 1; (10, 0) = 0; (4900, 0) = 1; (4900, 52) = 10; (4899, 52) = 9;
  * (4900, 51) = 9; (1225, 10) = 4; (1225, 11) = 5; (4900, 30, LONG) = 9;
- * (4900, 30, MID+LONG) = 9; (4900, 44, MID) = 10.
+ * (4900, 30, MID+LONG) = 9; (4900, 44, MID) = 10. On POWER (§1f): (4900, 52) = 10;
+ * (4899, 52) = 9; (969, 16) = 5; (968, 16) = 4. The depth cap is the same on both curves.
  */
-export function trackLevel(xp: number, keptWeeks: number, goalDepth: number = 0): number {
-  return Math.min(pointsLevel(xp), depthCap(trackDepth(keptWeeks, goalDepth)));
+export function trackLevel(xp: number, keptWeeks: number, goalDepth: number = 0, curve: TrackCurve = PRE_CURVE_TRACK_CURVE): number {
+  return Math.min(pointsLevel(xp, curve), depthCap(trackDepth(keptWeeks, goalDepth)));
 }
 
 /**
@@ -743,6 +828,47 @@ export function lifeLaunchDay(env?: LifeEnv): DayKey | null {
 /** Launched on and after the launch day; never when there is none. */
 export function isLaunched(today: DayKey, launchDay: DayKey | null = lifeLaunchDay()): boolean {
   return launchDay != null && today >= launchDay;
+}
+
+/**
+ * The first life day the tracks read the POWER curve (blueprint 1.3, D5).
+ * Null keeps it inert: every level, line, cap and page reads SQUARE exactly
+ * as before. Set in the launch commit only, on the user's go. Every track
+ * level is recomputed on read: from this day, a read lays the whole ledger
+ * on POWER (then and now alike), so the flip is never a rate and never a
+ * moment (celebration-detect lines the curves up).
+ */
+export const TRACK_CURVE_LAUNCH_DAY = null as DayKey | null;
+
+/** Outside production, a valid 'YYYY-MM-DD' here overrides TRACK_CURVE_LAUNCH_DAY (the rehearsal server, the sims). */
+export const TRACK_CURVE_LAUNCH_DAY_ENV = "XTNL_TRACK_CURVE_LAUNCH_DAY";
+
+/** The variables the curve's gate reads. Defaults to process.env; the checks pass their own. */
+export interface TrackCurveEnv {
+  NODE_ENV?: string;
+  XTNL_TRACK_CURVE_LAUNCH_DAY?: string;
+}
+
+/** Each variable read by name, so a bundler can inline NODE_ENV; on a client the XTNL_ one is undefined (a server decision). */
+function readCurveEnv(env?: TrackCurveEnv): TrackCurveEnv {
+  if (env) return env;
+  if (typeof process === "undefined" || !process.env) return {};
+  return { NODE_ENV: process.env.NODE_ENV, XTNL_TRACK_CURVE_LAUNCH_DAY: process.env.XTNL_TRACK_CURVE_LAUNCH_DAY };
+}
+
+/** The curve's launch day in force: outside production, XTNL_TRACK_CURVE_LAUNCH_DAY when it is a valid 'YYYY-MM-DD'; otherwise TRACK_CURVE_LAUNCH_DAY. */
+export function trackCurveLaunchDay(env?: TrackCurveEnv): DayKey | null {
+  const e = readCurveEnv(env);
+  if (e.NODE_ENV !== "production") {
+    const override = e.XTNL_TRACK_CURVE_LAUNCH_DAY?.trim();
+    if (isDayKey(override)) return override;
+  }
+  return TRACK_CURVE_LAUNCH_DAY;
+}
+
+/** The curve a read on `today` lays every track on: POWER on and after the launch day, SQUARE before it and with none. */
+export function trackCurveOn(today: DayKey, launchDay: DayKey | null = trackCurveLaunchDay()): TrackCurve {
+  return launchDay != null && today >= launchDay ? "POWER" : PRE_CURVE_TRACK_CURVE;
 }
 
 /**

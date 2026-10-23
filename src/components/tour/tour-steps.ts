@@ -83,8 +83,8 @@ export const TODAY_DUTY_COPY = "Must, Planned and Habits. A tick pays life XP; i
 /** Body: the weigh-in line and the Exercise log. A record, as the Body pages say. */
 export const BODY_COPY = "Log your weight with a line like ‘weight 72.4’, and your walks on Exercise. A record, never a reward.";
 
-/** The profile step (F-R4-6 and the profile menu): what the crest opens, and the aim the character can be given. Within the 160 budget. */
-export const YOU_COPY = "Your crest opens your character, skills and Settings. Give the character an aim and the app plans milestones toward it, measured from your reviews and ticks.";
+/** The profile step (F-R4-6 and the profile menu): what the crest opens (its Emblems row, D6), and the aim the character can be given. Within the 160 budget. */
+export const YOU_COPY = "Your crest opens your character, emblems and Settings. Give the character an aim and the app plans milestones toward it, measured from your reviews and ticks.";
 
 /** The last step's way back to the tour. */
 export const REPLAY_COPY = "Replay this tour from Settings.";

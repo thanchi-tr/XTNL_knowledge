@@ -158,7 +158,7 @@ Source: `C:\Users\Thanc\OneDrive\Desktop\XTNL-idea\docs\life-plan\blueprint-2026
 - **Data:** none. Levels are derived on read.
 - **Cores:** in `life-economy.ts`:
   - `TRACK_CURVE_BASE = 34.344`;
-  - an integer threshold table: 34, 131, 310, 585, 969, 1,473, 2,110, 2,887, 3,814, **4,900 (L10)**, … 26,129 (L20);
+  - an integer threshold table: 34, 131, 310, 585, 969, 1,473, 2,109, 2,887, 3,814, **4,900 (L10)**, … 26,129 (L20) (each round(34.344 · Σk^1.5); L7 is 2,109.48);
   - `pointsLevel` and `xpForLevel` read the table when `TRACK_CURVE_LAUNCH_DAY` is reached.
   
   The kept-week cap stays. Domains are **not** re-curved.

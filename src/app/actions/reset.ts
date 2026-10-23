@@ -9,6 +9,7 @@ import { ROADMAP_RESET_EFFECT, ROADMAP_RESET_TABLES, lifeResetOrder, resetArchiv
 import { isMissingRestDayTable } from "@/lib/rest-rules";
 import { isMissingRoadmapTable, type RoadmapStatus } from "@/lib/roadmap-types";
 import { todayKey } from "@/lib/life-day";
+import { AVATAR_KEY_PREFIX } from "@/lib/avatar";
 import { shortDate, weekdayName } from "@/lib/today-board";
 import { confirmsPhrase, resetSpecOf } from "@/components/settings/settings-model";
 
@@ -41,8 +42,9 @@ function lifeDeleteOp(table: LifeResetTable, userId: string) {
     case "activityEvents":
       return prisma.activityEvent.deleteMany({ where: { userId } });
     case "roadmapReadings":
-      // Every reading of the user's roadmaps: measures, PROFICIENCY and the self-logged checkpoints.
-      return prisma.roadmapReading.deleteMany({ where: { userId } });
+      // Every reading of the user's roadmaps: measures, PROFICIENCY and the self-logged checkpoints. The avatar's
+      // readings (AVATAR|, blueprint P4) stay: a record of the desired self, like a weigh-in, and no reset clears one.
+      return prisma.roadmapReading.deleteMany({ where: { userId, NOT: { measureKey: { startsWith: AVATAR_KEY_PREFIX } } } });
     case "roadmaps":
       // Cascades to the runs, milestones, items, measures, acceptances and quest weeks.
       return prisma.roadmap.deleteMany({ where: { userId } });

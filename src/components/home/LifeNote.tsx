@@ -2,7 +2,7 @@
 
 /**
  * The note that life now counts toward the character. The You sheet renders
- * it above Life tracks in the 14 days after launch (loadSheet's lifeNote),
+ * it below the Status card and the traits in the 14 days after launch (loadSheet's lifeNote),
  * so the day the levels move is explained where they move. 'Got it' hides
  * it for good on this device.
  *
@@ -19,7 +19,7 @@ import { Sigil } from "@/components/ui/Icon";
 export const LIFE_NOTE_KEY = "xtnl:you:life-note:v1";
 
 export const LIFE_NOTE_COPY =
-  "Life now counts toward your character: Body, Duty, Craft and Care feed your attributes, emblem gates, title and level. Kept weeks raise each track's cap.";
+  "Life now counts toward your character: Body, Duty, Craft and Care feed your traits, emblem gates, title and level. Kept weeks raise each track's cap.";
 
 type StorageLike = Pick<Storage, "getItem" | "setItem">;
 

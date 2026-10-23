@@ -157,7 +157,7 @@ eq(
   [["streak:BODY", "Body: 4 kept weeks in a row ended", "/today/week#last-week"]]
 );
 eq("…naming the week and the trait bonus it took (keptWeekBonusPercent)", [streaks[0]?.detail, Number(keptWeekBonusPercent(4).toFixed(1))], ["The week of 12 Oct was not kept, so its +13.2% to the traits is gone. A kept week starts the run again.", 13.2]);
-eq("mastery points: the week's idle decay as one line (the debits only); none when nothing was taken", [mpLinesOf([{ delta: -1.25 }, { delta: -1.19 }, { delta: 3 }]).map((l) => [l.title, l.detail, l.href]), mpLinesOf([]), mpLinesOf([{ delta: 0 }])], [[["2.44 MP to idle decay", "2 days of it this week: unspent points erode while a skill they could already buy waits.", "/skills"]], [], []]);
+eq("mastery points: the week's idle decay as one line (the debits only); none when nothing was taken", [mpLinesOf([{ delta: -1.25 }, { delta: -1.19 }, { delta: 3 }]).map((l) => [l.title, l.detail, l.href]), mpLinesOf([]), mpLinesOf([{ delta: 0 }])], [[["2.44 MP to idle decay", "2 days of it this week: unspent points erode while an emblem they could already buy waits.", "/skills"]], [], []]);
 
 // ═══ §2 The block ═════════════════════════════════════════════════════════
 

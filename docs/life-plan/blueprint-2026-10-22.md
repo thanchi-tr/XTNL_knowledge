@@ -51,3 +51,20 @@ Recorded as the user decides each conflict with the existing app. Decision ids (
 - **D11 / D10 Main quests.** The roadmap is the main-quest engine (milestones and a weekly sprint step), and Short/Mid/Long goals stay as key results. ROADMAP_GOALS_LIVE is rehearsed locally first and flipped only on the user's final go.
 - **D13 (default taken, recommended).** The weekly review runs without Duty; Duty-only steps stay hidden.
 - **D23 (default taken, recommended).** The per-card Ebbinghaus model stays, plus the 72 h floor. No flat decay.
+
+**2026-10-23: decisions for Stage 1 (attribute foundation).**
+- **D1 / D2 Attributes.** There are five: Vitality (Body), Intellect (Knowledge), Craft, Duty and Care. Capital is a reading only (AUD won per month from Deals, stage WON), with no XP and no level.
+- **D5 Curve.** Per-level Base·L^1.5 on the life tracks only, with Base 34.344 so L10 stays at 4,900. The kept-week cap stays. It sits behind TRACK_CURVE_LAUNCH_DAY, flipped only on the user's go. Domains are not re-curved.
+- **D6 Naming.** Attributes are the 5 axes and Traits are the 13 radar traits. The /skills nav label becomes "Emblems" (the route stays), the Life tree becomes "Life perks", and a new Skills page lists real skills. Copy only.
+- **D7 / D8 / D9 Skills.** A Skill is a named Competency that tasks, roadmaps and walks link to. Hours come from logged minutes. The tiers are 0–100, 100–500, 500–2,000 and 2,000–10,000 h. A tier-up is a Seal celebration only and pays no MP.
+- **D3 (default taken).** Targets go in a new AvatarTarget table, with readings in RoadmapReading.
+- **D4.** The user enters the baseline and target numbers in the app after it ships; this does not block the build.
+
+**2026-10-24: decisions for Stage 5 (Credits and the Mall).** The user delegated these to the coordinator ("you can decide your own decision for stage 5"), who took the plan's recommended option each time:
+- **D27 Immutable XP.** XP is append-only: never spent or converted. Forgetting and Duty debt stay as they are.
+- **D28 Credits and the legacy capital.** Credits are a new derived currency. The capital dividend is retired without conversion, after its balance is read and shown to the user. Every row is kept.
+- **D29 Credits income and start.** The plan's published P16 income table is used. Credits start at 0 with no backfill (the weekIsBackfill rule).
+- **D30 How far "lock all leisure" goes.** Only rewards the user lists are priced. #play, rest days and sleep are never priced, and there are no starter rewards.
+- **D31 Buying rules.** No overdraft, and a 10-minute undo. Penalties never debit credits. A purchase is permission now.
+- **D32 Chance.** Credits stay deterministic; chance stays with the existing chest and crits only.
+- **The live switch.** CREDITS_LAUNCH_DAY is built inert and is flipped only on the user's direct go, the same as every other launch switch.

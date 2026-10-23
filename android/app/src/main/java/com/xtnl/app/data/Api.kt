@@ -40,4 +40,6 @@ interface XtnlApi {
     suspend fun createIdea(body: JsonObject): Outcome<IdeaResult>
     /** The main quest, this week's sprint and Today's three (read only; blueprint P15). */
     suspend fun quests(): Outcome<QuestsData>
+    /** The five attributes, Capital's reading, the avatar targets and the skills: the web's Status card (read only; blueprint P1, P4, P5). */
+    suspend fun status(): Outcome<StatusPanel>
 }

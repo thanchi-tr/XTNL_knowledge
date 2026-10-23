@@ -69,4 +69,25 @@ object Glyphs {
     /** The streak: a flame. */
     val Flame = line("M12 21c-3.6 0-6-2.4-6-5.6 0-3.7 3.2-5.3 3.9-9.4 2.9 1.6 4.7 4.2 4.9 6.8.7-.6 1.2-1.6 1.3-2.8 1.3 1.4 1.9 3.3 1.9 5.2 0 3.4-2.5 5.8-6 5.8z")
     val Diamond = line("M12 4l7 8-7 8-7-8z", filled = setOf(0))
+
+    /** Status (More's row): a pentagon, one side per attribute. */
+    val Status = line("M12 3.5l8.1 5.9-3.1 9.6H7l-3.1-9.6z", "M12 8.5v4l3.4 2.4", "M12 12.5l-3.4 2.4")
+
+    // The track sigils (the web sprite's s-body, s-duty, s-craft, s-care, s-know), for the Status screen's attributes.
+    /** Body (Vitality): a triangle. */
+    val Body = line("M12 3.5l8.5 15.5h-17z")
+    /** Duty: a shield. */
+    val Duty = line("M12 3l7 2.8V11c0 4.6-3 8-7 10-4-2-7-5.4-7-10V5.8z")
+    /** Craft: a framed square, halved. */
+    val Craft = line("M6.5 5h11a1.5 1.5 0 0 1 1.5 1.5v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 17.5v-11A1.5 1.5 0 0 1 6.5 5z", "M5 12h14")
+    /** Care: a heart. */
+    val Care = line("M12 20s-7.5-4.6-7.5-10.4A4.1 4.1 0 0 1 12 7.2a4.1 4.1 0 0 1 7.5 2.4C19.5 15.4 12 20 12 20z")
+    /** Knowledge (Intellect): an open book. */
+    val Know = line("M12 6.5C9.5 4.8 6.5 4.5 3.5 5.2v13c3-.7 6-.4 8.5 1.3 2.5-1.7 5.5-2 8.5-1.3v-13c-3-.7-6-.4-8.5 1.3z", "M12 6.5v13")
+    /** Capital (a reading): the web's task icon "money", a coin with a dollar. */
+    val Money = line(
+        "M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 1 0 0-17",
+        "M14.5 9.5c-.5-1-1.5-1.5-2.5-1.5-1.5 0-2.5.8-2.5 2s1 1.6 2.5 2 2.5.8 2.5 2-1 2-2.5 2c-1 0-2-.5-2.5-1.5",
+        "M12 6.5V8", "M12 16v1.5",
+    )
 }

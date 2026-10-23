@@ -8,10 +8,10 @@ import "@/components/skills/skills.css";
 import "../skies.css";
 
 /**
- * The Skills segment of You: the compact tab strip stays put while a path
+ * The Emblems segment of You (route /skills): the compact tab strip stays put while a path
  * loads (loading.tsx sits inside this layout), and the page area is the
  * `main` container (no fixed layer renders inside it: sheets and toasts
- * portal to <body>). The ready dot on the Skills tab streams in.
+ * portal to <body>). The ready dot on the Emblems tab streams in.
  */
 export default function SkillsLayout({ children }: { children: React.ReactNode }) {
   return (

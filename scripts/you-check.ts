@@ -22,8 +22,9 @@
  * Life on the sheet (§4d–§4k): the character level agrees with the shell
  * with tracks too, a life row is named as the top-three source with its
  * exact share ('from Life · Body +2.8'), the ghost moves only by a life
- * row's level change, Life tracks renders 5 rows once life counts and 1
- * before, the goal ladder's copy (stated payout, preview, carried, closed),
+ * row's level change, the Status card (blueprint P1, which replaced the Life
+ * tracks card) renders its five attributes once life counts and Intellect
+ * alone before, each at its track's or Knowledge's own level, the goal ladder's copy (stated payout, preview, carried, closed),
  * habits by rung, the life note guards storage, the kept-weeks cells are
  * named by week, the track lines draw 2–12 points, the figure and date
  * labels, the first judged week, and (§8) the rules card types no number
@@ -143,7 +144,6 @@ import {
   lifeCompositions,
   lifeMpCell,
   lifeNoteDue,
-  lifeTrackRows,
   longDayLabel,
   mainSource,
   mainSourceOf,
@@ -163,7 +163,9 @@ import {
 } from "../src/components/home/sheet-math";
 import { characterRaw as characterRawOf } from "../src/lib/character";
 import { KeptWeeks, endLabelTops, keptCellLabel, trackLinesGeometry } from "../src/components/home/TrackCharts";
-import { LifeTracks } from "../src/components/home/SheetSections";
+import { StatusPanel, statusSeenKey } from "../src/components/home/StatusPanel";
+import { STATUS_ASIDE, STATUS_KEYS, STATUS_TITLE, capitalPanelOf, statusPanelOf, type CapitalDeal } from "../src/lib/status-panel";
+import { AttributeRadar, TRAITS_TITLE } from "../src/components/home/SheetSections";
 import { CharacterHero } from "../src/components/home/CharacterHero";
 import { fixtures as celebrateFixtures, fixtureMoments } from "../src/app/dev/style/celebrate/fixtures";
 import { GoalLadder, goalRowCopy, measuredLabel, roadmapEntryOf, roadmapRowCopy, rungsLine } from "../src/components/home/GoalLadder";
@@ -453,6 +455,25 @@ function scoresOf(v: (a: string, i: number) => number): AttributeScores {
   const inBox = layout.labels.every((l) => l.left >= 0 && l.left <= 100 && l.top >= 0 && l.top <= 100);
   const sided = layout.labels.every((l) => (l.anchor === "start" ? l.left > 50 : l.anchor === "end" ? l.left < 50 : Math.abs(l.left - 50) < 3));
   check("radar labels: every anchor inside the plot box, start on the right, end on the left", inBox && sided);
+
+  // Blueprint P2 (D6): the 13 are Traits (the radar's heading, its image's name and its empty line); the five Status axes
+  // took the word Attributes. The aside still counts the 13 and names where they come from.
+  const radarHtml = (life: { launched: boolean; contributes: boolean }, t = top) => renderToStaticMarkup(createElement(AttributeRadar, { radar: layout, hasGhost: false, top: t, life }));
+  const traitsOn = radarHtml({ launched: true, contributes: true });
+  const traitsOff = radarHtml({ launched: false, contributes: false }, []);
+  check(
+    "traits (P2): the radar is headed Traits, aside '13, from your Fields and life tracks' (or '13, from your Fields'), never Attributes",
+    TRAITS_TITLE === "Traits" &&
+      /<h2[^>]*>Traits<\/h2>/.test(traitsOn) &&
+      traitsOn.includes("13, from your Fields and life tracks") &&
+      traitsOff.includes("13, from your Fields") &&
+      !traitsOff.includes("life tracks") &&
+      !/Attribute/.test(traitsOn + traitsOff)
+  );
+  check(
+    "traits (P2): the plot is named 'Trait radar'; with nothing yet, 'Traits grow from every Domain you work…'",
+    /aria-label="Trait radar\. Top three: /.test(traitsOn) && traitsOff.includes("Traits grow from every Domain you work. Review an idea and the first one appears.") && radarHtml({ launched: true, contributes: false }, []).includes("Traits grow from every Domain you work and from life tracks.")
+  );
 }
 
 // ── 4b. Track-chart end labels never print on top of each other ───────────
@@ -529,7 +550,8 @@ const BODY_SEED = comp({ PHYSICAL: 46, STUBBORNNESS: 24, SELF_RESPECT: 20, FAITH
   check("ghost: unchanged life and Field levels → the ghost equals today", same !== null && ATTRIBUTES.every((a) => same[a] === now[a]));
 }
 
-// ── 4e. Life tracks: 5 rows once life counts, 1 before ─────────────────────
+// ── 4e. The Status card (blueprint P1): 5 attributes once life counts, Intellect alone before ──
+// It replaced the Life tracks card (same rows, same TrackRow, same last-seen keys), so the old card's pins move here.
 {
   const row = (track: LifeTrackRow["track"], name: string, extra: Partial<LifeTrackRow> = {}): LifeTrackRow => ({
     track,
@@ -552,21 +574,61 @@ const BODY_SEED = comp({ PHYSICAL: 46, STUBBORNNESS: 24, SELF_RESPECT: 20, FAITH
   });
   const rows = [row("DUTY", "Duty", { atCap: true, now: 1, banked: 1 }), row("CRAFT", "Craft"), row("BODY", "Body"), row("CARE", "Care", { level: 0, xp: 0, weeks: [] })];
   const k = knowledgeRow([{ name: "A", level: 10 }], []);
-  const on = lifeTrackRows(k, { launched: true, rows });
-  check("life tracks: launched → Duty, Craft, Body, Care, then Knowledge", on.map((r) => r.name).join(",") === "Duty,Craft,Body,Care,Knowledge");
-  check("life tracks: the cap tick only on a capped row, at 1", on[0].cap === 1 && on[0].capped === true && on[1].cap === undefined && !on[1].capped);
-  check("life tracks: pips pass through, never padded", on[1].weeks?.length === 3 && on[3].weeks?.length === 0 && on[4].weeks === undefined);
-  check("life tracks: life rows gain in xp, Knowledge in pts", on.slice(0, 4).every((r) => r.gainKind === "xp") && on[4].gainKind === "pts");
-  check("life tracks: not launched → Knowledge alone, rows or not", lifeTrackRows(k, { launched: false, rows }).length === 1 && lifeTrackRows(k, { launched: false, rows: [] })[0].name === "Knowledge");
+  const on = statusPanelOf({ launched: true, rows }, k).rows;
+  check(
+    "status: launched → Vitality (Body), Intellect (Knowledge), Craft, Duty, Care, in that order",
+    on.map((r) => `${r.attribute}:${r.name}`).join(",") === "Vitality:Body,Intellect:Knowledge,Craft:Craft,Duty:Duty,Care:Care" && on.map((r) => r.key).join(",") === STATUS_KEYS.join(",")
+  );
+  check("status: the cap only on a capped row (atCap), never on Intellect", on.find((r) => r.key === "DUTY")?.atCap === true && on.filter((r) => r.atCap).length === 1 && on[1].cap === null);
+  check("status: pips pass through, never padded; Intellect has none", on.find((r) => r.key === "CRAFT")?.weeks.length === 3 && on.find((r) => r.key === "CARE")?.weeks.length === 0 && on[1].weeks.length === 0);
+  check("status: the tracks' meters fill with life XP, Intellect's with review points", on.filter((r) => r.key !== "INTELLECT").every((r) => r.unit === "xp") && on[1].unit === "pts");
+  check("status: not launched → Intellect alone, rows or not", statusPanelOf({ launched: false, rows }, k).rows.length === 1 && statusPanelOf({ launched: false, rows: [] }, k).rows[0].name === "Knowledge");
+  check(
+    "status: the meters keep the Life tracks card's last-seen keys (you:track:<track>, you:track:knowledge), so nothing replays on the swap",
+    on.map((r) => statusSeenKey(r)).join(",") === "you:track:body,you:track:knowledge,you:track:craft,you:track:duty,you:track:care" &&
+      statusSeenKey(on[0], "fixture") === "fixture:track:body"
+  );
   const count = (html: string) => (html.match(/class="trk-row"/g) ?? []).length;
-  const htmlOn = renderToStaticMarkup(createElement(LifeTracks, { knowledge: k, life: { launched: true, rows } }));
-  const htmlOff = renderToStaticMarkup(createElement(LifeTracks, { knowledge: k, life: { launched: false, rows: [] } }));
-  check("life tracks: renders 5 rows when launched and 1 when not", count(htmlOn) === 5 && count(htmlOff) === 1, `${count(htmlOn)} / ${count(htmlOff)}`);
-  check("life tracks: the aside never promises tracks before they count", htmlOn.includes("levels capped by kept weeks") && !htmlOff.includes("arrive with life tracks") && !htmlOff.includes("kept weeks"));
+  const htmlOn = renderToStaticMarkup(createElement(StatusPanel, { panel: statusPanelOf({ launched: true, rows }, k), capital: null }));
+  const htmlOff = renderToStaticMarkup(createElement(StatusPanel, { panel: statusPanelOf({ launched: false, rows: [] }, k), capital: null }));
+  check("status: renders 5 rows when launched and 1 when not", count(htmlOn) === 5 && count(htmlOff) === 1, `${count(htmlOn)} / ${count(htmlOff)}`);
+  // Re-pinned for blueprint P2 (D6): the five axes are Attributes, so the card is titled Attributes (the radar's 13 are Traits).
+  check(
+    "status (P2): titled Attributes, never Status, named 'Five attributes' with the tracks and 'Attributes' with Intellect alone",
+    STATUS_TITLE === "Attributes" &&
+      /<h2[^>]*>Attributes<\/h2>/.test(htmlOn) &&
+      /<h2[^>]*>Attributes<\/h2>/.test(htmlOff) &&
+      !/>Status</.test(htmlOn + htmlOff) &&
+      htmlOn.includes('aria-label="Five attributes"') &&
+      htmlOff.includes('aria-label="Attributes"')
+  );
+  check("status: the blueprint's word beside a track's name only where it differs (Body · Vitality, Knowledge · Intellect)", /<h2[^>]*>Attributes<\/h2>/.test(htmlOn) && htmlOn.includes("· Vitality") && htmlOn.includes("· Intellect") && !htmlOn.includes("· Craft") && (htmlOn.match(/class="trk-sub"/g) ?? []).length === 2);
+  check("status: the aside never promises tracks before they count", htmlOn.includes("levels capped by kept weeks") && !htmlOff.includes("kept weeks") && htmlOff.includes("from your Fields"));
   // U7: the rows carry the spec's lines; the aside says once that paid goals raise the cap too.
-  check("life tracks (U7): the aside reads 'levels capped by kept weeks and paid goals'", htmlOn.includes("levels capped by kept weeks and paid goals") && !htmlOff.includes("paid goals"));
+  check("status (U7): the aside reads 'levels capped by kept weeks and paid goals'", STATUS_ASIDE === "levels capped by kept weeks and paid goals" && htmlOn.includes(STATUS_ASIDE) && !htmlOff.includes("paid goals"));
+  check("status: the meter's label names the attribute too ('Body (Vitality), level 3, 40% to level 4')", htmlOn.includes("Body (Vitality), level 3, 40% to level 4") && htmlOn.includes("Duty, level 3, capped at level 3"));
+  check("status: the card carries the tour's you-status anchor, once", (htmlOn.match(/data-tour="you-status"/g) ?? []).length === 1);
+  // Capital (D1): a reading only, the card's last row, never a level or a meter.
+  const deals: CapitalDeal[] = [
+    { stage: "WON", valueCents: 1_240_000, closedAt: "2026-10-12T02:00:00.000Z" },
+    { stage: "WON", valueCents: 820_000, closedAt: "2026-09-03T02:00:00.000Z" },
+  ];
+  const capital = capitalPanelOf(deals, "2026-10-23");
+  const withCapital = renderToStaticMarkup(createElement(StatusPanel, { panel: statusPanelOf({ launched: true, rows }, k), capital }));
+  const capRow = withCapital.slice(withCapital.indexOf('class="trk-row status-cap"'));
+  check(
+    "status: Capital is the last row, 'Capital · reading only $12,400', with its month line and the months before; no meter, no level, no pips",
+    capital !== null &&
+      withCapital.indexOf('class="trk-row status-cap"') > withCapital.lastIndexOf('class="trk-row"') &&
+      /<b>Capital<\/b><span class="trk-sub">· (?:<!-- -->)?reading only<\/span><span class="status-cap-v">\$12,400<\/span>/.test(capRow) &&
+      capRow.includes("1 deal won in October") &&
+      capRow.includes("September $8,200 · August $0") &&
+      !/role="meter"|class="lv"|class="wk"|progressbar/.test(capRow),
+    capRow.slice(0, 400)
+  );
+  check("status: no Capital row without a deal won in the window", !renderToStaticMarkup(createElement(StatusPanel, { panel: statusPanelOf({ launched: true, rows }, k), capital: capitalPanelOf([], "2026-10-23") })).includes("status-cap"));
   const art = read("src/app/dev/style/art/you/page.tsx");
-  check("life tracks (U7): the art fixture lines carry no '(or a paid Mid goal)' clause", !/or a paid Mid goal/.test(art) && /aside="levels capped by kept weeks and paid goals · fixture"/.test(art));
+  check("status (U7): the art fixture draws the Status card with fixture lines carrying no '(or a paid Mid goal)' clause", !/or a paid Mid goal/.test(art) && /<StatusPanel panel=\{STATUS_FIXTURE\} capital=\{CAPITAL_FIXTURE\} seenPrefix="fixture" \/>/.test(art) && !/you:track:/.test(art));
 }
 
 // ── 4f. The goal ladder's copy ─────────────────────────────────────────────
@@ -1073,7 +1135,8 @@ function sourceChecks(isUtility: UtilityTest, via: string) {
   const typed = [...text.matchAll(/\d+/g)].map((m) => m[0]);
   check("rules: the Tracks and kept weeks card types no number by hand", start >= 0 && body.length > 500 && typed.length === 0, typed.join(", "));
   const imported = rules.match(/import \{([^}]*)\} from "@\/lib\/life-economy"/)?.[1] ?? "";
-  const needed = ["TRACK_LEVEL_STEP", "TRACK_DEPTH_WEEK_COEF", "TRACK_SHARE_CAP", "KEPT_MIN_DAYS", "KEPT_MIN_RAW", "BODY_EFFORT_MINUTES", "DUTY_MIN_OCCURRENCES", "DUTY_FALLBACK_COMPLETIONS", "WEEK_JUDGE_LAG_DAYS", "LIFE_MP", "LIFE_MP_WEEK_CAP", "CAPPED_REASONS", "GOAL_RULES", "GOAL_DEPTH_CAP"];
+  // Blueprint P3: the POWER formula reads TRACK_CURVE_BASE and TRACK_CURVE_EXPONENT (the card shows it once the curve is in force).
+  const needed = ["TRACK_LEVEL_STEP", "TRACK_CURVE_BASE", "TRACK_CURVE_EXPONENT", "TRACK_DEPTH_WEEK_COEF", "TRACK_SHARE_CAP", "KEPT_MIN_DAYS", "KEPT_MIN_RAW", "BODY_EFFORT_MINUTES", "DUTY_MIN_OCCURRENCES", "DUTY_FALLBACK_COMPLETIONS", "WEEK_JUDGE_LAG_DAYS", "LIFE_MP", "LIFE_MP_WEEK_CAP", "CAPPED_REASONS", "GOAL_RULES", "GOAL_DEPTH_CAP"];
   const missing = needed.filter((n) => !new RegExp(`\\b${n}\\b`).test(imported));
   check("rules: the card's constants are imported from life-economy", missing.length === 0, missing.join(", "));
   check("rules: Full day still pays from daily settlement; goals never pay XP", /pays from daily settlement/.test(rules) && /Goals never pay XP/.test(rules));
@@ -1259,15 +1322,39 @@ function literalText(body: string): string {
   const radar = youCode.indexOf("<AttributeRadar");
   const cards = youCode.indexOf("{day && <DayCards view={day} />}");
   const ready = youCode.indexOf("{s.ready && <ReadyCallout");
+  // Re-pinned for blueprint P1: the Status card sits directly under the hero (the first card of the first column, where
+  // the Life tracks card's place went), and the 13-trait radar moves below it. P4: the card also takes the avatar (its
+  // targets and the Edit avatar sheet).
+  const STATUS_TAG = "<StatusPanel panel={status} capital={capital} avatar={avatar ? { view: avatar, today, actions: AVATAR_ACTIONS } : null} />";
+  const status = youCode.indexOf(STATUS_TAG);
   check(
-    "day cards: the order of weight, the level (the hero, across the grid) > the attributes > the day: drawn only when read, directly under AttributeRadar and before the ready callout",
+    "day cards: the order of weight, the level (the hero, across the grid) > the five attributes (Status) > the 13 traits > the day: drawn only when read, directly under AttributeRadar and before the ready callout",
     /<div className="you-hero">\s*<CharacterHero/.test(youCode) &&
       hero >= 0 &&
-      radar > hero &&
+      status > hero &&
+      radar > status &&
       cards > radar &&
       ready > cards &&
       !/<\/div>|<div/.test(youCode.slice(youCode.indexOf("/>", radar), cards)) &&
       /\.you-hero \{ grid-column: 1 \/ -1;/.test(read("src/components/home/you.css"))
+  );
+  check(
+    "status (P1): the Status card is the first card under the hero (the first column's first child), straight before the radar; the Life tracks card is gone",
+    /<\/div>\s*<div className="you-stack">\s*<StatusPanel panel=\{status\} capital=\{capital\} avatar=\{avatar \? \{ view: avatar, today, actions: AVATAR_ACTIONS \} : null\} \/>\s*<AttributeRadar /.test(youCode) &&
+      youCode.indexOf('<div className="you-hero">') < status &&
+      !/\bLifeTracks\b/.test(youCode)
+  );
+  check(
+    // Re-pinned for blueprint P5: the skills are the panel's fourth input, read beside the wave (a failed read counts none).
+    "status (P1, P4, P5): its rows come from the sheet's own life view and Knowledge row with the avatar's targets and the skills (statusPanelOf(s.life, s.knowledge, avatar, skills)), Capital from the won Deals read beside the one wave, and the avatar on those deals (a failed read: no Capital row, no targets, no skill counted, never an error page)",
+    /const status = statusPanelOf\(s\.life, s\.knowledge, avatar, skills \? skills\.skills : null\);/.test(youCode) &&
+      /const skillsRead = loadSkills\(userId, \{ fields: false \}\)\.catch\(\(\) => null\);/.test(youCode) &&
+      youCode.indexOf("const skillsRead = ") < youCode.indexOf("await Promise.all([") &&
+      /const avatarRead = capitalRead\.then\(\(deals\) => loadAvatar\(userId, now, \{ deals \}\)\)\.catch\(\(\) => null\);/.test(youCode) &&
+      youCode.indexOf("const avatarRead = ") < youCode.indexOf("await Promise.all([") &&
+      /const capitalRead = loadCapitalDeals\(userId, today\)\.catch\(\(\) => null\);/.test(youCode) &&
+      youCode.indexOf("const capitalRead = ") < youCode.indexOf("await Promise.all([") &&
+      /const capital = deals \? capitalPanelOf\(deals, today\) : null;/.test(youCode)
   );
   check("day cards: no Suspense on /you (the cards arrive with the sheet; nothing shifts)", !/Suspense/.test(youCode));
   check(
@@ -2515,7 +2602,8 @@ async function momentumChecks() {
     /const momentumOn = momentumLive\(today, momentumLaunch\);/.test(rulesCode) &&
       /\{momentumOn && momentumLaunch && \(\s*<section aria-labelledby="rules-momentum"/.test(rulesCode) &&
       /<Card id="momentum" title="Momentum: the run and its freezes"/.test(mr) &&
-      /<Card id="life-tree" title="The Life skill tree"/.test(mr) &&
+      // Re-pinned for blueprint P2 (D6): the Life tree's card is "Life perks"; its #life-tree anchor stays.
+      /<Card id="life-tree" title="Life perks"/.test(mr) &&
       rulesCode.indexOf("<MomentumRules") < rulesCode.indexOf("<RoadmapRules") &&
       M.MOMENTUM_LAUNCH_DAY === "2026-10-12" &&
       M.momentumLive("2026-10-12", M.MOMENTUM_LAUNCH_DAY) &&
@@ -2573,7 +2661,8 @@ async function momentumChecks() {
     /const live = momentumLive\(today\);/.test(lifePage) &&
       /const settled = live \? await settleMomentum\(userId, today, \{ now \}\) : null;/.test(lifePage) &&
       /live \? loadLifeTree\(userId, \{ now \}\)/.test(lifePage) &&
-      /hasn&apos;t started yet/.test(lifePage) &&
+      // Re-pinned for blueprint P2 (D6): the calm card names the tree as Life perks ("…haven't started yet").
+      /Life perks haven&apos;t started yet\. Nothing here counts until they do\./.test(lifePage) &&
       /<PathChips current="LIFE" summary=\{summary\} life=\{live\} \/>/.test(lifePage)
   );
   try {
@@ -2587,6 +2676,11 @@ async function momentumChecks() {
         (hidden.match(/class="pchip"/g) ?? []).length === ATTRIBUTES.length &&
         (shown.match(/class="pchip"/g) ?? []).length === ATTRIBUTES.length + 1 &&
         /<ul class="pathchips"><li><a class="pchip" aria-current="page"[^>]*href="\/skills\/life">/.test(shown)
+    );
+    check(
+      "life tab (P2): the Life chip keeps its visible word 'Life' and is named Life perks (its name holds the word it shows)",
+      /<a class="pchip" aria-current="page" aria-label="Life perks" href="\/skills\/life">(?:<svg[\s\S]*?<\/svg>)Life<\/a>/.test(shown) && !/Life skill tree/.test(shown),
+      (/<li><a class="pchip"[\s\S]*?<\/a>/.exec(shown) ?? [""])[0].slice(0, 300)
     );
     const { LifeTree, branchLinesOf } = await import("../src/components/skills/LifeTree");
     const pts = (earned: number, spent: number, countedXp: number) => ({ earned, spent, available: earned - spent, countedXp, nextAt: M.lspThreshold("DISCIPLINE", earned + 1), weekCounted: 640, weekCap: 700 });

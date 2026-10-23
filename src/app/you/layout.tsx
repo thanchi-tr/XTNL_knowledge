@@ -4,12 +4,14 @@ import { YouTabsSlot } from "@/components/home/YouTabsSlot";
 import "@/components/home/you.css";
 import "@/components/skills/skills.css";
 import "@/components/task-style/task-style.css";
+// The Edit avatar sheet's fields (blueprint P4: .st-input and its labels; namespaced, so nothing else changes).
+import "@/components/library/study.css";
 
 /**
  * You (final-you.html): Sheet, Loadout, Moments and Stats. The compact tab
  * strip stays put while a sub-page loads (loading.tsx sits inside this
  * layout), and the page area is the `main` container: every layer these
- * pages open (sheets, toasts) portals to <body>. The ready dot on the Skills
+ * pages open (sheets, toasts) portals to <body>. The ready dot on the Emblems
  * tab streams in; the layout itself awaits nothing.
  */
 export default function YouLayout({ children }: { children: React.ReactNode }) {

@@ -6,18 +6,19 @@ import { momentumLive } from "@/lib/momentum";
 import { loadLifeTree, settleMomentum } from "@/lib/momentum-server";
 import { learnPerk, respecPerks } from "@/app/actions/momentum";
 import { ShellTitle } from "@/components/shell/ShellTitle";
+import { LIFE_PERKS_TITLE } from "@/components/shell/nav";
 import { PathChips } from "@/components/skills/PathChips";
 import { LifeTree } from "@/components/skills/LifeTree";
 import { loadSkillsContext } from "@/components/skills/SkillsScreen";
 import { pathSummary } from "@/components/skills/ladder";
 
-export const metadata: Metadata = { title: "Life skills" };
+export const metadata: Metadata = { title: LIFE_PERKS_TITLE };
 
 // Points, perks and the respec day change on every tick, walk and learn.
 export const dynamic = "force-dynamic";
 
 /**
- * You › Skills › Life (docs/life-plan/momentum.md §B.5): the Life skill tree, a static segment beside
+ * You › Emblems › Life perks (docs/life-plan/momentum.md §B.5; named so since D6): the Life tree, a static segment beside
  * /skills/[attribute] (which never sees "life"). The render first settles momentum's lazy writes
  * (settleMomentum: idempotent, single flight, and nothing at all before launch), then reads the tree.
  *
@@ -35,13 +36,13 @@ export default async function LifeSkillsPage() {
 
   return (
     <>
-      <ShellTitle eyebrow="You" title="Skills" />
+      <ShellTitle eyebrow="You" title={LIFE_PERKS_TITLE} />
       <PathChips current="LIFE" summary={summary} life={live} />
       {tree?.live ? (
         <LifeTree tree={tree} learn={learnPerk} respec={respecPerks} settled={settled?.wrote ?? false} />
       ) : (
-        <section className="card lt-calm" aria-label="Life skill tree">
-          <p className="t-body">The Life skill tree hasn&apos;t started yet. Nothing here counts until it does.</p>
+        <section className="card lt-calm" aria-label={LIFE_PERKS_TITLE}>
+          <p className="t-body">Life perks haven&apos;t started yet. Nothing here counts until they do.</p>
         </section>
       )}
     </>

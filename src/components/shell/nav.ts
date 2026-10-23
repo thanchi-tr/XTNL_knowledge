@@ -4,7 +4,7 @@
  * Pure (the checks import it).
  *
  *   SECTIONS                 the three sections, their sub-pages, and the paths they own
- *   PROFILE                  the profile menu: Character, Skills, Loadout, Moments, Stats, Settings
+ *   PROFILE                  the profile menu: Character, Skills, Emblems, Loadout, Moments, Stats, Settings
  *   sectionOf(pathname)      "ideas" | "tasks" | "body" | null (null on a profile page)
  *   isProfilePath(pathname)  a profile page: no tab is current, the profile button is
  *   groupOf(pathname)        the section or PROFILE a path sits in, or null
@@ -24,6 +24,16 @@
  * though the rest of /you is the profile; Ideas' prefixes are matched first,
  * so the longer /you/roadmap wins over the profile's /you. /dev is in
  * neither: its pages light no tab and no profile button.
+ *
+ * Vocabulary (blueprint P2, decision D6; copy only): the /skills row is
+ * labelled "Emblems" (the route, its paths and the Prisma enum Attribute
+ * stay), its Life tree (/skills/life) is "Life perks", the 13 radar axes are
+ * Traits and the five Status axes are Attributes. "Skills" is kept for the
+ * real skills (named competencies) P5 lists.
+ *
+ * Skills (blueprint P5, decisions D7 to D9; a compatible addition): the
+ * profile menu's second row, /you/skills (SKILLS_PATH), lists the named
+ * competencies by hours and the Fields by level.
  */
 import type { IconName } from "@/components/ui/Icon";
 import type { CaptureMode } from "@/components/capture/events";
@@ -108,13 +118,22 @@ export const PROFILE: NavGroup<"you"> = {
   prefixes: ["/you", "/skills", "/overview", "/dashboard", "/settings"],
   subs: [
     { href: "/you", label: "Character", also: ["/overview"], icon: "sheet" },
-    { href: "/skills", label: "Skills", icon: "tree" },
+    // Blueprint P5: the real skills, by hours (the clock: hours are what a skill is measured in).
+    { href: "/you/skills", label: "Skills", icon: "clock" },
+    { href: "/skills", label: "Emblems", icon: "tree" },
     { href: "/you/loadout", label: "Loadout", icon: "sword" },
     { href: "/you/moments", label: "Moments", icon: "star" },
     { href: "/you/stats", label: "Stats", also: ["/dashboard"], icon: "chart" },
     { href: "/settings", label: "Settings", icon: "gear" },
   ],
 };
+
+/** You › Skills (blueprint P5): the named competencies by hours, and the Fields by level and Field tier. */
+export const SKILLS_PATH = "/you/skills";
+
+/** The Life tree's route (momentum.md §B.5; PathChips' LIFE_SKILLS_HREF) and, since D6, its name: "Life perks". */
+export const LIFE_PERKS_PATH = "/skills/life";
+export const LIFE_PERKS_TITLE = "Life perks";
 
 const under = (pathname: string, prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
 const owns = (g: NavGroup, pathname: string) => g.prefixes.some((p) => under(pathname, p));
@@ -126,7 +145,7 @@ export function sectionOf(pathname: string | null | undefined): SectionId | null
   return null;
 }
 
-/** A profile page (Character, Skills, Loadout, Moments, Stats, Settings): no tab is current, the profile button is. */
+/** A profile page (Character, Emblems, Loadout, Moments, Stats, Settings): no tab is current, the profile button is. */
 export function isProfilePath(pathname: string | null | undefined): boolean {
   return !!pathname && sectionOf(pathname) === null && owns(PROFILE, pathname);
 }
@@ -290,6 +309,8 @@ export function titleFor(pathname: string | null | undefined, dayKey?: string): 
   // The intake form sits under the Roadmap tab, which would title it "Roadmap".
   if (under(path, "/you/roadmap/new")) return { eyebrow: "Ideas", title: "Set an aim" };
   if (under(path, "/today/rules")) return { eyebrow: "Tasks", title: "How a day is judged" };
+  // The Life tree lights the Emblems tab (activeSub /skills) but is titled by its own name since D6: 'You · Life perks'.
+  if (under(path, LIFE_PERKS_PATH)) return { eyebrow: "You", title: LIFE_PERKS_TITLE };
   // A work tab's customer list and a customer (customers.ts): the tab's name (the eyebrow) and the customer's are data
   // (the page's <ShellTitle/>); until then, 'Work'.
   const crm = customersPathOf(path);

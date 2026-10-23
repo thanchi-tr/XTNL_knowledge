@@ -54,6 +54,11 @@
  *   LifeCronDeps.audit          the checks' injected freeze
  *   SettleEnv gains XTNL_AUDIT_LAUNCH_DAY (week-audit.ts AuditEnv)
  *
+ * Added by blueprint P4 (avatar targets; compatible):
+ *   recordAvatarAfterDegrade(userId, now, ctx?)   the degrade cron's avatar readings, right after its roadmap
+ *                               readings: today's COMPUTED reading of each measured target (avatar-server
+ *                               recordAvatarReadings). Gated by settlementWritesEnabled; never throws; pays nothing.
+ *
  * Shared-database safety (decision 2): dev and prod share one Supabase
  * database, so nothing here writes unless settlementWritesEnabled()
  * (production, or XTNL_LIFE_JUDGE=1 on the rehearsal server; never a Vercel
@@ -117,6 +122,7 @@ import {
 } from "./settlement-plan";
 import type { ActivityInput, ActivitySource, AutoMetric, InstanceSource, InstanceStatus, Receipt, Sink, TaskKind, Track } from "./life-types";
 import { recordRoadmapReadings, type ReadingsCaller } from "./roadmap-readings";
+import { recordAvatarReadings, type AvatarReadingsRun } from "./avatar-server";
 import { auditLaunchDay, isAuditLaunched, type AuditEnv } from "./week-audit";
 import { freezeWeekAudit, type AuditFreezeRun } from "./week-audit-server";
 import { finalizeQuestWeeks, freezeWeekQuests } from "./roadmap-quests-server";
@@ -1077,6 +1083,28 @@ export async function recordRoadmapAfterDegrade(
   } catch (err) {
     console.error("[roadmap] readings after the degrade failed", err);
     return { readings: null, errors: [`readings: ${errorText(err)}`] };
+  }
+}
+
+/**
+ * The degrade cron's avatar step (blueprint P4): right after its roadmap readings, today's COMPUTED reading of each
+ * measured avatar target (avatar-server recordAvatarReadings: a Field's level, last week's effort minutes or hours,
+ * this month's revenue), so a target's history is one reading a day. Gated by settlementWritesEnabled like the
+ * roadmap step; never throws, so it never fails the degrade cron; a failure is reported in its JSON's `avatar`. It
+ * pays nothing and writes no ledger row.
+ */
+export async function recordAvatarAfterDegrade(
+  userId: string,
+  now: Date,
+  ctx: { env?: SettleEnv; record?: (userId: string, now: Date, opts: { env: SettleEnv }) => Promise<AvatarReadingsRun> } = {}
+): Promise<AvatarReadingsRun> {
+  const env = ctx.env ?? processEnv();
+  if (!settlementWritesEnabled(env)) return { written: 0, skipped: "WRITES_OFF" };
+  try {
+    return await (ctx.record ?? recordAvatarReadings)(userId, now, { env });
+  } catch (err) {
+    console.error("[avatar] readings after the degrade failed", err);
+    return { written: 0, skipped: null, error: errorText(err) };
   }
 }
 

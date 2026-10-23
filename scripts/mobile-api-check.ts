@@ -19,7 +19,12 @@
  *      queue (the runner's seeded order and wording, per type) and its retry (review-model's queueAfterAnswer);
  *      /log's sections (the sheet's mode starts) and Undo; /ideas through the form's contentOfAddState; /quests (P15:
  *      the main quest through lib/main-quest's model, no Start while ROADMAP_GOALS_LIVE is off, the sprint's
- *      provisional Sunday words, Today's three, read only);
+ *      provisional Sunday words, Today's three, read only); /status (P1: the five attributes through status-panel's
+ *      model, each row its LifeTrackRow's or Knowledge's own level, Intellect alone before life counts, Capital from
+ *      WON deals only, read only and the same across two reads; P4: the avatar targets, avatar.ts's own views on the
+ *      same won deals, null when they can't be read; P5: the skills, competency.ts's own views, and each attribute's
+ *      count, null and 0 when they can't be read); /tasks/complete's skill (P5: the template's skill after the tick,
+ *      tierUp only with its tier's Seal among the tick's moments, null with none);
  *   3. the wiring: each route file hands its request to its handler with the real deps and exports only its method
  *      and dynamic; mobile-api-cores binds each dep to the web's own core (no refresh); the pure modules import no
  *      core; the web pages' formulas the app mirrors (pinned in their source); the failure lines the codes key on;
@@ -31,7 +36,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { QuestionType } from "@prisma/client";
-import { addDays, type DayKey } from "../src/lib/life-day";
+import { addDays, weekKeyOf, type DayKey } from "../src/lib/life-day";
 import { normTitleOf } from "../src/lib/life-lexicon";
 import { parseRule } from "../src/lib/recurrence";
 import { buildBoard, statsFor, type BoardData, type BoardInstance, type BoardTemplate, type DayLedger, type PaidRecord } from "../src/lib/today-board";
@@ -62,6 +67,12 @@ import type { AimCardView, WeekQuestsView, WeekQuestRow } from "../src/lib/roadm
 import type { MomentumView } from "../src/lib/momentum-server";
 import { SPRINT, SPRINT_PROVISIONAL_LINE, mainQuestOf } from "../src/lib/main-quest";
 import { geminiWordsOf } from "../src/components/roadmap/roadmap-copy";
+import { lifeTracksView, notLaunchedView, type LifeLedger } from "../src/lib/life-tracks";
+import { knowledgeLine, knowledgeRow } from "../src/components/home/sheet-math";
+import { capitalPanelOf, statusPanelOf, type CapitalDeal } from "../src/lib/status-panel";
+import { EMPTY_AVATAR, NO_FACTS, avatarTargetsOf, type AvatarTargetRow, type AvatarView } from "../src/lib/avatar";
+import { NO_SKILL_FACTS, skillSealKey, skillsOf, type SkillRow, type SkillTemplate, type SkillTick, type SkillView } from "../src/lib/competency";
+import { loadSkills, type SkillStore } from "../src/lib/competency-server";
 import {
   AUTH_LINE,
   CODE_STATUS,
@@ -103,6 +114,10 @@ import {
   retryOf,
   sameToken,
   stableJson,
+  statusAttributesOf,
+  statusCapitalOf,
+  statusSkillsOf,
+  statusTargetsOf,
   tickDayOf,
   weightOfUndoToken,
   weightUndoTokenOf,
@@ -119,6 +134,7 @@ import {
   handleQuests,
   handleReviewAnswer,
   handleReviewQueue,
+  handleStatus,
   handleTaskComplete,
   handleTaskUndo,
   handleWorkDone,
@@ -462,6 +478,96 @@ const THREE: MomentumView = {
   chest: { state: "locked" },
 } as unknown as MomentumView;
 
+// ── GET /status fixtures (blueprint P1) ───────────────────────────────────
+
+/** A launched life view, built by the real reader (lifeTracksView) over a fixture ledger: 10 judged weeks to 18 Oct. */
+const STATUS_LIFE = (() => {
+  const sundays = Array.from({ length: 10 }, (_, i) => addDays("2026-10-18", -7 * (9 - i)));
+  const marks: Record<string, string> = { BODY: "kkkkokkkkk", DUTY: "kkkkkkkkkk", CRAFT: "okkokkokko", CARE: "oooooooooo" };
+  const ledger: LifeLedger = {
+    epochDay: "2026-08-01",
+    xpByDay: [
+      { track: "BODY", day: "2026-10-05", xp: 400 },
+      { track: "BODY", day: "2026-10-20", xp: 200 },
+      { track: "DUTY", day: "2026-10-02", xp: 4900 },
+      { track: "CRAFT", day: "2026-10-21", xp: 310 },
+    ],
+    compositions: [],
+    weeks: Object.entries(marks).flatMap(([track, m]) =>
+      sundays.map((sunday, i) => ({ track: track as LifeLedger["weeks"][number]["track"], weekKey: weekKeyOf(sunday), sunday, kept: m[i] === "k", detail: m[i] === "k" ? "kept" : "missed" }))
+    ),
+    mints: [],
+  };
+  return lifeTracksView(ledger, TODAY, "2026-10-01");
+})();
+const STATUS_KNOWLEDGE = knowledgeRow(
+  [
+    { name: "Statistics", level: 9.4 },
+    { name: "Chemistry", level: 4.2 },
+  ],
+  [
+    { name: "Statistics", level: 9.1 },
+    { name: "Chemistry", level: 4.2 },
+  ]
+);
+const STATUS_DEALS: CapitalDeal[] = [
+  { stage: "WON", valueCents: 1_240_000, closedAt: new Date("2026-10-12T02:00:00.000Z"), archivedAt: null },
+  { stage: "WON", valueCents: 820_000, closedAt: new Date("2026-09-03T02:00:00.000Z"), archivedAt: null },
+  { stage: "LOST", valueCents: 9_900_000, closedAt: new Date("2026-10-14T02:00:00.000Z"), archivedAt: null },
+];
+/** The avatar (P4): Train's weight target, a Field's level, a Care measure of your own, and revenue a month (avatar.ts's own views). */
+const avatarRow = (over: Partial<AvatarTargetRow>): AvatarTargetRow => ({
+  id: "t1",
+  lineageId: "t1",
+  attribute: "INTELLECT",
+  label: "Statistics level",
+  metric: "FIELD_LEVEL",
+  scope: { fieldId: "f-stats" },
+  unit: "level",
+  direction: "UP",
+  baselineValue: 8,
+  baselineDay: "2026-10-01",
+  targetValue: 12,
+  targetDay: "2026-12-31",
+  sortOrder: 0,
+  createdAt: "2026-10-01T00:00:00.000Z",
+  archivedAt: null,
+  ...over,
+});
+const STATUS_AVATAR: AvatarView = {
+  targets: avatarTargetsOf(
+    [
+      avatarRow({}),
+      avatarRow({ id: "t2", lineageId: "t2", attribute: "CARE", label: "Calls home", metric: "MANUAL", scope: {}, unit: "a week", baselineValue: 1, targetValue: 3, targetDay: null }),
+      avatarRow({ id: "t3", lineageId: "t3", attribute: "CAPITAL", label: "Revenue", metric: "REVENUE_MONTH", scope: {}, unit: "AUD", baselineValue: 8200, targetValue: 20000, targetDay: "2027-06-30" }),
+    ],
+    {
+      ...NO_FACTS,
+      fields: [{ id: "f-stats", name: "Statistics", level: 9.4 }],
+      revenueCents: 1_240_000,
+      manual: { t2: { day: "2026-10-20", value: 2 } },
+      weight: { unit: "kg", trendKg: 82.4, progress: (85.2 - 82.4) / (85.2 - 75), goal: { unit: "kg", targetKg: 75, targetDay: "2027-03-01", startKg: 85.2, startDay: "2026-10-01" } },
+    },
+    TODAY
+  ),
+  fields: [{ id: "f-stats", name: "Statistics", level: 9.4 }],
+  writesOn: false,
+};
+
+/** The skills (P5): Writing (Craft, 142.5 h: Tier 2), Walking (Vitality, exercise: walks), Economics reading (Intellect, none yet), competency.ts's own views. */
+const skillRow = (id: string, over: Partial<SkillRow> = {}): SkillRow => ({ id, name: id, attribute: "CRAFT", kind: "PRACTICE", fieldId: null, sortOrder: 0, createdAt: "2026-10-01T00:00:00.000Z", archivedAt: null, ...over });
+const skillTpl = (id: string, competencyId: string): SkillTemplate => ({ id, title: id, kind: "HABIT", competencyId, roadmapCompetencyId: null, boardId: null, estMinutes: 30 });
+const skillTick = (id: string, templateId: string, minutes: number): SkillTick => ({ id, templateId, dedupeKey: `task:${templateId}:${id}`, receiptMinutes: minutes, instanceMinutes: minutes, instanceSource: "manual", day: "2026-10-20", undone: false });
+const STATUS_SKILLS: SkillView[] = skillsOf(
+  [
+    skillRow("sk-write", { name: "Writing" }),
+    skillRow("sk-walk", { name: "Walking", attribute: "VITALITY", kind: "EXERCISE" }),
+    skillRow("sk-econ", { name: "Economics reading", attribute: "INTELLECT", fieldId: "f-stats" }),
+  ],
+  { ...NO_SKILL_FACTS, templates: [skillTpl("hab-write", "sk-write")], ticks: [skillTick("e1", "hab-write", 142.5 * 60)], walks: { minutes: 750, count: 9 } },
+  [{ id: "f-stats", name: "Statistics" }]
+);
+
 // ── The fake cores ────────────────────────────────────────────────────────
 
 type Calls = Record<string, unknown[][]>;
@@ -510,6 +616,12 @@ function fakes(over: Partial<MobileDeps> = {}): { deps: MobileDeps; calls: Calls
     loadMainQuest: async () => null,
     loadSprintWeek: async () => null,
     loadMomentum: async (_userId, day) => ({ live: false, day }),
+    loadLifeTracks: async () => notLaunchedView(TODAY),
+    loadKnowledge: async () => STATUS_KNOWLEDGE,
+    loadCapitalDeals: async () => [],
+    loadAvatar: async () => EMPTY_AVATAR,
+    loadSkills: async () => [],
+    loadTemplateSkill: async () => null,
   };
   const merged = { ...base, ...over } as MobileDeps;
   const deps = Object.fromEntries(Object.entries(merged).map(([k, fn]) => [k, spy(k, fn as (...a: unknown[]) => unknown)])) as unknown as MobileDeps;
@@ -924,7 +1036,8 @@ async function routes() {
     const g = await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1" }), deps));
     const d = data(g);
     collectKeys(d);
-    eq("the documented keys", keysOf(d), ["allDone", "celebrations", "instanceId", "level", "line", "xp"]);
+    eq("the documented keys", keysOf(d), ["allDone", "celebrations", "competency", "instanceId", "level", "line", "xp"]);
+    check("a task that feeds no skill: competency null, read once for the ticked template (P5)", d.competency === null && same(calls.loadTemplateSkill, [["u1", "hab1"]]));
     check("the character's level after the tick, as /check's", same(d.level, { level: 7, title: "Novice", progress: 0.75 }) && calls.loadShell?.length === 1 && same(calls.loadShell[0], ["u1"]));
     check("it calls completeTask(templateId, {}) — the board's tick", same(calls.completeTask, [["hab1", {}]]));
     check("xp to one decimal; the line '+4.3 XP · Body'; the moments as {tier, kind, title}", d.xp === 4.3 && d.line === "+4.3 XP · Body" && same(d.celebrations, [{ tier: 2, kind: "streak-milestone", title: "7 days kept" }]) && d.instanceId === "i-new");
@@ -955,6 +1068,26 @@ async function routes() {
     const refuse = (error: string) => fakes({ completeTask: async () => ({ ok: false, error }) }).deps;
     const [gone, rule, srv] = await Promise.all(["That task no longer exists.", "The board is out of date: that day can no longer be recorded. Refresh and try again.", "Couldn't save that. Try again."].map(async (e) => got(handleTaskComplete(post("/tasks/complete", { templateId: "x" }), refuse(e)))));
     check("refusals: gone → 404, a rule → 409, the action's couldn't-save → 500, each with the core's line", isFail(gone, "gone") && isFail(rule, "conflict") && rule.json.error?.startsWith("The board is out of date") === true && isFail(srv, "server"));
+
+    // P5: the skill the template feeds, as it stands after the tick; tierUp only when this tick played its tier's Seal.
+    const writing = STATUS_SKILLS.find((x) => x.id === "sk-write")!;
+    const seal = { id: "c1", tier: 2, kind: "competency-tier", dedupeKey: skillSealKey("sk-write", 2), facts: { eyebrow: "Skill tier", title: "Writing reached Tier 2", numeral: { from: 1, to: 2 } }, what: [{ label: "Writing", value: "Tier 1 → Tier 2" }] } as CelebrationEvent;
+    const withSkill = await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab-write" }), fakes({ loadTemplateSkill: async () => writing }).deps));
+    const sealed = await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab-write" }), fakes({ loadTemplateSkill: async () => writing, completeTask: async () => ({ ok: true, value: { ...completion(), celebrations: [seal] } }) }).deps));
+    const otherSeal = { ...seal, dedupeKey: skillSealKey("sk-other", 2) } as CelebrationEvent;
+    const elsewhere = await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab-write" }), fakes({ loadTemplateSkill: async () => writing, completeTask: async () => ({ ok: true, value: { ...completion(), celebrations: [otherSeal] } }) }).deps));
+    collectKeys(data(sealed));
+    eq("competency: the documented keys", keysOf(data(withSkill).competency as object), ["hoursAfter", "id", "line", "name", "tier", "tierUp"]);
+    check(
+      "competency: the skill's name, its hours and tier after the tick and the web's line; tierUp false with no Seal, true with this skill's tier Seal, false with another skill's",
+      same(data(withSkill).competency, { id: "sk-write", name: "Writing", hoursAfter: 142.5, tier: 2, tierUp: false, line: "≈ 142 h (task estimates, not timed)" }) &&
+        (data(sealed).competency as { tierUp: boolean }).tierUp === true &&
+        (data(elsewhere).competency as { tierUp: boolean }).tierUp === false,
+      JSON.stringify(data(withSkill).competency)
+    );
+    const skillDown = await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab-write" }), fakes({ loadTemplateSkill: async () => Promise.reject(new Error("skill exploded")) }).deps));
+    check("a failed skill read after the tick reads as none, never a failed tick (200, no message)", skillDown.status === 200 && data(skillDown).competency === null && !/exploded/.test(skillDown.raw));
+    check("competency pays nothing: no xp, MP or level field on it (the tick's xp is the whole payment)", !/"(xp|mp|level|points)"/i.test(JSON.stringify(Object.keys(data(sealed).competency as object))));
 
     // Replays
     const r = fakes();
@@ -1397,6 +1530,184 @@ async function routes() {
     check("behind the token like every route", isFail(await got(handleQuests(get("/quests"), fakes({ token: () => TOKEN }).deps)), "auth"));
     check("mainQuestOf is the model the route answers with (the same words as Today's card)", (mainQuestOf(aimCard({ milestone: msOf({}) }), SPRINT_WEEK, TODAY).line) === (d.mainQuest as Record<string, unknown>).line);
   }
+
+  section("GET /status (blueprint P1)");
+  {
+    const live = fakes({ loadLifeTracks: async () => STATUS_LIFE, loadCapitalDeals: async () => STATUS_DEALS, loadAvatar: async () => STATUS_AVATAR, loadSkills: async () => STATUS_SKILLS });
+    const g = await got(handleStatus(get("/status"), live.deps));
+    const d = data(g);
+    collectKeys(d);
+    check("200, ok, no-store", g.status === 200 && g.json.ok === true && g.noStore);
+    eq("the documented keys", keysOf(d), ["attributes", "capital", "day", "launched", "now", "skills", "targets"]);
+    type Attr = { key: string; attribute: string; name: string; level: number; progress: number; banked: number; cap: number | null; atCap: boolean; keptStreak: number | null; weeks: string[]; line: string; unit: string; skills: number };
+    const attrs = d.attributes as Attr[];
+    eq(
+      "five attributes in the panel's order, each the blueprint's word over its source's own name: Vitality (Body), Intellect (Knowledge), Craft, Duty, Care",
+      attrs.map((a) => [a.key, a.attribute, a.name]),
+      [
+        ["VITALITY", "Vitality", "Body"],
+        ["INTELLECT", "Intellect", "Knowledge"],
+        ["CRAFT", "Craft", "Craft"],
+        ["DUTY", "Duty", "Duty"],
+        ["CARE", "Care", "Care"],
+      ]
+    );
+    eq("each row's keys are the documented ones", keysOf(attrs[0]), ["atCap", "attribute", "banked", "cap", "keptStreak", "key", "level", "line", "name", "progress", "skills", "unit", "weeks"]);
+    const track = (t: string) => STATUS_LIFE.rows.find((r) => r.track === t)!;
+    const r3 = (v: number) => Math.round(v * 1000) / 1000;
+    const offRows = attrs.flatMap((a) => {
+      if (a.key === "INTELLECT") {
+        const ok = a.level === STATUS_KNOWLEDGE.level && a.progress === r3(STATUS_KNOWLEDGE.now) && a.banked === r3(STATUS_KNOWLEDGE.banked) && a.line === knowledgeLine(STATUS_KNOWLEDGE) && a.cap === null && a.keptStreak === null && a.atCap === false && a.weeks.length === 0 && a.unit === "pts";
+        return ok ? [] : [`INTELLECT ${JSON.stringify(a)}`];
+      }
+      const t = track(a.key === "VITALITY" ? "BODY" : a.key);
+      const ok = a.level === t.level && a.progress === r3(t.now) && a.banked === r3(t.banked) && a.cap === t.cap && a.atCap === t.atCap && a.keptStreak === t.keptStreak && same(a.weeks, t.weeks.slice(-8)) && a.line === t.line && a.unit === "xp";
+      return ok ? [] : [`${a.key} ${JSON.stringify(a)} vs ${JSON.stringify(t)}`];
+    });
+    check("each row is the web's own: the LifeTrackRow's level, meter, banked, cap, atCap, kept streak, ≤ 8 pips and line; Knowledge's level, meter and line (cap and streak null, no pips)", offRows.length === 0, offRows.join(" | "));
+    check(
+      "the levels are the /you card's: statusAttributesOf(statusPanelOf(the same life view, the same Knowledge row))",
+      same(d.attributes, statusAttributesOf(statusPanelOf(STATUS_LIFE, STATUS_KNOWLEDGE, null, STATUS_SKILLS))) && attrs.find((a) => a.key === "DUTY")?.atCap === true && attrs.find((a) => a.key === "VITALITY")?.atCap === false
+    );
+    eq(
+      "Capital: a reading only, AUD won this month from WON deals (the lost one never counts), the deals, its line and the months before; no level, no XP",
+      d.capital,
+      {
+        month: "2026-10",
+        label: "October 2026",
+        wonCents: 1_240_000,
+        won: "$12,400",
+        deals: 1,
+        line: "1 deal won in October",
+        history: "September $8,200 · August $0",
+        months: [
+          { month: "2026-10", label: "October 2026", wonCents: 1_240_000, won: "$12,400", deals: 1 },
+          { month: "2026-09", label: "September 2026", wonCents: 820_000, won: "$8,200", deals: 1 },
+          { month: "2026-08", label: "August 2026", wonCents: 0, won: "$0", deals: 0 },
+        ],
+      }
+    );
+    check("capital is capitalPanelOf's, and carries no level or XP field", same(d.capital, statusCapitalOf(capitalPanelOf(STATUS_DEALS, TODAY))) && !/level|xp|points/i.test(JSON.stringify(Object.keys(d.capital as object))));
+
+    // P4: the avatar targets, the /you card's own views (avatar.ts), read on the same won deals; a record, never a level.
+    type Target = { id: string; attribute: string; metric: string; source: string; share: number | null; pace: string | null; line: string };
+    const targets = d.targets as Target[];
+    eq(
+      "targets: the documented keys",
+      keysOf(targets[0]),
+      ["attribute", "baseline", "baselineDay", "current", "currentDay", "direction", "id", "label", "line", "metric", "pace", "share", "source", "target", "targetDay", "unit"]
+    );
+    eq(
+      "targets: in the card's order (Vitality's weight first, then Intellect, Care, Capital), each avatar.ts's own view (statusTargetsOf)",
+      [targets.map((t) => `${t.attribute}:${t.metric}:${t.source}`), same(d.targets, statusTargetsOf(STATUS_AVATAR.targets))],
+      [["VITALITY:WEIGHT:WEIGHT", "INTELLECT:FIELD_LEVEL:COMPUTED", "CARE:MANUAL:SELF", "CAPITAL:REVENUE_MONTH:COMPUTED"], true]
+    );
+    eq(
+      "targets: the web's own lines (weight on Train's own goal, a Field's level, a measure of your own self-reported, revenue a month)",
+      targets.map((t) => t.line),
+      [
+        "Weight 82.4 → 75 kg · 27% of the way · on pace",
+        "Statistics level 9.4 → 12 · 35% of the way · on pace",
+        "Calls home 2 → 3 a week · 50% of the way · self-reported",
+        "Revenue $12,400 → $20,000 a month · 35% of the way · on pace",
+      ]
+    );
+    check(
+      "targets: shares to 3 decimals, and no level, XP or points field",
+      targets.every((t) => t.share === null || Math.abs(t.share * 1000 - Math.round(t.share * 1000)) < 1e-9) && !/"(level|xp|points|mp)"/i.test(JSON.stringify(targets.map((t) => Object.keys(t))))
+    );
+    check("targets: read once, on the deals already read (no second Deal read)", same(live.calls.loadAvatar, [["u1", NOW, STATUS_DEALS]]) && (live.calls.loadCapitalDeals ?? []).length === 1);
+    const avatarDown = await got(handleStatus(get("/status"), fakes({ loadLifeTracks: async () => STATUS_LIFE, loadAvatar: async () => Promise.reject(new Error("avatar exploded")) }).deps));
+    check(
+      "a failed avatar read is the targets alone: targets null, the attributes still answer, 200, no message in the reply",
+      avatarDown.status === 200 && data(avatarDown).targets === null && (data(avatarDown).attributes as Attr[]).length === 5 && !/exploded/.test(avatarDown.raw)
+    );
+    const dealsGone = fakes({ loadLifeTracks: async () => STATUS_LIFE, loadCapitalDeals: async () => Promise.reject(new Error("deals exploded")) });
+    await got(handleStatus(get("/status"), dealsGone.deps));
+    check("a failed deals read hands the avatar null deals (its revenue reads none), never a second try", same(dealsGone.calls.loadAvatar, [["u1", NOW, null]]));
+    check("no targets: an empty list", same(data(await got(handleStatus(get("/status"), fakes({ loadLifeTracks: async () => STATUS_LIFE }).deps))).targets, []));
+
+    // P5: the skills, You › Skills' own views (competency.ts), by hours; each attribute counts its live skills.
+    type Skill = { id: string; attribute: string; kind: string; hours: number; tier: number; progress: number; toNext: number | null; line: string; tierLine: string };
+    const skills = d.skills as Skill[];
+    eq(
+      "skills: the documented keys",
+      keysOf(skills[0]),
+      ["attribute", "estimated", "fieldName", "hours", "id", "kind", "line", "name", "progress", "templates", "ticks", "tier", "tierFrom", "tierLine", "tierTo", "toNext", "walks"]
+    );
+    check(
+      "skills: most hours first, each competency.ts's own view (statusSkillsOf): Writing 142.5 h Tier 2 in the plan's words, Walking 12.5 h of walks, Economics reading none yet",
+      same(d.skills, statusSkillsOf(STATUS_SKILLS)) &&
+        JSON.stringify(skills.map((x) => [x.id, x.hours, x.tier, x.line])) ===
+          JSON.stringify([
+            ["sk-write", 142.5, 2, "≈ 142 h (task estimates, not timed)"],
+            ["sk-walk", 12.5, 1, "12.5 h of walks"],
+            ["sk-econ", 0, 1, "No hours yet"],
+          ]) &&
+        skills[0].tierLine === "Tier 2 · 100–500 h · 357 h to Tier 3" &&
+        skills[0].toNext === 357.5 &&
+        skills.every((x) => Math.abs(x.progress * 1000 - Math.round(x.progress * 1000)) < 1e-9),
+      JSON.stringify(skills.map((x) => [x.id, x.hours, x.tier, x.line, x.tierLine]))
+    );
+    check(
+      "each attribute counts its live skills (Vitality 1, Intellect 1, Craft 1, Duty and Care 0), and no skill carries a level, XP or MP field",
+      JSON.stringify(attrs.map((a) => [a.key, a.skills])) === JSON.stringify([["VITALITY", 1], ["INTELLECT", 1], ["CRAFT", 1], ["DUTY", 0], ["CARE", 0]]) &&
+        !/"(level|xp|points|mp)"/i.test(JSON.stringify(skills.map((x) => Object.keys(x))))
+    );
+    const skillsDown = await got(handleStatus(get("/status"), fakes({ loadLifeTracks: async () => STATUS_LIFE, loadSkills: async () => Promise.reject(new Error("skills exploded")) }).deps));
+    check(
+      "a failed skills read is the skills alone: skills null and every count 0, the attributes still answer, 200, no message in the reply",
+      skillsDown.status === 200 && data(skillsDown).skills === null && (data(skillsDown).attributes as Attr[]).every((a) => a.skills === 0) && (data(skillsDown).attributes as Attr[]).length === 5 && !/exploded/.test(skillsDown.raw)
+    );
+    check("no skills: an empty list; read once for the user", same(data(await got(handleStatus(get("/status"), fakes({ loadLifeTracks: async () => STATUS_LIFE }).deps))).skills, []) && same(live.calls.loadSkills, [["u1"]]));
+    // The real bind's read (mobile-api-cores: loadSkills(userId), its Fields read): competency-server's own loadSkills on
+    // a fake store, so an Intellect skill with a fieldId reaches the phone with its Field's name, never null.
+    const noWrite = async (): Promise<never> => Promise.reject(new Error("a read writes nothing"));
+    const skillStore: SkillStore = {
+      live: async () => [skillRow("sk-econ", { name: "Economics reading", attribute: "INTELLECT", fieldId: "f-stats" }), skillRow("sk-write", { name: "Writing" })],
+      byId: async () => null,
+      insert: noWrite,
+      update: noWrite,
+      archive: noWrite,
+      template: async () => null,
+      linkTemplate: noWrite,
+      roadmap: async () => null,
+      linkRoadmap: noWrite,
+    };
+    const skillReads = {
+      templates: async () => [],
+      ticks: async () => [],
+      walks: async () => ({ minutes: 0, count: 0 }),
+      topUps: async () => [],
+      fields: async () => [{ id: "f-stats", name: "Statistics", level: 9.4 }],
+      families: async () => [],
+      roadmaps: async () => [],
+    };
+    const bound = await got(handleStatus(get("/status"), fakes({ loadLifeTracks: async () => STATUS_LIFE, loadSkills: async (userId) => (await loadSkills(userId, { store: skillStore, reads: skillReads })).skills }).deps));
+    const boundSkills = data(bound).skills as { id: string; fieldName: string | null }[];
+    check(
+      "skills through the bound read (loadSkills with its Fields): an Intellect skill with a fieldId carries its Field's name ('Statistics'), a skill with none null",
+      boundSkills.find((x) => x.id === "sk-econ")?.fieldName === "Statistics" && boundSkills.find((x) => x.id === "sk-write")?.fieldName === null,
+      JSON.stringify(boundSkills)
+    );
+    const okReads = (live.calls.loadLifeTracks ?? []).length === 1 && live.calls.loadLifeTracks[0][0] === "u1" && same(live.calls.loadLifeTracks[0][1], NOW) && (live.calls.loadKnowledge ?? []).length === 1 && same(live.calls.loadCapitalDeals, [["u1", TODAY]]);
+    const wrote = ["completeTask", "undoCompletion", "settleMomentum", "recordDayOpen", "autoCompleteStudyTasks", "maybeMaintainLife", "createFromCapture", "submitReview", "submitIdea", "doneScheduled", "reopenScheduled"].filter((k) => (live.calls[k] ?? []).length > 0);
+    check("read only: the life tracks at the server's clock, Knowledge, and the won deals for the life day, once each; no write, no settle, nothing owed after the reply", okReads && wrote.length === 0 && live.afters.length === 0, wrote.join(", "));
+    const again = await got(handleStatus(get("/status"), live.deps));
+    check("unchanged across two reads: the second answer is the first, byte for byte, and still nothing is written or owed", again.raw === g.raw && live.afters.length === 0 && ["completeTask", "settleMomentum", "maybeMaintainLife", "recordDayOpen"].every((k) => (live.calls[k] ?? []).length === 0));
+
+    // Before life counts (or the not-launched view): Intellect alone.
+    const before = data(await got(handleStatus(get("/status"), fakes({ loadCapitalDeals: async () => STATUS_DEALS }).deps)));
+    check("not launched: launched false and Intellect alone (no track level claimed); Capital still reads", before.launched === false && (before.attributes as Attr[]).map((a) => a.key).join(",") === "INTELLECT" && (before.capital as { won: string } | null)?.won === "$12,400");
+    check("no deal won in the window: capital null (the web shows no Capital row)", data(await got(handleStatus(get("/status"), fakes({ loadLifeTracks: async () => STATUS_LIFE }).deps))).capital === null);
+    const dealsDown = await got(handleStatus(get("/status"), fakes({ loadLifeTracks: async () => STATUS_LIFE, loadCapitalDeals: async () => Promise.reject(new Error("deals exploded")) }).deps));
+    check("a failed deals read is Capital alone: capital null, the attributes still answer, 200, no message in the reply", dealsDown.status === 200 && data(dealsDown).capital === null && (data(dealsDown).attributes as Attr[]).length === 5 && !/exploded/.test(dealsDown.raw));
+    const lifeDown = await got(handleStatus(get("/status"), fakes({ loadLifeTracks: async () => Promise.reject(new Error("life exploded")) }).deps));
+    const knowDown = await got(handleStatus(get("/status"), fakes({ loadKnowledge: async () => Promise.reject(new Error("tree exploded")) }).deps));
+    check("a failed life or Knowledge read fails the reply (server, no message), never a level of 0", isFail(lifeDown, "server") && isFail(knowDown, "server") && !/exploded/.test(lifeDown.raw + knowDown.raw));
+    check("an unknown query parameter is bad", isFail(await got(handleStatus(get("/status?track=BODY"), fakes().deps)), "bad"));
+    check("behind the token like every route", isFail(await got(handleStatus(get("/status"), fakes({ token: () => TOKEN }).deps)), "auth"));
+  }
 }
 
 // ═══ 3. The wiring ════════════════════════════════════════════════════════
@@ -1433,6 +1744,7 @@ const HANDLER_OF: Record<string, string> = {
   "GET /ideas/meta": "handleIdeasMeta",
   "POST /ideas": "handleIdeaCreate",
   "GET /quests": "handleQuests",
+  "GET /status": "handleStatus",
 };
 
 function wiring() {
@@ -1480,6 +1792,29 @@ function wiring() {
     "quests (P15): Today's own reads: main-quest-server loadMainQuestCard (the pick over loadAimCards), loadMainQuestWeek for that card (its goal's week), momentum-server loadMomentum(userId, day, { now })",
     /loadMainQuest: \(userId, now\) => loadMainQuestCard\(userId, now\),\s*loadSprintWeek: \(userId, now, card\) => loadMainQuestWeek\(userId, now, card\),\s*loadMomentum: \(userId, day, now\) => loadMomentum\(userId, day, \{ now \}\),/
   );
+  bind(
+    "status (P1): the /you Status card's own reads: life-tracks-server loadLifeTracks(userId, now), status-panel-server loadKnowledgeRow() (Knowledge as the sheet builds it) and loadCapitalDeals(userId, day) (the won Deals)",
+    /loadLifeTracks: \(userId, now\) => loadLifeTracks\(userId, now\),\s*loadKnowledge: \(\) => loadKnowledgeRow\(\),\s*loadCapitalDeals: \(userId, day\) => loadCapitalDeals\(userId, day\),/
+  );
+  bind(
+    "status (P4): the avatar targets are the /you card's own read, avatar-server loadAvatar(userId, now, { deals }) on the deals already read",
+    /import \{ loadAvatar \} from "\.\/avatar-server";[\s\S]*loadAvatar: \(userId, now, deals\) => loadAvatar\(userId, now, \{ deals \}\),/
+  );
+  bind(
+    // Re-pinned (P5 review): with its Fields read, so an Intellect skill's fieldName reaches the phone (StatusLine.skillSub).
+    "status and the tick (P5): the skills are You › Skills' own read, competency-server loadSkills(userId) with its Fields (an Intellect skill's fieldName), and a tick's skill loadTemplateSkill(userId, templateId)",
+    /import \{ loadSkills, loadTemplateSkill \} from "\.\/competency-server";[\s\S]*loadSkills: async \(userId\) => \(await loadSkills\(userId\)\)\.skills,\s*loadTemplateSkill: \(userId, templateId\) => loadTemplateSkill\(userId, templateId\),/
+  );
+  check(
+    // Re-pinned for P4: the panel takes the avatar as its third input, read on the same won deals. Re-pinned for P5:
+    // the skills are its fourth (a failed read counts none).
+    "status (P1, P4, P5): /you draws the same panel from its sheet's own life view and Knowledge row, the avatar and the skills (statusPanelOf(s.life, s.knowledge, avatar, skills)), Capital from loadCapitalDeals(userId, today), and the avatar from loadAvatar on those deals",
+    /const status = statusPanelOf\(s\.life, s\.knowledge, avatar, skills \? skills\.skills : null\);/.test(code("src/app/you/page.tsx")) &&
+      /const skillsRead = loadSkills\(userId, \{ fields: false \}\)\.catch\(\(\) => null\);/.test(code("src/app/you/page.tsx")) &&
+      /loadCapitalDeals\(userId, today\)/.test(code("src/app/you/page.tsx")) &&
+      /const avatarRead = capitalRead\.then\(\(deals\) => loadAvatar\(userId, now, \{ deals \}\)\)\.catch\(\(\) => null\);/.test(code("src/app/you/page.tsx")) &&
+      /<StatusPanel panel=\{status\} capital=\{capital\} avatar=\{avatar \? \{ view: avatar, today, actions: AVATAR_ACTIONS \} : null\} \/>/.test(code("src/app/you/page.tsx"))
+  );
   check(
     "quests (P15): Today's page reads the main quest through the same two (one pick, one week rule for the card and the phone)",
     /loadMainQuestCard\(userId, now\)\.catch\(\(\) => null\),/.test(code("src/app/today/page.tsx")) && /await loadMainQuestWeek\(userId, now, questCard, quests\?\.view \?\? null\)/.test(code("src/app/today/page.tsx"))
@@ -1497,6 +1832,8 @@ function wiring() {
     ["loadModifiers", "./skill-effects"],
     ["loadMainQuestCard, loadMainQuestWeek", "./main-quest-server"],
     ["loadMomentum, settleMomentum", "./momentum-server"],
+    ["loadLifeTracks", "./life-tracks-server"],
+    ["loadCapitalDeals, loadKnowledgeRow", "./status-panel-server"],
   ];
   const missing = imports.filter(([names, from]) => !cores.includes(`import { ${names} } from "${from}";`));
   check("mobile-api-cores imports each core from the web's own module", missing.length === 0, missing.map((m) => m[1]).join(", "));
@@ -1717,6 +2054,44 @@ function docs() {
       /`titleNote` is Gemini's words for a title Gemini wrote/.test(doc.replace(/\s+/g, " ")) &&
       /`PAST_DUE` \(the milestone is past its day: Today's card shows no sprint line then\) have no rows/.test(doc.replace(/\s+/g, " ")) &&
       /`loadMainQuestCard`, `loadMainQuestWeek`, `loadMomentum`/.test(doc)
+  );
+  check(
+    "/status (P1; D1, D2) is in the doc: read only and the same across two reads, the five attributes in order (Vitality is Body, Intellect is Knowledge), the track names kept beside the blueprint's words, Intellect alone before life counts, Capital a reading only from WON deals with no XP and no level, null with none",
+    // Re-pinned for P5: the heading names the skills too.
+    /## GET \/status: the five attributes, Capital, the avatar targets and the skills/.test(doc) &&
+      /\*\*Vitality\*\* is the Body track, \*\*Intellect\*\* is Knowledge/.test(doc.replace(/\s+/g, " ")) &&
+      /in this order: Vitality, Intellect, Craft, Duty, Care/.test(doc.replace(/\s+/g, " ")) &&
+      /The track names stay \(Body, Duty, Craft, Care\), with the blueprint's word beside them/.test(doc.replace(/\s+/g, " ")) &&
+      /\*\*Capital is a reading only\*\*: AUD won per month from Deals at stage WON, with no XP and no level/.test(doc.replace(/\s+/g, " ")) &&
+      /An archived, open or lost deal never counts/.test(doc.replace(/\s+/g, " ")) &&
+      /`attributes` holds Intellect alone, and no track level is claimed/.test(doc.replace(/\s+/g, " ")) &&
+      /so two reads in a row answer the same/.test(doc.replace(/\s+/g, " ")) &&
+      /`loadLifeTracks`, `loadKnowledgeRow`, `loadCapitalDeals`/.test(doc)
+  );
+  check(
+    // Re-pinned (P4 review): the weight's place is Body › This week (the app never shows a Train › Weight), and an hours
+    // target's value is task estimates, marked "≈".
+    "/status's targets (P4; D3, D4) are in the doc: the card's order, Body's own weight target (no second copy), each metric, an hours target's estimates, self-reported logs, the share and the pace, null when unread, and that a target pays nothing",
+    /`targets` \(blueprint 1\.2; decisions D3 and D4\)/.test(doc.replace(/\s+/g, " ")) &&
+      /`WEIGHT` is Body's weight card's own target and trend \(`id` `weight`; set on Body › This week, never a second copy\)/.test(doc.replace(/\s+/g, " ")) &&
+      /`TRACK_HOURS` hours of ticked tasks on Craft, Duty or Care last life week \(task estimates, not timed: its line marks the value "≈"\)/.test(doc.replace(/\s+/g, " ")) &&
+      ["`EFFORT_MINUTES`", "`FIELD_LEVEL`", "`TRACK_HOURS`", "`REVENUE_MONTH`", "`MANUAL`"].every((m) => doc.includes(m)) &&
+      /its `source` is `SELF`, and its line says "self-reported"/.test(doc.replace(/\s+/g, " ")) &&
+      /Null when the targets couldn't be read \(show none, never a stale share\); an empty list when there are none/.test(doc.replace(/\s+/g, " ")) &&
+      /A target is a record: it pays no XP or MP and moves no level/.test(doc.replace(/\s+/g, " ")) &&
+      /`loadCapitalDeals`, `loadAvatar`/.test(doc)
+  );
+  check(
+    "/status's skills and /tasks/complete's competency (P5; D7 to D9) are in the doc: by hours, fed by linked tasks (its own link, else its roadmap's) and an exercise skill's walks, the tiers, the plan's words, null when unread, tierUp only with the Seal, and that a skill pays nothing",
+    /`skills` \(blueprint 1\.5; decisions D7, D8 and D9\)/.test(doc.replace(/\s+/g, " ")) &&
+      /each task's own link, else its roadmap's/.test(doc.replace(/\s+/g, " ")) &&
+      /`tier` is 1 \(0–100 h\), 2 \(100–500 h\), 3 \(500–2,000 h\) or 4 \(2,000–10,000 h\)/.test(doc.replace(/\s+/g, " ")) &&
+      /"≈ 42 h \(task estimates, not timed\)"/.test(doc) &&
+      /Null when the skills couldn't be read \(show none\); an empty list with none/.test(doc.replace(/\s+/g, " ")) &&
+      /A skill is a record: no hour or tier pays XP or MP or moves a level/.test(doc.replace(/\s+/g, " ")) &&
+      /`competency` \(blueprint 1\.5; decisions D7 to D9\)/.test(doc.replace(/\s+/g, " ")) &&
+      /`tierUp` is true when this tick played the tier's Seal/.test(doc.replace(/\s+/g, " ")) &&
+      /`loadCapitalDeals`, `loadAvatar`, `loadSkills`/.test(doc)
   );
   check("/log's undo may be null (a weigh-in with nothing to take back)", /"undo": \{ "kind": "task" \| "weight" \| "draft", "id": "…" \} \| null/.test(doc) && /`undo` is null for a weigh-in/.test(doc));
 

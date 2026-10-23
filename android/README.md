@@ -20,11 +20,22 @@ the main one:
 - **Review**: a session runner for every card type, with feedback after each
   answer and a summary at the end.
 
-**More** holds Settings and **Open full app**, which is the web app in a
+**More** holds **Attributes** (the web's /you Status card, titled Attributes: the five attributes,
+Vitality, Intellect, Craft, Duty and Care, each its Body, Knowledge or track
+row's own level, pips, meter and line, each with its avatar targets under it
+("Weight 82.4 → 75 kg · 38% of the way · on pace", set on the web) and its
+skills counted, then Capital as a reading only, AUD won from won deals with no
+level and no XP, then the Skills: named practices by hours, each its tier
+(0–100, 100–500, 500–2,000, 2,000–10,000 h) and the web's own lines, named and
+linked on the web, paying nothing; one column on the front display, two panes
+on the main one; read only, also at `xtnl://app/status`). A tick on Check that
+feeds a skill says so in its line ("· Reading ≈ 99.9 h", or "· Reading reached
+Tier 2"). Then Settings and
+**Open full app**, which is the web app in a
 WebView, for everything else.
 
 The app talks to the server's mobile API, `<server>/api/mobile/v1` (see
-`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.5 (versionCode 8), so
+`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.5 (versionCode 13), so
 it installs over the v1 WebView shell in place.
 
 ## Build
@@ -76,6 +87,12 @@ is set in `gradle.properties` and is `https://xtnl-knowledge-xpis.vercel.app`.
 - the Sunday reminder's clock: 19:00 Sydney time whatever zone the phone is
   in, either side of DST, and its Settings line with and without exact
   alarms;
+- the Attributes screen's words (its title, the track's name with the blueprint's word
+  beside it, the meter's floored percentage and "capped at level n", one
+  TalkBack line per row, Intellect alone before life counts, Capital a reading
+  with no level), the demo's Vitality meter moving with the gym tick, each
+  attribute's avatar targets (and a track's kept apart before life counts),
+  and Back from More › Attributes;
 - the shapes of the API's responses.
 
 The screen renders are a separate step, because they are slow. This command

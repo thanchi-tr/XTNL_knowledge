@@ -11,6 +11,7 @@
 import { isDue } from "@/lib/due";
 import { getCapitalBalance, pendingDividend } from "@/lib/capital";
 import { todayKey } from "@/lib/life-day";
+import type { TrackCurve } from "@/lib/life-economy";
 import { keptWeekGrid, levelSeries, notLaunchedView, type WeekMark } from "@/lib/life-tracks";
 import { loadLifeLedger, loadLifeTracks } from "@/lib/life-tracks-server";
 import { TRACKS } from "@/lib/life-types";
@@ -68,11 +69,14 @@ const TYPE_LABEL: Record<string, string> = {
   DIAGRAM: "Diagram",
 };
 
-/** The life charts' data, from the cached ledger. A failed read hides them rather than draw an empty history. */
-async function loadLifeStats(userId: string): Promise<LifeStats> {
+/**
+ * The life charts' data, from the cached ledger. A failed read hides them rather than draw an empty history. Every
+ * Sunday reads on the curve the view reads today (blueprint P3): a curve flip is never a step in the chart.
+ */
+async function loadLifeStats(userId: string, curve: TrackCurve): Promise<LifeStats> {
   try {
     const ledger = await loadLifeLedger(userId);
-    const series = levelSeries(ledger, STATS_WEEKS);
+    const series = levelSeries(ledger, STATS_WEEKS, curve);
     const grid = keptWeekGrid(ledger, STATS_WEEKS);
     return {
       launched: true,
@@ -96,7 +100,7 @@ export async function loadStats(userId: string, now = new Date()): Promise<Stats
   ]);
   const [pending, lifeStats] = await Promise.all([
     pendingDividend(userId, progression.activeSkills).catch(() => ({ amount: 0, perHour: 0, capped: false, hoursAccrued: 0 })),
-    life.launched ? loadLifeStats(userId) : Promise.resolve(NO_LIFE),
+    life.launched ? loadLifeStats(userId, life.curve) : Promise.resolve(NO_LIFE),
   ]);
 
   // Track levels in TRACKS order, as the shell and the sheet sum them.

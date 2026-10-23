@@ -18,6 +18,7 @@ import { TaskMonth } from "@/components/task-style/TaskMonth";
 import { TaskStylePicker } from "@/components/task-style/TaskStylePicker";
 import { stepsAllowed } from "@/lib/subtasks";
 import { StepsEditor, type StepsSave } from "./StepsEditor";
+import { CompetencyLink } from "./CompetencyLink";
 
 /** A slower write this drawer started and is waiting on. */
 export type DrawerWork = { kind: "resize" } | { kind: "rate"; override: number } | { kind: "rename"; title: string } | { kind: "steps" };
@@ -329,6 +330,8 @@ export function TaskDrawer(props: Props) {
           </div>
         </section>
       )}
+      {/* Skills (blueprint P5): the named skill this task's ticks count toward. Never on a work tab: work stays outside the game. */}
+      {!props.work && !props.noMonth && <CompetencyLink key={t.id} templateId={t.id} />}
       {/* A personal habit's year (Tasks › Habits), its card scrolled to and ringed. Never on a work tab (not tracked there). */}
       {!props.work && t.kind === "HABIT" && recurring && (
         <div className="today-drawer-row">

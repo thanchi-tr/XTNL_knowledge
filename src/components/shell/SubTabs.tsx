@@ -13,7 +13,7 @@
  *                    YouTabs (home/YouTabs.tsx) is the strip, nor where a section
  *                    has a single page, nor anywhere outside the three sections.
  *   <SubTabs/>       the strip itself, which YouTabs renders for the profile pages
- *                    (with the Skills tab's ready dot).
+ *                    (with the Emblems tab's ready dot).
  *
  * From 600 the top bar carries the same tabs (medium) and from 1280 the
  * sidebar does, so the strip hides itself there (chrome.css, you.css). The
@@ -68,7 +68,7 @@ export interface SubTabsProps {
   /** The strip's accessible name ("Ideas pages", "You"). */
   label: string;
   className?: string;
-  /** Something after a tab's label (YouTabs: the Skills tab's ready dot). */
+  /** Something after a tab's label (YouTabs: the Emblems tab's ready dot). */
   extra?: (href: string) => ReactNode;
   /** Part of the shell's chrome: hidden in focus mode, like the bars. */
   chrome?: boolean;

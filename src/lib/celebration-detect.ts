@@ -51,6 +51,16 @@
  *                     own (the XP it paid, the MP its mint paid, 0 with the why).
  *     A WALK personal best (§A.7, §E.4) is the pr Seal with the walk's words;
  *     a PR reversal row ('undo:<id>', qty null) is never a moment.
+ *   - The track curve (blueprint P3, D5): the tracks and levels parts carry the
+ *     curve their track levels were read on. When TRACK_CURVE_LAUNCH_DAY falls
+ *     between the two snapshots (a before part cached from the day before),
+ *     the before side takes the after side's track levels (alignTrackCurve),
+ *     so a level the flip moved never plays: no ceremony on the flip.
+ *   - Skills (blueprint P5, D7–D9): the competencies part holds each live skill's hours and tier (competency-server
+ *     readSkillsPart). A tier that rises between the two snapshots is a competency-tier Seal keyed
+ *     'competency:<id>:t<n>' (once ever a tier; a skipped tier is claimed), with the hours and the tiers and no amount:
+ *     a tier pays nothing (D9). Only a tick or a walk takes this part, so a link's history (re-read on the next
+ *     snapshot, with the cache cleared by the link) never plays one.
  */
 import {
   DEFAULT_PREFS,
@@ -69,7 +79,7 @@ import { ATTRIBUTE_META, emptyComposition, type AttributeScores } from "./attrib
 import { fieldTier } from "./field-tier";
 import { HABIT_RUNGS, keptToNextRung, rungOf, type HabitRung } from "./habit";
 import { addDays, weekKeyOf, weekStartKeyOf, type DayKey } from "./life-day";
-import { GOAL_RULES, isBackfillDetail, parseWeekRowKey, type GoalRule } from "./life-economy";
+import { GOAL_RULES, PRE_CURVE_TRACK_CURVE, isBackfillDetail, parseWeekRowKey, type GoalRule, type TrackCurve } from "./life-economy";
 import {
   MOMENT_KEYS,
   RUN_MILESTONES,
@@ -91,6 +101,7 @@ import { getSkill, type SkillRank } from "./skill-pool";
 import { TITLE_BANDS, bandForLevel, computeTitle } from "./titles";
 import { MASTERY_LEVEL, fieldLevelRaw } from "./xp";
 import { characterLevelOf, trackLevelsOf } from "../components/shell/shell-types";
+import { hoursText, skillSealKey, tierRangeLabel, type SkillTier } from "./competency";
 
 // ─── Snapshot shape ─────────────────────────────────────────────────────────
 
@@ -110,8 +121,22 @@ export const SNAPSHOT_VERSION = 1 as const;
  * ready     emblems that meet every gate now (opt-in: it is the costly read)
  * momentum      the momentum run and Today's three (only once momentum is live)
  * momentumRows  CHEST, MILESTONE, CHECKPOINT, PLAN_WEEK and PERK rows (only once momentum is live)
+ * competencies  each live skill's hours and tier (blueprint P5; "skills" is the emblems' part, named before D6)
  */
-export type SnapshotPart = "levels" | "mastered" | "streak" | "skills" | "goals" | "bosses" | "ledger" | "habits" | "tracks" | "ready" | "momentum" | "momentumRows";
+export type SnapshotPart =
+  | "levels"
+  | "mastered"
+  | "streak"
+  | "skills"
+  | "goals"
+  | "bosses"
+  | "ledger"
+  | "habits"
+  | "tracks"
+  | "ready"
+  | "momentum"
+  | "momentumRows"
+  | "competencies";
 
 export const SNAPSHOT_PARTS: readonly SnapshotPart[] = [
   "levels",
@@ -126,6 +151,7 @@ export const SNAPSHOT_PARTS: readonly SnapshotPart[] = [
   "ready",
   "momentum",
   "momentumRows",
+  "competencies",
 ];
 
 /** What each kind of action reads. Take the same scope before and after. */
@@ -141,9 +167,10 @@ export const SNAPSHOT_SCOPES = {
    * A tick pays track XP, so it reads the tracks and the levels (the
    * character counts tracks once life is launched). Momentum: the run and
    * Today's three, so the day's first momentum action and a quest done chime
-   * on the tick itself (nothing is read before MOMENTUM_LAUNCH_DAY).
+   * on the tick itself (nothing is read before MOMENTUM_LAUNCH_DAY). Skills (blueprint P5): a tick's minutes can
+   * move its skill across an hour tier.
    */
-  tick: ["streak", "habits", "goals", "levels", "tracks", "momentum"],
+  tick: ["streak", "habits", "goals", "levels", "tracks", "momentum", "competencies"],
   /** An emblem unlock (the title can change with a first Ultimate). */
   unlock: ["skills", "levels"],
   /**
@@ -154,7 +181,7 @@ export const SNAPSHOT_SCOPES = {
    */
   settle: ["streak", "ledger", "habits", "goals", "tracks", "levels", "momentum", "momentumRows"],
   /** Everything except `ready`. */
-  all: ["levels", "mastered", "streak", "skills", "goals", "bosses", "ledger", "habits", "tracks", "momentum", "momentumRows"],
+  all: ["levels", "mastered", "streak", "skills", "goals", "bosses", "ledger", "habits", "tracks", "momentum", "momentumRows", "competencies"],
 } as const satisfies Record<string, readonly SnapshotPart[]>;
 
 export type SnapshotScope = keyof typeof SNAPSHOT_SCOPES;
@@ -175,6 +202,8 @@ export interface LevelsPart {
    * Optional, so snapshots stored before M5 still parse.
    */
   tracks?: Record<string, number>;
+  /** The curve `tracks` was read on (blueprint P3). Absent reads SQUARE (every snapshot before it). */
+  trackCurve?: TrackCurve;
 }
 export interface MasteredPart {
   /** ideaId → MP the IDEA_MASTERED row paid. */
@@ -270,6 +299,8 @@ export interface HabitsPart {
 export interface TracksPart {
   /** BODY | DUTY | CRAFT | CARE → track level (M5). */
   levels: Record<string, number>;
+  /** The curve `levels` was read on (blueprint P3). Absent reads SQUARE (every snapshot before it). */
+  curve?: TrackCurve;
 }
 export interface ReadyPart {
   codes: string[];
@@ -368,6 +399,20 @@ export interface MomentumRowsPart {
   branches?: Partial<Record<string, BranchNow>>;
 }
 
+/** One live skill (blueprint P5): its hours (2 decimals) and tier, and the hours' line ("≈ 42 h (task estimates, not timed)"). */
+export interface CompetencyPartRow {
+  id: string;
+  name: string;
+  hours: number;
+  tier: number;
+  line: string;
+}
+
+/** Every live skill's hours and tier (competency-server readSkillsPart). Empty before the migration or with no skill. */
+export interface CompetenciesPart {
+  rows: CompetencyPartRow[];
+}
+
 export interface ProgressData {
   parts: SnapshotPart[];
   levels?: LevelsPart;
@@ -382,6 +427,7 @@ export interface ProgressData {
   ready?: ReadyPart;
   momentum?: MomentumPart;
   momentumRows?: MomentumRowsPart;
+  competencies?: CompetenciesPart;
 }
 
 /** A snapshot that holds nothing: diffing against it can never fire. */
@@ -1061,6 +1107,44 @@ function detectHabits(b: HabitsPart, a: HabitsPart): CelebrationDraft[] {
   return out;
 }
 
+/** A skill tier's medallion: Tier 2 bronze, Tier 3 silver, Tier 4 gold. */
+const TIER_MATERIAL: Readonly<Record<number, Material>> = { 2: "bronze", 3: "silver", 4: "gold" };
+
+/**
+ * Skills (blueprint P5, D9): a skill whose tier rose is one Seal, 'competency:<id>:t<to>', the tiers it skipped claimed.
+ * It states the tiers (the numeral) and the hours, never an amount: a tier pays no XP or MP. A new skill, a tier that
+ * falls (an undo, an unlink) or stays, plays nothing.
+ */
+function detectCompetencies(b: CompetenciesPart, a: CompetenciesPart): CelebrationDraft[] {
+  const prev = new Map(b.rows.map((r) => [r.id, r]));
+  const out: CelebrationDraft[] = [];
+  for (const r of a.rows) {
+    const p = prev.get(r.id);
+    if (!p || !(r.tier > p.tier) || r.tier < 2 || r.tier > 4) continue;
+    const hours = `≈ ${hoursText(r.hours)} h`;
+    out.push(
+      draft(
+        "competency-tier",
+        skillSealKey(r.id, r.tier),
+        {
+          eyebrow: "Skill tier",
+          title: `${r.name} reached Tier ${r.tier}`,
+          lines: [`${r.line}.`, "A tier is a Seal only: it pays no XP or MP."],
+          numeral: { from: p.tier, to: r.tier },
+          material: TIER_MATERIAL[r.tier],
+          href: "/you/skills",
+        },
+        [
+          { label: r.name, value: `Tier ${p.tier} → Tier ${r.tier}` },
+          { label: "Hours", value: `${hours} · ${tierRangeLabel(r.tier as SkillTier)}` },
+        ],
+        range(p.tier, r.tier).map((t) => skillSealKey(r.id, t))
+      )
+    );
+  }
+  return out;
+}
+
 function detectTracks(b: TracksPart, a: TracksPart): CelebrationDraft[] {
   const out: CelebrationDraft[] = [];
   for (const [track, to] of Object.entries(a.levels).sort(([x], [y]) => (x < y ? -1 : 1))) {
@@ -1536,7 +1620,8 @@ export interface DiffOptions {
  * Before/after → drafts. Pure and deterministic. A part missing from either
  * side is skipped, so an empty or partial snapshot can never fire anything.
  */
-export function diffProgress(before: ProgressData, after: ProgressData, opts: DiffOptions = {}): CelebrationDraft[] {
+export function diffProgress(beforeRead: ProgressData, after: ProgressData, opts: DiffOptions = {}): CelebrationDraft[] {
+  const before = alignTrackCurve(beforeRead, after);
   const both = <K extends SnapshotPart>(p: K): boolean => before.parts.includes(p) && after.parts.includes(p) && before[p] != null && after[p] != null;
   const out: CelebrationDraft[] = [];
 
@@ -1590,6 +1675,8 @@ export function diffProgress(before: ProgressData, after: ProgressData, opts: Di
     out.push(...momentum);
   }
   if (both("momentumRows")) out.push(...detectMomentumRows(before.momentumRows!, after.momentumRows!, after.momentum?.today ?? null));
+  // Skills (blueprint P5): a tier crossed by this tick or walk, its own Seal (nothing folds into it, and it folds nowhere).
+  if (both("competencies")) out.push(...detectCompetencies(before.competencies!, after.competencies!));
 
   // Newly unlockable: no kind of its own (the orbit on You › Skills shows it);
   // it rides as a What-moved row on the loudest moment of the same diff.
@@ -1605,6 +1692,25 @@ export function diffProgress(before: ProgressData, after: ProgressData, opts: Di
 
   // Honesty is not optional: a Seal or Ascension without its number or its why is dropped.
   return out.filter((d) => d.tier < 2 || honestyProblem(draftToEvent(d, d.dedupeKey)) === null);
+}
+
+const curveOf = (c: TrackCurve | undefined): TrackCurve => c ?? PRE_CURVE_TRACK_CURVE;
+
+/**
+ * Blueprint P3 (D5): every track level is recomputed on read, so a before side read on another curve than the
+ * after side (TRACK_CURVE_LAUNCH_DAY between them, or a before part cached from the day before) takes the after
+ * side's track levels and curve. What the flip moved then never plays, and the character reads one set of tracks;
+ * Fields, weeks, goals and the rest diff as ever. The same curve on both sides returns `before` itself.
+ */
+export function alignTrackCurve(before: ProgressData, after: ProgressData): ProgressData {
+  const tracksMoved = before.tracks != null && after.tracks != null && curveOf(before.tracks.curve) !== curveOf(after.tracks.curve);
+  const levelsMoved = before.levels?.tracks != null && after.levels?.tracks != null && curveOf(before.levels.trackCurve) !== curveOf(after.levels.trackCurve);
+  if (!tracksMoved && !levelsMoved) return before;
+  return {
+    ...before,
+    ...(tracksMoved ? { tracks: { ...before.tracks!, levels: { ...after.tracks!.levels }, curve: curveOf(after.tracks!.curve) } } : {}),
+    ...(levelsMoved ? { levels: { ...before.levels!, tracks: { ...after.levels!.tracks! }, trackCurve: curveOf(after.levels!.trackCurve) } } : {}),
+  };
 }
 
 /** Convenience over two snapshots (same user, same version). */

@@ -56,6 +56,13 @@
  * (L4–L6); when each title, crest band and Field tier is first reached is
  * printed, not asserted. The attributes still read breadth (xp.ts
  * fieldBreadth), so nothing above it moves.
+ *
+ * The track curve (blueprint P3, D5): every track level here is life-economy
+ * trackLevel on TRACK_CURVE, the curve a set launch day puts the whole model
+ * on. While TRACK_CURVE_LAUNCH_DAY is null and XTNL_TRACK_CURVE_LAUNCH_DAY is
+ * unset that is SQUARE and the output is exactly as before; with the override
+ * set (`XTNL_TRACK_CURVE_LAUNCH_DAY=2026-10-24 npx tsx scripts/balance-horizon.ts`)
+ * every block runs on POWER, Base·L^1.5 a level, and says so in one line.
  */
 import "./_no-model";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -80,6 +87,7 @@ import {
   TRACK_SHARE_CAP,
   trackLevel,
 } from "../src/lib/life-economy";
+import { TRACK_CURVE_BASE, TRACK_CURVE_EXPONENT, trackCurveLaunchDay, type TrackCurve } from "../src/lib/life-economy";
 import { emptyLifeLedger, trackShareCap, trackStateAt } from "../src/lib/life-tracks";
 import { effectiveFieldComposition } from "../src/lib/attribute-inference";
 import { TRACK_LABEL, kneeG, priceTask } from "../src/lib/life-grade";
@@ -135,6 +143,12 @@ function fmtYears(days: number): string {
 }
 
 // ── LIFE: the model ─────────────────────────────────────────────────────────
+
+/**
+ * The track curve the whole model reads (blueprint P3): POWER once a launch day is set (the constant, or outside
+ * production XTNL_TRACK_CURVE_LAUNCH_DAY), since every model week is after it; SQUARE while there is none.
+ */
+const TRACK_CURVE: TrackCurve = trackCurveLaunchDay() == null ? "SQUARE" : "POWER";
 
 /** Life MP may add at most this share of the knowledge income, even in the worst case. */
 const LIFE_SHARE_CEILING = 0.03;
@@ -269,7 +283,7 @@ function paceAt(plan: PacePlan, week: number): PaceState {
   }
   // The raw sum: trackLevel caps it at GOAL_DEPTH_CAP itself, so a bumped cap shows here.
   const goalDepth = plan.goals.filter((g) => g.day <= 7 * week).reduce((s, g) => s + g.depth, 0);
-  return { week, xp, keptWeeks, keptStreak, goalDepth, level: trackLevel(xp, keptWeeks, goalDepth) };
+  return { week, xp, keptWeeks, keptStreak, goalDepth, level: trackLevel(xp, keptWeeks, goalDepth, TRACK_CURVE) };
 }
 
 function firstWeekAt(plan: PacePlan, level: number): number | null {
@@ -507,8 +521,12 @@ function lifeBlock(pool: number, knowledgePerDay: number): number {
     },
   } satisfies Record<string, PacePlan>;
 
+  const curveLevels =
+    TRACK_CURVE === "POWER"
+      ? `the highest L whose ${TRACK_CURVE_BASE}·Σ k^${TRACK_CURVE_EXPONENT} (k ≤ L, rounded) the XP reaches (POWER: XTNL_TRACK_CURVE_LAUNCH_DAY is set)`
+      : `floor(√xp / ${TRACK_LEVEL_STEP})`;
   console.log(
-    `  levels: floor(√xp / ${TRACK_LEVEL_STEP}), capped at ${TRACK_DEPTH_GRACE} + floor(${TRACK_DEPTH_WEEK_COEF}·√kept weeks + goal depth ≤ ${GOAL_DEPTH_CAP})`,
+    `  levels: ${curveLevels}, capped at ${TRACK_DEPTH_GRACE} + floor(${TRACK_DEPTH_WEEK_COEF}·√kept weeks + goal depth ≤ ${GOAL_DEPTH_CAP})`,
   );
   for (const plan of Object.values(plans)) {
     const firsts = [3, 4, 5, 10].map((l) => `L${l} wk ${firstWeekAt(plan, l) ?? "—"}`).join(" · ");
@@ -941,12 +959,13 @@ function levelsBlock(): number {
     console.log(`  ${ok ? "PASS" : "FAIL"} ${name}: ${detail}`);
   };
   console.log("\n── Levels: depth first ──────────────────────");
+  if (TRACK_CURVE === "POWER") console.log(`  track curve: POWER (${TRACK_CURVE_BASE}·L^${TRACK_CURVE_EXPONENT} a level; XTNL_TRACK_CURVE_LAUNCH_DAY is set)`);
 
   // The four life tracks at the steady basket, every week kept, no goals: life-economy trackLevel.
   const xpPerWeek = personaOf("steady").xpPerWeek;
   const tracksAt = (day: number) => {
     const weeks = Math.floor(day / 7);
-    return TRACKS.map((t) => trackLevel(xpPerWeek[t] * weeks, weeks));
+    return TRACKS.map((t) => trackLevel(xpPerWeek[t] * weeks, weeks, 0, TRACK_CURVE));
   };
   console.log(
     `  model: ${NEW_IDEAS_PER_WEEK} ${PACE_FORMAT} ideas (${XP_BASE[PACE_FORMAT]} points) a week over ${PACE_DOMAINS_PER_FIELD} Domains in 1 Field (focused) or in each of ${PACE_SPREAD_FIELDS} (spread), every due review passed; ` +

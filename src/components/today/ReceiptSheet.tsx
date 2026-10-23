@@ -9,7 +9,7 @@ import { formatNumber } from "@/components/ui/format";
 /**
  * The kit's factor names for the life formula's keys (B is the base, shown in
  * the formula). S, M and X are momentum's (momentum.md §E.3): the perks
- * ('Skills ×1.04 · Steady hand'), the chain ('Chain ×1.09 · 3 links') and a
+ * ('Perks ×1.04 · Steady hand'; the Life tree is "Life perks" since D6), the chain ('Chain ×1.09 · 3 links') and a
  * crit ('Crit ×2.00 · sealed roll 0.031 under 0.080 · set per task per day').
  */
 const FACTOR_NAME: Record<Exclude<LifeFactor["key"], "B">, string> = {
@@ -19,7 +19,7 @@ const FACTOR_NAME: Record<Exclude<LifeFactor["key"], "B">, string> = {
   D: "Repeat",
   V: "Volume",
   K: "Mode",
-  S: "Skills",
+  S: "Perks",
   M: "Chain",
   X: "Crit",
 };

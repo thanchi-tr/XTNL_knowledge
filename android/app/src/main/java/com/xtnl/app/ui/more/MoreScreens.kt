@@ -65,6 +65,7 @@ import com.xtnl.app.AppGraph
 import com.xtnl.app.BuildConfig
 import com.xtnl.app.core.AuditAlarm
 import com.xtnl.app.core.ServerAddress
+import com.xtnl.app.core.StatusLine
 import com.xtnl.app.data.MotionChoice
 import com.xtnl.app.data.Outcome
 import com.xtnl.app.data.ThemeChoice
@@ -85,7 +86,7 @@ import kotlinx.coroutines.withContext
 import java.time.Instant
 
 @Composable
-fun MoreScreen(graph: AppGraph, onSettings: () -> Unit, onFullApp: () -> Unit) {
+fun MoreScreen(graph: AppGraph, onSettings: () -> Unit, onFullApp: () -> Unit, onStatus: () -> Unit) {
     val c = X.c
     val prefs by graph.settings.state.collectAsStateWithLifecycle()
     val top = WindowInsets.safeDrawing.only(WindowInsetsSides.Top).asPaddingValues().calculateTopPadding()
@@ -94,6 +95,7 @@ fun MoreScreen(graph: AppGraph, onSettings: () -> Unit, onFullApp: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text("More", style = MaterialTheme.typography.headlineMedium, color = c.ink0, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
+        MoreRow(Glyphs.Status, StatusLine.TITLE, StatusLine.MORE_SUB, onStatus)
         MoreRow(Glyphs.Globe, "Open full app", "Everything else: Today, Library, Train, You", onFullApp)
         MoreRow(Glyphs.Settings, "Settings", "Server, token, theme, motion, sound, haptics and notifications", onSettings)
         Spacer(Modifier.height(8.dp))

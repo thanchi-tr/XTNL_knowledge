@@ -116,6 +116,76 @@ class DemoBoardTest {
         assertEquals(listOf(listOf(9, 11)), before.mainQuest!!.milestone?.titleStruck)
     }
 
+    /** GET /status (P1): the five attributes in the panel's order, Duty at its cap, Capital a reading; the gym tick moves Vitality's meter. */
+    @Test fun theStatusPanelReadsTheBoardsBodyTrack() = runTest {
+        val api = DemoApi()
+        val before = (api.status() as Outcome.Ok).value
+        assertTrue(before.launched)
+        assertEquals(listOf("VITALITY", "INTELLECT", "CRAFT", "DUTY", "CARE"), before.attributes.map { it.key })
+        assertEquals(listOf("Body", "Knowledge", "Craft", "Duty", "Care"), before.attributes.map { it.name })
+        val intellect = before.attributes.single { it.key == "INTELLECT" }
+        assertEquals(null, intellect.cap)
+        assertEquals(null, intellect.keptStreak)
+        assertTrue(intellect.weeks.isEmpty() && intellect.unit == "pts")
+        assertTrue(before.attributes.single { it.key == "DUTY" }.atCap)
+        assertTrue(before.attributes.all { it.weeks.size <= 8 })
+        val capital = before.capital!!
+        assertEquals("\$12,400", capital.won)
+        assertEquals(3, capital.months.size)
+        assertEquals(capital.month, capital.months.first().month)
+        val vitality = before.attributes.single { it.key == "VITALITY" }.progress
+        assertTrue(api.completeTask("t-gym", mvv = false, clientId = "c-gym") is Outcome.Ok)
+        val after = (api.status() as Outcome.Ok).value.attributes.single { it.key == "VITALITY" }
+        assertTrue("the gym tick moves Body's meter", after.progress > vitality)
+        assertEquals(6, after.level)
+        assertTrue(after.line.startsWith("1,968 / 2,401 XP"))
+    }
+
+    /** GET /status (P4): the demo's avatar targets, in the web card's order, each the web's own line; a measure of your own is SELF. */
+    @Test fun theStatusPanelCarriesTheAvatarTargets() = runTest {
+        val p = (DemoApi().status() as Outcome.Ok).value
+        val t = p.targets!!
+        assertEquals(listOf("VITALITY", "INTELLECT", "CRAFT", "CARE", "CAPITAL"), t.map { it.attribute })
+        assertEquals("Weight 82.4 → 75 kg · 38% of the way · on pace", t.first().line)
+        assertEquals("WEIGHT", t.first().metric)
+        val own = t.single { it.metric == "MANUAL" }
+        assertEquals("SELF", own.source)
+        assertTrue(own.line.endsWith("self-reported"))
+        assertTrue(t.all { it.share == null || it.share!! in 0.0..1.0 })
+        assertTrue("every target has a row or Capital's card", t.all { it.attribute == "CAPITAL" || p.attributes.any { a -> a.key == it.attribute } })
+    }
+
+    /** GET /status (P5): the demo's skills, most hours first, in the web's words; each attribute counts its own; a skill pays nothing. */
+    @Test fun theStatusPanelCarriesTheSkills() = runTest {
+        val p = (DemoApi().status() as Outcome.Ok).value
+        val s = p.skills!!
+        assertEquals(listOf("sk-write", "sk-read", "sk-strength", "sk-walk"), s.map { it.id })
+        assertEquals(listOf(2, 1, 1, 1), s.map { it.tier })
+        assertEquals("≈ 142 h (task estimates, not timed)", s[0].line)
+        assertEquals("Tier 2 · 100–500 h · 357 h to Tier 3", s[0].tierLine)
+        assertEquals("12.5 h of walks", s.single { it.kind == "EXERCISE" }.line)
+        assertEquals(listOf(2, 1, 1, 0, 0), p.attributes.map { it.skills })
+        assertTrue(s.all { it.progress in 0.0..1.0 })
+    }
+
+    /** POST /tasks/complete (P5): the read tick takes Reading across 100 h (a tier-up, once); the gym tick reports Strength; others none. */
+    @Test fun aTickReportsItsSkillAndATierUpOnce() = runTest {
+        val api = DemoApi()
+        val read = (api.completeTask("t-read", mvv = false, clientId = "c-read") as Outcome.Ok).value
+        val skill = read.competency!!
+        assertEquals("Reading", skill.name)
+        assertEquals(2, skill.tier)
+        assertTrue(skill.tierUp)
+        assertTrue(skill.hoursAfter >= 100.0)
+        assertEquals(listOf("Reading reached Tier 2"), celebrationTitles(read.celebrations))
+        assertTrue((api.undoTask(read.instanceId, "u-read") is Outcome.Ok))
+        val again = (api.completeTask("t-read", mvv = false, clientId = "c-read-2") as Outcome.Ok).value
+        assertEquals("a tier re-reached never plays twice", false, again.competency!!.tierUp)
+        val gym = (api.completeTask("t-gym", mvv = false, clientId = "c-gym") as Outcome.Ok).value
+        assertEquals(listOf("Strength", "≈ 42.5 h (task estimates, not timed)"), gym.competency!!.let { listOf(it.name, it.line) })
+        assertEquals(null, (api.completeTask("t-dentist", mvv = false, clientId = "c-dentist") as Outcome.Ok).value.competency)
+    }
+
     @Test fun theLastHabitClearsTheBoard() = runTest {
         val api = DemoApi()
         // The study task completes itself from the day's reviews (7 done; the demo starts at 4).

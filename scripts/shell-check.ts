@@ -9,7 +9,9 @@
  * shader slot or the runtime, and no 3D library. No DB, no browser.
  *
  * The three sections (Ideas · Tasks · Body): the nav model, the profile menu
- * (Character, Skills, Loadout, Moments, Stats, Settings, out of the tabs),
+ * (Character, Skills, Emblems, Loadout, Moments, Stats, Settings, out of the tabs;
+ * /skills labelled Emblems since blueprint P2, D6; /you/skills, the real
+ * skills, since P5),
  * the '+' that starts the section's mode, and the chrome's source (three
  * tabs and the +, the profile buttons, the menu sheet, chrome.css).
  *
@@ -18,7 +20,7 @@
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import { runInNewContext } from "node:vm";
-import { CAPTURE_LABEL, DEV_STYLE_PAGES, PROFILE, SECTIONS, activeSub, captureModeOf, groupOf, isProfilePath, longDate, sectionById, sectionOf, subsOf, titleFor } from "../src/components/shell/nav";
+import { CAPTURE_LABEL, DEV_STYLE_PAGES, LIFE_PERKS_PATH, LIFE_PERKS_TITLE, PROFILE, SECTIONS, activeSub, captureModeOf, groupOf, isProfilePath, longDate, sectionById, sectionOf, subsOf, titleFor } from "../src/components/shell/nav";
 import { PREPAINT_SCRIPT } from "../src/components/shell/prepaint";
 import { SHELL_CAPTURE_EVENT } from "../src/components/shell/capture-bridge";
 import { CAPTURE_MODE_START, isBareModeStart } from "../src/components/capture/events";
@@ -48,7 +50,7 @@ import { AUDIT_LAUNCH_DAY, AUDIT_READY_TITLE, auditReadyNotices } from "../src/l
 import { RECORD_YESTERDAY_HREF } from "../src/lib/shortcuts";
 import { ATTRIBUTES, computeAttributeScores, emptyComposition, sourcesFor, type Composition, type FieldContribution } from "../src/lib/attributes";
 import { characterLevel, characterRaw } from "../src/lib/character";
-import { depthCap, trackDepth, xpForLevel } from "../src/lib/life-economy";
+import { PRE_CURVE_TRACK_CURVE, depthCap, trackDepth, xpForLevel } from "../src/lib/life-economy";
 import { TRACK_SEED } from "../src/lib/life-lexicon";
 import { emptyLifeLedger, keptWeekBonusPercent, lifeContributionRows, lifeContributionsAt, notLaunchedView, type TrackState } from "../src/lib/life-tracks";
 import type { Track } from "../src/lib/life-types";
@@ -133,12 +135,15 @@ eq("nav: Body's sub-pages: This week, Exercise", sectionById("body").subs.map((s
   ["This week", "/train"],
   ["Exercise", "/train/exercise"],
 ]);
-eq("nav: the profile menu: Character, Skills, Loadout, Moments, Stats, Settings (each with its icon)", [PROFILE.id, PROFILE.label, PROFILE.subs.map((s) => [s.label, s.href, s.icon ?? null])], [
+// Re-pinned for blueprint P2 (D6): the /skills row is labelled Emblems; its route and its tree icon stay. Re-pinned for P5
+// (D7 to D9): You › Skills (/you/skills, the named competencies by hours) is the second row, a compatible addition.
+eq("nav: the profile menu: Character, Skills, Emblems, Loadout, Moments, Stats, Settings (each with its icon)", [PROFILE.id, PROFILE.label, PROFILE.subs.map((s) => [s.label, s.href, s.icon ?? null])], [
   "you",
   "You",
   [
     ["Character", "/you", "sheet"],
-    ["Skills", "/skills", "tree"],
+    ["Skills", "/you/skills", "clock"],
+    ["Emblems", "/skills", "tree"],
     ["Loadout", "/you/loadout", "sword"],
     ["Moments", "/you/moments", "star"],
     ["Stats", "/you/stats", "chart"],
@@ -210,11 +215,18 @@ eq("nav: each /dev/style fixture route has its own title (no ShellTitle swap)", 
 eq("nav: /you is the Character on first paint (the server-rendered title)", titleFor("/you"), { eyebrow: "You", title: "Character" });
 eq("nav: the profile pages keep their titles under 'You'", ["/you/loadout", "/skills", "/you/moments", "/you/stats", "/settings"].map((p) => titleFor(p)), [
   { eyebrow: "You", title: "Loadout" },
-  { eyebrow: "You", title: "Skills" },
+  { eyebrow: "You", title: "Emblems" },
   { eyebrow: "You", title: "Moments" },
   { eyebrow: "You", title: "Stats" },
   { eyebrow: "You", title: "Settings" },
 ]);
+// Blueprint P2 (D6): a path's page is Emblems' (it lights the Emblems row); the Life tree is titled by its own name, Life perks,
+// on first paint (titleFor), the same words its <ShellTitle/> sets, so nothing swaps after hydration.
+eq(
+  "nav (P2): /skills/mind is You · Emblems; /skills/life is You · Life perks, under the Emblems row",
+  [titleFor("/skills/mind"), titleFor("/skills/life"), activeSub("/skills/life"), activeSub("/skills/mind"), LIFE_PERKS_PATH, LIFE_PERKS_TITLE],
+  [{ eyebrow: "You", title: "Emblems" }, { eyebrow: "You", title: "Life perks" }, "/skills", "/skills", "/skills/life", "Life perks"]
+);
 eq("nav: unknown path", titleFor("/nowhere"), { eyebrow: null, title: "XTNL" });
 check(
   "nav: every /dev/style page in the strip exists",
@@ -286,7 +298,8 @@ check(
 // lists the profile menu's pages. Anything the strip lacks is a FAIL.
 {
   const labels = PROFILE.subs.map((s) => s.label);
-  const want = ["Character", "Skills", "Loadout", "Moments", "Stats", "Settings"];
+  // Re-pinned for P5: You › Skills joins the profile rows.
+  const want = ["Character", "Skills", "Emblems", "Loadout", "Moments", "Stats", "Settings"];
   const navProblems: string[] = [];
   if (labels.join(", ") !== want.join(", ")) navProblems.push(`profile rows read "${labels.join(", ")}"`);
   const roadmapSub = sectionById("ideas").subs.find((s) => s.label === "Roadmap");
@@ -755,7 +768,7 @@ eq("receipt: base × factors to one decimal", receiptTotal(20, [1, 1.1, 1, 1]), 
     const bonusPercent = keptWeekBonusPercent(keptStreak);
     return {
       track,
-      xp: xpForLevel(level),
+      xp: xpForLevel(level, PRE_CURVE_TRACK_CURVE),
       pointsLevel: level,
       keptWeeks: keptStreak,
       keptStreak,
@@ -767,6 +780,8 @@ eq("receipt: base × factors to one decimal", receiptTotal(20, [1, 1.1, 1, 1]), 
       bonusPercent,
       effectiveLevel: level * (1 + bonusPercent / 100),
       composition: comp(TRACK_SEED[track]),
+      // Blueprint P3: the fixture is read on today's curve (SQUARE until TRACK_CURVE_LAUNCH_DAY).
+      curve: PRE_CURVE_TRACK_CURVE,
     };
   };
   const body3 = lifeContributionRows([state("BODY", 3)]);

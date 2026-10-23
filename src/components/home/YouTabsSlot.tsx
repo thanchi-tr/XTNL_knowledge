@@ -4,7 +4,7 @@ import { loadProgression } from "@/lib/skill-effects";
 import { getCurrentUserId } from "@/lib/user";
 import { YouTabs } from "./YouTabs";
 
-/** The compact You tabs with the Skills ready dot: streamed, so no layout waits on it. Fails to no dot. */
+/** The compact You tabs with the Emblems ready dot: streamed, so no layout waits on it. Fails to no dot. */
 export async function YouTabsSlot() {
   let ready = 0;
   try {

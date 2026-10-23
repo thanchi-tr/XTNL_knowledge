@@ -797,11 +797,16 @@ model TaskTemplate {
   /// Deferred (2026-10-13, migration 20261222000000_task_defer_abort): off the board until this instant, then back.
   deferUntil         DateTime?
   decisions          TaskDecision[]
+  /// Skills (blueprint P5, migration 20261230000000_competencies): the Competency this task's ticks count toward; null =
+  /// none (every row before P5: it behaves exactly as before). A plain id, no foreign key (a link to a skill archived or
+  /// gone counts toward nothing). Never on a work tab's task (competency-server refuses it). Hours are read, not stored.
+  competencyId       String?
 
   @@unique([userId, captureKey])
   @@index([userId, archivedAt])
   @@index([userId, boardId])
   @@index([userId, normTitle])
+  @@index([userId, competencyId])
   @@index([parentId])
   @@schema("public")
 }
@@ -1161,6 +1166,9 @@ model Roadmap {
   doneReason         String?
   archivedAt         DateTime?
   archiveReason      String?
+  /// Skills (blueprint P5, migration 20261230000000_competencies): the Competency this roadmap's practices and steps
+  /// count toward, unless a practice names its own (TaskTemplate.competencyId wins); null = none. A plain id, no FK.
+  competencyId       String?
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   runs               RoadmapRun[]
@@ -1934,5 +1942,90 @@ model PushSubscription {
   failedAt   DateTime?
 
   @@index([userId])
+  @@schema("public")
+}
+
+// ── Avatar targets (migration 20261229000000_avatar_targets; blueprint P4, decisions D3 and D4) ──
+// The desired self in numbers: a record, never a reward. Nothing in the economy reads this table, and no target pays
+// XP, MP or a level. src/lib/avatar.ts holds the rules (the metric catalog, the share of the way, the pace, the words);
+// src/lib/avatar-server.ts is its only reader and writer (scripts/status-check.ts pins that it writes no ledger).
+
+/// One target for one attribute (VITALITY | INTELLECT | CRAFT | DUTY | CARE, or CAPITAL, a reading only), read by one
+/// metric (avatar.ts AVATAR_METRICS: EFFORT_MINUTES | FIELD_LEVEL | TRACK_HOURS | REVENUE_MONTH | MANUAL). The weight
+/// target is WeightGoal's own (no second copy), so no row has the metric WEIGHT. Rows are never edited in place: an
+/// edit archives the row (archivedAt) and adds a new one with the same lineageId, so the history stays; an archive
+/// alone retires the target. Readings live in RoadmapReading under 'AVATAR|a:<lineageId>' (COMPUTED from the degrade
+/// cron, SELF for a MANUAL target's own logs), so they carry across edits. Every timestamp is timestamptz.
+/// Not expressible in Prisma 6: CHECK "AvatarTarget_attribute_check" (the six), CHECK "AvatarTarget_metric_check" (the
+/// five stored metrics), CHECK "AvatarTarget_direction_check" (UP | DOWN), CHECK "AvatarTarget_label_check" (1..40
+/// characters), CHECK "AvatarTarget_baseline_check" (baselineValue and baselineDay both set or both null), and partial
+/// UNIQUE "AvatarTarget_lineageId_live_key" (lineageId) WHERE archivedAt IS NULL.
+model AvatarTarget {
+  id            String    @id @default(cuid())
+  userId        String
+  /// The first version's id; every edit keeps it (the readings' key).
+  lineageId     String
+  /// VITALITY | INTELLECT | CRAFT | DUTY | CARE | CAPITAL (avatar.ts AVATAR_ATTRIBUTES).
+  attribute     String
+  label         String
+  /// EFFORT_MINUTES | FIELD_LEVEL | TRACK_HOURS | REVENUE_MONTH | MANUAL (avatar.ts STORED_METRICS).
+  metric        String
+  /// What the metric reads: {fieldId} for FIELD_LEVEL, {} otherwise.
+  scope         Json      @default("{}")
+  /// min | h | level | AUD, or the user's own word for MANUAL (may be empty). Fixed for the lineage.
+  unit          String
+  /// UP (higher is closer) | DOWN (lower is closer).
+  direction     String
+  /// Where the bar measures from, in the unit, and the life day it was taken; both null until the user gives one.
+  baselineValue Float?
+  baselineDay   DateTime? @db.Date
+  targetValue   Float
+  /// An optional life day to reach it by (the pace reads it).
+  targetDay     DateTime? @db.Date
+  sortOrder     Int       @default(0)
+  archivedAt    DateTime? @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(3)
+
+  /// The Status card's read: a user's live targets.
+  @@index([userId, archivedAt])
+  /// A lineage's history.
+  @@index([lineageId])
+  @@schema("public")
+}
+
+// ── Skills: named competencies (migration 20261230000000_competencies; blueprint P5, decisions D7, D8 and D9) ──
+// A record, never a reward: nothing in the economy reads this table, and no hour or tier pays XP, MP or a level (a
+// tier-up is a Seal only, D9). src/lib/competency.ts holds the rules (the tiers, the hours from the ticks' minutes,
+// the suggestions, the words); src/lib/competency-server.ts is its only reader and writer, and of the two link columns
+// (TaskTemplate.competencyId, Roadmap.competencyId); scripts/status-check.ts pins that it writes no ledger.
+
+/// One skill (D7: a named Competency that tasks, roadmaps and walks link to) of one attribute (VITALITY | INTELLECT |
+/// CRAFT | DUTY | CARE). kind PRACTICE: its hours are the linked templates' tick minutes; EXERCISE (Vitality only, at most
+/// one live): every logged walk too. Hours are derived on read, never stored, and a tier (0-100, 100-500, 500-2,000,
+/// 2,000-10,000 h; D8) is read from them. Archived, never deleted; a link to an archived skill counts toward nothing.
+/// Every timestamp is timestamptz.
+/// Not expressible in Prisma 6: CHECK "Competency_attribute_check" (the five), CHECK "Competency_kind_check" (PRACTICE |
+/// EXERCISE), CHECK "Competency_name_check" (1..40 characters), CHECK "Competency_exercise_check" (an EXERCISE skill is
+/// VITALITY's), CHECK "Competency_field_check" (a fieldId only on an INTELLECT skill), partial UNIQUE
+/// "Competency_userId_name_live_key" (userId, lower(name)) WHERE archivedAt IS NULL, and partial UNIQUE
+/// "Competency_userId_exercise_live_key" (userId) WHERE kind = 'EXERCISE' AND archivedAt IS NULL.
+model Competency {
+  id         String    @id @default(cuid())
+  userId     String
+  name       String
+  /// VITALITY | INTELLECT | CRAFT | DUTY | CARE (competency.ts SKILL_ATTRIBUTES; Capital has no skills).
+  attribute  String
+  /// PRACTICE | EXERCISE (competency.ts SKILL_KINDS).
+  kind       String    @default("PRACTICE")
+  /// An Intellect skill's Field (a plain id, no foreign key); null otherwise.
+  fieldId    String?
+  sortOrder  Int       @default(0)
+  archivedAt DateTime? @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @db.Timestamptz(3)
+
+  /// The Skills page's read: a user's live skills.
+  @@index([userId, archivedAt])
   @@schema("public")
 }

@@ -5,7 +5,7 @@ import { decayStaleMastery } from "@/lib/mastery";
 import { purgeExpiredDebuffs } from "@/lib/debuffs";
 import { purgeExpiredBoons } from "@/lib/boons";
 import { enforceWeeklyQuotas } from "@/lib/field-quota";
-import { degradeCronRefusal, recordRoadmapAfterDegrade } from "@/lib/settlement";
+import { degradeCronRefusal, recordAvatarAfterDegrade, recordRoadmapAfterDegrade } from "@/lib/settlement";
 import { getCurrentUserId } from "@/lib/user";
 
 // Never statically cache/prerender a Cron endpoint.
@@ -42,6 +42,10 @@ export const dynamic = "force-dynamic";
  *      and the aim's Proficiency the same day. Only where life writes are
  *      on (settlement.ts recordRoadmapAfterDegrade); it never throws, so a
  *      roadmap failure is reported in the JSON's `roadmap` and fails nothing.
+ *      Then the avatar targets' readings (blueprint P4: today's COMPUTED
+ *      reading of each measured target, a Field's level among them; settlement.ts
+ *      recordAvatarAfterDegrade, the same gate), reported in `avatar`. They pay
+ *      nothing, and a failure fails nothing.
  *   5. Delete expired debuff rows, which are already inert by then.
  *
  * Each is independently idempotent per day, so a double-invocation cannot
@@ -61,7 +65,9 @@ export async function GET(request: Request) {
   const quota = await enforceWeeklyQuotas(userId);
   // After the degrade and the quota judge: the readings see today's lowered levels.
   const roadmap = await recordRoadmapAfterDegrade(userId, new Date());
+  // After the levels are recomputed: a Field's level target reads today's level.
+  const avatar = await recordAvatarAfterDegrade(userId, new Date());
   const [debuffsPurged, boonsPurged] = await Promise.all([purgeExpiredBoons(), purgeExpiredDebuffs()]);
 
-  return NextResponse.json({ degraded: results.length, results, levels, decay, quota, roadmap, debuffsPurged, boonsPurged });
+  return NextResponse.json({ degraded: results.length, results, levels, decay, quota, roadmap, avatar, debuffsPurged, boonsPurged });
 }

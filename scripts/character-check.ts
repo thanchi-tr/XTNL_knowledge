@@ -13,6 +13,9 @@
  *   §1e momentum's launched model (momentum.md §A.10, §G.3): the re-pins of §1b on the model
  *       MOMENTUM_LAUNCH_DAY (2026-10-12) switches to (cap 91, kept week 18, + LIFE_PLAN_WEEK); §1b
  *       keeps pinning today's model, in force before then (and on every day with no launch day)
+ *   §1f the track curve (blueprint P3, D5): SQUARE by default and while TRACK_CURVE_LAUNCH_DAY is
+ *       null; POWER's table (Base 34.344 · L^1.5 a level) and its goldens; POWER never lowers a level
+ *       at a cap of 10 or less; the gate and its override
  *   §1d judging days: lastJudgeableSunday, judgeDayOf (F4 helpers, lane 0)
  *   §2  TRACK_SEED compositions and the life labels and rows (F1)
  *   §3  the one character level, depth first (2026-10-11): goldens, delegation and bit-identity
@@ -134,6 +137,17 @@ import {
 } from "../src/lib/life-economy";
 import { MOMENTUM_CAPPED_REASONS, MOMENTUM_MP_MODEL, PRE_MOMENTUM_MP_MODEL, isCappedReasonIn, isMintReasonIn, lifeMpModelOf } from "../src/lib/life-economy";
 import { lifeMpModelOfWeek, lifeMpModelOn, momentumLaunchDay } from "../src/lib/momentum";
+import {
+  PRE_CURVE_TRACK_CURVE,
+  TRACK_CURVE_BASE,
+  TRACK_CURVE_EXPONENT,
+  TRACK_CURVE_LAUNCH_DAY,
+  TRACK_CURVE_TABLE,
+  TRACK_CURVE_TOP,
+  trackCurveLaunchDay,
+  trackCurveOn,
+  type TrackCurve,
+} from "../src/lib/life-economy";
 import {
   DISPLAY_ORDER,
   LIFE_ROW_PREFIX,
@@ -407,6 +421,92 @@ console.log("\n§1e momentum's launched model");
   check("cappedMp at 91: 18 with 73 used is 18 (91 exactly); the 90th MP is whole; the 92nd is trimmed; with 91 used 0", cappedMp(18, 73, M.weekCap) === 18 && cappedMp(1, 89, M.weekCap) === 1 && cappedMp(2, 90, M.weekCap) === 1 && cappedMp(1.5, 91, M.weekCap) === 0);
 }
 
+// ── §1f the track curve (blueprint P3, D5; INERT until TRACK_CURVE_LAUNCH_DAY) ──
+// §1 keeps pinning SQUARE, the curve every reader keeps by default and before the launch day.
+console.log("\n§1f the track curve");
+{
+  const P: TrackCurve = "POWER";
+  check("TRACK_CURVE_LAUNCH_DAY is null (inert: set in the launch commit only, on the user's go)", TRACK_CURVE_LAUNCH_DAY === null);
+  eq("dev honours a valid XTNL_TRACK_CURVE_LAUNCH_DAY", trackCurveLaunchDay({ NODE_ENV: "development", XTNL_TRACK_CURVE_LAUNCH_DAY: "2026-10-24" }), "2026-10-24");
+  eq("production ignores it", trackCurveLaunchDay({ NODE_ENV: "production", XTNL_TRACK_CURVE_LAUNCH_DAY: "2026-10-24" }), TRACK_CURVE_LAUNCH_DAY);
+  check(
+    "an invalid override falls back to TRACK_CURVE_LAUNCH_DAY",
+    ["2026-02-30", "tomorrow", "", "2026-10-5", " "].every((v) => trackCurveLaunchDay({ NODE_ENV: "development", XTNL_TRACK_CURVE_LAUNCH_DAY: v }) === TRACK_CURVE_LAUNCH_DAY)
+  );
+  check("no launch day (an explicit null): SQUARE on every day", ["2026-10-01", "2026-10-24", "2099-12-31"].every((d) => trackCurveOn(d, null) === "SQUARE") && PRE_CURVE_TRACK_CURVE === "SQUARE");
+  check("POWER on and after the launch day only", trackCurveOn("2026-10-24", "2026-10-24") === P && trackCurveOn("2027-01-01", "2026-10-24") === P && trackCurveOn("2026-10-23", "2026-10-24") === "SQUARE");
+  let defaults = true;
+  for (let xp = 0; xp <= 30000; xp += 7) if (pointsLevel(xp) !== pointsLevel(xp, "SQUARE") || trackLevel(xp, 30) !== trackLevel(xp, 30, 0, "SQUARE")) defaults = false;
+  for (let L = 0; L <= 40; L++) if (xpForLevel(L) !== (7 * L) ** 2 || xpForLevel(L, "SQUARE") !== (7 * L) ** 2) defaults = false;
+  check("the default is SQUARE: pointsLevel(xp) = pointsLevel(xp, SQUARE), trackLevel likewise, xpForLevel(L) = (7L)²", defaults);
+
+  eq("Base 34.344", TRACK_CURVE_BASE, 34.344);
+  eq("exponent 1.5 a level", TRACK_CURVE_EXPONENT, 1.5);
+  const want = [0, 34, 131, 310, 585, 969, 1473, 2109, 2887, 3814, 4900];
+  check(
+    `the table: ${want.slice(1).map((x) => x.toLocaleString("en-GB")).join(", ")} (L1–L10)`,
+    want.every((x, L) => TRACK_CURVE_TABLE[L] === x && xpForLevel(L, P) === x),
+    TRACK_CURVE_TABLE.slice(0, 11).join(", ")
+  );
+  eq("level 10 stays at 4,900 XP, as on SQUARE", xpForLevel(10, P), xpForLevel(10));
+  eq("level 20 starts at 26,129", xpForLevel(20, P), 26129);
+  let sum = 0;
+  let recomputed = TRACK_CURVE_TABLE.length === TRACK_CURVE_TOP + 1 && TRACK_CURVE_TABLE[0] === 0;
+  let steps = true;
+  for (let L = 1; L <= TRACK_CURVE_TOP; L++) {
+    sum += L ** 1.5;
+    if (TRACK_CURVE_TABLE[L] !== Math.round(34.344 * sum) || !Number.isInteger(TRACK_CURVE_TABLE[L])) recomputed = false;
+    if (Math.abs(TRACK_CURVE_TABLE[L] - TRACK_CURVE_TABLE[L - 1] - 34.344 * L ** 1.5) > 1 || TRACK_CURVE_TABLE[L] <= TRACK_CURVE_TABLE[L - 1]) steps = false;
+  }
+  check(`the table is round(34.344 · Σ k^1.5), integers, L 0..${TRACK_CURVE_TOP}`, recomputed);
+  check("each level costs Base·L^1.5 over the one before (within the rounding), strictly rising", steps);
+  check(
+    "past the table the same sum continues",
+    xpForLevel(TRACK_CURVE_TOP + 1, P) === Math.round(34.344 * (sum + (TRACK_CURVE_TOP + 1) ** 1.5)) && xpForLevel(TRACK_CURVE_TOP + 1, P) > TRACK_CURVE_TABLE[TRACK_CURVE_TOP]
+  );
+
+  // The plan's curve-on goldens (blueprint-plan P3 re-pins), and the first level.
+  const goldens: [number, number, number][] = [
+    [4900, 52, 10],
+    [4899, 52, 9],
+    [969, 16, 5],
+    [968, 16, 4],
+    [34, 0, 1],
+    [33, 0, 0],
+    [4900, 0, 1],
+  ];
+  for (const [xp, kw, wantLevel] of goldens) eq(`POWER: trackLevel(${xp}, ${kw}) = ${wantLevel}`, trackLevel(xp, kw, 0, P), wantLevel);
+  let inverse = true;
+  for (let L = 0; L <= TRACK_CURVE_TOP + 20; L++) {
+    if (pointsLevel(xpForLevel(L, P), P) !== L) inverse = false;
+    if (L > 0 && pointsLevel(xpForLevel(L, P) - 1, P) !== L - 1) inverse = false;
+  }
+  check(`POWER: pointsLevel(xpForLevel(L)) = L and one XP less is L − 1, for L 0..${TRACK_CURVE_TOP + 20} (across the table's end)`, inverse);
+  check("POWER: negative, NaN and zero XP read level 0", pointsLevel(-500, P) === 0 && pointsLevel(Number.NaN, P) === 0 && trackLevel(0, 0, 0, P) === 0);
+  check(
+    "the depth cap is the same on both curves",
+    [0, 1, 4, 16, 25, 52, 100].every((kw) => [0, 1, 2].every((gd) => trackLevel(1e7, kw, gd, P) === depthCap(trackDepth(kw, gd)) && trackLevel(1e7, kw, gd) === depthCap(trackDepth(kw, gd))))
+  );
+  // Levels only rise on the flip while the cap is 10 or less (every track of the live account, for years).
+  let rises = true;
+  let where = "";
+  for (let xp = 0; xp <= 30000 && rises; xp += 1)
+    for (let cap = 1; cap <= 10; cap++) {
+      const sq = Math.min(pointsLevel(xp), cap);
+      const pw = Math.min(pointsLevel(xp, P), cap);
+      if (pw < sq) {
+        rises = false;
+        where = `xp ${xp}, cap ${cap}: ${sq} → ${pw}`;
+        break;
+      }
+    }
+  check("POWER never lowers a level at a cap of 10 or less (XP 0..30,000)", rises, where);
+  check(
+    "above level 10 the thresholds rise past SQUARE's (L11 6,153 > 5,929; L20 26,129 > 19,600)",
+    xpForLevel(11, P) === 6153 && xpForLevel(11) === 5929 && xpForLevel(20, P) > xpForLevel(20)
+  );
+}
+
 // ── §1d judging days ──────────────────────────────────────────────────────
 console.log("\n§1d judging days");
 {
@@ -464,6 +564,8 @@ console.log("\n§2 labels and life rows");
       bonusPercent,
       effectiveLevel: level * (1 + bonusPercent / 100),
       composition: TRACK_SEED[track],
+      // Blueprint P3: the fixture is read on today's curve (SQUARE until TRACK_CURVE_LAUNCH_DAY).
+      curve: PRE_CURVE_TRACK_CURVE,
     };
   };
   const body3 = lifeContributionRows([state("BODY", 3), state("DUTY", 0)]);
@@ -806,12 +908,13 @@ console.log("\n§4 track state");
   const total = Object.values(mixComp).reduce((s, v) => s + v, 0);
   check("a negative-XP composition key is dropped; a positive one moves the mix", mixComp.MIND > 0 && mixComp.COMPASSION === 0 && mixComp.PHYSICAL > 0 && total === 100, JSON.stringify(mixComp));
 
-  // Lines.
-  const line = (xp: number, kept: number, goalDepth = 0): string => {
+  // Lines. The curve is explicit (SQUARE unless a golden names POWER), so an exported XTNL_TRACK_CURVE_LAUNCH_DAY (the
+  // plan's rehearsal shell) can't move the inert goldens.
+  const line = (xp: number, kept: number, goalDepth = 0, curve: TrackCurve = PRE_CURVE_TRACK_CURVE): string => {
     const mints = goalDepth >= 2 ? [goalMintRow("l", "BODY", "GOAL_LONG", 18)] : goalDepth === 1 ? [goalMintRow("m", "BODY", "GOAL_MID", 6)] : [];
     const l = ledgerOf({ xpByDay: xp ? [{ track: "BODY", day: EPOCH, xp }] : [], weeks: weekRows("BODY", kept), mints });
     const today = addDays(EPOCH, 7 * kept + 1);
-    return trackRowsView(l, today).find((r) => r.track === "BODY")!.line;
+    return trackRowsView(l, today, curve).find((r) => r.track === "BODY")!.line;
   };
   // The spec's strings exactly: no per-row goal clause (lead decision, review U7).
   eq("(1,960 XP, 25 kept) reads '1,960 / 2,401 XP · depth cap 7 · 7 more kept weeks raise it'", line(1960, 25), "1,960 / 2,401 XP · depth cap 7 · 7 more kept weeks raise it");
@@ -821,6 +924,12 @@ console.log("\n§4 track state");
   check("no line ever carries a goal clause", [line(1960, 25), line(4900, 25), line(1960, 25, 1), line(100, 0), line(4900, 3)].every((l) => !/goal/i.test(l)));
   eq("zero XP: 'No Body tasks yet · 49 XP reaches level 1'", line(0, 0), "No Body tasks yet · 49 XP reaches level 1");
   eq("a one-week case is singular", trackLine({ track: "DUTY", xp: 4900, level: 10, cap: 10, atCap: true, keptWeeks: 63, goalDepth: 2 }), "Capped at 10 · 1 more kept week raises it · 4,900 XP banked");
+  // Blueprint P3: the line's XP figures follow the read's curve (SQUARE above, as while the switch is null).
+  eq("POWER, zero XP: 'No Body tasks yet · 34 XP reaches level 1'", line(0, 0, 0, "POWER"), "No Body tasks yet · 34 XP reaches level 1");
+  eq("POWER, (1,960 XP, 25 kept): '1,960 / 2,109 XP · depth cap 7 · 7 more kept weeks raise it' (level 6)", line(1960, 25, 0, "POWER"), "1,960 / 2,109 XP · depth cap 7 · 7 more kept weeks raise it");
+  eq("POWER, (4,900 XP, 25 kept): capped at 7, as on SQUARE", line(4900, 25, 0, "POWER"), "Capped at 7 · 7 more kept weeks raise it · 4,900 XP banked");
+  eq("trackLine with no curve reads SQUARE", trackLine({ track: "CARE", xp: 0, level: 0, cap: 1, atCap: false, keptWeeks: 0, goalDepth: 0 }), "No Care tasks yet · 49 XP reaches level 1");
+  eq("trackLine on POWER", trackLine({ track: "CARE", xp: 0, level: 0, cap: 1, atCap: false, keptWeeks: 0, goalDepth: 0, curve: "POWER" }), "No Care tasks yet · 34 XP reaches level 1");
 
   // Rows: pips, meter, banked, edge.
   const pips10 = trackRowsView(ledger, addDays(EPOCH, 7 * n + 2));

@@ -54,6 +54,7 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 | GET | /ideas/meta | the New idea form's formats and collections |
 | POST | /ideas | `submitIdea` (actions/ideas.ts) |
 | GET | /quests | the main quest, this week's sprint and Today's three (Today's own reads: `loadMainQuestCard`, `loadMainQuestWeek`, `loadMomentum`); read only |
+| GET | /status | the five attributes, Capital's reading, the avatar targets and the skills, the /you Status card's and You › Skills' (their own reads: `loadLifeTracks`, `loadKnowledgeRow`, `loadCapitalDeals`, `loadAvatar`, `loadSkills`); read only |
 
 ## GET /check: the quick check (the app's home)
 
@@ -168,12 +169,14 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 - It runs through the same core as the board's tick (`completeTask`: its lock, pricing, momentum and celebrations).
   The server books only today or yesterday by its own clock: another day is refused (409).
 - Then it reads the board again, as the web's tick re-renders Today, for `allDone`, and the character's level (both
-  reads also warm the next `/check`).
+  reads also warm the next `/check`), and the skill the task feeds (`competency`, blueprint P5).
 
 ```json
 { "ok": true, "data": { "instanceId": "…", "xp": 8.3, "line": "+8.3 XP · Body", "allDone": false,
   "celebrations": [ { "tier": 1, "kind": "…", "title": "…" } ],
-  "level": { "level": 7, "title": "Adept", "progress": 0.81 } | null } }
+  "level": { "level": 7, "title": "Adept", "progress": 0.81 } | null,
+  "competency": { "id": "…", "name": "Writing", "hoursAfter": 100.25, "tier": 2, "tierUp": true,
+    "line": "≈ 100 h (task estimates, not timed)" } | null } }
 ```
 
 - `xp`: the life XP paid, to one decimal. `line`: `+8.3 XP · <track>` (Body, Duty, Craft or Care), with
@@ -184,6 +187,11 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 - `level`: the character's level after this tick, as `/check`'s `level` (null when it couldn't be read). The app steps
   its level seal by the difference, and plays a level up on the tick that earns it; with no `level` it refreshes
   `/check` instead.
+- `competency` (blueprint 1.5; decisions D7 to D9): the skill this task's ticks count toward, as it stands after the
+  tick: its `name`, `hoursAfter` (2 decimals), `tier` (1–4) and its hours `line`. `tierUp` is true when this tick
+  played the tier's Seal (a `competency-tier` moment among `celebrations`; a tier re-reached never plays twice). Null
+  when the task feeds no skill, or when the skill couldn't be read (never a failed tick). A skill pays nothing: the
+  tick's `xp` is the whole payment.
 
 ### POST /tasks/undo
 - Body: `{ "instanceId": "…", "clientId"?: "…" }`.
@@ -403,3 +411,102 @@ quest's key results, the daily quests stay the musts, and Today's three stay mom
   `POST /tasks/complete`). `frozen` is false while the day's set is still a preview; `chest` is today's chest. Null
   before momentum's launch, or when it couldn't be read.
 - It writes nothing and owes nothing after the reply; each read is the web's own cached one.
+
+## GET /status: the five attributes, Capital, the avatar targets and the skills
+
+Read only (blueprint 1.1; decisions D1 and D2). The /you Status card's own panel (status-panel.ts `statusPanelOf`):
+five **attributes**, each its source's own figures, never a second formula. **Vitality** is the Body track,
+**Intellect** is Knowledge (the Fields' level), and **Craft**, **Duty** and **Care** are their tracks. The track names
+stay (Body, Duty, Craft, Care), with the blueprint's word beside them. **Capital is a reading only**: AUD won per month
+from Deals at stage WON, with no XP and no level. The **skills** (blueprint 1.5; decisions D7 to D9) are You › Skills'
+own list: named competencies with hours and tiers, a record that pays nothing.
+
+```json
+{ "ok": true, "data": {
+  "now": "2026-10-23T00:12:00.000Z", "day": "2026-10-23", "launched": true,
+  "attributes": [
+    { "key": "VITALITY" | "INTELLECT" | "CRAFT" | "DUTY" | "CARE", "attribute": "Vitality", "name": "Body",
+      "level": 6, "progress": 0.31, "banked": 0.25, "cap": 9 | null, "atCap": false, "keptStreak": 4 | null,
+      "weeks": ["kept", "missed", "held"], "line": "1,960 / 2,401 XP · depth cap 9 · 7 more kept weeks raise it",
+      "unit": "xp" | "pts", "skills": 2 }
+  ],
+  "capital": { "month": "2026-10", "label": "October 2026", "wonCents": 1240000, "won": "$12,400", "deals": 1,
+    "line": "1 deal won in October", "history": "September $8,200 · August $0",
+    "months": [ { "month": "2026-10", "label": "October 2026", "wonCents": 1240000, "won": "$12,400", "deals": 1 } ] } | null,
+  "targets": [
+    { "id": "…" | "weight", "attribute": "VITALITY" | "INTELLECT" | "CRAFT" | "DUTY" | "CARE" | "CAPITAL",
+      "label": "Weight", "metric": "WEIGHT" | "EFFORT_MINUTES" | "FIELD_LEVEL" | "TRACK_HOURS" | "REVENUE_MONTH" | "MANUAL",
+      "unit": "kg", "direction": "UP" | "DOWN", "baseline": 85.2 | null, "baselineDay": "2026-10-01" | null,
+      "target": 75, "targetDay": "2027-03-01" | null, "current": 82.4 | null, "currentDay": "2026-10-23" | null,
+      "source": "COMPUTED" | "SELF" | "WEIGHT", "share": 0.274 | null,
+      "pace": "REACHED" | "ON_PACE" | "BEHIND" | "PAST" | null,
+      "line": "Weight 82.4 → 75 kg · 27% of the way · on pace" }
+  ] | null,
+  "skills": [
+    { "id": "…", "name": "Writing", "attribute": "VITALITY" | "INTELLECT" | "CRAFT" | "DUTY" | "CARE",
+      "kind": "PRACTICE" | "EXERCISE", "fieldName": "Economics" | null, "hours": 142.5, "tier": 2, "tierFrom": 100,
+      "tierTo": 500, "progress": 0.106, "toNext": 357.5 | null, "line": "≈ 142 h (task estimates, not timed)",
+      "tierLine": "Tier 2 · 100–500 h · 357 h to Tier 3", "ticks": 171, "estimated": 3, "walks": 0, "templates": 2 }
+  ] | null
+} }
+```
+
+- `attributes`: in this order: Vitality, Intellect, Craft, Duty, Care. `attribute` is the blueprint's word, `name` the
+  source's own (Body, Knowledge, Craft, Duty, Care); show the two together where they differ ("Body · Vitality").
+  - `level` is the track's level (capped by kept weeks and paid goals) or Knowledge's, the same number the web shows.
+  - `progress` is the meter toward the next level now, 0 to 1 (1 while `atCap`), and `banked` the meter at the end of
+    last life week (Knowledge: 7 days ago) when the level was the same then, else 0; both to 3 decimals.
+  - `cap` is the track's depth cap and `keptStreak` its run of kept weeks. Both are null for Intellect, which has no
+    cap. `atCap`: the XP is banked at the cap, and only a kept week (or a paid goal) raises the level.
+  - `weeks`: the last judged weeks, at most 8, oldest first, never padded (`kept`, `held` or `missed`). Intellect has none.
+  - `line` is the web row's own line. `unit` says what fills the meter: `xp` life XP for a track, `pts` review points
+    for Intellect.
+  - `skills` (P5) is how many live skills the attribute has (the web row's "2 skills", a link to You › Skills); 0 with
+    none, or when the skills couldn't be read.
+- `launched`: life counts. Until then (and the web shows the same) `attributes` holds Intellect alone, and no track
+  level is claimed.
+- `capital`: this month's reading (`wonCents` is AUD cents, a whole number; `won` the web's own figure), how many deals
+  were won in it, its `line` ("No deal won in October yet" in a month with none so far), `history` (the two months
+  before), and `months`, this month and the two before, newest first. A deal counts in the month of its close, read as a
+  life day (Sydney, the day turns at 04:00). An archived, open or lost deal never counts. Null when no deal was won in
+  those three months (the web shows no Capital row then), or when the deals couldn't be read. Capital has no level and
+  pays nothing.
+- `targets` (blueprint 1.2; decisions D3 and D4): the avatar's targets, the desired self in numbers, in the web card's
+  order (Vitality, Intellect, Craft, Duty, Care, then Capital; within one, the user's order). Show each under its
+  attribute's row (Capital's under the Capital card, even in a quarter with no deal won); a track's target before life
+  counts has no row yet, so show it apart. The numbers are the user's own, entered on the web (/you › Edit avatar).
+  - `metric`: `WEIGHT` is Body's weight card's own target and trend (`id` `weight`; set on Body › This week, never a
+    second copy), `EFFORT_MINUTES` Body's effort minutes last life week (as the kept-week floor counts them),
+    `FIELD_LEVEL` a Field's level now (0 to 100: a Field has no ceiling of its own), `TRACK_HOURS` hours of ticked tasks
+    on Craft, Duty or Care last life week (task estimates, not timed: its line marks the value "≈"), `REVENUE_MONTH` AUD
+    won this month from deals at stage Won, `MANUAL` a number the user logs (its `source` is `SELF`, and its line says
+    "self-reported").
+  - `unit` is the figures' unit (`kg` or `lb`, `min`, `h`, `level`, `AUD`, or the user's own word, which may be
+    empty). `direction` `UP`: higher is closer. `baseline` is where the share is measured from (null until the user
+    gives one), `current` the value now (null with no reading yet) and `currentDay` the day it is from (last week's
+    Sunday for a weekly metric).
+  - `share` is 0 to 1 of the way from the baseline (null without a baseline or a value). `pace`: `REACHED`, else with
+    a target day `ON_PACE` (the share is at least the share of the days gone), `BEHIND`, or `PAST` after the day; null
+    without a target day. `line` is the web's own words.
+  - Null when the targets couldn't be read (show none, never a stale share); an empty list when there are none.
+  - A target is a record: it pays no XP or MP and moves no level.
+- `skills` (blueprint 1.5; decisions D7, D8 and D9): the named skills, most hours first, as You › Skills lists them. A
+  skill is fed by the tasks linked to it (each task's own link, else its roadmap's) and, for an `EXERCISE` skill (Vitality
+  only, at most one), every logged walk. A walk counts once: on an `EXERCISE` skill a tick the walk paid, or a habit tick
+  it topped up ("Counts as" after the tick), is the walk's time, never counted beside it. Skills are named and linked on
+  the web.
+  - `hours` are derived on every read: the minutes of the linked tasks' ticks (an undo takes its tick back out), at the
+    receipt's minutes, else the occurrence's, else the task's estimate; `estimated` says how many ticks fell back to the
+    estimate. `line` is the web's words ("≈ 42 h (task estimates, not timed)"; "12.5 h of walks"; "No hours yet").
+  - `tier` is 1 (0–100 h), 2 (100–500 h), 3 (500–2,000 h) or 4 (2,000–10,000 h); `tierFrom` and `tierTo` are its bounds,
+    `progress` the share through it (0 to 1, 3 decimals) and `toNext` the hours to the next tier (null in Tier 4).
+    `tierLine` is the web's ("Tier 2 · 100–500 h · 357 h to Tier 3").
+  - `ticks`, `walks` and `templates` count what feeds it now. `fieldName` is an Intellect skill's Field, by its name now
+    (null otherwise, or when that Field is gone).
+  - Null when the skills couldn't be read (show none); an empty list with none.
+  - A skill is a record: no hour or tier pays XP or MP or moves a level. A tier-up is a Seal only (`competency-tier`).
+- Read only: it writes nothing, settles nothing and owes nothing after the reply, so two reads in a row answer the same.
+  The life view and Knowledge are the panel itself, so if either can't be read the request fails (`server`) and the app
+  keeps its last copy. Capital is read beside them, and a failure there reads as `capital: null`; the targets are read
+  on the same deals, and a failure there reads as `targets: null`; the skills are read beside them, and a failure there
+  reads as `skills: null` (and every attribute's `skills` 0).

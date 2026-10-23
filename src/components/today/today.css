@@ -428,6 +428,9 @@ html[data-motion="calm"] .t-row[data-motion="arrive"] { animation: today-fade 20
   font: 600 14px/18px var(--font-ui); color: var(--ink-0); text-decoration: underline; text-decoration-color: var(--line-ctl); text-underline-offset: 3px;
 }
 .today-drawer .td-record:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* The task's skill (blueprint P5, CompetencyLink): a label and a 44 px select on one line, the select taking the rest. */
+.today-drawer .td-skill { align-items: center; }
+.today-drawer .td-skill .today-drawer-note { margin-top: 0; flex: none; }
 .today-input { flex: 1 1 200px; min-width: 0; min-height: 44px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line-ctl); background: var(--sunken); color: var(--ink-0); font: 400 15px/1.3 var(--font-ui); }
 .today-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 /* 16 px on phones so the browser never zooms in (base.css's rule loses to this layer). */

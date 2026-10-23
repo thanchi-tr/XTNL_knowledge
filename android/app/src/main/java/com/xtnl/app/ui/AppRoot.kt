@@ -125,6 +125,8 @@ import com.xtnl.app.ui.motion.rememberBump
 import com.xtnl.app.ui.review.ReviewScreen
 import com.xtnl.app.ui.review.ReviewSpots
 import com.xtnl.app.ui.review.ReviewViewModel
+import com.xtnl.app.ui.status.StatusScreen
+import com.xtnl.app.ui.status.StatusViewModel
 import com.xtnl.app.ui.theme.X
 import com.xtnl.app.ui.theme.XtnlTheme
 import com.xtnl.app.ui.theme.resolveColors
@@ -379,7 +381,14 @@ private fun Destinations(
                 "review" -> ReviewScreen(reviewVm, nav, reviewSummary, reviewSpots, onBackToCheck = { nav.go(Tab.CHECK) })
                 "more:SETTINGS" -> SettingsScreen(graph, systemStill, onBack = { nav.more = MoreRoute.ROOT })
                 "more:WEB" -> FullAppScreen(webHolder, prefs.server, nav.webPath, onClose = { nav.more = MoreRoute.ROOT }, onSettings = { nav.more = MoreRoute.SETTINGS })
-                else -> MoreScreen(graph, onSettings = { nav.more = MoreRoute.SETTINGS }, onFullApp = { nav.webPath = "/"; nav.more = MoreRoute.WEB })
+                // Blueprint P1: the five attributes; its view model is made on the first visit, then kept with the activity.
+                "more:STATUS" -> StatusScreen(viewModel { StatusViewModel(graph) }, onBack = { nav.more = MoreRoute.ROOT })
+                else -> MoreScreen(
+                    graph,
+                    onSettings = { nav.more = MoreRoute.SETTINGS },
+                    onFullApp = { nav.webPath = "/"; nav.more = MoreRoute.WEB },
+                    onStatus = { nav.more = MoreRoute.STATUS },
+                )
             }
         }
     }

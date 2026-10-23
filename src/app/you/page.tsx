@@ -14,7 +14,13 @@ import { ShellTitle } from "@/components/shell/ShellTitle";
 import { CharacterHero } from "@/components/home/CharacterHero";
 import { LifeNote } from "@/components/home/LifeNote";
 import { lifeMpCell } from "@/components/home/sheet-math";
-import { AttributeRadar, LifeTracks, MasteryCard, ReadyCallout } from "@/components/home/SheetSections";
+import { AttributeRadar, MasteryCard, ReadyCallout } from "@/components/home/SheetSections";
+import { StatusPanel } from "@/components/home/StatusPanel";
+import { capitalPanelOf, statusPanelOf } from "@/lib/status-panel";
+import { loadCapitalDeals } from "@/lib/status-panel-server";
+import { loadAvatar } from "@/lib/avatar-server";
+import { loadSkills } from "@/lib/competency-server";
+import { addAvatarTarget, archiveAvatarTarget, editAvatarTarget, logAvatarReading } from "@/app/actions/avatar";
 import { DayCards } from "@/components/home/DayCards";
 import { dayCardsOf, type DayCardsView } from "@/components/home/day-cards";
 import { Glyph } from "@/components/glyph/Glyph";
@@ -28,6 +34,9 @@ import { settleMomentum } from "@/lib/momentum-server";
 import { MomentsPull } from "@/components/today/MomentumCard";
 
 export const metadata: Metadata = { title: "Character" };
+
+/** The Edit avatar sheet's writes (blueprint P4): the server actions, passed to the client sheet. */
+const AVATAR_ACTIONS = { addAvatarTarget, editAvatarTarget, archiveAvatarTarget, logAvatarReading };
 
 // Levels, balance and ownership change on every review and unlock.
 export const dynamic = "force-dynamic";
@@ -50,11 +59,15 @@ function dayCardsOrNull(board: BoardData | null, streak: DailyStreak | null): Da
 /**
  * You › Character (final-you.html), opened from the profile menu (the three
  * sections: Ideas, Tasks, Body; the game layer lives here): the hero (crest
- * with its track edges, title, level meter, purse), the attribute radar, the
- * streak and the Full day (moved off Today: life measures that span the
- * sections, day-cards.ts), the ready callout, life tracks, and goals and
- * mastery. The one place material shows by default, because everything on
- * it was earned.
+ * with its track edges, title, level meter, purse), the Status card directly
+ * under it (blueprint P1: the five attributes, Vitality, Intellect, Craft,
+ * Duty and Care, read from the life tracks and Knowledge, and Capital as a
+ * reading only; it replaced the Life tracks card; P4: each attribute's avatar
+ * targets under it, and the Edit avatar sheet; P5: each attribute's skills
+ * counted, linking You › Skills), the 13-trait radar below
+ * it, the streak and the Full day (moved off Today: life measures that span
+ * the sections, day-cards.ts), the ready callout, and goals and mastery. The
+ * one place material shows by default, because everything on it was earned.
  *
  * The roadmap's Aim card lives in Ideas › Roadmap now; the sheet keeps one
  * quiet link to it (the tour's "Give the character an aim" target).
@@ -88,17 +101,30 @@ export default async function YouSheetPage() {
   const settled = await settleMomentum(userId, today, { now });
   // One wave: the sheet (cached) and the day cards' reads (Today's cached board and the streak; a failure reads as none).
   // The month's done tasks (the "Done this month" calendar) load beside that wave; a failed read lets the card read it again.
+  // So do the won Deals the Status card's Capital reading counts (a reading only: a failed read shows no Capital row).
   const monthRead = loadMonthDoneCore(userId, monthKeyOf(today)).catch(() => null);
+  const capitalRead = loadCapitalDeals(userId, today).catch(() => null);
+  // The avatar's targets (blueprint P4) on the same won deals, so they are read once: a failed read shows no targets.
+  const avatarRead = capitalRead.then((deals) => loadAvatar(userId, now, { deals })).catch(() => null);
+  // The skills (blueprint P5), counted on the Status rows: a failed read counts none.
+  const skillsRead = loadSkills(userId, { fields: false }).catch(() => null);
   const [s, board, streak] = await Promise.all([loadSheet(userId, now), loadTodayBoard(userId, today, now).catch(() => null), getDailyStreak(userId).catch(() => null)]);
   const month = await monthRead;
+  const deals = await capitalRead;
+  const avatar = await avatarRead;
+  const skills = await skillsRead;
   const day = dayCardsOrNull(board, streak);
+  // The five attributes from the sheet's own life view and Knowledge row: the levels the hero counts; each with its
+  // targets and its skills counted.
+  const status = statusPanelOf(s.life, s.knowledge, avatar, skills ? skills.skills : null);
+  const capital = deals ? capitalPanelOf(deals, today) : null;
   const launched = s.life.launched;
 
   return (
     <>
       <ShellTitle eyebrow="You" title="Character" />
       <MomentsPull when={settled.wrote} />
-      {/* The order of weight: the level (the hero, the full width, first), then the attributes, then the day. */}
+      {/* The order of weight: the level (the hero, the full width, first), then the five attributes and the 13 traits, then the day. */}
       <div className="you-grid">
         <div className="you-hero">
           <CharacterHero
@@ -118,11 +144,11 @@ export default async function YouSheetPage() {
           />
         </div>
         <div className="you-stack">
+          <StatusPanel panel={status} capital={capital} avatar={avatar ? { view: avatar, today, actions: AVATAR_ACTIONS } : null} />
           <AttributeRadar radar={s.radar} hasGhost={s.hasGhost} top={s.top} life={{ launched, contributes: s.life.contributions.length > 0 }} />
           {day && <DayCards view={day} />}
           {s.ready && <ReadyCallout ready={s.ready} balance={s.balance} />}
           {s.lifeNote && <LifeNote />}
-          <LifeTracks knowledge={s.knowledge} life={s.life} />
         </div>
         <div className="you-stack">
           <MonthDoneCard today={today} initial={month && month.ok ? month.value : null} />

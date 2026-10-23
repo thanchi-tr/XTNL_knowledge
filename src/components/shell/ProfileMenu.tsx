@@ -9,7 +9,7 @@
  *                          ≥ 1280): aria-haspopup dialog, aria-expanded, aria-controls while
  *                          open, aria-current="true" on a profile page, and the click.
  *   <ProfileMenu/>         the kit Sheet titled "You" (the level caption under it when known):
- *                          Character, Skills, Loadout, Moments, Stats, Settings, each a
+ *                          Character, Emblems, Loadout, Moments, Stats, Settings, each a
  *                          48 px row with its icon; the current page is aria-current.
  *   openProfileMenu() / closeProfileMenu()
  *

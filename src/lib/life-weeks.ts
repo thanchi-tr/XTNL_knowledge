@@ -460,6 +460,26 @@ const isWalkRow = (r: WeekTaskRow): boolean => r.source === "WORKOUT" && (r.dedu
 /** A row that takes another back: an UNDO, or a WORKOUT row keyed 'undo:<id>' (a walk under 10 minutes). */
 const isReversalRow = (r: WeekTaskRow): boolean => (r.source === "UNDO" || r.source === "WORKOUT") && (r.dedupeKey?.startsWith("undo:") ?? false);
 
+/**
+ * Blueprint P4 (avatar targets): the rows the judge counts, as planWeeks reads them: TASK rows and walks, less every
+ * row an UNDO (or a short walk's 'undo:<id>' WORKOUT row) takes back. A reading for the avatar's targets; it judges
+ * nothing.
+ */
+export function liveWeekRows(rows: readonly WeekTaskRow[]): WeekTaskRow[] {
+  const undone = new Set<string>();
+  for (const r of rows) if (isReversalRow(r)) undone.add(r.dedupeKey!.slice(5));
+  return rows.filter((r) => (r.source === "TASK" || isWalkRow(r)) && !undone.has(r.id));
+}
+
+/**
+ * Blueprint P4: BODY's effort minutes over [from, to] by the week judge's own rule (trackWeekOf: receipt minutes ×
+ * effortWeightOfB(B) over live EXERCISE ticks and walks, a walk-paid tick counted once), the figure the kept-week floor
+ * reads. A reading only (the avatar's EFFORT_MINUTES target); the judge never calls it.
+ */
+export function effortMinutesOf(rows: readonly WeekTaskRow[], from: DayKey, to: DayKey): number {
+  return trackWeekOf(liveWeekRows(rows), "BODY", from, to).effortMinutes;
+}
+
 /** A plan week is kept (§A.8): ≥ 2 quests counted and all of them done (with Forward camp, ≥ 80 %). */
 export function planWeekKept(q: Pick<WeekQuestWeek, "total" | "done">, keepShare: number = 1): boolean {
   if (!(q.total >= 2) || !Number.isFinite(q.done)) return false;

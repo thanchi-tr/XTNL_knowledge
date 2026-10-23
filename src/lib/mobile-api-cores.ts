@@ -19,6 +19,10 @@ import { loadWeekAudit } from "./week-audit-server";
 import { loadMomentum, settleMomentum } from "./momentum-server";
 import { loadMainQuestCard, loadMainQuestWeek } from "./main-quest-server";
 import { loadVariants } from "./idea-variants-server";
+import { loadLifeTracks } from "./life-tracks-server";
+import { loadCapitalDeals, loadKnowledgeRow } from "./status-panel-server";
+import { loadAvatar } from "./avatar-server";
+import { loadSkills, loadTemplateSkill } from "./competency-server";
 import { reviewDedupeKey } from "./srs";
 import { loadReviewDay } from "../app/review/review-data";
 import { completeTask, undoCapture, undoCompletion } from "../app/actions/tasks";
@@ -80,4 +84,16 @@ export const realMobileDeps: MobileDeps = {
   loadMainQuest: (userId, now) => loadMainQuestCard(userId, now),
   loadSprintWeek: (userId, now, card) => loadMainQuestWeek(userId, now, card),
   loadMomentum: (userId, day, now) => loadMomentum(userId, day, { now }),
+
+  // GET /status (blueprint P1): the /you Status card's own reads, the status core (none writes): the life tracks at the
+  // server's clock (React-cached, as the sheet reads them), Knowledge as the sheet builds it, the won Deals for Capital.
+  loadLifeTracks: (userId, now) => loadLifeTracks(userId, now),
+  loadKnowledge: () => loadKnowledgeRow(),
+  loadCapitalDeals: (userId, day) => loadCapitalDeals(userId, day),
+  // The avatar targets (blueprint P4): the /you card's own read, on the won deals already read (none read twice).
+  loadAvatar: (userId, now, deals) => loadAvatar(userId, now, { deals }),
+  // The skills (blueprint P5): the Skills page's own read, with the Fields (queries.ts loadFieldLevels, cached) so an
+  // Intellect skill carries its Field's name (`fieldName`, drawn under it on the phone), and a tick's skill.
+  loadSkills: async (userId) => (await loadSkills(userId)).skills,
+  loadTemplateSkill: (userId, templateId) => loadTemplateSkill(userId, templateId),
 };

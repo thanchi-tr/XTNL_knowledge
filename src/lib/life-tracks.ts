@@ -38,6 +38,15 @@
  *       its qty and receipt (or a LedgerWeek's kept/held): life-tracks, snapshot and the week page
  *     LedgerWeek.held? — a held week (receipt mark 'held', qty 0): bridges keptStreak, never kept
  *     LifeLedger.settledThroughDay? — LifeSettings.settledThroughDay, for the judge's cheap check
+ *   Added by blueprint P3 (D5; compatible, INERT until life-economy TRACK_CURVE_LAUNCH_DAY)
+ *     TrackState.curve and LifeTracksView.curve — the track curve the levels were read on
+ *     A trailing curve on trackStateAt, trackRowsView, levelSeries, lifeContributionsAt and
+ *       lifeTracksView. One read lays the whole ledger on one curve: lifeTracksView and
+ *       trackRowsView default to trackCurveOn(today) for every state they read (last week's
+ *       banked meter included), and the then/now readers (the radar's ghost, the progress rate,
+ *       the audit, Stats) pass today's, so a flip never reads as growth. trackStateAt and
+ *       lifeContributionsAt alone default to the curve in force on their own day.
+ *     trackLine reads its state's curve (SQUARE when absent): '34 XP reaches level 1' on POWER
  */
 import type { Attribute } from "@prisma/client";
 import { ATTRIBUTES, emptyComposition, normaliseComposition, type Composition as FullComposition, type FieldContribution } from "./attributes";
@@ -61,8 +70,10 @@ import {
   moreKeptWeeks,
   pointsLevel,
   round2,
+  trackCurveOn,
   trackDepth,
   xpForLevel,
+  type TrackCurve,
 } from "./life-economy";
 import { TRACKS, type Composition, type Horizon, type Track } from "./life-types";
 // The judge pool in force for a life week (momentum.md §A.10): LIFE_MP_WEEK_CAP (8) and CAPPED_REASONS before
@@ -206,6 +217,8 @@ export interface TrackState {
   effectiveLevel: number;
   /** effectiveFieldComposition(TRACK_SEED[track], XP-weighted template compositions), sums to 100. */
   composition: FullComposition;
+  /** The curve pointsLevel read (blueprint P3): SQUARE until TRACK_CURVE_LAUNCH_DAY. */
+  curve: TrackCurve;
 }
 
 /** One track's row on the You sheet (trackRowsView), in DISPLAY_ORDER. */
@@ -273,6 +286,8 @@ export interface LifeTracksView {
   /** Week keys with a WEEK row for every track, oldest first (judgedWeekKeys). */
   judgedWeeks: string[];
   lastJudgedWeek: string | null;
+  /** The curve every level, row and contribution here was read on (trackCurveOn(today); blueprint P3). */
+  curve: TrackCurve;
 }
 
 /** levelSeries: the level of every track at each of the last ≤ n judged Sundays. */
@@ -318,6 +333,7 @@ export function notLaunchedView(today: DayKey): LifeTracksView {
     mpLastWeek: { used: 0, cap: lifeMpModelOfWeek(addDays(weekStartKeyOf(today), -7)).weekCap, weekKey: null, backfill: false },
     judgedWeeks: [],
     lastJudgedWeek: null,
+    curve: trackCurveOn(today),
   };
 }
 
@@ -328,9 +344,12 @@ export function lifeContributionRows(states: readonly TrackState[]): LifeContrib
     .map((s) => ({ fieldName: lifeRowName(s.track), level: s.effectiveLevel, composition: s.composition, source: "LIFE" as const }));
 }
 
-/** The life attribute rows as they stood on a day (compositions are not replayed: today's mix). */
-export function lifeContributionsAt(ledger: LifeLedger, day: DayKey): LifeContribution[] {
-  return lifeContributionRows(trackStateAt(ledger, day));
+/**
+ * The life attribute rows as they stood on a day (compositions are not replayed: today's mix). A then/now
+ * reader passes today's curve for both ends, so a curve flip between them is never growth.
+ */
+export function lifeContributionsAt(ledger: LifeLedger, day: DayKey, curve: TrackCurve = trackCurveOn(day)): LifeContribution[] {
+  return lifeContributionRows(trackStateAt(ledger, day, curve));
 }
 
 // ── Ledger readers (lane A, F3) ───────────────────────────────────────────
@@ -423,7 +442,7 @@ function trackComposition(ledger: LifeLedger, track: Track): FullComposition {
   return { ...clampTrackComposition(track, effectiveFieldComposition(TRACK_SEED[track], domains)) };
 }
 
-function stateOf(ledger: LifeLedger, track: Track, day: DayKey, composition: FullComposition): TrackState {
+function stateOf(ledger: LifeLedger, track: Track, day: DayKey, composition: FullComposition, curve: TrackCurve): TrackState {
   let sum = 0;
   for (const r of ledger.xpByDay) if (r.track === track && r.day <= day && Number.isFinite(r.xp)) sum += r.xp;
   const xp = Math.max(0, sum);
@@ -444,7 +463,7 @@ function stateOf(ledger: LifeLedger, track: Track, day: DayKey, composition: Ful
 
   const depth = trackDepth(keptWeeks, goalDepth);
   const cap = depthCap(depth);
-  const points = pointsLevel(xp);
+  const points = pointsLevel(xp, curve);
   const level = Math.min(points, cap);
   const bonusPercent = keptWeekBonusPercent(keptStreak);
   return {
@@ -461,6 +480,7 @@ function stateOf(ledger: LifeLedger, track: Track, day: DayKey, composition: Ful
     bonusPercent,
     effectiveLevel: level * (1 + bonusPercent / 100),
     composition,
+    curve,
   };
 }
 
@@ -472,18 +492,19 @@ function stateOf(ledger: LifeLedger, track: Track, day: DayKey, composition: Ful
  *   keptStreak  the trailing run of kept weeks ending at the latest judged week; a held week
  *               (M2) bridges it without adding to it
  *   goalDepth   min(2, Σ GOAL_DEPTH of this track's paid 'mp:GOAL:*' rows, day ≤ D)
- *   level       trackLevel(xp, keptWeeks, goalDepth); atCap = pointsLevel > level
+ *   level       trackLevel(xp, keptWeeks, goalDepth, curve); atCap = pointsLevel > level
  *   bonus       keptWeekBonusPercent(keptStreak); effectiveLevel = level × (1 + bonus/100)
+ *   curve       the one passed, else the curve in force on D (life-economy trackCurveOn)
  */
-export function trackStateAt(ledger: LifeLedger, day: DayKey): TrackState[] {
-  return TRACKS.map((track) => stateOf(ledger, track, day, trackComposition(ledger, track)));
+export function trackStateAt(ledger: LifeLedger, day: DayKey, curve: TrackCurve = trackCurveOn(day)): TrackState[] {
+  return TRACKS.map((track) => stateOf(ledger, track, day, trackComposition(ledger, track), curve));
 }
 
-/** The meter toward the next level, 0..1: 1 at the cap. */
+/** The meter toward the next level, 0..1: 1 at the cap. On the state's own curve. */
 function meterOf(s: TrackState): number {
   if (s.atCap) return 1;
-  const from = xpForLevel(s.level);
-  const span = xpForLevel(s.level + 1) - from;
+  const from = xpForLevel(s.level, s.curve);
+  const span = xpForLevel(s.level + 1, s.curve) - from;
   return span > 0 ? Math.max(0, Math.min(1, (s.xp - from) / span)) : 0;
 }
 
@@ -496,13 +517,15 @@ const int = (n: number): string => Math.floor(Math.max(0, n)).toLocaleString("en
  *   else    '1,960 / 2,401 XP · depth cap 7 · 7 more kept weeks raise it'
  * No per-row goal clause (lead decision, review U7): with whole goal depths
  * it would be on nearly every row. The Life tracks aside says once that
- * levels are capped by kept weeks and paid goals.
+ * levels are capped by kept weeks and paid goals. The XP figures follow the
+ * state's curve (SQUARE when it has none): on POWER, 'No Body tasks yet ·
+ * 34 XP reaches level 1' and '1,960 / 2,109 XP · depth cap 7 · …'.
  */
-export function trackLine(s: Pick<TrackState, "track" | "xp" | "level" | "cap" | "atCap" | "keptWeeks" | "goalDepth">): string {
-  if (!(s.xp > 0)) return `No ${TRACK_NAME[s.track]} tasks yet · ${int(xpForLevel(1))} XP reaches level 1`;
+export function trackLine(s: Pick<TrackState, "track" | "xp" | "level" | "cap" | "atCap" | "keptWeeks" | "goalDepth"> & Partial<Pick<TrackState, "curve">>): string {
+  if (!(s.xp > 0)) return `No ${TRACK_NAME[s.track]} tasks yet · ${int(xpForLevel(1, s.curve))} XP reaches level 1`;
   const raise = keptWeeksRaiseCopy(moreKeptWeeks(s.keptWeeks, s.goalDepth));
   if (s.atCap) return `Capped at ${int(s.cap)} · ${raise} · ${int(s.xp)} XP banked`;
-  return `${int(s.xp)} / ${int(xpForLevel(s.level + 1))} XP · depth cap ${int(s.cap)} · ${raise}`;
+  return `${int(s.xp)} / ${int(xpForLevel(s.level + 1, s.curve))} XP · depth cap ${int(s.cap)} · ${raise}`;
 }
 
 /** At most this many pips per track row on the You sheet. */
@@ -514,11 +537,12 @@ const markOf = (w: LedgerWeek): WeekMark => weekMarkOf(w);
  * The You sheet's rows, in DISPLAY_ORDER. now = the meter today; banked =
  * the meter at the end of last life week when the level was the same then
  * (else 0, never above now); weeks = the last ≤ 8 judged weeks, oldest
- * first, never padded; edge = level / cap (0 at level 0).
+ * first, never padded; edge = level / cap (0 at level 0). Last week's
+ * meter is read on today's curve too, so a flip banks nothing it moved.
  */
-export function trackRowsView(ledger: LifeLedger, today: DayKey): LifeTrackRow[] {
-  const states = new Map(trackStateAt(ledger, today).map((s) => [s.track, s]));
-  const before = new Map(trackStateAt(ledger, addDays(weekStartKeyOf(today), -1)).map((s) => [s.track, s]));
+export function trackRowsView(ledger: LifeLedger, today: DayKey, curve: TrackCurve = trackCurveOn(today)): LifeTrackRow[] {
+  const states = new Map(trackStateAt(ledger, today, curve).map((s) => [s.track, s]));
+  const before = new Map(trackStateAt(ledger, addDays(weekStartKeyOf(today), -1), curve).map((s) => [s.track, s]));
   return DISPLAY_ORDER.map((track) => {
     const s = states.get(track)!;
     const b = before.get(track)!;
@@ -530,7 +554,7 @@ export function trackRowsView(ledger: LifeLedger, today: DayKey): LifeTrackRow[]
       sigil: TRACK_SIGIL[track],
       level: s.level,
       xp: s.xp,
-      nextXp: xpForLevel(s.level + 1),
+      nextXp: xpForLevel(s.level + 1, curve),
       cap: s.cap,
       atCap: s.atCap,
       keptWeeks: s.keptWeeks,
@@ -578,12 +602,15 @@ export function lifeMpInWeek(ledger: LifeLedger, monday: DayKey): number {
   return round2(used);
 }
 
-/** Per track, the level at each of the last ≤ n judged Sundays (integers, DISPLAY_ORDER, oldest first). */
-export function levelSeries(ledger: LifeLedger, n: number = 12): LevelSeries {
+/**
+ * Per track, the level at each of the last ≤ n judged Sundays (integers, DISPLAY_ORDER, oldest first). With a
+ * curve (Stats passes today's), every Sunday reads on it; with none, each reads the curve in force that day.
+ */
+export function levelSeries(ledger: LifeLedger, n: number = 12, curve?: TrackCurve): LevelSeries {
   const weeks = judgedWeekList(ledger).slice(-Math.max(0, Math.floor(n)));
   const sundays = weeks.map((w) => w.sunday);
   const compositions = new Map(TRACKS.map((t) => [t, trackComposition(ledger, t)]));
-  const levelsAt = sundays.map((d) => new Map(TRACKS.map((t) => [t, stateOf(ledger, t, d, compositions.get(t)!).level])));
+  const levelsAt = sundays.map((d) => new Map(TRACKS.map((t) => [t, stateOf(ledger, t, d, compositions.get(t)!, curve ?? trackCurveOn(d)).level])));
   return {
     sundays,
     tracks: DISPLAY_ORDER.map((track) => ({ track, name: TRACK_NAME[track], levels: levelsAt.map((m) => m.get(track)!) })),
@@ -613,15 +640,15 @@ export function keptWeekGrid(ledger: LifeLedger, n: number = 12): KeptWeekGrid {
  * false) or no epochDay gives notLaunchedView(today), so nothing changes
  * before launch. Otherwise levels, rows, attribute contributions, crest
  * edges, the capped MP of this life week and of the last judged one, and
- * the judged weeks.
- * life-tracks-server.ts loadLifeTracks returns this.
+ * the judged weeks, all on one curve (trackCurveOn(today) unless passed;
+ * blueprint P3). life-tracks-server.ts loadLifeTracks returns this.
  */
-export function lifeTracksView(ledger: LifeLedger, today: DayKey, launchDay: DayKey | null = lifeLaunchDay()): LifeTracksView {
-  if (!isLaunched(today, launchDay) || !ledger.epochDay) return notLaunchedView(today);
-  const states = trackStateAt(ledger, today);
+export function lifeTracksView(ledger: LifeLedger, today: DayKey, launchDay: DayKey | null = lifeLaunchDay(), curve: TrackCurve = trackCurveOn(today)): LifeTracksView {
+  if (!isLaunched(today, launchDay) || !ledger.epochDay) return { ...notLaunchedView(today), curve };
+  const states = trackStateAt(ledger, today, curve);
   const levels = zeroLevels();
   for (const s of states) levels[s.track] = s.level;
-  const rows = trackRowsView(ledger, today);
+  const rows = trackRowsView(ledger, today, curve);
   const edgeOf = (t: Track) => rows.find((r) => r.track === t)?.edge ?? 0;
   const judgedList = judgedWeekList(ledger);
   const judgedWeeks = judgedList.map((w) => w.weekKey);
@@ -642,5 +669,6 @@ export function lifeTracksView(ledger: LifeLedger, today: DayKey, launchDay: Day
     },
     judgedWeeks,
     lastJudgedWeek: judgedWeeks.length > 0 ? judgedWeeks[judgedWeeks.length - 1] : null,
+    curve,
   };
 }

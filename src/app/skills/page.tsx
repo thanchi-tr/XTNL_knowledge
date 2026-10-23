@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
 import { SkillsScreen } from "@/components/skills/SkillsScreen";
 
-export const metadata: Metadata = { title: "Skills" };
+export const metadata: Metadata = { title: "Emblems" };
 
 // Ownership, balance and gates change on every unlock and review.
 export const dynamic = "force-dynamic";
 
 /**
- * You › Skills. Opens on the path with the most emblems ready to unlock
+ * You › Emblems (labelled so since D6; the route stays /skills). Opens on the path with the most emblems ready to unlock
  * (else the highest attribute); every path has its own URL, /skills/<slug>.
  */
 export default async function SkillsPage({ searchParams }: { searchParams: Promise<{ view?: string }> }) {

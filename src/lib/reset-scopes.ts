@@ -107,18 +107,18 @@ export const RESET_SCOPES: Record<ResetScope, { label: string; phrase: string; b
     label: "Ideas, domains and fields",
     phrase: "DELETE KNOWLEDGE",
     blurb:
-      "The above, plus the whole taxonomy and its attribute compositions, snapshots and streaks. It archives your roadmap too. Skills, mastery points, titles and your tasks survive.",
+      "The above, plus the whole taxonomy and its trait compositions, snapshots and streaks. It archives your roadmap too. Emblems, mastery points, titles and your tasks survive.",
   },
   life: {
     label: "Life only",
     phrase: "DELETE LIFE",
     blurb:
-      "Removes every task, habit and goal, their completions and XP, your rest and vacation days, the whole activity history (so the daily streak starts again) and your life settings. It deletes your roadmap and its history. Ideas, the taxonomy, skills and mastery points are untouched.",
+      "Removes every task, habit and goal, their completions and XP, your rest and vacation days, the whole activity history (so the daily streak starts again) and your life settings. It deletes your roadmap and its history. Ideas, the taxonomy, emblems and mastery points are untouched.",
   },
   everything: {
     label: "Everything, including progression",
     phrase: "DELETE EVERYTHING",
     blurb:
-      "A completely new account: the taxonomy, every idea, every task and the activity history, and all progression — unlocked skills, the mastery ledger, capital and augments, boss encounters, boons and debuffs. It deletes your roadmap too.",
+      "A completely new account: the taxonomy, every idea, every task and the activity history, and all progression — unlocked emblems, the mastery ledger, capital and augments, boss encounters, boons and debuffs. It deletes your roadmap too.",
   },
 };

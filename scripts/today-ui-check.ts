@@ -4652,9 +4652,10 @@ asyncChecks.push(
       /<div class="t-epithet">[^<]*<\/div><div class="cur-lines"><p>Stage 2 of 5 · 34 days<\/p><p>Confirmed on your readings, 12 Oct<\/p><\/div><ul class="grants">/.test(ms)
     );
     check(
-      "ceremony: milestone and capstone close with Done (gold primary) and lead on quietly (See the roadmap → facts.href; See the Life tree → /skills/life)",
+      // Re-pinned for blueprint P2 (D6): the Life tree is "Life perks".
+      "ceremony: milestone and capstone close with Done (gold primary) and lead on quietly (See the roadmap → facts.href; See Life perks → /skills/life)",
       /<div class="cur-acts"><button type="button" class="btn btn-gold">Done<\/button><a class="btn btn-quiet" href="\/you\/roadmap\?r=rm1">See the roadmap<\/a><\/div>/.test(ms) &&
-        /<button type="button" class="btn btn-gold">Done<\/button><a class="btn btn-quiet" href="\/skills\/life">See the Life tree<\/a>/.test(cap) &&
+        /<button type="button" class="btn btn-gold">Done<\/button><a class="btn btn-quiet" href="\/skills\/life">See Life perks<\/a>/.test(cap) &&
         defaultSecondary({ kind: "capstone", facts: { title: "x" } } as never)?.href === "/skills/life" &&
         defaultPrimary({ kind: "milestone" } as never)?.label === "Done"
     );

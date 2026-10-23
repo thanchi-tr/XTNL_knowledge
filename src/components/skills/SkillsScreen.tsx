@@ -1,5 +1,5 @@
 /**
- * You › Skills (final-you.html ?tab=skills): the path chips, the path header
+ * You › Emblems (final-you.html ?tab=skills; the nav label since D6, the route stays /skills): the path chips, the path header
  * on its sky, the rank ladder (or the graph, ?view=graph), and Attest
  * mastery. Shared by /skills (which opens on the default path) and
  * /skills/[attribute].
@@ -47,7 +47,7 @@ export async function SkillsScreen({ attribute: requested, view }: { attribute: 
 
   return (
     <>
-      <ShellTitle eyebrow="You" title="Skills" />
+      <ShellTitle eyebrow="You" title="Emblems" />
       <PathChips current={attribute} summary={summary} />
       <PathHeader attribute={attribute} summary={summary[attribute]} balance={ctx.balance} />
       <EffectsNotice debuffs={progression.debuffs} boons={progression.boons} />

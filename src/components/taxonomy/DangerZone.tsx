@@ -140,7 +140,7 @@ export function DangerZone({ counts, onReset }: Props) {
           countOf(counts, "ideas", "idea", "ideas"),
           countOf(counts, "domains", "domain", "domains"),
           countOf(counts, "fields", "field", "fields"),
-          countOf(counts, "unlockedSkills", "skill", "skills"),
+          countOf(counts, "unlockedSkills", "emblem", "emblems"),
           countOf(counts, "masteryEntries", "mastery entry", "mastery entries"),
           countOf(counts, "capitalEntries", "capital entry", "capital entries"),
           countOf(counts, "augments", "augment", "augments"),

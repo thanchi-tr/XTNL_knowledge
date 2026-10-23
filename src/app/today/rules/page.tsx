@@ -43,6 +43,8 @@ import {
   LIFE_MP_REASON_LABEL,
   LIFE_MP_WEEK_CAP,
   MOMENTUM_MP_REASON_LABEL,
+  TRACK_CURVE_BASE,
+  TRACK_CURVE_EXPONENT,
   TRACK_DEPTH_GRACE,
   TRACK_DEPTH_WEEK_COEF,
   TRACK_LEVEL_STEP,
@@ -53,6 +55,7 @@ import {
   isLaunched,
   keptFloorsOf,
   lifeLaunchDay,
+  trackCurveOn,
   trackDepth,
   xpForLevel,
   type LifeMintReason,
@@ -344,13 +347,14 @@ function decayBandLevels(): { from: number; to: number } | null {
 /**
  * The ground rules (docs/life-plan/blueprint-plan-2026-10-22.md P0; blueprint 4.1, 3.3a, 3.1a and 4.5), one
  * line each: XP is never spent, the knee is the fatigue breaker, forgetting's daily decay, and where chance
- * lives. Every number is read from the code that applies it (scripts/you-check.ts holds that none is typed by
- * hand), and scripts/credits-check.ts holds the first line in the code.
+ * lives; P4 (blueprint 1.2) adds that avatar targets pay nothing, and P5 (blueprint 1.5, D9) that skills pay
+ * nothing. Every number is read from the code that applies it (scripts/you-check.ts holds that none is typed by
+ * hand), scripts/credits-check.ts holds the first line in the code, and scripts/status-check.ts the last two.
  */
 function GroundRules({ momentumOn }: { momentumOn: boolean }) {
   const band = decayBandLevels();
   return (
-    <Card id="ground-rules" title="Ground rules" sub="Spending, fatigue, forgetting and chance" wide>
+    <Card id="ground-rules" title="Ground rules" sub="Spending, fatigue, forgetting, chance, targets and skills" wide>
       <ul className="rules-bullets">
         <li>
           XP is never spent; the Mall spends credits only. Nothing costs XP: emblems cost MP, and the Mall and its
@@ -377,6 +381,14 @@ function GroundRules({ momentumOn }: { momentumOn: boolean }) {
           {momentumOn
             ? "They are the only rolls that decide a payout, each sealed to the row it paid (Momentum, below). Other draws never set a price: they pick a card's wording, a boss's cards, a tie between task quests of equal score, the spread of a mid-level card's next review, and the points a typed formula is tested at."
             : "Neither is in force yet, so nothing that pays is random. Other draws never set a price: they pick a card's wording, a boss's cards, the spread of a mid-level card's next review, and the points a typed formula is tested at."}
+        </li>
+        <li>
+          Avatar targets pay nothing: a target and its readings are a record of the desired self, never XP, MP or a
+          level, and a number you log yourself is labelled self-reported.
+        </li>
+        <li>
+          Skills pay nothing: a skill&apos;s hours are read from the minutes of the ticks linked to it, and a tier-up is a
+          Seal, never XP, MP or a level.
         </li>
       </ul>
     </Card>
@@ -441,6 +453,8 @@ const CAPPED_WORDS: Record<LifeMintReason, string> = {
 
 /** The level used to illustrate the XP scale. */
 const SAMPLE_LEVEL = 10;
+/** The first level, whose XP the POWER curve's copy also names (blueprint P3). */
+const FIRST_LEVEL = 1;
 
 /** A whole number of kept weeks after which the bonus stops growing. */
 function bonusFullAt(): number {
@@ -453,7 +467,9 @@ function bonusFullAt(): number {
 /**
  * Tracks and kept weeks: every number below is read from life-economy.ts
  * and life-tracks.ts (scripts/you-check.ts holds that no figure in this
- * card is typed by hand).
+ * card is typed by hand). The level formula is the track curve in force
+ * today (blueprint P3): ⌊√XP / 7⌋ until TRACK_CURVE_LAUNCH_DAY, Base·L^1.5
+ * a level from it.
  */
 function TracksRules() {
   const launchDay = lifeLaunchDay();
@@ -470,21 +486,42 @@ function TracksRules() {
   const cappedReasons: readonly LifeMintReason[] = model.momentum ? model.cappedReasons : CAPPED_REASONS;
   const weekCap = model.momentum ? model.weekCap : LIFE_MP_WEEK_CAP;
   const capped = cappedReasons.map((r) => CAPPED_WORDS[r]);
+  // The track curve in force today (blueprint P3): SQUARE until TRACK_CURVE_LAUNCH_DAY, and always while it is null.
+  const curve = trackCurveOn(today);
+  const power = curve === "POWER";
   return (
     <Card
       title="Tracks and kept weeks"
       sub={inForce && launchDay ? `In force since ${longDayLabel(launchDay)}` : "Not yet in force: no week is judged and nothing here is paid yet"}
       wide
     >
-      <Formula>
-        level = min(⌊√XP / {TRACK_LEVEL_STEP}⌋, {TRACK_DEPTH_GRACE} + ⌊depth⌋)
-      </Formula>
+      {power ? (
+        <>
+          <Formula>
+            level L costs {TRACK_CURVE_BASE} · L^{TRACK_CURVE_EXPONENT} more XP
+          </Formula>
+          <Formula>
+            level = min(L reached, {TRACK_DEPTH_GRACE} + ⌊depth⌋)
+          </Formula>
+        </>
+      ) : (
+        <Formula>
+          level = min(⌊√XP / {TRACK_LEVEL_STEP}⌋, {TRACK_DEPTH_GRACE} + ⌊depth⌋)
+        </Formula>
+      )}
       <Formula>
         depth = {TRACK_DEPTH_WEEK_COEF} · √(kept weeks) + goal depth
       </Formula>
       <p>
         {TRACK_LABEL.BODY}, {TRACK_LABEL.DUTY}, {TRACK_LABEL.CRAFT} and {TRACK_LABEL.CARE} each start with no XP and no level;
-        a track&apos;s XP is the life XP its tasks paid. Level {SAMPLE_LEVEL} needs {xpForLevel(SAMPLE_LEVEL).toLocaleString("en-GB")} XP, and a year of kept
+        a track&apos;s XP is the life XP its tasks paid. Level {SAMPLE_LEVEL} needs {xpForLevel(SAMPLE_LEVEL, curve).toLocaleString("en-GB")} XP
+        {power ? (
+          <>
+            {" "}
+            in all, level {FIRST_LEVEL} needs {xpForLevel(FIRST_LEVEL, curve).toLocaleString("en-GB")} (each level costs more than the one before)
+          </>
+        ) : null}
+        , and a year of kept
         weeks ({year}) allows level {depthCap(trackDepth(year))}. XP past the cap is banked, never lost: it counts the
         moment a kept week raises the cap. A paid Mid goal adds {GOAL_DEPTH.MID} depth to its track and a paid Long goal{" "}
         {GOAL_DEPTH.LONG}, at most {GOAL_DEPTH_CAP} per track.
@@ -511,9 +548,9 @@ function TracksRules() {
         still counts. A judged week is final. Up to {WEEK_JUDGE_MAX_WEEKS} weeks are judged at a time, oldest first.
       </p>
       <p>
-        A run of kept weeks lifts the track&apos;s share of its attributes: +{pct(keptWeekBonusPercent(1))}% after one, and
+        A run of kept weeks lifts the track&apos;s share of its traits: +{pct(keptWeekBonusPercent(1))}% after one, and
         +{pct(keptWeekBonusPercent(fullAt))}% (the most) from {fullAt} in a row. Streak amplifiers never touch it. A
-        track&apos;s tasks shift which attributes it feeds, but its share of any one attribute is at most its starting share
+        track&apos;s tasks shift which traits it feeds, but its share of any one trait is at most its starting share
         or {TRACK_SHARE_CAP}%, whichever is more.
       </p>
       <div className="rules-scroll">
@@ -655,7 +692,7 @@ function LevelsRules() {
         rows={CHARACTER_LEVEL_SAMPLES.map((s) => [characterSampleLabel(s), String(characterLevel(s.fields, s.tracks).level)])}
       />
       <p>
-        Attributes still count breadth: each Field gives them ⌊Σ Domain level^{BREADTH_EXPONENT}⌋ over all its Domains, so
+        Traits still count breadth: each Field gives them ⌊Σ Domain level^{BREADTH_EXPONENT}⌋ over all its Domains, so
         working many Domains opens emblems at the same pace as before.
       </p>
     </Card>
@@ -680,7 +717,7 @@ const withPerk = (code: PerkCode) => lifeModsOf(new Set<PerkCode>([code]));
 /**
  * Momentum's published rules (momentum.md §A–§B): the run and its freezes, Today's three and the chest
  * (its odds from chestOdds, the one function the server's drop table publishes), crits and chains, walks,
- * the roadmap's pay and the Life skill tree. Every number is read from momentum.ts and the modules that
+ * the roadmap's pay and Life perks (the Life tree; D6). Every number is read from momentum.ts and the modules that
  * pay; nothing below is typed by hand. Rendered only once momentum is live (momentumLive), so before
  * MOMENTUM_LAUNCH_DAY this page is exactly what it was.
  */
@@ -910,7 +947,7 @@ function MomentumRules({ launchDay }: { launchDay: DayKey }) {
         </ul>
       </Card>
 
-      <Card id="life-tree" title="The Life skill tree" sub="Discipline, Pathfinder and Vitality: points from doing the thing" wide>
+      <Card id="life-tree" title="Life perks" sub="Discipline, Pathfinder and Vitality: points from doing the thing" wide>
         <Formula>the n-th point of a branch needs S · n(n + 1) / 2 of its XP, counted up to a weekly cap</Formula>
         <div className="rules-scroll">
           <table className="rules-table">
@@ -2009,7 +2046,7 @@ export default async function RulesPage() {
           <p>
             A capture is written at once with a lexical grade from {LIFE_RULE_COUNT} word rules (confidence = score / (score +
             5)). Within {SIZING_WINDOW_HOURS} hours the model ({TASK_SIZING_MODEL}, prompt v{SIZING_PROMPT_VERSION}) may refine
-            it once. It only chooses a category, a band, a duration and up to three attributes; this code turns those into
+            it once. It only chooses a category, a band, a duration and up to three traits; this code turns those into
             numbers.
           </p>
           <ul className="rules-bullets">
@@ -2024,7 +2061,7 @@ export default async function RulesPage() {
               </li>
             ))}
             <li>
-              Attributes blend {pct(SIZING_AI_COMPOSITION_SHARE)} model, {pct(1 - SIZING_AI_COMPOSITION_SHARE)} lexical.
+              Traits blend {pct(SIZING_AI_COMPOSITION_SHARE)} model, {pct(1 - SIZING_AI_COMPOSITION_SHARE)} lexical.
               Confidence is {f1(SIZING_CONFIDENCE_BASE)} + {f1(SIZING_CONFIDENCE_LEXICAL_SHARE)} × the lexical confidence; the
               model&apos;s reason is kept, up to {SIZING_BASIS_CHARS} characters.
             </li>
@@ -2093,7 +2130,7 @@ export default async function RulesPage() {
 
       {momentumOn && momentumLaunch && (
         <section aria-labelledby="rules-momentum" style={{ marginTop: 28 }}>
-          <SectionHeader id="rules-momentum" title="Momentum" aside="chance, stakes and the Life tree · read from the code that pays" />
+          <SectionHeader id="rules-momentum" title="Momentum" aside="chance, stakes and Life perks · read from the code that pays" />
           <div className="rules-grid">
             <MomentumRules launchDay={momentumLaunch} />
           </div>

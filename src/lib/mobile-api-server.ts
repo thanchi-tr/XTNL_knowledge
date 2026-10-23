@@ -6,7 +6,7 @@
  * route file may export only its methods and segment config).
  *
  *   GET  /check            handleCheck          the Today board and its daily quests, the Review hub's counts and the ideas fading, the due work, level, streak, the week audit
- *   POST /tasks/complete   handleTaskComplete   actions/tasks completeTask (the board's tick)
+ *   POST /tasks/complete   handleTaskComplete   actions/tasks completeTask (the board's tick), and the skill it fed (P5)
  *   POST /tasks/undo       handleTaskUndo       actions/tasks undoCompletion
  *   POST /work/done        handleWorkDone       actions/scheduled-tasks doneScheduledTask (no history log)
  *   POST /work/reopen      handleWorkReopen     actions/scheduled-tasks reopenScheduledTask
@@ -17,6 +17,7 @@
  *   GET  /ideas/meta       handleIdeasMeta      the New idea form's formats and collections
  *   POST /ideas            handleIdeaCreate     actions/ideas submitIdea
  *   GET  /quests           handleQuests         the main quest, this week's sprint and Today's three (read only; P15)
+ *   GET  /status           handleStatus         the five attributes, Capital's reading, the avatar targets and the skills, the /you Status card's (read only; P1, P4, P5)
  *
  * Every reply is JSON with Cache-Control: no-store; a thrown error is logged and answers the generic server line,
  * never its message or stack. Writes replay their first successful result for a clientId (mobile-api.ts ReplayCache);
@@ -71,6 +72,11 @@ import {
   questsMainOf,
   questsSprintOf,
   questsThreeOf,
+  statusAttributesOf,
+  statusCapitalOf,
+  statusTargetsOf,
+  statusSkillsOf,
+  tickCompetencyOf,
   onlyParams,
   refusalReply,
   responseOf,
@@ -103,6 +109,11 @@ import { isAuditLaunched, type WeekAudit } from "./week-audit";
 import { mainQuestOf } from "./main-quest";
 import type { AimCardView, WeekQuestsView } from "./roadmap-types";
 import type { MomentumView } from "./momentum-server";
+import { capitalPanelOf, statusPanelOf, type CapitalDeal } from "./status-panel";
+import type { AvatarView } from "./avatar";
+import type { SkillView } from "./competency";
+import type { LifeTracksView } from "./life-tracks";
+import type { KnowledgeRow } from "../components/home/sheet-math";
 
 // ── The cores ───────────────────────────────────────────────────────────────
 
@@ -168,6 +179,22 @@ export interface MobileDeps {
   loadSprintWeek: (userId: string, now: Date, card: AimCardView | null) => Promise<WeekQuestsView | null>;
   /** Momentum's view (momentum-server loadMomentum): Today's three; {live: false} before its launch. */
   loadMomentum: (userId: string, day: DayKey, now: Date) => Promise<MomentumView>;
+
+  // GET /status (blueprint P1): the reads the /you Status card stands on; none of them writes.
+  /** The life tracks as of `now` (life-tracks-server loadLifeTracks: the view the sheet reads; not launched before launch). */
+  loadLifeTracks: (userId: string, now: Date) => Promise<LifeTracksView>;
+  /** Knowledge as the sheet builds it (status-panel-server loadKnowledgeRow: the Field tree's levels, the snapshot of 7 days ago). */
+  loadKnowledge: () => Promise<KnowledgeRow>;
+  /** The won Deals Capital reads (status-panel-server loadCapitalDeals: stage WON, not archived, this month and the two before). */
+  loadCapitalDeals: (userId: string, day: DayKey) => Promise<readonly CapitalDeal[]>;
+  /** The avatar targets (P4; avatar-server loadAvatar), on the same won deals (null when they couldn't be read). */
+  loadAvatar: (userId: string, now: Date, deals: readonly CapitalDeal[] | null) => Promise<AvatarView>;
+
+  // Skills (blueprint P5): the Skills page's own reads; neither writes.
+  /** The live skills by hours (competency-server loadSkills, with the Fields: an Intellect skill's fieldName): /status's skills and the rows' counts. */
+  loadSkills: (userId: string) => Promise<readonly SkillView[]>;
+  /** The skill a template feeds, as it stands (competency-server loadTemplateSkill; null with none): the tick's `competency`. */
+  loadTemplateSkill: (userId: string, templateId: string) => Promise<SkillView | null>;
 }
 
 // ── The frame every route runs in ───────────────────────────────────────────
@@ -345,6 +372,46 @@ export async function handleQuests(request: Request, deps: MobileDeps): Promise<
   });
 }
 
+// ── GET /status ─────────────────────────────────────────────────────────────
+
+/**
+ * The Status panel (blueprint 1.1; P1, decisions D1 and D2): the five attributes the /you Status card shows, from the
+ * web's own reads (the life tracks as of the server's clock, Knowledge as the sheet builds it, the won Deals) through
+ * status-panel.ts, the one model the card reads, so each row is its track's or Knowledge's own figures. Read only: it
+ * writes nothing, settles nothing and owes nothing after the reply, so two reads in a row answer the same. The life
+ * view and Knowledge are the panel itself: a failed read fails the reply (the app keeps its last copy), never a level
+ * of 0. Capital is a reading beside them: a failed read reads as none (`capital` null), as a month with no deal does.
+ * The avatar targets (P4) are read on the same won deals, the /you card's own loadAvatar: a failed read is `targets`
+ * null (the app shows none), never a failed reply. A target pays nothing and moves no level. The skills (P5) are the
+ * Skills page's own read, in the same wave: a failed read is `skills` null and every attribute's count 0, never a
+ * failed reply. A skill pays nothing either.
+ */
+export async function handleStatus(request: Request, deps: MobileDeps): Promise<Response> {
+  return read("status", request, deps, [], async () => {
+    const now = deps.now();
+    const userId = deps.userId();
+    const day = todayKey(now);
+    const dealsRead = deps.loadCapitalDeals(userId, day).catch(soft<readonly CapitalDeal[] | null>("the won deals", null, "status"));
+    const [life, knowledge, deals, avatar, skills] = await Promise.all([
+      deps.loadLifeTracks(userId, now),
+      deps.loadKnowledge(),
+      dealsRead,
+      dealsRead.then((d) => deps.loadAvatar(userId, now, d)).catch(soft<AvatarView | null>("the avatar targets", null, "status")),
+      deps.loadSkills(userId).catch(soft<readonly SkillView[] | null>("the skills", null, "status")),
+    ]);
+    const panel = statusPanelOf(life, knowledge, avatar, skills);
+    return okReply({
+      now: now.toISOString(),
+      day,
+      launched: panel.launched,
+      attributes: statusAttributesOf(panel),
+      capital: statusCapitalOf(deals ? capitalPanelOf(deals, day) : null),
+      targets: statusTargetsOf(avatar ? avatar.targets : null),
+      skills: statusSkillsOf(skills),
+    });
+  });
+}
+
 // ── POST /tasks/complete, /tasks/undo ───────────────────────────────────────
 
 /**
@@ -352,7 +419,8 @@ export async function handleQuests(request: Request, deps: MobileDeps): Promise<
  * web's tick re-renders Today the same way) for `allDone`, and the shell's character level beside it, so the app's
  * level seal steps by the exact amount (and plays a level up on the tick that earns it); both reads warm the cache
  * for the app's next /check. A failed board read reads as not all done, a failed level read as none: never a failed
- * tick.
+ * tick. P5: the skill the template feeds, read in the same wave (`competency`: its hours and tier after the tick, and
+ * `tierUp` when the tick played the tier's Seal); null with none, or when it couldn't be read.
  */
 export async function handleTaskComplete(request: Request, deps: MobileDeps): Promise<Response> {
   return write("tasks/complete", request, deps, ["templateId", "day", "mvv"], async (body) => {
@@ -365,14 +433,23 @@ export async function handleTaskComplete(request: Request, deps: MobileDeps): Pr
     const now = deps.now();
     const today = todayKey(now);
     const userId = deps.userId();
-    const [allDone, shell] = await Promise.all([
+    const [allDone, shell, skill] = await Promise.all([
       deps
         .loadBoard(userId, today, now)
         .then((data) => boardAllDoneOf(data, now.getTime()))
         .catch(soft("the board after a tick", false)),
       deps.loadShell(userId).catch(soft("the level after a tick", null)),
+      deps.loadTemplateSkill(userId, templateId).catch(soft<SkillView | null>("the skill after a tick", null)),
     ]);
-    return okReply({ instanceId: v.instanceId, xp: tickXpOf(v), line: tickLineOf(v, today), allDone, celebrations: celebrationsOf(v.celebrations), level: levelOf(shell) });
+    return okReply({
+      instanceId: v.instanceId,
+      xp: tickXpOf(v),
+      line: tickLineOf(v, today),
+      allDone,
+      celebrations: celebrationsOf(v.celebrations),
+      level: levelOf(shell),
+      competency: tickCompetencyOf(skill, v.celebrations),
+    });
   });
 }
 

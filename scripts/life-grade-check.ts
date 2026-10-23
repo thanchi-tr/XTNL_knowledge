@@ -903,7 +903,8 @@ console.log("— momentum: the receipt sheet —");
   const crit = mPlan({ template: mTpl({ band: "DEMANDING" }), ledger: mLedger([done("a", "2026-10-19T00:30:00.000Z", { estEff: 30 })]), momentum: mom({ perks: ["D_STEADY"] }) }).receipt;
   const view = receiptView(crit);
   const names = view.factors.map((f) => f.label);
-  check("S, M and X read 'Skills', 'Chain', 'Crit' with their words", names.includes("Skills") && names.includes("Chain") && names.includes("Crit") && view.factors.find((f) => f.key === "X")?.detail === "sealed roll 0.046 under 0.080 · set per task per day", JSON.stringify(view.factors.map((f) => [f.label, f.detail, f.mult])));
+  // Re-pinned for blueprint P2 (D6): S is the Life tree's perks, and the Life tree is "Life perks", so S reads 'Perks'.
+  check("S, M and X read 'Perks', 'Chain', 'Crit' with their words", names.includes("Perks") && !names.includes("Skills") && names.includes("Chain") && names.includes("Crit") && view.factors.find((f) => f.key === "X")?.detail === "sealed roll 0.046 under 0.080 · set per task per day", JSON.stringify(view.factors.map((f) => [f.label, f.detail, f.mult])));
   check("…a miss shows no crit row", !receiptView(mPlan({ template: mTpl({ id: "d", normTitle: "dishes" }) }).receipt).factors.some((f) => f.key === "X"));
   const walk = mPlan({ template: mTpl({ id: "t-walk" }), session: true }).receipt;
   check("a walk's SESSION tick says why it pays 0: 'Paid by the walk, not twice.'", receiptView(walk).zero === "Paid by the walk, not twice.");

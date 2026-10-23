@@ -177,6 +177,16 @@ export function fixtures(): Fixture[] {
       expect: ["track:DUTY:12"],
     },
     {
+      name: "competency-tier",
+      note: "Blueprint P5 (D9): a tick takes Writing from 99.5 h to 100.25 h, Tier 1 → Tier 2: a Seal only, no MP.",
+      ...only(
+        "competencies",
+        { rows: [{ id: "sk-writing", name: "Writing", hours: 99.5, tier: 1, line: "≈ 99.5 h (task estimates, not timed)" }] },
+        { rows: [{ id: "sk-writing", name: "Writing", hours: 100.25, tier: 2, line: "≈ 100 h (task estimates, not timed)" }] }
+      ),
+      expect: ["competency:sk-writing:t2"],
+    },
+    {
       name: "emblem-unlock",
       note: `An Apex unlocked (${apex.name}, ${apex.masteryCost} MP).`,
       ...only("skills", { owned: [], mp: apex.masteryCost + 146 }, { owned: [{ code: apex.code, paid: apex.masteryCost }], mp: 146 }),

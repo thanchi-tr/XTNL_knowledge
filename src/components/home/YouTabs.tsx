@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * The profile pages as tabs, on compact only (< 600 px): Character, Skills,
+ * The profile pages as tabs, on compact only (< 600 px): Character, Emblems,
  * Loadout, Moments, Stats, Settings (nav.ts PROFILE, the profile menu's own
- * list). The Skills tab carries a gold dot while an emblem is ready to unlock.
+ * list). The Emblems tab carries a gold dot while an emblem is ready to unlock.
  *
  * The strip is the shell's (shell/SubTabs.tsx: it scrolls the current tab
  * into view and fades the edge with more tabs past it), so the profile and
