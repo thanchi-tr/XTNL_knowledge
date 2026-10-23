@@ -666,6 +666,8 @@ function lifeBlock(pool: number, knowledgePerDay: number): number {
 
   // 3g. Week quests, Proficiency and the Aim rank write no ledger row: no roadmap module holds a ledger writer.
   // Reads stay allowed (Start reads the 'mp:GOAL:*' rows to know whether a lineage paid); only writes are matched.
+  // Blueprint P16: nor does one import a credits or Mall module (credits*, mall*: the derived wallet and the Mall's
+  // buys), so the roadmap never spends or counts credits; the line it prints is unchanged.
   const ROOT = join(__dirname, "..");
   const roadmapFiles: string[] = [];
   const walk = (dir: string) => {
@@ -678,7 +680,7 @@ function lifeBlock(pool: number, knowledgePerDay: number): number {
   for (const name of readdirSync(join(ROOT, "src/lib"))) if (/^(roadmap-|throughput)[\w-]*\.ts$/.test(name)) roadmapFiles.push(`src/lib/${name}`);
   walk("src/components/roadmap");
   const LEDGER_WRITERS =
-    /\b(recordActivity|activityOp|activityData|mintLifeMasteryOps|lifeMintData|mintIdeaMasteryOp|mintReviewFractionOp)\s*\(|\b(masteryLedgerEntry|capitalLedgerEntry)\s*\.\s*(create|createMany|upsert|update|updateMany)\b|\bactivityEvent\s*\.\s*(create|createMany|upsert)\b|INSERT\s+INTO\s+"(ActivityEvent|MasteryLedgerEntry|CapitalLedgerEntry)"|from\s+["']\.\/(mastery|capital)["']/;
+    /\b(recordActivity|activityOp|activityData|mintLifeMasteryOps|lifeMintData|mintIdeaMasteryOp|mintReviewFractionOp)\s*\(|\b(masteryLedgerEntry|capitalLedgerEntry)\s*\.\s*(create|createMany|upsert|update|updateMany)\b|\bactivityEvent\s*\.\s*(create|createMany|upsert)\b|INSERT\s+INTO\s+"(ActivityEvent|MasteryLedgerEntry|CapitalLedgerEntry)"|from\s+["']\.\/(mastery|capital)["']|from\s+["'](?:\.\/|\.\.\/lib\/|@\/lib\/|@\/components\/[\w/-]*)([Cc]redit|[Mm]all)[\w-]*["']/;
   const offenders = roadmapFiles.filter((rel) => LEDGER_WRITERS.test(readFileSync(join(ROOT, rel), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1")));
   const questFiles = roadmapFiles.filter((f) => /roadmap-(quests|proficiency)/.test(f));
   check(

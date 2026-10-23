@@ -19,8 +19,8 @@ enum class Tab(val label: String, val icon: ImageVector, val key: String) {
     MORE("More", Glyphs.More, "more"),
 }
 
-/** More's places: its list, Settings, the full app, and Status (the five attributes; blueprint P1). */
-enum class MoreRoute { ROOT, SETTINGS, WEB, STATUS }
+/** More's places: its list, Settings, the full app, Status (the five attributes; blueprint P1) and the Mall (P18). */
+enum class MoreRoute { ROOT, SETTINGS, WEB, STATUS, MALL }
 
 enum class LogMode { QUICK, IDEA }
 
@@ -75,6 +75,7 @@ class Nav(tab: Tab = Tab.CHECK, more: MoreRoute = MoreRoute.ROOT, logMode: LogMo
      *   /review                  Review, started
      *   /settings                More › Settings
      *   /status                  More › Attributes (the five attributes, their targets and skills, Capital's reading; P1's Status screen)
+     *   /mall                    More › Mall (the rewards you price in credits; P18)
      *   /week                    the full app at the week audit (/today/week; the Sunday reminder opens it)
      *   anything else            the full app at that path
      */
@@ -105,6 +106,10 @@ class Nav(tab: Tab = Tab.CHECK, more: MoreRoute = MoreRoute.ROOT, logMode: LogMo
             path == "/status" -> {
                 tab = Tab.MORE
                 more = MoreRoute.STATUS
+            }
+            path == "/mall" -> {
+                tab = Tab.MORE
+                more = MoreRoute.MALL
             }
             path == "/week" -> {
                 tab = Tab.MORE

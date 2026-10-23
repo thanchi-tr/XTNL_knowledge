@@ -6,6 +6,10 @@
  * mastery points, life MP last week against the weekly cap (once life
  * counts: the last judged week, sheet-math lifeMpCell), ideas mastered and
  * emblems. Every figure is real; a missing one is left out rather than faked.
+ *
+ * Credits (blueprint P16): once CREDITS_LAUNCH_DAY is in force, a Credits line
+ * under the purse (the wallet's balance and what today earned, whole credits).
+ * While it is null `credits` is null and the hero is exactly as before.
  */
 import type { Attribute } from "@prisma/client";
 import { ATTRIBUTE_META } from "@/lib/attributes";
@@ -15,6 +19,7 @@ import { CurrencyGlyph } from "@/components/ui/Icon";
 import type { TrackEdges } from "@/components/ui/Crest";
 import { cx } from "@/components/ui/cx";
 import { mpFigure, type LifeMpCell, type TitleDistance } from "./sheet-math";
+import { CREDIT_UNIT, crFigure, walletTodayLine } from "@/lib/credits";
 import { LastSeenMeter } from "./LastSeenMeter";
 
 const whole = (v: number) => Math.floor(v).toLocaleString("en-GB");
@@ -35,6 +40,8 @@ interface Props {
    */
   lifeMp?: LifeMpCell | null;
   balance: number;
+  /** The credits wallet's balance and today's (credits-server loadWallet); null while credits are off or unread: no line. */
+  credits?: { balance: number; today: number } | null;
   mastered: number;
   owned: number;
   poolSize: number;
@@ -123,6 +130,15 @@ export function CharacterHero(p: Props) {
           <div className="k">emblems</div>
         </div>
       </div>
+      {p.credits && (
+        <p className="purse-cr">
+          <span className="k">Credits</span>
+          <b data-credits-balance="">
+            {crFigure(p.credits.balance)} {CREDIT_UNIT}
+          </b>
+          <span className="t">{walletTodayLine(p.credits)}</span>
+        </p>
+      )}
     </section>
   );
 }

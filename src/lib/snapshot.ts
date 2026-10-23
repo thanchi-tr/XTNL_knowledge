@@ -31,6 +31,10 @@
  * read (readSkillsPart: each live skill's hours and tier), under 'life' (which
  * every skill and link write clears), 'activity' (a tick), 'exercise' (a walk)
  * and 'roadmap'. Before the migration it reads as no skills, quietly.
+ *
+ * The Mall (blueprint P19): the `mall` part is mall-server's own read (readMallPart: the latest purchases with their
+ * receipts' figures and whether each was undone), loaded on first use as momentum's parts are, under 'activity' (which
+ * a purchase's and an undo's row clear). It reads nothing and is left out while CREDITS_LAUNCH_DAY is null.
  */
 import { cache } from "react";
 import { prisma } from "./prisma";
@@ -46,6 +50,7 @@ import {
   type LedgerPart,
   type LedgerRow,
   type LevelsPart,
+  type MallPart,
   type MasteredPart,
   type MilestoneRow,
   type MomentumPart,
@@ -136,6 +141,8 @@ const PART_TAGS: Record<SnapshotPart, CacheTag[]> = {
   momentumRows: ["activity", "life", "progress", "roadmap"],
   // Skills (blueprint P5): a tick's or a walk's minutes; a skill or link write clears 'life'.
   competencies: ["life", "activity", "exercise", "roadmap"],
+  // The Mall (blueprint P19): a purchase's and an undo's row (activity.ts clears 'activity').
+  mall: ["activity"],
 };
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -568,6 +575,12 @@ async function readReady(userId: string): Promise<ReadyPart> {
   return { codes };
 }
 
+/** The Mall's purchases (blueprint P19), mall-server's own read, loaded on first use; null (left out) while credits are off. */
+async function readMall(userId: string, now: Date): Promise<MallPart | null> {
+  const { readMallPart } = await import("./mall-server");
+  return readMallPart(userId, now);
+}
+
 type ReadablePart = SnapshotPart;
 
 /**
@@ -594,6 +607,7 @@ export async function readProgress(userId: string, opts: ReadProgressOptions = {
     momentum: () => readMomentum(userId, now),
     momentumRows: () => readMomentumRows(userId, now),
     competencies: () => readSkillsPart(userId),
+    mall: () => readMall(userId, now),
   };
   const results = await Promise.all(
     wanted.map(async (part): Promise<[ReadablePart, unknown]> => {

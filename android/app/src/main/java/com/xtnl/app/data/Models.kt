@@ -37,6 +37,11 @@ data class CheckData(
     val auditOn: Boolean = false,
     /** The weekly audit (the web's Week audit card): null while it is switched off, and from an older server. */
     val week: WeekAudit? = null,
+    /**
+     * The credits wallet (blueprint P16): its balance and what today earned. Null while credits are switched off
+     * (CREDITS_LAUNCH_DAY, until the user's go), when it couldn't be read, and from an older server: no wallet chip.
+     */
+    val credits: Wallet? = null,
     val work: List<WorkItem> = emptyList(),
     val level: LevelInfo? = null,
     val streak: StreakInfo? = null,
@@ -170,6 +175,24 @@ data class Customer(val id: String? = null, val name: String, val number: String
 
 @Serializable
 data class LevelInfo(val level: Int = 1, val title: String? = null, val progress: Double = 0.0)
+
+/**
+ * The credits wallet (docs/mobile-api.md `credits`; blueprint 4.1 and 4.2, decisions D27 to D29), whole credits: [balance]
+ * is earned less bought plus refunded, [today] what today's life day earned. Derived on the server on every read; XP
+ * is never spent, and no penalty ever takes credits.
+ */
+@Serializable
+data class Wallet(val balance: Int = 0, val today: Int = 0)
+
+/**
+ * A write's credits (a tick, an answer, a log): [balance] and [today] are the wallet the server read fresh after the
+ * write (the chip is set from them, never by adding deltas up); [delta] is what was earned across the write (earned
+ * after less earned before: a purchase never counts in it). Another write landing between the server's two reads
+ * counts in [delta] too, so it is the change across the write, never its receipt. [today] is null from an older server
+ * and on a Mall purchase or undo (there [delta] is exactly −price or +price). Null while credits are off or a read failed.
+ */
+@Serializable
+data class CreditsChange(val delta: Int = 0, val balance: Int = 0, val today: Int? = null)
 
 @Serializable
 data class StreakInfo(val days: Int = 0, val keptToday: Boolean = false, val freezes: Int = 0)
@@ -380,6 +403,140 @@ data class StatusSkill(
     val templates: Int = 0,
 )
 
+// ── GET /mall, POST /mall/rewards, POST /mall/buy, POST /mall/undo (blueprint P18, P19) ──
+
+/**
+ * You › Mall (docs/mobile-api.md `GET /mall`; blueprint 4.3 to 4.5, decisions D30 to D32): the rewards the user lists,
+ * each with a price in credits and whether it can be bought now, the latest purchases, and the credits over them. Only
+ * what the user lists is priced: the server never sends a starter reward. #play, rest days and sleep are never priced
+ * (the server refuses them). A purchase burns exactly its price, never more than the balance, and can be undone for
+ * ten minutes; it costs no XP or MP.
+ */
+@Serializable
+data class MallData(
+    val now: String? = null,
+    val day: String? = null,
+    /** The wallet, as /check's; null while credits are off (until the user's go) or when it couldn't be read. */
+    val credits: Wallet? = null,
+    /** The header's line: "+40 cr today", or why there is no balance. */
+    val creditsLine: String = "",
+    /** What the price hints divide by; null while they calibrate. */
+    val goodDay: MallGoodDay? = null,
+    /** What a good day is, or why the hints calibrate; null when the wallet couldn't be read. */
+    val hintLine: String? = null,
+    /** The categories in the page's order (TREAT, SCREEN, OUTING, PURCHASE, OTHER), each with its label and examples. */
+    val categories: List<MallCategory> = emptyList(),
+    /** The live rewards: by category, each category in the user's order. */
+    val rewards: List<MallReward> = emptyList(),
+    /** Archived rewards, newest first (kept rows; edited and archived on the web). */
+    val archived: List<MallReward> = emptyList(),
+    /** P19: the latest purchases, newest first, each with its undo window (empty while credits are off, and from an older server). */
+    val purchases: List<MallPurchase> = emptyList(),
+    val limits: MallLimits = MallLimits(),
+    val notes: MallNotes = MallNotes(),
+    /** The server records writes (only the live app does). */
+    val writesOn: Boolean = false,
+    /** The Mall's table is there (false before its migration: no rewards, and an add is refused). */
+    val ready: Boolean = true,
+)
+
+/** A good day: the middle of the [earningDays] that earned credits in the last [days] complete life days, in [credits]. */
+@Serializable
+data class MallGoodDay(val credits: Int = 0, val days: Int = 0, val earningDays: Int = 0)
+
+/** A category: its [key], the web's [label] ("Treats") and the Add form's [examples]. */
+@Serializable
+data class MallCategory(val key: String = "", val label: String = "", val examples: String = "")
+
+/**
+ * One reward: [price] whole credits and the web's [priceLine] ("120 cr"), [hint] "≈ 2 good days" or "calibrating", an
+ * optional [note], an optional cooldown ([cooldownDays], the web's [cooldownLine]); [archivedAt] on an archived one.
+ */
+@Serializable
+data class MallReward(
+    val id: String = "",
+    val title: String = "",
+    val category: String = "",
+    val categoryLabel: String = "",
+    val price: Int = 0,
+    val priceLine: String = "",
+    val hint: String = "calibrating",
+    val note: String? = null,
+    val cooldownDays: Int? = null,
+    val cooldownLine: String? = null,
+    val archivedAt: String? = null,
+    /** P19: whether it can be bought now, or the server's line saying why not; null from an older server (no buy). */
+    val buy: MallBuyState? = null,
+)
+
+/** A reward's Buy state (P19): [can] buy it now, else [why] not, in the server's words (it checks it all again at the buy). */
+@Serializable
+data class MallBuyState(val can: Boolean = false, val why: String? = null)
+
+/**
+ * One purchase (docs/mobile-api.md `purchases`; P19): its [id] (what an undo names), the reward's id and [title] as
+ * bought, its [price] and "120 cr", its life [day], the instant and Sydney's "21:05" ([at]), whether it was [refunded],
+ * and until when it can be undone ([undoUntil], ten minutes after it; null once undone or past it), with the web's line.
+ */
+@Serializable
+data class MallPurchase(
+    val id: String = "",
+    val rewardId: String? = null,
+    val title: String = "",
+    val price: Int = 0,
+    val priceLine: String = "",
+    val day: String? = null,
+    val occurredAt: String? = null,
+    val at: String = "",
+    val refunded: Boolean = false,
+    val undoUntil: String? = null,
+    val line: String = "",
+)
+
+/** What the Add form keeps (the server checks them again). */
+@Serializable
+data class MallLimits(
+    val titleMax: Int = 60,
+    val noteMax: Int = 200,
+    val priceMin: Int = 1,
+    val priceMax: Int = 100_000,
+    val cooldownMin: Int = 1,
+    val cooldownMax: Int = 365,
+    val rewardsMax: Int = 60,
+    /** P19: how long a purchase can be undone. */
+    val undoMinutes: Int = 10,
+)
+
+/** The page's honour notes, shown as the server words them. */
+@Serializable
+data class MallNotes(val honour: String = "", val free: String = "", val onlyYours: String = "", val buying: String = "")
+
+/** POST /mall/rewards: the new reward's [id], and the row as GET /mall lists it (null when that read failed). */
+@Serializable
+data class AddRewardResult(val id: String = "", val reward: MallReward? = null)
+
+/**
+ * POST /mall/buy (P19): the [purchase] made (or the one a resend of its clientId already made: [duplicate], delta 0), its
+ * [credits] (the change, −price, and the balance it left), the server's [line], and its Seal among [celebrations].
+ */
+@Serializable
+data class BuyResult(
+    val purchase: MallPurchase? = null,
+    val credits: CreditsChange? = null,
+    val duplicate: Boolean = false,
+    val line: String? = null,
+    val celebrations: List<JsonElement> = emptyList(),
+)
+
+/** POST /mall/undo (P19): the purchase undone, its [credits] back (+price; delta 0 on a repeat, [duplicate]) and the line. */
+@Serializable
+data class UndoBuyResult(
+    val purchaseId: String = "",
+    val credits: CreditsChange? = null,
+    val duplicate: Boolean = false,
+    val line: String? = null,
+)
+
 // ── Tasks and work ──────────────────────────────────────────────────────────
 
 @Serializable
@@ -393,6 +550,8 @@ data class CompleteResult(
     val level: LevelInfo? = null,
     /** The skill this task feeds (P5), as it stands after the tick; null when it feeds none (or from an older server). */
     val competency: TickSkill? = null,
+    /** The tick's credits (P16): the change and the balance; null while credits are off (or from an older server). */
+    val credits: CreditsChange? = null,
 )
 
 /** A tick's skill (P5): its [name], [hoursAfter] and [tier] after the tick, its hours [line]; [tierUp] when this tick played the tier's Seal. */
@@ -460,6 +619,8 @@ data class AnswerResult(
     val quest: Quest? = null,
     val streakSecured: Boolean = false,
     val celebrations: List<JsonElement> = emptyList(),
+    /** The answer's credits (P16): +10 when it completes the review quest; null while credits are off. */
+    val credits: CreditsChange? = null,
 ) {
     val expectedText: String?
         get() = when (val e = expected) {
@@ -488,6 +649,8 @@ data class LogResult(
     val line: String? = null,
     /** Sent back as is to /log/undo. */
     val undo: JsonObject? = null,
+    /** The line's credits (P16): a done-now line that finishes a quest earns its 10; null while credits are off. */
+    val credits: CreditsChange? = null,
 )
 
 // ── Ideas ───────────────────────────────────────────────────────────────────

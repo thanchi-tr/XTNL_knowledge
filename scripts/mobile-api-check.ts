@@ -24,19 +24,28 @@
  *      WON deals only, read only and the same across two reads; P4: the avatar targets, avatar.ts's own views on the
  *      same won deals, null when they can't be read; P5: the skills, competency.ts's own views, and each attribute's
  *      count, null and 0 when they can't be read); /tasks/complete's skill (P5: the template's skill after the tick,
- *      tierUp only with its tier's Seal among the tick's moments, null with none);
+ *      tierUp only with its tier's Seal among the tick's moments, null with none); the credits (P16: /check's
+ *      wallet and a tick's, an answer's and a log's change, null while CREDITS_LAUNCH_DAY is off, read before and
+ *      after the write, never a guessed figure); /mall and /mall/rewards (P18: You › Mall's own read through
+ *      mall-server loadMall over a fake store, the credits null while off, the hints calibrating until a good day,
+ *      P19: each reward's Buy state and the purchases; /mall/buy and /mall/undo through actions/mall's cores, the
+ *      clientId a purchase requires, a resend once, a refusal in the core's words, an undo inside its ten minutes only;
+ *      the rewards in the page's order, the archived kept; an add through actions/mall's core, its rules refused as
+ *      conflict with the core's own line, replayed per clientId, never a starter reward);
  *   3. the wiring: each route file hands its request to its handler with the real deps and exports only its method
- *      and dynamic; mobile-api-cores binds each dep to the web's own core (no refresh); the pure modules import no
- *      core; the web pages' formulas the app mirrors (pinned in their source); the failure lines the codes key on;
+ *      and dynamic; mobile-api-cores binds each dep to the web's own core (no refresh), and mall-mobile-cores the
+ *      Mall's two (the Mall's routes never hold a paying core); the pure modules import no core; the web pages' formulas the app mirrors (pinned in their source); the failure lines the codes key on;
  *   4. the doc: its Endpoints table, the route files and MOBILE_ENDPOINTS list the same routes; every key a reply
  *      carries is in the doc; package.json runs this check.
  */
 import "./_no-model";
 import { randomUUID } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { QuestionType } from "@prisma/client";
-import { addDays, weekKeyOf, type DayKey } from "../src/lib/life-day";
+import { addDays, todayKey, weekKeyOf, type DayKey } from "../src/lib/life-day";
+import { CREDITS_LAUNCH_DAY, CREDITS_LAUNCH_DAY_ENV, type CreditsWallet } from "../src/lib/credits";
 import { normTitleOf } from "../src/lib/life-lexicon";
 import { parseRule } from "../src/lib/recurrence";
 import { buildBoard, statsFor, type BoardData, type BoardInstance, type BoardTemplate, type DayLedger, type PaidRecord } from "../src/lib/today-board";
@@ -73,6 +82,10 @@ import { capitalPanelOf, statusPanelOf, type CapitalDeal } from "../src/lib/stat
 import { EMPTY_AVATAR, NO_FACTS, avatarTargetsOf, type AvatarTargetRow, type AvatarView } from "../src/lib/avatar";
 import { NO_SKILL_FACTS, skillSealKey, skillsOf, type SkillRow, type SkillTemplate, type SkillTick, type SkillView } from "../src/lib/competency";
 import { loadSkills, type SkillStore } from "../src/lib/competency-server";
+import { BUY_CREDITS_OFF, FREE_PLAY_LINE, FREE_REST_LINE, MALL_BUYING, MALL_CATEGORIES, PRICE_RANGE_LINE, PURCHASE_GONE, REWARD_GONE, UNDO_TOO_LATE, buyRowKey, goodDayLine, type MallRewardRow, type PurchaseRow, type RewardInput } from "../src/lib/mall";
+import { addRewardCore, buyRewardCore, loadMall, undoBuyCore, type MallStore, type MallView, type PurchaseStore } from "../src/lib/mall-server";
+import { BUY_NEEDS_CLIENT_ID } from "../src/lib/mobile-api";
+import type { WalletDays } from "../src/lib/credits-server";
 import {
   AUTH_LINE,
   CODE_STATUS,
@@ -131,6 +144,10 @@ import {
   handleIdeasMeta,
   handleLog,
   handleLogUndo,
+  handleMall,
+  handleMallBuy,
+  handleMallRewards,
+  handleMallUndo,
   handleQuests,
   handleReviewAnswer,
   handleReviewQueue,
@@ -140,6 +157,7 @@ import {
   handleWorkDone,
   handleWorkReopen,
   type MobileDeps,
+  type MobileMallDeps,
 } from "../src/lib/mobile-api-server";
 
 let passed = 0;
@@ -165,6 +183,40 @@ const code = (f: string) =>
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
 const keysOf = (o: unknown) => Object.keys((o ?? {}) as object).sort();
+/** A live wallet (blueprint P16), as credits-server loadWallet answers once CREDITS_LAUNCH_DAY is in force. */
+const liveWallet = (balance: number, today: number): CreditsWallet => ({
+  live: true,
+  day: "2026-10-21",
+  launchDay: "2026-10-19",
+  balance,
+  today,
+  earned: balance,
+  spent: 0,
+  refunded: 0,
+  byKind: { QUEST: today, THREE_OF_THREE: 0, KEPT_WEEK: balance - today, PLAN_WEEK: 0, CHECKPOINT: 0, MILESTONE: 0, GOAL: 0 },
+});
+/**
+ * A wallet whose balance steps from `before` to `after` once `step()` has been called (the write), logging each read:
+ * `load` is the cached loadWallet ("wallet"), `read` the fresh readWallet a write's after-read uses ("fresh wallet").
+ */
+function steppingWallet(before: number, after: number, order: string[]) {
+  let stepped = false;
+  const now = () => (stepped ? liveWallet(after, after - before) : liveWallet(before, 0));
+  return {
+    step: () => {
+      stepped = true;
+      order.push("write");
+    },
+    load: async () => {
+      order.push("wallet");
+      return now();
+    },
+    read: async () => {
+      order.push("fresh wallet");
+      return now();
+    },
+  };
+}
 
 // ── Fixtures ──────────────────────────────────────────────────────────────
 
@@ -597,6 +649,9 @@ function fakes(over: Partial<MobileDeps> = {}): { deps: MobileDeps; calls: Calls
     loadWork: async () => WORK,
     loadGraceExtra: async () => 0,
     loadWeekAudit: async () => null,
+    // As credits-server loadWallet and readWallet answer while CREDITS_LAUNCH_DAY is null: {live: false}, no read.
+    loadWallet: async (_userId, now) => ({ live: false, day: todayKey(now) }),
+    readWallet: async (_userId, now) => ({ live: false, day: todayKey(now) }),
     recordDayOpen: async () => {},
     autoCompleteStudyTasks: async () => 0,
     maybeMaintainLife: async () => {},
@@ -797,10 +852,10 @@ async function routes() {
     const d = data(g);
     collectKeys(d);
     check("200, ok, no-store", g.status === 200 && g.json.ok === true && g.noStore);
-    eq("the documented keys", keysOf(d), ["auditOn", "daily", "day", "dayLabel", "fading", "level", "now", "review", "streak", "tasks", "tasksSummary", "week", "work"]);
+    eq("the documented keys", keysOf(d), ["auditOn", "credits", "daily", "day", "dayLabel", "fading", "level", "now", "review", "streak", "tasks", "tasksSummary", "week", "work"]);
     check("now is the server's clock; day the life day; dayLabel 'Wed 21 Oct'", d.now === NOW.toISOString() && d.day === TODAY && d.dayLabel === "Wed 21 Oct");
     check(
-      "one wave: the board (personal: three arguments), the tree, the day's counts, streak, shell, work, the grace extension and the week audit, read once each",
+      "one wave: the board (personal: three arguments), the tree, the day's counts, streak, shell, work, the grace extension, the week audit and the credits wallet (P16), read once each",
       calls.loadBoard?.length === 1 &&
         same(calls.loadBoard[0].slice(0, 2), ["u1", TODAY]) &&
         calls.loadBoard[0].length === 3 &&
@@ -810,8 +865,21 @@ async function routes() {
         calls.loadShell?.length === 1 &&
         calls.loadWork?.length === 1 &&
         same(calls.loadGraceExtra, [["u1"]]) &&
-        same(calls.loadWeekAudit, [["u1", NOW]])
+        same(calls.loadWeekAudit, [["u1", NOW]]) &&
+        same(calls.loadWallet, [["u1", NOW]])
     );
+
+    // Blueprint P16 (4.1, 4.2; D27 to D29): the credits wallet. Off as shipped: the wallet answers {live: false} and the
+    // phone hides its chip.
+    check(
+      "credits: null while credits are off (CREDITS_LAUNCH_DAY is null, no override; the wallet answers {live: false})",
+      d.credits === null && CREDITS_LAUNCH_DAY === null && process.env[CREDITS_LAUNCH_DAY_ENV] === undefined
+    );
+    const cr = data(await got(handleCheck(get("/check"), fakes({ loadWallet: async () => liveWallet(120, 40) }).deps))).credits as Record<string, unknown>;
+    collectKeys(cr);
+    eq("credits: the documented keys, the wallet's balance and what today earned (whole credits)", [keysOf(cr), cr], [["balance", "today"], { balance: 120, today: 40 }]);
+    const noWallet = await got(handleCheck(get("/check"), fakes({ loadWallet: async () => Promise.reject(new Error("wallet exploded")) }).deps));
+    check("credits: a failed wallet read reads as none (the check still answers, no message)", noWallet.status === 200 && data(noWallet).credits === null && !/exploded/.test(noWallet.raw));
 
     // The board, as the web board builds and draws it.
     const board = buildBoard(DATA, [], NOW.getTime());
@@ -1036,7 +1104,46 @@ async function routes() {
     const g = await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1" }), deps));
     const d = data(g);
     collectKeys(d);
-    eq("the documented keys", keysOf(d), ["allDone", "celebrations", "competency", "instanceId", "level", "line", "xp"]);
+    eq("the documented keys", keysOf(d), ["allDone", "celebrations", "competency", "credits", "instanceId", "level", "line", "xp"]);
+    check("credits (P16): null while credits are off, the wallet read once (before the tick) and not again", d.credits === null && same(calls.loadWallet, [["u1", NOW]]) && calls.readWallet === undefined);
+    {
+      const order: string[] = [];
+      const w = steppingWallet(40, 50, order);
+      const live = fakes({ loadWallet: w.load, readWallet: w.read, completeTask: async () => (w.step(), { ok: true, value: completion() }) });
+      const lc = data(await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1" }), live.deps)));
+      collectKeys(lc);
+      eq(
+        "credits (P16): once credits count, what the tick earned and the wallet after it: read before the tick (cached), then fresh after it (uncached readWallet), so balance and today hold the tick",
+        [keysOf(lc.credits), lc.credits, order, live.calls.readWallet],
+        [["balance", "delta", "today"], { delta: 10, balance: 50, today: 10 }, ["wallet", "write", "fresh wallet"], [["u1", NOW]]]
+      );
+      const flat = steppingWallet(40, 40, []);
+      check("credits (P16): a tick that finishes nothing changes nothing (delta 0)", same(data(await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1" }), fakes({ loadWallet: flat.load, readWallet: flat.read, completeTask: async () => (flat.step(), { ok: true, value: completion() }) }).deps))).credits, { delta: 0, balance: 40, today: 0 }));
+      // The review of 2026-10-24: the phone sets its chip from balance and today, and delta is what was earned across
+      // the write. A purchase on the web between the two reads (−20) never counts in it, and the chip's figures are the
+      // wallet's own after the write; a second tick landing between them counts (it is the change, never a receipt).
+      const spentMeanwhile = fakes({
+        loadWallet: async () => liveWallet(40, 0),
+        readWallet: async () => ({ ...liveWallet(30, 10), earned: 50, spent: 20 }),
+      });
+      const both = fakes({ loadWallet: async () => liveWallet(185, 0), readWallet: async () => liveWallet(205, 20) });
+      check(
+        "credits (P16): delta is earned after less earned before (a purchase meanwhile never makes it negative), balance and today the fresh wallet's; a second tick meanwhile counts in delta",
+        same(data(await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1" }), spentMeanwhile.deps))).credits, { delta: 10, balance: 30, today: 10 }) &&
+          same(data(await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1" }), both.deps))).credits, { delta: 20, balance: 205, today: 20 })
+      );
+      const afterFails = fakes({ loadWallet: async () => liveWallet(40, 0), readWallet: async () => Promise.reject(new Error("w")) });
+      const af = await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1" }), afterFails.deps));
+      const beforeFails = fakes({ loadWallet: async () => Promise.reject(new Error("w")) });
+      const bf = await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1" }), beforeFails.deps));
+      check(
+        "credits (P16): a failed wallet read, before or after, is credits null and never a failed tick; with none before, none is read after",
+        af.status === 200 && data(af).credits === null && bf.status === 200 && data(bf).credits === null && beforeFails.calls.loadWallet?.length === 1 && beforeFails.calls.readWallet === undefined && same(beforeFails.calls.completeTask, [["hab1", {}]])
+      );
+      const refused = fakes({ loadWallet: async () => liveWallet(40, 0), completeTask: async () => ({ ok: false, error: "Too late." }) });
+      await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1" }), refused.deps));
+      check("credits (P16): a refused tick reads the wallet once (before) and not after", refused.calls.loadWallet?.length === 1 && refused.calls.readWallet === undefined);
+    }
     check("a task that feeds no skill: competency null, read once for the ticked template (P5)", d.competency === null && same(calls.loadTemplateSkill, [["u1", "hab1"]]));
     check("the character's level after the tick, as /check's", same(d.level, { level: 7, title: "Novice", progress: 0.75 }) && calls.loadShell?.length === 1 && same(calls.loadShell[0], ["u1"]));
     check("it calls completeTask(templateId, {}) — the board's tick", same(calls.completeTask, [["hab1", {}]]));
@@ -1177,7 +1284,15 @@ async function routes() {
     const g = await got(handleReviewAnswer(post("/review/answer", { ideaId: "idea1", answer: "Acidic", combo: 3 }), deps));
     const d = data(g);
     collectKeys(d);
-    eq("the documented keys", keysOf(d), ["celebrations", "comboNext", "correct", "expected", "explanation", "judged", "levelFrom", "levelTo", "multiplier", "nextDueDay", "quest", "retry", "streakSecured", "trueFact", "xp"]);
+    eq("the documented keys", keysOf(d), ["celebrations", "comboNext", "correct", "credits", "expected", "explanation", "judged", "levelFrom", "levelTo", "multiplier", "nextDueDay", "quest", "retry", "streakSecured", "trueFact", "xp"]);
+    check("credits (P16): null while credits are off, the wallet read once (before the answer) and not again", d.credits === null && same(calls.loadWallet, [["u1", NOW]]) && calls.readWallet === undefined);
+    {
+      const order: string[] = [];
+      const w = steppingWallet(40, 50, order);
+      const live = fakes({ loadWallet: w.load, readWallet: w.read, submitReview: async () => (w.step(), reviewResult()) });
+      const la = data(await got(handleReviewAnswer(post("/review/answer", { ideaId: "idea1", answer: "Acidic" }), live.deps)));
+      eq("credits (P16): an answer that completes the review quest earns its credits: read before the answer, then fresh after it", [la.credits, order], [{ delta: 10, balance: 50, today: 10 }, ["wallet", "write", "fresh wallet"]]);
+    }
     check("it calls submitReview({ideaId, userAnswer, combo}) — the runner's own call — and reads the level beside it", same(calls.submitReview, [[{ ideaId: "idea1", userAnswer: "Acidic", combo: 3 }]]) && same(calls.ideaLevel, [["idea1"]]));
     check("a pass: review points, the next combo and its multiplier, the levels, the true fact's line, the quest", d.xp === 4.2 && d.comboNext === 4 && d.multiplier === 1.2 && d.levelFrom === 3 && d.levelTo === 4 && d.trueFact === "Recalled after 3 days" && same(d.quest, { done: 5, target: 20 }) && d.retry === false && d.nextDueDay === "2026-10-29");
     await got(handleReviewAnswer(post("/review/answer", { ideaId: "idea4", answer: ["acid", "base"] }), deps));
@@ -1263,7 +1378,15 @@ async function routes() {
     const g = await got(handleLog(post("/log", { text: "gym legs 60m every mon,thu !", section: "task" }), deps));
     const d = data(g);
     collectKeys(d);
-    eq("the documented keys", keysOf(d), ["id", "kind", "line", "title", "undo"]);
+    eq("the documented keys", keysOf(d), ["credits", "id", "kind", "line", "title", "undo"]);
+    check("credits (P16): null while credits are off, the wallet read once (before the save) and not again", d.credits === null && same(calls.loadWallet, [["u1", NOW]]) && calls.readWallet === undefined);
+    {
+      const order: string[] = [];
+      const w = steppingWallet(40, 50, order);
+      const live = fakes({ loadWallet: w.load, readWallet: w.read, createFromCapture: async (text) => (w.step(), { ok: true, value: capturedItem({ title: text }) }) });
+      const ll = data(await got(handleLog(post("/log", { text: "x gym legs", section: "task" }), live.deps)));
+      eq("credits (P16): a done-now line that finishes a quest earns its credits: read before the save, then fresh after it", [ll.credits, order], [{ delta: 10, balance: 50, today: 10 }, ["wallet", "write", "fresh wallet"]]);
+    }
     check("task: the line as typed through createFromCapture, no capture key without a clientId", same(calls.createFromCapture, [["gym legs 60m every mon,thu !", undefined]]));
     const item = capturedItem({ title: "gym legs 60m every mon,thu !" });
     const copy = toastCopy(item, { notMust: false });
@@ -1708,6 +1831,341 @@ async function routes() {
     check("an unknown query parameter is bad", isFail(await got(handleStatus(get("/status?track=BODY"), fakes().deps)), "bad"));
     check("behind the token like every route", isFail(await got(handleStatus(get("/status"), fakes({ token: () => TOKEN }).deps)), "auth"));
   }
+
+  await mallRoutes();
+}
+
+// ── GET /mall, POST /mall/rewards (blueprint P18; D30) ───────────────────────
+
+/** A reward row as mall-server reads it. */
+const mallRow = (id: string, over: Partial<MallRewardRow> = {}): MallRewardRow => ({ id, title: id, category: "TREAT", price: 120, note: null, cooldownDays: null, sortOrder: 0, createdAt: "2026-10-01T00:00:00.000Z", archivedAt: null, ...over });
+const MALL_LIVE: MallRewardRow[] = [
+  mallRow("rw-film", { title: "Film night", category: "SCREEN", price: 60, sortOrder: 1 }),
+  mallRow("rw-thai", { title: "Takeaway night", category: "TREAT", price: 120, note: "From the Thai place", cooldownDays: 7, sortOrder: 0 }),
+  mallRow("rw-gig", { title: "A gig", category: "OUTING", price: 400, sortOrder: 2 }),
+];
+const MALL_ARCHIVED: MallRewardRow[] = [mallRow("rw-old", { title: "Old game", category: "SCREEN", price: 30, archivedAt: "2026-10-20T03:00:00.000Z" })];
+/** A fake catalog: reads answer the rows; a write is logged (and nothing is ever listed for the user). */
+function mallStore(log: string[] = []): MallStore {
+  return {
+    live: async () => MALL_LIVE,
+    archived: async () => MALL_ARCHIVED,
+    byId: async (_u, id) => [...MALL_LIVE, ...MALL_ARCHIVED].find((r) => r.id === id) ?? null,
+    insert: async (_u, d) => (log.push(`insert ${d.title}`), "rw-new"),
+    update: async () => (log.push("update"), 1),
+    archive: async () => (log.push("archive"), 1),
+    playTitles: async () => [normTitleOf("Guitar")],
+  };
+}
+/** Credits counted since 1 September: each of the 28 days before today earned 40, so a good day is 40. */
+const MALL_DAYS: WalletDays = {
+  wallet: { ...liveWallet(1240, 40), launchDay: "2026-09-01" } as CreditsWallet,
+  days: Array.from({ length: 28 }, (_, i) => ({ day: addDays(TODAY, -28 + i), earned: 40 })),
+};
+const WRITES_ON = { NODE_ENV: "production" };
+const mallView = (wallet: (u: string, now: Date) => Promise<WalletDays>, log?: string[]): Promise<MallView> => loadMall("u1", { store: mallStore(log), wallet, now: () => NOW, env: WRITES_ON });
+const offDays = async (_u: string, now: Date): Promise<WalletDays> => ({ wallet: { live: false, day: todayKey(now) }, days: [] });
+
+/** A purchase as mall.ts lists it (P19): Takeaway night at 21:05 Sydney, undoable until 21:15. */
+const FAKE_PURCHASE = {
+  id: "ev-thai",
+  rewardId: "rw-thai",
+  title: "Takeaway night",
+  price: 120,
+  priceLine: "120 cr",
+  day: TODAY,
+  occurredAt: "2026-10-21T10:05:00.000Z",
+  at: "21:05",
+  refunded: false,
+  undoUntilMs: Date.parse("2026-10-21T10:15:00.000Z"),
+  undoUntilAt: "21:15",
+  line: "Bought Wed 21 Oct at 21:05",
+};
+/** The purchase's Seal (celebration-detect detectMall), as the action's moments return it. */
+const MALL_SEAL = { id: "cel-1", tier: 2, kind: "mall-buy", facts: { eyebrow: "Mall", title: "Takeaway night bought", numeral: { from: null, to: 120 } }, what: [{ label: "Takeaway night", value: "120 cr" }] } as unknown as CelebrationEvent;
+
+function mallFakes(over: Partial<MobileMallDeps> = {}, view?: MallView): { deps: MobileMallDeps; calls: Calls } {
+  const calls: Calls = {};
+  const spy =
+    <A extends unknown[], R>(name: string, fn: (...a: A) => R) =>
+    (...a: A): R => {
+      (calls[name] ??= []).push(a);
+      return fn(...a);
+    };
+  const base: MobileMallDeps = {
+    token: () => undefined,
+    userId: () => "u1",
+    now: () => NOW,
+    loadMall: async () => view ?? (await mallView(offDays)),
+    addReward: async () => ({ ok: true, value: { id: "rw-gig" } }),
+    buyReward: async () => ({ ok: true, value: { purchase: FAKE_PURCHASE, balance: 1120, delta: -120, duplicate: false, celebrations: [MALL_SEAL] } }),
+    undoBuy: async () => ({ ok: true, value: { purchaseId: "ev-thai", title: "Takeaway night", price: 120, balance: 1240, delta: 120, duplicate: false } }),
+  };
+  const merged = { ...base, ...over } as MobileMallDeps;
+  const deps = Object.fromEntries(Object.entries(merged).map(([k, fn]) => [k, spy(k, fn as (...a: unknown[]) => unknown)])) as unknown as MobileMallDeps;
+  return { deps, calls };
+}
+
+async function mallRoutes() {
+  section("GET /mall (blueprint P18)");
+  {
+    type Reward = { id: string; title: string; category: string; categoryLabel: string; price: number; priceLine: string; hint: string; note: string | null; cooldownDays: number | null; cooldownLine: string | null; archivedAt?: string | null };
+    const off = mallFakes();
+    const g = await got(handleMall(get("/mall"), off.deps));
+    const d = data(g);
+    collectKeys(d);
+    check("200, ok, no-store", g.status === 200 && g.json.ok === true && g.noStore);
+    eq("the documented keys", keysOf(d), ["archived", "categories", "credits", "creditsLine", "day", "goodDay", "hintLine", "limits", "notes", "now", "purchases", "ready", "rewards", "writesOn"]);
+    check("read once for the user at the server's clock; nothing written", same(off.calls.loadMall, [["u1", NOW]]) && off.calls.addReward === undefined);
+    check(
+      "credits off (as shipped: CREDITS_LAUNCH_DAY null): credits null, the header says they aren't counted yet, no good day, every hint 'calibrating'",
+      CREDITS_LAUNCH_DAY === null && d.credits === null && d.creditsLine === "Credits aren't counted yet: they start at none on the day they are switched on." && d.goodDay === null &&
+        d.hintLine === goodDayLine({ calibrating: true, days: 0 }, false) && (d.rewards as Reward[]).every((r) => r.hint === "calibrating")
+    );
+    const rewards = d.rewards as Reward[];
+    eq("the live rewards in the page's order: by category (Treats, Screen time, Outings …), each in the user's order", rewards.map((r) => [r.id, r.category]), [["rw-thai", "TREAT"], ["rw-film", "SCREEN"], ["rw-gig", "OUTING"]]);
+    eq("a reward's keys", keysOf(rewards[0]), ["buy", "category", "categoryLabel", "cooldownDays", "cooldownLine", "hint", "id", "note", "price", "priceLine", "title"]);
+    check(
+      "P19, credits off (as shipped): no reward can be bought, each says why in the server's words, and no purchase is listed (none is read)",
+      (rewards as unknown as { buy: { can: boolean; why: string | null } }[]).every((r) => r.buy.can === false && r.buy.why === BUY_CREDITS_OFF) && same(d.purchases, [])
+    );
+    eq(
+      "a reward is mall.ts's own view: '120 cr', its note and cooldown in the web's words",
+      [rewards[0].title, rewards[0].categoryLabel, rewards[0].price, rewards[0].priceLine, rewards[0].note, rewards[0].cooldownDays, rewards[0].cooldownLine],
+      ["Takeaway night", "Treats", 120, "120 cr", "From the Thai place", 7, "at most once every 7 days"]
+    );
+    const archived = d.archived as Reward[];
+    check("the archived are kept and listed with their archivedAt", archived.length === 1 && archived[0].id === "rw-old" && archived[0].archivedAt === "2026-10-20T03:00:00.000Z" && keysOf(archived[0]).includes("archivedAt"));
+    eq("the categories in the page's order", (d.categories as { key: string }[]).map((c) => c.key), [...MALL_CATEGORIES]);
+    eq("the limits the Add form keeps, and the undo's ten minutes (P19)", d.limits, { titleMax: 60, noteMax: 200, priceMin: 1, priceMax: 100000, cooldownMin: 1, cooldownMax: 365, rewardsMax: 60, undoMinutes: 10 });
+    check("the notes: it runs on honour, #play, rest days and sleep stay free, only what the user lists, and (P19) a purchase is permission now, no overdraft, undo for 10 minutes", (() => {
+      const n = d.notes as Record<string, string>;
+      return /runs on honour/.test(n.honour) && /#play, rest days and sleep are never priced/.test(n.free) && /Only the rewards you list are priced/.test(n.onlyYours) && n.buying === MALL_BUYING && /permission now/.test(n.buying) && /can't spend more than you have/.test(n.buying) && /undone for 10 minutes/.test(n.buying);
+    })());
+    check("writesOn and ready are the read's", d.writesOn === true && d.ready === true);
+
+    const liveRead = await mallView(async () => MALL_DAYS);
+    const lv = data(await got(handleMall(get("/mall"), mallFakes({}, liveRead).deps)));
+    collectKeys(lv);
+    check("credits live: /check's shape (balance, today), the header's '+40 cr today'", same(lv.credits, { balance: 1240, today: 40 }) && lv.creditsLine === "+40 cr today");
+    check("the good day: the middle of the days that earned credits in the last 28 (40 cr, 28 of 28)", same(lv.goodDay, { credits: 40, days: 28, earningDays: 28 }) && lv.hintLine === "A good day is 40 cr: the middle of the 28 days that earned credits in the last 28.");
+    eq("each hint divides by the good day: 120 ≈ 3, 60 ≈ 2, 400 ≈ 10 good days", (lv.rewards as Reward[]).map((r) => [r.id, r.hint]), [["rw-thai", "≈ 3 good days"], ["rw-film", "≈ 2 good days"], ["rw-gig", "≈ 10 good days"]]);
+    const walletDown = await mallView(async () => Promise.reject(new Error("wallet exploded")));
+    const wd = data(await got(handleMall(get("/mall"), mallFakes({}, walletDown).deps)));
+    check("a failed wallet read is the credits alone: credits null, the header says it couldn't be read, no hint line, the rewards still answer", wd.credits === null && wd.creditsLine === "Your credits couldn't be read just now." && wd.hintLine === null && (wd.rewards as Reward[]).length === 3);
+    const empty = await loadMall("u1", { store: { ...mallStore(), live: async () => [], archived: async () => [] }, wallet: offDays, now: () => NOW, env: WRITES_ON });
+    const ed = data(await got(handleMall(get("/mall"), mallFakes({}, empty).deps)));
+    check("no starter rewards: an empty catalog answers no reward at all (nothing is listed for the user)", same(ed.rewards, []) && same(ed.archived, []));
+    const failing = await got(handleMall(get("/mall"), mallFakes({ loadMall: async () => Promise.reject(new Error("catalog exploded")) }).deps));
+    check("a failed catalog read fails the reply (server, no message): the app keeps its last copy", isFail(failing, "server") && !/exploded/.test(failing.raw));
+    check("an unknown query parameter is bad", isFail(await got(handleMall(get("/mall?all=1"), mallFakes().deps)), "bad"));
+    check("behind the token like every route", isFail(await got(handleMall(get("/mall"), mallFakes({ token: () => TOKEN }).deps)), "auth"));
+  }
+
+  section("POST /mall/rewards (blueprint P18)");
+  {
+    const body = { title: "A gig", category: "OUTING", price: 400 };
+    const ok = mallFakes();
+    const r = await got(handleMallRewards(post("/mall/rewards", body), ok.deps));
+    const d = data(r);
+    collectKeys(d);
+    check("200, ok, no-store", r.status === 200 && r.json.ok === true && r.noStore);
+    eq("the documented keys", keysOf(d), ["id", "reward"]);
+    check("the add is the web's addReward, with the Add form's fields (note and cooldown absent as null)", same(ok.calls.addReward, [[{ title: "A gig", category: "OUTING", price: 400, note: null, cooldownDays: null }]]));
+    check("then the Mall is read again for the new row as GET /mall lists it", same(ok.calls.loadMall, [["u1", NOW]]) && d.id === "rw-gig" && (d.reward as Record<string, unknown>).priceLine === "400 cr");
+    const full = mallFakes();
+    await got(handleMallRewards(post("/mall/rewards", { ...body, note: "Front row", cooldownDays: 30 }), full.deps));
+    check("a note and a cooldown pass through as sent", same(full.calls.addReward, [[{ title: "A gig", category: "OUTING", price: 400, note: "Front row", cooldownDays: 30 }]]));
+    const readFails = await got(handleMallRewards(post("/mall/rewards", body), mallFakes({ loadMall: async () => Promise.reject(new Error("read exploded")) }).deps));
+    check("a failed read after the add: the add stands, reward null, 200, no message", readFails.status === 200 && data(readFails).id === "rw-gig" && data(readFails).reward === null && !/exploded/.test(readFails.raw));
+
+    const mistyped: [string, Record<string, unknown>][] = [
+      ["a price sent as text", { ...body, price: "400" }],
+      ["a price with a fraction", { ...body, price: 1.5 }],
+      ["a category the Mall doesn't have", { ...body, category: "FOOD" }],
+      ["no title", { category: "OUTING", price: 400 }],
+      ["a title past 60 characters", { ...body, title: "x".repeat(61) }],
+      ["a note past 200 characters", { ...body, note: "n".repeat(201) }],
+      ["a cooldown sent as text", { ...body, cooldownDays: "7" }],
+      ["a field it doesn't list (no buy here)", { ...body, buy: true }],
+    ];
+    const notBad: string[] = [];
+    for (const [name, b] of mistyped) {
+      const f = mallFakes();
+      const res = await got(handleMallRewards(post("/mall/rewards", b), f.deps));
+      if (!isFail(res, "bad") || f.calls.addReward !== undefined) notBad.push(name);
+    }
+    check(`a mistyped body is bad and adds nothing (${mistyped.length} cases)`, notBad.length === 0, notBad.join(", "));
+    const refused = await got(handleMallRewards(post("/mall/rewards", body), mallFakes({ addReward: async () => ({ ok: false, error: FREE_REST_LINE }) }).deps));
+    check("a rule's refusal is conflict with the core's own line", isFail(refused, "conflict") && refused.json.error === FREE_REST_LINE);
+    const thrown = await got(handleMallRewards(post("/mall/rewards", body), mallFakes({ addReward: async () => ({ ok: false, error: "Couldn't save that. Try again." }) }).deps));
+    check("the core's couldn't-save line is server", isFail(thrown, "server"));
+
+    const replay = mallFakes();
+    const cid = randomUUID();
+    const first = await got(handleMallRewards(post("/mall/rewards", { ...body, clientId: cid }), replay.deps));
+    const again = await got(handleMallRewards(post("/mall/rewards", { ...body, clientId: cid }), replay.deps));
+    const other = await got(handleMallRewards(post("/mall/rewards", { ...body, price: 401, clientId: cid }), replay.deps));
+    check("a resend with the same clientId replays (one add); a different body with it is conflict", first.raw === again.raw && replay.calls.addReward?.length === 1 && isFail(other, "conflict") && other.json.error === REPLAY_MISMATCH_LINE);
+    check("behind the token like every route", isFail(await got(handleMallRewards(post("/mall/rewards", body), mallFakes({ token: () => TOKEN }).deps)), "auth"));
+
+    // Bound end to end: the real add (mall-server addRewardCore) over the fake catalog, as actions/mall calls it.
+    const log: string[] = [];
+    const bound = (input: RewardInput) => addRewardCore("u1", input, { store: mallStore(log), env: WRITES_ON });
+    const rule = async (b: Record<string, unknown>) => got(handleMallRewards(post("/mall/rewards", b), mallFakes({ addReward: bound }).deps));
+    // A title not yet listed, so each case meets the rule it names first.
+    const fresh = { title: "Concert tickets", category: "OUTING", price: 400 };
+    const [zero, over, sleep, play, board, dup] = await Promise.all([
+      rule({ ...fresh, price: 0 }),
+      rule({ ...fresh, price: 100001 }),
+      rule({ ...fresh, title: "Sleep in" }),
+      rule({ ...fresh, title: "#play guitar" }),
+      rule({ ...fresh, title: "Guitar" }),
+      rule({ ...fresh, title: "takeaway NIGHT" }),
+    ]);
+    check(
+      "through the real core: a price of 0 or 100001 is refused (conflict, its line), and so are sleep, #play, a #play task on the board and a title already listed; nothing is inserted",
+      [zero, over].every((x) => isFail(x, "conflict") && x.json.error === PRICE_RANGE_LINE) &&
+        isFail(sleep, "conflict") && sleep.json.error === FREE_REST_LINE &&
+        isFail(play, "conflict") && play.json.error === FREE_PLAY_LINE &&
+        isFail(board, "conflict") && /is #play on your board/.test(board.json.error ?? "") &&
+        isFail(dup, "conflict") && /You already list/.test(dup.json.error ?? "") &&
+        log.length === 0,
+      log.join(", ")
+    );
+    const made = await rule({ ...fresh, title: "A night out", price: 1 });
+    check("…and a reward that keeps the rules is inserted once (price 1, the least)", made.status === 200 && same(log, ["insert A night out"]));
+  }
+
+  await mallBuyRoutes();
+}
+
+// ── POST /mall/buy, POST /mall/undo (blueprint P19; D31, D32) ──────────────────
+
+/** A fake ledger of the Mall's rows: a commit appends a row (its guard and its key held as Postgres holds them). */
+function purchaseLedger(rows: PurchaseRow[] = []): PurchaseStore & { rows_: PurchaseRow[] } {
+  const store = {
+    rows_: rows,
+    rows: async () => [...store.rows_],
+    commit: async (_u: string, w: Parameters<PurchaseStore["commit"]>[1]) => {
+      if (w.guardCount != null && w.guardCount !== store.rows_.length) throw new Error("division by zero");
+      if (store.rows_.some((r) => r.dedupeKey === w.event.dedupeKey)) throw new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" });
+      const id = `ev-${store.rows_.length + 1}`;
+      store.rows_.push({ id, source: w.event.source, day: w.event.day, occurredAt: w.event.occurredAt.toISOString(), qty: w.event.qty, sourceId: w.event.sourceId, dedupeKey: w.event.dedupeKey, receipt: w.event.receipt });
+      return id;
+    },
+  };
+  return store;
+}
+
+async function mallBuyRoutes() {
+  section("POST /mall/buy (blueprint P19)");
+  {
+    const cid = randomUUID();
+    const ok = mallFakes();
+    const r = await got(handleMallBuy(post("/mall/buy", { rewardId: "rw-thai", clientId: cid }), ok.deps));
+    const d = data(r);
+    collectKeys(d);
+    check("200, ok, no-store", r.status === 200 && r.json.ok === true && r.noStore);
+    eq("the documented keys", keysOf(d), ["celebrations", "credits", "duplicate", "line", "purchase"]);
+    eq("the purchase's keys (GET /mall's purchases)", keysOf(d.purchase as Record<string, unknown>), ["at", "day", "id", "line", "occurredAt", "price", "priceLine", "refunded", "rewardId", "title", "undoUntil"]);
+    check(
+      "the buy is actions/mall buyReward with the reward and the clientId; credits are its own change and the balance it left; the line is the web's; the Seal rides along",
+      same(ok.calls.buyReward, [["rw-thai", cid.toLowerCase()]]) && same(d.credits, { delta: -120, balance: 1120 }) && d.duplicate === false &&
+        d.line === "Takeaway night bought for 120 cr · 1,120 cr left." && (d.purchase as Record<string, unknown>).undoUntil === "2026-10-21T10:15:00.000Z" &&
+        same(d.celebrations, [{ tier: 2, kind: "mall-buy", title: "Takeaway night bought" }])
+    );
+    const noId = mallFakes();
+    const missing = await got(handleMallBuy(post("/mall/buy", { rewardId: "rw-thai" }), noId.deps));
+    check("a purchase without a clientId is bad (it is the purchase's key), and nothing is bought", isFail(missing, "bad") && missing.json.error === BUY_NEEDS_CLIENT_ID && noId.calls.buyReward === undefined);
+    const mistyped: [string, Record<string, unknown>][] = [
+      ["no reward", { clientId: randomUUID() }],
+      ["a reward id that isn't one", { rewardId: "../x", clientId: randomUUID() }],
+      ["a clientId that isn't a UUID", { rewardId: "rw-thai", clientId: "abc" }],
+      ["an unknown field", { rewardId: "rw-thai", clientId: randomUUID(), price: 1 }],
+    ];
+    const notBad: string[] = [];
+    for (const [name, b] of mistyped) {
+      const fk = mallFakes();
+      const res = await got(handleMallBuy(post("/mall/buy", b), fk.deps));
+      if (!isFail(res, "bad") || fk.calls.buyReward !== undefined) notBad.push(name);
+    }
+    check(`a mistyped body is bad and buys nothing (${mistyped.length} cases; a price can never be sent: the server's is the price)`, notBad.length === 0, notBad.join(", "));
+    const refused = await got(handleMallBuy(post("/mall/buy", { rewardId: "rw-thai", clientId: randomUUID() }), mallFakes({ buyReward: async () => ({ ok: false, error: "Takeaway night costs 120 cr; you have 80 cr (40 cr short)." }) }).deps));
+    check("a refusal is conflict with the core's own line (no overdraft)", isFail(refused, "conflict") && /40 cr short/.test(refused.json.error ?? ""));
+    const gone = await got(handleMallBuy(post("/mall/buy", { rewardId: "rw-old", clientId: randomUUID() }), mallFakes({ buyReward: async () => ({ ok: false, error: REWARD_GONE }) }).deps));
+    check("a reward archived or not there is gone", isFail(gone, "gone") && gone.json.error === REWARD_GONE);
+    const replay = mallFakes();
+    const rid = randomUUID();
+    const first = await got(handleMallBuy(post("/mall/buy", { rewardId: "rw-thai", clientId: rid }), replay.deps));
+    const again = await got(handleMallBuy(post("/mall/buy", { rewardId: "rw-thai", clientId: rid }), replay.deps));
+    const other = await got(handleMallBuy(post("/mall/buy", { rewardId: "rw-film", clientId: rid }), replay.deps));
+    check("a resend with the same clientId replays here (one buy); another reward with it is conflict", first.raw === again.raw && replay.calls.buyReward?.length === 1 && isFail(other, "conflict"));
+    check("behind the token like every route", isFail(await got(handleMallBuy(post("/mall/buy", { rewardId: "rw-thai", clientId: randomUUID() }), mallFakes({ token: () => TOKEN }).deps)), "auth"));
+
+    // Bound end to end: the real buy (mall-server buyRewardCore) over the fake catalog and a fake ledger, credits live.
+    const ledger = purchaseLedger();
+    const LAUNCH = "2026-10-19";
+    const fresh = async () => liveWallet(150, 0);
+    const bound = (rewardId: string, clientId: string) =>
+      buyRewardCore("u1", { rewardId, clientId }, { store: mallStore(), purchases: ledger, freshWallet: fresh, launchDay: LAUNCH, now: () => NOW, env: WRITES_ON }).then((res) => (res.ok ? { ok: true as const, value: { ...res.value, celebrations: [] } } : res));
+    const real = (b: Record<string, unknown>) => got(handleMallBuy(post("/mall/buy", b), mallFakes({ buyReward: bound }).deps));
+    const k1 = randomUUID();
+    const b1 = await real({ rewardId: "rw-thai", clientId: k1 });
+    // Another instance (this one's replay cache would answer first): the core itself finds the row its clientId keyed.
+    const b1again = await bound("rw-thai", k1);
+    const b2 = await real({ rewardId: "rw-thai", clientId: randomUUID() });
+    const b3 = await real({ rewardId: "rw-film", clientId: randomUUID() });
+    check(
+      "through the real core: 150 cr buys Takeaway night (120 cr), its row keyed by the clientId; a resend on another instance answers it (duplicate, delta 0, written once); its 7-day cooldown and the 30 cr left refuse the next ones (no overdraft)",
+      b1.status === 200 && same(data(b1).credits, { delta: -120, balance: 30 }) &&
+        b1again.ok && b1again.value.duplicate === true && b1again.value.delta === 0 && b1again.value.balance === 30 && b1again.value.purchase.id === "ev-1" &&
+        isFail(b2, "conflict") && /next on Wed 28 Oct/.test(b2.json.error ?? "") &&
+        isFail(b3, "conflict") && /Film night costs 60 cr; you have 30 cr \(30 cr short\)/.test(b3.json.error ?? "") &&
+        ledger.rows_.length === 1 && ledger.rows_[0].dedupeKey === buyRowKey(k1.toLowerCase()) && ledger.rows_[0].qty === 120,
+      [b1.raw, JSON.stringify(b1again), b2.raw, b3.raw].map((x) => x.slice(0, 120)).join(" | ")
+    );
+    const off = await got(handleMallBuy(post("/mall/buy", { rewardId: "rw-thai", clientId: randomUUID() }), mallFakes({ buyReward: (rewardId, clientId) => buyRewardCore("u1", { rewardId, clientId }, { store: mallStore(), purchases: purchaseLedger(), freshWallet: fresh, launchDay: null, env: WRITES_ON }).then((res) => (res.ok ? { ok: true as const, value: { ...res.value, celebrations: [] } } : res)) }).deps));
+    check("…and while CREDITS_LAUNCH_DAY is null nothing can be bought (conflict, in the server's words)", isFail(off, "conflict") && off.json.error === BUY_CREDITS_OFF);
+  }
+
+  section("POST /mall/undo (blueprint P19)");
+  {
+    const ok = mallFakes();
+    const r = await got(handleMallUndo(post("/mall/undo", { purchaseId: "ev-thai" }), ok.deps));
+    const d = data(r);
+    collectKeys(d);
+    check("200, ok, no-store", r.status === 200 && r.json.ok === true && r.noStore);
+    eq("the documented keys", keysOf(d), ["credits", "duplicate", "line", "purchaseId"]);
+    check("the undo is actions/mall undoBuy with the purchase's id; its credits come back; the web's line", same(ok.calls.undoBuy, [["ev-thai"]]) && same(d.credits, { delta: 120, balance: 1240 }) && d.line === "Takeaway night undone: 120 cr back.");
+    check("no purchase id is bad", isFail(await got(handleMallUndo(post("/mall/undo", {}), mallFakes().deps)), "bad"));
+    check("an unknown field is bad", isFail(await got(handleMallUndo(post("/mall/undo", { purchaseId: "ev-thai", price: 1 }), mallFakes().deps)), "bad"));
+    const late = await got(handleMallUndo(post("/mall/undo", { purchaseId: "ev-thai" }), mallFakes({ undoBuy: async () => ({ ok: false, error: UNDO_TOO_LATE }) }).deps));
+    check("past its ten minutes it is conflict, in the core's words", isFail(late, "conflict") && late.json.error === UNDO_TOO_LATE);
+    const gone = await got(handleMallUndo(post("/mall/undo", { purchaseId: "ev-x" }), mallFakes({ undoBuy: async () => ({ ok: false, error: PURCHASE_GONE }) }).deps));
+    check("a purchase that isn't there is gone", isFail(gone, "gone"));
+    check("behind the token like every route", isFail(await got(handleMallUndo(post("/mall/undo", { purchaseId: "ev-thai" }), mallFakes({ token: () => TOKEN }).deps)), "auth"));
+
+    // Bound end to end: a real purchase at 21:05, then the real undo at 21:14 (inside) and at 21:16 (too late).
+    const at = (iso: string) => () => new Date(iso);
+    const fresh = async () => liveWallet(150, 0);
+    const base = { store: mallStore(), freshWallet: fresh, launchDay: "2026-10-19", env: WRITES_ON };
+    const ledger = purchaseLedger();
+    await buyRewardCore("u1", { rewardId: "rw-thai", clientId: randomUUID() }, { ...base, purchases: ledger, now: at("2026-10-21T10:05:00.000Z") });
+    const id = ledger.rows_[0]?.id ?? "";
+    const undoAt = (iso: string, l = ledger) => (purchaseId: string) => undoBuyCore("u1", { purchaseId }, { ...base, purchases: l, now: at(iso) });
+    const inside = await got(handleMallUndo(post("/mall/undo", { purchaseId: id }), mallFakes({ undoBuy: undoAt("2026-10-21T10:14:00.000Z") }).deps));
+    const twice = await got(handleMallUndo(post("/mall/undo", { purchaseId: id }), mallFakes({ undoBuy: undoAt("2026-10-21T10:14:30.000Z") }).deps));
+    const ledger2 = purchaseLedger();
+    await buyRewardCore("u1", { rewardId: "rw-thai", clientId: randomUUID() }, { ...base, purchases: ledger2, now: at("2026-10-21T10:05:00.000Z") });
+    const tooLate = await got(handleMallUndo(post("/mall/undo", { purchaseId: ledger2.rows_[0]?.id ?? "" }), mallFakes({ undoBuy: undoAt("2026-10-21T10:16:00.000Z", ledger2) }).deps));
+    check(
+      "through the real core: undone at 21:14 (inside its ten minutes) gives the 120 cr back, once (a repeat is duplicate, delta 0); at 21:16 it is too late and nothing is written",
+      inside.status === 200 && same(data(inside).credits, { delta: 120, balance: 150 }) && twice.status === 200 && data(twice).duplicate === true &&
+        ledger.rows_.filter((x) => x.source === "MALL_REFUND").length === 1 && isFail(tooLate, "conflict") && tooLate.json.error === UNDO_TOO_LATE && ledger2.rows_.length === 1,
+      [inside.raw, twice.raw, tooLate.raw].map((x) => x.slice(0, 120)).join(" | ")
+    );
+  }
 }
 
 // ═══ 3. The wiring ════════════════════════════════════════════════════════
@@ -1745,7 +2203,15 @@ const HANDLER_OF: Record<string, string> = {
   "POST /ideas": "handleIdeaCreate",
   "GET /quests": "handleQuests",
   "GET /status": "handleStatus",
+  "GET /mall": "handleMall",
+  "POST /mall/rewards": "handleMallRewards",
+  "POST /mall/buy": "handleMallBuy",
+  "POST /mall/undo": "handleMallUndo",
 };
+
+/** The deps each route hands over: the Mall's own (mall-mobile-cores: no paying core, P18), else the shared ones. */
+const DEPS_OF = (key: string): { name: string; from: string } =>
+  key.endsWith(" /mall") || key.includes(" /mall/") ? { name: "realMallDeps", from: "@/lib/mall-mobile-cores" } : { name: "realMobileDeps", from: "@/lib/mobile-api-cores" };
 
 function wiring() {
   section("the route files");
@@ -1757,17 +2223,24 @@ function wiring() {
     const handler = HANDLER_OF[key];
     const src = code(f.file);
     const exportsOf = [...src.matchAll(/export (?:async function|const) (\w+)/g)].map((m) => m[1]).sort();
+    const realDeps = DEPS_OF(key);
     check(
-      `${key}: exports ${f.methods[0]} and dynamic only, hands the request to ${handler} with the real deps`,
+      `${key}: exports ${f.methods[0]} and dynamic only, hands the request to ${handler} with the real deps (${realDeps.name})`,
       !!handler &&
         same(exportsOf, [f.methods[0], "dynamic"].sort()) &&
         /export const dynamic = "force-dynamic";/.test(src) &&
-        new RegExp(`export async function ${f.methods[0]}\\(request: Request\\): Promise<Response> \\{\\s*return ${handler}\\(request, realMobileDeps\\);\\s*\\}`).test(src) &&
+        new RegExp(`export async function ${f.methods[0]}\\(request: Request\\): Promise<Response> \\{\\s*return ${handler}\\(request, ${realDeps.name}\\);\\s*\\}`).test(src) &&
         new RegExp(`import \\{ ${handler} \\} from "@/lib/mobile-api-server";`).test(src) &&
-        /import \{ realMobileDeps \} from "@\/lib\/mobile-api-cores";/.test(src),
+        src.includes(`import { ${realDeps.name} } from "${realDeps.from}";`),
       f.file
     );
   }
+  const mallRouteFiles = files.filter((f) => f.path === "/mall" || f.path.startsWith("/mall/"));
+  check(
+    "the Mall's four routes (P18, P19) never import mobile-api-cores: they hold the Mall's read, its add, its buy and its undo, no paying core",
+    mallRouteFiles.length === 4 && mallRouteFiles.every((f) => !/mobile-api-cores|realMobileDeps/.test(code(f.file))),
+    mallRouteFiles.map((f) => f.file).join(", ")
+  );
 
   section("the cores");
   const cores = code("src/lib/mobile-api-cores.ts");
@@ -1780,6 +2253,15 @@ function wiring() {
   bind("streak, level and work: getDailyStreak, loadShellData, loadDueWorkTasks", /loadStreak: \(userId\) => getDailyStreak\(userId\),\s*loadShell: \(userId\) => loadShellData\(userId\),\s*loadWork: \(userId, now\) => loadDueWorkTasks\(userId, now\),/);
   bind("the grace extension (P13): skill-effects loadModifiers' graceExtraDays, the loadout's, as the bell reads it", /loadGraceExtra: async \(userId\) => \(await loadModifiers\(userId\)\)\.graceExtraDays,/);
   bind("the week audit (P11): week-audit-server loadWeekAudit(userId, now), /today/week's own read", /import \{ loadWeekAudit \} from "\.\/week-audit-server";[\s\S]*loadWeekAudit: \(userId, now\) => loadWeekAudit\(userId, now\),/);
+  bind(
+    "the credits wallet (P16): credits-server loadWallet(userId, now), the purse's own read (cached; no read while off), and readWallet(userId, now) uncached for a write's read after it",
+    /import \{ loadWallet, readWallet \} from "\.\/credits-server";[\s\S]*loadWallet: \(userId, now\) => loadWallet\(userId, now\),\s*readWallet: \(userId, now\) => readWallet\(userId, now\),/
+  );
+  check(
+    "the credits wallet (P16): /you's purse reads the same loadWallet(userId, now), caught to none, and draws its line only from a live wallet",
+    /const walletRead = loadWallet\(userId, now\)\.catch\(\(\) => null\);/.test(code("src/app/you/page.tsx")) &&
+      /credits=\{wallet\?\.live \? \{ balance: wallet\.balance, today: wallet\.today \} : null\}/.test(code("src/app/you/page.tsx"))
+  );
   bind("the owed writes: recordDayOpen, autoCompleteStudyTasks, maybeMaintainLife, settleMomentum", /recordDayOpen: \(userId, dueCount, now\) => recordDayOpen\(userId, dueCount, now\),\s*autoCompleteStudyTasks: \(userId, now\) => autoCompleteStudyTasks\(userId, now\),\s*maybeMaintainLife: \(userId\) => maybeMaintainLife\(userId\),\s*settleMomentum: \(userId, day, now\) => settleMomentum\(userId, day, \{ now \}\),/);
   bind("the tick and its Undo: actions/tasks completeTask, undoCompletion (no options: never refresh)", /completeTask: \(templateId, input\) => completeTask\(templateId, input\),\s*undoCompletion: \(instanceId\) => undoCompletion\(instanceId\),/);
   bind("work: doneScheduledTask(id, null) (no log), reopenScheduledTask(id, null)", /doneScheduled: \(id\) => doneScheduledTask\(id, null\),\s*reopenScheduled: \(id\) => reopenScheduledTask\(id, null\),/);
@@ -1865,8 +2347,9 @@ function wiring() {
   })();
   const leaks = clients.filter((p) => /MOBILE_API_TOKEN|mobile-api/.test(readFileSync(join(ROOT, p), "utf8")));
   check("no client module reads the token or imports the mobile API", leaks.length === 0 && clients.length > 10, leaks.join(", "));
-  const tokenReaders = ["src/lib/mobile-api.ts", "src/lib/mobile-api-server.ts", "src/lib/mobile-api-cores.ts"].filter((f) => /process\.env/.test(code(f)));
-  eq("only mobile-api-cores reads process.env", tokenReaders, ["src/lib/mobile-api-cores.ts"]);
+  const tokenReaders = ["src/lib/mobile-api.ts", "src/lib/mobile-api-server.ts", "src/lib/mobile-api-cores.ts", "src/lib/mall-mobile-cores.ts"].filter((f) => /process\.env/.test(code(f)));
+  // Re-pinned for P18: the Mall's own cores read the token too (the same env name).
+  eq("only the cores (mobile-api-cores, and mall-mobile-cores for the Mall's routes) read process.env", tokenReaders, ["src/lib/mobile-api-cores.ts", "src/lib/mall-mobile-cores.ts"]);
 
   section("the web formulas the app mirrors");
   const page = code("src/app/review/page.tsx");
@@ -1969,6 +2452,29 @@ function wiring() {
   check("submitIdea's no-Field throw starts 'Create a Field before adding ideas'", /throw new Error\("Create a Field before adding ideas/.test(code("src/app/actions/ideas.ts")));
   check("the action's not-found for an idea is findUniqueOrThrow (P2025)", /prisma\.idea\.findUniqueOrThrow\(/.test(code("src/lib/srs.ts")));
 
+  section("the Mall's cores (P18)");
+  const mallCores = code("src/lib/mall-mobile-cores.ts");
+  const mallBind = (name: string, re: RegExp) => check(`mall-mobile-cores: ${name}`, re.test(mallCores));
+  mallBind("the token, the user and the clock as the shared cores read them", /token: \(\) => process\.env\[MOBILE_TOKEN_ENV\],\s*userId: \(\) => getCurrentUserId\(\),\s*now: \(\) => new Date\(\),/);
+  mallBind("the Mall's read is mall-server loadMall at the route's clock, You › Mall's own", /import \{ loadMall \} from "\.\/mall-server";[\s\S]*loadMall: \(userId, now\) => loadMall\(userId, \{ now: \(\) => now \}\),/);
+  mallBind("the add is actions/mall addReward, as the page calls it less refresh", /import \{ addReward, buyReward, undoBuy \} from "\.\.\/app\/actions\/mall";[\s\S]*addReward: \(input\) => addReward\(input\),/);
+  mallBind("(P19) the buy and the undo are actions/mall buyReward and undoBuy, as the page calls them less refresh", /buyReward: \(rewardId, clientId\) => buyReward\(rewardId, clientId\),\s*undoBuy: \(purchaseId\) => undoBuy\(purchaseId\),/);
+  const mallImports = [...mallCores.matchAll(/^import (?!type )[^;]*? from "([^"]+)";/gm)].map((m) => m[1]).sort();
+  eq("mall-mobile-cores imports values from the user, the Mall's server, its action and the token's name only (never mobile-api-cores)", mallImports, ["../app/actions/mall", "./mall-server", "./mobile-api", "./user"]);
+  const mallImporters = (() => {
+    const out: string[] = [];
+    const walk = (d: string) => {
+      for (const f of readdirSync(d)) {
+        const p = join(d, f);
+        if (statSync(p).isDirectory()) walk(p);
+        else if (/\.(ts|tsx)$/.test(f) && !p.endsWith("mall-mobile-cores.ts") && /mall-mobile-cores/.test(code(relative(ROOT, p).replace(/\\/g, "/")))) out.push(relative(ROOT, p).replace(/\\/g, "/"));
+      }
+    };
+    walk(join(ROOT, "src"));
+    return out.sort();
+  })();
+  eq("only the four Mall route files import mall-mobile-cores", mallImporters, ["src/app/api/mobile/v1/mall/buy/route.ts", "src/app/api/mobile/v1/mall/rewards/route.ts", "src/app/api/mobile/v1/mall/route.ts", "src/app/api/mobile/v1/mall/undo/route.ts"]);
+
   section("the work read");
   const sched = code("src/lib/scheduled-tasks-server.ts");
   const dueRead = sched.slice(sched.indexOf("export function loadDueWorkTasks"));
@@ -2033,6 +2539,19 @@ function docs() {
       !/armed only while the server sends a `week`/.test(doc.replace(/\s+/g, " "))
   );
   check(
+    "/check's credits and a write's credits (P16; D27 to D29) are in the doc: null while CREDITS_LAUNCH_DAY is off (nothing read), whole credits, delta after − before from two reads, never a guess, no penalty takes credits",
+    /"credits": \{ "balance": 120, "today": 40 \} \| null,/.test(doc) &&
+      /`credits` \(blueprint 4\.1 and 4\.2; decisions D27 to D29\): the credits wallet/.test(doc.replace(/\s+/g, " ")) &&
+      /Null while credits are switched off \(`CREDITS_LAUNCH_DAY`, null until the user's go: the server reads nothing for it then, and the app shows no wallet chip\)/.test(doc.replace(/\s+/g, " ")) &&
+      (doc.match(/"credits": \{ "delta": \d+, "balance": \d+, "today": \d+ \} \| null/g) ?? []).length === 3 &&
+      /`balance` and `today` are the wallet read fresh once the tick has committed/.test(doc.replace(/\s+/g, " ")) &&
+      /the app sets its wallet chip from them, and never adds deltas up/.test(doc.replace(/\s+/g, " ")) &&
+      /`delta` is what was earned across the tick: the wallet's earned after it less its earned before it/.test(doc.replace(/\s+/g, " ")) &&
+      /it is the change across this tick, never its receipt/.test(doc.replace(/\s+/g, " ")) &&
+      /never a guessed figure, never a failed tick/.test(doc.replace(/\s+/g, " ")) &&
+      /XP is never spent, and no penalty ever takes credits/.test(doc.replace(/\s+/g, " "))
+  );
+  check(
     "/quests (P15; D11, D12) is in the doc: read only, one vocabulary, Start and plan edits on the web only, startOnWeb false while ROADMAP_GOALS_LIVE is off, the provisional Sunday words, never a verdict, ticks through /tasks/complete",
     /## GET \/quests: the main quest, its sprint and Today's three/.test(doc) &&
       /its week quests are \*\*this week's sprint\*\*/.test(doc.replace(/\s+/g, " ")) &&
@@ -2092,6 +2611,31 @@ function docs() {
       /`competency` \(blueprint 1\.5; decisions D7 to D9\)/.test(doc.replace(/\s+/g, " ")) &&
       /`tierUp` is true when this tick played the tier's Seal/.test(doc.replace(/\s+/g, " ")) &&
       /`loadCapitalDeals`, `loadAvatar`, `loadSkills`/.test(doc)
+  );
+  check(
+    "/mall and /mall/rewards (P18; D30) are in the doc: only what the user lists, #play, rest days and sleep never priced, on honour, (re-pinned for P19) a purchase is permission now, the good day and its 14 days, the conflict lines, listing a reward pays nothing",
+    /\*\*Only what the user\s+lists is priced\*\*: the Mall starts empty and the server never sends a starter reward/.test(doc) &&
+      /\*\*#play, rest days and sleep are\s+never priced\*\*/.test(doc) &&
+      /a commitment device that runs on honour/.test(doc.replace(/\s+/g, " ")) &&
+      /\*\*A purchase is permission now\*\* \(blueprint P19\)/.test(doc) &&
+      /the middle \(median\) of the days that earned credits in the last 28 complete life days/.test(doc.replace(/\s+/g, " ")) &&
+      /fewer than 14 complete days/.test(doc.replace(/\s+/g, " ")) &&
+      doc.replace(/\s+/g, " ").includes(PRICE_RANGE_LINE) && doc.replace(/\s+/g, " ").includes(FREE_REST_LINE) &&
+      /A reward is a record of what the user will pay: listing one pays and costs nothing\. Buying one costs its price in credits, and never XP, MP or a point/.test(doc.replace(/\s+/g, " ")) &&
+      ["title", "category", "price", "note", "cooldownDays"].every((k) => doc.includes(`"${k}"`) || doc.includes(`\`${k}\``))
+  );
+  check(
+    "/mall/buy and /mall/undo (P19; D31, D32) are in the doc: the clientId a purchase requires, the guard and its one re-read, no overdraft, penalties never take credits, the undo's ten minutes once, no chance",
+    (() => {
+      const flat = doc.replace(/\s+/g, " ");
+      return /\x60clientId\x60 is \*\*required\*\* here/.test(flat) && /reads again once and checks again, so two purchases can never spend the same credits/.test(flat) && /no overdraft and no credit line/.test(flat) && /No penalty ever takes credits/.test(flat) && flat.includes(UNDO_TOO_LATE) && /No chance: the price is the price/.test(flat) &&
+        // The review of 2026-10-24: a resend replays the first reply on the instance that answered (as write() does and
+        // the replay check pins, raw for raw); only another instance's answer is `duplicate: true` with delta 0.
+        /A resend with the same `clientId` replays the first reply on the instance that answered it \(byte for byte: `duplicate: false`, `credits\.delta` −price\); on another instance the server answers the purchase already made with `duplicate: true` and `credits\.delta` 0/.test(flat) &&
+        /Once: a resend with the same `clientId` replays the first reply on the instance that answered it \(`duplicate: false`, `credits\.delta` \+price\)/.test(flat) &&
+        /drops it once `GET \/mall` lists that purchase/.test(flat) &&
+        !/A repeat, on any server instance, answers the purchase already made/.test(flat);
+    })()
   );
   check("/log's undo may be null (a weigh-in with nothing to take back)", /"undo": \{ "kind": "task" \| "weight" \| "draft", "id": "…" \} \| null/.test(doc) && /`undo` is null for a weigh-in/.test(doc));
 

@@ -26,6 +26,8 @@ import { dailyStreakOf, type StreakDayRow, type StreakFacts } from "../src/lib/s
 import {
   computeStreak,
   countsForStreakOf,
+  NEVER_STREAK_SOURCES,
+  STREAK_SOURCES,
   foldStreakDays,
   streakBonusPercent,
   streakUnitsOf,
@@ -112,6 +114,14 @@ const none = new Set<DayKey>();
   check("every kind of real work counts by default", wrong.length === 0, wrong.join(", "));
   check("a workout counts only when its writer says so (≥ 10 min, M4)", !countsForStreakOf("WORKOUT") && countsForStreakOf("WORKOUT", true));
   check("a task written as not counting is honoured", !countsForStreakOf("TASK", false));
+  // Blueprint P19: the Mall's rows are left out of the counted list. Spending credits, or undoing a purchase, never
+  // keeps (or breaks) a day, whatever a writer asks.
+  const mall: ActivitySource[] = ["MALL_BUY", "MALL_REFUND"];
+  check(
+    "a Mall purchase and its undo (MALL_BUY, MALL_REFUND) are never streak days, even when the writer asks, and add no unit",
+    mall.every((s) => !counted.includes(s) && NEVER_STREAK_SOURCES.has(s) && !STREAK_SOURCES.has(s) && countsForStreakOf(s, true) === false && streakUnitsOf({ source: s, countsForStreak: false }) === 0) &&
+      streakOf([row(1, "MALL_BUY", true), row(1, "MALL_REFUND", true), row(0, "TASK")]).current === 1
+  );
 }
 {
   const s = streakOf([row(1, "FREEZE_USE"), row(2, "REVIEW"), row(0, "TASK")]);

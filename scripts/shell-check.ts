@@ -9,9 +9,9 @@
  * shader slot or the runtime, and no 3D library. No DB, no browser.
  *
  * The three sections (Ideas · Tasks · Body): the nav model, the profile menu
- * (Character, Skills, Emblems, Loadout, Moments, Stats, Settings, out of the tabs;
- * /skills labelled Emblems since blueprint P2, D6; /you/skills, the real
- * skills, since P5),
+ * (Character, Skills, Emblems, Loadout, Mall, Moments, Stats, Settings, out of
+ * the tabs; /skills labelled Emblems since blueprint P2, D6; /you/skills, the
+ * real skills, since P5; /you/mall, the rewards priced in credits, since P18),
  * the '+' that starts the section's mode, and the chrome's source (three
  * tabs and the +, the profile buttons, the menu sheet, chrome.css).
  *
@@ -137,7 +137,8 @@ eq("nav: Body's sub-pages: This week, Exercise", sectionById("body").subs.map((s
 ]);
 // Re-pinned for blueprint P2 (D6): the /skills row is labelled Emblems; its route and its tree icon stay. Re-pinned for P5
 // (D7 to D9): You › Skills (/you/skills, the named competencies by hours) is the second row, a compatible addition.
-eq("nav: the profile menu: Character, Skills, Emblems, Loadout, Moments, Stats, Settings (each with its icon)", [PROFILE.id, PROFILE.label, PROFILE.subs.map((s) => [s.label, s.href, s.icon ?? null])], [
+// Re-pinned for P18 (D30): You › Mall (/you/mall, the rewards the user prices in credits) follows Loadout, with the bag.
+eq("nav: the profile menu: Character, Skills, Emblems, Loadout, Mall, Moments, Stats, Settings (each with its icon)", [PROFILE.id, PROFILE.label, PROFILE.subs.map((s) => [s.label, s.href, s.icon ?? null])], [
   "you",
   "You",
   [
@@ -145,6 +146,7 @@ eq("nav: the profile menu: Character, Skills, Emblems, Loadout, Moments, Stats, 
     ["Skills", "/you/skills", "clock"],
     ["Emblems", "/skills", "tree"],
     ["Loadout", "/you/loadout", "sword"],
+    ["Mall", "/you/mall", "bag"],
     ["Moments", "/you/moments", "star"],
     ["Stats", "/you/stats", "chart"],
     ["Settings", "/settings", "gear"],
@@ -298,8 +300,8 @@ check(
 // lists the profile menu's pages. Anything the strip lacks is a FAIL.
 {
   const labels = PROFILE.subs.map((s) => s.label);
-  // Re-pinned for P5: You › Skills joins the profile rows.
-  const want = ["Character", "Skills", "Emblems", "Loadout", "Moments", "Stats", "Settings"];
+  // Re-pinned for P5: You › Skills joins the profile rows. Re-pinned for P18: You › Mall follows Loadout.
+  const want = ["Character", "Skills", "Emblems", "Loadout", "Mall", "Moments", "Stats", "Settings"];
   const navProblems: string[] = [];
   if (labels.join(", ") !== want.join(", ")) navProblems.push(`profile rows read "${labels.join(", ")}"`);
   const roadmapSub = sectionById("ideas").subs.find((s) => s.label === "Roadmap");

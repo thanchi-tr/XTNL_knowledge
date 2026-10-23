@@ -96,6 +96,8 @@ const CAUSE_WORD: Record<string, string> = {
   boss: "boss encounter",
   unlock: "unlock",
   settle: "settlement",
+  // A Mall purchase (blueprint P19): 'Moved by a Mall purchase.'
+  mall: "Mall purchase",
   // The one-time launch moment (scripts/life-launch.ts): the jump no before-snapshot would see.
   launch: "life tracks joining your character",
 };

@@ -6,6 +6,7 @@ import { recordTodaySnapshot } from "@/lib/snapshot";
 import { Amount } from "@/components/ui/Amount";
 import { Meter } from "@/components/ui/Meter";
 import { SectionHeader } from "@/components/ui/Tabs";
+import { LegacyCapitalLine } from "@/components/home/LegacyCapital";
 import { DividendLine, TitleRing } from "@/components/home/StatsParts";
 import { KeptWeeks, TrackLines } from "@/components/home/TrackCharts";
 import { loadStats, type LifeStats } from "../_lib/stats";
@@ -24,6 +25,10 @@ const lvl = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
  * glyphs. Once life counts, Track levels (up to 12 judged weeks, from the
  * second one) and the kept-weeks heatmap lead the page; before, neither
  * shows. Fixtures for both render on /dev/style/art/you.
+ *
+ * Line items (blueprint P17, D28): the capital dividend with Claim while it
+ * runs; once credits count it is retired, and the banked balance shows read
+ * only (LegacyCapitalLine, hidden when there is none to remember).
  */
 
 /** Track levels and kept weeks, from judged weeks only. */
@@ -234,10 +239,16 @@ export default async function StatsPage() {
             </section>
           </div>
 
-          <div>
-            <SectionHeader title="Line items" />
-            <DividendLine amount={s.dividend.amount} perHour={s.dividend.perHour} capped={s.dividend.capped} balance={s.dividend.balance} />
-          </div>
+          {(!s.capital.retired || s.capital.balance !== 0) && (
+            <div>
+              <SectionHeader title="Line items" />
+              {s.capital.retired ? (
+                <LegacyCapitalLine balance={s.capital.balance} since={s.capital.since} />
+              ) : (
+                <DividendLine amount={s.capital.amount} perHour={s.capital.perHour} capped={s.capital.capped} balance={s.capital.balance} />
+              )}
+            </div>
+          )}
         </div>
       </div>
     </>

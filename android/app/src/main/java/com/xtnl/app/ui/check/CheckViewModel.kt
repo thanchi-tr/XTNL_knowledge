@@ -7,12 +7,14 @@ import com.xtnl.app.core.DailyStrip
 import com.xtnl.app.core.QuestLine
 import com.xtnl.app.core.StatusLine
 import com.xtnl.app.core.TickLadder
+import com.xtnl.app.core.WalletLine
 import com.xtnl.app.data.CheckData
 import com.xtnl.app.data.DailyQuests
 import com.xtnl.app.data.LevelInfo
 import com.xtnl.app.data.Outcome
 import com.xtnl.app.data.QuestsData
 import com.xtnl.app.data.TaskItem
+import com.xtnl.app.data.Wallet
 import com.xtnl.app.data.WorkItem
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -75,9 +77,13 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
         val workClosing: Set<String> = emptySet(),
         /** GET /quests (P15): the main quest, its sprint and Today's three; null until read (a failed read keeps the last). */
         val quests: QuestsData? = null,
+        /** The credits wallet as the last tick answered it (P16: the server's balance), until the next /check brings its own. */
+        val tickWallet: Wallet? = null,
     ) {
         /** The level to show: a tick's answer, else /check's. */
         val level: LevelInfo? get() = tickLevel ?: data?.level
+        /** The wallet chip (P16): a tick's answer, else /check's; null while the server sends none (credits off). */
+        val wallet: Wallet? get() = tickWallet ?: data?.credits
         val tasks: List<TaskItem>
             get() = data?.tasks.orEmpty().map { t ->
                 val k = kept[t.templateId]
@@ -156,6 +162,8 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
     private var levelUps = 0
     /** Undo pressed before the server answered the tick: undo as soon as it does. */
     private val undoWhenKept = mutableSetOf<String>()
+    /** P16: ticks that were out at the same time as another tick here (their answers' credits change is shared). */
+    private val overlapped = mutableSetOf<String>()
 
     init {
         start()
@@ -166,6 +174,7 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
                 graph.auditReminder.sync()
                 refreshJob?.cancel()
                 questsJob?.cancel()
+                overlapped.clear()
                 _ui.value = Ui()
                 start()
             }
@@ -232,7 +241,7 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
                         u.copy(
                             data = data, fetchedAtMs = now, loading = false, refreshing = false, offline = false, refused = null, refusedAuth = false, error = null,
                             kept = kept, allDone = allDoneOf(u, r.value, kept), workHidden = u.workHidden.intersect(r.value.work.map { it.id }.toSet()),
-                            tickLevel = null, levelUp = levelUpOf(u, u.level, r.value.level),
+                            tickLevel = null, levelUp = levelUpOf(u, u.level, r.value.level), tickWallet = null,
                         )
                     }
                 }
@@ -282,6 +291,9 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
         val before = _ui.value
         if (task.templateId in before.pending) return
         touchedAt = System.currentTimeMillis()
+        // P16: ticks out at the same time share the server's one change across them (its `delta`), so neither line names
+        // it, and /check is read again once the last of them lands (the chip shows each answer's own wallet meanwhile).
+        if (before.pending.isNotEmpty()) overlapped += before.pending + task.templateId
         _ui.update {
             it.copy(
                 kept = it.kept + (task.templateId to Kept(null, task.xpHint, mvv, clientId)),
@@ -303,10 +315,15 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
                             boardClearKey = if (cleared) it.boardClearKey + 1 else it.boardClearKey,
                             tickLevel = r.value.level ?: it.tickLevel,
                             levelUp = levelUpOf(it, before, r.value.level),
+                            tickWallet = r.value.credits?.let { c -> WalletLine.after(it.wallet, c) } ?: it.tickWallet,
                         )
                     }
-                    // P5: the skill the task fed joins the line (its hours now, or the tier this tick reached).
-                    _events.tryEmit(Event.TaskKept(task.templateId, r.value.xp, StatusLine.tickLine(r.value.line, r.value.competency), hinted = task.xpHint != null, level = r.value.level, before = before))
+                    // P5: the skill the task fed joins the line (its hours now, or the tier this tick reached); P16: the
+                    // credits it earned, from its own answer (" · +10 cr"), only when no other tick here overlapped it.
+                    val alone = overlapped.remove(task.templateId).not()
+                    val line = StatusLine.tickLine(r.value.line, r.value.competency)?.let { it + WalletLine.tickSuffix(r.value.credits, alone) }
+                    if (!alone && _ui.value.pending.isEmpty() && r.value.credits != null) graph.changes.tryEmit("task")
+                    _events.tryEmit(Event.TaskKept(task.templateId, r.value.xp, line, hinted = task.xpHint != null, level = r.value.level, before = before))
                     if (cleared) _events.tryEmit(Event.BoardClear(task.templateId))
                     // No level in the answer (an older server): /check brings it, and with it any level up.
                     if (r.value.level == null) graph.changes.tryEmit("task")
@@ -316,6 +333,7 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
                 }
                 is Outcome.Err -> {
                     undoWhenKept.remove(task.templateId)
+                    overlapped.remove(task.templateId)
                     _ui.update { it.copy(kept = it.kept - task.templateId, pending = it.pending - task.templateId) }
                     _events.tryEmit(Event.TaskFailed(task.templateId, r.message) { complete(task, mvv, clientId) })
                 }

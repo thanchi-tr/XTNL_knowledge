@@ -4,6 +4,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
@@ -184,6 +185,103 @@ class DemoBoardTest {
         val gym = (api.completeTask("t-gym", mvv = false, clientId = "c-gym") as Outcome.Ok).value
         assertEquals(listOf("Strength", "≈ 42.5 h (task estimates, not timed)"), gym.competency!!.let { listOf(it.name, it.line) })
         assertEquals(null, (api.completeTask("t-dentist", mvv = false, clientId = "c-dentist") as Outcome.Ok).value.competency)
+    }
+
+    /**
+     * The credits wallet (P16), as a server with credits switched on sends it: /check's balance and today's, a tick on
+     * one of Today's three earns its 10 (the minimum version is not done), a tick on any other task earns nothing, an
+     * undo takes the 10 back on the next check, and every figure is a whole credit.
+     */
+    @Test fun aQuestTickEarnsItsCreditsAndAnUndoTakesThemBack() = runTest {
+        val api = DemoApi()
+        val start = (api.check() as Outcome.Ok).value.credits!!
+        assertEquals(Wallet(185, 0), start)
+        val gym = (api.completeTask("t-gym", mvv = false, clientId = "c-gym") as Outcome.Ok).value
+        assertEquals(CreditsChange(delta = 10, balance = 195, today = 10), gym.credits)
+        assertEquals(Wallet(195, 10), (api.check() as Outcome.Ok).value.credits)
+        val tax = (api.completeTask("t-tax", mvv = false, clientId = "c-tax") as Outcome.Ok).value
+        assertEquals("not one of Today's three: nothing", CreditsChange(delta = 0, balance = 195, today = 10), tax.credits)
+        val dentistMin = (api.completeTask("t-dentist", mvv = true, clientId = "c-dentist") as Outcome.Ok).value
+        assertEquals("the minimum version is not the quest done", 0, dentistMin.credits!!.delta)
+        assertTrue(api.undoTask(gym.instanceId, "u-gym") is Outcome.Ok)
+        assertEquals(Wallet(185, 0), (api.check() as Outcome.Ok).value.credits)
+        val log = (api.log("x water the plants", "task", "l-1") as Outcome.Ok).value
+        assertEquals(CreditsChange(delta = 0, balance = 185, today = 0), log.credits)
+    }
+
+    /** P18 (D30): the demo's Mall opens empty (no starter rewards); an add follows the server's rules and words. */
+    @Test fun theMallStartsEmptyAndAnAddKeepsTheRules() = runTest {
+        val api = DemoApi()
+        val first = (api.mall() as Outcome.Ok).value
+        assertTrue("nothing is listed for the user", first.rewards.isEmpty() && first.archived.isEmpty())
+        assertEquals(Wallet(185, 0), first.credits)
+        assertEquals(listOf("TREAT", "SCREEN", "OUTING", "PURCHASE", "OTHER"), first.categories.map { it.key })
+        assertTrue(first.notes.free.startsWith("#play, rest days and sleep are never priced"))
+
+        val gig = (api.addReward("A gig", "OUTING", 400, null, null, "m-1") as Outcome.Ok).value
+        assertEquals("≈ 10 good days", gig.reward!!.hint)
+        val thai = (api.addReward("  Takeaway   night ", "TREAT", 120, " From the Thai place ", 7, "m-2") as Outcome.Ok).value.reward!!
+        assertEquals("Takeaway night", thai.title)
+        assertEquals("From the Thai place", thai.note)
+        assertEquals("at most once every 7 days", thai.cooldownLine)
+        val again = (api.addReward("A gig", "OUTING", 400, null, null, "m-1") as Outcome.Ok).value
+        assertEquals("the same clientId lists it once", gig.id, again.id)
+        assertEquals(listOf("Takeaway night", "A gig"), (api.mall() as Outcome.Ok).value.rewards.map { it.title })
+
+        fun refusal(r: Outcome<AddRewardResult>) = (r as Outcome.Err).let { it.code to it.message }
+        assertEquals("conflict" to "A price is a whole number of credits from 1 to 100,000.", refusal(api.addReward("Pizza", "TREAT", 0, null, null, "m-3")))
+        assertEquals("conflict" to "A price is a whole number of credits from 1 to 100,000.", refusal(api.addReward("Pizza", "TREAT", 100_001, null, null, "m-4")))
+        assertEquals("conflict" to "Sleep, naps and rest days stay free: the Mall never prices them.", refusal(api.addReward("Sleep in", "OTHER", 50, null, null, "m-5")))
+        assertEquals("conflict" to "#play stays free: the Mall never prices what you do for its own sake.", refusal(api.addReward("#play guitar", "OTHER", 50, null, null, "m-6")))
+        assertEquals("conflict" to "You already list “takeaway NIGHT”.", refusal(api.addReward("takeaway NIGHT", "TREAT", 90, null, null, "m-7")))
+        assertEquals("bad", refusal(api.addReward("Pizza", "FOOD", 50, null, null, "m-8")).first)
+        assertEquals("a restaurant is not rest", "Restaurant dinner", (api.addReward("Restaurant dinner", "OUTING", 200, null, null, "m-9") as Outcome.Ok).value.reward!!.title)
+        assertEquals(3, (api.mall() as Outcome.Ok).value.rewards.size)
+    }
+
+    /**
+     * P19 (D31): the demo buys as the server does: exactly the price, never more than the balance; a cooldown holds; a
+     * resend of the clientId buys once; an undo gives the price back inside its ten minutes, once, and not after.
+     */
+    @Test fun theDemoBuysExactlyAndUndoesInsideTenMinutes() = runTest {
+        var now = Instant.parse("2026-10-28T10:05:00Z")
+        val api = DemoApi { now }
+        val thai = (api.addReward("Takeaway night", "TREAT", 120, null, 7, "m-1") as Outcome.Ok).value.reward!!
+        val gig = (api.addReward("A gig", "OUTING", 400, null, null, "m-2") as Outcome.Ok).value.reward!!
+        val before = (api.mall() as Outcome.Ok).value
+        assertEquals(Wallet(185, 0), before.credits)
+        assertTrue(before.rewards.first { it.id == thai.id }.buy!!.can)
+        assertEquals(MallBuyState(false, "A gig costs 400 cr; you have 185 cr (215 cr short)."), before.rewards.first { it.id == gig.id }.buy)
+
+        val bought = (api.buyReward(thai.id, "b-1") as Outcome.Ok).value
+        assertEquals(CreditsChange(-120, 65), bought.credits)
+        assertEquals("Takeaway night bought for 120 cr · 65 cr left.", bought.line)
+        assertEquals(listOf("Takeaway night bought"), celebrationTitles(bought.celebrations))
+        val again = (api.buyReward(thai.id, "b-1") as Outcome.Ok).value
+        assertEquals("the same clientId buys once", bought.purchase!!.id, again.purchase!!.id)
+        val after = (api.mall() as Outcome.Ok).value
+        assertEquals(Wallet(65, 0), after.credits)
+        assertEquals(1, after.purchases.size)
+        assertEquals("At most once every 7 days: next on Wed 4 Nov.", after.rewards.first { it.id == thai.id }.buy!!.why)
+        fun refusal(r: Outcome<BuyResult>) = (r as Outcome.Err).let { it.code to it.message }
+        assertEquals("conflict" to "At most once every 7 days: next on Wed 4 Nov.", refusal(api.buyReward(thai.id, "b-2")))
+        assertEquals("no overdraft", "conflict" to "A gig costs 400 cr; you have 65 cr (335 cr short).", refusal(api.buyReward(gig.id, "b-3")))
+        assertEquals("gone" to "That reward is gone.", refusal(api.buyReward("rw-none", "b-4")))
+
+        val purchase = after.purchases.single()
+        assertEquals("2026-10-28T10:15:00Z", purchase.undoUntil)
+        now = Instant.parse("2026-10-28T10:14:00Z")
+        val undone = (api.undoBuy(purchase.id, "u-1") as Outcome.Ok).value
+        assertEquals(CreditsChange(120, 185), undone.credits)
+        assertTrue("undone once", (api.undoBuy(purchase.id, "u-2") as Outcome.Ok).value.duplicate)
+        assertEquals(Wallet(185, 0), (api.mall() as Outcome.Ok).value.credits)
+        assertTrue("an undone purchase no longer holds the cooldown", (api.mall() as Outcome.Ok).value.rewards.first { it.id == thai.id }.buy!!.can)
+
+        (api.buyReward(thai.id, "b-5") as Outcome.Ok).value
+        now = Instant.parse("2026-10-28T10:30:00Z")
+        val second = (api.mall() as Outcome.Ok).value.purchases.first()
+        assertNull("past its ten minutes the purchase offers no undo", second.undoUntil)
+        assertEquals("conflict" to "Too late to undo: a purchase can be undone for 10 minutes.", (api.undoBuy(second.id, "u-3") as Outcome.Err).let { it.code to it.message })
     }
 
     @Test fun theLastHabitClearsTheBoard() = runTest {

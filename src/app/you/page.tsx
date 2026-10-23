@@ -31,6 +31,7 @@ import { loadMonthDoneCore } from "@/lib/task-style-server";
 import { monthKeyOf } from "@/lib/task-style";
 import { MonthDoneCard } from "@/components/task-style/MonthDoneCard";
 import { settleMomentum } from "@/lib/momentum-server";
+import { loadWallet } from "@/lib/credits-server";
 import { MomentsPull } from "@/components/today/MomentumCard";
 
 export const metadata: Metadata = { title: "Character" };
@@ -64,7 +65,8 @@ function dayCardsOrNull(board: BoardData | null, streak: DailyStreak | null): Da
  * Duty and Care, read from the life tracks and Knowledge, and Capital as a
  * reading only; it replaced the Life tracks card; P4: each attribute's avatar
  * targets under it, and the Edit avatar sheet; P5: each attribute's skills
- * counted, linking You › Skills), the 13-trait radar below
+ * counted, linking You › Skills; P16: the purse's Credits line once credits
+ * count), the 13-trait radar below
  * it, the streak and the Full day (moved off Today: life measures that span
  * the sections, day-cards.ts), the ready callout, and goals and mastery. The
  * one place material shows by default, because everything on it was earned.
@@ -108,11 +110,15 @@ export default async function YouSheetPage() {
   const avatarRead = capitalRead.then((deals) => loadAvatar(userId, now, { deals })).catch(() => null);
   // The skills (blueprint P5), counted on the Status rows: a failed read counts none.
   const skillsRead = loadSkills(userId, { fields: false }).catch(() => null);
+  // The credits wallet (blueprint P16), the purse's Credits line: {live: false} with no read while CREDITS_LAUNCH_DAY is
+  // not in force (no line), and a failed read shows none.
+  const walletRead = loadWallet(userId, now).catch(() => null);
   const [s, board, streak] = await Promise.all([loadSheet(userId, now), loadTodayBoard(userId, today, now).catch(() => null), getDailyStreak(userId).catch(() => null)]);
   const month = await monthRead;
   const deals = await capitalRead;
   const avatar = await avatarRead;
   const skills = await skillsRead;
+  const wallet = await walletRead;
   const day = dayCardsOrNull(board, streak);
   // The five attributes from the sheet's own life view and Knowledge row: the levels the hero counts; each with its
   // targets and its skills counted.
@@ -138,6 +144,7 @@ export default async function YouSheetPage() {
             tracks={s.life.edges}
             lifeMp={launched ? lifeMpCell(s.life.mpLastWeek, s.today) : null}
             balance={s.balance}
+            credits={wallet?.live ? { balance: wallet.balance, today: wallet.today } : null}
             mastered={s.mastered}
             owned={s.owned}
             poolSize={s.poolSize}

@@ -167,6 +167,7 @@ import { StatusPanel, statusSeenKey } from "../src/components/home/StatusPanel";
 import { STATUS_ASIDE, STATUS_KEYS, STATUS_TITLE, capitalPanelOf, statusPanelOf, type CapitalDeal } from "../src/lib/status-panel";
 import { AttributeRadar, TRAITS_TITLE } from "../src/components/home/SheetSections";
 import { CharacterHero } from "../src/components/home/CharacterHero";
+import { LegacyCapitalLine, legacyCapitalLineOf } from "../src/components/home/LegacyCapital";
 import { fixtures as celebrateFixtures, fixtureMoments } from "../src/app/dev/style/celebrate/fixtures";
 import { GoalLadder, goalRowCopy, measuredLabel, roadmapEntryOf, roadmapRowCopy, rungsLine } from "../src/components/home/GoalLadder";
 import { LIFE_NOTE_KEY, readNoteDismissed, writeNoteDismissed } from "../src/components/home/LifeNote";
@@ -1107,6 +1108,32 @@ function sourceChecks(isUtility: UtilityTest, via: string) {
   const stats = read("src/app/you/stats/page.tsx");
   const nm = [...stats.matchAll(/className="nm"([^>]*)>/g)];
   check("stats: every ellipsised .nm row has a title", nm.length > 0 && nm.every((m) => /\btitle=/.test(m[1])), `${nm.filter((m) => !/\btitle=/.test(m[1])).length} without`);
+  // Blueprint P17 (D28, harm H19): the Line items show the dividend with Claim while it runs; once credits count it is
+  // retired and the kept balance shows read only (no Claim, no rate), hidden only when there is none to remember.
+  check(
+    "stats (P17): the dividend line while it runs; once retired, the kept capital read only (LegacyCapitalLine), and no Line items at a balance of 0",
+    /\{\(!s\.capital\.retired \|\| s\.capital\.balance !== 0\) && \(/.test(stats) &&
+      /\{s\.capital\.retired \? \(\s*<LegacyCapitalLine balance=\{s\.capital\.balance\} since=\{s\.capital\.since\} \/>\s*\) : \(\s*<DividendLine amount=\{s\.capital\.amount\} perHour=\{s\.capital\.perHour\} capped=\{s\.capital\.capped\} balance=\{s\.capital\.balance\} \/>\s*\)\}/.test(stats) &&
+      !/s\.dividend\b/.test(stats)
+  );
+  const capLine = renderToStaticMarkup(createElement(LegacyCapitalLine, { balance: 1234.56, since: "2026-10-26" })).replace(/<!-- -->/g, "");
+  const capLineNull = renderToStaticMarkup(createElement(LegacyCapitalLine, { balance: null, since: "2026-10-26" })).replace(/<!-- -->/g, "");
+  // The review of 2026-10-24: the heading keeps the dividend's own name (the Capital reading on You's Status panel goes
+  // on), and the line says that dividend still waiting to be claimed stopped with it (H19: nothing vanishes unsaid).
+  check(
+    "stats (P17): the retired line is read only and honest: 'Capital dividend (stopped)' (never the live Capital reading's bare name), the balance as kept ('1,234.6 banked, kept as it was'), the day it stopped, the unclaimed dividend stopped with it, never converted; no button, no Claim, no rate",
+    capLine.includes(">Capital dividend (stopped)<") &&
+      capLine.includes('aria-label="Capital dividend, stopped"') &&
+      !capLine.includes("Capital (retired)") &&
+      capLine.includes("1,234.6 banked, kept as it was") &&
+      capLine.includes("The dividend stopped on 26 Oct, when credits started; dividend still waiting to be claimed that day stopped with it.") &&
+      capLine.includes("The banked capital is never converted into credits") &&
+      !/<button|<form|>\s*Claim\b|an hour|\d+(\.\d+)? waiting/i.test(capLine) &&
+      capLineNull.includes("The balance can&#x27;t be read just now") &&
+      !/\d banked/.test(capLineNull) &&
+      legacyCapitalLineOf(0, "2026-10-26").startsWith("0 banked"),
+    capLine
+  );
 
   // Tailwind-colliding class names retired from the lane.
   check("classes: no bare `grow` class (Tailwind's flex-grow utility)", !lane.some((f) => f.endsWith(".tsx") && /className="grow"/.test(read(f))));

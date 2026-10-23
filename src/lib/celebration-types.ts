@@ -75,6 +75,7 @@ export const T2_KINDS = [
   "boss-won", // BossSigil face + a boon you choose
   "goal-finished", // Short or Mid goal (frozen MP payout stated)
   "competency-tier", // a skill's hour tier (blueprint P5, D9: 100 / 500 / 2,000 h; a Seal only, it pays no MP)
+  "mall-buy", // a Mall purchase (blueprint P19, D31: its price in credits, never XP or MP; a purchase is permission now)
 ] as const;
 
 /** Tier 3 · Ascension: rare. Full-screen opaque curtain; persisted (shownAt). */

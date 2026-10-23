@@ -20,6 +20,9 @@
  *
  * The server actions arrive as props (TodayBoard passes actions/momentum's), so this module imports no
  * server code and the checks render it over fixtures. Styles: momentum.css (imported by TodayBoard).
+ *
+ * Credits (blueprint P16): `credits` (Today's tags, null while CREDITS_LAUNCH_DAY is not in force) reaches the Quest
+ * sheet's rows as their "+10 cr" price tags; the strip itself stays as it is (no total, no fill).
  */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
@@ -27,6 +30,7 @@ import type { DayKey } from "@/lib/life-day";
 import type { Receipt, Track } from "@/lib/life-types";
 import type { CelebrationEvent } from "@/lib/celebration-types";
 import type { ChainView, ChestOpenResult, ChestView, MomentumView, QuestView, RunMark, RunView, SwapResult } from "@/lib/momentum-server";
+import type { CreditTags } from "@/lib/credits";
 import { COSMETICS, MOMENTUM, cosmeticById, type ChestReceipt, type QuestSlot } from "@/lib/momentum";
 import { TRACK_LABEL, kneePay, receiptCritOf, roundTo } from "@/lib/life-grade";
 import { FLAME_PATH } from "@/components/glyph/paths/flame";
@@ -272,6 +276,8 @@ export interface MomentumCardProps {
   prices?: Readonly<Record<string, number>>;
   /** settleMomentum wrote rows for this render: the host pulls their persisted moments now. */
   settled?: boolean;
+  /** Today's credit tags (blueprint P16; credits.ts creditTagsOn): the Quest sheet's price tags. Null while credits are off. */
+  credits?: CreditTags | null;
 }
 
 /** The pending moments a render's settleMomentum persisted (a milestone, a checkpoint, an auto-opened chest), pulled once. */
@@ -282,12 +288,12 @@ export function MomentsPull({ when }: { when: boolean }) {
   return null;
 }
 
-export function MomentumCard({ view, nowIso, actions, prices = {}, settled = false }: MomentumCardProps) {
+export function MomentumCard({ view, nowIso, actions, prices = {}, settled = false, credits = null }: MomentumCardProps) {
   if (!view.live) return null;
-  return <LiveCard view={view} nowIso={nowIso} actions={actions} prices={prices} settled={settled} />;
+  return <LiveCard view={view} nowIso={nowIso} actions={actions} prices={prices} settled={settled} credits={credits} />;
 }
 
-function LiveCard({ view, nowIso, actions, prices, settled }: { view: LiveMomentum; nowIso: string; actions: MomentumCardActions; prices: Readonly<Record<string, number>>; settled: boolean }) {
+function LiveCard({ view, nowIso, actions, prices, settled, credits }: { view: LiveMomentum; nowIso: string; actions: MomentumCardActions; prices: Readonly<Record<string, number>>; settled: boolean; credits: CreditTags | null }) {
   const [runOpen, setRunOpen] = useState(false);
   const [chestOpen, setChestOpen] = useState(false);
   const [questSlot, setQuestSlot] = useState<QuestSlot | null>(null);
@@ -381,6 +387,7 @@ function LiveCard({ view, nowIso, actions, prices, settled }: { view: LiveMoment
         prices={prices}
         frozen={view.frozen}
         swap={actions.swapQuest}
+        credits={credits}
       />
       <ChestSheet
         open={chestOpen}

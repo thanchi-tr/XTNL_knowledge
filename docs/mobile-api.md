@@ -34,7 +34,9 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
   - Across server instances, and after a failure that came after the write, the cores' own guards hold: a tick is
     paid once (a repeat answers "Already recorded"), a logged line is saved once per clientId (it is the line's
     capture key), a review answer lands once per clientId (its ledger row is keyed by it; a repeat answers
-    `409 recorded`), Done and Reopen are idempotent, and a repeated new idea is merged into the first by dedup.
+    `409 recorded`), a Mall purchase lands once per clientId (its ledger row is keyed by it: `POST /mall/buy`
+    requires one) and an undo once per purchase, Done and Reopen are idempotent, and a repeated new idea is merged
+    into the first by dedup.
   - Writes revalidate the same cache tags the web actions do (they run the same actions).
 - **Errors:** the app keeps what the user typed on any failure.
 
@@ -42,7 +44,7 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 
 | Method | Path | Wraps |
 | --- | --- | --- |
-| GET | /check | the Today board's read, the Review hub's counts, the shell's level, the work tabs' due tasks, the week audit |
+| GET | /check | the Today board's read, the Review hub's counts, the shell's level, the work tabs' due tasks, the week audit, the credits wallet |
 | POST | /tasks/complete | `completeTask` (actions/tasks.ts) |
 | POST | /tasks/undo | `undoCompletion` (actions/tasks.ts) |
 | POST | /work/done | `doneScheduledTask` with no log (actions/scheduled-tasks.ts) |
@@ -55,6 +57,10 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 | POST | /ideas | `submitIdea` (actions/ideas.ts) |
 | GET | /quests | the main quest, this week's sprint and Today's three (Today's own reads: `loadMainQuestCard`, `loadMainQuestWeek`, `loadMomentum`); read only |
 | GET | /status | the five attributes, Capital's reading, the avatar targets and the skills, the /you Status card's and You › Skills' (their own reads: `loadLifeTracks`, `loadKnowledgeRow`, `loadCapitalDeals`, `loadAvatar`, `loadSkills`); read only |
+| GET | /mall | You › Mall's catalog, its purchases and the credits over it (its own read: `loadMall`); read only |
+| POST | /mall/rewards | `addReward` (actions/mall.ts), the Add sheet's save |
+| POST | /mall/buy | `buyReward` (actions/mall.ts), Buy's Confirm |
+| POST | /mall/undo | `undoBuy` (actions/mall.ts), a purchase's Undo |
 
 ## GET /check: the quick check (the app's home)
 
@@ -78,6 +84,7 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
     "status": "provisional" | "frozen" | "final", "calibrating": false, "asOfDay": "2026-10-26" | null,
     "decaying": { "count": 4, "unread": 0, "top": [ { "kind": "domain", "title": "Probability fell to L3 (from L4)",
       "detail": "2 ideas fading in it. Reviewing them brings the level back." } ] } | null } | null,
+  "credits": { "balance": 120, "today": 40 } | null,
   "work": [
     { "id": "…", "boardId": "…", "boardName": "Acme Sales", "title": "Call Jordan back",
       "dueAt": "…", "allDay": false, "channel": "CALL" | "VISIT" | "EMAIL" | "MESSAGE" | "OTHER",
@@ -153,6 +160,17 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
     before the first `week` is sent, and a failed audit read never turns it off. It is exact when Android lets the
     app set exact alarms (Alarms & reminders); otherwise Android sends it within the hour after 19:00. No push, no
     endpoint.
+- `credits` (blueprint 4.1 and 4.2; decisions D27 to D29): the credits wallet, as the purse on the web's Character
+  page shows it. Null while credits are switched off (`CREDITS_LAUNCH_DAY`, null until the user's go: the server
+  reads nothing for it then, and the app shows no wallet chip), and when it couldn't be read.
+  - `balance`: whole credits, earned less bought plus refunded (a Mall purchase spends its price; its undo gives it
+    back). It is below zero only when an undone quest took back credits a purchase had already spent: shown as it
+    is, never charged, and the Mall refuses a purchase until it is back at 0. `today`: what today's life day earned.
+  - Credits are counted from rows the server already keeps, on every read; none is stored. They start at 0 on the
+    launch day and nothing before it counts. Each of Today's three done earns 10 (an undo takes it back), the day's
+    chest 10 more, a kept week 15 per track, a kept plan week 25, and a checkpoint 25, a milestone 100 and a goal
+    10 / 40 × g / 120 × g only when it pays MP. XP is never spent, and no penalty ever takes credits. The web's rules
+    page (`/today/rules#credits`) publishes the table once credits count.
 - `work`: the open scheduled tasks across the open work tabs that are overdue or due today, in the Agenda's order
   (Overdue first, then Today; soonest first, an all-day task before the timed ones of its day), at most 30.
 - `level` (the character level, as the top bar shows it) and `streak` (the daily streak; `freezes` banked) are null
@@ -176,7 +194,8 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
   "celebrations": [ { "tier": 1, "kind": "…", "title": "…" } ],
   "level": { "level": 7, "title": "Adept", "progress": 0.81 } | null,
   "competency": { "id": "…", "name": "Writing", "hoursAfter": 100.25, "tier": 2, "tierUp": true,
-    "line": "≈ 100 h (task estimates, not timed)" } | null } }
+    "line": "≈ 100 h (task estimates, not timed)" } | null,
+  "credits": { "delta": 10, "balance": 130, "today": 30 } | null } }
 ```
 
 - `xp`: the life XP paid, to one decimal. `line`: `+8.3 XP · <track>` (Body, Duty, Craft or Care), with
@@ -192,6 +211,15 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
   played the tier's Seal (a `competency-tier` moment among `celebrations`; a tier re-reached never plays twice). Null
   when the task feeds no skill, or when the skill couldn't be read (never a failed tick). A skill pays nothing: the
   tick's `xp` is the whole payment.
+- `credits` (blueprint P16): the credits wallet after this tick, whole credits. `balance` and `today` are the wallet
+  read fresh once the tick has committed (never a cached read that left before it), as `/check`'s: the app sets its
+  wallet chip from them, and never adds deltas up. `delta` is what was earned across the tick: the wallet's earned
+  after it less its earned before it (10 when the tick finishes one of Today's three, 0 when it finishes none; a Mall
+  purchase or its undo never counts in it). The two reads sit either side of the tick, not inside its lock, so
+  another write that lands between them (a second tick from the phone, a tick on the web) counts in `delta` too: it
+  is the change across this tick, never its receipt. The app names it on the tick's line (" · +10 cr") only when no
+  other write of its own overlapped the tick, and reads `/check` again after overlapping ones. Null while credits are
+  switched off (`CREDITS_LAUNCH_DAY`), and when either read failed: never a guessed figure, never a failed tick.
 
 ### POST /tasks/undo
 - Body: `{ "instanceId": "…", "clientId"?: "…" }`.
@@ -251,7 +279,8 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
   "levelFrom": 3, "levelTo": 4, "nextDueDay": "2026-10-29",
   "retry": false, "trueFact": "Recalled after 34 days",
   "quest": { "done": 5, "target": 20 | null }, "streakSecured": false,
-  "celebrations": [ { "tier": 2, "kind": "…", "title": "…" } ] } }
+  "celebrations": [ { "tier": 2, "kind": "…", "title": "…" } ],
+  "credits": { "delta": 10, "balance": 130, "today": 30 } | null } }
 ```
 
 - `judged`: set when a short answer's wording missed and the meaning check decided (its verdict and its one line).
@@ -259,6 +288,9 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
   multiplier it was paid at. `levelFrom` / `levelTo`: the card's level before and after (null only if it couldn't be
   read after a strike). `trueFact`: the result panel's line. `quest.target` is null before the day's first open has
   fixed it: keep the one from `/check`.
+- `credits` (blueprint P16): as `/tasks/complete`'s, read before the answer and fresh after it (`delta` 10 when the
+  answer completes the day's review quest among Today's three; `balance` and `today` the wallet after it); null while
+  credits are switched off or when a read failed. A repeat answered `recorded` carries none.
 - `retry` is the web runner's rule: true when this answer is a miss and this card's misses this session, this one
   included (`sessionMisses` + 1), are at most 3. Then the app asks the card again at the end of its session, at
   `levelTo`. So the app keeps, for one session: the queue, `combo`, and each card's miss count (sent as
@@ -289,7 +321,8 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 
 ```json
 { "ok": true, "data": { "kind": "task" | "goal" | "weight" | "idea-draft", "id": "…", "title": "Gym legs",
-  "line": "Added. Gym legs → Today · ≈ 8.3", "undo": { "kind": "task" | "weight" | "draft", "id": "…" } | null } }
+  "line": "Added. Gym legs → Today · ≈ 8.3", "undo": { "kind": "task" | "weight" | "draft", "id": "…" } | null,
+  "credits": { "delta": 0, "balance": 120, "today": 20 } | null } }
 ```
 
 - `line`: the capture sheet's toast as one line ("Added (not a Must)" for a must with no day; "Already saved" for a
@@ -302,6 +335,9 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 - `undo` is null for a weigh-in there is nothing to take back from: the same value again ("Already logged": nothing
   was written), or one that replaced a reading the server couldn't see. Offer no Undo then, as the capture sheet
   offers none.
+- `credits` (blueprint P16): as `/tasks/complete`'s, read before the save and fresh after it (a done-now line that
+  finishes one of Today's three earns its 10; a plain new task earns nothing until it is done); null while credits are
+  switched off or when a read failed.
 
 ### POST /log/undo
 - Body: the `undo` object above, `{ "kind": "task" | "weight" | "draft", "id": "…", "clientId"?: "…" }`.
@@ -510,3 +546,144 @@ own list: named competencies with hours and tiers, a record that pays nothing.
   keeps its last copy. Capital is read beside them, and a failure there reads as `capital: null`; the targets are read
   on the same deals, and a failure there reads as `targets: null`; the skills are read beside them, and a failure there
   reads as `skills: null` (and every attribute's `skills` 0).
+
+## GET /mall: the Mall's rewards and the credits over them
+
+Read only (blueprint 4.3 to 4.5; decisions D30 to D32). You › Mall's own read (mall-server `loadMall`): the rewards the
+user lists, each with a price in credits and whether it can be bought now, by category, the archived ones, the latest
+purchases, and the credits wallet over them. **Only what the user
+lists is priced**: the Mall starts empty and the server never sends a starter reward. **#play, rest days and sleep are never priced**: the server refuses a reward named
+for #play, sleep, a nap or a rest day, and one that is a #play task on the user's board. The app can't block leisure,
+so the Mall is a commitment device that runs on honour. **A purchase is permission now** (blueprint P19): it burns
+exactly its price, never more than the balance (no overdraft), and can be undone for 10 minutes (`POST /mall/buy`,
+`POST /mall/undo`).
+
+```json
+{ "ok": true, "data": {
+  "now": "2026-10-24T00:12:00.000Z", "day": "2026-10-24",
+  "credits": { "balance": 1240, "today": 40 } | null,
+  "creditsLine": "+40 cr today" | "Credits aren't counted yet: they start at none on the day they are switched on.",
+  "goodDay": { "credits": 40, "days": 28, "earningDays": 22 } | null,
+  "hintLine": "A good day is 40 cr: the middle of the 22 days that earned credits in the last 28." | null,
+  "categories": [ { "key": "TREAT" | "SCREEN" | "OUTING" | "PURCHASE" | "OTHER", "label": "Treats",
+    "examples": "a takeaway, a dessert, a coffee out" } ],
+  "rewards": [ { "id": "…", "title": "Takeaway night", "category": "TREAT", "categoryLabel": "Treats", "price": 120,
+    "priceLine": "120 cr", "hint": "≈ 3 good days" | "calibrating", "note": "From the Thai place" | null,
+    "cooldownDays": 7 | null, "cooldownLine": "at most once every 7 days" | null,
+    "buy": { "can": true, "why": null } | { "can": false, "why": "Takeaway night costs 120 cr; you have 80 cr (40 cr short)." } } ],
+  "archived": [ { "id": "…", "title": "…", "category": "SCREEN", "categoryLabel": "Screen time", "price": 30,
+    "priceLine": "30 cr", "hint": "calibrating", "note": null, "cooldownDays": null, "cooldownLine": null,
+    "buy": { "can": false, "why": "That reward is gone." }, "archivedAt": "2026-10-20T03:00:00.000Z" } ],
+  "purchases": [ { "id": "…", "rewardId": "…", "title": "Takeaway night", "price": 120, "priceLine": "120 cr",
+    "day": "2026-10-24", "occurredAt": "2026-10-24T10:05:00.000Z", "at": "21:05", "refunded": false,
+    "undoUntil": "2026-10-24T10:15:00.000Z" | null, "line": "Bought Sat 24 Oct at 21:05" } ],
+  "limits": { "titleMax": 60, "noteMax": 200, "priceMin": 1, "priceMax": 100000, "cooldownMin": 1, "cooldownMax": 365,
+    "rewardsMax": 60, "undoMinutes": 10 },
+  "notes": { "honour": "The app can't block leisure, so the Mall is a commitment device: it runs on honour. …",
+    "free": "#play, rest days and sleep are never priced: …", "onlyYours": "Only the rewards you list are priced. …",
+    "buying": "A purchase is permission now: buy the reward, then take it. You can't spend more than you have, and a purchase can be undone for 10 minutes." },
+  "writesOn": true, "ready": true
+} }
+```
+
+- `credits`: the wallet, as `/check`'s `credits` (whole credits: the balance and what today earned). Null while
+  credits are off (`CREDITS_LAUNCH_DAY`, null until the user's go: no balance is shown) and when it couldn't be read.
+  `creditsLine` is the web header's line beside it, or why there is none.
+- `goodDay`: what the price hints divide by. A good day is the middle (median) of the days that earned credits in the
+  last 28 complete life days. Null while the hints calibrate: credits are off, they have counted for fewer than 14
+  complete days, or no day in the window earned any. `hintLine` says which, in the web's words (null when the wallet
+  couldn't be read). The hints are deterministic: the same rows give the same hint.
+- `rewards`: the live rewards in the page's order: by category (`categories`' order), each category in the user's
+  order. `price` is whole credits (1 to 100,000) and `priceLine` the web's figure. `hint` is "≈ 2 good days",
+  "≈ 1 good day" or "under half a good day", or `calibrating` without a good day. `cooldownDays` is "at most once every
+  n days" (null with none); a purchase keeps it (an undone purchase does not count).
+- `buy` (P19): whether the reward can be bought now (`can`), else the line saying why (`why`, the server's own words):
+  credits off ("Credits aren't counted yet, so nothing can be bought."), a server that records nothing, a balance below
+  zero ("You're at −10 cr: earn it back before you buy."), too few credits ("… costs 120 cr; you have 80 cr (40 cr
+  short)."), or a cooldown ("At most once every 7 days: next on Tue 27 Oct."). It is the page's own state; the server
+  checks it all again at the buy.
+- `purchases` (P19): the latest 20 purchases, newest first. `id` is what `POST /mall/undo` names; `title` and `price`
+  are the receipt's (an edit of the reward never reprices a purchase). `undoUntil` is ten minutes after the purchase,
+  while it can still be undone (null once undone or past it); `refunded` marks one undone. Empty while credits are off.
+- `archived`: archived rewards, newest first, at most 50, with `archivedAt`. An archive keeps the row; nothing is
+  deleted. Rewards are edited and archived on the web.
+- `limits`: what the Add form keeps (the server checks them again). `notes`: the page's honour notes, shown as is.
+- `writesOn`: the server records writes (only the live app does; a dev server sharing the database records nothing).
+  `ready`: the Mall's table is there (false before its migration: no rewards, and an add is refused).
+- A reward is a record of what the user will pay: listing one pays and costs nothing. Buying one costs its price in
+  credits, and never XP, MP or a point.
+- It writes nothing and owes nothing after the reply. The catalog is the page itself, so if it can't be read the
+  request fails (`server`) and the app keeps its last copy; the wallet is read beside it, and a failure there reads
+  as `credits: null`.
+
+### POST /mall/rewards
+
+Lists a reward, as the Add sheet on You › Mall does (`addReward`, actions/mall.ts).
+
+```json
+{ "title": "Takeaway night", "category": "TREAT", "price": 120, "note": "From the Thai place", "cooldownDays": 7,
+  "clientId": "…" }
+→ { "ok": true, "data": { "id": "…", "reward": { "id": "…", "title": "Takeaway night", "category": "TREAT", … } | null } }
+```
+
+- `title` (1–60 characters), `category` (a `categories` key) and `price` (a whole number of credits) are required;
+  `note` (at most 200 characters) and `cooldownDays` (whole days) are optional. A mistyped or missing field is `bad`.
+- The rules are the server's, refused as `conflict` with its own line: a price outside 1 to 100,000 ("A price is a
+  whole number of credits from 1 to 100,000."), a cooldown outside 1 to 365, a title naming #play, sleep, a nap or a
+  rest day ("Sleep, naps and rest days stay free: the Mall never prices them.") or a #play task on the board, a title
+  already listed ("You already list “Takeaway night”."), the 60th live reward, and a server that records nothing
+  ("Mall changes are recorded only on the live app.").
+- `reward` is the new row as `GET /mall` lists it (null when that read fails: the reward is listed all the same).
+- A resend with the same `clientId` replays on the instance that answered; on another instance the second add is
+  refused as a title already listed, so a reward is listed once.
+
+### POST /mall/buy
+
+Buys a reward, as Buy then Confirm on You › Mall does (`buyReward`, actions/mall.ts; blueprint 4.4 and 4.5, decisions
+D31 and D32). A purchase is permission now: the price is burnt exactly, never more than the balance.
+
+```json
+{ "rewardId": "…", "clientId": "…" }
+→ { "ok": true, "data": {
+  "purchase": { "id": "…", "rewardId": "…", "title": "Takeaway night", "price": 120, "priceLine": "120 cr", "day": "2026-10-24",
+    "occurredAt": "2026-10-24T10:05:00.000Z", "at": "21:05", "refunded": false, "undoUntil": "2026-10-24T10:15:00.000Z",
+    "line": "Bought Sat 24 Oct at 21:05" },
+  "credits": { "delta": -120, "balance": 1120 }, "duplicate": false,
+  "line": "Takeaway night bought for 120 cr · 1,120 cr left.",
+  "celebrations": [ { "tier": 2, "kind": "mall-buy", "title": "Takeaway night bought" } ] } }
+```
+
+- `clientId` is **required** here (`bad` without it): it is the purchase's ledger key, so send the same one on every
+  retry of one purchase, and a new one for every purchase meant as new. A resend with the same `clientId` replays the
+  first reply on the instance that answered it (byte for byte: `duplicate: false`, `credits.delta` −price); on another
+  instance the server answers the purchase already made with `duplicate: true` and `credits.delta` 0. Either way it is
+  written once: nothing is spent twice. So the app keeps a purchase's `clientId` only while the same attempt is retried
+  (its reply lost), and drops it once `GET /mall` lists that purchase.
+- The server reads the reward, every Mall row and the credits fresh, then writes the purchase in one transaction behind
+  the same lock as a tick, with a guard that no other purchase landed meanwhile. If one did (the phone and the web at
+  once), it reads again once and checks again, so two purchases can never spend the same credits; if it changed a
+  second time it says so ("Your credits changed meanwhile. Try again.", `conflict`).
+- Refusals are `conflict` with the server's line: credits off ("Credits aren't counted yet, so nothing can be
+  bought."), a server that records nothing, a balance below zero, too few credits (no overdraft and no credit line),
+  and a cooldown not yet over. A reward that is archived or not there is `gone` ("That reward is gone.").
+- `credits`: the purchase's own change (−price) and the balance it left, whole credits. No penalty ever takes credits,
+  and a purchase never costs XP, MP or a point.
+- `celebrations`: the purchase's Seal (`mall-buy`, tier 2), as the web's queue plays it; none on a repeat.
+- No chance: the price is the price. The chest and crits stay the only rolls.
+
+### POST /mall/undo
+
+Undoes a purchase inside its ten minutes, as Undo in the web's purchases does (`undoBuy`, actions/mall.ts).
+
+```json
+{ "purchaseId": "…", "clientId"?: "…" }
+→ { "ok": true, "data": { "purchaseId": "…", "credits": { "delta": 120, "balance": 1240 }, "duplicate": false,
+  "line": "Takeaway night undone: 120 cr back." } }
+```
+
+- Ten minutes from the purchase, on the server's clock; after that it is `conflict` ("Too late to undo: a purchase can
+  be undone for 10 minutes."). A purchase that isn't there is `gone` ("That purchase is gone.").
+- Once: a resend with the same `clientId` replays the first reply on the instance that answered it (`duplicate:
+  false`, `credits.delta` +price); any other repeat (another instance, a double tap with a new `clientId`, the other
+  device) is answered by the server with `duplicate: true` and `credits.delta` 0. A purchase is given back once.
+- The credits come back as they were spent; an undo plays no celebration.

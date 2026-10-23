@@ -4,7 +4,7 @@
  * Pure (the checks import it).
  *
  *   SECTIONS                 the three sections, their sub-pages, and the paths they own
- *   PROFILE                  the profile menu: Character, Skills, Emblems, Loadout, Moments, Stats, Settings
+ *   PROFILE                  the profile menu: Character, Skills, Emblems, Loadout, Mall, Moments, Stats, Settings
  *   sectionOf(pathname)      "ideas" | "tasks" | "body" | null (null on a profile page)
  *   isProfilePath(pathname)  a profile page: no tab is current, the profile button is
  *   groupOf(pathname)        the section or PROFILE a path sits in, or null
@@ -34,6 +34,10 @@
  * Skills (blueprint P5, decisions D7 to D9; a compatible addition): the
  * profile menu's second row, /you/skills (SKILLS_PATH), lists the named
  * competencies by hours and the Fields by level.
+ *
+ * Mall (blueprint P18, decision D30; a compatible addition): the row after
+ * Loadout, /you/mall (MALL_PATH), lists the rewards the user prices in
+ * credits. Only what the user lists is priced; #play stays free.
  */
 import type { IconName } from "@/components/ui/Icon";
 import type { CaptureMode } from "@/components/capture/events";
@@ -122,6 +126,8 @@ export const PROFILE: NavGroup<"you"> = {
     { href: "/you/skills", label: "Skills", icon: "clock" },
     { href: "/skills", label: "Emblems", icon: "tree" },
     { href: "/you/loadout", label: "Loadout", icon: "sword" },
+    // Blueprint P18 (D30): the rewards the user lists, priced in credits (the bag: what credits are spent on).
+    { href: "/you/mall", label: "Mall", icon: "bag" },
     { href: "/you/moments", label: "Moments", icon: "star" },
     { href: "/you/stats", label: "Stats", also: ["/dashboard"], icon: "chart" },
     { href: "/settings", label: "Settings", icon: "gear" },
@@ -130,6 +136,9 @@ export const PROFILE: NavGroup<"you"> = {
 
 /** You › Skills (blueprint P5): the named competencies by hours, and the Fields by level and Field tier. */
 export const SKILLS_PATH = "/you/skills";
+
+/** You › Mall (blueprint P18, D30): the rewards the user lists, each with a price in credits (buying is P19). */
+export const MALL_PATH = "/you/mall";
 
 /** The Life tree's route (momentum.md §B.5; PathChips' LIFE_SKILLS_HREF) and, since D6, its name: "Life perks". */
 export const LIFE_PERKS_PATH = "/skills/life";

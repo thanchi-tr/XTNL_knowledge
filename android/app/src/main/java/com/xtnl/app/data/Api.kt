@@ -42,4 +42,15 @@ interface XtnlApi {
     suspend fun quests(): Outcome<QuestsData>
     /** The five attributes, Capital's reading, the avatar targets and the skills: the web's Status card (read only; blueprint P1, P4, P5). */
     suspend fun status(): Outcome<StatusPanel>
+    /** You › Mall: the rewards the user lists, each with its price and hint, and the credits over them (read only; blueprint P18). */
+    suspend fun mall(): Outcome<MallData>
+    /** Lists a reward, as You › Mall's Add sheet does (blueprint P18). Edit and archive stay on the web. */
+    suspend fun addReward(title: String, category: String, price: Int, note: String?, cooldownDays: Int?, clientId: String): Outcome<AddRewardResult>
+    /**
+     * Buys a reward, as Buy then Confirm on You › Mall does (blueprint P19): its price in credits, never more than the
+     * balance. [clientId] is required and is the purchase's key: a retry sends the same one, and it is bought once.
+     */
+    suspend fun buyReward(rewardId: String, clientId: String): Outcome<BuyResult>
+    /** Undoes a purchase inside its ten minutes (blueprint P19), once. */
+    suspend fun undoBuy(purchaseId: String, clientId: String): Outcome<UndoBuyResult>
 }

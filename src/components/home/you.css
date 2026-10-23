@@ -62,6 +62,11 @@
     .purse.p4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     .purse.p4 > div:nth-child(3) { border-left: 1px solid var(--line-1); padding-left: 12px; }
   }
+  /* The Credits line under the purse (blueprint P16): drawn only once credits count. */
+  .purse-cr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--line-1); font-size: 13px; line-height: 18px; color: var(--ink-2); }
+  .purse-cr .k { font-size: 12px; color: var(--ink-2); }
+  .purse-cr b { font: 600 18px/1 var(--font-display); color: var(--ink-0); font-variant-numeric: tabular-nums; }
+  .purse-cr .t { color: var(--ink-1); }
 
   /* ---------- ready callout ---------- */
   .ready-c { display: flex; gap: 12px; align-items: center; padding: 12px 12px 12px 14px; border-color: color-mix(in srgb, var(--gold-m) 40%, transparent); }
@@ -124,6 +129,41 @@
   .sk-field { justify-content: space-between; min-height: 44px; }
   .sk-field b { flex: 1 1 140px; min-width: 0; }
   .sk-road { display: flex; flex-direction: column; }
+  /* You › Mall (blueprint P18, P19): the wallet header, the honour note, the rewards by category (a row each: the name and
+     its price, the hint and cooldown, the note, Buy then Confirm), the purchases (Undo for ten minutes), the Add sheet's
+     form and the archived list. Tokens only; 44 px targets. */
+  .ml-board { min-width: 0; }
+  .ml-pad { padding: 12px 14px; margin: 0 0 10px; }
+  .ml-wallet { display: flex; flex-direction: column; gap: 6px; padding: 14px; }
+  .ml-wallet p { margin: 0; }
+  .ml-bal-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+  .ml-bal { font: 600 22px/1.1 var(--font-display); color: var(--ink-0); font-variant-numeric: tabular-nums; }
+  .ml-bal-row .t { font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .ml-note { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
+  .ml-note p { margin: 0; font-size: 14px; line-height: 20px; color: var(--ink-1); overflow-wrap: anywhere; }
+  .ml-note p.t-meta { font-size: 13px; line-height: 18px; color: var(--ink-2); }
+  .ml-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  .ml-list { padding: 0; }
+  .ml-row { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; min-width: 0; }
+  .ml-row + .ml-row { border-top: 1px solid var(--line-1); }
+  .ml-row-h { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; }
+  .ml-row-h b { flex: 1 1 140px; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+  .ml-price { flex: none; margin-left: auto; font: 600 15px/1.2 var(--font-mono); color: var(--ink-0); font-variant-numeric: tabular-nums; }
+  .ml-line { margin: 2px 0 0; font-size: 13px; line-height: 18px; color: var(--ink-1); overflow-wrap: anywhere; }
+  .ml-acts { margin-top: 6px; }
+  /* P19: a reward that can't be bought now says why under its Buy, and one just bought says so; a purchase row reads
+     its price spent, or struck through once undone (it spent and got back the same: never a '+' that reads as income). */
+  .ml-why, .ml-done { margin: 4px 0 0; overflow-wrap: anywhere; }
+  .ml-done { color: var(--ink-1); }
+  .ml-price.ml-void { text-decoration: line-through; text-decoration-thickness: 1px; }
+  .ml-acts .t-meta { align-self: center; }
+  [data-refunded] > .ml-row-h b, [data-refunded] > .ml-row-h .ml-price { color: var(--ink-2); }
+  .ml-arch .ml-row-h b, .ml-arch .ml-price { color: var(--ink-1); }
+  .ml-form { display: flex; flex-direction: column; gap: 10px; }
+  .ml-form .st-label { margin-bottom: 0; }
+  .ml-form .st-hint { margin-top: -4px; }
+  .ml-field { display: flex; gap: 8px; align-items: center; }
+  .ml-unit { flex: none; font: 600 15px/1 var(--font-ui); color: var(--ink-1); }
 
   /* ---------- the life note (14 days after life starts counting) ---------- */
   .life-note { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 12px 14px; }

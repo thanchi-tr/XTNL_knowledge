@@ -7,10 +7,17 @@
  * judged Sunday and the kept-weeks grid, both read from the WEEK rows the
  * judge wrote (life-tracks.ts levelSeries, keptWeekGrid). Before launch
  * `life.launched` is false and nothing life-shaped is read or shown.
+ *
+ * Capital (blueprint P17, D28): while the dividend runs, `capital` carries
+ * what has accrued and the banked balance (the Claim line). Once credits count
+ * (credits.ts dividendRetiredOn, the CREDITS_LAUNCH_DAY switch) the dividend
+ * is not computed at all: `capital` is the banked balance only, read as it
+ * was and never converted, or null when it can't be read (never a made-up 0).
  */
 import { isDue } from "@/lib/due";
 import { getCapitalBalance, pendingDividend } from "@/lib/capital";
-import { todayKey } from "@/lib/life-day";
+import { creditsLaunchDay, dividendRetiredOn } from "@/lib/credits";
+import { todayKey, type DayKey } from "@/lib/life-day";
 import type { TrackCurve } from "@/lib/life-economy";
 import { keptWeekGrid, levelSeries, notLaunchedView, type WeekMark } from "@/lib/life-tracks";
 import { loadLifeLedger, loadLifeTracks } from "@/lib/life-tracks-server";
@@ -38,6 +45,14 @@ export interface LifeStats {
 
 const NO_LIFE: LifeStats = { launched: false, series: [], kept: { labels: [], rows: [] } };
 
+/**
+ * The capital line. Running: the dividend waiting, its rate, the 48 h ceiling and the banked balance (DividendLine,
+ * with Claim). Retired (P17): the launch day it stopped and the banked balance only, null when unreadable just now.
+ */
+export type CapitalStats =
+  | { retired: false; amount: number; perHour: number; capped: boolean; balance: number }
+  | { retired: true; since: DayKey; balance: number | null };
+
 export interface StatsData {
   level: number;
   title: string;
@@ -53,7 +68,7 @@ export interface StatsData {
   nearest: { name: string; field: string; level: number; progress: number }[];
   levelBuckets: number[];
   questionTypes: { name: string; count: number }[];
-  dividend: { amount: number; perHour: number; capped: boolean; balance: number };
+  capital: CapitalStats;
   hasGhost: boolean;
   life: LifeStats;
 }
@@ -90,18 +105,28 @@ async function loadLifeStats(userId: string, curve: TrackCurve): Promise<LifeSta
 }
 
 export async function loadStats(userId: string, now = new Date()): Promise<StatsData> {
+  // P17: the day credits started, once the dividend is retired on today's life day (null while it runs).
+  const creditsLaunch = creditsLaunchDay();
+  const retiredSince = creditsLaunch != null && dividendRetiredOn(todayKey(now), creditsLaunch) ? creditsLaunch : null;
   const [tree, progression, ghosts, streak, balance, life] = await Promise.all([
     loadFieldTree(),
     loadProgression(userId),
     getGhostLevelsFromDaysAgo(7),
     getDailyStreak(userId).catch(() => null),
-    getCapitalBalance(userId).catch(() => 0),
+    getCapitalBalance(userId).catch(() => null),
     loadLifeTracks(userId).catch(() => notLaunchedView(todayKey(now))),
   ]);
   const [pending, lifeStats] = await Promise.all([
-    pendingDividend(userId, progression.activeSkills).catch(() => ({ amount: 0, perHour: 0, capped: false, hoursAccrued: 0 })),
+    // Retired: the dividend is not computed (no rate, no accrual read).
+    retiredSince != null
+      ? Promise.resolve(null)
+      : pendingDividend(userId, progression.activeSkills).catch(() => ({ amount: 0, perHour: 0, capped: false, hoursAccrued: 0 })),
     life.launched ? loadLifeStats(userId, life.curve) : Promise.resolve(NO_LIFE),
   ]);
+  const capital: CapitalStats =
+    retiredSince != null
+      ? { retired: true, since: retiredSince, balance }
+      : { retired: false, amount: pending?.amount ?? 0, perHour: pending?.perHour ?? 0, capped: pending?.capped ?? false, balance: balance ?? 0 };
 
   // Track levels in TRACKS order, as the shell and the sheet sum them.
   const raw = characterRaw(
@@ -158,7 +183,7 @@ export async function loadStats(userId: string, now = new Date()): Promise<Stats
     nearest,
     levelBuckets: buckets,
     questionTypes: [...types.entries()].map(([k, n]) => ({ name: TYPE_LABEL[k] ?? k, count: n })).sort((a, b) => b.count - a.count),
-    dividend: { amount: pending.amount, perHour: pending.perHour, capped: pending.capped, balance },
+    capital,
     hasGhost: ghosts.length > 0,
     life: lifeStats,
   };

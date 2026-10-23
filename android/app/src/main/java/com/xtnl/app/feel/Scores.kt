@@ -73,4 +73,7 @@ object Scores {
 
     /** A work item's Done: crisper and lighter than a task. */
     val work = listOf(Beat(CLICK, 0.50f, 0), Beat(TICK, 0.25f, 150))
+
+    /** A Mall purchase (blueprint P19): the CLICK of the Confirm, then the burn cooling in three fading beats. */
+    val burn = listOf(Beat(CLICK, 0.65f, 0), Beat(TICK, 0.45f, 110), Beat(TICK, 0.32f, 230), Beat(LOW_TICK, 0.22f, 360))
 }

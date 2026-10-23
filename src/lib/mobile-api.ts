@@ -52,6 +52,37 @@ import { geminiWordsOf } from "../components/roadmap/roadmap-copy";
 import type { CapitalPanel, CapitalReading, StatusPanel } from "./status-panel";
 import type { AvatarTargetView } from "./avatar";
 import { skillTickOf, type SkillView } from "./competency";
+import type { CreditsWallet } from "./credits";
+import {
+  COOLDOWN_MAX,
+  COOLDOWN_MIN,
+  MALL_BUYING,
+  MALL_CATEGORIES,
+  MALL_CATEGORY_EXAMPLES,
+  MALL_CATEGORY_LABEL,
+  MALL_FREE,
+  MALL_HONOUR,
+  MALL_ONLY_YOURS,
+  MALL_UNDO_MINUTES,
+  PRICE_MAX,
+  PRICE_MIN,
+  PURCHASE_FAILED,
+  PURCHASE_GONE,
+  REWARDS_MAX,
+  REWARD_GONE,
+  REWARD_NOTE_MAX,
+  REWARD_TITLE_MAX,
+  boughtLine,
+  goodDayLine,
+  isMallCategory,
+  mallWalletLines,
+  undoneLine,
+  type BuyState,
+  type PurchaseView,
+  type RewardInput,
+  type RewardView,
+} from "./mall";
+import type { MallView } from "./mall-server";
 
 // ── The endpoints ───────────────────────────────────────────────────────────
 
@@ -74,6 +105,10 @@ export const MOBILE_ENDPOINTS: readonly { method: MobileMethod; path: string }[]
   { method: "POST", path: "/ideas" },
   { method: "GET", path: "/quests" },
   { method: "GET", path: "/status" },
+  { method: "GET", path: "/mall" },
+  { method: "POST", path: "/mall/rewards" },
+  { method: "POST", path: "/mall/buy" },
+  { method: "POST", path: "/mall/undo" },
 ];
 
 // ── The token ───────────────────────────────────────────────────────────────
@@ -149,6 +184,9 @@ export const GONE_LINES: ReadonlySet<string> = new Set([
   SCHEDULED_GONE,
   WORK_BOARD_GONE,
   "That capture is gone.",
+  // The Mall (blueprint P19): a reward archived, or a purchase that isn't there.
+  REWARD_GONE,
+  PURCHASE_GONE,
 ]);
 
 export const SERVER_LINES: ReadonlySet<string> = new Set([
@@ -157,6 +195,8 @@ export const SERVER_LINES: ReadonlySet<string> = new Set([
   // actions/capture.ts SAVE_FAILED and undoWeightCapture's catch.
   "Couldn't save it. Your line is kept — try again.",
   "Couldn't undo the weigh-in. Try again, or change it on Body.",
+  // mall-server.ts: a purchase or an undo that threw (never a refusal).
+  PURCHASE_FAILED,
 ]);
 
 export function refusalReply(error: string, code?: string | null): Reply {
@@ -601,6 +641,31 @@ export function streakOf(s: { current: number; last7Days: readonly boolean[]; ba
   return { days: s.current, keptToday: s.last7Days[s.last7Days.length - 1] === true, freezes: s.bankedFreezes };
 }
 
+/**
+ * /check's `credits` (blueprint P16; D27 to D29): the wallet's balance and what today earned, whole credits. Null
+ * while credits are off (CREDITS_LAUNCH_DAY, null until the user's go: the wallet is hidden) and when it couldn't be
+ * read.
+ */
+export function checkCreditsOf(w: CreditsWallet | null): { balance: number; today: number } | null {
+  if (!w || !w.live) return null;
+  return { balance: w.balance, today: w.today };
+}
+
+/**
+ * A write's `credits` (a tick, an answer, a log): the wallet after it, read fresh once the write committed (`balance`
+ * and `today`, as /check's: what the phone's chip shows, set from them, never by adding deltas), and `delta`, what was
+ * earned across it: the wallet's earned after the write less its earned before it (an answer that completes the review
+ * quest is +10, a tick that finishes nothing 0; a purchase or its undo never counts in it). The two reads are either
+ * side of the write, not inside its lock, so another write that lands between them (a second tick from the phone, a
+ * tick on the web) counts in `delta` too: it is the change across this write, never a receipt of it, and the app names
+ * it on the write's own line only when no other write of its own overlapped. Null while credits are off, or when either
+ * read failed: never a guessed figure.
+ */
+export function writeCreditsOf(before: CreditsWallet | null, after: CreditsWallet | null): { delta: number; balance: number; today: number } | null {
+  if (!before || !after || !before.live || !after.live) return null;
+  return { delta: after.earned - before.earned, balance: after.balance, today: after.today };
+}
+
 // ── GET /quests ─────────────────────────────────────────────────────────────
 
 /**
@@ -764,6 +829,135 @@ export function statusSkillsOf(skills: readonly SkillView[] | null) {
     walks: s.walks,
     templates: s.templates,
   }));
+}
+
+// ── GET /mall, POST /mall/rewards ───────────────────────────────────────────
+
+/**
+ * A reward as the phone shows it (blueprint 4.3; P18, decision D30), mall.ts's own view: its id, title, category (key
+ * and label), price (whole credits) and the web's "120 cr", the hint ("≈ 2 good days", or "calibrating"), its note,
+ * and its cooldown (days, and the web's "at most once every 7 days"; null with none). A reward pays nothing. P19:
+ * `buy`, whether it can be bought now (`can`) or the line saying why not (`why`), as the page's Buy reads it
+ * (mall.ts buyStateOf; the server checks it all again at the buy). An archived reward, or one read without its state,
+ * can't be bought.
+ */
+export function mallRewardOf(r: RewardView, buy?: BuyState | null) {
+  return {
+    id: r.id,
+    title: r.title,
+    category: r.category,
+    categoryLabel: r.categoryLabel,
+    price: r.price,
+    priceLine: r.priceLine,
+    hint: r.hint,
+    note: r.note,
+    cooldownDays: r.cooldownDays,
+    cooldownLine: r.cooldownLine,
+    buy: buy ? { can: buy.can, why: buy.why } : { can: false, why: r.archivedAt != null ? REWARD_GONE : null },
+  };
+}
+
+/**
+ * A purchase as the phone lists it (blueprint 4.4; P19, decision D31), mall.ts's own view: its id (what POST
+ * /mall/undo names), the reward's id and title as bought, its price (whole credits, the receipt's) and "120 cr", its
+ * life day, the instant and Sydney's "21:05", whether it was undone, and until when it can be undone (an ISO instant,
+ * ten minutes after the buy; null once undone or past it), with the web's line.
+ */
+export function mallPurchaseOf(p: PurchaseView) {
+  return {
+    id: p.id,
+    rewardId: p.rewardId,
+    title: p.title,
+    price: p.price,
+    priceLine: p.priceLine,
+    day: p.day,
+    occurredAt: p.occurredAt,
+    at: p.at,
+    refunded: p.refunded,
+    undoUntil: p.undoUntilMs == null ? null : new Date(p.undoUntilMs).toISOString(),
+    line: p.line,
+  };
+}
+
+/**
+ * GET /mall's data (You › Mall's own read, mall-server loadMall): the credits (as /check's: null while credits are off
+ * or unread) and the header's line, the good day the hints divide by (null while they calibrate) and its line, the
+ * categories in the page's order, the live rewards (by category, each in the user's order, each with its Buy state:
+ * P19), the archived ones (newest first, with their archivedAt), the latest purchases (P19: newest first, each with its
+ * undo window), the limits the Add form keeps (and the undo's minutes), the honour notes, and whether writes are on and
+ * the table is there. Only what the user lists is here: no starter reward is ever sent.
+ */
+export function mallOf(view: MallView) {
+  const w = mallWalletLines(view.wallet);
+  return {
+    credits: checkCreditsOf(view.wallet),
+    creditsLine: w.line,
+    goodDay: view.goodDay.calibrating ? null : { credits: view.goodDay.credits, days: view.goodDay.days, earningDays: view.goodDay.earningDays },
+    hintLine: view.wallet ? goodDayLine(view.goodDay, view.wallet.live) : null,
+    categories: MALL_CATEGORIES.map((key) => ({ key, label: MALL_CATEGORY_LABEL[key], examples: MALL_CATEGORY_EXAMPLES[key] })),
+    rewards: view.groups.flatMap((g) => g.rewards.map((r) => mallRewardOf(r, view.buy[r.id] ?? null))),
+    archived: view.archived.map((r) => ({ ...mallRewardOf(r), archivedAt: r.archivedAt })),
+    purchases: view.purchases.map(mallPurchaseOf),
+    limits: { titleMax: REWARD_TITLE_MAX, noteMax: REWARD_NOTE_MAX, priceMin: PRICE_MIN, priceMax: PRICE_MAX, cooldownMin: COOLDOWN_MIN, cooldownMax: COOLDOWN_MAX, rewardsMax: REWARDS_MAX, undoMinutes: MALL_UNDO_MINUTES },
+    notes: { honour: MALL_HONOUR, free: MALL_FREE, onlyYours: MALL_ONLY_YOURS, buying: MALL_BUYING },
+    writesOn: view.writesOn,
+    ready: view.ready,
+  };
+}
+
+/** POST /mall/rewards' fields (and clientId). */
+export const MALL_REWARD_KEYS = ["title", "category", "price", "note", "cooldownDays"] as const;
+
+/**
+ * POST /mall/rewards' body as the Add form's fields: a title (at most REWARD_TITLE_MAX characters), a category key, a
+ * whole price, an optional note (at most REWARD_NOTE_MAX) and an optional whole cooldown. A mistyped field is `bad`;
+ * the rules (the price's range, #play, sleep and rest days, one live reward a title) are the core's, refused as
+ * `conflict` with its own line.
+ */
+export function mallRewardRequestOf(body: Record<string, unknown>): RewardInput {
+  const title = textOf(body.title, "title", REWARD_TITLE_MAX);
+  if (!isMallCategory(body.category)) bad(`category must be one of ${MALL_CATEGORIES.join(", ")}.`);
+  const price = body.price;
+  if (typeof price !== "number" || !Number.isInteger(price)) bad("price must be a whole number of credits.");
+  const note = body.note;
+  if (!absent(note) && (typeof note !== "string" || note.length > REWARD_NOTE_MAX)) bad(`note must be text of at most ${REWARD_NOTE_MAX} characters.`);
+  const cooldown = body.cooldownDays;
+  if (!absent(cooldown) && (typeof cooldown !== "number" || !Number.isInteger(cooldown))) bad("cooldownDays must be a whole number of days.");
+  return { title, category: body.category as string, price: price as number, note: absent(note) ? null : (note as string), cooldownDays: absent(cooldown) ? null : (cooldown as number) };
+}
+
+/** POST /mall/buy's fields (and clientId, which a purchase requires). */
+export const MALL_BUY_KEYS = ["rewardId"] as const;
+/** POST /mall/undo's fields (and clientId). */
+export const MALL_UNDO_KEYS = ["purchaseId"] as const;
+
+export const BUY_NEEDS_CLIENT_ID = "clientId is required for a purchase: send the same one on every retry.";
+
+/**
+ * POST /mall/buy's body (blueprint P19): the reward's id and the purchase's clientId (a UUID). The clientId is required
+ * here, not optional as on other writes: it is the purchase's row key ('buy:<clientId>'), so a resend lands once on any
+ * server instance.
+ */
+export function mallBuyRequestOf(body: Record<string, unknown>): { rewardId: string; clientId: string } {
+  const rewardId = idOf(body.rewardId, "rewardId");
+  const clientId = clientIdOf(body.clientId);
+  if (!clientId) bad(BUY_NEEDS_CLIENT_ID);
+  return { rewardId, clientId: clientId as string };
+}
+
+/** POST /mall/undo's body: the purchase's id (GET /mall's `purchases[].id`, or the buy's `purchase.id`). */
+export function mallUndoRequestOf(body: Record<string, unknown>): { purchaseId: string } {
+  return { purchaseId: idOf(body.purchaseId, "purchaseId") };
+}
+
+/** A purchase's line on the phone: "Takeaway night bought for 120 cr · 1,120 cr left.", or a repeat's. */
+export function mallBuyLineOf(v: { purchase: Pick<PurchaseView, "title" | "price">; balance: number; duplicate: boolean }): string {
+  return v.duplicate ? `${v.purchase.title} was already bought. Nothing is spent twice.` : boughtLine(v.purchase.title, v.purchase.price, v.balance);
+}
+
+/** An undo's line: "Takeaway night undone: 120 cr back.", or a repeat's. */
+export function mallUndoLineOf(v: { title: string; price: number; duplicate: boolean }): string {
+  return v.duplicate ? `${v.title} was already undone.` : undoneLine(v.title, v.price);
 }
 
 // ── POST /tasks/complete ────────────────────────────────────────────────────

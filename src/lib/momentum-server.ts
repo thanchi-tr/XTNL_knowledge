@@ -1913,7 +1913,12 @@ function guardSql(userId: string, g: MomentumGuard): Prisma.Sql {
   return Prisma.sql`SELECT 1 / (CASE WHEN (SELECT COUNT(*) ${scope}) = ${g.paying}::int THEN 1 ELSE 0 END)`;
 }
 
-async function readDayFacts(userId: string, days: readonly DayKey[]): Promise<Map<DayKey, DayFacts>> {
+/**
+ * The days' facts (DayFacts) from the ledger, the board's instances and the checkpoint logs: reads only (the default
+ * store's dayFacts). Exported for credits-server.ts (blueprint P16), whose fold counts Today's three done through
+ * questDone over these, so a quest reads done in the wallet exactly when it reads done on Today.
+ */
+export async function readDayFacts(userId: string, days: readonly DayKey[]): Promise<Map<DayKey, DayFacts>> {
   const out = new Map<DayKey, DayFacts>();
   if (days.length === 0) return out;
   const cols = days.map(dateColumn);

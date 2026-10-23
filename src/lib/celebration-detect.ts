@@ -61,6 +61,11 @@
  *     'competency:<id>:t<n>' (once ever a tier; a skipped tier is claimed), with the hours and the tiers and no amount:
  *     a tier pays nothing (D9). Only a tick or a walk takes this part, so a link's history (re-read on the next
  *     snapshot, with the cache cleared by the link) never plays one.
+ *   - The Mall (blueprint P19, D31): the mall part holds the latest purchases with their receipts' price and balance
+ *     either side, and whether each was undone (mall-server readMallPart; left out while CREDITS_LAUNCH_DAY is null, so
+ *     nothing Mall-shaped can play then). A purchase new in the after snapshot and not undone is one mall-buy Seal keyed
+ *     'mall-buy:<rowId>' (once ever), stating its price (the numeral) and the credits either side, never an amount: a
+ *     purchase costs no XP or MP. An undo plays nothing.
  */
 import {
   DEFAULT_PREFS,
@@ -102,6 +107,7 @@ import { TITLE_BANDS, bandForLevel, computeTitle } from "./titles";
 import { MASTERY_LEVEL, fieldLevelRaw } from "./xp";
 import { characterLevelOf, trackLevelsOf } from "../components/shell/shell-types";
 import { hoursText, skillSealKey, tierRangeLabel, type SkillTier } from "./competency";
+import { crFigure } from "./credits";
 
 // ─── Snapshot shape ─────────────────────────────────────────────────────────
 
@@ -122,6 +128,7 @@ export const SNAPSHOT_VERSION = 1 as const;
  * momentum      the momentum run and Today's three (only once momentum is live)
  * momentumRows  CHEST, MILESTONE, CHECKPOINT, PLAN_WEEK and PERK rows (only once momentum is live)
  * competencies  each live skill's hours and tier (blueprint P5; "skills" is the emblems' part, named before D6)
+ * mall          the latest Mall purchases with their receipts (blueprint P19; only once credits count)
  */
 export type SnapshotPart =
   | "levels"
@@ -136,7 +143,8 @@ export type SnapshotPart =
   | "ready"
   | "momentum"
   | "momentumRows"
-  | "competencies";
+  | "competencies"
+  | "mall";
 
 export const SNAPSHOT_PARTS: readonly SnapshotPart[] = [
   "levels",
@@ -152,6 +160,7 @@ export const SNAPSHOT_PARTS: readonly SnapshotPart[] = [
   "momentum",
   "momentumRows",
   "competencies",
+  "mall",
 ];
 
 /** What each kind of action reads. Take the same scope before and after. */
@@ -180,8 +189,10 @@ export const SNAPSHOT_SCOPES = {
    * run and the CHEST, MILESTONE, CHECKPOINT, PLAN_WEEK and PERK rows.
    */
   settle: ["streak", "ledger", "habits", "goals", "tracks", "levels", "momentum", "momentumRows"],
+  /** A Mall purchase or its undo (blueprint P19): the purchases, for the mall-buy Seal. */
+  mall: ["mall"],
   /** Everything except `ready`. */
-  all: ["levels", "mastered", "streak", "skills", "goals", "bosses", "ledger", "habits", "tracks", "momentum", "momentumRows", "competencies"],
+  all: ["levels", "mastered", "streak", "skills", "goals", "bosses", "ledger", "habits", "tracks", "momentum", "momentumRows", "competencies", "mall"],
 } as const satisfies Record<string, readonly SnapshotPart[]>;
 
 export type SnapshotScope = keyof typeof SNAPSHOT_SCOPES;
@@ -413,6 +424,23 @@ export interface CompetenciesPart {
   rows: CompetencyPartRow[];
 }
 
+/** One Mall purchase (blueprint P19): its row id, life day, the reward's title, its price and the balance either side (null when its receipt is unreadable). */
+export interface MallPartRow {
+  id: string;
+  day: DayKey;
+  title: string;
+  price: number;
+  before: number | null;
+  after: number | null;
+  /** Undone inside its ten minutes (a MALL_REFUND row gives it back). */
+  refunded: boolean;
+}
+
+/** The latest Mall purchases (mall-server readMallPart). Present only once credits count. */
+export interface MallPart {
+  buys: MallPartRow[];
+}
+
 export interface ProgressData {
   parts: SnapshotPart[];
   levels?: LevelsPart;
@@ -428,6 +456,7 @@ export interface ProgressData {
   momentum?: MomentumPart;
   momentumRows?: MomentumRowsPart;
   competencies?: CompetenciesPart;
+  mall?: MallPart;
 }
 
 /** A snapshot that holds nothing: diffing against it can never fire. */
@@ -1145,6 +1174,39 @@ function detectCompetencies(b: CompetenciesPart, a: CompetenciesPart): Celebrati
   return out;
 }
 
+/** A Mall purchase's Seal key: once ever per purchase row. */
+export const mallSealKey = (rowId: string): string => `mall-buy:${rowId}`;
+
+/**
+ * The Mall (blueprint P19, D31): each purchase new in the after snapshot, and not undone, is one Seal 'mall-buy:<rowId>'.
+ * It states the price (the numeral, whole credits) and the credits either side, and says it costs no XP or MP; a
+ * purchase already in the before, an undone one, or an undo plays nothing.
+ */
+function detectMall(b: MallPart, a: MallPart): CelebrationDraft[] {
+  const had = new Set(b.buys.map((x) => x.id));
+  const out: CelebrationDraft[] = [];
+  for (const x of a.buys) {
+    if (had.has(x.id) || x.refunded || !(x.price > 0)) continue;
+    const what: WhatMoved[] = [{ label: x.title, value: `${crFigure(x.price)} cr` }];
+    if (x.before != null && x.after != null) what.push({ label: "Credits", value: `${crFigure(x.before)} → ${crFigure(x.after)} cr` });
+    out.push(
+      draft(
+        "mall-buy",
+        mallSealKey(x.id),
+        {
+          eyebrow: "Mall",
+          title: `${x.title} bought`,
+          lines: ["A purchase is permission now: take it, it's earned.", "It costs credits only, never XP or MP. It can be undone for 10 minutes."],
+          numeral: { from: null, to: x.price },
+          href: "/you/mall",
+        },
+        what
+      )
+    );
+  }
+  return out;
+}
+
 function detectTracks(b: TracksPart, a: TracksPart): CelebrationDraft[] {
   const out: CelebrationDraft[] = [];
   for (const [track, to] of Object.entries(a.levels).sort(([x], [y]) => (x < y ? -1 : 1))) {
@@ -1677,6 +1739,8 @@ export function diffProgress(beforeRead: ProgressData, after: ProgressData, opts
   if (both("momentumRows")) out.push(...detectMomentumRows(before.momentumRows!, after.momentumRows!, after.momentum?.today ?? null));
   // Skills (blueprint P5): a tier crossed by this tick or walk, its own Seal (nothing folds into it, and it folds nowhere).
   if (both("competencies")) out.push(...detectCompetencies(before.competencies!, after.competencies!));
+  // The Mall (blueprint P19): a purchase, its own Seal (nothing folds into it, and it folds nowhere).
+  if (both("mall")) out.push(...detectMall(before.mall!, after.mall!));
 
   // Newly unlockable: no kind of its own (the orbit on You › Skills shows it);
   // it rides as a What-moved row on the loudest moment of the same diff.

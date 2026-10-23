@@ -132,6 +132,13 @@ export type ActivitySource =
   | "FORGET"
   /** The weekly audit's frozen copy (week-audit.ts; blueprint P11): sink NONE, xp 0, 'audit:<YYYY-Www>', dated the Sunday. */
   | "AUDIT"
+  /**
+   * A Mall purchase (mall-server.ts buyRewardCore; blueprint P19, D31): sink NONE, xp 0, qty the price in credits (the
+   * credits fold takes it off the balance), 'buy:<clientId>', receipt {v: 'mall-1', …}. Never a streak day, never XP.
+   */
+  | "MALL_BUY"
+  /** A purchase undone inside its 10 minutes (mall-server.ts undoBuyCore): sink NONE, xp 0, qty the price given back, 'refund:<buyEventId>'. */
+  | "MALL_REFUND"
   /** Momentum's rows (momentum.md §D.2): written only by momentum's own writers, each gated on momentumLive(day). */
   | MomentumActivitySource;
 

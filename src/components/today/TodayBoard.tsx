@@ -30,6 +30,7 @@ import { announce, chime, mark, type MomentumT1Kind } from "@/lib/celebrate";
 import type { CelebrationEvent, T1Kind } from "@/lib/celebration-types";
 import type { PlaceLane, Receipt } from "@/lib/life-types";
 import type { MomentumView } from "@/lib/momentum-server";
+import type { CreditTags } from "@/lib/credits";
 import { burst, center, motionLevel } from "@/lib/motion";
 import { GOAL_ALREADY_CLOSED } from "@/lib/goals";
 import type { CapturedItem } from "@/app/actions/capture";
@@ -239,6 +240,11 @@ interface Props {
   momentum?: MomentumView | null;
   /** The render's settleMomentum wrote rows: the card asks the celebration host to pull their moments now. */
   momentumSettled?: boolean;
+  /**
+   * Credits (blueprint P16; credits.ts creditTagsOn, from the model in force today): the Momentum card's Quest sheet
+   * price tags. Absent or null (CREDITS_LAUNCH_DAY not in force): no tag, and the card is exactly as before.
+   */
+  credits?: CreditTags | null;
 }
 
 /** The Momentum card's writes (actions/momentum), passed down so the card imports no server code. */
@@ -488,7 +494,7 @@ function declaredOf(duty: DutyBoard | null, today: DayKey): DeclaredDay[] {
  * launch the board is the pre-M2 board (debts, which only settlement
  * writes, render whenever they exist).
  */
-export function TodayBoard({ data, streak, nowIso, notices, footClock, launched = false, namedTitles, work: workTab = null, momentum = null, momentumSettled = false, elsewhere = null, mainQuest = null }: Props) {
+export function TodayBoard({ data, streak, nowIso, notices, footClock, launched = false, namedTitles, work: workTab = null, momentum = null, momentumSettled = false, credits = null, elsewhere = null, mainQuest = null }: Props) {
   /** A work tab: nothing of the game (no XP, no moments, no goals, no plan card). */
   const isWork = workTab !== null;
   const router = useRouter();
@@ -2273,7 +2279,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
           {/* Momentum (momentum.md §E.1): above the Duty card and the strip, only once it is live; never on a work tab. */}
           {!isWork && momentum?.live && (
             <div className="o1">
-              <MomentumCard view={momentum} nowIso={nowIso} actions={MOMENTUM_ACTIONS} prices={questPrices} settled={momentumSettled} />
+              <MomentumCard view={momentum} nowIso={nowIso} actions={MOMENTUM_ACTIONS} prices={questPrices} settled={momentumSettled} credits={credits} />
             </div>
           )}
           {/* M2: one Duty card at most in .o1 (board-ui.ts o1CardOf); never owed-toned, never hiding the Record-yesterday Ask. */}

@@ -483,6 +483,18 @@ class Feel(context: Context, private val prefs: () -> Prefs) {
         play("clack", id = id)
     }
 
+    /**
+     * A Mall purchase landed (blueprint P19): the Confirm's CLICK and the burn cooling down ([Scores.burn]), the land at its
+     * end. Still: the CLICK alone. Never on a repeat, which spent nothing.
+     */
+    fun burn(id: String) {
+        score(
+            id, if (motion == MotionLevel.STILL) listOf(Beat(HapticScore.CLICK, 0.60f, 0)) else Scores.burn,
+            fallback = Fallback.View(0, HapticFeedbackConstants.CONFIRM to 30, HapticFeedbackConstants.VIRTUAL_KEY to 1),
+        )
+        soundAt(if (motion == MotionLevel.STILL) 0 else 360, "land", 0.8f, id)
+    }
+
     /** A tab changed. */
     fun segment() = viewHaptic(HapticFeedbackConstants.SEGMENT_TICK to 34, HapticFeedbackConstants.CLOCK_TICK to 1)
 

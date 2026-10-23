@@ -22,6 +22,15 @@
  * Behaviour randomness (which tasks a simulated person does on a given day) is a seeded mulberry32 stream per
  * simulated user. Game randomness (crits, chests) is the spec's HMAC roll with a fixed test secret, exactly as the
  * server will compute it, so the chest and crit rates printed here are the real distribution, not an assumption.
+ *
+ * The CREDITS block (blueprint P16, D29): `npx tsx scripts/momentum-sim.ts --credits` (npm run credits:sim; life:check
+ * runs it right after the plain run) prints only what the same realistic player earns in credits a week, from
+ * credits.ts CREDITS_V1 (imported, never restated), and pins it: about 200 a week from Today's three, their chest and
+ * the kept weeks, about 260 with the roadmap's pay, and a worst case of about 520 (every quest and chest, every track
+ * kept, a plan week for each of the three roadmap seats, two Shorts, and the windowed milestones, checkpoints and Mid
+ * and Long goals at their most). The
+ * counts ride on the year already simulated (no draw of their own), so the plain run's output is byte-identical with or
+ * without them; credits never feed XP, MP or a level, so nothing above moves.
  */
 import "./_no-model";
 import { createHmac } from "node:crypto";
@@ -34,6 +43,8 @@ import { IDEA_MASTERY_POINTS, REVIEW_MASTERY_PER_LEVEL } from "../src/lib/master
 import { SKILL_POOL } from "../src/lib/skill-pool";
 import { TRACKS, type Band, type Track } from "../src/lib/life-types";
 import { addDays, weekKeyOf, type DayKey } from "../src/lib/life-day";
+import { CREDITS_V1 } from "../src/lib/credits";
+import { GOAL_SLOTS_MAX } from "../src/lib/roadmap-types";
 
 /** The track curve the levels read (blueprint P3): POWER once a launch day is set, since every simulated day is after it. */
 const TRACK_CURVE: TrackCurve = trackCurveLaunchDay() == null ? "SQUARE" : "POWER";
@@ -399,6 +410,8 @@ export function foldMomentum(days: readonly DayKey[], today: DayKey, active: (d:
 const ARGS = process.argv.slice(2);
 const SEEDS = Number(ARGS[ARGS.indexOf("--seeds") + 1]) > 0 && ARGS.includes("--seeds") ? Number(ARGS[ARGS.indexOf("--seeds") + 1]) : 120;
 const JSON_OUT = ARGS.includes("--json");
+/** Print only the CREDITS block (blueprint P16), over the same simulated year. */
+const CREDITS_ONLY = ARGS.includes("--credits");
 const SECRET = "momentum-sim-secret-v1";
 const START: DayKey = "2026-10-19"; // a Monday
 const DAYS = 365;
@@ -511,6 +524,11 @@ interface UserResult {
   keptShare: Record<Track, number>;
   questsDone: { task: number; plan: number; body: number };
   lifeXpPerDay: number[];
+  /** Credits a week (blueprint P16; CREDITS_V1): Today's three, their chest, kept weeks and Short goals. */
+  creditsCoreByWeek: number[];
+  /** Credits a week from the roadmap's pay: kept plan weeks, checkpoints and milestones that pay MP, Mid goals. */
+  creditsRoadmapByWeek: number[];
+  creditsBySource: Record<string, number>;
 }
 
 const ZERO_TRACKS = (): Record<Track, number> => ({ BODY: 0, DUTY: 0, CRAFT: 0, CARE: 0 });
@@ -547,6 +565,18 @@ function simulateUser(seed: number): UserResult {
   let milestones = 0, checkpoints = 0, planWeeksPaid = 0;
   const questsDone = { task: 0, plan: 0, body: 0 };
   const lifeXpPerDay: number[] = [];
+  // Credits (P16): counted off the same events, never a draw of their own (the plain run's numbers cannot move).
+  const CR = CREDITS_V1;
+  const creditsCoreByWeek: number[] = [];
+  const creditsRoadmapByWeek: number[] = [];
+  const creditsBySource: Record<string, number> = { QUEST: 0, THREE_OF_THREE: 0, KEPT_WEEK: 0, GOAL_SHORT: 0, PLAN_WEEK: 0, CHECKPOINT: 0, MILESTONE: 0, GOAL_MID: 0 };
+  let crCore = 0;
+  let crRoadmap = 0;
+  const earn = (src: string, amount: number, roadmap: boolean) => {
+    creditsBySource[src] += amount;
+    if (roadmap) crRoadmap += amount;
+    else crCore += amount;
+  };
   // Roadmap state.
   let nextMilestoneDay = Math.round(PERSONA.milestoneEveryDays[0] + rng() * (PERSONA.milestoneEveryDays[1] - PERSONA.milestoneEveryDays[0]));
   const milestoneMpDays: number[] = [];
@@ -788,6 +818,8 @@ function simulateUser(seed: number): UserResult {
       dayXp += xp;
     };
     if (allThree) openChest(false);
+    earn("QUEST", CR.quest * ((taskQuestDone ? 1 : 0) + (planQuestDone ? 1 : 0) + (bodyQuestDone ? 1 : 0)), false);
+    if (allThree) earn("THREE_OF_THREE", CR.threeOfThree, false);
 
     // The roadmap (§A.8): milestone, its checkpoint, MID goal close.
     if (dayIdx >= nextMilestoneDay - 7 && !checkpointTakenThisMilestone && rng() < PERSONA.checkpointTaken / 7) {
@@ -800,6 +832,7 @@ function simulateUser(seed: number): UserResult {
         checkpointMpDays.push(dayIdx);
         weekMp += MOMENTUM.CHECKPOINT_MP;
         mpBySource.CHECKPOINT += MOMENTUM.CHECKPOINT_MP;
+        earn("CHECKPOINT", CR.checkpoint, true);
       }
     }
     if (dayIdx >= nextMilestoneDay) {
@@ -811,6 +844,7 @@ function simulateUser(seed: number): UserResult {
         milestoneMpDays.push(dayIdx);
         weekMp += MOMENTUM.MILESTONE_MP;
         mpBySource.MILESTONE += MOMENTUM.MILESTONE_MP;
+        earn("MILESTONE", CR.milestone, true);
       }
       if (mods.summitChest) openChest(true);
       // Its MID goal closes the same week when practice-backed (statedForMilestone 6 or 0).
@@ -818,6 +852,7 @@ function simulateUser(seed: number): UserResult {
         midPaidDays.push(dayIdx);
         weekMp += GOAL_RULES.MID.stated;
         mpBySource.GOAL_MID += GOAL_RULES.MID.stated;
+        earn("GOAL_MID", CR.goal.MID, true); // g = 1: the sim's Mid pays its stated MP in full
         craftGoalDepth = Math.min(2, craftGoalDepth + GOAL_RULES.MID.depth);
       }
       checkpointTakenThisMilestone = false;
@@ -838,21 +873,25 @@ function simulateUser(seed: number): UserResult {
       }
       // Judge pool, in mint order: Shorts, kept tracks (BODY + Iron lungs first), plan week, full days (inert).
       let pool = 0;
-      const mint = (amount: number, src: string) => {
+      const mint = (amount: number, src: string): number => {
         const paid = Math.max(0, Math.min(amount, MOMENTUM.JUDGE_POOL_CAP - pool));
         if (paid < amount) judgeTrimmedWeeks += 1;
         pool += paid;
         weekMp += paid;
         mpBySource[src] += paid;
+        return paid;
       };
-      if (rng() < PERSONA.shortGoalPerWeek) mint(LIFE_MP.GOAL_SHORT, "GOAL_SHORT");
+      // A Short pays credits when its close pays MP (credits.ts: qty > 0).
+      if (rng() < PERSONA.shortGoalPerWeek && mint(LIFE_MP.GOAL_SHORT, "GOAL_SHORT") > 0) earn("GOAL_SHORT", CR.goal.SHORT, false);
       for (const t of TRACKS) if (kept[t]) {
+        earn("KEPT_WEEK", CR.keptWeek, false);
         mint(MOMENTUM.WEEK_KEPT_MP, "WEEK_KEPT");
         if (t === "BODY" && mods.bodyKeptMp > 0) mint(mods.bodyKeptMp, "BODY_IRON");
       }
       const planKept = rng() < (mods.planKeepShare < 1 ? PERSONA.planWeekEightyDone : PERSONA.planWeekAllDone);
       if (planKept) {
         planWeeksPaid += 1;
+        earn("PLAN_WEEK", CR.planWeek, true);
         mint(mods.planWeekMp, "PLAN_WEEK");
         addXp("CRAFT", mods.planWeekXp);
         addBranch("PATHFINDER", mods.planWeekXp);
@@ -861,6 +900,10 @@ function simulateUser(seed: number): UserResult {
       if (week.chestMp >= MOMENTUM.CHEST_POOL_CAP) chestCapWeeks += 1;
       lifeMpByWeek.push(weekMp);
       weekMp = 0;
+      creditsCoreByWeek.push(crCore);
+      creditsRoadmapByWeek.push(crRoadmap);
+      crCore = 0;
+      crRoadmap = 0;
       week = { days: { BODY: new Set(), DUTY: new Set(), CRAFT: new Set(), CARE: new Set() }, raw: ZERO_TRACKS(), effort: 0, chestMp: 0, weekKm: 0, shortGoal: 0 };
       for (const b of BRANCHES) branchWeekXp[b] = 0;
     }
@@ -894,6 +937,7 @@ function simulateUser(seed: number): UserResult {
     chests, chestRare, chestPity, chestXp, chestMp, crits, qualifyingTasks, critExtraXp, chainExtraRaw, taskRawNoMomentum, tasks,
     sessions, sessionRaw: sessionRawSum, sessionXp: sessionXpSum, prs, milestones, checkpoints, planWeeks: planWeeksPaid,
     lspAt, perksAt, firstPerkDay, fullBranchDay, streak, bodyKeptShare: keptShare.BODY, keptShare, questsDone, lifeXpPerDay,
+    creditsCoreByWeek, creditsRoadmapByWeek, creditsBySource,
   };
 }
 
@@ -953,6 +997,10 @@ const pct = (xs: number[], p: number) => {
 const f = (x: number, dp = 1) => (Number.isFinite(x) ? x.toFixed(dp) : "—");
 
 function main() {
+  if (CREDITS_ONLY) {
+    creditsMain();
+    return;
+  }
   const out: Record<string, unknown> = {};
   const fails: string[] = [];
   const check = (name: string, ok: boolean, detail: string) => {
@@ -1126,6 +1174,63 @@ function main() {
   check("C11 first perk in each branch within 3 weeks (mean); no seed completes a branch before day 270", BRANCHES.every((b) => firstMean(b) <= 21 && fullEarliest(b) >= 270), BRANCHES.map((b) => `${b} first day ${f(firstMean(b), 0)}, earliest whole branch ${fullEarliest(b) === 999 ? "none" : `day ${fullEarliest(b)}`}`).join(" · "));
   console.log(fails.length ? `  ${fails.length} pin(s) failed: ${fails.join("; ")}` : "  all pins hold");
   if (JSON_OUT) console.log(JSON.stringify(out, null, 2));
+  if (fails.length) process.exitCode = 1;
+}
+
+// ── CREDITS (blueprint P16; D29): what the realistic player earns, and the worst case ──────────
+
+function creditsMain() {
+  const fails: string[] = [];
+  const check = (name: string, ok: boolean, detail: string) => {
+    if (!ok) fails.push(name);
+    console.log(`  ${ok ? "PASS" : "FAIL"} ${name}: ${detail}`);
+  };
+  const CR = CREDITS_V1;
+  const users = Array.from({ length: SEEDS }, (_, s) => simulateUser(s + 1));
+  const weeksN = users[0].creditsCoreByWeek.length;
+  const perUserWeek = (u: UserResult, k: "core" | "all") => mean(u.creditsCoreByWeek.map((c, i) => c + (k === "all" ? u.creditsRoadmapByWeek[i] : 0)));
+  const coreYear = users.map((u) => perUserWeek(u, "core"));
+  const allYear = users.map((u) => perUserWeek(u, "all"));
+  const core = mean(coreYear);
+  const all = mean(allYear);
+  // The worst case a week: every quest and the chest each day, every track kept, a plan week for every roadmap seat
+  // (the week judge writes one PLAN_WEEK row per open roadmap, up to GOAL_SLOTS_MAX, the Roadmap_slot_range CHECK's 3,
+  // and each pays its 25 even when the weekly cap trims its MP), the Shorts the week allows, and the windowed pay at
+  // its most, a week's share (milestones and checkpoints 2 in 30 days, Mid goals 2 in 30 days, Long 1 in 91 days), as
+  // balance-horizon prices the windows.
+  const week = 7;
+  const perDay = 3 * CR.quest + CR.threeOfThree;
+  const windowed =
+    ((CR.milestone * MOMENTUM.ROADMAP_MP_WINDOW_MAX) / MOMENTUM.ROADMAP_MP_WINDOW_DAYS) * week +
+    ((CR.checkpoint * MOMENTUM.ROADMAP_MP_WINDOW_MAX) / MOMENTUM.ROADMAP_MP_WINDOW_DAYS) * week +
+    ((CR.goal.MID * GOAL_RULES.MID.maxPaying) / GOAL_RULES.MID.windowDays) * week +
+    ((CR.goal.LONG * GOAL_RULES.LONG.maxPaying) / GOAL_RULES.LONG.windowDays) * week;
+  const seats = GOAL_SLOTS_MAX;
+  const worst = week * perDay + TRACKS.length * CR.keptWeek + seats * CR.planWeek + GOAL_RULES.SHORT.maxPaying * CR.goal.SHORT + windowed;
+  console.log(`── CREDITS (blueprint P16; credits.ts ${CR.v}) × ${SEEDS} seeds, one year ──`);
+  console.log(`  table: ${CR.quest} a quest · ${CR.threeOfThree} for 3 of 3 · ${CR.keptWeek} a kept track week · ${CR.planWeek} a plan week · ${CR.checkpoint} a checkpoint · ${CR.milestone} a milestone · goals ${CR.goal.SHORT} / ${CR.goal.MID}×g / ${CR.goal.LONG}×g`);
+  const src = Object.keys(users[0].creditsBySource);
+  console.log(`  by source (cr per week): ${src.map((s) => `${s} ${f(mean(users.map((u) => u.creditsBySource[s])) / weeksN, 1)}`).join(" · ")}`);
+  console.log(`  realistic: ${f(core)} cr/week from Today's three, their chest, kept weeks and Shorts (p10 ${f(pct(coreYear, 10))}, p90 ${f(pct(coreYear, 90))}) · ${f(all)} cr/week with the roadmap's pay (p10 ${f(pct(allYear, 10))}, p90 ${f(pct(allYear, 90))})`);
+  console.log(`  worst case: 7 × ${perDay} + ${TRACKS.length} × ${CR.keptWeek} + ${seats} seats × ${CR.planWeek} + ${GOAL_RULES.SHORT.maxPaying} × ${CR.goal.SHORT} + windowed ${f(windowed, 2)} = ${f(worst, 1)} cr/week`);
+  const again = simulateUser(1);
+  const integral = users.every((u) => [...u.creditsCoreByWeek, ...u.creditsRoadmapByWeek].every((x) => Number.isInteger(x) && x >= 0));
+  const table = [CR.quest, CR.threeOfThree, CR.keptWeek, CR.planWeek, CR.checkpoint, CR.milestone, CR.goal.SHORT, CR.goal.MID, CR.goal.LONG];
+  console.log("\n── Pins ──");
+  check("CR1 the plan's table (D29): 10 a quest, 10 for 3 of 3, 15 a kept track week, 25 a plan week, 25 a checkpoint, 100 a milestone, goals 10 / 40 / 120", JSON.stringify(table) === JSON.stringify([10, 10, 15, 25, 25, 100, 10, 40, 120]), table.join(", "));
+  check("CR2 realistic, Today's three, their chest, kept weeks and Shorts: about 200 cr a week, in [170, 230]", core >= 170 && core <= 230, `${f(core)} cr/week`);
+  check("CR3 realistic with the roadmap's pay: about 260 cr a week, in [220, 300]", all >= 220 && all <= 300, `${f(all)} cr/week`);
+  check(
+    "CR4 the worst case: about 520 cr a week, in [440, 560] (a plan week paid for each of the 3 roadmap seats, not one), and above every seed's realistic year",
+    seats === 3 && worst >= 440 && worst <= 560 && Math.max(...allYear) < worst,
+    `${f(worst, 1)} cr/week; highest seed ${f(Math.max(...allYear))}`
+  );
+  check(
+    "CR5 whole credits only, never negative, and deterministic (the same seed earns the same, week by week)",
+    integral && JSON.stringify(again.creditsCoreByWeek) === JSON.stringify(users[0].creditsCoreByWeek) && JSON.stringify(again.creditsRoadmapByWeek) === JSON.stringify(users[0].creditsRoadmapByWeek),
+    `${weeksN} weeks × ${SEEDS} seeds`
+  );
+  console.log(fails.length ? `  ${fails.length} pin(s) failed: ${fails.join("; ")}` : "  all credit pins hold");
   if (fails.length) process.exitCode = 1;
 }
 

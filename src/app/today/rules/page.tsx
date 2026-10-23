@@ -26,6 +26,8 @@ import {
   dutyLaunchDay,
 } from "@/lib/duty-economy";
 import { dutyPhaseOf, dutySettledLine, preLaunchNotice } from "@/lib/rituals";
+import { CREDIT_KIND_LABEL, CREDIT_UNIT, creditModelOn, creditRows, creditsLaunchDay, type CreditModel } from "@/lib/credits";
+import { MALL_UNDO_MINUTES } from "@/lib/mall";
 import {
   BODY_EFFORT_MINUTES,
   CAPPED_REASONS,
@@ -349,16 +351,21 @@ function decayBandLevels(): { from: number; to: number } | null {
  * line each: XP is never spent, the knee is the fatigue breaker, forgetting's daily decay, and where chance
  * lives; P4 (blueprint 1.2) adds that avatar targets pay nothing, and P5 (blueprint 1.5, D9) that skills pay
  * nothing. Every number is read from the code that applies it (scripts/you-check.ts holds that none is typed by
- * hand), scripts/credits-check.ts holds the first line in the code, and scripts/status-check.ts the last two.
+ * hand), scripts/credits-check.ts holds the first line in the code, and scripts/status-check.ts the last two. P16: the
+ * first line says whether credits count yet (CREDITS_LAUNCH_DAY: until the user's go they are built and not counted).
  */
 function GroundRules({ momentumOn }: { momentumOn: boolean }) {
   const band = decayBandLevels();
+  // Credits (P16): counted once the model is in force today; never while CREDITS_LAUNCH_DAY is null.
+  const creditsCount = creditModelOn(todayKey()) != null;
   return (
     <Card id="ground-rules" title="Ground rules" sub="Spending, fatigue, forgetting, chance, targets and skills" wide>
       <ul className="rules-bullets">
         <li>
-          XP is never spent; the Mall spends credits only. Nothing costs XP: emblems cost MP, and the Mall and its
-          credits are not built yet.
+          XP is never spent; the Mall spends credits only. Nothing costs XP: emblems cost MP.{" "}
+          {creditsCount
+            ? `Credits are counted from your own rows (Credits, below). The Mall lists the rewards you price; a purchase burns exactly its price, never more than you have, and can be undone for ${MALL_UNDO_MINUTES} minutes.`
+            : "Credits are built but not counted yet: they start at none on the day they are switched on. The Mall lists the rewards you price; nothing can be bought until credits count."}
         </li>
         <li>
           Fatigue breaker: full rate to {KNEE_FULL_RATE} raw a day, half rate at {KNEE_HALF_RATE_AT} raw, and the day
@@ -389,6 +396,69 @@ function GroundRules({ momentumOn }: { momentumOn: boolean }) {
         <li>
           Skills pay nothing: a skill&apos;s hours are read from the minutes of the ticks linked to it, and a tier-up is a
           Seal, never XP, MP or a level.
+        </li>
+        <li>
+          The Mall prices only the rewards you list (You › Mall), and none is listed for you. Play, rest days and sleep are
+          never priced: a reward named for #play, sleep or a rest day is refused.
+        </li>
+      </ul>
+    </Card>
+  );
+}
+
+/**
+ * Credits (blueprint 4.1 and 4.2; P16, decisions D27 to D29): the published income table, read from credits.ts (the
+ * model in force today, creditRows: every figure the model's or MP's own window), what the balance is, and what
+ * credits never do. Rendered only once credits count (creditModelOn), so before CREDITS_LAUNCH_DAY this page shows no
+ * Credits card at all; the Ground rules line says they are not counted yet. P17 (D28): it also says the capital
+ * dividend stopped on the same day and the banked capital is kept, never converted.
+ */
+function CreditsRules({ launchDay, model }: { launchDay: DayKey; model: CreditModel }) {
+  return (
+    <Card id="credits" title="Credits: earned by doing" sub={`Counted since ${longDayLabel(launchDay)}, from none; nothing before it is counted`} wide>
+      <Formula>balance = earned − bought + refunded</Formula>
+      <div className="rules-scroll">
+        <table className="rules-table">
+          <tbody>
+            {creditRows(model).map((r) => (
+              <tr key={r.kind}>
+                <td className="b">{CREDIT_KIND_LABEL[r.kind]}</td>
+                <td className="num">
+                  {r.amount} {CREDIT_UNIT}
+                </td>
+                <td className="ink-2">{r.per}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <ul className="rules-bullets">
+        <li>
+          Credits are counted again from your own rows each time they are shown, and nothing about them is stored: an undo
+          takes a quest&apos;s credits back, and a week counts once it is judged. Each line is priced by the table in force
+          on its own day, so a later table never reprices a day already counted.
+        </li>
+        <li>
+          XP is never spent or converted, and credits never become XP, MP or a level. Penalties never touch them: a missed
+          must, a debt or a forgotten card costs what it always has, never a credit.
+        </li>
+        <li>No chance: every amount above is fixed. The chest and crits stay the only rolls, and the chest&apos;s credits are its fixed {model.threeOfThree}.</li>
+        <li>
+          Credits replaced the capital dividend: it stopped the day they started, and dividend still waiting to be claimed
+          that day stopped with it. The capital you had banked is kept as it was on You › Stats, read only, and is never
+          converted into credits.
+        </li>
+        <li>
+          The Mall (You › Mall) lists the rewards you price, and only those: none is listed for you, and play, rest days
+          and sleep are never priced. A purchase is permission now: Buy, then Confirm, burns exactly the price, never more
+          than your balance (there is no overdraft and no credit line), and it can be undone for {MALL_UNDO_MINUTES} minutes.
+          Like the rest of the Mall, it runs on honour: the app can&apos;t lock anything you do, so a purchase is a promise
+          you keep.
+        </li>
+        <li>
+          A balance goes below zero one way only: an undone quest takes back credits a purchase had already spent. It
+          shows as it is (&ldquo;earn it back&rdquo;), nothing is charged for it, and buying waits until you are back at
+          zero. No penalty ever takes credits.
         </li>
       </ul>
     </Card>
@@ -1811,6 +1881,10 @@ export default async function RulesPage() {
   // Momentum (momentum.md): its cards, SESSION in K, S·M·X in the price, only once it is live; before, nothing here changes.
   const momentumLaunch = momentumLaunchDay();
   const momentumOn = momentumLive(today, momentumLaunch);
+  // Credits (blueprint P16): their card only once they count; before CREDITS_LAUNCH_DAY nothing here changes but the
+  // Ground rules line, which says they are not counted yet.
+  const creditsLaunch = creditsLaunchDay();
+  const creditsModel = creditModelOn(today, creditsLaunch);
   const settledLine = dutyLive ? dutySettledLine(await loadDutyCursor(getCurrentUserId()), today) : null;
 
   return (
@@ -2133,6 +2207,15 @@ export default async function RulesPage() {
           <SectionHeader id="rules-momentum" title="Momentum" aside="chance, stakes and Life perks · read from the code that pays" />
           <div className="rules-grid">
             <MomentumRules launchDay={momentumLaunch} />
+          </div>
+        </section>
+      )}
+
+      {creditsModel && creditsLaunch && (
+        <section aria-labelledby="rules-credits" style={{ marginTop: 28 }}>
+          <SectionHeader id="rules-credits" title="Credits" aside="earned by doing, spent in the Mall · read from the code that counts" />
+          <div className="rules-grid">
+            <CreditsRules launchDay={creditsLaunch} model={creditsModel} />
           </div>
         </section>
       )}

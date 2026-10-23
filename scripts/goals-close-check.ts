@@ -924,7 +924,8 @@ function navAndReview(): void {
   console.log("§12 nav (seam 10) and review.ts (seam 7)");
   check("Ideas subs: Review, Library, New idea, Roadmap, Fields & Domains (Roadmap at /you/roadmap)", j(sectionById("ideas").subs.map((s) => [s.label, s.href])) === j([["Review", "/review"], ["Library", "/library"], ["New idea", "/add"], ["Roadmap", "/you/roadmap"], ["Fields & Domains", "/structure"]]));
   // Re-pinned for blueprint P2 (D6): the /skills row reads Emblems. Re-pinned for P5: You › Skills is the second row.
-  check("the profile menu: Character, Skills, Emblems, Loadout, Moments, Stats, Settings (no Roadmap)", j(PROFILE.subs.map((s) => s.label)) === j(["Character", "Skills", "Emblems", "Loadout", "Moments", "Stats", "Settings"]));
+  // Re-pinned for P18 (D30): You › Mall follows Loadout.
+  check("the profile menu: Character, Skills, Emblems, Loadout, Mall, Moments, Stats, Settings (no Roadmap)", j(PROFILE.subs.map((s) => s.label)) === j(["Character", "Skills", "Emblems", "Loadout", "Mall", "Moments", "Stats", "Settings"]));
   check("/you/roadmap titles {Ideas, Roadmap}, under its own tab, in Ideas", j(titleFor("/you/roadmap")) === j({ eyebrow: "Ideas", title: "Roadmap" }) && activeSub("/you/roadmap") === "/you/roadmap" && sectionOf("/you/roadmap") === "ideas");
   check("/you/roadmap/new titles {Ideas, Set an aim}, under the Roadmap tab", j(titleFor("/you/roadmap/new")) === j({ eyebrow: "Ideas", title: "Set an aim" }) && activeSub("/you/roadmap/new") === "/you/roadmap" && sectionOf("/you/roadmap/new") === "ideas");
   check("dev strip: Roadmap fixtures", DEV_STYLE_PAGES.some((p) => p.href === "/dev/style/roadmap" && p.label === "Roadmap fixtures"));

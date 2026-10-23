@@ -28,6 +28,17 @@ class NavTest {
         assertFalse(nav.back())
     }
 
+    /** More › Mall (P18): Back goes to More's list, then to Check. */
+    @Test fun backFromMallGoesToMore() {
+        val nav = Nav(Tab.MORE, MoreRoute.MALL)
+        assertTrue(nav.canGoBack)
+        assertTrue(nav.back())
+        assertTrue(nav.tab == Tab.MORE && nav.more == MoreRoute.ROOT)
+        assertTrue(nav.back())
+        assertTrue(nav.tab == Tab.CHECK)
+        assertFalse(nav.back())
+    }
+
     @Test fun aFocusTickIsTakenOnce() {
         val nav = Nav()
         nav.focusLog++

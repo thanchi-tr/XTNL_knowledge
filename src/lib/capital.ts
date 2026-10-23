@@ -2,6 +2,8 @@ import { prisma } from "./prisma";
 import { cached, invalidate } from "./cache";
 import { skinFor } from "./skill-form";
 import { augmentIndex, hasAugment, YIELD_BONUS, type OwnedAugment } from "./augments";
+import { dividendRetiredOn } from "./credits";
+import { todayKey, type DayKey } from "./life-day";
 import type { Skill } from "./skill-pool";
 
 /**
@@ -26,6 +28,16 @@ import type { Skill } from "./skill-pool";
  * so a loadout of terminal emblems earns meaningfully more than ten
  * trinkets. A YIELD augment lifts that emblem's own contribution — the one
  * place in this app where money compounds into money.
+ *
+ * **Retired with credits** (docs/life-plan/blueprint-plan-2026-10-22.md P17,
+ * decision D28; harm H19). Credits replace the dividend on their launch day
+ * (credits.ts dividendRetiredOn, the same CREDITS_LAUNCH_DAY switch, null in
+ * code until the user's go). From that day `claimDividend` refuses before it
+ * reads or writes anything, You › Stats stops computing the dividend and shows
+ * the banked balance read only, and nothing converts capital into credits.
+ * The table and every row stay (scripts/capital-balance.ts reads them, read
+ * only); `purchaseAugment` stays unwired. Until the switch is set, all of this
+ * runs exactly as before.
  */
 
 /** Capital per hour with nothing equipped. Deliberately non-zero so a new account sees the mechanic exist. */
@@ -132,14 +144,22 @@ export async function pendingDividend(
 
 export type ClaimResult =
   | { status: "claimed"; amount: number; balance: number; capped: boolean }
-  | { status: "nothing"; balance: number };
+  | { status: "nothing"; balance: number }
+  | { status: "retired" };
 
-/** Banks whatever has accrued. Writing the row is what resets the clock. */
+/**
+ * Banks whatever has accrued. Writing the row is what resets the clock.
+ *
+ * Once the dividend is retired (P17: credits count on `now`'s life day; `launchDay` defaults to the switch in force,
+ * and the checks pass their own) it answers `retired` before any read or write, so a stale page's Claim adds no row.
+ */
 export async function claimDividend(
   userId: string,
   activeSkills: Skill[],
-  now: Date = new Date()
+  now: Date = new Date(),
+  launchDay?: DayKey | null
 ): Promise<ClaimResult> {
+  if (dividendRetiredOn(todayKey(now), launchDay)) return { status: "retired" };
   const pending = await pendingDividend(userId, activeSkills, now);
   // A rounding-dust claim would reset the accrual clock for nothing, quietly
   // costing the player the time they had banked.

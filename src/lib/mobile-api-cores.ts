@@ -16,6 +16,7 @@ import { loadModifiers } from "./skill-effects";
 import { loadDueWorkTasks } from "./scheduled-tasks-server";
 import { maybeMaintainLife } from "./settlement";
 import { loadWeekAudit } from "./week-audit-server";
+import { loadWallet, readWallet } from "./credits-server";
 import { loadMomentum, settleMomentum } from "./momentum-server";
 import { loadMainQuestCard, loadMainQuestWeek } from "./main-quest-server";
 import { loadVariants } from "./idea-variants-server";
@@ -51,6 +52,10 @@ export const realMobileDeps: MobileDeps = {
   loadGraceExtra: async (userId) => (await loadModifiers(userId)).graceExtraDays,
   // /today/week's Week audit card (blueprint P11): null while AUDIT_LAUNCH_DAY is not in force.
   loadWeekAudit: (userId, now) => loadWeekAudit(userId, now),
+  // The credits wallet (blueprint P16): {live: false} with no read while CREDITS_LAUNCH_DAY is not in force. A write's
+  // read after it is the uncached readWallet, so its balance holds the write.
+  loadWallet: (userId, now) => loadWallet(userId, now),
+  readWallet: (userId, now) => readWallet(userId, now),
   // What the Today and Review pages owe: momentum's settle the Today page awaits before its board read, the rest in after().
   recordDayOpen: (userId, dueCount, now) => recordDayOpen(userId, dueCount, now),
   autoCompleteStudyTasks: (userId, now) => autoCompleteStudyTasks(userId, now),

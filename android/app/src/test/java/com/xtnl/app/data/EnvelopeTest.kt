@@ -16,6 +16,22 @@ class EnvelopeTest {
         assertEquals(listOf("T"), celebrationTitles(v.celebrations))
     }
 
+    /** P16: the wallet on /check and a write's credits; null (credits off) and absent (an older server) both read as none. */
+    @Test fun creditsDecodeAndTheirAbsenceIsNone() {
+        val on = (HttpApi.parse(200, """{"ok":true,"data":{"credits":{"balance":120,"today":40}}}""", CheckData.serializer()) as Outcome.Ok).value
+        assertEquals(Wallet(120, 40), on.credits)
+        assertNull((HttpApi.parse(200, """{"ok":true,"data":{"credits":null}}""", CheckData.serializer()) as Outcome.Ok).value.credits)
+        assertNull((HttpApi.parse(200, """{"ok":true,"data":{}}""", CheckData.serializer()) as Outcome.Ok).value.credits)
+        val tick = (HttpApi.parse(200, """{"ok":true,"data":{"instanceId":"i1","credits":{"delta":10,"balance":130,"today":30}}}""", CompleteResult.serializer()) as Outcome.Ok).value
+        assertEquals(CreditsChange(10, 130, 30), tick.credits)
+        // An older server sends no today: it reads as none (the chip then steps by the change).
+        val older = (HttpApi.parse(200, """{"ok":true,"data":{"instanceId":"i1","credits":{"delta":10,"balance":130}}}""", CompleteResult.serializer()) as Outcome.Ok).value
+        assertEquals(CreditsChange(10, 130), older.credits)
+        assertNull((HttpApi.parse(200, """{"ok":true,"data":{"instanceId":"i1","credits":null}}""", CompleteResult.serializer()) as Outcome.Ok).value.credits)
+        assertEquals(CreditsChange(0, 120), (HttpApi.parse(200, """{"ok":true,"data":{"credits":{"delta":0,"balance":120}}}""", AnswerResult.serializer()) as Outcome.Ok).value.credits)
+        assertEquals(CreditsChange(10, 50), (HttpApi.parse(200, """{"ok":true,"data":{"kind":"task","credits":{"delta":10,"balance":50}}}""", LogResult.serializer()) as Outcome.Ok).value.credits)
+    }
+
     @Test fun anErrorKeepsTheServersLineAndCode() {
         val r = HttpApi.parse(409, """{"ok":false,"error":"Too late to undo.","code":"conflict"}""", UndoTaskResult.serializer()) as Outcome.Err
         assertEquals("Too late to undo.", r.message)
@@ -176,5 +192,68 @@ class EnvelopeTest {
         val meta = (HttpApi.parse(200, """{"ok":true,"data":{"formats":[{"type":"MCQ","label":"Multiple choice","points":8,"help":"h"}],
             "collections":[{"value":"BOOK","label":"Book"},"PROPOSAL"]}}""", IdeasMeta.serializer()) as Outcome.Ok).value
         assertEquals(listOf(Choice("BOOK", "Book"), Choice("PROPOSAL", "Proposal")), collectionChoices(meta))
+    }
+
+    /** P18: GET /mall as the doc lists it; credits null while they are off, no good day while the hints calibrate. */
+    @Test fun theMallShapeDecodes() {
+        val off = (HttpApi.parse(200, """{"ok":true,"data":{"now":"2026-10-24T00:12:00.000Z","day":"2026-10-24","credits":null,
+            "creditsLine":"Credits aren't counted yet: they start at none on the day they are switched on.","goodDay":null,
+            "hintLine":"Price hints wait for credits: they read your own days once credits are counted.",
+            "categories":[{"key":"TREAT","label":"Treats","examples":"a takeaway, a dessert, a coffee out"}],
+            "rewards":[{"id":"rw-1","title":"Takeaway night","category":"TREAT","categoryLabel":"Treats","price":120,"priceLine":"120 cr",
+              "hint":"calibrating","note":"From the Thai place","cooldownDays":7,"cooldownLine":"at most once every 7 days"}],
+            "archived":[{"id":"rw-0","title":"Old game","category":"SCREEN","categoryLabel":"Screen time","price":30,"priceLine":"30 cr",
+              "hint":"calibrating","note":null,"cooldownDays":null,"cooldownLine":null,"archivedAt":"2026-10-20T03:00:00.000Z"}],
+            "limits":{"titleMax":60,"noteMax":200,"priceMin":1,"priceMax":100000,"cooldownMin":1,"cooldownMax":365,"rewardsMax":60},
+            "notes":{"honour":"…runs on honour…","free":"#play, rest days and sleep are never priced: …","onlyYours":"Only the rewards you list are priced.","buying":"Buying isn't built yet."},
+            "writesOn":true,"ready":true}}""", MallData.serializer()) as Outcome.Ok).value
+        assertNull(off.credits)
+        assertNull(off.goodDay)
+        assertEquals(120, off.rewards.single().price)
+        assertEquals(7, off.rewards.single().cooldownDays)
+        assertEquals("2026-10-20T03:00:00.000Z", off.archived.single().archivedAt)
+        assertEquals(100_000, off.limits.priceMax)
+        assertTrue(off.notes.free.startsWith("#play"))
+        val live = (HttpApi.parse(200, """{"ok":true,"data":{"credits":{"balance":1240,"today":40},"goodDay":{"credits":40,"days":28,"earningDays":22}}}""", MallData.serializer()) as Outcome.Ok).value
+        assertEquals(Wallet(1240, 40), live.credits)
+        assertEquals(MallGoodDay(40, 28, 22), live.goodDay)
+        // An older server's answer (no Mall keys at all) reads as an empty Mall, not a crash.
+        val bare = (HttpApi.parse(200, """{"ok":true,"data":{}}""", MallData.serializer()) as Outcome.Ok).value
+        assertTrue(bare.rewards.isEmpty() && bare.categories.isEmpty() && !bare.writesOn)
+        val added = (HttpApi.parse(200, """{"ok":true,"data":{"id":"rw-2","reward":{"id":"rw-2","title":"A gig","category":"OUTING","price":400,"priceLine":"400 cr","hint":"≈ 10 good days"}}}""", AddRewardResult.serializer()) as Outcome.Ok).value
+        assertEquals("≈ 10 good days", added.reward!!.hint)
+        assertNull((HttpApi.parse(200, """{"ok":true,"data":{"id":"rw-2","reward":null}}""", AddRewardResult.serializer()) as Outcome.Ok).value.reward)
+        val refused = HttpApi.parse(409, """{"ok":false,"error":"Sleep, naps and rest days stay free: the Mall never prices them.","code":"conflict"}""", AddRewardResult.serializer()) as Outcome.Err
+        assertEquals("Sleep, naps and rest days stay free: the Mall never prices them.", refused.message)
+        assertNull("an older server's reward carries no Buy state", off.rewards.single().buy)
+        assertTrue("an older server sends no purchases", off.purchases.isEmpty())
+    }
+
+    /** P19: GET /mall's Buy states and purchases, POST /mall/buy and POST /mall/undo, as the doc lists them. */
+    @Test fun theBuyAndUndoShapesDecode() {
+        val mall = (HttpApi.parse(200, """{"ok":true,"data":{"credits":{"balance":1120,"today":40},
+            "rewards":[{"id":"rw-1","title":"Takeaway night","category":"TREAT","price":120,"priceLine":"120 cr","hint":"≈ 3 good days",
+              "buy":{"can":false,"why":"At most once every 7 days: next on Wed 4 Nov."}}],
+            "purchases":[{"id":"ev-1","rewardId":"rw-1","title":"Takeaway night","price":120,"priceLine":"120 cr","day":"2026-10-28",
+              "occurredAt":"2026-10-28T10:05:00.000Z","at":"21:05","refunded":false,"undoUntil":"2026-10-28T10:15:00.000Z","line":"Bought Wed 28 Oct at 21:05"}],
+            "limits":{"undoMinutes":10}}}""", MallData.serializer()) as Outcome.Ok).value
+        assertEquals(MallBuyState(false, "At most once every 7 days: next on Wed 4 Nov."), mall.rewards.single().buy)
+        assertEquals("2026-10-28T10:15:00.000Z", mall.purchases.single().undoUntil)
+        assertEquals(10, mall.limits.undoMinutes)
+        val bought = (HttpApi.parse(200, """{"ok":true,"data":{"purchase":{"id":"ev-1","title":"Takeaway night","price":120,"priceLine":"120 cr","at":"21:05",
+            "refunded":false,"undoUntil":"2026-10-28T10:15:00.000Z","line":"Bought Wed 28 Oct at 21:05"},
+            "credits":{"delta":-120,"balance":1120},"duplicate":false,"line":"Takeaway night bought for 120 cr · 1,120 cr left.",
+            "celebrations":[{"tier":2,"kind":"mall-buy","title":"Takeaway night bought"}]}}""", BuyResult.serializer()) as Outcome.Ok).value
+        assertEquals(CreditsChange(-120, 1120), bought.credits)
+        assertEquals("ev-1", bought.purchase!!.id)
+        assertEquals(listOf("Takeaway night bought"), celebrationTitles(bought.celebrations))
+        val repeat = (HttpApi.parse(200, """{"ok":true,"data":{"purchase":{"id":"ev-1"},"credits":{"delta":0,"balance":1120},"duplicate":true}}""", BuyResult.serializer()) as Outcome.Ok).value
+        assertTrue("a resend answers the purchase already made", repeat.duplicate && repeat.credits == CreditsChange(0, 1120))
+        val short = HttpApi.parse(409, """{"ok":false,"error":"Takeaway night costs 120 cr; you have 30 cr (90 cr short).","code":"conflict"}""", BuyResult.serializer()) as Outcome.Err
+        assertEquals("conflict", short.code)
+        val undone = (HttpApi.parse(200, """{"ok":true,"data":{"purchaseId":"ev-1","credits":{"delta":120,"balance":1240},"duplicate":false,"line":"Takeaway night undone: 120 cr back."}}""", UndoBuyResult.serializer()) as Outcome.Ok).value
+        assertEquals(CreditsChange(120, 1240), undone.credits)
+        val late = HttpApi.parse(409, """{"ok":false,"error":"Too late to undo: a purchase can be undone for 10 minutes.","code":"conflict"}""", UndoBuyResult.serializer()) as Outcome.Err
+        assertEquals("Too late to undo: a purchase can be undone for 10 minutes.", late.message)
     }
 }

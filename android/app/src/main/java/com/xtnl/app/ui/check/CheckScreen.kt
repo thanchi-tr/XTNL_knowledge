@@ -14,7 +14,9 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -103,6 +105,7 @@ import com.xtnl.app.core.Fmt
 import com.xtnl.app.core.QuestLine
 import com.xtnl.app.core.TickLadder
 import com.xtnl.app.core.TimeLabels
+import com.xtnl.app.core.WalletLine
 import com.xtnl.app.core.WeekLine
 import com.xtnl.app.data.CheckData
 import com.xtnl.app.data.DailyQuests
@@ -111,6 +114,7 @@ import com.xtnl.app.data.LevelInfo
 import com.xtnl.app.data.QuestsData
 import com.xtnl.app.data.ReviewSummary
 import com.xtnl.app.data.TaskItem
+import com.xtnl.app.data.Wallet
 import com.xtnl.app.data.WeekAudit
 import com.xtnl.app.data.WorkItem
 import com.xtnl.app.ui.LocalSnacks
@@ -124,6 +128,7 @@ import com.xtnl.app.ui.components.EmptyNote
 import com.xtnl.app.ui.components.Eyebrow
 import com.xtnl.app.ui.components.Glyphs
 import com.xtnl.app.ui.components.LevelSeal
+import com.xtnl.app.ui.components.PillShape
 import com.xtnl.app.ui.components.ProgressRing
 import com.xtnl.app.ui.components.SealState
 import com.xtnl.app.ui.components.StampSpec
@@ -768,6 +773,11 @@ private fun Header(data: CheckData, ui: CheckViewModel.Ui, vm: CheckViewModel, s
             Row(verticalAlignment = Alignment.CenterVertically) {
                 data.streak?.let { s -> Streak(s.days, s.keptToday || ui.kept.isNotEmpty(), spots) }
             }
+            // The credits wallet (blueprint P16): only while the server sends one (credits switched on, read).
+            ui.wallet?.let { w ->
+                Spacer(Modifier.height(6.dp))
+                WalletChip(w)
+            }
             if (ui.offline && ui.fetchedAtMs != null) {
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -886,6 +896,27 @@ private suspend fun characterLevelUp(seal: SealState, lu: CheckViewModel.LevelUp
         }
     }
     seal.holds = (seal.holds - 1).coerceAtLeast(0)
+}
+
+/**
+ * The credits wallet (blueprint P16; decisions D27 to D29): the server's balance and what today earned, in the web
+ * purse's words ("120 cr · +40 today"). A record, never a button: credits are spent on More › Mall (P19). It
+ * steps with a tick's own answer and comes back with the next /check; one line, so it fits the cover screen too.
+ */
+@Composable
+private fun WalletChip(w: Wallet) {
+    val c = X.c
+    Row(
+        Modifier
+            .clip(PillShape)
+            .border(BorderStroke(1.dp, c.line2), PillShape)
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .semantics(mergeDescendants = true) { contentDescription = WalletLine.describe(w) },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(WalletLine.balance(w), color = c.ink0, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+        Text(" · " + WalletLine.today(w), color = c.ink2, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+    }
 }
 
 /** The streak: its flame lights on the day's first tick (bumps, and three embers rise under it). */

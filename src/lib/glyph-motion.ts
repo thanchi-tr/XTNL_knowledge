@@ -27,6 +27,10 @@
  * after `reach`), `estimate-swap` (CHANGED: the estimate chip's label and pips crossfade; never a fill,
  * draw or count), and pv-confirm's swap form (toward a balloon glyph it only crossfades: it never draws
  * a balloon, H3).
+ *
+ * The Mall (blueprint P19): `burn` (ACT: my purchase spent credits; the wallet's figure dims and settles as it burns
+ * down to the balance the purchase left, which the page draws. It never counts the figure up or down, and it plays only
+ * on the purchase I just made, never on a read).
  */
 import { announce as celebrateAnnounce } from "./celebrate";
 import { DUR, EASE, burst as gatewayBurst, center, motionLevel, play, type PlayOptions } from "./motion";
@@ -58,7 +62,9 @@ export type GlyphMotion =
   // ── Revision 5, lane 9 ──
   | "trace"
   | "layer-open"
-  | "estimate-swap";
+  | "estimate-swap"
+  // ── The Mall (blueprint P19) ──
+  | "burn";
 
 /** Each motion's one licence (§4.7). playGlyph refuses any other. */
 export const MOTION_LICENCE: Readonly<Record<GlyphMotion, Licence>> = {
@@ -84,6 +90,8 @@ export const MOTION_LICENCE: Readonly<Record<GlyphMotion, Licence>> = {
   trace: "ACT",
   "layer-open": "SEEN",
   "estimate-swap": "CHANGED",
+  // ── The Mall (blueprint P19): my own purchase ──
+  burn: "ACT",
 };
 export const GLYPH_MOTIONS = Object.keys(MOTION_LICENCE) as GlyphMotion[];
 
@@ -111,6 +119,8 @@ export const GLYPH_DUR = {
   chainMax: 1600,
   waitMax: 90_000,
   ambientMax: 5_000,
+  /** The Mall's burn (P19): the figure dims, sinks 3 px and settles. */
+  burn: 560,
 } as const;
 
 /** Chain motions queue one at a time per page (H13); a lower order plays first (reach before rank-rise). */
@@ -398,6 +408,14 @@ const MOTIONS: Readonly<Record<GlyphMotion, MotionFn>> = {
       else setTimeout(() => (el.textContent = o.text!), GLYPH_DUR.swap / 2);
     }
     return go(el, [{ opacity: 1 }, { opacity: 0, offset: 0.5 }, { opacity: 1 }], { duration: GLYPH_DUR.swap, fill: "none" });
+  },
+
+  /**
+   * ACT · my Mall purchase spent credits (blueprint P19): the wallet's figure dims to a third and sinks 3 px, then
+   * settles on the balance the page draws. Its value is never animated (no count, no roll: H3), and nothing bursts.
+   */
+  burn(el, o) {
+    return go(el, [{ opacity: 1, transform: "translateY(0)" }, { opacity: 0.32, transform: "translateY(3px)", offset: 0.45 }, { opacity: 1, transform: "translateY(0)" }], { duration: GLYPH_DUR.burn, easing: EASE.out, delay: o.delay ?? 0 });
   },
 
   /** ACT · I checked this on a Start-sheet row: the shackle lifts −2.5 and turns −12° (its resting CSS is open: Glyph `open`). */

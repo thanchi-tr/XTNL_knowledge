@@ -187,6 +187,22 @@ export function fixtures(): Fixture[] {
       expect: ["competency:sk-writing:t2"],
     },
     {
+      name: "mall-buy",
+      note: "Blueprint P19 (D31): Takeaway night bought for 120 cr, 1,240 → 1,120 cr; an older purchase and an undone one play nothing.",
+      ...only(
+        "mall",
+        { buys: [{ id: "ev-old", day: "2026-09-28", title: "Film night", price: 60, before: 300, after: 240, refunded: false }] },
+        {
+          buys: [
+            { id: "ev-old", day: "2026-09-28", title: "Film night", price: 60, before: 300, after: 240, refunded: false },
+            { id: "ev-slip", day: TODAY, title: "A gig", price: 400, before: 1640, after: 1240, refunded: true },
+            { id: "ev-thai", day: TODAY, title: "Takeaway night", price: 120, before: 1240, after: 1120, refunded: false },
+          ],
+        }
+      ),
+      expect: ["mall-buy:ev-thai"],
+    },
+    {
       name: "emblem-unlock",
       note: `An Apex unlocked (${apex.name}, ${apex.masteryCost} MP).`,
       ...only("skills", { owned: [], mp: apex.masteryCost + 146 }, { owned: [{ code: apex.code, paid: apex.masteryCost }], mp: 146 }),

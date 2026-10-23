@@ -5,19 +5,27 @@
  * file never reaches Prisma or a model by itself. A route file only hands its request here with the real deps (a
  * route file may export only its methods and segment config).
  *
- *   GET  /check            handleCheck          the Today board and its daily quests, the Review hub's counts and the ideas fading, the due work, level, streak, the week audit
- *   POST /tasks/complete   handleTaskComplete   actions/tasks completeTask (the board's tick), and the skill it fed (P5)
+ *   GET  /check            handleCheck          the Today board and its daily quests, the Review hub's counts and the ideas fading, the due work, level, streak, the week audit, the credits wallet (P16)
+ *   POST /tasks/complete   handleTaskComplete   actions/tasks completeTask (the board's tick), and the skill it fed (P5), its credits (P16)
  *   POST /tasks/undo       handleTaskUndo       actions/tasks undoCompletion
  *   POST /work/done        handleWorkDone       actions/scheduled-tasks doneScheduledTask (no history log)
  *   POST /work/reopen      handleWorkReopen     actions/scheduled-tasks reopenScheduledTask
  *   GET  /review/queue     handleReviewQueue    the review hub's due cards in the runner's order
- *   POST /review/answer    handleReviewAnswer   actions/review submitReview
- *   POST /log              handleLog            actions/capture createFromCapture (the capture sheet's save)
+ *   POST /review/answer    handleReviewAnswer   actions/review submitReview, its credits (P16)
+ *   POST /log              handleLog            actions/capture createFromCapture (the capture sheet's save), its credits (P16)
  *   POST /log/undo         handleLogUndo        actions/tasks undoCapture, actions/capture undoWeightCapture
  *   GET  /ideas/meta       handleIdeasMeta      the New idea form's formats and collections
  *   POST /ideas            handleIdeaCreate     actions/ideas submitIdea
  *   GET  /quests           handleQuests         the main quest, this week's sprint and Today's three (read only; P15)
  *   GET  /status           handleStatus         the five attributes, Capital's reading, the avatar targets and the skills, the /you Status card's (read only; P1, P4, P5)
+ *   GET  /mall             handleMall           You › Mall's catalog, its purchases and the credits over it (read only; P18, P19)
+ *   POST /mall/rewards     handleMallRewards    actions/mall addReward (the Add sheet's save; P18)
+ *   POST /mall/buy         handleMallBuy        actions/mall buyReward (Buy, then Confirm; P19)
+ *   POST /mall/undo        handleMallUndo       actions/mall undoBuy (a purchase undone inside its ten minutes; P19)
+ *
+ * The four Mall routes run on MobileMallDeps alone (mall-mobile-cores.ts binds them): the token, the user, the clock,
+ * the Mall's read, its add, its buy and its undo. They never hold a paying core (a purchase spends credits only), so a
+ * mall* file reaches nothing that pays XP, MP or a point (scripts/credits-check.ts).
  *
  * Every reply is JSON with Cache-Control: no-store; a thrown error is logged and answers the generic server line,
  * never its message or stack. Writes replay their first successful result for a clientId (mobile-api.ts ReplayCache);
@@ -48,6 +56,7 @@ import {
   celebrationsOf,
   checkDailyOf,
   checkFadingOf,
+  checkCreditsOf,
   checkTasksOf,
   checkWeekOf,
   clientIdOf,
@@ -64,6 +73,17 @@ import {
   jsonBodyOf,
   levelOf,
   logLineOf,
+  MALL_BUY_KEYS,
+  MALL_REWARD_KEYS,
+  MALL_UNDO_KEYS,
+  mallBuyLineOf,
+  mallBuyRequestOf,
+  mallOf,
+  mallPurchaseOf,
+  mallRewardOf,
+  mallRewardRequestOf,
+  mallUndoLineOf,
+  mallUndoRequestOf,
   logResultOf,
   mobileAuthorized,
   mobileCardOf,
@@ -92,6 +112,7 @@ import {
   undoXpOf,
   weightOfUndoToken,
   workItemsOf,
+  writeCreditsOf,
   type DueWorkTask,
   type Reply,
   type ReviewTreeField,
@@ -114,6 +135,10 @@ import type { AvatarView } from "./avatar";
 import type { SkillView } from "./competency";
 import type { LifeTracksView } from "./life-tracks";
 import type { KnowledgeRow } from "../components/home/sheet-math";
+import type { CreditsWallet } from "./credits";
+import type { MallResult, RewardInput } from "./mall";
+import type { BuyResult, MallView, UndoBuyResult } from "./mall-server";
+import type { CelebrationEvent } from "./celebration-types";
 
 // ── The cores ───────────────────────────────────────────────────────────────
 
@@ -139,6 +164,17 @@ export interface MobileDeps {
   loadGraceExtra: (userId: string) => Promise<number>;
   /** The weekly audit as /today/week's card reads it (week-audit-server loadWeekAudit); null while it is inert. */
   loadWeekAudit: (userId: string, now: Date) => Promise<WeekAudit | null>;
+  /**
+   * The credits wallet (blueprint P16; credits-server loadWallet, cached): {live: false} at once, with no read, while
+   * CREDITS_LAUNCH_DAY is not in force. /check's `credits`, and the read before a tick, an answer and a log.
+   */
+  loadWallet: (userId: string, now: Date) => Promise<CreditsWallet>;
+  /**
+   * The same wallet read fresh (credits-server readWallet, uncached): the read after a tick, an answer and a log, so
+   * their `credits.balance` and `credits.today` are the server's own after this write, never a cached load that left
+   * before it (or one another write's read joined). {live: false} with no read while credits are off.
+   */
+  readWallet: (userId: string, now: Date) => Promise<CreditsWallet>;
   /**
    * What opening Today and the Review hub owe: momentum's lazy writes before the board's read (awaited, as the Today
    * page does), the rest after the response (tasks recordDayOpen, autoCompleteStudyTasks; settlement).
@@ -197,7 +233,29 @@ export interface MobileDeps {
   loadTemplateSkill: (userId: string, templateId: string) => Promise<SkillView | null>;
 }
 
+/**
+ * What the Mall's four routes run on (blueprint P18, P19): the frame's token and user, the clock, You › Mall's read, the
+ * Add sheet's save, Buy's Confirm and a purchase's Undo. Nothing here pays XP, MP or a point (a purchase spends
+ * credits only), so a Mall route holds no paying core (mall-mobile-cores.ts binds these).
+ */
+export interface MobileMallDeps {
+  token: () => string | undefined;
+  userId: () => string;
+  now: () => Date;
+  /** You › Mall's read (mall-server loadMall): the catalog fresh, the wallet credits-server's ({live: false} while off). */
+  loadMall: (userId: string, now: Date) => Promise<MallView>;
+  /** The Add sheet's save (actions/mall addReward), less `refresh`. */
+  addReward: (input: RewardInput) => Promise<MallResult<{ id: string }>>;
+  /** (P19) Buy's Confirm (actions/mall buyReward), less `refresh`: the purchase and its Seal. */
+  buyReward: (rewardId: string, clientId: string) => Promise<MallResult<BuyResult & { celebrations: CelebrationEvent[] }>>;
+  /** (P19) A purchase's Undo (actions/mall undoBuy), less `refresh`. */
+  undoBuy: (purchaseId: string) => Promise<MallResult<UndoBuyResult>>;
+}
+
 // ── The frame every route runs in ───────────────────────────────────────────
+
+/** What the frame reads: the token and the user (every route's deps carry them). */
+type FrameDeps = Pick<MobileDeps, "token" | "userId">;
 
 /** This instance's write results, by user, route and clientId. */
 const replays = new ReplayCache();
@@ -214,7 +272,7 @@ function isUniqueViolation(err: unknown): boolean {
   return !!err && typeof err === "object" && (err as { code?: unknown }).code === "P2002";
 }
 
-async function framed(label: string, request: Request, deps: MobileDeps, run: () => Promise<Reply>, gone?: string): Promise<Response> {
+async function framed(label: string, request: Request, deps: FrameDeps, run: () => Promise<Reply>, gone?: string): Promise<Response> {
   try {
     if (!mobileAuthorized(request.headers, deps.token())) return responseOf(failReply("auth", AUTH_LINE));
     return responseOf(await run());
@@ -231,7 +289,7 @@ async function framed(label: string, request: Request, deps: MobileDeps, run: ()
 async function write(
   label: string,
   request: Request,
-  deps: MobileDeps,
+  deps: FrameDeps,
   keys: readonly string[],
   run: (body: Record<string, unknown>) => Promise<Reply>,
   gone?: string
@@ -253,7 +311,7 @@ async function write(
 }
 
 /** A read: no body, only `params` in the query. */
-async function read(label: string, request: Request, deps: MobileDeps, params: readonly string[], run: (url: URL) => Promise<Reply>): Promise<Response> {
+async function read(label: string, request: Request, deps: FrameDeps, params: readonly string[], run: (url: URL) => Promise<Reply>): Promise<Response> {
   return framed(label, request, deps, async () => {
     const url = new URL(request.url);
     onlyParams(url, params);
@@ -268,6 +326,24 @@ const soft =
     console.error(`[mobile] ${route}: ${what} failed; it reads as none.`, err instanceof Error ? err.message : err);
     return fallback;
   };
+
+/**
+ * The credits wallet before a write (blueprint P16): read first, so a write's `credits.delta` is what was earned across
+ * it (after − before). While credits are off it answers {live: false} with no read; a failed read is null (the write
+ * still runs, `credits` null).
+ */
+function walletBefore(deps: MobileDeps, route: string): Promise<CreditsWallet | null> {
+  return deps.loadWallet(deps.userId(), deps.now()).catch(soft<CreditsWallet | null>("the credits before the write", null, route));
+}
+
+/**
+ * The wallet after the write, read fresh (uncached: never a load that left before the write committed, so the reply's
+ * balance and today hold this write); not read at all when the one before was not live (off, or unread).
+ */
+function walletAfter(deps: MobileDeps, before: CreditsWallet | null, route: string): Promise<CreditsWallet | null> {
+  if (!before || !before.live) return Promise.resolve(null);
+  return deps.readWallet(deps.userId(), deps.now()).catch(soft<CreditsWallet | null>("the credits after the write", null, route));
+}
 
 /** Owed writes after the response, each on its own: one failing never skips the others, and none fails the reply. */
 function owe(deps: MobileDeps, what: string, task: () => Promise<unknown>): void {
@@ -286,8 +362,9 @@ function owe(deps: MobileDeps, what: string, task: () => Promise<unknown>): void
  * The quick check: momentum's lazy writes first, as the Today page awaits them, then one parallel wave of the web's
  * own cached reads — the Today board (the personal board only), the Review hub's Field tree and today's ledger counts,
  * the daily streak, the shell's character level, the due work across the work tabs, the loadout's grace extension
- * (the ideas fading are read off the same tree, as the bell reads them) and the weekly audit (null until
- * AUDIT_LAUNCH_DAY; a failed read reads as none). `auditOn` is the switch alone (isAuditLaunched: the launch day, no
+ * (the ideas fading are read off the same tree, as the bell reads them), the weekly audit (null until
+ * AUDIT_LAUNCH_DAY; a failed read reads as none) and the credits wallet (null until CREDITS_LAUNCH_DAY: it reads
+ * nothing while off; a failed read reads as none). `auditOn` is the switch alone (isAuditLaunched: the launch day, no
  * read), so the phone arms its Sunday reminder from it, never from a `week` that is null before the first audited
  * Sunday's 18:00 or after a failed read. After the reply it runs what
  * opening Today and the Review hub owe (the day's first open fixes the quest target; study tasks met by the day's
@@ -302,7 +379,7 @@ export async function handleCheck(request: Request, deps: MobileDeps): Promise<R
     // a tick made from this check price today's frog. Single flight, at once when nothing is owed; it never throws
     // (were it to, the check would log it and read on).
     await deps.settleMomentum(userId, day, now).catch(soft("momentum's lazy writes", null));
-    const [data, fields, reviewDay, streak, shell, work, graceExtra, audit] = await Promise.all([
+    const [data, fields, reviewDay, streak, shell, work, graceExtra, audit, wallet] = await Promise.all([
       deps.loadBoard(userId, day, now),
       deps.loadFieldTree(),
       deps.loadReviewDay(userId, day),
@@ -311,6 +388,7 @@ export async function handleCheck(request: Request, deps: MobileDeps): Promise<R
       deps.loadWork(userId, now).catch(soft("the work list", [] as readonly DueWorkTask[])),
       deps.loadGraceExtra(userId).catch(soft("the grace extension", 0)),
       deps.loadWeekAudit(userId, now).catch(soft("the week audit", null)),
+      deps.loadWallet(userId, now).catch(soft<CreditsWallet | null>("the credits wallet", null)),
     ]);
     const board = buildBoard(data, [], now.getTime());
     const review = reviewHubOf(fields, now, reviewDay);
@@ -329,6 +407,7 @@ export async function handleCheck(request: Request, deps: MobileDeps): Promise<R
       fading: checkFadingOf(fields, now, Math.max(0, graceExtra || 0)),
       auditOn: isAuditLaunched(day),
       week: checkWeekOf(audit),
+      credits: checkCreditsOf(wallet),
       work: workItemsOf(work, now),
       level: levelOf(shell),
       streak: streakOf(streak),
@@ -412,6 +491,82 @@ export async function handleStatus(request: Request, deps: MobileDeps): Promise<
   });
 }
 
+// ── GET /mall, POST /mall/rewards ───────────────────────────────────────────
+
+/**
+ * You › Mall (blueprint 4.3; P18, decision D30): the rewards the user lists, each with its price and hint, the archived
+ * ones, and the credits over them, the page's own read (mall-server loadMall: the catalog fresh, the wallet
+ * credits-server's, {live: false} with no read while CREDITS_LAUNCH_DAY is null). Read only: it writes nothing and
+ * owes nothing after the reply. The catalog is the page itself, so a failed read fails the reply (the app keeps its
+ * last copy); the wallet is read beside it and reads as none when it fails. P19: each reward's Buy state and the latest
+ * purchases (none while credits are off); buying itself is POST /mall/buy.
+ */
+export async function handleMall(request: Request, deps: MobileMallDeps): Promise<Response> {
+  return read("mall", request, deps, [], async () => {
+    const now = deps.now();
+    const view = await deps.loadMall(deps.userId(), now);
+    return okReply({ now: now.toISOString(), day: view.day, ...mallOf(view) });
+  });
+}
+
+/**
+ * The Add sheet's save (actions/mall addReward: mall.ts cleanRewardInput's rules, life writes only on the live app),
+ * then the Mall read again for the new row as GET /mall lists it (`reward`; null when that read fails: the add stands).
+ * A rule's refusal (a price out of range, #play, sleep or a rest day, a title already listed) is `conflict` with the
+ * core's own line. A resend with the same clientId replays here; on another instance the one-live-title rule (the
+ * table's partial unique index) refuses the second add, so a reward is listed once.
+ */
+export async function handleMallRewards(request: Request, deps: MobileMallDeps): Promise<Response> {
+  return write("mall/rewards", request, deps, MALL_REWARD_KEYS, async (body) => {
+    const input = mallRewardRequestOf(body);
+    const res = await deps.addReward(input);
+    if (!res.ok) return refusalReply(res.error);
+    const view = await deps.loadMall(deps.userId(), deps.now()).catch(soft<MallView | null>("the Mall after an add", null, "mall/rewards"));
+    const row = view?.rewards.find((r) => r.id === res.value.id);
+    return okReply({ id: res.value.id, reward: row ? mallRewardOf(row, view?.buy[row.id] ?? null) : null });
+  });
+}
+
+/**
+ * Buy's Confirm (blueprint P19, D31; actions/mall buyReward: mall-server buyRewardCore's lock, guard and one re-read):
+ * the price is burnt exactly, never more than the balance. `clientId` is required: it is the purchase's row key, so a
+ * resend lands once on any instance (a repeat answers `duplicate` with delta 0, nothing spent twice; on this
+ * instance the replay cache answers it first). A rule's refusal (credits off, a balance below zero, too few credits, a
+ * cooldown, a reward gone) is `conflict` (`gone` for a reward archived) with the core's own line. `credits` is the
+ * purchase's own change and the balance it left, from the purchase's own read (no second wallet read: it is the figure
+ * the guard held). The Seal (`mall-buy`) is among `celebrations`.
+ */
+export async function handleMallBuy(request: Request, deps: MobileMallDeps): Promise<Response> {
+  return write("mall/buy", request, deps, MALL_BUY_KEYS, async (body) => {
+    const { rewardId, clientId } = mallBuyRequestOf(body);
+    const res = await deps.buyReward(rewardId, clientId);
+    if (!res.ok) return refusalReply(res.error);
+    const v = res.value;
+    return okReply({
+      purchase: mallPurchaseOf(v.purchase),
+      credits: { delta: v.delta, balance: v.balance },
+      duplicate: v.duplicate,
+      line: mallBuyLineOf(v),
+      celebrations: celebrationsOf(v.celebrations),
+    });
+  });
+}
+
+/**
+ * A purchase's Undo (blueprint P19, D31; actions/mall undoBuy): inside its ten minutes, once. A repeat answers the first
+ * (`duplicate`, delta 0); past the ten minutes it is `conflict` ("Too late to undo: …"), and a purchase that isn't
+ * there is `gone`.
+ */
+export async function handleMallUndo(request: Request, deps: MobileMallDeps): Promise<Response> {
+  return write("mall/undo", request, deps, MALL_UNDO_KEYS, async (body) => {
+    const { purchaseId } = mallUndoRequestOf(body);
+    const res = await deps.undoBuy(purchaseId);
+    if (!res.ok) return refusalReply(res.error);
+    const v = res.value;
+    return okReply({ purchaseId: v.purchaseId, credits: { delta: v.delta, balance: v.balance }, duplicate: v.duplicate, line: mallUndoLineOf(v) });
+  });
+}
+
 // ── POST /tasks/complete, /tasks/undo ───────────────────────────────────────
 
 /**
@@ -420,26 +575,30 @@ export async function handleStatus(request: Request, deps: MobileDeps): Promise<
  * level seal steps by the exact amount (and plays a level up on the tick that earns it); both reads warm the cache
  * for the app's next /check. A failed board read reads as not all done, a failed level read as none: never a failed
  * tick. P5: the skill the template feeds, read in the same wave (`competency`: its hours and tier after the tick, and
- * `tierUp` when the tick played the tier's Seal); null with none, or when it couldn't be read.
+ * `tierUp` when the tick played the tier's Seal); null with none, or when it couldn't be read. P16: the credits wallet,
+ * read before the tick (cached) and fresh again in that wave (`credits`: the balance and today's after the tick, and
+ * what was earned across it; null while credits are off).
  */
 export async function handleTaskComplete(request: Request, deps: MobileDeps): Promise<Response> {
   return write("tasks/complete", request, deps, ["templateId", "day", "mvv"], async (body) => {
     const templateId = idOf(body.templateId, "templateId");
     const day = tickDayOf(body.day);
     const mvv = boolOf(body.mvv, "mvv");
+    const before = await walletBefore(deps, "tasks/complete");
     const res = await deps.completeTask(templateId, { ...(day ? { day } : {}), ...(mvv !== undefined ? { mvv } : {}) });
     if (!res.ok) return refusalReply(res.error);
     const v = res.value;
     const now = deps.now();
     const today = todayKey(now);
     const userId = deps.userId();
-    const [allDone, shell, skill] = await Promise.all([
+    const [allDone, shell, skill, after] = await Promise.all([
       deps
         .loadBoard(userId, today, now)
         .then((data) => boardAllDoneOf(data, now.getTime()))
         .catch(soft("the board after a tick", false)),
       deps.loadShell(userId).catch(soft("the level after a tick", null)),
       deps.loadTemplateSkill(userId, templateId).catch(soft<SkillView | null>("the skill after a tick", null)),
+      walletAfter(deps, before, "tasks/complete"),
     ]);
     return okReply({
       instanceId: v.instanceId,
@@ -449,6 +608,7 @@ export async function handleTaskComplete(request: Request, deps: MobileDeps): Pr
       celebrations: celebrationsOf(v.celebrations),
       level: levelOf(shell),
       competency: tickCompetencyOf(skill, v.celebrations),
+      credits: writeCreditsOf(before, after),
     });
   });
 }
@@ -519,7 +679,8 @@ export async function handleReviewQueue(request: Request, deps: MobileDeps): Pro
  * The clientId is the answer's key (submitReview answerKey: its REVIEW row's dedupeKey), so a resend lands once on any
  * instance, even after a reply that was lost or a failure after the write. A repeated pass fails its row's insert
  * (P2002), which takes its points back with it; a repeated miss comes back as the day's retry, which changes nothing.
- * Either way, once the key's row is read as there, the repeat answers 409 `recorded`.
+ * Either way, once the key's row is read as there, the repeat answers 409 `recorded`. P16: the credits wallet, read
+ * before the answer and after it (`credits`; an answer that completes the review quest earns its 10; null while off).
  */
 export async function handleReviewAnswer(request: Request, deps: MobileDeps): Promise<Response> {
   return write(
@@ -533,6 +694,7 @@ export async function handleReviewAnswer(request: Request, deps: MobileDeps): Pr
       const combo = intOf(body.combo, "combo", 0, COMBO_MAX, 0);
       const sessionMisses = intOf(body.sessionMisses, "sessionMisses", 0, SESSION_MISSES_MAX, 0);
       const answerKey = clientIdOf(body.clientId);
+      const before = await walletBefore(deps, "review/answer");
       // Read only on a repeat's two signs, never on a plain answer; a failed read reads as not recorded.
       const keyOnLedger = async () => answerKey !== null && (await deps.reviewRecorded(deps.userId(), answerKey).catch(soft("the answer's key", false)));
       let result: SubmitReviewResult;
@@ -547,7 +709,8 @@ export async function handleReviewAnswer(request: Request, deps: MobileDeps): Pr
         throw err;
       }
       if (result.outcome.outcome === "retry" && (await keyOnLedger())) return failReply("recorded", REVIEW_RECORDED_LINE);
-      return okReply(reviewAnswerOf(result, { ideaId, sessionMisses, levelNow }));
+      const after = await walletAfter(deps, before, "review/answer");
+      return okReply({ ...reviewAnswerOf(result, { ideaId, sessionMisses, levelNow }), credits: writeCreditsOf(before, after) });
     },
     "That idea no longer exists."
   );
@@ -558,7 +721,8 @@ export async function handleReviewAnswer(request: Request, deps: MobileDeps): Pr
 /**
  * One line through the capture sheet's save (createFromCapture: sanitizeCaptureInput, parseCapture, the weigh-in
  * route, createTemplateCore, sizing after the reply), started the way the sheet's section starts it. The clientId is
- * the line's captureKey, so a retry finds the row the first send wrote, on any instance.
+ * the line's captureKey, so a retry finds the row the first send wrote, on any instance. P16: the credits wallet, read
+ * before the save and after it (`credits`; a done-now line that finishes a quest earns its 10; null while off).
  */
 export async function handleLog(request: Request, deps: MobileDeps): Promise<Response> {
   return write("log", request, deps, ["text", "section"], async (body) => {
@@ -566,9 +730,11 @@ export async function handleLog(request: Request, deps: MobileDeps): Promise<Res
     const section = sectionOf(body.section);
     const today = todayKey(deps.now());
     const line = logLineOf(text, section, today);
+    const before = await walletBefore(deps, "log");
     const res = await deps.createFromCapture(line, captureKeyOf(clientIdOf(body.clientId)));
     if (!res.ok) return refusalReply(res.error, res.code);
-    return okReply(logResultOf(res.value, line, today));
+    const after = await walletAfter(deps, before, "log");
+    return okReply({ ...logResultOf(res.value, line, today), credits: writeCreditsOf(before, after) });
   });
 }
 

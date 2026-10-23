@@ -142,6 +142,9 @@ export const NEVER_STREAK_SOURCES: ReadonlySet<AnyActivitySource> = new Set<AnyA
   "NUDGE",
   // The weekly audit's frozen copy (week-audit.ts; blueprint P11): written after the week, never an action.
   "AUDIT",
+  // The Mall's rows (mall-server.ts; blueprint P19): spending credits, or a purchase undone, is never a day's work.
+  "MALL_BUY",
+  "MALL_REFUND",
 ]);
 
 /**

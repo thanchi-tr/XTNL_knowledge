@@ -9,12 +9,18 @@
  * count left (the task quest once a day, twice with Second look; the plan quest once with Scout; a
  * done quest never). Footer: "1 of 3 keeps your run · 3 of 3 opens the chest".
  *
+ * Credits (blueprint P16): once CREDITS_LAUNCH_DAY is in force each row carries its price tag ("+10 cr", "+10 cr
+ * earned" once done on a day whose set is fixed) and the footer says what 3 of 3 adds; while it is null `credits` is
+ * null and nothing here changes. A preview (no QUEST_SET row yet, `frozen` false) never says "earned": the wallet
+ * counts a day only once its set is written, and the set fixed later may differ from the preview.
+ *
  * The swap action arrives as a prop (TodayBoard passes actions/momentum swapQuest).
  */
 import { useState } from "react";
 import Link from "next/link";
 import type { QuestView } from "@/lib/momentum-server";
 import type { QuestSlot } from "@/lib/momentum";
+import type { CreditTags } from "@/lib/credits";
 import { seekTemplate } from "@/components/roadmap/roadmap-events";
 import { ROADMAP_CHECKPOINT_HREF } from "@/components/roadmap/roadmap-links";
 import { openCapture } from "@/components/capture/events";
@@ -56,6 +62,27 @@ export function questGoOf(q: QuestView): QuestGo {
 
 export const QUEST_FOOTER = "1 of 3 keeps your run · 3 of 3 opens the chest";
 
+/**
+ * A quest row's price tag once credits count (blueprint P16): '+10 cr' while open, '+10 cr earned' once done on a day
+ * whose set is fixed (an undo takes it back). On a preview (`frozen` false: the day's set isn't written yet, so the
+ * wallet counts nothing for it) a done row keeps the plain '+10 cr': never "earned" for credits the wallet won't count.
+ * Null while credits are off: no tag at all.
+ */
+export function questCreditTagOf(q: Pick<QuestView, "done">, credits: CreditTags | null | undefined, frozen = false): string | null {
+  if (!credits) return null;
+  return q.done && frozen ? `${credits.quest} earned` : credits.quest;
+}
+
+/**
+ * The footer's credits line once credits count: 'Each done adds +10 cr · 3 of 3 adds +10 cr when the chest opens'; on a
+ * preview it adds that credits count once the day's set is fixed. Null while off.
+ */
+export function questCreditFootOf(credits: CreditTags | null | undefined, frozen = true): string | null {
+  if (!credits) return null;
+  const line = `Each done adds ${credits.quest} · 3 of 3 adds ${credits.threeOfThree} when the chest opens`;
+  return frozen ? line : `${line} · credits count once the day's set is fixed`;
+}
+
 export function QuestRows({
   quests,
   prices,
@@ -63,6 +90,8 @@ export function QuestRows({
   busy = null,
   onGo,
   onSwap,
+  credits = null,
+  frozen = false,
 }: {
   quests: readonly QuestView[];
   prices: Readonly<Record<string, number>>;
@@ -70,11 +99,16 @@ export function QuestRows({
   busy?: QuestSlot | null;
   onGo?: (q: QuestView) => void;
   onSwap?: (q: QuestView) => void;
+  /** Today's credit tags (credits.ts creditTagsOn); null while credits are off, so the rows are exactly as before. */
+  credits?: CreditTags | null;
+  /** The day's set is written (MomentumView.frozen): only then does a done row say "earned". */
+  frozen?: boolean;
 }) {
   return (
     <ul className="mo-qrows">
       {quests.map((q) => {
         const go = questGoOf(q);
+        const tag = questCreditTagOf(q, credits, frozen);
         return (
           <li key={q.slot} className="mo-qrow" data-focus={focus === q.slot ? "" : undefined} data-done={q.done ? "" : undefined}>
             <SlotGlyph slot={q.slot} />
@@ -84,6 +118,11 @@ export function QuestRows({
               </span>
               <b>{q.quest.title}</b>
               <span className="t-meta">{questWhyOf(q, prices)}</span>
+              {tag && (
+                <span className="mo-cr" data-done={q.done ? "" : undefined}>
+                  {tag}
+                </span>
+              )}
             </div>
             <div className="mo-qacts">
               {!q.done &&
@@ -117,6 +156,7 @@ export function QuestSheet({
   prices,
   frozen,
   swap,
+  credits = null,
 }: {
   open: boolean;
   onClose: () => void;
@@ -125,6 +165,8 @@ export function QuestSheet({
   prices: Readonly<Record<string, number>>;
   frozen: boolean;
   swap: MomentumCardActions["swapQuest"];
+  /** Today's credit tags; null while credits are off. */
+  credits?: CreditTags | null;
 }) {
   const [busy, setBusy] = useState<QuestSlot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -156,13 +198,21 @@ export function QuestSheet({
 
   return (
     <Sheet open={open} onClose={onClose} title="Today's three" description={frozen ? "Picked once for the day from what is due" : "A preview: the day's set is fixed once it is written"}>
-      <QuestRows quests={quests} prices={prices} focus={focus} busy={busy} onGo={go} onSwap={(q) => void swapOne(q)} />
+      <QuestRows quests={quests} prices={prices} focus={focus} busy={busy} onGo={go} onSwap={(q) => void swapOne(q)} credits={credits} frozen={frozen} />
       {error && (
         <p role="alert" className="t-meta mo-error">
           {error}
         </p>
       )}
       <p className="t-meta mo-qfoot">{QUEST_FOOTER}</p>
+      {credits && (
+        <p className="t-meta">
+          {questCreditFootOf(credits, frozen)}.{" "}
+          <Link className="link" href="/today/rules#credits">
+            How credits work
+          </Link>
+        </p>
+      )}
       <p className="t-meta">
         <Link className="link" href="/today/rules#momentum">
           How Today&apos;s three are picked

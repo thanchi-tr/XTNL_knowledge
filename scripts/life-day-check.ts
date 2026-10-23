@@ -267,6 +267,8 @@ for (const tz of [SYD, BNE]) {
   // momentum-check.
   // Blueprint P0 (2026-10-22, blueprint-plan-2026-10-22.md): status-check and credits-check, the ledger guards for the
   // status panel, avatars and competencies and for credits and the Mall, run right after momentum-sim, before settle.
+  // Blueprint P16 (2026-10-24): the sim's CREDITS block (momentum-sim --credits: what the realistic player earns in
+  // credits, and the worst case) runs right after the plain sim, before status-check; the plain run stays byte-identical.
   // Blueprint P9 (2026-10-22): daily-quests-check (the musts as Daily Quests: the cap of five, the 1/0 strip) runs
   // right after duty-actions-check, before the rituals.
   // Blueprint P11 (2026-10-22): week-audit-check (the weekly audit's rate, its frozen copy and its switch) runs right
@@ -276,14 +278,17 @@ for (const tz of [SYD, BNE]) {
   const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> }).scripts;
   const ROADMAP_LIFE_CHECKS = ["roadmap-contract", "roadmap-measures", "throughput", "roadmap-realism", "roadmap-model", "roadmap-server", "roadmap-quests", "roadmap-invite", "roadmap-hostile"];
   const STRICT_LIFE_CHECKS = new Set(["today-ui", "roadmap-contract"]);
-  const names = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "exercise-style", "subtasks", "task-decisions", "work-boards", "customers", "work-orders", "character", "goals-close", "leveling", "spacing", "momentum", "momentum-server", "balance-horizon", "momentum-sim", "status", "credits", "settle", "duty", "duty-actions", "daily-quests", "week-audit", "audit-decay", "rituals", "roadmap-goals", "roadmap-topics", "roadmap-grounding", ...ROADMAP_LIFE_CHECKS];
+  const names = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "exercise-style", "subtasks", "task-decisions", "work-boards", "customers", "work-orders", "character", "goals-close", "leveling", "spacing", "momentum", "momentum-server", "balance-horizon", "momentum-sim", "momentum-sim:credits", "status", "credits", "settle", "duty", "duty-actions", "daily-quests", "week-audit", "audit-decay", "rituals", "roadmap-goals", "roadmap-topics", "roadmap-grounding", ...ROADMAP_LIFE_CHECKS];
   const PLAIN_LIFE_SCRIPTS = new Set(["balance-horizon", "momentum-sim"]);
-  const fileOf = (n: string) => `scripts/${n}${PLAIN_LIFE_SCRIPTS.has(n) ? "" : "-check"}.ts`;
+  /** A name's arguments past its file: 'momentum-sim:credits' is the sim with --credits (P16). */
+  const ARGS_OF: Readonly<Record<string, string>> = { "momentum-sim:credits": " --credits" };
+  const baseOf = (n: string) => n.replace(/:.*$/, "");
+  const fileOf = (n: string) => `scripts/${baseOf(n)}${PLAIN_LIFE_SCRIPTS.has(baseOf(n)) ? "" : "-check"}.ts`;
   const all = names.map(fileOf);
   const lifeCheck = scripts["life:check"] ?? "";
   check(
     "package.json life:check chains every life check with &&, and each exists",
-    lifeCheck === names.map((n) => `tsx ${fileOf(n)}${STRICT_LIFE_CHECKS.has(n) ? " --strict" : ""}`).join(" && ") && all.every((f) => existsSync(resolve(ROOT, f))),
+    lifeCheck === names.map((n) => `tsx ${fileOf(n)}${STRICT_LIFE_CHECKS.has(n) ? " --strict" : ""}${ARGS_OF[n] ?? ""}`).join(" && ") && all.every((f) => existsSync(resolve(ROOT, f))),
     lifeCheck
   );
   for (const n of STRICT_LIFE_CHECKS) {
@@ -294,6 +299,7 @@ for (const tz of [SYD, BNE]) {
     );
   }
   check("package.json today-ui:check runs scripts/today-ui-check.ts on its own too", scripts["today-ui:check"] === "tsx scripts/today-ui-check.ts", scripts["today-ui:check"] ?? "missing");
+  check("package.json credits:sim runs the sim's CREDITS block on its own too (P16)", scripts["credits:sim"] === "tsx scripts/momentum-sim.ts --credits", scripts["credits:sim"] ?? "missing");
   check(
     "package.json db:backfill-activity runs the backfill script",
     scripts["db:backfill-activity"] === "tsx scripts/backfill-activity.ts" && existsSync(resolve(ROOT, "scripts/backfill-activity.ts"))

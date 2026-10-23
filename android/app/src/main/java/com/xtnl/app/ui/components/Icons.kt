@@ -70,6 +70,9 @@ object Glyphs {
     val Flame = line("M12 21c-3.6 0-6-2.4-6-5.6 0-3.7 3.2-5.3 3.9-9.4 2.9 1.6 4.7 4.2 4.9 6.8.7-.6 1.2-1.6 1.3-2.8 1.3 1.4 1.9 3.3 1.9 5.2 0 3.4-2.5 5.8-6 5.8z")
     val Diamond = line("M12 4l7 8-7 8-7-8z", filled = setOf(0))
 
+    /** The Mall (More's row; blueprint P18): the web's bag (the kit's i-bag), what credits are spent on. */
+    val Mall = line("M5.5 8.5h13l-1.2 12h-10.6z", "M9 8.5V7a3 3 0 0 1 6 0v1.5")
+
     /** Status (More's row): a pentagon, one side per attribute. */
     val Status = line("M12 3.5l8.1 5.9-3.1 9.6H7l-3.1-9.6z", "M12 8.5v4l3.4 2.4", "M12 12.5l-3.4 2.4")
 

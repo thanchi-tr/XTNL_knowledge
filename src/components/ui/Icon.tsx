@@ -18,7 +18,7 @@ import { cx } from "./cx";
 export type IconName =
   | "today" | "study" | "train" | "plus" | "bell" | "moon" | "chev" | "back" | "x" | "inbox" | "check" | "clock"
   | "undo" | "gear" | "lock" | "replay" | "sheet" | "grid" | "star" | "chart" | "search" | "library" | "tree"
-  | "flag" | "sword" | "share" | "dot3" | "flame";
+  | "flag" | "sword" | "share" | "dot3" | "flame" | "bag";
 
 export type TrackSigil = "body" | "duty" | "craft" | "care" | "know";
 export type HeldKind = "freeze" | "rest" | "sick" | "away";
@@ -52,6 +52,7 @@ const SPRITE = `<defs>
 <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V3.5M8 7.5l4-4 4 4M5 12v7.5h14V12"/></symbol>
 <symbol id="i-dot3" viewBox="0 0 24 24"><path d="M6 12h.01M12 12h.01M18 12h.01" stroke-width="3"/></symbol>
 <symbol id="i-flame" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M12.2 2.5c.6 3-1 4.8-2.6 6.6C8 10.9 6.5 12.6 6.5 15.4a5.5 5.5 0 0 0 11 0c0-2.1-.9-3.7-1.9-5-.3 1.3-1 2.3-2 2.8.6-3.6-.2-7.9-1.4-10.7z"/></symbol>
+<symbol id="i-bag" viewBox="0 0 24 24"><path d="M5.5 8.5h13l-1.2 12h-10.6zM9 8.5V7a3 3 0 0 1 6 0v1.5"/></symbol>
 <symbol id="c-xp" viewBox="0 0 24 24"><path fill="currentColor" d="M12 1.8l2.3 7.9 7.9 2.3-7.9 2.3L12 22.2l-2.3-7.9L1.8 12l7.9-2.3z"/></symbol>
 <symbol id="c-pts" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l8.5 10L12 22 3.5 12zm0 4.6L7.4 12 12 17.4 16.6 12z"/><path fill="currentColor" d="M12 9.2l2.4 2.8-2.4 2.8-2.4-2.8z"/></symbol>
 <symbol id="c-mp" viewBox="0 0 24 24"><path fill="currentColor" d="M12 1.8l8.8 5.1v10.2L12 22.2l-8.8-5.1V6.9zm0 4.3L6.9 9v6l5.1 2.9 5.1-2.9V9z"/></symbol>

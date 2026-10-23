@@ -13,8 +13,13 @@ the main one:
   frozen or final, the 85% target, and "Decaying this week" with its first
   three lines), the Quest card (the main quest, its milestone, this week's
   sprint and Today's three, read only: a row whose task is open ticks it, and
-  Start and plan edits stay on the web), and the work items that are due, with
-  call and text buttons.
+  Start and plan edits stay on the web), the wallet chip (once the server's
+  credits are switched on: "120 cr · +40 today", the server's own figures, set
+  from each tick's answer and never added up here; a tick that finishes one of
+  Today's three says "· +10 cr", unless another tick was out at the same time,
+  when neither line claims the shared change and the chip reads `/check` again;
+  no chip while they are off), and the work items that are due, with call and
+  text buttons.
 - **Log**: a quick line (Task · Weigh-in · Idea) with a live reading of the
   line, and the full **New idea** form in all seven formats.
 - **Review**: a session runner for every card type, with feedback after each
@@ -30,12 +35,21 @@ level and no XP, then the Skills: named practices by hours, each its tier
 linked on the web, paying nothing; one column on the front display, two panes
 on the main one; read only, also at `xtnl://app/status`). A tick on Check that
 feeds a skill says so in its line ("· Reading ≈ 99.9 h", or "· Reading reached
-Tier 2"). Then Settings and
+Tier 2"). Then the **Mall** (the web's You › Mall: the rewards you list, each with
+its price in credits and its hint, "≈ 2 good days" or "calibrating", by
+category, under the credits once they count; it opens empty, with no starter
+rewards, and #play, rest days and sleep are never priced, in the server's own
+words; an Add form lists a reward, and editing and archiving stay on the web;
+Buy, then Confirm, buys one for exactly its price, never more than the balance,
+with a burn on the wallet's figure and its haptics; the purchases follow, each
+undoable for 10 minutes; a balance below zero after an undone quest shows as
+"−10 cr · earn it back" and buys nothing; one column on the front display, two
+panes on the main one, also at `xtnl://app/mall`). Then Settings and
 **Open full app**, which is the web app in a
 WebView, for everything else.
 
 The app talks to the server's mobile API, `<server>/api/mobile/v1` (see
-`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.5 (versionCode 13), so
+`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.5 (versionCode 17), so
 it installs over the v1 WebView shell in place.
 
 ## Build
@@ -93,6 +107,17 @@ is set in `gradle.properties` and is `https://xtnl-knowledge-xpis.vercel.app`.
   with no level), the demo's Vitality meter moving with the gym tick, each
   attribute's avatar targets (and a track's kept apart before life counts),
   and Back from More › Attributes;
+- the Mall's words (the rewards in the server's category order, the Add
+  form's live hint by the server's own rule, a price of whole credits from 1
+  to 100,000, the form's checks before it sends), the demo's Mall opening
+  empty and refusing a price of 0, a rest day, #play and a title already
+  listed in the server's words, a clientId listed once, and Back from More ›
+  Mall; and buying (P19): Buy only while credits count, Confirm naming the
+  price, the server's refusals in its words, the demo burning exactly the
+  price and never more than the balance, a cooldown held, a clientId bought
+  once, an undo inside its ten minutes only, once, a lost purchase's clientId
+  kept only until a read lists that purchase (a new Buy is then a new one),
+  and an undone purchase's price struck through, never shown as "+";
 - the shapes of the API's responses.
 
 The screen renders are a separate step, because they are slow. This command
@@ -222,7 +247,9 @@ Go to **More › Settings › Data › Demo data**, or tap **Try demo data** on 
 - **Offline**: the last `/check` is cached and shown with "Offline · updated
   10:42".
   - A write that fails shows the server's error line with **Retry**. A retry
-    sends the same clientId, so the server records the action only once.
+    sends the same clientId, so the server records the action only once. A
+    purchase whose reply was lost keeps its clientId only until a read of the
+    Mall lists it; after that a new Buy is a new purchase.
   - What you typed is never cleared on a failure.
 - **Motion**: Settings › Motion offers **Full**, **Calm** or **Still**.
   - Full: each deed stamps (a 56 ms up-stroke, a few frames of hold, a spring

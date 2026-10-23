@@ -11,16 +11,21 @@ import android.graphics.Canvas
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ApplicationProvider
 import com.xtnl.app.XtnlApp
+import com.xtnl.app.core.MallLine
 import com.xtnl.app.core.StatusLine
 import com.xtnl.app.data.MotionChoice
 import com.xtnl.app.ui.more.WebHolder
@@ -95,6 +100,14 @@ class ScreensTest {
     /** P1: More › Status on the main display sideways. */
     @Test @Config(qualifiers = "w932dp-h704dp-420dpi")
     fun statusSideways() = status("sideways")
+
+    /** P18: More › Mall on the front display's one column (the wallet, the rewards, the Add form, the note). */
+    @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
+    fun mallFront() = mall("front")
+
+    /** P18: More › Mall in the main display's two panes (the wallet and the rewards; the Add form and the note). */
+    @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
+    fun mallMain() = mall("main")
 
     /** Half open and sideways: the hinge across the middle (1848 px tall window, hinge at 924 px). */
     @Test @Config(qualifiers = "w932dp-h704dp-420dpi")
@@ -377,6 +390,96 @@ class ScreensTest {
         rule.onAllNodes(hasText("Open full app")).onFirst().assertExists()
         rule.onAllNodes(hasText(StatusLine.TITLE)).onFirst().assertExists()
         snap("$name-more")
+    }
+
+    /**
+     * More › Mall (P18) with demo data, opened by its deep link: empty at first (D30: no starter rewards), then two
+     * rewards listed through the form (a semantics action each, wherever the field sits), then a refusal in the server's
+     * words. One PNG empty, one with the rewards in view, one with the refusal. P19: then Film night bought (Buy, then
+     * Confirm · 60 cr), the purchase listed with its Undo, and one PNG of it.
+     */
+    private fun mall(name: String) {
+        val graph = ApplicationProvider.getApplicationContext<XtnlApp>().graph
+        graph.settings.setDemo(true)
+        graph.settings.setMotion(MotionChoice.STILL)
+        val links = MutableStateFlow<Uri?>(Uri.parse("xtnl://app/mall"))
+        rule.runOnUiThread { rule.activity.actionBar?.hide() }
+        rule.setContent {
+            AppRoot(graph, MutableStateFlow(WindowFacts()), links, { links.value = null }, WebHolder(), {})
+        }
+        settle()
+        rule.onAllNodes(hasText(MallLine.TITLE)).onFirst().assertExists()
+        rule.onAllNodes(hasText(MallLine.EMPTY)).onFirst().assertExists()
+        snap("$name-mall-empty")
+        fun list(title: String, price: String, note: String = "", category: String? = null) {
+            val fields = rule.onAllNodes(hasSetTextAction())
+            fields[0].performTextReplacement(title)
+            category?.let { rule.onAllNodes(hasText(it)).onFirst().performSemanticsAction(SemanticsActions.OnClick) }
+            fields[1].performTextReplacement(price)
+            if (note.isNotEmpty()) fields[2].performTextReplacement(note)
+            settle(400)
+            rule.onAllNodes(hasText(MallLine.ADD_BUTTON)).onFirst().performSemanticsAction(SemanticsActions.OnClick)
+            settle()
+        }
+        list("Takeaway night", "120", "From the Thai place")
+        list("Film night", "60", category = "Screen time")
+        rule.onAllNodes(hasText("Film night listed at 60 cr.")).onFirst().assertExists()
+        val first = hasText("Takeaway night")
+        val lists = rule.onAllNodes(hasScrollAction())
+        for (i in 0 until lists.fetchSemanticsNodes().size) {
+            if (runCatching { scrolling { lists[i].performScrollToNode(first) } }.isSuccess) break
+        }
+        rule.mainClock.autoAdvance = true
+        settle()
+        rule.onAllNodes(hasText("≈ 3 good days", substring = true)).onFirst().assertExists()
+        snap("$name-mall-listed")
+        // A rest day stays free: the server's refusal, in its own words, under the form.
+        list("Rest day", "50")
+        rule.onAllNodes(hasText("Sleep, naps and rest days stay free: the Mall never prices them.")).onFirst().assertExists()
+        val refusal = hasText("Sleep, naps and rest days stay free", substring = true)
+        for (i in 0 until lists.fetchSemanticsNodes().size) {
+            if (runCatching { scrolling { lists[i].performScrollToNode(refusal) } }.isSuccess) break
+        }
+        rule.mainClock.autoAdvance = true
+        settle()
+        snap("$name-mall-refused")
+        // P19: Buy, then Confirm, on Film night (185 cr covers its 60); the purchase lands with its Undo.
+        val buy = hasContentDescription("Buy Film night for 60 cr")
+        for (i in 0 until lists.fetchSemanticsNodes().size) {
+            if (runCatching { scrolling { lists[i].performScrollToNode(buy) } }.isSuccess) break
+        }
+        rule.onAllNodes(buy).onFirst().performSemanticsAction(SemanticsActions.OnClick)
+        settle(400)
+        rule.onAllNodes(hasContentDescription("Confirm · 60 cr: buy Film night")).onFirst().performSemanticsAction(SemanticsActions.OnClick)
+        settle()
+        // The wallet's line (the lazy list composes only what is in view, so scroll to each before asserting it).
+        fun scrollTo(m: SemanticsMatcher) {
+            for (i in 0 until lists.fetchSemanticsNodes().size) {
+                if (runCatching { scrolling { lists[i].performScrollToNode(m) } }.isSuccess) break
+            }
+        }
+        val boughtLine = hasText("Film night bought for 60 cr · 125 cr left.")
+        scrollTo(boughtLine)
+        rule.onAllNodes(boughtLine).onFirst().assertExists()
+        val undo = hasContentDescription("Undo the purchase of Film night")
+        scrollTo(undo)
+        rule.onAllNodes(undo).onFirst().assertExists()
+        // The whole Purchases card in view (on the main display it heads the second pane).
+        // ("Purchases" alone is also a category chip in the Add form: the card's own aside is unique.)
+        scrollTo(hasText("undo within 10 min"))
+        rule.mainClock.autoAdvance = true
+        settle()
+        snap("$name-mall-bought")
+        // The review of 2026-10-24: undone, the purchase's price is struck through and read as undone, never "+60 cr".
+        rule.onAllNodes(undo).onFirst().performSemanticsAction(SemanticsActions.OnClick)
+        settle()
+        val undone = hasContentDescription("Film night. 60 cr, undone.", substring = true)
+        scrollTo(undone)
+        rule.onAllNodes(undone).onFirst().assertExists()
+        rule.onAllNodes(hasText("+60 cr")).assertCountEquals(0)
+        scrollTo(hasText("undo within 10 min"))
+        settle()
+        snap("$name-mall-undone")
     }
 
     private fun walk(name: String, hinge: Hinge? = null, reviewToo: Boolean = true) {

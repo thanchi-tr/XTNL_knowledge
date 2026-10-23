@@ -108,6 +108,9 @@
 .mo-qacts { grid-column: 2; display: flex; gap: 8px; flex-wrap: wrap; }
 .mo-qacts:empty { display: none; }
 .mo-qfoot { margin: 12px 0 4px; }
+/* A quest's credits price tag (blueprint P16): drawn only once credits count; a record of the price, never a button. */
+.mo-cr { align-self: flex-start; margin-top: 2px; font: 600 12px/1 var(--font-mono); font-variant-numeric: tabular-nums; padding: 3px 7px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--ink-1); white-space: nowrap; }
+.mo-cr[data-done] { border-color: var(--kept); color: var(--ink-0); }
 
 /* ── The chest sheet ──────────────────────────────────────────────────── */
 .mo-chestsheet { display: flex; flex-direction: column; gap: 16px; }

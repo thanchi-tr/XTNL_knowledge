@@ -125,6 +125,8 @@ import com.xtnl.app.ui.motion.rememberBump
 import com.xtnl.app.ui.review.ReviewScreen
 import com.xtnl.app.ui.review.ReviewSpots
 import com.xtnl.app.ui.review.ReviewViewModel
+import com.xtnl.app.ui.mall.MallScreen
+import com.xtnl.app.ui.mall.MallViewModel
 import com.xtnl.app.ui.status.StatusScreen
 import com.xtnl.app.ui.status.StatusViewModel
 import com.xtnl.app.ui.theme.X
@@ -383,11 +385,14 @@ private fun Destinations(
                 "more:WEB" -> FullAppScreen(webHolder, prefs.server, nav.webPath, onClose = { nav.more = MoreRoute.ROOT }, onSettings = { nav.more = MoreRoute.SETTINGS })
                 // Blueprint P1: the five attributes; its view model is made on the first visit, then kept with the activity.
                 "more:STATUS" -> StatusScreen(viewModel { StatusViewModel(graph) }, onBack = { nav.more = MoreRoute.ROOT })
+                // Blueprint P18: the Mall's catalog; its view model is made on the first visit, then kept with the activity.
+                "more:MALL" -> MallScreen(viewModel { MallViewModel(graph) }, onBack = { nav.more = MoreRoute.ROOT })
                 else -> MoreScreen(
                     graph,
                     onSettings = { nav.more = MoreRoute.SETTINGS },
                     onFullApp = { nav.webPath = "/"; nav.more = MoreRoute.WEB },
                     onStatus = { nav.more = MoreRoute.STATUS },
+                    onMall = { nav.more = MoreRoute.MALL },
                 )
             }
         }

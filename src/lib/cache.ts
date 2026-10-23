@@ -19,6 +19,14 @@
  * TTL as a backstop, so a write path someone forgets to tag self-corrects
  * within seconds rather than persisting until restart.
  *
+ * **A load in flight across a write.** `invalidate()` also bumps each of its
+ * tags' generation. A load that began before the bump (so it may have read
+ * the rows from before the write) is neither stored when it resolves nor
+ * handed to a caller who arrives after the write: that caller starts a load
+ * of its own. Without it, a read racing a write could be cached for the
+ * whole TTL with the write missing (the credits wallet read after a tick,
+ * say, joining a load that left before the tick committed).
+ *
  * **Scope.** Per-process and in-memory: this is a single-tenant personal
  * instance (see `user.ts`), so there is no cross-user leakage to reason
  * about, and keys are still user-scoped for forward compatibility. On a
@@ -76,9 +84,25 @@ interface Entry {
   tags: CacheTag[];
 }
 
+/** A load in flight, and the generation of its tags when it began. */
+interface Flight {
+  promise: Promise<unknown>;
+  generation: string;
+}
+
 const store = new Map<string, Entry>();
 /** In-flight loads, so a burst of concurrent misses does one query, not N. */
-const inflight = new Map<string, Promise<unknown>>();
+const inflight = new Map<string, Flight>();
+/** Each tag's generation: invalidate() bumps it. `everything` is invalidateAll()'s, which every key depends on. */
+const generations = new Map<CacheTag, number>();
+let everything = 0;
+
+/** The generation a load over `tags` begins at: it changes whenever any of them (or everything) is invalidated. */
+function generationOf(tags: readonly CacheTag[]): string {
+  let g = String(everything);
+  for (const t of tags) g += `:${generations.get(t) ?? 0}`;
+  return g;
+}
 
 let hits = 0;
 let misses = 0;
@@ -102,32 +126,37 @@ export async function cached<T>(
     return hit.value as T;
   }
 
+  // Join a load only if it began after the last write to these tags: one from before it may miss that write.
+  const generation = generationOf(tags);
   const pending = inflight.get(key);
-  if (pending) return pending as Promise<T>;
+  if (pending && pending.generation === generation) return pending.promise as Promise<T>;
 
   misses += 1;
-  const promise = loader()
+  const promise: Promise<T> = loader()
     .then((value) => {
-      store.set(key, { value, expiresAt: Date.now() + ttlMs, tags });
+      // Stored only when no write to its tags landed while it ran (else the next caller loads again).
+      if (generationOf(tags) === generation) store.set(key, { value, expiresAt: Date.now() + ttlMs, tags });
       return value;
     })
     .finally(() => {
-      inflight.delete(key);
+      if (inflight.get(key)?.promise === promise) inflight.delete(key);
     });
 
-  inflight.set(key, promise);
+  inflight.set(key, { promise, generation });
   return promise;
 }
 
-/** Drops every entry carrying any of these tags. Safe to over-call. */
+/** Drops every entry carrying any of these tags, and retires the loads in flight over them. Safe to over-call. */
 export function invalidate(...tags: CacheTag[]): void {
   if (tags.length === 0) return;
+  for (const t of new Set(tags)) generations.set(t, (generations.get(t) ?? 0) + 1);
   for (const [key, entry] of store) {
     if (entry.tags.some((t) => tags.includes(t))) store.delete(key);
   }
 }
 
 export function invalidateAll(): void {
+  everything += 1;
   store.clear();
 }
 

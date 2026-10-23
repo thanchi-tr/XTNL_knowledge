@@ -25,6 +25,7 @@ import { MainQuestCard } from "@/components/today/MainQuestCard";
 import { mainQuestCardOf } from "@/components/today/main-quest-card";
 import { isBoardId, workBoardHref } from "@/lib/work-boards";
 import { loadMomentum, settleMomentum } from "@/lib/momentum-server";
+import { creditTagsOn } from "@/lib/credits";
 
 // The board turns on the clock (a 04:00 day edge, a ten-minute undo window)
 // and on every tick — never statically cache it.
@@ -143,6 +144,9 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   const questWeek = await loadMainQuestWeek(userId, now, questCard, quests?.view ?? null).catch(() => null);
   const mainQuest = mainQuestOf(questCard, questWeek, day);
   const mainQuestView = questCard ? mainQuestCardOf(mainQuest, questWeek?.rows ?? null) : null;
+  // Credits (blueprint P16): the Quest sheet's price tags, from the model in force today (no read). Null while
+  // CREDITS_LAUNCH_DAY is not in force, so the card is exactly as before.
+  const credits = creditTagsOn(day);
 
   return (
     <>
@@ -159,6 +163,7 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
         namedTitles={Object.keys(namedTitles).length > 0 ? { names: namedTitles, mark: <NamedMark /> } : null}
         momentum={momentum?.live ? momentum : null}
         momentumSettled={settled.wrote}
+        credits={credits}
       />
     </>
   );

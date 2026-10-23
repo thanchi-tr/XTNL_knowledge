@@ -10,6 +10,9 @@
  *                     through the current title band.
  *   <DividendLine/>   the capital dividend as a line item, with Claim
  *                     (no loudest-panel treatment until it has a real sink).
+ *                     Shown only while the dividend runs: once credits
+ *                     count it is retired (blueprint P17, D28) and
+ *                     LegacyCapital.tsx shows the kept balance instead.
  */
 import { useEffect, useRef, useState, useTransition } from "react";
 import { claimCapital } from "@/app/actions/capital";

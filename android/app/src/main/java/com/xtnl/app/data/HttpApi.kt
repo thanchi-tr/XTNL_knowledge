@@ -209,4 +209,28 @@ class HttpApi(
     override suspend fun quests() = call("/quests", null, QuestsData.serializer())
 
     override suspend fun status() = call("/status", null, StatusPanel.serializer())
+
+    override suspend fun mall() = call("/mall", null, MallData.serializer())
+
+    override suspend fun addReward(title: String, category: String, price: Int, note: String?, cooldownDays: Int?, clientId: String) =
+        call("/mall/rewards", buildJsonObject {
+            put("title", title)
+            put("category", category)
+            put("price", price)
+            if (note != null) put("note", note)
+            if (cooldownDays != null) put("cooldownDays", cooldownDays)
+            put("clientId", clientId)
+        }, AddRewardResult.serializer())
+
+    override suspend fun buyReward(rewardId: String, clientId: String) =
+        call("/mall/buy", buildJsonObject {
+            put("rewardId", rewardId)
+            put("clientId", clientId)
+        }, BuyResult.serializer())
+
+    override suspend fun undoBuy(purchaseId: String, clientId: String) =
+        call("/mall/undo", buildJsonObject {
+            put("purchaseId", purchaseId)
+            put("clientId", clientId)
+        }, UndoBuyResult.serializer())
 }

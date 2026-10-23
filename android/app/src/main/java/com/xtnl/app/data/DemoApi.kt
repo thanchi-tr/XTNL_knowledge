@@ -3,8 +3,10 @@ package com.xtnl.app.data
 import com.xtnl.app.core.IdeaFormat
 import com.xtnl.app.core.LogPreview
 import com.xtnl.app.core.LogSection
+import com.xtnl.app.core.MallLine
 import com.xtnl.app.core.ReviewSession
 import com.xtnl.app.core.TimeLabels
+import com.xtnl.app.core.WalletLine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -74,6 +76,32 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
     private val reviewTarget = 20
     /** P5: the skills' tier Seals already played (once ever a tier, as the server keys them 'competency:<id>:t<n>'). */
     private val skillSeals = mutableSetOf<String>()
+    /** P16: the credits earned on the days before today (the demo's wallet, as a server with credits switched on sends it). */
+    private val creditsBefore = 185
+
+    /** Today's three done (as quests() lists them): the review quest, the gym and the dentist; the minimum is not done. */
+    private fun threeDone(): List<Boolean> {
+        val done = { id: String -> tasks.firstOrNull { it.item.templateId == id }?.item?.status == "DONE" }
+        return listOf(reviewDone >= 12, done("t-gym"), done("t-dentist"))
+    }
+
+    /**
+     * P16: the wallet as the server derives it: the days before, and today's 10 for each of Today's three done (an undo
+     * takes it back). The 3-of-3 bonus comes with the chest, which only the web opens, so the demo never adds it. P19:
+     * less what the Mall's purchases spent, plus what their undos gave back (earned − bought + refunded, as the server).
+     */
+    private fun wallet(): Wallet {
+        val today = 10 * threeDone().count { it }
+        val spent = purchases.filter { !it.refunded }.sumOf { it.price }
+        return Wallet(creditsBefore + today - spent, today)
+    }
+
+    /**
+     * A write's credits, as the server sends them: the wallet after it (balance and today), and what was earned across it
+     * (earned after less earned before; the days before are fixed here, so it is today's change, and a purchase never
+     * counts in it).
+     */
+    private fun creditsSince(before: Wallet): CreditsChange = wallet().let { CreditsChange(it.today - before.today, it.balance, it.today) }
 
     private class DemoCard(val card: ReviewCard, val expected: String, val explanation: String?, val accept: (JsonElement) -> Boolean)
 
@@ -241,6 +269,8 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                     // As a server with the audit switched on sends it (the reminder never arms from demo data).
                     auditOn = true,
                     week = week(now, daily),
+                    // As a server with credits switched on sends it (P16): the demo's wallet chip.
+                    credits = wallet(),
                     work = work.filter { !it.done }.map { it.item },
                     level = level,
                     streak = streak,
@@ -271,10 +301,12 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                 SprintRow("PRACTICE", "Read 20 pages · 3 sessions × 25 min", if (kept("t-read")) "2 of 3 sessions" else "1 of 3 sessions", 3, if (kept("t-read")) 2.0 else 1.0, "session", false, "t-read"),
             ).sortedWith(compareBy({ it.done }, { order[it.kind] ?: 9 }))
             val sunday = day.dayOfWeek == DayOfWeek.SUNDAY
+            // Done as the server's questDone reads it (P16's wallet counts the same three): the minimum version is not done.
+            val (plan, gym, dentist) = threeDone()
             val three = listOf(
-                ThreeQuest("PLAN", "Review 12 cards", reviewDone >= 12),
-                ThreeQuest("BODY", "Gym legs", kept("t-gym"), "t-gym"),
-                ThreeQuest("TASK", "Call the dentist", kept("t-dentist"), "t-dentist"),
+                ThreeQuest("PLAN", "Review 12 cards", plan),
+                ThreeQuest("BODY", "Gym legs", gym, "t-gym"),
+                ThreeQuest("TASK", "Call the dentist", dentist, "t-dentist"),
             )
             Outcome.Ok(
                 QuestsData(
@@ -424,6 +456,153 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
         )
     }
 
+    // ── The Mall (blueprint P18; D30) ──────────────────────────────────────────
+
+    /** The rewards listed in the demo: none to start (D30: no starter rewards), so its Mall opens empty, as a new one does. */
+    private val rewards = mutableListOf<MallReward>()
+    /** P19: the demo's purchases, oldest first: each its reward, price as bought, instant and whether it was undone. */
+    private class DemoPurchase(val id: String, val rewardId: String, val title: String, val price: Int, val at: Instant, var refunded: Boolean = false)
+    private val purchases = mutableListOf<DemoPurchase>()
+
+    /** A reward's Buy state as the server's planBuy decides it: below zero, a cooldown, too few credits; else it can. */
+    private fun buyState(r: MallReward, now: Instant): MallBuyState {
+        val balance = wallet().balance
+        val today = TimeLabels.lifeDay(now)
+        return when {
+            balance < 0 -> MallBuyState(false, MallLine.negativeLine(balance))
+            cooldownNext(r, today) != null -> MallBuyState(false, MallLine.cooldownRefusal(r.cooldownDays ?: 1, cooldownNext(r, today)!!))
+            r.price > balance -> MallBuyState(false, MallLine.shortLine(r.title, r.price, balance))
+            else -> MallBuyState(true, null)
+        }
+    }
+
+    /** The day a reward's cooldown lets it be bought again, while still ahead (an undone purchase does not count). */
+    private fun cooldownNext(r: MallReward, today: java.time.LocalDate): java.time.LocalDate? {
+        val days = r.cooldownDays ?: return null
+        val last = purchases.filter { it.rewardId == r.id && !it.refunded }.maxOfOrNull { TimeLabels.lifeDay(it.at) } ?: return null
+        val next = last.plusDays(days.toLong())
+        return if (today.isBefore(next)) next else null
+    }
+
+    /** A purchase as GET /mall lists it, at [now]: its undo window while it lasts. */
+    private fun purchaseOf(p: DemoPurchase, now: Instant): MallPurchase {
+        val until = p.at.plusSeconds(MallLine.UNDO_MINUTES * 60L)
+        return MallPurchase(
+            id = p.id, rewardId = p.rewardId, title = p.title, price = p.price, priceLine = "${WalletLine.figure(p.price)} ${WalletLine.UNIT}",
+            day = TimeLabels.lifeDay(p.at).toString(), occurredAt = p.at.toString(), at = TimeLabels.clock(p.at, h24 = true), refunded = p.refunded,
+            undoUntil = if (!p.refunded && !now.isAfter(until)) until.toString() else null,
+            line = MallLine.boughtWhen(TimeLabels.lifeDay(p.at), p.at, p.price, p.refunded),
+        )
+    }
+    /** The demo's good day, as the server reads one from a wallet that has counted for weeks (the demo plays that server). */
+    private val demoGoodDay = MallGoodDay(credits = 40, days = 28, earningDays = 21)
+
+    /** You › Mall as the server sends it: the demo's wallet over the rewards listed so far, by category. */
+    override suspend fun mall(): Outcome<MallData> {
+        pause(220)
+        return lock.withLock {
+            val now = clock()
+            val w = wallet()
+            val order = MALL_CATEGORIES.map { it.key }
+            Outcome.Ok(
+                MallData(
+                    now = now.toString(), day = TimeLabels.lifeDay(now).toString(),
+                    credits = w, creditsLine = WalletLine.today(w),
+                    goodDay = demoGoodDay, hintLine = "A good day is 40 cr: the middle of the 21 days that earned credits in the last 28.",
+                    categories = MALL_CATEGORIES,
+                    // A stable sort: each category keeps the order its rewards were listed in. P19: each with its Buy state.
+                    rewards = rewards.sortedBy { order.indexOf(it.category) }.map { it.copy(buy = buyState(it, now)) },
+                    purchases = purchases.asReversed().take(20).map { purchaseOf(it, now) },
+                    limits = MallLimits(), notes = MALL_NOTES, writesOn = true, ready = true,
+                ),
+            )
+        }
+    }
+
+    /** The Add sheet's save, with the server's checks and its own words (a mistyped field is bad; a rule's refusal a conflict). */
+    override suspend fun addReward(title: String, category: String, price: Int, note: String?, cooldownDays: Int?, clientId: String): Outcome<AddRewardResult> {
+        pause(260)
+        val body = buildJsonObject {
+            put("title", title); put("category", category); put("price", price)
+            if (note != null) put("note", note)
+            if (cooldownDays != null) put("cooldownDays", cooldownDays)
+        }
+        return lock.withLock {
+            once<AddRewardResult>(clientId, body) {
+                val t = title.replace(Regex("\\s+"), " ").trim()
+                val l = MallLimits()
+                val conflict = { line: String -> Outcome.Err(line, code = "conflict", status = 409) }
+                when {
+                    t.isEmpty() -> bad("title is missing.")
+                    title.length > l.titleMax -> bad("title is too long (at most ${l.titleMax} characters).")
+                    MALL_CATEGORIES.none { it.key == category } -> bad("category must be one of ${MALL_CATEGORIES.joinToString(", ") { it.key }}.")
+                    note != null && note.length > l.noteMax -> bad("note must be text of at most ${l.noteMax} characters.")
+                    rewards.size >= l.rewardsMax -> conflict("${l.rewardsMax} rewards is the most: archive one first.")
+                    PLAY_TAG.containsMatchIn(t) -> conflict(FREE_PLAY_LINE)
+                    REST_WORDS.containsMatchIn(t) -> conflict(FREE_REST_LINE)
+                    rewards.any { it.title.equals(t, ignoreCase = true) } -> conflict("You already list “$t”.")
+                    price !in l.priceMin..l.priceMax -> conflict(PRICE_RANGE_LINE)
+                    cooldownDays != null && cooldownDays !in l.cooldownMin..l.cooldownMax -> conflict(COOLDOWN_RANGE_LINE)
+                    else -> {
+                        val r = MallReward(
+                            id = "rw-" + UUID.randomUUID().toString().take(8), title = t, category = category,
+                            categoryLabel = MALL_CATEGORIES.first { it.key == category }.label,
+                            price = price, priceLine = "${WalletLine.figure(price)} ${WalletLine.UNIT}", hint = MallLine.hintFor(price, demoGoodDay),
+                            note = note?.replace(Regex("\\s+"), " ")?.trim()?.ifEmpty { null }, cooldownDays = cooldownDays,
+                            cooldownLine = cooldownDays?.let { if (it == 1) "at most once a day" else "at most once every $it days" },
+                        )
+                        rewards += r
+                        Outcome.Ok(AddRewardResult(r.id, r))
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Buy's Confirm (P19), with the server's rules and words: a reward gone is gone; below zero, a cooldown or too few
+     * credits is a conflict; else the price is burnt exactly and the purchase plays its Seal. The same clientId answers
+     * once (a resend never buys twice).
+     */
+    override suspend fun buyReward(rewardId: String, clientId: String): Outcome<BuyResult> {
+        pause(260)
+        val body = buildJsonObject { put("rewardId", rewardId) }
+        return lock.withLock {
+            once<BuyResult>(clientId, body) {
+                val now = clock()
+                val r = rewards.firstOrNull { it.id == rewardId } ?: return@once Outcome.Err(MallLine.REWARD_GONE, code = "gone", status = 404)
+                val state = buyState(r, now)
+                if (!state.can) return@once Outcome.Err(state.why ?: MallLine.REWARD_GONE, code = "conflict", status = 409)
+                val p = DemoPurchase("p-" + UUID.randomUUID().toString().take(8), r.id, r.title, r.price, now)
+                purchases += p
+                val balance = wallet().balance
+                Outcome.Ok(
+                    BuyResult(
+                        purchase = purchaseOf(p, now), credits = CreditsChange(-p.price, balance), duplicate = false,
+                        line = MallLine.boughtLine(r.title, r.price, balance),
+                        celebrations = listOf(buildJsonObject { put("tier", 2); put("kind", "mall-buy"); put("title", "${r.title} bought") }),
+                    ),
+                )
+            }
+        }
+    }
+
+    /** A purchase's Undo (P19): inside its ten minutes, once; past them a conflict in the server's words. */
+    override suspend fun undoBuy(purchaseId: String, clientId: String): Outcome<UndoBuyResult> {
+        pause(220)
+        val body = buildJsonObject { put("purchaseId", purchaseId) }
+        return lock.withLock {
+            once<UndoBuyResult>(clientId, body) {
+                val now = clock()
+                val p = purchases.firstOrNull { it.id == purchaseId } ?: return@once Outcome.Err(MallLine.PURCHASE_GONE, code = "gone", status = 404)
+                if (p.refunded) return@once Outcome.Ok(UndoBuyResult(p.id, CreditsChange(0, wallet().balance), duplicate = true, line = "${p.title} was already undone."))
+                if (now.isAfter(p.at.plusSeconds(MallLine.UNDO_MINUTES * 60L))) return@once Outcome.Err(MallLine.UNDO_TOO_LATE, code = "conflict", status = 409)
+                p.refunded = true
+                Outcome.Ok(UndoBuyResult(p.id, CreditsChange(p.price, wallet().balance), duplicate = false, line = MallLine.undoneLine(p.title, p.price)))
+            }
+        }
+    }
+
     override suspend fun completeTask(templateId: String, mvv: Boolean, clientId: String): Outcome<CompleteResult> {
         pause()
         val body = buildJsonObject { put("templateId", templateId); put("mvv", mvv) }
@@ -433,7 +612,8 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                 if (i < 0) return@once Outcome.Err("That task is no longer on today's board.", code = "gone", status = 404)
                 val t = tasks[i]
                 if (t.item.locked) return@once Outcome.Err("A study task completes itself from today's reviews.", code = "conflict", status = 409)
-                if (t.item.kept) return@once Outcome.Ok(CompleteResult(t.instanceId ?: "i-x", 0.0, "Already recorded. Nothing is paid twice.", board().allDone))
+                if (t.item.kept) return@once Outcome.Ok(CompleteResult(t.instanceId ?: "i-x", 0.0, "Already recorded. Nothing is paid twice.", board().allDone, credits = creditsSince(wallet())))
+                val walletBefore = wallet()
                 val xp = round((t.item.xpHint ?: 2.0) * (if (mvv) 0.5 else 1.0) * 10) / 10
                 val instance = "i-" + UUID.randomUUID().toString().take(8)
                 tasks[i] = t.copy(item = t.item.copy(status = if (mvv) "DONE_MVV" else "DONE", xpHint = xp), instanceId = instance)
@@ -454,6 +634,7 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                         ),
                         level = level,
                         competency = skill?.first,
+                        credits = creditsSince(walletBefore),
                     )
                 )
             }
@@ -509,6 +690,7 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
         return lock.withLock {
             once(clientId, body) {
                 val c = cards.firstOrNull { it.card.ideaId == ideaId } ?: return@once Outcome.Err("That card is gone.", code = "gone", status = 404)
+                val walletBefore = wallet()
                 val correct = runCatching { c.accept(answer) }.getOrDefault(false)
                 // The web runner's rule: a miss comes back while this card's misses this session are at most 3.
                 val retry = !correct && sessionMisses + 1 <= ReviewSession.MAX_RETURNS
@@ -544,6 +726,7 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                         quest = Quest(reviewDone, reviewTarget),
                         streakSecured = secured,
                         celebrations = if (reviewDone == reviewTarget) listOf(buildJsonObject { put("tier", 1); put("kind", "quest"); put("title", "Review quest done") }) else emptyList(),
+                        credits = creditsSince(walletBefore),
                     )
                 )
             }
@@ -557,6 +740,7 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
         val body = buildJsonObject { put("text", text); put("section", section) }
         return lock.withLock {
             once(clientId, body) {
+                val walletBefore = wallet()
                 val sec = LogSection.of(section)
                 val reading = LogPreview.read(text, sec)
                 if (!reading.ok) return@once bad(
@@ -585,17 +769,17 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                             must && peak >= 4 -> " · $peak of $MUSTS_PER_DAY_MAX daily quests" + if (peak >= MUSTS_PER_DAY_MAX) ", the cap" else ""
                             else -> ""
                         }
-                        Outcome.Ok(LogResult("task", id, reading.title, "$head. ${reading.title} → Today · ≈ $xp$note", buildJsonObject { put("kind", "task"); put("id", undoId) }))
+                        Outcome.Ok(LogResult("task", id, reading.title, "$head. ${reading.title} → Today · ≈ $xp$note", buildJsonObject { put("kind", "task"); put("id", undoId) }, creditsSince(walletBefore)))
                     }
                     LogSection.WEIGHT -> {
                         logged[undoId] = ""
                         val w = reading.tokens.first().text
-                        Outcome.Ok(LogResult("weight", "weight:${TimeLabels.lifeDay(Instant.now())}", "Weigh-in", "Weight logged. $w → Body", buildJsonObject { put("kind", "weight"); put("id", undoId) }))
+                        Outcome.Ok(LogResult("weight", "weight:${TimeLabels.lifeDay(Instant.now())}", "Weigh-in", "Weight logged. $w → Body", buildJsonObject { put("kind", "weight"); put("id", undoId) }, creditsSince(walletBefore)))
                     }
                     LogSection.IDEA -> {
                         logged[undoId] = ""
                         val draft = "draft-" + UUID.randomUUID().toString().take(8)
-                        Outcome.Ok(LogResult("idea-draft", draft, reading.title, "Idea in Inbox", buildJsonObject { put("kind", "draft"); put("id", undoId) }))
+                        Outcome.Ok(LogResult("idea-draft", draft, reading.title, "Idea in Inbox", buildJsonObject { put("kind", "draft"); put("id", undoId) }, creditsSince(walletBefore)))
                     }
                 }
             }
@@ -691,6 +875,28 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
         const val WEEK_TARGET = 85
         /** This week's audit opens at this Sydney hour of its Sunday (week-audit AUDIT_OPENS_HOUR). */
         const val AUDIT_OPENS_HOUR = 18
+
+        /** The Mall's categories and notes, in the server's words (mall.ts MALL_CATEGORIES, MALL_CATEGORY_LABEL, the notes). */
+        val MALL_CATEGORIES = listOf(
+            MallCategory("TREAT", "Treats", "a takeaway, a dessert, a coffee out"),
+            MallCategory("SCREEN", "Screen time", "an episode, a film, a box set"),
+            MallCategory("OUTING", "Outings", "a night out, a gig, a show"),
+            MallCategory("PURCHASE", "Purchases", "gear, clothes, a gadget"),
+            MallCategory("OTHER", "Other", "anything else you'd like to earn"),
+        )
+        val MALL_NOTES = MallNotes(
+            honour = "The app can't block leisure, so the Mall is a commitment device: it runs on honour. You buy a reward before you take it, and the promise is yours to keep.",
+            free = "#play, rest days and sleep are never priced: what you do for its own sake, and your recovery, stay free.",
+            onlyYours = "Only the rewards you list are priced. The Mall starts empty: nothing is listed for you.",
+            buying = "A purchase is permission now: buy the reward, then take it. You can't spend more than you have, and a purchase can be undone for 10 minutes.",
+        )
+        /** The server's refusals (mall.ts): #play, sleep, naps and rest days stay free; the price's and the cooldown's range. */
+        const val FREE_PLAY_LINE = "#play stays free: the Mall never prices what you do for its own sake."
+        const val FREE_REST_LINE = "Sleep, naps and rest days stay free: the Mall never prices them."
+        const val PRICE_RANGE_LINE = "A price is a whole number of credits from 1 to 100,000."
+        const val COOLDOWN_RANGE_LINE = "A cooldown is a whole number of days from 1 to 365, or none."
+        val PLAY_TAG = Regex("(^|\\s)#play\\b", RegexOption.IGNORE_CASE)
+        val REST_WORDS = Regex("\\b(sleep|sleeps|sleeping|sleep-in|lie-in|lie in|nap|naps|napping|rest|rests|resting|rest day|rest days|day off|days off)\\b", RegexOption.IGNORE_CASE)
 
         fun strings(a: JsonElement): List<String> = (a as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull } ?: emptyList()
         fun formula(a: JsonElement): String = (a as? JsonPrimitive)?.contentOrNull.orEmpty().lowercase().replace(" ", "").replace("**", "^")

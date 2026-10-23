@@ -598,6 +598,17 @@ async function main() {
     }
   }
   check("distinct: no glyph copies a kit path (kit symbols are reused through <use>; flame.unlit allowlisted by spec)", kitPaths.size > 30 && dup.length === 0, dup.join("; "));
+  // Re-pinned for blueprint P18 (D30): the profile menu's Mall row draws the kit's new bag. Every icon the nav names (the
+  // sections and the profile rows) must be a kit symbol, so a row never draws an empty <use>; the bag is one of them.
+  const { SECTIONS, PROFILE } = await import("../src/components/shell/nav");
+  const symbolIds = new Set([...iconSrc.matchAll(/<symbol id="([\w-]+)"/g)].map((m) => m[1]));
+  const navIcons = [...SECTIONS.map((s) => s.icon), PROFILE.icon, ...PROFILE.subs.flatMap((s) => (s.icon ? [s.icon] : []))];
+  const missingIcons = navIcons.filter((n) => !symbolIds.has(`i-${n}`));
+  check(
+    "kit icons: every section's and profile row's icon is a symbol in the sprite (P18: Mall's i-bag among them, a path no glyph copies)",
+    missingIcons.length === 0 && symbolIds.has("i-bag") && PROFILE.subs.some((s) => s.href === "/you/mall" && s.icon === "bag"),
+    missingIcons.join(", ")
+  );
   const suggest = flatParts(glyphParts("pv.suggest", "idle"));
   check("distinct: pv.suggest is not c-xp and is not filled", suggest.every((p) => p.t === "p" && !p.fill && !p.fs && kitPaths.get(p.d) !== "c-xp"));
   const health = flatParts(glyphParts("safe.health", "idle")).map((p) => (p.t === "p" ? p.d : ""));
@@ -998,6 +1009,8 @@ async function main() {
     { motion: "trace", el: () => fake('<section><ul><li data-trace="self"><span class="rm-tm-rail"></span></li><li data-trace="rel"><span class="rm-tm-rail"></span></li><li data-trace="other"><span class="rm-tm-rail"></span></li></ul></section>').querySelector("section") },
     { motion: "layer-open", el: () => fake(`<li data-n="2">${glyphMarkup("layer.2", "idle")}<span data-lo="badge">b</span><span data-lo="word">after 1</span></li>`).querySelector("li"), opts: { text: "open" } },
     { motion: "estimate-swap", el: () => fake('<span class="rm-es"><span>4 layers</span></span>').querySelector("span") },
+    // The Mall (blueprint P19): a purchase burns the wallet's figure.
+    { motion: "burn", el: () => fake('<b class="ml-bal">1,120 cr</b>').querySelector("b") },
   ];
   check("motion: every named motion has a fixture here", GM.GLYPH_MOTIONS.every((m) => targets.some((t) => t.motion === m)));
   const lic = (m: (typeof GM.GLYPH_MOTIONS)[number]) => GM.MOTION_LICENCE[m];
@@ -1103,6 +1116,29 @@ async function main() {
     wrongLicence = true;
   }
   check("H1: playGlyph without a licence, or with another motion's, throws in development", noLicence && wrongLicence);
+  // Re-pinned for the Mall (blueprint P19): burn is my own purchase (ACT), a dim-and-settle on the wallet's figure that
+  // never animates the value (no count, no roll, no text swap: H3), and it bursts nothing.
+  {
+    let burnUnderSeen = false;
+    try {
+      GM.playGlyph(fake("<b>1 cr</b>").querySelector("b") as unknown as Element, "burn", { licence: "SEEN" });
+    } catch {
+      burnUnderSeen = true;
+    }
+    setLevel("full");
+    CALLS.length = 0;
+    bursts.length = 0;
+    const burnEl = fake('<b class="ml-bal">1,120 cr</b>').querySelector("b");
+    await GM.playGlyph(burnEl as unknown as Element, "burn", { licence: "ACT" });
+    const frames = CALLS.flatMap((c) => c.frames);
+    check(
+      "the Mall's burn runs under ACT only, dims the figure and settles (opacity and a 3 px sink), never swaps its text, bursts nothing, ≤ 1.6 s",
+      GM.MOTION_LICENCE.burn === "ACT" && burnUnderSeen && CALLS.length === 1 && bursts.length === 0 && burnEl?.textContent === "1,120 cr" &&
+        frames.every((fr) => Object.keys(fr).every((k) => ["opacity", "transform", "offset", "easing"].includes(k))) &&
+        frames.some((fr) => fr.opacity === 0.32) && GM.GLYPH_DUR.burn <= GM.GLYPH_DUR.chainMax,
+      JSON.stringify(frames)
+    );
+  }
   eq(
     "H1: the six licences, and each motion's own (§4.7)",
     [GM.LICENCES, GM.MOTION_LICENCE["date-moved"], GM.MOTION_LICENCE.reach, GM.MOTION_LICENCE["rank-rise"], GM.MOTION_LICENCE.start, GM.MOTION_LICENCE["tip-open"]],
