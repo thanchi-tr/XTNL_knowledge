@@ -9,4 +9,10 @@
     <string name="sc_idea_long">New idea</string>
     <string name="sc_review_short">Review</string>
     <string name="sc_review_long">Review due cards</string>
+    <string name="widget_label">Today\'s musts and habits</string>
+    <string name="widget_description">Today\'s open musts and habits, each ticked in one tap. A tick with no connection waits on the phone and sends when you\'re online.</string>
+    <string name="widget_preview_title">Today · 3 open</string>
+    <string name="widget_preview_row">Gym legs</string>
+    <string name="widget_preview_meta">Must · 60 min</string>
+    <string name="tile_label">Log a task</string>
 </resources>

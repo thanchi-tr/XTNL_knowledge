@@ -17,9 +17,17 @@
  * the app's shortcuts, so they are listed under STANDARD_KEYS, not as
  * shortcuts.
  *
+ * The board keys (blueprint P6: j/k or ↓/↑ move, x ticks, m does the
+ * minimum, u undoes) are single unmodified keys too, answered by the Tasks
+ * board itself (decideBoardKey, scope 'board'): never while typing, mid-IME
+ * or with a dialog open, never the key right after 'g' (the sequence's), and
+ * ↓/↑ only once a task's own control has focus, so the arrows still scroll
+ * the page everywhere else.
+ *
  * Pure and client-importable. Keys are written in the app's own notation:
  * 'c', 'Shift+?', 'Alt+N', 'Ctrl+C', 'g t' (a sequence: g, then t within
- * 1.5 s), '1-9' (a range), 'Alt+1-7' (a range of chords: Alt+1 … Alt+7).
+ * 1.5 s), '1-9' (a range), 'Alt+1-7' (a range of chords: Alt+1 … Alt+7),
+ * '↓' and '↑' (the arrow keys).
  */
 
 import { chordLetter, isAltDeadKeyInField, isTypingTarget, type TargetLike } from "./capture-parse";
@@ -34,7 +42,9 @@ export type ShortcutScope =
   /** Only on /add (the full idea form). */
   | "idea-form"
   /** Only during a review session. */
-  | "review";
+  | "review"
+  /** Only on a Tasks board (Today, or a work tab's Tasks), not while typing (blueprint P6; decideBoardKey). */
+  | "board";
 
 export type ShortcutId =
   | "capture"
@@ -57,7 +67,12 @@ export type ShortcutId =
   | "idea-blank"
   | "idea-format"
   | "review-answer"
-  | "review-next";
+  | "review-next"
+  | "board-next"
+  | "board-prev"
+  | "board-tick"
+  | "board-minimum"
+  | "board-undo";
 
 export interface Shortcut {
   id: ShortcutId;
@@ -90,6 +105,11 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: "idea-format", keys: ["Alt+1-7"], label: "Switch the idea's format (1 Short … 7 Formula)", scope: "idea-form", group: "Capture" },
 
   { id: "record-yesterday", keys: ["y"], label: "Record yesterday", scope: "global", href: "/today?sheet=yesterday", group: "Tasks" },
+  { id: "board-next", keys: ["j", "↓"], label: "Next task (↓ once a task has focus)", scope: "board", group: "Tasks" },
+  { id: "board-prev", keys: ["k", "↑"], label: "Previous task (↑ once a task has focus)", scope: "board", group: "Tasks" },
+  { id: "board-tick", keys: ["x"], label: "Tick the task in focus", scope: "board", group: "Tasks" },
+  { id: "board-minimum", keys: ["m"], label: "Do the minimum of the task in focus", scope: "board", group: "Tasks" },
+  { id: "board-undo", keys: ["u"], label: "Undo the tick of the task in focus; with none in focus, the last tick", scope: "board", group: "Tasks" },
 
   { id: "go-today", keys: ["g t"], label: "Tasks", scope: "global", href: "/today", group: "Go to" },
   { id: "go-study", keys: ["g s"], label: "Ideas (review)", scope: "global", href: "/review", group: "Go to" },
@@ -214,6 +234,12 @@ export function shortcutOf(id: ShortcutId): Shortcut {
   return s;
 }
 
+/** The board keys (blueprint P6): the Tasks board answers them itself (decideBoardKey), never the global handler. */
+export type BoardKeyId = "board-next" | "board-prev" | "board-tick" | "board-minimum" | "board-undo";
+export const BOARD_KEYS: readonly (Shortcut & { id: BoardKeyId })[] = SHORTCUTS.filter((s): s is Shortcut & { id: BoardKeyId } => s.scope === "board");
+/** The arrow keys among them: the board's only while a task's own control has focus (elsewhere they scroll the page). */
+export const BOARD_ARROWS: ReadonlySet<string> = new Set(["↓", "↑"]);
+
 /** The format keys, one per format card in the cards' order (Alt+1 is the first card): 'idea-format' expanded. */
 export const FORMAT_KEYS: readonly string[] = expandKey(shortcutOf("idea-format").keys[0]);
 
@@ -247,6 +273,10 @@ const NAMED_KEYS: Record<string, string> = {
   Esc: "Esc",
   ArrowRight: "→",
   Right: "→",
+  ArrowDown: "↓",
+  Down: "↓",
+  ArrowUp: "↑",
+  Up: "↑",
 };
 
 /**
@@ -359,6 +389,14 @@ export function sequenceWaiting(seq: SequenceState, now: number): boolean {
  */
 export const MODAL_OPEN_SELECTOR = '[aria-modal="true"], .sheet.show, [data-capture-sheet]';
 
+/**
+ * The board keys (P6 review) also wait while a pop-up on the board is open: the drawer's icon or colour pop-up, a
+ * row's asks, the habit year's day. Each is a dialog the page doesn't mark modal (MODAL_OPEN_SELECTOR misses it), so
+ * 'j' would move focus out from under it and 'u' take a tick back behind it. TodayBoard queries this.
+ */
+export const BOARD_POPUP_SELECTOR = ".tsk-pop, .ask-pop, .hh-pop";
+export const BOARD_KEYS_OFF_SELECTOR = `${MODAL_OPEN_SELECTOR}, ${BOARD_POPUP_SELECTOR}`;
+
 export interface ShortcutEnv {
   /** The keydown's target. */
   target: TargetLike | null | undefined;
@@ -428,6 +466,61 @@ export function decideShortcut(e: KeyEventLike, seq: SequenceState, env: Shortcu
   return none();
 }
 
+// ── The board keys (TodayBoard, blueprint P6) ──────────────────────────────
+
+export interface BoardKeyEnv {
+  /** The keydown's target. */
+  target: TargetLike | null | undefined;
+  /** A dialog, sheet or board pop-up is open (BOARD_KEYS_OFF_SELECTOR matches; the capture sheet among them). */
+  modalOpen: boolean;
+  /** A task's own control has focus (its tick, its title, its row actions): ↓/↑ are the board's only then. */
+  onRow: boolean;
+  now: number;
+}
+
+export interface BoardKeyDecision {
+  /** The board key to run now, if any. */
+  run: BoardKeyId | null;
+  /** The board's own view of a 'g' sequence after this key (the global handler keeps its own). */
+  seq: SequenceState;
+  /** The key is the board's: prevent the browser's default (the arrows' scroll). */
+  consume: boolean;
+}
+
+/**
+ * The board keys' whole rule, pure: what one keydown does on a Tasks board.
+ *
+ * Nothing runs mid-IME composition, on a held key (repeat), while typing (an
+ * input, textarea, select, contenteditable or the capture sheet: capture-parse
+ * isTypingTarget), with a dialog, sheet or board pop-up open, or from inside
+ * any dialog (a [role="dialog"] the page doesn't mark modal). A 'g' starts a sequence, so
+ * the key after it (within SEQUENCE_MS) is the sequence's ('g k' is the Weekly
+ * review), never the board's, whichever listener hears it first; the board
+ * tracks that itself, even when the global handler has already prevented the
+ * 'g'. A key something else handled (defaultPrevented) is left alone. ↓ and ↑
+ * are the board's only while a task's own control has focus (env.onRow).
+ * Modified keys are none of the board's (normalizeKey writes them as chords).
+ */
+/** The target is inside a dialog (any [role="dialog"], modal or not): its own keys, never the board's. */
+function inDialog(target: TargetLike | null | undefined): boolean {
+  return !!target && typeof target.closest === "function" && !!target.closest('[role="dialog"]');
+}
+
+export function decideBoardKey(e: KeyEventLike, seq: SequenceState, env: BoardKeyEnv): BoardKeyDecision {
+  const none = (next: SequenceState = SEQUENCE_IDLE): BoardKeyDecision => ({ run: null, seq: next, consume: false });
+  if (isComposingKey(e)) return none();
+  if (MODIFIER_KEYS.has(e.key) || e.repeat) return none(seq);
+  if (isTypingTarget(env.target) || env.modalOpen || inDialog(env.target)) return none();
+  const key = normalizeKey(e, env.target);
+  if (key === null) return none();
+  if (sequenceWaiting(seq, env.now)) return SEQUENCE_PREFIXES.has(key) ? none({ prefix: key, at: env.now }) : none();
+  if (SEQUENCE_PREFIXES.has(key)) return none({ prefix: key, at: env.now });
+  if (e.defaultPrevented) return none();
+  const hit = BOARD_KEYS.find((s) => s.keys.includes(key));
+  if (!hit || (BOARD_ARROWS.has(key) && !env.onRow)) return none();
+  return { run: hit.id, seq: SEQUENCE_IDLE, consume: true };
+}
+
 // ── The format keys on /add (AddIdeaForm, 'idea-format') ───────────────────
 
 /**
@@ -491,4 +584,5 @@ export const SCOPE_NOTE: Partial<Record<ShortcutScope, string>> = {
   capture: "In the capture sheet",
   "idea-form": "On New idea",
   review: "During a review",
+  board: "On a Tasks board, not while typing",
 };

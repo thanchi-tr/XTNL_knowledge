@@ -31,9 +31,16 @@ interface XtnlApi {
     /**
      * A tick. [minutes] (1-480, blueprint P7: the long-press sheet's chips) is counted with the web drawer's clamp;
      * [sessionId] names the timer it counts (P23: a proof task's); [pages] (1-2000, P24) are a reading task's pages, sent
-     * as `proof { kind: PAGES, qty }`. All left out: a tick at the estimate, as before.
+     * as `proof { kind: PAGES, qty }`. All left out: a tick at the estimate, as before. [yesterday] (P7: a row of /check's
+     * Yesterday lane) sends day "yesterday": it books on yesterday at T 1.00, as the web's Record yesterday; else "today".
+     * [day] (P8, D34): the row's own life day ("2026-10-25"), fixed at the tap and sent as is on every try, the offline
+     * queue's replays included, so a tick made before 04:00 books on that day whenever it lands (the server books only
+     * today or yesterday by its own clock). Null: the word, as before.
      */
-    suspend fun completeTask(templateId: String, mvv: Boolean, clientId: String, minutes: Int? = null, sessionId: String? = null, pages: Int? = null): Outcome<CompleteResult>
+    suspend fun completeTask(
+        templateId: String, mvv: Boolean, clientId: String, minutes: Int? = null, sessionId: String? = null, pages: Int? = null, yesterday: Boolean = false,
+        day: String? = null,
+    ): Outcome<CompleteResult>
     /** A proof task's timer (blueprint P23): one runs at a time (a start stops any other). [clientId] is the start's key. */
     suspend fun startTimer(templateId: String, clientId: String): Outcome<TimerResult>
     /** Its stop: the minutes wait for the tick that counts them. */

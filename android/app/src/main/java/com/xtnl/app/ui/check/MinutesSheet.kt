@@ -58,6 +58,9 @@ private const val RUNNING_REFRESH_MS = 15_000L
  *
  * A reading task (P24, `pages` on its row) shows its page chips first, the day's target picked ("Done · 30 pages"), and
  * Done waits for at least that many (the server would refuse fewer: "Log the pages"). The minimum still needs none.
+ *
+ * A Yesterday row (P7, [forYesterday] its note: "For yesterday, Tue 20 Oct, at the full rate.") ticks for yesterday: the
+ * same chips and minimum, and no timer (a timer only times today), so a proof row's Done waits for picked minutes.
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -65,6 +68,8 @@ fun MinutesSheet(
     task: TaskItem,
     /** /check's life day: a timer that started on another (it ran across 04:00) asks before Done counts it. */
     today: String? = null,
+    /** P7: a Yesterday row's note under its title; with it the sheet has no timer. Null: today's row. */
+    forYesterday: String? = null,
     onDismiss: () -> Unit,
     onDone: (minutes: Int?, sessionId: String?, pages: Int?) -> Unit,
     onMinimum: () -> Unit,
@@ -84,7 +89,9 @@ fun MinutesSheet(
             now = Instant.now()
         }
     }
-    val timerMinutes = task.timer?.let { ProofLine.timerMinutes(it, now) }
+    // P7: a Yesterday row's tick never counts a timer (the server sends none for it, and today's never counts for yesterday).
+    val timers = forYesterday == null
+    val timerMinutes = task.timer?.takeIf { timers }?.let { ProofLine.timerMinutes(it, now) }
     val timerRan = task.proof && (timerMinutes ?: 0) >= 1
     // A timer across 04:00 or past twice the estimate: the sheet says so, and its Done is the confirmation.
     val timerAsk = if (timerRan && picked == null) task.timer?.let { ProofLine.timerAsk(it, today, task.minutes, now) } else null
@@ -104,6 +111,10 @@ fun MinutesSheet(
                 task.title, color = c.ink0, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.semantics { heading() },
             )
+            forYesterday?.let {
+                Spacer(Modifier.height(4.dp))
+                Text(it, color = c.ink2, style = MaterialTheme.typography.bodySmall)
+            }
             task.pages?.let { pages ->
                 Spacer(Modifier.height(12.dp))
                 Eyebrow("Pages read")
@@ -135,7 +146,12 @@ fun MinutesSheet(
                 Spacer(Modifier.height(8.dp))
                 Text(it, color = c.ink2, style = MaterialTheme.typography.bodySmall)
             }
-            if (task.proof) {
+            if (task.proof && !timers) {
+                if (!canDone) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(ProofLine.NEEDS_MINUTES_PICKED, color = c.ink2, style = MaterialTheme.typography.bodySmall)
+                }
+            } else if (task.proof) {
                 Spacer(Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(

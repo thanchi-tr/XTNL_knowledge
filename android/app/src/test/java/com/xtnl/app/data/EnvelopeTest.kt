@@ -250,6 +250,23 @@ class EnvelopeTest {
         assertNull((HttpApi.parse(200, """{"ok":true,"data":{"instanceId":"i1","xp":4.1}}""", CompleteResult.serializer()) as Outcome.Ok).value.competency)
     }
 
+    /** P7: /check's Yesterday lane and a tick's knee note; an older server sends neither (no section, no note). */
+    @Test fun theYesterdayLaneAndTheKneeDecode() {
+        val lane = (HttpApi.parse(200, """{"ok":true,"data":{"yesterday":{"day":"2026-10-20","dayLabel":"Tue 20 Oct",
+          "line":"Anything you tick pays at the full rate, record by 04:00 tomorrow.","open":1,
+          "tasks":[{"templateId":"hab1","title":"Gym legs","lane":"HABIT","status":"OPEN","minutes":60,"mvv":null,"icon":null,"dueLabel":null,"xpHint":8.3,
+                    "proof":false,"timer":null,"pages":null}]}}}""", CheckData.serializer()) as Outcome.Ok).value.yesterday!!
+        assertEquals(listOf("2026-10-20", "Tue 20 Oct"), listOf(lane.day, lane.dayLabel))
+        assertEquals(1, lane.open)
+        assertEquals("hab1", lane.tasks.single().templateId)
+        assertTrue(lane.tasks.single().open)
+        assertNull((HttpApi.parse(200, """{"ok":true,"data":{}}""", CheckData.serializer()) as Outcome.Ok).value.yesterday)
+        val tick = (HttpApi.parse(200, """{"ok":true,"data":{"instanceId":"i1","xp":4.1,"line":"+4.1 XP · Body",
+          "knee":{"day":"2026-10-21","raw":205,"rate":0.48,"capped":false,"line":"Fatigue breaker: past 200 raw today, so a tick now pays ×0.48 or less. The day stops at 300 XP."}}}""", CompleteResult.serializer()) as Outcome.Ok).value
+        assertEquals(TickKnee("2026-10-21", 205.0, 0.48, false, "Fatigue breaker: past 200 raw today, so a tick now pays ×0.48 or less. The day stops at 300 XP."), tick.knee)
+        assertNull("below 200 raw the key is left out", (HttpApi.parse(200, """{"ok":true,"data":{"instanceId":"i1","xp":4.1}}""", CompleteResult.serializer()) as Outcome.Ok).value.knee)
+    }
+
     /** The week audit's decay (P12): count, top and unread; a week from an older server has none. */
     @Test fun theWeeksDecayDecodes() {
         val week = """"week":{"weekKey":"2026-W43","label":"Week of 19 Oct","rate":86,"kept":26,"due":30,"minimum":3,"skipped":2,"held":0,"open":0,

@@ -1627,7 +1627,8 @@ const PLACE_ANYTIME: BoardPlace = { lane: "anytime", label: "Anytime" };
 const PLACE_INBOX: BoardPlace = { lane: "inbox", label: "Inbox" };
 const PLACE_GOALS: BoardPlace = { lane: "goals", label: "Goals" };
 const PLACE_GOAL_CLOSED: BoardPlace = { lane: "done", label: "Closed" };
-const PLACE_DONE_TODAY: BoardPlace = { lane: "done", label: "Done today" };
+/** Exported for done-now.ts (blueprint P6): a row ticked today already offers a done-now line its standing tick. */
+export const PLACE_DONE_TODAY: BoardPlace = { lane: "done", label: "Done today" };
 /** A side quest past its expiry (P31): off the board, at no cost. */
 const PLACE_SIDE_EXPIRED: BoardPlace = { lane: "done", label: `${SIDE_LABEL} · expired` };
 

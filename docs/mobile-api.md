@@ -39,13 +39,27 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
     repeat answers `duplicate`), Done and Reopen are idempotent, and a repeated new idea is merged into the first by
     dedup.
   - Writes revalidate the same cache tags the web actions do (they run the same actions).
+  - The app's offline queue (blueprint P8, decision D34) leans on these rules. A tick, a quick line or a work item's
+    Done that gets no answer at all, and every tick on the cover-screen widget, waits on the phone and is sent again
+    with the same clientId and the same body as its first try, so it lands once. Only `POST /tasks/complete`, `POST
+    /log` and `POST /work/done` ever wait; a review answer never does. A tick carries its row's own life day as `day`
+    (`"YYYY-MM-DD"`: the `day` of the `/check` the row was shown on, its `yesterday.day` for a Yesterday row, the
+    widget's cached board's too) from its first try, so one made before 04:00 books on that day when it lands after,
+    and a board read before 04:00 and tapped after it books its row on the row's day, as the web board's does (the
+    server still books only today or yesterday, and refuses an older day). `POST /log` has no day: a line waits only
+    while its day is the server's (`/check`'s `day`, read before the app sends one; fixed at the tap, before the
+    send), and one from an earlier day is kept back on the phone for the user, never saved on the new day. A kept-back
+    line got no answer, so its first try may have landed; a done-now line that ticked a row then wrote no row under its
+    capture key, so sent again on the new day it would tick that day's row too, and the app says the line may already
+    be saved before the user sends it. While `/check` gets no answer, the lines wait and the ticks and Dones behind
+    them still go.
 - **Errors:** the app keeps what the user typed on any failure.
 
 ## Endpoints
 
 | Method | Path | Wraps |
 | --- | --- | --- |
-| GET | /check | the Today board's read, the Review hub's counts and its fatigue, the shell's level, the work tabs' due tasks, the week audit, the credits wallet, the owed cards, the idle skills and attributes |
+| GET | /check | the Today board's read and its Yesterday lane, the Review hub's counts and its fatigue, the shell's level, the work tabs' due tasks, the week audit, the credits wallet, the owed cards, the idle skills and attributes |
 | POST | /tasks/complete | `completeTask` (actions/tasks.ts) |
 | POST | /tasks/undo | `undoCompletion` (actions/tasks.ts) |
 | POST | /tasks/start | `startTaskTimer` (actions/tasks.ts), a proof task's timer |
@@ -82,6 +96,9 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
       "side"?: true, "expiresDay"?: "2026-10-23" }
   ],
   "tasksSummary": { "open": 3, "done": 2, "allDone": false },
+  "yesterday": { "day": "2026-10-20", "dayLabel": "Tue 20 Oct",
+    "line": "Anything you tick pays at the full rate, record by 04:00 tomorrow.", "open": 2,
+    "tasks": [ { "templateId": "…", "title": "Stretch", "lane": "HABIT", "status": "OPEN", … } ] },
   "daily": { "kept": 3, "total": 4, "full": false, "cap": 5, "minimum": 1, "over": 0,
     "quests": [ { "templateId": "…", "title": "Gym legs", "kept": true, "minimum": true } ] },
   "review": { "due": 12, "doneToday": 4, "target": 20, "nextDueAt": "…" | null, "fatigued"?: { "until": "…" } | null },
@@ -160,6 +177,19 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 - `tasksSummary`: the board's own counts: `open` the Must and Today rows still open or locked (a held row and a side
   quest are not open), `done` the rows above done today, `allDone` the web's "Board clear" (nothing open, at least one
   done).
+- `yesterday` (blueprint 5.1b, P7; decision D34): the web's Record yesterday sheet, its first list: what was due
+  yesterday and is still recordable (a habit or must expected that day, a deadline due that day), and what was recorded
+  for it this morning (so its tick can still be undone). Always sent.
+  - `tasks`: each row in `tasks`' own shape, every row not done first. `lane` is the row's colour code (`MUST` a must,
+    `HABIT` anything with a repeat rule, else `TASK`); `xpHint` is what a tick for yesterday pays now, priced against
+    yesterday's own ledger at T 1.00: the record window's promise, so a deadline due yesterday is on time here and late
+    on its today row. A row has no `timer` (a timer only times today); a `proof` row's tick for yesterday takes its
+    `minutes` (the sheet's chips), a `pages` row its pages. Tick one with `/tasks/complete` and `day: "yesterday"`.
+  - `open`: the rows still to record (the web's "Yesterday: 2 to record"). `line` is the sheet's own line: "Anything
+    you tick pays at the full rate, record by 04:00 tomorrow." ("… this morning" after midnight; Duty's own words once
+    it is live: "Tuesday is settled. …").
+  - Empty `tasks` and `open` 0 when nothing is left to record, and once yesterday is settled or a rest token covers it.
+    Settling yesterday, its rest token and the sheet's "Something else you did yesterday?" list stay on the web.
 - `daily`: the daily quests (the user's musts, at most 5 due on a day; decisions D14 and D15), as the web's Must
   lane counts and draws them ("Daily quests · 3 of 4 kept" and its strip). Binary is a status only: XP stays graded.
   - `quests`: one cell per quest, in the lane's order: the musts that ask today (a held or skipped one asks nothing),
@@ -331,7 +361,13 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
 - Body: `{ "templateId": "…", "day"?: "today" | "yesterday" | "YYYY-MM-DD", "mvv"?: false, "minutes"?: 45,
   "sessionId"?: "…", "proof"?: { "kind": "PAGES", "qty": 30 }, "clientId"?: "…" }`.
 - It runs through the same core as the board's tick (`completeTask`: its lock, pricing, momentum and celebrations).
-  The server books only today or yesterday by its own clock: another day is refused (409).
+  The server books only today or yesterday by its own clock: another day is refused (409). The app (from 2.18, P8)
+  sends its row's own day key on every tick, as the web board does (from 2.19, the day of the board the row was shown
+  on, not the phone's clock), so a retry or a replay from its offline queue is the same request.
+- `day: "yesterday"` (blueprint P7) records a row of `/check`'s `yesterday` lane: it books on yesterday's life day, at
+  T 1.00 (on time) until today's life day ends, against yesterday's ledger and knee, as the web's Record yesterday
+  does. Only what the server would book for yesterday is accepted ("Only what was due yesterday can be recorded for
+  yesterday.", 409); a day already settled is refused too. Its `line` ends `· yesterday`.
 - `minutes` (blueprint P7's phone minutes, decision D34): what it took, a whole number from 1 to 480 (anything else is
   refused, 400). It is counted with the drawer's own clamp: between half and twice the task's effective estimate, and
   never above 480, so an estimate of 30 reported as 90 counts 60. Left out, the tick counts the estimate, as before.
@@ -361,13 +397,24 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
   "level": { "level": 7, "title": "Adept", "progress": 0.81 } | null,
   "competency": { "id": "…", "name": "Writing", "hoursAfter": 100.25, "tier": 2, "tierUp": true,
     "line": "≈ 100 h (task estimates, not timed)" } | null,
-  "credits": { "delta": 10, "balance": 130, "today": 30 } | null } }
+  "credits": { "delta": 10, "balance": 130, "today": 30 } | null,
+  "knee"?: { "day": "2026-10-21", "raw": 214.6, "rate": 0.46, "capped": false,
+    "line": "Fatigue breaker: past 200 raw today, so a tick now pays ×0.46 or less. The day stops at 300 XP." } } }
 ```
 
 - `xp`: the life XP paid, to one decimal. `line`: `+8.3 XP · <track>` (Body, Duty, Craft or Care), with
   `· minimum` for the minimum version and `· yesterday` for a forgotten tick; a repeat of a tick already recorded
   says `Already recorded. Nothing is paid twice.` (and pays nothing). Once the streak multiplier is in force (P29;
   `streak.multiplier` on `/check`), a full tick above ×1.00 adds its C: `+12.0 XP · Craft · streak ×1.16`.
+- `knee` (blueprint 3.3a, P7; decision D26): the knee note, present only once the day this tick booked on is past 200
+  raw (its receipt's day total before the tick plus its raw); absent below it and on a repeat, so every other tick reads
+  as before. The daily knee is the fatigue breaker every life XP shares: full rate to 100 raw a day, half rate at 200,
+  and the day stops at 300 XP. `day` is the life day (a tick for yesterday reads yesterday's), `raw` that day's raw total
+  after the tick (one decimal), `rate` the knee's rate there (two decimals, rounded down: what one more raw point pays
+  now; less as the day goes on), `capped` once the day's 300 XP is reached (`rate` 0). `line` says it: "Fatigue breaker:
+  past 200 raw today, so a tick now pays ×0.46 or less. The day stops at 300 XP.", or once capped "Fatigue breaker:
+  today reached the day's cap of 300 XP. Ticks still count; they add no more XP today." It changes no price (the `xp`
+  already carries the knee), and it is never a penalty.
 - `allDone`: the board is clear after this tick (false when the board couldn't be read again).
 - `celebrations`: L3's moments for the tick (a streak milestone, a habit rung, a finished goal …), every tier.
 - `level`: the character's level after this tick, as `/check`'s `level` (null when it couldn't be read). The app steps
@@ -572,11 +619,23 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
   - Daily quests: a must that would be the sixth due on one of its days is saved as an ordinary task, never refused:
     "Added (not a Must). Pay the rent → Planned · ≈ 3 · Five daily quests is the cap. Soften one first." The 4th or
     5th adds the warning: "… · 4 of 5 daily quests" ("… on Mon 26 Oct" when that day is not today).
+  - A done-now line that names a row on today's board (blueprint P6, decision D33: `x gym 45m` with a "Gym" habit due
+    today) ticks that row with the line's minutes, as the web's capture sheet does, and saves nothing new: "Ticked. Gym
+    (Habits) · +8.3". `id` and `title` are that row's. The row is a personal task or habit on today's Must, Planned,
+    Habits or Anytime lane: never a work tab's, never one that completes itself or counts pages, never in the Inbox or
+    deferred. A line with a schedule, an Inbox mark, `#side` or a study or pages link is saved as before. A row ticked
+    today already answers "Already ticked. Gym → Done today · Nothing is paid twice." and nothing is written, so a
+    retried line (the same clientId, or the same words again) writes once. When the row's tick is refused (a deep-work
+    row with proof of work on and no minutes, say) the line is refused with the reason (409), and nothing is written:
+    "Not ticked: Write the report (Planned) counts its time. Add its minutes to the line, like 45m, or tick it on
+    Today." With no such row the line is saved as a new one-off and ticked, as before.
 - `id`: the task, goal or draft's id (`weight:<day>` for a weigh-in). `undo.id` is opaque: send it back as is (for a
   weigh-in it carries the reading it replaced).
 - `undo` is null for a weigh-in there is nothing to take back from: the same value again ("Already logged": nothing
   was written), or one that replaced a reading the server couldn't see. Offer no Undo then, as the capture sheet
-  offers none.
+  offers none. It is null too for a line that ticked the row it names ("Ticked. …", P6): no capture was saved, and a
+  capture's Undo would take back the row itself. That tick is taken back on the web board inside its ten minutes, as a
+  tick made elsewhere is (Check says "Kept earlier today. Undo it on the web app.").
 - `credits` (blueprint P16): as `/tasks/complete`'s, read before the save and fresh after it (a done-now line that
   finishes one of Today's three earns its 10; a plain new task earns nothing until it is done); null while credits are
   switched off or when a read failed.

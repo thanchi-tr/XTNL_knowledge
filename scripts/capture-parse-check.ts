@@ -36,6 +36,7 @@ import {
 } from "../src/lib/capture-parse";
 import { autocorrectAtCaret, isBoundaryKey, type AutocorrectProfile } from "../src/lib/autocorrect";
 import type { ParsedCapture } from "../src/lib/life-types";
+import { doneNowAsksTick } from "../src/lib/done-now";
 
 const THU = "2026-10-01";
 const FRI = "2026-10-02";
@@ -1346,6 +1347,17 @@ console.log("\n── Every line capture.md's grammar can build (seeded, English
     chips(personal, line)
   );
   report("P31 work tab: the option changes nothing on a line without '#side'", same(parseCapture("call the supplier fri !", { today: THU, work: true }), parseCapture("call the supplier fri !", { today: THU })));
+}
+
+// Blueprint P6 (D33): which parsed lines ask to tick the row they name (done-now.ts doneNowAsksTick). The parse itself is
+// unchanged: the server matches the title it reads ('x gym 45m' is 'Gym', 45 min), so the title the chip shows is the
+// title it ticks.
+{
+  const asks = (line: string) => doneNowAsksTick(parseCapture(line, { today: THU }));
+  const gym = parseCapture("x gym 45m", { today: THU });
+  report("P6: 'x gym 45m' reads as done-now 'Gym' with 45 minutes, and asks to tick a row named Gym", gym.doneNow && gym.title === "Gym" && gym.estMinutes === 45 && asks("x gym 45m"), chips(gym, "x gym 45m"));
+  report("P6: 'did', 'done' and 'X' ask as 'x' does; a day, a Must, a tag or a goal shape a new row only and still ask", ["did laundry", "done the dishes", "X ran 5k 28m", "x pay rent fri !", "x run 30m #body", "x write report 45m #proof"].every(asks));
+  report("P6: a schedule ('x gym daily'), an Inbox mark ('x call bank?'), '#side', a study or pages link, a goal or no done mark never asks", ["did stretch 10m daily", "x call bank?", "x fix the bike #side", "x reviews", "x read 30 pages", "goal: x run a marathon", "gym 45m", "xylophone practice", "x"].every((l) => !asks(l)));
 }
 
 console.log(`\n${fixtures} fixtures; ${passed} passed, ${failed} failed`);

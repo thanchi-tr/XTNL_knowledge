@@ -124,5 +124,35 @@
                 <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
             </intent-filter>
         </receiver>
+
+        <!-- Blueprint P8 (D34): the cover-screen widget (widget/TodayWidget): today's open musts and habits, a tick in
+             one tap that waits on the phone and sends when it can (data/SendQueue). Its size: res/xml/today_widget_info. -->
+        <receiver
+            android:name=".widget.TodayWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/today_widget_info" />
+        </receiver>
+
+        <!-- Blueprint P8: the quick-settings tile "Log a task" (tile/LogTileService): it opens the quick line at its task
+             section, xtnl://app/log?section=task. A button, never a switch. -->
+        <service
+            android:name=".tile.LogTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_log"
+            android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="false" />
+        </service>
     </application>
 </manifest>

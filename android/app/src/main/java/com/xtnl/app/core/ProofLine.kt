@@ -51,6 +51,9 @@ object ProofLine {
     /** The sheet's line on a proof row with no minutes picked and no timer run. */
     const val NEEDS_MINUTES = "Deep work counts its time: pick the minutes it took, or start its timer."
 
+    /** P7: on a Yesterday row, which has no timer, the same line without one. */
+    const val NEEDS_MINUTES_PICKED = "Deep work counts its time: pick the minutes it took."
+
     /** What a tap on a row does. */
     enum class Tap {
         /** A tick at the estimate, in one tap (every row but a proof one). */

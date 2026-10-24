@@ -14,7 +14,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { QuestionType } from "@prisma/client";
 import { addDays, type DayKey } from "./life-day";
 import { buildBoard, shortDate, weekdayName, type Board, type BoardData, type BoardRow } from "./today-board";
-import { boardClearOf, madeUpLineOf, makeUpViewOf, splitTodayLane } from "../components/today/board-ui";
+import { boardClearOf, madeUpLineOf, makeUpViewOf, recordByLabel, rowAccentOf, splitTodayLane, yesterdaySheetOf } from "../components/today/board-ui";
 import { launchRefusal } from "./duty-plan";
 import type { OwedCard } from "./duty-view";
 import type { MakeUpResult } from "../app/actions/duty";
@@ -23,7 +23,7 @@ import { auditWeekLabel, type WeekAudit } from "./week-audit";
 import type { NextWeekView } from "./week-calibration";
 import { DECAY_TOP, type AuditDecaying } from "./audit-decay";
 import { fmtXp } from "../components/today/format";
-import { TIMING_FACTOR, TRACK_LABEL } from "./life-grade";
+import { KNEE_CAP, KNEE_CAP_AT_RAW, KNEE_FULL_RATE, KNEE_SCALE, TIMING_FACTOR, TRACK_LABEL } from "./life-grade";
 import { questTargetOf } from "./review-facts";
 import { isDue } from "./due";
 import { ideaStatusOf } from "./forgetting";
@@ -546,6 +546,27 @@ export function taskStatusOf(r: Pick<BoardRow, "state" | "minimum" | "heldToday"
 
 const isDone = (s: MobileTaskStatus) => s === "DONE" || s === "DONE_MVV";
 
+/** One board row as the app reads it, in `lane`: Today's (checkTasksOf) and the Yesterday lane's (checkYesterdayOf, P7). */
+function mobileTaskOf(r: BoardRow, lane: MobileLane, data: Pick<BoardData, "styles">): MobileTask {
+  const status = taskStatusOf(r);
+  return {
+    templateId: r.template.id,
+    title: r.template.title,
+    lane,
+    status,
+    minutes: r.estMinutes,
+    mvv: r.template.mvv ?? null,
+    icon: data.styles?.[r.template.id]?.icon ?? null,
+    dueLabel: r.dueLabel,
+    xpHint: isDone(status) ? (r.paid ? round1(r.paid.xp) : null) : round1(r.projection.xp),
+    proof: !!r.proof,
+    timer: r.proof?.timer ? timerOf(r.proof.timer) : null,
+    pages: r.pages ? { target: r.pages.target } : null,
+    // Side quests (P31): only on a side quest's row.
+    ...(r.side ? { side: true as const, expiresDay: r.side.expiresDay } : {}),
+  };
+}
+
 /**
  * The personal board's three lanes as the web board draws them, Must, Planned (TASK) and Habits (board-ui
  * splitTodayLane: anything with a rule), each in the board's own order; every row not done first, then the done
@@ -562,31 +583,39 @@ export function checkTasksOf(board: Pick<Board, "must" | "todayRows" | "clear" |
     ["TASK", planned],
     ["HABIT", habits],
   ];
-  const rows = lanes.flatMap(([lane, rs]) =>
-    rs.map((r): MobileTask => {
-      const status = taskStatusOf(r);
-      return {
-        templateId: r.template.id,
-        title: r.template.title,
-        lane,
-        status,
-        minutes: r.estMinutes,
-        mvv: r.template.mvv ?? null,
-        icon: data.styles?.[r.template.id]?.icon ?? null,
-        dueLabel: r.dueLabel,
-        xpHint: isDone(status) ? (r.paid ? round1(r.paid.xp) : null) : round1(r.projection.xp),
-        proof: !!r.proof,
-        timer: r.proof?.timer ? timerOf(r.proof.timer) : null,
-        pages: r.pages ? { target: r.pages.target } : null,
-        // Side quests (P31): only on a side quest's row.
-        ...(r.side ? { side: true as const, expiresDay: r.side.expiresDay } : {}),
-      };
-    })
-  );
+  const rows = lanes.flatMap(([lane, rs]) => rs.map((r) => mobileTaskOf(r, lane, data)));
   const done = rows.filter((t) => isDone(t.status)).length;
   return {
     tasks: [...rows.filter((t) => !isDone(t.status)), ...rows.filter((t) => isDone(t.status))],
     tasksSummary: { open: board.counts.musts + board.counts.due, done, allDone: boardClearOf({ clear: board.clear, done }) },
+  };
+}
+
+/**
+ * The Yesterday lane (blueprint P7, decision D34): the web's Record yesterday sheet, its first list (Board.yesterdayRows:
+ * what was due yesterday and is still recordable, and what was recorded for it this morning, so its tick can be undone),
+ * in the board's order, every row not done first. A row's `lane` is its colour code (board-ui rowAccentOf: a must, a
+ * habit, else a one-off); its `xpHint` is what a tick for yesterday pays now, priced against yesterday's ledger at T 1.00
+ * (the record window's promise: a deadline due yesterday is on time there, late on today's row). `open` is the web's
+ * "Yesterday: n to record" (rows open or locked). `line` is the sheet's own description (yesterdaySheetOf: "Anything you
+ * tick pays at the full rate, record by 04:00 tomorrow."): the day's activity (yesterdayActive) moves only the sheet's
+ * honesty line and its rest token offer, neither of which is sent.
+ * Settling, the rest token and the sheet's "Something else you did yesterday?" list stay on the web. Empty `tasks` (and
+ * `open` 0) when nothing is left to record, and once yesterday is settled or a rest token covers it.
+ */
+export function checkYesterdayOf(board: Pick<Board, "yesterday" | "yesterdayRows">, data: Pick<BoardData, "styles" | "today" | "duty">, nowMs: number) {
+  const rows = board.yesterdayRows.map((r) => {
+    const accent = rowAccentOf(r);
+    return mobileTaskOf(r, accent === "must" ? "MUST" : accent === "habit" ? "HABIT" : "TASK", data);
+  });
+  const recordBy = recordByLabel(data.today, nowMs);
+  const sheet = yesterdaySheetOf({ yesterday: board.yesterday, recordBy, duty: data.duty, yesterdayActive: false });
+  return {
+    day: board.yesterday,
+    dayLabel: dayLabelOf(board.yesterday),
+    line: sheet.description,
+    open: board.yesterdayRows.filter((r) => r.state === "open" || r.state === "locked").length,
+    tasks: [...rows.filter((t) => !isDone(t.status)), ...rows.filter((t) => isDone(t.status))],
   };
 }
 
@@ -1471,6 +1500,38 @@ export function tickXpOf(c: Pick<Completion, "receipt">): number {
   return round1(c.receipt.xp);
 }
 
+/**
+ * The knee note (blueprint P7, 3.3a; decision D26): from here the day's raw total is past the knee's half rate, the
+ * rules page's "half rate at 200 raw" (KNEE_FULL_RATE + KNEE_SCALE, its KNEE_HALF_RATE_AT).
+ */
+export const KNEE_NOTE_FROM_RAW = KNEE_FULL_RATE + KNEE_SCALE;
+
+/**
+ * The tick's `knee`: only once the day it booked on is past KNEE_NOTE_FROM_RAW raw (its receipt's kneeBefore + raw, the
+ * day's ΣR after it), else null (the key is left out, so every other tick reads as before); never on a repeat (it paid
+ * nothing). `day` is that life day (a tick for yesterday reads yesterday's knee), `raw` the day's raw total after the
+ * tick, `rate` the knee's slope there (kneeG′: KNEE_SCALE ÷ (KNEE_SCALE + R − KNEE_FULL_RATE), 2 decimals rounded down,
+ * so "or less" is true; 0 at the cap), `capped` once the day's pay has stopped (R at KNEE_CAP_AT_RAW). It reads the
+ * receipt only: it never changes a price, and it is no penalty (the knee is the fatigue breaker every life XP shares).
+ */
+export function tickKneeOf(c: Pick<Completion, "duplicate" | "receipt" | "day">, today: DayKey): { day: DayKey; raw: number; rate: number; capped: boolean; line: string } | null {
+  if (c.duplicate) return null;
+  const r = Math.max(0, c.receipt.kneeBefore) + Math.max(0, c.receipt.raw);
+  if (!(r > KNEE_NOTE_FROM_RAW)) return null;
+  const capped = r >= KNEE_CAP_AT_RAW;
+  const rate = capped ? 0 : Math.floor((KNEE_SCALE / (KNEE_SCALE + r - KNEE_FULL_RATE)) * 100) / 100;
+  const when = c.day === today ? "today" : "yesterday";
+  return {
+    day: c.day,
+    raw: round1(r),
+    rate,
+    capped,
+    line: capped
+      ? `Fatigue breaker: ${when} reached the day's cap of ${KNEE_CAP} XP. Ticks still count; they add no more XP ${when === "today" ? "today" : "to yesterday"}.`
+      : `Fatigue breaker: past ${KNEE_NOTE_FROM_RAW} raw ${when}, so a tick now pays ×${rate.toFixed(2)} or less. The day stops at ${KNEE_CAP} XP.`,
+  };
+}
+
 export function undoXpOf(xp: number): number {
   return round1(xp);
 }
@@ -1748,17 +1809,21 @@ export const UNDO_KINDS: readonly UndoKind[] = ["task", "weight", "draft"];
  * What a saved line answers: its kind, the capture's id and title, the sheet's toast as one line (capture-ui
  * toastCopy: "Added. Gym legs → Today · ≈ 8.3"; a Must with no day says "Added (not a Must)"), and its Undo — none
  * for a weigh-in that isn't undoable (it wrote nothing, or replaced a reading the server didn't see), as the sheet
- * offers none (CaptureToast, JustAdded, QuickCapture check weight.undoable).
+ * offers none (CaptureToast, JustAdded, QuickCapture check weight.undoable). Blueprint P6 (D33): a done-now line that
+ * ticked the row it names ("Ticked. Gym (Habits) · +8.3") wrote no capture, so it has no Undo here either: a capture's
+ * Undo would take back the row itself. Its tick is undone on the web board, as a tick made elsewhere is.
  */
 export function logResultOf(item: CapturedItem, line: string, today: DayKey) {
-  const notMust = !item.weight && !!parseCapture(line, { today }).compulsoryWarning;
+  const notMust = !item.weight && !item.ticked && !!parseCapture(line, { today }).compulsoryWarning;
   const copy = toastCopy(item, { notMust });
   const kind: LogKind = item.weight ? "weight" : item.kind === "IDEA_DRAFT" ? "idea-draft" : item.kind === "GOAL" ? "goal" : "task";
   const undo: { kind: UndoKind; id: string } | null = item.weight
     ? item.weight.undoable
       ? { kind: "weight", id: weightUndoTokenOf(item.weight) }
       : null
-    : { kind: item.kind === "IDEA_DRAFT" ? "draft" : "task", id: item.id };
+    : item.ticked
+      ? null
+      : { kind: item.kind === "IDEA_DRAFT" ? "draft" : "task", id: item.id };
   return { kind, id: item.id, title: item.title, line: copy.body ? `${copy.head}. ${copy.body}` : copy.head, undo };
 }
 

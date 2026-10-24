@@ -80,7 +80,7 @@ panes on the main one, also at `xtnl://app/mall`). Then Settings and
 WebView, for everything else.
 
 The app talks to the server's mobile API, `<server>/api/mobile/v1` (see
-`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.16 (versionCode 28), so
+`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.19 (versionCode 31), so
 it installs over the v1 WebView shell in place.
 
 On **Check**, a long press on any open task opens its **minutes sheet** (blueprint
@@ -97,6 +97,22 @@ timer that ran across 04:00, or past twice the estimate, opens the sheet first
 rather than counting in one tap. One timer runs at a time; it is a row on the
 server, so it survives an app restart, and the row's figure moves while it runs.
 Every other task, and every minimum, still ticks in one tap.
+
+Under the day's rows (and the Owed card) Check has a **Yesterday** section
+(blueprint P7): the web's Record yesterday, what was due yesterday and is still
+recordable ("Yesterday · 2 to record", and the server's line: "Anything you tick
+pays at the full rate, record by 04:00 tomorrow."). A row's tap ticks it for
+yesterday in one tap, at T 1.00 (its ✦ figure is that price; a deadline due
+yesterday is on time there); its long press opens the minutes sheet, with no
+timer (a timer only times today). It sits in the one column on the cover screen
+and at the end of the first pane on the main display, and a row recorded this
+morning stays ticked there for its Undo. Settling yesterday and its rest token
+stay on the web. A tick's snackbar now also says the Seals and Ascensions it
+played ("7 days kept"), as the web's moments do, and, once the day is past 200
+raw, the server's **knee note** under the line, once a day (and again at the
+day's cap): "Fatigue breaker: past 200 raw today, so a tick now pays ×0.48 or
+less. The day stops at 300 XP." It changes no price: the tick's XP already
+carries the knee.
 
 A reading task (P24, captured with its pages: `read 30 pages`, `30pg`; `30p` is
 still 30 minutes) says "log 30 pages" once proof of work is on: its tap opens the
@@ -124,6 +140,72 @@ never replaces one you typed. The line under the switch says when it last synced
 and what came in, and how many walks were skipped because their app recorded no
 distance.
 
+## The cover-screen widget, the quick tile and the offline queue
+
+Blueprint P8 (decision D34) takes a tick off the app's own screens:
+
+- **The widget** ("Today's musts and habits", from the launcher's widget list):
+  today's open Must and Habit rows, musts first, each with a tick that is **one
+  tap**. It is sized for the cover screen (4 × 2 cells there, resizable) and
+  shows the rows its height fits, then "+2 more"; on the main display's grid it
+  lays out the same way. The title says "3 open · 2 kept" and what waits to
+  send. It reads the last `/check` of the server in Settings (with that
+  address's own token), and reads it again when it is drawn and the board is
+  more than 15 minutes old or from another day; with demo data on it shows the
+  demo's rows ("Today · demo") and ticks them on the phone. A proof or reading
+  row (minutes or pages, P23 and P24) opens Check instead, as Check's own tap
+  opens the sheet. A row's name and the title open Check. Planned one-offs,
+  held, skipped and done rows are not listed. A tick on the widget books on the
+  day of the board it shows (a board read before 04:00 books on its own day,
+  one too old to record is set aside unsent), and a tick made on Check is
+  followed in the widget's board at once, so it never lists a row the app has
+  ticked.
+- **The quick-settings tile** ("Log a task", added from the quick settings
+  panel's edit page): one tap opens the quick line at its Task section, focused
+  (`xtnl://app/log?section=task`, the Log a task shortcut's own link), from any
+  screen; on the lock screen it asks to unlock first. It is a button, never a
+  switch.
+- **The offline queue**: a tick, a quick line or a work item's Done that gets
+  no answer at all (no connection, a timeout), and every widget tick, waits on
+  the phone, in the app's own storage, keyed by its clientId. Check keeps the row
+  ticked with "Waiting to send" under it, Log keeps the line with "Waiting to
+  send", and Check's header, the Log field and the widget say "2 waiting to
+  send". It is sent by a pass: at once when it can, when the app opens or reads
+  `/check` again, on a pull to refresh or a tap on the waiting line, and by a
+  WorkManager job once the phone is online (30 s, then doubling). Only those
+  three writes ever wait; review answers, make-ups, Mall purchases and undos
+  never do (they show their error with Retry, as before). Demo data never waits.
+  - **Each item keeps its own life day**, fixed at the tap (never "today"). A
+    tick's is the day of the board its row was shown on (a Yesterday row's, its
+    lane's), as the web board sends its row's day; a line's and a Done's are the
+    server's clock as last read, read before the send. A tick sends its day as
+    its `day` from its first try, so a tick made at 03:30 and sent at 04:30
+    books on the day it was made (as a record of yesterday, at T 1.00); one
+    older than yesterday is never sent ("… was ticked Fri 23 Oct. Only today and
+    yesterday can still be recorded, so it wasn't sent."). A line saves on the
+    server's today, so a pass reads `/check` first and sends a line only while
+    its day is still the server's; one typed before the day turned is kept back
+    on Check's **Not sent** card with **Send for today** and **Discard**, never
+    saved on the new day by itself. It waits only because it got no answer, so
+    the card says it may already be saved ("Look on Today first: sent now, it
+    saves for today."): a done-now line that ticked a row writes no row the
+    server can find again, so sent on the new day it ticks that day's row too.
+    While `/check` gets no answer, the lines wait and the ticks and Dones behind
+    them still go. A Done marks the work item, not a day's row, so it goes
+    whatever the day.
+  - **A replay writes once**: it is the first try's request, the same clientId
+    and the same body, so the server answers it once (a tick once per day, a line
+    once per capture key, Done idempotent).
+  - Undo on a waiting tick or Done takes it off the phone ("Taken back. It
+    hadn't left the phone."); one on its way waits for its answer. A tick that
+    lands later says "Sent: Gym legs · +8.3 XP · Body" with its Undo.
+  - What the server refuses is set aside on the **Not sent** card with the
+    server's own line (Dismiss), and its row opens again. A server fault is tried
+    again 8 times first. A missing API token or a wrong address holds everything
+    ("2 waiting to send · held", with the server's line) until Settings is fixed;
+    nothing is dropped over it. Items wait for the server they were made for and
+    are never sent to another address.
+
 ## Build
 
 The build needs Android Studio's JDK (Java 21) and the Android SDK, both
@@ -143,7 +225,7 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 | Android Gradle Plugin | 8.7.2 (compileSdk and targetSdk 35, minSdk 26) |
 | Kotlin | 2.0.21 (with the Compose compiler plugin) |
 | Compose BOM | 2024.11.00 (Compose 1.7.5, Material 3 1.3.1) |
-| Other libraries | androidx.window 1.3.0, androidx.webkit 1.12.1, core-splashscreen 1.0.1, OkHttp 4.12.0, kotlinx.serialization 1.7.3, Health Connect client 1.1.0-alpha10, WorkManager 2.9.1 |
+| Other libraries | androidx.window 1.3.0, androidx.webkit 1.12.1, core-splashscreen 1.0.1, OkHttp 4.12.0, kotlinx.serialization 1.7.3, Health Connect client 1.1.0-alpha10, WorkManager 2.9.1 (Health Connect's sync and the offline queue), Glance 1.1.1 (the widget) |
 
 To build for a different default server, pass it as a property:
 `.\gradlew.bat assembleDebug -Pxtnl.server=https://example.com`. The default
@@ -234,9 +316,34 @@ is set in `gradle.properties` and is `https://xtnl-knowledge-xpis.vercel.app`.
   "On offer on the web" or the server's words for what stands, the footer with
   no count, no rate or target); the demo's side row and its calibration (a must
   eased, pending, as the server says it);
+- the Yesterday section and the knee note (P7: YesterdayLineTest, a Yesterday
+  row keyed apart from today's row of the same template, "2 to record", the
+  sheet's note; TickNoteTest, the moments shown as the web's (tiers 2 and 3, a
+  skill's tier left to the line), the knee in the server's words, its rate
+  rounded down, said once a day and stage; DemoBoardTest, a tick for yesterday
+  at its row's price, "· yesterday", once, refused for a row the lane doesn't
+  list, undone, the line by the clock, and a tick past 200 raw paying through
+  the knee with its note);
+- the widget, the tile and the offline queue (P8: SendQueueTest, a tick queued
+  offline at 03:30 and sent at 04:30 booking on its own day, the demo booking a
+  day key as the server does, a replay with the same clientId writing once, review
+  answers never queued, a line from an earlier day kept back and sent for today
+  once, a tick too old set aside unsent, the server's no set aside and its token
+  holding everything, a server fault tried 8 times, a Done sent whatever the day,
+  another address's items waiting, Undo taking a waiting tick off the phone but
+  not one on its way, the queue surviving a restart, the cache following what
+  landed and a tick made on Check, a line whose answer is lost across 04:00 kept
+  back, a failing `/check` holding only the lines; SendLineTest, each item's day
+  by the server's clock across 04:00, a tick's day its board's (a board read
+  before 04:00 and tapped after it), what a pass and an answer do, the words;
+  WidgetRowsTest, the demo's open musts and habits, a waiting tick, a proof or
+  reading row opening Check, each row's board day, the rows a height fits, a
+  widget tick being one tap; WidgetManifestTest, the widget's receiver and size
+  and the tile's binding and link);
 - the shapes of the API's responses (a row's proof, timer and pages, the timer
-  routes' answer, a row from an older server reading as none of them, and
-  `/exercise`'s counts and the body the sync sends).
+  routes' answer, a row from an older server reading as none of them, the
+  Yesterday lane and the knee, and `/exercise`'s counts and the body the sync
+  sends).
 
 The screen renders are a separate step, because they are slow. This command
 draws every screen with demo data at the Fold's sizes (front display, main
@@ -251,7 +358,10 @@ The PNGs are written to `app/build/screens/`. The moments (a tick, board
 clear, a review's card, a right answer and a miss, the two level ups, session
 complete, a work item's Done, the new idea's filing and seal, a tab switch) are
 filmed in Full motion at the front and main sizes, one PNG per key frame:
-`<size>-m<moment>-<name>-<ms after the tap>ms.png`.
+`<size>-m<moment>-<name>-<ms after the tap>ms.png`. The P8 renders are
+`<size>-offline-queue*.png` and `<size>-offline-log.png` (the demo's board read
+offline from an address that refuses at once, so nothing leaves the PC) and
+`<size>-widget-<cells>.png` (the widget drawn from its RemoteViews).
 
 ## Install on the phone over USB
 
@@ -364,11 +474,15 @@ Go to **More › Settings › Data › Demo data**, or tap **Try demo data** on 
     on the bottom half.
 - **Offline**: the last `/check` is cached and shown with "Offline · updated
   10:42".
-  - A write that fails shows the server's error line with **Retry**. A retry
-    sends the same clientId, so the server records the action only once. A
-    purchase whose reply was lost keeps its clientId only until a read of the
-    Mall lists it; after that a new Buy is a new purchase.
-  - What you typed is never cleared on a failure.
+  - A tick, a quick line or a Done with no answer waits on the phone and sends
+    when it can (the offline queue, above).
+  - Any other write that fails, and one the server refuses, shows the server's
+    error line with **Retry**. A retry sends the same clientId, so the server
+    records the action only once. A purchase whose reply was lost keeps its
+    clientId only until a read of the Mall lists it; after that a new Buy is a
+    new purchase.
+  - What you typed is never cleared on a failure (a line waiting to send is kept
+    by the queue, so the field is free again).
 - **Motion**: Settings › Motion offers **Full**, **Calm** or **Still**.
   - Full: each deed stamps (a 56 ms up-stroke, a few frames of hold, a spring
     settle), and rewards travel from where they show to where they are kept.
@@ -385,7 +499,8 @@ Go to **More › Settings › Data › Demo data**, or tap **Try demo data** on 
   (WebViewAssetLoader) and refuses every other request. Before KaTeX has
   drawn, or if it fails, the TeX source shows in monospace.
 - **Launcher shortcuts**: Quick check, Log a task, New idea and Review. Each
-  opens `xtnl://app/check`, `/log?section=task`, `/idea` or `/review`.
+  opens `xtnl://app/check`, `/log?section=task`, `/idea` or `/review`. The quick
+  tile opens `/log?section=task` too, and the widget `/check`.
 - **Full app**: the web app in a WebView.
   - Links on the server's own origin stay in the app; other links open in the
     browser.

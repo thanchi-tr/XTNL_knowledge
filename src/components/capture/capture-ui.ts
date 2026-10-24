@@ -19,7 +19,10 @@
  *   - the toast copy by case (toastCopy), the paste split
  *     (splitPastedLines) and its where-guess (wherePreviewOf);
  *   - the vocabulary cache and its refresh scheduler, the Back-closes
- *     history rule, the '#capture=' link, the duplicate note.
+ *     history rule, the '#capture=' link, the duplicate note;
+ *   - blueprint P6 (D33): the done-now line's chip ('Ticks: Gym (Habits)':
+ *     tickMatchOf over done-now.ts doneNowMatchOf), its primary ('Tick it')
+ *     and what a tick of the row it names says (toastCopy, addedRowCopy).
  *
  * Nothing here reads a clock, storage or the DOM: every input is a
  * parameter, so the checks can drive each rule with fixed values.
@@ -48,6 +51,7 @@ import type { WeightUnit } from "../../lib/weight";
 import { weightToastCopy } from "./weight-capture";
 import { isBoardId, workTasksHref } from "../../lib/work-boards";
 import { sideTagKeyOf } from "../../lib/side-quests";
+import { doneNowAsksTick, doneNowMatchOf, type DoneNowTick } from "../../lib/done-now";
 
 /**
  * Where a repeating capture lands when it is not due today: 'Next: Thu'.
@@ -150,6 +154,11 @@ export function primaryAction(p: {
   empty: boolean;
   sentThisOpening: number;
   parsed: Pick<ParsedCapture, "inbox" | "kind" | "doneNow"> | null;
+  /**
+   * P6 (D33): the line ticks the row it names (tickMatchOf), so it adds nothing: 'Tick it'; a row ticked today already
+   * ('done', P6 review) is answered with its standing tick, nothing written or paid: 'Already ticked'.
+   */
+  ticks?: DoneNowTick | boolean | null;
 }): { label: string; done: boolean } {
   if (p.coarse && p.empty && p.sentThisOpening > 0 && !p.editing) return { label: "Done", done: true };
   if (p.editing) return { label: "Save change", done: false };
@@ -157,9 +166,15 @@ export function primaryAction(p: {
   if (!parsed || p.empty) return { label: "Add", done: false };
   if (parsed.inbox || parsed.kind === "IDEA_DRAFT") return { label: "Add to Inbox", done: false };
   if (parsed.kind === "GOAL") return { label: "Add goal", done: false };
+  if (parsed.doneNow && p.ticks) return { label: p.ticks === "done" ? TICKED_PRIMARY : TICK_PRIMARY, done: false };
   if (parsed.doneNow) return { label: "Add as done", done: false };
   return { label: "Add", done: false };
 }
+
+/** The primary on a done-now line that ticks the row it names (P6): it adds nothing. */
+export const TICK_PRIMARY = "Tick it";
+/** The primary when that row was ticked today already (P6 review): its tick stands, so the line writes and pays nothing. */
+export const TICKED_PRIMARY = "Already ticked";
 
 /** The phone's footer line, in place of the key hints a touch screen has no use for. */
 export const TOUCH_HINT = "Enter adds the next line · Add closes";
@@ -283,6 +298,12 @@ export function addedAnnouncement(title: string, where: string, addedThisOpening
   return `Added ${title} → ${where}. ${addedThisOpening} added.`;
 }
 
+/** The live region's sentence for a done-now line that ticked the row it names (P6): what it ticked, from where. */
+export function tickedAnnouncement(item: Pick<CapturedItem, "title"> & Partial<Pick<CapturedItem, "ticked">>): string {
+  if (item.ticked?.earlier) return `${item.title} was already ticked today. ${TICKED_EARLIER_TAIL}`;
+  return `Ticked ${item.title}${item.ticked ? ` (${item.ticked.from})` : ""}.`;
+}
+
 // ── The dock when the sheet closes ────────────────────────────────────────
 
 export type DockChoice = "none" | "single" | "summary";
@@ -385,6 +406,11 @@ export interface PendingLine extends SentLine {
    * was captured. Absent: the personal Board.
    */
   board?: string;
+  /**
+   * Blueprint P6 (D33): the done-now line's 'Ticks: …' chip was tapped, so it is saved as a new task, never a tick of
+   * the row it names (createFromCapture `asNew`), on every retry too. Absent: the server may tick it.
+   */
+  asNew?: true;
 }
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -407,7 +433,7 @@ export function parsePendingList(raw: unknown): PendingLine[] {
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((p) => {
     if (!p || typeof p !== "object") return [];
-    const { text, reverted, nonce, at, replaces, day, board } = p as Record<string, unknown>;
+    const { text, reverted, nonce, at, replaces, day, board, asNew } = p as Record<string, unknown>;
     if (typeof nonce !== "string" || !/^[A-Za-z0-9:_-]{4,64}$/.test(nonce) || typeof at !== "number" || !Number.isFinite(at)) return [];
     const clean = sanitizeCaptureInput(text, reverted);
     if (!clean.text.trim()) return [];
@@ -415,6 +441,7 @@ export function parsePendingList(raw: unknown): PendingLine[] {
     if (typeof replaces === "string" && ID_RE.test(replaces)) line.replaces = replaces;
     if (typeof day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(day)) line.day = day;
     if (isBoardId(board)) line.board = board;
+    if (asNew === true) line.asNew = true;
     return [line];
   });
 }
@@ -1032,6 +1059,12 @@ export interface ToastCopy {
 }
 
 export const NOT_MUST_TAIL = "needs a day or a schedule to be a Must";
+/** P6 (D33): a done-now line whose row was ticked today already: nothing was written or paid again. */
+export const TICKED_EARLIER_TAIL = "Nothing is paid twice.";
+/** Its 'Added here' row's place. */
+export const TICKED_EARLIER_WHERE = "Ticked earlier today";
+/** What its Undo says, in the toast and on its 'Added here' row (the row itself stays: only the tick went). */
+export const TICK_TAKEN_BACK = "Tick taken back";
 export const OLD_KEPT_BODY = "The old one couldn't be removed. Archive it on Today.";
 export const FILING_WHERE = "filing now. If it looks like one you have, it waits in your Inbox.";
 
@@ -1045,11 +1078,14 @@ export const FILING_WHERE = "filing now. If it looks like one you have, it waits
  * sixth must saved as an ordinary task reads 'Added (not a Must)' with the
  * cap's line; the 4th or 5th adds the warning ('4 of 5 daily quests'). Its
  * `sideNote` (side quests, P31): a '#side' line past the two open reads
- * 'Added (not a side quest)' with SIDE_CAP_LINE.
+ * 'Added (not a side quest)' with SIDE_CAP_LINE. Its `ticked` (P6, D33): a
+ * done-now line that ticked the row it names reads 'Ticked · Gym (Habits) ·
+ * +8.3', or 'Already ticked · Gym → Done today · Nothing is paid twice.'
+ * when that row was ticked today already (nothing was written).
  */
 export function toastCopy(
   item: Pick<CapturedItem, "id" | "title" | "projectedXp" | "kind" | "doneNow" | "doneNowError" | "duplicate" | "href" | "where" | "filing" | "oldKept" | "weight"> &
-    Partial<Pick<CapturedItem, "board" | "mustNote" | "sideNote">>,
+    Partial<Pick<CapturedItem, "board" | "mustNote" | "sideNote" | "ticked">>,
   ctx: { notMust?: boolean; update?: boolean; offToday?: boolean } = {}
 ): ToastCopy {
   // A weigh-in is a record, not a task: its own copy, no figure, View goes to Train (weight-capture.ts).
@@ -1067,7 +1103,18 @@ export function toastCopy(
   // A '#side' line past the cap (P31) says so the way a sixth must does: saved as an ordinary task, with the line why.
   const cap = item.mustNote ?? item.sideNote ?? null;
 
-  if (ctx.update && item.oldKept) {
+  if (item.ticked) {
+    // P6 (D33): no row was saved: the line ticked the one it names, from the lane it was in.
+    if (item.ticked.earlier) {
+      head = "Already ticked";
+      tail = TICKED_EARLIER_TAIL;
+    } else {
+      head = "Ticked";
+      title = `${item.title} (${item.ticked.from})`;
+      to = null;
+      if (priced) figure = { text: `+${formatXp(item.projectedXp)}`, exact: true };
+    }
+  } else if (ctx.update && item.oldKept) {
     head = "Saved the new line";
     title = "";
     to = null;
@@ -1117,10 +1164,13 @@ export function toastCopy(
   return { head, title, where: to, figure, tail, link, body: parts.join(" · ") };
 }
 
-/** A row of the 'Added here' list: title, place, ≈ price (or what a tick paid). */
-export function addedRowCopy(item: Pick<CapturedItem, "title" | "projectedXp" | "doneNow" | "where" | "kind">): { title: string; where: string; figure: string | null } {
+/** A row of the 'Added here' list: title, place, ≈ price (or what a tick paid). A tick of the row a line named (P6) says so. */
+export function addedRowCopy(
+  item: Pick<CapturedItem, "title" | "projectedXp" | "doneNow" | "where" | "kind"> & Partial<Pick<CapturedItem, "ticked">>
+): { title: string; where: string; figure: string | null } {
   const priced = Number.isFinite(item.projectedXp) && item.projectedXp > 0 && item.kind !== "GOAL" && item.kind !== "IDEA_DRAFT";
   const figure = priced ? (item.doneNow ? `+${formatXp(item.projectedXp)}` : `≈ ${formatXp(item.projectedXp)}`) : null;
+  if (item.ticked) return item.ticked.earlier ? { title: item.title, where: TICKED_EARLIER_WHERE, figure: null } : { title: item.title, where: `Ticked · ${item.ticked.from}`, figure };
   return { title: item.title, where: item.where?.label ?? "", figure };
 }
 
@@ -1225,6 +1275,14 @@ export function wherePreviewOf(parsed: ParsedCapture, today: DayKey): BoardPlace
 /** The paste preview's dashed note on a Must that has no day (it saves as an ordinary task). */
 export const PASTE_MUST_NOTE = "Must · needs a day";
 
+/** P6 review: the paste preview's toggle on a done-now line that ticks the row it names: pressed, a new task instead. */
+export const PASTE_AS_NEW = "As a new task";
+
+/** Its accessible name: the line, and the row it would tick otherwise. */
+export function pasteAsNewLabel(line: string, title: string): string {
+  return `Add “${line}” as a new task instead of ticking ${title}`;
+}
+
 // ── The vocabulary cache and its refresh ──────────────────────────────────
 
 export const VOCAB_CACHE_KEY = "xtnl:capture:vocab";
@@ -1266,7 +1324,9 @@ export function parseVocabCache(raw: unknown): VocabCache | null {
           const x = a as Record<string, unknown>;
           const w = x.where as Record<string, unknown> | undefined;
           if (typeof x.normTitle !== "string" || typeof x.title !== "string" || !w || typeof w.lane !== "string" || typeof w.label !== "string") return [];
-          return [{ normTitle: x.normTitle, title: x.title, where: { lane: w.lane, label: w.label } as BoardPlace }];
+          // P6: what it offers a done-now line; anything else (a cache written before P6) offers nothing.
+          const tick: DoneNowTick | null = x.tick === "open" || x.tick === "done" ? x.tick : null;
+          return [{ normTitle: x.normTitle, title: x.title, where: { lane: w.lane, label: w.label } as BoardPlace, ...(tick ? { tick } : {}) }];
         })
         .slice(0, ACTIVE_SCAN_MAX)
     : [];
@@ -1418,6 +1478,39 @@ export function duplicateOf(title: string, active: readonly CaptureActiveTitle[]
 
 export function duplicateNote(a: Pick<CaptureActiveTitle, "title" | "where">): string {
   return `Already on your board: ${a.title} · ${a.where.label}`;
+}
+
+/**
+ * Blueprint P6 (D33): the open title a done-now line will tick, for the sheet's chip ('Ticks: Gym (Habits)'), or
+ * null: done-now.ts doneNowMatchOf over the sheet's list, the server's own rule. Never during an edit (the server's
+ * edit writes its own row, as before), on a work tab, or once the chip was tapped (`asNew`: a new task). Only the
+ * first ACTIVE_SCAN_MAX titles are read, as the duplicate note reads them.
+ *
+ * P6 review: only from a list that is today's and fresh (`fresh`: vocabPriceable, the rule the ≈ price keeps), since
+ * what a row offers (open, ticked already) is a day's and a tick on the board never rewrites the stored list; the
+ * sheet reads it again at once for a line that asks a tick (tickWantsRefresh). `fresh` absent counts as fresh.
+ */
+export function tickMatchOf(
+  parsed: Parameters<typeof doneNowMatchOf>[0],
+  active: readonly CaptureActiveTitle[],
+  ctx: { editing?: boolean; work?: boolean; asNew?: boolean; fresh?: boolean } = {}
+): CaptureActiveTitle | null {
+  if (ctx.editing || ctx.fresh === false) return null;
+  const list = active.length > ACTIVE_SCAN_MAX ? active.slice(0, ACTIVE_SCAN_MAX) : active;
+  return doneNowMatchOf(parsed, normTitleOf(parsed.title), list, { work: ctx.work, asNew: ctx.asNew });
+}
+
+/**
+ * P6 review: whether the open sheet reads its list again at once (as an idea line asks for its words): a line that
+ * asks a tick (doneNowAsksTick, off a work tab, not an edit, not turned back into a new task) over a list that is not
+ * today's and fresh, so its chip shows before Enter. Once per opening, never while a save is in flight (the caller's
+ * considerVocab keeps both rules).
+ */
+export function tickWantsRefresh(
+  parsed: Parameters<typeof doneNowAsksTick>[0] | null,
+  ctx: { fresh: boolean; editing?: boolean; work?: boolean; asNew?: boolean }
+): boolean {
+  return !!parsed && !ctx.fresh && !ctx.editing && !ctx.work && !ctx.asNew && doneNowAsksTick(parsed);
 }
 
 // ── The idea chip ─────────────────────────────────────────────────────────

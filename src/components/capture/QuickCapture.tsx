@@ -16,12 +16,13 @@ import {
   type CaptureResult,
   type CapturedItem,
 } from "@/app/actions/capture";
-import { undoCapture } from "@/app/actions/tasks";
+import { undoCapture, undoCompletion } from "@/app/actions/tasks";
 import { MAX_CAPTURE_CHARS, isCaptureHotkey, parseCapture, shiftReverted, splitIdeaLine, type CaptureSpan } from "@/lib/capture-parse";
 import { todayKey, type DayKey } from "@/lib/life-day";
 import type { CaptureToken } from "@/lib/life-types";
 import { normTitleOf } from "@/lib/life-lexicon";
 import { mark } from "@/lib/celebrate";
+import { presentAll } from "@/components/celebrate/stage";
 import { MODAL_OPEN_SELECTOR } from "@/lib/shortcuts";
 import { SHEET_DRAFT_CLEARED_EVENT, writeIdeaHandoff, type SheetDraftCleared } from "@/lib/idea-handoff";
 import { writeAimHandoff } from "@/lib/roadmap-handoff";
@@ -60,6 +61,7 @@ import {
   TOUCH_HINT,
   addedAnnouncement,
   addedReducer,
+  tickedAnnouncement,
   dockToastChoice,
   applyInsert,
   caretContext,
@@ -91,6 +93,9 @@ import {
   stampLine,
   submitAllowed,
   tagSuggestions,
+  tickMatchOf,
+  tickWantsRefresh,
+  TICK_TAKEN_BACK,
   toInboxLine,
   undoGoneCopy,
   unsentLabel,
@@ -186,6 +191,13 @@ import {
  * inside <main>, whose @container would trap a fixed layer), under one
  * [data-capture-ui] marker so the review card can tell a tap meant for the
  * sheet from one meant for it.
+ *
+ * A done-now line that names a row on today's Board ('x gym 45m' with a Gym
+ * habit due: blueprint P6, D33) shows the chip 'Ticks: Gym (Habits)', and the
+ * primary reads 'Tick it': the server ticks that row and saves nothing new.
+ * One tap on the chip turns the line back into a new task (sent `asNew`, on
+ * every retry too). Its 'Added here' row has no Edit, and its Undo takes the
+ * tick back (undoCompletion), never the row.
  *
  * A weigh-in line ('weight 72.4', 'w 160 lb yesterday': weight-capture.ts)
  * is logged as that day's reading, never saved as a task: one chip, 'Log
@@ -283,6 +295,8 @@ interface Opening {
   saved: boolean;
   /** The background vocabulary refresh ran in this opening. */
   refreshed: boolean;
+  /** P6 review: the list was read at once for a line that asks a tick (once an opening; the refresh after a save still runs). */
+  tickRead?: boolean;
   /** The last capture this opening confirmed, for the dock's one-line toast on close. */
   last?: { id: string; notMust: boolean; update: boolean };
 }
@@ -306,6 +320,7 @@ function pendingOf(line: PendingLine): PendingLine {
     ...(line.replaces ? { replaces: line.replaces } : {}),
     ...(line.day ? { day: line.day } : {}),
     ...(line.board ? { board: line.board } : {}),
+    ...(line.asNew ? { asNew: true as const } : {}),
   };
 }
 
@@ -394,9 +409,12 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
   const [editing, setEditing] = useState<{ oldId: string; title: string; norm: string } | null>(null);
   /** The text the Must gate last stopped on (block-once). */
   const [blocked, setBlocked] = useState<string | null>(null);
+  /** P6: the title (normTitleOf) whose 'Ticks: …' chip was tapped: that line is saved as a new task, not a tick. */
+  const [asNewNorm, setAsNewNorm] = useState<string | null>(null);
   const [menu, setMenu] = useState<InsertMenu | null>(null);
   const [feedsOpen, setFeedsOpen] = useState(false);
-  const [paste, setPaste] = useState<{ lines: string[]; truncated: boolean } | null>(null);
+  /** A pasted list's preview; `asNew` (P6 review): the done-now lines turned back into new tasks, by index. */
+  const [paste, setPaste] = useState<{ lines: string[]; truncated: boolean; asNew?: boolean[] } | null>(null);
   /** 'Make it an aim' rewrote a long goal's line: the line before, and the line it made. The aim chip puts the goal back while the line is still that one. */
   const [aimRewrite, setAimRewrite] = useState<{ from: Line; to: string } | null>(null);
   const [coarse, setCoarse] = useState(false);
@@ -454,6 +472,8 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
   const aimWantedRef = useRef(false);
   /** A long goal: 'Make it an aim' also needs to know whether set-an-aim suggestions may show. */
   const aimPromptWantedRef = useRef(false);
+  /** P6 review: the line asks a tick and the list is not today's and fresh: it is read again at once (tickWantsRefresh). */
+  const tickRefreshRef = useRef(false);
   const menuRef = useRef<InsertMenu | null>(null);
   /** Captures an edit is on its way to replace (replacingOf), for handlers that run later. */
   const replacingRef = useRef<ReadonlyMap<string, string>>(new Map());
@@ -478,6 +498,18 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
   const longGoal = !aimCap && !editing && !paste && isLongGoalLine(parsed);
   // The Goal ▾ menu's 'New aim' shows only with no roadmap open (known), so an open Goal menu asks too.
   const aimWanted = !!aimCap || longGoal || (menu === "goal" && !editing);
+  /**
+   * P6 review: the 'Ticks: …' chip is offered only from a list that is today's and fresh (the ≈ price's own rule), and
+   * the line whose chip was tapped is the one saved as a new task (asNewNorm, cleared with the line).
+   */
+  const tickFresh = !!vocab && vocab.day === day && vocab.priced;
+  const asNewHere = asNewNorm !== null && !!parsed && asNewNorm === normTitleOf(parsed.title);
+  // A pasted list's done-now lines preview their ticks from the same list, so it is read again for them too.
+  const pasteAsksTick = useMemo(
+    () => !!paste && !!day && !tickFresh && !onWork && paste.lines.some((l) => tickWantsRefresh(parseCapture(l, { today: day, work: onWork }), { fresh: false })),
+    [paste, day, tickFresh, onWork]
+  );
+  const tickRefresh = open && !aimCap && (paste ? pasteAsksTick : tickWantsRefresh(parsed, { fresh: tickFresh, editing: !!editing, work: onWork, asNew: asNewHere }));
   /** A bare weigh-in number is read in the user's unit (from the vocabulary; 'kg' until it loads). The server reads it the same way. */
   const weightUnit: WeightUnit = vocab?.weightUnit ?? "kg";
   const weighIn = useMemo(() => (open && day ? weighInOf(text, reverted, day, weightUnit) : null), [open, day, text, reverted, weightUnit]);
@@ -505,6 +537,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
     aimLineRef.current = !!aimCap;
     aimWantedRef.current = aimWanted;
     aimPromptWantedRef.current = longGoal;
+    tickRefreshRef.current = tickRefresh;
     menuRef.current = menu;
     replacingRef.current = replacing;
   });
@@ -516,6 +549,8 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
     lineRef.current = { text: next, reverted: spans };
     if (next.trim()) emptySince.current = null;
     else if (!wasEmpty || emptySince.current === null) emptySince.current = Date.now();
+    // P6 review: the chip's 'a new task' was this line's choice, so it ends with the line (emptied, saved or replaced).
+    if (!next.trim()) setAsNewNorm(null);
     setText(next);
     setReverted(spans);
   }, []);
@@ -671,6 +706,14 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
       loadVocab(false);
       return;
     }
+    // P6 review: a line that asks a tick over a list that is not today's and fresh: read at once, so its 'Ticks: …'
+    // chip (or none) is the server's before Enter; once per opening, beside the refresh after a save (which still runs,
+    // so a burst's next line reads the board after this one's tick).
+    if (openRef.current && tickRefreshRef.current && !o.tickRead) {
+      o.tickRead = true;
+      loadVocab(false);
+      return;
+    }
     const since = emptySince.current;
     const decision = vocabRefreshDecision({
       now,
@@ -718,6 +761,11 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
   useEffect(() => {
     if (open && ideaMode && !vocab?.words) considerVocab();
   }, [open, ideaMode, vocab, considerVocab]);
+
+  // P6 review: a line that asks a tick reads the list again at once when it is not today's and fresh.
+  useEffect(() => {
+    if (tickRefresh) considerVocab();
+  }, [tickRefresh, considerVocab]);
 
   // An aim line or a long goal asks whether a roadmap is open (and a long goal whether suggestions may show), when no load has said so yet.
   useEffect(() => {
@@ -780,19 +828,23 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
       } else if (!openRef.current && mine && o.sent - o.merged >= 2) {
         showToast({ kind: "summary", key: ++seq.current, titles: [...o.titles], failed: o.failed });
       } else {
-        // The live region says 'Added <title> → <where>. N added.' for a line of this opening (a weigh-in says its own toast).
-        const say = mine && !update && !item.duplicate && !item.weight ? addedAnnouncement(item.title, item.where.label, o.titles.length) : undefined;
+        // The live region says 'Added <title> → <where>. N added.' for a line of this opening (a weigh-in says its own
+        // toast); a tick of the row the line named (P6) says what it ticked.
+        const say = mine && !update && !item.duplicate && !item.weight ? (item.ticked ? tickedAnnouncement(item) : addedAnnouncement(item.title, item.where.label, o.titles.length)) : undefined;
         showToast({ kind: "added", key: ++seq.current, item, notMust, update }, say);
       }
       // A weigh-in is a record, not a reward and not a board row: no mark, no flash.
       if (!item.weight) {
         // Tier 0: a capture saved. In place, no flight (a capture pays nothing yet); the toast says it.
-        void mark({ kind: "capture", id: `capture:${item.id}`, text: `Captured ${item.title}`, say: false });
+        void mark({ kind: "capture", id: `capture:${item.id}`, text: item.ticked ? `Ticked ${item.title}` : `Captured ${item.title}`, say: false });
         // The board flashes where it went. Behind the open sheet's scrim the flash would be spent
         // unseen (and the page scrolled under the modal), so it waits for the sheet to close.
         if (openRef.current) heldCaptured.current = item;
         else window.dispatchEvent(new CustomEvent<CapturedItem>(CAPTURED_EVENT, { detail: item }));
       }
+      // P6 review: the Seals and Ascensions a tick of the named row crossed play as the board's tick's do (its T1s are
+      // in place there; the server stored the rest unseen, so one not played here plays from the pending queue).
+      if (item.ticked && item.celebrations) presentAll(item.celebrations);
     } else if (res === null) {
       // The network, not the server: queued, and it retries on its own.
       const current = unsentRef.current.find((u) => u.nonce === line.nonce);
@@ -842,7 +894,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
         // was lost finds the row it already wrote instead of writing a second.
         res = line.replaces
           ? await recaptureFromCapture(line.replaces, line.text, line.reverted, { refresh: refreshPage, captureKey: line.nonce })
-          : await createFromCapture(line.text, line.reverted, { refresh: refreshPage, captureKey: line.nonce, board: line.board ?? null, weightUnit });
+          : await createFromCapture(line.text, line.reverted, { refresh: refreshPage, captureKey: line.nonce, board: line.board ?? null, weightUnit, asNew: line.asNew === true });
       } catch {
         res = null;
       }
@@ -877,7 +929,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
       let res: CaptureManyResult | null;
       try {
         res = await createManyFromCapture(
-          lines.map((l) => ({ text: l.text, reverted: l.reverted, captureKey: l.nonce, ...(l.board ? { board: l.board } : {}) })),
+          lines.map((l) => ({ text: l.text, reverted: l.reverted, captureKey: l.nonce, ...(l.board ? { board: l.board } : {}), ...(l.asNew ? { asNew: true } : {}) })),
           { refresh: refreshPage, weightUnit }
         );
       } catch {
@@ -943,6 +995,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
       setMenu(null);
       setPaste(null);
       setBlocked(null);
+      setAsNewNorm(null);
       setFeedsOpen(false);
       setPocket(false);
       setShowAll(false);
@@ -1292,7 +1345,11 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
   const addPasted = () => {
     if (!paste || paste.lines.length === 0) return;
     const now = Date.now();
-    const lines = paste.lines.map((t) => stampLine({ text: t, reverted: [] }, ++seq.current, now, randomSalt(), null, workBoardRef.current));
+    // P6 review: a done-now line its preview turned back into a new task goes `asNew`, on every retry too.
+    const lines = paste.lines.map((t, i): PendingLine => {
+      const stamped = stampLine({ text: t, reverted: [] }, ++seq.current, now, randomSalt(), null, workBoardRef.current);
+      return paste.asNew?.[i] ? { ...stamped, asNew: true } : stamped;
+    });
     addPending(...lines);
     const o = openingRef.current;
     o.sent += lines.length;
@@ -1353,12 +1410,17 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
       setError(TITLE_MISSING);
       return;
     }
+    // P6: a line whose 'Ticks: …' chip was tapped goes as a new task, on every retry too. A line that ticks the row it
+    // names takes no Must from the line, so the Must gate never stops it.
+    const asNew = asNewNorm !== null && asNewNorm === normTitleOf(read.title);
+    const v = vocabRef.current;
+    const ticking = !weighed && !!v && tickMatchOf(read, v.active, { editing: !!editing, work: workBoardRef.current !== null, asNew, fresh: v.day === day && v.priced }) !== null;
     // Block-once: a Must with no day, or a weigh-in-shaped line whose number is
     // out of range (it would be a task), stops the first press and says why.
     let notMust = false;
     if (!opts.inbox && !weighed) {
       const out = weighInOutOfRange(line.text, line.reverted, day, unit);
-      const gate = mustGate(blocked, line.text, !!read.compulsoryWarning || out !== null);
+      const gate = mustGate(blocked, line.text, (!!read.compulsoryWarning && !ticking) || out !== null);
       if (gate.action === "block") {
         setBlocked(gate.blocked);
         if (out) announce(weightRangeBlocked(out));
@@ -1368,7 +1430,8 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
       notMust = gate.action === "save-not-must" && !!read.compulsoryWarning;
     }
     const lineText = opts.inbox && !read.inbox ? toInboxLine(line.text) : line.text;
-    const pending = stampLine({ text: lineText, reverted: line.reverted }, ++seq.current, now, randomSalt(), editing?.oldId ?? null, workBoardRef.current);
+    const stamped = stampLine({ text: lineText, reverted: line.reverted }, ++seq.current, now, randomSalt(), editing?.oldId ?? null, workBoardRef.current);
+    const pending: PendingLine = asNew ? { ...stamped, asNew: true } : stamped;
     addPending(pending);
     writeDraft(null);
     if (notMust) notMustRef.current.add(pending.nonce);
@@ -1382,6 +1445,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
     setError(null);
     setNote(null);
     setBlocked(null);
+    setAsNewNorm(null);
     setMenu(null);
     setEditing(null);
     autocorrect.clearRecent();
@@ -1560,10 +1624,48 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
     });
   };
 
+  /**
+   * Undo of a done-now line that ticked the row it names (P6): the tick is taken back (actions/tasks undoCompletion,
+   * the board's own Undo, inside its ten minutes); the row stays where it was. One ticked earlier today wrote nothing.
+   */
+  const undoTick = (item: CapturedItem) => {
+    const ticked = item.ticked;
+    if (!ticked || ticked.earlier) return;
+    setUndoBusy((s) => new Set(s).add(item.id));
+    showToast({ kind: "working", key: ++seq.current, message: "Undoing…" });
+    startTransition(async () => {
+      let res: { ok: true } | { ok: false; error: string };
+      try {
+        const r = await undoCompletion(ticked.instanceId, { refresh: onTodayRef.current });
+        res = r.ok ? { ok: true } : { ok: false, error: r.error };
+      } catch {
+        res = { ok: false, error: "Couldn't reach the server to undo." };
+      }
+      setUndoBusy((s) => {
+        const n = new Set(s);
+        n.delete(item.id);
+        return n;
+      });
+      if (res.ok) {
+        if (heldCaptured.current?.id === item.id) heldCaptured.current = null;
+        setCaptured((n) => Math.max(0, n - 1));
+        dispatchAdded({ type: "removed", id: item.id, now: Date.now() });
+        showToast({ kind: "removed", key: ++seq.current, title: item.title, head: TICK_TAKEN_BACK });
+      } else {
+        showToast({ kind: "error", key: ++seq.current, head: "Didn't undo", message: res.error });
+      }
+      refocusLine();
+    });
+  };
+
   const undo = (item: CapturedItem) => {
     if (undoBusy.has(item.id)) return;
     if (item.weight) {
       undoWeight(item);
+      return;
+    }
+    if (item.ticked) {
+      undoTick(item);
       return;
     }
     // An edit of this line is on its way: an Undo now would leave its new row standing.
@@ -1729,7 +1831,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
   // The keyboard path to Undo: Ctrl/Cmd+Z while an 'added' toast is showing
   // and the sheet is closed, from anywhere but a text field or a review
   // card. A capture made with 'c' and Enter can be taken back the same way.
-  const undoTarget = !open && toast?.kind === "added" && !toast.update && (!toast.item.weight || toast.item.weight.undoable) ? toast.item : null;
+  const undoTarget = !open && toast?.kind === "added" && !toast.update && (!toast.item.weight || toast.item.weight.undoable) && !toast.item.ticked?.earlier ? toast.item : null;
   useEffect(() => {
     if (!undoTarget) return;
     const item = undoTarget;
@@ -1745,6 +1847,15 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
   }, [undoTarget]);
 
   // ── Chips and the insert row ────────────────────────────────────────────
+
+  /** P6: the 'Ticks: …' chip, tapped: this title's line is saved as a new task, not a tick of the row it names. */
+  const tickAsNew = () => {
+    const title = parsed?.title ?? "";
+    if (!title) return;
+    setAsNewNorm(normTitleOf(title));
+    announce("It will be added as a new task.");
+    focusInput();
+  };
 
   /** The weigh-in chip, tapped: the whole line stays text (a task), here and on the server (weight-capture revertedWholeLine). */
   const keepLineAsText = () => {
@@ -1924,7 +2035,12 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
     // An aim line saves nothing: its one action opens the aim form (never empty, never disabled).
     const aimAct = aimCap ? aimActionOf(vocab?.aim) : null;
     const canInbox = canSave && !aimCap && !weighIn && !editing && !parsed.inbox && parsed.kind === "TASK" && !parsed.doneNow;
-    const primary = primaryAction({ editing: !!editing, coarse, empty, sentThisOpening, parsed });
+    // P6 (D33): the row a done-now line will tick (the server's own rule over the same list), unless its chip was tapped.
+    const tickMatch =
+      vocab && !paste && !aimCap && !weighIn && !ideaMode
+        ? tickMatchOf(parsed, vocab.active, { editing: !!editing, work: workBoard !== null, asNew: asNewHere, fresh: tickFresh })
+        : null;
+    const primary = primaryAction({ editing: !!editing, coarse, empty, sentThisOpening, parsed, ticks: tickMatch ? (tickMatch.tick ?? true) : null });
     const primaryLabel = aimAct ? aimAct.label : weighIn && !primary.done && !editing ? WEIGHT_PRIMARY : primary.label;
     const primaryDisabled = aimAct ? false : !primary.done && !canSave;
     const priced = vocab && vocab.day === day && vocab.priced ? vocab.rawBefore : null;
@@ -2040,11 +2156,22 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
         truncated={paste.truncated}
         today={day}
         weightUnit={weightUnit}
+        active={vocab && tickFresh ? vocab.active : null}
+        work={workBoard !== null}
+        asNew={paste.asNew}
+        onToggleAsNew={(i) =>
+          setPaste((p) => {
+            if (!p) return p;
+            const asNew = p.lines.map((_, j) => (j === i ? !p.asNew?.[j] : !!p.asNew?.[j]));
+            return { ...p, asNew };
+          })
+        }
         onRemove={(i) =>
           setPaste((p) => {
             if (!p) return p;
             const lines = p.lines.filter((_, j) => j !== i);
-            return lines.length > 0 ? { ...p, lines } : null;
+            const asNew = p.asNew?.filter((_, j) => j !== i);
+            return lines.length > 0 ? { ...p, lines, ...(asNew ? { asNew } : {}) } : null;
           })
         }
       />
@@ -2078,6 +2205,8 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
         feedsOpen={feedsOpen}
         onToggleFeeds={() => setFeedsOpen((f) => !f)}
         duplicate={duplicate}
+        ticks={tickMatch}
+        onTickAsNew={tickAsNew}
         mustBlocked={mustBlocked}
         mustFixes={mustFixInserts(day)}
         onFix={insertIntoLine}

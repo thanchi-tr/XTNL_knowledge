@@ -111,18 +111,22 @@ import com.xtnl.app.core.OwedLine
 import com.xtnl.app.core.ProofLine
 import com.xtnl.app.core.QuestLine
 import com.xtnl.app.core.RestTokenLine
+import com.xtnl.app.core.SendLine
 import com.xtnl.app.core.SideLine
 import com.xtnl.app.core.StreakLine
 import com.xtnl.app.core.TickLadder
+import com.xtnl.app.core.TickNote
 import com.xtnl.app.core.TimeLabels
 import com.xtnl.app.core.WalletLine
 import com.xtnl.app.core.WeekLine
+import com.xtnl.app.core.YesterdayLine
 import com.xtnl.app.data.CheckCalibration
 import com.xtnl.app.data.CheckData
 import com.xtnl.app.data.CheckSkill
 import com.xtnl.app.data.DailyQuests
 import com.xtnl.app.data.Fading
 import com.xtnl.app.data.LevelInfo
+import com.xtnl.app.data.NotSent
 import com.xtnl.app.data.OwedItem
 import com.xtnl.app.data.QuestsData
 import com.xtnl.app.data.ReviewSummary
@@ -283,7 +287,8 @@ fun CheckEvents(vm: CheckViewModel, spots: CheckSpots) {
                     if (!e.hinted && e.xp > 0 && spots.shown && motion == MotionLevel.FULL && run != null && run.arrived == 0 && !run.holding) {
                         spots.at[e.templateId]?.let { from -> launchMotes(spots, fx, feel, c, run, from, mvv = false, delayMs = 0, motion = motion) }
                     }
-                    snacks.show(e.line ?: "Kept · ${Fmt.signed(e.xp)} XP", "Undo", SnackTone.KEPT) {
+                    // P7: the moments the tick played and the knee note ride under its line, in its one snackbar (its Undo stays).
+                    snacks.show(TickNote.message(e.line ?: "Kept · ${Fmt.signed(e.xp)} XP", e.moments, e.knee), "Undo", SnackTone.KEPT) {
                         undoTick(spots, fx, feel, vm, e.templateId, motion)
                     }
                 }
@@ -296,6 +301,9 @@ fun CheckEvents(vm: CheckViewModel, spots: CheckSpots) {
                     spots.nod("t:${e.templateId}")
                     snacks.error(e.message, e.retry)
                 }
+                // P8: a tick with no answer waits on the phone: its row stays ticked, and its Undo takes it off the phone.
+                is CheckViewModel.Event.TaskQueued -> snacks.show(e.message, "Undo") { undoTick(spots, fx, feel, vm, e.templateId, motion) }
+                is CheckViewModel.Event.WorkQueued -> snacks.show(e.message, "Undo") { feel?.untick(ladder = false); vm.cancelWorkDone(e.item) }
                 is CheckViewModel.Event.TaskUndone -> snacks.show("Put back · ${Fmt.signed(e.xp)} XP")
                 is CheckViewModel.Event.UndoFailed -> { feel?.error(); snacks.error(e.message) }
                 // Work never climbed the ladder, so its undo takes no rung back.
@@ -505,22 +513,29 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
         }
     }
 
-    /** P7, P23, P24: the minutes sheet's row (a long press, a proof row's tap with no timer run, a reading task's tap); null when closed. */
+    /**
+     * P7, P23, P24: the minutes sheet's row (a long press, a proof row's tap with no timer run, a reading task's tap), by
+     * its row key (a Yesterday row's is YesterdayLine.key); null when closed.
+     */
     var sheetFor by rememberSaveable { mutableStateOf<String?>(null) }
 
-    /** A tick, at its release frame (T): the haptic and the pluck fire now, the row flips now, the motes follow. */
-    fun tick(t: TaskItem, mvv: Boolean, minutes: Int? = null, sessionId: String? = null, pages: Int? = null) {
+    /**
+     * A tick, at its release frame (T): the haptic and the pluck fire now, the row flips now, the motes follow. [yesterday]
+     * (P7): a row of the Yesterday lane, ticked for yesterday; its moment is keyed apart from today's row of the template.
+     */
+    fun tick(t: TaskItem, mvv: Boolean, minutes: Int? = null, sessionId: String? = null, pages: Int? = null, yesterday: Boolean = false) {
+        val key = if (yesterday) YesterdayLine.key(t.templateId) else t.templateId
         val clientId = UUID.randomUUID().toString()
-        val id = tickId(t.templateId, clientId)
+        val id = tickId(key, clientId)
         val motes = motion == MotionLevel.FULL && (spots.seal?.tip() != null || fx.resolve("check") != null)
         val step = feel?.tick(id, motes) ?: 0
-        val run = TickRun(id, t.templateId, step, TickMoment.motes(step, mvv), SystemClock.uptimeMillis(), motes)
-        spots.runs[t.templateId] = run
-        vm.complete(t, mvv = mvv, clientId = clientId, minutes = minutes, sessionId = sessionId, pages = pages)
+        val run = TickRun(id, key, step, TickMoment.motes(step, mvv), SystemClock.uptimeMillis(), motes)
+        spots.runs[key] = run
+        vm.complete(t, mvv = mvv, clientId = clientId, minutes = minutes, sessionId = sessionId, pages = pages, yesterday = yesterday)
         val seal = spots.seal
         when {
             motion == MotionLevel.FULL && t.xpHint != null -> {
-                val from = spots.xp[t.templateId] ?: spots.at[t.templateId]
+                val from = spots.xp[key] ?: spots.at[key]
                 if (motes && from != null) launchMotes(spots, fx, feel, c, run, from, mvv, TickMoment.MOTES_AT, motion)
                 // Nowhere to land: a chip rises from the figure instead.
                 else from?.let { fx.chip(it, "+${Fmt.figure(t.xpHint)}", c.ink0, c.overlay, FxState.Glyph.SPARK, c.xp, id = id) }
@@ -528,7 +543,7 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
             seal != null && motion != MotionLevel.FULL -> spots.scope?.launch {
                 if (motion == MotionLevel.CALM) delay(200)
                 // Undone (or refused) meanwhile: no bead to light.
-                if (spots.runs[t.templateId] !== run) return@launch
+                if (spots.runs[key] !== run) return@launch
                 run.beadLit = true
                 seal.lightBead(step, motion)
             }
@@ -544,7 +559,7 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
                 ProofLine.Tap.TIMER -> tick(t, mvv = false, sessionId = t.timer?.sessionId)
                 ProofLine.Tap.SHEET -> { feel?.select(); sheetFor = t.templateId }
             }
-            t.kept && ui.kept.containsKey(t.templateId) -> undoTick(spots, fx, feel, vm, t.templateId, motion)
+            t.kept && (ui.kept.containsKey(t.templateId) || t.templateId in ui.waitingKeys) -> undoTick(spots, fx, feel, vm, t.templateId, motion)
             t.kept -> { feel?.select(); snacks.show("Kept earlier today. Undo it on the web app.") }
             t.locked -> { feel?.select(); snacks.show("A study task: it completes itself from today's reviews.") }
             else -> { feel?.select(); snacks.show(if (t.status == "HELD") "Held today: it asks nothing, and the streak is safe." else "Skipped today.") }
@@ -552,8 +567,23 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
     }
     val onMvv: (TaskItem) -> Unit = { t -> tick(t, mvv = true) }
     val onSheet: (TaskItem) -> Unit = { t -> feel?.select(); sheetFor = t.templateId }
-    val onImpact: (TaskItem, Offset) -> Unit = { t, p ->
-        val run = spots.runs[t.templateId]
+    /**
+     * P7: a Yesterday row's tap: it ticks for yesterday in one tap (a proof row, which has no timer for yesterday, and a
+     * reading task with a target open the sheet); one ticked here is undone; one recorded earlier says where its Undo is.
+     */
+    val onYesterday: (TaskItem) -> Unit = { t ->
+        val key = YesterdayLine.key(t.templateId)
+        when {
+            t.open -> if (ProofLine.tapOf(t, Instant.now(), null) == ProofLine.Tap.TICK) tick(t, mvv = false, yesterday = true) else { feel?.select(); sheetFor = key }
+            t.kept && (ui.kept.containsKey(key) || key in ui.waitingKeys) -> undoTick(spots, fx, feel, vm, key, motion)
+            t.kept -> { feel?.select(); snacks.show(YesterdayLine.EARLIER) }
+            else -> { feel?.select(); snacks.show(YesterdayLine.SKIPPED) }
+        }
+    }
+    val onYesterdaySheet: (TaskItem) -> Unit = { t -> feel?.select(); sheetFor = YesterdayLine.key(t.templateId) }
+    /** The tick's impact on the row keyed [key] (a template id, or a Yesterday row's key). */
+    val onImpact: (String, Offset) -> Unit = { key, p ->
+        val run = spots.runs[key]
         val step = run?.step ?: 0
         val id = run?.id
         val px = density.density
@@ -563,7 +593,7 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
         fx.shock(p, edge, TickMoment.shockRadiusDp(step) * px, 2f * px, 240, c.kept, w1 = 0.5f * px, alpha0 = 0.5f, light = false, id = id)
         val k = TickMoment.speedScale(step)
         fx.burst(
-            p, edge, TickMoment.streaks(step), listOf(c.kept, c.light), seed = t.templateId.hashCode() + step,
+            p, edge, TickMoment.streaks(step), listOf(c.kept, c.light), seed = key.hashCode() + step,
             speed = 240f * k..340f * k, drag = 10f, startAngle = TickMoment.startAngle(step), jitter = 10f,
             sparkShare = TickMoment.sparkShare(step), sparkColor = c.xp, id = id,
         )
@@ -586,6 +616,8 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
     ) {
         val data = ui.data
         val rows = Rows(spots, onTick, onMvv, onImpact, onSheet)
+        // P7: the Yesterday lane's rows, keyed apart from today's.
+        val yRows = Rows(spots, onYesterday, onMvv, onImpact, onYesterdaySheet, keyOf = { YesterdayLine.key(it.templateId) })
         when {
             data == null && ui.loading -> LoadingBoard(top)
             data == null -> CantReach(ui.error ?: "Can't reach the server.", top, onRetry = { vm.refresh() }, onSettings = onOpenSettings, onDemo = onUseDemo)
@@ -596,8 +628,10 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 header(data, ui, vm, spots, onOpenSettings)
+                notSent(ui, vm)
                 tasks(ui, rows, motion)
                 owed(ui, vm)
+                yesterday(ui, yRows, motion)
                 review(data.review, data.fading, data.now, onStartReview)
                 week(data.week)
                 calibration(data.calibration)
@@ -614,8 +648,10 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         header(data, ui, vm, spots, onOpenSettings)
+                        notSent(ui, vm)
                         tasks(ui, rows, motion)
                         owed(ui, vm)
+                        yesterday(ui, yRows, motion)
                     }
                 },
                 second = {
@@ -639,16 +675,21 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
     }
     // P7, P23: the minutes sheet, over either display; it closes with its row (ticked, gone or no longer open). Only once
     // the board is there: after a restore the saved sheet waits for the cache's read instead of closing at the first draw.
-    val sheetTask = sheetFor?.let { id -> ui.tasks.firstOrNull { it.templateId == id && it.open } }
+    // P7: a Yesterday row's sheet (its key is YesterdayLine.key) has no timer: it ticks for yesterday with its minutes.
+    val sheetYesterday = sheetFor?.let { YesterdayLine.isKey(it) } == true
+    val sheetTask = sheetFor?.let { key ->
+        if (sheetYesterday) ui.yesterday.firstOrNull { YesterdayLine.key(it.templateId) == key && it.open } else ui.tasks.firstOrNull { it.templateId == key && it.open }
+    }
     val sheetGone = sheetFor != null && ui.data != null && sheetTask == null
     LaunchedEffect(sheetGone) { if (sheetGone) sheetFor = null }
     sheetTask?.let { t ->
         MinutesSheet(
             task = t,
             today = ui.data?.day,
+            forYesterday = if (sheetYesterday) YesterdayLine.sheetNote(ui.data?.yesterday?.dayLabel) else null,
             onDismiss = { sheetFor = null },
-            onDone = { minutes, sessionId, pages -> sheetFor = null; tick(t, mvv = false, minutes = minutes, sessionId = sessionId, pages = pages) },
-            onMinimum = { sheetFor = null; tick(t, mvv = true) },
+            onDone = { minutes, sessionId, pages -> sheetFor = null; tick(t, mvv = false, minutes = minutes, sessionId = sessionId, pages = pages, yesterday = sheetYesterday) },
+            onMinimum = { sheetFor = null; tick(t, mvv = true, yesterday = sheetYesterday) },
             onStartTimer = { vm.startTimer(t) },
             onStopTimer = { vm.stopTimer(t) },
         )
@@ -658,13 +699,29 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
 /** How often a row's running timer moves its figure (the sheet's and the web chip's 15 s). */
 private const val ROW_TIMER_REFRESH_MS = 15_000L
 
-/** What a task row needs from the screen. */
-private class Rows(val spots: CheckSpots, val onTick: (TaskItem) -> Unit, val onMvv: (TaskItem) -> Unit, val onImpact: (TaskItem, Offset) -> Unit, val onSheet: (TaskItem) -> Unit = {})
+/** What a task row needs from the screen; [keyOf] a row's key (its template id; a Yesterday row's YesterdayLine.key, P7). */
+private class Rows(
+    val spots: CheckSpots, val onTick: (TaskItem) -> Unit, val onMvv: (TaskItem) -> Unit, val onImpact: (String, Offset) -> Unit, val onSheet: (TaskItem) -> Unit = {},
+    val keyOf: (TaskItem) -> String = { it.templateId },
+)
 
 // ── The list's parts ────────────────────────────────────────────────────────
 
 private fun LazyListScope.header(data: CheckData, ui: CheckViewModel.Ui, vm: CheckViewModel, spots: CheckSpots, onOpenSettings: () -> Unit) {
     item(key = "header", contentType = "header") { Header(data, ui, vm, spots, onOpenSettings) }
+}
+
+/**
+ * P8: what the offline queue didn't send (core/SendLine), under the header on both displays (the cover screen's one
+ * column, the main display's first pane): a tick the server can no longer book or refused, a Done refused, and a line
+ * from an earlier day kept back, which the user sends for today or discards. Only while there is one.
+ */
+private fun LazyListScope.notSent(ui: CheckViewModel.Ui, vm: CheckViewModel) {
+    val notes = ui.queue.notSent
+    if (notes.isEmpty()) return
+    item(key = "not-sent", contentType = "not-sent") {
+        NotSentTile(notes, onSend = { vm.sendForToday(it) }, onDismiss = { vm.dismissNotSent(it) }, modifier = Modifier.padding(top = 4.dp))
+    }
 }
 
 private fun LazyListScope.tasks(ui: CheckViewModel.Ui, rows: Rows, motion: MotionLevel) {
@@ -718,7 +775,55 @@ private fun LazyListScope.tasks(ui: CheckViewModel.Ui, rows: Rows, motion: Motio
             rollKey = if (t.templateId in roll.delays) roll.seq else 0,
             rollDelay = roll.delays[t.templateId] ?: 0,
             nodKey = spots.nods["t:" + t.templateId] ?: 0,
-            onImpact = { p -> rows.onImpact(t, p) },
+            onImpact = { p -> rows.onImpact(t.templateId, p) },
+            waiting = t.templateId in ui.waitingKeys,
+        )
+    }
+}
+
+/**
+ * P7: the Yesterday section (the web's Record yesterday, its first list), on both displays: on the cover screen in the
+ * one column after the day's rows (and the Owed card), on the main display at the end of the first pane. "Yesterday · 2
+ * to record", the server's line (what a tick pays and by when), then the rows; each tick books on yesterday at T 1.00.
+ * Only while the server lists a row.
+ */
+private fun LazyListScope.yesterday(ui: CheckViewModel.Ui, rows: Rows, motion: MotionLevel) {
+    val lane = ui.data?.yesterday
+    val list = ui.yesterday
+    if (!YesterdayLine.shows(lane) || list.isEmpty()) return
+    item(key = "yesterday-label", contentType = "label") {
+        Column(
+            Modifier
+                .animateItem(fadeInSpec = motion.fade(), placementSpec = motion.spr(Spr.glide), fadeOutSpec = motion.fade())
+                .fillMaxWidth()
+                .padding(top = 16.dp, bottom = 2.dp, start = 4.dp, end = 4.dp)
+                .semantics(mergeDescendants = true) { },
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Eyebrow(YesterdayLine.TITLE)
+                Spacer(Modifier.width(8.dp))
+                Text(YesterdayLine.count(list), color = X.c.ink2, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+            }
+            lane?.line?.takeIf { it.isNotBlank() }?.let {
+                Spacer(Modifier.height(2.dp))
+                Text(it, color = X.c.ink2, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+    items(list, key = { rows.keyOf(it) }, contentType = { "task" }) { t ->
+        val spots = rows.spots
+        val key = rows.keyOf(t)
+        TaskRow(
+            t,
+            onTick = { rows.onTick(t) }, onSheet = { rows.onSheet(t) },
+            modifier = Modifier.animateItem(fadeInSpec = motion.fade(), placementSpec = motion.spr(Spr.glide), fadeOutSpec = motion.fade()),
+            spots = spots,
+            spotKey = key,
+            rollKey = 0,
+            rollDelay = 0,
+            nodKey = spots.nods["t:$key"] ?: 0,
+            onImpact = { p -> rows.onImpact(key, p) },
+            waiting = key in ui.waitingKeys,
         )
     }
 }
@@ -894,6 +999,29 @@ private fun Header(data: CheckData, ui: CheckViewModel.Ui, vm: CheckViewModel, s
                         "Offline · " + TimeLabels.updated(Instant.ofEpochMilli(ui.fetchedAtMs), ZoneId.systemDefault(), DateFormat.is24HourFormat(ctx)),
                         color = c.ink2, style = MaterialTheme.typography.labelMedium,
                     )
+                }
+            }
+            // P8: what waits on the phone to send ("2 waiting to send"); a tap sends it now (the job also does, online).
+            SendLine.waitingLine(ui.queue.items.size)?.let { line ->
+                Spacer(Modifier.height(2.dp))
+                Row(
+                    Modifier
+                        .heightIn(min = 44.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClickLabel = "Send now") { feel?.select(); vm.sendWaiting() }
+                        .padding(end = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Glyphs.Clock, null, tint = c.ink2, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        line + if (ui.queue.held != null) " · ${SendLine.HELD}" else "",
+                        color = c.ink2, style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+                // Why, unless the refused /check below says the same.
+                ui.queue.held?.takeIf { it != ui.refused }?.let { why ->
+                    Text(why, color = c.owed, style = MaterialTheme.typography.labelMedium)
                 }
             }
             // The server answered, and said no: its line (the token one leads to Settings), over what was last read.
@@ -1111,6 +1239,10 @@ private fun Streak(days: Int, keptToday: Boolean, spots: CheckSpots) {
 private fun TaskRow(
     t: TaskItem, onTick: () -> Unit, modifier: Modifier = Modifier, spots: CheckSpots,
     rollKey: Int, rollDelay: Int, nodKey: Int, onImpact: (Offset) -> Unit, onSheet: () -> Unit = {},
+    /** Where the row's tick and figure sit in [spots]: its template id, or a Yesterday row's own key (P7). */
+    spotKey: String = t.templateId,
+    /** P8: its tick waits on the phone (no connection when it was made): the meta says so until it lands. */
+    waiting: Boolean = false,
 ) {
     val c = X.c
     val motion = LocalMotion.current
@@ -1213,13 +1345,13 @@ private fun TaskRow(
                 .semantics {
                     // As the screen shows it: a done side quest's line is gone, so TalkBack leaves it out too.
                     contentDescription = SideLine.of(t, null)?.takeIf { !kept }?.let { "${t.title}, $it" } ?: t.title
-                    stateDescription = when { kept -> "Kept"; held -> "Held"; t.locked -> "Completes from reviews"; else -> "Open" }
+                    stateDescription = when { kept && waiting -> "Kept, ${SendLine.WAITING.lowercase()}"; kept -> "Kept"; held -> "Held"; t.locked -> "Completes from reviews"; else -> "Open" }
                 }
                 .padding(start = 8.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
-                Modifier.size(52.dp).onGloballyPositioned { circleAt = it; spots.at[t.templateId] = it.boundsInRoot().center },
+                Modifier.size(52.dp).onGloballyPositioned { circleAt = it; spots.at[spotKey] = it.boundsInRoot().center },
                 contentAlignment = Alignment.Center,
             ) {
                 if (t.locked && !kept) {
@@ -1293,6 +1425,14 @@ private fun TaskRow(
                         Text(side, color = c.ink1, style = MaterialTheme.typography.labelMedium)
                     }
                 }
+                // P8: a tick waiting on the phone says so on its own line (the main display's pane never clips it).
+                if (kept && waiting) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+                        Icon(Glyphs.Clock, null, tint = c.ink2, modifier = Modifier.size(12.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(SendLine.WAITING, color = c.ink2, style = MaterialTheme.typography.labelMedium)
+                    }
+                }
             }
             t.xpHint?.let { xp ->
                 Spacer(Modifier.width(8.dp))
@@ -1307,7 +1447,7 @@ private fun TaskRow(
                         Glyphs.Spark, null, tint = c.xp,
                         modifier = Modifier
                             .size(13.dp)
-                            .onGloballyPositioned { spots.xp[t.templateId] = it.boundsInRoot().center }
+                            .onGloballyPositioned { spots.xp[spotKey] = it.boundsInRoot().center }
                             .graphicsLayer { rotationZ = star.value },
                     )
                     Spacer(Modifier.width(3.dp))
@@ -1586,6 +1726,54 @@ private fun ConditionTile(list: List<CheckSkill>, modifier: Modifier = Modifier)
                 }
             }
             Text(ConditionLine.NOTE, style = meta, color = c.ink2, modifier = Modifier.padding(top = 6.dp))
+        }
+    }
+}
+
+// ── Not sent (P8) ───────────────────────────────────────────────────────────
+
+/**
+ * P8: the Not sent card: each item the queue took out unsent, its name and the line why (the server's own, or the
+ * queue's: too old to book, or typed before the day turned). A kept-back line offers Send for today and Discard; every
+ * other note, Dismiss. A kept-back line got no answer, so its line says it may already be saved (P8 review): sending
+ * it is the user's call.
+ */
+@Composable
+private fun NotSentTile(notes: List<NotSent>, onSend: (String) -> Unit, onDismiss: (String) -> Unit, modifier: Modifier = Modifier) {
+    val c = X.c
+    val feel = LocalFeel.current
+    XCard(modifier.fillMaxWidth()) {
+        Column {
+            Row(Modifier.semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(8.dp).clip(CircleShape).background(c.owed))
+                Spacer(Modifier.width(8.dp))
+                Eyebrow(SendLine.NOT_SENT_TITLE)
+                Spacer(Modifier.width(8.dp))
+                Text("${notes.size}", color = c.ink2, style = MaterialTheme.typography.labelMedium)
+            }
+            notes.asReversed().forEachIndexed { i, n ->
+                Spacer(Modifier.height(if (i == 0) 8.dp else 12.dp))
+                if (i > 0) {
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(c.line2))
+                    Spacer(Modifier.height(12.dp))
+                }
+                key(n.item.clientId) {
+                    Column(Modifier.semantics(mergeDescendants = true) {}) {
+                        Text(SendLine.labelOf(n.item.kind, n.item.label), color = c.ink0, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.height(2.dp))
+                        Text(n.line, color = c.ink2, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (n.keptBack) {
+                            XButton(SendLine.SEND_FOR_TODAY, { feel?.select(); onSend(n.item.clientId) }, kind = ButtonKind.QUIET, height = 44.dp)
+                            XButton(SendLine.DISCARD, { feel?.select(); onDismiss(n.item.clientId) }, kind = ButtonKind.QUIET, height = 44.dp)
+                        } else {
+                            XButton(SendLine.DISMISS, { feel?.select(); onDismiss(n.item.clientId) }, kind = ButtonKind.QUIET, height = 44.dp)
+                        }
+                    }
+                }
+            }
         }
     }
 }

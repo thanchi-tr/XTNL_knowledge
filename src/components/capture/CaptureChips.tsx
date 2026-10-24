@@ -10,6 +10,7 @@ import { dutyLaunchDay } from "@/lib/duty-economy";
 import { todayKey } from "@/lib/life-day";
 import { pagesCaptureLabelOf, proofChipLabelOf, proofLaunchDay, proofOn } from "@/lib/proof";
 import { SIDE_WORK_LABEL } from "@/lib/side-quests";
+import { DONE_NOW_AS_NEW, doneNowChipOf, doneNowChipParts } from "@/lib/done-now";
 import type { CaptureToken, ParsedCapture, PayMode, Sizing } from "@/lib/life-types";
 import { CurrencyGlyph, Icon, type IconName } from "@/components/ui/Icon";
 import type { CaptureActiveTitle } from "@/app/actions/capture";
@@ -63,6 +64,14 @@ import {
  * Proof of work (P23, P24): the '#proof' and pages chips say what is in force. Before PROOF_LAUNCH_DAY the tag is kept
  * and asks for nothing yet ('Proof · from its launch', a plain '30 pages'); on a work tab the server drops both (work
  * stays outside the game), so the '#proof' chip says so (a warned chip) and the pages one is plain words.
+ *
+ * Blueprint P6 (D33): a done-now line that names a row on today's Board (`ticks`, capture-ui tickMatchOf) shows
+ * 'Ticks: Gym (Habits)' in place of the duplicate note, and one tap on it turns the line back into a new task. The
+ * tick pays the row's own price, so the grade chip says so instead of pricing the line's words, and the tokens that
+ * would only shape a new row (a day, a Must, a tag, a goal) are shown as not taken (a dashed chip): only the done mark
+ * and the minutes go with the tick. A row ticked today already ('Already ticked: …') takes nothing from the line: the
+ * grade chip says 'Paid already' and the minutes are dashed too. The chip is a 44 px target; its title is the part cut
+ * short on a narrow screen, never 'Ticks:', the lane or the x.
  */
 
 const TOKEN_ICON: Partial<Record<CaptureToken["field"], IconName>> = {
@@ -90,6 +99,10 @@ interface Props {
   onToggleFeeds: () => void;
   /** An open template with the same title, for the quiet note. */
   duplicate: CaptureActiveTitle | null;
+  /** P6: the row this done-now line will tick ('Ticks: Gym (Habits)'), or null: the line is saved as a new row. */
+  ticks?: CaptureActiveTitle | null;
+  /** The ticks chip, tapped: the line is saved as a new task instead. */
+  onTickAsNew?: () => void;
   /** The first Enter stopped on a Must with no day: the full warning, announced. */
   mustBlocked: boolean;
   /** The four ways to give the Must a day (by today · by tmr · by fri · every <weekday>). */
@@ -120,6 +133,15 @@ interface Grade {
   minutes: number;
   xp: number | null;
 }
+
+/** P6: what a done-now line's tick of the row it names takes from the line: the done mark and the minutes. */
+const TICK_TOKENS: ReadonlySet<CaptureToken["field"]> = new Set(["done", "duration"]);
+/** A row ticked today already (P6 review): its tick stands, so only the done mark is the line's; its minutes go nowhere. */
+const TICKED_TOKENS: ReadonlySet<CaptureToken["field"]> = new Set(["done"]);
+/** The grade chip of a line that ticks the row it names: the row's own price is paid, not the line's words. */
+export const TICK_GRADE_LABEL = "Pays its row's price";
+/** The grade chip of a line whose row was ticked today already: nothing is paid again. */
+export const TICK_PAID_LABEL = "Paid already";
 
 /** A study link (reviews or ideas pay it); a pages line (P24) is ordinary paying work. */
 const studyLinked = (parsed: Pick<ParsedCapture, "autoMetric">): boolean => !!parsed.autoMetric && (STUDY_AUTO_METRICS as readonly string[]).includes(parsed.autoMetric);
@@ -183,6 +205,32 @@ function GradeText({ grade, parsed }: { grade: Grade; parsed: ParsedCapture }) {
   );
 }
 
+/**
+ * P6: the 'Ticks: Gym (Habits)' chip, a 44 px target (P6 review). Its parts are drawn apart, so on a narrow screen
+ * only the title is cut short (an ellipsis): 'Ticks:', the lane, which says which row it ticks, and the x, which says
+ * it can be tapped away, always show. Its accessible name is the whole chip and what a tap does.
+ */
+function TicksChip({ ticks, onTap }: { ticks: CaptureActiveTitle; onTap?: () => void }) {
+  const p = doneNowChipParts(ticks);
+  return (
+    <button
+      type="button"
+      className="chip btn-chip capture-chip capture-ticks"
+      data-ticks={ticks.tick ?? undefined}
+      onClick={onTap}
+      onMouseDown={(e) => e.preventDefault()}
+      title={`${doneNowChipOf(ticks)}. ${DONE_NOW_AS_NEW}`}
+      aria-label={`${doneNowChipOf(ticks)}. ${DONE_NOW_AS_NEW}.`}
+    >
+      <Icon name="check" />
+      <span className="capture-ticks-lead">{p.lead}</span>
+      <span className="capture-ticks-title">{p.title}</span>
+      <span className="capture-ticks-lane">{p.lane}</span>
+      <Icon name="x" className="capture-chip-x" />
+    </button>
+  );
+}
+
 export function CaptureChips({
   text,
   parsed,
@@ -193,6 +241,8 @@ export function CaptureChips({
   feedsOpen,
   onToggleFeeds,
   duplicate,
+  ticks = null,
+  onTickAsNew,
   mustBlocked,
   mustFixes,
   onFix,
@@ -274,6 +324,8 @@ export function CaptureChips({
               miss = proofState.work || !parsed.side;
             }
             if (parsed.side && (t.field === "compulsory" || t.field === "inbox")) miss = true;
+            // P6: a tick of the row the line names takes only its done mark and minutes; the rest would shape a new row.
+            if (ticks && !(ticks.tick === "done" ? TICKED_TOKENS : TICK_TOKENS).has(t.field)) miss = true;
             if (t.field === "parent" && parsed.parentHint && goals) {
               // The goal it will attach to, or an honest miss: the server
               // matches the same way (matchParentGoal), so this is what lands.
@@ -316,7 +368,20 @@ export function CaptureChips({
               </li>
             );
           })}
-          {grade && (
+          {grade && ticks && (
+            <li>
+              {ticks.tick === "done" ? (
+                <span className="chip capture-chip capture-grade" data-warn="1" title="Its tick stands: nothing is written or paid again">
+                  {TICK_PAID_LABEL}
+                </span>
+              ) : (
+                <span className="chip capture-chip capture-grade" title="The tick pays what the row pays on Today">
+                  {TICK_GRADE_LABEL}
+                </span>
+              )}
+            </li>
+          )}
+          {grade && !ticks && (
             <li>
               {compact && hasFeeds ? (
                 <button
@@ -353,10 +418,18 @@ export function CaptureChips({
         </ul>
       )}
 
-      {duplicate && (
-        <p className="capture-note" role="note">
-          {duplicateNote(duplicate)}
-        </p>
+      {ticks ? (
+        <ul className="capture-chip-row capture-ticks-row" aria-label="What the line does">
+          <li>
+            <TicksChip ticks={ticks} onTap={onTickAsNew} />
+          </li>
+        </ul>
+      ) : (
+        duplicate && (
+          <p className="capture-note" role="note">
+            {duplicateNote(duplicate)}
+          </p>
+        )
       )}
 
       {inboxMust && (
@@ -365,7 +438,8 @@ export function CaptureChips({
         </p>
       )}
 
-      {parsed.compulsoryWarning && (
+      {/* P6: a line that ticks the row it names takes no Must from the line, so the warning is not its. */}
+      {parsed.compulsoryWarning && !ticks && (
         <div className="capture-warning">
           <p aria-live="polite">{mustBlocked ? MUST_WARNING : MUST_WARNING_BEFORE}</p>
           <div className="capture-fixes" role="group" aria-label="Give the Must a day">
@@ -392,7 +466,7 @@ export function CaptureChips({
         </div>
       )}
 
-      {showFeeds && grade && track && (
+      {showFeeds && grade && track && !ticks && (
         <p className="capture-feeds" id="capture-feeds">
           <span className="t-eyebrow">Feeds · {TRACK_LABEL[track]}</span>
           {feeds.map(([attribute, weight]) => (

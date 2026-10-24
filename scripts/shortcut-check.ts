@@ -38,14 +38,28 @@
  *       never bound. Truth tables for both, and their wiring (the global
  *       handler reads the selection; the form's key calls the card's own
  *       click path).
+ *   (j) Blueprint P6: the board keys (j/k or ↓/↑ move, x ticks, m does the
+ *       minimum, u undoes) are single unmodified keys in the Tasks group,
+ *       listed in the help with their scope; clear of every Chrome and Edge
+ *       key (their Ctrl/Cmd J, K, M, U stay the browsers'), of every
+ *       page-wide key and of the 'g' sequences ('g k' is still the Weekly
+ *       review, whichever listener hears it first); never while typing,
+ *       mid-IME, held, with a dialog open or already handled; ↓/↑ only once
+ *       a task's own control has focus. Truth tables (decideBoardKey) and
+ *       the board's wiring.
  */
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { isAltDeadKeyInField, isCaptureHotkey, isTypingTarget, type TargetLike } from "../src/lib/capture-parse";
 import { isUndoCaptureKey } from "../src/components/capture/capture-ui";
+import { undoKeyRefusalOf, undoneByKeyLine } from "../src/components/today/board-ui";
 import { PROFILE, sectionById } from "../src/components/shell/nav";
 import { ADD_FORMATS } from "../src/lib/idea-handoff";
 import {
+  BOARD_ARROWS,
+  BOARD_KEYS,
+  BOARD_KEYS_OFF_SELECTOR,
+  BOARD_POPUP_SELECTOR,
   BROWSER_NOTE,
   BROWSER_RESERVED,
   CAPTURE_ARIA_KEYS,
@@ -68,6 +82,7 @@ import {
   USER_CHOSEN_CHORDS,
   ariaKeyOf,
   ariaKeysOf,
+  decideBoardKey,
   decideShortcut,
   expandKey,
   formatKeyIndex,
@@ -78,6 +93,7 @@ import {
   sequenceTargets,
   sequenceWaiting,
   shortcutOf,
+  type BoardKeyEnv,
   type KeyEventLike,
   type SequenceState,
   type ShortcutEnv,
@@ -106,7 +122,7 @@ function canon(k: string): string {
   const parts = keyParts(k);
   const base = parts[parts.length - 1];
   const mods = new Set(parts.slice(0, -1));
-  const named: Record<string, string> = { "→": "ArrowRight", "←": "ArrowLeft", " ": "Space", Escape: "Esc" };
+  const named: Record<string, string> = { "→": "ArrowRight", "←": "ArrowLeft", "↓": "ArrowDown", "↑": "ArrowUp", " ": "Space", Escape: "Esc" };
   const b = named[base] ?? (base.length === 1 ? base.toUpperCase() : base);
   return ["Ctrl", "Cmd", "Alt", "Shift"].filter((m) => mods.has(m)).map((m) => `${m}+`).join("") + b;
 }
@@ -374,6 +390,9 @@ console.log("\n── (d) The pure rules");
   n("Enter", ev("Enter", { code: "Enter" }), "Enter");
   n("Shift+Enter", ev("Enter", { shiftKey: true, code: "Enter" }), "Shift+Enter");
   n("ArrowRight", ev("ArrowRight", { code: "ArrowRight" }), "→");
+  n("ArrowDown (P6)", ev("ArrowDown", { code: "ArrowDown" }), "↓");
+  n("ArrowUp (P6)", ev("ArrowUp", { code: "ArrowUp" }), "↑");
+  n("Shift+ArrowDown (not a board key)", ev("ArrowDown", { shiftKey: true, code: "ArrowDown" }), "Shift+↓");
   n("Space", ev(" ", { code: "Space" }), "Space");
   n("a bare Shift", ev("Shift", { shiftKey: true, code: "ShiftLeft" }), null);
   n("a bare Alt", ev("Alt", { altKey: true, code: "AltLeft" }), null);
@@ -404,7 +423,7 @@ console.log("\n── (d) The pure rules");
     const parts = keyParts(k);
     const base = parts[parts.length - 1];
     const mods = parts.slice(0, -1);
-    const named: Record<string, string> = { "→": "ArrowRight", Space: " " };
+    const named: Record<string, string> = { "→": "ArrowRight", "↓": "ArrowDown", "↑": "ArrowUp", Space: " " };
     const key = named[base] ?? (base.length === 1 ? base.toLowerCase() : base);
     const codeOf = /^[a-z]$/i.test(base) ? `Key${base.toUpperCase()}` : /^\d$/.test(base) ? `Digit${base}` : base === "Enter" ? "Enter" : undefined;
     return ev(key === "?" ? "?" : key, { ctrlKey: mods.includes("Ctrl"), metaKey: mods.includes("Cmd"), altKey: mods.includes("Alt"), shiftKey: mods.includes("Shift"), code: codeOf });
@@ -837,6 +856,155 @@ console.log("\n── (i) Ctrl+C opens New idea; Alt+1–7 pick the format (2026
     /\.add-type \{ position: relative; \}/.test(css) && /position: absolute;/.test(hint) && /background: var\(--card\);/.test(hint) && /color: var\(--ink-2\);/.test(hint) && /font: 600 12px\/12px var\(--font-mono\);/.test(hint) && !/(margin|min-height|[^-]height:|width:)/.test(hint),
     hint
   );
+}
+
+// ── (j) Blueprint P6: the board keys ─────────────────────────────────────────
+console.log("\n── (j) The board keys (P6): j/k or ↓/↑, x, m, u");
+{
+  const ev = (k: string, mods: Partial<KeyEventLike> = {}): KeyEventLike => ({ key: k, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...mods });
+  const body: TargetLike = { tagName: "BODY", closest: () => null };
+  const button: TargetLike = { tagName: "BUTTON", closest: () => null };
+  const input: TargetLike = { tagName: "INPUT", closest: () => null };
+  const area: TargetLike = { tagName: "TEXTAREA", closest: () => null };
+  const select: TargetLike = { tagName: "SELECT", closest: () => null };
+  const editable: TargetLike = { tagName: "DIV", isContentEditable: true, closest: () => null };
+  const inSheet: TargetLike = { tagName: "BUTTON", closest: (sel: string) => (sel === "[data-capture-sheet]" ? {} : null) };
+  const env = (over: Partial<BoardKeyEnv> = {}): BoardKeyEnv => ({ target: button, modalOpen: false, onRow: true, now: 10_000, ...over });
+  const letter = (k: string, mods: Partial<KeyEventLike> = {}) => ev(k, { code: `Key${k.toUpperCase()}`, ...mods });
+  const runs = (e: KeyEventLike, over: Partial<BoardKeyEnv> = {}, seq: SequenceState = SEQUENCE_IDLE) => decideBoardKey(e, seq, env(over)).run;
+
+  check(
+    "board keys: exactly j/↓ next, k/↑ previous, x tick, m minimum, u undo; scope 'board', in the Tasks group, with labels",
+    JSON.stringify(BOARD_KEYS.map((b) => [b.id, b.keys.join(" "), b.scope, b.group])) ===
+      JSON.stringify([
+        ["board-next", "j ↓", "board", "Tasks"],
+        ["board-prev", "k ↑", "board", "Tasks"],
+        ["board-tick", "x", "board", "Tasks"],
+        ["board-minimum", "m", "board", "Tasks"],
+        ["board-undo", "u", "board", "Tasks"],
+      ]) && BOARD_KEYS.every((b) => b.label.trim() && !b.href),
+    JSON.stringify(BOARD_KEYS.map((b) => [b.id, b.keys]))
+  );
+  check("board keys: listed in the help and the README with their scope ('On a Tasks board, not while typing')", SCOPE_NOTE.board === "On a Tasks board, not while typing" && BOARD_KEYS.every((b) => SHORTCUTS.includes(b)));
+  check("board keys: never the global handler's (it runs scope 'global' only), and no board key is a sequence prefix", BOARD_KEYS.every((b) => !GLOBAL_HANDLED.some((g) => g.id === b.id)) && !BOARD_KEYS.some((b) => b.keys.some((k) => SEQUENCE_PREFIXES.has(k))));
+  const singles = new Set(SHORTCUTS.filter((x) => x.scope === "global" || x.scope === "anywhere").flatMap((x) => x.keys.filter((k) => !k.includes(" ")).flatMap(expand).map(canon)));
+  const shared = BOARD_KEYS.flatMap((b) => b.keys.map(canon).filter((k) => singles.has(k)));
+  check("board keys: none is a page-wide key (c, i, y, r, ',', '/', ?, Alt+N, Ctrl+C) live on the same page", shared.length === 0, shared.join(", "));
+  check("board keys: none is Chrome's or Edge's, bare or as its Mac reading (ArrowDown and ArrowUp included)", BOARD_KEYS.every((b) => b.keys.every((k) => readings(k).every((r) => !RESERVED.has(r)))) && !RESERVED.has("ArrowDown") && !RESERVED.has("ArrowUp"));
+  check(
+    "board keys: the browsers' chords on the same letters stay theirs (Ctrl+J downloads, Ctrl+K search, Ctrl+U source, Ctrl+M, Cmd+M) and never run a board key",
+    ["Ctrl+J", "Ctrl+K", "Ctrl+U", "Ctrl+M", "Cmd+M", "Cmd+K"].every((k) => RESERVED.has(canon(k))) &&
+      runs(letter("j", { ctrlKey: true })) === null &&
+      runs(letter("k", { ctrlKey: true })) === null &&
+      runs(letter("u", { ctrlKey: true })) === null &&
+      runs(letter("m", { metaKey: true })) === null &&
+      runs(letter("x", { altKey: true })) === null &&
+      runs(ev("X", { shiftKey: true, code: "KeyX" })) === null
+  );
+
+  // The truth table.
+  const d = (name: string, got: string | null, want: string | null) => check(`board: ${name} → ${want ?? "nothing"}`, got === want, String(got));
+  d("j on a task", runs(letter("j")), "board-next");
+  d("k on a task", runs(letter("k")), "board-prev");
+  d("x on a task", runs(letter("x")), "board-tick");
+  d("m on a task", runs(letter("m")), "board-minimum");
+  d("u on a task", runs(letter("u")), "board-undo");
+  d("j with nothing focused (into the board)", runs(letter("j"), { target: body, onRow: false }), "board-next");
+  d("u with nothing focused (the last tick)", runs(letter("u"), { target: body, onRow: false }), "board-undo");
+  d("↓ on a task", runs(ev("ArrowDown", { code: "ArrowDown" })), "board-next");
+  d("↑ on a task", runs(ev("ArrowUp", { code: "ArrowUp" })), "board-prev");
+  const pageDown = decideBoardKey(ev("ArrowDown", { code: "ArrowDown" }), SEQUENCE_IDLE, env({ target: body, onRow: false }));
+  check("board: ↓ with no task in focus is the page's (it scrolls: nothing runs, nothing is prevented)", pageDown.run === null && !pageDown.consume);
+  const tick = decideBoardKey(letter("x"), SEQUENCE_IDLE, env());
+  check("board: a key that runs is prevented (consume), one that doesn't never is", tick.consume && !decideBoardKey(letter("q"), SEQUENCE_IDLE, env()).consume);
+  for (const [name, t] of [["an input", input], ["a textarea", area], ["a select", select], ["contenteditable", editable], ["the capture sheet", inSheet]] as const) {
+    d(`x typed in ${name}`, runs(letter("x"), { target: t, onRow: false }), null);
+    d(`j typed in ${name}`, runs(letter("j"), { target: t, onRow: false }), null);
+  }
+  d("x mid-composition (IME)", runs(letter("x", { isComposing: true })), null);
+  d("j with keyCode 229 (an IME)", runs(letter("j", { keyCode: 229 })), null);
+  d("u held down", runs(letter("u", { repeat: true })), null);
+  d("x with a dialog or sheet open", runs(letter("x"), { modalOpen: true }), null);
+  // P6 review: a board pop-up (the drawer's icon or colour pop-up, a row's asks, the habit year's day) is a dialog the
+  // page doesn't mark modal: the keys wait while one is open, and never run from inside any dialog.
+  const inPopup: TargetLike = { tagName: "BUTTON", closest: (sel: string) => (sel === '[role="dialog"]' ? {} : null) };
+  d("j on a swatch of the drawer's colour pop-up (inside a dialog the page doesn't mark modal)", runs(letter("j"), { target: inPopup }), null);
+  d("u from inside any dialog", runs(letter("u"), { target: inPopup, onRow: false }), null);
+  check(
+    "board: an open board pop-up keeps the keys off (TodayBoard asks BOARD_KEYS_OFF_SELECTOR: the dialogs and sheets, and .tsk-pop, .ask-pop, .hh-pop)",
+    BOARD_POPUP_SELECTOR === ".tsk-pop, .ask-pop, .hh-pop" && BOARD_KEYS_OFF_SELECTOR === `${MODAL_OPEN_SELECTOR}, ${BOARD_POPUP_SELECTOR}` &&
+      /className="tsk-pop" role="dialog"/.test(read("src/components/task-style/TaskStylePicker.tsx"))
+  );
+  d("x already handled", runs(letter("x", { defaultPrevented: true })), null);
+  d("Space (the page's)", runs(ev(" ", { code: "Space" })), null);
+
+  // The 'g' sequences win, whichever listener hears the keys first.
+  const g = decideBoardKey(letter("g"), SEQUENCE_IDLE, env({ now: 1000 }));
+  check("board: 'g' runs nothing and is never prevented here (the global handler owns it), but the board waits for its second key", g.run === null && !g.consume && g.seq.prefix === "g");
+  const gk = decideBoardKey(letter("k"), g.seq, env({ now: 1200 }));
+  const gkGlobal = decideShortcut(letter("k"), decideShortcut(letter("g"), SEQUENCE_IDLE, { target: button, modalOpen: false, reviewSession: false, hasSelection: false, path: "/today", now: 1000 }).seq, { target: button, modalOpen: false, reviewSession: false, hasSelection: false, path: "/today", now: 1200 });
+  check("board: 'g k' is the Weekly review (the global handler runs it) and never a move up on the board", gk.run === null && gk.seq.prefix === null && gkGlobal.run?.id === "go-week");
+  const gPrevented = decideBoardKey(letter("g", { defaultPrevented: true }), SEQUENCE_IDLE, env({ now: 1000 }));
+  check("board: a 'g' the global handler already prevented still starts the board's wait (so 'g k' is never 'k')", gPrevented.seq.prefix === "g" && decideBoardKey(letter("k"), gPrevented.seq, env({ now: 1100 })).run === null);
+  d("'g' then 'j' (the sequence ate it, as 'g r' never starts a review)", decideBoardKey(letter("j"), g.seq, env({ now: 1100 })).run, null);
+  d("k after the sequence window", decideBoardKey(letter("k"), g.seq, env({ now: 1000 + SEQUENCE_MS + 1 })).run, "board-prev");
+  check("board: 'g g' starts the wait again", decideBoardKey(letter("g"), g.seq, env({ now: 1300 })).seq.at === 1300);
+  check("board: a bare modifier leaves the wait alone", decideBoardKey(ev("Shift", { shiftKey: true, code: "ShiftLeft" }), g.seq, env({ now: 1100 })).seq === g.seq);
+  check("board: the arrows are its only named keys (BOARD_ARROWS ↓ ↑)", [...BOARD_ARROWS].join(" ") === "↓ ↑");
+
+  // The wiring: TodayBoard's own listener, the rows' own paths.
+  const board = code(read("src/components/today/TodayBoard.tsx"));
+  check(
+    "TodayBoard: one window keydown runs decideBoardKey with the dialog and pop-up selector and the task in focus, prevents only what it runs",
+    /const at = focusedRowIn\(boardRef\.current\);\s*const d = decideBoardKey\(e, boardSeq\.current, \{\s*target: e\.target instanceof Element \? e\.target : null,\s*modalOpen: document\.querySelector\(BOARD_KEYS_OFF_SELECTOR\) !== null,\s*onRow: !!at\?\.own,/.test(board) &&
+      /if \(d\.consume\) e\.preventDefault\(\);\s*if \(d\.run\) boardKeyRef\.current\(d\.run, at\?\.el \?\? null\);/.test(board) &&
+      /window\.addEventListener\("keydown", onKey\);\s*return \(\) => window\.removeEventListener\("keydown", onKey\);/.test(board)
+  );
+  check(
+    "TodayBoard: the task in focus is the row the focus is in on this board; the arrows are the board's only on its own controls (tick, title, row actions), so a drawer's widgets keep theirs",
+    /if \(!\(a instanceof HTMLElement\) \|\| !board\?\.contains\(a\)\) return null;\s*const el = a\.closest<HTMLElement>\("\.t-row"\);\s*return el \? \{ el, own: a\.matches\("button\.tick, \.r-open, \.r-act"\) \} : null;/.test(board)
+  );
+  check(
+    "TodayBoard: x is the row's own tick (steps or tickRow), m its minimum (complete mvv), u its undo or the last undoable tick; a move focuses the next row's tick (focus-visible)",
+    /if \(viaSteps\(row\)\) tickSteps\(row, null, true, rowEl\);\s*else tickRow\(row, minutes, rowEl\);/.test(board) &&
+      /else complete\(row, \{ mvv: true \}, rowEl\);/.test(board) &&
+      /\.filter\(undoableRow\)\s*\.sort\(/.test(board) &&
+      /else undo\(target, true\);/.test(board) &&
+      /\(tick && !tick\.disabled \? tick : next\.querySelector<HTMLElement>\("\.r-open"\)\)\?\.focus\(\);/.test(board)
+  );
+  check(
+    "TodayBoard: what a key could not do is said (announce), never silent",
+    ["No tasks on show.", "That's the last task.", "That's the first task.", "Nothing to undo: a tick can be taken back for ten minutes.", "Move to a task first: j or k.", "has no minimum version."].every((t) => board.includes(t))
+  );
+  check("TodayBoard: the row's Undo and the 'u' key read one undo window (undoableRow)", /const undoable = undoableRow\(row\);/.test(board));
+  // P6 review: with a task in focus, u is that task's only: one it can't undo says why and nothing changes; with none,
+  // the last tick on today's board (never Record yesterday's), named, and focus goes to it.
+  check(
+    "TodayBoard (P6 review): u with a task in focus undoes that task or says why it can't (undoKeyRefusalOf), never another row's",
+    /if \(row\) \{\s*const refusal = undoKeyRefusalOf\(row, undoableRow\(row\)\);\s*if \(refusal\) announce\(refusal\);\s*else if \(busyTemplates\.has\(row\.template\.id\)\) announce\(`\$\{row\.template\.title\} is still saving\.`\);\s*else undo\(row\);\s*return;\s*\}/.test(board)
+  );
+  check(
+    "TodayBoard (P6 review): u with no task in focus takes back the last tick of today's lanes and Done today (not Record yesterday's), named, and focus follows it",
+    /const target = \[\.\.\.pile\.rows, \.\.\.board\.must, \.\.\.board\.todayRows, \.\.\.board\.anytime\]/.test(board) &&
+      /if \(byKey\) announce\(undoneByKeyLine\(row\.template\.title, fmtXp\(xp\), isWork\)\);/.test(board) &&
+      /if \(focused \|\| byKey\) setRefocus\(\{ rowKey: key, lane: null, anytime: false \}\);/.test(board)
+  );
+  const row = (state: "open" | "done", extra: Record<string, unknown> = {}) => ({ state, template: { title: "Gym" }, instanceId: "i1", auto: null, paid: { undone: false }, ...extra });
+  check(
+    "board-ui (P6 review): why u can't undo the task in focus, in its words (open, saving, completed itself, no tick of its own, past its ten minutes); null when it can",
+    undoKeyRefusalOf(row("open"), false) === "Gym isn't ticked: there's nothing to take back." &&
+      undoKeyRefusalOf(row("done", { instanceId: "opt:1" }), false) === "Gym is still saving." &&
+      undoKeyRefusalOf(row("done", { auto: "REVIEW_DUE" }), false) === "Gym completed itself: it can't be taken back." &&
+      undoKeyRefusalOf(row("done", { paid: null }), false) === "Gym can't be taken back here." &&
+      undoKeyRefusalOf(row("done"), false) === "Gym can't be taken back: its ten minutes are up." &&
+      undoKeyRefusalOf(row("done"), true) === null
+  );
+  check(
+    "board-ui (P6 review): the last tick taken back by u is named ('Undone: Gym · 8.3 life XP taken back.'; a work tab: 'Undone: Gym is open again.')",
+    undoneByKeyLine("Gym", "8.3", false) === "Undone: Gym · 8.3 life XP taken back." && undoneByKeyLine("Gym", "8.3", true) === "Undone: Gym is open again."
+  );
+  const shell = code(read("src/components/shell/Shortcuts.tsx"));
+  check("help: the arrows are spoken ('Down arrow', 'Up arrow')", /"↓": "Down arrow", "↑": "Up arrow"/.test(shell));
 }
 
 console.log(`\nshortcut-check: ${passed} passed, ${failed} failed`);

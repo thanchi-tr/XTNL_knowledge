@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The widget's tick on a row whose tick waits to send (P8): the circle filled with its tick cut out, as Check's
+     kept circle, one colour (the widget tints it kept); the row's line says "waiting to send". -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M12,2.75a9.25,9.25 0 1,0 0,18.5a9.25,9.25 0 1,0 0,-18.5zM10.6,15.6L7.2,12.2L8.4,11L10.6,13.2L15.6,8.2L16.8,9.4z" />
+</vector>

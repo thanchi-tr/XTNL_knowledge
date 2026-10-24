@@ -27,9 +27,17 @@ import {
   recaptureCore,
   runCaptureBatch,
   tickFactsOf,
+  tickNamedRowCore,
   type CreatedTask,
+  type NamedTickAround,
   type RecaptureResult,
 } from "@/lib/tasks";
+import type { DoneNowTick, TickedRow } from "@/lib/done-now";
+import { captureSnapshot, detectCelebrations } from "@/lib/celebrations";
+import type { CelebrationEvent } from "@/lib/celebration-types";
+import { withMoments } from "@/lib/today-board";
+import { lifeWritesEnabled } from "@/lib/life-economy";
+import { recordPracticeForTemplate } from "@/lib/roadmap-readings";
 import { applySizing } from "@/lib/life-sizing";
 import { fileIdeaDraftCore } from "@/lib/idea-filing";
 import { EMPTY_WORD_MODEL, loadWordModel } from "@/lib/vocabulary";
@@ -128,6 +136,19 @@ export interface CapturedItem {
    * quests were open (`capped`: the toast says "Added (not a side quest)" with SIDE_CAP_LINE). Absent otherwise.
    */
   sideNote?: SideNote;
+  /**
+   * Blueprint P6 (D33): the done-now line ticked the open row it names instead of saving a new one (tasks.ts
+   * tickNamedRowCore): `id` and `title` are that row's, and this is the lane it was ticked from and the tick, which the
+   * sheet's Undo takes back (never the row; no Edit). `earlier`: the row was ticked today already, so nothing was
+   * written. Absent on every other save.
+   */
+  ticked?: TickedRow;
+  /**
+   * P6 review: L3's moments that tick crossed (a streak milestone, a habit rung, a finished goal), detected and stored
+   * unseen as the board's own tick's are (saveLine's snapshot pair); the sheet presents the Seals and Ascensions
+   * (presentAll), and any it doesn't play the pending queue plays later. Absent when there were none.
+   */
+  celebrations?: CelebrationEvent[];
   /**
    * Set when the line was a weigh-in (components/capture/weight-capture.ts):
    * the reading was logged for its life day and no task was written. `id` is
@@ -274,7 +295,38 @@ async function weighInFromCapture(
 
 /** Whether a saved line files itself as an Idea after the response: a new idea draft with an answer. */
 function filesItself(parsed: ParsedCapture, created: CreatedTask): boolean {
-  return IDEA_SELF_FILING && parsed.mode === "IDEA" && !created.duplicate && !!parsed.answer?.trim();
+  return IDEA_SELF_FILING && parsed.mode === "IDEA" && !created.duplicate && !created.ticked && !!parsed.answer?.trim();
+}
+
+/**
+ * L3's detectors around a named row's tick (P6 review): the board's own pair (actions/tasks aroundTick, today-board
+ * withMoments), the snapshot scoped to that row, no second snapshot for a repeat. Its Seals and Ascensions are stored
+ * unseen and come back with the line, as the board's tick's do; it never costs the tick.
+ */
+function momentsAround(userId: string): NamedTickAround {
+  return (templateId, tick) =>
+    withMoments({
+      snapshot: () => captureSnapshot(userId, { scope: "tick", templateIds: [templateId] }),
+      detect: (before, after) => detectCelebrations(before, after, { cause: "tick" }),
+      write: tick,
+      changed: (v) => !v.duplicate,
+    });
+}
+
+/**
+ * One line's save (P6, D33): a done-now line that names a row on today's personal Board ticks it (tasks.ts
+ * tickNamedRowCore, inside L3's snapshot pair; refused there with the board's reason, nothing written), unless the
+ * sheet turned it back into a new task (`asNew`); every other line is written as before (createTemplateCore).
+ */
+async function saveLine(
+  userId: string,
+  line: { text: string; reverted: CaptureSpan[]; parsed: ParsedCapture },
+  opts: { captureKey: string | null; boardId: string | null; asNew: boolean }
+): Promise<CaptureResult<CreatedTask>> {
+  const ticked = await tickNamedRowCore(userId, line.parsed, { captureKey: opts.captureKey, boardId: opts.boardId, asNew: opts.asNew, around: momentsAround(userId) });
+  if (ticked) return ticked;
+  const created = await createTemplateCore(userId, line.parsed, { rawText: line.text, captureSource: "quick", captureKey: opts.captureKey, boardId: opts.boardId, reverted: line.reverted });
+  return { ok: true, value: created };
 }
 
 function itemOf(parsed: ParsedCapture, created: CreatedTask, filing: boolean): CapturedItem {
@@ -294,6 +346,8 @@ function itemOf(parsed: ParsedCapture, created: CreatedTask, filing: boolean): C
     ...(created.boardId ? { board: created.boardId } : {}),
     ...(created.mustNote ? { mustNote: created.mustNote } : {}),
     ...(created.sideNote ? { sideNote: created.sideNote } : {}),
+    ...(created.ticked ? { ticked: created.ticked } : {}),
+    ...(created.celebrations && created.celebrations.length > 0 ? { celebrations: created.celebrations } : {}),
   };
 }
 
@@ -313,9 +367,23 @@ interface SavedLine {
  * is read before after(), never inside it.
  */
 function afterSave(userId: string, saved: readonly SavedLine[]): void {
-  // A work tab's line pays no XP (work-boards.ts): nothing to size, so no model call.
-  const toSize = saved.filter((s) => s.parsed.kind !== "IDEA_DRAFT" && s.parsed.kind !== "GOAL" && !s.created.duplicate && !s.created.boardId).map((s) => s.created.id);
+  // A work tab's line pays no XP (work-boards.ts): nothing to size, so no model call. A line that ticked the row it names
+  // (P6) wrote no row: that row keeps its own size, never sized again from the line's words.
+  const toSize = saved.filter((s) => s.parsed.kind !== "IDEA_DRAFT" && s.parsed.kind !== "GOAL" && !s.created.duplicate && !s.created.boardId && !s.created.ticked).map((s) => s.created.id);
   const toFile = saved.filter((s) => s.filing).map((s) => s.created.id);
+  // The named row's tick is the board's own tick (P6): the roadmap's practice reading follows it, as completeTask's does (F16 seam 6).
+  const toPractice = lifeWritesEnabled() ? saved.filter((s) => s.created.ticked && !s.created.ticked.earlier).map((s) => s.created.id) : [];
+  if (toPractice.length > 0) {
+    after(async () => {
+      for (const id of toPractice) {
+        try {
+          await recordPracticeForTemplate(userId, id);
+        } catch (err) {
+          console.error("[roadmap] the practice reading after a done-now tick failed", err);
+        }
+      }
+    });
+  }
   if (toSize.length > 0) {
     after(async () => {
       for (const id of toSize) {
@@ -346,11 +414,13 @@ function afterSave(userId: string, saved: readonly SavedLine[]): void {
  * same one on every retry of a line, and a save whose response was lost is
  * found again rather than written twice. `opts.weightUnit` is the unit the
  * sheet read a bare weigh-in number in (weight-capture weightUnitRefusal).
+ * A done-now line that names a row on today's Board ticks that row (P6,
+ * saveLine); `opts.asNew` (the sheet's chip, tapped) saves it as a new task.
  */
 export async function createFromCapture(
   text: string,
   reverted?: CaptureSpan[],
-  opts?: { refresh?: boolean; captureKey?: string; weightUnit?: WeightUnit; board?: string | null }
+  opts?: { refresh?: boolean; captureKey?: string; weightUnit?: WeightUnit; board?: string | null; asNew?: boolean }
 ): Promise<CaptureResult<CapturedItem>> {
   const today = todayKey();
   // A weigh-in ('weight 72.4') is logged, never saved as a task. A resend is
@@ -373,7 +443,10 @@ export async function createFromCapture(
     if (!scope.ok) return scope;
     const refusal = workLineRefusal(scope.boardId, line.parsed, today);
     if (refusal) return { ok: false, error: refusal };
-    created = await createTemplateCore(userId, line.parsed, { rawText: line.text, captureSource: "quick", captureKey: keyOf(opts?.captureKey), boardId: scope.boardId, reverted: line.reverted });
+    const saved = await saveLine(userId, line, { captureKey: keyOf(opts?.captureKey), boardId: scope.boardId, asNew: opts?.asNew === true });
+    // A named row's tick refused (P6): nothing was written, and the sheet keeps the line with the reason.
+    if (!saved.ok) return saved;
+    created = saved.value;
   } catch (err) {
     console.error("createFromCapture failed:", err);
     // The sheet keeps the line in local storage until this says ok, so the
@@ -464,6 +537,8 @@ export interface CaptureLineInput {
   captureKey: string;
   /** The work tab it was captured on (work-boards.ts); absent: the personal Board. */
   board?: string | null;
+  /** P6: the line was turned back into a new task (the chip, tapped), so it never ticks the row it names. */
+  asNew?: boolean;
 }
 
 /** One pasted line's outcome, in the order the lines were sent. A failure carries its captureKey so the sheet can file it. */
@@ -513,7 +588,9 @@ export async function createManyFromCapture(
     if (!scope.ok) return scope;
     const refusal = workLineRefusal(scope.boardId, prepared.parsed, today);
     if (refusal) return { ok: false, error: refusal };
-    const created = await createTemplateCore(userId, prepared.parsed, { rawText: prepared.text, captureSource: "quick", captureKey: line.captureKey, boardId: scope.boardId, reverted: prepared.reverted });
+    const one = await saveLine(userId, prepared, { captureKey: line.captureKey, boardId: scope.boardId, asNew: line.asNew === true });
+    if (!one.ok) return one;
+    const created = one.value;
     const filing = filesItself(prepared.parsed, created);
     saved.push({ parsed: prepared.parsed, created, filing });
     return { ok: true, value: itemOf(prepared.parsed, created, filing) };
@@ -557,6 +634,8 @@ export interface CaptureActiveTitle {
   normTitle: string;
   title: string;
   where: BoardPlace;
+  /** Blueprint P6 (D33): what it offers a done-now line (done-now.ts), for the sheet's 'Ticks: Gym (Habits)' chip. Absent: nothing. */
+  tick?: DoneNowTick;
 }
 
 export interface CaptureVocabulary {
@@ -702,7 +781,10 @@ export async function loadCaptureVocabulary(opts?: { words?: boolean }): Promise
     loadOpenGoals(userId).catch(() => []),
     loadRawBefore(userId, day).catch(() => 0),
     loadRecentCaptures(userId, now).catch((): string[] => []),
-    loadActiveTitles(userId, now).catch((): CaptureActiveTitle[] => []),
+    // The row ids stay on the server (its own read ticks by them): the sheet needs a title's place and its tick only.
+    loadActiveTitles(userId, now)
+      .then((list): CaptureActiveTitle[] => list.map((a) => ({ normTitle: a.normTitle, title: a.title, where: a.where, ...(a.tick ? { tick: a.tick } : {}) })))
+      .catch((): CaptureActiveTitle[] => []),
     loadWeightGoal(userId)
       .then((g): WeightUnit => (g.unit === "lb" ? "lb" : "kg"))
       .catch((): WeightUnit => "kg"),

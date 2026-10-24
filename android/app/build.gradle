@@ -16,8 +16,8 @@ android {
         applicationId "com.xtnl.app"
         minSdk 26
         targetSdk 35
-        versionCode 28
-        versionName "2.16"
+        versionCode 31
+        versionName "2.19"
         buildConfigField "String", "DEFAULT_SERVER", "\"${defaultServer}\""
     }
 
@@ -92,7 +92,11 @@ dependencies {
     // Blueprint P27 (D22): walks, hikes and weight read from Health Connect, synced by a WorkManager job (off until
     // the user turns it on in Settings).
     implementation "androidx.health.connect:connect-client:1.1.0-alpha10"
+    // Blueprint P8 (D34) uses the same WorkManager: the offline queue's job (data/SendWorker) replays a waiting tick, line
+    // or Done once the phone is online, with backoff.
     implementation "androidx.work:work-runtime-ktx:2.9.1"
+    // Blueprint P8: the cover-screen widget (widget/TodayWidget: today's open musts and habits, a tick in one tap).
+    implementation "androidx.glance:glance-appwidget:1.1.1"
 
     testImplementation composeBom
     testImplementation "junit:junit:4.13.2"

@@ -175,6 +175,11 @@ import {
   pendingDayNote,
   parseVocabCache,
   primaryAction,
+  PASTE_AS_NEW,
+  TICKED_EARLIER_TAIL,
+  TICKED_EARLIER_WHERE,
+  TICKED_PRIMARY,
+  TICK_PRIMARY,
   readCaptureFragment,
   recentChips,
   replaceCaretWord,
@@ -184,6 +189,9 @@ import {
   submitAllowed,
   summaryCopy,
   tagSuggestions,
+  tickMatchOf,
+  tickWantsRefresh,
+  tickedAnnouncement,
   titleSlot,
   toastCopy,
   undoGoneCopy,
@@ -217,6 +225,8 @@ import {
 import { ToastBody, dockToastOf, type ToastHandlers } from "../src/components/capture/CaptureToast";
 import { InsertRow } from "../src/components/capture/InsertRow";
 import { JustAdded } from "../src/components/capture/JustAdded";
+import { CaptureChips, TICK_GRADE_LABEL, TICK_PAID_LABEL } from "../src/components/capture/CaptureChips";
+import { PastePreview } from "../src/components/capture/PastePreview";
 import { CAPTURE_BATCH_MAX, CAPTURE_UNDO_MS, type ParsedCapture } from "../src/lib/life-types";
 import type { CaptureActiveTitle, CapturedItem } from "../src/app/actions/capture";
 import { QUEST_CAP, fullDayInputOf, fullDayOf, lifeDeedsOf, lifeRingOf, mustsRingOf, questRingOf } from "../src/lib/full-day";
@@ -2134,6 +2144,207 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   check("duplicate: the note's words", hit !== null && duplicateNote(hit) === "Already on your board: Pay rent · Planned later · Fri 2 Oct");
 }
 
+// ── Blueprint P6 (D33): a done-now line ticks the row it names ────────────
+
+{
+  const p = (line: string) => parseCapture(line, { today: "2026-10-01" });
+  const active: CaptureActiveTitle[] = [
+    { normTitle: normTitleOf("Gym"), title: "Gym", where: { lane: "habits", label: "Habits" }, tick: "open" },
+    { normTitle: normTitleOf("Stretch"), title: "Stretch", where: { lane: "done", label: "Done today" }, tick: "done" },
+    { normTitle: normTitleOf("Read the novel"), title: "Read the novel", where: { lane: "habits", label: "Habits" } },
+  ];
+  const gym = tickMatchOf(p("x gym 45m"), active);
+  check("P6 chip: 'x gym 45m' names the Gym habit (the server's rule over the sheet's list)", gym?.title === "Gym" && gym.tick === "open");
+  check("P6 chip: a row ticked today already is named too ('Already ticked'); a row that offers no tick never is", tickMatchOf(p("x stretch"), active)?.tick === "done" && tickMatchOf(p("x read the novel"), active) === null);
+  check(
+    "P6 chip: never during an edit, on a work tab, once tapped (asNew), for a line that is not a plain done-now line, or past the first ACTIVE_SCAN_MAX titles",
+    tickMatchOf(p("x gym"), active, { editing: true }) === null &&
+      tickMatchOf(p("x gym"), active, { work: true }) === null &&
+      tickMatchOf(p("x gym"), active, { asNew: true }) === null &&
+      tickMatchOf(p("gym"), active) === null &&
+      tickMatchOf(p("x gym daily"), active) === null &&
+      tickMatchOf(p("x gym?"), active) === null &&
+      tickMatchOf(p("x gym"), [...Array.from({ length: ACTIVE_SCAN_MAX }, (_, i): CaptureActiveTitle => ({ normTitle: `t${i}`, title: `T${i}`, where: { lane: "anytime", label: "Anytime" } })), active[0]]) === null
+  );
+  check(
+    "P6 primary: a line that ticks the row it names reads 'Tick it' (it adds nothing); any other done-now line still 'Add as done'",
+    primaryAction({ editing: false, coarse: false, empty: false, sentThisOpening: 0, parsed: p("x gym"), ticks: true }).label === TICK_PRIMARY &&
+      TICK_PRIMARY === "Tick it" &&
+      primaryAction({ editing: false, coarse: false, empty: false, sentThisOpening: 0, parsed: p("x gym") }).label === "Add as done" &&
+      primaryAction({ editing: false, coarse: true, empty: true, sentThisOpening: 2, parsed: p(""), ticks: true }).label === "Done"
+  );
+  check(
+    "P6 review primary: a row ticked today already reads 'Already ticked' (the line writes and pays nothing), an open one 'Tick it'",
+    primaryAction({ editing: false, coarse: false, empty: false, sentThisOpening: 0, parsed: p("x stretch"), ticks: "done" }).label === TICKED_PRIMARY &&
+      TICKED_PRIMARY === "Already ticked" &&
+      primaryAction({ editing: false, coarse: false, empty: false, sentThisOpening: 0, parsed: p("x gym"), ticks: "open" }).label === TICK_PRIMARY
+  );
+  check(
+    "P6 review chip: only from a list that is today's and fresh (fresh false: no chip, the line reads 'Add as done' until the list is read again)",
+    tickMatchOf(p("x gym"), active, { fresh: false }) === null && tickMatchOf(p("x gym"), active, { fresh: true })?.title === "Gym"
+  );
+  check(
+    "P6 review refresh: a line that asks a tick over a list not fresh is read again at once; a fresh list, an edit, a work tab, a tapped chip or a line that asks no tick never is",
+    tickWantsRefresh(p("x gym 45m"), { fresh: false }) &&
+      !tickWantsRefresh(p("x gym 45m"), { fresh: true }) &&
+      !tickWantsRefresh(p("x gym 45m"), { fresh: false, editing: true }) &&
+      !tickWantsRefresh(p("x gym 45m"), { fresh: false, work: true }) &&
+      !tickWantsRefresh(p("x gym 45m"), { fresh: false, asNew: true }) &&
+      !tickWantsRefresh(p("gym 45m"), { fresh: false }) &&
+      !tickWantsRefresh(null, { fresh: false })
+  );
+
+  // What the chips draw: the tick chip in place of the duplicate note, one tap away from a new task.
+  const chips = (line: string, ticks: CaptureActiveTitle | null) =>
+    renderToStaticMarkup(
+      createElement(CaptureChips, {
+        text: line,
+        parsed: p(line),
+        goals: [],
+        rawBefore: 0,
+        onRevert: () => {},
+        compact: false,
+        feedsOpen: false,
+        onToggleFeeds: () => {},
+        duplicate: active[0],
+        ticks,
+        onTickAsNew: () => {},
+        mustBlocked: false,
+        mustFixes: [],
+        onFix: () => {},
+        duty: { today: "2026-10-01", launchDay: null },
+        proof: { live: false, work: false },
+      })
+    );
+  const ticking = chips("x gym 45m fri !", gym);
+  const plain = chips("x gym 45m fri !", null);
+  check(
+    "P6 chips: 'Ticks: Gym (Habits)' as a button whose tap makes it a new task, in place of the duplicate note",
+    /class="chip btn-chip capture-chip capture-ticks"/.test(ticking) &&
+      ticking.includes('<span class="capture-ticks-lead">Ticks:</span><span class="capture-ticks-title">Gym</span><span class="capture-ticks-lane">(Habits)</span>') &&
+      ticking.includes('aria-label="Ticks: Gym (Habits). Tap to add it as a new task instead."') && !ticking.includes("Already on your board") && plain.includes("Already on your board: Gym · Habits") && !plain.includes("Ticks:"),
+    ticking.slice(0, 600)
+  );
+  check(
+    "P6 chips: the tick pays its row's price, so the grade chip says so (no ≈ for the line's words, no Feeds)",
+    ticking.includes(`>${TICK_GRADE_LABEL.replace("'", "&#x27;")}<`) && TICK_GRADE_LABEL === "Pays its row's price" && !ticking.includes("≈") && !ticking.includes("capture-feeds") && plain.includes("≈")
+  );
+  check(
+    "P6 chips: a line that ticks the row it names takes no Must from the line, so a Must with no day shows no warning, and the sheet's gate never stops its Enter",
+    chips("x gym !", gym).includes("Ticks: Gym (Habits)") && !chips("x gym !", gym).includes("capture-warning") && chips("x gym !", null).includes("capture-warning") &&
+      /const ticking = !weighed && !!v && tickMatchOf\(read, v\.active, \{ editing: !!editing, work: workBoardRef\.current !== null, asNew, fresh: v\.day === day && v\.priced \}\) !== null;/.test(read("src/components/capture/QuickCapture.tsx")) &&
+      /mustGate\(blocked, line\.text, \(!!read\.compulsoryWarning && !ticking\) \|\| out !== null\)/.test(read("src/components/capture/QuickCapture.tsx"))
+  );
+  const dashed = (html: string) => (html.match(/data-warn="1"/g) ?? []).length;
+  check("P6 chips: only the done mark and the minutes go with the tick: the day and the Must are dashed (not taken)", dashed(ticking) === 2 && dashed(plain) === 0, `${dashed(ticking)} / ${dashed(plain)}`);
+  // P6 review: a row ticked today already takes nothing from the line, so nothing promises a tick or a payment.
+  const stretchMatch = tickMatchOf(p("x stretch 20m"), active);
+  const already = chips("x stretch 20m", stretchMatch);
+  check(
+    "P6 review chips: 'Already ticked: Stretch (Done today)'; the grade chip says 'Paid already' (dashed, never 'Pays its row's price'), and the minutes are dashed too",
+    already.includes('<span class="capture-ticks-lead">Already ticked:</span><span class="capture-ticks-title">Stretch</span><span class="capture-ticks-lane">(Done today)</span>') &&
+      already.includes(`>${TICK_PAID_LABEL}<`) && TICK_PAID_LABEL === "Paid already" && !already.includes("Pays its row") && !already.includes("≈") && dashed(already) === 2,
+    `${dashed(already)} ${already.slice(0, 900)}`
+  );
+
+  // What a tick of the named row says, in the toast, the 'Added here' row, the live region and on the phone.
+  const ticked = capItem({ id: "gym", title: "Gym", doneNow: true, projectedXp: 8.3, where: { lane: "done", label: "Done today" }, ticked: { from: "Habits", instanceId: "i1" } });
+  const earlier = capItem({ id: "stretch", title: "Stretch", projectedXp: 2.2, where: { lane: "done", label: "Done today" }, ticked: { from: "Done today", instanceId: "i2", earlier: true } });
+  const tc = toastCopy(ticked);
+  const ec = toastCopy(earlier);
+  check("P6 toast: 'Ticked · Gym (Habits) · +8.3' (exact), never 'Added'", tc.head === "Ticked" && tc.body === "Gym (Habits) · +8.3" && tc.figure?.exact === true, JSON.stringify(tc));
+  check("P6 toast: a row ticked earlier today: 'Already ticked · Stretch → Done today · Nothing is paid twice.', no figure", ec.head === "Already ticked" && ec.body === `Stretch → Done today · ${TICKED_EARLIER_TAIL}` && ec.figure === null, JSON.stringify(ec));
+  check(
+    "P6 'Added here': 'Gym · Ticked · Habits · +8.3'; a row ticked earlier: 'Ticked earlier today', no figure",
+    JSON.stringify(addedRowCopy(ticked)) === JSON.stringify({ title: "Gym", where: "Ticked · Habits", figure: "+8.3" }) && JSON.stringify(addedRowCopy(earlier)) === JSON.stringify({ title: "Stretch", where: TICKED_EARLIER_WHERE, figure: null })
+  );
+  check("P6 live region: 'Ticked Gym (Habits).' and 'Stretch was already ticked today. Nothing is paid twice.'", tickedAnnouncement(ticked) === "Ticked Gym (Habits)." && tickedAnnouncement(earlier) === `Stretch was already ticked today. ${TICKED_EARLIER_TAIL}`);
+  const handlers: ToastHandlers = { onUndo: () => {}, onEdit: () => {}, onOpen: () => {}, onShow: () => {}, onSaveAsNew: () => {} };
+  const dockTicked = dockToastOf({ kind: "added", key: 1, item: ticked, notMust: false, update: false }, { offToday: false }, handlers);
+  const dockEarlier = dockToastOf({ kind: "added", key: 2, item: earlier, notMust: false, update: false }, { offToday: false }, handlers);
+  const dockBody = renderToStaticMarkup(createElement("div", null, dockTicked.body));
+  check("P6 dock: Undo (it takes the tick back) and no Edit (no row of its own was saved); a row ticked earlier offers neither", dockTicked.action?.label === "Undo" && !dockBody.includes(">Edit<") && dockEarlier.action === undefined);
+  const list = renderToStaticMarkup(
+    createElement(JustAdded, {
+      entries: [
+        { key: "a", item: ticked, line: { text: "x gym 45m", reverted: [] }, at: 0 },
+        { key: "b", item: earlier, line: { text: "x stretch", reverted: [] }, at: 0 },
+      ],
+      wide: true,
+      showAll: true,
+      onShowAll: () => {},
+      onEdit: () => {},
+      onUndo: () => {},
+      busy: new Set<string>(),
+      locked: new Map<string, string>(),
+    })
+  );
+  check("P6 'Added here': no Edit on a tick of the named row; its Undo says it takes the tick back; none on one ticked earlier", !list.includes(">Edit<") && (list.match(/>Undo</g) ?? []).length === 1 && list.includes('aria-label="Undo the tick of Gym"'), list.slice(0, 800));
+  const undone = renderToStaticMarkup(
+    createElement(JustAdded, { entries: [{ key: "a", item: ticked, line: { text: "x gym 45m", reverted: [] }, at: 0, removedAt: 1 }], wide: true, showAll: true, onShowAll: () => {}, onEdit: () => {}, onUndo: () => {}, busy: new Set<string>(), locked: new Map<string, string>() })
+  );
+  check("P6 'Added here': an undone tick reads 'Tick taken back · Gym' (the row stays; only the tick went), never 'Removed'", undone.includes("Tick taken back · ") && !undone.includes("Removed") && /head: TICK_TAKEN_BACK \}\);/.test(read("src/components/capture/QuickCapture.tsx")));
+
+  // The chip's choice travels with the line, retries included.
+  const stamped = { ...stampLine({ text: "x gym", reverted: [] }, 1, Date.parse("2026-10-01T01:00:00.000Z"), "abc"), asNew: true as const };
+  check("P6 pending: a line turned back into a new task keeps asNew through storage; any other value is dropped", parsePendingList([stamped])[0]?.asNew === true && parsePendingList([{ ...stamped, asNew: "yes" }])[0]?.asNew === undefined);
+  const cache = parseVocabCache({ day: "2026-10-01", at: 1, goals: [], recent: [], rawBefore: 0, active: [{ normTitle: "gym", title: "Gym", where: { lane: "habits", label: "Habits" }, tick: "open" }, { normTitle: "run", title: "Run", where: { lane: "anytime", label: "Anytime" }, tick: "nope" }] });
+  check("P6 vocabulary cache: a title keeps its tick ('open' or 'done'); anything else (a cache from before P6) offers none", cache?.active[0].tick === "open" && cache?.active[1].tick === undefined);
+
+  // The sheet's wiring, read from the source.
+  const quick = read("src/components/capture/QuickCapture.tsx");
+  check(
+    "P6 sheet: the match is tickMatchOf over the vocabulary (never on a paste, an aim, a weigh-in or an idea), and the primary reads it",
+    /vocab && !paste && !aimCap && !weighIn && !ideaMode\s*\?\s*tickMatchOf\(parsed, vocab\.active, \{ editing: !!editing, work: workBoard !== null, asNew: asNewHere, fresh: tickFresh \}\)/.test(quick) &&
+      /const tickFresh = !!vocab && vocab\.day === day && vocab\.priced;/.test(quick) &&
+      /primaryAction\(\{ editing: !!editing, coarse, empty, sentThisOpening, parsed, ticks: tickMatch \? \(tickMatch\.tick \?\? true\) : null \}\)/.test(quick) &&
+      /ticks=\{tickMatch\}\s*onTickAsNew=\{tickAsNew\}/.test(quick)
+  );
+  check(
+    "P6 sheet: a tapped chip makes the line asNew on its stamp, the send passes it, and the stored line keeps it",
+    /const asNew = asNewNorm !== null && asNewNorm === normTitleOf\(read\.title\);/.test(quick) &&
+      /const pending: PendingLine = asNew \? \{ \.\.\.stamped, asNew: true \} : stamped;/.test(quick) &&
+      /weightUnit, asNew: line\.asNew === true \}\);/.test(quick) &&
+      /\.\.\.\(line\.asNew \? \{ asNew: true as const \} : \{\}\)/.test(quick)
+  );
+  check(
+    "P6 sheet: the Undo of a tick of the named row is the tick's (undoCompletion with its instance), never undoCapture of the row",
+    /if \(item\.ticked\) \{\s*undoTick\(item\);\s*return;\s*\}/.test(quick) && /await undoCompletion\(ticked\.instanceId, \{ refresh: onTodayRef\.current \}\)/.test(quick) && /!toast\.item\.ticked\?\.earlier \? toast\.item : null/.test(quick)
+  );
+  check(
+    "P6 review sheet: a line that asks a tick over a list not fresh has it read at once (once per opening, never with a save in flight, the refresh after a save still its own), a pasted list's too",
+    /if \(openRef\.current && tickRefreshRef\.current && !o\.tickRead\) \{\s*o\.tickRead = true;\s*loadVocab\(false\);\s*return;\s*\}/.test(quick) &&
+      /useEffect\(\(\) => \{\s*if \(tickRefresh\) considerVocab\(\);\s*\}, \[tickRefresh, considerVocab\]\);/.test(quick) &&
+      /const tickRefresh = open && !aimCap && \(paste \? pasteAsksTick : tickWantsRefresh\(parsed, \{ fresh: tickFresh, editing: !!editing, work: onWork, asNew: asNewHere \}\)\);/.test(quick)
+  );
+  check(
+    "P6 review sheet: the chip's 'a new task' ends with its line: an emptied, saved or replaced line drops it, and so does closing the sheet",
+    /if \(!next\.trim\(\)\) setAsNewNorm\(null\);/.test(quick) && /setBlocked\(null\);\s*setAsNewNorm\(null\);\s*setFeedsOpen\(false\);/.test(quick)
+  );
+
+  // P6 review: a pasted list's done-now lines say which row they tick, each with its own 'As a new task' toggle.
+  const pasted = (asNew?: boolean[]) =>
+    renderToStaticMarkup(createElement(PastePreview, { lines: ["x gym 45m", "buy milk"], truncated: false, today: "2026-10-01", onRemove: () => {}, active, asNew, onToggleAsNew: () => {} }));
+  const pastedTick = pasted();
+  const pastedNew = pasted([true, false]);
+  check(
+    "P6 review paste: a pasted done-now line previews the row it ticks ('Ticks: Gym (Habits)') with a 44 px 'As a new task' toggle; pressed, it previews the new task",
+    pastedTick.includes("Ticks: Gym (Habits)") && (pastedTick.match(/capture-paste-new/g) ?? []).length === 1 && pastedTick.includes('aria-pressed="false"') && pastedTick.includes(`>${PASTE_AS_NEW}<`) &&
+      pastedTick.includes('aria-label="Add “x gym 45m” as a new task instead of ticking Gym"') &&
+      !pastedNew.includes("Ticks:") && pastedNew.includes('aria-pressed="true"') && pastedNew.includes("Done today") &&
+      !renderToStaticMarkup(createElement(PastePreview, { lines: ["x gym 45m", "buy milk"], truncated: false, today: "2026-10-01", onRemove: () => {}, active: null })).includes("Ticks:"),
+    pastedTick.slice(0, 900)
+  );
+  check(
+    "P6 review paste: the preview reads the sheet's list only while fresh, a toggled line is stamped asNew and the batch sends it",
+    /active=\{vocab && tickFresh \? vocab\.active : null\}/.test(quick) &&
+      /return paste\.asNew\?\.\[i\] \? \{ \.\.\.stamped, asNew: true \} : stamped;/.test(quick) &&
+      /\.\.\.\(l\.asNew \? \{ asNew: true \} : \{\}\) \}\)\),/.test(quick)
+  );
+  const board = read("src/components/today/TodayBoard.tsx");
+  check("P6 board: a tick of the named row is found and flashed (sought), never called 'just added'", /if \(item\.ticked\) setSeek\(\{ id: item\.id, at: Date\.now\(\), sought: true \}\);\s*else showCaptured\(item\.id, item\.where\?\.lane \?\? null\);/.test(board));
+}
+
 // ── Source guards for the sheet (markup and CSS no function holds) ────────
 
 {
@@ -2193,6 +2404,15 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   at("the editing pill (Cancel)", ".capture-editing", 40);
   at("the insert row", ".capture-insert", 40);
   at("the footer row (the Idea link)", ".capture-foot-row", 40);
+  // P6 review: the done-now chips are 44 px (the one way to keep a line as a new task, D33).
+  at("the done-now line's 'Ticks:' chip", ".chip.btn-chip.capture-ticks", 44);
+  at("a pasted done-now line's 'As a new task'", ".chip.btn-chip.capture-paste-new", 44);
+  check(
+    "layout (P6 review): on a narrow screen only the 'Ticks:' chip's title is cut short (an ellipsis); 'Ticks:', the lane and the x never shrink, and its row may take the whole width",
+    /flex:\s*none/.test(rule(".capture-ticks > *")) &&
+      /min-width:\s*0/.test(rule(".capture-ticks .capture-ticks-title")) && /overflow:\s*hidden/.test(rule(".capture-ticks .capture-ticks-title")) && /text-overflow:\s*ellipsis/.test(rule(".capture-ticks .capture-ticks-title")) && /flex:\s*0 1 auto/.test(rule(".capture-ticks .capture-ticks-title")) &&
+      /max-width:\s*100%/.test(rule(".capture-sheet[data-layout] .capture-chip-row.capture-ticks-row > li")) && /min-width:\s*0/.test(rule(".capture-sheet[data-layout] .capture-chip-row.capture-ticks-row > li"))
+  );
   const insertRow = read("src/components/capture/InsertRow.tsx");
   check("insert row: every chip is the kit's 40 px chip button and keeps the line's focus", (insertRow.match(/className="chip btn-chip capture-ins"/g) ?? []).length >= 3 && (insertRow.match(/onMouseDown=\{keepFocus\}/g) ?? []).length >= 3);
   check("insert row: role=group 'Add to the line', the opener carries aria-expanded", insertRow.includes('role="group" aria-label="Add to the line"') && insertRow.includes("aria-expanded={expanded}"));
@@ -5082,9 +5302,9 @@ asyncChecks.push(
         /<h2 id="lane-planned" tabindex="-1">Planned<\/h2>/.test(renderToStaticMarkup(createElement(Lane, { id: "planned", title: "Planned" })))
     );
     check(
-      "an Undo from Done today: the row unfolds back in its lane (enter, unless Still) and focus follows it to its title",
+      "an Undo from Done today: the row unfolds back in its lane (enter, unless Still) and focus follows it to its title (P6 review: the board key u's too)",
       /setArrivals\(\(a\) => \(\{ \.\.\.a, \[key\]: "enter" \}\)\);/.test(boardSrc) &&
-        /if \(focused\) setRefocus\(\{ rowKey: key, lane: null, anytime: false \}\);/.test(boardSrc) &&
+        /if \(focused \|\| byKey\) setRefocus\(\{ rowKey: key, lane: null, anytime: false \}\);/.test(boardSrc) &&
         /el\.style\.transition = "none";\s*el\.style\.gridTemplateRows = "0fr";\s*el\.style\.opacity = "0";\s*void el\.offsetHeight;\s*el\.style\.transition = "";\s*el\.style\.gridTemplateRows = "";/.test(rowSrc) &&
         /^transition: grid-template-rows 160ms var\(--ease-out\), opacity 160ms var\(--ease-out\);$/.test(body('.t-row[data-motion="enter"]'))
     );

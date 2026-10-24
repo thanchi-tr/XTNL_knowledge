@@ -89,6 +89,9 @@ class MainActivity : ComponentActivity() {
         // 15 minutes, and only while the sync is on).
         val sync = (application as XtnlApp).graph.healthSync
         lifecycleScope.launch { sync.runIfDue() }
+        // P8: back in the app, what waits on the phone goes now (the job also sends it once online).
+        val queue = (application as XtnlApp).graph.sendQueue
+        if (queue.state.value.items.isNotEmpty()) queue.kick()
     }
 
     override fun onNewIntent(intent: Intent) {

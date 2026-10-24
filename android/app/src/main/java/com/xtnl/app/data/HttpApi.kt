@@ -164,10 +164,12 @@ class HttpApi(
 
     override suspend fun check() = call("/check", null, CheckData.serializer())
 
-    override suspend fun completeTask(templateId: String, mvv: Boolean, clientId: String, minutes: Int?, sessionId: String?, pages: Int?) =
+    override suspend fun completeTask(templateId: String, mvv: Boolean, clientId: String, minutes: Int?, sessionId: String?, pages: Int?, yesterday: Boolean, day: String?) =
         call("/tasks/complete", buildJsonObject {
             put("templateId", templateId)
-            put("day", "today")
+            // P7: a Yesterday row books on yesterday (T 1.00); every other tick on today, by the server's own clock. P8: the
+            // row's own life day when the tap fixed one (Check and the widget always do), the same on every try and replay.
+            put("day", day ?: if (yesterday) "yesterday" else "today")
             if (mvv) put("mvv", true)
             minutes?.let { put("minutes", it) }
             sessionId?.let { put("sessionId", it) }

@@ -10,6 +10,7 @@ import com.xtnl.app.core.ProofLine
 import com.xtnl.app.core.ReviewSession
 import com.xtnl.app.core.SideLine
 import com.xtnl.app.core.StreakLine
+import com.xtnl.app.core.TickNote
 import com.xtnl.app.core.TimeLabels
 import com.xtnl.app.core.WalletLine
 import kotlinx.coroutines.delay
@@ -49,12 +50,20 @@ internal const val DEMO_FATIGUE_HOURS = 18L
  * answers once, unknown or unused fields are refused like the server refuses
  * them, an answer's `retry` follows the web runner's rule (a miss comes back
  * while the card's misses this session are at most 3), points are review
- * points. It grades loosely. Never the default. [clock] is the check's clock (the tests set it).
+ * points. It grades loosely. Never the default. [clock] is the check's clock (the tests set it). P7: [kneeToday] and
+ * [kneeYesterday] are the raw each day already holds (the ticks before the demo's): a tick pays through the daily knee
+ * from there, and its answer carries `knee` past 200 raw, as the server's does. 0 by default, so the demo's ticks stay
+ * at the full rate.
  */
-class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
+class DemoApi(
+    private val kneeToday: Double = 0.0,
+    private val kneeYesterday: Double = 0.0,
+    private val clock: () -> Instant = { Instant.now() },
+) : XtnlApi {
     private val lock = Mutex()
 
-    private data class DemoTask(val item: TaskItem, val instanceId: String? = null)
+    /** A row, its instance once ticked, and the raw its tick put on its day's knee (an undo takes it back). */
+    private data class DemoTask(val item: TaskItem, val instanceId: String? = null, val raw: Double = 0.0)
 
     private val tasks = mutableListOf(
         DemoTask(TaskItem("t-gym", "Gym legs", "MUST", "OPEN", minutes = 60, mvv = "10 squats", icon = "dumbbell", xpHint = 8.3)),
@@ -77,6 +86,21 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
         DemoTask(TaskItem("t-run", "Run 5 km", "HABIT", "HELD", minutes = 35, icon = "run")),
         DemoTask(TaskItem("t-meds", "Morning meds", "HABIT", "DONE", minutes = 2, icon = "pill", xpHint = 3.6), "i-meds"),
     )
+
+    /**
+     * P7: the Yesterday lane, as a server whose yesterday is not settled yet sends it (the web's Record yesterday): Morning
+     * meds (a habit done today, not ticked yesterday; the same template as today's row) and a one-off due yesterday, on
+     * time there. Each tick books on yesterday at T 1.00 (its xpHint), on yesterday's knee. The demo's owed cards come
+     * from a server with Duty on, whose early settle would have locked yesterday: the demo shows both, as it shows every
+     * switch on at once.
+     */
+    private val yesterdayTasks = mutableListOf(
+        DemoTask(TaskItem("t-meds", "Morning meds", "HABIT", "OPEN", minutes = 2, icon = "pill", xpHint = 3.6)),
+        DemoTask(TaskItem("t-power", "Pay the power bill", "TASK", "OPEN", minutes = 15, dueLabel = "by yesterday", xpHint = 4.0)),
+    )
+    /** P7: the raw each day's ticks here added to its knee. */
+    private var rawToday = 0.0
+    private var rawYesterday = 0.0
 
     /** P31: the demo's side quest, expiring two days from the check clock's life day (never past its Sunday, as the server's detectors do). */
     private fun sideWalk(): TaskItem {
@@ -351,6 +375,23 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
         )
     }
 
+    /**
+     * P7: /check's `yesterday`, as the server sends it: yesterday's day and label, the sheet's own line (the window ends at
+     * 04:00, "tomorrow" before midnight and "this morning" after it, Sydney time), the rows still to record, and the rows.
+     */
+    private fun yesterdayLane(now: Instant): YesterdayLane {
+        val day = TimeLabels.lifeDay(now).minusDays(1)
+        val afterMidnight = now.atZone(TimeLabels.SYDNEY).hour < 4
+        val rows = yesterdayTasks.map { it.item }
+        return YesterdayLane(
+            day = day.toString(),
+            dayLabel = day.format(DateTimeFormatter.ofPattern("EEE d MMM", Locale.ENGLISH)),
+            line = "Anything you tick pays at the full rate, record by 04:00 ${if (afterMidnight) "this morning" else "tomorrow"}.",
+            open = rows.count { it.open || it.locked },
+            tasks = rows.filter { !it.kept } + rows.filter { it.kept },
+        )
+    }
+
     private fun board(): TasksSummary {
         val rows = tasks.map { it.item }.filter { it.countsForBoard }
         val open = rows.count { it.open || it.locked }
@@ -373,6 +414,8 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                     dayLabel = day.format(DateTimeFormatter.ofPattern("EEE d MMM", Locale.ENGLISH)),
                     tasks = ordered,
                     tasksSummary = board(),
+                    // P7: the Yesterday lane (the web's Record yesterday sheet), every row not done first.
+                    yesterday = yesterdayLane(now),
                     daily = daily,
                     review = ReviewSummary(
                         due = cards.count { it.card.ideaId !in answeredToday },
@@ -767,10 +810,11 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
         }
     }
 
-    override suspend fun completeTask(templateId: String, mvv: Boolean, clientId: String, minutes: Int?, sessionId: String?, pages: Int?): Outcome<CompleteResult> {
+    override suspend fun completeTask(templateId: String, mvv: Boolean, clientId: String, minutes: Int?, sessionId: String?, pages: Int?, yesterday: Boolean, day: String?): Outcome<CompleteResult> {
         pause()
         val body = buildJsonObject {
             put("templateId", templateId); put("mvv", mvv)
+            put("day", day ?: if (yesterday) "yesterday" else "today")
             minutes?.let { put("minutes", it) }
             sessionId?.let { put("sessionId", it) }
             pages?.let { putJsonObject("proof") { put("kind", "PAGES"); put("qty", it) } }
@@ -779,6 +823,15 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
             once(clientId, body) {
                 if (minutes != null && minutes !in 1..ProofLine.MINUTES_MAX) return@once Outcome.Err("minutes must be a whole number from 1 to 480.", code = "bad", status = 400)
                 if (pages != null && pages !in 1..ProofLine.PAGES_MAX) return@once Outcome.Err("proof.qty must be a whole number of pages from 1 to ${ProofLine.PAGES_MAX}.", code = "bad", status = 400)
+                // P8: the day as the server resolves it (tasks.ts resolveDay), by the check clock: the word, or a day key
+                // that is today or yesterday; an older one is refused in the server's words. Yesterday's is the lane's record.
+                val today = TimeLabels.lifeDay(clock())
+                val booked = if (day == null) (if (yesterday) today.minusDays(1) else today) else TimeLabels.parseDay(day)
+                    ?: return@once bad("day must be 'today', 'yesterday' or a YYYY-MM-DD day.")
+                if (booked != today && booked != today.minusDays(1)) {
+                    return@once Outcome.Err("The board is out of date: that day can no longer be recorded. Refresh and try again.", code = "conflict", status = 409)
+                }
+                if (booked != today) return@once recordYesterday(templateId, mvv, minutes)
                 val i = tasks.indexOfFirst { it.item.templateId == templateId }
                 if (i < 0) return@once Outcome.Err("That task is no longer on today's board.", code = "gone", status = 404)
                 val t = tasks[i]
@@ -802,10 +855,14 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                 val counted = reported?.let { if (minutes == null) ProofLine.countedTimer(it, estimate) else ProofLine.counted(it, estimate) }
                 val effort = { m: Int -> min(1.4, 0.5 + m / (m + 30.0)) }
                 val scale = if (counted != null && !mvv) effort(counted) / effort(estimate) else 1.0
-                val xp = round((t.item.xpHint ?: 2.0) * (if (mvv) 0.5 else 1.0) * scale * 10) / 10
+                val raw = round((t.item.xpHint ?: 2.0) * (if (mvv) 0.5 else 1.0) * scale * 10) / 10
+                // P7: through the daily knee, from the raw today already holds (the full rate to 100 raw: the price as is).
+                val before = kneeToday + rawToday
+                val xp = round(TickNote.kneePay(before, raw) * 10) / 10
+                rawToday += raw
                 val instance = "i-" + UUID.randomUUID().toString().take(8)
                 // The row's timer is counted, or closed counting nothing (a report, or the minimum, took its place).
-                tasks[i] = t.copy(item = t.item.copy(status = if (mvv) "DONE_MVV" else "DONE", xpHint = xp, timer = null), instanceId = instance)
+                tasks[i] = t.copy(item = t.item.copy(status = if (mvv) "DONE_MVV" else "DONE", xpHint = xp, timer = null), instanceId = instance, raw = raw)
                 if (!streak.keptToday) streak = streak.copy(keptToday = true, days = streak.days + 1)
                 level = gain(level, xp / 120.0)
                 val track = when (t.item.lane) { "MUST" -> "Body"; "HABIT" -> "Care"; else -> "Duty" }
@@ -828,10 +885,45 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                         level = level,
                         competency = skill?.first,
                         credits = creditsSince(walletBefore),
+                        knee = TickNote.knee(before, raw, TimeLabels.lifeDay(clock()).toString(), yesterday = false),
                     )
                 )
             }
         }
+    }
+
+    /**
+     * P7, as the server records a row of the Yesterday lane (day 'yesterday'): only a row the lane lists (else the
+     * server's "Only what was due yesterday …", 409), once (a repeat is "Already recorded"), at T 1.00 (its xpHint, the
+     * minimum at half), on yesterday's knee; its line ends "· yesterday". It moves nothing on today's board.
+     */
+    private fun recordYesterday(templateId: String, mvv: Boolean, minutes: Int?): Outcome<CompleteResult> {
+        val i = yesterdayTasks.indexOfFirst { it.item.templateId == templateId }
+        if (i < 0) return Outcome.Err("Only what was due yesterday can be recorded for yesterday.", code = "conflict", status = 409)
+        val t = yesterdayTasks[i]
+        if (t.item.kept) return Outcome.Ok(CompleteResult(t.instanceId ?: "i-x", 0.0, "Already recorded. Nothing is paid twice.", board().allDone, credits = creditsSince(wallet())))
+        val walletBefore = wallet()
+        val estimate = t.item.minutes ?: 30
+        val effort = { m: Int -> min(1.4, 0.5 + m / (m + 30.0)) }
+        val scale = if (minutes != null && !mvv) effort(ProofLine.counted(minutes, estimate)) / effort(estimate) else 1.0
+        val raw = round((t.item.xpHint ?: 2.0) * (if (mvv) 0.5 else 1.0) * scale * 10) / 10
+        val before = kneeYesterday + rawYesterday
+        val xp = round(TickNote.kneePay(before, raw) * 10) / 10
+        rawYesterday += raw
+        val instance = "i-" + UUID.randomUUID().toString().take(8)
+        yesterdayTasks[i] = t.copy(item = t.item.copy(status = if (mvv) "DONE_MVV" else "DONE", xpHint = xp), instanceId = instance, raw = raw)
+        level = gain(level, xp / 120.0)
+        val track = when (t.item.lane) { "MUST" -> "Body"; "HABIT" -> "Care"; else -> "Duty" }
+        return Outcome.Ok(
+            CompleteResult(
+                instanceId = instance, xp = xp,
+                line = "+$xp XP · $track" + (if (mvv) " · minimum" else "") + " · yesterday",
+                allDone = board().allDone,
+                level = level,
+                credits = creditsSince(walletBefore),
+                knee = TickNote.knee(before, raw, TimeLabels.lifeDay(clock()).minusDays(1).toString(), yesterday = true),
+            )
+        )
     }
 
     /**
@@ -878,11 +970,22 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
         pause(200)
         return lock.withLock {
             once(clientId, buildJsonObject { put("instanceId", instanceId) }) {
+                // P7: a tick recorded for yesterday is undone the same way, its raw back off yesterday's knee.
+                val y = yesterdayTasks.indexOfFirst { it.instanceId == instanceId }
+                if (y >= 0) {
+                    val t = yesterdayTasks[y]
+                    val xp = t.item.xpHint ?: 0.0
+                    rawYesterday = (rawYesterday - t.raw).coerceAtLeast(0.0)
+                    yesterdayTasks[y] = t.copy(item = t.item.copy(status = "OPEN"), instanceId = null, raw = 0.0)
+                    level = level.copy(progress = (level.progress - xp / 120.0).coerceAtLeast(0.0))
+                    return@once Outcome.Ok(UndoTaskResult(-xp, level))
+                }
                 val i = tasks.indexOfFirst { it.instanceId == instanceId }
                 if (i < 0) return@once Outcome.Ok(UndoTaskResult(0.0, level))
                 val t = tasks[i]
                 val xp = t.item.xpHint ?: 0.0
-                tasks[i] = t.copy(item = t.item.copy(status = "OPEN"), instanceId = null)
+                rawToday = (rawToday - t.raw).coerceAtLeast(0.0)
+                tasks[i] = t.copy(item = t.item.copy(status = "OPEN"), instanceId = null, raw = 0.0)
                 // A level once reached stays (as on the server): an undo drains only this level's progress.
                 level = level.copy(progress = (level.progress - xp / 120.0).coerceAtLeast(0.0))
                 Outcome.Ok(UndoTaskResult(-xp, level))

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Blueprint P8: the cover-screen widget (widget/TodayWidget). Four cells by two on the Fold's cover screen (about 475 dp
+     wide), resizable from three by two up to the screen's height; it lays out the rows its height fits on the main
+     display's grid too. Drawn again when its board or the queue moves (WidgetRefresh), and at most every 30 minutes by
+     the system otherwise. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_description"
+    android:initialLayout="@layout/glance_default_loading_layout"
+    android:previewLayout="@layout/widget_preview"
+    android:minWidth="250dp"
+    android:minHeight="110dp"
+    android:minResizeWidth="180dp"
+    android:minResizeHeight="110dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="2"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="1800000"
+    android:widgetCategory="home_screen" />

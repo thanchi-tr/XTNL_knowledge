@@ -670,6 +670,11 @@ The list lives in `src/lib/shortcuts.ts`; this table is generated from it.
 | Capture | `Alt+B` | Blank the selected words (cloze) | On New idea |
 | Capture | `Alt+1`–`Alt+7` | Switch the idea's format (1 Short … 7 Formula) | On New idea |
 | Tasks | `y` | Record yesterday | Any page, not while typing |
+| Tasks | `j` or `↓` | Next task (↓ once a task has focus) | On a Tasks board, not while typing |
+| Tasks | `k` or `↑` | Previous task (↑ once a task has focus) | On a Tasks board, not while typing |
+| Tasks | `x` | Tick the task in focus | On a Tasks board, not while typing |
+| Tasks | `m` | Do the minimum of the task in focus | On a Tasks board, not while typing |
+| Tasks | `u` | Undo the tick of the task in focus; with none in focus, the last tick | On a Tasks board, not while typing |
 | Go to | `g` then `t` | Tasks | Any page, not while typing |
 | Go to | `g` then `s` | Ideas (review) | Any page, not while typing |
 | Go to | `g` then `l` | Library | Any page, not while typing |

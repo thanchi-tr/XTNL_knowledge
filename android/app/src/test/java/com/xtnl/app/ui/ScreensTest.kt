@@ -117,6 +117,13 @@ class ScreensTest {
     @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
     fun sideRowMain() = sideRow("main")
 
+    /** P7: the Yesterday section (Morning meds and the power bill) on the cover screen and the main display, before and after a tick for yesterday. */
+    @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
+    fun yesterdayFront() = yesterdaySection("front")
+
+    @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
+    fun yesterdayMain() = yesterdaySection("main")
+
     /** P32: the demo's calibration card (this week's sizes, the capacity on offer, Floss eased) on the cover screen and the main display. */
     @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
     fun calibrationFront() = calibrationCard("front")
@@ -178,6 +185,24 @@ class ScreensTest {
     /** P30: the same on the main display (the runner's bar over the card, then the Start panel). */
     @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
     fun fatigueMain() = fatigue("main")
+
+    /**
+     * P8: the offline queue on Check, the cover screen and the main display: the demo's board as the last /check, read
+     * offline (an address that refuses at once: nothing leaves the PC), a tick and a line waiting ("2 waiting to send",
+     * Gym legs ticked "waiting to send"), and the Not sent card (a line kept back, a refused tick).
+     */
+    @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
+    fun offlineQueueFront() = offlineQueue("front")
+
+    @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
+    fun offlineQueueMain() = offlineQueue("main")
+
+    /** P8: the cover-screen widget (4 × 2 cells there, and taller), drawn from its RemoteViews with the demo's board. */
+    @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
+    fun widgetFront() = widget("front")
+
+    @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
+    fun widgetMain() = widget("main")
 
     /** The minutes sheet (P7, P23, P24) on the cover screen and the main display, with demo data. */
     @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
@@ -453,6 +478,37 @@ class ScreensTest {
         rule.onAllNodes(row).onFirst().assertExists()
         rule.onAllNodes(hasText("Side quest · expires", substring = true)).onFirst().assertExists()
         snap("$name-side-row")
+    }
+
+    /**
+     * P7: Check with demo data, scrolled until the Yesterday section's power bill is in view (the cover screen's one column,
+     * the main display's first pane), one PNG; a tap ticks it for yesterday (its line ends "· yesterday", with its Undo),
+     * and a second PNG; Morning meds stays open there while today's is kept: one template, two rows.
+     */
+    private fun yesterdaySection(name: String) {
+        val graph = ApplicationProvider.getApplicationContext<XtnlApp>().graph
+        graph.settings.setDemo(true)
+        graph.settings.setMotion(MotionChoice.STILL)
+        rule.runOnUiThread { rule.activity.actionBar?.hide() }
+        rule.setContent {
+            AppRoot(graph, MutableStateFlow(WindowFacts()), MutableStateFlow<Uri?>(null), {}, WebHolder(), {})
+        }
+        settle()
+        val bill = hasContentDescription("Pay the power bill")
+        val lists = rule.onAllNodes(hasScrollAction())
+        for (i in 0 until lists.fetchSemanticsNodes().size) {
+            if (runCatching { scrolling { lists[i].performScrollToNode(bill) } }.isSuccess) break
+        }
+        settle()
+        rule.onAllNodes(hasText("2 to record")).onFirst().assertExists()
+        rule.onAllNodes(hasText("Anything you tick pays at the full rate", substring = true)).onFirst().assertExists()
+        snap("$name-yesterday")
+        rule.mainClock.autoAdvance = true
+        rule.onAllNodes(bill).onFirst().performClick()
+        settle()
+        rule.onAllNodes(hasText("· yesterday", substring = true)).onFirst().assertExists()
+        rule.onAllNodes(hasText("1 to record")).onFirst().assertExists()
+        snap("$name-yesterday-ticked")
     }
 
     /** Check with demo data, scrolled until the calibration card is in view (whichever list holds it), then one PNG. */
@@ -844,6 +900,87 @@ class ScreensTest {
      * Every window on screen, bottom first (the activity, then a sheet or a dialog over it), drawn into one PNG: a
      * ModalBottomSheet is its own window, which [snap] (the activity's view tree alone) would leave out.
      */
+    private fun offlineQueue(name: String) {
+        val graph = ApplicationProvider.getApplicationContext<XtnlApp>().graph
+        // Never a real server: a local port that refuses at once, so every read and send here is offline.
+        val server = "http://localhost:9"
+        graph.settings.setDemo(false)
+        graph.settings.setServer(server)
+        graph.settings.setMotion(MotionChoice.STILL)
+        val data = kotlinx.coroutines.runBlocking { (com.xtnl.app.data.DemoApi().check() as com.xtnl.app.data.Outcome.Ok).value }
+        kotlinx.coroutines.runBlocking { graph.cache.write(server, data, System.currentTimeMillis() - 25 * 60_000) }
+        val day = data.day!!
+        val yesterday = java.time.LocalDate.parse(day).minusDays(1).toString()
+        graph.sendQueue.restore(
+            com.xtnl.app.data.QueueFile(
+                items = listOf(
+                    com.xtnl.app.data.QueuedWrite.tick("shot-1", server, day, "Gym legs", "t-gym"),
+                    com.xtnl.app.data.QueuedWrite.log("shot-2", server, day, "call the plumber fri", "task"),
+                ),
+                notSent = listOf(
+                    com.xtnl.app.data.NotSent(com.xtnl.app.data.QueuedWrite.tick("shot-3", server, yesterday, "Stretch", "t-stretch"), "That task no longer exists."),
+                    com.xtnl.app.data.NotSent(com.xtnl.app.data.QueuedWrite.log("shot-4", server, yesterday, "buy milk", "task"), com.xtnl.app.core.SendLine.keptBack(yesterday), keptBack = true),
+                ),
+            ),
+        )
+        val links = MutableStateFlow<Uri?>(null)
+        rule.runOnUiThread { rule.activity.actionBar?.hide() }
+        rule.setContent {
+            AppRoot(graph, MutableStateFlow(WindowFacts()), links, { links.value = null }, WebHolder(), {})
+        }
+        settle()
+        rule.onAllNodes(hasText("2 waiting to send")).onFirst().assertExists()
+        rule.onAllNodes(hasText(com.xtnl.app.core.SendLine.NOT_SENT_TITLE.uppercase())).onFirst().assertExists()
+        rule.onAllNodes(hasText(com.xtnl.app.core.SendLine.SEND_FOR_TODAY)).onFirst().assertExists()
+        snap("$name-offline-queue")
+        // The rows below: Gym legs ticked, "Waiting to send" on its own line.
+        val gym = hasContentDescription("Gym legs")
+        val lists = rule.onAllNodes(hasScrollAction())
+        for (i in 0 until lists.fetchSemanticsNodes().size) {
+            if (runCatching { scrolling { lists[i].performScrollToNode(gym) } }.isSuccess) break
+        }
+        settle()
+        snap("$name-offline-queue-rows")
+        // Log: a line sent with no answer (the address refuses) waits on the phone, its entry says so.
+        rule.mainClock.autoAdvance = true
+        links.value = Uri.parse("xtnl://app/log?section=task")
+        settle()
+        rule.onAllNodes(hasSetTextAction()).onFirst().performTextInput("water the plants")
+        settle(200)
+        rule.onAllNodesWithContentDescription("Send").onFirst().performClick()
+        settle()
+        rule.onAllNodes(hasText(com.xtnl.app.core.SendLine.WAITING)).onFirst().assertExists()
+        rule.onAllNodes(hasText("2 waiting to send")).onFirst().assertExists()
+        snap("$name-offline-log")
+    }
+
+    @OptIn(androidx.glance.appwidget.ExperimentalGlanceRemoteViewsApi::class)
+    private fun widget(name: String) {
+        val ctx = ApplicationProvider.getApplicationContext<XtnlApp>()
+        val data = kotlinx.coroutines.runBlocking { (com.xtnl.app.data.DemoApi().check() as com.xtnl.app.data.Outcome.Ok).value }
+        val now = java.time.Instant.now()
+        val queue = com.xtnl.app.data.QueueState(items = listOf(com.xtnl.app.data.QueuedWrite.tick("w-1", "demo", data.day!!, "Stretch", "t-stretch")))
+        val view = com.xtnl.app.core.WidgetRows.of(data, queue, now, demo = true)
+        val sizes = listOf("4x2" to androidx.compose.ui.unit.DpSize(440.dp, 200.dp), "4x3" to androidx.compose.ui.unit.DpSize(440.dp, 290.dp), "3x2" to androidx.compose.ui.unit.DpSize(300.dp, 200.dp))
+        rule.runOnUiThread { rule.activity.actionBar?.hide() }
+        for ((label, size) in sizes) {
+            val rv = kotlinx.coroutines.runBlocking {
+                androidx.glance.appwidget.GlanceRemoteViews().compose(ctx, size) { com.xtnl.app.widget.WidgetBody(ctx, view) }.remoteViews
+            }
+            val density = ctx.resources.displayMetrics.density
+            rule.runOnUiThread {
+                val host = android.widget.FrameLayout(rule.activity).apply { setBackgroundColor(0xFF050609.toInt()) }
+                val w = (size.width.value * density).toInt()
+                val h = (size.height.value * density).toInt()
+                val v = rv.apply(rule.activity, host)
+                host.addView(v, android.widget.FrameLayout.LayoutParams(w, h).apply { setMargins((16 * density).toInt(), (24 * density).toInt(), 0, 0) })
+                rule.activity.setContentView(host)
+            }
+            settle(800)
+            snap("$name-widget-$label")
+        }
+    }
+
     private fun snapAll(name: String) {
         rule.waitForIdle()
         val decor = rule.activity.window.decorView.rootView

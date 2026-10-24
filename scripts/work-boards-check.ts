@@ -308,7 +308,13 @@ function scoping() {
     "capture action: a line's board is checked (open, the user's) and passed to createTemplateCore; a gone or archived tab is said, the line kept",
     /const scope = await boardOf\(userId, opts\?\.board\);\s*if \(!scope\.ok\) return scope;/.test(act) &&
       // Re-pinned for blueprint P31 review: with the line's own spans (a work tab's '#side' line is read again with them).
-      /boardId: scope\.boardId, reverted: (?:line|prepared)\.reverted \}\);/.test(act) &&
+      // Re-pinned for blueprint P6: both saves hand the tab to saveLine, which passes it to the done-now tick (which never
+      // ticks on a work tab) and to createTemplateCore with the line's spans.
+      /await saveLine\(userId, line, \{ captureKey: keyOf\(opts\?\.captureKey\), boardId: scope\.boardId, asNew: opts\?\.asNew === true \}\);/.test(act) &&
+      /await saveLine\(userId, prepared, \{ captureKey: line\.captureKey, boardId: scope\.boardId, asNew: line\.asNew === true \}\);/.test(act) &&
+      // Re-pinned for the P6 review: the tick runs inside L3's pair (`around`).
+      /tickNamedRowCore\(userId, line\.parsed, \{ captureKey: opts\.captureKey, boardId: opts\.boardId, asNew: opts\.asNew, around: momentsAround\(userId\) \}\)/.test(act) &&
+      /boardId: opts\.boardId, reverted: line\.reverted \}\);/.test(act) &&
       /WORK_BOARD_ARCHIVED : WORK_BOARD_GONE/.test(act) &&
       /const scope = await boardOf\(userId, line\.board\);/.test(act)
   );
@@ -371,7 +377,8 @@ function exclusion() {
   check("inbox on a work tab: no goal, no idea draft; its must has no Duty", /if \(row\.boardId && !workClarifyAllowed\(choice\)\) return fail\(WORK_CLARIFY_REFUSAL\);/.test(clarify) && /launched: isDutyLaunched\(today\) && !row\.boardId/.test(clarify));
   check("size: a work task takes no self-rating and no resize (sizing prices XP)", /if \(row\.boardId\) return fail\(WORK_NO_SIZE\);/.test(fnBody(tasks, "setBandOverrideCore")) && /if \(row\.boardId\) return fail\(WORK_NO_SIZE\);/.test(fnBody(tasks, "resizableCore")));
   check("sizing: a work task spends no model call and no cap slot (applySizing → 'done')", /if \(t\.boardId\) return "done";/.test(code("src/lib/life-sizing.ts")));
-  check("sizing: the capture's after() never queues a work line", /!s\.created\.boardId\)\.map\(\(s\) => s\.created\.id\)/.test(code("src/app/actions/capture.ts")));
+  // Re-pinned for blueprint P6: nor a line that ticked the row it names (no row of its own to size).
+  check("sizing: the capture's after() never queues a work line", /!s\.created\.boardId && !s\.created\.ticked\)\.map\(\(s\) => s\.created\.id\)/.test(code("src/app/actions/capture.ts")));
 
   // Readers of TaskTemplate / TaskInstance in the game: the personal Board only.
   const settle = code("src/lib/settlement.ts");
@@ -513,7 +520,7 @@ function ui(board: ReturnType<typeof scoping>) {
     /const workBoard = workBoardIdOf\(pathname\);\s*const onToday = pathname === "\/today" \|\| \(workBoard !== null && workSectionOf\(pathname\) === "tasks"\);/.test(quick) &&
       /randomSalt\(\), editing\?\.oldId \?\? null, workBoardRef\.current\)/.test(quick) &&
       /randomSalt\(\), null, workBoardRef\.current\)/.test(quick) &&
-      /createFromCapture\(line\.text, line\.reverted, \{ refresh: refreshPage, captureKey: line\.nonce, board: line\.board \?\? null, weightUnit \}\)/.test(quick) &&
+      /createFromCapture\(line\.text, line\.reverted, \{ refresh: refreshPage, captureKey: line\.nonce, board: line\.board \?\? null, weightUnit(?:, asNew: line\.asNew === true)? \}\)/.test(quick) &&
       /\.\.\.\(l\.board \? \{ board: l\.board \} : \{\}\)/.test(quick)
   );
 

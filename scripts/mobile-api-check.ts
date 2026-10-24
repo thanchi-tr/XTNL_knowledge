@@ -58,11 +58,13 @@ import { CREDITS_LAUNCH_DAY, CREDITS_LAUNCH_DAY_ENV, type CreditsWallet } from "
 import { normTitleOf } from "../src/lib/life-lexicon";
 import { parseRule } from "../src/lib/recurrence";
 import { buildBoard, statsFor, type BoardData, type BoardInstance, type BoardTemplate, type DayLedger, type PaidRecord } from "../src/lib/today-board";
-import { splitTodayLane, boardClearOf, madeUpLineOf, makeUpViewOf } from "../src/components/today/board-ui";
+import { splitTodayLane, boardClearOf, madeUpLineOf, makeUpViewOf, yesterdaySheetOf } from "../src/components/today/board-ui";
 // Blueprint P22: the owed cards (the web MakeUpCard's words) and an owed card's actions.
 import type { DutyBoard, OwedCard } from "../src/lib/duty-view";
 import type { MakeUpResult } from "../src/app/actions/duty";
 import { TIMING_FACTOR } from "../src/lib/life-grade";
+// Blueprint P7: the phone's minutes (the drawer's clamp) and the knee note.
+import { KNEE_CAP, KNEE_CAP_AT_RAW, REPORTED_MINUTES_MAX, clampMinutes, kneeG } from "../src/lib/life-grade";
 import { launchRefusal } from "../src/lib/duty-plan";
 import { seededOrder, queueAfterAnswer, SESSION_RETURNS_MAX, type CardResult, type RunCard } from "../src/components/workspace/review-model";
 import { contentOfAddState } from "../src/lib/idea-edit";
@@ -102,6 +104,8 @@ import { addRewardCore, buyRewardCore, loadMall, undoBuyCore, type MallStore, ty
 import { BUY_NEEDS_CLIENT_ID, TICK_MINUTES_MAX, TICK_MINUTES_MIN, TIMER_STARTED_LINE } from "../src/lib/mobile-api";
 // Blueprint P28: condition decay's /check `skills`.
 import { checkSkillsOf } from "../src/lib/mobile-api";
+// Blueprint P7: /check's Yesterday lane and the tick's knee note.
+import { KNEE_NOTE_FROM_RAW, checkYesterdayOf, tickKneeOf } from "../src/lib/mobile-api";
 import { CHECK_CONDITION_BELOW, DECAY_LAUNCH_DAY, DECAY_LAUNCH_DAY_ENV, conditionOf, conditionPercent, type ConditionItem } from "../src/lib/skill-decay";
 // Blueprint P30: review fatigue's `fatigued` on /check's review and on /review/queue.
 import { fatiguedKeyOf } from "../src/lib/mobile-api";
@@ -995,8 +999,9 @@ async function routes() {
     collectKeys(d);
     check("200, ok, no-store", g.status === 200 && g.json.ok === true && g.noStore);
     // Re-pinned for P22: Duty's switch (`dutyOn`) and the open debts (`owed`). P28's `skills` is absent while condition
-    // decay is off, so the keys are HEAD's (its own pin below, with the read in force).
-    eq("the documented keys", keysOf(d), ["auditOn", "credits", "daily", "day", "dayLabel", "dutyOn", "fading", "level", "now", "owed", "review", "streak", "tasks", "tasksSummary", "week", "work"]);
+    // decay is off, so the keys are HEAD's (its own pin below, with the read in force). Re-pinned for P7: the Yesterday
+    // lane (`yesterday`), always sent.
+    eq("the documented keys", keysOf(d), ["auditOn", "credits", "daily", "day", "dayLabel", "dutyOn", "fading", "level", "now", "owed", "review", "streak", "tasks", "tasksSummary", "week", "work", "yesterday"]);
     check("now is the server's clock; day the life day; dayLabel 'Wed 21 Oct'", d.now === NOW.toISOString() && d.day === TODAY && d.dayLabel === "Wed 21 Oct");
     check(
       "one wave: the board (personal: three arguments), the tree, the day's counts, streak, shell, work, the grace extension, the week audit and the credits wallet (P16), read once each",
@@ -1228,6 +1233,69 @@ async function routes() {
         { templateId: "q1", title: "Gym", kept: true, minimum: true },
       ],
     });
+
+    // Blueprint P7 (5.1b; D34): the Yesterday lane, the web's Record yesterday sheet's first list off the same board.
+    {
+      const y = d.yesterday as { day: string; dayLabel: string; line: string; open: number; tasks: Record<string, unknown>[] };
+      collectKeys(y);
+      eq("yesterday (P7): the documented keys", keysOf(y), ["day", "dayLabel", "line", "open", "tasks"]);
+      check(
+        "yesterday (P7): yesterday's life day and its label, and the sheet's own line (yesterdaySheetOf's description, before Duty: 'record by 04:00 tomorrow' at 11:12)",
+        y.day === YESTERDAY &&
+          y.dayLabel === "Tue 20 Oct" &&
+          y.line === "Anything you tick pays at the full rate, record by 04:00 tomorrow." &&
+          y.line === yesterdaySheetOf({ yesterday: YESTERDAY, recordBy: "record by 04:00 tomorrow", duty: undefined, yesterdayActive: false }).description,
+        y.line
+      );
+      const yBoard = buildBoard(DATA, [], NOW.getTime());
+      eq(
+        "yesterday (P7): Board.yesterdayRows in the board's order (the two daily habits not ticked yesterday), each in `tasks`' own shape, lane HABIT, open 2",
+        [y.tasks.map((x) => x.templateId), y.tasks.map((x) => x.lane), y.tasks.map((x) => x.status), y.open, keysOf(y.tasks[0])],
+        [yBoard.yesterdayRows.map((r) => r.template.id), ["HABIT", "HABIT"], ["OPEN", "OPEN"], 2, keysOf((d.tasks as Record<string, unknown>[])[0])]
+      );
+      check("yesterday (P7): the fixture's lane is the two habits (hab1, hab2), never today's one-offs", same(y.tasks.map((x) => x.templateId).sort(), ["hab1", "hab2"]));
+      // T 1.00 (TIMING_FACTOR.ON_TIME): a deadline due yesterday is on time on its yesterday row, late (×0.85) on today's.
+      const bill = tpl({ id: "bill", title: "Pay the power bill", dueDay: YESTERDAY, dueKind: "DEADLINE", track: "DUTY" });
+      const mustY = tpl({ id: "mustY", title: "Floss", compulsory: true, recurrence: "DAILY", estMinutes: 5, machineMinutes: 5 });
+      const recorded = tpl({ id: "recY", title: "Stretch", recurrence: "DAILY", estMinutes: 10, machineMinutes: 10 });
+      const yData = boardData([bill, mustY, recorded], [{ ...inst("i-recY", "recY", "DONE", YESTERDAY), source: "record-yesterday" }], { "i-recY": paidOf("i-recY", 2.2) });
+      const yb = buildBoard(yData, [], NOW.getTime());
+      const yl = checkYesterdayOf(yb, yData, NOW.getTime());
+      const tOf = (r: { projection: Receipt }) => r.projection.factors.find((f) => f.key === "T")?.value;
+      const billY = yb.yesterdayRows.find((r) => r.template.id === "bill")!;
+      const billToday = yb.todayRows.find((r) => r.template.id === "bill")!;
+      check(
+        "yesterday (P7): day 'yesterday' books at T 1.00: the bill due yesterday is on time on its yesterday row (T 1.00) and late on today's (T 0.85), and its xpHint is the yesterday row's price",
+        TIMING_FACTOR.ON_TIME === 1 &&
+          tOf(billY) === TIMING_FACTOR.ON_TIME &&
+          tOf(billToday) === TIMING_FACTOR.LATE &&
+          billY.day === YESTERDAY &&
+          yl.tasks.find((x) => x.templateId === "bill")?.xpHint === Math.round(billY.projection.xp * 10) / 10 &&
+          billY.projection.xp > billToday.projection.xp,
+        JSON.stringify([tOf(billY), tOf(billToday)])
+      );
+      check(
+        "yesterday (P7): every row of the lane prices at T 1.00",
+        yb.yesterdayRows.length > 0 && yb.yesterdayRows.every((r) => tOf(r) === 1) && yBoard.yesterdayRows.every((r) => tOf(r) === 1)
+      );
+      eq(
+        "yesterday (P7): lanes by the row's colour code (a must MUST, a habit HABIT, a one-off TASK); a row recorded for yesterday this morning last, DONE with what it paid, not counted open; no timer",
+        [yl.tasks.map((x) => [x.templateId, x.lane, x.status, x.xpHint]).slice(-1), yl.tasks.find((x) => x.templateId === "mustY")?.lane, yl.tasks.find((x) => x.templateId === "bill")?.lane, yl.open, yl.tasks.every((x) => x.timer === null)],
+        [[["recY", "HABIT", "DONE", 2.2]], "MUST", "TASK", 2, true]
+      );
+      const late = checkYesterdayOf(yb, yData, new Date("2026-10-21T15:30:00.000Z").getTime());
+      check("yesterday (P7): after midnight the line says 'this morning' (the window still ends at 04:00)", late.line === "Anything you tick pays at the full rate, record by 04:00 this morning.", late.line);
+      const settledData: BoardData = { ...yData, duty: dutyBoard({ cursor: YESTERDAY }) };
+      const settled = checkYesterdayOf(buildBoard(settledData, [], NOW.getTime()), settledData, NOW.getTime());
+      check(
+        "yesterday (P7): once yesterday is settled (Duty live) nothing is left to record: no rows, open 0, the sheet's own words",
+        same(settled.tasks, []) && settled.open === 0 && settled.line === "Tuesday is settled. Anything missed is made up from its card." && settled.line === yesterdaySheetOf({ yesterday: YESTERDAY, recordBy: "x", duty: settledData.duty, yesterdayActive: false }).description,
+        settled.line
+      );
+      const none = checkYesterdayOf(buildBoard(boardData([tpl({ id: "solo", title: "Only today", dueDay: TODAY, dueKind: "PLANNED" })], []), [], NOW.getTime()), boardData([], []), NOW.getTime());
+      check("yesterday (P7): nothing due yesterday: tasks [] and open 0, still sent", same(none.tasks, []) && none.open === 0 && none.day === YESTERDAY);
+      check("yesterday (P7): checkYesterdayOf is the reply's own builder", same(y, checkYesterdayOf(yBoard, DATA, NOW.getTime())));
+    }
 
     // The Review hub's figures, from its own formula (src/app/review/page.tsx).
     const all = TREE.flatMap((f) => f.domains.flatMap((dm) => dm.ideas));
@@ -1578,6 +1646,10 @@ async function routes() {
         { templateId: "hab1", proof: [30] },
         { templateId: "hab1", proof: "30 pages" },
         { templateId: "hab1", pages: 30 },
+        // P7: unknown fields are still refused (the reply's knee is never an input; the lane is chosen by `day`).
+        { templateId: "hab1", knee: true },
+        { templateId: "hab1", yesterday: true },
+        { templateId: "hab1", day: "tomorrow" },
       ].map(async (b) => got(handleTaskComplete(post("/tasks/complete", b), deps)))
     );
     // Re-pinned for P24: three more good calls above (9 in all), and the pages' bad shapes below are 400s too.
@@ -1617,6 +1689,68 @@ async function routes() {
       ].map(async (c) => data(await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1" }), fakes({ completeTask: async () => ({ ok: true, value: c }) }).deps))).line)
     );
     eq("lines: the minimum, yesterday, a repeat", lines, ["+4.3 XP · Body · minimum", "+4.3 XP · Body · yesterday", "Already recorded. Nothing is paid twice."]);
+    // Blueprint P7: the phone's minutes are counted with the drawer's own clamp (life-grade clampMinutes, in priceTask),
+    // the golden the web drawer reads: an estimate of 30 reported as 90 counts 60.
+    check(
+      "minutes (P7): the drawer's clamp, [0.5, 2] × the estimate and at most 480: 30 reported as 90 counts 60, as 10 counts 15, none counts the estimate; the route's 1-480 is the clamp's ceiling",
+      clampMinutes(90, 30) === 60 && clampMinutes(10, 30) === 15 && clampMinutes(null, 30) === 30 && clampMinutes(600, 400) === 480 && TICK_MINUTES_MIN === 1 && TICK_MINUTES_MAX === REPORTED_MINUTES_MAX
+    );
+    check(
+      "minutes (P7): the action hands the phone's minutes to the board's own core as reported (completeInstanceCore prices them through clampMinutes)",
+      /minutes: typeof input\?\.minutes === "number" \? input\.minutes : null,/.test(code("src/app/actions/tasks.ts")) && /const minutes = clampMinutes\(input\.minutes, eEff, wall\);/.test(code("src/lib/life-grade.ts"))
+    );
+    {
+      // Blueprint P7 (3.3a; D26): the knee note, only once the day the tick booked on is past 200 raw.
+      const kneeAt = (kneeBefore: number, raw: number, over: Partial<Completion> = {}) =>
+        tickKneeOf(completion({ receipt: { ...RECEIPT, kneeBefore, raw, xp: kneeG(kneeBefore + raw) - kneeG(kneeBefore) }, ...over }), TODAY);
+      check(
+        "knee (P7): from KNEE_FULL_RATE + KNEE_SCALE = 200 raw, the rules page's own half-rate point (KNEE_HALF_RATE_AT)",
+        KNEE_NOTE_FROM_RAW === 200 && /const KNEE_HALF_RATE_AT = KNEE_FULL_RATE \+ KNEE_SCALE;/.test(code("src/app/today/rules/page.tsx")) && /export const KNEE_NOTE_FROM_RAW = KNEE_FULL_RATE \+ KNEE_SCALE;/.test(code("src/lib/mobile-api.ts"))
+      );
+      check(
+        "knee (P7): none at the fixture's 5 raw, at 199.9, at exactly 200 (past it only), and never on a repeat (it paid nothing)",
+        kneeAt(0, 5) === null && kneeAt(190, 9.9) === null && kneeAt(195, 5) === null && kneeAt(300, 10, { duplicate: true }) === null
+      );
+      eq("knee (P7): past 200 raw today: the day, its raw total after the tick, the knee's rate there rounded down, the line", kneeAt(190, 15), {
+        day: TODAY,
+        raw: 205,
+        rate: 0.48,
+        capped: false,
+        line: "Fatigue breaker: past 200 raw today, so a tick now pays ×0.48 or less. The day stops at 300 XP.",
+      });
+      const slope = (r: number) => (kneeG(r + 1e-4) - kneeG(r - 1e-4)) / 2e-4;
+      check(
+        "knee (P7): the rate is kneeG's own slope at the day's raw total (rounded down: 'or less' holds), and it only falls as the day goes on",
+        [205, 214.6, 350, 600].every((r) => { const k = kneeAt(r - 5, 5)!; return k.rate <= slope(r) + 1e-9 && slope(r) - k.rate < 0.01; }) && kneeAt(209.6, 5)!.rate === 0.46 && kneeAt(345, 5)!.rate < kneeAt(200, 5)!.rate
+      );
+      eq("knee (P7): a tick for yesterday reads yesterday's knee", kneeAt(230, 10, { day: YESTERDAY }), {
+        day: YESTERDAY,
+        raw: 240,
+        rate: 0.41,
+        capped: false,
+        line: "Fatigue breaker: past 200 raw yesterday, so a tick now pays ×0.41 or less. The day stops at 300 XP.",
+      });
+      eq(
+        "knee (P7): at the cap (KNEE_CAP_AT_RAW, ≈ 739 raw) the day's pay has stopped: rate 0, capped, its own line (today, and yesterday)",
+        [kneeAt(730, 20), kneeAt(800, 1, { day: YESTERDAY })?.line, Math.round(KNEE_CAP_AT_RAW), KNEE_CAP],
+        [
+          { day: TODAY, raw: 750, rate: 0, capped: true, line: "Fatigue breaker: today reached the day's cap of 300 XP. Ticks still count; they add no more XP today." },
+          "Fatigue breaker: yesterday reached the day's cap of 300 XP. Ticks still count; they add no more XP to yesterday.",
+          739,
+          300,
+        ]
+      );
+      const kneed = completion({ receipt: { ...RECEIPT, kneeBefore: 190, raw: 15, xp: kneeG(205) - kneeG(190) } });
+      const kg = await got(handleTaskComplete(post("/tasks/complete", { templateId: "hab1" }), fakes({ completeTask: async () => ({ ok: true, value: kneed }) }).deps));
+      const kd = data(kg);
+      collectKeys(kd);
+      check(
+        "knee (P7): the reply carries `knee` (last) only past 200 raw, tickKneeOf's own; its xp is the receipt's (the note changes no price); below it the key is left out (the documented keys above)",
+        Object.keys(kd).at(-1) === "knee" && same(kd.knee, tickKneeOf(kneed, TODAY)) && kd.xp === Math.round(kneed.receipt.xp * 10) / 10 && !("knee" in d),
+        JSON.stringify(kd.knee)
+      );
+      check("knee (P7): a reading, never a charge: no xp, MP, level or points field on it", !/"(xp|mp|level|points)"/i.test(JSON.stringify(Object.keys(kd.knee as object))));
+    }
     const allDone = fakes({ loadBoard: async () => boardData([tpl({ id: "x", title: "Only", dueDay: TODAY, dueKind: "PLANNED" })], [inst("ix", "x", "DONE")], { ix: paidOf("ix", 1) }) });
     check("allDone: the board after the tick is clear", data(await got(handleTaskComplete(post("/tasks/complete", { templateId: "x" }), allDone.deps))).allDone === true);
     const noBoard = fakes({ loadBoard: async () => Promise.reject(new Error("b")) });
@@ -2149,6 +2283,17 @@ async function routes() {
     check("the 4th must: 'Added' with the warning", String(data(fourth).line).startsWith("Added. ") && String(data(fourth).line).endsWith(" · 4 of 5 daily quests"), String(data(fourth).line));
     const refused = await got(handleLog(post("/log", { text: "x y", section: "task" }), fakes({ createFromCapture: async () => ({ ok: false, error: "Couldn't save it. Your line is kept — try again." }) }).deps));
     check("the sheet's couldn't-save → 500 with its line", isFail(refused, "server") && refused.json.error === "Couldn't save it. Your line is kept — try again.");
+    // Blueprint P6 (D33): a done-now line that names a row on today's board ticks it (the server's fix, for free); only the line's words change.
+    const tickedRow = await kinds(capturedItem({ id: "gym", title: "Gym", kind: "TASK", doneNow: true, where: { lane: "done", label: "Done today" }, ticked: { from: "Habits", instanceId: "i1" } }));
+    const tickedEarlier = await kinds(capturedItem({ id: "gym", title: "Gym", kind: "TASK", where: { lane: "done", label: "Done today" }, ticked: { from: "Done today", instanceId: "i1", earlier: true } }));
+    check(
+      "P6: a line that ticked the row it names says 'Ticked. Gym (Habits) · +8.3', its id is that row's, and it has no Undo (a capture's Undo would take back the row)",
+      tickedRow.kind === "task" && tickedRow.id === "gym" && tickedRow.line === "Ticked. Gym (Habits) · +8.3" && tickedRow.undo === null,
+      JSON.stringify(tickedRow)
+    );
+    check("P6: a row ticked earlier today: 'Already ticked. Gym → Done today · Nothing is paid twice.', no Undo", tickedEarlier.line === "Already ticked. Gym → Done today · Nothing is paid twice." && tickedEarlier.undo === null, String(tickedEarlier.line));
+    const notTicked = await got(handleLog(post("/log", { text: "x write the report", section: "task" }), fakes({ createFromCapture: async () => ({ ok: false, error: "Not ticked: Write the report (Planned) counts its time. Add its minutes to the line, like 45m, or tick it on Today." }) }).deps));
+    check("P6: a named row's refused tick → 409 with its line (nothing was written)", isFail(notTicked, "conflict") && String(notTicked.json.error).startsWith("Not ticked: Write the report (Planned)"));
 
     const u = fakes();
     const ut = await got(handleLogUndo(post("/log/undo", { kind: "task", id: "t-new" }), u.deps));
@@ -3333,6 +3478,156 @@ function wiring() {
       /fatigued = r\.value\.fatigued,/.test(reviewVm)
   );
   check("Android: versionCode 26 (2.14) or later for the fatigue line", Number(/versionCode (\d+)\b/.exec(gradle)?.[1] ?? 0) >= 26);
+
+  section("the Android app (P7: the Yesterday section, the minute chips, the moments and the knee note)");
+  const tickNote = read("android/app/src/main/java/com/xtnl/app/core/TickNote.kt");
+  const yLine = read("android/app/src/main/java/com/xtnl/app/core/YesterdayLine.kt");
+  const proofLine = read("android/app/src/main/java/com/xtnl/app/core/ProofLine.kt");
+  const sheet = read("android/app/src/main/java/com/xtnl/app/ui/check/MinutesSheet.kt");
+  const checkVm = read("android/app/src/main/java/com/xtnl/app/ui/check/CheckViewModel.kt");
+  const api = read("android/app/src/main/java/com/xtnl/app/data/Api.kt");
+  check(
+    "Models.kt: /check's yesterday (null from an older server: no section) with its day, label, line, open and rows in tasks' shape; a tick's knee (null below 200 raw) with each key the server sends",
+    /val yesterday: YesterdayLane\? = null,/.test(models) &&
+      ["day", "dayLabel", "line", "open", "tasks"].every((k) => new RegExp(`\\bval ${k}: `).test(models.slice(models.indexOf("data class YesterdayLane(")))) &&
+      /val tasks: List<TaskItem> = emptyList\(\),\s*\)/.test(models.slice(models.indexOf("data class YesterdayLane("))) &&
+      /val knee: TickKnee\? = null,/.test(models) &&
+      ["day", "raw", "rate", "capped", "line"].every((k) => new RegExp(`\\bval ${k}: `).test(models.slice(models.indexOf("data class TickKnee("))))
+  );
+  // Re-pinned in P8: the tap now fixes the row's own life day (sent on every try and replay), the words only without one.
+  check(
+    "HttpApi: a tick sends the row's own life day when the tap fixed one (P8: Check and the widget always do), else 'yesterday' for a Yesterday row and 'today' for the rest; the API's completeTask takes the flag and the day, off and null by default",
+    /put\("day", day \?: if \(yesterday\) "yesterday" else "today"\)/.test(http) && /pages: Int\? = null, yesterday: Boolean = false,\s*day: String\? = null,\s*\): Outcome<CompleteResult>/.test(api)
+  );
+  check(
+    "the minute chips (P7): the web drawer's 10/20/30/45/60/90 on the long-press sheet of every row but a proof one (which keeps P23's estimate shares), the long press on any open row",
+    /val CHIPS: List<Int> = listOf\(10, 20, 30, 45, 60, 90\)/.test(proofLine) &&
+      /if \(!proof\) return CHIPS/.test(proofLine) &&
+      /for \(m in ProofLine\.chips\(task\.minutes, task\.proof\)\)/.test(sheet) &&
+      /onLongClick = if \(t\.open\) onSheet else null,/.test(screen)
+  );
+  check(
+    "the knee in the demo is the server's (TickNote.knee mirrors tickKneeOf: past 200 raw, rate rounded down, the same two lines)",
+    /const val NOTE_FROM_RAW = FULL_RATE \+ SCALE/.test(tickNote) &&
+      /if \(r <= NOTE_FROM_RAW\) return null/.test(tickNote) &&
+      /floor\(SCALE \/ \(SCALE \+ r - FULL_RATE\) \* 100\) \/ 100/.test(tickNote) &&
+      tickNote.includes(`"Fatigue breaker: past \${NOTE_FROM_RAW.toInt()} raw $whenWord, so a tick now pays ×\${"%.2f".format(java.util.Locale.ROOT, rate)} or less. The day stops at $cap XP."`) &&
+      tickNote.includes(`"Fatigue breaker: $whenWord reached the day's cap of $cap XP. Ticks still count; they add no more XP \${if (yesterday) "to yesterday" else "today"}."`) &&
+      KNEE_NOTE_FROM_RAW === 200 && KNEE_CAP === 300
+  );
+  check(
+    "the tick's snackbar (P7): its line, then the moments (tier 2 and 3, as the web's presentAll; a skill's tier left to the line), then the knee note once a day and stage; one snackbar, its Undo kept",
+    /if \(tier < 2 \|\| kind in SAID\) null else title/.test(tickNote) && /private val SAID = setOf\("competency-tier"\)/.test(tickNote) &&
+      /fun kneeKey\(k: TickKnee\): String = "\$\{k\.day\.orEmpty\(\)\}:\$\{if \(k\.capped\) "cap" else "half"\}"/.test(tickNote) &&
+      /val knee = r\.value\.knee\?\.takeIf \{ it\.line\.isNotBlank\(\) && kneeSaid\.add\(TickNote\.kneeKey\(it\)\) \}\?\.line/.test(checkVm) &&
+      /moments = TickNote\.moments\(r\.value\.celebrations\), knee = knee/.test(checkVm) &&
+      /snacks\.show\(TickNote\.message\(e\.line \?: "Kept · \$\{Fmt\.signed\(e\.xp\)\} XP", e\.moments, e\.knee\), "Undo", SnackTone\.KEPT\)/.test(screen)
+  );
+  check(
+    "CheckScreen: the Yesterday section on both displays (after the day's rows and the Owed card: the cover screen's one column, the main display's first pane), its rows keyed apart from today's",
+    (screen.match(/tasks\(ui, rows, motion\)\s*owed\(ui, vm\)\s*yesterday\(ui, yRows, motion\)/g) ?? []).length === 2 &&
+      /private fun LazyListScope\.yesterday\(ui: CheckViewModel\.Ui, rows: Rows, motion: MotionLevel\)/.test(screen) &&
+      /val yRows = Rows\(spots, onYesterday, onMvv, onImpact, onYesterdaySheet, keyOf = \{ YesterdayLine\.key\(it\.templateId\) \}\)/.test(screen) &&
+      /spotKey = key,/.test(screen) &&
+      /fun key\(templateId: String\): String = PREFIX \+ templateId/.test(yLine) &&
+      /val key = if \(yesterday\) YesterdayLine\.key\(task\.templateId\) else task\.templateId/.test(checkVm) &&
+      /graph\.api\.completeTask\(task\.templateId, mvv, clientId, minutes, sessionId, pages, yesterday, tickDay\)/.test(checkVm)
+  );
+  check(
+    "MinutesSheet: a Yesterday row's sheet has no timer (a timer only times today) and says so; its Done ticks for yesterday",
+    /val timers = forYesterday == null/.test(sheet) && /if \(task\.proof && !timers\)/.test(sheet) &&
+      /tick\(t, mvv = false, minutes = minutes, sessionId = sessionId, pages = pages, yesterday = sheetYesterday\)/.test(screen) &&
+      /forYesterday = if \(sheetYesterday\) YesterdayLine\.sheetNote\(ui\.data\?\.yesterday\?\.dayLabel\) else null,/.test(screen)
+  );
+  check(
+    "DemoApi: a server's Yesterday lane (the sheet's line by the clock), a tick for yesterday at its row's price ('· yesterday'), the server's refusal for a row it doesn't list, and the knee past 200 raw",
+    /yesterday = yesterdayLane\(now\),/.test(demo) &&
+      /line = "Anything you tick pays at the full rate, record by 04:00 \$\{if \(afterMidnight\) "this morning" else "tomorrow"\}\.",/.test(demo) &&
+      demo.includes(`Outcome.Err("Only what was due yesterday can be recorded for yesterday.", code = "conflict", status = 409)`) &&
+      // Re-pinned in P8: the demo resolves the day as the server does (a day key too), yesterday's to the lane's record.
+      /val booked = if \(day == null\) \(if \(yesterday\) today\.minusDays\(1\) else today\) else TimeLabels\.parseDay\(day\)/.test(demo) &&
+      /if \(booked != today\) return@once recordYesterday\(templateId, mvv, minutes\)/.test(demo) &&
+      /knee = TickNote\.knee\(before, raw, /.test(demo) &&
+      code("src/lib/today-board.ts").includes(`"Only what was due yesterday can be recorded for yesterday."`)
+  );
+  // Re-pinned in P8 (2.18): "or later" for the name too.
+  check(
+    "Android: versionCode 29 (2.17) or later for the Yesterday section and the knee note",
+    Number(/versionCode (\d+)\b/.exec(gradle)?.[1] ?? 0) >= 29 && Number(/versionName "2\.(\d+)"/.exec(gradle)?.[1] ?? 0) >= 17
+  );
+
+  section("the Android app (P8: the offline queue and the widget's tick)");
+  const sendLine = read("android/app/src/main/java/com/xtnl/app/core/SendLine.kt");
+  const queue = read("android/app/src/main/java/com/xtnl/app/data/SendQueue.kt");
+  const widgetTick = read("android/app/src/main/java/com/xtnl/app/widget/WidgetTick.kt");
+  const kinds = [...sendLine.matchAll(/^\s+(?:TICK|LOG|WORK_DONE)\("(\/[\w/]+)"\)/gm)].map((m) => m[1]);
+  check(
+    "the queue replays exactly POST /tasks/complete, /log and /work/done, each a MOBILE_ENDPOINTS write; POST /review/answer never waits",
+    JSON.stringify(kinds) === JSON.stringify(["/tasks/complete", "/log", "/work/done"]) &&
+      kinds.every((k) => MOBILE_ENDPOINTS.some((e) => e.method === "POST" && e.path === k)) &&
+      MOBILE_ENDPOINTS.some((e) => e.method === "POST" && e.path === "/review/answer") && !kinds.includes("/review/answer") &&
+      !/sendQueue|QueuedWrite/.test(read("android/app/src/main/java/com/xtnl/app/ui/review/ReviewViewModel.kt")),
+    JSON.stringify(kinds)
+  );
+  check(
+    "a queued tick carries its own life day: /tasks/complete takes a day key, the core books it only while it is today or yesterday by its own clock, and the queue sends the item's own day",
+    tickDayOf("2026-10-24") === "2026-10-24" &&
+      /return day === today \|\| day === yesterday \? day : null;/.test(code("src/lib/tasks.ts")) &&
+      /SendLine\.Kind\.TICK -> api\.completeTask\(\s*item\.templateId\.orEmpty\(\), item\.mvv, item\.clientId, item\.minutes, item\.sessionId, item\.pages, item\.yesterday, item\.day,/.test(queue) &&
+      // Re-pinned in the P8 review: the widget's tick books on the day of the board it showed (its row's), the clock only without one.
+      /val day = parameters\[DAY\]\?\.takeIf \{ TimeLabels\.parseDay\(it\) != null \} \?: queue\.today\(\)/.test(widgetTick)
+  );
+  check(
+    "P8 review: a tick's day is its board's (the row's own, as the web board sends row.day): Check's today rows take /check's day, its Yesterday rows yesterday.day, the widget its cached board's; the clock only when the board names none",
+    /val tickDay = day \?: SendLine\.tickDayOf\(before\.data\?\.day, before\.data\?\.yesterday\?\.day, yesterday, SendLine\.serverNow\(System\.currentTimeMillis\(\), offsetMs\(\)\)\)/.test(checkVm) &&
+      /val board = if \(yesterday\) yesterdayDay \?: boardDay\?\.let \{ d -> TimeLabels\.parseDay\(d\)\?\.minusDays\(1\)\?\.toString\(\) \} else boardDay/.test(sendLine) &&
+      /else -> Row\(t\.templateId, t\.title, t\.lane, metaOf\(t, waiting = false\), waiting = false, tap = tapOf\(t, now, data\.day\), day = data\.day\)/.test(read("android/app/src/main/java/com/xtnl/app/core/WidgetRows.kt")) &&
+      /WidgetRows\.Tap\.TICK -> actionRunCallback<WidgetTick>\(WidgetTick\.parametersOf\(r\)\)/.test(read("android/app/src/main/java/com/xtnl/app/widget/TodayWidget.kt")) &&
+      /r\.day\?\.let \{ actionParametersOf\(TEMPLATE to r\.templateId, TITLE to r\.title, DAY to it\) \}/.test(widgetTick)
+  );
+  check(
+    "P8 review: a line's day is fixed at the tap, before the send (a send that times out across 04:00 keeps the day it was typed on), and so is a Done's",
+    /val day = graph\.sendQueue\.today\(\)\s*when \(val r = graph\.api\.log\(text, u\.section\.wire, clientId\)\)/.test(read("android/app/src/main/java/com/xtnl/app/ui/log/LogViewModel.kt")) &&
+      /val day = SendLine\.dayKey\(SendLine\.serverNow\(System\.currentTimeMillis\(\), offsetMs\(\)\)\)\s*viewModelScope\.launch \{\s*when \(val r = graph\.api\.workDone\(item\.id, clientId\)\)/.test(checkVm)
+  );
+  check(
+    "P8 review: a /check with no answer holds only the lines (the server's day is unknown); the ticks and Dones behind them still go, and the pass ends RETRY",
+    /else -> linesWait = true/.test(queue) && /if \(linesWait && item\.kind == SendLine\.Kind\.LOG\) continue/.test(queue) && /if \(linesWait\) Pass\.RETRY else Pass\.DONE/.test(queue)
+  );
+  check(
+    "P8 review: a tick made on Check that lands is followed in the cache (its write pokes the widget), unless an Undo already waits for it",
+    /if \(undoWhenKept\.remove\(key\)\) undo\(key\)\s*\/\/[^\n]*\n\s*else if \(source == graph\.source\) graph\.cache\.followTick\(source, task\.templateId, tickDay, mvv, r\.value\.xp\)/.test(checkVm) &&
+      /suspend fun followTick\(source: String, templateId: String, day: String, mvv: Boolean, xp: Double\?\)/.test(read("android/app/src/main/java/com/xtnl/app/data/CheckCache.kt"))
+  );
+  check(
+    "P8 review: a kept-back line says it got no answer and may already be saved (a done-now line's first try that ticked a row wrote no row the server finds again), so Send for today is never promised safe",
+    /it got no answer, so it may already be saved\. Look on Today first: sent now, it saves for today\./.test(sendLine) &&
+      /const val QUEUED_LOG = "No answer: the line will send when you're online\. If it got through, it's saved once\."/.test(sendLine) &&
+      !/never saved twice/.test(queue)
+  );
+  check(
+    "a replay is the first try's request: the fingerprint ignores the clientId but not the day, so the first try sends the same day key the queue replays (a word then a key would be a conflict)",
+    fingerprintOf("tasks/complete", { templateId: "t", day: "2026-10-24", clientId: "a" }) === fingerprintOf("tasks/complete", { templateId: "t", day: "2026-10-24", clientId: "b" }) &&
+      fingerprintOf("tasks/complete", { templateId: "t", day: "today", clientId: "a" }) !== fingerprintOf("tasks/complete", { templateId: "t", day: "2026-10-24", clientId: "a" }) &&
+      /val tickDay = day \?: SendLine\.tickDayOf\(/.test(checkVm)
+  );
+  check(
+    "POST /log takes no day (so a line from an earlier day is kept back on the phone, never saved on the server's new day), read from /check before a pass that holds one",
+    /return write\("log", request, deps, \["text", "section"\]/.test(code("src/lib/mobile-api-server.ts")) &&
+      /Kind\.LOG -> if \(d != s\) Plan\.KeepBack\(keptBack\(day\)\) else Plan\.Send/.test(sendLine) &&
+      /when \(val r = api\.check\(\)\)/.test(queue)
+  );
+  const flatDoc = read("docs/mobile-api.md").replace(/\s+/g, " ");
+  check(
+    "the doc says what the app's queue leans on: the same clientId and body on a replay, only the three writes, a tick's own day key from its first try, a line kept back rather than saved on a new day",
+    /The app's offline queue \(blueprint P8, decision D34\)/.test(flatDoc) && /the same clientId and the same body as its first try/.test(flatDoc) &&
+      /a review answer never does/.test(flatDoc) && /one made before 04:00 books on that day when it lands after/.test(flatDoc) &&
+      /never saved on the new day/.test(flatDoc) &&
+      // P8 review: the tick's day is its board's, and a kept-back line may already be saved.
+      /the `day` of the `\/check` the row was shown on/.test(flatDoc) && /the app says the line may already be saved before the user sends it/.test(flatDoc)
+  );
+  check("Android: versionCode 30 (2.18) or later for the widget, the tile and the offline queue", Number(/versionCode (\d+)\b/.exec(gradle)?.[1] ?? 0) >= 30);
+  check("Android: versionCode 31 (2.19) or later for the P8 review (the board's day on a tick, the cache followed after a tick, the queue's lines alone wait on /check)", Number(/versionCode (\d+)\b/.exec(gradle)?.[1] ?? 0) >= 31 && Number(/versionName "2\.(\d+)"/.exec(gradle)?.[1] ?? 0) >= 19);
 }
 
 // ═══ 4. The doc and the package ══════════════════════════════════════════
@@ -3609,7 +3904,29 @@ function docs() {
         MAKEUP_RATE === 0.85;
     })()
   );
+  check(
+    "P7: the doc states the Yesterday lane (its rows in tasks' shape, T 1.00, what stays on the web), day 'yesterday' and the knee note (past 200 raw only, its two lines, no price change)",
+    /"yesterday": \{ "day": "2026-10-20", "dayLabel": "Tue 20 Oct",/.test(doc) &&
+      /- `yesterday` \(blueprint 5\.1b, P7; decision D34\): the web's Record yesterday sheet, its first list/.test(doc) &&
+      /yesterday's own ledger at T 1\.00: the record window's promise/.test(doc) &&
+      /Settling yesterday, its rest token and the sheet's "Something else you did yesterday\?" list stay on the web\./.test(doc) &&
+      /- `day: "yesterday"` \(blueprint P7\) records a row of `\/check`'s `yesterday` lane: it books on yesterday's life day, at\s+T 1\.00/.test(doc) &&
+      /"knee"\?: \{ "day": "2026-10-21", "raw": 214\.6, "rate": 0\.46, "capped": false,/.test(doc) &&
+      /- `knee` \(blueprint 3\.3a, P7; decision D26\): the knee note, present only once the day this tick booked on is past 200\s+raw/.test(doc) &&
+      doc.includes(tickKneeOf(completion({ receipt: { ...RECEIPT, kneeBefore: 209.6, raw: 5 } }), TODAY)!.line) &&
+      /"Fatigue breaker:\s+past 200 raw today, so a tick now pays ×0\.46 or less\. The day stops at 300 XP\."/.test(doc) &&
+      /"Fatigue breaker:\s+today reached the day's cap of 300 XP\. Ticks still count; they add no more XP today\."/.test(doc)
+  );
   check("/log's undo may be null (a weigh-in with nothing to take back)", /"undo": \{ "kind": "task" \| "weight" \| "draft", "id": "…" \} \| null/.test(doc) && /`undo` is null for a weigh-in/.test(doc));
+  check(
+    "P6: the doc says a done-now line ticks the row it names ('Ticked. Gym (Habits) · +8.3'), which rows and lines, a resend writes once, a refusal is 409, and its undo is null",
+    /A done-now line that names a row on today's board \(blueprint P6, decision D33/.test(doc) &&
+      /"Ticked\. Gym\s+\(Habits\) · \+8\.3"/.test(doc) &&
+      /never a work tab's, never one that completes itself or counts pages, never in the Inbox or\s+deferred/.test(doc) &&
+      /"Already ticked\. Gym → Done today · Nothing is paid twice\."/.test(doc) &&
+      /the line is refused with the reason \(409\)/.test(doc) &&
+      /It is null too for a line that ticked the row it names/.test(doc)
+  );
 
   section("the package");
   const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };

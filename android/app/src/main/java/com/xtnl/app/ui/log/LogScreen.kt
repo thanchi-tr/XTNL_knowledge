@@ -98,6 +98,7 @@ import com.xtnl.app.core.IdeaFormat
 import com.xtnl.app.core.LogPreview
 import com.xtnl.app.core.LogSection
 import com.xtnl.app.core.Panes
+import com.xtnl.app.core.SendLine
 import com.xtnl.app.data.IdeaResult
 import com.xtnl.app.data.collectionChoices
 import com.xtnl.app.ui.LocalSnacks
@@ -209,6 +210,8 @@ fun LogScreen(vm: LogViewModel, nav: Nav) {
                     }
                 }
                 is LogViewModel.Event.SendFailed -> { feel?.error(); snacks.error(e.message) { vm.send() } }
+                // P8: no answer: the line waits on the phone (its entry says so) and sends once online.
+                is LogViewModel.Event.Queued -> { feel?.select(); snacks.show(e.message) }
                 is LogViewModel.Event.Undone -> snacks.show("Undone · ${e.entry.text}")
                 is LogViewModel.Event.UndoFailed -> { feel?.error(); snacks.error(e.message) }
                 is LogViewModel.Event.IdeaFailed -> { if (!look.showing) feel?.error(); snacks.error(e.message) }
@@ -378,6 +381,10 @@ private fun QuickDock(ui: LogViewModel.Ui, vm: LogViewModel, nav: Nav, modifier:
         ui.sendError?.let {
             Text(it, color = c.owed, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 6.dp, start = 4.dp))
         }
+        // P8: the lines waiting on the phone to send.
+        SendLine.waitingLine(ui.waiting)?.let {
+            Text(it, color = c.ink2, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 6.dp, start = 4.dp))
+        }
     }
 }
 
@@ -518,7 +525,7 @@ private fun RecentList(ui: LogViewModel.Ui, vm: LogViewModel, modifier: Modifier
             ) {
                 Icon(
                     when (e.section) { LogSection.TASK -> Glyphs.Task; LogSection.WEIGHT -> Glyphs.Weight; LogSection.IDEA -> Glyphs.Idea },
-                    null, tint = if (e.undone) c.ink2 else c.kept, modifier = Modifier.size(18.dp),
+                    null, tint = if (e.undone || e.waiting) c.ink2 else c.kept, modifier = Modifier.size(18.dp),
                 )
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {

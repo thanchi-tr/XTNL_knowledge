@@ -2,7 +2,7 @@
 
 import type { Ref } from "react";
 import { CurrencyGlyph } from "@/components/ui/Icon";
-import { addedRowCopy, visibleAdded, type AddedEntry } from "./capture-ui";
+import { TICK_TAKEN_BACK, addedRowCopy, visibleAdded, type AddedEntry } from "./capture-ui";
 
 /**
  * 'Added here' (capture.md P1 burst capture): what this sheet saved in the
@@ -15,7 +15,10 @@ import { addedRowCopy, visibleAdded, type AddedEntry } from "./capture-ui";
  * longer be honoured. While an edit of a row is on its way (capture-ui
  * replacingOf), its Edit and Undo are off and the row says why. A
  * weigh-in's row ('Weight 72.4 kg · Train') has no Edit (it is not a task
- * row), and Undo only when the save wrote something it can take back.
+ * row), and Undo only when the save wrote something it can take back. A
+ * done-now line that ticked the row it names (P6: 'Gym · Ticked · Habits')
+ * has no Edit either (no row of its own was saved); its Undo takes the tick
+ * back, and a row ticked earlier today offers none (nothing was written).
  */
 
 interface Props {
@@ -48,7 +51,7 @@ export function JustAdded({ entries, wide, showAll, onShowAll, onEdit, onUndo, b
               <li key={e.key} className="capture-added-row" data-removed="1">
                 <span className="capture-added-main">
                   <span className="capture-added-meta">
-                    Removed · <span className="capture-added-gone">{e.item.title}</span>
+                    {e.item.ticked ? TICK_TAKEN_BACK : "Removed"} · <span className="capture-added-gone">{e.item.title}</span>
                   </span>
                 </span>
               </li>
@@ -80,13 +83,13 @@ export function JustAdded({ entries, wide, showAll, onShowAll, onEdit, onUndo, b
                 )}
               </span>
               <span className="capture-added-acts">
-                {!e.item.weight && (
+                {!e.item.weight && !e.item.ticked && (
                   <button type="button" className="btn btn-quiet capture-row-btn" onClick={() => onEdit(e)} disabled={pending} aria-label={`Edit ${row.title}`}>
                     Edit
                   </button>
                 )}
-                {(!e.item.weight || e.item.weight.undoable) && (
-                  <button type="button" className="btn btn-quiet capture-row-btn" onClick={() => onUndo(e)} disabled={pending} aria-label={`Undo ${row.title}`}>
+                {(!e.item.weight || e.item.weight.undoable) && !e.item.ticked?.earlier && (
+                  <button type="button" className="btn btn-quiet capture-row-btn" onClick={() => onUndo(e)} disabled={pending} aria-label={e.item.ticked ? `Undo the tick of ${row.title}` : `Undo ${row.title}`}>
                     Undo
                   </button>
                 )}

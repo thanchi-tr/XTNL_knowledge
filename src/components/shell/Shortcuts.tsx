@@ -78,7 +78,7 @@ function textSelected(): boolean {
 const GROUPS: readonly Shortcut["group"][] = SHORTCUT_GROUPS;
 
 /** Spoken names for keys a screen reader would read badly. */
-const SPOKEN: Record<string, string> = { "→": "Right arrow", "?": "question mark", ",": "comma", "/": "slash" };
+const SPOKEN: Record<string, string> = { "→": "Right arrow", "↓": "Down arrow", "↑": "Up arrow", "?": "question mark", ",": "comma", "/": "slash" };
 
 function Cap({ k }: { k: string }) {
   const spoken = SPOKEN[k];

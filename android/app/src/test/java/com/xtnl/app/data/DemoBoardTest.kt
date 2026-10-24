@@ -500,6 +500,63 @@ class DemoBoardTest {
         assertFalse(min.line!!, min.line!!.contains("pages"))
     }
 
+    /**
+     * P7: the Yesterday lane, as the server sends it: its rows tick with day "yesterday" (at T 1.00, the row's price, the
+     * line ending "· yesterday"), apart from today's row of the same template; a repeat is recorded once, a row the lane
+     * doesn't list is refused in the server's words, and an undo opens it again.
+     */
+    @Test fun aYesterdayRowTicksForYesterday() = runTest {
+        val now = Instant.parse("2026-10-21T00:12:00Z")
+        val api = DemoApi(clock = { now })
+        val check = (api.check() as Outcome.Ok).value
+        val lane = check.yesterday!!
+        assertEquals(listOf("2026-10-20", "Tue 20 Oct"), listOf(lane.day, lane.dayLabel))
+        assertEquals("Anything you tick pays at the full rate, record by 04:00 tomorrow.", lane.line)
+        assertEquals(listOf("t-meds", "t-power"), lane.tasks.map { it.templateId })
+        assertEquals(2, lane.open)
+        assertTrue("today's Morning meds is done; yesterday's is open: one template, two rows", check.tasks.single { it.templateId == "t-meds" }.kept && lane.tasks[0].open)
+        val tick = (api.completeTask("t-meds", mvv = false, clientId = "y-1", yesterday = true) as Outcome.Ok).value
+        assertEquals("T 1.00: the row's own price", 3.6, tick.xp, 0.0)
+        assertEquals("+3.6 XP · Care · yesterday", tick.line)
+        assertNull(tick.knee)
+        assertEquals("a resend answers the first", tick, (api.completeTask("t-meds", mvv = false, clientId = "y-1", yesterday = true) as Outcome.Ok).value)
+        assertEquals("Already recorded. Nothing is paid twice.", (api.completeTask("t-meds", mvv = false, clientId = "y-2", yesterday = true) as Outcome.Ok).value.line)
+        val after = (api.check() as Outcome.Ok).value
+        assertEquals(listOf("t-power", "t-meds"), after.yesterday!!.tasks.map { it.templateId })
+        assertEquals(1, after.yesterday!!.open)
+        assertEquals("today's board is untouched", check.tasks, after.tasks)
+        val refused = api.completeTask("t-gym", mvv = false, clientId = "y-3", yesterday = true) as Outcome.Err
+        assertEquals(409, refused.status)
+        assertEquals("Only what was due yesterday can be recorded for yesterday.", refused.message)
+        assertEquals(-3.6, (api.undoTask(tick.instanceId, "y-4") as Outcome.Ok).value.xp, 0.0)
+        assertEquals(2, (api.check() as Outcome.Ok).value.yesterday!!.open)
+    }
+
+    /** P7: after midnight the lane's line says "this morning" (the window still ends at 04:00). */
+    @Test fun theYesterdayLineFollowsTheClock() = runTest {
+        val api = DemoApi(clock = { Instant.parse("2026-10-21T15:30:00Z") })
+        assertEquals("Anything you tick pays at the full rate, record by 04:00 this morning.", (api.check() as Outcome.Ok).value.yesterday!!.line)
+    }
+
+    /**
+     * P7 (D26): a tick pays through the daily knee, and past 200 raw its answer carries the knee note in the server's
+     * words; the demo's own day stays at the full rate, so no tick says it.
+     */
+    @Test fun aTickPastTwoHundredRawCarriesTheKnee() = runTest {
+        val now = Instant.parse("2026-10-21T00:12:00Z")
+        val plain = (DemoApi(clock = { now }).completeTask("t-gym", mvv = false, clientId = "k-0") as Outcome.Ok).value
+        assertNull(plain.knee)
+        assertEquals(8.3, plain.xp, 0.0)
+        val api = DemoApi(clock = { now }, kneeToday = 195.0, kneeYesterday = 230.0)
+        val gym = (api.completeTask("t-gym", mvv = false, clientId = "k-1") as Outcome.Ok).value
+        assertEquals("kneePay(195, 8.3), one decimal", Math.round(com.xtnl.app.core.TickNote.kneePay(195.0, 8.3) * 10) / 10.0, gym.xp, 0.0)
+        assertTrue(gym.xp < 8.3)
+        assertEquals(TickKnee("2026-10-21", 203.3, 0.49, false, "Fatigue breaker: past 200 raw today, so a tick now pays ×0.49 or less. The day stops at 300 XP."), gym.knee)
+        val y = (api.completeTask("t-power", mvv = false, clientId = "k-2", yesterday = true) as Outcome.Ok).value
+        assertEquals("yesterday's knee is its own", "2026-10-20", y.knee!!.day)
+        assertTrue(y.knee!!.line, y.knee!!.line.startsWith("Fatigue breaker: past 200 raw yesterday"))
+    }
+
     /** P27: a demo sync answers as the server does: the backfill recorded, a newer walk paid, a resend a duplicate. */
     @Test fun aHealthSyncRecordsTheBackfillAndLandsEachWalkOnce() = runTest {
         val now = Instant.parse("2026-10-21T00:12:00Z")

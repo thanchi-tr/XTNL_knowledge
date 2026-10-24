@@ -290,8 +290,10 @@ const sideTpl = (id: string, expires: DayKey, over: Partial<BoardTemplate> = {})
   check(
     "…and the server reads a work tab's '#side' line that way (insertCapture parses it again with `work`, the line's own spans)",
     /const parsed: ParsedCapture = boardId && given\.side \? parseCapture\(opts\.rawText, \{ today, reverted: opts\.reverted \? \[\.\.\.opts\.reverted\] : undefined, work: true \}\) : given;/.test(ins) &&
+      // P6: both saves hand the prepared line (its text, its spans, its parse) to saveLine, which passes its spans on.
       /reverted: line\.reverted \}\);/.test(code("src/app/actions/capture.ts")) &&
-      /reverted: prepared\.reverted \}\);/.test(code("src/app/actions/capture.ts")) &&
+      /await saveLine\(userId, line, \{/.test(code("src/app/actions/capture.ts")) &&
+      /await saveLine\(userId, prepared, \{/.test(code("src/app/actions/capture.ts")) &&
       /parseCapture\(text, \{ today: day, reverted, work: onWork \}\)/.test(code("src/components/capture/QuickCapture.tsx"))
   );
   check("the cap's line and the toast's head say it plainly", SIDE_CAP_LINE === "Two side quests are open, the most at a time. Saved as an ordinary task." && /item\.sideNote \? "Added \(not a side quest\)"/.test(code("src/components/capture/capture-ui.ts")));

@@ -256,6 +256,12 @@
 .capture-chip .capture-chip-x { width: 12px; height: 12px; color: var(--ink-2); margin-left: 2px; }
 button.capture-chip:hover .capture-chip-x,
 button.capture-chip:focus-visible .capture-chip-x { color: var(--ink-0); }
+/* P6: 'Ticks: Gym (Habits)', a 44 px target, the whole row's width when it needs it. Only the title gives way on a
+   narrow screen (an ellipsis): 'Ticks:', the lane, which says which row it ticks, and the x always show. */
+.capture-sheet[data-layout] .capture-chip-row.capture-ticks-row > li { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.chip.btn-chip.capture-ticks { min-height: 44px; max-width: 100%; }
+.capture-ticks > * { flex: none; }
+.capture-ticks .capture-ticks-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 'Must' is told apart by shape: the ink diamond of the Must lane. */
 .capture-must { width: 8px; height: 8px; transform: rotate(45deg); border: 1.5px solid currentColor; border-radius: 1.5px; flex: none; }
 .capture-grade { color: var(--ink-1); cursor: default; min-height: 40px; }
@@ -325,6 +331,8 @@ button.capture-grade { cursor: pointer; }
 .capture-added-acts { flex: none; display: flex; }
 .capture-added-more { align-self: flex-start; }
 .capture-paste { display: flex; flex-direction: column; gap: 8px; }
+/* P6 review: a pasted done-now line's 'As a new task' toggle (pressed: the kit's inverted chip), a 44 px target. */
+.chip.btn-chip.capture-paste-new { flex: none; min-height: 44px; }
 .capture-paste-h { margin: 0; font: 600 15px/20px var(--font-ui); color: var(--ink-0); }
 
 /* Lines not confirmed yet: waiting to retry on their own, or failed with the server's reason. */

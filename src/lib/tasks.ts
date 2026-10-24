@@ -55,6 +55,8 @@ import { momentumRoll } from "./momentum-roll";
 import { cleanCaptureKey, matchParentGoal, parseCapture, type CaptureSpan } from "./capture-parse";
 import type { GoalProgressRow } from "./goals";
 import { captureShapeOf } from "./capture-shape";
+import { doneNowAsksTick, doneNowMatchOf, doneNowRefusalOf, doneNowTickOf, type DoneNowTick, type TickedRow } from "./done-now";
+import type { CelebrationEvent } from "./celebration-types";
 import { MUST_CAP_LINE, mustCapOf, mustNoteOf, restoredMustNoteOf, type MustNote } from "./daily-quests";
 import { SIDE_CAP_LINE, SIDE_KEY_PREFIX, SIDE_OPEN_MAX, isSideDetectorKey, isSideQuestKey, sideExpiredOn, sideTagKeyOf, type SideNote } from "./side-quests";
 import { occursOn } from "./recurrence";
@@ -91,6 +93,7 @@ import { isMissingRoadmapTable, isRoadmapCaptureKey, isSupersededRow, type Posit
 import { PERSONAL_BOARD, WORK_CLARIFY_REFUSAL, WORK_NO_SIZE, workClarifyAllowed, workKindRefusalOf, type BoardScope } from "./work-boards";
 import { templateDecisionsOf, untilLabelOf, type TemplateDecisions } from "./task-decisions";
 import {
+  PROOF_MINUTES_REFUSAL,
   TIMER_GONE,
   TIMER_OTHER_DAY,
   groupMinutesOf,
@@ -118,6 +121,7 @@ import type { BoardStreak } from "./streak-mult";
 import {
   EpochSet,
   HISTORY_DAYS,
+  PLACE_DONE_TODAY,
   boardStreakOptionsOf,
   STUDY_METRICS,
   UNDO_WINDOW_MS,
@@ -1073,6 +1077,18 @@ export interface CreatedTask {
    * side quests were open (SIDE_CAP_LINE). Absent otherwise, and on a retried send.
    */
   sideNote?: SideNote;
+  /**
+   * Blueprint P6 (D33): the done-now line ticked the row it names (tickNamedRowCore) instead of saving a new one: `id`
+   * is that row's, `completed` and `projectedXp` the tick's, and this says the lane it was ticked from and the tick
+   * (done-now.ts TickedRow). Absent on every other save.
+   */
+  ticked?: TickedRow;
+  /**
+   * P6 review: L3's moments that tick crossed (a streak milestone, a habit rung, a finished goal), when the caller ran
+   * it through the snapshot pair (tickNamedRowCore `around`): stored unseen like the board's tick's, for the sheet to
+   * present. Absent otherwise.
+   */
+  celebrations?: CelebrationEvent[];
 }
 
 const TITLE_MAX = 200;
@@ -1152,10 +1168,13 @@ export const ACTIVE_TITLES_MAX = 300;
 
 /** An open template's title and where it sits, for the sheet's quiet 'Already on your board' note. */
 export interface ActiveTitle {
+  id: string;
   /** normTitleOf(title), of the title as it reads now: the sheet matches on equality only. */
   normTitle: string;
   title: string;
   where: BoardPlace;
+  /** Blueprint P6 (D33): what it offers a done-now line (done-now.ts doneNowTickOf: open today, ticked today already), or null. */
+  tick: DoneNowTick | null;
 }
 
 /**
@@ -1163,11 +1182,18 @@ export interface ActiveTitle {
  * `max`, each with its place on the board — placementOf over the board's
  * own read, so the note names the lane the board shows it in. A side quest
  * past its expiry (P31) is gone at no cost, so it is never 'on your board'
- * and takes no place in the count. Pure.
+ * and takes no place in the count. Each says what it offers a done-now
+ * line (P6: doneNowTickOf, a deferral read at `nowMs`), so the sheet's chip
+ * and the server's tick read one list. A one-off ticked today stays listed
+ * (P6 review: its completedAt is set, but it sits in Done today, so the board
+ * still shows it): a resent done-now line that ticked it finds its tick
+ * standing ('done': "Already ticked", nothing written or paid), never a gap
+ * that a second one-off would fill. One done earlier is gone, as before. Pure.
  */
 export function activeTitlesOf(
   core: Pick<BoardData, "today" | "yesterday" | "templates" | "instances" | "stats">,
-  max: number = ACTIVE_TITLES_MAX
+  max: number = ACTIVE_TITLES_MAX,
+  nowMs?: number | null
 ): ActiveTitle[] {
   const byTpl = new Map<string, BoardInstance[]>();
   for (const i of core.instances) {
@@ -1175,15 +1201,17 @@ export function activeTitlesOf(
     if (list) list.push(i);
     else byTpl.set(i.templateId, [i]);
   }
+  const placeOfTpl = (t: BoardTemplate) =>
+    placementOf(t, { today: core.today, yesterday: core.yesterday, instances: byTpl.get(t.id) ?? [], lastDone: core.stats[t.id]?.lastDone ?? null }).place;
+  const doneToday = (p: BoardPlace) => p.lane === PLACE_DONE_TODAY.lane && p.label === PLACE_DONE_TODAY.label;
   return core.templates
-    .filter((t) => !t.completedAt && !sideExpiredOn(t, core.today))
+    .filter((t) => !sideExpiredOn(t, core.today) && (!t.completedAt || doneToday(placeOfTpl(t))))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
     .slice(0, Math.max(0, max))
-    .map((t) => ({
-      normTitle: normTitleOf(t.title),
-      title: t.title,
-      where: placementOf(t, { today: core.today, yesterday: core.yesterday, instances: byTpl.get(t.id) ?? [], lastDone: core.stats[t.id]?.lastDone ?? null }).place,
-    }));
+    .map((t) => {
+      const where = placeOfTpl(t);
+      return { id: t.id, normTitle: normTitleOf(t.title), title: t.title, where, tick: doneNowTickOf(t, where, nowMs) };
+    });
 }
 
 /** The open titles for today's board, read from the board's own cached wave. */
@@ -1738,6 +1766,91 @@ async function tickCaptured(
     console.error("Done-now tick failed after capture:", err);
     return { ...created, doneNowError: "Saved, but the tick didn't go through. Tick it on Today." };
   }
+}
+
+// ── A done-now line ticks the row it names (blueprint P6, D33) ────────────
+
+/** What tickNamedRowCore reads and writes: the seams capture-server-check stubs (namedTickDeps binds them to a user). */
+export interface NamedTickDeps {
+  /** A row is stored under this capture key already: an earlier send of the line saved one, so the line is that row's. */
+  keyTaken: (captureKey: string) => Promise<boolean>;
+  /** Today's personal Board: the board's read (to place and describe the ticked row) and its open titles (activeTitlesOf). */
+  board: () => Promise<{ core: Pick<BoardData, "today" | "yesterday" | "templates" | "instances" | "stats">; active: readonly ActiveTitle[] }>;
+  /** The board's own tick of today (completeInstanceCore), with the line's minutes. */
+  complete: (templateId: string, minutes: number | null) => Promise<LifeResult<Completion>>;
+}
+
+/**
+ * Wraps the named row's tick (P6 review): the capture actions pass L3's snapshot pair around it (the board's own
+ * aroundTick: scope 'tick' on that row, changed unless it was a repeat), so a Seal or an Ascension the tick crosses is
+ * detected and stored unseen as the board's tick's is, and comes back with it as `celebrations`.
+ */
+export type NamedTickAround = (
+  templateId: string,
+  tick: () => Promise<LifeResult<Completion>>
+) => Promise<LifeResult<Completion & { celebrations?: CelebrationEvent[] }>>;
+
+function namedTickDeps(userId: string, now: Date): NamedTickDeps {
+  return {
+    keyTaken: async (captureKey) => (await prisma.taskTemplate.findFirst({ where: { userId, captureKey }, select: { id: true } })) !== null,
+    board: async () => {
+      const read = await loadBoardCore(userId, todayKey(now), now);
+      return { core: read.core, active: activeTitlesOf(read.core, ACTIVE_TITLES_MAX, now.getTime()) };
+    },
+    complete: (templateId, minutes) => completeInstanceCore(userId, templateId, { day: "today", minutes, now }),
+  };
+}
+
+/**
+ * A done-now line ('x gym 45m') that names a row on today's personal Board ticks that row through the board's own
+ * tick (completeInstanceCore: Duty's refusals, the proof gate, the minutes clamp), with the line's typed minutes, and
+ * writes no template (blueprint P6, D33: the silent duplicate this fixes). done-now.ts holds which lines and which
+ * rows: the sheet's chip reads the same rule over the same list. Null when it does not apply, and the line is saved as
+ * before (createTemplateCore): a line that is not a plain done-now task line, a work tab's (`boardId`), one the user
+ * turned back into a new task (`asNew`), one whose key already has a row (its first send saved one: the insert's
+ * retry finds it), or no row by that title.
+ *
+ * A row ticked today already answers with its standing tick (`ticked.earlier`, completed false): nothing is written
+ * or paid again, so a resend (a lost answer, the phone's queue replaying its clientId) writes once. A one-off is that
+ * row too once ticked (activeTitlesOf keeps it while it is in Done today). A refused tick is refused here, with the
+ * board's reason after the row it names (doneNowRefusalOf), and nothing is written: the sheet keeps the line to fix,
+ * never a second row beside the one the user meant. `around` (the capture actions' L3 pair) wraps the tick itself.
+ */
+export async function tickNamedRowCore(
+  userId: string,
+  parsed: ParsedCapture,
+  opts: { captureKey?: string | null; boardId?: BoardScope; asNew?: boolean; now?: Date; around?: NamedTickAround },
+  deps?: NamedTickDeps
+): Promise<LifeResult<CreatedTask> | null> {
+  if (opts.boardId || opts.asNew || !doneNowAsksTick(parsed)) return null;
+  const now = opts.now ?? new Date();
+  const d = deps ?? namedTickDeps(userId, now);
+  // The board's own read first (cached while Today is open), so a line that names no row costs no round trip here.
+  const { core, active } = await d.board();
+  const match = doneNowMatchOf(parsed, normTitleOf(parsed.title), active);
+  const t = match ? core.templates.find((x) => x.id === match.id) : undefined;
+  if (!match || !t) return null;
+  const key = storedCaptureKeyOf(cleanCaptureKey(opts.captureKey), false);
+  if (key && (await d.keyTaken(key))) return null;
+  const typed = typeof parsed.estMinutes === "number" && Number.isFinite(parsed.estMinutes) ? parsed.estMinutes : null;
+  const tick = () => d.complete(t.id, typed);
+  const done = opts.around ? await opts.around(t.id, tick) : await tick();
+  if (!done.ok) return fail(doneNowRefusalOf(t.title, match.where.label, done.error, PROOF_MINUTES_REFUSAL));
+  const v: Completion & { celebrations?: CelebrationEvent[] } = done.value;
+  const inst: BoardInstance = { id: v.instanceId, templateId: t.id, day: v.day, slot: v.slot, status: v.status, source: v.source, xpPaid: v.receipt.xp };
+  const instances = [...core.instances.filter((i) => i.templateId === t.id && i.id !== inst.id), inst];
+  return ok({
+    id: t.id,
+    title: t.title,
+    projectedXp: v.receipt.xp,
+    describe: describeTemplate(t, core.today),
+    completed: !v.duplicate,
+    doneNowError: null,
+    duplicate: false,
+    where: placeOf(t, core.today, instances, core.stats[t.id]?.lastDone ?? null),
+    ticked: { from: match.where.label, instanceId: v.instanceId, ...(v.duplicate ? { earlier: true as const } : {}) },
+    ...(v.celebrations && v.celebrations.length > 0 ? { celebrations: v.celebrations } : {}),
+  });
 }
 
 // ── Completion ────────────────────────────────────────────────────────────
@@ -3648,6 +3761,8 @@ export interface CaptureBatchLine {
   captureKey: string;
   /** The work tab the line was captured on (work-boards.ts), unchecked: the saver checks it. Absent: the personal Board. */
   board?: unknown;
+  /** P6: the line was turned back into a new task, so it never ticks the row it names (only `true` counts). */
+  asNew?: boolean;
 }
 
 export type CaptureBatchOutcome<I> = { ok: true; item: I } | { ok: false; captureKey: string; error: string };
@@ -3684,7 +3799,7 @@ export async function runCaptureBatch<I>(
     else {
       seen.add(key);
       try {
-        const res = await save({ text: raw.text, reverted: raw.reverted, captureKey: key, ...(raw.board != null ? { board: raw.board } : {}) });
+        const res = await save({ text: raw.text, reverted: raw.reverted, captureKey: key, ...(raw.board != null ? { board: raw.board } : {}), ...(raw.asNew === true ? { asNew: true } : {}) });
         out.push(res.ok ? { ok: true, item: res.value } : { ok: false, captureKey: key, error: res.error });
       } catch (err) {
         console.error("Pasted line not saved:", err);

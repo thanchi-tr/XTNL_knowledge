@@ -6,14 +6,20 @@ import com.xtnl.app.AppGraph
 import com.xtnl.app.core.DailyStrip
 import com.xtnl.app.core.OwedLine
 import com.xtnl.app.core.QuestLine
+import com.xtnl.app.core.SendLine
 import com.xtnl.app.core.StatusLine
 import com.xtnl.app.core.TickLadder
+import com.xtnl.app.core.TickNote
 import com.xtnl.app.core.WalletLine
+import com.xtnl.app.core.YesterdayLine
 import com.xtnl.app.data.CheckData
 import com.xtnl.app.data.DailyQuests
 import com.xtnl.app.data.LevelInfo
 import com.xtnl.app.data.Outcome
+import com.xtnl.app.data.Landed
 import com.xtnl.app.data.OwedItem
+import com.xtnl.app.data.QueueState
+import com.xtnl.app.data.QueuedWrite
 import com.xtnl.app.data.QuestsData
 import com.xtnl.app.data.TaskItem
 import com.xtnl.app.data.Wallet
@@ -41,6 +47,11 @@ import java.util.UUID
  * server's line) if the server says no. The last /check is cached and shown
  * offline. Beside it, GET /quests (blueprint P15): the main quest, this week's
  * sprint and Today's three, read only; its rows tick through the tasks here.
+ * P7: the Yesterday lane's rows tick here too, with day "yesterday"; their
+ * state is keyed apart from today's (YesterdayLine.key), since a daily habit
+ * has a row on both lanes. P8: a tick carries its row's own life day, fixed at
+ * the tap; one that gets no answer at all (and a work item's Done) waits on the
+ * phone (data/SendQueue) and stays ticked, "waiting to send", until it lands.
  */
 class CheckViewModel(private val graph: AppGraph) : ViewModel() {
 
@@ -67,6 +78,7 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
         val refusedAuth: Boolean = false,
         /** Why there's nothing to show. */
         val error: String? = null,
+        /** Ticks made here, by row key: today's rows by template id, the Yesterday lane's by YesterdayLine.key (P7). */
         val kept: Map<String, Kept> = emptyMap(),
         val pending: Set<String> = emptySet(),
         val workHidden: Set<String> = emptySet(),
@@ -91,6 +103,8 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
         val owedBusy: Set<String> = emptySet(),
         /** P22 review: each owed card's picks, by instance id (absent: none yet, so a reading must's target). */
         val owedPicks: Map<String, OwedPick> = emptyMap(),
+        /** P8: the offline queue, this source's: what waits to send, and what was not sent. */
+        val queue: QueueState = QueueState(),
     ) {
         /** P22: the open debts, the server's own (the last /check, or a make-up's answer). */
         val owed: List<OwedItem> get() = data?.owed.orEmpty()
@@ -103,11 +117,16 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
         val tasks: List<TaskItem>
             get() = data?.tasks.orEmpty().map { t ->
                 val k = kept[t.templateId]
+                // P8: a tick waiting on the phone (made here or on the widget, before a restart too) shows ticked.
+                val q = if (k == null && t.open) queue.tickFor(t.templateId, yesterday = false) else null
                 when {
                     k != null -> t.copy(status = if (k.mvv) "DONE_MVV" else "DONE")
+                    q != null -> t.copy(status = if (q.mvv) "DONE_MVV" else "DONE")
                     else -> t
                 }
             }
+        /** P8: the rows (by key) whose tick waits to send. */
+        val waitingKeys: Set<String> get() = queue.items.mapNotNull { rowKeyOf(it) }.toSet()
         /**
          * The header's counts: every row the list shows (habits included), so "3 open" matches three open circles; a side
          * quest still open is not counted (P31: it asks nothing of the day, as the web's counts and tasksSummary say).
@@ -118,17 +137,41 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
         val daily: DailyQuests? get() = DailyStrip.live(data?.daily, tasks)
         /** The web's "Board clear", the server's call (see [allDone]). */
         val boardClear: Boolean get() = allDone
-        val work: List<WorkItem> get() = data?.work.orEmpty().filter { it.id !in workHidden }
+        /** The due work items; one whose Done waits to send (P8) stays off the list. */
+        val work: List<WorkItem>
+            get() = data?.work.orEmpty().filter { w -> w.id !in workHidden && queue.items.none { it.kind == SendLine.Kind.WORK_DONE && it.workId == w.id } }
+        /** P7: the Yesterday lane's rows (the server's, a tick made here shown at once), keyed apart from today's. */
+        val yesterday: List<TaskItem>
+            get() = data?.yesterday?.tasks.orEmpty().map { t ->
+                val k = kept[YesterdayLine.key(t.templateId)]
+                val q = if (k == null && t.open) queue.tickFor(t.templateId, yesterday = true) else null
+                when {
+                    k != null -> t.copy(status = if (k.mvv) "DONE_MVV" else "DONE")
+                    q != null -> t.copy(status = if (q.mvv) "DONE_MVV" else "DONE")
+                    else -> t
+                }
+            }
     }
 
     /** A level up to play, once ([key]), from [from] to [to]; queued at [atMs] (wall clock). */
     data class LevelUp(val key: Int, val from: LevelInfo, val to: LevelInfo, val atMs: Long)
 
     sealed interface Event {
-        /** [level]: the character's level after the tick, when the server sent it; [before], the level shown before it. */
-        data class TaskKept(val templateId: String, val xp: Double, val line: String?, val hinted: Boolean, val level: LevelInfo? = null, val before: LevelInfo? = null) : Event
+        /**
+         * [level]: the character's level after the tick, when the server sent it; [before], the level shown before it.
+         * [templateId] is the row's key (a Yesterday row's is YesterdayLine.key). P7: [moments], the Seals and Ascensions
+         * the tick played (TickNote.moments); [knee], the knee note's line when this tick is the first to say it today.
+         */
+        data class TaskKept(
+            val templateId: String, val xp: Double, val line: String?, val hinted: Boolean, val level: LevelInfo? = null, val before: LevelInfo? = null,
+            val moments: List<String> = emptyList(), val knee: String? = null,
+        ) : Event
         /** A tick the server refused; [retry] sends it again (null when a retry can only fail the same way: a timer that is gone). */
         data class TaskFailed(val templateId: String, val message: String, val retry: (() -> Unit)?) : Event
+        /** P8: a tick that got no answer waits on the phone ([message] says so, and the day it counts for); its row stays ticked. */
+        data class TaskQueued(val templateId: String, val message: String) : Event
+        /** P8: a work item's Done that got no answer waits on the phone; its row stays off the list. */
+        data class WorkQueued(val item: WorkItem, val message: String) : Event
         data class TaskUndone(val templateId: String, val xp: Double) : Event
         data class UndoFailed(val message: String) : Event
         data class WorkDone(val item: WorkItem) : Event
@@ -168,6 +211,13 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
          * [fresh]'s rows in the order [shown] lists them (a row the server dropped goes); a row the server added goes
          * just after the row the server lists before it, or first.
          */
+        /** P8: the Check row a waiting tick is for (a Yesterday row's key for the lane's), or null for any other write. */
+        fun rowKeyOf(item: QueuedWrite): String? {
+            if (item.kind != SendLine.Kind.TICK) return null
+            val id = item.templateId ?: return null
+            return if (item.yesterday) YesterdayLine.key(id) else id
+        }
+
         fun holdOrder(shown: List<String>, fresh: List<TaskItem>): List<TaskItem> {
             val at = HashMap<String, Int>(shown.size * 2)
             shown.forEachIndexed { i, id -> at[id] = i }
@@ -191,6 +241,8 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
     private val undoWhenKept = mutableSetOf<String>()
     /** P16: ticks that were out at the same time as another tick here (their answers' credits change is shared). */
     private val overlapped = mutableSetOf<String>()
+    /** P7: the knee notes already said (TickNote.kneeKey: once each a life day and stage). */
+    private val kneeSaid = mutableSetOf<String>()
 
     init {
         start()
@@ -202,7 +254,8 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
                 refreshJob?.cancel()
                 questsJob?.cancel()
                 overlapped.clear()
-                _ui.value = Ui()
+                kneeSaid.clear()
+                _ui.value = Ui(queue = graph.sendQueue.state.value.of(graph.source))
                 start()
             }
         }
@@ -210,7 +263,75 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
         viewModelScope.launch {
             graph.changes.debounce(600).collect { refresh(quiet = true) }
         }
+        // P8: the offline queue, this source's (what waits, what was not sent), and what lands or is set aside.
+        viewModelScope.launch {
+            graph.sendQueue.state.collect { q -> _ui.update { it.copy(queue = q.of(graph.source)) } }
+        }
+        viewModelScope.launch { graph.sendQueue.landed.collect { landedHere(it) } }
+        viewModelScope.launch {
+            graph.sendQueue.setAside.collect { n ->
+                if (n.item.source != graph.source) return@collect
+                when (n.item.kind) {
+                    SendLine.Kind.TICK -> {
+                        val key = rowKeyOf(n.item) ?: return@collect
+                        // Its row opens again (it never landed) and says why; the Not sent card keeps the line.
+                        if (_ui.value.kept[key]?.clientId == n.item.clientId) _ui.update { it.copy(kept = it.kept - key) }
+                        _events.tryEmit(Event.TaskFailed(key, SendLine.NOT_SENT_TITLE + ": " + n.item.label + ". " + n.line, null))
+                    }
+                    SendLine.Kind.WORK_DONE -> {
+                        _ui.update { u -> u.copy(workHidden = u.workHidden - n.item.workId.orEmpty()) }
+                        _events.tryEmit(Event.Note(SendLine.NOT_SENT_TITLE + ": Done on " + n.item.label + ". " + n.line))
+                    }
+                    SendLine.Kind.LOG -> Unit
+                }
+            }
+        }
     }
+
+    /**
+     * P8: a tick the queue landed (made here or on the widget): its row is kept with its instance (so its Undo works for
+     * its ten minutes), the level and the wallet follow its answer, and its line says it was sent.
+     */
+    private fun landedHere(l: Landed) {
+        if (l.item.source != graph.source) return
+        // A Done that landed stays off the list until /check (read again now) no longer lists it.
+        if (l is Landed.Work) _ui.update { it.copy(workHidden = it.workHidden + l.item.workId.orEmpty()) }
+        if (l !is Landed.Tick) return
+        val key = rowKeyOf(l.item) ?: return
+        val r = l.result
+        val before = _ui.value.level
+        touchedAt = System.currentTimeMillis()
+        _ui.update {
+            it.copy(
+                kept = it.kept + (key to Kept(r.instanceId, r.xp, l.item.mvv, l.item.clientId)),
+                // Board clear is the server's call; a tick that lands late only ever clears more (no moment is played).
+                allDone = it.allDone || r.allDone,
+                tickLevel = r.level ?: it.tickLevel,
+                levelUp = levelUpOf(it, before, r.level),
+                tickWallet = r.credits?.let { c -> WalletLine.after(it.wallet, c) } ?: it.tickWallet,
+            )
+        }
+        val knee = r.knee?.takeIf { it.line.isNotBlank() && kneeSaid.add(TickNote.kneeKey(it)) }?.line
+        val line = SendLine.sentTick(l.item.label, StatusLine.tickLine(r.line, r.competency))
+        _events.tryEmit(Event.TaskKept(key, r.xp, line, hinted = true, level = r.level, before = before, moments = TickNote.moments(r.celebrations), knee = knee))
+    }
+
+    /** P8: the server clock's offset from the phone's at the board's read, so a tap's own day is the server's. */
+    private fun offsetMs(): Long? = _ui.value.let { u -> SendLine.offsetOf(u.data?.now, u.fetchedAtMs) }
+
+    /** P8: what waits for this source is sent now (the job takes over if it can't land). */
+    fun sendWaiting() {
+        if (_ui.value.queue.items.isNotEmpty()) graph.sendQueue.kick()
+    }
+
+    /** P8: a kept-back line sent anyway, for today (the server's day as last read). */
+    fun sendForToday(clientId: String) {
+        val day = SendLine.dayKey(SendLine.serverNow(System.currentTimeMillis(), offsetMs()))
+        if (graph.sendQueue.sendForToday(clientId, day)) graph.sendQueue.kick()
+    }
+
+    /** P8: a not-sent note read, or a kept-back line discarded. */
+    fun dismissNotSent(clientId: String) = graph.sendQueue.dismiss(clientId)
 
     private fun start() {
         viewModelScope.launch {
@@ -243,9 +364,10 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
         }
     }
 
-    /** Pull to refresh (quiet = no spinner: on resume, after a deed elsewhere). */
+    /** Pull to refresh (quiet = no spinner: on resume, after a deed elsewhere). P8: a pull also sends what waits. */
     fun refresh(quiet: Boolean = false) {
         refreshQuests()
+        if (!quiet) sendWaiting()
         if (refreshJob?.isActive == true) return
         refreshJob = viewModelScope.launch {
             if (!quiet) _ui.update { it.copy(refreshing = true) }
@@ -260,11 +382,17 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
             when (r) {
                 is Outcome.Ok -> {
                     val now = System.currentTimeMillis()
+                    // P8: the server answered, so what waits for it goes now.
+                    sendWaiting()
                     _ui.update { u ->
                         val kept = reconcile(u, r.value)
                         // Just after a tick or an undo, a quiet read keeps the rows where they are on screen.
-                        val shown = u.data?.tasks?.takeIf { quiet && now - touchedAt < ORDER_HOLD_MS }
-                        val data = shown?.let { r.value.copy(tasks = holdOrder(it.map { t -> t.templateId }, r.value.tasks)) } ?: r.value
+                        val hold = quiet && now - touchedAt < ORDER_HOLD_MS
+                        val shown = u.data?.tasks?.takeIf { hold }
+                        val held = shown?.let { r.value.copy(tasks = holdOrder(it.map { t -> t.templateId }, r.value.tasks)) } ?: r.value
+                        // P7: the Yesterday lane holds its order the same way (a row ticked here stays under the finger).
+                        val shownY = u.data?.yesterday?.tasks?.takeIf { hold }
+                        val data = if (shownY != null && held.yesterday != null) held.copy(yesterday = held.yesterday.copy(tasks = holdOrder(shownY.map { t -> t.templateId }, held.yesterday.tasks))) else held
                         u.copy(
                             data = data, fetchedAtMs = now, loading = false, refreshing = false, offline = false, refused = null, refusedAuth = false, error = null,
                             kept = kept, allDone = allDoneOf(u, r.value, kept), workHidden = u.workHidden.intersect(r.value.work.map { it.id }.toSet()),
@@ -281,9 +409,14 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
         }
     }
 
+    /** The server's row a key names: today's by template id, a Yesterday row's (P7) in the lane. */
+    private fun rowOf(data: CheckData?, key: String): TaskItem? =
+        if (YesterdayLine.isKey(key)) data?.yesterday?.tasks?.firstOrNull { YesterdayLine.key(it.templateId) == key }
+        else data?.tasks?.firstOrNull { it.templateId == key }
+
     /** Ticks made here stay ticked while the server still says so (or hasn't heard yet). */
     private fun reconcile(u: Ui, fresh: CheckData): Map<String, Kept> = u.kept.filter { (id, k) ->
-        val server = fresh.tasks.firstOrNull { it.templateId == id }
+        val server = rowOf(fresh, id)
         when {
             server == null -> false
             id in u.pending -> true
@@ -295,7 +428,7 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
 
     /** The server's Board clear, unless this read left before a tick made here landed (then the tick's own answer stands). */
     private fun allDoneOf(u: Ui, fresh: CheckData, kept: Map<String, Kept>): Boolean {
-        val behind = u.pending.isNotEmpty() || kept.keys.any { id -> fresh.tasks.firstOrNull { it.templateId == id }?.kept == false }
+        val behind = u.pending.isNotEmpty() || kept.keys.any { id -> rowOf(fresh, id)?.kept == false }
         return if (behind) u.allDone else fresh.tasksSummary?.allDone ?: false
     }
 
@@ -318,31 +451,43 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
      * A tick, optimistic. [minutes] (the minutes sheet's chip, blueprint P7) and [sessionId] (a proof row's timer, P23)
      * go to the server as they are; it counts them with the web drawer's clamp and gates a proof row's full tick. [pages]
      * (a reading task's, P24) go as its proof; the server gates them against the day's target and never prices them.
+     * [yesterday] (P7): a row of the Yesterday lane, sent with day "yesterday" (T 1.00), its state under its own key.
+     * P8: [day], the row's own life day, is fixed here at the tap: the day of the board the row was shown on (its
+     * Yesterday lane's for a Yesterday row; SendLine.tickDayOf, the web board's rule), and sent as is on every try, so
+     * a Retry and the offline queue's replay are the same request. A tick that gets no answer at all waits on the
+     * phone (data/SendQueue) and stays ticked; it books on that day. One that lands is followed in the cache, so the
+     * widget stops listing the row (CheckCache.followTick).
      */
-    fun complete(task: TaskItem, mvv: Boolean = false, clientId: String = UUID.randomUUID().toString(), minutes: Int? = null, sessionId: String? = null, pages: Int? = null) {
+    fun complete(
+        task: TaskItem, mvv: Boolean = false, clientId: String = UUID.randomUUID().toString(), minutes: Int? = null, sessionId: String? = null, pages: Int? = null,
+        yesterday: Boolean = false, day: String? = null,
+    ) {
+        val key = if (yesterday) YesterdayLine.key(task.templateId) else task.templateId
         val before = _ui.value
-        if (task.templateId in before.pending) return
+        if (key in before.pending) return
+        val tickDay = day ?: SendLine.tickDayOf(before.data?.day, before.data?.yesterday?.day, yesterday, SendLine.serverNow(System.currentTimeMillis(), offsetMs()))
+        val source = graph.source
         touchedAt = System.currentTimeMillis()
         // P16: ticks out at the same time share the server's one change across them (its `delta`), so neither line names
         // it, and /check is read again once the last of them lands (the chip shows each answer's own wallet meanwhile).
-        if (before.pending.isNotEmpty()) overlapped += before.pending + task.templateId
+        if (before.pending.isNotEmpty()) overlapped += before.pending + key
         _ui.update {
             it.copy(
-                kept = it.kept + (task.templateId to Kept(null, task.xpHint, mvv, clientId)),
-                pending = it.pending + task.templateId,
+                kept = it.kept + (key to Kept(null, task.xpHint, mvv, clientId)),
+                pending = it.pending + key,
             )
         }
         viewModelScope.launch {
-            when (val r = graph.api.completeTask(task.templateId, mvv, clientId, minutes, sessionId, pages)) {
+            when (val r = graph.api.completeTask(task.templateId, mvv, clientId, minutes, sessionId, pages, yesterday, tickDay)) {
                 is Outcome.Ok -> {
                     // Board clear is the server's call (its allDone, habits included). A tick only ever clears more,
                     // so an earlier tick's answer arriving late never takes a clear board back. One already undone here doesn't count.
-                    val counts = r.value.allDone && task.templateId !in undoWhenKept
+                    val counts = r.value.allDone && key !in undoWhenKept
                     val cleared = counts && !_ui.value.allDone
                     val before = _ui.value.level
                     _ui.update {
                         it.copy(
-                            kept = it.kept + (task.templateId to Kept(r.value.instanceId, r.value.xp, mvv, clientId)), pending = it.pending - task.templateId,
+                            kept = it.kept + (key to Kept(r.value.instanceId, r.value.xp, mvv, clientId)), pending = it.pending - key,
                             allDone = it.allDone || counts,
                             boardClearKey = if (cleared) it.boardClearKey + 1 else it.boardClearKey,
                             tickLevel = r.value.level ?: it.tickLevel,
@@ -352,32 +497,50 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
                     }
                     // P5: the skill the task fed joins the line (its hours now, or the tier this tick reached); P16: the
                     // credits it earned, from its own answer (" · +10 cr"), only when no other tick here overlapped it.
-                    val alone = overlapped.remove(task.templateId).not()
+                    val alone = overlapped.remove(key).not()
                     val line = StatusLine.tickLine(r.value.line, r.value.competency)?.let { it + WalletLine.tickSuffix(r.value.credits, alone) }
                     if (!alone && _ui.value.pending.isEmpty() && r.value.credits != null) graph.changes.tryEmit("task")
-                    _events.tryEmit(Event.TaskKept(task.templateId, r.value.xp, line, hinted = task.xpHint != null, level = r.value.level, before = before))
-                    if (cleared) _events.tryEmit(Event.BoardClear(task.templateId))
+                    // P7: the moments the tick played (its Seals and Ascensions), and the knee note the first time it is past
+                    // 200 raw on its day (then again at the day's cap).
+                    val knee = r.value.knee?.takeIf { it.line.isNotBlank() && kneeSaid.add(TickNote.kneeKey(it)) }?.line
+                    _events.tryEmit(
+                        Event.TaskKept(key, r.value.xp, line, hinted = task.xpHint != null, level = r.value.level, before = before, moments = TickNote.moments(r.value.celebrations), knee = knee)
+                    )
+                    if (cleared) _events.tryEmit(Event.BoardClear(key))
                     // No level in the answer (an older server): /check brings it, and with it any level up.
                     if (r.value.level == null) graph.changes.tryEmit("task")
+                    // P7: a tick for yesterday can change today's board too (a deadline due yesterday leaves today's lane).
+                    if (yesterday) graph.changes.tryEmit("task-yesterday")
                     // The Quest card's counts follow a tick that moves them (a sprint row's task, a Today's three quest).
                     if (QuestLine.touches(_ui.value.quests, task.templateId)) refreshQuests(fresh = true)
-                    if (undoWhenKept.remove(task.templateId)) undo(task.templateId)
+                    if (undoWhenKept.remove(key)) undo(key)
+                    // P8 review: the widget hears of it (no /check follows a tick): its row is done in the cache, which pokes it.
+                    else if (source == graph.source) graph.cache.followTick(source, task.templateId, tickDay, mvv, r.value.xp)
                 }
                 is Outcome.Err -> {
-                    undoWhenKept.remove(task.templateId)
-                    overlapped.remove(task.templateId)
+                    overlapped.remove(key)
+                    // P8: no answer at all (and not undone meanwhile): the tick waits on the phone, ticked, and books on
+                    // its own day when it lands. Demo data never gets here (it answers on the phone).
+                    if (r.offline && key !in undoWhenKept && source == graph.source &&
+                        graph.sendQueue.enqueue(QueuedWrite.tick(clientId, source, tickDay, task.title, task.templateId, mvv, minutes, sessionId, pages, yesterday))
+                    ) {
+                        _ui.update { it.copy(pending = it.pending - key) }
+                        _events.tryEmit(Event.TaskQueued(key, SendLine.queuedTick(task.title, tickDay)))
+                        return@launch
+                    }
+                    undoWhenKept.remove(key)
                     // P23: a named timer the server no longer has (another device's tick counted it, or it was discarded):
                     // the row drops it here and /check is read again, so the next tap opens the sheet. A retry of the same
                     // timer can only fail the same way, so none is offered.
                     val timerGone = r.code == "gone" && sessionId != null
                     _ui.update {
                         it.copy(
-                            kept = it.kept - task.templateId, pending = it.pending - task.templateId,
+                            kept = it.kept - key, pending = it.pending - key,
                             data = if (!timerGone) it.data else it.data?.copy(tasks = it.data.tasks.map { t -> if (t.templateId == task.templateId && t.timer?.sessionId == sessionId) t.copy(timer = null) else t }),
                         )
                     }
                     if (timerGone) graph.changes.tryEmit("timer")
-                    _events.tryEmit(Event.TaskFailed(task.templateId, r.message, if (timerGone) null else ({ complete(task, mvv, clientId, minutes, sessionId, pages) })))
+                    _events.tryEmit(Event.TaskFailed(key, r.message, if (timerGone) null else ({ complete(task, mvv, clientId, minutes, sessionId, pages, yesterday, tickDay) })))
                 }
             }
         }
@@ -493,30 +656,51 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
         _ui.update { it.copy(refreshing = false) }
     }
 
-    fun undo(templateId: String) {
+    /**
+     * An undo of a tick made here, by its row key ([key]: a template id, or a Yesterday row's YesterdayLine.key, P7). P8: a
+     * tick still waiting on the phone (made here or on the widget) is taken off it, and nothing is sent; one on its way
+     * waits for its answer.
+     */
+    fun undo(key: String) {
         val u = _ui.value
-        val k = u.kept[templateId] ?: return
-        touchedAt = System.currentTimeMillis()
-        // An undone tick opens its task again: the board isn't clear.
-        if (templateId in u.pending || k.instanceId == null) {
-            undoWhenKept += templateId
-            _ui.update { it.copy(kept = it.kept - templateId, allDone = false) }
+        val waiting = u.queue.items.firstOrNull { rowKeyOf(it) == key }
+        if (waiting != null && u.kept[key]?.instanceId == null && key !in u.pending) {
+            if (graph.sendQueue.cancel(waiting.clientId)) {
+                touchedAt = System.currentTimeMillis()
+                _ui.update { it.copy(kept = it.kept - key, allDone = false) }
+                _events.tryEmit(Event.Note(SendLine.TAKEN_BACK))
+            } else {
+                _events.tryEmit(Event.Note(SendLine.SENDING_NOW))
+            }
             return
         }
-        _ui.update { it.copy(kept = it.kept - templateId, allDone = false) }
+        val k = u.kept[key] ?: return
+        val templateId = YesterdayLine.templateOf(key)
+        val yesterday = YesterdayLine.isKey(key)
+        touchedAt = System.currentTimeMillis()
+        // An undone tick opens its task again: the board isn't clear.
+        if (key in u.pending || k.instanceId == null) {
+            undoWhenKept += key
+            _ui.update { it.copy(kept = it.kept - key, allDone = false) }
+            return
+        }
+        _ui.update { it.copy(kept = it.kept - key, allDone = false) }
         val clientId = UUID.randomUUID().toString()
         viewModelScope.launch {
             // The server's copy may already say DONE; show it open until the next refresh agrees.
-            _ui.update { s -> s.copy(data = s.data?.copy(tasks = s.data.tasks.map { if (it.templateId == templateId) it.copy(status = "OPEN") else it })) }
+            _ui.update { s ->
+                val open = { t: TaskItem -> if (t.templateId == templateId) t.copy(status = "OPEN") else t }
+                s.copy(data = if (yesterday) s.data?.copy(yesterday = s.data.yesterday?.let { y -> y.copy(tasks = y.tasks.map(open)) }) else s.data?.copy(tasks = s.data.tasks.map(open)))
+            }
             when (val r = graph.api.undoTask(k.instanceId, clientId)) {
                 is Outcome.Ok -> {
                     r.value.level?.let { l -> _ui.update { it.copy(tickLevel = l) } }
-                    _events.tryEmit(Event.TaskUndone(templateId, r.value.xp))
+                    _events.tryEmit(Event.TaskUndone(key, r.value.xp))
                     graph.changes.tryEmit("task-undo")
                     if (QuestLine.touches(_ui.value.quests, templateId)) refreshQuests(fresh = true)
                 }
                 is Outcome.Err -> {
-                    _ui.update { it.copy(kept = it.kept + (templateId to k), allDone = it.allDone || u.allDone) }
+                    _ui.update { it.copy(kept = it.kept + (key to k), allDone = it.allDone || u.allDone) }
                     _events.tryEmit(Event.UndoFailed(r.message))
                 }
             }
@@ -535,14 +719,33 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
             delay(holdMs)
             _ui.update { if (item.id in it.workClosing) it.copy(workClosing = it.workClosing - item.id, workHidden = it.workHidden + item.id) else it }
         }
+        val source = graph.source
+        // P8: its key's day is the tap's (it only dates the item: a Done goes whatever the day), read before the send.
+        val day = SendLine.dayKey(SendLine.serverNow(System.currentTimeMillis(), offsetMs()))
         viewModelScope.launch {
             when (val r = graph.api.workDone(item.id, clientId)) {
                 is Outcome.Ok -> _events.tryEmit(Event.WorkDone(item))
                 is Outcome.Err -> {
+                    // P8: no answer at all: the Done waits on the phone (it marks the item, whatever the day it lands).
+                    if (r.offline && source == graph.source && graph.sendQueue.enqueue(QueuedWrite.workDone(clientId, source, day, item.title, item.id))) {
+                        _events.tryEmit(Event.WorkQueued(item, SendLine.queuedWork(item.title)))
+                        return@launch
+                    }
                     _ui.update { it.copy(workHidden = it.workHidden - item.id, workClosing = it.workClosing - item.id) }
                     _events.tryEmit(Event.WorkFailed(r.message, item.id) { workDone(item, clientId, holdMs) })
                 }
             }
+        }
+    }
+
+    /** P8: Undo on a Done still waiting: taken off the phone, and its row is back; one on its way waits for its answer. */
+    fun cancelWorkDone(item: WorkItem) {
+        val waiting = _ui.value.queue.items.firstOrNull { it.kind == SendLine.Kind.WORK_DONE && it.workId == item.id } ?: return
+        if (graph.sendQueue.cancel(waiting.clientId)) {
+            _ui.update { it.copy(workHidden = it.workHidden - item.id, workClosing = it.workClosing - item.id) }
+            _events.tryEmit(Event.Note(SendLine.TAKEN_BACK))
+        } else {
+            _events.tryEmit(Event.Note(SendLine.SENDING_NOW))
         }
     }
 

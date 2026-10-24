@@ -21,6 +21,14 @@
  *     first, at most eight;
  *   - the duplicate note's open titles (activeTitlesOf): open only, newest
  *     first, capped at 300, each with its board place;
+ *   - blueprint P6 (D33): a done-now line ticks the row it names
+ *     (tickNamedRowCore through stubbed seams): 'x gym 45m' with a due Gym
+ *     habit ticks it with 45 min and writes no template; no match leaves
+ *     the one-off to the insert as before; work-tab, autoMetric, Inbox and
+ *     deferred rows are never matched, nor a line with a schedule, '?',
+ *     '#side' or a study link; a resend writes once (its key's row, or the
+ *     row's standing tick); a refused tick is refused, nothing written;
+ *     existing duplicate one-offs are left as they are;
  *   - where a real line goes (captureShapeOf, then placeOf): the toast's
  *     place for the lines capture.md's acceptance names, and an idea's
  *     answer kept as its note;
@@ -152,6 +160,10 @@ import {
   type UnarchiveOutcome,
 } from "../src/lib/tasks";
 import { prisma } from "../src/lib/prisma";
+import { DONE_NOW_AS_NEW, DONE_NOW_LANES, doneNowAsksTick, doneNowChipOf, doneNowMatchOf, doneNowRefusalOf, doneNowTickOf } from "../src/lib/done-now";
+import { PROOF_MINUTES_REFUSAL } from "../src/lib/proof";
+import { tickNamedRowCore, type Completion, type NamedTickAround, type NamedTickDeps } from "../src/lib/tasks";
+import type { CelebrationEvent } from "../src/lib/celebration-types";
 
 const TODAY: DayKey = "2026-10-01";
 const YESTERDAY = addDays(TODAY, -1);
@@ -588,7 +600,7 @@ function tpl(p: Partial<BoardTemplate> & { id: string; title: string }): BoardTe
   const stats: BoardData["stats"] = { mon: statsFor(monHabit, parseRule("DOW:1")!, [], TODAY) };
   const active = activeTitlesOf({ today: TODAY, yesterday: YESTERDAY, templates, instances: [], stats });
   check(
-    `active: open templates only, newest first, capped at ${ACTIVE_TITLES_MAX}`,
+    `active: open templates only (a one-off done on an earlier day is gone), newest first, capped at ${ACTIVE_TITLES_MAX}`,
     active.length === ACTIVE_TITLES_MAX && !active.some((a) => a.title === "Already finished") && active[0].title === "Gym legs 60m!" && active[1].title === `Task number ${ACTIVE_TITLES_MAX + 4}`,
     `${active.length}: ${active[0]?.title}, ${active[1]?.title}`
   );
@@ -598,6 +610,199 @@ function tpl(p: Partial<BoardTemplate> & { id: string; title: string }): BoardTe
     gym.normTitle === "gym legs" && gym.normTitle === normTitleOf(gym.title) && gym.where.lane === "upcoming" && gym.where.label === "Habits · next Mon",
     JSON.stringify(gym)
   );
+}
+
+// ── Blueprint P6 (D33): a done-now line ticks the row it names ─────────────
+async function doneNowTickChecks(): Promise<void> {
+  const NOW = new Date("2026-10-01T08:00:00.000Z");
+  const inst = (id: string, templateId: string, day: DayKey, status: BoardInstance["status"] = "DONE"): BoardInstance => ({ id, templateId, day, slot: 0, status, source: "manual", xpPaid: 5 });
+  const gym = tpl({ id: "gym", title: "Gym", kind: "HABIT", recurrence: "DAILY", startDay: "2026-09-01", createdAt: "2026-09-01T00:00:00.000Z", estMinutes: 60 });
+  const mustGym = tpl({ id: "mustgym", title: "Gym", kind: "HABIT", recurrence: "DAILY", compulsory: true, startDay: "2026-09-01", createdAt: "2026-08-01T00:00:00.000Z" });
+  // The duplicate the old defect left: a done-now one-off 'Gym', ticked on an earlier day (completed, so off the board).
+  const oldDup = tpl({ id: "olddup", title: "Gym", completedAt: "2026-09-28T09:00:00.000Z", createdAt: "2026-09-28T08:59:00.000Z" });
+  const bike = tpl({ id: "bike", title: "Fix the bike", createdAt: "2026-09-20T00:00:00.000Z" });
+  const novel = tpl({ id: "novel", title: "Read the novel", kind: "HABIT", recurrence: "DAILY", autoMetric: "PAGES", autoTarget: 30, startDay: "2026-09-01" });
+  const reviews = tpl({ id: "rev", title: "Morning reviews", autoMetric: "REVIEW_DUE", autoTarget: 10 });
+  const rent = tpl({ id: "rent", title: "Pay rent", inbox: true });
+  const mum = tpl({ id: "mum", title: "Call mum" });
+  const mumDeferred = { ...mum, deferUntil: "2026-10-01T12:00:00.000Z" };
+  const legs = tpl({ id: "legs", title: "Leg day", kind: "HABIT", recurrence: "DOW:1", startDay: "2026-09-01" });
+  const stretch = tpl({ id: "stretch", title: "Stretch", kind: "HABIT", recurrence: "DAILY", startDay: "2026-09-01" });
+  const report = tpl({ id: "report", title: "Write the report", dueKind: "PLANNED", dueDay: TODAY });
+  const templates = [gym, oldDup, bike, novel, reviews, rent, mumDeferred, legs, stretch, report];
+  const instances = [inst("d1", "olddup", "2026-09-28"), inst("s1", "stretch", TODAY)];
+  const stats: BoardData["stats"] = {
+    gym: statsFor(gym, parseRule("DAILY")!, [], TODAY),
+    novel: statsFor(novel, parseRule("DAILY")!, [], TODAY),
+    legs: statsFor(legs, parseRule("DOW:1")!, [], TODAY),
+    stretch: statsFor(stretch, parseRule("DAILY")!, [inst("s1", "stretch", TODAY)], TODAY),
+  };
+  const core = { today: TODAY, yesterday: YESTERDAY, templates, instances, stats };
+  const active = activeTitlesOf(core, ACTIVE_TITLES_MAX, NOW.getTime());
+  const tickOf = (id: string) => active.find((a) => a.id === id)?.tick ?? null;
+
+  check(
+    "P6 rows: what each row offers a done-now line (open on today's four lanes, 'done' once ticked today, else nothing)",
+    tickOf("gym") === "open" && tickOf("bike") === "open" && tickOf("report") === "open" && tickOf("stretch") === "done" && tickOf("novel") === null && tickOf("rev") === null && tickOf("rent") === null && tickOf("mum") === null && tickOf("legs") === null,
+    JSON.stringify(active.map((a) => [a.id, a.where.label, a.tick]))
+  );
+  check("P6 rows: the duplicate one-off the old defect left (ticked on an earlier day) is off the board, so never matched or touched", !active.some((a) => a.id === "olddup"));
+  check(
+    "P6 rows: a work tab's row is never matched (doneNowTickOf), whatever its lane; nor a goal or an idea draft",
+    doneNowTickOf({ ...gym, boardId: "wb1" }, { lane: "habits", label: "Habits" }) === null &&
+      doneNowTickOf({ ...gym, kind: "GOAL" }, { lane: "goals", label: "Goals" }) === null &&
+      doneNowTickOf({ ...gym, kind: "IDEA_DRAFT" }, { lane: "inbox", label: "Inbox" }) === null &&
+      DONE_NOW_LANES.join(",") === "must,habits,planned,anytime"
+  );
+  check("P6 rows: a deferral that has ended no longer hides the row", doneNowTickOf(mumDeferred, { lane: "anytime", label: "Anytime" }, Date.parse("2026-10-01T13:00:00.000Z")) === "open");
+
+  const p = (line: string) => parseCapture(line, { today: TODAY });
+  check(
+    "P6 lines: a plain done-now line asks ('x gym 45m', 'did fix the bike', 'x pay rent fri !'); a schedule, '?', '#side', a study or pages link, or no 'x' never does",
+    doneNowAsksTick(p("x gym 45m")) && doneNowAsksTick(p("did fix the bike")) && doneNowAsksTick(p("x pay rent fri !")) &&
+      !doneNowAsksTick(p("x gym daily")) && !doneNowAsksTick(p("x gym?")) && !doneNowAsksTick(p("x gym #side")) && !doneNowAsksTick(p("x reviews")) && !doneNowAsksTick(p("x read 30 pages")) && !doneNowAsksTick(p("gym 45m")) && !doneNowAsksTick(p("goal: x gym"))
+  );
+
+  type Call = { kind: "key" | "board" | "complete"; arg?: string };
+  const run = async (line: string, opts: { captureKey?: string | null; boardId?: string | null; asNew?: boolean; around?: NamedTickAround } = {}, over: Partial<{ keyTaken: boolean; complete: (id: string, m: number | null) => Promise<LifeResult<Completion>>; core: typeof core }> = {}) => {
+    const calls: Call[] = [];
+    const c = over.core ?? core;
+    const deps: NamedTickDeps = {
+      keyTaken: async (k) => (calls.push({ kind: "key", arg: k }), over.keyTaken === true),
+      board: async () => (calls.push({ kind: "board" }), { core: c, active: activeTitlesOf(c, ACTIVE_TITLES_MAX, NOW.getTime()) }),
+      complete: async (id, m) => {
+        calls.push({ kind: "complete", arg: `${id}:${m}` });
+        if (over.complete) return over.complete(id, m);
+        return { ok: true, value: { instanceId: `i-${id}`, templateId: id, eventId: "e1", day: TODAY, slot: 0, receipt: { xp: 8.3 } as Completion["receipt"], status: "DONE", source: "manual", occurredAt: NOW.toISOString(), duplicate: false } };
+      },
+    };
+    const res = await tickNamedRowCore("u1", p(line), { now: NOW, ...opts }, deps);
+    return { res, calls };
+  };
+
+  const a1 = await run("x gym 45m", { captureKey: "n1abc" });
+  check(
+    "P6 acceptance: 'x gym 45m' with a due Gym habit ticks that habit with 45 min and creates no template (one tick, nothing else written)",
+    !!a1.res && a1.res.ok && a1.res.value.id === "gym" && a1.res.value.completed && a1.res.value.projectedXp === 8.3 && a1.res.value.where.label === "Done today" &&
+      JSON.stringify(a1.res.value.ticked) === JSON.stringify({ from: "Habits", instanceId: "i-gym" }) &&
+      JSON.stringify(a1.calls) === JSON.stringify([{ kind: "board" }, { kind: "key", arg: "n1abc" }, { kind: "complete", arg: "gym:45" }]),
+    JSON.stringify(a1)
+  );
+  const a2 = await run("x swim 30m", { captureKey: "n2abc" });
+  check("P6 acceptance: with no match the one-off is created as before (null: the insert runs, nothing is ticked here, and no key read is paid)", a2.res === null && JSON.stringify(a2.calls) === JSON.stringify([{ kind: "board" }]), JSON.stringify(a2));
+  const a3 = await run("x gym 45m", { boardId: "wb1" });
+  const a3b = await run("x read the novel");
+  const a3c = await run("x morning reviews");
+  check(
+    "P6 acceptance: a work tab's line never matches, and autoMetric rows (a pages task, a study task) are never matched",
+    a3.res === null && a3.calls.length === 0 && a3b.res === null && a3c.res === null && ![...a3b.calls, ...a3c.calls].some((c) => c.kind === "complete"),
+    JSON.stringify([a3, a3b, a3c])
+  );
+  check("P6 acceptance: existing duplicate one-offs are left as they are (the tick names the habit, never the old one-off)", a1.res?.ok === true && a1.res.value.id === "gym" && !a1.calls.some((c) => c.arg?.startsWith("olddup")));
+  const inboxRow = await run("x pay rent");
+  const deferredRow = await run("x call mum");
+  check("P6: an Inbox row and a deferred row are never ticked by a line (the one-off is saved as before)", inboxRow.res === null && deferredRow.res === null);
+  const noAsk = await Promise.all(["x gym daily", "x gym?", "x gym #side", "gym 45m"].map((l) => run(l)));
+  check("P6: a line with a schedule, '?', '#side' or no 'x' reads nothing and ticks nothing", noAsk.every((r) => r.res === null && r.calls.length === 0));
+  const asNew = await run("x gym 45m", { asNew: true });
+  check("P6: a line turned back into a new task (asNew) is saved as before, never a tick", asNew.res === null && asNew.calls.length === 0);
+
+  // The resend: once by the key's row (the first send inserted), once by the row's standing tick (the first send ticked).
+  const keyed = await run("x gym 45m", { captureKey: "mobile:c1" }, { keyTaken: true });
+  check("P6 resend: a line whose key already wrote a row is that row's (the insert's retry finds it): read, never ticked", keyed.res === null && JSON.stringify(keyed.calls) === JSON.stringify([{ kind: "board" }, { kind: "key", arg: "mobile:c1" }]));
+  const doneCore = { ...core, instances: [...core.instances, inst("i-gym", "gym", TODAY)] };
+  const again = await run("x gym 45m", { captureKey: "mobile:c1" }, {
+    core: doneCore,
+    complete: async (id) => ({ ok: true, value: { instanceId: `i-${id}`, templateId: id, eventId: "e1", day: TODAY, slot: 0, receipt: { xp: 8.3 } as Completion["receipt"], status: "DONE", source: "manual", occurredAt: NOW.toISOString(), duplicate: true } }),
+  });
+  check(
+    "P6 resend: a replay with the same clientId after the tick writes once: the row's standing tick answers (earlier), nothing paid again",
+    !!again.res && again.res.ok && again.res.value.id === "gym" && !again.res.value.completed && again.res.value.ticked?.earlier === true && again.res.value.ticked.from === "Done today" && again.res.value.ticked.instanceId === "i-gym",
+    JSON.stringify(again.res)
+  );
+  // P6 review: a one-off is that row too once its first send ticked it (its completedAt is set, but it sits in Done
+  // today), so a resend (the sheet's retry, /log past its replay cache, the phone's queue) or the same words again
+  // answers the standing tick and never inserts a second one-off that would be ticked and paid again.
+  const bikeDone = { ...bike, completedAt: "2026-10-01T07:59:00.000Z" };
+  const bikeCore = { ...core, templates: core.templates.map((t) => (t.id === "bike" ? bikeDone : t)), instances: [...core.instances, inst("i-bike", "bike", TODAY)] };
+  const bikeListed = activeTitlesOf(bikeCore, ACTIVE_TITLES_MAX, NOW.getTime()).find((a) => a.id === "bike");
+  check(
+    "P6 review: a one-off ticked today stays on the list as 'done' (Done today), so the line's chip and the server both read it ticked",
+    !!bikeListed && bikeListed.tick === "done" && bikeListed.where.label === "Done today",
+    JSON.stringify(bikeListed)
+  );
+  const repeat = async (id: string) => ({ ok: true as const, value: { instanceId: `i-${id}`, templateId: id, eventId: "e1", day: TODAY, slot: 0, receipt: { xp: 5 } as Completion["receipt"], status: "DONE" as const, source: "manual" as const, occurredAt: NOW.toISOString(), duplicate: true } });
+  const bikeResend = await run("x fix the bike", { captureKey: "mobile:c9" }, { core: bikeCore, complete: repeat });
+  check(
+    "P6 review resend: a one-off's line resent with its key after the tick answers 'Already ticked' (nothing inserted, written or paid: the board's own repeat)",
+    !!bikeResend.res && bikeResend.res.ok && bikeResend.res.value.id === "bike" && !bikeResend.res.value.completed && bikeResend.res.value.ticked?.earlier === true &&
+      JSON.stringify(bikeResend.calls) === JSON.stringify([{ kind: "board" }, { kind: "key", arg: "mobile:c9" }, { kind: "complete", arg: "bike:null" }]),
+    JSON.stringify(bikeResend)
+  );
+  const bikeAgain = await run("x fix the bike", { captureKey: "n9other" }, { core: bikeCore, complete: repeat });
+  check(
+    "P6 review: the same words again (a new key) answer the standing tick too, never a second one-off (the chip's one tap adds one)",
+    !!bikeAgain.res && bikeAgain.res.ok && bikeAgain.res.value.id === "bike" && bikeAgain.res.value.ticked?.earlier === true && (await run("x fix the bike", { asNew: true }, { core: bikeCore })).res === null
+  );
+  const bikeYesterday = { ...core, templates: core.templates.map((t) => (t.id === "bike" ? { ...bike, completedAt: "2026-09-30T07:59:00.000Z" } : t)), instances: [...core.instances, inst("i-bike", "bike", YESTERDAY)] };
+  check("P6 review: a one-off ticked on an earlier day is off the list as before (a new line is a new one-off)", !activeTitlesOf(bikeYesterday, ACTIVE_TITLES_MAX, NOW.getTime()).some((a) => a.id === "bike"));
+
+  // P6 review: the tick runs inside the caller's L3 pair (`around`), so its Seals and Ascensions are detected and stored
+  // as the board's tick's are, and come back with the line.
+  const seal = { id: "c1", tier: 2, kind: "habit-rung", dedupeKey: "rung:gym:3", facts: {} } as unknown as CelebrationEvent;
+  const arounds: string[] = [];
+  const withSeal = await run("x gym 45m", { captureKey: "n3abc", around: async (id, tick) => {
+    arounds.push(id);
+    const r = await tick();
+    return r.ok ? { ok: true, value: { ...r.value, celebrations: [seal] } } : r;
+  } });
+  check(
+    "P6 review moments: the tick runs inside `around` on the named row (once), and its moments come back on the save",
+    JSON.stringify(arounds) === JSON.stringify(["gym"]) && !!withSeal.res && withSeal.res.ok && withSeal.res.value.celebrations?.length === 1 && withSeal.res.value.celebrations[0].id === "c1" && withSeal.calls.filter((c) => c.kind === "complete").length === 1,
+    JSON.stringify(withSeal.res)
+  );
+  check("P6 review moments: with no `around` (or no moments) the save carries none", !!a1.res && a1.res.ok && a1.res.value.celebrations === undefined);
+
+  const both = await run("x gym", {}, { core: { ...core, templates: [...core.templates, mustGym] } });
+  check("P6: two open rows by the same title: the must first (then a habit, a planned row, an Anytime one)", both.res?.ok === true && both.res.value.id === "mustgym" && both.res.value.ticked?.from === "Must", JSON.stringify(both.res));
+  const openFirst = doneNowMatchOf(p("x stretch"), "stretch", [
+    { normTitle: "stretch", title: "Stretch", where: { lane: "done", label: "Done today" }, tick: "done" as const },
+    { normTitle: "stretch", title: "Stretch", where: { lane: "anytime", label: "Anytime" }, tick: "open" as const },
+  ]);
+  check("P6: an open row comes before one ticked today already", openFirst?.tick === "open");
+
+  // A refused tick: nothing is written, and the line is refused with the board's reason after the row it names.
+  const refused = await run("x write the report", {}, { complete: async () => ({ ok: false, error: PROOF_MINUTES_REFUSAL }) });
+  const blocked = await run("x fix the bike", {}, { complete: async () => ({ ok: false, error: "That task is archived." }) });
+  check(
+    "P6 proof gate: a deep-work row's done-now line with no minutes is refused, saying to add them to the line (nothing written)",
+    !!refused.res && !refused.res.ok && refused.res.error === "Not ticked: Write the report (Planned) counts its time. Add its minutes to the line, like 45m, or tick it on Today." && refused.calls.filter((c) => c.kind === "complete").length === 1,
+    JSON.stringify(refused.res)
+  );
+  check("P6: any other refusal says the board's own reason after the row it names", !!blocked.res && !blocked.res.ok && blocked.res.error === "Not ticked: Fix the bike (Anytime). That task is archived." && doneNowRefusalOf("A", "B", "C.", PROOF_MINUTES_REFUSAL) === "Not ticked: A (B). C.");
+  const withMinutes = await run("x write the report 45m");
+  check("P6 proof gate: a proof row's done-now line passes its minutes to the board's tick (completeInstanceCore holds the gate)", withMinutes.calls.some((c) => c.kind === "complete" && c.arg === "report:45"));
+  check("P6 chip: 'Ticks: Gym (Habits)', 'Already ticked: Stretch (Done today)', and the tap's words", doneNowChipOf({ title: "Gym", where: { lane: "habits", label: "Habits" }, tick: "open" }) === "Ticks: Gym (Habits)" && doneNowChipOf({ title: "Stretch", where: { lane: "done", label: "Done today" }, tick: "done" }) === "Already ticked: Stretch (Done today)" && DONE_NOW_AS_NEW === "Tap to add it as a new task instead");
+
+  // The save path, read from the source: the actions ask the tick first, and a tick writes no row and sizes nothing.
+  const actions = readFileSync(join(__dirname, "../src/app/actions/capture.ts"), "utf8");
+  check(
+    "P6 save path: createFromCapture and createManyFromCapture both go through saveLine (the tick first, the insert only on null), a refusal returns as the line's",
+    (actions.match(/await saveLine\(userId, /g) ?? []).length === 2 && /if \(!saved\.ok\) return saved;/.test(actions) && /if \(!one\.ok\) return one;/.test(actions) && /asNew: opts\?\.asNew === true/.test(actions) && /asNew: line\.asNew === true/.test(actions)
+  );
+  check(
+    "P6 after the save: a tick of the named row is never sized from the line's words nor filed, and the roadmap's practice reading follows the tick",
+    /!s\.created\.boardId && !s\.created\.ticked\)/.test(actions) && /!created\.ticked && !!parsed\.answer/.test(actions) && /recordPracticeForTemplate\(userId, id\)/.test(actions) && /const toPractice = lifeWritesEnabled\(\) \?/.test(actions)
+  );
+  check(
+    "P6 review moments: the capture actions' tick of a named row is the board's L3 pair (scope 'tick' on that row, cause 'tick', no second snapshot for a repeat), and the item carries its moments",
+    /const ticked = await tickNamedRowCore\(userId, line\.parsed, \{ captureKey: opts\.captureKey, boardId: opts\.boardId, asNew: opts\.asNew, around: momentsAround\(userId\) \}\);/.test(actions) &&
+      /snapshot: \(\) => captureSnapshot\(userId, \{ scope: "tick", templateIds: \[templateId\] \}\),\s*detect: \(before, after\) => detectCelebrations\(before, after, \{ cause: "tick" \}\),\s*write: tick,\s*changed: \(v\) => !v\.duplicate,/.test(actions) &&
+      /\.\.\.\(created\.celebrations && created\.celebrations\.length > 0 \? \{ celebrations: created\.celebrations \} : \{\}\)/.test(actions)
+  );
+  const sheet = readFileSync(join(__dirname, "../src/components/capture/QuickCapture.tsx"), "utf8");
+  check("P6 review moments: the sheet presents a ticked line's Seals and Ascensions (presentAll), as the board does", /if \(item\.ticked && item\.celebrations\) presentAll\(item\.celebrations\);/.test(sheet));
+  check("P6 vocabulary: the sheet's titles carry each one's tick, never the row ids", /list\.map\(\(a\) => \(\{ normTitle: a\.normTitle, title: a\.title, where: a\.where, \.\.\.\(a\.tick \? \{ tick: a\.tick \} : \{\}\) \}\)\)/.test(actions));
 }
 
 // ── Where a real line goes: captureShapeOf, then placeOf ──────────────────
@@ -1609,6 +1814,7 @@ batchChecks()
   .then(replacementChecks)
   .then(unarchiveChecks)
   .then(aimCaptureChecks)
+  .then(doneNowTickChecks)
   .catch((err) => {
     failed++;
     console.log(`FAIL batch checks threw — ${String(err)}`);

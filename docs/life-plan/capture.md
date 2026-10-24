@@ -353,6 +353,8 @@ Toast and row copy by case:
 | Normal | 'Added' | '<title> → <where.label> · ≈ 8.3' |
 | Done-now ticked | 'Done' | '<title> · +8.3', the exact figure with no ≈ |
 | Done-now not ticked | 'Saved, not ticked' | '<title> → <where> · <doneNowError>' |
+| Done-now line ticked the row it names (blueprint P6, D33) | 'Ticked' | '<row title> (<lane it was in>) · +8.3', no new row; the chip before it said 'Ticks: <row title> (<lane>)' |
+| …that row was ticked today already | 'Already ticked' | '<row title> → Done today · Nothing is paid twice.', nothing written |
 | Retry found the row | 'Already saved' | '<title> → <where>' |
 | Idea draft | 'Idea in Inbox' | '<question> → Inbox' with a 'Finish' link |
 | Goal | 'Goal added' | '<title> → Goals' |

@@ -147,9 +147,10 @@ export function dockToastOf(toast: Toast, ctx: { offToday: boolean; lock?: strin
       const { item, notMust, update } = toast;
       const copy = toastCopy(item, { notMust, update, offToday: ctx.offToday });
       const lock = ctx.lock ?? null;
-      // A weigh-in has no Edit (it is not a task row), and Undo only when it wrote something it can take back.
-      const edit = lock || item.weight ? undefined : on.onEdit;
-      const canUndo = !lock && !update && (!item.weight || item.weight.undoable);
+      // A weigh-in has no Edit (it is not a task row), and Undo only when it wrote something it can take back. Nor has a
+      // done-now line that ticked the row it names (P6): its Undo takes the tick back, and one already ticked wrote nothing.
+      const edit = lock || item.weight || item.ticked ? undefined : on.onEdit;
+      const canUndo = !lock && !update && (!item.weight || item.weight.undoable) && !item.ticked?.earlier;
       return {
         title: copy.head,
         body: <ToastBody copy={copy} onEdit={!update && edit ? () => edit(item) : undefined} onLink={on.onLink} note={lock} />,

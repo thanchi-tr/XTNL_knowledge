@@ -580,7 +580,8 @@ function bodyOf(src: string, name: string): string {
   const create = bodyOf(actions, "createFromCapture");
   const iw = create.indexOf("weighInFromCapture(");
   const ip = create.indexOf("prepareLine(");
-  const it = create.indexOf("createTemplateCore(");
+  // Re-pinned for blueprint P6: the task path is saveLine (a done-now line's tick of the row it names, else createTemplateCore).
+  const it = create.indexOf("saveLine(");
   check("server: createFromCapture routes a weigh-in (and returns) before it parses or writes a task", iw > 0 && ip > iw && it > ip && /if \(weighed\)[\s\S]*?return weighed;/.test(create.slice(iw, ip)), { iw, ip, it });
   const many = bodyOf(actions, "createManyFromCapture");
   const mw = many.indexOf("weighInFromCapture(");
@@ -602,7 +603,7 @@ function bodyOf(src: string, name: string): string {
   // The unit: the sheet says which it read in, the server refuses a mismatch, Train's switch updates the sheet.
   check("server: createFromCapture and createManyFromCapture hand the sheet's unit to the weigh-in route", /weighInFromCapture\(text, reverted, today, undefined, opts\?\.weightUnit\)/.test(create) && /weighInFromCapture\(line\.text, line\.reverted, today, loadUnit, opts\?\.weightUnit\)/.test(many));
   check("server: readWeightDay reads the note (Undo puts it back)", /select: \{ kg: true, source: true, note: true \}/.test(actions));
-  check("sheet: a single line and a pasted list send the unit they were read in", /createFromCapture\(line\.text, line\.reverted, \{[^}]*weightUnit \}\)/.test(qc) && /\{ refresh: refreshPage, weightUnit \}/.test(qc));
+  check("sheet: a single line and a pasted list send the unit they were read in", /createFromCapture\(line\.text, line\.reverted, \{[^}]*weightUnit(?:, asNew: line\.asNew === true)? \}\)/.test(qc) && /\{ refresh: refreshPage, weightUnit \}/.test(qc));
   check("sheet: it listens for the unit switched on Body and reads bare numbers in it", new RegExp(`addEventListener\\(WEIGHT_UNIT_EVENT`).test(qc) && /weightUnit: unit/.test(qc) && WEIGHT_UNIT_EVENT === "xtnl:weight-unit");
   const form = read("src/components/train/WeightForm.tsx");
   const okAt = form.indexOf("if (!res.ok)", form.indexOf("setWeightGoal({ unit: next }"));

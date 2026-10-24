@@ -8,9 +8,12 @@ import com.xtnl.app.core.IdeaDraft
 import com.xtnl.app.core.IdeaFormat
 import com.xtnl.app.core.LogPreview
 import com.xtnl.app.core.LogSection
+import com.xtnl.app.core.SendLine
 import com.xtnl.app.data.IdeaResult
 import com.xtnl.app.data.IdeasMeta
+import com.xtnl.app.data.Landed
 import com.xtnl.app.data.Outcome
+import com.xtnl.app.data.QueuedWrite
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -26,7 +29,9 @@ import java.util.UUID
  * Log: the quick line (POST /log, with Undo) and New idea (GET /ideas/meta,
  * POST /ideas). Everything typed lives here, so a fold, an unfold, a tab
  * switch or a failed send never loses it; a failed send keeps the text and
- * a retry sends the same clientId.
+ * a retry sends the same clientId. P8: a line that gets no answer at all waits
+ * on the phone (data/SendQueue), with its own life day, and its entry says
+ * "Waiting to send" until it lands (then it reads as any line, with its Undo).
  */
 class LogViewModel(private val graph: AppGraph) : ViewModel() {
 
@@ -43,6 +48,8 @@ class LogViewModel(private val graph: AppGraph) : ViewModel() {
         val undone: Boolean = false,
         /** One clientId for this entry's Undo, so a retried Undo (its answer lost) gets the first result back. */
         val undoClientId: String = UUID.randomUUID().toString(),
+        /** P8: it waits on the phone to send (no answer when it was sent). */
+        val waiting: Boolean = false,
     )
 
     /** An idea filed this session, keyed by its request (two filings can answer with equal results). */
@@ -69,11 +76,15 @@ class LogViewModel(private val graph: AppGraph) : ViewModel() {
         val sealing: IdeaResult? = null,
         /** Ticks when a Create fails (the overlay plays the idea going back to the form). */
         val failKey: Int = 0,
+        /** P8: the quick lines waiting on the phone to send (this source's). */
+        val waiting: Int = 0,
     )
 
     sealed interface Event {
         data class Added(val entry: Entry) : Event
         data class SendFailed(val message: String) : Event
+        /** P8: the line got no answer and waits on the phone. */
+        data class Queued(val entry: Entry, val message: String) : Event
         data class Undone(val entry: Entry) : Event
         data class UndoFailed(val message: String) : Event
         data class IdeaCreated(val result: IdeaResult, val format: IdeaFormat) : Event
@@ -88,6 +99,33 @@ class LogViewModel(private val graph: AppGraph) : ViewModel() {
     /** The last failed send: the same line and section again reuse its clientId (the server answers once). */
     private var failedSend: Triple<String, LogSection, String>? = null
     private var failedCreate: Pair<JsonObject, String>? = null
+
+    init {
+        // P8: the lines waiting on the phone (this source's), and what lands or is set aside.
+        viewModelScope.launch {
+            graph.sendQueue.state.collect { q ->
+                val n = q.of(graph.source).items.count { it.kind == SendLine.Kind.LOG }
+                _ui.update { it.copy(waiting = n) }
+            }
+        }
+        viewModelScope.launch {
+            graph.sendQueue.landed.collect { l ->
+                if (l !is Landed.Log || l.item.source != graph.source) return@collect
+                val r = l.result
+                val section = LogSection.of(l.item.section)
+                val e = Entry(l.item.clientId, l.item.text.orEmpty(), section, r.line ?: "Added", r.kind, r.id, r.undo, System.currentTimeMillis())
+                _ui.update { u -> u.copy(recent = listOf(e) + u.recent.filter { it.key != e.key }.take(29)) }
+                _events.tryEmit(Event.Added(e))
+            }
+        }
+        viewModelScope.launch {
+            graph.sendQueue.setAside.collect { n ->
+                if (n.item.kind != SendLine.Kind.LOG || n.item.source != graph.source) return@collect
+                val line = SendLine.NOT_SENT_TITLE + ": " + n.line
+                _ui.update { u -> u.copy(recent = u.recent.map { if (it.key == n.item.clientId) it.copy(line = line, waiting = false) else it }) }
+            }
+        }
+    }
 
     /** The capture line's limit, the start the server adds included (it refuses longer). */
     fun setText(t: String) = _ui.update { it.copy(text = t.take(LogPreview.maxLine(t, it.section)), sendError = null) }
@@ -105,6 +143,10 @@ class LogViewModel(private val graph: AppGraph) : ViewModel() {
         val clientId = failedSend?.takeIf { it.first == text && it.second == u.section }?.third ?: UUID.randomUUID().toString()
         _ui.update { it.copy(sending = true, sendError = null) }
         viewModelScope.launch {
+            // P8: the line's own life day and server, fixed at the tap, before the send: a send that times out across
+            // 04:00 keeps the day it was typed on, so the queue keeps it back rather than saving it on the new day.
+            val source = graph.source
+            val day = graph.sendQueue.today()
             when (val r = graph.api.log(text, u.section.wire, clientId)) {
                 is Outcome.Ok -> {
                     failedSend = null
@@ -115,6 +157,15 @@ class LogViewModel(private val graph: AppGraph) : ViewModel() {
                     if (r.value.kind == "task" || r.value.kind == "goal") graph.changes.tryEmit("log")
                 }
                 is Outcome.Err -> {
+                    // P8: no answer at all: the line waits on the phone with its own life day (the field is free again),
+                    // and is sent once the phone is back online. A line the server said no to keeps the field, as before.
+                    if (r.offline && source == graph.source && graph.sendQueue.enqueue(QueuedWrite.log(clientId, source, day, text, u.section.wire))) {
+                        failedSend = null
+                        val e = Entry(clientId, text, u.section, SendLine.WAITING, "waiting", null, null, System.currentTimeMillis(), waiting = true)
+                        _ui.update { it.copy(sending = false, text = if (it.text.trim() == text) "" else it.text, recent = listOf(e) + it.recent.filter { x -> x.key != clientId }.take(29)) }
+                        _events.tryEmit(Event.Queued(e, SendLine.QUEUED_LOG))
+                        return@launch
+                    }
                     failedSend = Triple(text, u.section, clientId)
                     _ui.update { it.copy(sending = false, sendError = r.message) }
                     _events.tryEmit(Event.SendFailed(r.message))

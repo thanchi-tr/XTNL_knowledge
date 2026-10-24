@@ -331,6 +331,33 @@ export function tickNameOf(
   return title;
 }
 
+/**
+ * Board keys (blueprint P6 review): why 'u' takes nothing back from the task in focus, or null when it can (its own
+ * tick, inside its ten minutes: `undoable`). With a task in focus the key is that task's only, never another row's
+ * off screen, so a row it can't undo says why and nothing changes.
+ */
+export function undoKeyRefusalOf(
+  row: Pick<BoardRow, "state"> & { template: { title: string }; instanceId?: string | null; auto?: unknown; paid?: { undone: boolean } | null },
+  undoable: boolean
+): string | null {
+  if (undoable) return null;
+  const title = row.template.title;
+  if (row.state !== "done") return `${title} isn't ticked: there's nothing to take back.`;
+  if (row.instanceId?.startsWith("opt:")) return `${title} is still saving.`;
+  if (row.auto) return `${title} completed itself: it can't be taken back.`;
+  // No tick of its own to take back here (no instance or no paid record, as its row's Undo reads it).
+  if (!row.instanceId || !row.paid || row.paid.undone) return `${title} can't be taken back here.`;
+  return `${title} can't be taken back: its ten minutes are up.`;
+}
+
+/**
+ * What 'u' says when, with no task in focus, it takes back the last tick still inside its ten minutes: the row by
+ * name (it may be folded away in Done today), and what went back. `xp` is the board's own figure (fmtXp).
+ */
+export function undoneByKeyLine(title: string, xp: string, work: boolean): string {
+  return work ? `Undone: ${title} is open again.` : `Undone: ${title} · ${xp} life XP taken back.`;
+}
+
 /** 'HH:MM' of an instant in the life zone ("Kept 08:05"). */
 export function hhmmOf(ms: number, tz: string = LIFE_TZ): string {
   if (!Number.isFinite(ms)) return "";

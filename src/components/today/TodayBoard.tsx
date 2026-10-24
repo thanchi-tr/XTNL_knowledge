@@ -60,6 +60,7 @@ import {
   undoDecision,
 } from "@/app/actions/tasks";
 import { timerConfirmOf, timerMinutesOf } from "@/lib/proof";
+import { BOARD_KEYS_OFF_SELECTOR, SEQUENCE_IDLE, decideBoardKey, type BoardKeyId, type SequenceState } from "@/lib/shortcuts";
 import { CAPTURED_EVENT, openCapture } from "@/components/capture/events";
 import { presentAll } from "@/components/celebrate/stage";
 import { Button } from "@/components/ui/Button";
@@ -149,7 +150,10 @@ import {
   settledKey,
   splitTodayLane,
   tickMotionOf,
+  tickNameOf,
   todayAsksOf,
+  undoKeyRefusalOf,
+  undoneByKeyLine,
   todayLaneNote,
   upcomingOf,
   vacationRangeError,
@@ -388,6 +392,18 @@ function flashSought(el: HTMLElement) {
   el.setAttribute("data-just-added", "1");
   window.setTimeout(() => el.removeAttribute("data-just-added"), JUST_ADDED_MS);
   el.querySelector<HTMLElement>(".r-open")?.focus({ preventScroll: true });
+}
+
+/**
+ * Board keys (P6): the row the focus is in on `board` (its tick, its title, its row actions or its open drawer), and
+ * whether it is on the row's own controls: only there are the arrows the board's (a drawer's own widgets, the habit
+ * year among them, keep theirs).
+ */
+function focusedRowIn(board: HTMLElement | null): { el: HTMLElement; own: boolean } | null {
+  const a = document.activeElement;
+  if (!(a instanceof HTMLElement) || !board?.contains(a)) return null;
+  const el = a.closest<HTMLElement>(".t-row");
+  return el ? { el, own: a.matches("button.tick, .r-open, .r-act") } : null;
 }
 
 function without<V>(record: Record<string, V>, key: string): Record<string, V> {
@@ -733,7 +749,9 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     const onCaptured = (e: Event) => {
       const item = (e as CustomEvent<CapturedItem | undefined>).detail;
       if (!item || typeof item.id !== "string") return;
-      showCaptured(item.id, item.where?.lane ?? null);
+      // A done-now line that ticked the row it names (P6) found that row, not a new one: flashed, never 'just added'.
+      if (item.ticked) setSeek({ id: item.id, at: Date.now(), sought: true });
+      else showCaptured(item.id, item.where?.lane ?? null);
     };
     window.addEventListener(CAPTURED_EVENT, onCaptured);
     return () => window.removeEventListener(CAPTURED_EVENT, onCaptured);
@@ -1338,7 +1356,11 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     });
   }
 
-  function undo(row: BoardRow) {
+  /**
+   * A tick taken back. `byKey` (the board key u with no task in focus, P6 review): the row is named in what is said,
+   * since it may be folded away in Done today, and focus goes to it once it is back in its lane.
+   */
+  function undo(row: BoardRow, byKey = false) {
     const instanceId = row.instanceId;
     if (!instanceId || instanceId.startsWith("opt:")) return;
     const xp = row.paid?.xp ?? 0;
@@ -1350,10 +1372,11 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
         setArrivals((a) => ({ ...a, [key]: "enter" }));
         later(() => setArrivals((a) => (a[key] === "enter" ? without(a, key) : a)), ARRIVAL_MS);
       }
-      if (focused) setRefocus({ rowKey: key, lane: null, anytime: false });
+      if (focused || byKey) setRefocus({ rowKey: key, lane: null, anytime: false });
     }
     dispatch({ id: nextOpId(), kind: "undo", instanceId }, () => undoCompletion(instanceId, REFRESH));
-    announce(isWork ? `Undone. ${row.template.title} is open again.` : `Undone. ${fmtXp(xp)} life XP taken back; nothing else changed.`);
+    if (byKey) announce(undoneByKeyLine(row.template.title, fmtXp(xp), isWork));
+    else announce(isWork ? `Undone. ${row.template.title} is open again.` : `Undone. ${fmtXp(xp)} life XP taken back; nothing else changed.`);
   }
 
   function skip(row: BoardRow) {
@@ -1833,6 +1856,16 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     return !pile && arrivals[key] === "enter" ? "enter" : null;
   };
 
+  /** Whether a done row's tick can still be taken back (its own ten minutes, a real instance, not a study task's). */
+  const undoableRow = (row: BoardRow) =>
+    row.state === "done" &&
+    !!row.instanceId &&
+    !row.instanceId.startsWith("opt:") &&
+    !!row.paid &&
+    !row.paid.undone &&
+    !row.auto &&
+    canUndo(new Date(row.paid.occurredAt), new Date(clock));
+
   /** A row in a lane (or Anytime, or Record yesterday); `pile` draws it compact in Done today. */
   const rowView = (row: BoardRow, pile: boolean) => {
     const key = row.key;
@@ -1842,15 +1875,7 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
     const pagesPicked = rowMinutes(key, openKey, drawerPages);
     const projection = minutes != null ? projectRow(current, row, { minutes }) : row.projection;
     const busy = busyTemplates.has(row.template.id);
-    const paid = row.paid;
-    const undoable =
-      row.state === "done" &&
-      !!row.instanceId &&
-      !row.instanceId.startsWith("opt:") &&
-      !!paid &&
-      !paid.undone &&
-      !row.auto &&
-      canUndo(new Date(paid.occurredAt), new Date(clock));
+    const undoable = undoableRow(row);
     const w = working[row.template.id] ?? null;
 
     return (
@@ -1939,6 +1964,106 @@ export function TodayBoard({ data, streak, nowIso, notices, footClock, launched 
   const allKeptLine = <p className="lane-note lane-all">{isWork ? "All done" : "All kept"}</p>;
   const pile = donePileOf(dayRows, { work: isWork, leaving });
   const pileShown = donePileShown(pile.rows, doneOpen);
+
+  // ── Board keys (blueprint P6; shortcuts.ts decideBoardKey, listed in the '?' help) ──
+  //
+  // j/k (↓/↑ once a task's own control has focus) move between the rows on show, in the order drawn; x ticks the row
+  // in focus as its tick does (a proof or reading row opens its chips, as a tap does), m does its minimum, u takes its
+  // tick back (or says why it can't: never another row's), and with no task in focus the last tick still undoable,
+  // named, with focus moved to it. Focus moves with them, so :focus-visible shows where they act, and what they did is
+  // said (the tick's and the undo's own words, or why nothing happened). Never while typing, mid-IME, with a dialog,
+  // sheet or board pop-up open (the capture sheet, the drawer's icon or colour pop-up too), or on the key right after 'g'.
+
+  /** The board's row a row element draws: a lane's (or Anytime's, or Record yesterday's), or Done today's. */
+  const boardRowOfEl = (el: HTMLElement): BoardRow | null => {
+    const key = el.dataset.rowKey;
+    if (!key) return null;
+    return (el.closest(".today-done") ? pile.rows : lanes).find((r) => r.key === key) ?? null;
+  };
+  const runBoardKey = (id: BoardKeyId, rowEl: HTMLElement | null) => {
+    if (id === "board-next" || id === "board-prev") {
+      const shown = boardRef.current ? Array.from(boardRef.current.querySelectorAll<HTMLElement>(".t-row")).filter((r) => r.offsetParent !== null && r.dataset.motion !== "out") : [];
+      if (shown.length === 0) {
+        announce("No tasks on show.");
+        return;
+      }
+      const at = rowEl ? shown.indexOf(rowEl) : -1;
+      const next = at < 0 ? (id === "board-next" ? shown[0] : shown[shown.length - 1]) : shown[at + (id === "board-next" ? 1 : -1)];
+      if (!next) {
+        announce(id === "board-next" ? "That's the last task." : "That's the first task.");
+        return;
+      }
+      const tick = next.querySelector<HTMLButtonElement>("button.tick");
+      (tick && !tick.disabled ? tick : next.querySelector<HTMLElement>(".r-open"))?.focus();
+      return;
+    }
+    const row = rowEl ? boardRowOfEl(rowEl) : null;
+    if (id === "board-undo") {
+      // A task in focus: its own tick or, when it has none to take back, why (never another row's, off screen).
+      if (row) {
+        const refusal = undoKeyRefusalOf(row, undoableRow(row));
+        if (refusal) announce(refusal);
+        else if (busyTemplates.has(row.template.id)) announce(`${row.template.title} is still saving.`);
+        else undo(row);
+        return;
+      }
+      // No task in focus: the last tick on today's board still inside its ten minutes, named, and focus goes to it.
+      // Record yesterday's rows are its sheet's (a dialog: the keys are off while it is open).
+      const target = [...pile.rows, ...board.must, ...board.todayRows, ...board.anytime]
+        .filter(undoableRow)
+        .sort((a, b) => Date.parse(b.paid?.occurredAt ?? "") - Date.parse(a.paid?.occurredAt ?? ""))[0];
+      if (!target) announce("Nothing to undo: a tick can be taken back for ten minutes.");
+      else if (busyTemplates.has(target.template.id)) announce(`${target.template.title} is still saving.`);
+      else undo(target, true);
+      return;
+    }
+    if (!row) {
+      announce("Move to a task first: j or k.");
+      return;
+    }
+    const title = row.template.title;
+    if (row.state === "done") {
+      announce(`${title} is done.${undoableRow(row) ? " u takes the tick back." : ""}`);
+      return;
+    }
+    if (row.state === "locked") {
+      announce(tickNameOf(row));
+      return;
+    }
+    if (busyTemplates.has(row.template.id)) {
+      announce(`${title} is still saving.`);
+      return;
+    }
+    if (id === "board-minimum") {
+      if (!row.template.mvv) announce(`${title} has no minimum version.`);
+      else complete(row, { mvv: true }, rowEl);
+      return;
+    }
+    const minutes = rowMinutes(row.key, openKey, drawerMinutes);
+    if (viaSteps(row)) tickSteps(row, null, true, rowEl);
+    else tickRow(row, minutes, rowEl);
+  };
+  const boardKeyRef = useRef(runBoardKey);
+  useEffect(() => {
+    boardKeyRef.current = runBoardKey;
+  });
+  const boardSeq = useRef<SequenceState>(SEQUENCE_IDLE);
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const at = focusedRowIn(boardRef.current);
+      const d = decideBoardKey(e, boardSeq.current, {
+        target: e.target instanceof Element ? e.target : null,
+        modalOpen: document.querySelector(BOARD_KEYS_OFF_SELECTOR) !== null,
+        onRow: !!at?.own,
+        now: Date.now(),
+      });
+      boardSeq.current = d.seq;
+      if (d.consume) e.preventDefault();
+      if (d.run) boardKeyRef.current(d.run, at?.el ?? null);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const yesterdayOpenCount = openCount(board.yesterdayRows);
   // Today's rows that can still be ticked for yesterday (the Record yesterday sheet's second list), once each.
   const forgotten = [...board.must, ...board.todayRows, ...board.anytime].filter(

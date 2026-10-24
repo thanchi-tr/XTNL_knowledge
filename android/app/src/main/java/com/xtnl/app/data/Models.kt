@@ -25,6 +25,11 @@ data class CheckData(
     val dayLabel: String? = null,
     val tasks: List<TaskItem> = emptyList(),
     val tasksSummary: TasksSummary? = null,
+    /**
+     * The Yesterday lane (blueprint 5.1b, P7; decision D34): the web's Record yesterday sheet, what was due yesterday and
+     * is still recordable (and what was recorded for it this morning). Null from an older server: no section.
+     */
+    val yesterday: YesterdayLane? = null,
     /** The daily quests (the user's musts, at most 5 a day): null from an older server. */
     val daily: DailyQuests? = null,
     val review: ReviewSummary? = null,
@@ -113,6 +118,21 @@ data class TaskItem(
 
 @Serializable
 data class TasksSummary(val open: Int = 0, val done: Int = 0, val allDone: Boolean = false)
+
+/**
+ * /check's `yesterday` (P7): yesterday's life [day] and its [dayLabel], the sheet's [line] ("Anything you tick pays at
+ * the full rate, record by 04:00 tomorrow."), the rows still to record ([open]) and every row in [tasks]' own shape, not
+ * done first. A row's tick goes with day "yesterday" and books at T 1.00; its `xpHint` is that price. Settling yesterday
+ * stays on the web.
+ */
+@Serializable
+data class YesterdayLane(
+    val day: String? = null,
+    val dayLabel: String? = null,
+    val line: String? = null,
+    val open: Int = 0,
+    val tasks: List<TaskItem> = emptyList(),
+)
 
 /** A task's timer (POST /tasks/start; blueprint P23): a row on the server, so it survives an app restart. */
 @Serializable
@@ -766,6 +786,23 @@ data class CompleteResult(
     val competency: TickSkill? = null,
     /** The tick's credits (P16): the change and the balance; null while credits are off (or from an older server). */
     val credits: CreditsChange? = null,
+    /** The knee note (P7, D26): only once the day the tick booked on is past 200 raw; null below it and from an older server. */
+    val knee: TickKnee? = null,
+)
+
+/**
+ * A tick's `knee` (docs/mobile-api.md; blueprint 3.3a, P7): the life [day] it booked on, that day's [raw] total after the
+ * tick, the knee's [rate] there, [capped] once the day's 300 XP is reached, and the server's [line] ("Fatigue breaker:
+ * past 200 raw today, so a tick now pays ×0.48 or less. The day stops at 300 XP."). A reading: the tick's xp already
+ * carries the knee.
+ */
+@Serializable
+data class TickKnee(
+    val day: String? = null,
+    val raw: Double = 0.0,
+    val rate: Double = 1.0,
+    val capped: Boolean = false,
+    val line: String = "",
 )
 
 /** A tick's skill (P5): its [name], [hoursAfter] and [tier] after the tick, its hours [line]; [tierUp] when this tick played the tier's Seal. */

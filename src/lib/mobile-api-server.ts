@@ -5,8 +5,8 @@
  * file never reaches Prisma or a model by itself. A route file only hands its request here with the real deps (a
  * route file may export only its methods and segment config).
  *
- *   GET  /check            handleCheck          the Today board and its daily quests, the Review hub's counts (and its fatigue: P30) and the ideas fading, the due work, level, streak, the week audit, the credits wallet (P16), the owed cards (P22), the idle skills and attributes (P28)
- *   POST /tasks/complete   handleTaskComplete   actions/tasks completeTask (the board's tick, with its minutes and timer: P7, P23; a reading task's pages: P24), and the skill it fed (P5), its credits (P16)
+ *   GET  /check            handleCheck          the Today board and its daily quests, the Yesterday lane (P7), the Review hub's counts (and its fatigue: P30) and the ideas fading, the due work, level, streak, the week audit, the credits wallet (P16), the owed cards (P22), the idle skills and attributes (P28)
+ *   POST /tasks/complete   handleTaskComplete   actions/tasks completeTask (the board's tick, with its minutes and timer: P7, P23; a reading task's pages: P24), and the skill it fed (P5), its credits (P16), the knee note past 200 raw (P7)
  *   POST /tasks/undo       handleTaskUndo       actions/tasks undoCompletion
  *   POST /tasks/start      handleTaskStart      actions/tasks startTaskTimer (a proof task's timer; P23)
  *   POST /tasks/stop       handleTaskStop       actions/tasks stopTaskTimer (P23)
@@ -66,6 +66,7 @@ import {
   fatiguedKeyOf,
   checkTasksOf,
   checkWeekOf,
+  checkYesterdayOf,
   checkCalibrationOf,
   MAKEUP_KEYS,
   acceptLossReplyOf,
@@ -125,6 +126,7 @@ import {
   streakOf,
   textOf,
   tickDayOf,
+  tickKneeOf,
   tickLineOf,
   tickMinutesOf,
   tickProofInputOf,
@@ -456,7 +458,8 @@ function owe(deps: MobileDeps, what: string, task: () => Promise<unknown>): void
  * [] when the read fails). P29: `streak.multiplier`, the streak multiplier the board priced its rows with
  * (Board.streak), present only while STREAK_LAUNCH_DAY is in force; while it is, Duty's lazy settle is awaited before the
  * board's read (settleForStreak). P30: `review.fatigued`, the fatigue in effect (fatiguedKeyOf), present only while
- * FATIGUE_LAUNCH_DAY is in force (null when the read fails).
+ * FATIGUE_LAUNCH_DAY is in force (null when the read fails). P7: `yesterday`, the Record yesterday sheet's lane off the same
+ * board (checkYesterdayOf: its rows, what each pays for yesterday at T 1.00, the sheet's line), always sent.
  */
 export async function handleCheck(request: Request, deps: MobileDeps): Promise<Response> {
   return read("check", request, deps, [], async () => {
@@ -500,6 +503,8 @@ export async function handleCheck(request: Request, deps: MobileDeps): Promise<R
       day,
       dayLabel: dayLabelOf(day),
       ...checkTasksOf(board, data),
+      // P7: the Record yesterday sheet's lane (its rows tick with day 'yesterday', at T 1.00).
+      yesterday: checkYesterdayOf(board, data, now.getTime()),
       daily: checkDailyOf(board),
       review,
       fading: checkFadingOf(fields, now, Math.max(0, graceExtra || 0)),
@@ -683,7 +688,8 @@ export async function handleMallUndo(request: Request, deps: MobileMallDeps): Pr
  * tick. P5: the skill the template feeds, read in the same wave (`competency`: its hours and tier after the tick, and
  * `tierUp` when the tick played the tier's Seal); null with none, or when it couldn't be read. P16: the credits wallet,
  * read before the tick (cached) and fresh again in that wave (`credits`: the balance and today's after the tick, and
- * what was earned across it; null while credits are off).
+ * what was earned across it; null while credits are off). P7: `knee`, the knee note off the tick's own receipt, only once
+ * the day it booked on is past 200 raw (tickKneeOf; left out otherwise, and on a repeat).
  */
 export async function handleTaskComplete(request: Request, deps: MobileDeps): Promise<Response> {
   return write("tasks/complete", request, deps, ["templateId", "day", "mvv", "minutes", "sessionId", "proof"], async (body) => {
@@ -708,6 +714,8 @@ export async function handleTaskComplete(request: Request, deps: MobileDeps): Pr
     const now = deps.now();
     const today = todayKey(now);
     const userId = deps.userId();
+    // P7: the knee note, read off the tick's own receipt (null below 200 raw, so the key is left out).
+    const knee = tickKneeOf(v, today);
     const [allDone, shell, skill, after] = await Promise.all([
       deps
         .loadBoard(userId, today, now)
@@ -726,6 +734,7 @@ export async function handleTaskComplete(request: Request, deps: MobileDeps): Pr
       level: levelOf(shell),
       competency: tickCompetencyOf(skill, v.celebrations),
       credits: writeCreditsOf(before, after),
+      ...(knee ? { knee } : {}),
     });
   });
 }
