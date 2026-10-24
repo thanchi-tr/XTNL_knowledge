@@ -9,6 +9,7 @@ import type { DayKey } from "./life-day";
 import type { DueKind, ParsedCapture, TaskKind } from "./life-types";
 import { allowsCompulsory, parseRule } from "./recurrence";
 import { startDayFor } from "./today-board";
+import { sideTagExpiryOf } from "./side-quests";
 
 /** An idea draft's answer ('idea: Q :: A') is kept whole up to the capture line's own cap. */
 export const CAPTURE_NOTE_MAX = 500;
@@ -32,8 +33,19 @@ export interface CaptureShape {
  * How createTemplateCore stores a parsed line, as a pure function of the
  * parse and the life day: the fields that decide where the row sits on the
  * board (scripts/capture-server-check.ts places real lines through it).
+ *
+ * A '#side' line (blueprint P31, D35; the parse takes the tag on a plain
+ * one-off only) is a side quest: a TASK with no schedule, its expiry a
+ * DEADLINE (the day it names, else side-quests sideTagExpiryOf), never a
+ * must and never in the inbox. tasks.ts gives it its 'side:tag:' key, or
+ * saves it as an ordinary task when SIDE_OPEN_MAX are open (its named day
+ * kept as a deadline, still no must: the parse already turned that down).
  */
 export function captureShapeOf(parsed: ParsedCapture, today: DayKey): CaptureShape {
+  if (parsed.side && parsed.mode === "TASK" && !parseRule(parsed.recurrence)) {
+    const typed = parsed.dueDay && KEY_RE.test(parsed.dueDay) ? parsed.dueDay : null;
+    return { kind: "TASK", recurrence: null, startDay: today, dueDay: sideTagExpiryOf(today, typed), dueKind: "DEADLINE", compulsory: false, inbox: false, note: null };
+  }
   const kind: TaskKind = parsed.mode === "GOAL" ? "GOAL" : parsed.mode === "IDEA" ? "IDEA_DRAFT" : parsed.kind;
   const rule = kind === "GOAL" || kind === "IDEA_DRAFT" ? null : parseRule(parsed.recurrence);
   const recurrence = rule ? parsed.recurrence : null;

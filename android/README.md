@@ -28,7 +28,17 @@ the main one:
   condition decay is switched on: each attribute and skill under 90%, the
   lowest first, in the web's words, "Body 81% · 13 days idle", and that
   levels, XP and hours never drop and one practice brings it back to 100%; no
-  card while it is off or with nothing under 90%), the **Owed** card (once Duty is switched on: every open debt,
+  card while it is off or with nothing under 90%), a **side quest** row (only
+  from a server that sends one: a `#side` line, or once its detectors are
+  switched on, one they offer; "Side quest · expires Fri" in ink with its
+  signpost glyph, on its own line under the meta so it never clips on the main
+  display's pane, never counted open in the header while open, and the Week
+  card's "Side quests · 1 of 2 done · not in the rate"), the read-only **This
+  week** card under the Week card on both displays (only while the server
+  sends `calibration`: the weekly audit on and two weeks frozen; Today's three
+  sizes for the week and why, and each suggestion with its basis, "On offer on
+  the web" or what stands, "Accept and Keep are on the web" with no count, since
+  a Keep there is that browser's own), the **Owed** card (once Duty is switched on: every open debt,
   oldest first, in the web make-up card's words: "−4.2 owed", when it was
   missed, its line and its window; **Make up · ≈ 1.9** repays the whole debt and
   pays ×0.85, **Do minimum** pays the minimum version's own, and **Accept the
@@ -70,7 +80,7 @@ panes on the main one, also at `xtnl://app/mall`). Then Settings and
 WebView, for everything else.
 
 The app talks to the server's mobile API, `<server>/api/mobile/v1` (see
-`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.14 (versionCode 26), so
+`docs/mobile-api.md`). Package `com.xtnl.app`, version 2.16 (versionCode 28), so
 it installs over the v1 WebView shell in place.
 
 On **Check**, a long press on any open task opens its **minutes sheet** (blueprint
@@ -217,6 +227,13 @@ is set in `gradle.properties` and is `https://xtnl-knowledge-xpis.vercel.app`.
   when it lifts on a later day, none once it has lifted by the server's
   clock, the note with no number) and the demo applying it once at the day's
   200th answer and halving its combo ceiling while it lasts (DemoFatigueTest);
+- the side quest's words (SideLineTest: the web's "Side quest · expires Fri",
+  "· expires today", "· expired yesterday", a date further back, the server's
+  own label first, an open one never counted open, the Week card's lane) and
+  the This week card's (CalibrationLineTest: only while the server sends one,
+  "On offer on the web" or the server's words for what stands, the footer with
+  no count, no rate or target); the demo's side row and its calibration (a must
+  eased, pending, as the server says it);
 - the shapes of the API's responses (a row's proof, timer and pages, the timer
   routes' answer, a row from an older server reading as none of them, and
   `/exercise`'s counts and the body the sync sends).

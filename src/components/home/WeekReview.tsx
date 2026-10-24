@@ -14,7 +14,11 @@
  *                  write-off resolves the card as MakeUpCard's 'written-off',
  *                  never as 'repaid': nothing was repaid)
  *   5 Next week    rest for specific days (declareRest / cancelRest) and the
- *                  daily capacity (CapacityPanel)
+ *                  daily capacity (CapacityPanel); with a calibration for the
+ *                  week after the reviewed one (blueprint P32, D36), its card
+ *                  after them, headed "Calibrated from last week" (the step
+ *                  is "Next week" already): Today's three sizes, the capacity
+ *                  suggestion and the one-tap suggestions (NextWeekCard)
  *   6 Sprint       the main quest's (blueprint P15, D11, D12; SprintStepBody),
  *                  only when it has something to show (lib/main-quest
  *                  sprintStepOf: a written or provisional share, a held week,
@@ -67,7 +71,9 @@ import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import type { TrackSigil } from "@/components/ui/Icon";
 import { ActionError } from "./ActionError";
+import { NextWeekCard } from "./NextWeekCard";
 import { SprintStepBody } from "./SprintStepBody";
+import type { NextWeekView } from "@/lib/week-calibration";
 
 const REFRESH = { refresh: true } as const;
 const OFFLINE = "Couldn't reach the server. Check the connection and try again.";
@@ -114,6 +120,8 @@ export interface WeekReviewProps {
   marked: boolean;
   /** The main quest and the reviewed week's sprint (blueprint P15, lib/main-quest sprintStepOf); null with nothing to show (the Sprint step doesn't run). */
   sprint?: SprintStep | null;
+  /** Blueprint P32: the calibration for the week after the reviewed one (week-calibration-server loadNextWeek); absent or null with none. */
+  nextWeek?: NextWeekView | null;
 }
 
 // ── Per-viewer progress (localStorage, never trusted to exist) ──────────────
@@ -559,6 +567,8 @@ export function WeekReview(props: WeekReviewProps) {
             onSetCapacity={setCapacity}
           />
         </section>
+        {/* P32: after the controls the meta line above speaks of, under its own heading (the step is "Next week"). */}
+        {props.nextWeek && <NextWeekCard view={props.nextWeek} title="Calibrated from last week" headingId="nw-run-h" />}
         {feedback}
       </>
     );

@@ -778,7 +778,8 @@ function sprintStep() {
       /const quest = mainQuestOf\(card, await loadMainQuestWeek\(userId, now, card\)\.catch\(\(\) => null\), today\);/.test(page) &&
       /const past = readsPastSprints\(quest\) \? await loadPastWeeks\(userId, quest\.roadmapId, today\)\.catch\(\(\) => \[\]\) : \[\];/.test(page) &&
       /return sprintStepOf\(quest, review\?\.monday \?\? weekStartKeyOf\(today\), today, past\);/.test(page) &&
-      /const \[read, markedBefore, data, audit, sprint\] = await Promise\.all\(\[/.test(page) &&
+      // Re-pinned for blueprint P32: the run's wave also reads next week's calibration (step 5's Next week card).
+      /const \[read, markedBefore, data, audit, sprint(?:, calibrated)?\] = await Promise\.all\(\[/.test(page) &&
       /const \[marked, decisionRows, audit, sprint\] = await Promise\.all\(\[/.test(page) &&
       /sprint=\{sprint\}/.test(page) &&
       /<StepsList live=\{dutyLive\} sprint=\{sprint != null\} \/>/.test(page) &&

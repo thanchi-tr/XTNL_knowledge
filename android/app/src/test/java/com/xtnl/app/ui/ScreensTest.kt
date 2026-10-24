@@ -110,6 +110,20 @@ class ScreensTest {
     @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
     fun questCardMain() = questCard("main")
 
+    /** P31: the demo's side quest row (its glyph and "Side quest · expires …" in ink) on the cover screen and the main display. */
+    @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
+    fun sideRowFront() = sideRow("front")
+
+    @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
+    fun sideRowMain() = sideRow("main")
+
+    /** P32: the demo's calibration card (this week's sizes, the capacity on offer, Floss eased) on the cover screen and the main display. */
+    @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
+    fun calibrationFront() = calibrationCard("front")
+
+    @Test @Config(qualifiers = "w704dp-h932dp-420dpi")
+    fun calibrationMain() = calibrationCard("main")
+
     /** P22: the Owed card (Make up, Do minimum, Accept the loss) on the front display's one column, before and after a make-up. */
     @Test @Config(qualifiers = "w475dp-h751dp-420dpi")
     fun owedCardFront() = owedCard("front")
@@ -418,6 +432,50 @@ class ScreensTest {
         }
         settle()
         snap("$name-quest-card")
+    }
+
+    /** Check with demo data, scrolled until the side quest's row is in view (whichever list holds it), then one PNG. */
+    private fun sideRow(name: String) {
+        val graph = ApplicationProvider.getApplicationContext<XtnlApp>().graph
+        graph.settings.setDemo(true)
+        graph.settings.setMotion(MotionChoice.STILL)
+        rule.runOnUiThread { rule.activity.actionBar?.hide() }
+        rule.setContent {
+            AppRoot(graph, MutableStateFlow(WindowFacts()), MutableStateFlow<Uri?>(null), {}, WebHolder(), {})
+        }
+        settle()
+        val row = hasContentDescription("20-minute walk, Side quest · expires", substring = true)
+        val lists = rule.onAllNodes(hasScrollAction())
+        for (i in 0 until lists.fetchSemanticsNodes().size) {
+            if (runCatching { scrolling { lists[i].performScrollToNode(row) } }.isSuccess) break
+        }
+        settle()
+        rule.onAllNodes(row).onFirst().assertExists()
+        rule.onAllNodes(hasText("Side quest · expires", substring = true)).onFirst().assertExists()
+        snap("$name-side-row")
+    }
+
+    /** Check with demo data, scrolled until the calibration card is in view (whichever list holds it), then one PNG. */
+    private fun calibrationCard(name: String) {
+        val graph = ApplicationProvider.getApplicationContext<XtnlApp>().graph
+        graph.settings.setDemo(true)
+        graph.settings.setMotion(MotionChoice.STILL)
+        rule.runOnUiThread { rule.activity.actionBar?.hide() }
+        rule.setContent {
+            AppRoot(graph, MutableStateFlow(WindowFacts()), MutableStateFlow<Uri?>(null), {}, WebHolder(), {})
+        }
+        settle()
+        val card = hasContentDescription("This week, Week of", substring = true)
+        val lists = rule.onAllNodes(hasScrollAction())
+        for (i in 0 until lists.fetchSemanticsNodes().size) {
+            if (runCatching { scrolling { lists[i].performScrollToNode(card) } }.isSuccess) break
+        }
+        settle()
+        rule.onAllNodes(card).onFirst().assertExists()
+        rule.onAllNodes(hasText("Move 20 min · Finish any 2 tasks")).onFirst().assertExists()
+        // P32 review: where the choice is, never a prompt (a Keep on the web never reaches the phone).
+        rule.onAllNodes(hasText("Accept and Keep are on the web.")).onFirst().assertExists()
+        snap("$name-calibration")
     }
 
     /**

@@ -3,7 +3,7 @@ import "@/components/task-style/task-style.css";
 import { after } from "next/server";
 import { redirect } from "next/navigation";
 import { getCurrentUserId } from "@/lib/user";
-import { todayKey } from "@/lib/life-day";
+import { todayKey, weekdayOf } from "@/lib/life-day";
 import { autoCompleteStudyTasks, loadTodayBoard, recordDayOpen } from "@/lib/tasks";
 import { boardClock, unrecordedStudyTasks, weekQuestsShownOnToday } from "@/lib/today-board";
 import { getDailyStreak } from "@/lib/streak";
@@ -26,6 +26,8 @@ import { mainQuestCardOf } from "@/components/today/main-quest-card";
 import { isBoardId, workBoardHref } from "@/lib/work-boards";
 import { loadMomentum, settleMomentum } from "@/lib/momentum-server";
 import { creditTagsOn } from "@/lib/credits";
+import { loadNextWeek } from "@/lib/week-calibration-server";
+import { NextWeekCard } from "@/components/home/NextWeekCard";
 
 // The board turns on the clock (a 04:00 day edge, a ten-minute undo window)
 // and on every tick — never statically cache it.
@@ -48,6 +50,11 @@ export const metadata: Metadata = { title: "Today" };
  * lowest open seat; cached), its milestone, its own sprint this week
  * (loadMainQuestWeek) and one action. Start stays on the roadmap page,
  * offered only while ROADMAP_GOALS_LIVE is on.
+ *
+ * Blueprint P32 (D36): on Mondays the week's calibration card sits above it
+ * (week-calibration-server loadNextWeek: Today's three sizes, the capacity
+ * suggestion and the one-tap suggestions), headed "This week". Null at once
+ * while AUDIT_LAUNCH_DAY is not in force, and on every other day no read.
  */
 export default async function TodayPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   // A work tab asked for by the query (/today?board=<id>, an old call back reminder's tap URL; work-boards.ts) is its own
@@ -85,6 +92,8 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   // The live fix (contracts §22.11, ruling 67): each plan-born title's Gemini-named Domain names, so Today marks them.
   // Started with the wave (cached per life day; a failure reads as none) and awaited after it.
   const namedTitlesLoad = loadTodayNamedTitles(userId, now).catch(() => ({}) as Record<string, string[]>);
+  // P32: the week's calibration, Mondays only (started with the wave, awaited after it; a failure reads as none).
+  const nextWeekLoad = weekdayOf(day) === 1 ? loadNextWeek(userId, now).catch(() => null) : Promise.resolve(null);
   const [board, streak, bosses, feed, quests, weight, momentum, questCard] = await Promise.all([
     loadTodayBoard(userId, day, now),
     getDailyStreak(userId),
@@ -98,6 +107,7 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
     loadMainQuestCard(userId, now).catch(() => null),
   ]);
   const namedTitles = await namedTitlesLoad;
+  const nextWeek = await nextWeekLoad;
 
   // Writes a render may owe, after the response and only when owed: the
   // day's first open fixes the quest's target, and a study task the day's
@@ -164,6 +174,7 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
         launched={isLaunched(day)}
         elsewhere={elsewhere.length > 0 ? <DueElsewhere rows={elsewhere} /> : null}
         mainQuest={mainQuestView ? <MainQuestCard view={mainQuestView} /> : null}
+        nextWeek={nextWeek ? <NextWeekCard view={nextWeek} title="This week" headingId="nw-today-h" /> : null}
         namedTitles={Object.keys(namedTitles).length > 0 ? { names: namedTitles, mark: <NamedMark /> } : null}
         momentum={momentum?.live ? momentum : null}
         momentumSettled={settled.wrote}

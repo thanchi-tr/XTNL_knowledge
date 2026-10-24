@@ -941,6 +941,17 @@ async function nudges() {
       check("nudgeDue: run 2+, nothing kept, not claimed, toggle not off, live", nudgeDue(facts(), null) && nudgeDue(facts({ run: 2 }), "on") && !nudgeDue(facts({ run: 1 }), null) && !nudgeDue(facts({ actionDone: true }), null) && !nudgeDue(facts({ claimed: true }), null) && !nudgeDue(facts(), "off") && !nudgeDue(facts({ live: false }), null));
       const words = nudgePayload(facts({ run: 7, bank: 2, quest: { slot: "TASK", kind: "TEMPLATE", templateId: "t", track: "DUTY", raw: 20, score: 30, title: "Tax return" } }));
       check("nudgePayload: names the run, the first undone quest and the freezes", words.title === "Keep your 7-day run" && words.body === "Tax return · 2 freezes banked · until 04:00", JSON.stringify(words));
+      // Blueprint P32 (D36): a calibrated week's fallbacks are named as stored ('Move 30 min', 'Finish any 3 tasks'); the
+      // push states no rate, no target and no basis, only the quest.
+      const sized = [
+        nudgePayload(facts({ quest: { slot: "BODY", kind: "MOVE", minutes: 30, title: "Move 30 min", why: "40 of 150 effort min this week · sized from last week's audit" } })),
+        nudgePayload(facts({ quest: { slot: "TASK", kind: "ANY", count: 3, title: "Finish any 3 tasks" } })),
+      ];
+      check(
+        "P32 nudge words: a calibrated quest by its stored title ('Move 30 min · 1 freeze banked · until 04:00', 'Finish any 3 tasks · …'), never its why",
+        sized[0].body === "Move 30 min · 1 freeze banked · until 04:00" && sized[1].body === "Finish any 3 tasks · 1 freeze banked · until 04:00" && sized.every((w) => !/%|sized|audit/.test(`${w.title} ${w.body}`)),
+        JSON.stringify(sized)
+      );
       const data = nudgeClaimData("u1", DAY, EVENING);
       check(
         "claim row: a NUDGE row, sink NONE, 0 XP, never a streak unit, keyed 'nudge:<day>' on that life day",

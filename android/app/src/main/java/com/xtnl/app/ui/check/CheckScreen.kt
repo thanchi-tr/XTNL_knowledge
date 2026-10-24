@@ -102,6 +102,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.xtnl.app.core.CalibrationLine
 import com.xtnl.app.core.ConditionLine
 import com.xtnl.app.core.DailyStrip
 import com.xtnl.app.core.FadingLine
@@ -110,11 +111,13 @@ import com.xtnl.app.core.OwedLine
 import com.xtnl.app.core.ProofLine
 import com.xtnl.app.core.QuestLine
 import com.xtnl.app.core.RestTokenLine
+import com.xtnl.app.core.SideLine
 import com.xtnl.app.core.StreakLine
 import com.xtnl.app.core.TickLadder
 import com.xtnl.app.core.TimeLabels
 import com.xtnl.app.core.WalletLine
 import com.xtnl.app.core.WeekLine
+import com.xtnl.app.data.CheckCalibration
 import com.xtnl.app.data.CheckData
 import com.xtnl.app.data.CheckSkill
 import com.xtnl.app.data.DailyQuests
@@ -597,6 +600,7 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
                 owed(ui, vm)
                 review(data.review, data.fading, data.now, onStartReview)
                 week(data.week)
+                calibration(data.calibration)
                 condition(data.skills)
                 quests(ui, rows)
                 work(ui, data.now, vm, spots, motion)
@@ -624,6 +628,7 @@ fun CheckScreen(vm: CheckViewModel, spots: CheckSpots, listState: LazyListState,
                     ) {
                         review(data.review, data.fading, data.now, onStartReview)
                         week(data.week)
+                        calibration(data.calibration)
                         condition(data.skills)
                         quests(ui, rows)
                         work(ui, data.now, vm, spots, motion)
@@ -781,6 +786,17 @@ private fun LazyListScope.week(w: WeekAudit?) {
     if (!WeekLine.shows(w) || w == null) return
     item(key = "week", contentType = "week") {
         WeekTile(w, Modifier.padding(top = 4.dp))
+    }
+}
+
+/**
+ * The calibration card (P32), on both displays, right under the Week card: on the cover screen in the one column, on the
+ * main screen in the second pane. Only while the server sends one (none while the audit is off, or before two frozen weeks).
+ */
+private fun LazyListScope.calibration(c: CheckCalibration?) {
+    if (!CalibrationLine.shows(c) || c == null) return
+    item(key = "calibration", contentType = "calibration") {
+        CalibrationTile(c, Modifier.padding(top = 4.dp))
     }
 }
 
@@ -1195,7 +1211,8 @@ private fun TaskRow(
                     onClick = onTick,
                 )
                 .semantics {
-                    contentDescription = t.title
+                    // As the screen shows it: a done side quest's line is gone, so TalkBack leaves it out too.
+                    contentDescription = SideLine.of(t, null)?.takeIf { !kept }?.let { "${t.title}, $it" } ?: t.title
                     stateDescription = when { kept -> "Kept"; held -> "Held"; t.locked -> "Completes from reviews"; else -> "Open" }
                 }
                 .padding(start = 8.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
@@ -1249,6 +1266,9 @@ private fun TaskRow(
                     if (!kept) t.pages?.let { add(ProofLine.pagesNote(it.target)) }
                     if (t.status == "DONE_MVV") add("the minimum")
                 }
+                // P31: a side quest says so in ink with its own glyph ("Side quest · expires Fri"), never a lane colour, on a
+                // line of its own under the meta, so the main display's narrow pane never clips it (it may wrap).
+                val side = SideLine.of(t, null)?.takeIf { !kept }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (t.lane == "MUST") {
                         Icon(Glyphs.Diamond, null, tint = c.must, modifier = Modifier.size(10.dp))
@@ -1258,12 +1278,19 @@ private fun TaskRow(
                         Spacer(Modifier.width(6.dp))
                     }
                     Text(meta.joinToString(" · "), color = c.ink2, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                    t.dueLabel?.takeIf { !kept }?.let { due ->
+                    if (side == null) t.dueLabel?.takeIf { !kept }?.let { due ->
                         Text(
                             (if (meta.isEmpty()) "" else " · ") + due,
                             color = if (due.startsWith("late") || due.startsWith("Overdue")) c.owed else c.ink1,
                             style = MaterialTheme.typography.labelMedium, maxLines = 1,
                         )
+                    }
+                }
+                if (side != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+                        Icon(Glyphs.Side, null, tint = c.ink1, modifier = Modifier.size(12.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(side, color = c.ink1, style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
@@ -1483,6 +1510,8 @@ private fun WeekTile(w: WeekAudit, modifier: Modifier = Modifier) {
             Text(WeekLine.target(w), style = meta, color = c.ink1)
             val notes = WeekLine.notes(w)
             if (notes.isNotEmpty()) Text(notes.joinToString(" · "), style = meta, color = c.ink2)
+            // P31: the week's side quests, beside the rate and never in it.
+            SideLine.audit(w)?.let { Text(it, style = meta, color = c.ink2) }
             WeekLine.decayHeading(w)?.let { heading ->
                 Spacer(Modifier.height(10.dp))
                 Eyebrow(heading)
@@ -1493,6 +1522,40 @@ private fun WeekTile(w: WeekAudit, modifier: Modifier = Modifier) {
                 }
                 WeekLine.decayNote(w)?.let { Text(it, style = meta, color = c.ink2, modifier = Modifier.padding(top = 4.dp)) }
             }
+        }
+    }
+}
+
+/**
+ * The calibration card (docs/mobile-api.md `calibration`; blueprint 5.2d, P32, decision D36): the web's Next week card
+ * in its words, read only: Today's three sizes for the week and why (set by themselves), the capacity's reading, then
+ * each suggestion with its basis and its state (on offer, or what stands). Accept and Keep are the web's, which the
+ * footer says. No rate and no target (D17). One node for TalkBack; every line may wrap, so it reads the same on the
+ * cover screen and in the main display's second pane.
+ */
+@Composable
+private fun CalibrationTile(cal: CheckCalibration, modifier: Modifier = Modifier) {
+    val c = X.c
+    val meta = MaterialTheme.typography.labelMedium
+    XCard(modifier.fillMaxWidth().semantics(mergeDescendants = true) { contentDescription = CalibrationLine.description(cal) }) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Eyebrow(CalibrationLine.TITLE)
+                Spacer(Modifier.width(8.dp))
+                Text(cal.label, color = c.ink2, style = meta, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.height(2.dp))
+            Text(cal.sizes.line, style = MaterialTheme.typography.titleMedium.figures(), color = c.ink0)
+            if (cal.sizes.basis.isNotEmpty()) Text(cal.sizes.basis, style = meta, color = c.ink1)
+            Text(CalibrationLine.SIZES_NOTE, style = meta, color = c.ink2)
+            cal.capacityNote?.let { Text(it, style = meta, color = c.ink2) }
+            for (ch in cal.changes) {
+                Spacer(Modifier.height(8.dp))
+                Text(ch.title, style = MaterialTheme.typography.bodyMedium, color = c.ink0)
+                if (ch.basis.isNotEmpty()) Text(ch.basis, style = meta, color = c.ink2)
+                Text(CalibrationLine.stateLine(ch), style = meta, color = c.ink1)
+            }
+            CalibrationLine.footer(cal)?.let { Text(it, style = meta, color = c.ink2, modifier = Modifier.padding(top = 6.dp)) }
         }
     }
 }

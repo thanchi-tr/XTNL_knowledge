@@ -93,6 +93,21 @@ class DemoBoardTest {
         assertTrue(before.auditOn && after.auditOn)
     }
 
+    /**
+     * P32: the demo's calibration is this life week's (from last week's frozen copy, 24 of 28: the standard sizes), the
+     * capacity under the 240 set and on offer, Floss (a must) eased and accepted, pending; no rate or target on it (D17).
+     */
+    @Test fun theCalibrationIsThisWeeks() = runTest {
+        // Monday 26 October 2026, 10:00 AEDT: the week of 26 Oct.
+        val cal = (DemoApi { Instant.parse("2026-10-25T23:00:00Z") }.check() as Outcome.Ok).value.calibration!!
+        assertEquals(listOf("2026-W44", "Week of 26 Oct", "Move 20 min · Finish any 2 tasks"), listOf(cal.weekKey, cal.label, cal.sizes.line))
+        assertEquals(listOf("capacity:open", "ease:t-floss:accepted"), cal.changes.map { "${it.id}:${it.state}" })
+        // The server eases a must only, and says "Not a must from …" only while it is still one with the change pending.
+        assertEquals("MUST", (DemoApi { Instant.parse("2026-10-25T23:00:00Z") }.check() as Outcome.Ok).value.tasks.first { it.templateId == "t-floss" }.lane)
+        assertEquals("Not a must from Mon 2 Nov.", cal.changes[1].line)
+        assertTrue(cal.changes.none { "%" in it.basis || "%" in it.title } && "%" !in cal.sizes.basis)
+    }
+
     /** GET /quests (P15): read only; the demo's quest rows tick tasks on the board, and a tick there shows here. */
     @Test fun theQuestCardsRowsAreTheBoardsTasks() = runTest {
         val api = DemoApi()
@@ -352,6 +367,28 @@ class DemoBoardTest {
         }
         assertEquals(listOf(false, false, false, false, false, false, true), results)
         assertTrue((api.check() as Outcome.Ok).value.tasksSummary!!.allDone)
+    }
+
+    /**
+     * P31: the demo's side quest is an ordinary one-off (TASK lane, never a must) that says so ("Side quest · expires …")
+     * and asks nothing of the day while open: it never counts in tasksSummary's open (theLastHabitClearsTheBoard clears
+     * with it still open); ticked, it counts as done like any row.
+     */
+    @Test fun aSideQuestAsksNothingOfTheDay() = runTest {
+        val api = DemoApi { Instant.parse("2026-10-21T01:00:00Z") }
+        val check = (api.check() as Outcome.Ok).value
+        val walk = check.tasks.single { it.side }
+        assertEquals("TASK", walk.lane)
+        assertEquals("Side quest · expires Fri", walk.dueLabel)
+        assertEquals("2026-10-23", walk.expiresDay)
+        assertTrue("every other row carries no side keys", check.tasks.filter { it.templateId != walk.templateId }.all { !it.side && it.expiresDay == null })
+        val before = check.tasksSummary!!
+        assertTrue(api.completeTask(walk.templateId, mvv = false, clientId = "c-side") is Outcome.Ok)
+        val after = (api.check() as Outcome.Ok).value.tasksSummary!!
+        assertEquals("it was never counted open", before.open, after.open)
+        assertEquals(before.done + 1, after.done)
+        // The week card's lane beside the rate (week.side), never in it.
+        assertEquals(WeekSide(done = 1, offered = 2), (api.check() as Outcome.Ok).value.week!!.side)
     }
 
     /** P23: a proof row's full tick takes its minutes or its timer; a chore and the minimum still tick in one tap. */

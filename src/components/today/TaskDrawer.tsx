@@ -21,6 +21,7 @@ import { StepsEditor, type StepsSave } from "./StepsEditor";
 import { CompetencyLink } from "./CompetencyLink";
 import { PROOF_COUNTS_NOTE, pageChipsOf, pagesLabelOf, proofMinuteChipsOf, timerConfirmOf, timerMinutesOf, type TimerView } from "@/lib/proof";
 import { useTimerClock } from "./TimerChip";
+import { SIDE_DRAWER_NOTE } from "@/lib/side-quests";
 
 /** A slower write this drawer started and is waiting on. */
 export type DrawerWork = { kind: "resize" } | { kind: "rate"; override: number } | { kind: "rename"; title: string } | { kind: "steps" } | { kind: "timer" };
@@ -270,6 +271,12 @@ export function TaskDrawer(props: Props) {
                 : "The pages are recorded with the tick; they never change its price."}
             </p>
           )}
+          {/* Side quests (P31): why it was offered (a detector's note), else what a side quest is. */}
+          {row.side && (
+            <p className="today-drawer-note" data-side="1">
+              {t.note ?? SIDE_DRAWER_NOTE}
+            </p>
+          )}
         </>
       )}
 
@@ -316,10 +323,11 @@ export function TaskDrawer(props: Props) {
       {open && !recurring && row.lane !== "yesterday" && !tomorrow.show && tomorrow.reason && (
         <p className="today-drawer-note">{tomorrow.reason}</p>
       )}
-      {/* Defer and abort (task-decisions.ts): each opens its sheet (a reason, and when, or how far). */}
+      {/* Defer and abort (task-decisions.ts): each opens its sheet (a reason, and when, or how far). A side quest (P31) has
+          no Defer…: it asks nothing of the day, and put off past its expiry it would only be gone (Abort… still drops it). */}
       {open && row.lane !== "yesterday" && (props.onDefer || props.onAbort) && (
         <div className="today-drawer-row" role="group" aria-label="Put it off, or drop it">
-          {props.onDefer && !completesItself(t.autoMetric) && (
+          {props.onDefer && !completesItself(t.autoMetric) && !row.side && (
             <button type="button" className="today-pill td-act" disabled={busy} onClick={props.onDefer} aria-haspopup="dialog" title="Off the board until a time you pick, with a reason">
               Defer…
             </button>

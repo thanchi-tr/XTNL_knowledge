@@ -55,6 +55,7 @@ import { WeekDecisions } from "@/components/home/WeekDecisions";
 import { WeekAuditCard } from "@/components/home/WeekAudit";
 import { LAST_WEEK_ANCHOR } from "@/lib/audit-decay";
 import { loadWeekAudit } from "@/lib/week-audit-server";
+import { loadNextWeek } from "@/lib/week-calibration-server";
 import { loadMainQuestCard, loadMainQuestWeek } from "@/lib/main-quest-server";
 import { loadPastWeeks } from "@/lib/roadmap-quests-server";
 import { mainQuestOf, readsPastSprints, sprintStepOf, type SprintStep } from "@/lib/main-quest";
@@ -102,6 +103,12 @@ export const dynamic = "force-dynamic";
  * final Wed 04:00" until the chain writes it; a held week; or this week's
  * sprint under way). The step list and the card's words key on the same
  * value. It reads only; nothing here writes a verdict.
+ *
+ * Blueprint P32 (D36): from Monday to Wednesday, when the reviewed week's
+ * frozen copy set a calibration for the week after it, step 5 opens with
+ * the Next week card (week-calibration-server loadNextWeek: Today's three
+ * sizes, the capacity suggestion and the one-tap suggestions). Null at once
+ * while AUDIT_LAUNCH_DAY is not in force; a failed read leaves it out.
  */
 
 /** One track's row of the last judged week. */
@@ -604,13 +611,19 @@ export default async function WeekPage({ searchParams }: { searchParams: Promise
 
   if (review && (await searchParams).view === "run") {
     // Before Duty nothing is settled: the run reads only its done marker (the rest of readReview is Duty's facts).
-    const [read, markedBefore, data, audit, sprint] = await Promise.all([
+    const [read, markedBefore, data, audit, sprint, calibrated] = await Promise.all([
       plan.settledFacts ? readReview(userId, review) : null,
       plan.settledFacts ? false : readMarked(userId, review),
       loadTodayBoard(userId, today, now),
       auditRead,
       sprintRead,
+      loadNextWeek(userId, now).catch((err: unknown) => {
+        console.error("Weekly review: next week's calibration failed to load.", err);
+        return null;
+      }),
     ]);
+    // P32: only the calibration for the week after the reviewed one (on Saturday and Sunday it is not set yet).
+    const nextWeek = calibrated && calibrated.monday === addDays(review.monday, 7) ? calibrated : null;
     const facts = read
       ? weekFactsOf({
           week: review,
@@ -653,6 +666,7 @@ export default async function WeekPage({ searchParams }: { searchParams: Promise
           end={card ? { kind: "card", card } : { kind: "pending", text: isLaunched(today) ? reviewPendingText(review) : REVIEW_BEFORE_LIFE_TEXT }}
           marked={read ? read.marked : markedBefore}
           sprint={sprint}
+          nextWeek={nextWeek}
         />
       </div>
     );

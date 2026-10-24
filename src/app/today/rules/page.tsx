@@ -29,6 +29,9 @@ import { proofLaunchDay, proofOn, proofRuleLines } from "@/lib/proof";
 import { conditionRuleLines, decayFromOf, decayLaunchDay, decayOn } from "@/lib/skill-decay";
 import { streakFromOf, streakLaunchDay, streakLive as streakInForce, streakMultText, streakRuleLines } from "@/lib/streak-mult";
 import { fatigueLaunchDay, fatigueOn, fatigueRuleLines } from "@/lib/review-fatigue";
+import { SIDE_OPEN_MAX, sideQuestsLaunchDay, sideQuestsOn, sideRuleLines } from "@/lib/side-quests";
+import { auditLaunchDay, isAuditLaunched } from "@/lib/week-audit";
+import { calibrationRuleLines } from "@/lib/week-calibration";
 import { REST_TOKENS_PER_DAY, REST_TOKENS_WORD } from "@/lib/rest-tokens";
 import {
   BODY_EFFORT_MINUTES,
@@ -456,6 +459,42 @@ function FatigueRules({ launchDay }: { launchDay: DayKey }) {
     <Card id="fatigue" title="Fatigue: a long day of reviews" sub={`In force since ${longDayLabel(launchDay)}; no sleep rule, no penalty for a quiet day`} wide>
       <ul className="rules-bullets">
         {fatigueRuleLines().map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+/**
+ * Side quests (blueprint 2.5; P31, decision D35): '#side' marks a one-off that expires at no cost, never a must, out of
+ * the audit's rate. The '#side' line works without SIDE_QUESTS_LAUNCH_DAY, so the card is always here; its line on the
+ * weekly audit's lane only while the audit is in force, and its line on the app's own detectors only once they run
+ * (side-quests.ts sideRuleLines, every figure read from the code that applies it).
+ */
+function SideQuestRules({ detectors, audit }: { detectors: boolean; audit: boolean }) {
+  return (
+    <Card id="side-quests" title="Side quests: optional, and gone at no cost" sub={`At most ${SIDE_OPEN_MAX} open; never a must, never debt`} wide>
+      <ul className="rules-bullets">
+        {sideRuleLines({ detectors, audit }).map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+/**
+ * Next week's calibration (blueprint 5.2d; P32, decision D36): automatic for Today's three sizes and the capacity
+ * suggestion, one tap for a must eased or a habit stepped up, never a price. Its lines are week-calibration.ts
+ * calibrationRuleLines (every figure read from the code that applies it), rendered only once the weekly audit is in
+ * force (AUDIT_LAUNCH_DAY: no copy, so no calibration, before it), so before the user's go this page shows no card.
+ */
+function CalibrationRules() {
+  return (
+    <Card id="calibration" title="Next week: calibrated from the audit" sub="Sizes by themselves; habits and musts only on your tap" wide>
+      <ul className="rules-bullets">
+        {calibrationRuleLines().map((line) => (
           <li key={line}>{line}</li>
         ))}
       </ul>
@@ -2032,6 +2071,10 @@ export default async function RulesPage() {
   // Review fatigue (blueprint P30): its card only once it is in force; before FATIGUE_LAUNCH_DAY nothing here changes.
   const fatigueLaunch = fatigueLaunchDay();
   const fatigueLive = fatigueLaunch != null && fatigueOn(today, fatigueLaunch);
+  // Side quests (blueprint P31): the '#side' card is always here; its detectors' line only once SIDE_QUESTS_LAUNCH_DAY is in force.
+  const sideDetectors = sideQuestsOn(today, sideQuestsLaunchDay());
+  // Next week's calibration (blueprint P32): its card only once the weekly audit is in force; before then nothing here changes.
+  const calibrationLive = isAuditLaunched(today, auditLaunchDay());
   const settledLine = dutyLive ? dutySettledLine(await loadDutyCursor(getCurrentUserId()), today) : null;
 
   return (
@@ -2116,6 +2159,11 @@ export default async function RulesPage() {
         {streakLive && streakFrom && <StreakRules launchDay={streakFrom} />}
 
         {fatigueLive && fatigueLaunch && <FatigueRules launchDay={fatigueLaunch} />}
+
+        {/* The audit's lane line only while the weekly audit is in force: the calibration card's own switch. */}
+        <SideQuestRules detectors={sideDetectors} audit={calibrationLive} />
+
+        {calibrationLive && <CalibrationRules />}
 
         <Card title="The price" sub="One formula, the same in the browser and on the server" wide>
           <Formula>raw = B × E × T × C × D × V × K</Formula>

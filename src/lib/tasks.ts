@@ -52,10 +52,11 @@ import {
 } from "./life-grade";
 import { critKey, momentumLaunchDay, momentumLive } from "./momentum";
 import { momentumRoll } from "./momentum-roll";
-import { cleanCaptureKey, matchParentGoal, parseCapture } from "./capture-parse";
+import { cleanCaptureKey, matchParentGoal, parseCapture, type CaptureSpan } from "./capture-parse";
 import type { GoalProgressRow } from "./goals";
 import { captureShapeOf } from "./capture-shape";
-import { mustCapOf, mustNoteOf, restoredMustNoteOf, type MustNote } from "./daily-quests";
+import { MUST_CAP_LINE, mustCapOf, mustNoteOf, restoredMustNoteOf, type MustNote } from "./daily-quests";
+import { SIDE_CAP_LINE, SIDE_KEY_PREFIX, SIDE_OPEN_MAX, isSideDetectorKey, isSideQuestKey, sideExpiredOn, sideTagKeyOf, type SideNote } from "./side-quests";
 import { occursOn } from "./recurrence";
 import { statedGoalMp } from "./life-economy";
 import { MAKEUP_RESTORE_EVERY_DAYS, dutyLaunchDay, freezeUseKey, isDutyLaunched, newLifeSettingsData } from "./duty-economy";
@@ -353,6 +354,8 @@ export function toBoardTemplate(r: TemplateRow, now: Date): BoardTemplate {
       r.boardId == null &&
       r.gradeSource === "LEXICAL" &&
       !isRoadmapCaptureKey(r.captureKey) &&
+      // Nor a side quest a detector wrote (P31: 'side:<detector>:…'); a '#side' line is sized like any capture.
+      !isSideDetectorKey(r.captureKey) &&
       !gradeFrozen &&
       r.bandOverride === 0 &&
       r.gradeAttempts === 0 &&
@@ -1065,6 +1068,11 @@ export interface CreatedTask {
    * and on a retried send (the first send's save stands).
    */
   mustNote?: MustNote;
+  /**
+   * Side quests (side-quests.ts, blueprint P31, D35): a '#side' line saved as an ordinary task because SIDE_OPEN_MAX
+   * side quests were open (SIDE_CAP_LINE). Absent otherwise, and on a retried send.
+   */
+  sideNote?: SideNote;
 }
 
 const TITLE_MAX = 200;
@@ -1153,7 +1161,9 @@ export interface ActiveTitle {
 /**
  * Open templates (not archived, not completed), newest first, at most
  * `max`, each with its place on the board — placementOf over the board's
- * own read, so the note names the lane the board shows it in. Pure.
+ * own read, so the note names the lane the board shows it in. A side quest
+ * past its expiry (P31) is gone at no cost, so it is never 'on your board'
+ * and takes no place in the count. Pure.
  */
 export function activeTitlesOf(
   core: Pick<BoardData, "today" | "yesterday" | "templates" | "instances" | "stats">,
@@ -1166,7 +1176,7 @@ export function activeTitlesOf(
     else byTpl.set(i.templateId, [i]);
   }
   return core.templates
-    .filter((t) => !t.completedAt)
+    .filter((t) => !t.completedAt && !sideExpiredOn(t, core.today))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
     .slice(0, Math.max(0, max))
     .map((t) => ({
@@ -1209,7 +1219,17 @@ export async function loadActiveTitles(userId: string, now: Date = new Date()): 
 export async function createTemplateCore(
   userId: string,
   parsed: ParsedCapture,
-  opts: { rawText: string; captureSource: CaptureSource; captureKey?: string | null; now?: Date; link?: CaptureLink; boardId?: BoardScope }
+  opts: {
+    rawText: string;
+    captureSource: CaptureSource;
+    captureKey?: string | null;
+    now?: Date;
+    link?: CaptureLink;
+    boardId?: BoardScope;
+    trigger?: SideTrigger;
+    /** The line's reverted spans, as the sheet sent them: a work tab's '#side' line is read again with them (P31). */
+    reverted?: readonly CaptureSpan[];
+  }
 ): Promise<CreatedTask> {
   const w = await insertCapture(userId, parsed, opts);
   if (!wantsDoneNowTick(parsed, w.t)) return w.created;
@@ -1312,6 +1332,64 @@ async function loadStandingMusts(userId: string, except?: string | null): Promis
 }
 
 /**
+ * A side quest a detector writes (side-quests-server.ts; blueprint P31): its key ('side:<detector>:<scope>:<week>',
+ * written as given: the week's key makes the write idempotent), why it was offered (the template's note) and what it
+ * is sized as (a neutral word when its title names another task, so it is priced as the small task it is).
+ */
+export interface SideTrigger {
+  key: string;
+  note: string;
+  sizeAs: string;
+}
+
+/**
+ * Side quests open now (side-quests.ts sideOpenOn: a side key, not done, not archived, not expired), the detectors'
+ * and the '#side' lines' together; `except` is the row an edit replaces. One indexed read, run only for a side line.
+ */
+export async function countOpenSideQuests(userId: string, today: DayKey, except?: string | null): Promise<number> {
+  return prisma.taskTemplate.count({
+    where: {
+      userId,
+      ...PERSONAL_BOARD,
+      captureKey: { startsWith: SIDE_KEY_PREFIX },
+      archivedAt: null,
+      completedAt: null,
+      dueDay: { gte: dateColumn(today) },
+      ...(except ? { id: { not: except } } : {}),
+    },
+  });
+}
+
+/**
+ * The key a line is stored under (side quests, blueprint P31): a '#side' line's is 'side:tag:<the line's key>' (a
+ * fresh random one when it has none), so the board reads it as a side quest; any other line keeps its own key, but
+ * never one that would read as a side quest's. Pure but for the random key; recaptureCore looks an edit's earlier
+ * send up under both.
+ */
+export function storedCaptureKeyOf(key: string | null, side: boolean): string | null {
+  if (side) return sideTagKeyOf(key ?? globalThis.crypto.randomUUID());
+  return key && isSideQuestKey(key) ? null : key;
+}
+
+/** The keys a '#side' line's earlier send may be stored under (sideStoreOf's lookup): its own, and 'side:tag:' + it. */
+export function sideSendKeysOf(key: string): string[] {
+  return [storedCaptureKeyOf(key, false), sideTagKeyOf(key)].filter((k): k is string => k != null);
+}
+
+/**
+ * How a '#side' line is stored (side quests, blueprint P31, D35): under the key its first send took when there is one
+ * (`earlier`: a lost answer then Retry, or the phone's queue replaying it, finds that row again whichever way the cap
+ * went then, so the insert meets its unique key and returns it: never a second row under the other key); else as a
+ * side quest under 'side:tag:<key>' while fewer than SIDE_OPEN_MAX are open; else as an ordinary task under its own
+ * key, `capped`. Pure but for storedCaptureKeyOf's random key; capture-server-check holds it.
+ */
+export function sideStoreOf(key: string | null, earlier: string | null, open: number): { captureKey: string | null; capped: boolean } {
+  if (earlier != null) return { captureKey: earlier, capped: !isSideQuestKey(earlier) };
+  const capped = open >= SIDE_OPEN_MAX;
+  return { captureKey: storedCaptureKeyOf(key, !capped), capped };
+}
+
+/**
  * createTemplateCore's write without the done-now tick: one INSERT (or the
  * row a retried key already wrote), priced against today's real ledger and
  * placed on the board. recaptureCore ticks only after the line it replaces
@@ -1323,27 +1401,66 @@ async function loadStandingMusts(userId: string, except?: string | null): Promis
  * saved as an ordinary task, with MUST_CAP_LINE; from the 4th it carries the
  * warning. Nothing already a must changes. A work tab's must has no Duty and
  * is not counted, nor is an inbox must (it is counted when it is clarified).
+ *
+ * Side quests (blueprint P31, D35): a '#side' line on the personal Board is a
+ * side quest (capture-shape's one-off with an expiry, never a must) under its
+ * 'side:tag:' key while fewer than SIDE_OPEN_MAX are open; past that it is
+ * saved as an ordinary task (its named day kept as a deadline, never a must),
+ * with SIDE_CAP_LINE. A resent '#side' line finds its first send's row under
+ * either key (sideStoreOf), never a second one. On a work tab the tag is not
+ * taken: the line is read again as that tab's sheet reads it (capture-parse
+ * `work`), so its Must, Inbox mark and day stand as typed. A detector's
+ * `trigger` writes its own key, note and size; nothing else changes for any
+ * other line.
  */
 async function insertCapture(
   userId: string,
-  parsed: ParsedCapture,
-  opts: { rawText: string; captureSource: CaptureSource; captureKey?: string | null; now?: Date; link?: CaptureLink; boardId?: BoardScope; replacing?: string | null }
+  given: ParsedCapture,
+  opts: {
+    rawText: string;
+    captureSource: CaptureSource;
+    captureKey?: string | null;
+    now?: Date;
+    link?: CaptureLink;
+    boardId?: BoardScope;
+    replacing?: string | null;
+    trigger?: SideTrigger;
+    reverted?: readonly CaptureSpan[];
+  }
 ): Promise<InsertedCapture> {
   const now = opts.now ?? new Date();
   const today = todayKey(now);
-  const title = parsed.title.trim().replace(/\s+/g, " ").slice(0, TITLE_MAX);
-  if (!title) throw new Error("Nothing to add: the line has no title left once its tokens are read.");
-  const captureKey = cleanCaptureKey(opts.captureKey);
   // A work tab (work-boards.ts): tasks and habits only, never linked to a goal, never a study task (the action refuses
   // a goal or an idea draft first, with WORK_KIND_REFUSAL; this is the backstop). The personal Board: null, as before.
   const boardId = opts.boardId ?? null;
+  // Side quests (P31): '#side' is never taken on a work tab. The line is read again as that tab's sheet reads it, so
+  // the Must, the Inbox mark and the day it names stand as typed (the parse gives them up only for a side quest).
+  const parsed: ParsedCapture = boardId && given.side ? parseCapture(opts.rawText, { today, reverted: opts.reverted ? [...opts.reverted] : undefined, work: true }) : given;
+  const title = parsed.title.trim().replace(/\s+/g, " ").slice(0, TITLE_MAX);
+  if (!title) throw new Error("Nothing to add: the line has no title left once its tokens are read.");
+
+  // Side quests (P31): a '#side' line is one only on the personal Board, and only while a slot is free. A resent line
+  // (a lost answer then Retry, the phone's queue) first finds the row its first send wrote, under either key.
+  const sideAsked = !!parsed.side && !boardId && !opts.trigger;
+  const lineKey = cleanCaptureKey(opts.captureKey);
+  let sideCapped = false;
+  let captureKey: string | null;
+  if (opts.trigger) captureKey = opts.trigger.key;
+  else if (sideAsked) {
+    const earlier = lineKey ? await prisma.taskTemplate.findFirst({ where: { userId, captureKey: { in: sideSendKeysOf(lineKey) } }, select: { captureKey: true } }) : null;
+    const store = sideStoreOf(lineKey, earlier?.captureKey ?? null, earlier ? 0 : await countOpenSideQuests(userId, today, opts.replacing));
+    captureKey = store.captureKey;
+    sideCapped = store.capped;
+  } else captureKey = storedCaptureKeyOf(lineKey, false);
+  const shaped: ParsedCapture = parsed.side && !(sideAsked && !sideCapped) ? { ...parsed, side: false } : parsed;
 
   const typed = typeof parsed.estMinutes === "number" && Number.isFinite(parsed.estMinutes) ? parsed.estMinutes : null;
-  const sizing = sizeLexically(title, { tagTrack: parsed.track, minutes: typed });
+  const sizing = sizeLexically(opts.trigger?.sizeAs ?? title, { tagTrack: parsed.track, minutes: typed });
   const machineMinutes = Math.max(1, Math.round(sizing.machineMinutes));
   const estMinutes = typed != null ? Math.max(1, Math.min(EST_MINUTES_MAX, Math.round(typed))) : machineMinutes;
 
-  const { kind, recurrence, startDay, dueDay, dueKind, compulsory: asMust, inbox, note } = captureShapeOf(parsed, today);
+  const { kind, recurrence, startDay, dueDay, dueKind, compulsory: asMust, inbox, note: shapeNote } = captureShapeOf(shaped, today);
+  const note = opts.trigger ? opts.trigger.note.slice(0, RAW_MAX) : shapeNote;
   const workRefusal = boardId ? workKindRefusalOf(kind) : null;
   if (workRefusal) throw new Error(workRefusal);
 
@@ -1452,7 +1569,17 @@ async function insertCapture(
   // ticked since (here, or on the board), so its place reads them.
   const instances = duplicate ? await readCapturedInstances(userId, row.id, today) : [];
   // A retried send's row is the first send's: its count then is what stands, so this one says nothing of the cap.
-  return capturedOf(row, { duplicate, instances, totals, events, minutes: typed, today, now, mustNote: duplicate ? null : mustNoteOf(cap) });
+  return capturedOf(row, {
+    duplicate,
+    instances,
+    totals,
+    events,
+    minutes: typed,
+    today,
+    now,
+    mustNote: duplicate ? null : mustNoteOf(cap),
+    sideNote: duplicate || !sideCapped ? null : { capped: true, line: SIDE_CAP_LINE },
+  });
 }
 
 /** A goal capture's own columns; all null for any other kind. */
@@ -1492,6 +1619,8 @@ function capturedOf(
     now: Date;
     /** The daily quests' note for this save (insertCapture), if any. */
     mustNote?: MustNote | null;
+    /** The side quests' note for this save (insertCapture): a '#side' line past the cap, if any. */
+    sideNote?: SideNote | null;
   }
 ): InsertedCapture {
   const t = toBoardTemplate(row, a.now);
@@ -1507,6 +1636,7 @@ function capturedOf(
     ...(row.boardId ? { boardId: row.boardId } : {}),
     where: placeOf(t, a.today, a.instances),
     ...(a.mustNote ? { mustNote: a.mustNote } : {}),
+    ...(a.sideNote ? { sideNote: a.sideNote } : {}),
   };
   return { created, t, instances: a.instances, minutes: a.minutes, today: a.today, now: a.now };
 }
@@ -2783,7 +2913,7 @@ export async function rescheduleCore(userId: string, templateId: string, to: "to
   const today = todayKey(now);
   const row = await prisma.taskTemplate.findFirst({
     where: { id: templateId, userId },
-    select: { recurrence: true, compulsory: true, dueDay: true, dueKind: true, completedAt: true, archivedAt: true, kind: true },
+    select: { recurrence: true, compulsory: true, dueDay: true, dueKind: true, completedAt: true, archivedAt: true, kind: true, captureKey: true },
   });
   if (!row || row.archivedAt) return fail("That task no longer exists.");
   if (row.recurrence) {
@@ -2792,8 +2922,16 @@ export async function rescheduleCore(userId: string, templateId: string, to: "to
   }
   const target = to === "tomorrow" ? addDays(today, 1) : to;
   if (!KEY_RE.test(target)) return fail("Pick today or a later day.");
+  // A side quest (P31) never moves past its expiry: it would only be gone on the day it came back.
   const block = moveBlockOf(
-    { recurrence: null, compulsory: row.compulsory, dueKind: (row.dueKind as DueKind | null) ?? null, dueDay: keyOrNull(row.dueDay), completedAt: row.completedAt?.toISOString() ?? null },
+    {
+      recurrence: null,
+      compulsory: row.compulsory,
+      dueKind: (row.dueKind as DueKind | null) ?? null,
+      dueDay: keyOrNull(row.dueDay),
+      completedAt: row.completedAt?.toISOString() ?? null,
+      captureKey: row.captureKey,
+    },
     target,
     today
   );
@@ -2949,7 +3087,7 @@ async function applyRuleEdit(
   for (let attempt = 1; attempt <= RULE_EDIT_ATTEMPTS; attempt++) {
     const row = await prisma.taskTemplate.findFirst({ where: { id: templateId, userId }, select: RULE_SELECT });
     if (!row) return fail("That task no longer exists.");
-    if (row.archivedAt && (edit.kind === "unflag" || edit.kind === "rest" || edit.kind === "cancel")) return fail("That task is archived.");
+    if (row.archivedAt && (edit.kind === "unflag" || edit.kind === "rest" || edit.kind === "cancel" || edit.kind === "flag")) return fail("That task is archived.");
     const refusal = refusalOf ? await refusalOf(row) : null;
     if (refusal) return fail(refusal);
     // A work tab's task has no Duty (work-boards.ts): planned as before launch, so every change is immediate.
@@ -3148,6 +3286,31 @@ async function loadRoadmapUnarchiveFacts(userId: string, goalId: string): Promis
 /** 'Not a must' (the drawer, F3): deferred 7 days once launched and past the 60-minute typo grace. */
 export function setCompulsoryCore(userId: string, templateId: string, now: Date = new Date()): Promise<LifeResult<RuleChangeOutcome>> {
   return applyRuleEdit(userId, templateId, { kind: "unflag" }, now);
+}
+
+/**
+ * A habit made a must (blueprint P32, D36: the calibration's step-up; its one caller is week-calibration-server
+ * acceptCalibrationCore): a strengthening, so immediate from today and never retroactive (duty-plan 'flag': a prior
+ * segment through yesterday). The personal Board's task or habit only, and never past the daily quests' cap (D14):
+ * one that would be a 6th on some day is refused with MUST_CAP_LINE (mustCapOf over loadStandingMusts, itself left out).
+ */
+export function setMustCore(userId: string, templateId: string, now: Date = new Date()): Promise<LifeResult<RuleChangeOutcome>> {
+  return applyRuleEdit(userId, templateId, { kind: "flag" }, now, async (row) => {
+    if (row.boardId) return "A work tab's task stays out of the calibration.";
+    if (row.compulsory || row.inbox || (row.kind !== "TASK" && row.kind !== "HABIT")) return null;
+    const candidate = {
+      kind: row.kind,
+      recurrence: row.recurrence,
+      startDay: keyOfDateColumn(row.startDay),
+      dueDay: keyOrNull(row.dueDay),
+      dueKind: row.dueKind,
+      compulsory: true,
+      compulsoryOnRest: row.compulsoryOnRest,
+      inbox: false,
+      archivedDay: null,
+    };
+    return mustCapOf(await loadStandingMusts(userId, row.id), candidate, todayKey(now)).capped ? MUST_CAP_LINE : null;
+  });
 }
 
 /** 'Even on rest days' (the drawer, F3; musts only): on is immediate from today and never retroactive; off is deferred. */
@@ -3403,7 +3566,7 @@ export async function recaptureCore(
   userId: string,
   oldId: string,
   parsed: ParsedCapture,
-  opts: { rawText: string; captureKey?: string | null; captureSource?: CaptureSource; now?: Date }
+  opts: { rawText: string; captureKey?: string | null; captureSource?: CaptureSource; now?: Date; reverted?: readonly CaptureSpan[] }
 ): Promise<RecaptureResult> {
   const now = opts.now ?? new Date();
   const today = todayKey(now);
@@ -3414,7 +3577,8 @@ export async function recaptureCore(
       ? prisma.taskTemplate.findFirst({ where: { id: oldId, userId }, select: { createdAt: true, archivedAt: true, rawText: true, boardId: true } })
       : null,
     validOld ? prisma.taskInstance.findMany({ where: { templateId: oldId, userId }, select: { status: true } }) : [],
-    captureKey ? prisma.taskTemplate.findFirst({ where: { userId, captureKey }, select: { id: true } }) : null,
+    // Side quests (P31): an earlier send of a '#side' edit wrote its row under 'side:tag:<key>' (storedCaptureKeyOf).
+    captureKey ? prisma.taskTemplate.findFirst({ where: { userId, captureKey: { in: [captureKey, sideTagKeyOf(captureKey)] } }, select: { id: true } }) : null,
   ]);
   const plan = planRecapture({
     oldCreatedAt: old?.createdAt ?? null,
@@ -3445,7 +3609,7 @@ export async function recaptureCore(
   const workRefusal = boardId ? workKindRefusalOf(captureShapeOf(parsed, today).kind) : null;
   if (workRefusal) return { ok: false, error: workRefusal };
   // The line it replaces is left out of the daily quests' count: an edit of a must is not a new one.
-  const w = await insertCapture(userId, parsed, { rawText: opts.rawText, captureSource: opts.captureSource ?? "quick", captureKey, now, replacing: oldId, boardId });
+  const w = await insertCapture(userId, parsed, { rawText: opts.rawText, captureSource: opts.captureSource ?? "quick", captureKey, now, replacing: oldId, boardId, reverted: opts.reverted });
   // Sent under the old line's own key (a race past the plan's check), the 'new' row IS the old one: taking it back would lose the line.
   if (w.created.id === oldId) return { ok: false, error: RECAPTURE_SAME_KEY };
 

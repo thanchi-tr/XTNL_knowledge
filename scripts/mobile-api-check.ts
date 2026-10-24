@@ -80,6 +80,7 @@ import { SCHEDULED_GONE } from "../src/lib/scheduled-tasks";
 import { MUST_CAP_LINE, dailyQuestsOf } from "../src/lib/daily-quests";
 import { AUDIT_LAUNCH_DAY, AUDIT_LAUNCH_DAY_ENV, AUDIT_TARGET, isAuditLaunched, weekAuditOf, type AuditTemplate, type WeekAudit } from "../src/lib/week-audit";
 import { DECAY_TOP, decayingOf } from "../src/lib/audit-decay";
+import { calibrationOf, nextWeekViewOf, type CalibrationWeek, type NextWeekView } from "../src/lib/week-calibration";
 import type { Receipt } from "../src/lib/life-types";
 import type { CelebrationEvent } from "../src/lib/celebration-types";
 import type { Completion } from "../src/lib/tasks";
@@ -150,6 +151,7 @@ import {
   checkDecayingOf,
   checkFadingOf,
   checkWeekOf,
+  checkCalibrationOf,
   clientIdOf,
   clozeBlanksOf,
   failReply,
@@ -764,6 +766,8 @@ function fakes(over: Partial<MobileDeps> = {}): { deps: MobileDeps; calls: Calls
     loadWork: async () => WORK,
     loadGraceExtra: async () => 0,
     loadWeekAudit: async () => null,
+    // As week-calibration-server loadNextWeek answers while AUDIT_LAUNCH_DAY is null (P32): null at once, no read.
+    loadNextWeek: async () => null,
     // As credits-server loadWallet and readWallet answer while CREDITS_LAUNCH_DAY is null: {live: false}, no read.
     loadWallet: async (_userId, now) => ({ live: false, day: todayKey(now) }),
     readWallet: async (_userId, now) => ({ live: false, day: todayKey(now) }),
@@ -1174,6 +1178,23 @@ async function routes() {
       const before: BoardData = { ...proofData, proof: { launchDay: addDays(TODAY, 1), timers: [] } };
       const bd = data(await got(handleCheck(get("/check"), fakes({ loadBoard: async () => before }).deps)));
       check("a launch day after today gates nothing (forward only)", (bd.tasks as Record<string, unknown>[]).every((x) => x.proof === false));
+      // Side quests (blueprint P31; D35): a side quest's row carries `side` and `expiresDay`; every other row neither.
+      const sideData: BoardData = { ...DATA, templates: [...DATA.templates, tpl({ id: "side1", title: "20-minute walk", dueDay: addDays(TODAY, 2), dueKind: "DEADLINE", captureKey: "side:body:week:2026-W43" })] };
+      const sd = data(await got(handleCheck(get("/check"), fakes({ loadBoard: async () => sideData }).deps)));
+      collectKeys(sd);
+      const st = (sd.tasks as Record<string, unknown>[]).find((x) => x.templateId === "side1");
+      const sOthers = (sd.tasks as Record<string, unknown>[]).filter((x) => x.templateId !== "side1");
+      check(
+        "side quests (P31): the side quest's row says side true, its expiresDay and the board's 'Side quest · expires …' (lane TASK); no other row carries either key; tasksSummary never counts it open",
+        !!st &&
+          st.side === true &&
+          st.expiresDay === addDays(TODAY, 2) &&
+          st.lane === "TASK" &&
+          /^Side quest · expires /.test(String(st.dueLabel)) &&
+          sOthers.every((x) => !("side" in x) && !("expiresDay" in x)) &&
+          same(sd.tasksSummary, d.tasksSummary),
+        JSON.stringify(st)
+      );
     }
     const t = (id: string) => tasks.find((x) => x.templateId === id)!;
     eq("statuses: done at the minimum DONE_MVV, done DONE, else OPEN", [t("plan2").status, t("hab2").status, t("hab1").status, t("must1").status], ["DONE_MVV", "DONE", "OPEN", "OPEN"]);
@@ -1307,6 +1328,39 @@ async function routes() {
     );
     const noAudit = await got(handleCheck(get("/check"), fakes({ loadWeekAudit: async () => Promise.reject(new Error("a")) }).deps));
     check("week: a failed audit read reads as none (the check still answers)", noAudit.status === 200 && data(noAudit).week === null);
+
+    // Blueprint P32 (5.2d; D36): next week's calibration, as the web's Next week card states it; absent while none is in force.
+    {
+      const off = fakes();
+      const plain = data(await got(handleCheck(get("/check"), off.deps)));
+      check(
+        "P32 calibration: absent while none is in force (AUDIT_LAUNCH_DAY null: loadNextWeek answers null with no read), so /check's keys are as before; read once, in the wave",
+        !("calibration" in plain) && AUDIT_LAUNCH_DAY === null && same(off.calls.loadNextWeek, [["u1", NOW]])
+      );
+      const wk43: CalibrationWeek = { weekKey: "2026-W43", monday: "2026-10-19", target: AUDIT_TARGET, daily: { kept: 14, due: 14, rows: [{ templateId: "gym", title: "Gym", kept: 7, due: 7 }] }, tracked: [200, 240, 180, 220, 260, 90, 120] };
+      const wk42: CalibrationWeek = { weekKey: "2026-W42", monday: "2026-10-12", target: AUDIT_TARGET, daily: { kept: 13, due: 14, rows: [{ templateId: "gym", title: "Gym", kept: 7, due: 7 }] }, tracked: [210, 230, 200, 250, 240, 60, 100] };
+      const cal = calibrationOf(wk43, [wk42], {
+        declared: 300,
+        musts: [{ templateId: "gym", title: "Gym", strength: 0.8, pending: false }],
+        habits: [{ templateId: "read", title: "Read", strength: 0.7, capped: false }],
+      });
+      const VIEW: NextWeekView = nextWeekViewOf(cal!, { capacity: 300, templates: [{ id: "read", compulsory: false, archived: false, pendingNotMustDay: null }] });
+      const on = data(await got(handleCheck(get("/check"), fakes({ loadNextWeek: async () => VIEW }).deps)));
+      const cb = on.calibration as Record<string, unknown>;
+      collectKeys(cb);
+      eq(
+        "P32 calibration: the documented keys, the sizes' and each change's; checkCalibrationOf is the reply (the web card's view)",
+        [keysOf(cb), keysOf(cb.sizes as object), keysOf((cb.changes as object[])[0]), same(cb, checkCalibrationOf(VIEW))],
+        [["capacityNote", "changes", "label", "sizes", "weekKey"], ["any", "basis", "line", "move"], ["basis", "id", "kind", "line", "state", "title"], true]
+      );
+      eq(
+        "P32 calibration: the week after the audited one, Move 30 and any 3 at 100% kept, the capacity suggested (240) under the 300 declared, Read offered as a must; no rate or target (D17)",
+        [cb.weekKey, cb.label, (cb.sizes as { line: string }).line, (cb.changes as { id: string; state: string }[]).map((c) => `${c.id}:${c.state}`), JSON.stringify(cb).includes("85")],
+        ["2026-W44", "Week of 26 Oct", "Move 30 min · Finish any 3 tasks", ["capacity:open", "step:read:open"], false]
+      );
+      const failed = await got(handleCheck(get("/check"), fakes({ loadNextWeek: async () => Promise.reject(new Error("calibration exploded")) }).deps));
+      check("P32 calibration: a failed read leaves the key out (the check still answers)", failed.status === 200 && !("calibration" in data(failed)));
+    }
 
     // Blueprint P12 (5.2c): "Decaying this week" rides on the week: its count, its first three lines, what couldn't be read.
     check("week.decaying: null when the audit was read without it (a copy frozen before P12, or a failed decay read)", wk.decaying === null);
@@ -2917,6 +2971,7 @@ function wiring() {
   bind("streak, level and work: getDailyStreak, loadShellData, loadDueWorkTasks", /loadStreak: \(userId\) => getDailyStreak\(userId\),\s*loadShell: \(userId\) => loadShellData\(userId\),\s*loadWork: \(userId, now\) => loadDueWorkTasks\(userId, now\),/);
   bind("the grace extension (P13): skill-effects loadModifiers' graceExtraDays, the loadout's, as the bell reads it", /loadGraceExtra: async \(userId\) => \(await loadModifiers\(userId\)\)\.graceExtraDays,/);
   bind("the week audit (P11): week-audit-server loadWeekAudit(userId, now), /today/week's own read", /import \{ loadWeekAudit \} from "\.\/week-audit-server";[\s\S]*loadWeekAudit: \(userId, now\) => loadWeekAudit\(userId, now\),/);
+  bind("next week's calibration (P32): week-calibration-server loadNextWeek(userId, now), the web's Next week card read (null with no read while the audit is off)", /import \{ loadNextWeek \} from "\.\/week-calibration-server";[\s\S]*loadNextWeek: \(userId, now\) => loadNextWeek\(userId, now\),/);
   bind(
     "the credits wallet (P16): credits-server loadWallet(userId, now), the purse's own read (cached; no read while off), and readWallet(userId, now) uncached for a write's read after it",
     /import \{ loadWallet, readWallet \} from "\.\/credits-server";[\s\S]*loadWallet: \(userId, now\) => loadWallet\(userId, now\),\s*readWallet: \(userId, now\) => readWallet\(userId, now\),/
@@ -3241,7 +3296,8 @@ function wiring() {
   check("DemoApi: a server with condition decay on sends its idle list (the lowest first)", /skills = DEMO_CONDITION,/.test(demo) && /val DEMO_CONDITION = listOf\(\s*CheckSkill\("skill", "Spanish", 0\.5, 74\),\s*CheckSkill\("attribute", "Care", 0\.869, 31\),/.test(demo));
   check(
     "CheckScreen: the Condition card on both displays (the cover screen's one column and the main display's second pane, after the Week card), one TalkBack node",
-    (screen.match(/week\(data\.week\)\s*condition\(data\.skills\)/g) ?? []).length === 2 && /private fun ConditionTile\(/.test(screen) && /contentDescription = ConditionLine\.description\(list\)/.test(screen)
+    // Re-pinned for blueprint P32: the calibration card (only while the server sends one) sits between the two.
+    (screen.match(/week\(data\.week\)\s*(?:calibration\(data\.calibration\)\s*)?condition\(data\.skills\)/g) ?? []).length === 2 && /private fun ConditionTile\(/.test(screen) && /contentDescription = ConditionLine\.description\(list\)/.test(screen)
   );
   check("Android: versionCode 24 (2.12) or later for the Condition card", Number(/versionCode (\d+)\b/.exec(gradle)?.[1] ?? 0) >= 24);
 
@@ -3358,6 +3414,25 @@ function docs() {
         /an import never replaces one typed on the phone or the web/.test(flat) &&
         flat.includes(HC_WRITES_OFF) &&
         ["since", "walks", "weights", "externalId", "start", "end", "distanceKm", "climbM", "origin", "at", "kg"].every((k) => doc.includes(`"${k}"`));
+    })()
+  );
+  check(
+    "side quests (P31; D35) are in the doc: `side` and `expiresDay` on a side quest's row only, never counted open, refused after its day, the detectors behind SIDE_QUESTS_LAUNCH_DAY, and the week's `side`",
+    /"side"\?: true, "expiresDay"\?: "2026-10-23"/.test(doc) &&
+      /`side` and `expiresDay` \(blueprint 2\.5, P31; decision D35\)/.test(doc) &&
+      /a held row and a side\s+quest are not open/.test(doc) &&
+      /`SIDE_QUESTS_LAUNCH_DAY`/.test(doc) &&
+      /"side"\?: \{ "done": 1, "offered": 2 \}/.test(doc)
+  );
+  check(
+    "next week's calibration (P32; D36) is in the doc: `calibration` only while one is in force, two frozen audits first, read only on the phone, the sizes set by themselves, each change's kind and state, no rate or target",
+    (() => {
+      const flat = doc.replace(/\s+/g, " ");
+      return /"calibration"\?: \{ "weekKey": "2026-W45", "label": "Week of 2 Nov",/.test(doc) &&
+        /`calibration` \(blueprint 5\.2d, P32; decision D36\)/.test(doc) &&
+        flat.includes("One is in force only once the weekly audit is switched on (`AUDIT_LAUNCH_DAY`) and two weeks are frozen") &&
+        flat.includes("It is read only on the phone: Accept and Keep stay on the web.") &&
+        flat.includes("No rate and no target are sent here: those are the audit's alone (D17).");
     })()
   );
   check(

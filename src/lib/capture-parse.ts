@@ -41,6 +41,7 @@ import { compareTwoStrings } from "string-similarity";
 import { addDays, daysBetween, weekdayOf, weekStartKeyOf, type DayKey } from "./life-day";
 import type { AutoMetric, CaptureMode, CaptureToken, DueKind, Horizon, ParsedCapture, Track } from "./life-types";
 import { PROOF_CHIP_LABEL, pagesChipLabelOf } from "./proof";
+import { SIDE_LABEL, SIDE_NOT_A_MUST, SIDE_ONE_OFF_ONLY, SIDE_WORK_LABEL, sideLabelOf, sideTagExpiryOf } from "./side-quests";
 
 /** A character range of the capture line, [start, end). */
 export interface CaptureSpan {
@@ -58,6 +59,12 @@ export interface ParseOptions {
    * stored title of a known kind (an edit), never for a fresh capture.
    */
   mode?: CaptureMode;
+  /**
+   * The line is captured on a work tab (work-boards.ts): '#side' is read as
+   * its chip but never taken there (SIDE_WORK_LABEL), so the line's Must,
+   * Inbox mark and day stand as typed, as on a line that repeats.
+   */
+  work?: boolean;
 }
 
 /** Longest line the server accepts. The input caps at the same length, so the two agree. */
@@ -729,6 +736,8 @@ interface Found {
   answer: string | null;
   /** '#proof' (blueprint P23, D20): the task counts its time. */
   proof: boolean;
+  /** '#side' (blueprint P31, D35): a side quest (a plain one-off only: read again once the line's schedule is known). */
+  side: boolean;
 }
 
 function overlaps(a: CaptureSpan, b: CaptureSpan): boolean {
@@ -764,6 +773,7 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
     inbox: false,
     answer: null,
     proof: false,
+    side: false,
   };
 
   /**
@@ -943,9 +953,16 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
     }
   }
 
-  /** A '#tag' or a spoken tag: one track, one horizon, one play mark and one proof mark per line. */
+  /** A '#tag' or a spoken tag: one track, one horizon, one play mark, one proof mark and one side mark per line. */
   function applyTag(raw: string): Draft | null {
     const tag = raw.toLowerCase();
+    // '#side' (blueprint P31, D35): a side quest. A goal or an idea is never one, so the word stays text there.
+    if (tag === "side") {
+      if (f.mode === "GOAL" || f.mode === "IDEA") return null;
+      if (f.side) return full();
+      f.side = true;
+      return { field: "side", label: SIDE_LABEL };
+    }
     // '#proof' (blueprint P23, D20): the task counts its time. A goal or an idea has no tick to prove, so it stays text there.
     if (tag === "proof") {
       if (f.mode === "GOAL" || f.mode === "IDEA") return null;
@@ -977,6 +994,8 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
     // '#proof' (P23) after the rest, so a horizon tag anywhere on the line has made it a goal first (a goal has no tick
     // to prove: the word stays title text there).
     scan(rx(`#(proof)`), (m) => applyTag(m[2]));
+    // '#side' (P31) after them too, for the same reason: on a goal line it stays title text.
+    scan(rx(`#(side)`), (m) => applyTag(m[2]));
     // Dictation: 'hashtag long' closing a fresh line. A spoken horizon changes
     // how the whole line is read, so it is taken here, and only at the very
     // end; spoken tracks wait for the end-of-line pass (readSpokenTags).
@@ -1706,6 +1725,40 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
     for (const t of tokens) if (t.field === "recurrence") t.label = ruleChipLabel(rule);
   }
 
+  // '#side' (blueprint P31, D35): a side quest is a one-off that expires at no cost, never a must. On a line that
+  // repeats, or on a work tab (work stays out of the game), the tag is not taken (its chip says so, and the line saves
+  // as it reads without it). Otherwise the line's Must and Inbox marks are not taken (their chips say so), and the day
+  // it names is its expiry, a deadline; with none, it expires SIDE_EXPIRY_DAYS after today (the chip names the day).
+  // Turning '#side' back into text restores them.
+  if (f.side) {
+    const relabel = (field: CaptureToken["field"], label: string) => {
+      for (const t of tokens) if (t.field === field) t.label = label;
+    };
+    if (opts.work || f.recurrence || f.mode !== "TASK") {
+      f.side = false;
+      relabel("side", opts.work ? SIDE_WORK_LABEL : SIDE_ONE_OFF_ONLY);
+    } else {
+      if (f.compulsoryMarked) {
+        f.compulsoryMarked = false;
+        relabel("compulsory", SIDE_NOT_A_MUST);
+      }
+      if (f.inbox) {
+        f.inbox = false;
+        relabel("inbox", "Inbox · not on a side quest");
+      }
+      if (f.dueKind === "PLANNED" && f.dueDay) {
+        f.dueKind = "DEADLINE";
+        for (const t of tokens) {
+          if (t.field !== "date") continue;
+          t.field = "deadline";
+          t.id = `deadline@${t.start}`;
+          t.label = dueLabel();
+        }
+      }
+      relabel("side", sideLabelOf(sideTagExpiryOf(today, f.dueDay), today));
+    }
+  }
+
   // R8: a Must on a one-off with a planned day makes that day its deadline
   // ('pay rent fri !' is due by Friday). Turning the Must back into text
   // makes the day planned again, because the Must is no longer read.
@@ -1765,6 +1818,8 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
     answer: f.answer,
     // '#proof' only when it was read (a goal or an idea never takes it): every other line's shape is as before.
     ...(f.proof ? { proof: true } : {}),
+    // '#side' (P31) only when it was taken (a plain one-off): every other line's shape is as before.
+    ...(f.side ? { side: true } : {}),
     tokens,
   };
 }

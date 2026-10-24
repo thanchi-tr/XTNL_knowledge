@@ -307,7 +307,8 @@ check(
 const wa = code("src/lib/week-audit-server.ts");
 check(
   "week-audit-server reads the decay beside the week's facts, live and for the freeze (one copy, decay included), and its cache drops on a review or a level change",
-  (wa.match(/Promise\.all\(\[readQuestFacts\(userId, week\.monday, today, \{ habits: true \}\), decayOf\(userId, week, now\)\]\)/g) ?? []).length === 2 &&
+  // Re-pinned for blueprint P31: the week's side quests (readSideWeek) are read in the same wave, live and for the freeze.
+  (wa.match(/Promise\.all\(\[readQuestFacts\(userId, week\.monday, today, \{ habits: true \}\), decayOf\(userId, week, now\), readSideWeek\(userId, week(?:, auditFreezeAsOf\(today\))?\)\]\)/g) ?? []).length === 2 &&
     /\["life", "activity", "fields", "ideas", "progress"\]/.test(wa) &&
     /if \(!week \|\| launchDay == null\) return null;\s*return cached\(/.test(wa)
 );

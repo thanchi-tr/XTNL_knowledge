@@ -61,6 +61,7 @@ import {
   MOMENTUM_START_FREEZES,
   MOMENT_KEYS,
   PERKS,
+  QUEST,
   RAW_WORST_CASE_MOMENTUM,
   TIER_GATE,
   WALK_B_OF_INTENSITY,
@@ -81,6 +82,7 @@ import {
   excritKey,
   exerciseDayRaw,
   foldMomentum,
+  isQuestSet,
   learnCheck,
   lifeModsOf,
   lifeMpModelOfWeek,
@@ -464,6 +466,17 @@ console.log("\n§8 the vocabulary");
   check("a day's chain: started within the window links; a batch tick 3 min later breaks it", chain.join() === "0,1,0", chain.join());
   check("sinceRareOf: counts back to the last RARE; a Summit chest neither counts nor resets", sinceRareOf([{ tier: "RARE" }, { tier: "COMMON" }, { tier: "RARE", summit: true }, { tier: "UNCOMMON" }]) === 2);
   check("BODY's fallback quest: Move 20 under 150 effort minutes, then Move 10", BODY_EFFORT_MINUTES === 150 && bodyMoveMinutes(149) === 20 && bodyMoveMinutes(150) === 10);
+  // Blueprint P32 (D36): a calibrated week passes its size (10, 20 or 30); without one it is exactly the line above.
+  check(
+    "P32: a calibrated week's Move is its size under 150 (10, 20 or 30) and never over 10 once met; the default is QUEST.MOVE_MINUTES",
+    QUEST.MOVE_SIZES.map((s) => `${bodyMoveMinutes(149, s)}/${bodyMoveMinutes(150, s)}`).join() === "10/10,20/10,30/10" && bodyMoveMinutes(149, QUEST.MOVE_MINUTES) === bodyMoveMinutes(149)
+  );
+  check(
+    "P32: a quests-2 set (its sizes recorded) is a quest set like quests-1; anything else is not",
+    isQuestSet({ v: "quests-2", day: "2026-11-02", quests: [{ slot: "BODY", kind: "MOVE", minutes: 30, title: "Move 30 min" }], sizes: { move: 30, any: 3, from: "2026-W44" } }) &&
+      isQuestSet({ v: "quests-1", day: "2026-11-02", quests: [] }) &&
+      !isQuestSet({ v: "quests-9", day: "2026-11-02", quests: [] })
+  );
 }
 
 console.log(failed ? `\n${failed} failed, ${passed} passed` : `\nall ${passed} pass`);

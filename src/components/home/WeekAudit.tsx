@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { SectionHeader } from "@/components/ui/Tabs";
 import { decayHeading, decayMoreOf, type AuditDecaying } from "@/lib/audit-decay";
+import { SIDE_AUDIT_LANE, sideAuditLine } from "@/lib/side-quests";
 import {
   AUDIT_HABITS_NOTE,
   AUDIT_HREF,
@@ -20,7 +21,8 @@ import {
  * target in plain words (or "calibrating" for the first two weeks), the daily quests' line with what was left out
  * ("n skipped", "n held"), the habits beside them (never in the rate), and the quests kept least. Neutral words: a
  * count, never a verdict (harm H12). The target appears here and nowhere on Today (D17). P12 adds "Decaying this
- * week" (lib/audit-decay.ts; blueprint 5.2c): what fell, each line a link to its fix, the block's only controls.
+ * week" (lib/audit-decay.ts; blueprint 5.2c): what fell, each line a link to its fix, the block's only controls. P31
+ * adds the week's side quests on a lane of their own, never in the rate, only when the week had one.
  */
 export function WeekAuditCard({ audit, today, headingId = "wa-h" }: { audit: WeekAudit; today: string; headingId?: string }) {
   const frozen = audit.status !== "provisional";
@@ -44,6 +46,12 @@ export function WeekAuditCard({ audit, today, headingId = "wa-h" }: { audit: Wee
               <span className="wa-lane-line">
                 {auditLaneLine(audit.habits, frozen)} · {AUDIT_HABITS_NOTE}
               </span>
+            </li>
+          )}
+          {audit.side && (
+            <li className="wa-lane" data-side="1">
+              <b>{SIDE_AUDIT_LANE}</b>
+              <span className="wa-lane-line">{sideAuditLine(audit.side)}</span>
             </li>
           )}
         </ul>

@@ -1112,6 +1112,13 @@ function momentumFixtures(): MomentumFixture[] {
   return [
     { name: "momentum-kept", before: run(), after: run({ run: 13, todayKept: true, quests: three([false, false, true]) }), expect: [`momentum-day:${D}`, `quest:${D}:TASK`] },
     { name: "quest-done", before: run({ todayKept: true, run: 13 }), after: run({ todayKept: true, run: 13, quests: three([false, true, false]) }), expect: [`quest:${D}:BODY`] },
+    // Blueprint P32 (D36): a calibrated week's 'Move 30 min' (identity BODY:MOVE:30) is the same moment, keyed by its slot.
+    {
+      name: "quest-done (a calibrated week's Move 30, P32)",
+      before: run({ todayKept: true, run: 13, quests: three([false, false, false]).map((q) => (q.slot === "BODY" ? { ...q, identity: "BODY:MOVE:30", title: "Move 30 min" } : q)) }),
+      after: run({ todayKept: true, run: 13, quests: three([false, true, false]).map((q) => (q.slot === "BODY" ? { ...q, identity: "BODY:MOVE:30", title: "Move 30 min" } : q)) }),
+      expect: [`quest:${D}:BODY`],
+    },
     { name: "freeze-held (the day turned)", before: run({ today: Y, run: 12 }), after: run({ run: 12, bank: 0, held: [Y], heldInRun: 1 }), expect: [`held:${Y}`] },
     { name: "freeze-held (on the day's first action)", before: run({ held: [Y], bank: 0 }), after: run({ held: [Y], bank: 0, run: 13, todayKept: true }), expect: [`momentum-day:${D}`, `held:${Y}`] },
     { name: "momentum-run 7", before: run({ run: 6 }), after: run({ run: 7, todayKept: true }), expect: [`momentum-day:${D}`, "momentum:7"] },

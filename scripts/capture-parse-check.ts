@@ -59,6 +59,8 @@ const SLOT: Record<ParsedCapture["tokens"][number]["field"], string> = {
   play: "play", parent: "parent", mvv: "mvv", study: "study", answer: "answer", proof: "proof",
   // Re-pinned for P24: a reading line's pages fill the line's one autoMetric, the slot a study link fills.
   pages: "study",
+  // Blueprint P31: '#side' fills the line's one side mark.
+  side: "side",
 };
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
 const chips = (p: ParsedCapture, text: string) => p.tokens.map((t) => `${t.field}[${text.slice(t.start, t.end)}]`).join(" ");
@@ -1323,6 +1325,27 @@ console.log("\n── Every line capture.md's grammar can build (seeded, English
     }
   }
   report(`${lines} generated lines of the new grammar keep parity, idempotence and revert round trips`, problems === 0, problems ? `${problems} failed; first ${first}` : "");
+}
+
+// Blueprint P31 review: on a work tab '#side' is never taken (work stays out of the game), so the line reads as typed.
+{
+  const line = "call the supplier #side fri !";
+  const work = parseCapture(line, { today: THU, work: true });
+  const personal = parseCapture(line, { today: THU });
+  report(
+    "P31 work tab: '#side' read as its chip ('Side quest · personal board only') but not taken; the Must and the day stand as typed (a must's day its deadline, R8)",
+    !work.side && work.compulsory && work.dueKind === "DEADLINE" && work.dueDay === FRI && work.title === "Call the supplier" &&
+      work.tokens.find((t) => t.field === "side")?.label === "Side quest · personal board only" &&
+      work.tokens.find((t) => t.field === "compulsory")?.label !== "Must · not on a side quest",
+    chips(work, line)
+  );
+  report(
+    "P31 work tab: on the personal Board the same line is a side quest (the Must not taken, its chip says so); the inbox mark stands on a work tab too",
+    personal.side === true && !personal.compulsory && personal.tokens.find((t) => t.field === "compulsory")?.label === "Must · not on a side quest" &&
+      parseCapture("sort the garage #side?", { today: THU, work: true }).inbox === true && parseCapture("sort the garage #side?", { today: THU }).inbox === false,
+    chips(personal, line)
+  );
+  report("P31 work tab: the option changes nothing on a line without '#side'", same(parseCapture("call the supplier fri !", { today: THU, work: true }), parseCapture("call the supplier fri !", { today: THU })));
 }
 
 console.log(`\n${fixtures} fixtures; ${passed} passed, ${failed} failed`);

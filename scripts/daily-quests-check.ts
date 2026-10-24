@@ -375,7 +375,8 @@ console.log("— §4 the writes —");
     "the standing musts: the personal Board's live TASK and HABIT musts, never an inbox item, never the row an edit replaces",
     /where: \{ userId, \.\.\.PERSONAL_BOARD, compulsory: true, inbox: false, archivedAt: null, kind: \{ in: \["TASK", "HABIT"\] \}, \.\.\.\(except \? \{ id: \{ not: except \} \} : \{\}\) \}/.test(tasks)
   );
-  check("an edit leaves the line it replaces out of the count (recaptureCore: replacing: oldId)", /insertCapture\(userId, parsed, \{ [^}]*replacing: oldId, boardId \}\)/.test(tasks));
+  // Re-pinned for blueprint P31 review: the line's own spans go with it (a work tab's '#side' line is read again with them).
+  check("an edit leaves the line it replaces out of the count (recaptureCore: replacing: oldId)", /insertCapture\(userId, parsed, \{ [^}]*replacing: oldId, boardId(?:, reverted: opts\.reverted)? \}\)/.test(tasks));
   const clarify = tasks.slice(tasks.indexOf("export async function clarifyInboxCore("), tasks.indexOf("export interface ClarifyOutcome"));
   check(
     "the board: an inbox must is counted as it leaves the inbox; past the cap it leaves as an ordinary task, written with the clarify, and the outcome says so",
@@ -429,9 +430,10 @@ console.log("— §4 the writes —");
   // (the audit's decay and delivery) after that, before the rituals.
   check(
     // Re-pinned for blueprint P28: skill-decay-check runs after audit-decay-check, before the rituals; for P29:
-    // streak-mult-check right after it; and for P30: review-fatigue-check right after that.
-    "package.json: life:check runs this check right after duty-actions-check, then week-audit-check, audit-decay-check, skill-decay-check, streak-mult-check and review-fatigue-check; daily-quests:check runs it alone",
-    pkg.scripts["life:check"].includes("tsx scripts/duty-actions-check.ts && tsx scripts/daily-quests-check.ts && tsx scripts/week-audit-check.ts && tsx scripts/audit-decay-check.ts && tsx scripts/skill-decay-check.ts && tsx scripts/streak-mult-check.ts && tsx scripts/review-fatigue-check.ts && tsx scripts/rituals-check.ts") &&
+    // streak-mult-check right after it; for P30: review-fatigue-check right after that; for P31: side-quests-check; and
+    // for P32: calibration-check right after it.
+    "package.json: life:check runs this check right after duty-actions-check, then week-audit-check, audit-decay-check, skill-decay-check, streak-mult-check, review-fatigue-check, side-quests-check and calibration-check; daily-quests:check runs it alone",
+    pkg.scripts["life:check"].includes("tsx scripts/duty-actions-check.ts && tsx scripts/daily-quests-check.ts && tsx scripts/week-audit-check.ts && tsx scripts/audit-decay-check.ts && tsx scripts/skill-decay-check.ts && tsx scripts/streak-mult-check.ts && tsx scripts/review-fatigue-check.ts && tsx scripts/side-quests-check.ts && tsx scripts/calibration-check.ts && tsx scripts/rituals-check.ts") &&
       pkg.scripts["daily-quests:check"] === "tsx scripts/daily-quests-check.ts"
   );
 }

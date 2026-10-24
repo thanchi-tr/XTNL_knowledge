@@ -16,7 +16,12 @@
  *       auditEventInput: sink NONE, xp 0, never a streak day), its decay (read when the cron runs) with it. A copy already
  *       there stands (a second write is a unique violation, reported FROZEN); a later tick or make-up never reaches it.
  *       Only settlement.ts runAuditStep calls it, behind settlementWritesEnabled (never on dev or a Preview: dev and
- *       prod share one database), so this file holds no write gate of its own beyond the launch day.
+ *       prod share one database), so this file holds no write gate of its own beyond the launch day. Blueprint P32
+ *       (D36): the copy also keeps the week's tracked minutes and, from the second copy on, next week's calibration
+ *       (week-calibration-server calibrationFreezeOf), read after the week's facts and never holding the copy up.
+ *   readSideWeek(userId, week, asOf?) → SideWeek | null
+ *       Side quests (blueprint P31, D35): the week's side quests, added and done (side-quests.ts sideWeekOf), beside the
+ *       rate and never in it; done by `asOf` in a frozen copy. One indexed read, only while the audit is in force.
  */
 import { prisma } from "./prisma";
 import { cached } from "./cache";
@@ -24,6 +29,10 @@ import { activityData, invalidateActivity, isDuplicateActivity } from "./activit
 import { todayKey, type DayKey } from "./life-day";
 import { readQuestFacts } from "./daily-quests-server";
 import { readAuditDecay } from "./audit-decay-server";
+import { PERSONAL_BOARD } from "./work-boards";
+import { SIDE_KEY_PREFIX, sideWeekOf, type SideWeek } from "./side-quests";
+import { calibrationFreezeOf } from "./week-calibration-server";
+import { addDays, dayStartOf } from "./life-day";
 import {
   auditEventInput,
   auditFreezeAsOf,
@@ -59,8 +68,22 @@ async function readWeekAudit(userId: string, week: AuditWeek, launchDay: DayKey,
     const copy = row ? parseAuditReceipt(row.receipt) : null;
     if (copy) return frozenAuditOf(copy, today, launchDay);
   }
-  const [facts, decaying] = await Promise.all([readQuestFacts(userId, week.monday, today, { habits: true }), decayOf(userId, week, now)]);
-  return weekAuditOf({ week, launchDay, templates: facts.templates, instances: facts.instances, held: facts.held, decaying, today, now });
+  const [facts, decaying, side] = await Promise.all([readQuestFacts(userId, week.monday, today, { habits: true }), decayOf(userId, week, now), readSideWeek(userId, week)]);
+  return weekAuditOf({ week, launchDay, templates: facts.templates, instances: facts.instances, held: facts.held, decaying, side, today, now });
+}
+
+/** The week's side quests (P31), added on a life day of it, and those done (by `asOf` for a frozen copy); null with none. */
+export async function readSideWeek(userId: string, week: AuditWeek, asOf?: Date): Promise<SideWeek | null> {
+  const rows = await prisma.taskTemplate.findMany({
+    where: {
+      userId,
+      ...PERSONAL_BOARD,
+      captureKey: { startsWith: SIDE_KEY_PREFIX },
+      createdAt: { gte: dayStartOf(week.monday), lt: dayStartOf(addDays(week.sunday, 1)) },
+    },
+    select: { captureKey: true, createdAt: true, completedAt: true, archivedAt: true },
+  });
+  return sideWeekOf(rows, week.monday, asOf);
 }
 
 /** "Decaying this week" (P12): each source soft on its own; a read that still throws leaves the block out (null). */
@@ -88,11 +111,14 @@ export async function freezeWeekAudit(userId: string, now: Date, opts: { env?: A
   const key = auditKey(week.weekKey);
   const existing = await prisma.activityEvent.findUnique({ where: { userId_dedupeKey: { userId, dedupeKey: key } }, select: { id: true } });
   if (existing) return { weekKey: week.weekKey, froze: false, skipped: "FROZEN" };
-  const [facts, decaying] = await Promise.all([readQuestFacts(userId, week.monday, today, { habits: true }), decayOf(userId, week, now)]);
+  // Side quests (P31): done by the copy's 04:00, as every instance is.
+  const [facts, decaying, side] = await Promise.all([readQuestFacts(userId, week.monday, today, { habits: true }), decayOf(userId, week, now), readSideWeek(userId, week, auditFreezeAsOf(today))]);
   // As of the 04:00 turn the copy names, not the cron's own minute: a tick set after it is left out.
   const asOf = auditFreezeAsOf(today);
-  const audit = weekAuditOf({ week, launchDay, templates: facts.templates, instances: instancesAsOf(facts.instances, asOf), held: facts.held, decaying, today, now: asOf });
-  const input = auditEventInput(audit, today, now);
+  const audit = weekAuditOf({ week, launchDay, templates: facts.templates, instances: instancesAsOf(facts.instances, asOf), held: facts.held, decaying, side, today, now: asOf });
+  // P32: the week's tracked minutes and, from the second copy on, next week's calibration, frozen in the same row.
+  const extra = await calibrationFreezeOf(userId, { week, audit, held: facts.held, asOf, today, now, launchDay });
+  const input = auditEventInput(audit, today, now, extra);
   try {
     await prisma.activityEvent.create({ data: activityData(userId, input) });
   } catch (err) {

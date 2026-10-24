@@ -8,6 +8,7 @@ import com.xtnl.app.core.MallLine
 import com.xtnl.app.core.OwedLine
 import com.xtnl.app.core.ProofLine
 import com.xtnl.app.core.ReviewSession
+import com.xtnl.app.core.SideLine
 import com.xtnl.app.core.StreakLine
 import com.xtnl.app.core.TimeLabels
 import com.xtnl.app.core.WalletLine
@@ -61,6 +62,9 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
         DemoTask(TaskItem("t-floss", "Floss", "MUST", "DONE_MVV", minutes = 5, mvv = "one tooth", xpHint = 1.1), "i-floss"),
         DemoTask(TaskItem("t-dentist", "Call the dentist", "TASK", "OPEN", minutes = 10, dueLabel = "late 2d", xpHint = 3.0)),
         DemoTask(TaskItem("t-tax", "Lodge the tax return", "TASK", "OPEN", minutes = 45, dueLabel = "by Fri", xpHint = 6.1)),
+        // P31: a side quest, as a server with the detectors switched on offers it (Body under 75 of 150 effort minutes):
+        // an ordinary one-off in ink with its glyph, never a must; it asks nothing of the day while open.
+        DemoTask(sideWalk()),
         // P23: a deep-work task marked proof, as a server with proof of work switched on sends it: its tick takes its
         // minutes (the sheet) or its timer; the minimum and every other row still tick in one tap.
         DemoTask(TaskItem("t-thesis", "Write the thesis chapter", "TASK", "OPEN", minutes = 90, xpHint = 26.7, proof = true)),
@@ -73,6 +77,17 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
         DemoTask(TaskItem("t-run", "Run 5 km", "HABIT", "HELD", minutes = 35, icon = "run")),
         DemoTask(TaskItem("t-meds", "Morning meds", "HABIT", "DONE", minutes = 2, icon = "pill", xpHint = 3.6), "i-meds"),
     )
+
+    /** P31: the demo's side quest, expiring two days from the check clock's life day (never past its Sunday, as the server's detectors do). */
+    private fun sideWalk(): TaskItem {
+        val today = TimeLabels.lifeDay(clock())
+        val sunday = today.plusDays((DayOfWeek.SUNDAY.value - today.dayOfWeek.value).toLong())
+        val expires = minOf(today.plusDays(2), sunday)
+        return TaskItem(
+            "t-side-walk", "20-minute walk", "TASK", "OPEN", minutes = 20, dueLabel = SideLine.label(expires, today), xpHint = 3.4,
+            side = true, expiresDay = expires.toString(),
+        )
+    }
 
     private data class DemoWork(val item: WorkItem, val done: Boolean = false)
 
@@ -303,6 +318,36 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
             calibrating = false,
             asOfDay = if (sunday) null else day.with(DayOfWeek.MONDAY).toString(),
             decaying = DEMO_DECAYING,
+            side = DEMO_SIDE_WEEK,
+        )
+    }
+
+    /**
+     * Next week's calibration as a server with the audit on and two weeks frozen sends it (docs/mobile-api.md
+     * `calibration`; P32): this life week's, from last week's frozen copy (24 of 28 kept: the target met, so the standard
+     * sizes), the capacity suggestion on offer (a median of 205 tracked minutes a day: 210 in 15s, under the 240 set) and
+     * Floss, a must, eased and already accepted: still a must until its 'Not a must' takes effect in 7 days (Duty live),
+     * as the server says it for a must with that change pending.
+     */
+    private fun calibration(now: Instant): CheckCalibration {
+        val monday = TimeLabels.lifeDay(now).with(DayOfWeek.MONDAY)
+        return CheckCalibration(
+            weekKey = "%d-W%02d".format(monday.get(IsoFields.WEEK_BASED_YEAR), monday.get(IsoFields.WEEK_OF_WEEK_BASED_YEAR)),
+            label = "Week of " + monday.format(DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH)),
+            sizes = CalibrationSizes(move = 20, any = 2, line = "Move 20 min · Finish any 2 tasks", basis = "Last week's daily quests met the audit's target: the standard sizes."),
+            capacityNote = null,
+            changes = listOf(
+                CalibrationChange(
+                    id = "capacity", kind = "capacity", title = "Plan 210 min a day",
+                    basis = "A median of 205 tracked min a day over 4 weeks, scaled by how last week's daily quests compare with the audit's target. You set 240.",
+                ),
+                CalibrationChange(
+                    id = "ease:t-floss", kind = "ease", title = "Floss: not a must",
+                    basis = "Kept 4 of 7 last week and 5 of 7 the week before: under the audit's target both weeks.",
+                    state = "accepted",
+                    line = "Not a must from " + monday.plusDays(7).format(DateTimeFormatter.ofPattern("EEE d MMM", Locale.ENGLISH)) + ".",
+                ),
+            ),
         )
     }
 
@@ -341,6 +386,8 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
                     // As a server with the audit switched on sends it (the reminder never arms from demo data).
                     auditOn = true,
                     week = week(now, daily),
+                    // As a server with the audit on and two weeks frozen sends it (P32): this week's calibration.
+                    calibration = calibration(now),
                     // As a server with credits switched on sends it (P16): the demo's wallet chip.
                     credits = wallet(),
                     // As a server with Duty switched on sends it (P22): the make-up cards' actions run.
@@ -1134,6 +1181,8 @@ class DemoApi(private val clock: () -> Instant = { Instant.now() }) : XtnlApi {
         val LEVEL_TITLES = mapOf(7 to "Adept", 8 to "Expert", 9 to "Master", 10 to "Sage")
         /** The server's cap on daily quests (duty-economy MUSTS_PER_DAY_MAX). */
         const val MUSTS_PER_DAY_MAX = 5
+        /** P31: the week's side quests, as the server sends them beside the rate (one of two done). */
+        val DEMO_SIDE_WEEK = WeekSide(done = 1, offered = 2)
         /** The week's "Decaying this week" (audit-decay.ts): four things fell, the first three listed, as the server sends it. */
         val DEMO_DECAYING = WeekDecaying(
             count = 4,

@@ -2146,7 +2146,25 @@ function staticChecks(): void {
       cron.indexOf("runAuditStep(") > cron.indexOf("runRoadmapStep(") &&
       /source: "CRON", caller: "LIFE_CRON"/.test(cron) &&
       (cron.match(/failed = true/g) ?? []).length === 2 &&
-      /Response\.json\(\{ settle, judge, roadmap, audit \}, \{ status: failed \? 500 : 200 \}\)/.test(cron)
+      // Re-pinned for blueprint P31: the cron's answer carries `side` only while the side quests' detectors are in force.
+      /Response\.json\(\{ settle, judge, roadmap, audit, \.\.\.\(side\.skipped === "NOT_LAUNCHED" \? \{\} : \{ side \}\) \}, \{ status: failed \? 500 : 200 \}\)/.test(cron)
+  );
+  check(
+    "blueprint P31: the side quests' step runs last in the chain (after the roadmap step, RENDER: throttled) and in the cron (after the audit step, CRON); it is inert while SIDE_QUESTS_LAUNCH_DAY is off, then gated by settlementWritesEnabled, and never throws",
+    chain.indexOf("runSideQuestStep(") > chain.indexOf("runRoadmapStep(") &&
+      /runSideQuestStep\(userId, now, \{ env: opts\.env \?\? processEnv\(\), source: "RENDER", run: opts\.side \}\)/.test(chain) &&
+      cron.indexOf("runSideQuestStep(") > cron.indexOf("runAuditStep(") &&
+      /runSideQuestStep\(userId, now, \{ env, source: "CRON", run: deps\.side \}\)/.test(cron) &&
+      (() => {
+        const step = settlementSrc.slice(settlementSrc.indexOf("export async function runSideQuestStep("), settlementSrc.indexOf("const maintaining = new Map"));
+        return (
+          step.indexOf("sideQuestsOn(todayKey(now), launch)") > 0 &&
+          step.indexOf("sideQuestsOn(todayKey(now), launch)") < step.indexOf("settlementWritesEnabled(ctx.env)") &&
+          step.indexOf("settlementWritesEnabled(ctx.env)") < step.indexOf('ctx.source === "RENDER"') &&
+          /catch \(err\) \{[^}]*error: errorText\(err\)/.test(step) &&
+          !/dutyLaunchDay|isDutyLaunched|DUTY_LAUNCH_DAY/.test(step)
+        );
+      })()
   );
 
   console.log("— §6 duty-launch.ts and the shared lock (static) —");

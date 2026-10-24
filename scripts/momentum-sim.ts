@@ -89,7 +89,11 @@ const PROOF_ROWS: ReadonlySet<string> = new Set(["deep work"]);
  * its ticks one tap (no minutes reported: from the launch they add no BODY effort), half with its minutes.
  */
 const SHADOW_EXERCISE = { band: "STANDARD" as Band, minutes: 20, perWeek: 3, oneTapShare: 0.5 } as const;
-/** The Move quest's minutes a tick needs (momentum.ts QUEST.MOVE_MINUTES; 10 once the week's 150 is met). */
+/**
+ * The Move quest's minutes a tick needs (momentum.ts QUEST.MOVE_MINUTES; 10 once the week's 150 is met). The sim keeps the
+ * standard size: a calibrated week (blueprint P32, D36) moves 10 or 30 instead, which decides only whether the BODY
+ * quest is done that day, never a price, so no figure here moves with it (calibration-check holds that).
+ */
 const SHADOW_MOVE_MINUTES = 20;
 /** The streak multiplier (P29): in force once a launch day is set, since every simulated day is after it. */
 const STREAK_ON = streakLaunchDay() != null;

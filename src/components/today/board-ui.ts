@@ -183,11 +183,12 @@ export function recordByLabel(today: DayKey, clockMs: number, tz: string = LIFE_
  * Whether 'Tomorrow' (put a one-off off to tomorrow) is on offer, and why
  * not when it is not. It asks the server's own rule (moveBlockOf), so the
  * drawer and the capacity tile never offer a move rescheduleCore refuses:
- * above all, a compulsory deadline is never put off past its day. A
- * repeating task's 'tomorrow' is Skip, offered on its own.
+ * above all, a compulsory deadline is never put off past its day, and a
+ * side quest (P31) never past its expiry. A repeating task's 'tomorrow' is
+ * Skip, offered on its own.
  */
 export function tomorrowOffer(
-  t: Pick<BoardTemplate, "recurrence" | "compulsory" | "dueKind" | "dueDay" | "completedAt">,
+  t: Pick<BoardTemplate, "recurrence" | "compulsory" | "dueKind" | "dueDay" | "completedAt"> & Pick<Partial<BoardTemplate>, "captureKey">,
   today: DayKey
 ): { show: boolean; reason: string | null } {
   if (ruleOf(t)) return { show: false, reason: null };
@@ -1448,7 +1449,8 @@ export interface CloseChoiceItem {
  * must's minimum and a one-off's Tomorrow. Once Duty is live: every open
  * must (its minimum, or the honest line of what leaving it open costs),
  * Tomorrow / Anytime / Drop for a non-must one-off, and Skip today for a
- * non-must habit. Held musts (a rest day) owe nothing and are not listed.
+ * non-must habit. Held musts (a rest day) owe nothing and are not listed,
+ * nor is an open side quest (P31): it asks nothing of the day.
  *
  * P21 review (D19): `tokens` is what today's musts can count on (FreezeState.forToday). With one or more, settlement
  * spends a Rest Token on today's open musts if one is still banked when today is judged (the run comes first: an
@@ -1474,7 +1476,8 @@ export function closeItemsOf(p: { must: readonly BoardRow[]; todayRows: readonly
   }
   const { planned, habits } = splitTodayLane(p.todayRows);
   for (const r of planned) {
-    if (r.state !== "open" || r.template.compulsory || r.day !== p.today) continue;
+    // An open side quest (P31) asks nothing of the day, so the day's end asks nothing about it either.
+    if (r.state !== "open" || r.template.compulsory || r.day !== p.today || r.side) continue;
     const offer = tomorrowOffer(r.template, p.today);
     const deadline = r.template.dueKind === "DEADLINE";
     const meta = deadline ? `${r.dueLabel ?? "deadline"} · keeps its deadline` : "Planned · carries forward, never late";

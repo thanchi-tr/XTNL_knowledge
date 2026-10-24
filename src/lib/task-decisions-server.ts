@@ -73,6 +73,8 @@ export interface DecisionTemplateRow {
   archivedAt: Date | null;
   deferUntil: Date | null;
   boardId: string | null;
+  /** A side quest's key (P31): it is never deferred past its expiry. Absent (the checks' rows): an ordinary task. */
+  captureKey?: string | null;
 }
 
 /** The reads and writes of the cores: Prisma in the app, an in-memory store in the checks. */
@@ -108,6 +110,7 @@ const TEMPLATE_READ = {
   archivedAt: true,
   deferUntil: true,
   boardId: true,
+  captureKey: true,
 } satisfies Prisma.TaskTemplateSelect;
 
 const DECISION_READ = {
@@ -272,6 +275,7 @@ function planTemplateOf(r: DecisionTemplateRow, today: DayKey): DecisionTemplate
     deferUntil: r.deferUntil,
     pendingArchiveDay: next?.archive ? next.effectiveDay : null,
     boardId: r.boardId,
+    captureKey: r.captureKey ?? null,
   };
 }
 

@@ -18,6 +18,15 @@
  * A week with no frozen copy (writes off, as on dev or a Preview, or a cron that did not run) reads live and stays
  * provisional: only a written copy is ever called frozen or final.
  *
+ * P31 (blueprint 2.5; D35): side quests stay out of the rate (they are one-offs, never musts) and are shown on a lane of
+ * their own ("Side quests · 1 of 2 done · not in the rate", side-quests.ts sideWeekOf), stored with the frozen copy
+ * only when the week had one, so a week with none reads, and freezes, exactly as before.
+ *
+ * P32 (blueprint 5.2d; D36): the frozen copy also keeps the week's tracked minutes a day (`tracked`) and, from the second
+ * frozen copy on, next week's calibration (week-calibration.ts calibrationOf: Today's three sizes, the capacity
+ * suggestion, a must eased or a habit stepped up as one-tap suggestions; never a price, a band or a kept-week floor).
+ * Both are written only by the freeze, so the card, the phone's `week` and every live read are exactly as before.
+ *
  * P12 (blueprint 5.2c and 5.2e; D37): the audit also carries "Decaying this week" (audit-decay.ts: what fell, read
  * from what the app keeps, never applied; stored with the frozen copy), and its "Week audit ready" notice (the bell
  * and Today's Ask, from Sunday 18:00 through Wednesday, info, never counted). The phone's Sunday 19:00 reminder is
@@ -37,8 +46,8 @@
  *              auditStatusOf(sunday, today, frozen) · auditCalibrating(monday, launchDay)
  *   The rate   AUDIT_TARGET · AUDIT_WEAKEST · AuditCounts · AuditRow · AuditLane · weekCompletionOf(questWeek)
  *              AuditTemplate · habitLaneOf(templates, instances, today, opts) · weakestOf(lane) · rateOf(c) · shortOf(c)
- *   The copy   AUDIT_SOURCE · auditKey(weekKey) · AUDIT_RECEIPT_V · AuditReceipt · auditReceiptOf(audit)
- *              parseAuditReceipt(json) · auditAsOfLabel(day) · auditDetailOf(audit) · auditEventInput(audit, now)
+ *   The copy   AUDIT_SOURCE · auditKey(weekKey) · AUDIT_RECEIPT_V · AuditReceipt · AuditExtra · auditReceiptOf(audit, today, extra?)
+ *              parseAuditReceipt(json) · auditAsOfLabel(day) · auditDetailOf(audit) · auditEventInput(audit, today, now, extra?)
  *   The card   WeekAudit · WeekAuditInput · weekAuditOf(input) · frozenAuditOf(receipt, today, launchDay)
  *              auditHeadline(a) · auditWeekLabel(monday) · auditStatusLine(a, today) · auditTargetLine(a)
  *              auditLaneLine(counts, frozen?) · AUDIT_HABITS_NOTE · AUDIT_LANE_NAMES
@@ -53,6 +62,8 @@ import { expectedOn, ruleOn } from "./duty-rule";
 import { shortDate, weekdayName } from "./today-board";
 import { DAILY_QUESTS_TITLE, questOutcomeOf, questWeekOf, type QuestHeldDays, type QuestTemplate, type QuestWeek } from "./daily-quests";
 import { parseDecaying, type AuditDecaying } from "./audit-decay";
+import { parseSideWeek, type SideWeek } from "./side-quests";
+import { parseCalibration, parseTracked, type WeekCalibration } from "./week-calibration";
 import { completesItself, type ActivityInput, type Receipt } from "./life-types";
 import type { Notice } from "./notifications";
 import { WEEK_AUDIT_NOTICE_ID } from "../components/shell/shell-types";
@@ -373,6 +384,11 @@ export interface WeekAudit extends AuditWeek {
    * was not read (a copy written without it, or a read that failed): the card then leaves the block out.
    */
   decaying: AuditDecaying | null;
+  /**
+   * Side quests (P31): the week's offered and done, beside the rate and never in it (side-quests.ts sideWeekOf). Absent
+   * or null with none: the card shows no lane for them, exactly as before.
+   */
+  side?: SideWeek | null;
 }
 
 /** Everything a live read hands weekAuditOf: the week, the facts (daily-quests-server readQuestFacts), now. */
@@ -384,6 +400,8 @@ export interface WeekAuditInput {
   held?: QuestHeldDays;
   /** What fell this week (audit-decay-server readAuditDecay); absent or null: not read. */
   decaying?: AuditDecaying | null;
+  /** The week's side quests (P31; week-audit-server readSideWeek); absent or null: none. */
+  side?: SideWeek | null;
   today: DayKey;
   now: Date;
 }
@@ -409,6 +427,8 @@ export function weekAuditOf(input: WeekAuditInput): WeekAudit {
     habits: habits ?? NO_COUNTS,
     weakest: weakestOf(daily),
     decaying: input.decaying ?? null,
+    // Side quests (P31): only when the week had one, so every other audit is exactly as before.
+    ...(input.side ? { side: input.side } : {}),
   };
 }
 
@@ -519,7 +539,9 @@ export const AUDIT_RECEIPT_V = 1;
 
 /**
  * What the frozen copy stores (ActivityEvent.receipt): the counts as of the freeze, never recomputed. `decaying` (P12)
- * is optional, so the version stays 1: a copy without it (or with one this version cannot read) reads as null.
+ * is optional, so the version stays 1: a copy without it (or with one this version cannot read) reads as null. So is
+ * `side` (P31), written only when the week had a side quest: a copy without it reads as none. So are `tracked` and
+ * `calibration` (P32), written only by the freeze: a copy without them reads as none.
  */
 export interface AuditReceipt {
   v: typeof AUDIT_RECEIPT_V;
@@ -531,11 +553,35 @@ export interface AuditReceipt {
   daily: AuditLane;
   habits: AuditCounts;
   decaying: AuditDecaying | null;
+  side?: SideWeek;
+  /** P32: each day's tracked minutes, Monday first (null on a held day), as of the copy's 04:00. */
+  tracked?: (number | null)[];
+  /** P32: next week's calibration (week-calibration.ts), from the second frozen copy on. */
+  calibration?: WeekCalibration;
 }
 
-/** The copy of a live audit frozen on `today` (its 04:00 turn). */
-export function auditReceiptOf(a: WeekAudit, today: DayKey): AuditReceipt {
-  return { v: AUDIT_RECEIPT_V, weekKey: a.weekKey, monday: a.monday, asOf: a.asOf, asOfDay: today, target: a.target, daily: a.daily, habits: a.habits, decaying: a.decaying };
+/** What only the freeze adds to a copy (P32; week-calibration-server calibrationFreezeOf). */
+export interface AuditExtra {
+  tracked?: (number | null)[] | null;
+  calibration?: WeekCalibration | null;
+}
+
+/** The copy of a live audit frozen on `today` (its 04:00 turn), with what only the freeze adds (P32), when it has it. */
+export function auditReceiptOf(a: WeekAudit, today: DayKey, extra: AuditExtra = {}): AuditReceipt {
+  return {
+    v: AUDIT_RECEIPT_V,
+    weekKey: a.weekKey,
+    monday: a.monday,
+    asOf: a.asOf,
+    asOfDay: today,
+    target: a.target,
+    daily: a.daily,
+    habits: a.habits,
+    decaying: a.decaying,
+    ...(a.side ? { side: a.side } : {}),
+    ...(extra.tracked ? { tracked: extra.tracked } : {}),
+    ...(extra.calibration ? { calibration: extra.calibration } : {}),
+  };
 }
 
 const isCount = (x: unknown): x is number => typeof x === "number" && Number.isInteger(x) && x >= 0;
@@ -560,7 +606,23 @@ export function parseAuditReceipt(json: unknown): AuditReceipt | null {
   const okRows = rows.filter(
     (r): r is AuditRow => !!r && typeof r === "object" && typeof (r as AuditRow).templateId === "string" && typeof (r as AuditRow).title === "string" && isCount((r as AuditRow).kept) && isCount((r as AuditRow).due)
   );
-  return { v: AUDIT_RECEIPT_V, weekKey: o.weekKey, monday: o.monday, asOf: o.asOf, asOfDay: o.asOfDay, target: o.target, daily: { ...daily, rows: okRows }, habits, decaying: parseDecaying(o.decaying) };
+  const side = parseSideWeek(o.side);
+  const tracked = parseTracked(o.tracked);
+  const calibration = parseCalibration(o.calibration);
+  return {
+    v: AUDIT_RECEIPT_V,
+    weekKey: o.weekKey,
+    monday: o.monday,
+    asOf: o.asOf,
+    asOfDay: o.asOfDay,
+    target: o.target,
+    daily: { ...daily, rows: okRows },
+    habits,
+    decaying: parseDecaying(o.decaying),
+    ...(side ? { side } : {}),
+    ...(tracked ? { tracked } : {}),
+    ...(calibration ? { calibration } : {}),
+  };
 }
 
 /** The audit a frozen copy reads as: frozen until the week's judge day, final from it; never recomputed. */
@@ -582,6 +644,7 @@ export function frozenAuditOf(r: AuditReceipt, today: DayKey, launchDay: DayKey)
     habits: r.habits,
     weakest: weakestOf(r.daily),
     decaying: r.decaying,
+    ...(r.side ? { side: r.side } : {}),
   };
 }
 
@@ -593,9 +656,10 @@ export function auditDetailOf(a: Pick<WeekAudit, "rate" | "daily">, asOfDay: Day
 /**
  * The frozen copy as a ledger row: source AUDIT, sink NONE, xp 0, no raw XP, never a streak day, dated the week's
  * Sunday, keyed 'audit:<YYYY-Www>' (a second write is a unique violation: the first copy stands), qty the rate (or
- * null with nothing due), the receipt the counts. It pays nothing and moves no level, MP or streak.
+ * null with nothing due), the receipt the counts (with the freeze's tracked minutes and calibration, P32). It pays
+ * nothing and moves no level, MP or streak.
  */
-export function auditEventInput(a: WeekAudit, today: DayKey, now: Date): ActivityInput {
+export function auditEventInput(a: WeekAudit, today: DayKey, now: Date, extra: AuditExtra = {}): ActivityInput {
   return {
     source: AUDIT_SOURCE,
     sink: "NONE",
@@ -607,7 +671,7 @@ export function auditEventInput(a: WeekAudit, today: DayKey, now: Date): Activit
     qty: a.rate,
     countsForStreak: false,
     // The receipt column holds any JSON; the audit's is its own shape (parseAuditReceipt reads it back).
-    receipt: auditReceiptOf(a, today) as unknown as Receipt,
+    receipt: auditReceiptOf(a, today, extra) as unknown as Receipt,
     detail: auditDetailOf(a, today),
     dedupeKey: auditKey(a.weekKey),
   };

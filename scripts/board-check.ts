@@ -178,6 +178,33 @@ function inst(templateId: string, day: DayKey, status: BoardInstance["status"] =
 /** Every fixture board built below: placeOf is checked against buildBoard on all of them at the end. */
 const fixtureBoards: BoardData[] = [];
 
+// Blueprint P31 (D35): a side quest's row ('side:' key, a DEADLINE expiry) asks nothing of the day while open and is
+// gone after its day, at no cost; no other row carries a side key (side-quests-check holds the rest).
+{
+  const walk = tpl({ id: "sq", title: "20-minute walk", dueDay: addDays(TODAY, 2), dueKind: "DEADLINE", captureKey: "side:body:week:2026-W40" });
+  const chore = tpl({ id: "ch", title: "Vacuum", dueDay: addDays(TODAY, 2), dueKind: "DEADLINE" });
+  const d = (day: DayKey): BoardData => ({ today: day, yesterday: addDays(day, -1), capacityMin: 240, templates: [walk, chore], instances: [], stats: {}, ledger: { today: ledger(day), yesterday: ledger(addDays(day, -1)) }, paid: {}, goalQty: {}, dueNow: 0 });
+  const b = buildBoard(d(TODAY));
+  const w = b.todayRows.find((r) => r.template.id === "sq");
+  const c = b.todayRows.find((r) => r.template.id === "ch");
+  check(
+    "P31: a side quest's row says 'Side quest · expires Sat', is never counted due (1 due: the chore), and no other row carries a side key",
+    w?.dueLabel === "Side quest · expires Sat" && w.side?.expiresDay === addDays(TODAY, 2) && b.counts.due === 1 && !!c && !("side" in c) && c.dueLabel === "by Sat",
+    JSON.stringify([w?.dueLabel, b.counts, c?.dueLabel])
+  );
+  const after = buildBoard(d(addDays(TODAY, 4)));
+  check("P31: two days after its expiry it is gone (no late row) while the chore is late", !after.todayRows.some((r) => r.template.id === "sq") && after.todayRows.some((r) => r.template.id === "ch" && r.late));
+  // P31 review: put off past its expiry it would only be gone, so the one move rule (the drawer's and rescheduleCore's) refuses it.
+  const lastDay = addDays(TODAY, 2);
+  check(
+    "P31: a side quest never moves past its expiry (moveBlockOf): on its last day Tomorrow is refused, the day before it is taken; the chore with the same deadline still moves",
+    /^This side quest expires today, so it can't move past that\./.test(moveBlockOf(walk, addDays(lastDay, 1), lastDay) ?? "") &&
+      moveBlockOf(walk, lastDay, addDays(lastDay, -1)) === null &&
+      moveBlockOf(chore, addDays(lastDay, 1), lastDay) === null,
+    String(moveBlockOf(walk, addDays(lastDay, 1), lastDay))
+  );
+}
+
 /** Board data as `readBoardCore` assembles it: stats from each recurring template's history, as the server computes them. */
 function board(
   templates: BoardTemplate[],

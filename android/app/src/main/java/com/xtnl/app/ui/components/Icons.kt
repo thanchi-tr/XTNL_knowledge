@@ -71,6 +71,8 @@ object Glyphs {
     val Freeze = line("M12 3v18", "M4.2 7.5l15.6 9", "M4.2 16.5l15.6-9", "M9.8 4.6L12 6.4l2.2-1.8", "M9.8 19.4L12 17.6l2.2 1.8", width = 1.7f)
     val Flame = line("M12 21c-3.6 0-6-2.4-6-5.6 0-3.7 3.2-5.3 3.9-9.4 2.9 1.6 4.7 4.2 4.9 6.8.7-.6 1.2-1.6 1.3-2.8 1.3 1.4 1.9 3.3 1.9 5.2 0 3.4-2.5 5.8-6 5.8z")
     val Diamond = line("M12 4l7 8-7 8-7-8z", filled = setOf(0))
+    /** A side quest (P31): a signpost, the web's i-side; drawn in ink beside its words, never alone. */
+    val Side = line("M12 21V3", "M12 5h6l2 2.5-2 2.5h-6", "M12 12.5H6l-2 2.5 2 2.5h6")
 
     /** The Mall (More's row; blueprint P18): the web's bag (the kit's i-bag), what credits are spent on. */
     val Mall = line("M5.5 8.5h13l-1.2 12h-10.6z", "M9 8.5V7a3 3 0 0 1 6 0v1.5")

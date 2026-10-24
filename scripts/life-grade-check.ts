@@ -887,6 +887,14 @@ console.log("— momentum: the facts read on a live day (perks, the frog) —");
   check("the frog: today's TASK quest after its latest swap (tB); another day's swap is ignored", facts.frogTemplateId === "tB", String(facts.frogTemplateId));
   check("…none without a set, or for 'Finish any 2 tasks'", momentumFactsOf([], M_DAY, new Date()).frogTemplateId === null && momentumFactsOf([row("QUEST_SET", null, 0, { v: "quests-1", day: M_DAY, quests: [{ slot: "TASK", kind: "ANY", count: 2, title: "Finish any 2 tasks" }] })], M_DAY, new Date()).frogTemplateId === null);
   check("a perk learned after the tick does not price it", momentumFactsOf([row("PERK", "D_STEADY", 120)], M_DAY, new Date("2026-10-19T01:00:00.000Z")).perks.length === 0);
+  // Blueprint P32 (D36): a calibrated week's set is quests-2 (its sizes recorded); the frog reads it exactly as a quests-1
+  // set, and 'Finish any 3 tasks' is no frog either: the sizes never reach a price.
+  const set2 = { ...set, v: "quests-2", sizes: { move: 30, any: 3, from: "2026-W42" } };
+  check(
+    "P32: the frog from a quests-2 set is the same (tB after its swap); a calibrated 'Finish any 3 tasks' is none",
+    momentumFactsOf([row("QUEST_SET", null, 4, set2), row("QUEST_SET", null, 5, swap(1, "tB"))], M_DAY, new Date("2026-10-19T01:00:00.000Z")).frogTemplateId === "tB" &&
+      momentumFactsOf([row("QUEST_SET", null, 0, { v: "quests-2", day: M_DAY, quests: [{ slot: "TASK", kind: "ANY", count: 3, title: "Finish any 3 tasks" }], sizes: { move: 30, any: 3, from: "2026-W42" } })], M_DAY, new Date()).frogTemplateId === null
+  );
 }
 
 console.log("— momentum: one payment for one walk (§A.6, completeLinkedCore) —");

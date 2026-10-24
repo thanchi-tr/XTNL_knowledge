@@ -105,6 +105,7 @@ import { deferNoteOf, isDeferredNow, type DeferredItem, type TemplateDecisions }
 import { pagesGated, pagesTargetOf, priceProofOf, proofGated, timerBelongsTo, type ProofFacts, type ProofKind, type TimerView } from "./proof";
 import { streakLive, streakRunOn, streakViewOf, type BoardStreak, type StreakView } from "./streak-mult";
 import { completesItself } from "./life-types";
+import { SIDE_LABEL, sideExpiredOn, sideExpiredRefusalOf, sideExpiresOf, sideLabelOf, sideMoveRefusalOf } from "./side-quests";
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -1155,7 +1156,7 @@ export function yesterdayBookable(
  * a sparse rule every day to farm its consistency.
  */
 export function completionBlockOf(a: {
-  t: Pick<BoardTemplate, "recurrence" | "startDay" | "autoMetric" | "dueKind" | "dueDay" | "planDay" | "completedAt">;
+  t: Pick<BoardTemplate, "recurrence" | "startDay" | "autoMetric" | "dueKind" | "dueDay" | "planDay" | "completedAt"> & Pick<Partial<BoardTemplate>, "captureKey">;
   rule: Rule | null;
   day: DayKey;
   today: DayKey;
@@ -1168,6 +1169,8 @@ export function completionBlockOf(a: {
   if (day !== today && day !== yesterday) return "Only today, or yesterday until today ends, can be recorded. Refresh the board.";
   if (t.startDay > day) return "That task didn't exist yet on that day.";
   if (!rule && t.completedAt) return "Already done.";
+  // A side quest past its expiry (blueprint P31): gone from the board, so its tick is refused too, at no cost.
+  if (!rule && sideExpiredOn(t, day)) return sideExpiredRefusalOf(t.dueDay as DayKey);
   if (day === today) {
     if (!rule || rule.kind === "TARGET") return null;
     return expectedToday(t, rule, today, a.lastDone).due ? null : "It isn't due today.";
@@ -1182,10 +1185,11 @@ export function completionBlockOf(a: {
  * moves to any day from today on, except that a compulsory deadline is
  * never put off past its own day. A deadline that moves keeps its day and
  * its late factor (it is put off with planDay, see rescheduleCore): moving
- * is a plan, not a way out of being late.
+ * is a plan, not a way out of being late. A side quest (blueprint P31) never
+ * moves past its expiry: it would only be gone on the day it came back.
  */
 export function moveBlockOf(
-  t: Pick<BoardTemplate, "recurrence" | "compulsory" | "dueKind" | "dueDay" | "completedAt">,
+  t: Pick<BoardTemplate, "recurrence" | "compulsory" | "dueKind" | "dueDay" | "completedAt"> & Pick<Partial<BoardTemplate>, "captureKey">,
   target: DayKey,
   today: DayKey
 ): string | null {
@@ -1193,6 +1197,8 @@ export function moveBlockOf(
   if (t.completedAt) return "Already done.";
   if (target < today) return "Pick today or a later day.";
   if (t.compulsory && t.dueKind === "DEADLINE" && t.dueDay && target > t.dueDay) return "A compulsory deadline can't be put off past its day.";
+  const sideDay = sideExpiresOf(t);
+  if (sideDay && target > sideDay) return sideMoveRefusalOf(sideDay, today);
   return null;
 }
 
@@ -1371,6 +1377,17 @@ export interface BoardRow {
    * is sent), at least its day's target when it has one. Absent or null: the row ticks as before.
    */
   pages?: RowPages | null;
+  /**
+   * Side quests (blueprint P31, side-quests.ts): the row is a side quest, with the life day it expires after. Its
+   * dueLabel says so ('Side quest · expires Fri'); while open it asks nothing of the day (asksToday), and once expired
+   * it is gone at no cost. Absent: an ordinary row, exactly as before.
+   */
+  side?: RowSide | null;
+}
+
+/** BoardRow.side: the day a side quest expires after (its DEADLINE dueDay). */
+export interface RowSide {
+  expiresDay: DayKey;
 }
 
 /** BoardRow.proof: the gate is on for this row, and its timer. */
@@ -1611,6 +1628,8 @@ const PLACE_INBOX: BoardPlace = { lane: "inbox", label: "Inbox" };
 const PLACE_GOALS: BoardPlace = { lane: "goals", label: "Goals" };
 const PLACE_GOAL_CLOSED: BoardPlace = { lane: "done", label: "Closed" };
 const PLACE_DONE_TODAY: BoardPlace = { lane: "done", label: "Done today" };
+/** A side quest past its expiry (P31): off the board, at no cost. */
+const PLACE_SIDE_EXPIRED: BoardPlace = { lane: "done", label: `${SIDE_LABEL} · expired` };
 
 /** 'Planned later · Fri 2 Oct'. */
 function laterPlace(day: DayKey): BoardPlace {
@@ -1665,13 +1684,21 @@ export function placementOf(t: BoardTemplate, ctx: PlaceContext): Placement {
       (i) => isDoneStatus(i.status) && (i.day === today || (i.day === yesterday && i.source === "record-yesterday"))
     );
     if (t.completedAt && !doneInst) return only({ lane: "done", label: "Done" });
-    const due = dueLabelOf(t, today);
+    // A side quest (blueprint P31): its deadline is its expiry, said as one ('Side quest · expires Fri'), never late.
+    const sideDay = sideExpiresOf(t);
+    const due = sideDay ? { label: sideLabelOf(sideDay, today), late: false, carriedFrom: null } : dueLabelOf(t, today);
     if (doneInst) {
       const onYesterday = doneInst.day === yesterday;
       const lane: Lane = onYesterday ? "yesterday" : t.compulsory ? "must" : "today";
       return only(onYesterday ? { lane: "done", label: "Done yesterday" } : PLACE_DONE_TODAY, {
         rows: [{ lane, day: doneInst.day, extra: { dueLabel: due.label, late: due.late } }],
       });
+    }
+    // A side quest past its expiry (D35): gone from today at no cost, never late, never counted, its tick refused
+    // (completionBlockOf). Yesterday's record window still holds one that expired yesterday, as it holds any deadline.
+    if (sideDay && sideDay < today) {
+      const rows: PlacedRow[] = yesterdayRecordable(t, null, yesterday, null) ? [{ lane: "yesterday", day: yesterday, extra: { dueLabel: `${SIDE_LABEL} · by yesterday` } }] : [];
+      return only(PLACE_SIDE_EXPIRED, { rows });
     }
     // Put off to a later day: off the board until then, deadline untouched.
     if (t.planDay && t.planDay > today) return only(laterPlace(t.planDay), { laterDay: t.planDay });
@@ -1690,13 +1717,15 @@ export function placementOf(t: BoardTemplate, ctx: PlaceContext): Placement {
       // Due yesterday: late if done now, but still on time if it was done
       // yesterday and only the tick is late — the record window's promise.
       if (yesterdayRecordable(t, null, yesterday, null)) rows.push({ lane: "yesterday", day: yesterday, extra: { dueLabel: "by yesterday" } });
+      // A side quest's place is its own words ('Side quest · expires Fri'), so the capture toast says it too.
+      const planned: BoardPlace = sideDay && due.label ? { lane: "planned", label: due.label } : PLACE_PLANNED;
       if (gap <= 0) {
         rows.push({ lane: t.compulsory ? "must" : "today", day: today, extra: { dueLabel: due.label, late: due.late } });
-        return only(t.compulsory ? PLACE_MUST : PLACE_PLANNED, { rows });
+        return only(t.compulsory ? PLACE_MUST : planned, { rows });
       }
       if (gap <= DEADLINE_LOOKAHEAD_DAYS) {
         rows.push({ lane: "today", day: today, extra: { dueLabel: due.label } });
-        return only(PLACE_PLANNED, { rows });
+        return only(planned, { rows });
       }
       rows.push({ lane: "anytime", day: today, extra: { dueLabel: due.label } });
       return only({ lane: "anytime", label: `Anytime · ${due.label ?? `by ${shortDate(t.dueDay)}`}` }, { rows });
@@ -1992,6 +2021,9 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = [], nowMs?
     const proofRow: RowProof | null = d.proof && proofGated(t, day, d.proof.launchDay) ? { timer: proofTimer } : null;
     // Pages proof (P24): a reading task's tick reports its pages, at least its day's target.
     const pagesRow: RowPages | null = d.proof && pagesGated(t, day, d.proof.launchDay) ? { target: pagesTargetOf(t) } : null;
+    // Side quests (P31): a side quest's row carries the day it expires after.
+    const sideDay = sideExpiresOf(t);
+    const sideRow: RowSide | null = sideDay ? { expiresDay: sideDay } : null;
     let state: RowState = done.length > 0 ? "done" : skipped ? "skipped" : "open";
     // Steps (today only): ticked steps that paid a part keep the row open, its tick finishing the rest.
     const sub = day === today && stepsAllowed(t) ? d.subtasks?.[t.id] : undefined;
@@ -2070,6 +2102,8 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = [], nowMs?
       // Proof of work (P23): only while BoardData.proof is sent, so every row before the launch is exactly as before.
       ...(proofRow ? { proof: proofRow } : {}),
       ...(pagesRow ? { pages: pagesRow } : {}),
+      // Side quests (P31): only on a side quest's row, so every other row is exactly as before.
+      ...(sideRow ? { side: sideRow } : {}),
       ...extra,
     };
   };
@@ -2148,8 +2182,8 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = [], nowMs?
   const over = Math.max(0, planned - capacity);
   const suggestion = over > 0 ? cheapestMovable(todayRows) : null;
 
-  // Held rows owe nothing today: never counted open (the bell, the nav badge, 'clear').
-  const openish = (r: BoardRow) => (r.state === "open" || r.state === "locked") && !r.heldToday;
+  // Held rows owe nothing today: never counted open (the bell, the nav badge, 'clear'); nor does a side quest (P31).
+  const openish = (r: BoardRow) => (r.state === "open" || r.state === "locked") && !r.heldToday && !r.side;
   const musts = must.filter(openish).length;
   const due = todayRows.filter(openish).length;
 
@@ -2187,9 +2221,12 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = [], nowMs?
  * Whether a row still asks something of today: not skipped, and not held by
  * a rest day while undone (a held row the player does anyway counts, kept).
  * The lane tallies, the capacity and the open counts read this one rule.
+ * A side quest (blueprint P31, D35) asks nothing while open, so it never
+ * keeps the board from clear and letting it expire costs nothing; done, it
+ * counts like any row.
  */
-export function asksToday(r: Pick<BoardRow, "state" | "heldToday">): boolean {
-  return r.state !== "skipped" && !(r.heldToday && r.state !== "done");
+export function asksToday(r: Pick<BoardRow, "state" | "heldToday"> & Pick<Partial<BoardRow>, "side">): boolean {
+  return r.state !== "skipped" && !((r.heldToday || !!r.side) && r.state !== "done");
 }
 
 /** The open debts, oldest first, each re-priced against today's live ledger (a tick moves D and V for a make-up too). */
@@ -2203,12 +2240,13 @@ function owedNow(owed: readonly OwedCard[], ledger: DayLedger, today: DayKey): O
  * The lowest projected-XP open card that is safe to move: not compulsory,
  * not a study task, and not a deadline due today or already past (moving
  * it cannot make it any less late, so the tile never suggests it). Ties go
- * to the longer card, which frees more time.
+ * to the longer card, which frees more time. Never a side quest (P31): it
+ * asks nothing of the day, and moving it would only outlive its expiry.
  */
 export function cheapestMovable(rows: readonly BoardRow[]): BoardRow | null {
   let best: BoardRow | null = null;
   for (const r of rows) {
-    if (r.state !== "open" || r.template.compulsory || r.auto) continue;
+    if (r.state !== "open" || r.template.compulsory || r.auto || r.side) continue;
     if (r.template.dueKind === "DEADLINE" && r.template.dueDay && r.template.dueDay <= r.day) continue;
     if (
       !best ||

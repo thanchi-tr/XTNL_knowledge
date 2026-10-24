@@ -9,6 +9,7 @@ import { sizeLexically } from "@/lib/life-lexicon";
 import { dutyLaunchDay } from "@/lib/duty-economy";
 import { todayKey } from "@/lib/life-day";
 import { pagesCaptureLabelOf, proofChipLabelOf, proofLaunchDay, proofOn } from "@/lib/proof";
+import { SIDE_WORK_LABEL } from "@/lib/side-quests";
 import type { CaptureToken, ParsedCapture, PayMode, Sizing } from "@/lib/life-types";
 import { CurrencyGlyph, Icon, type IconName } from "@/components/ui/Icon";
 import type { CaptureActiveTitle } from "@/app/actions/capture";
@@ -70,6 +71,7 @@ const TOKEN_ICON: Partial<Record<CaptureToken["field"], IconName>> = {
   done: "check",
   inbox: "inbox",
   parent: "flag",
+  side: "side",
 };
 
 const FEEDS_SHOWN = 3;
@@ -265,6 +267,13 @@ export function CaptureChips({
               miss = proofState.work;
             }
             if (t.field === "pages" && parsed.autoTarget != null) label = pagesCaptureLabelOf(parsed.autoTarget, proofState);
+            // Side quests (P31): '#side' on a work tab is dropped (work stays out of the game); on a line that repeats it is
+            // not taken, and on a side line the Must and Inbox marks are not (the parse says so in their labels).
+            if (t.field === "side") {
+              if (proofState.work) label = SIDE_WORK_LABEL;
+              miss = proofState.work || !parsed.side;
+            }
+            if (parsed.side && (t.field === "compulsory" || t.field === "inbox")) miss = true;
             if (t.field === "parent" && parsed.parentHint && goals) {
               // The goal it will attach to, or an honest miss: the server
               // matches the same way (matchParentGoal), so this is what lands.

@@ -41,6 +41,7 @@
  *               rest-tokens.ts, replace the EARN − USE counts)
  *   Rule edits  RuleRow · RuleEdit · RuleWrite · RuleEditPlan · ruleStateOf · planRuleEdit
  *               ClarifyChoice · planClarifyRule (F3)
+ *               (blueprint P32: RuleEdit 'flag', a habit made a must by the calibration's step-up)
  *   Board (F7)  OwedRow · DutyBoardFacts · dutyBoardOf · yesterdayMustsOf (BoardData.duty and
  *               TodayCounts.yesterdayMusts, assembled from tasks.ts's board-core read)
  */
@@ -858,7 +859,9 @@ export type RuleEdit =
   /** Archive (the board's Archive, an inbox Drop). `at` stamps archivedAt (capture's edit link); default now. */
   | { kind: "archive"; at?: Date }
   /** Bring an archived template back (the Undo of Archive and Drop). */
-  | { kind: "unarchive" };
+  | { kind: "unarchive" }
+  /** Blueprint P32 (D36): make it a must (the calibration's step-up, one tap; tasks.ts setMustCore holds the cap). */
+  | { kind: "flag" };
 
 /** The columns a rule edit writes; an absent field is unchanged. pendingChange null clears it (Prisma.DbNull). */
 export interface RuleWrite {
@@ -909,7 +912,8 @@ function cancelWrite(row: RuleRow): RuleWrite {
  * with pendingRefusal); otherwise immediate. A strengthening is immediate
  * and never retroactive: it appends a prior segment with the old values
  * through today − 1 (decision 16). A repeat of what is already so (or
- * already pending) writes nothing.
+ * already pending) writes nothing. 'flag' (blueprint P32) is such a
+ * strengthening: a must from today, a pending 'Not a must' cancelled.
  */
 export function planRuleEdit(
   row: RuleRow,
@@ -977,6 +981,13 @@ export function planRuleEdit(
       if (write.archivedAt === undefined && write.pendingChangeAt === undefined) return immediate(null);
       write.pendingChange = pendingChangeJson(pc);
       return immediate(write);
+    }
+    case "flag": {
+      // A strengthening: immediate, and never retroactive (it could have been expected before today only as a non-must).
+      if (row.compulsory) return next?.compulsory === false ? immediate(cancelWrite(row)) : immediate(null);
+      if (row.inbox || (row.kind !== "TASK" && row.kind !== "HABIT")) return fail("Only a task or a habit on the board can be a must.");
+      if (row.startDay >= ctx.today) return immediate({ compulsory: true });
+      return immediate({ compulsory: true, pendingChange: appendPrior(row.pendingChange, { throughDay: addDays(ctx.today, -1), compulsory: false }) });
     }
   }
 }

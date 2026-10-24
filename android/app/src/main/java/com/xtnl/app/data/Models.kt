@@ -39,6 +39,11 @@ data class CheckData(
     /** The weekly audit (the web's Week audit card): null while it is switched off, and from an older server. */
     val week: WeekAudit? = null,
     /**
+     * Next week's calibration (blueprint 5.2d, P32; decision D36): the web's Next week card, read only. Null while none is
+     * in force (the audit switched off, or fewer than two weeks frozen), and from an older server: no card.
+     */
+    val calibration: CheckCalibration? = null,
+    /**
      * The credits wallet (blueprint P16): its balance and what today earned. Null while credits are switched off
      * (CREDITS_LAUNCH_DAY, until the user's go), when it couldn't be read, and from an older server: no wallet chip.
      */
@@ -86,6 +91,13 @@ data class TaskItem(
      * of work switched off, and from an older server.
      */
     val pages: TaskPages? = null,
+    /**
+     * Side quests (blueprint P31, D35): the row is a side quest, and [expiresDay] ("2026-10-23") the life day it expires
+     * after. Its [dueLabel] says so ("Side quest · expires Fri"); it pays its normal price, is never a must, and asks
+     * nothing of the day while open. False and null on every other row, and from an older server.
+     */
+    val side: Boolean = false,
+    val expiresDay: String? = null,
 ) {
     /** Can be ticked (a LOCKED study task completes itself from the day's reviews). */
     val open: Boolean get() = status == "OPEN"
@@ -93,9 +105,10 @@ data class TaskItem(
     val kept: Boolean get() = status == "DONE" || status == "DONE_MVV"
     /**
      * A row the web's Board clear counts (today-board.ts): Must, Planned and Habits alike, held and skipped
-     * rows aside. The app shows the server's own figure (tasksSummary, a tick's allDone); this is the demo's.
+     * rows aside, and a side quest still open (P31: it asks nothing of the day; done, it counts). The app shows the
+     * server's own figure (tasksSummary, a tick's allDone); this is the demo's.
      */
-    val countsForBoard: Boolean get() = status != "HELD" && status != "SKIPPED"
+    val countsForBoard: Boolean get() = status != "HELD" && status != "SKIPPED" && !(side && !kept)
 }
 
 @Serializable
@@ -203,6 +216,46 @@ data class WeekAudit(
     val asOfDay: String? = null,
     /** "Decaying this week" (blueprint 5.2c; P12): its count and first three lines; null when it wasn't read. */
     val decaying: WeekDecaying? = null,
+    /** The week's side quests (blueprint P31): offered and done, beside the rate and never in it; null with none, and from an older server. */
+    val side: WeekSide? = null,
+)
+
+/** A week's side quests (docs/mobile-api.md `week.side`): those added on a day of it, and those done. */
+@Serializable
+data class WeekSide(val done: Int = 0, val offered: Int = 0)
+
+/**
+ * Next week's calibration (docs/mobile-api.md `calibration`; blueprint 5.2d, P32, decision D36): the week it is for, Today's
+ * three sizes (set by themselves), the capacity's reading when it changes nothing, and each suggestion with its state. No
+ * rate and no target: those are the audit's alone (D17). Accept and Keep stay on the web.
+ */
+@Serializable
+data class CheckCalibration(
+    val weekKey: String = "",
+    /** "Week of 26 Oct". */
+    val label: String = "",
+    val sizes: CalibrationSizes = CalibrationSizes(),
+    /** "…: your 240 min a day stands." when the capacity suggestion changes nothing; else null. */
+    val capacityNote: String? = null,
+    val changes: List<CalibrationChange> = emptyList(),
+)
+
+/** Today's three for the week: BODY's Move [move] min (10, 20 or 30), TASK's Finish any [any] tasks (2 or 3), and why. */
+@Serializable
+data class CalibrationSizes(val move: Int = 20, val any: Int = 2, val line: String = "", val basis: String = "")
+
+/**
+ * One suggestion: [kind] capacity | ease | step-up, its [title] and [basis] in the web card's words, [state] open (on offer
+ * on the web), accepted or gone, and [line] what stands once it is not open ("Not a must from Mon 2 Nov.").
+ */
+@Serializable
+data class CalibrationChange(
+    val id: String = "",
+    val kind: String = "",
+    val title: String = "",
+    val basis: String = "",
+    val state: String = "open",
+    val line: String? = null,
 )
 
 /**

@@ -108,8 +108,11 @@ class CheckViewModel(private val graph: AppGraph) : ViewModel() {
                     else -> t
                 }
             }
-        /** The header's counts: every row the list shows (habits included), so "3 open" matches three open circles. */
-        val shownOpen: Int get() = tasks.count { (it.open || it.locked) && it.status != "HELD" && it.status != "SKIPPED" }
+        /**
+         * The header's counts: every row the list shows (habits included), so "3 open" matches three open circles; a side
+         * quest still open is not counted (P31: it asks nothing of the day, as the web's counts and tasksSummary say).
+         */
+        val shownOpen: Int get() = tasks.count { (it.open || it.locked) && it.countsForBoard }
         val shownKept: Int get() = tasks.count { it.kept }
         /** The daily quests (the Must lane's count and strip), each listed quest's cell live from its row (DailyStrip). */
         val daily: DailyQuests? get() = DailyStrip.live(data?.daily, tasks)

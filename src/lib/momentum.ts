@@ -43,7 +43,7 @@
  *                   PerkCode · Perk · TIER_GATE · PERKS · perkOf · spentIn · learnCheck · ownedPerksOf
  *                   respecEpochOf · nextRespecDay · respecAllowed · LifeMods · lifeModsOf · DEFAULT_LIFE_MODS
  *                   rawWorstCaseMomentum · RAW_WORST_CASE_MOMENTUM
- *   Today's three   QuestSlot · QUEST_PICK_ORDER · Quest · QuestSet · QuestSwap · questIdentity
+ *   Today's three   QuestSlot · QUEST_PICK_ORDER · Quest · QuestSizes · QuestSet · QuestSwap · questIdentity
  *                   isQuestSet · isQuestSwap · questsInForce · taskQuestScore · TaskQuestCandidate
  *                   rankTaskQuests · swapsAllowed · bodyMoveMinutes
  *   The nudge       nudgeOn(pref) · inNudgeWindow(localHour)
@@ -221,6 +221,12 @@ export const QUEST = {
   MOVE_EASY_MINUTES: 10,
   /** TASK fallback 'Finish any 2 tasks': 2 live FULL TASK rows today. */
   ANY_TASKS: 2,
+  /**
+   * The sizes a week's calibration may set instead (blueprint P32, D36; week-calibration.ts): BODY's Move minutes and
+   * TASK's 'Finish any n tasks'. A set picked without one uses MOVE_MINUTES and ANY_TASKS, exactly as before.
+   */
+  MOVE_SIZES: [10, 20, 30],
+  ANY_SIZES: [2, 3],
   /** PLAN 'Review min(10, due) cards', the count frozen in the set. */
   REVIEWS_MAX: 10,
   /** The big one: score = priceTask(projected, rawBefore 0).raw × 1.5 (compulsory) × 1.3 (DEADLINE ≤ today). */
@@ -1019,11 +1025,27 @@ export type Quest =
   | { slot: "TASK"; kind: "TEMPLATE"; templateId: string; track: Track; raw: number; score: number; title: string; why?: string }
   | { slot: "TASK"; kind: "ANY"; count: number; title: string; why?: string };
 
-/** The QUEST_SET row's receipt ('quests:<day>'): the three, in QUEST_PICK_ORDER. */
+/** The sizes a calibrated week's sets are picked with (blueprint P32, D36): its frozen calibration's (week-calibration.ts). */
+export interface QuestSizes {
+  /** BODY's 'Move n min' while the week's effort minutes are under BODY_EFFORT_MINUTES: one of QUEST.MOVE_SIZES. */
+  move: number;
+  /** TASK's 'Finish any n tasks': one of QUEST.ANY_SIZES. */
+  any: number;
+  /** The audited week ('YYYY-Www') whose frozen copy set them. */
+  from: string;
+}
+
+/**
+ * The QUEST_SET row's receipt ('quests:<day>'): the three, in QUEST_PICK_ORDER. 'quests-2' (blueprint P32) is a set
+ * picked in a calibrated week and records its sizes; every other set is 'quests-1' and reads exactly as before. Either
+ * way each quest carries its own minutes and count, so a stored set is never re-sized.
+ */
 export interface QuestSet {
-  v: "quests-1";
+  v: "quests-1" | "quests-2";
   day: DayKey;
   quests: Quest[];
+  /** quests-2 only: the sizes it was picked with. */
+  sizes?: QuestSizes;
 }
 
 /** A swap row's receipt ('quests:<day>:swap:<SLOT>:<n>'): the replacement. The latest swap of a slot wins. */
@@ -1061,7 +1083,7 @@ const isQuestLike = (x: unknown): x is Quest => !!x && typeof x === "object" && 
 export function isQuestSet(x: unknown): x is QuestSet {
   if (!x || typeof x !== "object" || Array.isArray(x)) return false;
   const r = x as Partial<QuestSet>;
-  return r.v === "quests-1" && typeof r.day === "string" && Array.isArray(r.quests) && r.quests.every(isQuestLike);
+  return (r.v === "quests-1" || r.v === "quests-2") && typeof r.day === "string" && Array.isArray(r.quests) && r.quests.every(isQuestLike);
 }
 
 export function isQuestSwap(x: unknown): x is QuestSwap {
@@ -1105,9 +1127,12 @@ export function swapsAllowed(slot: QuestSlot, mods: Pick<LifeMods, "taskSwaps" |
   return slot === "TASK" ? mods.taskSwaps : slot === "PLAN" ? mods.planSwaps : 0;
 }
 
-/** BODY's fallback: 'Move 20 min' while the week's BODY effort minutes are under 150, else 'Move 10 min'. */
-export function bodyMoveMinutes(weekEffortMinutes: number): number {
-  return weekEffortMinutes < BODY_EFFORT_MINUTES ? QUEST.MOVE_MINUTES : QUEST.MOVE_EASY_MINUTES;
+/**
+ * BODY's fallback: 'Move 20 min' while the week's BODY effort minutes are under 150, else 'Move 10 min'. A calibrated
+ * week (blueprint P32) passes its size (10, 20 or 30) for the first; once the 150 is met it is never over 10.
+ */
+export function bodyMoveMinutes(weekEffortMinutes: number, size: number = QUEST.MOVE_MINUTES): number {
+  return weekEffortMinutes < BODY_EFFORT_MINUTES ? size : Math.min(size, QUEST.MOVE_EASY_MINUTES);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

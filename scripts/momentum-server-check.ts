@@ -51,6 +51,7 @@ import {
   pickQuests,
   planMilestone,
   questCandidatesOf,
+  questRowsOf,
   respecCore,
   setFlameSkinCore,
   setNudgeCore,
@@ -422,6 +423,31 @@ async function main(): Promise<void> {
     s.insert(USER, { source: "PERK", sink: "NONE", day: TODAY, occurredAt: nowOn(TODAY, 8), qty: 1, detail: "D_SWAP", dedupeKey: "perk:D_SWAP:0" });
     const sw3 = await swapQuestCore(USER, "TASK", d);
     check("a done quest cannot be swapped (even with a swap left)", !sw3.ok && /done already/.test(sw3.error), j(sw3));
+
+    // Blueprint P32 (D36): a calibrated week's sources carry its sizes; the fallbacks take them and the set is quests-2.
+    // Without them (every week while AUDIT_LAUNCH_DAY is off) the set is quests-1 exactly as above.
+    check("P32: the set above is quests-1 with no sizes key (no calibration in force)", !!x && x.v === "quests-1" && !("sizes" in x), j(x));
+    const sized = { move: 30, any: 3, from: "2026-W43" };
+    const bareSized = pickQuests(sourcesOf({ candidates: [], plan: { hasRoadmap: false, practices: [], checkpoints: [], adds: [] }, reviewsDue: 3, weekEffortMinutes: 40, sizes: sized }), tie);
+    check(
+      "P32 fallbacks in a calibrated week: 'Move 30 min' and 'Finish any 3 tasks', each saying it was sized from last week's audit; 'Move 10 min' once the 150 is met",
+      j(bareSized.map((q) => q.title)) === j(["Review 3 cards", "Move 30 min", "Finish any 3 tasks"]) &&
+        bareSized.slice(1).every((q) => /· sized from last week's audit$/.test(q.why ?? "")) &&
+        pickQuests(sourcesOf({ candidates: [], plan: { hasRoadmap: false, practices: [], checkpoints: [], adds: [] }, reviewsDue: 3, weekEffortMinutes: 160, sizes: sized }), tie)[1].title === "Move 10 min",
+      j(bareSized.map((q) => [q.title, q.why]))
+    );
+    check("P32: a due exercise or a big task still comes first (the sizes are the fallbacks' only)", j(pickQuests(sourcesOf({ sizes: sized }), tie).map(questIdentity)) === j(three.map(questIdentity)));
+    const s2 = new FakeStore();
+    s2.sources = sourcesOf({ candidates: [], plan: { hasRoadmap: false, practices: [], checkpoints: [], adds: [] }, reviewsDue: 3, weekEffortMinutes: 40, sizes: sized });
+    const set2 = await ensureQuestSet(USER, TODAY, depsOf(s2));
+    const row2 = s2.of("QUEST_SET", `quests:${TODAY}`)[0];
+    check(
+      "P32: ensureQuestSet writes quests-2 with the sizes it was picked with, write-once as ever; the row is the same sink NONE decision row",
+      !!set2 && set2.v === "quests-2" && j(set2.sizes) === j(sized) && j(row2?.receipt) === j(set2) && row2?.sink === "NONE" && row2.xp === 0 && !row2.countsForStreak && questRowsOf([row2], TODAY).inForce.some((q) => q.kind === "MOVE" && q.minutes === 30),
+      j(set2)
+    );
+    s2.sources = sourcesOf({ candidates: [], plan: { hasRoadmap: false, practices: [], checkpoints: [], adds: [] }, reviewsDue: 3, weekEffortMinutes: 40 });
+    check("P32: a stored quests-2 set is never re-sized (a later read returns it as stored)", j(await ensureQuestSet(USER, TODAY, depsOf(s2))) === j(set2) && s2.commits === 1);
   }
 
   // ════ §4 work boards ════
@@ -468,6 +494,9 @@ async function main(): Promise<void> {
     const row = (template: Record<string, unknown>) => ({ key: String(template.id), template, lane: "today", day: TODAY, state: "open", slot: 0, streakDays: 0, projection: { raw: 10 } }) as unknown as BoardRow;
     const cands = questCandidatesOf([row(tpl("mine")), row(tpl("theirs", { boardId: "wb-1" }))], ledger, TODAY);
     check("questCandidatesOf drops a row whose template carries a work board id, and prices the rest at rawBefore 0", cands.length === 1 && cands[0].templateId === "mine" && cands[0].raw > 0, j(cands));
+    // Re-pinned for blueprint P31 (D35): a side quest's row asks nothing of the day, so it is never Today's TASK quest.
+    const side = questCandidatesOf([row(tpl("mine")), { ...row(tpl("walk", { captureKey: "side:body:week:2026-W40" })), side: { expiresDay: TODAY } }], ledger, TODAY);
+    check("P31: questCandidatesOf drops a side quest's row (never a TASK candidate)", side.length === 1 && side[0].templateId === "mine", j(side));
     const src = read("src/lib/momentum-server.ts");
     check(
       "the default store reads the personal Board only: loadTodayBoard(…, PERSONAL_SCOPE) and instances under PERSONAL_BOARD",

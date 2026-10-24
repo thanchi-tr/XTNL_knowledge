@@ -152,6 +152,7 @@ export function TaskRow(props: Props) {
       data-row-key={row.key}
       data-motion={props.motion ?? undefined}
       data-variant={props.variant}
+      data-side={row.side ? "1" : undefined}
       data-just-added={props.justAdded ? "1" : undefined}
     >
       <div className="t-row-in">
@@ -265,9 +266,10 @@ function OpenMeta({ row, restToday, work }: { row: BoardRow; restToday: RestKind
         {!work && <Sigil track={TRACK_SIGIL[t.track]} />}
         {bits.join(" · ")}
       </span>
+      {/* A side quest (P31) says so in ink with its own glyph ('Side quest · expires Fri'), never in a lane colour. */}
       {row.dueLabel && (
-        <span className="r-bit due">
-          <Icon name="clock" size={14} />
+        <span className="r-bit due" data-side={row.side ? "1" : undefined}>
+          <Icon name={row.side ? "side" : "clock"} size={14} />
           {row.dueLabel}
         </span>
       )}

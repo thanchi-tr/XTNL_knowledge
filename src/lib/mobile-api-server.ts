@@ -66,6 +66,7 @@ import {
   fatiguedKeyOf,
   checkTasksOf,
   checkWeekOf,
+  checkCalibrationOf,
   MAKEUP_KEYS,
   acceptLossReplyOf,
   makeUpDutyOffLine,
@@ -150,6 +151,7 @@ import type { SubmitReviewInput, SubmitReviewResult } from "../app/actions/revie
 import type { CaptureResult, CapturedItem, CapturedWeight } from "../app/actions/capture";
 import type { SubmitIdeaInput, SubmitIdeaResult } from "../app/actions/ideas";
 import { isAuditLaunched, type WeekAudit } from "./week-audit";
+import type { NextWeekView } from "./week-calibration";
 import { mainQuestOf } from "./main-quest";
 import type { AimCardView, WeekQuestsView } from "./roadmap-types";
 import type { MomentumView } from "./momentum-server";
@@ -194,6 +196,11 @@ export interface MobileDeps {
   loadGraceExtra: (userId: string) => Promise<number>;
   /** The weekly audit as /today/week's card reads it (week-audit-server loadWeekAudit); null while it is inert. */
   loadWeekAudit: (userId: string, now: Date) => Promise<WeekAudit | null>;
+  /**
+   * Next week's calibration (blueprint P32; week-calibration-server loadNextWeek): the web's Next week card, or null at
+   * once, with no read, while AUDIT_LAUNCH_DAY is not in force (and until two audits are frozen). /check's `calibration`.
+   */
+  loadNextWeek: (userId: string, now: Date) => Promise<NextWeekView | null>;
   /**
    * The credits wallet (blueprint P16; credits-server loadWallet, cached): {live: false} at once, with no read, while
    * CREDITS_LAUNCH_DAY is not in force. /check's `credits`, and the read before a tick, an answer and a log.
@@ -463,7 +470,7 @@ export async function handleCheck(request: Request, deps: MobileDeps): Promise<R
     // P29: with the streak multiplier in force, Duty's lazy settle too (as on Today), so the rows' xpHint read the d
     // (counted back from the settlement cursor) their ticks pay. At once while it is off; a failure reads on.
     await deps.settleForStreak(userId, now).catch(soft("the settle before the streak", null));
-    const [data, fields, reviewDay, streak, shell, work, graceExtra, audit, wallet, conditions, fatigue] = await Promise.all([
+    const [data, fields, reviewDay, streak, shell, work, graceExtra, audit, wallet, conditions, fatigue, calibration] = await Promise.all([
       deps.loadBoard(userId, day, now),
       deps.loadFieldTree(),
       deps.loadReviewDay(userId, day),
@@ -477,6 +484,8 @@ export async function handleCheck(request: Request, deps: MobileDeps): Promise<R
       deps.loadConditions(userId, now).catch(soft<readonly ConditionItem[] | null>("the conditions", [])),
       // Off, it answers undefined without a read; so a failure means it was on: null (none known), never absent.
       deps.loadFatigue(userId, now).catch(soft<FatigueRead>("the review fatigue", null)),
+      // P32: null without a read while no calibration can be in force; a failure reads as none (the key stays out).
+      deps.loadNextWeek(userId, now).catch(soft<NextWeekView | null>("next week's calibration", null)),
     ]);
     const board = buildBoard(data, [], now.getTime());
     // P30: the fatigue in effect rides on the Review hub's figures (absent while FATIGUE_LAUNCH_DAY is not in force).
@@ -496,6 +505,8 @@ export async function handleCheck(request: Request, deps: MobileDeps): Promise<R
       fading: checkFadingOf(fields, now, Math.max(0, graceExtra || 0)),
       auditOn: isAuditLaunched(day),
       week: checkWeekOf(audit),
+      // Next week's calibration (P32): only while one is in force, so the reply is as before without it.
+      ...(calibration ? { calibration: checkCalibrationOf(calibration) } : {}),
       credits: checkCreditsOf(wallet),
       // Duty (P22): the switch alone (as auditOn), and the board's open debts in its MakeUpCards' words.
       dutyOn: isDutyLaunched(day, deps.dutyLaunchDay()),

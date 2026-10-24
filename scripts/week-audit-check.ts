@@ -297,10 +297,27 @@ eq(
 }
 check(
   "freezeWeekAudit counts the instances set by the copy's 04:00 (each read with when its status was set) and records that turn as its moment",
-  /const asOf = auditFreezeAsOf\(today\);\s*const audit = weekAuditOf\(\{[^}]*instances: instancesAsOf\(facts\.instances, asOf\)[^}]*now: asOf \}\);\s*const input = auditEventInput\(audit, today, now\);/.test(code("src/lib/week-audit-server.ts")) &&
+  // Re-pinned for blueprint P32: the copy also takes the freeze's additions (the week's tracked minutes and next week's
+  // calibration, week-calibration-server calibrationFreezeOf), read from the audit just built, before the one write.
+  // Re-pinned for blueprint P32 review: with the launch day, so a calibrating week is never judged against the target.
+  /const asOf = auditFreezeAsOf\(today\);\s*const audit = weekAuditOf\(\{[^}]*instances: instancesAsOf\(facts\.instances, asOf\)[^}]*now: asOf \}\);\s*const extra = await calibrationFreezeOf\(userId, \{ week, audit, held: facts\.held, asOf, today, now, launchDay \}\);\s*const input = auditEventInput\(audit, today, now, extra\);/.test(code("src/lib/week-audit-server.ts")) &&
     /select: \{ templateId: true, day: true, status: true, completedAt: true, updatedAt: true \}/.test(code("src/lib/daily-quests-server.ts")) &&
     /at: i\.completedAt \?\? i\.updatedAt/.test(code("src/lib/daily-quests-server.ts"))
 );
+// Blueprint P31 (D35): side quests are out of the rate, on a lane of their own, kept with the copy only when the week had one.
+{
+  const plain = audit(SUN, sydney(SUN, 19));
+  const withSide = weekAuditOf({ week: W43, launchDay: LAUNCH, templates: TEMPLATES, instances: INSTANCES, side: { offered: 2, done: 1 }, today: SUN, now: sydney(SUN, 19) });
+  check(
+    "P31: the week's side quests never move the rate (one-offs are never daily quests); the audit and its copy carry them only when the week had one",
+    withSide.rate === plain.rate &&
+      withSide.daily.due === plain.daily.due &&
+      !("side" in plain) &&
+      !("side" in auditReceiptOf(plain, "2026-10-26")) &&
+      JSON.stringify(auditReceiptOf(withSide, "2026-10-26").side) === JSON.stringify({ offered: 2, done: 1 })
+  );
+  check("P31: the phone's `week.side` only when the week had one", JSON.stringify(checkWeekOf(withSide)?.side) === JSON.stringify({ done: 1, offered: 2 }) && !("side" in (checkWeekOf(plain) ?? {})));
+}
 eq(
   "a receipt this version did not write reads as none (then the week reads live, provisional)",
   [parseAuditReceipt(null), parseAuditReceipt({ ...(input.receipt as object), v: 2 }), parseAuditReceipt({ ...(input.receipt as object), daily: { kept: -1 } })],

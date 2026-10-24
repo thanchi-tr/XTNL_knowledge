@@ -10,7 +10,8 @@
  *     loadLifeTree(userId, deps?)             → LifeTreeView: /skills/life (points, perks, respec).
  *     loadNudgeFacts(userId, now?, deps?)     → NudgeFacts: the evening push's facts (§F).
  *   Writers (each checks momentumLive first and writes nothing before launch)
- *     ensureQuestSet(userId, day, deps?)      → QuestSet | null: write-once 'quests:<day>'.
+ *     ensureQuestSet(userId, day, deps?)      → QuestSet | null: write-once 'quests:<day>' (quests-2 with a
+ *                                               calibrated week's sizes, blueprint P32; else quests-1).
  *     swapQuestCore(userId, slot, deps?)      → a swap row 'quests:<day>:swap:<SLOT>:<n>'.
  *     openChestCore(userId, deps & {day?})    → one $transaction: lifeLockOp, the chest-pool guard,
  *                                               the CHEST row and its LIFE_CHEST mint.
@@ -125,6 +126,7 @@ import {
   type PerkCode,
   type Quest,
   type QuestSet,
+  type QuestSizes,
   type QuestSlot,
   type QuestSwap,
 } from "./momentum";
@@ -133,6 +135,7 @@ import { restTokenFold, restTokenInputsOf, restTokenSpendFrom } from "./rest-tok
 import { dutyLaunchDay } from "./duty-economy";
 import { heldDaysOf, type RestRow } from "./duty-rule";
 import { isMissingRestDayTable } from "./rest-rules";
+import { readQuestSizes } from "./week-calibration-server";
 import type { CelebrationEvent, ProgressSnapshot } from "./celebration-types";
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -513,6 +516,12 @@ export interface QuestSources {
   weekEffortMinutes: number;
   reviewsDue: number;
   plan: PlanFacts;
+  /**
+   * Blueprint P32 (D36): the week's calibrated sizes (week-calibration-server readQuestSizes), the set then written as
+   * quests-2. Absent while no calibration is in force (AUDIT_LAUNCH_DAY off, or fewer than two frozen audits): the
+   * sizes are QUEST's and the set is quests-1, exactly as before.
+   */
+  sizes?: QuestSizes;
 }
 
 export interface MilestoneFact {
@@ -709,7 +718,8 @@ export function weekEffortOf(rows: readonly { id: string; source: string; dedupe
 /**
  * The personal Board's rows for `day` as quest candidates, each priced at rawBefore 0
  * (planCompletion with no momentum: priceTask(projected, rawBefore 0).raw). Yesterday's rows
- * are not candidates; a template keeps its first row. A row carrying a work board id is dropped.
+ * are not candidates; a template keeps its first row. A row carrying a work board id is dropped, and
+ * so is a side quest's (blueprint P31, D35: it asks nothing of the day, so it is never Today's quest).
  */
 export function questCandidatesOf(rows: readonly BoardRow[], ledger: DayLedger, day: DayKey): QuestCandidate[] {
   const out: QuestCandidate[] = [];
@@ -718,7 +728,7 @@ export function questCandidatesOf(rows: readonly BoardRow[], ledger: DayLedger, 
     if (r.day !== day || (r.lane !== "must" && r.lane !== "today" && r.lane !== "anytime")) continue;
     const t = r.template;
     const boardId = (t as { boardId?: string | null }).boardId ?? null;
-    if (boardId != null || seen.has(t.id)) continue;
+    if (boardId != null || r.side || seen.has(t.id)) continue;
     seen.add(t.id);
     let raw = 0;
     try {
@@ -780,19 +790,26 @@ function planOptions(src: QuestSources): Quest[] {
   return out.filter((q) => (seen.has(questIdentity(q)) ? false : (seen.add(questIdentity(q)), true)));
 }
 
-/** Every BODY option: a due EXERCISE template (not #play), then Move 20 (or 10 once the week's 150 is met). */
+/** The words a calibrated size adds to its quest's why (blueprint P32), only when it is not the standard one. */
+const SIZED_NOTE = " · sized from last week's audit";
+
+/**
+ * Every BODY option: a due EXERCISE template (not #play), then Move 20 (or 10 once the week's 150 is met). A calibrated
+ * week (P32) moves 10, 20 or 30 instead, never over 10 once the 150 is met.
+ */
 function bodyOptions(src: QuestSources): Quest[] {
   const out: Quest[] = [];
   for (const c of src.candidates) {
     if (!personalOpen(c) || c.lane === "anytime" || c.category !== "EXERCISE" || c.intrinsic) continue;
     out.push({ slot: "BODY", kind: "TEMPLATE", templateId: c.templateId, title: c.title, why: "Your exercise today" });
   }
-  const minutes = bodyMoveMinutes(src.weekEffortMinutes);
-  out.push({ slot: "BODY", kind: "MOVE", minutes, title: `Move ${minutes} min`, why: `${Math.round(src.weekEffortMinutes)} of 150 effort min this week` });
+  const minutes = bodyMoveMinutes(src.weekEffortMinutes, src.sizes?.move);
+  const sized = src.sizes != null && minutes !== bodyMoveMinutes(src.weekEffortMinutes) ? SIZED_NOTE : "";
+  out.push({ slot: "BODY", kind: "MOVE", minutes, title: `Move ${minutes} min`, why: `${Math.round(src.weekEffortMinutes)} of 150 effort min this week${sized}` });
   return out;
 }
 
-/** Every TASK option: the due candidates best first (rankTaskQuests), then 'Finish any 2 tasks'. */
+/** Every TASK option: the due candidates best first (rankTaskQuests), then 'Finish any 2 tasks' (2 or 3 in a calibrated week, P32). */
 function taskOptions(src: QuestSources, tie: (templateId: string) => number): Quest[] {
   const cands = src.candidates
     .filter(
@@ -824,7 +841,8 @@ function taskOptions(src: QuestSources, tie: (templateId: string) => number): Qu
       why: c.compulsory ? "Your biggest must today" : "Your biggest due task",
     })
   );
-  out.push({ slot: "TASK", kind: "ANY", count: QUEST.ANY_TASKS, title: `Finish any ${QUEST.ANY_TASKS} tasks`, why: "Nothing big is due today" });
+  const any = src.sizes?.any ?? QUEST.ANY_TASKS;
+  out.push({ slot: "TASK", kind: "ANY", count: any, title: `Finish any ${any} tasks`, why: `Nothing big is due today${any !== QUEST.ANY_TASKS ? SIZED_NOTE : ""}` });
   return out;
 }
 
@@ -1271,6 +1289,8 @@ const questSetEvent = (set: QuestSet, now: Date): ActivityInput => ({
  * when it exists, else the three picked now (§A.1) and written. Two at once write one row: the
  * loser's P2002 is swallowed and the stored set returned. A set is only ever picked on its own
  * day (a past day without one has no chest). Null before launch, and for a past day with none.
+ * In a calibrated week (blueprint P32, D36: its sources carry the sizes) the set is quests-2 and
+ * records them; otherwise quests-1, exactly as before.
  */
 export async function ensureQuestSet(userId: string, day: DayKey, deps: MomentumDeps = {}): Promise<QuestSet | null> {
   const ctx = ctxOf(deps);
@@ -1279,7 +1299,9 @@ export async function ensureQuestSet(userId: string, day: DayKey, deps: Momentum
   if (existing.set) return existing.set;
   if (day !== todayKey(ctx.now)) return null;
   const sources = await ctx.store.questSources(userId, day, ctx.now);
-  const set: QuestSet = { v: "quests-1", day, quests: pickQuests(sources, tieOf(ctx, userId, day)) };
+  const set: QuestSet = sources.sizes
+    ? { v: "quests-2", day, quests: pickQuests(sources, tieOf(ctx, userId, day)), sizes: sources.sizes }
+    : { v: "quests-1", day, quests: pickQuests(sources, tieOf(ctx, userId, day)) };
   try {
     await ctx.store.commit(userId, { lock: false, guards: [], events: [questSetEvent(set, ctx.now)], mints: [] });
     return set;
@@ -2179,7 +2201,8 @@ export const prismaMomentumStore: MomentumStore = {
 
   async questSources(userId, day, now) {
     const monday = weekStartKeyOf(day);
-    const [data, effortRows, plan] = await Promise.all([
+    // P32: the week's calibrated sizes, null at once (no read) while no calibration can be in force.
+    const [data, effortRows, plan, sizes] = await Promise.all([
       loadTodayBoard(userId, day, now, PERSONAL_SCOPE),
       prisma.activityEvent.findMany({
         where: { userId, track: "BODY", day: { gte: dateColumn(monday), lte: dateColumn(day) }, source: { in: ["TASK", "UNDO", "WORKOUT"] } },
@@ -2189,6 +2212,7 @@ export const prismaMomentumStore: MomentumStore = {
         if (!isMissingRoadmapTable(err)) console.error("[momentum] the roadmap's plan facts failed; the plan quest falls back", err);
         return EMPTY_PLAN;
       }),
+      readQuestSizes(userId, day, now),
     ]);
     const tplIds = [...new Set(effortRows.flatMap((r) => (r.source === "TASK" && r.templateId ? [r.templateId] : [])))];
     const cats = tplIds.length ? await prisma.taskTemplate.findMany({ where: { id: { in: tplIds } }, select: { id: true, category: true } }) : [];
@@ -2201,6 +2225,7 @@ export const prismaMomentumStore: MomentumStore = {
       weekEffortMinutes: weekEffortOf(effortRows.map((r) => ({ ...r, receipt: r.receipt as unknown, category: r.templateId ? (catOf.get(r.templateId) ?? null) : null }))),
       reviewsDue: data.dueNow ?? 0,
       plan,
+      ...(sizes ? { sizes } : {}),
     };
   },
 

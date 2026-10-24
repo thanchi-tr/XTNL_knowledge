@@ -678,7 +678,8 @@ function rest(LoadoutStrip: typeof import("../src/components/skills/LoadoutStrip
   const audit = code("src/lib/audit-decay-server.ts");
   check("the audit reads the conditions through loadConditionItems, soft on its own (null while off, never counted unread)", /loadConditionItems\(userId, now\)\.catch\(soft<ConditionItem\[\]>\("the conditions"\)\),/.test(audit));
   const kt = read("android/app/src/main/java/com/xtnl/app/ui/check/CheckScreen.kt");
-  check("the phone: the Condition card on both displays (after the Week card in each)", (kt.match(/week\(data\.week\)\s*condition\(data\.skills\)/g) ?? []).length === 2);
+  // Re-pinned for blueprint P32: the calibration card (only while the server sends one) may sit between the two.
+  check("the phone: the Condition card on both displays (after the Week card in each)", (kt.match(/week\(data\.week\)\s*(?:calibration\(data\.calibration\)\s*)?condition\(data\.skills\)/g) ?? []).length === 2);
   const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
   const chain = pkg.scripts["life:check"].split("&&").map((x) => x.trim());
   check(

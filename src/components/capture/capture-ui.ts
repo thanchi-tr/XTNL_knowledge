@@ -47,6 +47,7 @@ import type { CaptureActiveTitle, CaptureAim, CapturedItem } from "../../app/act
 import type { WeightUnit } from "../../lib/weight";
 import { weightToastCopy } from "./weight-capture";
 import { isBoardId, workTasksHref } from "../../lib/work-boards";
+import { sideTagKeyOf } from "../../lib/side-quests";
 
 /**
  * Where a repeating capture lands when it is not due today: 'Next: Thu'.
@@ -1042,11 +1043,13 @@ export const FILING_WHERE = "filing now. If it looks like one you have, it waits
  * `update`: the line replaced one saved moments ago. `offToday`: a 'View'
  * link to the row on Today. The server's `mustNote` (daily quests, D14): a
  * sixth must saved as an ordinary task reads 'Added (not a Must)' with the
- * cap's line; the 4th or 5th adds the warning ('4 of 5 daily quests').
+ * cap's line; the 4th or 5th adds the warning ('4 of 5 daily quests'). Its
+ * `sideNote` (side quests, P31): a '#side' line past the two open reads
+ * 'Added (not a side quest)' with SIDE_CAP_LINE.
  */
 export function toastCopy(
   item: Pick<CapturedItem, "id" | "title" | "projectedXp" | "kind" | "doneNow" | "doneNowError" | "duplicate" | "href" | "where" | "filing" | "oldKept" | "weight"> &
-    Partial<Pick<CapturedItem, "board" | "mustNote">>,
+    Partial<Pick<CapturedItem, "board" | "mustNote" | "sideNote">>,
   ctx: { notMust?: boolean; update?: boolean; offToday?: boolean } = {}
 ): ToastCopy {
   // A weigh-in is a record, not a task: its own copy, no figure, View goes to Train (weight-capture.ts).
@@ -1061,7 +1064,8 @@ export function toastCopy(
   let figure: ToastCopy["figure"] = null;
   let tail: string | null = null;
   let link: ToastCopy["link"] = view;
-  const cap = item.mustNote ?? null;
+  // A '#side' line past the cap (P31) says so the way a sixth must does: saved as an ordinary task, with the line why.
+  const cap = item.mustNote ?? item.sideNote ?? null;
 
   if (ctx.update && item.oldKept) {
     head = "Saved the new line";
@@ -1099,7 +1103,7 @@ export function toastCopy(
     head = "Saved, not ticked";
     tail = item.doneNowError;
   } else {
-    head = ctx.notMust || cap?.capped ? "Added (not a Must)" : "Added";
+    head = item.sideNote ? "Added (not a side quest)" : ctx.notMust || cap?.capped ? "Added (not a Must)" : "Added";
     if (priced) figure = { text: `≈ ${formatXp(item.projectedXp)}`, exact: false };
     if (ctx.notMust) tail = NOT_MUST_TAIL;
     else if (cap) tail = cap.line;
@@ -1208,8 +1212,9 @@ const PREVIEW_TEMPLATE: Omit<BoardTemplate, "title" | "kind" | "recurrence" | "s
  * the preview only — the toast names the place the server computed.
  */
 export function wherePreviewOf(parsed: ParsedCapture, today: DayKey): BoardPlace {
-  // The server's own shaping (src/lib/capture-shape.ts), so the preview and the stored row cannot drift.
-  const t: BoardTemplate = { ...PREVIEW_TEMPLATE, title: parsed.title, ...captureShapeOf(parsed, today) };
+  // The server's own shaping (src/lib/capture-shape.ts), so the preview and the stored row cannot drift. A '#side'
+  // line (P31) previews as the side quest it saves as (a free slot assumed: past the cap the toast says otherwise).
+  const t: BoardTemplate = { ...PREVIEW_TEMPLATE, title: parsed.title, ...captureShapeOf(parsed, today), ...(parsed.side ? { captureKey: sideTagKeyOf("preview") } : {}) };
   const place = placeOf(t, today);
   if (parsed.doneNow && (place.lane === "must" || place.lane === "planned" || place.lane === "habits" || place.lane === "anytime")) {
     return { lane: "done", label: "Done today" };

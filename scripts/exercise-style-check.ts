@@ -267,6 +267,19 @@ console.log("— momentum: what a walk pays (§A.6) —");
       bodyQuestDoneBy(habit, { ...facts, instances: [{ templateId: "t-walk", status: "DONE", minutes: 30, exercise: true }] }) &&
       !bodyQuestDoneBy(null, { ...facts, walkMinutes: 90 })
   );
+  // Blueprint P32 (D36): a calibrated week's Move (10 or 30) is done by the minutes it names, as stored in its quests-2 set;
+  // the walk's price is the same either way (Peak reads only whether the quest is done).
+  const move30: Quest = { slot: "BODY", kind: "MOVE", minutes: 30, title: "Move 30 min" };
+  const move10: Quest = { slot: "BODY", kind: "MOVE", minutes: 10, title: "Move 10 min" };
+  check(
+    "P32: a calibrated Move 30 needs 30 minutes (a 25-minute walk or tick doesn't do it; 30 does), a Move 10 is done by 10",
+    !bodyQuestDoneBy(move30, { ...facts, walkMinutes: 25 }) &&
+      bodyQuestDoneBy(move30, { ...facts, walkMinutes: 30 }) &&
+      !bodyQuestDoneBy(move30, { ...facts, instances: [{ templateId: "t-run", status: "DONE", minutes: 25, exercise: true }] }) &&
+      bodyQuestDoneBy(move10, { ...facts, walkMinutes: 10 }) &&
+      !bodyQuestDoneBy(move10, { ...facts, walkMinutes: 9 })
+  );
+  check("P32: the walk's price never reads the quest's size (Peak on a done Move 30 pays as on a done Move 20)", price(walk(3.75, 45), { mods: lifeModsOf(new Set(["V_PEAK"])), peak: bodyQuestDoneBy(move30, { ...facts, walkMinutes: 45 }) })?.raw === price(walk(3.75, 45), { mods: lifeModsOf(new Set(["V_PEAK"])), peak: bodyQuestDoneBy(move20, { ...facts, walkMinutes: 45 }) })?.raw);
 
   const p = g[0]!;
   const receipt = walkReceiptOf(p, paidFactsOf({ day: TODAY, distanceKm: 3.75, durationMin: 45, angleDeg: 0 }), "s1", { stride: 1, topUp: null });

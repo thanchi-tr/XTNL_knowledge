@@ -72,6 +72,6 @@ object WeekLine {
 
     /** The card in words, for TalkBack. */
     fun description(w: WeekAudit): String =
-        (listOf("$TITLE, ${w.label}", headline(w), status(w), target(w)) + notes(w) + listOfNotNull(decayHeading(w)) + decayLines(w).map { it.title } + listOfNotNull(decayNote(w)))
+        (listOf("$TITLE, ${w.label}", headline(w), status(w), target(w)) + notes(w) + listOfNotNull(SideLine.audit(w), decayHeading(w)) + decayLines(w).map { it.title } + listOfNotNull(decayNote(w)))
             .filter { it.isNotEmpty() }.joinToString(", ")
 }

@@ -16,6 +16,7 @@ import { loadModifiers } from "./skill-effects";
 import { loadDueWorkTasks } from "./scheduled-tasks-server";
 import { maybeMaintainLife, settleForStreak } from "./settlement";
 import { loadWeekAudit } from "./week-audit-server";
+import { loadNextWeek } from "./week-calibration-server";
 import { loadWallet, readWallet } from "./credits-server";
 import { loadMomentum, settleMomentum } from "./momentum-server";
 import { loadMainQuestCard, loadMainQuestWeek } from "./main-quest-server";
@@ -57,6 +58,8 @@ export const realMobileDeps: MobileDeps = {
   loadGraceExtra: async (userId) => (await loadModifiers(userId)).graceExtraDays,
   // /today/week's Week audit card (blueprint P11): null while AUDIT_LAUNCH_DAY is not in force.
   loadWeekAudit: (userId, now) => loadWeekAudit(userId, now),
+  // Next week's calibration (blueprint P32): the web's Next week card; null with no read while AUDIT_LAUNCH_DAY is off.
+  loadNextWeek: (userId, now) => loadNextWeek(userId, now),
   // The credits wallet (blueprint P16): {live: false} with no read while CREDITS_LAUNCH_DAY is not in force. A write's
   // read after it is the uncached readWallet, so its balance holds the write.
   loadWallet: (userId, now) => loadWallet(userId, now),

@@ -66,6 +66,17 @@
  *   Step 3 spends from it; nothing earns here any more (no FREEZE_EARN is planned). The guard's FREEZE_* count is
  *   unchanged: a manual spend or another run landing between the read and the write still re-plans the chunk.
  *
+ * Added by blueprint P31 (side quests, decision D35; compatible):
+ *   SideQuestStepReport · runSideQuestStep(userId, now, ctx)   the chain's fourth step (after the roadmap step) and the
+ *                               life cron's last: side-quests-server runSideQuests, the detectors' side quests written
+ *                               once per week and scope. Inert while SIDE_QUESTS_LAUNCH_DAY is not in force
+ *                               (NOT_LAUNCHED, nothing read); WRITES_OFF unless settlementWritesEnabled; never waits on
+ *                               Duty. The chain's run is throttled per user (SIDE_CHAIN_EVERY_MS); the cron's never.
+ *                               Its report is the cron JSON's `side`, present only while the detectors are in force,
+ *                               so the cron's answer reads as before without them; it never fails the cron.
+ *   MaintainOptions.side · LifeCronDeps.side   the checks' injected run
+ *   SettleEnv gains XTNL_SIDE_QUESTS_LAUNCH_DAY (side-quests.ts SideQuestsEnv)
+ *
  * Shared-database safety (decision 2): dev and prod share one Supabase
  * database, so nothing here writes unless settlementWritesEnabled()
  * (production, or XTNL_LIFE_JUDGE=1 on the rehearsal server; never a Vercel
@@ -136,6 +147,8 @@ import { momentumLaunchDay, type MomentumEnv } from "./momentum";
 import { readRestTokens } from "./rest-tokens-server";
 import { streakFromOf, streakLaunchDay, streakLive } from "./streak-mult";
 import { freezeWeekAudit, type AuditFreezeRun } from "./week-audit-server";
+import { sideQuestsLaunchDay, sideQuestsOn, type SideQuestsEnv } from "./side-quests";
+import { runSideQuests, type SideQuestRun } from "./side-quests-server";
 import { finalizeQuestWeeks, freezeWeekQuests } from "./roadmap-quests-server";
 import { roadmapStepErrorsOf, type QuestFinalizeRun, type QuestFreezeRun, type ReadingsRun, type RoadmapStepReport, type RoadmapWriteOpts, type WeekQuestSource } from "./roadmap-types";
 
@@ -144,7 +157,7 @@ import { roadmapStepErrorsOf, type QuestFinalizeRun, type QuestFreezeRun, type R
  * VERCEL_ENV: a Vercel Preview or development deployment ('preview', 'development') never settles,
  * even with NODE_ENV production, because it shares the live database (settlementWritesEnabled).
  */
-export type SettleEnv = LifeEnv & DutyEnv & AuditEnv & MomentumEnv & { CRON_SECRET?: string; VERCEL_ENV?: string };
+export type SettleEnv = LifeEnv & DutyEnv & AuditEnv & MomentumEnv & SideQuestsEnv & { CRON_SECRET?: string; VERCEL_ENV?: string };
 
 /** The Prisma surface settlement uses: the real client, or the checks' recording stub. */
 export type SettlementClient = Pick<
@@ -202,6 +215,8 @@ function processEnv(): SettleEnv {
     XTNL_AUDIT_LAUNCH_DAY: process.env.XTNL_AUDIT_LAUNCH_DAY,
     // Blueprint P21: the Rest Token bank is momentum's fold, from the momentum launch day in force.
     XTNL_MOMENTUM_LAUNCH_DAY: process.env.XTNL_MOMENTUM_LAUNCH_DAY,
+    // Blueprint P31: the side quests' detectors (side-quests.ts sideQuestsLaunchDay).
+    XTNL_SIDE_QUESTS_LAUNCH_DAY: process.env.XTNL_SIDE_QUESTS_LAUNCH_DAY,
     CRON_SECRET: process.env.CRON_SECRET,
     VERCEL_ENV: process.env.VERCEL_ENV,
   };
@@ -1042,6 +1057,8 @@ export interface MaintainOptions {
   judge?: (userId: string, now: Date) => Promise<void>;
   /** Roadmap lane G: the roadmap step's writers; each defaults to the real one (R6's freeze and finaliser, R1's readings). */
   roadmap?: RoadmapStepDeps;
+  /** Blueprint P31: the side quests' run (runSideQuestStep); defaults to side-quests-server runSideQuests. */
+  side?: SideQuestRunner;
 }
 
 // ── The roadmap step (roadmap.md F16 seam 8: settle → judge → roadmap) ────
@@ -1204,6 +1221,48 @@ export async function runAuditStep(
   }
 }
 
+// ── The side quests' step (blueprint P31, decision D35) ──────────────────
+
+/** The side quests' run, injectable for the checks (side-quests-server runSideQuests's shape). */
+export type SideQuestRunner = (userId: string, now: Date, opts: { launch: DayKey | null; writes: boolean }) => Promise<SideQuestRun>;
+
+/** The step's report: the run's, or the error it caught. */
+export type SideQuestStepReport = Omit<SideQuestRun, "skipped"> & { skipped: SideQuestRun["skipped"] | "THROTTLED"; error?: string };
+
+/** The chain runs the detectors for a user at most this often (a render's after()); the cron always runs them. */
+export const SIDE_CHAIN_EVERY_MS = 30 * 60_000;
+
+/** When the chain last ran the detectors, per user (per server instance: the week's keys keep a second run harmless). */
+const sideChainRanAt = new Map<string, number>();
+
+/**
+ * The side quests' step (blueprint P31): side-quests-server runSideQuests, the detectors' side quests for today,
+ * written once per week and scope. Inert while SIDE_QUESTS_LAUNCH_DAY is not in force (NOT_LAUNCHED: nothing read);
+ * WRITES_OFF unless settlementWritesEnabled (never on dev or a Preview); never waits on Duty. From the chain (RENDER)
+ * at most once per SIDE_CHAIN_EVERY_MS per user (THROTTLED); from the cron every run. Never throws: a failure is
+ * logged and reported as `error`. It pays and judges nothing.
+ */
+export async function runSideQuestStep(
+  userId: string,
+  now: Date,
+  ctx: { env: SettleEnv; source: "CRON" | "RENDER"; run?: SideQuestRunner }
+): Promise<SideQuestStepReport> {
+  const launch = sideQuestsLaunchDay(ctx.env);
+  if (!sideQuestsOn(todayKey(now), launch)) return { skipped: "NOT_LAUNCHED", planned: 0, created: [] };
+  if (!settlementWritesEnabled(ctx.env)) return { skipped: "WRITES_OFF", planned: 0, created: [] };
+  if (ctx.source === "RENDER") {
+    const last = sideChainRanAt.get(userId);
+    if (last != null && now.getTime() - last < SIDE_CHAIN_EVERY_MS) return { skipped: "THROTTLED", planned: 0, created: [] };
+    sideChainRanAt.set(userId, now.getTime());
+  }
+  try {
+    return await (ctx.run ?? runSideQuests)(userId, now, { launch, writes: true });
+  } catch (err) {
+    console.error("[side quests] the detectors' run failed", err);
+    return { skipped: null, planned: 0, created: [], error: errorText(err) };
+  }
+}
+
 /** In-flight maintenance runs, one per user: two renders at once share one chain. */
 const maintaining = new Map<string, Promise<void>>();
 
@@ -1267,7 +1326,9 @@ export function settleForStreak(userId: string, now: Date = new Date(), opts: Ma
  * next render tries again. Settlement's own failure never stops the judge
  * (BODY, CRAFT and CARE are judged whatever settlement is doing; decision
  * 5), and neither stops the roadmap step, which runs whatever Duty's launch
- * state, gated only by settlementWritesEnabled (runRoadmapStep).
+ * state, gated only by settlementWritesEnabled (runRoadmapStep). Last, the
+ * side quests' step (blueprint P31, runSideQuestStep): inert until its
+ * launch day, then throttled per user.
  */
 export function maybeMaintainLife(userId: string, now: Date = new Date(), opts: MaintainOptions = {}): Promise<void> {
   try {
@@ -1289,6 +1350,8 @@ export function maybeMaintainLife(userId: string, now: Date = new Date(), opts: 
       } catch (err) {
         console.error("[settlement] roadmap step failed", err);
       }
+      // Blueprint P31: never throws; NOT_LAUNCHED at once, with no read, while the detectors are off.
+      await runSideQuestStep(userId, now, { env: opts.env ?? processEnv(), source: "RENDER", run: opts.side });
     })().finally(() => {
       maintaining.delete(userId);
     });
@@ -1346,6 +1409,8 @@ export interface LifeCronDeps {
   roadmap?: RoadmapStepDeps;
   /** Blueprint P11: the audit step's freeze (runAuditStep); defaults to week-audit-server freezeWeekAudit. */
   audit?: (userId: string, now: Date, opts: { env?: AuditEnv }) => Promise<AuditFreezeRun>;
+  /** Blueprint P31: the side quests' run (runSideQuestStep); defaults to side-quests-server runSideQuests. */
+  side?: SideQuestRunner;
 }
 
 /**
@@ -1383,9 +1448,14 @@ export async function lifeLaunchFinished(
  * JSON's roadmap; a roadmap failure is logged and reported there, and the
  * status stays what settle and the judge set (200 when they passed).
  *
- * Last, the audit step (blueprint P11, runAuditStep): on the Monday after an
+ * Then the audit step (blueprint P11, runAuditStep): on the Monday after an
  * audited week (or the Tuesday, if Monday's run missed it) the week is frozen
  * once. Its report is the JSON's audit; it never changes the status.
+ *
+ * Last, the side quests' step (blueprint P31, runSideQuestStep): today's
+ * detectors, once per week and scope. Its report is the JSON's `side`, and
+ * only while the detectors are in force (so the answer reads as before
+ * without them); it never changes the status.
  */
 export async function runLifeCron(request: Request, deps: LifeCronDeps = {}): Promise<Response> {
   const env = deps.env ?? processEnv();
@@ -1428,7 +1498,9 @@ export async function runLifeCron(request: Request, deps: LifeCronDeps = {}): Pr
   }
   // runAuditStep never throws either; the audit pays and judges nothing, so it never moves the status.
   const audit = await runAuditStep(userId, now, { env, freeze: deps.audit });
-  return Response.json({ settle, judge, roadmap, audit }, { status: failed ? 500 : 200 });
+  // runSideQuestStep never throws; it pays and judges nothing, so it never moves the status either.
+  const side = await runSideQuestStep(userId, now, { env, source: "CRON", run: deps.side });
+  return Response.json({ settle, judge, roadmap, audit, ...(side.skipped === "NOT_LAUNCHED" ? {} : { side }) }, { status: failed ? 500 : 200 });
 }
 
 // ── The launch and rehearsal scripts' database guard (pure) ──────────────

@@ -2,6 +2,7 @@
 
 import "@/components/today/today.css";
 import "@/components/task-style/task-style.css";
+import "@/components/home/next-week.css";
 import { useMemo, useRef, useState } from "react";
 import { chime, mark } from "@/lib/celebrate";
 import { Button } from "@/components/ui/Button";
@@ -17,6 +18,8 @@ import { RepairAsk, WelcomeBack, YesterdaySettled } from "@/components/today/m2/
 import { RecordYesterdaySheet, RestControls, type DidAnswer } from "@/components/today/m2/Sheets";
 import { WEEK_STEPS, WeekCard, WeekRunner, WeekTrack } from "@/components/today/m2/WeekRunner";
 import { SprintStepBody } from "@/components/home/SprintStepBody";
+import { NextWeekBody } from "@/components/home/NextWeekBody";
+import { calibrationOf, nextWeekViewOf, type CalibrationWeek, type NextWeekView } from "@/lib/week-calibration";
 import { SPRINT_PROVISIONAL_LINE, type SprintStep } from "@/lib/main-quest";
 import { WeekQuests } from "@/components/roadmap/WeekQuests";
 import { AimLine } from "@/components/roadmap/AimLine";
@@ -37,6 +40,33 @@ import {
   type QuestFixture,
 } from "./fixtures";
 import { DoneFixtures } from "./DoneFixtures";
+import { SideFixtures } from "./SideFixtures";
+
+/**
+ * Blueprint P32: the Next week card's states over made-up frozen weeks (week-calibration's own rules, as the freeze
+ * would set them), so its markup can be seen at every width without an audited week: lighter sizes with the capacity and
+ * a must to ease on offer; the same once accepted and kept; and the larger sizes with a habit to step up.
+ */
+function nextWeekStates(): { key: string; title: string; heading: string; view: NextWeekView; done: Record<string, string>; kept: string[] }[] {
+  const wk = (weekKey: string, monday: string, gym: number, floss: number): CalibrationWeek => ({
+    weekKey,
+    monday,
+    target: 85,
+    daily: { kept: gym + floss, due: 14, rows: [{ templateId: "gym", title: "Gym legs", kept: gym, due: 7 }, { templateId: "floss", title: "Floss", kept: floss, due: 7 }] },
+    tracked: [215, 240, 160, 230, 205, 70, null],
+  });
+  const musts = [{ templateId: "gym", title: "Gym legs", strength: 0.62, pending: false }, { templateId: "floss", title: "Floss", strength: 0.71, pending: false }];
+  const habits = [{ templateId: "read", title: "Read 20 pages", strength: 0.78, capped: false }];
+  const lighter = calibrationOf(wk("2027-W02", "2027-01-11", 3, 7), [wk("2027-W01", "2027-01-04", 4, 7)], { declared: 240, musts, habits })!;
+  const more = calibrationOf(wk("2027-W02", "2027-01-11", 7, 7), [wk("2027-W01", "2027-01-04", 7, 6)], { declared: 300, musts, habits })!;
+  const tpl = [{ id: "gym", compulsory: true, archived: false, pendingNotMustDay: null }, { id: "read", compulsory: false, archived: false, pendingNotMustDay: null }];
+  const open = nextWeekViewOf(lighter, { capacity: 240, templates: tpl });
+  return [
+    { key: "next-week-open", title: "Lighter sizes · on offer (the review's step 5)", heading: "Next week", view: open, done: {}, kept: [] },
+    { key: "next-week-answered", title: "Answered · accepted and kept (Today, Monday)", heading: "This week", view: nextWeekViewOf(lighter, { capacity: 240, templates: [{ ...tpl[0], pendingNotMustDay: "2027-01-25" }, tpl[1]] }), done: {}, kept: ["capacity"] },
+    { key: "next-week-more", title: "Larger sizes · a habit to step up", heading: "Next week", view: nextWeekViewOf(more, { capacity: 300, templates: tpl }), done: {}, kept: [] },
+  ];
+}
 
 /**
  * A week quests fixture as the card renders it: roadmap-quests'
@@ -414,6 +444,18 @@ export function TodayFixtures() {
           ))}
         </div>
       </FixtureRoadmapProvider>
+
+      <SideFixtures />
+
+      <SectionHeader title="Next week (P32)" aside="the week's calibration: Today's three sizes, the capacity suggestion, a must to ease or a habit to step up · Accept, Keep and Undo do nothing here" />
+      <div className="dev-grid">
+        {nextWeekStates().map((n) => (
+          <div key={n.key} data-state={n.key}>
+            <p className="t-eyebrow">{n.title}</p>
+            <NextWeekBody view={n.view} title={n.heading} headingId={`${n.key}-h`} busy={false} error={null} done={n.done} kept={new Set(n.kept)} onAccept={() => undefined} onKeep={() => undefined} onUnkeep={() => undefined} />
+          </div>
+        ))}
+      </div>
 
       <SectionHeader title="Sheets (M2)" aside="record yesterday · close the day · plan time off" />
       <div className="dev-row">

@@ -465,7 +465,9 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
   const flushRef = useRef<(all: boolean) => void>(() => {});
   const considerRef = useRef<() => void>(() => {});
 
-  const parsed = useMemo(() => (open && day ? parseCapture(text, { today: day, reverted }) : null), [open, day, text, reverted]);
+  // On a work tab '#side' is never taken (P31: the server reads the line the same way), so its chips say so.
+  const onWork = workBoard !== null;
+  const parsed = useMemo(() => (open && day ? parseCapture(text, { today: day, reverted, work: onWork }) : null), [open, day, text, reverted, onWork]);
   const ideaMode = parsed?.mode === "IDEA";
   /**
    * An 'aim: …' line (aim-capture aimCaptureOf), read before the parse: it
@@ -1339,7 +1341,7 @@ export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null 
       openAimForm(aimLine, line.text);
       return;
     }
-    const read = parseCapture(line.text, { today: day, reverted: line.reverted });
+    const read = parseCapture(line.text, { today: day, reverted: line.reverted, work: workBoardRef.current !== null });
     const unit: WeightUnit = vocabRef.current?.weightUnit ?? "kg";
     const weighed = weighInOf(line.text, line.reverted, day, unit);
     // A weigh-in is not a task row, so it cannot replace one (the server refuses it too).

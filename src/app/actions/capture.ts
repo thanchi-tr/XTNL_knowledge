@@ -39,6 +39,7 @@ import { AIM_PROMPT_COOKIE, type AimPrompt } from "@/lib/roadmap-invite";
 import type { BoardPlace, CaptureMode, ParsedCapture, TaskKind } from "@/lib/life-types";
 import { captureShapeOf } from "@/lib/capture-shape";
 import type { MustNote } from "@/lib/daily-quests";
+import type { SideNote } from "@/lib/side-quests";
 import { WORK_BOARD_ARCHIVED, WORK_BOARD_GONE, isBoardId, workKindRefusalOf } from "@/lib/work-boards";
 import { listOpenWorkBoards, loadWorkBoard } from "@/lib/work-boards-server";
 
@@ -123,6 +124,11 @@ export interface CapturedItem {
    */
   mustNote?: MustNote;
   /**
+   * Side quests (lib/side-quests.ts, blueprint P31, D35): a '#side' line saved as an ordinary task because two side
+   * quests were open (`capped`: the toast says "Added (not a side quest)" with SIDE_CAP_LINE). Absent otherwise.
+   */
+  sideNote?: SideNote;
+  /**
    * Set when the line was a weigh-in (components/capture/weight-capture.ts):
    * the reading was logged for its life day and no task was written. `id` is
    * then 'weight:<day>', `projectedXp` 0, `href` '/train'; `kind`, `mode` and
@@ -164,15 +170,18 @@ const IDEA_SELF_FILING = false;
 
 const SAVE_FAILED = "Couldn't save it. Your line is kept — try again.";
 
-type PreparedLine = { ok: true; text: string; parsed: ParsedCapture } | { ok: false; error: string };
+type PreparedLine = { ok: true; text: string; reverted: CaptureSpan[]; parsed: ParsedCapture } | { ok: false; error: string };
 
-/** The line as the server reads it: sanitized, then parsed for `today`, exactly as the sheet's chips were drawn. */
+/**
+ * The line as the server reads it: sanitized, then parsed for `today`, exactly as the sheet's chips were drawn. Its
+ * sanitized spans go on with it: a work tab's '#side' line is read again with them (tasks.ts insertCapture, P31).
+ */
 function prepareLine(text: unknown, reverted: unknown, today: DayKey): PreparedLine {
   const input = sanitizeCaptureInput(text, reverted);
   if (!input.text.trim()) return { ok: false, error: "Type something to capture." };
   const parsed = parseCapture(input.text, { today, reverted: input.reverted });
   if (!parsed.title) return { ok: false, error: "Add a few words for the title — only dates and tags are left." };
-  return { ok: true, text: input.text, parsed };
+  return { ok: true, text: input.text, reverted: input.reverted, parsed };
 }
 
 /** A key the sheet sent with a line, or none; tasks.ts validates it (cleanCaptureKey). */
@@ -284,6 +293,7 @@ function itemOf(parsed: ParsedCapture, created: CreatedTask, filing: boolean): C
     ...(filing ? { filing: true } : {}),
     ...(created.boardId ? { board: created.boardId } : {}),
     ...(created.mustNote ? { mustNote: created.mustNote } : {}),
+    ...(created.sideNote ? { sideNote: created.sideNote } : {}),
   };
 }
 
@@ -363,7 +373,7 @@ export async function createFromCapture(
     if (!scope.ok) return scope;
     const refusal = workLineRefusal(scope.boardId, line.parsed, today);
     if (refusal) return { ok: false, error: refusal };
-    created = await createTemplateCore(userId, line.parsed, { rawText: line.text, captureSource: "quick", captureKey: keyOf(opts?.captureKey), boardId: scope.boardId });
+    created = await createTemplateCore(userId, line.parsed, { rawText: line.text, captureSource: "quick", captureKey: keyOf(opts?.captureKey), boardId: scope.boardId, reverted: line.reverted });
   } catch (err) {
     console.error("createFromCapture failed:", err);
     // The sheet keeps the line in local storage until this says ok, so the
@@ -431,7 +441,7 @@ export async function recaptureFromCapture(
   let res: RecaptureResult;
   try {
     userId = getCurrentUserId();
-    res = await recaptureCore(userId, oldId, line.parsed, { rawText: line.text, captureSource: "quick", captureKey: keyOf(opts?.captureKey) });
+    res = await recaptureCore(userId, oldId, line.parsed, { rawText: line.text, captureSource: "quick", captureKey: keyOf(opts?.captureKey), reverted: line.reverted });
   } catch (err) {
     console.error("recaptureFromCapture failed:", err);
     return { ok: false, error: "Couldn't save the change. Your line is kept — try again." };
@@ -503,7 +513,7 @@ export async function createManyFromCapture(
     if (!scope.ok) return scope;
     const refusal = workLineRefusal(scope.boardId, prepared.parsed, today);
     if (refusal) return { ok: false, error: refusal };
-    const created = await createTemplateCore(userId, prepared.parsed, { rawText: prepared.text, captureSource: "quick", captureKey: line.captureKey, boardId: scope.boardId });
+    const created = await createTemplateCore(userId, prepared.parsed, { rawText: prepared.text, captureSource: "quick", captureKey: line.captureKey, boardId: scope.boardId, reverted: prepared.reverted });
     const filing = filesItself(prepared.parsed, created);
     saved.push({ parsed: prepared.parsed, created, filing });
     return { ok: true, value: itemOf(prepared.parsed, created, filing) };

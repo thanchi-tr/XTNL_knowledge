@@ -78,7 +78,8 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
       "minutes": 60, "mvv": "10 squats" | null, "icon": "dumbbell" | null,
       "dueLabel": "by Fri" | "late 2d" | "from Tue" | null, "xpHint": 8.3 | null,
       "proof": false, "timer": { "sessionId": "…", "templateId": "…", "day": "2026-10-21", "startedAt": "…",
-        "endedAt": "…" | null, "running": true, "priorMinutes": 0 } | null, "pages": { "target": 30 } | null }
+        "endedAt": "…" | null, "running": true, "priorMinutes": 0 } | null, "pages": { "target": 30 } | null,
+      "side"?: true, "expiresDay"?: "2026-10-23" }
   ],
   "tasksSummary": { "open": 3, "done": 2, "allDone": false },
   "daily": { "kept": 3, "total": 4, "full": false, "cap": 5, "minimum": 1, "over": 0,
@@ -90,7 +91,13 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
     "skipped": 2, "held": 0, "open": 0, "short": 0, "target": 85,
     "status": "provisional" | "frozen" | "final", "calibrating": false, "asOfDay": "2026-10-26" | null,
     "decaying": { "count": 4, "unread": 0, "top": [ { "kind": "domain", "title": "Probability fell to L3 (from L4)",
-      "detail": "2 ideas fading in it. Reviewing them brings the level back." } ] } | null } | null,
+      "detail": "2 ideas fading in it. Reviewing them brings the level back." } ] } | null,
+    "side"?: { "done": 1, "offered": 2 } } | null,
+  "calibration"?: { "weekKey": "2026-W45", "label": "Week of 2 Nov",
+    "sizes": { "move": 30, "any": 3, "line": "Move 30 min · Finish any 3 tasks", "basis": "Nearly every daily quest was kept last week: a little more." },
+    "capacityNote": "…: your 240 min a day stands." | null,
+    "changes": [ { "id": "capacity" | "ease:…" | "step:…", "kind": "capacity" | "ease" | "step-up", "title": "Plan 195 min a day",
+      "basis": "A median of 230 tracked min a day over 4 weeks, …", "state": "open" | "accepted" | "gone", "line": "…" | null } ] },
   "credits": { "balance": 120, "today": 40 } | null,
   "dutyOn": false,
   "owed": [
@@ -141,8 +148,18 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
     when it has one (null: the pages are optional), so the app's tick on such a row opens its pages sheet instead. The
     minimum version still ticks in one tap. Null on every other row, and on every row while proof of work is switched
     off (`PROOF_LAUNCH_DAY`).
-- `tasksSummary`: the board's own counts: `open` the Must and Today rows still open or locked (a held row is not
-  open), `done` the rows above done today, `allDone` the web's "Board clear" (nothing open, at least one done).
+  - `side` and `expiresDay` (blueprint 2.5, P31; decision D35): the row is a side quest, and `expiresDay` the life day
+    it expires after. Its `dueLabel` says so ("Side quest · expires Fri", "· expires today"); the app draws it in ink
+    with the side-quest glyph, never in a lane colour. A side quest is an ordinary one-off (lane `TASK`): it pays its
+    normal price, is never a must and never carries debt, asks nothing of the day while open (it is never counted in
+    `tasksSummary.open`), and once its day is over it is simply gone, at no cost: a tick after that is refused ("This
+    side quest expired at the end of Fri. Letting it go costs nothing.", 409). At most 2 are open at a time. They
+    come from a `#side` line (`POST /log` reads it as the web does: a third open one is saved as an ordinary task) and,
+    once `SIDE_QUESTS_LAUNCH_DAY` is in force (null until the user's go), from the server's own detectors. Both keys are
+    absent on every other row.
+- `tasksSummary`: the board's own counts: `open` the Must and Today rows still open or locked (a held row and a side
+  quest are not open), `done` the rows above done today, `allDone` the web's "Board clear" (nothing open, at least one
+  done).
 - `daily`: the daily quests (the user's musts, at most 5 due on a day; decisions D14 and D15), as the web's Must
   lane counts and draws them ("Daily quests · 3 of 4 kept" and its strip). Binary is a status only: XP stays graded.
   - `quests`: one cell per quest, in the lane's order: the musts that ask today (a held or skipped one asks nothing),
@@ -198,12 +215,39 @@ tick, an answer or a log from the phone is exactly the same deed as one from the
     week ago, `mp` mastery points lost to idle decay), in that order; on the web each line links to its fix.
     `unread` counts the sources that couldn't be read (left out, never guessed). A frozen copy keeps the decay it was
     frozen with. Null when it wasn't read.
+  - `side` (blueprint 2.5, P31): the week's side quests, `offered` (added on a day of the week) and `done`, shown
+    beside the rate and never in it (the web's "Side quests · 1 of 2 done · not in the rate"). A frozen copy keeps the
+    count it was frozen with. Absent when the week had none.
   - The Sunday reminder (decision D37) is the app's own: a local notification on Sunday at 19:00 Sydney time,
     whatever zone the phone is set to, that opens `xtnl://app/week` (the web's `/today/week`). It is armed while the
     server's last `/check` said `auditOn` and Settings › Notifications has it on, so it is armed in the launch week,
     before the first `week` is sent, and a failed audit read never turns it off. It is exact when Android lets the
     app set exact alarms (Alarms & reminders); otherwise Android sends it within the hour after 19:00. No push, no
     endpoint.
+- `calibration` (blueprint 5.2d, P32; decision D36): next week's calibration, as the web's Next week card states it
+  (the weekly review's step 5, and Today on Mondays). Present only while one is in force for this life week; absent
+  otherwise, so the reply reads exactly as before. One is in force only once the weekly audit is switched on
+  (`AUDIT_LAUNCH_DAY`) and two weeks are frozen: each Monday's frozen copy then sets the week that starts. It is read
+  only on the phone: Accept and Keep stay on the web.
+  - `sizes`: Today's three for the week, set by themselves: BODY's Move `move` min (10, 20 or 30; never over 10 once
+    the week's 150 effort minutes are met) and TASK's Finish any `any` tasks (2 or 3), the fallbacks when no exercise or
+    big task is due. `line` and `basis` are the card's words. A quest set picked that week is stored with them and
+    never re-sized; prices never change.
+  - `capacityNote`: the capacity suggestion's reading when it changes nothing ("…: your 240 min a day stands"), else
+    null.
+  - `changes`: each suggestion, one tap on the web (Accept) or Keep. `kind` `capacity` plans the suggested minutes a
+    day (the median of the daily tracked minutes over up to 4 frozen weeks, scaled by the share kept against the
+    audit's target, in 15-minute steps, at least 120 and never above the capacity the user set); `ease` makes a daily
+    quest kept under the target two frozen weeks running not a must (once Duty is live it waits 7 days, as any change
+    that eases a must); `step-up` makes one Established habit a must (from today, never past 5 daily quests a day).
+    `state` is `open` (on offer), `accepted` (it stands now, `line` says how: "Not a must from Mon 9 Nov.") or `gone`
+    (its task left the board). What an Accept would do is said before the tap: an open `ease`'s `title` names the day
+    it would take effect once Duty is live ("Floss: not a must from Mon 9 Nov"), and an open `step-up`'s `basis` ends
+    with what a must costs once Duty speaks about musts ("As a must, ≈ −4.2 if missed."). A calibration set from one of
+    the audit's two calibrating weeks keeps the standard sizes and the capacity unscaled (the median alone) and lists no
+    `ease` or `step-up`. A Keep is the web browser's own note (nothing is sent for it), so a kept change still reads
+    `open` here: show where the choice is, never a prompt to answer it. No rate and no target are sent here: those are
+    the audit's alone (D17).
 - `credits` (blueprint 4.1 and 4.2; decisions D27 to D29): the credits wallet, as the purse on the web's Character
   page shows it. Null while credits are switched off (`CREDITS_LAUNCH_DAY`, null until the user's go: the server
   reads nothing for it then, and the app shows no wallet chip), and when it couldn't be read.

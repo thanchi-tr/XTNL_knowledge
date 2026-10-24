@@ -309,6 +309,8 @@ import {
 import { NextUp } from "../src/components/today/NextUp";
 import { TaskDrawer } from "../src/components/today/TaskDrawer";
 import { TaskRow } from "../src/components/today/TaskRow";
+import { NextWeekBody } from "../src/components/home/NextWeekBody";
+import { calibrationOf, nextWeekViewOf, type CalibrationWeek } from "../src/lib/week-calibration";
 import { Lane } from "../src/components/today/Lane";
 import { rowAccentOf } from "../src/components/today/board-ui";
 import { SEEK_TEMPLATE_EVENT, onSeekTemplate, seekTemplate } from "../src/components/roadmap/roadmap-events";
@@ -3138,7 +3140,8 @@ asyncChecks.push(
   );
   // Today's one slot now is the strip: it only renders, and never reaches buildBoard, the counts or the Asks.
   const slotLines = boardSrc.split(/\r?\n/).filter((l) => l.includes("elsewhere"));
-  const allowed = [/^\s*elsewhere\?: ReactNode;\s*$/, /elsewhere = null, mainQuest = null \}: Props\) \{\s*$/, /^\s*\{elsewhere != null && elsewhere !== false && <div className="o2">\{elsewhere\}<\/div>\}\s*$/];
+  // Re-pinned for blueprint P32: the props line now also takes the week's calibration slot (nextWeek), after mainQuest.
+  const allowed = [/^\s*elsewhere\?: ReactNode;\s*$/, /elsewhere = null, mainQuest = null(?:, nextWeek = null)? \}: Props\) \{\s*$/, /^\s*\{elsewhere != null && elsewhere !== false && <div className="o2">\{elsewhere\}<\/div>\}\s*$/];
   check(
     "due elsewhere: the board's strip slot is only typed, received and drawn (no count, no Ask, no buildBoard input)",
     slotLines.length === 3 && slotLines.every((l) => allowed.some((r) => r.test(l))),
@@ -3746,7 +3749,8 @@ asyncChecks.push(
       fxPage
     ) &&
       // The side column may open with the Asks (what needs you) before the goals; the slot is still c3 > o9.
-      /<div className="c3">(?:\s*\{\/\*[\s\S]*?\*\/\})?(?:\s*\{!isWork && mainQuest != null && mainQuest !== false && <div className="o9">\{mainQuest\}<\/div>\})?(?:\s*\{\/\*[\s\S]*?\*\/\})?(?:\s*\{asksOnScreen\.map[\s\S]*?\{asksMore\} more\s*<\/button>\s*\)\})?\s*<div className="o9">\s*<GoalsStrip/.test(boardSrc) &&
+      // Re-pinned for blueprint P32: the week's calibration card (Mondays only) may come first, above the Main quest.
+      /<div className="c3">(?:\s*\{\/\*[\s\S]*?\*\/\})?(?:\s*\{!isWork && nextWeek != null && nextWeek !== false && <div className="o9">\{nextWeek\}<\/div>\})?(?:\s*\{\/\*[\s\S]*?\*\/\})?(?:\s*\{!isWork && mainQuest != null && mainQuest !== false && <div className="o9">\{mainQuest\}<\/div>\})?(?:\s*\{\/\*[\s\S]*?\*\/\})?(?:\s*\{asksOnScreen\.map[\s\S]*?\{asksMore\} more\s*<\/button>\s*\)\})?\s*<div className="o9">\s*<GoalsStrip/.test(boardSrc) &&
       fxPage.indexOf("aimInPlace.map(") >= 0 &&
       fxPage.indexOf("aimInPlace.map(") < fxPage.search(/<div className="dev-grid">\s*\{aimStates\.map\(/) &&
       /key: "in-place", fixture: "set-week"/.test(fxPage) &&
@@ -5380,7 +5384,8 @@ asyncChecks.push(
     "P15 board: the Main quest slot is only typed, received and drawn in c3's .o9 before the goals, never on a work tab",
     slot.length === 3 &&
       /^\s*mainQuest\?: ReactNode;\s*$/.test(slot[0]) &&
-      /mainQuest = null \}: Props\) \{\s*$/.test(slot[1]) &&
+      // Re-pinned for blueprint P32: the props line now also takes the week's calibration slot (nextWeek), after it.
+      /mainQuest = null(?:, nextWeek = null)? \}: Props\) \{\s*$/.test(slot[1]) &&
       /^\s*\{!isWork && mainQuest != null && mainQuest !== false && <div className="o9">\{mainQuest\}<\/div>\}\s*$/.test(slot[2]) &&
       board.indexOf("<div className=\"o9\">{mainQuest}</div>") > board.indexOf('<div className="c3">') &&
       board.indexOf("<div className=\"o9\">{mainQuest}</div>") < board.indexOf("<GoalsStrip"),
@@ -5389,6 +5394,112 @@ asyncChecks.push(
   const quietFiles = ["src/components/today/board-ui.ts", "src/lib/today-board.ts", "src/lib/tasks.ts", "src/lib/notifications.ts"];
   const loud = quietFiles.filter((f) => /mainQuest|MainQuest|main-quest/.test(code(read(f))));
   check("P15: the counts, the Asks and the bell never read the main quest (board-ui, today-board, tasks, notifications)", loud.length === 0, loud.join(", "));
+}
+
+// Blueprint P31 (D35): a side quest's row on Today. Its due bit carries the side glyph and its words ("Side quest · expires
+// Sat") in the due bit's own ink (no lane colour, no new hue); data-side marks it; the drawer says why it was offered.
+// An ordinary deadline row is the control: its clock and "by Sat", no side mark anywhere.
+{
+  const sideTplOf = (over: Partial<BoardTemplate> = {}) => tpl({ id: "sq-walk", title: "20-minute walk", track: "BODY", dueDay: "2026-10-03", dueKind: "DEADLINE", captureKey: "side:body:week:2026-W40", note: "Body has 40 of 150 effort minutes this week. A 20-minute walk adds to them. Letting it expire costs nothing.", ...over });
+  const b = buildBoard(board(TODAY, [sideTplOf(), tpl({ id: "sq-chore", title: "Vacuum", dueDay: "2026-10-03", dueKind: "DEADLINE" })]));
+  const row = (id: string) => [...b.todayRows, ...b.anytime].find((r) => r.template.id === id)!;
+  const html = (r: BoardRow) =>
+    renderToStaticMarkup(
+      createElement(TaskRow, { row: r, projection: r.projection, drawerOpen: false, undoable: false, busy: false, receiptOpen: false, receiptId: "rcpt", onTick: () => {}, onUndo: () => {}, onToggleDrawer: () => {}, onToggleReceipt: () => {} })
+    );
+  const side = html(row("sq-walk"));
+  const chore = html(row("sq-chore"));
+  check(
+    "P31 TaskRow: a side quest's due bit is the side glyph and 'Side quest · expires Sat' (data-side), in the due bit's ink; the row wears no lane colour",
+    /<div class="t-row"[^>]*data-side="1"/.test(side) &&
+      /<span class="r-bit due" data-side="1"><svg class="i"[^>]*><use href="#i-side"><\/use><\/svg>Side quest · expires Sat<\/span>/.test(side) &&
+      !/data-accent=/.test(/^<div class="t-row"[^>]*>/.exec(side)?.[0] ?? "x"),
+    side.slice(0, 600)
+  );
+  check("P31 TaskRow: an ordinary deadline row is exactly as before (its clock and 'by Sat', no side mark)", /<use href="#i-clock"><\/use><\/svg>by Sat<\/span>/.test(chore) && !/data-side/.test(chore));
+  const drawer = renderToStaticMarkup(
+    createElement(TaskDrawer, {
+      row: row("sq-walk"),
+      now: at(TODAY, 9),
+      today: TODAY,
+      minutes: null,
+      onMinutes: () => {},
+      projection: row("sq-walk").projection,
+      minimumProjection: null,
+      busy: false,
+      working: null,
+      onDone: () => {},
+      onMinimum: () => {},
+      onSkip: () => {},
+      onTomorrow: () => {},
+      onAgain: () => {},
+      onRename: () => {},
+      onArchive: () => {},
+      onOverride: () => {},
+      onResize: () => {},
+    })
+  );
+  check("P31 TaskDrawer: a side quest's drawer says why it was offered (its note), letting it expire costing nothing", /<p class="today-drawer-note" data-side="1">Body has 40 of 150 effort minutes this week\. A 20-minute walk adds to them\. Letting it expire costs nothing\.<\/p>/.test(drawer));
+  check("P31 board: an open side quest never counts due on Today (the chore does)", b.counts.due === 1);
+  // P31 review: put off past its expiry it would only be gone; and an open one asks nothing of the day's end either.
+  const lastDay = "2026-10-03";
+  const last = buildBoard(board(lastDay, [sideTplOf({ startDay: TODAY })]));
+  const lastRow = [...last.todayRows].find((r) => r.template.id === "sq-walk")!;
+  const drawerOn = (r: BoardRow, today: string) =>
+    renderToStaticMarkup(
+      createElement(TaskDrawer, {
+        row: r, now: at(today, 9), today, minutes: null, onMinutes: () => {}, projection: r.projection, minimumProjection: null, busy: false, working: null,
+        onDone: () => {}, onMinimum: () => {}, onSkip: () => {}, onTomorrow: () => {}, onAgain: () => {}, onRename: () => {}, onArchive: () => {}, onOverride: () => {}, onResize: () => {},
+        onDefer: () => {}, onAbort: () => {}, noMonth: true,
+      })
+    );
+  const lastDrawer = drawerOn(lastRow, lastDay);
+  check(
+    "P31 TaskDrawer: on a side quest's last day there is no Tomorrow pill, the refusal is said in its place, and there is never a Defer… (Abort… still drops it)",
+    !/>Tomorrow</.test(lastDrawer) && /<p class="today-drawer-note">This side quest expires today, so it can&#x27;t move past that\. Letting it go costs nothing\.<\/p>/.test(lastDrawer) && !/Defer…/.test(lastDrawer) && /Abort…/.test(lastDrawer),
+    lastDrawer.slice(0, 900)
+  );
+  check("P31 TaskDrawer: before its last day Tomorrow is still offered, and an ordinary row keeps its Defer…", />Tomorrow</.test(drawerOn(row("sq-walk"), TODAY)) && /Defer…/.test(drawerOn(row("sq-chore"), TODAY)));
+  check(
+    "P31 Close the day: an open side quest is never listed (it asks nothing of the day), before Duty and after; the chore is",
+    [true, false].every((live) => { const items = closeItemsOf({ must: b.must, todayRows: b.todayRows, today: TODAY, live }); return !items.some((i) => i.key === row("sq-walk").key) && (live ? items.some((i) => i.key === row("sq-chore").key) : true); })
+  );
+}
+
+// Blueprint P32 (D36): the week's calibration on Today, Mondays only ("This week"), in the side column above the Main
+// quest. Only drawn: no Ask, no count, no row; a work tab never shows it; no rate and no target on Today (D17).
+{
+  const strip = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const page = strip(read("src/app/today/page.tsx"));
+  const boardSrc = strip(read("src/components/today/TodayBoard.tsx"));
+  check(
+    "P32 Today: the calibration card is read on Mondays only (no read on any other day, none while the audit is off) and passed as a node",
+    /const nextWeekLoad = weekdayOf\(day\) === 1 \? loadNextWeek\(userId, now\)\.catch\(\(\) => null\) : Promise\.resolve\(null\);/.test(page) &&
+      /nextWeek=\{nextWeek \? <NextWeekCard view=\{nextWeek\} title="This week" headingId="nw-today-h" \/> : null\}/.test(page)
+  );
+  check(
+    "P32 TodayBoard: drawn in the side column above the Main quest, never on a work tab; buildBoard and the counts never see it",
+    /\{!isWork && nextWeek != null && nextWeek !== false && <div className="o9">\{nextWeek\}<\/div>\}\s*(?:\{\}\s*)?\{!isWork && mainQuest != null/.test(boardSrc) &&
+      !/nextWeek/.test(strip(read("src/lib/today-board.ts"))) &&
+      !/nextWeek/.test(strip(read("src/components/today/board-ui.ts")))
+  );
+  const cw: CalibrationWeek = { weekKey: "2026-W43", monday: "2026-10-19", target: 85, daily: { kept: 6, due: 14, rows: [{ templateId: "gym", title: "Gym", kept: 2, due: 7 }, { templateId: "floss", title: "Floss", kept: 4, due: 7 }] }, tracked: [200, 180, 0, 160, 220, 60, null] };
+  const prev: CalibrationWeek = { ...cw, weekKey: "2026-W42", monday: "2026-10-12", daily: { kept: 8, due: 14, rows: [{ templateId: "gym", title: "Gym", kept: 3, due: 7 }, { templateId: "floss", title: "Floss", kept: 5, due: 7 }] } };
+  const cal = calibrationOf(cw, [prev], { declared: 300, musts: [{ templateId: "gym", title: "Gym", strength: 0.3, pending: false }, { templateId: "floss", title: "Floss", strength: 0.4, pending: false }], habits: [] })!;
+  const view = nextWeekViewOf(cal, { capacity: 300, templates: [{ id: "gym", compulsory: true, archived: false, pendingNotMustDay: "2026-11-02" }, { id: "floss", compulsory: true, archived: false, pendingNotMustDay: null }] });
+  const html = renderToStaticMarkup(createElement(NextWeekBody, { view, title: "This week", headingId: "nw-today-h", busy: false, error: null, done: {}, kept: new Set<string>(), onAccept: () => {}, onKeep: () => {} }));
+  check(
+    "P32 card on Today: 'This week · Week of 26 Oct', the lighter sizes, the capacity and Floss on offer (Accept / Keep), Gym already eased ('Not a must from Mon 2 Nov.')",
+    html.includes('<h2 id="nw-today-h"') &&
+      html.includes(">This week<") &&
+      html.includes('<span class="aside">Week of 26 Oct</span>') &&
+      html.includes('<p class="nw-sizes">Move 10 min · Finish any 2 tasks</p>') &&
+      (html.match(/>Accept<\/button>/g) ?? []).length === 2 &&
+      (html.match(/>Keep<\/button>/g) ?? []).length === 2 &&
+      html.includes('<span class="nw-state" role="status">Not a must from Mon 2 Nov.</span>'),
+    html.slice(0, 900)
+  );
+  check("P32 card on Today: no rate, no target, no '%' (D17: the audit's alone)", !/%|\b85\b/.test(html.replace(/Week of 26 Oct/, "")));
 }
 
 // The async checks (withMoments) settle before the tally.

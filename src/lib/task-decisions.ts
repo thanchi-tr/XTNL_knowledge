@@ -38,6 +38,7 @@ import { isFixedSchedule, occurrencesBetween, parseRule } from "./recurrence";
 import { UNDO_WINDOW_MINUTES } from "./life-grade";
 import type { MustNote } from "./daily-quests";
 import { completesItself } from "./life-types";
+import { sideExpiresOf, sideMoveRefusalOf } from "./side-quests";
 
 // ── Kinds, scopes, reasons ────────────────────────────────────────────────
 
@@ -285,6 +286,8 @@ export interface DecisionTemplate {
   pendingArchiveDay: DayKey | null;
   /** A work tab's task: the same rules, and nothing of the game either way. */
   boardId?: string | null;
+  /** TaskTemplate.captureKey: a side quest's (P31) says so, and it is never deferred past its expiry. */
+  captureKey?: string | null;
 }
 
 export type DeferShape = "must" | "repeating" | "deadline" | "one-off";
@@ -619,6 +622,9 @@ export function planDefer(
   if (refusal) return planFail(refusal);
 
   const returnDay = dayKeyOf(until, tz);
+  // A side quest (blueprint P31) comes back by its expiry at the latest: deferred past it, it would only be gone.
+  const sideDay = sideExpiresOf(t);
+  if (sideDay && returnDay > sideDay) return planFail(sideMoveRefusalOf(sideDay, today));
   const write = emptyWrite(t.id, now);
   write.expect = { deferUntil: t.deferUntil, planDay: t.planDay };
   write.template = { deferUntil: until };

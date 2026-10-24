@@ -1,0 +1,24 @@
+@layer theme, base, components, art, effects, utilities;
+/* ═══ NEXT WEEK (lib/week-calibration.ts; blueprint P32) ══════════════════
+   The "Next week" card (NextWeekCard.tsx) in the weekly review's step 5
+   and on Today on Mondays: Today's three sizes and why, the capacity's
+   reading, then each suggestion with its basis line and Accept / Keep
+   (44 px buttons, wrapping under the words at 344 px), a Keep with its
+   quiet Undo beside "Kept as it is.". Ink and lines
+   only: no colour carries a meaning here. Tokens only; nothing moves. */
+@layer components {
+
+.nw { display: grid; gap: 8px; }
+.nw-top { display: grid; gap: 4px; padding: 14px; min-width: 0; }
+.nw-sizes { margin: 0; font: 600 17px/22px var(--font-display); color: var(--ink-0); font-variant-numeric: tabular-nums lining-nums; overflow-wrap: anywhere; }
+.nw-line { margin: 0; overflow-wrap: anywhere; }
+.nw-items { margin: 0; padding: 0; list-style: none; }
+.nw-item { display: grid; gap: 4px; min-width: 0; padding: 12px 14px; border-top: 1px solid var(--line-1); }
+.nw-title { font: 600 14px/20px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+.nw-basis { font-size: 13px; line-height: 18px; color: var(--ink-1); font-variant-numeric: tabular-nums lining-nums; overflow-wrap: anywhere; }
+.nw-state { font: 600 13px/18px var(--font-ui); color: var(--ink-1); overflow-wrap: anywhere; }
+.nw-acts { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 4px; }
+.nw-kept { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; min-width: 0; }
+.nw-err { margin: 0; padding: 0 14px 14px; }
+
+}

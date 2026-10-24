@@ -90,7 +90,8 @@ export type AutoMetric = "REVIEWS" | "IDEAS" | "REVIEW_DUE" | "STEPS" | "WORKOUT
 export function completesItself(metric: string | null | undefined): boolean {
   return !!metric && metric !== "PAGES";
 }
-export type CaptureSource = "quick" | "share" | "api" | "form";
+/** Where a template came from. 'trigger' (blueprint P31): a side quest the app offered itself (side-quests.ts), never a line. */
+export type CaptureSource = "quick" | "share" | "api" | "form" | "trigger";
 export type TrackSource = "CATEGORY" | "TAG";
 
 export type InstanceStatus =
@@ -392,7 +393,9 @@ export interface CaptureToken {
     /** '#proof' (blueprint P23): the task counts its time. */
     | "proof"
     /** '30 pages' or '30pg' (blueprint P24): a reading task, its tick reports its pages (never '30p': that is minutes). */
-    | "pages";
+    | "pages"
+    /** '#side' (blueprint P31): a side quest, a one-off that expires at no cost and is never a must. */
+    | "side";
   label: string;
 }
 
@@ -423,6 +426,12 @@ export interface ParsedCapture {
    * 'MINUTES'; the gate waits for PROOF_LAUNCH_DAY). Absent or false: no proof, as before.
    */
   proof?: boolean;
+  /**
+   * Side quests (blueprint P31, D35): the line carries '#side' on a plain one-off, so it is saved as a side quest (a
+   * DEADLINE expiry, never a must: capture-shape.ts; at most side-quests SIDE_OPEN_MAX open: tasks.ts). Absent or
+   * false: an ordinary line, as before.
+   */
+  side?: boolean;
   /**
    * IDEA mode: the text after the first '::' ('idea: Q :: A'), kept whole —
    * the server stores it as the draft's note, never in the title. Null or

@@ -100,6 +100,7 @@ import { AIM_LATER_DAYS, AIM_PROMPT_COOKIE, aimPromptOf, hideCookieValue, laterC
 import { AIM_HANDOFF_KEY, aimLineOf, takeAimHandoff, writeAimHandoff, type AimHandoffStorage } from "../src/lib/roadmap-handoff";
 import { AIM_MAX, GOALS_MAX, GOAL_SLOTS_MAX, REV4_COLUMNS, SEAT_STATUSES } from "../src/lib/roadmap-types";
 import { captureShapeOf } from "../src/lib/capture-shape";
+import { SIDE_CAP_LINE, SIDE_OPEN_MAX, sideQuestKeyOf, sideTagKeyOf } from "../src/lib/side-quests";
 import { parseRule } from "../src/lib/recurrence";
 import { completionBlockOf, placeOf, statsFor, type BoardData, type BoardInstance, type BoardTemplate } from "../src/lib/today-board";
 import { VOCAB_FRESH_MS, applyInsert, insertMenuOptions, lineHasPrefix, toastCopy, type Insert } from "../src/components/capture/capture-ui";
@@ -143,6 +144,9 @@ import {
   ROADMAP_UNARCHIVE_REPLACED,
   roadmapUnarchiveRefusalOf,
   unarchiveCore,
+  storedCaptureKeyOf,
+  sideSendKeysOf,
+  sideStoreOf,
   type RoadmapUnarchiveFacts,
   type UnarchiveMilestoneRow,
   type UnarchiveOutcome,
@@ -633,6 +637,40 @@ function tpl(p: Partial<BoardTemplate> & { id: string; title: string }): BoardTe
     wrong.map(([l, want, got]) => `'${l}': want '${want}', got '${got}'`).join("; ")
   );
   check("where: every capture's place is a PLACE_LANES lane", cases.every(([line]) => PLACE_LANES.includes(placed(line).where.lane)));
+  // Blueprint P31 (D35): a '#side' line is a side quest under its 'side:tag:' key, and its place says so (the toast too).
+  {
+    const side = parseCapture("fix the bike #side", { today: TODAY });
+    const s = captureShapeOf(side, TODAY);
+    const where = placeOf(tpl({ id: "side", title: side.title, ...s, captureKey: storedCaptureKeyOf("n1abc", true) }), TODAY);
+    check(
+      "where (P31): 'fix the bike #side' is a one-off with an expiry 2 days on, never a must, its place 'Side quest · expires Sat'",
+      side.side === true && s.dueKind === "DEADLINE" && s.dueDay === "2026-10-03" && !s.compulsory && where.lane === "planned" && where.label === "Side quest · expires Sat",
+      JSON.stringify([s, where])
+    );
+    check("where (P31): its stored key is 'side:tag:<the line's key>'; an ordinary line's key is its own", storedCaptureKeyOf("n1abc", true) === "side:tag:n1abc" && storedCaptureKeyOf("n1abc", false) === "n1abc");
+    const capped = toastCopy({ id: "t", title: "Fix the bike", projectedXp: 3, kind: "TASK", doneNow: false, doneNowError: null, duplicate: false, href: null, where: { lane: "anytime", label: "Anytime" }, sideNote: { capped: true, line: SIDE_CAP_LINE } });
+    check("toast (P31): a '#side' line past the two open reads 'Added (not a side quest)' with the cap's line", capped.head === "Added (not a side quest)" && capped.tail === SIDE_CAP_LINE, JSON.stringify(capped));
+    // P31 review: a '#side' line's stored key followed the cap at its first send, so a resend looks under both keys first.
+    const first = sideStoreOf("mobile:c1", null, SIDE_OPEN_MAX - 1);
+    const resend = sideStoreOf("mobile:c1", first.captureKey, SIDE_OPEN_MAX);
+    const firstCapped = sideStoreOf("mobile:c1", null, SIDE_OPEN_MAX);
+    const resendFreed = sideStoreOf("mobile:c1", firstCapped.captureKey, 0);
+    check(
+      "retry (P31): with 1 open, a '#side' line sent twice with the same key writes one row: its first send takes 'side:tag:<key>', the resend (2 open now) finds that key and meets its unique index, not a second, ordinary row",
+      first.captureKey === "side:tag:mobile:c1" && !first.capped && resend.captureKey === first.captureKey && !resend.capped,
+      JSON.stringify([first, resend])
+    );
+    check(
+      "retry (P31): the other way round too: a first send saved as ordinary (2 open) is found again under its own key after a slot frees, never written again as a side quest",
+      firstCapped.captureKey === "mobile:c1" && firstCapped.capped && resendFreed.captureKey === "mobile:c1" && resendFreed.capped && JSON.stringify(sideSendKeysOf("mobile:c1")) === JSON.stringify(["mobile:c1", "side:tag:mobile:c1"]),
+      JSON.stringify([firstCapped, resendFreed])
+    );
+    // P31 review: an expired side quest is gone at no cost, so the sheet never says it is on the board.
+    const gone = tpl({ id: "walk", title: "20-minute walk", dueKind: "DEADLINE", dueDay: addDays(TODAY, -2), captureKey: sideQuestKeyOf("body", "week", "2026-W40") });
+    const live = tpl({ id: "bike", title: "Fix the bike", dueKind: "DEADLINE", dueDay: TODAY, captureKey: sideTagKeyOf("n2") });
+    const titles = activeTitlesOf({ today: TODAY, yesterday: YESTERDAY, templates: [gone, live], instances: [], stats: {} }).map((x) => x.title);
+    check("titles (P31): an expired side quest is never 'Already on your board' (an open one is)", !titles.includes("20-minute walk") && titles.includes("Fix the bike"), JSON.stringify(titles));
+  }
 
   const run = placed("x run 30m", true);
   check("where: a done-now one-off that was ticked is 'Done today'", run.parsed.doneNow && run.where.lane === "done" && run.where.label === "Done today", `${run.where.label}`);
@@ -771,7 +809,9 @@ function tpl(p: Partial<BoardTemplate> & { id: string; title: string }): BoardTe
       /linkedGoalFields\(kind, captureGoalFields\(kind, title, parsed\.horizon, dueDay, today\), opts\.link\)/.test(insert) &&
       insert.indexOf("linkedParentOf(kind, opts.link)") > 0 &&
       insert.indexOf("linkedParentOf(kind, opts.link)") < insert.indexOf("matchParentGoal(") &&
-      insert.indexOf("linkedGoalFields(") < insert.indexOf("prisma.taskTemplate"),
+      // Re-pinned for blueprint P31 review: a resent '#side' line's lookup reads prisma.taskTemplate first; this is about the insert.
+      insert.indexOf("linkedGoalFields(") < insert.indexOf(".create({ data, select: TEMPLATE_SELECT })") &&
+      insert.indexOf(".create({ data, select: TEMPLATE_SELECT })") > 0,
     insert.length ? "" : "insertCapture not found"
   );
   const loader = tasks.slice(tasks.indexOf("export async function loadTodayBoard("), tasks.indexOf("export interface TodayCounts"));

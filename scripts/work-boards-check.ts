@@ -299,14 +299,16 @@ function scoping() {
   );
   check("capture: a work line's toast names no price (projectedXp 0)", /projectedXp: row\.boardId \? 0 :/.test(fnBody(tasks, "capturedOf")));
   const recap = fnBody(tasks, "recaptureCore");
-  check("capture: an edit stays on its line's board (boardId from the old row), tasks and habits only", /const boardId = old\?\.boardId \?\? null;/.test(recap) && /insertCapture\([^)]*boardId \}\)/.test(recap) && /workKindRefusalOf/.test(recap));
+  // Re-pinned for blueprint P31 review: the line's own spans go with it (a work tab's '#side' line is read again with them).
+  check("capture: an edit stays on its line's board (boardId from the old row), tasks and habits only", /const boardId = old\?\.boardId \?\? null;/.test(recap) && /insertCapture\([^)]*boardId(?:, reverted: opts\.reverted)? \}\)/.test(recap) && /workKindRefusalOf/.test(recap));
   check("capture: TEMPLATE_SELECT reads boardId (the tick's dispatch needs no extra read)", /boardId: true,\n\} satisfies Prisma\.TaskTemplateSelect;/.test(tasks));
 
   const act = code("src/app/actions/capture.ts");
   check(
     "capture action: a line's board is checked (open, the user's) and passed to createTemplateCore; a gone or archived tab is said, the line kept",
     /const scope = await boardOf\(userId, opts\?\.board\);\s*if \(!scope\.ok\) return scope;/.test(act) &&
-      /boardId: scope\.boardId \}\);/.test(act) &&
+      // Re-pinned for blueprint P31 review: with the line's own spans (a work tab's '#side' line is read again with them).
+      /boardId: scope\.boardId, reverted: (?:line|prepared)\.reverted \}\);/.test(act) &&
       /WORK_BOARD_ARCHIVED : WORK_BOARD_GONE/.test(act) &&
       /const scope = await boardOf\(userId, line\.board\);/.test(act)
   );

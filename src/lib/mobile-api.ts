@@ -20,6 +20,7 @@ import type { OwedCard } from "./duty-view";
 import type { MakeUpResult } from "../app/actions/duty";
 import { dailyQuestsOf } from "./daily-quests";
 import { auditWeekLabel, type WeekAudit } from "./week-audit";
+import type { NextWeekView } from "./week-calibration";
 import { DECAY_TOP, type AuditDecaying } from "./audit-decay";
 import { fmtXp } from "../components/today/format";
 import { TIMING_FACTOR, TRACK_LABEL } from "./life-grade";
@@ -490,6 +491,12 @@ export interface MobileTask {
    * has one (null: the pages are optional). Null on every other row, and on every row while PROOF_LAUNCH_DAY is null.
    */
   pages: { target: number | null } | null;
+  /**
+   * Side quests (blueprint P31, D35): the row is a side quest (BoardRow.side), and `expiresDay` the life day it expires
+   * after; its dueLabel says so ('Side quest · expires Fri'). Both absent on every other row, so it reads as before.
+   */
+  side?: true;
+  expiresDay?: DayKey;
 }
 
 /**
@@ -571,6 +578,8 @@ export function checkTasksOf(board: Pick<Board, "must" | "todayRows" | "clear" |
         proof: !!r.proof,
         timer: r.proof?.timer ? timerOf(r.proof.timer) : null,
         pages: r.pages ? { target: r.pages.target } : null,
+        // Side quests (P31): only on a side quest's row.
+        ...(r.side ? { side: true as const, expiresDay: r.side.expiresDay } : {}),
       };
     })
   );
@@ -608,6 +617,8 @@ export function checkDailyOf(board: Pick<Board, "must" | "deferred">) {
  * audit: D17). `status` provisional (read live), frozen (the copy as of `asOfDay` 04:00) or final (from the week's
  * judge day); `calibrating` the first two audited weeks (the target shown, not applied). `decaying` (P12; blueprint
  * 5.2c) is "Decaying this week": its count and its first DECAY_TOP lines (checkDecayingOf); null when not read.
+ * `side` (P31; blueprint 2.5) is the week's side quests, offered and done, never in the rate: present only when the
+ * week had one, so every other week reads exactly as before.
  */
 export function checkWeekOf(a: WeekAudit | null) {
   if (!a) return null;
@@ -627,6 +638,25 @@ export function checkWeekOf(a: WeekAudit | null) {
     calibrating: a.calibrating,
     asOfDay: a.asOfDay,
     decaying: checkDecayingOf(a.decaying),
+    ...(a.side ? { side: { done: a.side.done, offered: a.side.offered } } : {}),
+  };
+}
+
+/**
+ * Next week's calibration (lib/week-calibration.ts; blueprint 5.2d, plan P32, decision D36), as the web's Next week card
+ * states it: the week it is for, Today's three sizes and why (automatic), the capacity's reading when it changes nothing,
+ * and each suggestion with its basis, its state (open, accepted or gone) and what stands. Read only: Accept and Keep
+ * stay on the web. Null with no calibration in force (always while AUDIT_LAUNCH_DAY is off, and until two audits are
+ * frozen); /check then leaves the key out, so the reply is as before. No rate and no target (D17: the audit's alone).
+ */
+export function checkCalibrationOf(v: NextWeekView | null) {
+  if (!v) return null;
+  return {
+    weekKey: v.weekKey,
+    label: v.label,
+    sizes: { move: v.sizes.move, any: v.sizes.any, line: v.sizes.line, basis: v.sizes.basis },
+    capacityNote: v.capacityNote,
+    changes: v.items.map((i) => ({ id: i.id, kind: i.kind, title: i.title, basis: i.basis, state: i.state, line: i.line })),
   };
 }
 
